@@ -166,8 +166,9 @@ uint32_t input_face_lost(struct input_face *f);
 // **THE INTERVAL IS muir's OWN AND IS NOT TUNED TO A MEASUREMENT.**  muir
 // runs `attend` --- and so attempts one `deliver` --- every
 // `TERMINAL_CHECK` microcycles, which is 4,096 (`muir src/main.rs`), and a
-// microcycle on this board is 29 ticks of 10 ns.  So the interval is
-// 4,096 x 290 ns, and it is the rate at which the reference emulator has
+// microcycle on this board is 15 ticks of 10 ns --- a normal microcycle on
+// MIT's 10 ns grid, the read tap and the restart each rounded up.  So the
+// interval is 4,096 x 150 ns, and it is the rate at which the reference emulator has
 // always fed this same microcode.  muir's own comment at that delivery says
 // "a glance every check is far more often than the machine reads it", so this
 // is an upper bound on muir's rate and NOT a measured floor of what the
@@ -178,7 +179,7 @@ uint32_t input_face_lost(struct input_face *f);
 // constant is derived rather than fitted to them; what those measurements
 // establish is only that twenty nanoseconds is far too close.
 #define INPUT_KEY_MICROCYCLES 4096ull
-#define INPUT_KEY_MICROCYCLE_NS 290ull
+#define INPUT_KEY_MICROCYCLE_NS 150ull
 #define INPUT_KEY_INTERVAL_NS (INPUT_KEY_MICROCYCLES * INPUT_KEY_MICROCYCLE_NS)
 
 // Whether the seam is empty: the fabric holds no word and the card's

@@ -80,10 +80,10 @@
 //
 // THE 80 ns SETUP IS HONORED ON BOTH TRANSACTIONS, and it is not ceremony.
 // `rtl/plumbing/xilinx7/cadr_ddr.xdc` relaxes the adapter's address and data registers to
-// sixteen ticks on the strength of `cadr_busint_xbus.sv`'s `SETUP_T` --- the
+// `ticks(80)` on the strength of `cadr_busint_xbus.sv`'s `SETUP_T` --- the
 // bus specification's "the responsibility of the bus master to assert good
 // address, write, and data lines 80 ns. prior to asserting -XBUS.RQ".  This
-// module is a bus master on that board, so it owes the same sixteen ticks; a
+// module is a bus master on that board, so it owes the same `SETUP_T`; a
 // witness that raised `mem_req` in the same tick as the address would make
 // that constraint a claim about a board where it is false.  The write-back is
 // a second transaction and owes them again, which is why it re-enters `SETUP`
@@ -184,7 +184,7 @@ module cadr_prove #(
         IDLE: begin
           if (go) begin
             // Loaded here and held for the whole sequence, so that the
-            // sixteen ticks below are sixteen ticks of a settled address ---
+            // `SETUP_T` ticks below are that many ticks of a settled address ---
             // and so that what goes out at the end is what was asked for
             // and not whatever the inputs say by then.
             mem_addr    <= addr;

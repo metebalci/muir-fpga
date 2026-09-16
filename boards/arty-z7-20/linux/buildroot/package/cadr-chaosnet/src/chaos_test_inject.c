@@ -30,7 +30,7 @@
 //
 // The model empties the buffer a service time after a frame is stored in it,
 // derived in `chaos_test_model.h` from microcode 323's own `CHAOS-INTR`: about
-// 716 us for the longest packet and about 50 us for a short one, at 290 ns a
+// 371 us for the longest packet and about 26 us for a short one, at 150 ns a
 // microcycle.  Both are used below and both give the same answer, because what
 // decides a loss is an ORDER of events and not a duration: a burst handed down
 // in one turn cannot outlast any service time at all, and a burst that waits
@@ -76,8 +76,8 @@
 #define LOOP_DRAIN 64u
 
 // The machine's service time, from `chaos_test_model.h`'s derivation.
-#define SERVICE_LONG_NS 716000ull	/* the longest packet, 255 words */
-#define SERVICE_SHORT_NS 50000ull	/* a six-byte packet, 14 words */
+#define SERVICE_LONG_NS (2470ull * 150ull)	/* the longest packet, 255 words */
+#define SERVICE_SHORT_NS (171ull * 150ull)	/* a six-byte packet, 14 words */
 
 // What one offer costs the program, which is not measured on the board.
 #define OFFER_FREE_NS 0ull

@@ -163,8 +163,8 @@
 #define CHAOS_INJECT_QUEUE 64u
 
 // How long a refused frame waits for the buffer to be emptied before it goes
-// again anyway.  The machine's own copy loop is about 716 us for the longest
-// packet --- 38 + 19 microinstructions for every two words at 290 ns each,
+// again anyway.  The machine's own copy loop is about 371 us for the longest
+// packet --- 38 + 19 microinstructions for every two words at 150 ns each,
 // derived in `docs/chaosnet.md` from microcode 323's `CHAOS-INTR` --- and the
 // board's measured Unibus interrupt latency is a couple of milliseconds at
 // worst.  Twenty is an order of magnitude above both, so a machine that is

@@ -32,6 +32,18 @@
 
 // muir's `checkpoint::VERSION`.
 #define CHK_VERSION 27u
+
+// **MIT'S GRID, `cadr_tick_pkg::TICK_NS`: what a fabric tick stands for in
+// muir's nanoseconds**, and so what the machine's elapsed time is multiplied
+// by.  A home of the grid like the testbenches' header, held to the package
+// by `tools/grid_check.py`.
+#define CHK_GRID_NS 10u
+
+// muir's `TimingModel` as `Rtl::save` writes it: 0 the board's own
+// nanoseconds, 1 muir-fpga's grid.  This fabric keeps the grid, so a
+// checkpoint of it is resumed with `--timing-model fpga`, and muir refuses
+// one resumed any other way.
+#define CHK_TIMING_FPGA 1u
 // muir's `MIN_ZERO_RUN`: the shortest run of zero bytes worth a count.
 #define CHK_MIN_ZERO_RUN 4u
 

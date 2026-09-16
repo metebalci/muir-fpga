@@ -126,7 +126,7 @@ proc assert_constraints_scoped {inside period} {
 #
 # **AND THE LIMIT IS NOT A TUNING KNOB, IT IS A CORRECTNESS HAZARD, MEASURED.**
 # `get_timing_paths` hands back the WORST slack first and a relaxed path has
-# fifteen periods of slack, so a query that hits its limit drops exactly the
+# seven or more periods of slack, so a query that hits its limit drops exactly the
 # paths this counts.  At 40,000 that stopped being theoretical the moment the
 # transaction audit was instantiated: the `DDR=1` board went from 39,397
 # endpoints to over 40,000, the query truncated, and
@@ -151,7 +151,7 @@ proc relaxed_path_histogram {limit} {
 #
 # `rtl/plumbing/xilinx7/cadr_machine.xdc` defines `slow` as every register
 # under `cadr_machine` less a name list, so ANY module instantiated there is
-# relaxed to fifteen ticks by default and nothing says so.  That is not a
+# relaxed to the fast read tap's count by default and nothing says so.  That is not a
 # hypothetical: `cadr_disk_controller.sv` landed with none of its registers
 # named and **3,904 of its 4,000 internal paths carried the exception**, the
 # longest 20.1 ns, and three slices quoted fit figures for a disk nobody was
@@ -161,7 +161,7 @@ proc relaxed_path_histogram {limit} {
 #
 # The assertion is deliberately the ONE DIRECTION THAT IS TRUE.  A relaxed
 # register's paths are relaxed only when BOTH ends are in `slow`, so "every
-# path to a named capture register asks for fifteen ticks" is FALSE by
+# path to a named capture register asks for the relaxed count" is FALSE by
 # construction --- a capture register's data comes from fast counters as well
 # --- and a check written that way would fail on a healthy design.  What holds
 # is the other way round:
@@ -176,7 +176,17 @@ proc relaxed_path_histogram {limit} {
 # `fast` and `relaxed` are lists of name patterns under the instance.  An
 # instance that has no registers at all fails: a module optimized away is a
 # finding and not a pass.
-proc assert_instance_timing {period cycles instance relaxed} {
+#
+# **`elsewhere` is the registers ANOTHER clause relaxes to the same
+# requirement**, and they are left out of both halves.  Two clauses whose
+# instants are different nanoseconds can come to the same count of ticks ---
+# at a 10 ns grid the fast read tap, 75 ns, and the bus's setup, 80 ns, are
+# both eight --- and a requirement cannot say which clause gave it.  So a
+# register of the block that `slow` relaxes must not read as swallowed by the
+# clause this call holds, and must not be what satisfies that clause's own
+# empty-clause half either.  `tools/grid_check.py` fails the build of a flow
+# that shares a count without saying so.
+proc assert_instance_timing {period cycles instance relaxed {elsewhere {}}} {
     set want [format %.3f [expr {$period * $cycles}]]
     set all [get_cells -quiet -hier -filter \
                  "NAME =~ $instance && PRIMITIVE_GROUP == FLOP_LATCH"]
@@ -190,8 +200,14 @@ proc assert_instance_timing {period cycles instance relaxed} {
     }
     set fast {}
     set slow {}
+    set other 0
     foreach cell $all {
         set name [get_property NAME $cell]
+        set is_other 0
+        foreach pat $elsewhere {
+            if {[string match $pat $name]} { set is_other 1 }
+        }
+        if {$is_other} { incr other; continue }
         set is_slow 0
         foreach pat $relaxed {
             if {[string match $pat $name]} { set is_slow 1 }
@@ -199,7 +215,8 @@ proc assert_instance_timing {period cycles instance relaxed} {
         if {$is_slow} { lappend slow $cell } else { lappend fast $cell }
     }
     puts "XDC: $instance --- [llength $all] registers,\
-          [llength $fast] meant fast, [llength $slow] meant relaxed"
+          [llength $fast] meant fast, [llength $slow] meant relaxed,\
+          $other relaxed to the same requirement by another clause"
 
     # THE SWALLOWING.  Every path ending at a register meant to be fast, one
     # per endpoint, and not one of them may carry the relaxed requirement.

@@ -26,7 +26,7 @@
 // the sixteen-way diagnostic read mux --- the whole of `Engine::spy_read` ---
 // and it is not a path anything can shorten from the far end.  What was
 // wrong was not the depth but the deadline: `cadr_machine.xdc` relaxes
-// `-from $slow -to $slow` to fifteen ticks and `md_reg` is in `slow`, but
+// `-from $slow -to $slow` to `ticks(75)` and `md_reg` is in `slow`, but
 // the console's register was not, because that file is read
 // `read_xdc -ref cadr_machine` and the console is a level above.  A register
 // in `cadr_machine` falls into `slow` on the file's own test and needs no

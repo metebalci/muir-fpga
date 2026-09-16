@@ -65,6 +65,7 @@
 
 #include "Vcadr_machine.h"
 #include "Vcadr_machine___024root.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
@@ -627,10 +628,12 @@ int main(int argc, char **argv) {
         "%ld mapped writes of MD were acknowledged, wanting 3 --- -LOADMD ACK is "
         "what answers the cycle and a debugger hangs for ever without it",
         r.md_answered);
-  Check(r.md_gate_waits > 20,
-        "the gate held the request off for only %ld ticks, which is too few "
-        "for the refusal to be a measurement rather than a coincidence",
-        r.md_gate_waits);
+  // In nanoseconds of MIT's time and not in ticks, so that the bar is the
+  // same at any grid: 100 ns, which was twenty ticks at 5 ns.
+  Check(r.md_gate_waits * kGridNs > 100,
+        "the gate held the request off for only %ld ticks, %ld ns, which is "
+        "too few for the refusal to be a measurement rather than a coincidence",
+        r.md_gate_waits, r.md_gate_waits * kGridNs);
   Check(r.md_word_wrong == 0,
         "%ld writes of MD left MD holding something other than the word that "
         "went out on UB MD LOAD",

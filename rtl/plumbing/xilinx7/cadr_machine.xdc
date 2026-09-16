@@ -3,14 +3,16 @@
 #
 # Timing constraints for the composed machine.
 #
-# The master clock exists only to resolve the delay-line taps, which the
-# drawings place five nanoseconds apart and which this design therefore holds
-# as tick COUNTS --- 15, 17, 20, 23, 25, 28 and 32 of them.  Netlist logic
-# settles *between* phases, where the fast read tap at fifteen ticks is the
-# real constraint.  (The board clocks a tick at 10 ns, so that tap is
-# 150 ns of real time; `boards/arty-z7-20/cadr_arty.sv` decides the length
-# of a tick and is the only thing that does.  Every exception in this file is
-# written in CYCLES and rescales with it by itself.)
+# The master clock exists only to resolve the delay-line taps, which this
+# design holds as tick COUNTS of MIT's instants on the fabric's grid --- at the
+# 10 ns grid 8, 9, 10, 12, 13, 14 and 16 of them, where the 5 ns grid gave 15,
+# 17, 20, 23, 25, 28 and 32.  Netlist logic settles *between* phases, where
+# the fast read tap at eight ticks is the real constraint.  (The board clocks
+# a tick at 10 ns, so that tap is 80 ns of real time;
+# `boards/arty-z7-20/cadr_arty.sv` decides the length of a tick and is the
+# only thing that does.  Every exception in this file is written in CYCLES,
+# rescales with the tick by itself, and is the grid's count of the instant its
+# `# grid:` tag names, which `tools/grid_check.py` holds.)
 #
 # **EVERY NANOSECOND FIGURE BELOW IS DATED BY THE TICK IT WAS MEASURED AT,
 # AND NONE OF THEM HAS BEEN REWRITTEN**: a measurement is worth its provenance
@@ -19,7 +21,8 @@
 # report excerpt below says a path "asks for 5.000 ns" it is one tick and asks
 # for 10.000 today, where it says "75.000" it is fifteen ticks and asks for
 # 150.000, and the one excerpt quoting 6.250 and 93.750 was taken at the
-# 6.25 ns tick and is the same two requirements.  The RATIOS --- which path is
+# 6.25 ns tick and is the same two requirements.  Since the grid moved to
+# 10 ns the relaxed set is eight ticks and asks for 80.000.  The RATIOS --- which path is
 # relaxed and which is not, and by how much a slack figure moved when
 # something changed --- are what those excerpts were quoted for, and they are
 # unaffected.  The
@@ -41,9 +44,9 @@
 #   - The scratchpad latches qualify. `amem[aadr]` is constant for the whole
 #     microcycle because `aadr` comes off IR, so the latch captures the same
 #     value every tick and only the last is read. `imem_q` and `prom_q` too.
-#   - A free-running counter does not: it is its own input, and a 15-tick
-#     multicycle says its increment may take fifteen ticks, at which point it does not
-#     count. `mfinish_t`, `rdfinish_t`, `elapsed`, `vco_count`, `arb_t`,
+#   - A free-running counter does not: it is its own input, and the relaxed
+#     set's multicycle says its increment may take eight ticks, at which point
+#     it does not count. `mfinish_t`, `rdfinish_t`, `elapsed`, `vco_count`, `arb_t`,
 #     `phase_t`.
 #   - An edge detector does not: it exists to spot a transition and is read
 #     the next tick. `n_memack_q`, `n_loadmd_q`, `n_tpwpiram_q`, `n_tpwp_q`,
@@ -195,7 +198,7 @@
 # above is derived and not measured, and this file's own history says what
 # that is worth: a correct derivation with a blind check still drifts.  Before
 # any timing figure is quoted for this module, ask `report_exceptions` or
-# `get_timing_paths -through` which of its paths carry the fifteen-cycle
+# `get_timing_paths -through` which of its paths carry the relaxed set's
 # requirement, the way the disk controller's 3,904 of 4,000 were found.
 #
 # **AND ASKING THE SAME QUESTION OF THE OTHER SLAVE FOUND SOMETHING THIS FILE
@@ -215,8 +218,8 @@
 # timed one, and only the source decides.**  The arc that matters is
 # `ub_ssyn -> ssyn_seen -> ub_ack_at`, where the interface makes the two
 # Unibus instants at the tick it SEES the answer; relaxed, the tool permits
-# that rise to take fifteen ticks and `-MEMACK` to land fifteen ticks late on
-# a register-block cycle.  Nothing in simulation can see it --- a Verilator
+# that rise to take the relaxed set's eight ticks and `-MEMACK` to land eight
+# ticks late on a register-block cycle.  Nothing in simulation can see it --- a Verilator
 # run is exact whatever this file says --- and until 2026-09-11 nothing ran a
 # Unibus READ at all.
 #
@@ -338,7 +341,7 @@
 # stay `cadr_bus_audit audit (...)`: a rename empties it in silence, which is
 # the `foreach` trap in a new place and has the same tell --- ask
 # `report_exceptions`, or `get_timing_paths -through [get_cells */audit/*]`,
-# which of its paths carry the fifteen-cycle requirement, and expect only the
+# which of its paths carry the relaxed set's requirement, and expect only the
 # record, the microcycle counter and the readout word to.
 
 set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
@@ -379,31 +382,34 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                        NAME =~ *memory/busint_regs/which_reg*  || \
                                        NAME =~ *memory/busint_regs/mapk_reg*)}]
 
-# 15 ticks, not 29: the tightest instant a datapath register is read at is the
-# fast read tap.
-set_multicycle_path -setup 15 -from $slow -to $slow
-set_multicycle_path -hold  14 -from $slow -to $slow
+# The fast read tap, not the whole microcycle: the tightest instant a datapath
+# register is read at.  `cadr_tick_pkg::ticks(75)`, eight at a 10 ns grid.
+# grid: 75 ns
+set_multicycle_path -setup 8 -from $slow -to $slow
+set_multicycle_path -hold  7 -from $slow -to $slow
 
 # THE BUS'S OWN EIGHTY NANOSECONDS, FOR THE SLAVES THAT ARE INSIDE THIS FILE.
 #
 # `rtl/plumbing/cadr_xbus_ddr.sv` quotes the bus rule that a master must
 # "assert good address, write, and data lines 80 ns prior to asserting
 # -XBUS.RQ", and `rtl/plumbing/xilinx7/cadr_ddr.xdc` relaxes the memory
-# port's address and data registers to sixteen ticks ON THE STRENGTH OF IT.
+# port's address and data registers to `ticks(80)` --- eight at the 10 ns
+# grid, sixteen at 5 --- ON THE STRENGTH OF IT.
 # The machine's OWN slaves take the same lines from the same master under the
 # same rule, and until now nothing said so: they were timed at one tick, and
 # at a 5 ns tick the routed board fails 207 paths into the display board's
 # color map because of it.
 #
 # THE DERIVATION, and every step of it is a line rather than an argument.
-# `cadr_busint_xbus.sv:568` sets `SETUP_T = 80 / 5` and `:541` makes
-# `dev_rq = (state == GRANTED && elapsed >= SETUP_T)`, so -XBUS.RQ stands
-# sixteen ticks after the grant and `elapsed` counts from the grant.
+# `cadr_busint_xbus.sv:128` sets `SETUP_T = cadr_tick_pkg::ticks(80)` and
+# `:283` makes `dev_rq = (state == GRANTED && elapsed >= SETUP_T)`, so
+# -XBUS.RQ stands `SETUP_T` ticks after the grant and `elapsed` counts from
+# the grant.
 # `cadr_memory_path.sv` loads `wdata` at MEMGO, which is at or before the
-# grant. `cadr_tv.sv:401` takes the word at
+# grant. `cadr_tv.sv:427` takes the word at
 # `store_now = asked && dev_write && !taken` --- the FIRST tick -XBUS.RQ
 # stands, `taken` refusing every tick after it. So the word has been settled
-# for sixteen ticks when the board captures it, and it is the same sixteen
+# for `SETUP_T` ticks when the board captures it, and it is the same count
 # the memory port already claims one module along.
 #
 # WHAT MAKES THIS A BOUND AND NOT A CONVENIENCE, which is the whole of the
@@ -416,17 +422,17 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 #     reason, and `elapsed -> md/CE` is the lesson under all three. The
 #     enable keeps its tick, so the capture happens at the tick it always
 #     did; what is relaxed is only the word it captures, which the bus
-#     already owed sixteen ticks of settling.
+#     already owed `SETUP_T` ticks of settling.
 #
 #   - **Only registers whose `D` IS the bus word.** `color_map` and
-#     `pointer` have exactly two writers each --- `cadr_tv.sv:502` and `:476`
-#     clear them at reset, `:530` and `:519` load them from `wdata` --- and a
+#     `pointer` have exactly two writers each --- `cadr_tv.sv:529` and `:502`
+#     clear them at reset, `:557` and `:546` load them from `wdata` --- and a
 #     synchronous clear arrives on `R`, not on `D`. So every setup path into
 #     these `/D` pins is the line the 80 ns rule names, and the exception
 #     needs no `-from` to say so.
 #
 #   - **`flag` is refused although the same gate writes it.**
-#     `cadr_tv.sv:510` gives it a third writer, `tvma_clr`, the sync
+#     `cadr_tv.sv:537` gives it a third writer, `tvma_clr`, the sync
 #     generator's own one-tick event. Relaxing `flag/D` would relax that
 #     preset, and an exemption that reaches a one-tick event is the one this
 #     file exists to warn about. `mode` and `sync_on` pass the test and are
@@ -439,16 +445,17 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 #     own program counter, which steps every tick, and they are the reason
 #     this clause names four pin patterns rather than an instance.
 #
-# HOLD: `-hold 15` beside `-setup 16`, which puts the hold check back on the
-# launch edge where it was. Without it the tool would ask the word to be held
-# for fifteen ticks after its launch and report hold violations no slower
-# clock could cure.
+# HOLD: `-hold 7` beside `-setup 8` --- `cadr_tick_pkg::ticks(80)`, eight at a
+# 10 ns grid --- which puts the hold check back on the launch edge where it
+# was. Without it the tool would ask the word to be held for seven ticks after
+# its launch and report hold violations no slower clock could cure.
+# grid: 80 ns
 set bus_word [get_pins -quiet {memory/tv/color_map_reg[*][*][*]/D
                                memory/tv/pointer_reg[*]/D
                                memory/g_color_tv.tv_color/color_map_reg[*][*][*]/D
                                memory/g_color_tv.tv_color/pointer_reg[*]/D}]
-set_multicycle_path -setup 16 -to $bus_word
-set_multicycle_path -hold  15 -to $bus_word
+set_multicycle_path -setup 8 -to $bus_word
+set_multicycle_path -hold  7 -to $bus_word
 
 # THE UNIBUS MAP AND ITS WRITE BUFFER, AT THE INSTANT MIT's OWN STROBE PUTS
 # THEM.
@@ -458,10 +465,10 @@ set_multicycle_path -hold  15 -to $bus_word
 #     assign land      = ub_msyn && sel    && wr             && (t_msyn == STROBE_T);
 #     assign land_wbuf = ub_msyn && in_win && wr && !mp_high && (t_msyn == STROBE_T);
 #
-# with `STROBE_T = 150 / 5` at `:477` --- THIRTY TICKS after `-UB MSYN`
-# rises. That is `busint::REGISTER_STROBE_NS`, the instant muir's `Busint`
+# with `STROBE_T = cadr_tick_pkg::ticks(150)` at `:477` --- FIFTEEN TICKS at a
+# 10 ns grid after `-UB MSYN` rises. That is `busint::REGISTER_STROBE_NS`, the instant muir's `Busint`
 # calls a write of this block answered, and `t_msyn` counts from the strobe,
-# so neither capture can happen before its thirtieth tick.
+# so neither capture can happen before its `STROBE_T`th tick.
 #
 # And a Unibus master has its data lines good BEFORE it raises `-UB MSYN`.
 # The word arrives on `ub_wdata`, which `cadr_console_bus.sv:228` mixes from
@@ -469,7 +476,7 @@ set_multicycle_path -hold  15 -to $bus_word
 # con_wdata_q : cpu_wdata` --- and which of them owns the bus is settled
 # before the cycle starts, the bus idling one tick at every change of owner.
 # So every setup path into these two registers' `D` was launched at or before
-# the tick `-UB MSYN` rose and is captured thirty ticks later.
+# the tick `-UB MSYN` rose and is captured `STROBE_T` ticks later.
 #
 # THE TWO REGISTERS ARE THE ONLY ONES IN THE BLOCK THIS IS TRUE OF, and the
 # neighbours are worth naming because each is refused for a different reason:
@@ -500,20 +507,21 @@ set_multicycle_path -hold  15 -to $bus_word
 # at 5 ns are the clock enables of these very registers and NOT ONE of them
 # is relaxed here.
 #
-# HOLD: `-hold 29` beside `-setup 30`, putting the hold check back on the
+# HOLD: `-hold 14` beside `-setup 15`, putting the hold check back on the
 # launch edge. `the-register-strobe-is-a-tick-early` is the mutation that
-# holds the thirty, one tick outside the bound in the design.
+# holds the count, one tick outside the bound in the design.
+# grid: 150 ns
 set ub_strobe [get_pins -quiet {memory/busint_regs/wr_buf_reg[*][*]/D
                                 memory/busint_regs/ub_map_reg[*][*]/D}]
-set_multicycle_path -setup 30 -to $ub_strobe
-set_multicycle_path -hold  29 -to $ub_strobe
+set_multicycle_path -setup 15 -to $ub_strobe
+set_multicycle_path -hold  14 -to $ub_strobe
 
 # THE MEMORY PORT'S OWN DEADLINE IS NOT HERE, AND IT CANNOT BE.
 #
 # `mem_addr`, `mem_wdata` and `mem_write` leave this module for whatever is
 # behind the memory port, and the bus specification --- quoted in
 # `rtl/plumbing/cadr_xbus_ddr.sv` --- makes the master responsible for asserting them
-# 80 ns before the request.  That is sixteen ticks, and it is a timing
+# 80 ns before the request.  That is `ticks(80)`, and it is a timing
 # exception waiting to be written.  It is written in `rtl/plumbing/xilinx7/cadr_ddr.xdc`
 # instead, for a reason worth recording rather than rediscovering:
 #

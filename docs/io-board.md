@@ -235,13 +235,13 @@ rule applies to whatever this card computes from it, and
 `cadr_spy_registers.sv`'s shape (a `selected` term off the registered
 `ub_addr`, an `elapsed` counter from `-UB MSYN`) is the one to copy.
 
-**This is the 5 ns grid, and the one place this card is not on it.** Every
-instant the fabric can act at is a multiple of five nanoseconds. The
+**This is the 10 ns grid, and the places this card is not on it.** Every
+instant the fabric can act at is a multiple of ten nanoseconds. The
 microsecond clock's edges are at 890 + 1,000k. The keyboard-and-mouse group
 answers 1,250 ns after the second edge past `-MSYN`, and the clocks and the
 GPIO answer 250 ns after `-MSYN`. `KB CLK^` is 8,000 ns and the mouse's step
 16,000, and the interval timer's count is 16,000. All of those are multiples
-of five. **The microsecond counter's low half is not.**
+of ten. **The microsecond counter's low half is not.**
 `busint::IOB_USEC_LOW_NS` is 313 ns, measured on the netlist, so muir answers
 at 1,203 + 1,000k and the fabric can only answer at 1,205. The trace carries a
 `slip` column saying so on every such row, rather than hiding two nanoseconds
@@ -263,20 +263,14 @@ looked at. A fabric that instead reloads a down-counter with 3,333,333 ticks
 loses a nanosecond a period, and the trace reads the register at fourteen
 boundaries on alternating sides to catch it.
 
-**A tick is 10 ns, so this card's two clocks no longer agree with the wall.**
-Everything above is the machine's own time, where a tick is five nanoseconds
-because that is what MIT's drawings are drawn on, and every tick count in the
-design is unchanged. What changed on 2026-09-11 is how long a tick lasts: the
-fabric runs at 100 MHz, so the machine runs at 50% of the speed the hardware
-ran. `USEC_PERIOD_T` is 200 ticks, which is now 2.0 real microseconds, and a
-CADR wall clock run off this counter loses half a day in a day. The
-sixty-cycle counter is the same family and slows in the same proportion, its
-mains edges arriving at 30 Hz. **It is decided that both keep agreeing with
-muir for now**, because the checks are the backbone of this project and
-nothing built yet needs the time of day --- this card is not composed into
-`cadr_machine` at all, so nothing on the board reads either of them. **And
-undoing it is still one constant, which is part of why the tick is a number
-that divides a thousand.** A real microsecond is exactly 100 ticks, a whole
+**The grid and the tick are both 10 ns, so this card's two clocks agree with
+the wall.** Everything above is the machine's own time, on a grid of ten
+nanoseconds, and a tick of the board lasts ten real ones. `USEC_PERIOD_T` is
+100 ticks, one real microsecond, and the sixty-cycle counter's mains edges
+arrive at 60 Hz. At the 5 ns grid the same counts were 200 ticks and 30 Hz, and
+a CADR wall clock run off this counter lost half a day in a day. **The two
+numbers are the same only while the grid and the tick are**, which is part of
+why the tick is a number that divides a thousand. A real microsecond is exactly 100 ticks, a whole
 number, so restoring real time here means changing `USEC_PERIOD_T` and nothing
 else, rather than a rewrite or a second clock domain. Doing it would put this
 module out of agreement with muir, which is why it has not been done.
@@ -934,8 +928,8 @@ program instead.
 The serial port's line is the `cadr-serial` program's, offered on a TCP socket
 as muir's `--serial` does. **The baud-rate generator is deliberately not on
 this card.** The 5.0688 MHz can at IOBSER 0A15 divides to instants that are
-not multiples of five. One bit at 9,600 baud is 104,166 ns and a frame
-1,041,666, so the 5 ns grid cannot carry them. What the card has instead is
+not multiples of ten. One bit at 9,600 baud is 104,166 ns and a frame
+1,041,666, so the grid cannot carry them. What the card has instead is
 two seam pulses. The generator itself is in fabric all the same, on the far
 side of that seam in `rtl/plumbing/cadr_serial_line.sv`: the card refuses it
 because of the grid and the program refuses it because a second model of one
@@ -967,12 +961,12 @@ both. It recomputes `tx_on`, `rx_on`, `-CTS` and `-DCD` from `ser_mode1`,
 runs the baud-rate generator off `ser_mode2`'s rate so that a character takes
 its own frame time either way.
 
-**The generator counts MIT's 5 ns grid and not the board's clock.** The frame
-above is 1,041,666 ns of the machine's own time, which is 208,333 ticks. The
-board's tick is 10 ns, so the whole machine runs at half real time on purpose
-and its clocks disagree with the wall by exactly that; the serial line is part
-of the machine and disagrees with it too. A generator timed by the real clock
-instead would halve every frame as the machine measures it. That is not merely
+**The generator counts the grid and not the board's clock.** The frame above
+is 1,041,666 ns of the machine's own time, which is 104,167 ticks at the 10 ns
+grid. The grid and the board's tick are both 10 ns now, so the two clocks agree
+with each other; at the 5 ns grid the machine ran at half real time and a
+generator timed by the real clock halved every frame as the machine measured
+it. That is not merely
 a wrong rate. `SR2`, the chip's TxEMT, rises one character frame after the
 holding register empties, and a status read does not clear it: only loading
 the holding register does. MIT's driver in `sys/io1/serial.lisp` puts a
@@ -1064,7 +1058,7 @@ the command register does not store that bit. It turns the receiver off with a
 character waiting and shows `SR1` falling with it. It plugs and unplugs the
 RS-232 cable, and it runs a character round local loop back.
 
-**Every instant the far end acts at is rounded up to the 5 ns grid**, which is
+**Every instant the far end acts at is rounded up to the grid**, which is
 the argument `IOB_USEC_LOW_NS` already makes on this card: a register can only
 be read at a grid instant, so nothing falls between muir's instant and the
 tick the fabric acts at.

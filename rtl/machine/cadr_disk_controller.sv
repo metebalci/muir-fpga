@@ -182,7 +182,7 @@
 // one flag a decision; the third acts on the flags, two logic levels from a
 // data pin.
 // Nothing on the bus can see one tick in a register: the next bus cycle is a
-// whole microcycle, 29 ticks, away.  What CAN see it is the trace, which samples every timer a START
+// whole microcycle, 15 ticks at the 10 ns grid, away.  What CAN see it is the trace, which samples every timer a START
 // loads either side of its expiry to the tick --- so each such load is made
 // with `STORE_HOLD_NS` less, written at the load and not hidden in the
 // constant, the way `RD_FINISH_T` carries its "two ticks short of 140 ns" in
@@ -838,11 +838,12 @@ module cadr_disk_controller #(
 
   // --- the spindle --------------------------------------------------------
   //
-  // `spin` is `now mod REVOLUTION_NS`: a counter incremented by five a tick
-  // and wrapped by SUBTRACTING the revolution, which is exact even though
-  // neither constant is a multiple of five.  `region` is `spin / SECTOR_NS`
-  // and `into` is the remainder, both kept as counters so that nothing here
-  // divides: `into` adds five a tick and gives `SECTOR_NS` back when it
+  // `spin` is `now mod REVOLUTION_NS`: a counter incremented by the grid's
+  // nanoseconds a tick and wrapped by SUBTRACTING the revolution, which is
+  // exact even though neither constant is a multiple of the grid.  `region`
+  // is `spin / SECTOR_NS` and `into` is the remainder, both kept as counters
+  // so that nothing here divides: `into` adds a tick's nanoseconds and gives
+  // `SECTOR_NS` back when it
   // passes the threshold, and `region` steps with it.  Run against muir's own
   // closed form for three revolutions --- 10,000,010 ticks --- with 0
   // disagreements before a line of this was written.
@@ -896,10 +897,10 @@ module cadr_disk_controller #(
   // --- the busy counter and the hang timer --------------------------------
   //
   // `Controller::done_at` is an instant and `not_active()` is `now >=
-  // done_at`; here it is a DOWN-COUNTER IN NANOSECONDS, decremented by five a
-  // tick, which reaches zero on exactly the tick a counter loaded with
-  // `ceil(span / 5)` would --- and needs no divider for a span that is not a
-  // multiple of five.  `seek_ns(2)` is 6,060,271 and is not; nor is a
+  // done_at`; here it is a DOWN-COUNTER IN NANOSECONDS, decremented by the
+  // grid a tick, which reaches zero on exactly the tick a counter loaded with
+  // `ceil(span / TICK_NS)` would --- and needs no divider for a span that is
+  // not a multiple of the grid.  `seek_ns(2)` is 6,060,271 and is not; nor is a
   // transfer's access time when the channel brings one.
   logic [31:0] busy_ns;
   logic        not_active;
@@ -946,7 +947,7 @@ module cadr_disk_controller #(
   // **THREE IS THE MOST THE TRACE ALLOWS**, and that is a measurement and
   // not a guess: `tb/cadr_disk_pack_tb.cpp` and the trace both place a store
   // into the disk address and the START that reads its distance four ticks
-  // apart --- back-to-back bus writes on the 5 ns grid --- so `seek_ns_r`
+  // apart --- back-to-back bus writes --- so `seek_ns_r`
   // must hold the new address's distance three edges after `da` takes it.
   // A fourth stage, tried first, read the old distance at every such START
   // and the property check said so at its first timed seek.  The heads and
@@ -1919,8 +1920,8 @@ module cadr_disk_controller #(
       store_miss  <= 1'b0;
       waiting     <= 1'b0;
       pf_n        <= 2'd0;
-      // Ten, not zero: five for the reset held a tick here (see `rst_q`),
-      // five for the read word held a tick on the way out (`READ_HOLD_NS`).
+      // Two ticks, not zero: one for the reset held a tick here (see `rst_q`),
+      // one for the read word held a tick on the way out (`READ_HOLD_NS`).
       spin        <= 24'(2 * cadr_tick_pkg::TICK_NS);
       into        <= 20'(2 * cadr_tick_pkg::TICK_NS);
       region      <= 5'd0;
@@ -1977,9 +1978,13 @@ module cadr_disk_controller #(
       // --- the attentions, one countdown a unit
       // Zero stays zero, so the countdown runs whenever the unit is armed
       // and the enable is the arm alone rather than a 28-bit zero test.
+      // Nanoseconds by the grid a tick, as `busy_ns` counts: this was a
+      // literal five, which counted every attention at half the rate once
+      // the grid moved to 10 ns and put a seek's attention twice as far off.
       for (int u = 0; u < 8; u++) begin
         if (u_att_armed[u])
-          u_att_ns[u] <= (u_att_ns[u] > 28'd5) ? u_att_ns[u] - 28'd5 : 28'd0;
+          u_att_ns[u] <= (u_att_ns[u] > 28'(cadr_tick_pkg::TICK_NS))
+                         ? u_att_ns[u] - 28'(cadr_tick_pkg::TICK_NS) : 28'd0;
       end
 
       // --- the flags the walk reads instead of the compares they stand for:

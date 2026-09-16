@@ -18,21 +18,28 @@ still lights the lamps, and is not the CADR.
 
 ## Where the grid lives
 
-The conversion from MIT's nanoseconds into ticks is one number with three
+The conversion from MIT's nanoseconds into ticks is one number with four
 kinds of home. They must move together, and `make check` holds them to it.
 
 | Home | What it covers |
 |---|---|
-| `rtl/machine/cadr_tick_pkg.sv` | the fabric: `TICK_NS` and `ticks(ns)` |
-| `tb/cadr_tick.h` | the testbenches: `kGridNs` and `GridTicks(ns)` |
-| `golden/src/busint_regs.rs`, `busint_xbus.rs`, `color_tv.rs`, `disk.rs`, `iob.rs`, `phase_gen.rs`, `trace.rs`, `tv.rs` | the reference side, one `TICK_NS` each |
+| `rtl/machine/cadr_tick_pkg.sv` | the fabric: `TICK_NS`, `ticks(ns)` and `POWER_ON_EDGES` |
+| `tb/cadr_tick.h` | the testbenches: `kGridNs`, `GridTicks(ns)` and `kPowerOnEdges` |
+| `golden/src/busint_regs.rs`, `busint_xbus.rs`, `color_tv.rs`, `disk.rs`, `iob.rs`, `phase_gen.rs`, `power_on.rs`, `trace.rs`, `tv.rs` | the reference side, one `TICK_NS` each |
+| `cadr-checkpoint/src/chk.h` and `cadr-console/src/console_test.c` | the board programs: `CHK_GRID_NS`, and the console model's microcycle and diagnostic cycle in ticks |
+
+**The grid is 10 ns.** MIT's drawings place most instants on multiples of
+five nanoseconds, and this grid places each one at the first 10 ns tick at or
+after it. So a normal microcycle is 15 ticks where the drawings say 145 ns,
+and the machine runs at 145/150 of the original speed, about 97%. The previous
+grid was 5 ns, which kept every instant exact but, with the board's 10 ns
+tick, ran the machine at half speed.
 
 **The grid is not the length of a tick.** How long a tick lasts is the
-board's business: `boards/arty-z7-20/cadr_arty.sv` makes it 10 ns, so the
-machine runs at half the speed the hardware ran at while every instant keeps
-its exact ratio to every other. The two tens are unrelated numbers that
-happen to match. One is a divisor in the package and one is a clock period in
-the board file.
+board's business: `boards/arty-z7-20/cadr_arty.sv` makes it 10 ns. The two
+tens are still two numbers. One is a divisor in the package and one is a
+clock period in the board file, so a board can change its tick without
+touching the grid.
 
 **Rounding is always up.** `ticks(ns)` is `(ns + TICK_NS - 1) / TICK_NS` and
 never a plain division. Truncation collapses MIT's 5 ns instant to zero ticks
@@ -41,14 +48,77 @@ and puts SELECT on top of a read tap. It also makes the fabric sample
 time, a deskew or a strobe: each of those is a promise that something has
 settled.
 
+**The reference is generated under the same grid.** muir's
+`--timing-model fpga` (`TimingModel::Fpga`, `GRID_NS` = 10) rounds a delay up
+from its own trigger and takes a free-running clock's edge at the first tick at
+or after its exact instant. Every generator builds muir's engines under that
+model, and `tools/grid_check.py` fails a generator that builds `Rtl`,
+`Busint`, `IoBoardTiming` or the disk's `Controller` without it.
+
 **The reference side is the half that cannot be checked by building.** The
-eight Rust constants belong to separate binaries with no shared library, so
-they are not unified here. They are load-bearing: `golden/src/disk.rs` writes
-tick counts into the trace (`# ticks {}`), and `color_tv.rs` asserts that the
+Rust constants belong to separate binaries with no shared library, so they are
+not unified here. They are load-bearing: `golden/src/disk.rs` writes tick
+counts into the trace (`# ticks {}`), and `color_tv.rs` asserts that the
 display's frame divides by the grid. Moving the fabric's grid without moving
 these would change what the traces mean, and nothing in the build would fail.
 That is why `tools/grid_check.py` exists. It runs as `grid.pass`, finds every
 home, and fails when one is missing or when two disagree.
+
+## What the 10 ns grid moved
+
+These are the instants the grid rounds rather than divides. Each moves up by
+five nanoseconds or less, and every one of them is rounded the same way by
+muir's `--timing-model fpga`.
+
+| Instant | Drawings | On the grid |
+|---|---|---|
+| `TPTSE` clears | 5 ns | 10 ns |
+| `TPTSE` sets | 25 ns | 30 ns |
+| SELECT | 65 ns | 70 ns |
+| control store write pulse ends, `-TPW45` | 45 ns | 50 ns |
+| read tap, fast | 75 ns | 80 ns |
+| read tap, fast + ILONG | 115 ns | 120 ns |
+| read tap, normal | 85 ns | 90 ns |
+| read tap, normal + ILONG | 125 ns | 130 ns |
+| the I/O board's low counter half | 313 ns | 320 ns |
+| the receive buffer's setup | 33 ns | 40 ns |
+| the half-microsecond clock's first edge | 203 ns | 210 ns |
+
+A microcycle is the rounded tap plus the rounded restart, as muir's
+`TimingModel::cycle_ns` computes it:
+
+| Speed | Drawings | 5 ns grid | 10 ns grid |
+|---|---|---|---|
+| fast | 135 ns | 27 ticks | 14 ticks |
+| fast + ILONG | 175 ns | 35 | 18 |
+| normal | 145 ns | 29 | 15 |
+| normal + ILONG | 185 ns | 37 | 19 |
+| slow | 160 ns | 32 | 16 |
+| slow + ILONG | 200 ns | 40 | 20 |
+| extra slow | 220 ns | 44 | 22 |
+
+**Three places in the fabric were right at 5 ns and wrong at 10 ns, and each
+is fixed and held by a mutation.**
+
+- **The control store was written on the write pulse's trailing edge.** The
+  store is read synchronously, so a word written must land two edges before
+  the boundary that loads IR. At 10 ns the trailing edge, 50 ns into the write
+  phase, is one tick before the restart at 60, and every word the boot PROM
+  loaded read back all ones from microcycle 410,840. The write is taken on the
+  leading edge now, which is the end of the read phase. The word is the same
+  at either edge, because `pc`, `iwr` and `iwrited` stand through the whole
+  pulse. `the-control-store-is-written-on-the-pulse-trailing-edge` holds it.
+- **A memory strobe on a boundary's own tick waited a microcycle.** muir runs
+  `after_memack` at the boundary instant before the next read phase, so a word
+  acknowledged on the boundary is in MD for the next microcycle. At 10 ns a
+  read acknowledged a whole number of microcycles after its grant lands
+  exactly on a boundary three times in the band's 2,800,000 microcycles. MD
+  now takes such a word at that boundary. `a-strobe-on-the-boundary-waits-a-microcycle`
+  holds it.
+- **The disk's attention countdowns subtracted a literal five.** At 10 ns they
+  counted at half the rate and a seek's attention arrived twice as far after
+  the heads. They subtract `TICK_NS` now, as the busy counter does.
+  `disk-attention-counts-five-nanoseconds-a-tick` holds it.
 
 ## The rule: triggered goes on the grid, free-running keeps its period
 
@@ -69,7 +139,7 @@ There are three kinds of timing instant, and the kind decides the treatment.
 The rule that follows is that **anything triggered goes on the grid and
 anything free-running keeps its true period.**
 
-### One refinement, which is why exactly two constants keep their period
+### One refinement, which is why a few constants keep their period
 
 Class 3 divides again, and the halves behave differently.
 
@@ -79,31 +149,32 @@ Class 3 divides again, and the halves behave differently.
 - **Rounding a free-running PHASE is a single error under one tick.** It is
   applied once, at power-on, and never again.
 
-The I/O board already rounds a phase, deliberately: the half-microsecond
-clock the serial port's select is synchronized to sits at 203 ns modulo 500
-from power-on, and `HU_FIRST_T` rounds it up. The module says so at the
-constant, and the reference trace carries a `slip` column rather than a
-tolerance, so the rounding is a stated instant and not a fudge. The
-microsecond counter's low half at 313 ns is rounded the same way.
+The I/O board rounds a phase, deliberately: the half-microsecond clock the
+serial port's select is synchronized to sits at 203 ns modulo 500 from
+power-on, and `HU_FIRST_T` rounds it up. The module says so at the constant,
+and the reference trace carries a `slip` column rather than a tolerance, so
+the rounding is a stated instant and not a fudge. The microsecond counter's
+low half at 313 ns is rounded the same way.
 
 So the constants that must not be rounded are precisely the free-running
-**periods that do not divide by the grid**, and there are exactly two:
+**periods that do not divide by the grid**:
 
-| Constant | Period | At a 5 ns grid | At a 10 ns grid |
+| Constant | Period | At a 5 ns grid | At the 10 ns grid |
 |---|---|---|---|
 | `VCO_HALF_NS`, `rtl/machine/cadr_busint_xbus.sv` | 425 ns | 85 ticks, uniform | 42.5 — alternates 43 and 42 |
 | `FCLK_NS`, `rtl/machine/cadr_io_board.sv` | 125 ns | 25 ticks, uniform | 12.5 — alternates 13 and 12 |
+| `INSTRUCTION_NS_SLOW`, `rtl/machine/cadr_tv.sv` | 625 ns | 125 ticks, uniform | 62.5 — alternates 63 and 62 |
 
-Both keep their period in nanoseconds and advance an accumulator by the grid
-each tick, so neither is ever rounded. Writing the alternation out instead
-would hard-code one particular grid in a second place, which is the thing
-having a single grid constant exists to prevent.
+Each keeps its period in nanoseconds and advances an accumulator by the grid
+each tick, so none is ever rounded. Writing the alternation out instead would
+hard-code one particular grid in a second place, which is the thing having a
+single grid constant exists to prevent.
 
 The other free-running constants are on the grid because they happen to
-divide: the microsecond clock's 890 ns first edge and 1,000 ns period, and
-`KB CLK^` at 8,000 ns. **They are safe by arithmetic accident and not by
-design**, which is why the class needs naming even though nothing is
-currently wrong with them.
+divide: the microsecond clock's 890 ns first edge and 1,000 ns period, the
+display's fast instruction of 500 ns, and `KB CLK^` at 8,000 ns. **They are
+safe by arithmetic and not by design**, which is why the class needs naming
+even though nothing is wrong with them.
 
 ### The pattern all of them use
 
@@ -111,56 +182,121 @@ Every oscillator in the machine keeps its period in nanoseconds and advances
 it by `TICK_NS` each tick, which is exact at any grid:
 
 - the I/O board's sixty-cycle clock, `mains_acc` in `cadr_io_board.sv`, whose
-  16,666,666 ns period is 1 modulo 5 and so lies off the grid at every tick;
+  16,666,666 ns period is 6 modulo 10 and so lies off the grid on four
+  periods in five;
 - the serial line's crystal, `XTAL_WRAP` in `cadr_serial_line.sv`, which adds
   a frequency each tick and wraps at `1_000_000_000 / TICK_NS`;
 - the disk controller, which counts every span down in nanoseconds by
   `TICK_NS` a tick, reaching zero on exactly the tick a counter loaded with
   `ceil(span / TICK_NS)` would;
-- and, since this document was first written, the timeout oscillator and
-  FCLK, which were tick counters and are now accumulators of the same shape.
+- the timeout oscillator, FCLK and the display's sync program.
 
 **The wrap subtracts the period and never clears.** Clearing discards the
 remainder, and carrying the remainder is the whole of the difference: a
 cleared counter loses a little every period and its phase walks away.
 
-**The starting parity is a decision and is stated at each constant.** Both
+**The starting parity is a decision and is stated at each constant.** The
 accumulators are zero when their oscillator starts, which makes the first
 period the longer of the two wherever the grid does not divide the period —
-43 ticks then 42 for the timeout oscillator at a 10 ns grid, 13 then 12 for
-FCLK. At the 5 ns grid the machine runs at, every period is uniform and the
-parity does not arise. At a grid that does not divide the period, no starting
-value keeps every edge on the reference's instant.
+43 ticks then 42 for the timeout oscillator, 13 then 12 for FCLK, 63 then 62
+for a slow sync instruction. That is also muir's answer: under
+`--timing-model fpga` an edge is taken at the first tick at or after its exact
+instant, so the timeout oscillator's edges fall at 0, 430, 850 and 1,280 ns,
+measured on the composed machine.
 
-**The timeout oscillator starts two edges after the reset edge, not at it.**
-The reference counts it in whole periods from its power-on, which is the
-instant the ring starts. The ring starts on the first edge reset is low. The
-processor and the bus interface then register a grant on the edge after the
-ring makes its boundary. So in the frame the grants are counted in, power-on
-is two edges after the reset edge. `POWER_ON_T` in `cadr_busint_xbus.sv` puts
-the oscillator's start there. It is a count of the fabric's edges, so it is
-two at any grid.
+### Power-on is two edges after the reset edge, for every oscillator
 
-It used to start at the reset edge, and every cycle nothing answered was
-acknowledged two ticks before the reference's. That was issue #21. It was
-measured on the whole machine by reading the oscillator itself, whose rises
-fell at 840 modulo 850 of the reference's time. The two suspects the issue
-first named were not the cause. The timer takes each edge on the same clock
-edge the oscillator's output takes it. The machine check reads every
-acknowledgment one tick late, but that tick was already in every
-acknowledgment it compares, and the check now measures it on 16,951 device
-cycles in the same run.
+The reference counts every free-running clock in whole periods from its
+power-on, which is the instant the ring starts. The ring starts on the first
+edge reset is low. The processor and the bus interface then act on the ring's
+boundary one edge after the ring makes it. So in the frame every trace compares
+in, power-on is two edges after the reset edge. `POWER_ON_EDGES` in
+`cadr_tick_pkg.sv` is that number. It is a count of the fabric's edges, so it
+is two at any grid.
 
-The checks that hold the bus interface to the reference outside the whole
-machine now use the same frame. `busint_xbus`, `memory_path`, `tv` and
-`color_tv` put the reset edge and one idle edge before their first row, and
-`unibus` puts them before the tick it counts from. So their zero is the
-reference's power-on, as it is in the machine. They used to reset on that
-zero, which is why all five passed with the oscillator two ticks early.
+The bus interface's timeout oscillator started at the reset edge, and every
+cycle nothing answered was acknowledged two ticks before the reference's. That
+was issue #21, measured on the whole machine by reading the oscillator itself,
+whose rises fell at 840 modulo 850 of the reference's time. **The I/O board's
+clocks and the display's program from power-on started at the reset edge too,
+and they carried the same two ticks.** Measured on the composed machine at
+the 10 ns grid, with the reference's origin taken from the processor's first
+microcycles:
 
-The I/O board's free-running clocks also start at the reset edge. No check of
-the whole machine compares them against the reference, so whether they carry
-the same two ticks is not established.
+| Clock | Reference | Started at the reset edge | Started at power-on |
+|---|---|---|---|
+| `FCLK^`, first four edges | 130, 250, 380, 500 ns | 110, 230, 360, 480 | 130, 250, 380, 500 |
+| half-microsecond clock | 210, 710, 1,210 ns | 190, 690, 1,190 | 210, 710, 1,210 |
+| microsecond clock | 890, 1,890 ns | 870, 1,870 | 890, 1,890 |
+| `KB CLK^` | 8,000, 16,000 ns | 7,980, 15,980 | 8,000, 16,000 |
+| the mains | 16,666,670 ns | 16,666,650 | 16,666,670 |
+| the display's first instruction | 500 ns | 480 | 500 |
+| the display's first `-TVMA CLR` | 16,000 ns | 15,980 | 16,000 |
+
+`cadr_busint_xbus.sv`, `cadr_io_board.sv` and `cadr_tv.sv` now start their
+clocks `POWER_ON_EDGES` after the reset edge. The bus interface does it by
+setting its accumulator that many ticks short of a toggle. The I/O board and
+the display hold their clocks at their reset values for that many edges, and
+held there none of them is at an edge.
+
+`power_on.pass` holds all of it. Its testbench builds the composed machine,
+finds the reference's origin from the ticks at which the processor's first
+eight microcycles end, and compares 26 edges of the I/O board's clocks and the
+display's program against muir's instants from `golden/src/power_on.rs`. It
+reads no power-on constant, so a module that started at any other edge fails
+by disagreeing with muir. Before the fix it failed on all 26, each 20 ns early.
+Its records are `iob-the-clocks-start-a-tick-before-power-on` and
+`tv-program-from-power-on-starts-a-tick-early`.
+
+The standalone checks use the same frame. `busint_xbus`, `memory_path`, `tv`,
+`color_tv` and now `iob` put the reset edge and one idle edge before their
+first row, and `unibus` puts them before the tick it counts from. They used to
+reset on their row 0, which is why each passed with its clocks two ticks early
+in the whole machine. `tools/grid_check.py` fails a testbench that keeps a
+`kPowerOnEdges` of its own and a module that writes a power-on count of its
+own.
+
+**Two free-running clocks are not held by it.** The disk's spindle still
+starts at the reset edge. Measured on the composed machine, its first wrap
+falls 30 ns before the first tick of the reference's revolution. The module's
+own convention of counting a tick ahead for the read word accounts for one
+tick of that, and the start at the reset edge for the other two. No
+whole-machine trace compares a rotational instant, and the disk check places
+the spindle with a pre-roll counted from its own reset, so moving it is work
+of its own. The serial line's crystal is not in the composed machine at all.
+
+## The display's sync program
+
+`rtl/machine/cadr_tv.sv` runs MIT's sync program one instruction at a time,
+and an instruction is 500 ns in clock modes 0 and 1 and 625 ns in modes 2 and
+3 (`sync::INSTRUCTION_NS`, measured on the netlist LISPM TV). The program runs
+off the board's crystal, so it is a free-running clock and not a delay from an
+event.
+
+- **An instruction keeps its length in nanoseconds.** `seq_ns` counts
+  nanoseconds into the instruction by `TICK_NS` a tick. A boundary falls at
+  the first tick at or after the instruction's end, which is the tick whose
+  next count would reach it. The boundary subtracts the instruction and
+  carries the remainder. At the 10 ns grid a fast instruction is exactly 50
+  ticks, and a slow one alternates 63 and 62.
+- **The phase starts at the restart, not at power-on.** muir's `Tv::restart`
+  puts the program's origin at the write that loads it or changes the clock
+  mode, and counts every boundary from there. So the accumulator starts again
+  at zero on that write's tick, and a remainder the old program left is thrown
+  away with it. Until the software restarts it, `cpt.prom` runs from power-on,
+  which is `POWER_ON_EDGES` after the reset edge like every other oscillator.
+- **The frame is made by the program.** For `cpt.prom` it is 15,456,000 ns,
+  which is 1,545,600 ticks at the 10 ns grid, and `-TVMA CLR` falls 16,000 ns
+  into it in clock mode 0.
+
+Held by `tv-sync-instruction-a-tick-long`, `tv-sync-instruction-a-tick-short`,
+`tv-slow-sync-instruction-is-the-fast-one`,
+`tv-slow-sync-instruction-rounded-to-the-grid`,
+`tv-sync-remainder-dropped-at-a-boundary`, `tv-sync-boundary-a-tick-late`,
+`tv-sync-phase-survives-a-restart` and
+`tv-program-from-power-on-starts-a-tick-early`. The trace restarts the
+program nine times and holds the machine in clock mode 3 for a whole frame, so
+the slow alternation is compared.
 
 ## The instants
 
@@ -198,7 +334,7 @@ ring, **T** for a triggered delay, **F** for free-running.
 | `-UB SSYN` to `-LMACK` | 150 | T | `busint::UNIBUS_ACK_NS` | `UB_ACK_T` | 30 | 15 |
 | `-UB SSYN` to the MD strobe | 100 | T | `busint::UNIBUS_STROBE_NS` | `UB_STROBE_T` | 20 | 10 |
 | timeout oscillator, half period | 425 | F | `chip::VCO_PERIOD` | `VCO_HALF_NS` | 85 | 43 then 42 |
-| timeout oscillator starts, edges after the reset edge | — | fabric | the reference's power-on in the frame grants are counted in | `POWER_ON_T` | 2 | 2 |
+| timeout oscillator starts, edges after the reset edge | — | fabric | the reference's power-on | `POWER_ON_T`, from `POWER_ON_EDGES` | 2 | 2 |
 
 ### The processor — `rtl/machine/cadr_microcycle.sv`
 
@@ -247,6 +383,16 @@ ring, **T** for a triggered delay, **F** for free-running.
 | the serial group's answer | 750 | T | `busint::IOB_SERIAL_NS` | `SERIAL_T` | 150 | 75 |
 | `-BOOT*` | 4,000 | T | half of `ioboard::KB_CLK_NS` | `BOOT_T` | 800 | 400 |
 | the sixty-cycle clock | 16,666,666 | F | `ioboard::SIXTY_CYCLE_NS` | accumulator | — | — |
+| every clock above starts, edges after the reset edge | — | fabric | the reference's power-on | `POWER_ON_EDGES` | 2 | 2 |
+
+### The display — `cadr_tv.sv`
+
+| Instant | ns | Class | Source | Constant | 5 ns | 10 ns |
+|---|---|---|---|---|---|---|
+| a sync instruction, clock modes 0 and 1 | 500 | F | `sync::INSTRUCTION_NS` | `INSTRUCTION_NS_FAST` | 100 | 50 |
+| a sync instruction, clock modes 2 and 3 | 625 | F | the same | `INSTRUCTION_NS_SLOW` | 125 | 63 then 62 |
+| `cpt.prom`'s frame | 15,456,000 | F | `tv::FRAME_NS` | made by the program | 3,091,200 | 1,545,600 |
+| the program from power-on starts, edges after the reset edge | — | fabric | the reference's power-on | `POWER_ON_EDGES` | 2 | 2 |
 
 ### The disk — `cadr_disk_controller.sv`
 
@@ -262,6 +408,7 @@ tick, so none of these is a tick count and none is rounded.
 | the hang timer, 74LS124 at DCTMOT 0B04 over 128 | 2,560,000,000 | T | `TIMEOUT_NS` |
 | seek settle | 5,939,729 | T | `SEEK_SETTLE_NS` |
 | seek, per cylinder | 60,271 | T | `SEEK_NS_PER_CYLINDER` |
+| a unit's attention | the seek | T | `u_att_ns`, by `TICK_NS` a tick |
 | the store hold | two ticks | fabric | `STORE_HOLD_NS` |
 | the read hold | one tick | fabric | `READ_HOLD_NS` |
 
@@ -272,15 +419,15 @@ number dangerous, and they are the reason this document exists.
 
 | # | Invariant | Why, and where it is written |
 |---|---|---|
-| 1 | **A generator cycle is the read tap plus the restart.** 85 + 60 = 145 ns, 29 ticks at normal speed. | `Speed::cycle_ns` is `read_phase_ns(ilong) + RESTART_AFTER_READ_NS`. Every cycle length in the machine follows from its tap; none is written down separately. |
+| 1 | **A generator cycle is the read tap plus the restart, each rounded on its own.** 85 + 60 = 145 ns, which is 9 + 6 = 15 ticks at the 10 ns grid and 29 at 5. | `Speed::cycle_ns` is `read_phase_ns(ilong) + RESTART_AFTER_READ_NS`, and `TimingModel::cycle_ns` rounds the two separately. Every cycle length in the machine follows from its tap; none is written down separately. |
 | 2 | **The write-pulse family is measured from the END of the read phase; TSE, SELECT and `-TPR60` are measured from `-TPR0`.** | `cadr_phase_gen.sv` computes `wp_on_at` as `read_sel + WP_ON_T`, while `tptse` compares against `TSE_OFF_T` directly. They are two different origins, which is why they cannot collide however the tap moves. |
-| 3 | **The write pulse is 15 ns wide**, `WPIRAM_OFF` minus `WP_ON`. The width is the claim, not either end. At a 10 ns grid both ends round up separately and the pulse is 20 ns wide. | `clock.rs`: "no signal on the board is derived from the pulse's width" — so what matters is that the control store sees a pulse at all, and both ends must move together. |
+| 3 | **The write pulse is 15 ns wide on the drawings**, `WPIRAM_OFF` minus `WP_ON`. The width is the claim, not either end. At the 10 ns grid both ends round up separately and the pulse is 20 ns wide. | `clock.rs`: "no signal on the board is derived from the pulse's width" — so what matters is that the control store sees a pulse at all, and both ends must move together. |
 | 4 | **The write pulse is clamped to the cycle boundary.** The board's `-TPW70` outlives `-TPDONE` at 60 by 10 ns; the model takes `WP_OFF_NS.min(RESTART)`. | `clock.rs` at `RESTART_AFTER_READ_NS`: "the write pulse of one cycle overlaps the start of the next by 10 ns". With no gate delays in fabric, an unclamped pulse would write at the next instruction's address. |
-| 5 | **ILONG adds exactly 40 ns to a read tap, except at extra slow.** | `Speed::read_phase_ns`. At extra slow 160 ns is already the longest tap the chain provides. Held by `extra-slow-stretches-with-ilong`. |
-| 6 | **SELECT falls after `-TPR60` and before the earliest read tap: 60 < 65 < 75.** | `clock.rs` at `SELECT_NS`: "after SPEEDCLK at 60 has clocked the synchronizer and the board has settled, before the earliest tap at 75". In ticks that is 12 < 13 < 15, and at a 10 ns grid 6 < 7 < 8 — the ordering survives, with nothing to spare. Held by `the-read-phase-is-selected-at-the-start-of-the-cycle`. |
+| 5 | **ILONG adds exactly 40 ns to a read tap before it is rounded, except at extra slow.** | `Speed::read_phase_ns`. At extra slow 160 ns is already the longest tap the chain provides. Held by `extra-slow-stretches-with-ilong`. |
+| 6 | **SELECT falls after `-TPR60` and before the earliest read tap: 60 < 65 < 75.** | `clock.rs` at `SELECT_NS`: "after SPEEDCLK at 60 has clocked the synchronizer and the board has settled, before the earliest tap at 75". In ticks that is 12 < 13 < 15 at 5 ns, and 6 < 7 < 8 at 10 ns — the ordering survives, with nothing to spare. Held by `the-read-phase-is-selected-at-the-start-of-the-cycle`. |
 | 7 | **`-TPR60`'s window is `TPR60_ON` to `TPR60_ON + TPR_PULSE_NS`**, 60 to 100 ns. | The `-TPR0` pulse is 40 ns wide and every read tap is that pulse delayed, so the window's width is the pulse's. |
 | 8 | **SPEEDCLK is `-TPR60` inverted, and two modules name the same instant.** `cadr_spy_registers.sv` uses `ticks(60)`; `cadr_microcycle.sv` uses `ticks(60) - 1`. | The processor compares against its own phase counter, which is a tick behind the generator's, so it must test a tick early. The two must move together and a reader meeting only one of them will not know that. |
-| 9 | **The bus master's 80 ns of setup is 16 ticks, and a timing constraint claims exactly 16.** | `rtl/plumbing/xilinx7/cadr_ddr.xdc` writes `set_multicycle_path -setup 16`, on the strength of the same sentence from `xspec.text.3` and nothing else. `the-setup-time-is-short` is the mutation one tick outside that bound: the check that catches a fabric which stopped honoring the 80 ns is the check that would catch a constraint claiming it wrongly. **If the grid moves, this constraint moves with it.** |
+| 9 | **The bus master's 80 ns of setup is `ticks(80)` ticks, and a timing constraint claims exactly that many.** Eight at the 10 ns grid. | `rtl/plumbing/xilinx7/cadr_ddr.xdc` writes `set_multicycle_path -setup 8`, on the strength of the same sentence from `xspec.text.3` and nothing else. `the-setup-time-is-short` is the mutation one tick outside that bound: the check that catches a fabric which stopped honoring the 80 ns is the check that would catch a constraint claiming it wrongly. `grid.pass` fails the constraint if the grid moves and it does not. |
 | 10 | **A read is deskewed by 60 ns and a write is not.** | The 74S64 at REQLM 0C11 makes XACK combinationally for a write and through the TD100's 60 ns tap for a read. Held by `memack-registered-on-a-write`. |
 | 11 | **On the Unibus the word lands 50 ns BEFORE the acknowledgment; on the Xbus they coincide.** `UB_STROBE` 100 against `UB_ACK` 150. | `busint::UNIBUS_STROBE_NS`: "`MSYN OUT` drops at `SSYN T100` and `-LOADMD` rises with it". That 50 ns gap is the only place on either bus where the word and the acknowledgment come apart, and it is why `-LOADMD` is a port of its own. Held by `unibus-the-md-strobe-lands-with-the-acknowledgement`. |
 | 12 | **The register block answers 100 ns after it strobes.** `STROBE` 150, `SSYN` 250, on one TD250. | `busint::DIAGNOSTIC_NS`: the block "runs `UB REG CYC T0` down the TD250 at 0F04 for any of them, strobes the register between the 50 and 150 ns taps, and answers at the last". One delay line, three taps; they cannot be moved independently. |
@@ -291,12 +438,16 @@ number dangerous, and they are the reason this document exists.
 | 17 | **The interval counter's tick is also two `KB CLK^` periods.** | `ioboard::INTERVAL_TICK_NS` is 16,000, one count of the four 74LS193s at CLKTIM on the 16 us clock. |
 | 18 | **`-BOOT*` is exactly half a `KB CLK^` period.** 4,000 against 8,000. | The comparator's enable is low for exactly that half clock — the one before the rising edge that latches the word and sets `KBD READY`. Held by `boot-the-pulse-is-a-tick-short`. |
 | 19 | **The serial group answers 750 ns after the first half-microsecond edge STRICTLY after `-MSYN`**, with those edges at 203 modulo 500 from power-on. | Moving the phase moves every answer of the group, by as much as half a microsecond at the wrong side of an edge. Held by `iob-the-serial-ports-select-has-no-phase`. |
-| 20 | **The receive buffer is read at the first `FCLK^` edge at or after `-MSYN` plus 33 ns.** | A threshold measured from an event, resolved against a free-running clock: `RBUF_SETUP_T` is triggered and on the grid, `FCLK_NS` is the oscillator and keeps its true period. |
+| 20 | **The receive buffer is read at the first `FCLK^` edge whose tick is at or after `-MSYN` plus `ticks(33)`**, and that is muir's rule under `--timing-model fpga` as well as the fabric's. | The fabric tests `fclk_now` on a tick at least `RBUF_SETUP_T` after `-UB MSYN`. muir's `fclk_edge_at_or_after` looks for the first exact edge at or after that threshold less `GRID_NS - 1`, which is the first edge whose tick is at or after it. The two forms agree on every phase: with `-UB MSYN` at 1,090 ns both take the edge at 1,125, whose tick is 1,130, and answer at 1,380 rather than 1,500. `iob.pass` compares them. `RBUF_SETUP_T` is triggered and on the grid, and `FCLK_NS` is the oscillator and keeps its true period. |
 | 21 | **The disk's store hold is two ticks and its read hold is one, and every timer a START loads is loaded that much short.** | So that what expires expires at the reference's instant despite the register on the counter's output. These are the one place a *fabric* concession is expressed in nanoseconds, and they move with the grid by construction. |
-| 22 | **The sixty-cycle clock accumulates and never reloads.** Its period is 1 modulo 5, so a counter that adds the tick and subtracts the period is exactly `now mod SIXTY_CYCLE_NS`; one that reloads with zero loses four nanoseconds a period. | Held by `iob-the-mains-counter-reloads-not-accumulates`. |
-| 23 | **The display's frame divides the grid exactly**: 15,456,000 ns is 3,091,200 ticks at 5 ns. | `golden/src/color_tv.rs` asserts `FRAME_NS % TICK_NS == 0` and would fail rather than round. A grid that does not divide the frame breaks that assertion, which is the one place the reference side checks the grid at all. |
-| 24 | **The timeout oscillator's PHASE, not its period, is what the acknowledgment instant carries.** The grant only opens the oscillator's output; it does not start it. | This is why a one-tick shift anywhere in the reset network moves every NXM answer: `the-memory-path-leaves-reset-a-tick-late` delays only the memory path's reset and is caught. The oscillator starts `POWER_ON_T` edges after the reset edge, which is the reference's power-on in the frame the grants are counted in, and `the-timeout-oscillator-starts-a-tick-before-power-on` holds that from the whole machine. Issue #21 was this phase and nothing else: the oscillator started at the reset edge, so every cycle nothing answered was acknowledged two ticks early. **Anything that changes when this counter starts, how long its period is, or how many edges the ring and the processor put between the reset edge and a grant, changes the answer on every cycle nothing answers.** |
-| 25 | **Four timing constraints and their flows write grid-derived tick counts as literals.** Fifteen is the fast read tap, 75 ns. Sixteen is the bus setup, 80 ns. Thirty is the register strobe, 150 ns. Each hold is one less than its setup. | Fifteen: `cadr_machine.xdc`'s relaxed set, `-to $probe_stable` in both boards' `cadr_probe.xdc`, and `assert_multicycle_applied` and `assert_instance_timing` in `fit.tcl` and both boards' `bitstream.tcl`. Sixteen: `-to $bus_word` in `cadr_machine.xdc`, `-to $contract` in `cadr_ddr.xdc`, and the flows' assertions. Thirty: `-to $ub_strobe` in `cadr_machine.xdc` and one assertion in each `bitstream.tcl`. **None of these follows the package, and `grid.pass` does not hold them.** A grid of 10 ns makes them 8, 8 and 15. The six in `cadr_debug.xdc` and `cadr_debug_pmod.xdc` is the debug link's beat in board ticks and is not on the grid. |
+| 22 | **The sixty-cycle clock accumulates and never reloads.** Its period is 6 modulo 10, so a counter that adds the tick and subtracts the period is exactly `now mod SIXTY_CYCLE_NS`; one that reloads with zero loses nanoseconds every period. | Held by `iob-the-mains-counter-reloads-not-accumulates`. |
+| 23 | **The display's frame divides the grid exactly**: 15,456,000 ns is 1,545,600 ticks at 10 ns and 3,091,200 at 5. | `golden/src/color_tv.rs` asserts `FRAME_NS % TICK_NS == 0` and would fail rather than round. A grid that does not divide the frame breaks that assertion, which is the one place the reference side checks the grid at all. |
+| 24 | **The timeout oscillator's PHASE, not its period, is what the acknowledgment instant carries.** The grant only opens the oscillator's output; it does not start it. | This is why a one-tick shift anywhere in the reset network moves every NXM answer: `the-memory-path-leaves-reset-a-tick-late` delays only the memory path's reset and is caught. The oscillator starts `POWER_ON_EDGES` after the reset edge, and `the-timeout-oscillator-starts-a-tick-before-power-on` holds that from the whole machine. **Anything that changes when this counter starts, how long its period is, or how many edges the ring and the processor put between the reset edge and a grant, changes the answer on every cycle nothing answers.** |
+| 25 | **Timing constraints and their flows write grid-derived tick counts as literals, and each carries a tag naming its instant.** At the 10 ns grid the fast read tap, 75 ns, and the bus setup, 80 ns, are both eight ticks, and the register strobe, 150 ns, is fifteen. Each hold is one less than its setup. | The relaxed set in `cadr_machine.xdc` and `-to $probe_stable` in both boards' `cadr_probe.xdc` are `# grid: 75 ns`; `-to $bus_word` in `cadr_machine.xdc` and `-to $contract` in `cadr_ddr.xdc` are `# grid: 80 ns`; `-to $ub_strobe` is `# grid: 150 ns`; and each assertion in `fit.tcl` and both `bitstream.tcl` carries its own tag. `tools/grid_check.py` fails a constraint with no tag, a count that is not `ticks(ns)` at the package's grid, and a hold that is not one less. **Two instants now share a count**, so an `assert_multicycle_applied` that matches a requirement cannot say which clause gave it; its tag must say `(shared with 80 ns)`, and the instance assertions say what holds each clause instead. The debug link's beat in `cadr_debug.xdc`, `cadr_debug_pmod.xdc` and the flows is tagged `# board ticks` and is not on the grid. |
+| 26 | **The control store is written on the write pulse's LEADING edge, at least two edges before the boundary.** | The store is read synchronously: `imem_q` takes a word a tick after it is written, and IR takes `imem_q` at the boundary. At the 10 ns grid the trailing edge, `-TPW45` at 50 ns, is one tick before the restart at 60. Held by `the-control-store-is-written-on-the-pulse-trailing-edge`. |
+| 27 | **A memory strobe on a boundary's own tick is that boundary's word.** | muir runs `after_memack` at the boundary instant before the next read phase. `cadr_microcycle.sv` commits the word to MD at that boundary rather than holding it for the next. Held by `a-strobe-on-the-boundary-waits-a-microcycle`. |
+| 28 | **Every free-running clock starts `POWER_ON_EDGES` after the reset edge**, in the composed machine and in every standalone check. | See *Power-on is two edges after the reset edge*. Held by `power_on.pass` and its two records, and by `tools/grid_check.py`, which keeps the number in one package and one header. |
+| 29 | **The display's sync program keeps its phase from the write that restarts it.** | `Tv::restart` puts the origin at that write. The accumulator starts again at zero there and drops the old program's remainder. Held by `tv-sync-phase-survives-a-restart`. |
 
 ## What is not MIT's timing at all
 
@@ -311,7 +462,7 @@ with them.
 | `LOST_T`, `RESET_T`, `BOOT_T` in `cadr_console.sv` | how long the console holds a line, and how long it waits for the processing system |
 | `WATCHDOG_T` in `cadr_debug_window.sv` | one second of real time before a wedged bus is released |
 | `CLKIN_PERIOD_NS` in `xilinx7/cadr_hdmi_phy.sv` | the board's own oscillator, in real nanoseconds |
-| `POWER_ON_T` in `cadr_busint_xbus.sv` | how many edges after the reset edge the reference's power-on falls, as the processor and the bus interface count time |
+| `POWER_ON_EDGES` in `cadr_tick_pkg.sv` | how many edges after the reset edge the reference's power-on falls, as the processor and the bus interface count time |
 | `HOLD_T` in `cadr_lamp_microcycle.sv` | how long the steady microcycle lamp stays lit after a microcycle, 2^22 ticks: longer than any stall of a running machine and shorter than a person takes to see a lamp go out |
 | `DISK_LIT_T` in `boards/arty-z7-20/cadr_arty.sv` | how long the disk lamp stays lit after a block moves, the same 2^22 ticks for the same reason |
 
@@ -329,10 +480,16 @@ would otherwise stop honoring it silently when the grid moved.
    whether you are changing a period or a phase.
 2. Read every relationship that names it. There is usually more than one.
 3. Check whether a timing constraint quotes it. Relationships 9 and 25 list
-   the ones that do today, and each would silently become a false claim.
+   the ones that do today, and `grid.pass` fails each one that no longer
+   agrees with the grid.
 4. If you are changing the grid itself, every home at the top of this
    document moves together, and `grid.pass` fails until they agree. The
-   constraint literals of relationship 25 move too, and nothing checks them.
-   The four oscillators follow on their own, but their starting parity
-   becomes visible, and at such a grid no starting value keeps every edge on
-   the reference's instant.
+   constraint literals of relationship 25 move too, and a count two instants
+   come to share must say so in its tag. Every generator must run muir under
+   the matching timing model. The oscillators follow on their own, and their
+   starting parity becomes visible.
+5. Regenerate every trace, and read what moved column by column before
+   believing it. A mutation whose magnitude was one tick at the old grid may
+   be no tick at all at the new one: 5 ns and 10 ns are the same tick at a
+   10 ns grid, so every record that moves an instant by five nanoseconds is
+   re-derived to one tick of the new grid.

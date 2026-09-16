@@ -34,13 +34,27 @@
 //! ticks of draining will separate it from the microcycle it precedes.  So
 //! `md` may move on an unstalled row, where every other column may not.
 
+use muir::clock::TimingModel;
 use muir::engine::Engine;
-use muir::machine::Halt;
+use muir::machine::{Halt, Machine};
 use muir::rtl::Rtl;
 
-/// Five nanoseconds, the master clock's period: the step a stall is drained
-/// in, small enough to land on the grid every instant of it is a multiple of.
-pub const TICK_NS: u64 = 5;
+/// MIT's grid, the master clock's period: the step a stall is drained in,
+/// small enough to land on the grid every instant of it is a multiple of.
+pub const TICK_NS: u64 = 10;
+
+/// Whose time the engine keeps: muir's model of this fabric's grid, under
+/// which every instant `rtl` reaches is a multiple of [`TICK_NS`].
+pub const TIMING: TimingModel = TimingModel::Fpga;
+
+/// The engine a trace is taken from: `machine` under `rtl`, on [`TIMING`],
+/// which has to be chosen before the machine runs.
+pub fn engine(machine: Machine) -> Rtl {
+    assert_eq!(TICK_NS, muir::clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
+    let mut e = Rtl::new(machine);
+    e.set_timing_model(TIMING);
+    e
+}
 
 /// The columns, in order. `cycle` is the absolute microcycle rather than the
 /// line number, so a row says where in the run it came from.

@@ -928,7 +928,7 @@ each of the two that go on.
 The check is `golden/src/disk_boot.rs` and `tb/cadr_disk_boot_tb.cpp`. **It is
 a new generator rather than an extension of `golden/src/disk.rs`**, and the
 reason is that the two references answer different questions. `disk.rs` is a
-*timed* trace on the 5 ns grid against a blank pack the program formats
+*timed* trace on the grid against a blank pack the program formats
 itself, with every block already in the store before the START that needs it.
 That is "a Linux of no latency", which is what keeps its rows on their
 instants, and what its own testbench asserts by requiring the request path

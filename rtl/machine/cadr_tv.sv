@@ -95,13 +95,26 @@
 //   RAM's enable runs the program afresh from location 0 --- `Tv::restart`
 //   --- so the flag's phase is not fixed to power-on at all.
 //
-// **AN INSTRUCTION IS 100 OR 125 TICKS AND NOTHING ROUNDS.**  500 ns in
-// clock modes 0 and 1 and 625 ns in modes 2 and 3 (`sync::INSTRUCTION_NS`,
-// measured on the netlist LISPM TV with `cpt.prom` running), which on MIT's
-// 5 ns grid is exactly 100 and 125.  muir walks the whole program into a
-// timeline because a model jumps in time; this executes one instruction
-// every 100 or 125 ticks, which is a program counter, a repeat counter and
-// the two sync bits latched an instruction late.  MIT's `cadrtv/cpt.prom` is
+// **AN INSTRUCTION KEEPS ITS TRUE LENGTH IN NANOSECONDS AND NOTHING ROUNDS
+// IT.**  500 ns in clock modes 0 and 1 and 625 ns in modes 2 and 3
+// (`sync::INSTRUCTION_NS`, measured on the netlist LISPM TV with `cpt.prom`
+// running).  The generator runs off the board's crystal and not off any
+// event on the bus, so it is a FREE-RUNNING clock and keeps its period the
+// way `cadr_io_board.sv`'s FCLK does: `seq_ns` counts nanoseconds into the
+// instruction by `TICK_NS` a tick, and a boundary SUBTRACTS the instruction
+// and carries the remainder.  At a 10 ns grid an instruction in clock modes
+// 2 and 3 is 62.5 ticks and alternates 63 and 62, and every boundary lands at
+// the first tick at or after muir's instant; at a grid that divides both
+// lengths the remainder is always zero.  muir walks the whole program into a
+// timeline because a model jumps in time; this executes one instruction at
+// each boundary, which is a program counter, a repeat counter and the two
+// sync bits latched an instruction late.
+//
+// **ITS PHASE STARTS AT THE RESTART, NOT AT POWER-ON.**  `Tv::restart` puts
+// the program's origin at the write that loads it or changes the clock mode,
+// and muir counts every boundary from there; so the accumulator is zeroed at
+// that write's tick and at reset, and the remainder a slow instruction left
+// is thrown away with the program it belonged to.  MIT's `cadrtv/cpt.prom` is
 // the program from power-on, `$readmemh`'d from `SYNC_PROM_HEX` as the boot
 // PROM's image is, until the software loads the RAM and selects it.
 //
@@ -293,13 +306,13 @@ module cadr_tv #(
   // and `tb/cadr_tv_tb.cpp` holds this constant to it.
   localparam int SYNC_PROM_WORDS = 297;
 
-  // An instruction of the sync program, in ticks of MIT's 5 ns grid: 500 ns
-  // in clock modes 0 and 1 and 625 ns in modes 2 and 3, `sync::INSTRUCTION_NS`
-  // measured on the netlist LISPM TV.  **Exactly 100 and 125 --- nothing
-  // rounds**, which is the constraint the whole machine is built on and the
-  // reason a tick stays MIT's 5 ns here while the board clocks one at 10.
-  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd100;
-  localparam logic [6:0] INSTRUCTION_T_SLOW = 7'd125;
+  // An instruction of the sync program in NANOSECONDS: 500 in clock modes 0
+  // and 1 and 625 in modes 2 and 3, `sync::INSTRUCTION_NS` measured on the
+  // netlist LISPM TV.  A free-running period and not a delay from an event,
+  // so it is not put through `cadr_tick_pkg::ticks`: see the top.
+  localparam logic [9:0] INSTRUCTION_NS_FAST = 10'd500;
+  localparam logic [9:0] INSTRUCTION_NS_SLOW = 10'd625;
+  localparam logic [9:0] TICK_NS             = 10'(cadr_tick_pkg::TICK_NS);
 
   // --- the held match --------------------------------------------------
   logic       ctl_c, fb_c, ctl, fb;
@@ -352,11 +365,10 @@ module cadr_tv #(
 
   // --- the sync generator ------------------------------------------------
   //
-  // `Timeline::of`'s walk, one instruction every INSTRUCTION_T ticks.
-  // `seq_a` is the address standing on the generator's read port; the word
-  // at it is `seq_word`, two ticks behind an assignment to `seq_a` and so
-  // settled long before the boundary that uses it, an instruction being a
-  // hundred ticks.  `seq_load` counts those two ticks out after the address
+  // `Timeline::of`'s walk, one instruction every INSTRUCTION_NS.  `seq_a` is
+  // the address standing on the generator's read port; the word at it is
+  // `seq_word`, two ticks behind an assignment to `seq_a` and so settled long
+  // before the boundary that uses it, an instruction being tens of ticks.  `seq_load` counts those two ticks out after the address
   // of a loop's repeat count is applied: the count word "is never executed
   // as an instruction, and does not cause a time delay", so the loading
   // costs no time of its own and the boundary keeps counting through it.
@@ -368,11 +380,23 @@ module cadr_tv #(
   logic [1:0]  seq_ended;   // 2 End of Loop, 3 End of Program
   logic [1:0]  seq_load;    // ticks left before a repeat count is taken
   logic        seq_alive;   // a program that makes a frame is still running
-  logic [6:0]  seq_t;       // ticks into the instruction
+  logic [9:0]  seq_ns;      // nanoseconds into the instruction
   logic        sync_h, sync_v;  // the 74LS175 at NSYREG 0D02
 
-  logic [6:0] step_t;
-  assign step_t = mode[1] ? INSTRUCTION_T_SLOW : INSTRUCTION_T_FAST;
+  // **THE PROGRAM FROM POWER-ON STARTS AT THE MACHINE'S POWER-ON, WHICH IS NOT
+  // THE RESET EDGE.**  Until the software restarts it, `cpt.prom` runs from
+  // muir's t = 0, and the composed machine's t = 0 is
+  // `cadr_tick_pkg::POWER_ON_EDGES` edges after the reset edge.  Started at
+  // the reset edge its first instruction completed at 480 ns and its first
+  // `-TVMA CLR` at 15,980, both measured on the composed machine, against
+  // muir's 500 and 16,000.  So the generator holds its reset state for that
+  // many edges; a restart is a write, which cannot come so early.
+  logic [1:0]  power_on_t;  // edges left before the program from power-on starts
+  logic        powered;
+  assign powered = (power_on_t == 2'd0);
+
+  logic [9:0] step_ns;
+  assign step_ns = mode[1] ? INSTRUCTION_NS_SLOW : INSTRUCTION_NS_FAST;
 
   logic [7:0] seq_word;
   assign seq_word = sync_on ? ram_seq : prom_seq;
@@ -383,7 +407,9 @@ module cadr_tv #(
   assign seq_past = sync_on ? seq_a[12] : (seq_a >= 13'(SYNC_PROM_WORDS));
 
   logic seq_fire;
-  assign seq_fire = seq_alive && (seq_load == 2'd0) && (seq_t == step_t - 7'd1);
+  // The boundary is at the first tick at or after the instruction's end:
+  // the tick whose NEXT count would reach it.
+  assign seq_fire = seq_alive && (seq_load == 2'd0) && (seq_ns >= step_ns - TICK_NS);
 
   // `-TVMA CLR`, Special Function 1, at the instant the instruction carrying
   // it completes.
@@ -490,7 +516,8 @@ module cadr_tv #(
       seq_ended    <= 2'd0;
       seq_load     <= 2'd2;
       seq_alive    <= 1'b1;
-      seq_t        <= 7'd0;
+      seq_ns       <= 10'd0;
+      power_on_t   <= 2'(cadr_tick_pkg::POWER_ON_EDGES);
       sync_h       <= 1'b0;
       sync_v       <= 1'b0;
 
@@ -536,6 +563,7 @@ module cadr_tv #(
       else if (store_now) taken <= 1'b1;
 
       // --- the sync generator ---------------------------------------------
+      if (!powered) power_on_t <= power_on_t - 2'd1;
       if (restart) begin
         // From location 0, which holds a repeat count.  The sync bits are
         // not touched: the 74LS175 has no clear on the program's start.
@@ -544,7 +572,9 @@ module cadr_tv #(
         seq_ended    <= 2'd0;
         seq_load     <= 2'd2;
         seq_alive    <= 1'b1;
-        seq_t        <= 7'd0;
+        seq_ns       <= 10'd0;
+      end else if (!powered) begin
+        // Before power-on: the reset state stands.
       end else if (seq_load != 2'd0) begin
         // The repeat count, once its word has arrived: "a word containing
         // the number of times it is to be executed ... never executed as an
@@ -568,9 +598,10 @@ module cadr_tv #(
           end
         end
         seq_load <= seq_load - 2'd1;
-        seq_t    <= seq_t + 7'd1;
+        seq_ns   <= seq_ns + TICK_NS;
       end else if (seq_fire) begin
-        seq_t <= 7'd0;
+        // The remainder carried, never cleared: see the top.
+        seq_ns <= seq_ns + TICK_NS - step_ns;
         if (seq_past) begin
           // The walk ran off the end of the program: no frame, and nothing
           // moves again until a restart.  `Timeline::of` answers None.
@@ -609,7 +640,7 @@ module cadr_tv #(
           end
         end
       end else begin
-        seq_t <= seq_t + 7'd1;
+        seq_ns <= seq_ns + TICK_NS;
       end
     end
   end

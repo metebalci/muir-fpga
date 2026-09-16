@@ -127,13 +127,15 @@
 //     STRICTLY past `-MSYN` --- between 1,250 and 2,250 ns, depending on where
 //     the request fell in the card's microsecond;
 //   - the counter's low half takes ONE edge and `IOB_USEC_LOW_NS` = 313 ns,
-//     measured on the netlist.  **This is the one place this card is off the
-//     5 ns grid**: muir answers at 1,203 + 1,000k and the fabric can only
-//     answer at 1,205.  The trace carries a `slip` column saying so on those
-//     208 rows and no others, rather than hiding two nanoseconds in a
-//     tolerance, and nothing downstream sees it --- `-LMACK` is 150 ns and the
-//     MD strobe 100 ns past `-UB SSYN`, both multiples of five, so a bus
-//     interface counting from the tick it SEES `-SSYN` lands where muir's does.
+//     measured on the netlist.  **This is off the grid**: muir answers at
+//     1,203 + 1,000k on the board's own time and the fabric at the first tick
+//     at or after it, 1,210 at the 10 ns grid, which is what muir's
+//     `--timing-model fpga` answers too.  The trace carries a `slip` column
+//     saying how far the board's instant is from the grid's on those rows,
+//     rather than hiding seven nanoseconds in a tolerance, and nothing
+//     downstream sees it --- `-LMACK` is 150 ns and the MD strobe 100 ns past
+//     `-UB SSYN`, both on the grid, so a bus interface counting from the tick
+//     it SEES `-SSYN` lands where muir's does.
 //
 // **A WRITE LANDS AT `-UB SSYN`, WHERE muir PUTS IT**, and not at the card's
 // own load pulse.  `busint.rs`'s `Responder::Unibus` arm makes `answered`
@@ -152,14 +154,14 @@
 // written at `-SSYN`.
 //
 // **THE SIXTY-CYCLE COUNTER ACCUMULATES AND SUBTRACTS; IT DOES NOT RELOAD.**
-// `SIXTY_CYCLE_NS` is 16,666,666, which is 1 modulo 5, so the k'th mains edge
-// is on the 5 ns grid only for k a multiple of five.  A counter that adds five
-// nanoseconds a tick and subtracts the period --- `cadr_disk_controller.sv`'s
+// `SIXTY_CYCLE_NS` is 16,666,666, which is 6 modulo 10, so the k'th mains edge
+// is on the 10 ns grid only for k a multiple of five.  A counter that adds the
+// grid's nanoseconds a tick and subtracts the period --- `cadr_disk_controller.sv`'s
 // spindle trick, which is exactly `now mod REVOLUTION_NS` --- increments at the
 // first tick at or after each edge, and the window in which it disagrees with
-// `ns / SIXTY_CYCLE_NS` is `[B, B + (5 - B mod 5))`, which contains no multiple
-// of five at all.  A down-counter reloaded with 3,333,333 ticks instead loses a
-// nanosecond a period; the trace reads the register at fourteen boundaries on
+// `ns / SIXTY_CYCLE_NS` is `[B, B + (10 - B mod 10))`, which contains no tick
+// at all.  A down-counter reloaded with a whole number of ticks instead loses
+// nanoseconds every period; the trace reads the register at boundaries on
 // alternating sides and catches it at the first.
 //
 // **THE MOUSE'S ENCODERS ARE NOT ON THIS CARD.**  What crosses its edge is the
@@ -373,8 +375,8 @@ module cadr_io_board (
 
   // `busint::IOB_STRAIGHT_NS` = 250, the TD250 at IOBADR 0E09, and the
   // counter's low half, `IOB_USEC_LOW_NS` = 313 --- the next edge of the
-  // 16 MHz `MCLK^` and then the TD250 --- rounded UP to the 5 ns grid, which
-  // is the trace's `slip`.
+  // 16 MHz `MCLK^` and then the TD250 --- rounded UP to the grid, which is the
+  // trace's `slip`.
   localparam int unsigned STRAIGHT_T     = cadr_tick_pkg::ticks(250);
   localparam int unsigned USEC_LOW_T     = cadr_tick_pkg::ticks(313);
 
@@ -420,14 +422,14 @@ module cadr_io_board (
   // whose phase `busint::IOB_HALF_USEC_PHASE_NS` measures at 203 ns on the
   // netlist board, through the two 74LS74s at IOBSER 0F29; the answer is
   // `busint::IOB_SERIAL_NS` = 750 after the first edge STRICTLY after
-  // `-MSYN`.  **THIS IS THE SECOND PLACE THIS CARD IS OFF THE 5 ns GRID AND
-  // THE ONLY ONE THAT IS ALWAYS OFF IT**: 203 + 500k + 750 is 953 + 500k,
-  // which is 3 modulo 5, so the answer is two nanoseconds past a tick on
-  // EVERY cycle of the group and the trace carries a `slip` of 2 on all of
-  // them.  Rounding up is exact, and the edges are counted on the grid at
-  // 205 + 500k for the same reason: no multiple of five lies between 203 and
-  // 205 modulo 500, so an edge is strictly after `-MSYN` on the grid exactly
-  // where it is strictly after it on the netlist.
+  // `-MSYN`.  **THIS IS THE SECOND PLACE THIS CARD IS OFF THE GRID AND THE
+  // ONLY ONE THAT IS ALWAYS OFF IT**: 203 + 500k + 750 is 953 + 500k, which
+  // is 3 modulo 10, so at the 10 ns grid the answer is seven nanoseconds past
+  // the board's instant on EVERY cycle of the group and the trace carries a
+  // `slip` of 7 on all of them.  Rounding up is exact, and the edges are
+  // counted on the grid at 210 + 500k for the same reason: no tick lies in
+  // [203, 210) modulo 500, so an edge is strictly after `-MSYN` on the grid
+  // exactly where it is strictly after it on the netlist.
   localparam int unsigned HU_PERIOD_T    = cadr_tick_pkg::ticks(500);
   localparam int unsigned HU_FIRST_T     = cadr_tick_pkg::ticks(203);
   localparam int unsigned SERIAL_T       = cadr_tick_pkg::ticks(750);
@@ -550,6 +552,20 @@ module cadr_io_board (
   // exception.
   assign mains_less = mains_acc + TICK_NS - SIXTY_CYCLE_NS;
   logic        mains_wrap;
+
+  // **EVERY CLOCK ON THIS CARD STARTS AT THE MACHINE'S POWER-ON, WHICH IS NOT
+  // THE RESET EDGE.**  muir counts the microsecond clock, its half, `FCLK^`,
+  // `KB CLK^` and the mains from its t = 0, and the composed machine's t = 0
+  // is `cadr_tick_pkg::POWER_ON_EDGES` edges after the reset edge, where the
+  // processor and the bus interface count every instant from.  Started at the
+  // reset edge, every one of them ran two ticks ahead of muir in the whole
+  // machine --- measured, each first edge 20 ns early at the 10 ns grid ---
+  // while this card's own check, which reset on its row 0, agreed with it.
+  // So they hold their reset values for that many edges.  Held there none of
+  // them is at an edge, so nothing is taken early and nothing is counted.
+  logic [1:0]  power_on_t;  // edges left before the clocks start
+  logic        powered;
+  assign powered = (power_on_t == 2'd0);
 
   // ------------------------------------------------------- the mouse interface
 
@@ -1009,6 +1025,7 @@ module cadr_io_board (
       hu_t        <= 7'(HU_FIRST_T - 1);
       fclk_acc    <= 8'd0;
       kb_t        <= 11'(KB_CLK_T - 1);
+      power_on_t  <= 2'(cadr_tick_pkg::POWER_ON_EDGES);
       mains_acc   <= 24'd0;
       mains_wrap  <= 1'b0;
       mains       <= 16'd0;
@@ -1288,22 +1305,29 @@ module cadr_io_board (
         ser_tx_data   <= s_echo_byte;
       end
 
-      // --- the microsecond clock, which no reset moves --------------------
-      usec <= usec_next;
-      usec_t <= usec_now ? 8'(USEC_PERIOD_T - 1) : usec_t - 8'd1;
-      // The half-microsecond clock the serial port's select waits on and
-      // `FCLK^` the Chaosnet's receive buffer reads on, both free-running
-      // off the same 32 MHz crystal and neither moved by a reset.
-      hu_t   <= hu_now   ? 7'(HU_PERIOD_T - 1) : hu_t - 7'd1;
-      fclk_acc <= fclk_now ? fclk_less : fclk_next;
+      // --- power-on, `POWER_ON_EDGES` after the reset edge ------------------
+      if (!powered) power_on_t <= power_on_t - 2'd1;
 
-      // --- the sixty-cycle clock ------------------------------------------
-      mains_wrap <= !mains_wrap && (mains_acc >= SIXTY_CYCLE_NS - 24'(2 * cadr_tick_pkg::TICK_NS));
-      mains_acc  <= mains_wrap ? mains_less : mains_next;
-      if (mains_wrap) mains <= mains + 16'd1;
+      // --- the microsecond clock, which no Unibus reset moves -------------
+      if (powered) begin
+        usec <= usec_next;
+        usec_t <= usec_now ? 8'(USEC_PERIOD_T - 1) : usec_t - 8'd1;
+        // The half-microsecond clock the serial port's select waits on and
+        // `FCLK^` the Chaosnet's receive buffer reads on, both free-running
+        // off the same 32 MHz crystal and neither moved by a reset.
+        hu_t   <= hu_now   ? 7'(HU_PERIOD_T - 1) : hu_t - 7'd1;
+        fclk_acc <= fclk_now ? fclk_less : fclk_next;
 
-      // --- `KB CLK^`, the mouse's latches and its counters -----------------
-      kb_t <= kb_now ? 11'(KB_CLK_T - 1) : kb_t - 11'd1;
+        // --- the sixty-cycle clock ----------------------------------------
+        mains_wrap <= !mains_wrap && (mains_acc >= SIXTY_CYCLE_NS - 24'(2 * cadr_tick_pkg::TICK_NS));
+        mains_acc  <= mains_wrap ? mains_less : mains_next;
+        if (mains_wrap) mains <= mains + 16'd1;
+
+        // --- `KB CLK^` ----------------------------------------------------
+        kb_t <= kb_now ? 11'(KB_CLK_T - 1) : kb_t - 11'd1;
+      end
+
+      // --- the mouse's latches and its counters, on `KB CLK^` -------------
       if (kb_now) begin
         mnew    <= lines;
         mouse_x <= step_count(mouse_x, mnew[1:0], lines[1:0]);

@@ -2332,9 +2332,9 @@ static void check_key_pacing(void)
 	// The constant, said in the two facts it is made of, so that a change
 	// to either has to be made here as well as at the constant.  muir
 	// attempts one `deliver` every `TERMINAL_CHECK` = 4,096 microcycles,
-	// and a microcycle on this board is 29 ticks of 10 ns.
-	CHECK(INPUT_KEY_INTERVAL_NS == 4096ull * 290ull,
-	      "the key interval is %llu ns, wanting 4096 microcycles of 290 ns",
+	// and a microcycle on this board is 15 ticks of 10 ns.
+	CHECK(INPUT_KEY_INTERVAL_NS == 4096ull * 150ull,
+	      "the key interval is %llu ns, wanting 4096 microcycles of 150 ns",
 	      (unsigned long long)INPUT_KEY_INTERVAL_NS);
 
 	struct client c;

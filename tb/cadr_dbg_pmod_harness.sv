@@ -42,7 +42,7 @@
 // here by driving its near arm from the testbench --- `loc_*`, a stimulus
 // port with no counterpart in the fabric, which is the only way to ask.
 //
-// **THE MICROCYCLE BOUNDARY IS MADE HERE**, a pulse every 29 ticks, because
+// **THE MICROCYCLE BOUNDARY IS MADE HERE**, a pulse every normal microcycle --- 15 ticks at a 10 ns grid --- because
 // `cadr_console_bus.sv` captures the diagnostic mux at it.  A harness with no
 // boundary would leave the read-back frozen at its reset value and the check
 // would be comparing a constant.  There is no processor: `spy_rdata` comes
@@ -350,14 +350,17 @@ module cadr_dbg_pmod_harness #(
 
   // --------------------------------------------------------- the boundary
   //
-  // 29 ticks, a microcycle at normal speed.  See the header.
+  // A microcycle at normal speed.  See the header.
+  // A normal microcycle on MIT's grid: the read tap and the restart, each
+  // put through `cadr_tick_pkg::ticks` as `cadr_phase_gen.sv` puts them.
+  localparam int unsigned MICROCYCLE_T = cadr_tick_pkg::ticks(85) + cadr_tick_pkg::ticks(60);
   logic [4:0] beat;
   logic       mclk;
   always_ff @(posedge clk_b) begin
     if (rst_b) begin
       beat <= 5'd0;
       mclk <= 1'b0;
-    end else if (beat == 5'd28) begin
+    end else if (beat == 5'(MICROCYCLE_T - 1)) begin
       beat <= 5'd0;
       mclk <= 1'b1;
     end else begin

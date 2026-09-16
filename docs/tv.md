@@ -178,14 +178,26 @@ and control returns to the loop's first instruction until the count runs out.
 End of Program then returns to location 0 and End of Loop takes the word
 after next as the next count.
 
-**An instruction is 100 or 125 ticks and nothing rounds.** 500 ns in clock
-modes 0 and 1 and 625 ns in modes 2 and 3, `sync::INSTRUCTION_NS`, measured
-on the netlist LISPM TV --- which on MIT's 5 ns grid is exactly 100 and 125.
-muir walks the whole program into a timeline because a model jumps in time;
-the fabric executes one instruction every 100 or 125 ticks, which is a
-program counter, a repeat counter, a loop's first and last addresses, and the
-two sync bits latched an instruction late. It costs a second read port on the
-sync RAM and a 512-word ROM beside it.
+**An instruction keeps its length in nanoseconds and nothing rounds.** It is
+500 ns in clock modes 0 and 1 and 625 ns in modes 2 and 3, `sync::INSTRUCTION_NS`,
+measured on the netlist LISPM TV. The program runs off the board's crystal, so
+it is a free-running clock. An accumulator counts nanoseconds into the
+instruction by the grid a tick, a boundary falls at the first tick at or after
+the instruction's end, and the boundary subtracts the instruction and carries
+the remainder. At the 10 ns grid a fast instruction is 50 ticks and a slow one
+alternates 63 and 62; at the 5 ns grid they were 100 and 125. muir walks the
+whole program into a timeline because a model jumps in time; the fabric
+executes one instruction at each boundary, which is a program counter, a
+repeat counter, a loop's first and last addresses, and the two sync bits
+latched an instruction late. It costs a second read port on the sync RAM and a
+512-word ROM beside it.
+
+**The phase starts at the restart.** muir's `Tv::restart` puts the program's
+origin at the write that loads it or changes the clock mode, so the
+accumulator starts again at zero on that write's tick. Until the software
+restarts it, the program from power-on runs from the machine's power-on, two
+edges after the reset edge like every other oscillator. `docs/timing.md` has
+the whole of it.
 
 **MIT's `cadrtv/cpt.prom` is the program from power-on.** 297 words of the
 74S472 at NSYRAM, which the enable selects against the 2147s. It reaches the
@@ -327,30 +339,16 @@ half is still a claim nothing exercises**, since neither reference program
 enables the display's interrupt, and this paragraph is where that is
 written down.
 
-**The frame is 3,091,200 ticks, and since 2026-09-11 that is 30.912 real
-milliseconds and not 15.456.** That day the tick was made longer instead of
-timing closure being chased: 6.25 ns that morning and 10 ns the same
-afternoon, when a one-character change to a multiplexer cost a third of a
-nanosecond and the memory-on board stopped closing again. So the fabric runs
-at 100 MHz and the machine at 50% of the speed the hardware ran. Every tick
-count in the design is unchanged --- this module's 100 and 125 ticks of a
-sync instruction among them --- so
-the machine's own time is exactly what it was and not one golden trace moved.
-What it costs is that the vertical interrupt arrives at **32.35 Hz where the
-display board scanned at 64.70**, and MIT's microcode uses that interrupt as
-its roughly-sixty-cycle clock for mouse tracking and the scheduler's sequence
-break. So the machine's idea of a second is 50% of one. **It is decided that
-this keeps agreeing with muir for now**, because the checks are the
-backbone of this project and nothing built yet needs the time of day. **And
-undoing it is still one constant.** An instruction of the sync program is 100
-or 125 ticks, and a real instruction at a 10 ns tick is 50 or 62.5 --- so
-restoring real time here is not a change to this module at all but a change
-to `TICK_NS`, and 62.5 is not a whole number of ticks. That is the floor this
-project has always had: the tick may be stretched and may not be rounded.
-Doing it would put this module out of agreement with muir, which is why it has
-not been done.
+**The frame is 1,545,600 ticks at the 10 ns grid, and that is 15.456 real
+milliseconds.** The board's tick is 10 ns and the grid is 10 ns, so the
+vertical interrupt arrives at the display board's own 64.70 Hz, which MIT's
+microcode uses as its roughly-sixty-cycle clock for mouse tracking and the
+scheduler's sequence break. At the 5 ns grid the frame was 3,091,200 ticks,
+30.912 real milliseconds, and the interrupt arrived at 32.35 Hz. The machine's
+own time is the grid's, so the frame agrees with the wall only while the grid
+and the board's tick are the same number.
 `boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src/screen_geom.h`
-carries both numbers for the same reason, `SCREEN_FRAME_NS` and
+carries both numbers for that reason, `SCREEN_FRAME_NS` and
 `SCREEN_FRAME_REAL_NS`.
 
 **The vertical spacing has no register.** Register 3's bits 6--0 are the

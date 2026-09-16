@@ -179,7 +179,9 @@ int bind_digest(struct binding *b, char *err, size_t errlen)
 void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n)
 {
 	size_t at = 0;
-	at += (size_t)snprintf(out + at, at < n ? n - at : 0, "muir --rtl");
+	// The fabric keeps muir-fpga's grid and the checkpoint says so, and muir
+	// refuses a checkpoint resumed under another timing model.
+	at += (size_t)snprintf(out + at, at < n ? n - at : 0, "muir --rtl --timing-model fpga");
 	for (unsigned u = 0; u < BIND_UNITS; ++u) {
 		if (!b->u[u].present)
 			continue;

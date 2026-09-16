@@ -135,7 +135,7 @@ anywhere in that stream would break it.
     packs-program-stopped: unknown
     packs: 1
     pack: unit=0 bytes=269562880 geometry=815,19,17 read-only=no sha256=... file=/mnt/packs/disk-pack-0.img
-    resume: muir --rtl --disk-pack /mnt/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume muir-20260911-193000.chk
+    resume: muir --rtl --timing-model fpga --disk-pack /mnt/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume muir-20260911-193000.chk
 
 The checkpoint's own digest is in there too, so a sidecar that has drifted
 away from the file it was written for is found out as well as a pack that has.

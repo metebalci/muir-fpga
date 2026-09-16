@@ -98,11 +98,12 @@
 #include <vector>
 
 #include "Vcadr_io_board.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
 
-constexpr long kTick = 5;              // nanoseconds a tick
+constexpr long kTick = kGridNs;        // nanoseconds a tick: MIT's grid
 // `-BOOT*`, the card's own boot line: half a keyboard clock, 4 us.  See THE
 // BOOT WORD in `rtl/machine/cadr_io_board.sv` and `docs/keyboard-boot.md` in
 // muir.  `kBootPulseT` is that in ticks.
@@ -153,7 +154,7 @@ constexpr long kPushedRows = 8;
 // longest answer the card can give is the keyboard-and-mouse group at its
 // worst phase, 2,250 ns; the trace's own eleven unanswered cycles are held
 // for 6,000.
-constexpr long kSweepHold = 460;
+constexpr long kSweepHold = GridTicks(2300);
 
 // `busint::IoBoardTiming::usec_edge_after`: the first rising edge of the
 // card's microsecond clock STRICTLY after `t`.
@@ -169,11 +170,14 @@ long HalfUsecEdgeAfter(long t) {
   return kHalfUsecPhase + k * kHalfUsec;
 }
 
-// `IoBoardTiming::answer`, rounded up to the 5 ns grid.  TWO REGISTERS ANSWER
-// OFF IT: the counter's low half at 313 ns past its edge, and EVERY address
-// of the serial port's group, whose half-microsecond clock has a phase of
-// 203 --- so 953 + 500k, which is 3 modulo 5 and two nanoseconds short of a
-// tick on every cycle of the group.  That is the trace's `slip`.
+// `IoBoardTiming::answer` on the board's own time, rounded up to the grid,
+// which is muir's `IoBoardTiming` under `TimingModel::Fpga` and what the trace
+// carries.  THREE REGISTERS ANSWER OFF THE GRID ON THE BOARD: the counter's low
+// half at 313 ns past its edge; EVERY address of the serial port's group,
+// whose half-microsecond clock has a phase of 203, so 953 + 500k and seven
+// nanoseconds short of a 10 ns tick; and the Chaosnet receive buffer, 250 ns
+// after an `FCLK^` edge that is an odd multiple of 125 on every other one.
+// That is the trace's `slip`.
 long AnswerNs(unsigned reg, int write, long msyn) {
   long exact;
   if (reg == kUsecLowReg) {
@@ -345,13 +349,28 @@ struct Dut {
     d->chaos_tx_abort = 0;
     d->chaos_cbl_busy = 0;
     d->eval();
+    // **muir'S t = 0 IS `kPowerOnEdges` EDGES AFTER THE RESET EDGE**, as it is
+    // in the whole machine, so the reset edge and one idle edge come before
+    // row 0.  This check used to reset the card ON row 0, which held its
+    // clocks to a power-on two ticks earlier than the machine has --- and it
+    // passed with every clock on the card two ticks early in the composed
+    // machine, which only `power_on.pass` could see.  The card starts its
+    // clocks `cadr_tick_pkg::POWER_ON_EDGES` after the reset edge now, and
+    // this is the same argument from the check's side.
+    for (int e = 0; e < kPowerOnEdges; ++e) {
+      d->rst = (e == 0);
+      d->clk = 1;
+      d->eval();
+      d->clk = 0;
+      d->eval();
+    }
+    d->rst = 0;
   }
   ~Dut() {
     d->final();
     delete d;
   }
   void Rise() {
-    d->rst = (tick == 0);
     d->clk = 1;
     d->eval();
   }
@@ -958,12 +977,26 @@ int main(int argc, char **argv) {
         ++answered;
         if (r.slip != 0) {
           ++slips;
+          // How far short of a tick each is on the board, derived from the
+          // two constants that put it there rather than written down: 953 and
+          // 1,203 modulo the grid, and an odd multiple of 125.
+          const long serial_short = (kTick - (kHalfUsecPhase + kSerialNs) % kTick) % kTick;
+          const long low_short = (kTick - (kFirstEdge + kUsecLow) % kTick) % kTick;
+          const long rbuf_short = (kTick - (kFclk + kStraight) % kTick) % kTick;
           if (r.reg_ >= kSerialFirst && r.reg_ <= kSerialLast) {
             ++serial_slips;
-            if (r.slip != 2)
-              Fail(t, r, "the serial port's answer is not two short of a tick", r.slip, 2);
-          } else if (r.reg_ != kUsecLowReg) {
-            Fail(t, r, "an answer off the 5 ns grid at a register that should be on it", r.reg_,
+            if (r.slip != serial_short)
+              Fail(t, r, "the serial port's answer is not where the grid puts it", r.slip,
+                   serial_short);
+          } else if (r.reg_ == kUsecLowReg) {
+            if (r.slip != low_short)
+              Fail(t, r, "the counter's low half is not where the grid puts it", r.slip, low_short);
+          } else if (r.reg_ == kChaosRbuf) {
+            if (r.slip != rbuf_short)
+              Fail(t, r, "the receive buffer's answer is not where the grid puts it", r.slip,
+                   rbuf_short);
+          } else {
+            Fail(t, r, "an answer off the grid at a register that should be on it", r.reg_,
                  kUsecLowReg);
           }
         }
@@ -1333,7 +1366,7 @@ int main(int argc, char **argv) {
   same("answered reads", reads, want_h("reads"));
   same("answered writes", writes, want_h("writes"));
   same("cycles nothing answered", unanswered, want_h("unanswered"));
-  same("answers off the 5 ns grid", slips, want_h("offgrid_answers"));
+  same("answers off the grid", slips, want_h("offgrid_answers"));
   same("phases of -UB MSYN", (long)phases.size(), want_h("msyn_phases"));
   same("presses", presses, want_h("presses"));
   same("boot words decoded", boot_rows, want_h("boot_rows"));
@@ -1392,9 +1425,10 @@ int main(int argc, char **argv) {
       "    at one nanosecond.\n"
       "    %ld cycles: %ld reads and %ld writes answered at -UB SSYN to the tick and at no earlier\n"
       "    tick, %ld read words compared there, %ld that nothing answered held 6,000 ns each.\n"
-      "    %ld of the answers fall off the 5 ns grid: %ld are the microsecond counter's low half\n"
-      "    and the rest EVERY cycle of the serial port's group, whose half-microsecond clock has\n"
-      "    a phase of 203 ns; %ld of the 200 phases of -UB MSYN in the card's microsecond were used.\n"
+      "    %ld of the answers fall off the grid on the board: %ld are the microsecond counter's\n"
+      "    low half and the receive buffer, and the rest EVERY cycle of the serial port's group,\n"
+      "    whose half-microsecond clock has a phase of 203 ns; %ld phases of -UB MSYN in the card's\n"
+      "    microsecond were used.\n"
       "    %ld presses, %ld moves, %ld switch masks, %ld -UB INIT pulses, %ld faces between cycles.\n"
       "    The decode: %ld directions answered and %ld silent over all %ld directions of an\n"
       "    eighteen-bit ub_addr, read and written, a real bus cycle each.  NOTHING IS EXEMPT: the\n"

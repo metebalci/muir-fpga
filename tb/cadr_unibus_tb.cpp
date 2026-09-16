@@ -138,6 +138,7 @@
 #include <cstdint>
 #include <string>
 #include <map>
+#include <numeric>
 #include <vector>
 
 #include "Vcadr_memory_path.h"
@@ -148,7 +149,13 @@ namespace {
 
 // A microcycle at normal speed, which is when MCLK falls: the bus interface
 // only looks at -MEMRQ towards the end of the cycle.
-const long kMicrocycle = 29;
+const long kMicrocycle = GridTicks(85) + GridTicks(60);
+
+// The card's microsecond in ticks, and the least common multiple of it with the
+// microcycle: a cycle begun on the same phase of MCLK a whole number of these
+// later runs identically.  100 and 300 at a 10 ns grid.
+const long kUsecT = GridTicks(1000);
+const long kUsecBeat = std::lcm(kMicrocycle, kUsecT);
 
 // MIT's grid, which is what every tick count in the fabric is measured in.
 // `cadr_arty.sv` decides how long a tick is in real time and nothing here
@@ -611,7 +618,6 @@ int main(int argc, char **argv) {
   // `tb/cadr_busint_xbus_tb.cpp` gives the argument at its own
   // `kPowerOnEdges`, and `POWER_ON_T` in `cadr_busint_xbus.sv` is what it
   // holds; issue #21.
-  constexpr int kPowerOnEdges = 2;
   for (int e = 0; e < kPowerOnEdges; ++e) {
     dut->rst = (e == 0);
     dut->dbg_rst = (e == 0);
@@ -1069,14 +1075,15 @@ int main(int argc, char **argv) {
     Named(kUsecLow);
 
     // Stand still until the next cycle STARTS a whole number of beats after
-    // this one did.  A beat is 5,800 ticks, which is the least common multiple
-    // of the microcycle's 29 and the card's 200: a cycle begun on the same
-    // phase of MCLK runs identically, so its strobe lands the same number of
-    // ticks in and the two strobes are then 5,800k apart --- which the run
-    // MEASURES below rather than assuming.  Placing it off the strobe instead
-    // was tried and is wrong: the wait then lands the start on an arbitrary
-    // phase and the strobes come out 22,881 ticks apart, not 23,200.
-    const long kBeat = 5800;   // lcm(29, 200)
+    // this one did.  A beat is the least common multiple of the microcycle
+    // and the card's microsecond: a cycle begun on the same phase of MCLK
+    // runs identically, so its strobe lands the same number of ticks in and
+    // the two strobes are then a whole number of beats apart --- which the
+    // run MEASURES below rather than assuming.  Placing it off the strobe
+    // instead was tried and is wrong: the wait then lands the start on an
+    // arbitrary phase and the strobes come out 22,881 ticks apart, not
+    // 23,200, at the 5 ns grid where a beat was 5,800 ticks.
+    const long kBeat = kUsecBeat;
     const long target = first.start + 4 * kBeat;
     while (tick < target && failures < kMaxFailures) Tick();
     const Cycle second = Run(kUsecLow, false, 0);
@@ -1084,12 +1091,12 @@ int main(int argc, char **argv) {
     ++card_reads;
     const unsigned v2 = second.word & 0xFFFFu;
     const long apart = second.msyn - first.msyn;
-    if (apart % 200 != 0)
+    if (apart % kUsecT != 0)
       failures += Fail("the two strobes, in ticks apart", (unsigned long)apart, (unsigned long)(4 * kBeat),
                        "the microsecond counter");
-    else if ((long)(v2 - v1) != apart / 200)
+    else if ((long)(v2 - v1) != apart / kUsecT)
       failures += Fail("the microsecond counter's advance", (unsigned long)(v2 - v1),
-                       (unsigned long)(apart / 200), "the microsecond counter");
+                       (unsigned long)(apart / kUsecT), "the microsecond counter");
 
     // The high half is MIT's latch and not the counter.  It reads zero until
     // the count carries at 65,536, which is 13.1 million ticks --- so it is
@@ -1283,7 +1290,7 @@ int main(int argc, char **argv) {
     // The card's straight answer is `IOB_STRAIGHT_NS` past the strobe, plus a
     // tick for the held match; twenty more is margin over the console's own
     // cycle boundaries.
-    const long kCardDue = 50 + 1 + 20;
+    const long kCardDue = GridTicks(250) + 1 + 20;
     long msyn_first = -1;
     for (int cycle = 0; cycle < 12 && failures < kMaxFailures; ++cycle) {
       if (cycle >= 4 && msyn_first >= 0 && tick >= msyn_first + kCardDue) break;
@@ -2232,8 +2239,8 @@ int main(int argc, char **argv) {
     const uint32_t before = ((before_hi.word & 0xFFFFu) << 16) | (before_lo.word & 0xFFFFu);
     // Stand still until the count is past 65,536 and on the same phase, so the
     // advance is again a whole number of microseconds this run can name.
-    const long beats = ((65536L - (long)(before & 0xFFFFu) + 400L) * 200L + 5799L) / 5800L;
-    const long target = before_lo.start + beats * 5800L;
+    const long beats = ((65536L - (long)(before & 0xFFFFu) + 400L) * kUsecT + kUsecBeat - 1) / kUsecBeat;
+    const long target = before_lo.start + beats * kUsecBeat;
     while (tick < target && failures < kMaxFailures) { Tick(); ++carry_ticks; }
     const Cycle after_lo = Run(kUsecLow, false, 0);
     const Cycle after_hi = Run(kUsecHigh, false, 0);
@@ -2242,12 +2249,12 @@ int main(int argc, char **argv) {
     card_reads += 2;
     const uint32_t after = ((after_hi.word & 0xFFFFu) << 16) | (after_lo.word & 0xFFFFu);
     const long apart = after_lo.msyn - before_lo.msyn;
-    if (apart % 200 != 0)
+    if (apart % kUsecT != 0)
       failures += Fail("the two strobes, in ticks apart", (unsigned long)apart,
-                       (unsigned long)(beats * 5800L), "the counter's carry");
-    else if ((long)(after - before) != apart / 200)
+                       (unsigned long)(beats * kUsecBeat), "the counter's carry");
+    else if ((long)(after - before) != apart / kUsecT)
       failures += Fail("the microsecond counter's advance across the carry", after - before,
-                       (unsigned long)(apart / 200), "the counter's carry");
+                       (unsigned long)(apart / kUsecT), "the counter's carry");
     if ((after >> 16) != 1)
       failures += Fail("the high half past the carry", after >> 16, 1, "the counter's carry");
     if ((before >> 16) != 0)

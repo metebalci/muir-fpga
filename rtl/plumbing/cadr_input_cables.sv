@@ -271,10 +271,10 @@ module cadr_input_cables #(
 );
 
   // `mouse::MOUSE_STEP_NS` = 16,000, on MIT's grid.  **The grid is not the
-  // board's clock period**, which is 10 ns: `cadr_tick_pkg.sv`'s header
-  // names that collision, and the two tens have nothing to do with each
-  // other.  So a step is 3,200 ticks, which is 32 real microseconds at this
-  // board's tick, and the mouse keeps the card's own time.  It is twice
+  // board's clock period**, which is 10 ns too: `cadr_tick_pkg.sv`'s header
+  // says why they are two numbers.  So a step is 1,600 ticks at the 10 ns
+  // grid, which is 16 real microseconds at this board's tick, and the mouse
+  // keeps the card's own time.  It is twice
   // `ioboard::KB_CLK_NS`, which is what lets the card see every step.
   localparam int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(16_000);
 

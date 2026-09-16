@@ -67,8 +67,10 @@ set_clock_groups -asynchronous \
 # notice might not have. All four come straight off registers in the machine
 # and meet one tick without help.
 #
-# 15 and 14, the same numbers and for the same reason: the tightest instant a
-# datapath register is read at is the fast read tap.
+# The machine's own relaxed set's numbers and for the same reason: the
+# tightest instant a datapath register is read at is the fast read tap,
+# `cadr_tick_pkg::ticks(75)`, eight at a 10 ns grid.
+# grid: 75 ns
 set probe_stable [get_cells -hier -filter {NAME =~ *u_probe/stable_q_reg*}]
-set_multicycle_path -setup 15 -to $probe_stable
-set_multicycle_path -hold  14 -to $probe_stable
+set_multicycle_path -setup 8 -to $probe_stable
+set_multicycle_path -hold  7 -to $probe_stable

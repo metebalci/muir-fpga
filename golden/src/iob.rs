@@ -78,33 +78,38 @@
 //! serial port's ready line. Each is a register or a wire on the card, so
 //! none is a column invented for the trace.
 //!
-//! **The 5 ns grid, and the one place the card is not on it.** Every
-//! instant the fabric can act at is a multiple of five nanoseconds. The
-//! microsecond clock's edges are at 890 + 1,000k, the keyboard and mouse
-//! group answers 1,250 ns after the second edge past `-MSYN`, and the
-//! clocks and the GPIO answer 250 ns after `-MSYN` itself: all multiples of
-//! five. **The microsecond counter's low half is not**: `busint`'s
-//! `IOB_USEC_LOW_NS` is 313 ns past the edge, measured on the netlist, so
-//! muir answers at 1,203 + 1,000k and the fabric can only answer at 1,205.
-//! `slip` says so on every such row rather than hiding two nanoseconds in a
-//! tolerance, and nothing downstream sees it: `-LMACK` is 150 ns and the
-//! MD strobe 100 ns past `-UB SSYN`, both multiples of five, so a bus
+//! **The grid, and the three places the card is not on it.** Every instant
+//! the fabric can act at is a multiple of `TICK_NS`, and every answer here
+//! is muir's `IoBoardTiming` under `TimingModel::Fpga`, which puts a
+//! triggered delay on the grid from its own start and takes a free-running
+//! edge at the first tick at or after it. The microsecond clock's edges are
+//! at 890 + 1,000k, the keyboard and mouse group answers 1,250 ns after the
+//! second edge past `-MSYN`, and the clocks and the GPIO answer 250 ns after
+//! `-MSYN` itself: all on the grid. **Three are not on the board**:
+//! `busint`'s `IOB_USEC_LOW_NS` is 313 ns past the edge, measured on the
+//! netlist, so the board answers at 1,203 + 1,000k and the grid at 1,210;
+//! the serial port's group answers 750 ns after a half-microsecond edge at
+//! 203 + 500k; and the Chaosnet receive buffer answers 250 ns after an
+//! `FCLK^` edge, a multiple of 125 and so off the grid on every odd one.
+//! `slip` says how far the grid moved each such row rather than hiding it
+//! in a tolerance, and nothing downstream sees it: `-LMACK` is 150 ns and
+//! the MD strobe 100 ns past `-UB SSYN`, both on the grid, so a bus
 //! interface counting from the tick it *sees* `-SSYN` lands where muir's
 //! does.
 //!
 //! **The sixty-cycle counter is off the grid too, and it does not matter.**
-//! `SIXTY_CYCLE_NS` is 1,000,000,000/60 = 16,666,666, which is 1 mod 5, so
-//! the k'th mains edge is on the grid only for k a multiple of five. A
-//! fabric that counts nanoseconds by five and subtracts the period ---
+//! `SIXTY_CYCLE_NS` is 1,000,000,000/60 = 16,666,666, which is not a
+//! multiple of the grid, so most mains edges fall between ticks. A fabric
+//! that counts nanoseconds by the tick and subtracts the period ---
 //! `disk_unit`'s spindle trick --- increments at the first tick at or after
 //! each edge, and the window in which it disagrees with `ns /
-//! SIXTY_CYCLE_NS` is `[B, B + (5 - B mod 5))`, which contains no multiple
-//! of five at all. So the two agree at every instant the fabric can be
+//! SIXTY_CYCLE_NS` is `[B, B + (TICK_NS - B mod TICK_NS))`, which contains
+//! no tick at all. So the two agree at every instant the fabric can be
 //! looked at, and the program reads the register at fourteen boundaries,
 //! alternating between the last grid instant before one --- which must
 //! still say `k-1` --- and the first at or after it, which must already say
-//! `k`. A fabric that instead reloads a down-counter with 3,333,333 ticks
-//! loses a nanosecond a period and is caught by the first of them.
+//! `k`. A fabric that instead reloads a down-counter with a whole number of
+//! ticks loses the remainder a period and is caught by the first of them.
 //!
 //! **Where a write lands.** muir applies a Unibus write to this card at
 //! `-UB SSYN`, not at the card's own write pulse: `busint.rs`'s
@@ -171,6 +176,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use muir::busint::{IoBoardTiming, UNIBUS_STROBE_NS};
+use muir::clock::{self, TimingModel};
 use muir::ioboard::{
     self, BEEP, CLOCK, CLOCK_VECTOR, CSR, FIRST_USEC_EDGE_NS, GPIO, INTERVAL_TICK_NS, IoBoard,
     KB_CLK_NS, KBD_HIGH, KBD_LOW, KBD_VECTOR, MOUSE_X, MOUSE_Y, SERIAL_VECTOR, SIXTY_CYCLE_NS,
@@ -191,10 +197,11 @@ use muir::terminal::mouse::MOUSE_STEP_NS;
 /// different and neither 0 nor 0o377.
 const CHAOS_ADDRESS: u16 = 0o003101;
 
-/// Five nanoseconds, the master clock's period. Every instant the trace
-/// hands the fabric is a multiple of this; `slip` says where muir's own
-/// is not.
-const TICK_NS: u64 = 5;
+/// MIT's grid, the master clock's period. Every instant the trace hands the
+/// fabric is a multiple of this; `slip` says where the board's own is not.
+/// muir's `clock::GRID_NS` is the grid its `fpga` timing model keeps, and
+/// `main` asserts the two equal.
+const TICK_NS: u64 = 10;
 
 /// **How wide the card's own `-BOOT*` is**, which is the one thing about the
 /// boot decode muir's behavioral board has no time for.  The comparator's
@@ -240,7 +247,12 @@ fn scancode(k: u32) -> u32 {
 
 struct Gen {
     b: IoBoard,
+    /// The card's answers on the grid, muir's `fpga` timing model: what the
+    /// fabric is held to.
     io: IoBoardTiming,
+    /// And on the board's own nanoseconds, only to say how far the grid
+    /// moved each answer: the `slip` column.
+    board: IoBoardTiming,
     now: u64,
     /// The instant the last answered cycle's word crossed: `-UB SSYN`, and
     /// where a write's effect is dated. `now` is a hundred nanoseconds
@@ -287,7 +299,7 @@ struct Gen {
     sre_rows: u64,
     sout_rows: u64,
     spl_rows: u64,
-    /// Instants of the far end's own that the 5 ns grid cannot reach: the
+    /// Instants of the far end's own that the grid cannot reach: the
     /// 2651's baud-rate crystal is 5.0688 MHz and the Chaosnet's turn timer
     /// runs on the I/O board's own 8 MHz, so neither lands on fives.
     far_slips: u64,
@@ -311,7 +323,8 @@ impl Gen {
     fn new() -> Gen {
         Gen {
             b: IoBoard::default(),
-            io: IoBoardTiming::default(),
+            io: IoBoardTiming::with_timing_model(TimingModel::Fpga),
+            board: IoBoardTiming::with_timing_model(TimingModel::Cadr),
             now: 0,
             landed: 0,
             out: Vec::with_capacity(1 << 12),
@@ -362,7 +375,7 @@ impl Gen {
     /// Time passes. Monotonic, and always on the fabric's grid.
     fn at(&mut self, now: u64) {
         assert!(now >= self.now, "time runs backwards: {} to {now}", self.now);
-        assert!(now % TICK_NS == 0, "{now} is not on the 5 ns grid");
+        assert!(now % TICK_NS == 0, "{now} is not on the {TICK_NS} ns grid");
         self.now = now;
     }
 
@@ -374,8 +387,8 @@ impl Gen {
 
     /// To the next instant at or after now whose place in the microsecond
     /// clock's period is `phase` nanoseconds. The edges are at 890 modulo
-    /// 1,000, so `phase` 890 is an edge and 885 is five nanoseconds short
-    /// of one; what the card's answer depends on is exactly this.
+    /// 1,000, so `phase` 890 is an edge and 880 is a tick short of one;
+    /// what the card's answer depends on is exactly this.
     fn at_phase(&mut self, phase: u64) {
         assert!(phase < 1_000 && phase % TICK_NS == 0, "phase {phase} is not on the grid");
         let mut t = self.now - self.now % 1_000 + phase;
@@ -472,29 +485,40 @@ impl Gen {
                 (0, 0, msyn + UNANSWERED_HOLD_NS, NO_REG)
             }
             Some(r) => {
-                let exact = self.io.answer(r, write, msyn);
+                // The answer on the grid is muir's own, `IoBoardTiming` under
+                // `TimingModel::Fpga`; the board's is only to say how far the
+                // grid moved it, and that it moved it UP to the first tick.
+                let ssyn = self.io.answer(r, write, msyn);
+                let exact = self.board.answer(r, write, msyn);
                 assert!(exact > msyn, "the card answered at or before -MSYN");
-                let ssyn = grid_at(exact);
+                assert_eq!(ssyn % TICK_NS, 0, "muir's fpga model answered off the grid at {r:o}");
+                assert_eq!(ssyn, grid_at(exact), "the grid is not the board's answer rounded up at {r:o}");
                 let slip = ssyn - exact;
                 if slip != 0 {
-                    // **TWO REGISTERS ANSWER OFF THE GRID AND NO OTHERS.**  The
+                    // **THREE REGISTERS ANSWER OFF THE GRID AND NO OTHERS.**  The
                     // microsecond counter's low half takes `IOB_USEC_LOW_NS` =
-                    // 313 past its edge, and EVERY address of the serial port's
+                    // 313 past its edge; EVERY address of the serial port's
                     // group answers 750 ns after a half-microsecond clock whose
                     // phase `busint::IOB_HALF_USEC_PHASE_NS` measures at 203 ---
-                    // so 953 + 500k, which is 3 modulo 5.  Both are counted
-                    // apart, and rounding UP is the same argument in both
-                    // places: a register can only be read at a grid instant, so
-                    // nothing falls between muir's answer and the tick.
+                    // so 953 + 500k, which is 3 modulo 10; and the Chaosnet
+                    // receive buffer answers 250 ns after an `FCLK^` edge, which
+                    // is a multiple of 125 and so off the grid on every odd
+                    // one.  All are counted apart, and rounding UP is the same
+                    // argument in each place: a register can only be read at a
+                    // grid instant, so nothing falls between the board's answer
+                    // and the tick.
                     self.slips += 1;
                     if (SERIAL_FIRST..=SERIAL_LAST).contains(&r) {
                         self.serial_slips += 1;
-                        assert_eq!(slip, 2, "the serial port's answer is not two short of a tick");
+                        assert_eq!(slip, 7, "the serial port's answer is not seven short of a tick");
+                    } else if r == USEC_LOW {
+                        assert_eq!(slip, 7, "the counter's low half is not seven short of a tick");
                     } else {
                         assert_eq!(
-                            r, USEC_LOW,
-                            "an answer off the 5 ns grid at a register the module does not expect: {r:o}"
+                            r, chaos::READ_BUFFER,
+                            "an answer off the grid at a register the module does not expect: {r:o}"
                         );
+                        assert_eq!(slip, 5, "the receive buffer's answer is not five short of a tick");
                     }
                 }
                 // The counter's low half is the count as it stood at
@@ -699,7 +723,7 @@ impl Gen {
     /// An instant of the far end's, brought onto the fabric's grid: the
     /// first tick at or after it.  The 2651's crystal is 5.0688 MHz and the
     /// Chaosnet's turn timer counts the I/O board's 8 MHz, so neither lands
-    /// on a multiple of five.  Rounding UP is the argument
+    /// on the grid.  Rounding UP is the argument
     /// `IOB_USEC_LOW_NS` already makes on this card: a register can only be
     /// read at a grid instant, so no read falls between muir's instant and
     /// the tick the fabric acts at.
@@ -717,9 +741,10 @@ impl Gen {
     /// them back.
     fn ctx(&mut self, words: &[u16]) {
         // The card hands the buffer over a word a tick from the tick after
-        // START, and 256 words is 1.28 us, so the assertion waits for the
-        // longest one there is rather than for this one.
-        self.wait(2_000);
+        // START --- a tick of the board, the seam's own rate and not MIT's
+        // --- so 256 words is 256 ticks, and the assertion waits for the
+        // longest one there is and 144 ticks more rather than for this one.
+        self.wait(400 * TICK_NS);
         let seq = self.ctx_rows;
         self.ctx_rows += 1;
         self.bufs.push((1, seq, words.to_vec()));
@@ -933,10 +958,11 @@ fn main() {
     assert_eq!(csr::WRITABLE, 0o217);
     assert_eq!(csr::FLOATING, 0o177400);
     assert_eq!(mouse::COUNT, 0o7777);
+    assert_eq!(TICK_NS, clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
     assert_eq!(UNIBUS_STROBE_NS % TICK_NS, 0);
     // The derivation at the top: the mains counter's boundaries lie off the
     // grid but never inside a tick the fabric can be looked at.
-    assert_eq!(SIXTY_CYCLE_NS % TICK_NS, 1);
+    assert_ne!(SIXTY_CYCLE_NS % TICK_NS, 0);
 
     let mut g = Gen::new();
     // The Chaosnet interface, plugged in with its address switches set and
@@ -1258,15 +1284,16 @@ fn main() {
     // The answer's phase. The keyboard and mouse group selects through two
     // stages of the microsecond clock and the counter's low half through
     // one, so what the card answers at depends on where `-UB MSYN` falls in
-    // that microsecond. Every one of the two hundred instants a 200 MHz
-    // fabric can raise `-MSYN` at inside a microsecond is used, at three
-    // registers: one that waits two edges, one that waits one, and one
-    // that waits none.
+    // that microsecond. Every one of the instants the fabric can raise
+    // `-MSYN` at inside a microsecond is used --- a hundred at the 10 ns
+    // grid --- at three registers: one that waits two edges, one that waits
+    // one, and one that waits none.
     // ------------------------------------------------------------------
+    let instants = 1_000 / TICK_NS;
     g.wait(5_000);
-    for k in 0..200u64 {
-        // 61 and 200 are coprime, so this reaches all two hundred.
-        let phase = 5 * ((k * 61) % 200);
+    for k in 0..instants {
+        // 61 is prime and divides no power of ten, so this reaches them all.
+        let phase = TICK_NS * ((k * 61) % instants);
         g.at_phase(phase);
         g.read(CSR);
         g.at_phase(phase);
@@ -1274,7 +1301,7 @@ fn main() {
         g.at_phase(phase);
         g.read(CLOCK);
     }
-    assert_eq!(g.phases.len(), 200, "the phase sweep missed one: {} seen", g.phases.len());
+    assert_eq!(g.phases.len() as u64, instants, "the phase sweep missed one: {} seen", g.phases.len());
 
     // ------------------------------------------------------------------
     // The microsecond counter, and MIT's latch. The low half is the count
@@ -1289,7 +1316,7 @@ fn main() {
     assert_eq!(hi, 0, "the counter has not reached 65,536 microseconds yet: {msyn_of_low}");
     assert!(lo > 0, "the microsecond counter has not moved");
     // The carry into the high half is at microsecond 65,536, which is
-    // 65,535,890 ns from power-on. Read the low half five nanoseconds
+    // 65,535,890 ns from power-on. Read the low half a tick
     // before it and the high half well after: the latch must still be the
     // count from before the carry.
     let carry = FIRST_USEC_EDGE_NS + 65_536 * 1_000 - 1_000;
@@ -1297,7 +1324,7 @@ fn main() {
     assert_eq!(usec_at(carry - TICK_NS), 65_535);
     g.at(carry - TICK_NS);
     let lo = g.read(USEC_LOW);
-    assert_eq!(lo, 0xFFFF, "the low half five nanoseconds before the carry");
+    assert_eq!(lo, 0xFFFF, "the low half a tick before the carry");
     g.wait(2_000);
     let hi = g.read(USEC_HIGH);
     assert_eq!(hi, 0, "the high half came from the counter and not from the latch");
@@ -1375,11 +1402,11 @@ fn main() {
     // several boundaries; start at the next one and take fourteen.
     //
     // ONE READ A BOUNDARY, ALTERNATING SIDES, because a cycle is 350 ns
-    // long and the two grid instants that straddle a boundary are five
+    // long and the two grid instants that straddle a boundary are a tick
     // apart: both sides of one boundary cannot be read. Alternating gives
-    // the same bound from the two directions --- a boundary read five
-    // nanoseconds early must still say k-1, so a period a nanosecond short
-    // is caught by the k'th of them once k exceeds five; a boundary read at
+    // the same bound from the two directions --- a boundary read a tick
+    // early must still say k-1, so a period a nanosecond short is caught by
+    // the k'th of them once k exceeds a tick's nanoseconds; a boundary read at
     // the first grid instant at or after it must already say k, so a period
     // a nanosecond long is caught the same way. A fabric that reloads a
     // down-counter with 3,333,333 ticks instead of subtracting the period
@@ -2384,7 +2411,7 @@ fn main() {
     println!("#");
     println!("# The Chaosnet interface's far end and the serial port's, which are the");
     println!("# `cadr-chaosnet` and `cadr-serial` programs' on the board and muir's own");
-    println!("# models here.  Every instant is rounded UP to the 5 ns grid, as the");
+    println!("# models here.  Every instant is rounded UP to the grid, as the");
     println!("# microsecond counter's low half is, and `far_offgrid` counts how many.");
     println!("#");
     println!("# CBUF     dir seq k word            dir 0 a packet landing, 1 a buffer handed over");

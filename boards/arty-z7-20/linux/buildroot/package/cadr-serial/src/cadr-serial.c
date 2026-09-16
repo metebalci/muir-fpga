@@ -57,14 +57,12 @@
 // 1.04 ms and at the 2651's fastest, 19,200, it is 521 us.
 //
 // **THOSE ARE THE MACHINE'S MILLISECONDS AND THIS TIMEOUT IS THE WALL'S, AND
-// THE TWO ARE NOT THE SAME ON THIS BOARD.**  MIT's grid is 5 ns a tick and the
-// board's tick is 10 ns, so the CADR and everything on its I/O board --- the
-// serial line's baud-rate generator included --- runs at half real time on
-// purpose.  A frame the machine calls 1.04 ms at 9,600 baud therefore occupies
-// 2.08 ms of the wall this program's `poll()` is measured against, and one at
-// 19,200 occupies 1.04 ms.  The margin is twice what the paragraph above
-// counts, in this program's favor.  Do not close the gap by speeding the
-// generator up: the frame's length is what MIT's own interrupt walk depends on
+// THE TWO ARE THE SAME ON THIS BOARD ONLY WHILE MIT's GRID AND THE BOARD'S TICK
+// ARE.**  Both are 10 ns, so the I/O board's baud-rate generator runs at real
+// time and a frame the machine calls 1.04 ms at 9,600 baud occupies 1.04 ms of
+// the wall this program's `poll()` is measured against.  At the 5 ns grid the
+// machine ran at half real time and the margin was twice this.  Do not shorten
+// the frame to buy margin: the frame's length is what MIT's own interrupt walk depends on
 // and `rtl/plumbing/cadr_serial_line.sv` says at length what shortening it
 // cost.  The default here is 2,000 us, which is comfortable at 9,600 and
 // marginal at 19,200; `--poll-us` shortens it, and the fabric's own DROPPED

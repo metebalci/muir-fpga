@@ -117,5 +117,6 @@
 # `the-carrier-beats-faster-than-its-deadline` is aimed at.
 set pmod [get_pins -quiet {u_dbg_cable/u_tx/tx_frame_reg[*]/D
                            u_dbg_cable/u_tx/tx_d_reg[*]/D}]
+# board ticks
 set_multicycle_path -setup 6 -to $pmod
 set_multicycle_path -hold  5 -to $pmod

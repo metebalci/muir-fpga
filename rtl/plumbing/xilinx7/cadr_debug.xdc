@@ -92,8 +92,8 @@
 #     `assert_instance_timing`: no path into any OTHER register of the window
 #     may ask for 40 ns, and at least one path into this one must.
 #
-#   - **And the count is asserted**, the way the machine's fifteen and the
-#     memory port's sixteen are, so an exception that reached no path is a
+#   - **And the count is asserted**, the way the machine's relaxed set and
+#     the memory port's contract are, so an exception that reached no path is a
 #     failure and not a plausible number.
 #
 # **THE INSTANCE IS MATCHED BY A WILDCARD AND NOT BY ITS FULL PATH.**  On both
@@ -107,5 +107,6 @@
 # not open at the other end, and `assert_instance_timing` in each board's flow
 # is what says it reached the registers it was meant to.
 set cable [get_pins -quiet {*u_debug_window/sts_dbd_reg[*]/D}]
+# board ticks
 set_multicycle_path -setup 6 -to $cable
 set_multicycle_path -hold  5 -to $cable

@@ -95,9 +95,9 @@ read_xdc rtl/plumbing/xilinx7/cadr_machine.xdc
 # whose `-from`/`-to` matched nothing exactly as it lists one that reached
 # 10,972 paths --- the statement was read either way, so the exception exists
 # either way. What separates them is the SETUP REQUIREMENT the paths ask for:
-# fifteen periods where the multicycle arrived, one period everywhere it did
-# not --- 150.000 ns against 10.000 at the tick this builds. A design where
-# nothing asks for fifteen periods is the unconstrained design, whatever the
+# `ticks(75)` periods where the multicycle arrived, one period everywhere it
+# did not --- 80.000 ns against 10.000 at the tick and the grid this builds. A
+# design where nothing asks for that is the unconstrained design, whatever the
 # exceptions report says.
 #
 # **THE REQUIREMENT IS MATCHED AS A STRING**, so the period handed to the
@@ -107,11 +107,15 @@ read_xdc rtl/plumbing/xilinx7/cadr_machine.xdc
 # NO PATH --- a false accusation of the one bug it exists to catch, pointing
 # the reader at `cadr_machine.xdc`, which would be blameless.
 source boards/arty-z7-20/vivado/constraints_check.tcl
-assert_multicycle_applied $tick 15
+# At a 10 ns grid the bus's setup is eight ticks too, so this count is shared;
+# the audit's assertion below is the relaxed set's own sharp half.
+# grid: 75 ns (shared with 80 ns)
+assert_multicycle_applied $tick 8
 # And the transaction audit's own two halves: see `bitstream.tcl`'s note at the
 # same call. Out of context the instance is one level shallower, `cadr_machine`
 # being the top here rather than `u_machine` inside `cadr_arty`.
-assert_instance_timing $tick 15 *audit/* \
+# grid: 75 ns
+assert_instance_timing $tick 8 *audit/* \
     {*audit/first_* *audit/micro_reg* *audit/word_reg*}
 # And the other half of the same policy: nothing outside the machine may take
 # the relaxation. Out of context the machine IS the top, so this can only pass

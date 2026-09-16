@@ -165,9 +165,11 @@ module cadr_busint_xbus (
   // the reset edge, and every cycle nothing answered was acknowledged two
   // ticks before muir's.  That was issue #21, measured on the composed
   // machine with the oscillator's own rises reading 840 modulo 850 in
-  // muir's time.  This is a count of the fabric's edges and not an instant
-  // on MIT's drawings, so it is not on the grid: it is two at any grid.
-  localparam int unsigned POWER_ON_T = 2;
+  // muir's time.  The number is the machine's and not this interface's:
+  // every oscillator starts there, and `cadr_tick_pkg::POWER_ON_EDGES` is
+  // where it is said once.  It counts the fabric's edges and not an instant
+  // on MIT's drawings, so it is not on the grid.
+  localparam int unsigned POWER_ON_T = cadr_tick_pkg::POWER_ON_EDGES;
 
   // `NXM TIMEOUT` on the sixth rise of the gated output: the first rise plus
   // busint::TIMEOUT_NS, which is five whole periods.  The REQTIM PROM's
@@ -218,10 +220,11 @@ module cadr_busint_xbus (
   // grid.  `cadr_io_board.sv`'s sixty-cycle clock and `cadr_serial_line.sv`'s
   // crystal are the same shape.
   //
-  // At the 5 ns grid the machine runs at, the remainder is always zero and
-  // the toggle falls every 85 ticks --- exactly where the tick counter this
-  // replaced put it.  At a 10 ns grid the half period is 42.5 ticks and the
-  // accumulator alternates 43 and 42.
+  // At a 5 ns grid the remainder is always zero and the toggle falls every 85
+  // ticks, exactly where the tick counter this replaced put it.  At the 10 ns
+  // grid the machine runs at, the half period is 42.5 ticks and the
+  // accumulator alternates 43 and 42, each edge at the first tick at or after
+  // muir's instant, which is what `--timing-model fpga` answers.
   //
   // The condition is `vco_acc >= VCO_HALF_NS - TICK_NS`, which is the same
   // test as `vco_acc + TICK_NS >= VCO_HALF_NS` with the adder off it; the
@@ -384,11 +387,11 @@ module cadr_busint_xbus (
     //
     // **THE STARTING PARITY IS STATED HERE RATHER THAN INHERITED.**  A zero
     // accumulator at the start makes the first half period the LONGER of the
-    // two wherever the grid does not divide 425: at a 10 ns grid it is 43
-    // ticks and then 42.  At the 5 ns grid the machine runs at, every half
-    // period is 85 and the parity does not arise, and every edge is on the
-    // reference's instant.  At a grid that does not divide 425 no starting
-    // value keeps every edge on the reference's instant.
+    // two wherever the grid does not divide 425: at the 10 ns grid it is 43
+    // ticks and then 42, and that is muir's own answer --- under
+    // `--timing-model fpga` the edges are the first ticks at or after 0, 425,
+    // 850, 1,275 ns, so 0, 430, 850, 1,280, measured on the composed machine.
+    // At a 5 ns grid every half period is 85 and the parity does not arise.
     if (rst) begin
       vco_acc <= 9'(VCO_HALF_NS - POWER_ON_T * cadr_tick_pkg::TICK_NS);
       vco     <= 1'b0;

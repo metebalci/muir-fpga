@@ -447,6 +447,35 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # EVERY FREE-RUNNING CLOCK OF THE COMPOSED MACHINE AGAINST muir, from the
+    # processor's origin: the I/O board's clocks and the display's program from
+    # power-on, each held to muir's instants under the fabric's timing model.
+    # The records aimed here are the ones about WHERE a clock starts, which the
+    # card's and the display's own checks cannot see, each setting muir's
+    # t = 0 from its own reset.  Built with `--public-flat-rw`, the clocks
+    # reaching no port; everything with a check of its own is in `extra`.
+    "power_on": {
+        "sources": [
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+        ],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv", "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_dbgin.sv", "rtl/plumbing/cadr_bus_audit.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_power_on_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-Iboards/arty-z7-20"],
+        "golden": "power_on.golden",
+        "gprom": True,
+    },
     # The machine behind real memory, which is what `DDR=1` puts on the part.
     # Same module list as `machine` and a different question: `machine` asks
     # whether the fabric agrees with muir, and this asks what it does where

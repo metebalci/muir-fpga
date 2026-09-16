@@ -536,7 +536,7 @@ int main(int argc, char **argv)
 	// that a sidecar beside the wrong file is found out as well.
 	bind.boards = boards;
 	bind.microcycles = img.cycles;
-	bind.ns = img.ticks * 5u;
+	bind.ns = img.ticks * CHK_GRID_NS;
 	when(bind.taken, sizeof bind.taken);
 	snprintf(bind.checkpoint, sizeof bind.checkpoint, "%s", out);
 	if (sha256_file(out, bind.checkpoint_sha, &bind.checkpoint_bytes) != 0) {

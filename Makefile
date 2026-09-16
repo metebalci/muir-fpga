@@ -65,7 +65,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
        $(BUILD)/md_compose.pass \
        $(BUILD)/park.pass \
-       $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass $(BUILD)/kbd_boot.pass \
+       $(BUILD)/machine.pass $(BUILD)/power_on.pass \
+       $(BUILD)/ddr_boot.pass $(BUILD)/kbd_boot.pass \
        $(BUILD)/no_auto_boot.pass $(BUILD)/errhalt_lamp.pass \
        $(BUILD)/blink_lamps.pass $(BUILD)/promenable.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
@@ -126,11 +127,16 @@ $(BUILD)/obj_phase_gen/Vcadr_phase_gen: $(TICKPKG) rtl/machine/cadr_phase_gen.sv
 	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_phase_gen --top-module cadr_phase_gen \
 	    $(TICKPKG) rtl/machine/cadr_phase_gen.sv $(abspath tb/cadr_phase_gen_tb.cpp)
 
-# MIT's grid in all its homes: the fabric's package, the testbenches' header
-# and every generator's own constant.  They cannot share a literal across
-# three languages, and a grid that differs between them still builds, so this
-# is what says they agree.  See `tools/grid_check.py` and `docs/timing.md`.
-$(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard golden/src/*.rs) | $(BUILD)
+# MIT's grid in all its homes: the fabric's package, the testbenches' header,
+# every generator's own constant and the board programs' two, the timing model every generator runs
+# muir under, and every timing constraint that writes a count of ticks as a
+# literal.  They cannot share a literal across four languages, and a grid that
+# differs between them still builds, so this is what says they agree.  See
+# `tools/grid_check.py` and `docs/timing.md`.
+$(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard golden/src/*.rs) \
+                    $(wildcard rtl/*/*.xdc rtl/*/*/*.xdc boards/*/*.xdc boards/*/vivado/*.tcl) \
+                    boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk.h \
+                    boards/arty-z7-20/linux/buildroot/package/cadr-console/src/console_test.c | $(BUILD)
 	python3 tools/grid_check.py .
 	@touch $@
 
@@ -264,7 +270,7 @@ $(BUILD)/memory_path.pass: $(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/b
 # DDR answers at once so that the timing is comparable with muir, whose TV
 # takes no time of its own.
 #
-# The trace is 77 million ticks --- twenty-five frames, because a write
+# The trace is 39 million ticks at the 10 ns grid --- twenty-five frames, because a write
 # landing on the very tick a frame begins first becomes reachable at the
 # twenty-fifth --- and takes a minute or so.
 $(BUILD)/tv.golden: golden/src/tv.rs golden/Cargo.toml | $(BUILD)
@@ -279,7 +285,7 @@ $(BUILD)/tv.golden: golden/src/tv.rs golden/Cargo.toml | $(BUILD)
 $(BUILD)/tv_lispm.golden: golden/src/tv.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin tv -- lispm-tv > $@
 
-$(BUILD)/obj_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_tv_tb.cpp | $(BUILD)
+$(BUILD)/obj_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_tv_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_tv \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_tv_tb.cpp)
@@ -301,7 +307,7 @@ $(BUILD)/tv.pass: $(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden \
 $(BUILD)/color_tv.golden: golden/src/color_tv.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin color_tv > $@
 
-$(BUILD)/obj_color_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_color_tv_tb.cpp | $(BUILD)
+$(BUILD)/obj_color_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_color_tv_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_color_tv \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_color_tv_tb.cpp)
@@ -324,13 +330,13 @@ $(BUILD)/color_tv.pass: $(BUILD)/obj_color_tv/Vcadr_memory_path $(BUILD)/color_t
 #
 # `docs/io-board.md` says what each slice builds and what seam it hangs on.
 #
-# The trace is 81 million ticks --- 404 ms of the card's own time, which is
-# what it takes for the microsecond counter to carry into its high half twice
-# and for fourteen boundaries of the sixty-cycle clock to be read on
-# alternating sides --- and the generator takes about a second.  It asserts as
-# it runs: time never runs backwards, every instant is a multiple of five
-# nanoseconds, every register the decoder names is reached, all two hundred
-# phases of `-UB MSYN` inside the card's microsecond are used, the mouse's
+# The trace is 41 million ticks at the 10 ns grid --- 413 ms of the card's
+# own time, which is what it takes for the microsecond counter to carry into
+# its high half twice and for fourteen boundaries of the sixty-cycle clock to
+# be read on alternating sides --- and the generator takes about a second.  It
+# asserts as it runs: time never runs backwards, every instant is on the grid,
+# every register the decoder names is reached, all hundred phases of
+# `-UB MSYN` inside the card's microsecond are used, the mouse's
 # counters wrap both ways and take over two hundred values each, the scan
 # codes cover all twenty-four bits and no two are alike, and each of the three
 # reachable interrupt vectors is asked for.
@@ -347,7 +353,7 @@ $(BUILD)/iob.golden: golden/src/iob.rs golden/Cargo.toml | $(BUILD)
 # priority chain to page IOBINT's own equations --- which is the only part no
 # trace against this model can reach, the Chaosnet interface being `None`
 # unless one is plugged in.
-$(BUILD)/obj_iob/Vcadr_io_board: $(TICKPKG) rtl/machine/cadr_io_board.sv tb/cadr_io_board_tb.cpp | $(BUILD)
+$(BUILD)/obj_iob/Vcadr_io_board: $(TICKPKG) rtl/machine/cadr_io_board.sv tb/cadr_io_board_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_iob \
 	    --top-module cadr_io_board $(TICKPKG) rtl/machine/cadr_io_board.sv $(abspath tb/cadr_io_board_tb.cpp)
 
@@ -411,7 +417,7 @@ $(BUILD)/busint_regs.pass: $(BUILD)/obj_busint_regs/Vcadr_busint_regs $(BUILD)/b
 # `ioboard::answers` for all 262,144 Unibus addresses in both directions, which
 # is what says which of these cycles must be answered and by whom.  Everything
 # else the run compares is its own stimulus.  About twenty seconds, most of it
-# the 13.1 million ticks the microsecond counter takes to carry into its high
+# the 6.6 million ticks the microsecond counter takes to carry into its high
 # half.
 $(BUILD)/obj_unibus/Vcadr_memory_path: $(MEMPATH) tb/cadr_unibus_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_unibus \
@@ -595,6 +601,28 @@ $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp tb/cadr_ti
 $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_machine/Vcadr_machine $(BUILD)/rtl.golden
+	@touch $@
+
+# EVERY FREE-RUNNING CLOCK OF THE COMPOSED MACHINE AGAINST muir, from the
+# processor's origin.  Each clock's own check sets muir's t = 0 from its own
+# reset and so cannot see a clock that starts at the wrong edge of the whole
+# machine; this takes t = 0 from the first microcycles `machine.pass` holds to
+# muir and compares the I/O board's clocks and the display's program from
+# power-on against muir's instants under the fabric's timing model.  The model
+# is built with `--public-flat-rw`, the clocks reaching no port.
+$(BUILD)/power_on.golden: golden/src/power_on.rs golden/src/trace.rs \
+                          golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin power_on > $@
+
+$(BUILD)/obj_power_on/Vcadr_machine: $(MACHINE) tb/cadr_power_on_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) --public-flat-rw -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_power_on \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_power_on_tb.cpp)
+
+$(BUILD)/power_on.pass: $(BUILD)/obj_power_on/Vcadr_machine \
+                        $(BUILD)/power_on.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_power_on/Vcadr_machine $(BUILD)/power_on.golden
 	@touch $@
 
 # ------------------------------------------------- the machine behind memory
@@ -1749,7 +1777,7 @@ mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
          $(BUILD)/disk.golden $(BUILD)/disk_boot.golden $(BUILD)/tv.golden \
          $(BUILD)/tv_lispm.golden $(BUILD)/color_tv.golden \
-         $(BUILD)/iob.golden $(BUILD)/busint_regs.golden \
+         $(BUILD)/iob.golden $(BUILD)/busint_regs.golden $(BUILD)/power_on.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
@@ -1924,10 +1952,10 @@ $(BUILD)/disk.golden: golden/src/disk.rs golden/Cargo.toml | $(BUILD)
 #
 # **THIS IS THE SLOWEST CHECK HERE AND THE REASON IS A CONSTANT THAT MUST NOT
 # BE SHORTENED**: the trace holds one hang run out to `TIMEOUT_NS`, 2.56 s,
-# which is 512,000,000 ticks of this fabric's clock, and the fabric has to
+# which is 256,000,000 ticks at the 10 ns grid, and the fabric has to
 # count every one of them.  A check that cannot tell that constant from a
 # wrong one is `RD_FINISH_T` again.  With the pre-roll that puts the spindle
-# in phase it is about 570 million ticks and takes two minutes or so.
+# in phase it is about 285 million ticks and takes a minute or so.
 DISK_SRC := $(TICKPKG) rtl/machine/cadr_disk_controller.sv rtl/plumbing/cadr_disk_pack.sv \
             tb/cadr_disk_harness.sv
 
@@ -2492,10 +2520,20 @@ CHECKPOINT_WORK := $(HOME)/.cache/muir-fpga-checkpoint
 # keeps, `TimingModel`, as one byte after `speed_a`, so `chk_rtl.c` declares
 # it too.  The file grew by that one byte, 561,515 to 561,516.  muir loads it
 # and saves it back byte for byte, and resumes at the same microcycle.
-CHECKPOINT_SHA  := 6f87acb160f9c7c799266a26d11fb70fbcd350b771555cf8381fbdfeff94a54b
+#
+# **AND WHEN THE GRID MOVED TO 10 NS.**  A tick is ten of muir's nanoseconds
+# now, so the elapsed time doubled; the timing byte declares `TimingModel::
+# Fpga`; and the memory boards' power-on instants are `with_timing_model(Fpga)`'s,
+# 1,420, 960, 13,000 and 13,001 where the board's own are 1,416, 958, 12,991 and
+# 12,992.  The file is still 561,516 bytes.  muir under `--timing-model fpga` loads it
+# and saves it back byte for byte and resumes at the same microcycle; without
+# the flag it refuses the file by name.
+CHECKPOINT_SHA  := 2f0beaf2ae57e7036215db3188230121cecc68daf75df945cef8aca57ad78930
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
-# 0x9876543210 ticks of five nanoseconds each, the two the model sets.
-CHECKPOINT_RESUMED := at 78187493520 microcycles, 3274101291600 ns, 1 memory boards
+# 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
+# sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
+# under `--timing-model fpga` and muir refuses it under any other.
+CHECKPOINT_RESUMED := at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
 # muir's binary, built into golden's own target directory because muir is
 # already golden's path dependency there and the library half is compiled
 # once for both.
@@ -2516,7 +2554,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir/Cargo.toml \
 	    --bin muir --target-dir golden/target
 	@set -e; W=$(CHECKPOINT_WORK); M=$(MUIR_BIN); \
-	 $$M --rtl --stop-after 0 --resume $$W/out.chk --checkpoint $$W/back.chk \
+	 $$M --rtl --timing-model fpga --stop-after 0 --resume $$W/out.chk --checkpoint $$W/back.chk \
 	     > $$W/muir.log 2>&1 \
 	   || { echo "checkpoint: muir REFUSED the file cadr-checkpoint wrote"; \
 	        sed -n '$$p' $$W/muir.log; exit 1; }; \
@@ -2539,7 +2577,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     || { echo "checkpoint: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
 	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out); \
-	   if ! $$M --rtl --stop-after 0 --resume $$W/mut-$$m.chk \
+	   if ! $$M --rtl --timing-model fpga --stop-after 0 --resume $$W/mut-$$m.chk \
 	            --checkpoint $$W/mut-$$m-back.chk > $$W/mut-$$m.log 2>&1; then \
 	     echo "checkpoint: mutant $$m caught, muir refused it --- $$what"; \
 	   elif ! cmp -s $$W/mut-$$m.chk $$W/mut-$$m-back.chk; then \
@@ -2961,7 +2999,7 @@ buildroot-cora-rebuild: buildroot-cora-check
 #
 # It also compares the direction of every DDR transaction against the
 # processor's own WRCYC, which nothing else in `make check` does.
-$(BUILD)/obj_md_compose/Vcadr_machine: $(MACHINE) tb/cadr_md_compose_tb.cpp | $(BUILD)
+$(BUILD)/obj_md_compose/Vcadr_machine: $(MACHINE) tb/cadr_md_compose_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_md_compose \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \

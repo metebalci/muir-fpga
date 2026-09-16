@@ -121,9 +121,14 @@
 //!   `Responder::Debug(_)` no word and no error and says why.
 
 use muir::busint::{self, Busint, DebugOut, Register, Responder, error_status, interrupt_status};
+use muir::clock::{self, Speed, TimingModel};
 use muir::ioboard::{self, csr};
 use muir::tv::mode;
 use muir::machine::{self, Machine};
+
+/// MIT's grid, the master clock's period: the one muir's `fpga` timing model
+/// keeps, which `main` asserts.
+const TICK_NS: u64 = 10;
 
 /// The Unibus is 18 bits and byte-addressed.
 const UB_ADDRESSES: u32 = 1 << 18;
@@ -596,12 +601,13 @@ struct DbgCycle {
 }
 
 fn dbg_cycle(strobe: u8, write: bool, cable: bool, answer_after: Option<u64>) -> DbgCycle {
-    // The tick and the microcycle, as `golden/src/busint_xbus.rs` has them:
-    // MIT's 5 ns grid and 29 ticks at normal speed.
-    const TICK_NS: u64 = 5;
-    const MICRO: u64 = 29;
+    // The microcycle, as `golden/src/busint_xbus.rs` has it: a normal one on
+    // the grid, the tap and the restart each rounded up.
+    let timing = TimingModel::Fpga;
+    assert_eq!(TICK_NS, clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
+    let micro = u64::from(timing.cycle_ns(Speed::Normal, false)) / TICK_NS;
 
-    let mut bi = Busint::new(1);
+    let mut bi = Busint::with_timing_model(1, timing);
     if cable {
         bi.attach_debug_cable();
     }
@@ -614,7 +620,7 @@ fn dbg_cycle(strobe: u8, write: bool, cable: bool, answer_after: Option<u64>) ->
 
     for tick in 0..40_000u64 {
         let now = tick * TICK_NS;
-        if tick % MICRO == 0 {
+        if tick % micro == 0 {
             bi.mclk_edge(now, resp);
         }
         if grant_ns.is_none() && bi.granted() {
@@ -1579,26 +1585,33 @@ fn main() {
     // table.  With both, it can measure the convention on an ordinary cycle
     // nothing answers and apply it to a debug one: what is left is the count,
     // thirteen intervals against five, which is the whole of the claim.
+    //
+    // **ON THE GRID, AS muir's `fpga` MODEL TAKES THEM**: a grant is on a
+    // tick, and the oscillator's edge that ends the wait is taken at the
+    // first tick at or after it, so both tables are a phase a tick and a
+    // delay rounded up from the board's own.
+    assert_eq!(TICK_NS, muir::clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
+    let grid = TimingModel::Fpga;
     let mut nxm_tmo: Vec<String> = Vec::new();
     let mut dbg_tmo: Vec<String> = Vec::new();
     let period = muir::chip::VCO_PERIOD.0 / muir::chip::VCO_PERIOD.1;
     let mut phase = 0u64;
     while phase < period {
-        let n = busint::nxm_timeout_at(phase) - phase;
+        let n = grid.free_running(busint::nxm_timeout_at(phase)) - phase;
         assert_eq!(
             n + busint::DEBUG_TIMEOUT_NS - busint::TIMEOUT_NS,
-            busint::debug_timeout_at(phase) - phase,
+            grid.free_running(busint::debug_timeout_at(phase)) - phase,
             "the two tables differ by their counts alone"
         );
         nxm_tmo.push(format!("NXMTMO {phase} {n}"));
         // A grant a whole number of periods in, at this phase: the answer is
         // the same at every one of them, which is asserted rather than
         // assumed.
-        let a = busint::debug_timeout_at(phase) - phase;
-        let b = busint::debug_timeout_at(phase + 17 * period) - (phase + 17 * period);
+        let a = grid.free_running(busint::debug_timeout_at(phase)) - phase;
+        let b = grid.free_running(busint::debug_timeout_at(phase + 17 * period)) - (phase + 17 * period);
         assert_eq!(a, b, "the timeout's delay is a function of the phase alone");
         dbg_tmo.push(format!("DBGTMO {phase} {a}"));
-        phase += 5;
+        phase += TICK_NS;
     }
 
     // The cycles themselves, out of `busint::Busint`.  The last two are the

@@ -643,9 +643,9 @@ microinstructions. The tail from `0o26032` to the Clear Receiver write at
 `0o26040` is 8 more.
 
 So a frame of `n` 16-bit words costs about 38 + 19 x ceil(n / 2) microcycles.
-A microcycle on this board is 290 nanoseconds. The longest packet is 255 words
-and takes about 716 microseconds; a six-byte packet is 14 words and takes
-about 50.
+A microcycle on this board is 150 nanoseconds, fifteen ticks of MIT's 10 ns
+grid. The longest packet is 255 words and takes about 371 microseconds; a
+six-byte packet is 14 words and takes about 26.
 
 One term of that loop is a delay the microcode takes when the disk is busy or
 when a PDP-11 arbitrates the Unibus. This board's LOCAL ENABLE bit reads set,

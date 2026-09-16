@@ -2,28 +2,258 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 //! The reference trace for `rtl/machine/cadr_phase_gen.sv`, taken from muir's own
-//! `clock::Behavioral` --- the model the `chip` engine runs.
+//! `clock::Behavioral` --- the model the `chip` engine runs --- put on the grid.
 //!
-//! One line per five-nanosecond tick: the inputs the tick was driven with,
-//! then the six signals the generator puts on the board.  The testbench reads
-//! the same file, drives the DUT with the inputs and compares the outputs, so
-//! the stimulus has exactly one definition and it is this one.
+//! One line per tick of the grid: the inputs the tick was driven with, then
+//! the six signals the generator puts on the board.  The testbench reads the
+//! same file, drives the DUT with the inputs and compares the outputs, so the
+//! stimulus has exactly one definition and it is this one.
 //!
 //! The generator is driven the way `Chip::tick` drives it: ask what the board
 //! looks like, take every event due, put the outputs back.  `pass` carries
 //! time across a tick with no event in it, `held` when nothing is due because
 //! `-HANG` or `RESET` is holding the generator rather than because the next
 //! transition has not come round yet.
+//!
+//! **THE RING ON THE GRID IS [`GridRing`], AND ITS OFFSETS ARE `Behavioral`'S.**
+//! muir's `TimingModel::Fpga` says what a whole microcycle is on the grid ---
+//! the tap rounded up and the restart rounded up after it --- and says nothing
+//! about the instants inside it, because `rtl` has no ring.  `Behavioral`
+//! keeps the board's own nanoseconds and has no model to choose.  So the ring
+//! here is `Behavioral`'s scheduler with every offset put through
+//! `TimingModel::Fpga.triggered` FROM ITS OWN TRIGGER: `TPTSE`, `-TPR60`,
+//! SELECT and the tap from `-TPR0`, the write pulses and the restart from the
+//! end of the read phase.  The offsets are not copied: [`Offsets::measure`]
+//! runs `Behavioral` and reads them off its outputs, so a muir that moves one
+//! moves this trace.  And every cycle the ring completes is asserted against
+//! `TimingModel::Fpga.cycle_ns`, which is muir's own statement of the grid.
 
-use muir::clock::{self, Behavioral, Clock, Inputs, Outputs, Speed};
+use muir::clock::{self, Behavioral, Clock, Inputs, Outputs, Speed, TimingModel};
 
-/// Five nanoseconds, the master clock's period. Every instant the generator
-/// names is a multiple of it.
-const TICK_NS: u64 = 5;
+/// MIT's grid in nanoseconds, the one `cadr_tick_pkg::TICK_NS` names: a tick
+/// of the trace.  muir's `clock::GRID_NS` is the grid its `fpga` timing model
+/// keeps, and the two are asserted equal.
+const TICK_NS: u64 = 10;
 
-/// How many ticks the trace runs for. At normal speed a microcycle is 29
+/// How many ticks the trace runs for. At normal speed a microcycle is 15
 /// ticks, so this is some hundreds of cycles.
 const TICKS: u64 = 12_000;
+
+/// The model every instant below is put on the grid with.
+const GRID: TimingModel = TimingModel::Fpga;
+
+/// `Behavioral`'s own offsets, in its own nanoseconds.
+#[derive(Clone, Copy, Debug)]
+struct Offsets {
+    /// From `-TPR0`: `TPTSE` cleared and set, and SELECT, where the tap is
+    /// chosen.
+    tse_off: u64,
+    tse_on: u64,
+    select: u64,
+    /// From the end of the read phase: the write pulse on, the control
+    /// store's pulse off, the write pulse off, and the next `-TPR0`.
+    wp_on: u64,
+    wpiram_off: u64,
+    wp_off: u64,
+    restart: u64,
+}
+
+/// One cycle of `Behavioral` at constant inputs from power-on, as the instants
+/// of each output's transitions in its SECOND cycle (the first has no `TPTSE`
+/// fall to see, `TPTSE` coming up low), and the tap it chose.
+fn second_cycle(switch_ilong_at: Option<u64>) -> (u64, Vec<(u64, Outputs)>) {
+    let mut clk = Behavioral::new();
+    let mut out = Outputs::default();
+    let mut seen = Vec::new();
+    let mut starts = 0u64;
+    let mut start = 0u64;
+    let base = Inputs { machrun: true, hang: false, ilong: false, speed: Speed::Normal, reset: false };
+    loop {
+        let at = clk.next_at(base).expect("the ring runs");
+        let inputs = match switch_ilong_at {
+            Some(x) if starts == 2 && at >= start + x => Inputs { ilong: true, ..base },
+            _ => base,
+        };
+        let before = out;
+        out = clk.advance(inputs).1;
+        let now = clk.time_ns();
+        if out.tpclk && !before.tpclk {
+            starts += 1;
+            if starts == 2 {
+                start = now;
+            } else if starts == 3 {
+                return (start, seen);
+            }
+        }
+        if starts == 2 && out != before {
+            seen.push((now - start, out));
+        }
+    }
+}
+
+impl Offsets {
+    fn measure() -> Offsets {
+        let (_, seen) = second_cycle(None);
+        let first = |f: &dyn Fn(&Outputs) -> bool| {
+            seen.iter().find(|(_, o)| f(o)).map(|&(t, _)| t).expect("a transition in the cycle")
+        };
+        let tse_off = first(&|o| !o.tptse);
+        let tse_on = seen.iter().find(|&&(t, o)| t > tse_off && o.tptse).map(|&(t, _)| t).unwrap();
+        let read = first(&|o| !o.tpclk);
+        let wp_on = first(&|o| o.tpwp);
+        let wpiram_off = seen.iter().find(|&&(t, o)| t > read && !o.tpwpiram).map(|&(t, _)| t).unwrap();
+        let wp_off = seen.iter().find(|&&(t, o)| t > wp_on && !o.tpwp).map(|&(t, _)| t).unwrap();
+        assert_eq!(read, u64::from(Speed::Normal.read_phase_ns(false)), "the tap is not the table's");
+        let restart = u64::from(Speed::Normal.cycle_ns(false)) - read;
+        // SELECT is when the tap is chosen, which no output shows: the
+        // earliest instant at which -ILONG going up still lengthens the cycle
+        // it went up in.
+        let long = u64::from(Speed::Normal.read_phase_ns(true));
+        let select = (0..read)
+            .find(|&x| {
+                let (_, s) = second_cycle(Some(x));
+                s.iter().find(|(_, o)| !o.tpclk).map(|&(t, _)| t) != Some(long)
+            })
+            .expect("-ILONG is taken somewhere in the read phase");
+        let select = select - 1;
+        Offsets {
+            tse_off,
+            tse_on,
+            select,
+            wp_on: wp_on - read,
+            wpiram_off: wpiram_off - read,
+            wp_off: wp_off - read,
+            restart,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Ev {
+    CycleStart,
+    TseOn,
+    TseOff,
+    ReadEnd,
+    WpIramOff,
+    WpOn,
+    WpOff,
+    Select,
+}
+
+/// `Behavioral`'s scheduler with each offset on the grid from its trigger.
+/// `advance`, `next_at`, `pass` and `phase_ns` are `Behavioral`'s own, line
+/// for line; what differs is only when `start_cycle` and `pick_tap` put the
+/// events.
+struct GridRing {
+    off: Offsets,
+    time: u64,
+    cycle_start: u64,
+    out: Outputs,
+    pending: Vec<(u64, Ev)>,
+    /// The cycle in flight's tap, for the assertion against muir's own cycle.
+    chosen: Option<(Speed, bool)>,
+}
+
+impl GridRing {
+    fn new(off: Offsets) -> GridRing {
+        GridRing { off, time: 0, cycle_start: 0, out: Outputs::default(), pending: vec![(0, Ev::CycleStart)], chosen: None }
+    }
+
+    fn schedule(&mut self, at: u64, ev: Ev) {
+        let i = self.pending.partition_point(|&(t, _)| t <= at);
+        self.pending.insert(i, (at, ev));
+    }
+
+    fn start_cycle(&mut self) {
+        let t0 = self.time;
+        if let Some((speed, ilong)) = self.chosen.take() {
+            assert_eq!(
+                t0 - self.cycle_start,
+                u64::from(GRID.cycle_ns(speed, ilong)),
+                "a cycle on the grid is not TimingModel::Fpga's"
+            );
+        }
+        self.cycle_start = t0;
+        self.schedule(t0 + GRID.triggered(self.off.tse_off), Ev::TseOff);
+        self.schedule(t0 + GRID.triggered(self.off.tse_on), Ev::TseOn);
+        self.schedule(t0 + GRID.triggered(self.off.select), Ev::Select);
+    }
+
+    fn pick_tap(&mut self, inputs: Inputs) {
+        let t0 = self.cycle_start;
+        let r = t0 + GRID.triggered(u64::from(inputs.speed.read_phase_ns(inputs.ilong)));
+        self.chosen = Some((inputs.speed, inputs.ilong));
+        self.schedule(r, Ev::ReadEnd);
+        self.schedule(r + GRID.triggered(self.off.wpiram_off), Ev::WpIramOff);
+        self.schedule(r + GRID.triggered(self.off.wp_on), Ev::WpOn);
+        self.schedule(r + GRID.triggered(self.off.wp_off.min(self.off.restart)), Ev::WpOff);
+        self.schedule(r + GRID.triggered(self.off.restart), Ev::CycleStart);
+    }
+
+    fn advance(&mut self, inputs: Inputs) -> Outputs {
+        if inputs.reset {
+            self.out = Outputs::default();
+            self.pending.clear();
+            self.pending.push((self.time, Ev::CycleStart));
+            self.chosen = None;
+            return self.out;
+        }
+        let Some(&(at, ev)) = self.pending.first() else { return self.out };
+        if inputs.hang && ev == Ev::CycleStart {
+            return self.out;
+        }
+        self.pending.remove(0);
+        self.time = at;
+        match ev {
+            Ev::CycleStart => {
+                self.out.tpclk = true;
+                self.start_cycle();
+            }
+            Ev::TseOn => self.out.tptse = true,
+            Ev::TseOff => self.out.tptse = false,
+            Ev::Select => self.pick_tap(inputs),
+            Ev::ReadEnd => {
+                self.out.tpclk = false;
+                self.out.tpwpiram = true;
+            }
+            Ev::WpIramOff => self.out.tpwpiram = false,
+            Ev::WpOn => self.out.tpwp = true,
+            Ev::WpOff => self.out.tpwp = false,
+        }
+        self.out
+    }
+
+    fn next_at(&self, inputs: Inputs) -> Option<u64> {
+        if inputs.reset {
+            return None;
+        }
+        let &(at, ev) = self.pending.first()?;
+        if inputs.hang && ev == Ev::CycleStart { None } else { Some(at) }
+    }
+
+    fn pass(&mut self, until: u64, held: bool) {
+        assert!(until >= self.time, "time does not run backwards");
+        if held {
+            let dt = until - self.time;
+            for e in &mut self.pending {
+                e.0 += dt;
+            }
+            // A cycle held off at -TPR0 is longer than its tap says, and
+            // that is -HANG's doing and not the grid's.
+            self.chosen = None;
+        } else {
+            assert!(
+                self.pending.first().is_none_or(|&(at, _)| until <= at),
+                "passed a transition without taking it"
+            );
+        }
+        self.time = until;
+    }
+
+    fn phase_ns(&self) -> u64 {
+        self.time - self.cycle_start
+    }
+}
 
 /// The inputs at one tick.
 #[derive(Clone, Copy)]
@@ -114,11 +344,25 @@ impl Drive {
 }
 
 fn main() {
-    let mut clk = Behavioral::new();
+    assert_eq!(TICK_NS, clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
+    let off = Offsets::measure();
+    // Every offset lands where `cadr_phase_gen.sv` puts its constant, and
+    // SELECT inside the ordering the fabric relies on.
+    assert!(off.tse_off < off.tse_on && off.select < u64::from(Speed::Fast.read_phase_ns(false)));
+    let mut clk = GridRing::new(off);
     let mut out = Outputs::default();
 
     println!("# tick rst hang ilong speed | tpclk n_tpclk tptse n_tpwp n_tpwpiram n_tpr60");
-    println!("# generated by golden/src/phase_gen.rs from muir's clock::Behavioral");
+    println!("# generated by golden/src/phase_gen.rs from muir's clock::Behavioral on the {TICK_NS} ns grid");
+    println!(
+        "# offsets from -TPR0: tptse off {} on {}, select {}; from the tap: wp on {}, wpiram off {}, wp off {}, restart {}",
+        off.tse_off, off.tse_on, off.select, off.wp_on, off.wpiram_off, off.wp_off, off.restart
+    );
+
+    // -TPR60 as chip.rs puts it on the board, from the phase: a tap of the
+    // same line at 60 ns, forty wide, both put on the grid from -TPR0.
+    let tpr60_on = GRID.triggered(60);
+    let tpr60_off = GRID.triggered(60 + u64::from(clock::TPR_PULSE_NS));
 
     for tick in 0..TICKS {
         let now = tick * TICK_NS;
@@ -130,14 +374,14 @@ fn main() {
             if at > now {
                 break;
             }
-            out = clk.advance(inputs).1;
+            out = clk.advance(inputs);
         }
 
         // Reset is not an event: `advance` under it clears the outputs and
         // leaves a CycleStart pending at the current time, and `next_at`
         // answers None for as long as it is held. So it is taken here.
         let held = if inputs.reset {
-            out = clk.advance(inputs).1;
+            out = clk.advance(inputs);
             true
         } else {
             clk.next_at(inputs).is_none()
@@ -147,12 +391,11 @@ fn main() {
         // has pending belongs to the next one. Passing only to `now` would
         // anchor the restarted cycle at the tick reset or `-HANG` was last
         // seen, and `start_cycle` schedules the rest of the cycle from there
-        // --- putting every later event five nanoseconds off the tick grid.
+        // --- putting every later event a tick off where the fabric has it.
         clk.pass(if held { now + TICK_NS } else { now }, held);
 
-        // -TPR60 as chip.rs puts it on the board, from the phase.
         let phase_ns = clk.phase_ns();
-        let tpr60 = (60..60 + clock::TPR_PULSE_NS).contains(&phase_ns);
+        let tpr60 = (tpr60_on..tpr60_off).contains(&phase_ns);
 
         let b = |v: bool| u8::from(v);
         println!(
