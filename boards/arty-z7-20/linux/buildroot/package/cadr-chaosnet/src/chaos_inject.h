@@ -109,11 +109,15 @@
 //     anything taken under Spy        yes                     no
 //     another station's frame         no                      no
 //
-// MIT's card wires the two apart at one gate: the 74S10 at LMMYNM 0D02 takes
-// `MATCH SO FAR` --- mine, or zero, or spying --- for the count, and the
-// abort flip-flop at LMMODU 0A09 is preset only when `ITS.ME` is true with
-// it.  muir's ether makes the same split in two lines, the counting test
-// admitting a broadcast and the aborting test not.
+// MIT's card wires the two apart, and the net names invite the opposite
+// reading.  The broad set is `ITS.ME`, made by the 74S08 at LMMYNM 0C02 from
+// `DEST MATCH` and `GENCLK`, and it clocks the Lost Count's 74LS161 at 0F04
+// through the inverter at 0D03.  The narrow net is `MATCH SO FAR`, a third
+// input of the 74S10 at 0D02 whose output presets the abort flip-flop at
+// LMMODU 0A09 and goes nowhere else.  That output is named `-LOST.ONE`, which
+// is the trap: the net that sounds like the count is the one that aborts.
+// muir's ether makes the same split in two lines, the counting test admitting
+// a broadcast and the aborting test not.
 //
 // **AND THE ABORT IS THE ONLY THING A RETRY CAN STAND ON.**  A retry here
 // stands in for the sending station's driver answering Transmit Abort; a

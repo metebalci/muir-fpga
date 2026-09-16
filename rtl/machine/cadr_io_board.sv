@@ -293,7 +293,9 @@ module cadr_io_board (
                                             // was busy: counted, not stored
     input  var logic        chaos_tx_done,  // the frame is away
     input  var logic        chaos_tx_abort, // ...or a collision took it
-    input  var logic        chaos_cbl_busy, // `-CBLBSY`, which bit 14 reads out beside the CRC
+    input  var logic        chaos_cbl_busy, // `-CBLBSY`, which bit 14 shows
+                                            // as the model does; the note at
+                                            // the register says why
     output var logic [11:0] chaos_bits,     // the bit counter, for the check
 
     // --- the Unibus interrupt: `-UB INTR` and `-UB BR5` on the backplane.
@@ -762,10 +764,21 @@ module cadr_io_board (
   assign ch_wn = ch_taken ? 9'd0 : ch_xn;
 
   // "All read/write bits are initialized to zero on power-up", and the ten
-  // the hardware makes up: Receive Done, the CRC error --- which is one net
-  // with `-CBLBSY` on the board and two things to the software --- the lost
-  // count, Transmit Done and Transmit Abort.  Bits 13, 8 and 3 are the three
+  // the hardware makes up: Receive Done, the CRC error, the lost count,
+  // Transmit Done and Transmit Abort.  Bits 13, 8 and 3 are the three
   // write-only commands and read as zero.
+  //
+  // **BIT 14 IS THE CHECK WORD'S VERDICT ALONE ON THE BOARD, AND THE
+  // `chaos_cbl_busy` TERM REPRODUCES WHAT THAT VERDICT READS AS MID-FRAME.**
+  // `CRCERR` has exactly two pins in `mit/cadrio/iob.wlr`, `ER` of the 9401
+  // at LMRBUF 0C07 and `IN2` of the readback buffer at LMDATP 0D17, and
+  // `CBLBSY` reaches no readback buffer at all --- so the card ORs nothing
+  // in here.  AIM-628 says the bit is valid at two instants and no others,
+  // which is what a running checker's output is worth in between, and
+  // `muir::chaos::board`'s `csr()` ORs `turn.busy_at(now)` into the bit so
+  // that it reads set while a frame goes by.  This term is that model and
+  // not a gate of MIT's.  The port is held low in `cadr_chaos_cable.sv`, so
+  // the two readings agree here whichever it is.
   assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
                       ch_tdone, ch_tabort, ch_wbits};
 

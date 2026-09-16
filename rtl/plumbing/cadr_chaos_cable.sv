@@ -88,17 +88,20 @@
 // program print them side by side and a board compare the two ends of the
 // seam.
 //
-// **`-CBLBSY` IS HELD LOW, DELIBERATELY.**  The card ORs it with the CRC
-// error into CSR bit 14, and nothing in the card is gated on it.  On the real
-// board it is up while a frame is on the wire --- microseconds --- and the
-// tempting thing is to raise it while a frame waits for Linux.  That wait is
-// however long Linux takes to poll, which is not a cable time, and bit 14
-// would read as a CRC error in front of the machine for milliseconds at a
-// stretch.  AIM-628 says the CRC error is only valid at two instants and
-// both of them can fall inside such a wait.  So the cable here is never
-// busy, which is what a cable with no other station on it looks like, and
-// bit 14 then reads the CRC error alone --- more informative than the board,
-// not less.
+// **`-CBLBSY` IS HELD LOW, DELIBERATELY.**  The card's face ORs it into CSR
+// bit 14, where it stands in for the check word's verdict reading set while a
+// frame goes by rather than for any gate of MIT's: `CRCERR` has two pins in
+// `mit/cadrio/iob.wlr` and `CBLBSY` reaches no readback buffer at all.
+// Nothing else in the card reads it.  On the real board it is up while a
+// frame is on the wire --- microseconds --- and the tempting thing is to
+// raise it while a frame waits for Linux.  That wait is however long Linux
+// takes to poll, which is not a cable time, and bit 14 would read as a CRC
+// error in front of the machine for milliseconds at a stretch.  AIM-628 says
+// the CRC error is only valid at two instants and both of them can fall
+// inside such a wait.  So the cable here is never busy, which is what a cable
+// with no other station on it looks like, and bit 14 then reads the check
+// word's verdict alone, which is what the board's own bit is at the two
+// instants it means anything.
 //
 // **AND `chaos_rx_crc` IS HELD LOW FOR WANT OF A BIT TO CARRY IT.**  A frame
 // whose check word failed is Linux's to verify --- the trailer is on the seam
