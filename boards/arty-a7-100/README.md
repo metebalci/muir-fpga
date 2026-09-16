@@ -147,6 +147,12 @@ board where Chaosnet could reach a wire from fabric directly**, and the answer
 is a MAC in fabric with the CHUDP encapsulation above it. That is an
 observation about the pins and not a design.
 
+**The Chaosnet cable's register face is here now, with `SOC=1`.**
+`rtl/plumbing/cadr_chaos_cable.sv` sits behind the same splitter at the same
+address as on the Zynq boards, and the soft processing system reaches it. So a
+firmware has every register the cable presents. What it has no way to reach is
+the wire above, which is the paragraph before this one.
+
 **The serial line.** The board has a USB-UART bridge on two fabric pins,
 `uart_rxd_out` on D10 and `uart_txd_in` on A9. **Those two pins are used now,
 and not for this.** With `SOC=1` they are the soft processing system's own
@@ -159,6 +165,10 @@ constrains no UART pins at all, so that board's serial port is the processing
 system's. Here it is the fabric's, and the answer is a transmitter and a
 receiver beside `rtl/plumbing/cadr_serial_line.sv`, which already does the
 2651's framing and its baud-rate generator against a socket.
+
+**That face is in the design now, with `SOC=1`**, behind the splitter at the
+Zynq's address. Its far end is a socket on the other boards and nothing yet on
+this one.
 
 **The console. THIS PARAGRAPH IS SUPERSEDED AND IS KEPT BECAUSE IT SAYS WHAT
 THE QUESTION WAS.** It read: the console and the debugger are both Linux
@@ -229,6 +239,8 @@ published for a board that boots this way.
 **The keyboard and the mouse.** The other board's USB host is the processing
 system's own controller. This board has no USB host at all, so these would be a
 host in fabric. They are last in this project's order of work on any board.
+Their register face, `rtl/plumbing/cadr_input_cables.sv`, is in the design with
+`SOC=1` at the Zynq's address, so a far end has somewhere to write.
 
 ## The card, and what is distributed
 
@@ -278,21 +290,26 @@ checks that what is committed is what the generator writes today.
 
 The machine is unchanged. `rtl/plumbing/cadr_xbus_ddr.sv` asks for a 32-bit
 word at a byte address and waits, exactly as it does on the other board, and
-`rtl/plumbing/cadr_ddr_map.sv`'s constants have not moved. Three modules are
-new and each has a testbench.
+`rtl/plumbing/cadr_ddr_map.sv`'s constants have not moved. Five modules are
+new and each is held by a testbench.
 
 | | |
 |---|---|
+| `rtl/plumbing/cadr_mem_share.sv` | the one arbiter, sharing the port between the machine and three other masters |
+| `rtl/plumbing/cadr_jtag_mem.sv` | the debugger's own way into memory, one of those masters |
+| `rtl/plumbing/cadr_hp2_mem.sv` | the disk pack face's own master onto the port, another of them |
 | `rtl/plumbing/cadr_mem_cross.sv` | the memory port across two clocks |
 | `rtl/plumbing/cadr_mig_ui.sv` | that port onto the controller's native user interface |
-| `rtl/plumbing/cadr_jtag_mem.sv` | the debugger's own way into memory, in front of the port |
-| `cadr_a7_memory.sv` | the four of those and the generated controller, wired together |
+| `cadr_a7_memory.sv` | the crossing, the user interface, the tally and the generated controller, wired together |
 
-`make build/a7_mem.pass` is the check. It runs the first three against a model
-of the controller's user interface, at two clock ratios, and it holds them to
-the things this family of module gets wrong: which sixteen-byte block, which of
-its four 32-bit lanes, which bytes to write, and the rules a crossing between
-two unrelated clocks has to keep. Seven mutation records are aimed at it.
+`make build/a7_mem.pass` is the check. It runs all of them but the generated
+controller against a model of the controller's user interface, at two clock
+ratios, with the real disk pack face as one of the masters. It holds them to the
+things this family of module gets wrong: which sixteen-byte block, which of its
+four 32-bit lanes, which bytes to write, and the rules a crossing between two
+unrelated clocks has to keep. It also holds the arbiter to putting the machine
+first, which the section after the observer describes. Sixteen mutation records
+are aimed at it.
 
 ### The machine's clock and the controller's, and how they coexist
 
@@ -336,12 +353,19 @@ is on the other board too.
 |---|---|
 | main memory | DDR byte `0x0800_0000`, 64 MB reserved, 15 MB reachable |
 | the display's window | DDR byte `0x0C00_0000`, 8 MB reserved, 128 KB reachable |
+| the spare above the display | DDR byte `0x0C80_0000`, where the disk pack face's records go |
 | the bottom 128 MB | nobody's yet |
 
 The translation is one constant bit rather than a subtraction, and the map's
 constants do not move. An address outside the reservation is refused with a
 zero word and a flag, not wrapped: wrapping it would put a wild write in DDR
 and let the machine carry on.
+
+The soft processing system reaches the whole reservation through a window at
+`0x2000_0000` in its own map, a word a load or a store. `0x2480_0000` there is
+`0x1C80_0000` in the machine's map, which is DDR byte `0x0C80_0000`. The window
+covers the reservation rather than the bottom half, because what a firmware has
+to reach is the machine's memory and the spare where the records go.
 
 ### The observer, which is the hard part on a board with no processing system
 
@@ -354,7 +378,7 @@ the fabric never touches.
 and no second master anywhere: the DDR3L is on the fabric's pins and the only
 thing that can reach it is the fabric. So the debugger is given a path ---
 `rtl/plumbing/cadr_jtag_mem.sv`, one register on a second `BSCANE2` user chain,
-in front of the memory port, taking it when the machine is not using it.
+and one of the masters the memory's arbiter serves behind the machine.
 
 That module's header says plainly what is lost by the debugger's words
 traveling the machine's own path, and what recovers it. The three things that
@@ -363,6 +387,61 @@ all four lanes of a sixteen-byte block written differently and read back, and a
 tally that is not on this path at all. The tally counts what the controller's
 own user interface accepted and returned, which a fabric that issued nothing
 cannot fabricate.
+
+### Four masters on one port, and the machine first
+
+The generated controller has one user interface, and four things want it. The
+machine's own port comes first. The debugger's JTAG window, the disk pack face's
+own master and the soft processing system's window onto DDR share the rest.
+`rtl/plumbing/cadr_mem_share.sv` is the one arbiter in front of all four. It is
+in the machine's clock, in front of the one crossing into the controller's.
+
+**The machine wins, and it wins per word.** Whenever the port is free and the
+machine is asking, the machine is served. A request half made to a DDR3
+controller cannot be taken back, so a machine cycle that arrives while another
+master's word is in flight waits for that one word and no more. The other three
+take turns among themselves.
+
+**The debugger's window gave up its own arbiter for this.** It used to sit in
+front of the port and let the machine win there. Kept, with this arbiter behind
+it, a machine cycle could wait for a JTAG transaction that was itself waiting
+for a disk word. That is two accesses where the bound is one.
+
+**On the Zynq boards the same two masters meet inside a hard block.** There the
+machine reaches DDR through `S_AXI_HP0` and the pack face through `S_AXI_HP2`,
+and the two meet only inside the processing system's DDR controller, which
+interleaves them at its own discretion. That claim rests on measurement, since a
+hard block arbitrates in tens of nanoseconds against a bus that allows 4,250.
+Here the arbitration is this repository's, so the claim rests on construction
+and on a check.
+
+**The disk pack face's master is joined through `rtl/plumbing/cadr_hp2_mem.sv`.**
+The face is unchanged and still moves a block as nine AXI3 bursts of 64-bit
+beats. That module answers the bursts, and each beat becomes two word requests
+on the arbiter. A half of a write beat with all four strobes set writes its
+word, and a half with none is skipped. The face's last beat strobes only its low
+half, because the word after the record is never written. A partly strobed half
+is refused with SLVERR.
+
+**What the check measures.** `build/a7_mem.pass` runs the machine's own accesses
+twice from reset at the same instants. The first run has nobody else asking.
+The second has the disk pack face fetching a record and writing it back for the
+whole run, and the soft system's window streaming words beside it. No access may
+grow by more than one access. At the two clock ratios the check runs, the
+machine's longest quiet access is 16 and 18 ticks, the worst growth is 24 and 27
+ticks, and the bound is the longest quiet access and a nine-tick handover. The
+handover is the owner letting go, the answer falling and the crossing's own
+acknowledgment clearing, and nine is the measured worst rather than a round
+number. Of the 96 accesses in each busy run, 87 and 91 were asked while another
+master had the port, so the bound was tested rather than passed by default.
+
+**The same check reads the disk pack face's work straight out of its store.** A
+record the window writes is fetched by the real face, and all 259 places of the
+slot it filled are compared with the record directly. A round trip back through
+the same path could not see a fault that is the same in both directions. The
+face then writes the slot back to an area the window poisoned first, the window
+reads the words, and the pad after the record must still be poison. A record
+placed outside the machine's reservation fails its move.
 
 ### The three scripts
 
@@ -408,7 +487,7 @@ the default board.
 before reading the rest.** The core computes a load or a store's address in the
 cycle it uses it, and that does not settle in the machine's 10 nanosecond tick.
 The machine's tick cannot move. So the soft system takes a third output of the
-same clock manager at 50 MHz, the AXI bridge in front of the three faces stays
+same clock manager at 50 MHz, the AXI bridge in front of the faces stays
 on the machine's clock where the faces are, and one request and one answer
 cross between the two. There are sections on the clock and on the seam below.
 
@@ -446,9 +525,27 @@ exercise: `console_face.h` says `0x8000_0000` and `pack_side.h` says
 | `0x0000_0000` | 32 KB of block RAM, the firmware in it |
 | `0x1000_0000` | this system's own UART |
 | `0x1000_1000` | its own timer |
+| `0x2000_0000` | 128 MB of DDR3L, the machine's reservation, a word a load or a store |
 | `0x4000_0000` | the disk pack face, `cadr_disk_pack.sv` |
+| `0x4000_1000` | the Chaosnet cable, `cadr_chaos_cable.sv` |
+| `0x4000_2000` | the serial line, `cadr_serial_line.sv` |
+| `0x4000_3000` | the keyboard and mouse, `cadr_input_cables.sv` |
+| the rest of `0x4000_0000` to `0x7FFF_FFFF` | the splitter's own `cadr_gp0_default.sv`, "NONE" |
 | `0x8000_0000` | the console, `cadr_console.sv` |
 | everything else | `cadr_gp0_default.sv`, which answers "NONE" |
+
+**The four faces from `0x4000_0000` are behind the Zynq boards' own splitter.**
+`rtl/plumbing/cadr_gp0_split.sv` decodes `M_AXI_GP0`'s gigabyte on those boards,
+and the bridge here hands it the same gigabyte. So the faces, the splitter and
+their addresses are the same files at the same places on all three boards.
+
+**The DDR window is the one address in this map that is not the Zynq's.** On
+the Zynq, Linux reaches DDR at its physical address. Here the region from
+`0x1000_0000` holds this system's own pages, so the window takes the next free
+128 MB and is laid onto the reservation. `soc_ddr()` in `firmware/soc.h`
+converts an address in the machine's map to the window's. Putting the window at
+`0x1800_0000` would have made the two numbers the same, and it would have put
+main memory in the middle of the region where this system's own pages go.
 
 **AND `0x8000_1000` IS NOT IN THAT TABLE, WHERE ON THE TWO ZYNQ BOARDS IT IS
 THE DEBUG CABLE'S REGISTER WINDOW.** The section above says why: that window is
@@ -481,9 +578,16 @@ account at the instruction that fixes it.
 ### The bridge
 
 `rtl/plumbing/cadr_soc_axi.sv` turns one of the core's loads or stores into one
-AXI transaction at one of three slaves. Single beat always, which is AXI4-Lite's
-shape wearing AXI3's signal list, and that is exactly what the faces were
-written for.
+AXI transaction at one of three slaves, or into one word on the memory's
+arbiter. The three slaves are `M_AXI_GP0`'s splitter, the console and the
+default slave. Single beat always, which is AXI4-Lite's shape wearing AXI3's
+signal list, and that is exactly what the faces were written for.
+
+**A store into the DDR window narrower than a word is refused.** The memory port
+writes whole words, so a byte store would either overwrite the three bytes
+beside it or need a read and a write the machine could step between. The core
+takes a store access fault and nothing reaches the memory. A load of any width
+is a word load, and the core takes the bytes it wanted.
 
 It holds one selection where `rtl/plumbing/cadr_gp0_split.sv` holds two. The
 splitter needs two because the thing in front of it drives the read and the
@@ -529,12 +633,36 @@ print:
   - starts it again;
   - reads the disk pack face's identifier and holds it to "PACK" --- which is
     register 7 and not register 0;
-  - reads the default slave, which must answer "NONE";
+  - reads the I/O board's three faces behind the same splitter, and holds them
+    to "CHAO", "SERI" and "INPT";
+  - reads the splitter's default slave at `0x4000_4000`, which must answer
+    "NONE";
   - reads `0x8000_1000`, the page the debug cable's register window holds on a
     Zynq board, which must answer "NONE" here --- there is no window on this
     board and that page is the catch-all's like any other;
+  - probes the DDR window, and on a board built without memory says so and
+    skips the next four steps;
+  - writes a record and its pad through the window at the disk pack program's
+    own fetch address, and reads them back;
+  - stores a byte into the window, which must fault and leave the word as it
+    was;
+  - has the disk pack face fetch the record into a slot and write it back to a
+    poisoned area 2 KB along, and reads that area through the window, the pad
+    after the record included;
+  - enables the face's "a move finished" interrupt and reads `mip`, which must
+    show fast interrupt 0 and no other face's, and show nothing once the
+    interrupt is disabled again;
+  - runs sixteen rounds of five back-to-back loads at five places, main memory
+    among them;
   - prints how many of those failed, and then idles taking four commands from
     the wire: `s` status, `h` halt, `c` continue, `.` step.
+
+**The trap handler can now return from one fault that was asked for.** A byte
+store's refusal is a fault, and a handler that could only print and park would
+make the one check of it the last thing the firmware ever did. `start.S` has two
+probes, one for a load and one for a byte store, which set a flag around the one
+access that may fault. A fault taken while the flag is set is recorded and
+stepped over.
 
 The four commands are `cadr-console`'s and muir's prompt's, for the reason that
 program gives: somebody who knows one should know the other. It is a crude
@@ -546,13 +674,16 @@ rather than anything this firmware can reach.
 
 `make build/soc.pass` runs `tb/cadr_soc_harness.sv`, which is this board's top
 level below the clock: the soft system with Ibex in it, `cadr_machine` with
-MIT's boot PROM and nothing behind its memory port, and the three faces. The
+MIT's boot PROM, the faces behind the splitter and the console, the disk pack
+face's master, and the memory's arbiter in front of a model of main memory. The
+model answers a few ticks after it is asked, refuses an address outside the
+reservation, and gives an unwritten word as poison injective in its address. The
 firmware is the one the board runs, the same hex.
 
 It asserts every line the firmware says, in order --- **the build line among
 them, against the number the harness drove into the console's page 2, so that
 the whole road from the port to the sentence is one comparison and not a
-confirmation** --- and then three things the
+confirmation** --- and then four things the
 firmware cannot say about itself.
 
 **That the machine really halted and really stepped.** `clock_edge` is the
@@ -564,6 +695,13 @@ the machine ran on would pass a check that read its output and fail this one.
 **That the bridge is serial.** The check watches which slaves see a VALID every
 tick and how many transactions are outstanding on each channel.
 
+**That the words really moved.** The check counts the answers the memory's
+arbiter gave each master. The disk pack face's master must move exactly 519
+words, which are a fetch of 260 and a write-back of 259, the pad not being
+written. The window must move exactly the 1,059 words the firmware's own loop
+makes. A firmware comparing against its own copy would print the same lines and
+fail these counts.
+
 **That the baud divisor is what the fabric was built for.** The narrowest level
 the transmitter ever holds is one bit time, so the minimum pulse width over the
 whole run is the divisor. A decoder samples in the middle of a bit and tolerates
@@ -573,7 +711,7 @@ The check builds the UART at a divisor of 32 rather than the board's 868, so
 that the same firmware says the same words in a fraction of the time. Nothing in
 the firmware knows the rate; it polls a ready bit.
 
-Fourteen mutation records are aimed at the seam, in `mutations/list.txt` under
+Eighteen mutation records are aimed at the seam, in `mutations/list.txt` under
 `soc`. Seven are the bridge's and the soft system's own two faces: an address
 bit dropped, a write answered before it lands, the console's page sent to the
 catch-all, the baud divisor doubled, the UART and the timer swapped as answer
@@ -581,8 +719,12 @@ sources, the memory read one word along, and the timer saying the wrong
 microsecond. Two are this board's not having the debug cable's register window:
 a decode given back to the page that window holds on a Zynq, and the arm of the
 join it used to drive left asking for the machine's DBGIN page. Five more are
-the crossing's, and they are described in the section on it below. All fourteen
-are caught, and each record quotes the line that catches it.
+the crossing's, and they are described in the section on it below. Four are the
+DDR window's and the faces': the window laid onto the wrong 128 MB, a byte store
+into it handed to the memory as a word, the general-purpose port matched as one
+page where it is a gigabyte, and two faces' interrupts crossed on their way to
+the core. All eighteen are caught, and each record quotes the line that catches
+it.
 
 Others were written and are recorded there as measured equivalences rather than
 holes. The first weakened the seam's guard against granting a second request
@@ -933,31 +1075,29 @@ being left to be filed as a hole.
 
 ### What is still absent
 
-The disk pack face answers its registers and cannot move a block. **This board
-has a memory controller and the pack face is not joined to it.**
+**The disk pack face is joined to main memory, and nothing fills main memory
+with a pack yet.** The face's own master reaches the controller through
+`rtl/plumbing/cadr_hp2_mem.sv` and the memory's arbiter. The soft processing
+system reaches the same memory through its window, so a firmware can put a
+record where the face fetches it. What is missing is the pack itself. On the
+Zynq boards a Linux program reads it off a card, and this board's card is a
+microSD Pmod on JD with no host in the fabric yet.
 
-The machine's own memory port is joined to it. `mem_*` leaves `cadr_machine`,
-passes `cadr_jtag_mem`, crosses to the controller's user clock in
-`cadr_mem_cross`, becomes a user-interface command in `cadr_mig_ui` and reaches
-the generated controller, all of it inside
-`boards/arty-a7-100/cadr_a7_memory.sv`, and that path has run MIT's boot PROM
-out of real DDR3L on silicon.
+**The I/O board's three faces are here and their far ends are not.** The
+Chaosnet cable's face, the serial line's and the keyboard and mouse's are behind
+the splitter at the Zynq's addresses, so a firmware has every register a far end
+needs. A MAC for Chaosnet, a socket or a second UART for the serial line, and a
+keyboard are other work.
 
-The pack face's own memory master is not. It is `S_AXI_HP2` on the Zynq, and in
-`boards/arty-a7-100/cadr_arty_a7.sv` its `m_awready`, `m_wready` and
-`m_arready` are tied low with `m_bvalid` and `m_rvalid` beside them, so a block
-fetch would stand for ever; what it drives goes nowhere but the fold that keeps
-those wires from being trimmed. That is said plainly rather than answered with a
-plausible completion: a port that accepted an address and returned a word of
-nothing would let the pack face report a block it had not moved. Nothing asks it
-for a block.
+**A load from the DDR window waits for the controller to calibrate.** That is
+about a millisecond after a fabric reset. A controller that never calibrated
+would leave such a load standing, and nothing in the bridge ends it. A board
+built without memory answers the window with an access fault instead, and the
+firmware says so.
 
-**What joining them needs is a second master in front of the controller.**
-`cadr_mig_ui.sv` takes one `mem_*` port and one request in flight, which is what
-the machine's port is, so a block moving beside the machine's own cycles wants
-an arbiter there --- and the machine's 4.25 microsecond timer is what bounds how
-long the disk may hold the controller, exactly as it bounds the channel's
-arbiter on the other board.
+**None of this has been on the board.** The splitter's faces, the DDR window and
+the disk pack face's master are checked in simulation, and the lines they add
+to the firmware's banner have not been seen on a wire.
 
 The firmware is not mutated by `mutations/run.py`, and that is a limit rather
 than a choice: its hex is built with a RISC-V compiler and read at elaboration,
@@ -980,15 +1120,25 @@ are not a series.
 | `DDR=1` | `be01ca0` | **+0.232 ns**, met | 0 of 40,343 | --- | 10,400 (16.40%) | 6,541 (5.16%) | 38 (28.15%) |
 | `SOC=1` | `27624ed` | **+0.123 ns**, met | 0 of 46,476 | 4,787 (30.20%) | 13,465 (21.24%) | 8,565 (6.75%) | 48.5 (35.93%) |
 | `SOC=1 DDR=1` | `782e3a9` | **+0.608 ns**, met | --- | 6,185 (39.02%) | 18,184 (28.68%) | 12,901 (10.17%) | --- |
+| `SOC=1 DDR=1`, three masters and the window | `d8cf73a` and this slice | **+0.314 ns**, met | 0 of 65,737 | 6,786 (42.81%) | 20,126 (31.74%) | 14,678 (11.58%) | 49.5 (36.67%) |
+| `SOC=1 DDR=1 LMTV=1`, the same | `d8cf73a` and this slice | **+0.196 ns**, met | 0 of 67,196 | 6,872 (43.36%) | 20,484 (32.31%) | 15,163 (11.96%) | 50.5 (37.41%) |
 
 Every row is a routed run of `boards/arty-a7-100/vivado/bitstream.tcl` for
 `xc7a100tcsg324-1`, and every one met.
 
-**Three of the five rows were read out of a routed report and two were not,
+**The last two rows are not a commit's figures, and the bitstream says so
+itself.** Both were routed from a working tree, and `tools/build_stamp.tcl`
+wrote `commit d8cf73a` with `tree modified and untracked` beside each one. The
+sources are this slice's and the words are no commit's, so the rule this
+project holds every other figure to is not met here: quote these two with the
+tree they were built from, never as the figures of whatever commit they land
+in.
+
+**Five of the seven rows were read out of a routed report and two were not,
 which is a difference worth carrying.** The memory-off row is the debug cable
-slice's own build, the probe row is the first silicon run's, and the `SOC=1`
-row is the window slice's; each has a `timing.rpt` and a `utilisation.rpt`
-kept beside its bitstream. The `DDR=1` row is what the run that built main
+slice's own build, the probe row is the first silicon run's, the `SOC=1`
+row is the window slice's, and the last two are this slice's own pair; each has
+a `timing.rpt` and a `utilisation.rpt` kept beside its bitstream. The `DDR=1` row is what the run that built main
 memory reported and its reports were not kept, so those figures are quoted and
 not read. The `SOC=1 DDR=1` row is the one-signal-per-pair slice's own record
 of its build, which kept no report for this board either; that slice counted
@@ -1017,6 +1167,54 @@ says, and every slack figure from such a run would be of a machine nobody meant
 to build. The `SOC=1` build reports 19,886 of 46,430 setup paths at 150.000 ns,
 and the `SOC=1 DDR=1` build 19,882 of 60,287, each with the Pmod carrier's own
 24 paths at 40.000 ns beside it.
+
+### The pack face, the window and the machine on one controller
+
+**The last two rows of the table were routed four times, twice before the
+change and twice after, so the pairs are one comparison rather than four
+quotations.** All four runs are `SOC=1 DDR=1` for `xc7a100tcsg324-1` through
+`boards/arty-a7-100/vivado/bitstream.tcl`, from the same tree, with the color
+board out and in. Each run kept its own `timing.rpt` and `utilisation.rpt`.
+
+| | before, `LMTV=0` | after, `LMTV=0` | before, `LMTV=1` | after, `LMTV=1` |
+|---|---|---|---|---|
+| worst slack | **+0.141 ns**, met | **+0.314 ns**, met | **+0.115 ns**, met | **+0.196 ns**, met |
+| failing endpoints | 0 of 61,822 | 0 of 65,737 | 0 of 63,283 | 0 of 67,196 |
+| slices | 6,147 (38.78%) | 6,786 (42.81%) | 6,547 (41.31%) | 6,872 (43.36%) |
+| Slice LUTs | 18,617 (29.36%) | 20,126 (31.74%) | 18,976 (29.93%) | 20,484 (32.31%) |
+| registers | 13,393 (10.56%) | 14,678 (11.58%) | 13,890 (10.95%) | 15,163 (11.96%) |
+| block RAM tiles | 48.5 (35.93%) | 49.5 (36.67%) | 49.5 (36.67%) | 50.5 (37.41%) |
+| multicycle exceptions | 10 | 10 | 10 | 10 |
+| setup paths at 150.000 ns | 19,883 of 61,822 | 19,883 of 65,719 | 20,416 of 63,283 | 20,417 of 67,195 |
+
+So the arbiter, the pack face's bus slave and the window cost about 1,500
+Slice LUTs, about 1,290 registers and one block RAM tile, and both
+configurations still meet timing. The slack moved in the good direction, which
+is placement and not a finding: a quarter of a nanosecond is the noise floor
+here, and these figures are well inside it.
+
+**The exception count did not move, and that is the reason it is not the number
+to read.** The relaxed set is every register in the named instances, so a
+module written after the constraints joins it in silence and its paths are then
+timed at 150 ns whatever they really need. A count of exceptions cannot see
+that. Two other numbers can. The flow asserts that no register outside the
+machine, the memory controller, the Pmod carrier and the soft system is
+relaxed, and both new modules are instantiated in this board's own memory and
+soft-system sections rather than under any of those four, so that assertion is
+a statement about them. And the count of relaxed paths stands still while the
+design grows: with the color board out the design gained 3,897 setup paths and
+the relaxed set gained none, so every path this slice added is timed at one
+tick.
+
+**One path did join the relaxed set with the color board in, and it is not
+explained.** That build went from 20,416 relaxed paths to 20,417 while gaining
+3,912. The pair without the color board, where the relaxed set does not move at
+all, is the cleaner statement of the same thing, and the one to read.
+
+**The two later runs were built from a working tree rather than from a
+commit.** Their bitstreams are stamped as a modified tree carrying an untracked
+file, where the two earlier runs are stamped clean at `d8cf73a`. The sources
+are this slice's; the words are not a commit's.
 
 **Read the memory-off row as a floor.** That design is the machine with every
 seam tied off, and a tie-off is not free: the drive constant-folds, the serial

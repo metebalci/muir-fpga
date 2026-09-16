@@ -16,8 +16,8 @@
 // system, no debug access port onto memory and no second master anywhere: the
 // DDR3L is on the fabric's pins and the only thing that can reach it is the
 // fabric.  So the observer has to be given a path, and this is it --- a
-// register the JTAG chain can read and write, in front of the memory port,
-// taking the port when the machine is not using it.
+// register the JTAG chain can read and write, and a request onto the shared
+// memory port behind it.
 //
 // WHAT THAT COSTS IN EVIDENCE, SAID PLAINLY.  The debugger's words now travel
 // the same `cadr_mem_cross` and `cadr_mig_ui` and the same controller that the
@@ -39,13 +39,17 @@
 //     that issued nothing cannot fabricate, and it is read out through this
 //     register without ever going near it.
 //
-// THE ARBITRATION, AND WHY IT CANNOT CAUSE A NON-EXISTENT MEMORY ERROR.  The
-// machine wins: a window transaction is started only when the machine is not
-// asking, and the machine's next request waits at most one memory access ---
-// about 150 ns --- for one to finish.  The bus allows 4,250 ns before it calls
-// a cycle a non-existent memory.  Once a window transaction has begun it runs
-// to the end, because a request half made to a DDR3 controller cannot be taken
-// back.
+// **IT ASKS AND DOES NOT ARBITRATE.**  This module used to sit in front of the
+// port and give it to the machine first.  The port has more masters now --- the
+// disk pack face's and the soft processing system's --- and
+// `rtl/plumbing/cadr_mem_share.sv` is the one arbiter in front of all of them,
+// with the machine first and one word in flight at a time.  A second arbiter
+// here would have let a machine cycle wait for a debugger's transaction that
+// was itself waiting for a disk word, which is two accesses where the bound is
+// one.  So a command raises a request, holds it until the answer comes, takes
+// the word and lets go, like every other master on the port.  A transaction
+// that has begun runs to the end, because a request half made to a DDR3
+// controller cannot be taken back.
 //
 // THE SCAN.  One data register of `DR_BITS` bits on a `BSCANE2` user chain ---
 // chain 2, which is IR 000011 on a seven-series part, where `cadr_probe` has
@@ -76,19 +80,10 @@ module cadr_jtag_mem #(
     input  var logic        clk,
     input  var logic        rst,
 
-    // ------------------------------------------------- the machine's side
-    input  var logic        m_req,
-    input  var logic        m_write,
-    input  var logic [31:0] m_addr,
-    input  var logic [31:0] m_wdata,
-    output var logic        m_done,
-    output var logic [31:0] m_rdata,
-    // The far end's own complaint, carried straight through.  It is the
-    // proving witness that reads it; with the machine driving, the machine has
-    // no wire for it and the top level folds it.
-    output var logic        m_error,
-
-    // ------------------------------------------------------ the port's side
+    // ------------------------------------------- the request onto the port
+    //
+    // One of `cadr_mem_share.sv`'s masters.  `p_done` is up only while this
+    // module owns the port and the answer stands.
     output var logic        p_req,
     output var logic        p_write,
     output var logic [31:0] p_addr,
@@ -191,13 +186,9 @@ module cadr_jtag_mem #(
   logic        cmd_write;
   logic [31:0] cmd_addr, cmd_wdata;
 
-  // ------------------------------------------------------ the arbiter
-  typedef enum logic [1:0] { FREE, MACHINE, WINDOW } owner_e;
-  owner_e owner;
-
+  // ------------------------------------------------------ the request
   always_ff @(posedge clk) begin
     if (rst) begin
-      owner     <= FREE;
       busy      <= 1'b0;
       have_run  <= 1'b0;
       err_q     <= 1'b0;
@@ -222,26 +213,17 @@ module cadr_jtag_mem #(
         reset_cmd <= sr[67];
       end
 
-      // A change of `go` that has not been acted on, and the port free of the
-      // machine, is what starts one.
-      if (!busy && (go_cmd != go_seen) && (owner == FREE) && !m_req) begin
-        busy  <= 1'b1;
-        owner <= WINDOW;
+      // A change of `go` that has not been acted on is what starts one, and
+      // the answer is what ends it.
+      if (!busy && (go_cmd != go_seen)) begin
+        busy <= 1'b1;
+      end else if (busy && p_done) begin
+        rdata_q  <= p_rdata;
+        err_q    <= p_error;
+        have_run <= 1'b1;
+        busy     <= 1'b0;
+        go_seen  <= go_cmd;
       end
-
-      unique case (owner)
-        FREE: if (m_req) owner <= MACHINE;
-        MACHINE: if (!m_req) owner <= FREE;
-        WINDOW: if (p_done) begin
-          rdata_q  <= p_rdata;
-          err_q    <= p_error;
-          have_run <= 1'b1;
-          busy     <= 1'b0;
-          go_seen  <= go_cmd;
-          owner    <= FREE;
-        end
-        default: owner <= FREE;
-      endcase
     end
   end
 
@@ -254,14 +236,10 @@ module cadr_jtag_mem #(
   assign mach_reset = reset_cmd;
 
   // ----------------------------------------------------------- the port
-  assign p_req   = (owner == MACHINE) ? m_req   : (owner == WINDOW);
-  assign p_write = (owner == MACHINE) ? m_write : cmd_write;
-  assign p_addr  = (owner == MACHINE) ? m_addr  : cmd_addr;
-  assign p_wdata = (owner == MACHINE) ? m_wdata : cmd_wdata;
-
-  assign m_done  = (owner == MACHINE) && p_done;
-  assign m_rdata = p_rdata;
-  assign m_error = p_error;
+  assign p_req   = busy;
+  assign p_write = cmd_write;
+  assign p_addr  = cmd_addr;
+  assign p_wdata = cmd_wdata;
 
 endmodule
 
