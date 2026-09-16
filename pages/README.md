@@ -79,7 +79,9 @@ halftone desk. Each plate opens with a pink eyebrow and a title in the display
 face, holds its panels, and closes with a who-line whose last cell is the
 plate's number on its page. The last plate of every page is the colophon: the
 copyright, where the drawing style and the board come from, and the board
-waving goodbye.
+waving goodbye. The front page's colophon is shaped as muir's is: where the
+material comes from, how the project is made, the name, the license, and the
+credits.
 
 **A board page** is `arty-z7-20.html` or `cora-z7-07s.html`. It is one plate:
 the board's name, one line, the keys to the booting and debugging pages, and

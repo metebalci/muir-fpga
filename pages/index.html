@@ -112,6 +112,7 @@
           <li><a href="#boards"><span class="tag">SPEC</span><span class="nm">The boards</span><span class="no">03</span></a></li>
           <li><a href="#machine"><span class="tag">MACHINE</span><span class="nm">The machine itself</span><span class="no">04</span></a></li>
           <li><a href="#license"><span class="tag">TERMS</span><span class="nm">License</span><span class="no">05</span></a></li>
+          <li><a href="#colophon"><span class="tag">END</span><span class="nm">Colophon</span><span class="no">06</span></a></li>
           <li><a href="arty-z7-20.html"><span class="tag">BOARD</span><span class="nm">Arty Z7-20</span><span class="no">page</span></a></li>
           <li><a href="cora-z7-07s.html"><span class="tag">BOARD</span><span class="nm">Cora Z7-07S</span><span class="no">page</span></a></li>
           <li><a href="booting.html"><span class="tag">BOOT</span><span class="nm">How a board comes up</span><span class="no">page</span></a></li>
@@ -287,7 +288,7 @@ PAINTS    the window system, on a screen</pre>
               <tr><th scope="row"><a href="https://github.com/metebalci/muir">muir</a></th><td>Its own repository, under the <b>AGPL, version 3 or later</b></td><td>not carried; pinned by commit in <code>muir.commit</code></td></tr>
               <tr><th scope="row">Buildroot 2026.02.3, U-Boot 2026.01, Linux 6.19.14</th><td>Each under its own license; for the loader and the kernel, the <b>GPL, version 2</b></td><td>not in the repository; the build fetches them</td></tr>
               <tr><th scope="row">Dela Gothic One, Zen Maru Gothic, IBM Plex Mono</th><td>The Dela Gothic Project Authors, The Zen Maru Gothic Authors and IBM, under the <b>SIL Open Font License 1.1</b></td><td><code>pages/fonts/README.md</code></td></tr>
-              <tr><th scope="row">The drawing style, the palette, the panels, and CADR&rsquo;s body, face and waving arm</th><td>Cold Boot&rsquo;s, a manga-style zine about the CADR, under <b>CC BY-SA 4.0</b></td><td><code>pages/README.md</code></td></tr>
+              <tr><th scope="row">The drawing style, the palette, the panels, and CADR&rsquo;s body, face and waving arm</th><td><a href="https://github.com/metebalci/coldboot">Cold Boot</a>&rsquo;s, a manga-style zine about the same machine by the same author, under <b>CC BY-SA 4.0</b></td><td><code>pages/README.md</code></td></tr>
               <tr><th scope="row">The board, the site&rsquo;s mascot</th><td>Drawn for this site by the <a href="https://github.com/metebalci/ozd">ozd</a> project, under the <b>AGPL, version 3 or later</b>; the face and arm it wears are Cold Boot&rsquo;s, under <b>CC BY-SA 4.0</b></td><td><code>pages/README.md</code></td></tr>
               <tr><th scope="row">MIT&rsquo;s own files: the drawings, wire lists, print sets and PROM images of 1977 to 1981, and the system software beside them</th><td>MIT&rsquo;s. No statement of terms came with the engineering files and none is made up for them; the system release states the <b>AGPL, version 3 or later</b></td><td>not in the repository; muir carries them, recovered from the ITS backup tapes and unmodified</td></tr>
           </tbody>
@@ -301,16 +302,23 @@ PAINTS    the window system, on a screen</pre>
     </footer>
   </section>
 
-  <!-- --------------------------------------------------------- the name -->
+  <!-- --------------------------------------------------------- colophon -->
   <section id="colophon" aria-label="Colophon">
+    <div class="panel bare">
+      <span class="eyebrow">End</span>
+      <h2 class="title t-m">Colophon</h2>
+    </div>
+
     <div class="panels two end-split">
       <div class="colophon">
-        <span class="eyebrow">The name</span>
+        <p>Almost nothing here is a first-hand invention. The CADR, the drawings, the wire lists and the microcode are MIT&rsquo;s, recovered by other people&rsquo;s work over decades, and the machine in the fabric is held tick for tick to <a href="https://github.com/metebalci/muir">muir</a>; <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#sources">the documents list every source</a> the drawings were read from and what each one is.</p>
+        <p>muir-fpga is implemented entirely by <a href="https://claude.com/claude-code">Claude Code</a>, on Anthropic&rsquo;s Opus 5 and Fable 5.1 models. The machine is written in SystemVerilog, its testbenches in C++ for Verilator, the programs beside it on the board in C, and the generators of its reference traces in Rust.</p>
         <p>muir-fpga is <a href="https://github.com/metebalci/muir">muir</a>&rsquo;s RTL model of the CADR, synthesized into the fabric of an FPGA and held to muir tick for tick. muir is named for Nathan Muir, the character Robert Redford plays in <em>Spy Game</em> (2001). In memory of Robert Redford.</p>
-        <p><b>&copy; 2026 Mete Balci.</b> muir-fpga is <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-or-later</a>.</p>
-        <p>The drawing style, the palette and the panels are Cold Boot&rsquo;s, a manga-style zine about the CADR, under CC BY-SA 4.0. The board is drawn for this site by the <a href="https://github.com/metebalci/ozd">ozd</a> project, in the same hand.</p>
-        <div class="actions">
-          <a class="key" href="https://github.com/metebalci/muir-fpga/tree/main/docs">Documents</a>
+        <p><b>&copy; 2026 Mete Balci.</b> muir-fpga is <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-or-later</a>. MIT&rsquo;s own files are not in this repository: muir carries them, unmodified.</p>
+        <p>The drawing style, the palette and the panels are <a href="https://github.com/metebalci/coldboot">Cold Boot</a>&rsquo;s, a manga-style zine about the same machine by the same author, under CC BY-SA 4.0. That one is the story; this one is the machine, in fabric. The board, this site&rsquo;s mascot, is drawn for it by the <a href="https://github.com/metebalci/ozd">ozd</a> project, in the same hand.</p>
+        <div class="actions" style="margin-top:0.6rem;">
+          <a class="key" href="https://github.com/metebalci/muir-fpga/tree/main/docs">Read the documents</a>
+          <a class="key lm" href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#sources">The sources</a>
           <a class="key lm" href="https://github.com/metebalci/muir-fpga">Repository</a>
         </div>
       </div>
@@ -321,7 +329,7 @@ PAINTS    the window system, on a screen</pre>
     </div>
 
     <footer class="wholine">
-      <div class="label">muir-fpga &middot; The name</div>
+      <div class="label">muir-fpga &middot; Colophon</div>
       <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>06</span></div>
     </footer>
   </section>
