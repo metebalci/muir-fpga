@@ -4,41 +4,110 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>muir-fpga &mdash; the CADR</title>
-<meta name="description" content="What the MIT CADR Lisp Machine is, in ten drawings: the cage and its two buses, the processor's data paths and its microinstruction, the map, the address space, the disk, the display, the I/O board, the light panel and the debug cable.">
+<meta name="description" content="What the MIT CADR Lisp Machine is, in ten drawings: the cage and its two buses, the processor&rsquo;s data paths and its microinstruction, the map, the address space, the disk, the display, the I/O board, the light panel and the debug cable.">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="cadr.css">
 </head>
 <body>
 
-<header class="topbar">
-  <div class="band">
-    <a class="home" href="index.html"><b>muir-fpga</b></a>
-    <nav>
-      <a href="arty-z7-20.html">Arty Z7-20</a>
-      <a href="cora-z7-07s.html">Cora Z7-07S</a>
-      <a href="booting.html">Booting</a>
-      <a href="debugging.html">Debugging</a>
-      <a href="faq.html">FAQ</a>
-      <a href="cadr.html">the CADR</a>
-    </nav>
-  </div>
-</header>
+<!-- The characters, drawn once and placed with <use>. The board is the site's
+     mascot: it was drawn for this site by the ozd project, in Cold Boot's
+     hand, and is copied here unchanged from ozd's pages/index.html. Its chip
+     wears CADR's face; the DDR3 beside it, the Ethernet jack and the microSD
+     slot are the Arty Z7-20's. CADR's face and its waving arm, and CADR's body, are Cold
+     Boot's own parts. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="cadr-body">
+      <rect x="48" y="112" width="24" height="14" fill="#141414"/>
+      <rect x="14" y="4" width="92" height="112" rx="7" fill="#fff" stroke="#141414" stroke-width="4"/>
+      <rect x="23" y="13" width="74" height="88" fill="#141414"/>
+      <rect x="23" y="90" width="74" height="2.5" fill="#fff"/>
+      <path d="M26 96h14M46 96h10M62 96h16" stroke="#fff" stroke-width="2"/>
+      <polygon points="10,128 110,128 117,146 3,146" fill="#fff" stroke="#141414" stroke-width="4" stroke-linejoin="round"/>
+      <path d="M18 134h84M13 140h94" stroke="#141414" stroke-width="2.5" stroke-dasharray="5 3"/>
+    </g>
+    <g id="face-happy">
+      <ellipse cx="46" cy="50" rx="9" ry="13" fill="#fff"/>
+      <ellipse cx="74" cy="50" rx="9" ry="13" fill="#fff"/>
+      <ellipse cx="47" cy="53" rx="6.2" ry="9.5" fill="#141414"/>
+      <ellipse cx="73" cy="53" rx="6.2" ry="9.5" fill="#141414"/>
+      <ellipse cx="47" cy="58" rx="4.6" ry="3.6" fill="#ff48b0"/>
+      <ellipse cx="73" cy="58" rx="4.6" ry="3.6" fill="#ff48b0"/>
+      <circle cx="44.5" cy="48" r="2.8" fill="#fff"/>
+      <circle cx="70.5" cy="48" r="2.8" fill="#fff"/>
+      <circle cx="49" cy="57" r="1.2" fill="#fff"/>
+      <circle cx="75" cy="57" r="1.2" fill="#fff"/>
+      <path d="M54 74q6 6 12 0" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M29 70l3-5M33 70l3-5M37 70l3-5M80 70l3-5M84 70l3-5M88 70l3-5" stroke="#ff48b0" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <g id="arm-wave">
+      <path d="M106 64q17-4 14-25" fill="none" stroke="#141414" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="120" cy="36" r="5.5" fill="#fff" stroke="#141414" stroke-width="3"/>
+      <path d="M111 22l3 5M120 18v6M129 22l-3 5" stroke="#141414" stroke-width="2.2" stroke-linecap="round"/>
+    </g>
+    <g id="fpga-board">
+      <rect x="20" y="116" width="12" height="9" fill="#141414"/>
+      <rect x="140" y="116" width="12" height="9" fill="#141414"/>
+      <rect x="8" y="10" width="156" height="108" rx="6" fill="#fff" stroke="#141414" stroke-width="4"/>
+      <circle cx="20" cy="22" r="4" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <circle cx="152" cy="22" r="4" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <circle cx="20" cy="106" r="4" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <circle cx="152" cy="106" r="4" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <path d="M44 21.5h68M44 106.5h68M35.5 30v68M120.5 30v68" stroke="#141414" stroke-width="4" stroke-dasharray="2 3"/>
+      <rect x="40" y="26" width="76" height="76" rx="3" fill="#141414"/>
+      <circle cx="47" cy="33" r="2.6" fill="#ff48b0"/>
+      <use href="#face-happy" transform="translate(21 8.4) scale(0.95)"/>
+      <rect x="130" y="30" width="18" height="26" rx="1.5" fill="#141414"/>
+      <path d="M127 35v16M151 35v16" stroke="#141414" stroke-width="3" stroke-dasharray="2 2.5"/>
+      <rect x="0" y="44" width="28" height="32" rx="2" fill="#fff" stroke="#141414" stroke-width="3"/>
+      <path d="M6 51h16v13h-4v5h-8v-5h-4z" fill="#141414"/>
+      <rect x="12" y="84" width="16" height="12" rx="1.5" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <path d="M16 90h8" stroke="#141414" stroke-width="2"/>
+      <circle cx="132" cy="78" r="3.2" fill="#ff48b0" stroke="#141414" stroke-width="1.5"/>
+      <circle cx="142" cy="78" r="3.2" fill="#ff48b0" stroke="#141414" stroke-width="1.5"/>
+      <circle cx="152" cy="78" r="3.2" fill="#ff48b0" stroke="#141414" stroke-width="1.5"/>
+    </g>
+    <g id="fpga-wave"><use href="#fpga-board"/><use href="#arm-wave" x="58" y="-4"/></g>
+  </defs>
+</svg>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The machine this project reproduces</h2>
-      <p class="lede">The CADR is a 32-bit microcoded processor built at the MIT Artificial
-      Intelligence Laboratory around 1978, and published as AI Memo 528 in 1980. It is the
-      machine the Lisp Machine system was written for.</p>
+<nav class="desk-nav" aria-label="Pages">
+  <a class="home" href="index.html">muir-fpga</a>
+  <a href="arty-z7-20.html">Arty Z7-20</a>
+  <a href="cora-z7-07s.html">Cora Z7-07S</a>
+  <a href="booting.html">Booting</a>
+  <a href="debugging.html">Debugging</a>
+  <a href="faq.html">FAQ</a>
+  <a aria-current="page" href="cadr.html">the CADR</a>
+</nav>
 
-      <p>It is a general-purpose processor designed for convenient emulation of complex order
-      codes, and on it the microcode interprets the 16-bit order code the Lisp machine compiler
-      produces. The drawings below are read from MIT's own files, and the table at the foot
-      says which file each one came from.</p>
+<div class="page">
+
+  <section aria-label="The CADR">
+    <div class="masthead">
+      <div class="masthead-text">
+        <span class="eyebrow">The machine</span>
+        <h1 class="title t-l">The machine this project reproduces</h1>
+        <p class="lede">The CADR is a 32-bit microcoded processor built at the MIT Artificial Intelligence Laboratory around 1978, and published as AI Memo 528 in 1980.</p>
+        <p class="small">It is the machine the Lisp Machine system was written for. The ten drawings below are read from MIT&rsquo;s own files; what each one shows, and every source, is <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md">docs/cadr.md</a>.</p>
+      </div>
+      <svg class="chara corner" viewBox="0 0 152 150" role="img" aria-label="CADR, waving"><use href="#cadr-body"/><use href="#face-happy"/><use href="#arm-wave"/></svg>
     </div>
 
-    <figure class="fig dense wide" style="--fig-width: 1340px">
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The CADR</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>01</span></div>
+    </footer>
+  </section>
+
+  <section id="whole" aria-label="The whole machine">
+    <div class="panel bare">
+      <span class="eyebrow">Whole</span>
+      <h2 class="title t-l">The whole machine</h2>
+    </div>
+
+    <figure class="panel fig dense wide" style="--fig-width: 1340px">
       <div class="scroll">
         <svg viewBox="0 0 1340 810" role="img" aria-label="The whole machine. On the left, the processor's own backplane holds two boards: the CADR board with the data paths and the ICMEM board with the control store, the boot PROM, the clock and the diagnostic registers. Five forty-wire flat cables, 92 signals of which 48 are driven from both ends, join them to the bus interface board in the bus cage; the four from the CADR board carry the memory bus and the diagnostic bus, and the one from the ICMEM board carries the master clock, the diagnostic bus's address and strobes, the boot line and three resets. The bus interface arbitrates two buses: the Xbus, which carries the memory boards, the disk controller and the display board, and the Unibus, which carries the I/O board and any PDP-11 device in an SPC slot. Outside the cage are the Trident disk packs behind the disk multiplexor, the screen, the keyboard and mouse, an RS-232 line and the Chaosnet cable. A light panel hangs off the ICMEM board, and a debug cable of 21 wires runs from the bus interface to another CADR, which is the debugger.">
           <text class="d-t" x="10" y="18">the machine, whole</text>
@@ -199,22 +268,23 @@
           <text class="d-s" x="174" y="628" text-anchor="middle">DBGOUT drives this DBGIN</text>
         </svg>
       </div>
-      <figcaption>The processor is two boards of its own; everything else in the machine plugs
-      into one of the two buses the bus interface arbitrates.</figcaption>
+      <figcaption class="cap long">The processor is two boards of its own; everything else in the machine plugs into one of the two buses the bus interface arbitrates.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-machine-this-project-reproduces">docs/cadr.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The processor</h2>
-      <p>The CADR board carries the data paths and the ICMEM board the control memory. Every
-      edge-triggered register on them takes one clock edge a microcycle. Between the edges the
-      clock is a level, and the board reads it as one: a read phase and then a write phase.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The whole machine</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>02</span></div>
+    </footer>
+  </section>
+
+  <section id="processor" aria-label="The processor">
+    <div class="panel bare">
+      <span class="eyebrow">Processor</span>
+      <h2 class="title t-l">The processor</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 740" role="img" aria-label="The processor's data paths. On the left the control side: a writable control store of 16,384 words of 48 bits whose bottom 1,024 are overlaid by the boot PROM, the instruction register, a sequencer with a 14-bit program counter, a 32-word return stack and an eight-deep history of the PC, and a dispatch memory of 2,048 words of 17 bits. On the right the data side: the A memory of 1,024 words drives the A bus; the M memory of 32 words, the pushdown buffer of 1,024 words, the Q register, VMA and MD drive the M bus; both reach the ALU and the byte hardware, whose result goes on the output bus and is written back to the scratchpads one microcycle later. VMA or MD indexes the two-level map, which puts out a 22-bit physical address. Below, a bar of one microcycle at normal speed: 145 nanoseconds, an 85 nanosecond read phase and a 60 nanosecond write phase, with the delay line's taps marked along it.">
           <text class="d-t" x="10" y="18">the processor&rsquo;s data paths</text>
@@ -333,22 +403,23 @@
           <text class="d-s" x="60" y="720">the clock can wait at the end of the read phase, and hang at the end of the write phase</text>
         </svg>
       </div>
-      <figcaption>The read phase is set by a tap of a delay line, so the machine has four speeds
-      and the instruction can ask for a long one.</figcaption>
+      <figcaption class="cap long">The read phase is set by a tap of a delay line, so the machine has four speeds and the instruction can ask for a long one.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-processor">docs/cadr.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The microinstruction</h2>
-      <p>A microinstruction is 48 bits and there are four classes of it. Every one names two
-      sources, called A and M, and two of the four also name a destination. Three bits mean the
-      same thing in every class: STAT, ILONG and POPJ.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The processor</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>03</span></div>
+    </footer>
+  </section>
+
+  <section id="word" aria-label="The microinstruction">
+    <div class="panel bare">
+      <span class="eyebrow">Word</span>
+      <h2 class="title t-l">The microinstruction</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 350" role="img" aria-label="The 48-bit microinstruction in MIT's own field names, one row for each of its four classes. Bits 47 down to 26 are the same in all four: a spare bit, STAT which counts the instruction in the statistics counter, ILONG which runs the read phase long, the two-bit class code OP, POPJ which returns from a microsubroutine after one more instruction, a ten-bit A source and a six-bit M source. ALU has a destination, an output-bus select, a misc function, a six-bit ALU function, a carry in and a two-bit Q control. JUMP has a fourteen-bit target, the R, P and N bits, an invert, and five bits that are either a rotate or a condition. DISPATCH has a dispatch constant in place of the A source, an eleven-bit dispatch address, two map bits, a byte length and a rotate. BYTE has a destination, a byte function, a length less one and a rotate. The fields are drawn to the space their names need rather than to their width in bits.">
           <text class="d-t" x="10" y="18">the microinstruction, 48 bits</text>
@@ -524,23 +595,23 @@
           <text class="d-s" x="90" y="336">a field is drawn to the room its name needs, not to its width in bits</text>
         </svg>
       </div>
-      <figcaption>A JUMP with both its R and P bits set is not a jump at all: it is how the
-      microcode writes the control store.</figcaption>
+      <figcaption class="cap long">A JUMP with both its R and P bits set is not a jump at all: it is how the microcode writes the control store.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-microinstruction">docs/cadr.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The map</h2>
-      <p>Memory is reached through two levels of paging that turn a 24-bit virtual address into
-      a 22-bit physical one. A page is 256 words, so the low eight bits pass through untouched.
-      There is no state in either level: a lookup is a ripple through two memories inside one
-      microcycle.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The microinstruction</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>04</span></div>
+    </footer>
+  </section>
+
+  <section id="map" aria-label="The map">
+    <div class="panel bare">
+      <span class="eyebrow">Map</span>
+      <h2 class="title t-l">The map</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 410" role="img" aria-label="The two-level map. A 24-bit virtual address is cut three ways: bits 23 to 13 index the first level, 2,048 entries of five bits; those five bits joined with bits 12 to 8 index the second level, 1,024 entries of 24 bits; bits 7 to 0 are the word within the page and pass through untranslated. The second-level word is bit 23, which permits the access at all, bit 22, which permits a write, eight bits the map hardware does not read, and fourteen bits of physical page. The physical page and the eight untranslated bits together are the 22-bit physical address. Both levels are asynchronous RAM chained combinationally.">
           <text class="d-t" x="10" y="18">the map, 24 virtual bits to 22 physical</text>
@@ -598,21 +669,23 @@
           <text class="d-s" x="60" y="394">bit 23 permits the access at all and bit 22 permits a write; a refusal reaches the microcode as a page fault</text>
         </svg>
       </div>
-      <figcaption>The refusal is what a page fault is, and a JUMP can test for it.</figcaption>
+      <figcaption class="cap long">The refusal is what a page fault is, and a JUMP can test for it.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-map">docs/cadr.md</a>, and the long form in <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/map.md">docs/map.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>What is where</h2>
-      <p>The physical address is 22 bits, so the Xbus can carry four million words. The top four of its
-      64 slots are not memory: two are I/O space and two are the whole of the Unibus. A cycle
-      to an address nothing answers is given up on by a timer on the bus interface.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The map</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>05</span></div>
+    </footer>
+  </section>
+
+  <section id="where" aria-label="What is where">
+    <div class="panel bare">
+      <span class="eyebrow">Space</span>
+      <h2 class="title t-l">What is where</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 490" role="img" aria-label="The physical address space, 22 bits and four million words, drawn as a column with the scale broken. From the bottom of the space upwards: main memory, one 64K-word board to a slot, which with 32 boards fitted is 2,097,152 words; then the slots with no board in them, where a cycle times out as a nonexistent memory; then Xbus I/O space from octal 17000000, holding the display's frame buffer of 32,768 words, the display's eight control words at octal 17377760, four words above them that answer nothing, and the disk controller's four registers at octal 17377774; and at the top the whole Unibus from octal 17400000, holding the I/O board at octal 764000, the bus interface's own four blocks at octal 766000, and the window at octal 140000 that the bus interface's sixteen map registers translate into Xbus memory.">
           <text class="d-t" x="10" y="18">the physical address space, 22 bits</text>
@@ -671,23 +744,23 @@
           <text class="d-s" x="86" y="478">word is two of them, the low half the lower</text>
         </svg>
       </div>
-      <figcaption>A Unibus master reaches Xbus memory through the window at the foot, because
-      the Unibus address space is not big enough to name it.</figcaption>
+      <figcaption class="cap long">A Unibus master reaches Xbus memory through the window at the foot, because the Unibus address space is not big enough to name it.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#what-is-where">docs/cadr.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The disk</h2>
-      <p>The disk controller is one board on the Xbus and it is a bus master as well as a
-      slave: it moves blocks into main memory itself. Writing the command register starts
-      nothing. A transfer begins when something is written to START, after the other registers
-      have been set up.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; What is where</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>06</span></div>
+    </footer>
+  </section>
+
+  <section id="disk" aria-label="The disk">
+    <div class="panel bare">
+      <span class="eyebrow">Disk</span>
+      <h2 class="title t-l">The disk</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 560" role="img" aria-label="The disk. On the left, a Trident pack seen from above: 815 cylinders, five heads on a T-80 and nineteen on a T-300, seventeen blocks to a track, which on a T-300 is 263,245 blocks. Below it the disk address, one word of unit, cylinder, head and block, three bits of unit being why one controller addresses eight drives; and below that the command list, which the controller walks a channel command word at a time, each word naming a physical page and saying whether another follows. On the right, what a block is on the surface: a preamble, a VFO lock, a sync byte, a 32-bit header and its checkword, a relock, another sync and a pad, 1,024 bytes of data which is one Lisp machine page, a data checkword and a postamble. The header's own fields are the next-block code, the cylinder, the head and the block. At the foot, the four registers, at which reading and writing the same address are two different registers.">
           <text class="d-t" x="10" y="18">the disk</text>
@@ -794,22 +867,23 @@
           <text class="d-s" x="840" y="506">START</text>
         </svg>
       </div>
-      <figcaption>A block is one Lisp machine page, and the drive carries three words of its own
-      beside it: a header, a checkword over the header, and a checkword over the data.</figcaption>
+      <figcaption class="cap long">A block is one Lisp machine page, and the drive carries three words of its own beside it: a header, a checkword over the header, and a checkword over the data.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-disk">docs/cadr.md</a>, and the long form in <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/disk-controller.md">docs/disk-controller.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The display</h2>
-      <p>MIT's word for the display controller is the TV, and the board this project
-      reproduces is the black-and-white SIMPLE TV. There is no color and no gray. The picture
-      is exactly what the software has written into the frame buffer.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The disk</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>07</span></div>
+    </footer>
+  </section>
+
+  <section id="display" aria-label="The display">
+    <div class="panel bare">
+      <span class="eyebrow">Display</span>
+      <h2 class="title t-l">The display</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 390" role="img" aria-label="The display. On the left the screen, 768 pixels across and 963 lines down at one bit a pixel, with the top line drawn as the 24 words of 32 bits it is. On the right the frame buffer, 32,768 words at octal 17000000, of which the picture uses 23,112; the eight control words at octal 17377760, of which register 0 is the mode register, registers 1 to 3 are the data, pointer and enable of the sync program RAM, and registers 4 to 7 answer the bus and do nothing; and the vertical interrupt, which is bit 4 of the mode register set at the start of a frame and is the machine's roughly-sixty-cycle clock at 64.7 hertz.">
           <text class="d-t" x="10" y="18">the display</text>
@@ -849,22 +923,23 @@
           <text class="d-s" x="320" y="354">or 64.7 hertz. The microcode hangs mouse tracking and its scheduler on it.</text>
         </svg>
       </div>
-      <figcaption>The frame is the machine's only regular interrupt, and the microcode counts
-      time by it.</figcaption>
+      <figcaption class="cap long">The frame is the machine's only regular interrupt, and the microcode counts time by it.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-display">docs/cadr.md</a>, and the long form in <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/tv.md">docs/tv.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The I/O board</h2>
-      <p>The I/O board is the machine's half of a conversation with a person. It is a Unibus
-      board carrying the keyboard, the mouse, two clocks, the serial port and the Chaosnet
-      interface. It answers a block of 64 addresses, in eight groups of eight.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The display</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>08</span></div>
+    </footer>
+  </section>
+
+  <section id="io" aria-label="The I/O board">
+    <div class="panel bare">
+      <span class="eyebrow">I/O</span>
+      <h2 class="title t-l">The I/O board</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 560" role="img" aria-label="The I/O board. On the left its Unibus block, octal 764000 to 764176, in eight groups of eight addresses: the first four go nowhere, then the keyboard, mouse, beep and status register, then the clocks and a port with nothing wired to it, then the Chaosnet interface, then the serial port's 2651. On the right, the keyboard's 24-bit word, which is five reserved ones, a three-bit source identifier and sixteen bits of information, and for the new keyboard that information is zeroes, a bit that says whether the key is coming up or going down, and a seven-bit key position. A key is a position and nothing else: both pressing and releasing send a code, and Shift, Control and Meta are keys of their own. Then the mouse, which is seven lines rather than a pair of coordinates; the three clocks with their addresses; and the four interrupt vectors on one grant chain.">
           <text class="d-t" x="10" y="18">the I/O board</text>
@@ -938,22 +1013,23 @@
           <text class="d-s" x="340" y="544">is named first, then the Chaosnet, then the serial port, then the keyboard.</text>
         </svg>
       </div>
-      <figcaption>The microsecond clock starts when the power comes on, and no Unibus reset
-      stops it.</figcaption>
+      <figcaption class="cap long">The microsecond clock starts when the power comes on, and no Unibus reset stops it.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-io-board">docs/cadr.md</a>, and the long form in <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/io-board.md">docs/io-board.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The light panel</h2>
-      <p>A CADR has a small panel of lamps and one button, on a cable from the control memory
-      board. Twelve of the connector's wires are used and the rest are not. Every internal
-      memory in the machine is parity checked, and the panel is where the checks show.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The I/O board</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>09</span></div>
+    </footer>
+  </section>
+
+  <section id="panel" aria-label="The light panel">
+    <div class="panel bare">
+      <span class="eyebrow">Panel</span>
+      <h2 class="title t-l">The light panel</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 310" role="img" aria-label="The light panel, on connector 1AJ2 of the ICMEM board, which the drawing marks TO LIGHT PANEL. Twelve wires are used: ten error lamps, the run lamp carrying MACHRUN, and the boot button, which is one wire grounded by a push button. The ten error lamps are the A memory, the M memory, the pushdown buffer, the microcode stack, the dispatch memory, the control store, main memory, both levels of the map, and the A memory's two address parity checks. Pins 15 to 22 of the connector are not connected. Beside it, on the ICMEM board itself, five TIL309 digits show the program counter in octal, and each digit's decimal point is a lamp of its own: two that gather the parity errors into groups, the dispatch memory's, the control store's, and one that says the boot PROM is selected.">
           <text class="d-t" x="10" y="18">the light panel</text>
@@ -1034,23 +1110,23 @@
           <text class="d-s" x="800" y="262">the boot PROM is selected</text>
         </svg>
       </div>
-      <figcaption>The button is one wire grounded by a push button, and it is one of five ways a
-      CADR can be told to boot.</figcaption>
+      <figcaption class="cap long">The button is one wire grounded by a push button, and it is one of five ways a CADR can be told to boot.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-light-panel">docs/cadr.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The debug cable</h2>
-      <p>A CADR is debugged by another CADR. The debugger's DBGOUT connector goes to the
-      debuggee's DBGIN, and over the cable one machine's Unibus cycles run on the other
-      machine's bus. The console program that does it is called CC, and it is Lisp software
-      running on the debugging machine.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The light panel</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>10</span></div>
+    </footer>
+  </section>
+
+  <section id="cable" aria-label="The debug cable">
+    <div class="panel bare">
+      <span class="eyebrow">Cable</span>
+      <h2 class="title t-l">The debug cable</h2>
     </div>
 
-    <figure class="fig">
+    <figure class="panel fig">
       <div class="scroll">
         <svg viewBox="0 0 1060 410" role="img" aria-label="The debug cable between two CADRs. MIT's cable is 21 wires: four go one way, the request, the write line and two address bits, which are bits 3 and 2 of the debugger's own Unibus cycle into octal 766100 through 766137; sixteen are the data lines, which either end may drive; and one comes back, the acknowledgment. At the debuggee a 74S139 decodes the two address bits into four strobes: run a cycle on this machine's Unibus at the address last latched, drive the error status onto the low byte, clock three bits into the modifier register, and clock sixteen bits into the address latches. Everything on the debuggee's Unibus is then reachable, which is the sixteen diagnostic registers, the I/O board, and main memory through the debuggee's own Unibus map. Nothing on the cable carries meaning by an edge alone: every wire is held for the whole of a request. The bus interface's timeout PROM gives an ordinary cycle 10 microseconds and one across the cable 30.">
           <defs>
@@ -1099,21 +1175,26 @@
           <text class="d-s" x="40" y="392">The bus interface&rsquo;s timeout PROM gives an ordinary cycle 10 microseconds, and one across the cable 30.</text>
         </svg>
       </div>
-      <figcaption>Once a cycle can run on the debuggee's Unibus, everything on that bus is
-      reachable, main memory included, through the debuggee's own Unibus map.</figcaption>
+      <figcaption class="cap long">Once a cycle can run on the debuggee's Unibus, everything on that bus is reachable, main memory included, through the debuggee's own Unibus map.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-debug-cable">docs/cadr.md</a>, and the long form in <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/debug-cable.md">docs/debug-cable.md</a>.</p>
     </figure>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>Where each drawing came from</h2>
-      <p>Nothing above is a first-hand invention. Numbers written with a leading
-      <code>0o</code> are octal, which is how MIT writes an address.</p>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The debug cable</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>11</span></div>
+    </footer>
+  </section>
 
+  <section id="sources" aria-label="Where each drawing came from">
+    <div class="panel bare">
+      <span class="eyebrow">Sources</span>
+      <h2 class="title t-l">Where each drawing came from</h2>
+      <p class="small" style="margin-top:0.4rem;">Nothing above is a first-hand invention. Numbers written with a leading <code>0o</code> are octal, which is how MIT writes an address.</p>
+    </div>
+
+    <div class="panel">
       <div class="tablewrap">
-        <table class="figsrc">
+                <table class="figsrc">
           <thead>
             <tr><th>Figure</th><th>Read from</th></tr>
           </thead>
@@ -1131,118 +1212,39 @@
           </tbody>
         </table>
       </div>
+      <p class="small">The sources themselves, file by file, are listed in <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#sources">docs/cadr.md</a>.</p>
     </div>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>Sources</h2>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; Sources</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>12</span></div>
+    </footer>
+  </section>
 
-      <h3>MIT's own files</h3>
-      <dl class="credits">
-        <div>
-          <dt>lmdoc/cadr.164</dt>
-          <dd>AI Memo 528, <i>CADR</i>, in the printing of 15 May 1980. The machine in MIT's
-          own words.</dd>
+  <!-- --------------------------------------------------------- colophon -->
+  <section id="colophon" aria-label="Colophon">
+    <div class="panels two end-split">
+      <div class="colophon">
+        <span class="eyebrow">End</span>
+        <p><b>&copy; 2026 Mete Balci.</b> muir-fpga is <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-or-later</a>; <a href="index.html#license">what is not this project&rsquo;s work</a> is on the front page.</p>
+        <p>The drawing style, the palette and the panels are Cold Boot&rsquo;s, a manga-style zine about the CADR, under CC BY-SA 4.0. The board is drawn for this site by the <a href="https://github.com/metebalci/ozd">ozd</a> project, in the same hand.</p>
+        <div class="actions">
+          <a class="key" href="https://github.com/metebalci/muir-fpga/tree/main/docs">Documents</a>
+          <a class="key lm" href="https://github.com/metebalci/muir-fpga">Repository</a>
         </div>
-        <div>
-          <dt>cadr/ir.bits</dt>
-          <dd>The microinstruction's field diagram, the functional source and destination
-          tables, and the sixteen diagnostic registers.</dd>
-        </div>
-        <div>
-          <dt>cadr/busint.erface</dt>
-          <dd>The five cables, the two buses they carry, and what a wait and a hang are.</dd>
-        </div>
-        <div>
-          <dt>cadr1/xspec.text.3</dt>
-          <dd>The Xbus specification: its cycles, its deskew delays, its arbitration, and the
-          pinout of every kind of slot in the cage.</dd>
-        </div>
-        <div>
-          <dt>cadrwd/cadr4.wlr, cadrwd/icmem3.wlr, cadr1/busint.wlr</dt>
-          <dd>The wire lists the two processor boards and the bus interface were wrapped from.
-          The light panel's connector is read from the second of them.</dd>
-        </div>
-        <div>
-          <dt>cadrtv/lmtv.order</dt>
-          <dd>The programming specification for the display board.</dd>
-        </div>
-        <div>
-          <dt>cadrio/, cadrdc/, cadrm/, chaos/lispm/</dt>
-          <dd>The drawings of the I/O board, the disk controller, the memory board and the
-          Chaosnet interface.</dd>
-        </div>
-        <div>
-          <dt>sys/ucadr/promh.text</dt>
-          <dd>MIT's source for the boot PROM, with its comments.</dd>
-        </div>
-      </dl>
-
-      <h3>Files in the System 100 release</h3>
-      <dl class="credits">
-        <div>
-          <dt>sys/doc/disk.text</dt>
-          <dd>"Programming the Disk Controller": every register, the format of a
-          block, and the two drive geometries.</dd>
-        </div>
-        <div>
-          <dt>sys/doc/unaddr.text</dt>
-          <dd>MIT's own allocation of Unibus and Xbus addresses.</dd>
-        </div>
-        <div>
-          <dt>sys/io1/ukbd.lisp</dt>
-          <dd>The keyboard's firmware, with the protocol at the end of it: the 24-bit word,
-          the key table, and the boot combination.</dd>
-        </div>
-        <div>
-          <dt>sys/io1/time.lisp, sys/io1/serial.lisp</dt>
-          <dd>The drivers for the two clocks and the serial port, which are where their Unibus
-          addresses are written down.</dd>
-        </div>
-        <div>
-          <dt>sys/window/shwarm.lisp</dt>
-          <dd>The window system's own use of the display, which is what fixes the shape of
-          the screen.</dd>
-        </div>
-      </dl>
-
-      <h3>This project, and muir</h3>
-      <dl class="credits">
-        <div>
-          <dt>muir, mit/README.md</dt>
-          <dd>The inventory of MIT's recovered files: what each one is, and how it reached
-          us.</dd>
-        </div>
-        <div>
-          <dt>muir, src/ and data/cables.txt</dt>
-          <dd>The simulator's module headers, which cite MIT's drawings by page and
-          part reference for each behavior they model, and the 92 wires of the five cables pin
-          by pin.</dd>
-        </div>
-        <div>
-          <dt>docs/</dt>
-          <dd>This repository's notes on the map, the display, the I/O board, the disk
-          controller and the debug cable, each written by reading MIT's files and naming
-          the line every claim came from.</dd>
-        </div>
-        <div>
-          <dt>rtl/machine/</dt>
-          <dd>The fabric this project builds, whose module headers transcribe the drawings page
-          by page.</dd>
-        </div>
-      </dl>
+      </div>
+      <div class="panel tone-pink center">
+        <svg class="chara" viewBox="-4 6 198 124" style="width:62%;" role="img" aria-label="muir-fpga's board, waving goodbye"><use href="#fpga-wave"/></svg>
+        <p class="cap" style="align-self:center;">Thanks for reading.</p>
+      </div>
     </div>
-  </div>
-</section>
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; Colophon</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>13</span></div>
+    </footer>
+  </section>
 
-<footer>
-  <div class="band">
-    <p>&copy; 2026 Mete Balci</p>
-  </div>
-</footer>
+</div>
 
 </body>
 </html>
