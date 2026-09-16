@@ -37,7 +37,7 @@ description of the diagnostic bus is quoted at the top of that file ---
 and `-DBWRITE`, and "the EADR<3:0> lines just follow the Unibus address
 <4:1>".
 
-`Engine::spy_read` answers a read (`../muir/src/rtl.rs:2679-2721`) and
+`Engine::spy_read` answers a read (`../muir/src/rtl.rs:2711-2753`) and
 `Machine::spy_write` takes a write (`../muir/src/machine.rs:630-645`) --- the
 latter "as the trailing edge of `-DBWRITE` does, from a Unibus cycle **or
 from a console with no bus at all**", which is `src/spy.rs`'s own sentence and
@@ -55,13 +55,13 @@ What a console does with them, in CC's own order
 and the state it reads back is the machine's own, recomputed: "the datapath
 is combinational, so a halted machine shows the console the result of the
 instruction it has not yet executed, which is what CC's `CC-EXECUTE-R` relies
-on" (`../muir/src/rtl.rs:2671-2678`).
+on" (`../muir/src/rtl.rs:2703-2710`).
 
 **`Halt` is not a hardware concept and a console can never see one.** muir's
 `Halt` enum has one variant, `UnknownDest`, constructed only by the
 low-fidelity `Micro` engine at `../muir/src/micro.rs:625`; `Rtl::step` never
-returns it (`../muir/src/rtl.rs:2652-2659`, "it cannot fail"). What a console
-reads instead is `FLAG-1`, and `../muir/src/main.rs:2278-2305` is the
+returns it (`../muir/src/rtl.rs:2684-2691`, "it cannot fail"). What a console
+reads instead is `FLAG-1`, and `../muir/src/main.rs:2378-2405` is the
 reference decode. Four stopped states, all of them in that one word:
 
     console halt    SRUN, bit 8, down --- RUN was written zero
@@ -776,14 +776,14 @@ check.
 
 | operation | held to | where |
 |---|---|---|
-| the sixteen reads | muir: `Engine::spy_read` | `../muir/src/rtl.rs:2679-2721`; every one of the sixteen is a column of `rtl.golden`, reconstructed by `SpyWord` in `tb/cadr_console_tb.cpp` |
+| the sixteen reads | muir: `Engine::spy_read` | `../muir/src/rtl.rs:2711-2753`; every one of the sixteen is a column of `rtl.golden`, reconstructed by `SpyWord` in `tb/cadr_console_tb.cpp` |
 | `FLAG-1` and `FLAG-2` bit order | muir: `Flag1::word`, `Flag2::word`, `Flag2::OPEN` | `../muir/src/spy.rs:396-421`, `561-576`, `559` |
 | register 3 reads all ones | muir: `spy::OPEN_READ` | `../muir/src/spy.rs:488` |
 | halt | muir: CC's first act, and what it means | `../muir/tests/lashup.rs:152-157`; `../muir/tests/spy.rs:729-741` --- "the microcycle in flight completes", then nothing moves while the master clock runs on |
 | `FLAG-1` halted, `0xe800` | muir: its own `HALTED` constant | `../muir/tests/spy.rs:706` |
 | `FLAG-1` running, `0xe900` | muir: its own `RUNNING` constant | `../muir/tests/spy.rs:705`, and `examples/cc.rs`'s own running/halted line reads exactly bit 8 |
 | start | muir | `../muir/tests/lashup.rs:311-315` |
-| CYCLES | muir: `Machine::cycles`, incremented at one place and only there | `../muir/src/rtl.rs:2386`; a halted master clock cycle returns at 2305 and a stall at 2325 without reaching it |
+| CYCLES | muir: `Machine::cycles`, incremented at one place and only there | `../muir/src/rtl.rs:2404`; a halted master clock cycle returns at 2323 and a stall at 2343 without reaching it |
 | the machine across a halt | muir, the strongest claim here: after sixteen halts and starts **all 600,000 microcycles still agree column for column** | the trace |
 | the GP1 face | a property: AXI3, no muir reference exists | one handshake a channel a burst, payload stable, RLAST where the length says, the ID echoed |
 | every address answered | a property, and the board's own failure | measured: an unanswered GP read hangs both Arm cores |
@@ -794,7 +794,7 @@ check.
 | the reset's length | a property, asserted as a number | the ticks the line is up are counted and compared with `RESET_T` |
 | the machine after a reset | muir: `Engine::boot` is reset then run | `run` up and `promdisable` down, and it re-executes all 600,000 microcycles of the boot PROM from zero --- PC, IR, LPC and OPC |
 | the console after a reset | a decision, argued in the module | IDENT, STAT's sticky `lost` and the reset count all stand, and the AXI write that asked completes |
-| `-PROG.RESET`, `PROG.BOOT` | muir: pulses and not settings | `../muir/src/spy.rs:229-234`, `../muir/src/busint.rs:254-263`; that they are *made* is checked here, what they reach is the machine's |
+| `-PROG.RESET`, `PROG.BOOT` | muir: pulses and not settings | `../muir/src/spy.rs:229-234`, `../muir/src/busint.rs:255-264`; that they are *made* is checked here, what they reach is the machine's |
 
 **Five signals this check compares with muir that nothing else in the
 repository ever has.** `Rtl::spy()` names twelve and `cadr_microcycle.sv`

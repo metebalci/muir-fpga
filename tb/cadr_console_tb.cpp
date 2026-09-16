@@ -8,7 +8,7 @@
 //
 // **WHAT IS HELD TO muir, AND WHERE THE REFERENCE IS.**
 //
-//   the sixteen reads  `Engine::spy_read`, muir/src/rtl.rs:2679-2721, whose
+//   the sixteen reads  `Engine::spy_read`, muir/src/rtl.rs:2711-2753, whose
 //                      sixteen answers are `IR` in three halves, `OPC`, `PC`,
 //                      `OB` in two, `FLAG-1`, `FLAG-2`, `M`, `A` and `ST` in
 //                      two each, and the open bus at register 3.  Every one
@@ -44,9 +44,9 @@
 //                      is the machine running --- and it is a constant muir
 //                      wrote down.
 //
-//   CYCLES             `Machine::cycles`, incremented at muir/src/rtl.rs:2386
+//   CYCLES             `Machine::cycles`, incremented at muir/src/rtl.rs:2404
 //                      and **only there**: a halted master clock cycle
-//                      returns at rtl.rs:2305 and a stall at 2325 without
+//                      returns at rtl.rs:2323 and a stall at 2343 without
 //                      reaching it.  The fabric's `clock_edge` is registered
 //                      `cpu_edge`, which is the same instant.  It is not
 //                      compared against a column, because the reference has
@@ -257,7 +257,7 @@ void Fail(const char *what, unsigned long long got, unsigned long long want) {
 }
 
 // What `Engine::spy_read` answers for this microcycle, off the reference's own
-// columns.  muir/src/rtl.rs:2679-2721 for the sixteen, muir/src/spy.rs for the
+// columns.  muir/src/rtl.rs:2711-2753 for the sixteen, muir/src/spy.rs for the
 // two flag words' bit order and polarities.
 //
 // `wait` is `FLAG-1` bit 15 and the trace has no column for it; every visit is
@@ -999,7 +999,7 @@ int main(int argc, char **argv) {
     Run(2000);
     if (k != at) Fail("a halted machine ran a microcycle", k, at);
 
-    // ---- CYCLES.  `Machine::cycles`, muir/src/rtl.rs:2386.  The console's
+    // ---- CYCLES.  `Machine::cycles`, muir/src/rtl.rs:2404.  The console's
     // ---- own count of retired microcycles is what names the row every
     // ---- register below is compared against, so if it is wrong every one of
     // ---- them says so.
@@ -1015,7 +1015,7 @@ int main(int argc, char **argv) {
     // re-opens it, and said on this check's own output.
     if (c.at(1) != 0) Fail("CYCLESH before the counter has a high half", c.at(1), 0);
 
-    // ---- the sixteen.  `Engine::spy_read`, muir/src/rtl.rs:2679.
+    // ---- the sixteen.  `Engine::spy_read`, muir/src/rtl.rs:2711.
     for (int e = 0; e < 16; ++e) {
       const uint32_t w = SpyRead(e);
       if (w >> 16) Fail("a diagnostic read said it was not answered", w >> 16, 0);
@@ -1676,7 +1676,7 @@ int main(int argc, char **argv) {
 
   // The two pulses, bits 6 and 7: `-PROG.RESET` and `PROG.BOOT`, gated with
   // the strobe on OLORD2 and asserted `REGISTER_PULSE_NS` before the register
-  // loads --- muir/src/spy.rs:229-234 and busint.rs:254-263.  They leave the
+  // loads --- muir/src/spy.rs:229-234 and busint.rs:255-264.  They leave the
   // register block here and are folded into `unused` in `cadr_machine.sv`;
   // what they reach is the machine's business, that they are made is this
   // module's.

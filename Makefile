@@ -2487,7 +2487,12 @@ CHECKPOINT_WORK := $(HOME)/.cache/muir-fpga-checkpoint
 # own.  What moved is the version byte in the header and the length of that
 # one run.  muir loads the file and saves it back byte for byte, and resumes
 # at the same microcycle.
-CHECKPOINT_SHA  := 25f6f4f5fbbf7f40537a30e2e8f9307f4069227fda80e4880ece7d4e7e2063e5
+#
+# **AND AGAIN WHEN IT WENT 26 TO 27.**  muir's `Rtl` records whose time it
+# keeps, `TimingModel`, as one byte after `speed_a`, so `chk_rtl.c` declares
+# it too.  The file grew by that one byte, 561,515 to 561,516.  muir loads it
+# and saves it back byte for byte, and resumes at the same microcycle.
+CHECKPOINT_SHA  := 6f87acb160f9c7c799266a26d11fb70fbcd350b771555cf8381fbdfeff94a54b
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of five nanoseconds each, the two the model sets.
 CHECKPOINT_RESUMED := at 78187493520 microcycles, 3274101291600 ns, 1 memory boards
