@@ -564,6 +564,15 @@
 @note exception arrived beside this note, in one commit --- and that is the
 @note point: the check that catches a fabric that stopped honoring the 80 ns
 @note is the same check that would catch a constraint claiming it wrongly.
+@note
+@note AND IT NOW HOLDS A SECOND EXCEPTION, IN THE SAME FILE AND BY THE SAME
+@note SENTENCE. `cadr_machine.xdc` gives the display board's `color_map` and
+@note `pointer` sixteen ticks to take the master's word, because
+@note `cadr_tv.sv:401` captures it at the FIRST tick -XBUS.RQ stands and
+@note `dev_rq` does not stand until `elapsed >= SETUP_T`. The machine's own
+@note slaves take the same lines from the same master under the same rule as
+@note the memory port does, so one mutation of `SETUP_T` is one tick outside
+@note BOTH bounds and no second record is written for the second clause.
 @old
   localparam int unsigned SETUP_T = 80 / 5;
 @new
@@ -15446,4 +15455,63 @@ puts "PROG: build $want, was $ubefore, now $uafter"
     if (r_map_q) r_word = {8'd0, map_word};
 @new
     if (r_map_q && 1'b0) r_word = {8'd0, map_word};
+@end
+
+@mutation the-register-strobe-is-a-tick-early
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note `rtl/plumbing/xilinx7/cadr_machine.xdc` gives the Unibus map and its
+@note write buffer THIRTY ticks to take the master's word, and the whole of
+@note that claim is `STROBE_T`: `land` and `land_wbuf` fire at
+@note `t_msyn == 7'(STROBE_T)`, thirty ticks after `-UB MSYN` rises, and a
+@note master has its data lines good before it raises the strobe.
+@note
+@note An exemption too wide tests nothing and looks exactly like one that is
+@note right, and the only way to test its tightness is a mutation of the
+@note design just outside the bound. Twenty-nine ticks where the exception
+@note claims thirty is exactly that.
+@note
+@note Written as the nanosecond figure rather than the tick count so that
+@note `STROBE_T` keeps its shape as a division by MIT's five, and `SSYN_T`
+@note beside it is untouched, so the READ's instant does not move and only
+@note the write's does. `busint-regs-the-write-lands-at-the-answer` above
+@note moves the same gate twenty ticks the other way; this one moves it one,
+@note which is the distance a constraint cares about.
+@old
+  localparam int unsigned STROBE_T = 150 / 5;
+@new
+  localparam int unsigned STROBE_T = 145 / 5;
+@end
+
+@mutation the-memory-path-leaves-reset-a-tick-late
+@check machine
+@file rtl/machine/cadr_machine.sv
+@note **THIS RECORD EXISTS TO SAY THAT THE RESET NETWORK MAY NOT BE
+@note RELAXED.** A fifteen-tick multicycle on `mach_rst` was proposed, on the
+@note argument that reset is held for many ticks and released with every
+@note input quiescent, and 1,128 of the paths that fail at a 5 ns tick are
+@note launched by a reset register. What a multicycle on that net permits is
+@note precisely a release that reaches one module later than another, so the
+@note claim is testable in the design: delay the memory path's reset by one
+@note tick and leave the processor's alone.
+@note
+@note `rst` stays read by every other instance, so lint has nothing to say,
+@note and the declaration is carried into the same hunk because a record is
+@note one contiguous block of text.
+@old
+  cadr_memory_path #(
+      .LMTV(LMTV),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+  ) memory (
+      .clk        (clk),
+      .rst        (rst),
+@new
+  logic rst_late;
+  always_ff @(posedge clk) rst_late <= rst;
+  cadr_memory_path #(
+      .LMTV(LMTV),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+  ) memory (
+      .clk        (clk),
+      .rst        (rst_late),
 @end
