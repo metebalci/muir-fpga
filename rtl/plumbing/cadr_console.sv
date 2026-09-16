@@ -210,7 +210,25 @@
 //
 //                 It is on this page beside the display boards for the same
 //                 reason they are: it is what the BOARD is.
-//     35-47       `UNMAPPED`
+//     35 LAMPS    **whether the board's activity lamps blink or hold a
+//                 level.**  A write of `LAMP_STEADY_KEY` makes them steady,
+//                 `--no-blinking-leds`; a write of its complement makes them
+//                 blink again, which is what the fabric comes up with.  It
+//                 reads back:
+//
+//                   bits 31:16  `LAMP_MARK`, a marker
+//                   bit 0       the lamps are steady
+//
+//                 Two lamps take it on the Arty Z7-20 --- LD1, the clock, and
+//                 LD2, the microcycles --- and one on the Cora Z7-07S, LD1's
+//                 green.  Steady, the clock lamp is the clock generator's
+//                 lock and the microcycle lamp is lit for a moment after each
+//                 microcycle; `rtl/plumbing/cadr_lamp_clock.sv` and
+//                 `rtl/plumbing/cadr_lamp_microcycle.sv` say why each.  What
+//                 the lamps SAY does not change, only how.  It is on this
+//                 page because it is what the board is doing and not what the
+//                 machine is.
+//     36-47       `UNMAPPED`
 //
 //   page 3, `REG_BASE + 0xC0`: all sixteen read `UNMAPPED`.
 //
@@ -633,6 +651,15 @@ module cadr_console #(
     parameter logic [31:0] HDMI_CW_KEY    = 32'h4852_4357,
     parameter logic [31:0] HDMI_CCW_KEY   = 32'h4852_4343,
     parameter logic [15:0] HDMI_MARK      = 16'h4844,
+    // **AND WHETHER THE LAMPS BLINK**, page 2's word 35: "STDY" makes them
+    // steady and its complement makes them blink again, on `DEBUG_KEY`'s rule
+    // that two opposite operations are a value and its complement, so that no
+    // partial write of one can be the other.  Four distinct bytes, none `00`
+    // or `FF`, and neither the key nor its complement is zero, all ones,
+    // `IDENT`, `UNMAPPED`, what the word reads back or any other key.  The
+    // marker is "LD", named for the word as `TV_MARK` and `HDMI_MARK` are.
+    parameter logic [31:0] LAMP_STEADY_KEY = 32'h5354_4459,
+    parameter logic [15:0] LAMP_MARK       = 16'h4C44,
     // **AND THE CABLE'S WIRING**, the same word and three more keys: "AUTO",
     // "STRA" and "CROS".  A Pmod ribbon is supposed to join pin one to pin
     // one; one made from two host sockets mirrors the header's two rows
@@ -833,6 +860,10 @@ module cadr_console #(
     output var logic [1:0]  hdmi_out,
     output var logic [1:0]  hdmi_rotate,
     input  var logic [1:0]  hdmi_mode,
+    // --- **WHETHER THE LAMPS BLINK**, page 2's word 35.  A level, 0 blinking
+    // --- and 1 steady, to the lamps in the board's own top level.  A board with
+    // --- no console never moves it and its lamps blink.
+    output var logic        steady_lamps,
     // --- and the cable's two counts, page 0's word 15: frames heard and
     // --- frames refused.  See the word's own entry above.
     input  var logic [23:0] dbg_frames,
@@ -1158,6 +1189,14 @@ module cadr_console #(
   logic w_is_hdmi;
   assign w_is_hdmi = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd2);
 
+  // And which beat says whether the lamps blink.  Page 2's word 35, a key and
+  // its complement, and a register load beside the state machine exactly as
+  // words 33 and 34 are.
+  logic w_is_lamps, w_is_lamps_steady, w_is_lamps_blink;
+  assign w_is_lamps        = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd3);
+  assign w_is_lamps_steady = w_is_lamps && (w_full == LAMP_STEADY_KEY);
+  assign w_is_lamps_blink  = w_is_lamps && (w_full == ~LAMP_STEADY_KEY);
+
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
   // ------------------------------------------------------------------------
@@ -1364,8 +1403,8 @@ module cadr_console #(
   assign tv_map_a = r_idx_q[3:0];
 
   always_comb begin
-    // **PAGE 2's WORD 0 AND ITS WORD 1 ARE THE ONLY WORDS OF PAGES 2 AND 3
-    // THAT ARE WORDS AT ALL**, and every other address of them falls through
+    // **PAGE 2's WORDS 0 TO 3 ARE THE ONLY WORDS OF PAGES 2 AND 3 THAT ARE
+    // WORDS AT ALL**, and every other address of them falls through
     // to `UNMAPPED` --- the same value an address outside the face reads.
     // Pages 4 and 5 are the two color maps, thirty-two words of their own.
     //
@@ -1373,7 +1412,8 @@ module cadr_console #(
     // words below are latched: it is loaded from the bitstream at
     // configuration and cannot move, so there is no instant for a latch to
     // name and nothing a second read could disagree with.  The display word
-    // is two flops read straight, for the same reason.
+    // is two flops read straight, for the same reason, and so are the display
+    // output's and the lamps' words.
     if (r_map_q) r_word = {8'd0, map_word};
     else if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build
                              : (r_hi_q && r_idx_q == 5'd1)
@@ -1381,6 +1421,8 @@ module cadr_console #(
                              : (r_hi_q && r_idx_q == 5'd2)
                                  ? {HDMI_MARK, 10'd0, hdmi_mode, hdmi_rotate,
                                     hdmi_out}
+                             : (r_hi_q && r_idx_q == 5'd3)
+                                 ? {LAMP_MARK, 15'd0, steady_lamps}
                                  : UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
     else begin
@@ -1462,6 +1504,10 @@ module cadr_console #(
       // that wants otherwise says so in `fpgarc`.
       hdmi_out    <= 2'b01;
       hdmi_rotate <= 2'd0;
+      // **AND THE LAMPS BLINK**, which is how every board has always come up:
+      // a blink is honest about a stopped clock by construction, and a card
+      // that wants a level says so in `fpgarc`.
+      steady_lamps <= 1'b0;
       r_idx_q     <= 5'd0;
       r_spy       <= 16'd0;
       r_lost      <= 1'b0;
@@ -1569,6 +1615,10 @@ module cadr_console #(
             else if (w_full == HDMI_CW_KEY)    hdmi_rotate <= 2'd1;
             else if (w_full == HDMI_CCW_KEY)   hdmi_rotate <= 2'd2;
           end
+          // Whether the lamps blink, page 2's word 35: the key and its
+          // complement, for the reason the color board's two are.
+          if (w_is_lamps_steady)     steady_lamps <= 1'b1;
+          else if (w_is_lamps_blink) steady_lamps <= 1'b0;
           if (w_in && w_idx[4]) wst <= W_CYCLE;
           else if (w_is_reset) begin
             mach_rst <= 1'b1;

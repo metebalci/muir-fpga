@@ -463,6 +463,8 @@ module cadr_cora #(
   logic [3:0]  con_tv_map_a;
   logic [23:0] con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q;
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
+  // Whether LD1's green blinks or holds a level, page 2's word 35.
+  logic        con_steady_lamps;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the twenty-one wires of the DBGIN connector.
@@ -1929,6 +1931,9 @@ module cadr_cora #(
         // reads it.
         .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
         .hdmi_mode(2'd0),
+        // Whether LD1's green blinks or holds a level, page 2's word 35:
+        // `cadr-console blinking-leds` and `--no-blinking-leds`.
+        .steady_lamps(con_steady_lamps),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -2083,6 +2088,9 @@ module cadr_cora #(
     // them at what a board comes up with rather than at nothing.
     assign con_hdmi_out    = 2'b01;
     assign con_hdmi_rotate = 2'd0;
+    // And nobody to ask for a steady lamp, so LD1's green blinks, which is
+    // what a board with a console comes up with too.
+    assign con_steady_lamps = 1'b0;
     assign con_tv_map_a = 4'd0;
     assign con_write = 1'b0;
     assign con_addr = 18'd0;
@@ -2296,20 +2304,12 @@ module cadr_cora #(
                    // reach nobody and are folded here.
                    con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
                    con_hdmi_out, con_hdmi_rotate,
+                   // Whether LD1's green blinks.  A `PROVE` board has a
+                   // console and no machine lamp to give it to, so there it
+                   // reaches nobody and is folded here.
+                   con_steady_lamps,
                    dbg_wire_state};
     end
-  end
-
-  // A microcycle is 29 ticks at normal speed and 44 at extra slow, which is
-  // what the boot PROM runs at: 440 ns of real time at a 10 ns tick. Bit 23
-  // of a count of them is 3.7 s a half-period --- a 7.4 s cycle, which reads
-  // as a light that is on or off rather than one that blinks. Bit 19 is
-  // 524,288 microcycles, 231 ms, about 2.2 Hz: fast enough to be obviously
-  // alive and slow enough to count.
-  logic [23:0] beat;
-  always_ff @(posedge clk) begin
-    if (mach_rst) beat <= 24'd0;
-    else if (clock_edge) beat <= beat + 24'd1;
   end
 
   // AND A HEARTBEAT THAT DOES NOT DEPEND ON THE MACHINE. Without it a dark
@@ -2371,11 +2371,18 @@ module cadr_cora #(
   //           GREEN channel below, which is the other half of the boot: blue
   //           while the PROM is selected, green blinking once the machine has
   //           its own microcode.
-  //   green   `beat[19]`, the microcycle blink: 524,288 microcycles, about
-  //           231 ms at the 10 ns tick, fast enough to be obviously alive and
-  //           slow enough to count.  It FREEZES when the machine stops, which
-  //           is the thing a level cannot say --- motion cannot be faked,
-  //           where a frozen fabric would still hold a level high.
+  //   green   bit 19 of a count of retired microcycles, the microcycle blink:
+  //           524,288 microcycles, about 231 ms at the 10 ns tick, fast enough
+  //           to be obviously alive and slow enough to count.  It FREEZES when
+  //           the machine stops, which is the thing a level cannot say ---
+  //           motion cannot be faked, where a frozen fabric would still hold a
+  //           level high.  **OR A LEVEL, with `--no-blinking-leds`**: lit for a
+  //           moment after every microcycle, so solid while the machine runs
+  //           and dark shortly after it stops.  Red and blue do not change and
+  //           neither does the order; only the green is a blink or a level.
+  //           `rtl/plumbing/cadr_lamp_microcycle.sv` is the lamp, held by
+  //           `build/blink_lamps.pass`, and the Arty Z7-20's LD2 is the same
+  //           module.
   //   red     `ERRHALT`, the machine stopping ITSELF: `ERRSTOP AND HALTED` at
   //           OLORD1, which on microcode 323 is `(si:%halt)` reached through
   //           `ILLOP`, `%HALT` and `ZERO`.  A console halt is not it --- that
@@ -2419,10 +2426,18 @@ module cadr_cora #(
         .lit(errhalt_lit)
     );
 
+    // The green's own source, blinking or steady.  Reset with the machine,
+    // which retires nothing while it is held there.
+    logic cycle_lamp;
+    cadr_lamp_microcycle u_lamp_microcycle (
+        .clk(clk), .rst(mach_rst), .steady(con_steady_lamps),
+        .retired(clock_edge), .lit(cycle_lamp)
+    );
+
     // Red over blue over green, as one expression, because three assignments
     // would let a later reader add a fourth state without meeting the order.
     assign lamp1 = {errhalt_lit,
-                    !errhalt_lit && promdisable && beat[19],
+                    !errhalt_lit && promdisable && cycle_lamp,
                     !errhalt_lit && promenable};
 
     // The heartbeat has no lamp here; see the note above the lamps.  It is

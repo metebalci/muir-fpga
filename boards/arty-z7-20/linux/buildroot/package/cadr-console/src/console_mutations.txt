@@ -418,3 +418,44 @@
 @new
 	const char *word = "trace-keys";
 @end
+
+# **WHETHER THE LAMPS BLINK, page 2's word 35.**  One setting and two keys, a
+# key and its complement, and the line that says which in words a person at
+# the board would recognize.
+
+@mutation the-lamps-are-asked-for-steady-both-ways
+@file console_face.c
+@why `blinking-leds on` writes the complement and `off` the key: a program that wrote the key both ways could make the lamps steady and never make them blink again
+@note The setting is still a function of its argument's type and nothing
+@note else changes, so the compiler has nothing to say; what catches it is
+@note asking for blinking lamps and reading the word back.
+@old
+	c->write(c, CONS_LAMPS, steady ? CONS_LAMP_STEADY_KEY : CONS_LAMP_BLINK_KEY);
+@new
+	c->write(c, CONS_LAMPS, steady ? CONS_LAMP_STEADY_KEY : CONS_LAMP_STEADY_KEY);
+@end
+
+@mutation the-lamps-word-is-read-at-the-marker
+@file console_face.c
+@why the setting is bit 0 of word 35 and the marker is bits 31:16; a decode that looked in the marker would report whatever the marker's bit happens to be, whatever the fabric holds
+@note "LD" is 0x4C44, whose bit 0 is clear, so the mutant reports blinking
+@note lamps on every board with the word --- including one that was just told
+@note to make them steady.
+@old
+	l->steady = (l->word & CONS_LAMP_STEADY) != 0;
+@new
+	l->steady = (l->word & (CONS_LAMP_STEADY << 16)) != 0;
+@end
+
+@mutation the-lamps-line-says-the-opposite
+@file console_face.c
+@why the line is what a person at the board reads, and one that called steady lamps blinking would send them to look for a blink that is not there
+@note The two sentences exchanged by testing the other sense, so every field
+@note stays read and both sentences stay in the program.
+@old
+	if (l->steady)
+		say("lamps: steady --- the clock lamp is the clock generator's lock, and the"
+@new
+	if (!l->steady)
+		say("lamps: steady --- the clock lamp is the clock generator's lock, and the"
+@end
