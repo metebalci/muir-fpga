@@ -22,19 +22,11 @@ build step and no generator, the same way
                   HDMI connector, the USB input program, the USB host
                   controller, the port it would drive and the no-auto-boot
                   switch are crossed off in their places
-    arty-a7-100.html
-                  the architecture drawing for the Arty A7-100. That board has
-                  no processing system at all, so everything the Arm cores and
-                  Linux do on the other two has to have an answer in fabric,
-                  and the drawing shows those answers in the positions the
-                  processing system's own parts hold. It draws nothing the
-                  board has not got, and nothing on it is crossed off
-    booting.html  how each board comes up, in three sequences: a Zynq board
-                  from its own card, the same board from a TFTP server while
-                  it is being worked on, and the Arty A7-100 from its own
-                  flash. The two Zynq boards come up the same way, so one
-                  drawing serves both and a label says where they differ. The
-                  Arty A7-100's is a plan and its caption says so
+    booting.html  how each board comes up, in two sequences: a Zynq board
+                  from its own card, and the same board from a TFTP server
+                  while it is being worked on. The two Zynq boards come up the
+                  same way, so one drawing serves both and a label says where
+                  they differ
     debugging.html
                   how one CADR debugs another, in five drawings: MIT's cable
                   of twenty-one wires and what CC reaches over it, the two
@@ -62,8 +54,7 @@ build step and no generator, the same way
 
 ## The two kinds of page
 
-A **drawing page** is `arty-z7-20.html`, `cora-z7-07s.html` or
-`arty-a7-100.html`. The drawing is
+A **drawing page** is `arty-z7-20.html` or `cora-z7-07s.html`. The drawing is
 the page. There is no heading, no caption and no prose on it, and each drawing
 carries its own title inside it. The only text outside the drawings is one
 faint line at the top saying which board this is and linking the other pages.
@@ -80,9 +71,7 @@ drawings, and all three of them draw in `currentColor` alone. **A sequence
 carries no status color.**
 A board drawing colors a block by how far along it is; a sequence says what
 happens and in what order, which is a different claim, so what is built and
-what is not is in the caption under each figure, in words. The Arty A7-100's
-sequence is a plan rather than a board, and its caption is where that is
-said.
+what is not is in the caption under each figure, in words.
 
 ## The drawings
 
@@ -96,17 +85,10 @@ the original, and the other two are derived from it. They share its viewBox and
 its translation, and a block two boards both have is at the same coordinates in
 both.
 
-**The two are derived in two different ways, because the two boards differ from
-the original in two different ways.** The Cora Z7-07S is the same architecture
-on a smaller part. Its drawing is the Arty Z7-20's with what that board does
-not have crossed off where it stands rather than taken out, so that a reader
-can see what is missing. The Arty A7-100 has no processing system at all, which
-makes it a different architecture around the same CADR rather than a smaller
-version of the same one. Its drawing therefore shows what is on that board and
-nothing else. Nothing on it is crossed off, what the board has not got is not
-drawn, and its legend has no row for the mark. What takes the place of the
-processing system is drawn in the positions that system's own parts hold, and
-that is what keeps the two pages readable side by side.
+**The derived one is derived by crossing off.** The Cora Z7-07S is the same
+architecture on a smaller part. Its drawing is the Arty Z7-20's with what that
+board does not have crossed off where it stands rather than taken out, so that
+a reader can see what is missing.
 
 **Every controller in the row at the foot of a drawing has the same left edge
 and the same width as the connector under it.** A controller and the thing it
@@ -117,40 +99,25 @@ on its right, which the wider box would swallow; and the UART's own line comes
 down on the UART's right, the gap on its left being the SD host's now.
 
 Under the machine, each drawing is three layers. The software region is on
-top. That is the Linux programs on a Zynq board and the firmware's own services
-on the Arty A7-100. Beside that region, at its left, stand the processor it
-runs on and the boot that starts that processor, in the same two places on all
-three drawings: the Arm cores and U-Boot on the Zynq boards, the Ibex and the
-QSPI flash on the Arty A7-100. Under it is a row of controllers, one for each
+top. That is the Linux programs the board runs. Beside that region, at its
+left, stand the processor it runs on and the boot that starts that processor,
+in the same two places on both drawings: the Arm cores and U-Boot. Under it is
+a row of controllers, one for each
 thing the board is attached to: the memory controller, the MAC, the SD host,
 the UART, and on the Arty Z7-20 the USB host. Under that row are the board's own
 connectors, one under each controller. A line that leaves a program ends on a
 controller and never on a connector. Each controller has one line down to the
-connector it drives. On the two Zynq boards every controller in the row is the
-part's own silicon, so the whole row is gray. On the Arty A7-100 every one of
-them is in the fabric, so each carries a color of its own.
+connector it drives. On both boards every controller in the row is the part's
+own silicon, so the whole row is gray.
 
-So a change to a block the Arty Z7-20 shares with another board is carried to
-that board's drawing by the same edit, at the same coordinates, and the three
+So a change to a block the Arty Z7-20 shares with the other board is carried
+to that board's drawing by the same edit, at the same coordinates, and the two
 can be compared with `diff`. The
 differences that are meant to be there are the titles, the part, the figures
 under the fabric's label, the status colors and the lamp rows, and then
 whatever the derivation itself adds. On the Cora Z7-07S that is the crossed-off
-blocks and the legend's extra swatch. On the Arty A7-100 it is the blocks that
-replace the processing system's, the blocks that are not drawn at all, and the
-legend one row shorter. Anything else in a diff between two of these files is
-a drift, and that is the point of keeping the geometry identical.
-
-The Arty A7-100's largest difference is the band under the machine. The other
-two drawings have a row of five port boxes there, and each of those is a hard
-boundary: the place the fabric's wires stop and the processing system's silicon
-begins. The Arty A7-100 has no such boundary anywhere, so that band holds one
-box and two wires and is otherwise empty. The box is the soft system's AXI
-bridge, which is a component. The two wires are the machine's memory path and
-the disk controller's channel, each running as one line from the block that
-masters it into the memory controller at the foot of the drawing. Nothing is
-drawn where they pass, because naming a wire in a box would invent a part the
-board has not got.
+blocks and the legend's extra swatch. Anything else in a diff between these two
+files is a drift, and that is the point of keeping the geometry identical.
 
 Everything the drawings assert about the machine comes from `README.md`,
 `rtl/machine/cadr_cables.map` and `rtl/machine/cadr_xbus_decode.sv`. The fit
@@ -165,7 +132,7 @@ about a board and not about the code.
 
 A block with no color at all has not been started. It is drawn so that the
 shape of the machine is known before the work begins. The Color TV --- MIT's
-second display board, on the Xbus beside the monochrome one on all three
+second display board, on the Xbus beside the monochrome one on both
 pages --- was drawn that way for a while and is turquoise now: it is built and
 checked here, and no monitor has shown its picture.
 
@@ -176,8 +143,7 @@ that says nothing about progress, and the legend calls it "not available on
 this board". A line that exists only to reach such a block stays drawn and goes
 faint with it, as far as the first junction where another line joins it or the
 first box it meets, because past that junction the same wire serves something
-the board does have. The Arty A7-100's drawing uses none of this. It is not the
-original with pieces struck out, so it draws only what is there.
+the board does have.
 
 ## The one change to muir's stylesheet
 

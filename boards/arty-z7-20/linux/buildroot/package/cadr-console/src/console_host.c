@@ -3,7 +3,7 @@
 //
 // The console's host half: the words that are not cycles on the diagnostic
 // bus.  `console_host.h` says why they are not in `console_face.c`, which is
-// compiled for the Arty A7-100's bare-metal firmware as well as for Linux.
+// kept clear of anything that needs an operating system.
 
 #include "console_host.h"
 

@@ -1,20 +1,20 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The two `program.tcl`s, against a stubbed hardware manager, ten cases
-# apiece, and three more on the flow's own end.  No Vivado, no cable and no
-# part: `tclsh tb/cadr_program_tb.tcl`.
+# `program.tcl`, against a stubbed hardware manager, ten cases, and three
+# more on the flow's own end.  No Vivado, no cable and no part:
+# `tclsh tb/cadr_program_tb.tcl`.
 #
 #     make build/program_tcl.pass
 #
 # WHY THIS EXISTS.  A programming script's verdict used to be the DONE bit
 # alone, and DONE is high before the download on any part that was already
 # configured.  So the witness read the same whether the configuration took or
-# not, and on the Arty A7-100 three downloads in six did not take while the
-# script reported that they had.  What found that was an identity read out of
+# not, and on one board three downloads in six did not take while the script
+# reported that they had.  What found that was an identity read out of
 # the design; the script itself could not have.
 #
-# The scripts now compare the build the part reads back over JTAG against the
+# The script now compares the build the part reads back over JTAG against the
 # build the bitstream names.  `tools/build_stamp.tcl` holds both ends of that
 # and the measurements behind it.
 #
@@ -47,12 +47,11 @@
 set here [file dirname [file normalize [info script]]]
 set repo [file normalize [file join $here ..]]
 
-# The two scripts under test, resolved from THIS FILE and not from the working
+# The script under test, resolved from THIS FILE and not from the working
 # directory --- so the mutation runner, which runs the harness out of a copy
-# of the tree, tests that copy's scripts and never the working tree's.
+# of the tree, tests that copy's script and never the working tree's.
 set SCRIPTS {
     {z7 {boards arty-z7-20 vivado program.tcl}  xc7z020_1}
-    {a7 {boards arty-a7-100 vivado program.tcl} xc7a100t_0}
 }
 
 # ------------------------------------------------------------------ the model
@@ -81,8 +80,8 @@ proc close_hw_manager {args} {}
 proc current_hw_device {args} {}
 proc refresh_hw_device {args} {}
 proc get_hw_devices {args} {
-    # The chain as each board presents it.  `get_hw_devices <name>` filters,
-    # which is how both scripts name their part rather than taking position 0.
+    # The chain as the board presents it.  `get_hw_devices <name>` filters,
+    # which is how the script names its part rather than taking position 0.
     set all $::model(chain)
     foreach a $args {
         if {[string index $a 0] eq "-"} { continue }
@@ -288,10 +287,10 @@ if {[lindex $argv 0] eq "--case"} {
         }
     }
     if {$script eq ""} { puts stderr "no such script: $which" ; exit 2 }
-    # The chain each board presents: the Zynq's carries the ARM debug access
-    # port beside the part, and the Artix is one device.  Both scripts name
-    # their part rather than taking position 0, and this is what they name.
-    set ::model(chain) [expr {$which eq "z7" ? [list $part arm_dap_0] : [list $part]}]
+    # The chain the board presents: the Zynq's carries the ARM debug access
+    # port beside the part.  The script names its part rather than taking
+    # position 0, and this is what it names.
+    set ::model(chain) [list $part arm_dap_0]
 
     foreach spec $CASES {
         lassign $spec name want_exit files settings lines
@@ -431,7 +430,7 @@ set self [file normalize [info script]]
 set bad 0
 set broke {}
 set runs 0
-puts "the two program.tcl scripts against a stubbed hardware manager:"
+puts "program.tcl against a stubbed hardware manager:"
 
 foreach why [flow_cases $outdir] {
     incr bad ; lappend broke "flow" ; puts [format "  %-4s %-13s FAIL %s" flow "" $why]
@@ -482,7 +481,7 @@ if {$bad} {
     puts "FAIL: $bad of $runs cases read wrongly: [join $broke {, }]"
     exit 1
 }
-puts "ok: $runs cases, and both program.tcl scripts say which of the four\
+puts "ok: $runs cases, and program.tcl says which of the four\
  things happened"
 puts "    a part that did not take the download is refused, and a part that\
  already held this build is not called a download that took"

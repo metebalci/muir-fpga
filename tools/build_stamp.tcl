@@ -36,13 +36,12 @@
 # ------------------------------------------------- what the two registers are
 #
 # `BITSTREAM.CONFIG.USERID` loads the JTAG USERCODE register.  The USERCODE
-# instruction is in all three parts' BSDL --- opcode `001000`, reading the
+# instruction is in both parts' BSDL --- opcode `001000`, reading the
 # 32-bit `DEVICE_ID` register, with `USERCODE_REGISTER` given as 32 X's
 # because what it holds is whatever was loaded into it.  The files are
 # `Vivado/data/parts/xilinx/zynq/public/bsdl/xc7z020_clg400.bsd` and
-# `xc7z007s_clg400.bsd`, and `artix7/public/bsdl/xc7a100t_csg324.bsd`.
-# Vivado's own device tables say the family supports it as well
-# (`Vivado/data/xicom/artix7.cfg` and `azynq.cfg`, `USERCODE = TRUE` with the
+# `xc7z007s_clg400.bsd`.  Vivado's own device tables say the family supports
+# it as well (`Vivado/data/xicom/azynq.cfg`, `USERCODE = TRUE` with the
 # same opcode).  The hardware manager reads it back as the `REGISTER.USERCODE`
 # property of a `hw_device`, documented with an example value of `ffffffff` in
 # `Vivado/doc/eng/class/hw_device`.

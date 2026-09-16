@@ -4,26 +4,24 @@
 // **THE CONSOLE'S HOST HALF: THE WORDS THAT NEED AN OPERATING SYSTEM UNDER
 // THEM.**
 //
-// `console_face.h` and `console_face.c` are the diagnostic register face, and
-// they are compiled TWICE.  Once for Linux, on the Arty Z7-20 and the Cora;
-// and once by `boards/arty-a7-100/firmware/`, for an Ibex core with picolibc
-// and no kernel at all.  Everything in them is a cycle on the bus and means
-// the same thing on both machines.
+// `console_face.h` and `console_face.c` are the diagnostic register face.
+// Everything in them is a cycle on the bus and arithmetic on what comes back,
+// and none of it asks an operating system for anything.  They were once
+// compiled a second time for a bare-metal core with picolibc and no kernel at
+// all, which is where that rule came from.
 //
 // This pair is the other half: what `cadr-console` does that is not about the
 // fabric, and so asks an operating system for something.  The front end and
-// `console_test.c` compile it; the firmware's own rules in the top-level
-// Makefile name `console_face.c` and not this file, so a word that needs a
-// kernel cannot reach the firmware's link by accident.
+// `console_test.c` compile it, and nothing else does.
 //
 // **THAT SEPARATION IS NOT TIDINESS, IT IS A MEASUREMENT.**  `trace-keys` was
-// written into `console_face.c` and the firmware stopped linking the same
-// day: `fopen` alone drags picolibc's stdio in, which wants `open`, `close`,
-// `read`, `write` and `lseek`, and `sbrk` wants a `__heap_end` this firmware
-// has not got.  Nothing called the new function --- it was enough that it was
-// in the object file.  So a check on the rule is cheap and exists:
-// `make build/soc.pass` builds this firmware, and it is the thing that says
-// the face file is still a face file.
+// written into `console_face.c` and that second build stopped linking the
+// same day: `fopen` alone drags picolibc's stdio in, which wants `open`,
+// `close`, `read`, `write` and `lseek`, and `sbrk` wants a `__heap_end` it had
+// not got.  Nothing called the new function --- it was enough that it was in
+// the object file.  The second build is gone, so NOTHING CHECKS THE RULE ANY
+// MORE: what keeps the face file a face file is this note and whoever reads
+// it before adding a word.
 
 #ifndef CONSOLE_HOST_H
 #define CONSOLE_HOST_H
@@ -101,9 +99,8 @@
 // write and is exactly what the prefix exists for.
 //
 // It is here rather than in `console_face.c` for the reason the file says at
-// its head --- the face is compiled for the Arty A7-100's bare-metal
-// firmware, which has a `say()` of its own over a UART and no terminals at
-// all.
+// its head --- the face is the register face, and it knows nothing about
+// terminals.
 #define CONS_LOG_PREFIX "cadr-console: "
 
 // The prefix to open the log with: `CONS_LOG_PREFIX`, or "" for a bare reply.
@@ -170,9 +167,8 @@ void cons_say_trace(const struct cons_trace *r, int on);
 // one thing this project does not do with numbers.
 //
 // It is in the HOST half and not the face, because a version is about the
-// program and the firmware is a different program: the Arty A7-100's banner
-// names the FABRIC's build through `cons_say_build`, and its own build is the
-// firmware's business.
+// PROGRAM while `cons_say_build` names the FABRIC's build, and anything else
+// that printed the fabric's build would have a version of its own to give.
 const char *cons_version(void);
 
 #endif

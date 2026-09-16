@@ -16,7 +16,6 @@
     <nav>
       <a href="arty-z7-20.html">Arty Z7-20</a>
       <a href="cora-z7-07s.html">Cora Z7-07S</a>
-      <a href="arty-a7-100.html">Arty A7-100</a>
       <a href="booting.html">Booting</a>
       <a href="debugging.html">Debugging</a>
       <a href="faq.html">FAQ</a>
@@ -300,7 +299,7 @@
       <div class="scroll">
         <svg viewBox="0 0 1060 504" role="img" aria-label="The cable, drawn as two Pmod headers and the ribbon between them. Each header is twelve pins in two rows: pins 1 to 6 above and 7 to 12 below. Pins 1 to 4 and 7 to 10 are signals, pins 5 and 11 are ground, and pins 6 and 12 are 3.3 V and are crossed off, because a cable for this link leaves them open at both ends. The ribbon joins pin 1 to pin 1 and so on. Pins 1 to 4 are one group and 7 to 10 the other: whichever board is the debugger drives one group and the debuggee drives the other, and neither is ever driven from both ends. Below, the same two headers drawn again to show what a connector pressed on the other way up does: each board's pins 1 to 4 land on the other's pins 7 to 10, in order. A board told to be the debugger drives nothing at first, listens on both groups and compensates; only the debugger compensates, because two ends compensating would cross the cable again.">
           <text class="d-t" x="10" y="18">the cable</text>
-          <text class="d-s" x="10" y="36">Pmod JA on the two Zynq boards; Pmod JB on the Arty A7-100, which is a high-speed port there</text>
+          <text class="d-s" x="10" y="36">Pmod JA on both boards</text>
 
           <text class="d-t" x="248" y="70" text-anchor="middle">this board&rsquo;s header</text>
           <rect class="d-box" x="80" y="82" width="56" height="40"/>
@@ -406,9 +405,9 @@
           <text class="d-s" x="80" y="496">end compensating is what straightens a mirrored ribbon and two ends compensating would cross it again.</text>
         </svg>
       </div>
-      <figcaption>The connector is Pmod JA on the two Zynq boards and Pmod JB
-      on the Arty A7-100, whose headers are not alike: JB is one of its two
-      high-speed ports, and its card stays on JD.</figcaption>
+      <figcaption>The connector is Pmod JA on both boards. Every board indexes
+      a header's eight signals in the same order, so a straight ribbon maps each
+      pin to its counterpart whichever headers the two ends are.</figcaption>
     </figure>
   </div>
 </section>
