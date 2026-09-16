@@ -63,6 +63,33 @@ int main(int argc, char **argv) {
   dut->dev_ack = 0;
   dut->eval();
 
+  // **MUIR'S t = 0 IS TWO EDGES AFTER THE RESET EDGE, NOT THE RESET EDGE.**
+  // Row n is compared as the outputs edge n settled, and that is muir's
+  // instant n ticks in: the frame `tb/cadr_machine_tb.cpp` reads the whole
+  // machine in, where `-MEMGRANT` falls on the edge muir grants on.  In that
+  // frame the machine's power-on --- where muir's ring starts and where
+  // `chip::toggle_at` counts the timeout oscillator from --- is two edges
+  // after the reset edge: the ring starts on the first edge reset is low
+  // (`cadr_phase_gen.sv`), and the processor and this interface take the
+  // ring's boundary one edge after the ring makes it (`boundary` in
+  // `cadr_microcycle.sv`).  So the reset edge and one idle edge come before
+  // row 0 here, as they do on the board.
+  //
+  // This check used to reset the module ON row 0.  That held the oscillator
+  // to a power-on two ticks earlier than the machine has, and it passed
+  // with the oscillator two ticks early --- issue #21, which only the whole
+  // machine's NXM leg could see.  The two agree now because both are the
+  // machine's frame, and `POWER_ON_T` in the module is what they agree on.
+  constexpr int kPowerOnEdges = 2;
+  for (int e = 0; e < kPowerOnEdges; ++e) {
+    dut->rst = (e == 0);
+    dut->clk = 1;
+    dut->eval();
+    dut->clk = 0;
+    dut->eval();
+  }
+  dut->rst = 0;
+
   char line[256];
   long checked = 0;
   int bad = 0;
@@ -98,7 +125,6 @@ int main(int argc, char **argv) {
       return 2;
     }
 
-    dut->rst = (r.tick == 0);
     dut->mclk = r.mclk;
     dut->n_memrq = r.n_memrq;
     dut->wrcyc = r.wrcyc;

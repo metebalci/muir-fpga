@@ -603,6 +603,26 @@ int main(int argc, char **argv) {
   dut->dbd_in = 0;
   dut->eval();
 
+  // **MUIR'S t = 0 IS TWO EDGES AFTER THE RESET EDGE, NOT THE RESET EDGE**:
+  // the reset edge --- both resets, which are one tick until the cable's own
+  // run writes the modifier bit --- and one idle edge come before tick 0, as
+  // they do in the whole machine.  So `tick * kTickNs` below is muir's time,
+  // and the REQTIM oscillator's phase at a grant is read off it directly.
+  // `tb/cadr_busint_xbus_tb.cpp` gives the argument at its own
+  // `kPowerOnEdges`, and `POWER_ON_T` in `cadr_busint_xbus.sv` is what it
+  // holds; issue #21.
+  constexpr int kPowerOnEdges = 2;
+  for (int e = 0; e < kPowerOnEdges; ++e) {
+    dut->rst = (e == 0);
+    dut->dbg_rst = (e == 0);
+    dut->clk = 1;
+    dut->eval();
+    dut->clk = 0;
+    dut->eval();
+  }
+  dut->rst = 0;
+  dut->dbg_rst = 0;
+
   // One tick.  Nothing is behind the memory port on a Unibus cycle --- the
   // decode sends none of these addresses there --- but it is answered anyway
   // so that a fault which sent one to main memory hangs nothing and shows up
@@ -645,8 +665,8 @@ int main(int argc, char **argv) {
   // The far end of the debug cable, as the section below drives it.
   long cable_latency = -1, cable_count = -1;
   auto Tick = [&]() {
-    dut->rst = (tick == 0) || cable_rst_q;
-    dut->dbg_rst = (tick == 0);
+    dut->rst = cable_rst_q;
+    dut->dbg_rst = 0;
     dut->mclk = (tick % kMicrocycle) == 0;
     dut->clk = 1;
     dut->eval();
