@@ -1,4 +1,4 @@
-# `site/`
+# `pages/`
 
 This directory is the project page. The files are hand-written, and there is no
 build step and no generator, the same way
@@ -240,6 +240,6 @@ is ever wanted, is a `CNAME` record plus the Custom domain field.
 `muir.metebalci.com` is set up that way.
 
 One thing to know about what that publishes: **everything committed under
-`site/` becomes reachable**, whether it is linked or not. That is why
+`pages/` becomes reachable**, whether it is linked or not. That is why
 `full-page.html` is gitignored rather than merely unlinked. It would otherwise
 answer at `/full-page.html` with nothing pointing at it.
