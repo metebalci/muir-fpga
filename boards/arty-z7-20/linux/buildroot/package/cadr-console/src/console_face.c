@@ -1037,6 +1037,39 @@ void cons_say_hdmi(const struct cons_hdmi *h)
 	    cons_hdmi_mode_name(h->mode));
 }
 
+// --- whether the activity lamps blink, page 2's word 35 --------------------
+//
+// `console_face.h` has what the two ways look like and why the steady one is
+// what it is.
+
+void cons_read_lamps(struct console *c, struct cons_lamps *l)
+{
+	l->word = c->read(c, CONS_LAMPS);
+	l->mark_ok = CONS_LAMP_MARK_OF(l->word) == CONS_LAMP_MARK;
+	l->steady = (l->word & CONS_LAMP_STEADY) != 0;
+}
+
+void cons_set_lamps_steady(struct console *c, int steady)
+{
+	c->write(c, CONS_LAMPS, steady ? CONS_LAMP_STEADY_KEY : CONS_LAMP_BLINK_KEY);
+	++c->writes;
+}
+
+void cons_say_lamps(const struct cons_lamps *l)
+{
+	if (!l->mark_ok) {
+		say("lamps: word 35 did not carry its marker (0x%08x);"
+		    " this fabric is older than it is, and its lamps blink", l->word);
+		return;
+	}
+	if (l->steady)
+		say("lamps: steady --- the clock lamp is the clock generator's lock, and the"
+		    " microcycle lamp is lit while the machine runs and dark when it stops");
+	else
+		say("lamps: blinking --- the clock lamp and the microcycle lamp blink,"
+		    " and the microcycle blink freezes when the machine stops");
+}
+
 void cons_read_color_map(struct console *c, int board,
 			 uint8_t map[CONS_MAP_COLORS][CONS_MAP_CHANNELS])
 {

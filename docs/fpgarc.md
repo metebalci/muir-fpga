@@ -197,6 +197,11 @@ three bitstreams carry the three modes and this line is compared against what th
 fabric reports. A card naming a mode the bitstream does not carry gets a line
 saying so rather than a setting that quietly does nothing.
 
+**The lamps**, read by `S80cadr-disk-packs` and written into the console face.
+One flag, and the section below is about it.
+
+    --no-blinking-leds    the activity lamps hold a level instead of blinking
+
 **The boot button**, read by `S80cadr-disk-packs` before it starts the disk pack
 program. One flag, and the section below is about it.
 
@@ -409,6 +414,32 @@ init step removes a marker it finds all the same, because a `restart` of that
 script is a case that can leave one standing, and a marker that outlives its
 hold is a lie about the machine.
 
+## `--no-blinking-leds`
+
+The board's activity lamps hold a level instead of blinking. On the Arty Z7-20
+those are LD1, the fabric's clock, and LD2, the microcycles. On the Cora Z7-07S
+it is LD1's green. The fabric comes up blinking, and a card that says nothing
+keeps the blink.
+
+Steady, the clock lamp is the clock generator's lock and the microcycle lamp is
+lit while the machine retires microcycles, dark about 42 ms after it stops.
+What the lamps say does not change, only how. `docs/board.md` has the lamps and
+says why each steady form is what it is.
+
+This is not a muir flag, because muir has no lamps. It is spelled the way muir
+spells a setting that turns something off.
+
+`S80cadr-disk-packs` reads the line first, before anything else it does, and
+asks the console with `cadr-console blinking-leds off`. That command exits 0
+when the lamps are steady afterwards, so a console that could not be reached
+and a fabric too old to have the word both get one line saying the lamps blink.
+The boot goes on either way. `cadr-console blinking-leds on` and `off` do the
+same thing at any time, and with no word it says which the lamps are doing.
+
+**A fabric reset puts the lamps back to blinking**, as it puts every setting on
+the console's face back to what the fabric comes up with, and the init step does
+not run again until the next boot.
+
 ## `--debug-cable-connect`
 
 muir's flag, and it means here what it means there: be the debugger on the
@@ -489,6 +520,13 @@ differ in one character and carry the same explanation. A released card always
 boots its band by itself, because `STANDALONE` clears the setting along with
 everything else that comes from `local.conf`.
 
+`--no-blinking-leds` is written the same way. `NO_BLINKING_LEDS=1` in
+`local.conf` makes the line live on a development card, for a board left
+running where a blink is a distraction. A released card always writes it
+commented, so a released board blinks: `STANDALONE` clears the variable, and
+the card script also refuses it under `RELEASE`, so the menu a stranger is given
+never depends on one flag having done its job.
+
 ## The released card's menu has three live lines
 
 A card a stranger is given carries the same whole menu, with three of its lines
@@ -535,6 +573,13 @@ flag, a commented-out flag, a flag no list names, and a file that is not there
 told apart from a file with nothing in it. It holds the boot button's step under
 a stubbed console, both when the flag is there and when it is not, and it holds
 the card script's two ways of writing the line.
+
+It holds the lamps' step the same way: a card with `--no-blinking-leds` asks the
+console for `blinking-leds off` with the boot log named, a card without it asks
+nothing, and a console that did not make the lamps steady is said to have
+failed while the boot goes on. It holds the card script's three ways of writing
+that line: commented by default, live with `NO_BLINKING_LEDS=1` and nothing else
+made live with it, and commented on a released card even with the variable set.
 
 One case in it claims another program's flag on purpose and requires that the
 flag then arrives. Everything else in that section is an absence, and an absence

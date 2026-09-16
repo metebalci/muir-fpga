@@ -197,6 +197,7 @@ done
 # reading the file cannot go wrong that way, and it makes a release image
 # depend on this script and on nothing on whoever's build host.
 SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
+NO_BLINKING_LEDS=
 if [ -z "$STANDALONE" ] && [ -r "$BOARD_DIR/linux/local.conf" ]; then
   . "$BOARD_DIR/linux/local.conf"
 fi
@@ -224,6 +225,10 @@ fi
 # it would look broken.  So it follows the flag rather than the rule about
 # private values.
 #
+# **AND NO_BLINKING_LEDS, FOR THE SAME REASON.**  Steady lamps are what a board
+# left running on a desk overnight wants, and a released card keeps the blink,
+# which is what a stranger switching a board on for the first time can read.
+#
 # **AND IT CLEARS THE CHAOSNET STATION NUMBERS, WHICH IT USED NOT TO.**  Those
 # two are not private in the way an address on somebody's network is --- the
 # subnet is private in the way 192.168 is --- but they are this BOARD'S
@@ -235,6 +240,7 @@ fi
 # environment, and an exported value has to be stopped the same way.
 if [ -n "$STANDALONE" ]; then
   SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
+  NO_BLINKING_LEDS=
   CHAOS_ADDR_FPGA=; CHAOS_ADDR_MUIR=; CHAOS_UDP_PORT=; CHAOS_UDP_PORT_MUIR=
   TERMINAL_ENDPOINT=; SERIAL_ENDPOINT=; KEYBOARD_BOOT=; MUIR_TERMINAL_PORT=
 fi
@@ -570,6 +576,20 @@ if [ -n "${NO_AUTO_BOOT:-}" ] && [ "${NO_AUTO_BOOT}" != "0" ]; then
 else
   NO_AUTO_BOOT_PREFIX="#"
 fi
+# **THE LAMPS BLINK UNLESS local.conf ASKS FOR A LEVEL, AND A RELEASE ALWAYS
+# BLINKS.**  The same one-character difference as the boot button's: a board
+# that is being worked on and left running sets NO_BLINKING_LEDS=1 in
+# local.conf and gets `--no-blinking-leds` live, and every other card carries
+# the same line commented out under the same sentence.  A released card is
+# written commented whatever the environment says --- STANDALONE has already
+# cleared the variable, and RELEASE is asked here as well, so that the menu a
+# stranger is given never depends on one flag having done its job.
+if [ -n "${NO_BLINKING_LEDS:-}" ] && [ "${NO_BLINKING_LEDS}" != "0" ] \
+   && [ -z "${RELEASE:-}" ]; then
+  NO_BLINKING_LEDS_PREFIX=""
+else
+  NO_BLINKING_LEDS_PREFIX="#"
+fi
 # **EVERY FLAG EVERY PROGRAM TAKES FROM THIS FILE IS WRITTEN INTO IT, grouped
 # by program, each under a sentence or two saying what it does and what it
 # falls back to.**  The ones a card uses are live and the rest are commented
@@ -841,6 +861,18 @@ fi
   printf -- "#--hdmi-mode 1280x1024\r\n"
 
   printf "\r\n"
+  printf "# ========================================================= the lamps\r\n"
+  printf "# Read by the disk pack program's init script, which asks the console\r\n"
+  printf "# for it. docs/board.md has the lamps.\r\n"
+  printf "\r\n"
+  printf "# With this line the activity lamps hold a level instead of blinking:\r\n"
+  printf "# the clock lamp is lit while the fabric has a clock and the microcycle\r\n"
+  printf "# lamp while the machine runs, dark a moment after it stops. Without\r\n"
+  printf "# it they blink, which is what the fabric comes up with.\r\n"
+  printf "# \`cadr-console blinking-leds on|off\` does the same thing at any time.\r\n"
+  printf -- "%s--no-blinking-leds\r\n" "$NO_BLINKING_LEDS_PREFIX"
+
+  printf "\r\n"
   printf "# =================================================== the boot button\r\n"
   printf "# Read by the disk pack program's init script, before the drive comes\r\n"
   printf "# present. docs/fpgarc.md has the section on it.\r\n"
@@ -891,6 +923,7 @@ fi
   printf "# wiring the board found.\r\n"
   printf -- "%s--debug-cable-wiring auto\r\n" "$MENU_WIRING"
 } > "$OUT/packs/fpgarc"
+echo "mksd-buildroot: the lamps: $([ -z "$NO_BLINKING_LEDS_PREFIX" ] && echo "--no-blinking-leds --- steady, a level while the fabric is clocked and the machine runs" || echo "blinking, as the fabric comes up")"
 echo "mksd-buildroot: the boot button: $([ -z "$NO_AUTO_BOOT_PREFIX" ] && echo "--no-auto-boot --- the machine is held at boot and cadr-console boot or BTN0 starts it" || echo "pressed at boot --- the board boots its band by itself")"
 echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, $([ -z "$MENU_CABLE" ] && echo "the cable on port $CHAOS_PORT" || echo "and the cable NOT plugged in --- --chaos-udp is written commented out")$([ -n "${CHAOS_PEER:-}" ] && echo ", $(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo ", no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
 echo "mksd-buildroot: the serial line: $([ -z "$MENU_SERIAL" ] && echo "offered at $SERIAL_ENDPOINT" || echo "OFF --- --serial is written commented out, and the program that serves it is not started")"

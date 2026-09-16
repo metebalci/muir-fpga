@@ -351,6 +351,21 @@ CHECKS = {
         "golden": None,
     },
 
+    # LD1 and LD2 on the Arty Z7-20 and LD1's green on the Cora Z7-07S,
+    # blinking or steady.  Two modules for LD4's reason --- the top level is
+    # reached by lint alone, and lint cannot tell a lamp that follows the MMCM's
+    # lock from one that samples it, or a hold re-armed by every microcycle
+    # from one that is not --- and one harness that puts them side by side.
+    "blink_lamps": {
+        "sources": ["rtl/plumbing/cadr_lamp_clock.sv",
+                    "rtl/plumbing/cadr_lamp_microcycle.sv"],
+        "extra": ["tb/cadr_blink_lamps_harness.sv"],
+        "top": "cadr_blink_lamps_harness",
+        "tb": "tb/cadr_blink_lamps_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": None,
+    },
+
     "sstep": {
         "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
         "top": "cadr_microcycle",

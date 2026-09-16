@@ -159,6 +159,11 @@ machine stops. Red is the machine halting itself under ERRSTOP, latched and
 cleared by any boot press. So blue then green is a boot, green gone still is a
 machine somebody halted, and red is a machine that fell over.
 
+With `--no-blinking-leds` in `fpgarc`, or `cadr-console blinking-leds off`, the
+green holds a level instead: lit while the machine retires microcycles and dark
+about 42 ms after it stops. Red and blue do not change. The Arty Z7-20's LD2 is
+the same lamp, and `docs/board.md` has both.
+
 LD0's brightness is the fraction of time the machine computes rather than
 waits, because `MACHRUN` drops during every memory stall. Dim means it is
 thrashing.

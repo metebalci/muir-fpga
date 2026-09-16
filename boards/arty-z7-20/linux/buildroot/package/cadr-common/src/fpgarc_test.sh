@@ -139,10 +139,18 @@ EOF
 	cat > "$WORK/bin/cadr-console" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/console.calls"
+# \$CONSOLE_LAMPS decides whether \`blinking-leds off\` got steady lamps,
+# which the real console answers with its status.  Its words come after
+# \`--log /dev/console\`, so that one is looked for anywhere on the line.
 case "\$1" in
 halt) [ "\${CONSOLE_HALTS:-yes}" = yes ] ;;
 switch) [ "\${CONSOLE_SWITCH:-no}" = yes ] ;;
-*) : ;;
+*)
+	case "\$*" in
+	*"blinking-leds off"*) [ "\${CONSOLE_LAMPS:-yes}" = yes ] ;;
+	*) : ;;
+	esac
+	;;
 esac
 EOF
 	# The two the disk script uses on the card.  Nothing is mounted here:
@@ -1284,6 +1292,68 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	fi
 fi
 
+# **THE LAMPS: --no-blinking-leds ASKS THE CONSOLE FOR A LEVEL.**  The fabric
+# comes up blinking, so a card that says nothing leaves the console alone, and
+# a card with the line asks for steady lamps through the console's own word,
+# with `--log /dev/console` for the boot log's reason.  A console that could not
+# make them steady is said to have failed, and the boot goes on either way,
+# since a lamp is nothing to wait on.
+case_head "--no-blinking-leds asks the console for steady lamps, and nothing else"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' '--no-blinking-leds' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	if grep -qx -- "--log /dev/console blinking-leds off" "$WORK/console.calls"; then
+		ok "the console was told blinking-leds off, with the boot log named"
+	else
+		fail "the console was not asked for steady lamps; it was told: $(cat "$WORK/console.calls")"
+	fi
+	if grep -qx "halt" "$WORK/console.calls"; then
+		fail "asking for steady lamps halted the machine"
+	else
+		ok "and nothing was halted"
+	fi
+	if grep -q "cadr-lamps" "$WORK/out.S80cadr-disk-packs"; then
+		fail "a console that made the lamps steady was said to have failed:"
+		sed 's/^/        /' "$WORK/out.S80cadr-disk-packs"
+	else
+		ok "and a console that did it is not said to have failed"
+	fi
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "the pack program was started"
+	else
+		fail "the pack program was not started"
+	fi
+fi
+
+case_head "without the line the lamps are left to blink, and a console that fails says so"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	if grep -q "blinking-leds" "$WORK/console.calls"; then
+		fail "the console was asked about the lamps by a card that says nothing: $(cat "$WORK/console.calls")"
+	else
+		ok "the console was not asked about the lamps"
+	fi
+	printf '%s\r\n' '--no-blinking-leds' > "$WORK/packs/fpgarc"
+	: > "$WORK/daemon.calls"
+	CONSOLE_LAMPS=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S80cadr-disk-packs" start > "$WORK/out.lamps" 2>&1
+	if grep -q "cadr-lamps: --no-blinking-leds: the console did not make the lamps steady" \
+	   "$WORK/out.lamps"; then
+		ok "a console that did not make them steady is said to have failed"
+	else
+		fail "a console that did not make the lamps steady is not called out; the script says:"
+		sed 's/^/        /' "$WORK/out.lamps"
+	fi
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the boot goes on: the pack program was started anyway"
+	else
+		fail "the boot stopped: the pack program was never started"
+	fi
+fi
+
 # **THE SWITCH AND THE FLAG TOGETHER, AND THE FLAG CANNOT TURN THE SWITCH
 # OFF.**  They are an OR, so a card that says `--no-auto-boot` on a board whose
 # switch is on is held once and not twice; the switch is what did it, since the
@@ -1387,6 +1457,9 @@ generate_fpgarc() {
 	  # different set of lines live, so both are generated from this one
 	  # block and the cases below say which is which.
 	  RELEASE=${2:-}
+	  # $3 is NO_BLINKING_LEDS, which local.conf sets on a card for a board
+	  # that is left running and which a release never carries live.
+	  NO_BLINKING_LEDS=${3:-}
 	  CHAOS_PEER=""
 	  CHAOS_DEFAULT_PEER=""
 	  . "$WORK/gen/gen.sh" ) || return 1
@@ -1555,6 +1628,89 @@ if generate_fpgarc "1"; then
 		ok "and the card's file is written with carriage returns, as it must be"
 	else
 		fail "the card's file has no carriage returns"
+	fi
+fi
+
+# **THE LAMPS FOLLOW THE BOOT BUTTON'S SHAPE, WITH A RELEASE HELD TO BLINKING.**
+# A card that says nothing about the lamps carries the line commented out;
+# NO_BLINKING_LEDS=1 on a development card makes the same line live; and a
+# released card writes it commented however the variable is set, because the
+# menu a stranger is given must not depend on the builder's environment.
+case_head "the card is written with blinking lamps by default"
+sandbox
+if generate_fpgarc "" "" ""; then
+	GEN="$WORK/gen/packs/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--no-blinking-leds'; then
+		ok "the line is there and commented out"
+	else
+		fail "there is no commented --no-blinking-leds line in what the card script wrote"
+	fi
+	if tr -d '\r' < "$GEN" | grep -q -- '^--no-blinking-leds'; then
+		fail "and it is also live, which it must not be"
+	else
+		ok "and it is not live"
+	fi
+	if grep -q 'the activity lamps hold a level' "$GEN"; then
+		ok "and the sentence explaining it is beside it"
+	else
+		fail "the line has no sentence explaining it"
+	fi
+	if [ "$HAVE_READER" != yes ]; then
+		fail "there is no reader to agree with the card script"
+	elif fpgarc_has "$GEN" --no-blinking-leds; then
+		fail "the reader takes the commented line as a flag"
+	else
+		ok "and the reader does not take it as a flag"
+	fi
+fi
+
+case_head "NO_BLINKING_LEDS=1 makes the same line live on a development card"
+sandbox
+if generate_fpgarc "" "" 1; then
+	GEN="$WORK/gen/packs/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '--no-blinking-leds'; then
+		ok "the line is live"
+	else
+		fail "the --no-blinking-leds line is not live in what the card script wrote"
+	fi
+	if tr -d '\r' < "$GEN" | grep -q -- '^#--no-blinking-leds'; then
+		fail "and a commented copy of it is there as well"
+	else
+		ok "and it is there once"
+	fi
+	if [ "$HAVE_READER" != yes ]; then
+		fail "there is no reader to find the live line"
+	elif fpgarc_has "$GEN" --no-blinking-leds; then
+		ok "and the reader finds it"
+	else
+		fail "the reader does not find the live line"
+	fi
+	# And nothing else moved: the live lines are the development card's six
+	# and this one, which is the control that the variable reaches one line.
+	got=$(live_flags "$GEN" | tr '\n' '|')
+	want='--chaos-address 177101|--chaos-udp 0.0.0.0:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--serial 0.0.0.0:7641|--no-blinking-leds|--debug-cable-wiring auto|'
+	if [ "$got" = "$want" ]; then
+		ok "and it is the only line the variable made live"
+	else
+		fail "the development menu's live lines with the lamps steady are [$got], not [$want]"
+	fi
+fi
+
+case_head "and a released card blinks even when NO_BLINKING_LEDS=1 is set"
+sandbox
+if generate_fpgarc "" 1 1; then
+	GEN="$WORK/gen/packs/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--no-blinking-leds'; then
+		ok "the line is written commented out"
+	else
+		fail "the released menu has no commented --no-blinking-leds line"
+	fi
+	if [ "$HAVE_READER" != yes ]; then
+		fail "there is no reader to agree with the card script"
+	elif fpgarc_has "$GEN" --no-blinking-leds; then
+		fail "a released card carries --no-blinking-leds live"
+	else
+		ok "and the reader does not find it, so a released board blinks"
 	fi
 fi
 
@@ -1986,7 +2142,7 @@ fi
 # case says which two kinds of value it is for.
 cleared=yes
 for v in SERVERIP ETHADDR CHAOS_PEER CHAOS_DEFAULT_PEER CC_PACK NO_AUTO_BOOT \
-         CHAOS_ADDR_FPGA CHAOS_ADDR_MUIR; do
+         NO_BLINKING_LEDS CHAOS_ADDR_FPGA CHAOS_ADDR_MUIR; do
 	if sed -n '/^if \[ -n "\$STANDALONE" \]; then$/,/^fi$/p' "$MKSD" | grep -q "$v="; then
 		:
 	else

@@ -341,6 +341,26 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 // The three modes a bitstream can carry, in the order `HDMI_MODE` names them.
 enum cons_hdmi_mode { CONS_HDMI_1280 = 0, CONS_HDMI_1400 = 1, CONS_HDMI_1920 = 2 };
 
+// **AND WHETHER THE BOARD'S ACTIVITY LAMPS BLINK, page 2's word 35.**
+//
+// Two lamps on the Arty Z7-20 --- LD1, the fabric's clock, and LD2, the
+// microcycles --- and one on the Cora Z7-07S, LD1's green, blink by default.
+// `--no-blinking-leds` makes them hold a level instead: the clock lamp is the
+// clock generator's lock, and the microcycle lamp is lit for a moment after
+// every microcycle, so it is solid while the machine runs and goes dark when
+// it stops.  What the lamps say does not change, only how.  It is written at
+// boot by the disk pack program's init step, as the display output's settings
+// are, and the fabric comes up blinking.
+//
+// A key and its complement, on the debug cable's argument: the two are
+// opposite operations, so no partial write of one can be the other.
+#define CONS_LAMPS            (CONS_PAGE2 + 3u)
+#define CONS_LAMP_STEADY_KEY  0x53544459u	/* "STDY" */
+#define CONS_LAMP_BLINK_KEY   (~CONS_LAMP_STEADY_KEY)
+#define CONS_LAMP_MARK        0x4C44u	/* "LD" */
+#define CONS_LAMP_MARK_OF(w)  ((w) >> 16)
+#define CONS_LAMP_STEADY      (1u << 0)
+
 #define CONS_PAGE4        64u
 #define CONS_PAGE5        80u
 #define CONS_COLOR_MAP_WORD(board, color) \
@@ -791,6 +811,20 @@ int cons_set_hdmi_output(struct console *c, int first, int color);
 int cons_set_hdmi_rotate(struct console *c, int rot);
 // The mode's own name, for a program printing what a bitstream carries.
 const char *cons_hdmi_mode_name(int mode);
+
+// --- whether the activity lamps blink, page 2's word 35 --------------------
+
+struct cons_lamps {
+	uint32_t word;		/* word 35 as it read */
+	int mark_ok;		/* it carried `CONS_LAMP_MARK` */
+	int steady;		/* the lamps hold a level rather than blink */
+};
+
+void cons_read_lamps(struct console *c, struct cons_lamps *l);
+void cons_say_lamps(const struct cons_lamps *l);
+// Steady or blinking, a keyed write of word 35.  Write and then READ: a wrong
+// key is dropped in silence, which is what the key is for.
+void cons_set_lamps_steady(struct console *c, int steady);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
 // ClockControl and ../muir/tests/spy.rs:743-761).

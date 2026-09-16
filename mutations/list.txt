@@ -12986,6 +12986,181 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
     else if (errhalt) lit <= 1'b0;
 @end
 
+# ---------------------------------------------------------------------------
+# LD1 AND LD2: THE LAMPS THAT BLINK, OR HOLD A LEVEL
+# ---------------------------------------------------------------------------
+#
+# `rtl/plumbing/cadr_lamp_clock.sv` and `rtl/plumbing/cadr_lamp_microcycle.sv`,
+# the Arty Z7-20's LD1 and LD2 and the Cora Z7-07S's green, held by
+# `build/blink_lamps.pass` at their own defaults.  A module of their own for
+# LD4's reason.  What is NOT here: which nets the boards wire to them, which is
+# lint-only and said so at each instantiation.  The console's word that sets
+# them is held by `console` below.
+
+@mutation blink-lamps-the-hold-is-a-tick-short
+@check blink_lamps
+@file rtl/plumbing/cadr_lamp_microcycle.sv
+@note **A HOLD IS A COUNT, SO IT IS HELD TO THE TICK.**  A lamp lit for one
+@note tick fewer than its constant is not a lamp anybody could tell apart by
+@note eye, and it is still a module that disagrees with its own parameter ---
+@note the `RD_FINISH_T` family, where a check that bounds a number rather than
+@note counting it cannot tell the constant from its neighbor.  Caught on "the
+@note ticks the steady lamp stays lit after the last microcycle is 4194303,
+@note wanted 4194304".
+@old
+        hold_t <= HOLD_W'(HOLD_T - 1);
+@new
+        hold_t <= HOLD_W'(HOLD_T - 2);
+@end
+
+@mutation blink-lamps-the-hold-is-not-rearmed
+@check blink_lamps
+@file rtl/plumbing/cadr_lamp_microcycle.sv
+@note **A HOLD ARMED ONCE RUNS OUT UNDER A RUNNING MACHINE**, and the lamp
+@note then goes dark for a moment every 42 ms --- a flicker, on the one lamp
+@note whose steady form exists to stop moving.  The flag is still set by every
+@note microcycle, so between two runs-out the lamp is lit again; only a check
+@note that watches every tick of a machine running for longer than the hold can
+@note see the gap.  Caught on "the steady lamp of a running machine is 0,
+@note wanted 1".
+@old
+        hold_t <= HOLD_W'(HOLD_T - 1);
+      end
+@new
+        if (!held) hold_t <= HOLD_W'(HOLD_T - 1);
+      end
+@end
+
+@mutation blink-lamps-the-steady-lamp-still-blinks
+@check blink_lamps
+@file rtl/plumbing/cadr_lamp_microcycle.sv
+@note The steady lamp gated by the blink: lit only on the half of each blink
+@note the count's bit is up.  Every signal stays read, so lint has nothing to
+@note say; what catches it is a running machine whose steady lamp is dark on
+@note the ticks the blink would have been.  Caught on "the steady lamp of a
+@note running machine is 0, wanted 1".
+@old
+  assign lit = steady ? held : beat[BLINK_BIT];
+@new
+  assign lit = steady ? (held && beat[BLINK_BIT]) : beat[BLINK_BIT];
+@end
+
+@mutation blink-lamps-the-blink-counts-ticks
+@check blink_lamps
+@file rtl/plumbing/cadr_lamp_microcycle.sv
+@note **THE BLINK IS OF MICROCYCLES AND NOT OF TICKS**, and a lamp that counted
+@note ticks would blink on a machine standing still --- which is the one thing
+@note the blink exists to refuse, motion being what cannot be faked.  The check
+@note retires a microcycle every third tick, so a count of ticks toggles three
+@note times too soon.  Caught on "the microcycle lamp, blinking is 1, wanted 0".
+@old
+      if (retired) beat <= beat + 1'b1;
+@new
+      if (retired || !retired) beat <= beat + 1'b1;
+@end
+
+@mutation blink-lamps-the-hold-stands-still-while-it-blinks
+@check blink_lamps
+@file rtl/plumbing/cadr_lamp_microcycle.sv
+@note **THE HOLD COUNTS IN BOTH MODES**, so that a mode changed at run time
+@note shows the right state at once.  A countdown that ran only while steady
+@note would, switched on after the machine stopped, keep the lamp lit for the
+@note whole of a hold that should already be half over.  Caught on "the ticks
+@note lit from the last microcycle, across the change of mode is 6291456,
+@note wanted 4194304".
+@old
+      if (hold_t != '0) hold_t <= hold_t - 1'b1;
+@new
+      if (hold_t != '0) hold_t <= hold_t - HOLD_W'(steady);
+@end
+
+@mutation blink-lamps-a-reset-leaves-the-hold-lit
+@check blink_lamps
+@file rtl/plumbing/cadr_lamp_microcycle.sv
+@note A machine held in reset retires nothing, so a steady lamp that stayed lit
+@note through a reset would say it was running.  Caught on "the steady lamp
+@note just after a reset is 1, wanted 0".
+@old
+      held   <= 1'b0;
+      hold_t <= '0;
+@new
+      held   <= held;
+      hold_t <= '0;
+@end
+
+@mutation blink-lamps-the-clock-lamp-is-lit-by-the-blink
+@check blink_lamps
+@file rtl/plumbing/cadr_lamp_clock.sv
+@note **STEADY, THE CLOCK LAMP IS THE LOCK AND NOTHING ELSE.**  ORing the blink
+@note in would light it on half the ticks of a board whose clock generator has
+@note lost its lock, and those are exactly the ticks that are not happening
+@note when the clock has stopped --- so the lamp would be dark or lit by
+@note accident of where the counter froze, which is the frozen level the steady
+@note lamp was built not to be.  Caught on "the clock lamp, steady, read with
+@note no edge is 1, wanted 0".
+@old
+  assign lit = steady ? locked : blink;
+@new
+  assign lit = steady ? (locked || blink) : blink;
+@end
+
+@mutation console-the-lamps-come-up-steady
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **A BOARD COMES UP BLINKING**, which is how every board has always come
+@note up and what a card that says nothing gets.  A blink is honest about a
+@note stopped clock by construction; a board that came up steady would depend
+@note on the lock being wired right to say anything at all before Linux
+@note started.  Caught on "the lamps out of reset".
+@old
+      steady_lamps <= 1'b0;
+@new
+      steady_lamps <= 1'b1;
+@end
+
+@mutation console-the-lamps-take-any-value
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note The complement's test widened to anything but the key, so that every
+@note value that means nothing --- zero off a dead bus, all ones off an
+@note undriven one, another word's key --- makes steady lamps blink again.
+@note That is a lamp setting a program can lose by writing the wrong word,
+@note which is the thing the key and its complement exist to rule out.  Caught
+@note on "the lamps after a value that means nothing".
+@old
+  assign w_is_lamps_blink  = w_is_lamps && (w_full == ~LAMP_STEADY_KEY);
+@new
+  assign w_is_lamps_blink  = w_is_lamps && (w_full != LAMP_STEADY_KEY);
+@end
+
+@mutation console-the-lamps-key-reaches-page-zero
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Word 3 of page 0 is `CYCLESH`, the same index in the other window, and
+@note a decode that took `w_in` as well as `w_hi` would let a program that
+@note echoed a counter change the board's lamps.  The same shape as the
+@note display boards' own record one word along.  Caught on "the lamps after
+@note STDY written at page 0's word 3".
+@old
+  assign w_is_lamps        = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd3);
+@new
+  assign w_is_lamps        = (w_hi || w_in) && !w_idx[4] && (w_idx[3:0] == 4'd3);
+@end
+
+@mutation console-the-lamps-word-reads-a-constant
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **WHAT THE WORD SAYS AND WHAT THE FABRIC HOLDS ARE TWO FACTS**, and a
+@note word that read back blinking whatever the setting would agree with a
+@note board whose lamps blink and with nothing else.  The level still leaves
+@note the module, so lint sees nothing; the check compares the word against
+@note the level.  Caught on "the lamps after STDY".
+@old
+                                 ? {LAMP_MARK, 15'd0, steady_lamps}
+@new
+                                 ? {LAMP_MARK, 15'd0, 1'b0}
+@end
+
 # THE DEBUG CABLE ON ONE CONNECTOR: the role, the pads, and the DBGOUT page
 #
 # `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` are the carrier and their records are above.

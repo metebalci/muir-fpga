@@ -243,6 +243,8 @@ module cadr_gp1_split_harness #(
   // There is no display output in this harness, so what it would show goes
   // nowhere and is folded with the rest below.
   logic [1:0] hdmi_out, hdmi_rotate;
+  // And no lamps, so whether they would blink is folded below too.
+  logic       steady_lamps;
 
   cadr_console u_console (
       .clk(clk), .rst(rst),
@@ -290,7 +292,8 @@ module cadr_gp1_split_harness #(
       // that is not there holds.
       .tv_lispm(tv_lispm), .color_tv(color_tv), .tv_map_a(tv_map_a),
       .tv_map_q(24'd0), .tv_color_map_q(24'd0),
-      .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate), .hdmi_mode(2'd0)
+      .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate), .hdmi_mode(2'd0),
+      .steady_lamps(steady_lamps)
   );
 
   // The readout window's three wires belong to `build/readout.pass` and
@@ -424,7 +427,8 @@ module cadr_gp1_split_harness #(
                     con_mach_boot, dbg_connect, dbg_wiring,
                     // The backplane's display boards, which go to
                     // `cadr_machine` on the board and to nobody here.
-                    tv_lispm, color_tv, tv_map_a, hdmi_out, hdmi_rotate};
+                    tv_lispm, color_tv, tv_map_a, hdmi_out, hdmi_rotate,
+                    steady_lamps};
 
 endmodule
 
