@@ -211,7 +211,7 @@ if {$prove > 0} {
 # `$slow` set is `all_registers` minus a name list, and on a board `all_
 # registers` includes the top level's own --- 26 of them when this was written,
 # the reset synchronizer and the free-running heartbeat, each taking a
-# fifteen-tick multicycle written for a datapath. `-ref cadr_machine` makes
+# relaxed-set multicycle written for a datapath. `-ref cadr_machine` makes
 # `all_registers` mean the machine's, which is what the file's prose has
 # always said it meant.
 #
@@ -256,7 +256,7 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 #
 # A THIRD ENTRY WITH `DDR=1`, and it is the memory's own contract rather than
 # a convenience. `rtl/plumbing/xilinx7/cadr_machine.xdc` gives `mem_addr`, `mem_wdata` and
-# `mem_write` sixteen ticks --- the 80 ns the bus specification makes the
+# `mem_write` `ticks(80)` --- the 80 ns the bus specification makes the
 # master responsible for --- and what receives them is `cadr_axi_master`'s
 # address and data registers, which are outside `u_machine` by construction.
 # So the adapter joins the list, and what the invariant still says is that
@@ -334,7 +334,13 @@ if {$clocks < 2} {
 # either way, and the `foreach` bug would pass the count. What separates them
 # is the setup requirement the paths ask for. The count still earns its place:
 # it is the half that says a setup exception has a hold exception beside it.
-assert_multicycle_applied $tick 15
+#
+# At a 10 ns grid this count is shared: the bus's setup below is eight ticks
+# too, so a relaxed set that reached nothing would still find the display's
+# eight here. The audit's own assertion just below is this clause's sharp
+# half, being registers only `slow` relaxes.
+# grid: 75 ns (shared with 80 ns)
+assert_multicycle_applied $tick 8
 # **AND WHICH SET THE TRANSACTION AUDIT'S REGISTERS FELL INTO, ASKED DIRECTLY
 # RATHER THAN INFERRED FROM A COUNT.** `rtl/plumbing/cadr_bus_audit.sv` is 347
 # registers under `cadr_machine`, which relaxes everything it does not name ---
@@ -364,8 +370,9 @@ assert_multicycle_applied $tick 15
 # board's own HEAD fails identically, 18,796 of 26,803 setup paths at
 # 150.000 ns and the same refusal. A flow nobody runs is a flow that says
 # nothing, which is this project's oldest lesson in a new place.
+# grid: 75 ns
 if {$port > 0} {
-    assert_instance_timing $tick 15 *u_machine/audit/* \
+    assert_instance_timing $tick 8 *u_machine/audit/* \
         {*audit/first_* *audit/micro_reg* *audit/word_reg*}
 } else {
     puts "XDC: the audit has no registers on a board with no console to read\
@@ -376,11 +383,24 @@ if {$port > 0} {
 # and the exception is real, legal and connected to nothing. Asserting it
 # there would fail on a healthy design; not asserting it here would leave the
 # 80 ns claim exactly as unchecked as it was before it existed.
-if {$port > 0} { assert_multicycle_applied $tick 16 }
+#
+# ASKED OF THE ADAPTER'S OWN REGISTERS AND NOT AS A COUNT, because at a 10 ns
+# grid the count is shared: 80 ns and the relaxed set's 75 are both eight
+# ticks, so the whole design has thousands of paths at the requirement this
+# clause gives and a clause that reached nothing would pass a count. The
+# adapter is outside `cadr_machine` and nothing else relaxes it, so the two
+# halves are this clause's alone: the address and data registers must carry
+# the requirement and no other register of the adapter may.
+# grid: 80 ns
+if {$port > 0} {
+    assert_instance_timing $tick 8 *g_ddr.u_axi/* \
+        {*m_axi_awaddr_reg* *m_axi_araddr_reg* *m_axi_wdata_reg*}
+}
 # And the debug cable's six ticks, the same way and for the same reason. The
 # instance assertion is the narrow half --- `sts_dbd_reg` may carry it and no
 # other register of the carrier may --- and the count is the `foreach` half,
 # that it reached a path at all.
+# board ticks
 if {$port > 0} {
     assert_instance_timing $tick 6 *g_ddr.u_debug_window/* {*sts_dbd_reg*}
 }
@@ -389,24 +409,33 @@ if {$port > 0} {
 # carrier's sender may carry it; the strobe's synchronizer, the beat counter,
 # the gap counter and the dead man may not, because a counter given six ticks
 # to settle is a counter that no longer counts.
+# board ticks
 assert_instance_timing $tick 6 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
 
 # And the carrier's deadline against the carrier's own beat, read out of the
 # source rather than remembered here. Pure Tcl and no design, so it runs
 # before anything is elaborated and fails naming both files.
 assert_cable_beat rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
+# board ticks
 assert_multicycle_applied $tick 6
 
 # AND THE TWO CLAUSES `cadr_machine.xdc` ADDED FOR THE SLAVES INSIDE THE
 # MACHINE, held the same two ways: the instance half says no OTHER register
 # of the block may carry the requirement, and the proc's own empty clause
 # says at least one of the named ones must. The display board takes the
-# master's word at the first tick of -XBUS.RQ, which the bus rule owes
-# sixteen ticks of settling; the bus interface's own block takes it at the
-# register strobe, thirty ticks after -UB MSYN. Neither clause touches a
-# clock enable, and these assertions are what says so.
-assert_instance_timing $tick 16 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*}
-assert_instance_timing $tick 30 *u_machine/memory/busint_regs/* \
+# master's word at the first tick of -XBUS.RQ, which the bus rule owes 80 ns
+# of settling; the bus interface's own block takes it at the register strobe,
+# 150 ns after -UB MSYN. Neither clause touches a clock enable, and these
+# assertions are what says so.
+#
+# The display's three held matches are in `slow`, and at a 10 ns grid `slow`
+# gives the same eight ticks the bus's setup does, so they are named as
+# relaxed ELSEWHERE: left out of both halves rather than read as swallowed.
+# grid: 80 ns
+assert_instance_timing $tick 8 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*} \
+    {*memory/tv/ctl_reg* *memory/tv/fb_reg* *memory/tv/which_reg*}
+# grid: 150 ns
+assert_instance_timing $tick 15 *u_machine/memory/busint_regs/* \
     {*wr_buf_reg* *ub_map_reg*}
 
 opt_design

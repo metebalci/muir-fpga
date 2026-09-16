@@ -2228,7 +2228,7 @@ int main(int argc, char **argv) {
         // most one poll; 200 ticks is generous against a poll of about ten
         // and tight against 0.2 per cent of the span.
         if (step_span < want - 200.0 || step_span > want + 200.0)
-          Fail("the ticks 63 steps of the mouse took, against 63 x MOUSE_STEP_NS / 5",
+          Fail("the ticks 63 steps of the mouse took, against 63 x MOUSE_STEP_T",
                (unsigned long long)step_span, (unsigned long long)want);
       }
       b.Idle(2 * KB_CLK_T);
@@ -2389,7 +2389,7 @@ int main(int argc, char **argv) {
       "      thing that can see the queue's count written from two places\n"
       "    %ld mouse steps, the Gray order and the direction against muir's own\n"
       "      00, 10, 11, 01 with counts 1 to 4, the twelve-bit wrap, and\n"
-      "      %.0f ticks over 63 steps against 63 x MOUSE_STEP_NS / 5 = %.0f\n"
+      "      %.0f ticks over 63 steps against 63 x MOUSE_STEP_T = %.0f\n"
       "    nothing reached the card's KBD READY until a word was WRITTEN, and\n"
       "      nothing reached it after the machine's own reset: the two legs\n"
       "      that keep a board out of the warm boot at (LOC 6)\n"

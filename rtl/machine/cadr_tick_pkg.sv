@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// MIT'S GRID, IN ONE PLACE.
+// MIT'S INSTANTS ON THE FABRIC'S GRID, IN ONE PLACE.
 //
 // Every instant in this machine is a count of ticks, and this package is the
 // one constant every one of those counts derives from.  `TICK_NS` is the
 // conversion from MIT's drawings into ticks; `ticks(ns)` performs it.
 //
 // **`TICK_NS` IS NOT THE LENGTH OF A TICK.**  How long a tick lasts is the
-// board's business: `boards/arty-z7-20/cadr_arty.sv` makes it 10 ns, so the
-// machine runs at half the speed the hardware ran at and nothing inside it
-// can tell, because every instant keeps its exact ratio to every other.  The
-// two tens are unrelated numbers that happen to match --- one is a divisor
-// here and one is a clock period there.
+// board's business: `boards/arty-z7-20/cadr_arty.sv` makes it 10 ns.  The
+// grid is 10 ns too, so a microcycle the fabric counts in ticks takes that
+// many tens of real nanoseconds, and the two tens are still two numbers ---
+// one a divisor here and one a clock period there --- which is why a board
+// can change its tick without touching this file.
 //
 // The reason this is a package and not a literal in each file is that the
-// two must be able to move independently, and for a while they could not:
+// grid must be able to move as one constant, and for a while it could not:
 // the grid was written out as `/ 5` in module after module and in twenty-one
 // testbenches, so an experiment that changed one file produced a processor
 // at one speed against a bus at another, which is a machine MIT never built.
@@ -26,9 +26,11 @@
 // read tap.  Rounding down also makes the fabric sample EARLIER than the
 // real machine did, which is the wrong direction for a setup time, a deskew
 // or a strobe --- every one of them is a promise that something has settled.
-// Three instants on the I/O board already do not divide by five and are
-// already rounded up here rather than approximated in place: 313, 203 and
-// 33 nanoseconds.
+// MIT's drawings place most edges on multiples of five nanoseconds, so at
+// this grid eight instants of the ring and a handful of the bus move up by
+// five nanoseconds each; `docs/timing.md` lists every one with its count at
+// both grids.  muir's `--timing-model fpga` rounds the same way, each delay
+// from its own trigger, and is what the references are generated under.
 //
 // ---------------------------------------------------------------------------
 // WHICH CONSTANTS BELONG HERE, AND WHICH DO NOT
@@ -61,16 +63,15 @@
 // ADVANCES BY `TICK_NS` EACH TICK**, wrapping by SUBTRACTING the period and
 // never by clearing.  Clearing discards the remainder, and carrying the
 // remainder is the whole of what makes the average period exact at a grid
-// that does not divide it.  There are four: the bus interface's timeout
-// oscillator (`cadr_busint_xbus.sv`, `VCO_HALF_NS`), the I/O board's FCLK
-// (`cadr_io_board.sv`, `FCLK_NS`) and sixty-cycle clock (`mains_acc`), and
-// the serial line's crystal (`cadr_serial_line.sv`, `XTAL_WRAP`).  The disk
-// controller counts its spans down in nanoseconds the same way.
-//
-// At the 5 ns grid the machine runs at, every one of those remainders is
-// zero and each oscillator's period is a whole number of ticks, so the form
-// degenerates to the tick counters it replaced.  That degeneration is what
-// makes it checkable: the traces do not move.  See `docs/timing.md`.
+// that does not divide it.  There are five: the bus interface's timeout
+// oscillator (`cadr_busint_xbus.sv`, `VCO_HALF_NS`, 43 then 42 ticks), the
+// I/O board's FCLK (`cadr_io_board.sv`, `FCLK_NS`, 13 then 12) and
+// sixty-cycle clock (`mains_acc`), the display's sync program
+// (`cadr_tv.sv`, `seq_ns`, 63 then 62 in its slow clock modes) and the
+// serial line's crystal (`cadr_serial_line.sv`, `XTAL_WRAP`).  The disk
+// controller counts its spans down in nanoseconds the same way.  An
+// oscillator whose period the grid divides --- the microsecond clock and its
+// half, the keyboard's --- is a plain tick counter, being the same thing.
 //
 // So a constant that is a delay from an event belongs here.  A constant that
 // is an oscillator's period belongs in nanoseconds beside an accumulator
@@ -79,18 +80,19 @@
 // choice measured in BOARD ticks and is not MIT's timing at all; those name
 // no nanosecond figure and must not be given one.
 //
-// This number has homes in three languages, and `tools/grid_check.py` fails
-// the check when they disagree.  Timing constraints that write a tick count
-// out as a literal are NOT held by it; `docs/timing.md` lists them.
+// This number has homes in four languages, and `tools/grid_check.py` fails
+// the check when they disagree, when a generator runs muir under any model
+// but the fabric's, or when a timing constraint's tick count is not the
+// grid's count of the instant its tag names.
 
 `default_nettype none
 
 package cadr_tick_pkg;
 
-  // MIT's grid: the drawings place every edge on a multiple of five
-  // nanoseconds.  See the header before changing it --- this is a divisor
-  // into the drawings and not the board's clock period.
-  localparam int unsigned TICK_NS = 5;
+  // MIT's instants, placed on a grid of this many nanoseconds.  See the header
+  // before changing it --- this is a divisor into the drawings and not the
+  // board's clock period.
+  localparam int unsigned TICK_NS = 10;
 
   // Nanoseconds to ticks, rounded UP.  The fabric can only act on a clock
   // edge, so an instant that falls between two of them is taken at the first
@@ -99,6 +101,30 @@ package cadr_tick_pkg;
   function automatic int unsigned ticks(input int unsigned ns);
     return (ns + TICK_NS - 1) / TICK_NS;
   endfunction
+
+  // **POWER-ON, IN EDGES AFTER THE RESET EDGE, FOR EVERY OSCILLATOR IN THE
+  // MACHINE.**  muir's t = 0 is where the ring starts, and every free-running
+  // clock's phase is counted from there.  In the fabric the ring starts on
+  // the first edge reset is low, and the processor and the bus interface act
+  // on the ring's boundary one edge after it makes it, so the instants every
+  // trace compares --- a microcycle's end, a grant, an acknowledgment --- are
+  // counted from two edges after the reset edge.  An oscillator that starts
+  // at the reset edge runs two ticks ahead of muir in the composed machine,
+  // whatever it agrees with alone: the bus interface's timeout oscillator was
+  // issue #21, and the I/O board's clocks and the display's sync program were
+  // measured the same way afterwards, every one of them 20 ns early at the
+  // 10 ns grid.  `cadr_busint_xbus.sv`, `cadr_io_board.sv` and `cadr_tv.sv`
+  // start theirs this many edges after the reset edge, a standalone check
+  // puts the same number of edges before its row 0 (`kPowerOnEdges` in
+  // `tb/cadr_tick.h`), and `power_on.pass` holds the composed machine's
+  // clocks to muir's instants from the processor's own first microcycles.
+  // It counts the fabric's edges and not an instant on MIT's drawings, so it
+  // is not on the grid.  Waived for lint here and nowhere else: every design
+  // compiles this package, three modules take this constant, and a design
+  // without them is not wrong to leave it unread.
+  /* verilator lint_off UNUSEDPARAM */
+  localparam int unsigned POWER_ON_EDGES = 2;
+  /* verilator lint_on UNUSEDPARAM */
 
 endpackage
 

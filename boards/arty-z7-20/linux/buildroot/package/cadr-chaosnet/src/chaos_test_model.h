@@ -44,9 +44,9 @@
 // 19 for every two 16-bit words of the packet, then 8 more to the write that
 // clears the receiver --- counted from the control-store addresses of the band
 // the board runs, `0o25762` for `CHAOS-INTR`, `0o26007` for
-// `CHAOS-RCV-INTR-LOOP` and `0o26040` for the Clear Receiver write.  At 290 ns
-// a microcycle that is about 716 us for the longest packet and about 50 us for
-// a short one.  `docs/chaosnet.md` has the derivation; the checks state the
+// `CHAOS-RCV-INTR-LOOP` and `0o26040` for the Clear Receiver write.  At 150 ns
+// a microcycle, fifteen ticks of MIT's 10 ns grid, that is about 371 us for the
+// longest packet and about 26 us for a short one.  `docs/chaosnet.md` has the derivation; the checks state the
 // service time they use and run at more than one, so that no answer of theirs
 // rests on the figure being exact.
 

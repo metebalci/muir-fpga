@@ -86,25 +86,23 @@
 #define SCREEN_WINDOW_BYTES     (SCREEN_WINDOW_WORDS * 4u)
 #define SCREEN_BASE             0x1C000000u
 // The display board's own frame, in the machine's nanoseconds: muir's
-// `FRAME_NS`, 966 lines of 16.000 us, and `rtl/machine/cadr_tv.sv` holds the
-// same thing as 3,091,200 ticks.  This one is held to muir and never moves.
+// `FRAME_NS`, 966 lines of 16.000 us, which `rtl/machine/cadr_tv.sv` makes as
+// 1,545,600 ticks of MIT's 10 ns grid.  This one is held to muir and never
+// moves.
 #define SCREEN_FRAME_NS         15456000u
 
-// AND THE SAME FRAME IN REAL TIME, WHICH IS A DIFFERENT NUMBER NOW.  A tick
-// is 10 ns on this board --- `boards/arty-z7-20/cadr_arty.sv`'s MMCM, and its
-// header says why --- so the fabric takes 3,091,200 x 10 = 30,912,000 real
-// nanoseconds over a frame and the vertical interrupt arrives at 32.35 Hz
-// where the display board scanned at 64.70.  The machine cannot tell (it
-// counts ticks), but this program compares against `CLOCK_MONOTONIC` and
-// therefore can: pacing a viewer off the machine's 15.456 ms would hand out
-// whole screens twice as fast as the fabric can produce them.
+// AND THE SAME FRAME IN REAL TIME, WHICH IS THE SAME NUMBER AGAIN.  A tick
+// is 10 ns on this board --- `boards/arty-z7-20/cadr_arty.sv`'s MMCM --- and
+// MIT's grid is 10 ns too, so the fabric takes 1,545,600 x 10 = 15,456,000
+// real nanoseconds over a frame and the vertical interrupt arrives at the
+// display board's own 64.70 Hz.  This program compares against
+// `CLOCK_MONOTONIC`, so it is the real frame it needs.  At the 5 ns grid the
+// board ran at half speed and this was 30,912,000.
 //
-// **THE TWO ARE KEPT APART RATHER THAN RECONCILED.**  Making the fabric's
-// frame 1,545,600 ticks would put `cadr_tv.sv` out of agreement with muir,
-// and the checks are the backbone; it is decided that the machine keeps
-// agreeing with muir for now.  `docs/tv.md` and `docs/terminal.md` carry the
-// consequence.
-#define SCREEN_FRAME_REAL_NS    30912000u
+// **THE TWO ARE KEPT APART RATHER THAN MERGED**, because they are different
+// quantities that only coincide while the grid and the board's tick do: a
+// board built with a different tick moves this one and not the machine's.
+#define SCREEN_FRAME_REAL_NS    15456000u
 
 // `MODE<2>`, `MODE BOW`, for whoever quotes the number: muir tv.rs:260.
 #define SCREEN_MODE_BOW         0004u

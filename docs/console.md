@@ -273,14 +273,14 @@ arbitrary --- which is why it has a floor and the floor is written down. The
 machine's own power-on reset is never short (`rst_sync` is four deep and
 `!mmcm_locked` holds it for the MMCM's whole lock time), so a machine that had
 only ever seen a one-tick reset would be released in a way the board never
-performs. The floor is **one whole generator cycle at extra slow, 44 ticks**:
-that is the longest interval over which any of the machine's own timing is in
-flight --- the phase generator's ring, the seven read taps at 15 to 32, the
-write pulses, the two countdowns --- and muir's `chip.rs` goes on deriving
-`-TPR60` from `phase_ns` at ticks 11 to 18 of a plain power-on reset, so a
-reset shorter than the cycle it interrupts lands in a region the model and the
-fabric are known to disagree in and nothing compares. 64 is the smallest power
-of two above 44, so the countdown ends on a borrow --- which is why `LOST_T`
+performs. The floor is **one whole generator cycle at extra slow**, 22 ticks
+at the 10 ns grid and 44 at 5: that is the longest interval over which any of
+the machine's own timing is in flight --- the phase generator's ring, the seven
+read taps at 8 to 16, the write pulses, the two countdowns --- and muir's
+`chip.rs` goes on deriving `-TPR60` from `phase_ns` 60 to 100 ns into a plain
+power-on reset, so a reset shorter than the cycle it interrupts lands in a
+region the model and the fabric are known to disagree in and nothing compares.
+64 is the smallest power of two above the 5 ns grid's 44, so the countdown ends on a borrow --- which is why `LOST_T`
 is 4,096 and not 4,000. **It is a floor with margin and is stated as one**;
 nothing derives 64, what is derived is that it must be more than 44.
 
@@ -1110,8 +1110,8 @@ test is "is a register's input stable across the microcycle, and does its
 consumer read it only at the end". So `con_rdata` is loaded **at the
 microcycle boundary and nowhere else** --- `mclk` is its whole clock enable
 --- and is therefore launched at one boundary and captured at the next, with
-29 ticks to settle at normal speed and 44 at extra slow against the 15 the
-exception asks for. Loaded every tick it would be a register holding whatever
+15 ticks to settle at normal speed and 22 at extra slow against the 8 the
+exception asks for at the 10 ns grid. Loaded every tick it would be a register holding whatever
 a relaxed path had reached, which is the too-wide exemption in its purest
 form.
 

@@ -26,7 +26,7 @@
 #define CADR_TICK_H
 
 // MIT's grid, in nanoseconds.  Equal to `cadr_tick_pkg::TICK_NS`.
-constexpr long kGridNs = 5;
+constexpr long kGridNs = 10;
 
 // Nanoseconds to ticks, rounded UP: the fabric can only act on a clock edge,
 // so an instant between two of them is taken at the first edge at or after
@@ -38,5 +38,12 @@ constexpr long GridTicks(long ns) { return (ns + kGridNs - 1) / kGridNs; }
 // format specifier.
 constexpr unsigned long long kGridNsU = static_cast<unsigned long long>(kGridNs);
 constexpr double kGridNsD = static_cast<double>(kGridNs);
+
+// **muir's t = 0 IS THIS MANY EDGES AFTER THE RESET EDGE**, in the whole
+// machine and so in every standalone check that compares against a trace
+// dated from muir's t = 0: the reset edge and one idle edge come before row 0.
+// Equal to `cadr_tick_pkg::POWER_ON_EDGES`, which says why; a count of the
+// fabric's edges and not an instant, so it is the same at any grid.
+constexpr int kPowerOnEdges = 2;
 
 #endif  // CADR_TICK_H

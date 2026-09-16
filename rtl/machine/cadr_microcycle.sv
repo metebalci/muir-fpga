@@ -479,9 +479,10 @@ module cadr_microcycle #(
   // microcycle names `imem_q` and `prom_q` beside the scratchpad latches:
   // the address is constant across the microcycle and the word is read only
   // at its end.  With the mux gone the path is `pc_reg -> imem_reg/ADDR`,
-  // slow to slow, and it takes the fifteen-tick exception the write port's
-  // address has carried all along.  Fifteen ticks is TIGHTER than the real
-  // deadline, which is the boundary at twenty-seven.
+  // slow to slow, and it takes the relaxed set's exception the write port's
+  // address has carried all along, `ticks(75)` and eight at the 10 ns grid.
+  // That is TIGHTER than the real deadline, which is the boundary a whole
+  // microcycle later.
   //
   // AND WHAT IT ACTUALLY TAKES WAS ASKED OF THE ROUTED BOARD, because an
   // exemption nobody measures is the thing this repository keeps being
@@ -541,10 +542,20 @@ module cadr_microcycle #(
   assign i = idebug ? debug_ir : (promenable ? prom_q : imem_q);
 
   // `-IWEA` is `NAND(WP5A, IWRITEDA)` at ICTL 1B13: the control store write
-  // pulse is -TPWPIRAM, and the word is stored on its trailing edge, in the
-  // write phase and before the boundary that loads IR.
+  // pulse is -TPWPIRAM, in the write phase and before the boundary that loads
+  // IR.  **TAKEN ON THE PULSE'S LEADING EDGE**, as the scratchpads' `wp` below
+  // is: `pc`, `iwr` and `iwrited` are loaded at the boundary and stand through
+  // the whole pulse, so the word written is the same at either edge.  What
+  // the edge decides is how long before the next boundary the word is in the
+  // store, and this store is read synchronously: `imem_q` takes the word a
+  // tick after a write, and IR takes `imem_q` at the boundary, so a write has
+  // to land at least two edges before it.  The trailing edge, `-TPW45`, is
+  // one tick before the restart at a 10 ns grid (50 and 60 ns), which put the
+  // write ON the boundary and IR took the word the store held before it:
+  // every word the boot PROM loads read back all ones, measured.  The leading
+  // edge is the end of the read phase, six ticks before the boundary.
   logic n_tpwpiram_q, iwe;
-  assign iwe = iwrited && n_tpwpiram && !n_tpwpiram_q;
+  assign iwe = iwrited && !n_tpwpiram && n_tpwpiram_q;
 
   always_ff @(posedge clk) begin
     n_tpwpiram_q <= n_tpwpiram;
@@ -1678,7 +1689,21 @@ module cadr_microcycle #(
       ifetch_q   <= ifetch;
 
       // "the high-going edge loads MD"
-      if (loadmd_edge) begin
+      //
+      // **A STROBE ON THE BOUNDARY'S OWN TICK IS THAT BOUNDARY'S WORD.**
+      // muir's `Rtl` runs `after_memack` at the boundary instant before the
+      // next read phase, so a word acknowledged at the boundary is in MD for
+      // the microcycle that follows it.  Held for the NEXT boundary instead,
+      // the fabric showed it a microcycle late --- and on a 10 ns grid a
+      // read acknowledged a whole number of microcycles after its grant lands
+      // exactly on a boundary: three times in the band's 2,800,000
+      // microcycles, measured, where the 5 ns grid met it on words MD already
+      // held.  `DESTMDR` below still wins at a cpu edge, as it does over a
+      // held word.
+      if (loadmd_edge && mclk_edge) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
         md_held    <= rdata;
         md_pending <= 1'b1;
       end else if (md_pending && (mclk_edge || hang)) begin
@@ -1987,7 +2012,7 @@ module cadr_microcycle #(
   // `rtl/plumbing/cadr_console.sv`, which is a level above `cadr_machine`
   // and outside `cadr_machine.xdc`'s reach, so it is registered HERE first
   // and the memories are addressed from `ro_a0`: that arc is
-  // `cadr_machine`'s at both ends and takes the fifteen-tick relaxation the
+  // `cadr_machine`'s at both ends and takes the relaxed set's relaxation the
   // control store's own address pins take, and the arc from the console is
   // a bare flop-to-flop wire at one tick.  The same rule sends `ro_data`
   // and `ro_echo` out as registers.  It is `cadr_console_state.sv`'s

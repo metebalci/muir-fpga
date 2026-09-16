@@ -58,7 +58,7 @@
 //   `err_status` is `Machine::debug_status`'s byte, which in the fabric
 //   comes from the bus interface's own error register.
 //
-// **THE MICROCYCLE BOUNDARY IS MADE HERE**, a pulse every 29 ticks, because
+// **THE MICROCYCLE BOUNDARY IS MADE HERE**, a pulse every normal microcycle --- 15 ticks at a 10 ns grid --- because
 // `cadr_console_bus.sv` captures the diagnostic mux at it and `cadr_console
 // .sv` counts microcycles off `clock_edge`.  A harness with no boundary
 // would leave the console's read-back frozen at its reset value and the
@@ -137,15 +137,18 @@ module cadr_gp1_split_harness #(
 
   // --------------------------------------------------------- the boundary
   //
-  // 29 ticks, a microcycle at normal speed.  See the header: without it the
+  // A microcycle at normal speed.  See the header: without it the
   // console's read-back never loads and the check compares a constant.
+  // A normal microcycle on MIT's grid: the read tap and the restart, each
+  // put through `cadr_tick_pkg::ticks` as `cadr_phase_gen.sv` puts them.
+  localparam int unsigned MICROCYCLE_T = cadr_tick_pkg::ticks(85) + cadr_tick_pkg::ticks(60);
   logic [4:0] beat;
   logic       mclk;
   always_ff @(posedge clk) begin
     if (rst) begin
       beat <= 5'd0;
       mclk <= 1'b0;
-    end else if (beat == 5'd28) begin
+    end else if (beat == 5'(MICROCYCLE_T - 1)) begin
       beat <= 5'd0;
       mclk <= 1'b1;
     end else begin

@@ -55,6 +55,7 @@
 
 use std::collections::BTreeMap;
 
+use muir::clock::TimingModel;
 use muir::disk_controller::Controller;
 use muir::disk_unit::{BLOCK_WORDS, Geometry, Unit};
 use muir::engine::Engine;
@@ -162,6 +163,7 @@ impl Gen {
     fn new(pack: &str) -> Gen {
         let unit = Unit::open(pack, G).unwrap_or_else(|e| fail(&format!("{pack}: {e}")));
         let mut d = Controller::default();
+        d.set_timing_model(TimingModel::Fpga);
         d.attach(0, unit);
         Gen {
             d,
@@ -364,6 +366,9 @@ fn from_boot(pack: &str, want: usize, limit: u64) -> Vec<FromBoot> {
     m.load_prom(&muir::prom::boot_prom());
     m.disk.attach(0, unit);
     let mut e = Rtl::new(m);
+    // muir's model of this fabric's grid: the boot the transfers are taken
+    // from runs on the time the fabric keeps.
+    e.set_timing_model(TimingModel::Fpga);
     e.boot();
     let mut found = Vec::new();
     let mut last: Vec<usize> = Vec::new();

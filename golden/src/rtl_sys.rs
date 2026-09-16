@@ -108,7 +108,6 @@ mod trace;
 use muir::disk_unit::{Geometry, Unit};
 use muir::engine::Engine;
 use muir::machine::Machine;
-use muir::rtl::Rtl;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -156,7 +155,7 @@ fn main() {
         .unwrap_or_else(|e| fail(&format!("{pack}: {e}")));
     m.disk.attach(0, unit);
 
-    let mut e = Rtl::new(m);
+    let mut e = trace::engine(m);
     e.boot();
 
     // The boot, run and not written. Plain `step` here rather than the

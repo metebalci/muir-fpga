@@ -100,10 +100,10 @@
 // without remainder, which is why this constant has never needed to be
 // anything but an integer.
 //
-// **THE MACHINE'S OWN TIME DID NOT CHANGE AND THIS IS NOT A CONVERSION FOR
-// IT.**  A microcycle is 29 ticks whatever a tick costs, and `status`
-// measures microcycles against a wall-clock wait, so the only place the two
-// meet is here and in `console_test.c`'s model.  Getting it wrong prints a
+// **THE MACHINE'S OWN TIME IS NOT WHAT THIS CONVERTS.**  A microcycle is 15
+// ticks of MIT's grid whatever a tick costs, and `status` measures
+// microcycles against a wall-clock wait, so the only place the two meet is
+// here and in `console_test.c`'s model.  Getting it wrong prints a
 // wrong duration; it cannot corrupt anything.
 #define CONS_TICKS_PER_US  100u
 

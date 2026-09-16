@@ -80,7 +80,6 @@ int main(int argc, char **argv) {
   // with the oscillator two ticks early --- issue #21, which only the whole
   // machine's NXM leg could see.  The two agree now because both are the
   // machine's frame, and `POWER_ON_T` in the module is what they agree on.
-  constexpr int kPowerOnEdges = 2;
   for (int e = 0; e < kPowerOnEdges; ++e) {
     dut->rst = (e == 0);
     dut->clk = 1;
@@ -189,7 +188,9 @@ int main(int argc, char **argv) {
       ++grants;
       if (r.wrcyc) ++writes; else ++reads;
       if (r.device_ns == 0) ++instant;
-      if (r.device_ns > 145) ++over_a_cycle;
+      // Longer than a normal microcycle on the grid: the tap and the
+      // restart each rounded up, 85 and 60 ns.
+      if (r.device_ns > (GridTicks(85) + GridTicks(60)) * kGridNs) ++over_a_cycle;
       if (r.mclk && !r.n_memrq) ++rq_on_edge;
     }
     memgrant_last = r.n_memgrant;

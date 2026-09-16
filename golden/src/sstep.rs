@@ -81,6 +81,7 @@
 //! 8. `LDSTAT`, which loads the statistics counter from `IWR`.
 //! 9. Starts again, and the machine goes on from where the steps left it.
 
+use muir::clock::TimingModel;
 use muir::engine::Engine;
 use muir::isa::asm::{ALU, SETA, a_dest, a_src, m_src};
 use muir::machine::Machine;
@@ -203,6 +204,10 @@ fn main() {
     let mut m = Machine::new();
     m.load_prom(&muir::prom::boot_prom());
     let mut e = Rtl::new(m);
+    // muir's model of this fabric's grid, chosen before the machine runs:
+    // the `ns` column is a microcycle's length on the grid.
+    assert_eq!(muir::clock::GRID_NS, 10, "the grid the fabric keeps");
+    e.set_timing_model(TimingModel::Fpga);
     e.boot();
 
     // The machine runs on its own for a while, so that the console arrives at

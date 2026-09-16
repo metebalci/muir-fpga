@@ -192,12 +192,11 @@ void screen_server_close(struct screen_server *s);
 // a new picture faster than the display board scans one; an incremental
 // update is never held back.
 //
-// **IT IS THE REAL FRAME AND NOT THE MACHINE'S**, and the two stopped being
-// the same number when the tick stopped being 5 ns.  This is compared against
-// `CLOCK_MONOTONIC` by `screen_server_poll`'s caller, so what it has to be is
-// how long the FABRIC takes over a frame: 3,091,200 ticks, 30.912 ms, where
-// the machine's own name for that interval is still muir's 15.456 ms.  See
-// `screen_geom.h` for both and for why they are kept apart.
+// **IT IS THE REAL FRAME AND NOT THE MACHINE'S**, and the two are the same
+// number only while MIT's grid and the board's tick are.  This is compared
+// against `CLOCK_MONOTONIC` by `screen_server_poll`'s caller, so what it has
+// to be is how long the FABRIC takes over a frame: 1,545,600 ticks of 10 ns,
+// 15.456 ms.  See `screen_geom.h` for both and for why they are kept apart.
 #define SCREEN_FULL_UPDATE_NS ((uint64_t)SCREEN_FRAME_REAL_NS)
 
 // A connection that has not got through RFC 6143's opening exchange in this

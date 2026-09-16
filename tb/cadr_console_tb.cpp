@@ -187,13 +187,14 @@ constexpr uint32_t kColorTvKey = 0x434F4C52u;   /* "COLR" */
 constexpr uint32_t kTvMark = 0x5456u;           /* "TV" */
 
 // What `rtl/plumbing/xilinx7/cadr_machine.xdc`'s relaxed set asks of the three
-// registers `rtl/machine/cadr_console_state.sv` holds: fifteen ticks, 75 ns.
+// registers `rtl/machine/cadr_console_state.sv` holds: the fast read tap, 75 ns,
+// eight ticks at a 10 ns grid.
 // The file relaxes `-from $slow -to $slow` and every register of that module
 // is in `slow`, so the claim being made about each of them is that its input
 // is stable for a microcycle and its capture is at the end of one.  A claim
 // nothing exercises is not a claim: the loop measures the shortest arc each
 // of the three actually has and fails below this.
-constexpr long kRelaxedT = 15;
+constexpr long kRelaxedT = GridTicks(75);
 
 // The reset register's key and the pulse it makes, as `rtl/plumbing/cadr_console.sv`
 // parameterizes them.  `RESET_KEY` is "RSET" --- four distinct bytes, none of
@@ -2549,7 +2550,7 @@ int main(int argc, char **argv) {
       "    the arc cadr_machine.xdc relaxes, MEASURED over %ld boundaries: the\n"
       "      shortest distance from a change of the source to the boundary\n"
       "      that captures it --- VMA %ld ticks, Q %ld, MD %ld, against the\n"
-      "      fifteen that file's relaxed set asks the fabric for.  vma and q\n"
+      "      %ld that file's relaxed set asks the fabric for.  vma and q\n"
       "      are written only inside `if (mclk_edge)` and cannot move between\n"
       "      boundaries at all; **MD can**, through `md_pending && hang` ---\n"
       "      the word -LOADMD deskewed, taken under a parked generator --- so\n"
@@ -2640,7 +2641,7 @@ int main(int argc, char **argv) {
       flag2_imodd, flag2_pdlwrited, flag2_spushd, flag2_iwrited,
       vq_compared, vq_distinct, md_off_vma, md_off_q,
       vq_latch_samples, vq_latch_moving, md_latch_samples, md_latch_moving,
-      cap_edges, cap_min[0], cap_min[1], cap_min[2],
+      cap_edges, cap_min[0], cap_min[1], cap_min[2], kRelaxedT,
       axi_reads, axi_writes,
       axi_beats, axi_stalls, unmapped_seen, kUnmapped, cpu_waited,
       lag_seen, lag_samples, lag_moving,

@@ -106,6 +106,7 @@
 #include <vector>
 
 #include "Vcadr_memory_path.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
@@ -118,13 +119,17 @@ constexpr uint32_t kBuffer = 017000000u;
 constexpr uint32_t kBufferWords = 0100000u;
 constexpr uint32_t kControl = 017377760u;
 constexpr uint32_t kControlWords = 8u;
-constexpr long kMicrocycle = 29;
+// The master clock `golden/src/tv.rs` runs the trace on: a normal microcycle
+// WITH `ILONG`, the read tap and the restart each on the grid, because a plain
+// normal microcycle divides a frame at a 10 ns grid and every `-TVMA CLR` would
+// then fall at one phase of it.  Held to the header below.
+constexpr long kMicrocycle = GridTicks(125) + GridTicks(60);
 
 // `cadr_tv.sv`'s own two constants for MIT's sync PROM: the 297 words of
 // `cadrtv/cpt.prom` MIT burned, which is where a fetch runs off the end of
 // the program and above which a read of register 1 gives zero; and an
 // instruction of the sync program in clock modes 0/1 and 2/3, 500 ns and
-// 625, which on MIT's 5 ns grid is exactly 100 ticks and 125.  Held to the
+// 625, kept in nanoseconds by the module's accumulator.  Held to the
 // generator's header below, so that a muir whose PROM or whose instruction
 // moved says so here rather than as a mismatch a frame in.
 constexpr long kSyncPromWords = 297;
@@ -576,10 +581,10 @@ static int run_trace(const char *path) {
   // The module's own constants against the generator's header: a muir that
   // moved says so here and not as a mismatch a frame in.
   struct { const char *what; long got, want; } consts[] = {
-      {"frame_ticks", want_h("frame_ticks"), 3091200L},
+      {"frame_ticks", want_h("frame_ticks"), 15456000L / kGridNs},
       {"microcycle_ticks", want_h("microcycle_ticks"), kMicrocycle},
-      {"setup_ticks", want_h("setup_ticks"), 16L},
-      {"deskew_ticks", want_h("deskew_ticks"), 12L},
+      {"setup_ticks", want_h("setup_ticks"), GridTicks(80)},
+      {"deskew_ticks", want_h("deskew_ticks"), GridTicks(60)},
       {"buffer", want_h("buffer"), (long)kBuffer},
       {"buffer_words", want_h("buffer_words"), (long)kBufferWords},
       {"control", want_h("control"), (long)kControl},
@@ -745,7 +750,6 @@ static int run_trace(const char *path) {
   // whole machine.  `tb/cadr_busint_xbus_tb.cpp` gives the argument at its
   // own `kPowerOnEdges`, and `POWER_ON_T` in `cadr_busint_xbus.sv` is what
   // it holds; issue #21.
-  constexpr int kPowerOnEdges = 2;
   for (int e = 0; e < kPowerOnEdges; ++e) {
     dut->rst = (e == 0);
     dut->clk = 1;

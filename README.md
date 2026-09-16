@@ -7,19 +7,21 @@ hardware ran.
 fidelities. `rtl` is the middle one. It has the machine's own two-phase clock,
 every datapath signal on it, and everything that is a matter of *when*. That
 means bus waits and hangs, arbitration, and timeouts. This repository is that
-machine in fabric, at the CADR's own microcycle of 29 clock ticks.
+machine in fabric, at the CADR's own microcycle of 15 clock ticks.
 
-The fifty per cent is one number and is worth being exact about. Every
-instant the CADR names is a whole number of ticks --- the microcycle is 29 of
-them, the seven read taps are 15, 17, 20, 23, 25, 28 and 32 --- and every one
-of those counts is MIT's own. What this board chooses is how long a tick
-lasts, and it makes one 10 nanoseconds where the hardware's was 5. So the
-machine is scaled and not distorted: a microcycle is 145 nanoseconds on MIT's
-drawings and 290 here, every instant keeps its exact ratio to every other, and
-nothing inside the machine can tell. The reason is timing closure, which at 5
-nanoseconds this design did not reach and at 10 it does with room to spare ---
-and a setup violation in a machine whose semantics are pinned to a tick is a
-threat to correctness rather than to speed.
+The speed is one number and is worth being exact about. Every instant the CADR
+names is placed on a grid of 10 nanoseconds, rounded up --- the microcycle is
+15 ticks, the seven read taps are 8, 9, 10, 12, 13, 14 and 16 --- and a tick
+lasts 10 nanoseconds on this board. So a microcycle is 145 nanoseconds on
+MIT's drawings and 150 here, and the machine runs at about 97% of the
+hardware's speed. Eight instants move up by five nanoseconds each, never down,
+and muir's `--timing-model fpga` rounds them the same way, so the references
+are generated under the same grid. `docs/timing.md` lists every one. The grid
+was 5 nanoseconds before, which kept every instant exact and, with a 10
+nanosecond tick, ran the machine at half speed; the tick is 10 nanoseconds
+because timing closure at 5 was not reached, and a setup violation in a
+machine whose semantics are pinned to a tick is a threat to correctness rather
+than to speed.
 
 muir's netlists are read to **derive** things. They give the port list's
 directions, the address decode's boundaries, and every constant that came off

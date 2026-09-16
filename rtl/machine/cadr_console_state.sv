@@ -53,8 +53,8 @@
 // restart and not about anybody's intent, so `tb/cadr_console_tb.cpp`
 // measures it every tick over MIT's whole boot PROM: the shortest distance
 // from a change of each source to the boundary that captures it, against the
-// fifteen ticks `rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes these three
-// arcs to.  It fails below fifteen.  An exemption too wide tests nothing and
+// `ticks(75)` that `rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes these three
+// arcs to, eight at the 10 ns grid.  It fails below that.  An exemption too wide tests nothing and
 // looks exactly like one that is right; that measurement is the check on this
 // one.
 //

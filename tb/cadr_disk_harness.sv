@@ -30,7 +30,7 @@
 // the pack side's status word, because `tb/cadr_disk_tb.cpp` requires the
 // first low at every tick and waits on the second at every START, and neither
 // is a thing a bus cycle should be spent on in a testbench that is placing
-// rows on a 5 ns grid.
+// rows on MIT's grid.
 
 `default_nettype none
 

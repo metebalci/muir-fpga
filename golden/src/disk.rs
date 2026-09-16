@@ -67,6 +67,7 @@
 
 use std::collections::BTreeMap;
 
+use muir::clock::{self, TimingModel};
 use muir::disk_controller::{Controller, TIMEOUT_NS};
 use muir::disk_unit::{
     self, BLOCK_WORDS, Ecc, Geometry, Header, INDEX_PULSE_NS, REVOLUTION_NS, SECTOR_NS, Unit,
@@ -107,10 +108,11 @@ fn record_at(k: u32) -> u32 {
     0x0100_0000 | ((k.wrapping_mul(0x9E37) & 0xFFFF) << 7)
 }
 
-/// Five nanoseconds, the master clock's period. Every instant the trace
-/// samples at is a multiple of this, because the fabric can only look at
-/// its own clock edges.
-const TICK_NS: u64 = 5;
+/// MIT's grid, the master clock's period. Every instant the trace samples
+/// at is a multiple of this, because the fabric can only look at its own
+/// clock edges.  muir's `clock::GRID_NS` is the grid its `fpga` timing
+/// model keeps, and the two are asserted equal.
+const TICK_NS: u64 = 10;
 
 /// A word of a block, as a function of **both** the block and the offset
 /// within it. Neither a wrong block nor a wrong offset reads back as the
@@ -191,7 +193,14 @@ struct Gen {
 impl Gen {
     fn new() -> Gen {
         Gen {
-            d: Controller::default(),
+            d: {
+                // muir's model of this fabric's grid: a span the drive
+                // charges ends at the first tick at or past it.
+                assert_eq!(TICK_NS, clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
+                let mut d = Controller::default();
+                d.set_timing_model(TimingModel::Fpga);
+                d
+            },
             main: vec![0u32; MEMORY_WORDS as usize],
             now: 0,
             watch: Vec::new(),
@@ -223,7 +232,7 @@ impl Gen {
     /// Time passes. Monotonic, and always on the fabric's grid.
     fn at(&mut self, now: u64) {
         assert!(now >= self.now, "time runs backwards: {} to {now}", self.now);
-        assert!(now % TICK_NS == 0, "{now} is not on the 5 ns grid");
+        assert!(now % TICK_NS == 0, "{now} is not on the {TICK_NS} ns grid");
         self.now = now;
     }
 
@@ -632,7 +641,7 @@ fn main() {
 
     // A seek waits at its first step for a drive that never answers, and
     // MIT's board with the timeout jumper in ends it 2.56 s on. **The one
-    // full-length hang in the trace**: 512,000,000 ticks of the fabric's
+    // full-length hang in the trace**: 256,000,000 ticks of the fabric's
     // clock, and `docs/disk-controller.md` says why there is only one.
     g.write(0, 0o4);
     g.write(3, 0);
@@ -682,10 +691,10 @@ fn main() {
     // index is at time zero of the machine's clock, so the phase is taken
     // from a whole number of revolutions and the edges follow from it.
     //
-    // Every sample is on the 5 ns grid; the edges themselves are not, and
-    // that is the whole reason for sampling either side rather than at
-    // them. A revolution is 16,666,667 ns and a sector 968,448, neither a
-    // multiple of five.
+    // Every sample is on the grid; the edges themselves are not, and that
+    // is the whole reason for sampling either side rather than at them. A
+    // revolution is 16,666,667 ns and a sector 968,448, neither a multiple
+    // of the grid.
     let turn = g.now.div_ceil(REVOLUTION_NS) * REVOLUTION_NS;
     for k in 0..=G.blocks_per_track {
         let began = turn + u64::from(k) * SECTOR_NS;
