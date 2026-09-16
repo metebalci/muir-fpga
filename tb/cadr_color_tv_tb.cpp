@@ -461,7 +461,6 @@ int main(int argc, char **argv) {
   int intr_last = 0, memack_last = 1, memrq_last = 1, timed_out_last = 0;
 
   auto step = [&](long tick, const Row &r, bool on_row) {
-    dut->rst = (tick == 0);
     const int mclk = (tick % kMicrocycle) == 0;
     if (on_row && r.mclk != mclk) bad += Fail(tick, "the MCLK grid", mclk, r.mclk, r);
     dut->mclk = mclk;
@@ -545,6 +544,21 @@ int main(int argc, char **argv) {
     dut->eval();
     ++checked;
   };
+
+  // **MUIR'S t = 0 IS TWO EDGES AFTER THE RESET EDGE, NOT THE RESET EDGE**:
+  // the reset edge and one idle edge come before row 0, as they do in the
+  // whole machine.  `tb/cadr_busint_xbus_tb.cpp` gives the argument at its
+  // own `kPowerOnEdges`, and `POWER_ON_T` in `cadr_busint_xbus.sv` is what
+  // it holds; issue #21.
+  constexpr int kPowerOnEdges = 2;
+  for (int e = 0; e < kPowerOnEdges; ++e) {
+    dut->rst = (e == 0);
+    dut->clk = 1;
+    dut->eval();
+    dut->clk = 0;
+    dut->eval();
+  }
+  dut->rst = 0;
 
   long tick = 0;
   for (size_t i = 0; i < rows.size() && bad < 20; ++i) {

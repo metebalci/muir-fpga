@@ -146,25 +146,43 @@ namespace {
 // Five nanoseconds, the master clock's period.
 constexpr int kTickNs = kGridNs;
 
-// WHERE THE NXM TIMER'S ACKNOWLEDGMENT LANDS, against muir's own column, in
-// the units the histogram at the end prints: muir minus the fabric as this
-// testbench observes it, which is one tick late for the reason given at the
-// collection site.  MEASURED AND NOT DERIVED: the two cycles this program
-// sends to empty Xbus space both read +5, and what is pinned is that they do
-// not move.  They move when the bus interface's free-running timeout
-// oscillator changes phase, and the only thing that changes its phase is the
-// tick reset is released on --- which is why this is the one witness the
-// boot PROM has to the reset network arriving everywhere at once.
-// AND +5 IS NOT AGREEMENT.  One tick of it is this instrument reading a
-// tick late; the rest is real, and means the fabric's NXM timer fires two
-// ticks BEFORE muir's.  A combinationally answered cycle reads -5 here,
-// which is exact agreement once the instrument's tick is allowed for, so
-// the two are measured against the same yardstick and only this one
-// disagrees.  Filed as issue #21.  What is pinned is the phase, not the
-// polarity: the number moves when the reset network arrives in two
-// places at once, which is the claim, and closing #21 moves it too --- at
-// which point this constant changes and the leg goes on doing its job.
-constexpr int kNxmAckSlipNs = 5;
+// WHERE AN ACKNOWLEDGMENT LANDS, against muir's own column, in the units the
+// histogram at the end prints: muir minus the fabric as this testbench
+// observes it.
+//
+// **-5 IS EXACT AGREEMENT, AND THE FIVE IS THIS INSTRUMENT'S OWN TICK.**  The
+// observation is made at the top of a tick, before that tick's edge, so an
+// acknowledgment the fabric makes at edge `e` is read at `e + 1` and mapped to
+// that edge's nanosecond.  It does not matter how the acknowledgment was
+// made: registered, as the NXM timer's is, or combinational, as the disk
+// controller's is, the value seen at the top of `e + 1` is the value edge `e`
+// settled.  That is measured in the same run rather than left to this
+// comment: every device cycle the disk controller answers must read this
+// number too, and those are the cycles whose grant and length already agree
+// with muir exactly.
+constexpr int kInstrumentSlipNs = -kTickNs;
+
+// WHERE THE NXM TIMER'S ACKNOWLEDGMENT LANDS.  The two cycles this program
+// sends to empty Xbus space must both read this.  They move when the bus
+// interface's free-running timeout oscillator changes phase, and the only
+// thing that changes its phase is the tick reset is released on, which is why
+// this is the one witness the boot PROM has to the reset network arriving
+// everywhere at once.  It is the instrument's tick and nothing else: the NXM
+// timer agrees with muir to the nanosecond.
+//
+// **IT READ +5 BEFORE THE FIX FOR ISSUE #21, AND ALL TEN NANOSECONDS WERE THE
+// OSCILLATOR'S PHASE.**  Measured on this program by reading the oscillator
+// itself: its output rose at muir-mapped instants 840 modulo 850, and
+// `NXM TIMEOUT` was registered on the same edge as the sixth of those rises.
+// So the timer was exact against the oscillator, and the oscillator was two
+// ticks early against muir.  It started at the reset edge, where muir's
+// power-on is the instant the ring starts, and the processor and the bus
+// interface count that instant two edges after the reset edge.
+// `cadr_busint_xbus.sv` says why at `POWER_ON_T`.  Neither suspect the issue
+// first named was the cause: the timer does not take an edge before the
+// oscillator has it, and this instrument's tick was already inside the -5
+// every combinationally answered cycle reads.
+constexpr int kNxmAckSlipNs = kInstrumentSlipNs;
 
 // "a write is acknowledged at once, a read XBUS_ACK_NS later, which is the
 // 60 ns tap of the TD100 at REQLM 0C09 deskewing the word into MD".
@@ -440,7 +458,7 @@ int main(int argc, char **argv) {
   bool was_unibus = false, was_nxm = false;
   // **THE NXM TIMER'S INSTANT IS THE ONLY WITNESS THIS PROGRAM HAS TO THE
   // RESET RELEASE.**  The oscillator at REQTIM 0A01 free-runs from power-on
-  // --- `cadr_busint_xbus.sv` clears `vco_count` and `vco` on `rst` and never
+  // --- `cadr_busint_xbus.sv` sets `vco_acc` and `vco` on `rst` and never
   // again --- so its phase is fixed by the tick `rst` is released on, and the
   // instant a cycle nothing answers reaches -MEMACK carries that phase.
   // Every other acknowledgment on this program is either driven from the
@@ -449,6 +467,7 @@ int main(int argc, char **argv) {
   // was printed and asserted by nothing.
   bool cur_nxm = false;
   long nxm_acks = 0, nxm_ack_wrong = 0;
+  long dev_acks_measured = 0, dev_ack_wrong = 0;
   uint32_t stuck_phys = 0;
   const char *stopped_because = "nothing on the bus answered it";
   // HOW MANY DEVICE CYCLES THE FABRIC ITSELF ANSWERED.  Counted at the far
@@ -515,13 +534,16 @@ int main(int argc, char **argv) {
     // than fitted: a constant chosen to make two checks agree is a constant
     // hiding a difference, and this says whether there is one and how big.
     //
-    // **READ THE NUMBERS IT PRINTS WITH THIS IN MIND: IT OBSERVES ONE TICK
-    // EARLY.**  It samples `n_memack` here, near the top of the tick, before
-    // the slave's answer has been driven and eval'd, so an acknowledgment
-    // the interface makes combinationally reads back a tick after it
-    // happened.  Measured, and the size of it: the printed histogram says -5
-    // on every device read and -5 on every device write, which is the
-    // instrument's one tick and nothing else.  **THE DEVICE WRITES USED TO
+    // **READ THE NUMBERS IT PRINTS WITH THIS IN MIND: IT SAMPLES AT THE TOP
+    // OF THE TICK, SO IT READS ONE TICK LATE.**  It samples `n_memack` here,
+    // before this tick's edge and before the slave's answer has been driven
+    // and eval'd, so what it sees is what the previous edge settled, and an
+    // acknowledgment reads back a tick after it happened --- registered or
+    // combinational alike.  `kInstrumentSlipNs` is that tick, and the leg
+    // below holds every device cycle the disk controller answers to it.
+    // Measured, and the size of it: the printed histogram says -5 on every
+    // device read and -5 on every device write, which is the instrument's
+    // one tick and nothing else.  **THE DEVICE WRITES USED TO
     // READ -10 AND THE DISK CONTROLLER MOVED THEM**: when this testbench
     // answered them, all 5,650 came back a tick late --- 17 ticks from the
     // grant against muir's 16, the signature of an answer worked out before
@@ -534,7 +556,8 @@ int main(int argc, char **argv) {
     // rounding, not the fabric's: the 256 writes spread over -9, -7 and -5
     // in 78, 104 and 74, the 256 reads over -4, -2 and 0 in the same three
     // counts, the two NXM cycles at +5 and the single Unibus write at -10.
-    // Measured at the commit that added the disk controller; the shape
+    // Measured at the commit that added the disk controller, and the NXM
+    // cycles read -5 since the fix for issue #21; the shape
     // follows from `ack_at_tick` being rounded up to a tick, and it is here
     // so that a change in it is visible as a change and not read as noise.
     //
@@ -554,6 +577,22 @@ int main(int argc, char **argv) {
       const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
       const long slip = static_cast<long>(ack_for_cur) - ns_now;
       ack_error[slip]++;
+      // The yardstick itself: a cycle the disk controller answered, whose
+      // grant and length already agree with muir exactly, reads the
+      // instrument's tick and nothing else.  If it does not, the -5 the NXM
+      // leg below requires stops meaning agreement.
+      if (dev_cycle && !cur_nxm && !pack_trace) {
+        ++dev_acks_measured;
+        if (slip != kInstrumentSlipNs) {
+          if (!dev_ack_wrong)
+            std::fprintf(stderr,
+                         "FAIL: a device cycle the disk controller answered "
+                         "read %+ld ns from muir, wanting the instrument's own "
+                         "%+ld\n",
+                         slip, static_cast<long>(kInstrumentSlipNs));
+          ++dev_ack_wrong;
+        }
+      }
       if (cur_nxm && !pack_trace) {
         ++nxm_acks;
         if (slip != kNxmAckSlipNs) {
@@ -1013,6 +1052,19 @@ int main(int argc, char **argv) {
                  nxm_acks, nxm_ack_wrong, kNxmAckSlipNs);
     ++thin;
   }
+  // **AND THE YARDSTICK THE NXM LEG IS READ AGAINST MUST HAVE BEEN MEASURED.**
+  // The -5 above means agreement only because every device cycle reads the
+  // same number, so a run in which none was measured, or some were missed,
+  // leaves that number standing on a comment.
+  if (dev_ack_wrong || (!pack_trace && dev_acks_measured != device_cycles)) {
+    std::fprintf(stderr,
+                 "FAIL: %ld of %ld device cycles were measured against muir's "
+                 "acknowledgment and %ld of them read other than the "
+                 "instrument's own %+d ns\n",
+                 dev_acks_measured, device_cycles, dev_ack_wrong,
+                 kInstrumentSlipNs);
+    ++thin;
+  }
   if (device_cycles == 0) {
     std::fprintf(stderr,
                  "FAIL: none of %ld bus cycles reached an Xbus device, so the "
@@ -1134,8 +1186,9 @@ int main(int argc, char **argv) {
       sintr_checked, sintr_raised, status_rows);
   std::printf("    %ld cycles ended on the NXM timer, each acknowledging %+d ns\n"
               "      from muir --- the free-running timeout oscillator's phase,\n"
-              "      and so the tick the reset network was released on\n",
-              nxm_acks, kNxmAckSlipNs);
+              "      and so the tick the reset network was released on --- on the\n"
+              "      yardstick %ld device cycles read at the instrument's own tick\n",
+              nxm_acks, kNxmAckSlipNs, dev_acks_measured);
 
   // What this program did not reach, printed from the counts rather than
   // asserted from memory, so the list cannot outlive its reasons.

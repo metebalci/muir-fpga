@@ -519,14 +519,19 @@
 @note grant only opens its output. Restarting it at the grant is the obvious
 @note way to write it and is wrong on every cycle but the lucky ones --- it
 @note only shows because the trace's grants land at varied phases.
+@note
+@note Since issue #21 the reset branch puts the oscillator `POWER_ON_T` edges
+@note short of starting, and this restarts it the same way at the grant: the
+@note argument is unchanged, because a restart at any fixed offset from the
+@note grant is still a phase chosen by the grant.
 @old
     if (rst) begin
-      vco_acc <= 9'd0;
-      vco     <= 1'b1;
+      vco_acc <= 9'(VCO_HALF_NS - POWER_ON_T * cadr_tick_pkg::TICK_NS);
+      vco     <= 1'b0;
 @new
     if (rst || (mclk && !n_memrq && state != GRANTED && state != ACKED)) begin
-      vco_acc <= 9'd0;
-      vco     <= 1'b1;
+      vco_acc <= 9'(VCO_HALF_NS - POWER_ON_T * cadr_tick_pkg::TICK_NS);
+      vco     <= 1'b0;
 @end
 
 @mutation xbus-rq-dropped-at-the-acknowledgement
@@ -639,6 +644,94 @@
           if (!tmr_fell && vco) begin
 @new
           if (!tmr_fell && !vco) begin
+@end
+
+@mutation the-timer-counts-an-edge-a-tick-after-the-output-takes-it
+@check busint_xbus
+@file rtl/machine/cadr_busint_xbus.sv
+@note THE READING OF ISSUE #21 THAT WAS REFUTED, WRITTEN AS A MUTATION.  The
+@note first account of the issue said the timer tests `vco` on the tick it
+@note toggles, against the value it is leaving, and so takes each edge a
+@note tick before the output moves --- and that the fix was to count the
+@note edges the output has.  It is not early: `vco` and the timer are both
+@note registers, and both settle on the clock edge `vco_toggle` names, so
+@note `NXM TIMEOUT` lands on the edge of the sixth rise.  Measured on the
+@note composed machine, where the oscillator's rise and `state <= ACKED`
+@note appeared on the same edge.  This is the proposed fix: it detects each
+@note edge on the tick after the output took it, when the accumulator has
+@note just wrapped and `vco` holds the new value, which moves every timeout
+@note a tick late and moves a fall that lands on the grant's own edge inside
+@note the count.
+@note
+@note Measured against every check that builds this file, with the tree of
+@note issue #21's fix: caught by `busint_xbus`, `machine`, `memory_path`, `tv`
+@note and `color_tv`.  Not by `unibus`, whose debug-table leg measures the
+@note fabric's convention on an ordinary cycle nothing answers and requires the
+@note debug cycle to sit the same way, so a shift that moves both alike is
+@note absorbed; nor by `ddr_boot`, `md_compose`, `park` or `probe`, which
+@note compare no timeout against muir.
+@old
+        if (vco_toggle) begin
+          if (!tmr_fell && vco) begin
+            tmr_fell <= 1'b1;
+          end else if (tmr_fell && !vco) begin
+@new
+        if (vco_acc < 9'(cadr_tick_pkg::TICK_NS)) begin
+          if (!tmr_fell && !vco) begin
+            tmr_fell <= 1'b1;
+          end else if (tmr_fell && vco) begin
+@end
+
+@mutation the-timeout-oscillator-starts-a-tick-before-power-on
+@check machine
+@file rtl/machine/cadr_busint_xbus.sv
+@note ISSUE #21, ONE TICK OF IT.  muir counts the timeout oscillator from its
+@note t = 0, where the ring starts, and the processor and this interface count
+@note that instant two edges after the reset edge: the ring starts on the
+@note first edge reset is low, and a grant is registered on the edge after
+@note the ring makes its boundary.  The oscillator started at the reset edge,
+@note and the boot PROM's two cycles to empty Xbus space were acknowledged two
+@note ticks before muir's.  Aimed at `machine` and not at `busint_xbus`,
+@note deliberately:
+@note `tb/cadr_busint_xbus_tb.cpp` puts the reset edge two edges before row 0
+@note on this same argument, so a mutation of `POWER_ON_T` checked only there
+@note would be checked against a number written in two places.  The whole
+@note machine derives the origin from its own ring and processor, and its NXM
+@note leg is what measured the two ticks in the first place.  One tick, the
+@note smallest error there is.
+@note
+@note Measured against every check that builds this file, with the tree of
+@note issue #21's fix: caught by `busint_xbus`, `machine`, `memory_path`, `tv`
+@note and `color_tv`.  Not by `unibus`, whose debug-table leg measures the
+@note fabric's convention on an ordinary cycle nothing answers and requires the
+@note debug cycle to sit the same way, so a shift that moves both alike is
+@note absorbed; nor by `ddr_boot`, `md_compose`, `park` or `probe`, which
+@note compare no timeout against muir.
+@old
+  localparam int unsigned POWER_ON_T = 2;
+@new
+  localparam int unsigned POWER_ON_T = 1;
+@end
+
+@mutation the-timeout-oscillator-starts-a-tick-after-power-on
+@check busint_xbus
+@file rtl/machine/cadr_busint_xbus.sv
+@note The other side of the record above, and at module level.  Starting the
+@note oscillator one edge late puts every timeout in this trace a tick after
+@note muir's, where the whole machine's check has only two cycles nothing
+@note answers.
+@note
+@note Measured against every check that builds this file, with the tree of
+@note issue #21's fix: caught by `busint_xbus`, `machine`, `memory_path`, `tv`
+@note and `color_tv`.  Not by `unibus`, whose debug-table leg measures the
+@note fabric's convention on an ordinary cycle nothing answers and requires the
+@note debug cycle to sit the same way, so a shift that moves both alike is
+@note absorbed; nor by `ddr_boot`, `md_compose`, `park` or `probe`, which
+@note compare no timeout against muir.
+@old
+  localparam int unsigned POWER_ON_T = 2;
+@new
+  localparam int unsigned POWER_ON_T = 3;
 @end
 
 @mutation the-timeout-flag-outlives-its-cycle

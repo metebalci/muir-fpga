@@ -125,17 +125,42 @@ remainder, and carrying the remainder is the whole of the difference: a
 cleared counter loses a little every period and its phase walks away.
 
 **The starting parity is a decision and is stated at each constant.** Both
-accumulators are initialized to zero, which makes the first period the longer
-of the two wherever the grid does not divide the period — 43 ticks then 42
-for the timeout oscillator at a 10 ns grid, 13 then 12 for FCLK. At the 5 ns
-grid the machine runs at, every period is uniform and the parity does not
-arise. The reference anchors the timeout at five periods after the first
-gated rise, with whole periods counted from power-on. At the 5 ns grid a
-zero start begins a half period at reset, as the reference does. At a grid
-that does not divide the period, no starting value keeps every edge on the
-reference's instant. Issue #21 found a separate defect: the timer tests the
-oscillator on the tick it toggles, one tick before its output moves. That is
-fixed on its own.
+accumulators are zero when their oscillator starts, which makes the first
+period the longer of the two wherever the grid does not divide the period —
+43 ticks then 42 for the timeout oscillator at a 10 ns grid, 13 then 12 for
+FCLK. At the 5 ns grid the machine runs at, every period is uniform and the
+parity does not arise. At a grid that does not divide the period, no starting
+value keeps every edge on the reference's instant.
+
+**The timeout oscillator starts two edges after the reset edge, not at it.**
+The reference counts it in whole periods from its power-on, which is the
+instant the ring starts. The ring starts on the first edge reset is low. The
+processor and the bus interface then register a grant on the edge after the
+ring makes its boundary. So in the frame the grants are counted in, power-on
+is two edges after the reset edge. `POWER_ON_T` in `cadr_busint_xbus.sv` puts
+the oscillator's start there. It is a count of the fabric's edges, so it is
+two at any grid.
+
+It used to start at the reset edge, and every cycle nothing answered was
+acknowledged two ticks before the reference's. That was issue #21. It was
+measured on the whole machine by reading the oscillator itself, whose rises
+fell at 840 modulo 850 of the reference's time. The two suspects the issue
+first named were not the cause. The timer takes each edge on the same clock
+edge the oscillator's output takes it. The machine check reads every
+acknowledgment one tick late, but that tick was already in every
+acknowledgment it compares, and the check now measures it on 16,951 device
+cycles in the same run.
+
+The checks that hold the bus interface to the reference outside the whole
+machine now use the same frame. `busint_xbus`, `memory_path`, `tv` and
+`color_tv` put the reset edge and one idle edge before their first row, and
+`unibus` puts them before the tick it counts from. So their zero is the
+reference's power-on, as it is in the machine. They used to reset on that
+zero, which is why all five passed with the oscillator two ticks early.
+
+The I/O board's free-running clocks also start at the reset edge. No check of
+the whole machine compares them against the reference, so whether they carry
+the same two ticks is not established.
 
 ## The instants
 
@@ -173,6 +198,7 @@ ring, **T** for a triggered delay, **F** for free-running.
 | `-UB SSYN` to `-LMACK` | 150 | T | `busint::UNIBUS_ACK_NS` | `UB_ACK_T` | 30 | 15 |
 | `-UB SSYN` to the MD strobe | 100 | T | `busint::UNIBUS_STROBE_NS` | `UB_STROBE_T` | 20 | 10 |
 | timeout oscillator, half period | 425 | F | `chip::VCO_PERIOD` | `VCO_HALF_NS` | 85 | 43 then 42 |
+| timeout oscillator starts, edges after the reset edge | — | fabric | the reference's power-on in the frame grants are counted in | `POWER_ON_T` | 2 | 2 |
 
 ### The processor — `rtl/machine/cadr_microcycle.sv`
 
@@ -269,7 +295,7 @@ number dangerous, and they are the reason this document exists.
 | 21 | **The disk's store hold is two ticks and its read hold is one, and every timer a START loads is loaded that much short.** | So that what expires expires at the reference's instant despite the register on the counter's output. These are the one place a *fabric* concession is expressed in nanoseconds, and they move with the grid by construction. |
 | 22 | **The sixty-cycle clock accumulates and never reloads.** Its period is 1 modulo 5, so a counter that adds the tick and subtracts the period is exactly `now mod SIXTY_CYCLE_NS`; one that reloads with zero loses four nanoseconds a period. | Held by `iob-the-mains-counter-reloads-not-accumulates`. |
 | 23 | **The display's frame divides the grid exactly**: 15,456,000 ns is 3,091,200 ticks at 5 ns. | `golden/src/color_tv.rs` asserts `FRAME_NS % TICK_NS == 0` and would fail rather than round. A grid that does not divide the frame breaks that assertion, which is the one place the reference side checks the grid at all. |
-| 24 | **The timeout oscillator's PHASE, not its period, is what the acknowledgment instant carries.** The grant only opens the oscillator's output; it does not start it. | This is why a one-tick shift anywhere in the reset network moves every NXM answer: `the-memory-path-leaves-reset-a-tick-late` delays only the memory path's reset and is caught, and issue #21 — "The NXM timeout fires two ticks before muir's, on every cycle nothing answers" — is the same phase seen from the reference. That issue is reconciled: one of its ticks is the timer testing this oscillator on the tick it toggles, before the output moves, and the other is how the check reads the acknowledgment. **Anything that changes when this counter starts, or how long its period is, changes the answer on every cycle nothing answers.** |
+| 24 | **The timeout oscillator's PHASE, not its period, is what the acknowledgment instant carries.** The grant only opens the oscillator's output; it does not start it. | This is why a one-tick shift anywhere in the reset network moves every NXM answer: `the-memory-path-leaves-reset-a-tick-late` delays only the memory path's reset and is caught. The oscillator starts `POWER_ON_T` edges after the reset edge, which is the reference's power-on in the frame the grants are counted in, and `the-timeout-oscillator-starts-a-tick-before-power-on` holds that from the whole machine. Issue #21 was this phase and nothing else: the oscillator started at the reset edge, so every cycle nothing answered was acknowledged two ticks early. **Anything that changes when this counter starts, how long its period is, or how many edges the ring and the processor put between the reset edge and a grant, changes the answer on every cycle nothing answers.** |
 | 25 | **Four timing constraints and their flows write grid-derived tick counts as literals.** Fifteen is the fast read tap, 75 ns. Sixteen is the bus setup, 80 ns. Thirty is the register strobe, 150 ns. Each hold is one less than its setup. | Fifteen: `cadr_machine.xdc`'s relaxed set, `-to $probe_stable` in both boards' `cadr_probe.xdc`, and `assert_multicycle_applied` and `assert_instance_timing` in `fit.tcl` and both boards' `bitstream.tcl`. Sixteen: `-to $bus_word` in `cadr_machine.xdc`, `-to $contract` in `cadr_ddr.xdc`, and the flows' assertions. Thirty: `-to $ub_strobe` in `cadr_machine.xdc` and one assertion in each `bitstream.tcl`. **None of these follows the package, and `grid.pass` does not hold them.** A grid of 10 ns makes them 8, 8 and 15. The six in `cadr_debug.xdc` and `cadr_debug_pmod.xdc` is the debug link's beat in board ticks and is not on the grid. |
 
 ## What is not MIT's timing at all
@@ -285,6 +311,7 @@ with them.
 | `LOST_T`, `RESET_T`, `BOOT_T` in `cadr_console.sv` | how long the console holds a line, and how long it waits for the processing system |
 | `WATCHDOG_T` in `cadr_debug_window.sv` | one second of real time before a wedged bus is released |
 | `CLKIN_PERIOD_NS` in `xilinx7/cadr_hdmi_phy.sv` | the board's own oscillator, in real nanoseconds |
+| `POWER_ON_T` in `cadr_busint_xbus.sv` | how many edges after the reset edge the reference's power-on falls, as the processor and the bus interface count time |
 
 The test is whether the number answers a question about the CADR or a
 question about this board. `RESET_T` is "long enough that the machine
