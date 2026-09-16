@@ -146,6 +146,29 @@ module cadr_busint_xbus (
   // below keeps the true period at any grid.  See `docs/timing.md`.
   localparam int unsigned VCO_HALF_NS = 425;
 
+  // **POWER-ON IS TWO EDGES AFTER THE RESET EDGE, AS THIS INTERFACE COUNTS
+  // TIME.**  muir counts the oscillator from its t = 0 (`chip::toggle_at`),
+  // which is the instant the ring starts, and whole periods from there are
+  // what `the_timeout_clock_runs_free_and_idles_high` holds the gate-level
+  // board to.  In the fabric that instant is not the reset edge:
+  //
+  //   1. the ring starts on the first edge `rst` is low --- `cadr_phase_gen.sv`
+  //      holds it cleared until reset lifts, as `clock.rs` does;
+  //   2. the processor and this interface act on the ring's boundary one edge
+  //      after the ring makes it --- `boundary` in `cadr_microcycle.sv` is a
+  //      level over the tick TPCLK rose in, and `mclk` is that level, so a
+  //      grant is registered on the edge after.
+  //
+  // So the grants this interface makes, which agree with muir's to the
+  // nanosecond, are counted from an origin two edges after the reset edge,
+  // and the oscillator has to start there too.  It did not: it started at
+  // the reset edge, and every cycle nothing answered was acknowledged two
+  // ticks before muir's.  That was issue #21, measured on the composed
+  // machine with the oscillator's own rises reading 840 modulo 850 in
+  // muir's time.  This is a count of the fabric's edges and not an instant
+  // on MIT's drawings, so it is not on the grid: it is two at any grid.
+  localparam int unsigned POWER_ON_T = 2;
+
   // `NXM TIMEOUT` on the sixth rise of the gated output: the first rise plus
   // busint::TIMEOUT_NS, which is five whole periods.  The REQTIM PROM's
   // second table, which `DEBUG REQUEST ACTIVE` selects, is thirteen periods
@@ -351,20 +374,24 @@ module cadr_busint_xbus (
     // The oscillator runs whatever the cycle is doing, and reset only sets its
     // phase: on the board it has been running since the power came up.
     //
-    // **THE STARTING PARITY IS STATED HERE RATHER THAN INHERITED.**  Zero
-    // makes the first half period the LONGER of the two wherever the grid
-    // does not divide 425: at a 10 ns grid it is 43 ticks and then 42.  At
-    // the 5 ns grid the machine runs at, every half period is 85 and the
-    // parity does not arise.  The reference anchors the timeout at five
-    // periods after the first gated rise, with whole periods counted from
-    // power-on, and at this grid a zero start begins a half period at
-    // reset as that does.  At a grid that does not divide 425 no starting
-    // value keeps every edge on the reference's instant.  Issue #21 found a
-    // separate one-tick defect in how the timer samples `vco`; that is not
-    // this counter's and is fixed on its own.
+    // **RESET PUTS THE OSCILLATOR `POWER_ON_T` EDGES SHORT OF STARTING.**  The
+    // accumulator is set that many ticks short of a toggle with the output
+    // low, so the output rises on the edge `POWER_ON_T` after the reset edge
+    // with the accumulator at zero --- "the output rises as it starts", as
+    // `chip::toggle_at` has it, at the origin the grants are counted from.
+    // The two edges before it are before power-on and no cycle can be
+    // granted in them.  See `POWER_ON_T` for why the origin is there.
+    //
+    // **THE STARTING PARITY IS STATED HERE RATHER THAN INHERITED.**  A zero
+    // accumulator at the start makes the first half period the LONGER of the
+    // two wherever the grid does not divide 425: at a 10 ns grid it is 43
+    // ticks and then 42.  At the 5 ns grid the machine runs at, every half
+    // period is 85 and the parity does not arise, and every edge is on the
+    // reference's instant.  At a grid that does not divide 425 no starting
+    // value keeps every edge on the reference's instant.
     if (rst) begin
-      vco_acc <= 9'd0;
-      vco     <= 1'b1;
+      vco_acc <= 9'(VCO_HALF_NS - POWER_ON_T * cadr_tick_pkg::TICK_NS);
+      vco     <= 1'b0;
     end else if (vco_toggle) begin
       vco_acc <= vco_less;
       vco     <= !vco;
@@ -403,6 +430,14 @@ module cadr_busint_xbus (
       ub_acked  <= ub_ack_due;
       ub_loadmd <= ub_md_due;
 
+      // The timer takes each edge on the same clock edge the oscillator's
+      // output takes it.  `vco_toggle` says this edge flips `vco`, so `vco`
+      // read here is the value it is flipping FROM: high means a fall, low a
+      // rise.  That is how a register sees an edge this very clock edge
+      // makes, and it is not early --- `NXM TIMEOUT` and the sixth rise of
+      // `vco` settle on one edge, which is the rise's instant.  Testing the
+      // output after it has moved lands every timeout a tick late, which
+      // `the-timer-counts-an-edge-a-tick-after-the-output-takes-it` holds.
       if (state == GRANTED || state == UB) begin
         if (vco_toggle) begin
           if (!tmr_fell && vco) begin

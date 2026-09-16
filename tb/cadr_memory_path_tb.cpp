@@ -484,6 +484,21 @@ int main(int argc, char **argv) {
   long grants = 0, timeouts = 0;
   int memgrant_last = 1, timed_out_last = 0;
 
+  // **MUIR'S t = 0 IS TWO EDGES AFTER THE RESET EDGE, NOT THE RESET EDGE**:
+  // the reset edge and one idle edge come before row 0, as they do in the
+  // whole machine.  `tb/cadr_busint_xbus_tb.cpp` gives the argument at its
+  // own `kPowerOnEdges`, and `POWER_ON_T` in `cadr_busint_xbus.sv` is what
+  // it holds; issue #21.
+  constexpr int kPowerOnEdges = 2;
+  for (int e = 0; e < kPowerOnEdges; ++e) {
+    dut->rst = (e == 0);
+    dut->clk = 1;
+    dut->eval();
+    dut->clk = 0;
+    dut->eval();
+  }
+  dut->rst = 0;
+
   while (std::fgets(line, sizeof line, f)) {
     if (line[0] == '#' || line[0] == '\n') continue;
 
@@ -496,7 +511,6 @@ int main(int argc, char **argv) {
       return 2;
     }
 
-    dut->rst = (r.tick == 0);
     dut->mclk = r.mclk;
     dut->n_memrq = r.n_memrq;
     dut->wrcyc = r.wrcyc;
