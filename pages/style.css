@@ -191,27 +191,22 @@ code, kbd { font-family: var(--mono); font-size: var(--fs-mono); font-weight: 40
 /* A board's page is its architecture drawing, which is drawn on a canvas
    1810 units wide. The plate is let out to hold it at about its own size, so
    that its 11-unit labels land near 11px where the window allows. */
-body.wide .page, body.wide .desk-nav { max-width: 118rem; }
+body.wide .page { max-width: 118rem; }
 
-/* The pages, as a desk note: one line of mono above the plates. The page
-   being read is printed on the spot color. */
-.desk-nav {
-  max-width: 76rem;
-  margin: 0 auto 0.9rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.2rem 0.9rem;
+/* The desk note, above the plates and outside them, as muir's and ozd's is:
+   the project's name in bold and what this page is. The other pages follow
+   it on the same line as links, because this site has seven pages where
+   theirs has one, and a name is never broken across two lines. */
+.desk-note {
   font-family: var(--mono);
   font-size: var(--fs-mono-small);
   font-weight: 400;
   letter-spacing: 0.04em;
   padding-inline: 0.15rem;
+  margin-bottom: 0.9rem;
 }
-.desk-nav a { text-decoration: none; padding-inline: 0.2rem; }
-.desk-nav a:hover { text-decoration: underline; text-decoration-color: var(--spot); }
-.desk-nav a.home { font-weight: 600; padding-inline: 0 0.3rem; }
-.desk-nav a[aria-current="page"] { background: var(--spot); color: var(--ink); }
+.desk-note b { font-weight: 600; }
+.desk-note a { white-space: nowrap; }
 
 /* Each section is paper on the halftone desk, with its panels above and the
    machine's own status line ruled off at the foot. */
@@ -440,8 +435,12 @@ h3 {
 .key:hover { background: var(--spot); color: var(--ink); }
 .key:active { border-bottom-width: 2px; translate: 0 3px; }
 
-/* The contents, with dotted leaders */
-.contents { display: grid; gap: 0.45rem; align-content: start; }
+/* The contents, with dotted leaders. It lists this page's own sections and
+   nothing else: the other pages are the line at the top. The panel is a grid
+   whose rows share the height the mascot beside it gives the row, so a short
+   contents sits in the middle of its panel and the note stays at the foot, as
+   muir's does. */
+.contents { display: grid; gap: 0.45rem; }
 .toc { margin: 0; padding: 0; list-style: none; display: grid; }
 .toc a {
   display: grid;
