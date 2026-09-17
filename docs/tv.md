@@ -775,7 +775,7 @@ console word says whether a MACHINE has the board. With `LMTV=0` the second
 instance is not elaborated and the color addresses give the NXM whatever the
 console asks for. It is on by default on all three boards. The Cora Z7-07S is
 the one where the question is live: with the board fitted it routes and closes
-at +0.411 ns and 97.7% of its slices, built from a clean tree at `d3d6a19`,
+at +0.345 ns and 98.4% of its slices, built from a clean tree at `9d1cf26`,
 which fits and leaves almost nothing.
 
 **What silicon has shown.** On a Zynq board the console fits and unfits the

@@ -199,10 +199,12 @@ releases are sent when the last viewer is dropped.
 ### How fast words may go, and why one word at a time is not enough
 
 **A word goes only when the machine has taken the last one, and no sooner than
-1.188 ms after it.** Both rules are needed. The first is the card's own
-handshake. The fabric hands the card a word only when `KBD READY` is clear, so
-no word is ever written over one the machine has not read. That is
-`muir::terminal::keyboard::Keyboard::deliver`'s gate, kept in hardware.
+614.4 us after it.** That is 4,096 microcycles of 150 ns, as
+`INPUT_KEY_INTERVAL_NS` in `input_face.h` has it. Both rules are needed. The
+first is the card's own handshake. The fabric hands the card a word only when
+`KBD READY` is clear, so no word is ever written over one the machine has not
+read. That is `muir::terminal::keyboard::Keyboard::deliver`'s gate, kept in
+hardware.
 
 The second rule exists because the first is about the card and not about the
 machine behind it. The fabric offers the card its next word about two ticks
