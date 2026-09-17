@@ -48,26 +48,31 @@
 // 7661 is taken from DBGOUT's Unibus address `0o766100`: the 2651's first
 // register is `0o764160`, so the port is 7641.
 //
-// **HOW OFTEN THE PORT IS LOOKED AT, AND THE ARITHMETIC FOR IT.**  The
-// fabric cannot wake this program: the face has an IRQ register but it
-// reaches no Linux interrupt, so nothing but the poll timeout makes the port
-// get read.  A character's own frame time is what the interval has to beat.
-// At MIT's own 300 baud, ten bits is 33.3 ms --- which is why muir polls its
-// endpoint every 33 ms and says so at `SERIAL_INTERVAL`.  At 9,600 baud it is
-// 1.04 ms and at the 2651's fastest, 19,200, it is 521 us.
+// **HOW OFTEN THE PORT IS LOOKED AT, AND WHY IT NO LONGER HAS TO BEAT A
+// FRAME.**  The fabric cannot wake this program: the face has an IRQ register
+// but it reaches no Linux interrupt, so nothing but the poll timeout makes the
+// port get read.  At MIT's own 300 baud a ten-bit frame is 33.3 ms --- which
+// is why muir polls its endpoint every 33 ms and says so at `SERIAL_INTERVAL`
+// --- at 9,600 baud it is 1.04 ms and at the 2651's fastest, 19,200, 521 us.
+// Those are the machine's milliseconds and this timeout is the wall's, and on
+// this board the two are the same: MIT's grid and the board's tick are both
+// 10 ns, so the I/O board's baud-rate generator runs at real time.
 //
-// **THOSE ARE THE MACHINE'S MILLISECONDS AND THIS TIMEOUT IS THE WALL'S, AND
-// THE TWO ARE THE SAME ON THIS BOARD ONLY WHILE MIT's GRID AND THE BOARD'S TICK
-// ARE.**  Both are 10 ns, so the I/O board's baud-rate generator runs at real
-// time and a frame the machine calls 1.04 ms at 9,600 baud occupies 1.04 ms of
-// the wall this program's `poll()` is measured against.  At the 5 ns grid the
-// machine ran at half real time and the margin was twice this.  Do not shorten
-// the frame to buy margin: the frame's length is what MIT's own interrupt walk depends on
-// and `rtl/plumbing/cadr_serial_line.sv` says at length what shortening it
-// cost.  The default here is 2,000 us, which is comfortable at 9,600 and
-// marginal at 19,200; `--poll-us` shortens it, and the fabric's own DROPPED
-// counter --- printed on every status line --- is what says whether it needed
-// shortening.  A pass that finds nothing costs one register read.
+// **THE PORT USED TO HOLD ONE CHARACTER, AND THIS INTERVAL HAD TO BEAT A
+// FRAME.**  When the grid moved to 10 ns a frame at 9,600 baud became shorter
+// than the 2,000 us this program waits, and the board printed "HELO AD" for
+// "HELLO CADR" with DROPPED at 5; looking every 500 us still lost one burst in
+// three, because Linux adds its own latency to any interval.  So the port now
+// holds a thousand and twenty-four characters behind RDATA
+// (`rtl/plumbing/cadr_serial_line.sv`), about a second at 9,600 baud, and
+// each look takes everything waiting.  The interval only has to keep a second
+// of characters from piling up, which 2,000 us does at every rate the chip has
+// with three orders of magnitude to spare.  Do not shorten the frame to buy
+// margin instead: its length is what MIT's own interrupt walk depends on, and
+// the same file says at length what shortening it cost.  DROPPED, REFUSED and
+// the deepest the port's store has been are on the status line, and a line is
+// printed whenever either of the port's two losses moves.  A pass that finds
+// nothing costs one register read.
 //
 //     cadr-serial [--serial <endpoint>] [--log PATH]... [--regs ADDR]
 //                 [--poll-us N] [--no-guard] [--quiet] [--once]
@@ -131,7 +136,8 @@ static void usage(void)
 		"                 A file destination is capped at 1 MiB and rotated to\n"
 		"                 <name>.1, the root filesystem being a RAM disk\n"
 		"  --regs ADDR    the port's register window (default 0x40002000)\n"
-		"  --poll-us N    how often the port is looked at while idle (default 2000)\n"
+		"  --poll-us N    how often the port is looked at while idle (default 2000);\n"
+		"                 the port holds 1024 characters, so this need not beat a frame\n"
 		"  --no-guard     do not check the EMIO tally first\n"
 		"  --quiet        do not say when a device plugs in or hangs up\n"
 		"  --once         do the checks, say what the port is set to, and exit\n");
@@ -257,8 +263,8 @@ int main(int argc, char **argv)
 	// default is to end the process.
 	signal(SIGPIPE, SIG_IGN);
 	time_t last_said = time(NULL);
-	unsigned long long said_from = 0, said_to = 0;
-	unsigned long said_connects = 0, said_refused = 0;
+	struct serial_said said = { 0 };
+	(void)serial_endpoint_worth_saying(&e, &face, &said);
 	while (!stopping) {
 		serial_endpoint_wait(&e, poll_us);
 		serial_endpoint_pump(&e, &face);
@@ -272,23 +278,19 @@ int main(int argc, char **argv)
 		// this program refuses everything typed at it -- with the last
 		// line on the console still reading "the receiver had no room 0
 		// times", minutes old and looking current.  The refusal count is
-		// therefore one of the things that makes a line worth printing.
-		if (t - last_said >= 60
-		    && (e.from_machine != said_from || e.to_machine != said_to
-			|| e.connects != said_connects
-			|| e.refused_by_receiver != said_refused)) {
+		// therefore one of the things that makes a line worth printing, and
+		// so are the port's own two losses, which move none of this
+		// program's counters: `serial_endpoint_worth_saying` is the rule.
+		if (t - last_said >= 60 && serial_endpoint_worth_saying(&e, &face, &said)) {
 			say("%s; %llu characters from the machine, %llu to it; %lu attached, "
-			    "%lu gone, %lu turned away; the port dropped %u of its own, %llu more "
-			    "went with a cable, the receiver had no room %lu times and the far end "
-			    "was too slow to read %lu times",
+			    "%lu gone, %lu turned away; the port dropped %u of its own with its "
+			    "store full (at most %u waited at once), %llu more went with a cable, "
+			    "it refused %u written with no room, the receiver had no room %lu times "
+			    "and the far end was too slow to read %lu times",
 			    serial_endpoint_connected(&e) ? "a device is on the cable" : "nothing is attached",
 			    e.from_machine, e.to_machine, e.connects, e.hangups, e.refused,
-			    serial_face_dropped(&face), e.dropped_on_hangup, e.refused_by_receiver,
-			    e.stalled_port);
-			said_from = e.from_machine;
-			said_to = e.to_machine;
-			said_connects = e.connects;
-			said_refused = e.refused_by_receiver;
+			    said.port_dropped, serial_face_deepest(&face), e.dropped_on_hangup,
+			    said.port_refused, e.refused_by_receiver, e.stalled_port);
 			last_said = t;
 		}
 	}
@@ -299,9 +301,10 @@ int main(int argc, char **argv)
 	if (e.lines_up)
 		serial_face_set_lines(&face, 0);
 	say("stopped: %lu devices attached and %lu went; %llu characters from the machine, %llu to "
-	    "it; the port dropped %u of its own and %llu more went with a cable",
+	    "it; the port dropped %u of its own and %llu more went with a cable, and refused %u "
+	    "written with no room",
 	    e.connects, e.hangups, e.from_machine, e.to_machine, serial_face_dropped(&face),
-	    e.dropped_on_hangup);
+	    e.dropped_on_hangup, serial_face_refused(&face));
 	serial_endpoint_close(&e);
 	serial_face_close(&face);
 	return 0;

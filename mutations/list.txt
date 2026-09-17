@@ -10810,11 +10810,18 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note leaves the same character waiting for ever, so the machine's serial
 @note output is one character repeated.  Caught at "STAT's RX_VALID after
 @note RDATA was read".
+@note
+@note Aimed at the slot's own clear since the store went in behind `RDATA`:
+@note the read registers its answer in one place and `taking` empties the
+@note slot in another, and it is the second that makes the read consume.
 @old
-        rdata_hold <= {23'd0, rx_valid, rx_char};
-        rx_valid   <= 1'b0;
+      end else if (taking) begin
+        rx_valid <= 1'b0;
+      end
 @new
-        rdata_hold <= {23'd0, rx_valid, rx_char};
+      end else if (taking) begin
+        rx_valid <= rx_valid;
+      end
 @end
 
 @mutation serial-line-times-the-frame-by-the-board-and-not-by-the-machine
@@ -11091,6 +11098,143 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
       if (tx_busy) begin
 @new
       if (tx_busy && s_tx_on) begin
+@end
+
+@mutation serial-line-holds-one-character-again
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note **THE BOARD'S FAULT ONCE THE GRID MOVED TO 10 ns.**  The face held one
+@note character and counted the next in DROPPED if nobody had read the first,
+@note so a character was lost unless `cadr-serial` looked within a frame ---
+@note 1.04 ms at 9600 baud, where the program looks every 2,000 us.  The
+@note board gave "HELO AD" for "HELLO CADR" with DROPPED at 5.  Written as the
+@note store always being full, so that everything that arrives behind a
+@note character already waiting is dropped, which is exactly what one
+@note character of room was.
+@note
+@note Invisible to every leg that takes the character the tick it arrives,
+@note which was every leg in this check until the far end was made as slow as
+@note Linux.  Caught at "the characters a far end looking every 2 ms took, of
+@note a hundred is 0x1d (29), wanting 0x64 (100)" --- the same count the old
+@note face gave measured before the store existed.
+@old
+  assign full = (count == CNTW'(STORE_DEPTH));
+@new
+  assign full = (count == CNTW'(0));
+@end
+
+@mutation serial-line-store-is-a-sixteenth-as-deep
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note The depth is the property: how long Linux may leave the port unread
+@note before a character goes.  A store of sixty-four passes the leg with the
+@note 50 ms stall, which piles up forty-eight, and it is the far end that
+@note never looks which holds the number --- written in the check as the
+@note face documents it and not read out of the design, so that a shallower
+@note store disagrees rather than agrees.  Caught at "WAITING with the store
+@note full".
+@old
+    parameter int unsigned STORE_DEPTH = 1024
+@new
+    parameter int unsigned STORE_DEPTH = 64
+@end
+
+@mutation serial-line-read-pointer-wraps-a-slot-early
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note The ring's own arithmetic: the read pointer back at zero one slot before
+@note the end, so the character in the last slot is never read and the one at
+@note zero is read twice.  A burst of a hundred never reaches the end of a
+@note ring of a thousand and twenty-four, which is why the leg that fills the
+@note store and then empties it exists at all.  Caught at "the characters
+@note taken out of a full store, oldest first and the newest three the ones
+@note lost".
+@old
+      if (fetch)    rptr <= (rptr == PTRW'(STORE_DEPTH - 1)) ? '0 : rptr + PTRW'(1);
+@new
+      if (fetch)    rptr <= (rptr == PTRW'(STORE_DEPTH - 2)) ? '0 : rptr + PTRW'(1);
+@end
+
+@mutation serial-line-counts-the-store-from-two-statements
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note **THE HAZARD THE INPUT FACE'S QUEUE MET, ONE PAGE ALONG.**  A character
+@note in and a character fetched out can land on the same tick, and written
+@note as two statements the later one stands: the count goes down where it
+@note should stay, and the newest character is left in the ring uncounted
+@note and never read.  Nothing slower than a tick can see it, so the leg that
+@note sweeps a take a tick a frame across the predicted arrival is what does.
+@note An earlier draft of that leg let the machine's handler run between the
+@note reads that locate the arrival, and on one run this SURVIVED it; with the
+@note handler kept out of those reads it is caught at "the characters taken
+@note with the takes swept across the arrivals is 0xac (172), wanting 0xad
+@note (173)", the two parting at the last character, the one left uncounted.
+@old
+      count <= count + (to_store ? CNTW'(1) : CNTW'(0)) - (fetch ? CNTW'(1) : CNTW'(0));
+@new
+      if (to_store) count <= count + CNTW'(1);
+      if (fetch)    count <= count - CNTW'(1);
+@end
+
+@mutation serial-line-sends-an-arrival-straight-past-a-character-moving-up
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note The one tick a character is between the store and `RDATA`: the take
+@note has emptied the slot and fetched the store's last character, which moves
+@note up on the next tick.  An arrival on that tick finds the store and the
+@note slot both empty, and without `fetched` it counts as nothing waiting and
+@note goes straight to the slot --- where the character moving up overwrites
+@note it.  Only a take one tick before an arrival, with exactly one character
+@note in the store, reaches it, which is why the sweep keeps one standing: a
+@note draft that kept more standing, with the handler also running between
+@note the locating reads, let this SURVIVE.  Caught at "the characters taken
+@note with the takes swept across the arrivals is 0xac (172), wanting 0xad
+@note (173)", the two parting at character 79, the middle of the sweep.
+@old
+  assign nothing_waiting = !rx_valid && !fetched && (count == '0);
+@new
+  assign nothing_waiting = !rx_valid && (count == '0);
+@end
+
+@mutation serial-line-deepest-ignores-the-write-that-restarts-it
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note `DEEPEST` is what a board reads to know how much of the store a run
+@note needed, and a run starts by writing it.  Restarted by the write to the
+@note word beside it instead, it carries the last run's number into this one.
+@note Caught at "DEEPEST after a write, with nothing waiting".
+@old
+      if (wr && w_word == 10'd9) deepest <= '0;
+@new
+      if (wr && w_word == 10'd10) deepest <= '0;
+@end
+
+@mutation serial-line-refused-writes-are-not-counted
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note A character written into the machine with no room is dropped, which is
+@note what a line does and what the program guards against by reading `STAT`
+@note first.  The one loss left is a write that lands after the room went,
+@note and `REFUSED` is the only thing that says it happened.  Caught at
+@note "REFUSED after a write with no room".
+@old
+          end else if (refused != 32'hFFFF_FFFF) begin
+@new
+          end else if (refused == 32'hFFFF_FFFF) begin
+@end
+
+@mutation serial-line-irq-rises-for-every-arrival
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note `IRQ` bit 0 is an event, a character arriving with nothing waiting, so
+@note that a program which cleared it and took everything is not woken again
+@note by characters it was always going to find behind the first.  Raised for
+@note every arrival it is a level in all but name.  Caught at "IRQ bit 0 set
+@note again by a character arriving behind one waiting".
+@old
+  assign irq_set = {tx_room && !room_was, straight};
+@new
+  assign irq_set = {tx_room && !room_was, ser_tx_strobe};
 @end
 
 @mutation iob-the-disabled-transmitter-drops-the-character-it-is-shifting

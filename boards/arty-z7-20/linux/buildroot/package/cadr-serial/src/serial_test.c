@@ -21,7 +21,8 @@
 // written to confirm rather than to compare passes a mirrored screen.  So the
 // model below decodes register numbers as LITERAL offsets --- 0 for IDENT, 1
 // for STAT, 2 for RDATA, 3 for WDATA, 4 for CTL, 5 for MODE, 6 for DROPPED,
-// 7 for IRQ --- written out from `serial_face.h`'s own table and not through
+// 7 for IRQ, 8 for WAITING, 9 for DEEPEST, 10 for REFUSED --- written out from
+// `serial_face.h`'s own table and not through
 // `enum ser_reg`, and its status and control bits are literal masks written
 // out from the same table and not through `enum ser_stat` or `enum ser_ctl`.
 // A mutation that renumbers a register or moves a bit is then a disagreement
@@ -160,8 +161,10 @@ struct model {
 	// checkable rather than merely written down.
 	unsigned long rdata_reads_when_empty;
 	// Writes of WDATA the receiver had no room for, which `serial_face.h`
-	// says are "refused, and lost".
+	// says are "refused, lost and counted in `REFUSED`".
 	unsigned long wdata_lost;
+	// The most the port has held since DEEPEST was last written.
+	unsigned deepest;
 };
 
 static void model_init(struct model *m, unsigned port_cap, unsigned recv_cap)
@@ -187,9 +190,12 @@ static void model_machine_sends(struct model *m, uint8_t c)
 			++m->dropped;	/* saturating, as the face says */
 		return;
 	}
+	if (!m->port_len)
+		m->irq |= 1u << 0;	/* IRQ bit 0: arrived with nothing waiting */
 	m->port[(m->port_head + m->port_len) % MODEL_PORT_MAX] = c;
 	++m->port_len;
-	m->irq |= 1u << 0;	/* IRQ bit 0: a character is waiting */
+	if (m->port_len > m->deepest)
+		m->deepest = m->port_len;
 }
 
 // The machine's receiver takes the next character, or there is none.
@@ -241,6 +247,12 @@ static uint32_t model_read(struct serial_face *f, unsigned word)
 		return m->dropped;
 	case 7:			/* IRQ */
 		return m->irq;
+	case 8:			/* WAITING */
+		return m->port_len;
+	case 9:			/* DEEPEST */
+		return m->deepest;
+	case 10:		/* REFUSED, saturating */
+		return m->wdata_lost > 0xFFFFFFFFul ? 0xFFFFFFFFu : (uint32_t)m->wdata_lost;
 	default:
 		// Every address in the window must be answered; a fabric that
 		// answered nothing here would hang both Arm cores.  The model
@@ -270,6 +282,9 @@ static void model_write(struct serial_face *f, unsigned word, uint32_t v)
 		return;
 	case 7:			/* IRQ: a 1 clears the bit */
 		m->irq &= ~v;
+		return;
+	case 9:			/* DEEPEST: any write starts it again */
+		m->deepest = m->port_len;
 		return;
 	default:
 		return;
@@ -885,6 +900,119 @@ static void check_nodelay(void)
 	settle();
 }
 
+// ---- the port's store ---------------------------------------------------
+//
+// **THE PORT HOLDS WHAT THE MACHINE SENT UNTIL IT IS TAKEN**, a thousand and
+// twenty-four characters behind RDATA, and three things follow for this
+// program.  A look takes everything waiting, which `check_bursts_both_ways`
+// already holds at a depth the model sets.  A device that arrives is not
+// handed what the port still holds for the last one.  And the port's own two
+// losses --- DROPPED, REFUSED --- make the status line worth printing,
+// because they move none of this program's counters.
+
+static void check_the_port_leftovers_go_with_the_last_device(void)
+{
+	fresh(MODEL_PORT_MAX, 8);
+	int fd = client_open(0);
+	CHECK(fd >= 0, "the first client must be able to connect");
+	settle();
+	close(fd);
+	settle();
+	CHECK(!serial_endpoint_connected(&e), "the first device has gone");
+	const unsigned long long went = e.dropped_on_hangup;
+
+	// A frame that was still on the wire when the lines dropped lands in
+	// the port after the device has gone: two characters nobody will take.
+	model_machine_sends(&mdl, 'L');
+	model_machine_sends(&mdl, 'M');
+	settle();
+	CHECK(mdl.port_len == 2,
+	      "with nobody on the cable the port keeps them rather than a read losing them: %u",
+	      mdl.port_len);
+
+	fd = client_open(0);
+	CHECK(fd >= 0, "the next client must be able to connect");
+	settle();
+	CHECK(serial_endpoint_connected(&e), "the next device is on the cable");
+	CHECK(mdl.port_len == 0,
+	      "and what the port held for the last device went as this one arrived: %u left",
+	      mdl.port_len);
+	CHECK(e.dropped_on_hangup == went + 2,
+	      "and it is counted with what went with a cable: %llu, wanting %llu",
+	      e.dropped_on_hangup, went + 2);
+
+	model_machine_sends(&mdl, 'N');
+	uint8_t got[16];
+	const size_t n = client_collect(fd, got, 1, sizeof got);
+	CHECK(n == 1 && got[0] == 'N',
+	      "and the first character the new device sees is the first sent to it: %zu, 0x%02x",
+	      n, n ? got[0] : 0u);
+	close(fd);
+	settle();
+}
+
+static void check_the_port_counters_are_read_where_the_face_says(void)
+{
+	model_init(&mdl, 16, 2);
+	face.read = model_read;
+	face.write = model_write;
+	face.ctx = &mdl;
+
+	model_machine_sends(&mdl, 'a');
+	model_machine_sends(&mdl, 'b');
+	model_machine_sends(&mdl, 'c');
+	CHECK(serial_face_waiting(&face) == 3, "WAITING is word 8: %u", serial_face_waiting(&face));
+	CHECK(serial_face_deepest(&face) == 3, "DEEPEST is word 9: %u", serial_face_deepest(&face));
+	CHECK(serial_face_get(&face) == 'a' && serial_face_get(&face) == 'b',
+	      "two taken, oldest first");
+	CHECK(serial_face_waiting(&face) == 1, "and one waits: %u", serial_face_waiting(&face));
+	CHECK(serial_face_deepest(&face) == 3, "while the deepest stays where it was: %u",
+	      serial_face_deepest(&face));
+	serial_face_restart_deepest(&face);
+	CHECK(serial_face_deepest(&face) == 1, "and a write of word 9 starts it again: %u",
+	      serial_face_deepest(&face));
+
+	// REFUSED is the fabric's count of a write that found no room, which
+	// `serial_face_put` never makes; so the write is made by hand.
+	CHECK(serial_face_refused(&face) == 0, "nothing refused yet");
+	face.write(&face, 3, 'p');
+	face.write(&face, 3, 'q');
+	face.write(&face, 3, 'r');	/* the receiver holds two */
+	CHECK(serial_face_refused(&face) == 1, "REFUSED is word 10: %u", serial_face_refused(&face));
+}
+
+static void check_the_ports_losses_are_worth_saying(void)
+{
+	fresh(16, 2);
+	struct serial_said said;
+	memset(&said, 0, sizeof said);
+	CHECK(serial_endpoint_worth_saying(&e, &face, &said) == 0,
+	      "nothing has moved at start, so there is nothing to say");
+	CHECK(serial_endpoint_worth_saying(&e, &face, &said) == 0, "and still nothing");
+
+	// DROPPED alone: the machine sent into a full port and nothing of this
+	// program's own moved.
+	mdl.dropped = 5;
+	CHECK(serial_endpoint_worth_saying(&e, &face, &said) == 1,
+	      "the port dropping characters is worth a line on its own");
+	CHECK(said.port_dropped == 5, "and the line reads the port's own count: %u",
+	      said.port_dropped);
+	CHECK(serial_endpoint_worth_saying(&e, &face, &said) == 0,
+	      "and once said it is not said again");
+
+	// REFUSED alone.
+	mdl.wdata_lost = 1;
+	CHECK(serial_endpoint_worth_saying(&e, &face, &said) == 1,
+	      "a write the port refused is worth a line on its own");
+	CHECK(said.port_refused == 1, "and the line reads it: %u", said.port_refused);
+	CHECK(serial_endpoint_worth_saying(&e, &face, &said) == 0, "and once said, not again");
+
+	// This program's own, one of them.
+	++e.from_machine;
+	CHECK(serial_endpoint_worth_saying(&e, &face, &said) == 1,
+	      "a character from the machine is still worth a line");
+}
+
 // ---- `--serial`'s endpoint, which is muir's grammar --------------------
 //
 // **WHY THE GRAMMAR IS CHECKED AND NOT THE FLAG.**  `cadr-serial.c`'s
@@ -1037,6 +1165,11 @@ int main(void)
 
 	printf("--- the receiver having no room\n");
 	check_receiver_refuses_and_is_offered_again();
+
+	printf("--- the port's store, and the port's own losses\n");
+	check_the_port_leftovers_go_with_the_last_device();
+	check_the_port_counters_are_read_where_the_face_says();
+	check_the_ports_losses_are_worth_saying();
 
 	printf("--- where the far end is offered: muir's endpoint grammar\n");
 	check_the_endpoint_grammar();

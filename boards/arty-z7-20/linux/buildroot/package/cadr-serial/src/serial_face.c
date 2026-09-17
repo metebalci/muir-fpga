@@ -153,6 +153,27 @@ uint32_t serial_face_dropped(struct serial_face *f)
 	return f->read(f, SER_DROPPED);
 }
 
+uint32_t serial_face_waiting(struct serial_face *f)
+{
+	return f->read(f, SER_WAITING);
+}
+
+uint32_t serial_face_deepest(struct serial_face *f)
+{
+	return f->read(f, SER_DEEPEST);
+}
+
+void serial_face_restart_deepest(struct serial_face *f)
+{
+	// Any value: the write is what starts it again, not the word written.
+	f->write(f, SER_DEEPEST, 0);
+}
+
+uint32_t serial_face_refused(struct serial_face *f)
+{
+	return f->read(f, SER_REFUSED);
+}
+
 unsigned serial_face_rate(struct serial_face *f)
 {
 	// MODE carries MR1 in bits 7:0 and MR2 in bits 15:8, and the rate is

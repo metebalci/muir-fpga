@@ -275,9 +275,13 @@ void serial_endpoint_pump(struct serial_endpoint *e, struct serial_face *f)
 	// much the line lost would understate it.  Left alone, the port fills
 	// and the fabric counts the rest.
 	//
-	// The face does not say how deep the port's queue is and nothing here
-	// depends on it: RDATA is drained until it reads invalid, which is
-	// right for a holding register of one and for a FIFO of sixteen.
+	// **EVERYTHING WAITING IS TAKEN AT EACH LOOK**, RDATA being drained
+	// until it reads invalid.  The port holds a thousand and twenty-four
+	// characters behind RDATA, so what this loop owes it is that a look
+	// empties it rather than that looks come faster than frames: at 9600
+	// baud a frame is 1.04 ms of the wall and this program looks every
+	// 2,000 us, so there are routinely two characters waiting.  Nothing here
+	// depends on the depth.
 	if (e->device >= 0) {
 		while (e->outbox.len < SER_QUEUE_CAP) {
 			const int c = serial_face_get(f);
@@ -304,7 +308,27 @@ void serial_endpoint_pump(struct serial_endpoint *e, struct serial_face *f)
 	const size_t room = e->inbox.len >= SER_BACKLOG ? 0 : SER_BACKLOG - e->inbox.len;
 	uint8_t typed[SER_BACKLOG];
 	size_t ntyped = 0;
+	const unsigned long connects_before = e->connects;
 	const enum ser_change change = serial_endpoint_service(e, room, typed, &ntyped);
+
+	// 2a. **A DEVICE THAT ARRIVES IS NOT HANDED THE LAST ONE'S CHARACTERS**,
+	// the rule `service` keeps for the outbox, kept here for what the port
+	// still holds: it was sent before this device was on the cable, to one
+	// that has gone.  Done at the arrival and not at the hang-up, so that a
+	// character whose frame was still on the wire when the lines dropped
+	// goes too, and before the lines go up, so that nothing the machine
+	// sends to THIS device can be among what is thrown away.  In the turn
+	// where one device replaces another the lines never drop, and the
+	// arrival is still the moment the characters stop being anybody's.
+	// Bounded, so that a face answering RX_VALID for ever cannot hold the
+	// loop.
+	if (e->connects != connects_before) {
+		for (unsigned k = 0; k < SER_QUEUE_CAP; ++k) {
+			if (serial_face_get(f) < 0)
+				break;
+			++e->dropped_on_hangup;
+		}
+	}
 
 	// 3. The modem-control lines, written when the cable changes and at no
 	// other time.  A device that went and another that came in the same
@@ -342,6 +366,26 @@ void serial_endpoint_pump(struct serial_endpoint *e, struct serial_face *f)
 		q_drop(&e->inbox, 1);
 		++e->to_machine;
 	}
+}
+
+int serial_endpoint_worth_saying(const struct serial_endpoint *e, struct serial_face *f,
+				 struct serial_said *said)
+{
+	const uint32_t dropped = serial_face_dropped(f);
+	const uint32_t refused = serial_face_refused(f);
+	const int moved = e->from_machine != said->from_machine
+		|| e->to_machine != said->to_machine
+		|| e->connects != said->connects
+		|| e->refused_by_receiver != said->refused_by_receiver
+		|| dropped != said->port_dropped
+		|| refused != said->port_refused;
+	said->from_machine = e->from_machine;
+	said->to_machine = e->to_machine;
+	said->connects = e->connects;
+	said->refused_by_receiver = e->refused_by_receiver;
+	said->port_dropped = dropped;
+	said->port_refused = refused;
+	return moved;
 }
 
 void serial_endpoint_wait(struct serial_endpoint *e, unsigned timeout_us)
