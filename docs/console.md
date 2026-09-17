@@ -280,9 +280,12 @@ read taps at 8 to 16, the write pulses, the two countdowns --- and muir's
 `chip.rs` goes on deriving `-TPR60` from `phase_ns` 60 to 100 ns into a plain
 power-on reset, so a reset shorter than the cycle it interrupts lands in a
 region the model and the fabric are known to disagree in and nothing compares.
-64 is the smallest power of two above the 5 ns grid's 44, so the countdown ends on a borrow --- which is why `LOST_T`
-is 4,096 and not 4,000. **It is a floor with margin and is stated as one**;
-nothing derives 64, what is derived is that it must be more than 44.
+64 was chosen as the smallest power of two above the 5 ns grid's 44. At the 10
+ns grid the floor is 22, so 64 is nearly three times it and the margin has
+grown. Being a power of two, the countdown ends on a borrow --- which is why
+`LOST_T` is 4,096 and not 4,000. **It is a floor with margin and is stated as
+one**; nothing derives 64, and what is derived is that it must be more than 22
+at the 10 ns grid, as it had to be more than 44 at the 5.
 
 **The write does not answer until the pulse is over.** `W_RESET` holds the
 write channel through the countdown, so `BVALID` is offered after the machine
