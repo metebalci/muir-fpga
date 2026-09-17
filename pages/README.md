@@ -89,7 +89,7 @@ sites, gives the project's name and then all eight pages, in one fixed order on
 every page, so no word on it moves as a reader goes from page to page. The page
 being read is plain text on the spot color, marked `aria-current`, and every
 other page is a link. An upcoming board is listed after the others, linked to
-its own page, with the word upcoming beside the link. Under it the page is a
+its own page like any other. Under it the page is a
 column of paper plates on a halftone desk. Each plate opens with a pink eyebrow and a title in the display
 face, holds its panels, and closes with a who-line whose last cell is the
 plate's number on its page. The last plate of every page is the colophon: the
