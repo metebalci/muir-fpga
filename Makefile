@@ -697,7 +697,7 @@ $(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boo
 
 # ------------------------------------------------------ LD5, the blue lamp
 
-# **`-PROMENABLE` AT PCTL 1C19, WHICH THE BLUE LAMP SHOWS.**  All three boards
+# **`-PROMENABLE` AT PCTL 1C19, WHICH THE BLUE LAMP SHOWS.**  Both Zynq boards
 # drive that lamp from the net itself rather than from the mode register's
 # `PROMDISABLE` bit, and the two agree almost everywhere --- which is the trap.
 # A board's top level is reached by `arty.pass`'s lint and by nothing else, so
