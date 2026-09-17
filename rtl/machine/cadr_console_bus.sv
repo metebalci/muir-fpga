@@ -91,10 +91,13 @@
 //
 // The other way round is bounded and safe.  While the console has the bus a
 // processor strobe is masked, so the processor's cycle simply starts late;
-// the console holds the bus for `DIAGNOSTIC_NS` plus the drop, which is
-// 260 ns, or 52 ticks, against that same 4,250 ns timer.  Sixteen to one,
-// and it is the argument `cadr_memory_path.sv`'s per-word channel arbiter is
-// held to, one bus along.
+// the console holds the bus for `DIAGNOSTIC_NS`, 25 ticks, and the ticks its
+// engine takes to raise and drop its strobe either side of that: 33 ticks,
+// 330 ns, on every hold of `build/console.pass` at 412dd6f but the one the
+// check holds the grant off for, against that same 4,250 ns timer.  About
+// thirteen to one, and it is the argument `cadr_memory_path.sv`'s per-word
+// channel arbiter is held to, one bus along.  At the 5 ns grid this said
+// 260 ns and 52 ticks.
 //
 // **THE DEBUG MASTER IS THE THIRD, AND IT BEATS THE CONSOLE.**  On MIT's
 // board the 74LS74 at UBMAST 0D02 is FIRST on the `NPG1 IN` chain, so the
@@ -107,7 +110,7 @@
 //
 // What that costs is bounded on the side that matters and unbounded on the
 // side that does not.  A debug master waiting behind the console waits the
-// console's own 260 ns.  A console waiting behind the debug master waits as
+// console's own 330 ns.  A console waiting behind the debug master waits as
 // long as the debugger holds its request, which is unbounded in real time
 // because the debugger's clock and the fabric's are decoupled --- and the
 // console already has the only bound on that bus, giving up after `LOST_T`
@@ -133,7 +136,7 @@
 // fast-to-slow, which the exception does not match and must not.  Held here,
 // both ends of that arc are registers of `cadr_machine` and it has the
 // microcycle.  It costs the console one tick at the start of a cycle it
-// holds for fifty-two.
+// holds for thirty-three.
 
 `default_nettype none
 

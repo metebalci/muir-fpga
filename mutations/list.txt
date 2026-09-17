@@ -1698,6 +1698,27 @@
       if (loadmd_edge) begin
 @end
 
+@mutation the-destmdr-edge-leaves-a-strobed-word-owed
+@check md_inject
+@file rtl/machine/cadr_microcycle.sv
+@note The same branch taken away, aimed at the check that was written red for
+@note it.  `md_inject` drives one `-LOADMD` strobe on a boundary where the
+@note instruction writes MD.  Without the branch the strobe takes the one that
+@note holds the word, the `else if` that clears `md_pending` never runs, and
+@note the held poison commits a boundary later over the instruction's word:
+@note what the check measured at the 5 ns grid before 9d1cf26, and what it
+@note must fail on again.  `a-strobe-on-the-boundary-waits-a-microcycle` is
+@note the band's view of the same line; this is the directed one, which runs
+@note in a minute on the boot PROM.
+@old
+      if (loadmd_edge && mclk_edge) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
+@new
+      if (loadmd_edge) begin
+@end
+
 @mutation the-a-memory-pass-around-is-inverted
 @check microcycle
 @file rtl/machine/cadr_microcycle.sv
@@ -14535,6 +14556,38 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   localparam int unsigned BEATS  = (PAYLOAD_W + MARK_W + 1 + LINES - 1) / LINES;
 @new
   localparam int unsigned BEATS  = (PAYLOAD_W + MARK_W + LINES - 1) / LINES;
+@end
+
+@mutation a-debuggee-leaves-no-room-for-a-refused-frame
+@check dbg_cable
+@file rtl/machine/cadr_dbgin.sv
+@note **THE ROUND TRIP'S BOUND, HELD FROM JUST OUTSIDE IT.**  A debugger gives
+@note up thirteen oscillator periods after the first rise, 1,105 ticks at the
+@note 10 ns grid, and this check holds a clean round trip two frames short of
+@note that, 781, so that a refused frame each way still lands inside it.  The
+@note far machine waiting 2,100 ns rather than 100 before its own `-DB MSYN`
+@note puts the slowest cycle at 785 ticks: inside the deadline, and without
+@note the room.  Measured at 412dd6f with the bound as it stood then, half of
+@note 2,210 --- the 5 ns grid's count --- the check passed this mutant.
+@note `dbgin` catches the same constant against muir; this record is about
+@note the bound, not the constant.
+@old
+    parameter int unsigned MSYN_T    = cadr_tick_pkg::ticks(100),
+@new
+    parameter int unsigned MSYN_T    = cadr_tick_pkg::ticks(2100),
+@end
+
+@mutation a-debuggee-leaves-no-room-for-a-refused-frame-on-the-carrier
+@check dbg_pmod
+@file rtl/machine/cadr_dbgin.sv
+@note The same mutant against the carrier's own check, whose round trip is
+@note measured from the window's request to its acknowledgment: 804 ticks
+@note against the bound of 781, where the bound as it stood at 412dd6f, 1,105,
+@note passed it.  See `a-debuggee-leaves-no-room-for-a-refused-frame`.
+@old
+    parameter int unsigned MSYN_T    = cadr_tick_pkg::ticks(100),
+@new
+    parameter int unsigned MSYN_T    = cadr_tick_pkg::ticks(2100),
 @end
 
 # --- WHICH BUILD THE FABRIC IS, page 2's word 32 --------------------------

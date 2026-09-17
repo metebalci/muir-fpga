@@ -331,28 +331,17 @@ module cadr_io_board (
   // is 890 ns after power-on and they are 1,000 ns apart from there, and NO
   // UNIBUS RESET MOVES THEM.
   //
-  // **AND THIS CLOCK IS 2.0 REAL MICROSECONDS LONG, DELIBERATELY.**  200
-  // ticks is a microsecond of the MACHINE's time, which is MIT's grid; the
-  // board clocks a tick at 10 ns rather than 5 (`cadr_arty.sv`, and its
-  // header is the argument), so this counter advances once per 2,000 real
-  // nanoseconds and a CADR wall clock run off it loses half a day in a day.
-  // It was decided on 2026-09-11 that the machine keeps agreeing with muir
-  // for now: the checks are the backbone, `iob.golden` compares tick counts,
-  // and nothing built yet needs the time of day.  **The card IS composed into
-  // `cadr_machine`, and the machine has read this clock on the board**, so
-  // the slow microsecond is a live divergence from real time rather than a
-  // dormant one --- which is the whole of what makes the constant below worth
-  // the paragraph after it.
-  //
-  // **UNDOING THIS IS STILL ONE CONSTANT, WHICH IS WHY THE TICK IS A NUMBER
-  // THAT DIVIDES 1,000.**  A real microsecond is exactly 100 ticks of 10 ns,
-  // a whole number, so restoring real time here means writing 100 in place of
-  // the division below and changing nothing else --- at the price of this
-  // module no longer agreeing with muir, which is why it has not been done.
-  // It was 160 while the tick was 6.25 ns and 200 while it was 5; every tick
-  // this board has been built with leaves the constant whole.
-  // `SIXTY_CYCLE_NS` below is the same family and slows in the same
-  // proportion, so its 60 Hz is 30 Hz of real time.
+  // **AND THIS CLOCK IS ONE REAL MICROSECOND LONG.**  100 ticks is a
+  // microsecond of the MACHINE's time, which is MIT's 10 ns grid, and the
+  // board clocks a tick at 10 ns (`cadr_arty.sv`, and its header is the
+  // argument), so this counter advances once per 1,000 real nanoseconds and
+  // a CADR wall clock run off it keeps real time.  `iob.golden` compares tick
+  // counts under muir's `--timing-model fpga`, so it agrees with muir and with
+  // the time of day at once.  While the grid was 5 ns under a 10 ns tick this
+  // was 200 ticks, 2.0 real microseconds, and the wall clock lost half a day
+  // in a day; a board whose tick differs from the grid brings that back, which
+  // is why a tick has to be a number that divides 1,000.  `SIXTY_CYCLE_NS`
+  // below is the same family, and its 60 Hz is 60 Hz of real time.
   localparam int unsigned FIRST_EDGE_T   = cadr_tick_pkg::ticks(890);
   localparam int unsigned USEC_PERIOD_T  = cadr_tick_pkg::ticks(1000);
 

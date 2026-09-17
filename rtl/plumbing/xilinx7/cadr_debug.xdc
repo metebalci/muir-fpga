@@ -90,7 +90,8 @@
 #     and the lead are counters that must keep their tick.
 #     `boards/arty-z7-20/vivado/bitstream.tcl` asserts exactly that with
 #     `assert_instance_timing`: no path into any OTHER register of the window
-#     may ask for 40 ns, and at least one path into this one must.
+#     may ask for six ticks, 60 ns at the 10 ns tick, and at least one path
+#     into this one must.
 #
 #   - **And the count is asserted**, the way the machine's relaxed set and
 #     the memory port's contract are, so an exception that reached no path is a

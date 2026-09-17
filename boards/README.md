@@ -17,13 +17,16 @@ part family.
 | Directory | Board | Part | State |
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
-| `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Builds. Placed, routed and closing timing; never on silicon. |
+| `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Runs on silicon. Smaller, and without display output or USB input. |
 
-**Both build something now, and they build two different amounts.**
+**Both run the machine on silicon, and they carry two different amounts.**
 `arty-z7-20/` is the board and is complete. `cora-z7-07s/` has a top level, a
-pin file, a processing-system configuration, a device tree and a Vivado flow,
-and the machine has been placed and routed for that part; nothing in it has
-been on silicon.
+pin file, a processing-system configuration, a device tree and a Vivado flow.
+The board has no HDMI connector, so it has no display output, and its image
+leaves USB input out; `cora-z7-07s/README.md` says why. On the board it boots
+Linux from its card and the machine runs a System 304 Listener. Over the Pmod
+cable it has debugged the Arty Z7-20 and been debugged by it, which
+`docs/board.md` records.
 
 **Both directories are Zynq-7000 parts, and that is deliberate.** What a board
 has to bring is main memory, a card the machine's disk can be a file on, a

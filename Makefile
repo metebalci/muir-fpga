@@ -63,7 +63,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/sstep.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
-       $(BUILD)/md_compose.pass \
+       $(BUILD)/md_inject.pass $(BUILD)/md_compose.pass \
        $(BUILD)/park.pass \
        $(BUILD)/machine.pass $(BUILD)/power_on.pass \
        $(BUILD)/ddr_boot.pass $(BUILD)/kbd_boot.pass \
@@ -755,7 +755,7 @@ $(BUILD)/errhalt_lamp.pass: $(BUILD)/obj_errhalt_lamp/Vcadr_lamp_errhalt
 $(BUILD)/obj_blink_lamps/Vcadr_blink_lamps_harness: rtl/plumbing/cadr_lamp_clock.sv \
                                                     rtl/plumbing/cadr_lamp_microcycle.sv \
                                                     tb/cadr_blink_lamps_harness.sv \
-                                                    tb/cadr_blink_lamps_tb.cpp | $(BUILD)
+                                                    tb/cadr_blink_lamps_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_blink_lamps \
 	    --top-module cadr_blink_lamps_harness \
 	    rtl/plumbing/cadr_lamp_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
@@ -1891,7 +1891,7 @@ $(BUILD)/md_hold_sys.pass: $(BUILD)/obj_md_hold/Vcadr_microcycle \
 	$(BUILD)/obj_md_hold/Vcadr_microcycle $(BUILD)/rtl_sys.golden
 	@touch $@
 
-# THE ONE TICK NO TRACE REACHES, AND THIS TARGET IS RED ON PURPOSE.
+# THE ONE TICK NO TRACE REACHES, AND THIS TARGET WAS WRITTEN RED.
 #
 # `md_hold` prints, on both programs, that no -LOADMD ever rose on the tick a
 # DESTMDR wrote MD: not once in 600,000 microcycles of the boot PROM nor in
@@ -1906,11 +1906,12 @@ $(BUILD)/md_hold_sys.pass: $(BUILD)/obj_md_hold/Vcadr_microcycle \
 # What it asserts is muir's rule, which is that the edge consumes the word and
 # the instruction's stands.
 #
-# IT IS NOT IN `check` AND MUST NOT BE ADDED UNTIL IT PASSES. The defect it
-# names is real and unfixed, measured at this commit: md_pending survives the
-# edge and the held word commits 44 ticks later, one extra-slow microcycle,
-# over the word the instruction put there. The test is written first, as the
-# house rule has it, and joins `check` in the commit that makes it pass. It
+# The defect it named was real when it was written: md_pending survived the
+# edge and the held word committed 44 ticks later, one extra-slow microcycle
+# at the 5 ns grid, over the word the instruction put there. The MD register's
+# first branch --- a strobe on the boundary's own tick loads MD and clears the
+# flag --- fixed it at 9d1cf26, so the test is in `check` now, and
+# `the-destmdr-edge-leaves-a-strobed-word-owed` takes that branch away. It
 # runs the boot PROM twice and takes about half a minute.
 $(BUILD)/obj_md_inject/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_md_inject_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Mdir $(BUILD)/obj_md_inject \
@@ -2296,7 +2297,7 @@ DBG_PMOD_SRC := $(TICKPKG) tb/cadr_dbg_pmod_harness.sv rtl/plumbing/cadr_dbg_tx.
                 rtl/machine/cadr_spy_registers.sv
 
 $(BUILD)/obj_dbg_pmod/Vcadr_dbg_pmod_harness: $(DBG_PMOD_SRC) \
-                                              tb/cadr_dbg_pmod_tb.cpp | $(BUILD)
+                                              tb/cadr_dbg_pmod_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -Mdir $(BUILD)/obj_dbg_pmod --top-module cadr_dbg_pmod_harness \
 	    $(DBG_PMOD_SRC) $(abspath tb/cadr_dbg_pmod_tb.cpp)
@@ -2328,7 +2329,7 @@ DBG_CABLE_SRC := $(TICKPKG) tb/cadr_dbg_cable_harness.sv rtl/plumbing/cadr_dbg_c
                  rtl/machine/cadr_console_bus.sv rtl/machine/cadr_spy_registers.sv
 
 $(BUILD)/obj_dbg_cable/Vcadr_dbg_cable_harness: $(DBG_CABLE_SRC) \
-                                                tb/cadr_dbg_cable_tb.cpp | $(BUILD)
+                                                tb/cadr_dbg_cable_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing \
 	    -Mdir $(BUILD)/obj_dbg_cable --top-module cadr_dbg_cable_harness \
 	    $(DBG_CABLE_SRC) $(abspath tb/cadr_dbg_cable_tb.cpp)

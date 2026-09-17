@@ -15,8 +15,8 @@
 # a directory named as its directory under `boards/` is.  The names below are
 # relative to the server's root and not to this file, so a copy of this file
 # anywhere on that server still fetches the right five --- which is what
-# carries the board this project runs across the change, its U-Boot still
-# fetching uEnv.net from the root.  docs/boot.md has the two steps.
+# carried a board whose U-Boot fetched uEnv.net from the root across the
+# change.  U-Boot built from cadr.env fetches it from arty-z7-20/.
 #
 # WHAT IT DOES.  The CADR goes into the fabric first: `fpga loadb` configures
 # it with cadr.bit and the machine is running its boot PROM out of DDR3
