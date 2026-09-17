@@ -5,10 +5,12 @@
 // It says the machine is retiring microcycles, and it says it one of two ways.
 //
 // **BLINKING, WHICH IS THE DEFAULT.**  Bit 19 of a count of retired
-// microcycles, 524,288 of them a half-period: about 231 ms at the 10 ns tick,
-// fast enough to be obviously alive and slow enough to count.  It FREEZES when
-// the machine stops, lit or dark, which is the thing a level cannot say ---
-// motion cannot be faked, where a frozen fabric would still hold a level high.
+// microcycles, 524,288 of them a half-period: about 89 ms on the 10 ns grid,
+// where the Arty Z7-20 retired 5.88 million microcycles a second running Lisp
+// at 9d1cf26 --- fast enough to be obviously alive and slow enough to count.
+// It FREEZES when the machine stops, lit or dark, which is the thing a level
+// cannot say --- motion cannot be faked, where a frozen fabric would still
+// hold a level high.
 //
 // **STEADY, WHICH IS `--no-blinking-leds`.**  Lit for `HOLD_T` ticks after
 // every retired microcycle, re-armed by each one.  So the lamp is solid while
@@ -22,15 +24,16 @@
 // choice in board ticks, real time, and it names nothing on MIT's drawings, so
 // it is not on the grid.  It has to sit between two numbers.  Below it is the
 // longest gap between two microcycles of a machine that is running: a bus
-// cycle nothing answers ends on the NXM timer within about a thousand ticks of
-// its grant, and the debug cable's longer deadline is 2,210, so even the
-// slowest stall is tens of microseconds.
-// Above it is how long a person takes to see a lamp go out, which is on the
-// order of a tenth of a second.  2^22 is two thousand times the first and
-// under half the second, so a running machine never flickers the lamp and a
-// stopped one reads as stopped at once.  It is also `DISK_LIT_T` in
-// `boards/arty-z7-20/cadr_arty.sv`, the disk lamp's own persistence one lamp
-// along, so the two lamps a person reads as activity hold for the same time.
+// cycle nothing answers ends on the NXM timer within about 550 ticks of its
+// grant at the 10 ns grid, and the debug cable's longer deadline is 1,105
+// ticks after the oscillator's first rise, so even the slowest stall is about
+// ten microseconds.  Above it is how long a person takes to see a lamp go
+// out, which is on the order of a tenth of a second.  2^22 is over three
+// thousand times the first and under half the second, so a running machine
+// never flickers the lamp and a stopped one reads as stopped at once.  It is
+// also `DISK_LIT_T` in `boards/arty-z7-20/cadr_arty.sv`, the disk lamp's own
+// persistence one lamp along, so the two lamps a person reads as activity
+// hold for the same time.
 // At a 5 ns tick it would be 21 ms, which is still between the two.
 //
 // **THE HOLD COUNTS IN BOTH MODES, AND THE BEAT IN BOTH.**  The setting chooses

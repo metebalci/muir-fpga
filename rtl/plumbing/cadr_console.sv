@@ -30,16 +30,18 @@
 // spy::FLAG_1) & 0x100 != 0 { "running" } else { "halted" }`".
 //
 // **WHAT LINUX SEES**, ninety-six words at `REG_BASE`, six pages of sixteen.
-// The window is 256 bytes; `M_AXI_GP1` decodes `0x8000_0000` upward in the
+// The face is 384 bytes; `M_AXI_GP1` decodes `0x8000_0000` upward in the
 // Zynq-7000 address map and this sits at the bottom of it.
 //
-// **IT WAS TWO PAGES AND IS FOUR BECAUSE PAGE 0 FILLED UP.**  The build stamp
-// wanted a word and the console's own page had none left, so a SECOND address
-// match was put beside the first rather than the first made wider --- the
-// module says at `in_window2` what widening it would have done to the writes.
-// **Nothing else moved and nothing else could**: an address outside the face
-// reads `UNMAPPED` and so does every word of pages 2 and 3 but the one, so the
-// only address in the whole gigabyte whose value changed is `REG_BASE + 0x80`.
+// **IT WAS TWO PAGES AND GREW TO SIX, FIRST BECAUSE PAGE 0 FILLED UP.**  The
+// build stamp wanted a word and the console's own page had none left, so a
+// SECOND address match was put beside the first rather than the first made
+// wider --- the module says at `in_window2` what widening it would have done
+// to the writes.  **Nothing else moved then and nothing else could**: an
+// address outside the face read `UNMAPPED`, and so did every word of pages 2
+// and 3 but the build, so the only address in the whole gigabyte whose value
+// changed was `REG_BASE + 0x80`.  Pages 4 and 5, the display boards' color
+// maps, came later behind a third match for the same reason.
 //
 //   page 0, `REG_BASE + 0x00`, the console's own.  **Three of its words are
 //   written** --- 6, 10 and 13 --- and the rest are read-only:
@@ -63,9 +65,10 @@
 //     3  CYCLESH  bits 63:32, **latched when CYCLES was read**: see below
 //     4  TICKS    the fabric's own ticks since reset, bits 31:0 --- 100 MHz
 //                 ones, `cadr_arty.sv`'s MMCM deciding that.  It is
-//                 `Rtl::ns()` divided by five, muir's nanoseconds being
-//                 MIT's grid: the MACHINE's own time, which runs whether or
-//                 not the machine does, so CYCLES against TICKS is a rate
+//                 `Rtl::ns()` divided by `cadr_tick_pkg::TICK_NS`, ten, muir's
+//                 nanoseconds being MIT's grid: the MACHINE's own time, which
+//                 runs whether or not the machine does, so CYCLES against
+//                 TICKS is a rate
 //     5  TICKSH   bits 63:32, latched when TICKS was read
 //     6  RESET    a write of `RESET_KEY` and of nothing else pulses the
 //                 machine's reset for `RESET_T` ticks; see below.  It reads
@@ -146,8 +149,9 @@
 //   on the board and reads the open bus, all ones; that is a fact about the
 //   machine and it comes back through here unchanged.
 //
-//   page 2, `REG_BASE + 0x80`, what the FABRIC is rather than what the
-//   machine is doing, read-only:
+//   page 2, `REG_BASE + 0x80`, what the FABRIC and the board are rather than
+//   what the machine is doing.  Words 33, 34 and 35 take a write and the rest
+//   are read-only:
 //
 //     32 BUILD    the eight hex digits `tools/build_stamp.tcl` wrote into
 //                 `BITSTREAM.CONFIG.USR_ACCESS` before this bitstream was
@@ -182,8 +186,8 @@
 //                 **IT IS ON THIS PAGE AND NOT ON PAGE 0 BECAUSE IT IS WHAT
 //                 THE BACKPLANE IS** and not what the machine is doing ---
 //                 the same kind of fact as the build stamp beside it, and
-//                 the reason the rule about pages 2 and 3 below names one
-//                 word rather than none.
+//                 the reason the rule about pages 2 and 3 below names words
+//                 rather than none.
 //     34 HDMI     **what the board's own display output is showing, and
 //                 which way up.**  A write of `HDMI_TV_KEY`, `HDMI_COLOR_KEY`
 //                 or `HDMI_BOTH_KEY` says which screens go to the monitor; a
@@ -197,16 +201,16 @@
 //                   bit 1       the color board goes to the monitor
 //                   bit 0       the first display does
 //
-//                 **THE MODE IS READ ONLY AND THE OTHER TWO ARE NOT**, which
-//                 is a fact about an MMCM rather than a decision: a video mode
-//                 is a pixel clock, and changing one at run time means
-//                 rewriting an MMCM's dividers along with the lock and filter
-//                 registers that go with them, which are Xilinx's own
-//                 empirical values with no arithmetic behind them.
-//                 `docs/display-output.md` has the measurement.  So three
-//                 bitstreams carry the three modes and this says which one
-//                 this fabric is; a card that asks for another is told which
-//                 bitstream it wants.
+//                 **THE MODE IS READ ONLY AND THE OTHER TWO ARE NOT**,
+//                 because run-time switching is possible and not built: a
+//                 video mode is a pixel clock, and changing one at run time
+//                 means rewriting an MMCM's multiplier and dividers through
+//                 its reconfiguration port, with the lock and filter values
+//                 that go with them --- which the clocking wizard generates.
+//                 `docs/display-output.md` says what building it would take.
+//                 So three bitstreams carry the three modes and this says
+//                 which one this fabric is; a card that asks for another is
+//                 told which bitstream it wants.
 //
 //                 It is on this page beside the display boards for the same
 //                 reason they are: it is what the BOARD is.
@@ -342,7 +346,7 @@
 // read nothing answers on a GP port does not fault the Arm, it hangs both
 // cores at one PC each --- measured on the board, and
 // `rtl/plumbing/cadr_gp0_default.sv` says so at length.  So a read outside
-// the sixty-four words completes with `UNMAPPED` and a write outside them
+// the ninety-six words completes with `UNMAPPED` and a write outside them
 // completes and is dropped, in the window and out of it, however wide the
 // address it is handed.  **OKAY and not SLVERR**, which is where this differs
 // from `rtl/plumbing/cadr_disk_pack.sv`'s face: an error response to a
@@ -534,9 +538,10 @@
 // **AND THE CONSOLE'S HOLD ON THAT BUS IS BOUNDED, because the processor's
 // is not.**  A CADR bus cycle that is not answered ends on the NXM timer at
 // 4,250 ns from the gated oscillator's first rise.  This module holds the
-// diagnostic bus for `DIAGNOSTIC_NS` plus the drop, which is 260 ns --- so a
-// Unibus cycle that has to wait for the console behind it waits a sixteenth
-// of its own timeout and cannot become an NXM.  That is the same argument
+// diagnostic bus for `DIAGNOSTIC_NS` and the ticks it takes to raise and drop
+// its strobe, 33 ticks or 330 ns measured at 412dd6f --- so a Unibus cycle
+// that has to wait for the console behind it waits about a thirteenth of its
+// own timeout and cannot become an NXM.  That is the same argument
 // the disk channel's per-word arbiter is held to, one bus along.
 //
 // **AND THE AXI TRANSACTION IS BOUNDED WHATEVER THE BUS DOES.**  `LOST_T`
@@ -565,7 +570,7 @@
 `default_nettype none
 
 module cadr_console #(
-    // Where the sixty-four words sit.  `0x8000_0000` is the first address
+    // Where the ninety-six words sit.  `0x8000_0000` is the first address
     // `M_AXI_GP1` decodes to the fabric in the Zynq-7000 PS address map,
     // as `0x4000_0000` is `M_AXI_GP0`'s.
     parameter logic [31:0] REG_BASE = 32'h8000_0000,
@@ -574,12 +579,12 @@ module cadr_console #(
     // What an address in neither page reads: the complement of IDENT.
     parameter logic [31:0] UNMAPPED = ~IDENT,
     // How long a diagnostic cycle may take before the engine gives up, in
-    // ticks.  The cycle itself is `DIAGNOSTIC_NS` = 250 ns = 50 ticks; the
+    // ticks.  The cycle itself is `DIAGNOSTIC_NS` = 250 ns = 25 ticks; the
     // rest is the wait for the grant, and the processor's own Unibus cycle
-    // in front of it is bounded by its NXM timer at 4,250 ns, which is 850
-    // ticks.  4,096 ticks is nearly five of those timeouts --- 41 us of
-    // real time at the 10 ns tick --- and it is a bound on how long the Arm
-    // may stall and nothing else.
+    // in front of it is bounded by its NXM timer at 4,250 ns, which is 425
+    // ticks.  4,096 ticks is nearly ten of those timeouts --- 41 us of real
+    // time at the 10 ns tick --- and it is a bound on how long the Arm may
+    // stall and nothing else.
     parameter int unsigned LOST_T   = 4096,
     // What must be written to page 0's word 6, and to nothing else, for the
     // machine to be reset: "RSET".  Four distinct bytes, none `00` or `FF`,
@@ -940,9 +945,10 @@ module cadr_console #(
   //
   // So `w_in` and `r_in` mean exactly what they meant, every line built on
   // them is untouched, and a write anywhere in pages 2 and 3 is answered OKAY
-  // and does nothing EXCEPT page 2's word 33, which is the only word outside
-  // page 0 a write reaches --- `w_hi` below, its own comparator and its own
-  // three keys, and never `w_in`.
+  // and does nothing EXCEPT page 2's words 33, 34 and 35 --- the display
+  // boards, the display output and the lamps --- which are the only words
+  // outside page 0 a write reaches: `w_hi` below, its own comparator, each
+  // word with keys of its own, and never `w_in`.
   localparam logic [31:0] BASE2 = REG_BASE + 32'h0000_0080;
   function automatic logic in_window2(input logic [31:7] page);
     return page == BASE2[31:7];

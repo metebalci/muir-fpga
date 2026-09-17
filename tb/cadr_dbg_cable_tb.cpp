@@ -51,6 +51,7 @@
 #include <cstring>
 
 #include "Vcadr_dbg_cable_harness.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
@@ -97,20 +98,42 @@ const long kRelistenT = kActT + kFrameT;
 
 // **THE DEADLINE THE WHOLE TRANSPORT IS AGAINST**, and it is a tick count
 // because the thing that counts it is in the fabric.
-// `rtl/machine/cadr_busint_xbus.sv` runs the REQTIM oscillator at
-// `425 / TICK_NS` ticks a half period and takes the PROM's SECOND table for a
-// debug cycle, thirteen whole periods --- so a debugger gives up 13 * 170 =
-// 2,210 ticks after the gated oscillator's first rise, which is
-// `busint::DEBUG_TIMEOUT_NS`, 11.05 microseconds on MIT's 5 ns grid and 22.1
-// of real time at this board's 10 ns tick.
+// `rtl/machine/cadr_busint_xbus.sv` takes the REQTIM PROM's SECOND table for a
+// debug cycle: `NXM TIMEOUT` on the fourteenth rise of the gated oscillator,
+// thirteen whole periods of 850 ns after its first rise, which is
+// `busint::DEBUG_TIMEOUT_NS`, 11,050 ns.  On the grid that is 1,105 ticks at
+// 10 ns and was 2,210 at 5, so it is derived here and not written out.
 //
-// What this check holds the round trip to is HALF of it.  A cycle over the
-// cable is a request frame, the far machine's own bus cycle and an answer
-// frame, and a bound with a factor of two in hand is a bound that says
-// something when the frame's length next moves; 2,210 would pass a transport
-// three times slower than this one.
-const long kDebugTimeoutT = 2210;
-const long kRoundTripBound = kDebugTimeoutT / 2;
+// **COUNTED FROM `-UB MSYN`, WHICH IS WHERE THIS CHECK STARTS COUNTING, IT IS
+// THE SHORTEST A DEBUGGER WAITS.**  The oscillator's first rise comes at
+// least half a period, 425 ns, after the transfer starts, and `-UB MSYN`
+// (100 ns into it) and the acknowledgment an answer still has to reach
+// (150 ns after `-UB SSYN`) are both inside that half period.  So a round
+// trip under this many ticks is under the timeout at every phase of the
+// oscillator.
+const long kDebugTimeoutT = GridTicks(13 * 850);
+
+// **WHAT THIS CHECK HOLDS THE ROUND TRIP TO IS THE DEADLINE LESS TWO FRAMES:
+// ONE REFUSED FRAME EACH WAY.**  A cycle over the cable is a request frame,
+// the far machine's own bus cycle and an answer frame.  A frame the far end
+// refuses costs a frame and never a word, which is claim 4 above, and that is
+// only true if the frame after it still lands inside the deadline --- so a
+// clean round trip has to leave a frame of room in each direction.  The bound
+// moves with the grid through `kDebugTimeoutT` and with the frame through
+// `kFrameT`.
+//
+// **IT USED TO BE HALF THE DEADLINE, AND AFTER THE GRID MOVED THAT WAS NOT
+// WHAT IT CHECKED.**  `kDebugTimeoutT` was written as 2,210, the 5 ns grid's
+// count, so half of it was 1,105 ticks: the whole of the deadline at the 10 ns
+// grid, with no room in it for a refused frame, while the comment claimed a
+// factor of two.  And a factor of two is not there to be claimed: half the
+// real deadline is 552 ticks, and the carrier's round trip is about four
+// frames, a level waiting up to a frame to be taken and taking a frame to
+// cross, each way --- 623 ticks at its slowest in this check, measured at
+// 412dd6f.  A 6-tick beat on the 10 ns grid spends more than half of the
+// debugger's deadline, and this bound says so rather than a margin the design
+// does not have.
+const long kRoundTripBound = kDebugTimeoutT - 2 * kFrameT;
 
 int failures = 0;
 const int kMaxFailures = 20;
@@ -1397,10 +1420,12 @@ int main(int argc, char **argv) {
     failures += Fail("ticks with a guard pin driven anything but low",
                      (unsigned long)guard_high, 0);
 
-  // **AND EVERY ONE OF THEM FINISHED INSIDE THE DEBUGGER'S OWN TIMEOUT.**
-  // This is the budget the frame's length is spent out of, measured rather
-  // than computed: a cycle is two frames and the far machine's bus cycle, and
-  // the interface beside this master gives up at `kDebugTimeoutT` ticks.
+  // **AND EVERY ONE OF THEM FINISHED INSIDE THE DEBUGGER'S OWN TIMEOUT, WITH
+  // A REFUSED FRAME'S ROOM EACH WAY.**  This is the budget the frame's length
+  // is spent out of, measured rather than computed: a cycle is two frames and
+  // the far machine's bus cycle, and the interface beside this master gives up
+  // at `kDebugTimeoutT` ticks.  See `kRoundTripBound` for why the check is
+  // two frames short of that.
   std::fprintf(stderr,
                "the slowest debug cycle over the cable took %ld ticks; a frame is %ld, "
                "the debugger gives up at %ld and this check at %ld\n",

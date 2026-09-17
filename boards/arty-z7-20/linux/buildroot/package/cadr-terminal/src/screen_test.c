@@ -1470,7 +1470,7 @@ static void model_reset(void)
 // and the pacing rule the program follows is measured on the clock its caller
 // hands it --- so a check of what a key MEANS needs the clock to move at all,
 // or the first word of a burst would be the only one.  A MICROSECOND, which
-// is small against the 30.912 ms frame and the 30 s handshake deadline that
+// is small against the 15.456 ms frame and the 30 s handshake deadline that
 // the clock must not run past, and large against the 1 ns interval those
 // checks set.
 #define POLL_STEP_NS 1000u

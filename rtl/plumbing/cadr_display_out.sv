@@ -100,12 +100,13 @@
 //
 // **THE CADR'S OWN FRAME RATE IS IRRELEVANT HERE, AND THAT IS WORTH SAYING
 // BECAUSE IT LOOKS LIKE IT SHOULD NOT BE.**  The display board's frame is
-// 15,456,000 ns of the machine's time, which on this board's 10 ns tick arrives
-// every 30.912 real ms --- 32.35 Hz, where the board scanned at 64.70.  The
-// monitor here runs at 60 Hz, or at 30 in the mode that asks for it.  Neither
-// number constrains the other: MIT's TV had the processor and the raster reading
-// one memory at whatever rates each ran at, and so does this.  The vertical flag
-// the machine reads is `cadr_tv.sv`'s and is not this module's VSYNC.
+// 15,456,000 ns of the machine's time, which on this board's 10 ns tick and
+// 10 ns grid arrives every 15.456 real ms --- 64.70 Hz, the rate the board
+// scanned at.  The monitor here runs at 60 Hz, or at 30 in the mode that asks
+// for it.  Neither number constrains the other: MIT's TV had the processor and
+// the raster reading one memory at whatever rates each ran at, and so does
+// this.  The vertical flag the machine reads is `cadr_tv.sv`'s and is not this
+// module's VSYNC.
 //
 // **SO THE PICTURE TEARS, AND TEARING IS THE ORIGINAL BEHAVIOR RATHER THAN A
 // DEFECT.**  A line fetched while the machine is drawing shows some words from

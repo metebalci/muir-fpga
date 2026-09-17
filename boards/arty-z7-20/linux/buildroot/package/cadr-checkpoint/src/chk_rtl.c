@@ -26,7 +26,7 @@
 // at the value a machine that has never issued a cycle has.
 //
 // **WHAT THAT COSTS, SAID PLAINLY: the resumed machine's CLOCK is not the
-// board's.**  `ns` is the fabric's own tick count on MIT's five-nanosecond
+// board's.**  `ns` is the fabric's own tick count times MIT's ten-nanosecond
 // grid, which is real; the bus interface's memory-board refresh model and the
 // I/O board's two clocks restart from their power-on state.  A resumed
 // machine therefore computes what the board would have computed and its
@@ -212,13 +212,15 @@ static void emit_disk(struct chk *w, const struct chk_declared *d)
 // Xbus, so that page is the only way to ask what a color is.
 static void emit_tv(struct chk *w, const struct cadr_image *img)
 {
-	// **WHICH OF THE TWO DISPLAY BOARDS THIS IS, AND IT IS NOT A DEFAULT.**
-	// `cadr_tv.sv` is MIT's SIMPLE TV --- its own header says so and
-	// `tv.pass` holds its register face to that board --- so this is a
-	// fact about the fabric, declared here because no wire carries it.
+	// **WHICH OF THE TWO DISPLAY BOARDS THIS IS, DECLARED AND NOT READ.**
+	// `cadr_tv.sv` comes up as MIT's SIMPLE TV and the console face's page
+	// 2 word 33 can strap it as the LISPM TV, `--tv-board` on the card.
+	// This program does not read that word, so it writes the SIMPLE TV: a
+	// checkpoint of a board strapped the other way declares the wrong board.
 	// muir cross-checks it: `resume_engine` (src/main.rs:3518-3525)
 	// compares the loaded board against `--tv-board` and refuses by name,
-	// so a wrong tag here is a message and never a machine.
+	// so a resume given the board's own setting says so rather than running
+	// the wrong machine.
 #if CHK_MUTATE == 4
 	// The other board's tag.  It LOADS --- `Tv::load` takes 0 and 1 and
 	// refuses anything else --- and the body is the same length, so only
@@ -265,11 +267,12 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 	chk_u64(w, 0);				/* NONE written_at */
 	// When the running sync program last started from its location 0
 	// (src/tv.rs:431-434).  Zero is `Tv::default`'s, which says the program
-	// has been running since the machine came up --- and that is right for
-	// a fabric with no sync generator at all, whose program has therefore
-	// never been changed and never restarted.  `Tv::load` runs the timeline
-	// afresh from it, so a resume measures the frame from power-on as a
-	// machine that had never touched the board would.
+	// has been running since the machine came up.  The fabric does run the
+	// sync program, and restarts it at a write of its RAM, a change of the
+	// RAM's enable or a change of the clock mode, but nothing reads out when
+	// that last was, so zero is written.  `Tv::load` runs the timeline afresh
+	// from it, so a resume measures the frame from power-on, whatever phase
+	// the board's own program had reached.
 #if CHK_MUTATE == 6
 	// The machine's own clock in place of zero: "the sync program started
 	// when the checkpoint was taken" rather than "it has been running
@@ -327,7 +330,8 @@ static void emit_serial(struct chk *w)
 
 // `chaos/board.rs`'s `Interface::save`.
 //
-// **IT HAS TO BE THERE EVEN THOUGH THE FABRIC HAS NO CHAOSNET**, because
+// **IT HAS TO BE THERE, AND NONE OF IT CAN BE READ.**  The fabric's Chaosnet
+// interface is on the I/O board, which the readout window does not reach.
 // `Machine::with_memory_boards` plugs one in and `IoBoard::load` refuses a
 // checkpoint that has none where the machine does --- and then refuses again
 // if the switches disagree with the address the resume was given.  So this is
@@ -533,11 +537,15 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	emit_tv(w, img);
 	// **WHETHER A SECOND DISPLAY BOARD WAS ON THE BACKPLANE**, and the
 	// board itself after it when there was one (`Machine::save`,
-	// src/machine.rs:962-965).  This backplane has one screen: the color
-	// board is `17200000` and `17377750`, which `cadr_xbus_decode.sv`
-	// answers with an NXM --- held to `busint::decode` over all 4,194,304
+	// src/machine.rs:962-965).  The flag is written clear and NOTHING
+	// follows it, which is the backplane as the fabric comes up: with no
+	// color board fitted `cadr_xbus_decode.sv` answers `17200000` and
+	// `17377750` with an NXM --- held to `busint::decode` over all 4,194,304
 	// addresses --- and that NXM is how `COLOR-EXISTS-P` finds out which
-	// machine it is on.  So the flag is clear and NOTHING follows it;
+	// machine it is on.  The console face's page 2 word 33 fits a color
+	// board, `--color-tv` on the card, and this program does not read that
+	// word: a checkpoint of a board with one fitted declares one screen and
+	// carries neither the second board's registers nor its picture.
 	// `refuse_color_tv` (src/main.rs:3405-3415) refuses a resume that
 	// `--color-tv` disagrees with, by name.
 #if CHK_MUTATE == 7
@@ -699,10 +707,12 @@ static const char *const kMissing[] = {
 	"    whose RAMs are off the board, so that page is the only way to ask",
 	"    what a color is.  The sync program is 4,096 bytes and no readout",
 	"    reaches it, so a resumed machine runs MIT's PROM from its",
-	"    power-on instant.  Which display board this is, and that no",
-	"    color board is fitted, are DECLARED rather than missing --- the",
-	"    fabric is the SIMPLE TV with one screen, and muir refuses a",
-	"    resume that disagrees with either.",
+	"    power-on instant.  Which display board this is, and whether a",
+	"    color board is fitted, are DECLARED rather than read: the SIMPLE",
+	"    TV and no color board, which is how the fabric comes up.  A board",
+	"    the console has strapped as a LISPM TV, or given a color board, is",
+	"    declared wrongly, and muir refuses a resume whose --tv-board or",
+	"    --color-tv disagrees with the file.",
 	"the I/O board, whole: the keyboard, the mouse, the sixty-cycle",
 	"    interval and THE MICROSECOND CLOCK, which is the CADR's whole",
 	"    timebase.  A resumed machine's time of day starts again.",

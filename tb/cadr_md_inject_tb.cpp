@@ -49,14 +49,15 @@
 //   B  the strobe, one tick, on the DESTMDR boundary itself.  MD must still
 //      hold OB afterwards.
 //
-// THIS TARGET IS NOT IN `make check`, AND THAT IS DELIBERATE.  It is the
-// check for a defect that has not been fixed: `cadr_microcycle.sv` takes the
-// first branch of the MD register when `loadmd_edge` is up, so the `else if`
-// that clears `md_pending` never runs, the flag survives the DESTMDR write,
-// and the held word commits at the next master clock edge --- or at the very
-// next tick if `-HANG` is up, a hang not being a boundary --- over the word
-// the instruction put there.  The test is written first and left red; it
-// joins `check` in the commit that makes it pass.
+// IT WAS WRITTEN RED, FOR A DEFECT THAT WAS REAL.  `cadr_microcycle.sv` took
+// the branch that holds the word whenever `loadmd_edge` was up, so the `else
+// if` that clears `md_pending` never ran, the flag survived the DESTMDR write,
+// and the held word committed at the next master clock edge --- or at the very
+// next tick if `-HANG` was up, a hang not being a boundary --- over the word
+// the instruction put there.  The MD register's first branch, a strobe on the
+// boundary's own tick loading MD and clearing the flag, fixed it at 9d1cf26.
+// The test is in `make check` since, and
+// `the-destmdr-edge-leaves-a-strobed-word-owed` takes that branch away.
 
 #include <cerrno>
 #include <cinttypes>
@@ -421,9 +422,9 @@ int main(int argc, char **argv) {
     if (injected.pending_after) {
       std::fprintf(stderr,
                    "FAIL: md_pending is still set after the edge.  The strobe "
-                   "and the instruction's write fell on one tick, so the "
-                   "first branch of the MD register was taken and the `else "
-                   "if` that clears the flag never ran.  The held word %08x "
+                   "and the instruction's write fell on one tick, and the "
+                   "MD register took the branch that holds the word, so the "
+                   "`else if` that clears the flag never ran.  The held word %08x "
                    "commits at the next master clock edge --- or at the very "
                    "next tick if -HANG is up --- over the %08x the "
                    "instruction put there.\n",

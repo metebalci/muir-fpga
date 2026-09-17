@@ -346,8 +346,10 @@ int main(int argc, char **argv) {
         if (!window_had_strobe) { window_had_strobe = true; ++windows_with_loadmd; }
       }
       // THE COINCIDENCE ITSELF.  `-LOADMD` rising on the very tick DESTMDR
-      // writes MD is the one case where the first branch of the MD register
-      // is taken and the `else if` that clears `md_pending` never runs.
+      // writes MD was the one case where the branch that holds the word ran
+      // and the `else if` that clears `md_pending` did not.  Since 9d1cf26 a
+      // strobe on the boundary's own tick has a branch of its own, which
+      // loads MD and clears the flag; `tb/cadr_md_inject_tb.cpp` drives it.
       if (pre_cpu_edge && pre_destmdr) ++coincidences;
     }
 
@@ -547,8 +549,8 @@ int main(int argc, char **argv) {
   if (coincidences == 0 || pending_at_destmdr == 0) {
     std::printf(
         "    NOTHING WAS OWED AT A DESTMDR EDGE ON THIS TRACE, and no -LOADMD\n"
-        "    rose on one, so the tick at which the MD register takes its\n"
-        "    first branch and leaves md_pending set is unreached here.  How\n"
+        "    rose on one, so the tick at which a strobe meets an edge that\n"
+        "    writes MD is unreached here.  How\n"
         "    near it came is the line above: %ld cpu edges did carry a word\n"
         "    that MD had not taken, and not one of them was an edge writing\n"
         "    MD.  tb/cadr_md_inject_tb.cpp is the stimulus for that tick, and\n"

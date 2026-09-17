@@ -348,7 +348,8 @@ module cadr_dbg_cable #(
   // carries through the detection and the probe.  A debug cycle is two frames
   // and the far machine's own bus cycle, and the debugger gives up at
   // `busint::DEBUG_TIMEOUT_NS` --- the REQTIM PROM's second table, which this
-  // fabric counts as 2,210 ticks in `rtl/machine/cadr_busint_xbus.sv`.
+  // fabric counts as 1,105 ticks at the 10 ns grid in
+  // `rtl/machine/cadr_busint_xbus.sv`.
   // `build/dbg_pmod.pass` and `build/dbg_cable.pass` measure the round trip
   // against it rather than leaving the arithmetic to stand on its own.
   localparam int unsigned FWD_STB = 0;   // the low four, header pins 1 to 4

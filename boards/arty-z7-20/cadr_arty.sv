@@ -3,18 +3,19 @@
 //
 // The machine on an Arty Z7-20: a top level with real pins.
 //
-// Everything else here is checked against muir and none of it has been near a
-// chip.  This exists to find out whether the design can be built at all ---
-// synthesized, placed, routed and written to a bitstream against a real part
-// with real package pins --- which is a different question from whether it is
-// correct, and one nothing in this repository has ever asked.
+// The machine under it is checked against muir, and the plumbing around the
+// machine against the properties it is held to.  This file is what puts both
+// on a real part with real package pins --- synthesized, placed, routed and
+// written to a bitstream --- which is a different question from whether they
+// are correct.
 //
 // **BY DEFAULT THIS IS NOT A WORKING CADR AND IS NOT MEANT TO BE.**  With
-// `DDR` zero there is no memory behind it: `mem_done` is tied low, so the
-// first cycle the boot PROM runs to main memory --- microcycle 536,303 of
-// 600,000 --- never completes, and the machine stalls there for ever.  What
-// it can show is that the fabric runs: the clock generator ticking,
-// microcycles retiring, the PROM executing.
+// `DDR` zero there is no memory behind it: `mem_done` is tied low, so every
+// cycle the boot PROM runs to main memory --- the first at microcycle 536,303
+// --- is ended by the bus interface's NXM timer rather than by a slave, and
+// the machine carries on with nothing stored.  What it can show is that the
+// fabric runs: the clock generator ticking, microcycles retiring, the PROM
+// executing.
 //
 // `DDR` set puts the Zynq processing system and its DDR3 behind `mem_*`.  It
 // is off for the same reason `PROBE_DEPTH` is, and the note beside that
@@ -24,8 +25,8 @@
 //
 // `PROVE` set builds one of the two boards that answer whether that memory
 // works at all, and neither of them is the machine running out of it.  The
-// machine is still in the design and still stalls on its own memory port
-// exactly as the default board does; what changes is that `rtl/plumbing/cadr_prove.sv`
+// machine is still in the design and its memory port still gets nothing,
+// exactly as on the default board; what changes is that `rtl/plumbing/cadr_prove.sv`
 // drives that port instead, with one word and one address, and somebody
 // outside the design says whether the word arrived.  `PROVE=1` writes a word
 // for a debugger to read; `PROVE=2` reads one a debugger wrote and WRITES IT
@@ -35,39 +36,30 @@
 //
 // THREE THINGS THIS FILE HAS TO GET RIGHT THAT ARE NOT OBVIOUS.
 //
-// **THE TICK IS 10 ns, AND EVERY TICK COUNT IN THE MACHINE IS UNCHANGED.**
-// `CLKOUT0_DIVIDE_F` below is the only place the length of a tick is decided,
-// and it is the only thing that moved when this project stopped treating
-// timing closure as something to chase, on 2026-09-11.  It went from 5 to
-// 6.25 that morning and from 6.25 to 10 that afternoon, when a one-character
-// change to a multiplexer cost a third of a nanosecond and the memory-on
-// board stopped closing again.  A design sitting near zero turns every edit
-// into a timing question, and the longer tick buys that off.  Nothing under
-// `rtl/machine/` changed:
-// `cadr_tick_pkg::TICK_NS` is still 5, because that constant
-// is the conversion from MIT's drawings --- whose instants are five
-// nanoseconds apart --- into tick counts, and the seven read taps are still
-// 15, 17, 20, 23, 25, 28 and 32 ticks of whatever a tick costs.
+// **THE TICK IS 10 ns, AND SO IS MIT'S GRID.**  `CLKOUT0_DIVIDE_F` below is
+// the only place the length of a tick is decided.  It went from 5 to 6.25 on
+// 2026-09-11 and from 6.25 to 10 the same afternoon, when a one-character
+// change to a multiplexer cost a third of a nanosecond and the memory-on board
+// stopped closing again.  A design sitting near zero turns every edit into a
+// timing question, and the longer tick buys that off.
 //
-// **SO THE MACHINE IS SCALED AND NOT DISTORTED**, and that distinction is the
-// whole argument.  It is also the one this file has to state carefully, now
-// that the tick is 10 ns, because an old note in these sources argued against
-// exactly that number and meant something else.  What must never happen is
-// REDESCRIBING MIT's instants on a 10 ns grid: the 5, 25, 45, 65, 85 and
-// 145 ns instants would become half-ticks and six of the machine's own edges,
-// the microcycle's length among them, simply could not be expressed --- the
-// "different machine that still lights LEDs" this project keeps meeting.
-// That is a property of `cadr_tick_pkg::TICK_NS`, which is 5 for ever.
-// Making every tick LONGER by the same factor is a different operation: the
-// counts are untouched, so every instant keeps its exact ratio to every other,
-// a microcycle is 29 ticks whatever a tick costs, and the machine's own clock
-// is the only clock it has.  The machine therefore runs at 50% of the speed
-// the hardware ran and **nothing inside it can tell**.  Every check in this
-// repository compares tick counts on both sides, so not one of them moves
-// either.
+// **THE GRID IS A DIFFERENT NUMBER THAT HAPPENS TO BE EQUAL.**
+// `cadr_tick_pkg::TICK_NS` is the conversion from MIT's drawings into tick
+// counts, not the length of a tick.  For a while it stayed 5 under a 10 ns
+// tick: every count was unchanged, and the machine ran at half the original
+// speed with nothing inside it able to tell.  It is 10 now as well, so every
+// instant on MIT's drawings rounds UP to the next 10 ns.  A normal microcycle
+// is 15 ticks, 150 ns against MIT's 145, and the machine runs at about 97% of
+// the original speed.  Eleven instants move, eight by 5 ns and three by 7,
+// and none earlier; `docs/timing.md` lists every one.  muir generates the
+// reference traces under the same grid with `--timing-model fpga`, so every
+// check still compares tick counts on both sides.
 //
-// The two places where that is visible from outside are recorded, not fixed:
-// see "THE TWO CLOCKS THAT NOW DISAGREE WITH THE WALL" below.
+// What must never happen is an instant rounded DOWN or placed by a plain
+// division, which at 10 ns collapses MIT's 5 ns edge to zero ticks and puts
+// SELECT on top of a read tap --- the "different machine that still lights
+// LEDs" this project keeps meeting.  `cadr_tick_pkg::ticks` rounds up and is
+// the one place the conversion is made.
 //
 // **The board's clock is 125 MHz and the machine's is 100.**  The 100 MHz
 // comes from an MMCM: 125 x 8 = 1000 MHz at the VCO, divided by 10.  **The
@@ -79,31 +71,23 @@
 // because a primitive is one instantiation in a file somebody can read and an
 // IP core is a directory of generated XML.
 //
-// **THE TWO CLOCKS THAT NOW DISAGREE WITH THE WALL, DELIBERATELY.**  Two
-// things the machine owns are clocks in the ordinary sense, and they cannot
-// both agree with muir tick for tick and agree with the time of day once a
-// tick stops being 5 ns.  It is decided that **for now they keep agreeing
-// with muir**, because the checks are the backbone of this project and
-// nothing built yet needs the time of day:
+// **THE MACHINE'S TWO CLOCKS KEEP THE TIME OF DAY**, because the grid and the
+// tick are the same 10 ns and a free-running clock keeps its true period in
+// nanoseconds on any grid:
 //
-//   - `rtl/machine/cadr_io_board.sv`'s microsecond clock is 200 ticks, so it
-//     counts one per 2.0 real microseconds and a CADR wall clock run off it
-//     loses half a day in a day.  The card is not composed into
-//     `cadr_machine` yet, so nothing on this board reads it.
-//   - `rtl/machine/cadr_tv.sv`'s frame is 3,091,200 ticks, so the vertical
-//     interrupt arrives every 30.912 real ms --- 32.35 Hz where the display
-//     board scanned at 64.70.  MIT's microcode uses that interrupt as its
-//     roughly-sixty-cycle clock for mouse tracking and the scheduler's
-//     sequence break, so the machine's idea of a second is 50% of one.
+//   - `rtl/machine/cadr_io_board.sv`'s microsecond clock is 100 ticks, one
+//     real microsecond, and a CADR wall clock run off it keeps real time.
+//   - `rtl/machine/cadr_tv.sv`'s sync program makes a frame of 15,456,000 ns,
+//     1,545,600 ticks, so the vertical interrupt arrives every 15.456 real ms
+//     --- 64.70 Hz, the rate the display board scanned at.  MIT's microcode
+//     uses that interrupt as its roughly-sixty-cycle clock for mouse tracking
+//     and the scheduler's sequence break.
 //
-// **10 ns keeps the property 6.25 was partly chosen for: undoing this is one
-// constant each.**  A real microsecond is exactly 100 ticks and a real frame
-// exactly 1,545,600, both whole numbers, so restoring real time later means
-// changing `USEC_PERIOD_T` and `FRAME_T` and nothing else --- not a rewrite,
-// and not a second clock domain.  The argument that chose 6.25 was that
-// 1,000 / 6.25 is 160 exactly; at 10 ns it is 100 exactly, so the argument
-// survives the number moving.  Doing it would put those two modules out of
-// agreement with muir, which is why it has not been done.
+// While the grid was 5 ns under a 10 ns tick both ran at half rate, and that
+// was recorded as a deliberate disagreement with the wall.  A board whose tick
+// differs from the grid brings it back at the ratio of the two, which is one
+// reason a tick has to divide a thousand nanoseconds: at 10 ns a real
+// microsecond is exactly 100 ticks.
 //
 // **Every output has to reach a pin or synthesis will delete the machine.**
 // `cadr_machine` brings out the whole datapath for the testbenches to compare
@@ -2273,9 +2257,10 @@ module cadr_arty #(
 
   end else begin : g_nomem
 
-    // NO MEMORY, which is what this top level has always been. The machine
-    // stalls at the boot PROM's first main-memory cycle and stays there, and
-    // `mem_req`, `mem_write`, `mem_addr` and `mem_wdata` reach nothing but
+    // NO MEMORY, which is what this top level has always been. The machine's
+    // main-memory cycles are ended by the NXM timer, from the boot PROM's
+    // first at microcycle 536,303, and `mem_req`, `mem_write`, `mem_addr` and
+    // `mem_wdata` reach nothing but
     // the `witness` fold below --- which is the only thing keeping them, and
     // whatever computes them, out of the bin.
     assign mem_done  = 1'b0;

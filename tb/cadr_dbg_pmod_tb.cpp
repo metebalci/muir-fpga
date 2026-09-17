@@ -38,9 +38,9 @@
 //
 // WHAT IS MEASURED AND REPORTED RATHER THAN ASSUMED, on the check's own
 // output: the worst end-to-end delay of a level, the worst round trip of a
-// whole debug transaction against the 1,105 ticks a debugger waits before it
-// gives up, the shortest lift that still latches at the far end, and the
-// largest strobe-to-data skew the sampling survives.
+// whole debug transaction against the ticks a debugger waits before it gives
+// up, the shortest lift that still latches at the far end, and the largest
+// strobe-to-data skew the sampling survives.
 
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +49,7 @@
 #include <vector>
 
 #include "Vcadr_dbg_pmod_harness.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
@@ -72,18 +73,30 @@ constexpr long kFrameT = kBeats * kBeatT + kGapT;    // 162
 constexpr long kLossT = 512;
 
 // **THE DEADLINE, AND IT IS A TICK COUNT BECAUSE THE FABRIC COUNTS TICKS.**
-// `rtl/machine/cadr_busint_xbus.sv` runs the REQTIM oscillator at
-// `425 / TICK_NS` ticks a half period and a debug cycle takes the PROM's
-// SECOND table, thirteen whole periods: 13 * 170 = 2,210 ticks, which is
-// `busint::DEBUG_TIMEOUT_NS` --- 11.05 microseconds on MIT's 5 ns grid, 22.1
-// of real time at this board's 10 ns tick.  Every round trip this check
-// measures is held to HALF of it, so that the bound still says something if
-// the frame's length moves again; the line it prints gives both.  The figure
-// standing here before the frame grew was 1,105, taken as 11.05 microseconds
-// of REAL time, which is the same number by a different route and is now
-// arrived at deliberately rather than by coincidence.
-constexpr long kDebugTimeoutT = 2210;
-constexpr long kRoundTripBound = kDebugTimeoutT / 2;
+// A debug cycle takes the REQTIM PROM's SECOND table in
+// `rtl/machine/cadr_busint_xbus.sv`: `NXM TIMEOUT` on the fourteenth rise of
+// the gated oscillator, thirteen whole periods of 850 ns after its first
+// rise, which is `busint::DEBUG_TIMEOUT_NS`, 11,050 ns.  On the grid that is
+// 1,105 ticks at 10 ns and was 2,210 at 5, so it is derived here and not
+// written out.  The first rise is at least half a period after the cycle
+// starts, so this many ticks is the shortest a debugger waits.
+constexpr long kDebugTimeoutT = GridTicks(13 * 850);
+
+// **AND EVERY ROUND TRIP IS HELD TO THE DEADLINE LESS TWO FRAMES: ONE REFUSED
+// FRAME EACH WAY.**  A frame the far end refuses costs one frame, and that is
+// a frame and never a word only while the frame after it still lands inside
+// the deadline, so a clean round trip has to leave that room in each
+// direction.  The line this check prints gives the deadline and the bound.
+//
+// **IT USED TO BE HALF THE DEADLINE, AND AFTER THE GRID MOVED THAT WAS NOT
+// WHAT IT CHECKED.**  The deadline was written as 2,210, the 5 ns grid's
+// count, so half of it was 1,105: the whole of the real deadline at the 10 ns
+// grid, while the comment claimed a factor of two.  No factor of two is
+// available: half of 1,105 is 552, and a register read over this carrier
+// took 640 ticks at its slowest, measured at 412dd6f, which is about four
+// frames --- a level waiting up to a frame to be taken and a frame to cross,
+// each way.
+constexpr long kRoundTripBound = kDebugTimeoutT - 2 * kFrameT;
 
 // The window's words and the fields of `CTL` and `STS`, from
 // `rtl/plumbing/cadr_debug_window.sv` and muir's `src/fabric.rs`.

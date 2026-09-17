@@ -594,10 +594,12 @@ module cadr_busint_xbus (
           // "has this long passed" rather than "how long": once past, past.
           // Wrapping made -XBUS.RQ fall for sixteen ticks in the middle of
           // any cycle that reached 1,024 of them, which on the board is a
-          // level and cannot. Only a cycle nothing answers runs that long ---
-          // the NXM timer ends it at about 935 ticks plus the oscillator's
-          // phase --- so no slave was ever listening when it happened, which
-          // is why every output agreed and nothing caught it.
+          // level and cannot. At the 5 ns grid only a cycle nothing answers
+          // ran that long --- the NXM timer ended it at about 935 ticks plus
+          // the oscillator's phase --- so no slave was ever listening when it
+          // happened, which is why every output agreed and nothing caught it.
+          // At the 10 ns grid the timer ends one at about 470 ticks plus the
+          // phase.
           if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
           if (acked) begin
             state <= ACKED;
