@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>muir-fpga — the DE25-Nano, upcoming</title>
+<meta name="description" content="The DE25-Nano, an upcoming board for muir-fpga with one Altera Agilex-5, part A5EB013BB23BE4SCS: the Arty Z7-20&rsquo;s architecture drawing, with nothing on it started.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="wide">
+
+<!-- The characters, drawn once and placed with <use>. The board is the site's
+     mascot: it was drawn for this site by the ozd project, in Cold Boot's
+     hand, and is copied here unchanged from ozd's pages/index.html. Its chip
+     wears CADR's face; the DDR3 beside it, the Ethernet jack and the microSD
+     slot are the Arty Z7-20's. CADR's face and its waving arm are Cold
+     Boot's own parts. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="face-happy">
+      <ellipse cx="46" cy="50" rx="9" ry="13" fill="#fff"/>
+      <ellipse cx="74" cy="50" rx="9" ry="13" fill="#fff"/>
+      <ellipse cx="47" cy="53" rx="6.2" ry="9.5" fill="#141414"/>
+      <ellipse cx="73" cy="53" rx="6.2" ry="9.5" fill="#141414"/>
+      <ellipse cx="47" cy="58" rx="4.6" ry="3.6" fill="#ff48b0"/>
+      <ellipse cx="73" cy="58" rx="4.6" ry="3.6" fill="#ff48b0"/>
+      <circle cx="44.5" cy="48" r="2.8" fill="#fff"/>
+      <circle cx="70.5" cy="48" r="2.8" fill="#fff"/>
+      <circle cx="49" cy="57" r="1.2" fill="#fff"/>
+      <circle cx="75" cy="57" r="1.2" fill="#fff"/>
+      <path d="M54 74q6 6 12 0" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M29 70l3-5M33 70l3-5M37 70l3-5M80 70l3-5M84 70l3-5M88 70l3-5" stroke="#ff48b0" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <g id="arm-wave">
+      <path d="M106 64q17-4 14-25" fill="none" stroke="#141414" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="120" cy="36" r="5.5" fill="#fff" stroke="#141414" stroke-width="3"/>
+      <path d="M111 22l3 5M120 18v6M129 22l-3 5" stroke="#141414" stroke-width="2.2" stroke-linecap="round"/>
+    </g>
+    <g id="fpga-board">
+      <rect x="20" y="116" width="12" height="9" fill="#141414"/>
+      <rect x="140" y="116" width="12" height="9" fill="#141414"/>
+      <rect x="8" y="10" width="156" height="108" rx="6" fill="#fff" stroke="#141414" stroke-width="4"/>
+      <circle cx="20" cy="22" r="4" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <circle cx="152" cy="22" r="4" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <circle cx="20" cy="106" r="4" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <circle cx="152" cy="106" r="4" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <path d="M44 21.5h68M44 106.5h68M35.5 30v68M120.5 30v68" stroke="#141414" stroke-width="4" stroke-dasharray="2 3"/>
+      <rect x="40" y="26" width="76" height="76" rx="3" fill="#141414"/>
+      <circle cx="47" cy="33" r="2.6" fill="#ff48b0"/>
+      <use href="#face-happy" transform="translate(21 8.4) scale(0.95)"/>
+      <rect x="130" y="30" width="18" height="26" rx="1.5" fill="#141414"/>
+      <path d="M127 35v16M151 35v16" stroke="#141414" stroke-width="3" stroke-dasharray="2 2.5"/>
+      <rect x="0" y="44" width="28" height="32" rx="2" fill="#fff" stroke="#141414" stroke-width="3"/>
+      <path d="M6 51h16v13h-4v5h-8v-5h-4z" fill="#141414"/>
+      <rect x="12" y="84" width="16" height="12" rx="1.5" fill="#fff" stroke="#141414" stroke-width="2.5"/>
+      <path d="M16 90h8" stroke="#141414" stroke-width="2"/>
+      <circle cx="132" cy="78" r="3.2" fill="#ff48b0" stroke="#141414" stroke-width="1.5"/>
+      <circle cx="142" cy="78" r="3.2" fill="#ff48b0" stroke="#141414" stroke-width="1.5"/>
+      <circle cx="152" cy="78" r="3.2" fill="#ff48b0" stroke="#141414" stroke-width="1.5"/>
+    </g>
+    <g id="fpga-wave"><use href="#fpga-board"/><use href="#arm-wave" x="58" y="-4"/></g>
+  </defs>
+</svg>
+
+<p class="desk-note"><b>muir-fpga</b> &middot; <a href="index.html">the front page</a> &middot; <a href="arty-z7-20.html">the Arty Z7-20</a> &middot; <a href="cora-z7-07s.html">the Cora Z7-07S</a> &middot; <span aria-current="page">the DE25-Nano</span> &middot; <a href="booting.html">booting</a> &middot; <a href="debugging.html">debugging</a> &middot; <a href="faq.html">questions</a> &middot; <a href="cadr.html">the CADR</a></p>
+
+<div class="page">
+
+  <section aria-label="DE25-Nano">
+    <div class="masthead">
+      <div class="masthead-text">
+        <span class="eyebrow">Board</span>
+        <h1 class="title t-l"><a href="https://www.terasic.com.tw/cgi-bin/page/archive.pl?Language=English&amp;CategoryNo=115&amp;No=1384">DE25-Nano</a></h1>
+        <p class="lede">This board is upcoming. Its FPGA is one Altera Agilex-5, the A5EB013BB23BE4SCS.</p>
+        <div class="actions">
+          <a class="key lm" href="arty-z7-20.html">Arty Z7-20</a>
+          <a class="key lm" href="cora-z7-07s.html">Cora Z7-07S</a>
+        </div>
+      </div>
+      <svg class="chara corner" viewBox="-4 6 198 124" role="img" aria-label="muir-fpga's board, waving"><use href="#fpga-wave"/></svg>
+    </div>
+
+    <figure class="panel fig dense wide">
+      <div class="scroll">
+<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5, part A5EB013BB23BE4SCS. Nothing on it has been started for this board: no block is colored, and the parts drawn gray are existing components. Apart from the chip&rsquo;s label and the memory, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+
+          <!-- The Arty Z7-20's drawing, generated for the DE25-Nano with
+               nothing started: no block is colored, the figures under the
+               fabric's label are gone because there is no build, and the
+               chip and the memory carry this board's parts.  Why each thing
+               is where it is, is in the Arty Z7-20's page. -->
+          <rect class="d-box d-done d-key" x="587.51" y="851" width="13" height="13"/>
+          <text class="d-s" x="607.51" y="861">verified</text>
+          <rect class="d-box d-built d-key" x="668.19" y="851" width="13" height="13"/>
+          <text class="d-s" x="688.19" y="861">simulated</text>
+          <rect class="d-box d-part d-key" x="758.66" y="851" width="13" height="13"/>
+          <text class="d-s" x="778.66" y="861">partly built</text>
+          <rect class="d-box d-wip d-key" x="855.39" y="851" width="13" height="13"/>
+          <text class="d-s" x="875.39" y="861">under development</text>
+          <rect class="d-box d-key" x="991.75" y="851" width="13" height="13"/>
+          <text class="d-s" x="1011.75" y="861">not started</text>
+          <rect class="d-box d-ext d-key" x="1090.24" y="851" width="13" height="13"/>
+          <text class="d-s" x="1110.24" y="861">existing component</text>
+          <g transform="translate(310,36)">
+          <rect class="d-box" x="-170" y="28" width="1460" height="668.5"/>
+          <text class="d-s" x="-164" y="24">Altera Agilex-5 &middot; A5EB013BB23BE4SCS</text>
+          <rect class="d-plate" x="-160" y="274" width="180" height="112"/>
+          <rect class="d-box" x="-160" y="274" width="180" height="112"/>
+          <text class="d-t" x="-70" y="300" text-anchor="middle">display output</text>
+          <text class="d-s" x="-70" y="318" text-anchor="middle">scans both screens out of</text>
+          <text class="d-s" x="-70" y="332" text-anchor="middle">DDR at the monitor&rsquo;s rate,</text>
+          <text class="d-s" x="-70" y="346" text-anchor="middle">centered, the color one over</text>
+          <text class="d-s" x="-70" y="360" text-anchor="middle">the first; TMDS out to HDMI</text>
+          <path class="d-line" d="M470,274 L470,256 L-70,256 L-70,274"/>
+          <path class="d-line" d="M-70,386 L-70,428"/>
+          <path class="d-line" d="M-160,330 L-183,330"/>
+          <rect class="d-plate" x="-150" y="428" width="160" height="38"/>
+          <rect class="d-box" x="-150" y="428" width="160" height="38"/>
+          <text class="d-m" x="-70" y="446" text-anchor="middle">S_AXI_HP3</text>
+          <text class="d-s" x="-70" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <path class="d-line" d="M-70,466 L-70,652"/>
+          <rect class="d-box d-ext" x="-283" y="288" width="100" height="84"/>
+          <text class="d-t" x="-233" y="310" text-anchor="middle">HDMI out</text>
+          <text class="d-s" x="-233" y="330" text-anchor="middle">the display,</text>
+          <text class="d-s" x="-233" y="344" text-anchor="middle">from the fabric,</text>
+          <text class="d-s" x="-233" y="358" text-anchor="middle">one of three modes</text>
+
+          <text class="d-s" x="-164" y="48">PL &mdash; fabric</text>
+
+          <rect class="d-box" x="40" y="62" width="112" height="128"/>
+          <text class="d-t" x="96" y="100" text-anchor="middle">clock</text>
+          <text class="d-n" x="96" y="120" text-anchor="middle">CLOCK1, CLOCK2</text>
+          <text class="d-s" x="96" y="142" text-anchor="middle">100 MHz,</text>
+          <text class="d-s" x="96" y="156" text-anchor="middle">10 ns a tick</text>
+          <text class="d-s" x="96" y="176" text-anchor="middle">15 ticks = 150 ns</text>
+
+          <rect class="d-box" x="152" y="62" width="224" height="56"/>
+          <text class="d-t" x="264" y="84" text-anchor="middle">ICMEM board</text>
+          <text class="d-s" x="264" y="104" text-anchor="middle">the control store: 16K &times; 48, 768 Kb</text>
+          <rect class="d-box" x="152" y="118" width="224" height="72"/>
+          <text class="d-t" x="264" y="142" text-anchor="middle">CADR board</text>
+          <text class="d-s" x="264" y="162" text-anchor="middle">datapath, sequencer,</text>
+          <text class="d-s" x="264" y="176" text-anchor="middle">scratchpads, maps</text>
+
+          <line class="d-line" x1="376" y1="90" x2="596" y2="90"/>
+          <text class="d-s" x="486" y="82" text-anchor="middle">12 wires</text>
+          <text class="d-s" x="486" y="108" text-anchor="middle">clock, SPY control, resets</text>
+          <line class="d-line" x1="376" y1="154" x2="596" y2="154"/>
+          <text class="d-s" x="486" y="146" text-anchor="middle">80 wires</text>
+          <text class="d-n" x="486" y="170" text-anchor="middle">MEM&lt;31:0&gt;, SPY&lt;15:0&gt;</text>
+          <text class="d-s" x="486" y="184" text-anchor="middle">48 driven from both ends</text>
+
+          <rect class="d-box" x="596" y="62" width="254" height="128"/>
+          <text class="d-t" x="723" y="92" text-anchor="middle">bus interface</text>
+          <text class="d-n" x="723" y="112" text-anchor="middle">BUSINT</text>
+          <text class="d-s" x="723" y="138" text-anchor="middle">arbitration, the NXM timeout,</text>
+          <text class="d-s" x="723" y="152" text-anchor="middle">the address decode, -HANG,</text>
+          <text class="d-s" x="723" y="166" text-anchor="middle">its registers, the map, the cable</text>
+
+          <rect class="d-box" x="1068" y="96" width="188" height="64"/>
+          <text class="d-t" x="1162" y="118" text-anchor="middle">debug cable adapter</text>
+          <text class="d-s" x="1162" y="138" text-anchor="middle">the cable both ways, 8 pins</text>
+          <text class="d-s" x="1162" y="152" text-anchor="middle">registers at GP1 + 0x1000</text>
+          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,428 M1162,466 L1162,542"/>
+          <text class="d-s" x="959" y="114" text-anchor="middle">20 out</text>
+          <text class="d-s" x="959" y="150" text-anchor="middle">19 in</text>
+          <path class="d-line" d="M1256,120 L1305,120"/>
+
+          <path class="d-line" d="M700,190 L700,214 L270,214 L270,238"/>
+          <path class="d-line" d="M746,190 L746,214 L906,214 L906,238"/>
+          <line class="d-bus" x1="40" y1="238" x2="730" y2="238"/>
+          <text class="d-s" x="40" y="228">Xbus, 32 bits</text>
+          <line class="d-bus" x1="780" y1="238" x2="1066" y2="238"/>
+          <text class="d-s" x="1066" y="228" text-anchor="end">Unibus, 16 bits, open collector</text>
+
+          <path class="d-line" d="M118,238 L118,274 M310,238 L310,274 M497,238 L497,274 M657,238 L657,274 M885,238 L885,274"/>
+
+          <rect class="d-box" x="40" y="274" width="156" height="112"/>
+          <text class="d-t" x="118" y="300" text-anchor="middle">Xbus to DDR</text>
+          <text class="d-s" x="118" y="320" text-anchor="middle">main memory and</text>
+          <text class="d-s" x="118" y="334" text-anchor="middle">the display&rsquo;s buffer</text>
+          <text class="d-s" x="118" y="360" text-anchor="middle">an AXI4 master</text>
+
+          <rect class="d-box" x="210" y="274" width="200" height="112"/>
+          <text class="d-t" x="310" y="300" text-anchor="middle">disk controller</text>
+          <text class="d-s" x="310" y="320" text-anchor="middle">four registers, and the channel</text>
+          <text class="d-s" x="310" y="334" text-anchor="middle">that walks a list in memory</text>
+          <text class="d-n" x="310" y="356" text-anchor="middle">CADRDC</text>
+          <text class="d-s" x="310" y="376" text-anchor="middle">an AXI4 master</text>
+
+          <rect class="d-box" x="424" y="274" width="146" height="112"/>
+          <text class="d-t" x="497" y="300" text-anchor="middle">TV</text>
+          <text class="d-s" x="497" y="320" text-anchor="middle">scan counters and</text>
+          <text class="d-s" x="497" y="334" text-anchor="middle">the mode register</text>
+          <text class="d-n" x="497" y="356" text-anchor="middle">SIMPLETV</text>
+          <text class="d-s" x="497" y="376" text-anchor="middle">the buffer is in DDR</text>
+
+          <rect class="d-box" x="584" y="274" width="146" height="112"/>
+          <text class="d-t" x="657" y="300" text-anchor="middle">Color TV</text>
+          <text class="d-s" x="657" y="320" text-anchor="middle">a second display board,</text>
+          <text class="d-s" x="657" y="334" text-anchor="middle">576 &times; 454, 4 bits a pixel</text>
+          <text class="d-n" x="657" y="356" text-anchor="middle">LISPMTV</text>
+          <text class="d-n" x="657" y="376" text-anchor="middle">0o17200000</text>
+
+          <rect class="d-box" x="780" y="274" width="210" height="112"/>
+          <text class="d-t" x="885" y="300" text-anchor="middle">I/O board</text>
+          <text class="d-s" x="885" y="320" text-anchor="middle">keyboard, mouse, clocks, serial</text>
+          <text class="d-s" x="885" y="334" text-anchor="middle">Chaosnet registers and buffers</text>
+          <text class="d-n" x="885" y="356" text-anchor="middle">CADRIO</text>
+          <text class="d-s" x="885" y="376" text-anchor="middle">the cable, not the protocol</text>
+
+          <path class="d-line" d="M118,386 L118,428"/>
+          <path class="d-line" d="M310,386 L310,428 M885,386 L885,428 M1036,238 L1036,428 M380,386 L380,407 L660,407 L660,428"/>
+
+          <path class="d-dash" d="M-170,450 L-150,450 M10,450 L38,450 M198,450 L230,450 M390,450 L640,450 M1050,450 L1092,450 M1232,450 L1290,450"/>
+          <rect class="d-plate" x="38" y="428" width="160" height="38"/>
+          <rect class="d-box" x="38" y="428" width="160" height="38"/>
+          <text class="d-m" x="118" y="446" text-anchor="middle">S_AXI_HP0</text>
+          <text class="d-s" x="118" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <rect class="d-box" x="230" y="428" width="160" height="38"/>
+          <text class="d-m" x="310" y="446" text-anchor="middle">S_AXI_HP2</text>
+          <text class="d-s" x="310" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <rect class="d-box" x="640" y="428" width="410" height="38"/>
+          <text class="d-m" x="845" y="446" text-anchor="middle">M_AXI_GP0</text>
+          <text class="d-s" x="845" y="460" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+          <rect class="d-box" x="1092" y="428" width="140" height="38"/>
+          <text class="d-m" x="1162" y="446" text-anchor="middle">M_AXI_GP1</text>
+          <text class="d-s" x="1162" y="460" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+
+          <text class="d-s" x="-164" y="520.4">PS &mdash; Arm</text>
+          <rect class="d-dot" x="220" y="522" width="1000" height="124"/>
+          <text class="d-s" x="230" y="536">Linux &mdash; Buildroot</text>
+          <path class="d-line" d="M845,466 L845,494 M305,494 L1040,494 M305,494 L305,542 M452,494 L452,542 M599,494 L599,542 M746,494 L746,542 M893,494 L893,542 M1040,494 L1040,542"/>
+
+          <rect class="d-plate" x="-62" y="542" width="110" height="96"/>
+          <rect class="d-box d-ext" x="-62" y="542" width="110" height="96"/>
+          <text class="d-t" x="-7" y="566" text-anchor="middle">2 &times; Cortex-A9</text>
+          <text class="d-s" x="-7" y="586" text-anchor="middle">650 MHz, Linux</text>
+          <rect class="d-plate" x="56" y="522" width="54" height="124"/>
+          <rect class="d-dot d-ext" x="56" y="522" width="54" height="124"/>
+          <rect class="d-plate" x="61" y="527" width="44" height="30"/>
+          <rect class="d-box" x="61" y="527" width="44" height="30"/>
+          <text class="d-t" x="83" y="547" text-anchor="middle">SPL</text>
+          <text class="d-t" text-anchor="middle"><tspan x="83" y="572">U</tspan><tspan x="83" y="585">-</tspan><tspan x="83" y="598">B</tspan><tspan x="83" y="611">o</tspan><tspan x="83" y="624">o</tspan><tspan x="83" y="637">t</tspan></text>
+          <rect class="d-plate" x="240" y="542" width="130" height="96"/>
+          <rect class="d-box" x="240" y="542" width="130" height="96"/>
+          <text class="d-t" x="305" y="566" text-anchor="middle">terminal</text>
+          <text class="d-s" x="305" y="586" text-anchor="middle">an RFB server: the screen,</text>
+          <text class="d-s" x="305" y="600" text-anchor="middle">the keys and the mouse</text>
+
+          <rect class="d-plate" x="387" y="542" width="130" height="96"/>
+          <rect class="d-box" x="387" y="542" width="130" height="96"/>
+          <text class="d-t" x="452" y="566" text-anchor="middle">Chaosnet</text>
+          <text class="d-s" x="452" y="586" text-anchor="middle">routing, and the</text>
+          <text class="d-s" x="452" y="600" text-anchor="middle">cable to the net</text>
+          <text class="d-s" x="452" y="622" text-anchor="middle">for the other machines</text>
+
+          <rect class="d-plate" x="534" y="542" width="130" height="96"/>
+          <rect class="d-box" x="534" y="542" width="130" height="96"/>
+          <text class="d-t" x="599" y="566" text-anchor="middle">serial</text>
+          <text class="d-s" x="599" y="586" text-anchor="middle">the CADR&rsquo;s serial line</text>
+          <text class="d-s" x="599" y="600" text-anchor="middle">on a TCP socket,</text>
+          <text class="d-s" x="599" y="622" text-anchor="middle">as muir offers it</text>
+
+          <rect class="d-plate" x="681" y="542" width="130" height="96"/>
+          <rect class="d-box" x="681" y="542" width="130" height="96"/>
+          <text class="d-t" x="746" y="566" text-anchor="middle">disk packs</text>
+          <text class="d-s" x="746" y="586" text-anchor="middle">a drive&rsquo;s blocks as a file,</text>
+          <text class="d-s" x="746" y="600" text-anchor="middle">one file a drive</text>
+          <text class="d-s" x="746" y="622" text-anchor="middle">staged into DDR</text>
+
+          <rect class="d-plate" x="828" y="542" width="130" height="96"/>
+          <rect class="d-box" x="828" y="542" width="130" height="96"/>
+          <text class="d-t" x="893" y="566" text-anchor="middle">console</text>
+          <text class="d-s" x="893" y="586" text-anchor="middle">halt, step and inspect</text>
+          <text class="d-s" x="893" y="600" text-anchor="middle">over M_AXI_GP1</text>
+          <text class="d-s" x="893" y="622" text-anchor="middle">a Unibus master</text>
+
+          <rect class="d-plate" x="975" y="542" width="130" height="96"/>
+          <rect class="d-box" x="975" y="542" width="130" height="96"/>
+          <text class="d-t" x="1040" y="566" text-anchor="middle">USB input</text>
+          <text class="d-s" x="1040" y="586" text-anchor="middle">the keyboard and mouse,</text>
+          <text class="d-s" x="1040" y="600" text-anchor="middle">onto the I/O board</text>
+          <text class="d-s" x="1040" y="622" text-anchor="middle">through the terminal</text>
+
+          <rect class="d-plate" x="1122" y="542" width="80" height="96"/>
+          <rect class="d-box d-ext" x="1122" y="542" width="80" height="96"/>
+          <text class="d-t" x="1162" y="566" text-anchor="middle">muir</text>
+          <text class="d-s" x="1162" y="586" text-anchor="middle">on the PS,</text>
+          <text class="d-s" x="1162" y="600" text-anchor="middle">running CC</text>
+          <text class="d-s" x="1162" y="622" text-anchor="middle">the debugger</text>
+
+          <path class="d-line" d="M118,466 L118,652"/>
+          <path class="d-line" d="M240,466 L240,494 L170,494 L170,652"/>
+          <rect class="d-plate" x="-79" y="652" width="332" height="40"/>
+          <rect class="d-box d-ext" x="-79" y="652" width="332" height="40"/>
+          <text class="d-t" x="87" y="670" text-anchor="middle">DDR controller</text>
+          <text class="d-s" x="87" y="684" text-anchor="middle">four ports, arbitrated in hardware</text>
+          <path class="d-line" d="M-7,638 L-7,652"/>
+          <path class="d-line" d="M87,692 L87,712"/>
+          <path class="d-line" d="M305,638 L305,652 M452,638 L452,652 M599,638 L599,652 M746,638 L746,652"/>
+
+          <rect class="d-box d-ext" x="268" y="652" width="370" height="40"/>
+          <text class="d-t" x="453" y="670" text-anchor="middle">MAC</text>
+          <text class="d-s" x="453" y="684" text-anchor="middle">gigabit Ethernet</text>
+          <path class="d-line" d="M453,692 L453,712"/>
+          <rect class="d-box d-ext" x="666" y="652" width="160" height="40"/>
+          <text class="d-t" x="746" y="670" text-anchor="middle">SD host</text>
+          <text class="d-s" x="746" y="684" text-anchor="middle">the card</text>
+          <path class="d-line" d="M746,692 L746,712"/>
+
+          <rect class="d-box d-ext" x="836" y="652" width="122" height="40"/>
+          <text class="d-t" x="897" y="670" text-anchor="middle">UART</text>
+          <text class="d-s" x="897" y="684" text-anchor="middle">Linux&rsquo;s console</text>
+          <path class="d-line" d="M964,646 L964,672 L958,672"/>
+          <path class="d-line" d="M897,692 L897,712"/>
+
+          <rect class="d-box d-ext" x="-79" y="712" width="332" height="84"/>
+          <text class="d-t" x="87" y="738" text-anchor="middle">1 GB LPDDR4</text>
+          <rect class="d-box d-ext" x="1305" y="88" width="150" height="98"/>
+          <text class="d-t" x="1380" y="110" text-anchor="middle">Pmod JA</text>
+          <text class="d-t" x="1380" y="128" text-anchor="middle">Debug cable</text>
+          <text class="d-s" x="1380" y="150" text-anchor="middle">2 out + 2 in</text>
+          <rect class="d-plate" x="1312" y="160" width="136" height="17"/>
+          <text class="d-s d-warn" x="1380" y="172" text-anchor="middle">Vcc open at both sides</text>
+          <rect class="d-box d-ext" x="1305" y="264" width="150" height="66"/>
+          <rect x="1315" y="275" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="283">BTN0 &mdash; BOOT</text>
+          <rect x="1315" y="307" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="315">BTN1 &mdash; RESET</text>
+          <path class="d-line" d="M1290,297 L1305,297"/>
+          <rect class="d-box d-ext" x="1305" y="336" width="150" height="152"/>
+          <circle cx="1319" cy="356" r="4.5" fill="#2da44e" fill-opacity="0.45" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="360">LD0 &mdash; MACHRUN</text>
+          <circle cx="1319" cy="378" r="8" fill="none" stroke="#2da44e" stroke-width="1" stroke-opacity="0.5"/>
+          <circle class="d-lamp-slow" cx="1319" cy="378" r="4.5" fill="#2da44e" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="382">LD1 &mdash; fabric clock</text>
+          <circle cx="1319" cy="400" r="8" fill="none" stroke="#2da44e" stroke-width="1" stroke-opacity="0.5"/>
+          <circle class="d-lamp-fast" cx="1319" cy="400" r="4.5" fill="#2da44e" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="404">LD2 &mdash; microcycles</text>
+          <circle class="d-lamp-disk" cx="1319" cy="422" r="4.5" fill="#2da44e" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="426">LD3 &mdash; disk activity</text>
+          <circle cx="1319" cy="444" r="4.5" fill="#d1495b" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="448">LD4 &mdash; ERRHALT</text>
+          <circle cx="1319" cy="466" r="4.5" fill="#0969da" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="470">LD5 &mdash; PROMENABLE</text>
+          <path class="d-line" d="M1290,412 L1305,412"/>
+          <rect class="d-box d-ext" x="1305" y="228" width="150" height="30"/>
+          <rect x="1314" y="239" width="10" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1"/>
+          <rect x="1315" y="240" width="4" height="6" fill="currentColor" fill-opacity="0.45" stroke="none"/>
+          <text class="d-s" x="1333" y="247">SW0 &mdash; NO AUTO BOOT</text>
+          <path class="d-line" d="M1290,243 L1305,243"/>
+
+          <rect class="d-box d-ext" x="970" y="652" width="140" height="40"/>
+          <text class="d-t" x="1040" y="670" text-anchor="middle">USB host</text>
+          <text class="d-s" x="1040" y="684" text-anchor="middle">keyboard and mouse</text>
+          <path class="d-line" d="M1040,692 L1040,712"/>
+
+          <rect class="d-box d-ext" x="970" y="712" width="140" height="84"/>
+          <text class="d-t" x="1040" y="738" text-anchor="middle">USB host port</text>
+          <text class="d-s" x="1040" y="760" text-anchor="middle">a keyboard and a mouse,</text>
+          <text class="d-s" x="1040" y="774" text-anchor="middle">plugged into the board</text>
+          <path class="d-line" d="M1040,638 L1040,652"/>
+
+
+          <rect class="d-box d-ext" x="268" y="712" width="370" height="84"/>
+          <text class="d-t" x="453" y="738" text-anchor="middle">gigabit Ethernet</text>
+          <text class="d-s" x="453" y="762" text-anchor="middle">the terminal is a VNC client; Chaosnet reaches</text>
+          <text class="d-s" x="453" y="778" text-anchor="middle">other machines; the serial line is a TCP socket</text>
+          <rect class="d-box d-ext" x="666" y="712" width="160" height="84"/>
+          <text class="d-t" x="746" y="738" text-anchor="middle">microSD</text>
+          <text class="d-s" x="746" y="758" text-anchor="middle">U-Boot, the CADR&rsquo;s bitstream,</text>
+          <text class="d-s" x="746" y="772" text-anchor="middle">Linux and its root filesystem,</text>
+          <text class="d-s" x="746" y="786" text-anchor="middle">and the disk packs, a file a drive</text>
+          <rect class="d-box d-ext" x="836" y="712" width="122" height="84"/>
+          <text class="d-t" x="897" y="738" text-anchor="middle">USB-UART</text>
+          <text class="d-t" x="897" y="756" text-anchor="middle">/ JTAG</text>
+          <text class="d-s" x="897" y="778" text-anchor="middle">one micro-USB socket,</text>
+          <text class="d-s" x="897" y="792" text-anchor="middle">the console and JTAG</text>
+
+          </g>
+        </svg>
+      </div>
+    </figure>
+
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; DE25-Nano</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>01</span></div>
+    </footer>
+  </section>
+
+  <!-- --------------------------------------------------------- colophon -->
+  <section id="colophon" aria-label="Colophon">
+    <div class="panel bare">
+      <span class="eyebrow">End</span>
+      <h2 class="title t-m">Colophon</h2>
+    </div>
+
+    <div class="panels two end-split">
+      <div class="colophon">
+        <p><b>&copy; 2026 Mete Balci.</b> muir-fpga is <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-or-later</a>. What is not this project&rsquo;s work, and <a href="index.html#colophon">how the site was made</a>, is on the front page.</p>
+        <p>The drawing style, the palette and the panels are <a href="https://coldboot.metebalci.com">Cold Boot</a>&rsquo;s, a manga-style zine about the same machine by the same author, under CC BY-SA 4.0. The board, this site&rsquo;s mascot, is drawn for it by the <a href="https://github.com/metebalci/ozd">ozd</a> project, in the same hand.</p>
+        <div class="actions" style="margin-top:0.6rem;">
+          <a class="key" href="https://github.com/metebalci/muir-fpga/tree/main/docs">Read the documents</a>
+          <a class="key lm" href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#sources">The sources</a>
+          <a class="key lm" href="https://github.com/metebalci/muir-fpga">Repository</a>
+        </div>
+      </div>
+      <div class="panel tone-pink center">
+        <svg class="chara" viewBox="-4 6 198 124" style="width:62%;" role="img" aria-label="muir-fpga's board, waving goodbye"><use href="#fpga-wave"/></svg>
+        <p class="cap" style="align-self:center;">Thanks for reading.</p>
+      </div>
+    </div>
+
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; Colophon</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>02</span></div>
+    </footer>
+  </section>
+
+</div>
+
+</body>
+</html>
