@@ -14002,7 +14002,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation the-blue-lamp-shows-the-mode-bit-and-not-the-prom-select
 @check promenable
 @file rtl/machine/cadr_microcycle.sv
-@note **THE FAULT THIS WHOLE CHECK EXISTS FOR.**  All three boards drive their
+@note **THE FAULT THIS WHOLE CHECK EXISTS FOR.**  Both Zynq boards drive their
 @note blue lamp from `-PROMENABLE` at PCTL 1C19, the PROM's own select, and the
 @note mode register's `PROMDISABLE` bit is a different net that agrees with it
 @note almost everywhere.  A board wired to the mode bit instead looks right to

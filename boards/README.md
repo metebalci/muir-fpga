@@ -2,8 +2,8 @@
 
 A board directory holds everything that is true of one particular piece of
 hardware and of nothing else. That is the pins, the processing system if the
-part has one, the Vivado flow for that part, and the operating system that runs
-beside the machine on it.
+part has one, the vendor tool's flow for that part, and the operating system
+that runs beside the machine on it.
 
 Nothing in `rtl/` belongs to a board. The machine is in `rtl/machine/` and is
 held to muir tick for tick. The pieces that are held to a protocol or a
@@ -12,29 +12,42 @@ property instead are in `rtl/plumbing/`, and the Xilinx-specific ones are in
 line is drawn and why the machine has one home rather than one repository per
 part family.
 
-## The two directories
+## The three directories
 
 | Directory | Board | Part | State |
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
-| `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Runs on silicon. Smaller, and without display output or USB input. |
+| `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Runs on silicon, without display output or USB input. |
+| `de25-nano/` | Terasic DE25-Nano | A5EB013BB23BE4SCS | Nothing built. A README of what a port needs. |
 
-**Both run the machine on silicon, and they carry two different amounts.**
-`arty-z7-20/` is the board and is complete. `cora-z7-07s/` has a top level, a
-pin file, a processing-system configuration, a device tree and a Vivado flow.
-The board has no HDMI connector, so it has no display output, and its image
-leaves USB input out; `cora-z7-07s/README.md` says why. On the board it boots
-Linux from its card and the machine runs a System 304 Listener. Over the Pmod
-cable it has debugged the Arty Z7-20 and been debugged by it, which
+**The two Zynq boards run the machine on silicon, and they carry two different
+amounts.** `arty-z7-20/` is the board and is complete. `cora-z7-07s/` has a
+top level, a pin file, a processing-system configuration, a device tree and a
+Vivado flow. The board has no HDMI connector, so it has no display output, and
+its image leaves USB input out; `cora-z7-07s/README.md` says why. On the board
+it boots Linux from its card. Its machine is halted today, with no drive. Over
+the Pmod cable it has debugged the Arty Z7-20 and been debugged by it, which
 `docs/board.md` records.
 
-**Both directories are Zynq-7000 parts, and that is deliberate.** What a board
-has to bring is main memory, a card the machine's disk can be a file on, a
-network the time host and the file host are reached over, and video. A
-Zynq-7000 board brings all four through its processing system and the Linux
-running on it. A part without one has to answer every one of them in fabric,
-which is a different project rather than a port, and the section below says
-what the list is.
+**`de25-nano/` holds a README and nothing else.** It says what the board is,
+what a port to it needs and where the board's pins are. Nothing for it has been
+built or synthesized.
+
+**Every board here has a processing system beside its fabric, and that is
+deliberate.** What a board has to bring is main memory, a card the machine's
+disk can be a file on, a network the time host and the file host are reached
+over, and video. A board whose part has hard processor cores brings all four
+through them and the Linux running on them. A part without one has to answer
+every one of them in fabric, which is a different project rather than a port,
+and the section below says what the list is.
+
+**The Arty Z7-20 and the Cora Z7-07S are Zynq-7000 parts, and the DE25-Nano is
+an SoC of another family.** Its part is an Altera Agilex 5, with Cortex-A76 and
+Cortex-A55 cores beside the fabric and a bridge from the fabric into their
+memory, so it brings the same four things in the same way. What differs is the
+vendor. Its flows would be Quartus's rather than Vivado's, nothing in
+`rtl/plumbing/xilinx7/` carries over, its cores are 64-bit, and it boots
+differently. `de25-nano/README.md` has the list.
 
 **There is no Spartan-7 directory, because the Digilent Arty S7-50 has no
 Ethernet.** This machine finds its time host and its file host over Chaosnet,
@@ -75,6 +88,12 @@ boot ROM reads `BOOT.BIN` from the root of the first FAT partition and nowhere
 else, the SPL asks for `u-boot.img` by that name at the root, and `uEnv.txt` is
 imported before any board name is known.
 
+**Those three names are the Zynq boards' and not a rule for every part.** The
+DE25-Nano has no card yet. Terasic's reference design for it puts U-Boot's
+first stage into the fabric's configuration image on the QSPI flash rather than
+into a file on the card, so the root of its boot partition would differ. The
+pack partition is the machine's and would not.
+
 **The pack partition is flat on every board.** A pack, the README and the two
 files of flags belong to the machine rather than to the part. What differs
 between two boards' cards there is the Chaosnet address inside `fpgarc` and
@@ -89,7 +108,8 @@ partition, because the packs are the machine's world and not the part's.
 ## The order
 
 The Arty Z7-20 is the board and stays the board. The Cora was added after it,
-which was not a stated priority and should not be read as one.
+which was not a stated priority and should not be read as one. The DE25-Nano's
+directory came after both and holds a README only.
 
 The Cora was worth settling before the display output block started, because a
 board with no HDMI pulls against exactly that work. And it is the tighter of
@@ -101,10 +121,10 @@ there.** That was the open question and it is answered.
 
 ## Does the machine fit
 
-**On the Cora Z7-07S this is measured now and is not a ratio.** Both boards
-were placed and routed at commit `86d787b` with `DDR=1`, which is the machine
-with the processing system and DDR3 behind its memory port, so the two columns
-are the same design on two parts.
+**On the Cora Z7-07S this is measured now and is not a ratio.** Both Zynq
+boards were placed and routed at commit `86d787b` with `DDR=1`, which is the
+machine with the processing system and DDR3 behind its memory port, so the two
+columns are the same design on two parts.
 
 | | Cora Z7-07S | Arty Z7-20 |
 |---|---|---|
@@ -123,7 +143,7 @@ figure with its commit.
 **What follows is a ratio and not a fit.** Today's
 memory-on design, placed and routed for the Arty Z7-20 at commit `95cbb84`, was
 **10,909 slice LUTs, 7,390 slice registers, 41.5 block RAM tiles and 4 DSP
-slices**. Vivado's own part database at 2026.1 gives the three parts as
+slices**. Vivado's own part database at 2026.1 gives the two parts as
 follows. Those four counts are properties of the die, so the package and the
 speed grade do not change them.
 
@@ -146,12 +166,24 @@ system it would not be, because on such a part this is not the design: every
 one of the answers the next section lists costs logic and block RAM these
 numbers do not include.
 
-## Two kinds of new board
+**On the DE25-Nano the fit is not measured at all.** No design has been
+synthesized for its part, and that part is counted in adaptive logic modules
+and M20K blocks rather than in LUTs and block RAM tiles, so it has no row in
+either table.
+
+## Three kinds of new board
 
 **The Cora is a variant.** It is another Zynq-7000, so a port is a top level, a
 pin file, a processing-system configuration and a device tree. Nothing in
 `rtl/` changed. The question there was whether the machine fits, because the
 XC7Z007S is a much smaller part than the XC7Z020, and it does.
+
+**An SoC of another family is a port with a second toolchain.** The DE25-Nano
+brings main memory, a card, a network and video through its hard processor
+system as a Zynq board does, and nothing in `rtl/machine/` changes. But its top
+level, its pins, its constraints, its processor configuration and its flows are
+all for Quartus, its Linux is 64-bit, and the vendor primitives in
+`rtl/plumbing/xilinx7/` need counterparts or go without.
 
 **A part with no processing system is a different project.** The fabric may be
 the same seven-series fabric, so `rtl/machine/` and the vendor primitives carry
@@ -210,7 +242,11 @@ board's design actually uses and cites the master file in its header ---
 `arty-z7-20/cadr_arty.xdc` and `cora-z7-07s/cadr_cora.xdc`. A constraint file
 that is mostly commented-out pins is a constraint file nobody reads.
 
-**Both call the clock port `sysclk`**, whatever Digilent's own schematic name
-for it is, so that the debug probe's own constraint file --- which groups the
-JTAG readout's clock apart from `sysclk` and everything generated from it ---
-says the same thing on every board.
+**Both Zynq boards call the clock port `sysclk`**, whatever Digilent's own
+schematic name for it is, so that the debug probe's own constraint file ---
+which groups the JTAG readout's clock apart from `sysclk` and everything
+generated from it --- says the same thing on both.
+
+**The DE25-Nano's pins are not vendored.** They come from Terasic's golden top,
+and Terasic grants no redistribution of it. `de25-nano/README.md` records where
+the file is, its sha256 and the terms that keep it out.
