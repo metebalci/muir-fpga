@@ -37,7 +37,11 @@
 //   cable rather than none.
 //
 //   **A hang-up drops what the port sent and the device never took**, because
-//   a cable pulled out drops whatever was on the wire.
+//   a cable pulled out drops whatever was on the wire.  That is this program's
+//   outbox and, since the port holds what the machine sent until it is taken,
+//   the port's store too: a device that arrives is not handed characters the
+//   machine sent to the one before it.  muir's port has no store to empty, its
+//   `Cable::outbound` being drained into the outbox at every turn.
 //
 //   **TCP_NODELAY**, because a character at a time is the whole traffic here
 //   and waiting to coalesce would only add latency.
@@ -132,6 +136,23 @@ struct serial_endpoint {
 	unsigned long long dropped_on_hangup;
 	unsigned long refused_by_receiver, stalled_port;
 };
+
+// What the status line last said, so that it is printed when something it
+// counts has moved and not otherwise.
+struct serial_said {
+	unsigned long long from_machine, to_machine;
+	unsigned long connects, refused_by_receiver;
+	uint32_t port_dropped, port_refused;
+};
+
+// Whether anything the status line reports has moved since `said`, which it
+// then brings up to date.  **The port's own two losses are among them**:
+// `DROPPED`, what the machine sent with the port's store full, and `REFUSED`,
+// a write into the machine's receiver that found no room.  Neither moves any
+// of this program's own counters, so a line printed only when those moved
+// would say nothing on exactly the run that lost characters.
+int serial_endpoint_worth_saying(const struct serial_endpoint *e, struct serial_face *f,
+				 struct serial_said *said);
 
 // Binds and listens, without blocking.  `bind_addr` is a dotted quad or NULL
 // for every interface; port 0 asks the host for one, which is what the check

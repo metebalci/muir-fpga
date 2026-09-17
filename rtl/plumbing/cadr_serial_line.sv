@@ -99,9 +99,46 @@
 // waits the whole frame, which is under one bit time later and which nothing
 // on either side of the seam can observe.
 //
+// **WHAT THE MACHINE TRANSMITS WAITS IN A STORE, BECAUSE THE PROGRAM CANNOT
+// LOOK AS OFTEN AS THE MACHINE CAN SEND.**  This face held ONE character and
+// counted the next in `DROPPED` if nobody had read the first.  So a character
+// was lost unless `cadr-serial` looked within one frame, and a frame at 9600
+// baud is 1.04 ms of the machine's time --- which on the 10 ns grid is 1.04 ms
+// of the wall too.  The program looks every 2,000 us and Linux may add a
+// scheduling latency to that.  Measured on the board once the grid moved to
+// 10 ns: `(format zz "HELLO CADR")` arrived as "HELO AD", DROPPED read 5, and
+// looking every 500 us still lost one burst in three, because an interval
+// Linux keeps is not an interval Linux promises.  At 19,200 baud a frame is
+// half as long again.
+//
+// So the characters wait here.  `STORE_DEPTH` of them behind the one at
+// `RDATA`, in a block RAM, and the program takes everything waiting at each
+// look.  A thousand and twenty-four is about a second at 9600 baud and half a
+// second at the 2651's fastest, which is hundreds of times the program's
+// interval.  DROPPED counts a character that arrives with the store full,
+// and it is the NEWEST that goes, because the program may already have been
+// told the oldest is there.  **This is `muir::serial::Cable`'s own shape**: its
+// `outbound` is a queue of everything the port has sent and the far end has
+// not yet taken, unbounded, and one character of it was the part of the far
+// end this face had left out.  **Nothing the machine can see moves**: the
+// store is on the far side of `ser_tx_strobe`, the chip's two edges and its
+// status byte are exactly what they were, and `build/iob.pass` and the run of
+// MIT's channel walk in `tb/cadr_gp0_split_tb.cpp` hold them there.
+//
+// **THE OTHER DIRECTION NEEDS NO STORE, AND ITS ONE LOSS IS COUNTED.**  A
+// character goes into the machine only while `TX_ROOM` is up, which is the
+// card's receive holding register empty with nothing already on its way, so
+// this side can never overrun the machine however fast the program offers;
+// the program's own queue waits for the room and TCP's window holds back
+// whoever is typing.  What can still lose a character is a write that lands
+// after the room went --- the machine turning its receiver off, or its own
+// transmitter filling the holding register in local loop back, between the
+// program's read of `STAT` and its write --- and that write was dropped with
+// nothing to say so.  `REFUSED` says so.
+//
 // ## The registers
 //
-// Eight words at the base `cadr_gp0_split.sv` gives this page, and
+// Eleven words at the base `cadr_gp0_split.sv` gives this page, and
 // `serial_face.h` is the other half of this table:
 //
 //    0  IDENT    reads `IDENT`, "SERI", so that the first read can tell the
@@ -111,12 +148,13 @@
 //                bit 1 the machine's receiver can take one now
 //                bit 2 the machine has its transmitter enabled
 //                bit 3 ...and its receiver
-//    2  RDATA    bits 7:0 the character, bit 8 that there was one.  **THE
-//                READ CONSUMES IT**, once a beat, so a burst of reads takes
-//                a burst of characters
+//    2  RDATA    bits 7:0 the oldest character waiting, bit 8 that there
+//                was one.  **THE READ CONSUMES IT**, and the next one waiting
+//                is at RDATA two ticks later, before any read can follow
 //    3  WDATA    written: bits 7:0 a character into the machine's receiver.
-//                Dropped unless `STAT`'s bit 1 is up.  Reads back the
-//                character on its way and bit 8 while one is
+//                Dropped, and counted in `REFUSED`, unless `STAT`'s bit 1
+//                is up.  Reads back the character on its way and bit 8
+//                while one is
 //    4  CTL       the three modem lines this end asserts: bit 0 DSR, bit 1
 //                DCD, bit 2 CTS.  The card has ONE wire for the three ---
 //                they come off one MC1489 at IOBSER 0B16 and one connector
@@ -133,9 +171,17 @@
 //                have to be folded away unread, and a diagnostic word with
 //                eight spare bits is the right place for them
 //    6  DROPPED  read only, saturating: characters the machine transmitted
-//                that nobody took, because `RDATA` still held the last one
-//    7  IRQ      bit 0 a character is waiting, bit 1 the machine's receiver
-//                has room.  A 1 written clears the bit; `IRQ_F2P` is the OR
+//                that nobody took, because the store behind `RDATA` was full
+//    7  IRQ      bit 0 a character arrived with nothing waiting, bit 1 the
+//                machine's receiver has room.  A 1 written clears the bit;
+//                `IRQ_F2P` is the OR
+//    8  WAITING  read only: how many characters the machine transmitted are
+//                waiting to be read, the one at `RDATA` among them
+//    9  DEEPEST  the most `WAITING` has been since this was last written;
+//                any write starts it again from zero.  What a board reads to
+//                know how much of the store a run needed
+//   10  REFUSED  read only, saturating: `WDATA` writes that found no room and
+//                were dropped
 //
 // Every other word in the page reads zero and ignores writes, and every
 // address in it is answered: see `cadr_gp_regs.sv`, which is the AXI3 face
@@ -146,7 +192,8 @@
 // held to it: `muir::serial::Pci::transmit` for the two edges,
 // `Framing::half_bits` and `DIVISORS` for the frame's length, `Pci::reset`
 // for what a reset keeps, and `serial::Cable` for the shape of the far end
-// (one character each way and one plugged flag).
+// (a queue of what the port sent, one character on its way in, and one
+// plugged flag).
 // `tb/cadr_gp0_split_tb.cpp` drives the card through the Unibus on one side
 // and this face through the splitter on the other, and requires the
 // character the machine transmitted to come out of `RDATA` and the character
@@ -169,7 +216,12 @@ module cadr_serial_line #(
     // where the number lives without touching the module's interface.  No
     // check overrides it today: `tb/cadr_gp0_split_harness.sv` takes the
     // default, so the divider is exercised at the machine's grid only.
-    parameter int unsigned TICK_NS = cadr_tick_pkg::TICK_NS
+    parameter int unsigned TICK_NS = cadr_tick_pkg::TICK_NS,
+    // How many characters the machine transmitted can wait behind the one at
+    // `RDATA`.  The header says why the number is this and not one: a
+    // thousand and twenty-four is one RAMB18 for eight bits, about a second
+    // at 9600 baud.  Any depth works; the pointers wrap by comparison.
+    parameter int unsigned STORE_DEPTH = 1024
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -359,9 +411,10 @@ module cadr_serial_line #(
   // The registers this face keeps
   // ------------------------------------------------------------------------
   logic [2:0]  r_ctl;                // DSR, DCD, CTS
-  logic [7:0]  rx_char;              // what the machine transmitted
+  logic [7:0]  rx_char;              // the oldest character waiting, at RDATA
   logic        rx_valid;
   logic [31:0] dropped;
+  logic [31:0] refused;              // `WDATA` writes with no room
   logic [1:0]  irq_q;
   logic [31:0] rdata_hold;           // `RDATA`, registered at the read
   logic [7:0]  in_char;              // on its way into the machine
@@ -372,16 +425,64 @@ module cadr_serial_line #(
   assign ser_rx_data = in_char;
   assign irq = |irq_q;
 
+  // ------------------------------------------------------------------------
+  // The store: what the machine transmitted, waiting behind `RDATA`
+  //
+  // A block RAM, so its read is a tick behind its address.  The character at
+  // `rptr` is fetched into `store_q` on one tick and moved into `rx_char` on
+  // the next, which `fetched` marks; a read of `RDATA` cannot follow the one
+  // that emptied `rx_char` sooner than three ticks later (`cadr_gp_regs.sv`'s
+  // two prep ticks and its data tick), so the next character is always there
+  // first.  **A CHARACTER IS FETCHED ONLY ONCE IT WAS WRITTEN AN EDGE EARLIER:**
+  // `count` is a register, so a slot it counts was written before this tick,
+  // and a write this tick lands at `wptr`, which is never `rptr` while
+  // `count` is not zero --- nor while it is `STORE_DEPTH`, because a full
+  // store takes no write.  So the RAM is never asked for a word on the edge
+  // that writes it, and neither read-first nor write-first is relied on.
+  //
+  // With nothing waiting a character goes straight to `rx_char`, which is
+  // what this face did when it held one, so a far end that keeps up sees
+  // exactly the timing it always saw.
+  // ------------------------------------------------------------------------
+  localparam int unsigned PTRW = (STORE_DEPTH > 1) ? $clog2(STORE_DEPTH) : 1;
+  localparam int unsigned CNTW = $clog2(STORE_DEPTH + 1);
+  // `WAITING` can be the store, the one fetched and the one at `RDATA`.
+  localparam int unsigned WAITW = $clog2(STORE_DEPTH + 3);
+
+  logic [7:0]       store [STORE_DEPTH];
+  logic [7:0]       store_q;          // `store[rptr]`, a tick behind
+  logic [PTRW-1:0]  rptr, wptr;
+  logic [CNTW-1:0]  count;            // characters in `store`
+  logic             fetched;          // `store_q` is the character to move up
+  logic [WAITW-1:0] waiting, deepest;
+
+  logic taking, nothing_waiting, straight, to_store, full, fetch;
+  // A read of `RDATA` takes the character at it, if there is one.
+  assign taking = rd && (r_word == 10'd2) && rx_valid;
+  assign nothing_waiting = !rx_valid && !fetched && (count == '0);
+  assign full = (count == CNTW'(STORE_DEPTH));
+  assign straight = ser_tx_strobe && nothing_waiting;
+  assign to_store = ser_tx_strobe && !nothing_waiting && !full;
+  // `rx_char` is free now or is being taken, and nothing is already on its
+  // way up to it.
+  assign fetch = (count != '0) && !fetched && (!rx_valid || taking);
+  assign waiting = WAITW'(count) + WAITW'(rx_valid) + WAITW'(fetched);
+
+  always_ff @(posedge clk) begin
+    if (to_store) store[wptr] <= ser_tx_data;
+    store_q <= store[rptr];
+  end
+
   // A character may be offered when the card can take one and none is on its
   // way already.
   logic tx_room;
   assign tx_room = card_room && !in_busy;
 
   // The two events, and what a write clears.  `IRQ` bit 0 is a character
-  // waiting and bit 1 the machine's receiver coming free.
+  // arriving with nothing waiting and bit 1 the machine's receiver coming
+  // free.
   logic [1:0] irq_set, irq_clr;
-  assign irq_set = {tx_room && !room_was,
-                    ser_tx_strobe && !rx_valid};
+  assign irq_set = {tx_room && !room_was, straight};
   assign irq_clr = (wr && w_word == 10'd7) ? (wr_data[1:0] & wr_mask[1:0]) : 2'd0;
 
   // ------------------------------------------------------------------------
@@ -410,7 +511,7 @@ module cadr_serial_line #(
   // consumes the character and the answer has to outlive the consuming ---
   // which is the second of `cadr_gp_regs`'s two prep ticks.
   logic [31:0] stat_word;
-  assign stat_word = {28'd0, s_rx_on, s_tx_on, tx_room, rx_valid};
+  assign stat_word = {28'd0, s_rx_on, s_tx_on, tx_room, !nothing_waiting};
   always_comb begin
     unique case (r_word)
       10'd0:   rd_data = IDENT;
@@ -421,6 +522,9 @@ module cadr_serial_line #(
       10'd5:   rd_data = {ser_status, ser_cmd, ser_mode2, ser_mode1};
       10'd6:   rd_data = dropped;
       10'd7:   rd_data = {30'd0, irq_q};
+      10'd8:   rd_data = 32'(waiting);
+      10'd9:   rd_data = 32'(deepest);
+      10'd10:  rd_data = refused;
       default: rd_data = 32'd0;
     endcase
   end
@@ -436,6 +540,12 @@ module cadr_serial_line #(
       rx_char    <= 8'd0;
       rx_valid   <= 1'b0;
       dropped    <= 32'd0;
+      refused    <= 32'd0;
+      rptr       <= '0;
+      wptr       <= '0;
+      count      <= '0;
+      fetched    <= 1'b0;
+      deepest    <= '0;
       irq_q      <= 2'd0;
       rdata_hold <= 32'd0;
       in_char    <= 8'd0;
@@ -471,15 +581,33 @@ module cadr_serial_line #(
         acc <= acc + XTAL_ADD;
       end
 
-      // --- the character the machine transmitted, off the card
-      if (ser_tx_strobe) begin
-        if (!rx_valid) begin
-          rx_char  <= ser_tx_data;
-          rx_valid <= 1'b1;
-        end else if (dropped != 32'hFFFF_FFFF) begin
-          dropped <= dropped + 32'd1;
-        end
+      // --- the character the machine transmitted, off the card: straight to
+      // `RDATA` with nothing waiting, into the store behind it otherwise, and
+      // counted with the store full.
+      if (ser_tx_strobe && full && dropped != 32'hFFFF_FFFF) dropped <= dropped + 32'd1;
+      if (to_store) wptr <= (wptr == PTRW'(STORE_DEPTH - 1)) ? '0 : wptr + PTRW'(1);
+      if (fetch)    rptr <= (rptr == PTRW'(STORE_DEPTH - 1)) ? '0 : rptr + PTRW'(1);
+      // The count is written ONCE from both sides, a character in and one
+      // fetched out being able to land on the same tick.
+      count <= count + (to_store ? CNTW'(1) : CNTW'(0)) - (fetch ? CNTW'(1) : CNTW'(0));
+      fetched <= fetch;
+      // `RDATA`: the fetched character moves up, or one arrives straight, or
+      // the one there is taken.  `fetched` and `straight` never meet ---
+      // `straight` needs nothing waiting and `fetched` is something waiting ---
+      // and neither meets `taking`, which needs `rx_char` full where both
+      // find it empty.
+      if (fetched) begin
+        rx_char  <= store_q;
+        rx_valid <= 1'b1;
+      end else if (straight) begin
+        rx_char  <= ser_tx_data;
+        rx_valid <= 1'b1;
+      end else if (taking) begin
+        rx_valid <= 1'b0;
       end
+      // `DEEPEST`, started again by any write to it.
+      if (wr && w_word == 10'd9) deepest <= '0;
+      else if (waiting > deepest) deepest <= waiting;
 
       // --- the transmitter's two edges
       if (tx_busy) begin
@@ -532,6 +660,8 @@ module cadr_serial_line #(
             in_char <= (in_char & ~wr_mask[7:0]) | (wr_data[7:0] & wr_mask[7:0]);
             in_left <= frame_x16;
             in_busy <= 1'b1;
+          end else if (refused != 32'hFFFF_FFFF) begin
+            refused <= refused + 32'd1;
           end
           10'd4: r_ctl <= (r_ctl & ~wr_mask[2:0]) | (wr_data[2:0] & wr_mask[2:0]);
           // `IRQ`'s clear is `irq_clr` above, resolved with the two
@@ -542,11 +672,9 @@ module cadr_serial_line #(
         endcase
       end
 
-      // --- a read of `RDATA` takes the character
-      if (rd && r_word == 10'd2) begin
-        rdata_hold <= {23'd0, rx_valid, rx_char};
-        rx_valid   <= 1'b0;
-      end
+      // --- a read of `RDATA` answers with the character at it; `taking`
+      // above is what empties the slot.
+      if (rd && r_word == 10'd2) rdata_hold <= {23'd0, rx_valid, rx_char};
 
       // --- the two interrupt events, and the clear, resolved in ONE
       // assignment with the SET winning.  Written as two statements, a

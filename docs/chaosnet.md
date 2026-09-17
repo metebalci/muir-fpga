@@ -66,7 +66,7 @@ Two register faces, each behind one header so that a change of address touches
 one file. `chaos_face.h` and `serial_face.h` are those headers.
 
 The Chaosnet face is sixteen words with two windows of 256 words each, one for
-each packet buffer. Its identity word is `CHAO`. The serial face is eight
+each packet buffer. Its identity word is `CHAO`. The serial face is eleven
 words. Both are on `M_AXI_GP0`, which is where the drawing has always put the
 Chaosnet buffers.
 
@@ -82,10 +82,15 @@ transmit window a word at a time after the machine starts a transmission, and
 streams a received frame in and then reports its length in bits and whether
 the check word was good. It does nothing else with the frame. Routing is by
 the cable destination alone, which is the hardware's own addressing, and the
-program never looks inside a packet except to print a trace line. The serial program holds the modem-control lines
-while a client is connected, reads the character frame and the rate out of the
-mode registers, and **paces the transmitter at the rate those registers
-name**. Without that pacing the transmitter never empties.
+program never looks inside a packet except to print a trace line. The serial
+program holds the modem-control lines while a client is connected and takes
+every character waiting at each look. The fabric's side of the line reads the
+character frame and the rate out of the mode registers and **paces the
+transmitter at the rate those registers name**, because without that pacing
+the transmitter never empties. It also holds up to 1,024 characters the
+machine has sent until the program takes them, because a frame at 9,600 baud
+is shorter than the interval the program looks at. `docs/io-board.md` has that
+account.
 
 ## What is not built, and why each
 
@@ -712,7 +717,7 @@ address space in both directions, read out of muir's two traces rather than
 transcribed.
 
 `chaosnet` and `serial` hold the two programs on the build host with no board:
-919 checks and 45 mutation records for the first, 115 and 19 for the second.
+919 checks and 45 mutation records for the first, 165 and 28 for the second.
 Thirty-four of those checks and seven of those records are the counters and
 the trace switch above: every road out of the link driven once, the four
 counts added up, and the two signals told apart. Three hundred and seventy-one

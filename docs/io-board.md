@@ -955,11 +955,55 @@ with the bit count. It holds `chaos_address` from what the program wrote,
 there being no switch on this board. Its own header records the three levels
 it holds low and why: `chaos_cbl_busy`, `chaos_rx_crc` and `chaos_tx_abort`.
 
-`rtl/plumbing/cadr_serial_line.sv` holds one character each way and paces
-both. It recomputes `tx_on`, `rx_on`, `-CTS` and `-DCD` from `ser_mode1`,
-`ser_mode2`, `ser_cmd` and `ser_status`, which is what this seam asks for, and
-runs the baud-rate generator off `ser_mode2`'s rate so that a character takes
-its own frame time either way.
+`rtl/plumbing/cadr_serial_line.sv` paces both directions and holds what the
+machine transmits until the program takes it. It recomputes `tx_on`, `rx_on`,
+`-CTS` and `-DCD` from `ser_mode1`, `ser_mode2`, `ser_cmd` and `ser_status`,
+which is what this seam asks for, and runs the baud-rate generator off
+`ser_mode2`'s rate so that a character takes its own frame time either way.
+
+**What the machine transmits waits in a store of 1,024 characters behind
+`RDATA`.** The line used to hold one character, and counted the next in
+`DROPPED` if the program had not read the first. That meant `cadr-serial` had
+to look within one frame, and it looks every 2,000 us. When the grid moved to
+10 ns the machine began keeping real time, and a frame at 9,600 baud became
+1.04 ms of the wall. The board then printed "HELO AD" for "HELLO CADR" with
+`DROPPED` at 5. Looking every 500 us still lost one burst in three, because
+Linux adds its own latency to any interval.
+
+So the characters wait. The store is a block RAM of 1,024 characters, which is
+about a second at 9,600 baud and half a second at the 2651's fastest rate. The
+program takes everything waiting at each look. A character that arrives with
+the store full is counted in `DROPPED`, and it is the newest that goes, because
+the program may already have been told the oldest is there. This is the shape
+muir's own far end has: `serial::Cable` keeps a queue, `outbound`, of
+everything the port has sent and the far end has not yet taken. **Nothing the
+machine can see moves.** The store is on the far side of `ser_tx_strobe`, and
+the chip's two edges and its status byte are exactly what they were.
+
+Three words were added to the face for it. `WAITING` is how many characters
+are waiting now. `DEEPEST` is the most that have waited since it was last
+written, which is how a board measures how much of the store a run needed.
+`REFUSED` counts a write into the machine's receiver that found no room, and
+the next paragraph says why that needed a counter.
+
+**The other direction needs no store.** A character goes into the machine only
+while `TX_ROOM` is up, which means the card's receive holding register is
+empty and nothing is already on its way. So the line cannot overrun the
+machine however fast the program offers characters. The program keeps a queue
+of what was typed until the room comes, and TCP's own window holds back
+whoever is typing. One loss is still possible. A write can land after the room
+went, if the machine turns its receiver off between the program's read of
+`STAT` and its write. That write is dropped, as a line would drop it, and
+`REFUSED` is what says so.
+
+`tb/cadr_gp0_split_tb.cpp` holds the store with a far end no faster than
+Linux. It looks every 2,000 us of the board's clock and once stops for 50 ms,
+while the machine sends a hundred characters at 9,600 baud; all hundred must
+arrive and `DROPPED` must not move. A far end that never looks must see the
+store fill to 1,025, the three after that counted, and the ones it held come
+out in order. And the takes are swept a tick at a time across the instants
+characters arrive, because the store's count is written from two places and
+only a take on the tick of an arrival can show that both were counted.
 
 **The generator counts the grid and not the board's clock.** The frame above
 is 1,041,666 ns of the machine's own time, which is 104,167 ticks at the 10 ns
