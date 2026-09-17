@@ -444,6 +444,11 @@ int main(int argc, char **argv) {
     dut->rotate = static_cast<uint8_t>(rot);
     dut->m_arready = 0; dut->m_rdata = 0; dut->m_rresp = 0;
     dut->m_rlast = 0; dut->m_rvalid = 0; dut->map_q = 0;
+    // Nobody writes the sleep setting or wakes the display here: the
+    // module's own three hundred seconds of real clock is ninety-three
+    // thousand frames, and `build/display_sleep.pass` is the check that runs
+    // the timer out.  So the lanes must never be muted in these runs.
+    dut->sleep_set = 0; dut->sleep_secs = 0; dut->wake = 0;
     dut->eval();
 
     uint64_t t = 0, next_clk = kClkHalf, next_pclk = kPclkHalf;
@@ -535,6 +540,8 @@ int main(int argc, char **argv) {
           mon.active_lines = 0;
           mon.y = -1;
         }
+        if (dut->mute) Fail("the lanes were muted at frame %ld, and nothing ran the timer out",
+                            mon.frames);
         if (dut->underrun && !under_seen) {
           under_seen = 1;
           std::fprintf(stderr, "       underrun first seen at frame %ld line %d\n",

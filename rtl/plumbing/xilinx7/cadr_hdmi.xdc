@@ -80,3 +80,31 @@ set_max_delay -datapath_only \
 set_max_delay -datapath_only \
     -from [get_cells -hier -filter {NAME =~ *map_idx_reg*}] \
     -to   [get_cells -hier -filter {NAME =~ *cmap_reg*}] 20.000
+
+# **AND THE THIRD IS SLEEP: TWO ONE-BIT LEVELS, ONE EACH WAY.** The sleep timer
+# runs on the machine's clock and its verdict, `slp_want`, crosses into the
+# pixel clock's domain through two flops, where the frame boundary takes it into
+# the mute. The mute, `slp_mute`, crosses back through two more, which is what
+# the console reads as the display being asleep. Each is a level that stands
+# for a frame at the least, so neither needs more than a synchronizer --- but
+# the clock group makes the route into each first flop a false path of any
+# length. One pixel clock, as the job's is; the `-to` is named as well as the
+# `-from` because the mute also gates the four lanes inside its own domain, and
+# that path is timed as an ordinary one. `bitstream.tcl` asserts that all four
+# registers were found.
+#
+# **AND MEASURED, NONE OF THESE BOUNDS REACHES A PATH.** A synthesized
+# `DDR=1 HDMI=1 LMTV=1` board's `report_exceptions -ignored` lists this pair and
+# the fetch job's bound above as "Totally overridden path by CG", and
+# `get_timing_paths` on each names the asynchronous clock group as the exception
+# in force. A clock group outranks `set_max_delay` in Vivado's precedence, so the
+# `-datapath_only` ceiling the paragraphs above describe is not put back. Nothing
+# here depends on it: each of these two is one bit that stands for a frame
+# through two flops. The fetch job's bound is the one whose absence could
+# matter, and the group and the bounds want settling together rather than here.
+set_max_delay -datapath_only \
+    -from [get_cells -hier -filter {NAME =~ *slp_want_reg*}] \
+    -to   [get_cells -hier -filter {NAME =~ *slp_want_s1_reg*}] 10.000
+set_max_delay -datapath_only \
+    -from [get_cells -hier -filter {NAME =~ *slp_mute_reg*}] \
+    -to   [get_cells -hier -filter {NAME =~ *slp_mute_s1_reg*}] 10.000

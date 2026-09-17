@@ -120,6 +120,22 @@ struct screen_server {
 	// not be lifted by a viewer letting go of a different one.  `buttons`
 	// is the viewers' and `link_buttons` the link's.
 	uint8_t link_buttons;
+
+	// --- **WAKING THE BOARD'S OWN DISPLAY OUTPUT.**  It sleeps a monitor
+	// after `--hdmi-sleep` seconds, and the one thing that wakes it and starts
+	// the timer over is a person at the board: a key or the mouse on the
+	// input link.  **A VIEWER'S KEY IS NOT ONE**, and the fabric cannot tell
+	// the two apart because this program writes the keyboard's register for
+	// both, so it is decided here.  `link_touched` is set by a RECORD from a
+	// link client --- the sink's `event`, which a client's releases when it
+	// goes away do not call --- and a pass that set it calls `wake` once, with
+	// the caller's clock, after the link is read.  `display_wake.h` is what
+	// `wake` is on the board; NULL is no display output to wake.  `wakes`
+	// counts the passes that called it.
+	void (*wake)(void *ctx, uint64_t now_ns);
+	void *wake_ctx;
+	int link_touched;
+	unsigned long wakes;
 	// --- how fast key words are handed over.  `input_face.h` has the two
 	// rules and where the number comes from; this is the second of them.
 	// **ZERO MEANS THE DERIVED DEFAULT**, `INPUT_KEY_INTERVAL_NS`, so that

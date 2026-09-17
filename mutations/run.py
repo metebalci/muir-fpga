@@ -1041,6 +1041,24 @@ CHECKS = {
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": None,
     },
+    # The display output's sleep timer and mute, on the small raster and the
+    # short second the Makefile's `DISPLAY_SLEEP_G` builds it with.  The same
+    # figures, because a record here must be run against the build the check
+    # was written for; `check_makefile` does not compare flags, so the two are
+    # kept together by this comment and by the check failing on the frame's
+    # own length if they part.
+    "display_sleep": {
+        "sources": ["rtl/plumbing/cadr_display_out.sv"],
+        "top": "cadr_display_out",
+        "tb": "tb/cadr_display_sleep_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2",
+                  "-GH_ACTIVE=80", "-GH_FRONT=4", "-GH_SYNC=6", "-GH_BACK=10",
+                  "-GV_ACTIVE=70", "-GV_FRONT=2", "-GV_SYNC=3", "-GV_BACK=5",
+                  "-GPIC_W=64", "-GPIC_H=6", "-GWORDS_PER_LINE=2",
+                  "-GCPIC_W=16", "-GCPIC_H=4", "-GCWORDS_PER_LINE=2",
+                  "-GMONO_ENTRIES=16", "-GCOLOR_ENTRIES=16", "-GSECOND_T=2000"],
+        "golden": None,
+    },
     "hdmi_tx": {
         "sources": ["rtl/plumbing/cadr_hdmi_tx.sv", "rtl/plumbing/cadr_tmds_encode.sv"],
         "top": "cadr_hdmi_tx",

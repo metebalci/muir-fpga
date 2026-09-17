@@ -183,6 +183,7 @@ design.
                           which screens go to the monitor
     --hdmi-rotate 0|90|-90
                           which way up, for a monitor on its side
+    --hdmi-sleep SECONDS  how long before the monitor sleeps; 0 never
     --hdmi-mode 1280x1024|1400x1050|1920x1080
                           which video mode the bitstream carries
 
@@ -190,6 +191,12 @@ Whatever is shown is centered on the monitor at 1:1 with the rest black. Where
 both screens overlap the color one is drawn over the first. Neither is scaled: a
 one-bit picture scaled by anything but a whole number turns single-pixel strokes
 into gray, and the CADR's screen is single-pixel strokes almost everywhere.
+
+**`--hdmi-sleep` is how long the display output waits with nobody at the board's
+own keyboard or mouse.** Then it stops the link, which is how a monitor is put to
+sleep. A key or the mouse at the board wakes it, and a viewer's keys do not. The
+default is 300 seconds and 0 never sleeps. A board with no display output says so
+when the line is there, and the boot goes on.
 
 **`--hdmi-mode` asks rather than sets.** A video mode is a pixel clock, the pixel
 clock comes from an MMCM, and an MMCM's dividers are fixed in the bitstream. So

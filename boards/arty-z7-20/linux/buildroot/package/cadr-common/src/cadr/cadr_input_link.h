@@ -150,10 +150,19 @@ struct cadr_input_link {
 // `buttons` is handed the OR over every client, not one client's mask: the
 // machine has one mouse with three switches, and a switch held in one place
 // must not be lifted by another letting go.
+//
+// **AND `event` IS CALLED ONCE FOR EVERY RECORD A CLIENT SENDS, BEFORE THE
+// CALLS IT BECOMES, AND FOR NOTHING ELSE.**  A client going away is handed its
+// releases through `key` and `buttons` too, and those are the link tidying up
+// rather than anybody touching a keyboard, so a far end that wants to know
+// that a person at the board did something --- the terminal, which wakes the
+// display output for exactly that --- asks here and not there.  A client
+// attaching is not a record either.  NULL is allowed.
 struct cadr_input_sink {
 	void (*key)(void *ctx, uint32_t keysym, int down);
 	void (*move)(void *ctx, int dx, int dy);
 	void (*buttons)(void *ctx, unsigned mask);
+	void (*event)(void *ctx);
 	void *ctx;
 };
 

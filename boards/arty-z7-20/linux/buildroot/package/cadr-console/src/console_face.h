@@ -361,6 +361,40 @@ enum cons_hdmi_mode { CONS_HDMI_1280 = 0, CONS_HDMI_1400 = 1, CONS_HDMI_1920 = 2
 #define CONS_LAMP_MARK_OF(w)  ((w) >> 16)
 #define CONS_LAMP_STEADY      (1u << 0)
 
+// **AND WHETHER THE BOARD'S OWN DISPLAY OUTPUT SLEEPS A MONITOR, page 2's word
+// 36.**
+//
+// A digital link has no power management of its own, so the display output puts
+// a monitor to sleep by stopping the link: the four lanes are held at one level
+// and the monitor sees no signal.  It does that after `--hdmi-sleep` seconds with
+// nobody at the board, and a key or the mouse AT THE BOARD --- which only
+// `cadr-terminal` can tell from a viewer's --- wakes it and starts the timer
+// over.  Zero never sleeps.
+//
+// **THE SETTING IS THE DISPLAY OUTPUT'S AND NOT THE CONSOLE'S.**  A write whose
+// top half is `CONS_HDMI_SLEEP_KEY` carries a setting in its bottom fifteen bits
+// to `rtl/plumbing/cadr_display_out.sv`, which holds it and starts its timer over
+// from the write, and the word reads back what that block holds: the marker, the
+// lanes muted in bit 15, the setting in bits 14 to 0.  **A BOARD WITH NO DISPLAY
+// OUTPUT READS `CONS_UNMAPPED`**, which carries no marker: there is no timer to
+// report.  A setting is written with all four lanes strobed, which a 32-bit
+// store is.
+//
+// A write of `CONS_HDMI_WAKE_KEY` is a wake.  **THIS PROGRAM NEVER WRITES IT**:
+// the rule is that only a person at the board wakes the monitor, and a console
+// command that woke it would be a second way.  `cadr-terminal` writes it, and its
+// `display_wake.h` copies these numbers.
+#define CONS_HDMI_SLEEP          (CONS_PAGE2 + 4u)
+#define CONS_HDMI_SLEEP_KEY      0x4853u	/* "HS", the top half of a setting */
+#define CONS_HDMI_WAKE_KEY       0x57414B45u	/* "WAKE" */
+#define CONS_HDMI_SLEEP_MARK     0x5A5Au	/* "ZZ" */
+#define CONS_HDMI_SLEEP_MARK_OF(w) ((w) >> 16)
+#define CONS_HDMI_ASLEEP         (1u << 15)
+#define CONS_HDMI_SLEEP_SECONDS  0x7FFFu
+#define CONS_HDMI_SLEEP_MAX      32767u
+// What the fabric comes up with, `--hdmi-sleep`'s own default.
+#define CONS_HDMI_SLEEP_DEFAULT  300u
+
 #define CONS_PAGE4        64u
 #define CONS_PAGE5        80u
 #define CONS_COLOR_MAP_WORD(board, color) \
@@ -825,6 +859,26 @@ void cons_say_lamps(const struct cons_lamps *l);
 // Steady or blinking, a keyed write of word 35.  Write and then READ: a wrong
 // key is dropped in silence, which is what the key is for.
 void cons_set_lamps_steady(struct console *c, int steady);
+
+// --- whether the display output sleeps, page 2's word 36 ------------------
+
+struct cons_hdmi_sleep {
+	uint32_t word;		/* word 36 as it read */
+	int mark_ok;		/* it carried `CONS_HDMI_SLEEP_MARK`: there is a display output */
+	int asleep;		/* the lanes are stopped: a monitor on them sees no signal */
+	unsigned seconds;	/* the setting; zero never sleeps */
+};
+
+void cons_read_hdmi_sleep(struct console *c, struct cons_hdmi_sleep *s);
+void cons_say_hdmi_sleep(const struct cons_hdmi_sleep *s);
+// A new setting in seconds, which starts the display output's timer over from
+// the write and wakes a monitor asleep.  -1 and nothing written for a setting
+// the word cannot carry.  Write and then READ: a board with no display output
+// takes the write and holds nothing.
+int cons_set_hdmi_sleep(struct console *c, unsigned seconds);
+// A setting as a person or a card writes it: decimal digits and nothing else,
+// no more than `CONS_HDMI_SLEEP_MAX`.  0, or -1 with `*seconds` untouched.
+int cons_parse_hdmi_sleep(const char *text, unsigned *seconds);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
 // ClockControl and ../muir/tests/spy.rs:743-761).

@@ -21,6 +21,16 @@
 // sequence through the device first.  The check reports how many states it
 // found and refuses to pass on fewer than the whole reachable set.
 //
+// **AND THE MUTE, WHICH IS HOW THE DISPLAY OUTPUT SLEEPS A MONITOR.**  A DVI
+// link has no power management of its own: a source puts a monitor to sleep by
+// stopping the link, and the monitor sees no signal.  So while `mute` is up all
+// four lanes carry one constant word --- the clock lane too, since a clock that
+// kept running is a link that has not stopped --- whatever the pixels and the
+// syncs are doing, and the moment it drops the three channels are the
+// specification's again.  The display output only ever lets it go in the
+// blanking at a frame boundary, which is a control period, so that is where
+// this lets it go too; what the encoders did meanwhile is theirs.
+//
 // What this cannot hold is the serializer: `OSERDESE2` and `OBUFDS` are
 // primitives, their stubs in `tb/cadr_arty_stubs.sv` tie their outputs low,
 // and a check built on a stub confirms rather than compares.  See
@@ -133,6 +143,7 @@ int main(int argc, char **argv) {
   dut->prst = 1;
   dut->red = 0; dut->green = 0; dut->blue = 0;
   dut->de = 0; dut->hsync = 0; dut->vsync = 0;
+  dut->mute = 0;
   dut->eval();
 
   // One symbol: drive, clock, then read what came out of it.
@@ -269,6 +280,49 @@ int main(int argc, char **argv) {
     ++stream;
   }
 
+  // ---------------------------------------------------------------- the mute
+  //
+  // Three times: the lanes are muted in a control period, a stream of pixels
+  // and blanking goes by with every lane held at the one word, and the mute is
+  // let go in a control period with the next symbols compared as ever.  The
+  // reference encoders are driven through the muted stretch as the device's
+  // are, so that the comparison after it is the ordinary one.
+  long muted = 0, unmuted_after = 0;
+  for (int round = 0; round < 3; round++) {
+    compare(0, 0, 0, false, false, false);
+    dut->mute = 1;
+    for (long i = 0; i < 4000; i++) {
+      const uint32_t v = Rnd();
+      const bool de = (v & 7u) != 0;
+      const unsigned red = (v >> 3) & 0xFFu, green = (v >> 11) & 0xFFu,
+                     blue = (v >> 19) & 0xFFu;
+      const bool hs = ((v >> 27) & 1u) != 0, vs = ((v >> 28) & 1u) != 0;
+      const int c0 = (vs ? 2 : 0) | (hs ? 1 : 0);
+      r0.Encode(blue, c0, de);
+      r1.Encode(green, 0, de);
+      r2.Encode(red, 0, de);
+      step(red, green, blue, de, hs, vs);
+      if (dut->tmds0 != 0u || dut->tmds1 != 0u || dut->tmds2 != 0u || dut->tmds_clk != 0u) {
+        if (++bad <= 20)
+          std::fprintf(stderr,
+                       "FAIL tick %ld: muted, and the lanes carry %03x %03x %03x clock %03x;"
+                       " want all four held at 000\n",
+                       tick, dut->tmds0, dut->tmds1, dut->tmds2, dut->tmds_clk);
+      }
+      ++muted;
+    }
+    // Let go in a control period, as the display output does at a frame
+    // boundary, and everything after it is the specification's.
+    dut->mute = 0;
+    compare(0, 0, 0, false, false, false);
+    for (long i = 0; i < 2000; i++) {
+      const uint32_t v = Rnd();
+      compare((v >> 3) & 0xFFu, (v >> 11) & 0xFFu, (v >> 19) & 0xFFu, (v & 7u) != 0,
+              ((v >> 27) & 1u) != 0, ((v >> 28) & 1u) != 0);
+      ++unmuted_after;
+    }
+  }
+
   const bool short_sweep = covered.size() != states * 256u;
   if (short_sweep) {
     std::fprintf(stderr,
@@ -296,7 +350,9 @@ int main(int argc, char **argv) {
       "    of 256 bytes in every one of them\n"
       "    %ld control periods, all four tokens, disparity reset at each\n"
       "    %ld pseudorandom symbols of mixed video and blanking\n"
-      "    the clock channel constant at 01f throughout\n",
-      tick, states, cases, tokens, stream);
+      "    the clock channel constant at 01f throughout\n"
+      "    %ld symbols muted with all four lanes held at 000, three times, and\n"
+      "    %ld compared as ever after each let go in a control period\n",
+      tick, states, cases, tokens, stream, muted, unmuted_after);
   return 0;
 }

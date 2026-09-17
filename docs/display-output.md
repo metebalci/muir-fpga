@@ -730,7 +730,7 @@ display.
 
 | File | What it is | What holds it |
 |---|---|---|
-| `rtl/plumbing/cadr_display_out.sv` | the AXI master, the buffers, the raster, the compositor and the map | `build/display_out.pass` |
+| `rtl/plumbing/cadr_display_out.sv` | the AXI master, the buffers, the raster, the compositor, the map, and the sleep timer and mute | `build/display_out.pass`, `build/display_sleep.pass` |
 | `rtl/plumbing/cadr_hdmi_tx.sv` | the three channels and the clock channel | `build/hdmi_tx.pass` |
 | `rtl/plumbing/cadr_tmds_encode.sv` | one channel's 8b/10b encoder | `build/hdmi_tx.pass` |
 | `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` | the MMCM, the serializers, the output buffers | lint and the fitter only |
@@ -832,7 +832,9 @@ It holds:
 - the channel assignment: that HSYNC and VSYNC appear as C0 and C1 of channel
   0 and that channels 1 and 2 send the zero token;
 - the clock channel's constant word;
-- a long pseudorandom stream of pixels and blanking, compared every cycle.
+- a long pseudorandom stream of pixels and blanking, compared every cycle;
+- the mute: all four lanes at one word through a stream of pixels and blanking,
+  and the specification's words again after it is let go in a control period.
 
 **It does not hold the serializer, and nothing does.** `OSERDESE2` and
 `OBUFDS` are stubbed in `tb/` so that the top level lints, and the stubs tie
@@ -850,13 +852,16 @@ catches a pin that is brought out and not connected.
 
 ## The settings
 
-Two of the three are settings and one is a build.
+Three of the four are settings and one is a build.
 
 | | where | what |
 |---|---|---|
 | `--hdmi-output tv\|color-tv\|both` | `fpgarc`, console word 34 | which screens |
 | `--hdmi-rotate 0\|90\|-90` | `fpgarc`, console word 34 | which way up |
+| `--hdmi-sleep SECONDS` | `fpgarc`, console word 36 | how long before the monitor sleeps |
 | `--hdmi-mode ...` | `HDMI_MODE` at build; the card's line only ASKS | which mode |
+
+The sleep setting is described in the next section.
 
 The two settings are written into the console's page 2 word 34 by
 `S80cadr-disk-packs` before the drive is presented, exactly as `--tv-board` and
@@ -867,6 +872,118 @@ word and `docs/fpgarc.md` the flags.
 **A card that names a mode the bitstream does not carry gets a line saying which
 bitstream it wants.** It is not a setting that quietly does nothing, which is
 what a word that accepted the key and changed nothing would be.
+
+## Sleep
+
+A digital link has no power management of its own. DPMS was a way of driving
+VGA's two sync lines, and DVI has nothing like it. A source puts a monitor to
+sleep by stopping the link. The monitor then sees no signal and goes into its
+own power save.
+
+So the display output sleeps a monitor by holding all four lanes at one word.
+The clock lane is held with the three data lanes, because a monitor locked to a
+running clock stays awake and shows black. `cadr_hdmi_tx.sv` does the holding,
+and a held lane looks exactly like a board built without a display output.
+Everything in front of the gate keeps running: the pixel clock, the raster, the
+fetch and both buffers. A monitor that wakes therefore locks onto a picture that
+never stopped, and it shows the machine's screen as it is now.
+
+### The timer
+
+The timer counts whole seconds of the machine's clock. When the setting's
+seconds have gone by, the lanes are muted at the next frame boundary. **The
+timer always runs.** It does not matter whether a keyboard is plugged in or
+whether anybody is watching over the network, which is how a computer's own
+display sleeps. A setting of 0 never sleeps.
+
+The setting is `--hdmi-sleep SECONDS` on the card, 300 by default, and
+`cadr-console hdmi-sleep [SECONDS]` at any time. With no number the console
+reports the setting and whether the monitor is asleep. The setting is fifteen
+bits, so the longest is 32,767 seconds, about nine hours.
+
+The setting lives in `cadr_display_out.sv` and not in the console. The console's
+page 2 word 36 carries a new setting and a wake to it as one-tick pulses, and
+reads back what it holds: the setting, and whether the lanes are muted. A board
+with no display output reads `UNMAPPED` there, because it has no timer to
+report. The Cora Z7-07S is such a board.
+
+### What wakes it
+
+**Only a key or the mouse at the board wakes the monitor**, and that is also the
+only thing that starts the timer over. The fabric cannot tell such a key from a
+key typed into a VNC viewer, because one program writes the keyboard's register
+for both. So that program decides. `cadr-terminal` writes a wake into word 36
+for a record that arrives on its input link from `cadr-usb-input`, and for
+nothing else.
+
+A viewer's key still reaches the machine. It neither wakes the monitor nor
+starts the timer over. A USB keyboard being plugged in or pulled out is not an
+event either, and neither are the key releases the terminal makes for a keyboard
+that went away. The terminal writes at most one wake every 100 ms, which loses
+nothing against a timer that counts seconds.
+
+### What the board's other controls do
+
+| | the timer | the lanes |
+|---|---|---|
+| a new setting | starts over from the write | on again at the next frame boundary |
+| BTN1, the fabric reset | starts over, and the setting returns to 300 | on again at the next frame boundary |
+| BTN0, or `cadr-console boot` | nothing | nothing |
+
+A new setting starts the timer over because the setting the monitor slept under
+is gone, and somebody who asks for ten minutes expects ten minutes from now. A
+setting of 0 wakes a monitor that is asleep and keeps it awake. A fabric reset
+puts the fabric's own 300 back until Linux next boots and writes the card's
+setting, which is how the lamps behave after BTN1 too. The machine's boot button
+does nothing to the display output, because the display output is not part of
+the machine and hears nothing from it.
+
+### Where the mute changes
+
+The mute changes only at a frame boundary, which is the instant before a frame's
+first line. So the link stops and starts in the blanking, and a monitor is never
+handed half a frame. The timer runs on the machine's clock, and its verdict
+crosses into the pixel clock's domain through two flops. The mute takes it at
+the next frame boundary, which is at most a frame later. The console reads
+`asleep`, which is the mute brought back into the machine's clock through two
+more flops. Each is one bit that stands for a frame, so two flops are all it
+needs. `rtl/plumbing/xilinx7/cadr_hdmi.xdc` writes a bound on each crossing in
+the file's own idiom. Measured, the asynchronous clock group overrides it, as it
+overrides the fetch job's bound beside it, so neither is in force on the board.
+
+A second is `SECOND_T` edges of the machine's clock, 100,000,000 at the 10 ns
+tick. That is a fabric choice like the debug window's watchdog, so it is counted
+in board ticks and not on MIT's grid.
+
+### What holds it
+
+`build/display_sleep.pass` builds `cadr_display_out` with a raster of 100 by 80
+and a second of 2,000 ticks, so that the default of 300 seconds is eighty
+frames. The default itself is the module's own. The check holds:
+
+- the timer running out after exactly the setting's seconds, to the tick, from a
+  write, from a wake while asleep, from a wake while awake and from a fabric
+  reset;
+- the mute changing only at a frame boundary, recovered from the syncs and the
+  data enable as a monitor recovers it;
+- the mute coming on at the first boundary the verdict can reach through its
+  synchronizer, and not before the timer ran out;
+- a wake letting the lanes go at the next boundary;
+- a setting of 0 never muting, and a 0 written to a sleeping display waking it;
+- the raster keeping its own shape through whole frames with the lanes muted;
+- `asleep` agreeing with the mute within its synchronizer;
+- a fabric reset letting the lanes go and putting 300 back.
+
+`build/hdmi_tx.pass` holds the gate: all four lanes at one word while muted, and
+the specification's words again after the mute is let go in a control period.
+`build/console.pass` holds word 36: a key becomes one pulse with its value, a
+value that means nothing becomes no pulse, and the word reads back what the
+display holds. The terminal's own check holds that a record on the input link
+calls the wake and that a viewer's key, a viewer's pointer, a source attaching
+and a source going away do not.
+
+**Nothing holds the board's 100,000,000**, which is a literal like the
+watchdog's second. And no monitor has been put to sleep or woken on silicon yet.
 
 ## What it costs, and whether it is being timed
 
@@ -952,10 +1069,9 @@ display output will not follow it. Making it follow would be one output on
 `rtl/machine/` is held to muir and neither reference program ever writes the
 register.
 
-There is no way to turn the output off from the machine or from Linux, and
-nothing sleeps the monitor: a source puts a digital monitor to sleep by stopping
-the link, and nothing here stops it. The connector's CEC pin is wired on this
-board and would let a television be told to stand by; it is not built either.
+The machine cannot turn the output off, and nor can Linux except by the sleep
+timer above. The connector's CEC pin is wired on this board and could tell a
+television to stand by. That is not built.
 
 **The mode is not a setting**: this bitstream carries one mode and the console
 reports which. Making it a setting is possible and is not built; section 1 has

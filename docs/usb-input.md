@@ -460,6 +460,11 @@ Plugging a keyboard in and typing at it is the whole of using it. What should
 happen is that the characters appear at the Lisp Listener on the screen, which
 can be watched over RFB from another machine at the same time.
 
+A key or the mouse here also wakes the board's own display output when it has
+put the monitor to sleep, and starts its wait over. The terminal does that for
+everything that comes over the link. Plugging the keyboard in does not wake it:
+a key has to be pressed. `docs/display-output.md` has the timer.
+
 **And a key cannot be pressed from another machine on this image**, which is
 worth saying plainly because the obvious ways look as though they would work.
 `evtest` only reads. `uinput` would do it --- a program makes a virtual
