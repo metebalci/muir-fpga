@@ -524,6 +524,37 @@
             state <= REQUESTED;
 @end
 
+@mutation a-one-tick-request-is-granted-at-the-edge
+@check busint_xbus
+@file rtl/machine/cadr_busint_xbus.sv
+@note The priority logic samples -MEMRQ at the master clock edge, so a
+@note request that has gone again by that edge is no request.  Taking the
+@note sample from the tick that entered REQUESTED instead grants one tick of
+@note -MEMRQ, and on silicon that tick exists: `memgo_q` is relaxed to the
+@note fast read tap, the map reaches it in about nineteen nanoseconds at
+@note 9d1cf26, and the tick after a boundary that raises MEMSTART on an access
+@note that faults can capture a VMAOK still rippling.  The grant then runs a
+@note cycle at the last address with the last cycle's word, which halted the
+@note machine in the page-fault code on the board: three of the four routed
+@note placements of 9d1cf26 and a slice beside it, the served one being the
+@note fourth.
+@note
+@note NO TRACE SEES IT, measured at d19e2e6 plus the fix: in zero delay
+@note -MEMRQ never falls between REQUESTED and the edge, so this survives
+@note memory_path, machine, md_compose, park, ddr_boot, probe, tv, color_tv,
+@note unibus and power_on.  The directed leg at the end of
+@note `tb/cadr_busint_xbus_tb.cpp` drives the one tick, and it is the only
+@note thing that catches this.
+@old
+          if (mclk && n_memrq) begin
+            state <= IDLE;
+          end else if (mclk) begin
+@new
+          if (1'b0) begin
+            state <= IDLE;
+          end else if (mclk) begin
+@end
+
 @mutation timeout-oscillator-restarted-at-the-grant
 @check busint_xbus
 @file rtl/machine/cadr_busint_xbus.sv
