@@ -217,7 +217,7 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 	// 2 word 33 can strap it as the LISPM TV, `--tv-board` on the card.
 	// This program does not read that word, so it writes the SIMPLE TV: a
 	// checkpoint of a board strapped the other way declares the wrong board.
-	// muir cross-checks it: `resume_engine` (src/main.rs:3518-3525)
+	// muir cross-checks it: `resume_engine` (src/main.rs:3524-3531)
 	// compares the loaded board against `--tv-board` and refuses by name,
 	// so a resume given the board's own setting says so rather than running
 	// the wrong machine.
@@ -546,7 +546,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// board, `--color-tv` on the card, and this program does not read that
 	// word: a checkpoint of a board with one fitted declares one screen and
 	// carries neither the second board's registers nor its picture.
-	// `refuse_color_tv` (src/main.rs:3405-3415) refuses a resume that
+	// `refuse_color_tv` (src/main.rs:3411-3421) refuses a resume that
 	// `--color-tv` disagrees with, by name.
 #if CHK_MUTATE == 7
 	// A color board this backplane does not have.  muir then reads a
