@@ -72,7 +72,7 @@
   </defs>
 </svg>
 
-<p class="desk-note"><b>muir-fpga</b> &middot; <span aria-current="page">the front page</span> &middot; <a href="arty-z7-20.html">the Arty Z7-20</a> &middot; <a href="cora-z7-07s.html">the Cora Z7-07S</a> &middot; <a href="booting.html">booting</a> &middot; <a href="debugging.html">debugging</a> &middot; <a href="faq.html">questions</a> &middot; <a href="cadr.html">the CADR</a></p>
+<p class="desk-note"><b>muir-fpga</b> &middot; <span aria-current="page">the front page</span> &middot; <a href="arty-z7-20.html">the Arty Z7-20</a> &middot; <a href="cora-z7-07s.html">the Cora Z7-07S</a> &middot; <a href="https://www.terasic.com.tw/cgi-bin/page/archive.pl?Language=English&amp;CategoryNo=115&amp;No=1384">the DE25-Nano</a>, upcoming &middot; <a href="booting.html">booting</a> &middot; <a href="debugging.html">debugging</a> &middot; <a href="faq.html">questions</a> &middot; <a href="cadr.html">the CADR</a></p>
 
 <div class="page">
 
@@ -169,7 +169,12 @@ RUNS      its processor and clocks within
          report, both built from a clean tree at 9d1cf26. They are the figures that board's own drawing carries
          under its fabric label. A cell says yes only where that board itself
          has shown the thing, which is the same claim the drawings' colors
-         make. -->
+         make. Under each board's name are its FPGA's product name, its part
+         number and a link to its maker's page for it, each on a line of its
+         own so that the name column stays narrow on a phone. The DE25-Nano's
+         row is its name, linked to its maker's page, and its part, and it says
+         the board is upcoming and nothing more, because nothing has been
+         built for it. -->
     <div class="tablescroll" tabindex="0" role="region" aria-label="What each board is and what it does">
       <table class="boardtable">
         <thead>
@@ -186,7 +191,7 @@ RUNS      its processor and clocks within
         </thead>
         <tbody>
           <tr>
-            <th scope="row" class="board"><a href="arty-z7-20.html">Arty Z7-20</a><span class="pc">XC7Z020</span></th>
+            <th scope="row" class="board"><a href="arty-z7-20.html">Arty Z7-20</a><span class="pc">Xilinx Zynq 7020</span><span class="pc">XC7Z020</span><span class="pc">made by <a href="https://digilent.com/shop/arty-z7-zynq-7000-soc-development-board/">Digilent</a></span></th>
             <td class="cpu">2 x Arm Cortex-A9, Linux</td>
             <td class="num">5,274 of 13,300<span class="pc">39.7%</span></td>
             <td class="num">45.5 of 140<span class="pc">32.5%</span></td>
@@ -196,7 +201,7 @@ RUNS      its processor and clocks within
             <td class="st">yes</td>
           </tr>
           <tr>
-            <th scope="row" class="board"><a href="cora-z7-07s.html">Cora Z7-07S</a><span class="pc">XC7Z007S</span></th>
+            <th scope="row" class="board"><a href="cora-z7-07s.html">Cora Z7-07S</a><span class="pc">Xilinx Zynq 7007S</span><span class="pc">XC7Z007S</span><span class="pc">made by <a href="https://digilent.com/shop/cora-z7-zynq-7000-single-core-for-arm-fpga-soc-development/">Digilent</a></span></th>
             <td class="cpu">1 x Arm Cortex-A9, Linux</td>
             <td class="num">4,328 of 4,400<span class="pc">98.4%</span></td>
             <td class="num">42.5 of 50<span class="pc">85.0%</span></td>
@@ -204,6 +209,10 @@ RUNS      its processor and clocks within
             <td class="st" title="The board's own card slot.">yes</td>
             <td class="st no" title="The board has no HDMI connector.">no</td>
             <td class="st no" title="The board has no USB host port, so the image leaves the program out.">no</td>
+          </tr>
+          <tr>
+            <th scope="row" class="board"><a href="https://www.terasic.com.tw/cgi-bin/page/archive.pl?Language=English&amp;CategoryNo=115&amp;No=1384">DE25-Nano</a><span class="pc">Altera Agilex-5</span><span class="pc">A5EB013B</span></th>
+            <td class="st no" colspan="7">upcoming</td>
           </tr>
         </tbody>
       </table>
@@ -216,8 +225,8 @@ RUNS      its processor and clocks within
         <p class="small">The Arty Z7-20 is the recommended board, and the one tested the most. It is the board the project was built on, and every block on its drawing has now run on it.</p>
       </div>
       <div class="panel">
-        <p class="cap"><a href="cora-z7-07s.html">Cora Z7-07S</a> &middot; smaller</p>
-        <p class="small">The Cora Z7-07S carries a smaller part of the same kind and a smaller board, with no HDMI output and no USB host for a keyboard and mouse. The machine fits it and closes timing with nothing in the machine itself changed.</p>
+        <p class="cap"><a href="cora-z7-07s.html">Cora Z7-07S</a></p>
+        <p class="small">The Cora Z7-07S carries a Xilinx Zynq 7007S, and it has no HDMI output and no USB host for a keyboard and mouse. The machine fits it and closes timing with nothing in the machine itself changed.</p>
       </div>
     </div>
 
