@@ -17,7 +17,11 @@ say again what a document already says.
 
     index.html    the front page. What the project is, in two speech bubbles
                   and a terminal block, then one table with a row for each
-                  board, the board's name linking its own page. It ends with
+                  board, the board's name linking its own page, and under it
+                  the FPGA's product name, its part number and a link to the
+                  maker's page for the board. A board with no page here yet
+                  has a row of its name, linked to its maker's page, its part,
+                  and the word upcoming, and nothing else. It ends with
                   the license and a table of the third-party material the
                   boards and the site use, each row naming whose it is, under
                   what terms, and where those terms are recorded. The long
@@ -26,13 +30,14 @@ say again what a document already says.
                   project's own rather than muir's
     arty-z7-20.html
                   the Arty Z7-20's architecture drawing, under the board's
-                  name, one line saying what it is, and the keys to the pages
+                  name, one line naming the FPGA it runs on, one line linking
+                  the maker's page for the board, and the keys to the pages
                   that explain it. How it boots is on booting.html with the
                   other board's
     cora-z7-07s.html
-                  the same drawing for the Cora Z7-07S. That part is
-                  smaller and the board has no HDMI connector, no USB host port
-                  and no switches, so the display output block, its port, the
+                  the same drawing for the Cora Z7-07S. That board has no
+                  HDMI connector, no USB host port and no switches, so the
+                  display output block, its port, the
                   HDMI connector, the USB input program, the USB host
                   controller, the port it would drive and the no-auto-boot
                   switch are crossed off in their places
@@ -77,7 +82,9 @@ Every page is the same shape. A desk note at the top, as on muir's and ozd's
 sites, gives the project's name and then all seven pages, in one fixed order on
 every page, so no word on it moves as a reader goes from page to page. The page
 being read is plain text on the spot color, marked `aria-current`, and every
-other page is a link. Under it the page is a column of paper plates on a
+other page is a link. After the boards that have a page, a board with no page
+here yet is named, linked to its maker's page, with the word upcoming beside
+it. Under it the page is a column of paper plates on a
 halftone desk. Each plate opens with a pink eyebrow and a title in the display
 face, holds its panels, and closes with a who-line whose last cell is the
 plate's number on its page. The last plate of every page is the colophon: the
@@ -87,9 +94,16 @@ material comes from, how the project is made, the name, the license, and the
 credits.
 
 **A board page** is `arty-z7-20.html` or `cora-z7-07s.html`. It is one plate:
-the board's name, one line, the keys to the booting and debugging pages, and
-the drawing in a panel of its own. The drawing carries its own title and
-legend inside it, and nothing outside the drawing explains it. Anything that
+the board's name, one line naming the FPGA by its product name and part, one
+line linking the maker's page for the board, the keys to the booting and
+debugging pages and to the other board, and the drawing in a panel of its own.
+The keys all look alike. The drawing carries its own legend, and nothing
+outside the drawing explains it. No outline is drawn around the board: the
+chip's own outline is the one labeled, with the FPGA's product name beside its
+part number, and the memory, the connectors, the lamps, the buttons and the
+Pmod header stand outside it. The legend is one row under the drawing,
+centered on it, with every swatch and word on one baseline, spaced by each
+word's measured width. Anything that
 does belongs in `full-page.html` or in `docs/`.
 
 **A page with prose** is `index.html`, `booting.html`, `debugging.html`,
@@ -136,7 +150,7 @@ its translation, and a block the two boards both have is at the same coordinates
 both.
 
 **The derived one is derived by crossing off.** The Cora Z7-07S is the same
-architecture on a smaller part. Its drawing is the Arty Z7-20's with what that
+architecture on the Zynq 7007S. Its drawing is the Arty Z7-20's with what that
 board does not have crossed off where it stands rather than taken out, so that
 a reader can see what is missing.
 
@@ -163,10 +177,11 @@ own silicon, so the whole row is gray.
 So a change to a block the Arty Z7-20 shares with the other board is carried
 to that board's drawing by the same edit, at the same coordinates, and the two
 can be compared with `diff`. The
-differences that are meant to be there are the titles, the part, the figures
+differences that are meant to be there are the chip's label, the figures
 under the fabric's label, the status colors and the lamp rows, and then
 whatever the derivation itself adds. On the Cora Z7-07S that is the crossed-off
-blocks and the legend's extra swatch. Anything else in a diff between these two
+blocks and the legend's extra swatch, which also moves the legend's other
+swatches, because the row is centered. Anything else in a diff between these two
 files is a drift, and that is the point of keeping the geometry identical.
 
 Everything the drawings assert about the machine comes from `README.md`,
