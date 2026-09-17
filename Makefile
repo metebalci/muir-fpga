@@ -89,6 +89,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
+       $(BUILD)/de25_pins.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -140,6 +141,18 @@ $(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard gol
                     boards/arty-z7-20/linux/buildroot/package/cadr-console/src/console_test.c | $(BUILD)
 	python3 tools/grid_check.py .
 	@touch $@
+
+# The DE25-Nano's pins, transcribed from Terasic's user manual into our own
+# Tcl.  Always held to itself: unique ports and pins, each port's name saying
+# the manual's signal, and each header's 36 signal pins where the manual's
+# figure puts them.  Held as well to the Quartus settings in Terasic's
+# resource package, pin and I/O standard for every port, when a package is
+# named by TERASIC_DE25_PACKAGE or boards/de25-nano/local.conf.  Without one
+# the comparison skips and says so, and the stamp is left alone so that the
+# next run asks again.  See `tools/de25_pins_check.py`.
+$(BUILD)/de25_pins.pass: tools/de25_pins_check.py boards/de25-nano/de25_nano_pins.tcl \
+                         boards/de25-nano/README.md $(wildcard boards/de25-nano/local.conf) | $(BUILD)
+	python3 tools/de25_pins_check.py . --stamp $@
 
 $(BUILD)/phase_gen.pass: $(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
 	$(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden

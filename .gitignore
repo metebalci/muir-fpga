@@ -58,6 +58,11 @@ tight_setup_hold_pins.txt
 # file and the one that got forgotten would be the one that was committed.
 boards/*/linux/local.conf
 
+# The same, for a board with no Linux of its own yet. The DE25-Nano's names
+# where Terasic's resource package is, for `tools/de25_pins_check.py`; a path
+# on somebody's machine to a package that needs an account to download.
+boards/*/local.conf
+
 # Buildroot's downloads (vendor/buildroot-dl, already under vendor/ above) and
 # its build tree, which the Makefile keeps out of the repository altogether
 # --- BR_WORK, under ~/.cache by default.  Nothing of the build lands here;
