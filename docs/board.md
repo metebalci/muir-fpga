@@ -130,8 +130,9 @@ Two consequences, both deliberate in `boards/arty-z7-20/cadr_arty.sv`:
   the PS.** It runs the moment the bitstream loads. A bring-up where nothing
   moves until a second thing works has two unknowns in it. The MMCM makes
   100 MHz --- 125 x 8 at the VCO, divided by 10 --- so a tick is 10 ns.
-  Every tick count in the machine is unchanged by that; `cadr_arty.sv`'s
-  header is the whole argument.
+  The machine's tick counts come from the grid in
+  `rtl/machine/cadr_tick_pkg.sv` and not from this clock, and
+  `docs/timing.md` says why the two are separate numbers.
 - **Anything needing DDR is a debugger test and not a program-and-look one.**
   From XSDB the sequence is `connect`, `targets -set -filter {name =~ "APU*"}`,
   `source ps7_init.tcl`, `ps7_init`, `ps7_post_config`. **The order of those
@@ -259,9 +260,10 @@ exactly like a fabric that cannot write. It cost one run at `700b98a`.
 
 The machine, `DDR=1`, has no such trigger. `boards/arty-z7-20/cadr_arty.sv`
 resets it on the MMCM's lock or BTN1. It therefore starts the instant the part
-configures, and reaches its memory cycles 118 ms of machine time later --- 236
-ms of real time, the tick being 10 ns --- whether or not anybody has brought
-the port up. Poisoning 256 words over JTAG takes longer than either.
+configures, and reaches its memory cycles 118 ms of machine time later ---
+about the same in real time, because the boot PROM runs at extra slow and the
+10 ns grid keeps that microcycle at MIT's 220 ns --- whether or not anybody has
+brought the port up. Poisoning 256 words over JTAG takes longer than either.
 So the port must be **live before the bitstream loads**:
 
     ps7_init -> clear LVL_SHFTR_EN -> poison -> ps7_post_config -> program
@@ -594,7 +596,7 @@ guard:
 
 A group of four pads is driven whole or not at all, and a board listening to a
 group drives no pin of it. One data line a direction makes a frame twenty-four
-beats, 162 ticks, against the 2,210 the debugger's own interface allows a
+beats, 162 ticks, against the 1,105 the debugger's own interface allows a
 cycle. `docs/debug-cable.md` has the reason and the budget.
 
 **The far board's connector is JA too.** The Cora Z7-07S uses JA as this
@@ -1182,6 +1184,7 @@ the registers --- carrying a key to the machine.
 
 So the first run with a finger on a real keyboard is still owed, and until it
 happens the drawing's USB input block says checked here and not yet on silicon.
+That run has happened since, and the section of 14 September has it.
 
 ## The display, the keyboard and the mouse, 14 September
 
@@ -1486,6 +1489,9 @@ The refusal is the guard working as it should, on a value that should never
 have been written. The spelling that works today is `cadr-checkpoint
 --chaos-address 0177100`, and with it the two programs agreed and the resume
 ran. The behavior predates this set, and a fix is in hand.
+The fix has landed since: `chk_chaos_address` in `cadr-checkpoint`'s
+`chk_rtl.c` reads an address in octal as muir does, so `177100` is right as
+written.
 
 ## The Chaosnet framing on the wire, 15 September
 
@@ -1786,6 +1792,10 @@ CADR` and `HELLO CADR` at about 700 characters a second, and the counter went
 from 5 to 6. Faster polling mostly cures it and does not remove it. Receiving
 at 9600 works: `ABCDE` written to the program's socket reads back in Lisp as
 `(65 66 67 68 69)`.
+The fabric has changed since: the line now keeps a store of 1,024 characters
+behind the holding register (`STORE_DEPTH` in
+`rtl/plumbing/cadr_serial_line.sv`), and `docs/io-board.md` describes it.
+This file has no 9600 baud run on that fabric yet.
 
 **The cold load takes the same real time as on the 5 ns grid.** After
 `cadr-console boot` the screen cleared at 58.6 seconds and was repainted at
@@ -1810,7 +1820,7 @@ both the memory and the display:
     DDR=1 HDMI=1 OUTDIR=build/hdmi vivado -mode batch -nojournal -nolog \
         -source boards/arty-z7-20/vivado/bitstream.tcl
 
-That writes `build/hdmi/cadr.bit`. Serve it the way any other bitstream is
+That writes `build/hdmi/cadr_arty.bit`. Serve it the way any other bitstream is
 served: copy it over the `cadr.bit` the board fetches, and reset the board.
 Nothing else changes. The start-up routine is unaffected, because enabling
 `S_AXI_HP3` changes `ps7_init` by nothing, and the root filesystem is

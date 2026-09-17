@@ -38,8 +38,8 @@ store's seam.
 - **The drive** is one unit present, writable, and its own time not charged,
   which is `Controller::timed` false and the way the reference is generated.
 
-Twenty-two columns are compared every microcycle: PC, IR, LPC, OPC, ST, LC, the
-A and M buses, the ALU, R, OB, Q, DC, VMA, MD, `-VMAOK`, JCOND, NOP, PCS1,
+Twenty-three columns are compared every microcycle: PC, IR, LPC, OPC, ST, LC,
+the A and M buses, the ALU, R, OB, Q, DC, VMA, MD, `-VMAOK`, JCOND, NOP, PCS1,
 PCS0, IWRITED, PROMDISABLE and `-XBUS.INTR`.
 
 ## What it reaches

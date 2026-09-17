@@ -10,7 +10,7 @@ not muir. The debugger is CC, MIT's own console program, running on a CADR
 that muir simulates. So muir on the board needs a band to boot, and that band
 needs CC in it.
 
-muir's own `tests/cc_304.rs` gets CC by compiling it over the Chaosnet FILE
+muir's own `tests/cc_304.rs` got CC by compiling it over the Chaosnet FILE
 service from a host on the model network. That is the right thing on a build
 host. It is the wrong thing on the board, where it would mean standing a
 Chaosnet file host up beside muir before the debugger could exist at all.
@@ -20,6 +20,11 @@ pack you boot.
 
 `tools/make-cc-pack.sh` builds it. `tools/cc-pack/cc_pack.rs` is the program
 it drives.
+
+**At the muir this repository pins, the script does not run.** muir removed
+`tools/fetch-system-304.sh` and `tests/cc_304.rs` at its commit `5328c26`, and
+the script calls the fetch script (`tools/make-cc-pack.sh:127`). Both packs
+below were built against a muir from before that commit.
 
 ## What the pack is
 
@@ -60,8 +65,9 @@ is muir's, not one of the CADR's drives. The script's default name is
 
 ## Where it goes
 
-It goes in the packs partition, next to the other packs, at
-`/mnt/packs/muir-cc-304.img`. The boot partition does not grow.
+It goes in the packs partition, next to the other packs. The card carries it
+as `/mnt/packs/muir-cc.img`, whatever the file was called on the build host.
+The boot partition does not grow.
 
 The room is there. A T-300 is 257.1 MiB. A full bay of eight is 2,056.6 MiB,
 and with the debugger's pack beside them 2,313.7 MiB. The release card's

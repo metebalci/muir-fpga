@@ -79,7 +79,7 @@ restricts it to the board itself, and a viewer then reaches it over an SSH
 tunnel.
 
 **It cannot read `MODE BOW`.** Whether a one bit shows white or black is four
-flops in the fabric (`rtl/machine/cadr_tv.sv:141`, cleared to zero at `:195`).
+flops in the fabric (`rtl/machine/cadr_tv.sv:333`, cleared to zero at `:500`).
 Nothing carries them to the processing system. `M_AXI_GP0` is the disk's and
 `M_AXI_GP1` is the console's, and neither has a word for the display. So the
 default is the fabric's own power-on state and muir's, which is zero, and a
@@ -130,11 +130,11 @@ pins the mapping on hand-computed pixels.
 | 963 lines | `HEIGHT` | muir `src/tv.rs:104`, `(:CADR 963.)`, "was 896. for CPT" |
 | 24 words to a line | `WORDS_PER_LINE` | muir `src/tv.rs:108`, `MAIN-SCREEN-LOCATIONS-PER-LINE` |
 | one bit a pixel | | muir `src/tv.rs:7`; `docs/tv.md` |
-| 32,768 words in the window | `BUFFER_WORDS` | muir `src/tv.rs:78`; `rtl/plumbing/cadr_ddr_map.sv:71` |
-| 23,112 of them are the screen | `visible()` | muir `src/terminal/mod.rs:88`; 963 x 24 |
-| the window is at `0x1C00_0000` | `DISPLAY_BASE` | `rtl/plumbing/cadr_ddr_map.sv:67` |
-| word *n* is at base + 4*n* | `display_byte_address` | `rtl/plumbing/cadr_ddr_map.sv:83`; `rtl/plumbing/cadr_xbus_ddr.sv:87` |
-| a frame is 15,456,000 ns | `FRAME_NS` | muir `src/tv.rs:331`; `rtl/machine/cadr_tv.sv:123` |
+| 32,768 words in the window | `BUFFER_WORDS` | muir `src/tv.rs:78`; `rtl/plumbing/cadr_ddr_map.sv:76` |
+| 23,112 of them are the screen | `visible()` | muir `src/terminal/mod.rs:129`; 963 x 24 |
+| the window is at `0x1C00_0000` | `DISPLAY_BASE` | `rtl/plumbing/cadr_ddr_map.sv:72` |
+| word *n* is at base + 4*n* | `display_byte_address` | `rtl/plumbing/cadr_ddr_map.sv:101`; `rtl/plumbing/cadr_xbus_ddr.sv:92` |
+| a frame is 15,456,000 ns | `FRAME_NS` | muir `src/tv.rs:331`; `rtl/machine/cadr_tv.sv:90` |
 
 **Which bit is which pixel.** muir `src/tv.rs:599-602`:
 
@@ -146,9 +146,9 @@ pins the mapping on hand-computed pixels.
 A line is 24 consecutive words, the first line first. Within a line the pixels
 run from the **low** end of the first word, so **bit 0 of a word is the
 leftmost of the 32 pixels it carries**. muir says the same in its own words at
-`src/terminal/mod.rs:216`: "entry `b` is the frame-buffer byte `b`, its bit
+`src/terminal/mod.rs:261`: "entry `b` is the frame-buffer byte `b`, its bit
 0 first, bit 0 being the leftmost pixel". It states the whole rule again at
-`src/terminal/mod.rs:97`, where `tests/terminal.rs` holds the two expressions
+`src/terminal/mod.rs:138`, where `tests/terminal.rs` holds the two expressions
 to each other pixel for pixel. This program is the third expression, and it has
 the same pair inside it. `screen_geom.h`'s `screen_lit` is the rule, and
 `screen_server.c`'s `row_byte` is the rule again as a byte at a time, which is
@@ -157,7 +157,7 @@ what a whole-width Raw rectangle actually goes through. **Both are mutated in
 encodings**, which is what says the check reaches both.
 
 **Which way round black and white are.** muir says it at
-`src/tv.rs:592-595` and `:607-609`. A lit bit shows **white** unless
+`src/tv.rs:592-595` and `:652-654`. A lit bit shows **white** unless
 `MODE BOW` is set, and the other way round when it is. That is `MODE<2>`, at
 `tv.rs:260`, "display one bits as black and zeros as white". So a screen
 of zeros with BOW clear is **black**, and that is what a real machine looks
@@ -340,10 +340,9 @@ prints is the mapping this program already carries:
 
 **Where the file lives on the board.** `/mnt/packs/terminal.keyboard.mapping.txt`,
 which is the pack partition that `S80cadr-disk-packs` mounts. The name ends in
-`.txt` for the reason the Chaosnet program's three settings files do: the
-partition is FAT32, so a laptop with a card reader can edit what is on it, and
-a suffixless file asks a laptop what should open it. `S85cadr-terminal` passes
-`--keyboard-mapping` only when the file is there.
+`.txt` because the partition is FAT32, so a laptop with a card reader can
+edit what is on it, and a suffixless file asks a laptop what should open it.
+`S85cadr-terminal` passes `--keyboard-mapping` only when the file is there.
 
 **The file is read only where there is a keyboard to map onto.** It is read
 beside the flush, after `IDENT` has answered and before the socket is bound,
@@ -500,16 +499,15 @@ This program sends the word. What turns it into a boot is a comparator on the
 I/O board: MIT's own is the 25LS2521 at IOBCSR `0A20`, whose `-EQUAL` becomes
 `-BOOT*` through a 74S04 and an open-collector 74S38, and that reaches the
 processor as `-BOOT1`, where it meets the light panel's `-BOOT2` and the debug
-cable's `PROG.BOOT`. Until `rtl/machine/cadr_io_board.sv` decodes the word, a
-boot word sent from here arrives in the card's keyboard register like any other
-word and the machine is not restarted by it. The word is right either way, and
-`muir`'s `docs/keyboard-boot.md` has the wire link by link.
+cable's `PROG.BOOT`. `rtl/machine/cadr_io_board.sv` decodes the word
+(`boot_match` at `:668`, `n_boot_star` at `:671`), and `build/kbd_boot.pass`
+holds the restart it makes. `muir`'s `docs/keyboard-boot.md` has the wire link
+by link.
 
 **It belongs in `fpgarc`** with the rest of this program's flags. That file is
 one flag a line in muir's own rc format on the packs partition, and
-`docs/chaosnet.md` describes it; the terminal reads its command line today and
-`S85cadr-terminal` does not read the file yet. When it does, the line is the
-flag as it stands:
+`docs/fpgarc.md` describes it. `S85cadr-terminal` passes `--keyboard-boot` on
+from it (its `FLAGS` list at `:93-106`), and the line is the flag as it stands:
 
     --keyboard-boot ctrl,ctrl,meta,meta
 
@@ -587,9 +585,9 @@ and sends `SIGUSR1` or `SIGUSR2`, and it touches no register, so it works on a
 board whose fabric has no console in it. `docs/console.md` has the word.
 
 **The flag is how a run starts with the trace on.** `--keyboard-mapping-trace`
-on the command line, or in the card's `fpgarc` for a board that should always
-trace. It is off by default: a line a keystroke on the board's own console is
-not something to leave running.
+goes on the command line. It is not in `S85cadr-terminal`'s `FLAGS` list, so a
+line for it in the card's `fpgarc` reaches no program. It is off by default: a
+line a keystroke on the board's own console is not something to leave running.
 
 **The lines go where every other line of this program goes.** On the board that
 is two places: the serial console and `/var/log/cadr-terminal.log`, because
@@ -609,11 +607,11 @@ would fling the machine's cursor from wherever it was to wherever the pointer
 happened to enter the window.
 
 The quadrature encoder is in the fabric and not here. A step is 16,000 ns of
-the machine's own time, which is 32 real microseconds at this board's tick, so
-a program making phases over `M_AXI_GP0` would be writing fifty thousand times
-a second. `docs/io-board.md` settled that at the card's second slice: the card
-takes the seven lines MIT's mouse drives, and whatever turns a delta into
-phases is fabric beside it.
+the machine's own time, which is 1,600 ticks and so 16 real microseconds at
+this board's 10 ns tick. A program making phases over `M_AXI_GP0` would be
+writing over sixty thousand times a second. `docs/io-board.md` settled that at
+the card's second slice: the card takes the seven lines MIT's mouse drives, and
+whatever turns a delta into phases is fabric beside it.
 
 The three switches need no translation. RFB's mask is left 1, middle 2, right
 4, and MIT's `buttons-down-mask` is the same three bits in the same order.
@@ -711,8 +709,9 @@ channel's, and nothing in the fabric has to know a viewer exists.
 `make -C boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src check`
 runs on the build host, with no board. The server is driven from screens made
 in the check, and a viewer written for the purpose sits on a real loopback
-socket. **952 checks, 0 failures**, then **56 mutations, 56 caught, 0 survived,
-0 broken.** The whole thing takes a few minutes.
+socket. At `0966ffd` `check-only` reports **1,039 checks, 0 failures**, and
+`check` then runs the 71 records in `screen_mutations.txt`. The whole thing
+takes a few minutes.
 
 **And `make check` at the repository root runs it now**, as `terminal.pass`,
 beside `chaosnet.pass` and `serial.pass`. It did not before. That was a hole
@@ -938,7 +937,7 @@ behind the machine's memory port at all. So the display's window is answered
 by nothing, and the region in DDR is never written. That is the same bitstream
 the disk already needs.
 
-This is what the console should show at boot, after `S80cadr-disk-pack`'s
+This is what the console should show at boot, after `S80cadr-disk-packs`'s
 lines:
 
     Starting cadr-terminal: OK
@@ -1007,13 +1006,14 @@ of the pixels lit.
 (`docs/boot.md`).
 
 **The keyboard mapping file is the one thing here that lives on the card**, and
-no package installs it. It is written by hand on the pack partition, the way
-the Chaosnet program's three settings files are, and it is optional. Two
-things the card's own tooling does not know about it yet: the staging script
-that writes a card checks partition 2 against a list of names it expects and
-would refuse a card carrying this one, and the `README.TXT` it writes there
-names the settings files one by one. Both are a line each and neither is this
-package's file.
+no package installs it. It is written by hand on the pack partition, and it is
+optional. The generated `fpgarc` carries a commented `--keyboard-mapping` line
+for it (`mksd-buildroot.sh:698-701`). Two things the card's own tooling does
+not know about it yet: the staging script that writes a card checks partition 2
+against a list of names it expects and would refuse a card carrying this one
+(`mksd-buildroot.sh:1219-1227`), and the `README.TXT` it writes there names the
+settings files one by one. Both are a line each and neither is this package's
+file.
 
 ## The second screen, the color TV's: `--color-terminal`
 
@@ -1100,9 +1100,9 @@ fits one, and then binds and serves a black screen anyway.
 - **The color screen's keyboard and mouse**, deliberately: see the section
   above. A viewer's events there are counted and dropped, which is muir's own
   rule for its own color terminal.
-- **The color screen on HDMI.** `cadr_display_out.sv` scans the first board's
-  window alone. The plan on record is both screens side by side on the one
-  output; nothing is built for it.
+- **The color screen on HDMI** is built and is not this program's:
+  `cadr_display_out.sv` shows either screen or both by `out_sel`
+  (`--hdmi-output tv|color-tv|both`), and `docs/display-output.md` has it.
 
 ## The Makefile does not name the packages any more, it derives them
 
@@ -1126,12 +1126,13 @@ middle of a diagnosis.
 
 **So the list is derived and no longer typed.** The packages that need forcing
 are exactly those whose `.mk` declares `_SITE_METHOD = local`, which is the
-property that makes them built from files in this tree, and `BR_RECONFIGURE`
-reads that off the `.mk` files. A package added under `package/` joins the list
-by existing. `muir` falls out of the derivation and should: its version is the
-commit in `muir.commit`, so a new pin is a new build directory and Buildroot
-rebuilds it unasked. U-Boot and the kernel stay named, because they are
-Buildroot's own packages reading our files through external options and hooks.
+property that makes them built from files in this tree, and `BR_LOCAL_PKGS`
+reads that off the `.mk` files (`Makefile:2823-2826`, with `BR_FORCE_PKGS`). A
+package added under `package/` joins the list by existing. `muir` falls out of
+the derivation and should: its version is the commit in `muir.commit`, so a new
+pin is a new build directory and Buildroot rebuilds it unasked. U-Boot and the
+kernel stay named, because they are Buildroot's own packages reading our files
+through external options and hooks.
 
 **And the two ways the derivation could come out short are refused rather than
 silently omitted.** `buildroot-check` fails if any `.mk` declares no site

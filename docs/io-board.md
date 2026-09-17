@@ -238,30 +238,31 @@ rule applies to whatever this card computes from it, and
 **This is the 10 ns grid, and the places this card is not on it.** Every
 instant the fabric can act at is a multiple of ten nanoseconds. The
 microsecond clock's edges are at 890 + 1,000k. The keyboard-and-mouse group
-answers 1,250 ns after the second edge past `-MSYN`, and the clocks and the
+answers 250 ns after the second edge past `-MSYN`, and the clocks and the
 GPIO answer 250 ns after `-MSYN`. `KB CLK^` is 8,000 ns and the mouse's step
 16,000, and the interval timer's count is 16,000. All of those are multiples
 of ten. **The microsecond counter's low half is not.**
 `busint::IOB_USEC_LOW_NS` is 313 ns, measured on the netlist, so muir answers
-at 1,203 + 1,000k and the fabric can only answer at 1,205. The trace carries a
-`slip` column saying so on every such row, rather than hiding two nanoseconds
+at 1,203 + 1,000k and the fabric can only answer at 1,210. The trace carries a
+`slip` column saying so on every such row, rather than hiding seven nanoseconds
 in a tolerance. And **nothing downstream sees it**: `-LMACK` is 150 ns and the
-MD strobe 100 ns past `-UB SSYN`, both multiples of five, so a bus interface
-counting from the tick it *sees* `-SSYN` lands where muir's does. 208 rows of
-the trace carry it and no other register ever does, and the generator asserts
-that.
+MD strobe 100 ns past `-UB SSYN`, both multiples of ten, so a bus interface
+counting from the tick it *sees* `-SSYN` lands where muir's does. The generator
+asserts the slip on every row that carries one: seven nanoseconds for this half
+and for the serial port's group, five for the receive buffer
+(`golden/src/iob.rs`).
 
 **The sixty-cycle counter is off the grid too, and it costs nothing.**
-`SIXTY_CYCLE_NS` is 16,666,666, which is 1 mod 5, so the k'th mains edge is on
+`SIXTY_CYCLE_NS` is 16,666,666, which is 6 mod 10, so the k'th mains edge is on
 the grid only for k a multiple of five. Take a fabric that accumulates
-nanoseconds by five and subtracts the period, which is `disk_unit`'s spindle
+nanoseconds by ten and subtracts the period, which is `disk_unit`'s spindle
 trick, and which is exactly `now mod REVOLUTION_NS`. It increments at the
 first tick at or after each edge, and the window in which it disagrees with
-`ns / SIXTY_CYCLE_NS` is `[B, B + (5 - B mod 5))`, **which contains no
-multiple of five at all**. So the two agree at every instant the fabric can be
-looked at. A fabric that instead reloads a down-counter with 3,333,333 ticks
-loses a nanosecond a period, and the trace reads the register at fourteen
-boundaries on alternating sides to catch it.
+`ns / SIXTY_CYCLE_NS` is `[B, B + (10 - B mod 10))`, **which contains no
+multiple of ten at all**. So the two agree at every instant the fabric can be
+looked at. A fabric that instead reloads a down-counter with a whole number of
+ticks loses the remainder a period, and the trace reads the register at
+fourteen boundaries on alternating sides to catch it.
 
 **The grid and the tick are both 10 ns, so this card's two clocks agree with
 the wall.** Everything above is the machine's own time, on a grid of ten
@@ -318,8 +319,8 @@ posed, and why the second was declined.
 muir puts the encoders in `terminal::mouse`, the far end rather than the card,
 and what crosses the card's edge is seven lines: four quadrature and three
 switches. A USB mouse gives deltas, and turning a delta into quadrature phases
-16 us apart --- 32 real microseconds, the tick being 10 ns --- in software
-over `M_AXI_GP0` is 50,000 writes a second, so the phase generator cannot be in
+16 us apart --- 16 real microseconds at the 10 ns grid --- in software over
+`M_AXI_GP0` is over 60,000 writes a second, so the phase generator cannot be in
 `cadr-usb-input`. There are two shapes, and the trace supports either:
 
 - **The card takes the seven lines**, and something in fabric beside it turns
@@ -342,18 +343,20 @@ same agreement, its 8 us clock's rate and its phase.
 `interrupt_request` with `UB_INT` into what the processor reads. Nothing in
 `rtl/` has a Unibus interrupt path yet, so the card's output is a port with
 nothing on the other end until somebody builds one. That is honest, and it is
-the same shape the display's `tv_intr` had before `f8c6d25`.
+the same shape the display's `tv_intr` had before `f8c6d25`. Slice four built
+that path, the bus interface's own interrupt block.
 
 ## What the trace is
 
-`build/iob.golden` is 223 KB, 2,591 event rows and 94 decode rows over 412.5 ms
-= 82,509,811 ticks. `make iob-golden` writes it in 1.4 s, and two runs are
+`build/iob.golden` is 199 KB, 2,332 event rows and 94 decode rows over 412.9 ms
+= 41,290,024 ticks. `make iob-golden` writes it in 1.4 s, and two runs are
 byte-identical. There is no wall-clock time in it and no randomness.
 
     DECNONE  first last                    answers() is None over this run
     DEC      uaddr write reg               answers(uaddr, write)
     CYC      n msyn ssyn slip off uaddr reg write wdata rdata  <face>
     KEY      n ns scancode                 <face>
+    KBOOT    n ns scancode boot            <face>   the same press, decoded
     MOVE     n ns dx dy                    <face>
     BTN      n ns mask                     <face>
     SER      n ns ready                    <face>
@@ -375,9 +378,10 @@ byte-identical. There is no wall-clock time in it and no randomness.
     <face> = csr x y held clkrdy interval intr audio serrdy
              ccsr cbits sm1 sm2 scmd sstat
 
-The first nine kinds are slice two's and the eleven after them belong to the
-two far ends, which slice five added and slice six finished. `CTX` and `SOUT`
-are assertions and every other kind is stimulus. The trace's own header
+The first nine kinds are slice two's, apart from `KBOOT`, which came with the
+card's own decode of the keyboard's boot word. The eleven after them belong to
+the two far ends, which slice five added and slice six finished. `CTX` and
+`SOUT` are assertions and every other kind is stimulus. The trace's own header
 carries this table, and it is the copy to trust if the two ever disagree.
 
 Every row ends with the same face, sampled after whatever the row did. It
@@ -841,12 +845,12 @@ internal paths carried the fifteen-cycle exception and three slices' fit
 figures were of a design a quarter of which was not being timed.
 
 The card is excluded whole, but for the five registers of its held match:
-`sel`, `kbm`, `clkgrp`, `wr` and `which`. Everything else there is a clock or
-a cycle's own state. `usec_t`, `kb_t` and `iv_t` count down one a tick,
-`mains_acc` adds five nanoseconds a tick with `mains_wrap` comparing it a tick
-early, `t_msyn` and `t_edge` count since the strobe and since the last edge,
-`usec` is a counter read by a latch at an arbitrary tick, `ub_ssyn` is the
-answer itself, and `busy`, `first` and `edges` are one tick deep.
+`sel`, `kbm`, `clkgrp`, `wr` and `which`. Everything else there is a clock or a
+cycle's own state. `usec_t`, `kb_t` and `iv_t` count down one a tick,
+`mains_acc` adds `TICK_NS` nanoseconds a tick with `mains_wrap` comparing it a
+tick early, `t_msyn` and `t_edge` count since the strobe and since the last
+edge, `usec` is a counter read by a latch at an arbitrary tick, `ub_ssyn` is
+the answer itself, and `busy`, `first` and `edges` are one tick deep.
 
 That was measured and not read off the filter expression. Synthesized with the
 file read scoped at the 6.25 ns tick of that afternoon, every path out of every
@@ -1066,7 +1070,7 @@ The netlist part raises it under the enable with the holding register empty,
 and keeps its generator running while a frame is in flight. The pinned muir
 carries both changes.
 `build/iob.pass` compares this card against the behavioral model over
-82,509,813 ticks and cannot see the difference. Nothing in that trace
+41,290,024 ticks and cannot see the difference. Nothing in that trace
 disables a transmitter with a character still in its shift register and then
 enables it again. An issue records the finding for muir. Nothing here changes
 muir.
@@ -1109,13 +1113,12 @@ tick the fabric acts at.
 
 **And the serial port's answer is off the grid on every cycle of its group.**
 `busint::IOB_HALF_USEC_PHASE_NS` is 203 and `IOB_SERIAL_NS` is 750, so the
-answer is at 953 + 500k, which is 3 modulo 5. The trace's `slip` column says
+answer is at 953 + 500k, which is 3 modulo 10. The trace's `slip` column says
 so on every one of them, which was fifty-one when this slice landed and is
 eighty-seven since slice six added its cycles. The fabric counts the same
-edges at 205 + 500k,
-and that is exact rather than close: no multiple of five lies between 203 and
-205 modulo 500, so an edge is strictly after `-UB MSYN` on the grid exactly
-where it is strictly after it on the netlist.
+edges at 210 + 500k, and that is exact rather than close: no multiple of ten
+lies strictly between 203 and 210 modulo 500, so an edge is strictly after
+`-UB MSYN` on the grid exactly where it is strictly after it on the netlist.
 
 ### What changed in the trace, and what did not
 
@@ -1313,14 +1316,14 @@ takes one step, and the bound is there to fail rather than to hang.
   programs are `cadr-chaosnet` and `cadr-serial`, and the fabric they reach is
   `rtl/plumbing/cadr_chaos_cable.sv` and `rtl/plumbing/cadr_serial_line.sv`,
   one 4 KB page each on `M_AXI_GP0` behind `rtl/plumbing/cadr_gp0_split.sv`.
-  What has not happened is a run on the board.
+  Both have run on the board since, and `docs/board.md` has the runs.
 - **The keyboard's and mouse's far end on the board itself.** That is
-  `cadr-usb-input`, which is built and checked here and has not run on the
-  board. It reads `/dev/input/event*` and sends keysyms and mouse movement to
-  `cadr-terminal`, which is the one program that writes these registers and
-  paces the words onto the card. `docs/usb-input.md` has the reason for that
-  shape, and the kernel side was done earlier: `evtest` printed typed
-  characters off a USB keyboard on the board on 10 Sep.
+  `cadr-usb-input`, which is built and checked here and has run on the board
+  since, on 14 September. It reads `/dev/input/event*` and sends keysyms and
+  mouse movement to `cadr-terminal`, which is the one program that writes these
+  registers and paces the words onto the card. `docs/usb-input.md` has the
+  reason for that shape, and the kernel side was done earlier: `evtest` printed
+  typed characters off a USB keyboard on the board on 10 Sep.
 - **The Unibus interrupt cycle.** Nothing in `rtl/` puts a vector on the bus
   or arbitrates `BR5`. The interrupt itself is built: the card's request
   reaches the bus interface's own register at `0o766040`, is taken under
@@ -1329,25 +1332,23 @@ takes one step, and the bound is there to fail rather than to hang.
   register on a wire. muir does the same and says why: "The model has no grant
   cycle to latch at, so the vector is read off the requesting board at the
   time of the read."
-- **A master for the mapped Unibus window.** The window itself is built.
+- **A master for the mapped Unibus window is built now, and so is the window.**
   `rtl/machine/cadr_busint_regs.sv` answers `0o140000`--`0o177777` for a
   Unibus master that is not the board, translates through the sixteen map
   registers, keeps the 29701s at RBUF and WBUF that make one Lisp machine
   word out of two Unibus cycles, and sets `UB MAP ERROR` when the map refuses.
   `rtl/machine/cadr_memory_path.sv` arbitrates its Xbus half onto the bus as
-  it arbitrates the disk's channel. What is missing is a master that can
-  reach it. The one muir has is the debug cable's, `Machine::mapped_read` and
-  `mapped_write`, and `rtl/machine/cadr_dbgin.sv`'s request is still tied off;
-  the console is a master but cannot address anything outside
-  `0o766000`--`0o766036`; and the processor's own Unibus cycles are not
-  mapped, which `busint::decode` says by answering `Responder::NoUnibus` over
-  the whole window.
-- **The debug block at `0o766100`--`0o766136`.** It is a cycle on the other
-  machine's Unibus, answered over the cable. `busint::register` decodes it to
-  nothing and so does this fabric; in the composed machine those four
-  addresses therefore time out, where muir's `Responder::Debug` with no cable
-  answers at `-UB MSYN` off the pull-up. That is a divergence of the cable's
-  absence and goes when the cable's side is built.
+  it arbitrates the disk's channel. The master muir has for it is the debug
+  cable's, `Machine::mapped_read` and `mapped_write`, and
+  `rtl/machine/cadr_dbgin.sv` is that master in this fabric now, attached in
+  `rtl/machine/cadr_memory_path.sv`. The console is a master but cannot
+  address anything outside `0o766000`--`0o766036`, and the processor's own
+  Unibus cycles are not mapped, which `busint::decode` says by answering
+  `Responder::NoUnibus` over the whole window.
+- **The debug block at `0o766100`--`0o766136`** is built now, in
+  `rtl/machine/cadr_busint_regs.sv`, and with no cable it answers at
+  `-UB MSYN` with all ones, as muir's `Responder::Debug` does.
+  `docs/debug-cable.md` has it.
 - **`-BOOT*` is built and reaches the processor.** The card decodes the
   keyboard's boot word itself and pulses the line. `build/iob.pass` holds the
   decode and the pulse against muir. `build/kbd_boot.pass` holds what the pulse

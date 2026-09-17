@@ -629,16 +629,16 @@ a tick of its own is a question for the disk's owner. A display that is right
 cannot be made wrong by a placer, and the checks say it is right.
 
 **The constraint applied as written.** Both boards count their multicycle
-exceptions (2 and 4) and pass `assert_multicycle_applied`. From the
-checkpoint, every path OUT of the display's three held decodes asks for
-5.000 ns, paths INTO them ask for 5.000 and 75.000 (the map arriving,
-relaxed), and every path into the frame counter, the flag, the mode
-register and the cycle's latch asks for 5.000. Those are one tick and fifteen
-ticks, so at the 10 ns tick built today the same requirements read 10.000 and
-150.000; the assertion matches the string it is handed by
-`boards/arty-z7-20/vivado/tick.tcl` and so moved with the tick.
-`rtl/plumbing/xilinx7/cadr_machine.xdc`'s new clause did exactly what its
-comment says.
+exceptions (2 and 4) and pass `assert_multicycle_applied`. From the checkpoint,
+every path OUT of the display's three held decodes asks for 5.000 ns, paths
+INTO them ask for 5.000 and 75.000 (the map arriving, relaxed), and every path
+into the frame counter, the flag, the mode register and the cycle's latch asks
+for 5.000. Those are one tick and fifteen ticks. At today's 10 ns grid the
+relaxed set is eight ticks (`rtl/plumbing/xilinx7/cadr_machine.xdc:401`), so
+with the 10 ns tick the same requirements read 10.000 and 80.000; the assertion
+matches the string it is handed by `boards/arty-z7-20/vivado/tick.tcl` and so
+moved with the tick. `rtl/plumbing/xilinx7/cadr_machine.xdc`'s new clause did
+exactly what its comment says.
 
 **Both boards close at the 10 ns tick.** On 2026-09-11 timing closure stopped
 being something to chase and the MMCM's 1000 MHz VCO was divided by 10 rather
