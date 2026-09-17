@@ -189,7 +189,7 @@ code, kbd { font-family: var(--mono); font-size: var(--fs-mono); font-weight: 40
   gap: 1.75rem;
 }
 /* A board's page is its architecture drawing, which is drawn on a canvas
-   1810 units wide. The plate is let out to hold it at about its own size, so
+   1752 units wide. The plate is let out to hold it at about its own size, so
    that its 11-unit labels land near 11px where the window allows. */
 body.wide .page { max-width: 118rem; }
 
@@ -199,7 +199,9 @@ body.wide .page { max-width: 118rem; }
    on every page, and nothing on it moves from page to page. The page being
    read is plain text printed on the spot color, as the who-line prints its
    number; the color is drawn with a shadow rather than padding, so it takes
-   no room and no word shifts. Every other page is a link. No name is broken
+   no room and no word shifts. Every other page is a link. After the boards
+   that have a page, a board with no page here yet is named, linked to its
+   maker's page, with the word upcoming beside it. No name is broken
    across two lines. */
 .desk-note {
   font-family: var(--mono);
