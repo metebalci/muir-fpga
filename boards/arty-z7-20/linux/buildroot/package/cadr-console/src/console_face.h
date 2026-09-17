@@ -923,7 +923,7 @@ const char *cons_reg_name(unsigned eadr);
 // so a machine that is not running cannot move it; and `Engine::step` goes on
 // returning Ok on a stopped machine, which is why nothing but the counter can
 // answer this.  The reason a stopped machine gives is FLAG-1's, decoded as
-// ../muir/src/main.rs:2378-2405 (`machrun_low`) decodes it.
+// ../muir/src/main.rs:3048-3074 (`machrun_low`) decodes it.
 struct cons_status {
 	int lost;			/* a diagnostic cycle was not answered: nothing below is data */
 	uint16_t flag1_word, flag2_word;
