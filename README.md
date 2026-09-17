@@ -1,27 +1,45 @@
 # muir-fpga
 
-This is the MIT CADR on an FPGA, at **rtl level**, at 50% of the speed the
-hardware ran.
+This is the MIT CADR on an FPGA, at **rtl level**, running at the original
+machine's speed to within about 5%.
 
 [muir](https://github.com/metebalci/muir) simulates the CADR at three
 fidelities. `rtl` is the middle one. It has the machine's own two-phase clock,
 every datapath signal on it, and everything that is a matter of *when*. That
 means bus waits and hangs, arbitration, and timeouts. This repository is that
-machine in fabric, at the CADR's own microcycle of 15 clock ticks.
+machine in fabric, with a normal microcycle of 15 clock ticks.
 
-The speed is one number and is worth being exact about. Every instant the CADR
-names is placed on a grid of 10 nanoseconds, rounded up --- the microcycle is
-15 ticks, the seven read taps are 8, 9, 10, 12, 13, 14 and 16 --- and a tick
-lasts 10 nanoseconds on this board. So a microcycle is 145 nanoseconds on
-MIT's drawings and 150 here, and the machine runs at about 97% of the
-hardware's speed. Eight instants move up by five nanoseconds each, never down,
-and muir's `--timing-model fpga` rounds them the same way, so the references
-are generated under the same grid. `docs/timing.md` lists every one. The grid
-was 5 nanoseconds before, which kept every instant exact and, with a 10
-nanosecond tick, ran the machine at half speed; the tick is 10 nanoseconds
-because timing closure at 5 was not reached, and a setup violation in a
-machine whose semantics are pinned to a tick is a threat to correctness rather
-than to speed.
+A normal microcycle takes 150 nanoseconds where MIT's drawings say 145, and
+every microcycle is within 4% of the drawings.
+
+| Speed | Drawings | Here |
+|---|---|---|
+| fast | 135 ns | 140 ns |
+| normal | 145 ns | 150 ns |
+| slow | 160 ns | 160 ns |
+| extra slow | 220 ns | 220 ns |
+
+**The timing of the clock edges is close to the CADR's but not identical.**
+The CADR placed its clock edges with tapped delay lines, at instants its
+drawings give in nanoseconds. The FPGA clocks everything from one 10
+nanosecond clock, so an edge can only fall on a tick. Each instant goes to the
+first tick at or after where the drawings put it. Eleven instants move later,
+eight of them by 5 nanoseconds and three by 7, and none moves earlier.
+
+What the machine computes does not change, because every instant keeps its
+order. Free-running oscillators keep their exact period, so the microsecond
+clock keeps real time and the display's frame is exact. muir's
+`--timing-model fpga` applies the same rounding. So the fabric is held tick for
+tick to muir under that model, and not to the original hardware's exact
+nanoseconds.
+
+On the Arty Z7-20 the machine runs 5.88 million microcycles a second of real
+time, memory stalls included. Its microsecond clock measured 0.99995 and
+1.00001 of real time. The grid was 5 nanoseconds before, which kept every
+instant exact, but the clock was 10 nanoseconds then too, so the machine ran at
+about half speed. The clock is not 5 nanoseconds because the design does not
+meet its timing at 5. `docs/timing.md` lists every instant, where it came from,
+and what depends on it.
 
 muir's netlists are read to **derive** things. They give the port list's
 directions, the address decode's boundaries, and every constant that came off
