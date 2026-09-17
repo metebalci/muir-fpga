@@ -62,7 +62,7 @@ on" (`../muir/src/rtl.rs:2703-2710`).
 `Halt` enum has one variant, `UnknownDest`, constructed only by the
 low-fidelity `Micro` engine at `../muir/src/micro.rs:625`; `Rtl::step` never
 returns it (`../muir/src/rtl.rs:2684-2691`, "it cannot fail"). What a console
-reads instead is `FLAG-1`, and `../muir/src/main.rs:2378-2405` is the
+reads instead is `FLAG-1`, and `../muir/src/main.rs:3048-3074` is the
 reference decode. Four stopped states, all of them in that one word:
 
     console halt    SRUN, bit 8, down --- RUN was written zero
