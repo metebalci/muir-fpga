@@ -169,7 +169,8 @@ is slower than the machine's own spacing.
   value 0 to 17 and no other.
 - **The timeout.** `TIMEOUT_NS` is 2.56 s. It is the 74LS124 at DCTMOT 0B04
   section 1 at 20 ms, divided by 128 by the 74393 at 0C03. **That is
-  512,000,000 ticks of the fabric's clock**, so running every hanging
+  256,000,000 ticks of the fabric's clock at the 10 ns grid**, and was
+  512,000,000 at the 5 ns grid, so running every hanging
   code out to it would cost more than the rest of `make check` together. The
   check runs one full-length hang, and checks the rest for the hang itself.
   The hang is visible on the store to START, because `Controller::hang`
@@ -426,7 +427,7 @@ DIRTY says a transfer wrote is written back at leisure, and the walk's own is
 left for the next pass. Such a write-back is deferred, counted, and said once
 if a slot is refused a hundred passes in a row (25 ms of real time, the poll
 being a `usleep` and not a tick count; a Read All holds a slot for a
-revolution, 16.7 ms of the machine's own time and 33.4 ms of real).
+revolution, 16.7 ms, which at the 10 ns grid is real time as well).
 
 **The refusal read back with WAITING up, found on the board.** Once in
 48,879 moves the disk pack program failed a write-back with `refused while the walk
@@ -1176,7 +1177,9 @@ limit that was never a defect is the suppression that list exists to prevent.
 
 **The band cannot close it, and that is worth being exact about.**
 `rtl_sys.golden` has `sintr` up on 17,185 of its 2,200,000 rows, and on the
-band it is the disk's done interrupt and nothing else's.  But
+band it is the disk's done interrupt and nothing else's. The trace has since
+grown to 2,800,000 rows (`golden/src/rtl_sys.rs`), and that count was not
+taken again.  But
 `build/microcycle_sys.pass` runs `cadr_microcycle` **alone**, where the disk
 is outside the module and `sintr` is properly a port with the trace driving
 it. So those 17,185 rows check the *processor's* end of the wire, which is

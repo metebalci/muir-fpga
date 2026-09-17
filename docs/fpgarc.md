@@ -510,8 +510,9 @@ flag every program takes, grouped by program, with an explanation above each.
 
 On the card this project builds for itself, the live lines are the Chaosnet
 address and the cable; the peers and the bridge, which come from `local.conf`;
-the screen's endpoint and the serial line's, written out in full; and the boot
-keyboard's chord. Everything else is commented out with what it does. The
+the screen's endpoint and the serial line's, written out in full; the boot
+keyboard's chord; and `--debug-cable-wiring auto`. Everything else is commented
+out with what it does. The
 `--no-auto-boot` and `--debug-cable-connect` lines are commented out with the
 sentences that explain them.
 
@@ -548,8 +549,9 @@ not got, listening on a port nobody named, with no peer it could reach. A
 release with `--serial` live would offer an unauthenticated port on every
 interface for a cable hardly anybody wants. Each is one `#` away from being on.
 
-The development card is unchanged. It has those three lines and the cable and
-the serial line as well, which is what this project's own board needs.
+The development card is unchanged. It has those three lines, the cable, the
+serial line and the debug cable's wiring as well, which is what this project's
+own board needs.
 
 `RELEASE=1` is what writes the released menu, and `mksd-release.sh` sets it.
 That is a separate flag from `STANDALONE=1`, which is about what is private:
@@ -602,7 +604,7 @@ program takes two spellings of each of its flags and a card says a setting once.
 That is held for the released menu as well as the development one.
 
 **And it holds the two menus apart.** The released menu must have those three
-live lines and no others, and the development menu must still have its five.
+live lines and no others, and the development menu must still have its six.
 The second half is the control: a release menu with three live lines could
 otherwise be bought by turning the development card's lines off too, and every
 other case would still pass.

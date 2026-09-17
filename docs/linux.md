@@ -11,7 +11,8 @@ evidence behind it.
 
 The fabric is the CADR. The PS runs Linux and serves it. Eventually that means
 the disk pack on microSD, blocks fed to the disk controller, and an RFB server
-reading the display out of DDR. **None of that exists.** This file is the
+reading the display out of DDR. **None of that exists.** All three exist now,
+and `docs/disk-controller.md` and `docs/terminal.md` have them. This file is the
 ground under the first step of it, which is Linux booting at all with a device
 tree the fabric can live alongside. It was written before the board could be
 tried, because the session doing it was cut short. **It has run on hardware
@@ -439,6 +440,10 @@ something claims a sub-region by phandle, and not before.
     cadr-reserved.dtsi   the reserved-memory node, appended to the BSP's tree
     uEnv.txt             the TFTP boot, with fdt_high and initrd_high pinned
     mksd.sh              stages build/sd/{stock,reserved} from the BSP
+
+That was the directory for the stepping stone. It now holds the Buildroot tree
+and the card scripts beside those, and `uEnv.txt` has become `uEnv.txt.in`,
+which the staging fills in.
 
 `mksd.sh` sums the BSP before use, for the same reason the band's archive is
 summed. The BSP itself is gitignored and belongs in `vendor/`.

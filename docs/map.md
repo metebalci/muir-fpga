@@ -58,7 +58,8 @@ those are the two that differ. `Q` holds the address the map was hacked for,
 which `((MD Q-R) VMA)` put there, and `VMA` holds the address that faulted.
 **So a halted board cannot be asked which suspect it is.** It would need either
 two more registers on `rtl/plumbing/cadr_console.sv` or a microinstruction
-stepped by hand to put `VMA` on `OB`.
+stepped by hand to put `VMA` on `OB`. The console has carried `VMA`, `Q` and
+`MD` since, as page 0's words 7 to 9, and `docs/console.md` has them.
 
 The injections settle one more thing. muir reaches `PDL-BUFFER-REFILL`'s first
 map hack at microcycle **2,196,653**, and it does all 105 of its calls, 63

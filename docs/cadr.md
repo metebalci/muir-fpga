@@ -78,8 +78,9 @@ data. [`disk-controller.md`](disk-controller.md) is the long form.
 ## The display
 
 MIT's word for the display controller is the TV, and the board this project
-reproduces is the black-and-white SIMPLE TV. There is no color and no gray. The
-picture is exactly what the software has written into the frame buffer.
+reproduces first is the black-and-white SIMPLE TV. It has no color and no gray.
+The picture is exactly what the software has written into the frame buffer. A
+second board, MIT's color TV, can be fitted beside it.
 
 The frame is the machine's only regular interrupt, and the microcode counts
 time by it. [`tv.md`](tv.md) is the long form.
