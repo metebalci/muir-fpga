@@ -70,10 +70,11 @@ is the conversion from MIT's drawings into ticks: `TICK_NS` in
 or after it. The tick is how long one lasts, which is the board's business, and
 this board makes one ten nanoseconds.
 
-The machine runs at the original CADR's speed to within about 5%. A normal
-microcycle is 15 ticks, 150 ns, where the drawings say 145 ns, and every
-microcycle is within 4% of the drawings. The read taps are 8, 9, 10, 12, 13, 14
-and 16 ticks.
+The processor's microcycles and the machine's clocks run at the original
+CADR's speed to within about 5%. A normal microcycle is 15 ticks, 150 ns, where
+the drawings say 145 ns, and every microcycle is within 4% of the drawings. The
+read taps are 8, 9, 10, 12, 13, 14 and 16 ticks. Main memory and the disk are
+not timed as the original's were, and `README.md` compares them part by part.
 
 The timing of the clock edges is close to the CADR's but not identical. The
 CADR placed its clock edges with tapped delay lines, while the FPGA clocks

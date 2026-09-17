@@ -1,7 +1,8 @@
 # muir-fpga
 
-This is the MIT CADR on an FPGA, at **rtl level**, running at the original
-machine's speed to within about 5%.
+This is the MIT CADR on an FPGA, at **rtl level**. Its processor's microcycles
+and the machine's clocks run at the original machine's speed to within about
+5%.
 
 [muir](https://github.com/metebalci/muir) simulates the CADR at three
 fidelities. `rtl` is the middle one. It has the machine's own two-phase clock,
@@ -9,15 +10,87 @@ every datapath signal on it, and everything that is a matter of *when*. That
 means bus waits and hangs, arbitration, and timeouts. This repository is that
 machine in fabric, with a normal microcycle of 15 clock ticks.
 
-A normal microcycle takes 150 nanoseconds where MIT's drawings say 145, and
-every microcycle is within 4% of the drawings.
+**That speed is a statement about parts, not about the whole machine.** A
+normal microcycle takes 150 nanoseconds where MIT's drawings say 145, and every
+microcycle is within 4% of the drawings. The microsecond clock and the display
+frame keep MIT's exact periods. Main memory is DDR3, which answers in its own
+time rather than on the memory board's clock. The disk carries the Trident
+T-300's timing and does not charge it on the board, so a disk operation ends
+when its words have moved. No whole program has been timed against a real CADR.
 
-| Speed | Drawings | Here |
+The table sets the original machine's figures beside this machine's on the Arty
+Z7-20. A figure for the original that no source gives is marked as not in the
+recovered material. Each figure for this machine says whether it was measured
+on the board or is what the fabric is built to do.
+
+| | The CADR | This machine, on the Arty Z7-20 |
 |---|---|---|
-| fast | 135 ns | 140 ns |
-| normal | 145 ns | 150 ns |
-| slow | 160 ns | 160 ns |
-| extra slow | 220 ns | 220 ns |
+| Microcycle, fast speed | 135 ns [1] | 140 ns, by design [11] |
+| Microcycle, normal speed | 145 ns [1] | 150 ns, by design [11] |
+| Microcycle, slow speed | 160 ns [1] | 160 ns, by design [11] |
+| Microcycle, extra slow speed | 220 ns [1] | 220 ns, by design [11] |
+| Microcycles a real second, stalls included | not in the recovered material | 5.876 million, measured, 88.1% of what a normal microcycle allows [12] |
+| Microsecond clock | 1,000 ns, from a 32 MHz crystal [2] | 100 ticks; measured at 0.99995 and 1.00001 of real time [12] |
+| Display frame | 15,456,000 ns, 64.7 Hz [3] | the same period from the same sync program, by design; not measured on the board [11] |
+| Xbus setup before `-XBUS.RQ` | 80 ns [4] | 80 ns, by design [11] |
+| Read deskew | 60 ns [4] | 60 ns, by design [11] |
+| Main memory, `-XBUS.RQ` to the acknowledgment | about 460 to 500 ns on the memory board's 24 MHz clock, longer during a refresh [5] | the DDR3 round trip through the processing system's `S_AXI_HP0`; not measured on the board. In simulation the checks answer at muir's memory board instant [13] |
+| Disk rotation | 3,600 rpm, 16.7 ms; average latency 8.3 ms [6] | 16,666,667 ns in the model; not charged on the board [14] |
+| Disk sector | 1,164 bytes [7], 963 us at the transfer rate below | 968,448 ns in the model, at 104 ns a bit; not charged on the board [14] |
+| Disk seek | 6 ms to the next cylinder, 30 ms on average, 55 ms at most [6] | 5,939,729 ns plus 60,271 ns a cylinder in the model: 6 ms, about 22 ms on average, 55 ms at most; not charged on the board [14] |
+| Disk transfer | 1,209 KByte/s [6] | a block moves once Linux has read it from the pack file; a cold load measured about 64,500 blocks in about 58 s, about the same as at half speed [12] |
+| Disk hang timer | 2.56 s [8] | 2.56 s, by design [14] |
+| Chaosnet cable | 4 MHz [9] | no cable: a frame crosses to Linux whole and travels as a UDP datagram over gigabit Ethernet; not measured [15] |
+| Serial line | 50 to 19,200 baud, from a 5.0688 MHz crystal [10] | the same rates in real time, by design; 300 baud measured whole at 30.0 characters a second, and 9600 baud whole with a store of 1,024 characters [16] |
+
+Sources for the CADR:
+
+1. muir `src/clock.rs`, `Speed`: the 74S151 at CLOCK1 1D08 selects the read
+   tap, and a microcycle is that tap plus 60 ns of restart
+   (`mit/cadr/clock1.drw`).
+2. muir `src/chip.rs`, `CHAOS_CRYSTAL_PERIOD`, and `src/ioboard.rs`,
+   `FIRST_USEC_EDGE_NS`: `1 USEC CLK` is counted down from the 32 MHz crystal
+   at LMTCLK 0A05 (`mit/chaos/lispm/lmtclk.drw`, `mit/cadrio/clktim.drw`).
+3. muir `src/tv.rs`, `FRAME_NS`: 966 lines of 16.000 us in clock mode 0, from
+   MIT's sync program `mit/cadrtv/cpt.prom`, measured on muir's netlist of the
+   SIMPLE TV.
+4. `mit/cadr1/xspec.text.3`, the Xbus specification: "80 ns. prior to
+   asserting -XBUS.RQ". muir `src/busint.rs`, `XBUS_ACK_NS`: the 60 ns tap of
+   the TD100 at REQLM 0C09.
+5. muir `src/busint.rs`, `MemoryBoard` and `MEMORY_CYCLE_STAGES`, and
+   `tests/cadrm_netlist.rs`: a request is taken at the first edge of the
+   board's 24 MHz crystal after `-XBUS.RQ` and acknowledged eleven stages of
+   41.7 ns later. A refresh cycle about every 12 us, MIT's note on
+   `mit/cadrm/memctl.drw`, holds the board for about 455 ns. These figures
+   come from muir's netlist of MIT's memory board, whose crystal ECO 1 in
+   `mit/cadrm/mem.eco` added, and not from hardware.
+6. CalComp/Century Data 76205-902, *Performance Specification, Models T-25,
+   T-50, T-80, T-200 and T-300*, November 1980, Table 2-1, as quoted in muir
+   `src/disk_unit.rs` at `REVOLUTION_NS`, `BIT_NS` and `Trident`.
+7. `mit/cadrdc/dctrid.drw`: "Set sector length jumpers in drive to 1410
+   (octal) which is 1164. bytes". System 100 `sys/doc/disk.text`: "one every
+   1164. bytes".
+8. muir `src/disk_controller.rs`, `TIMEOUT_NS`: the 74LS124 at DCTMOT 0B04 at
+   20 ms, divided by 128 by the 74393 at DCTMOT 0C03. System 100
+   `sys/doc/disk.text`: "longer than 2.5 seconds".
+9. `mit/cadrio/iob.eco`, ECO #5 of 8/3/80: "Change cable speed to 4 MHz".
+10. muir `src/serial.rs`, `DIVISORS` and `BRCLK_HZ`: Table 1 of the Signetics
+    2651 data sheet, for the crystal at IOBSER 0A15.
+
+Sources for this machine:
+
+11. `docs/timing.md`, which gives every instant in ticks and its source.
+12. `docs/board.md`, "The 10 ns grid on the board, 17 September".
+13. `rtl/plumbing/cadr_xbus_ddr.sv`: the bridge adds no ticks of its own, and
+    the answer comes when the AXI port returns it. `tb/cadr_machine_tb.cpp`
+    answers each memory cycle at muir's acknowledgment instant, which includes
+    the memory board's clock.
+14. `rtl/machine/cadr_disk_controller.sv`: the drive's time is charged only
+    when `cadr-disk-packs` runs with `--timed`. The board's init script does not
+    pass it, and muir leaves it off by default too.
+15. `rtl/plumbing/cadr_chaos_cable.sv` and `docs/chaosnet.md`.
+16. `docs/board.md`, "A placement fault fixed, and the serial store, 17
+    September".
 
 **The timing of the clock edges is close to the CADR's but not identical.**
 The CADR placed its clock edges with tapped delay lines, at instants its
@@ -33,13 +106,11 @@ clock keeps real time and the display's frame is exact. muir's
 tick to muir under that model, and not to the original hardware's exact
 nanoseconds.
 
-On the Arty Z7-20 the machine runs 5.88 million microcycles a second of real
-time, memory stalls included. Its microsecond clock measured 0.99995 and
-1.00001 of real time. The grid was 5 nanoseconds before, which kept every
-instant exact, but the clock was 10 nanoseconds then too, so the machine ran at
-about half speed. The clock is not 5 nanoseconds because the design does not
-meet its timing at 5. `docs/timing.md` lists every instant, where it came from,
-and what depends on it.
+The grid was 5 nanoseconds before, which kept every instant exact, but the
+clock was 10 nanoseconds then too, so the machine ran at about half speed. The
+clock is not 5 nanoseconds because the design does not meet its timing at 5.
+`docs/timing.md` lists every instant, where it came from, and what depends on
+it.
 
 muir's netlists are read to **derive** things. They give the port list's
 directions, the address decode's boundaries, and every constant that came off

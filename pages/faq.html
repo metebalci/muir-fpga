@@ -110,7 +110,7 @@
       </div>
       <div class="panel">
         <h3>Why is a tick ten nanoseconds?</h3>
-        <p class="small">Because the design does not meet its timing with a 5&nbsp;ns clock. The CADR placed its clock edges with delay lines, and here each of MIT&rsquo;s instants goes to the first 10&nbsp;ns tick at or after it, so some edges fall up to 7&nbsp;ns later and the machine runs within about 5% of the original speed. muir&rsquo;s fpga timing model rounds the same way.</p>
+        <p class="small">Because the design does not meet its timing with a 5&nbsp;ns clock. The CADR placed its clock edges with delay lines, and here each of MIT&rsquo;s instants goes to the first 10&nbsp;ns tick at or after it, so some edges fall up to 7&nbsp;ns later, and the processor and its clocks run within about 5% of the original speed. muir&rsquo;s fpga timing model rounds the same way.</p>
         <p class="src push">Rests on <code>docs/timing.md</code>; the header of <code>rtl/machine/cadr_tick_pkg.sv</code>; <code>README.md</code>. <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/faq.md#why-is-a-tick-ten-nanoseconds">The whole answer</a>.</p>
       </div>
       <div class="panel">
