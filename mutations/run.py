@@ -2130,9 +2130,14 @@ def check_makefile():
     # `arty` does not already tell us, and it would have to be kept in step
     # with the Arty's by hand for ever.  Naming it here is the second of the
     # two ways to close this warning and the one that stands alone.
+    # `de25_pins` is Python reading a Tcl pin file and, when one is named,
+    # Terasic's Quartus settings.  Nothing in it is verilated, and the second
+    # of the two files it compares cannot be carried into a mutation work
+    # tree, so it is named here and given no records.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
-                           "usb_input", "fpgarc", "cora", "grid"}
+                           "usb_input", "fpgarc", "cora", "grid",
+                           "de25_pins"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four
