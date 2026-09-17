@@ -37,11 +37,11 @@ as a named constant.
 
 - **The grid.** The ring and every triggered delay are rounded up to the next
   10 ns. A normal microcycle is 15 ticks, 150 ns against MIT's 145, so the
-  machine runs at about 97% of the original speed. Eleven instants move, each
-  by 5 ns or less: TSE's two edges, SELECT, the end of the control store's
-  write pulse, the fast and normal read taps with and without ILONG, the
-  receive buffer's setup, the counter's low half and the half-microsecond
-  clock's first edge.
+  machine runs at about 97% of the original speed. Eleven instants move, eight
+  by 5 ns and three by 7 ns, and none earlier: TSE's two edges, SELECT, the
+  end of the control store's write pulse, the fast and normal read taps with
+  and without ILONG, the receive buffer's setup, the counter's low half and the
+  half-microsecond clock's first edge.
 - **Oscillators keep their exact period.** A free-running clock is an
   accumulator that acts at the first tick at or after each true edge, so it
   never drifts from MIT's rate.
@@ -131,9 +131,9 @@ home, and fails when one is missing or when two disagree.
 
 ## What the 10 ns grid moved
 
-These are the instants the grid rounds rather than divides. Each moves up by
-five nanoseconds or less, and every one of them is rounded the same way by
-muir's `--timing-model fpga`.
+These are the instants the grid rounds rather than divides. Eight move up by
+five nanoseconds and three by seven, none earlier, and every one of them is
+rounded the same way by muir's `--timing-model fpga`.
 
 | Instant | Drawings | On the grid |
 |---|---|---|

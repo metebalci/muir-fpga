@@ -217,11 +217,13 @@ holds the fabric to `Rtl`'s ordering so that it cannot drift silently.
 
 ## Mutation records
 
-These records are written and measured but are **not yet in
-`mutations/list.txt`**, because a record's `@check` is validated against the
+These records were written and measured before they were in
+`mutations/list.txt`, because a record's `@check` is validated against the
 runner's `CHECKS` before anything else runs, and a record naming a check the
 runner has no entry for stops `make mutants` at parse for every record. The
-runner needs the entry below, and the two must land in the same commit.
+runner needed the entry below, and the two had to land in the same commit.
+They have: all five records are in `mutations/list.txt`, and `mutations/run.py`
+carries the `map_access` entry.
 
     "map_access": {
         "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_ddr_map.sv"],

@@ -12,7 +12,9 @@ bitstream says nothing about that at all.
     make check                       Verilator + Rust + muir     no Vivado
     vivado -mode batch -source ...   Vivado                      no checks
 
-`make check` is what CI runs on every push. A checkout without Vivado runs
+`make check` is what `.github/workflows/check.yml` runs on every push, and
+that workflow is disabled on GitHub today (`gh workflow list --all` reads
+`disabled_manually`). A checkout without Vivado runs
 every check that matters. Nothing in `make check` synthesizes anything.
 
 ## For the checks
@@ -38,8 +40,10 @@ silently ignored. That was measured, not assumed.
 **Verilator** is needed at 5.032 or near it. `sudo apt-get install verilator`
 is what CI does, and it is the whole of the install.
 
-**Python 3** runs `mutations/run.py`, with the standard library only. It is not
-needed by `make check`, and it is needed by `make mutants`.
+**Python 3** runs `mutations/run.py`, with the standard library only. `make
+mutants` needs it, and so does `make check`: `grid.pass` runs
+`tools/grid_check.py` (`Makefile:136-140`), and `current` runs the generators'
+own `--check` passes (`Makefile:1725-1734`).
 
 ## For a bitstream
 
@@ -145,8 +149,11 @@ is worth knowing before you read one. `cadr_machine` brings its whole datapath
 out for the testbenches. A top level that left those unconnected would
 synthesize to almost nothing, route in seconds, and **write a perfectly good
 bitstream of an empty part.** That is not an error but a plausible artifact. So
-the utilization is compared against what the machine is known to cost:
+the flow refuses a run with fewer than 1,500 LUT cells or 20 block RAMs
+(`boards/arty-z7-20/vivado/bitstream.tcl:612`). The floors were set an order of
+magnitude under what the machine cost at `712909e`:
 
     about 2,800 LUTs of 53,200, 29 block RAMs of 140, no DSPs
 
-If a run reports far less than that, it did not build this machine.
+The machine is several times larger than that now. If a run reports less than
+the floors, it did not build this machine.

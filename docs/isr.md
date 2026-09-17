@@ -123,5 +123,7 @@ machine just classified an interrupt using a register that does not exist.
 So the check worth having is not a test of the interrupt handler. It is a
 comparison of which addresses your implementation answers against which
 addresses a reference answers, in both directions, over the whole address
-space. This project's own check prints that list, and it had been naming these
-exact registers on every run for days before anybody acted on it.
+space. This project's own check, `tb/cadr_unibus_tb.cpp`, now holds that
+comparison against muir's own tables in both directions. Before these
+registers were built, it printed them as addresses muir answers and the fabric
+does not, on every run for days, before anybody acted on it.

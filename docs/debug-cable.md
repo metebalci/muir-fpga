@@ -79,15 +79,15 @@ MTD100 at 0A10, so the request falls one delay-line section after everything
 else is already standing. muir calls this `busint::DEBUG_OUT_REQUEST_NS`.
 
 The window reproduces that lead inside the fabric, where it is free. A store
-to `CTL` puts the levels on the cable at once and asserts the request twenty
-ticks later.
+to `CTL` puts the levels on the cable at once and asserts the request ten
+ticks later, `LEAD_T` in `rtl/plumbing/cadr_debug_window.sv`.
 
-A debugger must therefore hold a request for at least those twenty ticks. A
+A debugger must therefore hold a request for at least those ten ticks. A
 request lifted inside its own lead makes no strobe at all, which is what the
 real cable does too. `-DEBUG OUT REQ` is low only while `SELECT DEBUG` and its
 delayed copy are both high, so a select shorter than one section never brings
 the request down either. muir cannot reach that, because an AXI round trip
-through the interconnect is many times 200 nanoseconds. The check's own first
+through the interconnect is many times 100 nanoseconds. The check's own first
 draft did reach it, twice, and measured nothing until it was fixed.
 
 The levels are held past the lift by never being cleared. The debuggee's
@@ -214,7 +214,7 @@ This is a hazard worth naming rather than leaving to be found, and it is
 measured rather than reasoned.
 
 `rtl/plumbing/xilinx7/cadr_debug.xdc` relaxes every path into the carrier's
-`sts_dbd` register to four ticks, and the argument it gives is the debug
+`sts_dbd` register to six ticks, and the argument it gives is the debug
 CYCLE's: the diagnostic register block answers `busint::DIAGNOSTIC_NS` after
 `-UB MSYN`, so the word has had twenty-five ticks to settle by the time
 `DEBUG IN ACK` rises. A `-DB READ STATUS` strobe is not like that. It is
@@ -223,8 +223,8 @@ captures one tick after `-DEBUG IN REQ` falls and the byte has had exactly one.
 While the byte was a constant zero nothing could move inside that tick. Four of
 its bits are flip-flops now.
 
-Measured on the routed memory-on board, with every one of these paths carrying
-the 40 ns requirement the exception gives them:
+Measured on the routed memory-on board while the exception was four ticks, with
+every one of these paths carrying the 40 ns requirement it gave them:
 
 | path | levels | delay |
 |---|---|---|
@@ -428,7 +428,7 @@ The map the port now has:
 
 | | | |
 |---|---|---|
-| `0x8000_0000` | `cadr_console.sv` | sixty-four words, `CONS`, its own `UNMAPPED` in the rest of its page |
+| `0x8000_0000` | `cadr_console.sv` | ninety-six words, `CONS`, its own `UNMAPPED` in the rest of its page |
 | `0x8000_1000` | `cadr_debug_window.sv` | sixteen words, `DBUG`, its own `UNMAPPED` in the rest of its page |
 | everything else | `cadr_gp0_default.sv` | `NONE` to every read, OKAY to every write |
 
@@ -462,16 +462,18 @@ reads a program counter whose value muir wrote down.
 
 What it measures rather than assumes, reported on its own output:
 
-- the levels stand twenty ticks before the request and at least seven past the
-  lift, over thirty-one lifts, and no level ever moves on the tick the request
-  does;
+- the levels stand ten ticks before the request and at least one past the
+  lift, and no level ever moves on the tick the request does. At the 5 ns grid
+  the lead was twenty and the margin past the lift measured seven, over
+  thirty-one lifts;
 - `DEBUG ACK` rises on the tick the request falls for each of the three
-  register strobes, and seventy-four ticks later for a cycle;
-- the grant to `-UB MSYN` is twenty ticks, `-UB MSYN` to the register block's
-  `-UB SSYN` is fifty-one, and the lift to `DBUB MASTER` clearing is twenty;
+  register strobes, and for a cycle no sooner than the grant and the slave
+  take together, thirty-six ticks;
+- the grant to `-UB MSYN` is ten ticks, `-UB MSYN` to the register block's
+  `-UB SSYN` is twenty-six, and the lift to `DBUB MASTER` clearing is ten;
 - a cycle at an address nothing answers is never acknowledged over two
-  thousand ticks, which is twice the debugger's own timeout and five times the
-  bus's;
+  thousand ticks, which is 20 microseconds: longer than the debugger's own
+  11.05 microsecond timeout and more than four times the bus's 4.25;
 - the watchdog lifts a request that has stood too long, says so in `FAULTS`,
   and gives the machine its Unibus back;
 - all 600,000 microcycles still agree with muir, column for column, after the
@@ -591,7 +593,7 @@ whether the board that sent this frame is the debugger.
 **ONE CONNECTOR CARRIES THE WHOLE LINK, IN BOTH DIRECTIONS, four pins each
 way.** Each direction is one strobe, one data line and two guards, twenty-four
 beats a frame, and neither group is ever driven from both ends. A frame is 162
-ticks against the 2,210 the debugger's own interface allows a cycle, so the
+ticks against the 1,105 the debugger's own interface allows a cycle, so the
 beats have room. The section on the budget below spends them.
 
 **A board is a debugger or a debuggee by configuration and never both at
@@ -627,7 +629,7 @@ corrupt a word, it puts two drivers on one wire. And a receiver clocked from
 the cable is a second clock domain across the whole carrier, where the two
 boards already have a tick of the same length. What a forwarded clock would
 buy is a smaller delay, and delay is the one thing this cable has room for. A
-frame here is 162 ticks and the debugger's own interface waits 2,210 for an
+frame here is 162 ticks and the debugger's own interface waits 1,105 for an
 answer. The section on the budget below has the arithmetic.
 
 The eighth wire is therefore a strobe and not a clock. Nothing on either side
@@ -854,25 +856,29 @@ free, so a level put on the cable waits for the next frame to start.
 
 The worst case each way is therefore a whole frame of waiting plus the frame
 itself, which is 162 + 138 ticks with the receiver moving its outputs at the
-last beat. The far machine's own bus cycle is 74 ticks for a diagnostic
-register and longer for a cycle through the map. If nothing at the far end
+last beat. The far machine's own bus cycle is at least 36 ticks for a
+diagnostic register, and was 74 at the 5 ns grid, and longer for a cycle
+through the map. If nothing at the far end
 answers at all there is no answer to wait for: the debuggee runs no timer for
 this master, which the section on the timeout above says, so the debugger's own
 counter is the whole of it.
 
-**What it is spent against is 2,210 ticks.** The debugger's interface gives up
+**What it is spent against is 1,105 ticks.** The debugger's interface gives up
 at `busint::DEBUG_TIMEOUT_NS`, the REQTIM PROM's second table, which
-`rtl/machine/cadr_busint_xbus.sv` counts as thirteen periods of 170 ticks. That
-is 11.05 microseconds on MIT's 5 nanosecond grid and 22.1 of real time at this
-board's 10 nanosecond tick.
+`rtl/machine/cadr_busint_xbus.sv` counts as thirteen periods of 85 ticks. That
+is 11.05 microseconds, which at the 10 ns grid is both the machine's time and
+real time. At the 5 ns grid it was 2,210 ticks.
 
 **Neither figure is left to the arithmetic.** `build/dbg_cable.pass` reports
 the slowest debug cycle of its whole run and fails above half the timeout;
 `build/dbg_pmod.pass` does the same for the round trips it measures. The
-slowest measured is 644 ticks, against a bound of 1,105 and a real deadline of
-2,210. A cycle at an address nothing answers is a leg of its own in the
-two-board check: it must come back with no word at all over more ticks than
-that table allows, and the cable must carry the cycle after it.
+slowest measured was 644 ticks, at the 5 ns grid. Both checks still write the
+timeout as 2,210 and hold a round trip to half of it, 1,105 (`kDebugTimeoutT`
+in `tb/cadr_dbg_cable_tb.cpp` and `tb/cadr_dbg_pmod_tb.cpp`), so at the 10 ns
+grid that bound is the whole deadline rather than half of it. A cycle at an
+address nothing answers is a leg of its own in the two-board check: it must
+come back with no word at all over more ticks than that table allows, and the
+cable must carry the cycle after it.
 
 ### Making the frame longer found three numbers that were right by coincidence
 
@@ -1094,11 +1100,12 @@ same counter and the same free-running oscillator; the PROM's second table
 raises `NXM TIMEOUT` at count 13 where the first raises it at count 5, and
 `DEBUG REQUEST ACTIVE` is what selects it.
 
-**In ticks those are 850 and 2,210**, because the oscillator's half period is
-`425 / TICK_NS` and `TICK_NS` is MIT's 5 nanosecond grid rather than the
-board's 10 nanosecond clock. So a debug cycle has 2,210 ticks of this fabric to
-finish in, which is 22.1 microseconds of real time. That is the number the
-carrier's frames are spent against, and both checks measure against it.
+**In ticks those are 425 and 1,105**, because the oscillator keeps its half
+period of 425 nanoseconds in an accumulator and `TICK_NS` is 10. So a debug
+cycle has 1,105 ticks of this fabric to finish in, which is 11.05 microseconds
+of real time. At the 5 ns grid they were 850 and 2,210. The 1,105 is the
+number the carrier's frames are spent against, and the section on the budget
+says what the two checks hold them to.
 
 `rtl/machine/cadr_busint_regs.sv` therefore brings `SELECT DEBUG` out and
 `rtl/machine/cadr_memory_path.sv` joins it to `rtl/machine/cadr_busint_xbus.sv`,

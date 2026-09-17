@@ -94,9 +94,10 @@ account.
 
 ## What is not built, and why each
 
-**The mapped Unibus window.** The map's registers exist; the window they
-translate through does not. So a Chaosnet or serial cycle reaches the card,
-and a debug cycle cannot reach main memory.
+**The mapped Unibus window is built now, and it was on this list.**
+`rtl/machine/cadr_busint_regs.sv` translates a foreign master's cycles at
+`0o140000` to `0o177777` through the map, so a debug cycle reaches main
+memory. `busint_regs.pass` and `unibus.pass` hold it.
 
 **All four of the things this document used to list here are built.** The SYN
 and DLE registers and their pointer, the parity and framing flags, both
@@ -703,9 +704,9 @@ because a signal is not a setting.
 ## What the checks hold to
 
 `iob` compares the card against muir's model over a scripted trace at the
-Unibus: 82,509,813 ticks, 1,885 bus cycles, 55 directions answered and 524,233
+Unibus: 41,290,024 ticks, 1,589 bus cycles, 55 directions answered and 524,233
 silent over all 524,288 directions of an eighteen-bit address, read and
-written, a real bus cycle each. 63 mutation records, all caught.
+written, a real bus cycle each. 68 mutation records name the check.
 
 It has a second configuration now. The 2651's parity and framing flags cannot
 be held to muir at all, because muir's behavioral chip raises neither, so that
@@ -717,14 +718,15 @@ address space in both directions, read out of muir's two traces rather than
 transcribed.
 
 `chaosnet` and `serial` hold the two programs on the build host with no board:
-919 checks and 45 mutation records for the first, 165 and 28 for the second.
+955 checks and 49 mutation records for the first, 165 and 28 for the second.
 Thirty-four of those checks and seven of those records are the counters and
 the trace switch above: every road out of the link driven once, the four
 counts added up, and the two signals told apart. Three hundred and seventy-one
 more checks and eight more records are the burst above: two, three and
 sixty-four frames back to back against a machine that empties its buffer at
 its own pace, how many reached it and in what order, the bound counted against
-a machine that never empties it at all, and the queue's own bound.
+a machine that never empties it at all, and the queue's own bound. Thirty-six
+more checks and four more records are the rule that a broadcast is not retried.
 
 The figures were 548 and 37 before the burst checks, and 772 and 61 while the
 program carried services. The checks and records that went at that point are
@@ -753,14 +755,14 @@ old framing must be refused, so that the two cannot both be readable.
 
 ## One measurement worth not re-deriving
 
-The serial port answers off MIT's five-nanosecond grid, on every cycle of its
-group. Two constants put muir's answer at 953 nanoseconds plus a multiple of
-500,000, and the fabric counts the same edges at 955, which is the first grid
-point at or after it.
+The serial port answers off the 10 ns grid, on every cycle of its group. Two
+constants put muir's answer at 953 nanoseconds plus a multiple of 500,000, and
+the fabric counts the same edges at 960, which is the first grid point at or
+after it.
 
 **That is exact rather than close, and the reason is that nothing can happen
-in between.** The next multiple of five at or after 203 is 205, so no grid
+in between.** The next multiple of ten at or after 203 is 210, so no grid
 point lies strictly between the two, and "strictly after the strobe" therefore
 selects the same edge whether it is measured on the grid or on the netlist.
-The trace carries the two-nanosecond slip on all 80 cycles rather than hiding
-it.
+The trace carries the seven-nanosecond slip on all 87 cycles rather than
+hiding it.

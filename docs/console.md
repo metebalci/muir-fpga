@@ -8,15 +8,16 @@ Written at the console slice, 2026-09-10, against `rtl/plumbing/cadr_console.sv`
 stands at this slice. Numbers and line ranges below are measured at that
 point; read the date on anything that looks like a fact about the fabric.
 
-**And every slack figure and every timing requirement in this file was
-measured at a 5 ns tick**, which is what the fabric ran at until 2026-09-11.
-A requirement printed as `5.000 ns` is one tick and one printed as `75.000 ns`
-is fifteen; at the 10 ns tick built since, the same two read 10.000 and
-150.000, and the tick counts and logic levels are unchanged. Both boards close
+**And every slack figure and every timing requirement in this file was measured
+at a 5 ns tick**, which is what the fabric ran at until 2026-09-11. A
+requirement printed as `5.000 ns` is one tick and one printed as `75.000 ns` is
+fifteen; at the 10 ns tick built since, the same two read 10.000 and 150.000.
+The grid has since moved to 10 ns as well, and the relaxed set is now eight
+ticks, 80.000 ns (`rtl/plumbing/xilinx7/cadr_machine.xdc`). Both boards close
 at that tick --- +1.537 ns with memory off and +0.657 ns with `DDR=1`, zero
 failing endpoints on either, measured at `822535c` --- so where this file says
-a board does not close it is describing the build it names. `docs/tv.md` has the decision and its
-reasons.
+a board does not close it is describing the build it names. `docs/tv.md` has
+the decision and its reasons.
 
 **The machine goes quiet and nothing built can say why.** On the board the
 CADR loads its microcode from its pack, does a fixed amount of disk work and
@@ -90,7 +91,7 @@ second description of one thing, and the two would drift.
 
 ### The register map
 
-**Sixty-four words at `REG_BASE`, four pages of sixteen**, in
+**Ninety-six words at `REG_BASE`, six pages of sixteen**, in
 `rtl/plumbing/cadr_console.sv`'s header and its read mux
 (`r_word`, lines 430-446). `REG_BASE` is `0x8000_0000` (line 156), the bottom
 of `M_AXI_GP1`'s window; `IDENT` is `"CONS"` (line 158) and `UNMAPPED` its
@@ -112,7 +113,7 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
      2  CYCLES   microcycles retired since reset, bits 31:0.  This is muir's
                  `Machine::cycles`
      3  CYCLESH  bits 63:32, LATCHED when CYCLES was read
-     4  TICKS    fabric ticks since reset, bits 31:0 --- `Rtl::ns()` / 5.
+     4  TICKS    fabric ticks since reset, bits 31:0 --- `Rtl::ns()` / 10.
                  A tick is 10 ns of real time, so `cadr-console.c` divides
                  by `CONS_TICKS_PER_US` = 100 and not by 200
      5  TICKSH   bits 63:32, latched when TICKS was read
@@ -194,6 +195,13 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
 
     page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 
+    page 4, REG_BASE + 0x100, the first display board's color map: word
+    64 + c is color c, red in bits 23 to 16, green in 15 to 8 and blue in 7
+    to 0.  Read only
+
+    page 5, REG_BASE + 0x140, the color TV's map, the same sixteen words.
+    Read only
+
     page 1, REG_BASE + 0x40, the sixteen diagnostic registers, word k
     being EADR k:
 
@@ -219,7 +227,7 @@ low read latched.
 **Every address on GP1 is answered, and with OKAY.** A read nothing answers
 on a GP port does not fault the Arm, it hangs both cores at one PC each,
 measured on the board and set out at length in `rtl/plumbing/cadr_gp0_default.sv`. So a
-read outside the sixty-four words completes with `UNMAPPED` and a write
+read outside the ninety-six words completes with `UNMAPPED` and a write
 outside them completes and is dropped. OKAY and not SLVERR, which is where
 this differs from `rtl/plumbing/cadr_disk_pack.sv`: an error response to a
 Cortex-A9's posted write arrives as an imprecise external abort the kernel
@@ -239,7 +247,9 @@ within pages 2 and 3.
 
 **And an address in pages 2 and 3 that is not the build reads exactly what an
 address outside the face reads.** So the one address in the whole port whose
-value changed when the stamp arrived is `REG_BASE + 0x80`.
+value changed when the stamp arrived is `REG_BASE + 0x80`. Words 33, 34 and 35
+of page 2 have been added since, each with keys of its own, and pages 4 and 5
+are a third address match of their own.
 
 The console no longer owns the whole gigabyte, and that is a correction. The
 debug cable's carrier wanted a general-purpose port and there was no third, so
@@ -736,8 +746,8 @@ flops, 32 at the capture and 32 at the latch.
 
 ### The bound
 
-`LOST_T` (line 167) is 4,096 ticks --- 20.48 us of the machine's own time, and
-40.96 us of real time at the 10 ns tick. That much after the request the
+`LOST_T` (line 167) is 4,096 ticks --- 40.96 us, which at the 10 ns grid is
+both the machine's own time and real time. That much after the request the
 engine gives up, drops `dbg_req`, sets STAT's `lost` and answers the read
 with bit 16 set. A grant that never comes, or a register block that never
 answers, therefore costs the Arm 41 us and not its uptime. `LOST_T` is
@@ -754,17 +764,17 @@ writes the mode register there --- so the register block has two masters.
 outside the module because the thing it must see, whether the processor's own
 Unibus cycle is running, is `rtl/machine/cadr_memory_path.sv`'s.
 
-**The grant is taken only with the processor's own strobe down, and held
-until the console lets go.** Taken any other way it would truncate a Unibus
-cycle already counting on `elapsed` inside `cadr_spy_registers`: that module
-starts its count at the strobe and clears it when the strobe falls, so a
-strobe masked in the middle is a cycle that never answers, and the
-processor's own NXM timer is what would find it 4,250 ns later. The other way
-round is bounded and safe: while the console has the bus a processor strobe
-is masked, so the processor's cycle starts late, and the console holds the
-bus for `DIAGNOSTIC_NS` plus the drop --- 260 ns, 52 ticks, against that same
-4,250 ns timer. Sixteen to one, and it is the argument the disk channel's
-per-word arbiter is held to, one bus along.
+**The grant is taken only with the processor's own strobe down, and held until
+the console lets go.** Taken any other way it would truncate a Unibus cycle
+already counting on `elapsed` inside `cadr_spy_registers`: that module starts
+its count at the strobe and clears it when the strobe falls, so a strobe masked
+in the middle is a cycle that never answers, and the processor's own NXM timer
+is what would find it 4,250 ns later. The other way round is bounded and safe:
+while the console has the bus a processor strobe is masked, so the processor's
+cycle starts late, and the console holds the bus for `DIAGNOSTIC_NS` plus the
+drop --- 260 ns, 52 ticks at the 5 ns grid, against that same 4,250 ns timer.
+Sixteen to one, and it is the argument the disk channel's per-word arbiter is
+held to, one bus along.
 
 ## What the check holds to, operation by operation
 
@@ -878,9 +888,13 @@ through `/dev/mem` on the machine's reserved DDR region instead, at
 that it is reading DDR directly and not through the machine. The two are not
 the same claim: a word read through the machine passes the map, the decode
 and the bus interface, and a word read out of DDR does not.
+The debug cable's end has been built since, `rtl/machine/cadr_dbgin.sv`, and
+is attached in `rtl/machine/cadr_memory_path.sv`, so the route has a master
+now. `cadr-console` still examines and deposits through `/dev/mem`.
 
 **The high halves of CYCLES and TICKS are not tested in value.** The boot PROM
-is 600,000 microcycles and 27 million ticks, so neither counter comes near its
+is 600,000 microcycles and 13,419,782 ticks at the 10 ns grid, so neither
+counter comes near its
 thirty-second bit. The burst reads both halves as one transaction, which
 exercises the latch's shape; nothing here can tell a latched high half from a
 live one. Asserted as zero rather than assumed, so that a longer reference
@@ -975,10 +989,13 @@ and changes
 `ps7_init` by nothing. Moving it back is one parameter at the instantiation
 (`REG_BASE`) plus that decode. If the debug cable wants GP1 later, the two can
 share it the same way --- with a decode in front --- or the console can move.
+They share it now: `README.md` puts the console and the debug cable's carrier
+on `M_AXI_GP1` behind `rtl/plumbing/cadr_gp1_split.sv`.
 
 ## The attachment
 
 **`rtl/plumbing/cadr_console.sv` is not wired into `boards/arty-z7-20/cadr_arty.sv` by this slice.**
+It is wired in now, as `u_console`, and what follows is the patch that did it.
 Another session is in `cadr_machine.sv`, `cadr_memory_path.sv` and
 `cadr_arty.sv`, so the wiring is a written patch and not an edit:
 
@@ -1325,16 +1342,20 @@ contradicts itself. The board latches bit 4 off the same synchronized level the
 machine's own reset arms read, at the same edges, so the two cannot disagree.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
-`start`, `boot`, `step N`, `regs`, `status`, `switch`, `trace-keys on|off`,
-`trace-chaos on|off`, `examine` and `deposit`.  It also takes `--version`,
-which names which build the PROGRAM is and touches no register at all.
-`status` is the question of the day and answers it the way `main.rs`'s
-`machrun_low` does, plus a positive measurement: CYCLES sampled twice a few
-milliseconds apart, so that "running" is something seen rather than inferred. `step N` is CC's
-`CC-CLOCK`, `2` then `0`, N times, and reports CYCLES either side with
-`FLAG-1`'s `SSDONE`. It names either failure out loud: a machine that did not
-move, and a machine that ran more than one microcycle a step. A silent no-op
-is the failure this project keeps meeting, and so is a silent runaway.
+`start`, `boot`, `step N`, `regs`, `status`, `ident`, `switch`, `debug-cable`,
+`debug-cable-connect`, `debug-cable-disconnect`, `debug-cable-wiring`,
+`tv-board`, `color-tv`, `hdmi-output`, `hdmi-rotate`, `hdmi-mode`,
+`blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
+`read`, `write`, `examine` and `deposit`. Its `help` says what each does.  It
+also takes `--version`, which names which build the PROGRAM is and touches no
+register at all. `status` is the question of the day and answers it the way
+`main.rs`'s `machrun_low` does, plus a positive measurement: CYCLES sampled
+twice a few milliseconds apart, so that "running" is something seen rather than
+inferred. `step N` is CC's `CC-CLOCK`, `2` then `0`, N times, and reports
+CYCLES either side with `FLAG-1`'s `SSDONE`. It names either failure out loud:
+a machine that did not move, and a machine that ran more than one microcycle a
+step. A silent no-op is the failure this project keeps meeting, and so is a
+silent runaway.
 
 `boot` presses the light panel's button, which is page 0's word 13 with
 `BOOT_KEY` on it. It is muir's own `boot`. It reports what the machine did:
@@ -1442,15 +1463,14 @@ at this package's own files, because this check builds that file and the
 logging's own package has a shell check and no C one --- which is what
 `serial_mutations.txt` already does with the endpoint grammar.
 
-The ten records there hold the printing: a reply to a person bare and a kept
-line prefixed, both ways round; `--log` given twice reaching both
-destinations; a second destination remembered beside the first and not on top
-of it; the cap applied, and applied at the size it says; a log appended to and
-not truncated; a log that cannot be opened refused rather than carried on
-without; and the fan-out stream reaching every destination and counting
-against the cap. One equivalence is recorded in the list rather than left to
-be found: clearing the rotated file's size is written over by the next line's
-`ftell`.
+Ten of the twenty-five records there hold the printing: a reply to a person
+bare and a kept line prefixed, both ways round; `--log` given twice reaching
+both destinations; a second destination remembered beside the first and not on
+top of it; the cap applied, and applied at the size it says; a log appended to
+and not truncated; a log that cannot be opened refused rather than carried on
+without; and the fan-out stream reaching every destination and counting against
+the cap. One equivalence is recorded in the list rather than left to be found:
+clearing the rotated file's size is written over by the next line's `ftell`.
 
 **The eight mutations below were applied BY HAND** before that runner existed,
 to a scratch copy and reverted, and this table is the record of them. They are
@@ -1465,10 +1485,10 @@ still to be written as records. All eight caught:
     FLAG-2's four open bits dropped        console_test.c:495
     CYCLESH read before the low word       console_test.c:531
 
-`make -C boards/arty-z7-20/linux/buildroot/package/cadr-disk-pack/src check` is byte-for-byte
-what it was before the move --- 76 requests, 72 answered, 4 denied, 67 blocks
---- re-run from a cleared work directory so that it was a build and not a
-stale binary.
+`make -C boards/arty-z7-20/linux/buildroot/package/cadr-disk-pack/src check`
+(the package is `cadr-disk-packs` now) is byte-for-byte what it was before the
+move --- 76 requests, 72 answered, 4 denied, 67 blocks --- re-run from a
+cleared work directory so that it was a build and not a stale binary.
 
 ## What a line says, and where it goes
 
@@ -1556,11 +1576,12 @@ lost at a reboot, which is right for a log of this kind.
 - The OPC history, `CC-SAVE-OPCS`: eight `OPCCLK` pulses on a halted machine
   read the eight PCs out oldest first (`../muir/tests/spy.rs:831`). The OPC
   control register is register 4 and `cadr_spy_registers.sv` drops it.
-- The mapped Unibus window at `0o140000`--`0o177777` and its read and write
-  buffers, and with them examine and deposit *through the machine*. The
-  map's sixteen registers themselves are built.
-- The debug cable, which is a different instrument on a different port and
-  has a section of its own in `README.md`.
+- Examine and deposit *through the machine*. The mapped Unibus window at
+  `0o140000`--`0o177777` and its read and write buffers are built in
+  `rtl/machine/cadr_busint_regs.sv`, and `cadr-console`'s `examine` and
+  `deposit` still read and write DDR directly.
+- The debug cable is not in this list any more. It is built, as a different
+  instrument, and `docs/debug-cable.md` has it.
 - **Writing a memory through the readout window.** The window reads and does
   not write. Writing one would have to fight the write pulses a halted machine
   goes on firing, and nothing has asked for it.

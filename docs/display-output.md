@@ -510,10 +510,10 @@ being equal means everything asked for has arrived.
 
 The bank is never carried across. Both sides count requests, one counting what
 it sent and one what it served, and the bank is the low bit of that count. The
-counts step together because there is exactly one request per line and one fill
-per request. A signal saying which bank is in use would be a second description
-of something both sides already know, and two descriptions of one fact is how
-they come to disagree.
+counts step together because there is exactly one fill per request. A signal
+saying which bank is in use would be a second description of something both
+sides already know, and two descriptions of one fact is how they come to
+disagree.
 
 The two toggles come out of reset different, on purpose. Equal would mean
 "everything asked for has arrived" before anything had been asked for, and the
@@ -550,13 +550,15 @@ the display block's, not this block's VSYNC.
 
 ## 3. The memory read
 
-A burst-reading AXI3 master on `S_AXI_HP3` fetches one line at a time into the
-line buffer, ahead of the raster.
+A burst-reading AXI3 master on `S_AXI_HP3` fetches into each screen's buffer,
+ahead of the raster: a line at a time upright, and a word column at a time
+rotated, as section 2a says.
 
 A line is 24 words of 32 bits, which is 96 bytes, which is twelve beats of the
 64-bit port. Every line starts 96 bytes after the one before it, and 96 is a
 multiple of eight, so every line starts on a beat boundary. AXI3 caps a burst
-at sixteen beats, so twelve fits with room to spare.
+at sixteen beats, so twelve fits with room to spare. A line of the color board
+is 72 words, 288 bytes, which is thirty-six beats and never one burst.
 
 **But twelve beats is not always one burst, because 96 bytes does not tile
 4 KB.** AXI forbids a burst crossing a 4 KB boundary, and 4096 is not a
@@ -564,11 +566,12 @@ multiple of 96. The two have a common multiple at 12,288 bytes, which is three
 pages and 128 lines, so the pattern of line starts repeats every 128 lines and
 exactly two of each 128 begin close enough to a boundary that twelve beats
 would run over it. Over the picture's 963 lines that is **15 lines**, the first
-at line 42.
+at line 42. A color line's 288 bytes and 4096 meet at 36,864, which is nine
+pages and 128 lines.
 
-So a fetch is one burst where it fits and two where it does not, split exactly
-at the boundary, and the line buffer is filled by a word pointer that runs
-across the whole line rather than by a beat index inside a burst.
+So a fetch is one burst where it fits and more where it does not, split exactly
+at the boundary, and the buffer is filled by a word pointer that runs across the
+whole fetch rather than by a beat index inside a burst.
 
 This was not foreseen. The first draft issued one burst of twelve every time,
 and the check caught it on the first frame the module ever drew, on exactly
@@ -576,25 +579,30 @@ those 15 lines. The testbench recomputes every burst's permitted length
 independently, asserts that no burst crosses a boundary, and counts the lines
 that take two — so the second burst cannot quietly become dead code.
 
-**Exactly one request per raster line, always, including the lines that show
-nothing.** The raster asks at the first pixel of every one of the mode's 1066
-lines, clamping the line number into the picture's 963 when it is outside, and
-throws the answer away for the 103 that are border or blanking. That costs 103
-bursts a frame and it buys an invariant worth more than they cost: the memory
-side has no idea where the raster is, does the same thing every line, and can
-be checked against "one burst a line, at the address the line number says". A
-fetcher that knew about the vertical blanking would have a second mode that
-runs 103 times a frame, which is the kind of thing that stays wrong for a year.
+**A request is made when what is wanted changes, which is once a line upright
+and once a band rotated.** The raster computes the byte address it will need a
+fixed number of lines from now --- one line upright, 32 rotated for the first
+display and 8 for the color board --- and asks for it when it differs from the
+address it last asked for. The memory side is checked against that rule: every
+fill is at the address the rule gives, and there are as many of them as it says.
+
+It replaced "one request a line, always, including the lines that show
+nothing", which was this block's invariant while it drew one screen upright.
+The clamped fetches for the 103 border and blanking lines went with it, because
+a band is not a line and a rule that names lines cannot describe one.
 
 ### The bandwidth
 
-1066 bursts of 96 bytes, 59.90 times a second, is 6.13 MB/s. Of that, 5.54
-MB/s is picture and the rest is the clamped lines.
+Each picture is read exactly once a frame. The first display is 23,112 words,
+92,448 bytes, and at 59.90 frames a second that is 5.54 MB/s. The color screen
+is 32,688 words, 130,752 bytes, which is 7.83 MB/s. Both together are
+13.37 MB/s.
 
-The port is 64 bits at 100 MHz, which is 800 MB/s. So the display uses 0.77 per
-cent of it. The DDR3 behind it runs at 1050 MB/s per 32-bit transfer at this
-board's clock and is shared four ways. There is no bandwidth question here and
-the arithmetic is written down only so that nobody has to wonder.
+The port is 64 bits at 100 MHz, which is 800 MB/s. So the display uses under
+1.7 per cent of it with both screens shown. The DDR3 behind it runs at 1050
+MB/s per 32-bit transfer at this board's clock and is shared four ways. There
+is no bandwidth question here and the arithmetic is written down only so that
+nobody has to wonder.
 
 ### The arbitration
 
@@ -606,9 +614,9 @@ it keeps holding: the machine's own memory path is the one seam at machine
 speed and nothing else arbitrates against it.
 
 The disk's traffic is bursty, in blocks of 1024 bytes, and idle for long
-stretches. The display's is a steady 96 bytes every 15.7 microseconds. The
+stretches. The display's is steady, a line or a band as the raster needs it. The
 display can be made to wait a long time without anything going wrong, because
-it is a whole line ahead of the raster; the disk cannot be starved by 6 MB/s.
+it is ahead of the raster; the disk cannot be starved by 14 MB/s.
 
 The machine's own timing is untouched either way. Its NXM timer is 4.25
 microseconds from the grant, and it is not on this controller port.
@@ -936,7 +944,7 @@ Nothing reads the hot-plug detect, so the block sends its raster whether a
 monitor is attached or not.
 
 Nothing reads EDID, so the mode is fixed and is not negotiated. A monitor that
-does not do 1280x1024 at 60 Hz shows nothing.
+does not do the bitstream's mode shows nothing.
 
 `MODE BOW` is a parameter and not a wire. The machine can set that bit and the
 display output will not follow it. Making it follow would be one output on

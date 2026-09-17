@@ -27,7 +27,10 @@ and the third is a foreign Unibus master's, `UB MD LOAD`, which is CC's
 DUT is `cadr_microcycle` alone, and nothing in it can raise the third.
 
 ```
-      if (loadmd_edge) begin
+      if (loadmd_edge && mclk_edge) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
         md_held    <= rdata;
         md_pending <= 1'b1;
       end else if (md_pending && (mclk_edge || hang)) begin
@@ -62,12 +65,15 @@ nothing is left queued. That is muir's rule as well: `Rtl` has no special case
 for such a row, because the bus word is applied where the engine looks and
 `DESTMDR` is applied at the edge.
 
-**Unless `loadmd_edge` is true on that very tick.** Then the first branch is
-taken, the `else if` never runs, and `md_pending` survives the write. The
-instruction still writes MD, and the held word commits afterwards — at the
-next master clock edge, or at the very next tick if `-HANG` is up — over the
-word the instruction put there. Every map write from there to the next
-`DESTMDR` is then made at a different entry.
+**Unless `loadmd_edge` is true on that very tick.** Without the first branch
+above, the strobe took the latching branch, the `else if` never ran, and
+`md_pending` survived the write. The instruction still wrote MD, and the held
+word committed afterwards --- at the next master clock edge, or at the very
+next tick if `-HANG` was up --- over the word the instruction put there. Every
+map write from there to the next `DESTMDR` was then made at a different entry.
+The first branch closes that: a strobe on a boundary's own tick commits at
+once and clears the flag, and the `DESTMDR` assignment after it wins. It
+landed with the 10 ns grid, at `9d1cf26`.
 
 ## The check
 
@@ -181,7 +187,7 @@ of 165,175 on the band, and 0 at any `DESTMEM` edge at all. A record for it
 would be a survivor, and a survivor needs an issue and a `@hole` rather than
 a quiet entry.
 
-## The stimulus, and why it is red
+## The stimulus, and why it was red
 
 `build/md_inject.pass` is `tb/cadr_md_inject_tb.cpp` and is **not in `make
 check`**. It runs MIT's boot PROM and drives one extra `-LOADMD` strobe, for
@@ -207,15 +213,22 @@ FAIL: md_pending is still set after the edge.
 FAIL: MD moved to ffffffff at microcycle 536406, 44 ticks after the edge.
 ```
 
-Forty-four ticks is one extra-slow microcycle: the next boundary. The control
+Forty-four ticks was one extra-slow microcycle at the 5 ns grid: the next
+boundary. The control
 holds, so the difference is the strobe and nothing else. `MD<23:8>` goes from
 `0000` to `ffff`, which is the entry a `VMA-WRITE-MAP` in that window would
 reach.
 
-The defect is therefore real at the module's own port, and unfixed. The test
-is written first and left red; it joins `check` in the commit that makes it
-pass, and a record may be aimed at it then and not before — a mutation caught
-by a check that was already failing is caught by nothing.
+The defect was therefore real at the module's own port. The test was written
+first and left red; it joins `check` in the commit that makes it pass, and a
+record may be aimed at it then and not before — a mutation caught by a check
+that was already failing is caught by nothing.
+
+**It passes now, and it has not joined `check`.** Run at `0966ffd`, it prints
+that `md_pending` is clear after the edge, that MD is `00000000` eight
+boundaries later, and `ok: a -LOADMD on a DESTMDR boundary is consumed by that
+edge and the instruction's word stands`. The Makefile's and
+`mutations/run.py`'s comments on `md_inject` still call the defect unfixed.
 
 ## What to measure next
 

@@ -48,8 +48,8 @@ thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
 took 25 minutes of wall clock on 16 cores. `make buildroot` after a change
 takes minutes. **Buildroot does not watch our files.** After editing anything
 under `boards/arty-z7-20/linux/buildroot/`, run `make buildroot-rebuild`. It
-reconfigures U-Boot, the kernel and `cadr-disk-packs`, and finishes the
-image.
+reconfigures U-Boot, the kernel and every package of ours the board's
+configuration selects, and finishes the image.
 
 `boards/arty-z7-20/linux/buildroot/` is the Buildroot external tree. `make
 buildroot` builds the whole thing from the tarball, which takes several
@@ -295,6 +295,8 @@ loops saying which file it could not fetch. The second step is the next time
 that card's `u-boot.img` is written: the U-Boot on it then fetches
 `arty-z7-20/uEnv.net`, the root's copy can go, and no board fetches from the
 root any more.
+Both steps were taken on 14 September: the card was rewritten with a U-Boot
+that fetches `arty-z7-20/uEnv.net`, and the root's copy was removed.
 
 **A change to a board's `cadr.env` reaches a card only after U-Boot has been
 rebuilt.** Buildroot does not watch this repository's files, so a plain `make
@@ -561,8 +563,9 @@ two scripts over one staging tool rather than one script with a mode.
 
 ## The drive bay
 
-**Partition 2 holds disk packs and nothing else, and the eight names are the
-whole of the interface.**
+**Partition 2 is the drive bay, and the eight names are the whole of the
+interface.** The other files on it, `fpgarc`, `muirrc`, `muir-cc.img` and the
+README, are not drives.
 
     /mnt/packs/disk-pack-0.img  ... /mnt/packs/disk-pack-7.img
 
@@ -885,8 +888,9 @@ script's header with its sources: the viewport at op base `0x140` + `0x30`,
   `boards/arty-z7-20/vivado/ps7_config.tcl`, and off here.
 - **No display, no DRM, no framebuffer.** HDMI on this board is the fabric's.
 - **No writable storage from Linux but the drive bay.** Partition 1 is read
-  by U-Boot and mounted read-only, and partition 2 holds disk packs and
-  nothing else. There is no writable root and no saved state.
+  by U-Boot and mounted read-only, and partition 2 holds the drive bay and
+  the files of flags beside it. There is no writable root and no saved
+  state.
 - **No Vivado and no Xilinx tool of any kind** is needed to build the image.
   The one Xilinx-derived input is
   `boards/arty-z7-20/vivado/ps7_init.ops`, which is committed.

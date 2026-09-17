@@ -174,3 +174,4 @@ At `4a585e1` the list holds 557 records. The gate at that commit caught 555,
 with 2 known holes against issue 1 and none surviving. The two holes are
 terms of `-WAIT` that no program the traces run ever makes true, so no check
 can see them removed. They are recorded rather than pretended to be checked.
+At `0966ffd` the list holds 653 records, and the two holes are the same two.
