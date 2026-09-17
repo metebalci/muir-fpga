@@ -27,10 +27,14 @@
 // real machine did, which is the wrong direction for a setup time, a deskew
 // or a strobe --- every one of them is a promise that something has settled.
 // MIT's drawings place most edges on multiples of five nanoseconds, so at
-// this grid eight instants of the ring and a handful of the bus move up by
-// five nanoseconds each; `docs/timing.md` lists every one with its count at
-// both grids.  muir's `--timing-model fpga` rounds the same way, each delay
-// from its own trigger, and is what the references are generated under.
+// this grid eleven instants move up and none moves earlier: eight of the
+// ring's by five nanoseconds --- TSE's two edges, SELECT, the end of the
+// control store's write pulse, and the fast and normal read taps with and
+// without ILONG --- and three of the I/O board's by seven, the counter's low
+// half, the receive buffer's setup and the half-microsecond clock's first
+// edge.  `docs/timing.md` lists every one with its count at both grids.
+// muir's `--timing-model fpga` rounds the same way, each delay from its own
+// trigger, and is what the references are generated under.
 //
 // ---------------------------------------------------------------------------
 // WHICH CONSTANTS BELONG HERE, AND WHICH DO NOT

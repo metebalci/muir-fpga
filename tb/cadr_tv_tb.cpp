@@ -43,8 +43,9 @@
 // THE ROWS ARE SPARSE AND THE CHECK IS NOT.  The trace has a row wherever
 // anything moves and nothing between; here every gap is stepped a tick at a
 // time with the inputs held and every output required to hold, so a frame
-// of 3,091,200 ticks is compared at 3,091,200 ticks.  MCLK is made from the
-// grid and cross-checked against the column on the rows that carry it.
+// of 1,545,600 ticks at the 10 ns grid is compared at every one of them.
+// MCLK is made from the grid and cross-checked against the column on the rows
+// that carry it.
 //
 // AND THE COUNTS ARE THE GENERATOR'S.  The header says how many cycles of
 // each kind the program made and how many times the interrupt rose and

@@ -46,14 +46,16 @@
 # a nanosecond and the memory-on board read -0.261 ns and did not close again.
 # A design sitting near zero turns every edit into a timing question, which is
 # what the second move buys off, and raising the tick is what buys it. So
-# `cadr_arty.sv`'s MMCM divides its 1000 MHz VCO by 10 rather than by 5, a
-# tick is 10 ns, and the machine runs at 50% of the speed the hardware ran.
-# **Not one tick COUNT in the design changed and no check moved**, because the
-# machine's own clock is the only clock it has; `cadr_arty.sv`'s header is the
-# whole argument.
+# `cadr_arty.sv`'s MMCM divides its 1000 MHz VCO by 10 rather than by 5 and a
+# tick is 10 ns. **Not one tick COUNT in the design changed then and no check
+# moved**, because the grid stayed 5 ns and the machine's own clock is the only
+# clock it has, so the machine ran at half the original speed.  The grid moved
+# to 10 ns as well at 9d1cf26: every instant rounds up, a normal microcycle is
+# 15 ticks, and the machine runs at about 97% of the original speed.
+# `cadr_arty.sv`'s header and `rtl/machine/cadr_tick_pkg.sv` are the argument.
 #
-# Measured at `822535c` with that change and nothing else, both boards, this
-# flow:
+# Measured at `822535c` with the tick at 10 ns and the grid still 5, both
+# boards, this flow:
 #
 #     board          WNS        failing   hold      LUTs    registers   BRAM
 #     memory-off    +1.537 ns   0/25,525  +0.073    5,194     1,848      37

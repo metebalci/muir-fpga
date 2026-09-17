@@ -43,6 +43,7 @@
 #include <cstdint>
 #include <cstdio>
 #include "Vcadr_blink_lamps_harness.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
@@ -53,10 +54,16 @@ namespace {
 constexpr long kHoldT = 1L << 22;   // 41.9 ms at the 10 ns tick
 constexpr int kBlinkBit = 19;
 
-// The longest stall a running machine has between two microcycles, in ticks:
-// the debug cable's longer deadline, thirteen periods of the NXM oscillator.
-// Every shorter stall is inside it.
-constexpr long kLongestStall = 2210;
+// A microcycle at normal speed, in ticks: the read tap and the restart, each
+// rounded up to MIT's grid.  15 at the 10 ns grid.
+constexpr long kMicrocycleT = GridTicks(85) + GridTicks(60);
+
+// The longest stall a running machine has between two microcycles, in ticks,
+// taken with room: TWICE the debug cable's deadline, which is thirteen
+// periods of the NXM oscillator after its first rise, 1,105 ticks at the 10 ns
+// grid.  The real stall adds up to a period and a half before that rise and
+// the arbitration before the transfer, which the factor of two covers.
+constexpr long kLongestStall = 2 * GridTicks(13 * 850);
 
 int bad = 0;
 long tick = 0;
@@ -207,8 +214,9 @@ int main(int argc, char **argv) {
   // --- 6.  STEADY, IT IS DARK UNTIL THE MACHINE RETIRES SOMETHING, AND THEN
   // LIT ON EVERY TICK WHILE IT RUNS.
   //
-  // A microcycle every 29 ticks, the normal speed, with the longest stall a
-  // running machine has put in every so often, for more than twice the hold:
+  // A microcycle every `kMicrocycleT` ticks, the normal speed, with the
+  // longest stall a running machine has put in every so often, for more than
+  // twice the hold:
   // a hold that is not re-armed by every microcycle goes out once and is
   // caught here.
   l.Reset();
@@ -220,7 +228,7 @@ int main(int argc, char **argv) {
     bool started = false;
     long next_stall = 50000;
     while (ran < 2 * kHoldT + 100000) {
-      long gap = 29;
+      long gap = kMicrocycleT;
       if (ran >= next_stall) {
         gap = kLongestStall;
         next_stall += 250000;

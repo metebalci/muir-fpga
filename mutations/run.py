@@ -407,13 +407,13 @@ CHECKS = {
     },
     # THE ONE TICK NO TRACE REACHES.  A directed stimulus rather than a
     # program: MIT's boot PROM with one extra -LOADMD driven on a DESTMDR
-    # boundary, against a control run that drives none.  It is NOT in `make
-    # check` and it does not pass, because the defect it names is real and
-    # unfixed; no record may be aimed at it until it does, a mutation
-    # "caught" by a check that was already failing being caught by nothing.
-    # It is named here so that `check_makefile` knows the target the Makefile
-    # carries, and so that the record has somewhere to go on the day the fix
-    # lands.
+    # boundary, against a control run that drives none.  It was written red,
+    # for a defect that was real: `md_pending` survived the edge and the held
+    # word committed a boundary later over the instruction's.  The MD
+    # register's first branch, a strobe on the boundary's own tick loading MD
+    # and clearing the flag, fixed it at 9d1cf26, and the check has passed
+    # since and is in `make check`.  `the-destmdr-edge-leaves-a-strobed-word-
+    # owed` is the record aimed at it: that branch taken away.
     "md_inject": {
         "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
         "top": "cadr_microcycle",
@@ -1207,12 +1207,17 @@ CHECKS = {
         # receiver does about the group its own board is driving --- which is
         # the question the frame counts and the wiring's detection both rest
         # on, and which a carrier alone cannot be asked.
+        # **AND THE DEBUGGEE'S END IS MUTABLE HERE, FOR THE ROUND TRIP'S
+        # BOUND.**  `dbgin` holds `cadr_dbgin.sv`'s instants to muir; what
+        # nothing else holds is how much of the debugger's deadline the far
+        # machine's own cycle spends, and a bound's tightness is tested by a
+        # mutation just outside it.  The same reason puts it in `dbg_pmod`.
         "sources": ["rtl/plumbing/cadr_dbg_cable.sv",
                     "rtl/plumbing/cadr_dbg_tx.sv",
                     "rtl/plumbing/cadr_dbg_rx.sv",
-                    "rtl/plumbing/cadr_dbg_join.sv"],
+                    "rtl/plumbing/cadr_dbg_join.sv",
+                    "rtl/machine/cadr_dbgin.sv"],
         "extra": ["tb/cadr_dbg_cable_harness.sv",
-                  "rtl/machine/cadr_dbgin.sv",
                   "rtl/machine/cadr_busint_regs.sv",
                   "rtl/machine/cadr_console_bus.sv",
                   "rtl/machine/cadr_spy_registers.sv"],
@@ -1224,10 +1229,10 @@ CHECKS = {
     "dbg_pmod": {
         "sources": ["rtl/plumbing/cadr_dbg_tx.sv",
                     "rtl/plumbing/cadr_dbg_rx.sv",
-                    "rtl/plumbing/cadr_dbg_join.sv"],
+                    "rtl/plumbing/cadr_dbg_join.sv",
+                    "rtl/machine/cadr_dbgin.sv"],
         "extra": ["tb/cadr_dbg_pmod_harness.sv",
                   "rtl/plumbing/cadr_debug_window.sv",
-                  "rtl/machine/cadr_dbgin.sv",
                   "rtl/machine/cadr_console_bus.sv",
                   "rtl/machine/cadr_spy_registers.sv"],
         "top": "cadr_dbg_pmod_harness",
