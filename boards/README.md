@@ -18,7 +18,7 @@ part family.
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
 | `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Runs on silicon, without display output or USB input. |
-| `de25-nano/` | Terasic DE25-Nano | A5EB013BB23BE4SCS | Nothing built. A README of what a port needs. |
+| `de25-nano/` | Terasic DE25-Nano | A5EB013BB23BE4SCS | A pin file and a README of what a port needs. The machine is not built. |
 
 **The two Zynq boards run the machine on silicon, and they carry two different
 amounts.** `arty-z7-20/` is the board and is complete. `cora-z7-07s/` has a
@@ -29,9 +29,9 @@ it boots Linux from its card. Its machine is halted today, with no drive. Over
 the Pmod cable it has debugged the Arty Z7-20 and been debugged by it, which
 `docs/board.md` records.
 
-**`de25-nano/` holds a README and nothing else.** It says what the board is,
-what a port to it needs and where the board's pins are. Nothing for it has been
-built or synthesized.
+**`de25-nano/` holds a README and a pin file.** The README says what the board
+is and what a port to it needs. The pin file is transcribed from Terasic's
+user manual. The machine has not been built or synthesized for the board.
 
 **Every board here has a processing system beside its fabric, and that is
 deliberate.** What a board has to bring is main memory, a card the machine's
@@ -166,7 +166,7 @@ system it would not be, because on such a part this is not the design: every
 one of the answers the next section lists costs logic and block RAM these
 numbers do not include.
 
-**On the DE25-Nano the fit is not measured at all.** No design has been
+**On the DE25-Nano the fit is not measured at all.** The machine has not been
 synthesized for its part, and that part is counted in adaptive logic modules
 and M20K blocks rather than in LUTs and block RAM tiles, so it has no row in
 either table.
@@ -247,6 +247,8 @@ schematic name for it is, so that the debug probe's own constraint file ---
 which groups the JTAG readout's clock apart from `sysclk` and everything
 generated from it --- says the same thing on both.
 
-**The DE25-Nano's pins are not vendored.** They come from Terasic's golden top,
-and Terasic grants no redistribution of it. `de25-nano/README.md` records where
-the file is, its sha256 and the terms that keep it out.
+**The DE25-Nano's pin file is this project's own.** It is transcribed from
+Terasic's user manual, because Terasic grants no redistribution of its golden
+top. `tools/de25_pins_check.py` compares the two where Terasic's package is
+present. `de25-nano/README.md` records where the golden top is, its sha256 and
+the terms that keep it out.
