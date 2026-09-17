@@ -379,7 +379,7 @@
 // countdown is `RESET_T` ticks, and there is no way for software to extend
 // it, shorten it or hold it.
 //
-// **`RESET_T` IS 64 TICKS, 320 ns, AND THE NUMBER HAS A FLOOR AND A REASON.**
+// **`RESET_T` IS 64 TICKS, 640 ns, AND THE NUMBER HAS A FLOOR AND A REASON.**
 // Every register in `cadr_machine` takes a synchronous reset, so one tick
 // would clear them all at once and the length looks arbitrary.  It is not:
 //
@@ -388,10 +388,10 @@
 //     machine that had only ever seen a one-tick reset would be released in
 //     a way the board itself never performs.  A console reset that is not the
 //     board's reset is a second reset to reason about.
-//   - The floor is one whole generator cycle at extra slow, 44 ticks or
+//   - The floor is one whole generator cycle at extra slow, 22 ticks or
 //     220 ns.  That is the longest interval over which any of the machine's
 //     own timing is in flight --- `cadr_phase_gen.sv`'s ring, the seven read
-//     taps at 15 to 32, the write pulses, and the two countdowns.  muir's
+//     taps at 8 to 16, the write pulses, and the two countdowns.  muir's
 //     reference is not silent inside a reset either: `chip.rs` goes on
 //     deriving `-TPR60` from `phase_ns` at ticks 11 to 18 of a plain
 //     power-on reset, so a reset shorter than the cycle it interrupts is a
@@ -402,13 +402,13 @@
 //     why `LOST_T` is 4,096 and not 4,000, one register along.
 //
 // It is a floor with margin and it is stated as one.  Nothing here derives 64
-// from anything; what is derived is that it must be more than 44.
+// from anything; what is derived is that it must be more than 22.
 //
 // **AND THE WRITE DOES NOT ANSWER UNTIL THE PULSE IS OVER.**  `W_RESET` holds
 // the write channel through the countdown, so `BVALID` is offered after the
 // machine has left reset and not before.  A program's store therefore returns
 // when the machine is running again, and the very next read of `FLAG-1` means
-// something.  The cost is 64 ticks --- 320 ns --- of one Arm store, against
+// something.  The cost is 64 ticks --- 640 ns --- of one Arm store, against
 // `LOST_T`'s 4,096 for a diagnostic cycle, so nothing has to be told about it.
 //
 // **`RESET_KEY` IS "RSET", AND AN ARBITRARY VALUE MUST NOT RESET THE
@@ -587,8 +587,8 @@ module cadr_console #(
     // `IDENT`, not `UNMAPPED`, and not what register 6 reads back.  The
     // header has the whole argument.
     parameter logic [31:0] RESET_KEY = 32'h5253_4554,
-    // How many ticks the machine's reset is held for.  64 ticks is 400 ns of
-    // real time: the floor is one generator cycle at extra slow, 44 ticks, and
+    // How many ticks the machine's reset is held for.  64 ticks is 640 ns of
+    // real time: the floor is one generator cycle at extra slow, 22 ticks, and
     // this is the smallest power of two above it so that the countdown ends
     // on a borrow.  See the header --- it is a floor with margin and is not
     // derived from anything.
@@ -601,7 +601,7 @@ module cadr_console #(
     // the machine was doing exactly as a reset does.
     parameter logic [31:0] BOOT_KEY  = 32'h424F_4F54,
     // How long `-BOOT2` is held for.  The floor is the one `RESET_T` states:
-    // a whole generator cycle at extra slow is 44 ticks, and 64 is the
+    // a whole generator cycle at extra slow is 22 ticks, and 64 is the
     // smallest power of two above it.  A button is a finger and is held for
     // millions of ticks; this is the shortest press the machine cannot tell
     // from one, and it is a floor with margin rather than a derivation.  It
@@ -1639,7 +1639,7 @@ module cadr_console #(
         // **THE WRITE DOES NOT ANSWER UNTIL THE PULSE IS OVER**, so a
         // program's store returns with the machine already running again and
         // the next read of `FLAG-1` means something.  It costs one Arm store
-        // `RESET_T` ticks --- 320 ns --- and it is what makes "reset then
+        // `RESET_T` ticks --- 640 ns --- and it is what makes "reset then
         // ask" a sequence a program can write without a delay in it.
         W_RESET: if (!mach_rst) wst <= w_last_q ? W_RESP : W_DATA;
         // **AND NEITHER DOES THE BUTTON'S WRITE**, for the same reason one
