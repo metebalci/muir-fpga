@@ -133,6 +133,7 @@
 #include <cadr/cadr_input_link.h>
 
 #include "color_map.h"
+#include "display_wake.h"
 #include "input_face.h"
 #include "input_keys.h"
 #include "input_mapping.h"
@@ -150,6 +151,13 @@ static void on_stop(int sig)
 {
 	(void)sig;
 	stopping = 1;
+}
+
+// The server's wake hook: somebody at the board did something, so the display
+// output's monitor wakes and its sleep timer starts over.  `display_wake.h`.
+static void terminal_wake(void *ctx, uint64_t now_ns)
+{
+	display_wake_poke(ctx, now_ns);
 }
 
 static uint64_t monotonic_ns(void)
@@ -403,6 +411,8 @@ int main(int argc, char **argv)
 	// says so deliberately.
 	struct input_face input;
 	int have_input = 0;
+	struct display_wake dwake;
+	int have_dwake = 0;
 	if (!no_input) {
 		if (input_face_open(&input, mem, input_phys) == 0) {
 			if (input_face_ident(&input) == 0) {
@@ -477,9 +487,42 @@ int main(int argc, char **argv)
 		// either meant.  `cadr/cadr_input_link.h` and docs/usb-input.md
 		// have the whole of it.  **After the flush**, like the socket
 		// above and for the same reason.
-		if (!no_link && screen_server_link(&srv, link_path) == 0)
+		if (!no_link && screen_server_link(&srv, link_path) == 0) {
 			say("a source that is not a viewer may attach at %s: its keys and "
 			    "its mouse go the same way a viewer's do", link_path);
+			// **AND WHAT COMES OVER IT WAKES THE DISPLAY OUTPUT.**  The
+			// board's own display output sleeps a monitor after
+			// `--hdmi-sleep` seconds, and a key or the mouse at the board
+			// is what wakes it and starts the timer over.  Those come over
+			// this link and a viewer's keys do not, and the fabric cannot
+			// tell the two apart, so it is this program that writes the
+			// wake.  `display_wake.h` has the rest.  **The console's face is
+			// read here, after the input face answered**: both are in every
+			// bitstream that brings the general-purpose ports out, so a
+			// fabric that answered the one answers the other.
+			if (display_wake_open(&dwake, mem, DWAKE_REG_BASE) == 0) {
+				uint32_t id = 0, word = 0;
+				const int ready = display_wake_ready(&dwake, &id, &word);
+				if (ready == 1) {
+					srv.wake = terminal_wake;
+					srv.wake_ctx = &dwake;
+					have_dwake = 1;
+					say("a key or the mouse at the board wakes the display output "
+					    "and starts its sleep timer over, which is %u seconds%s; a "
+					    "viewer's does not, and still reaches the machine",
+					    (unsigned)(word & 0x7FFFu),
+					    (word & 0x7FFFu) ? "" : " --- zero, so it never sleeps");
+				} else {
+					if (ready == 0)
+						say("no display output to wake: the console's word 36 "
+						    "reads 0x%08x", word);
+					else
+						say("the console's face reads 0x%08x and not \"CONS\", so "
+						    "the display output cannot be woken from here", id);
+					display_wake_close(&dwake);
+				}
+			}
+		}
 	}
 	say("RFB on %s:%u --- display :%u to a viewer. NO AUTHENTICATION: RFC 6143's None is the "
 	    "only security type offered, so anyone who can reach this port sees the screen. "
@@ -673,10 +716,12 @@ int main(int argc, char **argv)
 			    srv.pointer_moves, srv.keys.unbound);
 			if (srv.link_ready && (srv.link.connects || srv.link.events))
 				say("the input link: %u attached (%lu came, %lu went, %lu refused, "
-				    "%lu dropped for what they said); %lu events",
+				    "%lu dropped for what they said); %lu events; %lu wakes of the "
+				    "display output written and %lu too soon after one to need it",
 				    cadr_input_link_clients(&srv.link), srv.link.connects,
 				    srv.link.drops, srv.link.refused, srv.link.rejected,
-				    srv.link.events);
+				    srv.link.events, have_dwake ? dwake.written : 0ul,
+				    have_dwake ? dwake.coalesced : 0ul);
 			said_connects = srv.connects;
 			said_input = srv.input_events;
 			said_bytes = srv.sent_raw + srv.sent_rre;
@@ -727,6 +772,8 @@ int main(int argc, char **argv)
 			    "its keyboard", key_pending(&srv.keys));
 		input_face_buttons(&input, 0);
 	}
+	if (have_dwake)
+		display_wake_close(&dwake);
 	if (have_input)
 		input_face_close(&input);
 	return 0;

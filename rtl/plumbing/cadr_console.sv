@@ -150,8 +150,8 @@
 //   machine and it comes back through here unchanged.
 //
 //   page 2, `REG_BASE + 0x80`, what the FABRIC and the board are rather than
-//   what the machine is doing.  Words 33, 34 and 35 take a write and the rest
-//   are read-only:
+//   what the machine is doing.  Words 33, 34, 35 and 36 take a write and the
+//   rest are read-only:
 //
 //     32 BUILD    the eight hex digits `tools/build_stamp.tcl` wrote into
 //                 `BITSTREAM.CONFIG.USR_ACCESS` before this bitstream was
@@ -232,7 +232,28 @@
 //                 the lamps SAY does not change, only how.  It is on this
 //                 page because it is what the board is doing and not what the
 //                 machine is.
-//     36-47       `UNMAPPED`
+//     36 SLEEP    **whether the board's own display output sleeps a monitor,
+//                 and after how long.**  A write whose top half is
+//                 `HDMI_SLEEP_KEY` and whose bottom half is a setting in
+//                 seconds, fifteen bits with bit 15 clear, is a new setting,
+//                 `--hdmi-sleep`; a write of `HDMI_WAKE_KEY` is a wake, which
+//                 `cadr-terminal` sends for a key or the mouse at the board
+//                 and for nothing else.  **NEITHER IS KEPT HERE**: each is a
+//                 pulse to `rtl/plumbing/cadr_display_out.sv`, which holds the
+//                 setting, runs the timer and mutes the lanes, and this word
+//                 reads back what that block holds:
+//
+//                   bits 31:16  `HDMI_SLEEP_MARK`, a marker
+//                   bit 15      the lanes are muted: the monitor is asleep
+//                   bits 14:0   the setting, in seconds; zero never sleeps
+//
+//                 **A BOARD WITH NO DISPLAY OUTPUT READS `UNMAPPED` HERE**,
+//                 because there is no timer to report and a setting read back
+//                 from a block that is not there would be a number nothing
+//                 holds.  A setting is written with all four lanes strobed or
+//                 not at all: its value may have a zero byte, so the key alone
+//                 cannot ask for four lanes the way a whole-word key does.
+//     37-47       `UNMAPPED`
 //
 //   page 3, `REG_BASE + 0xC0`: all sixteen read `UNMAPPED`.
 //
@@ -665,6 +686,17 @@ module cadr_console #(
     // marker is "LD", named for the word as `TV_MARK` and `HDMI_MARK` are.
     parameter logic [31:0] LAMP_STEADY_KEY = 32'h5354_4459,
     parameter logic [15:0] LAMP_MARK       = 16'h4C44,
+    // **AND WHETHER THE DISPLAY OUTPUT SLEEPS**, page 2's word 36.  A setting
+    // carries its value in the word's bottom half, so its key is the top half
+    // alone --- "HS" --- and it asks for all four lanes by testing the strobes,
+    // where a whole-word key asks by having no zero byte.  The wake is a whole
+    // word, "WAKE".  The marker is "ZZ", which is neither key's top half, so a
+    // program that read the word and wrote it straight back sets nothing and
+    // wakes nothing.  None is zero, all ones, `IDENT`, `UNMAPPED` or any other
+    // key, and the wake key's four bytes are distinct and none `00` or `FF`.
+    parameter logic [15:0] HDMI_SLEEP_KEY  = 16'h4853,
+    parameter logic [31:0] HDMI_WAKE_KEY   = 32'h5741_4B45,
+    parameter logic [15:0] HDMI_SLEEP_MARK = 16'h5A5A,
     // **AND THE CABLE'S WIRING**, the same word and three more keys: "AUTO",
     // "STRA" and "CROS".  A Pmod ribbon is supposed to join pin one to pin
     // one; one made from two host sockets mirrors the header's two rows
@@ -869,6 +901,18 @@ module cadr_console #(
     // --- and 1 steady, to the lamps in the board's own top level.  A board with
     // --- no console never moves it and its lamps blink.
     output var logic        steady_lamps,
+    // --- **WHETHER THE DISPLAY OUTPUT SLEEPS**, page 2's word 36.  Two
+    // --- one-tick pulses out to `cadr_display_out`, a setting with its value
+    // --- beside it and a wake, and three answers back from it: whether a
+    // --- display output is there at all, the setting it holds, and whether
+    // --- the lanes are muted.  A board with no display output ties the three
+    // --- low and the word reads `UNMAPPED`.
+    output var logic        hdmi_sleep_set,
+    output var logic [14:0] hdmi_sleep_secs,
+    output var logic        hdmi_wake,
+    input  var logic        hdmi_sleep_fitted,
+    input  var logic [14:0] hdmi_sleep_q,
+    input  var logic        hdmi_asleep,
     // --- and the cable's two counts, page 0's word 15: frames heard and
     // --- frames refused.  See the word's own entry above.
     input  var logic [23:0] dbg_frames,
@@ -945,10 +989,10 @@ module cadr_console #(
   //
   // So `w_in` and `r_in` mean exactly what they meant, every line built on
   // them is untouched, and a write anywhere in pages 2 and 3 is answered OKAY
-  // and does nothing EXCEPT page 2's words 33, 34 and 35 --- the display
-  // boards, the display output and the lamps --- which are the only words
-  // outside page 0 a write reaches: `w_hi` below, its own comparator, each
-  // word with keys of its own, and never `w_in`.
+  // and does nothing EXCEPT page 2's words 33 to 36 --- the display boards,
+  // the display output, the lamps and the display output's sleep --- which are
+  // the only words outside page 0 a write reaches: `w_hi` below, its own
+  // comparator, each word with keys of its own, and never `w_in`.
   localparam logic [31:0] BASE2 = REG_BASE + 32'h0000_0080;
   function automatic logic in_window2(input logic [31:7] page);
     return page == BASE2[31:7];
@@ -1203,6 +1247,19 @@ module cadr_console #(
   assign w_is_lamps_steady = w_is_lamps && (w_full == LAMP_STEADY_KEY);
   assign w_is_lamps_blink  = w_is_lamps && (w_full == ~LAMP_STEADY_KEY);
 
+  // And which beat says whether the display output sleeps.  Page 2's word 36:
+  // a setting under a half-word key with its value in the bottom half, and a
+  // wake under a whole one.  **A SETTING ASKS FOR ALL FOUR LANES BY THE
+  // STROBES**, because its value may have a zero byte --- a setting of 5 does
+  // --- and a beat merged against zero cannot otherwise tell a zero byte from
+  // a lane nobody strobed.  Bit 15 is the asleep bit when read and must be
+  // clear when written, so the word's own read-back is never a setting.
+  logic w_is_sleep, w_is_sleep_set, w_is_wake;
+  assign w_is_sleep     = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd4);
+  assign w_is_sleep_set = w_is_sleep && (w_full[31:16] == HDMI_SLEEP_KEY) &&
+                          !w_full[15] && (s_wstrb == 4'hF);
+  assign w_is_wake      = w_is_sleep && (w_full == HDMI_WAKE_KEY);
+
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
   // ------------------------------------------------------------------------
@@ -1409,7 +1466,7 @@ module cadr_console #(
   assign tv_map_a = r_idx_q[3:0];
 
   always_comb begin
-    // **PAGE 2's WORDS 0 TO 3 ARE THE ONLY WORDS OF PAGES 2 AND 3 THAT ARE
+    // **PAGE 2's WORDS 0 TO 4 ARE THE ONLY WORDS OF PAGES 2 AND 3 THAT ARE
     // WORDS AT ALL**, and every other address of them falls through
     // to `UNMAPPED` --- the same value an address outside the face reads.
     // Pages 4 and 5 are the two color maps, thirty-two words of their own.
@@ -1419,7 +1476,8 @@ module cadr_console #(
     // configuration and cannot move, so there is no instant for a latch to
     // name and nothing a second read could disagree with.  The display word
     // is two flops read straight, for the same reason, and so are the display
-    // output's and the lamps' words.
+    // output's and the lamps' words.  The sleep word is the display output's
+    // own registers read straight, and `UNMAPPED` on a board without one.
     if (r_map_q) r_word = {8'd0, map_word};
     else if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build
                              : (r_hi_q && r_idx_q == 5'd1)
@@ -1429,6 +1487,8 @@ module cadr_console #(
                                     hdmi_out}
                              : (r_hi_q && r_idx_q == 5'd3)
                                  ? {LAMP_MARK, 15'd0, steady_lamps}
+                             : (r_hi_q && r_idx_q == 5'd4 && hdmi_sleep_fitted)
+                                 ? {HDMI_SLEEP_MARK, hdmi_asleep, hdmi_sleep_q}
                                  : UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
     else begin
@@ -1514,6 +1574,11 @@ module cadr_console #(
       // a blink is honest about a stopped clock by construction, and a card
       // that wants a level says so in `fpgarc`.
       steady_lamps <= 1'b0;
+      // Nothing is asked of the display output's sleep out of reset; the
+      // display holds its own default.
+      hdmi_sleep_set  <= 1'b0;
+      hdmi_sleep_secs <= 15'd0;
+      hdmi_wake       <= 1'b0;
       r_idx_q     <= 5'd0;
       r_spy       <= 16'd0;
       r_lost      <= 1'b0;
@@ -1562,6 +1627,11 @@ module cadr_console #(
         if (boot_t == 7'd0) mach_boot <= 1'b0;
         else boot_t <= boot_t - 7'd1;
       end
+
+      // --- the display output's two pulses are one tick long, so they fall
+      // here and a write below raises one for the tick after its beat.
+      hdmi_sleep_set <= 1'b0;
+      hdmi_wake      <= 1'b0;
 
       // --- writes
       unique case (wst)
@@ -1625,6 +1695,16 @@ module cadr_console #(
           // complement, for the reason the color board's two are.
           if (w_is_lamps_steady)     steady_lamps <= 1'b1;
           else if (w_is_lamps_blink) steady_lamps <= 1'b0;
+          // Whether the display output sleeps, page 2's word 36: a pulse and
+          // not a register load, because the setting is the display's to
+          // hold.  The value rides beside the pulse and is held after it,
+          // which costs fifteen flops and keeps `w_full` out of the display's
+          // cone.
+          if (w_is_sleep_set) begin
+            hdmi_sleep_set  <= 1'b1;
+            hdmi_sleep_secs <= w_full[14:0];
+          end
+          if (w_is_wake) hdmi_wake <= 1'b1;
           if (w_in && w_idx[4]) wst <= W_CYCLE;
           else if (w_is_reset) begin
             mach_rst <= 1'b1;

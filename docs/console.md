@@ -191,7 +191,22 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  generator's lock and its LD2, like the Cora Z7-07S's green,
                  is lit while microcycles retire and dark a moment after they
                  stop.  `cadr-console blinking-leds [on|off]` reads and sets it
-    36-47        read UNMAPPED; writes dropped
+    36 SLEEP    **how long the board's own display output waits before it
+                 stops the link and the monitor sleeps.**  A write whose top
+                 half is `HDMI_SLEEP_KEY`, "HS", with a setting in seconds in
+                 bits 14 to 0 and bit 15 clear, is a new setting,
+                 `--hdmi-sleep`; it must strobe all four lanes.  A write of
+                 `HDMI_WAKE_KEY`, "WAKE", is a wake, which `cadr-terminal`
+                 sends for a key or the mouse at the board and nothing else
+                 does.  Neither is kept here: each is a one-tick pulse to the
+                 display output, which holds the setting and runs the timer.
+                 The word reads back a marker of `ZZ` in the top half, the
+                 lanes muted in bit 15 and the setting in bits 14 to 0, and
+                 `UNMAPPED` on a board with no display output.
+                 `cadr-console hdmi-sleep [SECONDS]` reads and sets it, and has
+                 no way to wake the monitor.  `docs/display-output.md` has the
+                 timer
+    37-47        read UNMAPPED; writes dropped
 
     page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 
@@ -1345,7 +1360,7 @@ machine's own reset arms read, at the same edges, so the two cannot disagree.
 `start`, `boot`, `step N`, `regs`, `status`, `ident`, `switch`, `debug-cable`,
 `debug-cable-connect`, `debug-cable-disconnect`, `debug-cable-wiring`,
 `tv-board`, `color-tv`, `hdmi-output`, `hdmi-rotate`, `hdmi-mode`,
-`blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
+`hdmi-sleep`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
 `read`, `write`, `examine` and `deposit`. Its `help` says what each does.  It
 also takes `--version`, which names which build the PROGRAM is and touches no
 register at all. `status` is the question of the day and answers it the way

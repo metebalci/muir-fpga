@@ -1070,6 +1070,72 @@ void cons_say_lamps(const struct cons_lamps *l)
 		    " and the microcycle blink freezes when the machine stops");
 }
 
+// --- whether the display output sleeps, page 2's word 36 ------------------
+//
+// `console_face.h` has what the word is and whose the setting is.
+
+void cons_read_hdmi_sleep(struct console *c, struct cons_hdmi_sleep *s)
+{
+	// ONE read, so that the setting and the asleep bit name one instant.
+	s->word = c->read(c, CONS_HDMI_SLEEP);
+	s->mark_ok = CONS_HDMI_SLEEP_MARK_OF(s->word) == CONS_HDMI_SLEEP_MARK;
+	s->asleep = (s->word & CONS_HDMI_ASLEEP) != 0;
+	s->seconds = s->word & CONS_HDMI_SLEEP_SECONDS;
+}
+
+int cons_set_hdmi_sleep(struct console *c, unsigned seconds)
+{
+	// **A SETTING THE WORD CANNOT CARRY IS REFUSED AND NOT CUT.**  Fifteen
+	// bits, so 32,768 would go out as zero --- a monitor asked to sleep after
+	// nine hours that never slept at all.
+	if (seconds > CONS_HDMI_SLEEP_MAX)
+		return -1;
+	c->write(c, CONS_HDMI_SLEEP, ((uint32_t)CONS_HDMI_SLEEP_KEY << 16) | seconds);
+	++c->writes;
+	return 0;
+}
+
+int cons_parse_hdmi_sleep(const char *text, unsigned *seconds)
+{
+	// Decimal digits and nothing else: no sign, no space, no base prefix. A
+	// card that said `0x10` meaning sixteen, or ` 300` with a stray space,
+	// is refused by name rather than read as something it did not say.
+	unsigned v = 0;
+	if (!text || !*text)
+		return -1;
+	for (const char *p = text; *p; ++p) {
+		if (*p < '0' || *p > '9')
+			return -1;
+		v = v * 10u + (unsigned)(*p - '0');
+		if (v > CONS_HDMI_SLEEP_MAX)
+			return -1;
+	}
+	*seconds = v;
+	return 0;
+}
+
+void cons_say_hdmi_sleep(const struct cons_hdmi_sleep *s)
+{
+	if (!s->mark_ok) {
+		// **NOT A SETTING OF ZERO**, which reads zero in the bottom half
+		// too: the marker is what tells a display output that never sleeps
+		// from a board that has none.
+		say("hdmi-sleep: word 36 reads 0x%08x and carries no marker: this board has no"
+		    " display output, or its fabric is older than the word", s->word);
+		return;
+	}
+	if (s->seconds == 0u)
+		say("hdmi-sleep: never --- the display output does not sleep the monitor");
+	else
+		say("hdmi-sleep: after %u seconds with nobody at the board's own keyboard or"
+		    " mouse; a viewer's keys do not count", s->seconds);
+	if (s->asleep)
+		say("hdmi-sleep: the display output is asleep: the link is stopped and a monitor"
+		    " on it sees no signal.  A key or the mouse at the board wakes it");
+	else
+		say("hdmi-sleep: the display output is awake");
+}
+
 void cons_read_color_map(struct console *c, int board,
 			 uint8_t map[CONS_MAP_COLORS][CONS_MAP_CHANNELS])
 {

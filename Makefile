@@ -81,7 +81,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass $(BUILD)/color_tv.pass \
-       $(BUILD)/display_out.pass $(BUILD)/hdmi_tx.pass \
+       $(BUILD)/display_out.pass $(BUILD)/display_sleep.pass \
+       $(BUILD)/hdmi_tx.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass $(BUILD)/dbg_cable.pass \
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
@@ -2097,6 +2098,40 @@ $(BUILD)/display_out.pass: $(BUILD)/obj_display_out0/Vcadr_display_out \
 	$(BUILD)/obj_display_out0/Vcadr_display_out 0
 	$(BUILD)/obj_display_out1/Vcadr_display_out 1
 	$(BUILD)/obj_display_out2/Vcadr_display_out 2
+	@touch $@
+
+# The display output's sleep: the timer, its prescaler and the mute on the four
+# lanes, which is how a source puts a monitor to sleep --- a digital link has
+# no power management of its own, so the link stops and the monitor sees no
+# signal.
+#
+# `tb/cadr_display_sleep_tb.cpp` holds the timer to the tick from a write, a
+# wake while asleep, a wake while awake and a fabric reset; holds the mute to
+# the frame boundary, recovered from the syncs as a monitor recovers it; and
+# holds that the raster keeps its own shape while the lanes are muted and that
+# zero never mutes.
+#
+# **ITS OWN BUILD, BECAUSE A REAL RASTER AND A REAL SECOND ARE TOO SLOW TO WAIT
+# FOR.**  Three hundred seconds of a real second is thirty billion edges.  So
+# the raster is 100 by 80 with pictures small enough to sit inside it, and a
+# second is 2,000 ticks, which makes the fabric's own default eighty frames.
+# The default setting itself is NOT overridden: it is the module's.  The check
+# carries these figures a second time and measures the frame from the syncs,
+# so a build here with other figures fails rather than measuring itself.
+DISPLAY_SLEEP_G := -GH_ACTIVE=80 -GH_FRONT=4 -GH_SYNC=6 -GH_BACK=10 \
+                   -GV_ACTIVE=70 -GV_FRONT=2 -GV_SYNC=3 -GV_BACK=5 \
+                   -GPIC_W=64 -GPIC_H=6 -GWORDS_PER_LINE=2 \
+                   -GCPIC_W=16 -GCPIC_H=4 -GCWORDS_PER_LINE=2 \
+                   -GMONO_ENTRIES=16 -GCOLOR_ENTRIES=16 -GSECOND_T=2000
+
+$(BUILD)/obj_display_sleep/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
+                                              tb/cadr_display_sleep_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_display_sleep \
+	    $(DISPLAY_SLEEP_G) --top-module cadr_display_out \
+	    rtl/plumbing/cadr_display_out.sv $(abspath tb/cadr_display_sleep_tb.cpp)
+
+$(BUILD)/display_sleep.pass: $(BUILD)/obj_display_sleep/Vcadr_display_out
+	$(BUILD)/obj_display_sleep/Vcadr_display_out
 	@touch $@
 
 # The DVI transmitter: three TMDS channels and the clock channel.

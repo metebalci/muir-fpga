@@ -662,6 +662,27 @@ The three switches are the OR of what the viewers hold and what the link holds.
 There is one mouse, and a button held in one place is not lifted by the other
 letting go.
 
+### What comes over the link also wakes the display output
+
+The board's own display output sleeps a monitor after `--hdmi-sleep` seconds
+with nobody at the board, and a key or the mouse at the board wakes it and starts
+the wait over. The fabric cannot tell a key at the board from a viewer's key,
+because this program writes the keyboard's register for both. So this program
+decides, and it writes a wake into the console's page 2 word 36 for a record on
+the input link and for nothing else.
+
+A viewer's key and pointer still reach the machine, and they do not wake the
+monitor. A source attaching is not a record. Nor are the releases this program
+makes for a source that went away with keys down, which is why the input link
+has a call of its own for records rather than the wake following the key calls.
+The wake is written at most once every 100 ms, because a mouse reports many times
+a second and the timer only counts seconds.
+
+The program reads word 36 once at start. A board with no display output, or a
+fabric older than the word, reads no marker there, and the program says so and
+never writes the wake. `display_wake.h` has the details and
+`docs/display-output.md` has the timer.
+
 ## The encodings, and what they cost
 
 **Raw** (RFC 6143 section 7.7.1) is what every server must have and every

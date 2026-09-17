@@ -148,6 +148,7 @@ switch) [ "\${CONSOLE_SWITCH:-no}" = yes ] ;;
 *)
 	case "\$*" in
 	*"blinking-leds off"*) [ "\${CONSOLE_LAMPS:-yes}" = yes ] ;;
+	*"hdmi-sleep"*) [ "\${CONSOLE_SLEEP:-yes}" = yes ] ;;
 	*) : ;;
 	esac
 	;;
@@ -1346,6 +1347,73 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	else
 		fail "a console that did not make the lamps steady is not called out; the script says:"
 		sed 's/^/        /' "$WORK/out.lamps"
+	fi
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the boot goes on: the pack program was started anyway"
+	else
+		fail "the boot stopped: the pack program was never started"
+	fi
+fi
+
+# **THE DISPLAY OUTPUT'S SLEEP: --hdmi-sleep HANDS THE CONSOLE ITS SECONDS.**
+# The fabric comes up with three hundred, so a card that says nothing leaves the
+# console alone, and a card with the line has its number carried through the
+# console's own word, with `--log /dev/console` for the boot log's reason.  A
+# console that did not take it --- a board with no display output, or a number
+# the console refuses --- is called out, and the boot goes on either way.
+case_head "--hdmi-sleep hands the console the card's seconds, and nothing else"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' '--hdmi-sleep 120' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	if grep -qx -- "--log /dev/console hdmi-sleep 120" "$WORK/console.calls"; then
+		ok "the console was told hdmi-sleep 120, with the boot log named"
+	else
+		fail "the console was not given the card's seconds; it was told: $(cat "$WORK/console.calls")"
+	fi
+	if grep -qx "halt" "$WORK/console.calls"; then
+		fail "setting the display's sleep halted the machine"
+	else
+		ok "and nothing was halted"
+	fi
+	if grep -q "cadr-display" "$WORK/out.S80cadr-disk-packs"; then
+		fail "a console that took the setting was said not to have:"
+		sed 's/^/        /' "$WORK/out.S80cadr-disk-packs"
+	else
+		ok "and a console that took it is not said to have failed"
+	fi
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "the pack program was started"
+	else
+		fail "the pack program was not started"
+	fi
+fi
+
+case_head "without the line the fabric's own sleep stands, and a console that refuses says so"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' '--hdmi-output tv' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	if grep -q "hdmi-sleep" "$WORK/console.calls"; then
+		fail "the console was asked about sleep by a card that says nothing: $(cat "$WORK/console.calls")"
+	else
+		ok "the console was not asked about sleep"
+	fi
+	printf '%s\r\n' '--hdmi-sleep 0' > "$WORK/packs/fpgarc"
+	: > "$WORK/daemon.calls"
+	: > "$WORK/console.calls"
+	CONSOLE_SLEEP=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S80cadr-disk-packs" start > "$WORK/out.sleep" 2>&1
+	if grep -qx -- "--log /dev/console hdmi-sleep 0" "$WORK/console.calls"; then
+		ok "zero is handed over as zero, which is never"
+	else
+		fail "zero was not handed over; the console was told: $(cat "$WORK/console.calls")"
+	fi
+	if grep -q "cadr-display: --hdmi-sleep 0: not set" "$WORK/out.sleep"; then
+		ok "a console that did not take it is said not to have"
+	else
+		fail "a console that did not take the setting is not called out; the script says:"
+		sed 's/^/        /' "$WORK/out.sleep"
 	fi
 	if [ -s "$WORK/daemon.calls" ]; then
 		ok "and the boot goes on: the pack program was started anyway"

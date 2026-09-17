@@ -180,6 +180,12 @@ constexpr uint32_t kHdmiMark = 0x4844u;          /* "HD" */
 constexpr unsigned kRegLamps = 35;
 constexpr uint32_t kLampSteadyKey = 0x53544459u;  /* "STDY" */
 constexpr uint32_t kLampMark = 0x4C44u;           /* "LD" */
+// Page 2's word 36, whether the display output sleeps: a setting under a
+// sixteen-bit key, a wake under a whole one, and a marker.
+constexpr unsigned kRegSleep = 36;
+constexpr uint32_t kSleepKey = 0x4853u;           /* "HS", the top half */
+constexpr uint32_t kWakeKey = 0x57414B45u;        /* "WAKE" */
+constexpr uint32_t kSleepMark = 0x5A5Au;          /* "ZZ" */
 // `cadr_console.sv`'s own three keys and the word's marker.
 constexpr uint32_t kTvSimpleKey = 0x534D504Cu;  /* "SMPL" */
 constexpr uint32_t kTvLispmKey = 0x4C53504Du;   /* "LSPM" */
@@ -541,7 +547,20 @@ int main(int argc, char **argv) {
   // later --- which is what an evaluation moved from the end of one tick to
   // the start of the next does --- made twenty stalled microcycles of the
   // page-0 parity loop one generator cycle long, measured.
+  // **THE DISPLAY OUTPUT'S FACE, AS FAR AS THE CONSOLE CAN SEE IT.**  The
+  // setting, whether the lanes are muted, and whether there is a display
+  // output at all live in `rtl/plumbing/cadr_display_out.sv` and not in the
+  // console, which only carries a write to them and a read back.  So this
+  // plays the display: a set pulse loads the setting with the value beside
+  // it, and every pulse of either kind is counted, one a tick at most.
+  unsigned face_secs = 300;
+  int face_asleep = 0, face_fitted = 1;
+  long face_sets = 0, face_wakes = 0, face_both = 0;
+
   auto Tick = [&]() {
+    dut->hdmi_sleep_q = face_secs;
+    dut->hdmi_asleep = face_asleep;
+    dut->hdmi_sleep_fitted = face_fitted;
     // -- the bus interface, as far as VCTL1 can see it
     dut->n_memgrant = bus_outstanding ? 0 : 1;
     const bool acking = bus_outstanding && tick >= ack_at_tick;
@@ -558,6 +577,12 @@ int main(int argc, char **argv) {
 
     dut->clk = 1;
     dut->eval();
+
+    // The display's face takes a pulse at the edge that makes it: a pulse is
+    // one tick, so each is seen here exactly once.
+    if (dut->hdmi_sleep_set) { ++face_sets; face_secs = dut->hdmi_sleep_secs; }
+    if (dut->hdmi_wake) ++face_wakes;
+    if (dut->hdmi_sleep_set && dut->hdmi_wake) ++face_both;
 
     // "MEMRQ drops when MEMACK rises, which causes MEMACK to drop."
     if (bus_outstanding && dut->n_memack == 0 && dut->n_memrq) {
@@ -1358,10 +1383,11 @@ int main(int argc, char **argv) {
   // **AND EVERY OTHER WORD OF PAGES 2 AND 3 READS `UNMAPPED`**, which is what
   // an address outside the face reads too.  The face gained one readable
   // address when the stamp arrived, one more when the backplane's display
-  // boards took word 33, a third when the display output took word 34 and a
-  // fourth when the lamps took word 35, and it gained nothing else: the end of
-  // page 2 past the four, and the two ends of page 3.
-  for (unsigned i : {36u, 47u, 48u, 63u}) {
+  // boards took word 33, a third when the display output took word 34, a
+  // fourth when the lamps took word 35 and a fifth when the display output's
+  // sleep took word 36, and it gained nothing else: the end of page 2 past the
+  // five, and the two ends of page 3.
+  for (unsigned i : {37u, 47u, 48u, 63u}) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("a word of pages 2 and 3 that is not the build", w, kUnmapped);
     ++unmapped_seen;
@@ -1575,6 +1601,115 @@ int main(int argc, char **argv) {
     // expect.
     DoWrite(Con(kRegLamps), ~kLampSteadyKey, 0xF);
     lamps("the lamps at the end", 0);
+  }
+
+  // **WHETHER THE DISPLAY OUTPUT SLEEPS, page 2's word 36.**
+  //
+  // `--hdmi-sleep` and `cadr-console hdmi-sleep`: a setting in seconds under a
+  // sixteen-bit key, and a wake under a key of its own, which is what
+  // `cadr-terminal` writes when a key or the mouse at the board moves.  The
+  // setting and the mute are the display output's and not the console's, so
+  // what is held here is the carrying: a key becomes one pulse with the value
+  // beside it and nothing else becomes any pulse, and the word reads back what
+  // the display holds --- which is the model above, and which moves only
+  // because a pulse moved it.
+  {
+    const long sets0 = face_sets, wakes0 = face_wakes;
+    auto slept = [&](const char *what, unsigned want_secs, int want_asleep) {
+      const uint32_t w = ReadWord(Con(kRegSleep));
+      if ((w >> 16) != kSleepMark) Fail("the sleep word's marker", w >> 16, kSleepMark);
+      if ((w & 0x7FFFu) != want_secs) Fail(what, w & 0x7FFFu, want_secs);
+      if (((w >> 15) & 1u) != (uint32_t)want_asleep)
+        Fail("the sleep word's asleep bit", (w >> 15) & 1u, (uint32_t)want_asleep);
+    };
+    auto pulses = [&](const char *what, long want_sets, long want_wakes) {
+      if (face_sets - sets0 != want_sets) Fail(what, face_sets - sets0, want_sets);
+      if (face_wakes - wakes0 != want_wakes) Fail(what, face_wakes - wakes0, want_wakes);
+    };
+    // The display's own default, carried straight through.
+    slept("the sleep setting out of reset", 300, 0);
+    pulses("pulses before anything was written", 0, 0);
+
+    // A setting is one pulse with the value on it, and the word then reads what
+    // the display loaded.
+    DoWrite(Con(kRegSleep), (kSleepKey << 16) | 600u, 0xF);
+    pulses("pulses after a setting of 600", 1, 0);
+    slept("the sleep setting after 600", 600, 0);
+    // The largest the word can carry, and zero, which never sleeps.
+    DoWrite(Con(kRegSleep), (kSleepKey << 16) | 0x7FFFu, 0xF);
+    pulses("pulses after a setting of 32767", 2, 0);
+    slept("the sleep setting after 32767", 0x7FFFu, 0);
+    DoWrite(Con(kRegSleep), (kSleepKey << 16) | 0u, 0xF);
+    pulses("pulses after a setting of 0", 3, 0);
+    slept("the sleep setting after 0", 0, 0);
+    DoWrite(Con(kRegSleep), (kSleepKey << 16) | 300u, 0xF);
+    pulses("pulses after a setting of 300", 4, 0);
+
+    // A wake is one pulse of its own and moves no setting.
+    DoWrite(Con(kRegSleep), kWakeKey, 0xF);
+    pulses("pulses after a wake", 4, 1);
+    slept("the sleep setting after a wake", 300, 0);
+    // And two, two: a wake is a pulse and not a level.
+    DoWrite(Con(kRegSleep), kWakeKey, 0xF);
+    pulses("pulses after a second wake", 4, 2);
+
+    // The asleep bit is the display's, read straight.
+    face_asleep = 1;
+    slept("the sleep word with the display asleep", 300, 1);
+    face_asleep = 0;
+    slept("the sleep word with the display awake again", 300, 0);
+
+    // **AND A VALUE THAT MEANS NOTHING MAKES NO PULSE.**  Zero, all ones, the
+    // face's own words, the word's own read-back --- which a program that
+    // echoed the word would write --- a setting with the fifteen-bit value's
+    // top neighbor set, a key one bit out, the wake key one bit out and a
+    // byte along, and the other words' keys.
+    const uint32_t nothing_sleep[] = {
+        0u, 0xFFFFFFFFu, kIdent, kUnmapped,
+        (kSleepMark << 16) | 300u, (kSleepMark << 16) | 0x8000u | 300u,
+        (kSleepKey << 16) | 0x8000u | 5u, ((kSleepKey ^ 1u) << 16) | 5u,
+        kWakeKey ^ 1u, kWakeKey >> 8, kWakeKey << 8,
+        kLampSteadyKey, kHdmiTvKey, kTvSimpleKey,
+        0x424F'4F54u /* BOOT_KEY */, 0x5253'4554u /* RESET_KEY */};
+    for (uint32_t v : nothing_sleep) {
+      DoWrite(Con(kRegSleep), v, 0xF);
+      pulses("pulses after a value that means nothing", 4, 2);
+    }
+    slept("the sleep setting after values that mean nothing", 300, 0);
+
+    // **AND A WRITE THAT DOES NOT STROBE ALL FOUR LANES IS NOT A SETTING.**
+    // The face merges a beat against zero, so a setting whose value has a
+    // zero byte could otherwise be assembled out of three lanes; the word
+    // asks for all four and not for a key with no zero byte.
+    DoWrite(Con(kRegSleep), (kSleepKey << 16) | 0x0105u, 0xD);
+    DoWrite(Con(kRegSleep), (kSleepKey << 16) | 0x0105u, 0xE);
+    DoWrite(Con(kRegSleep), kWakeKey, 0x1);
+    pulses("pulses after writes of fewer than four lanes", 4, 2);
+
+    // **AND ONLY PAGE 2'S OWN COMPARATOR REACHES IT, AT ITS OWN INDEX.**  Word
+    // 4 of page 0 is TICKS, the same index in another window; word 35 is the
+    // lamps', one along; word 37 is unmapped, one the other way.
+    for (unsigned at : {4u, 35u, 37u}) {
+      DoWrite(Con(at), (kSleepKey << 16) | 7u, 0xF);
+      DoWrite(Con(at), kWakeKey, 0xF);
+    }
+    pulses("pulses after the keys written at the neighboring words", 4, 2);
+    {
+      const uint32_t lw = ReadWord(Con(kRegLamps));
+      if ((lw & 1u) != 0) Fail("the lamps after the sleep keys at their word", lw & 1u, 0);
+    }
+
+    // **A BOARD WITH NO DISPLAY OUTPUT HAS NO SLEEP TO REPORT**, and the word
+    // reads `UNMAPPED`, what an address with nothing behind it reads: a
+    // setting read back from a display that is not there would be a number
+    // nothing holds.
+    face_fitted = 0;
+    {
+      const uint32_t w = ReadWord(Con(kRegSleep));
+      if (w != kUnmapped) Fail("the sleep word with no display output", w, kUnmapped);
+    }
+    face_fitted = 1;
+    if (face_both) Fail("ticks on which a setting and a wake were both pulsed", face_both, 0);
   }
 
   // **AND THE TWO DISPLAY BOARDS' COLOR MAPS, pages 4 and 5.**
