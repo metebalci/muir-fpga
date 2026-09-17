@@ -673,7 +673,7 @@ int main(int argc, char **argv) {
         // are held below, register by register.
         const bool defined = (s == kChaos)
             ? (word <= 8 || (word >= 0x100 && word < 0x300))
-            : (word <= 7);
+            : (s == kSer) ? (word <= 10) : (word <= 7);
         if (!defined && got != 0)
           FailAt(addr, "an undefined word of a register face", got, 0);
         break;
@@ -1192,11 +1192,20 @@ int main(int argc, char **argv) {
     }
     if (!(b.Read(SER_PAGE + 4) & 2u)) Fail("TX_ROOM once the character has landed", 0, 2u);
 
-    // --- and a character offered with no room is dropped, not queued.
+    // --- and a character offered with no room is dropped, not queued ---
+    // and COUNTED, in `REFUSED`, which is the one way a character into the
+    // machine can be lost on this side of the seam: a program reads STAT,
+    // the room goes, and the write lands after it.  Uncounted, that loss
+    // would be silent on both sides.
+    const uint32_t refused0 = b.Read(SER_PAGE + 4 * 10);
     b.Write(SER_PAGE + 4 * 3, 0x52u);
     const uint32_t busy = b.Read(SER_PAGE + 4);
     if (busy & 2u) Fail("TX_ROOM with a character already on its way", 1, 0);
+    if (b.Read(SER_PAGE + 4 * 10) != refused0)
+      Fail("REFUSED after a write that had room", b.Read(SER_PAGE + 4 * 10), refused0);
     b.Write(SER_PAGE + 4 * 3, 0x53u);     // refused: no room
+    if (b.Read(SER_PAGE + 4 * 10) != refused0 + 1)
+      Fail("REFUSED after a write with no room", b.Read(SER_PAGE + 4 * 10), refused0 + 1);
     in_at = tick;
     while (!(b.UbRead(UB_SER_STAT) & 2u) && tick - in_at < in_bound) { }
     const unsigned second = b.UbRead(UB_SER_DATA) & 0xFFu;
@@ -1753,6 +1762,323 @@ int main(int argc, char **argv) {
       if (bad == 0) ++drained_on_time;
     }
     b.UbWrite(UB_SER_CMD, 0x27);
+  }
+
+  // ======================================================================
+  // A FAR END THAT LOOKS NO FASTER THAN LINUX DOES
+  // ======================================================================
+  //
+  // **EVERY LEG ABOVE TAKES THE CHARACTER THE TICK IT ARRIVES**, because each
+  // one polls the face between two ticks of the machine.  That is a far end
+  // no program can be.  `cadr-serial` looks at the port every 2,000 us of
+  // the board's wall clock, and Linux is free to stretch that by a
+  // scheduling latency on top.  On the 10 ns grid a frame at 9600 baud is
+  // 1.04 ms of that same wall clock, so a program looking every 2 ms sees two
+  // characters arrive between two looks --- and a line side that held one
+  // character counted the first in `DROPPED` when the second came.  Measured
+  // on the board: `(format zz "HELLO CADR")` arrived as "HELO AD" with
+  // DROPPED at 5, and `--poll-us 500` still lost one burst in three.  The
+  // machine did nothing wrong and the check had never been slower than the
+  // machine, so nothing here could see it.
+  //
+  // So the far end here looks every 2,000 us, in BOARD ticks and not grid
+  // ticks, because the program's interval is the wall's; and once in the
+  // middle of the run it stops looking for 50 ms, which is a latency Linux
+  // is entitled to.  The machine's side is a driver reloading the holding
+  // register as soon as TxRDY is up, so the characters leave back to back.
+  //
+  // **AND THE STORE'S BOUND IS HELD, NOT ASSUMED.**  A far end that never
+  // looks lets the store fill: the one at RDATA and `kSerStore` behind it,
+  // and every character after that counted in DROPPED --- the newest, so
+  // that what the program was already told it could read is still there.
+  // Taking them all afterwards walks the ring's read pointer past its end,
+  // which a burst of a hundred cannot.
+  long slow_taken = 0, slow_piled = 0, slow_pairs = 0;
+  long store_held = 0, store_dropped = 0, store_swept = 0;
+  {
+    // The board's clock, `CLKOUT0_DIVIDE_F` in `cadr_arty.sv`: what one
+    // tick is on the wall the program's `ppoll` is measured against.  NOT
+    // the grid, which is what the machine's frame is counted in.
+    const long kBoardTickNs = 10;
+    const long poll = 2000000 / kBoardTickNs;        // cadr-serial's --poll-us
+    const long stall = 50000000 / kBoardTickNs;      // a latency on top of it
+    // The depth `cadr_serial_line.sv`'s face documents, written out here and
+    // not read from the design, so that a store made shallower is a
+    // disagreement rather than an agreed change.
+    const long kSerStore = 1024;
+
+    // The chip from scratch and the plug in, as every leg above does it.
+    auto program = [&](unsigned rate) {
+      b.Write(SER_PAGE + 4 * 4, 0u);
+      b.Idle(8);
+      (void)b.UbRead(UB_SER_CMD);
+      b.UbWrite(UB_SER_MODE, kMr1);
+      b.UbWrite(UB_SER_MODE, 0x30u | rate);
+      b.UbWrite(UB_SER_CMD, 0x27);
+      b.Write(SER_PAGE + 4 * 4, 7u);
+      b.Idle(64);
+      (void)b.UbRead(UB_SER_STAT);       // the plug's own data set change
+      while (b.Read(SER_PAGE + 4) & 1u) (void)b.Read(SER_PAGE + 4 * 2);
+    };
+    // What Linux does at a look: STAT, then RDATA, for as long as STAT says
+    // there is a character --- `serial_face_get` in a loop, which is what
+    // `serial_endpoint_pump` runs.  Returns how many it took.
+    auto look = [&](std::string *got) {
+      long n = 0;
+      while (b.Read(SER_PAGE + 4) & 1u) {
+        const uint32_t rd = b.Read(SER_PAGE + 4 * 2);
+        if (!(rd & 0x100u)) {
+          Fail("RDATA's valid bit with STAT's RX_VALID up", rd, 0x100u);
+          break;
+        }
+        got->push_back((char)(rd & 0xFFu));
+        ++n;
+      }
+      return n;
+    };
+
+    // --- leg 1: 9600 baud, a look every 2 ms, and one 50 ms stall.
+    {
+      const unsigned kRate = 14;
+      const double frame = FrameTicks(kMr1, kRate);
+      program(kRate);
+      const uint32_t dropped0 = b.Read(SER_PAGE + 4 * 6);
+      b.Write(SER_PAGE + 4 * 9, 0u);                     // DEEPEST from here
+      if (b.Read(SER_PAGE + 4 * 9) != 0)
+        Fail("DEEPEST after a write, with nothing waiting", b.Read(SER_PAGE + 4 * 9), 0);
+
+      const int kChars = 100;
+      std::string sent, got;
+      for (int k = 0; k < kChars; ++k) sent.push_back((char)(0x21 + (k * 29) % 94));
+
+      size_t op = 0;
+      long next_check = tick, next_look = tick + poll;
+      bool stalled = false;
+      const long began = tick;
+      const long budget = (long)(frame * (kChars + 6)) + stall + 8 * poll;
+      while (tick - began < budget && got.size() < (size_t)kChars && bad < 25) {
+        // The machine: a handler that looks at TxRDY every 20 us and loads
+        // the next character when the holding register is empty.
+        if (op < (size_t)kChars && tick >= next_check) {
+          if (b.UbRead(UB_SER_STAT) & 1u) b.UbWrite(UB_SER_DATA, (unsigned char)sent[op++]);
+          next_check = tick + GridTicks(20000);
+        }
+        // The far end.
+        if (tick >= next_look) {
+          const long n = look(&got);
+          if (n >= 2) ++slow_pairs;
+          next_look = tick + poll;
+          if (!stalled && got.size() >= 20) {
+            next_look = tick + stall;
+            stalled = true;
+          }
+        }
+        long until = next_look;
+        if (op < (size_t)kChars && next_check < until) until = next_check;
+        if (until > tick) b.Idle(until - tick);
+      }
+      slow_taken = (long)got.size();
+      if (got != sent) {
+        Fail("the characters a far end looking every 2 ms took, of a hundred",
+             got.size(), sent.size());
+        std::fprintf(stderr, "  the far end got \"%s\"\n", got.c_str());
+      }
+      const uint32_t dropped = b.Read(SER_PAGE + 4 * 6);
+      if (dropped != dropped0)
+        Fail("DROPPED over a hundred characters to a far end looking every 2 ms",
+             dropped - dropped0, 0);
+      // The stimulus was slower than the machine, or it tested nothing: looks
+      // that found two or more characters waiting, and a stall that piled up
+      // about one character a frame.
+      if (slow_pairs == 0)
+        Fail("looks that found two or more characters waiting: the far end was "
+             "never slower than the frame", 0, 1);
+      slow_piled = (long)b.Read(SER_PAGE + 4 * 9);
+      const long pile = (long)((double)stall / frame);
+      if (slow_piled < pile - 4 || slow_piled > pile + 4)
+        Fail("DEEPEST after a 50 ms stall at 9600 baud", slow_piled, pile);
+      if (b.Read(SER_PAGE + 4 * 8) != 0)
+        Fail("WAITING once the far end has taken everything", b.Read(SER_PAGE + 4 * 8), 0);
+    }
+
+    // --- leg 2: 19,200 baud and a far end that does not look at all.
+    {
+      const unsigned kRate = 15;
+      program(kRate);
+      const uint32_t dropped0 = b.Read(SER_PAGE + 4 * 6);
+      b.Write(SER_PAGE + 4 * 9, 0u);
+      b.Write(SER_PAGE + 4 * 7, 3u);                     // IRQ cleared
+      const long kChars = kSerStore + 1 + 3;
+      std::string sent;
+      for (long k = 0; k < kChars; ++k) sent.push_back((char)((k * 37 + 11) & 0xFF));
+
+      size_t op = 0;
+      bool first_seen = false;
+      long next_check = tick;
+      const long began = tick;
+      const double frame = FrameTicks(kMr1, kRate);
+      const long budget = (long)(frame * (double)(kChars + 4));
+      // Until every character has left the machine and the last frame has
+      // ended: the transmitter empty with nothing in the holding register.
+      while (tick - began < budget && bad < 25) {
+        if (tick >= next_check) {
+          const unsigned st = b.UbRead(UB_SER_STAT) & 0377u;
+          if (op < (size_t)kChars && (st & 1u)) {
+            b.UbWrite(UB_SER_DATA, (unsigned char)sent[op++]);
+          } else if (op == (size_t)kChars && (st & 4u)) {
+            break;                                         // TxEMT: all out
+          }
+          next_check = tick + GridTicks(20000);
+        }
+        // `IRQ` bit 0 is a character arriving with nothing waiting: once
+        // for the first, and not again while it stands.
+        if (!first_seen && (b.Read(SER_PAGE + 4 * 8) != 0)) {
+          first_seen = true;
+          if (!(b.Read(SER_PAGE + 4 * 7) & 1u))
+            Fail("IRQ bit 0 when the first character arrived", 0, 1);
+          b.Write(SER_PAGE + 4 * 7, 1u);
+        }
+        if (next_check > tick) b.Idle(next_check - tick);
+      }
+      if (op != (size_t)kChars) Fail("characters the machine got onto the line", op, kChars);
+      if (b.Read(SER_PAGE + 4 * 7) & 1u)
+        Fail("IRQ bit 0 set again by a character arriving behind one waiting", 1, 0);
+      store_held = (long)b.Read(SER_PAGE + 4 * 8);
+      store_dropped = (long)(b.Read(SER_PAGE + 4 * 6) - dropped0);
+      if (store_held != kSerStore + 1)
+        Fail("WAITING with the store full: the one at RDATA and the store behind it",
+             store_held, kSerStore + 1);
+      if (store_dropped != 3)
+        Fail("DROPPED past a full store", store_dropped, 3);
+      if ((long)b.Read(SER_PAGE + 4 * 9) != kSerStore + 1)
+        Fail("DEEPEST with the store full", b.Read(SER_PAGE + 4 * 9), kSerStore + 1);
+      std::string got;
+      (void)look(&got);
+      const std::string want = sent.substr(0, (size_t)(kSerStore + 1));
+      if (got != want) {
+        size_t at = 0;
+        while (at < got.size() && at < want.size() && got[at] == want[at]) ++at;
+        Fail("the characters taken out of a full store, oldest first and the "
+             "newest three the ones lost", got.size(), want.size());
+        std::fprintf(stderr, "  they part at character %zu\n", at);
+      }
+      if (b.Read(SER_PAGE + 4 * 8) != 0)
+        Fail("WAITING with the store emptied", b.Read(SER_PAGE + 4 * 8), 0);
+      // And with nothing waiting again, the next character does set it.
+      b.UbWrite(UB_SER_DATA, 'x');
+      const long at = tick;
+      while (!(b.Read(SER_PAGE + 4) & 1u) && tick - at < (long)(frame * 3.0)) { }
+      if (!(b.Read(SER_PAGE + 4 * 7) & 1u))
+        Fail("IRQ bit 0 for a character arriving at an empty store", 0, 1);
+      (void)b.Read(SER_PAGE + 4 * 2);
+      b.Write(SER_PAGE + 4 * 7, 3u);
+    }
+
+    // --- leg 3: a take on the tick a character arrives.
+    //
+    // **THE STORE'S COUNT IS WRITTEN FROM TWO PLACES, a character in and one
+    // fetched out, and only a take landing on the tick of an arrival can see
+    // that both were counted.**  The input face's queue met the same hazard
+    // and needed the same shape of stimulus: nothing slower than a tick finds
+    // it.  So with a character standing in the store, the far end takes
+    // one each frame at an offset from the next arrival that walks a tick a
+    // frame across eighty ticks either side of where the arrival is
+    // predicted --- the prediction being one arrival located by reading
+    // `WAITING` back to back, and every later one a whole number of frames
+    // after it, the characters leaving the machine back to back.  Afterwards
+    // everything is taken and must come out whole and in order.
+    {
+      const unsigned kRate = 15;
+      program(kRate);
+      const uint32_t dropped0 = b.Read(SER_PAGE + 4 * 6);
+      // Back to back, so that the arrivals are a frame apart exactly: the
+      // frame in the crystal's own periods, turned into ticks without
+      // rounding.
+      const double frame = FrameTicks(kMr1, kRate);
+      const long kSweep = 161;
+      const long kChars = kSweep + 12;
+      std::string sent, got;
+      for (long k = 0; k < kChars; ++k) sent.push_back((char)((k * 53 + 7) & 0xFF));
+
+      size_t op = 0;
+      long next_check = tick;
+      auto machine = [&]() {
+        if (op < (size_t)kChars && tick >= next_check) {
+          if (b.UbRead(UB_SER_STAT) & 1u) b.UbWrite(UB_SER_DATA, (unsigned char)sent[op++]);
+          next_check = tick + GridTicks(20000);
+        }
+      };
+      // Let one stand at `RDATA`, so that the sweep keeps ONE in the store
+      // behind it: a take then fetches the store's last character, and the
+      // arrival the sweep brings lands either side of that --- on a store
+      // the take is emptying, and on one it has just emptied.
+      const long fill_began = tick;
+      while (b.Read(SER_PAGE + 4 * 8) < 1 && tick - fill_began < (long)(frame * 12.0)) {
+        machine();
+        b.Idle(64);
+      }
+      // One arrival, located to the few ticks a read takes.  The holding
+      // register is loaded first and the machine's handler is NOT run while
+      // the reads look, because a Unibus cycle is a hundred ticks the reads
+      // would not be looking --- and the next character still leaves back to
+      // back, being in the holding register already.
+      const long load_began = tick;
+      while ((b.UbRead(UB_SER_STAT) & 1u) && op < (size_t)kChars &&
+             tick - load_began < (long)(frame * 3.0)) {
+        next_check = tick;
+        machine();
+      }
+      uint32_t w = b.Read(SER_PAGE + 4 * 8);
+      const long locate_began = tick;
+      long t0 = -1;
+      while (tick - locate_began < (long)(frame * 1.5)) {
+        const uint32_t now = b.Read(SER_PAGE + 4 * 8);
+        if (now > w) { t0 = tick; break; }
+        w = now;
+      }
+      next_check = tick;
+      if (t0 < 0) {
+        Fail("an arrival to sweep the takes around", 0, 1);
+      } else {
+        for (long k = 0; k < kSweep && bad < 25; ++k) {
+          const long target = t0 + (long)(frame * (double)(k + 1)) + (k - kSweep / 2);
+          // The machine's handler takes a Unibus cycle or two, so it is not
+          // let start inside the last few hundred ticks before the take:
+          // that would move the take off the tick it was aimed at.
+          while (tick < target - 3) {
+            if (target - 3 - tick > 400) machine();
+            long until = target - 3;
+            if (op < (size_t)kChars && next_check < until && target - 3 - next_check > 400)
+              until = next_check;
+            if (until > tick) b.Idle(until - tick);
+          }
+          const uint32_t rd = b.Read(SER_PAGE + 4 * 2);
+          if (rd & 0x100u) got.push_back((char)(rd & 0xFFu));
+          else Fail("RDATA with characters standing in the store", rd, 0x100u);
+        }
+      }
+      // The rest, once the machine has sent them all.
+      const long tail_began = tick;
+      while (op < (size_t)kChars && tick - tail_began < (long)(frame * 20.0)) {
+        machine();
+        b.Idle(256);
+      }
+      b.Idle((long)(frame * 2.0));
+      (void)look(&got);
+      if (got != sent) {
+        size_t at = 0;
+        while (at < got.size() && at < sent.size() && got[at] == sent[at]) ++at;
+        Fail("the characters taken with the takes swept across the arrivals",
+             got.size(), sent.size());
+        std::fprintf(stderr, "  they part at character %zu\n", at);
+      }
+      if (b.Read(SER_PAGE + 4 * 6) != dropped0)
+        Fail("DROPPED with the takes swept across the arrivals",
+             b.Read(SER_PAGE + 4 * 6) - dropped0, 0);
+      if (b.Read(SER_PAGE + 4 * 8) != 0)
+        Fail("WAITING once the swept store is emptied", b.Read(SER_PAGE + 4 * 8), 0);
+      if (bad == 0) store_swept = kSweep;
+    }
   }
 
   // ======================================================================
@@ -2404,7 +2730,15 @@ int main(int argc, char **argv) {
       "    %ld disables half a frame into a character whose character still\n"
       "      reached the far end one frame after it started --- the second\n"
       "      with the RECEIVER off too, so that the character in the shift\n"
-      "      register was the only thing keeping the crystal running\n",
+      "      register was the only thing keeping the crystal running\n"
+      "    %ld of a hundred characters at 9600 baud whole to a far end looking\n"
+      "      every 2,000 us of the board's clock, as `cadr-serial` does: %ld looks\n"
+      "      found two or more waiting and a 50 ms stall piled %ld up, with\n"
+      "      DROPPED unmoved; and a far end that never looked filled the store\n"
+      "      to %ld, the one at RDATA and the store behind it, with the %ld after\n"
+      "      that counted in DROPPED and the ones it held taken out in order;\n"
+      "      and %ld takes swept a tick a frame across the arrivals, so that a\n"
+      "      take lands on the tick a character is stored\n",
       pages, reads, writes, by[kPack], by[kChaos], by[kSer], by[kInput], by[kDflt],
       crossed, bursts,
       frames_out, frames_in, chars_out, chars_in, measured[0], measured[1],
@@ -2412,6 +2746,7 @@ int main(int argc, char **argv) {
       FrameTicks(kMr1, 15), looped,
       walk_streamed, walk_wedged,
       keys_typed, keys_lost, keys_swept, mouse_moved, step_span,
-      (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls, second_streamed, drained_on_time);
+      (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls, second_streamed, drained_on_time,
+      slow_taken, slow_pairs, slow_piled, store_held, store_dropped, store_swept);
   return 0;
 }

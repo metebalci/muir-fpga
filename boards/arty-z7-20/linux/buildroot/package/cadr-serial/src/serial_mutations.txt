@@ -327,6 +327,97 @@
 	return f->read(f, SER_MODE) & 0xFu;
 @end
 
+@mutation a-new-device-is-handed-what-the-port-held-for-the-last
+@file serial_endpoint.c
+@why a device that arrives must not be handed characters the machine sent to the one before it
+@note The port holds a thousand and twenty-four characters behind RDATA since
+@note a program looking every 2,000 us lost characters at 9600 baud, so what
+@note it holds at a hang-up is no longer at most one.  A frame still on the
+@note wire when the lines dropped lands there after the device has gone, and
+@note without the arrival's own drain the next device reads the last one's
+@note leavings first --- the rule `the-outbox-is-not-cleared-when-the-cable-goes`
+@note keeps for the outbox, one queue along.
+@old
+	if (e->connects != connects_before) {
+@new
+	if (e->connects != connects_before && e->connects == connects_before) {
+@end
+
+@mutation what-the-port-held-for-the-last-device-is-not-counted
+@file serial_endpoint.c
+@why the characters thrown away at an arrival are the one record that they were lost at all
+@note The port's own DROPPED counts what arrived with its store full and not
+@note these, which the port stored and this program then threw away.
+@old
+			++e->dropped_on_hangup;
+@new
+			e->dropped_on_hangup += 0;
+@end
+
+@mutation the-ports-dropped-characters-do-not-make-the-status-line
+@file serial_endpoint.c
+@why DROPPED moving must print a line even when none of the program's own counters moved
+@note **THE LOSS THE BOARD HAD WOULD HAVE BEEN SILENT ON AN IDLE LINE.**  The
+@note program's status line was printed when its own counters moved, and
+@note DROPPED is the fabric's: characters the machine sent that arrived with
+@note the port's store full move nothing the program counts.  A run that lost
+@note characters with no device attached, or between two lines, would read
+@note clean.
+@old
+		|| dropped != said->port_dropped
+@new
+		|| dropped != dropped
+@end
+
+@mutation a-refused-write-does-not-make-the-status-line
+@file serial_endpoint.c
+@why REFUSED moving must print a line on its own: it is the one loss of a character into the machine
+@note A write into the machine's receiver that lands after the room went is
+@note dropped by the port and counted there and nowhere else; this program
+@note believes it was taken.
+@old
+		|| refused != said->port_refused;
+@new
+		|| refused != refused;
+@end
+
+@mutation deepest-is-read-out-of-waiting
+@file serial_face.c
+@why DEEPEST is word 9, the most that waited; WAITING is word 8, what waits now
+@note Reading the wrong one of two words that agree whenever the port is
+@note filling and differ once it has been emptied: a status line that reads
+@note what waits now as the most that ever waited says a run used none of the
+@note store at every quiet moment.
+@old
+	return f->read(f, SER_DEEPEST);
+@new
+	return f->read(f, SER_WAITING);
+@end
+
+@mutation refused-is-read-out-of-dropped
+@file serial_face.c
+@why REFUSED is word 10, writes into the machine the port dropped; DROPPED is word 6, what the machine sent that the port could not hold
+@note The two losses are in opposite directions and read as the same number
+@note on a line where neither moves, which is the only kind of line a check
+@note that never makes either happen would ever see.
+@old
+	return f->read(f, SER_REFUSED);
+@new
+	return f->read(f, SER_DROPPED);
+@end
+
+@mutation deepest-is-restarted-at-the-wrong-word
+@file serial_face.c
+@why the write that restarts DEEPEST is a write of word 9
+@note Any write of word 9 restarts it, so the word is the whole of the
+@note operation; written to IRQ instead, it clears both interrupt bits and
+@note leaves DEEPEST at the last run's number.
+@old
+	f->write(f, SER_DEEPEST, 0);
+@new
+	f->write(f, SER_IRQ, 0);
+@end
+
 @mutation the-serial-endpoint-takes-an-address-with-no-port
 @file cadr-common/src/cadr_endpoint.c
 @why a bare address names no port, which is the one thing that lets --serial refuse it

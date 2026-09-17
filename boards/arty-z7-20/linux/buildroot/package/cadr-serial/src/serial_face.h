@@ -30,13 +30,14 @@
 //
 //    +0x00  0  IDENT  "SERI", read-only
 //    +0x04  1  STAT   read-only, the bits of `enum ser_stat`
-//    +0x08  2  RDATA  read: bits 7:0 the next character the machine
-//                     transmitted, bit 8 set if there was one.  **The read
-//                     consumes it**, which is the one place in this face
-//                     where a read has an effect, and is why `STAT`'s
-//                     `RX_VALID` is read first and `RDATA` only then
+//    +0x08  2  RDATA  read: bits 7:0 the oldest character the machine
+//                     transmitted that is waiting, bit 8 set if there was
+//                     one.  **The read consumes it**, which is the one place
+//                     in this face where a read has an effect, and is why
+//                     `STAT`'s `RX_VALID` is read first and `RDATA` only then
 //    +0x0C  3  WDATA  written: bits 7:0 a character into the machine's
-//                     receiver.  Refused, and lost, unless `TX_ROOM` is up
+//                     receiver.  Refused, lost and counted in `REFUSED`,
+//                     unless `TX_ROOM` is up
 //    +0x10  4  CTL    written: `enum ser_ctl`, the modem-control lines this
 //                     end asserts.  A device on the cable raises DSR and DCD;
 //                     CTS is raised with them, this cable having no flow
@@ -48,9 +49,25 @@
 //                     worth printing, and `muir::serial::BAUD_TENTHS` names
 //                     it.  **Nothing in this program acts on it.**
 //    +0x18  6  DROPPED read-only, saturating: characters the machine sent
-//                     that nobody was there to take
-//    +0x1C  7  IRQ    bit 0 a character is waiting, bit 1 the transmitter has
-//                     room.  A 1 written clears the bit
+//                     that arrived with the port's store full
+//    +0x1C  7  IRQ    bit 0 a character arrived with nothing waiting, bit 1
+//                     the transmitter has room.  A 1 written clears the bit
+//    +0x20  8  WAITING read-only: how many characters the machine sent are
+//                     waiting to be read, the one at `RDATA` among them
+//    +0x24  9  DEEPEST the most `WAITING` has been since this was last
+//                     written; any write starts it again from zero
+//    +0x28 10  REFUSED read-only, saturating: `WDATA` writes that found no
+//                     room and were dropped
+//
+// **THE PORT HOLDS WHAT THE MACHINE SENT UNTIL THIS PROGRAM TAKES IT.**  A
+// thousand and twenty-four characters wait behind the one at `RDATA`, which
+// is about a second at 9600 baud.  It held one until the grid moved to 10 ns,
+// and then a program looking every 2,000 us lost characters at 9600, a frame
+// there being 1.04 ms: the board printed "HELO AD" for "HELLO CADR".  So what
+// this program owes the port is to take everything waiting at each look, which
+// `serial_endpoint_pump` does, and to look often enough that a second of
+// characters never piles up, which any interval here does.  `DEEPEST` is how
+// much of that second a run actually used.
 //
 // **EVERY ADDRESS IN THE WINDOW MUST BE ANSWERED.**  A read on a GP port that
 // nothing answers hangs both Arm cores at one PC each --- measured on this
@@ -78,7 +95,8 @@
 
 enum ser_reg {
 	SER_IDENT = 0, SER_STAT = 1, SER_RDATA = 2, SER_WDATA = 3,
-	SER_CTL = 4, SER_MODE = 5, SER_DROPPED = 6, SER_IRQ = 7
+	SER_CTL = 4, SER_MODE = 5, SER_DROPPED = 6, SER_IRQ = 7,
+	SER_WAITING = 8, SER_DEEPEST = 9, SER_REFUSED = 10
 };
 
 enum ser_stat {
@@ -145,6 +163,16 @@ void serial_face_set_lines(struct serial_face *f, uint32_t lines);
 
 uint32_t serial_face_stat(struct serial_face *f);
 uint32_t serial_face_dropped(struct serial_face *f);
+
+// How many characters the port holds now, the most it has held since
+// `serial_face_restart_deepest`, and the writes into the machine's receiver it
+// refused.  The last is the one way a character INTO the machine can be lost
+// on this side of the seam --- a write that lands after the room went --- and
+// nothing else counts it.
+uint32_t serial_face_waiting(struct serial_face *f);
+uint32_t serial_face_deepest(struct serial_face *f);
+void serial_face_restart_deepest(struct serial_face *f);
+uint32_t serial_face_refused(struct serial_face *f);
 
 // The rate the machine has programmed, as an index into
 // `muir::serial::DIVISORS`, out of MODE's MR2; and that rate in tenths of a
