@@ -61,19 +61,30 @@ Source: [`README.md`](../README.md); the header of `mutations/list.txt`.
 
 ### Why is a tick ten nanoseconds?
 
+Because the design does not meet its timing with a clock of five nanoseconds.
+With a clock of ten it does.
+
 Two numbers are ten nanoseconds here, and they are different things. The grid
 is the conversion from MIT's drawings into ticks: `TICK_NS` in
 `rtl/machine/cadr_tick_pkg.sv` places every instant at the first 10 ns tick at
 or after it. The tick is how long one lasts, which is the board's business, and
 this board makes one ten nanoseconds.
 
-So the microcycle is 15 ticks where the drawings say 145 ns, and the read taps
-are 8, 9, 10, 12, 13, 14 and 16. Eight instants move up by five nanoseconds
-each and none moves down, and muir's `--timing-model fpga` rounds them the
-same way, so the references are generated under the same grid. The machine
-runs at about 97% of the hardware's speed. The grid was five nanoseconds
-before, which kept every instant exact and ran the machine at half speed. The
-tick is ten because timing closure at five was not reached.
+The machine runs at the original CADR's speed to within about 5%. A normal
+microcycle is 15 ticks, 150 ns, where the drawings say 145 ns, and every
+microcycle is within 4% of the drawings. The read taps are 8, 9, 10, 12, 13, 14
+and 16 ticks.
+
+The timing of the clock edges is close to the CADR's but not identical. The
+CADR placed its clock edges with tapped delay lines, while the FPGA clocks
+everything from one 10 ns clock. Eleven instants move later, eight of them by
+five nanoseconds and three by seven, and none moves earlier. Every instant
+keeps its order, so what the machine computes does not change. muir's
+`--timing-model fpga` rounds the same way, so the references are generated
+under the same grid.
+
+The grid was five nanoseconds before, which kept every instant exact. The clock
+was ten nanoseconds then too, so the machine ran at about half speed.
 
 Source: [`docs/timing.md`](timing.md); the header of
 `rtl/machine/cadr_tick_pkg.sv`; [`README.md`](../README.md).

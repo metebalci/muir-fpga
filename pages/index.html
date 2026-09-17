@@ -139,8 +139,11 @@
           and microcycle for microcycle
 BOOTS     MIT&rsquo;s own system software,
           off a disk pack
-PAINTS    the window system, on a screen</pre>
+PAINTS    the window system, on a screen
+RUNS      within about 5% of
+          the CADR&rsquo;s own speed</pre>
         <p class="small">It is <a href="https://github.com/metebalci/muir">muir</a>&rsquo;s RTL model of the CADR, synthesized into the fabric of an FPGA.</p>
+        <p class="small">Its clock edges are close to the CADR&rsquo;s but not identical. The CADR placed them with delay lines, and the FPGA can place them only on the ticks of one 10&nbsp;ns clock, so some fall up to 7&nbsp;ns later. <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/timing.md">The timing, instant by instant</a>.</p>
         <div class="actions push">
           <a class="key" href="arty-z7-20.html">Arty Z7-20</a>
           <a class="key lm" href="cora-z7-07s.html">Cora Z7-07S</a>
@@ -295,7 +298,7 @@ PAINTS    the window system, on a screen</pre>
     <div class="panels two end-split">
       <div class="colophon">
         <p>Almost nothing here is a first-hand invention. The CADR, the drawings, the wire lists and the microcode are MIT&rsquo;s, recovered by other people&rsquo;s work over decades, and the machine in the fabric is held tick for tick to <a href="https://github.com/metebalci/muir">muir</a>; <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#sources">the documents list every source</a> the drawings were read from and what each one is.</p>
-        <p>muir-fpga is implemented entirely by <a href="https://claude.com/claude-code">Claude Code</a>, on Anthropic&rsquo;s Opus 5 and Fable 5.1 models. The machine is written in SystemVerilog, its testbenches in C++ for Verilator, the programs beside it on the board in C, and the generators of its reference traces in Rust.</p>
+        <p>muir-fpga is implemented entirely by <a href="https://claude.com/claude-code">Claude Code</a>, on Anthropic&rsquo;s Opus and Fable models. The machine is written in SystemVerilog, its testbenches in C++ for Verilator, the programs beside it on the board in C, and the generators of its reference traces in Rust.</p>
         <p>muir-fpga is <a href="https://github.com/metebalci/muir">muir</a>&rsquo;s RTL model of the CADR, synthesized into the fabric of an FPGA and held to muir tick for tick. muir is named for Nathan Muir, the character Robert Redford plays in <em>Spy Game</em> (2001). In memory of Robert Redford.</p>
         <p><b>&copy; 2026 Mete Balci.</b> muir-fpga is <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-or-later</a>. MIT&rsquo;s own files are not in this repository: muir carries them, unmodified.</p>
         <p>The drawing style, the palette and the panels are <a href="https://github.com/metebalci/coldboot">Cold Boot</a>&rsquo;s, a manga-style zine about the same machine by the same author, under CC BY-SA 4.0. That one is the story; this one is the machine, in fabric. The board, this site&rsquo;s mascot, is drawn for it by the <a href="https://github.com/metebalci/ozd">ozd</a> project, in the same hand.</p>
