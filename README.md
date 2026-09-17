@@ -297,7 +297,7 @@ debuggee by configuration and never both at once, which is what makes one
 connector enough; a second one bought only a chain of three machines. The other
 Pmod is not assigned. The cable's 11.05 us budget makes the beats free.
 
-All three boards carry the connector, in every configuration, because a board
+Both Zynq boards carry the connector, in every configuration, because a board
 is always a debuggee. A board becomes the debugger by `--debug-cable-connect`
 in `fpgarc` or by `cadr-console debug-cable-connect`. A cable joins the Arty
 Z7-20 and the Cora Z7-07S, and each has debugged the other over it: CC in one

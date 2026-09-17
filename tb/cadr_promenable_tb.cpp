@@ -8,7 +8,7 @@
 // memory modeled, because the PROM's first main-memory cycle is at microcycle
 // 536,303 and nothing here gets near it.
 //
-// **WHY THIS CHECK EXISTS.**  The three boards drive their blue lamp from
+// **WHY THIS CHECK EXISTS.**  Both Zynq boards drive their blue lamp from
 // `promenable`, which is MIT's `-PROMENABLE` at PCTL 1C19 and NOT the mode
 // register's `PROMDISABLE` bit.  The two agree almost everywhere, which is
 // exactly the trap: a board wired to the mode bit instead would look right to
