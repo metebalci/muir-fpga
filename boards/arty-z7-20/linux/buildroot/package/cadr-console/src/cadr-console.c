@@ -361,6 +361,12 @@ static void help(void)
 	say("hdmi-mode       which video mode this BITSTREAM carries.  Read only: a mode is");
 	say("                a pixel clock and a pixel clock comes from an MMCM whose");
 	say("                dividers are fixed in the bitstream");
+	say("hdmi-sleep [SECONDS]    how long the display output waits with nobody at the");
+	say("                board's own keyboard or mouse before it stops the link and the");
+	say("                monitor sleeps; 0 never.  --hdmi-sleep.  A setting starts the");
+	say("                wait over and wakes a monitor asleep.  With no word it reports");
+	say("                the setting and whether the monitor is asleep.  Exits 0 when");
+	say("                there is a display output and it holds what was asked");
 	say("blinking-leds [on|off]  whether the board's activity lamps blink, or hold a level:");
 	say("                off is --no-blinking-leds.  With no word it reports.  Exits 0");
 	say("                when the lamps do what the words say: blinking with no word or");
@@ -563,6 +569,31 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 			    " another mode is another bitstream",
 			    cons_hdmi_mode_name(h.mode));
 		exit_status = h.mark_ok ? 0 : 1;
+	}
+	else if (!strcmp(cmd, "hdmi-sleep")) {
+		// **A SETTING, OR A REPORT, AND NEVER A WAKE.**  Only a person at
+		// the board wakes the monitor --- `cadr-terminal` writes that for a
+		// key or the mouse on its input link --- so there is no word here
+		// that does.  A setting does start the wait over, because the one
+		// the monitor was sleeping under is gone.
+		struct cons_hdmi_sleep s;
+		unsigned want = 0;
+		const int asked = argc > 1;
+		if (asked) {
+			if (cons_parse_hdmi_sleep(argv[1], &want) != 0) {
+				say("hdmi-sleep SECONDS: decimal, 0 to %u; 0 never sleeps",
+				    CONS_HDMI_SLEEP_MAX);
+				exit_status = 2;
+				return 0;
+			}
+			cons_set_hdmi_sleep(c, want);
+		}
+		cons_read_hdmi_sleep(c, &s);
+		cons_say_hdmi_sleep(&s);
+		// The answer, for a script: 0 when a display output is there and,
+		// if a setting was asked for, holds it.  A board with none, or a
+		// fabric older than the word, says so and answers 1.
+		exit_status = (s.mark_ok && (!asked || s.seconds == want)) ? 0 : 1;
 	}
 	else if (!strcmp(cmd, "blinking-leds")) {
 		// `on` and `off`, the flag's own sense read the other way round:

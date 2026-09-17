@@ -28,10 +28,11 @@ import subprocess
 import sys
 
 CORE = ["screen_frame.c", "screen_rfb.c", "screen_server.c",
-        "input_face.c", "input_keys.c", "input_mapping.c", "color_map.c"]
+        "input_face.c", "input_keys.c", "input_mapping.c", "color_map.c",
+        "display_wake.c"]
 HEADERS = ["screen_geom.h", "screen_frame.h", "screen_rfb.h", "screen_server.h",
            "input_face.h", "input_keys.h", "input_keymap.h", "input_mapping.h",
-           "color_map.h"]
+           "color_map.h", "display_wake.h"]
 COMMON = ["cadr_log.c", "cadr_mem.c", "cadr_input_link.c", "cadr_endpoint.c"]
 
 

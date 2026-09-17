@@ -230,6 +230,14 @@ set_the_display_boards() {
 # overlap.  `--hdmi-rotate` turns the picture a quarter turn for a monitor stood
 # on its side, which is what a screen 768 by 963 wants.
 #
+# **`--hdmi-sleep` IS HOW LONG THE MONITOR WAITS**, in seconds, with nobody at
+# the board's own keyboard or mouse, before the display output stops the link and
+# the monitor sleeps --- a digital link has no other way to sleep one.  A key or
+# the mouse at the board wakes it and a viewer's keys do not; zero never sleeps.
+# The fabric comes up with three hundred, so a card that says nothing has that.
+# `cadr-console hdmi-sleep` writes it at any time, and a board with no display
+# output says so there rather than here.
+#
 # **AND `--hdmi-mode` ASKS RATHER THAN SETS.**  A video mode is a pixel clock
 # and a pixel clock comes from an MMCM whose dividers are fixed in the
 # bitstream, so three bitstreams carry the three modes.  A card that names one
@@ -237,15 +245,18 @@ set_the_display_boards() {
 # saying which bitstream the card wants --- not a setting that quietly does
 # nothing.  `docs/display-output.md` has the measurement behind that.
 #
-# Nothing is printed when none of the three is there, because a board showing
-# the machine's own screen upright has nothing to say about it.
+# Nothing is printed when none of the four is there, because a board showing
+# the machine's own screen upright and sleeping after the fabric's own three
+# hundred seconds has nothing to say about it.
 set_the_display_output() {
 	[ -f "$RC" ] || return 0
 	fpgarc_has "$RC" --hdmi-output || fpgarc_has "$RC" --hdmi-rotate ||
-		fpgarc_has "$RC" --hdmi-mode || return 0
+		fpgarc_has "$RC" --hdmi-mode ||
+		fpgarc_has "$RC" --hdmi-sleep || return 0
 	if ! command -v cadr-console > /dev/null 2>&1; then
-		echo "cadr-display: --hdmi-output, --hdmi-rotate or --hdmi-mode, and no" \
-		     "cadr-console to ask with; the monitor shows the machine's own screen upright"
+		echo "cadr-display: --hdmi-output, --hdmi-rotate, --hdmi-mode or --hdmi-sleep, and" \
+		     "no cadr-console to ask with; the monitor shows the machine's own screen" \
+		     "upright and sleeps after the fabric's own 300 seconds"
 		return 0
 	fi
 	if fpgarc_has "$RC" --hdmi-output; then
@@ -260,6 +271,16 @@ set_the_display_output() {
 		if ! cadr-console --log /dev/console hdmi-rotate "${2:-0}" 2>&1; then
 			echo "cadr-display: --hdmi-rotate ${2:-0}: cadr-console could not reach" \
 			     "the console; the picture is whichever way up the fabric came up"
+		fi
+	fi
+	if fpgarc_has "$RC" --hdmi-sleep; then
+		# One flag and one number of seconds.  A number the console will not
+		# take, and a board with no display output to hold it, are both
+		# refused BY the console, whose line says which.
+		eval "set -- $(fpgarc_args "$RC" --hdmi-sleep)"
+		if ! cadr-console --log /dev/console hdmi-sleep "${2:-300}" 2>&1; then
+			echo "cadr-display: --hdmi-sleep ${2:-300}: not set --- the console's line" \
+			     "above says why"
 		fi
 	fi
 	if fpgarc_has "$RC" --hdmi-mode; then

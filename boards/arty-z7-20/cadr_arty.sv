@@ -1944,6 +1944,14 @@ module cadr_arty #(
     logic [31:0] con_build;
     cadr_usr_access u_usr_access (.build(con_build));
 
+    // **WHETHER THE DISPLAY OUTPUT SLEEPS**, page 2's word 36.  The console
+    // carries a setting and a wake to the display output below and reads back
+    // what it holds; on a board built without the display there is nothing to
+    // read, and `disp_sleep_fitted` low makes the word `UNMAPPED`.
+    logic        con_hdmi_sleep_set, con_hdmi_wake;
+    logic [14:0] con_hdmi_sleep_secs, disp_sleep_setting;
+    logic        disp_asleep, disp_sleep_fitted;
+
     cadr_console u_console (
         .clk(clk), .rst(gp1_rst),
         .s_awaddr(gp1c_awaddr), .s_awlen(gp1c_awlen), .s_awid(gp1c_awid),
@@ -1969,6 +1977,11 @@ module cadr_arty #(
         // Whether LD1 and LD2 blink or hold a level, page 2's word 35:
         // `cadr-console blinking-leds` and `--no-blinking-leds`.
         .steady_lamps(con_steady_lamps),
+        // Whether the display output sleeps, page 2's word 36: a setting and a
+        // wake out to it, and what it holds back.
+        .hdmi_sleep_set(con_hdmi_sleep_set), .hdmi_sleep_secs(con_hdmi_sleep_secs),
+        .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(disp_sleep_fitted),
+        .hdmi_sleep_q(disp_sleep_setting), .hdmi_asleep(disp_asleep),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -2067,7 +2080,7 @@ module cadr_arty #(
       end
 
       logic pclk, prst;
-      logic disp_de, disp_hsync, disp_vsync;
+      logic disp_de, disp_hsync, disp_vsync, disp_mute, disp_sleep_due;
       logic [7:0] disp_red, disp_green, disp_blue;
       logic disp_underrun, disp_rd_error;
       logic [9:0] tmds0, tmds1, tmds2, tmds_clk;
@@ -2086,13 +2099,21 @@ module cadr_arty #(
           .m_rvalid(hp3_rvalid), .m_rready(hp3_rready),
           // What is shown and which way up, out of the console face.
           .out_sel(con_hdmi_out), .rotate(con_hdmi_rotate),
+          // Whether it sleeps: a setting and a wake out of the console face,
+          // one of them from `cadr-terminal` for a key or the mouse at the
+          // board, and what it holds going back.
+          .sleep_set(con_hdmi_sleep_set), .sleep_secs(con_hdmi_sleep_secs),
+          .wake(con_hdmi_wake), .sleep_setting(disp_sleep_setting),
+          .sleep_due(disp_sleep_due), .asleep(disp_asleep),
           .pclk(pclk), .prst(prst),
           // The color board's map, an entry a raster line.
           .map_a(disp_map_a), .map_q(con_disp_color_map_q),
+          .mute(disp_mute),
           .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
           .red(disp_red), .green(disp_green), .blue(disp_blue),
           .underrun(disp_underrun), .rd_error(disp_rd_error)
       );
+      assign disp_sleep_fitted = 1'b1;
 
       // **THE THREE CHANNELS COME OUT OF THE DISPLAY NOW AND ARE NOT MADE
       // HERE.**  They were one bit spread over three bytes while the block drew
@@ -2103,6 +2124,9 @@ module cadr_arty #(
           .pclk(pclk), .prst(prst),
           .red(disp_red), .green(disp_green), .blue(disp_blue),
           .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
+          // Asleep, the four lanes held at one level: a monitor with no
+          // signal, which is the only way a digital link sleeps one.
+          .mute(disp_mute),
           .tmds0(tmds0), .tmds1(tmds1), .tmds2(tmds2), .tmds_clk(tmds_clk)
       );
 
@@ -2141,7 +2165,9 @@ module cadr_arty #(
       // check on the board would be measuring a different design.
       /* verilator lint_off UNUSEDSIGNAL */
       logic unused_disp;
-      assign unused_disp = ^{disp_underrun, disp_rd_error};
+      // The timer's verdict too, which the mute is already made of: the console
+      // reads whether the lanes ARE muted, and that is `disp_asleep`.
+      assign unused_disp = ^{disp_underrun, disp_rd_error, disp_sleep_due};
       /* verilator lint_on UNUSEDSIGNAL */
 
     end else begin : g_no_hdmi
@@ -2159,11 +2185,17 @@ module cadr_arty #(
       // nothing shows the two settings.  The console still answers word 34 with
       // what it would show, which is what a console is for.
       assign disp_map_a  = 4'd0;
+      // And no display output to sleep: the console's word 36 reads `UNMAPPED`,
+      // and what it would carry goes nowhere.
+      assign disp_sleep_fitted  = 1'b0;
+      assign disp_sleep_setting = 15'd0;
+      assign disp_asleep        = 1'b0;
 
       /* verilator lint_off UNUSEDSIGNAL */
       logic unused_hp3;
       assign unused_hp3 = ^{hp3_aresetn, hp3_arready, hp3_rdata, hp3_rresp,
-                            hp3_rlast, hp3_rvalid};
+                            hp3_rlast, hp3_rvalid,
+                            con_hdmi_sleep_set, con_hdmi_sleep_secs, con_hdmi_wake};
       /* verilator lint_on UNUSEDSIGNAL */
 
     end

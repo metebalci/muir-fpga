@@ -36,11 +36,15 @@
 // than in the serializer so that everything the monitor receives comes out
 // of one module and one clock domain.
 //
+// **AND `mute` STOPS THE LINK**, which is how the display output sleeps a
+// monitor: see the gate at the bottom of this file.
+//
 // WHAT THE CHECK HOLDS THIS TO.  `tb/cadr_hdmi_tx_tb.cpp` carries a second
 // encoder written from the specification's own pseudocode, and compares all
 // three channels against it: over every one of the 256 byte values in every
 // disparity state the encoder can reach, over all four control tokens, and
-// over a long pseudorandom stream of pixels and blanking.  What it cannot
+// over a long pseudorandom stream of pixels and blanking --- and holds all four
+// lanes at one word while the lanes are muted.  What it cannot
 // hold is the serializer, which is Xilinx primitives --- see
 // `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv`.
 
@@ -58,6 +62,9 @@ module cadr_hdmi_tx (
     input  var logic       de,
     input  var logic       hsync,
     input  var logic       vsync,
+    // The four lanes held at one level, which is a monitor put to sleep.
+    // From `cadr_display_out`, which moves it only at a frame boundary.
+    input  var logic       mute,
 
     // The four channels, bit 0 onto the wire first.
     output var logic [9:0] tmds0,     // blue, and the two syncs
@@ -66,22 +73,24 @@ module cadr_hdmi_tx (
     output var logic [9:0] tmds_clk
 );
 
+  logic [9:0] word0, word1, word2, clk_word;
+
   // Channel 0: blue, with HSYNC as C0 and VSYNC as C1.
   cadr_tmds_encode u_ch0 (
       .clk(pclk), .rst(prst),
-      .d(blue), .c({vsync, hsync}), .de(de), .q(tmds0)
+      .d(blue), .c({vsync, hsync}), .de(de), .q(word0)
   );
 
   // Channels 1 and 2 have no control bits of their own; DVI 1.0 says they
   // send the C1C0 = 00 token throughout the control period.
   cadr_tmds_encode u_ch1 (
       .clk(pclk), .rst(prst),
-      .d(green), .c(2'b00), .de(de), .q(tmds1)
+      .d(green), .c(2'b00), .de(de), .q(word1)
   );
 
   cadr_tmds_encode u_ch2 (
       .clk(pclk), .rst(prst),
-      .d(red), .c(2'b00), .de(de), .q(tmds2)
+      .d(red), .c(2'b00), .de(de), .q(word2)
   );
 
   // Bit 0 leaves first, so the low five bits are the first half of the
@@ -92,7 +101,21 @@ module cadr_hdmi_tx (
   // clock by exactly one pixel clock leaves it where it was.  It therefore
   // needs no alignment with the three encoded channels and keeps running
   // through reset, which is what a monitor wants to lock to.
-  assign tmds_clk = 10'b0000011111;
+  assign clk_word = 10'b0000011111;
+
+  // **MUTED, ALL FOUR LANES CARRY ONE WORD, THE CLOCK LANE WITH THE REST.**
+  // That is how a monitor is put to sleep: a DVI link has no power management
+  // of its own, so the source stops the link and the monitor sees no signal.
+  // A clock lane that kept running would be a link that had not stopped, and
+  // a monitor locked to it would stay awake showing black.  Zero is what a
+  // board built without the display holds the connector at, so a sleeping
+  // display looks to a monitor exactly like no display.  The encoders run on
+  // behind the gate, and `rtl/plumbing/cadr_display_out.sv` lets it go only at
+  // a frame boundary, in a control period.
+  assign tmds0    = mute ? 10'd0 : word0;
+  assign tmds1    = mute ? 10'd0 : word1;
+  assign tmds2    = mute ? 10'd0 : word2;
+  assign tmds_clk = mute ? 10'd0 : clk_word;
 
 endmodule
 

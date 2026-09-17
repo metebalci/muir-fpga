@@ -459,3 +459,74 @@
 	if (!l->steady)
 		say("lamps: steady --- the clock lamp is the clock generator's lock, and the"
 @end
+
+# **WHETHER THE DISPLAY OUTPUT SLEEPS, page 2's word 36.**  A setting in
+# seconds carried under a half-word key and read back; the asleep bit; a board
+# with no display output told apart from one that never sleeps; and the spelling
+# a person or a card writes.
+
+@mutation the-sleep-setting-goes-out-under-the-marker
+@file console_face.c
+@why a setting is the key over the seconds; the marker is what the word READS as, and a
+@why write under it is a value that means nothing and moves nothing
+@old
+	c->write(c, CONS_HDMI_SLEEP, ((uint32_t)CONS_HDMI_SLEEP_KEY << 16) | seconds);
+@new
+	c->write(c, CONS_HDMI_SLEEP, ((uint32_t)CONS_HDMI_SLEEP_MARK << 16) | seconds);
+@end
+
+@mutation a-setting-past-fifteen-bits-is-sent
+@file console_face.c
+@why the word carries fifteen bits, so 32,768 seconds would go out as the asleep bit over
+@why zero; a setting the word cannot carry is refused and not sent
+@old
+	if (seconds > CONS_HDMI_SLEEP_MAX)
+		return -1;
+@new
+	if (seconds > CONS_HDMI_SLEEP_MAX && 0)
+		return -1;
+@end
+
+@mutation the-asleep-bit-is-read-a-bit-down
+@file console_face.c
+@why the asleep bit is bit 15; bit 14 is the setting's top bit, and a display asleep with a
+@why setting under nine hours would be reported awake
+@old
+	s->asleep = (s->word & CONS_HDMI_ASLEEP) != 0;
+@new
+	s->asleep = (s->word & (CONS_HDMI_ASLEEP >> 1)) != 0;
+@end
+
+@mutation the-seconds-are-read-past-the-limit
+@file console_face.c
+@why a card that says more seconds than the word carries is refused by name, not sent and
+@why then refused in silence
+@old
+		if (v > CONS_HDMI_SLEEP_MAX)
+			return -1;
+	}
+@new
+	}
+@end
+
+@mutation zero-is-said-as-a-number-of-seconds
+@file console_face.c
+@why zero never sleeps, and a line saying "after 0 seconds" tells a person the monitor
+@why will go dark at once
+@old
+	if (s->seconds == 0u)
+@new
+	if (s->seconds == 1u)
+@end
+
+@mutation no-display-output-is-said-to-never-sleep
+@file console_face.c
+@why a board with no display output reads zero in the setting's bits like a board that
+@why never sleeps; the marker is what tells them apart, and the line must say which
+@old
+	if (!s->mark_ok) {
+		// **NOT A SETTING OF ZERO**, which reads zero in the bottom half
+@new
+	if (0 && !s->mark_ok) {
+		// **NOT A SETTING OF ZERO**, which reads zero in the bottom half
+@end

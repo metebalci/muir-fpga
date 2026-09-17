@@ -80,6 +80,7 @@
 #include "input_keys.h"
 #include "input_mapping.h"
 #include "color_map.h"
+#include "display_wake.h"
 #include "screen_frame.h"
 #include <cadr/cadr_endpoint.h>
 
@@ -3497,6 +3498,273 @@ static void check_keyboard_boot(const char *work_dir)
 	key_boot_set(&srv.keys, b);
 }
 
+// ---- WAKING THE BOARD'S OWN DISPLAY OUTPUT -----------------------------
+//
+// **A PERSON AT THE BOARD WAKES THE MONITOR, AND NOBODY ELSE DOES.**  The
+// display output sleeps a monitor after `--hdmi-sleep` seconds, and what wakes
+// it and starts its timer over is a key or the mouse at the board.  Those arrive
+// on the input link; a viewer's arrive on the RFB socket; and the fabric sees
+// one keyboard register written for both.  So this program decides, and what is
+// held here is that it decides right: a record on the link calls the wake, and
+// a viewer's key, a viewer's pointer, a source attaching and a source going away
+// --- whose held keys come up through the very same calls a record makes --- do
+// not.  The viewer's key must still reach the machine, which is what says the
+// wake's silence is a decision and not a viewer that was never heard.
+
+static unsigned long wake_calls;
+static uint64_t wake_now;
+
+static void count_wake(void *ctx, uint64_t now_ns)
+{
+	(void)ctx;
+	++wake_calls;
+	wake_now = now_ns;
+}
+
+static void link_record(struct cadr_input_link_client *l, const struct cadr_input_event *e,
+			const char *what)
+{
+	CHECK(cadr_input_link_send(l, e) == 0, "the link would not take %s", what);
+}
+
+static void check_display_wake(const char *work_dir)
+{
+	if (!work_dir) {
+		printf("--- waking the display output: skipped, no --server-log to put the "
+		       "socket beside\n");
+		return;
+	}
+	char path[128];
+	const char *home = getenv("HOME");
+	// The socket's path is short for `check_keyboard_boot`'s reason: a Unix
+	// socket's path is 108 bytes and the mutation runner's directories are long.
+	snprintf(path, sizeof path, "%.80s/.cache/dwake-%u", home && *home ? home : work_dir,
+		 (unsigned)getpid());
+	if (strlen(path) >= 100) {
+		printf("--- waking the display output: skipped, the socket's path would be %u "
+		       "characters\n", (unsigned)strlen(path));
+		return;
+	}
+	struct client c;
+	if (open_typist(&c) != 0) {
+		fail(__LINE__, "no viewer for the display wake check");
+		return;
+	}
+	// A link of this check's own, whatever an earlier check left listening.
+	if (srv.link_ready) {
+		cadr_input_link_close(&srv.link, NULL);
+		srv.link_ready = 0;
+	}
+	unlink(path);
+	srv.wake = count_wake;
+	srv.wake_ctx = NULL;
+	wake_calls = 0;
+	if (screen_server_link(&srv, path) < 0) {
+		fail(__LINE__, "no input link at %s", path);
+		client_close(&c);
+		return;
+	}
+	struct cadr_input_link_client link;
+	const char *why = NULL;
+	link.fd = -1;
+	if (cadr_input_link_open(&link, path, &why) < 0) {
+		fail(__LINE__, "the link client could not attach: %s", why ? why : "?");
+		client_close(&c);
+		return;
+	}
+	for (unsigned k = 0; k < 8 && !link.greeted; ++k) {
+		pump(2);
+		cadr_input_link_greet(&link, &why);
+	}
+	CHECK(link.greeted, "the link client was not greeted: %s", why ? why : "?");
+	pump(8);
+	CHECK(wake_calls == 0, "a source attaching to the input link woke the display "
+	      "%lu times; attaching is not somebody at the board", wake_calls);
+
+	// (1) A viewer's key and pointer reach the machine and wake nothing.
+	model.nkeys = 0;
+	model.nmoves = 0;
+	send_key(&c, 0x61u /* a */, 1);
+	pump(8);
+	send_key(&c, 0x61u, 0);
+	pump(8);
+	send_pointer(&c, 0, 100, 100);
+	pump(8);
+	send_pointer(&c, 1, 120, 90);
+	pump(8);
+	send_pointer(&c, 0, 125, 95);
+	pump(20);
+	CHECK(model.nkeys == 2, "the viewer's key did not reach the machine: %u words, wanting 2",
+	      model.nkeys);
+	CHECK(model.nmoves > 0, "the viewer's pointer did not reach the mouse");
+	CHECK(wake_calls == 0, "a viewer's key and pointer woke the display %lu times; only "
+	      "somebody at the board wakes it", wake_calls);
+
+	// (2) A key at the board wakes it, with the pass's own clock.
+	struct cadr_input_event e;
+	memset(&e, 0, sizeof e);
+	e.type = CADR_INPUT_KEY;
+	e.down = 1;
+	e.keysym = 0x62u; /* b */
+	uint64_t before = clock_ns;
+	link_record(&link, &e, "a key down");
+	pump(8);
+	CHECK(wake_calls >= 1, "a key down at the board did not wake the display");
+	CHECK(wake_calls <= 8, "one key at the board woke the display %lu times in eight passes",
+	      wake_calls);
+	CHECK(wake_now >= before && wake_now <= clock_ns,
+	      "the wake was handed %llu, outside the passes' own clock %llu..%llu",
+	      (unsigned long long)wake_now, (unsigned long long)before,
+	      (unsigned long long)clock_ns);
+	// ...and its release too, which is a key at the board as much as the press.
+	unsigned long w = wake_calls;
+	e.down = 0;
+	link_record(&link, &e, "a key up");
+	pump(8);
+	CHECK(wake_calls > w, "a key up at the board did not wake the display");
+
+	// (3) The mouse at the board wakes it: a movement, and a button.
+	w = wake_calls;
+	memset(&e, 0, sizeof e);
+	e.type = CADR_INPUT_POINTER;
+	e.dx = 3;
+	e.dy = -2;
+	link_record(&link, &e, "a movement");
+	pump(8);
+	CHECK(wake_calls > w, "the mouse moving at the board did not wake the display");
+	w = wake_calls;
+	e.dx = 0;
+	e.dy = 0;
+	e.buttons = 1;
+	link_record(&link, &e, "a button down");
+	pump(8);
+	CHECK(wake_calls > w, "a button at the board did not wake the display");
+	e.buttons = 0;
+	link_record(&link, &e, "a button up");
+	pump(8);
+
+	// (4) A source going away with a key held: the key comes up at the
+	// machine through the same call a record makes, and wakes nothing.
+	memset(&e, 0, sizeof e);
+	e.type = CADR_INPUT_KEY;
+	e.down = 1;
+	e.keysym = 0x63u; /* c */
+	link_record(&link, &e, "a key held");
+	pump(8);
+	w = wake_calls;
+	const unsigned nk = model.nkeys;
+	cadr_input_link_shut(&link);
+	pump(20);
+	CHECK(model.nkeys == nk + 1, "the key the gone source held did not come up at the "
+	      "machine: %u words, wanting %u", model.nkeys, nk + 1);
+	CHECK(wake_calls == w, "a source going away woke the display %lu times; its held key "
+	      "coming up is the link tidying up, not somebody at the board", wake_calls - w);
+
+	// (5) And no hook is no wake, which is a board with no display output.
+	srv.wake = NULL;
+	struct cadr_input_link_client again;
+	again.fd = -1;
+	if (cadr_input_link_open(&again, path, &why) == 0) {
+		for (unsigned k = 0; k < 8 && !again.greeted; ++k) {
+			pump(2);
+			cadr_input_link_greet(&again, &why);
+		}
+		memset(&e, 0, sizeof e);
+		e.type = CADR_INPUT_KEY;
+		e.down = 1;
+		e.keysym = 0x64u; /* d */
+		w = wake_calls;
+		link_record(&again, &e, "a key with no display output");
+		e.down = 0;
+		link_record(&again, &e, "its release");
+		pump(20);
+		CHECK(wake_calls == w, "a wake was called with no display output to wake");
+		cadr_input_link_shut(&again);
+		pump(8);
+	}
+
+	client_close(&c);
+	settle();
+	cadr_input_link_close(&srv.link, NULL);
+	srv.link_ready = 0;
+	unlink(path);
+	srv.wake = NULL;
+}
+
+// And the word the wake is written to, against a model of the console face.
+struct dwake_model {
+	uint32_t reg[96];
+	unsigned writes, last_word;
+	uint32_t last_value;
+};
+
+static uint32_t dwake_model_read(struct display_wake *w, unsigned word)
+{
+	const struct dwake_model *m = w->ctx;
+	return m->reg[word % 96u];
+}
+
+static void dwake_model_write(struct display_wake *w, unsigned word, uint32_t v)
+{
+	struct dwake_model *m = w->ctx;
+	++m->writes;
+	m->last_word = word;
+	m->last_value = v;
+}
+
+static void check_display_wake_word(void)
+{
+	static struct dwake_model m;
+	struct display_wake w;
+	memset(&m, 0, sizeof m);
+	memset(&w, 0, sizeof w);
+	w.read = dwake_model_read;
+	w.write = dwake_model_write;
+	w.ctx = &m;
+
+	// Whether there is a display output to wake, three ways.
+	m.reg[0] = 0x434F4E53u;                      /* CONS */
+	m.reg[36] = (0x5A5Au << 16) | 300u;           /* ZZ, awake, 300 seconds */
+	uint32_t ident = 0, word = 0;
+	CHECK(display_wake_ready(&w, &ident, &word) == 1,
+	      "the console with a sleep word was not taken as a display output to wake");
+	CHECK(ident == 0x434F4E53u && word == ((0x5A5Au << 16) | 300u),
+	      "what was read was not handed back: 0x%08x and 0x%08x", ident, word);
+	m.reg[36] = (0x5A5Au << 16) | 0x8000u | 0u;   /* asleep, zero is still a setting */
+	CHECK(display_wake_ready(&w, NULL, NULL) == 1,
+	      "a display output asleep with a setting of zero was not taken as one");
+	m.reg[36] = ~0x434F4E53u;                     /* UNMAPPED: no display output */
+	CHECK(display_wake_ready(&w, NULL, NULL) == 0,
+	      "a console with no sleep word was taken as a display output to wake");
+	m.reg[36] = (0x5A5Bu << 16) | 300u;           /* a marker one bit out */
+	CHECK(display_wake_ready(&w, NULL, NULL) == 0, "a word with the wrong marker was taken");
+	m.reg[0] = 0;
+	m.reg[36] = (0x5A5Au << 16) | 300u;
+	CHECK(display_wake_ready(&w, NULL, NULL) == -1,
+	      "a face that is not the console was taken as the console");
+	CHECK(m.writes == 0, "asking whether there is a display output wrote %u words", m.writes);
+
+	// The first poke writes, whatever the clock says --- a monotonic clock may
+	// be near zero on a board that has just booted.
+	CHECK(display_wake_poke(&w, 0) == 1, "the first wake at clock zero was not written");
+	CHECK(m.writes == 1 && m.last_word == 36u && m.last_value == 0x57414B45u,
+	      "the wake went to word %u as 0x%08x in %u writes, wanting WAKE at word 36 once",
+	      m.last_word, m.last_value, m.writes);
+	// Then one a tenth of a second at most, to the nanosecond.
+	const uint64_t t0 = 5000000000ull;
+	CHECK(display_wake_poke(&w, t0) == 1, "a wake five seconds on was not written");
+	CHECK(display_wake_poke(&w, t0 + 1) == 0, "a wake a nanosecond after one was written");
+	CHECK(display_wake_poke(&w, t0 + DWAKE_EVERY_NS - 1) == 0,
+	      "a wake a nanosecond short of a tenth of a second after one was written");
+	CHECK(m.writes == 2, "%u writes, wanting 2", m.writes);
+	CHECK(display_wake_poke(&w, t0 + DWAKE_EVERY_NS) == 1,
+	      "a wake a tenth of a second after one was not written");
+	CHECK(m.writes == 3 && m.last_value == 0x57414B45u, "%u writes, the last 0x%08x",
+	      m.writes, m.last_value);
+	CHECK(w.written == 3 && w.coalesced == 2, "the counts say %lu written and %lu "
+	      "coalesced, wanting 3 and 2", w.written, w.coalesced);
+}
+
 // **THE TRACE, WHICH IS muir'S OWN LINE.**
 //
 // `--keyboard-mapping-trace` writes a line for every keysym that arrives and
@@ -3822,6 +4090,10 @@ int main(int argc, char **argv)
 
 	printf("--- the keyboard's own boot sequence: the chord, the two words, the hold-back\n");
 	check_keyboard_boot(work_dir);
+
+	printf("--- waking the display output: somebody at the board, and nobody else\n");
+	check_display_wake(work_dir);
+	check_display_wake_word();
 
 	// Back to read-only for the screen checks that follow, which have no
 	// business with a keyboard.

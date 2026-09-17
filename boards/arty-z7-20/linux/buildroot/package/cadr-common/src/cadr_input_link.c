@@ -315,6 +315,10 @@ static int step(struct cadr_input_link *l, struct cadr_input_client *c,
 			c->in_len - CADR_INPUT_LINK_MSG);
 		c->in_len -= CADR_INPUT_LINK_MSG;
 		++l->events;
+		// A record from a client, which a release made by `forget` is
+		// not: see the header.
+		if (sink && sink->event)
+			sink->event(sink->ctx);
 		if (e.type == CADR_INPUT_KEY) {
 			note_down(c, e.keysym, e.down);
 			if (sink && sink->key)

@@ -118,6 +118,18 @@ module cadr_console_harness #(
     // reads back are two facts.
     output var logic        steady_lamps,
 
+    // --- **AND WHETHER THE DISPLAY OUTPUT SLEEPS, page 2's word 36.**  The
+    // setting and the mute are the display output's and not the console's,
+    // so the console's two pulses come out of the harness and the display's
+    // three answers come in: the testbench plays the display, and what it
+    // holds is that a key is carried and that a word is read back.
+    output var logic        hdmi_sleep_set,
+    output var logic [14:0] hdmi_sleep_secs,
+    output var logic        hdmi_wake,
+    input  var logic        hdmi_sleep_fitted,
+    input  var logic [14:0] hdmi_sleep_q,
+    input  var logic        hdmi_asleep,
+
     // --- `M_AXI_GP1`, brought out for the testbench's own master
     input  var logic [31:0] s_awaddr,
     input  var logic [3:0]  s_awlen,
@@ -442,6 +454,9 @@ module cadr_console_harness #(
       .tv_color_map_q(map_word(1'b1, tv_map_a)),
       .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate), .hdmi_mode(hdmi_mode),
       .steady_lamps(steady_lamps),
+      .hdmi_sleep_set(hdmi_sleep_set), .hdmi_sleep_secs(hdmi_sleep_secs),
+      .hdmi_wake(hdmi_wake), .hdmi_sleep_fitted(hdmi_sleep_fitted),
+      .hdmi_sleep_q(hdmi_sleep_q), .hdmi_asleep(hdmi_asleep),
       // **THE DEBUG CABLE'S ROLE, page 0's word 14, AND THE CONNECTOR IS THE
       // TESTBENCH.**  `build/dbg_cable.pass` is the check that has a real one
       // and two real boards on it; what this check holds is the console's own

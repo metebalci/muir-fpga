@@ -1892,6 +1892,15 @@ module cadr_cora #(
     logic [31:0] con_build;
     cadr_usr_access u_usr_access (.build(con_build));
 
+    // **WHETHER A DISPLAY OUTPUT SLEEPS**, page 2's word 36, and this board has
+    // no display output: the console's setting and wake go nowhere.
+    logic        con_hdmi_sleep_set, con_hdmi_wake;
+    logic [14:0] con_hdmi_sleep_secs;
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_hdmi_sleep;
+    assign unused_hdmi_sleep = ^{con_hdmi_sleep_set, con_hdmi_sleep_secs, con_hdmi_wake};
+    /* verilator lint_on UNUSEDSIGNAL */
+
     cadr_console u_console (
         .clk(clk), .rst(gp1_rst),
         .s_awaddr(gp1c_awaddr), .s_awlen(gp1c_awlen), .s_awid(gp1c_awid),
@@ -1918,6 +1927,14 @@ module cadr_cora #(
         // Whether LD1's green blinks or holds a level, page 2's word 35:
         // `cadr-console blinking-leds` and `--no-blinking-leds`.
         .steady_lamps(con_steady_lamps),
+        // Whether a display output sleeps, page 2's word 36.  **THIS BOARD HAS
+        // NONE**, so the three answers are tied low and the word reads
+        // `UNMAPPED`: `cadr-console hdmi-sleep` says there is no display output
+        // rather than reporting a setting nothing holds.  What it would carry is
+        // folded below.
+        .hdmi_sleep_set(con_hdmi_sleep_set), .hdmi_sleep_secs(con_hdmi_sleep_secs),
+        .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(1'b0),
+        .hdmi_sleep_q(15'd0), .hdmi_asleep(1'b0),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),

@@ -156,6 +156,15 @@ struct model {
 	int lamps_steady;
 	int lamps_deaf_to_the_key;	/* a fabric that takes any value */
 	int lamps_unmarked;		/* a fabric older than word 35 */
+	// **AND WHETHER THE DISPLAY OUTPUT SLEEPS**, page 2's word 36.  The
+	// setting and the mute are the display output's; here they are the
+	// model's, with a count of every setting and every wake written, and
+	// the value of the last store to the word.
+	int sleep_fitted;		/* a board with a display output */
+	unsigned sleep_seconds;
+	int sleep_asleep;
+	unsigned sleep_sets, sleep_wakes;
+	uint32_t sleep_last;
 	uint8_t map[2][CONS_MAP_COLORS][CONS_MAP_CHANNELS];
 };
 
@@ -275,6 +284,14 @@ static uint32_t model_read(struct console *c, unsigned word)
 				 | ((uint32_t)m->hdmi_rot << CONS_HDMI_ROT_SHIFT)
 				 | (m->hdmi_color ? CONS_HDMI_COLOR : 0u)
 				 | (m->hdmi_first ? CONS_HDMI_FIRST : 0u);
+	// Page 2's word 36: whether the display output sleeps, and `UNMAPPED` on
+	// a board without one.
+	if (word == CONS_HDMI_SLEEP)
+		return m->sleep_fitted
+			   ? ((uint32_t)CONS_HDMI_SLEEP_MARK << 16)
+				 | (m->sleep_asleep ? CONS_HDMI_ASLEEP : 0u)
+				 | (m->sleep_seconds & CONS_HDMI_SLEEP_SECONDS)
+			   : CONS_UNMAPPED;
 	// Page 2's word 35: whether the lamps blink, marked for word 33's reason.
 	if (word == CONS_LAMPS)
 		return m->lamps_unmarked
@@ -413,6 +430,23 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 		else if (v == CONS_HDMI_CCW_KEY)   m->hdmi_rot = CONS_HDMI_CCW;
 		return;
 	}
+	// Page 2's word 36, whether the display output sleeps: a setting under a
+	// half-word key with bit 15 clear, or a wake.  What `cadr_console.sv`
+	// carries and `cadr_display_out.sv` takes, and nothing else moves it.
+	if (word == CONS_HDMI_SLEEP) {
+		m->sleep_last = v;
+		if ((v >> 16) == CONS_HDMI_SLEEP_KEY && !(v & CONS_HDMI_ASLEEP)) {
+			++m->sleep_sets;
+			if (m->sleep_fitted) {
+				m->sleep_seconds = v & CONS_HDMI_SLEEP_SECONDS;
+				m->sleep_asleep = 0;
+			}
+		} else if (v == CONS_HDMI_WAKE_KEY) {
+			++m->sleep_wakes;
+			m->sleep_asleep = 0;
+		}
+		return;
+	}
 	// Page 2's word 35, whether the lamps blink: the key and its complement.
 	if (word == CONS_LAMPS) {
 		if (v == CONS_LAMP_STEADY_KEY)
@@ -539,6 +573,13 @@ static void model_init(struct model *m)
 	m->lamps_steady = 0;
 	m->lamps_deaf_to_the_key = 0;
 	m->lamps_unmarked = 0;
+	// And a board with a display output, awake, on the fabric's own default.
+	m->sleep_fitted = 1;
+	m->sleep_seconds = CONS_HDMI_SLEEP_DEFAULT;
+	m->sleep_asleep = 0;
+	m->sleep_sets = 0;
+	m->sleep_wakes = 0;
+	m->sleep_last = 0;
 	for (int b = 0; b < 2; ++b)
 		for (int k = 0; k < CONS_MAP_COLORS; ++k)
 			for (int ch = 0; ch < CONS_MAP_CHANNELS; ++ch)
@@ -2232,6 +2273,127 @@ static void check_hdmi(void)
 
 // **WHETHER THE LAMPS BLINK, page 2's word 35.**
 //
+// **WHETHER THE DISPLAY OUTPUT SLEEPS, page 2's word 36.**
+//
+// A setting in seconds, carried to the display output and read back from it; the
+// asleep bit read straight; a board with no display output told apart from one
+// set to zero; and a line in words a person at the board would recognize.  And
+// the one thing this program must never do, which is wake the monitor: that is
+// a person at the board's to do, through `cadr-terminal`.
+static void check_hdmi_sleep(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+	{
+		struct cons_hdmi_sleep s;
+		cons_read_hdmi_sleep(&c, &s);
+		CHECK(s.mark_ok == 1, "the sleep word did not carry its marker (0x%08x)", s.word);
+		CHECK(s.seconds == 300u, "the setting out of reset read %u, wanting 300", s.seconds);
+		CHECK(s.asleep == 0, "a board came up asleep");
+		capture_start();
+		cons_say_hdmi_sleep(&s);
+		const char *said = capture_end();
+		CHECK(strstr(said, "300 seconds") != NULL,
+		      "the setting was not said in seconds: %s", said);
+		CHECK(strstr(said, "awake") != NULL, "an awake display was not said to be: %s", said);
+	}
+	// A setting goes out as the key over the seconds, once, and reads back.
+	CHECK(cons_set_hdmi_sleep(&c, 600u) == 0, "a setting of 600 was refused");
+	CHECK(m.sleep_sets == 1, "%u settings reached the fabric, wanting 1", m.sleep_sets);
+	CHECK(m.sleep_last == ((0x4853u << 16) | 600u),
+	      "the setting was written as 0x%08x, wanting 0x%08x", m.sleep_last,
+	      (0x4853u << 16) | 600u);
+	{
+		struct cons_hdmi_sleep s;
+		cons_read_hdmi_sleep(&c, &s);
+		CHECK(s.seconds == 600u, "the setting read %u after 600", s.seconds);
+	}
+	// The largest the word carries, and one past it, which writes nothing.
+	CHECK(cons_set_hdmi_sleep(&c, 32767u) == 0, "a setting of 32767 was refused");
+	CHECK(cons_set_hdmi_sleep(&c, 32768u) == -1, "a setting of 32768 was accepted");
+	CHECK(cons_set_hdmi_sleep(&c, 65836u) == -1, "a setting of 65836 was accepted");
+	CHECK(m.sleep_sets == 2, "a refused setting reached the fabric: %u settings, wanting 2",
+	      m.sleep_sets);
+	{
+		struct cons_hdmi_sleep s;
+		cons_read_hdmi_sleep(&c, &s);
+		CHECK(s.seconds == 32767u, "the setting read %u after 32767 and a refusal", s.seconds);
+	}
+	// Zero, which never sleeps, and is said so.
+	CHECK(cons_set_hdmi_sleep(&c, 0u) == 0, "a setting of 0 was refused");
+	{
+		struct cons_hdmi_sleep s;
+		cons_read_hdmi_sleep(&c, &s);
+		CHECK(s.mark_ok == 1 && s.seconds == 0u, "a setting of 0 read as %u (marker %d)",
+		      s.seconds, s.mark_ok);
+		capture_start();
+		cons_say_hdmi_sleep(&s);
+		const char *said = capture_end();
+		CHECK(strstr(said, "never") != NULL, "a setting of 0 was not said to never sleep: %s",
+		      said);
+	}
+	// The asleep bit, read straight.
+	CHECK(cons_set_hdmi_sleep(&c, 120u) == 0, "a setting of 120 was refused");
+	m.sleep_asleep = 1;
+	{
+		struct cons_hdmi_sleep s;
+		cons_read_hdmi_sleep(&c, &s);
+		CHECK(s.asleep == 1 && s.seconds == 120u,
+		      "a display asleep read as asleep %d with %u seconds", s.asleep, s.seconds);
+		capture_start();
+		cons_say_hdmi_sleep(&s);
+		const char *said = capture_end();
+		CHECK(strstr(said, "asleep") != NULL && strstr(said, "no signal") != NULL,
+		      "a display asleep was not said to be, with no signal on the link: %s", said);
+	}
+	m.sleep_asleep = 0;
+	// **AND THIS PROGRAM NEVER WAKES THE MONITOR.**
+	CHECK(m.sleep_wakes == 0, "the console wrote %u wakes; only a person at the board wakes "
+	      "the display", m.sleep_wakes);
+
+	// A board with no display output: no marker, and said so, and not as a
+	// setting of zero --- the two read zero in the bottom half alike.
+	{
+		struct model none;
+		struct console nc;
+		model_init(&none);
+		none.sleep_fitted = 0;
+		attach(&nc, &none);
+		struct cons_hdmi_sleep s;
+		cons_read_hdmi_sleep(&nc, &s);
+		CHECK(s.mark_ok == 0, "a board with no display output read as one (0x%08x)", s.word);
+		capture_start();
+		cons_say_hdmi_sleep(&s);
+		const char *said = capture_end();
+		CHECK(strstr(said, "no display output") != NULL,
+		      "a board with no display output was not said to have none: %s", said);
+		CHECK(strstr(said, "never") == NULL,
+		      "a board with no display output was said to never sleep: %s", said);
+	}
+
+	// The spelling a person or a card writes: decimal digits, nothing else.
+	{
+		static const struct { const char *text; int ok; unsigned want; } cases[] = {
+			{"300", 1, 300u}, {"0", 1, 0u}, {"32767", 1, 32767u}, {"007", 1, 7u},
+			{"32768", 0, 0u}, {"99999999999999999999", 0, 0u}, {"-1", 0, 0u},
+			{"", 0, 0u}, {"12a", 0, 0u}, {"0x10", 0, 0u}, {" 5", 0, 0u},
+			{"5 ", 0, 0u}, {"+5", 0, 0u}};
+		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+			unsigned got = 12345u;
+			const int r = cons_parse_hdmi_sleep(cases[i].text, &got);
+			if (cases[i].ok)
+				CHECK(r == 0 && got == cases[i].want,
+				      "\"%s\" read as %d, %u; wanting %u", cases[i].text, r, got,
+				      cases[i].want);
+			else
+				CHECK(r == -1 && got == 12345u,
+				      "\"%s\" was taken as a setting (%d, %u)", cases[i].text, r, got);
+		}
+	}
+}
+
 // One setting and two keys, a key and its complement, and a line that says
 // what the lamps are doing in words a person at the board would recognize.
 static void check_lamps(void)
@@ -2752,6 +2914,7 @@ int main(int argc, char **argv)
 	check_display();
 	check_hdmi();
 	check_lamps();
+	check_hdmi_sleep();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.
 	check_log_prefix();

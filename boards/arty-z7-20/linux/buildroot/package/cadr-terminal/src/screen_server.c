@@ -325,12 +325,22 @@ static void link_buttons(void *ctx, unsigned mask)
 	write_buttons(s);
 }
 
+// A record from a link client, which is somebody at the board: see
+// `link_touched` in the header.  Only noted here; the wake is called once a pass,
+// after the link is read, where the caller's clock is.
+static void link_event(void *ctx)
+{
+	struct screen_server *s = ctx;
+	s->link_touched = 1;
+}
+
 static const struct cadr_input_sink *link_sink(struct screen_server *s,
 					       struct cadr_input_sink *sink)
 {
 	sink->key = link_key;
 	sink->move = link_move;
 	sink->buttons = link_buttons;
+	sink->event = link_event;
 	sink->ctx = s;
 	return sink;
 }
@@ -874,6 +884,15 @@ void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 	if (s->link_ready) {
 		struct cadr_input_sink sink;
 		cadr_input_link_poll(&s->link, fds, nfds, link_sink(s, &sink));
+		// **SOMEBODY AT THE BOARD, SO THE DISPLAY OUTPUT WAKES.**  Once a
+		// pass however many records came, and only for records: see
+		// `link_touched` in the header.
+		if (s->link_touched) {
+			s->link_touched = 0;
+			++s->wakes;
+			if (s->wake)
+				s->wake(s->wake_ctx, now_ns);
+		}
 	}
 	if (fds[0].revents & POLLIN)
 		accept_one(s, now_ns);

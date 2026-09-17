@@ -370,9 +370,33 @@ if {$hdmi > 0} {
         puts "BIT: applied to no object."
         exit 1
     }
+    # And the sleep timer's two levels, one each way: the timer's verdict into
+    # the pixel domain and the mute back out. All four registers must be there,
+    # the two a bound starts at and the two it ends at, because a filter that
+    # matched nothing on either side is a bound on nothing.
+    #
+    # **FOUND IS NOT IN FORCE.** Measured on a synthesized board,
+    # `report_exceptions -ignored` lists these two bounds and the fetch job's as
+    # totally overridden by the asynchronous clock group, which outranks
+    # `set_max_delay`; `rtl/plumbing/xilinx7/cadr_hdmi.xdc` says so at the
+    # constraints. So the line below counts registers a bound names, and the
+    # word "bounded" in it is the file's older claim and not a measurement.
+    set hdmi_sleep {}
+    foreach pat {*slp_want_reg* *slp_want_s1_reg* *slp_mute_reg* *slp_mute_s1_reg*} {
+        set found [get_cells -quiet -hier -filter "NAME =~ $pat"]
+        if {[llength $found] == 0} {
+            puts "BIT: FAILED --- no register matching $pat was found, so a"
+            puts "BIT: set_max_delay in rtl/plumbing/xilinx7/cadr_hdmi.xdc on the sleep"
+            puts "BIT: timer's crossing applied to nothing and that crossing has no"
+            puts "BIT: bound on it."
+            exit 1
+        }
+        set hdmi_sleep [concat $hdmi_sleep $found]
+    }
     puts "BIT: the display's clocks are grouped apart from the machine's, mode"
-    puts "BIT: $hdmi_mode, and [llength $hdmi_cross] register(s) of the fetch job"
-    puts "BIT: and [llength $hdmi_map] of the color map's round trip are bounded"
+    puts "BIT: $hdmi_mode, and [llength $hdmi_cross] register(s) of the fetch job,"
+    puts "BIT: [llength $hdmi_map] of the color map's round trip and [llength $hdmi_sleep]"
+    puts "BIT: of the sleep timer's two levels are bounded"
 }
 # And the debug cable's, by the same rule: `rtl/plumbing/xilinx7/cadr_debug.xdc`
 # names one register of `cadr_debug_window`, which is inside `g_ddr` too. What

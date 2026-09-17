@@ -1200,3 +1200,107 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @new
 		const uint32_t w = f->read(f, CMAP_WORD(0, c));
 @end
+
+# **WAKING THE BOARD'S OWN DISPLAY OUTPUT.**  Only a person at the board wakes
+# the monitor and starts its sleep timer over: a record on the input link, and
+# never a viewer's key, a viewer's pointer, a source attaching, or a source going
+# away --- whose held keys come up through the same calls a record makes.  And
+# the word the wake is written to, against a model of the console face.
+
+@mutation the-viewer-wakes-the-display
+@file screen_server.c
+@why a viewer's key must reach the machine and must not wake the monitor: the rule is
+@why that only somebody at the board wakes it, and a viewer is not at the board
+@note The fabric sees one keyboard register written for both kinds of key, so
+@note this program is the only place the difference exists; one line in the
+@note viewer's path is all it takes to lose it.
+@old
+				key_event_from(&s->keys, m.keysym, m.down, "a viewer");
+@new
+				key_event_from(&s->keys, m.keysym, m.down, "a viewer");
+				s->link_touched = 1;
+@end
+
+@mutation a-source-going-away-wakes-the-display
+@file cadr-common/src/cadr_input_link.c
+@why a source that goes away has its held keys come up at the machine, and that is the
+@why link tidying up and not a person at the board, so it must not wake the monitor
+@note The releases go through `key`, the same call a record makes, which is
+@note why the link has an `event` call of its own for records; calling it here
+@note as well puts the two back together.
+@old
+	if (sink && sink->key)
+		for (unsigned i = 0; i < c->downs; ++i)
+			sink->key(sink->ctx, c->down[i], 0);
+@new
+	if (sink && sink->event && c->downs)
+		sink->event(sink->ctx);
+	if (sink && sink->key)
+		for (unsigned i = 0; i < c->downs; ++i)
+			sink->key(sink->ctx, c->down[i], 0);
+@end
+
+@mutation a-source-attaching-wakes-the-display
+@file cadr-common/src/cadr_input_link.c
+@why a USB keyboard plugged in is not a key pressed; attaching must not wake the monitor
+@note A computer's own display does not wake when a keyboard is plugged in, and
+@note the rule here is the same.
+@old
+		c->greeted = 1;
+		memmove(c->in, c->in + CADR_INPUT_LINK_HELLO,
+@new
+		c->greeted = 1;
+		if (sink && sink->event)
+			sink->event(sink->ctx);
+		memmove(c->in, c->in + CADR_INPUT_LINK_HELLO,
+@end
+
+@mutation the-wake-is-called-on-every-pass
+@file screen_server.c
+@why a pass with a record calls the wake once; a flag never cleared calls it on every pass
+@why for ever after, which keeps the monitor awake whoever is at the board
+@note Caught where nothing at the board has done anything since: a source going
+@note away, and a key with no display output to wake.
+@old
+			s->link_touched = 0;
+@new
+@end
+
+@mutation the-first-wake-waits-for-the-clock
+@file display_wake.c
+@why the first wake after the program starts must be written whatever the clock reads; a
+@why monotonic clock is allowed to be small, and a board that has just booted is where it is
+@old
+	if (w->ever && now_ns - w->last_ns < DWAKE_EVERY_NS) {
+@new
+	if (now_ns - w->last_ns < DWAKE_EVERY_NS) {
+@end
+
+@mutation the-wake-waits-a-nanosecond-too-long
+@file display_wake.c
+@why one wake a tenth of a second at most, and a tenth of a second is when the next may go
+@old
+	if (w->ever && now_ns - w->last_ns < DWAKE_EVERY_NS) {
+@new
+	if (w->ever && now_ns - w->last_ns <= DWAKE_EVERY_NS) {
+@end
+
+@mutation the-wake-goes-to-the-lamps-word
+@file display_wake.c
+@why a wake is word 36; the word before it is the lamps', and a write there does nothing a
+@why person at the board would ever see
+@old
+	w->write(w, DWAKE_WORD, DWAKE_KEY);
+@new
+	w->write(w, DWAKE_WORD - 1u, DWAKE_KEY);
+@end
+
+@mutation a-board-with-no-display-output-is-woken
+@file display_wake.c
+@why a console whose word 36 carries no marker has no display output, and this program must
+@why say so and write nothing, rather than install a wake that pokes an empty word
+@old
+	return DWAKE_MARK_OF(v) == DWAKE_MARK ? 1 : 0;
+@new
+	return 1;
+@end

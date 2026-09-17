@@ -236,6 +236,70 @@
 // is the tearing rule above applied to the map.
 //
 // ----------------------------------------------------------------------
+// SLEEP
+//
+// **A DIGITAL LINK HAS NO POWER MANAGEMENT OF ITS OWN, SO A MONITOR IS PUT TO
+// SLEEP BY STOPPING THE LINK.**  DPMS was an encoding of VGA's two sync lines,
+// and DVI has nothing of that kind: a source that wants a monitor asleep stops
+// sending, the monitor sees no signal, and it goes into its own power save.  So
+// `mute` holds the four lanes at one level --- `rtl/plumbing/cadr_hdmi_tx.sv`
+// is what it gates, the clock lane with the three data lanes --- and everything
+// in front of it keeps running: the pixel clock, the raster, the fetch and the
+// buffers.  A monitor woken up locks onto a picture that never stopped and
+// shows the machine's screen as it is now.
+//
+// **THE TIMER ALWAYS RUNS.**  It counts whole seconds of the machine's clock,
+// `sleep_setting` of them, and when they are gone `sleep_due` goes up and
+// stays up.  Nothing about the board decides whether it runs --- not whether a
+// keyboard is plugged in, not whether anybody is watching over the network ---
+// which is how a computer's own display sleeps.  **A setting of zero never
+// sleeps.**
+//
+// **AND THE ONE THING THAT STARTS IT OVER, AND WAKES THE MONITOR, IS `wake`,
+// WHICH IS A KEY OR THE MOUSE AT THE BOARD.**  The fabric cannot tell a key
+// typed at the board from a key typed into a viewer, because one program writes
+// the keyboard's register for both, so the program is what decides:
+// `cadr-terminal` pulses `wake` through the console for an event that came over
+// its input link from `cadr-usb-input`, and for nothing else.  A viewer's key
+// still reaches the machine and neither wakes the monitor nor starts the timer
+// over, and a keyboard plugged in or pulled out is not an event at all.
+//
+// What each of the other things a person can do at the board does to it, and
+// why each is the least surprising:
+//
+//   `sleep_set`     a new setting, from the card's `fpgarc` at boot or
+//                   `cadr-console hdmi-sleep` at any time.  THE TIMER STARTS
+//                   OVER FROM THE WRITE and a monitor asleep wakes, because the
+//                   setting it went to sleep under is gone: a person who asks
+//                   for ten minutes expects ten minutes from now.  Zero wakes it
+//                   and keeps it awake.  A write and a wake on one edge are the
+//                   write, which starts the timer over too.
+//   a fabric reset  BTN1.  The timer starts over, the setting goes back to the
+//                   fabric's own `SLEEP_S`, and the monitor wakes --- which is
+//                   what a fabric that has just been reset is expected to look
+//                   like.  The card's own setting comes back at the next boot
+//                   of Linux, which a fabric reset does not cause, and this is
+//                   the lamps' own standing after BTN1.
+//   BTN0 and the    the machine's boot button, from the board or from
+//   console's boot  `cadr-console boot`.  **NOTHING**: this block is not part of
+//                   the machine and hears nothing from it, and a machine that
+//                   boots is a machine whose screen is being drawn on whether or
+//                   not a monitor is watching.
+//
+// **THE MUTE MOVES ONLY AT A FRAME BOUNDARY**, where the settings are taken:
+// the instant between a frame's last pixel of blanking and its first line.  The
+// lanes stop in the blanking and start again in the blanking, so a monitor is
+// never handed half a frame at either end.  The timer's verdict crosses into
+// the pixel clock's domain through two flops and the mute takes it at the next
+// boundary, a frame later at most; `asleep` is the mute brought back into the
+// machine's clock through two more, which is what the console reads.
+//
+// **THE SECOND IS IN BOARD TICKS AND NOT ON MIT'S GRID.**  `SECOND_T` is how
+// many of the machine's clock edges make a real second, a fabric choice like
+// `cadr_debug_window.sv`'s watchdog, so it names no nanosecond figure and does
+// not go through `cadr_tick_pkg`.  At the 10 ns tick it is 100,000,000.
+//
+// ----------------------------------------------------------------------
 // THE MODE
 //
 // Three, and **the mode is a parameter and not a setting**: a video mode is a
@@ -328,7 +392,18 @@ module cadr_display_out #(
 
     // How many single-beat reads the strided fetch may have in flight.  See the
     // strided arm below for why one at a time does not finish in time.
-    parameter int unsigned OUTSTANDING = 8
+    parameter int unsigned OUTSTANDING = 8,
+
+    // How many of the machine's clock edges make a second for the sleep timer.
+    // **ONE SECOND AT THE 10 ns TICK, IN BOARD TICKS AND NOT ON MIT'S GRID**:
+    // see "SLEEP" above.  At least two, because the prescaler counts to one
+    // below it.  The check builds it at 2,000 so that three hundred seconds is
+    // eighty frames rather than a real five minutes.
+    parameter int unsigned SECOND_T = 100_000_000,
+    // The setting the fabric comes up with and a fabric reset puts back:
+    // `--hdmi-sleep`'s own default.  At most 32,767, the setting being fifteen
+    // bits.
+    parameter int unsigned SLEEP_S  = 300
 ) (
     // ------------------------------------------------ the memory domain
     input  var logic        clk,
@@ -359,6 +434,20 @@ module cadr_display_out #(
     input  var logic [1:0]  out_sel,
     input  var logic [1:0]  rotate,
 
+    // **SLEEP**, the face the console writes, in the machine's clock domain:
+    // see "SLEEP" above.  `sleep_set` is a one-tick pulse carrying a new
+    // setting in `sleep_secs`, and `wake` a one-tick pulse; both start the
+    // timer over.  `sleep_setting` is the setting as this block holds it,
+    // `sleep_due` is the timer's verdict --- up from the edge the last second
+    // ran out until something starts it over --- and `asleep` is the lanes
+    // muted, as the machine's clock sees them.
+    input  var logic        sleep_set,
+    input  var logic [14:0] sleep_secs,
+    input  var logic        wake,
+    output var logic [14:0] sleep_setting,
+    output var logic        sleep_due,
+    output var logic        asleep,
+
     // ------------------------------------------------- the pixel domain
     input  var logic        pclk,
     input  var logic        prst,
@@ -370,6 +459,9 @@ module cadr_display_out #(
     output var logic [3:0]  map_a,
     input  var logic [23:0] map_q,
 
+    // The four lanes held at one level, which is a monitor with no signal:
+    // see "SLEEP" above.  Moves only at a frame boundary.
+    output var logic        mute,
     output var logic        de,
     output var logic        hsync,
     output var logic        vsync,
@@ -900,6 +992,68 @@ module cadr_display_out #(
   end
 
   // ====================================================================
+  // SLEEP: THE TIMER, IN THE MACHINE'S CLOCK DOMAIN
+  // ====================================================================
+  //
+  // A prescaler counting the machine's clock edges to a second and a count of
+  // whole seconds left, both started over by a write, a wake or a reset.  When
+  // the last second runs out `slp_want` goes up and the count stops there, so
+  // the verdict is a level and not a pulse the pixel side could miss.  **A
+  // SETTING OF ZERO NEVER COUNTS**: that is the only thing that stops the timer
+  // from running.
+  localparam int unsigned PRE_W = $clog2(SECOND_T);
+
+  logic [PRE_W-1:0] slp_pre;    // edges into the current second
+  logic [14:0]      slp_secs;   // the setting
+  logic [14:0]      slp_left;   // whole seconds still to go, this one included
+  logic             slp_want;   // the timer has run out: mute at the boundary
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      slp_secs <= 15'(SLEEP_S);
+      slp_left <= 15'(SLEEP_S);
+      slp_pre  <= '0;
+      slp_want <= 1'b0;
+    end else if (sleep_set) begin
+      // A write wins over a wake on the same edge, and starts the timer over
+      // as a wake would.
+      slp_secs <= sleep_secs;
+      slp_left <= sleep_secs;
+      slp_pre  <= '0;
+      slp_want <= 1'b0;
+    end else if (wake) begin
+      slp_left <= slp_secs;
+      slp_pre  <= '0;
+      slp_want <= 1'b0;
+    end else if (!slp_want && (slp_secs != 15'd0)) begin
+      if (slp_pre == PRE_W'(SECOND_T - 1)) begin
+        slp_pre <= '0;
+        if (slp_left <= 15'd1) slp_want <= 1'b1;
+        else                   slp_left <= slp_left - 15'd1;
+      end else begin
+        slp_pre <= slp_pre + PRE_W'(1);
+      end
+    end
+  end
+
+  assign sleep_setting = slp_secs;
+  assign sleep_due     = slp_want;
+
+  // The mute, back in the machine's clock domain for the console.  **NOT
+  // RESET**, because what it synchronizes is not reset by this domain's reset:
+  // the mute is the pixel domain's and a fabric reset lets it go at the next
+  // boundary, so a synchronizer cleared by that reset would say "awake" for two
+  // edges while the lanes were still muted, and then "asleep" again.  A flop
+  // that only ever follows its source cannot say anything its source did not.
+  logic slp_mute;
+  logic slp_mute_s1, slp_mute_s2;
+  always_ff @(posedge clk) begin
+    slp_mute_s1 <= slp_mute;
+    slp_mute_s2 <= slp_mute_s1;
+  end
+  assign asleep = slp_mute_s2;
+
+  // ====================================================================
   // THE PIXEL SIDE
   // ====================================================================
   //
@@ -926,6 +1080,9 @@ module cadr_display_out #(
   // being special.  So the changeover frame is marked: it neither primes nor
   // complains, and the frame after it does both.
   logic        settled;
+  // The timer's verdict in this domain, two flops deep; `slp_mute` above takes
+  // it at the frame boundary.
+  logic        slp_want_s1, slp_want_s2;
   logic [31:0] asked    [2];
   logic [31:0] drawn    [2];
 
@@ -951,6 +1108,8 @@ module cadr_display_out #(
   logic [31:0] m_word, c_word;
   assign m_word = m_half_q ? m_entry[63:32] : m_entry[31:0];
   assign c_word = c_half_q ? c_entry[63:32] : c_entry[31:0];
+
+  assign mute = slp_mute;
 
   // The color map's copy, and the index being refreshed.
   logic [23:0] cmap [16];
@@ -1008,12 +1167,19 @@ module cadr_display_out #(
       c_show_addr <= COLOR_BASE; c_ask_addr <= COLOR_BASE;
       settled  <= 1'b1;
       underrun <= 1'b0;
+      // **THE LANES COME UP RUNNING**, whatever the timer says, and a
+      // synchronizer comes out of reset holding what its source does ---
+      // `slp_want` resets low.
+      slp_want_s1 <= 1'b0;
+      slp_want_s2 <= 1'b0;
+      slp_mute    <= 1'b0;
       de <= 1'b0; hsync <= !HSYNC_POS; vsync <= !VSYNC_POS;
       red <= 8'd0; green <= 8'd0; blue <= 8'd0;
     end else begin
       for (int s = 0; s < 2; s++) ack_sync[s] <= {ack_sync[s][1:0], fill_n[s]};
       sel_s1 <= out_sel; sel_s2 <= sel_s1;
       rot_s1 <= rotate;  rot_s2 <= rot_s1;
+      slp_want_s1 <= slp_want; slp_want_s2 <= slp_want_s1;
 
       hc <= hc_n;
       vc <= vc_n;
@@ -1058,6 +1224,8 @@ module cadr_display_out #(
       if ((hc == HC_W'(H_TOTAL - 1)) && (vc == VC_W'(V_TOTAL - 1))) begin
         cfg_sel <= sel_s2;
         cfg_rot <= rot_next;
+        // The lanes stop and start here and nowhere else: see "SLEEP".
+        slp_mute <= slp_want_s2;
         // The shape about to be drawn starts at its own first line, so all four
         // addresses and both ahead-lines are reloaded here rather than stepped.
         m_show_addr <= mono_first_next;

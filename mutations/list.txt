@@ -12644,9 +12644,203 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note Both signals stay read, so this is the check's to catch and not
 @note lint's.
 @old
-      .d(blue), .c({vsync, hsync}), .de(de), .q(tmds0)
+      .d(blue), .c({vsync, hsync}), .de(de), .q(word0)
 @new
-      .d(blue), .c({hsync, vsync}), .de(de), .q(tmds0)
+      .d(blue), .c({hsync, vsync}), .de(de), .q(word0)
+@end
+
+# THE DISPLAY OUTPUT'S SLEEP.  A digital link has no power management of its
+# own, so a source sleeps a monitor by stopping the link: `cadr_display_out.sv`
+# runs a timer on the machine's clock and holds the lanes muted from a frame
+# boundary, and `cadr_hdmi_tx.sv` holds all four at one word while it does.
+# `build/display_sleep.pass` holds the timer to the tick and the mute to the
+# boundary on a small raster and a short second; `build/hdmi_tx.pass` holds the
+# gate; `build/console.pass` holds the word that carries a setting and a wake.
+
+@mutation the-mute-follows-the-timer-mid-frame
+@check display_sleep
+@file rtl/plumbing/cadr_display_out.sv
+@note The lanes stop and start at a frame boundary and nowhere else, so that a
+@note monitor is never handed half a frame at either end. This lets the mute
+@note follow the synchronized verdict on every pixel, which a later assignment
+@note at the boundary itself cannot undo anywhere but at the boundary --- so
+@note it stops the link in the middle of whatever line the verdict arrived on.
+@note
+@note Every signal stays read, and the check sees it from the syncs alone: the
+@note pixel after a change of the mute is not the first pixel of a frame.
+@old
+      slp_want_s1 <= slp_want; slp_want_s2 <= slp_want_s1;
+@new
+      slp_want_s1 <= slp_want; slp_want_s2 <= slp_want_s1; slp_mute <= slp_want_s2;
+@end
+
+@mutation the-wake-does-not-start-the-timer-over
+@check display_sleep
+@file rtl/plumbing/cadr_display_out.sv
+@note A wake is somebody at the board, and the whole of what it means is that
+@note the wait begins again from now. A wake that only let the lanes go, and
+@note left the count where the last second ran out, sleeps the monitor again a
+@note second later; one while the display is awake does nothing at all.
+@note
+@note `slp_secs` stays read by the counting term and the write, so lint has
+@note nothing to say.
+@old
+    end else if (wake) begin
+      slp_left <= slp_secs;
+      slp_pre  <= '0;
+@new
+    end else if (wake) begin
+      slp_left <= slp_left;
+      slp_pre  <= slp_pre;
+@end
+
+@mutation zero-sleeps-after-a-second
+@check display_sleep
+@file rtl/plumbing/cadr_display_out.sv
+@note Zero means never, and it is the one thing that stops the timer. Without
+@note the term the count runs anyway: a count of zero whole seconds has run out
+@note at the end of the first one, and the monitor goes dark a second after a
+@note card said it must not.
+@old
+    end else if (!slp_want && (slp_secs != 15'd0)) begin
+@new
+    end else if (!slp_want) begin
+@end
+
+@mutation the-second-is-a-tick-long
+@check display_sleep
+@file rtl/plumbing/cadr_display_out.sv
+@note The prescaler counts to one below `SECOND_T`, which makes a second exactly
+@note that many edges. Counting to `SECOND_T` itself is a second one edge long,
+@note which over three hundred of them is three hundred edges --- three
+@note microseconds of the board's time, and invisible to anything but a count
+@note to the tick.
+@old
+      if (slp_pre == PRE_W'(SECOND_T - 1)) begin
+@new
+      if (slp_pre == PRE_W'(SECOND_T)) begin
+@end
+
+@mutation a-fabric-reset-leaves-the-monitor-asleep
+@check display_sleep
+@file rtl/plumbing/cadr_display_out.sv
+@note BTN1 resets the fabric, and a fabric that has just been reset is expected
+@note to show its picture. Keeping the verdict across the reset also stops the
+@note count, which only runs while nothing is due, so the monitor would stay
+@note dark until somebody at the board touched a key.
+@old
+      slp_pre  <= '0;
+      slp_want <= 1'b0;
+    end else if (sleep_set) begin
+@new
+      slp_pre  <= '0;
+      slp_want <= slp_want;
+    end else if (sleep_set) begin
+@end
+
+@mutation asleep-says-so-before-the-lanes-stop
+@check display_sleep
+@file rtl/plumbing/cadr_display_out.sv
+@note `asleep` is the mute as the machine's clock sees it, which is what the
+@note console reads and a person is told. ORing in the timer's verdict makes it
+@note say the monitor is asleep for up to a frame before the link has stopped,
+@note and a program that believed it would be describing a monitor still lit.
+@note
+@note The synchronizer stays read, so this is the check's to catch.
+@old
+  assign asleep = slp_mute_s2;
+@new
+  assign asleep = slp_mute_s2 | slp_want;
+@end
+
+@mutation the-clock-lane-runs-while-muted
+@check hdmi_tx
+@file rtl/plumbing/cadr_hdmi_tx.sv
+@note A link with its clock lane still running has not stopped, and a monitor
+@note locked to that clock stays awake showing black: the three data lanes held
+@note at one word are a picture of nothing and not a missing signal. So the
+@note clock lane is muted with the rest.
+@note
+@note `mute` stays read by the three data lanes, so lint has nothing to say.
+@old
+  assign tmds_clk = mute ? 10'd0 : clk_word;
+@new
+  assign tmds_clk = clk_word;
+@end
+
+@mutation a-muted-lane-still-carries-red
+@check hdmi_tx
+@file rtl/plumbing/cadr_hdmi_tx.sv
+@note Each of the three data lanes is gated on its own line, so each can be
+@note forgotten on its own. A red lane that kept sending is a link a monitor
+@note can still find, one lane in three.
+@old
+  assign tmds2    = mute ? 10'd0 : word2;
+@new
+  assign tmds2    = word2;
+@end
+
+@mutation a-sleep-setting-is-taken-from-three-lanes
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note A setting carries its value in the bottom half, so a setting of 5 has a
+@note zero byte and the face's merge against zero cannot tell that byte from a
+@note lane nobody strobed. The whole-word keys ask for four lanes by having no
+@note zero byte; this word asks by the strobes, and without the test a write
+@note that strobed three lanes sets a number nobody wrote.
+@old
+                          !w_full[15] && (s_wstrb == 4'hF);
+@new
+                          !w_full[15];
+@end
+
+@mutation the-sleep-words-read-back-is-a-setting
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Bit 15 is the asleep bit when the word is read and must be clear when it
+@note is written. Without the test, a write with bit 15 set is taken as a
+@note setting of its bottom fifteen bits --- and a program that read the word
+@note of a sleeping display and wrote it back with the key on it would move the
+@note setting.
+@old
+  assign w_is_sleep_set = w_is_sleep && (w_full[31:16] == HDMI_SLEEP_KEY) &&
+                          !w_full[15] && (s_wstrb == 4'hF);
+@new
+  assign w_is_sleep_set = w_is_sleep && (w_full[31:16] == HDMI_SLEEP_KEY) &&
+                          (s_wstrb == 4'hF);
+@end
+
+@mutation the-sleep-word-answers-with-no-display-output
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note A board with no display output has no timer, and the word reads
+@note `UNMAPPED` so that nothing reports a setting nobody holds. Answering
+@note anyway reads the tied-off zeros as "never sleeps", which is a claim about
+@note a monitor that is not there.
+@note
+@note Written as an OR with one rather than a deleted term, so the input stays
+@note read and lint has nothing to say.
+@old
+                             : (r_hi_q && r_idx_q == 5'd4 && hdmi_sleep_fitted)
+@new
+                             : (r_hi_q && r_idx_q == 5'd4 && (hdmi_sleep_fitted || 1'b1))
+@end
+
+@mutation a-wake-is-a-level-and-not-a-pulse
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note The display output starts its timer over on every tick `wake` is up, so a
+@note wake that never falls is a timer that never runs and a monitor that never
+@note sleeps. The fall is the one line that makes the write a pulse.
+@old
+      hdmi_sleep_set <= 1'b0;
+      hdmi_wake      <= 1'b0;
+
+      // --- writes
+@new
+      hdmi_sleep_set <= 1'b0;
+
+      // --- writes
 @end
 
 # `UB MD LOAD` AT THE REGISTER, which is the composed machine and no module
