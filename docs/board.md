@@ -1805,6 +1805,43 @@ seconds. The processor now runs 1.88 times as fast, but the cold load is bound
 by the disk path, about 64,500 block moves in 58 seconds through the Linux
 program, and not by the machine.
 
+## A placement fault fixed, and the serial store, 17 September
+
+**Builds of the 10 ns grid's fabric halted depending on their placement.**
+The served build of `9d1cf26` ran Lisp. The same RTL placed with
+`-directive Explore` halted at 1.07 G microcycles, and two placements of a
+slice beside it halted on every boot. The halts landed in the page-fault code
+with stray pixels in the frame buffer, and every build met timing.
+
+**The cause was a one-tick request granted as a bus cycle.** `memgo_q` is
+MEMSTART AND VMAOK registered every tick, with the map before it. Its path is
+allowed eight ticks and routes at about 19 ns, so on an access that faults the
+tick after the boundary can hold a VMAOK that has not settled. The bus
+interface granted on that tick. The grant ran a cycle at the last address used
+with stale write data. At `80e92d2` the interface samples -MEMRQ again at the
+master clock, as MIT's priority logic does. The unfixed Explore placement
+halted again at 331,783,208 microcycles. Four placements with the fix ran
+4.08 G microcycles each with forms typed and a clean screen.
+
+**Main's fabric at `80e92d2` on the Arty Z7-20.** Two placements were built
+with `DDR=1 HDMI=1 LMTV=1`: the default at +0.253 ns and Explore at +0.239 ns,
+both with 5,366 slices and 46 block RAM tiles. Explore ran 4.11 G microcycles
+and the default 4.78 G, and then 8.08 G after the serial test, with no halt.
+
+**Serial at 9600 baud now loses nothing.** The line keeps a store of 1,024
+characters behind RDATA (`3f7829f`). Measured on the default build:
+
+| Test | Result |
+|---|---|
+| ten bursts of `HELLO CADR` | 10 of 10 whole |
+| a hundred characters in one `dotimes` | 100 of 100 |
+| 342 characters with `cadr-serial` stopped for 3 s | 342 of 342; WAITING and DEEPEST reached 342; DROPPED 0 |
+| `ABCDE` typed into the socket | read by Lisp, 5 of 5 |
+| the same at 300 baud | whole, at 30.0 characters a second |
+
+Each build had one boot, so an intermittent fault is not ruled out by these
+runs.
+
 ## Looking at the display output
 
 The display output block scans the CADR's screen out of DDR and drives the
