@@ -19,9 +19,9 @@ say again what a document already says.
                   and a terminal block, then one table with a row for each
                   board, the board's name linking its own page, and under it
                   the FPGA's product name, its part number and a link to the
-                  maker's page for the board. A board with no page here yet
-                  has a row of its name, linked to its maker's page, its part,
-                  and the word upcoming, and nothing else. It ends with
+                  maker's page for the board. An upcoming board has a row of
+                  its name, linked to its own page, its FPGA, its part and its
+                  maker, and the word upcoming, and nothing else. It ends with
                   the license and a table of the third-party material the
                   boards and the site use, each row naming whose it is, under
                   what terms, and where those terms are recorded. The long
@@ -41,6 +41,12 @@ say again what a document already says.
                   HDMI connector, the USB input program, the USB host
                   controller, the port it would drive and the no-auto-boot
                   switch are crossed off in their places
+    de25-nano.html
+                  the DE25-Nano, which is upcoming. Nothing is built for it,
+                  so its drawing is the Arty Z7-20's with every block drawn not
+                  started. The page's title links the maker's page for the
+                  board, and its one line says the board is upcoming and names
+                  its FPGA
     booting.html  how each board comes up, in two sequences: a Zynq board
                   from its own card, and the same board from a TFTP server
                   while it is being worked on. The two Zynq boards come up the
@@ -79,13 +85,12 @@ say again what a document already says.
 ## The shape of a page
 
 Every page is the same shape. A desk note at the top, as on muir's and ozd's
-sites, gives the project's name and then all seven pages, in one fixed order on
+sites, gives the project's name and then all eight pages, in one fixed order on
 every page, so no word on it moves as a reader goes from page to page. The page
 being read is plain text on the spot color, marked `aria-current`, and every
-other page is a link. After the boards that have a page, a board with no page
-here yet is named, linked to its maker's page, with the word upcoming beside
-it. Under it the page is a column of paper plates on a
-halftone desk. Each plate opens with a pink eyebrow and a title in the display
+other page is a link. An upcoming board is listed after the others, linked to
+its own page, with the word upcoming beside the link. Under it the page is a
+column of paper plates on a halftone desk. Each plate opens with a pink eyebrow and a title in the display
 face, holds its panels, and closes with a who-line whose last cell is the
 plate's number on its page. The last plate of every page is the colophon: the
 copyright, where the drawing style and the board come from, and the board
@@ -93,10 +98,12 @@ waving goodbye. The front page's colophon is shaped as muir's is: where the
 material comes from, how the project is made, the name, the license, and the
 credits.
 
-**A board page** is `arty-z7-20.html` or `cora-z7-07s.html`. It is one plate:
-the board's name, one line naming the FPGA by its product name and part, one
-line linking the maker's page for the board, the keys to the booting and
-debugging pages and to the other board, and the drawing in a panel of its own.
+**A board page** is `arty-z7-20.html`, `cora-z7-07s.html` or `de25-nano.html`.
+It is one plate: the board's name, one line naming the FPGA by its product name
+and part, one line linking the maker's page for the board, the keys to the
+other boards, and the drawing in a panel of its own. The pages of the boards
+that run the machine also have keys to the booting and debugging pages, which
+say nothing yet about an upcoming board.
 The keys all look alike. The drawing carries its own legend, and nothing
 outside the drawing explains it. No outline is drawn around the board: the
 chip's own outline is the one labeled, with the FPGA's product name beside its
@@ -144,15 +151,24 @@ They are hand-placed rather than generated, because nothing here reads the RTL.
 So **a change to the architecture is a change to the drawing**, made by hand,
 and the drawing can drift from the machine.
 
-There are two architecture drawings, one per board. The Arty Z7-20's is
-the original, and the other is derived from it. It shares its viewBox and
-its translation, and a block the two boards both have is at the same coordinates in
+There are three architecture drawings, one per board. The Arty Z7-20's is
+the original, and the other two are derived from it. They share its viewBox and
+its translation, and a block the boards both have is at the same coordinates in
 both.
 
-**The derived one is derived by crossing off.** The Cora Z7-07S is the same
+**The Cora Z7-07S's is derived by crossing off.** The Cora Z7-07S is the same
 architecture on the Zynq 7007S. Its drawing is the Arty Z7-20's with what that
 board does not have crossed off where it stands rather than taken out, so that
 a reader can see what is missing.
+
+**The DE25-Nano's is derived by starting nothing.** Nothing is built for that
+board, so its drawing is the Arty Z7-20's with every block that would be this
+project's work drawn not started, with no fill. What is drawn gray stays gray,
+because those are things on a board rather than work. The fit and timing figures
+come off, because there is no build to take them from. The chip is labeled with
+the board's own FPGA, and the memory with the board's own memory. Every other
+label is still the Arty Z7-20's, and the drawing's HTML comments are left out,
+because they record what the Arty Z7-20 has shown.
 
 **Every controller in the row at the foot of a drawing has the same left edge
 and the same width as the connector under it.** A controller and the thing it
@@ -165,13 +181,13 @@ down on the UART's right, the gap on its left being the SD host's now.
 Under the machine, each drawing is three layers. The software region is on
 top. That is the Linux programs the board runs. Beside that region, at its
 left, stand the processor it runs on and the boot that starts that processor,
-in the same two places on both drawings: the Arm cores and U-Boot. Under it is
+in the same two places on every drawing: the Arm cores and U-Boot. Under it is
 a row of controllers, one for each
 thing the board is attached to: the memory controller, the MAC, the SD host,
 the UART, and on the Arty Z7-20 the USB host. Under that row are the board's own
 connectors, one under each controller. A line that leaves a program ends on a
 controller and never on a connector. Each controller has one line down to the
-connector it drives. On both boards every controller in the row is the part's
+connector it drives. On the two Zynq boards every controller in the row is the part's
 own silicon, so the whole row is gray.
 
 So a change to a block the Arty Z7-20 shares with the other board is carried
@@ -187,7 +203,8 @@ files is a drift, and that is the point of keeping the geometry identical.
 Everything the drawings assert about the machine comes from `README.md`,
 `rtl/machine/cadr_cables.map` and `rtl/machine/cadr_xbus_decode.sv`. The fit
 and timing figures under each fabric label come from that board's own place and
-route report at the commit its comment names.
+route report at the commit its comment names. The DE25-Nano's drawing has
+none, because nothing has been built for that board.
 
 A block's color says how far along it is, and the legend on each drawing
 carries the words. Green means the board itself has shown it. Turquoise means
