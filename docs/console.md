@@ -267,7 +267,7 @@ held in reset by a level looks exactly like a machine that will not start with
 nothing to say which. A write arms a countdown and software cannot extend it,
 shorten it or hold it.
 
-**`RESET_T` is 64 ticks, 320 ns.** Every register in `cadr_machine` takes a
+**`RESET_T` is 64 ticks, 640 ns.** Every register in `cadr_machine` takes a
 synchronous reset, so one tick would clear them all and the number looks
 arbitrary --- which is why it has a floor and the floor is written down. The
 machine's own power-on reset is never short (`rst_sync` is four deep and
@@ -291,7 +291,7 @@ at the 10 ns grid, as it had to be more than 44 at the 5.
 write channel through the countdown, so `BVALID` is offered after the machine
 has left reset. A program's store therefore returns with the machine running
 again and the next read of `FLAG-1` means something. It costs one Arm store
-320 ns.
+640 ns.
 
 **`RESET_KEY` is `"RSET"`, `0x5253_4554`, and an arbitrary value must not
 reset the machine.** Chosen the way `cadr_arty.sv` chooses `PROVE_WORD`: four

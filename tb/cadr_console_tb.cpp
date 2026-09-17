@@ -200,7 +200,7 @@ constexpr long kRelaxedT = GridTicks(75);
 // parameterizes them.  `RESET_KEY` is "RSET" --- four distinct bytes, none of
 // them `00` or `FF`, so a write that does not strobe all four lanes cannot
 // equal it however the lanes are merged, and neither a dead bus's zeros nor
-// an undriven bus's ones can arrive at it.  `RESET_T` is 64 ticks, 320 ns.
+// an undriven bus's ones can arrive at it.  `RESET_T` is 64 ticks, 640 ns.
 constexpr uint32_t kResetKey  = 0x52534554u;   // "RSET"
 constexpr uint32_t kResetMark = kResetKey >> 16;
 constexpr long     kResetT    = 64;
