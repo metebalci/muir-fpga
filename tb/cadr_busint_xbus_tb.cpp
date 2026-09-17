@@ -205,6 +205,105 @@ int main(int argc, char **argv) {
   }
 
   std::fclose(f);
+
+  // ---- A ONE-TICK REQUEST IS NO REQUEST ---------------------------------
+  //
+  // The priority logic samples -MEMRQ at the master clock edge and nowhere
+  // else, so a request that has gone again by that edge must not be granted.
+  // No trace can hold this: in zero delay -MEMRQ never falls between the tick
+  // that raises it and the edge, because `memgo_q` follows registers that
+  // move only at the boundary.  On silicon it can: `memgo_q` is relaxed to the
+  // fast read tap and the map reaches it in about nineteen nanoseconds, so
+  // the tick after a boundary that raises MEMSTART can capture a VMAOK still
+  // rippling, and on an access that faults that is exactly one tick of
+  // request.  Granting it ran a bus cycle nobody asked for.  So this leg
+  // drives that tick, and a control beside it drives a request standing at
+  // the edge, which must still be granted and run --- or an interface that
+  // never granted anything would pass.
+  long one_tick_legs = 0, standing_legs = 0;
+  if (!bad) {
+    auto step = [&](int n_memrq, int mclk) {
+      dut->n_memrq = n_memrq;
+      dut->mclk = mclk;
+      dut->wrcyc = 0;
+      dut->clk = 1;
+      dut->eval();
+      // The slave answers at once: the control leg needs its cycle to end.
+      dut->dev_ack = dut->dev_rq;
+      dut->eval();
+      dut->clk = 0;
+      dut->eval();
+    };
+    // Whatever the trace left standing, let it finish and come back to IDLE.
+    for (int k = 0; k < 20000 && dut->busy; ++k) step(1, (k % 15) == 14);
+    if (dut->busy) {
+      std::fprintf(stderr, "directed leg: the interface never returned to IDLE\n");
+      ++bad;
+    }
+
+    if (!bad) {
+      step(0, 0);  // one tick of -MEMRQ, between master clock edges
+      const int entered = dut->busy;
+      int granted = 0, rq = 0;
+      for (int k = 0; k < 5; ++k) {
+        step(1, 0);
+        granted |= !dut->n_memgrant;
+        rq |= dut->dev_rq;
+      }
+      step(1, 1);  // the edge, with the request gone
+      granted |= !dut->n_memgrant;
+      rq |= dut->dev_rq;
+      const int busy_after = dut->busy;
+      for (int k = 0; k < 40; ++k) {
+        step(1, 0);
+        granted |= !dut->n_memgrant;
+        rq |= dut->dev_rq;
+      }
+      if (!entered) {
+        std::fprintf(stderr, "directed leg: one tick of -MEMRQ did not leave "
+                             "IDLE, so the leg tests nothing\n");
+        ++bad;
+      }
+      if (granted || rq) {
+        std::fprintf(stderr,
+                     "directed leg: ONE TICK of -MEMRQ, gone by the master "
+                     "clock edge, was granted (-MEMGRANT %s, -XBUS.RQ %s): a "
+                     "bus cycle the processor never asked for\n",
+                     granted ? "fell" : "held", rq ? "rose" : "held");
+        ++bad;
+      }
+      if (busy_after) {
+        std::fprintf(stderr, "directed leg: still busy after the edge that "
+                             "found no request\n");
+        ++bad;
+      }
+      if (!bad) ++one_tick_legs;
+    }
+
+    if (!bad) {
+      for (int k = 0; k < 6; ++k) step(0, 0);  // the same request, standing
+      step(0, 1);                              // at the edge
+      const int granted = !dut->n_memgrant;
+      int rq = 0, acked = 0;
+      for (int k = 0; k < 40 && !acked; ++k) {
+        step(0, 0);
+        rq |= dut->dev_rq;
+        acked |= !dut->n_memack;
+      }
+      for (int k = 0; k < 20 && dut->busy; ++k) step(1, 0);
+      if (!granted || !rq || !acked || dut->busy) {
+        std::fprintf(stderr,
+                     "directed leg: a request standing at the master clock "
+                     "edge was not granted and run (granted %d, -XBUS.RQ %d, "
+                     "-MEMACK %d, back in IDLE %d)\n",
+                     granted, rq, acked, !dut->busy);
+        ++bad;
+      } else {
+        ++standing_legs;
+      }
+    }
+  }
+
   dut->final();
   delete dut;
 
@@ -240,8 +339,10 @@ int main(int argc, char **argv) {
       "ok: %ld ticks agree with muir's busint::Busint\n"
       "    %ld cycles --- %ld reads, %ld writes, %ld answered at once, "
       "%ld slower than a microcycle, %ld timed out\n"
-      "    %ld acknowledged with -XBUS.RQ still out\n",
+      "    %ld acknowledged with -XBUS.RQ still out\n"
+      "    %ld one-tick request gone by the edge and not granted, %ld standing "
+      "at the edge and run\n",
       checked, grants, reads, writes, instant, over_a_cycle, timeouts,
-      ack_with_rq);
+      ack_with_rq, one_tick_legs, standing_legs);
   return 0;
 }

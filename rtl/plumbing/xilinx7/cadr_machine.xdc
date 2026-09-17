@@ -63,6 +63,19 @@
 #     a comparison moved into a register is invisible to this file's own test,
 #     which asks what a register's consumers do and not what it replaced.
 #
+# **A REGISTER IN `slow` THAT LOADS EVERY TICK HOLDS GARBAGE FOR THE FIRST
+# TICKS AFTER ITS INPUT MOVES, AND A READER THAT DECIDES ON ANY OF THOSE TICKS
+# IS WRONG ON SILICON AND RIGHT IN EVERY TRACE.**  `memgo_q` is `MEMSTART AND
+# VMAOK`, loaded every tick, with the map between the boundary and its `D`:
+# 18.7 to 19.2 ns routed at 9d1cf26, legal under this file's eight ticks.
+# `cadr_busint_xbus.sv`'s IDLE state read it every tick and, until the fix
+# beside it, granted a bus cycle on one tick of it --- which three placements
+# of the board met as a halt in the page-fault code and zero-delay simulation
+# never can.  The relaxation is honest only because every reader now decides
+# at the master clock edge, a microcycle after the boundary.  So a register
+# like it is the same question as an edge detector, asked from the reader's
+# side: what does the first reader do with the first tick.
+#
 # Paths *into* the generator are already tick-rate and must stay so: they are
 # slow-to-fast, which `-from $slow -to $slow` does not match. `speed`
 # especially --- the synchronizer updates it at phase 12 and the 74S151 samples

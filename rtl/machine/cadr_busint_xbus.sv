@@ -491,8 +491,43 @@ module cadr_busint_xbus (
         // The grant. -MEMRQ is sampled here and nowhere else --- "the bus
         // interface only looks at it towards the end of the cycle" --- so a
         // request made just after an edge waits a whole microcycle.
+        //
+        // **AND IT IS SAMPLED AT THAT EDGE, NOT TAKEN FROM THE TICK THAT
+        // BROUGHT THE STATE HERE.**  The priority logic registers -MEMRQ at
+        // the master clock and nowhere else, and muir's `Busint::request` is
+        // only ever called with MEMSTART up at a clock edge.  Granting on the
+        // strength of the tick that entered REQUESTED let ONE tick of -MEMRQ
+        // start a bus cycle the processor never asked for.
+        //
+        // That tick happens on silicon.  `memgo_q` in `cadr_microcycle.sv` is
+        // `MEMSTART AND VMAOK` registered every tick, VMAOK is the far end of
+        // the map, and `rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes the
+        // path into it to the fast read tap.  Routed at 9d1cf26 the map takes
+        // 18.7 to 19.2 ns to reach it, so the tick after a boundary that
+        // raises MEMSTART captures a VMAOK still rippling.  On an access that
+        // faults that is a one-tick -MEMRQ, and the grant it bought ran a
+        // cycle at `phys_r`, the last address used, in the faulting access's
+        // direction and with `wdata` left from the last cycle: a stale word
+        // written over that address, or MD loaded from it under the
+        // page-fault handler.  Whether the rippling VMAOK reads 1 depends on
+        // the placement: the served placement of 9d1cf26 ran, and its Explore
+        // placement and two of a slice beside it halted in the page-fault
+        // code.  Forcing `memgo_q` to 1 on that one tick at every such
+        // boundary halts the band there in `band-axi` too, at microcycle
+        // 16,617,942 with the memory 12 ticks slow and 10,587,276 with it 3;
+        // with this line the forced runs agree tick for tick with an unforced
+        // one.
+        //
+        // In zero delay -MEMRQ cannot fall between REQUESTED and the edge ---
+        // `memgo_q` follows registers that move only at the boundary, and
+        // MBUSY is set at the edge and cleared only after an acknowledgment
+        // --- so no trace can see this line and none moved.  The directed
+        // leg at the end of `tb/cadr_busint_xbus_tb.cpp` drives the one tick,
+        // and `a-one-tick-request-is-granted-at-the-edge` takes this line away.
         REQUESTED: begin
-          if (mclk) begin
+          if (mclk && n_memrq) begin
+            state <= IDLE;
+          end else if (mclk) begin
             elapsed     <= 10'd0;
             answered    <= 1'b0;
             answered_at <= 10'd0;
