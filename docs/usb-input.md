@@ -228,12 +228,12 @@ happened.
 writes to the link as fast as events arrive, which for a person typing is a few
 records a second and for a mouse is one report per hundredth of a second.
 
-The pacing is the terminal's, unchanged: a word goes when the fabric holds
-none and the card's `KBD READY` is clear, and no sooner than
-`INPUT_KEY_INTERVAL_NS` after the last one. That is 4,096 microcycles of 290 ns,
-which is the cadence muir has always fed this microcode at. A burst that
-arrives faster waits in the terminal's backlog of 256 words, about six seconds
-of the fastest typing anybody does.
+The pacing is the terminal's, unchanged: a word goes when the fabric holds none
+and the card's `KBD READY` is clear, and no sooner than `INPUT_KEY_INTERVAL_NS`
+after the last one. That is 4,096 microcycles of 150 ns, 614.4 us, which is the
+cadence muir has always fed this microcode at. A burst that arrives faster
+waits in the terminal's backlog of 256 words, about six seconds of the fastest
+typing anybody does.
 
 This is why the link carries no acknowledgment. The far end is a queue with a
 bound, and a source that overruns it is refused whole keystrokes rather than

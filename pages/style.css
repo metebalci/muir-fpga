@@ -585,16 +585,18 @@ figcaption { font-size: var(--fs-small); max-width: var(--measure); }
 /* The absent swatch is ink with the red cross on it, so that the legend shows
    the mark rather than a color. */
 .d-absent-key { fill: var(--ink); fill-opacity: 1; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: none; }
-/* The lamps that blink on the board blink here, at the board's own rates,
-   and both derive from the machine's clock: the fabric's clock lamp is bit 25
-   of a counter clocked at 100 MHz, so it toggles every 2^25 ticks of 10 ns ---
-   0.336 s, a 0.671 s period, 1.49 Hz; the microcycle lamp was measured
-   toggling every 0.14 s when a tick was 5 ns, which is 0.28 s and a 0.56 s
-   period at 10. Both moved by exactly the factor the tick did, the machine
-   being scaled and not otherwise changed. The ring around each says so as
+/* The lamps that blink on the board blink here, at the board's own rates.
+   The fabric's clock lamp is bit 25 of a counter clocked at 100 MHz, so it
+   toggles every 2^25 ticks of 10 ns: 0.336 s, a 0.671 s period, 1.49 Hz. The
+   microcycle lamp is bit 19 of the count of retired microcycles, so it
+   toggles every 2^19 microcycles. On the 10 ns grid the Arty Z7-20 was
+   measured retiring 5.88 million microcycles a real second while it ran
+   Lisp, so the lamp toggles every 0.089 s and its period is 0.178 s. That
+   rate is a measurement of one machine running one band, and a machine that
+   waits more on memory blinks slower. The ring around each lamp says so as
    well, for anyone who has asked for less motion and gets none. */
 @keyframes d-blink { 0%, 49.9% { opacity: 1 } 50%, 100% { opacity: 0.12 } }
-.d-lamp-fast { animation: d-blink 0.56s steps(1, end) infinite; }
+.d-lamp-fast { animation: d-blink 0.178s steps(1, end) infinite; }
 .d-lamp-slow { animation: d-blink 0.671s steps(1, end) infinite; }
 /* The disk light is not periodic on the board --- it follows the blocks the
    machine asks for --- so it flickers here on an uneven schedule of its own

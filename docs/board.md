@@ -755,12 +755,15 @@ The lamps are named for the machine's own signals: LD0 is `MACHRUN`, LD4 is
 machine's own port, because a board's top level is reached by lint and by
 nothing else.
 
-**Every rate here is in the machine's own time, and a wristwatch reads twice as
-long.** The tick is 10 ns rather than 5, so the machine runs at half the speed
-the hardware ran. Every tick count in it is unchanged, which is why none of the
-simulations these figures come from moved. A period given as 0.14 s is 0.28 s
-at the board. LD1 is the exception, because it counts fabric ticks rather than
-microcycles and its figure above is already real time.
+**The microcycle figures below were simulated at the 5 ns grid, and they are in
+that machine's own time.** At that grid each of MIT's 5 ns steps took a 10 ns
+tick on the board, so the machine ran at half the speed the hardware ran,
+and a period given there as 0.14 s was 0.28 s at the board. At the 10 ns grid
+the machine runs close to the hardware's speed. On 17 September the Arty Z7-20
+retired 5.88 million microcycles a real second while running Lisp, so LD2's
+blink, which toggles every 2^19 microcycles, had a period of 0.178 s. LD1
+counts fabric ticks rather than microcycles, so its figure above is real time
+on either grid.
 
 Read the first three in order.
 
@@ -818,7 +821,7 @@ was simulated afterwards to put numbers on it, with `cadr_machine` and
     NXM timeouts             514 in 200 ms --- the parity loop's 512 plus
                              the two cycles to empty Xbus space
     after the first cycle    0.26 us a microcycle, against 0.22 normal
-    LD2 (beat[19])           toggles every 0.14 s
+    LD2 (beat[19])           toggles every 0.14 s, machine time at the 5 ns grid
 
     (before the disk controller's registers answered the polls, the same run
      gave 13,783 timeouts, 1.49 us a microcycle and the blink every 0.79 s;
@@ -956,11 +959,13 @@ tally over the session reads 722 input events, 394 key words to the machine,
 none held back for pacing or room, none lost in the fabric, 354 pointer moves
 and no keysym that nothing maps.
 
-The machine's clocks run at half real time, which is what the fabric says they
-should. The who-line clock advanced 31 seconds over 61 real seconds. That is a
-ratio of 0.508, and the readings are to the second, so it is a half. The
-microsecond clock counts 200 ticks (`rtl/machine/cadr_io_board.sv`), and at a
-10 ns tick that is one count every 2.0 real microseconds.
+At the 5 ns grid the machine's clocks ran at half real time, which is what the
+fabric said they should. The who-line clock advanced 31 seconds over 61 real
+seconds, a ratio of 0.508. The microsecond clock then counted 200 ticks
+(`rtl/machine/cadr_io_board.sv`), and at a 10 ns tick that was one count every
+2.0 real microseconds. The section of 17 September gives the 10 ns grid's
+figures, where the microsecond clock keeps real time and the who-line runs at
+1.015 of it, and 0.508 turns out to be that same 1.016 times a half.
 
 Two things are not shown yet. The serial port's registers are programmed and
 its rate reads back, but characters do not flow, because the line's frame end
@@ -985,10 +990,11 @@ interrupt channel take the character (`rtl/machine/cadr_io_board.sv`).
 The CADR's serial line works on the board. Three bursts at 300 baud arrived
 whole and in order, with nothing lost and nothing extra. They arrived at 15.0
 characters a second. A 10-bit frame at 300 baud is 30 characters a second of
-real time, and the machine runs at half real time at a 10 ns tick, so 15.0 is
-the rate the fabric says it should be.
+real time, and at the 5 ns grid the machine ran at half real time, so 15.0 was
+the rate the fabric said it should be. At the 10 ns grid the same bursts arrive
+at 29.9 characters a second, measured on 17 September.
 
-Every rate the chip offers was swept, with two bursts at each:
+Every rate the chip offers was swept at the 5 ns grid, with two bursts at each:
 
 | baud | characters a second | at full real time |
 |---|---|---|
@@ -1406,13 +1412,15 @@ read off the screen twice on each board, 137.9 real seconds apart with nothing
 touching either machine: 0.5077 of real time on the Arty Z7-20 and 0.5150 on
 the Cora Z7-07S. The who-line ticks once a machine second, so a reading of that
 length resolves to about seven parts in a thousand, and both figures are the
-half rate of 0.508 this file measures above, within that resolution.
+rate of 0.508 this file measured above at the 5 ns grid, within that
+resolution.
 
 The rate was measured a second way, off the fabric's own tick counter, which
 touches neither the screen nor the network. Two readings 118.3 real seconds
 apart give 99.9989 MHz on the Arty Z7-20 and 99.9934 MHz on the Cora Z7-07S,
-against the 100 MHz a 10 ns tick is by design. The CADR's microsecond clock
-counts one per 200 ticks, so those are 0.499994 and 0.499967 of real time. The
+against the 100 MHz a 10 ns tick is by design. At the 5 ns grid the CADR's
+microsecond clock counted one per 200 ticks, so those were 0.499994 and
+0.499967 of real time. The
 two methods agree, and the second one does not depend on the screen, the
 network or anything outside the board.
 
@@ -1454,9 +1462,10 @@ did not lose its place.
 **The who-line advances through a halt, which looks like a jump and is not
 one.** Across that halt the who-line gained about three minutes and forty-seven
 seconds more than the running time accounts for, and three minutes and
-forty-three seconds is the halt itself at the half rate. The microsecond clock
-is in fabric and counts ticks, so it free-runs while `MACHRUN` is down. A
-machine restarted after a halt therefore reads a clock that never stopped.
+forty-three seconds is the halt itself at the 5 ns grid's half rate. The
+microsecond clock is in fabric and counts ticks, so it free-runs while
+`MACHRUN` is down. A machine restarted after a halt therefore reads a clock
+that never stopped.
 
 **The cable held at zero refused frames a second time.** Each board took the
 debugger's role in turn over the same mirrored ribbon, found the wiring, and
@@ -1713,6 +1722,78 @@ otherwise, because both were written before this commit's menu existed. The
 effect is the same, since both settings are off without them, but a card
 written from this commit's script carries all four of the display lines
 commented out.
+
+## The 10 ns grid on the board, 17 September
+
+The Arty Z7-20 was served a set built from a clean tree at `9d1cf26`, the
+commit that moves MIT's grid from 5 ns to 10 ns. The part's USERCODE reads
+`9d1cf260`, and `cadr-console status` says `commit 9d1cf26, tree clean`. The
+Cora Z7-07S was not reset.
+
+**The machine boots MIT's Lisp on the 10 ns grid.** The drive came present,
+43,484 blocks were served and 21,096 written back, and a Lisp Listener was
+painted 84 seconds after the reset, with 18,116 lit pixels and no trap.
+`FLAG-1` reads `0xf900`, with `ERR` down.
+
+**It retires 1.880 times as many microcycles.** Over 195.406 seconds of the
+fabric's own ticks the machine retired 0.058757 microcycles a tick. That is
+5.876 million a real second, and 88.1% of the one in 15 a microcycle at normal
+speed allows. Read the same way just before the reset, on the 5 ns grid, the
+same board retired 0.031256 a tick, which is 3.126 million a second and 90.6%
+of one in 29. The console's 2,000-microsecond window reads 12,359 to 12,546
+retired, where it read 6,577 to 6,658. The smaller share of a microcycle is
+consistent with memory stalls costing more of a shorter cycle, and it has not
+been examined.
+
+**The microsecond clock keeps real time.** `(time:microsecond-time)` read three
+times about 62.5 seconds apart gave 387,418,772, 449,945,806 and 512,475,250.
+That is 62,527,034 microseconds in 62.530 real seconds, 0.99995 of real time,
+and 62,529,444 in 62.529, 1.00001. At the 5 ns grid the same clock ran at half.
+
+**The who-line runs at 1.015 of real time, and that is the band's and not the
+grid's.** Fourteen readings 15 seconds apart gave 198 seconds of who-line in
+195.0 real seconds, which is 1.0154 with an uncertainty of 0.005 from the
+one-second display. It gains a second about every 65 seconds. At the 5 ns grid
+this file recorded 0.508, and 0.508 is 1.016 times 0.5. So the who-line has
+always run about 1.6% ahead of the microsecond clock, and the grid moved both
+by the same factor. After a console boot the same drift appeared again: 209
+seconds of who-line in 206.4 real seconds, 1.013.
+
+The cause is not established. A time base in units of 2^14 microseconds read
+as sixtieths of a second would give 1.01725. That is a candidate only, because
+the System 304 sources were not at hand to check it against.
+
+**Chaosnet, the mouse and the keys work.** `(chaos:host-up-p)` on the file and
+time host answers `T`, and `(time:print-current-time)` prints the right date.
+The arrow moves with a viewer's pointer, and `tv:mouse-x` and `tv:mouse-y` went
+from 767 and 923 to 376 and 710 on a walk of -400 and -320. On the 5 ns grid
+the same walk moved y by 342. MIT's speed-dependent mouse scaling now sees real
+speed, which is a candidate for the difference and is not established. `(+ 1
+2)` typed over RFB answers `3`, and the auto-shifted `+` arrives as a `+`.
+
+**The serial line is whole at 300 baud.** Two bursts of `HELLO CADR` arrived
+whole at 29.9 characters a second, which is the full real rate of a 10-bit
+frame at 300 baud. At the 5 ns grid the same bursts came at 15.0.
+
+**At 9600 baud characters were lost, and this is open.** Two bursts arrived as
+`HELO AD` and `HELO ADR`, at 474 characters a second. The serial face's dropped
+counter read 5, and `cadr-serial` reported that the port dropped 5 of its own.
+The machine sent those characters, and the program had not yet taken the
+previous one out of the one-character holding register. The program looks at
+the port every 2,000 microseconds, and a 9600-baud frame is now 1.04 ms of real
+time. Run by hand with `--poll-us 500`, three bursts gave `HLLO CADR`, `HELLO
+CADR` and `HELLO CADR` at about 700 characters a second, and the counter went
+from 5 to 6. Faster polling mostly cures it and does not remove it. Receiving
+at 9600 works: `ABCDE` written to the program's socket reads back in Lisp as
+`(65 66 67 68 69)`.
+
+**The cold load takes the same real time as on the 5 ns grid.** After
+`cadr-console boot` the screen cleared at 58.6 seconds and was repainted at
+60.0 seconds. Another 43,483 blocks were served and 21,095 written back, with
+no failure and no denial. At the 5 ns grid the clear came at 57.16 to 57.50
+seconds. The processor now runs 1.88 times as fast, but the cold load is bound
+by the disk path, about 64,500 block moves in 58 seconds through the Linux
+program, and not by the machine.
 
 ## Looking at the display output
 
