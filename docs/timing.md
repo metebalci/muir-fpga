@@ -16,6 +16,71 @@ phase, and the bus's setup time is quoted in a timing constraint in another
 file. Rounding one number in isolation gives a machine that still builds,
 still lights the lamps, and is not the CADR.
 
+## Overview
+
+This section is the short version. The sections after it give every instant
+with its source, its constant and its count on both grids.
+
+### What is MIT's
+
+MIT's drawings give every instant in nanoseconds, and muir carries each one
+as a named constant.
+
+| Group | Instants |
+|---|---|
+| The ring, a delay line started by `-TPR0` | TSE at 5 and 25 ns; `-TPR60` from 60 to 100 ns; SELECT at 65 ns; the write pulse from 30 to 45 ns; the restart at 60 ns; the read tap at 75 (fast), 85 (normal), 100 (slow) or 160 ns (extra slow), 40 ns later under ILONG |
+| Triggered delays, started by an event | the master's 80 ns setup; the 60 ns read deskew; on the Unibus the select at 200, the address at 100, the acknowledgment at 150 and the MD strobe at 100 ns; the register strobe at 150 and the answer at 250 ns; the debug request at 100 ns; `-MFINISHD` at 30 and `-RDFINISH` at 140 ns |
+| Free-running oscillators | the timeout oscillator, 850 ns a period; the microsecond clock, 1,000 ns; `KB CLK`, 8,000 ns; `FCLK`, 125 ns; the half-microsecond clock, 500 ns at a phase of 203; the sixty-cycle clock; the sync program, 500 or 625 ns an instruction; the display frame, 15,456,000 ns |
+| The disk | a revolution, a sector, the seek's settle and its time per cylinder, and the 2.56 s hang timer |
+
+### What is ours
+
+- **The grid.** The ring and every triggered delay are rounded up to the next
+  10 ns. A normal microcycle is 15 ticks, 150 ns against MIT's 145, so the
+  machine runs at about 97% of the original speed. Eleven instants move, each
+  by 5 ns or less: TSE's two edges, SELECT, the end of the control store's
+  write pulse, the fast and normal read taps with and without ILONG, the
+  receive buffer's setup, the counter's low half and the half-microsecond
+  clock's first edge.
+- **Oscillators keep their exact period.** A free-running clock is an
+  accumulator that acts at the first tick at or after each true edge, so it
+  never drifts from MIT's rate.
+- **Power-on is two edges after the reset edge** for every oscillator,
+  because that is where the reference's time zero falls in the fabric.
+- **A few fabric adjustments are made, each explained where it is made.** The
+  control store is written on the write pulse's leading edge. A memory strobe
+  on a boundary's own tick belongs to that boundary. The processor tests
+  SPEEDCLK a tick early. `-RDFINISH` is three ticks short, the ticks that
+  ending a hang costs. The disk holds a stored word two ticks and a read one.
+- **Some counts are not MIT's timing at all.** The debug cable's signaling,
+  the console's pulses, the watchdog and the lamps' hold times are counted in
+  real board ticks. They are listed under *What is not MIT's timing at all*.
+
+### What depends on what
+
+1. A microcycle is the read tap plus the restart, and each is rounded on its
+   own.
+2. The write pulse is measured from the end of the read phase. TSE, SELECT and
+   `-TPR60` are measured from the start of the cycle, so the two groups cannot
+   collide.
+3. SELECT must fall after `-TPR60` and before the earliest read tap. On the
+   grid that is 6 < 7 < 8 ticks, with nothing to spare.
+4. The NXM timeout is five oscillator periods and fires on the sixth rising
+   edge. The acknowledgment follows the oscillator's phase, so anything that
+   changes when the oscillator starts moves every timeout.
+5. On the Unibus the MD strobe lands 50 ns before the acknowledgment. On the
+   Xbus the two coincide.
+6. The register blocks' pulse, strobe and answer are three taps of one delay
+   line, and they move together.
+7. On the I/O board a mouse step and the interval counter's tick are each two
+   `KB CLK` periods, and `-BOOT*` is half of one.
+8. The timing constraints write tick counts as literals. `grid.pass` fails
+   when a literal and the grid disagree.
+9. muir generates the reference traces under the same grid, with
+   `--timing-model fpga`.
+
+The full list is *The relationships* below.
+
 ## Where the grid lives
 
 The conversion from MIT's nanoseconds into ticks is one number with four
