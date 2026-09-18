@@ -84,11 +84,11 @@
 
     <figure class="panel fig dense wide">
       <div class="scroll">
-<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Nothing on it has been started for this board: no block is colored, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. Apart from the chip&rsquo;s label, the memory, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Nothing on it has been started for this board: no block is colored, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
 
           <!-- The Arty Z7-20's drawing, generated for the DE25-Nano with
                nothing started: no block is colored, the figures under the
-               fabric's label are gone because there is no build, and the
+               fabric's label show zero because there is no build, and the
                chip and the memory carry this board's parts, and the
                lamps are green, as this board's user LEDs are, and the
                debug cable's connector is a GPIO header, the board having no
@@ -122,7 +122,7 @@
           <rect class="d-plate" x="-150" y="428" width="160" height="38"/>
           <rect class="d-box" x="-150" y="428" width="160" height="38"/>
           <text class="d-m" x="-70" y="446" text-anchor="middle">S_AXI_HP3</text>
-          <text class="d-s" x="-70" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <text class="d-s" x="-70" y="460" text-anchor="middle">FPGA masters, 64 bits, AXI3</text>
           <path class="d-line" d="M-70,466 L-70,652"/>
           <rect class="d-box d-ext" x="-283" y="288" width="100" height="84"/>
           <text class="d-t" x="-233" y="310" text-anchor="middle">HDMI out</text>
@@ -130,7 +130,24 @@
           <text class="d-s" x="-233" y="344" text-anchor="middle">from the fabric,</text>
           <text class="d-s" x="-233" y="358" text-anchor="middle">one of three modes</text>
 
-          <text class="d-s" x="-164" y="48">PL &mdash; fabric</text>
+          <text class="d-s" x="-164" y="48">FPGA fabric logic</text>
+          <!-- Zero usage placeholders until this board has a build.
+               A5E 013B: 46,800 ALMs; 6.99 Mb M20K + 1.43 Mb MLAB
+               = 8.42 Mb fabric memory (excluding HPS RAM).
+               Source: Altera Agilex 5 E-Series Product Table, 2026.08.07, p. 3:
+               https://docs.altera.com/api/khub/documents/rcQSreUhbuYGXCo7Np10cw/content -->
+          <text class="d-s" x="-164" y="68">ALM 0 of 46,800</text>
+          <rect class="d-box" x="-164" y="74" width="136" height="13"/>
+          <rect x="-164" y="74" width="0" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="84">0%</text>
+          <text class="d-s" x="-164" y="104">M20K memory 0 of 6.99 Mb</text>
+          <rect class="d-box" x="-164" y="110" width="136" height="13"/>
+          <rect x="-164" y="110" width="0" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="120">0%</text>
+          <text class="d-s" x="-164" y="140">MLAB memory 0 of 1.43 Mb</text>
+          <rect class="d-box" x="-164" y="146" width="136" height="13"/>
+          <rect x="-164" y="146" width="0" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="156">0%</text>
 
           <rect class="d-box" x="40" y="62" width="112" height="128"/>
           <text class="d-t" x="96" y="100" text-anchor="middle">clock</text>
@@ -221,26 +238,29 @@
           <rect class="d-plate" x="38" y="428" width="160" height="38"/>
           <rect class="d-box" x="38" y="428" width="160" height="38"/>
           <text class="d-m" x="118" y="446" text-anchor="middle">S_AXI_HP0</text>
-          <text class="d-s" x="118" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <text class="d-s" x="118" y="460" text-anchor="middle">FPGA masters, 64 bits, AXI3</text>
           <rect class="d-box" x="230" y="428" width="160" height="38"/>
           <text class="d-m" x="310" y="446" text-anchor="middle">S_AXI_HP2</text>
-          <text class="d-s" x="310" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <text class="d-s" x="310" y="460" text-anchor="middle">FPGA masters, 64 bits, AXI3</text>
           <rect class="d-box" x="640" y="428" width="410" height="38"/>
           <text class="d-m" x="845" y="446" text-anchor="middle">M_AXI_GP0</text>
-          <text class="d-s" x="845" y="460" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+          <text class="d-s" x="845" y="460" text-anchor="middle">HPS masters, 32 bits, AXI3</text>
           <rect class="d-box" x="1092" y="428" width="140" height="38"/>
           <text class="d-m" x="1162" y="446" text-anchor="middle">M_AXI_GP1</text>
-          <text class="d-s" x="1162" y="460" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+          <text class="d-s" x="1162" y="460" text-anchor="middle">HPS masters, 32 bits, AXI3</text>
 
-          <text class="d-s" x="-164" y="520.4">PS &mdash; Arm</text>
+          <text class="d-s" x="-164" y="520.4">HPS &mdash; Arm</text>
           <rect class="d-dot" x="220" y="522" width="1000" height="124"/>
           <text class="d-s" x="230" y="536">Linux &mdash; Buildroot</text>
           <path class="d-line" d="M845,466 L845,494 M305,494 L1040,494 M305,494 L305,542 M452,494 L452,542 M599,494 L599,542 M746,494 L746,542 M893,494 L893,542 M1040,494 L1040,542"/>
 
           <rect class="d-plate" x="-62" y="542" width="110" height="96"/>
           <rect class="d-box d-ext" x="-62" y="542" width="110" height="96"/>
-          <text class="d-t" x="-7" y="566" text-anchor="middle">2 &times; Cortex-A9</text>
-          <text class="d-s" x="-7" y="586" text-anchor="middle">650 MHz, Linux</text>
+          <text class="d-t" x="-7" y="560" text-anchor="middle">2 &times; Cortex-A76</text>
+          <text class="d-s" x="-7" y="574" text-anchor="middle">up to 1.4 GHz</text>
+          <text class="d-t" x="-7" y="594" text-anchor="middle">2 &times; Cortex-A55</text>
+          <text class="d-s" x="-7" y="608" text-anchor="middle">up to 1.25 GHz</text>
+          <text class="d-s" x="-7" y="628" text-anchor="middle">Linux</text>
           <rect class="d-plate" x="56" y="522" width="54" height="124"/>
           <rect class="d-dot d-ext" x="56" y="522" width="54" height="124"/>
           <rect class="d-plate" x="61" y="527" width="44" height="30"/>
@@ -291,7 +311,7 @@
           <rect class="d-plate" x="1122" y="542" width="80" height="96"/>
           <rect class="d-box d-ext" x="1122" y="542" width="80" height="96"/>
           <text class="d-t" x="1162" y="566" text-anchor="middle">muir</text>
-          <text class="d-s" x="1162" y="586" text-anchor="middle">on the PS,</text>
+          <text class="d-s" x="1162" y="586" text-anchor="middle">on the HPS,</text>
           <text class="d-s" x="1162" y="600" text-anchor="middle">running CC</text>
           <text class="d-s" x="1162" y="622" text-anchor="middle">the debugger</text>
 
