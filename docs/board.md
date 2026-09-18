@@ -1919,3 +1919,74 @@ did. See `docs/display-output.md`.
 **A stable picture with the wrong geometry — shifted, or wrapped diagonally.**
 The monitor has picked a different mode from the one being sent. Check what it
 reports the incoming timing as; it should say 1280x1024 at about 60 Hz.
+
+## LMZ System 1001 on both boards, 18 September 2026
+
+The Arty Z7-20 and Cora Z7-07S both booted
+[LMZ System 1001](https://github.com/metebalci/lmz/releases/tag/lmz-1001),
+tag `lmz-1001` at `1c5494d8891d73627a5a3307e3c83649ba627630`.
+Neither needed a new bitstream: the Arty still runs fabric build `44eff450`
+and the Cora `0966ffd0`. Both report microcode 323.
+
+The release assets were checked against their published SHA-256 digests:
+
+| Asset | SHA-256 |
+|---|---|
+| `lmz-1001-pack.img.gz` | `70a620e28feade762f27a0b4d6408e942e4d9495b3c81a6f0530dd7e28070b05` |
+| `lmz-1001-sys.tar.gz` | `dc83a333f2f2703ef224c1551406e5d208c94b0ced6d44827fe0b35caf4c6378` |
+| Uncompressed pack, 269,562,880 bytes | `35b15e7e947bdcd0e3b3994ca107c247d599ac6127b13b5d8d9029281de1364c` |
+
+Each uploaded pack was synced, read back from its SD card after dropping the
+Linux page cache, and hashed before boot. Both matched the uncompressed
+release. The running machine writes its pack, so that digest identifies the
+installed release bytes, not the pack after use.
+
+### Two machines on one site
+
+The Arty is LISPM-1 at Chaosnet address `177201`; the Cora is LISPM-2 at
+`177202`. OZ is `177200`. All three addresses are octal. The development
+server runs ozd against the release's source tree and a separate copy of its
+site files extended with LISPM-2's host and machine location. The original
+release site files are kept unchanged.
+
+The Cora's card configuration and its build host's private `local.conf`
+both name its new address and OZ peer. A stock band knows only LISPM-1, so
+setting the hardware address alone initially leaves the Cora's local host
+unnamed. On the Cora, after logging in to OZ, these forms loaded the two-host
+site configuration and saved it in the spare `LOD2` partition:
+
+```lisp
+(chaos:generate-host-table)
+(load "SYS: SITE; HSTTBL LISP")
+(load "SYS: SITE; LMLOCS LISP")
+(chaos::setup-my-address)
+(si::set-local-host-variables)
+(si:disk-save "LOD2" t)
+```
+
+The save reloads the world it wrote. Once it had returned to a Listener,
+`(si:set-current-band "LOD2")` made that the default for the next boot.
+The disk label was read back to confirm the selection, and a subsequent
+`cadr-console boot` verified that the default band retained the LISPM-2
+identity. The distribution's pack name remains LISPM-1 in the herald's
+first line; `si:local-host` is LISPM-2 and the machine description is
+"Lisp Machine Two, with associated machine OZ."
+
+The Cora's original `LOD1` remains byte-identical to the release: its 49,419
+blocks starting at block 65,569 have SHA-256
+`002e925bee9c832da5260ea04cd976bb81e2508aa16f47381cb8fddf4dd750aa`.
+The Arty's previous pack and the Cora's previous configuration were retained
+for rollback. System 100 reference packs and golden traces were not changed.
+
+### What was checked on the boards
+
+Both machines reported System 1001 from `si:get-system-version`, answered
+`(chaos:host-up-p "OZ")` with `T`, logged in successfully, and read the
+expected first line of `SYS: SYS; LTOP LISP`. These were observed through
+RFB, with the server log independently recording each login and file read.
+The Arty's file read was repeated after the server acquired the Cora's peer.
+
+Both console counters showed the processors running. The Cora's final disk
+sample reported 128,847 blocks served, 62,297 written back, no lost blocks
+and no failures. This establishes boot and basic network file access, not
+a full SYSTEM build on either FPGA.
