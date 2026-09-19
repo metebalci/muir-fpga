@@ -135,7 +135,7 @@ static int probe_face(struct console *c, uint32_t regs_phys)
 		    "a board with a GP port and nothing of ours behind it", regs_phys);
 	else if (ident == CONS_UNMAPPED)
 		say("no console at 0x%08x: word 0 reads 0x%08x, which is cadr_console.sv's own UNMAPPED --- "
-		    "something of ours answers on M_AXI_GP1 but the window is not here", regs_phys, ident);
+		    "something of ours answers on " CADR_BOARD_CONSOLE_PORT " but the window is not here", regs_phys, ident);
 	else
 		say("no console at 0x%08x: word 0 reads 0x%08x, wanting 0x%08x (\"CONS\"); "
 		    "is the fabric a bitstream with the console in it?", regs_phys, ident, CONS_IDENT_WORD);
@@ -682,15 +682,21 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 			say("examine ADDR [N]   ADDR is a CADR physical WORD address, 22 bits");
 			return 0;
 		}
-		do_examine(m->mem, (uint32_t)strtoul(argv[1], NULL, 0),
+		uint32_t phys;
+		if (cadr_parse_u32("examine", argv[1], &phys) != 0)
+			return 0;
+		do_examine(m->mem, phys,
 			   argc > 2 ? (unsigned)strtoul(argv[2], NULL, 0) : 1);
 	} else if (!strcmp(cmd, "deposit")) {
 		if (argc < 3) {
 			say("deposit ADDR VALUE   ADDR is a CADR physical WORD address, 22 bits");
 			return 0;
 		}
-		do_deposit(m->mem, (uint32_t)strtoul(argv[1], NULL, 0),
-			   (uint32_t)strtoul(argv[2], NULL, 0));
+		uint32_t phys, value;
+		if (cadr_parse_u32("deposit", argv[1], &phys) != 0
+		    || cadr_parse_u32("deposit", argv[2], &value) != 0)
+			return 0;
+		do_deposit(m->mem, phys, value);
 	} else
 		say("%s: no such command; `help` lists them", cmd);
 	return 0;
@@ -721,13 +727,13 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: cadr-console [options] [command [arguments]]\n"
-		"  --regs ADDR      the console's window (default 0x80000000, the bottom of M_AXI_GP1)\n"
+		"  --regs ADDR      the console's window (default " CADR_BOARD_CONSOLE_BASE_STR ", the bottom of " CADR_BOARD_CONSOLE_PORT ")\n"
 		"  --log PATH       where to write; may be given more than once, and every\n"
 		"                   line then goes to every destination named.  With none, the\n"
 		"                   lines go to stdout, and to a TERMINAL they go bare: a reply\n"
 		"                   to a person does not name the program they asked\n"
 		"  --settle-us N    how long `status` waits between its two reads of CYCLES (default 2000)\n"
-		"  --no-guard       touch M_AXI_GP1 without checking the EMIO tally first\n"
+		"  --no-guard       touch " CADR_BOARD_CONSOLE_PORT " without checking " CADR_BOARD_TALLY " first\n"
 		"  --version        which build THIS PROGRAM is, and exit.  `status` names\n"
 		"                   which build the FABRIC is, which is the other half\n"
 		"with no command it reads lines at a `>` prompt; `help` lists them\n"
@@ -753,7 +759,10 @@ int main(int argc, char **argv)
 	int c;
 	while ((c = getopt_long(argc, argv, "r:l:s:GVh", opts, NULL)) != -1) {
 		switch (c) {
-		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
+		case 'r':
+			if (cadr_parse_u32("--regs", optarg, &regs_phys) != 0)
+				return 2;
+			break;
 		case 'l': cadr_log_dest(optarg); break;
 		case 's': settle_us = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'G': no_guard = 1; break;
@@ -788,7 +797,7 @@ int main(int argc, char **argv)
 	if (mem < 0)
 		return 1;
 	// 1. The guard, before anything on GP1.
-	if (!no_guard && cadr_guard(mem, "M_AXI_GP1") < 0)
+	if (!no_guard && cadr_guard(mem, CADR_BOARD_CONSOLE_PORT) < 0)
 		return 1;
 	struct mmio m;
 	m.mem = mem;

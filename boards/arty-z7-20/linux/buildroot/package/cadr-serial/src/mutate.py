@@ -100,7 +100,7 @@ def apply(record, work, src, common):
         shutil.copy(os.path.join(src, f), os.path.join(here, "cadr-serial", "src", f))
     for f in COMMON:
         shutil.copy(os.path.join(common, f), os.path.join(here, "cadr-common", "src", f))
-    for f in ("cadr_log.h", "cadr_mem.h", "cadr_endpoint.h"):
+    for f in ("cadr_log.h", "cadr_mem.h", "cadr_endpoint.h", "cadr_board.h"):
         shutil.copy(os.path.join(common, "cadr", f),
                     os.path.join(here, "cadr-common", "src", "cadr", f))
     # A bare name is this package's; cadr-common's files are named with their

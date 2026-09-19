@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The card's optional file.  THIS IS A TEMPLATE, the Zynq boards' in every
+# line: boards/arty-z7-20/linux/mksd-buildroot.sh, run with
+# BOARD_DIR=boards/de25-nano, writes uEnv.txt from it, filling @SERVERIP@ and
+# @ETHADDR@ from boards/de25-nano/linux/local.conf --- gitignored, because a
+# machine's address on a private network, or a board's MAC, is not part of
+# the project --- and dropping the line for anything local.conf does not set.
+#
+# WHAT IT DECIDES.  U-Boot's own environment (boards/de25-nano/linux/
+# buildroot/board/de25-nano/uboot/cadr_de25.env) boots from the card by
+# default: cadr.core.rbf, the tree, Image and the root filesystem out of the
+# de25-nano/ folder on the FAT partition, no network needed.  If this file sets
+# `serverip`, the loader takes the network path instead: `dhcp`, fetch
+# de25-nano/uEnv.net from that server, and run the netcmd it defines, which
+# fetches the same four files over TFTP from /srv/tftp/de25-nano.  This file
+# stays at the root of the partition beside u-boot.itb, because U-Boot imports
+# it before any board name is known.
+#
+# `ethaddr` is the board's MAC.  Without it U-Boot gives the interface a
+# random one (NET_RANDOM_ETHADDR in Altera's configuration) and says so.  Set
+# it when a DHCP lease is pinned to the board.
+serverip=@SERVERIP@
+ethaddr=@ETHADDR@
+
+# 1468 rather than the 512-byte default (RFC 2348).  Harmless on the card path.
+tftpblocksize=1468
+
+# A board booted over JTAG from an "HPS SOF" --- which configures the fabric and
+# starts the processor from one file, before this project's first stage is in
+# the QSPI flash --- has its fabric configured before U-Boot runs, and the
+# processor may not configure it again.  Uncomment this on such a board's card
+# and U-Boot opens the bridges without loading cadr.core.rbf.  Leave it
+# commented on a board that boots from its flash, where U-Boot loads the fabric.
+#cadr_fabric_loaded=1

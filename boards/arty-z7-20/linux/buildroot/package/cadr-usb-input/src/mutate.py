@@ -47,7 +47,7 @@ TERMINAL_HEADERS = ["input_face.h", "input_keys.h", "input_keymap.h",
                     "input_mapping.h", "screen_server.h", "screen_frame.h",
                     "screen_rfb.h", "screen_geom.h"]
 COMMON = ["cadr_log.c", "cadr_mem.c", "cadr_input_link.c"]
-COMMON_HEADERS = ["cadr_log.h", "cadr_mem.h", "cadr_input_link.h"]
+COMMON_HEADERS = ["cadr_log.h", "cadr_mem.h", "cadr_input_link.h", "cadr_board.h"]
 
 
 def parse(path):

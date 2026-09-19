@@ -6,6 +6,10 @@
 #
 #     BIT=build/ddr/cadr_arty.bit boards/arty-z7-20/linux/mksd-buildroot.sh [PACKS="a.img 3=b.img"]
 #
+#     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-de25/images \
+#     BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
+#     BIT=<the fabric's core.rbf> boards/arty-z7-20/linux/mksd-buildroot.sh
+#
 # The sibling of boards/arty-z7-20/linux/mksd.sh, which stages the stepping stone from
 # Digilent's BSP and is left as it is.  This one takes what `make buildroot`
 # built (output/images) and the bitstream it is told, and lays them out the
@@ -147,6 +151,76 @@ BOARD_DTB=${BOARD_DTB:-zynq-arty-z7-20.dtb}
 # of its directory on the TFTP server, so the two cannot part company.
 BOARD_NAME=$(basename "$BOARD_DIR")
 BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
+# **AND WHAT THE BOARD BOOTS, WHICH IS THE THIRD THING THAT DIFFERS.**  The two
+# Zynq-7000 boards boot alike --- a boot ROM that reads BOOT.BIN, U-Boot in
+# u-boot.img, the fabric as a .bit, a zImage --- and the DE25-Nano does not.
+# Its first-stage loader lives in the QSPI flash and reads u-boot.itb, which is
+# U-Boot and TF-A in one FIT; the fabric is a core.rbf that U-Boot hands to the
+# Secure Device Manager; the kernel is an arm64 Image; the CADR's memory is
+# reserved at 0xB000_0000; and the console and the debug window are on the
+# lightweight bridge at 0x2000_0000.  Everything else below --- the
+# partitions, the packs, the files of flags, every warning --- is the
+# machine's and is the same on every board.  So the board enters here as the
+# names and numbers that differ, every line below says them through these, and
+# a board this does not name is a Zynq-7000 board, which is what every run
+# before the DE25-Nano was.
+#
+#   ROOT_FILES   the files at the root of partition 1 besides uEnv.txt, each
+#                as <its name in images/>:<its name on the card>
+#   FABRIC       the fabric's file in the board's folder, and FABRIC_KIND
+#                what it is, which decides how BIT is read
+#   KERNEL       the kernel's file in the board's folder
+#   LAST_STEP    the U-Boot environment's last step, which boots the kernel
+#   DTS_DIR      where the board's tree is, under its board/ directory
+#   RESERVED     the reserved-memory node the tree must carry, no-map
+#   PL_NODE      a node the tree must NOT carry, if the board has one to name
+#   *_WINDOW     the display's two windows and the debug window, which the
+#                files of flags name; the programs have their own copy of
+#                every address (cadr-common's cadr/cadr_board.h)
+#   REBUILD      the Makefile target that rewrites a stale loader
+case "$BOARD_NAME" in
+  de25-nano)
+    ROOT_FILES="u-boot.itb:u-boot.itb"
+    FABRIC=cadr.core.rbf
+    FABRIC_KIND=rbf
+    KERNEL=Image
+    LAST_STEP=cadr_booti
+    DTS_DIR=dts/intel
+    RESERVED=cadr@b0000000
+    PL_NODE=
+    DISPLAY_WINDOW=0xB4000000
+    COLOR_WINDOW=0xB4020000
+    CONSOLE_WINDOW_US=0x2000_0000
+    DEBUG_WINDOW=0x20001000
+    DEBUG_WINDOW_US=0x2000_1000
+    DEBUG_PORT="the lightweight HPS-to-FPGA bridge"
+    REBUILD=buildroot-de25-rebuild
+    ;;
+  *)
+    ROOT_FILES="boot.bin:BOOT.BIN u-boot.img:u-boot.img"
+    FABRIC=cadr.bit
+    FABRIC_KIND=bit
+    KERNEL=zImage
+    LAST_STEP=cadr_bootz
+    DTS_DIR=dts/xilinx
+    RESERVED=cadr@18000000
+    PL_NODE=amba_pl
+    DISPLAY_WINDOW=0x1C000000
+    COLOR_WINDOW=0x1C020000
+    CONSOLE_WINDOW_US=0x8000_0000
+    DEBUG_WINDOW=0x80001000
+    DEBUG_WINDOW_US=0x8000_1000
+    DEBUG_PORT="M_AXI_GP1"
+    REBUILD=buildroot-rebuild
+    ;;
+esac
+# The FIT the first-stage loader reads, which carries U-Boot and its
+# environment: the last of the root's files.
+LOADER=${ROOT_FILES##*:}
+# The board's four files, which the card's folder and the server's directory
+# for the board both hold and the loader's environment names.
+BOARD_FILES="$FABRIC $BOARD_DTB $KERNEL rootfs.cpio.uboot"
+STAGED_FILES=$BOARD_FILES
 BIT=${BIT:-}
 PACKS=${PACKS:-}
 BOOT_MB=${BOOT_MB:-64}
@@ -165,11 +239,30 @@ DTC=${DTC:-$HOSTBIN/dtc}
 
 die() { echo "mksd-buildroot: $*" >&2; exit 1; }
 
-for f in boot.bin u-boot.img zImage "$BOARD_DTB" rootfs.cpio.uboot; do
+ROOT_IMAGES=; ROOT_NAMES=
+for rf in $ROOT_FILES; do
+  ROOT_IMAGES="$ROOT_IMAGES ${rf%%:*}"; ROOT_NAMES="${ROOT_NAMES:+$ROOT_NAMES }${rf#*:}"
+done
+for f in $ROOT_IMAGES "$KERNEL" "$BOARD_DTB" rootfs.cpio.uboot; do
   [ -f "$IMAGES/$f" ] || die "no $f in $IMAGES: run 'make buildroot' first"
 done
-[ -n "$BIT" ] || die "BIT is not set: name the bitstream, e.g. BIT=build/ddr/cadr_arty.bit $0"
-[ -f "$BIT" ] || die "no bitstream at $BIT"
+# **THE FABRIC MAY BE LEFT OUT, AND ONLY BY NAME.**  NO_FABRIC=1 stages a card
+# whose board folder has no fabric file at all: the slot is there, named in
+# the loader's environment and in the served uEnv.net, and empty.  It is for a
+# board whose fabric does not exist yet --- the DE25-Nano's, today --- so that
+# everything else on the card can be built and checked.  Such a card boots
+# U-Boot and stops at the fabric's load, saying which file it could not read,
+# every ten seconds, until the file is copied into the folder.  An empty BIT
+# without NO_FABRIC=1 is still refused: the bitstream is named, never guessed.
+NO_FABRIC=${NO_FABRIC:-}
+if [ -n "$NO_FABRIC" ] && [ "$NO_FABRIC" != 0 ]; then
+  [ -z "$BIT" ] || die "NO_FABRIC=1 and BIT=$BIT: name the fabric or leave it out, not both"
+  STAGED_FILES="$BOARD_DTB $KERNEL rootfs.cpio.uboot"
+else
+  NO_FABRIC=
+  [ -n "$BIT" ] || die "BIT is not set: name the bitstream, e.g. BIT=build/ddr/cadr_arty.bit $0, or NO_FABRIC=1 to stage the fabric's slot empty"
+  [ -f "$BIT" ] || die "no bitstream at $BIT"
+fi
 
 # The address, the MAC, the Chaosnet peers and the debugger's pack, from the
 # file the repository does not carry.  The first four are everything private a
@@ -390,9 +483,20 @@ print("P1_OFF=%d P1_MB=%d P2_OFF=%d P2_MB=%d" % (s1 * 512, n1 // 2048, s2 * 512,
 PYMBR
 }
 
-BITLINE=$(bitinfo "$BIT") || die "$BIT does not carry a Xilinx bitstream header"
-echo "mksd-buildroot: bitstream $BIT"
-echo "mksd-buildroot:   $BITLINE"
+# This script reads no header out of a core.rbf, so what goes in the log for
+# one is its size and its digest, which identify the file if not its
+# provenance.
+if [ -n "$NO_FABRIC" ]; then
+  echo "mksd-buildroot: THE FABRIC'S SLOT IS EMPTY (NO_FABRIC=1): $BOARD_NAME/$FABRIC is on neither the card nor the"
+  echo "mksd-buildroot:   server, and the loader will stop at it, saying so, until it is copied there"
+elif [ "$FABRIC_KIND" = rbf ]; then
+  echo "mksd-buildroot: the fabric $BIT"
+  echo "mksd-buildroot:   $(stat -c %s "$BIT") bytes, sha256 $(sha256sum "$BIT" | cut -d' ' -f1)"
+else
+  BITLINE=$(bitinfo "$BIT") || die "$BIT does not carry a Xilinx bitstream header"
+  echo "mksd-buildroot: bitstream $BIT"
+  echo "mksd-buildroot:   $BITLINE"
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT/card/$BOARD_NAME" "$OUT/packs" "$OUT/server/$BOARD_NAME"
@@ -403,10 +507,11 @@ mkdir -p "$OUT/card/$BOARD_NAME" "$OUT/packs" "$OUT/server/$BOARD_NAME"
 # root, and U-Boot imports uEnv.txt before it could know a board name.  The
 # board's own four go in the folder named for it, exactly as they sit in the
 # server's directory for it.
-cp "$IMAGES/boot.bin" "$OUT/card/BOOT.BIN"
-cp "$IMAGES/u-boot.img" "$OUT/card/"
-cp "$BIT" "$OUT/card/$BOARD_NAME/cadr.bit"
-cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/$BOARD_NAME/"
+for spec in $ROOT_FILES; do
+  cp "$IMAGES/${spec%%:*}" "$OUT/card/${spec#*:}"
+done
+[ -n "$NO_FABRIC" ] || cp "$BIT" "$OUT/card/$BOARD_NAME/$FABRIC"
+cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/$BOARD_NAME/"
 sed -e "s/@SERVERIP@/${SERVERIP:-}/" -e "s/@ETHADDR@/${ETHADDR:-}/" \
     -e '/^serverip=$/d' -e '/^ethaddr=$/d' "$BOARD/uEnv.txt.in" > "$OUT/card/uEnv.txt"
 grep -q '@' "$OUT/card/uEnv.txt" && die "uEnv.txt still carries a marker"
@@ -718,7 +823,7 @@ fi
   printf "# The display's region in memory, and how often it is read while\r\n"
   printf "# anybody is watching, in milliseconds.  The defaults are where the\r\n"
   printf "# fabric puts the window and about sixty frames a second.\r\n"
-  printf -- "#--window 0x1C000000\r\n"
+  printf -- "#--window %s\r\n" "$DISPLAY_WINDOW"
   printf -- "#--interval-ms 16\r\n"
   printf "\r\n"
   printf "# Send every rectangle Raw instead of RRE where RRE is smaller.  Off\r\n"
@@ -744,7 +849,7 @@ fi
   printf "\r\n"
   printf "# The color TV's region in memory. The default is where the fabric\r\n"
   printf "# puts the second window, 128 KB above the first.\r\n"
-  printf -- "#--color-window 0x1C020000\r\n"
+  printf -- "#--color-window %s\r\n" "$COLOR_WINDOW"
   printf "\r\n"
   printf "# The socket a source that is not a viewer sends keys and pointer\r\n"
   printf "# movement on, which is the board's own USB keyboard and mouse, and\r\n"
@@ -1023,13 +1128,13 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
     printf "# The cable.  An argument beginning 0x is no endpoint but the\r\n"
     printf "# physical address where this project's CADR presents its DBGIN as\r\n"
     printf "# a register window, reached through /dev/mem.  THE ADDRESS IS\r\n"
-    printf "# SETTLED: 0x8000_1000, the second 4 KB page of M_AXI_GP1, behind\r\n"
-    printf "# the split that shares that port with the console at 0x8000_0000.\r\n"
+    printf "# SETTLED: %s, the second 4 KB page of %s, behind\r\n" "$DEBUG_WINDOW_US" "$DEBUG_PORT"
+    printf "# the split that shares that port with the console at %s.\r\n" "$CONSOLE_WINDOW_US"
     printf "# muir refuses a window that does not read DBUG, and has no default\r\n"
     printf "# for where one sits, so a bitstream without the cable in it stops\r\n"
     printf "# muir rather than letting it talk to nothing --- which is also\r\n"
     printf "# what this line does on a board holding an older bitstream.\r\n"
-    printf -- "--debug-cable-connect 0x80001000\r\n"
+    printf -- "--debug-cable-connect %s\r\n" "$DEBUG_WINDOW"
   else
     printf "# NOT ON THIS CARD, AND THE TWO LINES THAT WOULD FINISH THIS FILE.\r\n"
     printf "#\r\n"
@@ -1045,8 +1150,8 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
     printf "# The cable.  An argument beginning 0x is no endpoint but the\r\n"
     printf "# physical address where this project's CADR presents its DBGIN as\r\n"
     printf "# a register window, reached through /dev/mem.  THE ADDRESS IS\r\n"
-    printf "# SETTLED: 0x8000_1000, the second 4 KB page of M_AXI_GP1, behind\r\n"
-    printf "# the split that shares that port with the console at 0x8000_0000.\r\n"
+    printf "# SETTLED: %s, the second 4 KB page of %s, behind\r\n" "$DEBUG_WINDOW_US" "$DEBUG_PORT"
+    printf "# the split that shares that port with the console at %s.\r\n" "$CONSOLE_WINDOW_US"
     printf "# muir refuses a window that does not read DBUG, and has no default\r\n"
     printf "# for where one sits, so a bitstream without the cable in it stops\r\n"
     printf "# muir rather than letting it talk to nothing.  That is also why\r\n"
@@ -1054,7 +1159,7 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
     printf "# that demanded the window would refuse to start on every older\r\n"
     printf "# bitstream.  Copy a pack in beside this file and uncomment the\r\n"
     printf "# two together.\r\n"
-    printf "#--debug-cable-connect 0x80001000\r\n"
+    printf "#--debug-cable-connect %s\r\n" "$DEBUG_WINDOW"
   fi
   printf "#\r\n"
   printf "# The serial line would be --serial 0.0.0.0:7642, one above the fabric\r\n"
@@ -1064,21 +1169,24 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
   printf "# and a --serial line cannot both be in this file.  The cable is what\r\n"
   printf "# this muir is for.\r\n"
 } > "$OUT/packs/muirrc"
-echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at 0x80001000 and $([ -n "${CC_PACK:-}" ] && echo "is live, with the debugger's pack at /mnt/packs/$CC_PACK_NAME" || echo "waits on the CC pack")"
+echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at $DEBUG_WINDOW and $([ -n "${CC_PACK:-}" ] && echo "is live, with the debugger's pack at /mnt/packs/$CC_PACK_NAME" || echo "waits on the CC pack")"
 
 # The server: the same five files and the command that fetches them, in the
 # directory named for this board.
-cp "$BIT" "$OUT/server/$BOARD_NAME/cadr.bit"
-cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/$BOARD_NAME/"
+[ -n "$NO_FABRIC" ] || cp "$BIT" "$OUT/server/$BOARD_NAME/$FABRIC"
+cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/$BOARD_NAME/"
 cp "$BOARD/uEnv.net" "$OUT/server/$BOARD_NAME/uEnv.net"
 
 # What makes the staging believable rather than merely done.
 #
 # BOOT.BIN is a Zynq boot image: the boot ROM looks for "XNLX" at offset 0x24
 # (UG585, the boot header's image identification), and a file that is not
-# that is a board parked in its ROM.
+# that is a board parked in its ROM.  A board with no BOOT.BIN --- the
+# DE25-Nano's first-stage loader is in its flash --- has nothing here to check.
+if [ -f "$OUT/card/BOOT.BIN" ]; then
 id=$(dd if="$OUT/card/BOOT.BIN" bs=1 skip=36 count=4 2>/dev/null)
 [ "$id" = "XNLX" ] || die "BOOT.BIN does not carry the boot ROM's XNLX identification at 0x24"
+fi
 # u-boot.img is a FIT holding U-Boot proper and its tree --- the generic Zynq
 # configuration's SPL loads a FIT (CONFIG_SPL_LOAD_FIT, no legacy-image
 # support) and asks for it by that name (CONFIG_SPL_FS_LOAD_PAYLOAD_NAME) ---
@@ -1087,15 +1195,18 @@ id=$(dd if="$OUT/card/BOOT.BIN" bs=1 skip=36 count=4 2>/dev/null)
 # which is why the check reads the FIT rather than trusting a listing.  And
 # the U-Boot inside it must be the one whose environment boots this card:
 # bootcmd=run cadr_boot with a cadr_card, or the card path does not exist.
+# The DE25-Nano's u-boot.itb is the same shape, and its `firmware` is TF-A's
+# BL31 (arch/arm/dts/socfpga_soc64_fit-u-boot.dtsi); `$LOADER` is whichever
+# the board's loader reads.
 if [ -x "$HOSTBIN/fdtget" ]; then
   found=no
-  for img in $("$HOSTBIN/fdtget" -l "$OUT/card/u-boot.img" /images 2>/dev/null); do
-    [ "$("$HOSTBIN/fdtget" "$OUT/card/u-boot.img" "/images/$img" type 2>/dev/null)" = firmware ] && found=yes
+  for img in $("$HOSTBIN/fdtget" -l "$OUT/card/$LOADER" /images 2>/dev/null); do
+    [ "$("$HOSTBIN/fdtget" "$OUT/card/$LOADER" "/images/$img" type 2>/dev/null)" = firmware ] && found=yes
   done
-  [ "$found" = yes ] || die "u-boot.img is not a FIT with a firmware image in it"
+  [ "$found" = yes ] || die "$LOADER is not a FIT with a firmware image in it"
 fi
-for var in "bootcmd=run cadr_boot" "cadr_card=load mmc 0:1" "cadr_net=" "cadr_bootz="; do
-  strings "$OUT/card/u-boot.img" | grep -q "^$var" || die "the U-Boot in u-boot.img has no '$var' in its environment"
+for var in "bootcmd=run cadr_boot" "cadr_card=load mmc 0:1" "cadr_net=" "$LAST_STEP="; do
+  strings "$OUT/card/$LOADER" | grep -q "^$var" || die "the U-Boot in $LOADER has no '$var' in its environment"
 done
 # AND IT MUST LOAD THE BOARD'S FOUR FILES FROM THE BOARD'S OWN FOLDER, which
 # is the card half of the mirror and is checked at both ends here.  A U-Boot
@@ -1105,9 +1216,9 @@ done
 # refusal names the cure, because Buildroot does not watch this repository's
 # files and a plain `make buildroot` leaves a stale environment in place once
 # the package has a build stamp.
-for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
-  strings "$OUT/card/u-boot.img" | grep -q "cadr_card=.*$BOARD_NAME/$f " \
-    || die "the U-Boot in u-boot.img does not load $BOARD_NAME/$f from the card: it predates the card mirroring the server, and 'make buildroot-rebuild' is what rewrites it"
+for f in $BOARD_FILES; do
+  strings "$OUT/card/$LOADER" | grep -q "cadr_card=.*$BOARD_NAME/$f " \
+    || die "the U-Boot in $LOADER does not load $BOARD_NAME/$f from the card: it predates the card mirroring the server, and 'make $REBUILD' is what rewrites it"
 done
 # BOTH ENDS OF THE SERVED-DIRECTORY RULE ARE CHECKED RATHER THAN BELIEVED.
 # The U-Boot on the card fetches this board's uEnv.net from this board's
@@ -1115,9 +1226,9 @@ done
 # way.  A U-Boot built before the rule, or a uEnv.net edited back to the flat
 # names, is a board that fetches another board's files --- which on this
 # server is a bitstream for the wrong part, and it is silent.
-strings "$OUT/card/u-boot.img" | grep -q "^cadr_net=.*$BOARD_NAME/uEnv.net" \
-  || die "the U-Boot in u-boot.img does not fetch $BOARD_NAME/uEnv.net: it predates the served-directory rule"
-for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
+strings "$OUT/card/$LOADER" | grep -q "^cadr_net=.*$BOARD_NAME/uEnv.net" \
+  || die "the U-Boot in $LOADER does not fetch $BOARD_NAME/uEnv.net: it predates the served-directory rule"
+for f in $BOARD_FILES; do
   grep -q "tftpboot [^ ]* $BOARD_NAME/$f " "$OUT/server/$BOARD_NAME/uEnv.net" \
     || die "the served uEnv.net does not fetch $BOARD_NAME/$f"
 done
@@ -1129,29 +1240,55 @@ fi
 command -v "$DTC" >/dev/null 2>&1 || DTC=dtc
 if command -v "$DTC" >/dev/null 2>&1; then
   "$DTC" -I dtb -O dts -o "$OUT/tree.dts" "$OUT/card/$BOARD_NAME/$BOARD_DTB" 2>/dev/null
-  grep -q 'cadr@18000000' "$OUT/tree.dts" || die "the tree has no cadr@18000000 node"
-  grep -A4 'cadr@18000000' "$OUT/tree.dts" | grep -q 'no-map' || die "the tree's reservation is not no-map"
-  grep -q 'amba_pl' "$OUT/tree.dts" && die "the tree describes PL peripherals"
+  grep -q "$RESERVED" "$OUT/tree.dts" || die "the tree has no $RESERVED node"
+  grep -A4 "$RESERVED" "$OUT/tree.dts" | grep -q 'no-map' || die "the tree's reservation is not no-map"
+  [ -z "$PL_NODE" ] || ! grep -q "$PL_NODE" "$OUT/tree.dts" || die "the tree describes PL peripherals"
   # Which board's tree it is, read out of the board's own source rather than
   # written here a second time: two spellings of one model string would part
   # company on the first board that changed it.
-  DTS=$BOARD/dts/xilinx/${BOARD_DTB%.dtb}.dts
+  DTS=$BOARD/$DTS_DIR/${BOARD_DTB%.dtb}.dts
   MODEL=$(sed -n 's/^[[:space:]]*model = "\(.*\)";.*/\1/p' "$DTS" | head -1)
   [ -n "$MODEL" ] || die "no model string in $DTS"
   grep -q "\"$MODEL\"" "$OUT/tree.dts" || die "the tree's model is not \"$MODEL\": it is not this board's"
+  # **AND ON THE DE25-Nano, U-BOOT'S OWN TREE TOO.**  There U-Boot proper runs
+  # with the tree binman packs into u-boot.itb, and that tree is the one whose
+  # `lmb` keeps the kernel's tree and the ramdisk out of the CADR's region.
+  # Altera's DE25 configuration packs ITS tree there; ours is packed only
+  # because socfpga_agilex5_de25_nano_cadr-u-boot.dtsi says so, and nothing
+  # else would notice if it stopped.  So the tree is taken back out of the FIT
+  # and looked at.  A Zynq board's u-boot.img carries its tree the same way,
+  # and there the kernel's reservation and U-Boot's come from one file listed
+  # for both, so this is the DE25-Nano's alone.
+  if [ "$LOADER" = u-boot.itb ]; then
+    [ -x "$HOSTBIN/dumpimage" ] && [ -x "$HOSTBIN/fdtget" ] \
+      || die "no dumpimage or fdtget in $HOSTBIN to read U-Boot's tree out of u-boot.itb"
+    at=0; pos=
+    for img in $("$HOSTBIN/fdtget" -l "$OUT/card/u-boot.itb" /images); do
+      [ "$("$HOSTBIN/fdtget" "$OUT/card/u-boot.itb" "/images/$img" type)" = flat_dt ] && pos=$at
+      at=$((at + 1))
+    done
+    [ -n "$pos" ] || die "u-boot.itb carries no tree"
+    "$HOSTBIN/dumpimage" -T flat_dt -p "$pos" -o "$OUT/uboot-tree.dtb" "$OUT/card/u-boot.itb" >/dev/null \
+      || die "dumpimage could not take the tree out of u-boot.itb"
+    "$DTC" -I dtb -O dts -o "$OUT/uboot-tree.dts" "$OUT/uboot-tree.dtb" 2>/dev/null
+    grep -A4 "$RESERVED" "$OUT/uboot-tree.dts" | grep -q 'no-map' \
+      || die "the tree U-Boot runs with (in u-boot.itb) has no $RESERVED, no-map: it is not ours, and U-Boot would place the kernel's tree and the ramdisk without knowing where the CADR's memory is"
+    grep -q "\"$MODEL\"" "$OUT/uboot-tree.dts" || die "the tree in u-boot.itb is not \"$MODEL\""
+    rm -f "$OUT/uboot-tree.dtb" "$OUT/uboot-tree.dts"
+  fi
 else
   echo "mksd-buildroot: no dtc; the tree was not checked" >&2
 fi
 # The card and the server hold the same four files, byte for byte, under the
 # same folder name --- which is the whole of what "the card mirrors the server"
 # claims, compared rather than asserted.
-for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
+for f in $STAGED_FILES; do
   cmp -s "$OUT/card/$BOARD_NAME/$f" "$OUT/server/$BOARD_NAME/$f" \
     || die "$f differs between card/$BOARD_NAME/ and server/$BOARD_NAME/"
 done
 # And nothing of the board's is left at the root of the boot partition, where
 # a stale copy would be read by nobody and would still look like the file.
-for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
+for f in $BOARD_FILES; do
   if [ -e "$OUT/card/$f" ]; then
     die "card/$f is at the root of the boot partition, where nothing reads it"
   fi
@@ -1208,10 +1345,9 @@ if [ -x "$HOSTBIN/genimage" ]; then
     # tells the folder from a file of the same name; a fourth file at the root
     # is one nothing reads, and this is the only place that would say so.
     for n in $("$HOSTBIN/mdir" -b -i "$OUT/sdcard.img@@$P1_OFF" :: 2>/dev/null | sed 's,^::/,,'); do
-      case "$n" in
-        BOOT.BIN|u-boot.img|uEnv.txt) ;;
-        "$BOARD_NAME"/) ;;
-        *) die "the root of partition 1 carries '$n', which is none of the three fixed names and is not $BOARD_NAME/" ;;
+      case " $ROOT_NAMES uEnv.txt $BOARD_NAME/ " in
+        *" $n "*) ;;
+        *) die "the root of partition 1 carries '$n', which is none of the fixed names ($ROOT_NAMES uEnv.txt) and is not $BOARD_NAME/" ;;
       esac
     done
     for f in "$OUT"/packs/*; do
@@ -1247,7 +1383,8 @@ echo "  $MODE"
 (cd "$OUT/packs" && for f in *; do [ -e "$f" ] || continue; printf '  packs/   %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 (cd "$OUT/server/$BOARD_NAME" && for f in *; do printf "  server/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 echo "  the card mirrors the server: card/$BOARD_NAME/ holds the same four files as"
-echo "  server/$BOARD_NAME/, and only BOOT.BIN, u-boot.img and uEnv.txt are at the root"
+echo "  server/$BOARD_NAME/, and only $(echo "$ROOT_NAMES" | sed 's/ /, /g') and uEnv.txt are at the root"
+[ -z "$NO_FABRIC" ] || echo "  (and the fabric's slot, $BOARD_NAME/$FABRIC, is EMPTY on both: NO_FABRIC=1)"
 echo "  the served set goes to the server's own directory for this board:"
 echo "    mkdir -p /srv/tftp/$BOARD_NAME && cp $OUT/server/$BOARD_NAME/* /srv/tftp/$BOARD_NAME/"
 [ -f "$OUT/sdcard.img" ] && printf '  %-31s %10d  %s\n' sdcard.img "$(stat -c %s "$OUT/sdcard.img")" "$(sha256sum "$OUT/sdcard.img" | cut -c1-16)"

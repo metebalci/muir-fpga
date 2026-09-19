@@ -67,9 +67,10 @@
 
 // `rtl/plumbing/cadr_ddr_map.sv`, which is the one map in the project shared
 // with the Linux side: the reserved region, main memory at its base and the
-// display at its own.  A change there is a change here.
-#define DDR_MAIN_BASE    0x18000000u
-#define DDR_DISPLAY_BASE 0x1C000000u
+// display at its own.  A change there is a change here --- and in
+// <cadr/cadr_board.h>, which has the region's base for every board.
+#define DDR_MAIN_BASE    CADR_BOARD_MAIN_BASE
+#define DDR_DISPLAY_BASE CADR_BOARD_DISPLAY_BASE
 
 // muir's own default Chaosnet address, `chaos::Config::default()`.
 #define DEFAULT_CHAOS_ADDRESS 0177001u
@@ -152,7 +153,7 @@ static int open_window(struct readout *r, struct mem_face *face, int guard, int 
 	if (*fd < 0)
 		return -1;
 	// **BEFORE ANYTHING ON GP1.**  See the header, and `cadr_mem.h`'s.
-	if (guard && cadr_guard(*fd, "M_AXI_GP1") != 0)
+	if (guard && cadr_guard(*fd, CADR_BOARD_CONSOLE_PORT) != 0)
 		return -1;
 	face->reg = cadr_map(*fd, RO_REG_BASE, RO_REG_BYTES, "the console's window");
 	if (!face->reg)

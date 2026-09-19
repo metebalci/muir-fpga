@@ -693,6 +693,36 @@ static void check_guard(void)
 	      "the marker pattern has moved from what rtl/plumbing/cadr_mem_count.sv writes");
 }
 
+// A 32-bit number from the command line, which every address flag of every
+// program here goes through (cadr-common's `cadr_parse_u32`).  The bite is at
+// the edge: 0xFFFFFFFF is the last number taken and 0x100000000 the first
+// refused, because on an arm64 board an `unsigned long` holds the second and a
+// cast to 32 bits would have kept its bottom half.  And the characters
+// strtoul would have stopped at are refused rather than ignored.
+static void check_parse_u32(void)
+{
+	uint32_t v = 0;
+	CHECK(cadr_parse_u32("t", "0x40000000", &v) == 0 && v == 0x40000000u,
+	      "a hexadecimal address is refused or misread");
+	CHECK(cadr_parse_u32("t", "4096", &v) == 0 && v == 4096u,
+	      "a decimal number is refused or misread");
+	CHECK(cadr_parse_u32("t", "017", &v) == 0 && v == 15u,
+	      "an octal number is refused or misread");
+	CHECK(cadr_parse_u32("t", "0xFFFFFFFF", &v) == 0 && v == 0xFFFFFFFFu,
+	      "the largest 32-bit number is refused");
+	v = 7u;
+	CHECK(cadr_parse_u32("t", "0x100000000", &v) != 0 && v == 7u,
+	      "a number one past 32 bits is taken: its top half would be dropped");
+	CHECK(cadr_parse_u32("t", "0x1B4000000", &v) != 0,
+	      "an address with a digit too many is taken as another address");
+	CHECK(cadr_parse_u32("t", "0x4000_0000", &v) != 0,
+	      "characters after the number are ignored rather than refused");
+	CHECK(cadr_parse_u32("t", "-1", &v) != 0, "a negative number is taken as a large one");
+	CHECK(cadr_parse_u32("t", " 5", &v) != 0, "a number with a blank before it is taken");
+	CHECK(cadr_parse_u32("t", "", &v) != 0, "an empty word is taken as zero");
+	CHECK(cadr_parse_u32("t", "0x", &v) != 0, "a prefix with no digits is taken as zero");
+}
+
 static void check_halt_and_start(void)
 {
 	struct model m;
@@ -2896,6 +2926,7 @@ int main(int argc, char **argv)
 	capture_start();		/* nothing may print to the terminal but the verdict */
 	check_ident();
 	check_guard();
+	check_parse_u32();
 	check_halt_and_start();
 	check_boot();
 	check_held();
@@ -2935,6 +2966,8 @@ int main(int argc, char **argv)
 	       "    IDENT \"CONS\", and \"NONE\", UNMAPPED, zeros and ones all refused\n"
 	       "    the EMIO tally guard refuses all ones and all zeros and takes only the\n"
 	       "      marker pattern (w & 0x80008000) == 0x00008000\n"
+	       "    a 32-bit number on the command line: 0xFFFFFFFF taken, 0x100000000\n"
+	       "      refused, and a sign, a blank or a trailing character refused\n"
 	       "    halt then status: SRUN down, CYCLES standing, the halt attributed to the\n"
 	       "      console; start then status: CYCLES MEASURED to have moved\n"
 	       "    boot: page 0's word 13 with \"BOOT\" on it presses the light panel's button\n"

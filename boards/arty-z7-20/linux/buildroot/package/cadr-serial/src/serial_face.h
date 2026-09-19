@@ -89,7 +89,10 @@
 
 #include <stdint.h>
 
-#define SER_REG_BASE    0x40002000u
+#include <cadr/cadr_board.h>
+
+// Two pages above the pack side on every board (<cadr/cadr_board.h>).
+#define SER_REG_BASE    CADR_BOARD_SERIAL_BASE
 #define SER_REG_BYTES   0x1000u
 #define SER_IDENT_WORD  0x53455249u	/* "SERI" */
 

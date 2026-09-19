@@ -15,3 +15,31 @@ config BR2_PACKAGE_CADR_COMMON
 
 	  Selected by the programs that use it rather than chosen on its
 	  own.
+
+# WHICH BOARD'S ADDRESS MAP THE PROGRAMS ARE BUILT WITH.  Every address a
+# program maps --- the faces, the console, the machine's reserved memory and
+# the tally the guard reads --- is a fact about the board, and
+# src/cadr/cadr_board.h holds every board's.  The choice is made here, once,
+# in the board's defconfig, and cadr-common carries it to every program: the
+# library is compiled for it and the header it stages says which it is.  The
+# Zynq-7000 boards are the default, so a defconfig that says nothing builds
+# what it always built.
+#
+# The symbols are BR2_CADR_BOARD_* and not BR2_PACKAGE_CADR_*, because they
+# are not packages: board/arty-z7-20/post-build.sh reads that namespace as
+# the list of programs a defconfig asks for.
+if BR2_PACKAGE_CADR_COMMON
+choice
+	prompt "the board's address map"
+	default BR2_CADR_BOARD_ZYNQ7000
+	help
+	  Which board the programs map the fabric of.
+
+config BR2_CADR_BOARD_ZYNQ7000
+	bool "Zynq-7000: the Arty Z7-20 and the Cora Z7-07S"
+
+config BR2_CADR_BOARD_DE25_NANO
+	bool "Agilex 5: the DE25-Nano"
+
+endchoice
+endif

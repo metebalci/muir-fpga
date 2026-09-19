@@ -102,6 +102,11 @@ def apply(record, work, src):
     os.makedirs(os.path.join(here, "src"))
     for f in CORE + HEADERS + ["feeder_test.c"]:
         shutil.copy(os.path.join(src, f), os.path.join(here, "src", f))
+    # pack_side.h takes the pack side's address from cadr-common's board map,
+    # so the one header of that package the check builds against comes too.
+    os.makedirs(os.path.join(here, "include", "cadr"))
+    shutil.copy(os.path.join(src, "..", "..", "cadr-common", "src", "cadr", "cadr_board.h"),
+                os.path.join(here, "include", "cadr", "cadr_board.h"))
     if record["file"] not in MUTABLE:
         return here, (f"@file {record['file']} is not one of the sources the check builds; "
                       "a mutation there would be reported on evidence that does not exist")
@@ -118,7 +123,8 @@ def apply(record, work, src):
 def build_and_run(here, cc, cflags, golden):
     src = os.path.join(here, "src")
     binary = os.path.join(here, "feeder_test")
-    cmd = ([cc] + cflags.split() + ["-o", binary, os.path.join(src, "feeder_test.c")]
+    cmd = ([cc] + cflags.split() + ["-I" + os.path.join(here, "include"),
+                                     "-o", binary, os.path.join(src, "feeder_test.c")]
            + [os.path.join(src, f) for f in CORE])
     build = subprocess.run(cmd, capture_output=True, text=True)
     if build.returncode != 0:

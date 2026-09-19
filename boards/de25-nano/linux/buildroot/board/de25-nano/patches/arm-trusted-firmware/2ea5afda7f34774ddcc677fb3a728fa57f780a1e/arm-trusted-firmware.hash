@@ -1,0 +1,5 @@
+# Altera's TF-A at the commit the defconfig pins, as Buildroot makes a tarball
+# of it from git (support/download/git; reproducible).  Taken at the first
+# download, from a checkout at that commit; every later download is checked
+# against it.
+sha256  103ff30c95b11ee4ecd02a95438d02558890d6873491fda413246af2ca8311b0  arm-trusted-firmware-2ea5afda7f34774ddcc677fb3a728fa57f780a1e-git4.tar.gz

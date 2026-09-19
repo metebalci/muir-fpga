@@ -21,14 +21,17 @@
 
 #include <stdint.h>
 
+#include <cadr/cadr_board.h>
+
 #include "cadr_image.h"
 
 // `M_AXI_GP1` decodes 0x80000000 upwards to the fabric; the console sits at
 // the bottom of it, sixty-four words, four pages of sixteen.  This program
 // reads two of page 0's words and nothing above them, so the 128 bytes below
 // are all it maps: a readout that mapped the whole face would be claiming an
-// interest in words it never touches.
-#define RO_REG_BASE   0x80000000u
+// interest in words it never touches.  The console's address is the board's
+// (<cadr/cadr_board.h>): the bottom of the lightweight bridge on the DE25-Nano.
+#define RO_REG_BASE   CADR_BOARD_CONSOLE_BASE
 // **384 AND NOT 128 SINCE THE TWO DISPLAY BOARDS' COLOR MAPS TOOK PAGES 4
 // AND 5.**  A checkpoint has to carry the map muir would have kept ---
 // `tv::Tv::color_map` --- and register 4 is write only on the Xbus, the RAMs

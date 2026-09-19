@@ -195,7 +195,7 @@ static int probe_face(struct pack_side *ps, uint32_t regs_phys)
 		return 0;
 	}
 	if (ident == CADR_IDENT_NONE)
-		say("no pack side at 0x%08x: register 7 reads \"NONE\", the proving boards' default slave; a board with M_AXI_GP0 and no disk", regs_phys);
+		say("no pack side at 0x%08x: register 7 reads \"NONE\", the proving boards' default slave; a board with " CADR_BOARD_FACES_PORT " and no disk", regs_phys);
 	else
 		say("no pack side at 0x%08x: register 7 reads 0x%08x, wanting 0x%08x (\"PACK\"); "
 		    "is the fabric the memory-on bitstream with the disk's pack side?", regs_phys, ident, PS_IDENT_WORD);
@@ -207,7 +207,7 @@ static void usage(void)
 	fprintf(stderr,
 		"usage: cadr-disk-packs [options]\n"
 		"  --packs DIR     the drive bay: disk-pack-0.img .. disk-pack-7.img (default " BAY_DIR ")\n"
-		"  --regs ADDR     the pack side's registers (default 0x40000000)\n"
+		"  --regs ADDR     the pack side's registers (default " CADR_BOARD_PACK_BASE_STR ")\n"
 		"  --log PATH      where to write; may be given more than once, and every line\n"
 		"                  then goes to every destination named.  With none, stdout.\n"
 		"                  A file destination is capped at 1 MiB and rotated to\n"
@@ -217,7 +217,7 @@ static void usage(void)
 		"  --scan-ms N     how often the bay is looked at (default 250)\n"
 		"  --irq PATH      sleep on this UIO device instead of only polling (see the header)\n"
 
-		"  --no-guard      touch M_AXI_GP0 without checking the EMIO tally first\n"
+		"  --no-guard      touch " CADR_BOARD_FACES_PORT " without checking " CADR_BOARD_TALLY " first\n"
 		"  --selftest      fetch block 0 into slot 0, write it back, compare, exit\n"
 		"  --once          do the checks, bring the drive present, and exit\n");
 }
@@ -258,7 +258,7 @@ static int selftest(struct feeder *f, unsigned unit)
 		say("selftest: FAIL: %d of %d words differ after the round trip through the store", differ, PACK_RECORD_WORDS);
 		return 1;
 	}
-	say("selftest: PASS: block 0 fetched over HP2 from 0x%08x into slot 0, written back to 0x%08x, "
+	say("selftest: PASS: block 0 fetched over " CADR_BOARD_PACK_PORT " from 0x%08x into slot 0, written back to 0x%08x, "
 	    "all %d words equal, the pad untouched, the slot taken away",
 	    feeder_fetch_addr(0), wb, PACK_RECORD_WORDS);
 	return 0;
@@ -289,7 +289,10 @@ int main(int argc, char **argv)
 	while ((c = getopt_long(argc, argv, "p:r:l:tP:S:i:Gsoh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'p': packs_dir = optarg; break;
-		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
+		case 'r':
+			if (cadr_parse_u32("--regs", optarg, &regs_phys) != 0)
+				return 2;
+			break;
 		case 'l': cadr_log_dest(optarg); break;
 		case 't': timed = 1; break;
 		case 'P': poll_us = (unsigned)strtoul(optarg, NULL, 0); break;
@@ -315,7 +318,7 @@ int main(int argc, char **argv)
 	if (mem < 0)
 		return 1;
 	// 1. The guard, before anything on GP0.
-	if (!no_guard && cadr_guard(mem, "M_AXI_GP0") < 0)
+	if (!no_guard && cadr_guard(mem, CADR_BOARD_FACES_PORT) < 0)
 		return 1;
 	struct mmio m;
 	m.poll_us = poll_us;

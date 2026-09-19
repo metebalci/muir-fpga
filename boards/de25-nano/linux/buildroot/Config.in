@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# NOTHING IS SOURCED HERE, for the reason the Cora Z7-07S's tree gives.
+#
+# The programs that run beside the CADR are Buildroot packages in the ARTY
+# Z7-20's external tree, and there is one copy of them.  This board's build is
+# given both trees:
+#
+#     BR2_EXTERNAL=boards/arty-z7-20/linux/buildroot:boards/de25-nano/linux/buildroot
+#
+# and every `BR2_PACKAGE_CADR_*` symbol comes from the first.  What this tree
+# adds is the board: a device tree, the three pinned sources of Altera's boot
+# chain and kernel, a U-Boot environment and a defconfig.

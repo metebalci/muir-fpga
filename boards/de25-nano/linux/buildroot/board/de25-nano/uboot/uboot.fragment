@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# What this board changes in Altera's DE25-Nano U-Boot configuration,
+# configs/socfpga_agilex5_de25_nano_defconfig at the pinned commit (which
+# includes configs/socfpga_agilex5_defconfig).  Merged over it by Buildroot
+# (BR2_TARGET_UBOOT_CONFIG_FRAGMENT_FILES).  It is the Zynq boards' fragment
+# in intent, line for line where the two parts allow.
+#
+# `make buildroot-de25` asserts every line of this file against the .config
+# U-Boot was built with, because a line whose dependencies are not met is
+# dropped by Kconfig without a word and would read here as a setting that
+# holds.
+
+# Our tree, which is Altera's DE25 tree with the CADR's reservation and the
+# USB host added (dts/intel/socfpga_agilex5_de25_nano_cadr.dts).
+# scripts/Makefile.dts adds CONFIG_DEFAULT_DEVICE_TREE to the trees built,
+# which is how a tree not in arch/arm/dts/Makefile's list gets built.
+CONFIG_DEFAULT_DEVICE_TREE="socfpga_agilex5_de25_nano_cadr"
+
+# The default environment is board/intel/agilex5-socdk/cadr_de25.env (put
+# there by a hook in external.mk) and bootcmd runs it.  The environment is
+# built in and lives nowhere else.  Altera's configuration also keeps one in
+# a file on the card's first partition (ENV_IS_IN_FAT, "0:1") and one in a
+# UBI volume in the flash (ENV_IS_IN_UBI); a saved environment is a second
+# place a boot can be decided from that nothing in the repository sees, and a
+# `saveenv` would write the partition Linux mounts read-only.
+CONFIG_ENV_SOURCE_FILE="cadr_de25"
+CONFIG_USE_BOOTCOMMAND=y
+CONFIG_BOOTCOMMAND="run cadr_boot"
+CONFIG_ENV_IS_NOWHERE=y
+# CONFIG_ENV_IS_IN_FAT is not set
+# CONFIG_ENV_IS_IN_UBI is not set
+# CONFIG_ENV_IS_IN_SPI_FLASH is not set
+
+# The card's file may set ethaddr over the random one the interface is given
+# at probe (NET_RANDOM_ETHADDR, which Altera's configuration sets); without
+# this an ethaddr once set may not be changed (include/env_flags.h,
+# "ethaddr:mo") and the import would be refused.
+CONFIG_ENV_OVERWRITE=y
+
+# Two seconds at the console to interrupt, then the loop.  Altera's is five.
+CONFIG_BOOTDELAY=2
+
+# The commands the environment runs, named so that a change in Altera's
+# configuration cannot take one away silently: `booti` boots an arm64 Image,
+# `fpga load` puts core.rbf into the fabric through the Secure Device
+# Manager's mailbox (drivers/fpga/intel_sdm_mb.c, which
+# TARGET_SOCFPGA_AGILEX5 selects), and `dhcp` and `tftpboot` are the network
+# path.  `bridge` is arch/arm/mach-socfpga/misc.c's own and has no option.
+CONFIG_CMD_BOOTI=y
+CONFIG_CMD_FPGA=y
+CONFIG_CMD_DHCP=y
+CONFIG_CMD_TFTPBOOT=y
+
+# And the network path's two halves, named for the same reason: U-Boot's own
+# network stack, which the environment's two imports of uEnv.txt around `dhcp`
+# are written for (the Zynq boards' U-Boot uses lwIP and the same two imports
+# serve both), and EMAC 0's driver, which Altera's tree describes as
+# `intel,socfpga-dwxgmac` and which DWC_ETH_XGMAC_SOCFPGA drives (its default
+# for TARGET_SOCFPGA_AGILEX5, drivers/net/Kconfig).
+CONFIG_NET=y
+CONFIG_DWC_ETH_XGMAC_SOCFPGA=y
+
+# And what the environment itself is written in: hush, for its `if` and its
+# `while`, `sleep` for the loop's ten seconds, and the legacy image format,
+# because the root filesystem is a U-Boot ramdisk image (rootfs.cpio.uboot)
+# and `booti` refuses one without it.  Altera's configuration signs FITs
+# (FIT_SIGNATURE), and LEGACY_IMAGE_FORMAT's own default is off under that
+# (boot/Kconfig); it is on here only because DISTRO_DEFAULTS turns it on.
+CONFIG_HUSH_PARSER=y
+CONFIG_CMD_SLEEP=y
+CONFIG_LEGACY_IMAGE_FORMAT=y

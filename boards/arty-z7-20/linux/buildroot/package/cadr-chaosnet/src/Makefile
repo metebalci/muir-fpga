@@ -86,7 +86,7 @@ check: $(WORK)/chaos_test
 check-only: $(WORK)/chaos_test
 	$(WORK)/chaos_test
 
-$(WORK)/chaos_test: $(TESTS) $(CORE) $(HEADERS) chaos_test.h chaos_test_model.h \
+$(WORK)/chaos_test: $(TESTS) $(CORE) $(HEADERS) chaos_test.h chaos_test_model.h $(wildcard $(COMMON_DIR)/cadr/*.h) \
                     $(COMMON_SRC)
 	@mkdir -p $(WORK)
 	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ $(TESTS) $(CORE) $(COMMON_SRC)

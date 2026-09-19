@@ -1,0 +1,50 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * The DE25-Nano's hard processor system, as Linux and U-Boot see it, with
+ * the CADR beside it.
+ *
+ * ONE FILE FOR BOTH, as the Zynq boards' trees are, and a thin one: it is
+ * Altera's own DE25-Nano tree with three things added.  The kernel compiles it
+ * from arch/arm64/boot/dts/intel/ and U-Boot from arch/arm/dts/, and in each
+ * `#include "socfpga_agilex5_de25_nano.dts"` finds THAT tree's own file ---
+ * Altera ships one in its kernel (linux-socfpga, arch/arm64/boot/dts/intel/)
+ * and another in its U-Boot (u-boot-socfpga, arch/arm/dts/), and they are
+ * not the same file.  Neither is copied here; both are included from the
+ * pinned sources.  U-Boot adds socfpga_agilex5_de25_nano_cadr-u-boot.dtsi by
+ * name.
+ *
+ * WHAT IS ADDED:
+ *
+ *   the model, restated in Altera's own words ("SoCFPGA Agilex5 Terasic
+ *     DE25-Nano", both of Altera's trees) so that the card staging can read
+ *     which board's tree this is out of this file, as it reads the Zynq
+ *     boards' out of theirs;
+ *   the CADR's 128 MB at 0xB000_0000, no-map, from cadr-reserved.dtsi, which
+ *     says why there and why in both trees;
+ *   the USB port as a HOST.  The board's one USB port is the processor's
+ *     DWC2 controller behind a USB3320 ULPI PHY at a Type-C connector, and
+ *     Terasic's manual calls it "One USB 2.0 host with Type-C USB connector"
+ *     and says the port supplies power to a device in host mode (DE25-Nano
+ *     user manual, rev B, section 3.8.5).  Altera's kernel tree enables
+ *     `usb0` and leaves its mode to the controller, which is on-the-go; a
+ *     keyboard and a mouse want a host, so this says so.  U-Boot's tree has
+ *     the same label and leaves the controller disabled, so the line does
+ *     nothing there.
+ *
+ * NOTHING OF THE FABRIC IS DESCRIBED.  As on the Zynq boards the programs
+ * reach the faces through /dev/mem, so there is no node for them, and the
+ * fabric's own bridges are U-Boot's to open: `cadr_de25.env` loads the fabric
+ * and runs `bridge enable` before the kernel starts.
+ */
+
+#include "socfpga_agilex5_de25_nano.dts"
+#include "cadr-reserved.dtsi"
+
+/ {
+	model = "SoCFPGA Agilex5 Terasic DE25-Nano";
+};
+
+&usb0 {
+	dr_mode = "host";
+};

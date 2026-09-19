@@ -49,7 +49,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PS_REG_BASE   0x40000000u
+#include <cadr/cadr_board.h>
+
+// The bottom of the faces' port on every board (<cadr/cadr_board.h>).
+#define PS_REG_BASE   CADR_BOARD_PACK_BASE
 #define PS_REG_BYTES  64u
 #define PS_IDENT_WORD 0x5041434Bu	/* "PACK" */
 #define PS_SLOTS      24u

@@ -30,11 +30,14 @@
 
 #include <stdint.h>
 
+#include <cadr/cadr_board.h>
+
 // `M_AXI_GP1` decodes 0x80000000 upwards to the fabric; the console sits at
 // the bottom of it.  This program reads page 2's word 33 and page 5's sixteen
 // and nothing else, so 384 bytes is what it maps: six pages of sixteen words,
-// which is the whole face.
-#define CMAP_REG_BASE   0x80000000u
+// which is the whole face.  The console's address is the board's
+// (<cadr/cadr_board.h>).
+#define CMAP_REG_BASE   CADR_BOARD_CONSOLE_BASE
 #define CMAP_REG_BYTES  384u
 #define CMAP_IDENT_WORD 0x434F4E53u	/* "CONS" */
 

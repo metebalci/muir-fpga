@@ -73,9 +73,9 @@ check: $(WORK)/feeder_test
 	@test -f $(GOLDEN) || { echo "no $(GOLDEN): run 'make disk-golden' at the repository root"; exit 1; }
 	$(WORK)/feeder_test $(GOLDEN) $(WORK)
 
-$(WORK)/feeder_test: feeder_test.c $(CORE) $(HEADERS)
+$(WORK)/feeder_test: feeder_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h)
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -o $@ feeder_test.c $(CORE)
+	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ feeder_test.c $(CORE)
 
 mutants:
 	@test -f $(GOLDEN) || { echo "no $(GOLDEN): run 'make disk-golden' at the repository root"; exit 1; }

@@ -349,7 +349,7 @@ static void usage(void)
 "                               runs and SIGUSR2 turns it off, which is what\n"
 "                               `cadr-console trace-chaos on|off` sends\n"
 "  --base <hex>                 the register face's address; 0x%08x by default\n"
-"  --no-guard                   skip the EMIO tally guard.  Only for a board\n"
+"  --no-guard                   skip " CADR_BOARD_TALLY " guard.  Only for a board\n"
 "                               somebody knows: see <cadr/cadr_mem.h>\n"
 "  --no-fabric                  no board at all --- CHUDP alone, which is how\n"
 "                               this is exercised off the board\n"
@@ -442,7 +442,8 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "--time")) {
 			return gone(a);
 		} else if (!strcmp(a, "--base") && v) {
-			base = (uint32_t)strtoul(argv[++i], NULL, 0);
+			if (cadr_parse_u32("--base", argv[++i], &base) != 0)
+				return 2;
 		} else if (!strcmp(a, "--no-guard")) {
 			guard = 0;
 		} else if (!strcmp(a, "--no-fabric")) {

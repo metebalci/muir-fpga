@@ -1,0 +1,32 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * What U-Boot adds to the DE25-Nano's tree: Altera's own additions, and the
+ * one line that makes u-boot.itb carry OUR tree.
+ *
+ * U-Boot includes <tree>-u-boot.dtsi by the name of the tree it compiles
+ * (scripts/Makefile.lib, `u_boot_dtsi_options`, the first of which is
+ * `$(basename $<)-u-boot.dtsi`), so a tree of our own name no longer gets
+ * Altera's `socfpga_agilex5_de25_nano-u-boot.dtsi` by itself.  This includes
+ * it, and with it everything the first-stage loader needs marked (the card,
+ * its 1.8 V switch on GPIO port B line 3, the timers, the QSPI) and binman's
+ * description of u-boot.itb (`socfpga_soc64_fit-u-boot.dtsi`, through
+ * `socfpga_agilex5-u-boot.dtsi`).
+ *
+ * **AND IT POINTS THE FIT'S TREE AT OURS.**  Altera's DE25 file names the
+ * tree binman packs into u-boot.itb as
+ * `arch/arm/dts/socfpga_agilex5_de25_nano.dtb` (its `&fdt_0_blob`).  Left so,
+ * U-Boot proper would run with Altera's tree and not ours, and the CADR's
+ * reservation would be missing from the one tree whose `lmb` places the
+ * kernel's tree and the ramdisk --- with nothing anywhere to say so, since
+ * both trees compile.  The staging script reads the tree back out of
+ * u-boot.itb and looks for the reservation, which is what would catch it.
+ */
+
+#include "socfpga_agilex5_de25_nano-u-boot.dtsi"
+
+#if !defined(CONFIG_SOCFPGA_SECURE_VAB_AUTH)
+&fdt_0_blob {
+	filename = "arch/arm/dts/socfpga_agilex5_de25_nano_cadr.dtb";
+};
+#endif

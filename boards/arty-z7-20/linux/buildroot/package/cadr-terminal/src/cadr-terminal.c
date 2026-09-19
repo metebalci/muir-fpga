@@ -188,13 +188,13 @@ static void usage(void)
 		"                            the machine's own color map. Pixels only --- the\n"
 		"                            keyboard and mouse stay with the main screen.\n"
 		"                            Default: the display above the main screen's\n"
-		"  --color-window ADDR   the color TV's region (default 0x1C020000)\n"
-		"  --window ADDR     the display's region (default 0x1C000000)\n"
+		"  --color-window ADDR   the color TV's region (default " CADR_BOARD_COLOR_BASE_STR ")\n"
+		"  --window ADDR     the display's region (default " CADR_BOARD_DISPLAY_BASE_STR ")\n"
 		"  --interval-ms N   how often the window is read while anybody watches (default 16)\n"
 		"  --no-rre          send every rectangle Raw, for measuring what RRE buys\n"
-		"  --no-guard        do not check the EMIO tally first\n"
+		"  --no-guard        do not check " CADR_BOARD_TALLY " first\n"
 		"  --no-input        do not carry the keyboard and mouse; drop what a viewer sends\n"
-		"  --input ADDR      the keyboard and mouse registers (default 0x40003000)\n"
+		"  --input ADDR      the keyboard and mouse registers (default " CADR_BOARD_INPUT_BASE_STR ")\n"
 		"  --keyboard-mapping FILE   what a viewer's keysyms mean, over the built-in map\n"
 		"                            (muir's own `key` and `prefix` lines; `muir\n"
 		"                            --keyboard-mapping-dump` writes a starting file)\n"
@@ -321,15 +321,24 @@ int main(int argc, char **argv)
 			want_color = 1;
 			break;
 		}
-		case 'W': color_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
+		case 'W':
+			if (cadr_parse_u32("--color-window", optarg, &color_phys) != 0)
+				return 2;
+			break;
 		case 'l': cadr_log_dest(optarg); break;
 		case 'B': bow = 1; break;
-		case 'w': window_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
+		case 'w':
+			if (cadr_parse_u32("--window", optarg, &window_phys) != 0)
+				return 2;
+			break;
 		case 'i': interval_ms = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'R': no_rre = 1; break;
 		case 'G': no_guard = 1; break;
 		case 'I': no_input = 1; break;
-		case 'n': input_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
+		case 'n':
+			if (cadr_parse_u32("--input", optarg, &input_phys) != 0)
+				return 2;
+			break;
 		case 'k': keymap_path = optarg; break;
 		case 'K':
 			// **REFUSED AND NOT FALLEN BACK ON**, which is the

@@ -56,12 +56,24 @@ CADR_COMMON_LICENSE = AGPL-3.0-or-later
 CADR_COMMON_INSTALL_STAGING = YES
 CADR_COMMON_INSTALL_TARGET = YES
 
+# **THE BOARD'S ADDRESS MAP**, from the one choice in Config.in, handed to
+# both the build and the staging install from this one variable, so the
+# library and the header every program includes cannot be for two boards.
+# src/Makefile says how the header carries it.
+ifeq ($(BR2_CADR_BOARD_DE25_NANO),y)
+CADR_COMMON_BOARD = de25-nano
+else
+CADR_COMMON_BOARD = zynq-7000
+endif
+
 define CADR_COMMON_BUILD_CMDS
-	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
+	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D) \
+		CADR_BOARD=$(CADR_COMMON_BOARD)
 endef
 
 define CADR_COMMON_INSTALL_STAGING_CMDS
-	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(STAGING_DIR) install-staging
+	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(STAGING_DIR) \
+		CADR_BOARD=$(CADR_COMMON_BOARD) install-staging
 endef
 
 define CADR_COMMON_INSTALL_TARGET_CMDS

@@ -80,7 +80,7 @@ check: $(WORK)/serial_test
 check-only: $(WORK)/serial_test
 	$(WORK)/serial_test
 
-$(WORK)/serial_test: serial_test.c $(CORE) $(HEADERS) $(COMMON_SRC)
+$(WORK)/serial_test: serial_test.c $(CORE) $(HEADERS) $(COMMON_SRC) $(wildcard $(COMMON_DIR)/cadr/*.h)
 	@mkdir -p $(WORK)
 	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ serial_test.c $(CORE) $(COMMON_SRC)
 
