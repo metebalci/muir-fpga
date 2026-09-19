@@ -96,10 +96,19 @@
 
 `default_nettype none
 
+// AND ONE THING IT DOES NOT DO BY DEFAULT, AS ON THE ZYNQ BOARDS.
+// `PROBE_DEPTH` is zero here, so the design is the machine and nothing else.
+// Setting it instantiates `rtl/plumbing/cadr_probe.sv`, which records one
+// sample a microcycle from the machine's reset, behind Altera's Virtual JTAG:
+// `make de25 PROBE_DEPTH=1024` builds that bitstream and
+// `boards/de25-nano/quartus/probe.tcl` reads it.  Off by default for the
+// reason `boards/arty-z7-20/cadr_arty.sv` gives: an instrument in every
+// bitstream is an instrument nobody measures the cost of.
 module cadr_de25 #(
     parameter string PROM_HEX = "build/boot_prom.hex",
     // MIT's TV sync PROM, for the display: `rtl/machine/cadr_tv.sv`.
-    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
+    parameter int unsigned PROBE_DEPTH = 0
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
     input  var logic       clock50_0,
@@ -366,6 +375,60 @@ module cadr_de25 #(
                    debuggee_reset, timeout_inhibit,
                    tv_map_q, tv_color_map_q, disp_color_map_q};
     end
+  end
+
+  // ------------------------------------------------------------ the probe
+  //
+  // One sample a microcycle of the columns `build/rtl.golden` carries, read
+  // out over JTAG so that what this part computes can be compared with what
+  // muir computes.  The capture is the Zynq boards' own module, wired to the
+  // machine as `boards/arty-z7-20/cadr_arty.sv` wires it, with `-VMAOK` in
+  // the trace's polarity.  Only the JTAG side is this vendor's: the Virtual
+  // JTAG IP, which `boards/de25-nano/quartus/build.sh` generates as
+  // `cadr_de25_vjtag` when the probe is asked for, and the node in
+  // `rtl/plumbing/agilex5/cadr_probe_vjtag.sv` between it and the probe.
+  //
+  // The IP's other outputs are the rest of the node's virtual states, which
+  // the probe does not need: it moves its pointer on Capture-DR, so it needs
+  // no Update-DR, and the node reads its instruction as a level.
+  if (PROBE_DEPTH > 0) begin : g_probe
+    logic vj_tck, vj_tdi, vj_tdo, vj_ir_in, vj_ir_out, vj_cdr, vj_sdr;
+    /* verilator lint_off PINCONNECTEMPTY */
+    cadr_de25_vjtag u_vjtag (
+        .tck(vj_tck), .tdi(vj_tdi), .tdo(vj_tdo),
+        .ir_in(vj_ir_in), .ir_out(vj_ir_out),
+        .virtual_state_cdr(vj_cdr), .virtual_state_sdr(vj_sdr),
+        .virtual_state_e1dr(), .virtual_state_pdr(), .virtual_state_e2dr(),
+        .virtual_state_udr(), .virtual_state_cir(), .virtual_state_uir()
+    );
+    /* verilator lint_on PINCONNECTEMPTY */
+
+    logic jtag_drck, jtag_sel, jtag_shift, jtag_capture, jtag_tdi, jtag_tdo;
+    cadr_probe_vjtag u_node (
+        .tck(vj_tck), .tdi(vj_tdi), .ir_in(vj_ir_in),
+        .virtual_state_cdr(vj_cdr), .virtual_state_sdr(vj_sdr),
+        .tdo(vj_tdo), .ir_out(vj_ir_out),
+        .jtag_drck(jtag_drck), .jtag_sel(jtag_sel),
+        .jtag_shift(jtag_shift), .jtag_capture(jtag_capture),
+        .jtag_tdi(jtag_tdi), .jtag_tdo(jtag_tdo)
+    );
+
+    cadr_probe #(
+        .DEPTH(PROBE_DEPTH)
+    ) u_probe (
+        // Re-armed by the machine's reset, which on this board is KEY1 or a
+        // fresh configuration: a restarted machine has new first microcycles.
+        .clk(clk), .rst(mach_rst),
+        .qualify(clock_edge),
+        .pc(pc), .ir(ir), .q(q), .a(a), .m(m), .alu(alu), .r(r), .ob(ob),
+        .dc(dc), .opc(opc), .st(st), .lc(lc),
+        .iwrited(iwrited), .nop(nop), .n_vmaok(!vmaok), .jcond(jcond),
+        .pcs1(pcs1), .pcs0(pcs0),
+        .lpc(lpc), .md(md), .vma(vma), .promdis(promdisable),
+        .jtag_drck(jtag_drck), .jtag_sel(jtag_sel),
+        .jtag_shift(jtag_shift), .jtag_capture(jtag_capture),
+        .jtag_tdi(jtag_tdi), .jtag_tdo(jtag_tdo)
+    );
   end
 
   // ---------------------------------------------------------- the lamps

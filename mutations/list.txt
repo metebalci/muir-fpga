@@ -3394,7 +3394,7 @@
 
 # --------------------------------------------------- the probe, three of them
 #
-# `rtl/plumbing/xilinx7/cadr_probe.sv` is the instrument the board will be read through, and
+# `rtl/plumbing/cadr_probe.sv` is the instrument the board will be read through, and
 # it is the one piece of fabric here whose other verification --- a run on
 # silicon --- has not happened. So the check on it has to bite, and these say
 # whether it does. The check is `tb/cadr_probe_tb.cpp`: the machine runs from
@@ -3414,7 +3414,7 @@
 
 @mutation the-sample-carries-the-next-microcycles-number
 @check probe
-@file rtl/plumbing/xilinx7/cadr_probe.sv
+@file rtl/plumbing/cadr_probe.sv
 @note `cycle` is the trace's first column and the only direct proof that the
 @note window begins at microcycle zero: the comparison tool checks it counts
 @note 0, 1, 2 with no gap and no repeat, and reports a capture without one as
@@ -3433,7 +3433,7 @@
 
 @mutation the-readout-is-rotated-by-a-bit
 @check probe
-@file rtl/plumbing/xilinx7/cadr_probe.sv
+@file rtl/plumbing/cadr_probe.sv
 @note The half of this core that no simulation of the machine reaches and no
 @note board has yet run: the JTAG shift register. Loading it a bit out of
 @note place moves every field of every sample by one, which is not obviously
@@ -3459,7 +3459,7 @@
 
 @mutation the-read-pointer-moves-on-every-bit
 @check probe
-@file rtl/plumbing/xilinx7/cadr_probe.sv
+@file rtl/plumbing/cadr_probe.sv
 @note The pointer advances on the CAPTURE edge, once a scan, deliberately:
 @note that way a scan cut short or shifted with the wrong length still moves
 @note it exactly once and the reader stays in step. Advancing it on each
@@ -3502,7 +3502,7 @@
 # WHAT THE CHECK CANNOT SEE is in `tb/cadr_jtag_chain.tcl`'s header and is
 # the thing to read before trusting a green run: it is a shift chain, not a
 # TAP state machine and not silicon, so a DRCK edge, `BSCANE2`'s real
-# behavior and every property of `rtl/plumbing/xilinx7/cadr_probe.sv` are outside it. Those
+# behavior and every property of `rtl/plumbing/cadr_probe.sv` are outside it. Those
 # belong to the `probe` mutations above.
 #
 # THE REASONING BELOW WAS TRUE AT ace4131, which is where `boards/arty-z7-20/vivado/probe.tcl`
@@ -3627,6 +3627,212 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
  [bits $ircap [expr {$our_ir_lsb + 5}] 1]"
 @new
  [bits $ircap 5 1]"
+@end
+
+# ------------------------------------ the probe on the DE25-Nano, and its reader
+#
+# The capture is `rtl/plumbing/cadr_probe.sv` on every board.  What the
+# DE25-Nano adds is the Altera side: `rtl/plumbing/agilex5/cadr_probe_vjtag.sv`,
+# the node between the Virtual JTAG IP and the probe, which `probe` reads
+# through with TCK running in every state and holds to the same trace; the
+# top level's wiring of the IP, the node and the probe, which only lint can
+# read short of Quartus; and the two Tcl scripts that reach the board through
+# `quartus_stp`, which `de25_jtag` runs against a model of its commands.
+#
+# The probe's constraints, `boards/de25-nano/quartus/cadr_probe.sdc`, are
+# held by `sta_check.tcl` under Quartus, which no check here runs.  Three
+# mutations of that file were measured against a finished fit instead, and
+# each was refused on the line that names it: the clock group removed, the
+# multicycle removed, and the multicycle widened to `late_q`.
+
+@mutation vjtag-the-node-captures-while-shifting
+@check probe
+@file rtl/plumbing/agilex5/cadr_probe_vjtag.sv
+@note The probe loads its shift register on Capture-DR and shifts it on
+@note Shift-DR.  Given Shift-DR for both, every shifting edge reloads the
+@note sample, since the probe gives capture priority, and a scan reads one
+@note bit of it over and over.  `virtual_state_cdr` stays read by the bypass
+@note register, so lint has nothing to say.
+@old
+  assign jtag_capture = virtual_state_cdr;
+@new
+  assign jtag_capture = virtual_state_sdr;
+@end
+
+@mutation vjtag-the-probe-is-selected-in-bypass
+@check probe
+@file rtl/plumbing/agilex5/cadr_probe_vjtag.sv
+@note SEL is the virtual instruction.  Held high, the probe answers every
+@note virtual DR scan of the node, the bypass scans included, and each of
+@note those moves its read pointer, so the readout that follows starts one
+@note sample late.  The node's TDO still takes the bypass bit in instruction
+@note 0, so the bypass itself reads right and only the samples are wrong:
+@note the first carries cycle 1.
+@old
+  assign jtag_sel     = ir_in;
+@new
+  assign jtag_sel     = 1'b1;
+@end
+
+@mutation vjtag-the-bypass-bit-never-shifts
+@check probe
+@file rtl/plumbing/agilex5/cadr_probe_vjtag.sv
+@note The bypass register holds its captured 0, so a bypass scan reads back
+@note zeros where the pattern should come one bit late.  That is the
+@note measurement `boards/de25-nano/quartus/probe.tcl` takes of the path's
+@note order and alignment before it believes a sample, and it must fail.
+@note `tdi` stays read by the probe's side, so lint has nothing to say.
+@old
+      bypass <= tdi;
+@new
+      bypass <= bypass;
+@end
+
+@mutation vjtag-the-node-reports-an-instruction-it-does-not-hold
+@check probe
+@file rtl/plumbing/agilex5/cadr_probe_vjtag.sv
+@note A virtual IR scan captures the instruction the node holds, and the
+@note reader asks it to read back 0 and then 1 before it reads a sample.
+@note Tied high, it reads back 1 before anything selected it.
+@old
+  assign ir_out = ir_in;
+@new
+  assign ir_out = 1'b1;
+@end
+
+@mutation de25-the-probe-hands-nothing-back
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The probe's TDO left off its instance: the node then passes on a net
+@note nothing drives, and every sample reads as whatever that net floats
+@note to.  Only the `PROBE_DEPTH=1024` pass elaborates this arm, so it is
+@note that pass that must catch it: PINMISSING at the instance and UNDRIVEN
+@note at the net.
+@old
+        .jtag_tdi(jtag_tdi), .jtag_tdo(jtag_tdo)
+    );
+  end
+@new
+        .jtag_tdi(jtag_tdi)
+    );
+  end
+@end
+
+@mutation de25-the-node-never-sees-capture-dr
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The IP's virtual Capture-DR left unconnected: the node's capture is a
+@note net nothing drives, so the probe never loads a sample and moves no
+@note pointer.  Caught as UNDRIVEN, in the probe's pass only.
+@old
+        .virtual_state_cdr(vj_cdr), .virtual_state_sdr(vj_sdr),
+        .virtual_state_e1dr(), .virtual_state_pdr(), .virtual_state_e2dr(),
+@new
+        .virtual_state_cdr(), .virtual_state_sdr(vj_sdr),
+        .virtual_state_e1dr(), .virtual_state_pdr(), .virtual_state_e2dr(),
+@end
+
+@mutation de25-reader-the-bypass-is-measured-and-ignored
+@check de25_jtag
+@file boards/de25-nano/quartus/probe.tcl
+@note The bypass scan is the one measurement of the virtual DR path that
+@note owes nothing to the probe.  Measured and not acted on, a path of the
+@note wrong length or order goes on to read samples, and the `no-bypass`
+@note case, whose node returns TDI unshifted, is read to the end.
+@old
+if {$back ne $expect} {
+@new
+if {0 && $back ne $expect} {
+@end
+
+@mutation de25-reader-a-part-holding-another-build-is-read
+@check de25_jtag
+@file boards/de25-nano/quartus/probe.tcl
+@note A capture is evidence about the build it was taken from.  Without the
+@note USERCODE comparison, a part still holding an earlier build is read as
+@note though it held this one, and `other-build` exports a capture.
+@old
+if {$held ne $want} {
+    probe_fail "$tag FAILED --- the part holds build $held and this bitstream is build $want." \
+@new
+if {0 && $held ne $want} {
+    probe_fail "$tag FAILED --- the part holds build $held and this bitstream is build $want." \
+@end
+
+@mutation de25-reader-the-rotation-is-off-by-one
+@check de25_jtag
+@file boards/de25-nano/quartus/probe.tcl
+@note The read pointer stands wherever the last readout left it, and each
+@note sample carries its cycle, so the reader rotates the buffer to put
+@note cycle zero first.  Off by one, the run from cycle zero is empty and
+@note nothing is exported that `good` can check.
+@old
+    set s [lindex $samples [expr {($start + $j) % $depth}]]
+@new
+    set s [lindex $samples [expr {($start + $j + 1) % $depth}]]
+@end
+
+@mutation de25-jtag-the-serial-is-not-compared
+@check de25_jtag
+@file boards/de25-nano/quartus/jtag.tcl
+@note Several boards share one hub, so a cable is chosen by the serial its
+@note USB device carries.  Not compared, every cable matches, and with two
+@note attached `serial-picks-second` is refused where it should select.
+@old
+        if {$dev ne "" && [dict exists $serials $dev] && [dict get $serials $dev] eq $serial} {
+@new
+        if {$dev ne "" && [dict exists $serials $dev]} {
+@end
+
+@mutation de25-jtag-the-idcode-scan-is-believed
+@check de25_jtag
+@file boards/de25-nano/quartus/jtag.tcl
+@note The raw IDCODE is the one register whose content is known without the
+@note board, which is what makes it the check on the bit order of every
+@note register read after it.  Not compared, a reversed scan goes on to read
+@note a reversed USERCODE, and `reversed` is refused one check later, on the
+@note build, for a reason that is not its own.
+@old
+    if {$id ne $::de25_idcode} {
+@new
+    if {0 && $id ne $::de25_idcode} {
+@end
+
+@mutation de25-jtag-the-tap-capture-is-not-read
+@check de25_jtag
+@file boards/de25-nano/quartus/jtag.tcl
+@note Every TAP's instruction capture ends in 01, and a scan that returns
+@note something else did not go through one.  Ignored, `no-tap` reads its
+@note registers and a capture as if it had.
+@old
+    if {![string is integer -strict $cap] || ($cap & 3) != 1} {
+@new
+    if {![string is integer -strict $cap]} {
+@end
+
+@mutation de25-usercode-an-unchanged-part-is-called-a-download
+@check de25_jtag
+@file boards/de25-nano/quartus/usercode.tcl
+@note A part that held this build before the programmer ran holds it after
+@note whether the download took or not, and the line must say that it
+@note cannot tell.  Without the branch, `usercode-held-before` is told the
+@note download took, which is the claim the Zynq boards once made falsely.
+@old
+if {$before eq $want} {
+@new
+if {0 && $before eq $want} {
+@end
+
+@mutation de25-usercode-another-build-passes
+@check de25_jtag
+@file boards/de25-nano/quartus/usercode.tcl
+@note The one refusal: the part holds a build that is not the bitstream's.
+@note Without it `usercode-other` passes, and `program.sh` calls a download
+@note good that left the part running something else.
+@old
+if {$held ne $want} {
+@new
+if {0 && $held ne $want} {
 @end
 
 

@@ -68,7 +68,8 @@
 // --- has long since been taken and cannot be overwritten.  Pressing BTN1
 // takes a fresh one.
 //
-// THE READOUT PROTOCOL, which `boards/arty-z7-20/vivado/probe.tcl` is the other half of.  One
+// THE READOUT PROTOCOL, which `boards/arty-z7-20/vivado/probe.tcl` and
+// `boards/de25-nano/quartus/probe.tcl` are the other half of.  One
 // DR scan of SAMPLE bits returns one sample and advances the read pointer, so
 // DEPTH scans return the whole buffer and leave the pointer where they found
 // it.  There is no bit counter and no use of UPDATE: the pointer moves on the
@@ -136,9 +137,15 @@ module cadr_probe #(
     input  var logic [31:0]      vma,
     input  var logic             promdis,
 
-    // The BSCANE2's fabric side.  The primitive is instantiated in
-    // `cadr_arty.sv`, beside the MMCM, so that this module is a module and
-    // can be simulated: `tb/cadr_probe_tb.cpp` drives these directly.
+    // THE JTAG SIDE, WHICH IS THE ONLY VENDOR'S PART OF THE PROBE.  On the
+    // Zynq boards it is a `BSCANE2`'s fabric side, the primitive instantiated
+    // in the top level beside the MMCM.  On the DE25-Nano it is Altera's
+    // Virtual JTAG, through `rtl/plumbing/agilex5/cadr_probe_vjtag.sv`, where
+    // `jtag_drck` is TCK itself and runs in every TAP state; that is the same
+    // thing here, because nothing below acts unless `jtag_capture` or
+    // `jtag_shift` is high.  Either way this module is a module and can be
+    // simulated: `tb/cadr_probe_tb.cpp` drives these directly, and through
+    // the Altera node as well.
     input  var logic             jtag_drck,
     input  var logic             jtag_sel,
     input  var logic             jtag_shift,
@@ -164,9 +171,10 @@ module cadr_probe #(
   logic [SAMPLE-1:0] mem [DEPTH];
 
   // Zeroed so that an unwritten entry reads back with its valid bit clear
-  // rather than as X.  Vivado brings block RAM up zero anyway; this is for
-  // the simulation, where X would make a partial capture unreadable instead
-  // of merely empty.
+  // rather than as X.  Vivado brings block RAM up zero anyway, and Quartus
+  // loads this as the M20K blocks' initial contents with the configuration;
+  // this is for the simulation, where X would make a partial capture
+  // unreadable instead of merely empty.
   initial begin
     for (int unsigned i = 0; i < DEPTH; i++) mem[i] = '0;
   end
@@ -195,8 +203,10 @@ module cadr_probe #(
   // through 24 levels of the dispatch memory is 18.048 ns, and the
   // instrumented board came out at **-13.156 ns on 2,400 endpoints** before
   // the split.  So `stable_q` takes the microcycle exception, in
-  // `boards/arty-z7-20/cadr_probe.xdc`, on the same argument the machine makes for
-  // itself: its inputs stand still from one boundary to the next.
+  // `boards/arty-z7-20/cadr_probe.xdc` and the DE25-Nano's
+  // `boards/de25-nano/quartus/cadr_probe.sdc`, on the same argument the
+  // machine makes for itself: its inputs stand still from one boundary to
+  // the next.
   //
   // `late_q` must NOT, and that is the whole reason there are two.  It holds
   // the four columns that can move *inside* a microcycle --- `lpc`, `md`,

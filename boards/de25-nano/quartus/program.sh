@@ -5,6 +5,10 @@
 # The DE25-Nano's bitstream, loaded over JTAG.
 #
 #     make de25-program
+#     make de25-program PROBE_DEPTH=1024
+#
+# The second loads the instrumented build from `build/de25-probe/`, which
+# `make de25 PROBE_DEPTH=1024` writes, and the first the plain one.
 #
 # **VOLATILE, AND NOTHING ELSE.**  This loads `build/de25/output_files/
 # cadr_de25.sof` into the part's configuration memory, which a power cycle
@@ -22,15 +26,24 @@
 # device.  A serial that matches no device, or more than one, is refused, and
 # so is a chain that is not exactly one Agilex 5 part.
 #
-# **WHAT IT READS BACK, AND WHAT IT CANNOT YET.**  The programmer must report
-# that configuration succeeded on device 1.  The JTAG server reports a hash of
-# the design a part holds only when that design carries a debug hub: the
-# board's factory image showed one, with three debug nodes, and this design,
-# with no hub, shows none, measured.  Where a hash is shown it must be the
-# start of the assembler's, or the part is not running what was built.  The
-# build stamp is in the USERCODE register, and reading it back needs the
-# Agilex 5 USERCODE instruction from Altera's boundary-scan guide, which this
-# script does not guess.
+# **WHAT SAYS IT WORKED IS THE BUILD THE PART READS BACK.**  The programmer
+# must report that configuration succeeded on device 1, and that alone is
+# the witness a Zynq board once lost three downloads in six to.  So the build
+# stamp `build.sh` writes into USERCODE is read back by `usercode.tcl`, before
+# the download and after it, with the USERCODE instruction from Altera's
+# boundary-scan guide for the family, and compared with the bitstream's: the
+# part must hold this build afterwards, and the line printed says whether it
+# held it before too, in which case a download cannot be told from none.
+#
+# **AND THE HUB'S HASH, WHICH TELLS THE TWO BUILDS OF ONE TREE APART.**  The
+# plain build and the probe's carry the same stamp when they are built from
+# the same tree, so USERCODE cannot say which of the two a part holds.  The
+# JTAG server can: it reports a `Design hash` for a design whose SLD hub has a
+# node, and it is the hub's own, the `DESIGN_HASH` Quartus writes into the
+# build's `.sld` file, not the assembler's design hash, measured.  The probe's
+# build shows its hash and the plain build, whose hub has no node, shows
+# none.  So a hash shown must be the build's, the probe's build must show
+# one, and the line printed says what the hub reported before and after.
 #
 # It refuses a bitstream whose timing was not met, because a board that
 # misses timing is no evidence about its own logic.  `FORCE=1` loads it
@@ -53,14 +66,17 @@ conf_value() {
 
 quartus=${QUARTUS_ROOTDIR:-$(conf_value QUARTUS_ROOTDIR)}
 [ -n "$quartus" ] || refuse "set QUARTUS_ROOTDIR, or add a QUARTUS_ROOTDIR= line to $conf"
-for tool in "$quartus/bin/jtagconfig" "$quartus/bin/quartus_pgm"; do
+for tool in "$quartus/bin/jtagconfig" "$quartus/bin/quartus_pgm" "$quartus/bin/quartus_stp"; do
     [ -x "$tool" ] || refuse "$tool is not there"
 done
 
 serial=${DE25_SERIAL:-$(conf_value DE25_SERIAL)}
 [ -n "$serial" ] || refuse "set DE25_SERIAL, or add a DE25_SERIAL= line to $conf"
 
-out=build/de25
+case ${PROBE_DEPTH:-0} in
+    ''|0) out=build/de25 ;;
+    *)    out=build/de25-probe ;;
+esac
 sof=$out/output_files/cadr_de25.sof
 asm=$out/output_files/cadr_de25.asm.rpt
 [ -s "$sof" ] || refuse "$sof is not there; run \`make de25\` first"
@@ -108,6 +124,17 @@ parts=$(printf '%s\n' "$chain" | grep -c '^  [0-9A-F]\{8\} ' || true)
 [ "$parts" -eq 1 ] || refuse "wanted one part on '$cable', found $parts"
 printf '%s\n' "$chain" | grep -q '^  4362C0DD ' || refuse "the part on '$cable' is not ID code 4362C0DD"
 
+# What the hub reports before the download, for the line after it.
+hub_before=$(block | sed -n 's/^ *Design hash *\([0-9A-F]*\).*/\1/p' | head -n 1)
+
+# The build the part holds before the download, for the verdict after it.
+# A part that cannot be read now is not a reason to stop: the reading after
+# the download is the one that decides.
+usercode_tcl=boards/de25-nano/quartus/usercode.tcl
+before=$(DE25_SERIAL=$serial "$quartus/bin/quartus_stp" -t "$usercode_tcl" 2>&1 \
+             | sed -n 's/^de25-program: USERCODE \([0-9a-f]\{8\}\)$/\1/p' | tail -n 1)
+say "the part holds build ${before:-that could not be read} before the download"
+
 say "loading $sof over '$cable' (serial $serial), volatile"
 "$quartus/bin/quartus_pgm" -c "$cable" -m jtag -o "p;$sof@1" > "$out/program.log" 2>&1 \
     || { tail -n 20 "$out/program.log" >&2; refuse "the programmer failed; see $out/program.log"; }
@@ -117,18 +144,30 @@ grep -q '^Info (18943): Configuration succeeded at device index 1' "$out/program
     || refuse "the programmer did not report that configuration succeeded; see $out/program.log"
 say "configuration succeeded on device 1"
 
-# The design the part now holds, against the design in the file, where the
-# JTAG server shows one: see the header.
-built=$(sed -n 's/^; Design hash *; \([0-9A-F]*\) *;.*/\1/p' "$asm" | head -n 1)
-[ -n "$built" ] || refuse "no design hash in $asm"
+# The hub the part now reports, against the build's: see the header.
+sld=$out/output_files/cadr_de25.sld
+built=$(sed -n 's/.*DESIGN_HASH \([0-9a-fA-F]*\).*/\1/p' "$sld" 2>/dev/null | head -n 1 | tr a-f A-F)
 held=$(block | sed -n 's/^ *Design hash *\([0-9A-F]*\).*/\1/p' | head -n 1)
 if [ -n "$held" ]; then
-    case "$built" in
-        "$held"*) say "the part holds design $held, the start of the file's $built" ;;
-        *) refuse "the part holds design $held, and the file's is $built" ;;
-    esac
+    [ "$held" = "$built" ] || refuse "the part's hub reports design $held, and this build's is ${built:-not in $sld}"
+    say "the part's hub reports design $held, this build's"
+elif [ "$out" = build/de25-probe ]; then
+    refuse "the part's hub reports no design, and the probe's build has a node on it"
 else
-    say "the part shows no design hash, as a design with no debug hub does; the file's is $built"
+    say "the part's hub reports no design, as the plain build's, with no node, does"
+fi
+if [ "$hub_before" != "$held" ]; then
+    say "the hub reported ${hub_before:-no design} before the download and ${held:-no design} after it"
 fi
 usercode=$(sed -n 's/^; JTAG usercode *; 0x\([0-9A-Fa-f]*\) *;.*/\1/p' "$asm" | head -n 1)
+[ -n "$usercode" ] || refuse "no JTAG usercode in $asm"
 say "the bitstream's USERCODE is $usercode"
+
+# And the build the part holds now, against the bitstream's.  Its lines are
+# printed whatever they say, and its exit status is the verdict.
+if ! DE25_SERIAL=$serial "$quartus/bin/quartus_stp" -t "$usercode_tcl" "$usercode" "$before" \
+        > "$out/usercode.log" 2>&1; then
+    grep '^de25-program:' "$out/usercode.log" >&2 || tail -n 20 "$out/usercode.log" >&2
+    refuse "the part does not hold the build just loaded; see $out/usercode.log"
+fi
+grep '^de25-program:' "$out/usercode.log"

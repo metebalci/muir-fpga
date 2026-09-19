@@ -114,6 +114,24 @@ free license covers the Agilex 5 E-series part this board carries.
 step and what stops it. Everything it writes is under `build/de25/`, and it
 removes that directory first.
 
+**`PROBE_DEPTH` builds the instrumented board, as it does for the Zynq
+boards.** The probe records the machine's first microcycles, and a reader
+compares them with muir:
+
+    make de25 PROBE_DEPTH=1024           # into build/de25-probe/
+    make de25-program PROBE_DEPTH=1024   # load that build instead
+    make de25-probe                      # read the capture and compare it
+
+The probe's JTAG side is Altera's Virtual JTAG IP, which the flow generates
+beside the PLL. `make de25-probe` runs `boards/de25-nano/quartus/probe.tcl`
+under `quartus_stp` and then `tools/probe_check.py` against
+`build/rtl.golden`.
+
+**Vendor RTL lives under `rtl/plumbing/<family>/`, and each flow reads only
+its own family.** The Vivado flows skip every directory under
+`rtl/plumbing/` but `xilinx7/`, and the Quartus flow refuses any file from
+`rtl/plumbing/` one level down that is not under `agilex5/`.
+
 **Quartus is found by `QUARTUS_ROOTDIR`,** from the environment or from a
 `QUARTUS_ROOTDIR=` line in the gitignored `boards/de25-nano/local.conf`. It
 names the installation's `quartus` directory, the one holding
@@ -133,6 +151,14 @@ the line when it appears.
 `DE25_SERIAL=` from the same `local.conf` and finds the JTAG cable Quartus
 names after that USB device. It refuses a bitstream whose timing was not met,
 unless `FORCE=1` is set, and it loads the part's configuration memory only.
+The probe's reader selects its cable the same way. With no serial it goes
+ahead only when exactly one cable is attached.
+
+**The build a part holds is read back after every download.** `build.sh`
+writes the build stamp into the JTAG USERCODE register, and
+`boards/de25-nano/quartus/usercode.tcl` reads it back with the USERCODE
+instruction from Altera's boundary-scan guide for the family, before the
+download and after it. The part must hold the bitstream's build afterwards.
 
 ## Running the flows
 

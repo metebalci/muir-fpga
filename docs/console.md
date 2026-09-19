@@ -23,7 +23,7 @@ the decision and its reasons.
 CADR loads its microcode from its pack, does a fixed amount of disk work and
 stops moving. The lamps say a beat is running and the probe sees only the
 first 1,024 microcycles, which is 0.17% of the boot PROM and structurally
-cannot be moved (`rtl/plumbing/xilinx7/cadr_probe.sv`: it fills from the first microcycle after
+cannot be moved (`rtl/plumbing/cadr_probe.sv`: it fills from the first microcycle after
 reset and freezes, which is what makes it need nobody at the board). So the
 question --- is it waiting, or has it halted, and where is its PC --- has had no
 instrument at all. **The console is that instrument.**
@@ -378,7 +378,7 @@ level:
   is no longer asking is ignored by construction.
 
 **And the probe re-arms with it**, which is a capability and not a side
-effect. `rtl/plumbing/xilinx7/cadr_probe.sv`'s own words are that it fills from the first
+effect. `rtl/plumbing/cadr_probe.sv`'s own words are that it fills from the first
 microcycle after reset and freezes, so a machine that has been restarted has
 new first microcycles and the probe must be looking at those. Until now
 re-arming meant the reset button or a fresh bitstream; it is a store from Linux now. The
@@ -830,7 +830,7 @@ brings out four. `WMAPD`, `DESTSPCD`, `IMODD`, `PDLWRITED` and `SPUSHD` --- the
 write-pipeline enables, the 74LS244 inputs on SPY2 3F15 --- are internal to the
 processor and appear on no port; grepping `rtl/` and `tb/` for their names
 returns `cadr_microcycle.sv`, this check's testbench, and one comment ---
-`rtl/plumbing/xilinx7/cadr_probe.sv:103-104`, which lists exactly these five among the columns
+`rtl/plumbing/cadr_probe.sv:104-105`, which lists exactly these five among the columns
 it cannot carry "because `cadr_machine` has no port for it". They are `FLAG-2`'s bits 13, 12, 10, 9 and 8, and reading that
 register through the console is what compares them. Because which of them a
 given microcycle carries is the boot PROM's business and not the check's, the

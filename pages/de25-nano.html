@@ -84,19 +84,19 @@
 
     <figure class="panel fig dense wide">
       <div class="scroll">
-<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-three blocks this project builds, eight are simulated: clock, ICMEM board, CADR board, bus interface, disk controller, TV, Color TV and I/O board. The other fifteen have not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-three blocks this project builds, four are verified: clock, ICMEM board, CADR board and bus interface. Four are simulated: disk controller, TV, Color TV and I/O board. The other fifteen have not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
 
           <!-- The Arty Z7-20's drawing, generated for the DE25-Nano.  Of the
-               twenty-three blocks this project builds, eight are simulated:
-               clock, ICMEM board, CADR board, bus interface, disk controller,
-               TV, Color TV and I/O board.  The other fifteen have not been
-               started, and the parts drawn gray are existing components.  The
-               figures under the fabric's label are this board's own fit, as
-               ALMs and M20K, the chip and the memory carry this board's
-               parts, the lamps are green, as this board's user LEDs are, and
-               the debug cable's connector is a GPIO header, the board having
-               no Pmod.  Why each thing is where it is, is in the Arty Z7-20's
-               page. -->
+               twenty-three blocks this project builds, four are verified:
+               clock, ICMEM board, CADR board and bus interface.  Four are
+               simulated: disk controller, TV, Color TV and I/O board.  The
+               other fifteen have not been started, and the parts drawn gray
+               are existing components.  The figures under the fabric's label
+               are this board's own fit, as ALMs and M20K, the chip and the
+               memory carry this board's parts, the lamps are green, as this
+               board's user LEDs are, and the debug cable's connector is a
+               GPIO header, the board having no Pmod.  Why each thing is where
+               it is, is in the Arty Z7-20's page. -->
           <rect class="d-box d-done d-key" x="587.51" y="851" width="13" height="13"/>
           <text class="d-s" x="607.51" y="861">verified</text>
           <rect class="d-box d-built d-key" x="668.19" y="851" width="13" height="13"/>
@@ -153,17 +153,17 @@
           <rect x="-164" y="110" width="36.1" height="13" fill="currentColor" fill-opacity="0.42"/>
           <text class="d-n" x="-158" y="120">26.5%</text>
 
-          <rect class="d-box d-built" x="40" y="62" width="112" height="128"/>
+          <rect class="d-box d-done" x="40" y="62" width="112" height="128"/>
           <text class="d-t" x="96" y="100" text-anchor="middle">clock</text>
           <text class="d-n" x="96" y="120" text-anchor="middle">CLOCK1, CLOCK2</text>
           <text class="d-s" x="96" y="142" text-anchor="middle">100 MHz,</text>
           <text class="d-s" x="96" y="156" text-anchor="middle">10 ns a tick</text>
           <text class="d-s" x="96" y="176" text-anchor="middle">15 ticks = 150 ns</text>
 
-          <rect class="d-box d-built" x="152" y="62" width="224" height="56"/>
+          <rect class="d-box d-done" x="152" y="62" width="224" height="56"/>
           <text class="d-t" x="264" y="84" text-anchor="middle">ICMEM board</text>
           <text class="d-s" x="264" y="104" text-anchor="middle">the control store: 16K &times; 48, 768 Kb</text>
-          <rect class="d-box d-built" x="152" y="118" width="224" height="72"/>
+          <rect class="d-box d-done" x="152" y="118" width="224" height="72"/>
           <text class="d-t" x="264" y="142" text-anchor="middle">CADR board</text>
           <text class="d-s" x="264" y="162" text-anchor="middle">datapath, sequencer,</text>
           <text class="d-s" x="264" y="176" text-anchor="middle">scratchpads, maps</text>
@@ -176,7 +176,7 @@
           <text class="d-n" x="486" y="170" text-anchor="middle">MEM&lt;31:0&gt;, SPY&lt;15:0&gt;</text>
           <text class="d-s" x="486" y="184" text-anchor="middle">48 driven from both ends</text>
 
-          <rect class="d-box d-built" x="596" y="62" width="254" height="128"/>
+          <rect class="d-box d-done" x="596" y="62" width="254" height="128"/>
           <text class="d-t" x="723" y="92" text-anchor="middle">bus interface</text>
           <text class="d-n" x="723" y="112" text-anchor="middle">BUSINT</text>
           <text class="d-s" x="723" y="138" text-anchor="middle">arbitration, the NXM timeout,</text>

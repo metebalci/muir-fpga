@@ -50,7 +50,16 @@ if {![file exists $sync_prom]} {
     exit 1
 }
 
-read_verilog -sv [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]
+# Every module under `rtl/` but another family's plumbing: `bitstream.tcl`
+# gives the rule, at the same glob.
+set sources {}
+foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv] {
+    if {[regexp {^rtl/plumbing/([^/]+)/} $f -> family] && $family ne "xilinx7"} {
+        continue
+    }
+    lappend sources $f
+}
+read_verilog -sv $sources
 synth_design -top cadr_machine -part $part -mode out_of_context \
     -generic PROM_HEX=[file normalize $prom] \
     -generic SYNC_PROM_HEX=[file normalize $sync_prom]

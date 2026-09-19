@@ -8,7 +8,7 @@
 # Everything in this repository agrees with muir in simulation.  Nothing has
 # ever compared what the *board* computes against what the model computes,
 # because the board's observable surface is six LEDs.  An in-fabric probe
-# --- `rtl/plumbing/xilinx7/cadr_probe.sv` --- records the datapath one sample per microcycle
+# --- `rtl/plumbing/cadr_probe.sv` --- records the datapath one sample per microcycle
 # from microcycle zero and reads it out over JTAG; this turns that readout
 # into a verdict.
 #

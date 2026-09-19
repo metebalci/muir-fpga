@@ -193,7 +193,7 @@ So the probe is a `BSCANE2` and a shift register, which is one primitive in a
 file somebody can read. It fills from the first qualifying edge after reset and
 freezes, so nothing has to be armed and nobody has to be at the board.
 
-Source: the header of `rtl/plumbing/xilinx7/cadr_probe.sv`;
+Source: the header of `rtl/plumbing/cadr_probe.sv`;
 [`docs/toolchain.md`](toolchain.md).
 
 ### What license is this under, and what in it is not this project's work?

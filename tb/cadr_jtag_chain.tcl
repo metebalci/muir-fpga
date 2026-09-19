@@ -42,7 +42,7 @@
 #   instruction is loaded. A script that reached Shift-DR without passing
 #   through Capture-DR would be modeled as though it had captured.
 #
-#   NOT SILICON, AND NOT `rtl/plumbing/xilinx7/cadr_probe.sv`.  There is no DRCK here, no
+#   NOT SILICON, AND NOT `rtl/plumbing/cadr_probe.sv`.  There is no DRCK here, no
 #   clock, and no edges. The probe's shift register clocking the wrong edge of
 #   DRCK, capturing after advancing instead of before, or gating on SEL
 #   wrongly, are all invisible to this file. `tb/cadr_probe_tb.cpp` is what
@@ -159,7 +159,7 @@ proc model_arg_tdi {argv} {
 
 # ------------------------------------------------------------ the sample
 #
-# valid, then the cycle, then the data --- the order `rtl/plumbing/xilinx7/cadr_probe.sv`
+# valid, then the cycle, then the data --- the order `rtl/plumbing/cadr_probe.sv`
 # stores it in and `boards/arty-z7-20/vivado/probe.tcl` unpacks. 1 + 32 + 421 = 454.
 proc model_sample {} {
     set j [expr {$::model(rd) % $::model(depth)}]

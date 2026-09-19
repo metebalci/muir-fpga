@@ -10,7 +10,7 @@
 # exactly like a constraint which applied, and this project has already lost
 # an evening to one.
 #
-# WHY DRCK NEEDS A CLOCK AT ALL.  `rtl/plumbing/xilinx7/cadr_probe.sv` clocks its shift
+# WHY DRCK NEEDS A CLOCK AT ALL.  `rtl/plumbing/cadr_probe.sv` clocks its shift
 # register and its read pointer on the BSCANE2's DRCK, which Vivado does not
 # know is a clock unless it is told: left alone the whole readout is
 # unconstrained, timed against nothing, and reported as nothing --- the same
@@ -59,7 +59,7 @@ set_clock_groups -asynchronous \
 # machine is a timing exception on whatever does the watching.
 #
 # `stable_q` is the half of the holding register that may take it, and the
-# split is `rtl/plumbing/xilinx7/cadr_probe.sv`'s: its inputs stand still from one microcycle
+# split is `rtl/plumbing/cadr_probe.sv`'s: its inputs stand still from one microcycle
 # boundary to the next, which is this project's own test for what may be
 # relaxed. `late_q` --- `lpc`, `md`, `vma`, `promdis` --- deliberately may not.
 # `md` is the column that sampling before a stall is about: `-LOADMD` strobes
