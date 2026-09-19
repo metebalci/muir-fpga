@@ -15437,3 +15437,120 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .clk        (clk),
       .rst        (rst_late),
 @end
+
+@mutation de25-an-output-is-folded-twice-and-another-not-at-all
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The DE25-Nano's fold is the Arty Z7-20's list of every output of
+@note `cadr_machine`, written by hand again, and the failure a list like that
+@note has is a name repeated where the next one belongs. `pc` for `lpc` costs
+@note two at once: `lpc` stops being folded, and `pc` XOR `pc` is zero, so
+@note `pc` stops contributing too, and synthesis may delete whatever computes
+@note either. That is the empty-part bitstream this board's fold exists to
+@note prevent, on a second vendor's tools.
+@note
+@note Caught because `lpc` has no other reader on this board: UNUSEDSIGNAL at
+@note the declaration.
+@old
+      witness <= ^{pc, lpc, opc, st, ir, a, m, alu, r, ob, q, dc, lc,
+@new
+      witness <= ^{pc, pc, opc, st, ir, a, m, alu, r, ob, q, dc, lc,
+@end
+
+@mutation de25-the-word-at-the-xbus-seam-reaches-no-pin
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The bug the Arty Z7-20's top level once had, put into this one:
+@note `dev_wdata`, MEM<31:0> on its way to an Xbus slave, left off the
+@note instance. No slave exists, so nothing but the fold reads it, and an
+@note output connected to nothing lets synthesis delete the register the word
+@note comes out of.
+@note
+@note Two warnings, the two halves of the claim: PINMISSING says the port list
+@note is incomplete, and UNDRIVEN says the fold reads something the machine no
+@note longer supplies.
+@old
+      .dev_write(dev_write), .phys(phys), .dev_wdata(dev_wdata),
+@new
+      .dev_write(dev_write), .phys(phys),
+@end
+
+@mutation de25-the-pll-runs-before-the-device-is-in-user-mode
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note An Agilex 5 part does not enter user mode everywhere at once, and the
+@note Reset Release's `nINIT_DONE` is what says it has. This board holds its
+@note PLL in reset until then, so no clock reaches the machine early and the
+@note fabric's reset waits for the lock. Tying the PLL's reset low lets the
+@note clock start while part of the fabric may still be configuring. Quartus
+@note warns about a design with no Reset Release at all, critical warning
+@note 20759, measured on a test design for this part; whether it notices an
+@note endpoint that is present and reaches nothing has not been measured.
+@note
+@note Caught because `ninit_done` then has no reader: UNUSEDSIGNAL.
+@old
+      .rst     (ninit_done),
+@new
+      .rst     (1'b0),
+@end
+
+@mutation de25-key1-resets-nothing
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note KEY1 is the fabric's reset on this board as BTN1 is on the Zynq boards,
+@note and on this board it is the only way to reset the fabric short of
+@note reconfiguring the part: there is no processing system behind it yet.
+@note Dropped from the reset's OR, the button is a pin nothing reads.
+@note
+@note Caught as UNUSEDSIGNAL on bit 1 of `btn`. What lint cannot see is the
+@note button's polarity, which is the manual's: the board's buttons read low
+@note while pressed.
+@old
+  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !pll_locked || !btn[1]};
+@new
+  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !pll_locked};
+@end
+
+@mutation de25-sw0-does-not-reach-the-machine
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note SW0 is the no-auto-boot switch, as on the Arty Z7-20: up, the machine
+@note comes out of reset with `RUN` clear and waits for KEY0. On this board no
+@note console and no `fpgarc` flag can ask for that state instead, so the
+@note switch is the only way to hold the machine at power-on. Tied low at the
+@note instance, the machine always runs, and the synchronizer's last stage is
+@note read by nothing.
+@note
+@note Caught as UNUSEDSIGNAL on bit 2 of `sw0_sync`.
+@old
+      .n_boot2(n_boot2), .no_auto_boot(sw0_sync[2]),
+@new
+      .n_boot2(n_boot2), .no_auto_boot(1'b0),
+@end
+
+@mutation the-level-1-map-is-read-in-its-undefined-tick
+@check rdw_poison_map
+@file rtl/machine/cadr_microcycle.sv
+@note The poison check's own window, moved one tick earlier onto the write
+@note tick of the level-1 map, which is the one tick in which the machine
+@note does read a memory it is writing: the level-2 write takes its address
+@note from the level-1 read of that same tick, and `Rtl::step` puts it in
+@note the OLD level-1 block. So this is what the check would see if the
+@note undefined tick of an Altera MLAB were a tick the machine samples, and
+@note it must be caught or the check is blind to the thing it is for.
+@note
+@note Measured before the record was written: poisoning the write tick of all
+@note three memories fails `map_access`'s patched PROM, with the level-2 word
+@note landing in the NEW level-1 block, and passes both programs the
+@note processor checks run, neither of which writes both levels in one write
+@note phase. No mutation of the design that keeps its behavior puts a
+@note sampled read into the undefined tick on those programs: taking the
+@note dispatch word or the map's word on MF a tick before the boundary both
+@note survived the poison, because no program reads an entry in the
+@note instruction right after writing it. That is the finding the check
+@note holds, and this record is how it stays able to fail.
+@old
+  assign l1_rdw = l1_w_q && adr0 == l1_wa_q;
+@new
+  assign l1_rdw = (wp && wmapd && vma[26]) || (l1_w_q && adr0 == l1_wa_q);
+@end

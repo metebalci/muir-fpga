@@ -382,6 +382,49 @@ CHECKS = {
         "golden": "rtl_sys.golden",
         "files": [("boot_prom.hex", "build/boot_prom.hex")],
     },
+    # THE READ-DURING-WRITE WINDOW OF THE THREE ASYNCHRONOUS MEMORIES, the
+    # processor built with `CADR_RDW_POISON` and run on both programs, and the
+    # whole machine on `map_access`'s patched PROM, the one program that writes
+    # both levels of the map in one write phase.  Under the define, a read of
+    # the address written on the most recent edge returns the complement of
+    # the word, which is the tick an Altera MLAB leaves undefined; the last
+    # section of `rtl/machine/cadr_microcycle.sv` has the argument.  Records
+    # aimed here are the ones that put a sampled read into that tick.
+    "rdw_poison": {
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
+        "top": "cadr_microcycle",
+        "tb": "tb/cadr_microcycle_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_RDW_POISON"],
+        "golden": "rtl.golden",
+        "files": [("boot_prom.hex", "build/boot_prom.hex")],
+    },
+    "rdw_poison_sys": {
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
+        "top": "cadr_microcycle",
+        "tb": "tb/cadr_microcycle_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_RDW_POISON"],
+        "golden": "rtl_sys.golden",
+        "files": [("boot_prom.hex", "build/boot_prom.hex")],
+    },
+    "rdw_poison_map": {
+        "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_ddr_map.sv"],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_map_access_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_RDW_POISON", "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": "rtl.golden",
+        "gprom_path": "rdw_poison_map_prom.hex",
+    },
     # MD STILL HOLDS WHAT ITS OWN INSTRUCTION PUT THERE.  The same module and
     # the same two programs as the pair above, and a property rather than an
     # agreement: from the `cpu_edge` where DESTMDR writes MD until the write
@@ -956,6 +999,34 @@ CHECKS = {
                   "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_memory_path.sv",
                   "rtl/machine/cadr_machine.sv"],
         "top": "cadr_arty",
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
+    # The DE25-Nano's top level, the first board built by Quartus, and lint
+    # alone for the same reason `arty` is: its PLL is generated at build time
+    # and its reset release is a primitive Quartus supplies, so neither can be
+    # run.  What lint holds is the port list and the fold, as there, and the
+    # few wires only this board has: the reset release reaching the PLL, KEY1
+    # reaching the fabric's reset and SW0 reaching the machine.  ONE BOARD
+    # CONFIGURATION, since the top level has no parameter that elaborates a
+    # different design, and its own stubs, which `de25_check` puts first.
+    "de25": {
+        "kind": "lint",
+        "sources": ["boards/de25-nano/cadr_de25.sv"],
+        "stubs": ["tb/cadr_de25_stubs.sv"],
+        "extra": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+                  "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+                  "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+                  "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
+                  "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+                  "rtl/machine/cadr_busint_regs.sv", "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+                  "rtl/plumbing/cadr_bus_audit.sv", "rtl/machine/cadr_memory_path.sv",
+                  "rtl/machine/cadr_machine.sv",
+                  "rtl/plumbing/cadr_lamp_clock.sv", "rtl/plumbing/cadr_lamp_microcycle.sv",
+                  "rtl/plumbing/cadr_lamp_errhalt.sv"],
+        "top": "cadr_de25",
         "tb": None,
         "flags": [],
         "golden": None,
@@ -1770,6 +1841,8 @@ def build_and_run(args, work, check, build_fails=False):
         return cables_check(args, work, build_fails)
     if check == "arty":
         return arty_check(args, work, build_fails)
+    if check == "de25":
+        return de25_check(args, work, build_fails)
 
     # MIT's TV sync PROM, placed for EVERY check rather than named check by
     # check.  `cadr_tv.sv` reads it at elaboration and its `SYNC_PROM_HEX`
@@ -1945,6 +2018,29 @@ def arty_check(args, work, build_fails=False):
         return BROKEN, "none of the board configurations could be linted"
     return SURVIVED, "lint passes on %d board configuration%s" % (
         ran, "" if ran == 1 else "s")
+
+
+def de25_check(args, work, build_fails=False):
+    """The DE25-Nano's top level, linted, as `build/de25.pass` lints it.
+
+    Lint failing is the mutation being caught, and a mutant that does not
+    compile is BROKEN, which `lint_verdict` decides exactly as it does for
+    `arty`.  The copy must have the board's files: `--since` names revisions
+    older than this board, and there the check has nothing to lint.
+    """
+    spec = CHECKS["de25"]
+    files = spec["stubs"] + spec["sources"]
+    if not all(os.path.exists(os.path.join(work, f)) for f in files):
+        return BROKEN, "the DE25-Nano's top level is not in this copy"
+    prom = "-GPROM_HEX=\"%s\"" % os.path.join(args.goldens, "boot_prom.hex")
+    sync = "-GSYNC_PROM_HEX=\"%s\"" % os.path.join(args.goldens, "sync_prom.hex")
+    cmd = [args.verilator, "--lint-only", "-Wall", "-Irtl/machine",
+           "-Irtl/plumbing", prom, sync, "--top-module", spec["top"]]
+    cmd += spec["stubs"] + tick_pkg(work) + spec["extra"] + spec["sources"]
+    rc, out = run(cmd, work)
+    if rc != 0:
+        return lint_verdict(out, build_fails)
+    return SURVIVED, "lint passes on the one board configuration"
 
 
 def generator_check(args, work, spec):

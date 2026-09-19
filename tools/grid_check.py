@@ -217,7 +217,8 @@ def tag_above(lines, i):
 def check_constraints(root, grid):
     files = []
     for top in ("rtl", "boards"):
-        files += list((root / top).rglob("*.xdc")) + list((root / top).rglob("*.tcl"))
+        files += list((root / top).rglob("*.xdc")) + list((root / top).rglob("*.sdc")) \
+            + list((root / top).rglob("*.tcl"))
     found = []
     for path in sorted(files):
         lines = path.read_text().splitlines()

@@ -11,6 +11,10 @@ bitstream says nothing about that at all.
 
     make check                       Verilator + Rust + muir     no Vivado
     vivado -mode batch -source ...   Vivado                      no checks
+    make de25                        Quartus Prime Pro           no checks
+
+The third line is the DE25-Nano's, and it is a bitstream flow of the same kind
+as the second, for the one board Vivado does not build.
 
 `make check` is what `.github/workflows/check.yml` runs on every push, and
 that workflow is disabled on GitHub today (`gh workflow list --all` reads
@@ -96,6 +100,39 @@ Symlinks to the installed `.so.6` are enough, and they need no root:
 Put the export beside wherever `settings64.sh` is sourced. Note that Ubuntu's
 `.bashrc` returns early for non-interactive shells. A block appended to it
 therefore applies to your shells and not to `ssh host 'cmd'` or cron.
+
+## For the DE25-Nano's bitstream
+
+**Quartus Prime Pro 26.1.1** builds the DE25-Nano, with its Agilex 5 device
+support installed. It is the one board here that Vivado does not build. The
+free license covers the Agilex 5 E-series part this board carries.
+
+    make de25            # the IP, the project, synthesis, fit, timing, a .sof
+    make de25-program    # load that .sof over JTAG; volatile, never the flash
+
+`make de25` runs `boards/de25-nano/quartus/build.sh`, whose header lists each
+step and what stops it. Everything it writes is under `build/de25/`, and it
+removes that directory first.
+
+**Quartus is found by `QUARTUS_ROOTDIR`,** from the environment or from a
+`QUARTUS_ROOTDIR=` line in the gitignored `boards/de25-nano/local.conf`. It
+names the installation's `quartus` directory, the one holding
+`bin/quartus_sh`. Nothing is taken from a login shell's settings, which a
+non-interactive shell does not read.
+
+**The flow refuses to build without the Agilex 5E license.** Before
+synthesis it runs `quartus_sh --check_license` and reads the license mode it
+reports, which must be "Agilex 5E (no-cost)". The command exits with 3 whether
+a license is there or not, so the flow reads the text. The fitter's
+`Info (24849): Successfully acquired license` line is not the gate. Quartus
+prints it on the fit that fetches the license and keeps the license it
+fetched, so every later fit prints no license line at all. The flow quotes
+the line when it appears.
+
+**The board is named by its USB serial.** `make de25-program` reads
+`DE25_SERIAL=` from the same `local.conf` and finds the JTAG cable Quartus
+names after that USB device. It refuses a bitstream whose timing was not met,
+unless `FORCE=1` is set, and it loads the part's configuration memory only.
 
 ## Running the flows
 

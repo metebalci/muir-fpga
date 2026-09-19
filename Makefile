@@ -53,7 +53,7 @@ TICKPKG := rtl/machine/cadr_tick_pkg.sv
 .DELETE_ON_ERROR:
 
 .PHONY: check cables ps7 ps7-cora ps7-init ps7-init-cora current mutants \
-        mutants-selftest probe-selftest \
+        mutants-selftest probe-selftest de25 de25-program \
         disk-golden disk-boot-golden iob-golden busint-regs-golden muir-pin clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
@@ -61,6 +61,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
+       $(BUILD)/rdw_poison.pass $(BUILD)/rdw_poison_sys.pass \
+       $(BUILD)/rdw_poison_map.pass \
        $(BUILD)/sstep.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
        $(BUILD)/md_inject.pass $(BUILD)/md_compose.pass \
@@ -89,7 +91,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
-       $(BUILD)/de25_pins.pass \
+       $(BUILD)/de25_pins.pass $(BUILD)/de25.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -137,6 +139,7 @@ $(BUILD)/obj_phase_gen/Vcadr_phase_gen: $(TICKPKG) rtl/machine/cadr_phase_gen.sv
 # `tools/grid_check.py` and `docs/timing.md`.
 $(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard golden/src/*.rs) \
                     $(wildcard rtl/*/*.xdc rtl/*/*/*.xdc boards/*/*.xdc boards/*/vivado/*.tcl) \
+                    $(wildcard boards/*/quartus/*.sdc boards/*/quartus/*.tcl) \
                     boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk.h \
                     boards/arty-z7-20/linux/buildroot/package/cadr-console/src/console_test.c | $(BUILD)
 	python3 tools/grid_check.py .
@@ -605,6 +608,13 @@ DISPLAY := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_tmds_encode.sv \
 # in place of a primitive, which is a board that reports a build compiled in
 # rather than the one in its own bitstream.
 BOARD_STUBS := tb/cadr_arty_stubs.sv tb/cadr_usr_access_stub.sv
+
+# The DE25-Nano's top level and the three lamp modules it shares with the
+# Zynq boards, named once because two rules read the list: the lint in
+# `check` and the Quartus flow outside it.  Named here for the reason the
+# lists above are: `:=` is expanded where it is read.
+DE25_TOP := boards/de25-nano/cadr_de25.sv rtl/plumbing/cadr_lamp_clock.sv \
+            rtl/plumbing/cadr_lamp_microcycle.sv rtl/plumbing/cadr_lamp_errhalt.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
@@ -1567,6 +1577,41 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    rtl/plumbing/cadr_lamp_microcycle.sv
 	@touch $@
 
+# ------------------------------------------------ the DE25-Nano's top level
+#
+# `boards/de25-nano/cadr_de25.sv` is the first board built by Quartus, and
+# like the two Zynq boards it cannot be simulated: its PLL is generated at
+# build time and its reset release is a primitive Quartus supplies.  So this
+# is its lint, and what lint holds is the same as `arty.pass` holds there ---
+# that every output of `cadr_machine` reaches the instance and the fold, and
+# that nothing in the top level is left undriven or unread.
+#
+# ONE BOARD, NOT FIVE.  The top level has no configuration parameter: there
+# is no memory, no probe, no processing system and no display on this board
+# yet, so there is no generate arm a default lint would leave unelaborated.
+#
+# **ITS STUBS ARE ITS OWN**, `tb/cadr_de25_stubs.sv`, and in `tb/` for the
+# reason `tb/cadr_arty_stubs.sv` gives.  The Quartus flow is `make de25`,
+# outside `check`, because it needs Quartus and about eight minutes.
+$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) tb/cadr_de25_stubs.sv | $(BUILD)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP)
+	@touch $@
+
+# THE DE25-NANO'S BITSTREAM, which needs Quartus Prime Pro and is not part of
+# `check`.  `boards/de25-nano/quartus/build.sh` says where Quartus is found
+# and what each step refuses; everything it writes is under `build/de25/`.
+de25: $(MACHINE) $(DE25_TOP) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	boards/de25-nano/quartus/build.sh $(MACHINE) $(DE25_TOP)
+
+# And that bitstream loaded over JTAG, which is volatile: nothing here writes
+# the board's flash.  `boards/de25-nano/quartus/program.sh` finds the board's
+# cable by the serial in `boards/de25-nano/local.conf`.
+de25-program:
+	boards/de25-nano/quartus/program.sh
+
 # --------------------------------------------------------------- the probe
 
 # `rtl/plumbing/xilinx7/cadr_probe.sv` is what will be read off the board. It is checked the
@@ -1870,6 +1915,54 @@ $(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/src/trace.rs \
 $(BUILD)/microcycle_sys.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
                               $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl_sys.golden
+	@touch $@
+
+# ---------------------------------------------- the read-during-write window
+#
+# **THE TICK A BOARD MAY LEAVE UNDEFINED, MADE VISIBLE.**  The dispatch
+# memory and both levels of the map are read asynchronously, and on the
+# DE25-Nano they are Altera MLABs, which read asynchronously only with
+# read-during-write checking off: the word read at an address in the tick
+# after the edge that wrote it is not specified there.  This builds the
+# processor with `CADR_RDW_POISON`, under which that read returns the
+# complement of the word, and runs both programs.  Every row still agreeing
+# with muir says no consumer samples one of the three memories in that tick;
+# the counts it prints say how many ticks were poisoned, and a memory never
+# poisoned fails the run.  `rtl/machine/cadr_microcycle.sv`'s last section
+# has the argument and the measurement that keeps the write tick itself out.
+#
+# The define is set here and nowhere else; no board flow reads it.
+$(BUILD)/obj_rdw_poison/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_microcycle_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 +define+CADR_RDW_POISON -Mdir $(BUILD)/obj_rdw_poison \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_microcycle_tb.cpp)
+
+$(BUILD)/rdw_poison.pass: $(BUILD)/obj_rdw_poison/Vcadr_microcycle \
+                          $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_rdw_poison/Vcadr_microcycle $(BUILD)/rtl.golden
+	@touch $@
+
+$(BUILD)/rdw_poison_sys.pass: $(BUILD)/obj_rdw_poison/Vcadr_microcycle \
+                              $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_rdw_poison/Vcadr_microcycle $(BUILD)/rtl_sys.golden
+	@touch $@
+
+# **AND THE ONE PROGRAM THAT WRITES BOTH LEVELS OF THE MAP IN ONE WRITE
+# PHASE**, which is where the machine does read a map it is writing: the
+# level-2 write's address is the level-1 read of that same tick.  Neither of
+# the two programs above does it, and `map_access.pass`'s patched boot PROM
+# does, so the same harness runs under the poison too.  Its own patched PROM
+# goes to a file of its own, so that the two can run at once.
+$(BUILD)/obj_rdw_poison_map/Vcadr_machine: $(MACHINE) tb/cadr_map_access_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 +define+CADR_RDW_POISON -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_rdw_poison_map \
+	    -GPROM_HEX='"$(abspath $(BUILD))/rdw_poison_map_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_map_access_tb.cpp)
+
+$(BUILD)/rdw_poison_map.pass: $(BUILD)/obj_rdw_poison_map/Vcadr_machine \
+                              $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_rdw_poison_map/Vcadr_machine $(BUILD)/rtl.golden \
+	    $(BUILD)/rdw_poison_map_prom.hex $(BUILD)/boot_prom.hex
 	@touch $@
 
 # ------------------------------------------ MD holds what its instruction put

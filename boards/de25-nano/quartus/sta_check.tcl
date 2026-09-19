@@ -1,0 +1,302 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# What the timing analyzer says about the DE25-Nano's fit, asked rather than
+# assumed.  Run by `boards/de25-nano/quartus/build.sh` as
+#
+#     quartus_sta -t sta_check.tcl
+#
+# in the build directory, after the fitter.  It writes `timing.txt` there,
+# whose last line `boards/de25-nano/quartus/program.sh` reads before it will
+# program a board, and it exits non-zero when any of the first three things
+# below is not so.  The fourth is the verdict, which is written and not
+# refused on.
+#
+#   1. THE CLOCKS ARE THE BOARD'S AND THE TICK.  Both periods come from the
+#      generated PLL, through the constraints the IP writes for itself.  The
+#      one on `clock50_0` must be 20 ns, the manual's 50 MHz, and the PLL's
+#      output must be 10 ns: every board literal in
+#      `boards/de25-nano/cadr_de25.sv` and in the lamp modules is written
+#      against that tick, and the machine's own counts are MIT's instants on
+#      a 10 ns grid.  A PLL generated from a mistyped parameter would still
+#      lock, still light the lamps and run a different machine.
+#
+#   2. THE EXCEPTIONS REACH WHAT THEY NAME.  `cadr_de25.sdc` cuts the paths
+#      from the two buttons and SW0 and to the eight LEDs.  A pattern that
+#      matches nothing is silent in a log, so the collections are counted
+#      here.  SW1 to SW3 reach no logic and have no port in the timing
+#      netlist, measured, so `sw[*]` is one port.
+#
+#   3. THE MACHINE'S EXCEPTIONS REACH THE PATHS THEIR ARGUMENT IS ABOUT, AND
+#      NO OTHERS.  `cadr_de25.sdc` writes `cadr_machine.xdc`'s three clauses
+#      again, and `constraints_check.tcl`'s questions are asked of them here
+#      in Quartus's words: the relaxed set reached the design; no register
+#      outside the machine carries a relaxed requirement; and for the two
+#      instance clauses, the named registers carry it and no other register
+#      of the instance does.  A pattern that matches nothing, or matches too
+#      much, looks exactly like one that works until a path is asked what it
+#      is required to do.
+#
+#   4. EVERY CORNER, SETUP AND HOLD.  Each operating condition the part has is
+#      analyzed and its worst slack printed.  A negative one is reported as a
+#      failure and written to `timing.txt`, and the bitstream is still
+#      written, because a flow that works and a design that closes are two
+#      questions.
+
+package require ::quartus::sta
+
+set tick_ns 10.000
+set board_ns 20.000
+set tick $tick_ns
+
+project_open cadr_de25
+create_timing_netlist
+read_sdc
+update_timing_netlist
+
+set failures 0
+set out [open timing.txt w]
+
+# ------------------------------------------------------------- the clocks
+set machine_clocks {}
+foreach_in_collection c [get_clocks] {
+    set name   [get_clock_info -name $c]
+    set period [get_clock_info -period $c]
+    puts "sta: clock $name, $period ns"
+    puts $out "clock $name $period"
+    # The PLL's output counter drives the machine.  The IP names it after the
+    # instance, `u_pll`, and its output counter.
+    if {[string match {*u_pll*outclk*} $name] || [string match {*u_pll*out_clk*} $name]} {
+        lappend machine_clocks $name $period
+    }
+}
+if {[llength $machine_clocks] != 2} {
+    puts "sta: FAIL: wanted exactly one clock out of the PLL, found [expr {[llength $machine_clocks] / 2}]"
+    incr failures
+} else {
+    set period [lindex $machine_clocks 1]
+    if {[format %.3f $period] ne [format %.3f $tick_ns]} {
+        puts "sta: FAIL: the machine's clock is $period ns, and the tick is $tick_ns"
+        incr failures
+    } else {
+        puts "sta: the machine's clock is [lindex $machine_clocks 0], $period ns, the tick"
+    }
+}
+
+set board_clocks {}
+foreach_in_collection c [get_clocks] {
+    foreach_in_collection target [get_clock_info -targets $c] {
+        if {[get_object_info -name $target] eq "clock50_0"} {
+            lappend board_clocks [get_clock_info -name $c] [get_clock_info -period $c]
+        }
+    }
+}
+if {[llength $board_clocks] != 2} {
+    puts "sta: FAIL: wanted exactly one clock on clock50_0, found [expr {[llength $board_clocks] / 2}]"
+    incr failures
+} elseif {[format %.3f [lindex $board_clocks 1]] ne [format %.3f $board_ns]} {
+    puts "sta: FAIL: the clock on clock50_0 is [lindex $board_clocks 1] ns, and the board's is $board_ns"
+    incr failures
+} else {
+    puts "sta: the board's clock is [lindex $board_clocks 0] on clock50_0, [lindex $board_clocks 1] ns"
+}
+
+# --------------------------------------------------------- the exceptions
+foreach {pattern want} {{btn[*]} 2 {sw[*]} 1 {led[*]} 8 {clock50_0} 1} {
+    set n [get_collection_size [get_ports -nowarn $pattern]]
+    if {$n != $want} {
+        puts "sta: FAIL: `$pattern` names $n ports, wanting $want"
+        incr failures
+    } else {
+        puts "sta: `$pattern` names $n ports"
+    }
+}
+
+# ------------------------------------------ the machine's three clauses
+#
+# Every setup requirement below is read off a path, as the clock
+# relationship Quartus gives it, and compared with a count of ticks: the
+# multicycle that made it and the argument that allowed it.
+
+# The worst setup path into each of `targets`, as a dict of requirement in ns
+# to the number of endpoints asking for it.
+proc requirements {targets} {
+    set hist {}
+    if {[get_collection_size $targets] == 0} { return $hist }
+    foreach_in_collection path [get_timing_paths -setup -to $targets -npaths 200000 -nworst 1] {
+        dict incr hist [format %.3f [get_path_info -clock_relationship $path]]
+    }
+    return $hist
+}
+
+# The `d` pins of a set of registers: a requirement is a property of the
+# data pin, and an exception written on the register would have reached its
+# clock enable too.
+proc data_pins {registers} {
+    set names {}
+    foreach_in_collection r $registers { lappend names "[get_register_info -name $r]|d" }
+    if {[llength $names] == 0} { return [get_pins -nowarn {cadr_no_such_pin}] }
+    return [get_pins -nowarn $names]
+}
+
+proc said {hist} {
+    set words {}
+    foreach k [lsort -real [dict keys $hist]] { lappend words "[dict get $hist $k] at $k ns" }
+    return [join $words ", "]
+}
+
+# THE RELAXED SET REACHED THE DESIGN: some endpoint's worst setup path asks
+# for `cycles` ticks.  A set that matched nothing leaves every path at one
+# tick, and that is the unconstrained design reported as if it were this one.
+proc assert_multicycle_applied {period cycles} {
+    global failures
+    set want [format %.3f [expr {$period * $cycles}]]
+    set hist [requirements [get_keepers -nowarn *]]
+    set n [expr {[dict exists $hist $want] ? [dict get $hist $want] : 0}]
+    if {$n == 0} {
+        puts "sta: FAIL: no endpoint asks for $want ns, so the relaxed set reached nothing; endpoints: [said $hist]"
+        incr failures
+    } else {
+        puts "sta: $n endpoints ask for $want ns: the machine's relaxed set reached the design"
+    }
+    return $n
+}
+
+# NOTHING OUTSIDE THE MACHINE IS RELAXED: every register outside `u_machine`
+# is timed at no more than a tick and a half.
+proc assert_constraints_scoped {period} {
+    global failures
+    set outside [remove_from_collection [get_registers -nowarn *] [get_registers -nowarn {u_machine|*}]]
+    set caught 0
+    dict for {req n} [requirements [data_pins $outside]] {
+        if {$req > 1.5 * $period} { incr caught $n }
+    }
+    if {$caught > 0} {
+        puts "sta: FAIL: $caught registers outside the machine carry a relaxed requirement"
+        incr failures
+    } else {
+        puts "sta: no register outside the machine is relaxed ([get_collection_size $outside] registers asked)"
+    }
+}
+
+# THE SPLIT OF ONE INSTANCE TOOK: of the registers under `instance`, those
+# whose leaf is one of `relaxed` must carry `cycles` ticks on at least one
+# path, and no other may, except those whose leaf is one of `elsewhere`,
+# which another clause relaxes to the same count and are left out of both.
+proc assert_instance_timing {period cycles instance relaxed {elsewhere {}}} {
+    global failures
+    set want [format %.3f [expr {$period * $cycles}]]
+    set all [get_registers -nowarn "${instance}|*"]
+    if {[get_collection_size $all] == 0} {
+        puts "sta: FAIL: no register matched ${instance}|*, so the clause naming it is empty"
+        incr failures
+        return
+    }
+    set named [get_registers -nowarn [cadr_leaves "${instance}|" $relaxed]]
+    set rest [remove_from_collection $all $named]
+    set n_other 0
+    if {[llength $elsewhere] > 0} {
+        set other [get_registers -nowarn [cadr_leaves "${instance}|" $elsewhere]]
+        set n_other [get_collection_size $other]
+        set rest [remove_from_collection $rest $other]
+    }
+    set kept [requirements [data_pins $named]]
+    set swallowed [requirements [data_pins $rest]]
+    set n_kept [expr {[dict exists $kept $want] ? [dict get $kept $want] : 0}]
+    set n_swallowed [expr {[dict exists $swallowed $want] ? [dict get $swallowed $want] : 0}]
+    puts "sta: $instance: [get_collection_size $all] registers, [get_collection_size $named] meant relaxed,\
+          [get_collection_size $rest] meant at the tick, $n_other relaxed by another clause"
+    if {$n_swallowed > 0} {
+        puts "sta: FAIL: $n_swallowed registers of $instance that must be timed at the tick ask for $want ns"
+        incr failures
+    } elseif {$n_kept == 0} {
+        puts "sta: FAIL: no register $relaxed of $instance asks for $want ns, so the clause reached nothing"
+        incr failures
+    } else {
+        puts "sta: $instance: $n_kept capture registers at $want ns and none of the others: the split took"
+    }
+}
+
+# The same leaf patterns `cadr_de25.sdc` names registers by.
+if {[llength [info procs cadr_leaves]] == 0} {
+    proc cadr_leaves {prefix names} {
+        set patterns {}
+        foreach name $names { lappend patterns "${prefix}${name}" "${prefix}${name}\[*\]" }
+        return $patterns
+    }
+}
+
+# THE THREE COLLECTIONS THEMSELVES, as `cadr_de25.sdc` left them.  An empty
+# one is a clause that reached nothing, whatever the paths below then say.
+foreach {what var} {{the relaxed set} slow {its tick-rate exclusions} fast
+                    {the held decodes put back} held {the display's word pins} bus_word
+                    {the Unibus map's word pins} ub_strobe} {
+    if {![info exists ::$var]} {
+        puts "sta: FAIL: cadr_de25.sdc left no collection named $var"
+        incr failures
+        continue
+    }
+    set n [get_collection_size [set ::$var]]
+    puts "sta: $what: $n"
+    if {$n == 0 && $var ne "bus_word"} {
+        puts "sta: FAIL: $what is empty"
+        incr failures
+    }
+}
+assert_constraints_scoped $tick
+# At a 10 ns grid this count is shared: the bus's setup below is eight ticks
+# too, so a relaxed set that reached nothing would still find the display's
+# eight here.  The instance assertions are the sharp half.
+# grid: 75 ns (shared with 80 ns)
+assert_multicycle_applied $tick 8
+# The display board's word, relaxed at its `d` pins only.  Its three held
+# decodes are in the relaxed set, at the same eight ticks, and are left out of
+# both halves.
+# grid: 80 ns
+assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb which}
+# The bus interface's register block: the Unibus map and its write buffer at
+# the register strobe.
+# grid: 150 ns
+assert_instance_timing $tick 15 u_machine|memory|busint_regs {wr_buf ub_map}
+# The transaction audit has no register on a board with no console to read
+# it, and `cadr_machine.xdc`'s clause for it is then empty by construction, as
+# the Zynq flow says of its own memory-off board.
+if {[get_collection_size [get_registers -nowarn {u_machine|audit|*}]] == 0} {
+    puts "sta: the audit has no registers on a board with no console to read it, so its split is not asked about"
+}
+
+# ------------------------------------------------------------ the corners
+set worst_setup ""
+set worst_hold ""
+foreach cond [get_available_operating_conditions] {
+    set_operating_conditions $cond
+    update_timing_netlist
+    set s [report_timing -setup -npaths 1 -detail full_path -file timing_setup_$cond.txt]
+    set h [report_timing -hold  -npaths 1 -detail full_path -file timing_hold_$cond.txt]
+    set s_slack [lindex $s 1]
+    set h_slack [lindex $h 1]
+    puts "sta: $cond: setup [format %+.3f $s_slack] ns, hold [format %+.3f $h_slack] ns"
+    puts $out "corner $cond setup $s_slack hold $h_slack"
+    if {$worst_setup eq "" || $s_slack < $worst_setup} { set worst_setup $s_slack }
+    if {$worst_hold  eq "" || $h_slack < $worst_hold}  { set worst_hold  $h_slack }
+}
+puts "sta: worst setup [format %+.3f $worst_setup] ns, worst hold [format %+.3f $worst_hold] ns, over every corner"
+puts $out "worst setup $worst_setup hold $worst_hold"
+
+set met [expr {$worst_setup >= 0 && $worst_hold >= 0}]
+if {!$met} {
+    puts "sta: TIMING IS NOT MET.  The bitstream will still be written, and"
+    puts "sta: program.sh will refuse it."
+}
+if {$failures > 0} {
+    puts $out "verdict refused"
+} elseif {$met} {
+    puts $out "verdict met"
+} else {
+    puts $out "verdict failed"
+}
+close $out
+
+delete_timing_netlist
+project_close
+exit [expr {$failures > 0 ? 1 : 0}]
