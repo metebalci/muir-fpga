@@ -141,7 +141,7 @@ set tick [cadr_tick_ns]
 #
 #     PROBE_DEPTH=1024 OUTDIR=build/probe vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
 #
-# puts `rtl/plumbing/xilinx7/cadr_probe.sv` in the design: one sample a microcycle of the
+# puts `rtl/plumbing/cadr_probe.sv` in the design: one sample a microcycle of the
 # columns `build/rtl.golden` carries, in block RAM, shifted out over JTAG by
 # `boards/arty-z7-20/vivado/probe.tcl`. Zero, the default, is the machine and nothing else ---
 # the same LUTs, the same registers, the same 28 block RAM tiles --- so every
@@ -263,8 +263,18 @@ if {![file exists $sync_prom]} {
 # happened once, and the answer then was to name what did not belong. If it
 # happens again, name it again --- one line that rots loudly is better than a
 # list that rots quietly.
+#
+# **AND ANOTHER FAMILY'S PLUMBING IS NOT READ AT ALL.**  Vendor-specific RTL
+# lives under `rtl/plumbing/<family>/`, and this part's family is `xilinx7`.
+# A directory beside it holds another vendor's primitives and IP, which
+# Vivado does not have, so everything under `rtl/plumbing/` one level down is
+# skipped unless it is under `xilinx7/`.  The Quartus flow refuses
+# `rtl/plumbing/xilinx7/` the same way.
 set sources {}
 foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv] {
+    if {[regexp {^rtl/plumbing/([^/]+)/} $f -> family] && $family ne "xilinx7"} {
+        continue
+    }
     lappend sources $f
 }
 read_verilog -sv $sources

@@ -19,7 +19,7 @@
 # WHAT `tb/cadr_jtag_chain.tcl` DOES NOT MODEL is written at length in its own
 # header and is the thing to read before quoting this check. In one line: it
 # is a shift chain, not a TAP and not silicon, and it cannot see a DRCK edge,
-# `BSCANE2`'s real behavior, or anything at all about `rtl/plumbing/xilinx7/cadr_probe.sv` ---
+# `BSCANE2`'s real behavior, or anything at all about `rtl/plumbing/cadr_probe.sv` ---
 # which `tb/cadr_probe_tb.cpp` holds instead, in Verilator, against muir.
 #
 # WHY IT IS IN `tb/`.  Both `boards/arty-z7-20/vivado/fit.tcl` and `boards/arty-z7-20/vivado/bitstream.tcl` read
@@ -193,7 +193,7 @@ if {[lindex $argv 0] eq "--case"} {
 # ------------------------------------------------------- what `good` exported
 #
 # THE FIELD TABLE IS NOT COPIED HERE, AND THAT IS THE POINT. There are already
-# three descriptions of the probe's 421-bit payload --- `rtl/plumbing/xilinx7/cadr_probe.sv`,
+# three descriptions of the probe's 421-bit payload --- `rtl/plumbing/cadr_probe.sv`,
 # `tb/cadr_probe_tb.cpp` and `boards/arty-z7-20/vivado/probe.tcl` --- and a fourth would be one
 # more thing to keep in step and one more way to be wrong in agreement.
 #

@@ -53,7 +53,7 @@ TICKPKG := rtl/machine/cadr_tick_pkg.sv
 .DELETE_ON_ERROR:
 
 .PHONY: check cables ps7 ps7-cora ps7-init ps7-init-cora current mutants \
-        mutants-selftest probe-selftest de25 de25-program \
+        mutants-selftest probe-selftest de25 de25-program de25-probe \
         disk-golden disk-boot-golden iob-golden busint-regs-golden muir-pin clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
@@ -91,7 +91,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
-       $(BUILD)/de25_pins.pass $(BUILD)/de25.pass \
+       $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_jtag.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -615,6 +615,11 @@ BOARD_STUBS := tb/cadr_arty_stubs.sv tb/cadr_usr_access_stub.sv
 # lists above are: `:=` is expanded where it is read.
 DE25_TOP := boards/de25-nano/cadr_de25.sv rtl/plumbing/cadr_lamp_clock.sv \
             rtl/plumbing/cadr_lamp_microcycle.sv rtl/plumbing/cadr_lamp_errhalt.sv
+
+# And the probe on that board: the capture every board shares, and the node
+# that puts it behind Altera's Virtual JTAG.  In the lint always, and in the
+# Quartus flow only when `PROBE_DEPTH` asks for it.
+DE25_PROBE := rtl/plumbing/cadr_probe.sv rtl/plumbing/agilex5/cadr_probe_vjtag.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
@@ -1362,7 +1367,7 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp tb/cadr_tick.h
 #
 # THREE TIMES, BECAUSE THERE ARE THREE BOARDS. `PROBE_DEPTH` and `DDR` are
 # both zero by default and the generate blocks that instantiate
-# `rtl/plumbing/xilinx7/cadr_probe.sv`, `boards/arty-z7-20/cadr_ps7.sv` and `rtl/plumbing/cadr_axi_master.sv` are then
+# `rtl/plumbing/cadr_probe.sv`, `boards/arty-z7-20/cadr_ps7.sv` and `rtl/plumbing/cadr_axi_master.sv` are then
 # not elaborated at all --- so a lint of the default says nothing whatever
 # about the configurations `boards/arty-z7-20/vivado/probe.tcl` and `DDR=1` build and program.
 # A branch only one build reaches is a branch only one build checks.
@@ -1385,7 +1390,7 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp tb/cadr_tick.h
 # writing a word, and the fabric reading one back and writing it out again at
 # a second address. They are a branch only those builds reach, and nothing
 # else elaborates `cadr_prove.sv` at all.
-$(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilinx7/cadr_probe.sv \
+$(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_probe.sv \
                     boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
                     rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
@@ -1404,7 +1409,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
 	    --top-module cadr_arty $(BOARD_STUBS) $(MACHINE) \
-	    boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilinx7/cadr_probe.sv $(DBGPMOD)
+	    boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_probe.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
@@ -1510,7 +1515,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 # every one of the PS7's 620 pins are the same on both parts.  A second set of
 # stubs would be a second description of one hard block, and `tb/` is not a
 # board's directory.
-$(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xilinx7/cadr_probe.sv \
+$(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr_probe.sv \
                     boards/cora-z7-07s/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
                     rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
@@ -1529,7 +1534,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
 	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE) \
-	    boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xilinx7/cadr_probe.sv \
+	    boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr_probe.sv \
 	    rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -1586,35 +1591,77 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 # that every output of `cadr_machine` reaches the instance and the fold, and
 # that nothing in the top level is left undriven or unread.
 #
-# ONE BOARD, NOT FIVE.  The top level has no configuration parameter: there
-# is no memory, no probe, no processing system and no display on this board
-# yet, so there is no generate arm a default lint would leave unelaborated.
+# TWO BOARDS, THE PLAIN ONE AND THE PROBE'S.  `PROBE_DEPTH` is the top
+# level's one configuration parameter, and a lint of the default leaves its
+# generate arm unelaborated, so the second pass is the only thing short of
+# Quartus that reads the probe's wiring.  There is no memory, no processing
+# system and no display on this board yet.
 #
 # **ITS STUBS ARE ITS OWN**, `tb/cadr_de25_stubs.sv`, and in `tb/` for the
 # reason `tb/cadr_arty_stubs.sv` gives.  The Quartus flow is `make de25`,
 # outside `check`, because it needs Quartus and about eight minutes.
-$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) tb/cadr_de25_stubs.sv | $(BUILD)
+$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) tb/cadr_de25_stubs.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    -GPROBE_DEPTH=1024 \
+	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
+	    $(DE25_PROBE)
 	@touch $@
 
 # THE DE25-NANO'S BITSTREAM, which needs Quartus Prime Pro and is not part of
 # `check`.  `boards/de25-nano/quartus/build.sh` says where Quartus is found
 # and what each step refuses; everything it writes is under `build/de25/`.
-de25: $(MACHINE) $(DE25_TOP) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
-	boards/de25-nano/quartus/build.sh $(MACHINE) $(DE25_TOP)
+# `PROBE_DEPTH=1024` builds the instrumented board into `build/de25-probe/`.
+PROBE_DEPTH ?= 0
+de25: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	PROBE_DEPTH=$(PROBE_DEPTH) boards/de25-nano/quartus/build.sh $(MACHINE) $(DE25_TOP) \
+	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE))
 
 # And that bitstream loaded over JTAG, which is volatile: nothing here writes
 # the board's flash.  `boards/de25-nano/quartus/program.sh` finds the board's
 # cable by the serial in `boards/de25-nano/local.conf`.
 de25-program:
-	boards/de25-nano/quartus/program.sh
+	PROBE_DEPTH=$(PROBE_DEPTH) boards/de25-nano/quartus/program.sh
+
+# And the probe's capture read off that board and compared with muir: the
+# silicon half of what `build/probe.pass` holds in simulation.  The reader is
+# `boards/de25-nano/quartus/probe.tcl` under `quartus_stp`, which refuses a
+# part that does not hold the probe build in `build/de25-probe/`; the verdict
+# is `tools/probe_check.py`'s.  Quartus is found as `build.sh` finds it.
+DE25_QUARTUS = $${QUARTUS_ROOTDIR:-$$(sed -n 's/^[[:space:]]*QUARTUS_ROOTDIR[[:space:]]*=[[:space:]]*//p' \
+                   boards/de25-nano/local.conf 2>/dev/null | tail -n 1 | tr -d "\"'")}
+de25-probe: $(BUILD)/rtl.golden
+	"$(DE25_QUARTUS)/bin/quartus_stp" -t boards/de25-nano/quartus/probe.tcl
+	python3 tools/probe_check.py --capture $(BUILD)/de25-probe/capture.csv \
+	    --golden $(BUILD)/rtl.golden
+
+# ------------------------------------------ the DE25-Nano's JTAG scripts
+#
+# `boards/de25-nano/quartus/probe.tcl` reads the probe off the board, and
+# `usercode.tcl` reads back the build a part holds for `program.sh`; both
+# need a board and Quartus, so nothing would run them otherwise, and the
+# Zynq reader shipped with a bug nothing could have caught for that reason.
+# `tb/cadr_de25_jtag_tb.tcl` runs both against `tb/cadr_de25_jtag_model.tcl`,
+# the ten `quartus_stp` commands they use with the shapes measured on the
+# board, and asserts for each case the LINES it must print.  It also holds
+# the DE25 reader's field table to the Zynq reader's.  `tclsh`, no board.
+# What the model cannot see is in its own header.
+$(BUILD)/de25_jtag.pass: boards/de25-nano/quartus/probe.tcl \
+                         boards/de25-nano/quartus/usercode.tcl \
+                         boards/de25-nano/quartus/jtag.tcl tools/build_stamp.tcl \
+                         boards/arty-z7-20/vivado/probe.tcl \
+                         tb/cadr_de25_jtag_model.tcl tb/cadr_de25_jtag_tb.tcl | $(BUILD)
+	OUTDIR=$(BUILD)/de25_jtag $(TCLSH) tb/cadr_de25_jtag_tb.tcl
+	@touch $@
 
 # --------------------------------------------------------------- the probe
 
-# `rtl/plumbing/xilinx7/cadr_probe.sv` is what will be read off the board. It is checked the
+# `rtl/plumbing/cadr_probe.sv` is what will be read off the board. It is checked the
 # way everything else here is checked --- against muir's own trace --- and not
 # merely instantiated: `tb/cadr_probe_harness.sv` wires it to `cadr_machine`
 # exactly as `boards/arty-z7-20/cadr_arty.sv` does, and the testbench shifts all 1,024
@@ -1624,7 +1671,8 @@ de25-program:
 #
 # The harness is in `tb/` for the reason `tb/cadr_arty_stubs.sv` gives: both
 # Vivado scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`.
-PROBE_SRC := $(MACHINE) rtl/plumbing/xilinx7/cadr_probe.sv tb/cadr_probe_harness.sv
+PROBE_SRC := $(MACHINE) rtl/plumbing/cadr_probe.sv rtl/plumbing/agilex5/cadr_probe_vjtag.sv \
+             tb/cadr_probe_harness.sv
 
 $(BUILD)/obj_probe/Vcadr_probe_harness: $(PROBE_SRC) tb/cadr_probe_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_probe \

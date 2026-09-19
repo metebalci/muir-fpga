@@ -37,6 +37,11 @@
 #      much, looks exactly like one that works until a path is asked what it
 #      is required to do.
 #
+#   And when the probe is built, THE PROBE'S TWO CLAUSES, from
+#      `cadr_probe.sdc`: the JTAG clock exists at its bound and nothing is
+#      timed between it and the machine's clock, and of the probe's
+#      registers `stable_q` carries the microcycle and no other does.
+#
 #   4. EVERY CORNER, SETUP AND HOLD.  Each operating condition the part has is
 #      analyzed and its worst slack printed.  A negative one is reported as a
 #      failure and written to `timing.txt`, and the bitstream is still
@@ -163,19 +168,32 @@ proc assert_multicycle_applied {period cycles} {
 }
 
 # NOTHING OUTSIDE THE MACHINE IS RELAXED: every register outside `u_machine`
-# is timed at no more than a tick and a half.
-proc assert_constraints_scoped {period} {
+# is timed at no more than a period and a half of the clock that latches it.
+# The latching clock's own period and not the tick, because the probe's JTAG
+# side is clocked by TCK, whose 30 ns is a clock and not an exception.
+# `exempt` is registers another clause relaxes on purpose and asserts itself.
+proc assert_constraints_scoped {exempt} {
     global failures
     set outside [remove_from_collection [get_registers -nowarn *] [get_registers -nowarn {u_machine|*}]]
+    # An empty collection is not one `remove_from_collection` takes, and the
+    # plain build's exemption is empty.
+    if {[get_collection_size $exempt] > 0} {
+        set outside [remove_from_collection $outside $exempt]
+    }
     set caught 0
-    dict for {req n} [requirements [data_pins $outside]] {
-        if {$req > 1.5 * $period} { incr caught $n }
+    set targets [data_pins $outside]
+    if {[get_collection_size $targets] > 0} {
+        foreach_in_collection path [get_timing_paths -setup -to $targets -npaths 200000 -nworst 1] {
+            set period [get_clock_info -period [get_path_info -to_clock $path]]
+            if {[get_path_info -clock_relationship $path] > 1.5 * $period} { incr caught }
+        }
     }
     if {$caught > 0} {
         puts "sta: FAIL: $caught registers outside the machine carry a relaxed requirement"
         incr failures
     } else {
-        puts "sta: no register outside the machine is relaxed ([get_collection_size $outside] registers asked)"
+        puts "sta: no register outside the machine is relaxed ([get_collection_size $outside] registers asked,\
+              [get_collection_size $exempt] exempt by the probe's own clause)"
     }
 }
 
@@ -243,7 +261,49 @@ foreach {what var} {{the relaxed set} slow {its tick-rate exclusions} fast
         incr failures
     }
 }
-assert_constraints_scoped $tick
+# THE PROBE, WHEN IT IS BUILT.  Its registers are under `g_probe.u_probe`.
+set probe [get_registers -nowarn {g_probe.u_probe|*}]
+set probe_stable [get_registers -nowarn {g_probe.u_probe|stable_q[*]}]
+if {[get_collection_size $probe] == 0} {
+    puts "sta: the probe is not in this build"
+} else {
+    # The JTAG clock `cadr_probe.sdc` declares, at the bound it gives.
+    set tck [get_clocks -nowarn {altera_reserved_tck}]
+    if {[get_collection_size $tck] != 1} {
+        puts "sta: FAIL: the probe is built and there is no clock altera_reserved_tck"
+        incr failures
+    } elseif {[format %.3f [get_clock_info -period $tck]] ne "30.000"} {
+        puts "sta: FAIL: altera_reserved_tck is [get_clock_info -period $tck] ns, and cadr_probe.sdc says 30"
+        incr failures
+    } else {
+        puts "sta: the probe's JTAG clock is altera_reserved_tck, 30.000 ns"
+    }
+    # AND NOTHING IS TIMED BETWEEN IT AND THE MACHINE'S CLOCK, although the
+    # probe crosses between them: its read pointer's first synchronizer
+    # stage is a register of the machine's clock fed from TCK's.  A crossing
+    # that exists and is timed as if the two clocks were related is what the
+    # asynchronous group is for, and a group that reached nothing leaves it.
+    set crossing [get_registers -nowarn {g_probe.u_probe|rd_addr_s1[*]}]
+    if {[get_collection_size $crossing] == 0} {
+        puts "sta: FAIL: the probe has no rd_addr_s1, so there is no crossing to ask about"
+        incr failures
+    } elseif {[llength $machine_clocks] == 2} {
+        set mclk [get_clocks [lindex $machine_clocks 0]]
+        set there [get_collection_size [get_timing_paths -setup -from_clock $tck -to_clock $mclk -npaths 10]]
+        set back  [get_collection_size [get_timing_paths -setup -from_clock $mclk -to_clock $tck -npaths 10]]
+        if {$there + $back > 0} {
+            puts "sta: FAIL: $there paths from TCK to the machine's clock and $back back are timed"
+            incr failures
+        } else {
+            puts "sta: the probe crosses between TCK and the machine's clock, and no path between them is timed"
+        }
+    }
+    # The split `cadr_probe.sv` makes: `stable_q` at the microcycle, and
+    # every other register of the probe at its clock's own period.
+    # grid: 75 ns
+    assert_instance_timing $tick 8 g_probe.u_probe {stable_q}
+}
+assert_constraints_scoped $probe_stable
 # At a 10 ns grid this count is shared: the bus's setup below is eight ticks
 # too, so a relaxed set that reached nothing would still find the display's
 # eight here.  The instance assertions are the sharp half.

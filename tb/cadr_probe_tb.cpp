@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Drives rtl/plumbing/xilinx7/cadr_probe.sv --- the in-fabric probe the board will be read
+// Drives rtl/plumbing/cadr_probe.sv --- the in-fabric probe the board will be read
 // through --- and asks it the two questions nothing else can.
 //
 // **DOES SAMPLE j HOLD ROW j?**  The probe is wired to `cadr_machine`
@@ -38,6 +38,19 @@
 // taken from `$XILINX_VIVADO/data/verilog/src/unisims/BSCANE2.v`.  A probe
 // whose readout is wrong is a probe that says nothing, and the
 // board is the one place that cannot be debugged by looking.
+//
+// **AND THE SAME WINDOW OVER THE ALTERA PATH.**  A second probe on the same
+// machine sits behind `rtl/plumbing/agilex5/cadr_probe_vjtag.sv`, as on the
+// DE25-Nano, and is read the way Altera's Virtual JTAG IP Core User Guide
+// (683705) describes a node being driven: TCK running in every state, the
+// node's virtual Capture-DR and Shift-DR as the only states it acts in, and
+// its one-bit virtual instruction choosing the sample register or a bypass
+// bit.  Before a sample is read the bypass must return a pattern one bit late
+// behind a captured 0, and the instruction the node holds must read back as
+// the one shifted in, which are the two things
+// `boards/de25-nano/quartus/probe.tcl` asks of the board.  Then all 1,024
+// samples must agree with the trace as the first probe's did.  The model of
+// the hub is the guide's words and not silicon; the board is the check on it.
 
 #include <cstdint>
 #include <cstdio>
@@ -51,7 +64,7 @@
 
 namespace {
 
-// The layout, most significant field first, as `rtl/plumbing/xilinx7/cadr_probe.sv`
+// The layout, most significant field first, as `rtl/plumbing/cadr_probe.sv`
 // concatenates it.  Held here as a table rather than as offsets, so that this
 // program and `boards/arty-z7-20/vivado/probe.tcl` are two readings of one list and not two
 // lists.
@@ -150,6 +163,69 @@ Sample scan(bool synth) {
   return s;
 }
 
+// ---------------------------------------------- the Altera path, the hub's side
+//
+// One rising edge of TCK with the node's two virtual states as given.  The
+// hub's state signals are its FSM's registered state, standing across the
+// edge the state acts on, so they are set with TCK low and the edge follows.
+void vj_edge(bool cdr, bool sdr) {
+  dut->vj_cdr = cdr;
+  dut->vj_sdr = sdr;
+  dut->vj_tck = 0;
+  dut->eval();
+  dut->vj_tck = 1;
+  dut->eval();
+}
+
+// TCK in the states where the node must do nothing: Run-Test/Idle, the
+// Select, Exit, Update and Pause states, and all of an IR scan.
+void vj_idle(int edges) {
+  for (int i = 0; i < edges; ++i) vj_edge(false, false);
+}
+
+// A virtual IR scan: the hub captures `ir_out`, shifts, and at Update-IR the
+// node's instruction becomes `value`.  Returns what was captured.
+int vj_vir(int value) {
+  for (int i = 0; i < 8; ++i) tick();
+  vj_idle(3);
+  const int captured = dut->vj_ir_out;
+  vj_idle(12);
+  dut->vj_ir_in = value;
+  vj_idle(3);
+  return captured;
+}
+
+// A virtual DR scan with `tdi` shifted in, first bit first, returning what
+// came out, first bit out first.  Idle, Select-DR, Capture-DR, one edge a bit
+// of Shift-DR, Exit1-DR, Update-DR, Idle: TCK runs through all of them, and
+// TDO is read before each shifting edge.
+std::vector<uint8_t> vj_vdr(const std::vector<uint8_t> &tdi) {
+  for (int i = 0; i < 8; ++i) tick();
+  vj_idle(2);
+  vj_edge(true, false);
+  std::vector<uint8_t> out(tdi.size(), 0);
+  for (size_t i = 0; i < tdi.size(); ++i) {
+    dut->vj_tdi = tdi[i];
+    dut->vj_cdr = 0;
+    dut->vj_sdr = 1;
+    dut->vj_tck = 0;
+    dut->eval();
+    out[i] = dut->vj_tdo;
+    dut->vj_tck = 1;
+    dut->eval();
+  }
+  dut->vj_tdi = 0;
+  vj_idle(4);
+  return out;
+}
+
+Sample scan_alt() {
+  std::vector<uint8_t> out = vj_vdr(std::vector<uint8_t>(kSampleWidth, 0));
+  Sample s;
+  for (int i = 0; i < kSampleWidth; ++i) s.bit[i] = out[i];
+  return s;
+}
+
 // ---------------------------------------------------------- the reference
 
 struct Golden {
@@ -214,6 +290,11 @@ int main(int argc, char **argv) {
   dut->real_sel = 0;
   dut->synth_sel = 0;
   dut->s_qualify = 0;
+  dut->vj_tck = 0;
+  dut->vj_tdi = 0;
+  dut->vj_ir_in = 0;
+  dut->vj_cdr = 0;
+  dut->vj_sdr = 0;
 
   // ------------------------------------------------- the run, and the gaps
   //
@@ -311,8 +392,41 @@ int main(int argc, char **argv) {
 
   long compared = 0;
   std::vector<long> distinct_lo(kNFields, 0);
+  // THE ONE COMPARISON, FOR BOTH PATHS: the Zynq boards' `BSCANE2` first,
+  // then the Altera node, each of the 1,024 samples against its row.
+  for (int path_i = 0; path_i < 2; ++path_i) {
+  const bool alt = path_i == 1;
+  if (alt) {
+    // The node's instruction comes up 0, the bypass bit.  A 16-bit pattern
+    // through it must come back one bit late behind the captured 0, and the
+    // instruction it holds must read back as the one shifted in.
+    if (vj_vir(0) != 0) {
+      std::fprintf(stderr, "FAIL: the node's instruction did not come up 0\n");
+      return 1;
+    }
+    const uint32_t pattern = 0xa53c;
+    std::vector<uint8_t> in(16);
+    for (int i = 0; i < 16; ++i) in[i] = (pattern >> i) & 1;
+    std::vector<uint8_t> out = vj_vdr(in);
+    uint32_t back = 0;
+    for (int i = 0; i < 16; ++i) back |= static_cast<uint32_t>(out[i]) << i;
+    if (back != ((pattern << 1) & 0xffff)) {
+      std::fprintf(stderr,
+                   "FAIL: the bypass returned %04x for %04x, wanting %04x: one "
+                   "bit of delay behind a captured 0\n",
+                   back, pattern, (pattern << 1) & 0xffff);
+      return 1;
+    }
+    const int first = vj_vir(1);
+    const int second = vj_vir(1);
+    if (first != 0 || second != 1) {
+      std::fprintf(stderr, "FAIL: the node's instruction reads back %d and %d "
+                           "after 0 and 1 were shifted in\n", first, second);
+      return 1;
+    }
+  }
   for (int j = 0; j < kRealDepth; ++j) {
-    Sample s = scan(false);
+    Sample s = alt ? scan_alt() : scan(false);
     if (!s.bit[kSampleWidth - 1]) {
       std::fprintf(stderr,
                    "FAIL: sample %d has its valid bit clear; the capture did "
@@ -356,9 +470,11 @@ int main(int argc, char **argv) {
     if (bad >= 20) break;
   }
   if (bad) {
-    std::fprintf(stderr, "FAIL: %d mismatches in %ld comparisons\n", bad,
-                 compared);
+    std::fprintf(stderr, "FAIL: %d mismatches in %ld comparisons, reading %s\n",
+                 bad, compared,
+                 alt ? "through the Altera node" : "through the BSCANE2");
     return 1;
+  }
   }
 
   // ------------------------------------------------ the synthetic capture
@@ -417,6 +533,9 @@ int main(int argc, char **argv) {
   std::printf("    %d columns compared, %ld comparisons, and the sample's own "
               "cycle counts 0 to %d\n",
               kNFields, compared, kRealDepth - 1);
+  std::printf("    read twice: through the Zynq boards' BSCANE2, and through "
+              "the Altera node with TCK in every state,\n"
+              "    its bypass one bit late and its instruction read back\n");
   std::printf("    columns that are non-zero somewhere in the window:");
   for (int i = 0; i < kNFields; ++i)
     if (distinct_lo[i]) std::printf(" %s", kFields[i].name);

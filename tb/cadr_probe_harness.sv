@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The two things `tb/cadr_probe_tb.cpp` has to ask `rtl/plumbing/xilinx7/cadr_probe.sv`,
+// The two things `tb/cadr_probe_tb.cpp` has to ask `rtl/plumbing/cadr_probe.sv`,
 // under one top so that Verilator can build them together.
 //
 // **`u_real` is the probe wired to the machine exactly as `cadr_arty.sv`
@@ -12,6 +12,12 @@
 // memory cycle is at microcycle 535,791, so the first thousand microcycles
 // need no stimulus at all: no bus, no stall, no device. That is why this
 // harness drives nothing.
+//
+// **`u_alt` is the probe wired as `boards/de25-nano/cadr_de25.sv` wires it**,
+// behind `rtl/plumbing/agilex5/cadr_probe_vjtag.sv`, the node that stands
+// between an Altera part's Virtual JTAG and the probe.  The testbench reads it
+// with TCK running in every TAP state, as the Virtual JTAG's TCK does and a
+// `BSCANE2`'s DRCK does not, and holds its samples to the same trace.
 //
 // **`u_synth` is the same core with the testbench in place of the machine**,
 // and it exists for the one property the window above cannot reach. A stall
@@ -68,7 +74,18 @@ module cadr_probe_harness #(
     input  var logic real_sel,
     input  var logic synth_sel,
     output var logic real_tdo,
-    output var logic synth_tdo
+    output var logic synth_tdo,
+
+    // The Virtual JTAG IP's side of the Altera path: what the IP gives the
+    // node, driven by the testbench as the SLD hub would drive it, and what
+    // the node gives back.
+    input  var logic vj_tck,
+    input  var logic vj_tdi,
+    input  var logic vj_ir_in,
+    input  var logic vj_cdr,
+    input  var logic vj_sdr,
+    output var logic vj_tdo,
+    output var logic vj_ir_out
 );
 
   logic [13:0] pc, lpc, opc;
@@ -215,6 +232,31 @@ module cadr_probe_harness #(
       .jtag_drck(jtag_drck), .jtag_sel(real_sel),
       .jtag_shift(jtag_shift), .jtag_capture(jtag_capture),
       .jtag_tdi(jtag_tdi), .jtag_tdo(real_tdo)
+  );
+
+  // WIRED AS `boards/de25-nano/cadr_de25.sv` WIRES IT, the machine side as
+  // above and the JTAG side through the node.
+  logic alt_drck, alt_sel, alt_shift, alt_capture, alt_tdi, alt_tdo;
+  cadr_probe_vjtag u_node (
+      .tck(vj_tck), .tdi(vj_tdi), .ir_in(vj_ir_in),
+      .virtual_state_cdr(vj_cdr), .virtual_state_sdr(vj_sdr),
+      .tdo(vj_tdo), .ir_out(vj_ir_out),
+      .jtag_drck(alt_drck), .jtag_sel(alt_sel),
+      .jtag_shift(alt_shift), .jtag_capture(alt_capture),
+      .jtag_tdi(alt_tdi), .jtag_tdo(alt_tdo)
+  );
+  cadr_probe #(
+      .DEPTH(REAL_DEPTH)
+  ) u_alt (
+      .clk(clk), .rst(rst), .qualify(clock_edge),
+      .pc(pc), .ir(ir), .q(q), .a(a), .m(m), .alu(alu), .r(r), .ob(ob),
+      .dc(dc), .opc(opc), .st(st), .lc(lc),
+      .iwrited(iwrited), .nop(nop), .n_vmaok(!vmaok), .jcond(jcond),
+      .pcs1(pcs1), .pcs0(pcs0),
+      .lpc(lpc), .md(md), .vma(vma), .promdis(promdisable),
+      .jtag_drck(alt_drck), .jtag_sel(alt_sel),
+      .jtag_shift(alt_shift), .jtag_capture(alt_capture),
+      .jtag_tdi(alt_tdi), .jtag_tdo(alt_tdo)
   );
 
   cadr_probe #(

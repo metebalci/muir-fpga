@@ -37,7 +37,7 @@
 # One path is still one path; a list of one behaves exactly as it always did.
 #
 # IT BECAME A LIST WHEN THE PROBE ARRIVED, and the alternative would have
-# been worse. `rtl/plumbing/xilinx7/cadr_probe.sv` holds the machine's *combinational*
+# been worse. `rtl/plumbing/cadr_probe.sv` holds the machine's *combinational*
 # outputs --- the A and M buses, the ALU, the sequencing flags --- for a tick,
 # and those settle inside a microcycle and not inside one tick: the first
 # instrumented board came out at -13.156 ns on 2,400 endpoints because of it.

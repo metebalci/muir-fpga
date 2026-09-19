@@ -8,8 +8,10 @@
 #     quartus_sh -t boards/de25-nano/quartus/project.tcl <build dir> <userid> <source>...
 #
 # from the repository's root.  The sources are the Makefile's `$(MACHINE)` and
-# `$(DE25_TOP)`, in that order, so that the list of what the board is built
-# from is written once, beside the lint that reads the same list.
+# `$(DE25_TOP)`, in that order, and `$(DE25_PROBE)` after them when the probe
+# is built, so that the list of what the board is built from is written once,
+# beside the lint that reads the same list.  `PROBE_DEPTH` in the environment
+# is the probe's depth, and zero or none is the plain board.
 #
 # **NOTHING HERE IS TAKEN FROM A GUI-SAVED PROJECT.**  A `.qsf` saved by the
 # tool carries dates, versions and every default it happened to write, and
@@ -24,6 +26,11 @@ if {[llength $argv] < 3} {
     exit 1
 }
 set build   [file normalize [lindex $argv 0]]
+set probe_depth [expr {[info exists ::env(PROBE_DEPTH)] ? $::env(PROBE_DEPTH) : 0}]
+if {![string is integer -strict $probe_depth] || $probe_depth < 0} {
+    puts "project: PROBE_DEPTH is '$probe_depth', which is not a depth"
+    exit 1
+}
 set userid  [lindex $argv 1]
 set sources [lrange $argv 2 end]
 set root    [pwd]
@@ -79,6 +86,18 @@ foreach f $sources {
 set_global_assignment -name IP_FILE [file join $build ip cadr_de25_pll.ip]
 set_global_assignment -name IP_FILE [file join $build ip cadr_de25_reset_release.ip]
 set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_de25.sdc]
+
+# **THE PROBE, AND ITS OWN CONSTRAINTS, ONLY WHEN IT IS BUILT.**  The Virtual
+# JTAG IP deployed by `build.sh`, the depth as the top level's parameter, and
+# `cadr_probe.sdc`, which declares the JTAG clock and relaxes one register of
+# the probe.  That file is read only here for the reason the Zynq flows read
+# theirs only behind `PROBE_DEPTH`: a constraint on something that is not in
+# the design is a warning that reads like a constraint that applied.
+if {$probe_depth > 0} {
+    set_global_assignment -name IP_FILE [file join $build ip cadr_de25_vjtag.ip]
+    set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_probe.sdc]
+    set_parameter -name PROBE_DEPTH $probe_depth
+}
 
 # ------------------------------------------- the three asynchronous memories
 #
@@ -199,4 +218,8 @@ if {$placed != 15 || $standardized != 15} {
 puts "project: 15 of the pin file's [expr {[llength $locations] / 2}] ports are this top level's"
 
 project_close
-puts "project: written to $build/cadr_de25.qsf with USERCODE $userid"
+if {$probe_depth > 0} {
+    puts "project: written to $build/cadr_de25.qsf with USERCODE $userid and a probe of $probe_depth samples"
+} else {
+    puts "project: written to $build/cadr_de25.qsf with USERCODE $userid"
+}

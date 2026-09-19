@@ -17,7 +17,7 @@
 # like a network fault.
 #
 # NOTHING HAS TO BE ARMED AND NOBODY HAS TO BE AT THE BOARD.  The probe's
-# trigger is reset: `rtl/plumbing/xilinx7/cadr_probe.sv` fills from the first microcycle
+# trigger is reset: `rtl/plumbing/cadr_probe.sv` fills from the first microcycle
 # after it and then freezes, so by the time a bitstream has been programmed
 # and a readout arranged, the window --- the first microcycles the machine
 # ever ran --- has long since been taken and cannot be overwritten. Pressing
@@ -85,7 +85,7 @@ file mkdir $outdir
 
 # ---------------------------------------------------------------- the layout
 #
-# THE SAME LIST `rtl/plumbing/xilinx7/cadr_probe.sv` CONCATENATES, in the same order, most
+# THE SAME LIST `rtl/plumbing/cadr_probe.sv` CONCATENATES, in the same order, most
 # significant field first --- and the same list `tb/cadr_probe_tb.cpp`
 # holds. Three readings of one order is two too many, and the only thing that
 # keeps them together is that a disagreement shows up as a capture that
@@ -105,7 +105,7 @@ foreach {name w} $fields { incr data_width $w }
 if {$data_width != 421} {
     puts "PROBE: FAILED --- the field table adds to $data_width bits and the"
     puts "PROBE: probe is 421. One of the three copies of this list has"
-    puts "PROBE: moved; rtl/plumbing/xilinx7/cadr_probe.sv is the one that decides."
+    puts "PROBE: moved; rtl/plumbing/cadr_probe.sv is the one that decides."
     exit 1
 }
 # valid, cycle, data --- as the probe stores it.
@@ -413,7 +413,7 @@ if {[bits $s $valid_bit 1] != 1 || [bits $s $cycle_lsb 32] >= $depth} {
         "PROBE: With the chain proved, the suspects are, in order: the" \
         "PROBE: bitstream in the part has no probe in it --- PROBE_DEPTH was" \
         "PROBE: zero; the machine has retired no microcycle; the shift" \
-        "PROBE: register in rtl/plumbing/xilinx7/cadr_probe.sv clocks the wrong edge of DRCK." \
+        "PROBE: register in rtl/plumbing/cadr_probe.sv clocks the wrong edge of DRCK." \
         "PROBE: None of those is fixable here: this script is the reader."
 }
 puts "PROBE: the first sample reads valid, at cycle [bits $s $cycle_lsb 32]"

@@ -934,7 +934,8 @@ CHECKS = {
             "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
             "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
             "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
-            "rtl/plumbing/xilinx7/cadr_probe.sv", "tb/cadr_probe_harness.sv",
+            "rtl/plumbing/cadr_probe.sv", "rtl/plumbing/agilex5/cadr_probe_vjtag.sv",
+            "tb/cadr_probe_harness.sv",
         ],
         "extra": ["rtl/machine/cadr_console_state.sv"],
         "top": "cadr_probe_harness",
@@ -967,6 +968,18 @@ CHECKS = {
         "sources": ["boards/arty-z7-20/vivado/probe.tcl",
                     "tools/jtag_target.tcl"],
         "tb": "tb/cadr_probe_jtag_tb.tcl",
+        "golden": None,
+    },
+    # The DE25-Nano's two JTAG scripts, the probe's reader and the USERCODE
+    # read-back `program.sh` runs, against `tb/cadr_de25_jtag_model.tcl`: the
+    # `quartus_stp` commands they use, with the shapes measured on the board.
+    # `jtag.tcl` is what both source; the model and the harness are the check.
+    "de25_jtag": {
+        "kind": "tcl",
+        "sources": ["boards/de25-nano/quartus/probe.tcl",
+                    "boards/de25-nano/quartus/jtag.tcl",
+                    "boards/de25-nano/quartus/usercode.tcl"],
+        "tb": "tb/cadr_de25_jtag_tb.tcl",
         "golden": None,
     },
     # The two programming scripts, against a stubbed hardware manager.
@@ -1008,9 +1021,10 @@ CHECKS = {
     # and its reset release is a primitive Quartus supplies, so neither can be
     # run.  What lint holds is the port list and the fold, as there, and the
     # few wires only this board has: the reset release reaching the PLL, KEY1
-    # reaching the fabric's reset and SW0 reaching the machine.  ONE BOARD
-    # CONFIGURATION, since the top level has no parameter that elaborates a
-    # different design, and its own stubs, which `de25_check` puts first.
+    # reaching the fabric's reset and SW0 reaching the machine.  TWO BOARD
+    # CONFIGURATIONS, the plain one and `PROBE_DEPTH=1024`, whose generate arm
+    # a lint of the default never elaborates; and its own stubs, which
+    # `de25_check` puts first.
     "de25": {
         "kind": "lint",
         "sources": ["boards/de25-nano/cadr_de25.sv"],
@@ -1026,6 +1040,9 @@ CHECKS = {
                   "rtl/machine/cadr_machine.sv",
                   "rtl/plumbing/cadr_lamp_clock.sv", "rtl/plumbing/cadr_lamp_microcycle.sv",
                   "rtl/plumbing/cadr_lamp_errhalt.sv"],
+        # The probe's board adds these, in `de25_check`'s second pass.
+        "probe": ["rtl/plumbing/cadr_probe.sv",
+                  "rtl/plumbing/agilex5/cadr_probe_vjtag.sv"],
         "top": "cadr_de25",
         "tb": None,
         "flags": [],
@@ -1952,7 +1969,7 @@ def arty_check(args, work, build_fails=False):
         ([], ["tb/cadr_arty_stubs.sv"], []),
         # The instrumented one.
         (["-GPROBE_DEPTH=1024"], ["tb/cadr_arty_stubs.sv"],
-         ["rtl/plumbing/xilinx7/cadr_probe.sv"]),
+         ["rtl/plumbing/cadr_probe.sv"]),
         # And the one with the processing system behind the memory port,
         # and the disk's pack side on the processing system's other two
         # ports.
@@ -2040,7 +2057,15 @@ def de25_check(args, work, build_fails=False):
     rc, out = run(cmd, work)
     if rc != 0:
         return lint_verdict(out, build_fails)
-    return SURVIVED, "lint passes on the one board configuration"
+    # And the probe's board, as `build/de25.pass` lints it second.  A copy
+    # from before the probe reached this board has nothing to lint there.
+    probe = spec["probe"]
+    if not all(os.path.exists(os.path.join(work, f)) for f in probe):
+        return SURVIVED, "lint passes on the one board configuration this copy has"
+    rc, out = run(cmd[:6] + ["-GPROBE_DEPTH=1024"] + cmd[6:] + probe, work)
+    if rc != 0:
+        return lint_verdict(out, build_fails)
+    return SURVIVED, "lint passes on both board configurations"
 
 
 def generator_check(args, work, spec):

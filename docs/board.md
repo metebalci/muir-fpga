@@ -1990,3 +1990,22 @@ Both console counters showed the processors running. The Cora's final disk
 sample reported 128,847 blocks served, 62,297 written back, no lost blocks
 and no failures. This establishes boot and basic network file access, not
 a full SYSTEM build on either FPGA.
+
+## The DE25-Nano against muir, 19 September 2026
+
+The DE25-Nano is reached through Quartus rather than Vivado.
+`boards/de25-nano/README.md` has its flow, and `docs/toolchain.md` has the
+commands. The board was loaded over JTAG only. Its flash was not written,
+and no switch was moved.
+
+The probe's build was loaded with `make de25-program PROBE_DEPTH=1024`. The
+part read back the previous build's stamp before the download and the new
+build's stamp after it. The JTAG server then reported the probe build's own
+hub hash. `make de25-probe` found the part holding that build. A bypass scan
+of the probe's node came back one bit late, as it should, and the node read
+back the instruction shifted into it. The reader then took the 1,024
+samples. All of them agree with `build/rtl.golden` on the cycle counter and
+the probe's 22 columns. Eight of those columns are constant in this window.
+A second readout returned the same file.
+
+The plain build was then loaded again, and the board was left running it.

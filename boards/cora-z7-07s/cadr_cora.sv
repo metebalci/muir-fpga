@@ -2168,7 +2168,7 @@ module cadr_cora #(
   //
   // One sample a microcycle of the columns `build/rtl.golden` carries, held
   // in block RAM and shifted out over JTAG, so that what the *board* computes
-  // can be diffed against what muir computes. `rtl/plumbing/xilinx7/cadr_probe.sv` is the
+  // can be diffed against what muir computes. `rtl/plumbing/cadr_probe.sv` is the
   // whole of it and its header says why it is not an ILA.
   //
   // **THE COLUMN LIST AND THE BIT LAYOUT ARE THAT FILE'S**, one port a

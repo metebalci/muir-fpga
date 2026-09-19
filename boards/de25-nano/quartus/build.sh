@@ -5,12 +5,20 @@
 # The DE25-Nano's bitstream, built by Quartus in batch from nothing.
 #
 #     make de25
+#     make de25 PROBE_DEPTH=1024
 #
 # which runs this with the Makefile's source list.  Everything it makes is
 # under `build/de25/`, which it removes first, so no file from an earlier
 # build can be mistaken for this one's.  The SRAM Object File it ends with is
 # `build/de25/output_files/cadr_de25.sof`, and `program.sh` beside this loads
 # it over JTAG.
+#
+# **`PROBE_DEPTH` BUILDS THE INSTRUMENTED BOARD INSTEAD**, as it does for the
+# Zynq boards: the machine with `rtl/plumbing/cadr_probe.sv` holding its first
+# `PROBE_DEPTH` microcycles behind Altera's Virtual JTAG, which `probe.tcl`
+# beside this reads.  That build goes to `build/de25-probe/`, so that the
+# plain bitstream survives it and a board can be given either one without a
+# second eight-minute build.  Zero, or no value, is the plain board.
 #
 # **WHERE QUARTUS IS** comes from `QUARTUS_ROOTDIR` in the environment, or
 # from a `QUARTUS_ROOTDIR=` line in the gitignored
@@ -23,7 +31,7 @@
 # **THE STEPS**, each with its log in `build/de25/`:
 #
 #   1. The variation files of the I/O PLL, from the parameters below, and of
-#      the Reset Release.
+#      the Reset Release, and of the Virtual JTAG when the probe is built.
 #   2. The project, by `project.tcl`, with the build stamp in USERCODE.
 #   3. The two cores' HDL, generated from their variations.
 #   4. Synthesis, and 5. the fitter.  **A BUILD WITHOUT THE AGILEX 5E LICENSE
@@ -65,7 +73,30 @@ for image in build/boot_prom.hex build/sync_prom.hex; do
     [ -s "$image" ] || refuse "$image is missing; \`make de25\` builds it first"
 done
 
-out=build/de25
+# **ONLY THIS FAMILY'S PLUMBING.**  Vendor-specific RTL lives under
+# `rtl/plumbing/<family>/`, and a file from another family's directory is a
+# primitive this tool does not have: `rtl/plumbing/xilinx7/` is Vivado's.  The
+# Zynq flows skip `rtl/plumbing/agilex5/` the same way, by their own rule.
+for f in "$@"; do
+    case $f in
+        rtl/plumbing/agilex5/*) ;;
+        rtl/plumbing/*/*) refuse "$f is another family's plumbing; this flow reads rtl/plumbing/agilex5/ only" ;;
+    esac
+done
+
+# The probe, or not.  A power of two, because its read pointer wraps on it.
+depth=${PROBE_DEPTH:-0}
+case $depth in
+    ''|*[!0-9]*) refuse "PROBE_DEPTH is '$depth', which is not a number" ;;
+esac
+depth=$((depth + 0))
+if [ "$depth" -gt 0 ]; then
+    [ $((depth & (depth - 1))) -eq 0 ] || refuse "PROBE_DEPTH is $depth, which is not a power of two"
+    out=build/de25-probe
+    say "the probe is in this build: $depth samples, into $out"
+else
+    out=build/de25
+fi
 rm -rf "$out"
 mkdir -p "$out/ip"
 
@@ -137,10 +168,26 @@ step 1-ip-deploy-reset "$qsys/ip-deploy" --component-name=altera_s10_user_rst_cl
     --output-name=cadr_de25_reset_release --output-directory="$out/ip" \
     --family="Agilex 5" --part=A5EB013BB23BE4SCS
 
+# **AND THE VIRTUAL JTAG, WITH ONE PARAMETER, WHEN THE PROBE IS BUILT.**  The
+# node's instruction is one bit, the sample register or a bypass bit, as
+# `rtl/plumbing/agilex5/cadr_probe_vjtag.sv` says.  The instance index is the
+# IP's default, assigned by Quartus; with one node in the design it is 0,
+# which is the index `probe.tcl` asks for, and a scan of any other finds
+# nothing.  The IP's synthesis output is one instance of Quartus's own
+# `sld_virtual_jtag` with these parameters, and Quartus builds the SLD hub
+# around it.
+if [ "$depth" -gt 0 ]; then
+    step 1-ip-deploy-vjtag "$qsys/ip-deploy" --component-name=altera_virtual_jtag \
+        --output-name=cadr_de25_vjtag --output-directory="$out/ip" \
+        --family="Agilex 5" --part=A5EB013BB23BE4SCS \
+        --component-parameter=sld_ir_width=1
+fi
+
 # ------------------------------------------------------- 2. the project
-step 2-project "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
+step 2-project env PROBE_DEPTH="$depth" "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
 # --------------------------------------------- 3. to 6. the compilation
+dir=$out
 cd "$out"
 out=.
 step 3-ipgenerate "$bin/quartus_ipgenerate" cadr_de25 --generate_project_ip_files --synthesis=verilog
@@ -154,12 +201,34 @@ step 4-syn "$bin/quartus_syn" cadr_de25
 rpt=output_files/cadr_de25.syn.rpt
 for memory in dmem l1_map l2_map; do
     n=$(grep -c "^; u_machine|processor|${memory}_rtl_[0-9]*|[^;]*; MLAB " "$rpt" || true)
-    [ "$n" -eq 1 ] || refuse "synthesis made u_machine|processor|$memory into $n MLABs, wanting 1; see build/de25/$rpt"
+    [ "$n" -eq 1 ] || refuse "synthesis made u_machine|processor|$memory into $n MLABs, wanting 1; see $dir/$rpt"
 done
 if grep -q 'RAM logic "u_machine|processor|\(dmem\|l1_map\|l2_map\)" is uninferred' 4-syn.log; then
-    refuse "synthesis built one of the three asynchronous memories from registers; see build/de25/4-syn.log"
+    refuse "synthesis built one of the three asynchronous memories from registers; see $dir/4-syn.log"
 fi
 say "the dispatch memory and both levels of the map are MLABs"
+
+# **THE PROBE IS IN THE BUILD THAT ASKED FOR IT AND IN NO OTHER.**  The top
+# level's parameter as synthesis records it, in binary; the probe's buffer as
+# one memory of `PROBE_DEPTH` words of 454 bits; and the Virtual JTAG IP
+# among the design's IP.  A plain build has none of it.
+if [ "$depth" -gt 0 ]; then
+    pbits=$(sed -n 's/^; PROBE_DEPTH *; \([01]*\) *; Unsigned Binary *;$/\1/p' "$rpt" | head -n 1)
+    got=0
+    while [ -n "$pbits" ]; do
+        got=$((got * 2 + ${pbits%"${pbits#?}"}))
+        pbits=${pbits#?}
+    done
+    [ "$got" -eq "$depth" ] || refuse "synthesis gave the top level PROBE_DEPTH $got, wanting $depth; see $dir/$rpt"
+    n=$(grep -c "^; g_probe.u_probe|mem_rtl_0|[^;]*; [A-Z0-9]* *; Simple Dual Port *; $depth *; 454 *;" "$rpt" || true)
+    [ "$n" -eq 1 ] || refuse "synthesis made the probe's buffer into $n memories of $depth words of 454 bits, wanting 1; see $dir/$rpt"
+    grep -q "; altera_virtual_jtag *;[^;]*;[^;]*;[^;]*; g_probe.u_vjtag *;" "$rpt" \
+        || refuse "synthesis lists no Virtual JTAG IP at g_probe.u_vjtag; see $dir/$rpt"
+    say "the probe is in: $depth samples of 454 bits, behind the Virtual JTAG"
+elif grep -q 'g_probe' "$rpt"; then
+    refuse "a build without PROBE_DEPTH has a probe in it; see $dir/$rpt"
+fi
+
 step 5-fit "$bin/quartus_fit" cadr_de25
 if grep -q '^Info (24849)' 5-fit.log; then
     say "$(grep '^Info (24849)' 5-fit.log | head -n 1)"
@@ -169,7 +238,7 @@ step 6-sta "$bin/quartus_sta" cadr_de25
 say "6-sta-check"
 if ! "$bin/quartus_sta" -t "$here/sta_check.tcl" > 6-sta-check.log 2>&1; then
     grep '^sta:' 6-sta-check.log >&2 || tail -n 20 6-sta-check.log >&2
-    refuse "the timing analyzer's checks failed; see build/de25/6-sta-check.log"
+    refuse "the timing analyzer's checks failed; see $dir/6-sta-check.log"
 fi
 grep '^sta:' 6-sta-check.log | sed 's/^sta: /de25: /'
 
@@ -194,13 +263,20 @@ grep '^; *\[d\] ALMs used for memory' output_files/cadr_de25.fit.rpt | head -n 1
 # The floors are the size of an empty part's worth of nothing, not a budget:
 # the control store alone is 16,384 words of 48 bits, forty M20K blocks.
 if [ "$alms" -lt 1000 ] || [ "$m20k" -lt 40 ]; then
-    refuse "the fit is $alms ALMs and $m20k M20K blocks, which is not the machine; see build/de25/$summary"
+    refuse "the fit is $alms ALMs and $m20k M20K blocks, which is not the machine; see $dir/$summary"
 fi
 say "fit: $alms ALMs, $m20k M20K blocks"
+# And the probe's buffer is block memory, where the fitter was free to put it.
+if [ "$depth" -gt 0 ]; then
+    grep -q "^; g_probe.u_probe|mem_rtl_0|[^;]*; M20K *; Simple Dual Port *; Single Clock *; $depth *; 454 *;" \
+            output_files/cadr_de25.fit.rpt \
+        || refuse "the fitter did not put the probe's buffer in M20K blocks; see $dir/output_files/cadr_de25.fit.rpt"
+    say "the probe's buffer is in M20K blocks"
+fi
 
 # ------------------------------------------------------ 8. the bitstream
 step 8-asm "$bin/quartus_asm" cadr_de25
 sof=output_files/cadr_de25.sof
 [ -s "$sof" ] || refuse "$sof was not written"
-say "$(wc -c < "$sof" | tr -d ' ') bytes in build/de25/$sof, USERCODE $userid"
+say "$(wc -c < "$sof" | tr -d ' ') bytes in $dir/$sof, USERCODE $userid"
 say "timing: $(tail -n 1 timing.txt)"
