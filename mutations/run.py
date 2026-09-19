@@ -914,23 +914,27 @@ CHECKS = {
     # and it is why `--self-test` skips this kind when it wants a check that
     # can be made not to build.
     #
-    # `sources` is the script, because the script is what the mutations are
-    # aimed at.  The model and the harness are the check, not the thing
-    # checked, and mutating them would be mutating a testbench.
+    # `sources` is the script and `tools/jtag_target.tcl`, which `probe.tcl`
+    # sources to pick a JTAG target by cable serial rather than by position:
+    # a mutation of that helper is a mutation of what runs, the same as one
+    # of the script itself.  The model and the harness are the check, not the
+    # thing checked, and mutating them would be mutating a testbench.
     "probe_jtag": {
         "kind": "tcl",
-        "sources": ["boards/arty-z7-20/vivado/probe.tcl"],
+        "sources": ["boards/arty-z7-20/vivado/probe.tcl",
+                    "tools/jtag_target.tcl"],
         "tb": "tb/cadr_probe_jtag_tb.tcl",
         "golden": None,
     },
-    # The two programming scripts, against a stubbed hardware manager.  Three
-    # sources because the decision is one implementation read by both boards:
-    # a record aims at each, which is what `check_coverage` asks for and what
-    # keeps the shared file from being the one nothing tests.
+    # The two programming scripts, against a stubbed hardware manager.
+    # `tools/build_stamp.tcl` is this script's own; `tools/jtag_target.tcl`
+    # is also `probe.tcl`'s, above.  A record aims at each source here, which
+    # is what `check_coverage` asks for and what keeps a shared file from
+    # being the one nothing tests.
     "program_tcl": {
         "kind": "tcl",
         "sources": ["boards/arty-z7-20/vivado/program.tcl",
-                    "tools/build_stamp.tcl"],
+                    "tools/build_stamp.tcl", "tools/jtag_target.tcl"],
         "tb": "tb/cadr_program_tb.tcl",
         "golden": None,
     },

@@ -76,6 +76,14 @@ set ZYNQ_IR5 {xc7z020 5 0x23727093 0x01 0x09 0x02 454}
 # is at the TDO end, 9 when the DAP is in front of it. An off-by-one there
 # reads a neighboring device's capture bit, which is a plausible 0 or 1 and
 # changes no exit code anywhere.
+#
+# `serial-picks-second`, `serial-ambiguous`, `serial-one-target-proceeds` and
+# `serial-no-match` are `jtag_target.tcl`'s own selection, exercised here as
+# well as through `program.tcl`: two boards share one hub, so a serial names
+# one of two targets, no serial among two refuses naming both, one target
+# with no serial still proceeds as `good` and the rest above it do, and a
+# serial naming neither refuses too. Their chain is `good`'s own device order,
+# so a passing one is held to the same IR lines.
 set CASES {
     {good      0 {"PROBE: the 10-bit instruction register captures 061, wanting 041 under mask 0c3"
                   "PROBE: ours is 0 from the TDO end, so a DR scan carries 0 bypass bit(s) in front of the sample and 1 behind"
@@ -90,6 +98,24 @@ set CASES {
     {msb-first 1 {"PROBE: FAILED --- the IDCODE scan found 0 device(s) and the"}}
     {tdi-zero  1 {"PROBE: FAILED --- bit 64 of the IDCODE scan is a bypass bit, so a"}}
     {irlen     1 {"PROBE: FAILED --- the instruction register does not capture 01 at the"}}
+
+    {serial-picks-second 0
+        {"PROBE: selecting by cable serial, from JTAG_SERIAL in the environment"
+         "PROBE: selected BBBB0002"
+         "PROBE: the 10-bit instruction register captures 061, wanting 041 under mask 0c3"
+         "PROBE: the part's IR capture reads DONE = 1"}}
+    {serial-ambiguous 1
+        {"PROBE: FAILED --- 2 JTAG targets are attached and nothing"
+         "PROBE:     AAAA0001"
+         "PROBE:     BBBB0002"}}
+    {serial-one-target-proceeds 0
+        {"PROBE: no cable serial was given and one target is attached, so it is\
+ that one: MODEL0000"
+         "PROBE: the 10-bit instruction register captures 061, wanting 041 under mask 0c3"
+         "PROBE: the part's IR capture reads DONE = 1"}}
+    {serial-no-match 1
+        {"PROBE: FAILED --- 0 targets match cable serial NOPE0000."
+         "PROBE:   The targets attached are: MODEL0000"}}
 }
 
 # `good` reads the whole buffer and its export is checked column by column;
@@ -98,7 +124,16 @@ set CASES {
 # 421 for `good` is not a round number: it is the probe's data width, and the
 # case hands out one-hot data so that bit k of the payload is the only bit set
 # in cycle k. See check_capture.
-set DEPTHS {good 421 reversed 8 threedev 8 stranger 8 msb-first 8 tdi-zero 8 irlen 8}
+set DEPTHS {good 421 reversed 8 threedev 8 stranger 8 msb-first 8 tdi-zero 8 irlen 8
+            serial-picks-second 8 serial-ambiguous 8 serial-one-target-proceeds 8
+            serial-no-match 8}
+
+# The two targets `serial-picks-second` and `serial-ambiguous` present, and
+# the serial each of the two serial-bearing cases is run with. A case absent
+# here gets no `JTAG_SERIAL` at all.
+set TWO_TARGETS {localhost:3121/xilinx_tcf/Digilent/AAAA0001
+                 localhost:3121/xilinx_tcf/Digilent/BBBB0002}
+set SERIALS {serial-picks-second BBBB0002  serial-no-match NOPE0000}
 
 # Where in the ring the read pointer stands when the readout begins. Non-zero
 # for `good` deliberately: the rotation back to cycle zero is a branch, and a
@@ -112,7 +147,7 @@ proc one_hot {j} { return [expr {1 << $j}] }
 # Run as a child process, because `boards/arty-z7-20/vivado/probe.tcl` ends in `exit` on every
 # path --- there is no way to source it seven times in one interpreter.
 proc setup_case {case} {
-    global ZYNQ DAP ZYNQ_IR5 DEPTHS START_AT
+    global ZYNQ DAP ZYNQ_IR5 DEPTHS START_AT TWO_TARGETS
     set ::model(depth) [dict get $DEPTHS $case]
     switch -exact -- $case {
         good      { set ::model(devs) [list $ZYNQ $DAP]
@@ -126,6 +161,12 @@ proc setup_case {case} {
         tdi-zero  { set ::model(devs) [list $ZYNQ $DAP]
                     set ::model(tdi_zero) 1 }
         irlen     { set ::model(devs) [list $ZYNQ_IR5 $DAP] }
+        serial-picks-second { set ::model(devs) [list $ZYNQ $DAP]
+                              set ::model(targets) $TWO_TARGETS }
+        serial-ambiguous    { set ::model(devs) [list $ZYNQ $DAP]
+                              set ::model(targets) $TWO_TARGETS }
+        serial-one-target-proceeds { set ::model(devs) [list $ZYNQ $DAP] }
+        serial-no-match            { set ::model(devs) [list $ZYNQ $DAP] }
         default   { puts stderr "no such case: $case" ; exit 2 }
     }
     model_reset
@@ -138,6 +179,13 @@ if {[lindex $argv 0] eq "--case"} {
     set ::env(PROBE_DEPTH) $::model(depth)
     set ::env(OUTDIR)      [lindex $argv 2]
     set ::env(CSV)         [file join [lindex $argv 2] $case.csv]
+    # No serial unless SERIALS names one for this case, whatever the invoking
+    # shell carries, and never this repository's own gitignored `local.conf`.
+    catch {unset ::env(JTAG_SERIAL)}
+    if {[dict exists $SERIALS $case]} {
+        set ::env(JTAG_SERIAL) [dict get $SERIALS $case]
+    }
+    set ::env(BOARD_DIR) [file join [lindex $argv 2] no-such-board]
     source $probe
     exit 0
 }

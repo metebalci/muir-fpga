@@ -14120,6 +14120,71 @@ puts "PROG: build $want, was $ubefore, now $uafter"
     if {$before ne $want} {
 @end
 
+# --------------------------------------------- picking a JTAG target by serial
+#
+# `tools/jtag_target.tcl` is the third source both programming scripts read:
+# it is what picks a JTAG target by cable serial rather than by position,
+# since two Digilent boards share one USB hub and `[lindex $targets 0]` can
+# be the wrong one.  `tb/cadr_program_tb.tcl` runs it through `program.tcl`
+# against a stubbed hardware manager holding one or two named targets, and
+# `tb/cadr_probe_jtag_tb.tcl` runs it through `boards/arty-z7-20/vivado/probe.tcl` the same way.
+
+@mutation the-first-target-is-taken-whatever-the-serial
+@check program_tcl
+@file tools/jtag_target.tcl
+@note THE BUG THIS FILE EXISTS TO CLOSE, restored inside the helper rather
+@note than in `program.tcl`: whatever `JTAG_SERIAL` names, the match is
+@note thrown away and the first target enumerated is used instead --- exactly
+@note `current_hw_target [lindex $targets 0]`, the line this project measured
+@note as the wrong board on a bench with two Digilent cables.
+@note
+@note Caught on `serial-picks-second`, measured: it never says "selected
+@note BBBB0002", because AAAA0001 --- the first target, not the one the
+@note serial names --- is what gets selected and printed instead.  Also
+@note caught on `serial-no-match`, which exits 0 where the harness wants 1:
+@note a serial naming nothing is silently satisfied by the first target
+@note rather than refused.
+@old
+    set chosen [get_hw_targets -quiet "*$serial*"]
+@new
+    set chosen [list [lindex $all 0]]
+@end
+
+@mutation two-targets-are-accepted-with-no-serial
+@check program_tcl
+@file tools/jtag_target.tcl
+@note THE OTHER HALF OF THE SAME BUG.  With the ambiguity guard disabled, no
+@note serial and two targets attached no longer refuses; it falls through to
+@note "one target is attached" and takes the first one silently, which is
+@note guessing dressed as success --- the very thing `docs/mutations.md`'s
+@note rule about an exemption too wide describes, except the exemption here
+@note is the whole guard rather than a bound relaxed.
+@note
+@note Caught on `serial-ambiguous`, measured: it exits 0 where the harness
+@note wants 1, and never prints "FAILED --- 2 JTAG targets are attached".
+@old
+        if {[llength $all] > 1} {
+@new
+        if {0 && [llength $all] > 1} {
+@end
+
+@mutation a-serial-matching-nothing-is-accepted
+@check program_tcl
+@file tools/jtag_target.tcl
+@note THE COUNT THAT MUST BE EXACTLY ONE IS RELAXED TO AT MOST ONE, so zero
+@note matches --- a serial that names no target on the bench --- passes the
+@note guard with `$chosen` empty, and `[lindex $chosen 0]` hands the caller an
+@note empty string as though it were a target.  A bound is honest only with a
+@note mutation just outside it, and zero is exactly outside "exactly one".
+@note
+@note Caught on `serial-no-match`, measured: it exits 0 where the harness
+@note wants 1, and never prints "FAILED --- 0 targets match cable serial".
+@old
+    if {[llength $chosen] != 1} {
+@new
+    if {[llength $chosen] > 1} {
+@end
+
 # ============================================================================
 # THE DEBUG CABLE ON ONE CONNECTOR: THE ROLE, AND THE PAGE THAT IS NEVER
 # SWITCHED OFF

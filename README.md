@@ -257,7 +257,7 @@ the 74S139 at DBGIN 0A15 makes of `DEBUG IN A<1:0>`.
 Four wires go out (`-DEBUG OUT REQ`, `DEBUG OUT A<1:0>`, `DEBUG OUT WR`) and
 one comes back (`DEBUG IN ACK`). `DBD<15:0>` goes both ways. It is one bus on
 each board with both connectors on it, and its direction follows `WR`. So 21
-wires are 20 signals out and 17 back. They are carried the way the processor
+wires are 20 signals out and 19 back. They are carried the way the processor
 cables carry their 48 both-ends wires, as a value and an enable out with the
 resolved wire back in. The two octal Am8304s at DBGOUT 0B21 and 0B22 drive
 `DBD` together. They share one enable and one direction, `-DBD ENB` on pin 9
@@ -302,8 +302,7 @@ is always a debuggee. A board becomes the debugger by `--debug-cable-connect`
 in `fpgarc` or by `cadr-console debug-cable-connect`. A cable joins the Arty
 Z7-20 and the Cora Z7-07S, and each has debugged the other over it: CC in one
 board's Lisp world has halted the machine in the other and read its registers
-and scratchpads, equal to that board's own console and readout. `docs/debug-
-cable.md` is the whole of it.
+and scratchpads, equal to that board's own console and readout.
 
 **The console is not this, and the difference is worth keeping.** It masters
 the machine's own Unibus to reach the diagnostic registers. No CADR had that

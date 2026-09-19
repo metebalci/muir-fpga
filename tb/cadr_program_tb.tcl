@@ -61,6 +61,13 @@ set SCRIPTS {
 #   has_usercode        0 for a manager that has no such property here
 #
 # A device is a name and nothing else; the stubs answer from these.
+#
+#   targets         the JTAG targets attached, as Vivado's own NAME property
+#                   gives them: `<host>/xilinx_tcf/Digilent/<serial>`, per
+#                   `current_hw_target`'s own manual page.  One by default, so
+#                   every case that says nothing about it sees the board as it
+#                   always has.
+#   current_target  what `current_hw_target` was last told to select.
 array set ::model {
     done_before 1  done_after 1
     code_before ffffffff  code_after 4a585e10
@@ -68,12 +75,42 @@ array set ::model {
     device {}
     programmed 0
     marker {}
+    targets {localhost:3121/xilinx_tcf/Digilent/MODEL0000}
+    current_target {}
 }
 
 proc open_hw_manager {args} {}
 proc connect_hw_server {args} {}
-proc get_hw_targets {args} { return {localhost:3121/xilinx_tcf/Digilent/MODEL0000} }
-proc current_hw_target {args} { return {localhost:3121/xilinx_tcf/Digilent/MODEL0000} }
+
+# Vivado matches `get_hw_targets <patterns>` against NAME, anchored, with `*`
+# widening it to a substring --- `jtag_target.tcl` relies on exactly that to
+# match a serial against the whole NAME.  No pattern is `*`, same as Vivado's
+# own default.
+proc get_hw_targets {args} {
+    set patterns {}
+    foreach a $args {
+        if {[string index $a 0] eq "-"} { continue }
+        lappend patterns $a
+    }
+    if {[llength $patterns] == 0} { set patterns {*} }
+    set result {}
+    foreach t $::model(targets) {
+        foreach p $patterns {
+            if {[string match $p $t]} { lappend result $t ; break }
+        }
+    }
+    return $result
+}
+
+proc current_hw_target {args} {
+    foreach a $args {
+        if {[string index $a 0] ne "-"} { set ::model(current_target) $a }
+    }
+    if {$::model(current_target) eq ""} {
+        set ::model(current_target) [lindex $::model(targets) 0]
+    }
+    return $::model(current_target)
+}
 proc open_hw_target {args} {}
 proc close_hw_target {args} {}
 proc close_hw_manager {args} {}
@@ -110,8 +147,10 @@ proc get_property {args} {
         if {$a eq "-quiet"} { set quiet 1 } else { lappend rest $a }
     }
     set prop [lindex $rest 0]
+    # NAME is called only on a target object here, which in this stub is its
+    # own NAME string, exactly as `current_hw_target` returns it.
     switch -exact -- $prop {
-        NAME    { return "localhost:3121/xilinx_tcf/Digilent/MODEL0000" }
+        NAME    { return [lindex $rest 1] }
         PART    { return "model" }
         REGISTER.IDCODE { return "13631093" }
         REGISTER.IR.BIT5_DONE {
@@ -205,6 +244,13 @@ proc write_sidecar {path userid commit tree} {
 # because two different readers touched such a value --- the one that compares
 # the header with the sidecar, and the one that prints what the part read back
 # --- which is why the second carries the shape in `code_before` as well.
+#
+# `serial-picks-second`, `serial-ambiguous`, `serial-one-target-proceeds` and
+# `serial-no-match` are `jtag_target.tcl`'s own selection, exercised through
+# this script rather than assumed: two boards share one hub, so a serial
+# names one of two targets, no serial among two refuses naming both, one
+# target with no serial still proceeds as every case above these does, and a
+# serial naming neither refuses too.
 set CASES {
     {fresh 0 {4a585e10 4a585e10}
         {code_before ffffffff code_after 4a585e10}
@@ -272,6 +318,38 @@ set CASES {
         {"PROG: DONE before programming: 1, build 8108e233"
          "PROG: DONE after programming:  1, build 8108e233"
          "PROG: the part holds build 8108e233, and held it before this run too, so"}}
+
+    {serial-picks-second 0 {4a585e10 4a585e10}
+        {targets {localhost:3121/xilinx_tcf/Digilent/AAAA0001
+                  localhost:3121/xilinx_tcf/Digilent/BBBB0002}
+         env_JTAG_SERIAL BBBB0002
+         code_before ffffffff code_after 4a585e10}
+        {"PROG: selecting by cable serial, from JTAG_SERIAL in the environment"
+         "PROG: selected BBBB0002"
+         "PROG: target localhost:3121/xilinx_tcf/Digilent/BBBB0002"
+         "PROG: the part holds build 4a585e10 and held ffffffff before, so the"
+         "PROG: download took."}}
+
+    {serial-ambiguous 1 {4a585e10 4a585e10}
+        {targets {localhost:3121/xilinx_tcf/Digilent/AAAA0001
+                  localhost:3121/xilinx_tcf/Digilent/BBBB0002}
+         no-program 1}
+        {"PROG: FAILED --- 2 JTAG targets are attached and nothing"
+         "PROG:     AAAA0001"
+         "PROG:     BBBB0002"
+         "PROG:   Set JTAG_SERIAL, or put a JTAG_SERIAL line in"}}
+
+    {serial-one-target-proceeds 0 {4a585e10 4a585e10}
+        {code_before ffffffff code_after 4a585e10}
+        {"PROG: no cable serial was given and one target is attached, so it is\
+ that one: MODEL0000"
+         "PROG: target localhost:3121/xilinx_tcf/Digilent/MODEL0000"}}
+
+    {serial-no-match 1 {4a585e10 4a585e10}
+        {env_JTAG_SERIAL NOPE0000
+         no-program 1}
+        {"PROG: FAILED --- 0 targets match cable serial NOPE0000."
+         "PROG:   The targets attached are: MODEL0000"}}
 }
 
 # ------------------------------------------------------------- a single case
@@ -308,12 +386,23 @@ if {[lindex $argv 0] eq "--case"} {
             write_sidecar $bit.stamp $sidecar [string range $sidecar 0 6] \
                 [sidecar_tree_words $sidecar]
         }
-        foreach {k v} $settings { if {$k ne "no-program"} { set ::model($k) $v } }
+        # No serial unless the case sets one, whatever the invoking shell
+        # carries: a case not about serial selection must see one target and
+        # nothing standing for `JTAG_SERIAL`.
+        catch {unset ::env(JTAG_SERIAL)}
+        foreach {k v} $settings {
+            if {$k eq "no-program"} { continue }
+            if {$k eq "env_JTAG_SERIAL"} { set ::env(JTAG_SERIAL) $v ; continue }
+            set ::model($k) $v
+        }
         set ::model(marker) [file join $outdir $which-$case.programmed]
         file delete -force $::model(marker)
         set ::env(BIT) $bit
         set ::env(BOARD_URL) "model"
         set ::env(CABLE) "MODEL0000"
+        # Never this repository's own gitignored `local.conf`: a path with no
+        # board under it, so a case that gives no JTAG_SERIAL sees none at all.
+        set ::env(BOARD_DIR) [file join $outdir no-such-board]
         source $script
         exit 0
     }

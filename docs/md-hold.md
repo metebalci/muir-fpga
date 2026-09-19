@@ -189,8 +189,8 @@ a quiet entry.
 
 ## The stimulus, and why it was red
 
-`build/md_inject.pass` is `tb/cadr_md_inject_tb.cpp` and is **not in `make
-check`**. It runs MIT's boot PROM and drives one extra `-LOADMD` strobe, for
+`build/md_inject.pass` is `tb/cadr_md_inject_tb.cpp` and is now in `make
+check`. It runs MIT's boot PROM and drives one extra `-LOADMD` strobe, for
 one tick, at an instant no trace reaches: the `cpu_edge` at which an
 instruction writes MD. It asserts muir's rule — the edge consumes the word and
 the instruction's stands — against a control run that places no strobe at all.
@@ -224,11 +224,11 @@ first and left red; it joins `check` in the commit that makes it pass, and a
 record may be aimed at it then and not before — a mutation caught by a check
 that was already failing is caught by nothing.
 
-**It passes now, and it has not joined `check`.** Run at `0966ffd`, it prints
+**It passes now, and it has joined `check`.** Run at `0966ffd`, it prints
 that `md_pending` is clear after the edge, that MD is `00000000` eight
 boundaries later, and `ok: a -LOADMD on a DESTMDR boundary is consumed by that
 edge and the instruction's word stands`. The Makefile's and
-`mutations/run.py`'s comments on `md_inject` still call the defect unfixed.
+`mutations/run.py`'s comments on `md_inject` say so.
 
 ## What to measure next
 

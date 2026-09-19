@@ -1603,7 +1603,7 @@ $(BUILD)/probe.pass: $(BUILD)/obj_probe/Vcadr_probe_harness \
 # could exercise it.
 #
 # `tb/cadr_jtag_chain.tcl` is a shift-chain model of the two devices a Zynq
-# presents, and `tb/cadr_probe_jtag_tb.tcl` runs the script against seven
+# presents, and `tb/cadr_probe_jtag_tb.tcl` runs the script against eleven
 # chains and asserts, for each, the LINE it must print --- not merely its exit
 # code, because "fails on the check that names it, not on a sample of zeros"
 # is a claim `boards/arty-z7-20/vivado/probe.tcl`'s own header makes and an exit code cannot
@@ -1615,8 +1615,8 @@ $(BUILD)/probe.pass: $(BUILD)/obj_probe/Vcadr_probe_harness \
 # in `tb/cadr_jtag_chain.tcl`'s header --- there is no TAP state machine here,
 # no DRCK and no silicon, so a green run says the script reads a chain
 # correctly and says nothing whatever about the readout being verified.
-$(BUILD)/probe_jtag.pass: boards/arty-z7-20/vivado/probe.tcl tb/cadr_jtag_chain.tcl \
-                          tb/cadr_probe_jtag_tb.tcl | $(BUILD)
+$(BUILD)/probe_jtag.pass: boards/arty-z7-20/vivado/probe.tcl tools/jtag_target.tcl \
+                          tb/cadr_jtag_chain.tcl tb/cadr_probe_jtag_tb.tcl | $(BUILD)
 	OUTDIR=$(BUILD)/probe_jtag $(TCLSH) tb/cadr_probe_jtag_tb.tcl
 	@touch $@
 
@@ -1631,21 +1631,23 @@ $(BUILD)/probe_jtag.pass: boards/arty-z7-20/vivado/probe.tcl tb/cadr_jtag_chain.
 #
 # The script compares the build the part reads back over JTAG with the build
 # the bitstream names, which `tools/build_stamp.tcl` writes into
-# `BITSTREAM.CONFIG.USERID` at the other end.  This runs it against a stubbed
-# hardware manager, ten cases, and asserts, for each, the LINE it must print
-# --- because "the part already held this build" and "the download took" are
-# two different findings with one exit status.
+# `BITSTREAM.CONFIG.USERID` at the other end, and it picks the JTAG target by
+# cable serial through `tools/jtag_target.tcl`.  This runs it against a
+# stubbed hardware manager, nineteen cases, and asserts, for each, the LINE
+# it must print --- because "the part already held this build" and "the
+# download took" are two different findings with one exit status.
 #
-# IN `check`: no Vivado, no cable, no bitstream, and 0.08 s measured.  Three
-# records in `mutations/list.txt` aim at it, at both of its sources, so nothing
-# here needs an exemption.
+# IN `check`: no Vivado, no cable, no bitstream, and 0.08 s measured.  Six
+# records in `mutations/list.txt` aim at it, at all three of its sources, so
+# nothing here needs an exemption.
 #
 # WHAT IT CANNOT SAY is in `tb/cadr_program_tb.tcl`'s header: the USERCODE is
 # a stub answering what the case says, and that a part really reads its
 # bitstream's USERID back there is read out of the BSDL and Vivado's device
 # tables and has not been measured on a board by anything in this repository.
 $(BUILD)/program_tcl.pass: boards/arty-z7-20/vivado/program.tcl \
-                           tools/build_stamp.tcl tb/cadr_program_tb.tcl | $(BUILD)
+                           tools/build_stamp.tcl tools/jtag_target.tcl \
+                           tb/cadr_program_tb.tcl | $(BUILD)
 	OUTDIR=$(BUILD)/program_tcl $(TCLSH) tb/cadr_program_tb.tcl
 	@touch $@
 
