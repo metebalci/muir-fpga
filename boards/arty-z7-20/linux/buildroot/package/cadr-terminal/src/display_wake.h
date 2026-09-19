@@ -39,8 +39,11 @@
 
 #include <stdint.h>
 
+#include <cadr/cadr_board.h>
+
 // `M_AXI_GP1` decodes 0x80000000 upwards; the console sits at the bottom of it.
-#define DWAKE_REG_BASE   0x80000000u
+// The console's address is the board's (<cadr/cadr_board.h>).
+#define DWAKE_REG_BASE   CADR_BOARD_CONSOLE_BASE
 #define DWAKE_REG_BYTES  384u
 #define DWAKE_IDENT      0u
 #define DWAKE_IDENT_WORD 0x434F4E53u	/* "CONS" */

@@ -1,0 +1,158 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Linux for the DE25-Nano's hard processor system, beside the CADR in its
+# fabric.
+#
+#     make buildroot-de25     # from the repository root; see the Makefile
+#
+# What comes out (output/images/): u-boot.itb (U-Boot proper and TF-A's BL31
+# in one FIT, which the first-stage loader reads off the card),
+# u-boot-spl-dtb.hex (that first-stage loader, which goes into the QSPI image
+# the fabric's flow makes and never onto the card), Image,
+# socfpga_agilex5_de25_nano_cadr.dtb and rootfs.cpio.uboot.
+#
+# **IT NEEDS BOTH EXTERNAL TREES**, because the packages live in the Arty
+# Z7-20's and this one holds only the board, as the Cora Z7-07S's does:
+#
+#     BR2_EXTERNAL=boards/arty-z7-20/linux/buildroot:boards/de25-nano/linux/buildroot
+#
+# `$(BR2_EXTERNAL_CADR_PATH)` below is that first tree and
+# `$(BR2_EXTERNAL_CADR_DE25_PATH)` this one.
+#
+# **NOTHING BUILT FROM THIS HAS RUN.**  No DE25-Nano has booted from this
+# repository.  What holds the configuration is that its three sources are the
+# ones Altera's own release for this board pins, and its differences from
+# Altera's configurations are named file by file below.
+#
+# THE BOOT CHAIN IS HPS-FIRST, and that decides what this image is.  The
+# Secure Device Manager boots the hard processor system first, from the QSPI
+# flash, which holds only its own firmware, the processor's I/O and memory
+# configuration and U-Boot's first-stage loader.  That loader reads
+# u-boot.itb from the card; U-Boot then puts the CADR into the fabric from the
+# card or over TFTP, opens the bridges and boots Linux.  Altera's HPS Booting
+# User Guide (813762) says the fabric can be configured from the processor only
+# in this mode (chapter 6).
+#
+# EVERYTHING IS PINNED.  Buildroot by version and sha256 in the Makefile, and
+# through it the toolchain and every package by the hashes Buildroot carries.
+# The three sources Buildroot does not carry are Altera's forks, each pinned to
+# the commit of Altera's 26.1.1 release for this board (tag
+# QPDS26.1.1_REL_GSRD_PR of meta-altera-fpga, whose recipes name the same three
+# commits), and each with a hash file of its own under board/de25-nano/patches/
+# so that BR2_DOWNLOAD_FORCE_CHECK_HASHES has something to check.  Buildroot
+# passes a download that has NO hash file at all (support/download/check-hash
+# exits 0 with a warning), so `make buildroot-de25-check` asserts that the
+# three hash files exist and name the three pinned commits.
+
+BR2_aarch64=y
+BR2_cortex_a76_a55=y
+BR2_DL_DIR="$(BR2_EXTERNAL_CADR_PATH)/../../../../vendor/buildroot-dl"
+BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/patches"
+
+# The same prebuilt toolchain family as the Zynq boards', for aarch64: glibc,
+# so the programs meet the libc they would meet anywhere else.
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_AARCH64_GLIBC_STABLE=y
+
+# The board on a private LAN, as the other two are.  The console is UART 1,
+# ttyS0 to Linux: `serial0 = &uart1` in Altera's DE25 tree.
+BR2_TARGET_GENERIC_HOSTNAME="cadr"
+BR2_TARGET_GENERIC_ISSUE="the DE25-Nano beside the CADR"
+BR2_TARGET_GENERIC_ROOT_PASSWD="root"
+BR2_SYSTEM_DHCP="eth0"
+BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+
+# The kernel: Altera's linux-socfpga, because mainline has no driver for this
+# part's SD controller and no tree for this board.  Altera's arm64 `defconfig`,
+# which is what their own release builds this board with --- Buildroot's name
+# for it is the architecture's default configuration, since it would spell
+# BR2_LINUX_KERNEL_DEFCONFIG="defconfig" as `defconfig_defconfig` --- and our
+# fragment over it; the fragment's header says what it changes and why.  The
+# device tree is ours, a thin one over Altera's DE25 tree; the reserved-memory
+# node arrives by a hook in external.mk.
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_GIT=y
+BR2_LINUX_KERNEL_CUSTOM_REPO_URL="https://github.com/altera-fpga/linux-socfpga.git"
+BR2_LINUX_KERNEL_CUSTOM_REPO_VERSION="d8e46bd82a1e1dbbc641db7f0f57d7ddeb2621b1"
+BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/linux/linux.fragment"
+BR2_LINUX_KERNEL_IMAGE=y
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+BR2_LINUX_KERNEL_CUSTOM_DTS_DIR="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/dts"
+
+# The root filesystem: BusyBox, Dropbear, evtest for the USB keyboard and
+# mouse, and every program of ours.  NOTHING IS LEFT OUT: this board has a USB
+# host on its Type-C port, so the USB input program is in, as on the Arty
+# Z7-20.  An initramfs as a U-Boot ramdisk image, as on both Zynq boards.
+BR2_PACKAGE_DROPBEAR=y
+BR2_PACKAGE_EVTEST=y
+BR2_PACKAGE_CADR_CONSOLE=y
+BR2_PACKAGE_CADR_READOUT=y
+BR2_PACKAGE_CADR_CHECKPOINT=y
+BR2_PACKAGE_CADR_DISK_PACKS=y
+BR2_PACKAGE_CADR_TERMINAL=y
+BR2_PACKAGE_CADR_SERIAL=y
+BR2_PACKAGE_CADR_CHAOSNET=y
+BR2_PACKAGE_CADR_USB_INPUT=y
+BR2_PACKAGE_MUIR=y
+# **THE PROGRAMS ARE BUILT WITH THIS BOARD'S ADDRESS MAP.**  The faces keep
+# their Zynq addresses on the HPS-to-FPGA bridge, the console moves to the
+# lightweight bridge, and the machine's memory is the 128 MB reserved at
+# 0xB000_0000; package/cadr-common/src/cadr/cadr_board.h has the table and
+# its sources.
+BR2_CADR_BOARD_DE25_NANO=y
+# The other board's post-build script, unchanged, for the reason the Cora
+# Z7-07S's defconfig gives: it asserts that the image holds only the programs
+# the packages install, and the packages are that tree's.  Then this board's
+# own, which takes the kernel's loadable modules back out of the image; its
+# header says why they are built at all.
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/post-build.sh $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/post-build.sh"
+BR2_TARGET_ROOTFS_CPIO=y
+BR2_TARGET_ROOTFS_CPIO_GZIP=y
+BR2_TARGET_ROOTFS_CPIO_UIMAGE=y
+# BR2_TARGET_ROOTFS_TAR is not set
+
+# TF-A: Altera's fork, BL31 alone, for the Agilex 5.  SOCFPGA_UART_CONFIG=1
+# puts its console on UART 1, which is this board's (plat/intel/soc/common/
+# include/platform_def.h, `#if SOCFPGA_UART_CONFIG`); Altera's own recipe for
+# this board passes it (meta-altera-bsp arm-trusted-firmware_%.bbappend).
+BR2_TARGET_ARM_TRUSTED_FIRMWARE=y
+BR2_TARGET_ARM_TRUSTED_FIRMWARE_CUSTOM_GIT=y
+BR2_TARGET_ARM_TRUSTED_FIRMWARE_CUSTOM_REPO_URL="https://github.com/altera-fpga/arm-trusted-firmware.git"
+BR2_TARGET_ARM_TRUSTED_FIRMWARE_CUSTOM_REPO_VERSION="2ea5afda7f34774ddcc677fb3a728fa57f780a1e"
+BR2_TARGET_ARM_TRUSTED_FIRMWARE_PLATFORM="agilex5"
+BR2_TARGET_ARM_TRUSTED_FIRMWARE_BL31=y
+BR2_TARGET_ARM_TRUSTED_FIRMWARE_ADDITIONAL_VARIABLES="SOCFPGA_UART_CONFIG=1"
+
+# U-Boot: Altera's fork, its DE25-Nano configuration with our fragment over it,
+# our device tree, and TF-A's BL31 copied in, which binman packs into
+# u-boot.itb with U-Boot proper (arch/arm/dts/socfpga_soc64_fit-u-boot.dtsi).
+# The first-stage loader comes out as a hex file for the QSPI image.
+BR2_TARGET_UBOOT=y
+BR2_TARGET_UBOOT_BUILD_SYSTEM_KCONFIG=y
+BR2_TARGET_UBOOT_CUSTOM_GIT=y
+BR2_TARGET_UBOOT_CUSTOM_REPO_URL="https://github.com/altera-fpga/u-boot-socfpga.git"
+BR2_TARGET_UBOOT_CUSTOM_REPO_VERSION="e09d6fcc95f33b8a60377103f6e37e635660a3ee"
+BR2_TARGET_UBOOT_BOARD_DEFCONFIG="socfpga_agilex5_de25_nano"
+BR2_TARGET_UBOOT_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/uboot/uboot.fragment"
+BR2_TARGET_UBOOT_NEEDS_DTC=y
+BR2_TARGET_UBOOT_NEEDS_PYTHON3=y
+BR2_TARGET_UBOOT_NEEDS_PYLIBFDT=y
+BR2_TARGET_UBOOT_NEEDS_OPENSSL=y
+BR2_TARGET_UBOOT_NEEDS_GNUTLS=y
+BR2_TARGET_UBOOT_NEEDS_ATF_BL31=y
+BR2_TARGET_UBOOT_FORMAT_CUSTOM=y
+BR2_TARGET_UBOOT_FORMAT_CUSTOM_NAME="u-boot.itb"
+BR2_TARGET_UBOOT_SPL=y
+BR2_TARGET_UBOOT_SPL_NAME="spl/u-boot-spl-dtb.hex"
+BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_cadr.dts $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/uboot/socfpga_agilex5_de25_nano_cadr-u-boot.dtsi $(BR2_EXTERNAL_CADR_DE25_PATH)/../cadr-reserved.dtsi"
+
+# For the card image boards/arty-z7-20/linux/mksd-buildroot.sh writes at
+# staging time.
+BR2_PACKAGE_HOST_DOSFSTOOLS=y
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_PACKAGE_HOST_MTOOLS=y

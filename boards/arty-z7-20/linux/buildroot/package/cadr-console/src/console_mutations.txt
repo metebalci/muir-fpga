@@ -530,3 +530,52 @@
 	if (0 && !s->mark_ok) {
 		// **NOT A SETTING OF ZERO**, which reads zero in the bottom half
 @end
+
+@mutation a-number-past-32-bits-is-taken
+@file cadr-common/src/cadr_mem.c
+@why 0x100000000 must be refused: on an arm64 board an unsigned long holds it, and the
+@why cast to 32 bits would map its bottom half, a real address and the wrong one
+@note One past the bound, which is where a bound is honest: 0xFFFFFFFF is still taken
+@note and the check says so, so the record shows the edge and not a wider hole.
+@old
+	if (v > 0xFFFFFFFFull) {
+@new
+	if (v > 0x1FFFFFFFFull) {
+@end
+
+@mutation characters-after-a-number-are-ignored
+@file cadr-common/src/cadr_mem.c
+@why `0x4000_0000` must be refused: strtoul stops at the underscore, and the old cast
+@why mapped 0x4000 without a word
+@old
+	if (errno || !end || *end != '\0') {
+@new
+	if (errno || !end) {
+@end
+
+@mutation a-word-that-does-not-start-with-a-digit-is-taken
+@file cadr-common/src/cadr_mem.c
+@why a blank before a number, or no number at all, must be refused: strtoull skips the
+@why blank and reads an empty word as zero, and zero is an address
+@old
+	if (!s || s[0] < '0' || s[0] > '9') {
+@new
+	if (!s) {
+@end
+
+@mutation the-tally-guard-takes-any-top-bit
+@file cadr-common/src/cadr_mem.c
+@why the guard is the one thing that runs before any bridge is read, and the marker
+@why pattern is the whole of it: an undriven pin reads all ones and the level shifters
+@why off read zero, both measured on the board, and only the pattern tells a tally from
+@why either.  The DE25-Nano's guard asks this of its one word as the Zynq boards' asks
+@why it of each of two, so this record holds the test for every board.
+@note The mask dropped, which is how a guard is loosened by somebody making it
+@note "simpler": with only the marker bit tested, 0xFFFFFFFF is a tally.
+@old
+	return (w2 & CADR_TALLY_MASK) == CADR_TALLY_MARK
+	    && (w3 & CADR_TALLY_MASK) == CADR_TALLY_MARK;
+@new
+	return (w2 & CADR_TALLY_MARK) == CADR_TALLY_MARK
+	    && (w3 & CADR_TALLY_MARK) == CADR_TALLY_MARK;
+@end

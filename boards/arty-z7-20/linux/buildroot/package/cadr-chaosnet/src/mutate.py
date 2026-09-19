@@ -105,7 +105,7 @@ def apply(record, work, src, common):
         shutil.copy(os.path.join(src, f), os.path.join(here, "cadr-chaosnet", "src", f))
     for f in COMMON:
         shutil.copy(os.path.join(common, f), os.path.join(here, "cadr-common", "src", f))
-    for f in ("cadr_log.h", "cadr_mem.h"):
+    for f in ("cadr_log.h", "cadr_mem.h", "cadr_board.h"):
         shutil.copy(os.path.join(common, "cadr", f),
                     os.path.join(here, "cadr-common", "src", "cadr", f))
     if record["file"] not in MUTABLE:

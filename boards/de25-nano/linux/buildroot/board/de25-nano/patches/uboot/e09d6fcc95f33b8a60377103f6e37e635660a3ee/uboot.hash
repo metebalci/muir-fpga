@@ -1,0 +1,5 @@
+# Altera's U-Boot at the commit the defconfig pins, as Buildroot makes a
+# tarball of it from git (support/download/git; reproducible).  Taken at the
+# first download, from a checkout at that commit; every later download is
+# checked against it.
+sha256  f902740c2764e88c9dd4b1bb942300bf2b919cd572e6ac46eb7d5f5ae4d54326  uboot-e09d6fcc95f33b8a60377103f6e37e635660a3ee-git4.tar.gz

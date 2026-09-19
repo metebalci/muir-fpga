@@ -1,0 +1,51 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// The CADR's memory on the DE25-Nano, told to Linux and to U-Boot.
+//
+// The machine's 128 MB, laid out as `rtl/plumbing/cadr_ddr_map.sv` lays it
+// out on every board --- main memory at its base, the display 64 MB up, the
+// spare above that --- at this board's base:
+//
+//   RESERVED_BASE = 0xB000_0000, RESERVED_MB = 128
+//
+// The Zynq boards' file, `boards/arty-z7-20/linux/cadr-reserved.dtsi`, is the
+// same fact at 0x1800_0000 in the cell sizes of a 32-bit part.  This one is
+// in the root's two-cell sizes and adds a child to the `reserved-memory` node
+// Altera's `socfpga_agilex5.dtsi` already has (the service layer's buffer at
+// 0x8000_0000), in both the kernel's tree and U-Boot's.  GPL-2.0-or-later
+// because U-Boot embeds the blob in u-boot.itb.
+//
+// WHERE THE 128 MB IS, AND WHY NOT AT THE TOP.  The hard processor system's
+// memory is 1 GB at 0x8000_0000-0xBFFF_FFFF, and the fabric reaches it at the
+// same addresses through the FPGA-to-SDRAM bridge (Agilex 5 HPS Technical
+// Reference Manual, 814346, Table 323, "Total Address Map for F2H and
+// F2SDRAM").  On the Zynq boards the region is the top of memory.  Here it
+// cannot be: U-Boot relocates itself to the top of memory, and on this part
+// nothing in U-Boot moves that below a reserved-memory node --- the one
+// caller of the reserved-memory-aware `get_mem_top()` in U-Boot 2026.01 is
+// Xilinx's board code (`board/xilinx/common/board.c`,
+// `board_get_usable_ram_top`), and neither mainline's nor Altera's socfpga
+// code implements that hook.  So the region is the second 128 MB from the
+// top, 0xB000_0000-0xB7FF_FFFF, and 0xB800_0000-0xBFFF_FFFF is U-Boot's to
+// relocate into, with room to spare.  U-Boot's `lmb` does honor this node in
+// its own control tree when it places the kernel's tree and the ramdisk
+// (`lib/lmb.c`), which is why U-Boot's tree carries it as well as the kernel's.
+//
+// `no-map`, for the Zynq boards' reason: the FPGA-to-SDRAM bridge does not
+// snoop the processors' caches, so a cacheable kernel mapping of memory the
+// fabric writes would go stale in a way that reads as a fabric fault.  A
+// no-map region is also left out of "System RAM" by arm64's
+// `request_standard_resources()`, which is what lets /dev/mem map it.
+//
+// Included by `socfpga_agilex5_de25_nano_cadr.dts`, beside which the build
+// copies it in both trees.
+
+/ {
+	reserved-memory {
+		cadr@b0000000 {
+			reg = <0x0 0xb0000000 0x0 0x08000000>;
+			no-map;
+		};
+	};
+};

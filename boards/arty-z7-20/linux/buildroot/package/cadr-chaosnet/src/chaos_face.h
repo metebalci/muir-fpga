@@ -122,7 +122,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CHAOS_REG_BASE    0x40001000u
+#include <cadr/cadr_board.h>
+
+// One page above the pack side on every board (<cadr/cadr_board.h>).
+#define CHAOS_REG_BASE    CADR_BOARD_CHAOS_BASE
 #define CHAOS_REG_BYTES   0x1000u
 #define CHAOS_IDENT_WORD  0x4348414Fu	/* "CHAO" */
 

@@ -89,11 +89,11 @@ install: all
 check: $(WORK)/checkpoint_test
 	$(WORK)/checkpoint_test $(WORK) $(CHK)
 
-$(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) \
+$(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                          $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
                          $(READOUT_DIR)/cadr_image.h
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -I$(READOUT_DIR) -o $@ checkpoint_test.c \
+	$(HOSTCC) $(HOSTCFLAGS) -I$(READOUT_DIR) -I$(COMMON_DIR) -o $@ checkpoint_test.c \
 	    $(CORE) $(READOUT_SRC)
 
 # The mutants. **A ROUND TRIP THAT CANNOT FAIL IS NOT EVIDENCE**, so the same
@@ -107,11 +107,11 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) \
 MUTANTS := 1 2 3 4 5 6 7 8
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
-$(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) \
+$(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                            $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
                            $(READOUT_DIR)/cadr_image.h
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -DCHK_MUTATE=$* -I$(READOUT_DIR) -o $@ \
+	$(HOSTCC) $(HOSTCFLAGS) -DCHK_MUTATE=$* -I$(READOUT_DIR) -I$(COMMON_DIR) -o $@ \
 	    checkpoint_test.c $(CORE) $(READOUT_SRC)
 
 clean:

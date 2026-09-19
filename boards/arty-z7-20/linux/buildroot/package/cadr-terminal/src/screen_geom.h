@@ -26,7 +26,9 @@
 //                                   rtl/plumbing/cadr_ddr_map.sv:71
 //   23,112 of them are the screen muir src/terminal/mod.rs:88, `visible()`;
 //                                   963 x 24, and the rest is not drawn
-//   0x1C00_0000 in DDR            rtl/plumbing/cadr_ddr_map.sv:67, `DISPLAY_BASE`
+//   0x1C00_0000 in DDR            rtl/plumbing/cadr_ddr_map.sv:67, `DISPLAY_BASE`;
+//                                   a Zynq board's, and <cadr/cadr_board.h>
+//                                   has every board's
 //   word n at base + 4n           rtl/plumbing/cadr_ddr_map.sv:83, `display_byte_address`,
 //                                   the offset being the low fifteen bits of
 //                                   the physical address and nothing
@@ -78,13 +80,18 @@
 
 #include <stdint.h>
 
+#include <cadr/cadr_board.h>
+
 #define SCREEN_WIDTH            768u
 #define SCREEN_HEIGHT           963u
 #define SCREEN_WORDS_PER_LINE   24u
 #define SCREEN_WINDOW_WORDS     32768u
 #define SCREEN_VISIBLE_WORDS    (SCREEN_HEIGHT * SCREEN_WORDS_PER_LINE)
 #define SCREEN_WINDOW_BYTES     (SCREEN_WINDOW_WORDS * 4u)
-#define SCREEN_BASE             0x1C000000u
+// The display's base is the board's (<cadr/cadr_board.h>): 0x1C000000 on the
+// Zynq boards and 0xB4000000 on the DE25-Nano, 64 MB into the reservation on
+// both.
+#define SCREEN_BASE             CADR_BOARD_DISPLAY_BASE
 // The display board's own frame, in the machine's nanoseconds: muir's
 // `FRAME_NS`, 966 lines of 16.000 us, which `rtl/machine/cadr_tv.sv` makes as
 // 1,545,600 ticks of MIT's 10 ns grid.  This one is held to muir and never
@@ -153,7 +160,7 @@
 #define SCREEN_COLOR_BPP            4u
 #define SCREEN_COLORS               16u
 #define SCREEN_COLOR_VISIBLE_WORDS  (SCREEN_COLOR_HEIGHT * SCREEN_COLOR_WORDS_PER_LINE)
-#define SCREEN_COLOR_BASE           0x1C020000u
+#define SCREEN_COLOR_BASE           CADR_BOARD_COLOR_BASE
 
 // The larger of the two screens, in frame-buffer words: 963 x 24 = 23,112
 // against 454 x 72 = 32,688.  **The color screen is the bigger one**, which

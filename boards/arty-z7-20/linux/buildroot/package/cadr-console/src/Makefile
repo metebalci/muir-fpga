@@ -124,7 +124,7 @@ check: $(WORK)/console_test
 check-only: $(WORK)/console_test
 	$(WORK)/console_test
 
-$(WORK)/console_test: console_test.c $(CORE) $(HOST) $(HEADERS) $(COMMON_SRC)
+$(WORK)/console_test: console_test.c $(CORE) $(HOST) $(HEADERS) $(COMMON_SRC) $(wildcard $(COMMON_DIR)/cadr/*.h)
 	@mkdir -p $(WORK)
 	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ console_test.c $(CORE) $(HOST) $(COMMON_SRC)
 

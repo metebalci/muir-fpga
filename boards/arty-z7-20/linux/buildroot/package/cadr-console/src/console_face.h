@@ -73,13 +73,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <cadr/cadr_board.h>
+
 // `M_AXI_GP1` decodes 0x80000000 - 0xBFFFFFFF to the fabric, as `M_AXI_GP0`
 // decodes 0x40000000 - 0x7FFFFFFF.  Not from memory: Xilinx's own
 // `processing_system7_v5_5/bd/bd.tcl` says it in the CRITICAL WARNING it
 // raises for an address segment outside the range --- line 125 for a design
 // with both ports and line 135 for one with GP1 alone.  The console sits at
-// the bottom of GP1's gigabyte.
-#define CONS_REG_BASE    0x80000000u
+// the bottom of GP1's gigabyte.  That is the Zynq boards'; on the DE25-Nano
+// it is the bottom of the lightweight bridge's window, 0x20000000, and
+// <cadr/cadr_board.h> has both.
+#define CONS_REG_BASE    CADR_BOARD_CONSOLE_BASE
 // Six pages of sixteen words.  It was two and 128 bytes until the build
 // stamp wanted a word of its own and page 0 had none left, and four until the
 // two display boards' color maps wanted sixteen words each; nothing maps this
@@ -992,8 +996,9 @@ void cons_say_flag2(uint16_t w);
 // the machine's bus cycles land in, not the machine's view of it: nothing is
 // halted, nothing is synchronized, and a word read while the machine is
 // running is a word from an instant nobody named.  The addresses are
-// `rtl/plumbing/cadr_ddr_map.sv`'s and the arithmetic is its `main_byte_address`.
-#define CONS_MAIN_BASE 0x18000000u
+// `rtl/plumbing/cadr_ddr_map.sv`'s and the arithmetic is its `main_byte_address`,
+// at the board's base (<cadr/cadr_board.h>: 0x18000000 on the Zynq boards).
+#define CONS_MAIN_BASE CADR_BOARD_MAIN_BASE
 // What the machine can address today: 60 boards of 64K words.  The region
 // reserves 64 MB for a machine whose physical address had been widened, which
 // would be a fork of the machine and not a change here.

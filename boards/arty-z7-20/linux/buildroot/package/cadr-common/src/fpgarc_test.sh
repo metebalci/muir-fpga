@@ -1503,9 +1503,26 @@ fi
 # run on its own, because the rest of that script wants a bitstream, a card
 # image and a Buildroot output tree.  The anchors are asserted the same way
 # the init scripts' constants are.
+#
+# **AND THE BOARD'S FACTS BEFORE IT**, lifted the same way: the menu names the
+# display's two windows, which are the board's, and the generator reads them
+# from the block of the script that sets every board's.  $4 names the board,
+# the Arty Z7-20 unless said, which is what the card script itself defaults to.
+lift_board_facts() {
+	awk '/^case "\$BOARD_NAME" in$/ {on=1}
+	     on {print}
+	     /^STAGED_FILES=\$BOARD_FILES$/ {if (on) exit}' "$MKSD" > "$1"
+	if [ ! -s "$1" ] || [ "$(grep -c '^STAGED_FILES=\$BOARD_FILES$' "$1")" != "1" ]; then
+		fail "the board's facts are not where this check looks in mksd-buildroot.sh"
+		return 1
+	fi
+	return 0
+}
+
 generate_fpgarc() {
 	rm -rf "$WORK/gen"
 	mkdir -p "$WORK/gen/packs"
+	lift_board_facts "$WORK/gen/board.sh" || return 1
 	awk '/^CHAOS_ADDR=\$\{CHAOS_ADDR_FPGA/ {on=1}
 	     on {print}
 	     /^\} > "\$OUT\/packs\/fpgarc"$/ {if (on) exit}' "$MKSD" > "$WORK/gen/gen.sh"
@@ -1519,6 +1536,9 @@ generate_fpgarc() {
 	fi
 	( set -u
 	  OUT="$WORK/gen"
+	  BOARD_NAME=${4:-arty-z7-20}
+	  BOARD_DTB=the-board.dtb
+	  . "$WORK/gen/board.sh"
 	  NO_AUTO_BOOT=$1
 	  # $2 is RELEASE: empty for the development card, 1 for the card a
 	  # stranger is given.  The two menus are the same file with a
@@ -1992,22 +2012,31 @@ lift() {
 case_head "the card script puts the board's four files in the board's own folder"
 sandbox
 mkdir -p "$WORK/lay/images" "$WORK/lay/out"
-for f in boot.bin u-boot.img zImage rootfs.cpio.uboot zynq-arty-z7-20.dtb; do
+for f in boot.bin u-boot.img zImage rootfs.cpio.uboot zynq-arty-z7-20.dtb \
+         u-boot.itb Image socfpga_agilex5_de25_nano_cadr.dtb; do
 	echo "$f" > "$WORK/lay/images/$f"
 done
 echo bitstream > "$WORK/lay/the.bit"
-if lift 'cp "$IMAGES/boot.bin" "$OUT/card/BOOT.BIN"' \
-        'cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot"' \
-        "$WORK/lay/copy.sh"; then
+# One board's copy, run the way the script runs it: the board's facts, then the
+# copy block, each lifted on its own anchors.  $1 the board, $2 its tree.
+lay_out() {
+	rm -rf "$WORK/lay/out"; mkdir -p "$WORK/lay/out"
 	( set -eu
 	  OUT="$WORK/lay/out"
 	  IMAGES="$WORK/lay/images"
 	  BIT="$WORK/lay/the.bit"
-	  BOARD_NAME=arty-z7-20
-	  BOARD_DTB=zynq-arty-z7-20.dtb
+	  NO_FABRIC=
+	  BOARD_NAME=$1
+	  BOARD_DTB=$2
+	  . "$WORK/lay/board.sh"
 	  mkdir -p "$OUT/card/$BOARD_NAME"
 	  . "$WORK/lay/copy.sh" ) 2>"$WORK/lay/err"
-	if [ $? != 0 ]; then
+}
+if lift_board_facts "$WORK/lay/board.sh" \
+   && lift 'for spec in $ROOT_FILES; do' \
+        'cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot"' \
+        "$WORK/lay/copy.sh"; then
+	if ! lay_out arty-z7-20 zynq-arty-z7-20.dtb; then
 		fail "the card script's copy block did not run: $(cat "$WORK/lay/err")"
 	else
 		root_ok=yes
@@ -2027,6 +2056,27 @@ if lift 'cp "$IMAGES/boot.bin" "$OUT/card/BOOT.BIN"' \
 		[ "$folder_ok" = yes ] \
 			&& ok "and cadr.bit, the tree, zImage and the root filesystem are in arty-z7-20/ and nowhere else"
 	fi
+	# **THE DE25-Nano FROM THE SAME BLOCK**, which is the point of the
+	# block: one layout, the board's own names.  Its first-stage loader is in
+	# its flash, so the root holds u-boot.itb and no BOOT.BIN, and the fabric
+	# is a core.rbf.
+	if ! lay_out de25-nano socfpga_agilex5_de25_nano_cadr.dtb; then
+		fail "the card script's copy block did not run for the DE25-Nano: $(cat "$WORK/lay/err")"
+	else
+		de25_ok=yes
+		[ -f "$WORK/lay/out/card/u-boot.itb" ] || { fail "card/u-boot.itb is not at the root"; de25_ok=no; }
+		for f in BOOT.BIN u-boot.img; do
+			[ -e "$WORK/lay/out/card/$f" ] && { fail "the DE25-Nano's card has a $f, which nothing on it reads"; de25_ok=no; }
+		done
+		for f in cadr.core.rbf socfpga_agilex5_de25_nano_cadr.dtb Image rootfs.cpio.uboot; do
+			[ -f "$WORK/lay/out/card/de25-nano/$f" ] \
+				|| { fail "card/de25-nano/$f is not in the board's folder"; de25_ok=no; }
+		done
+		n=$(ls "$WORK/lay/out/card" | wc -l)
+		[ "$n" = 2 ] || { fail "the DE25-Nano's card root holds $n entries, wanting u-boot.itb and de25-nano/"; de25_ok=no; }
+		[ "$de25_ok" = yes ] \
+			&& ok "and the DE25-Nano's: u-boot.itb alone at the root, cadr.core.rbf, its tree, Image and the root filesystem in de25-nano/"
+	fi
 fi
 
 case_head "a U-Boot that loads from the root of the partition is refused by name"
@@ -2039,12 +2089,14 @@ if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
 		> "$WORK/ub/new.img"
 	printf 'bootcmd=run cadr_boot\ncadr_card=load mmc 0:1 ${a} cadr.bit && load mmc 0:1 ${b} zynq-arty-z7-20.dtb && load mmc 0:1 ${c} zImage && load mmc 0:1 ${d} rootfs.cpio.uboot && run cadr_bootz\n' \
 		> "$WORK/ub/old.img"
+	lift_board_facts "$WORK/ub/board.sh" || true
 	run_refusal() {
 		cp "$1" "$WORK/ub/card/u-boot.img"
 		( set -eu
 		  OUT="$WORK/ub"
 		  BOARD_NAME=arty-z7-20
 		  BOARD_DTB=zynq-arty-z7-20.dtb
+		  . "$WORK/ub/board.sh"
 		  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
 		  . "$WORK/ub/refuse.sh" ) 2>"$WORK/ub/err"
 	}
@@ -2080,17 +2132,18 @@ sandbox
 # subshell, and the failure count this check exits on would be incremented
 # there and lost --- a case that prints FAIL and still leaves the run green.
 while IFS= read -r spec; do
-	env_file="$TREE/${spec%%=*}"
-	rest=${spec#*=}
-	board=${rest%%=*}
-	dtb=${rest#*=}
+	# <environment>=<board>=<its tree>=<its fabric>=<its kernel>
+	IFS='=' read -r env_rel board dtb fabric kernel <<EOF_SPEC
+$spec
+EOF_SPEC
+	env_file="$TREE/$env_rel"
 	if [ ! -f "$env_file" ]; then
 		fail "no environment at $env_file: this check has rotted"
 		continue
 	fi
 	block=$(sed -n '/^cadr_card=/,/^$/p' "$env_file")
 	bad=0
-	for f in cadr.bit "$dtb" zImage rootfs.cpio.uboot; do
+	for f in "$fabric" "$dtb" "$kernel" rootfs.cpio.uboot; do
 		echo "$block" | grep -q "load mmc 0:1 [^ ]* $board/$f " \
 			|| { fail "$(basename "$env_file")'s cadr_card does not load $board/$f"; bad=1; }
 	done
@@ -2101,9 +2154,41 @@ while IFS= read -r spec; do
 		|| { fail "$(basename "$env_file") does not import uEnv.txt from the root of the partition"; bad=1; }
 	[ "$bad" = 0 ] && ok "$(basename "$env_file"): all four out of $board/, and uEnv.txt from the root"
 done <<'ENVS'
-boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env=arty-z7-20=zynq-arty-z7-20.dtb
-boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/cadr_cora.env=cora-z7-07s=zynq-cora-z7-07s.dtb
+boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env=arty-z7-20=zynq-arty-z7-20.dtb=cadr.bit=zImage
+boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/cadr_cora.env=cora-z7-07s=zynq-cora-z7-07s.dtb=cadr.bit=zImage
+boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env=de25-nano=socfpga_agilex5_de25_nano_cadr.dtb=cadr.core.rbf=Image
 ENVS
+
+case_head "the DE25-Nano's menu is the Zynq boards' with the DE25-Nano's windows"
+sandbox
+# **ONE MENU FOR EVERY BOARD, AND THE ADDRESSES IN IT ARE THE BOARD'S.**  The
+# file of flags is the machine's and not the part's, so the DE25-Nano's card
+# must carry the same menu line for line --- and the two lines that name where
+# the display's windows are must name the DE25-Nano's, 64 MB into ITS
+# reservation, or a person uncommenting them would point the screen at the
+# wrong memory.  Generated twice from the one block and compared.
+if generate_fpgarc "" "" "" arty-z7-20 && cp "$WORK/gen/packs/fpgarc" "$WORK/fpgarc.arty" \
+   && generate_fpgarc "" "" "" de25-nano && cp "$WORK/gen/packs/fpgarc" "$WORK/fpgarc.de25"; then
+	if tr -d '\r' < "$WORK/fpgarc.arty" | grep -qx -- '#--window 0x1C000000' \
+	   && tr -d '\r' < "$WORK/fpgarc.arty" | grep -qx -- '#--color-window 0x1C020000'; then
+		ok "the Arty Z7-20's names its display at 0x1C000000 and the color display at 0x1C020000"
+	else
+		fail "the Arty Z7-20's menu does not name its display's windows"
+	fi
+	if tr -d '\r' < "$WORK/fpgarc.de25" | grep -qx -- '#--window 0xB4000000' \
+	   && tr -d '\r' < "$WORK/fpgarc.de25" | grep -qx -- '#--color-window 0xB4020000'; then
+		ok "the DE25-Nano's names its display at 0xB4000000 and the color display at 0xB4020000"
+	else
+		fail "the DE25-Nano's menu does not name ITS display's windows"
+	fi
+	n=$(diff "$WORK/fpgarc.arty" "$WORK/fpgarc.de25" | grep -c '^[<>]' || true)
+	if [ "$n" = 4 ]; then
+		ok "and the two menus differ in those two lines and in nothing else"
+	else
+		fail "the two boards' menus differ in $n lines, wanting the two windows' 4:" \
+		     "$(diff "$WORK/fpgarc.arty" "$WORK/fpgarc.de25" | head -20)"
+	fi
+fi
 
 # ---------------------------------------------------------------------------
 # 8.  The release guard: it lets the card's own file through, and it still

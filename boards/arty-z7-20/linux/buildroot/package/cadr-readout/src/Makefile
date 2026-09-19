@@ -89,9 +89,9 @@ install-staging: $(LIB)
 check: $(WORK)/readout_test
 	$(WORK)/readout_test
 
-$(WORK)/readout_test: readout_test.c $(CORE) $(HEADERS)
+$(WORK)/readout_test: readout_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h)
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -o $@ readout_test.c $(CORE)
+	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ readout_test.c $(CORE)
 
 clean:
 	rm -f $(PROGRAMS) $(LIB) readout.o

@@ -184,8 +184,8 @@ static int print_audit(struct readout *r)
 		if (a.port_reads == 0 && a.port_writes == 0)
 			say("  BUT THE PORT HAS ANSWERED NOTHING, so the clause "
 			    "that watches it has had nothing to watch: this is "
-			    "a board with no S_AXI_HP0 behind the machine, or "
-			    "one where ps7_post_config has not run");
+			    "a board with no " CADR_BOARD_MEMORY_PORT " behind the machine, or "
+			    CADR_BOARD_MEMORY_OPENED);
 		return 0;
 	}
 	say("  %-14s %u, %s", "first fault", a.clause,
@@ -284,7 +284,7 @@ int main(int argc, char **argv)
 	if (fd < 0)
 		return 1;
 	// **BEFORE ANYTHING ON GP1.**  See the header, and `cadr_mem.h`'s.
-	if (guard && cadr_guard(fd, "M_AXI_GP1") != 0)
+	if (guard && cadr_guard(fd, CADR_BOARD_CONSOLE_PORT) != 0)
 		return 1;
 
 	struct mem_face face;

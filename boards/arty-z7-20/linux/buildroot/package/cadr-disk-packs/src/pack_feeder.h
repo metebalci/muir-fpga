@@ -94,7 +94,10 @@
 #include "pack_file.h"
 #include "pack_side.h"
 
-#define FEEDER_SPARE_BASE   0x1C800000u
+// The spare's base is the board's (<cadr/cadr_board.h>, through pack_side.h):
+// 0x1C800000 on the Zynq boards, 0xB4800000 on the DE25-Nano, 72 MB into the
+// reservation on both.
+#define FEEDER_SPARE_BASE   CADR_BOARD_SPARE_BASE
 #define FEEDER_SPARE_BYTES  (56u * 1024u * 1024u)
 #define FEEDER_RECORD_STRIDE 0x800u
 #define FEEDER_FETCH_OFF    0x00000u

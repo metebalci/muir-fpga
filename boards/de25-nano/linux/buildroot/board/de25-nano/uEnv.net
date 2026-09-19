@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The boot command for this project's own DE25-Nano, served by its TFTP server
+# and fetched by U-Boot's cadr_net when the card's uEnv.txt names a server.
+# Edit here, copy to /srv/tftp/de25-nano, reset the board; the card is never
+# touched.  A card without a server named on it never reads this file: it
+# boots the same four files from the card (cadr_de25.env's cadr_card).
+#
+# EVERY PATH HERE IS UNDER de25-nano/, for the reason every board's served set
+# is in a directory of its own: one server serves more than one board, and the
+# boards' files share names.
+#
+# WHAT IT DOES.  The CADR goes into the fabric first: cadr.core.rbf fetched,
+# then cadr_fabric --- the fabric's gate shut, `fpga load`, `bridge enable`,
+# the gate opened --- which cadr_de25.env explains.  Then the tree, the kernel
+# and the root filesystem, and cadr_booti, which is the same last step the
+# card path takes.  The addresses are U-Boot's environment's.
+netcmd=tftpboot ${cadr_rbf_addr} de25-nano/cadr.core.rbf && run cadr_fabric && tftpboot ${cadr_fdt_addr} de25-nano/socfpga_agilex5_de25_nano_cadr.dtb && tftpboot ${cadr_kernel_addr} de25-nano/Image && tftpboot ${cadr_ramdisk_addr} de25-nano/rootfs.cpio.uboot && run cadr_booti

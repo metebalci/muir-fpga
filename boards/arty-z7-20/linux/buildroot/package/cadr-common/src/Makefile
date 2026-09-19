@@ -22,11 +22,35 @@
 LIB     := libcadr-common.a
 SOURCES := cadr_log.c cadr_mem.c cadr_input_link.c cadr_endpoint.c
 HEADERS := cadr/cadr_log.h cadr/cadr_mem.h cadr/cadr_input_link.h \
-           cadr/cadr_endpoint.h
+           cadr/cadr_endpoint.h cadr/cadr_board.h
 OBJECTS := $(SOURCES:.c=.o)
 
 AR ?= ar
 CFLAGS += -Wall -Wextra -std=gnu11 -I.
+
+# **WHICH BOARD'S ADDRESS MAP, AND HOW EVERY PROGRAM GETS IT.**  Named once,
+# by the board's defconfig (package/cadr-common/Config.in), and handed here
+# by cadr-common.mk as CADR_BOARD.  The library is compiled for it --- the
+# guard in cadr_mem.c reads the board's tally --- and the copy of
+# cadr/cadr_board.h that `install-staging` puts in the staging tree BEGINS
+# with the board's define, so every program that includes it from there is
+# built for the same board with no flag of its own and no way to be built for
+# another.  A name this file does not know stops the build.  The default is
+# the Zynq-7000 boards', which is what a build that says nothing always was.
+CADR_BOARD ?= zynq-7000
+BOARD_DEFINE_zynq-7000 := CADR_BOARD_ZYNQ7000
+BOARD_DEFINE_de25-nano := CADR_BOARD_DE25_NANO
+BOARD_DEFINE := $(BOARD_DEFINE_$(CADR_BOARD))
+ifeq ($(BOARD_DEFINE),)
+$(error CADR_BOARD=$(CADR_BOARD) names no board cadr/cadr_board.h has a map for)
+endif
+# `override`, because Buildroot hands CFLAGS on the command line
+# ($(TARGET_CONFIGURE_OPTS)), and GNU make lets a command-line variable win
+# over every assignment in the file, `+=` included --- the `CFLAGS +=` above is
+# dropped under Buildroot for exactly that reason.  Dropped here, the library
+# would be built for the Zynq boards under a header that says otherwise, and
+# every program would guard the wrong block.
+override CFLAGS += -D$(BOARD_DEFINE)
 
 all: $(LIB)
 
@@ -41,7 +65,10 @@ $(OBJECTS): $(HEADERS)
 install-staging: all
 	install -d $(DESTDIR)/usr/lib $(DESTDIR)/usr/include/cadr
 	install -m 0644 $(LIB) $(DESTDIR)/usr/lib/
-	install -m 0644 $(HEADERS) $(DESTDIR)/usr/include/cadr/
+	install -m 0644 $(filter-out cadr/cadr_board.h,$(HEADERS)) $(DESTDIR)/usr/include/cadr/
+	{ printf '#define %s 1\n' $(BOARD_DEFINE); cat cadr/cadr_board.h; } \
+	    > $(DESTDIR)/usr/include/cadr/cadr_board.h
+	chmod 0644 $(DESTDIR)/usr/include/cadr/cadr_board.h
 
 # The target.  Two files, both shell the init scripts source and neither with
 # a build step --- they are read, not compiled --- so `all` says nothing about

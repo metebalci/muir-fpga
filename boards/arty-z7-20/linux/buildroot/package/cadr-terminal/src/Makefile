@@ -95,7 +95,7 @@ check: $(WORK)/screen_test
 check-only: $(WORK)/screen_test
 	$(WORK)/screen_test --screens $(SCREENS) --server-log $(WORK)/server.log
 
-$(WORK)/screen_test: screen_test.c $(CORE) $(HEADERS) $(COMMON_SRC)
+$(WORK)/screen_test: screen_test.c $(CORE) $(HEADERS) $(COMMON_SRC) $(wildcard $(COMMON_DIR)/cadr/*.h)
 	@mkdir -p $(WORK)
 	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ screen_test.c $(CORE) $(COMMON_SRC)
 

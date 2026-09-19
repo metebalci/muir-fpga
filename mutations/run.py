@@ -2258,11 +2258,15 @@ def check_makefile():
     # `de25_pins` is Python reading a Tcl pin file and, when one is named,
     # Terasic's Quartus settings.  Nothing in it is verilated, and the second
     # of the two files it compares cannot be carried into a mutation work
-    # tree, so it is named here and given no records.
+    # tree, so it is named here and given no records.  `de25_linux` is the
+    # DE25-Nano's Linux side: Python over the pinned sources' hash files, and
+    # the board programs compiled with that board's address map.  C, like
+    # `chaosnet`'s, and what bites on the code it compiles is the packages'
+    # own mutation lists; named here for the same reason.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora", "grid",
-                           "de25_pins"}
+                           "de25_pins", "de25_linux"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four

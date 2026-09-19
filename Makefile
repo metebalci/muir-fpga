@@ -92,6 +92,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_jtag.pass \
+       $(BUILD)/de25_linux.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -2629,6 +2630,7 @@ $(BUILD)/console_face.pass: $(CONSOLE_SRC_DIR)/console_face.c \
 
 $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
                             $(READOUT_SRC)/cadr_image.h \
+                            $(wildcard $(COMMON_SRC)/cadr/*.h) \
                             $(READOUT_SRC)/readout_test.c \
                             $(READOUT_SRC)/cadr-readout.c | $(BUILD)
 	$(MAKE) -C $(READOUT_SRC) check
@@ -2738,7 +2740,8 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(CHECKPOINT_SRC)/pack_bind.c $(CHECKPOINT_SRC)/pack_bind.h \
                           $(CHECKPOINT_SRC)/sha256.c $(CHECKPOINT_SRC)/sha256.h \
                           $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
-                          $(READOUT_SRC)/cadr_image.h | $(BUILD)
+                          $(READOUT_SRC)/cadr_image.h \
+                          $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
 	$(MAKE) -C $(CHECKPOINT_SRC) check CHK=$(CHECKPOINT_WORK)/out.chk
 	$(MAKE) -C $(CHECKPOINT_SRC) all COMMON=host READOUT=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean
@@ -2836,6 +2839,7 @@ USB_INPUT_SRC := $(USB_INPUT_PKG)/src
 # records for the terminal's own tests.
 $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
                         $(wildcard $(CHAOSNET_SRC)/*.h) \
+                        $(wildcard $(COMMON_SRC)/cadr/*.h) \
                         $(CHAOSNET_SRC)/chaos_mutations.txt \
                         $(CHAOSNET_SRC)/chaos_test_boot.sh \
                         $(CHAOSNET_PKG)/S87cadr-chaosnet \
@@ -3177,6 +3181,92 @@ buildroot-cora-rebuild: buildroot-cora-check
 	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_CORA) $(BR_OUT_CORA) $(BR_OUT_CORA)/images/rootfs.cpio.uboot
 	@echo "buildroot-cora: images in $(BR_OUT_CORA)/images:"
 	@ls -l $(BR_OUT_CORA)/images/ | grep -v '^total'
+
+# ------------------------------------------------ the DE25-Nano's image
+#
+# The same Buildroot and the same packages, for aarch64, with Altera's TF-A,
+# U-Boot and kernel, each pinned to a commit.  `boards/de25-nano/linux/
+# buildroot/configs/de25_nano_defconfig` says what it is and why; like the
+# Cora Z7-07S's it is built from both external trees and into an output
+# directory of its own.
+#
+# **TWO CHECKS OF ITS OWN, BEFORE AND AFTER.**  Before: the three pinned
+# sources each have a hash file naming the pinned commit, because Buildroot
+# lets a download with no hash file through with a warning, even with
+# BR2_DOWNLOAD_FORCE_CHECK_HASHES set (support/download/check-hash).  After:
+# every line of the defconfig and of this board's kernel and U-Boot fragments
+# holds in the .config each was built with, because Kconfig drops a line it
+# cannot satisfy without a word, and the programs in the image say this
+# board's addresses.  Then the image against its target tree, as on every
+# board.
+#
+# **AND A REBUILD TARGET FROM THE START**, for the Cora Z7-07S's reason: the
+# other boards' rebuild targets act on their own output directories.  It forces
+# the same one list, filtered by this board's .config.
+BR_EXTERNAL_DE25 := $(BR_EXTERNAL):$(abspath boards/de25-nano/linux/buildroot)
+BR_OUT_DE25 := $(BR_WORK)/out-de25
+BR_DE25_CHECK := boards/de25-nano/linux/buildroot_check.py
+
+.PHONY: buildroot-de25 buildroot-de25-check buildroot-de25-rebuild
+
+# **AND WHAT OF IT `make check` CAN HOLD WITH NO BUILDROOT AT ALL.**  The pins,
+# and every program compiled on the build host with the DE25-Nano's address
+# map, warnings as errors, and asked for that board's addresses and ports in
+# its own words.  Every other check here compiles the Zynq boards' map, which
+# is what their models were written against, so this is the only place the
+# other half of `cadr/cadr_board.h` is compiled before a board build --- a map
+# that does not compile, or a program that still says a Zynq board's address,
+# fails the gate and not the board.  The packages are compiled in a copy, so
+# that this never shares a source directory with the checks that build there.
+DE25_LINUX_PROGRAMS := cadr-console cadr-readout cadr-checkpoint cadr-disk-packs \
+                       cadr-serial cadr-chaosnet cadr-terminal cadr-usb-input
+DE25_LINUX_WORK := $(HOME)/.cache/muir-fpga-de25-linux-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
+$(BUILD)/de25_linux.pass: $(BR_DE25_CHECK) \
+                          boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig \
+                          $(wildcard boards/de25-nano/linux/buildroot/board/de25-nano/patches/*/*/*.hash) \
+                          $(wildcard $(BR_EXTERNAL)/package/*/src/*.c) \
+                          $(wildcard $(BR_EXTERNAL)/package/*/src/*.h) \
+                          $(wildcard $(BR_EXTERNAL)/package/*/src/Makefile) \
+                          $(wildcard $(BR_EXTERNAL)/package/*/src/cadr/*.h) | $(BUILD)
+	@python3 $(BR_DE25_CHECK) pins boards/de25-nano/linux/buildroot
+	@rm -rf $(DE25_LINUX_WORK) && mkdir -p $(DE25_LINUX_WORK)/bin
+	@cp -a $(BR_EXTERNAL)/package $(DE25_LINUX_WORK)/package
+	@set -e; for p in $(DE25_LINUX_PROGRAMS); do \
+	    MAKEFLAGS= $(BR_MAKE) -s -C $(DE25_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host \
+	        CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -DCADR_BOARD_DE25_NANO"; \
+	    cp $(DE25_LINUX_WORK)/package/$$p/src/$$p $(DE25_LINUX_WORK)/bin/; \
+	done
+	@python3 $(BR_DE25_CHECK) programs boards/de25-nano/linux/buildroot $(DE25_LINUX_WORK)/bin
+	@rm -rf $(DE25_LINUX_WORK)
+	@touch $@
+
+buildroot-de25-check: buildroot-packages-check
+	@python3 $(BR_DE25_CHECK) pins boards/de25-nano/linux/buildroot
+
+buildroot-de25: buildroot-de25-check
+	@test -f $(BR_TARBALL) || { \
+	    echo "no Buildroot at $(BR_TARBALL); fetch it with"; \
+	    echo "  curl -o $(BR_TARBALL) $(BR_URL)"; exit 1; }
+	@echo "$(BR_SHA)  $(BR_TARBALL)" | sha256sum -c --quiet - \
+	    || { echo "$(BR_TARBALL) is not the Buildroot this image was built with"; exit 1; }
+	@mkdir -p $(BR_WORK)/bin vendor/buildroot-dl
+	@for f in /usr/bin/gnu*; do [ -x "$$f" ] && ln -sf "$$f" "$(BR_WORK)/bin/$${f#/usr/bin/gnu}"; done; true
+	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_DE25) BR2_EXTERNAL=$(BR_EXTERNAL_DE25) de25_nano_defconfig
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_DE25)
+	@python3 $(BR_DE25_CHECK) configs boards/de25-nano/linux/buildroot $(BR_OUT_DE25)
+	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_DE25) $(BR_OUT_DE25) $(BR_OUT_DE25)/images/rootfs.cpio.uboot
+	@echo "buildroot-de25: images in $(BR_OUT_DE25)/images:"
+	@ls -l $(BR_OUT_DE25)/images/ | grep -v '^total'
+
+buildroot-de25-rebuild: buildroot-de25-check
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_DE25) BR2_EXTERNAL=$(BR_EXTERNAL_DE25) de25_nano_defconfig
+	$(call BR_FORCE,$(BR_OUT_DE25))
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_DE25)
+	@python3 $(BR_DE25_CHECK) configs boards/de25-nano/linux/buildroot $(BR_OUT_DE25)
+	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_DE25) $(BR_OUT_DE25) $(BR_OUT_DE25)/images/rootfs.cpio.uboot
+	@echo "buildroot-de25: images in $(BR_OUT_DE25)/images:"
+	@ls -l $(BR_OUT_DE25)/images/ | grep -v '^total'
 
 # ------------------------------------------------------- MD on the composed
 # machine

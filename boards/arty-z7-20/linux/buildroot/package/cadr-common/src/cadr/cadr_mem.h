@@ -27,6 +27,21 @@
 //
 // A board somebody knows --- a bitstream without the counters, say --- is
 // reached with the program's own `--no-guard`, never by weakening this.
+//
+// **THAT IS THE ZYNQ BOARDS' GUARD, AND THE DE25-Nano's READS ONE WORD.**  The
+// tally reaches an Agilex 5's processor on the thirty-two `h2f_gp_in` lines,
+// which the system manager's GPI register reports, and the guard asks the same
+// marker bits of that one word.  Which block, which words and how many are the
+// board's, in `cadr_board.h`, which says what the DE25-Nano's fabric owes it.
+//
+// **AND ON AN ARM64 PART EVERY MAPPING HERE IS DEVICE MEMORY.**  arm64's
+// `phys_mem_access_prot()` (arch/arm64/mm/mmu.c) maps /dev/mem as
+// noncached --- Device-nGnRnE --- wherever the page is not the kernel's own
+// memory, and the machine's reserved region is not.  Device memory takes a
+// naturally aligned access of the width asked for and nothing cleverer, so a
+// mapping is read and written one aligned 32-bit word at a time through a
+// `volatile uint32_t *`, which is how every program here already does it, and
+// never handed to a library copy.
 
 #ifndef CADR_MEM_H
 #define CADR_MEM_H
@@ -34,10 +49,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// The EMIO tally.
-#define CADR_GPIO_BASE     0xE000A000u
-#define CADR_GPIO_DATA2_RO 0x68u
-#define CADR_GPIO_DATA3_RO 0x6Cu
+#include "cadr_board.h"
+
+// The tally's marker, on every board.
 #define CADR_TALLY_MASK    0x80008000u
 #define CADR_TALLY_MARK    0x00008000u
 
@@ -57,13 +71,30 @@ int cadr_open_mem(void);
 // failure, having said why.
 void *cadr_map(int fd, uint32_t phys, size_t bytes, const char *what);
 
-// The whole guard: map the GPIO block, read the two words, apply the test,
-// say what was found.  0 if the fabric may be touched, -1 if it may not.
+// The whole guard: map the board's tally block --- the GPIO block on a Zynq
+// board, the system manager on the DE25-Nano --- read its words, apply the
+// test, say what was found.  0 if the fabric may be touched, -1 if it may not.
 int cadr_guard(int fd, const char *port);
 
 // The test alone, on two words already in hand: 1 if they carry the marker
 // bits.  Split out so that it can be checked without /dev/mem, and so that
 // the pattern is written once.
 int cadr_tally_ok(uint32_t w2, uint32_t w3);
+
+// A 32-bit number from the command line --- an address a program is told to
+// map, or a word it is told to write: digits in any base `strtoul` takes
+// (`0x` for hexadecimal, a leading 0 for octal), nothing before them and
+// nothing after, and no more than 32 bits.  0 with *out set, or -1 having
+// said why, naming `what`.
+//
+// **IT WAS `(uint32_t)strtoul(s, NULL, 0)`, AND AN arm64 BUILD IS WHAT MADE
+// THAT WRONG.**  On a 32-bit ARM an `unsigned long` is 32 bits, so a number too
+// large came back as ULONG_MAX, 0xFFFFFFFF, and the cast kept it: wrong, but
+// an address nothing answers.  On arm64 it is 64 bits, so the same number came
+// back whole and the cast dropped its top half --- `--window 0x1B4000000` is
+// 0xB4000000 with its first digit gone, a real address and the wrong one.
+// And neither build ever said a word about the characters strtoul stopped
+// at, so `0x4000_0000` mapped 0x4000.  A number this cannot take is refused.
+int cadr_parse_u32(const char *what, const char *s, uint32_t *out);
 
 #endif

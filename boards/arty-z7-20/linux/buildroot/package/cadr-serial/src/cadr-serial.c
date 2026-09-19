@@ -135,10 +135,10 @@ static void usage(void)
 		"                 then goes to every destination named.  With none, stdout.\n"
 		"                 A file destination is capped at 1 MiB and rotated to\n"
 		"                 <name>.1, the root filesystem being a RAM disk\n"
-		"  --regs ADDR    the port's register window (default 0x40002000)\n"
+		"  --regs ADDR    the port's register window (default " CADR_BOARD_SERIAL_BASE_STR ")\n"
 		"  --poll-us N    how often the port is looked at while idle (default 2000);\n"
 		"                 the port holds 1024 characters, so this need not beat a frame\n"
-		"  --no-guard     do not check the EMIO tally first\n"
+		"  --no-guard     do not check " CADR_BOARD_TALLY " first\n"
 		"  --quiet        do not say when a device plugs in or hangs up\n"
 		"  --once         do the checks, say what the port is set to, and exit\n");
 }
@@ -199,7 +199,10 @@ int main(int argc, char **argv)
 			}
 			break;
 		case 'l': cadr_log_dest(optarg); break;
-		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
+		case 'r':
+			if (cadr_parse_u32("--regs", optarg, &regs_phys) != 0)
+				return 2;
+			break;
 		case 'u': poll_us = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'G': no_guard = 1; break;
 		case 'q': quiet = 1; break;
@@ -227,7 +230,7 @@ int main(int argc, char **argv)
 	if (mem < 0)
 		return 1;
 	// 1. The guard, before anything on GP0.
-	if (!no_guard && cadr_guard(mem, "M_AXI_GP0") < 0)
+	if (!no_guard && cadr_guard(mem, CADR_BOARD_FACES_PORT) < 0)
 		return 1;
 
 	struct serial_face face;

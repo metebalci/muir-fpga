@@ -101,7 +101,7 @@ check: $(WORK)/usb_test
 check-only: $(WORK)/usb_test
 	$(WORK)/usb_test --work $(WORK)
 
-$(WORK)/usb_test: usb_test.c $(CORE) $(HEADERS) $(COMMON_SRC) $(TERMINAL_SRC)
+$(WORK)/usb_test: usb_test.c $(CORE) $(HEADERS) $(COMMON_SRC) $(TERMINAL_SRC) $(wildcard $(COMMON_DIR)/cadr/*.h)
 	@mkdir -p $(WORK)
 	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -I$(TERMINAL_DIR) -o $@ usb_test.c \
 	    $(CORE) $(TERMINAL_SRC) $(COMMON_SRC)

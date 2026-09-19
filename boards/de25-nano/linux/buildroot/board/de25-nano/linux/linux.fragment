@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The kernel for the DE25-Nano's hard processor system: Altera's arm64
+# `defconfig` at the pinned commit of linux-socfpga, which is what Altera's own
+# release builds this board with (KBUILD_DEFCONFIG ?= "defconfig" in
+# meta-altera-bsp's conf/machine/agilex5e_de25_nano.conf), and this over it.
+#
+# **EVERY LINE BELOW IS ASSERTED AGAINST THE KERNEL'S OWN .config** by
+# `make buildroot-de25`, because Kconfig drops a line whose dependencies are
+# not met without a word, and a line here that did not hold would read as a
+# driver the board has.  Most of them only say again what Altera's
+# configuration already gives; they are here so that the list of what this
+# board needs is written down in one place and checked, and so that a change
+# in Altera's configuration cannot take one away quietly.
+#
+# **BUILT IN, EVERY ONE.**  Altera's configuration builds some nine hundred
+# drivers as modules and this image carries none of them
+# (board/de25-nano/post-build.sh), so a driver the board needs must be `y`.
+# What the board needs, from Altera's DE25 tree and the SoC's own
+# (arch/arm64/boot/dts/intel/socfpga_agilex5_de25_nano.dts and
+# socfpga_agilex5.dtsi):
+#
+#   the console      UART 1, `snps,dw-apb-uart`, ttyS0
+#   the card         the SD controller, `altr,agilex5-sd6hc` / `cdns,sd6hc`,
+#                    which drivers/mmc/host/sdhci-cadence.c matches in this
+#                    kernel and in no mainline one; its supply and its
+#                    1.8 V switch, a fixed regulator and a GPIO one on port B
+#                    of the DesignWare GPIO block; and FAT with the code pages
+#                    a FAT volume names, for the card's two partitions
+#   the network      EMAC 0, `altr,socfpga-stmmac-agilex5`, with a Micrel
+#                    KSZ9031 at MDIO address 1
+#   USB              the DWC2 controller, `snps,dwc2`, behind a ULPI PHY the
+#                    tree describes as `usb-nop-xceiv`; HID over USB and
+#                    evdev, so that a keyboard and a mouse are
+#                    /dev/input/event* for cadr-usb-input; and a line on the
+#                    console when something is plugged in
+#   the SMMU         which the DE25 tree turns on, and which the card, the
+#                    MAC and USB sit behind
+#
+# /dev/mem IS UNRESTRICTED, for the Zynq boards' reason: it is how every
+# program here reaches the fabric and the CADR's memory.  On arm64 it would
+# work with STRICT_DEVMEM on as well --- a no-map region is "reserved" and not
+# "System RAM" (arch/arm64/kernel/setup.c, request_standard_resources) --- and
+# off is one fewer thing to be wrong about.
+
+CONFIG_LOCALVERSION="-cadr"
+# No debug information.  Altera's configuration asks for it
+# (DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT with DEBUG_INFO_REDUCED); it goes into
+# vmlinux and the modules and not into the Image this board boots, so what it
+# costs here is build time and nothing else.
+CONFIG_DEBUG_INFO_NONE=y
+CONFIG_DEVMEM=y
+# CONFIG_STRICT_DEVMEM is not set
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_8250_DW=y
+CONFIG_MMC=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_PLTFM=y
+CONFIG_MMC_SDHCI_CADENCE=y
+CONFIG_GPIO_DWAPB=y
+CONFIG_REGULATOR=y
+CONFIG_REGULATOR_FIXED_VOLTAGE=y
+CONFIG_REGULATOR_GPIO=y
+CONFIG_VFAT_FS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_STMMAC_ETH=y
+CONFIG_STMMAC_PLATFORM=y
+CONFIG_DWMAC_SOCFPGA=y
+CONFIG_MICREL_PHY=y
+CONFIG_USB=y
+CONFIG_USB_ANNOUNCE_NEW_DEVICES=y
+CONFIG_USB_DWC2=y
+CONFIG_NOP_USB_XCEIV=y
+CONFIG_INPUT=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_HID=y
+CONFIG_HID_GENERIC=y
+CONFIG_USB_HID=y
+CONFIG_ARM_SMMU_V3=y
