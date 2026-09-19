@@ -18,7 +18,7 @@ part family.
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
 | `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Runs on silicon, without display output or USB input. |
-| `de25-nano/` | Terasic DE25-Nano | A5EB013BB23BE4SCS | A pin file and a README of what a port needs. The machine is not built. |
+| `de25-nano/` | Terasic DE25-Nano | A5EB013BB23BE4SCS | The machine without its memory, built by Quartus and loaded over JTAG. No processor configuration yet. |
 
 **The two Zynq boards run the machine on silicon, and they carry two different
 amounts.** `arty-z7-20/` is the board and is complete. `cora-z7-07s/` has a
@@ -29,9 +29,12 @@ it boots Linux from its card. Its machine is halted today, with no drive. Over
 the Pmod cable it has debugged the Arty Z7-20 and been debugged by it, which
 `docs/board.md` records.
 
-**`de25-nano/` holds a README and a pin file.** The README says what the board
-is and what a port to it needs. The pin file is transcribed from Terasic's
-user manual. The machine has not been built or synthesized for the board.
+**`de25-nano/` holds the machine without its memory.** It has a top level, a
+Quartus flow, a pin file transcribed from Terasic's user manual, and a README
+that says what the board is and what the rest of the port needs. The machine
+runs its boot PROM there with nothing behind its memory port, as the Arty
+Z7-20's default board does, and it meets timing with the Zynq boards'
+exceptions written again for Quartus.
 
 **Every board here has a processing system beside its fabric, and that is
 deliberate.** What a board has to bring is main memory, a card the machine's
@@ -45,7 +48,7 @@ and the section below says what the list is.
 an SoC of another family.** Its part is an Altera Agilex 5, with Cortex-A76 and
 Cortex-A55 cores beside the fabric and a bridge from the fabric into their
 memory, so it brings the same four things in the same way. What differs is the
-vendor. Its flows would be Quartus's rather than Vivado's, nothing in
+vendor. Its flows are Quartus's rather than Vivado's, nothing in
 `rtl/plumbing/xilinx7/` carries over, its cores are 64-bit, and it boots
 differently. `de25-nano/README.md` has the list.
 
@@ -109,7 +112,7 @@ partition, because the packs are the machine's world and not the part's.
 
 The Arty Z7-20 is the board and stays the board. The Cora was added after it,
 which was not a stated priority and should not be read as one. The DE25-Nano's
-directory came after both and holds a README only.
+directory came after both and holds the machine without its memory.
 
 The Cora was worth settling before the display output block started, because a
 board with no HDMI pulls against exactly that work. And it is the tighter of
@@ -166,10 +169,11 @@ system it would not be, because on such a part this is not the design: every
 one of the answers the next section lists costs logic and block RAM these
 numbers do not include.
 
-**On the DE25-Nano the fit is not measured at all.** The machine has not been
-synthesized for its part, and that part is counted in adaptive logic modules
-and M20K blocks rather than in LUTs and block RAM tiles, so it has no row in
-either table.
+**On the DE25-Nano only the machine without its memory is measured.** It
+takes 5,162 of the part's 46,800 adaptive logic modules and 95 of its 358
+M20K blocks. That part is counted in those units rather than in LUTs and
+block RAM tiles, and the board has no memory-on build yet, so it has no row
+in either table. `de25-nano/README.md` has the figures.
 
 ## Three kinds of new board
 
@@ -180,7 +184,7 @@ XC7Z007S is a much smaller part than the XC7Z020, and it does.
 
 **An SoC of another family is a port with a second toolchain.** The DE25-Nano
 brings main memory, a card, a network and video through its hard processor
-system as a Zynq board does, and nothing in `rtl/machine/` changes. But its top
+system as a Zynq board does, and nothing in `rtl/machine/` changes for it. But its top
 level, its pins, its constraints, its processor configuration and its flows are
 all for Quartus, its Linux is 64-bit, and the vendor primitives in
 `rtl/plumbing/xilinx7/` need counterparts or go without.

@@ -684,7 +684,21 @@ module cadr_microcycle #(
                || (!dmap && dmask[0] && r[0])
                || ir[12];
   assign dadr   = {ir[22:13], daddr0} | {4'd0, dmask[6:1] & r[6:1], 1'b0};
+`ifdef CADR_RDW_POISON
+  // A CHECK'S VARIANT AND NEVER A BOARD'S: see "THE READ-DURING-WRITE
+  // WINDOW" at the end of this module.
+  logic        dmem_w_q;
+  logic [10:0] dmem_wa_q;
+  always_ff @(posedge clk) begin
+    dmem_w_q  <= wp && dispwr;
+    dmem_wa_q <= dadr;
+  end
+  logic dmem_rdw;
+  assign dmem_rdw = dmem_w_q && dadr == dmem_wa_q;
+  assign dram_q   = dmem_rdw ? ~dmem[dadr] : dmem[dadr];
+`else
   assign dram_q = dmem[dadr];
+`endif
   assign dr     = dram_q[16];
   assign dp     = dram_q[15];
   assign dn     = dram_q[14];
@@ -1170,9 +1184,30 @@ module cadr_microcycle #(
   logic [23:0] vmo;
   assign mapi = memstart ? vma[23:8] : md[23:8];
   assign adr0 = mapi[15:5];
+`ifdef CADR_RDW_POISON
+  // A check's variant: see "THE READ-DURING-WRITE WINDOW" at the end of
+  // this module.  The two write enables are the ones the write phase below
+  // uses, restated here because the read is here.
+  logic        l1_w_q, l2_w_q;
+  logic [10:0] l1_wa_q;
+  logic [9:0]  l2_wa_q;
+  logic        l1_rdw, l2_rdw;
+  always_ff @(posedge clk) begin
+    l1_w_q  <= wp && wmapd && vma[26];
+    l1_wa_q <= adr0;
+    l2_w_q  <= wp && wmapd && vma[25];
+    l2_wa_q <= adr1;
+  end
+  assign l1_rdw = l1_w_q && adr0 == l1_wa_q;
+  assign l2_rdw = l2_w_q && adr1 == l2_wa_q;
+  assign vmap = l1_rdw ? ~l1_map[adr0] : l1_map[adr0];
+  assign adr1 = {vmap, mapi[4:0]};
+  assign vmo  = l2_rdw ? ~l2_map[adr1] : l2_map[adr1];
+`else
   assign vmap = l1_map[adr0];
   assign adr1 = {vmap, mapi[4:0]};
   assign vmo  = l2_map[adr1];
+`endif
 
   // page VMEMDR 1D14: a 74S373 transparent while MEMSTART, so on such a cycle
   // it is already following the word the map is putting out.  -PFR and -PFW
@@ -2151,9 +2186,20 @@ module cadr_microcycle #(
     ro_mmem_q <= mmem[ro_a0[4:0]];
     ro_pdl_q  <= pdl[ro_a0[9:0]];
     ro_spc_q  <= spcm[ro_a0[4:0]];
+`ifdef CADR_RDW_POISON
+    // The readout's copies are the same memories on a board, so their reads
+    // in the same window are poisoned too.
+    ro_dmem_q <= (dmem_w_q && ro_a0[10:0] == dmem_wa_q)
+               ? ~dmem[ro_a0[10:0]] : dmem[ro_a0[10:0]];
+    ro_map1_q <= (l1_w_q && ro_a0[10:0] == l1_wa_q)
+               ? ~l1_map[ro_a0[10:0]] : l1_map[ro_a0[10:0]];
+    ro_map2_q <= (l2_w_q && ro_a0[9:0] == l2_wa_q)
+               ? ~l2_map[ro_a0[9:0]] : l2_map[ro_a0[9:0]];
+`else
     ro_dmem_q <= dmem[ro_a0[10:0]];
     ro_map1_q <= l1_map[ro_a0[10:0]];
     ro_map2_q <= l2_map[ro_a0[9:0]];
+`endif
     ro_opcs_q <= opcs[ro_a0[2:0]];
     ro_regs_q <= ro_regs;
   end
@@ -2210,6 +2256,62 @@ module cadr_microcycle #(
   logic unused;
   assign unused = &{1'b0, n_tpclk, tptse, n_tpr60, funct[0], funct[3],
                     spcv[20:15], lvmo_eff[21:0], destmdr, dmask[7]};
+
+  // ----------------------------------------- THE READ-DURING-WRITE WINDOW
+  //
+  // **THE THREE MEMORIES READ ASYNCHRONOUSLY --- THE DISPATCH MEMORY AND BOTH
+  // LEVELS OF THE MAP --- HAVE ONE TICK A BOARD MAY NOT DEFINE.**  On the
+  // DE25-Nano they are Altera MLABs, which read asynchronously only with
+  // read-during-write checking turned off (`boards/de25-nano/quartus/
+  // project.tcl` has the assignments and the documents), and then the word
+  // read at an address during the tick after the edge that wrote it is not
+  // specified.  Before that edge the MLAB still holds the old word, because
+  // its write address and data are registered on that edge, and after the
+  // next one it holds the new word, which is what this module's behavioral
+  // arrays give at every tick.
+  //
+  // So `CADR_RDW_POISON`, defined only by `build/rdw_poison.pass` and
+  // `build/rdw_poison_sys.pass` and never by a board flow, makes that one
+  // tick visible: a read of the address written on the most recent edge
+  // returns the complement of the word, which differs from both the old and
+  // the new word in every bit.  If every reference trace still matches, no
+  // consumer in the machine samples a memory in its undefined tick on those
+  // programs.  **The write tick itself is NOT poisoned, and that was
+  // measured**: the level-2 write takes its address from the level-1 read in
+  // the tick both are written, and that read must be the OLD word, which
+  // `build/map_access.pass` holds (the level-2 word lands in the old level-1
+  // block, as `Rtl::step` puts it).
+  //
+  // What the structure says, from this file: every write is on the edge that
+  // ends the tick `wp` is up, the third-to-last of the cycle, so the
+  // undefined tick is the second-to-last, and the boundary that samples the
+  // dispatch word and the map is the edge that ends the last.  The one register that samples the map on
+  // every tick is `memgo_q`, through `vmaok`, and it reads the map only while
+  // MEMSTART is up.  MEMSTART and WMAPD come from one instruction, and the
+  // only way they are up together is an instruction fetch in the instruction
+  // that writes the map, so the counts below say whether a program ever did.
+`ifdef CADR_RDW_POISON
+  longint unsigned n_dmem_rdw = 0, n_l1_rdw = 0, n_l2_rdw = 0;
+  longint unsigned n_on_boundary = 0, n_under_memstart = 0, n_write_under_memstart = 0;
+  always_ff @(posedge clk) begin
+    if (dmem_rdw) n_dmem_rdw <= n_dmem_rdw + 1;
+    if (l1_rdw)   n_l1_rdw   <= n_l1_rdw + 1;
+    if (l2_rdw)   n_l2_rdw   <= n_l2_rdw + 1;
+    if ((dmem_rdw || l1_rdw || l2_rdw) && cpu_edge) n_on_boundary <= n_on_boundary + 1;
+    if ((l1_rdw || l2_rdw) && memstart) n_under_memstart <= n_under_memstart + 1;
+    if (wp && wmapd && memstart) n_write_under_memstart <= n_write_under_memstart + 1;
+  end
+  // A poison that never fired tested nothing, so a program that never wrote
+  // one of the three memories fails the check rather than passing it.
+  final begin
+    $display("rdw_poison: poisoned ticks: dispatch %0d, level-1 map %0d, level-2 map %0d",
+             n_dmem_rdw, n_l1_rdw, n_l2_rdw);
+    if (n_dmem_rdw == 0 || n_l1_rdw == 0 || n_l2_rdw == 0)
+      $fatal(1, "rdw_poison: a memory was never poisoned, so this run measured nothing about it");
+    $display("rdw_poison: poisoned reads on a boundary %0d, map reads under MEMSTART %0d, map writes under MEMSTART %0d",
+             n_on_boundary, n_under_memstart, n_write_under_memstart);
+  end
+`endif
 
 endmodule
 

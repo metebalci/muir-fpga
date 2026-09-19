@@ -42,9 +42,9 @@ say again what a document already says.
                   controller, the port it would drive and the no-auto-boot
                   switch are crossed off in their places
     de25-nano.html
-                  the DE25-Nano, which is upcoming. Nothing is built for it,
-                  so its drawing is the Arty Z7-20's with every block drawn not
-                  started. The page's title links the maker's page for the
+                  the DE25-Nano, which is upcoming. Its drawing is the Arty
+                  Z7-20's with each block colored by how far along it is on
+                  this board. The page's title links the maker's page for the
                   board, and its one line says the board is upcoming and names
                   its FPGA
     booting.html  how each board comes up, in two sequences: a Zynq board
@@ -161,14 +161,15 @@ architecture on the Zynq 7007S. Its drawing is the Arty Z7-20's with what that
 board does not have crossed off where it stands rather than taken out, so that
 a reader can see what is missing.
 
-**The DE25-Nano's is derived by starting nothing.** Nothing is built for that
-board, so its drawing is the Arty Z7-20's with every block that would be this
-project's work drawn not started, with no fill. What is drawn gray stays gray,
-because those are things on a board rather than work. The fit and timing figures
-come off, because there is no build to take them from. The chip is labeled with
-the board's own FPGA, and the memory with the board's own memory. Every other
-label is still the Arty Z7-20's, and the drawing's HTML comments are left out,
-because they record what the Arty Z7-20 has shown.
+**The DE25-Nano's is derived by coloring from a table.** Its drawing is the
+Arty Z7-20's, with every block that would be this project's work colored by the
+status the generator's table gives it for this board, and drawn not started
+until the port reaches it. What is drawn gray stays gray, because those are
+things on a board rather than work. Its fit figures are its logic and its block
+memory, as ALMs and M20K, and they come from the board's own fit report. The
+chip is labeled with the board's own FPGA, and the memory with the board's own
+memory. Every other label is still the Arty Z7-20's, and the drawing's HTML
+comments are left out, because they record what the Arty Z7-20 has shown.
 
 **Every controller in the row at the foot of a drawing has the same left edge
 and the same width as the connector under it.** A controller and the thing it
@@ -203,8 +204,8 @@ files is a drift, and that is the point of keeping the geometry identical.
 Everything the drawings assert about the machine comes from `README.md`,
 `rtl/machine/cadr_cables.map` and `rtl/machine/cadr_xbus_decode.sv`. The fit
 and timing figures under each fabric label come from that board's own place and
-route report at the commit its comment names. The DE25-Nano's drawing has
-none, because nothing has been built for that board.
+route report at the commit its comment names. The DE25-Nano's come from its
+Quartus fit report, as ALMs and M20K.
 
 A block's color says how far along it is, and the legend on each drawing
 carries the words. Green means the board itself has shown it. Turquoise means
