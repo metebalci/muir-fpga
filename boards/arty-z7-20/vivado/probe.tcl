@@ -67,6 +67,16 @@
 # each of those is checked here against something the capture itself says
 # rather than trusted.
 
+# Resolved from this file rather than from the working directory, so that the
+# script runs from anywhere and so that a copy of the tree tests its own copy.
+source [file join [file dirname [file normalize [info script]]] .. .. .. tools jtag_target.tcl]
+
+# Overridable for the same reason OUTDIR and BOARD_URL are: a stubbed run
+# must never read this repository's own gitignored `local.conf`, which names
+# a real board's serial.
+set BOARD_DIR [expr {[info exists ::env(BOARD_DIR)] ? $::env(BOARD_DIR) \
+                                                     : "boards/arty-z7-20"}]
+
 set url    [expr {[info exists ::env(BOARD_URL)] ? $::env(BOARD_URL) : "localhost:3121"}]
 set outdir [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)    : "build/probe"}]
 set depth  [expr {[info exists ::env(PROBE_DEPTH)] ? $::env(PROBE_DEPTH) : 1024}]
@@ -170,7 +180,11 @@ if {[llength $targets] == 0} {
         "PROBE: FAILED --- the server connected and offered no targets." \
         "PROBE: That is the udev rules, not the network. docs/board.md has them."
 }
-current_hw_target [lindex $targets 0]
+lassign [jtag_select_hw_target "PROBE:" $BOARD_DIR] ok target
+if {!$ok} {
+    probe_fail {*}$target
+}
+current_hw_target $target
 
 # THE HARDWARE MANAGER IS THE AUTHORITY ON HOW MANY DEVICES THERE ARE. The raw
 # scan below is the authority on where they sit and how wide their registers

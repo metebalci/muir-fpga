@@ -39,6 +39,13 @@
 # Resolved from this file rather than from the working directory, so that the
 # script runs from anywhere and so that a copy of the tree tests its own copy.
 source [file join [file dirname [file normalize [info script]]] .. .. .. tools build_stamp.tcl]
+source [file join [file dirname [file normalize [info script]]] .. .. .. tools jtag_target.tcl]
+
+# Overridable for the same reason BIT and BOARD_URL are: a stubbed run must
+# never read this repository's own gitignored `local.conf`, which names a
+# real board's serial.
+set BOARD_DIR [expr {[info exists ::env(BOARD_DIR)] ? $::env(BOARD_DIR) \
+                                                     : "boards/arty-z7-20"}]
 
 set url [expr {[info exists ::env(BOARD_URL)] ? $::env(BOARD_URL) : "localhost:3121"}]
 set bit [expr {[info exists ::env(BIT)] ? $::env(BIT) : "build/bitstream/cadr_arty.bit"}]
@@ -65,7 +72,12 @@ if {[llength $targets] == 0} {
     puts "PROG: cable and not write it. docs/board.md has them."
     exit 1
 }
-current_hw_target [lindex $targets 0]
+lassign [jtag_select_hw_target "PROG:" $BOARD_DIR] ok target
+if {!$ok} {
+    foreach line $target { puts $line }
+    exit 1
+}
+current_hw_target $target
 open_hw_target
 puts "PROG: target [get_property NAME [current_hw_target]]"
 

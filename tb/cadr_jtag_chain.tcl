@@ -78,6 +78,9 @@
 #   tdi_zero  DR scans see TDI low whatever the caller drove, which is the
 #             board a script driving TDI with zeros would see
 #   msb_first a returned scan comes back most significant bit first
+#   targets   the JTAG targets attached, as Vivado's own NAME property gives
+#             them (`<host>/xilinx_tcf/Digilent/<serial>`). One by default.
+#   current_target  what `current_hw_target` was last told to select.
 array set ::model {
     devs      {}
     insn      {}
@@ -86,6 +89,8 @@ array set ::model {
     datafn    model_default_data
     tdi_zero  0
     msb_first 0
+    targets   {localhost:3121/xilinx_tcf/Digilent/MODEL0000}
+    current_target {}
 }
 
 proc model_default_data {j} { return [expr {($j * 3 + 1) & 0xffff}] }
@@ -237,8 +242,36 @@ proc run_state_hw_jtag {state} {
 # has to get right and so is modeled rather than smoothed over.
 proc open_hw_manager {args} {}
 proc connect_hw_server {args} {}
-proc get_hw_targets {args} { return {model_target} }
-proc current_hw_target {args} {}
+
+# Vivado matches `get_hw_targets <patterns>` against NAME, anchored, with `*`
+# widening it to a substring --- `jtag_target.tcl` relies on exactly that to
+# match a serial against the whole NAME. No pattern is `*`, same as Vivado's
+# own default.
+proc get_hw_targets {args} {
+    set patterns {}
+    foreach a $args {
+        if {[string index $a 0] eq "-"} { continue }
+        lappend patterns $a
+    }
+    if {[llength $patterns] == 0} { set patterns {*} }
+    set result {}
+    foreach t $::model(targets) {
+        foreach p $patterns {
+            if {[string match $p $t]} { lappend result $t ; break }
+        }
+    }
+    return $result
+}
+
+proc current_hw_target {args} {
+    foreach a $args {
+        if {[string index $a 0] ne "-"} { set ::model(current_target) $a }
+    }
+    if {$::model(current_target) eq ""} {
+        set ::model(current_target) [lindex $::model(targets) 0]
+    }
+    return $::model(current_target)
+}
 proc open_hw_target {args} {}
 proc close_hw_target {args} {}
 proc close_hw_manager {args} {}
@@ -249,4 +282,15 @@ proc get_hw_devices {args} {
     return [lreverse $r]
 }
 
-proc get_property {args} { return "model" }
+# NAME is called only on a target object here, which in this stub is its own
+# NAME string, exactly as `current_hw_target` returns it. Everything else
+# (the device properties `boards/arty-z7-20/vivado/probe.tcl` reads) stays
+# the fixed "model" it always was.
+proc get_property {args} {
+    set rest {}
+    foreach a $args {
+        if {[string index $a 0] ne "-"} { lappend rest $a }
+    }
+    if {[lindex $rest 0] eq "NAME"} { return [lindex $rest 1] }
+    return "model"
+}
