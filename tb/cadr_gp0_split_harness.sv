@@ -133,6 +133,25 @@ module cadr_gp0_split_harness #(
     output var logic        chaos_irq,
     output var logic        ser_irq,
 
+    // --- the one wire of the serial seam whose TICK the check has to know -
+    //
+    // `ser_tx_strobe` is the card's strobe into the serial line's face: the
+    // edge a character crosses from the one to the other, and so the edge the
+    // face's store counts it on.  It is brought out for the same reason
+    // `intr_request` below is --- the thing cannot be read off a register.
+    // Here the reason is sharper: the check has to aim a take at the very
+    // edge a character is stored, and READING is the stimulus being aimed, so
+    // a check that located the edge by reading `WAITING` would be locating it
+    // to the several ticks a read takes and then pretending to tick accuracy.
+    //
+    // **NOTHING IS COMPARED AGAINST IT.**  Every claim the serial section
+    // makes is still read off `RDATA`, `WAITING`, `DROPPED` and the card's
+    // own registers.  This says WHERE to aim and proves the take landed
+    // there, which is `docs/mutations.md`'s "assert the exception counts"
+    // applied to a stimulus: a sweep that never reached the case it was
+    // written for looks exactly like one that did.
+    output var logic        ser_tx_strobe,
+
     // --- and what the CARD raises at the machine, which is a different
     // thing entirely: `IRQ_F2P` is the processing system's, this is the
     // Unibus interrupt request MIT's own driver is written around.  Brought
@@ -343,7 +362,7 @@ module cadr_gp0_split_harness #(
   );
 
   // ------------------------------------------------ the serial line, page 2
-  logic        ser_reset, ser_tx_strobe, ser_tx_take, ser_tx_done;
+  logic        ser_reset, ser_tx_take, ser_tx_done;
   logic        ser_rx_strobe, ser_plugged;
   logic        ser_rx_end, ser_rx_parity, ser_rx_framing;
   logic [25:0] ser_syn_face;
