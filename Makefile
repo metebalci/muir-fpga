@@ -3390,9 +3390,13 @@ BR_DE25_CHECK := boards/de25-nano/linux/buildroot_check.py
 .PHONY: buildroot-de25 buildroot-de25-check buildroot-de25-rebuild
 
 # **AND WHAT OF IT `make check` CAN HOLD WITH NO BUILDROOT AT ALL.**  The pins,
-# and every program compiled on the build host with the DE25-Nano's address
-# map, warnings as errors, and asked for that board's addresses and ports in
-# its own words.  Every other check here compiles the Zynq boards' map, which
+# the boot's own arrangement of the fabric's image, and every program compiled
+# on the build host with the DE25-Nano's address map, warnings as errors, and
+# asked for that board's addresses and ports in its own words.  The boot check
+# holds the fabric's image to being fetched only on the path that loads it into
+# the fabric, so that a card with an empty fabric slot cannot stop a board that
+# was configured before U-Boot ran; `buildroot_check.py` says what it holds and
+# what it cannot.  Every other check here compiles the Zynq boards' map, which
 # is what their models were written against, so this is the only place the
 # other half of `cadr/cadr_board.h` is compiled before a board build --- a map
 # that does not compile, or a program that still says a Zynq board's address,
@@ -3403,12 +3407,15 @@ DE25_LINUX_PROGRAMS := cadr-console cadr-readout cadr-checkpoint cadr-disk-packs
 DE25_LINUX_WORK := $(HOME)/.cache/muir-fpga-de25-linux-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 $(BUILD)/de25_linux.pass: $(BR_DE25_CHECK) \
                           boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig \
+                          boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env \
+                          boards/de25-nano/linux/buildroot/board/de25-nano/uEnv.net \
                           $(wildcard boards/de25-nano/linux/buildroot/board/de25-nano/patches/*/*/*.hash) \
                           $(wildcard $(BR_EXTERNAL)/package/*/src/*.c) \
                           $(wildcard $(BR_EXTERNAL)/package/*/src/*.h) \
                           $(wildcard $(BR_EXTERNAL)/package/*/src/Makefile) \
                           $(wildcard $(BR_EXTERNAL)/package/*/src/cadr/*.h) | $(BUILD)
 	@python3 $(BR_DE25_CHECK) pins boards/de25-nano/linux/buildroot
+	@python3 $(BR_DE25_CHECK) boot boards/de25-nano/linux/buildroot
 	@rm -rf $(DE25_LINUX_WORK) && mkdir -p $(DE25_LINUX_WORK)/bin
 	@cp -a $(BR_EXTERNAL)/package $(DE25_LINUX_WORK)/package
 	@set -e; for p in $(DE25_LINUX_PROGRAMS); do \
@@ -3422,6 +3429,7 @@ $(BUILD)/de25_linux.pass: $(BR_DE25_CHECK) \
 
 buildroot-de25-check: buildroot-packages-check
 	@python3 $(BR_DE25_CHECK) pins boards/de25-nano/linux/buildroot
+	@python3 $(BR_DE25_CHECK) boot boards/de25-nano/linux/buildroot
 
 buildroot-de25: buildroot-de25-check
 	@test -f $(BR_TARBALL) || { \

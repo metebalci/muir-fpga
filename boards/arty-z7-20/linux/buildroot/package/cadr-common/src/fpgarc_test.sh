@@ -2902,9 +2902,22 @@ sandbox
 # A here-document and not a pipe: a `while` on the far end of a pipe runs in a
 # subshell, and the failure count this check exits on would be incremented
 # there and lost --- a case that prints FAIL and still leaves the run green.
+# **AND THE LAST FIELD SAYS WHICH VARIABLE FETCHES THE FABRIC'S IMAGE**, which
+# is not the same one on every board.  The Zynq boards' cadr_card loads all
+# four files itself.  The DE25-Nano's does not: one of its two arrangements
+# may not configure its own fabric and must not so much as ask for the image,
+# so the fetch is a variable of its own that cadr_fabric runs on the path that
+# loads.  What this case is about is the FOLDER --- a loader that looked for a
+# board's file at the root of the partition would be handed another board's
+# --- and that is asked of all four files wherever the fetch lives.
+env_block() {
+	awk -v v="$1" 'index($0, v "=") == 1 { inside = 1; print; next }
+	               inside && (/^$/ || /^[^ \t=][^ =]*=/) { exit }
+	               inside { print }' "$2"
+}
 while IFS= read -r spec; do
-	# <environment>=<board>=<its tree>=<its fabric>=<its kernel>
-	IFS='=' read -r env_rel board dtb fabric kernel <<EOF_SPEC
+	# <environment>=<board>=<its tree>=<its fabric>=<its kernel>=<what fetches the fabric>
+	IFS='=' read -r env_rel board dtb fabric kernel rbf_var <<EOF_SPEC
 $spec
 EOF_SPEC
 	env_file="$TREE/$env_rel"
@@ -2912,9 +2925,15 @@ EOF_SPEC
 		fail "no environment at $env_file: this check has rotted"
 		continue
 	fi
-	block=$(sed -n '/^cadr_card=/,/^$/p' "$env_file")
+	block=$(env_block cadr_card "$env_file")
+	rbf_block=$(env_block "$rbf_var" "$env_file")
+	[ -n "$rbf_block" ] || fail "$(basename "$env_file") has no $rbf_var to fetch the fabric's image"
 	bad=0
-	for f in "$fabric" "$dtb" "$kernel" rootfs.cpio.uboot; do
+	# The file is at the end of its own line where the fetch is a variable of
+	# one line, and is followed by ` &&` inside cadr_card, so either ends it.
+	echo "$rbf_block" | grep -q "load mmc 0:1 [^ ]* $board/$fabric\\( \\|\$\\)" \
+		|| { fail "$(basename "$env_file")'s $rbf_var does not load $board/$fabric"; bad=1; }
+	for f in "$dtb" "$kernel" rootfs.cpio.uboot; do
 		echo "$block" | grep -q "load mmc 0:1 [^ ]* $board/$f " \
 			|| { fail "$(basename "$env_file")'s cadr_card does not load $board/$f"; bad=1; }
 	done
@@ -2925,9 +2944,9 @@ EOF_SPEC
 		|| { fail "$(basename "$env_file") does not import uEnv.txt from the root of the partition"; bad=1; }
 	[ "$bad" = 0 ] && ok "$(basename "$env_file"): all four out of $board/, and uEnv.txt from the root"
 done <<'ENVS'
-boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env=arty-z7-20=zynq-arty-z7-20.dtb=cadr.bit=zImage
-boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/cadr_cora.env=cora-z7-07s=zynq-cora-z7-07s.dtb=cadr.bit=zImage
-boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env=de25-nano=socfpga_agilex5_de25_nano_cadr.dtb=cadr.core.rbf=Image
+boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env=arty-z7-20=zynq-arty-z7-20.dtb=cadr.bit=zImage=cadr_card
+boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/cadr_cora.env=cora-z7-07s=zynq-cora-z7-07s.dtb=cadr.bit=zImage=cadr_card
+boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env=de25-nano=socfpga_agilex5_de25_nano_cadr.dtb=cadr.core.rbf=Image=cadr_rbf_card
 ENVS
 
 case_head "the DE25-Nano's menu is the Zynq boards' with the DE25-Nano's windows"

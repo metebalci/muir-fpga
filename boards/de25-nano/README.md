@@ -509,6 +509,21 @@ A bare `.sof` cannot configure a part with a processor in it, which the HPS
 Booting User Guide says in its section 4.5.1, so `quartus/program.sh` loads
 `cadr_de25_hps.sof` when the flow has written one.
 
+**A core bitstream comes only from an HPS-first build, and the tool says so.**
+It is phase 2 of a two-phase configuration whose phase 1 lives in the flash, so
+there is no such file for the other arrangement. `quartus_pfg` refuses to make
+one out of an FPGA-first build:
+
+    Error (19921): Current design from device A5EB013BB23BCS does not support
+    HPS bitstream - HPS configuration order is not HPS first
+
+So the `cadr.core.rbf` on an FPGA-first board's card is the HPS-first build of
+the same commit: the same sources and the same build stamp, differing in the
+`HPS_INITIALIZATION` assignment, which decides the configuration order and not
+the design. That board never loads it, because its card says the fabric was
+configured before U-Boot ran; the file is there for the day the flash is
+written.
+
 ## Loading it
 
 `make de25-program` loads the bitstream over JTAG, into the part's

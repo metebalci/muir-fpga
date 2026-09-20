@@ -11,9 +11,14 @@
 # is in a directory of its own: one server serves more than one board, and the
 # boards' files share names.
 #
-# WHAT IT DOES.  The CADR goes into the fabric first: cadr.core.rbf fetched,
-# then cadr_fabric --- the fabric's gate shut, `fpga load`, `bridge enable`,
-# the gate opened --- which cadr_de25.env explains.  Then the tree, the kernel
-# and the root filesystem, and cadr_booti, which is the same last step the
-# card path takes.  The addresses are U-Boot's environment's.
-netcmd=tftpboot ${cadr_rbf_addr} de25-nano/cadr.core.rbf && run cadr_fabric && tftpboot ${cadr_fdt_addr} de25-nano/socfpga_agilex5_de25_nano_cadr.dtb && tftpboot ${cadr_kernel_addr} de25-nano/Image && tftpboot ${cadr_ramdisk_addr} de25-nano/rootfs.cpio.uboot && run cadr_booti
+# WHAT IT DOES.  The CADR goes into the fabric first: cadr_fabric --- the
+# fabric's gate shut, cadr.core.rbf fetched, `fpga load`, `bridge enable`, the
+# gate opened --- which cadr_de25.env explains.  Then the tree, the kernel and
+# the root filesystem, and cadr_booti, which is the same last step the card
+# path takes.  The addresses are U-Boot's environment's.
+#
+# THE FABRIC'S IMAGE IS FETCHED BY cadr_fabric AND NOT HERE, so that a board
+# whose fabric was configured before U-Boot ran never asks for a file it may
+# not use.  All this line does about it is say which of the two ways of
+# fetching it this path uses: cadr_rbf_net, the served one.
+netcmd=setenv cadr_rbf_get cadr_rbf_net; run cadr_fabric && tftpboot ${cadr_fdt_addr} de25-nano/socfpga_agilex5_de25_nano_cadr.dtb && tftpboot ${cadr_kernel_addr} de25-nano/Image && tftpboot ${cadr_ramdisk_addr} de25-nano/rootfs.cpio.uboot && run cadr_booti
