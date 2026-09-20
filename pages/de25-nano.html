@@ -84,19 +84,21 @@
 
     <figure class="panel fig dense wide">
       <div class="scroll">
-<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-three blocks this project builds, five are verified: clock, ICMEM board, CADR board, bus interface and Xbus to DDR. Four are simulated: disk controller, TV, Color TV and I/O board. The other fourteen have not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-one blocks this project builds, seven are verified: F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to DDR and SPL. Twelve are simulated: disk controller, TV, Color TV, I/O board, H2F, LWH2F, terminal, Chaosnet, serial, disk packs, console and USB input. The other two have not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
 
           <!-- The Arty Z7-20's drawing, generated for the DE25-Nano.  Of the
-               twenty-three blocks this project builds, five are verified:
-               clock, ICMEM board, CADR board, bus interface and Xbus to DDR.
-               Four are simulated: disk controller, TV, Color TV and I/O
-               board.  The other fourteen have not been started, and the parts
-               drawn gray are existing components.  The figures under the
-               fabric's label are this board's own fit, as ALMs and M20K, the
-               chip and the memory carry this board's parts, the lamps are
-               green, as this board's user LEDs are, and the debug cable's
-               connector is a GPIO header, the board having no Pmod.  Why each
-               thing is where it is, is in the Arty Z7-20's page. -->
+               twenty-one blocks this project builds, seven are verified:
+               F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to
+               DDR and SPL. Twelve are simulated: disk controller, TV, Color
+               TV, I/O board, H2F, LWH2F, terminal, Chaosnet, serial, disk
+               packs, console and USB input.  The other two have not been
+               started, and the parts drawn gray are existing components.  The
+               figures under the fabric's label are this board's own fit, as
+               ALMs and M20K, the chip and the memory carry this board's
+               parts, the lamps are green, as this board's user LEDs are, and
+               the debug cable's connector is a GPIO header, the board having
+               no Pmod.  Why each thing is where it is, is in the Arty Z7-20's
+               page. -->
           <rect class="d-box d-done d-key" x="587.51" y="851" width="13" height="13"/>
           <text class="d-s" x="607.51" y="861">verified</text>
           <rect class="d-box d-built d-key" x="668.19" y="851" width="13" height="13"/>
@@ -122,11 +124,11 @@
           <path class="d-line" d="M470,274 L470,256 L-70,256 L-70,274"/>
           <path class="d-line" d="M-70,386 L-70,428"/>
           <path class="d-line" d="M-160,330 L-183,330"/>
-          <rect class="d-plate" x="-150" y="428" width="160" height="38"/>
-          <rect class="d-box" x="-150" y="428" width="160" height="38"/>
-          <text class="d-m" x="-70" y="446" text-anchor="middle">S_AXI_HP3</text>
-          <text class="d-s" x="-70" y="460" text-anchor="middle">FPGA masters, 64 bits, AXI3</text>
-          <path class="d-line" d="M-70,466 L-70,652"/>
+          <rect class="d-plate" x="-150" y="428" width="540" height="38"/>
+          <rect class="d-box d-done" x="-150" y="428" width="540" height="38"/>
+          <text class="d-m" x="120" y="446" text-anchor="middle">F2SDRAM</text>
+          <text class="d-s" x="120" y="460" text-anchor="middle">fabric masters, 64 bits, AXI4, one port shared by burst</text>
+          <path class="d-line" d="M120,466 L120,652"/>
           <rect class="d-box d-ext" x="-283" y="288" width="100" height="84"/>
           <text class="d-t" x="-233" y="310" text-anchor="middle">HDMI out</text>
           <text class="d-s" x="-233" y="330" text-anchor="middle">the display,</text>
@@ -239,23 +241,16 @@
           <path class="d-line" d="M118,386 L118,428"/>
           <path class="d-line" d="M310,386 L310,428 M885,386 L885,428 M1036,238 L1036,428 M380,386 L380,407 L660,407 L660,428"/>
 
-          <path class="d-dash" d="M-170,450 L-150,450 M10,450 L38,450 M198,450 L230,450 M390,450 L640,450 M1050,450 L1092,450 M1232,450 L1290,450"/>
-          <rect class="d-plate" x="38" y="428" width="160" height="38"/>
-          <rect class="d-box" x="38" y="428" width="160" height="38"/>
-          <text class="d-m" x="118" y="446" text-anchor="middle">S_AXI_HP0</text>
-          <text class="d-s" x="118" y="460" text-anchor="middle">FPGA masters, 64 bits, AXI3</text>
-          <rect class="d-box" x="230" y="428" width="160" height="38"/>
-          <text class="d-m" x="310" y="446" text-anchor="middle">S_AXI_HP2</text>
-          <text class="d-s" x="310" y="460" text-anchor="middle">FPGA masters, 64 bits, AXI3</text>
-          <rect class="d-box" x="640" y="428" width="410" height="38"/>
-          <text class="d-m" x="845" y="446" text-anchor="middle">M_AXI_GP0</text>
+          <path class="d-dash" d="M-170,450 L-150,450 M390,450 L640,450 M1050,450 L1092,450 M1232,450 L1290,450"/>
+          <rect class="d-box d-built" x="640" y="428" width="410" height="38"/>
+          <text class="d-m" x="845" y="446" text-anchor="middle">H2F</text>
           <text class="d-s" x="845" y="460" text-anchor="middle">HPS masters, 32 bits, AXI3</text>
-          <rect class="d-box" x="1092" y="428" width="140" height="38"/>
-          <text class="d-m" x="1162" y="446" text-anchor="middle">M_AXI_GP1</text>
+          <rect class="d-box d-built" x="1092" y="428" width="140" height="38"/>
+          <text class="d-m" x="1162" y="446" text-anchor="middle">LWH2F</text>
           <text class="d-s" x="1162" y="460" text-anchor="middle">HPS masters, 32 bits, AXI3</text>
 
           <text class="d-s" x="-164" y="520.4">HPS &mdash; Arm</text>
-          <rect class="d-dot" x="220" y="522" width="1000" height="124"/>
+          <rect class="d-dot d-built" x="220" y="522" width="1000" height="124"/>
           <text class="d-s" x="230" y="536">Linux &mdash; Buildroot</text>
           <path class="d-line" d="M845,466 L845,494 M305,494 L1040,494 M305,494 L305,542 M452,494 L452,542 M599,494 L599,542 M746,494 L746,542 M893,494 L893,542 M1040,494 L1040,542"/>
 
@@ -269,45 +264,45 @@
           <rect class="d-plate" x="56" y="522" width="54" height="124"/>
           <rect class="d-dot d-ext" x="56" y="522" width="54" height="124"/>
           <rect class="d-plate" x="61" y="527" width="44" height="30"/>
-          <rect class="d-box" x="61" y="527" width="44" height="30"/>
+          <rect class="d-box d-done" x="61" y="527" width="44" height="30"/>
           <text class="d-t" x="83" y="547" text-anchor="middle">SPL</text>
           <text class="d-t" text-anchor="middle"><tspan x="83" y="572">U</tspan><tspan x="83" y="585">-</tspan><tspan x="83" y="598">B</tspan><tspan x="83" y="611">o</tspan><tspan x="83" y="624">o</tspan><tspan x="83" y="637">t</tspan></text>
           <rect class="d-plate" x="240" y="542" width="130" height="96"/>
-          <rect class="d-box" x="240" y="542" width="130" height="96"/>
+          <rect class="d-box d-built" x="240" y="542" width="130" height="96"/>
           <text class="d-t" x="305" y="566" text-anchor="middle">terminal</text>
           <text class="d-s" x="305" y="586" text-anchor="middle">an RFB server: the screen,</text>
           <text class="d-s" x="305" y="600" text-anchor="middle">the keys and the mouse</text>
 
           <rect class="d-plate" x="387" y="542" width="130" height="96"/>
-          <rect class="d-box" x="387" y="542" width="130" height="96"/>
+          <rect class="d-box d-built" x="387" y="542" width="130" height="96"/>
           <text class="d-t" x="452" y="566" text-anchor="middle">Chaosnet</text>
           <text class="d-s" x="452" y="586" text-anchor="middle">routing, and the</text>
           <text class="d-s" x="452" y="600" text-anchor="middle">cable to the net</text>
           <text class="d-s" x="452" y="622" text-anchor="middle">for the other machines</text>
 
           <rect class="d-plate" x="534" y="542" width="130" height="96"/>
-          <rect class="d-box" x="534" y="542" width="130" height="96"/>
+          <rect class="d-box d-built" x="534" y="542" width="130" height="96"/>
           <text class="d-t" x="599" y="566" text-anchor="middle">serial</text>
           <text class="d-s" x="599" y="586" text-anchor="middle">the CADR&rsquo;s serial line</text>
           <text class="d-s" x="599" y="600" text-anchor="middle">on a TCP socket,</text>
           <text class="d-s" x="599" y="622" text-anchor="middle">as muir offers it</text>
 
           <rect class="d-plate" x="681" y="542" width="130" height="96"/>
-          <rect class="d-box" x="681" y="542" width="130" height="96"/>
+          <rect class="d-box d-built" x="681" y="542" width="130" height="96"/>
           <text class="d-t" x="746" y="566" text-anchor="middle">disk packs</text>
           <text class="d-s" x="746" y="586" text-anchor="middle">a drive&rsquo;s blocks as a file,</text>
           <text class="d-s" x="746" y="600" text-anchor="middle">one file a drive</text>
           <text class="d-s" x="746" y="622" text-anchor="middle">staged into DDR</text>
 
           <rect class="d-plate" x="828" y="542" width="130" height="96"/>
-          <rect class="d-box" x="828" y="542" width="130" height="96"/>
+          <rect class="d-box d-built" x="828" y="542" width="130" height="96"/>
           <text class="d-t" x="893" y="566" text-anchor="middle">console</text>
           <text class="d-s" x="893" y="586" text-anchor="middle">halt, step and inspect</text>
-          <text class="d-s" x="893" y="600" text-anchor="middle">over M_AXI_GP1</text>
+          <text class="d-s" x="893" y="600" text-anchor="middle">over LWH2F</text>
           <text class="d-s" x="893" y="622" text-anchor="middle">a Unibus master</text>
 
           <rect class="d-plate" x="975" y="542" width="130" height="96"/>
-          <rect class="d-box" x="975" y="542" width="130" height="96"/>
+          <rect class="d-box d-built" x="975" y="542" width="130" height="96"/>
           <text class="d-t" x="1040" y="566" text-anchor="middle">USB input</text>
           <text class="d-s" x="1040" y="586" text-anchor="middle">the keyboard and mouse,</text>
           <text class="d-s" x="1040" y="600" text-anchor="middle">onto the I/O board</text>
@@ -320,8 +315,6 @@
           <text class="d-s" x="1162" y="600" text-anchor="middle">running CC</text>
           <text class="d-s" x="1162" y="622" text-anchor="middle">the debugger</text>
 
-          <path class="d-line" d="M118,466 L118,652"/>
-          <path class="d-line" d="M240,466 L240,494 L170,494 L170,652"/>
           <rect class="d-plate" x="-79" y="652" width="332" height="40"/>
           <rect class="d-box d-ext" x="-79" y="652" width="332" height="40"/>
           <text class="d-t" x="87" y="670" text-anchor="middle">DDR controller</text>
