@@ -36,6 +36,10 @@
 #                                  there is no temporary file and no rename,
 #                                  as muir's diskpack says of its own writes.
 #                                  The program syncs every block it writes.
+#                                  `fpgarc` and `muirrc` are on this partition
+#                                  as well, and `clock` beside them, which THIS
+#                                  script writes at a clean shutdown because the
+#                                  board has no clock of its own.
 #
 # Neither the boot ROM nor U-Boot ever looks at the second partition.
 #
@@ -47,6 +51,15 @@
 # The log goes to the console, which is where the board is watched from
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
 # program is told where to write instead.
+#
+# **AND THE CLOCK'S STEP LIVES HERE TOO, AND RUNS BEFORE EVERY OTHER ONE.**  No
+# board here has a real-time clock in it, so `--date` and `--time` on the card
+# are what tell this one the date, and `clock` beside them is what the last
+# clean shutdown saved.  Both are on the partition this script mounts, which is
+# the same reason the boot button's step is here, and the step is first because
+# the machine, the programs and every file written want to agree from the first
+# second.  `set_the_clock` below is the whole of it and `save_the_clock` is its
+# other half, in `stop`.
 #
 # **AND THE BOOT BUTTON'S STEP LIVES HERE, WHICH NEEDS SAYING.**  `fpgarc`'s
 # `--no-auto-boot`, and SW0 on the board, each leave the CADR's boot button
@@ -104,6 +117,21 @@ FPGARC_SH=/usr/share/cadr/fpgarc.sh
 DAEMON_SH=/usr/share/cadr/daemon.sh
 . "$DAEMON_SH"
 
+# And the clock, cadr-common's third file on the target.  No board here has a
+# real-time clock in it, so `--date` and `--time` on the card are the only
+# things that can tell this one what day it is, and what one clean shutdown
+# saved is what the next boot starts from.  That file's header is the contract
+# and `set_the_clock` below is the step.
+CLOCK_SH=/usr/share/cadr/clock.sh
+. "$CLOCK_SH"
+
+# **WHERE THE CLOCK IS SAVED**, which is the pack partition, beside the card's
+# file of flags.  That partition is the only place on this board that is both
+# written and still there at the next boot: the boot partition is mounted
+# read-only and the root filesystem is a RAM disk unpacked at every boot.  One
+# line, the fourteen digits `cadr_clock_now` prints.
+CLOCK="$PACKS/clock"
+
 # **THE HOLD MARKER.**  It stands while the machine is held, and it is what
 # `cadr-console` reads to refuse `start` and `step` with muir's own words and
 # to remove when `boot` presses the button.  /var/run is on the root
@@ -125,6 +153,7 @@ start() {
 	else
 		echo "cadr-disk-packs: no pack partition at $PACKS_DEV; the bay will be empty"
 	fi
+	set_the_clock
 	set_the_lamps
 	set_the_display_boards
 	set_the_display_output
@@ -136,6 +165,208 @@ start() {
 	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS"
 }
 
+# **WHAT DAY IT IS, WHICH NOTHING ON THIS BOARD KNOWS.**  There is no
+# real-time clock in it: `date` straight after a boot reads the epoch,
+# /sys/class/rtc is empty and there is no /dev/rtc.  So a board that boots from
+# its card alone is at the 1st of January 1970 until something tells it
+# otherwise, and every file it writes says so.
+#
+# Two lines on the card tell it.  `--date yyyyMMdd` and `--time HHmm`, with the
+# second after the minute if it is wanted, and either may stand alone and sets
+# only its own field of the clock.  The clock is UTC, which is what this board's
+# is.
+#
+# **AND WHAT THE LAST CLEAN SHUTDOWN SAVED IS RESTORED FIRST**, from `clock`
+# beside the card's file of flags, so that a board that has been told the date
+# once keeps it.  The later of the two is what the clock becomes and the clock
+# never runs backwards: a date written on the card months ago does not drag the
+# board back to it at every boot, and the line says which of the two won so
+# that nobody thinks a setting was dropped.
+#
+# **IT IS FIRST, BEFORE EVERY OTHER STEP HERE AND BEFORE THE DRIVE COMES
+# PRESENT**, because the machine, the programs and every file written want to
+# agree from the first second --- a band read with the clock still at the epoch
+# is a band whose files are stamped 1970 for ever.  And it is in THIS script
+# for `hold_the_machine`'s two reasons: it reads the card's file of flags and
+# the file it restores from, both of which are on the partition this script is
+# the one thing that mounts.  The arithmetic under it --- which eight digits
+# are a day that exists, which of two instants is later --- is cadr-common's
+# `clock.sh`, so that a check can try the wrong dates against it directly.
+set_the_clock() {
+	# The card's two lines.  A card with no fpgarc has neither.
+	clock_date=
+	clock_time=
+	have_date=no
+	have_time=no
+	if [ -f "$RC" ]; then
+		if fpgarc_has "$RC" --date; then
+			have_date=yes
+			eval "set -- $(fpgarc_args "$RC" --date)"
+			clock_date=${2:-}
+		fi
+		if fpgarc_has "$RC" --time; then
+			have_time=yes
+			eval "set -- $(fpgarc_args "$RC" --time)"
+			clock_time=${2:-}
+		fi
+	fi
+	# Nothing said and nothing saved is a board whose clock nobody has ever
+	# set, and it has nothing to say about it --- which is the rule every
+	# other step in this script follows.
+	[ "$have_date" = yes ] || [ "$have_time" = yes ] || [ -f "$CLOCK" ] ||
+		return 0
+
+	# What the board came up with, which with no clock in it is the epoch and
+	# a few seconds of uptime.  A clock that does not read as fourteen digits
+	# is nothing to compare against, so it is said and nothing is set: every
+	# line below rests on this one being an instant.
+	clock_now=$(cadr_clock_now)
+	if ! cadr_clock_stamp_ok "$clock_now"; then
+		echo "cadr-clock: the board's clock reads [$clock_now], which is not an" \
+		     "instant, so nothing was set from $RC or from $CLOCK"
+		return 0
+	fi
+	clock_want=$clock_now
+	clock_from=
+
+	# **WHAT THE LAST CLEAN SHUTDOWN SAVED**, which is the clock this board
+	# had when somebody halted it.  A file that is not fourteen digits is
+	# named rather than guessed at: the partition is FAT32 and can be edited
+	# on a laptop with a card reader, so a file with something else in it is
+	# a real thing to meet.
+	if [ -f "$CLOCK" ]; then
+		clock_saved=$(cadr_clock_saved "$CLOCK")
+		if ! cadr_clock_stamp_ok "$clock_saved"; then
+			echo "cadr-clock: the clock saved in $CLOCK is [$clock_saved] and not the" \
+			     "fourteen digits yyyyMMddHHmmss, so the clock was not restored from it"
+		elif cadr_clock_later "$clock_saved" "$clock_want"; then
+			clock_want=$clock_saved
+			clock_from="restored from $CLOCK"
+		fi
+	fi
+
+	# **AND THE CARD'S TWO LINES, EACH ON ITS OWN FIELD OF THE CLOCK AS IT
+	# NOW STANDS**, which is the restored one where there was something to
+	# restore.  That is what lets `--time` alone move a board's clock forward
+	# by an hour without saying again what day it is.
+	clock_asked=$clock_want
+	clock_said=
+	if [ "$have_date" = yes ]; then
+		if cadr_clock_date_ok "$clock_date"; then
+			clock_asked=$(cadr_clock_with_date "$clock_asked" "$clock_date")
+			clock_said="--date $clock_date"
+		else
+			say_not_a_date "$clock_date"
+		fi
+	fi
+	if [ "$have_time" = yes ]; then
+		if cadr_clock_time_ok "$clock_time"; then
+			clock_asked=$(cadr_clock_with_time "$clock_asked" "$clock_time")
+			if [ -n "$clock_said" ]; then
+				clock_said="$clock_said and --time $clock_time"
+			else
+				clock_said="--time $clock_time"
+			fi
+		else
+			say_not_a_time "$clock_time"
+		fi
+	fi
+
+	# **THE LATER OF THE TWO WINS.**  A card that names an instant the board
+	# has already passed is a card written before the last shutdown, and
+	# taking it would run the clock backwards under everything that has
+	# already looked at it.
+	if [ -n "$clock_said" ]; then
+		if cadr_clock_later "$clock_asked" "$clock_want"; then
+			clock_want=$clock_asked
+			if [ -n "$clock_from" ]; then
+				clock_from="$clock_said in $RC, on the clock $clock_from"
+			else
+				clock_from="$clock_said in $RC"
+			fi
+		elif [ -n "$clock_from" ]; then
+			echo "cadr-clock: $clock_said in $RC is not later than the clock" \
+			     "$clock_from, $(cadr_clock_human "$clock_want") UTC, so the clock" \
+			     "was not moved back"
+		else
+			echo "cadr-clock: $clock_said in $RC is not later than the clock this" \
+			     "board is already at, $(cadr_clock_human "$clock_want") UTC, so the" \
+			     "clock was not moved back"
+		fi
+	fi
+
+	# Nothing was later than the clock the board came up with, so there is
+	# nothing to set and nothing to say.
+	[ -n "$clock_from" ] || return 0
+
+	if cadr_clock_set "$clock_want"; then
+		echo "cadr-clock: the clock is $(cadr_clock_human "$clock_want") UTC," \
+		     "$clock_from"
+	else
+		echo "cadr-clock: the clock could not be set to" \
+		     "$(cadr_clock_human "$clock_want") UTC; it is still" \
+		     "$(cadr_clock_human "$clock_now") UTC"
+	fi
+}
+
+# One line for a line on the card that is not the thing it says it is, with the
+# form beside it: the person who wrote it has the card in a reader, and the
+# form is the whole of what they need to put it right.  The boot goes on, which
+# is what every other step here does with a setting it could not take.
+say_not_a_date() {
+	if [ -z "$1" ]; then
+		echo "cadr-clock: --date is there with nothing after it, so the clock's date" \
+		     "was not set from it: --date is yyyyMMdd, a four-digit year then a" \
+		     "two-digit month 01 to 12 then a two-digit day the month has"
+	else
+		echo "cadr-clock: --date $1 is not a date, so the clock's date was not set" \
+		     "from it: --date is yyyyMMdd, a four-digit year then a two-digit month" \
+		     "01 to 12 then a two-digit day the month has"
+	fi
+}
+
+say_not_a_time() {
+	if [ -z "$1" ]; then
+		echo "cadr-clock: --time is there with nothing after it, so the clock's time" \
+		     "was not set from it: --time is HHmm or HHmmss, the hour 00 to 23 on a" \
+		     "24-hour clock then the minute then the second, with no am and no pm"
+	else
+		echo "cadr-clock: --time $1 is not a time, so the clock's time was not set" \
+		     "from it: --time is HHmm or HHmmss, the hour 00 to 23 on a 24-hour clock" \
+		     "then the minute then the second, with no am and no pm"
+	fi
+}
+
+# **THE CLOCK IS SAVED AT A CLEAN SHUTDOWN**, so that the next boot starts
+# where this one left off rather than at the epoch.  It is written at this
+# moment and no other: the pack program is already stopped, so nothing else is
+# writing the partition, and the partition is about to be unmounted --- a save
+# after that would write into the root filesystem's RAM disk, where the file
+# would be there to find and gone at the next boot.
+#
+# A board that lost its power instead of being halted keeps whatever the
+# shutdown before it saved, which is the most a board with no clock in it can
+# offer.
+save_the_clock() {
+	clock_stamp=$(cadr_clock_now)
+	if ! cadr_clock_stamp_ok "$clock_stamp"; then
+		echo "cadr-clock: the clock reads [$clock_stamp], which is not an instant" \
+		     "to save; $CLOCK is left as it was"
+		return 0
+	fi
+	# **THE `2>/dev/null` COMES FIRST BECAUSE REDIRECTIONS ARE APPLIED IN
+	# ORDER**, which is the card reader's own lesson: written the other way
+	# round the file is opened while stderr is still the console, so a
+	# partition that is not writable prints the shell's own `cannot create`
+	# and the `2>/dev/null` that was meant to catch it never sees it.
+	if ! printf '%s\n' "$clock_stamp" 2>/dev/null > "$CLOCK"; then
+		echo "cadr-clock: the clock could not be written to $CLOCK, so the next boot" \
+		     "will start from whatever was last saved there"
+		return 0
+	fi
+	echo "cadr-clock: $(cadr_clock_human "$clock_stamp") UTC saved to $CLOCK"
+}
+
 # **WHETHER THE BOARD'S ACTIVITY LAMPS BLINK.**  `--no-blinking-leds` makes
 # them hold a level: on the Arty Z7-20 LD1 is then the clock generator's lock
 # and LD2 is lit while the machine retires microcycles, and on the Cora Z7-07S
@@ -143,9 +374,10 @@ start() {
 # only how, and the fabric comes up blinking.
 #
 # It is here because it reads `fpgarc`, which is on the partition this script
-# is the one thing that mounts, and it is FIRST because nothing waits on it and
-# a person watching the board should see the lamps settle as early in the boot
-# as anything can make them.
+# is the one thing that mounts, and it is the FIRST thing this script asks the
+# fabric for, because nothing waits on it and a person watching the board should
+# see the lamps settle as early in the boot as anything can make them.  Only the
+# clock is ahead of it, and nobody watches that.
 #
 # Nothing is printed when the flag is not there, because a board whose lamps
 # blink has nothing to say about it.
@@ -445,6 +677,7 @@ stop() {
 	printf "Stopping cadr-disk-packs: "
 	start-stop-daemon -K -q -p "$PIDFILE"
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	save_the_clock
 	sync
 	umount "$PACKS" 2>/dev/null
 	umount "$BOOT" 2>/dev/null

@@ -108,9 +108,16 @@ Four flags are deliberately absent from that list. `--chaos-file-root`,
 `--chaos-file-peers`, `--server-name` and `--time` named a file host and a time
 host that used to live inside the program and now do not. A flag that no
 program has is not a setting this file can carry. A card still carrying one of
-those lines is named at boot by the report below, which says the line went to
-nobody. The program itself still refuses each by name, saying where the host
+the first three is named at boot by the report below, which says the line went
+to nobody. The program itself still refuses each by name, saying where the host
 went, for somebody who passes one by hand.
+
+`--time` is the exception among those four, and the reason is worth stating.
+The word now names the clock's time of day, which the section below has, and
+the disk pack program's init script claims it. So a card carrying `--time` is
+a card setting this board's clock, and it never reaches the Chaosnet program.
+The refusal there stands for somebody who passes the flag to that program by
+hand, and it is about the time host that went, which is a different thing.
 
 **The screen**, read by `S85cadr-terminal`. `docs/terminal.md` says what each
 one means. `--terminal` takes nothing, a port, an address, or address:port.
@@ -203,6 +210,15 @@ clock comes from an MMCM, and an MMCM's dividers are fixed in the bitstream. So
 three bitstreams carry the three modes and this line is compared against what the
 fabric reports. A card naming a mode the bitstream does not carry gets a line
 saying so rather than a setting that quietly does nothing.
+
+**The clock**, read by `S80cadr-disk-packs` before anything else it does. No
+board here has a real-time clock in it, so these two lines are what tell one
+the date. The section below is about them.
+
+    --date yyyyMMdd       the date: a four-digit year, a two-digit month and a
+                          two-digit day
+    --time HHmm           the time of day on a 24-hour clock, with the second
+                          after the minute when it is wanted
 
 **The lamps**, read by `S80cadr-disk-packs` and written into the console face.
 One flag, and the section below is about it.
@@ -367,6 +383,66 @@ ten megabytes, however long the board is up. The logs go at a reboot, which is
 right for a log of this kind. `docs/console.md` has the routine and what holds
 it.
 
+## `--date` and `--time`
+
+No board here presents a real-time clock to Linux. `date` straight after a boot
+reads the epoch, `/sys/class/rtc` is empty, there is no `/dev/rtc` and the
+kernel names no such device. So a board that boots from its card alone does not
+know the date or the time, and everything it writes is stamped 1970.
+
+Two lines on the card tell it.
+
+    --date 20260920       a four-digit year, then a two-digit month, then a
+                          two-digit day
+    --time 1438           the hour on a 24-hour clock from 00 to 23, then the
+                          minute, then the second if it is given
+
+There is no am and no pm, and `1438` and `143800` name the same instant. The
+clock is UTC, which is what the board's is, and there is no timezone flag.
+
+**Either line may stand alone and sets only its own field.** A card with
+`--date` alone sets the date and leaves the time of day as it is, and a card
+with `--time` alone sets the time of day and leaves the date.
+
+**The clock is saved at a clean shutdown and restored at the next boot.** It is
+fourteen digits, `yyyyMMddHHmmss`, in `clock` on the pack partition beside this
+file. The disk pack program's init script writes it while it is stopping, after
+the program has gone and before the partition is unmounted, and reads it at the
+next boot. The line is cleaned the way a line of this file is, so a carriage
+return and a space at either end do not matter, and a file holding anything
+else is named at boot and not used. A board that lost its power rather than
+being halted keeps whatever the shutdown before it saved, which is the most a
+board with no clock in it can offer.
+
+**The later of what these two lines compose and what was restored is what the
+clock becomes, so the clock never runs backwards.** A date written on a card
+months ago would otherwise drag the board back to it at every boot. The
+composition is done on the clock as it stands after the restore, so `--time`
+alone on a board that was halted at two in the afternoon is later the same day
+rather than an afternoon in 1970. The boot log says which of the two won,
+because a setting that was not taken is worth a line.
+
+**A value that is not a date or a time is named at boot and dropped, and the
+other line still lands.** `--date 20260931` is eight digits and looks exactly
+like a date, and a board that passed it on would be told the 31st of September
+and would quietly get the 1st of October. So the month must be 01 to 12, the
+day must be one the month really has with leap years counted properly, the hour
+must be 00 to 23, and the minute and the second must be 00 to 59. The line that
+says a value was refused names the form, because the person who wrote it has
+the card in a reader and the form is what they need.
+
+**Both lines are written on the card commented out, and what stands after them
+is the form rather than a date.** There is no date a card script could write. A
+line uncommented without being filled in gets the line at boot that says so,
+which is better than a day nobody meant.
+
+**The step is first, before every other step in that script and before the
+drive comes present.** The machine, the programs and every file written want to
+agree from the first second, and a band read with the clock still at the epoch
+is a band whose files are stamped 1970. The step is in that script for the boot
+button's reason: it reads this file and the saved clock, and both are on the
+partition that script is the one thing that mounts.
+
 ## `--no-auto-boot`
 
 muir's flag, and it means here what it means there: leave the boot button
@@ -436,8 +512,11 @@ says why each steady form is what it is.
 This is not a muir flag, because muir has no lamps. It is spelled the way muir
 spells a setting that turns something off.
 
-`S80cadr-disk-packs` reads the line first, before anything else it does, and
-asks the console with `cadr-console blinking-leds off`. That command exits 0
+`S80cadr-disk-packs` reads the line before anything it asks the fabric for,
+after the clock and before every other step, and asks the console with
+`cadr-console blinking-leds off`. A person watching the board should see the
+lamps settle as early in the boot as anything can make them, and the clock ahead
+of it is not something anybody watches. That command exits 0
 when the lamps are steady afterwards, so a console that could not be reached
 and a fabric too old to have the word both get one line saying the lamps blink.
 The boot goes on either way. `cadr-console blinking-leds on` and `off` do the
@@ -589,6 +668,26 @@ nothing, and a console that did not make the lamps steady is said to have
 failed while the boot goes on. It holds the card script's three ways of writing
 that line: commented by default, live with `NO_BLINKING_LEDS=1` and nothing else
 made live with it, and commented on a released card even with the variable set.
+
+**It holds the clock in two places.** The arithmetic is tried on its own, one
+process a case, against the wrong values as well as the right ones: a date that
+is not eight digits, a month of 00 and of 13, a day of 00 and of 32, the 31st
+of September, the 29th of February in a year that is not a leap year and in
+1900 which is not one, an hour of 24, a minute of 60, a second of 60, letters
+where digits belong, nothing at all, and a space at either end or in the
+middle. A check that tried only the good values would pass a step that took
+every eight digits it was given.
+
+The rule that the clock never runs backwards is held by a pair of cases rather
+than one, because a comparison the wrong way round passes a single case as
+happily as the right one. The same card is booted beside a saved clock later
+than what its lines compose and beside one earlier, one second either side, and
+the two cases require different outcomes. The `date` the step reads and writes
+is stubbed, so the clock in the case is the check's own and the build host's is
+never touched. Where in the boot the clock was set is recorded too: it must
+land before the pack program starts and before the console is asked anything.
+The save is held to happening while the partition is still the card's, since a
+save after the unmount writes into a RAM disk and is lost at the next boot.
 
 One case in it claims another program's flag on purpose and requires that the
 flag then arrives. Everything else in that section is an absence, and an absence

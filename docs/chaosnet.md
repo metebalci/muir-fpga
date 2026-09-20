@@ -253,11 +253,18 @@ that state, with the line commented out under the sentence that explains it.
 A board with no `fpgarc` at all is the other case. Nobody has been asked, so it
 runs both defaults, which are System 100's own address and CHUDP's own port.
 
-The four flags this program refuses by name are not in that list, and are not
-written on the card either: `--chaos-file-root`, `--chaos-file-peers`,
-`--server-name` and `--time`. A card still carrying one of those lines is named
-at boot by the report on lines no program takes, and the Chaosnet starts. In
-the list instead, the line would reach the program and stop it.
+The four flags this program refuses by name are not in that list:
+`--chaos-file-root`, `--chaos-file-peers`, `--server-name` and `--time`. A card
+still carrying one of the first three is named at boot by the report on lines
+no program takes, and the Chaosnet starts. In the list instead, the line would
+reach the program and stop it.
+
+`--time` is the exception among those four. The word now names the time of day
+on the card, which the disk pack program's init script reads to set a clock
+this board does not keep, so a card carrying `--time` is setting the clock and
+the line never reaches this program. `docs/fpgarc.md` has that section. The
+refusal here stands for somebody who passes the flag to this program by hand,
+and what it is about is the time host that went.
 
     --chaos-address 3050         this machine's Chaosnet address, in octal.
                                  It is the DIP switches on MIT's card, so it

@@ -3052,6 +3052,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
 # exactly the thing that sat broken because nobody ran it.
 $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(COMMON_SRC)/daemon.sh \
+                      $(COMMON_SRC)/clock.sh \
                       $(COMMON_SRC)/fpgarc_test.sh \
                       $(CHAOSNET_PKG)/S87cadr-chaosnet \
                       $(TERMINAL_PKG)/S85cadr-terminal \
@@ -3062,8 +3063,10 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       boards/arty-z7-20/linux/mksd-release.sh | $(BUILD)
 	$(MAKE) -C $(COMMON_SRC) check
 	@echo "fpgarc: one file of flags on the card reaches five programs, each gets the flags it"
-	@echo "fpgarc: owns and no others, --no-auto-boot holds the machine before the drive, and"
-	@echo "fpgarc: the card mirrors the server: the board's four files under the board's folder"
+	@echo "fpgarc: owns and no others, --no-auto-boot holds the machine before the drive,"
+	@echo "fpgarc: --date and --time set a clock the board does not keep and never run it"
+	@echo "fpgarc: backwards, and the card mirrors the server: the board's four files under"
+	@echo "fpgarc: the board's own folder"
 	@touch $@
 
 # **cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK COMPILES
