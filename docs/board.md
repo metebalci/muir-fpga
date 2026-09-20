@@ -2062,3 +2062,54 @@ ships, attaches to the chain, names both TAPs, and examines a memory access
 port on the debug port.  Walking its debug ROM table then hangs in that
 version, so reading the processor's memory that way is not established here.
 
+
+## The DE25-Nano's memory on silicon, 20 September 2026
+
+The machine's memory cycles reach the board's LPDDR4 through the processor
+system's SDRAM bridge. The proof is one instrument read in two gate states, and
+its figures were written down before the run.
+
+The board was prepared so that nothing could touch memory before the
+measurement. Its card was written and verified, the processor calibrated the
+LPDDR4 and U-Boot stopped at the empty fabric slot, and the slide switch SW0
+held the machine unbooted. The data cache was turned off, so the processor and
+the fabric see one memory. Then 1,024 words from the machine's base were
+poisoned with a pattern that depends on the address, read back word for word,
+and checksummed. The gate word read zero, so the port was shut.
+
+The first press of the boot button ran the machine against that shut port. The
+counters at the bridge read 256 reads and 256 writes asked and none answered,
+which is the boot PROM's page-0 parity pass exactly once, every cycle ending on
+the machine's own timeout. The poisoned block was unchanged, which is what a
+shut port has to mean. The counters carry a marker bit in each half, so a word
+of all ones or all zeros cannot be mistaken for a reading.
+
+The bridges were then enabled and the gate raised by the board's own boot
+commands. The secure firmware accepted the fabric's warm-reset acknowledgment
+inside its own timeout, which is that handshake's first run on silicon. With
+the gate open and no new press, the counters and the memory did not move, so
+whatever followed belonged to the next press.
+
+The second press gave the three figures exactly as predicted: 512 reads and 512
+writes asked in all, 256 reads and 256 writes answered, and the poisoned block
+unchanged. The answers being exactly half the cumulative requests is the whole
+instrument in one reading. The first run met a shut port and was never
+answered; the second met an open one and was answered at the bridge's own
+handshakes, which a fabric that issued no transaction cannot fabricate. Page 0
+was read twice, identically, and every one of its 1,024 words read back as its
+poison.
+
+What this does not cover is worth stating. The window is the boot PROM's parity
+pass alone: 256 word reads and 256 word writes of one page, with no other
+master on the shared port. It does not exercise the disk pack side, the
+display, their arbitration, or any address outside that page. Page 0 matching
+is not the proof, because an identity copy leaves nothing behind; the counters
+are what say the path was used.
+
+One ordering matters on this board. The gate is raised by software, seconds
+after the fabric is configured, while the machine reaches its only memory pass
+about 118 ms after its own reset. A machine left to start by itself therefore
+spends that pass against a shut port. The Zynq boards escape this only because
+their port comes up in the first-stage loader, inside that window. Until the
+machine is held until the gate is up, SW0 stays up and the machine is started
+by the boot button.
