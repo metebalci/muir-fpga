@@ -84,21 +84,21 @@
 
     <figure class="panel fig dense wide">
       <div class="scroll">
-<svg viewBox="20 41 1813 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-one blocks this project builds, seven are verified: F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to DDR and SPL. Twelve are simulated: disk controller, TV, Color TV, I/O board, H2F, LWH2F, terminal, Chaosnet, serial, disk packs, console and USB input. The other two have not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Beside muir, at the right end of the Linux outline, stands ozd, the associated machine a site of these machines takes its files, its time and its host table from over Chaosnet. It runs on a host of its own today, and running it on this board&rsquo;s own processing system, so that a card by itself is a whole site, has not been started: the block carries no color, and no line reaches it because there is no path on the board to draw. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+<svg viewBox="20 41 1813 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-one blocks this project builds, seven are verified: F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to DDR and SPL. Thirteen are simulated: display output, disk controller, TV, Color TV, I/O board, H2F, LWH2F, terminal, Chaosnet, serial, disk packs, console and USB input. The other one has not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Beside muir, at the right end of the Linux outline, stands ozd, the associated machine a site of these machines takes its files, its time and its host table from over Chaosnet. It runs on a host of its own today, and running it on this board&rsquo;s own processing system, so that a card by itself is a whole site, has not been started: the block carries no color, and no line reaches it because there is no path on the board to draw. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
 
           <!-- The Arty Z7-20's drawing, generated for the DE25-Nano.  Of the
                twenty-one blocks this project builds, seven are verified:
                F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to
-               DDR and SPL. Twelve are simulated: disk controller, TV, Color
-               TV, I/O board, H2F, LWH2F, terminal, Chaosnet, serial, disk
-               packs, console and USB input.  The other two have not been
-               started, and the parts drawn gray are existing components.  The
-               figures under the fabric's label are this board's own fit, as
-               ALMs and M20K, the chip and the memory carry this board's
-               parts, the lamps are green, as this board's user LEDs are, and
-               the debug cable's connector is a GPIO header, the board having
-               no Pmod.  Why each thing is where it is, is in the Arty Z7-20's
-               page. -->
+               DDR and SPL. Thirteen are simulated: display output, disk
+               controller, TV, Color TV, I/O board, H2F, LWH2F, terminal,
+               Chaosnet, serial, disk packs, console and USB input.  The other
+               one has not been started, and the parts drawn gray are existing
+               components.  The figures under the fabric's label are this
+               board's own fit, as ALMs and M20K, the chip and the memory
+               carry this board's parts, the lamps are green, as this board's
+               user LEDs are, and the debug cable's connector is a GPIO
+               header, the board having no Pmod.  Why each thing is where it
+               is, is in the Arty Z7-20's page. -->
           <rect class="d-box d-done d-key" x="618.01" y="851" width="13" height="13"/>
           <text class="d-s" x="638.01" y="861">verified</text>
           <rect class="d-box d-built d-key" x="698.69" y="851" width="13" height="13"/>
@@ -115,7 +115,7 @@
           <rect class="d-box" x="-170" y="28" width="1521" height="668.5"/>
           <text class="d-s" x="-164" y="24">Altera Agilex-5E &middot; A5EB013BB23BE4SCS</text>
           <rect class="d-plate" x="-160" y="274" width="180" height="112"/>
-          <rect class="d-box" x="-160" y="274" width="180" height="112"/>
+          <rect class="d-box d-built" x="-160" y="274" width="180" height="112"/>
           <text class="d-t" x="-70" y="300" text-anchor="middle">display output</text>
           <text class="d-s" x="-70" y="318" text-anchor="middle">scans both screens out of</text>
           <text class="d-s" x="-70" y="332" text-anchor="middle">DDR at the monitor&rsquo;s rate,</text>
@@ -136,24 +136,25 @@
           <text class="d-s" x="-233" y="358" text-anchor="middle">one of three modes</text>
 
           <text class="d-s" x="-164" y="48">FPGA fabric logic</text>
-          <!-- From the Quartus fit report of the build with the faces:
-               15,028 ALMs, of which 4,010 hold the six small memories, and
-               129 M20K blocks.
+          <!-- From the Quartus fit report of the build with the faces and
+               the display output:
+               16,076 ALMs, of which 4,010 hold the small memories, and
+               135 M20K blocks.
                A5E 013B: 46,800 ALMs, and 358 M20K blocks of 20 Kbit each,
                895 KB, the same convention as the Zynq boards' block RAM row.
                Source: Altera Agilex 5 E-Series Product Table, 2026.08.07, p. 3:
                https://docs.altera.com/api/khub/documents/rcQSreUhbuYGXCo7Np10cw/content
-               The six small memories are counted inside the ALMs, as the
+               The small memories are counted inside the ALMs, as the
                lookup-table memory on the Zynq boards is counted inside the
                slices. -->
-          <text class="d-s" x="-164" y="68">ALM 15,028 of 46,800</text>
+          <text class="d-s" x="-164" y="68">ALM 16,076 of 46,800</text>
           <rect class="d-box" x="-164" y="74" width="136" height="13"/>
-          <rect x="-164" y="74" width="43.7" height="13" fill="currentColor" fill-opacity="0.42"/>
-          <text class="d-n" x="-158" y="84">32.1%</text>
-          <text class="d-s" x="-164" y="104">M20K 323 KB of 895 KB</text>
+          <rect x="-164" y="74" width="46.7" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="84">34.4%</text>
+          <text class="d-s" x="-164" y="104">M20K 338 KB of 895 KB</text>
           <rect class="d-box" x="-164" y="110" width="136" height="13"/>
-          <rect x="-164" y="110" width="49" height="13" fill="currentColor" fill-opacity="0.42"/>
-          <text class="d-n" x="-158" y="120">36.0%</text>
+          <rect x="-164" y="110" width="51.3" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="120">37.7%</text>
 
           <rect class="d-box d-done" x="40" y="62" width="112" height="128"/>
           <text class="d-t" x="96" y="100" text-anchor="middle">clock</text>

@@ -484,6 +484,22 @@ half at a time, which is a byte-enabled write and is what a block RAM is for.
 | first display | 512 | 12 of them | 482 | 65,536 bits, two RAMB36 |
 | color board | 256 | 36 | 227 | 32,768 bits, one RAMB36 |
 
+**And on the second vendor's part that byte-enabled write has to be written as
+one, not merely be one.** The same three cases can be written as a full-width
+assignment in one branch and two 32-bit sub-range assignments in the others,
+which reads more directly. Vivado infers block RAM from that shape without
+being asked. Quartus does not: it says it is extracting a RAM and then builds
+all 98,304 bits out of registers, with no warning and nothing in its RAM
+summary to say so. Measured on the DE25-Nano's part, on this module alone,
+135,576 lookup tables and 99,437 registers against 1,257 and 1,005 --- and the
+whole board's fit then stops, because the part has 93,600 lookup tables.
+Asking Quartus for an M20K does not help; neither that attribute nor turning
+its read-during-write checking off moves a single number, which is a
+constraint that reaches nothing looking exactly like one that works. So the
+write is one enable a half, each half written by itself, which is what a block
+RAM with byte enables is. Vivado's result is unchanged by the rewriting: 3
+block RAM tiles either way, and six lookup tables fewer.
+
 The fitter agrees, and the table above is a prediction it confirms rather than
 a claim about it. Synthesis maps `mbuf` as 1K by 64 into two RAMB36 and `cbuf`
 as 512 by 64 into one, and the routed board's block RAM goes from 42.5 tiles to
@@ -737,6 +753,8 @@ display.
 | `boards/arty-z7-20/cadr_arty.xdc` | the eight pins, on every board | the fitter |
 | `rtl/plumbing/xilinx7/cadr_hdmi.xdc` | the clock groups, only when it is built | the fitter |
 | `tb/cadr_arty_stubs.sv` | `OSERDESE2`, `OBUFDS`, `BUFIO` as empty shells | nothing; it models nothing |
+| `rtl/plumbing/cadr_adv7513.sv` | the DE25-Nano's transmitter, written over its two-wire bus | `build/adv7513.pass` |
+| `boards/de25-nano/quartus/cadr_hdmi.sdc` | the pixel clock, the forwarded clock and the video pins, only when it is built | the fitter |
 
 The split is not the obvious one and the reason is checkability. Putting the
 encoder in the same file as the serializer primitives would have made the
@@ -1054,6 +1072,178 @@ the first try. The file holds only constraints now, the filter is on the
 register's own name rather than on its hierarchy, and the assertions are in
 `boards/arty-z7-20/vivado/bitstream.tcl` where Tcl control flow is legal and
 where the flow's other assertions already live.
+
+## The DE25-Nano
+
+The same display on a second board, with one stage of it off the fabric.
+
+The DE25-Nano has an Analog Devices ADV7513 transmitter between the fabric and
+its HDMI connector. The fabric hands that part a raster on a parallel bus,
+twenty-four bits of color with a clock, a data enable and two syncs, and the
+part encodes and serializes it. So the whole of section 4 above has no
+counterpart on this board: `cadr_tmds_encode.sv`, `cadr_hdmi_tx.sv` and
+`xilinx7/cadr_hdmi_phy.sv` are not built for it and nothing replaces them.
+
+Everything above the raster is the same file.
+`rtl/plumbing/cadr_display_out.sv` already ends at a parallel raster, because
+that is what its encoder was always fed, so the two boards run the same
+module with the same three video modes, the same compositor, the same two
+rotations and the same sleep timer. The two settings reach it through the
+console's page 2 word 34 and word 36 exactly as they do on the Arty Z7-20,
+and the Linux programs are the same packages unchanged.
+
+The memory side differs only in where it arrives. The Arty Z7-20 gives the
+display a port of its own, `S_AXI_HP3`. The Agilex 5's processor has one
+fabric-to-SDRAM bridge, so the machine, the disk pack side and the display
+share it through a burst-level arbiter that gives the machine priority;
+`rtl/plumbing/cadr_f2sdram_share.sv` is that arbiter and its header carries
+the argument. The display is its third master, it reads and never writes, and
+it can be made to wait because it runs ahead of its own raster.
+
+### Configuring the transmitter
+
+**The part does nothing at all until its registers are written.** That is the
+one piece this board needs and the Arty Z7-20 does not, where a loaded
+bitstream is already transmitting. `rtl/plumbing/cadr_adv7513.sv` writes them
+over the transmitter's own two-wire bus, which on this board goes to fabric
+pins rather than to the processor.
+
+It is fabric and not software, so a picture needs no program, no face and no
+boot. That keeps the promise this document opens with, which is that the
+screens reach the connector with no software in the path.
+
+The program is written once out of the fabric's reset and again whenever the
+display wakes from sleep, and it takes about ten milliseconds at the hundred
+kilohertz the bus is driven at. A byte the part does not acknowledge stops the
+program, is reported, and leaves the bus released with a stop, because a
+half-configured transmitter reporting success is worse than one that says it
+failed.
+
+**The register program is not derived here.** The data sheet in the board's
+resource package is the short form: it gives the part's pins, its electrical
+limits and its bus timing, and it does not give the register map. The register
+map is in a programming guide that is not in the package. So the program is
+the board vendor's own initialization of the transmitter on this board, taken
+whole and in its own order from the resource package's HDMI demonstration,
+cited in the module's header by path and digest as the pin file cites the same
+package for its pins. Nothing is dropped and nothing is reordered, because
+both would be claims that the document which could settle them does not exist
+here. Three of its entries carry this design rather than the part's defaults:
+the input is 4:4:4 with separate syncs, the input is twenty-four bits wide,
+and there is no clock delay.
+
+The two-wire bus is driven at a quarter of the four hundred kilohertz the data
+sheet allows, and every interval the sheet bounds is a whole quarter of a bit
+period, which is four times the margin the slowest of them asks for. The
+module refuses at elaboration a clock or a bus speed that would break any of
+the six. A stretched clock is waited for rather than talked over.
+
+### The pixel clock, and the video bus
+
+The pixel clock is a second I/O PLL off the board's 50 MHz, separate from the
+machine's, because no counter chain of that reference gives both the tick and
+a pixel clock. That is the same arithmetic that gives the Arty Z7-20 two clock
+managers. The flow asks the generator for the mode's frequency and the timing
+analyzer is asked afterwards what it actually made, so a PLL generated from a
+mistyped parameter is a refusal rather than a picture nobody can explain.
+
+**The video is launched on the rising edge of that clock and the same clock is
+forwarded to the part.** The data sheet gives the setup and hold the part's
+video inputs need, 1.8 ns and 1.3 ns, and does not say which edge of its clock
+it samples on; the programming guide that would is not available. So the
+arrangement is not derived here either. It is the one the board vendor's own
+demonstration uses on this board, whose video generator registers every output
+on the rising edge of the PLL output it forwards, with the same clock-delay
+value written. Inventing a half-period shift instead would have been a theory
+about an edge no document names.
+
+`boards/de25-nano/quartus/cadr_hdmi.sdc` declares the forwarded clock on the
+pin and constrains the twenty-seven video pins against it with the part's own
+setup and hold. **The board's trace skew between the clock and the data is not
+included, because it is not known**: the resource package carries no schematic
+and the manual gives no trace lengths. So that is a bound this design meets
+rather than a bound the board meets, and which of the two it is matters more
+than the number.
+
+### Sleep
+
+A source puts a monitor to sleep by stopping the link. On the Arty Z7-20 the
+fabric makes the link, so it stops it by holding all four lanes at one word.
+Here the lanes are the transmitter's, so what this fabric can stop is the
+clock it hands the part, which stops the link at one remove and is the same
+act.
+
+Everything in front of the gate keeps running, as it does there: the pixel
+clock inside the fabric, the raster, the fetch and both buffers. So a monitor
+that wakes locks onto a picture that never stopped. The gate takes its enable
+while the forwarded clock is low, so the part is never handed a fragment of a
+period, and the mute still moves only at a frame boundary, so the link stops
+and starts in the blanking.
+
+The transmitter's registers are written again at every wake. Its input clock
+went away and came back, and whether it relocks by itself is not established
+by any document available here; writing the program again costs ten
+milliseconds and removes the question. That is the reason, and it is not a
+measurement.
+
+### What it costs on this board
+
+Built at the commit this section arrived at, the whole memory board with the
+display in it, through `boards/de25-nano/quartus/build.sh`:
+
+| | |
+|---|---|
+| logic | **16,076 ALMs** of 46,800, 34 per cent |
+| block memory | **135 M20K blocks** of 358, 38 per cent |
+| registers | 13,623 |
+| worst setup slack | **+2.283 ns**, over every operating condition the part has |
+| worst hold slack | +0.001 ns |
+| pixel clock | 108.0030 MHz, where the mode asks 108 |
+
+Against the same board without the display, 15,028 ALMs and 129
+M20K blocks, the display costs about **1,048 ALMs and 6 M20K
+blocks**. The Arty Z7-20's own display costs about 2,200 lookup tables, 3,800
+registers and three and a half block RAM tiles there; the two are not the same
+unit and are not comparable directly.
+
+**The hold figure is the video bus, and it is zero.** The worst hold path at
+the fast corner is a video data register to its pin, with the arrival and the
+requirement equal to the picosecond: it is the transmitter's own 1.3 ns hold
+requirement binding exactly. **The board's trace skew between the clock and
+the data is not in that number**, because no schematic gives it, so this is a
+bound the design meets rather than one the board is shown to meet. A board
+whose clock trace is shorter than its data traces would spend margin that is
+already zero. It is a thing to measure the first time a monitor is attached.
+
+### What holds it, and what nothing holds
+
+`build/display_out.pass` and `build/display_sleep.pass` hold the raster, the
+fetch, the compositor, both rotations and the sleep, and they are the same
+checks the Arty Z7-20 runs, because it is the same module.
+`build/adv7513.pass` holds what leaves the two-wire pins: a decoder recovers
+the starts, the stops, every bit and every acknowledge from the levels of the
+two lines, never from a signal inside the module, and compares the byte stream
+with its own second transcription of the program. It measures the six
+intervals the data sheet bounds and prints the worst of each, drives a
+stretched clock and a refused byte, and requires that neither line moves once
+the program is through. `build/de25.pass` lints the board with the display in
+it as a fourth configuration, which is what catches a pin brought out and not
+connected.
+
+**Nothing holds that these registers make an ADV7513 transmit.** The register
+map is in a document that is not available, the program is the board vendor's
+own, and **the board's HDMI connector has never been wired to a monitor**. The
+display on this board is built, checked in simulation and fitted, and it has
+not been shown.
+
+**And one question about the board is left open rather than closed.** The
+pixel clock's pin is in a bank whose single-ended standards run from 1.0 V to
+1.2 V, so the pin file gives it 1.1 V and Quartus refuses 3.3 V there. The
+ADV7513's data sheet asks at least 1.35 V of its video inputs. The board
+vendor's own demonstration drives that pin the same way at a higher pixel
+clock, and there is no schematic in the package to explain how the two meet.
+`boards/de25-nano/README.md` records it. It is a question for the first time a
+monitor is attached.
 
 ## What is not built
 

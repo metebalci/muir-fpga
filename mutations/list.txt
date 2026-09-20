@@ -15949,10 +15949,19 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note 20759, measured on a test design for this part; whether it notices an
 @note endpoint that is present and reaches nothing has not been measured.
 @note
-@note Caught because `ninit_done` then has no reader: UNUSEDSIGNAL.
+@note Caught because `ninit_done` then has no reader: UNUSEDSIGNAL.  On the
+@note board built with the display there is a second PLL, and it reads
+@note `ninit_done` too, so the record names the machine's PLL by its instance
+@note --- an anchor of the two lines alone matches twice and kills the whole
+@note run at parse.  Lint's first pass is the board without a display, where
+@note the signal is read by nothing.
 @old
+  cadr_de25_pll u_pll (
+      .refclk  (clock50_0),
       .rst     (ninit_done),
 @new
+  cadr_de25_pll u_pll (
+      .refclk  (clock50_0),
       .rst     (1'b0),
 @end
 
@@ -16366,4 +16375,336 @@ puts "PROG: build $want, was $ubefore, now $uafter"
     blk_rdw <= (store_we && store_addr < 9'(BLOCK_WORDS)) || chb_we;
 @new
     blk_rdw <= (store_we && store_addr < 9'(BLOCK_WORDS)) || chb_we || 1'b1;
+@end
+
+# ============================================ the DE25-Nano's display output
+#
+# The display itself is `cadr_display_out.sv`, which is the Arty Z7-20's and
+# carries its own records under `display_out` and `display_sleep`.  What is
+# new on this board is everything below the raster: the HDMI transmitter on
+# the board has to be written over its two-wire bus before it will do
+# anything, and the fabric hands it a parallel picture rather than a serial
+# one.  `rtl/plumbing/cadr_adv7513.sv` is that, and `build/adv7513.pass` is
+# what reads the two wires back.
+#
+# **THE TIMING RECORDS BELOW ARE THE BOUNDS' NEGATIVE CONTROLS.**  The data
+# sheet bounds six things and the check measures all six off the waveform; a
+# bound with nothing just outside it is a bound that could be satisfied by
+# arithmetic rather than by the design, which this project has met.  So each
+# of the intervals has a record that moves an edge onto a clock edge, where
+# the interval collapses to zero, and the check must say so.
+#
+# What no record here can do is break the ADV7513, and nothing below claims
+# to: the register map is in a programming guide that is not on this machine,
+# the program is the board vendor's own for this board, and the connector has
+# never been wired to a monitor.  These hold the fabric's half.
+
+@mutation adv7513-a-value-of-the-program-is-wrong
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The clock delay written as 0x61 instead of 0x60. The check carries its
+@note own transcription of the program, typed from the same source the
+@note module's header cites, so the two are two descriptions of one thing and
+@note this is them disagreeing. A check that read the program out of the
+@note module would agree with anything.
+@old
+      16'hBA60,   // NO CLOCK DELAY: this design's clock forwarding
+@new
+      16'hBA61,   // NO CLOCK DELAY: this design's clock forwarding
+@end
+
+@mutation adv7513-two-writes-of-the-program-swap-places
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The input format and the output format written the other way round.
+@note Both writes still happen and both values still reach the part, so a
+@note check that only counted the bytes, or only gathered them into a set,
+@note would pass. The order is a claim about what the part does between two
+@note writes, and it is compared in order.
+@old
+      16'h1520,   // INPUT 4:4:4 WITH SEPARATE SYNCS: this design's raster
+      16'h1630,   // OUTPUT 4:4:4, 24-BIT INPUT: this design's video bus
+@new
+      16'h1630,   // OUTPUT 4:4:4, 24-BIT INPUT: this design's video bus
+      16'h1520,   // INPUT 4:4:4 WITH SEPARATE SYNCS: this design's raster
+@end
+
+@mutation adv7513-the-address-asks-to-read
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The low bit of the address byte is the direction, and this is a write.
+@note Set, the part would drive the bus against the fabric from the first
+@note byte. Caught as the first byte of every transaction.
+@old
+      2'd0:    next_byte = {ADDR, 1'b0};
+@new
+      2'd0:    next_byte = {ADDR, 1'b1};
+@end
+
+@mutation adv7513-the-data-moves-when-the-clock-falls
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The data line put up at the end of the bit rather than a quarter after
+@note the clock fell, so SDA moves at the same instant SCL does. The data
+@note sheet asks 100 ns of hold, and this is zero. It is also how a slave
+@note reads a start or a stop in the middle of a byte, which is the other
+@note half of what the check counts.
+@old
+        if (quarter == 2'd0 && (state == S_BYTE || state == S_ACK))
+@new
+        if (quarter == 2'd3 && (state == S_BYTE || state == S_ACK))
+@end
+
+@mutation adv7513-the-clock-rises-as-the-data-moves
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note SCL released a quarter early, so it rises at the boundary the data
+@note moves at. The data sheet asks 100 ns of setup, and this is zero. The
+@note bit is still sent and the acknowledge still comes back, so nothing but
+@note a measurement off the waveform notices.
+@old
+      S_BYTE, S_ACK: begin
+        scl_oe = (quarter == 2'd0) || (quarter == 2'd1);
+@new
+      S_BYTE, S_ACK: begin
+        scl_oe = (quarter == 2'd0);
+@end
+
+@mutation adv7513-the-start-has-no-hold
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note SCL pulled low for the whole of the start but its first quarter, so it
+@note falls at the instant SDA does. The data sheet asks 0.6 us of hold after
+@note a start, and this is zero.
+@old
+      S_START: begin
+        scl_oe = (quarter == 2'd3);
+@new
+      S_START: begin
+        scl_oe = (quarter != 2'd0);
+@end
+
+@mutation adv7513-the-stop-has-no-setup
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note SDA let go a quarter early, so it rises at the instant SCL does rather
+@note than a quarter after. The data sheet asks 0.6 us of setup before a
+@note stop, and this is zero --- and a rise of SDA that is not inside SCL's
+@note high is not a stop at all, so the transaction is never closed.
+@old
+        sda_oe = (quarter == 2'd1) || (quarter == 2'd2);
+@new
+        sda_oe = (quarter == 2'd1);
+@end
+
+@mutation adv7513-a-refused-byte-is-written-over
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The refusal read and then ignored, so the program carries on to the
+@note next register and reports `configured` at the end of it. A
+@note half-configured transmitter reporting success is the shape of every
+@note fault this project has had to dig out afterwards, and it is invisible
+@note to any count of bytes.
+@old
+            S_ACK: begin
+              if (ack_bad) begin
+@new
+            S_ACK: begin
+              if (1'b0) begin
+@end
+
+@mutation adv7513-the-fabric-answers-its-own-acknowledge
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The data line pulled LOW for the acknowledge bit instead of released,
+@note so the engine reads back the level it is driving itself and every byte
+@note looks acknowledged whether a part is there or not. This is a check
+@note written to confirm rather than to compare, in hardware: it would pass
+@note on a board with no transmitter fitted.
+@old
+          sda_bit <= (state == S_ACK) ? 1'b1 : shifter[7];
+@new
+          sda_bit <= (state == S_ACK) ? 1'b0 : shifter[7];
+@end
+
+@mutation adv7513-the-program-stops-one-write-short
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note Thirty-two of the thirty-three written, and `configured` raised anyway.
+@note Everything that was written is right, so only the count says so ---
+@note which is why the check asserts how many transactions there were and not
+@note merely that the ones it saw were correct.
+@old
+              end else if (entry == 6'(N_REGS - 1) && writes == 6'(N_REGS)) begin
+@new
+              end else if (entry == 6'(N_REGS - 2) && writes == 6'(N_REGS - 1)) begin
+@end
+
+@mutation adv7513-the-program-never-stops
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The engine going round to the top instead of stopping, so the part is
+@note written over and over for as long as the board is on. Every byte is
+@note still right and the whole program is still there, so only the count of
+@note transactions and the quiet stretch after them notice. A transmitter
+@note written to continuously is not one anybody can share a bus with, and a
+@note register rewritten under a running picture is not one either.
+@note
+@note **THE FIRST WRITING OF THIS RECORD WAS AN EQUIVALENCE AND SURVIVED**,
+@note and it is worth saying which. Sending the engine back to `S_GAP` alone
+@note leaves `entry` and `writes` where they were, so the gap's own test is
+@note true again at once and it sits in the gap for ever --- with both lines
+@note RELEASED, which is a bus doing exactly what `S_DONE` does. Nothing on
+@note the two wires could tell the two apart, so nothing should have. The
+@note counters have to be put back for the program to actually run again.
+@old
+                configured <= 1'b1;
+                state      <= S_DONE;
+@new
+                configured <= 1'b1;
+                state      <= S_GAP;
+                entry      <= 6'd0;
+                writes     <= 6'd0;
+@end
+
+@mutation adv7513-a-stretched-clock-is-talked-over
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The wait for the released clock to read high inverted rather than
+@note deleted: deleting it leaves `scl_seen` with no reader and lint catches
+@note it, which is lint doing the catching, so the record keeps both signals
+@note used. A master that does not follow a stretched clock shifts bits the
+@note part never saw.
+@old
+  assign may_advance  = !scl_released || scl_seen;
+@new
+  assign may_advance  = !scl_released || !scl_seen;
+@end
+
+@mutation adv7513-a-wake-does-not-write-the-part-again
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note The restart going straight to the end instead of to the top. `restart`
+@note and its edge are still read, so lint is not what catches it. On this
+@note board sleep stops the transmitter's input clock, and the program is
+@note written again at the wake because nothing here can say whether the part
+@note relocks by itself; a restart that writes nothing leaves that question
+@note open on the board.
+@old
+    end else if (restart_edge) begin
+      // From the top, whatever it was doing.  The bus is left released for a
+      // gap first, so a restart in the middle of a byte cannot look like a
+      // start to a part that was listening.
+      state      <= S_GAP;
+@new
+    end else if (restart_edge) begin
+      // From the top, whatever it was doing.  The bus is left released for a
+      // gap first, so a restart in the middle of a byte cannot look like a
+      // start to a part that was listening.
+      state      <= S_DONE;
+@end
+
+# And the display's wiring on the board, which lint is what holds: a seam
+# left unconnected is a PINMISSING or an UNDRIVEN, and `build/de25.pass`
+# lints the board with the display in it as its fourth configuration.
+
+@mutation de25-the-forwarded-clock-is-never-gated
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The pixel clock put on the pin ungated, so the display's sleep stops
+@note nothing and a monitor stays awake showing the picture for ever. On the
+@note Arty Z7-20 sleep holds the four lanes at one word; here the lanes are
+@note the transmitter's, so the clock it is handed is what this fabric can
+@note stop.
+@note
+@note Caught because `pclk_on` then has no reader: UNUSEDSIGNAL.
+@old
+  assign hdmi_pclk = pclk && pclk_on;
+@new
+  assign hdmi_pclk = pclk;
+@end
+
+@mutation de25-the-display-does-not-reach-the-memory
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The display's address channel left off the share, so the third master
+@note asks for nothing and the screen is black on a board whose memory holds
+@note the picture. The Zynq boards give the display a port of its own; here
+@note it is the third on one bridge, and this is that wire.
+@note
+@note Caught because `dm_araddr` is then driven by nothing: UNDRIVEN.
+@old
+      .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
+@new
+      .m_araddr(), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
+@end
+
+@mutation de25-the-transmitter-is-never-written-again
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The wake never reaching the transmitter's configuration, so a display
+@note that slept and woke has a part whose input clock went away and came
+@note back with nothing written since.
+@note
+@note Caught because `hdmi_wake_edge` then has no reader: UNUSEDSIGNAL.
+@old
+      .restart(hdmi_wake_edge),
+@new
+      .restart(1'b0),
+@end
+
+@mutation de25-the-console-cannot-say-which-mode
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The console's word 34 reporting mode 0 whatever the bitstream carries.
+@note A card that names another mode is supposed to be told which bitstream
+@note it wants, and a console that always says 0 tells it the wrong thing.
+@note
+@note Caught because `disp_mode` then has no reader: UNUSEDSIGNAL.
+@old
+      .hdmi_mode(disp_mode),
+@new
+      .hdmi_mode(2'd0),
+@end
+
+# And the band buffers' write, which is two halves with their own enables so
+# that both vendors' synthesis will put it in a memory.  The shape is in
+# `rtl/plumbing/cadr_display_out.sv`'s own header with the measurements; what
+# is here is that the enables and the halves still say what the three cases
+# said when they were one assignment and two sub-ranges.
+
+@mutation a-strided-beat-writes-both-halves-of-the-entry
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note A strided fetch's beat carries the word the job wants AND the word
+@note beside it in the same source line, which belongs to another word column
+@note and to a band this job is not fetching. So it must write ONE half. This
+@note writes both, which puts a word of the wrong column into every entry.
+@note
+@note Caught by the rotated pictures: an output line is a source column, and
+@note half of every entry is then a column over.
+@old
+  assign mb_we_lo = wr_beat && (job_src == 1'b0) && (!job_strided || !wr_word[0]);
+@new
+  assign mb_we_lo = wr_beat && (job_src == 1'b0);
+@end
+
+@mutation the-two-words-of-a-beat-go-in-the-wrong-halves
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note AXI puts word 2k in the low half of a beat and 2k+1 in the high half,
+@note which is the order `cadr_axi_widen.sv` and the pack side use and the
+@note order `Tv::pixel` reads them in. Swapped, every pair of words in a line
+@note changes places, and the rotated fetch --- which uses one half of each
+@note beat --- takes the wrong one.
+@note
+@note It is written as a swap rather than a deletion because both halves must
+@note stay used: a term dropped leaves a bit of `m_rdata` unread and lint
+@note catches it, which is lint doing the catching.
+@old
+  assign wr_hi    = job_strided ? strided_word : m_rdata[63:32];
+  assign wr_lo    = job_strided ? strided_word : m_rdata[31:0];
+@new
+  assign wr_hi    = job_strided ? strided_word : m_rdata[31:0];
+  assign wr_lo    = job_strided ? strided_word : m_rdata[63:32];
 @end

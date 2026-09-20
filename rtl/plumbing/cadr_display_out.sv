@@ -976,19 +976,67 @@ module cadr_display_out #(
   // the low half and 2k+1 in the high half, which is the same convention
   // `cadr_axi_widen.sv` and the pack side use, and it is also the order
   // `Tv::pixel` reads them in.
+  // **IT IS WRITTEN AS TWO HALVES WITH THEIR OWN ENABLES, AND THAT SHAPE IS
+  // WHAT MAKES IT A MEMORY AT ALL ON ONE OF THE TWO VENDORS.**  The same
+  // three cases were once written as a full-width assignment in one branch
+  // and thirty-two-bit sub-range assignments in the others, which reads more
+  // directly and which Vivado infers as block RAM without being asked.
+  // Quartus does not: it says "extracting RAM for identifier 'mbuf'" and then
+  // builds all 98,304 bits out of registers, with no warning and no mention
+  // of it in its RAM summary.  Measured on the DE25-Nano's part, on this
+  // module alone: 135,576 ALUTs and 99,437 registers, against 1,257 and 1,005
+  // for the form below --- and the whole board's fit then stopped at "Fitter
+  // requires 159716 LUTs to implement the design, but the device only has
+  // 93600".
+  //
+  // **AND ASKING QUARTUS FOR AN M20K DOES NOT FIX IT**, which was tried
+  // first, because a setting from outside the source is what this project
+  // reaches for before changing the source.  Neither attribute moves a
+  // single number, measured on the same module and the same part:
+  //
+  //   as it was written                     135,576 ALUTs, 99,437 registers
+  //   with RAMSTYLE_ATTRIBUTE M20K          135,576 ALUTs, 99,437 registers
+  //   and RAMSTYLE_ATTRIBUTE_RDW off too    135,576 ALUTs, 99,437 registers
+  //   written as below                        1,257 ALUTs,  1,005 registers
+  //
+  // The assignments are in the project file, synthesis says nothing about
+  // them, and nothing moves.  A constraint that reaches nothing looks exactly
+  // like one that works.
+  //
+  // **AND NOTHING IS GIVEN AWAY TO GET THIS.**  The relaxation the disk
+  // controller's store and the machine's three asynchronous memories need on
+  // this part --- read-during-write checking off, which costs the word read
+  // in the tick an edge writes it --- is not needed here and is not asked
+  // for, so there is no undefined tick to poison and no check owed for one.
+  //
+  // So the write is the canonical byte-enabled form instead --- one enable a
+  // half, each half written by itself --- which is what a block RAM with byte
+  // enables IS, and which both tools infer.  It says the same thing: a
+  // contiguous beat writes both halves of an entry, and a strided beat writes
+  // the one half its word belongs in.  Nothing about the behavior moves, and
+  // `build/display_out.pass` holds every pixel of a frame against the memory
+  // it came from, in both rotations and for both screens, in all three modes.
+  logic          wr_beat;
+  logic [ME_W:0] mb_addr;
+  logic [CE_W:0] cb_addr;
+  logic [31:0]   wr_hi, wr_lo;
+  logic          mb_we_hi, mb_we_lo, cb_we_hi, cb_we_lo;
+  assign wr_beat  = ((fstate == F_DATA) || (fstate == F_STRIDE)) && m_rvalid;
+  assign mb_addr  = {fill_n[MONO], wr_word[ME_W:1]};
+  assign cb_addr  = {fill_n[COLR], wr_word[CE_W:1]};
+  assign wr_hi    = job_strided ? strided_word : m_rdata[63:32];
+  assign wr_lo    = job_strided ? strided_word : m_rdata[31:0];
+  assign mb_we_hi = wr_beat && (job_src == 1'b0) && (!job_strided ||  wr_word[0]);
+  assign mb_we_lo = wr_beat && (job_src == 1'b0) && (!job_strided || !wr_word[0]);
+  assign cb_we_hi = wr_beat && (job_src == 1'b1) && (!job_strided ||  wr_word[0]);
+  assign cb_we_lo = wr_beat && (job_src == 1'b1) && (!job_strided || !wr_word[0]);
   always_ff @(posedge clk) begin
-    if (((fstate == F_DATA) || (fstate == F_STRIDE)) && m_rvalid) begin
-      if (!job_strided) begin
-        if (job_src == 1'b0) mbuf[{fill_n[MONO], wr_word[ME_W:1]}] <= m_rdata;
-        else                 cbuf[{fill_n[COLR], wr_word[CE_W:1]}] <= m_rdata;
-      end else if (job_src == 1'b0) begin
-        if (wr_word[0]) mbuf[{fill_n[MONO], wr_word[ME_W:1]}][63:32] <= strided_word;
-        else            mbuf[{fill_n[MONO], wr_word[ME_W:1]}][31:0]  <= strided_word;
-      end else begin
-        if (wr_word[0]) cbuf[{fill_n[COLR], wr_word[CE_W:1]}][63:32] <= strided_word;
-        else            cbuf[{fill_n[COLR], wr_word[CE_W:1]}][31:0]  <= strided_word;
-      end
-    end
+    if (mb_we_hi) mbuf[mb_addr][63:32] <= wr_hi;
+    if (mb_we_lo) mbuf[mb_addr][31:0]  <= wr_lo;
+  end
+  always_ff @(posedge clk) begin
+    if (cb_we_hi) cbuf[cb_addr][63:32] <= wr_hi;
+    if (cb_we_lo) cbuf[cb_addr][31:0]  <= wr_lo;
   end
 
   // ====================================================================

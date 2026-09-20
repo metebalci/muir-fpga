@@ -1143,6 +1143,12 @@ CHECKS = {
                 "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_disk_pack.sv",
                 "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_console.sv",
                 "rtl/plumbing/cadr_debug_window.sv"],
+        # And the display output's, in its fourth: the raster every board
+        # shares and the HDMI transmitter's own configuration, which is this
+        # board's alone.  Each has records of its own, at `display_out` and
+        # `adv7513`.  The encoder and the serializers have no counterpart
+        # here: the ADV7513 does both.
+        "hdmi": ["rtl/plumbing/cadr_display_out.sv", "rtl/plumbing/cadr_adv7513.sv"],
         "top": "cadr_de25",
         "tb": None,
         "flags": [],
@@ -1273,6 +1279,15 @@ CHECKS = {
         "top": "cadr_hdmi_tx",
         "tb": "tb/cadr_hdmi_tx_tb.cpp",
         "flags": [],
+        "golden": None,
+    },
+    # The HDMI transmitter's own configuration on the DE25-Nano, read off the
+    # two wires by a decoder that knows nothing inside the module.
+    "adv7513": {
+        "sources": ["rtl/plumbing/cadr_adv7513.sv"],
+        "top": "cadr_adv7513",
+        "tb": "tb/cadr_adv7513_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": None,
     },
     "gp0_default": {
@@ -2274,7 +2289,17 @@ def de25_check(args, work, build_fails=False):
     rc, out = run(cmd[:6] + ["-DCADR_DE25_DDR"] + cmd[6:] + ddr, work)
     if rc != 0:
         return lint_verdict(out, build_fails)
-    return SURVIVED, "lint passes on all three board configurations"
+    # And the display output, as `build/de25.pass` lints it fourth: the
+    # second define, which adds the video bus and the transmitter's two wires
+    # to the port list.
+    hdmi = spec["hdmi"]
+    if not all(os.path.exists(os.path.join(work, f)) for f in hdmi):
+        return SURVIVED, "lint passes on the three board configurations this copy has"
+    rc, out = run(cmd[:6] + ["-DCADR_DE25_DDR", "-DCADR_DE25_HDMI"] + cmd[6:] + ddr + hdmi,
+                  work)
+    if rc != 0:
+        return lint_verdict(out, build_fails)
+    return SURVIVED, "lint passes on all four board configurations"
 
 
 def generator_check(args, work, spec):

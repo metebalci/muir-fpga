@@ -13,12 +13,21 @@
 // executing.  Every seam the processor's side would plug into is tied off
 // below as the cable a CADR has with nothing on the far end of it.
 //
-// **WITH `DDR` IT IS THE WHOLE BOARD BUT THE DISPLAY OUTPUT AND THE DEBUG
-// CONNECTOR**: the processor, its LPDDR4 behind the machine's memory port, and
-// on the two processor-to-fabric bridges the disk's pack side, the Chaosnet
-// cable, the serial line, the keyboard's cable and the mouse's, the console
-// and the debug cable's carrier.  The display output through the ADV7513 and
-// the connector on JP1 are later slices.
+// **WITH `DDR` IT IS THE WHOLE BOARD BUT THE DEBUG CONNECTOR**: the
+// processor, its LPDDR4 behind the machine's memory port, and on the two
+// processor-to-fabric bridges the disk's pack side, the Chaosnet cable, the
+// serial line, the keyboard's cable and the mouse's, the console and the
+// debug cable's carrier.  The connector on JP1 is a later slice.
+//
+// **AND WITH `HDMI` BESIDE `DDR`, THE DISPLAY OUTPUT.**  The CADR's screens
+// out of the machine's memory and onto the board's HDMI connector, which is
+// the Arty Z7-20's display with one stage of it moved off the fabric: there
+// the fabric encodes DVI and serializes it, here an ADV7513 on the board
+// does both and the fabric hands it a raster on a parallel bus.  The display
+// section near the end of this file has the whole of it, and
+// `docs/display-output.md` is the design it is built to.  `HDMI` needs `DDR`,
+// because the picture is read out of the machine's memory and a board with
+// no memory has no picture.
 //
 // **THE MACHINE DOES NOT CHANGE FOR THIS BOARD.**  It does not know what part
 // it is on, and the two Zynq boards already keep that promise.  Its three
@@ -148,7 +157,17 @@ module cadr_de25 #(
     parameter string PROM_HEX = "build/boot_prom.hex",
     // MIT's TV sync PROM, for the display: `rtl/machine/cadr_tv.sv`.
     parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
-    parameter int unsigned PROBE_DEPTH = 0
+    parameter int unsigned PROBE_DEPTH = 0,
+    // **WHICH VIDEO MODE THIS BITSTREAM CARRIES**, as `HDMI_MODE` is on the
+    // Arty Z7-20 and for the same reason: the raster's widths, the two
+    // margins that center each picture and one sync polarity are all
+    // elaboration-time constants of `rtl/plumbing/cadr_display_out.sv`, and
+    // the pixel clock is a PLL's counters.  0 is 1280x1024 at 60 Hz, 1 is
+    // 1400x1050 reduced-blanking at 60, 2 is 1920x1080 at 30.  The console's
+    // page 2 word 34 reports which, and a card naming another is told which
+    // bitstream it wants.  `docs/display-output.md` has the table and the
+    // argument.
+    parameter int unsigned HDMI_MODE = 0
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
     input  var logic       clock50_0,
@@ -204,7 +223,42 @@ module cadr_de25 #(
     inout  wire  logic      hps_i2c_scl,
     inout  wire  logic      hps_i2c_sda
 `endif
+`ifdef CADR_DE25_HDMI
+    ,
+    // **THE ADV7513's SIDE OF THE BOARD**, the manual's Table 3-13 as
+    // `boards/de25-nano/de25_nano_pins.tcl` transcribes it.  The video is a
+    // 24-bit bus with its own clock, a data enable and two syncs; the
+    // transmitter's registers are written over the two-wire bus beside it,
+    // which on this board goes to the fabric and not to the processor.
+    output var logic [23:0] hdmi_d,
+    output var logic        hdmi_pclk,
+    output var logic        hdmi_de,
+    output var logic        hdmi_hsync,
+    output var logic        hdmi_vsync,
+    // Open drain, both of them, with the board's resistors pulling up.
+    inout  wire  logic      hdmi_scl,
+    inout  wire  logic      hdmi_sda
+    //
+    // **AND FIVE PINS THE BOARD HAS THAT THIS DESIGN LEAVES OUT**, which is
+    // a decision and not an oversight, recorded here as the Arty Z7-20's top
+    // level records the four it leaves out of its own connector.
+    // `HDMI_TX_INT` is the transmitter's interrupt, and nothing here changes
+    // its behavior on anything the part could report, so reading it would be
+    // a signal with no consumer.  `HDMI_I2S`, `HDMI_MCLK`, `HDMI_LRCLK` and
+    // `HDMI_SCLK` are the audio interface, and this machine has no audio:
+    // `docs/display-output.md` says the same of the Arty's data islands.  A
+    // port with no pin cannot be placed, so leaving them out of the list is
+    // how they stay off the part.
+`endif
 );
+
+`ifdef CADR_DE25_HDMI
+`ifndef CADR_DE25_DDR
+  if (1) begin : g_hdmi_without_ddr
+    $error("CADR_DE25_HDMI needs CADR_DE25_DDR: the display reads the machine's memory");
+  end
+`endif
+`endif
 
   // ------------------------------------------------------------ the clock
   //
@@ -308,6 +362,14 @@ module cadr_de25 #(
   logic [11:0] mouse_x, mouse_y;
   logic [15:0] interval;
   logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
+  // **THE DISPLAY'S OWN SEAMS**, driven by the display section near the end
+  // of this file on a board that has one and tied off there on a board that
+  // does not: the color board's second map port, which mode this bitstream
+  // carries, and what the console's word 36 reads back of the sleep.
+  logic [3:0]  disp_map_a;
+  logic [1:0]  disp_mode;
+  logic        disp_sleep_fitted, disp_asleep;
+  logic [14:0] disp_sleep_setting;
   logic [13:0] pc, lpc, opc;
   logic [31:0] st, a, m, alu, r, ob, q, vma, md;
   logic [47:0] ir;
@@ -430,7 +492,11 @@ module cadr_de25 #(
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
       .tv_map_a(con_tv_map_a), .tv_map_q(tv_map_q),
       .tv_color_map_q(tv_color_map_q),
-      .disp_map_a(4'd0), .disp_color_map_q(disp_color_map_q),
+      // **THE COLOR BOARD'S SECOND MAP PORT IS THE DISPLAY'S**, an entry a
+      // raster line, which is the cable to the off-board converters that
+      // `docs/display-output.md` describes; tied to zero on a board with no
+      // display, where nothing reads what comes back.
+      .disp_map_a(disp_map_a), .disp_color_map_q(disp_color_map_q),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -731,10 +797,24 @@ module cadr_de25 #(
   // `S_AXI_HP2`'s role on the Zynq boards: the master that fetches a block
   // from the pack in memory into the controller's store and writes one back.
   // It is the AXI3 shape `cadr_disk_pack.sv` already has, which is the shape
-  // the share takes, so nothing is adapted between them.  The display's port
-  // is still tied off: its output is a later slice.  Its valid is low, so
+  // the share takes, so nothing is adapted between them.
+  //
+  // **AND ITS THIRD IS THE DISPLAY'S**, `S_AXI_HP3`'s role there: read only,
+  // the same AXI3 shape, and the master `rtl/plumbing/cadr_display_out.sv`
+  // already puts out.  The three ports the Zynq gives the machine, the disk
+  // and the display are one bridge here, and the burst-level arbiter in
+  // `rtl/plumbing/cadr_f2sdram_share.sv` is where they meet with the machine
+  // first.  On a board built without the display its valid is low, so
   // nothing is ever granted to it, and its ready is high, so a response would
   // be taken.
+  logic [31:0] dm_araddr;
+  logic [3:0]  dm_arlen;
+  logic [1:0]  dm_arsize, dm_arburst;
+  logic        dm_arvalid, dm_arready;
+  logic [63:0] dm_rdata;
+  logic [1:0]  dm_rresp;
+  logic        dm_rlast, dm_rvalid, dm_rready;
+
   logic [31:0] pm_awaddr, pm_araddr;
   logic [3:0]  pm_awlen, pm_arlen;
   logic [1:0]  pm_awsize, pm_arsize, pm_awburst, pm_arburst;
@@ -767,9 +847,11 @@ module cadr_de25 #(
       .p_arburst(pm_arburst), .p_arvalid(pm_arvalid), .p_arready(pm_arready),
       .p_rdata(pm_rdata), .p_rresp(pm_rresp), .p_rlast(pm_rlast),
       .p_rvalid(pm_rvalid), .p_rready(pm_rready),
-      .d_araddr(32'd0), .d_arlen(4'd0), .d_arsize(2'd0), .d_arburst(2'd0),
-      .d_arvalid(1'b0), .d_arready(),
-      .d_rdata(), .d_rresp(), .d_rlast(), .d_rvalid(), .d_rready(1'b1),
+      .d_araddr(dm_araddr), .d_arlen(dm_arlen), .d_arsize(dm_arsize),
+      .d_arburst(dm_arburst),
+      .d_arvalid(dm_arvalid), .d_arready(dm_arready),
+      .d_rdata(dm_rdata), .d_rresp(dm_rresp), .d_rlast(dm_rlast),
+      .d_rvalid(dm_rvalid), .d_rready(dm_rready),
       .f2s_awid(f2s_awid), .f2s_awaddr(f2s_awaddr), .f2s_awlen(f2s_awlen),
       .f2s_awsize(f2s_awsize), .f2s_awburst(f2s_awburst),
       .f2s_awlock(f2s_awlock), .f2s_awcache(f2s_awcache),
@@ -1213,17 +1295,20 @@ module cadr_de25 #(
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
       .tv_map_a(con_tv_map_a), .tv_map_q(tv_map_q),
       .tv_color_map_q(tv_color_map_q),
-      // **THERE IS NO DISPLAY OUTPUT ON THIS BOARD YET**, so the mode this
-      // bitstream was built with is 0, the sleep is not fitted and word 36
-      // reads `UNMAPPED`, and what a write to word 34 asks for is held and
-      // read back with nothing behind it.
+      // **THE DISPLAY'S TWO SETTINGS AND ITS SLEEP**, word 34 and word 36,
+      // as `docs/display-output.md` and `docs/console.md` give them.  On a
+      // board built with the display these reach it and it answers; on a
+      // board built without, the mode reads 0, the sleep is not fitted and
+      // word 36 reads `UNMAPPED`, and what a write to word 34 asks for is
+      // held and read back with nothing behind it --- which is what the
+      // Cora Z7-07S does, and a console is for saying so.
       .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
-      .hdmi_mode(2'd0),
+      .hdmi_mode(disp_mode),
       .steady_lamps(con_steady_lamps),
       .hdmi_sleep_set(con_hdmi_sleep_set),
       .hdmi_sleep_secs(con_hdmi_sleep_secs),
-      .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(1'b0),
-      .hdmi_sleep_q(15'd0), .hdmi_asleep(1'b0),
+      .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(disp_sleep_fitted),
+      .hdmi_sleep_q(disp_sleep_setting), .hdmi_asleep(disp_asleep),
       .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
       .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
       .clock_edge(clock_edge),
@@ -1290,6 +1375,241 @@ module cadr_de25 #(
       .s_rlast(lwx_rlast), .s_rvalid(lwx_rvalid), .s_rready(lwx_rready)
   );
 
+  // =========================================== the display output
+  //
+  // **THE SAME DISPLAY THE ARTY Z7-20 HAS, WITH ONE STAGE OF IT OFF THE
+  // FABRIC.**  `rtl/plumbing/cadr_display_out.sv` reads the CADR's two
+  // screens out of the machine's own memory and puts them on a raster, and
+  // it is the same module, the same three video modes, the same run-time
+  // output selection, rotation and sleep.  What parts the two boards is what
+  // happens to that raster afterwards.  There the fabric encodes it as DVI
+  // in `cadr_hdmi_tx.sv` and serializes four lanes in
+  // `xilinx7/cadr_hdmi_phy.sv`; here an Analog Devices ADV7513 on the board
+  // does both, and the fabric hands it twenty-four bits of color with a
+  // clock, a data enable and two syncs.  So THE ENCODER AND THE SERIALIZERS
+  // HAVE NO COUNTERPART ON THIS BOARD, which is what
+  // `boards/de25-nano/README.md` already said they would not have, and
+  // nothing of them is built here.
+  //
+  // **AND THE PART DOES NOTHING UNTIL ITS REGISTERS ARE WRITTEN**, which is
+  // the one thing this board needs that the Arty does not:
+  // `rtl/plumbing/cadr_adv7513.sv` writes them over the two-wire bus, out of
+  // reset and again at every wake.  It is fabric and not software, so a
+  // picture needs no program, no face and no boot, which is what
+  // `docs/display-output.md` means by no software in the path.
+  //
+  // THE MEMORY SIDE.  The display is the third master on
+  // `cadr_f2sdram_share.sv`, which is `S_AXI_HP3`'s role on the Zynq boards.
+  // It reads and never writes, it is behind the machine in the arbiter, and
+  // it can be made to wait a long time without anything going wrong because
+  // it runs ahead of its own raster --- the argument is in that module's
+  // header and in `docs/display-output.md`'s arbitration section.  What it
+  // costs the port is under two per cent of it with both screens shown.
+  //
+  // THE PIXEL CLOCK IS ITS OWN PLL, AND THAT IS DELIBERATE.  The machine's
+  // 100 MHz and the mode's pixel clock have no common divider of the board's
+  // 50 MHz that serves both, exactly as the Arty's 125 MHz serves neither
+  // the machine's clock nor the pixel clock from one manager.  So there are
+  // two I/O PLLs, `u_pll` for the tick and `u_pixel_clock` for the mode, and
+  // `boards/de25-nano/quartus/build.sh` generates both from the frequencies
+  // it asks for.  **THE INSTANCE IS NOT CALLED `u_pll` ANYTHING**, because
+  // `boards/de25-nano/quartus/sta_check.tcl` finds the machine's clock by
+  // that name and refuses a build in which it finds two --- the same trap
+  // `boards/arty-z7-20/cadr_arty.sv` records against `tick.tcl`, which
+  // stopped a whole board flow the first time the display's clock manager
+  // appeared beside the machine's.
+  //
+  // **THE VIDEO IS LAUNCHED ON THE RISING EDGE OF THAT CLOCK AND THE SAME
+  // CLOCK IS FORWARDED TO THE PART**, with `0xBA` written as no clock delay.
+  // The data sheet in the board's resource package gives the setup and hold
+  // its video inputs need, 1.8 ns and 1.3 ns, and does NOT say which edge of
+  // its clock it samples on; the programming guide that would is not on this
+  // machine.  So the arrangement is not derived here either: it is the one
+  // the board vendor's own demonstration uses on this board, whose video
+  // generator registers every output on the rising edge of the PLL output it
+  // forwards, with the same `0xBA` value.  Inventing a half-period shift
+  // instead would have been this project's theory about an edge no document
+  // here names.  `boards/de25-nano/quartus/cadr_hdmi.sdc` constrains the
+  // skew that is left.
+  //
+  // **AND SLEEP STOPS THE CLOCK, BECAUSE THE FABRIC NO LONGER MAKES THE
+  // LINK.**  On the Arty, sleep holds all four lanes at one word: a monitor
+  // sees no signal and goes into its own power save, and the clock lane is
+  // held with the data lanes because a monitor locked to a running clock
+  // stays awake and shows black.  Here the lanes are the ADV7513's, so what
+  // this fabric can stop is the clock it hands the part --- which stops the
+  // link at one remove and is the same act.  Everything in front of the gate
+  // keeps running, as it does there: the pixel clock inside the fabric, the
+  // raster, the fetch and both buffers, so a monitor that wakes locks onto a
+  // picture that never stopped.  The gate takes its enable while the
+  // forwarded clock is low, so the part is never handed a short pulse, and
+  // `mute` moves only at a frame boundary, so the link stops and starts in
+  // the blanking.
+  //
+  // **WHAT IS BUILT AND NOT SHOWN.**  The board's HDMI connector has never
+  // been wired to anything.  `build/display_out.pass` and
+  // `build/display_sleep.pass` hold the raster, the fetch, the compositor,
+  // both rotations and the sleep; `build/adv7513.pass` holds what leaves the
+  // two-wire pins; `build/de25.pass` holds this wiring; and the fitter holds
+  // the rest.  No monitor has seen any of it, and the pixel clock's pin is a
+  // further open question this file does not close: `de25_nano_pins.tcl`
+  // gives it the 1.1 V standard its bank allows, and the data sheet asks at
+  // least 1.35 V of the part's video inputs.  The board vendor's own
+  // demonstration drives it the same way, and there is no schematic here to
+  // explain how.  `boards/de25-nano/README.md` records that.
+`ifdef CADR_DE25_HDMI
+
+  // The port's own reset is the fabric's, as everything on the memory side
+  // of this board takes; the machine's memory is opened by software seconds
+  // later, and a display that asked for a word before then waits on the
+  // share rather than failing --- what it shows meanwhile is a black line
+  // and a sticky `underrun`, which is what that module does when a fill is
+  // late.
+  logic        pixel_locked;
+  logic        pclk;                    // the mode's pixel clock, in fabric
+  logic [3:0]  prst_sync;
+  logic        prst;
+  logic        disp_de, disp_hsync, disp_vsync, disp_mute, disp_sleep_due;
+  logic [7:0]  disp_red, disp_green, disp_blue;
+  logic        disp_underrun, disp_rd_error;
+
+  // 50 MHz in, the mode's pixel clock out.  `build.sh` asks the IP for the
+  // frequency this mode wants and refuses a generator that cannot make it,
+  // and `sta_check.tcl` reads the period back out of the timing analyzer, so
+  // no constraint can describe a different mode from the one being built.
+  cadr_de25_pixel_pll u_pixel_clock (
+      .refclk  (clock50_0),
+      .rst     (ninit_done),
+      .outclk_0(pclk),
+      .locked  (pixel_locked)
+  );
+
+  // The raster's reset: the fabric's, and the pixel PLL's lock, synchronized
+  // into the pixel domain because neither is of it.
+  always_ff @(posedge pclk) prst_sync <= {prst_sync[2:0], rst || !pixel_locked};
+  assign prst = prst_sync[3];
+
+  cadr_display_out #(
+      .BASE(cadr_ddr_map::DISPLAY_BASE),
+      .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
+      .MODE(HDMI_MODE)
+  ) u_display (
+      .clk(clk), .rst(rst),
+      .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
+      .m_arburst(dm_arburst), .m_arvalid(dm_arvalid), .m_arready(dm_arready),
+      .m_rdata(dm_rdata), .m_rresp(dm_rresp), .m_rlast(dm_rlast),
+      .m_rvalid(dm_rvalid), .m_rready(dm_rready),
+      // What is shown and which way up, out of the console face.
+      .out_sel(con_hdmi_out), .rotate(con_hdmi_rotate),
+      // Whether it sleeps: a setting and a wake out of the console face, one
+      // of them from `cadr-terminal` for a key or the mouse at the board,
+      // and what it holds going back.
+      .sleep_set(con_hdmi_sleep_set), .sleep_secs(con_hdmi_sleep_secs),
+      .wake(con_hdmi_wake), .sleep_setting(disp_sleep_setting),
+      .sleep_due(disp_sleep_due), .asleep(disp_asleep),
+      .pclk(pclk), .prst(prst),
+      // The color board's map, an entry a raster line.
+      .map_a(disp_map_a), .map_q(disp_color_map_q),
+      .mute(disp_mute),
+      .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
+      .red(disp_red), .green(disp_green), .blue(disp_blue),
+      .underrun(disp_underrun), .rd_error(disp_rd_error)
+  );
+  assign disp_sleep_fitted = 1'b1;
+  assign disp_mode         = 2'(HDMI_MODE);
+
+  // **THE VIDEO BUS, REGISTERED ON THE PIXEL CLOCK AND NOWHERE ELSE.**  One
+  // register a pin, so what the part sees leaves a flip-flop rather than a
+  // cone of logic, and the skew the constraints have to hold is between
+  // twenty-seven pins that all launch from the same edge.  The bus's own
+  // order is the transmitter's: red in the top byte, then green, then blue,
+  // which is what `0x16` written as 24-bit 4:4:4 means by it.
+  logic [23:0] vid_d;
+  logic        vid_de, vid_hs, vid_vs;
+  always_ff @(posedge pclk) begin
+    vid_d  <= {disp_red, disp_green, disp_blue};
+    vid_de <= disp_de;
+    vid_hs <= disp_hsync;
+    vid_vs <= disp_vsync;
+  end
+  assign hdmi_d     = vid_d;
+  assign hdmi_de    = vid_de;
+  assign hdmi_hsync = vid_hs;
+  assign hdmi_vsync = vid_vs;
+
+  // **THE FORWARDED CLOCK, AND ITS GATE.**  The enable is taken on the
+  // falling edge, which is while the forwarded clock is low, so the part is
+  // handed whole periods and never a fragment of one; a gate taken on the
+  // rising edge would cut a period in half the first time it moved.
+  // `disp_mute` is the display's own, and it moves only at a frame boundary.
+  logic pclk_on;
+  always_ff @(negedge pclk) pclk_on <= !disp_mute;
+  assign hdmi_pclk = pclk && pclk_on;
+
+  // **THE TRANSMITTER'S REGISTERS.**  Written once out of the fabric's
+  // reset, and again whenever the display wakes: `asleep` is the mute
+  // brought back into this clock by the display itself, so its fall is a
+  // wake, in this domain, with no second synchronizer to disagree with the
+  // first.
+  logic asleep_q, hdmi_wake_edge;
+  always_ff @(posedge clk) asleep_q <= rst ? 1'b0 : disp_asleep;
+  assign hdmi_wake_edge = asleep_q && !disp_asleep;
+
+  logic hdmi_scl_oe, hdmi_sda_oe, hdmi_configured, hdmi_failed;
+  logic [5:0] hdmi_writes;
+  cadr_adv7513 u_adv7513 (
+      .clk(clk), .rst(rst),
+      .restart(hdmi_wake_edge),
+      .configured(hdmi_configured), .failed(hdmi_failed), .writes(hdmi_writes),
+      .scl_i(hdmi_scl), .scl_oe(hdmi_scl_oe),
+      .sda_i(hdmi_sda), .sda_oe(hdmi_sda_oe)
+  );
+  // Open drain: pulled low or released, never driven high, because the board
+  // pulls both lines up and the part answers on SDA and may hold SCL.
+  assign hdmi_scl = hdmi_scl_oe ? 1'b0 : 1'bz;
+  assign hdmi_sda = hdmi_sda_oe ? 1'b0 : 1'bz;
+
+  // The display's four reports have no register to be read in: this board's
+  // console carries the sleep and the mode and nothing else of it, as the
+  // Arty's does.  They go into a fold for the reason every output of the
+  // machine does --- a signal with no consumer is one synthesis may delete,
+  // and then the register behind it is gone and a check on the board would
+  // be measuring another design.
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic unused_disp;
+  assign unused_disp = ^{disp_underrun, disp_rd_error, disp_sleep_due,
+                         hdmi_configured, hdmi_failed, hdmi_writes};
+  /* verilator lint_on UNUSEDSIGNAL */
+
+`else
+
+  // NO DISPLAY.  Its port on the share asks for nothing and would take an
+  // answer; the machine's second map port stands at entry zero and nothing
+  // reads what comes back; the console's word 34 reports mode 0 and word 36
+  // reads `UNMAPPED`, which is what a board with no timer to report has to
+  // say.  The Cora Z7-07S is the same board on the other vendor.
+  assign dm_araddr   = 32'd0;
+  assign dm_arlen    = 4'd0;
+  assign dm_arsize   = 2'b11;
+  assign dm_arburst  = 2'b01;
+  assign dm_arvalid  = 1'b0;
+  assign dm_rready   = 1'b1;
+  assign disp_map_a  = 4'd0;
+  assign disp_mode   = 2'd0;
+  assign disp_sleep_fitted  = 1'b0;
+  assign disp_sleep_setting = 15'd0;
+  assign disp_asleep        = 1'b0;
+
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic unused_nodisp;
+  assign unused_nodisp = ^{dm_arready, dm_rdata, dm_rresp, dm_rlast, dm_rvalid,
+                           disp_color_map_q,
+                           con_hdmi_out, con_hdmi_rotate, con_hdmi_sleep_set,
+                           con_hdmi_sleep_secs, con_hdmi_wake};
+  /* verilator lint_on UNUSEDSIGNAL */
+
+`endif
+
   // **THE THREE FACES' INTERRUPTS HAVE NOWHERE TO GO ON THIS BOARD YET.**
   // The Zynq boards carry them to `IRQ_F2P`; the Agilex 5's fabric-to-
   // processor interrupts are not brought out of the generated system, so the
@@ -1316,8 +1636,6 @@ module cadr_de25 #(
                         lw_awburst, lw_arburst, lw_awlock, lw_arlock,
                         lw_awcache, lw_arcache,
                         pack_irq, chaos_irq, ser_irq,
-                        con_hdmi_out, con_hdmi_rotate, con_hdmi_sleep_set,
-                        con_hdmi_sleep_secs, con_hdmi_wake,
                         con_dbg_connect, con_dbg_wiring};
   /* verilator lint_on UNUSEDSIGNAL */
 `else
@@ -1395,6 +1713,15 @@ module cadr_de25 #(
   assign con_tv_map_a     = 4'd0;
   assign con_steady_lamps = 1'b0;
 
+  // NO DISPLAY, because there is no memory for it to read.  The machine's
+  // second map port stands at entry zero, the console's word 34 reports mode
+  // 0 and its word 36 reads `UNMAPPED`.
+  assign disp_map_a         = 4'd0;
+  assign disp_mode          = 2'd0;
+  assign disp_sleep_fitted  = 1'b0;
+  assign disp_sleep_setting = 15'd0;
+  assign disp_asleep        = 1'b0;
+
   // NO DEBUG CABLE.  `-DEBUG IN REQ` held UP, which is `dbg_in_req` low, is
   // what the SIP at DBGIN 0A22 makes of an unplugged connector, and the DBGIN
   // page folds to its idle state.
@@ -1410,7 +1737,20 @@ module cadr_de25 #(
   assign nopack_unused = ^{store_rdata, store_miss, ch_active,
                            req_valid, req_tag, req_post,
                            ch_waiting, ch_slot, ch_wrote, ch_hit,
-                           sw0_held, csr_face};
+                           sw0_held, csr_face, disp_color_map_q,
+                           disp_mode, disp_sleep_fitted, disp_sleep_setting,
+                           disp_asleep};
+  /* verilator lint_on UNUSEDSIGNAL */
+`endif
+
+`ifndef CADR_DE25_HDMI
+  // **THE VIDEO MODE IS A PARAMETER OF EVERY BUILD AND ONLY THE DISPLAY
+  // READS IT**, so on a board without one it is read here.  A board built
+  // with a mode and no display is a board whose mode means nothing, and
+  // saying that once is better than each arm saying it separately.
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic unused_hdmi_mode;
+  assign unused_hdmi_mode = ^32'(HDMI_MODE);
   /* verilator lint_on UNUSEDSIGNAL */
 `endif
 

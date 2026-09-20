@@ -37,6 +37,20 @@ if {$ddr ne "0" && $ddr ne "1"} {
     puts "project: DDR is '$ddr', which is neither 0 nor 1"
     exit 1
 }
+set hdmi [expr {[info exists ::env(HDMI)] ? $::env(HDMI) : 0}]
+if {$hdmi ne "0" && $hdmi ne "1"} {
+    puts "project: HDMI is '$hdmi', which is neither 0 nor 1"
+    exit 1
+}
+if {$hdmi && !$ddr} {
+    puts "project: HDMI needs DDR: the display reads the machine's memory"
+    exit 1
+}
+set hdmi_mode [expr {[info exists ::env(HDMI_MODE)] ? $::env(HDMI_MODE) : 0}]
+if {![string is integer -strict $hdmi_mode] || $hdmi_mode < 0 || $hdmi_mode > 2} {
+    puts "project: HDMI_MODE is '$hdmi_mode', which is not 0, 1 or 2"
+    exit 1
+}
 set userid  [lindex $argv 1]
 set sources [lrange $argv 2 end]
 set root    [pwd]
@@ -106,6 +120,21 @@ set_global_assignment -name VERILOG_MACRO "CADR_DDR_MAP_DE25_NANO=1"
 if {$ddr} {
     set_global_assignment -name VERILOG_MACRO "CADR_DE25_DDR=1"
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_ddr.sdc]
+}
+
+# **THE DISPLAY OUTPUT, ITS PIXEL CLOCK AND ITS OWN CONSTRAINTS**, only when
+# it is built, for the reason the probe's files below are read only behind
+# `PROBE_DEPTH`: a constraint on something that is not in the design is a
+# warning that reads like a constraint that applied.  The define is the top
+# level's switch for the video pins, which changes its port list; the
+# parameter is which of the three video modes the raster and the pixel clock
+# are built for, and `boards/de25-nano/quartus/build.sh` asks the PLL
+# generator for that mode's frequency.
+if {$hdmi} {
+    set_global_assignment -name VERILOG_MACRO "CADR_DE25_HDMI=1"
+    set_global_assignment -name IP_FILE [file join $build ip cadr_de25_pixel_pll.ip]
+    set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_hdmi.sdc]
+    set_parameter -name HDMI_MODE $hdmi_mode
 }
 
 # **THE PROBE, AND ITS OWN CONSTRAINTS, ONLY WHEN IT IS BUILT.**  The Virtual
@@ -281,6 +310,18 @@ if {$ddr} {
     set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\]|lpddr4a_.*|hps_.*)$}
     set wanted_ports [expr {15 + 57 + 40}]
 }
+# **AND THE DISPLAY'S THIRTY: THE VIDEO BUS AND THE TRANSMITTER'S TWO WIRES,
+# AND NOT THE OTHER FIVE THE PIN FILE HAS.**  The twenty-four data lines, the
+# pixel clock, the data enable and the two syncs are what the fabric drives;
+# `hdmi_scl` and `hdmi_sda` are how its registers are written.  `hdmi_int` and
+# the four audio lines are deliberately not in the top level's port list ---
+# `boards/de25-nano/cadr_de25.sv` says why for each --- so they are named out
+# here rather than swept in by a pattern, and the count below is what says
+# the two files still agree.
+if {$hdmi} {
+    set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\]|lpddr4a_.*|hps_.*|hdmi_d\[([0-9]|1[0-9]|2[0-3])\]|hdmi_pclk|hdmi_de|hdmi_hsync|hdmi_vsync|hdmi_scl|hdmi_sda)$}
+    set wanted_ports [expr {15 + 57 + 40 + 30}]
+}
 set locations {}
 set standards {}
 proc record_location {pin -to port} {
@@ -325,6 +366,8 @@ puts "project: $wanted_ports of the pin file's [expr {[llength $locations] / 2}]
 project_close
 if {$probe_depth > 0} {
     puts "project: written to $build/cadr_de25.qsf with USERCODE $userid and a probe of $probe_depth samples"
+} elseif {$hdmi} {
+    puts "project: written to $build/cadr_de25.qsf with USERCODE $userid, $hps_boot, video mode $hdmi_mode"
 } else {
     puts "project: written to $build/cadr_de25.qsf with USERCODE $userid, $hps_boot"
 }
