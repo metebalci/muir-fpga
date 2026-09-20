@@ -400,9 +400,11 @@ Two lines on the card tell it.
 There is no am and no pm, and `1438` and `143800` name the same instant. The
 clock is UTC, which is what the board's is, and there is no timezone flag.
 
-**Either line may stand alone and sets only its own field.** A card with
-`--date` alone sets the date and leaves the time of day as it is, and a card
-with `--time` alone sets the time of day and leaves the date.
+**Either line may stand alone and sets only the field it names.** A card with
+`--date` alone sets the date and leaves the time of day exactly as it stands,
+and a card with `--time` alone sets the time of day and leaves the date exactly
+as it stands. A lone `--time` is not that time today. The board has no today,
+and a date it invented would be a day nobody meant.
 
 **The clock is saved at a clean shutdown and restored at the next boot.** It is
 fourteen digits, `yyyyMMddHHmmss`, in `clock` on the pack partition beside this
@@ -414,13 +416,19 @@ else is named at boot and not used. A board that lost its power rather than
 being halted keeps whatever the shutdown before it saved, which is the most a
 board with no clock in it can offer.
 
-**The later of what these two lines compose and what was restored is what the
-clock becomes, so the clock never runs backwards.** A date written on a card
-months ago would otherwise drag the board back to it at every boot. The
-composition is done on the clock as it stands after the restore, so `--time`
-alone on a board that was halted at two in the afternoon is later the same day
-rather than an afternoon in 1970. The boot log says which of the two won,
-because a setting that was not taken is worth a line.
+**The restore happens first, and the card's lines are set on top of it.** That
+is what gives the board a date for a lone `--time` to leave alone, so `--time`
+alone on a board that was halted at two in the afternoon is that same day and
+not a day in 1970.
+
+**The two are never compared.** A line that is there overrides the field it
+names, whatever was restored and whatever the board came up with. A value
+written on the card is one the operator asked for, so `--time 0900` on a board
+halted at two in the afternoon is nine that morning. A rule that dropped the
+line because the saved value happened to be later would be a setting somebody
+wrote down and did not get, visible from nowhere but the console, which is the
+failure this whole file of flags exists to prevent. If the clock is to be moved
+forward, the line on the card is what moves it.
 
 **A value that is not a date or a time is named at boot and dropped, and the
 other line still lands.** `--date 20260931` is eight digits and looks exactly
@@ -678,13 +686,20 @@ where digits belong, nothing at all, and a space at either end or in the
 middle. A check that tried only the good values would pass a step that took
 every eight digits it was given.
 
-The rule that the clock never runs backwards is held by a pair of cases rather
-than one, because a comparison the wrong way round passes a single case as
-happily as the right one. The same card is booted beside a saved clock later
-than what its lines compose and beside one earlier, one second either side, and
-the two cases require different outcomes. The `date` the step reads and writes
-is stubbed, so the clock in the case is the check's own and the build host's is
-never touched. Where in the boot the clock was set is recorded too: it must
+The rule that a line sets only the field it names is held by a pair of cases
+rather than one. The same card is booted beside a saved clock later than what
+its lines name and beside one earlier, one second either side, and the two
+cases require the same outcome, which is the whole of the rule. A lone `--time`
+and a lone `--date` are each tried against a saved clock that is later than
+them, and each case asserts that the field the line did not name did not move.
+A step that weighed the line against the saved clock, which is what this once
+did, fails every one of those. The sentence that step printed when it dropped a
+line is asserted absent by name, and both files are required to carry no
+comparison between two instants at all. The restore is held to being
+unconditional too, since a condition on it would be the same comparison moved
+into the step's other half. The `date` the step reads and writes is stubbed, so
+the clock in the case is the check's own and the build host's is never touched.
+Where in the boot the clock was set is recorded too: it must
 land before the pack program starts and before the console is asked anything.
 The save is held to happening while the partition is still the card's, since a
 save after the unmount writes into a RAM disk and is lost at the next boot.

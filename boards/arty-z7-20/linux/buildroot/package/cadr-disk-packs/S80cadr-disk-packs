@@ -172,16 +172,27 @@ start() {
 # otherwise, and every file it writes says so.
 #
 # Two lines on the card tell it.  `--date yyyyMMdd` and `--time HHmm`, with the
-# second after the minute if it is wanted, and either may stand alone and sets
-# only its own field of the clock.  The clock is UTC, which is what this board's
-# is.
+# second after the minute if it is wanted.  The clock is UTC, which is what this
+# board's is.
+#
+# **EACH LINE NAMES EXACTLY WHAT IT SETS AND THIS STEP GUESSES NOTHING ELSE.**
+# `--date` alone sets the date and leaves the time of day where it stands;
+# `--time` alone sets the time of day and leaves the date where it stands.  A
+# lone `--time` is not that time today, because this board has no today: a date
+# it invented would be a day nobody meant, which is the thing the card's whole
+# file of flags exists to prevent.
 #
 # **AND WHAT THE LAST CLEAN SHUTDOWN SAVED IS RESTORED FIRST**, from `clock`
 # beside the card's file of flags, so that a board that has been told the date
-# once keeps it.  The later of the two is what the clock becomes and the clock
-# never runs backwards: a date written on the card months ago does not drag the
-# board back to it at every boot, and the line says which of the two won so
-# that nobody thinks a setting was dropped.
+# once has a date for a lone `--time` to leave alone.  The restore is first and
+# the card's lines are set on top of it.
+#
+# **THE TWO ARE NEVER COMPARED.**  A flag that is there overrides the field it
+# names, whatever was restored and whatever the board came up with.  A rule
+# that dropped a line because the saved clock happened to be later would be a
+# value somebody wrote on the card and did not get, and it would be invisible:
+# the card would say one thing and the board would do another.  If the clock
+# has to be moved forward, the line on the card is what moves it.
 #
 # **IT IS FIRST, BEFORE EVERY OTHER STEP HERE AND BEFORE THE DRIVE COMES
 # PRESENT**, because the machine, the programs and every file written want to
@@ -190,8 +201,9 @@ start() {
 # for `hold_the_machine`'s two reasons: it reads the card's file of flags and
 # the file it restores from, both of which are on the partition this script is
 # the one thing that mounts.  The arithmetic under it --- which eight digits
-# are a day that exists, which of two instants is later --- is cadr-common's
-# `clock.sh`, so that a check can try the wrong dates against it directly.
+# are a day that exists, which field of an instant a flag replaces --- is
+# cadr-common's `clock.sh`, so that a check can try the wrong dates against it
+# directly.
 set_the_clock() {
 	# The card's two lines.  A card with no fpgarc has neither.
 	clock_date=
@@ -217,9 +229,10 @@ set_the_clock() {
 		return 0
 
 	# What the board came up with, which with no clock in it is the epoch and
-	# a few seconds of uptime.  A clock that does not read as fourteen digits
-	# is nothing to compare against, so it is said and nothing is set: every
-	# line below rests on this one being an instant.
+	# a few seconds of uptime.  It is the clock a flag's own field is set on
+	# when there is nothing saved to set it on, so a clock that does not read
+	# as fourteen digits is said and nothing is set: every line below rests on
+	# this one being an instant.
 	clock_now=$(cadr_clock_now)
 	if ! cadr_clock_stamp_ok "$clock_now"; then
 		echo "cadr-clock: the board's clock reads [$clock_now], which is not an" \
@@ -229,31 +242,34 @@ set_the_clock() {
 	clock_want=$clock_now
 	clock_from=
 
-	# **WHAT THE LAST CLEAN SHUTDOWN SAVED**, which is the clock this board
-	# had when somebody halted it.  A file that is not fourteen digits is
-	# named rather than guessed at: the partition is FAT32 and can be edited
-	# on a laptop with a card reader, so a file with something else in it is
-	# a real thing to meet.
+	# **WHAT THE LAST CLEAN SHUTDOWN SAVED, RESTORED FIRST AND WITHOUT A
+	# CONDITION**, which is the clock this board had when somebody halted it.
+	# It is restored so that the board has a date at all, which is what a lone
+	# `--time` then leaves alone.  A file that is not fourteen digits is named
+	# rather than guessed at: the partition is FAT32 and can be edited on a
+	# laptop with a card reader, so a file with something else in it is a real
+	# thing to meet.
 	if [ -f "$CLOCK" ]; then
 		clock_saved=$(cadr_clock_saved "$CLOCK")
 		if ! cadr_clock_stamp_ok "$clock_saved"; then
 			echo "cadr-clock: the clock saved in $CLOCK is [$clock_saved] and not the" \
 			     "fourteen digits yyyyMMddHHmmss, so the clock was not restored from it"
-		elif cadr_clock_later "$clock_saved" "$clock_want"; then
+		else
 			clock_want=$clock_saved
 			clock_from="restored from $CLOCK"
 		fi
 	fi
 
-	# **AND THE CARD'S TWO LINES, EACH ON ITS OWN FIELD OF THE CLOCK AS IT
-	# NOW STANDS**, which is the restored one where there was something to
-	# restore.  That is what lets `--time` alone move a board's clock forward
-	# by an hour without saying again what day it is.
-	clock_asked=$clock_want
+	# **AND THE CARD'S TWO LINES, EACH ON ITS OWN FIELD OF THE CLOCK AS IT NOW
+	# STANDS**, which is the restored one where there was something to restore.
+	# A flag that is there overrides the field it names and nothing else.  It
+	# is not weighed against what was restored: `--time 0900` on a board halted
+	# at two in the afternoon gives nine in the morning of that same day, which
+	# is what the line asked for.
 	clock_said=
 	if [ "$have_date" = yes ]; then
 		if cadr_clock_date_ok "$clock_date"; then
-			clock_asked=$(cadr_clock_with_date "$clock_asked" "$clock_date")
+			clock_want=$(cadr_clock_with_date "$clock_want" "$clock_date")
 			clock_said="--date $clock_date"
 		else
 			say_not_a_date "$clock_date"
@@ -261,7 +277,7 @@ set_the_clock() {
 	fi
 	if [ "$have_time" = yes ]; then
 		if cadr_clock_time_ok "$clock_time"; then
-			clock_asked=$(cadr_clock_with_time "$clock_asked" "$clock_time")
+			clock_want=$(cadr_clock_with_time "$clock_want" "$clock_time")
 			if [ -n "$clock_said" ]; then
 				clock_said="$clock_said and --time $clock_time"
 			else
@@ -272,31 +288,16 @@ set_the_clock() {
 		fi
 	fi
 
-	# **THE LATER OF THE TWO WINS.**  A card that names an instant the board
-	# has already passed is a card written before the last shutdown, and
-	# taking it would run the clock backwards under everything that has
-	# already looked at it.
 	if [ -n "$clock_said" ]; then
-		if cadr_clock_later "$clock_asked" "$clock_want"; then
-			clock_want=$clock_asked
-			if [ -n "$clock_from" ]; then
-				clock_from="$clock_said in $RC, on the clock $clock_from"
-			else
-				clock_from="$clock_said in $RC"
-			fi
-		elif [ -n "$clock_from" ]; then
-			echo "cadr-clock: $clock_said in $RC is not later than the clock" \
-			     "$clock_from, $(cadr_clock_human "$clock_want") UTC, so the clock" \
-			     "was not moved back"
+		if [ -n "$clock_from" ]; then
+			clock_from="$clock_said in $RC, on the clock $clock_from"
 		else
-			echo "cadr-clock: $clock_said in $RC is not later than the clock this" \
-			     "board is already at, $(cadr_clock_human "$clock_want") UTC, so the" \
-			     "clock was not moved back"
+			clock_from="$clock_said in $RC"
 		fi
 	fi
 
-	# Nothing was later than the clock the board came up with, so there is
-	# nothing to set and nothing to say.
+	# Nothing was restored and no line landed, so there is nothing to set and
+	# nothing to say.
 	[ -n "$clock_from" ] || return 0
 
 	if cadr_clock_set "$clock_want"; then

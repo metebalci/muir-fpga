@@ -18,24 +18,30 @@
 #                          the second if it is given; 143800 is the same
 #                          instant
 #
-# Either may stand alone and sets only its own field.  The clock is UTC, as
-# the board's is.
+# **A FLAG NAMES EXACTLY WHAT IT SETS, AND THE BOARD GUESSES NOTHING ELSE.**
+# `--date` alone sets the date and leaves the time of day exactly as it stands;
+# `--time` alone sets the time of day and leaves the date exactly as it stands.
+# A lone `--time` is NOT that time today: this board has no today, and a date it
+# invented would mean nothing.  The clock is UTC, as the board's is.
 #
 # **AND THE CLOCK IS SAVED AT A CLEAN SHUTDOWN AND RESTORED AT THE NEXT BOOT,
-# so the card's two lines are a floor and not a setting.**  The later of what
-# the card composes and what was restored is what the clock becomes, so it
-# never runs backwards: a date written on the card months ago does not drag the
-# board back to it at every boot.
+# which is what gives the board a date to leave alone.**  The restore happens
+# first and the card's lines are set on top of it.  There is no comparison
+# between the two and no rule about which is later: a value written on the card
+# is one somebody asked for, and dropping it because a saved value happened to
+# be later would be a setting written down and not got, which is the failure
+# this whole file of flags exists to prevent.
 #
 # **WHY THIS IS A FILE OF ITS OWN, beside the reader and the daemon starter.**
 # The step in the init script is a dozen lines of boot; what is under it is
-# arithmetic --- which eight digits are a day that exists, which of two
-# instants is later --- and that is the part a check has to aim at directly,
-# with the wrong inputs beside the right ones.  `--date 20260931` is eight
-# digits and looks exactly like a date, and a step that took it would hand the
-# kernel the 31st of September, which it would quietly make the 1st of October:
-# a setting somebody wrote on the card and did not get, which is the failure
-# the card's whole file of flags exists to prevent.
+# arithmetic --- which eight digits are a day that exists, which six are a time
+# of day, which field of an instant a flag replaces --- and that is the part a
+# check has to aim at directly, with the wrong inputs beside the right ones.
+# `--date 20260931` is eight digits and looks exactly like a date, and a step
+# that took it would hand the kernel the 31st of September, which it would
+# quietly make the 1st of October: a setting somebody wrote on the card and did
+# not get, which is the failure the card's whole file of flags exists to
+# prevent.
 #
 # THE CONTRACT.  An INSTANT here is fourteen digits, YYYYMMDDhhmmss, UTC.
 #
@@ -62,9 +68,6 @@
 #       Print INSTANT with its time replaced by TIME, seconds 00 when TIME is
 #       four digits.
 #
-#   cadr_clock_later A B
-#       True when the instant A is later than the instant B.
-#
 #   cadr_clock_human INSTANT
 #       Print INSTANT as `YYYY-MM-DD hh:mm:ss`, which is what a person reads
 #       and what `date` is given.
@@ -78,11 +81,12 @@
 #   cadr_clock_set INSTANT
 #       Set the board's clock to INSTANT, UTC.  True when `date` took it.
 #
-# **WHY THE COMPARISON SPLITS THE INSTANT IN TWO.**  Fourteen digits is more
-# than a thirty-two-bit number holds, and the shell's `-gt` is as wide as the
-# shell was built for.  The date is eight digits and the time is six, and both
-# are inside thirty-two bits whatever the board's shell was built with, so the
-# comparison rests on nothing about the build.
+# **THERE IS NO COMPARISON BETWEEN TWO INSTANTS HERE, and that is deliberate.**
+# One stood here while the card's lines were a floor that a later saved clock
+# could overrule.  They are not a floor now, so nothing compares them, and the
+# function went with the rule rather than being left where a check could still
+# aim at it: a function nobody calls looks exactly like one that holds
+# something.
 
 # The board's clock, UTC, as fourteen digits.
 cadr_clock_now() {
@@ -183,18 +187,6 @@ cadr_clock_with_time() {
 	????) printf '%s%s00' "${1%??????}" "$2" ;;
 	*) printf '%s%s' "${1%??????}" "$2" ;;
 	esac
-}
-
-cadr_clock_later() {
-	_cadr_clock_d1=${1%??????}
-	_cadr_clock_d2=${2%??????}
-	if [ "$_cadr_clock_d1" -gt "$_cadr_clock_d2" ]; then
-		return 0
-	fi
-	if [ "$_cadr_clock_d1" -lt "$_cadr_clock_d2" ]; then
-		return 1
-	fi
-	[ "${1#????????}" -gt "${2#????????}" ]
 }
 
 cadr_clock_human() {
