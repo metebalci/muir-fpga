@@ -58,8 +58,9 @@ set_global_assignment -name DEVICE A5EB013BB23BE4SCS
 set_global_assignment -name TOP_LEVEL_ENTITY cadr_de25
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
 # Two other build flows can share this machine, and the fitter takes every
-# core it is offered.
-set_global_assignment -name NUM_PARALLEL_PROCESSORS 8
+# core it is offered. Sixteen is the share a build here is allowed, on a
+# machine of twenty-four, so the rest stays usable while a fit runs.
+set_global_assignment -name NUM_PARALLEL_PROCESSORS 16
 # **THE CONTROL STORE COMES UP ALL ONES**, written by a loop over its 16,384
 # words in `rtl/machine/cadr_microcycle.sv`'s `initial` block, and Quartus
 # refuses a constant loop longer than 5,000 iterations by default (error
