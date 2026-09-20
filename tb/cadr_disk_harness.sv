@@ -163,10 +163,16 @@ module cadr_disk_harness #(
       .ch_wrote(ch_wrote), .ch_hit(ch_hit)
   );
 
+  // The memory port is live throughout here, which is what makes this the
+  // check that holds the OTHER side of `port_live`: every move this harness
+  // commands must be carried out, so a `port_live` term that refused more
+  // than the shut port fails here.  What happens while the port is SHUT ---
+  // the face answering anyway, and a move refused rather than started --- is
+  // `build/gp0_split.pass`'s, where the whole window is swept with it low.
   cadr_disk_pack #(
       .SLOTS(SLOTS)
   ) u_pack (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .port_live(1'b1),
       .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
       .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
       .s_wdata(gp0_wdata), .s_wstrb(gp0_wstrb), .s_wlast(gp0_wlast),

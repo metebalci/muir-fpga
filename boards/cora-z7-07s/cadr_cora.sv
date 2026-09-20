@@ -1480,8 +1480,15 @@ module cadr_cora #(
         pack_rst      <= rst || !pack_rst_sync[2];
       end
 
+      // `port_live` is the memory port's own liveness, which here is the half
+      // of `pack_rst` the processing system drives: `SAXIHP2ARESETN` and
+      // `MAXIGP0ARESETN` come and go together, so this level is high whenever
+      // the face is out of reset and no command can be written while it is
+      // low.  On a board where the two are NOT the same level, the face takes
+      // the bridge's reset alone and this level does the rest, which
+      // `rtl/plumbing/cadr_disk_pack.sv`'s header sets out.
       cadr_disk_pack u_pack (
-          .clk(clk), .rst(pack_rst),
+          .clk(clk), .rst(pack_rst), .port_live(pack_rst_sync[2]),
           .s_awaddr(gp0p_awaddr), .s_awlen(gp0p_awlen), .s_awid(gp0p_awid),
           .s_awvalid(gp0p_awvalid), .s_awready(gp0p_awready),
           .s_wdata(gp0p_wdata), .s_wstrb(gp0p_wstrb), .s_wlast(gp0p_wlast),

@@ -16118,6 +16118,69 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @end
 
 # ======================================================================
+# A PAGE THAT STOPS ANSWERING WHILE THE MEMORY PORT IS SHUT
+# ======================================================================
+#
+# Every address of a processor-to-fabric window is answered, and the half of
+# that rule a board loses on its own is AT ALL TIMES.  A slave held in reset
+# answers nothing, and on these faces it is worse than a stall: the read
+# state machine is held in its address state, ARREADY is high there, so the
+# address is taken and no beat is ever returned.  The read never completes,
+# both processor cores hang at one PC each, and no software guard can see it
+# coming --- a program that has just read a tally and found the fabric
+# answering has learned nothing about the page it is about to read.
+#
+# The two records below are what `tb/cadr_gp0_split_tb.cpp`'s shut leg is
+# for: it sweeps every page of the window and every word of the four faces'
+# pages with the memory port LOW, and commands a move there as well.  They
+# are aimed at the bridges' shape, because the board that has the interval
+# between a live window and a live memory port is the one with those bridges.
+
+@mutation pack-face-answers-only-while-the-memory-is-live
+@check gp0_split_axi4
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The defect this leg was written for, put inside the module instead of
+@note into the board's wiring: the face's readiness made a function of the
+@note memory port, so the page answers nothing until software opens the port.
+@note On the board the reset carried the port's liveness and the address was
+@note SWALLOWED; here ARREADY simply stays low and the address is never
+@note taken.  Either way the read never ends, which is the only thing the
+@note processor can tell about it.
+@note
+@note Caught by the sweep with the port shut, at the pack side's IDENT ---
+@note the first word the disk pack program reads on every boot --- and then
+@note at every page of the window, because one unanswerable read holds the
+@note splitter's read channel and the whole window wedges behind it.
+@old
+  assign s_arready = (rst_r == R_ADDR);
+@new
+  assign s_arready = (rst_r == R_ADDR) && port_live;
+@end
+
+@mutation a-move-is-started-into-a-shut-memory-port
+@check gp0_split_axi4
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The other side of `port_live`, which is the one thing a shut port is
+@note allowed to change: a move has nowhere to put a block, so a command
+@note written then is refused and no move starts.  Inverted, the term refuses
+@note exactly the commands it should carry out and carries out exactly the
+@note ones it should refuse --- so a fetch commanded with the port shut
+@note starts a burst against a memory port that is not there.
+@note
+@note The term is INVERTED rather than deleted because a deleted term leaves
+@note `port_live` unread and lint would do the catching.
+@note
+@note Caught with the port shut at "the pack side's `refused` bit after a
+@note fetch commanded with the memory port shut", and at `busy`, which says a
+@note move started.  `disk_pack` sees the same inversion from the other end:
+@note there the port is live throughout and every move must be carried out.
+@old
+    bad_mem_q   <= !port_live;
+@new
+    bad_mem_q   <= port_live;
+@end
+
+# ======================================================================
 # WHERE THE DE25-NANO'S FACES SIT
 # ======================================================================
 #
@@ -16183,6 +16246,74 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @new
       .REG_BASE(32'h0000_0000), .ID_W(4)
   ) u_pack (
+@end
+
+# A face is also unreachable if it is held in reset while its bridge is up,
+# and that is not a number but a connection: `tools/de25_faces_check.py`
+# requires every slave on a bridge to take that bridge's own reset, a bare
+# signal and the same one the splitter takes, and requires no such signal to
+# be derived from the memory port's liveness.  Lint cannot see either: a
+# reset is a legal connection whatever it is made of.
+
+@mutation de25-the-pack-face-is-held-while-the-memory-is-shut
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note THE DEFECT THIS RULE WAS WRITTEN FOR, exactly as the board had it.  The
+@note pack side's reset carried the memory port's liveness as well as the
+@note bridge's, in imitation of a Zynq board's `MAXIGP0ARESETN` and
+@note `SAXIHP2ARESETN`.  On a Zynq board the processing system drives both and
+@note they are never apart; here the memory port is opened by software,
+@note seconds after the bridge comes up, so the face sat in reset through
+@note every boot --- and a face in reset on this page takes the address and
+@note returns no beat, so the read never completes and both processor cores
+@note hang.  Measured on the board twice, once at the boot monitor and once
+@note on the ordinary path where the disk pack program reads these registers
+@note before the port is open.
+@note
+@note Caught at "u_pack takes `pack_rst` as its reset and the h2f bridge
+@note takes `h2f_rst`".
+@old
+  cadr_disk_pack #(
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+  ) u_pack (
+      .clk(clk), .rst(h2f_rst), .port_live(port_live),
+@new
+  logic pack_rst;
+  always_ff @(posedge clk) pack_rst <= h2f_rst || !port_live;
+
+  cadr_disk_pack #(
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+  ) u_pack (
+      .clk(clk), .rst(pack_rst), .port_live(port_live),
+@end
+
+@mutation de25-the-console-is-held-while-the-memory-is-shut
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note The same class of fault on the OTHER bridge, which the rule has to
+@note cover as well: the console owns the first page of the lightweight
+@note window, and a console that stops answering while the memory port is
+@note shut takes the one face a program has to reach before anything else
+@note works.  The console has nothing whatever to do with the memory port,
+@note which is what makes this the shape a tidy-looking edit would take ---
+@note one reset for everything that came up with the machine.
+@note
+@note Caught at "u_console takes `con_rst` as its reset and the lw bridge
+@note takes `h2f_rst`", and by the second rule as well once `con_rst` is
+@note followed back to the memory port's liveness.
+@old
+  cadr_console #(
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+  ) u_console (
+      .clk(clk), .rst(h2f_rst),
+@new
+  logic con_rst;
+  always_ff @(posedge clk) con_rst <= h2f_rst || !port_live;
+
+  cadr_console #(
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+  ) u_console (
+      .clk(clk), .rst(con_rst),
 @end
 
 # ======================================================================

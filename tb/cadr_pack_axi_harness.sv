@@ -402,8 +402,12 @@ module cadr_pack_axi_harness #(
   // gives for leaving `hp0_aresetn` out: a dead port is a configuration this
   // has nothing to say about, and modeling it here would add a reset the
   // testbench could get wrong without the machine noticing.
+  // The memory port is live throughout, as it is on a board whose Linux is
+  // up: this harness is about the moves themselves, and a move refused for
+  // want of memory would be a different check.  `build/gp0_split.pass` is
+  // where the port is shut.
   cadr_disk_pack u_pack (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .port_live(1'b1),
       .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
       .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
       .s_wdata(gp0_wdata), .s_wstrb(gp0_wstrb), .s_wlast(gp0_wlast),

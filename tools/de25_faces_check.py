@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The DE25-Nano's register faces sit where the programs look for them.
+"""The DE25-Nano's register faces sit where the programs look for them, and
+every one of them takes its bridge's reset and nothing else.
 
 WHY THIS EXISTS.  The faces behind a processor-to-fabric bridge are placed by
 parameters on the instances in `boards/de25-nano/cadr_de25.sv`, and that file
@@ -34,6 +35,38 @@ face on them is built with those two widths, and a face left at the defaults
 would answer a 256-beat read with sixteen beats and leave the processor
 waiting for the rest -- which on a general-purpose port is not a wrong answer
 but two frozen cores.  So each instance is required to carry both.
+
+AND THE RESET, WHICH IS THE OTHER WAY A PAGE STOPS ANSWERING.  A slave that
+owns a page of a bridge's window must answer it whenever the bridge is out of
+reset.  A slave held in reset answers nothing, and on these bridges that is
+worse than a stall: a face holds its read state machine in its address state
+while it is reset, ARREADY is high in that state, so the address is taken and
+no beat is ever returned.  The read never completes, both processor cores hang,
+and no software guard can see it coming.
+
+That is not hypothetical.  One face on the HPS-to-FPGA bridge was given a reset
+that carried the memory port's liveness as well as the bridge's, in imitation
+of a Zynq board, where the processing system drives both and they are never
+apart.  Here the memory port is opened by software, seconds after the bridge
+comes up, so the face sat in reset through every boot, and the first program to
+read its registers hung the processor.  Lint cannot see this: a reset is a
+legal connection whatever it is made of, and beside lint this file is the only
+thing that reads the top level at all.
+
+So two rules, both read out of the source:
+
+    every slave instance on a bridge connects `.rst` to a BARE SIGNAL, and to
+    the same signal its bridge's splitter takes; and
+
+    no signal a bridge's slaves take as a reset is derived from the memory
+    port's liveness -- the net the memory port drives at its `live` port,
+    followed through this file's assignments as far as they go.
+
+What the rules cannot see is what a signal is made of beyond that following: a
+reset built out of something this file gives no name to would pass.
+`build/gp0_split.pass` is the other half, and the half that demonstrates rather
+than reads: it sweeps every page of the window with the memory port shut and
+requires an answer at each address.
 
 It writes its stamp and prints what it found.  Run as
 
@@ -79,6 +112,15 @@ SHAPED = ["u_h2f_split", "u_pack", "u_chaos", "u_serial", "u_input",
           "u_h2f_rest", "u_lw_split", "u_console", "u_debug_window",
           "u_lw_rest"]
 
+# Which bridge each of them is on, and which instance is that bridge's
+# splitter -- the one whose reset the rest are held to.  The splitter is on
+# the list too: it owns the window before anything behind it does.
+ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_chaos": "h2f",
+             "u_serial": "h2f", "u_input": "h2f", "u_h2f_rest": "h2f",
+             "u_lw_split": "lw", "u_console": "lw", "u_debug_window": "lw",
+             "u_lw_rest": "lw"}
+SPLITTER = {"h2f": "u_h2f_split", "lw": "u_lw_split"}
+
 WINDOWS = {"h2f": (H2F_BASE, H2F_SIZE), "lw": (LW_BASE, LW_SIZE)}
 
 
@@ -112,6 +154,65 @@ def instance_parameters(text, instance):
         if n:
             out[name] = int(n.group(1))
     return out
+
+
+def instance_connections(text, instance):
+    """The port connections on one instance, as {port: expression}.
+
+    The instance's connection list is what follows `<instance> (`, up to the
+    parenthesis that closes it, so this counts parentheses rather than looking
+    for the first `)`: an expression on a port has parentheses of its own.
+    """
+    m = re.search(r"\b" + re.escape(instance) + r"\s*\(", text)
+    if not m:
+        fail("no instance named `%s` in %s" % (instance, TOP))
+    depth, i = 1, m.end()
+    while i < len(text) and depth:
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+        i += 1
+    body = text[m.end():i - 1]
+    out = {}
+    for port, expr in re.findall(r"\.(\w+)\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)",
+                                 body):
+        out[port] = expr.strip()
+    return out
+
+
+def liveness_net(text):
+    """The net the memory port drives to say it is live.
+
+    Read off the instance rather than written down here, so that renaming it
+    cannot quietly empty the rule below.  A board built without the memory
+    port has no such instance, and then there is nothing to taint.
+    """
+    m = re.search(r"\.live\s*\(\s*(\w+)\s*\)", text)
+    return m.group(1) if m else None
+
+
+def derived_from(text, seed):
+    """Every signal in the file that is assigned from `seed`, transitively.
+
+    A line at a time, and only the plain forms this file is written in:
+    `assign x = ...;` and `x <= ...;`.  It is a closure over names, so a
+    reset made two signals away from the memory port's liveness is still
+    caught.  What it cannot follow is a name this file does not assign.
+    """
+    tainted = {seed}
+    changed = True
+    while changed:
+        changed = False
+        for lhs, rhs in re.findall(r"(?:assign\s+)?(\w+)\s*(?:<=|=)\s*([^;]*);",
+                                   text):
+            if lhs in tainted:
+                continue
+            words = set(re.findall(r"\b(\w+)\b", rhs))
+            if words & tainted:
+                tainted.add(lhs)
+                changed = True
+    return tainted
 
 
 def board_addresses(text):
@@ -193,9 +294,59 @@ def main():
         print("de25_faces: all %d instances carry the bridges' four bits of "
               "ID and eight of burst length" % len(SHAPED))
 
+    # THE RESET.  Every slave on a bridge takes a bare signal, the same one
+    # its bridge's splitter takes, and that signal owes nothing to the memory
+    # port's liveness.  See the header for what each rule is against.
+    live = liveness_net(top)
+    tainted = derived_from(top, live) if live else set()
+    resets = {}
+    for instance in SHAPED:
+        conns = instance_connections(top, instance)
+        if "rst" not in conns:
+            print("de25_faces: %s connects no `rst`" % instance, file=sys.stderr)
+            bad += 1
+            continue
+        resets[instance] = conns["rst"]
+    for bridge, splitter in SPLITTER.items():
+        want = resets.get(splitter)
+        if want is None:
+            continue
+        if not re.match(r"^\w+$", want):
+            print("de25_faces: the %s bridge's splitter takes `%s` as its "
+                  "reset, which is an expression and not a signal" %
+                  (bridge, want), file=sys.stderr)
+            bad += 1
+            continue
+        for instance in SHAPED:
+            if ON_BRIDGE[instance] != bridge or instance not in resets:
+                continue
+            got = resets[instance]
+            if got != want:
+                print("de25_faces: %s takes `%s` as its reset and the %s "
+                      "bridge takes `%s`: a slave that owns a page of a "
+                      "window must answer it whenever the bridge is out of "
+                      "reset, and one held in reset takes the address and "
+                      "returns no beat, which hangs both processor cores" %
+                      (instance, got, bridge, want), file=sys.stderr)
+                bad += 1
+        if want in tainted:
+            print("de25_faces: the %s bridge's slaves are reset by `%s`, "
+                  "which is derived from `%s`, the memory port's liveness: "
+                  "the window would stop answering for as long as the port "
+                  "is shut, which is every boot until software opens it" %
+                  (bridge, want, live), file=sys.stderr)
+            bad += 1
+    if bad == 0:
+        for bridge, splitter in sorted(SPLITTER.items()):
+            on = [i for i in SHAPED if ON_BRIDGE[i] == bridge]
+            print("de25_faces: %-3s %d slaves, all reset by `%s` alone%s" %
+                  (bridge, len(on), resets[splitter],
+                   ", which owes nothing to `%s`" % live if live else ""))
+
     if bad:
         fail("%d of the DE25-Nano's faces are not where the programs look for "
-             "them, or are not the bridges' shape" % bad)
+             "them, are not the bridges' shape, or do not answer whenever "
+             "their bridge is out of reset" % bad)
 
     print("de25_faces: %d faces, each at the offset its program's address is "
           "into its bridge's window" % len(FACES))
