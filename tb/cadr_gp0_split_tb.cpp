@@ -450,6 +450,96 @@ struct Bus {
     return w.resp;
   }
 
+  // ------------------------------------------- the seam, edge by edge
+  //
+  // **AN EDGE IS NUMBERED BY THE TICKS BEFORE IT**, which is `tick` as it
+  // stands when the edge is driven and before the increment.  Everything
+  // below --- the edge a character crosses the seam on, the edge a read's
+  // address handshake lands on --- is in that one numbering, so that the two
+  // can be subtracted.
+  //
+  // One edge, saying whether the card handed the face a character on it.
+  bool StepSeam() {
+    Quiet();
+    d->clk = 0; d->eval();
+    const bool arrived = d->ser_tx_strobe != 0;
+    d->clk = 1; d->eval();
+    ++tick;
+    return arrived;
+  }
+
+  // Step until it does, and give the edge; -1 if it did not inside `bound`.
+  long AwaitArrival(long bound) {
+    for (long k = 0; k < bound; ++k) {
+      const long at = tick;
+      if (StepSeam()) return at;
+    }
+    return -1;
+  }
+
+  // **ONE TAKE, AIMED AT AN EDGE, WITH THE SEAM WATCHED ACROSS THE WINDOW.**
+  //
+  // `RDATA` is read with its address handshake commanded onto the edge `aim`:
+  // ARVALID goes up there, the face's ARREADY is high whenever it is idle, so
+  // the handshake lands on that edge and `rd` --- the take itself --- is high
+  // across the NEXT one.  `cadr_gp_regs.sv` says why the two are a tick
+  // apart: the address is a register, `rd` is high for the tick the block
+  // sees it, and the beat follows.
+  //
+  // **THE HANDSHAKES ARE NOT HELD FOR A RANDOM FEW TICKS HERE, AND THAT IS
+  // THE POINT.**  The tick the take lands on is the parameter being swept,
+  // and `Run` delays ARVALID by a random nought to two ticks --- so a sweep
+  // that stepped its AIM one tick a frame stepped the TAKE by one tick plus a
+  // random jitter, which is a walk that can and does step over the one tick
+  // it was written to reach.  Every other read in this check still varies its
+  // handshakes; this one is a stopwatch and is not allowed to.
+  //
+  // Stepping runs on until the read is done AND a character has crossed, so
+  // that the edge the take landed on and the edge the character arrived on
+  // are both measured in the same window.  `*ar_at` and `*arrival` are those
+  // two edges, either -1 if it did not happen inside the bound.
+  uint32_t TakeAt(uint32_t addr, long aim, long *ar_at, long *arrival) {
+    const unsigned id = rnd() & kIdMask;
+    const long bound = (aim > tick ? aim : tick) + 20000;
+    bool ar = false, done = false;
+    uint32_t word = 0;
+    int resp = -1;
+    long beats = 0;
+    *ar_at = -1;
+    *arrival = -1;
+    while ((!done || *arrival < 0) && tick < bound && bad < 25) {
+      d->m_awvalid = 0; d->m_wvalid = 0; d->m_bready = 0; d->m_wlast = 0;
+      // The address is poisoned once its handshake is done, exactly as `Run`
+      // does it and for the reason `Run`'s header gives.
+      d->m_araddr = ar ? ~addr : addr;
+      d->m_arlen = ar ? (uint8_t)(~0u & kLenMask) : 0;
+      d->m_arid = ar ? (~id & kIdMask) : id;
+      d->m_arvalid = (!ar && !done && tick >= aim) ? 1 : 0;
+      d->m_rready = (ar && !done) ? 1 : 0;
+
+      d->clk = 0; d->eval();
+      if (d->ser_tx_strobe && *arrival < 0) *arrival = tick;
+      const bool ar_hs = d->m_arvalid && d->m_arready;
+      const bool r_hs = d->m_rready && d->m_rvalid;
+      if (r_hs) {
+        if ((unsigned)d->m_rid != id) FailAt(addr, "RID at an aimed take", d->m_rid, id);
+        if (!d->m_rlast) FailAt(addr, "RLAST on the one beat of an aimed take", 0, 1);
+        word = d->m_rdata;
+        resp = d->m_rresp;
+        ++beats;
+      }
+      if (ar_hs) { *ar_at = tick; ++ar_total; }
+      d->clk = 1; d->eval();
+      ++tick;
+      if (ar_hs) ar = true;
+      if (r_hs) { done = true; ++r_total; }
+    }
+    Quiet();
+    if (beats != 1) FailAt(addr, "beats for one aimed take", beats, 1);
+    if (resp != 0) FailAt(addr, "RRESP at an aimed take", resp, 0);
+    return word;
+  }
+
   // ------------------------------------------------------------- the Unibus
   //
   // The card's own bus, driven as `tb/cadr_io_board_tb.cpp` drives it: the
@@ -1959,7 +2049,7 @@ int main(int argc, char **argv) {
   // Taking them all afterwards walks the ring's read pointer past its end,
   // which a burst of a hundred cannot.
   long slow_taken = 0, slow_piled = 0, slow_pairs = 0;
-  long store_held = 0, store_dropped = 0, store_swept = 0;
+  long store_held = 0, store_dropped = 0, store_swept = 0, store_span = 0;
   {
     // The board's clock, `CLKOUT0_DIVIDE_F` in `cadr_arty.sv`: what one
     // tick is on the wall the program's `ppoll` is measured against.  NOT
@@ -2139,96 +2229,169 @@ int main(int argc, char **argv) {
       b.Write(SER_PAGE + 4 * 7, 3u);
     }
 
-    // --- leg 3: a take on the tick a character arrives.
+    // --- leg 3: a take on the very tick a character arrives.
     //
     // **THE STORE'S COUNT IS WRITTEN FROM TWO PLACES, a character in and one
     // fetched out, and only a take landing on the tick of an arrival can see
     // that both were counted.**  The input face's queue met the same hazard
     // and needed the same shape of stimulus: nothing slower than a tick finds
-    // it.  So with a character standing in the store, the far end takes
-    // one each frame at an offset from the next arrival that walks a tick a
-    // frame across eighty ticks either side of where the arrival is
-    // predicted --- the prediction being one arrival located by reading
-    // `WAITING` back to back, and every later one a whole number of frames
-    // after it, the characters leaving the machine back to back.  Afterwards
+    // it.  So with one character standing in the store, the far end takes one
+    // each frame at an offset from the arrival that walks a tick a frame
+    // across the ticks either side of it.
+    //
+    // **AND THE OFFSET IS MEASURED AND NOT ASSUMED, WHICH IS WHAT THIS LEG
+    // LEARNED THE HARD WAY.**  An earlier draft predicted every arrival from
+    // one located by reading `WAITING` back to back, and aimed the take by
+    // issuing an ordinary read a few ticks before it.  Neither the arrival
+    // nor the take was then a tick the leg commanded: the arrival was located
+    // only to the several ticks a read takes, and an ordinary read delays
+    // ARVALID by a random nought to two ticks.  So what walked a tick a frame
+    // was the AIM, while the TAKE walked a tick a frame plus a jitter of two
+    // --- a walk that can step over the one tick the leg exists to reach, and
+    // did: on one run the achieved offsets went -3, -2, -1, -2, +1, +1, +1,
+    // and in a hundred and sixty-one takes a take and an arrival never once
+    // landed together.  The two counted paths were never made to meet, the
+    // mutation that writes the count from two statements passed, and the
+    // check was green.  Nothing in the leg had changed; the stimulus in front
+    // of it had, which moved the phase the walk started from.
+    //
+    // So now the leg commands both ends and checks its own work.  The arrival
+    // is read off the seam itself --- `ser_tx_strobe`, the strobe the card
+    // hands the face --- at the tick it happens.  The take's address
+    // handshake is put on a chosen tick, `rd` following it by one.  The
+    // offset ACHIEVED is those two measured ticks subtracted, an offset is
+    // not left behind until it has been achieved, and the frame's length is
+    // re-measured every frame because it is not a whole number of ticks.  At
+    // the end every offset from -16 to +16 must have been reached, and the
+    // leg FAILS naming any that was not: a sweep that never reached the case
+    // it was written for must not look like one that did.  Afterwards
     // everything is taken and must come out whole and in order.
     {
       const unsigned kRate = 15;
       program(kRate);
       const uint32_t dropped0 = b.Read(SER_PAGE + 4 * 6);
-      // Back to back, so that the arrivals are a frame apart exactly: the
-      // frame in the crystal's own periods, turned into ticks without
-      // rounding.
+      // The frame in the crystal's own periods, turned into ticks without
+      // rounding.  It is a starting estimate only: a frame is 50505.05 ticks
+      // at this rate, so the arrivals are 50505 ticks apart most frames and
+      // 50506 apart one in twenty, and a leg that assumed either would be a
+      // tick out whenever it was wrong.
       const double frame = FrameTicks(kMr1, kRate);
-      const long kSweep = 161;
-      const long kChars = kSweep + 12;
+      // The offsets swept, in ticks from the take to the arrival.  0 is the
+      // two on one tick, which is the hazard this leg exists for; -1 is the
+      // take one tick ahead of the arrival, the tick a character is between
+      // the store and `RDATA`, which is the other hazard on this path.  The
+      // rest are the shoulders, and they are this project's "sweep the
+      // magnitude": a fault caught at one tick and at no other is a fault
+      // caught and not a coincidence.
+      const long kSpan = 16;
+      const long kOffsets = 2 * kSpan + 1;
+      // **THE BUDGET OF FRAMES, AND WHY IT CANNOT RUN OUT.**  Each offset
+      // wants one frame.  A second is wanted only by a frame whose period
+      // differed from the frame before it, because the period of the frame
+      // before it is the estimate this one is aimed with --- and the period
+      // takes only two values, 50505 ticks and 50506, the second of them once
+      // in about twenty frames at this rate.  So a window of F frames holds
+      // at most ceil(F/20) long ones and at most twice that many CHANGES, and
+      // the retries are the changes: at most six over the fifty-seven frames
+      // here, against the twenty-four spare.  Measured, over twenty-four
+      // different pseudo-random streams: thirty-seven frames for the
+      // thirty-three offsets, the same thirty-seven every time, because
+      // nothing about the aiming is pseudo-random.  And if it ever did run
+      // out, the sweep below FAILS naming the offsets it never reached rather
+      // than passing quietly.
+      const long kFrames = kOffsets + 24;
+      const long kChars = kFrames + 12;
       std::string sent, got;
       for (long k = 0; k < kChars; ++k) sent.push_back((char)((k * 53 + 7) & 0xFF));
 
+      // The machine's side is a driver reloading the holding register as soon
+      // as TxRDY is up, so the characters leave back to back.  It is run once
+      // a frame and RIGHT AFTER an arrival, a whole frame from the next one:
+      // a Unibus cycle is a hundred ticks the seam would not be watched, and
+      // the seam is what every tick here is measured against.
       size_t op = 0;
-      long next_check = tick;
-      auto machine = [&]() {
-        if (op < (size_t)kChars && tick >= next_check) {
-          if (b.UbRead(UB_SER_STAT) & 1u) b.UbWrite(UB_SER_DATA, (unsigned char)sent[op++]);
-          next_check = tick + GridTicks(20000);
-        }
+      auto feed = [&]() {
+        if (op < (size_t)kChars && (b.UbRead(UB_SER_STAT) & 1u))
+          b.UbWrite(UB_SER_DATA, (unsigned char)sent[op++]);
       };
+
       // Let one stand at `RDATA`, so that the sweep keeps ONE in the store
       // behind it: a take then fetches the store's last character, and the
       // arrival the sweep brings lands either side of that --- on a store
       // the take is emptying, and on one it has just emptied.
       const long fill_began = tick;
       while (b.Read(SER_PAGE + 4 * 8) < 1 && tick - fill_began < (long)(frame * 12.0)) {
-        machine();
+        feed();
         b.Idle(64);
       }
-      // One arrival, located to the few ticks a read takes.  The holding
-      // register is loaded first and the machine's handler is NOT run while
-      // the reads look, because a Unibus cycle is a hundred ticks the reads
-      // would not be looking --- and the next character still leaves back to
-      // back, being in the holding register already.
-      const long load_began = tick;
-      while ((b.UbRead(UB_SER_STAT) & 1u) && op < (size_t)kChars &&
-             tick - load_began < (long)(frame * 3.0)) {
-        next_check = tick;
-        machine();
-      }
-      uint32_t w = b.Read(SER_PAGE + 4 * 8);
-      const long locate_began = tick;
-      long t0 = -1;
-      while (tick - locate_began < (long)(frame * 1.5)) {
-        const uint32_t now = b.Read(SER_PAGE + 4 * 8);
-        if (now > w) { t0 = tick; break; }
-        w = now;
-      }
-      next_check = tick;
-      if (t0 < 0) {
-        Fail("an arrival to sweep the takes around", 0, 1);
+      feed();
+      long prev = b.AwaitArrival((long)(frame * 3.0));
+      long period = (long)(frame + 0.5);
+      long want = -kSpan;
+      long takes = 0;
+      std::vector<bool> reached((size_t)kOffsets, false);
+      if (prev < 0) {
+        Fail("an arrival to aim the takes at", 0, 1);
       } else {
-        for (long k = 0; k < kSweep && bad < 25; ++k) {
-          const long target = t0 + (long)(frame * (double)(k + 1)) + (k - kSweep / 2);
-          // The machine's handler takes a Unibus cycle or two, so it is not
-          // let start inside the last few hundred ticks before the take:
-          // that would move the take off the tick it was aimed at.
-          while (tick < target - 3) {
-            if (target - 3 - tick > 400) machine();
-            long until = target - 3;
-            if (op < (size_t)kChars && next_check < until && target - 3 - next_check > 400)
-              until = next_check;
-            if (until > tick) b.Idle(until - tick);
-          }
-          const uint32_t rd = b.Read(SER_PAGE + 4 * 2);
+        for (long f = 0; f < kFrames && want <= kSpan && bad < 25; ++f) {
+          feed();
+          // `rd` is high the tick AFTER the address handshake, so a take at
+          // offset `want` from the arrival wants its handshake put on
+          // arrival + want - 1, and the arrival is one period from the last.
+          const long aim = prev + period + want - 1;
+          long ar_at = -1, at = -1;
+          if (aim - tick > 400) b.Idle(aim - tick - 400);
+          const uint32_t rd = b.TakeAt(SER_PAGE + 4 * 2, aim, &ar_at, &at);
+          ++takes;
           if (rd & 0x100u) got.push_back((char)(rd & 0xFFu));
           else Fail("RDATA with characters standing in the store", rd, 0x100u);
+          if (at < 0 || ar_at < 0) {
+            Fail("a take and an arrival inside the frame the take was aimed in",
+                 0, 1);
+            break;
+          }
+          // **THE TWO THINGS THAT MAKE THE AIM AN AIM**, both said out loud
+          // rather than relied on.  The face's ARREADY is high whenever its
+          // read state machine is idle, so a handshake offered on a chosen
+          // tick is taken on that tick and on no other; and the characters
+          // leave the machine back to back, so an arrival is one period from
+          // the last and the period is the frame to within a tick.  A leg
+          // that assumed either and was wrong would go on sweeping something
+          // else entirely and still look like a sweep.
+          if (ar_at != aim)
+            Fail("the tick a take's address handshake was put on", ar_at, aim);
+          if (at - prev < (long)frame - 2 || at - prev > (long)frame + 3)
+            Fail("the ticks between two arrivals, the machine reloading the "
+                 "holding register inside the frame",
+                 at - prev, (long)frame);
+          period = at - prev;
+          prev = at;
+          const long achieved = ar_at + 1 - at;
+          if (achieved >= -kSpan && achieved <= kSpan)
+            reached[(size_t)(achieved + kSpan)] = true;
+          if (achieved == want) ++want;
         }
+      }
+      // **AND WHAT THE SWEEP ACTUALLY REACHED**, which is the half of this
+      // leg that was missing.  The catch below is the characters; this is the
+      // statement that the stimulus the catch needs was made at all.
+      long covered = 0;
+      for (long o = 0; o < kOffsets; ++o) if (reached[(size_t)o]) ++covered;
+      if (covered != kOffsets) {
+        Fail("the ticks either side of an arrival a take was put on",
+             covered, kOffsets);
+        for (long o = -kSpan; o <= kSpan && bad < 25; ++o)
+          if (!reached[(size_t)(o + kSpan)])
+            std::fprintf(stderr, "  no take landed %ld ticks from an arrival, "
+                         "in %ld takes\n", o, takes);
       }
       // The rest, once the machine has sent them all.
       const long tail_began = tick;
-      while (op < (size_t)kChars && tick - tail_began < (long)(frame * 20.0)) {
-        machine();
+      while (op < (size_t)kChars && tick - tail_began < (long)(frame * (double)kChars)) {
+        feed();
         b.Idle(256);
       }
-      b.Idle((long)(frame * 2.0));
+      b.Idle((long)(frame * 3.0));
       (void)look(&got);
       if (got != sent) {
         size_t at = 0;
@@ -2242,7 +2405,7 @@ int main(int argc, char **argv) {
              b.Read(SER_PAGE + 4 * 6) - dropped0, 0);
       if (b.Read(SER_PAGE + 4 * 8) != 0)
         Fail("WAITING once the swept store is emptied", b.Read(SER_PAGE + 4 * 8), 0);
-      if (bad == 0) store_swept = kSweep;
+      if (bad == 0) { store_swept = takes; store_span = kSpan; }
     }
   }
 
@@ -2979,8 +3142,11 @@ int main(int argc, char **argv) {
       "      DROPPED unmoved; and a far end that never looked filled the store\n"
       "      to %ld, the one at RDATA and the store behind it, with the %ld after\n"
       "      that counted in DROPPED and the ones it held taken out in order;\n"
-      "      and %ld takes swept a tick a frame across the arrivals, so that a\n"
-      "      take lands on the tick a character is stored\n",
+      "      and %ld takes were aimed a tick a frame across the arrivals, the\n"
+      "      arrival read off the seam and the take's own tick measured, until\n"
+      "      every offset from %ld ticks before an arrival to %ld after it had\n"
+      "      been landed on --- including the tick they land together, which is\n"
+      "      the tick the store counts one in and one out at once\n",
       shut_pages, shut_reads, shut_writes,
       pages, reads, writes, by[kPack], by[kChaos], by[kSer], by[kInput], by[kDflt],
       crossed, bursts,
@@ -2990,6 +3156,7 @@ int main(int argc, char **argv) {
       walk_streamed, walk_wedged,
       keys_typed, keys_lost, keys_swept, mouse_moved, step_span,
       (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls, second_streamed, drained_on_time,
-      slow_taken, slow_pairs, slow_piled, store_held, store_dropped, store_swept);
+      slow_taken, slow_pairs, slow_piled, store_held, store_dropped, store_swept,
+      store_span, store_span);
   return 0;
 }

@@ -11654,13 +11654,28 @@ if {0 && $held ne $want} {
 @note in and a character fetched out can land on the same tick, and written
 @note as two statements the later one stands: the count goes down where it
 @note should stay, and the newest character is left in the ring uncounted
-@note and never read.  Nothing slower than a tick can see it, so the leg that
-@note sweeps a take a tick a frame across the predicted arrival is what does.
-@note An earlier draft of that leg let the machine's handler run between the
-@note reads that locate the arrival, and on one run this SURVIVED it; with the
-@note handler kept out of those reads it is caught at "the characters taken
-@note with the takes swept across the arrivals is 0xac (172), wanting 0xad
-@note (173)", the two parting at the last character, the one left uncounted.
+@note and never read.  Nothing slower than a tick can see it, so what catches
+@note it is the leg that puts a take on the very tick a character is stored.
+@note **AND THAT LEG WAS A COIN TOSS FOR AS LONG AS IT AIMED RATHER THAN
+@note MEASURED.**  It predicted every arrival from one located by reading
+@note `WAITING` back to back, and aimed each take by issuing an ordinary read
+@note a few ticks early, so neither end was a tick it commanded: a read
+@note locates an arrival only to the several ticks the read itself takes, an
+@note ordinary read delays ARVALID by a random nought to two ticks, and the
+@note take is the tick after that handshake.  What walked a tick a frame was
+@note the AIM; the TAKE walked a tick a frame with a jitter of two, and a walk
+@note like that steps over a single tick.  Over twenty-four pseudo-random
+@note streams this record was caught in fourteen and SURVIVED ten, the leg
+@note itself unchanged throughout: every green run of it was the luck of the
+@note stream, and it was a change to the stimulus IN FRONT of the leg, which
+@note moved the phase it started from, that turned one of the ten up.
+@note The leg now reads the arrival off the seam itself, puts the take's
+@note address handshake on a commanded tick, works out the offset it ACHIEVED
+@note from the two measured ticks, and will not leave an offset behind until
+@note it has landed on it --- twenty-four of twenty-four afterwards, at both
+@note shapes of the port.  Caught at "the characters taken with the takes
+@note swept across the arrivals is 0x44 (68), wanting 0x45 (69)", the two
+@note parting at the last character, the one left uncounted.
 @old
       count <= count + (to_store ? CNTW'(1) : CNTW'(0)) - (fetch ? CNTW'(1) : CNTW'(0));
 @new
@@ -11677,11 +11692,18 @@ if {0 && $held ne $want} {
 @note slot both empty, and without `fetched` it counts as nothing waiting and
 @note goes straight to the slot --- where the character moving up overwrites
 @note it.  Only a take one tick before an arrival, with exactly one character
-@note in the store, reaches it, which is why the sweep keeps one standing: a
-@note draft that kept more standing, with the handler also running between
-@note the locating reads, let this SURVIVE.  Caught at "the characters taken
-@note with the takes swept across the arrivals is 0xac (172), wanting 0xad
-@note (173)", the two parting at character 79, the middle of the sweep.
+@note in the store, reaches it, which is why the sweep keeps one standing.
+@note This record was the second one the sweep's old aim left to luck: over
+@note twenty-four pseudo-random streams it was caught in seventeen and
+@note SURVIVED seven, for the reason set out under
+@note `serial-line-counts-the-store-from-two-statements`.  With the offsets
+@note measured rather than predicted it is twenty-four of twenty-four, at
+@note both shapes of the port.  Caught at "the characters taken with the
+@note takes swept across the arrivals is 0x44 (68), wanting 0x45 (69)", the
+@note two parting in the middle of the sweep, at the frame whose take landed
+@note one tick ahead of the arrival --- which character that is moves by a
+@note frame or two with the phase the sweep starts from, the frame's length
+@note not being a whole number of ticks.
 @old
   assign nothing_waiting = !rx_valid && !fetched && (count == '0);
 @new
