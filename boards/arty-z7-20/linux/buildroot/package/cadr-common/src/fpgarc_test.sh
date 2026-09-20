@@ -554,8 +554,8 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 1b.  THE CLOCK'S OWN ARITHMETIC: what is a date, what is a time, and which of
-#      two instants is later.
+# 1b.  THE CLOCK'S OWN ARITHMETIC: what is a date, what is a time, and which
+#      field of an instant a flag replaces.
 # ---------------------------------------------------------------------------
 #
 # **WHY THIS IS TRIED HERE AND NOT ONLY THROUGH THE INIT SCRIPT.**  The two
@@ -663,6 +663,12 @@ else
 		fi
 	done
 
+	# **AND A FLAG REPLACES ITS OWN FIELD WHICHEVER WAY IT MOVES IT.**  The
+	# last two of these go BACKWARDS --- an earlier date on a later clock and
+	# an earlier time of day on the same day --- because nothing here weighs
+	# what a flag asks for against what the clock already holds.  A version
+	# that dropped a flag pointing at an earlier instant would pass a list of
+	# forward moves and nothing else.
 	case_head "a flag moves its own field of the clock and leaves the other"
 	for triple in \
 		"19700101000005 with_date 20260920 20260920000005" \
@@ -670,6 +676,8 @@ else
 		"19700101000005 with_time 143805 19700101143805" \
 		"20260920143805 with_date 20261231 20261231143805" \
 		"20260920143805 with_time 0000 20260920000000" \
+		"20260920143805 with_date 20260101 20260101143805" \
+		"20260920143805 with_time 0900 20260920090000" \
 	; do
 		set -- $triple
 		got=$(cadr_clock_$2 "$1" "$3")
@@ -686,34 +694,25 @@ else
 		fail "both together came out as $got, not 20260920143800"
 	fi
 
-	# **THE COMPARISON IS WHAT KEEPS THE CLOCK FROM RUNNING BACKWARDS, so both
-	# directions of every pair are asserted and so is the pair that is equal.**
-	# One direction alone is what a reversed comparison also passes.
-	case_head "one instant is later than another, and the reverse is not"
-	for pair in \
-		"20260920143801 20260920143800" \
-		"20260920144000 20260920143959" \
-		"20260921000000 20260920235959" \
-		"20261001000000 20260930235959" \
-		"20270101000000 20261231235959" \
-		"20260920143800 19700101000005" \
-	; do
-		set -- $pair
-		if cadr_clock_later "$1" "$2"; then
-			ok "$1 is later than $2"
-		else
-			fail "$1 was not called later than $2"
-		fi
-		if cadr_clock_later "$2" "$1"; then
-			fail "$2 was called later than $1, so the comparison is the wrong way round"
-		else
-			ok "and $2 is not later than $1"
-		fi
-	done
-	if cadr_clock_later 20260920143800 20260920143800; then
-		fail "an instant was called later than itself"
+	# **AND NOTHING HERE COMPARES TWO INSTANTS.**  A `cadr_clock_later` once
+	# stood in this file, with a case of its own aimed at it, while the card's
+	# lines were a floor that a later saved clock could overrule.  They are not
+	# a floor now: a flag overrides the field it names whatever was restored.
+	# The function went with the rule and this case went with the function,
+	# because a case aimed at something nobody calls passes for ever and holds
+	# nothing.  What replaces it is in section 5b, where a card's line is
+	# required to land beside a saved clock that is later than it.
+	case_head "the clock's shell keeps no comparison between two instants"
+	if grep -q 'cadr_clock_later' "$CLOCKSH"; then
+		fail "$CLOCKSH still names cadr_clock_later, and the rule it served is gone"
 	else
-		ok "and an instant is not later than itself"
+		ok "cadr_clock_later is gone from $CLOCKSH"
+	fi
+	if grep -q 'cadr_clock_later' "$PKG/cadr-disk-packs/S80cadr-disk-packs"; then
+		fail "S80cadr-disk-packs still calls cadr_clock_later: a flag is being weighed"
+		fail "against the saved clock instead of setting the field it names"
+	else
+		ok "and S80cadr-disk-packs calls no such thing"
 	fi
 
 	case_head "fourteen digits are a date and a time together"
@@ -1794,8 +1793,8 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5b. THE CLOCK: --date AND --time SET IT BEFORE ANYTHING ELSE STARTS, AND IT
-#     NEVER RUNS BACKWARDS.
+# 5b. THE CLOCK: --date AND --time SET IT BEFORE ANYTHING ELSE STARTS, AND EACH
+#     SETS ONLY THE FIELD IT NAMES.
 # ---------------------------------------------------------------------------
 #
 # **WHAT THE BOARD HAS.**  No board here presents a real-time clock to Linux:
@@ -1807,15 +1806,27 @@ fi
 # **WHAT TELLS IT.**  Two lines on the card, read by the disk pack program's
 # init script for the reasons the boot button's step gives: they are on the
 # partition that script is the one thing that mounts, and they must land before
-# anything else starts.  Either may stand alone and sets only its own field.
+# anything else starts.
+#
+# **EACH LINE SETS ONLY THE FIELD IT NAMES, AND NOTHING IS INFERRED.**  A lone
+# `--time` sets the time of day and leaves the date exactly as it stands.  It
+# is not that time today, because this board has no today and a date it
+# invented would mean nothing.  A lone `--date` sets the date and leaves the
+# time of day.
 #
 # **AND THE CLOCK IS SAVED AT A CLEAN SHUTDOWN AND RESTORED AT THE NEXT BOOT,
-# so what the card says is a floor and not a setting.**  The later of the two
-# wins, which is the one rule here that a check can pass while being exactly
-# wrong: a comparison the other way round restores nothing that matters and
-# looks like a clock that works.  So every pair below is tried both ways round
-# --- a saved clock later than the card's lines and a saved clock earlier ---
-# and the two cases assert different outcomes.
+# which is what gives the board a date for a lone `--time` to leave alone.**
+# The restore is first and the card's lines are set on top of it.  The two are
+# never compared.
+#
+# **THE COMPARISON THAT WENT IS THE THING THIS SECTION MOST HAS TO CATCH.**
+# The step once took the later of the restored clock and what the card's lines
+# composed, so a line naming an earlier instant was dropped and the boot log
+# said so.  That is a card that says one thing and a board that does another,
+# and it is invisible from anywhere but the console.  Every case below that
+# names a saved clock therefore names one LATER than the line it is booted
+# with, so a step that weighed the two fails it, and the sentence the old step
+# printed is asserted absent by name.
 
 # What the step told the clock to be, one line a call.
 clock_told() { sed -n 's/^-u -s //p' "$WORK/date.calls"; }
@@ -1843,6 +1854,32 @@ clock_set_never() {
 		ok "$1"
 	else
 		fail "the clock was set to [$(clock_told)] and nothing asked for it"
+	fi
+}
+
+# **AND THE TWO FIELDS SEPARATELY, because a lone flag is about the field it
+# does NOT name.**  `clock_set_once` compares the whole instant and says
+# "set to X and not Y" for every way of being wrong at once.  These two say
+# which half moved, which is the sentence somebody reading a failure needs when
+# the rule under test is that the other half stood still.
+clock_date_told() { clock_told | cut -d' ' -f1; }
+clock_time_told() { clock_told | cut -d' ' -f2; }
+
+clock_date_unmoved() {
+	if [ "$(clock_date_told)" = "$1" ]; then
+		ok "and the date is still $1, which no line on the card named"
+	else
+		fail "the date moved to [$(clock_date_told)] and $1 is where it stood;" \
+		     "no line on the card named a date"
+	fi
+}
+
+clock_time_unmoved() {
+	if [ "$(clock_time_told)" = "$1" ]; then
+		ok "and the time of day is still $1, which no line on the card named"
+	else
+		fail "the time of day moved to [$(clock_time_told)] and $1 is where it" \
+		     "stood; no line on the card named a time"
 	fi
 }
 
@@ -1953,25 +1990,31 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	fi
 fi
 
-# **THE CLOCK NEVER RUNS BACKWARDS, and this pair is what says so.**  The same
-# card is booted twice: once beside a saved clock LATER than what its lines
-# compose, and once beside one EARLIER.  The first must keep the saved clock
-# and say that the card's lines were not applied; the second must take the
-# card's.  A comparison the wrong way round passes neither, and a step with no
-# comparison at all passes only the second.
-case_head "a saved clock later than the card's lines wins, and the clock is not moved back"
+# **A LINE ON THE CARD LANDS WHATEVER THE SAVED CLOCK SAYS, and this pair is
+# what says so.**  The same card is booted twice: once beside a saved clock
+# LATER than what its lines name and once beside one EARLIER, and the outcome
+# is the same both times, which is the whole of the rule.  The step that came
+# before took the later of the two, so the first of these two cases is exactly
+# the one it fails.  A single case with the saved clock earlier would pass both
+# designs and say nothing.
+case_head "a saved clock later than the card's lines does not drop them"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
 	echo 20260920140000 > "$WORK/packs/clock"
 	printf '%s\r\n' '--date 20260919' '--time 1200' > "$WORK/packs/fpgarc"
 	run_script S80cadr-disk-packs
-	clock_set_once "2026-09-20 14:00:00"
-	says "is not later than the clock restored"
-	says "cadr-clock: the clock is 2026-09-20 14:00:00 UTC, restored from"
+	clock_set_once "2026-09-19 12:00:00"
+	says "cadr-clock: the clock is 2026-09-19 12:00:00 UTC, --date 20260919 and --time 1200"
+	says "on the clock restored from"
+	# The sentence the old step printed when it dropped a line.  It is asserted
+	# absent by name, because a board that silently ignores a setting somebody
+	# wrote on the card is the failure this file of flags exists to prevent,
+	# and a step that has gone back to weighing the two would print it.
+	says_not "is not later than"
 fi
 
-case_head "and a saved clock earlier than them does not, so the card's lines win"
+case_head "and a saved clock earlier than them lands them the same way"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
@@ -1980,15 +2023,14 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-19 12:00:00"
 	says "--date 20260919 and --time 1200"
-	says_not "is not later than the clock restored"
+	says_not "is not later than"
 fi
 
-# **AND A LINE THAT STANDS ALONE COMPOSES ON THE CLOCK AS IT NOW STANDS, which
-# is the restored one.**  `--time 1500` on a board that was halted at two in
-# the afternoon is three in the afternoon of the same day, and not three in the
-# afternoon of the 1st of January 1970 --- which is what composing on the clock
-# the board came up with would give, and which the comparison would then throw
-# away, leaving a line on the card that did nothing at all.  That is the whole
+# **AND A LINE THAT STANDS ALONE SETS ITS OWN FIELD ON THE CLOCK AS IT NOW
+# STANDS, which is the restored one.**  `--time 1500` on a board that was
+# halted at two in the afternoon is three in the afternoon of the same day, and
+# not three in the afternoon of the 1st of January 1970 --- which is what
+# setting it on the clock the board came up with would give.  That is the whole
 # of what "sets only its own field, leaving the other as it is" means, and this
 # is the case that says which of the two readings the step has.
 case_head "a lone --time moves the restored clock and does not start again from the epoch"
@@ -1999,14 +2041,53 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	printf '%s\r\n' '--time 1500' > "$WORK/packs/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 15:00:00"
+	clock_date_unmoved "2026-09-20"
 	says "on the clock restored from"
 fi
 
+# **AND IT LEAVES THE DATE ALONE WHEN THE TIME IT NAMES IS EARLIER THAN THE
+# SAVED CLOCK, which is the case the rule is really about.**  The one above
+# moves the clock forward, so a step that weighed the line against the saved
+# clock would pass it.  This one moves it back by five hours on the same day.
+# The line is what the operator asked for and it lands; the date it did not
+# name does not move, because this board has no today to put the time on and a
+# date it invented would be a day nobody meant.
+case_head "a lone --time earlier than the saved clock still lands, and the date does not move"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260918140000 > "$WORK/packs/clock"
+	printf '%s\r\n' '--time 0900' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-18 09:00:00"
+	clock_date_unmoved "2026-09-18"
+	says "cadr-clock: the clock is 2026-09-18 09:00:00 UTC, --time 0900"
+	says "on the clock restored from"
+	says_not "is not later than"
+	says_not "--date"
+fi
+
+# And the same thing the other way up: a lone `--date` earlier than the saved
+# clock lands, and the time of day it did not name stays where it stood, down
+# to the second.
+case_head "a lone --date earlier than the saved clock still lands, and the time of day does not move"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260920143805 > "$WORK/packs/clock"
+	printf '%s\r\n' '--date 20260101' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-01-01 14:38:05"
+	clock_time_unmoved "14:38:05"
+	says "cadr-clock: the clock is 2026-01-01 14:38:05 UTC, --date 20260101"
+	says_not "is not later than"
+fi
+
 # **AND ONE SECOND EITHER SIDE OF THE SAVED CLOCK**, which is the mutation just
-# outside the bound: a comparison that took `not earlier` for `later`, or that
-# compared the date and forgot the time, passes everything above and fails
-# here.
-case_head "one second later than the saved clock is later, and one second earlier is not"
+# outside the bound: a step that took the later of the two, or that took the
+# card's lines only when they moved the clock forward, passes the first of
+# these and fails the second by one second.
+case_head "one second either side of the saved clock is set exactly as the card names it"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
@@ -2021,8 +2102,8 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 20260920143800 > "$WORK/packs/clock"
 	printf '%s\r\n' '--date 20260920' '--time 143759' > "$WORK/packs/fpgarc"
 	run_script S80cadr-disk-packs
-	clock_set_once "2026-09-20 14:38:00"
-	says "is not later than the clock restored"
+	clock_set_once "2026-09-20 14:37:59"
+	says_not "is not later than"
 fi
 
 case_head "a saved clock and no lines at all is restored on its own"
@@ -2034,6 +2115,23 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:00:00"
 	clock_set_first
+	says "restored from"
+fi
+
+# **AND THE RESTORE ITSELF IS NOT WEIGHED EITHER.**  A condition on the restore
+# would be the same comparison in the other half of the step, so the saved
+# clock is put on whatever the board came up with, whichever is later.  On a
+# real board the question does not arise --- `date` reads the epoch and the
+# saved clock is always later --- and that is exactly why a step that weighed
+# them would look like one that works.
+case_head "a saved clock earlier than the clock the board came up with is still restored"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 20260921000000 > "$WORK/now"
+	echo 20260920140000 > "$WORK/packs/clock"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:00:00"
 	says "restored from"
 fi
 

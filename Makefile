@@ -3064,9 +3064,9 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
 	$(MAKE) -C $(COMMON_SRC) check
 	@echo "fpgarc: one file of flags on the card reaches five programs, each gets the flags it"
 	@echo "fpgarc: owns and no others, --no-auto-boot holds the machine before the drive,"
-	@echo "fpgarc: --date and --time set a clock the board does not keep and never run it"
-	@echo "fpgarc: backwards, and the card mirrors the server: the board's four files under"
-	@echo "fpgarc: the board's own folder"
+	@echo "fpgarc: --date and --time each set one field of a clock the board does not keep,"
+	@echo "fpgarc: with nothing inferred, and the card mirrors the server: the board's four"
+	@echo "fpgarc: files under the board's own folder"
 	@touch $@
 
 # **cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK COMPILES
