@@ -1,0 +1,13 @@
+# The commit of ozd the board's file and time host is built from.
+#
+# ozd is another project and is never patched here, exactly as muir is never
+# patched here.  This file is the pin, and it is the only place the version is
+# written: the Buildroot package reads it, so moving the pin moves the board's
+# ozd with no other edit.  A 40-character SHA names one tree and nothing else,
+# which is why there is no hash file beside it.
+#
+# There is no golden trace against ozd, so this pin is unlike muir.commit in
+# one way: nothing in this repository is generated from it.  What it buys is
+# that two builds of the same commit of this repository put the same ozd on
+# the card.
+e0dd18065d4ea0d2c80bce0beff03627acc293b6

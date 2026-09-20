@@ -317,6 +317,64 @@ wait_for_network() {
 	return 1
 }
 
+# **THE FILE AND TIME HOST ON THIS BOARD, AND THE ONE WAY IT CAN GO WRONG.**
+#
+# S84ozd starts a host on this board unless the card says `--no-ozd`, and when
+# it does it leaves one line behind saying where it is, in this program's own
+# peer syntax: `<address>@127.0.0.1:<port>`.  The file is written only when the
+# host is really running, so it is a fact about this boot and not a second copy
+# of a setting.  A flag in the card's file names one program, so this script
+# cannot read that script's flags and does not: it reads what happened.
+#
+# **AND ONE ADDRESS MAY NOT BE PLACED TWICE.**  `chudp_add_peer` refuses a
+# second endpoint for a Chaos address already placed --- `udp: %o twice; one
+# endpoint an address` --- and the refusal stops the program, which would leave
+# the board with no cable at all.  So a card that names that address itself
+# keeps its own host, and the console says which host the machine will reach.
+# That is the case where the network really does have a file host and the board
+# has one too, and it is decided in favor of the card, because a peer line is
+# something somebody wrote down.
+OZD_PEERFILE=/var/run/cadr-ozd.peer
+
+# The Chaos addresses this board's own peer lines place, one a line.  Read out
+# of the flags about to be passed, exactly as `names_in` reads the names, and
+# never from a list here.
+addresses_in() {
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--udp-peer|--chaos-udp-peer)
+			[ $# -gt 1 ] || break
+			printf '%s\n' "${2%%@*}"
+			shift
+			;;
+		esac
+		shift
+	done
+}
+
+# Sets `board_host_arg` to the peer flag for the host on this board, quoted for
+# `eval`, or to nothing.  Says on the console which host the machine will
+# reach, in every one of the three cases, because a board that quietly took one
+# of two file hosts is a board nobody can read.
+board_host_arg=""
+board_host() {
+	board_host_arg=""
+	[ -s "$OZD_PEERFILE" ] || return 0
+	read -r _bh_peer < "$OZD_PEERFILE" || return 0
+	[ -n "$_bh_peer" ] || return 0
+	_bh_addr=${_bh_peer%%@*}
+	if addresses_in "$@" | grep -qx -- "$_bh_addr"; then
+		echo "cadr-chaosnet: the card places $_bh_addr on the network itself," \
+		     "so that is the host the machine reaches;"
+		echo "cadr-chaosnet: the host on this board is listening and nothing" \
+		     "sends to it.  Put --no-ozd in $RC to stop it."
+		return 0
+	fi
+	board_host_arg="'--chaos-udp-peer' '$_bh_peer'"
+	echo "cadr-chaosnet: the machine's file and time host is on this board," \
+	     "at $_bh_peer"
+}
+
 start() {
 	set --
 	cable=no
@@ -357,13 +415,53 @@ start() {
 		echo "cadr-chaosnet: the address switches are set and nothing is sent or received."
 		echo "cadr-chaosnet: uncomment --chaos-udp in that file, and the peer lines under it,"
 		echo "cadr-chaosnet: to put this machine on a network."
+		# **AND A HOST ON THIS BOARD IS REACHED OVER THE CABLE LIKE ANY
+		# OTHER.**  It is on the loopback rather than on a network, but
+		# the machine still talks to it through this program's socket,
+		# so a card with the cable unplugged cannot reach it either.
+		# That is the one trap in having the host on by default, and
+		# the console is where it is said.
+		if [ -s "$OZD_PEERFILE" ]; then
+			echo "cadr-chaosnet: a file and time host IS running on this board, and with"
+			echo "cadr-chaosnet: no cable the machine cannot reach it.  --chaos-udp"
+			echo "cadr-chaosnet: 127.0.0.1:$DEFAULT_PORT is enough, and puts this machine on no network."
+		fi
 	else
+		# **THE HOST ON THIS BOARD, IF S84ozd STARTED ONE**, added
+		# before the wait, because a board whose only host is its own
+		# has nothing to wait for and this is what makes that true.
+		board_host "$@"
+		eval "set -- \"\$@\" $board_host_arg"
+
 		# The names first, out of the very flags about to be passed,
 		# then the wait.  Before the line below rather than after it,
 		# so that a boot's log does not hold a half-printed "Starting"
 		# across the wait.
 		names=$(names_in "$@")
-		wait_for_network
+		# **AND THE WAIT IS ONLY FOR A NAME.**  Every part of
+		# `network_ready` becomes true at the lease, and what the
+		# program actually dies of is a peer's name with no address: it
+		# resolves each one once, at the start, and exits if one has
+		# none.  A card whose peers are all written as addresses has
+		# nothing for a resolver to answer about, so there is nothing
+		# the wait can buy it.  The socket binds 0.0.0.0 with no
+		# interface up, and a frame for an address that is not
+		# reachable yet is a frame not delivered yet rather than a
+		# program that has exited.
+		#
+		# **IT WAITED ANYWAY UNTIL THIS WAS WRITTEN, AND THAT IS WORTH
+		# STATING.**  `network_ready` asks for a global address and a
+		# default route before it looks at a single name, so a board
+		# with no network and every peer an address spent the whole
+		# bound at every boot on a wait for something it was not going
+		# to use.  A board that is its own file host is exactly that
+		# board, and it is the ordinary case now rather than a corner.
+		if [ -n "$names" ]; then
+			wait_for_network
+		else
+			echo "cadr-chaosnet: every peer is an address," \
+			     "so there is no name to wait for"
+		fi
 	fi
 
 	# `--log` is not here and is not the card's to say: where a daemon

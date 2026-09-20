@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The user the board's file and time host runs as.
+#
+# ozd refuses to run as root, in its own words, and it is right to: nothing it
+# does needs a privilege, and as root a path check it got wrong would reach the
+# whole filesystem rather than one directory.  This board otherwise runs
+# everything as root, so the user has to be made, and Buildroot's users table
+# is the way to make one.
+#
+# The fields are Buildroot's own: user, uid, group, gid, password, home, shell,
+# groups, comment.  A uid of -1 lets Buildroot choose one.  The password is
+# locked and the shell is /bin/false, because nobody logs in as this user: the
+# init script starts the program under it with start-stop-daemon's -c.
+#
+# The home directory is what the program's base root sits under, and that root
+# is where a Lisp Machine user's own directory goes.  It is in the root
+# filesystem, which is a RAM disk unpacked at every boot, so it is empty at
+# every boot and costs the card nothing.
+ozd -1 ozd -1 * /var/lib/ozd /bin/false - the board's file and time host

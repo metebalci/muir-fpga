@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_OZD
+	bool "ozd"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  ozd on the board's own processing system: the associated
+	  machine of the CADR in the fabric.  It answers the band's
+	  file host and its time host, and it serves the host table.
+
+	  A CADR has no file or time server in it, and neither has the
+	  fabric and neither has cadr-chaosnet.  The host the band calls
+	  is a machine on the network, and until now that machine had to
+	  be somewhere else.  This package puts one on the board, so a
+	  board with a card and no network is a whole site by itself:
+	  the machine boots, asks for the time, is answered, and reaches
+	  its files.
+
+	  It is on unless the card turns it off with --no-ozd, and it
+	  listens on the loopback and nowhere else.  ozd authenticates
+	  nobody: any host that can reach its socket may read every root
+	  and write every root that is not read-only.  The loopback is
+	  therefore a decision and not a default, and a board that is to
+	  serve a second machine has to be told to.
+
+	  It is built from ozd's own source at the commit ozd.commit
+	  pins, the way muir is, so no binary is carried in this
+	  repository and ozd is never patched here.
+
+comment "ozd needs a toolchain the Rust compiler supports"
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS

@@ -33,7 +33,8 @@
 #
 #   * from `<pkg>/<pkg>.mk`, every `$(TARGET_DIR)/<path>` an install command
 #     names: `usr/bin/muir` and the `root/.muirrc` symlink from muir's own
-#     rules, and `etc/init.d/S8x...` from each INSTALL_INIT_SYSV;
+#     rules, `usr/bin/ozd` from ozd's, and `etc/init.d/S8x...` from each
+#     INSTALL_INIT_SYSV;
 #   * and where that .mk delegates the target install to the program's own
 #     `src/Makefile` --- `$(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install`,
 #     which is what every package of ours does --- the `install:` rule of that
@@ -386,7 +387,7 @@ def main():
         kind = entries[path][0] & 0o170000
         if kind not in (0o100000, 0o120000):
             continue
-        if ("cadr" in base or base == "muir") and path not in expected:
+        if ("cadr" in base or base in ("muir", "ozd")) and path not in expected:
             stale.append(path)
 
     if absent or differ or stale:
