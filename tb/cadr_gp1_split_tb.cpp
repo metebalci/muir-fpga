@@ -65,10 +65,28 @@
 
 namespace {
 
-const uint32_t GP1_BASE = 0x80000000u;
-const uint32_t GP1_TOP  = 0xBFFFFFFCu;
-const uint32_t CON_PAGE = 0x80000000u;
-const uint32_t DBG_PAGE = 0x80001000u;
+// The port's shape and its map, which the Makefile's second model changes:
+// see the header.
+#ifndef GP_ID_W
+#define GP_ID_W 12
+#endif
+#ifndef GP_LEN_W
+#define GP_LEN_W 4
+#endif
+#ifndef GP_PORT_BASE
+#define GP_PORT_BASE 0x80000000u
+#endif
+#ifndef GP_PORT_PAGES
+#define GP_PORT_PAGES 262144u
+#endif
+const unsigned kIdMask  = (1u << GP_ID_W) - 1u;
+const unsigned kLenMask = (1u << GP_LEN_W) - 1u;
+
+const uint32_t GP1_BASE = GP_PORT_BASE;
+const uint32_t GP1_SPAN = GP_PORT_PAGES * 4096u;
+const uint32_t GP1_TOP  = GP_PORT_BASE + GP1_SPAN - 4u;
+const uint32_t CON_PAGE = GP_PORT_BASE + 0x0000u;
+const uint32_t DBG_PAGE = GP_PORT_BASE + 0x1000u;
 
 const uint32_t W_CONS = 0x434F4E53u;   // "CONS"
 const uint32_t W_DBUG = 0x44425547u;   // "DBUG"
@@ -244,9 +262,9 @@ struct Bus {
       // would never have said so.
       if (w && !w->done) {
         d->m_awaddr = w->aw ? ~w->addr : w->addr;
-        d->m_awlen = w->aw ? (uint8_t)(~(w->data.size() - 1) & 0xF)
+        d->m_awlen = w->aw ? (uint8_t)(~(w->data.size() - 1) & kLenMask)
                            : (uint8_t)(w->data.size() - 1);
-        d->m_awid = w->aw ? (~w->id & 0xFFF) : w->id;
+        d->m_awid = w->aw ? (~w->id & kIdMask) : w->id;
         d->m_awvalid = (!w->aw && aw_hold == 0) ? 1 : 0;
         d->m_wdata = w->beats < w->data.size() ? w->data[w->beats] : 0;
         d->m_wstrb = w->strb;
@@ -258,8 +276,8 @@ struct Bus {
       }
       if (r && !r->done) {
         d->m_araddr = r->ar ? ~r->addr : r->addr;
-        d->m_arlen = r->ar ? (uint8_t)(~r->len & 0xF) : (uint8_t)r->len;
-        d->m_arid = r->ar ? (~r->id & 0xFFF) : r->id;
+        d->m_arlen = r->ar ? (uint8_t)(~r->len & kLenMask) : (uint8_t)r->len;
+        d->m_arid = r->ar ? (~r->id & kIdMask) : r->id;
         d->m_arvalid = (!r->ar && ar_hold == 0) ? 1 : 0;
         d->m_rready = (r->ar && r_hold == 0) ? 1 : 0;
       } else {
@@ -347,7 +365,7 @@ struct Bus {
   uint32_t Read(uint32_t addr, int *resp = nullptr) {
     RTxn r;
     r.addr = addr;
-    r.id = rnd() & 0xFFF;
+    r.id = rnd() & kIdMask;
     Run(nullptr, &r);
     if (resp) *resp = r.resp;
     return r.data.empty() ? 0 : r.data[0];
@@ -358,7 +376,7 @@ struct Bus {
     w.addr = addr;
     w.data.push_back(word);
     w.strb = strb;
-    w.id = rnd() & 0xFFF;
+    w.id = rnd() & kIdMask;
     Run(&w, nullptr);
     return w.resp;
   }
@@ -424,7 +442,9 @@ int main(int argc, char **argv) {
   // ======================================================================
   //
   // `M_AXI_GP1`'s window is 0x8000_0000 to 0xBFFF_FFFF, a gigabyte, which is
-  // 262,144 pages of 4 KB.  Every one of them is read, and the word that
+  // 262,144 pages of 4 KB; the DE25-Nano's lightweight bridge hands the
+  // fabric 512 MB of offsets, which is 131,072.  Every one of them is read,
+  // at whichever of the two this model was built for, and the word that
   // comes back says which slave answered: "CONS" at the console's, "DBUG" at
   // the cable's, "NONE" at every other.  **A SAMPLE WOULD NOT DO**, because
   // a decode wrong by one bit is wrong on a set of pages a sample can miss,
@@ -439,7 +459,7 @@ int main(int argc, char **argv) {
   // stimulus than the sweep below; it is the same one, over every page.
   long pages = 0;
   {
-    for (uint32_t page = 0; page < 262144u && bad < 25; ++page) {
+    for (uint32_t page = 0; page < GP_PORT_PAGES && bad < 25; ++page) {
       const uint32_t addr = GP1_BASE + (page << 12);
       int resp = -1;
       const uint32_t got = b.Read(addr, &resp);
@@ -474,7 +494,7 @@ int main(int argc, char **argv) {
     sweep.push_back(DBG_PAGE + 4 * k);
   }
   for (uint32_t p = 2; p < 16; ++p) sweep.push_back(GP1_BASE + (p << 12));
-  for (int s = 12; s < 30; ++s) {
+  for (int s = 12; (1u << s) < GP1_SPAN; ++s) {
     sweep.push_back(GP1_BASE + (1u << s));
     sweep.push_back(GP1_BASE + (1u << s) + 0xFFC);
   }
@@ -604,10 +624,10 @@ int main(int argc, char **argv) {
         WTxn w;
         w.addr = p.waddr;
         w.data.push_back(p.wdata);
-        w.id = rnd() & 0xFFF;
+        w.id = rnd() & kIdMask;
         RTxn r;
         r.addr = p.raddr;
-        r.id = (rnd() & 0xFFF) ^ 0x555;
+        r.id = (rnd() & kIdMask) ^ (0x555u & kIdMask);
         b.Run(&w, &r);
         ++crossed;
         const uint32_t got = r.data.empty() ? 0 : r.data[0];
@@ -637,7 +657,7 @@ int main(int argc, char **argv) {
       RTxn r;
       r.addr = a;
       r.len = 3;
-      r.id = rnd() & 0xFFF;
+      r.id = rnd() & kIdMask;
       b.Run(nullptr, &r);
       ++bursts;
       if (r.data.size() != 4)
@@ -856,6 +876,36 @@ int main(int argc, char **argv) {
 
   const long swept_con = by[kCon], swept_dbg = by[kDbg], swept_dflt = by[kDflt];
   (void)Name;
+
+  // ======================================================================
+  // THE LONGEST READ THIS PORT CAN ASK FOR
+  // ======================================================================
+  //
+  // Sixteen beats on a Zynq `M_AXI_GP` and 256 on the Agilex 5's lightweight
+  // bridge, because ARLEN is four bits there and eight here.  A face that
+  // counted the beats four bits wide would give the first sixteen of a longer
+  // burst and leave the master owing the rest, which on a general-purpose
+  // port is the frozen cores again --- and it is a fault no burst of sixteen
+  // can show.  At each of the three slaves, from its page's first word, so
+  // the whole burst stays inside the page AXI keeps it in.
+  //
+  // **IT IS LAST FOR THE REASON `tb/cadr_gp0_split_tb.cpp` GIVES**: every leg
+  // here draws from one generator, and a transaction inserted in the middle
+  // moves the delays of every leg after it.  One added in the burst section
+  // of that file stopped a mutation in another module being caught.
+  for (uint32_t a : {CON_PAGE, DBG_PAGE, GP1_BASE + 0x3000u}) {
+    if (bad >= 25) break;
+    RTxn r;
+    r.addr = a;
+    r.len = kLenMask;
+    r.id = rnd() & kIdMask;
+    b.Run(nullptr, &r);
+    ++bursts;
+    if (r.data.size() != kLenMask + 1u)
+      FailAt(a, "beats of the longest read this port can ask for",
+             r.data.size(), kLenMask + 1u);
+    if (r.resp != 0) FailAt(a, "RRESP in the longest read", r.resp, 0);
+  }
 
   delete dut;
   if (bad) {

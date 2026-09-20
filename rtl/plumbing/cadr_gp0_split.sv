@@ -98,6 +98,17 @@
 // regenerated from the captured ID: a downstream slave that echoed the wrong
 // BID would otherwise be invisible at the top.
 //
+//
+// **AND THE SAME ARRANGEMENT ON THE AGILEX 5'S BRIDGES, WHICH ARE AXI4.**
+// `ID_W` and `LEN_W` are the transaction ID's width and the burst length's:
+// twelve and four here, which is a Zynq `M_AXI_GP`'s AXI3 shape, and four and
+// eight on the DE25-Nano's two processor-to-fabric bridges, where a read may
+// therefore be 256 beats.  The bases are parameters already, and there they
+// are OFFSETS into the bridge's own window rather than the processor's
+// addresses, the bridge handing the fabric an offset.  So one arrangement
+// serves two boards, and the check runs its whole sweep twice rather than
+// twice over: `boards/de25-nano/README.md` has that board's map.
+//
 // NO muir REFERENCE EXISTS FOR ANY OF THIS, as none exists for
 // `cadr_axi_master.sv` or the pack side: nothing in MIT's drawings is an AXI
 // interconnect.  It is held to the AXI3 protocol --- exactly one handshake
@@ -117,15 +128,22 @@ module cadr_gp0_split #(
     parameter logic [31:0] PACK_BASE  = 32'h4000_0000,
     parameter logic [31:0] CHAOS_BASE = 32'h4000_1000,
     parameter logic [31:0] SER_BASE   = 32'h4000_2000,
-    parameter logic [31:0] INPUT_BASE = 32'h4000_3000
+    parameter logic [31:0] INPUT_BASE = 32'h4000_3000,
+    // The transaction ID's width and the burst length's: twelve and four on a
+    // Zynq board's `M_AXI_GP`, which is AXI3, and four and eight on the
+    // Agilex 5's two processor-to-fabric bridges, which are AXI4 and so may
+    // ask for 256 beats.  `cadr_gp0_default.sv`'s header has the argument,
+    // and every slave behind this takes the same two.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
     input  var logic        rst,
 
     // --- M_AXI_GP0 as the PS drives it: 32 bits, AXI3, the PS the master ---
     input  var logic [31:0] s_awaddr,
-    input  var logic [3:0]  s_awlen,
-    input  var logic [11:0] s_awid,
+    input  var logic [LEN_W-1:0]  s_awlen,
+    input  var logic [ID_W-1:0] s_awid,
     input  var logic        s_awvalid,
     output var logic        s_awready,
     input  var logic [31:0] s_wdata,
@@ -134,25 +152,25 @@ module cadr_gp0_split #(
     input  var logic        s_wvalid,
     output var logic        s_wready,
     output var logic [1:0]  s_bresp,
-    output var logic [11:0] s_bid,
+    output var logic [ID_W-1:0] s_bid,
     output var logic        s_bvalid,
     input  var logic        s_bready,
     input  var logic [31:0] s_araddr,
-    input  var logic [3:0]  s_arlen,
-    input  var logic [11:0] s_arid,
+    input  var logic [LEN_W-1:0]  s_arlen,
+    input  var logic [ID_W-1:0] s_arid,
     input  var logic        s_arvalid,
     output var logic        s_arready,
     output var logic [31:0] s_rdata,
     output var logic [1:0]  s_rresp,
-    output var logic [11:0] s_rid,
+    output var logic [ID_W-1:0] s_rid,
     output var logic        s_rlast,
     output var logic        s_rvalid,
     input  var logic        s_rready,
 
     // --- the pack side, which keeps the whole address ---------------------
     output var logic [31:0] pack_awaddr,
-    output var logic [3:0]  pack_awlen,
-    output var logic [11:0] pack_awid,
+    output var logic [LEN_W-1:0]  pack_awlen,
+    output var logic [ID_W-1:0] pack_awid,
     output var logic        pack_awvalid,
     input  var logic        pack_awready,
     output var logic [31:0] pack_wdata,
@@ -161,25 +179,25 @@ module cadr_gp0_split #(
     output var logic        pack_wvalid,
     input  var logic        pack_wready,
     input  var logic [1:0]  pack_bresp,
-    input  var logic [11:0] pack_bid,
+    input  var logic [ID_W-1:0] pack_bid,
     input  var logic        pack_bvalid,
     output var logic        pack_bready,
     output var logic [31:0] pack_araddr,
-    output var logic [3:0]  pack_arlen,
-    output var logic [11:0] pack_arid,
+    output var logic [LEN_W-1:0]  pack_arlen,
+    output var logic [ID_W-1:0] pack_arid,
     output var logic        pack_arvalid,
     input  var logic        pack_arready,
     input  var logic [31:0] pack_rdata,
     input  var logic [1:0]  pack_rresp,
-    input  var logic [11:0] pack_rid,
+    input  var logic [ID_W-1:0] pack_rid,
     input  var logic        pack_rlast,
     input  var logic        pack_rvalid,
     output var logic        pack_rready,
 
     // --- the Chaosnet cable, the offset in its page -----------------------
     output var logic [11:0] chaos_awaddr,
-    output var logic [3:0]  chaos_awlen,
-    output var logic [11:0] chaos_awid,
+    output var logic [LEN_W-1:0]  chaos_awlen,
+    output var logic [ID_W-1:0] chaos_awid,
     output var logic        chaos_awvalid,
     input  var logic        chaos_awready,
     output var logic [31:0] chaos_wdata,
@@ -188,25 +206,25 @@ module cadr_gp0_split #(
     output var logic        chaos_wvalid,
     input  var logic        chaos_wready,
     input  var logic [1:0]  chaos_bresp,
-    input  var logic [11:0] chaos_bid,
+    input  var logic [ID_W-1:0] chaos_bid,
     input  var logic        chaos_bvalid,
     output var logic        chaos_bready,
     output var logic [11:0] chaos_araddr,
-    output var logic [3:0]  chaos_arlen,
-    output var logic [11:0] chaos_arid,
+    output var logic [LEN_W-1:0]  chaos_arlen,
+    output var logic [ID_W-1:0] chaos_arid,
     output var logic        chaos_arvalid,
     input  var logic        chaos_arready,
     input  var logic [31:0] chaos_rdata,
     input  var logic [1:0]  chaos_rresp,
-    input  var logic [11:0] chaos_rid,
+    input  var logic [ID_W-1:0] chaos_rid,
     input  var logic        chaos_rlast,
     input  var logic        chaos_rvalid,
     output var logic        chaos_rready,
 
     // --- the serial line, the offset in its page --------------------------
     output var logic [11:0] ser_awaddr,
-    output var logic [3:0]  ser_awlen,
-    output var logic [11:0] ser_awid,
+    output var logic [LEN_W-1:0]  ser_awlen,
+    output var logic [ID_W-1:0] ser_awid,
     output var logic        ser_awvalid,
     input  var logic        ser_awready,
     output var logic [31:0] ser_wdata,
@@ -215,25 +233,25 @@ module cadr_gp0_split #(
     output var logic        ser_wvalid,
     input  var logic        ser_wready,
     input  var logic [1:0]  ser_bresp,
-    input  var logic [11:0] ser_bid,
+    input  var logic [ID_W-1:0] ser_bid,
     input  var logic        ser_bvalid,
     output var logic        ser_bready,
     output var logic [11:0] ser_araddr,
-    output var logic [3:0]  ser_arlen,
-    output var logic [11:0] ser_arid,
+    output var logic [LEN_W-1:0]  ser_arlen,
+    output var logic [ID_W-1:0] ser_arid,
     output var logic        ser_arvalid,
     input  var logic        ser_arready,
     input  var logic [31:0] ser_rdata,
     input  var logic [1:0]  ser_rresp,
-    input  var logic [11:0] ser_rid,
+    input  var logic [ID_W-1:0] ser_rid,
     input  var logic        ser_rlast,
     input  var logic        ser_rvalid,
     output var logic        ser_rready,
 
     // --- the keyboard's cable and the mouse's, the offset in their page ---
     output var logic [11:0] in_awaddr,
-    output var logic [3:0]  in_awlen,
-    output var logic [11:0] in_awid,
+    output var logic [LEN_W-1:0]  in_awlen,
+    output var logic [ID_W-1:0] in_awid,
     output var logic        in_awvalid,
     input  var logic        in_awready,
     output var logic [31:0] in_wdata,
@@ -242,39 +260,39 @@ module cadr_gp0_split #(
     output var logic        in_wvalid,
     input  var logic        in_wready,
     input  var logic [1:0]  in_bresp,
-    input  var logic [11:0] in_bid,
+    input  var logic [ID_W-1:0] in_bid,
     input  var logic        in_bvalid,
     output var logic        in_bready,
     output var logic [11:0] in_araddr,
-    output var logic [3:0]  in_arlen,
-    output var logic [11:0] in_arid,
+    output var logic [LEN_W-1:0]  in_arlen,
+    output var logic [ID_W-1:0] in_arid,
     output var logic        in_arvalid,
     input  var logic        in_arready,
     input  var logic [31:0] in_rdata,
     input  var logic [1:0]  in_rresp,
-    input  var logic [11:0] in_rid,
+    input  var logic [ID_W-1:0] in_rid,
     input  var logic        in_rlast,
     input  var logic        in_rvalid,
     output var logic        in_rready,
 
     // --- everything else, which answers without looking at an address -----
-    output var logic [11:0] dflt_awid,
+    output var logic [ID_W-1:0] dflt_awid,
     output var logic        dflt_awvalid,
     input  var logic        dflt_awready,
     output var logic        dflt_wlast,
     output var logic        dflt_wvalid,
     input  var logic        dflt_wready,
     input  var logic [1:0]  dflt_bresp,
-    input  var logic [11:0] dflt_bid,
+    input  var logic [ID_W-1:0] dflt_bid,
     input  var logic        dflt_bvalid,
     output var logic        dflt_bready,
-    output var logic [3:0]  dflt_arlen,
-    output var logic [11:0] dflt_arid,
+    output var logic [LEN_W-1:0]  dflt_arlen,
+    output var logic [ID_W-1:0] dflt_arid,
     output var logic        dflt_arvalid,
     input  var logic        dflt_arready,
     input  var logic [31:0] dflt_rdata,
     input  var logic [1:0]  dflt_rresp,
-    input  var logic [11:0] dflt_rid,
+    input  var logic [ID_W-1:0] dflt_rid,
     input  var logic        dflt_rlast,
     input  var logic        dflt_rvalid,
     output var logic        dflt_rready
@@ -314,8 +332,8 @@ module cadr_gp0_split #(
   // The transaction, captured: the address, the length and the ID, with the
   // selection made beside them.
   logic [31:0] w_at, r_at;
-  logic [3:0]  w_len, r_len;
-  logic [11:0] w_id, r_id;
+  logic [LEN_W-1:0] w_len, r_len;
+  logic [ID_W-1:0]  w_id, r_id;
   logic [4:0]  w_sel, r_sel;
 
   // ------------------------------------------------------------------------
@@ -398,7 +416,7 @@ module cadr_gp0_split #(
   // ------------------------------------------------------------------------
   logic        sel_awready, sel_wready, sel_bvalid, sel_arready, sel_rvalid;
   logic [1:0]  sel_bresp, sel_rresp;
-  logic [11:0] sel_bid, sel_rid;
+  logic [ID_W-1:0] sel_bid, sel_rid;
   logic [31:0] sel_rdata;
   logic        sel_rlast;
 
@@ -504,10 +522,10 @@ module cadr_gp0_split #(
       rst_r <= R_ADDR;
       w_at  <= 32'd0;
       r_at  <= 32'd0;
-      w_len <= 4'd0;
-      r_len <= 4'd0;
-      w_id  <= 12'd0;
-      r_id  <= 12'd0;
+      w_len <= '0;
+      r_len <= '0;
+      w_id  <= '0;
+      r_id  <= '0;
       // The default port, so that a selection nothing has decoded yet names
       // the slave which answers whatever it is asked.  A one-hot register
       // coming up zero would offer a transaction to nobody, and on this port

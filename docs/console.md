@@ -1579,6 +1579,44 @@ started. A program's log is therefore at most two of these and the five
 programs at most ten megabytes, however long the board is up. The logs are
 lost at a reboot, which is right for a log of this kind.
 
+## The console on the DE25-Nano
+
+The same module sits on the DE25-Nano's lightweight processor-to-fabric
+bridge, which is that board's `M_AXI_GP1`. Three things differ and nothing
+else does.
+
+**Its address is `0x2000_0000`.** The lightweight bridge's window is 512 MB
+there, and `0x8000_0000` is memory on that part. The debug cable's carrier
+keeps the page above the console, at `0x2000_1000`, so the split is the same
+split. `cadr_board.h` is where a program takes the number from, and it names
+one address per board.
+
+**The fabric sees an offset and not the processor's address.** The bridge
+hands the fabric 29 bits, which are the offset into its window, so the
+console's `REG_BASE` is `0x0000_0000` in the design and the carrier's is
+`0x0000_1000`. `build/de25_faces.pass` is what holds the two ends together:
+it requires each instance's parameter to be the address `cadr_board.h` names
+less the bridge's window base, because the top level is not simulated and
+lint has no opinion about a number.
+
+**The bridge is AXI4 and `M_AXI_GP1` is AXI3.** Four bits of transaction ID
+where the Zynq port has twelve, and eight bits of burst length where it has
+four, so a read there can be 256 beats. Those two widths are parameters,
+`ID_W` and `LEN_W`, and `build/gp1_split.pass` runs its whole sweep twice,
+once at each shape and at each board's addresses. A face that counted four
+bits of the length would answer the first sixteen beats of a longer read and
+leave the processor owing the rest, which on a general-purpose port is not a
+wrong answer but two frozen cores; the mutation that does exactly that is in
+`mutations/list.txt` and the second model is what catches it.
+
+**The machine's reset waits for its memory there.** The console's `RESET_KEY`
+restarts the machine as it does on a Zynq board, but the board's own reset
+also holds the machine until the memory port has been live once. The reason
+is the ordering: on that board the fabric is configured before the processor's
+software opens the bridge, and the boot PROM's one pass over main memory would
+otherwise always meet a shut port. `boards/de25-nano/README.md` has the
+measurement.
+
 ## What is not built
 
 - `CC-EXECUTE-R` and `CC-EXECUTE-W` as console COMMANDS, which are how a
@@ -1635,6 +1673,13 @@ and what every bitstream this project built before the flows stamped them
 leaves in the register, and `build_stamp_pack` makes sure no build can ever
 be called it. The console reports it as no stamp and never as a commit,
 because a program that printed `commit fffffff` would be inventing one.
+
+**The DE25-Nano reads all ones, and that is the honest answer there.** Its
+part has no register the fabric can read the stamp back out of, so the top
+level drives the console's word with all ones rather than with a number it
+would be making up. The commit is still in that bitstream's USERCODE, which a
+JTAG cable reads, so the fact is not lost; it is only unreadable from inside,
+and a session on that board has one observer of it and not two.
 
 **The program's build is `cadr-console --version`**, in muir's own spelling:
 

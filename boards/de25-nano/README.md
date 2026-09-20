@@ -208,6 +208,36 @@ programs and the map check's patched PROM still agree with muir, and the
 checks count the poisoned ticks. The last section of
 `rtl/machine/cadr_microcycle.sv` has the argument.
 
+## The disk controller's block store
+
+**The store is M20K blocks, and the same relaxation.** The controller's block
+store is 24 slots of 256 words of 32 bits, and it is a true dual-port memory:
+the seam a program fills a slot through is one port and the channel that walks
+a block under the heads is the other, so a fill and a walk never contend. Each
+port reads the old word at an address it is writing, which is what a block
+RAM's port does; Agilex 5's M20K does not offer old data at a port that is
+writing, so synthesis leaves the memory uninferred and builds all 196,608 bits
+out of logic instead.
+
+**Measured, and it is not a matter of a few per cent: 332,163 ALUTs on a part
+that has 93,600, and the fitter refuses to place the design at all.** The
+store is dead on a build with nothing to fill it, so this appeared the moment
+the pack side was attached and not before. The flow therefore asks for M20K
+with read-during-write checking off, by an assignment in
+`quartus/project.tcl`, exactly as it asks for the three MLABs; nothing in
+`rtl/` names a vendor's memory, and `quartus/build.sh` refuses a synthesis in
+which the store is not M20K.
+
+**What it gives away is the same one tick, and `build/rdw_poison_disk.pass`
+holds it.** Built with `CADR_RDW_POISON_DISK`, the store returns the complement of
+the word in the tick after an edge that wrote it --- on both ports and after a
+write to either, which is wider than the hardware's own undefined tick, so a
+run that still agrees has shown the narrow thing too. The channel's read-back
+is what notices: every word of every block is a function of the block and of
+the offset within it, so a complemented word cannot read like a right one. The
+model refuses a run in which the store was never written, because a poison
+that never fired measured nothing.
+
 ## The fit and the timing
 
 Measured with `make de25` at the default optimization, on the machine
@@ -272,8 +302,8 @@ the top.
 
 **One port, three masters, the machine first.** The disk pack side and the
 display have ports of their own on the Zynq and share this one here, so the
-arbiter is in the design now, with the machine on port 0 and the other two
-tied off until their slices arrive. It grants by burst, lets each master have
+arbiter is in the design, with the machine on port 0, the disk pack side on
+port 1 and the display's port tied off until its slice arrives. It grants by burst, lets each master have
 one burst in flight in each direction, and grants the others nothing new
 while the machine is asking for a word or waiting for one. That hold is what
 bounds a machine cycle --- what the machine waits for is what was already in
@@ -305,30 +335,153 @@ the marker that says the fabric and not an undriven register wrote it.
 | the tally's half | `h2f_gp_out[1]` |
 | the tally | `h2f_gp_in`, its GPI at `0x10D1_20E8` |
 | the processor-to-fabric bridges | 1 GB at `0x4000_0000` and 512 MB at `0x2000_0000`, both answered end to end |
+| the machine's hold | the machine is held in reset until the port has been live |
 
 `build/f2sdram.pass` is the check: the machine through this path against a
 model of the bridge, five configurations, with the region poisoned from
 outside. Its header has them.
 
+### The machine waits for its memory
+
+**The machine is held in reset until the memory port has been live**, and the
+ordering is the reason. On a Zynq board the processing system is configured
+before the fabric is, so `S_AXI_HP0` is live before the machine's first tick.
+Here the fabric is configured first and the bridge is opened by software in
+U-Boot, seconds later, while the boot PROM's only traffic to main memory is
+512 bus cycles some 118 ms after the machine's own reset and none before or
+after. A machine released at the fabric's reset therefore spends its one pass
+over main memory against a shut port on every boot, ends all 512 cycles on
+the NXM timer and carries on with nothing stored, on a board whose memory
+works perfectly. The hold is in `cadr_f2sdram_gate.sv`, beside the gate it
+reads.
+
+It is a latch and not the level: once the machine is running, software
+lowering the bit or the processor resetting does not reset the machine, any
+more than `SAXIHP0ARESETN` falling resets the Zynq's. What a shut port does to
+a running machine is what a board with no memory does. The fabric's own reset
+re-arms it, so KEY1 restarts the machine and it waits for the port again,
+which takes a handful of ticks with the port already open. `--no-auto-boot`
+and SW0 are unchanged: SW0 is read when the machine's reset releases, which is
+now the moment its memory is ready.
+
+**What this looks like at the board** is that LEDR0 stays dark from
+configuration until U-Boot has run `bridge enable` and raised the bit: the
+machine is in reset, so `MACHRUN` is down and no microcycle retires. On a
+board whose card does not boot, or whose U-Boot never gets that far, the
+machine never starts at all and says so with that lamp --- which is a better
+answer than a machine that runs and quietly has no memory.
+
+`build/f2sdram.pass` holds both halves of it. Its OPEN configuration opens the
+port a millisecond after the fabric's reset and requires that no microcycle
+retired before the port was live; its NEVER configuration never opens it and
+requires that no microcycle retired at all and that the tally reads nothing
+asked. Its SHUT configuration then shuts the port under a running machine and
+requires that the machine keeps running and that all 512 of its cycles end on
+the NXM timer, which is the latch.
+
+## The faces on the two bridges
+
+The processor's two bridges carry the same register faces the Arty Z7-20 puts
+on `M_AXI_GP0` and `M_AXI_GP1`, and they are the same modules: the disk's pack
+side, the Chaosnet cable, the serial line and the keyboard's cable with the
+mouse's on the HPS-to-FPGA bridge, and the console with the debug cable's
+carrier on the lightweight bridge.
+
+**The fabric sees an offset into each window and not the processor's address.**
+The HPS-to-FPGA bridge's window is 1 GB at `0x4000_0000` and it hands the
+fabric 30 bits; the lightweight bridge's is 512 MB at `0x2000_0000` and it
+hands the fabric 29. So a face a program reaches at `0x4000_1000` is at
+`0x0000_1000` in the design, and the four faces keep the offsets they have
+from `0x4000_0000` on a Zynq board. That is why `cadr_board.h` names the same
+four addresses for both boards and a different one for the console.
+
+| face | the program's address | the offset in the design |
+|---|---|---|
+| the pack side | `0x4000_0000` | `0x0000_0000` |
+| the Chaosnet cable | `0x4000_1000` | `0x0000_1000` |
+| the serial line | `0x4000_2000` | `0x0000_2000` |
+| the keyboard and the mouse | `0x4000_3000` | `0x0000_3000` |
+| the console | `0x2000_0000` | `0x0000_0000` |
+| the debug cable's window | `0x2000_1000` | `0x0000_1000` |
+
+**Every address in both windows is answered**, which is this project's oldest
+rule about a general-purpose port: a read nothing answers on the Zynq's
+`M_AXI_GP0` does not fault the Arm, it hangs both cores at one PC each. So
+each bridge is split into its pages and a last port for everything else, and
+`cadr_gp0_default.sv` answers that with `"NONE"` to every read and OKAY to
+every write.
+
+**Both bridges are AXI4 and the Zynq's ports are AXI3**, so every face here is
+built with four bits of transaction ID where a Zynq board gives twelve, and
+eight bits of burst length where it gives four. A read on these bridges can
+therefore be 256 beats, and a face that counted four bits of the length would
+answer sixteen of them and leave the processor owing the rest. The widths are
+parameters, `ID_W` and `LEN_W`, and `build/gp0_split.pass` and
+`build/gp1_split.pass` each run their whole sweep twice, once at each shape
+and at each board's addresses.
+
+**Where a face sits is checked from both ends of the bridge.** The instance's
+parameter is an offset and `cadr_board.h`'s number is the processor's address,
+and `build/de25_faces.pass` requires the first to be the second less the
+bridge's window base, for every face, and requires every instance on either
+bridge to carry the AXI4 widths. Nothing else could: the top level is not
+simulated, and lint has no opinion about a number.
+
+**The pack side's master is the share's second port.** On a Zynq board it
+fetches a block over `S_AXI_HP2`; here it shares the FPGA-to-SDRAM bridge with
+the machine through the arbiter, in the same AXI3 shape, with the machine
+first. Its face and its master are reset together by the bridge's reset and
+the memory port's liveness, which is the pair `MAXIGP0ARESETN` and
+`SAXIHP2ARESETN` make on the Zynq: before software has opened the port the
+face's registers read zero, so no drive is present and the machine sees the
+empty cable it already knows how to meet.
+
+**The three faces' interrupts have nowhere to go yet.** The Zynq boards carry
+them to `IRQ_F2P`; the fabric-to-processor interrupts are not brought out of
+the generated system here, so the programs poll, which is what they do by
+default and what their `--irq` flag is the alternative to.
+
+**The build stamp cannot be read from inside this fabric.** On a Zynq board
+the console reads it out of the part's own `USR_ACCESS` register; this part
+has no equivalent the fabric can read, so the console's word 32 reads all
+ones, which is its own word for "this fabric cannot say". The same commit is
+in the bitstream's USERCODE, which a JTAG cable reads.
+
 ### The memory board's fit
 
 Measured with `make de25 DDR=1` at the default optimization, the LPDDR4 at
-1066.667 MHz:
+1066.667 MHz, with the faces on both processor-to-fabric bridges:
 
 | | |
 |---|---|
-| ALMs | 5,735 of 46,800, 12%, of which 2,030 hold the three MLAB memories |
-| M20K blocks | 95 of 358, 27%, 1,762,880 bits |
+| ALMs | 15,028 of 46,800, 32%, of which 4,010 hold the six MLAB memories |
+| M20K blocks | 129 of 358, 36%, 2,121,824 bits |
 | pins | 127 of 351 |
-| worst setup slack | +3.343 ns, at the slow corner at 0 C |
+| worst setup slack | +2.342 ns, at the slow corner at 0 C |
 | worst hold slack | +0.000 ns, at the fast corner |
 
-The worst setup path is the machine's own, `busint`'s elapsed counter into
-MD, ten levels of logic and 6.654 ns of delay, which is the family of paths
-the board without memory is critical on too. The worst hold path is inside
-Altera's ready-latency adapter between the bridge and the memory controller,
-launched and latched by the machine's clock, zero logic levels, arrival
-2.357 ns against a requirement of 2.357 ns.
+The worst setup path is the machine's own again, `busint`'s elapsed counter
+into MD, 7.578 ns of data delay, which is the family of paths every build of
+this board is critical on. The worst hold path is the disk pack side's write
+data into Altera's ready-latency adapter between the bridge and the memory
+controller, launched and latched by the machine's clock, arriving exactly at
+its requirement.
+
+**AND THE FIRST FIT WITH THE FACES MISSED BY -1.542 ns, ON THE DEBUG CABLE'S
+CARRIER.** The path was the machine's `MD<13>` into `u_debug_window|sts_dbd`,
+11.825 ns of data delay for a 10 ns tick: `MD` through the processor's
+sixteen-way diagnostic mux, the register block, the arbiter and MIT's DBGIN
+page, out of `cadr_machine` on `DBD<15:0>` and into the carrier's latch. The
+Zynq boards have the same arc and the same claim about it --- the word is
+answered twenty-five ticks after `-UB MSYN` and the address selecting it has
+not moved since the previous request was lifted --- so
+`quartus/cadr_ddr.sdc` now carries
+`rtl/plumbing/xilinx7/cadr_debug.xdc`'s clause written again: six ticks, at
+the `|d` pins of `sts_dbd` alone, so the acknowledgment that says the word is
+good keeps its own tick. `quartus/sta_check.tcl` asserts what it reached ---
+sixteen pins, sixteen capture registers at 60 ns and none of the window's
+other 231 --- because a constraint that reaches nothing looks exactly like
+one that works.
 
 **AND THE FIRST FIT OF THIS BOARD CLOSED AT +0.028 ns, ON A PATH THAT IS NOT
 A PATH.** It ran from the fabric's handshake acknowledgment into the

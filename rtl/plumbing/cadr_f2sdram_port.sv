@@ -70,6 +70,20 @@ module cadr_f2sdram_port (
     output var logic [31:0] gp_in,         // `h2f_gp_in`
     // The port is open and out of reset, for a lamp.
     output var logic        live,
+    // **THE MACHINE MAY RUN**: the port has been live at least once since the
+    // fabric's reset.  The top level holds the machine in reset until it is
+    // up, so that the boot PROM's one pass over main memory meets a port that
+    // is open; `cadr_f2sdram_gate.sv`'s header has the measurement.
+    output var logic        may_start,
+    // **WHAT THE BRIDGE ITSELF ANSWERED THE MACHINE**, the two handshakes
+    // `cadr_machine`'s transaction audit is given: the last beat of a read
+    // and a write's response, both carrying the machine's ID, off the same
+    // registered copies the tally counts, so the tally and the audit cannot
+    // disagree about what the port did.  The Zynq boards make the same pair
+    // in their top level; here the copies are in this module, so it makes
+    // them.
+    output var logic        port_read_ack,
+    output var logic        port_write_ack,
 
     // --- the disk pack side's port, AXI3 at 64 bits -----------------------
     input  var logic [31:0] p_awaddr,
@@ -162,7 +176,8 @@ module cadr_f2sdram_port (
       .clk(clk), .rst(rst),
       .h2f_reset(h2f_reset), .gp_open(gp_open), .req_n(warm_req_n),
       .idle(idle),
-      .hold(hold), .port_rst(port_rst), .ack_n(warm_ack_n), .live(live)
+      .hold(hold), .port_rst(port_rst), .ack_n(warm_ack_n), .live(live),
+      .may_start(may_start)
   );
 
   // --------------------------------------------- the adapter and the beat
@@ -317,6 +332,9 @@ module cadr_f2sdram_port (
       .rvalid(count_rvalid), .rready(count_rready), .rlast(count_rlast),
       .gpio(tally)
   );
+
+  assign port_read_ack  = count_rvalid && count_rready && count_rlast;
+  assign port_write_ack = count_bvalid && count_bready;
 
   // Which half software reads, synchronized in as the other three are.
   logic [2:0] half_s;

@@ -4,15 +4,21 @@
 // The machine on a DE25-Nano: a top level with real pins, and the first one
 // built with Quartus rather than Vivado.
 //
-// **THIS IS THE MEMORY-OFF BOARD, THE ARTY Z7-20's DEFAULT ONE MOVED TO A
-// SECOND VENDOR.**  `cadr_machine` with nothing behind its memory port: every
-// cycle the boot PROM runs to main memory --- the first at microcycle 536,303
-// --- is ended by the bus interface's NXM timer, and the machine carries on
-// with nothing stored.  What it can show is that the fabric runs on this part:
-// the clock ticking, microcycles retiring, the PROM executing.  The processing
-// system, its memory, the disk's pack side, the console, the debug cable and
-// the display output are later slices, and each seam they will plug into is
-// tied off below as the cable a CADR has with nothing on the far end of it.
+// **WITHOUT `DDR` THIS IS THE MEMORY-OFF BOARD, THE ARTY Z7-20's DEFAULT ONE
+// MOVED TO A SECOND VENDOR.**  `cadr_machine` with nothing behind its memory
+// port: every cycle the boot PROM runs to main memory --- the first at
+// microcycle 536,303 --- is ended by the bus interface's NXM timer, and the
+// machine carries on with nothing stored.  What it can show is that the fabric
+// runs on this part: the clock ticking, microcycles retiring, the PROM
+// executing.  Every seam the processor's side would plug into is tied off
+// below as the cable a CADR has with nothing on the far end of it.
+//
+// **WITH `DDR` IT IS THE WHOLE BOARD BUT THE DISPLAY OUTPUT AND THE DEBUG
+// CONNECTOR**: the processor, its LPDDR4 behind the machine's memory port, and
+// on the two processor-to-fabric bridges the disk's pack side, the Chaosnet
+// cable, the serial line, the keyboard's cable and the mouse's, the console
+// and the debug cable's carrier.  The display output through the ADV7513 and
+// the connector on JP1 are later slices.
 //
 // **THE MACHINE DOES NOT CHANGE FOR THIS BOARD.**  It does not know what part
 // it is on, and the two Zynq boards already keep that promise.  Its three
@@ -54,6 +60,19 @@
 // the machine until the device is fully configured, and the fabric reset then
 // waits for the PLL's lock.
 //
+// **AND THE MACHINE WAITS FOR ITS MEMORY ON THIS BOARD, WHICH THE ZYNQ
+// BOARDS DO NOT HAVE TO.**  There the processing system is configured before
+// the fabric is, so the memory port is live before the machine's first tick.
+// Here the fabric is configured first and the bridge is opened by software in
+// U-Boot, seconds later, while the boot PROM's ONLY traffic to main memory is
+// 512 bus cycles 118 ms after the machine's own reset and none before or
+// after: a machine released at the fabric's reset spends that one pass
+// against a shut port every time, on a board whose memory works.  So the
+// machine's reset is held until the port has been live once.  The reset
+// section below has the whole of it, `rtl/plumbing/cadr_f2sdram_gate.sv`
+// holds the hold, and `tb/cadr_f2sdram_tb.cpp`'s OPEN and NEVER are its two
+// halves.
+//
 // THE BUTTONS AND THE SWITCH, AS THE OTHER BOARDS HAVE THEM.
 //
 // `KEY0` is `-BOOT2`, the light panel's boot button, and `KEY1` resets the
@@ -82,9 +101,9 @@
 //
 // The eight are single green LEDs, lit when their pin is driven LOW (manual
 // section 3.7.1), so the whole row is inverted at the pin.  The Arty's red
-// error lamp and blue PROM lamp are two green ones here.  There is no console
-// on this board yet, so nobody can ask for steady lamps and LEDR1 and LEDR2
-// blink, which is what a board with a console comes up doing too.
+// error lamp and blue PROM lamp are two green ones here.  LEDR1 and LEDR2
+// blink until the console's word 35 asks for steady, which is
+// `--no-blinking-leds`, and a board without a console blinks for ever.
 //
 // **EVERY OUTPUT OF THE MACHINE REACHES THE FOLD, OR SYNTHESIS DELETES IT.**
 // `cadr_machine` brings its whole datapath out for the testbenches, and a top
@@ -219,14 +238,29 @@ module cadr_de25 #(
   always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !pll_locked || !btn[1]};
   assign rst = rst_sync[3];
 
-  // The machine's reset: the fabric's, and the debug cable's modifier bit 1,
-  // which is this processor's power-on reset when a debugger asks for it.
-  // No debugger can reach this board yet, so the second term folds away, and
-  // the register stays so that the reset keeps the shape it has on the other
-  // boards.  There is no console, so there is no console reset to join.
+  // The machine's reset: the fabric's, the console's `RESET_KEY`, the debug
+  // cable's modifier bit 1 --- which is this processor's power-on reset when
+  // a debugger asks for it --- and **the hold that makes the machine wait for
+  // its memory**.
+  //
+  // **THE HOLD IS THE ONE PIECE THIS BOARD NEEDS AND THE ZYNQ BOARDS DO NOT.**
+  // On a Zynq board the processing system is configured before the fabric is,
+  // so `S_AXI_HP0` is live before the machine's first tick.  Here the fabric
+  // is configured first and the bridge is opened by software in U-Boot,
+  // seconds later, while the boot PROM's ONLY traffic to main memory ---
+  // PAGE-0-PARITY-FIX, 512 bus cycles and no others --- is 118 ms after the
+  // machine's own reset.  A machine released at the fabric's reset therefore
+  // spends that one pass against a shut port every time and carries on with
+  // nothing stored, on a board whose memory works.  So `mach_hold` is up
+  // until the memory port has been live, and `rtl/plumbing/cadr_f2sdram_gate.sv`
+  // holds it there; on the board without memory there is no port and no hold.
+  // `tb/cadr_f2sdram_tb.cpp`'s OPEN and NEVER are the two halves of it.
   logic debuggee_reset;
+  logic con_mach_rst;    // the console's word 6, `RESET_KEY`
+  logic mach_hold;       // the machine waits for its memory port
   logic mach_rst;
-  always_ff @(posedge clk) mach_rst <= rst || debuggee_reset;
+  always_ff @(posedge clk)
+    mach_rst <= rst || con_mach_rst || debuggee_reset || mach_hold;
 
   // ------------------------------------------------- KEY0 and SW0
   //
@@ -235,14 +269,23 @@ module cadr_de25 #(
   // stages are all it needs.  SW0 is a level read at the machine's reset arms
   // and nowhere else, so moving it under a running machine does nothing until
   // the next reset; three stages, as the other boards give it.
+  //
+  // `-BOOT2` is joined with the console's `BOOT_KEY`, as it is on the Zynq
+  // boards: `cadr-console boot` is the same line as the button.  And SW0 is
+  // read twice for the console --- the value the machine actually came out of
+  // reset with, and where the switch is now --- because those are two
+  // different facts and `cadr-console status` prints both.
   logic [1:0] btn0_sync;
   logic [2:0] sw0_sync;
-  logic       n_boot2;
+  logic       n_boot2, con_mach_boot;
+  logic       sw0_level, sw0_held;
   always_ff @(posedge clk) begin
     btn0_sync <= {btn0_sync[0], !btn[0]};
     sw0_sync  <= {sw0_sync[1:0], sw[0]};
   end
-  assign n_boot2 = !btn0_sync[1];
+  assign n_boot2   = !(btn0_sync[1] || con_mach_boot);
+  assign sw0_level = sw0_sync[2];
+  always_ff @(posedge clk) if (mach_rst) sw0_held <= sw0_level;
 
   // ---------------------------------------------------------- the machine
   //
@@ -296,6 +339,39 @@ module cadr_de25 #(
   logic [31:0] mem_addr, mem_wdata;
   logic        mem_done;
   logic [31:0] mem_rdata;
+  logic        port_read_ack, port_write_ack;
+
+  // And the seams the register faces drive, which are `cadr_machine`'s inputs:
+  // the disk's cable and its block store, the I/O board's four cables, the
+  // console's Unibus port and the debug cable's near end.  They are declared
+  // here and driven in ONE of the two arms below --- by the faces on the
+  // memory board, and by the tie-offs of an unplugged cable on the board
+  // without --- because the machine is instantiated once and does not know
+  // which board it is on.
+  logic [7:0]  drive_present, drive_read_only;
+  logic        drive_timed;
+  logic        store_we, store_busy, store_deny;
+  logic [4:0]  store_slot, store_busy_slot;
+  logic [8:0]  store_addr;
+  logic [31:0] store_wdata;
+  logic        kbd_strobe;
+  logic [23:0] kbd_code;
+  logic [6:0]  mouse_lines;
+  logic        ser_tx_take, ser_tx_done, ser_rx_strobe;
+  logic [7:0]  ser_rx_data;
+  logic        ser_rx_end, ser_rx_parity, ser_rx_framing, ser_plugged;
+  logic [15:0] chaos_address, chaos_rx_word;
+  logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc, chaos_rx_lost;
+  logic [12:0] chaos_rx_bits;
+  logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
+  logic        con_req, con_msyn, con_write;
+  logic [17:0] con_addr, con_ro_addr;
+  logic [15:0] con_wdata;
+  logic        con_tv_lispm, con_color_tv, con_steady_lamps;
+  logic [3:0]  con_tv_map_a;
+  logic        dbg_in_req, dbg_in_wr;
+  logic [1:0]  dbg_in_a;
+  logic [15:0] dbd_in;
 
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
@@ -303,50 +379,57 @@ module cadr_de25 #(
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       .sintr_o(sintr),
-      // NO DRIVE AND NO PACK.  With `drive_present` at zero the status
-      // register answers `0x2321` for every one of the boot PROM's polls, and
-      // tied off the whole drive constant-folds, so this fit counts the
-      // register face and the decode and not the spindle.
-      .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0),
-      .store_we(1'b0), .store_slot(5'd0), .store_addr(9'd0),
-      .store_wdata(32'd0), .store_rdata(store_rdata),
+      // **THE DISK'S CABLE AND ITS BLOCK STORE.**  On the memory board
+      // `rtl/plumbing/cadr_disk_pack.sv` is the far end of them, with the
+      // drives a program in Linux presents; on the board without, the cable
+      // is empty and the status register answers `0x2321` for every one of
+      // the boot PROM's polls.
+      .drive_present(drive_present), .drive_read_only(drive_read_only),
+      .drive_timed(drive_timed),
+      .store_we(store_we), .store_slot(store_slot), .store_addr(store_addr),
+      .store_wdata(store_wdata), .store_rdata(store_rdata),
       .store_miss(store_miss), .ch_active(ch_active),
-      .store_busy(1'b0), .store_busy_slot(5'd0), .store_deny(1'b0),
+      .store_busy(store_busy), .store_busy_slot(store_busy_slot),
+      .store_deny(store_deny),
       .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
       .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
       .ch_hit(ch_hit),
-      // THE I/O BOARD'S CABLES, WITH NOTHING ON THEIR FAR ENDS.  No strobe
-      // means no scan code.  The mouse's seven lines are ALL ONES and not
-      // zero: each switch pulls to ground when pressed and each quadrature
-      // line is high at rest, so all ones is a mouse nobody is touching.
-      .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'h7F),
-      .n_boot2(n_boot2), .no_auto_boot(sw0_sync[2]),
-      // The serial line unplugged: with `ser_plugged` down the 2651's sheet
-      // holds both halves stopped.  And the Chaosnet with its address
-      // switches at zero and no frame ever arriving.
+      // **THE I/O BOARD'S FOUR CABLES.**  On the memory board the far ends
+      // are `cadr_input_cables.sv`, `cadr_serial_line.sv` and
+      // `cadr_chaos_cable.sv` behind the bridge; on the board without, every
+      // cable is unplugged.
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines),
+      .n_boot2(n_boot2), .no_auto_boot(sw0_level),
       .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
       .ser_cmd(ser_cmd), .ser_tx_strobe(ser_tx_strobe),
       .ser_tx_data(ser_tx_data),
-      .ser_tx_take(1'b0), .ser_tx_done(1'b0), .ser_rx_strobe(1'b0),
-      .ser_rx_data(8'd0), .ser_rx_end(1'b0), .ser_rx_parity(1'b0),
-      .ser_rx_framing(1'b0), .ser_plugged(1'b0),
+      .ser_tx_take(ser_tx_take), .ser_tx_done(ser_tx_done),
+      .ser_rx_strobe(ser_rx_strobe),
+      .ser_rx_data(ser_rx_data), .ser_rx_end(ser_rx_end),
+      .ser_rx_parity(ser_rx_parity),
+      .ser_rx_framing(ser_rx_framing), .ser_plugged(ser_plugged),
       .ser_status(ser_status), .ser_syn_face(ser_syn_face),
-      .chaos_address(16'd0), .chaos_tx_go(chaos_tx_go),
+      .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go),
       .chaos_tx_len(chaos_tx_len), .chaos_tx_valid(chaos_tx_valid),
       .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
       .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
-      .chaos_rx_valid(1'b0), .chaos_rx_word(16'd0), .chaos_rx_done(1'b0),
-      .chaos_rx_bits(13'd0), .chaos_rx_crc(1'b0), .chaos_rx_lost(1'b0),
-      .chaos_tx_done(1'b0), .chaos_tx_abort(1'b0), .chaos_cbl_busy(1'b0),
+      .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word),
+      .chaos_rx_done(chaos_rx_done),
+      .chaos_rx_bits(chaos_rx_bits), .chaos_rx_crc(chaos_rx_crc),
+      .chaos_rx_lost(chaos_rx_lost),
+      .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
+      .chaos_cbl_busy(chaos_cbl_busy),
       .chaos_bits(chaos_bits),
       .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
       .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
       .clock_ready(clock_ready), .interval(interval),
-      // 32 boards of 64K words, muir's default, and the backplane with no
-      // console to say otherwise: one SIMPLE TV and no color board.
+      // 32 boards of 64K words, muir's default.  **THE BACKPLANE IS THE
+      // CONSOLE'S TO SAY**, page 2's word 33, and with no console it is one
+      // SIMPLE TV and no color board.
       .boards(7'd32),
-      .tv_lispm(1'b0), .color_tv(1'b0),
-      .tv_map_a(4'd0), .tv_map_q(tv_map_q), .tv_color_map_q(tv_color_map_q),
+      .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
+      .tv_map_a(con_tv_map_a), .tv_map_q(tv_map_q),
+      .tv_color_map_q(tv_color_map_q),
       .disp_map_a(4'd0), .disp_color_map_q(disp_color_map_q),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
@@ -367,17 +450,28 @@ module cadr_de25 #(
       .timed_out(timed_out),
       .machrun(machrun), .errhalt(errhalt), .stathalt(stathalt),
       .n_boot_o(n_boot),
-      // NO CONSOLE.  With `con_req` and `con_msyn` down the arbiter never
-      // grants, and the register block keeps its one master.
-      .con_req(1'b0), .con_gnt(con_gnt), .con_msyn(1'b0),
-      .con_write(1'b0), .con_addr(18'd0), .con_wdata(16'd0),
+      // **THE CONSOLE'S UNIBUS PORT**, the second master on the diagnostic
+      // bus: `rtl/plumbing/cadr_console.sv` on the lightweight bridge drives
+      // it on the memory board.  With no console `con_req` and `con_msyn`
+      // are down, the arbiter never grants, and the register block keeps its
+      // one master.
+      .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
+      .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
-      // NO DEBUG CABLE.  `-DEBUG IN REQ` held UP, which is `dbg_in_req` low,
-      // is what the SIP at DBGIN 0A22 makes of an unplugged connector, and the
-      // DBGIN page folds to its idle state.  The DBGOUT page's far end is a
-      // bare connector as `cadr_machine` describes one: not live, never
-      // acknowledging, and every data line reading one.
-      .dbg_in_req(1'b0), .dbg_in_wr(1'b0), .dbg_in_a(2'd0), .dbd_in(16'd0),
+      // **THE DEBUG CABLE'S NEAR END.**  On the memory board
+      // `rtl/plumbing/cadr_debug_window.sv` on the lightweight bridge is the
+      // carrier, and muir on this board's own cores is the debugger.  There
+      // is no connector on this board yet --- JP1's cable is a later slice,
+      // and with it `rtl/plumbing/cadr_dbg_join.sv` --- so the window is the
+      // only arm, which is what the join's header says an unplugged
+      // connector leaves.  On the board without a processor, `-DEBUG IN REQ`
+      // is held UP, which is `dbg_in_req` low: what the SIP at DBGIN 0A22
+      // makes of an unplugged connector, and the DBGIN page folds to its idle
+      // state.  The DBGOUT page's far end is a bare connector as
+      // `cadr_machine` describes one: not live, never acknowledging, and
+      // every data line reading one.
+      .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
+      .dbd_in(dbd_in),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_out), .dbd_oe(dbd_oe),
       .dbgout_req(dbgout_req), .dbgout_wr(dbgout_wr), .dbgout_a(dbgout_a),
       .dbgout_dbd(dbgout_dbd), .dbgout_ack(1'b0),
@@ -388,9 +482,10 @@ module cadr_de25 #(
       // own bit 1 could never be written.
       .dbg_rst(rst),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
-      // Nothing asks the readout anything: the address stands at the
-      // reserved selector and the machine answers `RO_NO_MEMORY` for ever.
-      .con_ro_addr(18'h3FFFF), .con_ro_data(con_ro_data),
+      // The readout, page 0's words 10, 11 and 12 of the console.  With no
+      // console the address stands at the reserved selector and the machine
+      // answers `RO_NO_MEMORY` for ever.
+      .con_ro_addr(con_ro_addr), .con_ro_data(con_ro_data),
       .con_ro_echo(con_ro_echo),
       // THE MEMORY, OR NONE.  With `DDR` off nothing ever answers, so the
       // NXM timer ends every main-memory cycle; with it on, the memory
@@ -400,7 +495,13 @@ module cadr_de25 #(
       .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .port_read_ack(1'b0), .port_write_ack(1'b0)
+      // **THE PORT'S OWN ANSWERS, FOR THE TRANSACTION AUDIT.**  The bridge's
+      // handshakes and nothing the fabric decides for itself, which is what
+      // makes the audit's word 8 able to tell a silent port from an answering
+      // one.  `rtl/plumbing/cadr_f2sdram_port.sv` makes the pair off the same
+      // registered copies the tally counts; on the board without memory
+      // nothing answers and nothing is counted.
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
   );
 
   // ---------------------------------------------------------- the fold
@@ -624,10 +725,29 @@ module cadr_de25 #(
 
   // **THE MACHINE'S MEMORY PORT ON THE BRIDGE**: the gate, the adapter, the
   // beat, the share and the tally, all in `rtl/plumbing/cadr_f2sdram_port.sv`
-  // where `tb/cadr_f2sdram_tb.cpp` runs the machine through them.  The pack
-  // side's and the display's ports of the share are tied off: neither exists
-  // on this board yet.  Their valids are low, so nothing is ever granted to
-  // them, and their readies are high, so a response to them would be taken.
+  // where `tb/cadr_f2sdram_tb.cpp` runs the machine through them.
+  //
+  // **THE SHARE'S SECOND PORT IS THE DISK PACK SIDE'S**, which is
+  // `S_AXI_HP2`'s role on the Zynq boards: the master that fetches a block
+  // from the pack in memory into the controller's store and writes one back.
+  // It is the AXI3 shape `cadr_disk_pack.sv` already has, which is the shape
+  // the share takes, so nothing is adapted between them.  The display's port
+  // is still tied off: its output is a later slice.  Its valid is low, so
+  // nothing is ever granted to it, and its ready is high, so a response would
+  // be taken.
+  logic [31:0] pm_awaddr, pm_araddr;
+  logic [3:0]  pm_awlen, pm_arlen;
+  logic [1:0]  pm_awsize, pm_arsize, pm_awburst, pm_arburst;
+  logic        pm_awvalid, pm_awready, pm_wlast, pm_wvalid, pm_wready;
+  logic        pm_bvalid, pm_bready, pm_arvalid, pm_arready;
+  logic        pm_rlast, pm_rvalid, pm_rready;
+  logic [63:0] pm_wdata, pm_rdata;
+  logic [7:0]  pm_wstrb;
+  logic [1:0]  pm_bresp, pm_rresp;
+
+  logic may_start;
+  assign mach_hold = !may_start;
+
   /* verilator lint_off PINCONNECTEMPTY */
   cadr_f2sdram_port u_memory (
       .clk(clk), .rst(rst),
@@ -636,14 +756,17 @@ module cadr_de25 #(
       .mem_done(mem_done), .mem_rdata(mem_rdata), .mem_error(),
       .h2f_reset(h2f_reset), .gp_open(gp_out[0]), .gp_half(gp_out[1]),
       .warm_req_n(warm_req_n), .warm_ack_n(warm_ack_n),
-      .gp_in(gp_in), .live(port_live),
-      .p_awaddr(32'd0), .p_awlen(4'd0), .p_awsize(2'd0), .p_awburst(2'd0),
-      .p_awvalid(1'b0), .p_awready(),
-      .p_wdata(64'd0), .p_wstrb(8'd0), .p_wlast(1'b0), .p_wvalid(1'b0),
-      .p_wready(), .p_bresp(), .p_bvalid(), .p_bready(1'b1),
-      .p_araddr(32'd0), .p_arlen(4'd0), .p_arsize(2'd0), .p_arburst(2'd0),
-      .p_arvalid(1'b0), .p_arready(),
-      .p_rdata(), .p_rresp(), .p_rlast(), .p_rvalid(), .p_rready(1'b1),
+      .gp_in(gp_in), .live(port_live), .may_start(may_start),
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
+      .p_awaddr(pm_awaddr), .p_awlen(pm_awlen), .p_awsize(pm_awsize),
+      .p_awburst(pm_awburst), .p_awvalid(pm_awvalid), .p_awready(pm_awready),
+      .p_wdata(pm_wdata), .p_wstrb(pm_wstrb), .p_wlast(pm_wlast),
+      .p_wvalid(pm_wvalid), .p_wready(pm_wready),
+      .p_bresp(pm_bresp), .p_bvalid(pm_bvalid), .p_bready(pm_bready),
+      .p_araddr(pm_araddr), .p_arlen(pm_arlen), .p_arsize(pm_arsize),
+      .p_arburst(pm_arburst), .p_arvalid(pm_arvalid), .p_arready(pm_arready),
+      .p_rdata(pm_rdata), .p_rresp(pm_rresp), .p_rlast(pm_rlast),
+      .p_rvalid(pm_rvalid), .p_rready(pm_rready),
       .d_araddr(32'd0), .d_arlen(4'd0), .d_arsize(2'd0), .d_arburst(2'd0),
       .d_arvalid(1'b0), .d_arready(),
       .d_rdata(), .d_rresp(), .d_rlast(), .d_rvalid(), .d_rready(1'b1),
@@ -668,60 +791,609 @@ module cadr_de25 #(
   );
   /* verilator lint_on PINCONNECTEMPTY */
 
-  // **EVERY ADDRESS OF BOTH PROCESSOR-TO-FABRIC BRIDGES IS ANSWERED**, by the
-  // default slave the Zynq boards put on `M_AXI_GP0`, at these bridges' AXI4
-  // shape: a read gets OKAY and "NONE" in every beat, and a write is taken and
-  // dropped.  On the Zynq a read nothing answers froze both Arm cores; nothing
-  // says these bridges are kinder, and the faces that will sit here are a
-  // later slice's.  Its reset is the bridges' own, the processor's
-  // `h2f_reset`, synchronized in.
+  // ============================== the faces on the two processor-to-fabric
+  //                                                                 bridges
+  //
+  // **EVERY ADDRESS OF BOTH BRIDGES IS ANSWERED**, which is this project's
+  // oldest rule about a general-purpose port and the one it was taught by the
+  // board: a read nothing answers on the Zynq's `M_AXI_GP0` does not fault
+  // the Arm, it hangs BOTH cores at one PC each, measured.  Nothing says
+  // these bridges are kinder, and Altera puts a default subordinate on both
+  // of them in every design of its own.  So each bridge is split into its
+  // pages and a last port for everything else, and `cadr_gp0_default.sv`
+  // answers that: "NONE" to every read and OKAY to every write.
+  //
+  // **THE FABRIC SEES AN OFFSET INTO EACH WINDOW AND NOT THE PROCESSOR'S
+  // ADDRESS**, which is why the bases below are not the ones a program uses.
+  // The HPS-to-FPGA bridge's 1 GB window is at `0x4000_0000` and it hands the
+  // fabric 30 bits; the lightweight bridge's 512 MB window is at
+  // `0x2000_0000` and it hands the fabric 29.  So the pack side's page, which
+  // a program reaches at `0x4000_0000`, is offset 0 here, and the console's,
+  // which a program reaches at `0x2000_0000`, is offset 0 on the other
+  // bridge.  The four faces keep their Zynq offsets from the window's base,
+  // so `cadr_board.h` names the same four addresses on both boards.
+  //
+  //   the HPS-to-FPGA bridge        the lightweight bridge
+  //     +0x0000  the pack side       +0x0000  the console
+  //     +0x1000  the Chaosnet        +0x1000  the debug cable's window
+  //     +0x2000  the serial line     everything else  the default slave
+  //     +0x3000  keyboard and mouse
+  //     everything else  the default slave
+  //
+  // **BOTH BRIDGES ARE AXI4 AND THE ZYNQ'S PORTS ARE AXI3**, so every module
+  // here is built with four bits of ID where the Zynq boards give twelve, and
+  // eight bits of burst length where they give four --- `ID_W` and `LEN_W`,
+  // which `cadr_gp0_default.sv` already had and every face and both splitters
+  // now take.  A read of up to 256 beats therefore ends where ARLEN says on
+  // this board too, which is the same promise at a different width and not a
+  // new one.  `build/gp0_split.pass` and `build/gp1_split.pass` run their
+  // whole sweep twice, once at each shape and at each board's bases.
+  //
+  // THE RESET IS THE BRIDGES' OWN, `h2f_reset`, synchronized in: before
+  // Linux is up the faces read zero, so the serial line's `CTL` is zero and
+  // its cable is out, the Chaosnet's address switches read zero, and the
+  // input face's queue is empty --- which is exactly what the tie-offs of the
+  // board without a processor give the machine.
   logic [2:0] h2f_rst_s;
-  always_ff @(posedge clk) h2f_rst_s <= {h2f_rst_s[1:0], h2f_reset};
+  logic       h2f_rst;
+  always_ff @(posedge clk) begin
+    h2f_rst_s <= {h2f_rst_s[1:0], h2f_reset};
+    h2f_rst   <= rst || h2f_rst_s[2];
+  end
 
-  cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_h2f_default (
-      .clk(clk), .rst(rst || h2f_rst_s[2]),
-      .s_awvalid(h2f_awvalid), .s_awid(h2f_awid), .s_awready(h2f_awready),
-      .s_wlast(h2f_wlast), .s_wvalid(h2f_wvalid), .s_wready(h2f_wready),
+  // ------------------------------------- the HPS-to-FPGA bridge, four faces
+  logic [31:0] h2fp_awaddr, h2fp_araddr, h2fp_wdata, h2fp_rdata;
+  logic [7:0]  h2fp_awlen, h2fp_arlen;
+  logic [3:0]  h2fp_wstrb, h2fp_awid, h2fp_arid, h2fp_bid, h2fp_rid;
+  logic        h2fp_awvalid, h2fp_awready, h2fp_wlast, h2fp_wvalid, h2fp_wready;
+  logic        h2fp_bvalid, h2fp_bready, h2fp_arvalid, h2fp_arready;
+  logic        h2fp_rlast, h2fp_rvalid, h2fp_rready;
+  logic [1:0]  h2fp_bresp, h2fp_rresp;
+  logic [11:0] h2fc_awaddr, h2fc_araddr;
+  logic [31:0] h2fc_wdata, h2fc_rdata;
+  logic [7:0]  h2fc_awlen, h2fc_arlen;
+  logic [3:0]  h2fc_wstrb, h2fc_awid, h2fc_arid, h2fc_bid, h2fc_rid;
+  logic        h2fc_awvalid, h2fc_awready, h2fc_wlast, h2fc_wvalid, h2fc_wready;
+  logic        h2fc_bvalid, h2fc_bready, h2fc_arvalid, h2fc_arready;
+  logic        h2fc_rlast, h2fc_rvalid, h2fc_rready;
+  logic [1:0]  h2fc_bresp, h2fc_rresp;
+  logic [11:0] h2fs_awaddr, h2fs_araddr;
+  logic [31:0] h2fs_wdata, h2fs_rdata;
+  logic [7:0]  h2fs_awlen, h2fs_arlen;
+  logic [3:0]  h2fs_wstrb, h2fs_awid, h2fs_arid, h2fs_bid, h2fs_rid;
+  logic        h2fs_awvalid, h2fs_awready, h2fs_wlast, h2fs_wvalid, h2fs_wready;
+  logic        h2fs_bvalid, h2fs_bready, h2fs_arvalid, h2fs_arready;
+  logic        h2fs_rlast, h2fs_rvalid, h2fs_rready;
+  logic [1:0]  h2fs_bresp, h2fs_rresp;
+  logic [11:0] h2fi_awaddr, h2fi_araddr;
+  logic [31:0] h2fi_wdata, h2fi_rdata;
+  logic [7:0]  h2fi_awlen, h2fi_arlen;
+  logic [3:0]  h2fi_wstrb, h2fi_awid, h2fi_arid, h2fi_bid, h2fi_rid;
+  logic        h2fi_awvalid, h2fi_awready, h2fi_wlast, h2fi_wvalid, h2fi_wready;
+  logic        h2fi_bvalid, h2fi_bready, h2fi_arvalid, h2fi_arready;
+  logic        h2fi_rlast, h2fi_rvalid, h2fi_rready;
+  logic [1:0]  h2fi_bresp, h2fi_rresp;
+  logic [31:0] h2fd_rdata;
+  logic [7:0]  h2fd_arlen;
+  logic [3:0]  h2fd_awid, h2fd_arid, h2fd_bid, h2fd_rid;
+  logic        h2fd_awvalid, h2fd_awready, h2fd_wlast, h2fd_wvalid, h2fd_wready;
+  logic        h2fd_bvalid, h2fd_bready, h2fd_arvalid, h2fd_arready;
+  logic        h2fd_rlast, h2fd_rvalid, h2fd_rready;
+  logic [1:0]  h2fd_bresp, h2fd_rresp;
+
+  cadr_gp0_split #(
+      .PACK_BASE (32'h0000_0000),
+      .CHAOS_BASE(32'h0000_1000),
+      .SER_BASE  (32'h0000_2000),
+      .INPUT_BASE(32'h0000_3000),
+      .ID_W(4), .LEN_W(8)
+  ) u_h2f_split (
+      .clk(clk), .rst(h2f_rst),
+      .s_awaddr({2'b00, h2f_awaddr}), .s_awlen(h2f_awlen), .s_awid(h2f_awid),
+      .s_awvalid(h2f_awvalid), .s_awready(h2f_awready),
+      .s_wdata(h2f_wdata), .s_wstrb(h2f_wstrb), .s_wlast(h2f_wlast),
+      .s_wvalid(h2f_wvalid), .s_wready(h2f_wready),
       .s_bresp(h2f_bresp), .s_bid(h2f_bid), .s_bvalid(h2f_bvalid),
       .s_bready(h2f_bready),
-      .s_arlen(h2f_arlen), .s_arid(h2f_arid), .s_arvalid(h2f_arvalid),
-      .s_arready(h2f_arready), .s_rdata(h2f_rdata), .s_rresp(h2f_rresp),
-      .s_rid(h2f_rid), .s_rlast(h2f_rlast), .s_rvalid(h2f_rvalid),
-      .s_rready(h2f_rready)
+      .s_araddr({2'b00, h2f_araddr}), .s_arlen(h2f_arlen), .s_arid(h2f_arid),
+      .s_arvalid(h2f_arvalid), .s_arready(h2f_arready),
+      .s_rdata(h2f_rdata), .s_rresp(h2f_rresp), .s_rid(h2f_rid),
+      .s_rlast(h2f_rlast), .s_rvalid(h2f_rvalid), .s_rready(h2f_rready),
+      .pack_awaddr(h2fp_awaddr), .pack_awlen(h2fp_awlen), .pack_awid(h2fp_awid),
+      .pack_awvalid(h2fp_awvalid), .pack_awready(h2fp_awready),
+      .pack_wdata(h2fp_wdata), .pack_wstrb(h2fp_wstrb), .pack_wlast(h2fp_wlast),
+      .pack_wvalid(h2fp_wvalid), .pack_wready(h2fp_wready),
+      .pack_bresp(h2fp_bresp), .pack_bid(h2fp_bid), .pack_bvalid(h2fp_bvalid),
+      .pack_bready(h2fp_bready),
+      .pack_araddr(h2fp_araddr), .pack_arlen(h2fp_arlen), .pack_arid(h2fp_arid),
+      .pack_arvalid(h2fp_arvalid), .pack_arready(h2fp_arready),
+      .pack_rdata(h2fp_rdata), .pack_rresp(h2fp_rresp), .pack_rid(h2fp_rid),
+      .pack_rlast(h2fp_rlast), .pack_rvalid(h2fp_rvalid),
+      .pack_rready(h2fp_rready),
+      .chaos_awaddr(h2fc_awaddr), .chaos_awlen(h2fc_awlen),
+      .chaos_awid(h2fc_awid),
+      .chaos_awvalid(h2fc_awvalid), .chaos_awready(h2fc_awready),
+      .chaos_wdata(h2fc_wdata), .chaos_wstrb(h2fc_wstrb),
+      .chaos_wlast(h2fc_wlast),
+      .chaos_wvalid(h2fc_wvalid), .chaos_wready(h2fc_wready),
+      .chaos_bresp(h2fc_bresp), .chaos_bid(h2fc_bid),
+      .chaos_bvalid(h2fc_bvalid), .chaos_bready(h2fc_bready),
+      .chaos_araddr(h2fc_araddr), .chaos_arlen(h2fc_arlen),
+      .chaos_arid(h2fc_arid),
+      .chaos_arvalid(h2fc_arvalid), .chaos_arready(h2fc_arready),
+      .chaos_rdata(h2fc_rdata), .chaos_rresp(h2fc_rresp), .chaos_rid(h2fc_rid),
+      .chaos_rlast(h2fc_rlast), .chaos_rvalid(h2fc_rvalid),
+      .chaos_rready(h2fc_rready),
+      .ser_awaddr(h2fs_awaddr), .ser_awlen(h2fs_awlen), .ser_awid(h2fs_awid),
+      .ser_awvalid(h2fs_awvalid), .ser_awready(h2fs_awready),
+      .ser_wdata(h2fs_wdata), .ser_wstrb(h2fs_wstrb), .ser_wlast(h2fs_wlast),
+      .ser_wvalid(h2fs_wvalid), .ser_wready(h2fs_wready),
+      .ser_bresp(h2fs_bresp), .ser_bid(h2fs_bid), .ser_bvalid(h2fs_bvalid),
+      .ser_bready(h2fs_bready),
+      .ser_araddr(h2fs_araddr), .ser_arlen(h2fs_arlen), .ser_arid(h2fs_arid),
+      .ser_arvalid(h2fs_arvalid), .ser_arready(h2fs_arready),
+      .ser_rdata(h2fs_rdata), .ser_rresp(h2fs_rresp), .ser_rid(h2fs_rid),
+      .ser_rlast(h2fs_rlast), .ser_rvalid(h2fs_rvalid), .ser_rready(h2fs_rready),
+      .in_awaddr(h2fi_awaddr), .in_awlen(h2fi_awlen), .in_awid(h2fi_awid),
+      .in_awvalid(h2fi_awvalid), .in_awready(h2fi_awready),
+      .in_wdata(h2fi_wdata), .in_wstrb(h2fi_wstrb), .in_wlast(h2fi_wlast),
+      .in_wvalid(h2fi_wvalid), .in_wready(h2fi_wready),
+      .in_bresp(h2fi_bresp), .in_bid(h2fi_bid), .in_bvalid(h2fi_bvalid),
+      .in_bready(h2fi_bready),
+      .in_araddr(h2fi_araddr), .in_arlen(h2fi_arlen), .in_arid(h2fi_arid),
+      .in_arvalid(h2fi_arvalid), .in_arready(h2fi_arready),
+      .in_rdata(h2fi_rdata), .in_rresp(h2fi_rresp), .in_rid(h2fi_rid),
+      .in_rlast(h2fi_rlast), .in_rvalid(h2fi_rvalid), .in_rready(h2fi_rready),
+      .dflt_awid(h2fd_awid), .dflt_awvalid(h2fd_awvalid),
+      .dflt_awready(h2fd_awready),
+      .dflt_wlast(h2fd_wlast), .dflt_wvalid(h2fd_wvalid),
+      .dflt_wready(h2fd_wready),
+      .dflt_bresp(h2fd_bresp), .dflt_bid(h2fd_bid), .dflt_bvalid(h2fd_bvalid),
+      .dflt_bready(h2fd_bready),
+      .dflt_arlen(h2fd_arlen), .dflt_arid(h2fd_arid),
+      .dflt_arvalid(h2fd_arvalid), .dflt_arready(h2fd_arready),
+      .dflt_rdata(h2fd_rdata), .dflt_rresp(h2fd_rresp), .dflt_rid(h2fd_rid),
+      .dflt_rlast(h2fd_rlast), .dflt_rvalid(h2fd_rvalid),
+      .dflt_rready(h2fd_rready)
   );
 
-  cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_lw_default (
-      .clk(clk), .rst(rst || h2f_rst_s[2]),
-      .s_awvalid(lw_awvalid), .s_awid(lw_awid), .s_awready(lw_awready),
-      .s_wlast(lw_wlast), .s_wvalid(lw_wvalid), .s_wready(lw_wready),
+  // **THE PACK SIDE**, its register face on this bridge and its master on the
+  // share's second port.  **ITS RESET IS THE BRIDGE'S AND THE MEMORY PORT'S
+  // TOGETHER**, which is the pair the Zynq boards take --- `MAXIGP0ARESETN`
+  // and `SAXIHP2ARESETN` --- because a master whose memory is shut has
+  // nowhere to put a block, and a face whose registers read zero says
+  // `drive_present` is zero, which is the empty cable the machine already
+  // knows how to meet.
+  logic pack_rst;
+  always_ff @(posedge clk) pack_rst <= h2f_rst || !port_live;
+
+  cadr_disk_pack #(
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+  ) u_pack (
+      .clk(clk), .rst(pack_rst),
+      .s_awaddr(h2fp_awaddr), .s_awlen(h2fp_awlen), .s_awid(h2fp_awid),
+      .s_awvalid(h2fp_awvalid), .s_awready(h2fp_awready),
+      .s_wdata(h2fp_wdata), .s_wstrb(h2fp_wstrb), .s_wlast(h2fp_wlast),
+      .s_wvalid(h2fp_wvalid), .s_wready(h2fp_wready),
+      .s_bresp(h2fp_bresp), .s_bid(h2fp_bid), .s_bvalid(h2fp_bvalid),
+      .s_bready(h2fp_bready),
+      .s_araddr(h2fp_araddr), .s_arlen(h2fp_arlen), .s_arid(h2fp_arid),
+      .s_arvalid(h2fp_arvalid), .s_arready(h2fp_arready),
+      .s_rdata(h2fp_rdata), .s_rresp(h2fp_rresp), .s_rid(h2fp_rid),
+      .s_rlast(h2fp_rlast), .s_rvalid(h2fp_rvalid), .s_rready(h2fp_rready),
+      .m_awaddr(pm_awaddr), .m_awlen(pm_awlen), .m_awsize(pm_awsize),
+      .m_awburst(pm_awburst), .m_awvalid(pm_awvalid), .m_awready(pm_awready),
+      .m_wdata(pm_wdata), .m_wstrb(pm_wstrb), .m_wlast(pm_wlast),
+      .m_wvalid(pm_wvalid), .m_wready(pm_wready),
+      .m_bresp(pm_bresp), .m_bvalid(pm_bvalid), .m_bready(pm_bready),
+      .m_araddr(pm_araddr), .m_arlen(pm_arlen), .m_arsize(pm_arsize),
+      .m_arburst(pm_arburst), .m_arvalid(pm_arvalid), .m_arready(pm_arready),
+      .m_rdata(pm_rdata), .m_rresp(pm_rresp), .m_rlast(pm_rlast),
+      .m_rvalid(pm_rvalid), .m_rready(pm_rready),
+      .store_we(store_we), .store_slot(store_slot),
+      .store_addr(store_addr), .store_wdata(store_wdata),
+      .store_rdata(store_rdata), .store_miss(store_miss),
+      .ch_active(ch_active), .moving(store_busy),
+      .moving_slot(store_busy_slot),
+      .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
+      .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
+      .ch_hit(ch_hit), .deny(store_deny), .irq(pack_irq),
+      .drive_present(drive_present), .drive_read_only(drive_read_only),
+      .drive_timed(drive_timed)
+  );
+
+  cadr_chaos_cable #(.ID_W(4), .LEN_W(8)) u_chaos (
+      .clk(clk), .rst(h2f_rst),
+      .s_awaddr(h2fc_awaddr), .s_awlen(h2fc_awlen), .s_awid(h2fc_awid),
+      .s_awvalid(h2fc_awvalid), .s_awready(h2fc_awready),
+      .s_wdata(h2fc_wdata), .s_wstrb(h2fc_wstrb), .s_wlast(h2fc_wlast),
+      .s_wvalid(h2fc_wvalid), .s_wready(h2fc_wready),
+      .s_bresp(h2fc_bresp), .s_bid(h2fc_bid), .s_bvalid(h2fc_bvalid),
+      .s_bready(h2fc_bready),
+      .s_araddr(h2fc_araddr), .s_arlen(h2fc_arlen), .s_arid(h2fc_arid),
+      .s_arvalid(h2fc_arvalid), .s_arready(h2fc_arready),
+      .s_rdata(h2fc_rdata), .s_rresp(h2fc_rresp), .s_rid(h2fc_rid),
+      .s_rlast(h2fc_rlast), .s_rvalid(h2fc_rvalid), .s_rready(h2fc_rready),
+      .chaos_address(chaos_address),
+      .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
+      .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset),
+      .chaos_csr(chaos_csr),
+      .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word),
+      .chaos_rx_done(chaos_rx_done), .chaos_rx_bits(chaos_rx_bits),
+      .chaos_rx_crc(chaos_rx_crc), .chaos_rx_lost(chaos_rx_lost),
+      .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
+      .chaos_cbl_busy(chaos_cbl_busy),
+      .irq(chaos_irq)
+  );
+
+  cadr_serial_line #(.ID_W(4), .LEN_W(8)) u_serial (
+      .clk(clk), .rst(h2f_rst),
+      .s_awaddr(h2fs_awaddr), .s_awlen(h2fs_awlen), .s_awid(h2fs_awid),
+      .s_awvalid(h2fs_awvalid), .s_awready(h2fs_awready),
+      .s_wdata(h2fs_wdata), .s_wstrb(h2fs_wstrb), .s_wlast(h2fs_wlast),
+      .s_wvalid(h2fs_wvalid), .s_wready(h2fs_wready),
+      .s_bresp(h2fs_bresp), .s_bid(h2fs_bid), .s_bvalid(h2fs_bvalid),
+      .s_bready(h2fs_bready),
+      .s_araddr(h2fs_araddr), .s_arlen(h2fs_arlen), .s_arid(h2fs_arid),
+      .s_arvalid(h2fs_arvalid), .s_arready(h2fs_arready),
+      .s_rdata(h2fs_rdata), .s_rresp(h2fs_rresp), .s_rid(h2fs_rid),
+      .s_rlast(h2fs_rlast), .s_rvalid(h2fs_rvalid), .s_rready(h2fs_rready),
+      .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
+      .ser_cmd(ser_cmd), .ser_status(ser_status),
+      .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
+      .ser_tx_take(ser_tx_take), .ser_tx_done(ser_tx_done),
+      .ser_rx_strobe(ser_rx_strobe), .ser_rx_data(ser_rx_data),
+      .ser_rx_end(ser_rx_end), .ser_rx_parity(ser_rx_parity),
+      .ser_rx_framing(ser_rx_framing),
+      .ser_plugged(ser_plugged),
+      .irq(ser_irq)
+  );
+
+  // The keyboard's cable and the mouse's.  **`mach_rst` AND NOT THE BRIDGE'S
+  // RESET FOR THE QUEUE'S FLUSH**, which is the whole reason that port
+  // exists: the console can restart the CADR while Linux runs, and the
+  // restarted microcode asks whether anybody is typing four instructions in,
+  // so a key queued before the restart would send it down the warm-boot path.
+  // The face's own reset stays the BRIDGE'S, because resetting an AXI state
+  // machine mid-transaction is how a console would hang a core.
+  cadr_input_cables #(.ID_W(4), .LEN_W(8)) u_input (
+      .clk(clk), .rst(h2f_rst), .mach_rst(mach_rst),
+      .s_awaddr(h2fi_awaddr), .s_awlen(h2fi_awlen), .s_awid(h2fi_awid),
+      .s_awvalid(h2fi_awvalid), .s_awready(h2fi_awready),
+      .s_wdata(h2fi_wdata), .s_wstrb(h2fi_wstrb), .s_wlast(h2fi_wlast),
+      .s_wvalid(h2fi_wvalid), .s_wready(h2fi_wready),
+      .s_bresp(h2fi_bresp), .s_bid(h2fi_bid), .s_bvalid(h2fi_bvalid),
+      .s_bready(h2fi_bready),
+      .s_araddr(h2fi_araddr), .s_arlen(h2fi_arlen), .s_arid(h2fi_arid),
+      .s_arvalid(h2fi_arvalid), .s_arready(h2fi_arready),
+      .s_rdata(h2fi_rdata), .s_rresp(h2fi_rresp), .s_rid(h2fi_rid),
+      .s_rlast(h2fi_rlast), .s_rvalid(h2fi_rvalid), .s_rready(h2fi_rready),
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
+      .mouse_lines(mouse_lines),
+      .card_csr(csr_face)
+  );
+
+  cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_h2f_rest (
+      .clk(clk), .rst(h2f_rst),
+      .s_awvalid(h2fd_awvalid), .s_awid(h2fd_awid), .s_awready(h2fd_awready),
+      .s_wlast(h2fd_wlast), .s_wvalid(h2fd_wvalid), .s_wready(h2fd_wready),
+      .s_bresp(h2fd_bresp), .s_bid(h2fd_bid), .s_bvalid(h2fd_bvalid),
+      .s_bready(h2fd_bready),
+      .s_arlen(h2fd_arlen), .s_arid(h2fd_arid), .s_arvalid(h2fd_arvalid),
+      .s_arready(h2fd_arready),
+      .s_rdata(h2fd_rdata), .s_rresp(h2fd_rresp), .s_rid(h2fd_rid),
+      .s_rlast(h2fd_rlast), .s_rvalid(h2fd_rvalid), .s_rready(h2fd_rready)
+  );
+
+  // -------------------------------- the lightweight bridge, two faces
+  logic [31:0] lwc_awaddr, lwc_araddr, lwc_wdata, lwc_rdata;
+  logic [7:0]  lwc_awlen, lwc_arlen;
+  logic [3:0]  lwc_wstrb, lwc_awid, lwc_arid, lwc_bid, lwc_rid;
+  logic        lwc_awvalid, lwc_awready, lwc_wlast, lwc_wvalid, lwc_wready;
+  logic        lwc_bvalid, lwc_bready, lwc_arvalid, lwc_arready;
+  logic        lwc_rlast, lwc_rvalid, lwc_rready;
+  logic [1:0]  lwc_bresp, lwc_rresp;
+  logic [31:0] lwd_awaddr, lwd_araddr, lwd_wdata, lwd_rdata;
+  logic [7:0]  lwd_awlen, lwd_arlen;
+  logic [3:0]  lwd_wstrb, lwd_awid, lwd_arid, lwd_bid, lwd_rid;
+  logic        lwd_awvalid, lwd_awready, lwd_wlast, lwd_wvalid, lwd_wready;
+  logic        lwd_bvalid, lwd_bready, lwd_arvalid, lwd_arready;
+  logic        lwd_rlast, lwd_rvalid, lwd_rready;
+  logic [1:0]  lwd_bresp, lwd_rresp;
+  logic [31:0] lwx_rdata;
+  logic [7:0]  lwx_arlen;
+  logic [3:0]  lwx_awid, lwx_arid, lwx_bid, lwx_rid;
+  logic        lwx_awvalid, lwx_awready, lwx_wlast, lwx_wvalid, lwx_wready;
+  logic        lwx_bvalid, lwx_bready, lwx_arvalid, lwx_arready;
+  logic        lwx_rlast, lwx_rvalid, lwx_rready;
+  logic [1:0]  lwx_bresp, lwx_rresp;
+
+  cadr_gp1_split #(
+      .CON_BASE(32'h0000_0000),
+      .DBG_BASE(32'h0000_1000),
+      .ID_W(4), .LEN_W(8)
+  ) u_lw_split (
+      .clk(clk), .rst(h2f_rst),
+      .s_awaddr({3'b000, lw_awaddr}), .s_awlen(lw_awlen), .s_awid(lw_awid),
+      .s_awvalid(lw_awvalid), .s_awready(lw_awready),
+      .s_wdata(lw_wdata), .s_wstrb(lw_wstrb), .s_wlast(lw_wlast),
+      .s_wvalid(lw_wvalid), .s_wready(lw_wready),
       .s_bresp(lw_bresp), .s_bid(lw_bid), .s_bvalid(lw_bvalid),
       .s_bready(lw_bready),
-      .s_arlen(lw_arlen), .s_arid(lw_arid), .s_arvalid(lw_arvalid),
-      .s_arready(lw_arready), .s_rdata(lw_rdata), .s_rresp(lw_rresp),
-      .s_rid(lw_rid), .s_rlast(lw_rlast), .s_rvalid(lw_rvalid),
-      .s_rready(lw_rready)
+      .s_araddr({3'b000, lw_araddr}), .s_arlen(lw_arlen), .s_arid(lw_arid),
+      .s_arvalid(lw_arvalid), .s_arready(lw_arready),
+      .s_rdata(lw_rdata), .s_rresp(lw_rresp), .s_rid(lw_rid),
+      .s_rlast(lw_rlast), .s_rvalid(lw_rvalid), .s_rready(lw_rready),
+      .con_awaddr(lwc_awaddr), .con_awlen(lwc_awlen), .con_awid(lwc_awid),
+      .con_awvalid(lwc_awvalid), .con_awready(lwc_awready),
+      .con_wdata(lwc_wdata), .con_wstrb(lwc_wstrb), .con_wlast(lwc_wlast),
+      .con_wvalid(lwc_wvalid), .con_wready(lwc_wready),
+      .con_bresp(lwc_bresp), .con_bid(lwc_bid), .con_bvalid(lwc_bvalid),
+      .con_bready(lwc_bready),
+      .con_araddr(lwc_araddr), .con_arlen(lwc_arlen), .con_arid(lwc_arid),
+      .con_arvalid(lwc_arvalid), .con_arready(lwc_arready),
+      .con_rdata(lwc_rdata), .con_rresp(lwc_rresp), .con_rid(lwc_rid),
+      .con_rlast(lwc_rlast), .con_rvalid(lwc_rvalid), .con_rready(lwc_rready),
+      .dbg_awaddr(lwd_awaddr), .dbg_awlen(lwd_awlen), .dbg_awid(lwd_awid),
+      .dbg_awvalid(lwd_awvalid), .dbg_awready(lwd_awready),
+      .dbg_wdata(lwd_wdata), .dbg_wstrb(lwd_wstrb), .dbg_wlast(lwd_wlast),
+      .dbg_wvalid(lwd_wvalid), .dbg_wready(lwd_wready),
+      .dbg_bresp(lwd_bresp), .dbg_bid(lwd_bid), .dbg_bvalid(lwd_bvalid),
+      .dbg_bready(lwd_bready),
+      .dbg_araddr(lwd_araddr), .dbg_arlen(lwd_arlen), .dbg_arid(lwd_arid),
+      .dbg_arvalid(lwd_arvalid), .dbg_arready(lwd_arready),
+      .dbg_rdata(lwd_rdata), .dbg_rresp(lwd_rresp), .dbg_rid(lwd_rid),
+      .dbg_rlast(lwd_rlast), .dbg_rvalid(lwd_rvalid), .dbg_rready(lwd_rready),
+      .dflt_awid(lwx_awid), .dflt_awvalid(lwx_awvalid),
+      .dflt_awready(lwx_awready),
+      .dflt_wlast(lwx_wlast), .dflt_wvalid(lwx_wvalid),
+      .dflt_wready(lwx_wready),
+      .dflt_bresp(lwx_bresp), .dflt_bid(lwx_bid), .dflt_bvalid(lwx_bvalid),
+      .dflt_bready(lwx_bready),
+      .dflt_arlen(lwx_arlen), .dflt_arid(lwx_arid),
+      .dflt_arvalid(lwx_arvalid), .dflt_arready(lwx_arready),
+      .dflt_rdata(lwx_rdata), .dflt_rresp(lwx_rresp), .dflt_rid(lwx_rid),
+      .dflt_rlast(lwx_rlast), .dflt_rvalid(lwx_rvalid),
+      .dflt_rready(lwx_rready)
   );
 
-  // What a default slave does not read, and what the bridge answers the
-  // share with that AXI4 has and the share does not use: the user fields of
-  // a response.  The upper thirty general-purpose output bits are software's,
-  // for nothing yet.
+  // **WHICH BUILD THIS FABRIC IS**, page 2's word 32.  **ALL ONES, WHICH IS
+  // THE CONSOLE'S WORD FOR "THIS FABRIC CANNOT SAY".**  On a Zynq board
+  // `cadr_usr_access.sv` reads the stamp back out of the part's own AXSS
+  // register, and this part has no equivalent the fabric can read; the same
+  // commit IS in this bitstream's USERCODE, which `boards/de25-nano/quartus/
+  // usercode.tcl` writes and a JTAG cable reads, so the fact is not lost, it
+  // is only unreadable from inside.  Saying so is the point: the console
+  // distinguishes "this is build X" from "this fabric cannot say", and a
+  // number invented here would be a lie a program could not see through.
+  localparam logic [31:0] NO_BUILD_STAMP = 32'hFFFF_FFFF;
+
+  // The display output is a later slice, so its sleep has nothing behind it
+  // and page 2's word 36 reads `UNMAPPED`.
+  logic        con_hdmi_sleep_set, con_hdmi_wake;
+  logic [14:0] con_hdmi_sleep_secs;
+  logic [1:0]  con_hdmi_out, con_hdmi_rotate;
+  logic        con_dbg_connect;
+  logic [1:0]  con_dbg_wiring;
+
+  cadr_console #(
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+  ) u_console (
+      .clk(clk), .rst(h2f_rst),
+      .s_awaddr(lwc_awaddr), .s_awlen(lwc_awlen), .s_awid(lwc_awid),
+      .s_awvalid(lwc_awvalid), .s_awready(lwc_awready),
+      .s_wdata(lwc_wdata), .s_wstrb(lwc_wstrb), .s_wlast(lwc_wlast),
+      .s_wvalid(lwc_wvalid), .s_wready(lwc_wready),
+      .s_bresp(lwc_bresp), .s_bid(lwc_bid), .s_bvalid(lwc_bvalid),
+      .s_bready(lwc_bready),
+      .s_araddr(lwc_araddr), .s_arlen(lwc_arlen), .s_arid(lwc_arid),
+      .s_arvalid(lwc_arvalid), .s_arready(lwc_arready),
+      .s_rdata(lwc_rdata), .s_rresp(lwc_rresp), .s_rid(lwc_rid),
+      .s_rlast(lwc_rlast), .s_rvalid(lwc_rvalid), .s_rready(lwc_rready),
+      .dbg_req(con_req), .dbg_gnt(con_gnt),
+      .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
+      .tv_map_a(con_tv_map_a), .tv_map_q(tv_map_q),
+      .tv_color_map_q(tv_color_map_q),
+      // **THERE IS NO DISPLAY OUTPUT ON THIS BOARD YET**, so the mode this
+      // bitstream was built with is 0, the sleep is not fitted and word 36
+      // reads `UNMAPPED`, and what a write to word 34 asks for is held and
+      // read back with nothing behind it.
+      .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
+      .hdmi_mode(2'd0),
+      .steady_lamps(con_steady_lamps),
+      .hdmi_sleep_set(con_hdmi_sleep_set),
+      .hdmi_sleep_secs(con_hdmi_sleep_secs),
+      .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(1'b0),
+      .hdmi_sleep_q(15'd0), .hdmi_asleep(1'b0),
+      .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
+      .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
+      .clock_edge(clock_edge),
+      .mach_vma(con_vma), .mach_q(con_q), .mach_md(con_md),
+      .build(NO_BUILD_STAMP),
+      .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
+      .mach_rst(con_mach_rst),
+      .mach_boot(con_mach_boot),
+      .no_auto_boot_held(sw0_held),
+      .no_auto_boot_now(sw0_level),
+      // **THE DEBUG CABLE'S ROLE**, page 0's word 14.  There is no connector
+      // on this board yet --- JP1's is a later slice --- so this board is a
+      // debuggee and nothing else: what it asks for is held and read back,
+      // the wiring is undetected, no frame has been heard and no peer is
+      // there.  That is what `cadr_dbg_cable.sv` reports on a board whose
+      // connector is empty, and it is what this board's connector is.
+      .dbg_connect(con_dbg_connect),
+      .dbg_wiring(con_dbg_wiring),
+      .dbg_wire_state(3'd0),
+      .dbg_frames(24'd0),
+      .dbg_engaged(1'b0),
+      .dbg_foreign(1'b0),
+      .dbg_peer_far(1'b0),
+      .dbg_live(1'b0),
+      .dbg_active(1'b0)
+  );
+
+  // **THE DEBUG CABLE'S CARRIER**, MIT's twenty-one wires as sixteen words on
+  // the lightweight bridge, one page above the console.  Its far end is
+  // `rtl/machine/cadr_dbgin.sv` inside `cadr_machine`, and the debugger is
+  // muir on this board's own cores, reaching it through `/dev/mem` with
+  // `--debug-cable-connect 0x20001000`.  **IT TAKES THE BRIDGE'S RESET AND
+  // NOT THE MACHINE'S**: modifier bit 1 resets the machine over this very
+  // cable, and a carrier reset by it would forget the request that asked for
+  // it.
+  cadr_debug_window #(
+      .REG_BASE(32'h0000_1000), .ID_W(4), .LEN_W(8)
+  ) u_debug_window (
+      .clk(clk), .rst(h2f_rst),
+      .s_awaddr(lwd_awaddr), .s_awlen(lwd_awlen), .s_awid(lwd_awid),
+      .s_awvalid(lwd_awvalid), .s_awready(lwd_awready),
+      .s_wdata(lwd_wdata), .s_wstrb(lwd_wstrb), .s_wlast(lwd_wlast),
+      .s_wvalid(lwd_wvalid), .s_wready(lwd_wready),
+      .s_bresp(lwd_bresp), .s_bid(lwd_bid), .s_bvalid(lwd_bvalid),
+      .s_bready(lwd_bready),
+      .s_araddr(lwd_araddr), .s_arlen(lwd_arlen), .s_arid(lwd_arid),
+      .s_arvalid(lwd_arvalid), .s_arready(lwd_arready),
+      .s_rdata(lwd_rdata), .s_rresp(lwd_rresp), .s_rid(lwd_rid),
+      .s_rlast(lwd_rlast), .s_rvalid(lwd_rvalid), .s_rready(lwd_rready),
+      .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
+      .dbd_out(dbd_in),
+      .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_out), .dbd_oe(dbd_oe)
+  );
+
+  cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_lw_rest (
+      .clk(clk), .rst(h2f_rst),
+      .s_awvalid(lwx_awvalid), .s_awid(lwx_awid), .s_awready(lwx_awready),
+      .s_wlast(lwx_wlast), .s_wvalid(lwx_wvalid), .s_wready(lwx_wready),
+      .s_bresp(lwx_bresp), .s_bid(lwx_bid), .s_bvalid(lwx_bvalid),
+      .s_bready(lwx_bready),
+      .s_arlen(lwx_arlen), .s_arid(lwx_arid), .s_arvalid(lwx_arvalid),
+      .s_arready(lwx_arready),
+      .s_rdata(lwx_rdata), .s_rresp(lwx_rresp), .s_rid(lwx_rid),
+      .s_rlast(lwx_rlast), .s_rvalid(lwx_rvalid), .s_rready(lwx_rready)
+  );
+
+  // **THE THREE FACES' INTERRUPTS HAVE NOWHERE TO GO ON THIS BOARD YET.**
+  // The Zynq boards carry them to `IRQ_F2P`; the Agilex 5's fabric-to-
+  // processor interrupts are not brought out of the generated system, so the
+  // programs poll, which is what they do by default and what their `--irq`
+  // flag is the alternative to.
+  //
+  // AND WHAT NEITHER SPLITTER READS OF A TRANSACTION, which is every
+  // attribute but the address, the length and the ID: the size, the burst
+  // type, the lock, the cache hints and the protection bits.  A register face
+  // answering one word at every address in its page answers the same word
+  // whatever they say, and a byte within a word is the write strobes' business
+  // and not AxSIZE's --- `cadr_gp0_default.sv` states that for its own
+  // window and `cadr_gp_regs.sv` for a face's.  Read here so that lint holds
+  // every one of them to being deliberately unused rather than accidentally
+  // unconnected, which is the same rule the machine's fold keeps.
   /* verilator lint_off UNUSEDSIGNAL */
+  logic pack_irq, chaos_irq, ser_irq;
   logic hps_unused;
-  assign hps_unused = ^{h2f_awaddr, h2f_awlen, h2f_awsize, h2f_awburst,
-                        h2f_awlock, h2f_awcache, h2f_awprot, h2f_wdata,
-                        h2f_wstrb, h2f_araddr, h2f_arsize, h2f_arburst,
-                        h2f_arlock, h2f_arcache, h2f_arprot,
-                        lw_awaddr, lw_awlen, lw_awsize, lw_awburst, lw_awlock,
-                        lw_awcache, lw_awprot, lw_wdata, lw_wstrb, lw_araddr,
-                        lw_arsize, lw_arburst, lw_arlock, lw_arcache,
-                        lw_arprot, f2s_buser, f2s_ruser, gp_out[31:2]};
+  assign hps_unused = ^{f2s_buser, f2s_ruser, gp_out[31:2],
+                        h2f_awsize, h2f_arsize, h2f_awprot, h2f_arprot,
+                        h2f_awburst, h2f_arburst, h2f_awlock, h2f_arlock,
+                        h2f_awcache, h2f_arcache,
+                        lw_awsize, lw_arsize, lw_awprot, lw_arprot,
+                        lw_awburst, lw_arburst, lw_awlock, lw_arlock,
+                        lw_awcache, lw_arcache,
+                        pack_irq, chaos_irq, ser_irq,
+                        con_hdmi_out, con_hdmi_rotate, con_hdmi_sleep_set,
+                        con_hdmi_sleep_secs, con_hdmi_wake,
+                        con_dbg_connect, con_dbg_wiring};
   /* verilator lint_on UNUSEDSIGNAL */
 `else
-  // NO MEMORY: the machine's cycles to it end on the NXM timer.
+  // NO PROCESSOR: no memory, and every cable out of the machine has nothing
+  // on its far end.  These are the tie-offs the memory board's faces replace,
+  // and they are what a CADR with an empty backplane connector is.
+  //
+  // NO MEMORY: the machine's cycles to it end on the NXM timer, and the
+  // machine is not held, because there is no port for it to wait for.
   assign mem_done  = 1'b0;
   assign mem_rdata = 32'd0;
   assign port_live = 1'b0;
+  assign mach_hold = 1'b0;
+  assign port_read_ack  = 1'b0;
+  assign port_write_ack = 1'b0;
+
+  // NO DRIVE AND NO PACK.  With `drive_present` at zero the status register
+  // answers `0x2321` for every one of the boot PROM's polls, and tied off the
+  // whole drive constant-folds, so this fit counts the register face and the
+  // decode and not the spindle.
+  assign drive_present   = 8'd0;
+  assign drive_read_only = 8'd0;
+  assign drive_timed     = 1'b0;
+  assign store_we        = 1'b0;
+  assign store_slot      = 5'd0;
+  assign store_addr      = 9'd0;
+  assign store_wdata     = 32'd0;
+  assign store_busy      = 1'b0;
+  assign store_busy_slot = 5'd0;
+  assign store_deny      = 1'b0;
+
+  // THE I/O BOARD'S CABLES, WITH NOTHING ON THEIR FAR ENDS.  No strobe means
+  // no scan code.  The mouse's seven lines are ALL ONES and not zero: each
+  // switch pulls to ground when pressed and each quadrature line is high at
+  // rest, so all ones is a mouse nobody is touching.  The serial line is
+  // unplugged, so with `ser_plugged` down the 2651's sheet holds both halves
+  // stopped; and the Chaosnet has its address switches at zero and no frame
+  // ever arriving.
+  assign kbd_strobe     = 1'b0;
+  assign kbd_code       = 24'd0;
+  assign mouse_lines    = 7'h7F;
+  assign ser_tx_take    = 1'b0;
+  assign ser_tx_done    = 1'b0;
+  assign ser_rx_strobe  = 1'b0;
+  assign ser_rx_data    = 8'd0;
+  assign ser_rx_end     = 1'b0;
+  assign ser_rx_parity  = 1'b0;
+  assign ser_rx_framing = 1'b0;
+  assign ser_plugged    = 1'b0;
+  assign chaos_address  = 16'd0;
+  assign chaos_rx_valid = 1'b0;
+  assign chaos_rx_word  = 16'd0;
+  assign chaos_rx_done  = 1'b0;
+  assign chaos_rx_bits  = 13'd0;
+  assign chaos_rx_crc   = 1'b0;
+  assign chaos_rx_lost  = 1'b0;
+  assign chaos_tx_done  = 1'b0;
+  assign chaos_tx_abort = 1'b0;
+  assign chaos_cbl_busy = 1'b0;
+
+  // NO CONSOLE, so nothing asks for the bus, nothing resets or boots the
+  // machine, the backplane is one SIMPLE TV and no color board, the lamps
+  // blink, and the readout's address stands at the reserved selector where
+  // the machine answers `RO_NO_MEMORY` for ever.
+  assign con_req          = 1'b0;
+  assign con_msyn         = 1'b0;
+  assign con_write        = 1'b0;
+  assign con_addr         = 18'd0;
+  assign con_wdata        = 16'd0;
+  assign con_ro_addr      = 18'h3FFFF;
+  assign con_mach_rst     = 1'b0;
+  assign con_mach_boot    = 1'b0;
+  assign con_tv_lispm     = 1'b0;
+  assign con_color_tv     = 1'b0;
+  assign con_tv_map_a     = 4'd0;
+  assign con_steady_lamps = 1'b0;
+
+  // NO DEBUG CABLE.  `-DEBUG IN REQ` held UP, which is `dbg_in_req` low, is
+  // what the SIP at DBGIN 0A22 makes of an unplugged connector, and the DBGIN
+  // page folds to its idle state.
+  assign dbg_in_req = 1'b0;
+  assign dbg_in_wr  = 1'b0;
+  assign dbg_in_a   = 2'd0;
+  assign dbd_in     = 16'd0;
+
+  // And what the machine gives those cables, read here so that lint holds a
+  // board with no far ends to reading every one of them.
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic nopack_unused;
+  assign nopack_unused = ^{store_rdata, store_miss, ch_active,
+                           req_valid, req_tag, req_post,
+                           ch_waiting, ch_slot, ch_wrote, ch_hit,
+                           sw0_held, csr_face};
+  /* verilator lint_on UNUSEDSIGNAL */
 `endif
 
   // ------------------------------------------------------------ the probe
@@ -811,15 +1483,16 @@ module cadr_de25 #(
     end
   end
 
-  // LEDR1 and LEDR2, blinking.  They are the modules the Zynq boards use and
-  // `build/blink_lamps.pass` holds; with no console `steady` is tied low.
+  // LEDR1 and LEDR2, blinking or steady.  They are the modules the Zynq
+  // boards use and `build/blink_lamps.pass` holds; the console's word 35 is
+  // what asks for steady, and with no console they blink.
   logic clock_lamp, cycle_lamp;
   cadr_lamp_clock u_lamp_clock (
-      .steady(1'b0), .locked(pll_locked), .blink(tick[25]),
+      .steady(con_steady_lamps), .locked(pll_locked), .blink(tick[25]),
       .lit(clock_lamp)
   );
   cadr_lamp_microcycle u_lamp_microcycle (
-      .clk(clk), .rst(mach_rst), .steady(1'b0),
+      .clk(clk), .rst(mach_rst), .steady(con_steady_lamps),
       .retired(clock_edge), .lit(cycle_lamp)
   );
 

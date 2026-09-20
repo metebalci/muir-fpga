@@ -11065,9 +11065,9 @@ if {0 && $held ne $want} {
 @note is not the last", on the nine-beat burst across the Chaosnet cable's
 @note registers.
 @old
-  assign s_rlast   = (r_left == 4'd0);
+  assign s_rlast   = (r_left == '0);
 @new
-  assign s_rlast   = (r_left == 4'd1);
+  assign s_rlast   = (r_left == LEN_W'(1));
 @end
 
 @mutation gp-regs-samples-the-word-a-tick-early
@@ -11626,9 +11626,9 @@ if {0 && $held ne $want} {
 @note store disagrees rather than agrees.  Caught at "WAITING with the store
 @note full".
 @old
-    parameter int unsigned STORE_DEPTH = 1024
+    parameter int unsigned STORE_DEPTH = 1024,
 @new
-    parameter int unsigned STORE_DEPTH = 64
+    parameter int unsigned STORE_DEPTH = 64,
 @end
 
 @mutation serial-line-read-pointer-wraps-a-slot-early
@@ -15955,17 +15955,23 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @check de25
 @file boards/de25-nano/cadr_de25.sv
 @note SW0 is the no-auto-boot switch, as on the Arty Z7-20: up, the machine
-@note comes out of reset with `RUN` clear and waits for KEY0. On this board no
-@note console and no `fpgarc` flag can ask for that state instead, so the
-@note switch is the only way to hold the machine at power-on. Tied low at the
-@note instance, the machine always runs, and the synchronizer's last stage is
-@note read by nothing.
+@note comes out of reset with `RUN` clear and waits for KEY0. The console can
+@note ask for the same state on the memory board, and on the board without one
+@note the switch is the only way to hold the machine at power-on. Killed at its
+@note source the switch reaches neither the machine nor the console, and the
+@note synchronizer's last stage is read by nothing.
+@note
+@note **THE MUTATION IS AT THE SWITCH AND NOT AT THE INSTANCE**, because the
+@note console reads the same level for what `cadr-console status` prints: tied
+@note off at the machine alone, the level is still read and lint has nothing to
+@note say. Killed here, both readers lose it at once, which is the fault this
+@note record is about. Lint is the only tool that sees this file at all.
 @note
 @note Caught as UNUSEDSIGNAL on bit 2 of `sw0_sync`.
 @old
-      .n_boot2(n_boot2), .no_auto_boot(sw0_sync[2]),
+  assign sw0_level = sw0_sync[2];
 @new
-      .n_boot2(n_boot2), .no_auto_boot(1'b0),
+  assign sw0_level = 1'b0;
 @end
 
 @mutation the-level-1-map-is-read-in-its-undefined-tick
@@ -15993,4 +15999,218 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   assign l1_rdw = l1_w_q && adr0 == l1_wa_q;
 @new
   assign l1_rdw = (wp && wmapd && vma[26]) || (l1_w_q && adr0 == l1_wa_q);
+@end
+
+# ======================================================================
+# THE MACHINE WAITS FOR ITS MEMORY, WHICH IS THE DE25-NANO'S ORDERING
+# ======================================================================
+#
+# On a Zynq board the processing system is configured before the fabric is, so
+# `S_AXI_HP0` is live before the machine's first tick.  On this board the
+# fabric is configured first and the bridge is opened by software in U-Boot,
+# seconds later, while the boot PROM's only traffic to main memory is 512 bus
+# cycles 118 ms after the machine's own reset and none before or after.  A
+# machine released at the fabric's reset therefore spends that one pass
+# against a shut port EVERY time, on a board whose memory works perfectly.
+# `may_start` is the hold, and the OPEN and NEVER configurations of `f2sdram`
+# are its two halves.
+
+@mutation the-machine-need-not-wait-for-its-memory
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The hold released at the fabric's reset, which is the fault itself: the
+@note machine runs from configuration and its one memory pass meets a port
+@note software has not opened.  On the board it looks exactly like a dead
+@note bridge, and the tally reads 256 asked and none answered, which is why
+@note the ordering is held here and not left to be noticed at the board.
+@note
+@note Caught twice: at OPEN, "the machine retired its first microcycle at tick
+@note ... and the port came live at tick ..., so the machine ran before its
+@note memory did"; and at NEVER, "the machine retired a microcycle ... with
+@note its memory port never opened".
+@old
+    if (rst) may_start <= 1'b0;
+@new
+    if (rst) may_start <= 1'b1;
+@end
+
+@mutation the-machines-hold-follows-the-port-rather-than-latching
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The hold is a LATCH: it goes up when the port first becomes live and
+@note stays up until the fabric's own reset.  Made to follow the level, a
+@note machine that has been running for an hour is reset the moment software
+@note lowers the bit or the processor resets --- and the processor's reset
+@note lowers those bits in hardware, so this is a machine any warm reset of
+@note the Arm wipes.  A shut port under a running machine must do what a board
+@note with no memory does, which is end every cycle on the NXM timer, and
+@note `cadr_f2sdram_share.sv` is where that is arranged.
+@note
+@note Caught at SHUT, "microcycles retired, and shutting the port must not stop
+@note a machine that has already started", and again at "the tally asks 256
+@note reads and 256 writes" --- a machine reset at two milliseconds never
+@note reaches its memory pass at all.
+@old
+    else if (live) may_start <= 1'b1;
+@new
+    else may_start <= live;
+@end
+
+# ======================================================================
+# A READ OF MORE THAN SIXTEEN BEATS, WHICH ONLY THE BRIDGES CAN ASK FOR
+# ======================================================================
+#
+# A Zynq `M_AXI_GP` carries four bits of burst length and the Agilex 5's two
+# processor-to-fabric bridges carry eight, so a read there can be 256 beats.
+# Every face on those bridges counts the beats it owes for itself, and one
+# that counted four bits of the length would give the first sixteen of a
+# longer burst and leave the processor owing the rest --- which on a
+# general-purpose port is not a wrong answer but two frozen cores.  At the
+# Zynq's own shape the mutation is the same expression, so the checks that
+# see these are the ones built at the bridges' shape.  The length is masked
+# rather than sliced, so that every bit of it stays read and lint does not do
+# the catching.
+
+@mutation gp-regs-counts-four-bits-of-a-bursts-length
+@check gp0_split_axi4
+@file rtl/plumbing/cadr_gp_regs.sv
+@note The face the Chaosnet cable, the serial line and the input cables all
+@note present.  Caught at "beats of the longest read this port can ask for".
+@old
+          r_left <= s_arlen;
+@new
+          r_left <= s_arlen & LEN_W'(15);
+@end
+
+@mutation pack-side-counts-four-bits-of-a-bursts-length
+@check gp0_split_axi4
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The pack side's own face, which is written out by hand rather than built
+@note on `cadr_gp_regs.sv` and so has to be held separately.  Caught at "a read
+@note that never completed --- the board's frozen cores", on the sweep's own
+@note reads once the count has been left short.
+@old
+          r_left <= s_arlen;
+@new
+          r_left <= s_arlen & LEN_W'(15);
+@end
+
+@mutation console-counts-four-bits-of-a-bursts-length
+@check gp1_split_axi4
+@file rtl/plumbing/cadr_console.sv
+@note The console's face on the lightweight bridge.  Caught at "beats of the
+@note longest read this port can ask for".
+@old
+          r_left <= s_arlen;
+@new
+          r_left <= s_arlen & LEN_W'(15);
+@end
+
+@mutation debug-window-counts-four-bits-of-a-bursts-length
+@check gp1_split_axi4
+@file rtl/plumbing/cadr_debug_window.sv
+@note The debug cable's carrier, one page above the console.  Caught at "beats
+@note of the longest read this port can ask for".
+@old
+          r_left <= s_arlen;
+@new
+          r_left <= s_arlen & LEN_W'(15);
+@end
+
+# ======================================================================
+# WHERE THE DE25-NANO'S FACES SIT
+# ======================================================================
+#
+# A face behind a processor-to-fabric bridge is placed by a parameter on its
+# instance in a file nothing simulates, and lint has no opinion about a
+# number.  What makes it checkable is that the address is written twice: as an
+# offset into the bridge's window here, and as the processor's address in
+# `cadr_board.h`, which every program takes it from.
+# `tools/de25_faces_check.py` requires the two to agree.
+
+@mutation de25-the-chaosnet-face-is-a-page-out
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note A face one page out builds, fits and programs, and every program that
+@note reads it gets the default slave's "NONE" --- or, a page the other way,
+@note the neighboring face's words, which is a working face with somebody
+@note else's contents in it.  This is the fault the check exists for, and it
+@note is invisible to lint and to the fitter alike.
+@note
+@note Caught at "u_h2f_split.CHAOS_BASE is 0x00004000, and the programs look
+@note at 0x40001000".
+@old
+      .CHAOS_BASE(32'h0000_1000),
+@new
+      .CHAOS_BASE(32'h0000_4000),
+@end
+
+@mutation de25-a-face-takes-the-processors-address-and-not-the-offset
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note The bridges hand the fabric an OFFSET into their window and not the
+@note processor's address, which is the one thing about this board's map that
+@note is easy to get wrong: the Zynq boards' faces take `0x4000_0000` itself,
+@note the number looks familiar, and the design elaborates either way.  Given
+@note the processor's address, the console's page is at 0x2000_0000 of a
+@note window that is 512 MB long, so nothing answers it and the face is
+@note unreachable.
+@note
+@note Caught at "u_console.REG_BASE is 0x20000000, and the programs look at
+@note 0x20000000, which is 0x00000000 into the bridge's window".
+@old
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+  ) u_console (
+@new
+      .REG_BASE(32'h2000_0000), .ID_W(4), .LEN_W(8)
+  ) u_console (
+@end
+
+@mutation de25-the-pack-face-is-built-at-the-zynqs-axi3-shape
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note Both bridges are AXI4 and carry eight bits of burst length; a face left
+@note at the Zynq's four answers a read of more than sixteen beats with
+@note sixteen and leaves the processor owing the rest, which on a
+@note general-purpose port is two frozen cores.  The face still elaborates,
+@note because a narrower parameter is a legal parameter.
+@note
+@note Caught at "u_pack does not set LEN_W to 8, so it is built at the Zynq's
+@note AXI3 shape on an AXI4 bridge".
+@old
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+  ) u_pack (
+@new
+      .REG_BASE(32'h0000_0000), .ID_W(4)
+  ) u_pack (
+@end
+
+# ======================================================================
+# THE BLOCK STORE'S UNDEFINED TICK
+# ======================================================================
+#
+# On the DE25-Nano the disk controller's block store is an M20K with
+# read-during-write checking off, because Agilex 5's M20K does not offer old
+# data at a port that is writing and the alternative is 196,608 bits built out
+# of logic --- measured at 332,163 ALUTs of a part that has 93,600.  So the
+# word either port reads in the tick after an edge that wrote the array is not
+# specified, and `rdw_poison_disk` returns the complement there.
+
+@mutation the-block-store-is-read-in-its-undefined-tick
+@check rdw_poison_disk
+@file rtl/machine/cadr_disk_controller.sv
+@note The poison held to every tick instead of the tick after a write, which
+@note is what the check would see if a reader of the store DID sample a word
+@note in the tick the relaxation leaves undefined.  It must be caught or the
+@note check is blind to the thing it is for: a poison nothing samples and a
+@note poison that never fires look exactly alike from the outside, and this is
+@note what tells them apart.
+@note
+@note Caught by the channel's own read-back: every word of every block is a
+@note function of the block AND the offset within it (`golden/src/disk.rs`'s
+@note `pack_word`), so a complemented word cannot read like any right one.
+@old
+    blk_rdw <= (store_we && store_addr < 9'(BLOCK_WORDS)) || chb_we;
+@new
+    blk_rdw <= (store_we && store_addr < 9'(BLOCK_WORDS)) || chb_we || 1'b1;
 @end

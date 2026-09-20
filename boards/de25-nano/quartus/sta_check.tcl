@@ -313,7 +313,8 @@ if {[get_collection_size $probe] == 0} {
 # register of the adapter, and the processor's four asynchronous bits and the
 # default slaves' reset cut at their first register and nowhere else.
 set ddr_exempt [get_registers -nowarn {u_memory|u_axi|m_axi_awaddr[*] u_memory|u_axi|m_axi_araddr[*]
-                                       u_memory|u_axi|m_axi_wdata[*]}]
+                                       u_memory|u_axi|m_axi_wdata[*]
+                                       u_debug_window|sts_dbd[*]}]
 if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     puts "sta: the memory port is not in this build"
 } else {
@@ -329,7 +330,8 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     # register for them, so the pins are 24 + 24 + 32.
     foreach {sta_what sta_var sta_want} {{the adapter's address and data pins} ddr_contract 80
                              {the registers the processor samples on its own clock} ddr_to_hps 32
-                             {the processor's asynchronous bits' first registers} ddr_crossing 5} {
+                             {the processor's asynchronous bits' first registers} ddr_crossing 5
+                             {the debug cable's carrier latch} cable_word 16} {
         if {![info exists ::$sta_var]} {
             puts "sta: FAIL: cadr_ddr.sdc left no collection named $sta_var"
             incr failures
@@ -345,6 +347,11 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     }
     # grid: 80 ns
     assert_instance_timing $tick 8 u_memory|u_axi {m_axi_awaddr m_axi_araddr m_axi_wdata}
+    # And the debug cable's carrier: `sts_dbd` at the cable's six ticks and no
+    # other register of the window, which is `cadr_ddr.sdc`'s split for it and
+    # the reason that clause names the `|d` pins.
+    # grid: 60 ns
+    assert_instance_timing $tick 6 u_debug_window {sts_dbd}
     # And a cut that reached its registers leaves no timed path out of them.
     if {[info exists ::ddr_to_hps] && [get_collection_size $::ddr_to_hps] > 0} {
         set timed [get_collection_size [get_timing_paths -setup -from $::ddr_to_hps -npaths 100]]

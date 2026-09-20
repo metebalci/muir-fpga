@@ -195,17 +195,23 @@ module cadr_debug_window #(
     // bound on how long a wedged bus may stand before somebody at the
     // board notices, so what it wants is a second of REAL time; `LEAD_T`
     // above it is the machine's own instant and is on the grid.
-    parameter int unsigned WATCHDOG_T = 100_000_000
+    parameter int unsigned WATCHDOG_T = 100_000_000,
+    // The transaction ID's width and the read burst length's: twelve and four
+    // on a Zynq board's `M_AXI_GP`, which is AXI3, and four and eight on the
+    // Agilex 5's two processor-to-fabric bridges, which are AXI4 and so may
+    // ask for 256 beats.  `cadr_gp0_default.sv`'s header has the argument.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
 
-    // --- the general-purpose port, on which the processing system is the
-    // --- master.  AXI3, 32 bits, 12-bit IDs, one write and one read in
-    // --- flight at once.
+    // --- the general-purpose port, on which the processor is the master.
+    // --- 32 bits, one write and one read in flight at once; `ID_W` and
+    // --- `LEN_W` say which of the two shapes.
     input  var logic [31:0] s_awaddr,
-    input  var logic [3:0]  s_awlen,
-    input  var logic [11:0] s_awid,
+    input  var logic [LEN_W-1:0] s_awlen,
+    input  var logic [ID_W-1:0] s_awid,
     input  var logic        s_awvalid,
     output var logic        s_awready,
     input  var logic [31:0] s_wdata,
@@ -214,17 +220,17 @@ module cadr_debug_window #(
     input  var logic        s_wvalid,
     output var logic        s_wready,
     output var logic [1:0]  s_bresp,
-    output var logic [11:0] s_bid,
+    output var logic [ID_W-1:0] s_bid,
     output var logic        s_bvalid,
     input  var logic        s_bready,
     input  var logic [31:0] s_araddr,
-    input  var logic [3:0]  s_arlen,
-    input  var logic [11:0] s_arid,
+    input  var logic [LEN_W-1:0] s_arlen,
+    input  var logic [ID_W-1:0] s_arid,
     input  var logic        s_arvalid,
     output var logic        s_arready,
     output var logic [31:0] s_rdata,
     output var logic [1:0]  s_rresp,
-    output var logic [11:0] s_rid,
+    output var logic [ID_W-1:0] s_rid,
     output var logic        s_rlast,
     output var logic        s_rvalid,
     input  var logic        s_rready,
@@ -290,8 +296,8 @@ module cadr_debug_window #(
   rstate_e rstt;
 
   logic [31:0] w_at, r_at;
-  logic [11:0] w_id, r_id;
-  logic [3:0]  r_left;
+  logic [ID_W-1:0]  w_id, r_id;
+  logic [LEN_W-1:0] r_left;
   logic [31:0] w_next, r_next;
   assign w_next = w_at + 32'd4;
   assign r_next = r_at + 32'd4;
@@ -319,7 +325,7 @@ module cadr_debug_window #(
 
   assign s_arready = (rstt == R_ADDR);
   assign s_rvalid  = (rstt == R_DATA);
-  assign s_rlast   = (r_left == 4'd0);
+  assign s_rlast   = (r_left == '0);
   assign s_rresp   = 2'b00;   // OKAY, everywhere
   assign s_rdata   = rdata_q;
   assign s_rid     = r_id;
@@ -463,12 +469,12 @@ module cadr_debug_window #(
     if (rst) begin
       wst      <= W_ADDR;
       w_at     <= 32'd0;
-      w_id     <= 12'd0;
+      w_id     <= '0;
       w_last_q <= 1'b0;
       rstt     <= R_ADDR;
       r_at     <= 32'd0;
-      r_id     <= 12'd0;
-      r_left   <= 4'd0;
+      r_id     <= '0;
+      r_left   <= '0;
       r_in_q   <= 1'b0;
       r_idx_q  <= 4'd0;
       rdata_q  <= 32'd0;
@@ -512,10 +518,10 @@ module cadr_debug_window #(
           rstt    <= R_DATA;
         end
         R_DATA: if (s_rready) begin
-          if (r_left == 4'd0) rstt <= R_ADDR;
+          if (r_left == '0) rstt <= R_ADDR;
           else begin
             r_at   <= r_next;
-            r_left <= r_left - 4'd1;
+            r_left <= r_left - LEN_W'(1);
             rstt   <= R_PREP;
           end
         end

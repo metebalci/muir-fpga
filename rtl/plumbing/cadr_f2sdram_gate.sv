@@ -49,6 +49,29 @@
 // request is `hold`, and the acknowledgment is given once the adapter is in
 // reset, which is once nothing is in flight.  It follows the request back up.
 //
+// **AND THE MACHINE WAITS FOR THE PORT, WHICH IS AN ORDERING AND NOT A
+// PRECAUTION.**  `may_start` is low from the fabric's reset until the port has
+// been live once, and the DE25-Nano's top level holds the machine in reset
+// while it is low.  The reason is measured rather than argued: the boot PROM's
+// only traffic to main memory is PAGE-0-PARITY-FIX, 512 bus cycles some 118 ms
+// after the machine's own reset and none before or after, while the port is
+// opened by software in U-Boot, seconds after the fabric was configured.  A
+// machine released at the fabric's reset therefore spends its one memory pass
+// against a shut port EVERY time, ends all 512 cycles on the bus interface's
+// NXM timer, and carries on with nothing stored --- on a board whose memory
+// works perfectly.  The Zynq boards do not have the fault because there the
+// processing system is configured before the fabric is, so the port is live
+// before the machine's first tick; holding the machine here is how this board
+// arrives at the same order.
+//
+// It is a LATCH and not the level: once the machine is running, software
+// lowering the bit or the processor resetting must not reset the machine, any
+// more than `SAXIHP0ARESETN` falling resets the Zynq's.  What a shut port does
+// to a running machine is what a board with no memory does, which is the whole
+// of `cadr_f2sdram_share.sv`'s and this module's other business.  The fabric's
+// own reset re-arms it, so KEY1 restarts the machine and it waits for the port
+// again --- a handful of ticks, the port being open already.
+//
 // All three inputs from the processor are asynchronous to this clock and are
 // synchronized in, three stages each, as the Zynq boards synchronize theirs.
 
@@ -71,7 +94,8 @@ module cadr_f2sdram_gate (
     output var logic hold,        // grant nothing new
     output var logic port_rst,    // the adapter and the share in reset
     output var logic ack_n,       // the handshake's acknowledgment, low
-    output var logic live         // the port is open and out of reset
+    output var logic live,        // the port is open and out of reset
+    output var logic may_start    // the port has been live: the machine may run
 );
 
   logic [2:0] rst_s, open_s, req_s;
@@ -108,6 +132,14 @@ module cadr_f2sdram_gate (
   end
 
   assign live = !port_rst;
+
+  // The machine's hold, latched: see the header.  Set by the port becoming
+  // live and cleared only by the fabric's reset, so a port shut under a
+  // running machine leaves the machine running.
+  always_ff @(posedge clk) begin
+    if (rst) may_start <= 1'b0;
+    else if (live) may_start <= 1'b1;
+  end
 
 endmodule
 

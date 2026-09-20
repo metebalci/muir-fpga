@@ -715,16 +715,23 @@ module cadr_console #(
     // value, so no partial write of one is another.
     parameter logic [31:0] WIRE_AUTO_KEY      = 32'h4155_544F,
     parameter logic [31:0] WIRE_STRAIGHT_KEY  = 32'h5354_5241,
-    parameter logic [31:0] WIRE_CROSSOVER_KEY = 32'h4352_4F53
+    parameter logic [31:0] WIRE_CROSSOVER_KEY = 32'h4352_4F53,
+    // The transaction ID's width and the read burst length's: twelve and four
+    // on a Zynq board's `M_AXI_GP`, which is AXI3, and four and eight on the
+    // Agilex 5's two processor-to-fabric bridges, which are AXI4 and so may
+    // ask for 256 beats.  `cadr_gp0_default.sv`'s header has the argument.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
 
-    // --- `M_AXI_GP1`, on which the processing system is the master.  AXI3,
-    // --- 32 bits, 12-bit IDs, one write and one read in flight at once.
+    // --- The processor's general-purpose port, on which the processor is
+    // --- the master.  32 bits, one write and one read in flight at once;
+    // --- `ID_W` and `LEN_W` say which of the two shapes.
     input  var logic [31:0] s_awaddr,
-    input  var logic [3:0]  s_awlen,
-    input  var logic [11:0] s_awid,
+    input  var logic [LEN_W-1:0] s_awlen,
+    input  var logic [ID_W-1:0] s_awid,
     input  var logic        s_awvalid,
     output var logic        s_awready,
     input  var logic [31:0] s_wdata,
@@ -733,17 +740,17 @@ module cadr_console #(
     input  var logic        s_wvalid,
     output var logic        s_wready,
     output var logic [1:0]  s_bresp,
-    output var logic [11:0] s_bid,
+    output var logic [ID_W-1:0] s_bid,
     output var logic        s_bvalid,
     input  var logic        s_bready,
     input  var logic [31:0] s_araddr,
-    input  var logic [3:0]  s_arlen,
-    input  var logic [11:0] s_arid,
+    input  var logic [LEN_W-1:0] s_arlen,
+    input  var logic [ID_W-1:0] s_arid,
     input  var logic        s_arvalid,
     output var logic        s_arready,
     output var logic [31:0] s_rdata,
     output var logic [1:0]  s_rresp,
-    output var logic [11:0] s_rid,
+    output var logic [ID_W-1:0] s_rid,
     output var logic        s_rlast,
     output var logic        s_rvalid,
     input  var logic        s_rready,
@@ -963,8 +970,8 @@ module cadr_console #(
   rstate_e rst_r;
 
   logic [31:0] w_at, r_at;      // the beat's address, walked up a word a beat
-  logic [11:0] w_id, r_id;
-  logic [3:0]  r_left;          // beats still owed on the read
+  logic [ID_W-1:0]  w_id, r_id;
+  logic [LEN_W-1:0] r_left;     // beats still owed on the read
   logic        w_last_q;        // the beat now in hand was WLAST
 
   // Whether the beat's address is one of pages 0 and 1, and which of their
@@ -1411,7 +1418,7 @@ module cadr_console #(
   logic        r_lost;
   assign s_arready = (rst_r == R_ADDR);
   assign s_rvalid  = (rst_r == R_DATA);
-  assign s_rlast   = (r_left == 4'd0);
+  assign s_rlast   = (r_left == '0);
   assign s_rresp   = 2'b00;   // OKAY, everywhere
   assign s_rdata   = rdata_q;
   assign s_rid     = r_id;
@@ -1544,9 +1551,9 @@ module cadr_console #(
       rst_r       <= R_ADDR;
       w_at        <= 32'd0;
       r_at        <= 32'd0;
-      w_id        <= 12'd0;
-      r_id        <= 12'd0;
-      r_left      <= 4'd0;
+      w_id        <= '0;
+      r_id        <= '0;
+      r_left      <= '0;
       w_in        <= 1'b0;
       w_hi        <= 1'b0;
       w_last_q    <= 1'b0;
@@ -1810,9 +1817,9 @@ module cadr_console #(
         end
         R_DATA: if (s_rready) begin
           r_at <= r_at + 32'd4;
-          if (r_left == 4'd0) rst_r <= R_ADDR;
+          if (r_left == '0) rst_r <= R_ADDR;
           else begin
-            r_left <= r_left - 4'd1;
+            r_left <= r_left - LEN_W'(1);
             rst_r  <= R_START;
           end
         end

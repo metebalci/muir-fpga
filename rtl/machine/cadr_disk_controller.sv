@@ -594,6 +594,48 @@ module cadr_disk_controller #(
   // within it, so no wrong slot and no wrong offset gives the right word.
   // `golden/src/disk.rs` says so at its `pack_word`.
   logic [31:0] blk_ram [SLOTS*BLOCK_WORDS];
+
+  // **THE TICK AFTER AN EDGE THAT WROTE THE STORE, MADE VISIBLE.**  On the
+  // DE25-Nano the store is an M20K with read-during-write checking off
+  // (`boards/de25-nano/quartus/project.tcl` has the assignment and the
+  // reason: Agilex 5's M20K does not offer old data at a port that is
+  // writing, and without the relaxation synthesis builds all 196,608 bits out
+  // of logic --- 332,163 ALUTs of a part that has 93,600, measured).  What
+  // the relaxation gives away is the word either port reads in the tick after
+  // an edge that wrote the array.
+  //
+  // `CADR_RDW_POISON_DISK`, which only `build/rdw_poison_disk.pass` defines and
+  // no board flow ever does, returns the complement of the word in that tick ---
+  // a value that differs from both the old word and the new one in every bit.
+  // **IT IS WIDER THAN THE HARDWARE'S UNDEFINED TICK ON PURPOSE**: it poisons
+  // BOTH ports after a write to EITHER, whatever address was written, so a
+  // run that still agrees with the reference has shown the narrow thing as
+  // well.  A poison that is too wide can only fail a good design, never pass
+  // a bad one, which is the opposite of the direction an exemption is
+  // dangerous in.
+  //
+  // `cadr_microcycle.sv` does the same for the three asynchronous memories
+  // under `CADR_RDW_POISON`, and its last section is the longer argument.  The
+  // two defines are separate because the checks are: a run that poisons the
+  // map need not write the store, and a refusal that fired there would be
+  // this file's poison complaining about somebody else's stimulus.
+`ifdef CADR_RDW_POISON_DISK
+  logic blk_rdw;
+  longint unsigned n_blk_rdw = 0;
+  always_ff @(posedge clk) begin
+    blk_rdw <= (store_we && store_addr < 9'(BLOCK_WORDS)) || chb_we;
+    if (blk_rdw) n_blk_rdw <= n_blk_rdw + 1;
+  end
+  // A poison that never fired tested nothing, so a run that never wrote the
+  // store fails rather than passing.
+  final begin
+    $display("rdw_poison_disk: poisoned ticks on the block store: %0d", n_blk_rdw);
+    if (n_blk_rdw == 0)
+      $fatal(1, "rdw_poison_disk: the store was never written, so this run measured nothing about it");
+  end
+`else
+  localparam logic blk_rdw = 1'b0;
+`endif
   logic [31:0] s_header [SLOTS];
   logic [31:0] s_hck    [SLOTS];
   logic [31:0] s_dck    [SLOTS];
@@ -633,7 +675,7 @@ module cadr_disk_controller #(
   logic        seam_meta_sel;
   always_ff @(posedge clk) begin
     if (store_we && store_addr < 9'(BLOCK_WORDS)) blk_ram[seam_word] <= store_wdata;
-    seam_q <= blk_ram[seam_word];
+    seam_q <= blk_rdw ? ~blk_ram[seam_word] : blk_ram[seam_word];
   end
   always_ff @(posedge clk) begin
     seam_meta_q   <= seam_meta;
@@ -1561,7 +1603,7 @@ module cadr_disk_controller #(
   logic [31:0] chb_q2;
   always_ff @(posedge clk) begin
     if (chb_we) blk_ram[chb_a] <= chb_d;
-    chb_q  <= blk_ram[chb_a];
+    chb_q  <= blk_rdw ? ~blk_ram[chb_a] : blk_ram[chb_a];
     chb_q2 <= chb_q;
   end
 

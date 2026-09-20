@@ -52,6 +52,15 @@
 // concurrent write had chosen.
 
 #include <cstdint>
+// **THE SAME CHECK AT TWO SHAPES AND TWO MAPS**, because the arrangement is
+// one arrangement on two boards.  A Zynq board's `M_AXI_GP` is AXI3 with
+// twelve bits of ID and four of burst length, and its window starts where the
+// processing system's map puts it; the DE25-Nano's processor-to-fabric bridges
+// are AXI4 with four bits of ID and eight of burst length, and each hands the
+// fabric an OFFSET into its own window, so the faces sit at 0 and the pages
+// above it.  The Makefile builds a second model with the other four numbers
+// and runs both, and the whole sweep is made twice.
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -64,12 +73,30 @@
 
 namespace {
 
-const uint32_t GP0_BASE = 0x40000000u;
-const uint32_t GP0_TOP  = 0x7FFFFFFCu;
-const uint32_t PACK_PAGE = 0x40000000u;
-const uint32_t CHAOS_PAGE = 0x40001000u;
-const uint32_t SER_PAGE = 0x40002000u;
-const uint32_t INPUT_PAGE = 0x40003000u;
+// The port's shape and its map, which the Makefile's second model changes:
+// see the header.
+#ifndef GP_ID_W
+#define GP_ID_W 12
+#endif
+#ifndef GP_LEN_W
+#define GP_LEN_W 4
+#endif
+#ifndef GP_PORT_BASE
+#define GP_PORT_BASE 0x40000000u
+#endif
+#ifndef GP_PORT_PAGES
+#define GP_PORT_PAGES 262144u
+#endif
+const unsigned kIdMask  = (1u << GP_ID_W) - 1u;
+const unsigned kLenMask = (1u << GP_LEN_W) - 1u;
+
+const uint32_t GP0_BASE = GP_PORT_BASE;
+const uint32_t GP0_SPAN = GP_PORT_PAGES * 4096u;
+const uint32_t GP0_TOP  = GP_PORT_BASE + GP0_SPAN - 4u;
+const uint32_t PACK_PAGE = GP_PORT_BASE + 0x0000u;
+const uint32_t CHAOS_PAGE = GP_PORT_BASE + 0x1000u;
+const uint32_t SER_PAGE = GP_PORT_BASE + 0x2000u;
+const uint32_t INPUT_PAGE = GP_PORT_BASE + 0x3000u;
 
 const uint32_t W_PACK = 0x5041434Bu;   // "PACK"
 const uint32_t W_CHAO = 0x4348414Fu;   // "CHAO"
@@ -304,9 +331,9 @@ struct Bus {
       // down.
       if (w && !w->done) {
         d->m_awaddr = w->aw ? ~w->addr : w->addr;
-        d->m_awlen = w->aw ? (uint8_t)(~(w->data.size() - 1) & 0xF)
+        d->m_awlen = w->aw ? (uint8_t)(~(w->data.size() - 1) & kLenMask)
                            : (uint8_t)(w->data.size() - 1);
-        d->m_awid = w->aw ? (~w->id & 0xFFF) : w->id;
+        d->m_awid = w->aw ? (~w->id & kIdMask) : w->id;
         d->m_awvalid = (!w->aw && aw_hold == 0) ? 1 : 0;
         d->m_wdata = w->beats < w->data.size() ? w->data[w->beats] : 0;
         d->m_wstrb = w->strb;
@@ -318,8 +345,8 @@ struct Bus {
       }
       if (r && !r->done) {
         d->m_araddr = r->ar ? ~r->addr : r->addr;
-        d->m_arlen = r->ar ? (uint8_t)(~r->len & 0xF) : (uint8_t)r->len;
-        d->m_arid = r->ar ? (~r->id & 0xFFF) : r->id;
+        d->m_arlen = r->ar ? (uint8_t)(~r->len & kLenMask) : (uint8_t)r->len;
+        d->m_arid = r->ar ? (~r->id & kIdMask) : r->id;
         d->m_arvalid = (!r->ar && ar_hold == 0) ? 1 : 0;
         d->m_rready = (r->ar && r_hold == 0) ? 1 : 0;
       } else {
@@ -407,7 +434,7 @@ struct Bus {
   uint32_t Read(uint32_t addr, int *resp = nullptr) {
     RTxn r;
     r.addr = addr;
-    r.id = rnd() & 0xFFF;
+    r.id = rnd() & kIdMask;
     Run(nullptr, &r);
     if (resp) *resp = r.resp;
     return r.data.empty() ? 0 : r.data[0];
@@ -418,7 +445,7 @@ struct Bus {
     w.addr = addr;
     w.data.push_back(word);
     w.strb = strb;
-    w.id = rnd() & 0xFFF;
+    w.id = rnd() & kIdMask;
     Run(&w, nullptr);
     return w.resp;
   }
@@ -586,7 +613,7 @@ int main(int argc, char **argv) {
   // stimulus than the sweep below; it is the same one, over every page.
   long pages = 0;
   {
-    for (uint32_t page = 0; page < 262144u && bad < 25; ++page) {
+    for (uint32_t page = 0; page < GP_PORT_PAGES && bad < 25; ++page) {
       const uint32_t addr = GP0_BASE + (page << 12);
       int resp = -1;
       const uint32_t got = b.Read(addr, &resp);
@@ -633,7 +660,7 @@ int main(int argc, char **argv) {
     sweep.push_back(INPUT_PAGE + 4 * k);
   }
   for (uint32_t p = 4; p < 16; ++p) sweep.push_back(GP0_BASE + (p << 12));
-  for (int s = 12; s < 30; ++s) {
+  for (int s = 12; (1u << s) < GP0_SPAN; ++s) {
     sweep.push_back(GP0_BASE + (1u << s));
     sweep.push_back(GP0_BASE + (1u << s) + 0xFFC);
   }
@@ -644,7 +671,7 @@ int main(int argc, char **argv) {
   sweep.push_back(GP0_BASE + 0x2FFC);
   sweep.push_back(GP0_BASE + 0x3FFC);
   for (int k = 0; k < 400; ++k)
-    sweep.push_back((GP0_BASE + (rnd() & 0x3FFFFFFCu)) & 0x7FFFFFFCu);
+    sweep.push_back(GP0_BASE + (rnd() & (GP0_SPAN - 4u)));
 
   long reads = 0, writes = 0;
   long by[5] = {0, 0, 0, 0, 0};
@@ -741,10 +768,10 @@ int main(int argc, char **argv) {
         WTxn w;
         w.addr = p.waddr;
         w.data.push_back(p.wdata);
-        w.id = rnd() & 0xFFF;
+        w.id = rnd() & kIdMask;
         RTxn r;
         r.addr = p.raddr;
-        r.id = (rnd() & 0xFFF) ^ 0x555;
+        r.id = (rnd() & kIdMask) ^ (0x555u & kIdMask);
         b.Run(&w, &r);
         ++crossed;
         if (w.resp != 0) FailAt(p.waddr, "BRESP with a read in flight", w.resp, 0);
@@ -766,7 +793,7 @@ int main(int argc, char **argv) {
     RTxn r;
     r.addr = CHAOS_PAGE;
     r.len = 8;
-    r.id = 0x321;
+    r.id = 0x321u & kIdMask;
     b.Run(nullptr, &r);
     ++bursts;
     if (r.data.size() == 9) {
@@ -782,14 +809,14 @@ int main(int argc, char **argv) {
     WTxn w;
     w.addr = CHAOS_PAGE + 4 * CH_RX_WIN;
     for (unsigned k = 0; k < 16; ++k) w.data.push_back(0x1000u + k);
-    w.id = 0x111;
+    w.id = 0x111u & kIdMask;
     b.Run(&w, nullptr);
     ++bursts;
     if (w.resp != 0) Fail("BRESP for a sixteen-beat write", w.resp, 0);
     RTxn back;
     back.addr = CHAOS_PAGE + 4 * CH_RX_WIN;
     back.len = 15;
-    back.id = 0x222;
+    back.id = 0x222u & kIdMask;
     b.Run(nullptr, &back);
     ++bursts;
     for (unsigned k = 0; k < back.data.size(); ++k) {
@@ -804,7 +831,7 @@ int main(int argc, char **argv) {
     RTxn edge;
     edge.addr = SER_PAGE + 0xFC0;
     edge.len = 15;
-    edge.id = 0x0AB;
+    edge.id = 0x0ABu & kIdMask;
     b.Run(nullptr, &edge);
     ++bursts;
     for (uint32_t v : edge.data)
@@ -2362,7 +2389,7 @@ int main(int argc, char **argv) {
         b.Quiet();
         dut->m_awaddr = INPUT_PAGE + 4 * IN_KEY;
         dut->m_awlen = 0;
-        dut->m_awid = 0x2A;
+        dut->m_awid = 0x2Au & kIdMask;
         dut->m_wdata = seq[3];
         dut->m_wstrb = 0xF;
         dut->m_wlast = 1;
@@ -2667,6 +2694,74 @@ int main(int argc, char **argv) {
           Fail("the word the machine read after its own reset",
                ((uint32_t)(hi & 0377u) << 16) | lo, w);
       }
+    }
+  }
+
+  // ======================================================================
+  // THE LONGEST READ THIS PORT CAN ASK FOR
+  // ======================================================================
+  //
+  // Sixteen beats on a Zynq `M_AXI_GP` and 256 on the Agilex 5's bridges,
+  // because ARLEN is four bits there and eight here.  A face that counted the
+  // beats four bits wide would give the first sixteen of a longer burst and
+  // leave the master owing the rest, which on a general-purpose port is the
+  // frozen cores again --- and it is a fault no burst of sixteen can show.
+  // The Chaosnet's RX window is 256 words, so the whole of it is read at once
+  // and the first sixteen beats are the words written into it above.
+  //
+  // **IT IS LAST, AND THAT IS NOT TIDINESS.**  Every leg here draws from one
+  // generator, so a transaction inserted in the middle moves the delays of
+  // every leg after it: adding this to the burst section moved the serial
+  // line's swept take by a character and stopped
+  // `serial-line-counts-the-store-from-two-statements` being caught --- a
+  // mutation nobody had touched, in a module this had nothing to do with.
+  // A leg added at the end cannot do that to anything.
+  {
+    // Its own sixteen words first, because the Chaosnet legs above have been
+    // through this window since the burst section wrote it.
+    WTxn seed;
+    seed.addr = CHAOS_PAGE + 4 * CH_RX_WIN;
+    for (unsigned k = 0; k < 16; ++k) seed.data.push_back(0x1000u + k);
+    seed.id = 0x0C7u & kIdMask;
+    b.Run(&seed, nullptr);
+    RTxn longest;
+    longest.addr = CHAOS_PAGE + 4 * CH_RX_WIN;
+    longest.len = kLenMask;
+    longest.id = 0x1C7u & kIdMask;
+    b.Run(nullptr, &longest);
+    ++bursts;
+    if (longest.data.size() != kLenMask + 1u)
+      FailAt(longest.addr, "beats of the longest read this port can ask for",
+             longest.data.size(), kLenMask + 1u);
+    for (unsigned k = 0; k < longest.data.size() && k < 16; ++k)
+      if (longest.data[k] != 0x1000u + k)
+        FailAt(CHAOS_PAGE + 4 * (CH_RX_WIN + k),
+               "a beat of the longest read", longest.data[k], 0x1000u + k);
+
+    // **AND AT EVERY OTHER SLAVE ON THE PORT**, because each of them counts
+    // the beats it owes for itself: the pack side's face is written out by
+    // hand rather than built on `cadr_gp_regs.sv`, and the default slave has
+    // its own counter again.  What is required here is the COUNT and not the
+    // words.
+    //
+    // The pack side's is read from `+0x400` and not from its first word, so
+    // that every beat of it is outside the sixteen registers rather than
+    // sixteen inside and the rest out.  It answers SLVERR there, which is an
+    // answer and not a hang and is its own older decision; what a burst
+    // ACROSS that boundary does is a different question --- the response
+    // would change inside one burst --- and this leg is about the length.
+    for (uint32_t a : {PACK_PAGE + 0x400u, SER_PAGE, INPUT_PAGE,
+                       GP0_BASE + 0x8000u}) {
+      if (bad >= 25) break;
+      RTxn r;
+      r.addr = a;
+      r.len = kLenMask;
+      r.id = rnd() & kIdMask;
+      b.Run(nullptr, &r);
+      ++bursts;
+      if (r.data.size() != kLenMask + 1u)
+        FailAt(a, "beats of the longest read this port can ask for",
+               r.data.size(), kLenMask + 1u);
     }
   }
 

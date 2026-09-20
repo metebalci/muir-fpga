@@ -260,16 +260,41 @@ step 4-syn "$bin/quartus_syn" cadr_de25
 # `project.tcl` asks for it, and a request that stopped applying --- a
 # renamed instance, a changed array --- would leave them as some 70,000
 # registers with nothing but the fit's size to say so.  The synthesis
-# report's RAM summary must name each of the three once, as an MLAB.
+# report's RAM summary must name each of the three, as MLABs.
+#
+# **ONE COPY A READER, AND THE MEMORY BOARD HAS TWO READERS.**  An MLAB has one
+# asynchronous read port, so a memory two things read at once is built as two
+# copies written together.  Without the processor the machine is the only
+# reader and there is one copy of each; with it the console's readout window
+# reads the same three memories --- `cadr_machine`'s `con_ro_addr`, which is
+# tied to the reserved selector on a board with no console and driven by one
+# here --- and there are two.  The count is checked rather than left open,
+# because a bound with no ceiling would pass a third copy nobody asked for,
+# and a copy is 2 KB of the same MLABs the machine is paying for.
 rpt=output_files/cadr_de25.syn.rpt
+if [ "$ddr" -eq 1 ]; then copies=2; else copies=1; fi
 for memory in dmem l1_map l2_map; do
     n=$(grep -c "^; u_machine|processor|${memory}_rtl_[0-9]*|[^;]*; MLAB " "$rpt" || true)
-    [ "$n" -eq 1 ] || refuse "synthesis made u_machine|processor|$memory into $n MLABs, wanting 1; see $dir/$rpt"
+    [ "$n" -eq "$copies" ] || refuse "synthesis made u_machine|processor|$memory into $n MLABs, wanting $copies; see $dir/$rpt"
 done
 if grep -q 'RAM logic "u_machine|processor|\(dmem\|l1_map\|l2_map\)" is uninferred' 4-syn.log; then
     refuse "synthesis built one of the three asynchronous memories from registers; see $dir/4-syn.log"
 fi
-say "the dispatch memory and both levels of the map are MLABs"
+say "the dispatch memory and both levels of the map are MLABs, $copies copies each"
+
+# **AND THE DISK CONTROLLER'S BLOCK STORE IS M20K BLOCKS**, for the reason
+# `project.tcl` gives: left to itself synthesis builds its 196,608 bits out of
+# logic, which is 332,163 ALUTs on a part that has 93,600 and a fitter that
+# refuses to place the design.  The store is dead on a build with nothing to
+# fill it, so this is asked of the memory board alone.
+if [ "$ddr" -eq 1 ]; then
+    n=$(grep -c "^; u_machine|disk|blk_ram_rtl_[0-9]*|[^;]*; M20K " "$rpt" || true)
+    [ "$n" -eq 1 ] || refuse "synthesis made u_machine|disk|blk_ram into $n M20K memories, wanting 1; see $dir/$rpt"
+    if grep -q 'RAM logic "u_machine|disk|blk_ram" is uninferred' 4-syn.log; then
+        refuse "synthesis built the disk controller's block store from logic; see $dir/4-syn.log"
+    fi
+    say "the disk controller's block store is one true dual-port M20K memory"
+fi
 
 # **THE PROBE IS IN THE BUILD THAT ASKED FOR IT AND IN NO OTHER.**  The top
 # level's parameter as synthesis records it, in binary; the probe's buffer as

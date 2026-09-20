@@ -145,6 +145,34 @@ foreach memory {dmem l1_map l2_map} {
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|processor|$memory"
 }
 
+# ----------------------------------------- the disk controller's block store
+#
+# **THE STORE IS M20K BLOCKS, AND NOTHING IN `rtl/` SAYS SO EITHER.**  The
+# controller's block store is 24 slots of 256 words of 32 bits, and it is a
+# TRUE dual-port memory: the seam a program in Linux fills a slot through is
+# one port and the channel that walks a block under the heads is the other, so
+# a fill and a walk never contend.  Each port is written exactly as a block
+# RAM's port is --- `if (we) ram[a] <= d; q <= ram[a];` --- which is read-OLD
+# on that port, and Agilex 5's M20K does not offer old data at a port that is
+# writing: synthesis says so in as many words (info 276009, "uninferred due to
+# unsupported read-during-write behavior") and builds the whole 196,608 bits
+# out of logic instead.  **Measured: 332,163 ALUTs of a part that has 93,600,
+# and the fitter refuses to place it.**  The store is dead on the Zynq boards'
+# default build, where nothing fills it, and it only became real here when the
+# pack side arrived.
+#
+# So synthesis is asked for M20K with read-during-write checking off, from
+# here and not from the HDL, exactly as the three asynchronous memories above
+# are asked for MLABs.  What that gives away is the word read at an address in
+# the tick an edge writes it, on the same port or the other one.
+# `build/rdw_poison_disk.pass` is what says nothing reads a word in that
+# tick: it returns the complement there, on both ports, and the disk
+# controller's own checks --- the drive against `golden/src/disk.rs`, the
+# channel and the band --- still agree with the reference.
+# `build.sh` refuses a synthesis in which the store is anything but M20K.
+set_instance_assignment -name RAMSTYLE_ATTRIBUTE M20K -to "u_machine|disk|blk_ram"
+set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|disk|blk_ram"
+
 # The two images `cadr_machine` reads at elaboration, by absolute path:
 # `$readmemh` resolves a relative one against wherever the tool is running,
 # which is this directory and not the repository.  `build.sh` refuses to

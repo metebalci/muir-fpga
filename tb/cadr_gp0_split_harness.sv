@@ -48,7 +48,25 @@
 
 `default_nettype none
 
-module cadr_gp0_split_harness (
+module cadr_gp0_split_harness #(
+    // Where the four faces sit: `cadr_gp0_split.sv`'s own defaults, which are
+    // the Zynq boards' addresses, or the DE25-Nano's offsets into the
+    // HPS-to-FPGA bridge's window.
+    parameter logic [31:0] PACK_BASE  = 32'h4000_0000,
+    parameter logic [31:0] CHAOS_BASE = 32'h4000_1000,
+    parameter logic [31:0] SER_BASE   = 32'h4000_2000,
+    parameter logic [31:0] INPUT_BASE = 32'h4000_3000,
+    // **AND THE SAME FIVE SLAVES AT THE AGILEX 5'S SHAPE.**  The DE25-Nano
+    // puts them behind its two processor-to-fabric bridges, which are AXI4:
+    // four bits of ID where a Zynq `M_AXI_GP` has twelve, eight bits of burst
+    // length where AXI3 has four, and the bases are offsets into the bridge's
+    // own window rather than the processor's addresses.  The defaults are the
+    // Zynq's, and `build/gp0_split.pass` runs the whole check at both shapes,
+    // which is how one arrangement is held on two boards rather than two
+    // arrangements each held once.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
+) (
     input  var logic        clk,
     // The port's reset: the splitter and the four faces behind it.
     input  var logic        rst,
@@ -58,8 +76,8 @@ module cadr_gp0_split_harness (
 
     // --- `M_AXI_GP0` as the PS would drive it -----------------------------
     input  var logic [31:0] m_awaddr,
-    input  var logic [3:0]  m_awlen,
-    input  var logic [11:0] m_awid,
+    input  var logic [LEN_W-1:0] m_awlen,
+    input  var logic [ID_W-1:0] m_awid,
     input  var logic        m_awvalid,
     output var logic        m_awready,
     input  var logic [31:0] m_wdata,
@@ -68,17 +86,17 @@ module cadr_gp0_split_harness (
     input  var logic        m_wvalid,
     output var logic        m_wready,
     output var logic [1:0]  m_bresp,
-    output var logic [11:0] m_bid,
+    output var logic [ID_W-1:0] m_bid,
     output var logic        m_bvalid,
     input  var logic        m_bready,
     input  var logic [31:0] m_araddr,
-    input  var logic [3:0]  m_arlen,
-    input  var logic [11:0] m_arid,
+    input  var logic [LEN_W-1:0] m_arlen,
+    input  var logic [ID_W-1:0] m_arid,
     input  var logic        m_arvalid,
     output var logic        m_arready,
     output var logic [31:0] m_rdata,
     output var logic [1:0]  m_rresp,
-    output var logic [11:0] m_rid,
+    output var logic [ID_W-1:0] m_rid,
     output var logic        m_rlast,
     output var logic        m_rvalid,
     input  var logic        m_rready,
@@ -109,8 +127,9 @@ module cadr_gp0_split_harness (
 
   // ------------------------------------------------------- the four ports
   logic [31:0] p_awaddr, p_wdata, p_araddr, p_rdata;
-  logic [3:0]  p_awlen, p_wstrb, p_arlen;
-  logic [11:0] p_awid, p_arid, p_bid, p_rid;
+  logic [LEN_W-1:0] p_awlen, p_arlen;
+  logic [3:0]  p_wstrb;
+  logic [ID_W-1:0] p_awid, p_arid, p_bid, p_rid;
   logic        p_awvalid, p_awready, p_wlast, p_wvalid, p_wready;
   logic        p_bvalid, p_bready, p_arvalid, p_arready;
   logic        p_rlast, p_rvalid, p_rready;
@@ -118,8 +137,9 @@ module cadr_gp0_split_harness (
 
   logic [11:0] c_awaddr, c_araddr;
   logic [31:0] c_wdata, c_rdata;
-  logic [3:0]  c_awlen, c_wstrb, c_arlen;
-  logic [11:0] c_awid, c_arid, c_bid, c_rid;
+  logic [LEN_W-1:0] c_awlen, c_arlen;
+  logic [3:0]  c_wstrb;
+  logic [ID_W-1:0] c_awid, c_arid, c_bid, c_rid;
   logic        c_awvalid, c_awready, c_wlast, c_wvalid, c_wready;
   logic        c_bvalid, c_bready, c_arvalid, c_arready;
   logic        c_rlast, c_rvalid, c_rready;
@@ -127,8 +147,9 @@ module cadr_gp0_split_harness (
 
   logic [11:0] l_awaddr, l_araddr;
   logic [31:0] l_wdata, l_rdata;
-  logic [3:0]  l_awlen, l_wstrb, l_arlen;
-  logic [11:0] l_awid, l_arid, l_bid, l_rid;
+  logic [LEN_W-1:0] l_awlen, l_arlen;
+  logic [3:0]  l_wstrb;
+  logic [ID_W-1:0] l_awid, l_arid, l_bid, l_rid;
   logic        l_awvalid, l_awready, l_wlast, l_wvalid, l_wready;
   logic        l_bvalid, l_bready, l_arvalid, l_arready;
   logic        l_rlast, l_rvalid, l_rready;
@@ -136,22 +157,27 @@ module cadr_gp0_split_harness (
 
   logic [11:0] i_awaddr, i_araddr;
   logic [31:0] i_wdata, i_rdata;
-  logic [3:0]  i_awlen, i_wstrb, i_arlen;
-  logic [11:0] i_awid, i_arid, i_bid, i_rid;
+  logic [LEN_W-1:0] i_awlen, i_arlen;
+  logic [3:0]  i_wstrb;
+  logic [ID_W-1:0] i_awid, i_arid, i_bid, i_rid;
   logic        i_awvalid, i_awready, i_wlast, i_wvalid, i_wready;
   logic        i_bvalid, i_bready, i_arvalid, i_arready;
   logic        i_rlast, i_rvalid, i_rready;
   logic [1:0]  i_bresp, i_rresp;
 
   logic [31:0] d_rdata;
-  logic [3:0]  d_arlen;
-  logic [11:0] d_awid, d_arid, d_bid, d_rid;
+  logic [LEN_W-1:0] d_arlen;
+  logic [ID_W-1:0] d_awid, d_arid, d_bid, d_rid;
   logic        d_awvalid, d_awready, d_wlast, d_wvalid, d_wready;
   logic        d_bvalid, d_bready, d_arvalid, d_arready;
   logic        d_rlast, d_rvalid, d_rready;
   logic [1:0]  d_bresp, d_rresp;
 
-  cadr_gp0_split u_split (
+  cadr_gp0_split #(
+      .PACK_BASE(PACK_BASE), .CHAOS_BASE(CHAOS_BASE),
+      .SER_BASE(SER_BASE), .INPUT_BASE(INPUT_BASE),
+      .ID_W(ID_W), .LEN_W(LEN_W)
+  ) u_split (
       .clk(clk), .rst(rst),
       .s_awaddr(m_awaddr), .s_awlen(m_awlen), .s_awid(m_awid),
       .s_awvalid(m_awvalid), .s_awready(m_awready),
@@ -232,7 +258,7 @@ module cadr_gp0_split_harness (
   logic [7:0]  pk_present, pk_read_only;
   logic        pk_timed;
 
-  cadr_disk_pack u_pack (
+  cadr_disk_pack #(.REG_BASE(PACK_BASE), .ID_W(ID_W), .LEN_W(LEN_W)) u_pack (
       .clk(clk), .rst(rst),
       .s_awaddr(p_awaddr), .s_awlen(p_awlen), .s_awid(p_awid),
       .s_awvalid(p_awvalid), .s_awready(p_awready),
@@ -272,7 +298,7 @@ module cadr_gp0_split_harness (
   logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc, chaos_rx_lost;
   logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
 
-  cadr_chaos_cable u_chaos (
+  cadr_chaos_cable #(.ID_W(ID_W), .LEN_W(LEN_W)) u_chaos (
       .clk(clk), .rst(rst),
       .s_awaddr(c_awaddr), .s_awlen(c_awlen), .s_awid(c_awid),
       .s_awvalid(c_awvalid), .s_awready(c_awready),
@@ -305,7 +331,7 @@ module cadr_gp0_split_harness (
   logic [7:0]  ser_mode1, ser_mode2, ser_cmd, ser_status;
   logic [7:0]  ser_tx_data, ser_rx_data;
 
-  cadr_serial_line u_serial (
+  cadr_serial_line #(.ID_W(ID_W), .LEN_W(LEN_W)) u_serial (
       .clk(clk), .rst(rst),
       .s_awaddr(l_awaddr), .s_awlen(l_awlen), .s_awid(l_awid),
       .s_awvalid(l_awvalid), .s_awready(l_awready),
@@ -333,7 +359,7 @@ module cadr_gp0_split_harness (
   logic [6:0]  mouse_lines;
   logic [7:0]  iob_csr_face;
 
-  cadr_input_cables u_input (
+  cadr_input_cables #(.ID_W(ID_W), .LEN_W(LEN_W)) u_input (
       .clk(clk), .rst(rst), .mach_rst(card_rst),
       .s_awaddr(i_awaddr), .s_awlen(i_awlen), .s_awid(i_awid),
       .s_awvalid(i_awvalid), .s_awready(i_awready),
@@ -350,7 +376,7 @@ module cadr_gp0_split_harness (
   );
 
   // ------------------------------------------------- the rest of the window
-  cadr_gp0_default u_dflt (
+  cadr_gp0_default #(.ID_W(ID_W), .LEN_W(LEN_W)) u_dflt (
       .clk(clk), .rst(rst),
       .s_awvalid(d_awvalid), .s_awid(d_awid), .s_awready(d_awready),
       .s_wlast(d_wlast), .s_wvalid(d_wvalid), .s_wready(d_wready),
