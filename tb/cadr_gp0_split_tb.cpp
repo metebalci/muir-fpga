@@ -516,6 +516,13 @@ int main(int argc, char **argv) {
   // port's: the two are released together here and are pulsed apart below,
   // where the input face's queue is held to emptying on a machine restart.
   dut->card_rst = 1;
+  // **AND THE MEMORY PORT STARTS SHUT, BECAUSE THAT IS WHERE EVERY BOOT
+  // STARTS.**  On a board whose memory port is opened by software rather than
+  // by the processing system, the window is live for seconds before the port
+  // is, and the first thing a program does in that interval is read a
+  // register face.  So this begins where the board begins, and the leg below
+  // sweeps the whole window before anything opens the port.
+  dut->port_live = 0;
   b.Quiet();
   dut->ub_msyn = 0; dut->ub_write = 0; dut->ub_addr = 0; dut->ub_wdata = 0;
   dut->ub_init = 0;
@@ -572,82 +579,40 @@ int main(int argc, char **argv) {
   }
 
   // ======================================================================
-  // The four are where the map says, and each says who it is
+  // THE STIMULUS, WRITTEN ONCE AND RUN TWICE
   // ======================================================================
-  {
-    int resp = 0;
-    const uint32_t ident_pack = b.Read(PACK_PAGE + 4 * 7, &resp);
-    if (ident_pack != W_PACK) FailAt(PACK_PAGE + 28, "the pack side's IDENT", ident_pack, W_PACK);
-    if (resp != 0) FailAt(PACK_PAGE + 28, "RRESP at the pack's IDENT", resp, 0);
-    const uint32_t ident_chaos = b.Read(CHAOS_PAGE, &resp);
-    if (ident_chaos != W_CHAO) FailAt(CHAOS_PAGE, "the Chaosnet cable's IDENT", ident_chaos, W_CHAO);
-    if (resp != 0) FailAt(CHAOS_PAGE, "RRESP at the Chaosnet IDENT", resp, 0);
-    const uint32_t ident_ser = b.Read(SER_PAGE, &resp);
-    if (ident_ser != W_SERI) FailAt(SER_PAGE, "the serial line's IDENT", ident_ser, W_SERI);
-    if (resp != 0) FailAt(SER_PAGE, "RRESP at the serial IDENT", resp, 0);
-    const uint32_t ident_in = b.Read(INPUT_PAGE, &resp);
-    if (ident_in != W_INPT) FailAt(INPUT_PAGE, "the input face's IDENT", ident_in, W_INPT);
-    if (resp != 0) FailAt(INPUT_PAGE, "RRESP at the input IDENT", resp, 0);
-    const uint32_t none = b.Read(GP0_BASE + 0x4000, &resp);
-    if (none != W_NONE) FailAt(GP0_BASE + 0x4000, "the default slave's word", none, W_NONE);
-    if (resp != 0) FailAt(GP0_BASE + 0x4000, "RRESP at the fifth page", resp, 0);
-  }
+  //
+  // Every page of the port read, and a sweep of every word of the four
+  // faces' pages with a spread over the rest of the window, read and then
+  // written.  It is run TWICE: once with the memory port SHUT and once with
+  // it live.  Written out here, once, so that the two runs cannot drift
+  // apart --- a shut run that swept less than the live one would be the
+  // weaker of the two claiming to be the stronger.
+  //
+  // **WHY THE SHUT RUN EXISTS.**  The rule is that every address on the port
+  // is answered; the half of it that a board can lose on its own is that
+  // every address is answered AT ALL TIMES the bridge is out of reset.  A
+  // board gave the pack side a reset that carried its memory port's liveness
+  // as well as the bridge's, so that face sat in reset for the seconds
+  // between the bridge coming up and software opening the memory port --- and
+  // a face in reset here does not stall a read, it SWALLOWS it: the read
+  // state machine is held in its address state, ARREADY is high in that
+  // state, so the bridge's address is taken and no beat is ever returned.
+  // Measured on that board, twice: both processor cores hung at one PC each,
+  // once on a read typed at the boot monitor and once on the ordinary boot
+  // path, where the disk pack program's first register read arrives while
+  // the port is still shut.
+  //
+  // **AND THE GUARD THE PROGRAMS CARRY IS NOT EVIDENCE.**  A program reads a
+  // tally on the other bridge first and finds the fabric answering.  That
+  // says nothing whatever about this page: on the board the tally passed
+  // with no flag and the very next read hung both cores.  No software guard
+  // can catch a load that never completes, so nothing downstream of the
+  // fabric can stand in for this leg.
+  long pages = 0, shut_pages = 0;
+  long reads = 0, writes = 0;
+  long by[5] = {0, 0, 0, 0, 0};
 
-  // ======================================================================
-  // EVERY PAGE OF THE PORT, EXHAUSTIVELY
-  // ======================================================================
-  //
-  // `M_AXI_GP0`'s window is 0x4000_0000 to 0x7FFF_FFFF, a gigabyte, which is
-  // 262,144 pages of 4 KB.  Every one of them is read, and the word that
-  // comes back says which slave answered: "CHAO" and "SERI" at the two the
-  // map names, "NONE" at every other, and at the pack side's a word that is
-  // neither --- its own first register, answered OKAY.  **A SAMPLE WOULD NOT
-  // DO**, because a decode wrong by one bit is wrong on a set of pages a
-  // sample can miss, and the whole point of the arrangement is that no
-  // address falls through: one that does hangs both Arm cores at one PC each.
-  // This is `cadr_xbus_decode`'s exhaustive shape, on the one port where an
-  // unanswered address is not a wrong answer but a stopped processor.
-  //
-  // The handshakes vary here as everywhere --- `Read` holds its valid and
-  // ready for a random few ticks --- so this is not a faster, politer
-  // stimulus than the sweep below; it is the same one, over every page.
-  long pages = 0;
-  {
-    for (uint32_t page = 0; page < GP_PORT_PAGES && bad < 25; ++page) {
-      const uint32_t addr = GP0_BASE + (page << 12);
-      int resp = -1;
-      const uint32_t got = b.Read(addr, &resp);
-      ++pages;
-      if (resp != 0) FailAt(addr, "RRESP at a page's first word", resp, 0);
-      switch (Owner(addr)) {
-        case kChaos:
-          if (got != W_CHAO) FailAt(addr, "the word at the Chaosnet page", got, W_CHAO);
-          break;
-        case kSer:
-          if (got != W_SERI) FailAt(addr, "the word at the serial page", got, W_SERI);
-          break;
-        case kInput:
-          if (got != W_INPT) FailAt(addr, "the word at the input page", got, W_INPT);
-          break;
-        case kPack:
-          // The pack side's word 0 is its ADDR register, which holds
-          // whatever was last written to it --- so what is held here is that
-          // the DEFAULT slave did not answer the pack's page.
-          if (got == W_NONE)
-            FailAt(addr, "the word at the pack's page: the default slave answered it",
-                   got, 0);
-          break;
-        default:
-          if (got != W_NONE) FailAt(addr, "the word at a page with nothing on it", got, W_NONE);
-          break;
-      }
-    }
-  }
-
-  // ======================================================================
-  // THE SWEEP: every address answered, by the slave the map names
-  // ======================================================================
-  //
   // What each slave's reply must look like at an address with nothing
   // behind it.  The three faces answer zero and OKAY; the pack side answers
   // SLVERR outside its own sixteen words, which is its older and narrower
@@ -673,53 +638,124 @@ int main(int argc, char **argv) {
   for (int k = 0; k < 400; ++k)
     sweep.push_back(GP0_BASE + (rnd() & (GP0_SPAN - 4u)));
 
-  long reads = 0, writes = 0;
-  long by[5] = {0, 0, 0, 0, 0};
-  for (uint32_t addr : sweep) {
-    if (bad >= 25) break;
-    const Slave s = Owner(addr);
-    ++by[s];
-    int resp = -1;
-    const uint32_t got = b.Read(addr, &resp);
-    ++reads;
-    // The reply names the slave.  This is the whole demonstration: an
-    // address routed to the wrong slave gives the wrong word or the wrong
-    // response, and an address routed nowhere gives neither.
-    switch (s) {
-      case kDflt:
-        if (got != W_NONE) FailAt(addr, "the reply, which should be the default's", got, W_NONE);
-        if (resp != 0) FailAt(addr, "RRESP from the default slave", resp, 0);
-        break;
-      case kChaos:
-      case kSer:
-      case kInput: {
-        const uint32_t word = (addr & 0xFFFu) >> 2;
-        if (resp != 0) FailAt(addr, "RRESP from a register face", resp, 0);
-        if (got == W_NONE) FailAt(addr, "the reply: the default slave answered a register page", got, 0);
-        // An undefined word of any of the three reads zero; the defined ones
-        // are held below, register by register.
-        const bool defined = (s == kChaos)
-            ? (word <= 8 || (word >= 0x100 && word < 0x300))
-            : (s == kSer) ? (word <= 10) : (word <= 7);
-        if (!defined && got != 0)
-          FailAt(addr, "an undefined word of a register face", got, 0);
-        break;
-      }
-      case kPack: {
-        const uint32_t word = (addr & 0xFFFu) >> 2;
-        if (got == W_NONE) FailAt(addr, "the reply: the default slave answered the pack's page", got, 0);
-        if (word < 16) {
-          if (resp != 0) FailAt(addr, "RRESP inside the pack's sixteen words", resp, 0);
-        } else {
-          // The pack side answers SLVERR outside its own window, in its
-          // own page: `cadr_disk_pack.sv` says why.  An answer, and not a
-          // hang, which is what this check is about.
-          if (resp != 2) FailAt(addr, "RRESP outside the pack's sixteen words", resp, 2);
-        }
-        break;
+  // `M_AXI_GP0`'s window is 0x4000_0000 to 0x7FFF_FFFF, a gigabyte, which is
+  // 262,144 pages of 4 KB.  Every one of them is read, and the word that
+  // comes back says which slave answered: "CHAO" and "SERI" at the two the
+  // map names, "NONE" at every other, and at the pack side's a word that is
+  // neither --- its own first register, answered OKAY.  **A SAMPLE WOULD NOT
+  // DO**, because a decode wrong by one bit is wrong on a set of pages a
+  // sample can miss, and the whole point of the arrangement is that no
+  // address falls through: one that does hangs both Arm cores at one PC each.
+  // This is `cadr_xbus_decode`'s exhaustive shape, on the one port where an
+  // unanswered address is not a wrong answer but a stopped processor.
+  //
+  // The handshakes vary here as everywhere --- `Read` holds its valid and
+  // ready for a random few ticks --- so this is not a faster, politer
+  // stimulus than the sweep; it is the same one, over every page.
+  auto walk_every_page = [&](const char *when, long *count) {
+    for (uint32_t page = 0; page < GP_PORT_PAGES && bad < 25; ++page) {
+      const uint32_t addr = GP0_BASE + (page << 12);
+      int resp = -1;
+      const uint32_t got = b.Read(addr, &resp);
+      ++*count;
+      if (resp != 0)
+        FailAt(addr, (std::string("RRESP at a page's first word") + when).c_str(),
+               resp, 0);
+      switch (Owner(addr)) {
+        case kChaos:
+          if (got != W_CHAO)
+            FailAt(addr, (std::string("the word at the Chaosnet page") + when).c_str(),
+                   got, W_CHAO);
+          break;
+        case kSer:
+          if (got != W_SERI)
+            FailAt(addr, (std::string("the word at the serial page") + when).c_str(),
+                   got, W_SERI);
+          break;
+        case kInput:
+          if (got != W_INPT)
+            FailAt(addr, (std::string("the word at the input page") + when).c_str(),
+                   got, W_INPT);
+          break;
+        case kPack:
+          // The pack side's word 0 is its ADDR register, which holds
+          // whatever was last written to it --- so what is held here is that
+          // the DEFAULT slave did not answer the pack's page.
+          if (got == W_NONE)
+            FailAt(addr, (std::string("the word at the pack's page: the default "
+                                      "slave answered it") + when).c_str(), got, 0);
+          break;
+        default:
+          if (got != W_NONE)
+            FailAt(addr, (std::string("the word at a page with nothing on it")
+                          + when).c_str(), got, W_NONE);
+          break;
       }
     }
-  }
+  };
+
+  // The reply names the slave.  This is the whole demonstration: an address
+  // routed to the wrong slave gives the wrong word or the wrong response,
+  // and an address routed nowhere gives neither.
+  auto sweep_reads = [&](const char *when, long *count, long *tally) {
+    for (uint32_t addr : sweep) {
+      if (bad >= 25) break;
+      const Slave s = Owner(addr);
+      ++tally[s];
+      int resp = -1;
+      const uint32_t got = b.Read(addr, &resp);
+      ++*count;
+      switch (s) {
+        case kDflt:
+          if (got != W_NONE)
+            FailAt(addr, (std::string("the reply, which should be the default's")
+                          + when).c_str(), got, W_NONE);
+          if (resp != 0)
+            FailAt(addr, (std::string("RRESP from the default slave") + when).c_str(),
+                   resp, 0);
+          break;
+        case kChaos:
+        case kSer:
+        case kInput: {
+          const uint32_t word = (addr & 0xFFFu) >> 2;
+          if (resp != 0)
+            FailAt(addr, (std::string("RRESP from a register face") + when).c_str(),
+                   resp, 0);
+          if (got == W_NONE)
+            FailAt(addr, (std::string("the reply: the default slave answered a "
+                                      "register page") + when).c_str(), got, 0);
+          // An undefined word of any of the three reads zero; the defined
+          // ones are held below, register by register.
+          const bool defined = (s == kChaos)
+              ? (word <= 8 || (word >= 0x100 && word < 0x300))
+              : (s == kSer) ? (word <= 10) : (word <= 7);
+          if (!defined && got != 0)
+            FailAt(addr, (std::string("an undefined word of a register face")
+                          + when).c_str(), got, 0);
+          break;
+        }
+        case kPack: {
+          const uint32_t word = (addr & 0xFFFu) >> 2;
+          if (got == W_NONE)
+            FailAt(addr, (std::string("the reply: the default slave answered the "
+                                      "pack's page") + when).c_str(), got, 0);
+          if (word < 16) {
+            if (resp != 0)
+              FailAt(addr, (std::string("RRESP inside the pack's sixteen words")
+                            + when).c_str(), resp, 0);
+          } else {
+            // The pack side answers SLVERR outside its own window, in its
+            // own page: `cadr_disk_pack.sv` says why.  An answer, and not a
+            // hang, which is what this check is about.
+            if (resp != 2)
+              FailAt(addr, (std::string("RRESP outside the pack's sixteen words")
+                            + when).c_str(), resp, 2);
+          }
+          break;
+        }
+      }
+    }
+  };
 
   // Writes over the same sweep.  Zero everywhere, so that no command bit of
   // any face is set: a `CTL` write with no bits set is a harmless probe by
@@ -729,15 +765,117 @@ int main(int argc, char **argv) {
   // `KEY` being a register whose whole content is a word; the input section
   // below drains the card and flushes the queue before it begins, and says
   // so.
-  for (uint32_t addr : sweep) {
-    if (bad >= 25) break;
-    const Slave s = Owner(addr);
-    const int resp = b.Write(addr, 0);
-    ++writes;
-    const uint32_t word = (addr & 0xFFFu) >> 2;
-    const int want = (s == kPack && word >= 16) ? 2 : 0;
-    if (resp != want) FailAt(addr, "BRESP", resp, want);
+  auto sweep_writes = [&](const char *when, long *count) {
+    for (uint32_t addr : sweep) {
+      if (bad >= 25) break;
+      const Slave s = Owner(addr);
+      const int resp = b.Write(addr, 0);
+      ++*count;
+      const uint32_t word = (addr & 0xFFFu) >> 2;
+      const int want = (s == kPack && word >= 16) ? 2 : 0;
+      if (resp != want)
+        FailAt(addr, (std::string("BRESP") + when).c_str(), resp, want);
+    }
+  };
+
+  // ======================================================================
+  // EVERY ADDRESS OF THE WINDOW, WITH THE MEMORY PORT SHUT
+  // ======================================================================
+  const char *kShut = " with the memory port shut";
+  long shut_reads = 0, shut_writes = 0;
+  {
+    // First the one access that hung the board, on its own and named: the
+    // disk pack program's first read is the pack side's IDENT, and it
+    // arrives while the port is still shut.
+    int resp = -1;
+    const uint32_t ident = b.Read(PACK_PAGE + 4 * 7, &resp);
+    if (ident != W_PACK)
+      FailAt(PACK_PAGE + 28, "the pack side's IDENT with the memory port shut, "
+             "which is the disk pack program's first read on every boot",
+             ident, W_PACK);
+    if (resp != 0)
+      FailAt(PACK_PAGE + 28, "RRESP at the pack's IDENT with the memory port shut",
+             resp, 0);
+
+    long shut_by[5] = {0, 0, 0, 0, 0};
+    walk_every_page(kShut, &shut_pages);
+    sweep_reads(kShut, &shut_reads, shut_by);
+    sweep_writes(kShut, &shut_writes);
+
+    // The write sweep queues a key word of zero on the input face, `KEY`
+    // being a register whose whole content is a word, and the live run below
+    // does it again.  The input section further down starts from exactly ONE
+    // such word waiting, so this leg hands the face back as it found it:
+    // drain the card in MIT's own order and flush the queue.
+    (void)b.UbRead(UB_KBD_HIGH);
+    (void)b.UbRead(UB_KBD_LOW);
+    b.Write(INPUT_PAGE + 4 * IN_CTL, IN_CTL_FLUSH);
+    b.Idle(16);
+
+    // **AND THE ONE THING A SHUT PORT IS ALLOWED TO CHANGE.**  A move has
+    // nowhere to put a block, so a command written now is refused --- in
+    // CTL's `refused` bit, which the disk pack program already reads --- and
+    // no move starts.  That is what keeps the level a signal with a
+    // consequence rather than a wire nothing reads: with the refusal gone,
+    // the fetch below starts a move against a memory port that is not there.
+    // The other side of the same term, that nothing ELSE is refused, is
+    // `build/disk_pack.pass`, where every move is commanded with the port
+    // live and every one must be carried out.
+    enum { PK_ADDR = 0, PK_SLOT = 2, PK_CTL = 3 };
+    const uint32_t PK_FETCH = 1u << 0, PK_BUSY = 1u << 0, PK_REFUSED = 1u << 3;
+    b.Write(PACK_PAGE + 4 * PK_ADDR, 0x00001000u);
+    b.Write(PACK_PAGE + 4 * PK_SLOT, 0);
+    b.Write(PACK_PAGE + 4 * PK_CTL, PK_FETCH);
+    b.Idle(8);
+    const uint32_t ctl = b.Read(PACK_PAGE + 4 * PK_CTL);
+    if (!(ctl & PK_REFUSED))
+      Fail("the pack side's `refused` bit after a fetch commanded with the "
+           "memory port shut", ctl, PK_REFUSED);
+    if (ctl & PK_BUSY)
+      Fail("the pack side's `busy` bit after a fetch commanded with the memory "
+           "port shut: a move started into a port that is not there",
+           ctl & PK_BUSY, 0);
   }
+
+  // **AND NOW SOFTWARE OPENS THE PORT**, which on the board is a write to a
+  // general-purpose output register, seconds into the boot.  Everything
+  // below runs with it live, as the board runs once Linux is up.
+  dut->port_live = 1;
+  b.Idle(4);
+
+  // ======================================================================
+  // The four are where the map says, and each says who it is
+  // ======================================================================
+  {
+    int resp = 0;
+    const uint32_t ident_pack = b.Read(PACK_PAGE + 4 * 7, &resp);
+    if (ident_pack != W_PACK) FailAt(PACK_PAGE + 28, "the pack side's IDENT", ident_pack, W_PACK);
+    if (resp != 0) FailAt(PACK_PAGE + 28, "RRESP at the pack's IDENT", resp, 0);
+    const uint32_t ident_chaos = b.Read(CHAOS_PAGE, &resp);
+    if (ident_chaos != W_CHAO) FailAt(CHAOS_PAGE, "the Chaosnet cable's IDENT", ident_chaos, W_CHAO);
+    if (resp != 0) FailAt(CHAOS_PAGE, "RRESP at the Chaosnet IDENT", resp, 0);
+    const uint32_t ident_ser = b.Read(SER_PAGE, &resp);
+    if (ident_ser != W_SERI) FailAt(SER_PAGE, "the serial line's IDENT", ident_ser, W_SERI);
+    if (resp != 0) FailAt(SER_PAGE, "RRESP at the serial IDENT", resp, 0);
+    const uint32_t ident_in = b.Read(INPUT_PAGE, &resp);
+    if (ident_in != W_INPT) FailAt(INPUT_PAGE, "the input face's IDENT", ident_in, W_INPT);
+    if (resp != 0) FailAt(INPUT_PAGE, "RRESP at the input IDENT", resp, 0);
+    const uint32_t none = b.Read(GP0_BASE + 0x4000, &resp);
+    if (none != W_NONE) FailAt(GP0_BASE + 0x4000, "the default slave's word", none, W_NONE);
+    if (resp != 0) FailAt(GP0_BASE + 0x4000, "RRESP at the fifth page", resp, 0);
+  }
+
+  // ======================================================================
+  // EVERY PAGE OF THE PORT, EXHAUSTIVELY, AND THE SWEEP --- NOW WITH THE
+  // MEMORY PORT LIVE
+  // ======================================================================
+  //
+  // The same three stimuli again, unchanged and from the same source, with
+  // the port open.  Two runs of one stimulus is the whole of the claim: the
+  // window answers the same everywhere whatever the memory port is doing.
+  walk_every_page("", &pages);
+  sweep_reads("", &reads, by);
+  sweep_writes("", &writes);
 
   // ======================================================================
   // A WRITE AND A READ TO DIFFERENT PAGES, TOGETHER
@@ -2772,6 +2910,15 @@ int main(int argc, char **argv) {
   }
   std::printf(
       "ok: `M_AXI_GP0` answers every address it was asked, in both directions\n"
+      "    and AT ALL TIMES: %ld pages, %ld reads and %ld writes over the same\n"
+      "      window again with the MEMORY PORT SHUT, which is where every boot\n"
+      "      of a board whose port software opens starts; the pack side's\n"
+      "      IDENT, the first word the disk pack program reads, answered\n"
+      "      there too, and a move commanded then was refused rather than\n"
+      "      started.  A guard in a program cannot stand in for this: a load\n"
+      "      that never completes hangs both processor cores, and the tally\n"
+      "      the programs read first passed on a board whose very next read\n"
+      "      hung them\n"
       "    all %ld pages of the port read, and the word each gave says which\n"
       "      slave answered: no address in the gigabyte falls through\n"
       "    %ld reads and %ld writes swept over the window --- every word of the\n"
@@ -2834,6 +2981,7 @@ int main(int argc, char **argv) {
       "      that counted in DROPPED and the ones it held taken out in order;\n"
       "      and %ld takes swept a tick a frame across the arrivals, so that a\n"
       "      take lands on the tick a character is stored\n",
+      shut_pages, shut_reads, shut_writes,
       pages, reads, writes, by[kPack], by[kChaos], by[kSer], by[kInput], by[kDflt],
       crossed, bursts,
       frames_out, frames_in, chars_out, chars_in, measured[0], measured[1],

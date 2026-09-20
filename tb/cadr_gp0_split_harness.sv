@@ -45,6 +45,19 @@
 // holds that half of it.  What is exercised here is its GP0 face, which is
 // the half this check is about --- including the SLVERR it gives outside its
 // own sixteen words, which is a real answer and not a hang.
+//
+// **AND THE MEMORY PORT IS A THIRD LEVEL, BECAUSE A BOARD CAN HAVE IT SHUT
+// WHILE THE BRIDGE IS UP.**  On a Zynq board the pack side's memory port and
+// its general-purpose port are the same processing system's, live together;
+// on the DE25-Nano the memory port is opened by software, seconds after the
+// processor-to-fabric bridge comes out of reset, so there is an interval at
+// every boot when the window is live and the memory is not.  `port_live` is
+// that level, it reaches `cadr_disk_pack.sv`'s input of the same name and
+// nothing else, and the testbench sweeps the whole window with it LOW as
+// well as high.  A harness that fed it into the pack's RESET instead --- the
+// board's own defect, measured as two hung processor cores --- makes the
+// sweep fail at the pack's page, which is the point of having the level
+// here at all.
 
 `default_nettype none
 
@@ -73,6 +86,12 @@ module cadr_gp0_split_harness #(
     // The MACHINE's, which resets the card and empties the input face's
     // queue.  See the header.
     input  var logic        card_rst,
+    // **WHETHER THE PACK SIDE'S MEMORY PORT IS LIVE**, which is a third
+    // level again and is neither of the resets.  It goes to
+    // `cadr_disk_pack.sv`'s input of that name and to nothing else, so that
+    // the check can sweep the whole window with the memory shut.  See the
+    // header.
+    input  var logic        port_live,
 
     // --- `M_AXI_GP0` as the PS would drive it -----------------------------
     input  var logic [31:0] m_awaddr,
@@ -259,7 +278,7 @@ module cadr_gp0_split_harness #(
   logic        pk_timed;
 
   cadr_disk_pack #(.REG_BASE(PACK_BASE), .ID_W(ID_W), .LEN_W(LEN_W)) u_pack (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .port_live(port_live),
       .s_awaddr(p_awaddr), .s_awlen(p_awlen), .s_awid(p_awid),
       .s_awvalid(p_awvalid), .s_awready(p_awready),
       .s_wdata(p_wdata), .s_wstrb(p_wstrb), .s_wlast(p_wlast),

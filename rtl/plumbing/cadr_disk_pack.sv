@@ -109,7 +109,8 @@
 //                                         busy, the channel active on the
 //                                         slot named, an address not
 //                                         aligned, a slot past the store,
-//                                         or not one bit of 2:0
+//                                         not one bit of 2:0, or the memory
+//                                         port shut (`port_live` low)
 //                       bit 4 ch_active   the controller is walking, live
 //                       bit 5 store_miss  the walk asked the store for a
 //                                         block it does not hold and was
@@ -154,6 +155,31 @@
 // each, measured on the board.  `rtl/plumbing/cadr_gp0_default.sv` answers for a
 // board that has GP0 and not this module.
 //
+// **AND AT ALL TIMES, WHICH IS THE HALF OF THAT RULE A BOARD CAN LOSE
+// WITHOUT LOSING THE OTHER.**  A slave that owns a page of a
+// processor-to-fabric window must answer it whenever the bridge is out of
+// reset, and not merely once the rest of the board is ready.  What this is
+// written against was measured: a board gave this module a reset that carried
+// its memory port's liveness as well as the bridge's, so the face sat in
+// reset for the seconds between the bridge coming up and software opening the
+// memory port --- and a face in reset here is WORSE than a face that stalls.
+// `s_arready` is high in reset, because the read state machine is held in its
+// address state, so the bridge's read address is TAKEN and no beat is ever
+// returned: the transaction is swallowed, both processor cores stand at one
+// PC each, and opening the port afterwards cannot complete a transaction
+// whose address was never latched.  That is every boot of such a board, on
+// the ordinary path where the disk pack program's first register read arrives
+// before the port is open, and no software guard can see it coming: a program
+// that has just read a tally and found the fabric answering has learned
+// nothing about this page.
+//
+// So the port's liveness reaches this module as a SIGNAL and never as a
+// reset.  `port_live` refuses a MOVE, which is the thing that genuinely needs
+// memory to put a block in, and reaches nothing on the register face.  A
+// command written while it is low is refused in CTL's `refused` bit, which is
+// an answer the disk pack program already knows how to read, rather than a
+// move that waits on a port nobody has opened.
+//
 // **THE GP0 FACE IS A SLAVE TO A 32-BIT AXI3 MASTER, AND IT IS SMALL ON
 // PURPOSE.**  A register access from the CPU is a single beat on an
 // uncached mapping; this accepts a burst of any length and walks the
@@ -194,6 +220,14 @@ module cadr_disk_pack #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
+
+    // **WHETHER THE MASTER'S MEMORY PORT IS LIVE.**  A move has nowhere to
+    // put a block while it is low, so a command written then is refused and
+    // says so in CTL's `refused` bit.  It reaches NOTHING on the register
+    // face, which answers every address whenever `rst` is low, and it is not
+    // a reset for the reason the header gives.  A board whose memory port is
+    // live whenever the bridge is ties it high.
+    input  var logic        port_live,
 
     // --- M_AXI_GP0: the PS is the master, 32 bits, AXI3 ------------------
     input  var logic [31:0] s_awaddr,
@@ -479,11 +513,20 @@ module cadr_disk_pack #(
   // CTL that acts on them, and `go_q` is a tick behind that beat, so they
   // are current when they are read.  Off `r_addr` directly the alignment
   // test was in front of the address register's enable.
-  logic bad_align, bad_slot, bad_busy, bad_ch;
-  logic bad_align_q, bad_slot_q, bad_ch_q;
+  //
+  // **AND THE MEMORY PORT, WHICH IS THE ONE TERM THAT IS NOT ABOUT THE
+  // COMMAND.**  A move has nowhere to put a block while the port is shut, so
+  // it is refused here rather than started and left waiting: a refusal is a
+  // bit the disk pack program reads, and a move that waits is a command that
+  // never ends.  Registered like the others so that the level, which comes
+  // from a synchronizer at the top level and changes once a boot, is not a
+  // fresh level in front of this tree.
+  logic bad_align, bad_slot, bad_busy, bad_ch, bad_mem;
+  logic bad_align_q, bad_slot_q, bad_ch_q, bad_mem_q;
   always_ff @(posedge clk) begin
     bad_align_q <= (r_addr[6:0] != 7'd0);
     bad_slot_q  <= (32'(r_slot) >= SLOTS);
+    bad_mem_q   <= !port_live;
     // The channel active and not waiting, on the slot named: see the header.
     // Registered like the two above, for the same reason and with the same
     // argument that SLOT is an earlier beat than the CTL that acts on it.
@@ -493,8 +536,10 @@ module cadr_disk_pack #(
   assign bad_slot  = bad_slot_q;
   assign bad_busy  = busy;
   assign bad_ch    = bad_ch_q;
+  assign bad_mem   = bad_mem_q;
   logic refuse;
-  assign refuse = go_any && (!go_one || bad_align || bad_slot || bad_busy || bad_ch);
+  assign refuse = go_any && (!go_one || bad_align || bad_slot || bad_busy
+                             || bad_ch || bad_mem);
 
   always_ff @(posedge clk) begin
     if (rst) begin

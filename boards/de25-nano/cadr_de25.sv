@@ -958,19 +958,37 @@ module cadr_de25 #(
   );
 
   // **THE PACK SIDE**, its register face on this bridge and its master on the
-  // share's second port.  **ITS RESET IS THE BRIDGE'S AND THE MEMORY PORT'S
-  // TOGETHER**, which is the pair the Zynq boards take --- `MAXIGP0ARESETN`
-  // and `SAXIHP2ARESETN` --- because a master whose memory is shut has
-  // nowhere to put a block, and a face whose registers read zero says
-  // `drive_present` is zero, which is the empty cable the machine already
-  // knows how to meet.
-  logic pack_rst;
-  always_ff @(posedge clk) pack_rst <= h2f_rst || !port_live;
-
+  // share's second port.  **ITS RESET IS THE BRIDGE'S AND THE BRIDGE'S
+  // ALONE**, as every other face on both bridges takes, and the memory port's
+  // liveness reaches it as a signal instead.
+  //
+  // The reason is a defect this board had and the Zynq boards cannot have.
+  // The reset here was once the bridge's and the memory port's together, in
+  // imitation of `MAXIGP0ARESETN` and `SAXIHP2ARESETN`; but on a Zynq board
+  // the processing system drives both, so the pack's port is live whenever
+  // the general-purpose port is, and there is no interval between them.  Here
+  // the memory port is opened by SOFTWARE, seconds after the bridge comes up,
+  // so the interval is every boot --- and through all of it the face sat in
+  // reset, which on this page does not stall a read but SWALLOWS it: the read
+  // state machine is held in its address state, `s_arready` is high there, so
+  // the address is taken and no beat is ever returned.  Measured on the
+  // board: a read of this page before the memory port was opened hung both
+  // processor cores, once by hand at the boot monitor and once on the
+  // ordinary path, where the disk pack program's first register read arrives
+  // while the port is still shut.  The tally the programs read first cannot
+  // see it --- it is answered by a face on the other bridge, and answering is
+  // not evidence about this one.
+  //
+  // So the rule this board keeps is the rule the whole arrangement exists
+  // for, with the half that was missing restored: every address of both
+  // windows is answered, and at every time the bridge is out of reset.
+  // `port_live` goes to `cadr_disk_pack.sv`'s own input of that name, where
+  // it refuses a MOVE --- which is the thing that really has nowhere to put a
+  // block while the memory is shut --- and touches nothing on the face.
   cadr_disk_pack #(
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
   ) u_pack (
-      .clk(clk), .rst(pack_rst),
+      .clk(clk), .rst(h2f_rst), .port_live(port_live),
       .s_awaddr(h2fp_awaddr), .s_awlen(h2fp_awlen), .s_awid(h2fp_awid),
       .s_awvalid(h2fp_awvalid), .s_awready(h2fp_awready),
       .s_wdata(h2fp_wdata), .s_wstrb(h2fp_wstrb), .s_wlast(h2fp_wlast),
