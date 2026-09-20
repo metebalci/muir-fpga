@@ -80,6 +80,16 @@ BR2_PACKAGE_CADR_USB_INPUT=y
 # passive.  package/muir/Config.in has the argument.  It brings host-rustc,
 # which on a clean tree is two prebuilt tarballs from static.rust-lang.org.
 BR2_PACKAGE_MUIR=y
+# ozd, the band's file and time host, on the board itself.  It is what makes a
+# board with a card and no network a whole site: the machine asks for the time
+# and for its files and is answered here rather than somewhere on a network.
+# Built from its own source at the commit ozd.commit pins, and never patched.
+# It brings no toolchain that muir has not already brought.
+BR2_PACKAGE_OZD=y
+# ozd refuses to run as root and this board otherwise runs everything as root,
+# so its user is made here.  The table is in the package, beside the init
+# script that starts the program under that user.
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_CADR_PATH)/package/ozd/users.table"
 # Buildroot builds output/target/ up and never removes what a package stopped
 # installing, so a renamed package leaves its old program and its old init
 # script in the image beside the new ones.  That happened once and two disk

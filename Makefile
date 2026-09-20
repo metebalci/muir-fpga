@@ -3000,6 +3000,10 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # `input_keymap.h` is generated from muir but the state machine over it is
 # written out by hand, and this is what holds it.
 DISK_PACKS_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs
+# ozd's package: the band's file and time host, on the board itself.  It is the
+# sixth init script the card's one file of flags reaches, and the only one of
+# the six whose program is not ours.
+OZD_PKG      := boards/arty-z7-20/linux/buildroot/package/ozd
 CHAOSNET_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet
 CHAOSNET_SRC := $(CHAOSNET_PKG)/src
 SERIAL_PKG   := boards/arty-z7-20/linux/buildroot/package/cadr-serial
@@ -3055,6 +3059,7 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(COMMON_SRC)/clock.sh \
                       $(COMMON_SRC)/fpgarc_test.sh \
                       $(CHAOSNET_PKG)/S87cadr-chaosnet \
+                      $(OZD_PKG)/S84ozd \
                       $(TERMINAL_PKG)/S85cadr-terminal \
                       $(SERIAL_PKG)/S86cadr-serial \
                       $(USB_INPUT_PKG)/S88cadr-usb-input \
@@ -3062,11 +3067,12 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       boards/arty-z7-20/linux/mksd-buildroot.sh \
                       boards/arty-z7-20/linux/mksd-release.sh | $(BUILD)
 	$(MAKE) -C $(COMMON_SRC) check
-	@echo "fpgarc: one file of flags on the card reaches five programs, each gets the flags it"
+	@echo "fpgarc: one file of flags on the card reaches six programs, each gets the flags it"
 	@echo "fpgarc: owns and no others, --no-auto-boot holds the machine before the drive,"
 	@echo "fpgarc: --date and --time each set one field of a clock the board does not keep,"
-	@echo "fpgarc: with nothing inferred, and the card mirrors the server: the board's four"
-	@echo "fpgarc: files under the board's own folder"
+	@echo "fpgarc: the board's own file and time host is on unless --no-ozd and its address"
+	@echo "fpgarc: is never placed twice, with nothing inferred, and the card mirrors the"
+	@echo "fpgarc: server: the board's four files under the board's own folder"
 	@touch $@
 
 # **cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK COMPILES

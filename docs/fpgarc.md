@@ -119,6 +119,35 @@ a card setting this board's clock, and it never reaches the Chaosnet program.
 The refusal there stands for somebody who passes the flag to that program by
 hand, and it is about the time host that went, which is a different thing.
 
+**The file and time host on this board**, read by `S84ozd`. `docs/chaosnet.md`
+has the section on it. Every setting is spelled `--ozd-` because a word like
+`--root`, `--host`, `--name` or `--port` is a word another program could want,
+and each maps to one of that program's own flags.
+
+    --no-ozd              do not run it at all
+    --ozd-chaos-address   the Chaosnet address it answers at, in octal
+    --ozd-name            its names, the official one first
+    --ozd-port            the loopback port it listens on
+    --ozd-root            a tree it serves, repeatable.  A card that carries
+                          a pack carries the band's sources under `sys` on
+                          this partition, and this line is live on it
+    --ozd-host            a machine in the host table it answers from,
+                          repeatable
+    --ozd-hosts-text      a band's own host table, whose hosts it also answers
+                          for
+    --ozd-trace           say every packet
+
+**It is on when this file says nothing**, which is the opposite of the cable
+and the serial line and is deliberate: a board with no network had no file
+host and no time host at all, and one on the board costs almost nothing. The
+section below is about the flag that turns it off.
+
+**There is no flag for the address it listens on, only for the port.** It
+authenticates nobody, so an endpoint flag would let a card put it on a network
+where anything that reached the port could read and write every tree it
+serves. That is not a setting to be made by uncommenting a line with the card
+in a reader.
+
 **The screen**, read by `S85cadr-terminal`. `docs/terminal.md` says what each
 one means. `--terminal` takes nothing, a port, an address, or address:port.
 
@@ -451,6 +480,34 @@ is a band whose files are stamped 1970. The step is in that script for the boot
 button's reason: it reads this file and the saved clock, and both are on the
 partition that script is the one thing that mounts.
 
+## `--no-ozd`
+
+The board runs the band's file and time host itself unless this line is there.
+`docs/chaosnet.md` says what it serves, what it costs and why it listens on
+the loopback; this section is about the flag.
+
+**It is the one flag whose setting decides another line's meaning.** A band
+calls one address for its file host. If this file names a peer at that address
+on a network, and the host on the board answers at the same address on the
+loopback, then the Chaosnet program is given one Chaosnet address at two
+endpoints. It refuses that by name and does not start, so the board is left
+with no cable at all, on a boot that started a file host.
+
+So a card whose band has a file host on a real network writes this line live.
+The card script does it: a card that names any `--chaos-udp-peer` gets
+`--no-ozd` live, and every other card gets it commented out under the sentence
+that explains it. A card that names the address itself without this line is
+not left to fail either. The Chaosnet script sees that the card places the
+address and keeps the card's host, and the console says which of the two the
+machine reaches.
+
+**The host is reached over the cable like any other.** It is on the loopback
+rather than on a network, but the machine still talks to it through the
+Chaosnet program's socket, so a card with `--chaos-udp` commented out cannot
+reach it. A released card therefore carries `--chaos-udp 127.0.0.1:42042`
+live, which plugs the cable into the board and into no network. The console
+says so when a host is running and the cable is not plugged in.
+
 ## `--no-auto-boot`
 
 muir's flag, and it means here what it means there: leave the boot button
@@ -622,26 +679,35 @@ commented, so a released board blinks: `STANDALONE` clears the variable, and
 the card script also refuses it under `RELEASE`, so the menu a stranger is given
 never depends on one flag having done its job.
 
-## The released card's menu has three live lines
+## The released card's menu has four live lines
 
-A card a stranger is given carries the same whole menu, with three of its lines
+A card a stranger is given carries the same whole menu, with four of its lines
 live.
 
     --chaos-address 177101
+    --chaos-udp 127.0.0.1:42042
     --terminal 0.0.0.0:5900
     --keyboard-boot ctrl,meta
 
 Those are what a board out of the box needs. A Chaosnet interface has an
 address whether or not anything is plugged into it, so the switches are always
-set. The screen is the only way to use a board that has no monitor of its own.
-The chord is what cold-boots the machine from a viewer.
+set. The cable is plugged into the board itself, because the band's file and
+time host is on the board and the machine reaches it over the cable. The
+screen is the only way to use a board that has no monitor of its own. The
+chord is what cold-boots the machine from a viewer.
 
-Every other flag is on the card and commented out, under the sentence that says
-what it does. **The Chaosnet cable and the serial line are among them.** A
-release with `--chaos-udp` live would put a station on a network the user has
-not got, listening on a port nobody named, with no peer it could reach. A
-release with `--serial` live would offer an unauthenticated port on every
-interface for a cable hardly anybody wants. Each is one `#` away from being on.
+**The cable came back onto this menu when the board gained a host of its
+own.** The argument for leaving it out was that a release with the cable live
+would put a station on a network the user has not got, listening on a port
+nobody named, with no peer it could reach. Two of those three are still true
+of a cable on every interface and none of them is true of a cable on the
+loopback. A user who wants a station on their own network changes `127.0.0.1`
+to `0.0.0.0` in that one line.
+
+Every other flag is on the card and commented out, under the sentence that
+says what it does. **The serial line is among them.** A release with
+`--serial` live would offer an unauthenticated port on every interface for a
+cable hardly anybody wants. It is one `#` away from being on.
 
 The development card is unchanged. It has those three lines, the cable, the
 serial line and the debug cable's wiring as well, which is what this project's
@@ -737,6 +803,42 @@ not started, and the script says the line is off and how to turn it on. The
 screen is given its endpoint and the boot chord. A menu whose commented lines
 the scripts ignored, or whose live ones they missed, would be a card that says
 one thing and a board that does another.
+
+**And it holds the file and time host on the board**, which is the sixth
+program the file reaches and the first one whose settings have to be rewritten
+on the way. Ten cases: the host is on with nothing said and is given the four
+flags its program requires; `--no-ozd` stops it and leaves nothing behind for
+the Chaosnet script to find; a setting left beside `--no-ozd` still reaches a
+program, with a misspelling of the same flag reported on the same run as the
+control; every setting the card names arrives under the program's own name,
+with the absence of every `--ozd-` spelling asserted beside it, because a
+rewrite that did not happen would be a host that never started and the
+defaults would be there to find either way; a tree the board has not got stops
+the host and prints the program's own refusal; the machine is given the host
+on its own board, and is not given it when none is running; a card that places
+that address itself keeps its own host and its cable; and the card script
+writes `--no-ozd` live for a card with a peer and commented for a card
+without, both halves, because a script that wrote it live always would pass
+the first alone.
+
+**And it holds the wait for the network to being a wait for a name.** A board
+whose peers are all addresses must not wait, on a stubbed board with nothing
+plugged in, and a board with a peer named by name must still wait on that same
+board. The second is the control: a script that had stopped waiting for
+anything would pass the first. The case that used to require a board with no
+card to wait now requires it not to, since the defaults name no peer at all.
+
+**And it holds the card's layout, by running the card script's own sizing
+rather than restating it.** The function is lifted out on its anchors and
+called with the real byte counts, and what is asserted is that the partition
+it returns holds a pack and the band's sources together, with room for one
+more drive. The control is that the 272 MiB this used to give must not be
+enough, since without that half the case would pass on a partition that had
+not grown at all. A tree larger than the reserve is asserted to take the room
+it needs, with a tree that fits asserted not to change the size, because
+otherwise the term would be the tree's size and not a reserve. The card is
+held to naming the tree exactly when it carries one, both ways, since a line
+naming a tree that is not there stops the host.
 
 `chaosnet.pass` holds the Chaosnet script's own wait for the network, and it now
 also holds that script to taking its own flags out of a file written for the

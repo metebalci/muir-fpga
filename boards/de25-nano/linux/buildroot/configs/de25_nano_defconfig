@@ -99,6 +99,16 @@ BR2_PACKAGE_CADR_SERIAL=y
 BR2_PACKAGE_CADR_CHAOSNET=y
 BR2_PACKAGE_CADR_USB_INPUT=y
 BR2_PACKAGE_MUIR=y
+# ozd, the band's file and time host, on the board itself.  It is what makes a
+# board with a card and no network a whole site: the machine asks for the time
+# and for its files and is answered here rather than somewhere on a network.
+# Built from its own source at the commit ozd.commit pins, and never patched.
+# It brings no toolchain that muir has not already brought.
+BR2_PACKAGE_OZD=y
+# ozd refuses to run as root and this board otherwise runs everything as root,
+# so its user is made here.  The table is in the package, beside the init
+# script that starts the program under that user.
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_CADR_PATH)/package/ozd/users.table"
 # **THE PROGRAMS ARE BUILT WITH THIS BOARD'S ADDRESS MAP.**  The faces keep
 # their Zynq addresses on the HPS-to-FPGA bridge, the console moves to the
 # lightweight bridge, and the machine's memory is the 128 MB reserved at

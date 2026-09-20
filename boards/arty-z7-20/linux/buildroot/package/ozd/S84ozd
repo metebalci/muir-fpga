@@ -1,0 +1,288 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# THE BAND'S FILE AND TIME HOST, ON THE BOARD.
+#
+# A CADR has no file or time server in it.  The fabric has none, and
+# cadr-chaosnet has none: it is the cable and nothing above it.  The host a
+# band calls is a machine on the network, and a board with no network reached
+# no such machine, so it booted, painted its window system and said its file
+# host was not a known host --- and it did not know the date either.  This
+# script starts one on the board itself, so that a board with a card and
+# nothing plugged into it is a whole site.
+#
+# **IT IS ON UNLESS THE CARD SAYS OTHERWISE.**  `--no-ozd` turns it off, in the
+# spelling this board already uses for a thing that is on until somebody says
+# no: `--no-auto-boot` and `--no-blinking-leds`.  Every other setting is
+# spelled `--ozd-`, because a word like `--root`, `--host`, `--name` or
+# `--port` is a word another program could want, and the card's one file of
+# flags cannot carry a word two programs answer to.
+#
+# S84: after S80cadr-disk-packs, which is the one thing that mounts the
+# partition this file of flags is on, and before S87cadr-chaosnet, so that the
+# machine's first request for the time finds a host already listening.  Not
+# last, so S88cadr-usb-input keeps the report of the lines no program claimed.
+#
+# **IT LISTENS ON THE LOOPBACK AND NOWHERE ELSE, AND THAT IS A DECISION.**  ozd
+# authenticates nobody: any host that can reach its socket may read every root
+# it serves and write every root that is not marked read-only.  On the loopback
+# the only thing that can reach it is this board, which is the whole of what
+# was asked for.  It also settles the address.  Every board runs a copy at the
+# same Chaosnet address, because the address is not free to choose --- it is
+# whatever the band's own host table calls its file host --- and three boards
+# on one network are still not three hosts claiming one address, because none
+# of them claims it on the network.  The address is a name inside one board.
+#
+# **AND A BOARD THAT ALREADY HAS A FILE HOST TURNS THIS ONE OFF.**  A band
+# calls ONE address for its file host.  If the card names a peer at that
+# address on a real network and this host answers at the same address on the
+# loopback, then cadr-chaosnet is given one Chaos address at two endpoints and
+# refuses it by name --- `udp: 177200 twice; one endpoint an address` --- and
+# the board is left with no cable at all.  So S87cadr-chaosnet reads what this
+# script leaves behind and a card that places that address itself keeps its own
+# host and is told so on the console.  `--no-ozd` is the other way to say it,
+# and it is the one to use when the host on the network is the one that should
+# win.
+
+PACKS=/mnt/packs
+PROG=/usr/bin/ozd
+PIDFILE=/var/run/ozd.pid
+LOG=/var/log/ozd.log
+
+# **WHAT S87cadr-chaosnet READS**: one line, the peer entry that reaches this
+# host, in that program's own syntax.  It is written only when the host is
+# really running and removed whenever it is not, so it is a fact about this
+# boot rather than a second copy of a setting.  /var/run is a RAM disk unpacked
+# at every boot, so it starts absent and cannot go stale across a reset; it is
+# removed at the top of start() all the same, because a `restart` can leave one
+# standing and a marker that outlives its host is a lie about the board.
+PEERFILE=/var/run/cadr-ozd.peer
+
+RC="$PACKS/fpgarc"
+
+# The reader, cadr-common's, installed by that package on the target.  Its
+# header is the contract.  If it is not there this script dies here and the
+# shell names the file, which is the loud failure and the right one.
+FPGARC_SH=/usr/share/cadr/fpgarc.sh
+. "$FPGARC_SH"
+
+# **THE FLAGS THIS SCRIPT OWNS**, each one of ozd's own under a name this board
+# can carry.  The mapping is one for one and `to_ozd` below is the whole of it:
+#
+#     --no-ozd            this board's, and not ozd's: do not start it at all
+#     --ozd-chaos-address ozd's --address
+#     --ozd-name          ozd's --name
+#     --ozd-port          the port of ozd's --listen, on the loopback
+#     --ozd-root          ozd's --root, repeatable
+#     --ozd-host          ozd's --host, repeatable
+#     --ozd-hosts-text    ozd's --hosts-text
+#     --ozd-trace         ozd's --trace
+#
+# **AND ozd'S `--listen` IS NOT OFFERED WHOLE, ONLY ITS PORT.**  An endpoint
+# flag would let a card put this host on a network, where it would serve every
+# root to anybody who could reach the port, with no authentication of any kind
+# and no way to tell afterwards.  That is not a setting somebody should be able
+# to make by uncommenting a line with the card in a reader.  A board that is to
+# serve a second machine is a decision taken with the program's own flags, and
+# this script is not the place for it.
+#
+# **AND NONE OF ozd'S FIVE `--log-` FLAGS IS HERE.**  The log is a file in the
+# root filesystem, which is a RAM disk, and a log that grew without bound would
+# take the board down.  ozd is quiet unless asked --- a whole boot leaves a
+# line or two --- and asking is what those flags do.
+FLAGS="--no-ozd
+       --ozd-chaos-address
+       --ozd-name
+       --ozd-port
+       --ozd-root
+       --ozd-host
+       --ozd-hosts-text
+       --ozd-trace"
+
+# **THE DEFAULTS, AND WHY EACH IS WHAT IT IS.**
+#
+# THE ADDRESS IS THE ONE THE BAND CALLS, and it is not free to choose.  A band
+# holds a host table and calls its file and time host at the address that table
+# gives; a host answering anywhere else is a host the band never calls, and a
+# service that runs and is never reached looks exactly like one that works.  So
+# the default is the address the band this project ships beside names for its
+# own associated machine, and a board running another band says so on the card:
+# System 100's table calls 3060 and System 304's calls 4403.
+DEFAULT_ADDRESS=177200
+# ITS NAMES, as a band's host table writes them: the official name first, then
+# the system type.  STATUS answers with the first of them.
+DEFAULT_NAME=OZ,system=UNIX
+# THE PORT.  CHUDP's own port is 42042 and the CADR in the fabric takes it, so
+# this host cannot have it --- two programs on one board cannot bind one port
+# --- and the CADR inside muir already took 42043 in muirrc.  42142 is this
+# project's own number for this service and has been since the copy that runs
+# beside the boards took it, which is one number for one thing.  On the
+# loopback it can never meet that copy.
+DEFAULT_PORT=42142
+# THE BASE ROOT, which is where a user's home directory lives.  ozd requires at
+# least one root and refuses to start without one.  LOGIN gives each user the
+# home directory /<user>/ in lower case, and a band that compiles a system
+# writes its compiler warnings there and stops with "Access to file denied" if
+# it cannot, so this has to exist and be writable.  It is in the root
+# filesystem, which is a RAM disk unpacked at every boot, so it costs the card
+# nothing and it is empty at every boot.
+#
+# **IT IS ALWAYS PASSED, AND A CARD'S OWN ROOTS ARE MOUNTS BESIDE IT.**  That
+# is the one place this parts from the rule that a script's default stands only
+# where the card is silent, and the reason is that a home directory is not a
+# setting: it is a thing that has to exist.  A card names a tree with
+# `--ozd-root <name>=<path>,ro`, which ozd mounts at /<name>.  A card that
+# writes an unnamed root instead gets ozd's own refusal by name, because a
+# second base is not a thing ozd has.
+BASE_ROOT=/var/lib/ozd/lispm
+# THE USER.  ozd refuses to run as root, in its own words, and it is right to:
+# nothing it does needs a privilege, and as root a path check it got wrong
+# would reach the whole filesystem.  Buildroot's users table makes this user
+# and the directory above belongs to it.
+OZD_USER=ozd
+
+# **WHERE THE TREE IT SERVES LIVES, WHICH IS NOWHERE BY DEFAULT.**  The band's
+# sources are about 16 MiB.  The root filesystem is a RAM disk unpacked at
+# every boot, so a tree put there costs that much memory on every board whether
+# this host is ever asked for a file or not --- and this host is on by default.
+# So the default serves no tree at all, and what that costs is nothing.
+#
+# What a board gets for nothing is the two things that were actually stopping
+# it: the time, which the machine asks for at every boot and otherwise has to
+# be told by hand, and the host table, which is what makes the band's file host
+# a known host rather than an error raised before a single packet is sent.
+#
+# A tree is named on the card, and the place for it is the pack partition,
+# which is on the card and costs no memory:
+#
+#     --ozd-root sys=/mnt/packs/sys,ro
+#
+# docs/chaosnet.md has the measured sizes behind that and behind the two other
+# places it could have gone.
+
+# The argument of one of this script's own flags, or nothing.  Asking claims
+# the flag, which is right: a script only asks about a flag it owns.
+value_of() {
+	eval "set -- $(fpgarc_args "$RC" "$1")"
+	[ $# -ge 2 ] && printf '%s\n' "$2"
+}
+
+# The card's lines in this board's spelling, printed as ozd's own words,
+# shell-quoted for `eval`.  This is the whole of the mapping and there is no
+# other copy of it.  `--no-ozd` and `--ozd-port` are dropped here because they
+# are answered before this runs: the first stops the host and the second is
+# folded into `--listen`.
+to_ozd() {
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--ozd-chaos-address)
+			fpgarc_quote --address; fpgarc_quote "$2"; shift 2 ;;
+		--ozd-name)
+			fpgarc_quote --name; fpgarc_quote "$2"; shift 2 ;;
+		--ozd-root)
+			fpgarc_quote --root; fpgarc_quote "$2"; shift 2 ;;
+		--ozd-host)
+			fpgarc_quote --host; fpgarc_quote "$2"; shift 2 ;;
+		--ozd-hosts-text)
+			fpgarc_quote --hosts-text; fpgarc_quote "$2"; shift 2 ;;
+		--ozd-trace)
+			fpgarc_quote --trace; shift ;;
+		*)
+			shift ;;
+		esac
+	done
+}
+
+start() {
+	rm -f "$PEERFILE"
+
+	if fpgarc_has "$RC" --no-ozd; then
+		echo "ozd: --no-ozd on the card: this board serves itself no files and no time."
+		echo "ozd: the band's file host is whichever --chaos-udp-peer names, on the network."
+		# Every other flag of this script's is claimed all the same, so
+		# that an --ozd- setting left beside --no-ozd is not reported at
+		# S88 as a line no program takes.  It did reach a program: this
+		# one, which was told not to run.
+		fpgarc_args "$RC" $FLAGS > /dev/null
+		return 0
+	fi
+
+	address=$(value_of --ozd-chaos-address)
+	[ -n "$address" ] || address=$DEFAULT_ADDRESS
+	port=$(value_of --ozd-port)
+	[ -n "$port" ] || port=$DEFAULT_PORT
+
+	# The home directory, made before ozd looks at it and owned by the user
+	# that will write in it.  ozd refuses a root it cannot resolve, so it
+	# has to exist rather than be made on first use.
+	mkdir -p "$BASE_ROOT" 2>/dev/null
+	chown -R "$OZD_USER" "$BASE_ROOT" 2>/dev/null
+
+	# The defaults first and the card's lines after them, so that a card
+	# line wins, which is muir's rule and the rule everywhere in this file.
+	set -- --address "$DEFAULT_ADDRESS" --name "$DEFAULT_NAME" \
+	       --listen "127.0.0.1:$port" --root "$BASE_ROOT"
+	card=$(fpgarc_args "$RC" $FLAGS)
+	eval "set -- \"\$@\" $(eval "to_ozd $card")"
+
+	# **THE FLAGS ARE CHECKED BEFORE THE DAEMON IS STARTED, AND ozd HAS ITS
+	# OWN WORD FOR IT.**  `--check` reads the flags, checks the roots and
+	# exits without changing anything.  That is better here than this
+	# board's usual trick of starting a daemon and running it again when it
+	# is not there: it is the program's own dry run, it happens before a
+	# socket is bound, and it costs nothing when it passes.  What it prints
+	# when it fails is the refusal, in ozd's own words, on the console.
+	#
+	# `-c /dev/null` so that the run depends on this card and on nothing
+	# else: without it ozd reads .ozdrc from the working directory or from
+	# a home directory, and an init script's working directory is not a
+	# thing anybody meant to configure a board with.
+	if ! "$PROG" --check -c /dev/null "$@" > "$PIDFILE.check" 2>&1; then
+		echo "Starting ozd: FAIL"
+		sed 's/^/ozd: /' "$PIDFILE.check"
+		rm -f "$PIDFILE.check"
+		return 1
+	fi
+	rm -f "$PIDFILE.check"
+
+	printf "Starting ozd: "
+	# `-c` runs it as its own user.  The `sh -c exec` is what keeps its
+	# log: `-b` daemonizes and sends stdout and stderr to /dev/null, and
+	# ozd logs to stderr and takes no flag naming a destination.  `exec`
+	# replaces the shell with ozd, so the pid start-stop-daemon wrote is
+	# ozd's own and `stop` below kills the right process rather than a
+	# shell that is no longer there.
+	if start-stop-daemon -S -q -b -m -p "$PIDFILE" -c "$OZD_USER" \
+	    --exec /bin/sh -- -c "exec \"\$0\" -c /dev/null \"\$@\" >> $LOG 2>&1" \
+	    "$PROG" "$@"; then
+		sleep 1
+		p=$(cat "$PIDFILE" 2>/dev/null)
+		if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+			echo "OK"
+			echo "$address@127.0.0.1:$port" > "$PEERFILE"
+			echo "ozd: this board is its own file and time host, at $address" \
+			     "on the loopback at port $port."
+			return 0
+		fi
+	fi
+	echo "FAIL"
+	tail -5 "$LOG" 2>/dev/null | sed 's/^/ozd: /'
+	return 1
+}
+
+stop() {
+	printf "Stopping ozd: "
+	start-stop-daemon -K -q -p "$PIDFILE"
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	rm -f "$PEERFILE"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?

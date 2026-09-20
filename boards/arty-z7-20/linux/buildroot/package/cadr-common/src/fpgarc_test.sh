@@ -92,6 +92,7 @@ sandbox() {
 	: > "$WORK/date.calls"
 	: > "$WORK/umount.calls"
 	: > "$WORK/order.calls"
+	: > "$WORK/ozd.check.calls"
 
 	# **THE REAL ONE FORKS THE PROGRAM AND CLOSES ITS OUTPUT**, which is
 	# what made a refused flag silent, so this does the same: it records
@@ -122,6 +123,27 @@ EOF
 	# names --- on stderr, which is where every one of them refuses --- and
 	# otherwise runs, which is what a daemon does.  The name is its own, so
 	# a refusal printed here is attributable the way the real one is.
+	# **AND THE SIXTH IS NOT OURS.**  ozd takes no --log and has a dry run
+	# of its own, `--check`, which its init script uses instead of this
+	# board's start-it-and-run-it-again trick.  \$OZD_CHECK_FAILS makes
+	# that dry run refuse, which is the case where a card names a root
+	# that is not there.
+	cat > "$WORK/bin/ozd" <<EOF
+#!/bin/sh
+for a; do
+	case "\$a" in
+	--check)
+		echo "\$*" >> "$WORK/ozd.check.calls"
+		if [ "\${OZD_CHECK_FAILS:-no}" = yes ]; then
+			echo "ozd: root /mnt/packs/sys: cannot be resolved: No such file or directory (os error 2)" >&2
+			exit 1
+		fi
+		exit 0
+		;;
+	esac
+done
+exec sleep 8
+EOF
 	for _p in cadr-terminal cadr-serial cadr-usb-input cadr-chaosnet cadr-disk-packs; do
 		cat > "$WORK/bin/$_p" <<EOF
 #!/bin/sh
@@ -271,8 +293,36 @@ prepare() {
 	anchor "$dst" "^PACKS=/mnt/packs\$" "PACKS=$WORK/packs" || return 1
 	anchor "$dst" "^FPGARC_SH=/usr/share/cadr/fpgarc.sh\$" \
 	              "FPGARC_SH=$READER" || return 1
-	anchor "$dst" "^DAEMON_SH=/usr/share/cadr/daemon.sh\$" \
-	              "DAEMON_SH=$STARTER" || return 1
+	# **THE DAEMON STARTER IS NOT EVERY SCRIPT'S.**  Five of the six are
+	# our own programs and every one of them is started through
+	# `cadr_daemon`, which is what makes a refused flag loud.  ozd is not
+	# ours: it takes no --log, and it has a dry run of its own that says
+	# the same thing earlier.  So the line is required of the five and
+	# required to be ABSENT from the sixth, rather than merely allowed to
+	# be missing --- a script that grew one would otherwise start using it
+	# with nothing here noticing.
+	case "$2" in
+	S84ozd)
+		if grep -q "^DAEMON_SH=" "$dst"; then
+			fail "S84ozd has a DAEMON_SH line now; it used ozd's own --check instead," \
+			     "and this check has rotted against it"
+			return 1
+		fi
+		anchor "$dst" "^LOG=/var/log/ozd.log\$" "LOG=$WORK/ozd.log" || return 1
+		anchor "$dst" "^PEERFILE=/var/run/cadr-ozd.peer\$" \
+		              "PEERFILE=$WORK/run/cadr-ozd.peer" || return 1
+		anchor "$dst" "^BASE_ROOT=/var/lib/ozd/lispm\$" \
+		              "BASE_ROOT=$WORK/ozdroot" || return 1
+		# Nobody in this check is root, so the program runs as whoever
+		# is running the check.  What the user is for is held by the
+		# users table and by the line above, not here.
+		anchor "$dst" "^OZD_USER=ozd\$" "OZD_USER=$(id -un)" || return 1
+		;;
+	*)
+		anchor "$dst" "^DAEMON_SH=/usr/share/cadr/daemon.sh\$" \
+		              "DAEMON_SH=$STARTER" || return 1
+		;;
+	esac
 	# The program itself, so that the stand-in on the stub PATH is what is
 	# started and what is run again for its refusal.  The name is read out
 	# of the script rather than written here, so a script that renames its
@@ -290,6 +340,12 @@ prepare() {
 	case "$2" in
 	S87cadr-chaosnet)
 		anchor "$dst" "^WAIT_SECONDS=30\$" "WAIT_SECONDS=1" || return 1
+		# What S84ozd leaves behind when it has started a host on this
+		# board.  The two scripts name one path and this rewrite is
+		# what keeps the check honest about that: a rename in either
+		# fails here by name.
+		anchor "$dst" "^OZD_PEERFILE=/var/run/cadr-ozd.peer\$" \
+		              "OZD_PEERFILE=$WORK/run/cadr-ozd.peer" || return 1
 		;;
 	S80cadr-disk-packs)
 		anchor "$dst" "^BOOT=/mnt/card\$" "BOOT=$WORK/mnt/card" || return 1
@@ -1078,10 +1134,15 @@ if prepare cadr-chaosnet S87cadr-chaosnet; then
 	run_script S87cadr-chaosnet
 	passes_once "--chaos-address" "cadr-chaosnet" "3050"
 	passes_once "--chaos-udp" "cadr-chaosnet" "0.0.0.0:42042"
+	# **AND IT DOES NOT WAIT, BECAUSE THERE IS NOTHING TO WAIT FOR.**  The
+	# defaults are the switches and the cable and no peer at all, so no
+	# name is resolved and the wait can buy nothing.  This used to assert
+	# the opposite, on a board that then spent the whole bound at every
+	# boot on a network it had nobody to reach.
 	if [ -s "$WORK/ip.calls" ]; then
-		ok "and a board with no card still waits for its network"
+		fail "a board with no card and no peer waited for a network"
 	else
-		fail "a board with no card has a cable and did not wait for a network"
+		ok "and it does not wait: there is no peer, so there is no name"
 	fi
 fi
 
@@ -2376,7 +2437,15 @@ generate_fpgarc() {
 	  # $3 is NO_BLINKING_LEDS, which local.conf sets on a card for a board
 	  # that is left running and which a release never carries live.
 	  NO_BLINKING_LEDS=${3:-}
-	  CHAOS_PEER=""
+	  # $5 is CHAOS_PEER, which local.conf sets on a card whose band has a
+	  # file host on a real network.  It is empty everywhere but in the
+	  # case that asserts what such a card does about the host on the
+	  # board, because those two things are one decision.
+	  CHAOS_PEER=${5:-}
+	  # $6 is SYS, the band's sources staged onto the packs partition.  The
+	  # menu names the tree exactly when the card carries one, because a
+	  # line naming a tree that is not there stops the host.
+	  SYS=${6:-}
 	  CHAOS_DEFAULT_PEER=""
 	  . "$WORK/gen/gen.sh" ) || return 1
 	return 0
@@ -2412,7 +2481,8 @@ live_flags() { tr -d '\r' < "$1" | grep -E '^--' || true; }
 # written into the file twice under two different explanations.
 flag_requirements() {
 	for _f in cadr-chaosnet/S87cadr-chaosnet cadr-terminal/S85cadr-terminal \
-	          cadr-serial/S86cadr-serial cadr-usb-input/S88cadr-usb-input; do
+	          cadr-serial/S86cadr-serial cadr-usb-input/S88cadr-usb-input \
+	          ozd/S84ozd; do
 		sed -n '/^FLAGS="/,/"[[:space:]]*$/p' "$PKG/$_f" |
 			sed -e 's/^FLAGS="//' -e 's/"[[:space:]]*$//' |
 			while IFS= read -r _line; do
@@ -2695,24 +2765,24 @@ done
 # development menu is asserted as the control, because a release menu with
 # three live lines could otherwise be bought by turning the development card's
 # off as well, and every case above would still pass.
-case_head "a released card's menu has three live lines and they are the three a board needs"
+case_head "a released card's menu has four live lines and they are the four a board needs"
 sandbox
 if generate_fpgarc "" 1; then
 	GEN="$WORK/gen/packs/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
-	want='--chaos-address 177101|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|'
+	want='--chaos-address 177101|--chaos-udp 127.0.0.1:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|'
 	if [ "$got" = "$want" ]; then
-		ok "the address switches, the screen and the boot chord, and nothing else"
+		ok "the switches, the cable on the loopback, the screen and the boot chord, and nothing else"
 	else
 		fail "the released menu's live lines are [$got], not [$want]"
 	fi
 fi
 
-case_head "and the cable and the serial line are on it, commented out"
+case_head "and the serial line is on it, commented out"
 sandbox
 if generate_fpgarc "" 1; then
 	GEN="$WORK/gen/packs/fpgarc"
-	for f in --chaos-udp --serial; do
+	for f in --serial; do
 		if tr -d '\r' < "$GEN" | grep -qE "^#$f "; then
 			ok "$f is there as a setting to uncomment"
 		else
@@ -2723,11 +2793,11 @@ if generate_fpgarc "" 1; then
 	if [ "$HAVE_READER" != yes ]; then
 		fail "there is no reader to agree with the card script"
 	else
-		for f in --chaos-address --terminal --keyboard-boot; do
+		for f in --chaos-address --chaos-udp --terminal --keyboard-boot; do
 			fpgarc_has "$GEN" "$f" && ok "the reader finds $f" ||
 				fail "the reader does not find $f live"
 		done
-		for f in --chaos-udp --serial; do
+		for f in --serial; do
 			fpgarc_has "$GEN" "$f" &&
 				fail "the reader takes the commented $f as a flag" ||
 				ok "and the reader does not find $f"
@@ -2786,17 +2856,22 @@ fi
 # fabricated here.  That is the join the decision actually rests on: a menu
 # whose commented lines the scripts ignored, or whose live ones they missed,
 # would be a card that says one thing and a board that does another.
-case_head "a board given the released menu has its switches set and no cable"
+case_head "a board given the released menu has its switches set and its cable on the loopback"
 sandbox
 if generate_fpgarc "" 1 && prepare cadr-chaosnet S87cadr-chaosnet; then
 	cp "$WORK/gen/packs/fpgarc" "$WORK/packs/fpgarc"
 	run_script S87cadr-chaosnet
 	passes_once "--chaos-address" "cadr-chaosnet" "177101"
-	passes_not "--chaos-udp" "cadr-chaosnet"
+	# **THE CABLE IS PLUGGED INTO THE BOARD AND INTO NO NETWORK.**  That is
+	# what changed when the board gained a file and time host of its own: a
+	# board out of the box is a whole site, and it cannot be one with its
+	# cable unplugged.  0.0.0.0 here would be a station on a network the
+	# user has not got, which is what kept the line off this menu before.
+	passes_once "--chaos-udp" "cadr-chaosnet" "127.0.0.1:42042"
 	if grep -q 'the cable is not plugged in' "$WORK/out.S87cadr-chaosnet"; then
-		ok "and the console says the cable is not plugged in"
+		fail "the console says the cable is not plugged in, and the released menu plugs it in"
 	else
-		fail "the console does not say the cable is not plugged in"
+		ok "and the console does not say the cable is unplugged"
 	fi
 fi
 
@@ -3194,9 +3269,452 @@ done
 [ "$cleared" = yes ] \
 	&& ok "and STANDALONE clears the private values and the board's station numbers out of the environment"
 
+# ---------------------------------------------------------------------------
+# 8.  THE FILE AND TIME HOST ON THE BOARD.
+#
+# A CADR has no file or time server in it, so a board with no network had no
+# file host and no time host at all: it booted, painted its window system, said
+# its file host was not a known host, and did not know the date.  S84ozd starts
+# one on the board, on unless the card says --no-ozd.
+#
+# What these cases hold is the join, which is where the whole thing can go
+# wrong quietly.  The host's flags reach ozd in ozd's own spelling; the machine
+# is told where the host is; and the ONE address the band calls is not placed
+# twice, which the Chaosnet program refuses by name --- a refusal that would
+# leave the board with no cable at all, on a boot that started a file host.
+# ---------------------------------------------------------------------------
+
+# What start-stop-daemon was given, as one line, for the ozd cases.  The words
+# after `--` are the shell's, and ozd's own flags come after the program.
+ozd_given() { cat "$WORK/daemon.calls"; }
+
+case_head "the host is on with no card saying anything, and it is given ozd's own words"
+sandbox
+if prepare ozd S84ozd; then
+	: > "$WORK/packs/fpgarc"
+	run_script S84ozd
+	for want in "--address 177200" "--name OZ,system=UNIX" \
+	            "--listen 127.0.0.1:42142"; do
+		if ozd_given | grep -q -- "$want"; then
+			ok "ozd was given $want"
+		else
+			fail "ozd was not given $want; it was given: $(ozd_given)"
+		fi
+	done
+	# **AND A ROOT, BECAUSE ozd REFUSES TO START WITHOUT ONE.**  It is in
+	# the root filesystem and it is empty, which is what makes the host free
+	# to have on: a tree there would be about 16 MiB of every board's memory
+	# whether anybody ever asked for a file or not.
+	if ozd_given | grep -q -- "--root $WORK/ozdroot"; then
+		ok "and the base root, which is where a user's own directory goes"
+	else
+		fail "ozd was given no base root; it was given: $(ozd_given)"
+	fi
+	if ozd_given | grep -q -- "--root sys="; then
+		fail "ozd was given a tree nobody named; the default serves none"
+	else
+		ok "and no tree, which is the default and costs no memory"
+	fi
+fi
+
+case_head "--no-ozd stops it, and nothing is left behind for the Chaosnet to find"
+sandbox
+if prepare ozd S84ozd; then
+	printf -- '--no-ozd\r\n' > "$WORK/packs/fpgarc"
+	run_script S84ozd
+	if [ -s "$WORK/daemon.calls" ]; then
+		fail "ozd was started with --no-ozd on the card: $(ozd_given)"
+	else
+		ok "nothing was started"
+	fi
+	if [ -e "$WORK/run/cadr-ozd.peer" ]; then
+		fail "a peer file was left behind by a host that is not running"
+	else
+		ok "and no peer file, so the Chaosnet adds no peer for it"
+	fi
+	if grep -q -- '--no-ozd on the card' "$WORK/out.S84ozd"; then
+		ok "and the console says so"
+	else
+		fail "the console does not say the host was turned off"
+	fi
+fi
+
+# **THE CONTROL FOR THE CASE ABOVE.**  An --ozd- setting beside --no-ozd is
+# still CLAIMED, or the last script to read the file would report it at boot as
+# a line no program takes --- which would be false: it reached this program,
+# which had been told not to run.  An absence is also what a check looking at
+# the wrong thing reports, so the same file is run past the reporter both ways.
+case_head "a setting left beside --no-ozd is not reported as a line nobody took"
+sandbox
+if prepare ozd S84ozd && prepare cadr-usb-input S88cadr-usb-input; then
+	printf -- '--no-ozd\r\n--ozd-port 42142\r\n' > "$WORK/packs/fpgarc"
+	: > "$WORK/run/claimed"
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S84ozd" start > "$WORK/out.S84ozd" 2>&1
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S88cadr-usb-input" start > "$WORK/out.S88cadr-usb-input" 2>&1
+	if grep -q 'no program on this board takes' "$WORK/out.S88cadr-usb-input"; then
+		fail "a line was reported as taken by nobody: $(grep 'no program' "$WORK/out.S88cadr-usb-input")"
+	else
+		ok "--ozd-port went to a program, which was told not to run"
+	fi
+	# The control: a flag no list names really is reported, on the same run
+	# of the same reporter.  Without this the case above would pass on a
+	# reporter that had stopped reporting anything at all.
+	printf -- '--no-ozd\r\n--ozd-prt 42142\r\n' > "$WORK/packs/fpgarc"
+	: > "$WORK/run/claimed"
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S84ozd" start > /dev/null 2>&1
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S88cadr-usb-input" start > "$WORK/out.S88cadr-usb-input" 2>&1
+	if grep -q -- '--ozd-prt' "$WORK/out.S88cadr-usb-input"; then
+		ok "and a misspelling of it still is reported"
+	else
+		fail "a misspelled --ozd-prt was not reported, so the case above tests nothing"
+	fi
+fi
+
+case_head "the card's own settings reach ozd, each under ozd's own name"
+sandbox
+if prepare ozd S84ozd; then
+	mkdir -p "$WORK/packs/sys"
+	{ printf -- '--ozd-chaos-address 3060\r\n'
+	  printf -- '--ozd-name MIT-OZ,OZ,system=UNIX\r\n'
+	  printf -- '--ozd-port 42242\r\n'
+	  printf -- '--ozd-root sys=%s/packs/sys,ro\r\n' "$WORK"
+	  printf -- '--ozd-host 3050,MIT-LISPM-1,system=LISPM\r\n'
+	  printf -- '--ozd-trace\r\n'; } > "$WORK/packs/fpgarc"
+	run_script S84ozd
+	for want in "--address 3060" "--name MIT-OZ,OZ,system=UNIX" \
+	            "--listen 127.0.0.1:42242" "--root sys=$WORK/packs/sys,ro" \
+	            "--host 3050,MIT-LISPM-1,system=LISPM" "--trace"; do
+		if ozd_given | grep -q -- "$want"; then
+			ok "ozd was given $want"
+		else
+			fail "ozd was not given $want; it was given: $(ozd_given)"
+		fi
+	done
+	# **AND NOT ONE OF THIS BOARD'S OWN SPELLINGS REACHED IT.**  ozd refuses
+	# a flag it does not know, so a rename that did not happen would be a
+	# host that never started --- and the case above would still pass,
+	# because the defaults it looks for would be there too.
+	if ozd_given | grep -q -- '--ozd-'; then
+		fail "a --ozd- spelling reached ozd itself: $(ozd_given)"
+	else
+		ok "and no --ozd- spelling reached it; every one was rewritten"
+	fi
+fi
+
+case_head "a root the card names and the board has not got stops the host, in ozd's words"
+sandbox
+if prepare ozd S84ozd; then
+	printf -- '--ozd-root sys=/mnt/packs/sys,ro\r\n' > "$WORK/packs/fpgarc"
+	OZD_CHECK_FAILS=yes run_script S84ozd
+	if [ -s "$WORK/daemon.calls" ]; then
+		fail "the host was started although its own --check refused: $(ozd_given)"
+	else
+		ok "nothing was started"
+	fi
+	if grep -q 'cannot be resolved' "$WORK/out.S84ozd"; then
+		ok "and what the console says is ozd's own refusal, with the path in it"
+	else
+		fail "the console does not carry ozd's refusal: $(cat "$WORK/out.S84ozd")"
+	fi
+	if [ -e "$WORK/run/cadr-ozd.peer" ]; then
+		fail "a peer file was left behind by a host that never started"
+	else
+		ok "and no peer file, so the machine is not sent to a host that is not there"
+	fi
+fi
+
+case_head "the machine is given the host on its own board, and only when one is running"
+sandbox
+if prepare ozd S84ozd && prepare cadr-chaosnet S87cadr-chaosnet; then
+	printf -- '--chaos-address 177201\r\n--chaos-udp 127.0.0.1:42042\r\n' \
+		> "$WORK/packs/fpgarc"
+	run_script S84ozd
+	if [ -s "$WORK/run/cadr-ozd.peer" ]; then
+		ok "the host left its endpoint behind: $(cat "$WORK/run/cadr-ozd.peer")"
+	else
+		fail "the host started and left no endpoint for the Chaosnet to read"
+	fi
+	run_script S87cadr-chaosnet
+	passes_once "--chaos-udp-peer" "cadr-chaosnet" "177200@127.0.0.1:42142"
+	if grep -q 'file and time host is on this board' "$WORK/out.S87cadr-chaosnet"; then
+		ok "and the console says which host the machine reaches"
+	else
+		fail "the console does not say where the machine's file host is"
+	fi
+	# **THE CONTROL.**  With no host running the peer must not appear, or
+	# the case above would pass on a script that added that peer whatever
+	# happened --- and a machine would be sent to a port nothing answers.
+	rm -f "$WORK/run/cadr-ozd.peer"
+	run_script S87cadr-chaosnet
+	passes_not "--chaos-udp-peer" "cadr-chaosnet"
+fi
+
+# **THE COLLISION, WHICH IS THE ONE THAT COSTS THE WHOLE CABLE.**  A band calls
+# ONE address for its file host.  If the card places that address on a network
+# and the board answers at it on the loopback, cadr-chaosnet is given one Chaos
+# address at two endpoints and refuses by name --- `udp: 177200 twice; one
+# endpoint an address` --- and the program does not start at all.  So the card
+# wins and the console says so.
+case_head "a card that places the host's address itself keeps its own host, and keeps its cable"
+sandbox
+if prepare ozd S84ozd && prepare cadr-chaosnet S87cadr-chaosnet; then
+	{ printf -- '--chaos-address 177201\r\n'
+	  printf -- '--chaos-udp 0.0.0.0:42042\r\n'
+	  printf -- '--chaos-udp-peer 177200@192.0.2.9:42142\r\n'; } > "$WORK/packs/fpgarc"
+	run_script S84ozd
+	run_script S87cadr-chaosnet
+	if [ "$(given_count -- '--chaos-udp-peer')" = 1 ]; then
+		ok "the address is placed once"
+	else
+		fail "the address is placed $(given_count -- '--chaos-udp-peer') times; it was given: $(given)"
+	fi
+	if given | grep -q '177200@192.0.2.9:42142'; then
+		ok "and it is the card's endpoint that was placed"
+	else
+		fail "the card's own endpoint was not placed; it was given: $(given)"
+	fi
+	if given | grep -q '127.0.0.1:42142'; then
+		fail "the host on the board was placed as well, which the program refuses by name"
+	else
+		ok "and the host on the board was not placed beside it"
+	fi
+	if grep -q 'places 177200 on the network itself' "$WORK/out.S87cadr-chaosnet"; then
+		ok "and the console says which of the two the machine reaches"
+	else
+		fail "the console does not say the card's own host won: $(cat "$WORK/out.S87cadr-chaosnet")"
+	fi
+fi
+
+# **AND THE WAIT FOR THE NETWORK IS ONLY FOR A NAME.**  cadr-chaosnet resolves
+# every peer's name once at the start and exits if one has none, which is what
+# the wait is for.  A card whose peers are all written as addresses has nothing
+# for a resolver to answer about --- and a board that is its own file host is
+# exactly such a card, at every boot.  This waited the whole bound all the same
+# until it was written down: `network_ready` asks for a global address and a
+# default route before it looks at a single name.
+case_head "a board whose peers are all addresses does not wait for a network"
+sandbox
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	{ printf -- '--chaos-address 177201\r\n'
+	  printf -- '--chaos-udp 127.0.0.1:42042\r\n'
+	  printf -- '--chaos-udp-peer 177200@127.0.0.1:42142\r\n'; } > "$WORK/packs/fpgarc"
+	# No address, no route: a board with nothing plugged in.  The real
+	# `network_ready` fails at its first question on such a board.
+	cat > "$WORK/bin/ip" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/ip.calls"
+exit 0
+EOF
+	chmod +x "$WORK/bin/ip"
+	run_script S87cadr-chaosnet
+	if grep -q 'no name to wait for' "$WORK/out.S87cadr-chaosnet"; then
+		ok "it says there is no name to wait for"
+	else
+		fail "the board waited for a network it has no name to resolve on: $(cat "$WORK/out.S87cadr-chaosnet")"
+	fi
+	if grep -q 'waiting up to' "$WORK/out.S87cadr-chaosnet"; then
+		fail "it waited"
+	else
+		ok "and it did not wait"
+	fi
+	passes_once "--chaos-udp" "cadr-chaosnet" "127.0.0.1:42042"
+fi
+
+# **THE CONTROL FOR THE CASE ABOVE**, and it is the half that makes it a
+# measurement rather than a wish: a card with a peer named by NAME must still
+# wait, on the same stubbed board with nothing plugged in.  Without this, a
+# script that had simply stopped waiting for anything would pass.
+case_head "and a board with a peer named by name still waits"
+sandbox
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	{ printf -- '--chaos-address 177201\r\n'
+	  printf -- '--chaos-udp 0.0.0.0:42042\r\n'
+	  printf -- '--chaos-udp-peer 177200@a-host.invalid:42142\r\n'; } > "$WORK/packs/fpgarc"
+	cat > "$WORK/bin/ip" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/ip.calls"
+exit 0
+EOF
+	chmod +x "$WORK/bin/ip"
+	run_script S87cadr-chaosnet
+	if grep -q 'waiting up to' "$WORK/out.S87cadr-chaosnet"; then
+		ok "it waited, and said what it was waiting for"
+	else
+		fail "a card with a name to resolve did not wait: $(cat "$WORK/out.S87cadr-chaosnet")"
+	fi
+	if grep -q 'no name to wait for' "$WORK/out.S87cadr-chaosnet"; then
+		fail "it said there was no name to wait for, and a-host.invalid is a name"
+	else
+		ok "and it did not say there was no name"
+	fi
+fi
+
+# **AND THE CARD TURNS THE HOST OFF EXACTLY WHEN IT NAMES ONE ON A NETWORK.**
+# The two are one decision: a card with peer lines has been told where the
+# band's file host is, and a second host at the same address would be the
+# collision above.  Both halves are asserted, because a card script that wrote
+# --no-ozd live always would pass the first alone.
+case_head "the card writes --no-ozd live when it names a peer, and commented when it does not"
+sandbox
+if generate_fpgarc "" "" "" arty-z7-20 "177200@192.0.2.9:42142"; then
+	GEN="$WORK/gen/packs/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '--no-ozd'; then
+		ok "a card with a file host on its network turns the one on the board off"
+	else
+		fail "a card with a peer does not write --no-ozd live"
+	fi
+fi
+sandbox
+if generate_fpgarc "" ""; then
+	GEN="$WORK/gen/packs/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--no-ozd'; then
+		ok "and a card with no peer leaves it commented, so the board serves itself"
+	else
+		fail "a card with no peer does not write --no-ozd commented out"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# 9.  THE CARD'S LAYOUT: ONE PACK AND THE SOURCES THAT BELONG TO IT.
+#
+# A board that serves itself its own files has to have them, so a card that
+# carries a pack carries the band's sources beside it, on the packs partition
+# rather than in the root filesystem --- which is a RAM disk unpacked at every
+# boot, where sixteen megabytes would be sixteen megabytes of every board's
+# memory whether anybody ever asked for a file or not.
+#
+# **THE ARITHMETIC IS RUN RATHER THAN RESTATED.**  The card script's own
+# sizing function is lifted out on its anchors and called with the real byte
+# counts, and what is asserted is that the partition it returns HOLDS the pair
+# --- measured on a real FAT32 image made by the same mkfs.vfat, with the real
+# files copied in.  A check that compared the function against a formula
+# written here would agree with any formula.
+#
+#   a 4,096-byte cluster, which is what mkfs.vfat chooses at these sizes
+#   a T-300 pack        269,565,952 bytes on the card (the file is 269,562,880)
+#   the sources          17,031,168 bytes on the card (513 files, 25 dirs)
+#   the FAT itself          696,320 bytes on a 320 MiB partition
+# ---------------------------------------------------------------------------
+T300_ON_CARD=269565952
+SYS_ON_CARD=17031168
+FAT_ON_CARD=696320
+
+# The sizing function and its three constants, lifted from the card script.
+lift_sizing() {
+	sed -n '/^PACKS_FAT_MB=/,/^}$/p' "$MKSD" > "$1"
+	if [ ! -s "$1" ]; then
+		fail "the packs partition's sizing is not where this check looks in mksd-buildroot.sh"
+		return 1
+	fi
+	for _c in PACKS_FAT_MB PACKS_SPARE_MB PACKS_SYS_MB; do
+		if [ "$(grep -c "^$_c=" "$1")" != 1 ]; then
+			fail "$_c is not a constant of its own in the lifted sizing: this check has rotted"
+			return 1
+		fi
+	done
+	if [ "$(grep -c '^packs_partition_mb() {$' "$1")" != 1 ]; then
+		fail "packs_partition_mb is not where this check looks"
+		return 1
+	fi
+	return 0
+}
+
+case_head "the packs partition holds one pack and the sources that belong to it"
+sandbox
+if lift_sizing "$WORK/sizing.sh"; then
+	# A card staged with its pack: the pack, the tree, and room for one more
+	# drive.
+	mb=$( . "$WORK/sizing.sh"; packs_partition_mb 269562880 $SYS_ON_CARD )
+	need=$(( T300_ON_CARD + SYS_ON_CARD + FAT_ON_CARD ))
+	if [ "$(( mb * 1048576 ))" -ge "$need" ]; then
+		ok "a card with a T-300 gets ${mb} MiB, and the pair needs $(( need / 1048576 + 1 ))"
+	else
+		fail "a card with a T-300 gets ${mb} MiB and the pair needs $(( need / 1048576 + 1 ))"
+	fi
+	# And there is still room for a second drive, which is what the spare
+	# term is for.
+	if [ "$(( mb * 1048576 ))" -ge "$(( need + T300_ON_CARD ))" ]; then
+		ok "and room for one more drive beside them"
+	else
+		fail "there is no room for a second drive: ${mb} MiB against $(( (need + T300_ON_CARD) / 1048576 + 1 ))"
+	fi
+fi
+
+# **THE CASE THE OWNER'S OWN CARDS ARE STAGED IN**: an empty bay, with the
+# sources on the card and a pack copied onto the running board afterwards.
+# That is the one the old default got wrong --- 272 MiB, which held the pack
+# and had about fourteen megabytes left, two short of the tree.
+case_head "and a card staged with an empty bay still holds a pack copied on later, beside the sources"
+sandbox
+if lift_sizing "$WORK/sizing.sh"; then
+	mb=$( . "$WORK/sizing.sh"; packs_partition_mb 0 0 )
+	need=$(( T300_ON_CARD + SYS_ON_CARD + FAT_ON_CARD ))
+	if [ "$(( mb * 1048576 ))" -ge "$need" ]; then
+		ok "an empty bay gets ${mb} MiB, which holds a pack and the sources"
+	else
+		fail "an empty bay gets ${mb} MiB and a pack with the sources needs $(( need / 1048576 + 1 ))"
+	fi
+	# **THE CONTROL, AND IT IS THE POINT OF THE CASE.**  272 MiB is what this
+	# used to give, and it must NOT be enough --- otherwise the two cases
+	# above would pass on a partition that had not grown at all.
+	if [ "$(( 272 * 1048576 ))" -lt "$need" ]; then
+		ok "and the 272 MiB this used to give really is too small for the pair"
+	else
+		fail "272 MiB would have held the pair, so nothing above is measuring anything"
+	fi
+fi
+
+# **AND A TREE LARGER THAN THE ROOM SET ASIDE TAKES THE ROOM IT NEEDS.**  A
+# reserve a real tree overflowed would be a card that failed at the last file
+# copied, which is the worst moment to find out.
+case_head "a tree larger than the room set aside for one is still made room for"
+sandbox
+if lift_sizing "$WORK/sizing.sh"; then
+	big=$(( 100 * 1048576 ))
+	mb=$( . "$WORK/sizing.sh"; packs_partition_mb 269562880 $big )
+	if [ "$(( mb * 1048576 ))" -ge "$(( T300_ON_CARD + big + FAT_ON_CARD ))" ]; then
+		ok "a 100 MiB tree gets its 100 MiB: ${mb} MiB in all"
+	else
+		fail "a 100 MiB tree was squeezed into the reserve: ${mb} MiB"
+	fi
+	# The control: a small tree must not grow the partition past the
+	# reserve, or the term would be the tree's size and not a reserve.
+	small=$( . "$WORK/sizing.sh"; packs_partition_mb 269562880 4096 )
+	reserved=$( . "$WORK/sizing.sh"; packs_partition_mb 269562880 $SYS_ON_CARD )
+	if [ "$small" = "$reserved" ]; then
+		ok "and a tree that fits the reserve does not change the size"
+	else
+		fail "a one-cluster tree gives ${small} MiB and a real one ${reserved}; the reserve is not a reserve"
+	fi
+fi
+
+case_head "the card names the tree exactly when it carries one"
+sandbox
+if generate_fpgarc "" "" "" arty-z7-20 "" "/some/sys"; then
+	GEN="$WORK/gen/packs/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root sys=/mnt/packs/sys,ro'; then
+		ok "a card with the sources on it names them, read-only"
+	else
+		fail "a card carrying the sources does not name them"
+	fi
+fi
+sandbox
+if generate_fpgarc "" ""; then
+	GEN="$WORK/gen/packs/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-root sys=/mnt/packs/sys,ro'; then
+		ok "and a card without them leaves the line commented, so the host still starts"
+	else
+		fail "a card with no sources still names them, which stops the host"
+	fi
+fi
+
 echo
 if [ "$fails" = 0 ]; then
-	echo "fpgarc: $cases cases, one file of flags reaches five programs and each gets its own"
+	echo "fpgarc: $cases cases, one file of flags reaches six programs and each gets its own"
 	exit 0
 fi
 echo "fpgarc: $fails failures in $cases cases"

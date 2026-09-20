@@ -90,12 +90,21 @@
 # holds packs under other names, which the bay ignores, so it is where
 # backups and bands not currently mounted live.
 #
-# **BUT THE DEFAULT IS NOT A CARD, IT IS THE PACKS.**  BOOT_MB is 64 and
-# PACKS_MB, unset, is what the packs named come to plus 264 MiB --- room for
-# one more drive.  One T-300 pack therefore makes an image of 594 MiB rather
-# than of some round gigabyte, and it writes in about a minute.  Ask for a
-# bigger partition when the card is bigger and the bay should be able to
-# fill up without another write.
+# **BUT THE DEFAULT IS NOT A CARD, IT IS WHAT THE CARD CARRIES.**  BOOT_MB is
+# 64 and PACKS_MB, unset, is what the packs named come to, plus the FAT's own
+# 8 MiB, plus 32 MiB for the band's sources and plus 264 MiB for one more
+# drive.  A card with an empty bay therefore comes out at 304 MiB of packs
+# partition and one with a T-300 at 561, rather than at some round gigabyte,
+# and either writes in about a minute.  Ask for a bigger partition when the
+# card is bigger and the bay should be able to fill up without another write.
+#
+# **THE THREE TERMS ARE MEASURED AND NOT ESTIMATED.**  On a FAT32 image made
+# by this card's own `mkfs.vfat -F 32`, the cluster is 4,096 bytes, a T-300
+# pack takes 269,565,952 bytes, the sources this project ships beside take
+# 17,031,168 (513 files in 25 directories), and a 320 MiB partition carrying
+# both still reads back 48,250,880 bytes free.  A pack and its sources
+# together need 274 MiB, so the 272 this used to default to was two megabytes
+# short of the pair.
 #
 # So **1 GB is the absolute minimum** and one pack fits on far less than
 # that, while **4 GB takes a full bay of eight**, which is 2,056 MiB of
@@ -223,8 +232,21 @@ BOARD_FILES="$FABRIC $BOARD_DTB $KERNEL rootfs.cpio.uboot"
 STAGED_FILES=$BOARD_FILES
 BIT=${BIT:-}
 PACKS=${PACKS:-}
+# **THE BAND'S SOURCES, WHICH GO ON THE CARD BESIDE ITS PACK.**  SYS names a
+# directory: the tree the board's own file and time host serves, staged as
+# `sys/` on the packs partition and named on the card's menu as
+# `--ozd-root sys=/mnt/packs/sys,ro`.  A pack and the sources that belong to it
+# are one band, and they belong on one card together.
+#
+# It goes on the packs partition and not in the root filesystem, because that
+# filesystem is a RAM disk unpacked at every boot: sixteen megabytes there is
+# sixteen megabytes of every board's memory whether the files are ever asked
+# for or not.  On this partition it costs memory to nobody, and it can be read
+# and changed with the card in a reader, which is why the settings files are
+# here too.
+SYS=${SYS:-}
 BOOT_MB=${BOOT_MB:-64}
-PACKS_MB=${PACKS_MB:-}          # empty means "what the packs need, plus one drive"
+PACKS_MB=${PACKS_MB:-}          # empty means "the packs, the sources, and one more drive"
 STANDALONE=${STANDALONE:-}
 # **RELEASE=1 IS ABOUT THE MENU AND STANDALONE=1 IS ABOUT WHAT IS PRIVATE**,
 # and they are two flags because they are two properties.  STANDALONE says this
@@ -357,6 +379,19 @@ fi
 # staged and silently not being a drive on the board.
 T300=269562880
 T80=70937600
+
+# **WHAT THE SOURCES TAKE ON THE CARD**, measured on the tree that is actually
+# being staged rather than assumed.  `du` in 4,096-byte units is the cluster
+# `mkfs.vfat` chooses for a partition of this size, so what is counted here is
+# what the card will really spend: a file of one byte costs a whole cluster,
+# and 513 small files is where that adds up.
+sys_total=0
+if [ -n "$SYS" ]; then
+  [ -d "$SYS" ] || die "SYS names no directory at $SYS"
+  sys_total=$(( $(du -s --block-size=4096 "$SYS" | cut -f1) * 4096 ))
+  [ "$sys_total" -gt 0 ] || die "SYS at $SYS is empty; a card with an empty tree on it serves nothing"
+fi
+
 packs_total=0
 pack_units=
 pack_files=
@@ -409,8 +444,45 @@ if [ -n "${CC_PACK:-}" ]; then
   packs_total=$((packs_total + size))
 fi
 
-# FAT32 needs a little room of its own; a megabyte a pack is generous.
-packs_need=$(( packs_total / 1048576 + 8 ))
+# **THE THREE TERMS THE PACKS PARTITION IS MADE OF**, each a number with a
+# reason, and all three measured on a FAT32 image made by the same
+# `mkfs.vfat -F 32` this card is made with, with the real files copied in by
+# `mcopy` and the free space read back afterwards.
+#
+#   THE FAT'S OWN ROOM.  A 320 MiB FAT32 keeps 696,320 bytes for its reserved
+#   sectors and its two allocation tables, and that grows with the partition.
+#   A megabyte a pack and eight besides is generous and stays generous.
+PACKS_FAT_MB=8
+#   ROOM FOR ONE MORE DRIVE.  A T-300 is 257 MiB, so 264 is enough to copy a
+#   pack in beside what is already there.  `dd` writes every byte of the
+#   image, so a partition sized for nine drives costs eight drives' worth of
+#   zeros on a card carrying one.
+PACKS_SPARE_MB=264
+#   ROOM FOR THE BAND'S SOURCES.  The board serves its own files now, and what
+#   it serves lives on this partition rather than in the root filesystem,
+#   which is a RAM disk unpacked at every boot: a tree there would be sixteen
+#   megabytes of every board's memory whether anybody ever asked for a file or
+#   not.  The tree this project ships beside is 513 files in 25 directories and
+#   takes 17,031,168 bytes on this filesystem --- 16.24 MiB, at the 4,096-byte
+#   cluster `mkfs.vfat` chooses for a partition of this size.  This is double
+#   that, so the tree may grow by 97% before the card has to be laid out
+#   again, and it is set aside whether or not a tree is staged today, exactly
+#   as the drive above is.
+PACKS_SYS_MB=32
+
+# **THE SIZE ITSELF, AS ONE FUNCTION, SO THAT A CHECK CAN RUN IT.**  $1 is the
+# bytes of every pack named and $2 the bytes the staged tree takes on the card.
+# A staged tree larger than the room set aside for one takes the room it needs
+# instead, rounded up to the megabyte: a card that carries a tree must hold it,
+# and a reserve that a real tree overflowed would be a card that failed at the
+# last file copied.
+packs_partition_mb() {
+	_sys=$(( $2 / 1048576 + 1 ))
+	[ "$_sys" -lt "$PACKS_SYS_MB" ] && _sys=$PACKS_SYS_MB
+	echo $(( $1 / 1048576 + _sys + PACKS_FAT_MB + PACKS_SPARE_MB ))
+}
+
+packs_need=$(( packs_total / 1048576 + PACKS_FAT_MB + sys_total / 1048576 + 1 ))
 # THE DEFAULT IS WHAT IS BEING CARRIED PLUS ROOM FOR ONE MORE DRIVE, not a
 # round number.  `dd` writes every byte of the image, so a partition sized for
 # nine drives costs eight drives' worth of zeros on a card carrying one.  A
@@ -419,7 +491,7 @@ packs_need=$(( packs_total / 1048576 + 8 ))
 # counts as carried, not as spare: a card with a bay pack and a CC pack comes
 # out at 851 MiB and still has room for one more drive.  Ask for more with
 # PACKS_MB and the table in this header says what each card takes.
-[ -n "$PACKS_MB" ] || PACKS_MB=$(( packs_need + 264 ))
+[ -n "$PACKS_MB" ] || PACKS_MB=$(packs_partition_mb "$packs_total" "$sys_total")
 [ "$PACKS_MB" -ge "$packs_need" ] \
   || die "PACKS_MB=$PACKS_MB is too small for the packs named ($packs_need MiB needed)"
 [ "$PACKS_MB" -ge 64 ] || die "PACKS_MB=$PACKS_MB: the pack partition is not worth making smaller than 64 MiB"
@@ -552,6 +624,23 @@ if [ -n "${CC_PACK:-}" ]; then
   echo "mksd-buildroot:   $CC_PACK_SHA"
 fi
 
+# **AND THE BAND'S SOURCES, IF A TREE WAS NAMED.**  A pack is a band and this
+# is the band's files; the two belong on one card together, because a board
+# that serves itself its own files has to have them.  `cp -a` keeps the modes
+# and the times, and the count staged is asserted against the count named, so
+# a copy that came out short is a failure here rather than a file the machine
+# asks for and does not get.
+if [ -n "$SYS" ]; then
+  rm -rf "$OUT/packs/sys"
+  cp -a "$SYS" "$OUT/packs/sys"
+  want=$(find "$SYS" -type f | wc -l)
+  got=$(find "$OUT/packs/sys" -type f | wc -l)
+  [ "$want" = "$got" ] \
+    || die "the sources staged as $got files where $SYS has $want"
+  echo "mksd-buildroot: the band's sources: $SYS -> packs/sys, $got files," \
+       "$sys_total bytes on the card"
+fi
+
 # **AND A README, WHICH IS NOT DECORATION.**  Two reasons, and the second is
 # the one that makes it mandatory rather than nice.  First: this partition is
 # what somebody sees when they put the card in a Windows machine, and a
@@ -664,8 +753,47 @@ KEYBOARD_BOOT=${KEYBOARD_BOOT:-ctrl,meta}
 # on, and that the path from the card to the console is exercised at every
 # boot rather than only when somebody is diagnosing a cable.  A release keeps
 # its three live lines.
+#
+# **THE CABLE CAME BACK ONTO THE RELEASED MENU WHEN THE BOARD GAINED A FILE
+# HOST OF ITS OWN, AND IT CAME BACK ON THE LOOPBACK.**  The argument for
+# leaving it out was that a release with the cable live would put a station on
+# a network the user has not got, listening on a port nobody named, with no
+# peer it could reach.  Two of those three are still true of a cable on every
+# interface and none of them is true of a cable on the loopback: nothing
+# listens on any network, and there IS a peer it can reach, which is the file
+# and time host S84ozd starts on the board.  A board out of the box is a whole
+# site, which is the whole point of putting that host there, and it cannot be
+# one with its cable unplugged.  A user who wants a station on their own
+# network changes 127.0.0.1 to 0.0.0.0 in that one line.
+# **AND THE HOST ON THE BOARD IS TURNED OFF EXACTLY WHEN THE CARD NAMES ONE ON
+# A NETWORK.**  A band calls ONE address for its file host.  A card with peer
+# lines has been told where that host is, and a second host answering at the
+# same address on the loopback would be one Chaos address at two endpoints,
+# which the Chaosnet program refuses by name --- leaving the board with no
+# cable at all.  So a card that names a peer writes `--no-ozd` live, and every
+# other card writes it commented out under the sentence that explains it.  The
+# peers come from local.conf, so a release card, which has none, keeps its own
+# host; the cards this project builds for its own boards name the host that
+# runs beside them and turn theirs off.
+if [ -n "${CHAOS_PEER:-}" ]; then
+  MENU_NO_OZD=""
+else
+  MENU_NO_OZD="#"
+fi
+# **AND THE TREE IS NAMED ON THE MENU WHEN THERE IS ONE ON THE CARD.**  A line
+# naming a tree that is not there stops the host, in its own words, so the line
+# is live exactly when the tree was staged.  It is read-only, which is what a
+# tree of sources wants and what keeps anything that reaches the host's socket
+# from writing in it.
+if [ -n "${SYS:-}" ]; then
+  MENU_OZD_ROOT=""
+else
+  MENU_OZD_ROOT="#"
+fi
+CABLE_ENDPOINT=0.0.0.0:$CHAOS_PORT
 if [ -n "${RELEASE:-}" ]; then
-  MENU_CABLE="#"
+  CABLE_ENDPOINT=127.0.0.1:$CHAOS_PORT
+  MENU_CABLE=""
   MENU_SERIAL="#"
   MENU_WIRING="#"
 else
@@ -742,8 +870,7 @@ fi
   printf "# other than the one this card ships with may want another number.\r\n"
   printf -- "--chaos-address %s\r\n" "$CHAOS_ADDR"
   printf "\r\n"
-  printf "# The cable: Chaosnet over UDP, on every interface so that another\r\n"
-  printf "# machine can reach it.  THIS LINE IS THE CABLE PLUGGED IN, and\r\n"
+  printf "# The cable: Chaosnet over UDP.  THIS LINE IS THE CABLE PLUGGED IN, and\r\n"
   printf "# without it nothing is sent and the peer lines below are refused ---\r\n"
   printf "# the address switches are one flag and the cable is another, as they\r\n"
   printf "# are two things on the board.  A machine with the switches set and\r\n"
@@ -752,7 +879,13 @@ fi
   printf "# own port and the CADR in fabric takes it; the CADR inside muir\r\n"
   printf "# takes another in muirrc, two stations on one port being a collision\r\n"
   printf "# rather than a network.\r\n"
-  printf -- "%s--chaos-udp 0.0.0.0:%s\r\n" "$MENU_CABLE" "$CHAOS_PORT"
+  printf "# A released card names the loopback, because the host this machine\r\n"
+  printf "# calls for its files and its time is on this board: the cable is\r\n"
+  printf "# plugged into the board itself and into no network.  0.0.0.0 here\r\n"
+  printf "# instead puts the machine on every interface, which is what a card\r\n"
+  printf "# that is being worked on wants and what a user who has a file host\r\n"
+  printf "# of their own on a network wants.\r\n"
+  printf -- "%s--chaos-udp %s\r\n" "$MENU_CABLE" "$CABLE_ENDPOINT"
   printf "\r\n"
   printf "# The other stations, one a line, in muir's own syntax:\r\n"
   printf "#\r\n"
@@ -787,6 +920,66 @@ fi
   printf "# default: it is a great deal of output and it is for finding out why\r\n"
   printf "# a host is not answering.\r\n"
   printf -- "#--chaos-trace\r\n"
+
+  printf "\r\n"
+  printf "# ====================== the file and time host on this board (ozd)\r\n"
+  printf "# Read by the host's own init script, which starts it before the\r\n"
+  printf "# Chaosnet.  A CADR has no file or time server in it and neither has\r\n"
+  printf "# the program above; the host a band calls is a machine on the\r\n"
+  printf "# network, and this is one on the board.  It is ON, and it listens on\r\n"
+  printf "# the loopback, so nothing off this board can reach it.\r\n"
+  printf "# docs/chaosnet.md says what it serves and where its files go.\r\n"
+  printf "\r\n"
+  printf "# Do not run it at all.  Use this when the band's file host is a real\r\n"
+  printf "# machine on your network: the two would answer at one Chaosnet\r\n"
+  printf "# address, and one address placed twice stops the Chaosnet program.\r\n"
+  printf -- "%s--no-ozd\r\n" "$MENU_NO_OZD"
+  printf "\r\n"
+  printf "# The Chaosnet address it answers at, in octal.  THIS IS NOT FREE TO\r\n"
+  printf "# CHOOSE: a band calls its file and time host at the address its own\r\n"
+  printf "# host table gives, and a host answering anywhere else is a host the\r\n"
+  printf "# band never calls.  The default is 177200.  System 100 calls 3060\r\n"
+  printf "# and System 304 calls 4403.\r\n"
+  printf -- "#--ozd-chaos-address 177200\r\n"
+  printf "\r\n"
+  printf "# Its names, as a band's host table writes them: the official name\r\n"
+  printf "# first, then the system type.  The default is OZ,system=UNIX.\r\n"
+  printf -- "#--ozd-name OZ,system=UNIX\r\n"
+  printf "\r\n"
+  printf "# The loopback port it listens on.  42042 is the machine's own and\r\n"
+  printf "# 42043 is muir's, so this is a third; the default is 42142.\r\n"
+  printf -- "#--ozd-port 42142\r\n"
+  printf "\r\n"
+  printf "# A tree it serves, mounted at /<name>.  Repeatable.  Nothing is\r\n"
+  printf "# served by default and that costs no memory, which is the point:\r\n"
+  printf "# the host is on for every board and a tree in the root filesystem\r\n"
+  printf "# would be about 16 MiB of every board's memory whether anybody asked\r\n"
+  printf "# for a file or not.  Put the band's sources on THIS partition and\r\n"
+  printf "# name them here, and they cost memory to nobody:\r\n"
+  printf "#\r\n"
+  printf "#     --ozd-root sys=/mnt/packs/sys,ro\r\n"
+  printf "#\r\n"
+  printf "# ,ro is read-only, which is what a tree of sources wants.  Without\r\n"
+  printf "# it the host may write in the tree, and anything that reaches its\r\n"
+  printf "# socket may.  The user's own directory is always there and is always\r\n"
+  printf "# in memory, so a band that compiles a system has somewhere to put\r\n"
+  printf "# its warnings without a line here.\r\n"
+  printf -- "%s--ozd-root sys=/mnt/packs/sys,ro\r\n" "$MENU_OZD_ROOT"
+  printf "\r\n"
+  printf "# A machine in the host table it answers HOSTAB from, so that a band\r\n"
+  printf "# whose own table does not know a name can still find it.\r\n"
+  printf "# Repeatable, once a machine.  This board's own is the first one to\r\n"
+  printf "# put here, at the address the switches above are set to.\r\n"
+  printf -- "#--ozd-host %s,LISPM-1,system=LISPM\r\n" "$CHAOS_ADDR"
+  printf "\r\n"
+  printf "# A band's own host table file, whose hosts are answered for as well.\r\n"
+  printf "# A site that already keeps that file writes each host once instead\r\n"
+  printf "# of twice.  It is read when the host starts.\r\n"
+  printf -- "#--ozd-hosts-text /mnt/packs/sys/site/hosts.text\r\n"
+  printf "\r\n"
+  printf "# Every packet it sees, to its log.  Off by default: the log is in\r\n"
+  printf "# memory and this is a great deal of output.\r\n"
+  printf -- "#--ozd-trace\r\n"
 
   printf "\r\n"
   printf "# ======================================================== the screen\r\n"
@@ -1070,7 +1263,7 @@ fi
 } > "$OUT/packs/fpgarc"
 echo "mksd-buildroot: the lamps: $([ -z "$NO_BLINKING_LEDS_PREFIX" ] && echo "--no-blinking-leds --- steady, a level while the fabric is clocked and the machine runs" || echo "blinking, as the fabric comes up")"
 echo "mksd-buildroot: the boot button: $([ -z "$NO_AUTO_BOOT_PREFIX" ] && echo "--no-auto-boot --- the machine is held at boot and cadr-console boot or BTN0 starts it" || echo "pressed at boot --- the board boots its band by itself")"
-echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, $([ -z "$MENU_CABLE" ] && echo "the cable on port $CHAOS_PORT" || echo "and the cable NOT plugged in --- --chaos-udp is written commented out")$([ -n "${CHAOS_PEER:-}" ] && echo ", $(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo ", no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
+echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, the cable at $CABLE_ENDPOINT$([ -n "${CHAOS_PEER:-}" ] && echo ", $(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo ", no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
 echo "mksd-buildroot: the serial line: $([ -z "$MENU_SERIAL" ] && echo "offered at $SERIAL_ENDPOINT" || echo "OFF --- --serial is written commented out, and the program that serves it is not started")"
 
 # --------------------------------------------------------- muir's file of flags

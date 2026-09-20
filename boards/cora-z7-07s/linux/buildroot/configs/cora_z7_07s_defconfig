@@ -85,6 +85,16 @@ BR2_PACKAGE_CADR_TERMINAL=y
 BR2_PACKAGE_CADR_SERIAL=y
 BR2_PACKAGE_CADR_CHAOSNET=y
 BR2_PACKAGE_MUIR=y
+# ozd, the band's file and time host, on the board itself.  It is what makes a
+# board with a card and no network a whole site: the machine asks for the time
+# and for its files and is answered here rather than somewhere on a network.
+# Built from its own source at the commit ozd.commit pins, and never patched.
+# It brings no toolchain that muir has not already brought.
+BR2_PACKAGE_OZD=y
+# ozd refuses to run as root and this board otherwise runs everything as root,
+# so its user is made here.  The table is in the package, beside the init
+# script that starts the program under that user.
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_CADR_PATH)/package/ozd/users.table"
 
 # **THREE THINGS THE ARTY Z7-20's IMAGE HAS AND THIS ONE DOES NOT**, and all
 # three are one decision: there is no USB input on this board.
