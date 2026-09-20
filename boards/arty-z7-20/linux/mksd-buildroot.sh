@@ -187,11 +187,21 @@ BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 #                files of flags name; the programs have their own copy of
 #                every address (cadr-common's cadr/cadr_board.h)
 #   REBUILD      the Makefile target that rewrites a stale loader
+#   FABRIC_FETCH which variable of the loader's environment fetches the
+#                fabric's image.  The Zynq boards' `cadr_card` loads all four
+#                files itself.  The DE25-Nano's does not: one of its two
+#                arrangements may not configure its own fabric and must not so
+#                much as ask for the image, so the fetch is a variable of its
+#                own that `cadr_fabric` runs only on the path that loads.  The
+#                checks below read the loader for the folder rule, and the
+#                folder rule holds wherever the fetch lives.
 case "$BOARD_NAME" in
   de25-nano)
     ROOT_FILES="u-boot.itb:u-boot.itb"
     FABRIC=cadr.core.rbf
     FABRIC_KIND=rbf
+    FABRIC_FETCH=cadr_rbf_card
+    FABRIC_FETCH_NET=cadr_rbf_net
     KERNEL=Image
     LAST_STEP=cadr_booti
     DTS_DIR=dts/intel
@@ -209,6 +219,8 @@ case "$BOARD_NAME" in
     ROOT_FILES="boot.bin:BOOT.BIN u-boot.img:u-boot.img"
     FABRIC=cadr.bit
     FABRIC_KIND=bit
+    FABRIC_FETCH=cadr_card
+    FABRIC_FETCH_NET=
     KERNEL=zImage
     LAST_STEP=cadr_bootz
     DTS_DIR=dts/xilinx
@@ -314,7 +326,7 @@ fi
 # reading the file cannot go wrong that way, and it makes a release image
 # depend on this script and on nothing on whoever's build host.
 SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
-NO_BLINKING_LEDS=
+NO_BLINKING_LEDS=; FABRIC_LOADED=
 if [ -z "$STANDALONE" ] && [ -r "$BOARD_DIR/linux/local.conf" ]; then
   . "$BOARD_DIR/linux/local.conf"
 fi
@@ -590,6 +602,34 @@ cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/card
 sed -e "s/@SERVERIP@/${SERVERIP:-}/" -e "s/@ETHADDR@/${ETHADDR:-}/" \
     -e '/^serverip=$/d' -e '/^ethaddr=$/d' "$BOARD/uEnv.txt.in" > "$OUT/card/uEnv.txt"
 grep -q '@' "$OUT/card/uEnv.txt" && die "uEnv.txt still carries a marker"
+
+# **AND WHETHER THE CARD SAYS THE FABRIC WAS CONFIGURED BEFORE U-BOOT RAN.**
+# A board whose first stage is not in its flash yet is configured over JTAG
+# from one file that also starts the processor, so its fabric is already in
+# place when U-Boot runs and the processor may not configure it a second time
+# (Technical Reference Manual, the Secure Device Manager's configuration
+# order).  The template carries `cadr_fabric_loaded=1` commented out under the
+# sentence that explains it, exactly as the file of flags carries the boot
+# button's line, and FABRIC_LOADED=1 in local.conf is what makes it live.  It
+# belongs beside the board's other settings because it is a fact about how
+# THIS board is started and not about the design: the same card, on the day
+# the flash is written, wants the line commented again, which is one character
+# with the card in a reader.
+#
+# **AND IT IS WHAT LETS A CARD WITH AN EMPTY FABRIC SLOT BOOT.**  The image is
+# fetched inside the branch that loads it, so a board told the fabric is
+# already there never asks for the file and never stops at it.  STANDALONE
+# clears the variable with everything else local.conf sets, so a released card
+# always loads its own fabric.
+if [ -n "${FABRIC_LOADED:-}" ] && [ "$FABRIC_LOADED" != 0 ]; then
+  grep -qx '#cadr_fabric_loaded=1' "$OUT/card/uEnv.txt" \
+    || die "FABRIC_LOADED=1, and $BOARD/uEnv.txt.in carries no '#cadr_fabric_loaded=1' line to make live: this board's loader has no such setting"
+  sed -i 's/^#cadr_fabric_loaded=1$/cadr_fabric_loaded=1/' "$OUT/card/uEnv.txt"
+  grep -qx 'cadr_fabric_loaded=1' "$OUT/card/uEnv.txt" \
+    || die "uEnv.txt still does not say the fabric was configured before U-Boot ran"
+  echo "mksd-buildroot: uEnv.txt says the fabric was configured before U-Boot ran (FABRIC_LOADED=1):"
+  echo "mksd-buildroot:   the loader opens its bridges and never reads $BOARD_NAME/$FABRIC"
+fi  # whether the card says the fabric was configured before U-Boot ran
 
 # The drive bay: nothing but packs, named by unit.  A hard link where the
 # filesystem allows one, so that staging a 270 MB pack is not a copy.
@@ -1429,7 +1469,15 @@ if [ -x "$HOSTBIN/fdtget" ]; then
   done
   [ "$found" = yes ] || die "$LOADER is not a FIT with a firmware image in it"
 fi
-for var in "bootcmd=run cadr_boot" "cadr_card=load mmc 0:1" "cadr_net=" "$LAST_STEP="; do
+# **AND THE CARD PATH IS ASKED FOR IN TWO PARTS, BECAUSE IT IS IN TWO PARTS ON
+# ONE OF THE BOARDS.**  `cadr_card` must be there and the fabric's image must
+# be fetched from the card, and on the Zynq boards those are one line:
+# FABRIC_FETCH is `cadr_card` and this asks exactly what it always asked.  On
+# the DE25-Nano the fetch is `cadr_rbf_card`, a variable of its own, so asking
+# for `cadr_card=load mmc 0:1` there refused every loader built since the
+# fabric's image stopped being fetched on the path that does not load it.
+for var in "bootcmd=run cadr_boot" "cadr_card=" "$FABRIC_FETCH=load mmc 0:1" \
+           "cadr_net=" "$LAST_STEP="; do
   strings "$OUT/card/$LOADER" | grep -q "^$var" || die "the U-Boot in $LOADER has no '$var' in its environment"
 done
 # AND IT MUST LOAD THE BOARD'S FOUR FILES FROM THE BOARD'S OWN FOLDER, which
@@ -1440,7 +1488,17 @@ done
 # refusal names the cure, because Buildroot does not watch this repository's
 # files and a plain `make buildroot` leaves a stale environment in place once
 # the package has a build stamp.
-for f in $BOARD_FILES; do
+#
+# **THE FABRIC'S IMAGE IS ASKED OF THE VARIABLE THAT FETCHES IT**, which is
+# `cadr_card` on the Zynq boards and `cadr_rbf_card` on the DE25-Nano.  What
+# this holds is the FOLDER and not where the fetch lives: a loader that looked
+# for a board's file at the root of the partition would be handed another
+# board's, and that is as true of the fabric's image as of the other three.
+# The file ends its own line where the fetch is a variable of one line, so
+# either a space or the end of the line follows it.
+strings "$OUT/card/$LOADER" | grep -q "^$FABRIC_FETCH=.*$BOARD_NAME/$FABRIC\( \|$\)" \
+  || die "the U-Boot in $LOADER does not load $BOARD_NAME/$FABRIC from the card in $FABRIC_FETCH: it predates the card mirroring the server, and 'make $REBUILD' is what rewrites it"
+for f in $BOARD_DTB $KERNEL rootfs.cpio.uboot; do
   strings "$OUT/card/$LOADER" | grep -q "cadr_card=.*$BOARD_NAME/$f " \
     || die "the U-Boot in $LOADER does not load $BOARD_NAME/$f from the card: it predates the card mirroring the server, and 'make $REBUILD' is what rewrites it"
 done
@@ -1452,10 +1510,22 @@ done
 # server is a bitstream for the wrong part, and it is silent.
 strings "$OUT/card/$LOADER" | grep -q "^cadr_net=.*$BOARD_NAME/uEnv.net" \
   || die "the U-Boot in $LOADER does not fetch $BOARD_NAME/uEnv.net: it predates the served-directory rule"
-for f in $BOARD_FILES; do
+for f in $BOARD_DTB $KERNEL rootfs.cpio.uboot; do
   grep -q "tftpboot [^ ]* $BOARD_NAME/$f " "$OUT/server/$BOARD_NAME/uEnv.net" \
     || die "the served uEnv.net does not fetch $BOARD_NAME/$f"
 done
+# **AND THE FABRIC'S IMAGE ON THE NETWORK PATH, WHEREVER THAT PATH FETCHES
+# IT.**  The Zynq boards' served netcmd fetches all four files itself.  The
+# DE25-Nano's names `cadr_rbf_net` instead, which is in the loader's own
+# environment, so the folder is asked of the loader there.  Either way the
+# question is the same one: the folder, and not which file says it.
+if [ -n "$FABRIC_FETCH_NET" ]; then
+  strings "$OUT/card/$LOADER" | grep -q "^$FABRIC_FETCH_NET=.*$BOARD_NAME/$FABRIC\( \|$\)" \
+    || die "the U-Boot in $LOADER does not fetch $BOARD_NAME/$FABRIC over TFTP in $FABRIC_FETCH_NET: it predates the served-directory rule, and 'make $REBUILD' is what rewrites it"
+else
+  grep -q "tftpboot [^ ]* $BOARD_NAME/$FABRIC\( \|$\)" "$OUT/server/$BOARD_NAME/uEnv.net" \
+    || die "the served uEnv.net does not fetch $BOARD_NAME/$FABRIC"
+fi
 if [ -x "$HOSTBIN/mkimage" ]; then
   "$HOSTBIN/mkimage" -l "$OUT/server/$BOARD_NAME/rootfs.cpio.uboot" | grep -q "RAMDisk" || die "rootfs.cpio.uboot is not a U-Boot ramdisk image"
 fi
@@ -1577,6 +1647,25 @@ if [ -x "$HOSTBIN/genimage" ]; then
     for f in "$OUT"/packs/*; do
       [ -e "$f" ] || continue
       n=$(basename "$f")
+      # **THE BAND'S SOURCES ARE A TREE, AND A TREE IS READ BACK AS ONE.**
+      # mcopy takes one file at a time, and this loop used to hand it a
+      # directory and die saying the directory was not in the image --- which
+      # is what a card carrying the sources did, because nothing had ever
+      # staged one through genimage.  So a directory is pulled out of the
+      # image whole and compared against what was staged, file by file.
+      # Skipping it instead would have been five hundred files nobody looked
+      # at, on the one partition the board writes to.
+      if [ -d "$f" ]; then
+        rm -rf "$TMP/readtree"; mkdir -p "$TMP/readtree"
+        "$HOSTBIN/mcopy" -n -s -i "$OUT/sdcard.img@@$P2_OFF" "::/$n" "$TMP/readtree/" 2>/dev/null \
+          || die "$n/ is not in partition 2 of sdcard.img"
+        diff -r "$f" "$TMP/readtree/$n" > "$TMP/treediff" 2>&1 \
+          || { sed 's/^/  /' "$TMP/treediff" >&2; die "$n/ in sdcard.img differs from packs/$n/"; }
+        echo "mksd-buildroot: packs/$n/ read back out of the image:" \
+             "$(find "$TMP/readtree/$n" -type f | wc -l) file(s), every one identical"
+        rm -rf "$TMP/readtree" "$TMP/treediff"
+        continue
+      fi
       "$HOSTBIN/mcopy" -n -i "$OUT/sdcard.img@@$P2_OFF" "::$n" "$TMP/readback" 2>/dev/null \
         || die "$n is not in partition 2 of sdcard.img"
       cmp -s "$f" "$TMP/readback" || die "$n in sdcard.img differs from packs/$n"
@@ -1587,6 +1676,11 @@ if [ -x "$HOSTBIN/genimage" ]; then
       case "$n" in
         disk-pack-[0-7].img|README.TXT) ;;
         fpgarc|muirrc) ;;
+        # The band's sources, which mdir marks as a directory with a trailing
+        # slash.  It is named rather than swept in with every directory,
+        # because `--ozd-root sys=/mnt/packs/sys,ro` names this one tree and
+        # a second directory here would be one nothing on the board reads.
+        sys/) ;;
         # A variable and not the literal muir-cc.img, so that the name lives
         # in one place: it is written into muirrc as well, and two spellings
         # of it would part company on the first one somebody changed.
@@ -1604,7 +1698,19 @@ echo "staged $OUT"
 echo "  $MODE"
 (cd "$OUT/card" && for f in *; do [ -f "$f" ] || continue; printf '  card/    %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 (cd "$OUT/card/$BOARD_NAME" && for f in *; do printf "  card/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
-(cd "$OUT/packs" && for f in *; do [ -e "$f" ] || continue; printf '  packs/   %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
+(cd "$OUT/packs" && for f in *; do
+   [ -e "$f" ] || continue
+   # A tree has no digest, so it is summed by what it costs the card: the
+   # files in it and the clusters they take, which is the term the partition
+   # was sized on.
+   if [ -d "$f" ]; then
+     printf '  packs/   %-22s %10d  %s\n' "$f/" \
+       "$(( $(du -s --block-size=4096 "$f" | cut -f1) * 4096 ))" \
+       "$(find "$f" -type f | wc -l) file(s)"
+     continue
+   fi
+   printf '  packs/   %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"
+ done)
 (cd "$OUT/server/$BOARD_NAME" && for f in *; do printf "  server/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 echo "  the card mirrors the server: card/$BOARD_NAME/ holds the same four files as"
 echo "  server/$BOARD_NAME/, and only $(echo "$ROOT_NAMES" | sed 's/ /, /g') and uEnv.txt are at the root"

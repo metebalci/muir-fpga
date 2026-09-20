@@ -3023,6 +3023,68 @@ if lift_board_facts "$WORK/lay/board.sh" \
 	fi
 fi
 
+# **AND THE CARD SAYS WHETHER THE FABRIC WAS CONFIGURED BEFORE U-BOOT RAN.**
+# A board configured over JTAG has its fabric in place before the processor's
+# loader runs, and the loader may not configure it again; the card's uEnv.txt
+# is where it is told so.  The line decides which branch of the loader runs,
+# and the branch that loads the fabric is the one that fetches its image, so
+# this is also what lets a card with an empty fabric slot boot such a board
+# instead of looping on a file it will never use.  Both halves are asserted,
+# because a script that wrote the line live always would pass the first.
+#
+# The block is lifted out of the card script on its own anchors and run
+# against each board's REAL template, so a template that stops carrying the
+# line fails here by name rather than on a board.
+uenv_out() {
+	rm -rf "$WORK/uenv/out"; mkdir -p "$WORK/uenv/out/card"
+	( set -eu
+	  OUT="$WORK/uenv/out"
+	  BOARD="$TREE/boards/$1/linux/buildroot/board/$1"
+	  BOARD_NAME=$1
+	  FABRIC=$2
+	  SERVERIP=; ETHADDR=
+	  FABRIC_LOADED=$3
+	  die() { echo "$*" > "$WORK/uenv/died"; exit 1; }
+	  . "$WORK/uenv/uenv.sh" ) > "$WORK/uenv/said" 2>&1
+}
+case_head "the card says the fabric was configured before U-Boot ran exactly when it is asked to"
+sandbox
+mkdir -p "$WORK/uenv"
+if lift 'sed -e "s/@SERVERIP@/${SERVERIP:-}/"' \
+        '# whether the card says the fabric was configured before U-Boot ran' \
+        "$WORK/uenv/uenv.sh"; then
+	rm -f "$WORK/uenv/died"
+	if ! uenv_out de25-nano cadr.core.rbf 1; then
+		fail "the DE25-Nano's uEnv.txt was not written with FABRIC_LOADED=1: $(cat "$WORK/uenv/died" "$WORK/uenv/said" 2>/dev/null)"
+	elif grep -qx 'cadr_fabric_loaded=1' "$WORK/uenv/out/card/uEnv.txt"; then
+		ok "FABRIC_LOADED=1 writes the line live, so the loader opens the bridges and reads no image"
+	else
+		fail "FABRIC_LOADED=1 left the line commented, so the board would try to configure a fabric it has"
+	fi
+	# **THE CONTROL.**  Without it the line must still be there and still be
+	# commented out: the card is a menu, and a board that boots from its own
+	# flash configures its own fabric.
+	rm -f "$WORK/uenv/died"
+	if ! uenv_out de25-nano cadr.core.rbf ""; then
+		fail "the DE25-Nano's uEnv.txt was not written without FABRIC_LOADED: $(cat "$WORK/uenv/died" "$WORK/uenv/said" 2>/dev/null)"
+	elif grep -qx '#cadr_fabric_loaded=1' "$WORK/uenv/out/card/uEnv.txt"; then
+		ok "and a card that does not ask keeps the line commented, one character from being on"
+	else
+		fail "a card that did not ask for it does not carry the line commented out"
+	fi
+	# **AND A BOARD WHOSE LOADER HAS NO SUCH SETTING REFUSES IT BY NAME**,
+	# rather than staging a card that says nothing and looks as though it
+	# said something.  The Zynq boards' template has no such line.
+	rm -f "$WORK/uenv/died"
+	if uenv_out arty-z7-20 cadr.bit 1; then
+		fail "FABRIC_LOADED=1 was accepted for a board whose loader has no such setting"
+	elif grep -q 'cadr_fabric_loaded=1' "$WORK/uenv/died" 2>/dev/null; then
+		ok "and a board whose loader has no such setting refuses it by name"
+	else
+		fail "the refusal does not name the setting: $(cat "$WORK/uenv/died" "$WORK/uenv/said" 2>/dev/null)"
+	fi
+fi
+
 case_head "a U-Boot that loads from the root of the partition is refused by name"
 sandbox
 mkdir -p "$WORK/ub/card"
@@ -3066,6 +3128,87 @@ if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
 			ok "and it names the command that rewrites the loader"
 		else
 			fail "the refusal does not say how to fix it: $(cat "$WORK/ub/err")"
+		fi
+	fi
+	# **AND THE SAME QUESTION OF A LOADER WHOSE cadr_card DOES NOT FETCH THE
+	# FABRIC'S IMAGE AT ALL.**  The DE25-Nano's does not: one of its two
+	# arrangements may not configure its own fabric and must not so much as
+	# ask for the file, so the fetch is `cadr_rbf_card`, run by `cadr_fabric`
+	# only on the path that loads.  The staging asked `cadr_card` for all
+	# four files and so refused every loader built after that change ---
+	# measured, on the real u-boot.itb, which is how this case came to be
+	# here.  What is held is the FOLDER, wherever the fetch lives.
+	de25_loader() {
+		printf 'bootcmd=run cadr_boot\n' > "$1"
+		printf 'cadr_card=setenv cadr_rbf_get cadr_rbf_card; run cadr_fabric && load mmc 0:1 ${b} de25-nano/socfpga_agilex5_de25_nano_cadr.dtb && load mmc 0:1 ${c} de25-nano/Image && load mmc 0:1 ${d} de25-nano/rootfs.cpio.uboot && run cadr_booti\n' >> "$1"
+		printf 'cadr_rbf_card=load mmc 0:1 ${a} %s\n' "$2" >> "$1"
+		printf 'cadr_rbf_net=tftpboot ${a} %s\n' "$2" >> "$1"
+		printf 'cadr_net=dhcp && tftpboot ${a} de25-nano/uEnv.net && run netcmd\n' >> "$1"
+		printf 'cadr_booti=booti ${c} ${d} ${b}\n' >> "$1"
+	}
+	run_refusal_de25() {
+		cp "$1" "$WORK/ub/card/u-boot.itb"
+		( set -eu
+		  OUT="$WORK/ub"
+		  BOARD_NAME=de25-nano
+		  BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb
+		  . "$WORK/ub/board.sh"
+		  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
+		  . "$WORK/ub/refuse.sh" ) 2>"$WORK/ub/err"
+	}
+	de25_loader "$WORK/ub/de25-new.itb" de25-nano/cadr.core.rbf
+	de25_loader "$WORK/ub/de25-old.itb" cadr.core.rbf
+	if run_refusal_de25 "$WORK/ub/de25-new.itb"; then
+		ok "a DE25-Nano loader whose cadr_rbf_card loads de25-nano/cadr.core.rbf is accepted"
+	else
+		fail "the staging refuses a DE25-Nano loader that IS right: $(cat "$WORK/ub/err")"
+	fi
+	# **AND THE BLOCK BEFORE IT, WHICH ASKS THE ENVIRONMENT FOR THE CARD
+	# PATH BY NAME.**  It is a separate lift because it is a separate block,
+	# and it is the one that refused the real u-boot.itb first: it wanted
+	# `cadr_card=load mmc 0:1`, which is not how the DE25-Nano's card path
+	# begins now that the fabric's image is fetched somewhere else.
+	if lift 'for var in "bootcmd=run cadr_boot"' 'done' "$WORK/ub/vars.sh"; then
+		run_vars() {
+			cp "$2" "$WORK/ub/card/$3"
+			( set -eu
+			  OUT="$WORK/ub"
+			  BOARD_NAME=$1
+			  BOARD_DTB=x.dtb
+			  . "$WORK/ub/board.sh"
+			  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
+			  . "$WORK/ub/vars.sh" ) 2>"$WORK/ub/err"
+		}
+		printf 'bootcmd=run cadr_boot\ncadr_card=load mmc 0:1 ${a} arty-z7-20/cadr.bit\ncadr_net=x\ncadr_bootz=y\n' \
+			> "$WORK/ub/vars-arty.img"
+		if run_vars arty-z7-20 "$WORK/ub/vars-arty.img" u-boot.img; then
+			ok "and the Zynq boards' environment is asked for cadr_card=load mmc 0:1, as it always was"
+		else
+			fail "the staging refuses a Zynq environment that IS right: $(cat "$WORK/ub/err")"
+		fi
+		if run_vars de25-nano "$WORK/ub/de25-new.itb" u-boot.itb; then
+			ok "and the DE25-Nano's is asked for cadr_rbf_card=load mmc 0:1 instead"
+		else
+			fail "the staging refuses the DE25-Nano's environment: $(cat "$WORK/ub/err")"
+		fi
+		# The control: an environment with no card path at all must still
+		# be refused, or the two above would pass on a check that asks
+		# nothing.
+		printf 'bootcmd=run cadr_boot\ncadr_net=x\ncadr_booti=y\n' > "$WORK/ub/vars-none.itb"
+		if run_vars de25-nano "$WORK/ub/vars-none.itb" u-boot.itb; then
+			fail "an environment with no card path at all is accepted"
+		else
+			ok "and one with no card path at all is still refused"
+		fi
+	fi
+	if run_refusal_de25 "$WORK/ub/de25-old.itb"; then
+		fail "the staging accepts a DE25-Nano loader that fetches the fabric's image from the root of the partition"
+	else
+		ok "and one that fetches it from the root of the partition is refused"
+		if grep -q 'cadr_rbf_card' "$WORK/ub/err"; then
+			ok "and the refusal names the variable that fetches it"
+		else
+			fail "the refusal does not name the variable: $(cat "$WORK/ub/err")"
 		fi
 	fi
 fi
