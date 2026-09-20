@@ -136,25 +136,24 @@
           <text class="d-s" x="-233" y="358" text-anchor="middle">one of three modes</text>
 
           <text class="d-s" x="-164" y="48">FPGA fabric logic</text>
-          <!-- From the Quartus fit report of the memory-on build: 5,735
-               ALMs, of which 2,030 hold the three MLAB memories, and 95 M20K
-               blocks; worst setup +3.343 ns and worst hold +0.000 ns at the
-               10 ns tick, timing met.
+          <!-- From the Quartus fit report of the build with the faces:
+               15,028 ALMs, of which 4,010 hold the six small memories, and
+               129 M20K blocks.
                A5E 013B: 46,800 ALMs, and 358 M20K blocks of 20 Kbit each,
                895 KB, the same convention as the Zynq boards' block RAM row.
                Source: Altera Agilex 5 E-Series Product Table, 2026.08.07, p. 3:
                https://docs.altera.com/api/khub/documents/rcQSreUhbuYGXCo7Np10cw/content
-               The MLAB memory, 1.43 Mb, is counted inside the ALMs, as the
+               The six small memories are counted inside the ALMs, as the
                lookup-table memory on the Zynq boards is counted inside the
                slices. -->
-          <text class="d-s" x="-164" y="68">ALM 5,735 of 46,800</text>
+          <text class="d-s" x="-164" y="68">ALM 15,028 of 46,800</text>
           <rect class="d-box" x="-164" y="74" width="136" height="13"/>
-          <rect x="-164" y="74" width="16.7" height="13" fill="currentColor" fill-opacity="0.42"/>
-          <text class="d-n" x="-158" y="84">12.3%</text>
-          <text class="d-s" x="-164" y="104">M20K 238 KB of 895 KB</text>
+          <rect x="-164" y="74" width="43.7" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="84">32.1%</text>
+          <text class="d-s" x="-164" y="104">M20K 323 KB of 895 KB</text>
           <rect class="d-box" x="-164" y="110" width="136" height="13"/>
-          <rect x="-164" y="110" width="36.1" height="13" fill="currentColor" fill-opacity="0.42"/>
-          <text class="d-n" x="-158" y="120">26.5%</text>
+          <rect x="-164" y="110" width="49" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="120">36.0%</text>
 
           <rect class="d-box d-done" x="40" y="62" width="112" height="128"/>
           <text class="d-t" x="96" y="100" text-anchor="middle">clock</text>
