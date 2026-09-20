@@ -473,7 +473,7 @@ set_the_display_boards() {
 #
 # **AND `--hdmi-mode` ASKS RATHER THAN SETS.**  A video mode is a pixel clock
 # and a pixel clock comes from an MMCM whose dividers are fixed in the
-# bitstream, so three bitstreams carry the three modes.  A card that names one
+# bitstream, so a bitstream carries one mode.  A card that names one
 # is compared against what the fabric says it is, and a mismatch is a line
 # saying which bitstream the card wants --- not a setting that quietly does
 # nothing.  `docs/display-output.md` has the measurement behind that.

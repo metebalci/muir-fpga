@@ -235,10 +235,19 @@ default is 300 seconds and 0 never sleeps. A board with no display output says s
 when the line is there, and the boot goes on.
 
 **`--hdmi-mode` asks rather than sets.** A video mode is a pixel clock, the pixel
-clock comes from an MMCM, and an MMCM's dividers are fixed in the bitstream. So
-three bitstreams carry the three modes and this line is compared against what the
-fabric reports. A card naming a mode the bitstream does not carry gets a line
-saying so rather than a setting that quietly does nothing.
+clock comes from a clock manager, and its dividers are fixed in the bitstream. So
+a bitstream carries one mode and this line is compared against what the fabric
+reports. A card naming a mode the bitstream does not carry gets a line saying so
+rather than a setting that quietly does nothing.
+
+**There are four modes and this list names three of them.** The fourth is
+1920x1080 at 60 Hz, which only the DE25-Nano can clock, and the three words
+above cannot tell it from 1920x1080 at 30 Hz: the comparison is a substring of
+the line the console prints, and `1920x1080` is inside both of those names. So
+a card carrying that word on a bitstream built for 60 Hz is accepted without a
+line, which is what this flag exists to prevent. The word that says the rate is
+not decided yet, and until it is, a board built for 1920x1080 at 60 Hz should
+leave this line off the card and read the mode with `cadr-console hdmi-mode`.
 
 **The clock**, read by `S80cadr-disk-packs` before anything else it does. No
 board here has a real-time clock in it, so these two lines are what tell one

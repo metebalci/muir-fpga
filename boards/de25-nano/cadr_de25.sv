@@ -163,10 +163,23 @@ module cadr_de25 #(
     // margins that center each picture and one sync polarity are all
     // elaboration-time constants of `rtl/plumbing/cadr_display_out.sv`, and
     // the pixel clock is a PLL's counters.  0 is 1280x1024 at 60 Hz, 1 is
-    // 1400x1050 reduced-blanking at 60, 2 is 1920x1080 at 30.  The console's
-    // page 2 word 34 reports which, and a card naming another is told which
-    // bitstream it wants.  `docs/display-output.md` has the table and the
-    // argument.
+    // 1400x1050 reduced-blanking at 60, 2 is 1920x1080 at 30, 3 is 1920x1080
+    // at 60.  The console's page 2 word 34 reports which, and a card naming
+    // another is told which bitstream it wants.  `docs/display-output.md` has
+    // the table and the argument.
+    //
+    // **MODE 3 IS THIS BOARD'S AND NOT THE ARTY Z7-20'S**, and that is the
+    // one place where the two boards' displays part.  1920x1080 at 60 Hz is
+    // a pixel clock of 148.5 MHz.  On the Zynq boards the fabric serializes
+    // the link itself, ten bits a pixel down each lane, and the serializer
+    // was measured to stop near 1.2 Gb/s where that mode needs 1.485; so
+    // `boards/arty-z7-20/cadr_arty.sv` refuses the column at elaboration.
+    // Here the fabric serializes nothing.  It hands a parallel raster to an
+    // ADV7513 at one pixel a clock, and that part's data sheet --- Rev. B,
+    // page 3 of 12, Table 1 under AC SPECIFICATIONS --- gives its Input
+    // Video Clock Frequency a maximum of 165 MHz.  So the lane rate that
+    // bounds the other board is not a fact about this one, and what bounds
+    // this one has 16.5 MHz in hand.
     parameter int unsigned HDMI_MODE = 0
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
@@ -1380,8 +1393,10 @@ module cadr_de25 #(
   // **THE SAME DISPLAY THE ARTY Z7-20 HAS, WITH ONE STAGE OF IT OFF THE
   // FABRIC.**  `rtl/plumbing/cadr_display_out.sv` reads the CADR's two
   // screens out of the machine's own memory and puts them on a raster, and
-  // it is the same module, the same three video modes, the same run-time
-  // output selection, rotation and sleep.  What parts the two boards is what
+  // it is the same module, the same run-time output selection, rotation and
+  // sleep.  It is NOT the same list of video modes: this board carries a
+  // fourth, 1920x1080 at 60 Hz, which the Arty Z7-20 refuses because its own
+  // lanes cannot reach 148.5 MHz.  What parts the two boards is what
   // happens to that raster afterwards.  There the fabric encodes it as DVI
   // in `cadr_hdmi_tx.sv` and serializes four lanes in
   // `xilinx7/cadr_hdmi_phy.sv`; here an Analog Devices ADV7513 on the board

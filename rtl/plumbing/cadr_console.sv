@@ -208,9 +208,15 @@
 //                 its reconfiguration port, with the lock and filter values
 //                 that go with them --- which the clocking wizard generates.
 //                 `docs/display-output.md` says what building it would take.
-//                 So three bitstreams carry the three modes and this says
-//                 which one this fabric is; a card that asks for another is
-//                 told which bitstream it wants.
+//                 So a bitstream carries one mode and this says which one
+//                 this fabric is; a card that asks for another is told which
+//                 bitstream it wants.  TWO BITS AND FOUR MODES: 0 is
+//                 1280x1024 at 60 Hz, 1 is 1400x1050 reduced blanking at 60,
+//                 2 is 1920x1080 at 30 and 3 is 1920x1080 at 60, and the
+//                 last of those is the DE25-Nano's alone --- a board that
+//                 serializes the link in its own fabric cannot reach its
+//                 148.5 MHz pixel clock, and refuses it when the bitstream
+//                 is built.
 //
 //                 It is on this page beside the display boards for the same
 //                 reason they are: it is what the BOARD is.

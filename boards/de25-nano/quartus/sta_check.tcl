@@ -167,6 +167,21 @@ if {!$display_built} {
             puts "sta: the pixel clock is [lindex $pixel_clocks 0], [format %.4f $got] ns,\
                   [format %.4f [expr {1000.0 / $got}]] MHz, and the mode asks $pixel_mhz MHz"
         }
+        # **AND THE TRANSMITTER'S OWN CEILING, AGAINST WHAT THE PLL MADE AND
+        # NOT AGAINST WHAT IT WAS ASKED FOR.**  The ADV7513's data sheet in
+        # the board's resource package --- Rev. B, page 3 of 12, Table 1 under
+        # AC SPECIFICATIONS --- gives its Input Video Clock Frequency a
+        # maximum of 165 MHz.  `build.sh` refuses a mode whose specification
+        # asks more than that; this one refuses a clock the generator actually
+        # made above it, which is the number the part will see.  The two are
+        # not the same check: a PLL asked for 148.5 and landing on 166 would
+        # pass the first and fail this.
+        set made_mhz [expr {1000.0 / $got}]
+        if {$made_mhz > 165.0} {
+            puts "sta: FAIL: the pixel clock is [format %.4f $made_mhz] MHz and the\
+                  ADV7513 takes 165 MHz at most (data sheet Rev. B, Table 1)"
+            incr failures
+        }
     }
     # **THE FORWARDED CLOCK, AND THE PINS TIMED AGAINST IT.**  A video pin
     # with no output delay is a path nobody is timing, and a report with

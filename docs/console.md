@@ -178,10 +178,16 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  the mode the FABRIC WAS BUILT WITH in bits 5 and 4, the
                  rotation in bits 3 and 2, and the two screens in bits 1 and
                  0.  **The mode is read only**: a video mode is a pixel clock
-                 and a pixel clock comes from an MMCM whose dividers are fixed
-                 in the bitstream, so three bitstreams carry the three modes
-                 and this says which one is loaded.  `docs/display-output.md`
-                 has the measurement behind that
+                 and a pixel clock comes from a clock manager whose dividers
+                 are fixed in the bitstream, so a bitstream carries one mode
+                 and this says which one is loaded.  Two bits, and there are
+                 four modes: 0 is 1280x1024 at 60 Hz, 1 is 1400x1050 reduced
+                 blanking at 60, 2 is 1920x1080 at 30 and 3 is 1920x1080 at
+                 60.  **Only the DE25-Nano can carry mode 3**, because a board
+                 that serializes the link in its own fabric cannot reach that
+                 pixel clock; the Zynq boards refuse it when the bitstream is
+                 built.  `docs/display-output.md` has the measurement behind
+                 that
     35 LAMPS    **whether the board's activity lamps blink or hold a
                  level.**  A write of `LAMP_STEADY_KEY`, "STDY", makes them
                  steady, `--no-blinking-leds`; a write of its complement makes

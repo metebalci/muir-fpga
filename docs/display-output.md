@@ -136,22 +136,33 @@ wizard's own validation messages against this part.
 
 ### The decision
 
-**Three modes, one a bitstream**, and the default is the one the board has run.
+**Four modes, one a bitstream**, and the default is the one the board has run.
 
-| mode | pixel clock | a lane's bit rate | syncs |
-|---|---|---|---|
-| VESA DMT 1280x1024 at 60 Hz | 108 MHz | 1.08 Gb/s | H+ V+ |
-| CVT reduced blanking 1400x1050 at 60 Hz | 101 MHz | 1.01 Gb/s | H+ V- |
-| CEA-861 VIC 34, 1920x1080 at 30 Hz | 74.25 MHz | 0.74 Gb/s | H+ V+ |
+| mode | pixel clock | a lane's bit rate | syncs | boards |
+|---|---|---|---|---|
+| 0, VESA DMT 1280x1024 at 60 Hz | 108 MHz | 1.08 Gb/s | H+ V+ | every board |
+| 1, CVT reduced blanking 1400x1050 at 60 Hz | 101 MHz | 1.01 Gb/s | H+ V- | every board |
+| 2, CEA-861 VIC 34, 1920x1080 at 30 Hz | 74.25 MHz | 0.74 Gb/s | H+ V+ | every board |
+| 3, CEA-861 VIC 16, 1920x1080 at 60 Hz | 148.5 MHz | 1.485 Gb/s | H+ V+ | the DE25-Nano only |
 
-All three are inside the 1.2 Gb/s a lane the part will do. The two that are not
-offered are ruled out by the same figure: 1400x1050 with NORMAL blanking is
-1.22 Gb/s and 1920x1080 at 60 Hz is 1.485. 1280x720 holds neither orientation of
-a 768 by 963 screen and is not offered either.
+The first three are inside the 1.2 Gb/s a lane a Zynq board will do, and the
+fourth is not. **Mode 3 exists because the DE25-Nano has no lane of its own.**
+A board that serializes the link in its own fabric is bound by the measurement
+in the section above; a board that hands a parallel raster to a transmitter
+part is bound by that part instead, and the ADV7513 takes 165 MHz. So the same
+number that rules the mode out on one board leaves 16.5 MHz in hand on the
+other. "Which board may drive which mode" below says where that is refused and
+what holds the refusal.
+
+The one mode still not offered anywhere is 1400x1050 with NORMAL blanking, at
+1.22 Gb/s on a board that cannot serialize it and no advantage on a board that
+can. 1280x720 holds neither orientation of a 768 by 963 screen and is not
+offered either.
 
 Reduced blanking is accepted by flat-panel monitors and not by televisions;
 30 Hz is accepted by televisions and not by every PC monitor. That is why both
-are there.
+are there. 1920x1080 at 60 Hz is accepted by both, which is why it is worth
+having where it can be driven.
 
 The timings are the specifications':
 
@@ -163,6 +174,55 @@ The timings are the specifications':
 | 1400x1050 V | 1050 | 3 | 4 | 23 | 1080 |
 | 1920x1080 H | 1920 | 88 | 44 | 148 | 2200 |
 | 1920x1080 V | 1080 | 4 | 5 | 36 | 1125 |
+
+**There is one 1920x1080 row and not two.** CEA-861 gives VIC 16 and VIC 34 one
+blanking table, and what tells them apart is the pixel clock alone: 2200 x 1125
+is 2,475,000 pixels, which at 74.25 MHz is 30.000 Hz and at 148.5 is 60.000.
+So modes 2 and 3 elaborate the same raster, the same margins and the same sync
+polarities, and the whole of the difference between them is a clock the module
+never sees. The parameter table therefore reads `MODE >= 2` for those figures,
+and the refusal of `MODE > 3` beside it is what makes that exactly two columns
+rather than every number above one.
+
+### Which board may drive which mode
+
+**A build that accepts a mode the board cannot clock is worse than one that
+refuses, because it fails at a monitor rather than at a tool.** So mode 3 is
+refused on the Zynq boards, at the earliest thing that knows which board it is,
+and the refusal is checked.
+
+It is refused in three places, and only the first of them cannot be gone round:
+
+| where | when | what it says |
+|---|---|---|
+| `boards/arty-z7-20/cadr_arty.sv` | elaboration, every tool | this board carries 0, 1 and 2; a lane stops near 1.2 Gb/s |
+| `boards/arty-z7-20/vivado/bitstream.tcl` | before synthesis | the same, and which board the mode belongs to |
+| `rtl/plumbing/cadr_display_out.sv` | elaboration | `MODE` is 0, 1, 2 or 3 and nothing else |
+
+**Without the first one nothing else notices, and that was measured rather than
+assumed.** With the refusal disabled, the whole Arty Z7-20 top level lints clean
+at `HDMI_MODE=3`. The pixel clock's two MMCM dividers are a ternary chain
+ending in mode 0's, so an unrefused 3 takes a divide of 2 and a multiply of
+8.625, and through the phy's fixed divide of ten that is a 53.9 MHz pixel clock
+driving a 1920x1080 raster: a frame every 46 milliseconds, at a rate no 1080p
+sink will lock to. What would probably stop it later is the 539.0625 MHz VCO
+that falls out of those same dividers, which is under the manager's own 600 MHz
+floor --- and that is an accident of where this mode's fall-through landed, not
+a guard. A fourth column whose fall-through landed in range would get a
+bitstream.
+
+**`build/hdmi_mode_guard.pass` is the check, and every bound in it is asserted
+from both sides.** A bound nothing reaches looks exactly like a bound that
+works, and a refusal written one number too wide refuses everything while
+passing any check that only asks whether the tool said no. So there are four
+legs: mode 3 must elaborate in the shared module and mode 4 must not, and the
+Arty Z7-20 must lint at mode 2 and must not at mode 3. `tools/refusal_check.py`
+runs one command and holds it to refusing or to not refusing, and a refusing leg
+requires the refusal's own words as well as a non-zero exit, so that a tool
+breaking for some other reason is not mistaken for a guard firing.
+
+Four mutation records stand behind it, two widening each bound and two
+narrowing it, and `mutations/list.txt` has them under `hdmi_mode_guard`.
 
 The middle one is CVT reduced blanking's own arithmetic rather than a table
 lookup: reduced blanking fixes the horizontal blanking at 160 pixels whatever
@@ -214,19 +274,21 @@ integer, so if the pixel divider is `D` and the serial divider `D/5`, then `D`
 must be a multiple of five. One oscillator therefore offers the pixel ratios
 1, 2/3, 1/2 and no others --- and the three modes want 1, 0.93 and 0.69.
 
-So the mode is chosen when the bitstream is built, three bitstreams carry the
-three, and the console's page 2 word 34 reports which one the fabric is. A card
+So the mode is chosen when the bitstream is built, one bitstream carries one
+mode, and the console's page 2 word 34 reports which one the fabric is. A card
 that names another mode is told which bitstream it wants rather than given a
 setting that quietly does nothing.
 
 The MMCM dividers are in `boards/arty-z7-20/cadr_arty.sv` and not in the block,
-because they are about the BOARD's 125 MHz crystal rather than about the mode:
+because they are about the BOARD's 125 MHz crystal rather than about the mode.
+**There are three rows and not four**: mode 3 has no dividers here because this
+board refuses it, and a row for it would read as a mode this board could build.
 
 | mode | DIVCLK | CLKFBOUT | VCO | pixel | refresh |
 |---|---|---|---|---|---|
 | 1280x1024 | 1 | 8.625 | 1078.125 MHz | 107.8125 MHz | 59.92 Hz |
 | 1400x1050 | 2 | 16.125 | 1007.8125 MHz | 100.78125 MHz | 59.82 Hz |
-| 1920x1080 | 2 | 11.875 | 742.1875 MHz | 74.21875 MHz | 29.99 Hz |
+| 1920x1080 at 30 | 2 | 11.875 | 742.1875 MHz | 74.21875 MHz | 29.99 Hz |
 
 No multiple of an eighth gives any of the three exactly. The errors are 0.17,
 0.22 and 0.04 per cent, and monitors accept far more than that. **Mode 0's
@@ -363,7 +425,7 @@ picture. The color screen is 72 columns of 454, which is 32,688, which is
 bandwidth.
 
 Rotated, the pictures are 963 by 768 and 454 by 576, and both fit every one of
-the three modes at 1:1.
+the four modes at 1:1.
 
 ### What the band fetch costs the port
 
@@ -747,6 +809,8 @@ display.
 | File | What it is | What holds it |
 |---|---|---|
 | `rtl/plumbing/cadr_display_out.sv` | the AXI master, the buffers, the raster, the compositor, the map, and the sleep timer and mute | `build/display_out.pass`, `build/display_sleep.pass` |
+| `tools/refusal_check.py` | one command held to refusing, or to not refusing, and to its words | `build/hdmi_mode_guard.pass` |
+| the mode each board may ask for | the refusals above, both sides of each bound | `build/hdmi_mode_guard.pass` |
 | `rtl/plumbing/cadr_hdmi_tx.sv` | the three channels and the clock channel | `build/hdmi_tx.pass` |
 | `rtl/plumbing/cadr_tmds_encode.sv` | one channel's 8b/10b encoder | `build/hdmi_tx.pass` |
 | `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` | the MMCM, the serializers, the output buffers | lint and the fitter only |
@@ -765,12 +829,26 @@ is four primitives and a clock with no logic in it at all.
 
 ### `display_out`
 
-**IT IS BUILT THREE TIMES, ONE A MODE**, because the mode is a parameter: the
+**IT IS BUILT FOUR TIMES, ONE A MODE**, because the mode is a parameter: the
 raster's widths, the two margins that center each picture and one sync polarity
 are all elaboration-time constants, so a check that ran one of them would hold
-the code and say nothing about the other two columns of the table. The testbench
-takes the mode as its argument and carries its own transcription of the three
+the code and say nothing about the other columns of the table. The testbench
+takes the mode as its argument and carries its own transcription of the four
 specifications.
+
+**AND THE MUTATION RUNNER BUILDS ALL FOUR TOO, WHICH IT DID NOT.** It built one
+binary and ran it with no argument, which is mode 0, while `make check` built
+every column and ran each with its own --- so a record aimed at any other column
+would have survived the runner and been caught by the Makefile. The record that
+holds the mode table said so in its own note and put its mutation on mode 0's
+column for that reason. The hole is closed: `mutations/run.py` takes the list of
+modes and builds one a mode, and there is now a record aimed at a column nothing
+but mode 3 elaborates.
+
+Mode 3 is worth running although its widths are mode 2's. What it exercises is
+not the geometry but the ratio between the two clocks: the testbench runs the
+memory side at its own 10.000 ns whatever the raster does, and mode 3 is the
+shortest raster line of the four.
 
 It found three faults in the first draft, and all three would have been
 invisible against a memory of zeros.
@@ -877,7 +955,7 @@ Three of the four are settings and one is a build.
 | `--hdmi-output tv\|color-tv\|both` | `fpgarc`, console word 34 | which screens |
 | `--hdmi-rotate 0\|90\|-90` | `fpgarc`, console word 34 | which way up |
 | `--hdmi-sleep SECONDS` | `fpgarc`, console word 36 | how long before the monitor sleeps |
-| `--hdmi-mode ...` | `HDMI_MODE` at build; the card's line only ASKS | which mode |
+| `--hdmi-mode ...` | `HDMI_MODE` at build; the card's line only ASKS | which mode, of the four |
 
 The sleep setting is described in the next section.
 
@@ -890,6 +968,17 @@ word and `docs/fpgarc.md` the flags.
 **A card that names a mode the bitstream does not carry gets a line saying which
 bitstream it wants.** It is not a setting that quietly does nothing, which is
 what a word that accepted the key and changed nothing would be.
+
+**THE CARD'S WORD FOR MODE 3 IS NOT SETTLED, AND THE COMPARISON IS A SUBSTRING.**
+`S80cadr-disk-packs` matches the card's `--hdmi-mode` word against the line
+`cadr-console hdmi-mode` prints, as a substring, and the four modes' names are
+`1280x1024 at 60 Hz`, `1400x1050 at 60 Hz, reduced blanking`, `1920x1080 at
+30 Hz` and `1920x1080 at 60 Hz`. None of those four is inside another, and the
+console's own check holds that. But the card's vocabulary is `1280x1024`,
+`1400x1050` and `1920x1080`, and that last word is now inside two of them: a
+card asking for `1920x1080` on a mode 3 bitstream is accepted in silence, which
+is the failure this paragraph opened by ruling out. The vocabulary has to grow
+a word that says the rate, and what that word should be is not decided here.
 
 ## Sleep
 
@@ -1087,8 +1176,10 @@ counterpart on this board: `cadr_tmds_encode.sv`, `cadr_hdmi_tx.sv` and
 Everything above the raster is the same file.
 `rtl/plumbing/cadr_display_out.sv` already ends at a parallel raster, because
 that is what its encoder was always fed, so the two boards run the same
-module with the same three video modes, the same compositor, the same two
-rotations and the same sleep timer. The two settings reach it through the
+module with the same compositor, the same two rotations and the same sleep
+timer. **They do not run the same list of video modes**, and that is the one
+place the two displays part: this board carries a fourth, 1920x1080 at 60 Hz,
+and the Zynq boards refuse it. The next section but two is why. The two settings reach it through the
 console's page 2 word 34 and word 36 exactly as they do on the Arty Z7-20,
 and the Linux programs are the same packages unchanged.
 
@@ -1137,6 +1228,61 @@ sheet allows, and every interval the sheet bounds is a whole quarter of a bit
 period, which is four times the margin the slowest of them asks for. The
 module refuses at elaboration a clock or a bus speed that would break any of
 the six. A stretched clock is waited for rather than talked over.
+
+### The fourth video mode
+
+**1920x1080 at 60 Hz is this board's and no other board's, and the reason is
+that this board serializes nothing.**
+
+On the Zynq boards the fabric makes the link itself, ten bits a pixel down each
+lane, and section 1 records the measurement that stops it: the serializer's own
+clock input will not take a period shorter than 1.667 ns, which is 600 MHz and
+a lane rate of 1.2 Gb/s. 1920x1080 at 60 Hz is a pixel clock of 148.5 MHz and a
+lane rate of 1.485 Gb/s, so that mode is out of reach there and is refused when
+the bitstream is built.
+
+Here the fabric hands the ADV7513 one pixel a clock on a parallel bus and the
+part does the serializing. So the number that binds is the part's, and the part
+gives it: the data sheet in the board's resource package --- Rev. B, page 3 of
+12, Table 1 under AC SPECIFICATIONS --- sets the **Input Video Clock Frequency
+at 165 MHz maximum** and the TMDS Output Clock Frequency at 20 to 165 MHz, and
+its first page says that 165 MHz supports all video formats up to 1080p and
+UXGA. 148.5 MHz is inside that with 16.5 MHz in hand.
+
+**That ceiling is written down in two places and neither is the same check.**
+`boards/de25-nano/quartus/build.sh` refuses a mode whose specification asks more
+than 165 MHz, before anything is built. `boards/de25-nano/quartus/sta_check.tcl`
+refuses a pixel clock the generator actually MADE above it, after the fit. A PLL
+asked for 148.5 and landing somewhere else would pass the first and fail the
+second, which is why both are there.
+
+The picture sits in the raster the same way it does in every other mode, which
+for 1920 by 1080 is 576 columns of border each side of the first display and
+117 rows --- 58 above and 59 below, the odd row going to the bottom. The color
+screen's 576 by 454 leaves 672 columns and 313 rows. Rotated, the first
+display's 963 by 768 leaves 478 columns and 156 rows and the color screen's
+454 by 576 leaves 733 and 252. Every one of those is positive, which is what
+`tb/cadr_display_out_tb.cpp` asserts before it compares anything.
+
+**What it asks of the shared memory port is what mode 0 asks**, and that is
+worth stating plainly because it is not obvious. Each picture is read exactly
+once a frame, so the demand is the frame rate times the picture: at 60.000 Hz
+the first display's 92,448 bytes are 5.55 MB/s and the color screen's 130,752
+are 7.85, which is 13.39 MB/s with both shown. Mode 0 at 59.92 Hz is 13.37. The
+FPGA-to-SDRAM bridge is 64 bits at the fabric clock, so this is under 1.7 per
+cent of it, and mode 3 adds a tenth of a per cent to mode 0 rather than
+anything the arbiter has to think about. What does change is the DEADLINE: a
+raster line is 2200 pixels at 148.5 MHz, which is 14.81 microseconds against
+mode 0's 15.63, so every fetch has 5.2 per cent less time. The band fetches
+move with it --- a color band is eight raster lines, 118.5 microseconds against
+125.0 --- and both remain more than an order of magnitude longer than the fetch
+they have to cover.
+
+**And if the port could not keep up, the failure would be a line of black and a
+sticky bit rather than a monitor that never syncs.** The raster runs off its own
+clock whatever memory does; a bank the raster reaches before its words shows
+black and raises `underrun`, which the console reports. A mode the board cannot
+clock is the other failure, and it is the one the refusals above exist for.
 
 ### The pixel clock, and the video bus
 
@@ -1228,7 +1374,9 @@ intervals the data sheet bounds and prints the worst of each, drives a
 stretched clock and a refused byte, and requires that neither line moves once
 the program is through. `build/de25.pass` lints the board with the display in
 it as a fourth configuration, which is what catches a pin brought out and not
-connected.
+connected, and at mode 3 as a fifth, which is the column only this board
+carries. `build/hdmi_mode_guard.pass` holds the other half of that, which is
+that the same column is refused on the board that cannot clock it.
 
 **Nothing holds that these registers make an ADV7513 transmit.** The register
 map is in a document that is not available, the program is the board vendor's
@@ -1266,6 +1414,11 @@ television to stand by. That is not built.
 **The mode is not a setting**: this bitstream carries one mode and the console
 reports which. Making it a setting is possible and is not built; section 1 has
 what it would take.
+
+**Mode 3 has not been fitted or shown.** The refusals, the raster and the
+arithmetic are checked in simulation; whether 1920x1080 at 60 Hz closes timing
+on the DE25-Nano is a question for a fit, and no monitor has seen any mode on
+this board at all.
 
 ## Looking at it
 

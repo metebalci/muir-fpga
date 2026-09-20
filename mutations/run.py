@@ -1103,6 +1103,43 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # **WHICH BOARD MAY DRIVE WHICH VIDEO MODE, AND THE REFUSAL THAT SAYS SO.**
+    #
+    # `rtl/plumbing/cadr_display_out.sv` has four video modes and the Zynq
+    # boards have three.  Mode 3 is 1920x1080 at 60 Hz, a pixel clock of
+    # 148.5 MHz and 1.485 Gb/s down a lane, and the serializer the Arty Z7-20
+    # builds its link out of was measured to stop near 1.2.  The DE25-Nano
+    # hands a parallel raster to a transmitter part and serializes nothing, so
+    # it carries the column and the Arty refuses it at elaboration.
+    #
+    # **A GUARD NOBODY TESTS IS A GUARD THAT WORKS UNTIL IT MATTERS**, and this
+    # one is worse than most, because what it stands in front of is a bitstream
+    # that builds: measured, with the refusal disabled the whole Arty board
+    # lints CLEAN at `HDMI_MODE=3`, and what it elaborates is a 1920x1080
+    # raster on a 53.9 MHz pixel clock.  So the refusal is the only thing
+    # between that number and a monitor, and it is checked like any other
+    # property.
+    #
+    # **AND EVERY REFUSAL IS PAIRED WITH THE VALUE JUST INSIDE IT**, because a
+    # bound nothing reaches looks exactly like a bound that works.  Four legs:
+    # mode 3 allowed in the shared module and mode 4 refused; mode 2 allowed on
+    # the Arty and mode 3 refused.  The refusing legs require the refusal's own
+    # WORDS as well as a non-zero exit, so that a mutant which breaks the lint
+    # some other way is not mistaken for the guard firing.
+    "hdmi_mode_guard": {
+        "kind": "guard",
+        "sources": ["boards/arty-z7-20/cadr_arty.sv",
+                    "rtl/plumbing/cadr_display_out.sv"],
+        # The rest of the board, taken from `arty` rather than written out a
+        # second time: it is the same six-configuration file list one generic
+        # along, and two copies of it would part.  Filled in below the table,
+        # because a dict literal cannot read itself.
+        "extra": [],
+        "top": "cadr_arty",
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # The DE25-Nano's top level, the first board built by Quartus, and lint
     # alone for the same reason `arty` is: its PLL is generated at build time
     # and its reset release is a primitive Quartus supplies, so neither can be
@@ -1254,6 +1291,14 @@ CHECKS = {
         "top": "cadr_display_out",
         "tb": "tb/cadr_display_out_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
+        # **FOUR BUILDS, ONE A VIDEO MODE, AS `build/display_out.pass` RUNS
+        # IT.**  The mode is an elaboration parameter --- the raster's widths,
+        # the two margins that center each picture and one sync polarity are
+        # all constants of it --- so a record aimed at a column this runner
+        # never elaborated would survive here and be caught by the Makefile.
+        # It ran mode 0 alone until the fourth column arrived.
+        "modes": [0, 1, 2, 3],
+        "mode_param": "MODE",
         "golden": None,
     },
     # The display output's sleep timer and mute, on the small raster and the
@@ -1671,6 +1716,13 @@ CHECKS = {
     },
 }
 
+# **ONE FILE LIST AND NOT TWO.**  `hdmi_mode_guard` lints the same board
+# `arty` does, at two more generics, so it takes that check's list rather than
+# keeping a copy.  A second copy would drift the first time a module is added
+# to the board, and the drift would be invisible: both lists would still lint
+# something.
+CHECKS["hdmi_mode_guard"]["extra"] = list(CHECKS["arty"]["extra"])
+
 
 # The three files golden/src/cables.rs writes.  `current` regenerates them and
 # fails if anything moved; this does the same to a copy.
@@ -2049,6 +2101,8 @@ def build_and_run(args, work, check, build_fails=False):
         return arty_check(args, work, build_fails)
     if check == "de25":
         return de25_check(args, work, build_fails)
+    if check == "hdmi_mode_guard":
+        return hdmi_mode_guard_check(args, work, build_fails)
 
     # MIT's TV sync PROM, placed for EVERY check rather than named check by
     # check.  `cadr_tv.sv` reads it at elaboration and its `SYNC_PROM_HEX`
@@ -2070,9 +2124,39 @@ def build_and_run(args, work, check, build_fails=False):
         if not os.path.exists(where):
             shutil.copy(os.path.join(args.goldens, src), where)
 
-    obj = os.path.join(work, "obj_" + check)
+    # **A CHECK WITH SEVERAL BUILDS IS RUN WITH ALL OF THEM, AS THE MAKEFILE
+    # RUNS IT.**  `display_out` is built once a video mode, because the mode is
+    # an elaboration parameter: the raster's widths and the margins that center
+    # each picture are constants, so one build says nothing about the others.
+    # `build/display_out.pass` has run all of them since the mode was a
+    # parameter and THIS RUNNER RAN ONE --- the default, mode 0 --- so a record
+    # aimed at any other column would have survived while the Makefile caught
+    # it.  That is the same shape as the sixth board configuration `arty` grew
+    # for the same reason, and `check_coverage` cannot see it, because both
+    # lists name the same file.
+    #
+    # `modes` is the list of values, `mode_param` the parameter they are given
+    # to, and the value is also the testbench's `argv[1]`, which is how the
+    # check knows which specification to compare against.
+    modes = spec.get("modes")
+    last = ""
+    for mode in (modes if modes else [None]):
+        verdict, why = build_and_run_one(args, work, check, spec, mode,
+                                         build_fails)
+        if verdict != SURVIVED:
+            return verdict, why
+        last = why
+    return SURVIVED, last
+
+
+def build_and_run_one(args, work, check, spec, mode, build_fails=False):
+    """One build of a check, at one value of its mode parameter or at none."""
+    obj = os.path.join(work, "obj_" + check
+                       + ("" if mode is None else str(mode)))
     cmd = [args.verilator, "--cc", "--exe", "--build", "-Wall"]
     cmd += spec["flags"]
+    if mode is not None:
+        cmd += ["-G%s=%d" % (spec["mode_param"], mode)]
     if spec.get("gprom_path"):
         # A check that writes its own PROM names it here, and it is placed in
         # the mutant's work directory so two mutants cannot share one file.
@@ -2095,6 +2179,10 @@ def build_and_run(args, work, check, build_fails=False):
         return BROKEN, first_problem(out)
 
     cmd = [os.path.join(obj, "V" + spec["top"])]
+    # The mode goes FIRST, because the testbench reads it as `argv[1]` exactly
+    # as the Makefile hands it.
+    if mode is not None:
+        cmd.append(str(mode))
     for g in goldens_of(check):
         cmd.append(os.path.join(args.goldens, g))
     # The Makefile hands such a check two more paths: where to write its
@@ -2224,6 +2312,91 @@ def arty_check(args, work, build_fails=False):
         return BROKEN, "none of the board configurations could be linted"
     return SURVIVED, "lint passes on %d board configuration%s" % (
         ran, "" if ran == 1 else "s")
+
+
+def hdmi_mode_guard_check(args, work, build_fails=False):
+    """The video modes each board may drive, and the refusal that says so.
+
+    Four legs, and each one is half of a bound: the shared module must
+    elaborate mode 3 and must refuse mode 4, and the Arty Z7-20 must lint at
+    `HDMI_MODE=2` and must refuse 3.  **A BOUND NOTHING REACHES LOOKS EXACTLY
+    LIKE A BOUND THAT WORKS**, so a guard written one number too wide --- which
+    refuses everything --- fails the allowing legs rather than passing.
+
+    A REFUSING LEG ASKS FOR THE REFUSAL'S OWN WORDS.  Verilator exits non-zero
+    for a syntax error too, and a mutant that does not compile must not read as
+    a guard that fired: `lint_verdict` tells the two apart by Verilator's own
+    vocabulary, and the words are what tells a fired guard from a lint finding
+    somewhere else in the board.
+
+    `build/hdmi_mode_guard.pass` runs the same four legs through
+    `tools/refusal_check.py`, and the Makefile's rule and this share `arty`'s
+    file list rather than each keeping one.
+    """
+    spec = CHECKS["hdmi_mode_guard"]
+    arty = CHECKS["arty"]
+    display = os.path.join("rtl", "plumbing", "cadr_display_out.sv")
+    if not os.path.exists(os.path.join(work, display)):
+        return BROKEN, "%s is not in this copy" % display
+    base = [args.verilator, "--lint-only", "-Wall",
+            "-Irtl/machine", "-Irtl/plumbing"]
+
+    # The shared module alone: one file, no board, no stubs.
+    for mode, want, saying in ((3, True, None),
+                               (4, False, "the table has 0, 1, 2 and 3")):
+        cmd = base + ["-GMODE=%d" % mode, "--top-module", "cadr_display_out",
+                      display]
+        rc, out = run(cmd, work)
+        if want and rc != 0:
+            return lint_verdict(out, build_fails)
+        if not want:
+            if rc == 0:
+                return CAUGHT, "cadr_display_out elaborated MODE=%d" % mode
+            if saying not in out:
+                verdict, why = lint_verdict(out, build_fails)
+                if verdict == BROKEN:
+                    return BROKEN, why
+                return CAUGHT, "MODE=%d was refused, but not saying %r" % (
+                    mode, saying)
+
+    # And the board, with the display in it, at the mode it carries and the
+    # mode it does not.
+    prom = "-GPROM_HEX=\"%s\"" % os.path.join(args.goldens, "boot_prom.hex")
+    stubs = ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"]
+    board = ["boards/arty-z7-20/cadr_ps7.sv",
+             "rtl/plumbing/cadr_axi_master.sv",
+             "rtl/plumbing/cadr_axi_widen.sv",
+             "rtl/plumbing/cadr_mem_count.sv",
+             "rtl/plumbing/cadr_disk_pack.sv",
+             "rtl/plumbing/cadr_console.sv",
+             "rtl/plumbing/cadr_gp0_default.sv"] + GP0 + DISPLAY
+    files = stubs + board
+    if not all(os.path.exists(os.path.join(work, f)) for f in files):
+        return BROKEN, "the board with a display is not in this copy"
+    usr_access = [f for f in ["tb/cadr_usr_access_stub.sv"]
+                  if os.path.exists(os.path.join(work, f))]
+    arty_base = [args.verilator, "--lint-only", "-Wall", "-Irtl/machine",
+                 "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                 "-Iboards/arty-z7-20", prom, "--top-module", "cadr_arty",
+                 "-GDDR=1", "-GHDMI=1"]
+    tail = (tick_pkg(work) + usr_access + stubs + spec["extra"]
+            + arty["sources"] + board)
+    for mode, want, saying in ((2, True, None),
+                               (3, False, "a lane stops near 1.2 Gb/s")):
+        rc, out = run(arty_base + ["-GHDMI_MODE=%d" % mode] + tail, work)
+        if want and rc != 0:
+            return lint_verdict(out, build_fails)
+        if not want:
+            if rc == 0:
+                return CAUGHT, ("cadr_arty linted at HDMI_MODE=%d, which this"
+                                " board cannot clock" % mode)
+            if saying not in out:
+                verdict, why = lint_verdict(out, build_fails)
+                if verdict == BROKEN:
+                    return BROKEN, why
+                return CAUGHT, ("HDMI_MODE=%d was refused, but not saying %r"
+                                % (mode, saying))
+    return SURVIVED, "both bounds hold on both sides"
 
 
 def script_check(args, work, spec):
