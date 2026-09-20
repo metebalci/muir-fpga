@@ -1000,13 +1000,20 @@ int cons_set_hdmi_rotate(struct console *c, int rot)
 	return 0;
 }
 
+// **EACH NAME OPENS WITH THE WORD A CARD SAYS**, because there is one
+// vocabulary for a mode and this is where it is written.  `S80cadr-disk-packs`
+// compares the card's `--hdmi-mode` word against this line as a substring, so
+// the word a card may say is exactly a word that appears in one of these four
+// names and in no other.  `1080p30` and `1080p60` are the two rates of
+// 1920x1080; `1920x1080` alone is in both names and is therefore not a word a
+// card may say.  `console_test.c` holds all of that.
 const char *cons_hdmi_mode_name(int mode)
 {
 	switch (mode) {
 	case CONS_HDMI_1280:    return "1280x1024 at 60 Hz";
 	case CONS_HDMI_1400:    return "1400x1050 at 60 Hz, reduced blanking";
-	case CONS_HDMI_1920P30: return "1920x1080 at 30 Hz";
-	case CONS_HDMI_1920P60: return "1920x1080 at 60 Hz";
+	case CONS_HDMI_1920P30: return "1080p30, which is 1920x1080 at 30 Hz";
+	case CONS_HDMI_1920P60: return "1080p60, which is 1920x1080 at 60 Hz";
 	default: return "a mode this program does not know";
 	}
 }

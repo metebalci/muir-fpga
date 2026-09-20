@@ -182,8 +182,11 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  are fixed in the bitstream, so a bitstream carries one mode
                  and this says which one is loaded.  Two bits, and there are
                  four modes: 0 is 1280x1024 at 60 Hz, 1 is 1400x1050 reduced
-                 blanking at 60, 2 is 1920x1080 at 30 and 3 is 1920x1080 at
-                 60.  **Only the DE25-Nano can carry mode 3**, because a board
+                 blanking at 60, 2 is 1080p30 and 3 is 1080p60, which are
+                 1920x1080 at 30 Hz and at 60.  The last two carry their rate
+                 because the resolution alone names neither of them, and those
+                 are the words a card's `--hdmi-mode` line says as well.
+                 **Only the DE25-Nano can carry mode 3**, because a board
                  that serializes the link in its own fabric cannot reach that
                  pixel clock; the Zynq boards refuse it when the bitstream is
                  built.  `docs/display-output.md` has the measurement behind
@@ -1492,6 +1495,14 @@ and not truncated; a log that cannot be opened refused rather than carried on
 without; and the fan-out stream reaching every destination and counting against
 the cap. One equivalence is recorded in the list rather than left to be found:
 clearing the rotated file's size is written over by the next line's `ftell`.
+
+**Two of them hold the modes' names**, which is the card's vocabulary as well
+as this program's. One takes the word `1080p30` back out of mode 2's name,
+which is how that name stood before the two rates were given words of their
+own; the check then reports that the card's word is inside none of the four
+names. The other swaps the two 1080 words between the modes they belong to,
+which a check that only counted the names holding each word would pass, and is
+why the mode each word names is asserted and not only the count.
 
 **The eight mutations below were applied BY HAND** before that runner existed,
 to a scratch copy and reverted, and this table is the record of them. They are

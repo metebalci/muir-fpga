@@ -579,3 +579,34 @@
 	return (w2 & CADR_TALLY_MARK) == CADR_TALLY_MARK
 	    && (w3 & CADR_TALLY_MARK) == CADR_TALLY_MARK;
 @end
+
+@mutation a-1080-mode-loses-the-word-a-card-says
+@file console_face.c
+@why the card's --hdmi-mode word is looked for inside the line this program prints, so
+@why a name that drops the word leaves a card asking for that mode told it was not
+@why loaded, on the very bitstream that carries it
+@note This is the name as it stood before the two rates were given words of
+@note their own, and it is the shape of the defect somebody would reintroduce
+@note by "tidying" a name back to its resolution.  `1920x1080` is inside both
+@note 1080 names, which is why the resolution alone cannot be that word.
+@old
+	case CONS_HDMI_1920P30: return "1080p30, which is 1920x1080 at 30 Hz";
+@new
+	case CONS_HDMI_1920P30: return "1920x1080 at 30 Hz";
+@end
+
+@mutation the-two-1080-card-words-are-swapped
+@file console_face.c
+@why each of the four words must name the mode it belongs to and not merely name some
+@why mode: swapped, a card asking for 1080p30 is accepted on the bitstream that cannot
+@why be clocked by the board it was written for, which is the failure the two words
+@why exist to prevent
+@note A check that only counted how many names hold each word would pass this,
+@note which is why the mode a word names is asserted and not only the count.
+@old
+	case CONS_HDMI_1920P30: return "1080p30, which is 1920x1080 at 30 Hz";
+	case CONS_HDMI_1920P60: return "1080p60, which is 1920x1080 at 60 Hz";
+@new
+	case CONS_HDMI_1920P30: return "1080p60, which is 1920x1080 at 30 Hz";
+	case CONS_HDMI_1920P60: return "1080p30, which is 1920x1080 at 60 Hz";
+@end

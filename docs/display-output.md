@@ -142,8 +142,13 @@ wizard's own validation messages against this part.
 |---|---|---|---|---|
 | 0, VESA DMT 1280x1024 at 60 Hz | 108 MHz | 1.08 Gb/s | H+ V+ | every board |
 | 1, CVT reduced blanking 1400x1050 at 60 Hz | 101 MHz | 1.01 Gb/s | H+ V- | every board |
-| 2, CEA-861 VIC 34, 1920x1080 at 30 Hz | 74.25 MHz | 0.74 Gb/s | H+ V+ | every board |
-| 3, CEA-861 VIC 16, 1920x1080 at 60 Hz | 148.5 MHz | 1.485 Gb/s | H+ V+ | the DE25-Nano only |
+| 2, CEA-861 VIC 34, 1920x1080 at 30 Hz, `1080p30` | 74.25 MHz | 0.74 Gb/s | H+ V+ | every board |
+| 3, CEA-861 VIC 16, 1920x1080 at 60 Hz, `1080p60` | 148.5 MHz | 1.485 Gb/s | H+ V+ | the DE25-Nano only |
+
+The last two are one resolution at two rates, so the resolution alone does not
+name a mode and each carries its rate. Those are the words a card's
+`--hdmi-mode` line says and the words the console prints, and the section on the
+settings below has them.
 
 The first three are inside the 1.2 Gb/s a lane a Zynq board will do, and the
 fourth is not. **Mode 3 exists because the DE25-Nano has no lane of its own.**
@@ -955,7 +960,7 @@ Three of the four are settings and one is a build.
 | `--hdmi-output tv\|color-tv\|both` | `fpgarc`, console word 34 | which screens |
 | `--hdmi-rotate 0\|90\|-90` | `fpgarc`, console word 34 | which way up |
 | `--hdmi-sleep SECONDS` | `fpgarc`, console word 36 | how long before the monitor sleeps |
-| `--hdmi-mode ...` | `HDMI_MODE` at build; the card's line only ASKS | which mode, of the four |
+| `--hdmi-mode 1280x1024\|1400x1050\|1080p30\|1080p60` | `HDMI_MODE` at build; the card's line only ASKS | which mode, of the four |
 
 The sleep setting is described in the next section.
 
@@ -969,16 +974,31 @@ word and `docs/fpgarc.md` the flags.
 bitstream it wants.** It is not a setting that quietly does nothing, which is
 what a word that accepted the key and changed nothing would be.
 
-**THE CARD'S WORD FOR MODE 3 IS NOT SETTLED, AND THE COMPARISON IS A SUBSTRING.**
+**THE COMPARISON IS A SUBSTRING, SO THE CARD'S WORDS ARE THE CONSOLE'S.**
 `S80cadr-disk-packs` matches the card's `--hdmi-mode` word against the line
 `cadr-console hdmi-mode` prints, as a substring, and the four modes' names are
-`1280x1024 at 60 Hz`, `1400x1050 at 60 Hz, reduced blanking`, `1920x1080 at
-30 Hz` and `1920x1080 at 60 Hz`. None of those four is inside another, and the
-console's own check holds that. But the card's vocabulary is `1280x1024`,
-`1400x1050` and `1920x1080`, and that last word is now inside two of them: a
-card asking for `1920x1080` on a mode 3 bitstream is accepted in silence, which
-is the failure this paragraph opened by ruling out. The vocabulary has to grow
-a word that says the rate, and what that word should be is not decided here.
+`1280x1024 at 60 Hz`, `1400x1050 at 60 Hz, reduced blanking`, `1080p30, which
+is 1920x1080 at 30 Hz` and `1080p60, which is 1920x1080 at 60 Hz`. None of
+those four is inside another. A word a card may say is therefore one that is
+inside one of those names and no other, which makes the vocabulary
+`1280x1024`, `1400x1050`, `1080p30` and `1080p60`. The first two need no rate
+because nothing about them is ambiguous; the last two are the two rates of
+2200 by 1125, and each opens the name of the mode it belongs to. The console's
+own check holds both halves: no name inside another, and each of those four
+words inside exactly one name.
+
+**And `1920x1080` on its own is refused by name.** It is inside two of the four
+names, so a card carrying it on either of those bitstreams would be taken in
+silence, which is what a flag that asks rather than sets exists to prevent, and
+resolving it to one of the two would be that same failure under a different
+spelling. The refusal is in the init script and not in the console, because the
+init script is the only thing that reads the card's word: the console reports
+what the fabric carries and hears nothing of what a card asked for. It fires
+before anything is asked and above that step's own guard for a board with no
+console, since the word is ambiguous whatever bitstream is loaded and a refusal
+that needed a console to reach would be no refusal on a board without one.
+`fpgarc.pass` holds all of that, and the console's check holds the fact the
+refusal rests on: that word really is inside two of the four names.
 
 ## Sleep
 

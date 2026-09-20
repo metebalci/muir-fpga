@@ -2262,6 +2262,66 @@ static void check_hdmi(void)
 			}
 		}
 	}
+	// **AND THE CARD'S FOUR WORDS, EACH INSIDE EXACTLY ONE OF THE NAMES.**
+	// The check above says no name swallows another, which is about the
+	// names; this one is about the words a card may write on the
+	// `--hdmi-mode` line, and it is the stronger claim.  The card says a
+	// word, `S80cadr-disk-packs` looks for it in the line the console
+	// prints, and a word in two names would make a card that asked for one
+	// mode accept a bitstream carrying the other WITHOUT SAYING SO --- which
+	// is what a flag that asks rather than sets exists to prevent.  So each
+	// word must name one mode and no other, and the mode it names is
+	// asserted rather than only the count.
+	{
+		static const struct { const char *word; int mode; } words[] = {
+			{ "1280x1024", CONS_HDMI_1280 },
+			{ "1400x1050", CONS_HDMI_1400 },
+			{ "1080p30",   CONS_HDMI_1920P30 },
+			{ "1080p60",   CONS_HDMI_1920P60 }
+		};
+		static const int modes[] = {
+			CONS_HDMI_1280, CONS_HDMI_1400,
+			CONS_HDMI_1920P30, CONS_HDMI_1920P60
+		};
+		size_t i, j;
+		for (i = 0; i < sizeof words / sizeof words[0]; i++) {
+			int found = 0;
+			for (j = 0; j < sizeof modes / sizeof modes[0]; j++) {
+				if (strstr(cons_hdmi_mode_name(modes[j]), words[i].word) == NULL)
+					continue;
+				++found;
+				CHECK(modes[j] == words[i].mode,
+				      "the card's word \"%s\" is inside the name of"
+				      " mode %d, \"%s\", and it names mode %d",
+				      words[i].word, modes[j],
+				      cons_hdmi_mode_name(modes[j]), words[i].mode);
+			}
+			CHECK(found == 1,
+			      "the card's word \"%s\" is inside %d of the four names"
+			      " and it must be inside exactly one",
+			      words[i].word, found);
+		}
+	}
+	// **AND `1920x1080` IS INSIDE TWO OF THEM, WHICH IS WHY A CARD MAY NOT
+	// SAY IT.**  This is the control for the case above and it is asserted
+	// rather than assumed: the refusal in `S80cadr-disk-packs` names that
+	// word, and a check that only required the four good words to work would
+	// pass just as well on names where the bare word was unambiguous and the
+	// refusal was reachable by nothing.
+	{
+		static const int modes[] = {
+			CONS_HDMI_1280, CONS_HDMI_1400,
+			CONS_HDMI_1920P30, CONS_HDMI_1920P60
+		};
+		size_t j;
+		int found = 0;
+		for (j = 0; j < sizeof modes / sizeof modes[0]; j++)
+			if (strstr(cons_hdmi_mode_name(modes[j]), "1920x1080") != NULL)
+				++found;
+		CHECK(found == 2,
+		      "\"1920x1080\" is inside %d of the four names; the card's"
+		      " refusal of it says it is inside two", found);
+	}
 	// The three screen keys, each leaving the rotation alone.
 	cons_set_hdmi_rotate(&c, CONS_HDMI_CW);
 	cons_set_hdmi_output(&c, 0, 1);
