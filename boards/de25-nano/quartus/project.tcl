@@ -47,8 +47,8 @@ if {$hdmi && !$ddr} {
     exit 1
 }
 set hdmi_mode [expr {[info exists ::env(HDMI_MODE)] ? $::env(HDMI_MODE) : 0}]
-if {![string is integer -strict $hdmi_mode] || $hdmi_mode < 0 || $hdmi_mode > 2} {
-    puts "project: HDMI_MODE is '$hdmi_mode', which is not 0, 1 or 2"
+if {![string is integer -strict $hdmi_mode] || $hdmi_mode < 0 || $hdmi_mode > 3} {
+    puts "project: HDMI_MODE is '$hdmi_mode', which is not 0, 1, 2 or 3"
     exit 1
 }
 set userid  [lindex $argv 1]
@@ -127,9 +127,12 @@ if {$ddr} {
 # `PROBE_DEPTH`: a constraint on something that is not in the design is a
 # warning that reads like a constraint that applied.  The define is the top
 # level's switch for the video pins, which changes its port list; the
-# parameter is which of the three video modes the raster and the pixel clock
+# parameter is which of the four video modes the raster and the pixel clock
 # are built for, and `boards/de25-nano/quartus/build.sh` asks the PLL
-# generator for that mode's frequency.
+# generator for that mode's frequency.  **MODE 3, 1920x1080 at 60 Hz, IS
+# THIS BOARD'S ALONE**: the Arty Z7-20 serializes the link in fabric and a
+# lane there stops near 1.2 Gb/s, where this board hands a parallel raster
+# to a transmitter part whose data sheet allows 165 MHz.
 if {$hdmi} {
     set_global_assignment -name VERILOG_MACRO "CADR_DE25_HDMI=1"
     set_global_assignment -name IP_FILE [file join $build ip cadr_de25_pixel_pll.ip]

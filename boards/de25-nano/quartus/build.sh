@@ -24,10 +24,13 @@
 # **`HDMI=1` BUILDS THE DISPLAY OUTPUT INTO THE MEMORY BOARD**: the CADR's two
 # screens read out of the machine's memory and put on the board's ADV7513, as
 # `HDMI=1` does for the Arty Z7-20.  It needs `DDR=1`, because the picture is
-# in the machine's memory.  `HDMI_MODE` is which of the three video modes the
+# in the machine's memory.  `HDMI_MODE` is which of the four video modes the
 # bitstream carries --- 0 is 1280x1024 at 60 Hz, 1 is 1400x1050 reduced
-# blanking at 60, 2 is 1920x1080 at 30 --- and the mode is a build and not a
-# setting for the reason `docs/display-output.md` gives.  That build goes to
+# blanking at 60, 2 is 1920x1080 at 30, 3 is 1920x1080 at 60 --- and the mode
+# is a build and not a setting for the reason `docs/display-output.md` gives.
+# **MODE 3 IS THIS BOARD'S AND NOT THE ARTY Z7-20'S**, because that board
+# serializes the link in fabric where a lane stops near 1.2 Gb/s and this one
+# hands a parallel raster to a transmitter part.  That build goes to
 # `build/de25-ddr-hdmi/`, and it generates a SECOND I/O PLL for the pixel
 # clock, because no counter of the board's 50 MHz gives both the machine's
 # tick and a pixel clock.
@@ -134,15 +137,26 @@ if [ "$ddr" -eq 1 ]; then
     out=$out-ddr
 fi
 
-# The display output, or not, and which video mode it carries.  **THE THREE
+# The display output, or not, and which video mode it carries.  **THE FOUR
 # PIXEL CLOCKS ARE THE SPECIFICATIONS' OWN**, and they are written here
 # because this is where the PLL is asked for them: VESA DMT's 1280x1024 at
-# 60 Hz is 108 MHz, CVT reduced blanking's 1400x1050 at 60 is 101 MHz, and
-# CEA-861's VIC 34 at 1920x1080 and 30 is 74.25 MHz.  The same three are the
-# parameter table in `rtl/plumbing/cadr_display_out.sv`, which carries the
-# raster's own widths beside them, and `tb/cadr_display_out_tb.cpp` carries a
-# third transcription and compares against it; what is here is only the
-# frequency the clock generator is asked to make.
+# 60 Hz is 108 MHz, CVT reduced blanking's 1400x1050 at 60 is 101 MHz,
+# CEA-861's VIC 34 at 1920x1080 and 30 is 74.25 MHz, and its VIC 16 at
+# 1920x1080 and 60 is 148.5.  The same four are the parameter table in
+# `rtl/plumbing/cadr_display_out.sv`, which carries the raster's own widths
+# beside them, and `tb/cadr_display_out_tb.cpp` carries a third transcription
+# and compares against it; what is here is only the frequency the clock
+# generator is asked to make.
+#
+# **AND THE TRANSMITTER'S OWN CEILING IS HELD HERE, AT 165 MHz.**  The
+# ADV7513's data sheet in the board's resource package --- Rev. B, page 3 of
+# 12, Table 1 under AC SPECIFICATIONS --- gives its Input Video Clock
+# Frequency a maximum of 165 MHz and its TMDS Output Clock Frequency 20 to
+# 165 MHz, and its first page says 165 MHz supports all video formats up to
+# 1080p.  148.5 is inside it.  The bound is written out rather than left
+# implied because the next mode somebody adds is the one it is for, and
+# `sta_check.tcl` holds the same number against what the PLL actually made
+# rather than against what it was asked for.
 hdmi=${HDMI:-0}
 case $hdmi in
     0|1) ;;
@@ -153,8 +167,12 @@ case $hdmi_mode in
     0) pixel_mhz=108.0  ; mode_words="1280x1024 at 60 Hz" ;;
     1) pixel_mhz=101.0  ; mode_words="1400x1050 reduced blanking at 60 Hz" ;;
     2) pixel_mhz=74.25  ; mode_words="1920x1080 at 30 Hz" ;;
-    *) refuse "HDMI_MODE is '$hdmi_mode'; it is 0, 1 or 2" ;;
+    3) pixel_mhz=148.5  ; mode_words="1920x1080 at 60 Hz" ;;
+    *) refuse "HDMI_MODE is '$hdmi_mode'; it is 0, 1, 2 or 3" ;;
 esac
+if [ "$(awk -v p="$pixel_mhz" 'BEGIN { print (p > 165.0) ? 1 : 0 }')" = 1 ]; then
+    refuse "mode $hdmi_mode asks $pixel_mhz MHz of the pixel clock, and the ADV7513 takes 165 MHz at most (data sheet Rev. B, Table 1, Input Video Clock Frequency)"
+fi
 if [ "$hdmi" -eq 1 ]; then
     [ "$ddr" -eq 1 ] || refuse "HDMI=1 needs DDR=1: the display reads the machine's memory"
     out=$out-hdmi
@@ -251,7 +269,7 @@ grep -q 'Able to implement PLL with user settings' "$out/1-ip-deploy.log" \
 # same reference and the same five decisions, at the mode's frequency instead
 # of the tick.  A SECOND PLL AND NOT A SECOND OUTPUT OF THE FIRST, because a
 # counter chain that gives 100 MHz gives no whole divisor that is also 108,
-# 101 or 74.25; the Arty Z7-20's two clock managers exist for the same reason
+# 101, 74.25 or 148.5; the Arty Z7-20's two clock managers exist for the same reason
 # and `boards/arty-z7-20/cadr_arty.sv` has the arithmetic.  What the generator
 # actually achieves is read back from the timing analyzer by `sta_check.tcl`
 # and compared with the mode's, so a PLL that locked at some other frequency

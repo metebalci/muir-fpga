@@ -302,7 +302,7 @@
 // ----------------------------------------------------------------------
 // THE MODE
 //
-// Three, and **the mode is a parameter and not a setting**: a video mode is a
+// Four, and **the mode is a parameter and not a setting**: a video mode is a
 // pixel clock, the pixel clock comes from an MMCM, and changing an MMCM's
 // frequency at run time means rewriting its dividers through its reconfiguration
 // port along with the lock and filter registers that go with them.  Those two
@@ -314,14 +314,26 @@
 // serve the three clocks --- a 10:1 serializer makes the pixel divider a
 // multiple of five, so one oscillator gives only the ratios 1, 2/3, 1/2.
 //
-// So the mode is chosen when the bitstream is built, three bitstreams carry the
-// three modes, and the console reports which one the fabric is.  The other two
+// So the mode is chosen when the bitstream is built, a bitstream carries one
+// mode, and the console reports which one the fabric is.  The other two
 // settings are read from the card at every boot.
 //
 //   0  VESA DMT 1280x1024 at 60 Hz, 108 MHz, both syncs positive
 //   1  CVT reduced blanking 1400x1050 at 60 Hz, 101 MHz, HSYNC positive and
 //      VSYNC negative, which is how a sink knows reduced blanking
-//   2  CEA-861 1920x1080 at 30 Hz, 74.25 MHz, both syncs positive
+//   2  CEA-861 VIC 34, 1920x1080 at 30 Hz, 74.25 MHz, both syncs positive
+//   3  CEA-861 VIC 16, 1920x1080 at 60 Hz, 148.5 MHz, both syncs positive
+//
+// **MODE 3 IS NOT FOR EVERY BOARD, AND THIS MODULE IS NOT WHERE THAT IS SAID.**
+// CEA-861 gives VIC 16 and VIC 34 one blanking table, so columns 2 and 3 are
+// the same raster and differ only in the pixel clock: 148.5 MHz against 74.25,
+// which is 60 Hz against 30.  Nothing in this module cares which, because it
+// takes its pixel clock from outside and counts it.  What cares is the board.
+// On the Zynq boards the fabric serializes the link itself and a lane was
+// measured to stop near 1.2 Gb/s, where 148.5 MHz needs 1.485, so
+// `boards/arty-z7-20/cadr_arty.sv` REFUSES this column at elaboration.  The
+// DE25-Nano hands a parallel raster to an ADV7513 and serializes nothing, and
+// that part's data sheet allows 165 MHz, so it carries it.
 //
 // The figures are the specifications' and are in `docs/display-output.md` with
 // the arithmetic they come from.  They are parameters here so that the check can
@@ -348,6 +360,16 @@ module cadr_display_out #(
     //      is 160 pixels of horizontal blanking whatever the width, and HSYNC
     //      POSITIVE with VSYNC NEGATIVE, which is the pair a sink reads it by
     //   2  CEA-861 VIC 34, 1920x1080 at 30 Hz, 74.25 MHz, both syncs positive
+    //   3  CEA-861 VIC 16, 1920x1080 at 60 Hz, 148.5 MHz, both syncs positive
+    //
+    // **COLUMNS 2 AND 3 ARE ONE SET OF WIDTHS**, because CEA-861 gives VIC 16
+    // and VIC 34 one blanking table: 2200 by 1125, both syncs positive.  What
+    // tells them apart is the pixel clock, and the pixel clock does not appear
+    // in this module at all --- it arrives on `pclk` and this counts it.  So
+    // the two columns below read `MODE >= 2`, which the refusal in the body
+    // makes exactly {2, 3}: a fifth number is an error rather than a fall
+    // through to mode 0.  **WHICH BOARD MAY ASK FOR COLUMN 3 IS THE BOARD'S
+    // TO SAY**, and the module header says where.
     //
     // `docs/display-output.md` has the arithmetic each column comes out of.
     parameter int unsigned MODE = 0,
@@ -357,14 +379,14 @@ module cadr_display_out #(
     // part of how it identifies the mode and which are therefore not free.
     // They are parameters of their own, defaulting to the mode's column, so
     // that the check can run a small raster in a short simulation.
-    parameter int unsigned H_ACTIVE = (MODE == 1) ? 1400 : (MODE == 2) ? 1920 : 1280,
-    parameter int unsigned H_FRONT  = (MODE == 1) ?   48 : (MODE == 2) ?   88 :   48,
-    parameter int unsigned H_SYNC   = (MODE == 1) ?   32 : (MODE == 2) ?   44 :  112,
-    parameter int unsigned H_BACK   = (MODE == 1) ?   80 : (MODE == 2) ?  148 :  248,
-    parameter int unsigned V_ACTIVE = (MODE == 1) ? 1050 : (MODE == 2) ? 1080 : 1024,
-    parameter int unsigned V_FRONT  = (MODE == 1) ?    3 : (MODE == 2) ?    4 :    1,
-    parameter int unsigned V_SYNC   = (MODE == 1) ?    4 : (MODE == 2) ?    5 :    3,
-    parameter int unsigned V_BACK   = (MODE == 1) ?   23 : (MODE == 2) ?   36 :   38,
+    parameter int unsigned H_ACTIVE = (MODE == 1) ? 1400 : (MODE >= 2) ? 1920 : 1280,
+    parameter int unsigned H_FRONT  = (MODE == 1) ?   48 : (MODE >= 2) ?   88 :   48,
+    parameter int unsigned H_SYNC   = (MODE == 1) ?   32 : (MODE >= 2) ?   44 :  112,
+    parameter int unsigned H_BACK   = (MODE == 1) ?   80 : (MODE >= 2) ?  148 :  248,
+    parameter int unsigned V_ACTIVE = (MODE == 1) ? 1050 : (MODE >= 2) ? 1080 : 1024,
+    parameter int unsigned V_FRONT  = (MODE == 1) ?    3 : (MODE >= 2) ?    4 :    1,
+    parameter int unsigned V_SYNC   = (MODE == 1) ?    4 : (MODE >= 2) ?    5 :    3,
+    parameter int unsigned V_BACK   = (MODE == 1) ?   23 : (MODE >= 2) ?   36 :   38,
     parameter bit          HSYNC_POS = 1'b1,
     parameter bit          VSYNC_POS = (MODE == 1) ? 1'b0 : 1'b1,
 
@@ -481,6 +503,22 @@ module cadr_display_out #(
     output var logic        underrun,
     output var logic        rd_error
 );
+
+  // **THE BOUND ON THE MODE, AND A NUMBER OUTSIDE IT IS A REFUSAL AND NOT A
+  // FALL THROUGH.**  The table has four columns and its ternaries end in mode
+  // 0's figures, so without this a fifth number would elaborate a 1280x1024
+  // raster in silence: a bitstream built for a mode nobody ever wrote, whose
+  // first reader would be a monitor.  `build/hdmi_mode_guard.pass` asserts
+  // BOTH sides of it --- that 3 elaborates and that 4 does not --- because a
+  // bound nothing reaches looks exactly like one that works.
+  //
+  // It is the only thing this module says about which mode is allowed.  Which
+  // BOARD may ask for which column is the board's own refusal, and the header
+  // says where mode 3's is and what measurement it stands on.
+  if (MODE > 3) begin : g_no_such_mode
+    $error("cadr_display_out: MODE is %0d, and the table has 0, 1, 2 and 3",
+           MODE);
+  end
 
   localparam int unsigned H_TOTAL = H_ACTIVE + H_FRONT + H_SYNC + H_BACK;
   localparam int unsigned V_TOTAL = V_ACTIVE + V_FRONT + V_SYNC + V_BACK;
@@ -1015,7 +1053,7 @@ module cadr_display_out #(
   // contiguous beat writes both halves of an entry, and a strided beat writes
   // the one half its word belongs in.  Nothing about the behavior moves, and
   // `build/display_out.pass` holds every pixel of a frame against the memory
-  // it came from, in both rotations and for both screens, in all three modes.
+  // it came from, in both rotations and for both screens, in all four modes.
   logic          wr_beat;
   logic [ME_W:0] mb_addr;
   logic [CE_W:0] cb_addr;

@@ -1003,9 +1003,10 @@ int cons_set_hdmi_rotate(struct console *c, int rot)
 const char *cons_hdmi_mode_name(int mode)
 {
 	switch (mode) {
-	case CONS_HDMI_1280: return "1280x1024 at 60 Hz";
-	case CONS_HDMI_1400: return "1400x1050 at 60 Hz, reduced blanking";
-	case CONS_HDMI_1920: return "1920x1080 at 30 Hz";
+	case CONS_HDMI_1280:    return "1280x1024 at 60 Hz";
+	case CONS_HDMI_1400:    return "1400x1050 at 60 Hz, reduced blanking";
+	case CONS_HDMI_1920P30: return "1920x1080 at 30 Hz";
+	case CONS_HDMI_1920P60: return "1920x1080 at 60 Hz";
 	default: return "a mode this program does not know";
 	}
 }

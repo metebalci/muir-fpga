@@ -319,8 +319,8 @@ enum cons_display_bit { CONS_TV_LISPM = 1u << 0, CONS_TV_COLOR = 1u << 1 };
 // DECISION.**  A video mode is a pixel clock; the pixel clock comes from an
 // MMCM whose dividers are fixed in the bitstream; and moving one at run time
 // means rewriting the lock and filter registers that go with them, which are
-// Xilinx's own empirical values with no arithmetic behind them.  So three
-// bitstreams carry the three modes and this word says which one is loaded.
+// Xilinx's own empirical values with no arithmetic behind them.  So a
+// bitstream carries one mode and this word says which one is loaded.
 // `docs/display-output.md` has the measurement.
 //
 // Six keys, on word 33's argument: three values and not two, so three keys and
@@ -342,8 +342,24 @@ enum cons_hdmi_bit { CONS_HDMI_FIRST = 1u << 0, CONS_HDMI_COLOR = 1u << 1 };
 #define CONS_HDMI_MODE_SHIFT  4
 #define CONS_HDMI_MODE_MASK   3u
 enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 };
-// The three modes a bitstream can carry, in the order `HDMI_MODE` names them.
-enum cons_hdmi_mode { CONS_HDMI_1280 = 0, CONS_HDMI_1400 = 1, CONS_HDMI_1920 = 2 };
+// The four modes a bitstream can carry, in the order `HDMI_MODE` names them.
+//
+// **TWO OF THEM ARE 1920x1080 AND THE NAMES SAY WHICH.**  CEA-861 gives VIC 34
+// and VIC 16 one blanking table, 2200 by 1125, and tells them apart by the
+// pixel clock: 74.25 MHz is 30 Hz and 148.5 is 60.  So the resolution alone no
+// longer names a mode and these two carry the rate.
+//
+// **AND ONLY THE DE25-NANO CARRIES THE 60 Hz ONE.**  A board that serializes
+// the link in its own fabric stops near 1.2 Gb/s a lane and that mode wants
+// 1.485, so the Zynq boards refuse it when the bitstream is built.  Nothing
+// here can be asked for: the mode is read only, and what this enumeration is
+// for is saying which bitstream is loaded.
+enum cons_hdmi_mode {
+	CONS_HDMI_1280    = 0,
+	CONS_HDMI_1400    = 1,
+	CONS_HDMI_1920P30 = 2,
+	CONS_HDMI_1920P60 = 3
+};
 
 // **AND WHETHER THE BOARD'S ACTIVITY LAMPS BLINK, page 2's word 35.**
 //

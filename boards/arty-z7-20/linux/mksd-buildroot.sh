@@ -1165,8 +1165,8 @@ fi
   printf "\r\n"
   printf "# Which video mode the BITSTREAM carries, which this line asks about\r\n"
   printf "# rather than sets: a mode is a pixel clock, a pixel clock comes from\r\n"
-  printf "# an MMCM, and an MMCM's dividers are fixed in the bitstream. Three\r\n"
-  printf "# bitstreams carry the three modes. A card naming one the fabric does\r\n"
+  printf "# an MMCM, and an MMCM's dividers are fixed in the bitstream. A\r\n"
+  printf "# bitstream carries one mode. A card naming one the fabric does\r\n"
   printf "# not carry gets a line saying which bitstream it wants.\r\n"
   printf -- "#--hdmi-mode 1280x1024\r\n"
 

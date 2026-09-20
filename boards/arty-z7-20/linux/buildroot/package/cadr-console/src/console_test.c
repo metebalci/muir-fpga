@@ -2234,6 +2234,34 @@ static void check_hdmi(void)
 		CHECK(h.mode == CONS_HDMI_1400, "the mode read %d, and the model is built for %d",
 		      h.mode, CONS_HDMI_1400);
 	}
+	// **THE FOUR NAMES, AND NONE OF THEM INSIDE ANOTHER.**  `cadr-console
+	// hdmi-mode` prints a name and `S80cadr-disk-packs` compares the card's
+	// `--hdmi-mode` word against that line as a SUBSTRING, so a mode whose
+	// name contains another mode's name would make a card asking for the
+	// shorter one match a bitstream carrying the longer.  Two of the four
+	// are 1920x1080 and are told apart only by their rate, which is where
+	// this stops being a formality.
+	{
+		static const int modes[] = {
+			CONS_HDMI_1280, CONS_HDMI_1400,
+			CONS_HDMI_1920P30, CONS_HDMI_1920P60
+		};
+		size_t i, j;
+		for (i = 0; i < sizeof modes / sizeof modes[0]; i++) {
+			const char *a = cons_hdmi_mode_name(modes[i]);
+			CHECK(strcmp(a, cons_hdmi_mode_name(-1)) != 0,
+			      "mode %d has no name of its own", modes[i]);
+			for (j = 0; j < sizeof modes / sizeof modes[0]; j++) {
+				const char *b = cons_hdmi_mode_name(modes[j]);
+				if (i == j)
+					continue;
+				CHECK(strstr(b, a) == NULL,
+				      "the name of mode %d, \"%s\", is inside the"
+				      " name of mode %d, \"%s\"",
+				      modes[i], a, modes[j], b);
+			}
+		}
+	}
 	// The three screen keys, each leaving the rotation alone.
 	cons_set_hdmi_rotate(&c, CONS_HDMI_CW);
 	cons_set_hdmi_output(&c, 0, 1);

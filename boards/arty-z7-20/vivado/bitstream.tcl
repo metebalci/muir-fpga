@@ -211,11 +211,22 @@ set hdmi [expr {[info exists ::env(HDMI)] ? $::env(HDMI) : 0}]
 #   1  CVT reduced blanking 1400x1050   1.01 Gb/s a lane
 #   2  CEA-861 1920x1080 at 30 Hz       0.74 Gb/s a lane
 #
+# **AND THREE AND NOT FOUR.**  `rtl/plumbing/cadr_display_out.sv` carries a
+# fourth column, CEA-861's VIC 16 at 1920x1080 and 60 Hz, and this board
+# cannot drive it: 148.5 MHz is 1.485 Gb/s a lane and the serializer that
+# makes the link here was measured to stop near 1.2.  It is the DE25-Nano's,
+# where the fabric serializes nothing.  `boards/arty-z7-20/cadr_arty.sv`
+# refuses it at elaboration too, which is the refusal that cannot be gone
+# round; this one is only the earlier and friendlier of the two.
+#
 #     DDR=1 HDMI=1 HDMI_MODE=2 OUTDIR=build/hdmi1080 vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
 set hdmi_mode [expr {[info exists ::env(HDMI_MODE)] ? $::env(HDMI_MODE) : 0}]
 if {$hdmi_mode != 0 && $hdmi_mode != 1 && $hdmi_mode != 2} {
-    puts "BIT: FAILED --- HDMI_MODE=$hdmi_mode is not a mode. 0 is 1280x1024,"
-    puts "BIT: 1 is 1400x1050 reduced blanking, 2 is 1920x1080 at 30 Hz."
+    puts "BIT: FAILED --- HDMI_MODE=$hdmi_mode is not a mode this board has."
+    puts "BIT: 0 is 1280x1024, 1 is 1400x1050 reduced blanking, 2 is"
+    puts "BIT: 1920x1080 at 30 Hz. Mode 3, 1920x1080 at 60 Hz, wants a lane"
+    puts "BIT: rate of 1.485 Gb/s and this board's serializer stops near 1.2,"
+    puts "BIT: so that mode is the DE25-Nano's. See docs/display-output.md."
     exit 1
 }
 # **THE SECOND DISPLAY BOARD, `LMTV=1`.**  MIT's color TV --- `lmtv.order`'s

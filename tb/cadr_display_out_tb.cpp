@@ -33,15 +33,26 @@
 // a map applied to the wrong screen and an index off by one are all visible.
 //
 // THE MODE IS THE BINARY'S, and `argv[1]` says which: the raster's figures are
-// parameters of the module and three builds carry the three. The table below is
+// parameters of the module and four builds carry the four. The table below is
 // transcribed from the specifications rather than from the module, which is
 // what makes comparing it worth anything.
+//
+// **MODE 3 IS MODE 2'S RASTER AT TWICE THE PIXEL CLOCK, AND THAT IS WHY IT IS
+// RUN AT ALL.**  CEA-861's VIC 16 and its VIC 34 are the same 2200 by 1125
+// grid; what tells them apart is 148.5 MHz against 74.25, which is 60 Hz
+// against 30.  So the two elaborate the same widths and the check that matters
+// for the new column is not the geometry but the ratio between the two clocks:
+// mode 3 gives the memory side the SHORTEST line of the four --- 2200 pixels
+// at 148.5 MHz is 14.81 us, against mode 0's 15.63 --- and this file runs the
+// memory side at its own 10.000 ns whatever the raster does.  A mode that
+// asked more of the port than the port can give shows here as the underrun
+// this check already knows how to see.
 //
 // The configurations:
 //
 //   A  mono upright, the port at its ordinary speed.  A whole frame compared
 //      pixel for pixel, the raster's own figures counted rather than sampled,
-//      and every burst's shape asserted.  RUN FOR ALL THREE MODES.
+//      and every burst's shape asserted.  RUN FOR ALL FOUR MODES.
 //   B  the port slowed until it cannot keep up.  **A STIMULUS FAST ENOUGH
 //      HIDES THE RACE IT EXISTS TO SHOW**: at the real speed the fetcher is a
 //      whole line ahead and the underrun path is dead code no mutation can
@@ -69,7 +80,7 @@
 
 namespace {
 
-// The three modes, from their own specifications.  `docs/display-output.md`
+// The four modes, from their own specifications.  `docs/display-output.md`
 // has the arithmetic; these are the figures it arrives at.
 struct ModeSpec {
   int ha, hf, hs, hb;
@@ -78,16 +89,23 @@ struct ModeSpec {
   uint64_t pclk_half_ps;   // the board's own pixel clock, to the picosecond
   const char *name;
 };
-const ModeSpec kModes[3] = {
+const ModeSpec kModes[4] = {
     {1280, 48, 112, 248, 1024, 1, 3, 38, 1, 1, 4638,
      "VESA DMT 1280x1024 at 60 Hz"},
     // Reduced blanking: 160 pixels of horizontal blanking whatever the width,
-    // and the one mode of the three whose VSYNC is negative --- which is the
+    // and the one mode of the four whose VSYNC is negative --- which is the
     // pair a sink reads reduced blanking by.
     {1400, 48, 32, 80, 1050, 3, 4, 23, 1, 0, 4961,
      "CVT reduced blanking 1400x1050 at 60 Hz"},
     {1920, 88, 44, 148, 1080, 4, 5, 36, 1, 1, 6737,
      "CEA-861 VIC 34, 1920x1080 at 30 Hz"},
+    // **THE SAME GRID AS THE ONE ABOVE AND TWICE ITS CLOCK.**  CEA-861 gives
+    // VIC 16 and VIC 34 one blanking table between them --- 2200 by 1125,
+    // both syncs positive --- and 148.5 MHz over 2,475,000 is 60 Hz exactly,
+    // where 74.25 is 30.  The half period is 3367 ps, which is 1/297 GHz
+    // rounded to the picosecond this timeline counts in.
+    {1920, 88, 44, 148, 1080, 4, 5, 36, 1, 1, 3367,
+     "CEA-861 VIC 16, 1920x1080 at 60 Hz"},
 };
 
 int M = 0;                       // which mode this binary was built for
@@ -365,7 +383,7 @@ struct Result {
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
   if (argc > 1) M = std::atoi(argv[1]);
-  if (M < 0 || M > 2) { std::fprintf(stderr, "FAIL: mode %d\n", M); return 1; }
+  if (M < 0 || M > 3) { std::fprintf(stderr, "FAIL: mode %d\n", M); return 1; }
 
   HA = kModes[M].ha; HF = kModes[M].hf; HS = kModes[M].hs; HB = kModes[M].hb;
   VA = kModes[M].va; VF = kModes[M].vf; VS = kModes[M].vs; VB = kModes[M].vb;

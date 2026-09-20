@@ -155,6 +155,18 @@ module cadr_arty #(
     //   1  CVT reduced blanking 1400x1050 at 60 Hz, HSYNC positive and VSYNC
     //      negative, which is how a sink knows reduced blanking
     //   2  CEA-861 1920x1080 at 30 Hz, both syncs positive
+    //
+    // **AND THREE AND NOT FOUR, WHICH IS A FACT ABOUT THIS BOARD AND NOT
+    // ABOUT THE TABLE.**  `rtl/plumbing/cadr_display_out.sv` carries a fourth
+    // column, CEA-861's VIC 16 --- 1920x1080 at 60 Hz, 148.5 MHz --- and this
+    // board cannot drive it.  The refusal is in the body below and the
+    // measurement behind it is in `docs/display-output.md`: this fabric
+    // serializes the link itself, ten bits a pixel down each lane, and the
+    // serializer's own clock input will not take a period shorter than
+    // 1.667 ns, which is 600 MHz and a lane rate of 1.2 Gb/s.  148.5 MHz
+    // needs 1.485 Gb/s.  A board that hands a parallel raster to a
+    // transmitter part serializes nothing and is not bound by that number,
+    // which is why the DE25-Nano carries the column and this board does not.
     parameter int unsigned HDMI_MODE = 0,
 
     // **THE SECOND DISPLAY BOARD, THE COLOR TV**, `lmtv.order`'s "for the
@@ -215,6 +227,52 @@ module cadr_arty #(
     output var logic [2:0] hdmi_tx_d_p,
     output var logic [2:0] hdmi_tx_d_n
 );
+
+  // **THE MODES THIS BOARD CAN DRIVE, REFUSED AT ELABORATION AND NOT LATER.**
+  //
+  // `rtl/plumbing/cadr_display_out.sv` has four columns and this board has
+  // three.  Column 3 is 1920x1080 at 60 Hz, whose 148.5 MHz pixel clock is
+  // 1.485 Gb/s down a lane, and the serializer this fabric builds the link
+  // out of was measured to stop at 1.2 --- the tool's own minimum period for
+  // `OSERDESE2/CLK`, 1.667 ns, which `docs/display-output.md` records with
+  // the sweep it came from.
+  //
+  // **AND WHAT MAKES THIS WORTH A REFUSAL RATHER THAN A COMMENT IS WHAT
+  // HAPPENS WITHOUT IT, WHICH WAS MEASURED.**  The pixel clock's two MMCM
+  // dividers below are a ternary chain ending in mode 0's, so an unrefused 3
+  // does not fail anywhere the tools were asked: lint passes on the whole
+  // board, and what it elaborates is `HM_VCO_DIV` of 2 with `HM_VCO_MULT` of
+  // 8.625, which through the phy's fixed divide of ten is a 53.9 MHz pixel
+  // clock driving a 1920x1080 raster --- a frame every 46 milliseconds, at a
+  // pixel rate no 1080p sink will lock to.  Nothing between here and a
+  // monitor asks what mode that is meant to be.
+  //
+  // **WHAT WOULD PROBABLY STOP IT LATER IS AN ACCIDENT AND NOT A GUARD.**
+  // Those dividers put the VCO at 539.0625 MHz, under the manager's own
+  // 600 MHz floor on this speed grade, so the fitter would very likely refuse
+  // the primitive --- hours in, in the fitter's vocabulary, and only because
+  // this mode's fall-through happens to land out of range.  A fourth column
+  // whose fall-through landed inside it would get a bitstream.  A refusal
+  // that depends on where somebody else's numbers fell is not a refusal.
+  //
+  // So it is said here, at the earliest thing that knows which board this is,
+  // and `build/hdmi_mode_guard.pass` holds that it is still said.
+  //
+  // It is not behind `HDMI`, on purpose.  A build that names a mode this
+  // board has no clock for has asked for the wrong bitstream whether or not
+  // it also asked for the display, and a guard that only fires in one
+  // configuration is a guard with a way round it.
+  //
+  // Three lines and not one, because a concatenation of string literals is a
+  // BIT VECTOR and not a string: `$error({"a", "b"}, x)` elaborates and prints
+  // a two-hundred-digit number where the sentence should be.  Measured on the
+  // first build of this guard.  So each line is one literal of its own.
+  if (HDMI_MODE > 2) begin : g_no_such_mode_here
+    $error("cadr_arty: HDMI_MODE is %0d, and this board carries 0, 1 and 2.",
+           HDMI_MODE);
+    $error("cadr_arty: it makes the link in fabric, where a lane stops near 1.2 Gb/s.");
+    $error("cadr_arty: 1920x1080 at 60 Hz wants 1.485; see docs/display-output.md.");
+  end
 
   // ------------------------------------------------------------ the clock
   //
