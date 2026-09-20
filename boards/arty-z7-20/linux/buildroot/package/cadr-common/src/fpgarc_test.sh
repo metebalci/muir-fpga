@@ -45,6 +45,7 @@ TREE=${TREE:-$(cd "$HERE/../../../../../../.." && pwd)}
 PKG="$TREE/boards/arty-z7-20/linux/buildroot/package"
 READER="$PKG/cadr-common/src/fpgarc.sh"
 STARTER="$PKG/cadr-common/src/daemon.sh"
+CLOCKSH="$PKG/cadr-common/src/clock.sh"
 MKSD="$TREE/boards/arty-z7-20/linux/mksd-buildroot.sh"
 MKSDREL="$TREE/boards/arty-z7-20/linux/mksd-release.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-fpgarc-$$}
@@ -88,6 +89,9 @@ sandbox() {
 	: > "$WORK/console.calls"
 	: > "$WORK/ip.calls"
 	: > "$WORK/nslookup.calls"
+	: > "$WORK/date.calls"
+	: > "$WORK/umount.calls"
+	: > "$WORK/order.calls"
 
 	# **THE REAL ONE FORKS THE PROGRAM AND CLOSES ITS OUTPUT**, which is
 	# what made a refused flag silent, so this does the same: it records
@@ -182,6 +186,74 @@ EOF
 for a; do case "\$a" in -*) ;; *) echo "\$a" >> "$WORK/nslookup.calls" ;; esac; done
 exit 0
 EOF
+	# **THE CLOCK, WHICH THIS CHECK OWNS.**  The board has no real-time
+	# clock, so `date` is the only thing the clock step reads and the only
+	# thing it writes, and a check that let the real one through would set
+	# the build host's clock.  This one keeps the board's clock in a file:
+	# a read prints it and a `-s` writes it, so a step that sets the clock
+	# and then reads it back sees what it set.  \$DATE_SETS=no is a clock
+	# the board will not take, which is a case of its own.
+	#
+	# The value is kept as the fourteen digits, whatever form the setter
+	# used, by dropping everything that is not a digit --- so what is
+	# asserted is `date.calls`, which has the words exactly as the step
+	# said them.
+	echo 19700101000005 > "$WORK/now"
+	cat > "$WORK/bin/date" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/date.calls"
+_set=""
+_fmt=""
+while [ \$# -gt 0 ]; do
+	case "\$1" in
+	-s) _set=\$2; shift ;;
+	-u) ;;
+	+*) _fmt=\$1 ;;
+	esac
+	shift
+done
+if [ -n "\$_set" ]; then
+	# **WHERE IN THE BOOT THE CLOCK WAS SET**, which is the half of this the
+	# words alone cannot show: the step exists so that the machine, the
+	# programs and any file written agree from the first second, and a clock
+	# set after the pack program had presented a drive would be a band read
+	# with the date still at the epoch.
+	_d=after; [ -s "$WORK/daemon.calls" ] || _d=before
+	_c=after; [ -s "$WORK/console.calls" ] || _c=before
+	echo "the clock was set \$_d the pack program started and \$_c the console was asked anything" \
+		>> "$WORK/order.calls"
+	if [ "\${DATE_SETS:-yes}" != yes ]; then
+		echo "date: invalid date '\$_set'" >&2
+		exit 1
+	fi
+	printf '%s' "\$_set" | tr -cd '0-9' > "$WORK/now"
+fi
+_now=\$(cat "$WORK/now" 2>/dev/null)
+[ -n "\$_now" ] || _now=19700101000000
+case "\$_fmt" in
+"+%s") echo 0 ;;
+*) echo "\$_now" ;;
+esac
+exit 0
+EOF
+	# The two the disk script's `stop` uses.  \`umount\` records whether the
+	# clock had been saved by the time it ran, which is the only way to see
+	# that the save happens while the partition is still the card's: a save
+	# after the unmount would write into the root filesystem's RAM disk and
+	# be lost at the next boot, with the file there to find either way.
+	cat > "$WORK/bin/umount" <<EOF
+#!/bin/sh
+if [ -f "$WORK/packs/clock" ]; then
+	echo "the clock was saved before \$1 was unmounted" >> "$WORK/umount.calls"
+else
+	echo "\$1 was unmounted before the clock was saved" >> "$WORK/umount.calls"
+fi
+exit 0
+EOF
+	cat > "$WORK/bin/sync" <<EOF
+#!/bin/sh
+exit 0
+EOF
 	chmod +x "$WORK/bin/"*
 }
 
@@ -222,6 +294,10 @@ prepare() {
 	S80cadr-disk-packs)
 		anchor "$dst" "^BOOT=/mnt/card\$" "BOOT=$WORK/mnt/card" || return 1
 		anchor "$dst" "^HELD=/var/run/cadr-held\$" "HELD=$WORK/run/cadr-held" || return 1
+		# The clock's own shell, cadr-common's third file on the target,
+		# beside the reader and the daemon starter.
+		anchor "$dst" "^CLOCK_SH=/usr/share/cadr/clock.sh\$" \
+		              "CLOCK_SH=$CLOCKSH" || return 1
 		;;
 	esac
 	return 0
@@ -229,6 +305,8 @@ prepare() {
 
 run_script() {
 	: > "$WORK/daemon.calls"
+	: > "$WORK/date.calls"
+	: > "$WORK/order.calls"
 	# A pid file left by an earlier run in this sandbox would answer for
 	# this one: the stand-in programs live for a few seconds, so a stale
 	# live pid is exactly the thing that would make a failed start look
@@ -476,6 +554,204 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 1b.  THE CLOCK'S OWN ARITHMETIC: what is a date, what is a time, and which of
+#      two instants is later.
+# ---------------------------------------------------------------------------
+#
+# **WHY THIS IS TRIED HERE AND NOT ONLY THROUGH THE INIT SCRIPT.**  The two
+# flags carry the only numbers on the card that nothing else can check: a
+# misspelled endpoint is refused by the program that gets it, but `--date
+# 20260931` is eight digits and looks exactly like a date.  What decides is the
+# parsing, so the parsing is what this aims at, one process a case, with the
+# wrong inputs beside the right ones.  A checker that only tried the good ones
+# would pass on a step that took every eight digits it was given.
+#
+# `clock.sh` is cadr-common's third file on the target, beside the reader and
+# the daemon starter, for that reason: the step is a dozen lines of boot and
+# the arithmetic under it is what has to be tried by itself.
+HAVE_CLOCK=no
+if [ ! -f "$CLOCKSH" ]; then
+	case_head "the clock's shell is where cadr-common installs it from"
+	fail "there is no clock shell at $CLOCKSH: S80cadr-disk-packs sources it, so"
+	fail "the disk pack program's whole init script would die at its own first line"
+else
+	HAVE_CLOCK=yes
+	. "$CLOCKSH"
+
+	case_head "a date is eight digits naming a day that exists"
+	for d in 20260920 20260101 19700101 19991231 20260930 20240229 20000229 00010101; do
+		if cadr_clock_date_ok "$d"; then
+			ok "$d is a date"
+		else
+			fail "$d was refused and it is a date"
+		fi
+	done
+
+	# **AND EVERY OTHER EIGHT CHARACTERS IS NOT ONE.**  The three that matter
+	# most are the last three: a day the month has not, and the two leap
+	# years, which are the mutation just outside the bound.  A step that took
+	# 20260229 would hand `date` the 29th of a February that has 28 days, and
+	# the kernel would silently make it the first of March --- a setting
+	# somebody wrote on the card and did not get, which is the failure this
+	# whole file exists to prevent.
+	case_head "and nothing else is a date"
+	for bad in \
+		"|nothing at all" \
+		"2026092|seven digits" \
+		"202609201|nine digits" \
+		"2026-09-20|a date with dashes in it" \
+		"2026092a|a letter where a digit belongs" \
+		"abcdefgh|letters" \
+		"20260020|a month of 00" \
+		"20261320|a month of 13" \
+		"20260900|a day of 00" \
+		"20260932|a day of 32" \
+		"20260931|the 31st of September, which has thirty days" \
+		"20260229|the 29th of February in a year that is not a leap year" \
+		"19000229|the 29th of February in 1900, which is not a leap year" \
+		" 2026092|a leading space in eight characters" \
+		"2026092 |a trailing space in eight characters" \
+		"2026 920|a space in the middle" \
+		" 20260920|a date with a space in front of it" \
+		"20260920 |a date with a space after it" \
+	; do
+		v=${bad%%|*}
+		why=${bad#*|}
+		if cadr_clock_date_ok "$v"; then
+			fail "[$v] was taken as a date and it is $why"
+		else
+			ok "[$v] is refused: $why"
+		fi
+	done
+
+	case_head "a time is four or six digits on a 24-hour clock"
+	for t in 0000 1438 2359 000000 143800 143805 235959 0830; do
+		if cadr_clock_time_ok "$t"; then
+			ok "$t is a time"
+		else
+			fail "$t was refused and it is a time"
+		fi
+	done
+
+	case_head "and nothing else is a time"
+	for bad in \
+		"|nothing at all" \
+		"14|two digits" \
+		"143|three digits" \
+		"14385|five digits" \
+		"1438000|seven digits" \
+		"14:38|a time with a colon in it" \
+		"14a8|a letter where a digit belongs" \
+		"abcd|letters" \
+		"2400|an hour of 24" \
+		"9900|an hour of 99" \
+		"1460|a minute of 60" \
+		"146000|a minute of 60 with seconds after it" \
+		"143860|a second of 60" \
+		" 438|a leading space in four characters" \
+		"143 |a trailing space in four characters" \
+		"14 8|a space in the middle" \
+		" 1438|a time with a space in front of it" \
+		"1438 |a time with a space after it" \
+	; do
+		v=${bad%%|*}
+		why=${bad#*|}
+		if cadr_clock_time_ok "$v"; then
+			fail "[$v] was taken as a time and it is $why"
+		else
+			ok "[$v] is refused: $why"
+		fi
+	done
+
+	case_head "a flag moves its own field of the clock and leaves the other"
+	for triple in \
+		"19700101000005 with_date 20260920 20260920000005" \
+		"19700101000005 with_time 1438 19700101143800" \
+		"19700101000005 with_time 143805 19700101143805" \
+		"20260920143805 with_date 20261231 20261231143805" \
+		"20260920143805 with_time 0000 20260920000000" \
+	; do
+		set -- $triple
+		got=$(cadr_clock_$2 "$1" "$3")
+		if [ "$got" = "$4" ]; then
+			ok "$1 with $2 $3 is $4"
+		else
+			fail "$1 with $2 $3 came out as $got, not $4"
+		fi
+	done
+	got=$(cadr_clock_with_time "$(cadr_clock_with_date 19700101000005 20260920)" 1438)
+	if [ "$got" = 20260920143800 ]; then
+		ok "and both together are 2026-09-20 14:38:00"
+	else
+		fail "both together came out as $got, not 20260920143800"
+	fi
+
+	# **THE COMPARISON IS WHAT KEEPS THE CLOCK FROM RUNNING BACKWARDS, so both
+	# directions of every pair are asserted and so is the pair that is equal.**
+	# One direction alone is what a reversed comparison also passes.
+	case_head "one instant is later than another, and the reverse is not"
+	for pair in \
+		"20260920143801 20260920143800" \
+		"20260920144000 20260920143959" \
+		"20260921000000 20260920235959" \
+		"20261001000000 20260930235959" \
+		"20270101000000 20261231235959" \
+		"20260920143800 19700101000005" \
+	; do
+		set -- $pair
+		if cadr_clock_later "$1" "$2"; then
+			ok "$1 is later than $2"
+		else
+			fail "$1 was not called later than $2"
+		fi
+		if cadr_clock_later "$2" "$1"; then
+			fail "$2 was called later than $1, so the comparison is the wrong way round"
+		else
+			ok "and $2 is not later than $1"
+		fi
+	done
+	if cadr_clock_later 20260920143800 20260920143800; then
+		fail "an instant was called later than itself"
+	else
+		ok "and an instant is not later than itself"
+	fi
+
+	case_head "fourteen digits are a date and a time together"
+	for s in 20260920143805 19700101000000 20000229235959; do
+		if cadr_clock_stamp_ok "$s"; then
+			ok "$s is an instant"
+		else
+			fail "$s was refused and it is an instant"
+		fi
+	done
+	for bad in \
+		"|nothing at all" \
+		"2026092014380|thirteen digits" \
+		"202609201438050|fifteen digits" \
+		"20260920243805|an hour of 24" \
+		"20261320143805|a month of 13" \
+		"20260931143805|the 31st of September" \
+		"2026-09-20 14:38:05|the human form" \
+	; do
+		v=${bad%%|*}
+		why=${bad#*|}
+		if cadr_clock_stamp_ok "$v"; then
+			fail "[$v] was taken as an instant and it is $why"
+		else
+			ok "[$v] is refused: $why"
+		fi
+	done
+
+	case_head "and the human form is what a person reads"
+	got=$(cadr_clock_human 20260920143805)
+	if [ "$got" = "2026-09-20 14:38:05" ]; then
+		ok "20260920143805 reads as 2026-09-20 14:38:05"
+	else
+		fail "20260920143805 reads as [$got]"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
 # 2.  One file, five scripts, and each program gets its own flags.
 # ---------------------------------------------------------------------------
 sandbox
@@ -492,8 +768,17 @@ printf '%s\r\n' \
 	'--quiet' \
 	'--usb-scan-ms 500' \
 	'--usb-grab' \
+	'--date 20260920' \
+	'--time 1438' \
 	'--no-auto-boot' > "$RC"
 
+# **AND `--time` IS ON THAT FILE FOR A REASON OF ITS OWN.**  The word was the
+# Chaosnet program's once: it named a time host that lived inside it, and the
+# program still refuses it by name to say where the host went.  It is not in
+# that program's list, so the card's line goes to the clock step and nowhere
+# else --- and if it were ever claimed again, the program would be handed it
+# and would exit at argument parsing, which is the whole Chaosnet gone on a
+# boot that printed OK.  That is what the absence below is for.
 case_head "the Chaosnet program gets its own flags and nobody else's"
 if prepare cadr-chaosnet S87cadr-chaosnet; then
 	run_script S87cadr-chaosnet
@@ -503,6 +788,8 @@ if prepare cadr-chaosnet S87cadr-chaosnet; then
 	passes_not "--usb-grab" "cadr-chaosnet"
 	passes_not "--no-auto-boot" "cadr-chaosnet"
 	passes_not "--poll-us" "cadr-chaosnet"
+	passes_not "--date" "cadr-chaosnet"
+	passes_not "--time" "cadr-chaosnet"
 fi
 
 case_head "the screen gets its own flags and nobody else's"
@@ -516,6 +803,8 @@ if prepare cadr-terminal S85cadr-terminal; then
 	passes_not "--usb-scan-ms" "cadr-terminal"
 	passes_not "--no-auto-boot" "cadr-terminal"
 	passes_not "--quiet" "cadr-terminal"
+	passes_not "--date" "cadr-terminal"
+	passes_not "--time" "cadr-terminal"
 fi
 
 case_head "the serial line gets its own flags and nobody else's"
@@ -535,6 +824,8 @@ if prepare cadr-serial S86cadr-serial; then
 	passes_not "--chaos-udp" "cadr-serial"
 	passes_not "--keyboard-mapping" "cadr-serial"
 	passes_not "--usb-grab" "cadr-serial"
+	passes_not "--date" "cadr-serial"
+	passes_not "--time" "cadr-serial"
 fi
 
 case_head "the USB input gets its own flags and nobody else's"
@@ -545,6 +836,8 @@ if prepare cadr-usb-input S88cadr-usb-input; then
 	passes_not "--chaos-address" "cadr-usb-input"
 	passes_not "--keyboard-mapping" "cadr-usb-input"
 	passes_not "--bow" "cadr-usb-input"
+	passes_not "--date" "cadr-usb-input"
+	passes_not "--time" "cadr-usb-input"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1001,9 +1294,13 @@ if [ "$ran" = yes ]; then
 	done
 fi
 
+# The clock's two lines are on this file as well, because they are claimed by a
+# step and not by a program: a claim that was never recorded would have every
+# card that sets its clock told at boot that the two lines went to nobody.
 case_head "and a file every program's list covers is reported silently"
 sandbox
-printf '%s\r\n' '--chaos-address 3050' '--bow' '--usb-grab' > "$WORK/packs/fpgarc"
+printf '%s\r\n' '--chaos-address 3050' '--bow' '--usb-grab' \
+	'--date 20260920' '--time 1438' > "$WORK/packs/fpgarc"
 ran=yes
 for pair in "cadr-disk-packs S80cadr-disk-packs" "cadr-terminal S85cadr-terminal" \
             "cadr-serial S86cadr-serial" "cadr-chaosnet S87cadr-chaosnet" \
@@ -1496,6 +1793,438 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. THE CLOCK: --date AND --time SET IT BEFORE ANYTHING ELSE STARTS, AND IT
+#     NEVER RUNS BACKWARDS.
+# ---------------------------------------------------------------------------
+#
+# **WHAT THE BOARD HAS.**  No board here presents a real-time clock to Linux:
+# `date` straight after a boot reads the epoch, /sys/class/rtc is empty and
+# there is no /dev/rtc.  So a board that boots from its card alone does not
+# know the date or the time until the card tells it, and every file it writes
+# and every band it reads is stamped 1970.
+#
+# **WHAT TELLS IT.**  Two lines on the card, read by the disk pack program's
+# init script for the reasons the boot button's step gives: they are on the
+# partition that script is the one thing that mounts, and they must land before
+# anything else starts.  Either may stand alone and sets only its own field.
+#
+# **AND THE CLOCK IS SAVED AT A CLEAN SHUTDOWN AND RESTORED AT THE NEXT BOOT,
+# so what the card says is a floor and not a setting.**  The later of the two
+# wins, which is the one rule here that a check can pass while being exactly
+# wrong: a comparison the other way round restores nothing that matters and
+# looks like a clock that works.  So every pair below is tried both ways round
+# --- a saved clock later than the card's lines and a saved clock earlier ---
+# and the two cases assert different outcomes.
+
+# What the step told the clock to be, one line a call.
+clock_told() { sed -n 's/^-u -s //p' "$WORK/date.calls"; }
+clock_told_count() { clock_told | grep -c . || true; }
+
+# The clock was set to $1 and once.  Setting it twice is not harmless: it means
+# the step composed one value, set it, and then thought again.
+clock_set_once() {
+	_n=$(clock_told_count)
+	if [ "$_n" != 1 ]; then
+		fail "the clock was set $_n times and once is right; date was told:" \
+		     "[$(tr '\n' '|' < "$WORK/date.calls")]"
+		return 1
+	fi
+	if [ "$(clock_told)" = "$1" ]; then
+		ok "the clock was set to $1, once"
+	else
+		fail "the clock was set to [$(clock_told)] and not to [$1]"
+	fi
+}
+
+clock_set_never() {
+	_n=$(clock_told_count)
+	if [ "$_n" = 0 ]; then
+		ok "$1"
+	else
+		fail "the clock was set to [$(clock_told)] and nothing asked for it"
+	fi
+}
+
+# The step ran before the pack program and before the console was touched.
+clock_set_first() {
+	_want="the clock was set before the pack program started and before the console was asked anything"
+	if [ "$(cat "$WORK/order.calls" 2>/dev/null)" = "$_want" ]; then
+		ok "and it was set before anything else started"
+	else
+		fail "the order was [$(cat "$WORK/order.calls" 2>/dev/null)], wanting [$_want]"
+	fi
+}
+
+# **-F, BECAUSE WHAT IS LOOKED FOR IS A SENTENCE AND NOT A PATTERN.**  A line
+# the step prints can hold a bracket --- a value it could not read is printed as
+# `[not-a-clock]` --- and grep reads that as a character range, refuses the
+# whole pattern and finds nothing, which reads here as "the console does not say
+# it".  That is a case failing for a reason that has nothing to do with the
+# board, and it was found by a mutation run rather than by the clean one.
+said() { grep -qF -- "$1" "$WORK/out.S80cadr-disk-packs"; }
+says() {
+	if said "$1"; then
+		ok "the console says $1"
+	else
+		fail "the console does not say [$1]; it says:"
+		sed 's/^/        /' "$WORK/out.S80cadr-disk-packs"
+	fi
+}
+says_not() {
+	if said "$1"; then
+		fail "the console says [$1] and should not; it says:"
+		sed 's/^/        /' "$WORK/out.S80cadr-disk-packs"
+	else
+		ok "and the console does not say $1"
+	fi
+}
+
+case_head "--date and --time set the clock, before anything else starts"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' '--date 20260920' '--time 1438' \
+		> "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:38:00"
+	clock_set_first
+	says "cadr-clock: the clock is 2026-09-20 14:38:00 UTC"
+	says "--date 20260920 and --time 1438"
+	# The two lines are the step's and are passed to no program: the pack
+	# program refuses a flag it does not know, so a `--date` reaching it
+	# would be the drive bay gone on a boot that printed OK.
+	passes_not "--date" "cadr-disk-packs"
+	passes_not "--time" "cadr-disk-packs"
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "the pack program was started"
+	else
+		fail "the pack program was not started"
+	fi
+	# Nothing is saved at a start: the save is the shutdown's.
+	if [ -f "$WORK/packs/clock" ]; then
+		fail "a start wrote the saved clock, and only a clean shutdown may"
+	else
+		ok "and nothing was saved at start"
+	fi
+fi
+
+case_head "--date alone sets the date and leaves the time of day"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '--date 20260920' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 00:00:05"
+	says "--date 20260920"
+	says_not "--time"
+fi
+
+case_head "--time alone sets the time of day and leaves the date"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '--time 1438' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "1970-01-01 14:38:00"
+	says "--time 1438"
+	says_not "--date"
+fi
+
+case_head "--time takes the second when the card gives one"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '--date 20260920' '--time 143805' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:38:05"
+fi
+
+case_head "a card that says nothing leaves the clock alone and says nothing"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_never "the clock was not set"
+	says_not "cadr-clock"
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the pack program was started"
+	else
+		fail "the pack program was not started"
+	fi
+fi
+
+# **THE CLOCK NEVER RUNS BACKWARDS, and this pair is what says so.**  The same
+# card is booted twice: once beside a saved clock LATER than what its lines
+# compose, and once beside one EARLIER.  The first must keep the saved clock
+# and say that the card's lines were not applied; the second must take the
+# card's.  A comparison the wrong way round passes neither, and a step with no
+# comparison at all passes only the second.
+case_head "a saved clock later than the card's lines wins, and the clock is not moved back"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260920140000 > "$WORK/packs/clock"
+	printf '%s\r\n' '--date 20260919' '--time 1200' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:00:00"
+	says "is not later than the clock restored"
+	says "cadr-clock: the clock is 2026-09-20 14:00:00 UTC, restored from"
+fi
+
+case_head "and a saved clock earlier than them does not, so the card's lines win"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260918000000 > "$WORK/packs/clock"
+	printf '%s\r\n' '--date 20260919' '--time 1200' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-19 12:00:00"
+	says "--date 20260919 and --time 1200"
+	says_not "is not later than the clock restored"
+fi
+
+# **AND A LINE THAT STANDS ALONE COMPOSES ON THE CLOCK AS IT NOW STANDS, which
+# is the restored one.**  `--time 1500` on a board that was halted at two in
+# the afternoon is three in the afternoon of the same day, and not three in the
+# afternoon of the 1st of January 1970 --- which is what composing on the clock
+# the board came up with would give, and which the comparison would then throw
+# away, leaving a line on the card that did nothing at all.  That is the whole
+# of what "sets only its own field, leaving the other as it is" means, and this
+# is the case that says which of the two readings the step has.
+case_head "a lone --time moves the restored clock and does not start again from the epoch"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260920140000 > "$WORK/packs/clock"
+	printf '%s\r\n' '--time 1500' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 15:00:00"
+	says "on the clock restored from"
+fi
+
+# **AND ONE SECOND EITHER SIDE OF THE SAVED CLOCK**, which is the mutation just
+# outside the bound: a comparison that took `not earlier` for `later`, or that
+# compared the date and forgot the time, passes everything above and fails
+# here.
+case_head "one second later than the saved clock is later, and one second earlier is not"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260920143800 > "$WORK/packs/clock"
+	printf '%s\r\n' '--date 20260920' '--time 143801' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:38:01"
+fi
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260920143800 > "$WORK/packs/clock"
+	printf '%s\r\n' '--date 20260920' '--time 143759' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:38:00"
+	says "is not later than the clock restored"
+fi
+
+case_head "a saved clock and no lines at all is restored on its own"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260920140000 > "$WORK/packs/clock"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:00:00"
+	clock_set_first
+	says "restored from"
+fi
+
+case_head "and a saved clock with no fpgarc beside it is restored too"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	rm -f "$WORK/packs/fpgarc"
+	echo 20260920140000 > "$WORK/packs/clock"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:00:00"
+fi
+
+# **THE SAVED CLOCK IS CLEANED THE WAY A LINE OF THE CARD'S FILE IS, AND FOR
+# THE SAME REASON.**  The partition is FAT32 and this file can be edited on a
+# laptop with a card reader, which leaves a carriage return and can leave a
+# space at either end.  A space in the middle is another thing, and is refused:
+# `2026 0920140000` is not an instant however it got there.
+case_head "a saved clock a card reader left its marks on is still restored"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '  20260920140000  \r\n' > "$WORK/packs/clock"
+	rm -f "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:00:00"
+fi
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '2026 0920140000\n' > "$WORK/packs/clock"
+	rm -f "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_never "a saved clock with a space in the middle was not used"
+	says "cadr-clock: the clock saved in"
+fi
+
+case_head "a saved clock that is not fourteen digits is named and not used"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo "hello" > "$WORK/packs/clock"
+	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:38:00"
+	says "cadr-clock: the clock saved in"
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the boot goes on: the pack program was started anyway"
+	else
+		fail "the boot stopped: the pack program was never started"
+	fi
+fi
+
+# **A LINE THAT IS NOT A DATE IS SAID AND DROPPED, AND THE OTHER LINE STILL
+# LANDS.**  That is the shape every other step here has: the console says what
+# did not happen and the boot goes on.  What must not happen is the kernel
+# being handed 20260231 and quietly making it the 3rd of March.
+case_head "a --date that is not a date is named, and --time still lands"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '--date 20261301' '--time 1438' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "1970-01-01 14:38:00"
+	says "cadr-clock: --date 20261301 is not a date"
+	says "yyyyMMdd"
+fi
+
+case_head "a --time that is not a time is named, and --date still lands"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '--date 20260920' '--time 2400' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 00:00:05"
+	says "cadr-clock: --time 2400 is not a time"
+	says "HHmm"
+fi
+
+case_head "a line with nothing after it is named, and the clock is not set"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '--date' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_never "the clock was not set from a line with no date on it"
+	says "cadr-clock: --date is there with nothing after it"
+fi
+
+# **SPACES ROUND THE VALUE ARE THE READER'S TO TAKE OFF, AND A SPACE INSIDE IT
+# IS NOT A VALUE.**  The card is edited on a laptop with a card reader, so a
+# line with a space at either end is a line somebody really writes; the reader
+# trims both ends and reduces the gap after the flag to one space.  A space in
+# the middle survives that and is refused here, which is right: `2026 0920` is
+# two words and not a date.
+case_head "spaces round the value are taken off, and a space inside it is not a date"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '   --date   20260920   ' '  --time  1438  ' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:38:00"
+fi
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '--date 2026 0920' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_never "a date with a space in it did not reach the clock"
+	says "cadr-clock: --date 2026 0920 is not a date"
+fi
+
+case_head "a board whose clock does not read as an instant is said, and nothing is set"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo "not-a-clock" > "$WORK/now"
+	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/packs/fpgarc"
+	run_script S80cadr-disk-packs
+	clock_set_never "nothing was set against a clock that is not an instant"
+	says "cadr-clock: the board's clock reads [not-a-clock]"
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the boot goes on: the pack program was started anyway"
+	else
+		fail "the boot stopped: the pack program was never started"
+	fi
+fi
+
+case_head "a clock the board will not take is said, and the boot goes on"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/packs/fpgarc"
+	: > "$WORK/daemon.calls"
+	: > "$WORK/date.calls"
+	DATE_SETS=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S80cadr-disk-packs" start > "$WORK/out.S80cadr-disk-packs" 2>&1
+	says "cadr-clock: the clock could not be set to 2026-09-20 14:38:00"
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the boot goes on: the pack program was started anyway"
+	else
+		fail "the boot stopped: the pack program was never started"
+	fi
+fi
+
+# **THE SAVE IS THE SHUTDOWN'S, AND IT HAPPENS WHILE THE PARTITION IS STILL THE
+# CARD'S.**  A save after the unmount writes into the root filesystem, which is
+# a RAM disk unpacked at every boot, so the file would be there to find and
+# gone at the next boot --- the worst of both.  The stubbed `umount` records
+# which side of it the save fell on.
+case_head "a clean shutdown saves the clock, before the partition is unmounted"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 20260920143805 > "$WORK/now"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
+	if [ "$(cat "$WORK/packs/clock" 2>/dev/null)" = 20260920143805 ]; then
+		ok "the clock was saved as fourteen digits"
+	else
+		fail "the saved clock is [$(cat "$WORK/packs/clock" 2>/dev/null)], not 20260920143805"
+	fi
+	if grep -q "cadr-clock: 2026-09-20 14:38:05 UTC saved" "$WORK/out.stop"; then
+		ok "and the console says so"
+	else
+		fail "the console does not say the clock was saved; it says:"
+		sed 's/^/        /' "$WORK/out.stop"
+	fi
+	if grep -q "^the clock was saved before $WORK/packs was unmounted\$" "$WORK/umount.calls"; then
+		ok "and it was saved while the partition was still the card's"
+	else
+		fail "the unmount and the save fell the wrong way round: $(cat "$WORK/umount.calls")"
+	fi
+fi
+
+# And the round trip, which is the whole of what the save is for: what one
+# shutdown wrote is what the next boot reads, with no line on the card at all.
+case_head "and the next boot starts where the last shutdown left off"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 20260920143805 > "$WORK/now"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
+	# The board comes up at the epoch, as it really does with no real-time
+	# clock in it.
+	echo 19700101000005 > "$WORK/now"
+	run_script S80cadr-disk-packs
+	clock_set_once "2026-09-20 14:38:05"
+	if [ "$(cat "$WORK/now")" = 20260920143805 ]; then
+		ok "and the board's clock reads it afterwards"
+	else
+		fail "the board's clock reads [$(cat "$WORK/now")] afterwards"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6.  The card script writes the line, commented out unless asked.
 # ---------------------------------------------------------------------------
 #
@@ -1801,6 +2530,47 @@ if generate_fpgarc "" 1 1; then
 		ok "and the reader does not find it, so a released board blinks"
 	fi
 fi
+
+# **THE CLOCK'S TWO LINES ARE ON BOTH MENUS AND LIVE ON NEITHER.**  There is no
+# date a card script could write.  The card carries the two lines and the form
+# they take, and somebody who wants the board to know the date fills them in
+# with a card reader.  The placeholder is the FORM rather than an example date,
+# which is the difference between a line somebody uncomments and is told to
+# fill in and a line somebody uncomments and gets a wrong date from.  The exact
+# live lines of both menus are asserted below, and those two cases are the
+# control that neither of these went live.
+case_head "the card is written with the clock's two lines commented out"
+for _rel in "" 1; do
+	sandbox
+	if generate_fpgarc "" "$_rel"; then
+		GEN="$WORK/gen/packs/fpgarc"
+		if [ -n "$_rel" ]; then _which="the released menu"; else _which="the development menu"; fi
+		for f in --date --time; do
+			if tr -d '\r' < "$GEN" | grep -qE "^#$f "; then
+				ok "$_which has $f as a setting to uncomment"
+			else
+				fail "$_which has no commented $f setting"
+			fi
+			if tr -d '\r' < "$GEN" | grep -q -- "^$f "; then
+				fail "$_which has $f live, and there is no date a card can guess"
+			else
+				ok "and $_which does not have it live"
+			fi
+		done
+		if grep -q 'no real-time clock' "$GEN"; then
+			ok "and the sentence saying why the two lines are there is beside them"
+		else
+			fail "$_which does not say why the two lines are there"
+		fi
+		if [ "$HAVE_READER" != yes ]; then
+			fail "there is no reader to agree with the card script"
+		elif fpgarc_has "$GEN" --date || fpgarc_has "$GEN" --time; then
+			fail "the reader takes one of the commented clock lines as a flag"
+		else
+			ok "and the reader does not take either as a flag"
+		fi
+	fi
+done
 
 # ---------------------------------------------------------------------------
 # 6b. THE RELEASED CARD'S MENU: THREE LIVE LINES, AND THE REST OF THE MENU

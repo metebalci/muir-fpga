@@ -293,7 +293,9 @@ If you want the packs held still by something stronger than the halt — no
 program that writes packs running at all — there is a longer way, and it has
 one trap in it: **the init script's `stop` unmounts `/mnt/packs`**, so the bay
 has to be brought back read-only before the packs can be digested, and the
-checkpoint then has nowhere on the card to go.
+checkpoint then has nowhere on the card to go. That `stop` also writes the
+board's clock to `clock` on that partition before it unmounts it, which is one
+small write and is not a pack.
 
     cadr-checkpoint --halt
     /etc/init.d/S80cadr-disk-packs stop

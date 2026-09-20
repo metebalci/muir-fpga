@@ -70,22 +70,25 @@ install-staging: all
 	    > $(DESTDIR)/usr/include/cadr/cadr_board.h
 	chmod 0644 $(DESTDIR)/usr/include/cadr/cadr_board.h
 
-# The target.  Two files, both shell the init scripts source and neither with
-# a build step --- they are read, not compiled --- so `all` says nothing about
-# them and this is the whole of their shipping.  `fpgarc.sh` decides what a
-# program is given out of the card's one file of flags; `daemon.sh` starts it
-# so that a program which will not take what it was given says so on the
-# console instead of dying behind an OK.
+# The target.  Three files, all of them shell that the init scripts source and
+# none of them with a build step --- they are read, not compiled --- so `all`
+# says nothing about them and this is the whole of their shipping.  `fpgarc.sh`
+# decides what a program is given out of the card's one file of flags;
+# `daemon.sh` starts it so that a program which will not take what it was given
+# says so on the console instead of dying behind an OK; `clock.sh` is what this
+# board knows about the date, there being no real-time clock in it.
 SHAREDIR := /usr/share/cadr
 
 install:
 	install -d $(DESTDIR)$(SHAREDIR)
 	install -m 0644 fpgarc.sh $(DESTDIR)$(SHAREDIR)/fpgarc.sh
 	install -m 0644 daemon.sh $(DESTDIR)$(SHAREDIR)/daemon.sh
+	install -m 0644 clock.sh $(DESTDIR)$(SHAREDIR)/clock.sh
 
 # The reader's own check, on the build host, needing nothing but a POSIX
 # shell: one `fpgarc` handed to five init scripts, each getting its own flags
-# and no others, and the boot button's step under a stubbed console.
+# and no others, the boot button's step under a stubbed console, and the
+# clock's arithmetic against the wrong dates as well as the right ones.
 check:
 	./fpgarc_test.sh
 
