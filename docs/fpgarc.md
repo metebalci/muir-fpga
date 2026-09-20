@@ -220,7 +220,7 @@ design.
     --hdmi-rotate 0|90|-90
                           which way up, for a monitor on its side
     --hdmi-sleep SECONDS  how long before the monitor sleeps; 0 never
-    --hdmi-mode 1280x1024|1400x1050|1920x1080
+    --hdmi-mode 1280x1024|1400x1050|1080p30|1080p60
                           which video mode the bitstream carries
 
 Whatever is shown is centered on the monitor at 1:1 with the rest black. Where
@@ -240,14 +240,24 @@ a bitstream carries one mode and this line is compared against what the fabric
 reports. A card naming a mode the bitstream does not carry gets a line saying so
 rather than a setting that quietly does nothing.
 
-**There are four modes and this list names three of them.** The fourth is
-1920x1080 at 60 Hz, which only the DE25-Nano can clock, and the three words
-above cannot tell it from 1920x1080 at 30 Hz: the comparison is a substring of
-the line the console prints, and `1920x1080` is inside both of those names. So
-a card carrying that word on a bitstream built for 60 Hz is accepted without a
-line, which is what this flag exists to prevent. The word that says the rate is
-not decided yet, and until it is, a board built for 1920x1080 at 60 Hz should
-leave this line off the card and read the mode with `cadr-console hdmi-mode`.
+**There are four modes and this list names all four.** Two of them are
+1920x1080, at 30 Hz and at 60 Hz, and only the DE25-Nano can clock the second.
+The resolution alone therefore no longer names a mode, so the two words say the
+rate: `1080p30` and `1080p60`. The comparison is a substring of the line the
+console prints, so a word a card may say is one that appears in one mode's name
+and in no other, and these four are those words. The console writes the names
+and the card uses the console's own vocabulary.
+
+**`1920x1080` on its own is refused by name.** It is inside both of the 1080
+names, so a card carrying it would be taken on either of those bitstreams
+without a line, which is what this flag exists to prevent, and resolving it to
+one of the two silently would be the same failure under a different spelling.
+The refusal is in `S80cadr-disk-packs`, because that script is the only thing
+that reads the card's word: the console reports what the fabric carries and
+hears nothing of what a card asked for. The word is refused before anything is
+asked, and above that step's own guard for a board with no console at all,
+since it is ambiguous whatever bitstream is loaded and whatever the board can
+reach. The line names both words it could have meant.
 
 **The clock**, read by `S80cadr-disk-packs` before anything else it does. No
 board here has a real-time clock in it, so these two lines are what tell one
@@ -751,6 +761,26 @@ nothing, and a console that did not make the lamps steady is said to have
 failed while the boot goes on. It holds the card script's three ways of writing
 that line: commented by default, live with `NO_BLINKING_LEDS=1` and nothing else
 made live with it, and commented on a released card even with the variable set.
+
+**It holds `--hdmi-mode` to naming one mode.** Each of the four words is tried
+on the bitstream it names and on one it does not, so the accepting half and the
+refusing half are both required, and a step that matched everything or nothing
+fails one of them. The two 1080 words are the pair that matters, since both of
+those bitstreams are 1920x1080 and a card saying the resolution alone would be
+taken on either. The bare `1920x1080` is required to be refused by name, with
+both words it could have meant in the line, with no comparison made against the
+bitstream, and with the fabric not asked at all. It is required again on a
+board with no `cadr-console` on it, which is what says the refusal does not
+rest on reaching a fabric rather than only that it did not this time. The same
+refusal is required on the other 1080 bitstream as well, because the word is
+ambiguous on the card and not on the board. A card with no `--hdmi-mode` line
+at all is required to ask nothing, which is the control for every leg above:
+a step that asked whatever the card said would pass them all. The four names
+the stubbed fabric reports are read out of the console program's own source on
+their anchors rather than copied into the check, so a name that moves out from
+under a card's word fails by name here. The console's check holds the other
+half: each of the four words is inside exactly one of the four names, and
+`1920x1080` is inside two.
 
 **It holds the clock in two places.** The arithmetic is tried on its own, one
 process a case, against the wrong values as well as the right ones: a date that

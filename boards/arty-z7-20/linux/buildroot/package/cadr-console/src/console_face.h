@@ -347,7 +347,10 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 // **TWO OF THEM ARE 1920x1080 AND THE NAMES SAY WHICH.**  CEA-861 gives VIC 34
 // and VIC 16 one blanking table, 2200 by 1125, and tells them apart by the
 // pixel clock: 74.25 MHz is 30 Hz and 148.5 is 60.  So the resolution alone no
-// longer names a mode and these two carry the rate.
+// longer names a mode, and the two are `1080p30` and `1080p60`.  Those are the
+// words a card's `--hdmi-mode` line says as well, because a mode has one name
+// here and `cons_hdmi_mode_name` is where it is written; `1920x1080` alone
+// names neither of them and a card saying it is refused.
 //
 // **AND ONLY THE DE25-NANO CARRIES THE 60 Hz ONE.**  A board that serializes
 // the link in its own fabric stops near 1.2 Gb/s a lane and that mode wants

@@ -360,9 +360,10 @@ static void help(void)
 	say("hdmi-rotate [0|90|-90]  which way up, for a monitor stood on its side");
 	say("hdmi-mode       which video mode this BITSTREAM carries.  Read only: a mode is");
 	say("                a pixel clock and a pixel clock comes from a clock manager whose");
-	say("                dividers are fixed in the bitstream.  Two of the four are");
-	say("                1920x1080 and the answer names the rate, because only one board");
-	say("                can clock the 60 Hz one");
+	say("                dividers are fixed in the bitstream.  The four are 1280x1024,");
+	say("                1400x1050, 1080p30 and 1080p60, which are the words a card's");
+	say("                --hdmi-mode line says; the last two are both 1920x1080 and only");
+	say("                one board can clock the 60 Hz one");
 	say("hdmi-sleep [SECONDS]    how long the display output waits with nobody at the");
 	say("                board's own keyboard or mouse before it stops the link and the");
 	say("                monitor sleeps; 0 never.  --hdmi-sleep.  A setting starts the");

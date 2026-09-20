@@ -1208,6 +1208,9 @@ fi
   printf "# an MMCM, and an MMCM's dividers are fixed in the bitstream. A\r\n"
   printf "# bitstream carries one mode. A card naming one the fabric does\r\n"
   printf "# not carry gets a line saying which bitstream it wants.\r\n"
+  printf "# The four words are 1280x1024, 1400x1050, 1080p30 and 1080p60. The\r\n"
+  printf "# last two are both 1920x1080 and only the DE25-Nano can clock the\r\n"
+  printf "# 60 Hz one, so 1920x1080 on its own names two modes and is refused.\r\n"
   printf -- "#--hdmi-mode 1280x1024\r\n"
 
   printf "\r\n"

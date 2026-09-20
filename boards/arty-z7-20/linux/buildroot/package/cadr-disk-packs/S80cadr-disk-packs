@@ -478,6 +478,26 @@ set_the_display_boards() {
 # saying which bitstream the card wants --- not a setting that quietly does
 # nothing.  `docs/display-output.md` has the measurement behind that.
 #
+# **THE FOUR WORDS ARE `1280x1024`, `1400x1050`, `1080p30` AND `1080p60`**, and
+# they are the console's own: `cons_hdmi_mode_name` writes each mode's name, the
+# comparison below looks for the card's word inside the line the console prints,
+# and `console_test.c` holds each of those four words to being inside exactly
+# one of the four names.  So there is one vocabulary for a mode and this script
+# keeps no second copy of it.
+#
+# **`1920x1080` ALONE IS TWO MODES AND IS REFUSED BY NAME.**  It is inside both
+# 1080p names, so on a board of either of them the comparison would match and
+# this step would say nothing at all --- a setting somebody wrote down and did
+# not get, which is the whole reason this line exists.  The refusal is here
+# rather than in the console because this is the only thing that reads the
+# card's word: the console reports what the fabric is and hears nothing of what
+# a card asked for.  It is refused BEFORE anything is asked and above the guard
+# that says there is no console to ask, because the word is ambiguous whatever
+# bitstream is loaded and a refusal that needed a console to reach would be no
+# refusal on a board with none.  `console_test.c` asserts that the word really
+# is inside two names, so the one word written out here cannot become a refusal
+# nothing can reach.
+#
 # Nothing is printed when none of the four is there, because a board showing
 # the machine's own screen upright and sleeping after the fabric's own three
 # hundred seconds has nothing to say about it.
@@ -486,6 +506,24 @@ set_the_display_output() {
 	fpgarc_has "$RC" --hdmi-output || fpgarc_has "$RC" --hdmi-rotate ||
 		fpgarc_has "$RC" --hdmi-mode ||
 		fpgarc_has "$RC" --hdmi-sleep || return 0
+	# **THE CARD'S MODE WORD IS JUDGED BEFORE ANYTHING IS ASKED**, and above
+	# the console's own guard below, because the one word that names two
+	# modes is wrong on the card whatever this board carries and whatever it
+	# can reach.  What is left in `hdmi_mode_want` is a word worth comparing
+	# against the fabric, and a card that said nothing leaves it empty.
+	hdmi_mode_want=""
+	if fpgarc_has "$RC" --hdmi-mode; then
+		eval "set -- $(fpgarc_args "$RC" --hdmi-mode)"
+		hdmi_mode_want="${2:-1280x1024}"
+		if [ "$hdmi_mode_want" = 1920x1080 ]; then
+			echo "cadr-display: --hdmi-mode 1920x1080 names two modes, so say" \
+			     "1080p30 or 1080p60 instead.  The card's word is looked for" \
+			     "inside the line the fabric reports, and this one is inside" \
+			     "both of their names, so it would be taken on either" \
+			     "bitstream without a word said"
+			hdmi_mode_want=""
+		fi
+	fi
 	if ! command -v cadr-console > /dev/null 2>&1; then
 		echo "cadr-display: --hdmi-output, --hdmi-rotate, --hdmi-mode or --hdmi-sleep, and" \
 		     "no cadr-console to ask with; the monitor shows the machine's own screen" \
@@ -516,17 +554,17 @@ set_the_display_output() {
 			     "above says why"
 		fi
 	fi
-	if fpgarc_has "$RC" --hdmi-mode; then
+	if [ -n "$hdmi_mode_want" ]; then
 		# **ASKED AND NOT SET**, so what this does is compare and say.
-		eval "set -- $(fpgarc_args "$RC" --hdmi-mode)"
-		want="${2:-1280x1024}"
+		# The word was read and judged at the head of this function, and
+		# the one that names two modes never reaches here.
 		have=$(cadr-console hdmi-mode 2>/dev/null | head -1)
 		case "$have" in
-			*"$want"*) ;;
+			*"$hdmi_mode_want"*) ;;
 			*)
-				echo "cadr-display: --hdmi-mode $want, and this bitstream is not it:" \
-				     "$have.  A mode is a pixel clock and a pixel clock is fixed in the" \
-				     "bitstream, so another mode is another bitstream" ;;
+				echo "cadr-display: --hdmi-mode $hdmi_mode_want, and this bitstream is" \
+				     "not it: $have.  A mode is a pixel clock and a pixel clock is fixed" \
+				     "in the bitstream, so another mode is another bitstream" ;;
 		esac
 	fi
 }
