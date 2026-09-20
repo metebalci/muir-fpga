@@ -221,15 +221,21 @@ module cadr_serial_line #(
     // `RDATA`.  The header says why the number is this and not one: a
     // thousand and twenty-four is one RAMB18 for eight bits, about a second
     // at 9600 baud.  Any depth works; the pointers wrap by comparison.
-    parameter int unsigned STORE_DEPTH = 1024
+    parameter int unsigned STORE_DEPTH = 1024,
+    // The transaction ID's width and the read burst length's: twelve and four
+    // on a Zynq board's `M_AXI_GP`, four and eight on the Agilex 5's two
+    // processor-to-fabric bridges.  `cadr_gp0_default.sv`'s header has the
+    // argument; this face carries them through to `cadr_gp_regs.sv`.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
     input  var logic        rst,
 
     // --- the face: one 4 KB page of `M_AXI_GP0`, the offset only ---------
     input  var logic [11:0] s_awaddr,
-    input  var logic [3:0]  s_awlen,
-    input  var logic [11:0] s_awid,
+    input  var logic [LEN_W-1:0] s_awlen,
+    input  var logic [ID_W-1:0] s_awid,
     input  var logic        s_awvalid,
     output var logic        s_awready,
     input  var logic [31:0] s_wdata,
@@ -238,17 +244,17 @@ module cadr_serial_line #(
     input  var logic        s_wvalid,
     output var logic        s_wready,
     output var logic [1:0]  s_bresp,
-    output var logic [11:0] s_bid,
+    output var logic [ID_W-1:0] s_bid,
     output var logic        s_bvalid,
     input  var logic        s_bready,
     input  var logic [11:0] s_araddr,
-    input  var logic [3:0]  s_arlen,
-    input  var logic [11:0] s_arid,
+    input  var logic [LEN_W-1:0] s_arlen,
+    input  var logic [ID_W-1:0] s_arid,
     input  var logic        s_arvalid,
     output var logic        s_arready,
     output var logic [31:0] s_rdata,
     output var logic [1:0]  s_rresp,
-    output var logic [11:0] s_rid,
+    output var logic [ID_W-1:0] s_rid,
     output var logic        s_rlast,
     output var logic        s_rvalid,
     input  var logic        s_rready,
@@ -492,7 +498,7 @@ module cadr_serial_line #(
   logic        wr, rd;
   logic [31:0] wr_data, wr_mask, rd_data;
 
-  cadr_gp_regs u_regs (
+  cadr_gp_regs #(.ID_W(ID_W), .LEN_W(LEN_W)) u_regs (
       .clk(clk), .rst(rst),
       .s_awaddr(s_awaddr), .s_awlen(s_awlen), .s_awid(s_awid),
       .s_awvalid(s_awvalid), .s_awready(s_awready),

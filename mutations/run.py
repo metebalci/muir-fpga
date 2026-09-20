@@ -896,6 +896,38 @@ CHECKS = {
     # `sources` is the pack side ALONE.  Everything below it has `axi_channel`
     # aimed at it already, and a record aimed at two checks would be caught
     # twice and say nothing new the second time.
+    # THE BLOCK STORE IN ITS UNDEFINED TICK.  On the DE25-Nano the store is an
+    # M20K with read-during-write checking off, so the word either port reads
+    # in the tick after an edge that wrote the array is not specified; the
+    # poison returns the complement there and this is `pack_channel`'s own run
+    # with it on.  A record aimed at the poison belongs here, where it is the
+    # thing being exercised; one aimed at the store's logic belongs at
+    # `pack_channel`, where it is the same stimulus and runs faster.
+    "rdw_poison_disk": {
+        "sources": ["rtl/machine/cadr_disk_controller.sv"],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+            "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
+            "rtl/plumbing/cadr_disk_pack.sv",
+            "tb/cadr_pack_axi_harness.sv",
+        ],
+        "top": "cadr_pack_axi_harness",
+        "tb": "tb/cadr_pack_channel_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_RDW_POISON_DISK",
+                  "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
     "pack_channel": {
         "sources": ["rtl/plumbing/cadr_disk_pack.sv"],
         # THE ORDER IS THE MAKEFILE'S, because `cadr_ddr_map` is a package and
@@ -1105,8 +1137,30 @@ CHECKS = {
         "ddr": ["rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
                 "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_f2sdram_gate.sv",
                 "rtl/plumbing/cadr_f2sdram_share.sv", "rtl/plumbing/cadr_f2sdram_port.sv",
-                "rtl/plumbing/cadr_gp0_default.sv"],
+                "rtl/plumbing/cadr_gp0_default.sv",
+                "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
+                "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
+                "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_disk_pack.sv",
+                "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_console.sv",
+                "rtl/plumbing/cadr_debug_window.sv"],
         "top": "cadr_de25",
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
+    # WHERE THE DE25-NANO'S FACES SIT, which lint cannot see at all: a face is
+    # placed by a parameter on its instance, and a number is not something
+    # lint has an opinion about.  What makes it checkable is that the address
+    # is written twice --- as an OFFSET into the bridge's window on the
+    # instance, and as the PROCESSOR's address in `cadr_board.h`, which is
+    # where every program takes it from --- so the two can be required to
+    # agree.  `tools/de25_faces_check.py` is the whole of it and its header is
+    # the argument.  Refusing is being caught.
+    "de25_faces": {
+        "kind": "script",
+        "sources": ["boards/de25-nano/cadr_de25.sv"],
+        "cmd": ["tools/de25_faces_check.py", "."],
+        "top": None,
         "tb": None,
         "flags": [],
         "golden": None,
@@ -1267,6 +1321,36 @@ CHECKS = {
                   "-Irtl/plumbing/xilinx7"],
         "golden": None,
     },
+    # AND THE SAME FIVE AT THE DE25-NANO'S SHAPE AND MAP: the HPS-to-FPGA
+    # bridge is AXI4, with four bits of ID and EIGHT of burst length, and the
+    # faces sit at offsets into its window rather than at the processor's
+    # `0x4000_0000`.  The same harness and the same testbench, built as
+    # `build/gp0_split.pass` builds them a second time.  A record aimed at
+    # what only a burst longer than sixteen beats can reach belongs here;
+    # everything else belongs at `gp0_split` above, where it is the same
+    # stimulus and says the same thing.  `sources` is the two files that
+    # count a read's beats for themselves on this port.
+    "gp0_split_axi4": {
+        "sources": ["rtl/plumbing/cadr_gp_regs.sv",
+                    "rtl/plumbing/cadr_disk_pack.sv"],
+        "extra": ["tb/cadr_gp0_split_harness.sv",
+                  "rtl/plumbing/cadr_gp0_split.sv",
+                  "rtl/plumbing/cadr_chaos_cable.sv",
+                  "rtl/plumbing/cadr_serial_line.sv",
+                  "rtl/plumbing/cadr_input_cables.sv",
+                  "rtl/machine/cadr_io_board.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv"],
+        "top": "cadr_gp0_split_harness",
+        "tb": "tb/cadr_gp0_split_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7",
+                  "-GID_W=4", "-GLEN_W=8",
+                  "-GPACK_BASE=32'h0000_0000", "-GCHAOS_BASE=32'h0000_1000",
+                  "-GSER_BASE=32'h0000_2000", "-GINPUT_BASE=32'h0000_3000",
+                  "-CFLAGS", "-DGP_ID_W=4", "-CFLAGS", "-DGP_LEN_W=8",
+                  "-CFLAGS", "-DGP_PORT_BASE=0x00000000u"],
+        "golden": None,
+    },
     # `M_AXI_GP1` split three ways: the decode that lets the console and the
     # debug cable's carrier share the port, with the property `gp0_split`
     # holds on the other one --- every address answered, in both directions,
@@ -1287,6 +1371,31 @@ CHECKS = {
         "tb": "tb/cadr_gp1_split_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
                   "-Irtl/plumbing/xilinx7"],
+        "golden": None,
+    },
+    # AND THE SAME THREE ON THE DE25-NANO'S LIGHTWEIGHT BRIDGE, which is AXI4
+    # with four bits of ID and eight of burst length, a window of 512 MB, and
+    # the console at offset 0 with the cable's page above it.  `sources` is
+    # the two faces that count a read's beats for themselves; a record aimed
+    # at what only a burst longer than sixteen beats can reach belongs here.
+    "gp1_split_axi4": {
+        "sources": ["rtl/plumbing/cadr_console.sv",
+                    "rtl/plumbing/cadr_debug_window.sv"],
+        "extra": ["tb/cadr_gp1_split_harness.sv",
+                  "rtl/plumbing/cadr_gp1_split.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv",
+                  "rtl/machine/cadr_dbgin.sv",
+                  "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_spy_registers.sv"],
+        "top": "cadr_gp1_split_harness",
+        "tb": "tb/cadr_gp1_split_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7",
+                  "-GID_W=4", "-GLEN_W=8",
+                  "-GCON_BASE=32'h0000_0000", "-GDBG_BASE=32'h0000_1000",
+                  "-CFLAGS", "-DGP_ID_W=4", "-CFLAGS", "-DGP_LEN_W=8",
+                  "-CFLAGS", "-DGP_PORT_BASE=0x00000000u",
+                  "-CFLAGS", "-DGP_PORT_PAGES=131072u"],
         "golden": None,
     },
     # The console: the sixteen diagnostic registers on `M_AXI_GP1`, held to
@@ -1917,6 +2026,8 @@ def build_and_run(args, work, check, build_fails=False):
         return generator_check(args, work, spec)
     if spec.get("kind") == "tcl":
         return tcl_check(args, work, spec)
+    if spec.get("kind") == "script":
+        return script_check(args, work, spec)
     if check == "cables":
         return cables_check(args, work, build_fails)
     if check == "arty":
@@ -2098,6 +2209,28 @@ def arty_check(args, work, build_fails=False):
         return BROKEN, "none of the board configurations could be linted"
     return SURVIVED, "lint passes on %d board configuration%s" % (
         ran, "" if ran == 1 else "s")
+
+
+def script_check(args, work, spec):
+    """Run a checking script over the mutated copy.  Refusing is being caught.
+
+    The script reads the tree rather than building anything, so there is no
+    build step to tell apart from a verdict: it either finds what it is
+    looking for and agrees, or it does not.  A copy that predates the file
+    the script reads is BROKEN rather than a survivor, for the reason
+    `de25_check` gives about its own: a check that never saw the mutation has
+    not caught it.
+    """
+    for f in spec["sources"]:
+        if not os.path.exists(os.path.join(work, f)):
+            return BROKEN, "%s is not in this copy" % f
+    script = os.path.join(work, spec["cmd"][0])
+    if not os.path.exists(script):
+        return BROKEN, "%s is not in this copy" % spec["cmd"][0]
+    rc, out = run([sys.executable, script] + list(spec["cmd"][1:]), work)
+    if rc != 0:
+        return CAUGHT, first_problem(out)
+    return SURVIVED, "the script read the tree and agreed with it"
 
 
 def de25_check(args, work, build_fails=False):

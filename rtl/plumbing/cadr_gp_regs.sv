@@ -1,8 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The AXI3 slave face a register block on a general purpose port presents:
-// one 4 KB page, 1,024 words, every one of them answered.
+// The slave face a register block on a general purpose port presents: one
+// 4 KB page, 1,024 words, every one of them answered.
+//
+// **TWO SHAPES, ONE FACE.**  A Zynq board's `M_AXI_GP` is AXI3, with twelve
+// bits of transaction ID and four of burst length; the DE25-Nano's two
+// processor-to-fabric bridges are AXI4, with four and eight, so a read there
+// may be 256 beats.  `ID_W` and `LEN_W` are those two widths and nothing else
+// changes --- `cadr_gp0_default.sv`'s header has the argument --- and the
+// check behind `cadr_gp0_split.sv` runs at both.
 //
 // **WHY THIS IS A MODULE AND NOT A FOURTH COPY.**  There are three of these
 // in the tree already --- `cadr_disk_pack.sv`'s, `cadr_console.sv`'s and
@@ -70,14 +77,22 @@
 
 `default_nettype none
 
-module cadr_gp_regs (
+module cadr_gp_regs #(
+    // The transaction ID's width and the read burst length's: twelve and four
+    // on a Zynq board's `M_AXI_GP`, four and eight on the Agilex 5's two
+    // processor-to-fabric bridges, which are AXI4.  The defaults are the AXI3
+    // shape every Zynq board builds; `cadr_gp0_default.sv`'s header has the
+    // argument, and it is the same argument here.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
+) (
     input  var logic        clk,
     input  var logic        rst,
 
-    // --- the port's side: 32 bits, AXI3, twelve bits of address ----------
+    // --- the port's side: 32 bits, twelve bits of address ---------------
     input  var logic [11:0] s_awaddr,
-    input  var logic [3:0]  s_awlen,
-    input  var logic [11:0] s_awid,
+    input  var logic [LEN_W-1:0] s_awlen,
+    input  var logic [ID_W-1:0] s_awid,
     input  var logic        s_awvalid,
     output var logic        s_awready,
     input  var logic [31:0] s_wdata,
@@ -86,17 +101,17 @@ module cadr_gp_regs (
     input  var logic        s_wvalid,
     output var logic        s_wready,
     output var logic [1:0]  s_bresp,
-    output var logic [11:0] s_bid,
+    output var logic [ID_W-1:0] s_bid,
     output var logic        s_bvalid,
     input  var logic        s_bready,
     input  var logic [11:0] s_araddr,
-    input  var logic [3:0]  s_arlen,
-    input  var logic [11:0] s_arid,
+    input  var logic [LEN_W-1:0] s_arlen,
+    input  var logic [ID_W-1:0] s_arid,
     input  var logic        s_arvalid,
     output var logic        s_arready,
     output var logic [31:0] s_rdata,
     output var logic [1:0]  s_rresp,
-    output var logic [11:0] s_rid,
+    output var logic [ID_W-1:0] s_rid,
     output var logic        s_rlast,
     output var logic        s_rvalid,
     input  var logic        s_rready,
@@ -122,8 +137,8 @@ module cadr_gp_regs (
   wstate_e wst;
   rstate_e rst_r;
 
-  logic [11:0] w_id, r_id;
-  logic [3:0]  r_left;     // beats still owed after this one
+  logic [ID_W-1:0]  w_id, r_id;
+  logic [LEN_W-1:0] r_left;     // beats still owed after this one
   logic [31:0] rdata_q;
 
   assign s_awready = (wst == W_ADDR);
@@ -137,7 +152,7 @@ module cadr_gp_regs (
   assign s_rdata   = rdata_q;
   assign s_rresp   = OKAY;
   assign s_rid     = r_id;
-  assign s_rlast   = (r_left == 4'd0);
+  assign s_rlast   = (r_left == '0);
 
   // A beat lands this tick.
   assign wr      = s_wvalid && s_wready;
@@ -151,9 +166,9 @@ module cadr_gp_regs (
       rst_r   <= R_ADDR;
       w_word  <= 10'd0;
       r_word  <= 10'd0;
-      w_id    <= 12'd0;
-      r_id    <= 12'd0;
-      r_left  <= 4'd0;
+      w_id    <= '0;
+      r_id    <= '0;
+      r_left  <= '0;
       rdata_q <= 32'd0;
     end else begin
       unique case (wst)
@@ -186,9 +201,9 @@ module cadr_gp_regs (
           rst_r   <= R_DATA;
         end
         R_DATA: if (s_rready) begin
-          if (r_left == 4'd0) rst_r <= R_ADDR;
+          if (r_left == '0) rst_r <= R_ADDR;
           else begin
-            r_left <= r_left - 4'd1;
+            r_left <= r_left - LEN_W'(1);
             r_word <= r_word + 10'd1;
             rst_r  <= R_PREP;
           end

@@ -75,7 +75,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/mem_count.pass $(BUILD)/f2sdram.pass $(BUILD)/bus_audit.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
-       $(BUILD)/pack_channel.pass \
+       $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
        $(BUILD)/arty.pass $(BUILD)/cora.pass \
        $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
@@ -91,7 +91,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
-       $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_jtag.pass \
+       $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
+       $(BUILD)/de25_jtag.pass \
        $(BUILD)/de25_linux.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
@@ -157,6 +158,17 @@ $(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard gol
 $(BUILD)/de25_pins.pass: tools/de25_pins_check.py boards/de25-nano/de25_nano_pins.tcl \
                          boards/de25-nano/README.md $(wildcard boards/de25-nano/local.conf) | $(BUILD)
 	python3 tools/de25_pins_check.py . --stamp $@
+
+# And where the DE25-Nano's register faces sit, which lint cannot see: a face
+# is placed by a parameter on its instance, and lint has no opinion about a
+# number.  The address is written twice --- as an offset into the bridge's
+# window on the instance, and as the processor's address in `cadr_board.h`,
+# where every program takes it from --- so the two are required to agree, and
+# every instance on either bridge is required to carry the bridges' AXI4
+# widths.  See `tools/de25_faces_check.py`.
+$(BUILD)/de25_faces.pass: tools/de25_faces_check.py boards/de25-nano/cadr_de25.sv \
+                          boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h | $(BUILD)
+	python3 tools/de25_faces_check.py . --stamp $@
 
 $(BUILD)/phase_gen.pass: $(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
 	$(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
@@ -637,7 +649,14 @@ DE25_PROBE := rtl/plumbing/cadr_probe.sv rtl/plumbing/agilex5/cadr_probe_vjtag.s
 F2SDRAM := rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
            rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_f2sdram_gate.sv \
            rtl/plumbing/cadr_f2sdram_share.sv rtl/plumbing/cadr_f2sdram_port.sv
-DE25_DDR := $(F2SDRAM) rtl/plumbing/cadr_gp0_default.sv
+# And the faces behind the two processor-to-fabric bridges, which are the
+# Zynq boards' own modules at the Agilex 5's AXI4 widths: the two splitters,
+# the four register faces of the main bridge, the console and the debug
+# cable's window on the lightweight one, and the default slave that answers
+# the rest of both windows.
+DE25_DDR := $(F2SDRAM) rtl/plumbing/cadr_gp0_default.sv $(GP0) \
+            rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_gp1_split.sv \
+            rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_debug_window.sv
 
 # **THE DE25-NANO'S MAP OF THE PROCESSOR'S MEMORY**, which every DE25-Nano
 # build takes, the lint and the Quartus flow alike: `rtl/plumbing/cadr_ddr_map.sv`
@@ -1116,6 +1135,43 @@ $(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness: $(PACK_CHANNEL_SRC) \
 $(BUILD)/pack_channel.pass: $(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness \
                             $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness
+	@touch $@
+
+# ------------------------- the block store in its undefined tick, poisoned
+#
+# **THE DE25-NANO'S BLOCK STORE IS AN M20K WITH READ-DURING-WRITE CHECKING
+# OFF**, which `boards/de25-nano/quartus/project.tcl` asks for and explains:
+# Agilex 5's M20K does not offer old data at a port that is writing, and
+# without the relaxation synthesis builds the store's 196,608 bits out of
+# logic --- 332,163 ALUTs of a part that has 93,600, so the fitter refuses to
+# place it at all.  What the relaxation gives away is the word either port
+# reads in the tick after an edge that wrote the array.
+#
+# This is the same run as `pack_channel` above with `CADR_RDW_POISON_DISK`
+# defined,
+# which returns the complement of the word in that tick, on both ports and
+# after a write to either --- wider than the hardware's own undefined tick, so
+# a run that still agrees has shown the narrow thing too.  The check is the
+# whole of `pack_channel`'s: every block the channel lays down compared with
+# `golden/src/disk.rs`'s own `pack_word`, which is a function of the block AND
+# the offset in it, so no wrong word reads like a right one.  The model
+# refuses a run in which the store was never written, because a poison that
+# never fired measured nothing.
+#
+# `cadr_microcycle.sv`'s three asynchronous memories have the same treatment
+# at `rdw_poison`, `rdw_poison_sys` and `rdw_poison_map`.
+$(BUILD)/obj_rdw_poison_disk/Vcadr_pack_axi_harness: $(PACK_CHANNEL_SRC) \
+                                                  tb/cadr_pack_channel_tb.cpp \
+                                                  tb/cadr_pack_linux.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -CFLAGS -I$(abspath tb) +define+CADR_RDW_POISON_DISK -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_rdw_poison_disk \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_pack_axi_harness $(PACK_CHANNEL_SRC) \
+	    $(abspath tb/cadr_pack_channel_tb.cpp)
+
+$(BUILD)/rdw_poison_disk.pass: $(BUILD)/obj_rdw_poison_disk/Vcadr_pack_axi_harness \
+                               $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_rdw_poison_disk/Vcadr_pack_axi_harness
 	@touch $@
 
 # ------------------- the same run again, with the pack side as fabric
@@ -2432,8 +2488,27 @@ $(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness: $(GP0_SPLIT_SRC) \
 	    -Mdir $(BUILD)/obj_gp0_split --top-module cadr_gp0_split_harness \
 	    $(GP0_SPLIT_SRC) $(abspath tb/cadr_gp0_split_tb.cpp)
 
-$(BUILD)/gp0_split.pass: $(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness
+# AND THE SAME ARRANGEMENT AT THE DE25-NANO'S SHAPE AND MAP, which is the
+# same five slaves behind the same splitter on the HPS-to-FPGA bridge: AXI4,
+# four bits of ID and eight of burst length, and the faces at offsets 0 to
+# 0x3000 into the bridge's own window rather than at the processor's
+# `0x4000_0000`.  A second model, because those are parameters; the sweep is
+# the whole of both windows, twice.
+$(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness: $(GP0_SPLIT_SRC) \
+                                                tb/cadr_gp0_split_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
+	    -GID_W=4 -GLEN_W=8 \
+	    -GPACK_BASE=32\'h0000_0000 -GCHAOS_BASE=32\'h0000_1000 \
+	    -GSER_BASE=32\'h0000_2000 -GINPUT_BASE=32\'h0000_3000 \
+	    -CFLAGS -DGP_ID_W=4 -CFLAGS -DGP_LEN_W=8 \
+	    -CFLAGS -DGP_PORT_BASE=0x00000000u \
+	    -Mdir $(BUILD)/obj_gp0_split_axi4 --top-module cadr_gp0_split_harness \
+	    $(GP0_SPLIT_SRC) $(abspath tb/cadr_gp0_split_tb.cpp)
+
+$(BUILD)/gp0_split.pass: $(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness \
+                         $(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness
 	$(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness
+	$(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness
 	@touch $@
 
 # ----------------------------------------------------- `M_AXI_GP1`, split
@@ -2465,8 +2540,24 @@ $(BUILD)/obj_gp1_split/Vcadr_gp1_split_harness: $(GP1_SPLIT_SRC) \
 	    -Mdir $(BUILD)/obj_gp1_split --top-module cadr_gp1_split_harness \
 	    $(GP1_SPLIT_SRC) $(abspath tb/cadr_gp1_split_tb.cpp)
 
-$(BUILD)/gp1_split.pass: $(BUILD)/obj_gp1_split/Vcadr_gp1_split_harness
+# AND THE SAME THREE AT THE DE25-NANO'S SHAPE AND MAP, on the lightweight
+# bridge: AXI4 with four bits of ID and eight of burst length, the console at
+# offset 0 and the cable's window at 0x1000, and a window of 512 MB rather
+# than the Zynq port's gigabyte --- 131,072 pages, every one of them read.
+$(BUILD)/obj_gp1_split_axi4/Vcadr_gp1_split_harness: $(GP1_SPLIT_SRC) \
+                                                tb/cadr_gp1_split_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
+	    -GID_W=4 -GLEN_W=8 \
+	    -GCON_BASE=32\'h0000_0000 -GDBG_BASE=32\'h0000_1000 \
+	    -CFLAGS -DGP_ID_W=4 -CFLAGS -DGP_LEN_W=8 \
+	    -CFLAGS -DGP_PORT_BASE=0x00000000u -CFLAGS -DGP_PORT_PAGES=131072u \
+	    -Mdir $(BUILD)/obj_gp1_split_axi4 --top-module cadr_gp1_split_harness \
+	    $(GP1_SPLIT_SRC) $(abspath tb/cadr_gp1_split_tb.cpp)
+
+$(BUILD)/gp1_split.pass: $(BUILD)/obj_gp1_split/Vcadr_gp1_split_harness \
+                         $(BUILD)/obj_gp1_split_axi4/Vcadr_gp1_split_harness
 	$(BUILD)/obj_gp1_split/Vcadr_gp1_split_harness
+	$(BUILD)/obj_gp1_split_axi4/Vcadr_gp1_split_harness
 	@touch $@
 
 # --------------------------------------------------------------- the console

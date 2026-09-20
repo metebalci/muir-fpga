@@ -34,6 +34,57 @@ set ddr_contract [get_pins -nowarn {u_memory|u_axi|m_axi_awaddr[*]|d
 set_multicycle_path -setup 8 -to $ddr_contract
 set_multicycle_path -hold  7 -to $ddr_contract
 
+# ------------------------------------------ the debug cable's carrier latch
+#
+# **THE WORD THE DEBUGGEE DRIVES IS NOT A ONE-TICK SIGNAL, AND WHERE THE
+# CARRIER LATCHES IT IS OUTSIDE THE MACHINE.**  This is
+# `rtl/plumbing/xilinx7/cadr_debug.xdc`'s one clause written again, with the
+# same register, the same count and the same split, because it is the same
+# path in the same two modules; that file has the whole argument and what
+# follows is what makes it this board's.
+#
+# MEASURED HERE, on the first fit with the faces attached: worst setup
+# **-1.542 ns** at the slow corner at 0 C, on
+#
+#     u_machine|processor|md[13] -> u_debug_window|sts_dbd[0]
+#     11.825 ns of data delay, requirement 10.000 ns
+#
+# which is `MD` through the processor's sixteen-way diagnostic mux, the
+# register block, the arbiter and MIT's DBGIN page, out of `cadr_machine` on
+# `DBD<15:0>` and into the carrier's latch.  The Zynq boards' worst on the
+# same arc was -8.772 ns before their clause; this part is kinder to it and
+# still does not close it at one tick.
+#
+# **THE DEADLINE IS THE CABLE'S OWN AND IS NOT CHOSEN HERE.**  A debug cycle
+# is answered by the diagnostic register block `busint::DIAGNOSTIC_NS` = 250 ns
+# after `-UB MSYN`, twenty-five ticks, and the address that selects the word is
+# a latched register that has not moved since the previous request was lifted.
+# So by the tick `DEBUG IN ACK` rises and this register captures, the word has
+# had twenty-five ticks to settle.  Six is a floor with four times margin, and
+# it is six rather than two because one number covers this latch and the Pmod
+# carrier's frame register on the Zynq boards, neither written to its own
+# convenience.  Twenty-five is what this latch alone could claim and is not
+# claimed.
+#
+# **THE `|d` PINS AND NOT THE REGISTERS**, which is the split every clause in
+# this file makes: this register's clock enable is
+# `dbg_in_req && dbg_in_ack && !sts_ack`, the acknowledgment, which is the
+# signal that says the word is good and the one thing that must not be
+# relaxed.  And `sts_dbd` alone of the carrier: `sts_ack` is a constant,
+# `sts_drv` is two levels deep, and the watchdog and the lead are counters
+# that must keep their tick.  `sta_check.tcl` asserts exactly that split, so a
+# clause that reached nothing is a failure and not a plausible number.
+#
+# WHAT IT DOES NOT EXCUSE.  The 74LS244s drive `SPY<15:0>` asynchronously, so
+# a running machine moves the lines under a standing acknowledgment; a word a
+# tick or two stale on a running machine is already this bus's semantics, and
+# CC halts the debuggee before it does anything else.  A two-tick arrival
+# inside a twenty-five-tick window is invisible to it.
+# grid: 60 ns
+set cable_word [get_pins -nowarn {u_debug_window|sts_dbd[*]|d}]
+set_multicycle_path -setup 6 -to $cable_word
+set_multicycle_path -hold  5 -to $cable_word
+
 # ------------------------------------------- the processor's asynchronous bits
 #
 # `h2f_reset`, `h2f_gp_out[1:0]` and the warm-reset handshake's request leave

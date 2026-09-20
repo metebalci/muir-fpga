@@ -69,15 +69,30 @@
 module cadr_gp1_split_harness #(
     // Shrunk from the window's own one second, because a bound nothing
     // exercises is not a bound and a second is 100,000,000 ticks.
-    parameter int unsigned WATCHDOG_T = 4096
+    parameter int unsigned WATCHDOG_T = 4096,
+    // Where the two pages sit: `cadr_gp1_split.sv`'s own defaults, which are
+    // the Zynq boards' addresses, or the DE25-Nano's offsets into the
+    // lightweight bridge's window.
+    parameter logic [31:0] CON_BASE = 32'h8000_0000,
+    parameter logic [31:0] DBG_BASE = 32'h8000_1000,
+    // **AND THE SAME FIVE SLAVES AT THE AGILEX 5'S SHAPE.**  The DE25-Nano
+    // puts them behind its two processor-to-fabric bridges, which are AXI4:
+    // four bits of ID where a Zynq `M_AXI_GP` has twelve, eight bits of burst
+    // length where AXI3 has four, and the bases are offsets into the bridge's
+    // own window rather than the processor's addresses.  The defaults are the
+    // Zynq's, and `build/gp0_split.pass` runs the whole check at both shapes,
+    // which is how one arrangement is held on two boards rather than two
+    // arrangements each held once.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
     input  var logic        rst,
 
     // --- `M_AXI_GP1` as the PS would drive it -----------------------------
     input  var logic [31:0] m_awaddr,
-    input  var logic [3:0]  m_awlen,
-    input  var logic [11:0] m_awid,
+    input  var logic [LEN_W-1:0] m_awlen,
+    input  var logic [ID_W-1:0] m_awid,
     input  var logic        m_awvalid,
     output var logic        m_awready,
     input  var logic [31:0] m_wdata,
@@ -86,17 +101,17 @@ module cadr_gp1_split_harness #(
     input  var logic        m_wvalid,
     output var logic        m_wready,
     output var logic [1:0]  m_bresp,
-    output var logic [11:0] m_bid,
+    output var logic [ID_W-1:0] m_bid,
     output var logic        m_bvalid,
     input  var logic        m_bready,
     input  var logic [31:0] m_araddr,
-    input  var logic [3:0]  m_arlen,
-    input  var logic [11:0] m_arid,
+    input  var logic [LEN_W-1:0] m_arlen,
+    input  var logic [ID_W-1:0] m_arid,
     input  var logic        m_arvalid,
     output var logic        m_arready,
     output var logic [31:0] m_rdata,
     output var logic [1:0]  m_rresp,
-    output var logic [11:0] m_rid,
+    output var logic [ID_W-1:0] m_rid,
     output var logic        m_rlast,
     output var logic        m_rvalid,
     input  var logic        m_rready,
@@ -160,30 +175,35 @@ module cadr_gp1_split_harness #(
 
   // ------------------------------------------------------- the three ports
   logic [31:0] c_awaddr, c_wdata, c_araddr, c_rdata;
-  logic [3:0]  c_awlen, c_wstrb, c_arlen;
-  logic [11:0] c_awid, c_arid, c_bid, c_rid;
+  logic [LEN_W-1:0] c_awlen, c_arlen;
+  logic [3:0]  c_wstrb;
+  logic [ID_W-1:0] c_awid, c_arid, c_bid, c_rid;
   logic        c_awvalid, c_awready, c_wlast, c_wvalid, c_wready;
   logic        c_bvalid, c_bready, c_arvalid, c_arready;
   logic        c_rlast, c_rvalid, c_rready;
   logic [1:0]  c_bresp, c_rresp;
 
   logic [31:0] d_awaddr, d_wdata, d_araddr, d_rdata;
-  logic [3:0]  d_awlen, d_wstrb, d_arlen;
-  logic [11:0] d_awid, d_arid, d_bid, d_rid;
+  logic [LEN_W-1:0] d_awlen, d_arlen;
+  logic [3:0]  d_wstrb;
+  logic [ID_W-1:0] d_awid, d_arid, d_bid, d_rid;
   logic        d_awvalid, d_awready, d_wlast, d_wvalid, d_wready;
   logic        d_bvalid, d_bready, d_arvalid, d_arready;
   logic        d_rlast, d_rvalid, d_rready;
   logic [1:0]  d_bresp, d_rresp;
 
   logic [31:0] x_rdata;
-  logic [3:0]  x_arlen;
-  logic [11:0] x_awid, x_arid, x_bid, x_rid;
+  logic [LEN_W-1:0] x_arlen;
+  logic [ID_W-1:0] x_awid, x_arid, x_bid, x_rid;
   logic        x_awvalid, x_awready, x_wlast, x_wvalid, x_wready;
   logic        x_bvalid, x_bready, x_arvalid, x_arready;
   logic        x_rlast, x_rvalid, x_rready;
   logic [1:0]  x_bresp, x_rresp;
 
-  cadr_gp1_split u_split (
+  cadr_gp1_split #(
+      .CON_BASE(CON_BASE), .DBG_BASE(DBG_BASE),
+      .ID_W(ID_W), .LEN_W(LEN_W)
+  ) u_split (
       .clk(clk), .rst(rst),
       .s_awaddr(m_awaddr), .s_awlen(m_awlen), .s_awid(m_awid),
       .s_awvalid(m_awvalid), .s_awready(m_awready),
@@ -253,7 +273,7 @@ module cadr_gp1_split_harness #(
   logic        hdmi_sleep_set, hdmi_wake;
   logic [14:0] hdmi_sleep_secs;
 
-  cadr_console u_console (
+  cadr_console #(.REG_BASE(CON_BASE), .ID_W(ID_W), .LEN_W(LEN_W)) u_console (
       .clk(clk), .rst(rst),
       .s_awaddr(c_awaddr), .s_awlen(c_awlen), .s_awid(c_awid),
       .s_awvalid(c_awvalid), .s_awready(c_awready),
@@ -321,8 +341,9 @@ module cadr_gp1_split_harness #(
   assign cab_ack_o = dbg_in_ack;
 
   cadr_debug_window #(
-      .REG_BASE(32'h8000_1000),
-      .WATCHDOG_T(WATCHDOG_T)
+      .REG_BASE(DBG_BASE),
+      .WATCHDOG_T(WATCHDOG_T),
+      .ID_W(ID_W), .LEN_W(LEN_W)
   ) u_window (
       .clk(clk), .rst(rst),
       .s_awaddr(d_awaddr), .s_awlen(d_awlen), .s_awid(d_awid),
@@ -417,7 +438,7 @@ module cadr_gp1_split_harness #(
   );
 
   // ---------------------------------------- everything else on the port
-  cadr_gp0_default u_rest (
+  cadr_gp0_default #(.ID_W(ID_W), .LEN_W(LEN_W)) u_rest (
       .clk(clk), .rst(rst),
       .s_awvalid(x_awvalid), .s_awid(x_awid), .s_awready(x_awready),
       .s_wlast(x_wlast), .s_wvalid(x_wvalid), .s_wready(x_wready),

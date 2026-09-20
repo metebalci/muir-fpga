@@ -62,11 +62,11 @@
 // with nothing else running, `h2f_gp_in`, which the system manager's GPI
 // reports.  So the guard asks one word of the tally and the same thing of it
 // as of each of the Zynq's two: bit 15 set and bit 31 clear, a pattern neither
-// an absent instrument nor a saturated one produces (`cadr_mem.h`).  **This is
-// the contract the DE25-Nano's fabric has to meet, and it does not yet**: what
-// drives `h2f_gp_in` is the fabric's decision, still open.  Until it is made,
-// a program here refuses the fabric unless told `--no-guard`, which is the
-// safe way to be wrong.
+// an absent instrument nor a saturated one produces (`cadr_mem.h`).  **The
+// fabric meets that contract**: `rtl/plumbing/cadr_f2sdram_port.sv` drives
+// `h2f_gp_in` from the same counters, with `h2f_gp_out[1]` choosing which half
+// of them a read sees, so a program needs no `--no-guard` on this board any
+// more than on a Zynq one.
 //
 // HOW THE CHOICE ARRIVES.  One define, `CADR_BOARD_DE25_NANO`, and no define
 // is a Zynq-7000 board.  Under Buildroot the board's defconfig names its map

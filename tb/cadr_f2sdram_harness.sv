@@ -177,13 +177,24 @@ module cadr_f2sdram_harness #(
   logic        sintr;   // -XBUS.INTR, the machine's own; read by nothing here
   logic [31:0] mem_rdata;
 
+  // **THE MACHINE'S RESET IS THE BOARD'S, AND IT WAITS FOR THE PORT.**
+  // `boards/de25-nano/cadr_de25.sv` holds the machine in reset until
+  // `may_start` is up, which is the port having been live once since the
+  // fabric's reset; `rtl/plumbing/cadr_f2sdram_gate.sv`'s header gives the
+  // measurement that makes it an ordering rather than a precaution.  A
+  // harness that released the machine at the fabric's reset would run a
+  // machine no board runs, and the fault this exists to stop would pass
+  // through it unseen.  Registered, as the board registers it.
+  logic may_start, mach_rst;
+  always_ff @(posedge clk) mach_rst <= rst || !may_start;
+
   // The DDR=1 board's configuration exactly: no interrupt, no Xbus device,
   // 32 boards of memory declared.
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) u_machine (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(mach_rst),
       // `device_ack` low is not "no disk controller": the disk's four
       // registers are inside `cadr_machine` and answer for themselves. This
       // port is for a slave that is still outside --- the display, the I/O
@@ -284,14 +295,15 @@ module cadr_f2sdram_harness #(
       .nxm(nxm), .unibus(unibus), .memstart(memstart),
       .timed_out(timed_out), .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata),
-      // The port's own answers, for the transaction audit inside the machine.
-      // Tied off here as `boards/de25-nano/cadr_de25.sv` ties them: the audit
-      // has no register on a board with no console to read it.
-      .port_read_ack(1'b0), .port_write_ack(1'b0)
+      // The port's own answers, for the transaction audit inside the
+      // machine, as `boards/de25-nano/cadr_de25.sv` wires them: the bridge's
+      // own handshakes and nothing the fabric decides for itself.
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
   );
 
   // The path itself, wired as `boards/de25-nano/cadr_de25.sv` wires it.
   logic mem_error;
+  logic port_read_ack, port_write_ack;
   cadr_f2sdram_port u_memory (
       .clk(clk), .rst(rst),
       .mem_req(mem_req), .mem_write(mem_write),
@@ -299,7 +311,8 @@ module cadr_f2sdram_harness #(
       .mem_done(mem_done), .mem_rdata(mem_rdata), .mem_error(mem_error),
       .h2f_reset(h2f_reset), .gp_open(gp_open), .gp_half(gp_half),
       .warm_req_n(warm_req_n), .warm_ack_n(warm_ack_n),
-      .gp_in(gp_in), .live(live),
+      .gp_in(gp_in), .live(live), .may_start(may_start),
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
       .p_awaddr(p_awaddr), .p_awlen(p_awlen), .p_awsize(p_awsize),
       .p_awburst(p_awburst), .p_awvalid(p_awvalid), .p_awready(p_awready),
       .p_wdata(p_wdata), .p_wstrb(p_wstrb), .p_wlast(p_wlast),

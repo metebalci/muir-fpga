@@ -35,21 +35,34 @@
 // order of the write addresses.  `rtl/plumbing/cadr_f2sdram_share.sv`'s header
 // says where each rule comes from.
 //
-// THE FIVE CONFIGURATIONS.
+// THE SIX CONFIGURATIONS.
 //
-//   OPEN     software has opened the port on `h2f_gp_out[0]`.  The machine
-//            runs the parity loop: 512 transactions, 256 reads and 256
-//            writes, each at its own address, each write carrying the word
-//            its own read returned, the region its poison again afterwards,
-//            and the tally reading 256 and 256 asked and answered.
+//   OPEN     software opens the port on `h2f_gp_out[0]`, a millisecond after
+//            the fabric's reset, as U-Boot does seconds after it.  The
+//            machine must retire NO microcycle before the port is live ---
+//            which is the ordering `cadr_f2sdram_gate.sv` holds, and without
+//            it the machine's one memory pass meets a shut port on every
+//            board every time --- and then runs the parity loop: 512
+//            transactions, 256 reads and 256 writes, each at its own address,
+//            each write carrying the word its own read returned, the region
+//            its poison again afterwards, and the tally reading 256 and 256
+//            asked and answered.
 //
-//   SHUT     the port never opened, which is a board on which nobody has run
-//            `bridge enable` or written the general-purpose register.  The
-//            machine still asks 512 times and NOTHING reaches the bridge:
-//            not an address, not a beat.  The tally must read the same 256
-//            and 256 asked, and nothing answered --- the reading the whole
-//            instrument exists to make possible, and the one a counter of
-//            the fabric's own intentions cannot produce.
+//   NEVER    software never opens the port, which is a board on which nobody
+//            has run `bridge enable` or written the general-purpose register.
+//            The machine never leaves reset: not one microcycle, nothing at
+//            the bridge, and a tally reading nothing asked and nothing
+//            answered.  A board that cannot reach its memory does not pretend
+//            to run, and this is the control for the check above.
+//
+//   SHUT     the port opened and then shut under a running machine, which is
+//            what the processor's own reset does to those bits.  The machine
+//            keeps running --- the hold is a latch and not the level --- asks
+//            512 times, and NOTHING reaches the bridge: not an address, not a
+//            beat.  The tally must read the same 256 and 256 asked, and
+//            nothing answered --- the reading the whole instrument exists to
+//            make possible, and the one a counter of the fabric's own
+//            intentions cannot produce.
 //
 //   QUIET    the port open, the other two masters idle, and the bridge's
 //            delays fixed rather than varying: the reference run for the one
@@ -121,6 +134,15 @@ constexpr int kDisplayOffered = 8;
 // How long the pack side leaves its write response standing before it takes
 // it: see the master's own code below.
 constexpr long kPackBHold = 12;
+// **THE SPANS THE TWO MASTERS' IDLE GAPS ARE DRAWN FROM.**  A burst of
+// sixteen full-width beats occupies the bridge for some tens of ticks, and a
+// machine cycle is about the same, so a gap of up to these many ticks walks
+// each master's grant across the whole of a machine cycle within a few
+// hundred bursts --- and the run has hundreds of thousands.  The two spans
+// are different and neither divides the other, so the pair of them do not
+// fall into step with each other either.
+constexpr unsigned kPackGapSpan = 37u;
+constexpr unsigned kDisplayGapSpan = 23u;
 
 // The IDs `cadr_f2sdram_share.sv` gives its three ports.
 constexpr int kMachineId = 0, kPackId = 1, kDisplayId = 2;
@@ -128,6 +150,18 @@ constexpr int kMachineId = 0, kPackId = 1, kDisplayId = 2;
 // 200 ms of machine time for the run that has to show the region quiet
 // afterwards, and 130 ms for the rest: the parity loop closes at about
 // 118 ms.
+// **WHEN SOFTWARE OPENS THE PORT**, and it is not at the fabric's reset.
+// On the board U-Boot runs `bridge enable` and writes the general-purpose
+// register seconds after the fabric was configured, while the machine's one
+// pass over main memory is 118 ms after its own reset.  One millisecond here
+// is 6,666 microcycles the machine would have retired against a shut port if
+// nothing held it, which is enough for the ordering to be visible and cheap
+// enough to run five times.
+constexpr long kOpenTick = 100000L;
+// And when it shuts it again, for the configuration that shuts it: two
+// milliseconds, so the machine is running and its memory pass is still a
+// hundred milliseconds away.
+constexpr long kShutTick = 200000L;
 constexpr long kTicksLong = 40000000L;
 constexpr long kTicksShort = 26000000L;
 
@@ -191,6 +225,8 @@ struct Run {
   long micro = 0;
   long timeouts = 0;
   long first_req_micro = -1;
+  long first_edge_tick = -1;      // the machine's first retired microcycle
+  long first_live_tick = -1;      // the port's first tick open and out of reset
   long last_edge_tick = -1;
   long final_pc = -1;
   long ar_seen = 0, aw_seen = 0;      // at the bridge, any master
@@ -297,6 +333,7 @@ void CheckAddress(Run &run, long t, const char *what, int id, uint32_t addr,
 struct Config {
   const char *name;
   bool open;            // software opens the port
+  long close_at = -1;   // tick software shuts it again, or -1
   bool varying;         // the bridge's delays vary
   bool others;          // the pack side and the display stream
   long ticks;
@@ -350,6 +387,50 @@ Run Simulate(const Config &cfg) {
   long pack_b_left = 0;
   long pack_b_held = 0;
 
+  // **THE OTHER TWO MASTERS DO NOT RUN BEFORE THE PORT IS OPEN**, which is
+  // the board.  There the pack side's face and its master are held in reset
+  // by the bridge's reset AND the memory port's liveness --- the pair
+  // `MAXIGP0ARESETN` and `SAXIHP2ARESETN` make on a Zynq board --- so nothing
+  // of the disk's can reach the arbiter before software has opened the port.
+  //
+  // **IT CHANGES NO NUMBER AND IT IS STILL RIGHT.**  Measured: the share is
+  // held in reset by the same gate, so it never grants them anything before
+  // the port opens whatever this loop asserts, and every count below is the
+  // same with it and without.  What it buys is that the harness does not
+  // model a master the board holds in reset, which is the rule the whole file
+  // is written to.  Latched, not the level, so that shutting the port under a
+  // running machine leaves them streaming, which is what SHUT and HANDSHAKE
+  // need.
+  bool others_on = false;
+
+  // **AND THE OTHER TWO MASTERS ARE MOVED ACROSS THE MACHINE'S CYCLE**, which
+  // is what makes BUSY's bound a bound and not an alignment.
+  //
+  // THIS WAS MEASURED AND NOT FORESEEN.  Streaming back to back with the
+  // bridge's delays fixed, the two of them have ONE phase relative to the
+  // machine's requests for the whole run, and both bounds below then hold at
+  // that one phase.  Moving the machine's first tick by twenty-two ticks ---
+  // which is all the DE25-Nano's hold on the machine does, the port coming
+  // live two ticks before it instead of twenty after --- left every number of
+  // the clean run unchanged and took `f2sdram-the-machine-is-not-first` from
+  // 28 ticks of growth to 26, under a bound of 27: a mutation that had been
+  // caught for two years stopped being caught by a check nobody had touched.
+  // A bound that holds at one alignment is luck, and luck is what this whole
+  // list exists to take out of the checks.
+  //
+  // So each master idles a varying number of ticks between its transactions,
+  // and the gap walks a cycle that shares no factor with its burst, so the
+  // grant it wants lands at every offset into a machine cycle over the run.
+  // The generator is this loop's own and deterministic --- the bridge's LCG
+  // is not used with fixed delays, and borrowing it would tie BUSY's phases
+  // to whether OPEN's delays vary.
+  uint32_t gap_seed = 0x0F1E2D3Cu;
+  auto next_gap = [&gap_seed](unsigned span) {
+    gap_seed = gap_seed * 1103515245u + 12345u;
+    return static_cast<int>((gap_seed >> 16) % span);
+  };
+  int pack_gap = 0, display_gap = 0;
+
   long micro = 0;
   int to_last = 0;
   bool req_last = false, done_last = false;
@@ -367,7 +448,9 @@ Run Simulate(const Config &cfg) {
     // fabric runs from configuration and software opens the port whenever it
     // gets there.
     dut->h2f_reset = (t < 16) ? 1 : 0;
-    dut->gp_open = (cfg.open && t >= 24) ? 1 : 0;
+    dut->gp_open =
+        (cfg.open && t >= kOpenTick && (cfg.close_at < 0 || t < cfg.close_at))
+            ? 1 : 0;
     dut->warm_req_n =
         (cfg.quiet_from >= 0 && t >= cfg.quiet_from && t < cfg.quiet_to) ? 0 : 1;
 
@@ -429,9 +512,9 @@ Run Simulate(const Config &cfg) {
     }
 
     // --------------------------------------------- the other two masters
-    if (cfg.others && !dut->rst) {
+    if (cfg.others && !dut->rst && others_on) {
       // The pack side: a sixteen-beat write, then a sixteen-beat read.
-      dut->p_awvalid = (pack_phase == 0 && !pack_w_out) ? 1 : 0;
+      dut->p_awvalid = (pack_phase == 0 && !pack_w_out && pack_gap == 0) ? 1 : 0;
       dut->p_awaddr = pack_addr;
       dut->p_awlen = kOtherBeats - 1;
       dut->p_wvalid = (pack_phase == 1) ? 1 : 0;
@@ -449,7 +532,8 @@ Run Simulate(const Config &cfg) {
       if (dut->p_bvalid) ++pack_b_held; else pack_b_held = 0;
       dut->p_bready = (pack_b_held > kPackBHold) ? 1 : 0;
       // The display: sixteen-beat reads, as many at once as it is allowed.
-      dut->d_arvalid = (display_out < kDisplayOffered) ? 1 : 0;
+      dut->d_arvalid =
+          (display_out < kDisplayOffered && display_gap == 0) ? 1 : 0;
       dut->d_araddr = display_addr;
       dut->d_arlen = kOtherBeats - 1;
     }
@@ -555,8 +639,11 @@ Run Simulate(const Config &cfg) {
     // ------------------------------------------------ what the edge did
     if (dut->clock_edge) {
       ++micro;
+      if (out.first_edge_tick < 0) out.first_edge_tick = t;
       out.last_edge_tick = t;
     }
+    if (dut->live && out.first_live_tick < 0) out.first_live_tick = t;
+    if (dut->live) others_on = true;
     if (dut->timed_out && !to_last) ++out.timeouts;
     to_last = dut->timed_out;
     out.final_pc = dut->pc;
@@ -697,7 +784,7 @@ Run Simulate(const Config &cfg) {
     }
 
     // The other two masters' own state machines, after the edge.
-    if (cfg.others && !dut->rst) {
+    if (cfg.others && !dut->rst && others_on) {
       if (p_aw_hs) {
         pack_w_out = true;
         pack_phase = 1;
@@ -718,12 +805,17 @@ Run Simulate(const Config &cfg) {
         pack_phase = 0;
         pack_addr += 8u * kOtherBeats;
         if (pack_addr >= kPackBase + 0x10000u) pack_addr = kPackBase;
+        // The gap before the next write address: see the sweep's note above.
+        pack_gap = next_gap(kPackGapSpan);
       }
+      if (pack_gap > 0) --pack_gap;
       if (d_ar_hs) {
         ++display_out;
         display_addr += 8u * kOtherBeats;
         if (display_addr >= kDisplayBase + 0x10000u) display_addr = kDisplayBase;
+        display_gap = next_gap(kDisplayGapSpan);
       }
+      if (display_gap > 0) --display_gap;
       if (pack_phase == 3 && !pack_w_out) pack_phase = 2;
     }
 
@@ -875,9 +967,10 @@ int main(int argc, char **argv) {
   }
 
   // ----------------------------------------------------------------- OPEN
-  const Config open_cfg{"OPEN", true, true, false, kTicksLong};
+  const Config open_cfg{"OPEN", true, -1, true, false, kTicksLong};
   Run open = Simulate(open_cfg);
-  std::printf("\nOPEN: software opened the port; the bridge's delays vary\n");
+  std::printf("\nOPEN: software opened the port a millisecond in; the "
+              "bridge's delays vary\n");
   CheckParityLoop(open, "OPEN");
   CheckRegion(open, "OPEN");
   CheckMarkers(open, "OPEN");
@@ -904,6 +997,19 @@ int main(int argc, char **argv) {
         "OPEN: the last clock edge was at tick %ld of %ld, so the machine is "
         "not running at the end", open.last_edge_tick, kTicksLong);
   Check(open.final_pc != 040, "OPEN: the machine ended at PC 40, ERROR-DISK-ERROR");
+  // **AND THE MACHINE DID NOT RUN BEFORE ITS MEMORY DID.**  The port comes
+  // live a millisecond in; a machine released at the fabric's reset would
+  // have retired some 6,666 microcycles by then, and on the board it would
+  // have spent its ONE pass over main memory against a shut port.
+  Check(open.first_live_tick >= 0,
+        "OPEN: the port never came live at all");
+  Check(open.first_edge_tick > open.first_live_tick,
+        "OPEN: the machine retired its first microcycle at tick %ld and the "
+        "port came live at tick %ld, so the machine ran before its memory did",
+        open.first_edge_tick, open.first_live_tick);
+  std::printf("  the port came live at tick %ld and the machine's first\n"
+              "    microcycle retired at tick %ld\n",
+              open.first_live_tick, open.first_edge_tick);
   std::printf("  %zu transactions, %ld reads and %ld writes, every one at its\n"
               "    own address, each write carrying the word its own read\n"
               "    returned; %d words of the region are their poison again\n",
@@ -916,10 +1022,50 @@ int main(int argc, char **argv) {
   std::printf("  microcycles %ld, first memory cycle at microcycle %ld, NXM "
               "timeouts %ld\n", open.micro, open.first_req_micro, open.timeouts);
 
+  // ---------------------------------------------------------------- NEVER
+  //
+  // The other half of the ordering: with the port never opened the machine
+  // never starts.  Twenty milliseconds, which is 133,000 microcycles a
+  // released machine would have retired.
+  const Config never_cfg{"NEVER", false, -1, true, false, 2000000L};
+  Run never = Simulate(never_cfg);
+  std::printf("\nNEVER: software never opened the port\n");
+  Check(never.first_live_tick < 0,
+        "NEVER: the port came live at tick %ld with nobody opening it",
+        never.first_live_tick);
+  Check(never.first_edge_tick < 0,
+        "NEVER: the machine retired a microcycle at tick %ld with its memory "
+        "port never opened, and it must be held in reset until the port is "
+        "live", never.first_edge_tick);
+  Check(never.micro == 0,
+        "NEVER: %ld microcycles retired, wanting none", never.micro);
+  Check(never.ar_seen == 0 && never.aw_seen == 0,
+        "NEVER: %ld read and %ld write addresses reached the bridge, wanting "
+        "none at all", never.ar_seen, never.aw_seen);
+  Check(never.asked_reads == 0 && never.asked_writes == 0,
+        "NEVER: the tally asks %ld reads and %ld writes, wanting none: a "
+        "machine in reset asks for nothing",
+        never.asked_reads, never.asked_writes);
+  Check(never.answered_reads == 0 && never.answered_writes == 0,
+        "NEVER: the tally answers %ld reads and %ld writes, wanting none",
+        never.answered_reads, never.answered_writes);
+  CheckMarkers(never, "NEVER");
+  std::printf("  no microcycle retired in %ld ticks and nothing reached the "
+              "bridge;\n    the tally reads %08x and %08x, with the marker in "
+              "each half\n",
+              never_cfg.ticks, never.tally_high, never.tally_low);
+
   // ----------------------------------------------------------------- SHUT
-  const Config shut_cfg{"SHUT", false, true, false, kTicksShort};
+  const Config shut_cfg{"SHUT", true, kShutTick, true, false, kTicksShort};
   Run shut = Simulate(shut_cfg);
-  std::printf("\nSHUT: software never opened the port\n");
+  std::printf("\nSHUT: software opened the port and shut it again under the "
+              "running machine\n");
+  Check(shut.first_edge_tick > shut.first_live_tick && shut.first_live_tick >= 0,
+        "SHUT: the machine's first microcycle was at tick %ld and the port "
+        "came live at tick %ld", shut.first_edge_tick, shut.first_live_tick);
+  Check(shut.micro > 100000,
+        "SHUT: %ld microcycles retired, and shutting the port must not stop a "
+        "machine that has already started", shut.micro);
   Check(shut.ar_seen == 0 && shut.aw_seen == 0,
         "SHUT: %ld read and %ld write addresses reached the bridge, wanting "
         "none at all", shut.ar_seen, shut.aw_seen);
@@ -934,15 +1080,16 @@ int main(int argc, char **argv) {
   Check(shut.timeouts >= 512,
         "SHUT: %ld NXM timeouts, wanting at least the 512 memory cycles",
         shut.timeouts);
-  std::printf("  nothing reached the bridge; the tally reads %08x and %08x:\n"
+  std::printf("  the machine ran; nothing reached the bridge; the tally reads "
+              "%08x and %08x:\n"
               "    %ld and %ld asked, nothing answered, and %ld cycles ended on\n"
               "    the NXM timer\n",
               shut.tally_high, shut.tally_low, shut.asked_reads,
               shut.asked_writes, shut.timeouts);
 
   // --------------------------------------------------------- QUIET, BUSY
-  const Config quiet_cfg{"QUIET", true, false, false, kTicksShort};
-  const Config busy_cfg{"BUSY", true, false, true, kTicksShort};
+  const Config quiet_cfg{"QUIET", true, -1, false, false, kTicksShort};
+  const Config busy_cfg{"BUSY", true, -1, false, true, kTicksShort};
   Run quiet = Simulate(quiet_cfg);
   Run busy = Simulate(busy_cfg);
   std::printf("\nQUIET and BUSY: the same machine cycles, with the pack side "
@@ -1001,12 +1148,18 @@ int main(int argc, char **argv) {
   // (at most `kFixedArWait` + 1 ticks) and the beats of the bursts the two
   // other masters have accepted ahead of it, which one in flight per master
   // and direction caps at two of sixteen --- a ceiling of 35 ticks.  What the
-  // two runs below actually reach is 27, and that is the number held to: a
+  // two runs below actually reach is 29, and that is the number held to: a
   // tick more fails.  The mutations just outside it are a second burst let
   // through, and the hold that keeps the other masters from being granted
   // anything new while the machine is asking taken away;
   // `mutations/list.txt` has both.
-  const long bound = 27;
+  //
+  // **IT WAS 27 UNTIL THE OTHER MASTERS WERE SWEPT ACROSS THE MACHINE'S
+  // CYCLE**, and 27 was the worst at one alignment rather than the worst
+  // there is.  The note at `others_on` above has the measurement that found
+  // it.  The number is still inside the ceiling the argument gives, which is
+  // what says the design's claim held and only its measurement was short.
+  const long bound = 29;
   long worst = 0;
   size_t worst_at = 0;
   for (size_t i = 0; i < quiet.cycle.size() && i < busy.cycle.size(); ++i) {
@@ -1035,7 +1188,7 @@ int main(int argc, char **argv) {
   // whole fabric to be quiet and the machine alone would hardly test it: its
   // own port goes into reset as soon as it is idle, and it is idle most of
   // the time, so what the hold has to stop is the masters that are not.
-  Config hs_cfg{"HANDSHAKE", true, true, true, kTicksShort};
+  Config hs_cfg{"HANDSHAKE", true, -1, true, true, kTicksShort};
   // WHERE THE WINDOW GOES IS THE LOOP'S OWN, taken from the run above: the
   // tick of its hundredth transaction, which is well inside the loop
   // whatever the delays do to it.  A window at a tick chosen by hand would

@@ -184,15 +184,21 @@ module cadr_disk_pack #(
     // `M_AXI_GP0` decodes to the fabric in the Zynq-7000 PS address map.
     parameter logic [31:0] REG_BASE = 32'h4000_0000,
     // "PACK", so that a read of register 7 can be told from a bus of zeros.
-    parameter logic [31:0] IDENT = 32'h5041_434B
+    parameter logic [31:0] IDENT = 32'h5041_434B,
+    // The transaction ID's width and the read burst length's: twelve and four
+    // on a Zynq board's `M_AXI_GP`, which is AXI3, and four and eight on the
+    // Agilex 5's two processor-to-fabric bridges, which are AXI4 and so may
+    // ask for 256 beats.  `cadr_gp0_default.sv`'s header has the argument.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
     input  var logic        rst,
 
     // --- M_AXI_GP0: the PS is the master, 32 bits, AXI3 ------------------
     input  var logic [31:0] s_awaddr,
-    input  var logic [3:0]  s_awlen,
-    input  var logic [11:0] s_awid,
+    input  var logic [LEN_W-1:0] s_awlen,
+    input  var logic [ID_W-1:0] s_awid,
     input  var logic        s_awvalid,
     output var logic        s_awready,
     input  var logic [31:0] s_wdata,
@@ -201,17 +207,17 @@ module cadr_disk_pack #(
     input  var logic        s_wvalid,
     output var logic        s_wready,
     output var logic [1:0]  s_bresp,
-    output var logic [11:0] s_bid,
+    output var logic [ID_W-1:0] s_bid,
     output var logic        s_bvalid,
     input  var logic        s_bready,
     input  var logic [31:0] s_araddr,
-    input  var logic [3:0]  s_arlen,
-    input  var logic [11:0] s_arid,
+    input  var logic [LEN_W-1:0] s_arlen,
+    input  var logic [ID_W-1:0] s_arid,
     input  var logic        s_arvalid,
     output var logic        s_arready,
     output var logic [31:0] s_rdata,
     output var logic [1:0]  s_rresp,
-    output var logic [11:0] s_rid,
+    output var logic [ID_W-1:0] s_rid,
     output var logic        s_rlast,
     output var logic        s_rvalid,
     input  var logic        s_rready,
@@ -356,8 +362,8 @@ module cadr_disk_pack #(
   rstate_e rst_r;
 
   logic [31:0] w_at, r_at;         // the beat's address, walked up a word a beat
-  logic [11:0] w_id, r_id;
-  logic [3:0]  r_left;             // beats still owed on the read
+  logic [ID_W-1:0]  w_id, r_id;
+  logic [LEN_W-1:0] r_left;        // beats still owed on the read
   logic        w_bad;              // a beat outside the window: SLVERR
 
   // Whether the beat's address is one of the sixteen words.
@@ -404,7 +410,7 @@ module cadr_disk_pack #(
   logic        r_in_q;   // `r_in`, the tick after the address moved
   assign s_arready = (rst_r == R_ADDR);
   assign s_rvalid  = (rst_r == R_DATA);
-  assign s_rlast   = (r_left == 4'd0);
+  assign s_rlast   = (r_left == '0);
   assign s_rresp   = rresp_q;
   assign s_rdata   = rdata_q;
   assign s_rid     = r_id;
@@ -496,9 +502,9 @@ module cadr_disk_pack #(
       rst_r <= R_ADDR;
       w_at  <= 32'd0;
       r_at  <= 32'd0;
-      w_id  <= 12'd0;
-      r_id  <= 12'd0;
-      r_left <= 4'd0;
+      w_id  <= '0;
+      r_id  <= '0;
+      r_left <= '0;
       w_bad <= 1'b0;
       r_addr  <= 32'd0;
       r_tag   <= 31'd0;
@@ -607,9 +613,9 @@ module cadr_disk_pack #(
         end
         R_DATA: if (s_rready) begin
           r_at <= r_at + 32'd4;
-          if (r_left == 4'd0) rst_r <= R_ADDR;
+          if (r_left == '0) rst_r <= R_ADDR;
           else begin
-            r_left <= r_left - 4'd1;
+            r_left <= r_left - LEN_W'(1);
             rst_r  <= R_PREP;
           end
         end
