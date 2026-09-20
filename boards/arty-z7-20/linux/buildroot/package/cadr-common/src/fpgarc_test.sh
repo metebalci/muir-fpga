@@ -773,12 +773,13 @@ printf '%s\r\n' \
 	'--no-auto-boot' > "$RC"
 
 # **AND `--time` IS ON THAT FILE FOR A REASON OF ITS OWN.**  The word was the
-# Chaosnet program's once: it named a time host that lived inside it, and the
-# program still refuses it by name to say where the host went.  It is not in
-# that program's list, so the card's line goes to the clock step and nowhere
-# else --- and if it were ever claimed again, the program would be handed it
-# and would exit at argument parsing, which is the whole Chaosnet gone on a
-# boot that printed OK.  That is what the absence below is for.
+# Chaosnet program's once: it named a time host that lived inside it.  It now
+# names the time of day on the card, and one name means one thing here, so the
+# Chaosnet program no longer knows the word at all --- neither claiming it nor
+# refusing it by name.  That makes the absence below matter more, not less: if
+# the word were ever added to that program's list, the card's clock line would
+# be handed to a program that does not know it, and it would exit at argument
+# parsing, which is the whole Chaosnet gone on a boot that printed OK.
 case_head "the Chaosnet program gets its own flags and nobody else's"
 if prepare cadr-chaosnet S87cadr-chaosnet; then
 	run_script S87cadr-chaosnet

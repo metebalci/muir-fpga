@@ -90,15 +90,23 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 # than to a card.  And nothing generic --- `--port` is the screen's and the
 # serial line's both, so no list may claim it.
 #
-# **AND THE FOUR FLAGS THE PROGRAM REFUSES BY NAME ARE NOT HERE EITHER.**
-# `--chaos-file-root`, `--chaos-file-peers`, `--server-name` and `--time`
-# named a file host and a time host that used to live inside this program and
-# now do not.  A flag that does not exist has no place in a list of the flags
-# this program owns, and the card no longer offers one.  A card still carrying
+# **AND THE THREE FLAGS THE PROGRAM REFUSES BY NAME ARE NOT HERE EITHER.**
+# `--chaos-file-root`, `--chaos-file-peers` and `--server-name` named a file
+# host that used to live inside this program and now does not.  A flag that
+# does not exist has no place in a list of the flags this program owns, and
+# the card no longer offers one.  A card still carrying
 # such a line is named by the unclaimed-lines report at boot, which says the
 # line went to nobody; claimed here, the line would instead stop the Chaosnet
 # from starting at all.  The program still refuses each by name, saying where
 # the host went, for somebody who passes one by hand.
+#
+# **AND `--time` IS NOT HERE, FOR A DIFFERENT REASON.**  The word was this
+# program's once, for a time host that went with the file host.  It now names
+# the time of day on the card, which the disk pack program's init script reads
+# to set a clock no board here keeps, so the program no longer knows the word
+# at all.  Claimed here, a card's clock line would be handed to this program,
+# which would not know it and would stop at argument parsing --- the whole
+# Chaosnet gone on a boot that said OK.  It must never be added to this list.
 FLAGS="--address --chaos-address
        --udp --chaos-udp
        --udp-peer --chaos-udp-peer
