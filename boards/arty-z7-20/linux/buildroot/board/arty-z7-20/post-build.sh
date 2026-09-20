@@ -158,14 +158,16 @@ done
 # upstream Buildroot ones that no package here declares and must not.  There is
 # no way to tell the two apart from inside this script --- Buildroot's own
 # source is not reachable from here --- so the namespaces are enumerated:
-# BR2_PACKAGE_CADR_* for our own programs, and BR2_PACKAGE_MUIR, which is
-# outside that namespace because muir is not one of our programs but muir.
-# Anything added here in a third namespace wants a third expression.
+# BR2_PACKAGE_CADR_* for our own programs, and BR2_PACKAGE_MUIR and
+# BR2_PACKAGE_OZD, which are outside that namespace because neither is one of
+# our programs: they are muir and ozd, carried rather than written here.
+# Anything added in a further namespace wants a further expression.
 for dc in "$EXT"/configs/*_defconfig; do
 	[ -f "$dc" ] || continue
 	for sym in $(sed -n \
 			-e 's/^\(BR2_PACKAGE_CADR_[A-Z0-9_]*\)=y$/\1/p' \
-			-e 's/^\(BR2_PACKAGE_MUIR\)=y$/\1/p' "$dc"); do
+			-e 's/^\(BR2_PACKAGE_MUIR\)=y$/\1/p' \
+			-e 's/^\(BR2_PACKAGE_OZD\)=y$/\1/p' "$dc"); do
 		case " $declared " in
 			*" $sym "*) ;;
 			*) die "$(basename -- "$dc") sets $sym=y and no package declares it:
@@ -188,13 +190,14 @@ done
 
 # check 1: nothing else of ours is there.
 #
-# The names it looks at are the same two namespaces check 3b enumerates, and
-# for the same reason: a find over every file in the target would flag every
-# BusyBox applet.  `muir` is matched exactly --- it is one program, not a
-# family --- and it is here so that the day the muir package is renamed or
-# dropped, the /usr/bin/muir it leaves behind is caught rather than shipped.
+# The names it looks at are the same namespaces check 3b enumerates, and for
+# the same reason: a find over every file in the target would flag every
+# BusyBox applet.  `muir` and `ozd` are matched exactly --- each is one
+# program, not a family --- and they are here so that the day either package
+# is renamed or dropped, the /usr/bin/muir or /usr/bin/ozd it leaves behind is
+# caught rather than shipped.
 stale=
-for path in $(cd "$TARGET" && find . \( -type f -o -type l \) \( -name '*cadr*' -o -name 'muir' \) | sed 's|^\./||' | LC_ALL=C sort); do
+for path in $(cd "$TARGET" && find . \( -type f -o -type l \) \( -name '*cadr*' -o -name 'muir' -o -name 'ozd' \) | sed 's|^\./||' | LC_ALL=C sort); do
 	case " $expected " in
 		*" $path "*) ;;
 		*) stale="$stale $path" ;;
