@@ -13,12 +13,21 @@
 # `build/de25/output_files/cadr_de25.sof`, and `program.sh` beside this loads
 # it over JTAG.
 #
+# **`DDR=1` BUILDS THE MEMORY BOARD**: the machine with the Agilex 5's
+# processor, its LPDDR4 and its FPGA-to-SDRAM bridge behind its memory port,
+# as `DDR=1` does for the Arty Z7-20.  The processor system is described in
+# `hps.tcl` beside this and generated here at every build, as the PLL is.
+# `DE25_DDR_MHZ` is the LPDDR4's speed, 1066.667 by default, which runs on
+# either revision of the board, or 1333.333 for a rev B board; `hps.tcl` says
+# why.  That build goes to `build/de25-ddr/`.
+#
 # **`PROBE_DEPTH` BUILDS THE INSTRUMENTED BOARD INSTEAD**, as it does for the
 # Zynq boards: the machine with `rtl/plumbing/cadr_probe.sv` holding its first
 # `PROBE_DEPTH` microcycles behind Altera's Virtual JTAG, which `probe.tcl`
 # beside this reads.  That build goes to `build/de25-probe/`, so that the
 # plain bitstream survives it and a board can be given either one without a
-# second eight-minute build.  Zero, or no value, is the plain board.
+# second eight-minute build.  Zero, or no value, is the plain board.  With
+# both, the directory is `build/de25-ddr-probe/`.
 #
 # **WHERE QUARTUS IS** comes from `QUARTUS_ROOTDIR` in the environment, or
 # from a `QUARTUS_ROOTDIR=` line in the gitignored
@@ -32,7 +41,8 @@
 #
 #   1. The variation files of the I/O PLL, from the parameters below, and of
 #      the Reset Release, and of the Virtual JTAG when the probe is built.
-#   2. The project, by `project.tcl`, with the build stamp in USERCODE.
+#   2. The project, by `project.tcl`, with the build stamp in USERCODE, and
+#      on the memory board the processor system, by `hps.tcl`.
 #   3. The two cores' HDL, generated from their variations.
 #   4. Synthesis, and 5. the fitter.  **A BUILD WITHOUT THE AGILEX 5E LICENSE
 #      IS REFUSED**, before synthesis: see "the license" below.
@@ -65,7 +75,7 @@ bin=$quartus/bin
 qsys=$quartus/../qsys/bin
 for tool in "$bin/quartus_sh" "$bin/quartus_ipgenerate" "$bin/quartus_syn" \
             "$bin/quartus_fit" "$bin/quartus_sta" "$bin/quartus_asm" \
-            "$qsys/ip-deploy"; do
+            "$qsys/ip-deploy" "$qsys/qsys-script"; do
     [ -x "$tool" ] || refuse "$tool is not there"
 done
 
@@ -84,6 +94,35 @@ for f in "$@"; do
     esac
 done
 
+# The memory board, or not, and its memory's speed.
+ddr=${DDR:-0}
+case $ddr in
+    0|1) ;;
+    *) refuse "DDR is '$ddr'; it is 0, the board without memory, or 1, the memory board" ;;
+esac
+mhz=${DE25_DDR_MHZ:-1066.667}
+# Which way the processor boots: see `project.tcl`.  The board loaded over
+# JTAG with no flash written is the FPGA-first one, and it is the only one
+# this flow can turn into a file a programmer takes.
+hps_boot=${DE25_HPS_BOOT:-hps-first}
+case $hps_boot in
+    hps-first|fpga-first) ;;
+    *) refuse "DE25_HPS_BOOT is '$hps_boot'; it is hps-first or fpga-first" ;;
+esac
+# The processor's first-stage loader, as a hex file, when there is one: the
+# Linux side builds it.  With it, the flow writes a file the programmer can
+# load over JTAG on an FPGA-first board, or the two bitstreams an HPS-first
+# board needs in its flash and on its card.
+spl=${DE25_SPL_HEX:-}
+case $mhz in
+    1066.667|1333.333) ;;
+    *) refuse "DE25_DDR_MHZ is '$mhz'; the LPDDR4 runs at 1066.667 (either revision) or 1333.333 (rev B)" ;;
+esac
+out=build/de25
+if [ "$ddr" -eq 1 ]; then
+    out=$out-ddr
+fi
+
 # The probe, or not.  A power of two, because its read pointer wraps on it.
 depth=${PROBE_DEPTH:-0}
 case $depth in
@@ -92,13 +131,22 @@ esac
 depth=$((depth + 0))
 if [ "$depth" -gt 0 ]; then
     [ $((depth & (depth - 1))) -eq 0 ] || refuse "PROBE_DEPTH is $depth, which is not a power of two"
-    out=build/de25-probe
+    out=$out-probe
     say "the probe is in this build: $depth samples, into $out"
-else
-    out=build/de25
+fi
+if [ "$ddr" -eq 1 ]; then
+    say "the processor and its memory are in this build: LPDDR4 at $mhz MHz, into $out"
 fi
 rm -rf "$out"
-mkdir -p "$out/ip"
+mkdir -p "$out/ip" "$out/tmp"
+
+# **THE TOOLS' TEMPORARY FILES GO WITH THE BUILD**, and not into the system's
+# temporary space, which on a build host may be small, shared or a RAM disk.
+# Measured here: with it full, Platform Designer failed to write a component
+# it had just generated and synthesis failed to open the debug fabric's IP,
+# both reported as errors about a file in the tool's own sandbox.
+TMPDIR=$(cd "$out/tmp" && pwd)
+export TMPDIR
 
 # Each step's output goes to its log and nowhere else; the step's exit status
 # is the tool's.
@@ -184,7 +232,22 @@ if [ "$depth" -gt 0 ]; then
 fi
 
 # ------------------------------------------------------- 2. the project
-step 2-project env PROBE_DEPTH="$depth" "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
+step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" DE25_HPS_BOOT="$hps_boot" \
+    "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
+
+# **AND THE PROCESSOR SYSTEM, ON THE MEMORY BOARD.**  `qsys-script` builds it
+# in the build directory from `hps.tcl` and adds it to the project, and step
+# 3 generates it with the other IP.  `hps.tcl` refuses a system that does not
+# validate, and prints the LPDDR4's speed as the IP holds it.
+if [ "$ddr" -eq 1 ]; then
+    step 2-hps sh -c "cd '$out' && exec '$qsys/qsys-script' --quartus-project=cadr_de25 \
+        --cmd='set ddr_mhz $mhz; source $root/boards/de25-nano/quartus/hps.tcl'"
+    grep '^hps: ' "$out/2-hps.log" | sed 's/^hps: /de25: hps: /'
+    grep -q "^hps: LPDDR4 at $mhz MHz" "$out/2-hps.log" \
+        || refuse "the processor system's LPDDR4 is not at $mhz MHz; see $out/2-hps.log"
+    grep -q '^set_global_assignment -name QSYS_FILE cadr_de25_hps.qsys' "$out/cadr_de25.qsf" \
+        || refuse "qsys-script did not add the processor system to the project; see $out/2-hps.log"
+fi
 
 # --------------------------------------------- 3. to 6. the compilation
 dir=$out
@@ -227,6 +290,21 @@ if [ "$depth" -gt 0 ]; then
     say "the probe is in: $depth samples of 454 bits, behind the Virtual JTAG"
 elif grep -q 'g_probe' "$rpt"; then
     refuse "a build without PROBE_DEPTH has a probe in it; see $dir/$rpt"
+fi
+
+# **THE PROCESSOR IS IN THE MEMORY BOARD AND IN NO OTHER**, by the synthesis
+# report's list of the design's IP, which names the processor system's two
+# components under the instance `u_hps`, and by the machine's memory port
+# under `u_memory`.
+if [ "$ddr" -eq 1 ]; then
+    for ip in intel_agilex_5_soc emif_io96b_hps; do
+        grep -q "; $ip *;[^;]*;[^;]*;[^;]*; u_hps|" "$rpt" \
+            || refuse "synthesis lists no $ip under u_hps; see $dir/$rpt"
+    done
+    grep -q 'u_memory|u_share' "$rpt" || refuse "synthesis has no memory port under u_memory; see $dir/$rpt"
+    say "the processor system and the machine's memory port are in"
+elif grep -q 'u_hps|\|u_memory|' "$rpt"; then
+    refuse "a build without DDR has the processor or the memory port in it; see $dir/$rpt"
 fi
 
 step 5-fit "$bin/quartus_fit" cadr_de25
@@ -280,3 +358,41 @@ sof=output_files/cadr_de25.sof
 [ -s "$sof" ] || refuse "$sof was not written"
 say "$(wc -c < "$sof" | tr -d ' ') bytes in $dir/$sof, USERCODE $userid"
 say "timing: $(tail -n 1 timing.txt)"
+
+# ------------------------------------------- 9. the processor's own files
+#
+# **THE `.sof` ALONE DOES NOT CONFIGURE A PART WITH A PROCESSOR IN IT**: the
+# Booting User Guide (document 813762, section 4.5.1) says so, and the first
+# stage has to be added to it.  With `DE25_SPL_HEX` naming that loader:
+#
+#   fpga-first   `cadr_de25_hps.sof`, which the programmer loads over JTAG:
+#                it configures the fabric and starts the processor's first
+#                stage from the same file.  This is the board with no flash
+#                written (section 4.5.1).
+#   hps-first    `cadr_de25.hps.rbf`, the phase-1 bitstream for the flash,
+#                and `cadr_de25.core.rbf`, the fabric the processor loads
+#                from the card (section 4.5.2).  Writing the flash is not
+#                this flow's business and nothing here does it.
+#
+# `quartus_pfg -i` then says what the file holds, and its lines are printed:
+# the configuration order, whether the processor's debug port is open, and
+# the I/O hash, which is what says a phase-1 image and a core bitstream come
+# from the same processor configuration.
+if [ "$ddr" -eq 1 ] && [ -n "$spl" ]; then
+    case $spl in /*) ;; *) spl=$root/$spl ;; esac
+    [ -s "$spl" ] || refuse "DE25_SPL_HEX names $spl, which is not there"
+    if [ "$hps_boot" = fpga-first ]; then
+        step 9-pfg "$bin/quartus_pfg" -c "$sof" output_files/cadr_de25_hps.sof \
+            -o hps_path="$spl"
+        made=output_files/cadr_de25_hps.sof
+    else
+        step 9-pfg "$bin/quartus_pfg" -c "$sof" output_files/cadr_de25.rbf \
+            -o hps_path="$spl" -o hps=on
+        made=output_files/cadr_de25.hps.rbf
+    fi
+    [ -s "$made" ] || refuse "$made was not written; see $dir/9-pfg.log"
+    say "$(wc -c < "$made" | tr -d ' ') bytes in $dir/$made, from $spl"
+    "$bin/quartus_pfg" -i "$made" > 9-pfg-info.log 2>&1 || true
+    grep -i -E "configuration order|debug access|IO hash|HPS/FPGA" 9-pfg-info.log \
+        | sed 's/^[[:space:]]*/de25: /' || true
+fi

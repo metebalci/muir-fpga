@@ -253,6 +253,109 @@ selects it powers up at zero, because the flow turns Quartus's power-up
 don't-care off so that every register starts at zero as it does in Verilator
 and on the Zynq boards. With the setting on, the readout would fold away.
 
+## The memory board
+
+`make de25 DDR=1` builds the machine with the processor behind its memory
+port, which is what `DDR=1` does for the Arty Z7-20. The pieces are the
+processor system, generated from `quartus/hps.tcl` at every build, and
+`rtl/plumbing/cadr_f2sdram_port.sv`, whose header is the argument for the
+memory path.
+
+**The machine's memory is the FPGA-to-SDRAM bridge.** It is AXI4 at 64 bits,
+and every beat must be the full bus width, so the path is the Zynq boards'
+with one piece changed: `cadr_axi_master.sv` and `cadr_axi_widen.sv` are
+unchanged, and `cadr_f2sdram_share.sv` takes their AXI3 shape to the bridge's
+AXI4 one, with the bridge's own attributes on every transaction. The
+machine's 128 MB are at `0xB000_0000`, the second 128 MB from the top of the
+processor's 1 GB, and `rtl/plumbing/cadr_ddr_map.sv` says why they are not at
+the top.
+
+**One port, three masters, the machine first.** The disk pack side and the
+display have ports of their own on the Zynq and share this one here, so the
+arbiter is in the design now, with the machine on port 0 and the other two
+tied off until their slices arrive. It grants by burst, lets each master have
+one burst in flight in each direction, and grants the others nothing new
+while the machine is asking for a word or waiting for one. That hold is what
+bounds a machine cycle --- what the machine waits for is what was already in
+flight when it asked --- and priority by port alone does not do it: with one
+burst in flight per master, a master waiting for its answer is not asking, so
+reversing the priority moved not one number of the check. The measured worst
+is 27 ticks of growth with both other ports streaming.
+
+**The port is shut until software opens it**, on bit 0 of `h2f_gp_out`. The
+first-stage loader calibrates the memory and opens its firewall, and the
+secure firmware releases the bridge when U-Boot runs `bridge enable`; until
+then a memory cycle would meet a bridge in reset. So the fabric holds its
+master off, and every memory cycle ends on the NXM timer, exactly as on a
+board with no memory. The processor's warm-reset handshake is answered the
+same way: while it asks for quiet nothing new is put to the bridge, and the
+acknowledgment follows once nothing is outstanding.
+
+**The tally is one word here and two on the Zynq boards.** It is
+`cadr_mem_count.sv`'s sixty-four bits, and `h2f_gp_in` carries thirty-two, so
+bit 1 of `h2f_gp_out` chooses the half: low the answers, high the requests.
+Software reads it at the system manager's GPI register, and each half carries
+the marker that says the fabric and not an undriven register wrote it.
+
+| what | where |
+|---|---|
+| main memory | `0xB000_0000`, 128 MB reserved, 15 MB reachable |
+| the display's buffer | `0xB400_0000` |
+| the gate | `h2f_gp_out[0]`, the system manager's GPO at `0x10D1_20E4` |
+| the tally's half | `h2f_gp_out[1]` |
+| the tally | `h2f_gp_in`, its GPI at `0x10D1_20E8` |
+| the processor-to-fabric bridges | 1 GB at `0x4000_0000` and 512 MB at `0x2000_0000`, both answered end to end |
+
+`build/f2sdram.pass` is the check: the machine through this path against a
+model of the bridge, five configurations, with the region poisoned from
+outside. Its header has them.
+
+### The memory board's fit
+
+Measured with `make de25 DDR=1` at the default optimization, the LPDDR4 at
+1066.667 MHz:
+
+| | |
+|---|---|
+| ALMs | 5,735 of 46,800, 12%, of which 2,030 hold the three MLAB memories |
+| M20K blocks | 95 of 358, 27%, 1,762,880 bits |
+| pins | 127 of 351 |
+| worst setup slack | +3.343 ns, at the slow corner at 0 C |
+| worst hold slack | +0.000 ns, at the fast corner |
+
+The worst setup path is the machine's own, `busint`'s elapsed counter into
+MD, ten levels of logic and 6.654 ns of delay, which is the family of paths
+the board without memory is critical on too. The worst hold path is inside
+Altera's ready-latency adapter between the bridge and the memory controller,
+launched and latched by the machine's clock, zero logic levels, arrival
+2.357 ns against a requirement of 2.357 ns.
+
+**AND THE FIRST FIT OF THIS BOARD CLOSED AT +0.028 ns, ON A PATH THAT IS NOT
+A PATH.** It ran from the fabric's handshake acknowledgment into the
+processor's hard block --- zero logic levels, 0.795 ns of data delay --- and
+was timed against `hps_internal_osc`, the processor's own 200 MHz
+oscillator, which has no relation to the machine's clock at all: 3.953 ns of
+that figure was skew between two clocks that are not related. The
+acknowledgment and the tally are the only two things the fabric drives into
+the processor asynchronously, and `quartus/cadr_ddr.sdc` cuts both and says
+why each may be cut. With them cut the board closes at +3.343 ns, and
+`quartus/sta_check.tcl` counts what the cut reached so that it cannot
+quietly reach more.
+
+### How the processor boots
+
+`DE25_HPS_BOOT` chooses, and `DE25_SPL_HEX` names the first-stage loader the
+Linux side builds:
+
+| | |
+|---|---|
+| `hps-first` | the default. `quartus_pfg` writes the phase-1 bitstream for the flash and `cadr_de25.core.rbf` for the card, and the processor configures the fabric from U-Boot. |
+| `fpga-first` | `cadr_de25_hps.sof`, one file the programmer loads over JTAG that configures the fabric and starts the processor's first stage. This is the board with no flash written. |
+
+A bare `.sof` cannot configure a part with a processor in it, which the HPS
+Booting User Guide says in its section 4.5.1, so `quartus/program.sh` loads
+`cadr_de25_hps.sof` when the flow has written one.
+
 ## Loading it
 
 `make de25-program` loads the bitstream over JTAG, into the part's

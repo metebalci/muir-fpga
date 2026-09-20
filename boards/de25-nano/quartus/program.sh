@@ -73,11 +73,27 @@ done
 serial=${DE25_SERIAL:-$(conf_value DE25_SERIAL)}
 [ -n "$serial" ] || refuse "set DE25_SERIAL, or add a DE25_SERIAL= line to $conf"
 
-case ${PROBE_DEPTH:-0} in
-    ''|0) out=build/de25 ;;
-    *)    out=build/de25-probe ;;
+out=build/de25
+case ${DDR:-0} in
+    ''|0) ;;
+    *)    out=$out-ddr ;;
 esac
+case ${PROBE_DEPTH:-0} in
+    ''|0) ;;
+    *)    out=$out-probe ;;
+esac
+# **AND THE MEMORY BOARD IS LOADED AS THE FILE THE PROCESSOR NEEDS**, not as
+# the bare `.sof`: "SOF files resulted from compiling hardware designs that
+# have HPS instantiated cannot be used directly to configure the device", the
+# Booting User Guide (document 813762) says in its section 4.5.1, and
+# `build.sh` writes `cadr_de25_hps.sof` beside the `.sof` when it is given the
+# processor's first-stage loader.
+hps_sof=$out/output_files/cadr_de25_hps.sof
 sof=$out/output_files/cadr_de25.sof
+if [ -s "$hps_sof" ]; then
+    sof=$hps_sof
+    say "loading the file with the processor's first stage in it, not the bare bitstream"
+fi
 asm=$out/output_files/cadr_de25.asm.rpt
 [ -s "$sof" ] || refuse "$sof is not there; run \`make de25\` first"
 [ -s "$asm" ] || refuse "$asm is not there; the bitstream has no report to check it against"
@@ -118,11 +134,31 @@ while [ -z "$chain" ] && [ "$tries" -lt 5 ]; do
 done
 [ -n "$chain" ] \
     || refuse "the JTAG server does not list '$cable'; it lists: $("$quartus/bin/jtagconfig" 2>&1 | grep '^ *[0-9])' | tr '\n' ' ')"
-# One part on that cable, and it is this board's: the ID code Quartus reports
-# for the A5EB013BB23BE4SCS family, 4362C0DD.
+# **THIS BOARD'S PART ON THAT CABLE, AND WHAT ELSE MAY BE BESIDE IT.**  The ID
+# code Quartus reports for the A5EB013BB23BE4SCS family is 4362C0DD, and it is
+# the part this programs.  A design with the processor in it puts a second TAP
+# on the chain --- the processor's debug port, which Altera's boundary-scan
+# guide for the family says appears only then --- and that is an Arm debug
+# port, `?BA06477`, as Quartus's own programmer part table gives every other
+# family's (`quartus/linux64/pgm_parts.txt`), and this board's own reports
+# `4BA06477 ARM_CORESIGHT_SOC_600 (IR=4)`, measured.  Anything else on the chain is
+# refused, and the position of this board's own part is what the programmer is
+# given, because a chain of two has two positions.
 parts=$(printf '%s\n' "$chain" | grep -c '^  [0-9A-F]\{8\} ' || true)
-[ "$parts" -eq 1 ] || refuse "wanted one part on '$cable', found $parts"
-printf '%s\n' "$chain" | grep -q '^  4362C0DD ' || refuse "the part on '$cable' is not ID code 4362C0DD"
+[ "$parts" -ge 1 ] && [ "$parts" -le 2 ] \
+    || refuse "wanted one or two parts on '$cable', found $parts"
+ours=$(printf '%s\n' "$chain" | grep -c '^  4362C0DD ' || true)
+[ "$ours" -eq 1 ] || refuse "wanted one part with ID code 4362C0DD on '$cable', found $ours"
+others=$(printf '%s\n' "$chain" | grep '^  [0-9A-F]\{8\} ' | grep -v '^  4362C0DD ' || true)
+if [ -n "$others" ]; then
+    printf '%s\n' "$others" | grep -q '^  [0-9A-F]BA06477 ' \
+        || refuse "'$cable' carries a part that is neither this board's FPGA nor its processor's debug port: $others"
+    say "the processor's debug port is on the chain: $(printf '%s\n' "$others" | sed 's/^  //')"
+fi
+# Which position this board's part is at, counting the parts in chain order.
+device=$(printf '%s\n' "$chain" | grep '^  [0-9A-F]\{8\} ' | grep -n '^  4362C0DD ' | cut -d: -f1)
+[ -n "$device" ] || refuse "could not place this board's part on '$cable'"
+say "this board's part is device $device of $parts on the chain"
 
 # What the hub reports before the download, for the line after it.
 hub_before=$(block | sed -n 's/^ *Design hash *\([0-9A-F]*\).*/\1/p' | head -n 1)
@@ -136,13 +172,31 @@ before=$(DE25_SERIAL=$serial "$quartus/bin/quartus_stp" -t "$usercode_tcl" 2>&1 
 say "the part holds build ${before:-that could not be read} before the download"
 
 say "loading $sof over '$cable' (serial $serial), volatile"
-"$quartus/bin/quartus_pgm" -c "$cable" -m jtag -o "p;$sof@1" > "$out/program.log" 2>&1 \
+"$quartus/bin/quartus_pgm" -c "$cable" -m jtag -o "p;$sof@$device" > "$out/program.log" 2>&1 \
     || { tail -n 20 "$out/program.log" >&2; refuse "the programmer failed; see $out/program.log"; }
 grep '^Info (209011)\|^Info (209060)\|Successfully performed' "$out/program.log" | sed 's/^/de25-program: /' || true
 
-grep -q '^Info (18943): Configuration succeeded at device index 1' "$out/program.log" \
+# **AND THE INDEX IT SUCCEEDS AT MAY NOT BE THE INDEX IT WAS GIVEN.**  On the
+# memory board the processor's debug port joins the chain DURING
+# configuration, ahead of the FPGA, and the programmer says so itself:
+# "Added ARM_CORESIGHT_SOC_600 at device index 1 after configuration
+# succeeded", with the success reported at index 2 for a part that was index
+# 1 when the download began.  Measured.  So what is read here is that
+# configuration succeeded at some index, and the index is printed; what says
+# the part holds this build is the USERCODE read back below, which finds the
+# part by its IDCODE whatever the chain has become.
+at=$(sed -n 's/^Info (18943): Configuration succeeded at device index \([0-9]*\).*/\1/p' \
+     "$out/program.log" | head -n 1)
+[ -n "$at" ] \
     || refuse "the programmer did not report that configuration succeeded; see $out/program.log"
-say "configuration succeeded on device 1"
+if [ "$at" = "$device" ]; then
+    say "configuration succeeded on device $at"
+else
+    say "configuration succeeded on device $at, which was device $device before the download:"
+    grep -q 'Added ARM_CORESIGHT_SOC_600' "$out/program.log" \
+        && say "the processor's debug port joined the chain ahead of it during configuration" \
+        || refuse "the part moved on the chain and nothing says the processor's debug port joined it"
+fi
 
 # The hub the part now reports, against the build's: see the header.
 sld=$out/output_files/cadr_de25.sld

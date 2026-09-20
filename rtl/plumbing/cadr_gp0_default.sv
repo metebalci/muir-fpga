@@ -35,6 +35,15 @@
 // every handshake, so a beat too many or too few, a response without a
 // request or RLAST on the wrong beat is a failure and not a stall.
 //
+// **AND THE SAME SLAVE ON THE AGILEX 5'S TWO BRIDGES**, which are AXI4: four
+// bits of ID where GP0 has twelve, and eight bits of burst length where AXI3
+// has four, so a read there can be 256 beats long.  `ID_W` and `LEN_W` are
+// those two widths, twelve and four by default, which is GP0's shape and the
+// module every Zynq board builds.  `boards/de25-nano/cadr_de25.sv` sets four
+// and eight, and `build/gp0_default.pass` runs its check at both shapes.  A
+// burst type is not read at all: FIXED, INCR and WRAP are the same to a slave
+// that answers one word everywhere.
+//
 // WHAT THIS CANNOT DO.  A board without a `PS7` in it --- `cadr_arty.sv`'s
 // default, `DDR=0` --- has no GP0 to answer on, and a program that touches
 // the window there hangs the processor whatever the fabric does.  The EMIO
@@ -44,28 +53,32 @@
 `default_nettype none
 
 module cadr_gp0_default #(
-    parameter logic [31:0] WORD = 32'h4E4F_4E45   // "NONE"
+    parameter logic [31:0] WORD = 32'h4E4F_4E45,  // "NONE"
+    // The transaction ID's width and the read burst length's: twelve and four
+    // on GP0, four and eight on the Agilex 5's bridges.
+    parameter int unsigned ID_W  = 12,
+    parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
     input  var logic        rst,
 
     input  var logic        s_awvalid,
-    input  var logic [11:0] s_awid,
+    input  var logic [ID_W-1:0] s_awid,
     output var logic        s_awready,
     input  var logic        s_wlast,
     input  var logic        s_wvalid,
     output var logic        s_wready,
     output var logic [1:0]  s_bresp,
-    output var logic [11:0] s_bid,
+    output var logic [ID_W-1:0] s_bid,
     output var logic        s_bvalid,
     input  var logic        s_bready,
-    input  var logic [3:0]  s_arlen,
-    input  var logic [11:0] s_arid,
+    input  var logic [LEN_W-1:0] s_arlen,
+    input  var logic [ID_W-1:0] s_arid,
     input  var logic        s_arvalid,
     output var logic        s_arready,
     output var logic [31:0] s_rdata,
     output var logic [1:0]  s_rresp,
-    output var logic [11:0] s_rid,
+    output var logic [ID_W-1:0] s_rid,
     output var logic        s_rlast,
     output var logic        s_rvalid,
     input  var logic        s_rready
@@ -75,8 +88,8 @@ module cadr_gp0_default #(
   typedef enum logic [0:0] { R_ADDR, R_DATA } rstate_e;
   wstate_e wst;
   rstate_e rst_r;
-  logic [11:0] w_id, r_id;
-  logic [3:0]  r_left;   // beats still owed on the read
+  logic [ID_W-1:0]  w_id, r_id;
+  logic [LEN_W-1:0] r_left;   // beats still owed on the read
 
   assign s_awready = (wst == W_ADDR);
   assign s_wready  = (wst == W_DATA);
@@ -89,15 +102,15 @@ module cadr_gp0_default #(
   assign s_rdata   = WORD;
   assign s_rresp   = 2'b00;
   assign s_rid     = r_id;
-  assign s_rlast   = (r_left == 4'd0);
+  assign s_rlast   = (r_left == '0);
 
   always_ff @(posedge clk) begin
     if (rst) begin
       wst    <= W_ADDR;
       rst_r  <= R_ADDR;
-      w_id   <= 12'd0;
-      r_id   <= 12'd0;
-      r_left <= 4'd0;
+      w_id   <= '0;
+      r_id   <= '0;
+      r_left <= '0;
     end else begin
       unique case (wst)
         W_ADDR: if (s_awvalid) begin
@@ -115,8 +128,8 @@ module cadr_gp0_default #(
           rst_r  <= R_DATA;
         end
         R_DATA: if (s_rready) begin
-          if (r_left == 4'd0) rst_r <= R_ADDR;
-          else r_left <= r_left - 4'd1;
+          if (r_left == '0) rst_r <= R_ADDR;
+          else r_left <= r_left - LEN_W'(1);
         end
         default: rst_r <= R_ADDR;
       endcase

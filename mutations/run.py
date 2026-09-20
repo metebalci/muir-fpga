@@ -736,6 +736,61 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # THE MACHINE ON THE DE25-NANO'S MEMORY PORT, which is one port with three
+    # masters on it and a gate software opens.  `sources` is the arbiter, the
+    # gate, the port that wires them and the map the board's addresses come
+    # from; the machine, the adapter, the widening and the tally are `extra`,
+    # having checks of their own, and `tb/cadr_f2sdram_harness.sv` is the
+    # wiring rather than the thing checked.
+    #
+    # **BUILT WITH THE DE25-NANO'S MAP**, as the Makefile builds it: the
+    # addresses the machine puts on the bridge are the board's, and the model
+    # behind the bridge watches those.
+    #
+    # Five configurations, and each catches what the others cannot: the port
+    # open, the port never opened, the same machine cycles with and without
+    # two other masters streaming, and the processor asking the fabric to be
+    # quiet in the middle of the loop.  `tb/cadr_f2sdram_tb.cpp`'s header has
+    # them and the bound.
+    "f2sdram": {
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv",
+                    "rtl/plumbing/cadr_f2sdram_gate.sv",
+                    "rtl/plumbing/cadr_f2sdram_share.sv",
+                    "rtl/plumbing/cadr_f2sdram_port.sv"],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
+            "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_busint_regs.sv", "rtl/machine/cadr_console_bus.sv",
+            "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+            "rtl/plumbing/cadr_bus_audit.sv", "rtl/machine/cadr_memory_path.sv",
+            "rtl/machine/cadr_machine.sv", "rtl/plumbing/cadr_axi_master.sv",
+            "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
+            "tb/cadr_f2sdram_harness.sv",
+        ],
+        "top": "cadr_f2sdram_harness",
+        "tb": "tb/cadr_f2sdram_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-DCADR_DDR_MAP_DE25_NANO",
+                  "-Irtl/machine", "-Irtl/plumbing"],
+        "golden": None,
+        "gprom": True,
+    },
+    # AND THE DEFAULT SLAVE AT THE AGILEX 5 BRIDGES' SHAPE, four bits of ID
+    # and eight of read length: the same module and the same testbench, built
+    # as `build/gp0_default.pass` builds it a second time.  A record aimed at
+    # what only a burst longer than sixteen beats can reach belongs here, and
+    # one aimed at the module's shape belongs at `gp0_default` above, where it
+    # is the same speed and says the same thing.
+    "gp0_default_axi4": {
+        "sources": ["rtl/plumbing/cadr_gp0_default.sv"],
+        "top": "cadr_gp0_default",
+        "tb": "tb/cadr_gp0_default_tb.cpp",
+        "flags": ["-GID_W=4", "-GLEN_W=8", "-CFLAGS", "-DGP_ID_W=4",
+                  "-CFLAGS", "-DGP_LEN_W=8"],
+        "golden": None,
+    },
     # ONE TRANSACTION PER BUS CYCLE, IN THE DIRECTION WRCYC NAMES, AND NONE
     # ANYWHERE ELSE.  The property a spurious write at a read's own address
     # falls over, which is the shape the board's page-hash-table corruption has
@@ -1043,6 +1098,14 @@ CHECKS = {
         # The probe's board adds these, in `de25_check`'s second pass.
         "probe": ["rtl/plumbing/cadr_probe.sv",
                   "rtl/plumbing/agilex5/cadr_probe_vjtag.sv"],
+        # And the memory board's, in its third: the machine's port on the
+        # processor's FPGA-to-SDRAM bridge and the default slave both
+        # processor-to-fabric bridges are tied to.  Each has records of its
+        # own, at `f2sdram` and `gp0_default`.
+        "ddr": ["rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
+                "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_f2sdram_gate.sv",
+                "rtl/plumbing/cadr_f2sdram_share.sv", "rtl/plumbing/cadr_f2sdram_port.sv",
+                "rtl/plumbing/cadr_gp0_default.sv"],
         "top": "cadr_de25",
         "tb": None,
         "flags": [],
@@ -2051,8 +2114,12 @@ def de25_check(args, work, build_fails=False):
         return BROKEN, "the DE25-Nano's top level is not in this copy"
     prom = "-GPROM_HEX=\"%s\"" % os.path.join(args.goldens, "boot_prom.hex")
     sync = "-GSYNC_PROM_HEX=\"%s\"" % os.path.join(args.goldens, "sync_prom.hex")
+    # **AND THE BOARD'S MAP OF THE PROCESSOR'S MEMORY, ON EVERY PASS**, as the
+    # Makefile lints it: the top level refuses to elaborate without it, so a
+    # lint that left it out would report every mutation as caught.
     cmd = [args.verilator, "--lint-only", "-Wall", "-Irtl/machine",
-           "-Irtl/plumbing", prom, sync, "--top-module", spec["top"]]
+           "-Irtl/plumbing", "-DCADR_DDR_MAP_DE25_NANO", prom, sync,
+           "--top-module", spec["top"]]
     cmd += spec["stubs"] + tick_pkg(work) + spec["extra"] + spec["sources"]
     rc, out = run(cmd, work)
     if rc != 0:
@@ -2065,7 +2132,16 @@ def de25_check(args, work, build_fails=False):
     rc, out = run(cmd[:6] + ["-GPROBE_DEPTH=1024"] + cmd[6:] + probe, work)
     if rc != 0:
         return lint_verdict(out, build_fails)
-    return SURVIVED, "lint passes on both board configurations"
+    # And the memory board, as `build/de25.pass` lints it third: the processor
+    # in the design, which is a define and not a parameter because it changes
+    # the top level's port list.
+    ddr = spec["ddr"]
+    if not all(os.path.exists(os.path.join(work, f)) for f in ddr):
+        return SURVIVED, "lint passes on the two board configurations this copy has"
+    rc, out = run(cmd[:6] + ["-DCADR_DE25_DDR"] + cmd[6:] + ddr, work)
+    if rc != 0:
+        return lint_verdict(out, build_fails)
+    return SURVIVED, "lint passes on all three board configurations"
 
 
 def generator_check(args, work, spec):

@@ -8,10 +8,11 @@
 #     quartus_sh -t boards/de25-nano/quartus/project.tcl <build dir> <userid> <source>...
 #
 # from the repository's root.  The sources are the Makefile's `$(MACHINE)` and
-# `$(DE25_TOP)`, in that order, and `$(DE25_PROBE)` after them when the probe
-# is built, so that the list of what the board is built from is written once,
-# beside the lint that reads the same list.  `PROBE_DEPTH` in the environment
-# is the probe's depth, and zero or none is the plain board.
+# `$(DE25_TOP)`, in that order, then `$(DE25_PROBE)` when the probe is built
+# and `$(DE25_DDR)` when the memory board is, so that the list of what the
+# board is built from is written once, beside the lint that reads the same
+# list.  `PROBE_DEPTH` in the environment is the probe's depth, and zero or
+# none is the plain board; `DDR` is 1 for the memory board.
 #
 # **NOTHING HERE IS TAKEN FROM A GUI-SAVED PROJECT.**  A `.qsf` saved by the
 # tool carries dates, versions and every default it happened to write, and
@@ -29,6 +30,11 @@ set build   [file normalize [lindex $argv 0]]
 set probe_depth [expr {[info exists ::env(PROBE_DEPTH)] ? $::env(PROBE_DEPTH) : 0}]
 if {![string is integer -strict $probe_depth] || $probe_depth < 0} {
     puts "project: PROBE_DEPTH is '$probe_depth', which is not a depth"
+    exit 1
+}
+set ddr [expr {[info exists ::env(DDR)] ? $::env(DDR) : 0}]
+if {$ddr ne "0" && $ddr ne "1"} {
+    puts "project: DDR is '$ddr', which is neither 0 nor 1"
     exit 1
 }
 set userid  [lindex $argv 1]
@@ -86,6 +92,20 @@ foreach f $sources {
 set_global_assignment -name IP_FILE [file join $build ip cadr_de25_pll.ip]
 set_global_assignment -name IP_FILE [file join $build ip cadr_de25_reset_release.ip]
 set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_de25.sdc]
+
+# **THE BOARD'S MAP OF THE PROCESSOR'S MEMORY, ALWAYS**, and the memory board's
+# processor, pins and constraints when it is built.  `rtl/plumbing/cadr_ddr_map.sv`
+# chooses the DE25-Nano's base by the first define, and the top level refuses
+# to elaborate without it; the second is `boards/de25-nano/cadr_de25.sv`'s own
+# switch for the memory board, which changes its port list.  `cadr_ddr.sdc`
+# is read only when the memory port is in the design, for the reason the
+# probe's file below is.  The processor system itself is added to the
+# project by `build.sh`, which builds it after this.
+set_global_assignment -name VERILOG_MACRO "CADR_DDR_MAP_DE25_NANO=1"
+if {$ddr} {
+    set_global_assignment -name VERILOG_MACRO "CADR_DE25_DDR=1"
+    set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_ddr.sdc]
+}
 
 # **THE PROBE, AND ITS OWN CONSTRAINTS, ONLY WHEN IT IS BUILT.**  The Virtual
 # JTAG IP deployed by `build.sh`, the depth as the top level's parameter, and
@@ -167,6 +187,54 @@ set_global_assignment -name PWRMGT_LINEAR_FORMAT_N "-12"
 set_global_assignment -name STRATIX_JTAG_USER_CODE $userid
 set_global_assignment -name USE_CHECKSUM_AS_USERCODE OFF
 
+# **THE MEMORY BOARD'S PROCESSOR BOOTS FIRST**, and these four are how, each
+# as Altera's MIT-0 demo sets it for this board (its
+# `create_quartus_project.tcl`, the same commit as above).  Only the memory
+# board has a processor to boot, so the board without it sets none of them.
+#
+#   HPS_INITIALIZATION "HPS FIRST"  the processor is configured and boots
+#       before the fabric, which is what lets U-Boot load the fabric from the
+#       card; the HPS Booting User Guide, document 813762, chapter 6: "only
+#       when using the HPS Boot First mode".
+#   HPS_DAP_SPLIT_MODE "SDM PINS"   the processor's debug access port on the
+#       SDM's JTAG pins, the board's one JTAG connection, so that a debugger
+#       can reach the processor over the cable this project already uses.
+#   HPS_DAP_NO_CERTIFICATE ON       that port open without an authentication
+#       certificate, which is what a development board wants.
+#   QSPI_OWNERSHIP HPS              the configuration flash the processor's
+#       after it boots, as the processor's first stage expects when it boots
+#       first.
+#
+# **AND ONE BOARD BOOTS THE OTHER WAY ROUND, FOR A BOARD WITH NO FLASH
+# WRITTEN.**  `DE25_HPS_BOOT` is `hps-first` by default and `fpga-first` for
+# the development board that is loaded over JTAG: the processor cannot be
+# configured over JTAG in HPS-first mode --- the Booting User Guide's section
+# 4.5.2 puts its phase-1 bitstream in the flash --- while an FPGA-first board
+# takes one file over JTAG that configures the fabric AND starts the
+# processor's first stage from the same file (its section 4.5.1).  That board
+# may not configure the fabric from the processor afterwards (Technical
+# Reference Manual A.4.2.1), which the card's `uEnv.txt` says with
+# `cadr_fabric_loaded=1`.
+set hps_boot [expr {[info exists ::env(DE25_HPS_BOOT)] ? $::env(DE25_HPS_BOOT) : "hps-first"}]
+if {$hps_boot ne "hps-first" && $hps_boot ne "fpga-first"} {
+    puts "project: DE25_HPS_BOOT is '$hps_boot', which is neither hps-first nor fpga-first"
+    exit 1
+}
+if {$ddr} {
+    # Quartus's own two values, from `linux64/assignment_defaults.qdf`:
+    # "HPS FIRST", and "After INIT_DONE" for the fabric first, which is what
+    # `quartus_pfg -i` calls `HPS_AFTER_INIT_DONE` and the default for this
+    # family.
+    if {$hps_boot eq "hps-first"} {
+        set_global_assignment -name HPS_INITIALIZATION "HPS FIRST"
+    } else {
+        set_global_assignment -name HPS_INITIALIZATION "After INIT_DONE"
+    }
+    set_global_assignment -name HPS_DAP_SPLIT_MODE "SDM PINS"
+    set_global_assignment -name HPS_DAP_NO_CERTIFICATE ON
+    set_global_assignment -name QSPI_OWNERSHIP HPS
+}
+
 # ----------------------------------------------------------------- the pins
 #
 # **FROM `boards/de25-nano/de25_nano_pins.tcl`, AND ONLY FOR THE PORTS THE TOP
@@ -177,6 +245,13 @@ set_global_assignment -name USE_CHECKSUM_AS_USERCODE OFF
 # recorded rather than applied, and only the top level's ports are applied
 # here.  The pin file stays the one place a pin is written.
 set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\])$}
+set wanted_ports 15
+# And the memory board's: the processor's LPDDR4 bank, 57 pins, and its 40
+# peripheral pins, every one the pin file has.
+if {$ddr} {
+    set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\]|lpddr4a_.*|hps_.*)$}
+    set wanted_ports [expr {15 + 57 + 40}]
+}
 set locations {}
 set standards {}
 proc record_location {pin -to port} {
@@ -209,17 +284,18 @@ foreach {port standard} $standards {
         incr standardized
     }
 }
-# One clock, two buttons, four switches and eight LEDs.  A count that is not
-# fifteen is a pin file or a port list that has moved under this flow.
-if {$placed != 15 || $standardized != 15} {
-    puts "project: placed $placed ports and gave $standardized a standard, wanting 15 and 15"
+# One clock, two buttons, four switches and eight LEDs, and on the memory
+# board the processor's 97.  A count that is not the one wanted is a pin file
+# or a port list that has moved under this flow.
+if {$placed != $wanted_ports || $standardized != $wanted_ports} {
+    puts "project: placed $placed ports and gave $standardized a standard, wanting $wanted_ports and $wanted_ports"
     exit 1
 }
-puts "project: 15 of the pin file's [expr {[llength $locations] / 2}] ports are this top level's"
+puts "project: $wanted_ports of the pin file's [expr {[llength $locations] / 2}] ports are this top level's"
 
 project_close
 if {$probe_depth > 0} {
     puts "project: written to $build/cadr_de25.qsf with USERCODE $userid and a probe of $probe_depth samples"
 } else {
-    puts "project: written to $build/cadr_de25.qsf with USERCODE $userid"
+    puts "project: written to $build/cadr_de25.qsf with USERCODE $userid, $hps_boot"
 }

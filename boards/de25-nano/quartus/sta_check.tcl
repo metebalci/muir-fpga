@@ -193,7 +193,7 @@ proc assert_constraints_scoped {exempt} {
         incr failures
     } else {
         puts "sta: no register outside the machine is relaxed ([get_collection_size $outside] registers asked,\
-              [get_collection_size $exempt] exempt by the probe's own clause)"
+              [get_collection_size $exempt] exempt by the probe's and the memory port's own clauses)"
     }
 }
 
@@ -246,18 +246,23 @@ if {[llength [info procs cadr_leaves]] == 0} {
 
 # THE THREE COLLECTIONS THEMSELVES, as `cadr_de25.sdc` left them.  An empty
 # one is a clause that reached nothing, whatever the paths below then say.
-foreach {what var} {{the relaxed set} slow {its tick-rate exclusions} fast
+# **THE LOOP'S VARIABLES ARE NAMED APART FROM EVERY SHORT WORD**, because the
+# constraint files share this interpreter: the processor system's generated
+# SDC files are read into it too, and one of them leaves an ARRAY called
+# `var`, on which `foreach {what var}` fails with "variable is array".
+# Measured on the first memory board build.
+foreach {sta_what sta_var} {{the relaxed set} slow {its tick-rate exclusions} fast
                     {the held decodes put back} held {the display's word pins} bus_word
                     {the Unibus map's word pins} ub_strobe} {
-    if {![info exists ::$var]} {
-        puts "sta: FAIL: cadr_de25.sdc left no collection named $var"
+    if {![info exists ::$sta_var]} {
+        puts "sta: FAIL: cadr_de25.sdc left no collection named $sta_var"
         incr failures
         continue
     }
-    set n [get_collection_size [set ::$var]]
-    puts "sta: $what: $n"
-    if {$n == 0 && $var ne "bus_word"} {
-        puts "sta: FAIL: $what is empty"
+    set n [get_collection_size [set ::$sta_var]]
+    puts "sta: $sta_what: $n"
+    if {$n == 0 && $sta_var ne "bus_word"} {
+        puts "sta: FAIL: $sta_what is empty"
         incr failures
     }
 }
@@ -303,7 +308,73 @@ if {[get_collection_size $probe] == 0} {
     # grid: 75 ns
     assert_instance_timing $tick 8 g_probe.u_probe {stable_q}
 }
-assert_constraints_scoped $probe_stable
+# THE MEMORY BOARD, WHEN IT IS BUILT, and `cadr_ddr.sdc`'s two clauses: the
+# adapter's address and data registers at the bus's 80 ns and no other
+# register of the adapter, and the processor's four asynchronous bits and the
+# default slaves' reset cut at their first register and nowhere else.
+set ddr_exempt [get_registers -nowarn {u_memory|u_axi|m_axi_awaddr[*] u_memory|u_axi|m_axi_araddr[*]
+                                       u_memory|u_axi|m_axi_wdata[*]}]
+if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
+    puts "sta: the memory port is not in this build"
+} else {
+    # **AND THIRTY-TWO AND NOT THIRTY-THREE** for the other clause: the
+    # acknowledgment's register and thirty-one of the tally's thirty-two
+    # bits.  Bit 31 is the tally's own marker, a constant zero in both halves,
+    # and the fitter keeps no register for it; bit 15, the marker's constant
+    # one, it keeps.  Measured.
+    #
+    # **EIGHTY AND NOT NINETY-SIX.**  The clause names three registers of
+    # thirty-two bits, and the top eight bits of both addresses are the
+    # region's base, `0xB0`, which is a constant: the fitter keeps no
+    # register for them, so the pins are 24 + 24 + 32.
+    foreach {sta_what sta_var sta_want} {{the adapter's address and data pins} ddr_contract 80
+                             {the registers the processor samples on its own clock} ddr_to_hps 32
+                             {the processor's asynchronous bits' first registers} ddr_crossing 5} {
+        if {![info exists ::$sta_var]} {
+            puts "sta: FAIL: cadr_ddr.sdc left no collection named $sta_var"
+            incr failures
+            continue
+        }
+        set n [get_collection_size [set ::$sta_var]]
+        if {$n != $sta_want} {
+            puts "sta: FAIL: $sta_what: $n, wanting $sta_want"
+            incr failures
+        } else {
+            puts "sta: $sta_what: $n"
+        }
+    }
+    # grid: 80 ns
+    assert_instance_timing $tick 8 u_memory|u_axi {m_axi_awaddr m_axi_araddr m_axi_wdata}
+    # And a cut that reached its registers leaves no timed path out of them.
+    if {[info exists ::ddr_to_hps] && [get_collection_size $::ddr_to_hps] > 0} {
+        set timed [get_collection_size [get_timing_paths -setup -from $::ddr_to_hps -npaths 100]]
+        if {$timed > 0} {
+            puts "sta: FAIL: $timed timed paths start at a register the processor samples on its own clock"
+            incr failures
+        } else {
+            puts "sta: no timed path starts at the registers the processor samples on its own clock"
+        }
+    }
+    # A cut that reached its registers leaves no timed path into them.
+    if {[info exists ::ddr_crossing] && [get_collection_size $::ddr_crossing] > 0} {
+        set timed [get_collection_size [get_timing_paths -setup -to [data_pins $::ddr_crossing] -npaths 100]]
+        if {$timed > 0} {
+            puts "sta: FAIL: $timed timed paths end at a first synchronizer register"
+            incr failures
+        } else {
+            puts "sta: no timed path ends at the processor's bits' first registers"
+        }
+    }
+}
+set exempt $probe_stable
+if {[get_collection_size $ddr_exempt] > 0} {
+    if {[get_collection_size $exempt] > 0} {
+        set exempt [add_to_collection $exempt $ddr_exempt]
+    } else {
+        set exempt $ddr_exempt
+    }
+}
+assert_constraints_scoped $exempt
 # At a 10 ns grid this count is shared: the bus's setup below is eight ticks
 # too, so a relaxed set that reached nothing would still find the display's
 # eight here.  The instance assertions are the sharp half.

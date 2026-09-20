@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Where the CADR's memory lives in PS DDR3.
+// Where the CADR's memory lives in the processing system's DDR.
 //
 // This is the one map in the project that is expensive to change, so it is
 // settled early and in one place.  The fabric constants below can be moved any
@@ -45,6 +45,28 @@
 //
 // The reserved region sits at the top of DDR so that Linux's own memory starts
 // at zero and needs no hole in it.
+//
+// **THE BASE IS THE BOARD'S, AND THE LAYOUT UNDER IT IS NOT.**  The DE25-Nano's
+// processor has 1 GB of LPDDR4 at `0x8000_0000` to `0xBFFF_FFFF`, and the fabric
+// sees it at those same addresses through the FPGA-to-SDRAM bridge.  Its
+// 128 MB are reserved at `0xB000_0000`, the second 128 MB from the top, and
+// not at the top: U-Boot on this part relocates itself to the top of DDR
+// without looking at a reserved-memory node, so the top 128 MB is U-Boot's
+// until Linux runs, and the fabric's gate is opened by U-Boot.
+//
+//   board          RESERVED_BASE   main memory    display
+//   Arty, Cora     0x1800_0000     0x1800_0000    0x1C00_0000
+//   DE25-Nano      0xB000_0000     0xB000_0000    0xB400_0000
+//
+// **ONE DEFINE CHOOSES**, `CADR_DDR_MAP_DE25_NANO`, which the DE25-Nano's
+// flows set and no other flow does.  A package cannot take a parameter, and
+// the base is read deep inside `cadr_machine`, where a parameter would have to
+// be carried through two modules of the machine that are MIT's and not the
+// board's.  The define is not trusted on its own:
+// `boards/de25-nano/cadr_de25.sv` states its own base and stops elaboration
+// when this package disagrees, so a flow that forgot the define builds nothing
+// rather than a board that writes the Zynq's addresses into the processor's
+// address map.
 
 `default_nettype none
 
@@ -54,13 +76,22 @@
 /* verilator lint_off UNUSEDPARAM */
 package cadr_ddr_map;
 
+`ifdef CADR_DDR_MAP_DE25_NANO
+  // The second 128 MB from the top of the DE25-Nano's 1 GB: see the header.
+  localparam logic [31:0] RESERVED_BASE = 32'hB000_0000;
+`else
   // The top 128 MB of the Arty Z7-20's 512 MB.
   localparam logic [31:0] RESERVED_BASE = 32'h1800_0000;
+`endif
   localparam int unsigned RESERVED_MB   = 128;
 
   // Main memory. A word is 32 bits, so the byte address is the CADR's word
   // address shifted left by two.
+`ifdef CADR_DDR_MAP_DE25_NANO
+  localparam logic [31:0] MAIN_BASE  = 32'hB000_0000;
+`else
   localparam logic [31:0] MAIN_BASE  = 32'h1800_0000;
+`endif
   localparam int unsigned MAIN_WORDS = 16 * 1024 * 1024;  // 64 MB reserved
 
   // What the machine can address today: 60 boards of 64K words, the top four
@@ -69,7 +100,11 @@ package cadr_ddr_map;
   localparam int unsigned MAIN_WORDS_REACHABLE = 3_932_160;
 
   // The display.
+`ifdef CADR_DDR_MAP_DE25_NANO
+  localparam logic [31:0] DISPLAY_BASE  = 32'hB400_0000;
+`else
   localparam logic [31:0] DISPLAY_BASE  = 32'h1C00_0000;
+`endif
   localparam int unsigned DISPLAY_WORDS = 2 * 1024 * 1024;  // 8 MB reserved
 
   // tv::BUFFER_WORDS, 0o100000: the 64 4116s on the SIMPLE TV.

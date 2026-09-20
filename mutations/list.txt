@@ -3048,6 +3048,240 @@
       end
 @end
 
+# ------------------------------------------------------------------------
+# The DE25-Nano's memory port: one FPGA-to-SDRAM bridge, three masters on it
+# and a gate software opens.  `f2sdram` is the check, and its five
+# configurations are in `tb/cadr_f2sdram_tb.cpp`'s header; each record below
+# says which of them sees it.
+# ------------------------------------------------------------------------
+
+@mutation f2sdram-the-decoration-is-not-the-sdrams
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The bridge's own convention: AxUSER 0xE0, "SDRAM direct", which the
+@note Technical Reference Manual's section 10.8 gives and its table 336 repeats.
+@note A transaction without it is one the bridge routes somewhere else.
+@old
+  localparam logic [7:0] USER_SDRAM   = 8'hE0;
+@new
+  localparam logic [7:0] USER_SDRAM   = 8'h00;
+@end
+
+@mutation f2sdram-the-beat-is-not-bufferable
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note AxCACHE is `0b0010` or `0b0011` at this bridge, table 337, and no other
+@note value is in the table at all.
+@old
+  localparam logic [3:0] CACHE_BUFFER = 4'b0010;
+@new
+  localparam logic [3:0] CACHE_BUFFER = 4'b0000;
+@end
+
+@mutation f2sdram-the-master-is-secure
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note AxPROT `0b011`, privileged and non-secure, which is what Altera's own
+@note adapters drive and what this design chose; the manual's example table says
+@note `0b001`, and which of the two the board wants is a decision to confirm.
+@note Whichever it is, it is one value and the check knows which.
+@old
+  localparam logic [2:0] PROT_NS      = 3'b011;
+@new
+  localparam logic [2:0] PROT_NS      = 3'b001;
+@end
+
+@mutation f2sdram-a-read-is-a-narrow-transfer
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note "The number of bytes in a transfer must be equal to the data bus width"
+@note (table 336), so a four-byte beat on a 64-bit port is a transaction the
+@note bridge refuses.  The machine's word rides in a full beat with strobes and
+@note never in a narrow one; this is the fabric asking for the narrow transfer
+@note `cadr_axi_widen.sv`'s header says was sidestepped rather than answered.
+@old
+  assign m_arsize   = {1'b0, s_arsize[ar_who]};
+@new
+  assign m_arsize   = {1'b0, s_arsize[ar_who]} & 3'b110;
+@end
+
+@mutation f2sdram-every-read-carries-the-machines-id
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The ID is what the responses are routed by, and each master has its own.
+@note With every read carrying the machine's, the display's data comes back to
+@note the machine's adapter.  Nothing in a run with one master can see it, which
+@note is why the check runs one with three.
+@old
+  assign m_arid     = 5'(ar_who);
+@new
+  assign m_arid     = 5'd0;
+@end
+
+@mutation f2sdram-the-machine-is-not-first
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note While the machine is asking for a word or waiting for one, the other
+@note masters are granted nothing new, and that hold is what makes the bound
+@note in BUSY the machine's: what it waits for is what was in flight when it
+@note asked.  Without it they keep being granted while it waits.
+@note
+@note **AND PRIORITY BY PORT ALONE DOES NOT DO THIS**, measured: with one
+@note burst in flight per master, a master waiting for its answer is not
+@note asking, so the machine almost never meets another at the same tick.
+@note Reversing the priority --- the loop in `first` run the other way ---
+@note moved not one number of the check, which is why the design has the hold
+@note and this record is aimed at it.
+@old
+  assign ar_can = (s_arvalid & ~rd_out) & eligible;
+@new
+  assign ar_can = (s_arvalid & ~rd_out) & (machine_busy ? {N{1'b1}} : eligible);
+@end
+
+@mutation f2sdram-a-master-may-have-two-bursts-in-flight
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note One burst in flight per master and direction is the whole of what bounds a
+@note machine cycle: what the machine waits for is what was already accepted when
+@note it asked.  Without the outstanding bit, a streaming master queues as many as
+@note the bridge will take and the machine waits behind all of them.
+@old
+  assign ar_can = (s_arvalid & ~rd_out) & eligible;
+@new
+  assign ar_can = s_arvalid & eligible;
+@end
+
+@mutation f2sdram-the-write-data-need-not-finish
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note A write is let go when its address and its last data beat have both been
+@note taken.  Let go at the address alone, the next write's address can be put to
+@note a bridge still waiting for the last one's data --- and the bridge has no
+@note write ID to tell them apart.
+@old
+        if ((aw_done || aw_take) && (w_done || w_take)) begin
+@new
+        if (aw_done || aw_take) begin
+@end
+
+@mutation f2sdram-a-response-goes-to-every-master
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note A write response carries the ID of the write it answers, and only that
+@note master may see it.  Offered to all three, the machine takes the pack side's
+@note response as its own.
+@old
+      s_bvalid[i]  = m_bvalid && b_mine[i];
+@new
+      s_bvalid[i]  = m_bvalid;
+@end
+
+@mutation f2sdram-a-grant-ignores-the-hold
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note `hold` is the gate's: the port is shut, or the processor has asked the
+@note fabric to be quiet before it resets the bridge, and the manual's section
+@note 8.7.4 says the fabric must then have no traffic toward the memory at all.
+@old
+        if (!hold && (ar_can != '0)) begin
+@new
+        if (ar_can != '0) begin
+@end
+
+@mutation the-port-is-open-before-software-opens-it
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The bridge is in reset until the secure firmware releases it, and software
+@note says so on `h2f_gp_out[0]`.  A fabric that does not wait puts its first
+@note memory cycle to a bridge that is still in reset --- which is what the SHUT
+@note configuration is a board on which nobody has run `bridge enable`.
+@old
+  assign opened  = open_s[2];
+@new
+  assign opened  = open_s[2] | 1'b1;
+@end
+
+@mutation the-quiet-is-acknowledged-before-the-fabric-is
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The acknowledgment's whole meaning is that the fabric has gone quiet: the
+@note processor's reset manager waits for it and then resets the bridge under
+@note whatever is still in the air.  Acknowledged on the request alone, it is
+@note given while a transaction is still outstanding.
+@old
+      ack_n    <= !(pending && port_rst);
+@new
+      ack_n    <= !pending;
+@end
+
+@mutation the-port-is-cut-off-in-the-middle-of-a-transaction
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note A master that has put a valid address to the bridge may not take it back,
+@note and a bridge that has taken one will answer it.  Reset on the hold alone,
+@note the adapter goes away with a read outstanding and the bridge is left
+@note holding an answer nobody will take.
+@old
+      port_rst <= hps_rst || (hold && idle);
+@new
+      port_rst <= hps_rst || (hold && (idle || 1'b1));
+@end
+
+@mutation the-tally-counts-another-masters-answers
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_port.sv
+@note The tally is the machine's: what IT asked and what the bridge answered IT.
+@note Counted without the ID, the pack side's and the display's responses are the
+@note machine's too, and the number software reads is not a measurement of
+@note anything.
+@old
+    count_bvalid <= f2s_bvalid && (f2s_bid == 5'd0);
+@new
+    count_bvalid <= f2s_bvalid;
+@end
+
+@mutation the-tallys-halves-are-the-wrong-way-round
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_port.sv
+@note One word where the Zynq boards have two, so `h2f_gp_out[1]` chooses the
+@note half: low the answers, high the requests.  Swapped, a port that answered
+@note nothing reads as one that answered everything and asked nothing, which is
+@note the reading the whole instrument exists to make possible.
+@old
+    gp_in  <= half_s[2] ? tally[63:32] : tally[31:0];
+@new
+    gp_in  <= half_s[2] ? tally[31:0] : tally[63:32];
+@end
+
+@mutation the-de25s-memory-is-at-the-zynqs-base
+@check f2sdram
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The DE25-Nano's processor has its memory at `0x8000_0000` and the CADR's
+@note 128 MB are reserved at `0xB000_0000`; the Zynq's `0x1800_0000` is not
+@note memory on this part at all, and the manual warns against a fabric master
+@note reaching outside the memory's own aperture.
+@old
+  localparam logic [31:0] MAIN_BASE  = 32'hB000_0000;
+@new
+  localparam logic [31:0] MAIN_BASE  = 32'h1800_0000;
+@end
+
+@mutation gp0-default-counts-four-bits-of-a-bursts-length
+@check gp0_default_axi4
+@file rtl/plumbing/cadr_gp0_default.sv
+@note The Agilex 5's bridges carry eight bits of burst length, so a read there
+@note can be 256 beats; GP0 carries four.  Counted four bits wide, a burst of
+@note seventeen beats or more gets a handful and the master waits for the rest.
+@note At GP0's own shape the two are the same expression, so the check that sees
+@note this is the one built at the bridges' shape.  The length is masked rather
+@note than sliced, so that every bit of it stays read and lint does not do the
+@note catching.
+@old
+          r_left <= s_arlen;
+@new
+          r_left <= s_arlen & LEN_W'(15);
+@end
+
 
 # ======================================================== the top level ===
 #
@@ -5259,9 +5493,9 @@ if {0 && $held ne $want} {
 @note stops taking beats and the slave stands with one owed.  Caught at
 @note "RLAST on a beat that is not the last".
 @old
-  assign s_rlast   = (r_left == 4'd0);
+  assign s_rlast   = (r_left == '0);
 @new
-  assign s_rlast   = (r_left == 4'd1);
+  assign s_rlast   = (r_left == LEN_W'(1));
 @end
 
 @mutation gp0-default-answers-with-the-reads-id
