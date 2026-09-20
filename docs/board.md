@@ -2258,3 +2258,172 @@ the card at 18.6 MiB/s under the shipped loader and at 5.4 MiB/s under this
 project's, so they leave the card interface at different speeds, and whatever
 separates them is not confined to the QSPI controller. Which of their settings
 accounts for the panic is not established here.
+
+## The DE25-Nano's display on a monitor, 20 September 2026
+
+A monitor was wired to this board's HDMI connector for the first time, and a
+signal left that connector. The fabric is build `321a7510`, built with both the
+memory and the display, and the card is a new one, written whole from a single
+image and booted here for the first time.
+
+**The bitstream and the tree are one commit.** The file downloaded carries the
+processor's first stage as well as the fabric, which the packager reports as
+`HPS present: TRUE`, and it was checked for that before anything was sent, the
+bare fabric file beside it being the one that would leave the processor to the
+flash. The part read back `ffffffff` before the download and `321a7510` after
+it. The JTAG chain held one part before and two after, the processor's debug
+port joining during configuration, and the hub reported a design before the
+download and none after, because the image in the flash carries a hub node and
+this build carries none. The build's own report gives mode 1280x1024 at 60 Hz,
+a pixel clock of 108.0030 MHz where the mode asks 108.0, 16,076 ALMs and 135
+M20K, with timing met. The board still needs a cable at every power-on, since
+its flash has not been written and this configuration is volatile.
+
+**A signal leaves the board's video connector.** The control was taken from
+outside and before anything was done to the board: the same monitor on the
+same cable reported no signal with the part unconfigured. The reading after the
+download, by the same eye on the same monitor and the same cable, is that the
+display works. The transmitter does nothing at all until its registers are
+written, and `rtl/plumbing/cadr_adv7513.sv` writes them out of the fabric's
+reset with no program, no face and no boot in the path, so a monitor that syncs
+at all says the register program reached the part and made it transmit.
+`docs/display-output.md` records that nothing held that these registers make an
+ADV7513 transmit, and that the connector had never been wired to a monitor;
+both of those are superseded here. That document also leaves one question open
+for the first time a monitor is attached, which is that the pixel clock's pin
+sits in a bank whose standards stop at 1.2 V while the part's data sheet asks
+at least 1.35 V of its video inputs. A monitor syncing at this mode is the
+first evidence that the two meet on this board, and it is evidence from one
+board at one mode.
+
+**The raster is running, and that is measured inside the fabric rather than
+inferred from the picture.** The instrument is the sleep mute, because of where
+it lives: in `rtl/plumbing/cadr_display_out.sv` the timer runs on the machine's
+clock, but the mute is assigned only at the last pixel of the last line of a
+frame, in the pixel clock's own domain, and what the console reports is that
+bit brought back through two flip-flops. With the sleep set to five seconds the
+console read awake at once and again a second later, so the bit is not stuck
+and the timer had restarted at the write. Eight seconds later it read asleep,
+which is reachable only through a frame boundary of the pixel raster. Turning
+the sleep off read asleep in the same command, which is right, because the mute
+is released at the next frame boundary and a console read microseconds after
+the write falls inside that window; a later read said awake. That is two frame
+boundaries, one in each direction, so the pixel-clock domain advanced through
+whole frames while it was measured.
+
+**The machine's screen is in the memory the display reads**, by three readings
+on three code paths. A sample of 1,000 words taken across the machine's display
+window at a stride of 23 words, which is coprime with the line of 24 and so
+walks every position in a line, had 854 of its 32,000 bits lit, 2.67 per cent,
+and 862 on a repeat minutes later, so the screen is drawn and static. The
+terminal's own reading of the whole screen was 17,999 of 739,584, 2.43 per
+cent. One frame read over RFB from the build host was 18,016 of 739,584, and it
+is a Lisp Listener with its herald, its mode line and a status line. The
+control is the color board's window, which no fitted board and no program
+writes: 16,367 of 32,768 bits lit, 49.9 per cent, half its bits set, which is
+what uninitialized memory looks like. The terminal's own reading of the main
+window before the machine had painted was 368,831 of 739,584, 49.87 per cent,
+which agrees with that control at a different address by a different program.
+An earlier sample of the same window at a stride of 22 read 1.08 per cent, and
+that is explained rather than explained away: 22 shares a factor with the line
+of 24, so it only ever lands on even word positions and never sees the other
+twelve.
+
+**The card boots by itself.** The shipped boot path ran all the way through
+with nothing typed once the fabric was loaded. This project's own first-stage
+loader replaced the factory one that had been panicking the kernel in a loop,
+and then U-Boot read the card's `uEnv.txt` of 1,942 bytes, the device tree of
+23,737 bytes, the kernel and the ramdisk, and started Linux, which started six
+programs from the card's own `fpgarc`. The drive came present at 815 cylinders,
+19 heads and 17 blocks a track, 263,245 blocks in all, with a labeled pack, and
+the machine reported RUNNING with PROMDISABLE set. The disk pack program's
+final tally is 42,371 blocks served and 20,493 written back, with none denied,
+none refused, none deferred, none lost and no failures, over 213,582 polls. Two
+cycle counter readings 2,000 us apart differ by 11,637 microcycles, which is
+5.82 million a second.
+
+**The board's clock reads the epoch, and that is the right reading for this
+card.** The root filesystem is the first that carries the flags which set a
+date and a time, but both lines are commented out on this card, and a fresh
+card has no saved clock from a previous clean shutdown, so there is nothing to
+restore and nothing to set. The board has no real-time clock. These are the
+flags being absent, not the flags failing.
+
+**The Ethernet transmits, and the Chaosnet program carried a round trip.** This
+was found while measuring the display and was not what the session set out to
+do. The board took an address by DHCP, where the first attempt had reported no
+lease, it answers a ping from the build host in under a millisecond, and its
+RFB server accepted a connection from the build host, which is how the frame
+above was read. The Chaosnet program's own tally reads one frame from the
+machine and one to it, one out and one in over UDP, one datagram arrived, none
+refused for its shape, none with a bad checksum and **none with nowhere to go**.
+The machine asked the associated machine for the time at cold boot and was
+answered: the associated machine's own log, on another host, records answering
+a time request from this machine's Chaosnet address, and the band's status line
+carries today's date at a local time two hours ahead of UTC while Linux
+underneath it still reads the epoch. The board has no real-time clock, so that
+date came over the network. The section above records ten frames from the
+machine with nowhere to go, because this board's Ethernet transmit path did not
+work; that is superseded here, and what changed between the two is not
+established by this session.
+
+### What this does not establish
+
+**Nothing ties the pixels at the connector to that memory.** Everything
+measured here is what is *in* the display's window, and nothing on the board
+can read what leaves the connector, so the tie between the two is one pair of
+eyes. That the picture is the machine's own screen, and that it is centered in
+the raster as built, have not been confirmed at the monitor. Nor was the
+sequence that would have settled it recorded as it happened: black while the
+memory gate is still shut, then a block of noise 768 by 963 centered with a
+black border, then the machine's screen. The one test that would close it is to
+write a run of known words into the window and see a bar appear where the
+arithmetic says, which needs somebody at the monitor and has not been done.
+
+**The monitor's own reading of its mode has not been taken.** The fabric was
+built for 1280x1024 at 60 Hz and the pixel clock measures 108.0030 MHz against
+the 108.0 the mode asks, but nothing on the board can ask the monitor what it
+thinks it is receiving. A monitor that picked a different mode would show a
+picture with the wrong geometry, and that is exactly the failure this reading
+exists to separate.
+
+**Five signals that would report the transmitter's state and the display's own
+faults reach no register on any board.** The transmitter's `configured` and
+`failed`, and its count of the registers the part acknowledged, together with
+the display's sticky `underrun` and its read-error bit, all go into an unused
+fold in the board's top level, and the console has no command that reports any
+of them. So whether the two-wire program was acknowledged byte by byte is not
+established, and neither is whether the display has ever been starved. **A
+static screen being starved looks exactly like one being fed**, which is what
+that sticky bit exists to tell apart. The underrun and the read-error bit are
+folded on the Arty Z7-20 in the same way, so they are unreadable there too; the
+three that report the two-wire program are particular to this board, which is
+the only one with a transmitter to program. One console word would carry all
+five.
+
+**The sleep was not seen from outside.** The fabric entered the mute and left
+it, each at a frame boundary, but nobody was watching the monitor at the time,
+so whether it dropped to standby and came back is a separate claim and is not
+made here. The two rotations, the output selection and the second display board
+are all built and none of them has been seen.
+
+**Nothing was typed into the machine by any path.** So the terminal's path into
+the machine was not exercised, no key reached the band, and the serial line
+carried nothing. No USB keyboard is attached to this board.
+
+### What the drawing takes from this
+
+The Chaosnet block goes green, on the grounds the Arty Z7-20's block went green
+on and one witness more: the band's date comes from the network, the program's
+own tally accounts for every frame, and the associated machine's log on another
+host records the answer. The I/O board keeps the color that says checked here
+and not yet shown on silicon, because only its Chaosnet half was used. The
+terminal block keeps it too, its path into the machine being untouched.
+
+The display output block also keeps that color. Silicon has shown that the
+block drives a link a monitor accepts and that its raster runs, which is more
+than was known before it, but the drawing's green says a block has been shown
+on silicon, and what makes this block the display output — that the pixels it
+fetches from memory are the pixels that leave the connector — is the one thing
+above that nothing has yet read. Confirming the geometry at the monitor, or the
+pattern test, would turn it green.

@@ -1398,20 +1398,32 @@ connected, and at mode 3 as a fifth, which is the column only this board
 carries. `build/hdmi_mode_guard.pass` holds the other half of that, which is
 that the same column is refused on the board that cannot clock it.
 
-**Nothing holds that these registers make an ADV7513 transmit.** The register
-map is in a document that is not available, the program is the board vendor's
-own, and **the board's HDMI connector has never been wired to a monitor**. The
-display on this board is built, checked in simulation and fitted, and it has
-not been shown.
+**These registers do make an ADV7513 transmit, and that was shown rather than
+argued.** The register map is in a document that is not available and the
+program is the board maker's own, taken whole and cited by digest, so until a
+monitor was attached nothing held that it worked at all. One now has been. The
+same monitor on the same cable reported no signal while the part was
+unconfigured, and a picture after the fabric was loaded; the control was taken
+before anyone knew the answer. That part transmits nothing until its registers
+are written, so a monitor that synchronizes is the evidence the program
+reached it.
 
-**And one question about the board is left open rather than closed.** The
+**What is still not established is what leaves the connector.** Nothing on the
+board can read that, and five signals that would say whether the program was
+acknowledged byte by byte, and whether the display is being starved, reach no
+register on any board here. A starved display painting a screen that does not
+change looks exactly like one that is fed. So the picture is the whole of the
+evidence, and the geometry of it has not been described by anyone who saw it.
+`docs/board.md` carries the session and what it did not settle.
+
+**And the question about the pin is answered in practice, not in theory.** The
 pixel clock's pin is in a bank whose single-ended standards run from 1.0 V to
 1.2 V, so the pin file gives it 1.1 V and Quartus refuses 3.3 V there. The
 ADV7513's data sheet asks at least 1.35 V of its video inputs. The board
-vendor's own demonstration drives that pin the same way at a higher pixel
+maker's own demonstration drives that pin the same way at a higher pixel
 clock, and there is no schematic in the package to explain how the two meet.
-`boards/de25-nano/README.md` records it. It is a question for the first time a
-monitor is attached.
+The link works at 108 MHz, which settles that it can be driven this way and
+settles nothing about why. `boards/de25-nano/README.md` records it.
 
 ## What is not built
 
