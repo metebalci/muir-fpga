@@ -82,10 +82,17 @@ set CASES {
          "PROBE: wrote"}}
     {serial-no-match probe 1
         {"PROBE: FAILED --- 0 cables carry serial NOPE0000."}}
-    {two-parts probe 1
-        {"PROBE: FAILED --- the chain on DE25-Nano [9-1-iface0] holds 2 parts, wanting one:"}}
+    {processors-debug-port probe 0
+        {"PROBE: the processor's debug port is on the chain: @2: ARM_CORESIGHT_SOC_600 (0x4BA06477)"
+         "PROBE: the part is @1: A5E(A013BB23B|B013BB23BCS)/.. (0x4362C0DD)"
+         "PROBE: wrote"}}
+    {two-strangers probe 1
+        {"PROBE: FAILED --- the chain on DE25-Nano [9-1-iface0] holds a part that is neither this board's"}}
+    {two-of-ours probe 1
+        {"PROBE: FAILED --- the chain on DE25-Nano [9-1-iface0] holds 2 parts with this board's"}}
     {stranger probe 1
-        {"PROBE: FAILED --- the part on DE25-Nano [9-1-iface0] is `@1: SOMETHING (0x12345679)`, and this board's IDCODE is"}}
+        {"PROBE: FAILED --- the chain on DE25-Nano [9-1-iface0] holds a part that is neither this board's"
+         "PROBE:   port: @1: SOMETHING (0x12345679)"}}
     {reversed probe 1
         {"PROBE: FAILED --- IDCODE read by a raw scan is bb0346c2, and the part's is"}}
     {no-tap probe 1
@@ -173,7 +180,15 @@ proc setup_case {case dir} {
         }
         serial-one-cable-proceeds { set serial "" }
         serial-no-match           { set serial NOPE0000 }
-        two-parts   { dict set ::m(devices) $CABLE1 [list $PART "@2: OTHER (0x0BA00477)"] }
+        processors-debug-port {
+            set ::m(depth) $GOOD_DEPTH
+            set ::m(sample) one_hot
+            set ::m(rd) $START_AT
+            set depth $GOOD_DEPTH
+            dict set ::m(devices) $CABLE1 [list $PART "@2: ARM_CORESIGHT_SOC_600 (0x4BA06477)"]
+        }
+        two-strangers { dict set ::m(devices) $CABLE1 [list $PART "@2: OTHER (0x12345679)"] }
+        two-of-ours   { dict set ::m(devices) $CABLE1 [list $PART "@2: A5E (0x4362C0DD)"] }
         stranger    { dict set ::m(devices) $CABLE1 [list "@1: SOMETHING (0x12345679)"] }
         reversed    - usercode-reversed { set ::m(reversed) 1 }
         no-tap      { set ::m(ircap) 0 }

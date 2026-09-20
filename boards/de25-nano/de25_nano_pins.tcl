@@ -15,11 +15,13 @@
 # read only by `tools/de25_pins_check.py` as a second witness.
 #
 # **What is here.** The three 50 MHz clock inputs, the four slide switches,
-# the two push buttons, the eight LEDs, both 2x20 GPIO headers, and the
-# fabric's connections to the ADV7513 HDMI transmitter, audio included. The
-# LPDDR4 banks, the SDRAM, the MIPI connector, the ADC and the processor's own
-# pins are left out, because nothing here uses them yet. The fabric UART's two
-# pins are left out too, because the manual does not list them.
+# the two push buttons, the eight LEDs, both 2x20 GPIO headers, the fabric's
+# connections to the ADV7513 HDMI transmitter, audio included, and the
+# processor's: its LPDDR4 bank, LPDDR4A, and the pins of the peripherals the
+# manual's section 3.8 puts on it. The fabric's own LPDDR4 bank, the SDRAM,
+# the MIPI connector and the ADC are left out, because nothing here uses them
+# yet. The fabric UART's two pins are left out too, because the manual does
+# not list them.
 #
 # **How to use it.** Source it from a Quartus Tcl flow with a project open, and
 # then export the assignments. Each `de25_pin` line makes two assignments, the
@@ -255,3 +257,138 @@ de25_pin {hdmi_i2s_data} {HDMI_I2S} PIN_CB2 "3.3-V LVCMOS"
 de25_pin {hdmi_i2s_mclk} {HDMI_MCLK} PIN_CF1 "3.3-V LVCMOS"
 de25_pin {hdmi_i2s_lrclk} {HDMI_LRCLK} PIN_BR6 "3.3-V LVCMOS"
 de25_pin {hdmi_i2s_bclk} {HDMI_SCLK} PIN_BW1 "3.3-V LVCMOS"
+
+
+# ------------------------------------------------- the processor's LPDDR4
+#
+# Table 3-14, "Pin Assignment of LPDDR4A Memory", pages 29 to 31. LPDDR4A is
+# the bank the manual's section 3.7.4 gives to the processor's memory
+# controller when the design has one, which the DE25-Nano's `DDR=1` board
+# does. `lpddr4a_X` is the manual's `LPDDR4A_X`, lowercased, and its `_n`
+# suffixes are kept. The manual prints "1.1-V LVSTL" for the single-ended
+# signals, "DIFFERENTIAL 1.1-V LVSTL" for the clock and the strobes, and
+# "1.1V" for the calibration resistor's ball, which is Quartus's "1.1-V".
+#
+# **Three names are not the memory's own.** `LPDDR4A_CS_n` is the chip
+# select, which LPDDR4 has active high, and it drives the memory
+# controller's `mem_cs`. `LPDDR4A_DM` is the memory's DMI. And the reset is
+# `LPDDR4A_RESET_N` in the manual and `LPDDR4A_RESET_n` in the resource
+# package, which `tools/de25_pins_check.py` knows.
+#
+# The reference clock is the manual's Table 3-6 on page 18 as well, at
+# 166.666 MHz, and it prints "1.1V TRUE DIFFERENTIAL SIGNALING". One port
+# carries it, the positive leg, as Quartus places a differential input.
+de25_pin {lpddr4a_ca[0]} {LPDDR4A_CA[0]} PIN_B66 "1.1-V LVSTL"
+de25_pin {lpddr4a_ca[1]} {LPDDR4A_CA[1]} PIN_A68 "1.1-V LVSTL"
+de25_pin {lpddr4a_ca[2]} {LPDDR4A_CA[2]} PIN_B68 "1.1-V LVSTL"
+de25_pin {lpddr4a_ca[3]} {LPDDR4A_CA[3]} PIN_A70 "1.1-V LVSTL"
+de25_pin {lpddr4a_ca[4]} {LPDDR4A_CA[4]} PIN_B63 "1.1-V LVSTL"
+de25_pin {lpddr4a_ca[5]} {LPDDR4A_CA[5]} PIN_A66 "1.1-V LVSTL"
+de25_pin {lpddr4a_dm[0]} {LPDDR4A_DM[0]} PIN_J59 "1.1-V LVSTL"
+de25_pin {lpddr4a_dm[1]} {LPDDR4A_DM[1]} PIN_T59 "1.1-V LVSTL"
+de25_pin {lpddr4a_dm[2]} {LPDDR4A_DM[2]} PIN_J27 "1.1-V LVSTL"
+de25_pin {lpddr4a_dm[3]} {LPDDR4A_DM[3]} PIN_A25 "1.1-V LVSTL"
+de25_pin {lpddr4a_cke} {LPDDR4A_CKE} PIN_A61 "1.1-V LVSTL"
+de25_pin {lpddr4a_ck} {LPDDR4A_CK} PIN_J42 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_ck_n} {LPDDR4A_CK_n} PIN_G42 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_cs_n} {LPDDR4A_CS_n} PIN_B58 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[0]} {LPDDR4A_DQ[0]} PIN_T62 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[1]} {LPDDR4A_DQ[1]} PIN_T56 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[2]} {LPDDR4A_DQ[2]} PIN_G56 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[3]} {LPDDR4A_DQ[3]} PIN_E56 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[4]} {LPDDR4A_DQ[4]} PIN_G65 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[5]} {LPDDR4A_DQ[5]} PIN_J65 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[6]} {LPDDR4A_DQ[6]} PIN_M56 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[7]} {LPDDR4A_DQ[7]} PIN_M62 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[8]} {LPDDR4A_DQ[8]} PIN_W62 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[9]} {LPDDR4A_DQ[9]} PIN_M65 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[10]} {LPDDR4A_DQ[10]} PIN_M51 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[11]} {LPDDR4A_DQ[11]} PIN_T51 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[12]} {LPDDR4A_DQ[12]} PIN_AB48 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[13]} {LPDDR4A_DQ[13]} PIN_W48 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[14]} {LPDDR4A_DQ[14]} PIN_T65 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[15]} {LPDDR4A_DQ[15]} PIN_AB62 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[16]} {LPDDR4A_DQ[16]} PIN_G24 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[17]} {LPDDR4A_DQ[17]} PIN_E24 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[18]} {LPDDR4A_DQ[18]} PIN_J35 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[19]} {LPDDR4A_DQ[19]} PIN_T32 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[20]} {LPDDR4A_DQ[20]} PIN_M32 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[21]} {LPDDR4A_DQ[21]} PIN_T24 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[22]} {LPDDR4A_DQ[22]} PIN_G35 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[23]} {LPDDR4A_DQ[23]} PIN_M24 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[24]} {LPDDR4A_DQ[24]} PIN_A22 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[25]} {LPDDR4A_DQ[25]} PIN_A23 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[26]} {LPDDR4A_DQ[26]} PIN_A33 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[27]} {LPDDR4A_DQ[27]} PIN_B33 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[28]} {LPDDR4A_DQ[28]} PIN_B30 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[29]} {LPDDR4A_DQ[29]} PIN_A36 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[30]} {LPDDR4A_DQ[30]} PIN_A20 "1.1-V LVSTL"
+de25_pin {lpddr4a_dq[31]} {LPDDR4A_DQ[31]} PIN_B22 "1.1-V LVSTL"
+de25_pin {lpddr4a_dqs_n[0]} {LPDDR4A_DQS_n[0]} PIN_E62 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_dqs_n[1]} {LPDDR4A_DQS_n[1]} PIN_W56 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_dqs_n[2]} {LPDDR4A_DQS_n[2]} PIN_E32 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_dqs_n[3]} {LPDDR4A_DQS_n[3]} PIN_A30 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_dqs[0]} {LPDDR4A_DQS[0]} PIN_G62 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_dqs[1]} {LPDDR4A_DQS[1]} PIN_AB56 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_dqs[2]} {LPDDR4A_DQS[2]} PIN_G32 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_dqs[3]} {LPDDR4A_DQS[3]} PIN_B28 "DIFFERENTIAL 1.1-V LVSTL"
+de25_pin {lpddr4a_reset_n} {LPDDR4A_RESET_N} PIN_M48 "1.1-V LVSTL"
+de25_pin {lpddr4a_rzq} {LPDDR4A_RZQ} PIN_T48 "1.1-V"
+de25_pin {lpddr4a_refclk_p} {LPDDR4A_REFCLK_p} PIN_B55 "1.1-V TRUE DIFFERENTIAL SIGNALING"
+
+# --------------------------------------------- the processor's peripherals
+#
+# Section 3.8, "Peripherals Connected to the Hard Processor System", and
+# Table 3-6 on page 18 for the processor's 25 MHz clock. The manual prints
+# "1.8V" for every one of these, which is Quartus's "1.8-V". `hps_X` is the
+# manual's `HPS_X`, lowercased. Which of the processor's own I/O pins,
+# `HPS_IOA_N` and `HPS_IOB_N`, each package pin is, and so which peripheral
+# function it can carry, is `boards/de25-nano/quartus/hps.tcl`'s concern.
+#
+#   Table 3-6, page 18          hps_clk_25, the processor's oscillator
+#   Table 3-19, page 39         hps_key and hps_led, the processor's GPIO
+#   Table 3-20, pages 39, 40    hps_enet_*, RGMII and MDIO to the KSZ9031RN
+#   Table 3-22, page 41         hps_uart_*, UART1 to the FT4232H
+#   Table 3-23, page 42         hps_sd_*, the microSD socket, four bits
+#   Table 3-24, pages 42, 43    hps_usb_*, ULPI to the USB3320
+#   Table 3-25, pages 43, 44    hps_gsensor_int and hps_i2c_*, the LIS2DW12
+de25_pin {hps_clk_25} {HPS_CLK_25} PIN_AN67 "1.8-V"
+de25_pin {hps_key} {HPS_KEY} PIN_F75 "1.8-V"
+de25_pin {hps_led} {HPS_LED} PIN_AD71 "1.8-V"
+de25_pin {hps_enet_tx_ctl} {HPS_ENET_TX_CTL} PIN_BL74 "1.8-V"
+de25_pin {hps_enet_tx_data[0]} {HPS_ENET_TX_DATA[0]} PIN_BG74 "1.8-V"
+de25_pin {hps_enet_tx_data[1]} {HPS_ENET_TX_DATA[1]} PIN_AP75 "1.8-V"
+de25_pin {hps_enet_tx_data[2]} {HPS_ENET_TX_DATA[2]} PIN_BD75 "1.8-V"
+de25_pin {hps_enet_tx_data[3]} {HPS_ENET_TX_DATA[3]} PIN_AM74 "1.8-V"
+de25_pin {hps_enet_tx_clk} {HPS_ENET_TX_CLK} PIN_BP75 "1.8-V"
+de25_pin {hps_enet_rx_ctl} {HPS_ENET_RX_CTL} PIN_AP74 "1.8-V"
+de25_pin {hps_enet_rx_data[0]} {HPS_ENET_RX_DATA[0]} PIN_BD74 "1.8-V"
+de25_pin {hps_enet_rx_data[1]} {HPS_ENET_RX_DATA[1]} PIN_AN71 "1.8-V"
+de25_pin {hps_enet_rx_data[2]} {HPS_ENET_RX_DATA[2]} PIN_AJ74 "1.8-V"
+de25_pin {hps_enet_rx_data[3]} {HPS_ENET_RX_DATA[3]} PIN_AJ75 "1.8-V"
+de25_pin {hps_enet_rx_clk} {HPS_ENET_RX_CLK} PIN_BL75 "1.8-V"
+de25_pin {hps_enet_mdio} {HPS_ENET_MDIO} PIN_C74 "1.8-V"
+de25_pin {hps_enet_mdc} {HPS_ENET_MDC} PIN_D71 "1.8-V"
+de25_pin {hps_uart_rx} {HPS_UART_RX} PIN_AD72 "1.8-V"
+de25_pin {hps_uart_tx} {HPS_UART_TX} PIN_N71 "1.8-V"
+de25_pin {hps_sd_clk} {HPS_SD_CLK} PIN_AC74 "1.8-V"
+de25_pin {hps_sd_cmd} {HPS_SD_CMD} PIN_AK69 "1.8-V"
+de25_pin {hps_sd_data[0]} {HPS_SD_DATA[0]} PIN_AF75 "1.8-V"
+de25_pin {hps_sd_data[1]} {HPS_SD_DATA[1]} PIN_AC75 "1.8-V"
+de25_pin {hps_sd_data[2]} {HPS_SD_DATA[2]} PIN_AN64 "1.8-V"
+de25_pin {hps_sd_data[3]} {HPS_SD_DATA[3]} PIN_Y74 "1.8-V"
+de25_pin {hps_usb_clk} {HPS_USB_CLK} PIN_BC64 "1.8-V"
+de25_pin {hps_usb_data[0]} {HPS_USB_DATA[0]} PIN_AN72 "1.8-V"
+de25_pin {hps_usb_data[1]} {HPS_USB_DATA[1]} PIN_AY69 "1.8-V"
+de25_pin {hps_usb_data[2]} {HPS_USB_DATA[2]} PIN_BC71 "1.8-V"
+de25_pin {hps_usb_data[3]} {HPS_USB_DATA[3]} PIN_AU74 "1.8-V"
+de25_pin {hps_usb_data[4]} {HPS_USB_DATA[4]} PIN_AY71 "1.8-V"
+de25_pin {hps_usb_data[5]} {HPS_USB_DATA[5]} PIN_AU75 "1.8-V"
+de25_pin {hps_usb_data[6]} {HPS_USB_DATA[6]} PIN_BC72 "1.8-V"
+de25_pin {hps_usb_data[7]} {HPS_USB_DATA[7]} PIN_BP74 "1.8-V"
+de25_pin {hps_usb_dir} {HPS_USB_DIR} PIN_AY67 "1.8-V"
+de25_pin {hps_usb_nxt} {HPS_USB_NXT} PIN_BA75 "1.8-V"
+de25_pin {hps_usb_stp} {HPS_USB_STP} PIN_BC67 "1.8-V"
+de25_pin {hps_gsensor_int} {HPS_GSENSOR_INT} PIN_Y75 "1.8-V"
+de25_pin {hps_i2c_scl} {HPS_I2C_SCL} PIN_N72 "1.8-V"
+de25_pin {hps_i2c_sda} {HPS_I2C_SDA} PIN_L75 "1.8-V"

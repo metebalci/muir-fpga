@@ -33,6 +33,21 @@
 namespace {
 
 const uint32_t WORD = 0x4E4F4E45u;   // "NONE", the module's default
+
+// THE SHAPE UNDER TEST, which is the build's: GP0's twelve bits of ID and
+// four of read length by default, and the Agilex 5 bridges' four and eight
+// when the Makefile builds the second model with `-GID_W=4 -GLEN_W=8` and
+// these two defines beside them.  A build whose defines and parameters
+// disagreed would drive IDs the port cannot hold, and the ID check below
+// would say so.
+#ifndef GP_ID_W
+#define GP_ID_W 12
+#endif
+#ifndef GP_LEN_W
+#define GP_LEN_W 4
+#endif
+constexpr unsigned kIdMask = (1u << GP_ID_W) - 1;
+constexpr unsigned kBeats = 1u << GP_LEN_W;   // the longest burst
 long tick = 0;
 int bad = 0;
 
@@ -71,19 +86,21 @@ int main(int argc, char **argv) {
   long writes = 0, reads = 0, w_beats = 0, r_beats = 0, b_resps = 0;
   long stalls_w = 0, stalls_r = 0;
   const int ROUNDS = 400;
-  const long BOUND = 400;   // ticks a transaction may take before it is stuck
+  // Ticks a transaction may take before it is stuck: 400 for sixteen beats,
+  // and in proportion for longer bursts.
+  const long BOUND = 400 * (kBeats / 16);
 
   for (int round = 0; round < ROUNDS && bad < 20; ++round) {
     // --- the write: AW, then WLEN beats, then B
-    const unsigned wlen = 1 + rnd() % 16;
-    const unsigned wid = rnd() & 0xFFF;
+    const unsigned wlen = 1 + rnd() % kBeats;
+    const unsigned wid = rnd() & kIdMask;
     int aw_hold = rnd() % 4, w_hold = rnd() % 4, b_hold = rnd() % 4;
     bool aw_done = false, b_done = false;
     unsigned w_sent = 0;
     int b_seen = 0;
     // --- the read: AR, then ARLEN+1 beats
-    const unsigned rlen = rnd() % 16;   // ARLEN
-    const unsigned rid = rnd() & 0xFFF;
+    const unsigned rlen = rnd() % kBeats;   // ARLEN
+    const unsigned rid = rnd() & kIdMask;
     int ar_hold = rnd() % 4, r_hold = rnd() % 4;
     bool ar_done = false, r_done = false;
     unsigned r_got = 0;
@@ -153,12 +170,14 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf(
-      "ok: the default GP0 slave answers every transaction\n"
-      "    %ld writes of 1 to 16 beats (%ld beats, %ld responses, OKAY, the ID\n"
-      "      echoed), %ld reads of 1 to 16 beats (%ld beats of 0x%08x, OKAY,\n"
+      "ok: the default slave, %u bits of ID and %u of read length, answers\n"
+      "    every transaction: %ld writes of 1 to %u beats (%ld beats, %ld\n"
+      "      responses, OKAY, the ID echoed), %ld reads of 1 to %u beats (%ld\n"
+      "      beats of 0x%08x, OKAY,\n"
       "      the ID echoed, RLAST on the last beat only), a write and a read\n"
       "      in flight together, valids and readies varying; %ld response\n"
       "      and %ld read beats held until taken\n",
-      writes, w_beats, b_resps, reads, r_beats, WORD, stalls_w, stalls_r);
+      (unsigned)GP_ID_W, (unsigned)GP_LEN_W, writes, kBeats, w_beats, b_resps,
+      reads, kBeats, r_beats, WORD, stalls_w, stalls_r);
   return 0;
 }

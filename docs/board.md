@@ -2009,3 +2009,56 @@ the probe's 22 columns. Eight of those columns are constant in this window.
 A second readout returned the same file.
 
 The plain build was then loaded again, and the board was left running it.
+
+## The DE25-Nano's processor and its memory, 19 September 2026
+
+The memory board, `make de25 DDR=1`, is the machine with the Agilex 5's
+processor behind its memory port: the FPGA-to-SDRAM bridge, the LPDDR4 the
+processor's own controller drives, and both processor-to-fabric bridges
+answered end to end.  `boards/de25-nano/README.md` has the design and the
+figures.
+
+**A part with a processor in it is not configured by a bare bitstream.**  The
+HPS Booting User Guide says so, and the flow writes the file the board needs
+instead: with the first-stage loader added, one file that configures the
+fabric and starts the processor.  That is the board a JTAG cable can load
+with nothing written to the flash and no card in the socket, and it is
+FPGA-first, because a processor that boots first takes its first stage from
+the flash.
+
+**The processor's debug port joins the JTAG chain.**  Altera's boundary-scan
+guide for the family says the processor's TAP appears only once a design with
+the processor in it is configured, and it does: the chain that held one part
+holds two, the port first and the FPGA second.  It joins DURING
+configuration, and the programmer says so itself --- it reported the
+configuration as succeeding at device index 2 for a part that was index 1
+when the download began, and added a line naming what had arrived.  The port
+is an Arm CoreSight SoC-600 debug port, IDCODE `0x4BA06477`, four bits of
+instruction register.  `quartus/jtag.tcl` and `quartus/program.sh` take that
+chain, pick this board's FPGA out of it by its IDCODE, and refuse anything on
+the chain that is neither.  The build stamp was then read back through the
+two-part chain by a raw scan, and it is this build's.
+
+**The processor's memory calibrated.**  The first-stage loader in that file
+ran and printed what it did on the processor's serial line: the initial
+calibration of the memory interface succeeded, the memory is 1,024 MiB, the
+size check passed, the firewall that lets the fabric reach it was opened, and
+the memory came up.  That is this project's own description of the memory ---
+the controller's parameters, its speed and the board's byte lanes --- proved
+on the part.  The loader then looked for the next stage on the card, in the
+flash and in memory, found none of the three, and stopped, which is what a
+board with no card and a flash nobody has written must do.
+
+**So the machine's memory cycles cannot be proved yet, and what is missing is
+software.**  The gate stays shut until U-Boot has run `bridge enable` and
+raised it, and U-Boot comes from the card.  What the board showed is the two
+things that had to be true before that: the memory works at the settings this
+project generated, and the fabric holding the machine is the build it says it
+is.
+
+**The processor's debug port is reachable over the same cable**, which is the
+other way software could be replaced: OpenOCD, with the adapter Quartus
+ships, attaches to the chain, names both TAPs, and examines a memory access
+port on the debug port.  Walking its debug ROM table then hangs in that
+version, so reading the processor's memory that way is not established here.
+

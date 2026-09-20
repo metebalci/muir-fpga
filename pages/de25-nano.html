@@ -84,19 +84,19 @@
 
     <figure class="panel fig dense wide">
       <div class="scroll">
-<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-three blocks this project builds, four are verified: clock, ICMEM board, CADR board and bus interface. Four are simulated: disk controller, TV, Color TV and I/O board. The other fifteen have not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+<svg viewBox="20 41 1752 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-three blocks this project builds, four are verified: clock, ICMEM board, CADR board and bus interface. Five are simulated: Xbus to DDR, disk controller, TV, Color TV and I/O board. The other fourteen have not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
 
           <!-- The Arty Z7-20's drawing, generated for the DE25-Nano.  Of the
                twenty-three blocks this project builds, four are verified:
-               clock, ICMEM board, CADR board and bus interface.  Four are
-               simulated: disk controller, TV, Color TV and I/O board.  The
-               other fifteen have not been started, and the parts drawn gray
-               are existing components.  The figures under the fabric's label
-               are this board's own fit, as ALMs and M20K, the chip and the
-               memory carry this board's parts, the lamps are green, as this
-               board's user LEDs are, and the debug cable's connector is a
-               GPIO header, the board having no Pmod.  Why each thing is where
-               it is, is in the Arty Z7-20's page. -->
+               clock, ICMEM board, CADR board and bus interface.  Five are
+               simulated: Xbus to DDR, disk controller, TV, Color TV and I/O
+               board.  The other fourteen have not been started, and the parts
+               drawn gray are existing components.  The figures under the
+               fabric's label are this board's own fit, as ALMs and M20K, the
+               chip and the memory carry this board's parts, the lamps are
+               green, as this board's user LEDs are, and the debug cable's
+               connector is a GPIO header, the board having no Pmod.  Why each
+               thing is where it is, is in the Arty Z7-20's page. -->
           <rect class="d-box d-done d-key" x="587.51" y="851" width="13" height="13"/>
           <text class="d-s" x="607.51" y="861">verified</text>
           <rect class="d-box d-built d-key" x="668.19" y="851" width="13" height="13"/>
@@ -134,9 +134,10 @@
           <text class="d-s" x="-233" y="358" text-anchor="middle">one of three modes</text>
 
           <text class="d-s" x="-164" y="48">FPGA fabric logic</text>
-          <!-- From the Quartus fit report of the memory-off build: 5,162
-               ALMs, of which 1,920 hold the three MLAB memories, and 95 M20K
-               blocks, timing met at the 10 ns tick.
+          <!-- From the Quartus fit report of the memory-on build: 5,735
+               ALMs, of which 2,030 hold the three MLAB memories, and 95 M20K
+               blocks; worst setup +3.343 ns and worst hold +0.000 ns at the
+               10 ns tick, timing met.
                A5E 013B: 46,800 ALMs, and 358 M20K blocks of 20 Kbit each,
                895 KB, the same convention as the Zynq boards' block RAM row.
                Source: Altera Agilex 5 E-Series Product Table, 2026.08.07, p. 3:
@@ -144,10 +145,10 @@
                The MLAB memory, 1.43 Mb, is counted inside the ALMs, as the
                lookup-table memory on the Zynq boards is counted inside the
                slices. -->
-          <text class="d-s" x="-164" y="68">ALM 5,162 of 46,800</text>
+          <text class="d-s" x="-164" y="68">ALM 5,735 of 46,800</text>
           <rect class="d-box" x="-164" y="74" width="136" height="13"/>
-          <rect x="-164" y="74" width="15" height="13" fill="currentColor" fill-opacity="0.42"/>
-          <text class="d-n" x="-158" y="84">11%</text>
+          <rect x="-164" y="74" width="16.7" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="84">12.3%</text>
           <text class="d-s" x="-164" y="104">M20K 238 KB of 895 KB</text>
           <rect class="d-box" x="-164" y="110" width="136" height="13"/>
           <rect x="-164" y="110" width="36.1" height="13" fill="currentColor" fill-opacity="0.42"/>
@@ -201,7 +202,7 @@
 
           <path class="d-line" d="M118,238 L118,274 M310,238 L310,274 M497,238 L497,274 M657,238 L657,274 M885,238 L885,274"/>
 
-          <rect class="d-box" x="40" y="274" width="156" height="112"/>
+          <rect class="d-box d-built" x="40" y="274" width="156" height="112"/>
           <text class="d-t" x="118" y="300" text-anchor="middle">Xbus to DDR</text>
           <text class="d-s" x="118" y="320" text-anchor="middle">main memory and</text>
           <text class="d-s" x="118" y="334" text-anchor="middle">the display&rsquo;s buffer</text>

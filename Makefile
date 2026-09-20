@@ -72,7 +72,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/no_auto_boot.pass $(BUILD)/errhalt_lamp.pass \
        $(BUILD)/blink_lamps.pass $(BUILD)/promenable.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
-       $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
+       $(BUILD)/mem_count.pass $(BUILD)/f2sdram.pass $(BUILD)/bus_audit.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass \
@@ -595,7 +595,15 @@ DBGPMOD := rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/cadr_dbg_rx.sv \
 # note above gives: `:=` is expanded where it is read and `arty.pass`'s
 # prerequisites are read before the rules further down.  The phy is last
 # because it is the only one of the three that needs the primitive stubs.
-DISPLAY := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_tmds_encode.sv \
+# **AND IT IS `DISPLAY_SRC` AND NOT `DISPLAY`, WHICH IT WAS.**  A make
+# variable whose name is also an environment variable's is exported to every
+# recipe with the makefile's value, and every Java tool in a flow reads
+# `DISPLAY` as an X server to connect to.  Measured: `make de25 DDR=1` handed
+# Platform Designer this list as its display, and `save_component` failed with
+# "Can't connect to X11 window server using 'rtl/plumbing/...'".  Nothing in
+# `check` had ever run a Java tool, so the trap had been harmless until the
+# DE25-Nano's processor system arrived.
+DISPLAY_SRC := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_tmds_encode.sv \
            rtl/plumbing/cadr_hdmi_tx.sv rtl/plumbing/xilinx7/cadr_hdmi_phy.sv
 
 # The Xilinx primitives every board instantiates, as shells, so that a top
@@ -621,6 +629,21 @@ DE25_TOP := boards/de25-nano/cadr_de25.sv rtl/plumbing/cadr_lamp_clock.sv \
 # that puts it behind Altera's Virtual JTAG.  In the lint always, and in the
 # Quartus flow only when `PROBE_DEPTH` asks for it.
 DE25_PROBE := rtl/plumbing/cadr_probe.sv rtl/plumbing/agilex5/cadr_probe_vjtag.sv
+
+# And the memory board's: the machine's port on the processor's FPGA-to-SDRAM
+# bridge, `rtl/plumbing/cadr_f2sdram_port.sv` and the four modules it is made
+# of, and the default slave both processor-to-fabric bridges are tied to.  In
+# the lint always, and in the Quartus flow only when `DDR` asks for it.
+F2SDRAM := rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
+           rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_f2sdram_gate.sv \
+           rtl/plumbing/cadr_f2sdram_share.sv rtl/plumbing/cadr_f2sdram_port.sv
+DE25_DDR := $(F2SDRAM) rtl/plumbing/cadr_gp0_default.sv
+
+# **THE DE25-NANO'S MAP OF THE PROCESSOR'S MEMORY**, which every DE25-Nano
+# build takes, the lint and the Quartus flow alike: `rtl/plumbing/cadr_ddr_map.sv`
+# chooses the board's base by it, and the top level refuses to elaborate
+# without it.  No Zynq rule sets it.
+DE25_MAP := -DCADR_DDR_MAP_DE25_NANO
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
@@ -1225,6 +1248,35 @@ $(BUILD)/mem_count.pass: $(BUILD)/obj_mem_count/Vcadr_mem_count_harness \
 	$(BUILD)/obj_mem_count/Vcadr_mem_count_harness
 	@touch $@
 
+# ------------------------------- the machine on the DE25-Nano's memory port
+
+# THE MACHINE BEHIND THE AGILEX 5'S FPGA-TO-SDRAM BRIDGE, which is what
+# `make de25 DDR=1` puts on the part: `rtl/plumbing/cadr_f2sdram_port.sv` with
+# `cadr_machine` in front of it and a model of the bridge behind it.  It is
+# `ddr_boot`'s question on the other vendor's part, and `memory_path`'s
+# configuration B besides --- what another master on the same port costs a
+# machine cycle --- because on this board there is one port and three masters.
+# `tb/cadr_f2sdram_tb.cpp`'s header has the five configurations and the bound.
+#
+# **BUILT WITH THE DE25-NANO'S MAP**, `$(DE25_MAP)`, because the addresses the
+# machine puts on the bridge are the board's and the model watches those.
+#
+# It runs the machine five times, a couple of minutes.
+F2SDRAM_SRC := $(MACHINE) $(F2SDRAM) tb/cadr_f2sdram_harness.sv
+
+$(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness: $(F2SDRAM_SRC) \
+                                            tb/cadr_f2sdram_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 $(DE25_MAP) -Irtl/machine -Irtl/plumbing -Mdir $(BUILD)/obj_f2sdram \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_f2sdram_harness $(F2SDRAM_SRC) \
+	    $(abspath tb/cadr_f2sdram_tb.cpp)
+
+$(BUILD)/f2sdram.pass: $(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness \
+                       $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness
+	@touch $@
+
 # ------------------------------------------- one transaction per bus cycle
 
 # THE CHECK THE BOARD'S OWN BUG HAS BEEN LIVING BEHIND.  The account of it
@@ -1399,7 +1451,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
                     rtl/plumbing/cadr_lamp_errhalt.sv \
                     rtl/plumbing/cadr_lamp_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
                     $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
-                    $(DBGPMOD) $(DISPLAY) \
+                    $(DBGPMOD) $(DISPLAY_SRC) \
                     $(BOARD_STUBS) tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -1453,7 +1505,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY)
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY_SRC)
 # AND THE OTHER TWO VIDEO MODES, which are three bitstreams and not a setting:
 # `HDMI_MODE` reaches the raster's widths, the two margins that center each
 # picture and one sync polarity, so each column of the table elaborates to a
@@ -1466,7 +1518,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY)
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY_SRC)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
@@ -1475,7 +1527,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY)
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY_SRC)
 # AND THE DEBUG CABLE'S TWO, AT THEIR OWN DEFAULT PARAMETERS, WHICH IS STILL
 # WORTH A PASS OF ITS OWN. Both are composed now --- `cadr_dbgin.sv` is in
 # `$(MACHINE)`, so every pass above elaborates it, and
@@ -1592,42 +1644,63 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 # that every output of `cadr_machine` reaches the instance and the fold, and
 # that nothing in the top level is left undriven or unread.
 #
-# TWO BOARDS, THE PLAIN ONE AND THE PROBE'S.  `PROBE_DEPTH` is the top
-# level's one configuration parameter, and a lint of the default leaves its
-# generate arm unelaborated, so the second pass is the only thing short of
-# Quartus that reads the probe's wiring.  There is no memory, no processing
-# system and no display on this board yet.
+# THREE BOARDS, THE PLAIN ONE, THE PROBE'S AND THE MEMORY BOARD.  `PROBE_DEPTH`
+# is a parameter and `CADR_DE25_DDR` a define, because the memory board has
+# ports the others do not, and a lint of the default elaborates neither arm.
+# So the second pass is the only thing short of Quartus that reads the probe's
+# wiring, and the third the only thing that reads the processor's: its
+# memory bank, its pins, both bridges' default slaves and the machine's port
+# on the third.  All three take the DE25-Nano's map of the processor's memory,
+# `$(DE25_MAP)`, and the top level checks that they did.
 #
 # **ITS STUBS ARE ITS OWN**, `tb/cadr_de25_stubs.sv`, and in `tb/` for the
 # reason `tb/cadr_arty_stubs.sv` gives.  The Quartus flow is `make de25`,
 # outside `check`, because it needs Quartus and about eight minutes.
-$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) tb/cadr_de25_stubs.sv | $(BUILD)
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
+$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) tb/cadr_de25_stubs.sv | $(BUILD)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP)
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
 	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
 	    $(DE25_PROBE)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
+	    -DCADR_DE25_DDR \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
+	    $(DE25_DDR)
 	@touch $@
 
 # THE DE25-NANO'S BITSTREAM, which needs Quartus Prime Pro and is not part of
 # `check`.  `boards/de25-nano/quartus/build.sh` says where Quartus is found
 # and what each step refuses; everything it writes is under `build/de25/`.
-# `PROBE_DEPTH=1024` builds the instrumented board into `build/de25-probe/`.
+# `PROBE_DEPTH=1024` builds the instrumented board into `build/de25-probe/`,
+# and `DDR=1` the memory board, the processor and its LPDDR4 behind the
+# machine's memory port, into `build/de25-ddr/`, with `DE25_DDR_MHZ` the
+# LPDDR4's speed: 1066.667 by default, or 1333.333 on a rev B board.
 PROBE_DEPTH ?= 0
-de25: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
-	PROBE_DEPTH=$(PROBE_DEPTH) boards/de25-nano/quartus/build.sh $(MACHINE) $(DE25_TOP) \
-	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE))
+DDR ?= 0
+DE25_DDR_MHZ ?= 1066.667
+# How the processor boots, and the first-stage loader to put in the file the
+# programmer takes: `boards/de25-nano/quartus/build.sh` says what each makes.
+DE25_HPS_BOOT ?= hps-first
+DE25_SPL_HEX ?=
+de25: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
+	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
+	    boards/de25-nano/quartus/build.sh $(MACHINE) $(DE25_TOP) \
+	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
+	    $(if $(filter-out 0,$(DDR)),$(DE25_DDR))
 
 # And that bitstream loaded over JTAG, which is volatile: nothing here writes
 # the board's flash.  `boards/de25-nano/quartus/program.sh` finds the board's
 # cable by the serial in `boards/de25-nano/local.conf`.
 de25-program:
-	PROBE_DEPTH=$(PROBE_DEPTH) boards/de25-nano/quartus/program.sh
+	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) boards/de25-nano/quartus/program.sh
 
 # And the probe's capture read off that board and compared with muir: the
 # silicon half of what `build/probe.pass` holds in simulation.  The reader is
@@ -2209,8 +2282,21 @@ $(BUILD)/obj_gp0_default/Vcadr_gp0_default: rtl/plumbing/cadr_gp0_default.sv \
 	    --top-module cadr_gp0_default \
 	    rtl/plumbing/cadr_gp0_default.sv $(abspath tb/cadr_gp0_default_tb.cpp)
 
-$(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
+# AND AT THE AGILEX 5 BRIDGES' SHAPE, which is the same slave with four bits of
+# ID and eight of read length, so reads of up to 256 beats: the DE25-Nano ties
+# both of its processor-to-fabric bridges to it until the faces arrive.  A
+# second model, because the widths are parameters.
+$(BUILD)/obj_gp0_default_axi4/Vcadr_gp0_default: rtl/plumbing/cadr_gp0_default.sv \
+                                                 tb/cadr_gp0_default_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_gp0_default_axi4 \
+	    -GID_W=4 -GLEN_W=8 -CFLAGS -DGP_ID_W=4 -CFLAGS -DGP_LEN_W=8 \
+	    --top-module cadr_gp0_default \
+	    rtl/plumbing/cadr_gp0_default.sv $(abspath tb/cadr_gp0_default_tb.cpp)
+
+$(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default \
+                           $(BUILD)/obj_gp0_default_axi4/Vcadr_gp0_default
 	$(BUILD)/obj_gp0_default/Vcadr_gp0_default
+	$(BUILD)/obj_gp0_default_axi4/Vcadr_gp0_default
 	@touch $@
 
 # ------------------------------------------------------- the display output

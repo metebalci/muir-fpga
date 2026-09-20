@@ -37,13 +37,12 @@
 #
 # ------------------------------------------------------------- the part
 #
-# One part on the chain, and it is this board's: IDCODE 0x4362C0DD, which
-# Altera's JTAG boundary-scan guide for the family (document 820038,
-# 2026.08.20, the device ID table) gives the A5EB013BB23B, and which Quartus
-# prints in the device's name as `@1: A5E(A013BB23B|B013BB23BCS)/..
-# (0x4362C0DD)`, measured.  The HPS's own TAP joins the chain only once a
-# design with the processor is loaded, the same guide says; a later slice
-# will meet that and this refuses it until then.
+# This board's part on the chain: IDCODE 0x4362C0DD, which Altera's JTAG
+# boundary-scan guide for the family (document 820038, 2026.08.20, the device
+# ID table) gives the A5EB013BB23B, and which Quartus prints in the device's
+# name as `@1: A5E(A013BB23B|B013BB23BCS)/.. (0x4362C0DD)`, measured.  The
+# processor's own debug port joins the chain once a design with the processor
+# is loaded, and `de25_select_part` below picks the FPGA out of that chain.
 #
 # **THE TWO REGISTERS ARE READ BY RAW SCANS, WITH THE GUIDE'S OPCODES**:
 # IDCODE `00 0000 0110` and USERCODE `00 0000 0111`, both in its table 5 of
@@ -62,6 +61,8 @@
 # and the USERCODE the bitstream's stamp.
 
 set ::de25_idcode   4362c0dd
+# The processor's debug port, by its IDCODE: see `de25_select_part`.
+set ::de25_dap_idcode {?ba06477}
 set ::de25_ir_idcode   6
 set ::de25_ir_usercode 7
 
@@ -174,19 +175,66 @@ proc de25_select_cable {tag} {
 
 # The one part on the cable's chain, which must be this board's.  Returns
 # `{1 <device name>}` or `{0 <lines>}`.
+# **THE PROCESSOR'S DEBUG PORT IS THE SECOND PART, AND ONLY ONCE THE FABRIC
+# HAS THE PROCESSOR IN IT.**  Altera's boundary-scan guide for the family
+# (document 820038, its section 6, "SoC FPGAs"): "For SoC FPGAs, you can only
+# see the FPGA TAP controller in the JTAG chain upon device power up.  The TAP
+# controller for the HPS component only appears in the JTAG chain once the
+# device is configured with a programming file or design that contains the
+# HPS component."  So the memory board's chain has two parts where the boards
+# before it had one, and both are this board.
+#
+# **WHAT SAYS THE SECOND PART IS THAT PORT AND NOT A STRANGER** is its IDCODE.
+# The guide does not give it, and it is not guessed here.  Quartus's own
+# programmer part table gives every other family's processor,
+# `quartus/linux64/pgm_parts.txt` with `SOCVHPS ... 0x4BA00477` and
+# `AGILEX_HPS ... 0x6BA00477`, four bits of instruction register, which are
+# Arm debug ports.  This board's was then measured: with the memory board
+# configured, the JTAG server lists `4BA06477 ARM_CORESIGHT_SOC_600 (IR=4)`
+# beside the FPGA, which is an Arm CoreSight SoC-600 debug port with its
+# version in the top nibble.  So a part whose IDCODE is `?BA06477` is the
+# processor's debug port, whatever version it reports, and the line printed
+# says which; anything else on the chain is refused.
 proc de25_select_part {tag hw} {
     if {[catch {get_device_names -hardware_name $hw} devs]} {
         return [list 0 [list "$tag FAILED --- no part answers on $hw: $devs"]]
     }
-    if {[llength $devs] != 1} {
-        return [list 0 [list "$tag FAILED --- the chain on $hw holds [llength $devs] parts, wanting one:" \
-                             "$tag   [join $devs {; }]"]]
+    set mine {}
+    set dap {}
+    set strangers {}
+    foreach dev $devs {
+        if {![regexp {\(0x([0-9A-Fa-f]{8})\)$} $dev -> id]} {
+            lappend strangers $dev
+            continue
+        }
+        set id [string tolower $id]
+        if {$id eq $::de25_idcode} {
+            lappend mine $dev
+        } elseif {[string match $::de25_dap_idcode $id]} {
+            lappend dap $dev
+        } else {
+            lappend strangers $dev
+        }
     }
-    set dev [lindex $devs 0]
-    if {![regexp {\(0x([0-9A-Fa-f]{8})\)$} $dev -> id] || [string tolower $id] ne $::de25_idcode} {
-        return [list 0 [list "$tag FAILED --- the part on $hw is `$dev`, and this board's IDCODE is" \
-                             "$tag   0x[string toupper $::de25_idcode]."]]
+    if {[llength $strangers] > 0} {
+        return [list 0 [list "$tag FAILED --- the chain on $hw holds a part that is neither this board's" \
+                             "$tag   FPGA, IDCODE 0x[string toupper $::de25_idcode], nor its processor's debug" \
+                             "$tag   port: [join $strangers {; }]"]]
     }
+    if {[llength $mine] != 1} {
+        return [list 0 [list "$tag FAILED --- the chain on $hw holds [llength $mine] parts with this board's" \
+                             "$tag   IDCODE, wanting one: [join $devs {; }]"]]
+    }
+    if {[llength $dap] > 1} {
+        return [list 0 [list "$tag FAILED --- the chain on $hw holds [llength $dap] Arm debug ports, wanting at" \
+                             "$tag   most the processor's one: [join $dap {; }]"]]
+    }
+    if {[llength $dap] == 1} {
+        puts "$tag the processor's debug port is on the chain: [lindex $dap 0]"
+    } else {
+        puts "$tag no processor's debug port on the chain, so this fabric has no processor in it"
+    }
+    set dev [lindex $mine 0]
     puts "$tag the part is $dev"
     return [list 1 $dev]
 }

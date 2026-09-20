@@ -52,7 +52,8 @@ LOCAL_CONF = "boards/de25-nano/local.conf"
 QSF = "Demonstration/FPGA/Golden_top/golden_top.qsf"
 ENV = "TERASIC_DE25_PACKAGE"
 
-STANDARDS = {"1.1-V", "3.3-V LVCMOS"}
+STANDARDS = {"1.1-V", "3.3-V LVCMOS", "1.1-V LVSTL", "DIFFERENTIAL 1.1-V LVSTL",
+             "1.1-V TRUE DIFFERENTIAL SIGNALING", "1.8-V"}
 
 LINE = re.compile(r'^de25_pin \{([^{}]+)\} \{([^{}]+)\} (PIN_[A-Z]+[0-9]+) "([^"]+)"\s*$')
 SUPPLY = re.compile(r'^set de25_header_supply_pins \{([0-9 ]+)\}\s*$')
@@ -96,10 +97,48 @@ def header_index(pin):
     return None
 
 
+# The processor's memory bank: vectors, each with its width, and the single
+# signals, each beside the manual's name, whose `_n` stays lowercase except in
+# the reset.
+LPDDR4A_BUSES = {"ca": 6, "dm": 4, "dq": 32, "dqs": 4, "dqs_n": 4}
+LPDDR4A = {
+    "lpddr4a_cke": "LPDDR4A_CKE",
+    "lpddr4a_ck": "LPDDR4A_CK",
+    "lpddr4a_ck_n": "LPDDR4A_CK_n",
+    "lpddr4a_cs_n": "LPDDR4A_CS_n",
+    "lpddr4a_reset_n": "LPDDR4A_RESET_N",
+    "lpddr4a_rzq": "LPDDR4A_RZQ",
+    "lpddr4a_refclk_p": "LPDDR4A_REFCLK_p",
+}
+# The processor's peripherals: every name is the manual's, lowercased.  The
+# vectors, each with its width.
+HPS_BUSES = {"hps_enet_tx_data": 4, "hps_enet_rx_data": 4, "hps_sd_data": 4,
+             "hps_usb_data": 8}
+HPS = {"hps_clk_25", "hps_key", "hps_led", "hps_enet_tx_ctl", "hps_enet_tx_clk",
+       "hps_enet_rx_ctl", "hps_enet_rx_clk", "hps_enet_mdio", "hps_enet_mdc",
+       "hps_uart_rx", "hps_uart_tx", "hps_sd_clk", "hps_sd_cmd", "hps_usb_clk",
+       "hps_usb_dir", "hps_usb_nxt", "hps_usb_stp", "hps_gsensor_int",
+       "hps_i2c_scl", "hps_i2c_sda"}
+
+
 def manual_name_for(port):
     """The manual's name for a port, by the pin file's naming, or None."""
     if port in HDMI:
         return HDMI[port]
+    if port in LPDDR4A:
+        return LPDDR4A[port]
+    m = re.fullmatch(r"lpddr4a_(ca|dm|dq|dqs|dqs_n)\[([0-9]+)\]", port)
+    if m:
+        n = int(m.group(2))
+        if n >= LPDDR4A_BUSES[m.group(1)]:
+            return None
+        return "LPDDR4A_%s[%d]" % (m.group(1).upper().replace("_N", "_n"), n)
+    if port in HPS:
+        return port.upper()
+    m = re.fullmatch(r"(hps_[a-z_]+)\[([0-9]+)\]", port)
+    if m and m.group(1) in HPS_BUSES:
+        n = int(m.group(2))
+        return "%s[%d]" % (m.group(1).upper(), n) if n < HPS_BUSES[m.group(1)] else None
     m = re.fullmatch(r"clock50_([0-2])", port)
     if m:
         return "CLOCK%s_50" % m.group(1)
@@ -122,7 +161,8 @@ def package_name_for(manual):
     """The resource package's name for the manual's signal.
 
     The two documents name three groups differently: the LEDs, the header
-    signals and the video bus. Everything else carries the manual's name.
+    signals and the video bus, and one signal, the processor's memory reset.
+    Everything else carries the manual's name.
     """
     m = re.fullmatch(r"LEDR\[([0-9]+)\]", manual)
     if m:
@@ -133,6 +173,10 @@ def package_name_for(manual):
     m = re.fullmatch(r"HDMI_TX_D([0-9]+)", manual)
     if m:
         return "HDMI_TX_D[%s]" % m.group(1)
+    # The manual's Table 3-14 spells the memory's reset `LPDDR4A_RESET_N`, and
+    # the package `LPDDR4A_RESET_n`.
+    if manual == "LPDDR4A_RESET_N":
+        return "LPDDR4A_RESET_n"
     return manual
 
 
