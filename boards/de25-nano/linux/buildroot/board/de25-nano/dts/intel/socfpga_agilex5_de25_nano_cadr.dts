@@ -5,7 +5,7 @@
  * the CADR beside it.
  *
  * ONE FILE FOR BOTH, as the Zynq boards' trees are, and a thin one: it is
- * Altera's own DE25-Nano tree with three things added.  The kernel compiles it
+ * Altera's own DE25-Nano tree with four things added.  The kernel compiles it
  * from arch/arm64/boot/dts/intel/ and U-Boot from arch/arm/dts/, and in each
  * `#include "socfpga_agilex5_de25_nano.dts"` finds THAT tree's own file ---
  * Altera ships one in its kernel (linux-socfpga, arch/arm64/boot/dts/intel/)
@@ -31,6 +31,33 @@
  *     keyboard and a mouse want a host, so this says so.  U-Boot's tree has
  *     the same label and leaves the controller disabled, so the line does
  *     nothing there.
+ *   the ETHERNET PHY'S RECEIVE DELAY.  Altera's tree gives `gmac0`
+ *     `phy-mode = "rgmii"` and says beside it that the delays are on the
+ *     printed board.  They are not, on the receive side: measured on the
+ *     board, with that mode the interface negotiated a gigabit, transmitted,
+ *     and received NOTHING AT ALL --- rx_packets zero with rx_errors,
+ *     rx_crc_errors and rx_frame_errors all zero too, which is a receiver
+ *     that never starts a frame rather than one that breaks the frames it
+ *     starts.  The part's own numbers say why: the KSZ9031 carries a built-in
+ *     1.2 ns receive delay, and on `rgmii` the kernel's micrel driver writes
+ *     the pad skews that CANCEL it (drivers/net/phy/micrel.c, RX_ND and
+ *     RX_CLK_ND, "to compensate the internal 1.2ns delay"), leaving the
+ *     receive path with no delay at all.  `rgmii-id` leaves the part's delay
+ *     in place and adds to it, and with it the same board received frames
+ *     immediately and CLEANLY: rx_packets climbing with every receive error
+ *     counter still at zero, and a count that rose by four when the build
+ *     host sent five address requests.
+ *
+ *     THE TRANSMIT SIDE IS A SEPARATE FAULT AND THIS DOES NOT FIX IT.  It is
+ *     not a delay at all: the transmit counter advances by the same handful
+ *     whether three frames are asked for or forty, with no errors counted and
+ *     no transmit timeout logged, so the ring is not being reclaimed and no
+ *     skew setting reaches it.  `rgmii-id` is chosen over `rgmii-rxid` so
+ *     that the part's transmit delay is in place for whoever repairs that.
+ *     THAT HALF IS UNVERIFIED: no frame has ever left this board, so the
+ *     transmit delay has never been shown to be right, only the receive one.
+ *     Whoever repairs the ring must measure the transmit delay as well, and
+ *     must not read this line as evidence that it is already correct.
  *
  * NOTHING OF THE FABRIC IS DESCRIBED.  As on the Zynq boards the programs
  * reach the faces through /dev/mem, so there is no node for them, and the
@@ -47,4 +74,13 @@
 
 &usb0 {
 	dr_mode = "host";
+};
+
+/*
+ * The receive delay, which the printed board does not carry: see the header.
+ * U-Boot's own DE25-Nano tree has the same label and the same `phy-mode`, so
+ * this line lands in both trees, which is what one file for both is for.
+ */
+&gmac0 {
+	phy-mode = "rgmii-id";
 };
