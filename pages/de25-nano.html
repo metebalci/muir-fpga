@@ -84,15 +84,15 @@
 
     <figure class="panel fig dense wide">
       <div class="scroll">
-<svg viewBox="20 41 1813 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-one blocks this project builds, seven are verified: F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to DDR and SPL. Thirteen are simulated: display output, disk controller, TV, Color TV, I/O board, H2F, LWH2F, terminal, Chaosnet, serial, disk packs, console and USB input. The other one has not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Beside muir, at the right end of the Linux outline, stands ozd, the associated machine a site of these machines takes its files, its time and its host table from over Chaosnet. It runs on a host of its own today, and running it on this board&rsquo;s own processing system, so that a card by itself is a whole site, has not been started: the block carries no color, and no line reaches it because there is no path on the board to draw. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+<svg viewBox="20 41 1813 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-one blocks this project builds, twelve are verified: F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to DDR, disk controller, H2F, LWH2F, SPL, disk packs and console. Eight are simulated: display output, TV, Color TV, I/O board, terminal, Chaosnet, serial and USB input. The other one has not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Beside muir, at the right end of the Linux outline, stands ozd, the associated machine a site of these machines takes its files, its time and its host table from over Chaosnet. It runs on a host of its own today, and running it on this board&rsquo;s own processing system, so that a card by itself is a whole site, has not been started: the block carries no color, and no line reaches it because there is no path on the board to draw. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
 
           <!-- The Arty Z7-20's drawing, generated for the DE25-Nano.  Of the
-               twenty-one blocks this project builds, seven are verified:
+               twenty-one blocks this project builds, twelve are verified:
                F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to
-               DDR and SPL. Thirteen are simulated: display output, disk
-               controller, TV, Color TV, I/O board, H2F, LWH2F, terminal,
-               Chaosnet, serial, disk packs, console and USB input.  The other
-               one has not been started, and the parts drawn gray are existing
+               DDR, disk controller, H2F, LWH2F, SPL, disk packs and console.
+               Eight are simulated: display output, TV, Color TV, I/O board,
+               terminal, Chaosnet, serial and USB input.  The other one has
+               not been started, and the parts drawn gray are existing
                components.  The figures under the fabric's label are this
                board's own fit, as ALMs and M20K, the chip and the memory
                carry this board's parts, the lamps are green, as this board's
@@ -210,7 +210,7 @@
           <text class="d-s" x="118" y="334" text-anchor="middle">the display&rsquo;s buffer</text>
           <text class="d-s" x="118" y="360" text-anchor="middle">an AXI4 master</text>
 
-          <rect class="d-box d-built" x="210" y="274" width="200" height="112"/>
+          <rect class="d-box d-done" x="210" y="274" width="200" height="112"/>
           <text class="d-t" x="310" y="300" text-anchor="middle">disk controller</text>
           <text class="d-s" x="310" y="320" text-anchor="middle">four registers, and the channel</text>
           <text class="d-s" x="310" y="334" text-anchor="middle">that walks a list in memory</text>
@@ -242,10 +242,10 @@
           <path class="d-line" d="M310,386 L310,428 M885,386 L885,428 M1036,238 L1036,428 M380,386 L380,407 L660,407 L660,428"/>
 
           <path class="d-dash" d="M-170,450 L-150,450 M390,450 L640,450 M1050,450 L1092,450 M1232,450 L1351,450"/>
-          <rect class="d-box d-built" x="640" y="428" width="410" height="38"/>
+          <rect class="d-box d-done" x="640" y="428" width="410" height="38"/>
           <text class="d-m" x="845" y="446" text-anchor="middle">H2F</text>
           <text class="d-s" x="845" y="460" text-anchor="middle">HPS masters, 32 bits, AXI3</text>
-          <rect class="d-box d-built" x="1092" y="428" width="140" height="38"/>
+          <rect class="d-box d-done" x="1092" y="428" width="140" height="38"/>
           <text class="d-m" x="1162" y="446" text-anchor="middle">LWH2F</text>
           <text class="d-s" x="1162" y="460" text-anchor="middle">HPS masters, 32 bits, AXI3</text>
 
@@ -288,14 +288,14 @@
           <text class="d-s" x="599" y="622" text-anchor="middle">as muir offers it</text>
 
           <rect class="d-plate" x="681" y="542" width="130" height="96"/>
-          <rect class="d-box d-built" x="681" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="681" y="542" width="130" height="96"/>
           <text class="d-t" x="746" y="566" text-anchor="middle">disk packs</text>
           <text class="d-s" x="746" y="586" text-anchor="middle">a drive&rsquo;s blocks as a file,</text>
           <text class="d-s" x="746" y="600" text-anchor="middle">one file a drive</text>
           <text class="d-s" x="746" y="622" text-anchor="middle">staged into DDR</text>
 
           <rect class="d-plate" x="828" y="542" width="130" height="96"/>
-          <rect class="d-box d-built" x="828" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="828" y="542" width="130" height="96"/>
           <text class="d-t" x="893" y="566" text-anchor="middle">console</text>
           <text class="d-s" x="893" y="586" text-anchor="middle">halt, step and inspect</text>
           <text class="d-s" x="893" y="600" text-anchor="middle">over LWH2F</text>

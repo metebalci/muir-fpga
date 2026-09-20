@@ -2113,3 +2113,148 @@ spends that pass against a shut port. The Zynq boards escape this only because
 their port comes up in the first-stage loader, inside that window. Until the
 machine is held until the gate is up, SW0 stays up and the machine is started
 by the boot button.
+
+## A band on the DE25-Nano, 20 September 2026
+
+A machine on this board ran a band for the first time. The fabric is build
+`bd749d20`, the band is LMZ System 1001 from the card, and the shipped boot
+path ran all the way through with nothing typed.
+
+**The board still needs a cable at every power-on.** Its flash has not been
+written, so the fabric and the first-stage loader arrive over JTAG in one
+file. The part read back `ffffffff` before the download and `bd749d20` after
+it. The JTAG hub reported a design before the download and none after, which
+is a second and independent witness that the fabric changed, because the image
+in the flash carries a hub node and this build carries none. This family gives
+the fabric no way to read its own stamp, so the console reports none, and that
+JTAG reading is the only witness of what the part holds.
+
+**The whole boot ran with nothing typed.** The first-stage loader calibrated
+the memory and loaded the next stage from the card. U-Boot then read the
+card's `uEnv.txt` of 1,942 bytes, the fabric image of 2,052,096 bytes, which
+it did not use because `uEnv.txt` says the fabric is configured already, the
+device tree of 23,733 bytes, the kernel of 41,921,024 bytes and the initial
+ramdisk of 4,225,544 bytes, and started the kernel. Reading an image it does
+not use cost 381 ms and nothing else. Linux then started five programs from
+the card's own `fpgarc`, and nothing was started by hand.
+
+**Both processor-to-fabric bridges carried their faces.** The console answers
+at `0x2000_0000` on the lightweight bridge with its own identifier. On the
+main bridge the pack side answers at `0x4000_0000`, the Chaosnet interface at
+`0x4000_1000` holding this machine's Chaosnet address `177203`, the keyboard
+and mouse at `0x4000_3000`, and the serial port at its own window. Each of the
+five was read, and the pack side then carried the band.
+
+**The drive came present and the machine booted its band.** The disk pack
+program found one writable drive of 815 cylinders, 19 heads and 17 blocks a
+track, 263,245 blocks in all, and read a labeled pack at block 0. The
+machine's first three requests were block 1, block 0 and block 17, which are
+the three the Zynq boards' boot PROM asks for, in the same order. The machine
+then reported RUNNING with PROMDISABLE set, which is what says it has left its
+boot PROM and is running microcode it loaded from the pack. A machine that
+finds no drive stays in its boot PROM with that bit clear, which is the
+reading this board gives with an empty bay.
+
+**The counters are the measurement.** The disk pack program prints its summary
+at most once a minute and only when a count has moved, so the absence of a
+later line is itself a reading. Its final tally is 42,170 blocks served and
+20,493 written back, with none denied, none refused, none deferred, none lost
+and no failures, over 214,360 polls. The bay was looked at 214 times: one
+drive appeared, none went away, none was write-protected and no block was
+lost. A count that rises with the work beside counts that stay at zero is what
+tells a working path from a busy one. Nothing was printed after the band's
+load finished, so the machine asked for no block while it sat at its prompt.
+
+**The write-backs reached the card.** The pack file is still 269,562,880
+bytes, the length of the release asset, and its SHA-256 is now
+`97505e9468668cd64470d977e7bf5d5bb4554d63c3a81edec9e95d77bdc95c91` where the
+release's uncompressed pack is
+`35b15e7e947bdcd0e3b3994ca107c247d599ac6127b13b5d8d9029281de1364c`. So the
+write-backs landed in the file, in place and without changing its length. A
+pack a machine has run is no longer the release asset byte for byte, and a
+digest taken against the release will fail from here on.
+
+**A halt made the register reading exact.** The cycle counter read
+3,790,835,915 twice running on the halted machine, which is what says the halt
+took, while the tick counter moved between the two reads, because the fabric
+clock runs whether the machine does or not. One counter frozen beside one
+moving is what a real halt looks like. The flag register read `0xf800`: the
+run flag down, no error, PROMDISABLE still set, and every one of the eight
+parity bits zero, so no A memory, M memory, pushdown buffer, micro-stack,
+dispatch, control store or main memory parity error. Starting the machine
+again moved the cycle counter. The disk pack program said nothing across the
+halt, which is what it must do, since halting the machine does not touch its
+cable to Linux.
+
+**The machine retired about 5.75 million microcycles a second while the band
+loaded**, from two cycle counter readings 2,000 us apart, and about 6.0
+million a second with no disk traffic. The Arty Z7-20 retired 5.88 million
+microcycles a real second while running Lisp.
+
+**The machine drew its own screen.** A sample of 1,024 words taken evenly
+across the machine's display window, every twenty-second word, had 192 of its
+32,768 pixels lit, 0.59 per cent. The control is the same sample of the color
+board's window, which no fitted board and no program writes: 15,494 of 32,768
+lit, 47.3 per cent. The terminal's own reading of the whole main window
+seconds after the boot was 356,824 of 739,584 lit, 48.2 per cent. The two
+unwritten readings agree with each other at about half the bits set, which is
+what uninitialized memory looks like, and the main window has since been
+written down to under one per cent. Eight minutes later the same sample read
+194, so the screen is drawn and static, which is a band sitting at a prompt
+rather than one still loading.
+
+**The boot PROM's memory pass was answered.** The gate word read 1, so the
+port was open, and the tally read 256 reads and 256 writes answered with its
+marker bit present. That is the boot PROM's page-0 parity pass, all 512 cycles
+of it, answered at the bridge's own handshakes. The same half of the same
+instrument read nothing answered in the memory session earlier the same day,
+when the machine ran that pass against a shut port.
+
+### What this does not establish
+
+The tally's four counters are fifteen bits, and by the time anything read them
+again they were saturated, all four fields at 32,767. They are a witness for
+the boot PROM's pass and for nothing after it, so no figure here is a count of
+the band's own memory traffic.
+
+Nothing timed when the machine left reset against when the memory gate was
+opened. The pass was answered, so on this boot the gate was up in time, but
+what ordered the two is not established by this session, and the previous
+session's figures say a machine left to start by itself can meet a shut port.
+
+No viewer connected to the RFB server and no key was typed, so the terminal's
+path into the machine was not exercised. The serial line carried nothing. The
+display output has never left the board, its connector being unwired. The
+Chaosnet program reached nothing: ten frames came from the machine and ten had
+nowhere to go, because this board's Ethernet transmit path does not work, so
+it never took an address and had no route. The board's clock read the epoch,
+this card's root filesystem being older than the flags that set one.
+
+### The first-stage loader decides whether this kernel lives
+
+At a cold power-on with no download, the board boots the first-stage loader in
+its QSPI flash as shipped, `U-Boot SPL 2025.01`. That loader reads the second
+stage from this card, so everything after it is this project's: the same
+U-Boot, the same device tree, the same kernel and the same card. The kernel
+then takes an asynchronous SError in `cqspi_wait_idle`, called from
+`cqspi_probe`, and panics.
+
+Nineteen kernels started that way in one log, and every one of them died
+there: seventeen panicking on the SError and two killing init with the same
+function in the backtrace. Six kernels started under this project's own
+first-stage loader in the same log, and none panicked. Under it the same
+driver probes the same controller and says only `unrecognized JEDEC id bytes:
+90 5d 8c 08 22 00`, and the boot goes on.
+
+The comparison is tightest across the download that ended the loop. The boot
+before it and the boot after it read the same six files from the same card at
+the same six sizes, ran the same second-stage U-Boot, loaded the same device
+tree of 23,733 bytes and the same kernel of 41,921,024 bytes, and reported the
+same kernel version. Only the first-stage loader changed, and the kernel died
+on one side of the download and lived on the other.
+
+The two loaders differ in more than the outcome. That same kernel read from
+the card at 18.6 MiB/s under the shipped loader and at 5.4 MiB/s under this
+project's, so they leave the card interface at different speeds, and whatever
+separates them is not confined to the QSPI controller. Which of their settings
+accounts for the panic is not established here.
