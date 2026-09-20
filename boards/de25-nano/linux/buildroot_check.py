@@ -5,6 +5,7 @@
 # THE DE25-Nano's IMAGE IS BUILT FROM WHAT ITS FILES SAY, OR THE BUILD FAILS.
 #
 #     buildroot_check.py pins     <external tree>
+#     buildroot_check.py boot     <external tree>
 #     buildroot_check.py configs  <external tree> <Buildroot output directory>
 #     buildroot_check.py programs <external tree> <directory of programs>
 #
@@ -40,6 +41,32 @@
 # compiles every program on the build host with the DE25-Nano's map and hands
 # the directory here, so that a map that does not compile, or a program that
 # does not say this board's addresses, fails the gate and not a board.
+#
+# **`boot`: THE FABRIC'S IMAGE IS FETCHED ONLY WHERE IT IS USED.**  This board
+# takes two arrangements.  Where the QSPI flash holds this project's first
+# stage the processor configures the fabric from the card, and the fabric's
+# image has to be there.  Where it does not, the board is configured over JTAG
+# from one file before U-Boot runs, may not configure its fabric again, and
+# says so with `cadr_fabric_loaded=1` on its card; that board must not ask for
+# the image at all.  It used to: the boot fetched the image on both paths and
+# joined the fetch to everything after it with `&&`, so a card whose fabric
+# slot was empty --- which is how a card is staged before the fabric exists ---
+# stopped at the first line of the boot and looped there for ever, on a board
+# that wanted nothing from that file and was otherwise ready to run.
+#
+# So this holds four things about `cadr_de25.env` and the served `uEnv.net`:
+# that the image is named in the two fetch commands and nowhere else, that
+# neither path fetches it itself, that each path says which fetch to use and
+# names one the environment defines, and that `cadr_fabric` runs the fetch in
+# the branch that loads the fabric, before `fpga load`, and not in the branch
+# that finds it loaded already.
+#
+# **WHAT IT DOES NOT HOLD** is U-Boot's behavior.  It reads the environment as
+# text; it does not run hush, so it cannot say that the environment parses or
+# that a `run` inside an `&&` list does what it looks like.  The change this
+# was written against introduces no construct the file did not already use ---
+# `setenv x y;` opens `cadr_net`, and `run x &&` is in it --- and the board's
+# next boot is what shows the rest.
 
 import os
 import re
@@ -59,6 +86,14 @@ FRAGMENTS = (
     ("board/de25-nano/linux/linux.fragment", "linux"),
     ("board/de25-nano/uboot/uboot.fragment", "uboot"),
 )
+# U-Boot's default environment, the served boot command, and the one file the
+# fabric's image is called on the card and on the server.
+UBOOT_ENV = "board/de25-nano/uboot/cadr_de25.env"
+UENV_NET = "board/de25-nano/uEnv.net"
+FABRIC_FILE = "de25-nano/cadr.core.rbf"
+# The variable each path names its fetch in, and the fetch each path uses.
+RBF_GET = "cadr_rbf_get"
+RBF_BY_PATH = {"cadr_card": "cadr_rbf_card", "netcmd": "cadr_rbf_net"}
 
 
 def die(*lines):
@@ -105,6 +140,111 @@ def pins(tree):
                 % (hashfile, len(found), tarball))
         print("buildroot-de25: %-22s pinned to %s, sha256 %s"
               % (pkg, commit[:12], found[0].split()[1][:16]))
+
+
+def uboot_env(path):
+    """`cadr_de25.env` as {name: value}, read the way U-Boot reads it: the C
+    preprocessor takes the comments out, and then scripts/env2string.awk
+    starts a variable on a line of the form `name=value` and joins every
+    other non-empty line onto the value with one space."""
+    text = re.sub(r"/\*.*?\*/", "", open(path).read(), flags=re.S)
+    out, name = {}, None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        m = re.match(r"^([^ \t=][^ =]*)=(.*)$", line)
+        if m:
+            name = m.group(1)
+            out[name] = m.group(2)
+        elif name is None:
+            die("%s: a continuation line before any variable: %r" % (path, line))
+        else:
+            out[name] = (out[name] + " " + line.strip()).strip()
+    return out
+
+
+def uenv_file(path):
+    """A `uEnv.txt`-shaped file as {name: value}: `#` comments, one line each,
+    which is what `env import -t` reads."""
+    out = {}
+    for line in open(path).read().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        m = re.match(r"^([^ \t=][^ =]*)=(.*)$", line)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def boot(tree):
+    env = uboot_env(os.path.join(tree, UBOOT_ENV))
+    served = uenv_file(os.path.join(tree, UENV_NET))
+    paths = dict(env)
+    paths.update(served)
+
+    # **THE IMAGE IS NAMED IN THE TWO FETCHES AND NOWHERE ELSE.**  A path that
+    # names the file is a path that fetches it itself, which is the shape that
+    # made an empty slot stop a boot that did not need the file.
+    fetchers = sorted(RBF_BY_PATH.values())
+    named = sorted(n for n, v in paths.items() if FABRIC_FILE in v)
+    if named != fetchers:
+        die("%s is named by %s, wanting exactly %s"
+            % (FABRIC_FILE, ", ".join(named) or "nothing", " and ".join(fetchers)),
+            "Each path says WHICH fetch to use and cadr_fabric runs it, so that a",
+            "board that may not configure its own fabric never asks for the file.")
+
+    # **AND EACH PATH SAYS WHICH FETCH TO USE, BEFORE IT RUNS cadr_fabric.**
+    for path, want in sorted(RBF_BY_PATH.items()):
+        if path not in paths:
+            die("there is no %s in %s or %s" % (path, UBOOT_ENV, UENV_NET))
+        value = paths[path]
+        m = re.search(r"\bsetenv\s+%s\s+([^\s;]+)" % re.escape(RBF_GET), value)
+        if not m:
+            die("%s does not set %s: it would run cadr_fabric with whatever the"
+                " last path left there" % (path, RBF_GET))
+        if m.group(1) != want:
+            die("%s sets %s to %s, wanting %s" % (path, RBF_GET, m.group(1), want))
+        if m.group(1) not in env:
+            die("%s sets %s to %s, which %s does not define"
+                % (path, RBF_GET, m.group(1), UBOOT_ENV))
+        run = value.find("run cadr_fabric")
+        if run < 0:
+            die("%s does not run cadr_fabric" % path)
+        if run < m.start():
+            die("%s sets %s after it has already run cadr_fabric" % (path, RBF_GET))
+
+    # **AND cadr_fabric FETCHES IN THE BRANCH THAT LOADS AND NOT IN THE OTHER.**
+    # The branch that finds the fabric configured already must not fetch, which
+    # is the whole point; the branch that loads must fetch before `fpga load`,
+    # because that is where the image and its filesize come from.
+    fabric = env.get("cadr_fabric", "")
+    m = re.match(r"^\s*if\s+(?P<test>.*?);\s*then\s+(?P<loaded>.*?)\s*;?\s*"
+                 r"else\s+(?P<load>.*?)\s*;?\s*fi\s*$", fabric)
+    if not m:
+        die("cadr_fabric is not one if/then/else/fi, so this check cannot tell its",
+            "two branches apart:", "    " + fabric)
+    if "cadr_fabric_loaded" not in m.group("test"):
+        die("cadr_fabric does not branch on cadr_fabric_loaded: %s" % m.group("test"))
+    fetch = "run ${%s}" % RBF_GET
+    if fetch in m.group("loaded"):
+        die("cadr_fabric fetches the fabric's image on the branch that found it",
+            "configured already, which is the board that must never ask for it")
+    load = m.group("load")
+    if load.count(fetch) != 1:
+        die("the branch of cadr_fabric that loads the fabric runs %r %d times,"
+            " wanting once" % (fetch, load.count(fetch)))
+    if "fpga load" not in load or load.index(fetch) > load.index("fpga load"):
+        die("the branch of cadr_fabric that loads the fabric does not fetch the",
+            "image before `fpga load`, which is where the image and its filesize",
+            "come from:", "    " + load)
+    if "fpga load" in m.group("loaded"):
+        die("cadr_fabric loads the fabric on the branch that found it configured",
+            "already, which the Technical Reference Manual (A.4.2.1) forbids")
+
+    print("buildroot-de25: the fabric's image is fetched only where it is used: "
+          "%s by %s, %s by %s, in cadr_fabric's loading branch alone"
+          % (RBF_BY_PATH["cadr_card"], "cadr_card",
+             RBF_BY_PATH["netcmd"], "netcmd"))
 
 
 def build_dir(out, pkg):
@@ -204,13 +344,15 @@ def programs(tree, bindir):
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "pins":
         pins(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "boot":
+        boot(sys.argv[2])
     elif len(sys.argv) == 4 and sys.argv[1] == "configs":
         configs(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 4 and sys.argv[1] == "programs":
         programs(sys.argv[2], sys.argv[3])
     else:
-        die("usage: buildroot_check.py pins <tree> | configs <tree> <output> "
-            "| programs <tree> <directory>")
+        die("usage: buildroot_check.py pins <tree> | boot <tree> "
+            "| configs <tree> <output> | programs <tree> <directory>")
 
 
 if __name__ == "__main__":

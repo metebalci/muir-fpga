@@ -252,7 +252,9 @@ done
 # board whose fabric does not exist yet --- the DE25-Nano's, today --- so that
 # everything else on the card can be built and checked.  Such a card boots
 # U-Boot and stops at the fabric's load, saying which file it could not read,
-# every ten seconds, until the file is copied into the folder.  An empty BIT
+# every ten seconds, until the file is copied into the folder.  The one board
+# it does not stop is a DE25-Nano whose uEnv.txt says the fabric was configured
+# before U-Boot ran, which never asks for the file at all.  An empty BIT
 # without NO_FABRIC=1 is still refused: the bitstream is named, never guessed.
 NO_FABRIC=${NO_FABRIC:-}
 if [ -n "$NO_FABRIC" ] && [ "$NO_FABRIC" != 0 ]; then
@@ -488,7 +490,8 @@ PYMBR
 # provenance.
 if [ -n "$NO_FABRIC" ]; then
   echo "mksd-buildroot: THE FABRIC'S SLOT IS EMPTY (NO_FABRIC=1): $BOARD_NAME/$FABRIC is on neither the card nor the"
-  echo "mksd-buildroot:   server, and the loader will stop at it, saying so, until it is copied there"
+  echo "mksd-buildroot:   server, and the loader will stop at it, saying so, until it is copied there ---"
+  echo "mksd-buildroot:   unless the card says the fabric was configured before U-Boot ran, which never asks for it"
 elif [ "$FABRIC_KIND" = rbf ]; then
   echo "mksd-buildroot: the fabric $BIT"
   echo "mksd-buildroot:   $(stat -c %s "$BIT") bytes, sha256 $(sha256sum "$BIT" | cut -d' ' -f1)"
