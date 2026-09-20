@@ -165,7 +165,9 @@ interconnect, so that reason has to be met another way or measured.
 | `S_AXI_HP0`, `S_AXI_HP2` and `S_AXI_HP3` | the single `f2sdram` interface |
 | `IRQ_F2P`, the fabric's interrupts to Linux | the processor's FPGA-to-HPS interrupt inputs |
 | microSD, gigabit Ethernet, USB and Linux's serial console on the processing system | the same four on the hard processor system |
-| HDMI made in fabric: `cadr_tmds_encode.sv`, `cadr_hdmi_tx.sv` and `xilinx7/cadr_hdmi_phy.sv` | the ADV7513 does the encoding. The raster in `cadr_display_out.sv` has a counterpart, and the encoder and the serializers do not. |
+| HDMI made in fabric: `cadr_tmds_encode.sv`, `cadr_hdmi_tx.sv` and `xilinx7/cadr_hdmi_phy.sv` | the ADV7513 does the encoding. The raster in `cadr_display_out.sv` is the same module, and the encoder and the serializers have no counterpart. What this board needs instead is `rtl/plumbing/cadr_adv7513.sv`, which writes the transmitter's registers over its two-wire bus before it will do anything. |
+| the display's pixel clock, a second `MMCME2_BASE` inside the phy | a second I/O PLL, generated at each build, for the same reason: no counter chain of the board's reference gives both the machine's tick and a pixel clock. |
+| sleep, which holds the four TMDS lanes at one word | sleep, which stops the pixel clock the transmitter is handed. The fabric no longer makes the link, so what it can stop is the clock at one remove. |
 | the clock generator, an `MMCME2_BASE` from the board's 125 MHz | an I/O PLL from `CLOCK0_50`, Altera's IP, generated at each build |
 | the debug probe and the build stamp | the same probe behind Altera's Virtual JTAG IP, and the build stamp in the JTAG USERCODE register, read back after every download |
 | `SW0`, the no-auto-boot switch | `SW0`, the same switch. `SW1` to `SW3` are not assigned. |

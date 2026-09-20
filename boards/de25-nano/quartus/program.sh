@@ -78,6 +78,13 @@ case ${DDR:-0} in
     ''|0) ;;
     *)    out=$out-ddr ;;
 esac
+# And the board with the display output, which `make de25 DDR=1 HDMI=1`
+# writes: the same naming `build.sh` gives it, so the two agree on where a
+# build went.
+case ${HDMI:-0} in
+    ''|0) ;;
+    *)    out=$out-hdmi ;;
+esac
 case ${PROBE_DEPTH:-0} in
     ''|0) ;;
     *)    out=$out-probe ;;

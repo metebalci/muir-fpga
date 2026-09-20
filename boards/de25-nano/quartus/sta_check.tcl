@@ -37,6 +37,17 @@
 #      much, looks exactly like one that works until a path is asked what it
 #      is required to do.
 #
+#   And when the display is built, THE DISPLAY'S OWN THREE, from
+#      `cadr_hdmi.sdc`: the pixel clock exists at the mode's frequency, which
+#      `build.sh` passes in as `CADR_PIXEL_MHZ` from the mode it asked the PLL
+#      generator for --- a PLL generated from a mistyped frequency would still
+#      lock and draw a raster nothing can display; the forwarded clock exists
+#      on `hdmi_pclk` and the twenty-seven video pins carry an output delay
+#      against it, because a video pin with no output delay is a path nobody
+#      is timing and a report with no failure on it; and nothing is timed
+#      between the machine's clock and the pixel clock, which is what the
+#      asynchronous group between them is for.
+#
 #   And when the probe is built, THE PROBE'S TWO CLAUSES, from
 #      `cadr_probe.sdc`: the JTAG clock exists at its bound and nothing is
 #      timed between it and the machine's clock, and of the probe's
@@ -104,6 +115,135 @@ if {[llength $board_clocks] != 2} {
     incr failures
 } else {
     puts "sta: the board's clock is [lindex $board_clocks 0] on clock50_0, [lindex $board_clocks 1] ns"
+}
+
+# ------------------------------------------------------ the pixel clock
+#
+# **WHEN THE DISPLAY IS BUILT.**  `build.sh` puts the mode's frequency in
+# `CADR_PIXEL_MHZ`, and zero when there is no display; the clock the analyzer
+# derived from the generated PLL is compared with it.
+#
+# **THE TOLERANCE IS HALF A PER CENT, AND THAT IS A NUMBER WITH A REASON.**  A
+# counter chain rarely lands on a frequency exactly: 108 MHz from 50 is 54
+# over 25 and is exact, but 101 is 101 over 50 and its oscillator would be
+# 5.05 GHz, so that mode's clock is whatever the generator can reach.  A
+# monitor accepts far more --- the Arty Z7-20's three modes are 0.17, 0.22 and
+# 0.04 per cent low, and `docs/display-output.md` says why that does not
+# matter.  What the bound is for is a mistyped parameter, and those are not
+# roundings: the three frequencies differ from each other by six per cent and
+# thirty, and a transposed digit by hundreds.
+set pixel_mhz 0
+if {[info exists ::env(CADR_PIXEL_MHZ)]} { set pixel_mhz $::env(CADR_PIXEL_MHZ) }
+set display_built [expr {[get_collection_size [get_registers -nowarn {u_display|*}]] > 0}]
+if {!$display_built} {
+    puts "sta: the display output is not in this build"
+    if {$pixel_mhz > 0} {
+        puts "sta: FAIL: the flow asked for a pixel clock of $pixel_mhz MHz and there is no display"
+        incr failures
+    }
+} else {
+    if {$pixel_mhz <= 0} {
+        puts "sta: FAIL: the display is in this build and the flow named no pixel clock"
+        incr failures
+    }
+    set pixel_clocks {}
+    foreach_in_collection c [get_clocks] {
+        set name [get_clock_info -name $c]
+        if {[string match {*u_pixel_clock*outclk*} $name]
+            || [string match {*u_pixel_clock*out_clk*} $name]} {
+            lappend pixel_clocks $name [get_clock_info -period $c]
+        }
+    }
+    if {[llength $pixel_clocks] != 2} {
+        puts "sta: FAIL: wanted exactly one clock out of the pixel PLL, found [expr {[llength $pixel_clocks] / 2}]"
+        incr failures
+    } elseif {$pixel_mhz > 0} {
+        set got [lindex $pixel_clocks 1]
+        set want [expr {1000.0 / $pixel_mhz}]
+        if {abs($got - $want) > 0.005 * $want} {
+            puts "sta: FAIL: the pixel clock is $got ns and the mode's is [format %.4f $want] ns"
+            incr failures
+        } else {
+            puts "sta: the pixel clock is [lindex $pixel_clocks 0], [format %.4f $got] ns,\
+                  [format %.4f [expr {1000.0 / $got}]] MHz, and the mode asks $pixel_mhz MHz"
+        }
+    }
+    # **THE FORWARDED CLOCK, AND THE PINS TIMED AGAINST IT.**  A video pin
+    # with no output delay is a path nobody is timing, and a report with
+    # nothing failing on it.
+    set fwd [get_clocks -nowarn {cadr_hdmi_pclk}]
+    if {[get_collection_size $fwd] != 1} {
+        puts "sta: FAIL: cadr_hdmi.sdc left no generated clock on hdmi_pclk"
+        incr failures
+    } else {
+        puts "sta: the forwarded clock on hdmi_pclk is [format %.4f [get_clock_info -period $fwd]] ns"
+    }
+    set video [get_ports -nowarn {hdmi_d[*] hdmi_de hdmi_hsync hdmi_vsync}]
+    if {[get_collection_size $video] != 27} {
+        puts "sta: FAIL: the video bus names [get_collection_size $video] ports, wanting 27"
+        incr failures
+    }
+    # **AND IT IS ASKED AS A PATH AND NOT AS A CONSTRAINT.**  Reading the
+    # constraint back would say an output delay was written; what matters is
+    # that the analyzer TIMES the path, which is the thing an output delay
+    # exists to make it do.  A port with no output delay has no timing path
+    # to it, so the path is the honest question --- and the first writing of
+    # this asked `get_output_delay_info`, which is not a command this tool
+    # has, and the whole check died at the unknown name.
+    set untimed 0
+    foreach_in_collection port $video {
+        set name [get_object_info -name $port]
+        if {[get_collection_size [get_timing_paths -setup -to $name -npaths 1]] == 0} {
+            incr untimed
+        }
+    }
+    if {$untimed > 0} {
+        puts "sta: FAIL: $untimed of the video pins have no timed path to them"
+        incr failures
+    } else {
+        puts "sta: all [get_collection_size $video] video pins are timed against the forwarded clock"
+    }
+    # AND THE PIXEL PLL'S LOCK IS CUT AT ITS SYNCHRONIZER'S FIRST REGISTER,
+    # which `cadr_hdmi.sdc` does and gives the reason for.  Both halves are
+    # asked: that the cut named the register, and that nothing timed ends
+    # there.  A cut that reached nothing looks exactly like one that worked.
+    if {![info exists ::cadr_prst_first]} {
+        puts "sta: FAIL: cadr_hdmi.sdc left no collection named cadr_prst_first"
+        incr failures
+    } elseif {[get_collection_size $::cadr_prst_first] != 1} {
+        puts "sta: FAIL: the raster's reset synchronizer's first register:\
+              [get_collection_size $::cadr_prst_first], wanting 1"
+        incr failures
+    } else {
+        # The register's own data pin, named here rather than through
+        # `data_pins`: that proc is declared further down this file, with the
+        # machine's clauses, and calling it from up here died on an unknown
+        # command the first time.
+        set timed [get_collection_size [get_timing_paths -setup \
+                       -to [get_pins -nowarn {prst_sync[0]|d}] -npaths 10]]
+        if {$timed > 0} {
+            puts "sta: FAIL: $timed timed paths end at the raster's reset synchronizer's first register"
+            incr failures
+        } else {
+            puts "sta: the pixel PLL's lock is cut at the raster's reset synchronizer's first register"
+        }
+    }
+    # AND THE TWO CLOCKS DO NOT MEET.  The display crosses between the
+    # machine's clock and the pixel clock only through its own handshakes, and
+    # a path timed between them is what the asynchronous group is for.
+    if {[llength $machine_clocks] == 2 && [llength $pixel_clocks] == 2} {
+        set mclk [get_clocks [lindex $machine_clocks 0]]
+        set pclk [get_clocks [lindex $pixel_clocks 0]]
+        set there [get_collection_size [get_timing_paths -setup -from_clock $mclk -to_clock $pclk -npaths 10]]
+        set back  [get_collection_size [get_timing_paths -setup -from_clock $pclk -to_clock $mclk -npaths 10]]
+        if {$there + $back > 0} {
+            puts "sta: FAIL: $there paths from the machine's clock to the pixel clock and $back back are timed"
+            incr failures
+        } else {
+            puts "sta: the display crosses between the machine's clock and the pixel clock,\
+                  and no path between them is timed"
+        }
+    }
 }
 
 # --------------------------------------------------------- the exceptions

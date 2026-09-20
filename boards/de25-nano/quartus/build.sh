@@ -21,6 +21,17 @@
 # either revision of the board, or 1333.333 for a rev B board; `hps.tcl` says
 # why.  That build goes to `build/de25-ddr/`.
 #
+# **`HDMI=1` BUILDS THE DISPLAY OUTPUT INTO THE MEMORY BOARD**: the CADR's two
+# screens read out of the machine's memory and put on the board's ADV7513, as
+# `HDMI=1` does for the Arty Z7-20.  It needs `DDR=1`, because the picture is
+# in the machine's memory.  `HDMI_MODE` is which of the three video modes the
+# bitstream carries --- 0 is 1280x1024 at 60 Hz, 1 is 1400x1050 reduced
+# blanking at 60, 2 is 1920x1080 at 30 --- and the mode is a build and not a
+# setting for the reason `docs/display-output.md` gives.  That build goes to
+# `build/de25-ddr-hdmi/`, and it generates a SECOND I/O PLL for the pixel
+# clock, because no counter of the board's 50 MHz gives both the machine's
+# tick and a pixel clock.
+#
 # **`PROBE_DEPTH` BUILDS THE INSTRUMENTED BOARD INSTEAD**, as it does for the
 # Zynq boards: the machine with `rtl/plumbing/cadr_probe.sv` holding its first
 # `PROBE_DEPTH` microcycles behind Altera's Virtual JTAG, which `probe.tcl`
@@ -123,6 +134,32 @@ if [ "$ddr" -eq 1 ]; then
     out=$out-ddr
 fi
 
+# The display output, or not, and which video mode it carries.  **THE THREE
+# PIXEL CLOCKS ARE THE SPECIFICATIONS' OWN**, and they are written here
+# because this is where the PLL is asked for them: VESA DMT's 1280x1024 at
+# 60 Hz is 108 MHz, CVT reduced blanking's 1400x1050 at 60 is 101 MHz, and
+# CEA-861's VIC 34 at 1920x1080 and 30 is 74.25 MHz.  The same three are the
+# parameter table in `rtl/plumbing/cadr_display_out.sv`, which carries the
+# raster's own widths beside them, and `tb/cadr_display_out_tb.cpp` carries a
+# third transcription and compares against it; what is here is only the
+# frequency the clock generator is asked to make.
+hdmi=${HDMI:-0}
+case $hdmi in
+    0|1) ;;
+    *) refuse "HDMI is '$hdmi'; it is 0, no display output, or 1, with it" ;;
+esac
+hdmi_mode=${HDMI_MODE:-0}
+case $hdmi_mode in
+    0) pixel_mhz=108.0  ; mode_words="1280x1024 at 60 Hz" ;;
+    1) pixel_mhz=101.0  ; mode_words="1400x1050 reduced blanking at 60 Hz" ;;
+    2) pixel_mhz=74.25  ; mode_words="1920x1080 at 30 Hz" ;;
+    *) refuse "HDMI_MODE is '$hdmi_mode'; it is 0, 1 or 2" ;;
+esac
+if [ "$hdmi" -eq 1 ]; then
+    [ "$ddr" -eq 1 ] || refuse "HDMI=1 needs DDR=1: the display reads the machine's memory"
+    out=$out-hdmi
+fi
+
 # The probe, or not.  A power of two, because its read pointer wraps on it.
 depth=${PROBE_DEPTH:-0}
 case $depth in
@@ -136,6 +173,9 @@ if [ "$depth" -gt 0 ]; then
 fi
 if [ "$ddr" -eq 1 ]; then
     say "the processor and its memory are in this build: LPDDR4 at $mhz MHz, into $out"
+fi
+if [ "$hdmi" -eq 1 ]; then
+    say "the display output is in this build: mode $hdmi_mode, $mode_words, a pixel clock of $pixel_mhz MHz, into $out"
 fi
 rm -rf "$out"
 mkdir -p "$out/ip" "$out/tmp"
@@ -207,6 +247,28 @@ step 1-ip-deploy "$qsys/ip-deploy" --component-name=altera_iopll \
 grep -q 'Able to implement PLL with user settings' "$out/1-ip-deploy.log" \
     || refuse "the PLL generator did not say it can make 100 MHz from 50; see $out/1-ip-deploy.log"
 
+# **AND THE PIXEL CLOCK'S PLL, WITH THE DISPLAY.**  The same generator, the
+# same reference and the same five decisions, at the mode's frequency instead
+# of the tick.  A SECOND PLL AND NOT A SECOND OUTPUT OF THE FIRST, because a
+# counter chain that gives 100 MHz gives no whole divisor that is also 108,
+# 101 or 74.25; the Arty Z7-20's two clock managers exist for the same reason
+# and `boards/arty-z7-20/cadr_arty.sv` has the arithmetic.  What the generator
+# actually achieves is read back from the timing analyzer by `sta_check.tcl`
+# and compared with the mode's, so a PLL that locked at some other frequency
+# is a refusal and not a picture nobody can explain.
+if [ "$hdmi" -eq 1 ]; then
+    step 1-ip-deploy-pixel "$qsys/ip-deploy" --component-name=altera_iopll \
+        --output-name=cadr_de25_pixel_pll --output-directory="$out/ip" \
+        --family="Agilex 5" --part=A5EB013BB23BE4SCS \
+        --component-parameter=gui_reference_clock_frequency=50.0 \
+        --component-parameter=gui_number_of_clocks=1 \
+        --component-parameter=gui_output_clock_frequency0=$pixel_mhz \
+        --component-parameter=gui_use_locked=true \
+        --component-parameter=gui_operation_mode=direct
+    grep -q 'Able to implement PLL with user settings' "$out/1-ip-deploy-pixel.log" \
+        || refuse "the PLL generator did not say it can make $pixel_mhz MHz from 50; see $out/1-ip-deploy-pixel.log"
+fi
+
 # **AND THE RESET RELEASE, WITH NO PARAMETER AT ALL.**  Its one option is
 # whether `nINIT_DONE` is a conduit or a Platform Designer reset interface,
 # and outside a Platform Designer system the two are the same wire; the
@@ -232,7 +294,8 @@ if [ "$depth" -gt 0 ]; then
 fi
 
 # ------------------------------------------------------- 2. the project
-step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" DE25_HPS_BOOT="$hps_boot" \
+step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" \
+    HDMI_MODE="$hdmi_mode" DE25_HPS_BOOT="$hps_boot" \
     "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
 # **AND THE PROCESSOR SYSTEM, ON THE MEMORY BOARD.**  `qsys-script` builds it
@@ -332,6 +395,39 @@ elif grep -q 'u_hps|\|u_memory|' "$rpt"; then
     refuse "a build without DDR has the processor or the memory port in it; see $dir/$rpt"
 fi
 
+# **THE DISPLAY IS IN THE BUILD THAT ASKED FOR IT AND IN NO OTHER**, by the
+# synthesis report's own list of what it elaborated: the raster and the
+# transmitter's configuration, each named by its module AND its instance, so
+# a module that had been elaborated somewhere else in the design would not
+# answer for one at the top level.  A define that stopped reaching the top
+# level would leave a board with video pins and no picture, and the fit's size
+# alone would not say so.
+disp_line='User Entity cadr_display_out Instance: u_display'
+adv_line='User Entity cadr_adv7513 Instance: u_adv7513'
+if [ "$hdmi" -eq 1 ]; then
+    grep -q "$disp_line" "$rpt" || refuse "synthesis has no display output at u_display; see $dir/$rpt"
+    grep -q "$adv_line" "$rpt" \
+        || refuse "synthesis has no HDMI transmitter configuration at u_adv7513; see $dir/$rpt"
+    # **AND THE DISPLAY'S TWO BAND BUFFERS ARE MEMORIES AND NOT REGISTERS.**
+    # Each is written as two halves with their own enables, which is what
+    # makes it inferable here at all, and synthesis builds each half as its
+    # own memory: two for `mbuf` and two for `cbuf`, four in all.  Written any
+    # other way Quartus puts their 98,304 bits in registers without saying so
+    # --- 135,576 ALUTs for this module alone, measured, against 1,257 --- and
+    # the fit then stops at "Fitter requires 159716 LUTs ... device only has
+    # 93600".  `rtl/plumbing/cadr_display_out.sv` has the whole of it.  The
+    # RAM summary is where a memory that quietly became registers shows,
+    # because nothing else says so.
+    for buffer in mbuf cbuf; do
+        n=$(grep -c "^; u_display|${buffer}_[a-z0-9_]*|auto_generated" "$rpt" || true)
+        [ "$n" -eq 2 ] || refuse "synthesis made u_display|$buffer into $n memories, wanting 2; see $dir/$rpt"
+    done
+    say "the display's two band buffers are four memories and not 98,304 registers"
+    say "the display output and the transmitter's configuration are in"
+elif grep -q "$disp_line" "$rpt" || grep -q "$adv_line" "$rpt"; then
+    refuse "a build without HDMI has the display output in it; see $dir/$rpt"
+fi
+
 step 5-fit "$bin/quartus_fit" cadr_de25
 if grep -q '^Info (24849)' 5-fit.log; then
     say "$(grep '^Info (24849)' 5-fit.log | head -n 1)"
@@ -339,7 +435,8 @@ fi
 step 6-sta "$bin/quartus_sta" cadr_de25
 # The checks' own exit status is theirs, and a refusal there stops the flow.
 say "6-sta-check"
-if ! "$bin/quartus_sta" -t "$here/sta_check.tcl" > 6-sta-check.log 2>&1; then
+if ! env CADR_PIXEL_MHZ="$([ "$hdmi" -eq 1 ] && echo "$pixel_mhz" || echo 0)" \
+        "$bin/quartus_sta" -t "$here/sta_check.tcl" > 6-sta-check.log 2>&1; then
     grep '^sta:' 6-sta-check.log >&2 || tail -n 20 6-sta-check.log >&2
     refuse "the timing analyzer's checks failed; see $dir/6-sta-check.log"
 fi

@@ -84,7 +84,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass $(BUILD)/color_tv.pass \
        $(BUILD)/display_out.pass $(BUILD)/display_sleep.pass \
-       $(BUILD)/hdmi_tx.pass \
+       $(BUILD)/hdmi_tx.pass $(BUILD)/adv7513.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass $(BUILD)/dbg_cable.pass \
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
@@ -657,6 +657,15 @@ F2SDRAM := rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
 DE25_DDR := $(F2SDRAM) rtl/plumbing/cadr_gp0_default.sv $(GP0) \
             rtl/plumbing/cadr_disk_pack.sv rtl/plumbing/cadr_gp1_split.sv \
             rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_debug_window.sv
+
+# And the display output on that board: the raster every board shares, and
+# the HDMI transmitter's own configuration, which is this board's alone.
+# **`cadr_tmds_encode.sv`, `cadr_hdmi_tx.sv` AND `xilinx7/cadr_hdmi_phy.sv`
+# ARE NOT HERE AND HAVE NO COUNTERPART**: on the DE25-Nano the encoding and
+# the serializing are the ADV7513's, and the fabric hands it a parallel
+# raster.  In the lint always, and in the Quartus flow only when `HDMI` asks
+# for it.
+DE25_HDMI := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_adv7513.sv
 
 # **THE DE25-NANO'S MAP OF THE PROCESSOR'S MEMORY**, which every DE25-Nano
 # build takes, the lint and the Quartus flow alike: `rtl/plumbing/cadr_ddr_map.sv`
@@ -1712,7 +1721,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 # **ITS STUBS ARE ITS OWN**, `tb/cadr_de25_stubs.sv`, and in `tb/` for the
 # reason `tb/cadr_arty_stubs.sv` gives.  The Quartus flow is `make de25`,
 # outside `check`, because it needs Quartus and about eight minutes.
-$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) tb/cadr_de25_stubs.sv | $(BUILD)
+$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) tb/cadr_de25_stubs.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
@@ -1729,6 +1738,12 @@ $(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) tb/cadr_de2
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
 	    $(DE25_DDR)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
+	    -DCADR_DE25_DDR -DCADR_DE25_HDMI \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
+	    $(DE25_DDR) $(DE25_HDMI)
 	@touch $@
 
 # THE DE25-NANO'S BITSTREAM, which needs Quartus Prime Pro and is not part of
@@ -1740,23 +1755,33 @@ $(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) tb/cadr_de2
 # LPDDR4's speed: 1066.667 by default, or 1333.333 on a rev B board.
 PROBE_DEPTH ?= 0
 DDR ?= 0
+# **`HDMI=1` BUILDS THE DISPLAY OUTPUT INTO THE MEMORY BOARD**, into
+# `build/de25-hdmi/`: the CADR's screens read out of the machine's memory and
+# put on the board's ADV7513, as `HDMI=1` does for the Arty Z7-20.  It needs
+# `DDR=1`, because the picture is in the machine's memory.  `HDMI_MODE` is
+# which of the three video modes the bitstream carries, 0 by default;
+# `docs/display-output.md` has the table.
+HDMI ?= 0
+HDMI_MODE ?= 0
 DE25_DDR_MHZ ?= 1066.667
 # How the processor boots, and the first-stage loader to put in the file the
 # programmer takes: `boards/de25-nano/quartus/build.sh` says what each makes.
 DE25_HPS_BOOT ?= hps-first
 DE25_SPL_HEX ?=
-de25: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+de25: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
+	    HDMI=$(HDMI) HDMI_MODE=$(HDMI_MODE) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
 	    boards/de25-nano/quartus/build.sh $(MACHINE) $(DE25_TOP) \
 	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
-	    $(if $(filter-out 0,$(DDR)),$(DE25_DDR))
+	    $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
+	    $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI))
 
 # And that bitstream loaded over JTAG, which is volatile: nothing here writes
 # the board's flash.  `boards/de25-nano/quartus/program.sh` finds the board's
 # cable by the serial in `boards/de25-nano/local.conf`.
 de25-program:
-	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) boards/de25-nano/quartus/program.sh
+	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) HDMI=$(HDMI) boards/de25-nano/quartus/program.sh
 
 # And the probe's capture read off that board and compared with muir: the
 # silicon half of what `build/probe.pass` holds in simulation.  The reader is
@@ -2473,6 +2498,36 @@ $(BUILD)/obj_hdmi_tx/Vcadr_hdmi_tx: rtl/plumbing/cadr_hdmi_tx.sv \
 
 $(BUILD)/hdmi_tx.pass: $(BUILD)/obj_hdmi_tx/Vcadr_hdmi_tx
 	$(BUILD)/obj_hdmi_tx/Vcadr_hdmi_tx
+	@touch $@
+
+# The HDMI transmitter on the DE25-Nano, and the two wires its registers are
+# written over.  On the Arty Z7-20 the fabric makes the link itself and there
+# is nothing to configure; here the part does nothing at all until it is
+# written, so this is the piece the second vendor's board needs and the first
+# does not.
+#
+# `tb/cadr_adv7513_tb.cpp` reads the two lines as a bus analyzer reads them:
+# it recovers the starts, the stops, every bit and every acknowledge from
+# their edges, never from a signal inside the module and never by predicting
+# where an edge will be, and compares the byte stream with ITS OWN
+# transcription of the program --- so the two transcriptions are two
+# descriptions of one thing and can disagree.  It also measures the six
+# intervals the part's data sheet bounds and prints the worst of each, drives
+# a stretched clock and a refused byte, and holds that the bus is left alone
+# once the program is through.
+#
+# WHAT IT DOES NOT HOLD is that these registers and these values make an
+# ADV7513 transmit.  The register map is in a programming guide that is not
+# here, the program is the board vendor's own for this board, and this
+# board's connector has never been wired to a monitor.
+$(BUILD)/obj_adv7513/Vcadr_adv7513: rtl/plumbing/cadr_adv7513.sv \
+                                    tb/cadr_adv7513_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_adv7513 \
+	    --top-module cadr_adv7513 \
+	    rtl/plumbing/cadr_adv7513.sv $(abspath tb/cadr_adv7513_tb.cpp)
+
+$(BUILD)/adv7513.pass: $(BUILD)/obj_adv7513/Vcadr_adv7513
+	$(BUILD)/obj_adv7513/Vcadr_adv7513
 	@touch $@
 
 # ----------------------------------------------------- `M_AXI_GP0`, split
