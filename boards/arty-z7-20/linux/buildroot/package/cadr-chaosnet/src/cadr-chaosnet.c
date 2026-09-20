@@ -439,8 +439,6 @@ int main(int argc, char **argv)
 			return gone(a);
 		} else if (!strcmp(a, "--server-name")) {
 			return gone(a);
-		} else if (!strcmp(a, "--time")) {
-			return gone(a);
 		} else if (!strcmp(a, "--base") && v) {
 			if (cadr_parse_u32("--base", argv[++i], &base) != 0)
 				return 2;
