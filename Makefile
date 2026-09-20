@@ -1996,6 +1996,20 @@ MUTDIR ?= $(BUILD)/mutants
 # warning.
 MUTREV ?= HEAD
 
+# **HOW MANY MUTATIONS RUN AT ONCE.** The runner's own default is half the
+# machine's cores, and its reason is memory rather than courtesy: a job is a
+# Verilator build of a large module, and enough of them at once will have the
+# kernel kill something. That default does not bound the cores used, because
+# one job is several processes, so this machine names a number instead.
+# Sixteen is the share a run here is allowed on a twenty-four core host, which
+# leaves the rest to the other work that shares it. Lower it on a machine with
+# less memory, since the runner's own reason for a limit is memory rather than
+# courtesy: a job is a Verilator build of a large module, and enough of them
+# at once will have the kernel kill something. The jobs are left free to
+# schedule wherever the kernel likes; do not pin them to a subset of cores,
+# which only leaves idle cores unused.
+MUTJOBS ?= 16
+
 # The goldens every check needs, including the processor's two: the stage-4
 # mutations are of `cadr_microcycle.sv`, so a run from a clean build directory
 # needs the traces they are checked against. Without them the runner stops and
@@ -2020,7 +2034,7 @@ mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
-	    --rev $(MUTREV)
+	    --jobs $(MUTJOBS) --rev $(MUTREV)
 
 # The runner's own guarantees, against lists written to fail: a mutation
 # that does not apply, one that lint rejects, a survivor with nothing
