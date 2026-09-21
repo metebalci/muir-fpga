@@ -1101,6 +1101,20 @@ and the manual gives no trace lengths. So that is a bound this design meets
 rather than a bound the board meets, and which of the two it is matters more
 than the number.
 
+### A retired second mode
+
+This board was once built for 1920 by 1080 at 60 Hz as well, a second mode
+beside the one above. A monitor showed it working, once. The build closed
+timing with **nine picoseconds** of margin on its worst path, from `vid_d[2]`
+to `hdmi_d[2]` --- the video bus leaving the part, not the machine and not the
+raster, the same family of path as the current mode's.
+
+That build is not carried today. A video mode is a pixel clock, and the
+dividers that make one are fixed in the bitstream, so a second mode was never
+a setting a card could choose: it was a second bitstream, with its own margin
+to keep current every time anything moved. The project kept the one mode
+above instead.
+
 ### Sleep
 
 A source puts a monitor to sleep by stopping the link. On the Arty Z7-20 the
