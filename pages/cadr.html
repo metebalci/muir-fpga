@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>muir-fpga &mdash; the CADR</title>
-<meta name="description" content="What the MIT CADR Lisp Machine is, in ten drawings: the cage and its two buses, the processor&rsquo;s data paths and its microinstruction, the map, the address space, the disk, the display, the I/O board, the light panel and the debug cable.">
+<meta name="description" content="What the MIT CADR Lisp Machine is, in eleven drawings: the cage and its two buses, the processor&rsquo;s data paths, its microinstruction and the macroinstruction its microcode interprets, the map, the address space, the disk, the display, the I/O board, the light panel and the debug cable.">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="cadr.css">
 </head>
@@ -82,7 +82,7 @@
         <span class="eyebrow">The machine</span>
         <h1 class="title t-l">The machine this project reproduces</h1>
         <p class="lede">The CADR is a 32-bit microcoded processor built at the MIT Artificial Intelligence Laboratory around 1978, and published as AI Memo 528 in 1980.</p>
-        <p class="small">It is the machine the Lisp Machine system was written for. The ten drawings below are read from MIT&rsquo;s own files; what each one shows, and every source, is <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md">docs/cadr.md</a>.</p>
+        <p class="small">It is the machine the Lisp Machine system was written for. The eleven drawings below are read from MIT&rsquo;s own files; what each one shows, and every source, is <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md">docs/cadr.md</a>.</p>
       </div>
       <svg class="chara corner" viewBox="0 0 152 150" role="img" aria-label="CADR, waving"><use href="#cadr-body"/><use href="#face-happy"/><use href="#arm-wave"/></svg>
     </div>
@@ -597,6 +597,77 @@
     </footer>
   </section>
 
+  <section id="macro" aria-label="The macroinstruction">
+    <div class="panel bare">
+      <span class="eyebrow">Macro</span>
+      <h2 class="title t-l">The macroinstruction</h2>
+    </div>
+
+    <figure class="panel fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 350" role="img" aria-label="The 16-bit macroinstruction in MIT's own field names, one row for each of the four classes MIT's manual gives it. The low nine bits are one field in every class, which MIT calls ADR: the first two classes split it into a three-bit register naming a base and a six-bit displacement from it, the branches read it as a self-relative offset, and the miscellaneous instructions read it as a function number. Class I, which has a destination and an address, is a two-bit destination, a five-bit opcode, the register and the displacement. Class II, which has an address and no destination, puts a three-bit sub-opcode where the destination was and leaves the opcode four bits. Class III, the branches, has the same three-bit sub-opcode and four-bit opcode over the nine bits. Class IV, the miscellaneous instructions, has a destination and no address, and its nine bits are a function number. The fields are drawn to the space their names need rather than to their width in bits.">
+          <text class="d-t" x="10" y="18">the macroinstruction, 16 bits</text>
+          <text class="d-s" x="90" y="56">bit 15</text>
+          <text class="d-s" x="1030" y="56" text-anchor="end">bit 0</text>
+          <text class="d-t" x="84" y="96" text-anchor="end">CLASS I</text>
+          <rect class="d-box" x="90" y="70" width="940" height="44"/>
+          <text class="d-s" x="160" y="89" text-anchor="middle">DEST</text>
+          <text class="d-n" x="160" y="105" text-anchor="middle">15:14</text>
+          <path class="d-hair" d="M230,70 V114"/>
+          <text class="d-s" x="360" y="89" text-anchor="middle">OP</text>
+          <text class="d-n" x="360" y="105" text-anchor="middle">13:9</text>
+          <path class="d-hair" d="M490,70 V114"/>
+          <text class="d-s" x="590" y="89" text-anchor="middle">REGISTER</text>
+          <text class="d-n" x="590" y="105" text-anchor="middle">8:6</text>
+          <path class="d-hair" d="M690,70 V114"/>
+          <text class="d-s" x="860" y="89" text-anchor="middle">DELTA</text>
+          <text class="d-n" x="860" y="105" text-anchor="middle">5:0</text>
+          <text class="d-t" x="84" y="164" text-anchor="end">CLASS II</text>
+          <rect class="d-box" x="90" y="138" width="940" height="44"/>
+          <text class="d-s" x="180" y="157" text-anchor="middle">SUB-OPCODE</text>
+          <text class="d-n" x="180" y="173" text-anchor="middle">15:13</text>
+          <path class="d-hair" d="M270,138 V182"/>
+          <text class="d-s" x="380" y="157" text-anchor="middle">OP</text>
+          <text class="d-n" x="380" y="173" text-anchor="middle">12:9</text>
+          <path class="d-hair" d="M490,138 V182"/>
+          <text class="d-s" x="590" y="157" text-anchor="middle">REGISTER</text>
+          <text class="d-n" x="590" y="173" text-anchor="middle">8:6</text>
+          <path class="d-hair" d="M690,138 V182"/>
+          <text class="d-s" x="860" y="157" text-anchor="middle">DELTA</text>
+          <text class="d-n" x="860" y="173" text-anchor="middle">5:0</text>
+          <text class="d-t" x="84" y="232" text-anchor="end">CLASS III</text>
+          <rect class="d-box" x="90" y="206" width="940" height="44"/>
+          <text class="d-s" x="180" y="225" text-anchor="middle">SUB-OPCODE</text>
+          <text class="d-n" x="180" y="241" text-anchor="middle">15:13</text>
+          <path class="d-hair" d="M270,206 V250"/>
+          <text class="d-s" x="380" y="225" text-anchor="middle">OP</text>
+          <text class="d-n" x="380" y="241" text-anchor="middle">12:9</text>
+          <path class="d-hair" d="M490,206 V250"/>
+          <text class="d-s" x="760" y="225" text-anchor="middle">ADR</text>
+          <text class="d-n" x="760" y="241" text-anchor="middle">8:0</text>
+          <text class="d-t" x="84" y="300" text-anchor="end">CLASS IV</text>
+          <rect class="d-box" x="90" y="274" width="940" height="44"/>
+          <text class="d-s" x="160" y="293" text-anchor="middle">DEST</text>
+          <text class="d-n" x="160" y="309" text-anchor="middle">15:14</text>
+          <path class="d-hair" d="M230,274 V318"/>
+          <text class="d-s" x="360" y="293" text-anchor="middle">OP</text>
+          <text class="d-n" x="360" y="309" text-anchor="middle">13:9</text>
+          <path class="d-hair" d="M490,274 V318"/>
+          <text class="d-s" x="760" y="293" text-anchor="middle">ADR</text>
+          <text class="d-n" x="760" y="309" text-anchor="middle">8:0</text>
+          <text class="d-s" x="90" y="336">a field is drawn to the room its name needs, not to its width in bits</text>
+        </svg>
+      </div>
+      <figcaption class="cap long">The microcode dispatches on bits 13 to 9 whatever the class, so an opcode whose bit 13 is a sub-opcode bit takes two entries of that table.</figcaption>
+      <p class="small">More: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/cadr.md#the-macroinstruction">docs/cadr.md</a>.</p>
+    </figure>
+
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; The macroinstruction</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>05</span></div>
+    </footer>
+  </section>
+
   <section id="map" aria-label="The map">
     <div class="panel bare">
       <span class="eyebrow">Map</span>
@@ -667,7 +738,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; The map</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>05</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>06</span></div>
     </footer>
   </section>
 
@@ -742,7 +813,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; What is where</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>06</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>07</span></div>
     </footer>
   </section>
 
@@ -865,7 +936,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; The disk</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>07</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>08</span></div>
     </footer>
   </section>
 
@@ -921,7 +992,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; The display</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>08</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>09</span></div>
     </footer>
   </section>
 
@@ -1011,7 +1082,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; The I/O board</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>09</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>10</span></div>
     </footer>
   </section>
 
@@ -1108,7 +1179,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; The light panel</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>10</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>11</span></div>
     </footer>
   </section>
 
@@ -1173,7 +1244,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; The debug cable</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>11</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>12</span></div>
     </footer>
   </section>
 
@@ -1194,6 +1265,7 @@
             <tr><td>the machine, whole</td><td><code>busint.erface</code>, muir's <code>data/cables.txt</code>, <code>xspec.text.3</code>, the three wire lists</td></tr>
             <tr><td>the data paths</td><td>AI Memo 528, and the CLOCK1 delay-line taps as muir's <code>clock.rs</code> has them</td></tr>
             <tr><td>the microinstruction</td><td><code>cadr/ir.bits</code>, and muir's <code>isa.rs</code> for the bit ranges</td></tr>
+            <tr><td>the macroinstruction</td><td><code>sys/ucadr/uc-parameters.lisp</code> and <code>uc-macrocode.lisp</code>, <code>sys/sys2/disass.lisp</code>, <code>sys/man/code.text</code></td></tr>
             <tr><td>the map</td><td>AI Memo 528, <code>docs/map.md</code>, the VMEM drawings</td></tr>
             <tr><td>the address space</td><td><code>sys/doc/unaddr.text</code>, muir's <code>busint.rs</code>, <code>cadr_xbus_decode.sv</code></td></tr>
             <tr><td>the disk</td><td><code>sys/doc/disk.text</code>, and muir's <code>dm.rs</code> for the multiplexor</td></tr>
@@ -1209,7 +1281,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; Sources</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>12</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>13</span></div>
     </footer>
   </section>
 
@@ -1238,7 +1310,7 @@
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; Colophon</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>13</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>14</span></div>
     </footer>
   </section>
 
