@@ -1191,9 +1191,11 @@ run has happened since, and the section of 14 September has it.
 **A monitor on the HDMI TX connector shows the machine's screen.** It is
 1280x1024 at 60 Hz with the CADR's own 768x963 screen centered in it, white on
 black, and the rest of the frame black. That is the display output block as it
-was built and as `docs/display-output.md` describes it. The picture comes out
-of DDR over `S_AXI_HP3` with no software anywhere in the path, so the block and
-the port are both shown by the same monitor.
+was built then. That build centered the first display, where the block now puts
+it at the raster's left edge and the color board at the right, which is what
+`docs/display-output.md` describes. The picture comes out of DDR over
+`S_AXI_HP3` with no software anywhere in the path, so the block and the port
+are both shown by the same monitor.
 
 **A USB keyboard plugged into the board reaches Lisp.** `cadr-usb-input` reads
 the keyboard as an evdev device and hands each key to `cadr-terminal`, which is

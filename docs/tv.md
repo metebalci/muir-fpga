@@ -773,7 +773,10 @@ give the NXM with MD zero while the first board goes on answering.
 carries the slot at all, which is a board's decision taken at synthesis; the
 console word says whether a MACHINE has the board. With `LMTV=0` the second
 instance is not elaborated and the color addresses give the NXM whatever the
-console asks for. It is on by default on both Zynq boards. The Cora Z7-07S is
+console asks for. It is one on every board here: the two Zynq boards declare a
+top-level `LMTV` of their own and default it to 1, and
+`boards/de25-nano/cadr_de25.sv` passes none at all, so its machine takes
+`cadr_machine`'s own default, which is 1 as well. The Cora Z7-07S is
 the one where the question is live: with the board fitted it routes and closes
 at +0.203 ns and 93.6% of its lookup tables, built from a clean tree at
 `8d2c1cd`, which fits and leaves almost nothing. Those lookup tables sit in
@@ -790,17 +793,21 @@ over unwritten memory, so nothing has drawn a picture on this board yet.
 
 ## What is not built
 
-- **The display output.** Nothing drives a monitor: there is no raster, no
-  HDMI, no reading of the buffer out of DDR. That block is last and is not this
-  slice's. What this slice leaves it is a bitmap at a known place in DDR,
+- **The display output is built and is not this slice's.** Nothing in the TV
+  block drives a monitor: it has no raster, it puts nothing on HDMI and it
+  reads nothing out of DDR. The block that does all three is
+  `rtl/plumbing/cadr_display_out.sv`, which came after this slice and has since
+  shown the machine's screen on a monitor on the Arty Z7-20 and on the
+  DE25-Nano; `docs/display-output.md` is its design and `docs/board.md` has
+  those sessions. What this slice leaves it is a bitmap at a known place in DDR,
   one bit a pixel, 24 words a line, 963 lines, with `BOW` in the mode register
   saying which way up the bits are. Its own frame comes from its video mode
   and not from the machine's sync program; the two are unrelated.
-- **Video timing.** There is no raster: no dot is fetched, no shift register
-  is loaded and no monitor is driven. What the sync program produces here is
-  its two sync bits, its `-TVMA CLR` and its rate, which is everything the
-  Xbus face can see. `rtl/plumbing/cadr_display_out.sv` drives a monitor from
-  a mode of its own and reads none of this.
+- **Video timing.** There is no raster in this block: no dot is fetched, no
+  shift register is loaded and no monitor is driven here. What the sync program
+  produces here is its two sync bits, its `-TVMA CLR` and its rate, which is
+  everything the Xbus face can see. `rtl/plumbing/cadr_display_out.sv` drives a
+  monitor from a mode of its own and reads none of this.
 - **The video cycles.** An instruction of the sync program names a Video
   Buffer Cycle Type --- processor, refresh, normal video or end-of-line ---
   and a normal video cycle loads 64 bits of the buffer into a shift register

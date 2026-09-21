@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 Mete Balci
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# Linux on the PS
+# Linux on the processing system
 
 **The procedure is `docs/boot.md`.** That covers the card, the server, the
 jumper, the console and what to expect. This file is the reasoning and the
@@ -18,6 +18,13 @@ tree the fabric can live alongside. It was written before the board could be
 tried, because the session doing it was cut short. **It has run on hardware
 now, as the next section says, and three of the conclusions below did not
 survive the board.**
+
+**Everything from here to "The DE25-Nano is a different chain" is the Zynq
+boards'**, and that section and the five after it are the DE25-Nano's. The two
+sides have the programs, the card's shape and the disk pack in common, and they
+share no part of the boot chain: a Zynq board runs 32-bit Arm from a `BOOT.BIN`
+the boot ROM reads off the card, and the DE25-Nano runs aarch64 from a first
+stage in its QSPI flash.
 
 Everything below was read out of a binary, a source tree or a config file. The
 rest was measured on this machine by running `mksd.sh` and by walking the
@@ -542,3 +549,273 @@ current recipe for every platform.
   fetches, so it could not be read from a primary source. It should be read
   off the board's silkscreen rather than recalled. A known unknown is worth
   more than an assumed one.
+
+## The DE25-Nano is a different chain
+
+**Everything above is the Zynq boards'.** This board runs the same programs off
+a card of the same shape, and it shares no part of the boot chain with them.
+Its processor runs aarch64 where theirs run 32-bit Arm (`BR2_aarch64=y` and
+`BR2_cortex_a76_a55=y` in
+`boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig`), out of the same
+prebuilt toolchain family, so the programs meet the libc they would meet
+anywhere else.
+
+**The kernel, U-Boot and the secure firmware are Altera's forks, pinned by
+commit.** They are `linux-socfpga` at `d8e46bd8`, `u-boot-socfpga` at `e09d6fcc`
+and `arm-trusted-firmware` at `2ea5afda`, each at the commit of Altera's 26.1.1
+release for this board: the tag `QPDS26.1.1_REL_GSRD_PR` of `meta-altera-fpga`,
+whose recipes name the same three. The Zynq boards' side above went looking for
+a prebuilt image and had to establish an absence; here the sources exist and the
+question is which commit of them, which is answered by pinning rather than by
+tracking a branch.
+
+**Mainline does not boot this board.** It has no driver for the part's SD
+controller and no device tree for the board. The controller is
+`altr,agilex5-sd6hc`, which `drivers/mmc/host/sdhci-cadence.c` matches in
+Altera's kernel and in no mainline one.
+
+**A pin with no hash beside it would build whatever the network handed over.**
+Buildroot lets a download with no hash file at all through with a warning, even
+with `BR2_DOWNLOAD_FORCE_CHECK_HASHES` set (`support/download/check-hash` exits
+0). So each of the three sources has a hash file of its own under
+`board/de25-nano/patches/<package>/<commit>/`, and `buildroot_check.py pins`
+asserts that the file exists and carries a sha256 line for the tarball Buildroot
+makes of exactly that commit. It is Python over three files and needs no
+Buildroot, so `make check` runs it too, in `build/de25_linux.pass`, together
+with a check on the environment's own arrangement and a compile of every program
+against this board's address map.
+
+**And a configuration line that was dropped reads exactly like one that holds.**
+Kconfig drops a line whose dependencies are not met, or whose symbol does not
+exist, without a word. The defconfig, the kernel's fragment and U-Boot's
+fragment are three lists of such lines, and `buildroot_check.py configs` holds
+every line of each against the `.config` it was applied to. The one that would
+have been caught first is `BR2_CADR_BOARD_DE25_NANO=y`: dropped, every program
+would be built with a Zynq board's addresses and nothing would say so.
+
+**Altera's configuration builds some nine hundred drivers as modules and this
+image carries none of them.** The root filesystem is an initramfs unpacked at
+every boot, nothing here loads a module, and `board/de25-nano/post-build.sh`
+takes `/lib/modules` back out. So a driver this board needs has to be built in,
+and `board/de25-nano/linux/linux.fragment` is the list: the console on UART 1,
+the card's controller with its supply and its 1.8 V switch, EMAC 0 with its
+Micrel PHY, the DWC2 USB controller with HID and evdev for the keyboard and the
+mouse, and the SMMU that the card, the MAC and USB sit behind. `/dev/mem` is
+unrestricted as it is on the Zynq boards, because it is how every program here
+reaches the fabric and the machine's memory.
+
+## The boot chain is HPS-first, and the fabric's turn falls in the middle of it
+
+**The processor boots first, and out of the QSPI flash.** The Secure Device
+Manager starts it from the flash, which holds the manager's firmware, the
+processor's I/O and memory configuration, and U-Boot's first-stage loader.
+Altera's HPS Booting User Guide (document 813762, chapter 6) says the processor
+can configure the fabric only in this mode, and configuring the fabric from the
+processor is what this board's boot needs, so the arrangement follows from it.
+
+**There is no `BOOT.BIN` here.** The first stage never comes off the card. Two
+files stay at the root of the card all the same, because their names are not
+ours to move: `u-boot.itb`, which the loader in the flash asks for by that name
+at the root of the first FAT partition (`CONFIG_SPL_FS_LOAD_PAYLOAD_NAME`), and
+`uEnv.txt`, which is imported before any board name is known. `u-boot.itb` is
+one FIT carrying U-Boot proper and the secure firmware's BL31, packed by binman
+(`arch/arm/dts/socfpga_soc64_fit-u-boot.dtsi`); the firmware is BL31 alone for
+the `agilex5` platform, with `SOCFPGA_UART_CONFIG=1` putting its console on
+UART 1, which is this board's.
+
+**The fabric is configured by U-Boot, in the middle of the boot.** On a Zynq
+board the bitstream travels inside `BOOT.BIN` and the first-stage loader has put
+it in the fabric before U-Boot runs. Here the first stage carries no fabric
+image, so `cadr.core.rbf` is read off the card or fetched over TFTP and loaded
+through the Secure Device Manager. The four steps are in
+`board/de25-nano/uboot/cadr_de25.env`, all of them before the kernel is fetched,
+and they are in this order:
+
+1. Write 0 to the system manager's GPO register at `0x10D1_20E4`, whose bits are
+   the fabric's `h2f_gp_out`. Altera's Technical Reference Manual (814346,
+   appendix A.4) says to clear them before the processor reconfigures the
+   fabric.
+2. `fpga load` puts `cadr.core.rbf` into the fabric.
+3. `bridge enable` releases every bridge between the processor and the fabric:
+   the one the faces sit on, the lightweight one the console sits on, and the
+   FPGA-to-SDRAM bridge the machine's memory comes through. It is U-Boot's own
+   command (`arch/arm/mach-socfpga/misc.c`), and the secure firmware does the
+   work, including the handshake with the fabric.
+4. Write 1 to the same register. Bit 0 is what the fabric reads as "the bridges
+   are stable", which is the use the manual gives these bits, and until it rises
+   the fabric holds its memory master off, so the machine's first memory cycle
+   cannot meet a bridge that is still in reset.
+
+**A board whose flash holds no first stage of this project's cannot do step 2 at
+all.** Such a board is brought up over JTAG from one file that configures the
+fabric and starts the processor, which makes it FPGA-first, and the processor
+may not then configure the fabric again (814346, A.4.2.1). That board's card
+says so with `cadr_fabric_loaded=1`, and the same variable opens the bridges and
+raises the gate without ever reading the image. This board's flash has been
+written since, so its card no longer sets it.
+
+**The gate is raised by software, seconds after the fabric is configured, and
+the machine reaches its only memory pass about 118 ms after its own reset.** So
+a machine left to start by itself can spend that pass against a shut port, which
+was measured on this board. The Zynq boards escape it because their memory port
+comes up inside the first-stage loader, which is inside that window. A later
+boot of this board found the gate up in time, and what ordered the two is not
+established; `docs/board.md` has both sessions.
+
+**The environment is built in and lives nowhere else.**
+`CONFIG_ENV_IS_NOWHERE`, with Altera's own `ENV_IS_IN_FAT` and `ENV_IS_IN_UBI`
+turned off, because a saved environment is a second place a boot can be decided
+from that nothing in the repository sees, and a `saveenv` would write it onto
+the card beside the loader's own files. The two paths are the Zynq boards': the
+card's `uEnv.txt` decides between them by whether it names a server, and it is
+imported twice around `dhcp` so that a lease cannot take the card's `serverip`
+away. On any failure the loop says so, waits ten seconds and tries again.
+
+## The machine's 128 MB, at `0xB000_0000` and not at the top
+
+**The processor's memory is 1 GB at `0x8000_0000`, and the fabric reaches it at
+the same addresses** through the FPGA-to-SDRAM bridge (814346, Table 323).
+
+**The region cannot be at the top of it, for the reason this document already
+gives about U-Boot.** U-Boot relocates itself to the top of memory, and on this
+part nothing moves that below a reserved-memory node: the one caller of the
+reserved-memory-aware `get_mem_top()` in U-Boot 2026.01 is Xilinx's board code,
+and neither mainline's nor Altera's socfpga code implements the hook. So the
+machine's 128 MB is the second 128 MB from the top, `0xB000_0000` to
+`0xB7FF_FFFF`, and the last 128 MB is U-Boot's to relocate into, with room to
+spare. On the Zynq boards that relocation is a hazard to be lived with; here it
+decides the address.
+
+**U-Boot's tree carries the node as well as the kernel's**, because U-Boot's own
+`lmb` does honor it when it places the kernel's tree and the ramdisk
+(`lib/lmb.c`).
+
+**`no-map` here, where it killed the Zynq boards' 4.9 kernel.** What is wanted
+of it is the same: the FPGA-to-SDRAM bridge does not snoop the processors'
+caches, so a cacheable kernel mapping of memory the fabric writes would go stale
+in a way that reads as a fabric fault. On arm64 a no-map region is also left out
+of "System RAM" by `request_standard_resources()`, which is what lets `/dev/mem`
+map it. So this board needs no `mem=` on its command line, and its bootargs are
+the console and `earlycon` and nothing else.
+
+**Nothing U-Boot loads goes near the region.** The kernel at `0x8200_0000` and
+its tree at `0x8600_0000` are Altera's own addresses, the ramdisk is at
+`0x9000_0000`, and BL31 is at `0x8000_0000`.
+
+**The register faces are reached through two windows, and the programs are built
+knowing which.** The HPS-to-FPGA bridge's window is 1 GB at `0x4000_0000` and
+the lightweight bridge's is 512 MB at `0x2000_0000`. The pack side, the Chaosnet
+cable, the serial line and the keyboard's cable with the mouse's keep the
+offsets they have from `0x4000_0000` on a Zynq board, and the console moves to
+`0x2000_0000` with the debug cable's window at `0x2000_1000`.
+`BR2_CADR_BOARD_DE25_NANO=y` picks that map and
+`package/cadr-common/src/cadr/cadr_board.h` holds it;
+`boards/de25-nano/README.md` has the table and the fabric's side of it.
+
+**Nothing of the fabric is described in the device tree.** As on the Zynq boards
+the programs reach the faces through `/dev/mem`, so there is no node for them,
+and the bridges are U-Boot's to open.
+
+## The device tree, one file for Linux and U-Boot
+
+**It is Altera's own DE25-Nano tree with things added, and neither of Altera's
+is copied here.** The kernel compiles the tree from `arch/arm64/boot/dts/intel/`
+and U-Boot from `arch/arm/dts/`, and in each the `#include` finds that source's
+own file, which are not the same file. What is added is the model restated in
+Altera's words, so that the card staging can read which board's tree this is;
+the machine's reservation; the USB port as a host; the Ethernet PHY's receive
+delay; and the flash controller turned off. The last three were each measured on
+the board.
+
+**The USB port is a host.** The board's one port is the processor's DWC2
+controller behind a ULPI PHY at a Type-C connector, and the board's manual
+describes it as a host port that supplies power to what is plugged into it.
+Altera's tree leaves the mode to the controller, which is on-the-go, and a
+keyboard and a mouse want a host.
+
+**The Ethernet PHY's receive delay is not on the printed board**, where Altera's
+tree says it is. With Altera's `rgmii` the interface negotiated a gigabit,
+transmitted, and received nothing at all: `rx_packets` zero with the receive
+error counters zero as well, which is a receiver that never starts a frame
+rather than one that breaks the frames it starts. The part carries a built-in
+1.2 ns receive delay, and on `rgmii` the kernel's micrel driver writes the pad
+skews that cancel it (`drivers/net/phy/micrel.c`), leaving the receive path with
+no delay at all. With `rgmii-id` the same board received frames immediately and
+cleanly, every receive error counter still at zero.
+
+**The flash controller is turned off, and leaving it on can kill the kernel.**
+The controller is shared between the processor and the Secure Device Manager,
+the manager owns it at every power-up, and the fabric image's QSPI Ownership
+setting decides whether the manager hands it over (813762, section 4.12; 814346,
+appendix A.2.2). A Linux that finds itself holding a controller it may not touch
+takes an external abort at the Cadence driver's first register read, in
+`cqspi_wait_idle` called from `cqspi_probe`: measured on this board as a
+synchronous external abort that killed init, and on the boot after it as an
+asynchronous SError that panicked the kernel. Altera's own remedy for exactly
+this case is `status = "disabled"` on the node (813762, Table 17). It costs
+nothing here, because the part answers a JEDEC identification this kernel does
+not recognize, so there is no flash device on either kind of boot, and no init
+script, program or partition reads the flash. The line reaches the kernel's tree
+alone: U-Boot appends Altera's own `-u-boot.dtsi` after this file and that sets
+the node back to `okay`, so the loader keeps the flash it boots from.
+
+**That death was first blamed on the wrong thing.** Nineteen kernels died under
+the first-stage loader the board shipped with and six lived under this project's
+own, and the loader and the fabric image had changed together, so the
+correlation was real and the cause was wrong. The variable is the fabric image's
+ownership of the controller. `docs/board.md` records both the attribution and
+its correction, and the image in this board's flash now gives the controller to
+the processor.
+
+## What is in `boards/de25-nano/linux/`
+
+    cadr-reserved.dtsi   the machine's 128 MB at 0xB000_0000, for both trees
+    buildroot_check.py   the pins, the boot's own arrangement, the
+                         configurations after a build, and the programs
+    buildroot/           the BR2_EXTERNAL tree, which holds no package
+
+and inside that tree:
+
+    configs/de25_nano_defconfig             what the image is, and why
+    board/de25-nano/dts/intel/*_cadr.dts    the device tree, for both
+    board/de25-nano/uboot/cadr_de25.env     the default environment
+    board/de25-nano/uboot/uboot.fragment    over Altera's DE25 configuration
+    board/de25-nano/linux/linux.fragment    over Altera's arm64 defconfig
+    board/de25-nano/uEnv.txt.in             the card's file, filled by staging
+    board/de25-nano/uEnv.net                the served file, for the network
+    board/de25-nano/patches/                a hash file for each pinned commit
+    board/de25-nano/post-build.sh           takes the modules back out
+    external.mk                             two hooks, and no package
+
+**The packages live in the Arty Z7-20's tree**, so this build is given both
+trees at once, and `make buildroot-de25` builds it into an output directory of
+its own. The reservation reaches the kernel by one hook, because Buildroot
+copies a directory of device trees rather than following a symlink out of it,
+and the environment reaches U-Boot by the other, because U-Boot wants that file
+at `board/<vendor>/<board>/` and this configuration builds the development kit's
+board code.
+
+## What the DE25-Nano's Linux side has shown
+
+**Linux from the card, with nothing typed, on 20 September.** The first-stage
+loader calibrated the memory and read the next stage from the card; U-Boot read
+the card's `uEnv.txt`, the device tree, the kernel and the ramdisk and started
+the kernel; Linux started five programs from the card's own `fpgarc`; both
+bridges carried their faces at the addresses above; and the machine booted its
+band off the pack. `docs/board.md` has the session and its counters.
+
+**And from the board's own flash, with nothing attached but power, a monitor and
+a keyboard, on 21 September.** The flash carries this project's first phase now,
+so the fabric arrives from the card through U-Boot rather than from a cable, and
+the board cold-booted and ran its band. `boards/de25-nano/README.md` has what is
+in the flash and how it was written.
+
+**What has not been read is the console during a boot that starts from the
+flash.** The cable that carries the processor's console is the cable that
+programs the board, and it cannot be attached at the same time as the USB
+keyboard, so those boots have been seen at the monitor and not on the console.
+
+**The board has no real-time clock**, and this kernel names no such device, so
+`date` after a boot reads the epoch until something sets it: the card's flags,
+or the network, which is where the band on this board got its date.
+`docs/fpgarc.md` has those flags and the rule they follow.
