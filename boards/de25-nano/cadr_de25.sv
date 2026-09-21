@@ -13,11 +13,33 @@
 // executing.  Every seam the processor's side would plug into is tied off
 // below as the cable a CADR has with nothing on the far end of it.
 //
-// **WITH `DDR` IT IS THE WHOLE BOARD BUT THE DEBUG CONNECTOR**: the
-// processor, its LPDDR4 behind the machine's memory port, and on the two
-// processor-to-fabric bridges the disk's pack side, the Chaosnet cable, the
-// serial line, the keyboard's cable and the mouse's, the console and the
-// debug cable's carrier.  The connector on JP1 is a later slice.
+// **WITH `DDR` IT IS THE WHOLE BOARD**: the processor, its LPDDR4 behind the
+// machine's memory port, and on the two processor-to-fabric bridges the
+// disk's pack side, the Chaosnet cable, the serial line, the keyboard's cable
+// and the mouse's, the console and the debug cable's carrier.
+//
+// **AND MIT'S DEBUG CABLE ON JP1, ON EVERY BOARD AND NOT ONLY A `DDR` ONE.**
+// A board is always a DEBUGGEE --- it answers a debugger that plugs into the
+// connector exactly as MIT's board answers one on its DBGIN, and nothing has
+// to be set for that --- so the connector cannot live inside the generate
+// block that holds the processor.  The pins are this top level's besides,
+// where an output nothing drives is a PINMISSING.  The connector section near
+// the end of this file has the pin map and `docs/debug-cable.md` the design.
+//
+// **WHAT IS CHECKED HERE AND WHAT IS ONLY BUILT.**  Every module under the
+// connector is held by a check that runs it: `build/dbg_pmod.pass` for the
+// carrier, `build/dbg_cable.pass` for two boards on one ribbon with the
+// testbench as the cable, and `build/dbgin.pass`, `build/gp1_split.pass` and
+// `build/unibus.pass` for the page, the window and a debug cycle.  None of
+// those is this board's: they are the modules', and this board instantiates
+// the same modules.  What is this board's ALONE is the adapter below --- which
+// header pin carries which of the carrier's eight lines, and which nets join
+// the connector, the join, the window and the machine --- and this file cannot
+// be simulated, so what holds the adapter is lint and
+// `tools/de25_faces_check.py`, which reads the pin map and the nets alike.
+// **NOTHING OF THIS CONNECTOR HAS RUN ON SILICON.**  The Zynq boards' two ends
+// have run on a real ribbon; no cable from a 2x20 header to a Pmod exists, so
+// this one has crossed nothing.
 //
 // **AND WITH `HDMI` BESIDE `DDR`, THE DISPLAY OUTPUT.**  The CADR's screens
 // out of the machine's memory and onto the board's HDMI connector, which is
@@ -191,7 +213,27 @@ module cadr_de25 #(
     // about, brought out so that the port list matches the board.
     input  var logic [3:0] sw,
     // `LEDR[7:0]`, lit when driven low.
-    output var logic [7:0] led
+    output var logic [7:0] led,
+    // **MIT'S DEBUG CABLE, ON EIGHT OF JP1's PINS**, which is what this board
+    // has in place of the Zynq boards' Pmod JA.  One port a header pin, named
+    // by the header pin, because that is how `de25_nano_pins.tcl` names every
+    // pin of both headers and choosing pins for a cable is then a matter of
+    // naming them.  **NOT A BUS**: a bus would be a name that says nothing
+    // about which pin each bit is, and which pin each bit is on is the whole
+    // of what this adapter decides.
+    //
+    // Bidirectional, and they have to be: the role is not fixed at synthesis,
+    // so the group this board does not own is high-impedance and the far end
+    // has it.  The connector section near the end of this file has the map,
+    // the reason for it and what a cable to a Pmod must leave open.
+    inout  wire  logic     jp1_pin31,
+    inout  wire  logic     jp1_pin32,
+    inout  wire  logic     jp1_pin33,
+    inout  wire  logic     jp1_pin34,
+    inout  wire  logic     jp1_pin35,
+    inout  wire  logic     jp1_pin36,
+    inout  wire  logic     jp1_pin37,
+    inout  wire  logic     jp1_pin38
 `ifdef CADR_DE25_DDR
     ,
     // The processor's LPDDR4 bank, LPDDR4A, which its memory controller
@@ -400,12 +442,21 @@ module cadr_de25 #(
   logic        machrun, errhalt, stathalt, n_boot;
   logic        con_gnt, con_ssyn;
   logic [15:0] con_rdata;
+  // **MIT'S DEBUG CABLE, THIS MACHINE'S TWO ENDS OF IT**, named as
+  // `boards/arty-z7-20/cadr_arty.sv` names them so that a person who knows
+  // that board knows this one.  `dbd_from_machine` is `DBD<15:0>` as this
+  // machine's DBGIN page drives it, with `dbd_oe` saying which of its two
+  // bytes, and it goes to BOTH ways in --- the register window and the
+  // connector --- because the cable is one bus.  `dbgout_*` is the other end,
+  // the DBGOUT page, which is CC on this machine debugging a second board.
   logic        dbg_in_ack;
-  logic [15:0] dbd_out;
+  logic [15:0] dbd_from_machine;
   logic [1:0]  dbd_oe;
   logic        dbgout_req, dbgout_wr;
   logic [1:0]  dbgout_a;
   logic [15:0] dbgout_dbd;
+  logic        dbgout_ack, dbgout_live;
+  logic [15:0] dbgout_dbd_in;
   logic        timeout_inhibit;
   logic [31:0] con_vma, con_q, con_md;
   logic [47:0] con_ro_data;
@@ -444,9 +495,40 @@ module cadr_de25 #(
   logic [15:0] con_wdata;
   logic        con_tv_lispm, con_color_tv, con_steady_lamps;
   logic [3:0]  con_tv_map_a;
+  // **THE DEBUG CABLE'S NEAR END HAS TWO ARMS ON THIS BOARD**, which MIT's
+  // board cannot have, there being one DBGIN connector.  `dbg_in_*` and
+  // `dbd_to_machine` are the register window's, muir on this board's own
+  // cores; `cab_*` is the connector's, a second board's debugger arriving on
+  // JP1.  `rtl/plumbing/cadr_dbg_join.sv` is what says which of the two holds
+  // the page, and `mdbg_*` is its one cable into `rtl/machine/cadr_dbgin.sv`.
+  // The window's arm is tied off on a board with no processor and the
+  // connector's is live on every board, which is what "a debuggee always
+  // listens" is as wiring.
   logic        dbg_in_req, dbg_in_wr;
   logic [1:0]  dbg_in_a;
-  logic [15:0] dbd_in;
+  logic [15:0] dbd_to_machine;
+  logic        cab_req, cab_wr;
+  logic [1:0]  cab_a;
+  logic [15:0] cab_dbd;
+  logic        mdbg_req, mdbg_wr;
+  logic [1:0]  mdbg_a;
+  logic [15:0] mdbg_dbd;
+  logic        dbg_holder;
+
+  // And what the connector is: the role this board asks for and the role it
+  // HAS, which are two facts, with which way round the ribbon was made and
+  // what came of that.  `dbg_connect` and `dbg_wiring` come from the console's
+  // page 0 word 14 on a board that has one and are tied off on a board that
+  // does not; the seven the other way are what the console reports back.
+  logic        dbg_connect, dbg_engaged, dbg_foreign, dbg_live, dbg_active;
+  logic        dbg_peer_far;
+  logic [1:0]  dbg_wiring;
+  logic [2:0]  dbg_wire_state;
+  logic [23:0] dbg_frames;
+  // The eight pads, as the connector hands them out: the level, the tri-state
+  // enable --- HIGH is NOT driven, which is the sense `cadr_dbg_cable.sv`
+  // writes them in --- and what comes back off the header.
+  logic [7:0]  dbg_pin_o, dbg_pin_t, dbg_pin_i;
 
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
@@ -537,24 +619,29 @@ module cadr_de25 #(
       .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
-      // **THE DEBUG CABLE'S NEAR END.**  On the memory board
-      // `rtl/plumbing/cadr_debug_window.sv` on the lightweight bridge is the
-      // carrier, and muir on this board's own cores is the debugger.  There
-      // is no connector on this board yet --- JP1's cable is a later slice,
-      // and with it `rtl/plumbing/cadr_dbg_join.sv` --- so the window is the
-      // only arm, which is what the join's header says an unplugged
-      // connector leaves.  On the board without a processor, `-DEBUG IN REQ`
-      // is held UP, which is `dbg_in_req` low: what the SIP at DBGIN 0A22
-      // makes of an unplugged connector, and the DBGIN page folds to its idle
-      // state.  The DBGOUT page's far end is a bare connector as
-      // `cadr_machine` describes one: not live, never acknowledging, and
-      // every data line reading one.
-      .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-      .dbd_in(dbd_in),
-      .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_out), .dbd_oe(dbd_oe),
+      // **THE DEBUG CABLE, BOTH OF THIS MACHINE'S ENDS OF IT.**  The DBGIN
+      // page takes `mdbg_*`, which is the join's one cable: two debuggers
+      // reach this page and only one holds it at a time.  The near arm is
+      // `rtl/plumbing/cadr_debug_window.sv` on the lightweight bridge, muir
+      // on this board's own cores, present on the memory board and tied off
+      // on the board without; the far arm is the connector on JP1, present on
+      // every board, because a CADR always answers a debugger that plugs in.
+      // With BOTH quiet `-DEBUG IN REQ` stands UP, which is `mdbg_req` low:
+      // what the SIP at DBGIN 0A22 makes of an unplugged connector, and the
+      // page folds to its idle state.
+      //
+      // The DBGOUT page is the other way round --- CC on THIS machine
+      // debugging a second board --- and it now reaches a real connector
+      // instead of the bare one this board used to describe.  `dbgout_live`
+      // says whether there is a board at the far end at all, and with none
+      // `cadr_dbg_cable.sv` answers every data line as ones, which is what a
+      // CADR with a bare connector reads.
+      .dbg_in_req(mdbg_req), .dbg_in_wr(mdbg_wr), .dbg_in_a(mdbg_a),
+      .dbd_in(mdbg_dbd),
+      .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
       .dbgout_req(dbgout_req), .dbgout_wr(dbgout_wr), .dbgout_a(dbgout_a),
-      .dbgout_dbd(dbgout_dbd), .dbgout_ack(1'b0),
-      .dbgout_dbd_in(16'hFFFF), .dbgout_live(1'b0),
+      .dbgout_dbd(dbgout_dbd), .dbgout_ack(dbgout_ack),
+      .dbgout_dbd_in(dbgout_dbd_in), .dbgout_live(dbgout_live),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
       // The DBGIN page's own reset is the fabric's and not `mach_rst`, for
       // the reason `cadr_machine` gives: a modifier register cleared by its
@@ -620,12 +707,144 @@ module cadr_de25 #(
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr,
-                   dbg_in_ack, dbd_out, dbd_oe,
+                   dbg_in_ack, dbd_from_machine, dbd_oe,
                    dbgout_req, dbgout_wr, dbgout_a, dbgout_dbd,
                    debuggee_reset, timeout_inhibit,
-                   tv_map_q, tv_color_map_q, disp_color_map_q};
+                   tv_map_q, tv_color_map_q, disp_color_map_q,
+                   // **AND THE CONNECTOR'S OWN SEVEN**, which are not outputs
+                   // of `cadr_machine` at all: they say what JP1 is doing
+                   // rather than what crosses it.  On the memory board page
+                   // 0's word 14 reports them and this is a second reader; on
+                   // a board with no console the fold is the ONLY reader, and
+                   // without it the fitter trims the role, the wiring
+                   // detection and the frame counters away and leaves a pin
+                   // count where a connector should be.  `dbg_holder` is the
+                   // join's, and is here for the same reason.
+                   dbg_engaged, dbg_foreign, dbg_peer_far, dbg_live,
+                   dbg_active, dbg_wire_state, dbg_frames, dbg_holder};
     end
   end
+
+  // ------------------------------------ MIT's debug cable, on JP1's pins
+  //
+  // **THE WHOLE CABLE ON ONE CONNECTOR, BOTH DIRECTIONS, FOUR PINS EACH WAY.**
+  // `rtl/plumbing/cadr_dbg_cable.sv` is the connector and the role;
+  // `cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` under it are the carrier, and
+  // `docs/debug-cable.md` is the design.  The frame is twenty-four beats,
+  // which is twenty-one signals, a two-bit marker and a parity bit over ONE
+  // data line: one signal a pair, with the other line of the pair driven low
+  // as a guard.
+  //
+  // **WHERE IT IS: JP1 PINS 31 TO 38, WITH THE HEADER'S OWN GROUND ON PIN 30
+  // BESIDE THEM.**  The Zynq boards have Pmod headers and this board has none,
+  // so a cable between this board and one of those is an ADAPTER and the
+  // question the other boards answered by taking a whole Pmod has to be
+  // answered again here.  It is answered by carrying the Pmod's own numbering
+  // across: index k of the carrier is header pin 31 + k, and those eight land
+  // on Pmod pins 1, 2, 3, 4, 7, 8, 9 and 10 in that order, which is exactly
+  // the order `boards/arty-z7-20/cadr_arty.xdc` puts them in.
+  //
+  //   | index | JP1 pin | package | Pmod pin | what it carries          |
+  //   |-------|---------|---------|----------|--------------------------|
+  //   | 0     | 31      | H19     | 1        | debugger strobe          |
+  //   | 1     | 32      | AH19    | 2        | guard, driven low        |
+  //   | 2     | 33      | R19     | 3        | debugger data            |
+  //   | 3     | 34      | R14     | 4        | guard, driven low        |
+  //   | 4     | 35      | V19     | 7        | debuggee strobe          |
+  //   | 5     | 36      | V14     | 8        | guard, driven low        |
+  //   | 6     | 37      | AG31    | 9        | debuggee data            |
+  //   | 7     | 38      | AL31    | 10       | guard, driven low        |
+  //
+  // The package pins are the user manual's Figure 3-18 on page 23, through
+  // `boards/de25-nano/de25_nano_pins.tcl`, and are not written here: this file
+  // names header pins and the pin file is the one place a package pin is
+  // written.  `tools/de25_faces_check.py` is what holds the two together, and
+  // holds the table above to being the one the connector itself describes.
+  //
+  // **SIGNALS ON THE ODD PINS, GUARDS ON THE EVEN.**  It falls out of `31 + k`
+  // and it is the property that matters: a Pmod's own signal pins are 1, 3, 7
+  // and 9 and its guards 2, 4, 8 and 10, so an adapter that joins pin to pin
+  // puts each signal on its counterpart at the far end.  On this header it
+  // also means no two signals are adjacent in the ribbon --- 31 signal, 32
+  // guard, 33 signal, 34 guard and so on --- with the header's ground on pin
+  // 30 at the end of the run.
+  //
+  // **AND THE SUPPLY PINS MUST BE OPEN AT BOTH ENDS.**  JP1 carries 5 V on pin
+  // 11 and 3.3 V on pin 29; a Pmod carries 3.3 V on 6 and 12.  The grounds
+  // must be joined and the supplies must not: two boards' regulators tied
+  // together is not something either of them is built for.  Neither supply pin
+  // is a fabric pin at all, so nothing here can drive one, and what the fabric
+  // can promise ends there --- the rest is the person making the cable, and
+  // `docs/debug-cable.md` says so for every board.
+  //
+  // **IT TAKES THE BOARD'S RESET AND NOT THE MACHINE'S.**  Modifier bit 1 of
+  // this very cable resets this machine, so a connector reset by it would
+  // forget the request that asked for it, and MIT's own "write a 1 here then
+  // write a 0" could not be written at all.  That is the same reason the DBGIN
+  // page takes `rst` at `.dbg_rst` above.
+  cadr_dbg_cable u_dbg_cable (
+      .clk(clk), .rst(rst),
+      // The role.  `connect` is the console's word 14 and the `fpgarc` line
+      // behind it; `engaged` is whether this board TOOK it, which is not the
+      // same question --- a board that can see a debugger on the forward group
+      // refuses, and `foreign` is how the console says why.
+      .connect(dbg_connect), .engaged(dbg_engaged), .foreign(dbg_foreign),
+      .peer_far(dbg_peer_far), .live(dbg_live), .active(dbg_active),
+      // Which way round the ribbon was made, and what the board found.  Only
+      // a DEBUGGER applies it; a debuggee always drives the high four.
+      .wiring(dbg_wiring), .wire_state(dbg_wire_state),
+      // Frames heard and frames refused, page 0's word 15.
+      .frames(dbg_frames),
+      // This machine's own DBGOUT page: CC on this board, writing
+      // `0o766100`-`0o766137`, debugging the board at the far end.
+      .out_req(dbgout_req), .out_wr(dbgout_wr), .out_a(dbgout_a),
+      .out_dbd(dbgout_dbd), .out_ack(dbgout_ack),
+      .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
+      // And a second board's debugger arriving here, which joins the window's
+      // cable at the page below.
+      .in_req(cab_req), .in_wr(cab_wr), .in_a(cab_a), .in_dbd(cab_dbd),
+      .in_ack(dbg_in_ack), .in_dbd_out(dbd_from_machine), .in_dbd_oe(dbd_oe),
+      .pin_o(dbg_pin_o), .pin_t(dbg_pin_t), .pin_i(dbg_pin_i)
+  );
+
+  // The eight pads.  `pin_t` is HIGH for NOT DRIVEN, so the group this board
+  // does not own is high-impedance and the far end has it; a pad driven
+  // unconditionally is two drivers on one wire the moment a second board is
+  // on the cable, which is the one failure this connector's whole design is
+  // about.  Written as one continuous assignment a pad, and named by header
+  // pin on both sides, so that the map above is read off these lines rather
+  // than believed.
+  assign jp1_pin31 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+  assign jp1_pin32 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+  assign jp1_pin33 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+  assign jp1_pin34 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+  assign jp1_pin35 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+  assign jp1_pin36 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+  assign jp1_pin37 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+  assign jp1_pin38 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+  // And what comes back off the header, most significant first: index 7 is
+  // pin 38 and index 0 is pin 31, which is the same map the eight lines above
+  // drive.  Driving one pin and listening on another is a board that hears
+  // its own guard, and nothing that reads only one of the two halves can see
+  // it, so both are written and `tools/de25_faces_check.py` compares them.
+  assign dbg_pin_i = {jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35,
+                      jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31};
+
+  // Two debuggers at one DBGIN page, which MIT's board cannot have and this
+  // one can.  The near arm is the register window and the far arm the
+  // connector, the first to assert holds until it lifts, and a tie goes to
+  // the window --- `rtl/plumbing/cadr_dbg_join.sv` has the argument.  With
+  // nothing in JP1 the connector presents zeros, so this is the window's cable
+  // unchanged; on a board with no processor the window's arm is tied off
+  // below, so it is the connector's cable unchanged.
+  cadr_dbg_join u_dbg_join (
+      .clk(clk), .rst(rst),
+      .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
+      .a_dbd(dbd_to_machine),
+      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
+      .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
+      .holder(dbg_holder)
+  );
 
   // ----------------------------------------------------------- the memory
   //
@@ -1287,9 +1506,6 @@ module cadr_de25 #(
   logic        con_hdmi_sleep_set, con_hdmi_wake;
   logic [14:0] con_hdmi_sleep_secs;
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
-  logic        con_dbg_connect;
-  logic [1:0]  con_dbg_wiring;
-
   cadr_console #(
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
   ) u_console (
@@ -1332,21 +1548,23 @@ module cadr_de25 #(
       .mach_boot(con_mach_boot),
       .no_auto_boot_held(sw0_held),
       .no_auto_boot_now(sw0_level),
-      // **THE DEBUG CABLE'S ROLE**, page 0's word 14.  There is no connector
-      // on this board yet --- JP1's is a later slice --- so this board is a
-      // debuggee and nothing else: what it asks for is held and read back,
-      // the wiring is undetected, no frame has been heard and no peer is
-      // there.  That is what `cadr_dbg_cable.sv` reports on a board whose
-      // connector is empty, and it is what this board's connector is.
-      .dbg_connect(con_dbg_connect),
-      .dbg_wiring(con_dbg_wiring),
-      .dbg_wire_state(3'd0),
-      .dbg_frames(24'd0),
-      .dbg_engaged(1'b0),
-      .dbg_foreign(1'b0),
-      .dbg_peer_far(1'b0),
-      .dbg_live(1'b0),
-      .dbg_active(1'b0)
+      // **THE DEBUG CABLE'S ROLE AND ITS CONNECTOR**, page 0's words 14 and
+      // 15.  Two go out --- the role this board asks for and which way round
+      // the ribbon was made --- and seven come back, because what this board
+      // ASKED FOR and what it HAS are two different facts: a board that can
+      // see a debugger already on the connector refuses, and a console that
+      // reported the ask alone would say this board was the debugger when the
+      // far one is.  Every one of these nine was a constant while this board
+      // had no connector, which was true then and would be a lie now.
+      .dbg_connect(dbg_connect),
+      .dbg_wiring(dbg_wiring),
+      .dbg_wire_state(dbg_wire_state),
+      .dbg_frames(dbg_frames),
+      .dbg_engaged(dbg_engaged),
+      .dbg_foreign(dbg_foreign),
+      .dbg_peer_far(dbg_peer_far),
+      .dbg_live(dbg_live),
+      .dbg_active(dbg_active)
   );
 
   // **THE DEBUG CABLE'S CARRIER**, MIT's twenty-one wires as sixteen words on
@@ -1372,8 +1590,8 @@ module cadr_de25 #(
       .s_rdata(lwd_rdata), .s_rresp(lwd_rresp), .s_rid(lwd_rid),
       .s_rlast(lwd_rlast), .s_rvalid(lwd_rvalid), .s_rready(lwd_rready),
       .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-      .dbd_out(dbd_in),
-      .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_out), .dbd_oe(dbd_oe)
+      .dbd_out(dbd_to_machine),
+      .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_from_machine), .dbd_oe(dbd_oe)
   );
 
   cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_lw_rest (
@@ -1650,8 +1868,7 @@ module cadr_de25 #(
                         lw_awsize, lw_arsize, lw_awprot, lw_arprot,
                         lw_awburst, lw_arburst, lw_awlock, lw_arlock,
                         lw_awcache, lw_arcache,
-                        pack_irq, chaos_irq, ser_irq,
-                        con_dbg_connect, con_dbg_wiring};
+                        pack_irq, chaos_irq, ser_irq};
   /* verilator lint_on UNUSEDSIGNAL */
 `else
   // NO PROCESSOR: no memory, and every cable out of the machine has nothing
@@ -1737,13 +1954,25 @@ module cadr_de25 #(
   assign disp_sleep_setting = 15'd0;
   assign disp_asleep        = 1'b0;
 
-  // NO DEBUG CABLE.  `-DEBUG IN REQ` held UP, which is `dbg_in_req` low, is
-  // what the SIP at DBGIN 0A22 makes of an unplugged connector, and the DBGIN
-  // page folds to its idle state.
-  assign dbg_in_req = 1'b0;
-  assign dbg_in_wr  = 1'b0;
-  assign dbg_in_a   = 2'd0;
-  assign dbd_in     = 16'd0;
+  // **NO REGISTER WINDOW**, there being no bridge to put its carrier on, so
+  // the join's near arm is empty.  `-DEBUG IN REQ` held UP, which is
+  // `dbg_in_req` low, is what the SIP at DBGIN 0A22 makes of an unplugged
+  // connector, and the join then carries the CONNECTOR's cable unchanged.
+  assign dbg_in_req     = 1'b0;
+  assign dbg_in_wr      = 1'b0;
+  assign dbg_in_a       = 2'd0;
+  assign dbd_to_machine = 16'd0;
+
+  // And nobody to ask for the debugger's role, there being no console.
+  // **THE CONNECTOR IS STILL THERE AND THIS BOARD IS STILL A DEBUGGEE**: it
+  // answers a debugger that plugs into JP1, which is the power-on state of any
+  // CADR and needs nothing set.  What is missing is only the way to ask for
+  // the other role, and the way to be told what the connector found.
+  assign dbg_connect = 1'b0;
+  // And the wiring stands at `auto`, which is what the fabric comes up with:
+  // a board with no console still finds a crossed cable, it just has nobody
+  // to tell.
+  assign dbg_wiring  = 2'd0;
 
   // And what the machine gives those cables, read here so that lint holds a
   // board with no far ends to reading every one of them.

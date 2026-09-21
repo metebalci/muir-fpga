@@ -16467,6 +16467,279 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @end
 
 # ======================================================================
+# MIT'S DEBUG CABLE ON THE DE25-NANO'S JP1
+# ======================================================================
+#
+# The Zynq boards carry the whole cable on one Pmod header, whose twelve pins
+# a ribbon maps to the far board's twelve.  This board has no Pmod, so the
+# connector is JP1 pins 31 to 38 and a cable to a Pmod is an adapter.  Every
+# module under it is held by a check that RUNS it --- `dbg_pmod`, `dbg_cable`,
+# `dbgin`, `gp1_split`, `unibus` --- and none of those is this board's: they
+# are the modules', and this board instantiates the same modules.  What is
+# this board's alone is the adapter, and `boards/de25-nano/cadr_de25.sv`
+# cannot be simulated, so what reads it is lint and
+# `tools/de25_faces_check.py`.  These records are what say those two see the
+# adapter's own failures rather than only its shape.
+
+@mutation de25-the-debug-connector-drives-all-eight-pads
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note **ONE connector carries both directions, so the pads are bidirectional
+@note and the tri-state enable is what tells the two groups apart.**  The four
+@note this board does not own must be high-impedance, or the far end cannot
+@note drive them: two boards on one cable would hold all eight from both ends,
+@note which is the thing the whole design of this connector is about.
+@note
+@note **AND LINT CANNOT SEE IT HERE, WHERE IT CAN ON THE ZYNQ BOARDS.**  There
+@note the eight pads are one genvar loop, so dropping the tri-state leaves
+@note `ja_t` read by nothing and UNUSEDSIGNAL says so.  Here the pads are
+@note named one by one, because each one is a header pin and which pin it is
+@note is the whole of this adapter; drop the tri-state from one of them and
+@note the other seven still read `dbg_pin_t`.  So the source check is what has
+@note this, and it has it by requiring eight pads driven and finding seven.
+@note
+@note Caught at "the top level drives pad indices [1, 2, 3, 4, 5, 6, 7], and
+@note the connector hands out eight, 0 to 7".
+@old
+  assign jp1_pin31 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+@new
+  assign jp1_pin31 = dbg_pin_o[0];
+@end
+
+@mutation de25-the-debug-connector-hears-a-pin-it-does-not-drive
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note A pad is written twice in this file --- once in the assignment that
+@note DRIVES it and once in the concatenation the connector LISTENS on --- and
+@note nothing that reads one half can see that the other disagrees.  Crossed,
+@note this board drives the debugger's group and listens on it too, so it
+@note hears its own strobe and never the far board's, and its guards arrive
+@note where its data should be.
+@note
+@note Every signal is still driven and still read, so lint has nothing to say,
+@note and `build/dbg_cable.pass` cannot help: its DUT is the connector module
+@note and this crossing is outside it.
+@note
+@note Caught at "the connector drives and listens on different pins at indexes
+@note [0, 1, 2, 3, 4, 5, 6, 7]".
+@old
+  assign dbg_pin_i = {jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35,
+                      jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31};
+@new
+  assign dbg_pin_i = {jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31,
+                      jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35};
+@end
+
+@mutation de25-the-debug-connectors-two-groups-are-swapped
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note **The debugger's four pins on the debuggee's, at BOTH halves at once**,
+@note so the crossing rule above passes and only the ORDER rule is left to
+@note find it.  On a straight ribbon the low four must be the debugger's at
+@note both ends and the high four the debuggee's; swapped here, two boards
+@note drive each other's groups and the `crossover` setting --- which exists
+@note to swap them DELIBERATELY at one end --- is wrong on whichever cable it
+@note was right about.
+@note
+@note It keeps every signal on an odd pin and every guard on an even one, so
+@note the guarding rule is untouched: this is the mutation that says the order
+@note rule does work of its own.
+@note
+@note Caught at "the carrier's index 0 is on JP1 pin 35, and the connector is
+@note JP1 pins 31 to 38 in order, so index 0 is pin 31", four times over.
+@old
+  assign jp1_pin31 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+  assign jp1_pin32 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+  assign jp1_pin33 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+  assign jp1_pin34 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+  assign jp1_pin35 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+  assign jp1_pin36 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+  assign jp1_pin37 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+  assign jp1_pin38 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+@new
+  assign jp1_pin35 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+  assign jp1_pin36 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+  assign jp1_pin37 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+  assign jp1_pin38 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+  assign jp1_pin31 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+  assign jp1_pin32 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+  assign jp1_pin33 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+  assign jp1_pin34 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+@end
+
+@mutation de25-a-signal-of-the-debug-cable-lands-on-a-guards-pin
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note **The whole connector one pin up the header**, which is the shape an
+@note off-by-one in a transcription takes and which no count of pads can see:
+@note eight pads, eight ports, eight package pins, and every signal now on an
+@note EVEN header pin with a guard on the odd one beside it.
+@note
+@note What that costs is the guarding.  A guard is the pin a signal's
+@note counterpart is at the far end of an adapter --- a Pmod's signals are on
+@note its pins 1, 3, 7 and 9 --- so shifted by one this board drives its
+@note strobe into the far board's guard and its guard into the far board's
+@note strobe, and the link never comes up on a cable that is made right.
+@note
+@note This is the mutation that says the guarding rule does work of its own
+@note rather than riding on the order rule, which is why the two are asked
+@note separately.
+@note
+@note Caught at "index 0 is FWD_STB, a signal, and JP1 pin 32 is an even pin,
+@note which is a guard's", eight times over, and by the order rule as well.
+@old
+  assign jp1_pin31 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+  assign jp1_pin32 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+  assign jp1_pin33 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+  assign jp1_pin34 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+  assign jp1_pin35 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+  assign jp1_pin36 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+  assign jp1_pin37 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+  assign jp1_pin38 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+  // And what comes back off the header, most significant first: index 7 is
+  // pin 38 and index 0 is pin 31, which is the same map the eight lines above
+  // drive.  Driving one pin and listening on another is a board that hears
+  // its own guard, and nothing that reads only one of the two halves can see
+  // it, so both are written and `tools/de25_faces_check.py` compares them.
+  assign dbg_pin_i = {jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35,
+                      jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31};
+@new
+  assign jp1_pin32 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+  assign jp1_pin33 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+  assign jp1_pin34 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+  assign jp1_pin35 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+  assign jp1_pin36 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+  assign jp1_pin37 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+  assign jp1_pin38 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+  assign jp1_pin39 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+  assign dbg_pin_i = {jp1_pin39, jp1_pin38, jp1_pin37, jp1_pin36,
+                      jp1_pin35, jp1_pin34, jp1_pin33, jp1_pin32};
+@end
+
+@mutation de25-the-debug-connector-is-reset-by-the-machine-it-debugs
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note Modifier bit 1 of this very cable is the debuggee's power-on reset, and
+@note on this board it joins `mach_rst`.  A connector reset by `mach_rst`
+@note would therefore be reset BY the request that is standing on it, forget
+@note that request, and drop the levels the far end's latches take at the
+@note trailing edge of their own strobe.  MIT's own sequence for that bit is
+@note "write a 1 here then write a 0", which is a LEVEL, and it could not be
+@note written at all: the second write would never reach a connector that the
+@note first write had just reset.
+@note
+@note This is the same fault the DBGIN page inside the machine avoids by
+@note taking `dbg_rst` rather than the machine's reset, and the rule is that
+@note the connector and the join take the signal that port takes.  Lint sees
+@note nothing: a reset is a legal connection whatever it is made of.
+@note
+@note Caught at "u_dbg_cable takes `mach_rst` as its reset and the DBGIN page
+@note takes `rst`".
+@old
+  cadr_dbg_cable u_dbg_cable (
+      .clk(clk), .rst(rst),
+@new
+  cadr_dbg_cable u_dbg_cable (
+      .clk(clk), .rst(mach_rst),
+@end
+
+@mutation de25-the-console-reports-a-constant-about-the-connector
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note Page 0's word 14 reports what this board ASKED FOR and what it HAS, and
+@note they are two facts: a board that can see a debugger already on the
+@note connector refuses the role, so a console reporting the ask alone would
+@note say this board is the debugger when the far one is.  All nine of these
+@note words were constants while this board had no connector --- which was
+@note true then and is a lie now, and the lie reads exactly like a board with
+@note nothing plugged in.
+@note
+@note **LINT CANNOT TELL THE TWO APART**, because the connector's outputs have
+@note a second reader in the `witness` fold: `dbg_engaged` is still driven and
+@note still read with the console taking a zero, and no warning is raised on
+@note any of the five configurations.
+@note
+@note Caught at "u_console takes `1'b0` at `dbg_engaged`, which is whether
+@note this board took the role".
+@old
+      .dbg_engaged(dbg_engaged),
+@new
+      .dbg_engaged(1'b0),
+@end
+
+@mutation de25-the-joins-two-arms-are-crossed
+@check de25_faces
+@file boards/de25-nano/cadr_de25.sv
+@note The join's near arm is the register window and its far arm the
+@note connector, and `rtl/plumbing/cadr_dbg_join.sv` decides between them by a
+@note rule its own check holds: the first to assert holds until it lifts, and
+@note a tie goes to the window.  Crossed HERE, outside that module, the rule
+@note still works perfectly and works on the wrong pair: the window's request
+@note arrives carrying the connector's data lines, so a debugger's word never
+@note reaches the page and the first request latches whatever the other arm
+@note was holding.
+@note
+@note `mutations/list.txt` already carries
+@note `the-join-crosses-the-two-debuggers-data-lines` for the module itself;
+@note this is the same shape one level out, where no check runs the design at
+@note all.  Both arms are sixteen bits, both are driven and both are read, so
+@note lint has nothing whatever to say.
+@note
+@note Caught at "u_debug_window.dbd_out takes `dbd_to_machine` and
+@note u_dbg_join.a_dbd takes `cab_dbd`", and again for the connector's arm.
+@old
+      .a_dbd(dbd_to_machine),
+      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
+@new
+      .a_dbd(cab_dbd),
+      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(dbd_to_machine),
+@end
+
+@mutation de25-the-connector-never-answers-this-machines-debugger
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note This machine's DBGOUT page is CC on THIS board debugging a second one,
+@note and until the connector landed its far end was a bare connector written
+@note as constants: never acknowledging, not live, every data line reading
+@note one.  Put back, those constants are exactly what an unplugged cable
+@note gives, so the board behaves like one with nothing in JP1 however the
+@note ribbon is wired --- and `-DB READ STATUS` from the debugger's own Lisp
+@note Listener would read `0o177777`, its own timeout, with a board answering
+@note at the far end.
+@note
+@note **THIS ONE LINT DOES HAVE**, and it is worth keeping on lint rather than
+@note on the source check for that reason: the connector's `out_ack`,
+@note `out_dbd_in` and `out_live` then have no reader anywhere, on any of the
+@note five configurations, and UNUSEDSIGNAL says so at each declaration.
+@old
+      .dbgout_dbd(dbgout_dbd), .dbgout_ack(dbgout_ack),
+      .dbgout_dbd_in(dbgout_dbd_in), .dbgout_live(dbgout_live),
+@new
+      .dbgout_dbd(dbgout_dbd), .dbgout_ack(1'b0),
+      .dbgout_dbd_in(16'hFFFF), .dbgout_live(1'b0),
+@end
+
+@mutation de25-the-connectors-state-reaches-no-pin
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note `dbg_holder` says which of the two debuggers holds the DBGIN page, and
+@note nothing on this board reads it but the fold --- the console does not
+@note report it, and on a board with no console there is no console to report
+@note anything.  Dropped from the fold, nothing reads it at all, the fitter
+@note trims the join's held bit away with it, and what is left is a selection
+@note that cannot hold.
+@note
+@note The same shape as `dev_wdata` and caught the same way: UNUSEDSIGNAL at
+@note the declaration, which is the only shape of this bug lint can see, and
+@note it is seen on all five configurations rather than only the board with no
+@note processor.
+@old
+                   dbg_active, dbg_wire_state, dbg_frames, dbg_holder};
+@new
+                   dbg_active, dbg_wire_state, dbg_frames};
+@end
+
+# ======================================================================
 # THE BLOCK STORE'S UNDEFINED TICK
 # ======================================================================
 #

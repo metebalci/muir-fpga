@@ -52,6 +52,56 @@ set_false_path -from [get_ports {btn[*] sw[*]}]
 # Nor is an LED, which nothing samples.
 set_false_path -to [get_ports {led[*]}]
 
+# ------------------------------------------- MIT's debug cable, on JP1
+#
+# **THE EIGHT PADS ARE ASYNCHRONOUS AND THE TWO BOARDS SHARE NO CLOCK.**  What
+# crosses this connector is a strobe and a data line at the far end of a
+# ribbon, sampled here through two flops like any other asynchronous input ---
+# `rtl/plumbing/cadr_dbg_rx.sv` does the sampling and the frame's own gap is
+# what says where a frame begins.  There is no clock to constrain them against
+# and no input or output delay that would mean anything, so both directions
+# are cut, which is what `boards/arty-z7-20/cadr_arty.xdc` does for the same
+# eight pads on Pmod JA.
+set_false_path -from [get_ports {jp1_pin3[1-8]}]
+set_false_path -to   [get_ports {jp1_pin3[1-8]}]
+
+# --------------------------------------- and the carrier's own six ticks
+#
+# **`rtl/plumbing/xilinx7/cadr_debug_pmod.xdc`'s ONE CLAUSE, WRITTEN AGAIN**,
+# and read by every configuration of this board for the reason that file
+# records: a board is always a DEBUGGEE, so `cadr_dbgin.sv`'s page is driven by
+# the cable on every board, `DBD<15:0>` is live on every board, and the arc
+# this exists for is real whether or not a processor is in the build.  That
+# file was once gated on a general-purpose port being brought out, and the
+# memory-off Arty Z7-20 measured -9.600 ns on 596 endpoints with it read by
+# nothing.
+#
+# THE ARC IS THE MACHINE'S WORD INTO THE FRAME THE SENDER IS ABOUT TO SHIFT
+# OUT: `VMA` through both levels of the map to `-VMAOK`, into FLAG-2, through
+# the processor's sixteen-way diagnostic mux, the register block, the arbiter
+# and MIT's DBGIN page, out of `cadr_machine` on `DBD<15:0>` and into
+# `tx_frame`.  It is the same cone `cadr_ddr.sdc` relaxes into the register
+# window's `sts_dbd`, with a second reader on it, and the remedy is the same.
+#
+# **SIX TICKS IS THE CARRIER'S OWN NUMBER AND NOT A MARGIN.**  The sender takes
+# the cable's levels once at the first beat of a frame and shifts them out over
+# the twenty-three that follow, so the two ways into these registers are a
+# snapshot every 162 ticks and a SHIFT every `BEAT_T`, which is six.  Six is
+# the tighter of the two, and that is what makes it a bound rather than a
+# margin.
+#
+# The `|d` pins and not the registers, as every other clause in this file
+# does: `-to [get_registers ...]` would cover the clock enable too, and the
+# enable on these is the beat countdown, a free-running counter that must keep
+# its tick.  `sta_check.tcl` asserts what it reached --- these two registers of
+# the sender and no other register of the connector --- because a constraint
+# that reaches nothing looks exactly like one that works.
+# grid: 60 ns
+set cable_frame [get_pins -nowarn {u_dbg_cable|u_tx|tx_frame[*]|d
+                                   u_dbg_cable|u_tx|tx_d[*]|d}]
+set_multicycle_path -setup 6 -to $cable_frame
+set_multicycle_path -hold  5 -to $cable_frame
+
 # ------------------------------------------------ the machine's relaxed set
 #
 # Every register of the machine but the ones that must stay at the tick: the
