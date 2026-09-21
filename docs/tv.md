@@ -779,7 +779,7 @@ top-level `LMTV` of their own and default it to 1, and
 `cadr_machine`'s own default, which is 1 as well. The Cora Z7-07S is
 the one where the question is live: with the board fitted it routes and closes
 at +0.203 ns and 93.6% of its lookup tables, built from a clean tree at
-`8d2c1cd`, which fits and leaves almost nothing. Those lookup tables sit in
+`fe859fb`, which fits and leaves almost nothing. Those lookup tables sit in
 97.4% of the part's slices.
 
 **What silicon has shown.** On a Zynq board the console fits and unfits the
