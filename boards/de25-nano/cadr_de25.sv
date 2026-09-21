@@ -179,30 +179,7 @@ module cadr_de25 #(
     parameter string PROM_HEX = "build/boot_prom.hex",
     // MIT's TV sync PROM, for the display: `rtl/machine/cadr_tv.sv`.
     parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
-    parameter int unsigned PROBE_DEPTH = 0,
-    // **WHICH VIDEO MODE THIS BITSTREAM CARRIES**, as `HDMI_MODE` is on the
-    // Arty Z7-20 and for the same reason: the raster's widths, the two
-    // margins that center each picture and one sync polarity are all
-    // elaboration-time constants of `rtl/plumbing/cadr_display_out.sv`, and
-    // the pixel clock is a PLL's counters.  0 is 1280x1024 at 60 Hz, 1 is
-    // 1400x1050 reduced-blanking at 60, 2 is 1920x1080 at 30, 3 is 1920x1080
-    // at 60.  The console's page 2 word 34 reports which, and a card naming
-    // another is told which bitstream it wants.  `docs/display-output.md` has
-    // the table and the argument.
-    //
-    // **MODE 3 IS THIS BOARD'S AND NOT THE ARTY Z7-20'S**, and that is the
-    // one place where the two boards' displays part.  1920x1080 at 60 Hz is
-    // a pixel clock of 148.5 MHz.  On the Zynq boards the fabric serializes
-    // the link itself, ten bits a pixel down each lane, and the serializer
-    // was measured to stop near 1.2 Gb/s where that mode needs 1.485; so
-    // `boards/arty-z7-20/cadr_arty.sv` refuses the column at elaboration.
-    // Here the fabric serializes nothing.  It hands a parallel raster to an
-    // ADV7513 at one pixel a clock, and that part's data sheet --- Rev. B,
-    // page 3 of 12, Table 1 under AC SPECIFICATIONS --- gives its Input
-    // Video Clock Frequency a maximum of 165 MHz.  So the lane rate that
-    // bounds the other board is not a fact about this one, and what bounds
-    // this one has 16.5 MHz in hand.
-    parameter int unsigned HDMI_MODE = 0
+    parameter int unsigned PROBE_DEPTH = 0
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
     input  var logic       clock50_0,
@@ -419,10 +396,9 @@ module cadr_de25 #(
   logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
   // **THE DISPLAY'S OWN SEAMS**, driven by the display section near the end
   // of this file on a board that has one and tied off there on a board that
-  // does not: the color board's second map port, which mode this bitstream
-  // carries, and what the console's word 36 reads back of the sleep.
+  // does not: the color board's second map port, and what the console's word
+  // 36 reads back of the sleep.
   logic [3:0]  disp_map_a;
-  logic [1:0]  disp_mode;
   logic        disp_sleep_fitted, disp_asleep;
   logic [14:0] disp_sleep_setting;
   logic [13:0] pc, lpc, opc;
@@ -1527,12 +1503,11 @@ module cadr_de25 #(
       // **THE DISPLAY'S TWO SETTINGS AND ITS SLEEP**, word 34 and word 36,
       // as `docs/display-output.md` and `docs/console.md` give them.  On a
       // board built with the display these reach it and it answers; on a
-      // board built without, the mode reads 0, the sleep is not fitted and
-      // word 36 reads `UNMAPPED`, and what a write to word 34 asks for is
-      // held and read back with nothing behind it --- which is what the
-      // Cora Z7-07S does, and a console is for saying so.
+      // board built without, the sleep is not fitted and word 36 reads
+      // `UNMAPPED`, and what a write to word 34 asks for is held and read
+      // back with nothing behind it --- which is what the Cora Z7-07S does,
+      // and a console is for saying so.
       .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
-      .hdmi_mode(disp_mode),
       .steady_lamps(con_steady_lamps),
       .hdmi_sleep_set(con_hdmi_sleep_set),
       .hdmi_sleep_secs(con_hdmi_sleep_secs),
@@ -1611,10 +1586,8 @@ module cadr_de25 #(
   // **THE SAME DISPLAY THE ARTY Z7-20 HAS, WITH ONE STAGE OF IT OFF THE
   // FABRIC.**  `rtl/plumbing/cadr_display_out.sv` reads the CADR's two
   // screens out of the machine's own memory and puts them on a raster, and
-  // it is the same module, the same run-time output selection, rotation and
-  // sleep.  It is NOT the same list of video modes: this board carries a
-  // fourth, 1920x1080 at 60 Hz, which the Arty Z7-20 refuses because its own
-  // lanes cannot reach 148.5 MHz.  What parts the two boards is what
+  // it is the same module, the same video mode, the same run-time output
+  // selection, rotation and sleep.  What parts the two boards is what
   // happens to that raster afterwards.  There the fabric encodes it as DVI
   // in `cadr_hdmi_tx.sv` and serializes four lanes in
   // `xilinx7/cadr_hdmi_phy.sv`; here an Analog Devices ADV7513 on the board
@@ -1724,8 +1697,7 @@ module cadr_de25 #(
 
   cadr_display_out #(
       .BASE(cadr_ddr_map::DISPLAY_BASE),
-      .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
-      .MODE(HDMI_MODE)
+      .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE)
   ) u_display (
       .clk(clk), .rst(rst),
       .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
@@ -1749,7 +1721,6 @@ module cadr_de25 #(
       .underrun(disp_underrun), .rd_error(disp_rd_error)
   );
   assign disp_sleep_fitted = 1'b1;
-  assign disp_mode         = 2'(HDMI_MODE);
 
   // **THE VIDEO BUS, REGISTERED ON THE PIXEL CLOCK AND NOWHERE ELSE.**  One
   // register a pin, so what the part sees leaves a flip-flop rather than a
@@ -1828,7 +1799,6 @@ module cadr_de25 #(
   assign dm_arvalid  = 1'b0;
   assign dm_rready   = 1'b1;
   assign disp_map_a  = 4'd0;
-  assign disp_mode   = 2'd0;
   assign disp_sleep_fitted  = 1'b0;
   assign disp_sleep_setting = 15'd0;
   assign disp_asleep        = 1'b0;
@@ -1946,10 +1916,9 @@ module cadr_de25 #(
   assign con_steady_lamps = 1'b0;
 
   // NO DISPLAY, because there is no memory for it to read.  The machine's
-  // second map port stands at entry zero, the console's word 34 reports mode
-  // 0 and its word 36 reads `UNMAPPED`.
+  // second map port stands at entry zero and the console's word 36 reads
+  // `UNMAPPED`.
   assign disp_map_a         = 4'd0;
-  assign disp_mode          = 2'd0;
   assign disp_sleep_fitted  = 1'b0;
   assign disp_sleep_setting = 15'd0;
   assign disp_asleep        = 1'b0;
@@ -1982,21 +1951,11 @@ module cadr_de25 #(
                            req_valid, req_tag, req_post,
                            ch_waiting, ch_slot, ch_wrote, ch_hit,
                            sw0_held, csr_face, disp_color_map_q,
-                           disp_mode, disp_sleep_fitted, disp_sleep_setting,
+                           disp_sleep_fitted, disp_sleep_setting,
                            disp_asleep};
   /* verilator lint_on UNUSEDSIGNAL */
 `endif
 
-`ifndef CADR_DE25_HDMI
-  // **THE VIDEO MODE IS A PARAMETER OF EVERY BUILD AND ONLY THE DISPLAY
-  // READS IT**, so on a board without one it is read here.  A board built
-  // with a mode and no display is a board whose mode means nothing, and
-  // saying that once is better than each arm saying it separately.
-  /* verilator lint_off UNUSEDSIGNAL */
-  logic unused_hdmi_mode;
-  assign unused_hdmi_mode = ^32'(HDMI_MODE);
-  /* verilator lint_on UNUSEDSIGNAL */
-`endif
 
   // ------------------------------------------------------------ the probe
   //

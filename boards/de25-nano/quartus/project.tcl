@@ -46,11 +46,6 @@ if {$hdmi && !$ddr} {
     puts "project: HDMI needs DDR: the display reads the machine's memory"
     exit 1
 }
-set hdmi_mode [expr {[info exists ::env(HDMI_MODE)] ? $::env(HDMI_MODE) : 0}]
-if {![string is integer -strict $hdmi_mode] || $hdmi_mode < 0 || $hdmi_mode > 3} {
-    puts "project: HDMI_MODE is '$hdmi_mode', which is not 0, 1, 2 or 3"
-    exit 1
-}
 set userid  [lindex $argv 1]
 set sources [lrange $argv 2 end]
 set root    [pwd]
@@ -126,18 +121,13 @@ if {$ddr} {
 # it is built, for the reason the probe's files below are read only behind
 # `PROBE_DEPTH`: a constraint on something that is not in the design is a
 # warning that reads like a constraint that applied.  The define is the top
-# level's switch for the video pins, which changes its port list; the
-# parameter is which of the four video modes the raster and the pixel clock
-# are built for, and `boards/de25-nano/quartus/build.sh` asks the PLL
-# generator for that mode's frequency.  **MODE 3, 1920x1080 at 60 Hz, IS
-# THIS BOARD'S ALONE**: the Arty Z7-20 serializes the link in fabric and a
-# lane there stops near 1.2 Gb/s, where this board hands a parallel raster
-# to a transmitter part whose data sheet allows 165 MHz.
+# level's switch for the video pins, which changes its port list, and
+# `boards/de25-nano/quartus/build.sh` asks the PLL generator for the video
+# mode's own frequency.
 if {$hdmi} {
     set_global_assignment -name VERILOG_MACRO "CADR_DE25_HDMI=1"
     set_global_assignment -name IP_FILE [file join $build ip cadr_de25_pixel_pll.ip]
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_hdmi.sdc]
-    set_parameter -name HDMI_MODE $hdmi_mode
 }
 
 # **THE PROBE, AND ITS OWN CONSTRAINTS, ONLY WHEN IT IS BUILT.**  The Virtual
@@ -416,7 +406,7 @@ project_close
 if {$probe_depth > 0} {
     puts "project: written to $build/cadr_de25.qsf with USERCODE $userid and a probe of $probe_depth samples"
 } elseif {$hdmi} {
-    puts "project: written to $build/cadr_de25.qsf with USERCODE $userid, $hps_boot, video mode $hdmi_mode"
+    puts "project: written to $build/cadr_de25.qsf with USERCODE $userid, $hps_boot, with the display output"
 } else {
     puts "project: written to $build/cadr_de25.qsf with USERCODE $userid, $hps_boot"
 }

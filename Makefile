@@ -84,7 +84,6 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass $(BUILD)/color_tv.pass \
        $(BUILD)/display_out.pass $(BUILD)/display_sleep.pass \
-       $(BUILD)/hdmi_mode_guard.pass \
        $(BUILD)/hdmi_tx.pass $(BUILD)/adv7513.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass $(BUILD)/dbg_cable.pass \
@@ -1590,31 +1589,6 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY_SRC)
-# AND THE OTHER TWO VIDEO MODES THIS BOARD CARRIES, which are bitstreams and
-# not a setting: `HDMI_MODE` reaches the raster's widths, the two margins that
-# center each picture and one sync polarity, so each column of the table
-# elaborates to a different design and a column nothing lints is a column
-# nobody has checked.  **THE TABLE HAS FOUR COLUMNS AND THIS BOARD HAS THREE**:
-# mode 3 is 1920x1080 at 60 Hz, which this board's lanes cannot reach, and
-# `$(BUILD)/hdmi_mode_guard.pass` holds that asking for it here is a refusal.
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    -GDDR=1 -GHDMI=1 -GHDMI_MODE=1 \
-	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
-	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
-	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY_SRC)
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    -GDDR=1 -GHDMI=1 -GHDMI_MODE=2 \
-	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
-	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
-	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY_SRC)
 # AND THE DEBUG CABLE'S TWO, AT THEIR OWN DEFAULT PARAMETERS, WHICH IS STILL
 # WORTH A PASS OF ITS OWN. Both are composed now --- `cadr_dbgin.sv` is in
 # `$(MACHINE)`, so every pass above elaborates it, and
@@ -1766,19 +1740,6 @@ $(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
 	    $(DE25_DDR) $(DE25_HDMI)
-# AND A FIFTH, MODE 3, WHICH IS THIS BOARD'S AND NO OTHER BOARD'S.  1920x1080
-# at 60 Hz needs a 148.5 MHz pixel clock, which a fabric that serializes the
-# link itself cannot reach and a board that hands a parallel raster to an
-# ADV7513 can.  `boards/arty-z7-20/cadr_arty.sv` refuses the column and this
-# board carries it, so this is the lint that says the column elaborates HERE.
-# `$(BUILD)/hdmi_mode_guard.pass` holds the other half, which is that the same
-# number is refused on the board that cannot clock it.
-	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
-	    -DCADR_DE25_DDR -DCADR_DE25_HDMI -GHDMI_MODE=3 \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
-	    $(DE25_DDR) $(DE25_HDMI)
 	@touch $@
 
 # THE DE25-NANO'S BITSTREAM, which needs Quartus Prime Pro and is not part of
@@ -1793,14 +1754,8 @@ DDR ?= 0
 # **`HDMI=1` BUILDS THE DISPLAY OUTPUT INTO THE MEMORY BOARD**, into
 # `build/de25-hdmi/`: the CADR's screens read out of the machine's memory and
 # put on the board's ADV7513, as `HDMI=1` does for the Arty Z7-20.  It needs
-# `DDR=1`, because the picture is in the machine's memory.  `HDMI_MODE` is
-# which of the four video modes the bitstream carries, 0 by default, and mode
-# 3 --- 1920x1080 at 60 Hz --- is this board's alone: the Zynq boards make the
-# link in fabric, where a lane stops near 1.2 Gb/s, and this one hands a
-# parallel raster to a transmitter part.  `docs/display-output.md` has the
-# table.
+# `DDR=1`, because the picture is in the machine's memory.
 HDMI ?= 0
-HDMI_MODE ?= 0
 DE25_DDR_MHZ ?= 1066.667
 # How the processor boots, and the first-stage loader to put in the file the
 # programmer takes: `boards/de25-nano/quartus/build.sh` says what each makes.
@@ -1808,7 +1763,7 @@ DE25_HPS_BOOT ?= hps-first
 DE25_SPL_HEX ?=
 de25: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
-	    HDMI=$(HDMI) HDMI_MODE=$(HDMI_MODE) \
+	    HDMI=$(HDMI) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
 	    boards/de25-nano/quartus/build.sh $(MACHINE) $(DE25_TOP) \
 	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
@@ -2451,122 +2406,27 @@ $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default \
 # a 4 KB boundary that a 96-byte line forces; and a second configuration slows
 # the port until it loses the race, because a stimulus fast enough hides the
 # race it exists to show.
-# **FOUR BUILDS, ONE A MODE, BECAUSE THE MODE IS A PARAMETER.**  A video mode
-# is a pixel clock and a pixel clock comes from a clock manager whose dividers
-# are fixed in the bitstream, so the four modes are four bitstreams and the
-# raster's figures are elaboration-time constants.  A check that ran one of
-# them would hold the code and say nothing about the other columns of the
-# table --- and the centering, whose margins differ between them, is exactly
-# where an off-by-one lives.
+# **AND WHERE THE TWO PICTURES SIT IS HELD AS FOUR EDGES A SCREEN AND NOT AS
+# AN OVERLAP.**  The first display is at the raster's left edge and the color
+# board at its right, so they share 64 columns upright and 137 turned. An
+# overlap of 64 is small enough that a margin one pixel out is invisible to a
+# person and fatal to a comparison, so the check measures the extreme column
+# and row each picture reached --- telling the two apart by their colors, since
+# the first display draws only black and white and the map has no white or
+# black entry --- and holds each of the eight numbers to the figure
+# `docs/display-output.md` states.
 #
-# **AND MODE 3 IS RUN ALTHOUGH ITS WIDTHS ARE MODE 2'S.**  CEA-861's VIC 16
-# and VIC 34 share one blanking table, so those two columns elaborate the same
-# raster and differ only in the pixel clock, 148.5 MHz against 74.25.  What
-# mode 3 exercises here is therefore not the geometry but the ratio between
-# the raster and the memory side: the testbench clocks the memory side at its
-# own 10.000 ns whatever the raster does, and mode 3 is the shortest line of
-# the four.  A column that elaborated another mode's widths --- which is what
-# a table that forgot it falls through to --- would still be caught, because
-# the check counts the raster rather than sampling it.
-#
-# The testbench carries its own transcription of the four specifications and
-# takes the mode as its argument, so the module's table and the check's are two
-# descriptions that can disagree.
-$(BUILD)/obj_display_out%/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
-                                             tb/cadr_display_out_tb.cpp | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_display_out$* \
-	    -GMODE=$* --top-module cadr_display_out \
+# The testbench carries its own transcription of VESA DMT's figures for
+# 1280x1024 at 60 Hz and of the placement rule, so the module's numbers and the
+# check's are two descriptions that can disagree.
+$(BUILD)/obj_display_out/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
+                                            tb/cadr_display_out_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_display_out \
+	    --top-module cadr_display_out \
 	    rtl/plumbing/cadr_display_out.sv $(abspath tb/cadr_display_out_tb.cpp)
 
-$(BUILD)/display_out.pass: $(BUILD)/obj_display_out0/Vcadr_display_out \
-                           $(BUILD)/obj_display_out1/Vcadr_display_out \
-                           $(BUILD)/obj_display_out2/Vcadr_display_out \
-                           $(BUILD)/obj_display_out3/Vcadr_display_out
-	$(BUILD)/obj_display_out0/Vcadr_display_out 0
-	$(BUILD)/obj_display_out1/Vcadr_display_out 1
-	$(BUILD)/obj_display_out2/Vcadr_display_out 2
-	$(BUILD)/obj_display_out3/Vcadr_display_out 3
-	@touch $@
-
-# ------------------------------------ which board may drive which video mode
-#
-# **A BUILD THAT ACCEPTS A MODE THE BOARD CANNOT CLOCK IS WORSE THAN ONE THAT
-# REFUSES**, because it fails at a monitor rather than at a tool.  This is the
-# check that the refusals happen.
-#
-# `rtl/plumbing/cadr_display_out.sv` has four video modes and the boards do
-# not.  Mode 3 is 1920x1080 at 60 Hz, a pixel clock of 148.5 MHz, and whether
-# a board can drive it depends on what turns the raster into a link:
-#
-#   The Arty Z7-20 and the Cora Z7-07S serialize it in fabric, ten bits a
-#   pixel down each lane.  The serializer's own clock input was measured to
-#   need 1.667 ns, which is 600 MHz and 1.2 Gb/s a lane; 148.5 MHz needs
-#   1.485.  So mode 3 is refused there, and the refusal is in
-#   `boards/arty-z7-20/cadr_arty.sv` because the top level is the earliest
-#   thing that knows which board this is.
-#
-#   The DE25-Nano hands a parallel raster to an ADV7513 and serializes
-#   nothing, and that part's data sheet gives its video input 165 MHz.  So it
-#   carries the column, and `$(BUILD)/de25.pass` lints it.
-#
-# **AND EVERY REFUSAL IS PAIRED WITH THE VALUE JUST INSIDE IT**, because a
-# bound nothing reaches looks exactly like a bound that works: a guard written
-# one number too wide refuses everything and still passes the refusing half.
-# So mode 2 is required to lint on the Arty and mode 3 is required not to, and
-# mode 3 is required to elaborate in the shared module and mode 4 is required
-# not to.
-#
-# `tools/refusal_check.py` is what holds each one, and it asks for the
-# refusal's OWN WORDS as well as a non-zero exit.  Without that a deleted
-# guard goes on passing as long as the tool breaks for any reason at all ---
-# a missing file, a mistyped flag, a lint finding somewhere else.
-ARTY_HDMI_LINT := $(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
-    -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
-    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-    -GDDR=1 -GHDMI=1 --top-module cadr_arty \
-    $(BOARD_STUBS) tb/cadr_ps7_stub.sv $(MACHINE) \
-    boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv \
-    rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
-    rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
-    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY_SRC)
-
-$(BUILD)/hdmi_mode_guard.pass: rtl/plumbing/cadr_display_out.sv \
-                               boards/arty-z7-20/cadr_arty.sv \
-                               tools/refusal_check.py \
-                               $(MACHINE) boards/arty-z7-20/cadr_ps7.sv \
-                               rtl/plumbing/cadr_axi_master.sv \
-                               rtl/plumbing/cadr_axi_widen.sv \
-                               rtl/plumbing/cadr_mem_count.sv \
-                               rtl/plumbing/cadr_disk_pack.sv \
-                               rtl/plumbing/cadr_gp0_default.sv \
-                               rtl/plumbing/cadr_console.sv \
-                               $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
-                               $(DBGPMOD) $(DISPLAY_SRC) \
-                               $(BOARD_STUBS) tb/cadr_ps7_stub.sv | $(BUILD)
-# The shared module's own bound: four columns, and a fifth number is an error
-# rather than a silent fall through to mode 0's raster.
-	python3 tools/refusal_check.py --allow \
-	    --what "MODE=3 in cadr_display_out" -- \
-	    $(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
-	    -GMODE=3 --top-module cadr_display_out \
-	    rtl/plumbing/cadr_display_out.sv
-	python3 tools/refusal_check.py --refuse \
-	    --saying "the table has 0, 1, 2 and 3" \
-	    --what "MODE=4 in cadr_display_out" -- \
-	    $(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
-	    -GMODE=4 --top-module cadr_display_out \
-	    rtl/plumbing/cadr_display_out.sv
-# And the board's: the Arty Z7-20 carries three of the four columns, and the
-# one it does not carry is the one its lanes cannot reach.
-	python3 tools/refusal_check.py --allow \
-	    --what "HDMI_MODE=2 on the Arty Z7-20" -- \
-	    $(ARTY_HDMI_LINT) -GHDMI_MODE=2
-	python3 tools/refusal_check.py --refuse \
-	    --saying "a lane stops near 1.2 Gb/s" \
-	    --what "HDMI_MODE=3 on the Arty Z7-20" -- \
-	    $(ARTY_HDMI_LINT) -GHDMI_MODE=3
+$(BUILD)/display_out.pass: $(BUILD)/obj_display_out/Vcadr_display_out
+	$(BUILD)/obj_display_out/Vcadr_display_out
 	@touch $@
 
 # The display output's sleep: the timer, its prescaler and the mute on the four

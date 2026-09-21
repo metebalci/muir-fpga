@@ -107,11 +107,9 @@ module cadr_console_harness #(
     // --- **AND WHAT THE DISPLAY OUTPUT SHOWS, page 2's word 34.**  Out of the
     // harness for word 33's reason: the LEVEL the fabric holds and the WORD it
     // reads back are two facts, and a console that reported the key it was
-    // given would agree with itself and with nothing else.  The mode goes the
-    // other way, being what a bitstream was built with.
+    // given would agree with itself and with nothing else.
     output var logic [1:0]  hdmi_out,
     output var logic [1:0]  hdmi_rotate,
-    input  var logic [1:0]  hdmi_mode,
 
     // --- **AND WHETHER THE LAMPS BLINK, page 2's word 35.**  Out of the
     // harness for word 33's reason: the level the fabric holds and the word it
@@ -452,7 +450,7 @@ module cadr_console_harness #(
       .tv_map_a   (tv_map_a),
       .tv_map_q   (map_word(1'b0, tv_map_a)),
       .tv_color_map_q(map_word(1'b1, tv_map_a)),
-      .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate), .hdmi_mode(hdmi_mode),
+      .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate),
       .steady_lamps(steady_lamps),
       .hdmi_sleep_set(hdmi_sleep_set), .hdmi_sleep_secs(hdmi_sleep_secs),
       .hdmi_wake(hdmi_wake), .hdmi_sleep_fitted(hdmi_sleep_fitted),

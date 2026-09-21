@@ -195,28 +195,15 @@
 //                 says which way up.  It reads back:
 //
 //                   bits 31:16  `HDMI_MARK`, a marker
-//                   bits 5:4    the mode the FABRIC WAS BUILT WITH, read only
 //                   bits 3:2    0 upright, 1 a quarter turn clockwise, 2 the
 //                               other way
 //                   bit 1       the color board goes to the monitor
 //                   bit 0       the first display does
 //
-//                 **THE MODE IS READ ONLY AND THE OTHER TWO ARE NOT**,
-//                 because run-time switching is possible and not built: a
-//                 video mode is a pixel clock, and changing one at run time
-//                 means rewriting an MMCM's multiplier and dividers through
-//                 its reconfiguration port, with the lock and filter values
-//                 that go with them --- which the clocking wizard generates.
-//                 `docs/display-output.md` says what building it would take.
-//                 So a bitstream carries one mode and this says which one
-//                 this fabric is; a card that asks for another is told which
-//                 bitstream it wants.  TWO BITS AND FOUR MODES: 0 is
-//                 1280x1024 at 60 Hz, 1 is 1400x1050 reduced blanking at 60,
-//                 2 is 1920x1080 at 30 and 3 is 1920x1080 at 60, and the
-//                 last of those is the DE25-Nano's alone --- a board that
-//                 serializes the link in its own fabric cannot reach its
-//                 148.5 MHz pixel clock, and refuses it when the bitstream
-//                 is built.
+//                 The first display is drawn at the left of the monitor and
+//                 the color board at the right, and where they share a
+//                 column the color board is on top.
+//                 `docs/display-output.md` has the margins.
 //
 //                 It is on this page beside the display boards for the same
 //                 reason they are: it is what the BOARD is.
@@ -902,14 +889,11 @@ module cadr_console #(
     input  var logic [23:0] tv_map_q,
     input  var logic [23:0] tv_color_map_q,
     // --- **WHAT THE DISPLAY OUTPUT SHOWS AND WHICH WAY UP**, page 2's word
-    // --- 34.  The two settings leave the console for the display output in the
-    // --- board's own memory generate; the mode comes back in from the
-    // --- parameter the bitstream was built with, because that is a thing only
-    // --- a build can decide.  A board with no display output leaves them where
-    // --- they are and the word still says what it would show.
+    // --- 34.  Both settings leave the console for the display output in the
+    // --- board's own memory generate.  A board with no display output leaves
+    // --- them where they are and the word still says what it would show.
     output var logic [1:0]  hdmi_out,
     output var logic [1:0]  hdmi_rotate,
-    input  var logic [1:0]  hdmi_mode,
     // --- **WHETHER THE LAMPS BLINK**, page 2's word 35.  A level, 0 blinking
     // --- and 1 steady, to the lamps in the board's own top level.  A board with
     // --- no console never moves it and its lamps blink.
@@ -1496,7 +1480,7 @@ module cadr_console #(
                              : (r_hi_q && r_idx_q == 5'd1)
                                  ? {TV_MARK, 14'd0, color_tv, tv_lispm}
                              : (r_hi_q && r_idx_q == 5'd2)
-                                 ? {HDMI_MARK, 10'd0, hdmi_mode, hdmi_rotate,
+                                 ? {HDMI_MARK, 12'd0, hdmi_rotate,
                                     hdmi_out}
                              : (r_hi_q && r_idx_q == 5'd3)
                                  ? {LAMP_MARK, 15'd0, steady_lamps}

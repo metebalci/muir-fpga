@@ -358,12 +358,6 @@ static void help(void)
 	say("                monitor.  With no word it reports.  The color screen is drawn");
 	say("                over the first where they overlap");
 	say("hdmi-rotate [0|90|-90]  which way up, for a monitor stood on its side");
-	say("hdmi-mode       which video mode this BITSTREAM carries.  Read only: a mode is");
-	say("                a pixel clock and a pixel clock comes from a clock manager whose");
-	say("                dividers are fixed in the bitstream.  The four are 1280x1024,");
-	say("                1400x1050, 1080p30 and 1080p60, which are the words a card's");
-	say("                --hdmi-mode line says; the last two are both 1920x1080 and only");
-	say("                one board can clock the 60 Hz one");
 	say("hdmi-sleep [SECONDS]    how long the display output waits with nobody at the");
 	say("                board's own keyboard or mouse before it stops the link and the");
 	say("                monitor sleeps; 0 never.  --hdmi-sleep.  A setting starts the");
@@ -558,20 +552,6 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		}
 		cons_read_hdmi(c, &h);
 		cons_say_hdmi(&h);
-	}
-	else if (!strcmp(cmd, "hdmi-mode")) {
-		// **READ ONLY, AND THE WORD SAYS WHICH BITSTREAM IS LOADED.**  A
-		// card that wants another mode wants another bitstream, so this
-		// reports rather than sets and there is no argument to give it.
-		struct cons_hdmi h;
-		cons_read_hdmi(c, &h);
-		if (!h.mark_ok)
-			cons_say_hdmi(&h);
-		else
-			say("hdmi: %s --- the mode this bitstream was built with;"
-			    " another mode is another bitstream",
-			    cons_hdmi_mode_name(h.mode));
-		exit_status = h.mark_ok ? 0 : 1;
 	}
 	else if (!strcmp(cmd, "hdmi-sleep")) {
 		// **A SETTING, OR A REPORT, AND NEVER A WAKE.**  Only a person at

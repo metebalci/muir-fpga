@@ -50,14 +50,22 @@
 // color board, so `01` is the first alone, `10` the color board alone and `11`
 // both.
 //
-// **BOTH SCREENS ARE CENTERED AT 1:1 AND THE COLOR ONE IS DRAWN OVER THE
-// FIRST.**  Neither is scaled: a one-bit picture scaled by anything but a whole
-// number turns single-pixel strokes into gray, and the CADR's screen is
-// single-pixel strokes almost everywhere.  Centered and not side by side,
-// because the two pictures are two views of one machine rather than a desktop,
-// and because 768 + 576 is 1344, which the narrowest mode's 1280 does not hold.
-// Centered, the color screen's 576 by 454 falls wholly inside the first's 768
-// by 963, so where they overlap is the whole of the color screen.
+// **THE TWO SCREENS ARE SIDE BY SIDE AT 1:1 AND THE COLOR ONE IS DRAWN OVER
+// THE FIRST WHERE THEY MEET.**  The first display is at the raster's left edge
+// and the color board at its right, so the pair is exactly as wide as the
+// raster and the two share the columns in the middle that the raster is too
+// narrow to give them separately: 768 + 576 - 1280 is 64 columns upright, and
+// turned, where the widths are the heights, 963 + 454 - 1280 is 137.
+//
+// **CENTERED ON ONE POINT THEY DO NOT MEET, THEY NEST.**  The color board's
+// 576 by 454 falls wholly inside the first display's 768 by 963, so with both
+// shown the color picture hides the middle of the machine's own screen and
+// none of what it covers can be seen at all.  Two views of one machine are
+// worth seeing at once, which is what the two settings are for.
+//
+// Neither is scaled: a one-bit picture scaled by anything but a whole number
+// turns single-pixel strokes into gray, and the CADR's screen is single-pixel
+// strokes almost everywhere.
 //
 // ----------------------------------------------------------------------
 // ROTATION
@@ -94,9 +102,9 @@
 // The memory side runs on the machine's own 100 MHz, because that is the clock
 // `S_AXI_HP0` and `S_AXI_HP2` already run at and the third port has no reason to
 // be different.  The raster runs on the pixel clock, which is the monitor's rate
-// and is a different number --- 107.8125 MHz for the default mode --- made by an
-// MMCM of its own in `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv`.  The two are
-// unrelated and nothing tries to relate them.
+// and is a different number --- 107.8125 MHz --- made by an MMCM of its own in
+// `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv`.  The two are unrelated and nothing
+// tries to relate them.
 //
 // **THE CADR'S OWN FRAME RATE IS IRRELEVANT HERE, AND THAT IS WORTH SAYING
 // BECAUSE IT LOOKS LIKE IT SHOULD NOT BE.**  The display board's frame is
@@ -286,8 +294,9 @@
 //                   boots is a machine whose screen is being drawn on whether or
 //                   not a monitor is watching.
 //
-// **THE MUTE MOVES ONLY AT A FRAME BOUNDARY**, where the settings are taken:
-// the instant between a frame's last pixel of blanking and its first line.  The
+// **THE MUTE MOVES ONLY AT A FRAME BOUNDARY**: the instant between a frame's
+// last pixel of blanking and its first line, which is two pixels after the
+// settings are taken and is the last thing that happens before a frame.  The
 // lanes stop in the blanking and start again in the blanking, so a monitor is
 // never handed half a frame at either end.  The timer's verdict crosses into
 // the pixel clock's domain through two flops and the mute takes it at the next
@@ -300,45 +309,21 @@
 // not go through `cadr_tick_pkg`.  At the 10 ns tick it is 100,000,000.
 //
 // ----------------------------------------------------------------------
-// THE MODE
+// THE VIDEO MODE
 //
-// Four, and **the mode is a parameter and not a setting**: a video mode is a
-// pixel clock, the pixel clock comes from an MMCM, and changing an MMCM's
-// frequency at run time means rewriting its dividers through its reconfiguration
-// port along with the lock and filter registers that go with them.  Those two
-// tables are empirical values of Xilinx's with no published arithmetic behind
-// them: the only copy on this machine is inside the clocking wizard, under a
-// notice that forbids taking it, and writing them from memory is the thing this
-// project refuses everywhere else.  `docs/display-output.md` has the whole
-// measurement, including the arithmetic that says a fixed oscillator cannot
-// serve the three clocks --- a 10:1 serializer makes the pixel divider a
-// multiple of five, so one oscillator gives only the ratios 1, 2/3, 1/2.
+// VESA DMT's 1280x1024 at 60 Hz: a pixel clock of 108 MHz, both syncs
+// positive, and a raster of 1688 by 1066.  It is the smallest standard mode
+// that holds the CADR's 768 by 963 screen without scaling, and it is a 5:4
+// mode, so a display that will not take 5:4 will not take this output.
 //
-// So the mode is chosen when the bitstream is built, a bitstream carries one
-// mode, and the console reports which one the fabric is.  The other two
-// settings are read from the card at every boot.
+// **A VIDEO MODE IS A PIXEL CLOCK**, the pixel clock comes from a clock
+// manager, and a clock manager's dividers are fixed when the bitstream loads.
+// The raster's widths, the margins and the memory side's deadline all follow
+// it, so the mode is settled when the fabric is built.
 //
-//   0  VESA DMT 1280x1024 at 60 Hz, 108 MHz, both syncs positive
-//   1  CVT reduced blanking 1400x1050 at 60 Hz, 101 MHz, HSYNC positive and
-//      VSYNC negative, which is how a sink knows reduced blanking
-//   2  CEA-861 VIC 34, 1920x1080 at 30 Hz, 74.25 MHz, both syncs positive
-//   3  CEA-861 VIC 16, 1920x1080 at 60 Hz, 148.5 MHz, both syncs positive
-//
-// **MODE 3 IS NOT FOR EVERY BOARD, AND THIS MODULE IS NOT WHERE THAT IS SAID.**
-// CEA-861 gives VIC 16 and VIC 34 one blanking table, so columns 2 and 3 are
-// the same raster and differ only in the pixel clock: 148.5 MHz against 74.25,
-// which is 60 Hz against 30.  Nothing in this module cares which, because it
-// takes its pixel clock from outside and counts it.  What cares is the board.
-// On the Zynq boards the fabric serializes the link itself and a lane was
-// measured to stop near 1.2 Gb/s, where 148.5 MHz needs 1.485, so
-// `boards/arty-z7-20/cadr_arty.sv` REFUSES this column at elaboration.  The
-// DE25-Nano hands a parallel raster to an ADV7513 and serializes nothing, and
-// that part's data sheet allows 165 MHz, so it carries it.
-//
-// The figures are the specifications' and are in `docs/display-output.md` with
-// the arithmetic they come from.  They are parameters here so that the check can
-// run a small raster in a short simulation, and so that a board that must use
-// another mode can.
+// The figures are the specification's and are in `docs/display-output.md` with
+// the arithmetic they come from.  They are parameters here so that the check
+// can run a small raster in a short simulation.
 
 `default_nettype none
 
@@ -349,46 +334,29 @@ module cadr_display_out #(
     parameter logic [31:0] BASE       = 32'h1C00_0000,
     parameter logic [31:0] COLOR_BASE = 32'h1C02_0000,
 
-    // **THE MODE, AND ITS FIGURES ARE HERE AND NOWHERE ELSE.**  The board picks
-    // a column and passes nothing but the number; the check transcribes the
-    // three specifications independently and compares.  A table in the top
-    // level as well would be a second description of one fact, which is how
-    // they come to disagree.
+    // **THE RASTER, AND ITS FIGURES ARE HERE AND NOWHERE ELSE.**  VESA DMT's
+    // 1280x1024 at 60 Hz: active, front porch, sync, back porch, in that
+    // order, which is the order the raster walks them.  The board passes
+    // nothing; the check transcribes the specification independently and
+    // compares.  A table in a top level as well would be a second description
+    // of one fact, which is how they come to disagree.
     //
-    //   0  VESA DMT 1280x1024 at 60 Hz, 108 MHz, both syncs positive
-    //   1  CVT reduced blanking 1400x1050 at 60 Hz, 101 MHz.  Reduced blanking
-    //      is 160 pixels of horizontal blanking whatever the width, and HSYNC
-    //      POSITIVE with VSYNC NEGATIVE, which is the pair a sink reads it by
-    //   2  CEA-861 VIC 34, 1920x1080 at 30 Hz, 74.25 MHz, both syncs positive
-    //   3  CEA-861 VIC 16, 1920x1080 at 60 Hz, 148.5 MHz, both syncs positive
+    // They are parameters so that the check can run a small raster in a short
+    // simulation, which `build/display_sleep.pass` does.
     //
-    // **COLUMNS 2 AND 3 ARE ONE SET OF WIDTHS**, because CEA-861 gives VIC 16
-    // and VIC 34 one blanking table: 2200 by 1125, both syncs positive.  What
-    // tells them apart is the pixel clock, and the pixel clock does not appear
-    // in this module at all --- it arrives on `pclk` and this counts it.  So
-    // the two columns below read `MODE >= 2`, which the refusal in the body
-    // makes exactly {2, 3}: a fifth number is an error rather than a fall
-    // through to mode 0.  **WHICH BOARD MAY ASK FOR COLUMN 3 IS THE BOARD'S
-    // TO SAY**, and the module header says where.
+    // **BOTH SYNCS ARE POSITIVE AND THAT IS NOT A PARAMETER**, because a
+    // monitor reads the pair as part of how it identifies the mode: it is this
+    // mode's, at the end of this file, and not a choice a build makes.
     //
-    // `docs/display-output.md` has the arithmetic each column comes out of.
-    parameter int unsigned MODE = 0,
-
-    // Active, front porch, sync, back porch, in that order, which is the order
-    // the raster walks them; and the two polarities, which a monitor reads as
-    // part of how it identifies the mode and which are therefore not free.
-    // They are parameters of their own, defaulting to the mode's column, so
-    // that the check can run a small raster in a short simulation.
-    parameter int unsigned H_ACTIVE = (MODE == 1) ? 1400 : (MODE >= 2) ? 1920 : 1280,
-    parameter int unsigned H_FRONT  = (MODE == 1) ?   48 : (MODE >= 2) ?   88 :   48,
-    parameter int unsigned H_SYNC   = (MODE == 1) ?   32 : (MODE >= 2) ?   44 :  112,
-    parameter int unsigned H_BACK   = (MODE == 1) ?   80 : (MODE >= 2) ?  148 :  248,
-    parameter int unsigned V_ACTIVE = (MODE == 1) ? 1050 : (MODE >= 2) ? 1080 : 1024,
-    parameter int unsigned V_FRONT  = (MODE == 1) ?    3 : (MODE >= 2) ?    4 :    1,
-    parameter int unsigned V_SYNC   = (MODE == 1) ?    4 : (MODE >= 2) ?    5 :    3,
-    parameter int unsigned V_BACK   = (MODE == 1) ?   23 : (MODE >= 2) ?   36 :   38,
-    parameter bit          HSYNC_POS = 1'b1,
-    parameter bit          VSYNC_POS = (MODE == 1) ? 1'b0 : 1'b1,
+    // `docs/display-output.md` has the arithmetic these come out of.
+    parameter int unsigned H_ACTIVE = 1280,
+    parameter int unsigned H_FRONT  =   48,
+    parameter int unsigned H_SYNC   =  112,
+    parameter int unsigned H_BACK   =  248,
+    parameter int unsigned V_ACTIVE = 1024,
+    parameter int unsigned V_FRONT  =    1,
+    parameter int unsigned V_SYNC   =    3,
+    parameter int unsigned V_BACK   =   38,
 
     // The first display: muir's `WIDTH`, `HEIGHT` and `WORDS_PER_LINE`.
     parameter int unsigned PIC_W = 768,
@@ -504,37 +472,32 @@ module cadr_display_out #(
     output var logic        rd_error
 );
 
-  // **THE BOUND ON THE MODE, AND A NUMBER OUTSIDE IT IS A REFUSAL AND NOT A
-  // FALL THROUGH.**  The table has four columns and its ternaries end in mode
-  // 0's figures, so without this a fifth number would elaborate a 1280x1024
-  // raster in silence: a bitstream built for a mode nobody ever wrote, whose
-  // first reader would be a monitor.  `build/hdmi_mode_guard.pass` asserts
-  // BOTH sides of it --- that 3 elaborates and that 4 does not --- because a
-  // bound nothing reaches looks exactly like one that works.
-  //
-  // It is the only thing this module says about which mode is allowed.  Which
-  // BOARD may ask for which column is the board's own refusal, and the header
-  // says where mode 3's is and what measurement it stands on.
-  if (MODE > 3) begin : g_no_such_mode
-    $error("cadr_display_out: MODE is %0d, and the table has 0, 1, 2 and 3",
-           MODE);
-  end
-
   localparam int unsigned H_TOTAL = H_ACTIVE + H_FRONT + H_SYNC + H_BACK;
   localparam int unsigned V_TOTAL = V_ACTIVE + V_FRONT + V_SYNC + V_BACK;
 
   localparam int unsigned HC_W = $clog2(H_TOTAL);
   localparam int unsigned VC_W = $clog2(V_TOTAL);
 
-  // Where each picture sits, upright and rotated.  An odd margin loses its half
-  // pixel at the bottom and the right, which is where a reader expects it.
-  localparam int unsigned MX0  = (H_ACTIVE - PIC_W)  / 2;
+  // Where each picture sits, upright and rotated.
+  //
+  // **THE TWO PICTURES ARE PUSHED TO THE RASTER'S TWO SIDES.**  The first
+  // display's left edge is the raster's left edge and the color board's right
+  // edge is the raster's right edge, so the two overlap in the middle by
+  // exactly as much as the raster is too narrow to hold them side by side:
+  // 768 + 576 - 1280 is 64 columns upright, and turned, where the widths are
+  // the heights, 963 + 454 - 1280 is 137.  Where they overlap the color board
+  // is drawn over the first display, which is the compositor's order at the
+  // end of this file.
+  //
+  // Vertically each is centered on its own, and an odd margin loses its half
+  // pixel at the bottom, which is where a reader expects it.
+  localparam int unsigned MX0  = 0;
   localparam int unsigned MY0  = (V_ACTIVE - PIC_H)  / 2;
-  localparam int unsigned CX0  = (H_ACTIVE - CPIC_W) / 2;
+  localparam int unsigned CX0  = H_ACTIVE - CPIC_W;
   localparam int unsigned CY0  = (V_ACTIVE - CPIC_H) / 2;
-  localparam int unsigned RMX0 = (H_ACTIVE - PIC_H)  / 2;
+  localparam int unsigned RMX0 = 0;
   localparam int unsigned RMY0 = (V_ACTIVE - PIC_W)  / 2;
-  localparam int unsigned RCX0 = (H_ACTIVE - CPIC_H) / 2;
+  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H;
   localparam int unsigned RCY0 = (V_ACTIVE - CPIC_W) / 2;
 
   localparam int unsigned LINE_BYTES  = WORDS_PER_LINE  * 4;
@@ -545,6 +508,29 @@ module cadr_display_out #(
   // and 8 nibbles for the color board.
   localparam int unsigned MONO_LOOK  = 32;
   localparam int unsigned COLOR_LOOK = 8;
+
+  // **A LINE'S WORDS ARE DECIDED BEFORE ITS FIRST PIXEL AND NOT AT IT.**  The
+  // buffer's output is registered, so the entry a pixel is drawn from is read
+  // at the edge before that pixel, and the bank that read uses is the bank in
+  // force an edge before THAT.  A bank taken at the line's first pixel is
+  // therefore two pixels late, and so is the rotation, and the black a screen
+  // is shown in when its words did not arrive is one pixel late.
+  //
+  // **THE FIRST DISPLAY NOW BEGINS AT THE RASTER'S FIRST COLUMN**, so those
+  // are its own first pixels rather than border: taken at column 0, the first
+  // two columns of every line came out of the line before it.  Centered, the
+  // picture began 256 columns in and nothing showed.
+  //
+  // So a line's work is done in the blanking that precedes it.  The four
+  // addresses step at `LINE_STEP`, and at `LINE_TOP` the bank is taken and the
+  // next fetch asked for; the line's first pixel is two edges after that with
+  // everything settled.  The mute is NOT moved with them: it belongs to the
+  // frame boundary, which is the edge the frame's first pixel is loaded on.
+  //
+  // Three pixels of blanking is what this needs, and there is far more:
+  // 408 at 1280x1024 and 20 on the small raster the sleep check builds.
+  localparam int unsigned LINE_TOP  = H_TOTAL - 2;
+  localparam int unsigned LINE_STEP = H_TOTAL - 3;
 
   localparam int unsigned ME_W = $clog2(MONO_ENTRIES);
   localparam int unsigned CE_W = $clog2(COLOR_ENTRIES);
@@ -579,12 +565,17 @@ module cadr_display_out #(
 
   logic [HC_W-1:0] hc, hc_n;
   logic [VC_W-1:0] vc, vc_n;
+  // The line after this one.  The raster prepares a line in the blanking
+  // BEFORE it, where `vc` has not moved on yet, so it needs the next line's
+  // number as well as the next pixel's: see `LINE_TOP` above.  `vc_n` is this
+  // at the last pixel of a line and `vc` everywhere else, so the two are one
+  // description of the count and not two.
+  logic [VC_W-1:0] vc_next;
 
   always_comb begin
-    hc_n = (hc == HC_W'(H_TOTAL - 1)) ? '0 : hc + 1'b1;
-    vc_n = (hc == HC_W'(H_TOTAL - 1))
-             ? ((vc == VC_W'(V_TOTAL - 1)) ? '0 : vc + 1'b1)
-             : vc;
+    hc_n    = (hc == HC_W'(H_TOTAL - 1)) ? '0 : hc + 1'b1;
+    vc_next = (vc == VC_W'(V_TOTAL - 1)) ? '0 : vc + 1'b1;
+    vc_n    = (hc == HC_W'(H_TOTAL - 1)) ? vc_next : vc;
   end
 
   // ====================================================================
@@ -644,21 +635,32 @@ module cadr_display_out #(
   assign vs_c = (vc >= VC_W'(V_ACTIVE + V_FRONT)) &&
                 (vc <  VC_W'(V_ACTIVE + V_FRONT + V_SYNC));
 
+  //
+  // **INSIDE A PICTURE IS ONE UNSIGNED COMPARISON A DIRECTION AND NOT TWO.**
+  // Subtracting the margin wraps a position left of or above the picture to a
+  // number bigger than any the raster reaches --- the counters are as wide as
+  // the TOTAL, which is strictly more than the active area --- so
+  // `p - margin < size` is both bounds at once.  It is the same subtraction
+  // `mono_bit` below makes to find the bit within a word.
+  //
+  // Written as a pair of bounds instead, the first display's own test reads
+  // `hc >= 0`, which is always true: a comparison that cannot fail is
+  // indistinguishable from one that works, and the tool says so.
   always_comb begin
     if (cfg_rot == 2'd0)
-      m_in_c = (hc >= HC_W'(MX0)) && (hc < HC_W'(MX0 + PIC_W)) &&
-               (vc >= VC_W'(MY0)) && (vc < VC_W'(MY0 + PIC_H));
+      m_in_c = ((hc - HC_W'(MX0))  < HC_W'(PIC_W)) &&
+               ((vc - VC_W'(MY0))  < VC_W'(PIC_H));
     else
-      m_in_c = (hc >= HC_W'(RMX0)) && (hc < HC_W'(RMX0 + PIC_H)) &&
-               (vc >= VC_W'(RMY0)) && (vc < VC_W'(RMY0 + PIC_W));
+      m_in_c = ((hc - HC_W'(RMX0)) < HC_W'(PIC_H)) &&
+               ((vc - VC_W'(RMY0)) < VC_W'(PIC_W));
   end
   always_comb begin
     if (cfg_rot == 2'd0)
-      c_in_c = (hc >= HC_W'(CX0)) && (hc < HC_W'(CX0 + CPIC_W)) &&
-               (vc >= VC_W'(CY0)) && (vc < VC_W'(CY0 + CPIC_H));
+      c_in_c = ((hc - HC_W'(CX0))  < HC_W'(CPIC_W)) &&
+               ((vc - VC_W'(CY0))  < VC_W'(CPIC_H));
     else
-      c_in_c = (hc >= HC_W'(RCX0)) && (hc < HC_W'(RCX0 + CPIC_H)) &&
-               (vc >= VC_W'(RCY0)) && (vc < VC_W'(RCY0 + CPIC_W));
+      c_in_c = ((hc - HC_W'(RCX0)) < HC_W'(CPIC_H)) &&
+               ((vc - VC_W'(RCY0)) < VC_W'(CPIC_W));
   end
 
   // ====================================================================
@@ -731,10 +733,10 @@ module cadr_display_out #(
   //
   // **THE FIRST LINE'S `ask` ADDRESS IS THE FIRST LINE'S `show` ADDRESS**, so
   // one reload serves both, and that holds because `LOOK` is inside the top
-  // margin in every mode: 1 against 30, 43 and 58 upright, 32 against 128, 141
-  // and 156 rotated, and 8 against the color board's 224, 237 and 252.  A mode
-  // whose margin were narrower than its lead would want the address for line
-  // `LOOK` here instead, and would be a mode that cannot hold the picture.
+  // margin: one line against the first display's 30 and the color board's 285
+  // upright, 32 against 128 and 8 against 224 turned.  A picture whose top
+  // margin were narrower than its lead would want the address for line `LOOK`
+  // here instead, and is a picture this raster could not hold.
   logic [1:0]      rot_next;
   logic [31:0]     mono_step, color_step, mono_first, color_first;
   logic [31:0]     mono_first_next, color_first_next;
@@ -1053,7 +1055,7 @@ module cadr_display_out #(
   // contiguous beat writes both halves of an entry, and a strided beat writes
   // the one half its word belongs in.  Nothing about the behavior moves, and
   // `build/display_out.pass` holds every pixel of a frame against the memory
-  // it came from, in both rotations and for both screens, in all four modes.
+  // it came from, in both rotations and for both screens.
   logic          wr_beat;
   logic [ME_W:0] mb_addr;
   logic [CE_W:0] cb_addr;
@@ -1259,7 +1261,8 @@ module cadr_display_out #(
       slp_want_s1 <= 1'b0;
       slp_want_s2 <= 1'b0;
       slp_mute    <= 1'b0;
-      de <= 1'b0; hsync <= !HSYNC_POS; vsync <= !VSYNC_POS;
+      // Both syncs are positive in this mode, so both idle low.
+      de <= 1'b0; hsync <= 1'b0; vsync <= 1'b0;
       red <= 8'd0; green <= 8'd0; blue <= 8'd0;
     end else begin
       for (int s = 0; s < 2; s++) ack_sync[s] <= {ack_sync[s][1:0], fill_n[s]};
@@ -1274,13 +1277,18 @@ module cadr_display_out #(
       //      the addition here IS the multiplication that used to hang off
       //      `vc` on every pixel.  A frame top with a change of setting
       //      reloads all four below, and overrides this.
-      if (hc == HC_W'(H_TOTAL - 1)) begin
-        if (vc_n == '0) begin
+      //
+      //      It is done at `LINE_STEP`, three pixels before the line it is
+      //      for, because the take below needs these addresses and the raster
+      //      needs the take two pixels before a pixel is drawn.  `vc` has not
+      //      moved on yet there, so the line being prepared is `vc_next`.
+      if (hc == HC_W'(LINE_STEP)) begin
+        if (vc_next == '0) begin
           m_show_addr <= mono_first;
           c_show_addr <= color_first;
         end else begin
-          if (mono_steps(vc_n))  m_show_addr <= m_show_addr + mono_step;
-          if (color_steps(vc_n)) c_show_addr <= c_show_addr + color_step;
+          if (mono_steps(vc_next))  m_show_addr <= m_show_addr + mono_step;
+          if (color_steps(vc_next)) c_show_addr <= c_show_addr + color_step;
         end
         if (va_m == VC_W'(V_TOTAL - 1)) begin
           va_m       <= '0;
@@ -1298,7 +1306,20 @@ module cadr_display_out #(
         end
       end
 
-      // ---- the settings, taken at the top of a frame and nowhere else
+      // ---- **THE LANES STOP AND START AT THE FRAME BOUNDARY ITSELF**, which
+      //      is the edge the frame's first pixel is loaded on --- two pixels
+      //      after the settings below are taken, and the last thing that
+      //      happens before the frame.  Both instants are in the blanking, so
+      //      a monitor is handed the change between frames either way; this
+      //      one is the boundary rather than the preparation for it, and is
+      //      the instant `build/display_sleep.pass` recovers from the syncs.
+      if ((hc == HC_W'(H_TOTAL - 1)) && (vc == VC_W'(V_TOTAL - 1)))
+        slp_mute <= slp_want_s2;
+
+      // ---- the settings, taken at the top of a frame and nowhere else ---
+      //      which is `LINE_STEP` of the last line, where the first line's
+      //      addresses are loaded, because the geometry has to be settled
+      //      before the bank for that line is taken.
       //
       // **AND A CHANGE STARTS THE PIPELINE AGAIN RATHER THAN REPORTING A
       // FAULT.**  `primed` is what tells "nothing has been fetched yet" from
@@ -1307,11 +1328,9 @@ module cadr_display_out #(
       // is not what is now needed, and the first bank of the new shape cannot
       // have arrived.  Without this the sticky `underrun` would be set on every
       // board whose card names a setting, and would then mean nothing.
-      if ((hc == HC_W'(H_TOTAL - 1)) && (vc == VC_W'(V_TOTAL - 1))) begin
+      if ((hc == HC_W'(LINE_STEP)) && (vc == VC_W'(V_TOTAL - 1))) begin
         cfg_sel <= sel_s2;
         cfg_rot <= rot_next;
-        // The lanes stop and start here and nowhere else: see "SLEEP".
-        slp_mute <= slp_want_s2;
         // The shape about to be drawn starts at its own first line, so all four
         // addresses and both ahead-lines are reloaded here rather than stepped.
         m_show_addr <= mono_first_next;
@@ -1326,12 +1345,16 @@ module cadr_display_out #(
         end
       end
 
-      // ---- the first pixel of a line: take the new bank, then ask for what the
-      //      line `LOOK` ahead will want.  **The order matters.**  The raster
-      //      takes over the bank filled while the last one was being shown, and
-      //      only then asks for the next; doing both at the END of a line
-      //      instead is off by one and shows every line one late.
-      if (hc == '0) begin
+      // ---- two pixels before a line begins: take the new bank, then ask for
+      //      what the line `LOOK` ahead will want.  **The order matters.**  The
+      //      raster takes over the bank filled while the last line was being
+      //      shown, and only then asks for the next; the two the other way
+      //      round is off by one and shows every line one late.
+      //
+      //      `LINE_TOP` and not the line's first pixel, and the addresses it
+      //      reads were stepped one edge earlier still: see `LINE_TOP` above
+      //      for the two edges the buffer's registered output costs.
+      if (hc == HC_W'(LINE_TOP)) begin
         if (en_m && (m_show_addr != drawn[MONO])) begin
           drawn[MONO] <= m_show_addr;
           if (ack_sync[MONO][2] != consumed[MONO]) begin
@@ -1381,8 +1404,10 @@ module cadr_display_out #(
 
       // ---- the outputs
       de    <= de_c;
-      hsync <= HSYNC_POS ? hs_c : !hs_c;
-      vsync <= VSYNC_POS ? vs_c : !vs_c;
+      // **BOTH SYNCS POSITIVE**, which is VESA DMT's for this mode and part
+      // of how a monitor identifies it.
+      hsync <= hs_c;
+      vsync <= vs_c;
       // Blanking is black by the specification.  The border is black because it
       // is not the CADR's screen --- see the header --- so it does not follow
       // `BOW`.

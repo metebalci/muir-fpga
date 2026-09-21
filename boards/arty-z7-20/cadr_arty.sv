@@ -134,41 +134,6 @@ module cadr_arty #(
     // itself.  `docs/display-output.md` is the design.
     parameter int unsigned HDMI = 0,
 
-    // **WHICH VIDEO MODE THE DISPLAY OUTPUT DRIVES, AND IT IS A PARAMETER
-    // RATHER THAN A SETTING.**  A video mode is a pixel clock; the pixel clock
-    // comes from the MMCM in `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv`; and
-    // changing an MMCM's frequency at run time means rewriting its dividers
-    // through its reconfiguration port along with the lock and filter registers
-    // that go with them --- two tables of Xilinx's own empirical values with no
-    // published arithmetic behind them, whose only copy on this machine is
-    // inside the clocking wizard under a notice that forbids taking it.  A
-    // fixed oscillator cannot serve the three either: a 10:1 serializer makes
-    // the pixel divider a multiple of five, so one VCO gives only the ratios
-    // 1, 2/3 and 1/2, and these three are 1, 0.93 and 0.69.
-    // `docs/display-output.md` has both measurements.
-    //
-    // So three bitstreams carry the three modes and the console reports which
-    // one this fabric is; what is SHOWN and which way up stay settings the card
-    // writes at every boot.
-    //
-    //   0  VESA DMT 1280x1024 at 60 Hz, both syncs positive
-    //   1  CVT reduced blanking 1400x1050 at 60 Hz, HSYNC positive and VSYNC
-    //      negative, which is how a sink knows reduced blanking
-    //   2  CEA-861 1920x1080 at 30 Hz, both syncs positive
-    //
-    // **AND THREE AND NOT FOUR, WHICH IS A FACT ABOUT THIS BOARD AND NOT
-    // ABOUT THE TABLE.**  `rtl/plumbing/cadr_display_out.sv` carries a fourth
-    // column, CEA-861's VIC 16 --- 1920x1080 at 60 Hz, 148.5 MHz --- and this
-    // board cannot drive it.  The refusal is in the body below and the
-    // measurement behind it is in `docs/display-output.md`: this fabric
-    // serializes the link itself, ten bits a pixel down each lane, and the
-    // serializer's own clock input will not take a period shorter than
-    // 1.667 ns, which is 600 MHz and a lane rate of 1.2 Gb/s.  148.5 MHz
-    // needs 1.485 Gb/s.  A board that hands a parallel raster to a
-    // transmitter part serializes nothing and is not bound by that number,
-    // which is why the DE25-Nano carries the column and this board does not.
-    parameter int unsigned HDMI_MODE = 0,
-
     // **THE SECOND DISPLAY BOARD, THE COLOR TV**, `lmtv.order`'s "for the
     // color TV, x is 5": a LISPM TV strapped to 0o17200000 with its control
     // words at 0o17377750, carrying a color monitor of its own.  One means
@@ -227,52 +192,6 @@ module cadr_arty #(
     output var logic [2:0] hdmi_tx_d_p,
     output var logic [2:0] hdmi_tx_d_n
 );
-
-  // **THE MODES THIS BOARD CAN DRIVE, REFUSED AT ELABORATION AND NOT LATER.**
-  //
-  // `rtl/plumbing/cadr_display_out.sv` has four columns and this board has
-  // three.  Column 3 is 1920x1080 at 60 Hz, whose 148.5 MHz pixel clock is
-  // 1.485 Gb/s down a lane, and the serializer this fabric builds the link
-  // out of was measured to stop at 1.2 --- the tool's own minimum period for
-  // `OSERDESE2/CLK`, 1.667 ns, which `docs/display-output.md` records with
-  // the sweep it came from.
-  //
-  // **AND WHAT MAKES THIS WORTH A REFUSAL RATHER THAN A COMMENT IS WHAT
-  // HAPPENS WITHOUT IT, WHICH WAS MEASURED.**  The pixel clock's two MMCM
-  // dividers below are a ternary chain ending in mode 0's, so an unrefused 3
-  // does not fail anywhere the tools were asked: lint passes on the whole
-  // board, and what it elaborates is `HM_VCO_DIV` of 2 with `HM_VCO_MULT` of
-  // 8.625, which through the phy's fixed divide of ten is a 53.9 MHz pixel
-  // clock driving a 1920x1080 raster --- a frame every 46 milliseconds, at a
-  // pixel rate no 1080p sink will lock to.  Nothing between here and a
-  // monitor asks what mode that is meant to be.
-  //
-  // **WHAT WOULD PROBABLY STOP IT LATER IS AN ACCIDENT AND NOT A GUARD.**
-  // Those dividers put the VCO at 539.0625 MHz, under the manager's own
-  // 600 MHz floor on this speed grade, so the fitter would very likely refuse
-  // the primitive --- hours in, in the fitter's vocabulary, and only because
-  // this mode's fall-through happens to land out of range.  A fourth column
-  // whose fall-through landed inside it would get a bitstream.  A refusal
-  // that depends on where somebody else's numbers fell is not a refusal.
-  //
-  // So it is said here, at the earliest thing that knows which board this is,
-  // and `build/hdmi_mode_guard.pass` holds that it is still said.
-  //
-  // It is not behind `HDMI`, on purpose.  A build that names a mode this
-  // board has no clock for has asked for the wrong bitstream whether or not
-  // it also asked for the display, and a guard that only fires in one
-  // configuration is a guard with a way round it.
-  //
-  // Three lines and not one, because a concatenation of string literals is a
-  // BIT VECTOR and not a string: `$error({"a", "b"}, x)` elaborates and prints
-  // a two-hundred-digit number where the sentence should be.  Measured on the
-  // first build of this guard.  So each line is one literal of its own.
-  if (HDMI_MODE > 2) begin : g_no_such_mode_here
-    $error("cadr_arty: HDMI_MODE is %0d, and this board carries 0, 1 and 2.",
-           HDMI_MODE);
-    $error("cadr_arty: it makes the link in fabric, where a lane stops near 1.2 Gb/s.");
-    $error("cadr_arty: 1920x1080 at 60 Hz wants 1.485; see docs/display-output.md.");
-  end
 
   // ------------------------------------------------------------ the clock
   //
@@ -904,25 +823,20 @@ module cadr_arty #(
   //                  It differs from `PROVE_ADDR` in bits 2 through 8, so a
   //                  dropped or doubled bit among the low nine moves the
   //                  write-back somewhere the block still shows.
-  // ------------------------------------------------ the video mode's figures
+  // ------------------------------------------- the pixel clock's dividers
   //
-  // The three modes, as their own specifications give them, and the MMCM
-  // dividers that make each pixel clock out of the board's 125 MHz.  The
-  // arithmetic and what each one costs a lane are in `docs/display-output.md`;
-  // the numbers here are the specifications' and this file's job is only to
-  // pick a column.
+  // The MMCM dividers that make the video mode's pixel clock out of the
+  // board's 125 MHz: 125 x 8.625 is a VCO of 1078.125 MHz and the phy's fixed
+  // divide of ten gives 107.8125 MHz, where VESA DMT asks 108.  That is 0.17
+  // per cent out and a monitor takes far more; `docs/display-output.md` has
+  // the arithmetic.
   //
-  // **MODE 0'S DIVIDERS ARE UNCHANGED FROM THE BOARD THAT HAS RUN**, which is
-  // why it is the one that divides by one: 125 x 8.625 and 125 x 17.25 / 2 are
-  // one VCO, and a board whose default clocking is bit for bit what a monitor
-  // has already locked to is worth a line of asymmetry.
   // **THE RASTER'S OWN FIGURES ARE NOT HERE**, they are in
-  // `rtl/plumbing/cadr_display_out.sv` where the mode is a column of one
-  // table; this file passes the number and nothing else.  What IS here is the
-  // pair of MMCM dividers, because those are about the BOARD's 125 MHz crystal
-  // rather than about the mode, and a board with another crystal needs others.
-  localparam int          HM_VCO_DIV   = (HDMI_MODE == 0) ? 1 : 2;
-  localparam real         HM_VCO_MULT  = (HDMI_MODE == 1) ? 16.125 : (HDMI_MODE == 2) ? 11.875 : 8.625;
+  // `rtl/plumbing/cadr_display_out.sv`.  What IS here is the pair of dividers,
+  // because those are about the BOARD's 125 MHz crystal rather than about the
+  // mode, and a board with another crystal needs others.
+  localparam int          HM_VCO_DIV   = 1;
+  localparam real         HM_VCO_MULT  = 8.625;
 
   localparam logic [31:0] PROVE_ADDR = cadr_ddr_map::main_byte_address(22'o12345671);
   localparam logic [31:0] PROVE_WORD = 32'h8A5C_36E1;
@@ -2035,10 +1949,8 @@ module cadr_arty #(
         .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
         .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
         .tv_color_map_q(con_tv_color_map_q),
-        // What the display output shows and which way up, page 2's word 34,
-        // and the mode this bitstream was built with coming the other way.
+        // What the display output shows and which way up, page 2's word 34.
         .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
-        .hdmi_mode(2'(HDMI_MODE)),
         // Whether LD1 and LD2 blink or hold a level, page 2's word 35:
         // `cadr-console blinking-leds` and `--no-blinking-leds`.
         .steady_lamps(con_steady_lamps),
@@ -2153,8 +2065,7 @@ module cadr_arty #(
 
       cadr_display_out #(
           .BASE(cadr_ddr_map::DISPLAY_BASE),
-          .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
-          .MODE(HDMI_MODE)
+          .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE)
       ) u_display (
           .clk(clk), .rst(disp_rst),
           .m_araddr(hp3_araddr), .m_arlen(hp3_arlen), .m_arsize(hp3_arsize),
