@@ -7,10 +7,11 @@
 // a port of their own into the processing system's memory: `S_AXI_HP0`,
 // `S_AXI_HP2` and `S_AXI_HP3`.  The Agilex 5's processor has one: the
 // FPGA-to-SDRAM bridge, AXI4 at 64, 128 or 256 bits.  So on the DE25-Nano the
-// three share it, and this is where they meet.  The machine is its only master
-// today; the other two ports are tied off at the top level, and the check that
-// holds this module drives them anyway, because the property that matters is
-// what they cost the machine when they are not idle.
+// three share it, and this is where they meet.  All three drive it on the
+// board: the machine, the disk pack side, and the display on a build that
+// carries one, whose port is tied idle on a build that does not.  The check
+// that holds this module drives all three, because the property that matters
+// is what the other two cost the machine when they are not idle.
 //
 // **WHAT THE THREE MASTERS SPEAK IS WHAT THE ZYNQ'S PORTS SPOKE**, AXI3 at 64
 // bits with four bits of burst length and a two-bit beat size, because that is

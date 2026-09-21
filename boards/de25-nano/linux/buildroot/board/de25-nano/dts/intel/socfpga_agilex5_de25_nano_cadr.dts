@@ -5,7 +5,7 @@
  * the CADR beside it.
  *
  * ONE FILE FOR BOTH, as the Zynq boards' trees are, and a thin one: it is
- * Altera's own DE25-Nano tree with four things added.  The kernel compiles it
+ * Altera's own DE25-Nano tree with five things added.  The kernel compiles it
  * from arch/arm64/boot/dts/intel/ and U-Boot from arch/arm/dts/, and in each
  * `#include "socfpga_agilex5_de25_nano.dts"` finds THAT tree's own file ---
  * Altera ships one in its kernel (linux-socfpga, arch/arm64/boot/dts/intel/)

@@ -20,10 +20,13 @@
 # `$(BR2_EXTERNAL_CADR_PATH)` below is that first tree and
 # `$(BR2_EXTERNAL_CADR_DE25_PATH)` this one.
 #
-# **NOTHING BUILT FROM THIS HAS RUN.**  No DE25-Nano has booted from this
-# repository.  What holds the configuration is that its three sources are the
-# ones Altera's own release for this board pins, and its differences from
-# Altera's configurations are named file by file below.
+# **WHAT IS BUILT FROM THIS HAS RUN ON THE BOARD.**  A card carrying this
+# image boots the DE25-Nano, starts the programs from the card's own `fpgarc`,
+# and the machine runs a band off the pack; the board does it from power
+# alone, with nothing attached but a monitor and a keyboard.  `docs/board.md`
+# has the sessions.  What holds the configuration itself is that its three
+# sources are the ones Altera's own release for this board pins, and its
+# differences from Altera's configurations are named file by file below.
 #
 # THE BOOT CHAIN IS HPS-FIRST, and that decides what this image is.  The
 # Secure Device Manager boots the hard processor system first, from the QSPI
