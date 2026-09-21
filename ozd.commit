@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
 # The commit of ozd the board's file and time host is built from.
 #
 # ozd is another project and is never patched here, exactly as muir is never
