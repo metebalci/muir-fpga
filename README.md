@@ -247,6 +247,23 @@ against the name MIT wrote.
 
 ## The debug cable
 
+> ## ⚠ DO NOT JOIN THE TWO BOARDS' POWER
+>
+> **A straight ribbon between two headers joins their supplies as well as
+> their signals, and two boards' regulators tied together is not something
+> either of them is built for. It can damage both.**
+>
+> **The grounds must be joined. The supplies must never be.** On a Pmod
+> header that means leaving pins 6 and 12 open at *both* ends, joining only
+> the grounds on pins 5 and 11. On the DE25-Nano's JP1 it means leaving pin
+> 11, which is 5 V, and pin 29, which is 3.3 V, open at both ends, and
+> joining only the ground on pin 30.
+>
+> A manufactured ribbon does not do this for you. Check the cable against the
+> header's own pin list before either board is powered, and check both ends:
+> a cable that is right at one end and wrong at the other is still wrong.
+> `docs/debug-cable.md` gives the full pin list for each board.
+
 This is the other cable in the machine, and the one that makes two of them. A
 CADR debugs a CADR. The debugger's `DBGOUT` connector goes to the debuggee's
 `DBGIN`, over the 21 wires of `data/busint-connectors.txt`. Through them the
