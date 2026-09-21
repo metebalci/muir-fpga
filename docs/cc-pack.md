@@ -65,20 +65,23 @@ is muir's, not one of the CADR's drives. The script's default name is
 
 ## Where it goes
 
-It goes in the packs partition, next to the other packs. The card carries it
-as `/mnt/packs/muir-cc.img`, whatever the file was called on the build host.
-The boot partition does not grow.
+It goes in `packs/` on the card, next to the other packs but not one of the
+eight. The card carries it as `/mnt/card/packs/muir-cc.img`, whatever the file
+was called on the build host.
 
-The room is there. A T-300 is 257.1 MiB. A full bay of eight is 2,056.6 MiB,
-and with the debugger's pack beside them 2,313.7 MiB. The release card's
-packs partition is 3,584 MiB, so 1,270.3 MiB is left over.
+How much card that wants is arithmetic. A T-300 is 257.1 MiB. A full bay of
+eight is 2,056.6 MiB, and with the debugger's pack beside them 2,313.7 MiB. A
+card of 4 GB takes that with room to spare; one drive and this pack take about
+515 MiB. **A release carries no debugger's pack**, because a band with CC
+compiled into it is somebody else's Lisp and the user's own to supply, so the
+`muirrc` that would name it ships with its last two lines commented.
 
 ## Using it
 
 muir needs the pack and the band's own Chaosnet address. Nothing else about
 the pack is special.
 
-    muir --rtl --disk-pack /mnt/packs/muir-cc-304.img --chaos-address 4401
+    muir --rtl --disk-pack /mnt/card/packs/muir-cc-304.img --chaos-address 4401
 
 Measured with that command on the build host: muir reports `pack: ... in unit
 0, written as the machine writes it`, runs at about five million microcycles

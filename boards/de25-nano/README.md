@@ -137,9 +137,11 @@ from the card, and U-Boot loads the kernel from there. That is the package's
 `Demonstration/SoC_FPGA/GHRD/sof_with_hps.bat` and `sof_to_jic.bat`, and
 Terasic's "Build Linux image from scratch" guide. So the fabric's image and
 the first-stage loader are one file here, and a card holds no first stage.
-`boards/README.md` keeps three names at the root of every card's boot
-partition because the Zynq's boot ROM, its SPL and U-Boot look for them there.
-That root would differ on this board.
+`boards/README.md` keeps `BOOT.BIN`, `u-boot.img` and `uEnv.txt` at the root of
+a Zynq board's card because the boot ROM, the SPL and U-Boot look for them
+there. This board's root carries `u-boot.itb` and `uEnv.txt` and no `BOOT.BIN`
+at all. Everything else about the card --- one FAT32 partition, the board's own
+folder, `packs/`, `sys/` and `site/` --- is the same as the other boards'.
 
 **The FPGA-to-SDRAM bridge in place of `S_AXI_HP0`.** Terasic's reference
 design configures the processor with one `f2sdram` interface, an AXI4

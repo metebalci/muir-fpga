@@ -68,45 +68,46 @@ already show. `README.md` names the commit it was removed at.
 
 ## The card
 
-**Every board's card has the same two partitions and the same layout**, so that
-a person who has learned one card has learned all of them.
+**Every board's card is one FAT32 partition in an MBR with the same layout**,
+so that a person who has learned one card has learned all of them. The user
+formats the card and unpacks the board's zip onto it. There is no disk image.
 
-    partition 1  BOOT   BOOT.BIN, u-boot.img and uEnv.txt at the root, and a
-                        folder named as the board's directory here is ---
-                        `arty-z7-20/`, `cora-z7-07s/` --- holding that board's
-                        cadr.bit, device tree, zImage and root filesystem
-    partition 2  PACKS  the disk packs, muir-cc.img where a debugger runs,
-                        fpgarc, muirrc and a README.TXT, all at the root
+    /            BOOT.BIN, u-boot.img and uEnv.txt, whose names the loader
+                 fixes, and README.TXT, fpgarc and muirrc, which are the files
+                 a person edits
+    <board>/     a folder named as the board's directory here is ---
+                 `arty-z7-20/`, `cora-z7-07s/`, `de25-nano/` --- holding that
+                 board's fabric image, device tree, kernel and root filesystem
+    packs/       the disk packs, and muir-cc.img where a debugger runs
+    sys/ site/   the band's Lisp sources and its site configuration
 
-**The boot partition mirrors the TFTP server.** One server serves more than one
-board here, every board's files carry the same names, and a flat root would
-hand one board another's bitstream. So a board's served set lives in a
-directory named for it, and the card holds the same four files under the same
-name. A card belongs to one board, so the folder is not what keeps two boards
-apart on it; what it buys is that the card and the server hold the same thing
-in the same place.
+**The card mirrors the TFTP server.** One server serves more than one board
+here, every board's files carry the same names, and a flat root would hand one
+board another's bitstream. So a board's served set lives in a directory named
+for it, and the card holds the same four files under the same name. A card
+belongs to one board, so the folder is not what keeps two boards apart on it;
+what it buys is that the card and the server hold the same thing in the same
+place, and that a card made from the wrong board's zip says so --- the loader
+asks for its own folder by name and never finds it.
 
-**Three files stay at the root because their names are not ours to move.** The
+**Some files stay at the root because their names are not ours to move.** The
 boot ROM reads `BOOT.BIN` from the root of the first FAT partition and nowhere
 else, the SPL asks for `u-boot.img` by that name at the root, and `uEnv.txt` is
 imported before any board name is known.
 
-**Those three names are the Zynq boards' and not a rule for every part.** The
-DE25-Nano has no card yet. Terasic's reference design for it puts U-Boot's
-first stage into the fabric's configuration image on the QSPI flash rather than
-into a file on the card, so the root of its boot partition would differ. The
-pack partition is the machine's and would not.
+**Those names are the Zynq boards' and not a rule for every part.** The
+DE25-Nano's first-stage loader is in the QSPI flash rather than in a file on
+the card, so its root carries `u-boot.itb` and no `BOOT.BIN` at all. Everything
+else about the card is the machine's and is the same on all three.
 
-**The pack partition is flat on every board.** A pack, the README and the two
-files of flags belong to the machine rather than to the part. What differs
-between two boards' cards there is the Chaosnet address inside `fpgarc` and
-`muirrc`, which each board's own `local.conf` sets.
+**`packs/`, `sys/` and `site/` are on every card even when they are empty**,
+because an empty folder with a name on it is what tells somebody where a band
+goes. A release ships all three empty, since the band is the user's own.
 
-**One staging script writes every board's card and one release script builds
-every board's image**, both taking the board in the same two variables.
-`docs/boot.md` has the recipes, the sizes and what a release carries. A board
-with no processing system would get the same card image with an empty boot
-partition, because the packs are the machine's world and not the part's.
+**One staging script writes every board's card and one command builds the
+release**, `make release`, which makes all three boards' zips together so that
+one board cannot be left at an older build. `docs/boot.md` has the recipes, the
+sizes, how to format a card and what a release carries.
 
 ## The order
 

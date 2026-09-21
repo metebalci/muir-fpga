@@ -15,110 +15,93 @@
 # built (output/images) and the bitstream it is told, and lays them out the
 # way the board consumes them:
 #
-#     build/sd/buildroot/card/    BOOT.BIN u-boot.img uEnv.txt      -> partition 1
-#     build/sd/buildroot/card/<board>/
-#                                 cadr.bit zynq-arty-z7-20.dtb zImage
-#                                 rootfs.cpio.uboot                --- the same partition
-#     build/sd/buildroot/packs/   disk-pack-0.img .. disk-pack-7.img   -> partition 2
+#     build/sd/buildroot/card/            the whole card, one FAT32 partition
+#     build/sd/buildroot/cadr-<board>.zip that directory zipped: what is published
 #     build/sd/buildroot/server/<board>/
 #                                 uEnv.net cadr.bit zynq-arty-z7-20.dtb
 #                                 zImage rootfs.cpio.uboot    -> /srv/tftp/<board>
-#     build/sd/buildroot/sdcard.img                                   -> dd, instead of both
 #
-# THE SERVED SET IS UNDER A DIRECTORY NAMED FOR THE BOARD, and the name is
-# the board's own directory under `boards/`.  One TFTP server serves more
-# than one board here and every board's five files carry the same five names,
-# so a flat server root would hand a Cora the Arty's bitstream --- a bitstream
-# for the wrong part, which configures nothing and says nothing about why.
+# **THERE IS ONE WAY TO MAKE A CARD AND IT IS THE ZIP.**  The user formats a
+# microSD card themselves --- one FAT32 partition in an MBR --- and unpacks the
+# zip onto it.  Nothing here writes a disk image and nothing here writes a
+# card.  The whole-card image this script used to build, an MBR with two
+# partitions written onto a card with `dd`, is gone; it is gone rather than
+# kept beside the zip, because a second way that nothing exercises is a way
+# that quietly stops working.
 #
-# **AND THE CARD MIRRORS THE SERVER.**  The same four files sit in a folder of
-# the same name on the card's boot partition, and the board's U-Boot loads them
-# from there.  A card belongs to one board, so the folder is not what keeps two
-# boards' files apart on it; what it buys is that the card and the server hold
-# the same thing in the same place, and that a file copied from one to the
-# other keeps its path.  Three files stay at the ROOT of the partition because
-# their names are not ours to move: BOOT.BIN, which the boot ROM reads from the
-# root of the first FAT partition and nowhere else; u-boot.img, which the SPL
-# asks for by that name at the root; and uEnv.txt, which U-Boot imports before
-# any board name is known.  The pack partition keeps its flat layout, because a
-# pack, a README and the two files of flags belong to the machine rather than
-# to the part --- what differs between two boards' cards there is the Chaosnet
-# address inside fpgarc and muirrc, which this script writes from each board's
-# own local.conf.
+# **WHAT THE CARD LOOKS LIKE.**  Four places, so that somebody who puts the
+# card in a reader can see what each part is for without reading anything:
 #
-# **DO NOT WRITE THE IMAGE WITH `conv=sparse`.**  It skips runs of zeros, so
-# wherever the image holds zeros the card keeps whatever was there before.
-# A disk pack is full of legitimate zeros.  Measured on 11 Sep: the image's
-# md5 was right on the laptop, the card's `disk-pack-0.img` came out with a
-# different one, and the card mounted and looked perfectly healthy.  Written
-# again in full, it matched.  The flag is safe only on a blank card, which
-# nobody can check, so it is never offered.
+#     /                    the files a loader demands by name, and the three
+#                          a person edits
+#     /<board>/            the loader's own files for this board
+#     /packs/              the disk packs, disk-pack-0.img to disk-pack-7.img
+#     /sys/  /site/        the band's Lisp sources, and its site configuration
 #
-# **THE CARD IS WRITTEN ONCE AND THEN NEVER LEAVES THE BOARD.**  That is what
-# the second partition is for and it is why PACKS is optional: from the first
-# boot onwards the ordinary way to put a pack on the card is to copy it to
-# the running board --- `scp` over the network, or the board's own `tftp`
-# client --- into /mnt/packs, where a file appearing IS a drive coming ready.
-# Staging a pack here is for the first card and for a board with no network.
-# docs/boot.md, "The drive bay", has the three gestures.
+# **THE ROOT'S FIXED NAMES ARE NOT OURS TO CHOOSE AND THEY DIFFER BETWEEN THE
+# TWO BOARD SHAPES.**  On a Zynq-7000 board they are BOOT.BIN, which the boot
+# ROM reads from the root of the first FAT partition and nowhere else, and
+# u-boot.img, which the SPL asks for by that name at the root
+# (CONFIG_SPL_FS_LOAD_PAYLOAD_NAME).  On the DE25-Nano the first-stage loader
+# is in the QSPI flash and asks for u-boot.itb the same way, and there is no
+# BOOT.BIN at all.  Both shapes read uEnv.txt at the root, which the loader
+# imports before it does anything else.  README.TXT, fpgarc and muirrc are at
+# the root beside them because they are the files a person edits with the card
+# in a reader, and the root is where a person looks.
+#
+# **AND THE CARD MIRRORS THE SERVER**, which is why the board's own files are
+# in a folder named for it, and the name is the board's own directory under
+# `boards/`.  One TFTP server serves more than one board here and every
+# board's files carry the same names, so a flat server root would hand a Cora
+# the Arty's bitstream --- a bitstream for the wrong part, which configures
+# nothing and says nothing about why.  A card belongs to one board, so the
+# folder is not what keeps two boards' files apart on it; what it buys is that
+# the card and the server hold the same thing in the same place, and that a
+# file copied from one to the other keeps its path.  It is also what makes a
+# card built for the wrong board say so: the loader asks for its OWN folder,
+# so a Cora handed the Arty's card prints `Unable to read file
+# cora-z7-07s/zImage` within a second of power-on and goes on saying it.
+#
+# **ONE PARTITION MEANS THE LOADER'S FILES ARE NO LONGER BEHIND A READ-ONLY
+# MOUNT**, and that is a protection given up deliberately rather than
+# overlooked.  Two partitions put the loader, the kernel and the root
+# filesystem on a filesystem Linux mounted read-only, so that the machine's
+# constant writing to a disk pack could not damage them.  With one partition
+# the machine writes its pack into the same filesystem those files are in, and
+# a power cut in the middle of a write can damage any of them.  What makes
+# that bearable is the remedy: unpack the zip onto the card again.  A
+# whole-card image needed the card rewritten in whole with a tool that
+# destroys the wrong disk if the device name is wrong.  docs/boot.md says this
+# where a user will read it.
+#
+# **THE CARD IS WRITTEN ONCE AND THEN NEVER LEAVES THE BOARD**, which is why
+# PACKS is optional: from the first boot onwards the ordinary way to put a
+# pack on the card is to copy it to the running board --- `scp` over the
+# network, or the board's own `tftp` client --- into /mnt/card/packs, where a
+# file appearing IS a drive coming ready.  Staging a pack here is for the
+# first card and for a board with no network.  docs/boot.md, "The drive bay",
+# has the three gestures.
 #
 # PACKS names files to place, space separated.  An entry is `unit=path` or
 # just `path`, which takes the lowest unit not yet spoken for; a pack lands
-# as disk-pack-<unit>.img, which is the only thing that decides which drive
-# it is.
-#
-# HOW BIG A CARD HAS TO BE.  BOOT_MB and PACKS_MB are the two partitions and
-# both are parameters, because half a gigabyte of boot partition on a 1 GB
-# card is most of the card.  The boot partition holds seven files and they
-# come to about 11 MiB.  A T-300 pack is 257 MiB and a T-80 is 68.
-#
-#     card    BOOT_MB  PACKS_MB   the bay, and what is left over
-#     1 GB         64       832   three drives
-#     2 GB         64      1792   seven drives
-#     4 GB         64      3584   all eight, and room for six spare packs
-#
-# Those are sized against what a card of that name really holds, which is
-# less than the name: 1,003,520,000 bytes for a 1 GB card, 2,003,795,968 for
-# a 2 GB and 3,965,190,144 for a 4 GB, with 16 MiB left spare on top of the
-# partition table's own megabyte.  **An image larger than the card does not
-# warn, it fails part way**: `dd` stops with "No space left on device", the
-# boot partition is written because it comes first, and the pack partition
-# is left truncated and claiming room the card has not got.
+# as packs/disk-pack-<unit>.img, which is the only thing that decides which
+# drive it is.
 #
 # **THE BAY IS EIGHT AND NO MORE**, because a drive is `disk-pack-<unit>.img`
-# and a unit is 0 to 7.  Eight T-300 packs are 2,056 MiB.  Space past that
-# holds packs under other names, which the bay ignores, so it is where
-# backups and bands not currently mounted live.
+# and a unit is 0 to 7.  Eight T-300 packs are 2,056 MiB.  A file in `packs/`
+# under any other name is not a drive, which is where backups and bands not
+# currently mounted live.
 #
-# **BUT THE DEFAULT IS NOT A CARD, IT IS WHAT THE CARD CARRIES.**  BOOT_MB is
-# 64 and PACKS_MB, unset, is what the packs named come to, plus the FAT's own
-# 8 MiB, plus 32 MiB for the band's sources and plus 264 MiB for one more
-# drive.  A card with an empty bay therefore comes out at 304 MiB of packs
-# partition and one with a T-300 at 561, rather than at some round gigabyte,
-# and either writes in about a minute.  Ask for a bigger partition when the
-# card is bigger and the bay should be able to fill up without another write.
-#
-# **THE THREE TERMS ARE MEASURED AND NOT ESTIMATED.**  On a FAT32 image made
-# by this card's own `mkfs.vfat -F 32`, the cluster is 4,096 bytes, a T-300
-# pack takes 269,565,952 bytes, the sources this project ships beside take
-# 17,031,168 (513 files in 25 directories), and a 320 MiB partition carrying
-# both still reads back 48,250,880 bytes free.  A pack and its sources
-# together need 274 MiB, so the 272 this used to default to was two megabytes
-# short of the pair.
-#
-# So **1 GB is the absolute minimum** and one pack fits on far less than
-# that, while **4 GB takes a full bay of eight**, which is 2,056 MiB of
-# packs.  Nobody runs eight.  64 MiB of boot partition is decided and it is
-# the default on every card: the seven files are 11.3 MiB, so it is six times
-# what they need and leaves room for a second bitstream and a second kernel
-# beside them.  The whole default image is 2,625 MiB.  A bigger card leaves
-# the rest of itself unused, which costs nothing and is not worth a resize
-# step at first boot; set PACKS_MB to the card you have if you want all of
-# it, and remember that `dd` writes every byte of whatever size you ask for.
+# **HOW BIG A CARD HAS TO BE IS NO LONGER THIS SCRIPT'S ARITHMETIC.**  It used
+# to size two partitions, because it made the image that carried them; the
+# user's own format decides now.  What this script can say is what the card
+# has to hold, so it prints the unpacked size of what it staged and the zip
+# says the rest.  The files a board needs come to about 12 MB, a T-300 pack is
+# 257 MiB and a T-80 is 68, and docs/boot.md turns that into a card size.
 #
 # THE CARD CARRIES EVERYTHING AND BOOTS ON ITS OWN; the server directory is
 # this project's convenience.  Which path the loader takes is decided by the
-# card's uEnv.txt: with `serverip` set it fetches the five files over TFTP,
+# card's uEnv.txt: with `serverip` set it fetches the files over TFTP,
 # without it reads them from the card (cadr.env).  So uEnv.txt is written
 # from boards/arty-z7-20/linux/local.conf --- SERVERIP=a.b.c.d, ETHADDR=xx:xx:xx:xx:xx:xx, both
 # gitignored, both optional --- and STANDALONE=1 writes it without the server
@@ -130,9 +113,8 @@
 # and its own header --- design, part, date, time, as Vivado wrote them ---
 # is printed so the provenance is in the log of every staging.
 #
-# Nothing here writes a card.  sdcard.img is what the laptop dd's onto it,
-# or the files in card/ go onto a FAT32 partition made by hand; both are the
-# same card.
+# Nothing here writes a card.  The zip is what a user unpacks onto one, and
+# the staged directory under card/ is the same thing unzipped.
 
 set -eu
 
@@ -142,7 +124,7 @@ OUT=${OUT:-build/sd/buildroot}
 # WHICH BOARD, AND WHY IT IS TWO VARIABLES RATHER THAN A NAME.  This script
 # stages a card for a board, and a second Zynq board is a second device tree
 # and a second directory under `boards/` with everything else the same --- the
-# partitions, the packs, the `fpgarc`, the `muirrc`, the U-Boot environment and
+# layout, the packs, the `fpgarc`, the `muirrc`, the U-Boot environment and
 # every warning below are the machine's and not the part's.  So the board
 # enters as the two things that differ: where its `linux/` directory is, and
 # what its compiled device tree is called.  Both default to the Arty Z7-20's,
@@ -168,13 +150,13 @@ BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 # Secure Device Manager; the kernel is an arm64 Image; the CADR's memory is
 # reserved at 0xB000_0000; and the console and the debug window are on the
 # lightweight bridge at 0x2000_0000.  Everything else below --- the
-# partitions, the packs, the files of flags, every warning --- is the
+# layout, the packs, the files of flags, every warning --- is the
 # machine's and is the same on every board.  So the board enters here as the
 # names and numbers that differ, every line below says them through these, and
 # a board this does not name is a Zynq-7000 board, which is what every run
 # before the DE25-Nano was.
 #
-#   ROOT_FILES   the files at the root of partition 1 besides uEnv.txt, each
+#   ROOT_FILES   the files at the root of the card besides uEnv.txt, each
 #                as <its name in images/>:<its name on the card>
 #   FABRIC       the fabric's file in the board's folder, and FABRIC_KIND
 #                what it is, which decides how BIT is read
@@ -244,21 +226,28 @@ BOARD_FILES="$FABRIC $BOARD_DTB $KERNEL rootfs.cpio.uboot"
 STAGED_FILES=$BOARD_FILES
 BIT=${BIT:-}
 PACKS=${PACKS:-}
-# **THE BAND'S SOURCES, WHICH GO ON THE CARD BESIDE ITS PACK.**  SYS names a
-# directory: the tree the board's own file and time host serves, staged as
-# `sys/` on the packs partition and named on the card's menu as
-# `--ozd-root sys=/mnt/packs/sys,ro`.  A pack and the sources that belong to it
-# are one band, and they belong on one card together.
+# **THE BAND'S LISP FILES, WHICH GO ON THE CARD BESIDE ITS PACK.**  A pack and
+# the files that belong to it are one band, and they belong on one card
+# together.  There are two trees and they are two because the band uses them
+# two different ways:
 #
-# It goes on the packs partition and not in the root filesystem, because that
-# filesystem is a RAM disk unpacked at every boot: sixteen megabytes there is
-# sixteen megabytes of every board's memory whether the files are ever asked
-# for or not.  On this partition it costs memory to nobody, and it can be read
-# and changed with the card in a reader, which is why the settings files are
-# here too.
+#   SYS    the band's sources, staged as `sys/` and named on the card's menu
+#          as `--ozd-root sys=/mnt/card/sys,ro`.  Read-only: it is a tree of
+#          sources and nothing that reaches the host's socket should write in
+#          it.  The tree this project ships beside is 508 files and 17 MB.
+#   SITE   the band's site configuration --- its host table, its logical
+#          pathname translations, the few files that say what THIS site is ---
+#          staged as `site/` and named as `--ozd-root site=/mnt/card/site`.
+#          Read-WRITE, because a site is a thing its owner changes.  The tree
+#          this project ships beside is five files and 24 KB.
+#
+# They go on the card and not in the root filesystem, because that filesystem
+# is a RAM disk unpacked at every boot: seventeen megabytes there is seventeen
+# megabytes of every board's memory whether the files are ever asked for or
+# not.  On the card it costs memory to nobody, and it can be read and changed
+# with the card in a reader, which is why the settings files are here too.
 SYS=${SYS:-}
-BOOT_MB=${BOOT_MB:-64}
-PACKS_MB=${PACKS_MB:-}          # empty means "the packs, the sources, and one more drive"
+SITE=${SITE:-}
 STANDALONE=${STANDALONE:-}
 # **RELEASE=1 IS ABOUT THE MENU AND STANDALONE=1 IS ABOUT WHAT IS PRIVATE**,
 # and they are two flags because they are two properties.  STANDALONE says this
@@ -310,11 +299,12 @@ fi
 #
 # **IT IS READ HERE, BEFORE THE BAY IS RESOLVED, AND IT USED TO BE READ TWO
 # HUNDRED LINES LATER.**  As far as the card is concerned the debugger's pack
-# is a pack: it takes a T-300's 257 MiB of partition 2, so it has to be known
-# where the packs are sized and not where the files are written.  Read late,
-# a card built with the default PACKS_MB would have squeezed it into the spare
-# room meant for one more drive and left seven megabytes --- a card that
-# stages without complaint and then has nowhere to put a band.
+# is a pack: it takes a T-300's 257 MiB, so it has to be known where the packs
+# are counted and not where the files are written.  Read late, it was left out
+# of what the card was said to hold, and the card was sized without it --- a
+# card that staged without complaint and then had nowhere to put a band.  The
+# partitions it was sized against are gone and the number is advice now, but
+# advice that leaves out a quarter of a gigabyte is worse than none.
 #
 # **AND STANDALONE DOES NOT READ IT AT ALL**, which is the structural half of
 # the paragraph below.  Clearing the values by name after sourcing the file
@@ -374,9 +364,9 @@ if [ -n "$STANDALONE" ]; then
   TERMINAL_ENDPOINT=; SERIAL_ENDPOINT=; KEYBOARD_BOOT=; MUIR_TERMINAL_PORT=
 fi
 if [ -n "${SERVERIP:-}" ]; then
-  MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp/$BOARD_NAME"
+  MODE="the network path: uEnv.txt names the TFTP server, the board's files come from /srv/tftp/$BOARD_NAME"
 else
-  MODE="the card path: uEnv.txt names no server, the five files come from the card, no network is used"
+  MODE="the card path: uEnv.txt names no server, the board's files come from the card, no network is used"
 fi
 if [ -n "$STANDALONE" ]; then
   echo "mksd-buildroot: STANDALONE: no server, no MAC and no Chaosnet peers --- this card carries nothing from local.conf"
@@ -392,17 +382,22 @@ fi
 T300=269562880
 T80=70937600
 
-# **WHAT THE SOURCES TAKE ON THE CARD**, measured on the tree that is actually
-# being staged rather than assumed.  `du` in 4,096-byte units is the cluster
-# `mkfs.vfat` chooses for a partition of this size, so what is counted here is
-# what the card will really spend: a file of one byte costs a whole cluster,
-# and 513 small files is where that adds up.
+# **WHAT THE BAND'S TWO TREES TAKE ON THE CARD**, measured on the trees that
+# are actually being staged rather than assumed.  `du` in 4,096-byte units is
+# the cluster a FAT32 filesystem of this size uses, so what is counted is what
+# the card will really spend: a file of one byte costs a whole cluster, and
+# five hundred small files is where that adds up.  It is reported and no
+# longer sized against, the card being the user's own now.
+tree_total() {
+  [ -d "$2" ] || die "$1 names no directory at $2"
+  _n=$(( $(du -s --block-size=4096 "$2" | cut -f1) * 4096 ))
+  [ "$_n" -gt 0 ] || die "$1 at $2 is empty; a card with an empty tree on it serves nothing"
+  echo "$_n"
+}
 sys_total=0
-if [ -n "$SYS" ]; then
-  [ -d "$SYS" ] || die "SYS names no directory at $SYS"
-  sys_total=$(( $(du -s --block-size=4096 "$SYS" | cut -f1) * 4096 ))
-  [ "$sys_total" -gt 0 ] || die "SYS at $SYS is empty; a card with an empty tree on it serves nothing"
-fi
+[ -z "$SYS" ] || sys_total=$(tree_total SYS "$SYS")
+site_total=0
+[ -z "$SITE" ] || site_total=$(tree_total SITE "$SITE")
 
 packs_total=0
 pack_units=
@@ -432,7 +427,7 @@ done
 # **THE DEBUGGER'S PACK IS NOT ONE OF THE EIGHT.**  muir on this board's own
 # Arm cores is the far end of the debug cable, and the debugger is not muir:
 # it is CC running on a CADR that muir simulates.  So muir needs a band with
-# CC already loaded in it, and that band rides on this partition beside the
+# CC already loaded in it, and that band rides in `packs/` beside the
 # bay.  Its name must NOT be disk-pack-0.img to disk-pack-7.img, because those
 # eight are the fabric machine's drive bay and this pack is muir's own; the
 # card carries it as muir-cc.img and muirrc names it at that path
@@ -456,61 +451,24 @@ if [ -n "${CC_PACK:-}" ]; then
   packs_total=$((packs_total + size))
 fi
 
-# **THE THREE TERMS THE PACKS PARTITION IS MADE OF**, each a number with a
-# reason, and all three measured on a FAT32 image made by the same
-# `mkfs.vfat -F 32` this card is made with, with the real files copied in by
-# `mcopy` and the free space read back afterwards.
+# **WHAT THE CARD HAS TO HOLD, AS ONE FUNCTION, SO THAT A CHECK CAN RUN IT.**
+# $1 is the bytes of every pack named, $2 and $3 the bytes the two staged trees
+# take on the card, and $4 the bytes of everything else --- the loader, the
+# kernel, the fabric's image and the root filesystem, which is what a card must
+# hold before it holds anything of the band's at all.  The answer is in
+# megabytes, rounded up, and it is a REPORT and not a size this script imposes:
+# the partition is the user's, made by their own formatter, and the only thing
+# this can honestly do is say how small a card would be too small.
 #
-#   THE FAT'S OWN ROOM.  A 320 MiB FAT32 keeps 696,320 bytes for its reserved
-#   sectors and its two allocation tables, and that grows with the partition.
-#   A megabyte a pack and eight besides is generous and stays generous.
-PACKS_FAT_MB=8
-#   ROOM FOR ONE MORE DRIVE.  A T-300 is 257 MiB, so 264 is enough to copy a
-#   pack in beside what is already there.  `dd` writes every byte of the
-#   image, so a partition sized for nine drives costs eight drives' worth of
-#   zeros on a card carrying one.
-PACKS_SPARE_MB=264
-#   ROOM FOR THE BAND'S SOURCES.  The board serves its own files now, and what
-#   it serves lives on this partition rather than in the root filesystem,
-#   which is a RAM disk unpacked at every boot: a tree there would be sixteen
-#   megabytes of every board's memory whether anybody ever asked for a file or
-#   not.  The tree this project ships beside is 513 files in 25 directories and
-#   takes 17,031,168 bytes on this filesystem --- 16.24 MiB, at the 4,096-byte
-#   cluster `mkfs.vfat` chooses for a partition of this size.  This is double
-#   that, so the tree may grow by 97% before the card has to be laid out
-#   again, and it is set aside whether or not a tree is staged today, exactly
-#   as the drive above is.
-PACKS_SYS_MB=32
-
-# **THE SIZE ITSELF, AS ONE FUNCTION, SO THAT A CHECK CAN RUN IT.**  $1 is the
-# bytes of every pack named and $2 the bytes the staged tree takes on the card.
-# A staged tree larger than the room set aside for one takes the room it needs
-# instead, rounded up to the megabyte: a card that carries a tree must hold it,
-# and a reserve that a real tree overflowed would be a card that failed at the
-# last file copied.
-packs_partition_mb() {
-	_sys=$(( $2 / 1048576 + 1 ))
-	[ "$_sys" -lt "$PACKS_SYS_MB" ] && _sys=$PACKS_SYS_MB
-	echo $(( $1 / 1048576 + _sys + PACKS_FAT_MB + PACKS_SPARE_MB ))
+# This replaced the arithmetic that sized two partitions.  That arithmetic had
+# to be right to the megabyte, because `dd` wrote every byte of an image and an
+# image larger than the card failed part way through the write.  Nothing here
+# writes a card any more, so the number is advice; what it must still not do is
+# be quietly wrong, and the check calls this function with the real byte counts
+# exactly as it called the old one.
+card_needs_mb() {
+	echo $(( ($1 + $2 + $3 + $4 + 1048575) / 1048576 ))
 }
-
-packs_need=$(( packs_total / 1048576 + PACKS_FAT_MB + sys_total / 1048576 + 1 ))
-# THE DEFAULT IS WHAT IS BEING CARRIED PLUS ROOM FOR ONE MORE DRIVE, not a
-# round number.  `dd` writes every byte of the image, so a partition sized for
-# nine drives costs eight drives' worth of zeros on a card carrying one.  A
-# T-300 is 257 MiB, so the spare room is 264: enough to copy a pack in beside
-# what is there, and enough on its own for an empty bay.  The debugger's pack
-# counts as carried, not as spare: a card with a bay pack and a CC pack comes
-# out at 851 MiB and still has room for one more drive.  Ask for more with
-# PACKS_MB and the table in this header says what each card takes.
-[ -n "$PACKS_MB" ] || PACKS_MB=$(packs_partition_mb "$packs_total" "$sys_total")
-[ "$PACKS_MB" -ge "$packs_need" ] \
-  || die "PACKS_MB=$PACKS_MB is too small for the packs named ($packs_need MiB needed)"
-[ "$PACKS_MB" -ge 64 ] || die "PACKS_MB=$PACKS_MB: the pack partition is not worth making smaller than 64 MiB"
-# The boot partition holds seven files and they come to about 11 MiB, so 32 MiB
-# is a floor with room for a second bitstream rather than a tight fit.  It is a
-# parameter because half a gigabyte of it on a 1 GB card is most of the card.
-[ "$BOOT_MB" -ge 32 ] || die "BOOT_MB=$BOOT_MB: the boot partition holds about 11 MiB of files and 32 MiB is the floor"
 
 # The bitstream's own header: Vivado writes the design name (with its
 # UserID and Version), the part, the date and the time as tagged fields after
@@ -537,38 +495,6 @@ print("design %s  part %s  date %s  time %s  %d bytes of configuration"
          out["length"]))
 PYEOF
 }
-# The partition table an image carries, as shell assignments: two primary
-# FAT32 partitions, the first bootable and at 1 MiB, not overlapping.  A
-# layout that moved is a staging that fails here rather than a card that does
-# not boot.
-mbrinfo() {
-  python3 - "$1" <<'PYMBR'
-import struct, sys
-b = open(sys.argv[1], "rb").read(512)
-if b[510:512] != b"\x55\xaa":
-    sys.exit("sdcard.img has no MBR signature")
-out = []
-for i in range(4):
-    e = b[446 + 16 * i:446 + 16 * i + 16]
-    if e[4] == 0:
-        continue
-    lba, n = struct.unpack("<II", e[8:16])
-    out.append((e[0], e[4], lba, n))
-if len(out) != 2:
-    sys.exit("sdcard.img has %d partitions, wanting 2" % len(out))
-(b1, t1, s1, n1), (b2, t2, s2, n2) = out
-if t1 != 0x0c or t2 != 0x0c:
-    sys.exit("the partitions are type 0x%02x and 0x%02x, wanting 0x0c twice" % (t1, t2))
-if b1 != 0x80 or b2 != 0x00:
-    sys.exit("the boot flags are 0x%02x and 0x%02x, wanting 0x80 and 0x00" % (b1, b2))
-if s1 != 2048:
-    sys.exit("partition 1 starts at sector %d, wanting 2048 (1 MiB)" % s1)
-if s2 < s1 + n1:
-    sys.exit("the two partitions overlap")
-print("P1_OFF=%d P1_MB=%d P2_OFF=%d P2_MB=%d" % (s1 * 512, n1 // 2048, s2 * 512, n2 // 2048))
-PYMBR
-}
-
 # This script reads no header out of a core.rbf, so what goes in the log for
 # one is its size and its digest, which identify the file if not its
 # provenance.
@@ -586,14 +512,20 @@ else
 fi
 
 rm -rf "$OUT"
-mkdir -p "$OUT/card/$BOARD_NAME" "$OUT/packs" "$OUT/server/$BOARD_NAME"
+# **THE FOUR PLACES, MADE WHETHER OR NOT THEY ARE FILLED.**  `packs/`, `sys/`
+# and `site/` are on every card even when a release puts nothing in them,
+# because an empty folder with a name is what tells somebody with the card in
+# a reader where a band goes.  A zip carries an empty directory, and FAT holds
+# one, so this costs nothing.
+mkdir -p "$OUT/card/$BOARD_NAME" "$OUT/card/packs" "$OUT/card/sys" \
+         "$OUT/card/site" "$OUT/server/$BOARD_NAME"
 
-# The card: everything.  Three files at the root, because their names are not
-# ours to move --- the boot ROM reads BOOT.BIN from the root of the first FAT
-# partition and nowhere else, the SPL asks for u-boot.img by that name at the
-# root, and U-Boot imports uEnv.txt before it could know a board name.  The
-# board's own four go in the folder named for it, exactly as they sit in the
-# server's directory for it.
+# The card: everything.  The loader's files are at the root, because their
+# names are not ours to move --- the boot ROM reads BOOT.BIN from the root of
+# the first FAT partition and nowhere else, the SPL asks for u-boot.img (or
+# u-boot.itb) by that name at the root, and U-Boot imports uEnv.txt before it
+# could know a board name.  The board's own four go in the folder named for
+# it, exactly as they sit in the server's directory for it.
 for spec in $ROOT_FILES; do
   cp "$IMAGES/${spec%%:*}" "$OUT/card/${spec#*:}"
 done
@@ -631,83 +563,99 @@ if [ -n "${FABRIC_LOADED:-}" ] && [ "$FABRIC_LOADED" != 0 ]; then
   echo "mksd-buildroot:   the loader opens its bridges and never reads $BOARD_NAME/$FABRIC"
 fi  # whether the card says the fabric was configured before U-Boot ran
 
-# The drive bay: nothing but packs, named by unit.  A hard link where the
-# filesystem allows one, so that staging a 270 MB pack is not a copy.
+# The drive bay: packs, named by unit, in the folder named for them.  A hard
+# link where the filesystem allows one, so that staging a 270 MB pack is not a
+# copy.
 for spec in $pack_files; do
   unit=${spec%%=*}; file=${spec#*=}
-  cp -l "$file" "$OUT/packs/disk-pack-$unit.img" 2>/dev/null \
-    || cp "$file" "$OUT/packs/disk-pack-$unit.img"
+  cp -l "$file" "$OUT/card/packs/disk-pack-$unit.img" 2>/dev/null \
+    || cp "$file" "$OUT/card/packs/disk-pack-$unit.img"
 done
 
-# The debugger's pack, beside the bay and not in it.  Hard linked like the
-# others where the filesystem allows one, and then digested --- which says
-# which of the two happened and that the bytes staged are the bytes CC_PACK
-# named.  A link makes the staged name resolve to that very file; a copy makes
-# it a copy of it.  What proves the IMAGE holds those bytes is the mtools
-# readback further down, which compares every file on partition 2 against this
-# directory byte for byte.
-#
-# **NOTHING HERE IS `dd conv=sparse`, and a pack is why.**  That flag skips
-# runs of zeros, and a disk pack is full of legitimate zeros, so wherever the
-# image has them a card keeps whatever it held before.  Measured on this
-# project's own card: the image's digest was right and the card's pack read
-# back different.  `cp` writes every byte.
+# The debugger's pack, in the bay's folder but not one of the eight.  Hard
+# linked like the others where the filesystem allows one, and then digested ---
+# which says which of the two happened and that the bytes staged are the bytes
+# CC_PACK named.  A link makes the staged name resolve to that very file; a
+# copy makes it a copy of it.  What proves the ZIP holds those bytes is the
+# readback further down, which unpacks the zip and compares every file in it
+# against this directory byte for byte.
 if [ -n "${CC_PACK:-}" ]; then
-  cp -l "$CC_PACK" "$OUT/packs/$CC_PACK_NAME" 2>/dev/null \
-    || cp "$CC_PACK" "$OUT/packs/$CC_PACK_NAME"
-  staged=$(sha256sum "$OUT/packs/$CC_PACK_NAME" | cut -d' ' -f1)
+  cp -l "$CC_PACK" "$OUT/card/packs/$CC_PACK_NAME" 2>/dev/null \
+    || cp "$CC_PACK" "$OUT/card/packs/$CC_PACK_NAME"
+  staged=$(sha256sum "$OUT/card/packs/$CC_PACK_NAME" | cut -d' ' -f1)
   [ "$staged" = "$CC_PACK_SHA" ] \
     || die "packs/$CC_PACK_NAME staged as $staged where $CC_PACK is $CC_PACK_SHA"
-  if [ "$(stat -c %d:%i "$CC_PACK")" = "$(stat -c %d:%i "$OUT/packs/$CC_PACK_NAME")" ]
+  if [ "$(stat -c %d:%i "$CC_PACK")" = "$(stat -c %d:%i "$OUT/card/packs/$CC_PACK_NAME")" ]
   then how="hard linked"; else how=copied; fi
   echo "mksd-buildroot: the debugger's pack: $CC_PACK $how to packs/$CC_PACK_NAME"
   echo "mksd-buildroot:   $CC_PACK_SHA"
 fi
 
-# **AND THE BAND'S SOURCES, IF A TREE WAS NAMED.**  A pack is a band and this
-# is the band's files; the two belong on one card together, because a board
-# that serves itself its own files has to have them.  `cp -a` keeps the modes
-# and the times, and the count staged is asserted against the count named, so
-# a copy that came out short is a failure here rather than a file the machine
-# asks for and does not get.
-if [ -n "$SYS" ]; then
-  rm -rf "$OUT/packs/sys"
-  cp -a "$SYS" "$OUT/packs/sys"
-  want=$(find "$SYS" -type f | wc -l)
-  got=$(find "$OUT/packs/sys" -type f | wc -l)
-  [ "$want" = "$got" ] \
-    || die "the sources staged as $got files where $SYS has $want"
-  echo "mksd-buildroot: the band's sources: $SYS -> packs/sys, $got files," \
-       "$sys_total bytes on the card"
-fi
+# **AND THE BAND'S TWO TREES, IF THEY WERE NAMED.**  A pack is a band and
+# these are the band's files; they belong on one card together, because a
+# board that serves itself its own files has to have them.  `cp -a` keeps the
+# modes and the times, and the count staged is asserted against the count
+# named, so a copy that came out short is a failure here rather than a file
+# the machine asks for and does not get.
+stage_tree() {
+  rm -rf "$OUT/card/$1"
+  cp -a "$2" "$OUT/card/$1"
+  _want=$(find "$2" -type f | wc -l)
+  _got=$(find "$OUT/card/$1" -type f | wc -l)
+  [ "$_want" = "$_got" ] \
+    || die "$1/ staged as $_got files where $2 has $_want"
+  echo "mksd-buildroot: the band's $3: $2 -> $1/, $_got files, $4 bytes on the card"
+}
+[ -z "$SYS" ]  || stage_tree sys  "$SYS"  "sources" "$sys_total"
+[ -z "$SITE" ] || stage_tree site "$SITE" "site configuration" "$site_total"
 
-# **AND A README, WHICH IS NOT DECORATION.**  Two reasons, and the second is
-# the one that makes it mandatory rather than nice.  First: this partition is
-# what somebody sees when they put the card in a Windows machine, and a
-# volume with nothing on it but a 270 MB `.img` explains nothing.  Second:
-# genimage builds a FAT image by `mcopy`ing its mountpoint's contents, and an
-# EMPTY directory makes that fail outright --- measured --- so a card staged
-# with no pack would have no second partition at all, which is the ordinary
-# case.  CRLF, because the reader is Notepad.
+# **AND A README, WHICH IS NOT DECORATION.**  This card is what somebody sees
+# when they put it in a Windows machine, and a volume holding a folder named
+# for a board and a 270 MB `.img` explains nothing.  It is also the first
+# thing that says WHICH BOARD the card is for, which matters because a release
+# is one zip a board and they differ in only a few files: a card made from the
+# wrong board's zip looks perfectly ordinary in a reader.  CRLF, because the
+# reader is Notepad.
 {
-  printf 'The CADR disk pack drive bay.\r\n\r\n'
-  printf 'This partition holds the disk packs, and the few settings files that\r\n'
-  printf 'have to survive a reboot.  Everything else on the board runs from a\r\n'
-  printf 'RAM disk unpacked at every boot, so a file edited there is lost; a\r\n'
-  printf 'file edited here is not.  The settings files are fpgarc and muirrc,\r\n'
-  printf 'one for each of the two CADRs this board runs: fpgarc configures the\r\n'
-  printf 'machine in the fabric and muirrc the machine inside muir, which is\r\n'
-  printf 'the debugger.  Both are lists of flags, one a line, and each says at\r\n'
-  printf 'its top what it is for.\r\n\r\n'
+  printf 'The CADR on a card --- for the %s and no other board.\r\n\r\n' "$BOARD_NAME"
+  printf 'This is one FAT32 partition and everything the board needs is on\r\n'
+  printf 'it.  Unpack the zip onto a card you formatted yourself; there is no\r\n'
+  printf 'disk image to write.  A file damaged by a power cut is repaired by\r\n'
+  printf 'unpacking the zip again over the top.\r\n\r\n'
+  printf 'What is here\r\n'
+  printf '  %-22s the loader, which this board reads by name.\r\n' "$ROOT_NAMES"
+  printf "  %-22s read by the loader before anything else: a\r\n" uEnv.txt
+  printf "  %-22s TFTP server to fetch from, and this board's\r\n" ''
+  printf "  %-22s MAC.  A card out of the box has neither.\r\n" ''
+  printf "  %-22s this board's own files: the fabric, the\r\n" "$BOARD_NAME/"
+  printf "  %-22s kernel, its device tree and its root\r\n" ''
+  printf "  %-22s filesystem.\r\n" ''
+  printf '  %-22s the disk packs.  See below.\r\n' 'packs/'
+  printf "  %-22s the band's Lisp sources, read-only, and its\r\n" 'sys/  site/'
+  printf '  %-22s site configuration, which it may write.\r\n' ''
+  printf '  %-22s the settings.  Edit these here, on the card,\r\n' 'fpgarc  muirrc'
+  printf '  %-22s where they survive a reboot: everything else\r\n' ''
+  printf '  %-22s on the board runs from a RAM disk unpacked at\r\n' ''
+  printf '  %-22s every boot, so a file edited there is lost.\r\n' ''
+  printf '  %-22s fpgarc configures the machine in the fabric\r\n' ''
+  printf '  %-22s and muirrc the machine inside muir, which is\r\n' ''
+  printf '  %-22s the debugger.  Both are lists of flags, one a\r\n' ''
+  printf '  %-22s line, and each says at its top what it is for.\r\n' ''
+  printf '\r\n'
+  printf "A CARD MADE FROM ANOTHER BOARD'S ZIP WILL NOT BOOT.  The board looks\r\n"
+  printf 'for its own folder by name, so it stops saying it cannot read a file\r\n'
+  printf 'under %s/ and says it every ten seconds.  Unpack the right zip.\r\n\r\n' "$BOARD_NAME"
   printf 'Name a pack\r\n'
-  printf 'disk-pack-0.img to disk-pack-7.img: the number is the disk unit the\r\n'
-  printf 'machine sees it on, and whichever of the eight files exist are the\r\n'
-  printf 'drives that are present.  A pack must be exactly 269,562,880 bytes\r\n'
-  printf '(a T-300) or 70,937,600 (a T-80); any other size is not a pack.\r\n\r\n'
-  printf 'muir-cc.img, if this card carries it, is not one of the eight and is\r\n'
-  printf 'not a drive.  It is the debugger pack: a band with CC already loaded\r\n'
-  printf 'in it, which muir reads and the machine in the fabric never sees.\r\n'
-  printf 'muirrc is what names it, and the two are deleted or kept together.\r\n\r\n'
+  printf 'packs/disk-pack-0.img to packs/disk-pack-7.img: the number is the\r\n'
+  printf 'disk unit the machine sees it on, and whichever of the eight files\r\n'
+  printf 'exist are the drives that are present.  A pack must be exactly\r\n'
+  printf '269,562,880 bytes (a T-300) or 70,937,600 (a T-80); any other size\r\n'
+  printf 'is not a pack.\r\n\r\n'
+  printf 'packs/muir-cc.img, if this card carries it, is not one of the eight\r\n'
+  printf 'and is not a drive.  It is the debugger pack: a band with CC already\r\n'
+  printf 'loaded in it, which muir reads and the machine in the fabric never\r\n'
+  printf 'sees.  muirrc is what names it, and the two are deleted or kept\r\n'
+  printf 'together.\r\n\r\n'
   printf 'While the board is running you need not take the card out at all:\r\n'
   printf '  copy a pack in            that drive comes ready\r\n'
   printf '  RENAME a pack out         that drive is taken away, and anything\r\n'
@@ -717,9 +665,10 @@ fi
   printf 'DELETING a pack loses whatever the machine had written and not yet\r\n'
   printf 'been given back; rename it instead.  Do not copy over a pack that is\r\n'
   printf 'in use --- rename the old one out first.\r\n\r\n'
-  printf 'The other partition holds the loader and the boot files.  Do not\r\n'
-  printf 'put packs there; nothing looks for them there.\r\n'
-} > "$OUT/packs/README.TXT"
+  printf 'Do not put packs anywhere but packs/; nothing looks for them\r\n'
+  printf 'elsewhere.  Do not delete the files at the top or the %s\r\n' "$BOARD_NAME"
+  printf 'folder: the board does not start without them.\r\n'
+} > "$OUT/card/README.TXT"
 
 # ------------------------------------------------- the fabric CADR's flags
 #
@@ -820,15 +769,22 @@ if [ -n "${CHAOS_PEER:-}" ]; then
 else
   MENU_NO_OZD="#"
 fi
-# **AND THE TREE IS NAMED ON THE MENU WHEN THERE IS ONE ON THE CARD.**  A line
-# naming a tree that is not there stops the host, in its own words, so the line
-# is live exactly when the tree was staged.  It is read-only, which is what a
-# tree of sources wants and what keeps anything that reaches the host's socket
-# from writing in it.
+# **AND A TREE IS NAMED ON THE MENU WHEN THERE IS ONE ON THE CARD.**  A line
+# naming a tree that is not there stops the host, in its own words, so each
+# line is live exactly when its own tree was staged --- and they are two lines
+# and two decisions, because a card may carry one tree and not the other.  The
+# sources are read-only, which is what a tree of sources wants and what keeps
+# anything that reaches the host's socket from writing in them; the site tree
+# is not, because a site configuration is a thing its owner changes.
 if [ -n "${SYS:-}" ]; then
   MENU_OZD_ROOT=""
 else
   MENU_OZD_ROOT="#"
+fi
+if [ -n "${SITE:-}" ]; then
+  MENU_OZD_SITE=""
+else
+  MENU_OZD_SITE="#"
 fi
 CABLE_ENDPOINT=0.0.0.0:$CHAOS_PORT
 if [ -n "${RELEASE:-}" ]; then
@@ -993,18 +949,23 @@ fi
   printf "# A tree it serves, mounted at /<name>.  Repeatable.  Nothing is\r\n"
   printf "# served by default and that costs no memory, which is the point:\r\n"
   printf "# the host is on for every board and a tree in the root filesystem\r\n"
-  printf "# would be about 16 MiB of every board's memory whether anybody asked\r\n"
-  printf "# for a file or not.  Put the band's sources on THIS partition and\r\n"
-  printf "# name them here, and they cost memory to nobody:\r\n"
+  printf "# would be about 17 MiB of every board's memory whether anybody asked\r\n"
+  printf "# for a file or not.  The band's Lisp files are on THIS card, in two\r\n"
+  printf "# folders, and cost memory to nobody:\r\n"
   printf "#\r\n"
-  printf "#     --ozd-root sys=/mnt/packs/sys,ro\r\n"
+  printf "#     --ozd-root sys=/mnt/card/sys,ro\r\n"
+  printf "#     --ozd-root site=/mnt/card/site\r\n"
   printf "#\r\n"
-  printf "# ,ro is read-only, which is what a tree of sources wants.  Without\r\n"
-  printf "# it the host may write in the tree, and anything that reaches its\r\n"
-  printf "# socket may.  The user's own directory is always there and is always\r\n"
-  printf "# in memory, so a band that compiles a system has somewhere to put\r\n"
-  printf "# its warnings without a line here.\r\n"
-  printf -- "%s--ozd-root sys=/mnt/packs/sys,ro\r\n" "$MENU_OZD_ROOT"
+  printf "# ,ro is read-only, which is what a tree of SOURCES wants: without it\r\n"
+  printf "# the host may write in the tree, and anything that reaches its socket\r\n"
+  printf "# may.  The SITE tree has no ,ro, because a site configuration --- its\r\n"
+  printf "# host table, its logical pathname translations --- is a thing its\r\n"
+  printf "# owner changes, and a band that edits it should be able to save it.\r\n"
+  printf "# The user's own directory is always there and is always in memory, so\r\n"
+  printf "# a band that compiles a system has somewhere to put its warnings\r\n"
+  printf "# without a line here.\r\n"
+  printf -- "%s--ozd-root sys=/mnt/card/sys,ro\r\n" "$MENU_OZD_ROOT"
+  printf -- "%s--ozd-root site=/mnt/card/site\r\n" "$MENU_OZD_SITE"
   printf "\r\n"
   printf "# A machine in the host table it answers HOSTAB from, so that a band\r\n"
   printf "# whose own table does not know a name can still find it.\r\n"
@@ -1015,7 +976,7 @@ fi
   printf "# A band's own host table file, whose hosts are answered for as well.\r\n"
   printf "# A site that already keeps that file writes each host once instead\r\n"
   printf "# of twice.  It is read when the host starts.\r\n"
-  printf -- "#--ozd-hosts-text /mnt/packs/sys/site/hosts.text\r\n"
+  printf -- "#--ozd-hosts-text /mnt/card/site/hosts.text\r\n"
   printf "\r\n"
   printf "# Every packet it sees, to its log.  Off by default: the log is in\r\n"
   printf "# memory and this is a great deal of output.\r\n"
@@ -1039,7 +1000,7 @@ fi
   printf "# replacing it.  \`muir --keyboard-mapping-dump\` writes a file to edit.\r\n"
   printf "# terminal.keyboard.mapping.txt beside this file is taken with no\r\n"
   printf "# line here at all; this names another.\r\n"
-  printf -- "#--keyboard-mapping /mnt/packs/terminal.keyboard.mapping.txt\r\n"
+  printf -- "#--keyboard-mapping /mnt/card/terminal.keyboard.mapping.txt\r\n"
   printf "\r\n"
   printf "# The keys the keyboard's boot sequence needs: held with Rubout they\r\n"
   printf "# cold-boot the machine and with Return they warm-boot it, as on a\r\n"
@@ -1303,7 +1264,7 @@ fi
   printf "# same thing at any time, and \`cadr-console debug-cable\` says which\r\n"
   printf "# wiring the board found.\r\n"
   printf -- "%s--debug-cable-wiring auto\r\n" "$MENU_WIRING"
-} > "$OUT/packs/fpgarc"
+} > "$OUT/card/fpgarc"
 echo "mksd-buildroot: the lamps: $([ -z "$NO_BLINKING_LEDS_PREFIX" ] && echo "--no-blinking-leds --- steady, a level while the fabric is clocked and the machine runs" || echo "blinking, as the fabric comes up")"
 echo "mksd-buildroot: the boot button: $([ -z "$NO_AUTO_BOOT_PREFIX" ] && echo "--no-auto-boot --- the machine is held at boot and cadr-console boot or BTN0 starts it" || echo "pressed at boot --- the board boots its band by itself")"
 echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, the cable at $CABLE_ENDPOINT$([ -n "${CHAOS_PEER:-}" ] && echo ", $(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo ", no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
@@ -1326,7 +1287,7 @@ echo "mksd-buildroot: the serial line: $([ -z "$MENU_SERIAL" ] && echo "offered 
 # The format, out of muir's own main.rs: one flag a line, the flag then a space
 # then the rest of the line as its argument --- so a path with a space in it
 # needs no quoting --- and a line that is blank or starts with `#` is a comment.
-# The file is called `muirrc` and not `.muirrc` because this partition is what
+# The file is called `muirrc` and not `.muirrc` because this card is what
 # a laptop shows somebody who puts the card in, and a dotfile is hidden there.
 #
 # **THE PORTS ARE muir'S OWN AND NOT THE FABRIC CADR'S.**  5900 is
@@ -1390,7 +1351,7 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
     printf "# muir's own.  muir opens it read-write, as a drive writes a pack,\r\n"
     printf "# so this copy drifts from the first boot; that is what a drive\r\n"
     printf "# does and is not a fault.\r\n"
-    printf -- "--disk-pack /mnt/packs/%s\r\n" "$CC_PACK_NAME"
+    printf -- "--disk-pack /mnt/card/packs/%s\r\n" "$CC_PACK_NAME"
     printf "#\r\n"
     printf "# The cable.  An argument beginning 0x is no endpoint but the\r\n"
     printf "# physical address where this project's CADR presents its DBGIN as\r\n"
@@ -1412,7 +1373,7 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
     printf "# what a CADR with no pack loaded did.  The name must not be\r\n"
     printf "# disk-pack-0.img to disk-pack-7.img: those eight are the fabric\r\n"
     printf "# machine's drive bay and this pack is muir's own.\r\n"
-    printf "#--disk-pack /mnt/packs/%s\r\n" "$CC_PACK_NAME"
+    printf "#--disk-pack /mnt/card/packs/%s\r\n" "$CC_PACK_NAME"
     printf "#\r\n"
     printf "# The cable.  An argument beginning 0x is no endpoint but the\r\n"
     printf "# physical address where this project's CADR presents its DBGIN as\r\n"
@@ -1435,8 +1396,8 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
   printf "# port is one machine's and a lashup runs two --- so the line above\r\n"
   printf "# and a --serial line cannot both be in this file.  The cable is what\r\n"
   printf "# this muir is for.\r\n"
-} > "$OUT/packs/muirrc"
-echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at $DEBUG_WINDOW and $([ -n "${CC_PACK:-}" ] && echo "is live, with the debugger's pack at /mnt/packs/$CC_PACK_NAME" || echo "waits on the CC pack")"
+} > "$OUT/card/muirrc"
+echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at $DEBUG_WINDOW and $([ -n "${CC_PACK:-}" ] && echo "is live, with the debugger's pack at /mnt/card/packs/$CC_PACK_NAME" || echo "waits on the CC pack")"
 
 # The server: the same five files and the command that fetches them, in the
 # directory named for this board.
@@ -1486,7 +1447,7 @@ done
 # AND IT MUST LOAD THE BOARD'S FOUR FILES FROM THE BOARD'S OWN FOLDER, which
 # is the card half of the mirror and is checked at both ends here.  A U-Boot
 # built before the card mirrored the server loads cadr.bit from the root of
-# the partition, where this script no longer puts it, so it would loop saying
+# the card, where this script no longer puts it, so it would loop saying
 # it cannot find a file --- loudly, but at the board rather than here.  The
 # refusal names the cure, because Buildroot does not watch this repository's
 # files and a plain `make buildroot` leaves a stale environment in place once
@@ -1495,7 +1456,7 @@ done
 # **THE FABRIC'S IMAGE IS ASKED OF THE VARIABLE THAT FETCHES IT**, which is
 # `cadr_card` on the Zynq boards and `cadr_rbf_card` on the DE25-Nano.  What
 # this holds is the FOLDER and not where the fetch lives: a loader that looked
-# for a board's file at the root of the partition would be handed another
+# for a board's file at the root of the card would be handed another
 # board's, and that is as true of the fabric's image as of the other three.
 # The file ends its own line where the fetch is a variable of one line, so
 # either a space or the end of the line follows it.
@@ -1583,151 +1544,149 @@ for f in $STAGED_FILES; do
   cmp -s "$OUT/card/$BOARD_NAME/$f" "$OUT/server/$BOARD_NAME/$f" \
     || die "$f differs between card/$BOARD_NAME/ and server/$BOARD_NAME/"
 done
-# And nothing of the board's is left at the root of the boot partition, where
-# a stale copy would be read by nobody and would still look like the file.
+# And nothing of the board's is left at the root of the card, where a stale
+# copy would be read by nobody and would still look like the file.
 for f in $BOARD_FILES; do
   if [ -e "$OUT/card/$f" ]; then
-    die "card/$f is at the root of the boot partition, where nothing reads it"
+    die "card/$f is at the root of the card, where nothing reads it"
   fi
 done
 
-# The card as one image, if Buildroot built genimage: card/ becomes partition
-# 1 and packs/ partition 2, each in whole.
-if [ -x "$HOSTBIN/genimage" ]; then
+# ------------------------------------------------ the card's layout, asserted
+#
+# **THE ROOT HOLDS THE LOADER'S FIXED NAMES, THE THREE A PERSON EDITS, AND THE
+# FOUR FOLDERS --- AND NOTHING ELSE.**  A file at the root that is none of
+# those is a file nothing on the board reads, and this is the only place that
+# would say so.  It matters more with one partition than it did with two: the
+# root of the card is now where the loader looks AND where a person copies
+# things, so it is the place a stray file lands.
+for e in "$OUT"/card/* "$OUT"/card/.*; do
+  n=$(basename "$e")
+  case "$n" in . | .. | '*' | '.*') continue ;; esac
+  if [ -d "$e" ]; then
+    case " $BOARD_NAME packs sys site " in
+      *" $n "*) continue ;;
+      *) die "the root of the card carries the folder '$n/', which is none of $BOARD_NAME/, packs/, sys/ or site/" ;;
+    esac
+  fi
+  case " $ROOT_NAMES uEnv.txt README.TXT fpgarc muirrc " in
+    *" $n "*) ;;
+    *) die "the root of the card carries '$n', which is none of the loader's fixed names ($ROOT_NAMES), uEnv.txt, README.TXT, fpgarc or muirrc" ;;
+  esac
+done
+# **AND packs/ HOLDS PACKS AND NOTHING ELSE.**  The program builds the eight
+# names by format (pack_bay.h's BAY_NAME_FMT), so a file here under any other
+# name is simply not a drive; the debugger's band is the one such file this
+# script puts here on purpose, and it is named by the variable rather than
+# spelled a second time, because muirrc names it too and two spellings of one
+# name part company on the first change.
+for e in "$OUT"/card/packs/*; do
+  [ -e "$e" ] || continue
+  n=$(basename "$e")
+  case "$n" in
+    disk-pack-[0-7].img) ;;
+    "$CC_PACK_NAME") ;;
+    *) die "packs/ carries '$n', which is none of the eight pack names and is not $CC_PACK_NAME" ;;
+  esac
+done
+
+# ------------------------------------------------------------------- the zip
+#
+# **THE ZIP IS THE CARD, AND IT IS READ BACK OUT RATHER THAN TRUSTED.**  This
+# is what the image's `mcopy` readback used to be: the image was read back file
+# by file out of each partition with the tool that speaks FAT, because a
+# staging that merely copied into a directory says nothing about what the board
+# would find.  The zip is read back the same way --- unpacked into a scratch
+# directory and compared against what was staged, every file byte for byte and
+# the name sets both ways --- so the thing that is published is the thing that
+# was checked.  What the old readback could also say and this cannot is that
+# the FILESYSTEM is right, because there is no filesystem here any more: the
+# user's own formatter makes it.  docs/boot.md says what that formatter has to
+# produce, and it was measured against U-Boot's own code rather than assumed.
+#
+# **THE NAME CARRIES THE BOARD.**  A release is one zip a board, they differ in
+# only a few files, and a card made from the wrong board's zip looks perfectly
+# ordinary in a reader.  So the board's name is in the file's name, in the
+# README at the card's root, and in the folder the loader asks for by name.
+#
+# The path is made absolute here, because `zip` is run from inside card/ so
+# that the archive's entries are the card's own paths and not `card/...`.  A
+# relative OUT would otherwise put the archive inside the directory it is
+# archiving, which is where this first went wrong.
+ZIP="$(cd "$OUT" && pwd)/cadr-$BOARD_NAME.zip"
+if command -v zip >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
   TMP=$(mktemp -d "${TMPDIR:-$HOME/.cache}/mksd-buildroot.XXXXXX")
   trap 'rm -rf "$TMP"' EXIT
-  mkdir -p "$TMP/tmp" "$TMP/in" "$TMP/root"
-  # genimage takes one rootpath and reads each image's `mountpoint` under it,
-  # so the two staged directories go side by side --- hard linked, so a
-  # 270 MB pack is not copied a third time.
-  cp -al "$OUT/card" "$TMP/root/card"
-  cp -al "$OUT/packs" "$TMP/root/packs"
-  CADR_BOOT_SIZE="${BOOT_MB}M" CADR_PACKS_SIZE="${PACKS_MB}M" PATH="$HOSTBIN:$PATH" "$HOSTBIN/genimage" \
-      --rootpath "$TMP/root" --tmppath "$TMP/tmp" \
-      --inputpath "$TMP/in" --outputpath "$OUT" --config "$BOARD/genimage.cfg" >"$TMP/genimage.log" 2>&1 \
-      || { cat "$TMP/genimage.log" >&2; die "genimage failed"; }
-  rm -f "$OUT/boot.vfat" "$OUT/packs.vfat"
-  # **THE PARTITION TABLE IS READ BACK, NOT ASSUMED.**  Two primary
-  # partitions of type 0x0c, the first bootable at 1 MiB; the offsets come
-  # out of the MBR the image actually carries, and are what the readback
-  # below hands mtools --- so a layout that moved is a staging that fails
-  # here rather than a card that does not boot.
-  parts=$(mbrinfo "$OUT/sdcard.img" 2>&1) || die "$parts"
-  eval "$parts"
-  # Every file in card/ and packs/ is in the image, read back byte for byte
-  # with mtools from its own partition --- the same bytes the boot ROM,
-  # U-Boot and the disk pack program will read, not a listing.  A bay with no
-  # pack in it is allowed, so the loop over packs/ may find nothing.
-  if [ -x "$HOSTBIN/mcopy" ]; then
-    # Partition 1's root: the three files whose names are fixed, and nothing
-    # else of the board's.  Then the board's own folder, read back by the path
-    # U-Boot will use --- which is what says the mirror survived genimage, and
-    # not a listing.
-    for f in "$OUT"/card/*; do
-      [ -d "$f" ] && continue
-      n=$(basename "$f")
-      "$HOSTBIN/mcopy" -n -i "$OUT/sdcard.img@@$P1_OFF" "::$n" "$TMP/readback" 2>/dev/null \
-        || die "$n is not at the root of partition 1 of sdcard.img"
-      cmp -s "$f" "$TMP/readback" || die "$n in sdcard.img differs from card/$n"
-    done
-    for f in "$OUT/card/$BOARD_NAME"/*; do
-      n=$(basename "$f")
-      "$HOSTBIN/mcopy" -n -i "$OUT/sdcard.img@@$P1_OFF" "::/$BOARD_NAME/$n" "$TMP/readback" 2>/dev/null \
-        || die "$BOARD_NAME/$n is not in partition 1 of sdcard.img: the card does not mirror the server"
-      cmp -s "$f" "$TMP/readback" \
-        || die "$BOARD_NAME/$n in sdcard.img differs from card/$BOARD_NAME/$n"
-    done
-    # AND THE ROOT HOLDS THE THREE FIXED NAMES AND THE BOARD'S FOLDER AND
-    # NOTHING ELSE.  mdir marks a directory with a trailing slash, so this
-    # tells the folder from a file of the same name; a fourth file at the root
-    # is one nothing reads, and this is the only place that would say so.
-    for n in $("$HOSTBIN/mdir" -b -i "$OUT/sdcard.img@@$P1_OFF" :: 2>/dev/null | sed 's,^::/,,'); do
-      case " $ROOT_NAMES uEnv.txt $BOARD_NAME/ " in
-        *" $n "*) ;;
-        *) die "the root of partition 1 carries '$n', which is none of the fixed names ($ROOT_NAMES uEnv.txt) and is not $BOARD_NAME/" ;;
-      esac
-    done
-    for f in "$OUT"/packs/*; do
-      [ -e "$f" ] || continue
-      n=$(basename "$f")
-      # **THE BAND'S SOURCES ARE A TREE, AND A TREE IS READ BACK AS ONE.**
-      # mcopy takes one file at a time, and this loop used to hand it a
-      # directory and die saying the directory was not in the image --- which
-      # is what a card carrying the sources did, because nothing had ever
-      # staged one through genimage.  So a directory is pulled out of the
-      # image whole and compared against what was staged, file by file.
-      # Skipping it instead would have been five hundred files nobody looked
-      # at, on the one partition the board writes to.
-      if [ -d "$f" ]; then
-        rm -rf "$TMP/readtree"; mkdir -p "$TMP/readtree"
-        "$HOSTBIN/mcopy" -n -s -i "$OUT/sdcard.img@@$P2_OFF" "::/$n" "$TMP/readtree/" 2>/dev/null \
-          || die "$n/ is not in partition 2 of sdcard.img"
-        diff -r "$f" "$TMP/readtree/$n" > "$TMP/treediff" 2>&1 \
-          || { sed 's/^/  /' "$TMP/treediff" >&2; die "$n/ in sdcard.img differs from packs/$n/"; }
-        echo "mksd-buildroot: packs/$n/ read back out of the image:" \
-             "$(find "$TMP/readtree/$n" -type f | wc -l) file(s), every one identical"
-        rm -rf "$TMP/readtree" "$TMP/treediff"
-        continue
-      fi
-      "$HOSTBIN/mcopy" -n -i "$OUT/sdcard.img@@$P2_OFF" "::$n" "$TMP/readback" 2>/dev/null \
-        || die "$n is not in partition 2 of sdcard.img"
-      cmp -s "$f" "$TMP/readback" || die "$n in sdcard.img differs from packs/$n"
-    done
-    # And NOTHING BUT PACKS on partition 2: the program takes eight names, so
-    # a ninth file there is a file nobody will ever read.
-    for n in $("$HOSTBIN/mdir" -b -i "$OUT/sdcard.img@@$P2_OFF" :: 2>/dev/null | sed 's,^::/,,'); do
-      case "$n" in
-        disk-pack-[0-7].img|README.TXT) ;;
-        fpgarc|muirrc) ;;
-        # The band's sources, which mdir marks as a directory with a trailing
-        # slash.  It is named rather than swept in with every directory,
-        # because `--ozd-root sys=/mnt/packs/sys,ro` names this one tree and
-        # a second directory here would be one nothing on the board reads.
-        sys/) ;;
-        # A variable and not the literal muir-cc.img, so that the name lives
-        # in one place: it is written into muirrc as well, and two spellings
-        # of it would part company on the first one somebody changed.
-        "$CC_PACK_NAME") ;;
-        *) die "partition 2 carries '$n', which is none of the eight pack names, the README, or a settings file" ;;
-      esac
-    done
-    rm -f "$TMP/readback"
+  rm -f "$ZIP"
+  # -r walks the tree and -X drops the uid, gid and the extra timestamps: a
+  # zip that carried the build host's user id would be something of ours on a
+  # public artifact.
+  #
+  # **THE EMPTY FOLDERS ARE ADDED BY NAME AFTERWARDS**, although `-r` puts a
+  # directory entry in for each of them today.  A release ships `packs/`,
+  # `sys/` and `site/` empty, and an empty folder with a name is the whole of
+  # what tells somebody with the card in a reader where a band goes --- so it
+  # is asserted below rather than left to a flag of `zip`, and adding each by
+  # name costs nothing when it is already there.
+  ( cd "$OUT/card" && zip -q -r -X "$ZIP" . ) || die "zip failed"
+  for d in "$BOARD_NAME" packs sys site; do
+    [ -d "$OUT/card/$d" ] || continue
+    ( cd "$OUT/card" && zip -q -X "$ZIP" "$d/" ) || die "zip could not add $d/"
+  done
+  # The readback.  Unpack into a scratch directory and compare the two trees
+  # in whole: `diff -r` reports a file in either that the other has not got,
+  # and compares the contents of every file that is in both.
+  mkdir -p "$TMP/unzipped"
+  unzip -q "$ZIP" -d "$TMP/unzipped" || die "the zip does not unpack"
+  if ! diff -r "$OUT/card" "$TMP/unzipped" > "$TMP/zipdiff" 2>&1; then
+    sed 's/^/  /' "$TMP/zipdiff" >&2
+    die "the zip does not hold what was staged under card/"
   fi
+  # And every folder is in it, including the empty ones, which `diff -r` on a
+  # directory that unzip created would not distinguish from one it did not.
+  for d in "$BOARD_NAME" packs sys site; do
+    unzip -l "$ZIP" | grep -q " $d/" \
+      || die "the zip carries no $d/ entry: an empty folder was dropped, and an empty folder is what says where a band goes"
+  done
+  echo "mksd-buildroot: $(basename "$ZIP"): $(unzip -l "$ZIP" | tail -1 | awk '{print $2}') entries," \
+       "$(stat -c %s "$ZIP") bytes, read back against card/ and identical"
 else
-  echo "mksd-buildroot: no genimage in $HOSTBIN; only the loose files are staged" >&2
-fi
+  echo "mksd-buildroot: no zip or unzip on this host; only the staged directory was made" >&2
+fi  # the zip, built and read back
 
 echo "staged $OUT"
 echo "  $MODE"
-(cd "$OUT/card" && for f in *; do [ -f "$f" ] || continue; printf '  card/    %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
-(cd "$OUT/card/$BOARD_NAME" && for f in *; do printf "  card/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
-(cd "$OUT/packs" && for f in *; do
-   [ -e "$f" ] || continue
-   # A tree has no digest, so it is summed by what it costs the card: the
-   # files in it and the clusters they take, which is the term the partition
-   # was sized on.
-   if [ -d "$f" ]; then
-     printf '  packs/   %-22s %10d  %s\n' "$f/" \
-       "$(( $(du -s --block-size=4096 "$f" | cut -f1) * 4096 ))" \
-       "$(find "$f" -type f | wc -l) file(s)"
-     continue
-   fi
-   printf '  packs/   %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"
- done)
+( cd "$OUT/card" && find . -mindepth 1 | LC_ALL=C sort | while read -r e; do
+    n=${e#./}
+    if [ -d "$e" ]; then
+      printf '  card/%-28s %10d  %s\n' "$n/" \
+        "$(( $(du -s --block-size=4096 "$e" | cut -f1) * 4096 ))" \
+        "$(find "$e" -type f | wc -l) file(s)"
+      # A folder is summed and not walked: the files under it are its own
+      # business and five hundred lines of digest is not a listing anybody
+      # reads.  The board's own folder is the exception, because its four
+      # files are what a stale card gets wrong.
+      case "$n" in "$BOARD_NAME") ;; *) continue ;; esac
+      continue
+    fi
+    case "$n" in */*) case "${n%%/*}" in "$BOARD_NAME") ;; *) continue ;; esac ;; esac
+    printf '  card/%-28s %10d  %s\n' "$n" "$(stat -c %s "$e")" "$(sha256sum "$e" | cut -c1-16)"
+  done )
 (cd "$OUT/server/$BOARD_NAME" && for f in *; do printf "  server/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 echo "  the card mirrors the server: card/$BOARD_NAME/ holds the same four files as"
-echo "  server/$BOARD_NAME/, and only $(echo "$ROOT_NAMES" | sed 's/ /, /g') and uEnv.txt are at the root"
+echo "  server/$BOARD_NAME/, and only $(echo "$ROOT_NAMES" | sed 's/ /, /g'), uEnv.txt, README.TXT, fpgarc and muirrc are at the root"
 [ -z "$NO_FABRIC" ] || echo "  (and the fabric's slot, $BOARD_NAME/$FABRIC, is EMPTY on both: NO_FABRIC=1)"
 echo "  the served set goes to the server's own directory for this board:"
 echo "    mkdir -p /srv/tftp/$BOARD_NAME && cp $OUT/server/$BOARD_NAME/* /srv/tftp/$BOARD_NAME/"
-[ -f "$OUT/sdcard.img" ] && printf '  %-31s %10d  %s\n' sdcard.img "$(stat -c %s "$OUT/sdcard.img")" "$(sha256sum "$OUT/sdcard.img" | cut -c1-16)"
-if [ -f "$OUT/sdcard.img" ]; then
-  echo "  partition 1 at byte $P1_OFF, $P1_MB MiB, FAT32 BOOT   --- the loader and the boot files; Linux mounts it read-only"
-  echo "  partition 2 at byte $P2_OFF, $P2_MB MiB, FAT32 PACKS  --- the disk packs and the settings files, at /mnt/packs, read-write"
-fi
+card_bytes=$(( $(du -s --block-size=4096 "$OUT/card" | cut -f1) * 4096 ))
+boot_bytes=$(( card_bytes - packs_total - sys_total - site_total ))
+[ "$boot_bytes" -ge 0 ] || boot_bytes=0
+echo "  the card holds $card_bytes bytes: $(card_needs_mb "$packs_total" "$sys_total" "$site_total" "$boot_bytes") MiB,"
+echo "  so a card of that size or more, formatted as ONE FAT32 partition in an MBR."
+[ -f "$ZIP" ] && printf '  %-33s %10d  %s\n' "$(basename "$ZIP")" "$(stat -c %s "$ZIP")" "$(sha256sum "$ZIP" | cut -c1-16)"
 if [ -z "$PACKS" ]; then
   echo "  (no PACKS given: the bay is empty.  Copy a pack to the running board as"
-  echo "   /mnt/packs/disk-pack-N.img and that unit's drive comes ready with no restart;"
-  echo "   docs/boot.md, \"The drive bay\".)"
+  echo "   /mnt/card/packs/disk-pack-N.img and that unit's drive comes ready with no"
+  echo "   restart; docs/boot.md, \"The drive bay\".)"
 fi
 exit 0

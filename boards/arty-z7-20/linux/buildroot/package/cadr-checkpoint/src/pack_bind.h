@@ -49,11 +49,13 @@
 
 // The controller's eight unit slots (`rtl/machine/cadr_disk_controller.sv`).
 #define BIND_UNITS 8
-// Where `S80cadr-disk-packs` mounts the card's pack partition, and what the
-// eight packs are called there.  **The same two constants as
+// Where `S80cadr-disk-packs` puts the drive bay, and what the eight packs are
+// called there.  **The same two constants as
 // `package/cadr-disk-packs/src/pack_bay.h`**, which is the authority: a name
-// that is a pack is one of these eight and nothing else.
-#define BIND_DIR "/mnt/packs"
+// that is a pack is one of these eight and nothing else.  `--pack-dir`
+// overrides it, which is what a card of the old two-partition shape needs,
+// its bay having been the root of the second partition.
+#define BIND_DIR "/mnt/card/packs"
 #define BIND_NAME_FMT "disk-pack-%u.img"
 
 // The sidecar's suffix, appended to the checkpoint's own name.

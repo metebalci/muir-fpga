@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Build the card image this project uses on its own board.
+# Build the card this project uses on its own board.
 #
 #     BIT=<a bitstream> boards/arty-z7-20/linux/mksd-dev.sh [PACKS="a.img 3=b.img"]
 #
@@ -15,14 +15,15 @@
 #      a one-time write here: everything after it changes by copying a file
 #      to the server, and the board picks it up at the next reset.  local.conf
 #      is gitignored and the address never reaches the repository.
-#   2. IT CARRIES PACKS.  Name them with PACKS and the machine boots straight
-#      into its own world.  With none named the bay is empty, which is a valid
-#      card and boots to a CADR with no drive.
+#   2. IT CARRIES A BAND.  Name packs with PACKS and the band's two trees
+#      with SYS and SITE, and the machine boots straight into its own world.
+#      With none named the bay is empty, which is a valid card and boots to a
+#      CADR with no drive.  A release carries none of the three and refuses
+#      all three by name.
 #
-# The pack partition is sized to what the packs need plus room for one more
-# drive, so an image carrying one pack is about 594 MiB rather than filling a
-# card.  Set PACKS_MB to fill the card instead, and the table in
-# mksd-buildroot.sh's header says what each size takes.
+# The card is the same one partition as a release's, and it is made the same
+# way: unpack the zip onto a card formatted as one FAT32 partition in an MBR.
+# What differs is what is in it.
 set -eu
 
 cd "$(dirname "$0")/../../.."
@@ -53,24 +54,21 @@ if [ ! -r "$BOARD_DIR/linux/local.conf" ]; then
 	exit 1
 fi
 
-# PACKS_MB is passed by exporting it rather than as an assignment prefix: a
-# prefix that comes out of a parameter expansion is not an assignment, it is
-# the command name, and `PACKS_MB=3584: not found` is what that looks like.
-[ -z "${PACKS_MB:-}" ] || export PACKS_MB
-# IMAGES is exported for the same reason PACKS_MB is, one line above: a
-# prefix that comes out of a parameter expansion is not an assignment, it is
-# the command name.
+# IMAGES is exported rather than written as an assignment prefix: a prefix
+# that comes out of a parameter expansion is not an assignment, it is the
+# command name, and `IMAGES=...: not found` is what that looks like.  SYS and
+# SITE go the same way for the same reason.
 [ -z "${IMAGES:-}" ] || export IMAGES
-OUT="$OUT" BIT="$BIT" BOOT_MB=${BOOT_MB:-64} PACKS="${PACKS:-}" \
+[ -z "${SYS:-}" ] || export SYS
+[ -z "${SITE:-}" ] || export SITE
+OUT="$OUT" BIT="$BIT" PACKS="${PACKS:-}" \
     BOARD_DIR="$BOARD_DIR" BOARD_DTB="$BOARD_DTB" \
     boards/arty-z7-20/linux/mksd-buildroot.sh
 
-img="$OUT/sdcard.img"
-echo "mksd-dev: $img  $(stat -c %s "$img") bytes"
-echo "mksd-dev: write it with"
-echo "    sudo dd if=$img of=/dev/sdX bs=4M status=progress"
-echo "mksd-dev: NOT conv=sparse --- it leaves the old card's bytes wherever the"
-echo "mksd-dev: image has zeros, and a disk pack is full of legitimate zeros"
+zip="$OUT/cadr-$BOARD_NAME.zip"
+echo "mksd-dev: $zip  $(stat -c %s "$zip") bytes"
+echo "mksd-dev: format a microSD card as ONE FAT32 partition in an MBR and unpack"
+echo "mksd-dev: this onto it; $OUT/card/ is the same thing already unpacked"
 echo "mksd-dev: and $OUT/server/$BOARD_NAME/ is what goes to this board's own"
 echo "mksd-dev: directory on the TFTP server, /srv/tftp/$BOARD_NAME --- a directory a"
 echo "mksd-dev: board, because every board's five files carry the same five names"

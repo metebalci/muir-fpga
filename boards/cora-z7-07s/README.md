@@ -302,24 +302,29 @@ The served files go to a directory on the TFTP server named for this board,
 names and a flat server root would hand this board the other's bitstream.
 `docs/boot.md`, "One server, more than one board", has the rule.
 
-**The card mirrors the server.** On the boot partition this board's `cadr.bit`,
+**The card mirrors the server.** This board's `cadr.bit`,
 `zynq-cora-z7-07s.dtb`, `zImage` and `rootfs.cpio.uboot` are in a folder called
 `cora-z7-07s`, the same name the server's directory has, and `cadr_cora.env`
-loads them from there. Only `BOOT.BIN`, `u-boot.img` and `uEnv.txt` are at the
-root of that partition, because those three names are fixed: the boot ROM, the
-SPL and U-Boot's own import look for them there. The pack partition is flat and
-is the same on every board.
+loads them from there. `BOOT.BIN`, `u-boot.img` and `uEnv.txt` are at the root
+of the card, because those three names are fixed: the boot ROM, the SPL and
+U-Boot's own import look for them there. `README.TXT`, `fpgarc` and `muirrc`
+are at the root beside them because they are the files a person edits, and
+`packs/`, `sys/` and `site/` are the folders a band goes in. That layout is the
+same on every board.
 
-**A release image is built for this board the same way it is for the other**,
+**A release zip is built for this board the same way it is for the other**,
 with the board in the same two variables:
 
     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
     BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
-It carries the boot partition complete and the pack partition empty but for a
-README and the two files of flags. No release for this board has been
-published, because nothing here has been on silicon.
+`make release` builds this one together with the other two boards', which is
+how a release is actually made. It carries everything the board needs to come
+up and no band at all: `packs/`, `sys/` and `site/` are on the card empty, and
+`README.TXT` and the two files of flags are at the root. `cadr-cora-z7-07s.zip`
+is 8,091,752 bytes and unpacks to 10,498,048. No release for this board has
+been published, because nothing here has been on silicon.
 
 ## On silicon
 
@@ -373,8 +378,9 @@ directory stage from it with every check in the staging script passing: the
 boot image's own identification, the U-Boot inside `u-boot.img` and the
 environment it carries, the device tree's model string and its reservation,
 the root filesystem's image type, and the two ends of the served-directory
-rule. The card image is read back partition by partition. None of that is a
-board, and a staged card is not a booted one.
+rule. The zip is unpacked again and read back file by file against the
+directory it was made from. None of that is a board, and a staged card is not
+a booted one.
 
 No card has been written or booted yet, so nothing on this board has run Linux
 or served the machine a disk.

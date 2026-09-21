@@ -24,7 +24,7 @@ CONFIG_DEFAULT_DEVICE_TREE="socfpga_agilex5_de25_nano_cadr"
 # a file on the card's first partition (ENV_IS_IN_FAT, "0:1") and one in a
 # UBI volume in the flash (ENV_IS_IN_UBI); a saved environment is a second
 # place a boot can be decided from that nothing in the repository sees, and a
-# `saveenv` would write the partition Linux mounts read-only.
+# `saveenv` would put it on the card beside the loader's own files.
 CONFIG_ENV_SOURCE_FILE="cadr_de25"
 CONFIG_USE_BOOTCOMMAND=y
 CONFIG_BOOTCOMMAND="run cadr_boot"

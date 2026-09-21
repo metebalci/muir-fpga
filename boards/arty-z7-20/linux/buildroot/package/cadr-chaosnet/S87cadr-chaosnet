@@ -9,7 +9,7 @@
 # S87, after S80cadr-disk-packs and S86cadr-serial.  The order matters twice
 # over here, and only the second is a real dependency: the console log reads
 # in the order a person wants it, and the settings file below lives on the
-# pack partition that S80 mounts.  A boot where that mount failed still starts
+# card that S80 mounts.  A boot where that mount failed still starts
 # this --- it takes the defaults and says so, which is better than a machine
 # with no cable at all.
 #
@@ -32,7 +32,9 @@
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
 # program is told where to write instead.
 
-PACKS=/mnt/packs
+# Where the card is mounted, which `S80cadr-disk-packs` is the one thing
+# that does.  The card is one FAT32 partition and `fpgarc` is at its root.
+CARD=/mnt/card
 PROG=/usr/bin/cadr-chaosnet
 PIDFILE=/var/run/cadr-chaosnet.pid
 
@@ -62,7 +64,7 @@ PIDFILE=/var/run/cadr-chaosnet.pid
 # keeping.  So the file goes through the shared reader, which hands back only
 # the lines whose flag is in the list below and nothing else.  A flag no list
 # names goes to nobody; docs/fpgarc.md says which flags each program owns.
-RC="$PACKS/fpgarc"
+RC="$CARD/fpgarc"
 
 # The reader, cadr-common's, installed by that package on the target.  Its
 # header is the contract.  If it is not there this script dies here and the
@@ -133,7 +135,7 @@ FLAGS="--address --chaos-address
 #
 # **A BOARD WITH NO FILE AT ALL IS THE OTHER CASE AND KEEPS BOTH.**  No file is
 # nobody having been asked, not an answer of no, and it is also a boot where
-# the pack partition did not mount.  That board runs what this script has
+# the card did not mount.  That board runs what this script has
 # always run: the address and the cable.
 DEFAULT_ADDRESS=3050
 DEFAULT_PORT=42042

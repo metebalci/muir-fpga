@@ -31,7 +31,9 @@
 
 PROG=/usr/bin/cadr-usb-input
 PIDFILE=/var/run/cadr-usb-input.pid
-PACKS=/mnt/packs
+# Where the card is mounted, which `S80cadr-disk-packs` is the one thing
+# that does.  The card is one FAT32 partition and `fpgarc` is at its root.
+CARD=/mnt/card
 
 # **THE CARD'S ONE FILE OF FLAGS, FILTERED TO THIS PROGRAM'S.**  `fpgarc`
 # configures the CADR in the fabric the way `muirrc` beside it configures the
@@ -45,7 +47,7 @@ PACKS=/mnt/packs
 # S80cadr-disk-packs mounts that partition before this runs.  A boot where the
 # mount failed still starts this and takes the defaults, which are what the
 # program does with no flags at all.
-RC="$PACKS/fpgarc"
+RC="$CARD/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
 

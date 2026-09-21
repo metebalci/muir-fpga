@@ -262,6 +262,12 @@ console. That reading is settled. Three things say so, and they agree:
 So `partid` exists only to let someone override a default of 1, and there is
 nothing to recover at the console.
 
+**That "whole device" branch is this U-Boot's and is not something to rely
+on.** The loader the board runs now is mainline U-Boot 2026.01, and a card with
+no partition table fails there with `** No partition table **`, measured in the
+sandbox. Every card this project makes has an MBR, so the branch is never
+reached either way. `docs/boot.md` says what a card has to be formatted as.
+
 **`$modeboot` is unset in this build, and the guard that reads it succeeds by
 accident.** `u-boot.elf` has no `board_late_init` symbol and no
 `zynq_slcr_get_boot_mode`. The strings `"modeboot"`, `"sdboot"`,
@@ -480,6 +486,12 @@ moves. A column-by-column diff is what makes a generated-file change
 believable, and a device tree is no different.
 
 ## Physical, and one known unknown
+
+**This is the record of the first card, written on 10 September for the
+stepping stone.** It is kept because the naming of the device and the check
+before the wipe are the part that matters and have not changed. What goes on a
+card now is a zip unpacked onto one FAT32 partition, and `docs/boot.md` has the
+current recipe for every platform.
 
 - **Vivado is on the build host, and the card is written on the laptop.** The
   build host is a virtual machine with one 256 GB virtio disk, a

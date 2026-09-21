@@ -71,7 +71,7 @@
 # **And a program's settings file is not covered at all.**  /root/.muirrc is a
 # symlink the muir package installs, and nothing here asserts it: the
 # derivation reads install paths under usr/bin and S-numbered init scripts, and
-# a symlink into /mnt/packs is neither.  It is named here so that its absence
+# a symlink into /mnt/card is neither.  It is named here so that its absence
 # from the checks is a known absence rather than an assumed presence.
 
 set -eu

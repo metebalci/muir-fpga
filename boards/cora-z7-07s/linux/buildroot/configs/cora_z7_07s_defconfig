@@ -162,8 +162,3 @@ BR2_TARGET_UBOOT_ZYNQ_PS7_INIT_FILE="$(BR2_EXTERNAL_CADR_CORA_PATH)/board/cora-z
 BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_CORA_PATH)/board/cora-z7-07s/dts/xilinx/zynq-cora-z7-07s.dts $(BR2_EXTERNAL_CADR_CORA_PATH)/board/cora-z7-07s/uboot/zynq-cora-z7-07s-u-boot.dtsi $(BR2_EXTERNAL_CADR_PATH)/../cadr-reserved.dtsi"
 BR2_TARGET_UBOOT_CUSTOM_MAKEOPTS="DEVICE_TREE=zynq-cora-z7-07s"
 
-# For the card image boards/cora-z7-07s/linux/mksd-buildroot.sh writes at
-# staging time, when the TFTP server's address is known.
-BR2_PACKAGE_HOST_DOSFSTOOLS=y
-BR2_PACKAGE_HOST_GENIMAGE=y
-BR2_PACKAGE_HOST_MTOOLS=y

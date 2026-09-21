@@ -37,13 +37,12 @@ is the whole machine.
     Linux       6.19.14, mainline    zImage 3,337,032 B; zynq-arty-z7-20.dtb 11,401 B
     rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,801,388 B (6.2 MB unpacked), an
                 + evtest             initramfs, unpacked into RAM on both paths
-    the card    two FAT32 partitions sdcard.img, 622,854,144 B carrying one pack
-                                     (1 MiB + 64 MiB + 529 MiB; sparse, 277 MB on disk).
-                                     Partition 1: the loader and the boot files, seven of
-                                     them, 11.3 MB.  Partition 2: the drive bay --- nothing
-                                     but disk packs
+    the card    one FAT32 partition  cadr-arty-z7-20.zip, about 8.1 MB, 12,500,992 B
+                                     on the card.  The user formats the card and unpacks
+                                     the zip onto it.  There is no disk image
 
-The sizes are of the 10 September builds on the build host. The whole
+The kernel's, the loader's and the root filesystem's sizes are of the 10
+September builds on the build host, and the zip's are of the current one. The whole
 thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
 took 25 minutes of wall clock on 16 cores. `make buildroot` after a change
 takes minutes. **Buildroot does not watch our files.** After editing anything
@@ -67,7 +66,6 @@ These are the ones worth knowing exist:
     board/arty-z7-20/uboot/uboot.fragment      what changes in xilinx_zynq_virt_defconfig
     board/arty-z7-20/linux/linux.config        the kernel: what the board has and nothing more
     board/arty-z7-20/uEnv.txt.in, uEnv.net     the card's optional file and the served boot command
-    board/arty-z7-20/genimage.cfg              the card as one image, sdcard.img
     board/arty-z7-20/post-build.sh             the image holds only the programs the packages install
     package/                                   our own programs, one package each
 
@@ -192,16 +190,25 @@ say that. This paragraph is where it is said instead.
 
 ## The card, and the two ways it boots
 
-    partition 1 BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional)
-                arty-z7-20/ cadr.bit, zynq-arty-z7-20.dtb, zImage,
-                            rootfs.cpio.uboot
-    partition 2 disk-pack-0.img .. disk-pack-7.img, whichever exist,
-                muir-cc.img where a debugger runs, fpgarc, muirrc and a
-                README.TXT; neither the boot ROM nor U-Boot ever looks here
+**The card is one FAT32 partition in an MBR, and everything is on it.**
+
+    /           BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional),
+                README.TXT, fpgarc, muirrc, and `clock` once the board has
+                shut down cleanly once
+    arty-z7-20/ cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
+    packs/      disk-pack-0.img .. disk-pack-7.img, whichever exist, and
+                muir-cc.img where a debugger runs; neither the boot ROM nor
+                U-Boot ever looks here
+    sys/        the band's Lisp sources, served read-only
+    site/       the band's site configuration, served read-write
     /srv/tftp/arty-z7-20
                 uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage,
                 rootfs.cpio.uboot --- this project's convenience, the same
                 five files, in a directory named for the board
+
+`sys/`, `site/` and `packs/` are on every card even when they are empty,
+because an empty folder with a name on it is what tells somebody where a band
+goes.
 
 U-Boot's built-in environment (`cadr.env`) boots **from the card by
 default**. It loads `arty-z7-20/cadr.bit` and `fpga loadb`'s it, then reads the
@@ -220,12 +227,40 @@ is this project's, and booting stale files silently is the thing this project
 decided against. Nothing else is ever booted.
 
 The root filesystem is the initramfs on both paths, unpacked into RAM, so
-nothing on the board drifts. **Partition 1 is read by the loader and mounted
-READ-ONLY by Linux**, and the one thing the board writes is a disk pack on
-partition 2. **Small persistent state, if it is ever wanted, would be a file
-on the card that the image reads at start**, not a partition and not a
-writable root. An SSH host key is the obvious case, since Dropbear makes a
-new one at every boot. It is not built now.
+nothing on the board drifts. **The card is read by the loader and mounted
+READ-WRITE by Linux at `/mnt/card`**, and the things the board writes on it
+are a disk pack in `packs/`, the band's `site/` tree, and the `clock` file at
+the root. **Small persistent state, if it is ever wanted, is a file on the
+card that the image reads at start**, not a partition and not a writable root.
+`clock` is already that: the board has no clock of its own, so the disk pack
+program writes the time there at a clean shutdown and reads it at the next
+boot. An SSH host key would be the next case, since Dropbear makes a new one
+at every boot. It is not built now.
+
+### One partition, and the protection that was given up for it
+
+**The loader, the kernel and the root filesystem are no longer behind a
+read-only mount, and that is a protection given up deliberately rather than
+overlooked.** The card used to have two partitions. The first held the loader
+and the boot files and Linux mounted it read-only, so that the machine's
+constant writing to a disk pack could not damage them; the second held nothing
+but packs and was the only thing mounted for writing. With one partition the
+machine writes its pack into the same filesystem the boot files are in, and a
+power cut in the middle of a write can damage any of them. FAT32 has no
+journal, so nothing puts them back.
+
+**What makes that bearable is the remedy, and it is the reason the trade is
+worth taking.** A damaged boot file is repaired by unpacking the board's zip
+onto the card again, over the top of what is there, from any machine with a
+card reader. The two-partition arrangement was an image, and repairing it
+meant rewriting the whole card with a tool that destroys the wrong disk if the
+device name is wrong. So the failure that is now possible is recovered in a
+minute by a copy, and the failure that was possible before was recovered by
+the one command in this project that can erase somebody's system disk.
+
+A pack is a working copy whose master is in the archive, and the boot files
+are in a zip that is still on the machine that wrote the card. Nothing on the
+card is the only copy of itself.
 
 **Three files were two.** Mainline U-Boot's SPL is the first stage, and it
 loads U-Boot proper as a second file, `u-boot.img`, from the FAT partition.
@@ -256,33 +291,44 @@ place, so a copy of it anywhere on that server still fetches the right five
 files.
 
 **And the card mirrors the server.** The same four files sit in a folder of
-the same name on the card's boot partition, and the board's U-Boot loads them
-from there. A card belongs to one board, so the folder is not what keeps two
-boards' files apart on it. What it buys is that the card and the server hold
-the same thing in the same place, and that a file copied from one to the other
-keeps its path.
+the same name on the card, and the board's U-Boot loads them from there. A
+card belongs to one board, so the folder is not what keeps two boards' files
+apart on it. What it buys is that the card and the server hold the same thing
+in the same place, and that a file copied from one to the other keeps its
+path. It is also what makes a card built for the wrong board say so: the
+loader asks for its **own** folder, so a Cora handed the Arty's card prints
+`** Unable to read file cora-z7-07s/zImage **` within a second of power-on and
+goes on saying it every ten seconds.
 
-**Three files stay at the root of the boot partition, because their names are
-not ours to move.** `BOOT.BIN` is what the boot ROM reads from the root of the
-first FAT partition and nowhere else. `u-boot.img` is what the SPL asks for by
-that name at the root. `uEnv.txt` is imported by U-Boot before any board name
-is known, and it is the file that decides which of the two paths the board
+**Some files stay at the root of the card, because their names are not ours to
+move.** `BOOT.BIN` is what the boot ROM reads from the root of the first FAT
+partition and nowhere else. `u-boot.img` is what the SPL asks for by that name
+at the root. On the DE25-Nano the first-stage loader is in the QSPI flash and
+asks for `u-boot.itb` the same way, and there is no `BOOT.BIN` at all.
+`uEnv.txt` is imported by U-Boot before any board name is known, on both board
+shapes, and it is the file that decides which of the two paths the board
 takes, so it cannot be behind a name that path has not chosen yet.
 
-**The pack partition keeps its flat layout.** A pack, the README and the two
-files of flags belong to the machine rather than to the part, and a card
-belongs to one board. What differs between two boards' cards there is the
-Chaosnet address inside `fpgarc` and `muirrc`, and the staging writes those
-from each board's own `local.conf`.
+**Three more are at the root because that is where a person looks.**
+`README.TXT`, `fpgarc` and `muirrc` are the files somebody edits with the card
+in a reader, so they are beside the loader's rather than buried. What differs
+between two boards' cards in the two files of flags is the Chaosnet address
+and, on the DE25-Nano, the window addresses; the staging writes those from
+each board's own `local.conf`.
+
+**The packs keep a folder of their own, `packs/`.** A pack, unlike everything
+else on the card, belongs to the machine rather than to the part, and the
+folder is what says so. Whichever of `disk-pack-0.img` to `disk-pack-7.img`
+are in it are the drives that are present, and nothing looks for a pack
+anywhere else.
 
 **A card written before this change does not boot a U-Boot built after it**,
 and the staging refuses that pair rather than letting it reach a board. The
 card script checks that the U-Boot inside `u-boot.img` loads
 `<board>/cadr.bit` and the other three the same way, names the file it wanted,
-and says that `make buildroot-rebuild` is what rewrites the loader. The image
-is then read back out of partition 1 by the path U-Boot will use, and the root
-of that partition is asserted to hold the three fixed names and the board's
-folder and nothing else.
+and says that `make buildroot-rebuild` is what rewrites the loader. The zip is
+then read back, file by file, against the directory it was made from, so that
+what a user unpacks is what was staged.
 
 **The board this project runs crosses the change in two steps, and neither
 needs a card reader.** Its U-Boot predates the rule and fetches `uEnv.net`
@@ -324,63 +370,179 @@ them into the `.bit` --- so the provenance of every staging is in its log:
     mksd-buildroot: bitstream /srv/tftp/cadr.bit
     mksd-buildroot:   design cadr_arty;UserID=0XFFFFFFFF;Version=2026.1;...  part 7z020clg400  date 2026/09/10  time 07:38:09  4045564 bytes of configuration
 
-`PACKS="a.img 5=b.img"` puts disk packs in the bay on partition 2. An entry
-is `unit=path`, or a bare path taking the lowest free unit. Without it the
-bay is empty, and the script says so and says how to fill it from the running
-board. A file whose size is neither a T-300's nor a T-80's is refused here,
-because on the board it would simply not be a drive.
+`PACKS="a.img 5=b.img"` puts disk packs in `packs/`. An entry is `unit=path`,
+or a bare path taking the lowest free unit. Without it the bay is empty, and
+the script says so and says how to fill it from the running board. A file
+whose size is neither a T-300's nor a T-80's is refused here, because on the
+board it would simply not be a drive.
+
+`SYS=<a directory>` and `SITE=<a directory>` put the band's own Lisp files on
+the card as `sys/` and `site/`. Both are optional, and both folders are on the
+card empty when they are not given.
 
 **`CC_PACK` is the debugger's band, and it is not one of the eight.** muir on
 the board's own Arm cores is the far end of the debug cable, and the debugger
 is CC running on a CADR that muir simulates. So muir needs a band with CC
 already loaded in it, which `docs/cc-pack.md` says how to build. Name that
 file with `CC_PACK` in `local.conf` and the card carries it as
-`/mnt/packs/muir-cc.img`, beside the bay rather than in it, and `muirrc` gets
-its `--disk-pack` and `--debug-cable-connect` lines live. Leave `CC_PACK`
-unset and those two lines stay commented, with the explanation of what is
-missing. The variable is in `local.conf` because the file is 257 MiB and is a
-path on whoever's build host. It must be exactly a T-300, where the bay also
-takes a T-80. `STANDALONE` clears it, so no release card carries it. `BOOT_MB=<n>` and `PACKS_MB=<n>` are
-how big the two partitions are made. `BOOT_MB` is 64. `PACKS_MB`, left
-unset, is what the packs named come to plus 264 MiB, which is room for one
-more drive. One T-300 pack therefore makes an image of 594 MiB rather than of
-some round gigabyte, and it writes in about a minute. `dd` writes every byte
-of an image, so a partition sized for a full bay costs seven drives' worth of
-zeros on a card carrying one.
+`/mnt/card/packs/muir-cc.img`, in the bay's folder but not one of the eight,
+and `muirrc` gets its `--disk-pack` and `--debug-cable-connect` lines live.
+Leave `CC_PACK` unset and those two lines stay commented, with the explanation
+of what is missing. The variable is in `local.conf` because the file is 257
+MiB and is a path on whoever's build host. It must be exactly a T-300, where
+the bay also takes a T-80. `STANDALONE` clears it, so no release card carries
+it.
 
-How big a card has to be follows from two numbers. The boot partition holds
-seven files that come to 11.3 MB. A T-300 pack is 257 MiB and a T-80 is 68.
+`STANDALONE=1` writes `uEnv.txt` without the server even when `local.conf`
+names one, for testing the card path from this host. With no `local.conf` at
+all the card is standalone. The script says which path the card it staged will
+take.
 
-| card | `BOOT_MB` | `PACKS_MB` | the bay, and what is left over |
-|---|---|---|---|
-| 1 GB | 64 | 832 | three drives |
-| 2 GB | 64 | 1792 | seven drives |
-| 4 GB | 64 | 3584 | all eight, and room for six spare packs |
+### How big a card has to be
 
-Those are sized against what a card of that name really holds, which is less
-than the name. A 1 GB card is 1,003,520,000 bytes, a 2 GB is 2,003,795,968 and
-a 4 GB is 3,965,190,144. Each row leaves 16 MiB spare on top of the partition
-table's own megabyte. **An image larger than the card does not warn, it fails
-part way.** `dd` stops with "No space left on device", the boot partition is
-written because it comes first, and the pack partition is left truncated and
-claiming room the card has not got.
+**It is the band that sizes the card, not the files the board needs.** How big
+to format is the user's own decision now, because the user does the
+formatting; there is no image whose size has to be settled in advance. What
+this project can say is what goes on it.
 
-**The bay is eight and no more.** A drive is `disk-pack-<unit>.img` and a unit
-is 0 to 7. Eight T-300 packs are 2,056 MiB. Space past that holds packs under
-other names, which the bay ignores, so it is where backups and bands that are
-not mounted live.
+| what | bytes |
+|---|---|
+| the Arty Z7-20's zip, unpacked | 12,500,992 |
+| the Cora Z7-07S's zip, unpacked | 10,498,048 |
+| the DE25-Nano's zip, unpacked | 49,434,624 |
+| a T-300 disk pack | 269,562,880 |
+| a T-80 disk pack | 70,937,600 |
 
-So **1 GB is the absolute minimum**, and one pack fits on far less than that.
-**4 GB takes a full bay of eight and six spare packs beside it.** Nobody runs
-eight drives. The boot partition is 64 MiB on every card. That is six times what its seven
-files need, with room for a second bitstream and a second kernel beside them.
-It is a parameter because half a gigabyte of it on a 1 GB card would be most
-of the card. A bigger card leaves the rest of itself
-unused, which costs nothing, and `dd` writes every byte of whatever size is
-asked for. `STANDALONE=1` writes `uEnv.txt` without the
-server even when `local.conf` names one, for testing the card path from this
-host. With no `local.conf` at all the card is standalone. The script says
-which path the card it staged will take.
+The DE25-Nano's is four times the Zynq boards' because its kernel `Image` is
+not compressed: 41.9 MB of the 49.4. Beside any of them one pack is the
+larger number, which is the whole point of the table. **So a 1 GB card is
+ample for a board with one drive**, and the size to buy is decided by how many
+bands are to be kept on it rather than by the boot files.
+
+**The bay is eight and no more.** A drive is `packs/disk-pack-<unit>.img` and
+a unit is 0 to 7. Eight T-300 packs are 2,056 MiB, so a full bay wants 4 GB.
+A file in `packs/` under any other name is not a drive, which is where backups
+and bands that are not currently mounted live. Nobody runs eight drives.
+
+**A card too small does not warn, it fails while unpacking**, and the file
+that did not fit is the one that is missing at the next boot. The unpacking
+tool says so; read what it prints.
+
+### Format a card
+
+**One FAT32 partition in an MBR, and then unpack the zip onto it.** That is
+the whole of it. The partition needs no particular type byte and need not be
+marked bootable: U-Boot accepts any non-zero type that is not an extended one,
+and does not look at the boot flag (`disk/part_dos.c`). What it does require
+is a partition table. A card formatted as a bare filesystem with no MBR at
+all --- a "superfloppy", which some tools produce --- fails with `** No
+partition table **`, so the MBR is not optional.
+
+**On Windows**, right-click the drive and choose Format, with FAT32 as the
+file system. **Windows' own dialog refuses FAT32 above 32 GB**, and this is
+the trap worth knowing: a 64 GB card or larger is formatted exFAT by default,
+both by Windows and by the SD Association's own formatter, and **no loader
+here reads exFAT**. A card that exFAT was put on looks perfectly healthy in a
+reader and does not boot. Use a card of 32 GB or less, which is far more than
+this needs, or a third-party tool that will write FAT32 on a larger one.
+
+**On macOS**, Disk Utility with the view set to show all devices: select the
+card itself rather than the volume on it, Erase, format **MS-DOS (FAT)**,
+scheme **Master Boot Record**. The scheme is the part that is easy to miss and
+is the part that matters.
+
+**On Linux**, with `D` set to the card --- read it off `lsblk`, from the line
+that says `usb`, never from memory:
+
+    sudo umount ${D}?* 2>/dev/null
+    sudo sfdisk --wipe always $D <<'EOF'
+    label: dos
+    start=2048, type=c
+    EOF
+    sudo mkfs.vfat -F 32 -n CADR ${D}1
+
+Then mount it and unpack the board's zip into the root of it:
+
+    M=$(mktemp -d) && sudo mount ${D}1 $M
+    sudo unzip -o cadr-arty-z7-20.zip -d $M
+    sudo sync && sudo umount $M && rmdir $M
+
+**Unpack into the root of the card, not into a folder on it.** `BOOT.BIN` and
+`uEnv.txt` are read from the root by name, and a card whose files are one
+level down behaves exactly like a card with no files on it.
+
+### What is in the zip
+
+Everything the board needs, laid out as the card is laid out: the loader's
+files at the root, the board's own folder, and `packs/`, `sys/` and `site/`
+empty. `README.TXT` at the root says which board the zip is for and what each
+part is, because a card in a Windows reader otherwise shows a folder named
+after a board and a 270 MB `.img` and explains nothing.
+
+**A release is three zips, one for each board.**
+
+    cadr-arty-z7-20.zip     about 8.1 MB     12,500,992 B on the card
+    cadr-cora-z7-07s.zip    about 8.1 MB     10,498,048 B on the card
+    cadr-de25-nano.zip     about 21.9 MB     49,434,624 B on the card
+
+The download is given to a tenth of a megabyte because it is not the same to
+the byte twice: a zip stores each file's own time, so two builds of the same
+files differ in a few dozen bytes. What lands on the card does not, and those
+are the figures that decide how big a card has to be. The DE25-Nano's is the
+large one because its kernel is an uncompressed arm64 `Image` of 41.9 MB.
+
+**A card made from the wrong board's zip does not boot, and says which file it
+wanted.** Two files are shared and no others: the Arty's and the Cora's
+`fpgarc` and `muirrc` are byte-identical to each other, and the DE25-Nano's
+are not, because they name different window addresses. Everything else ---
+the loader, the kernel, the device tree, the fabric image, `uEnv.txt` and
+`README.TXT` --- differs between all three. So the zips are near enough alike
+that a card made from the wrong one looks perfectly ordinary in a reader. The
+loader asks for its **own** board folder by name, so within a second of
+power-on a board handed the wrong card prints
+
+    ** Unable to read file <this board>/zImage **
+    cadr: the boot did not happen; trying again in 10 s
+
+and goes on saying it every ten seconds, for ever. The kernel is `zImage` on
+the Zynq boards and `Image` on the DE25-Nano, so the name in that line is the
+one the board asking for it uses. Unpack the right zip.
+
+### What has been shown about a card the user formats, and what has not
+
+**The loader reads such a card, measured in a sandbox.** U-Boot 2026.01 was
+built for the sandbox from the same source tree the Zynq boards' U-Boot comes
+from, and run against six card images made as an ordinary formatter makes
+them: one FAT32 partition in an MBR, with partition type `0x0c` and with
+`0x0b`, with the boot flag set and with it clear, and with the partition
+starting at sector 2048 (1 MiB) and at 8192 (4 MiB), in both the Arty's and
+the DE25-Nano's layouts. On every one of the six it found partition 1 and
+loaded every file by the exact path the board's `cadr_card` names.
+
+**The control failed as it should.** The same FAT32 filesystem with no
+partition table at all --- a bare filesystem written straight onto the device,
+which some tools call a superfloppy --- gives `** No partition table **`. So
+the MBR is required, and this is the one thing about the format that a user
+can get wrong without noticing.
+
+**One sandbox run covers both boards.** `disk/part_dos.c`, `fs/fat/fat.c`,
+`common/spl/spl_fat.c` and `spl_mmc_do_fs_boot()` are byte-identical between
+mainline U-Boot 2026.01, which is the Zynq boards', and Altera's fork at
+commit `e09d6fcc`, which is the DE25-Nano's. Both boards' SPLs are configured
+`CONFIG_SYS_MMCSD_FS_BOOT_PARTITION=1`, which is the first partition. Reading
+`disk/part_dos.c` says what the acceptance really is: any non-zero partition
+type byte that is not an extended type, with no requirement that the bootable
+flag be set, but a valid MBR --- the `0x55AA` signature, all four boot
+indicators either 0 or `0x80`, and at least one non-empty entry.
+
+**What has NOT been shown is a board booting from one.** No real board has yet
+been started from a card made this way. On a Zynq board exactly one step is
+silicon this project cannot read: the boot ROM finding `BOOT.BIN` on the first
+FAT partition. Everything after it is the U-Boot code the sandbox ran. On the
+DE25-Nano even that step is not on the card, because its first stage is in the
+QSPI flash, so the whole card path there is U-Boot code and nothing about the
+card is unreadable. **The sandbox result is evidence about U-Boot and it does
+not stand in for a board.**
 
 **`ETHADDR`.** Digilent's U-Boot read the board's MAC out of the QSPI flash's
 OTP area. Mainline has no such code. So without a MAC in the card's file
@@ -409,49 +571,58 @@ Cora Z7-07S is
     cp build/sd/buildroot/server/cora-z7-07s/* /srv/tftp/cora-z7-07s/
 
 Everything else about the card is the machine's rather than the part's: the
-two partitions, the bay, the `fpgarc` and the `muirrc`, the U-Boot
-environment and every warning above. `local.conf` is read out of
-`$BOARD_DIR/linux/`, so each board carries its own server address, its own
-MAC and its own Chaosnet addresses. Two boards on one network must differ in
-all three, and the development allocation reserves a second pair of Chaosnet
-addresses for exactly that.
+layout, the bay, the `fpgarc` and the `muirrc`, the U-Boot environment and
+every warning above. `local.conf` is read out of `$BOARD_DIR/linux/`, so each
+board carries its own server address, its own MAC and its own Chaosnet
+addresses. Two boards on one network must differ in all three, and the
+development allocation reserves a second pair of Chaosnet addresses for
+exactly that.
 
-`build/sd/buildroot/sdcard.img` is the card as one image. It has an MBR and
-two primary FAT32 partitions of type `0x0c`, aligned to a megabyte. genimage
-makes it from the staged `card/` and `packs/` directories, and it is read
-back file by file out of each partition, the board's own four by the path
-U-Boot will use. The partition table itself is read back and checked rather
-than assumed. So on the laptop, run
+`build/sd/buildroot/card/` is the card's contents as a directory, and
+`build/sd/buildroot/cadr-<board>.zip` is that directory zipped, which is what
+a user unpacks. The zip is read back afterwards --- unpacked to a scratch
+directory and compared against what was staged, every file byte for byte and
+the name sets both ways --- because what is published is the zip and not the
+directory. **What the image's readback could say and this cannot is that the
+filesystem is right**, since there is no filesystem here any more: the user's
+own formatter makes it. What that formatter has to produce is above, and it
+was measured against U-Boot's own code rather than assumed. **Nothing here
+writes a card, and there is no disk image.** The two-partition `sdcard.img`
+that genimage used to build is gone, and it is gone rather than kept beside
+the zip, because a second way that nothing exercises is a way that quietly
+stops working.
 
-    D=/dev/sdX   # the line that says usb, never from memory
-    sudo dd if=sdcard.img of=$D bs=4M conv=fsync
+**THE CARD IS WRITTEN ONCE AND THEN NEVER LEAVES THE BOARD.** Adding,
+replacing or protecting a disk pack is `scp` to the running board and nothing
+else, as "The drive bay" below says. For this project's own board, a change to
+the loader, kernel or bitstream is `cp
+build/sd/buildroot/server/<board>/* /srv/tftp/<board>/` and a reset. For a
+standalone card those live on the card itself, and since the card is mounted
+read-write they can be replaced from the board with a plain
 
-The image is sparse on the build host: 277 MB for a 4.1 GB image with no
-pack in it. But `dd` writes every byte, so allow a few minutes.
+    cp ... /mnt/card/<board>/ && sync
 
-**THE CARD IS WRITTEN ONCE AND THEN NEVER LEAVES THE BOARD.** That is what
-the second partition is for. Adding, replacing or protecting a disk pack is
-`scp` to the running board and nothing else, as "The drive bay" below says.
-For this project's own board, a change to the loader, kernel or bitstream is
-`cp build/sd/buildroot/server/<board>/* /srv/tftp/<board>/` and a reset. For
-a standalone card those live on partition 1, and they can be replaced from
-the board with
+and no remounting at all. That is the convenience the one-partition card buys,
+and the section above says what it costs.
 
-    mount -o remount,rw /mnt/card && cp ... && sync && mount -o remount,ro /mnt/card
+## The release, and the card this project builds for itself
 
-which is the one reason that partition is mounted at all. It is mounted
-read-only by default. A power cut with the loader writable is a board that
-needs a card reader again, and this project's whole point is that it does
-not.
+**A release is three zips, one for each board, and one command makes all
+three.**
 
-## The released card, and the card this project builds for itself
+    make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>
 
-**There is one released image a board**, and every one of them is built for a
-card of **4 GB or more**. That is the only size anybody needs to know. The
-board enters `mksd-release.sh` in the same two variables the staging script
-takes, and the image goes in a directory named for the board, so two boards'
-releases can be built one after the other and the published file says which
-board it is for.
+**It is one target rather than three because three zips are three chances for
+one to be stale.** A release in which two boards were rebuilt and the third
+was not is exactly the sort of thing that ships, so every bitstream is
+required by name, a missing one stops the run before anything is built, and
+the three zips are printed together at the end with their sizes and digests,
+where a missing one is visible. The bitstreams are named on the command line
+because they are not in this repository: they are built by Vivado and by
+Quartus, which `make check` does not run.
+
+Each board's Buildroot output must exist first, which is `make buildroot`,
+`make buildroot-cora` and `make buildroot-de25`. One board on its own is
 
     BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
@@ -459,15 +630,20 @@ board it is for.
     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
     BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
-**What a release image carries is the boot partition complete and the pack
-partition empty.** Partition 1 holds everything the board needs to come up, in
-the layout above, with a `uEnv.txt` that names no server and carries no MAC.
-Partition 2 holds a `README.TXT` saying what the partition is for and how to
-name a pack, and the two files of flags: `fpgarc` for the CADR in the fabric
-and `muirrc` for the CADR inside muir. Each is the same full menu the
+and the zip goes in a directory named for the board and carries the board's
+name in its own name, so two boards' releases can be built one after the other
+without either being overwritten, and a file somebody downloaded a month ago
+still says which board it is for.
+
+**What a release zip carries is everything the board needs to come up and no
+band at all.** The loader's files and the board's own folder are complete,
+with a `uEnv.txt` that names no server and carries no MAC. `packs/`, `sys/`
+and `site/` are on the card empty, which is what says where a band goes.
+`README.TXT` at the root says which board the zip is for and how to name a
+pack, and beside it are the two files of flags: `fpgarc` for the CADR in the
+fabric and `muirrc` for the CADR inside muir. Each is the same full menu the
 development card gets, every flag the board's programs take written out under
-a sentence or two saying what it does. Nothing else is on that partition, and
-the script asserts it rather than trusting the flag that says so.
+a sentence or two saying what it does.
 
 **The released `fpgarc` has three live lines and the rest of the menu is
 commented out.** They are `--chaos-address`, `--terminal` and
@@ -493,29 +669,34 @@ board does with each.
 flag from `STANDALONE=1`: one decides which lines are live, the other keeps
 anything private off the card.
 
-**It carries no disk pack.** The bay is empty, the program says so on the
-console, and the CADR waits for a drive exactly as the real machine did with
-no pack loaded. A band is the user's own to supply. It goes on partition 2
-either from a PC with the card in a reader, since that partition is plain
-FAT32, or over the network to the running board. Either way the drive comes
-ready within a quarter second and nothing restarts.
-
-**The bay fills the card rather than being sized to a set of packs.** It is
-3,584 MiB, which is everything a 4 GB card has after the boot partition and a
-margin, and it leaves 138 MB spare on the smallest card of that name. There is
-no reason to size it more tightly: the space costs nothing to ship and a user
-who fills all eight units and keeps six spare bands beside them never has to
-rewrite the card.
+**It carries no disk pack and no band.** The bay is empty, the program says so
+on the console, and the CADR waits for a drive exactly as the real machine did
+with no pack loaded. A band is the user's own to supply. It goes in `packs/`
+either from a PC with the card in a reader, since the card is plain FAT32, or
+over the network to the running board. Either way the drive comes ready within
+a quarter second and nothing restarts. **The debugger's band is a band too**,
+so a release carries no `muir-cc.img` either, and the `muirrc` that would name
+it ships with its last two lines commented and the explanation beside them.
+`sys/` and `site/` are empty for the same reason: those are the band's Lisp
+files.
 
 `mksd-release.sh` holds those decisions so that a release is a command rather
-than a set of variables somebody has to remember. It refuses to run if `PACKS`
-is set. It does not trust its own standalone flag either: it greps both staged
-partitions for anything address-shaped afterwards and stops if it finds any,
-because a flag can be wrong and a private address on a public artifact cannot
-be taken back. It then checks that the pack partition holds the README and the
-two files of flags and nothing else, that the image fits the smallest card sold
-as 4 GB, and that the empty bay has room for three T-300 packs, which is two
-drives and the debugger's band.
+than a set of variables somebody has to remember. It refuses to run if `PACKS`,
+`SYS` or `SITE` is set. It does not trust its own standalone flag either: it
+greps the whole staged card afterwards for anything address-shaped --- an IP
+or a MAC --- and stops if it finds any, because a flag can be wrong and a
+private address on a public artifact cannot be taken back. **Reading the whole
+card is what one partition made simple and what the two files of flags made
+necessary**: `fpgarc` and `muirrc` can each name a host on somebody's network,
+and with two partitions they were on the half this guard did not read. It then
+checks that `packs/`, `sys/` and `site/` are empty, and that the four files a
+card cannot boot without are there.
+
+**A peer can be a name, which no pattern for an address can see.** A Chaosnet
+peer is written `<address>@<host>:<port>` and the host may be a name, which is
+as private as the number it resolves to. So the two files of flags are
+separately asserted to carry no `--chaos-udp-peer` and no
+`--chaos-udp-default-peer` line at all.
 
 **What that guard exempts is the addresses that cannot name a host**, and only
 those: `0.0.0.0`, which is every interface on this board; `127.0.0.1`, the
@@ -529,24 +710,15 @@ been built since, so nothing said so. `make build/fpgarc.pass` runs the guard
 both ways now: it must pass the file the card script really writes, and it must
 still catch a private address and a MAC.
 
-**The image is 3.83 GB and the download is 7.4 MB**, measured, because
-everything the bay does not hold is zeros and the kernel and the bitstream
-compress well. Ship it compressed. Filling the card rather than sizing the bay
-to eight packs cost 0.3 MB of download.
+**The download is 8.1 MB for a Zynq board and 21.9 MB for the DE25-Nano**, and
+the card has to hold only what is unpacked from it: 12.5 MB, 10.5 MB and 49.4
+MB respectively. The released image this replaced was 3.83 GB raw and 7.4 MB
+compressed, and it demanded a 4 GB card whatever the user meant to put on it,
+because a whole-card image carries the card's own size. The zip demands only
+what is actually on the card.
 
-Write it whole:
-
-    xz -dc cadr-sdcard.img.xz | sudo dd of=/dev/sdX bs=4M status=progress
-
-**Not `conv=sparse`, and this was measured rather than reasoned.** That flag
-skips runs of zeros, so wherever the image has zeros the card keeps whatever
-it held before. A disk pack is full of legitimate zeros. Written that way on
-11 September, the image was right and the card's pack was not: a different
-checksum, on a card that mounted and looked perfectly healthy. The flag is
-safe only on a card that is already blank, which is not a thing anybody can
-check, so it is not offered. Writing 3.83 GB takes three or four minutes. **`STANDALONE=1` matters**: without it the card would
-carry this project's own TFTP server address and boot over a network the user
-has not got.
+**`STANDALONE=1` matters**: without it the card would carry this project's own
+TFTP server address and boot over a network the user has not got.
 
 **The card this project builds for itself is a different one, and it has a
 script of its own.**
@@ -555,19 +727,22 @@ script of its own.**
 
 `mksd-dev.sh` names the server, so the loader fetches the bitstream, the
 kernel, the tree and the root filesystem over the network and the card is
-written once. It carries packs, so the machine boots straight into its own
-world. And it stops if `local.conf` is missing, rather than quietly building a
-card that boots from itself, because somebody who forgot to write that file
-should be told. Neither of those belongs in a release, which is why there are
-two scripts over one staging tool rather than one script with a mode.
+written once. It carries a band --- packs with `PACKS`, and the band's own
+Lisp files with `SYS` and `SITE` --- so the machine boots straight into its
+own world. And it stops if `local.conf` is missing, rather than quietly
+building a card that boots from itself, because somebody who forgot to write
+that file should be told. None of that belongs in a release, which is why
+there are two scripts over one staging tool rather than one script with a
+mode. Both produce the same thing in the end: a directory and a zip of it, for
+a card the user formatted.
 
 ## The drive bay
 
-**Partition 2 is the drive bay, and the eight names are the whole of the
-interface.** The other files on it, `fpgarc`, `muirrc`, `muir-cc.img` and the
-README, are not drives.
+**`packs/` is the drive bay, and the eight names are the whole of the
+interface.** `muir-cc.img` beside them is not a drive, and neither is anything
+at the root of the card.
 
-    /mnt/packs/disk-pack-0.img  ... /mnt/packs/disk-pack-7.img
+    /mnt/card/packs/disk-pack-0.img  ... /mnt/card/packs/disk-pack-7.img
 
 Whichever of the eight exist are the drives that are present. The number in
 the name is the unit the machine selects with `DA<30:28>`. A pack is a file
@@ -592,12 +767,12 @@ of a millisecond later.
 
 From another machine, run these:
 
-    scp band.img root@<the board>:/mnt/packs/disk-pack-0.img     # load unit 0
-    ssh root@<the board> mv /mnt/packs/disk-pack-0.img /mnt/packs/kept.img
-    ssh root@<the board> chmod -w /mnt/packs/disk-pack-1.img     # write-protect unit 1
+    scp band.img root@<the board>:/mnt/card/packs/disk-pack-0.img     # load unit 0
+    ssh root@<the board> mv /mnt/card/packs/disk-pack-0.img /mnt/card/packs/kept.img
+    ssh root@<the board> chmod -w /mnt/card/packs/disk-pack-1.img     # write-protect unit 1
 
 It can also be done from the board's own prompt, with `tftp -g -r band.img
--l /mnt/packs/disk-pack-0.img <the server>`. The read-only mark is FAT's own
+-l /mnt/card/packs/disk-pack-0.img <the server>`. The read-only mark is FAT's own
 attribute. Windows sets it from a file's properties and `chmod -w` sets it
 from Linux, and they are the same bit.
 
@@ -627,11 +802,12 @@ should let it go on with no reboot. This is *expected rather than measured*.
 The program's own check holds the drive coming present and the attention
 being raised, and the board has not yet been asked to do it.
 
-**FAT32 for both partitions, deliberately.** The card must be readable and
-writable from Windows, which cannot write ext4. What it costs is the journal.
-What makes that bearable is that a pack is a working copy whose master is in
-the archive, and that the partition it would hurt to lose --- the loader's ---
-is mounted read-only.
+**FAT32, deliberately.** The card must be readable and writable from Windows,
+which cannot write ext4. What it costs is the journal. What makes that
+bearable is that a pack is a working copy whose master is in the archive, and
+that the loader's files are a copy of what is in the zip, which is still on
+the machine that wrote the card. Nothing on the card is the only copy of
+itself, so the remedy for anything lost is to put it back.
 
 ## What happens at power-on, and what the console must show
 
@@ -887,10 +1063,11 @@ script's header with its sources: the viewport at op base `0x140` + `0x30`,
 - **No I2C, no SPI0, no FCLK.** They are off in
   `boards/arty-z7-20/vivado/ps7_config.tcl`, and off here.
 - **No display, no DRM, no framebuffer.** HDMI on this board is the fabric's.
-- **No writable storage from Linux but the drive bay.** Partition 1 is read
-  by U-Boot and mounted read-only, and partition 2 holds the drive bay and
-  the files of flags beside it. There is no writable root and no saved
-  state.
+- **No writable storage from Linux but the card.** The card's one partition
+  is mounted read-write at `/mnt/card`, and what the board writes on it is a
+  disk pack in `packs/`, the band's `site/` tree, and the `clock` file. There
+  is no writable root: everything else runs out of a RAM disk unpacked at
+  every boot, so a file edited there is gone at the next one.
 - **No Vivado and no Xilinx tool of any kind** is needed to build the image.
   The one Xilinx-derived input is
   `boards/arty-z7-20/vivado/ps7_init.ops`, which is committed.
@@ -963,9 +1140,10 @@ the `image.ub` already on the card.
    from the first card. It gave a login with `Memory: 335116K/524288K`,
    against `303564K/393216K` on the reserved boot.
 
-5. **The kernel's root filesystem is built into `zImage`** as an initramfs.
-   So there is no second partition, and nothing on the card is mounted by
-   Linux. It boots to a shell on the serial console.
+5. **The kernel's root filesystem was built into `zImage`** as an initramfs.
+   So that card had one partition and Linux mounted nothing on it at all. It
+   booted to a shell on the serial console. The card today is also one
+   partition, and Linux does mount it: the section above says so.
 
 ### What to look for on the console
 
@@ -1056,7 +1234,7 @@ power-cycled. The port is named by its USB identity rather than by a
 `ttyUSB` number, because that number changes when the board is replugged
 while something still holds the old one:
 
-    boards/arty-z7-20/linux/console.py /dev/serial/by-id/usb-Digilent_Digilent_Adept_USB_Device_003017A6FFE5-if01-port0 build/console.log &
+    boards/arty-z7-20/linux/console.py /dev/serial/by-id/<the board's by-id path> build/console.log &
 
 Then reset the board. **Nobody has to be at it.** `rst -srst` from `xsdb`
 over JTAG restarts the boot ROM exactly as the SRST button does, and the USB

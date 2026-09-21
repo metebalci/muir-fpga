@@ -31,8 +31,8 @@ sheet has a one-board version whose jumpers are "not to be installed if this
 DC is associated with a DM board", and they ground those lines so that the
 single drive is unit 0.
 
-Here there is nothing for such a board to do. A drive is a file on the card's
-second partition, handed to the controller through a register face, so there
+Here there is nothing for such a board to do. A drive is a file in the card's
+`packs/` folder, handed to the controller through a register face, so there
 are no cables to fan out and no sector pulses to count. The fabric's
 controller is held to muir's behavioral controller, which has addressed eight
 units all along and wants no such board either. It selects among them by the

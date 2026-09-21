@@ -25,7 +25,7 @@
 // controller that asks.
 //
 // **THE DRIVE BAY: EIGHT NAMES, AND THE CARD NEVER LEAVES THE BOARD.**
-// `/mnt/packs` is the card's second partition and holds nothing but disk
+// `/mnt/card/packs` is the card's `packs/` folder and holds nothing but disk
 // packs.  Whichever of `disk-pack-0.img` to `disk-pack-7.img` exist are the
 // drives that are present; the unit in a request chooses the file; a file
 // whose read-only mark is set is a write-protected drive.  There is no
@@ -52,8 +52,8 @@
 // transfer**: a scan that finds the channel walking changes nothing and is
 // retried on the next poll, which is a quarter of a millisecond.
 //
-// HOW IT RUNS.  `S80cadr-disk-packs` mounts the card's second partition at
-// /mnt/packs and starts this at boot; `cadr_daemon` gives it the serial console
+// HOW IT RUNS.  `S80cadr-disk-packs` mounts the card at
+// /mnt/card and starts this at boot; `cadr_daemon` gives it the serial console
 // and `/var/log/cadr-disk-packs.log` as its two logs.
 // In order:
 //

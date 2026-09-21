@@ -25,7 +25,7 @@ config BR2_PACKAGE_MUIR
 	  cores saturated and the machine's rate read off the fabric's
 	  own tick counter.
 
-	  /root/.muirrc is a symlink to muirrc on the pack partition, so
+	  /root/.muirrc is a symlink to muirrc at the root of the card, so
 	  that the debugger is the word `muir` and its settings survive a
 	  reboot.  The root filesystem is a RAM disk unpacked at every
 	  boot, so an edit made to a file in it is lost.
