@@ -144,9 +144,15 @@ RUNS      its processor and clocks within
           about 5% of the CADR&rsquo;s speed</pre>
         <p class="small">It is <a href="https://github.com/metebalci/muir">muir</a>&rsquo;s RTL model of the CADR, synthesized into the fabric of an FPGA.</p>
         <p class="small">Its clock edges are close to the CADR&rsquo;s but not identical. The CADR placed them with delay lines, and the FPGA can place them only on the ticks of one 10&nbsp;ns clock, so some fall up to 7&nbsp;ns later. <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/timing.md">The timing, instant by instant</a>.</p>
+        <!-- Three boards, and the third is listed here as it is everywhere
+             else: in the desk note, in the table below and among each board
+             page's own keys.  This row said two until the DE25-Nano's row was
+             filled in, and a reader who met the front page here would have
+             been told there are two. -->
         <div class="actions push">
           <a class="key" href="arty-z7-20.html">Arty Z7-20</a>
           <a class="key lm" href="cora-z7-07s.html">Cora Z7-07S</a>
+          <a class="key lm" href="de25-nano.html">DE25-Nano</a>
         </div>
       </div>
     </div>
@@ -162,15 +168,17 @@ RUNS      its processor and clocks within
     <div class="panel bare">
       <span class="eyebrow">Spec</span>
       <h2 class="title t-l">The boards</h2>
-      <p class="small" style="margin-top:0.4rem;">A cell says yes where that board itself has run the thing, yes with a qualification where the thing is built into that board and nothing of it has run there yet, and no where the board does not have the thing at all. The two resource figures in each row are that board&rsquo;s own place and route report for the fabric it runs, with the memory, the disk and both display boards in it, in that part&rsquo;s own terms: lookup tables and block RAM on the Zynq boards, ALMs and M20K blocks on the DE25-Nano, and memory built out of logic is counted inside the logic figure rather than beside it. The two logic columns are different units, so their counts do not compare and the percentage is the figure that does: by Altera&rsquo;s own guide for converting a Zynq-7000 design to an Agilex 5 one, an ALM is about 1.3 lookup tables. The DE25-Nano can also be built for 1920 by 1080 at 60 hertz, which a monitor has shown once and which leaves nine picoseconds of room on the video bus that leaves the part, so the figures here are its 1280 by 1024 build. What a board has built and checked but never run is on that board&rsquo;s own page.</p>
+      <p class="small" style="margin-top:0.4rem;">A cell says yes where that board itself has run the thing, yes with a qualification where the thing is built into that board and nothing of it has run there yet, and no where the board does not have the thing at all. The two resource figures in each row are that board&rsquo;s own place and route report for the fabric it runs, with the memory, the disk and both display boards in it, in that part&rsquo;s own terms: lookup tables and block RAM on the Zynq boards, ALMs and M20K blocks on the DE25-Nano, and memory built out of logic is counted inside the logic figure rather than beside it. The two logic columns are different units, so their counts do not compare and the percentage is the figure that does: by Altera&rsquo;s own guide for converting a Zynq-7000 design to an Agilex 5 one, an ALM is about 1.3 lookup tables. The DE25-Nano was once built for 1920 by 1080 at 60 hertz as well, which a monitor showed once and which left nine picoseconds of room on the video bus that leaves the part. The fabric carries one video mode now, 1280 by 1024 at 60 hertz, and these figures are of it. What a board has built and checked but never run is on that board&rsquo;s own page.</p>
     </div>
 
     <div class="panel">
     <!-- One row a board. The figures are each board's own place and route
          report for the fabric that board runs, with the memory, the disk and
          both display boards in it: the two Zynq boards from a clean tree at
-         8d2c1cd, and the DE25-Nano at d7529aa with its display built for
-         1280 by 1024. They are the figures that board's own drawing carries
+         8d2c1cd, and the DE25-Nano at d7529aa. All three predate the display
+         placement change of ad86f45, and no clean-tree fit has been taken on
+         any board since it, so each figure is still of the commit named here
+         and of no later one. They are the figures that board's own drawing carries
          under its fabric label. A CELL HAS THREE READINGS AND NOT TWO: yes
          where that board itself has run the thing, yes with a qualification
          where the thing is built into that board and nothing of it has run
