@@ -781,7 +781,7 @@
     <div class="panel bare">
       <span class="eyebrow">Shown</span>
       <h2 class="title t-l">What has run on a board</h2>
-      <p class="small" style="margin-top:0.4rem;">All three pieces have run on silicon: the window, the ribbon, and CC across the ribbon, both ways round. What has not crossed either is a write.</p>
+      <p class="small" style="margin-top:0.4rem;">All three pieces have run on silicon: the window, the ribbon, and CC across the ribbon, both ways round. A write has crossed it since, into a register of the far machine rather than into its memory. CC itself ran on the earlier carrier, and what has crossed the guarded one is every cycle such a session is built out of.</p>
     </div>
 
     <div class="panel">
@@ -852,13 +852,13 @@
           </tr>
           <tr>
             <th scope="row">CC over the carrier that runs now</th>
-            <td>What has crossed the guarded carrier is a status strobe</td>
-            <td class="name">not yet</td>
+            <td>All sixteen of the far machine&rsquo;s diagnostic registers read over the guarded ribbon at one halt, each equal to the far board&rsquo;s own console, and the machine stepped and started over it; CC&rsquo;s own sequences typed at a Listener, and not the program run</td>
+            <td class="name">yes</td>
           </tr>
           <tr>
             <th scope="row">A write over the ribbon</th>
-            <td>None of CC&rsquo;s writes has crossed a ribbon yet</td>
-            <td class="name">not yet</td>
+            <td>MD written over the ribbon by CC&rsquo;s own CC-WRITE-MD; the far board&rsquo;s own console read 0xa53c5ac3 where it read 0x0a0005c2 before and after the restore, and no microcycle was spent</td>
+            <td class="name">yes</td>
           </tr>
           <tr>
             <th scope="row">The DE25-Nano&rsquo;s connector</th>
