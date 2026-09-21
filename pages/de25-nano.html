@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>muir-fpga — the DE25-Nano, upcoming</title>
-<meta name="description" content="The DE25-Nano, an upcoming board for muir-fpga with one Altera Agilex-5E, part A5EB013BB23BE4SCS: the Arty Z7-20&rsquo;s architecture drawing, with each block colored by how far along it is on this board.">
+<meta name="description" content="The DE25-Nano, an upcoming board for muir-fpga with one Altera Agilex-5E, part A5EB013BB23BE4SCS: the Arty Z7-20&rsquo;s architecture drawing, with this project&rsquo;s own blocks colored green where they are done on this board.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="wide">
@@ -84,33 +84,30 @@
 
     <figure class="panel fig dense wide">
       <div class="scroll">
-<svg viewBox="20 41 1813 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-one blocks this project builds, sixteen are verified: display output, F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to DDR, disk controller, H2F, LWH2F, SPL, terminal, Chaosnet, disk packs, console and USB input. Four are simulated: TV, Color TV, I/O board and serial. The other one has not been started, and the parts drawn gray are existing components. Its lamps are drawn green, as this board&rsquo;s user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Beside muir, at the right end of the Linux outline, stands ozd, the associated machine a site of these machines takes its files, its time and its host table from over Chaosnet. It runs on a host of its own today, and running it on this board&rsquo;s own processing system, so that a card by itself is a whole site, is built and checked and has happened on no board: the block is simulated, and no line reaches it because there is no path on the board to draw. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+<svg viewBox="20 41 1813 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-one blocks this project builds for this board, twenty are done and drawn green: display output, F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to DDR, disk controller, TV, Color TV, I/O board, H2F, LWH2F, SPL, terminal, Chaosnet, serial, disk packs, console and USB input. The other one is not done and carries no color: debug cable adapter. The parts drawn gray are components of the board, and muir, ozd and U-Boot are drawn orange, as programs other projects carry onto this board. The lamps at its right are drawn in the color each one lights, which on this board is green for every one of them, as its user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Beside muir, at the right end of the Linux outline, stands ozd, the associated machine a site of these machines takes its files, its time and its host table from over Chaosnet. It runs on a host of its own today, and no line reaches its block, because running it on this board&rsquo;s own processing system, so that a card by itself is a whole site, would be a path on the board and there is none yet. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
 
           <!-- The Arty Z7-20's drawing, generated for the DE25-Nano.  Of the
-               twenty-one blocks this project builds, sixteen are verified:
-               display output, F2SDRAM, clock, ICMEM board, CADR board, bus
-               interface, Xbus to DDR, disk controller, H2F, LWH2F, SPL,
-               terminal, Chaosnet, disk packs, console and USB input.  Four
-               are simulated: TV, Color TV, I/O board and serial.  The other
-               one has not been started, and the parts drawn gray are existing
-               components.  The figures under the fabric's label are this
+               twenty-one blocks this project builds for this board, twenty
+               are done and drawn green: display output, F2SDRAM, clock, ICMEM
+               board, CADR board, bus interface, Xbus to DDR, disk controller,
+               TV, Color TV, I/O board, H2F, LWH2F, SPL, terminal, Chaosnet,
+               serial, disk packs, console and USB input.  The other one is
+               not done and carries no color: debug cable adapter.  The parts
+               drawn gray are components of the board, and muir, ozd and
+               U-Boot are drawn orange, as programs other projects carry onto
+               this board.  The figures under the fabric's label are this
                board's own fit, as ALMs and M20K, the chip and the memory
-               carry this board's parts, the lamps are green, as this board's
-               user LEDs are, and the debug cable's connector is a GPIO
-               header, the board having no Pmod.  Why each thing is where it
-               is, is in the Arty Z7-20's page. -->
-          <rect class="d-box d-done d-key" x="618.01" y="851" width="13" height="13"/>
-          <text class="d-s" x="638.01" y="861">verified</text>
-          <rect class="d-box d-built d-key" x="698.69" y="851" width="13" height="13"/>
-          <text class="d-s" x="718.69" y="861">simulated</text>
-          <rect class="d-box d-part d-key" x="789.16" y="851" width="13" height="13"/>
-          <text class="d-s" x="809.16" y="861">partly built</text>
-          <rect class="d-box d-wip d-key" x="885.89" y="851" width="13" height="13"/>
-          <text class="d-s" x="905.89" y="861">under development</text>
-          <rect class="d-box d-key" x="1022.25" y="851" width="13" height="13"/>
-          <text class="d-s" x="1042.25" y="861">not started</text>
-          <rect class="d-box d-ext d-key" x="1120.74" y="851" width="13" height="13"/>
-          <text class="d-s" x="1140.74" y="861">existing component</text>
+               carry this board's parts, the lamps are drawn in the color each
+               one lights, green for all of them as this board's user LEDs
+               are, and the debug cable's connector is a GPIO header, the
+               board having no Pmod.  Why each thing is where it is, is in the
+               Arty Z7-20's page. -->
+          <rect class="d-box d-done d-key" x="764.99" y="851" width="13" height="13"/>
+          <text class="d-s" x="784.99" y="861">this project</text>
+          <rect class="d-box d-part d-key" x="864.29" y="851" width="13" height="13"/>
+          <text class="d-s" x="884.29" y="861">another project</text>
+          <rect class="d-box d-ext d-key" x="983.28" y="851" width="13" height="13"/>
+          <text class="d-s" x="1003.28" y="861">board component</text>
           <g transform="translate(310,36)">
           <rect class="d-box" x="-170" y="28" width="1521" height="668.5"/>
           <text class="d-s" x="-164" y="24">Altera Agilex-5E &middot; A5EB013BB23BE4SCS</text>
@@ -217,21 +214,21 @@
           <text class="d-n" x="310" y="356" text-anchor="middle">CADRDC</text>
           <text class="d-s" x="310" y="376" text-anchor="middle">an AXI4 master</text>
 
-          <rect class="d-box d-built" x="424" y="274" width="146" height="112"/>
+          <rect class="d-box d-done" x="424" y="274" width="146" height="112"/>
           <text class="d-t" x="497" y="300" text-anchor="middle">TV</text>
           <text class="d-s" x="497" y="320" text-anchor="middle">scan counters and</text>
           <text class="d-s" x="497" y="334" text-anchor="middle">the mode register</text>
           <text class="d-n" x="497" y="356" text-anchor="middle">SIMPLETV</text>
           <text class="d-s" x="497" y="376" text-anchor="middle">the buffer is in DDR</text>
 
-          <rect class="d-box d-built" x="584" y="274" width="146" height="112"/>
+          <rect class="d-box d-done" x="584" y="274" width="146" height="112"/>
           <text class="d-t" x="657" y="300" text-anchor="middle">Color TV</text>
           <text class="d-s" x="657" y="320" text-anchor="middle">a second display board,</text>
           <text class="d-s" x="657" y="334" text-anchor="middle">576 &times; 454, 4 bits a pixel</text>
           <text class="d-n" x="657" y="356" text-anchor="middle">LISPMTV</text>
           <text class="d-n" x="657" y="376" text-anchor="middle">0o17200000</text>
 
-          <rect class="d-box d-built" x="780" y="274" width="210" height="112"/>
+          <rect class="d-box d-done" x="780" y="274" width="210" height="112"/>
           <text class="d-t" x="885" y="300" text-anchor="middle">I/O board</text>
           <text class="d-s" x="885" y="320" text-anchor="middle">keyboard, mouse, clocks, serial</text>
           <text class="d-s" x="885" y="334" text-anchor="middle">Chaosnet registers and buffers</text>
@@ -262,7 +259,7 @@
           <text class="d-s" x="-7" y="608" text-anchor="middle">up to 1.25 GHz</text>
           <text class="d-s" x="-7" y="628" text-anchor="middle">Linux</text>
           <rect class="d-plate" x="56" y="522" width="54" height="124"/>
-          <rect class="d-dot d-ext" x="56" y="522" width="54" height="124"/>
+          <rect class="d-dot d-part" x="56" y="522" width="54" height="124"/>
           <rect class="d-plate" x="61" y="527" width="44" height="30"/>
           <rect class="d-box d-done" x="61" y="527" width="44" height="30"/>
           <text class="d-t" x="83" y="547" text-anchor="middle">SPL</text>
@@ -281,7 +278,7 @@
           <text class="d-s" x="452" y="622" text-anchor="middle">for the other machines</text>
 
           <rect class="d-plate" x="534" y="542" width="130" height="96"/>
-          <rect class="d-box d-built" x="534" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="534" y="542" width="130" height="96"/>
           <text class="d-t" x="599" y="566" text-anchor="middle">serial</text>
           <text class="d-s" x="599" y="586" text-anchor="middle">the CADR&rsquo;s serial line</text>
           <text class="d-s" x="599" y="600" text-anchor="middle">on a TCP socket,</text>
@@ -309,14 +306,14 @@
           <text class="d-s" x="1040" y="622" text-anchor="middle">through the terminal</text>
 
           <rect class="d-plate" x="1122" y="542" width="80" height="96"/>
-          <rect class="d-box d-ext" x="1122" y="542" width="80" height="96"/>
+          <rect class="d-box d-part" x="1122" y="542" width="80" height="96"/>
           <text class="d-t" x="1162" y="566" text-anchor="middle">muir</text>
           <text class="d-s" x="1162" y="586" text-anchor="middle">on the HPS,</text>
           <text class="d-s" x="1162" y="600" text-anchor="middle">running CC</text>
           <text class="d-s" x="1162" y="622" text-anchor="middle">the debugger</text>
 
           <rect class="d-plate" x="1219" y="542" width="80" height="96"/>
-          <rect class="d-box d-built" x="1219" y="542" width="80" height="96"/>
+          <rect class="d-box d-part" x="1219" y="542" width="80" height="96"/>
           <text class="d-t" x="1259" y="566" text-anchor="middle">ozd</text>
           <text class="d-s" x="1259" y="586" text-anchor="middle">the files,</text>
           <text class="d-s" x="1259" y="600" text-anchor="middle">the time and</text>
