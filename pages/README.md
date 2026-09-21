@@ -313,9 +313,12 @@ push that touches it. Nothing is built. The directory goes up as it stands,
 which is what `.nojekyll` is for. The one repository setting it needs, Pages ->
 Build and deployment -> Source: **GitHub Actions**, is already done.
 
-It lands at <https://metebalci.github.io/muir-fpga/>. A custom domain, if one
-is ever wanted, is a `CNAME` record plus the Custom domain field.
-`muir.metebalci.com` is set up that way.
+It lands at <https://muir-fpga.metebalci.com/>, which is a custom domain set
+in the repository's Pages settings. **That setting is invisible from this
+directory**: there is no `CNAME` file here, so nothing in the source says the
+site has a domain at all, and `https://metebalci.github.io/muir-fpga/` answers
+but redirects to it. Read the real answer with `gh api
+repos/<owner>/<repo>/pages` rather than inferring it from the tree.
 
 One thing to know about what that publishes: **everything committed under
 `pages/` becomes reachable**, whether it is linked or not. That is why

@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # License, and what is not this project's work
 
 This file is the long form of the license table on the site's
-[front page](https://metebalci.github.io/muir-fpga/#license). It says what
+[front page](https://muir-fpga.metebalci.com/#license). It says what
 license this repository's work is under, which files are under another, and
 whose the third-party material is. Each entry says whose it is, under what
 terms, and where in the repository those terms are recorded. Where nothing
