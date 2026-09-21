@@ -2590,3 +2590,125 @@ session above already had; nothing here reads the TV's scan counters or its
 mode register, and no color screen has been composited on this board.
 
 **The serial block is not shown**, its line having carried nothing.
+
+## The DE25-Nano's flash, and a boot from power alone, 21 September 2026
+
+This board's QSPI flash now carries this project's phase-1 bitstream. The board
+comes up from power on its own, with nothing attached to it but a monitor and a
+keyboard, and runs its band. Before this it came up on the image the maker
+shipped in that flash, which has no CADR in it, and every power-on needed a
+cable and a download.
+
+**What the flash holds.** The phase-1 bitstream in it was built at commit
+`f5ca348`, HPS-first, with the processor's first-stage loader from the same
+build as the card's contents. `QSPI_OWNERSHIP` is `HPS`, which gives the flash
+controller to the processor; the other value is what the shipped image sets,
+and a kernel that finds the controller owned by the device manager dies on the
+driver's first register read.
+
+**The two phases agree on the processor's I/O settings, and the tools say so.**
+`quartus_pfg` reports an I/O hash for each image it writes and checks a pair
+against each other, and that hash is what says a phase-1 bitstream and a core
+bitstream came from one processor configuration. The image written to the flash
+and the `cadr.core.rbf` on the card both report `26EE4912...`. A pair that
+disagrees is a pair the processor will not configure the fabric from.
+
+**The card needed two changes and they were made from the running board.** Its
+boot partition was remounted read-write by the board itself, `cadr.core.rbf`
+was added under the board's own folder, and `uEnv.txt`'s `cadr_fabric_loaded=1`
+was commented out, since the fabric is no longer configured before U-Boot runs.
+Both files were fetched by the board's own TFTP client, each was verified by a
+digest read back off the card, and the partition was remounted read-only. The
+card never left the board.
+
+**It cold-booted.** The power was pulled and the board came back by itself,
+running its band, with its picture on the monitor again. Everything the band
+needs was therefore in place: the fabric configured from the card, Linux up,
+and the programs started from the card's own file of flags. No cable and no
+build host were in the path. Every earlier display reading on this board came
+from a boot a cable had started, so this is the first time the whole chain has
+been shown with nothing else attached.
+
+**Two statements in the sessions above are superseded.** "A band on the
+DE25-Nano" and "The DE25-Nano's display on a monitor" each say that the board
+still needs a cable at every power-on because its flash has not been written.
+Both were true when they were written.
+
+**The recovery path was run rather than asserted.** The flash was written with
+this project's image and verified; the factory image was then written back over
+it and verified against a copy read off the board beforehand; and this
+project's image was written again. So a bad image in this flash is a repeat and
+not a brick. The part takes a JTAG download whatever the flash holds, because
+the programmer puts its own helper design into the fabric and reaches the flash
+through that, which is how the flash is reached at all.
+
+**Each write was checked by reading the whole flash back** and comparing it
+with the file that had been written, rather than by the programmer's own report
+of what it had done.
+
+**There is no copy of the factory image here any more.** The copy read off the
+board, 16,777,460 bytes and identical on two reads, was lost. Recovery from now
+on means fetching the maker's published image from its resource package. That
+is possible because the copy read off the board matched that published file
+byte for byte apart from the file's own trailer, which was measured while the
+copy still existed. The published file will not program this part as it stands,
+for the reason below, so such a recovery needs the image packaged again with a
+flash loader this part accepts. That repackaging has not been done or tried.
+
+**Two traps here read as a broken board.** The maker's published image names
+flash loader `A5EB013BB23B` and the IDCODE `0xC362C0DD`, where this part
+answers `0x4362C0DD`, and the programmer refuses it; the loader that works is
+`A5EB013BB23BCS`. And the part's index in the JTAG scan chain moves with what
+the part is holding. It is 2 with a design that has the processor in it,
+because the processor's debug port joins the chain during configuration, and 1
+with the programmer's helper design or with the part unconfigured. A wrong
+index is reported as `Error (213001): Device name <garbage> is illegal`, which
+names neither the index nor the chain.
+
+**And the programmer's report of which build the part holds is not a witness.**
+It reported one build's stamp before and after three downloads of differently
+stamped images, and reported it again while the part was holding the
+programmer's helper design. The readings recorded in the sessions above did
+change with their downloads: two took the part from `ffffffff` to the new
+build's stamp, one of those recording the JTAG chain going from one device to
+two as it happened, and one took a configured part from one build's stamp to
+another's and was corroborated by a second reader that found the part holding
+the build it named. What separates a reading that follows the part from one
+that does not has not been established, and until it has, this is the project's
+only witness that a download took at all. It wants a session of its own.
+
+### What this does not establish
+
+**Nothing inside the board was read while it cold-booted.** The cable that
+reads the part's stamp also carries the processor's serial console, and it was
+out, as it must be when the keyboard is in. So the evidence for the cold boot
+is what a person saw at the monitor, and no counter, tally or status word
+stands beside it. This family gives the fabric no way to read its own stamp, so
+there is no reading from inside to be had in any case.
+
+**What the flash holds is established by reading the flash**, against the file
+written, and by nothing the board says about itself.
+
+**The earlier account of why the kernel died is superseded**, and this session
+does not re-test it. "The first-stage loader decides whether this kernel lives"
+above attributes the death to the first-stage loader, on nineteen deaths under
+one loader and six clean boots under another. The correlation was real and the
+cause was wrong: the loader and the fabric image had changed together, and the
+variable is the fabric image's ownership of the flash controller. With this
+project's image in the flash, neither the shipped loader nor the shipped image
+is in the path any longer, so nothing here tests either.
+
+**No boot from the flash has been read from the console.** The console and the
+keyboard cannot both be attached, and the keyboard was in, so the boot the
+flash starts has been seen at the monitor and not on the console.
+
+### What this settles, and what it does not
+
+**The board is a standalone board now.** It needs power and nothing else, which
+is what the two Zynq boards have had since their cards were written, and the
+first phase is the last part of this board's boot chain that a cable was still
+supplying.
+
+**Nothing about the machine changed here.** This is a session about
+configuration and about what the part holds, and the machine, its fabric and
+its band are the same as in the sessions above.

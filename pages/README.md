@@ -47,18 +47,22 @@ say again what a document already says.
                   where they are done on this board. The page's title links the
                   maker's page for the board, and its one line says the board
                   is upcoming and names its FPGA
-    booting.html  how each board comes up, in two sequences: a Zynq board
-                  from its own card, and the same board from a TFTP server
-                  while it is being worked on. The two Zynq boards come up the
-                  same way, so one drawing serves both and a label says where
-                  they differ. The long form is docs/boot.md
+    booting.html  how each board comes up, in three sequences: a Zynq board
+                  from its own card, the same board from a TFTP server while
+                  it is being worked on, and the DE25-Nano. The two Zynq
+                  boards come up the same way, so one drawing serves both and
+                  a label says where they differ. The DE25-Nano has a drawing
+                  of its own because its boot crosses two storage devices and
+                  its fabric is configured in the middle of the sequence. The
+                  long form is docs/boot.md
     debugging.html
-                  how one CADR debugs another, in five drawings: MIT's cable
+                  how one CADR debugs another, in six drawings: MIT's cable
                   of twenty-one wires and what CC reaches over it, the two
                   ways into a board's own debuggee end, the ribbon between two
-                  Pmod headers, and the frame the pins carry. It ends with a
-                  table of what has run on a board and what has not. The long
-                  form is docs/debug-cable.md
+                  Pmod headers, the same eight signals on eight pins of the
+                  DE25-Nano's JP1, and the frame the pins carry. It ends with
+                  a table of what has run on a board and what has not. The
+                  long form is docs/debug-cable.md
     faq.html      questions this project is asked, each with an answer of a
                   sentence or two and a line naming the file it rests on. The
                   whole of each answer is in docs/faq.md. The first is why
