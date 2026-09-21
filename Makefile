@@ -166,8 +166,20 @@ $(BUILD)/de25_pins.pass: tools/de25_pins_check.py boards/de25-nano/de25_nano_pin
 # window on the instance, and as the processor's address in `cadr_board.h`,
 # where every program takes it from --- so the two are required to agree, and
 # every instance on either bridge is required to carry the bridges' AXI4
-# widths.  See `tools/de25_faces_check.py`.
-$(BUILD)/de25_faces.pass: tools/de25_faces_check.py boards/de25-nano/cadr_de25.sv \
+# widths.
+#
+# AND THE DEBUG CABLE'S SEAM, for the same reason and against a different
+# shape of bug: a literal where a signal belongs, and a crossing between two
+# signals of the same width.  Lint sees neither.  That takes in which of JP1's
+# pins each of the carrier's eight lines is on, which is the one place this
+# board chooses a pin rather than transcribing one, so this reads the pin file
+# and `rtl/plumbing/cadr_dbg_cable.sv` as well.  It borrows the pin file's
+# grammar from `tools/de25_pins_check.py` rather than keeping a second copy.
+# See `tools/de25_faces_check.py`.
+$(BUILD)/de25_faces.pass: tools/de25_faces_check.py tools/de25_pins_check.py \
+                          boards/de25-nano/cadr_de25.sv \
+                          boards/de25-nano/de25_nano_pins.tcl \
+                          rtl/plumbing/cadr_dbg_cable.sv \
                           boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h | $(BUILD)
 	python3 tools/de25_faces_check.py . --stamp $@
 
@@ -631,12 +643,18 @@ DISPLAY_SRC := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_tmds_encode.sv
 # rather than the one in its own bitstream.
 BOARD_STUBS := tb/cadr_arty_stubs.sv tb/cadr_usr_access_stub.sv
 
-# The DE25-Nano's top level and the three lamp modules it shares with the
-# Zynq boards, named once because two rules read the list: the lint in
-# `check` and the Quartus flow outside it.  Named here for the reason the
-# lists above are: `:=` is expanded where it is read.
+# The DE25-Nano's top level, the three lamp modules it shares with the Zynq
+# boards and MIT's debug cable on JP1, named once because two rules read the
+# list: the lint in `check` and the Quartus flow outside it.  Named here for
+# the reason the lists above are: `:=` is expanded where it is read.
+#
+# **`$(DBGPMOD)` IS IN THE BASE LIST AND NOT IN `$(DE25_DDR)`**, for the
+# reason that list's own note gives and this board needs stating again: a
+# board is always a DEBUGGEE, so the connector is on every build of it, memory
+# or no memory, and its pins are the top level's.
 DE25_TOP := boards/de25-nano/cadr_de25.sv rtl/plumbing/cadr_lamp_clock.sv \
-            rtl/plumbing/cadr_lamp_microcycle.sv rtl/plumbing/cadr_lamp_errhalt.sv
+            rtl/plumbing/cadr_lamp_microcycle.sv rtl/plumbing/cadr_lamp_errhalt.sv \
+            $(DBGPMOD)
 
 # And the probe on that board: the capture every board shares, and the node
 # that puts it behind Altera's Virtual JTAG.  In the lint always, and in the

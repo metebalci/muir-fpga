@@ -463,6 +463,52 @@ if {[get_collection_size $probe] == 0} {
     # grid: 75 ns
     assert_instance_timing $tick 8 g_probe.u_probe {stable_q}
 }
+
+# MIT'S DEBUG CABLE ON JP1, which is in EVERY build of this board and not only
+# a memory one: a board is always a debuggee.  Two things are asked of it.
+#
+# **THE COLLECTION IS NOT EMPTY**, because `cadr_de25.sdc`'s clause names two
+# registers of one instance and a renamed register would leave it reaching
+# nothing while the build went on passing.
+#
+# **AND THE SPLIT TOOK.**  The sender's frame registers carry the six ticks and
+# NO OTHER REGISTER OF THE CONNECTOR does.  That matters more here than the
+# collection's size: the connector's two receivers count ticks --- the strobe's
+# synchronizer, the frame counter, the gap counter and the dead man --- and a
+# counter given six ticks is a counter that no longer counts.  The receivers
+# are under `u_dbg_cable|u_rx_fwd` and `u_dbg_cable|u_rx_ret`, so they are
+# inside the instance this asks about and are swept up by its `rest`.
+if {![info exists ::cable_frame]} {
+    puts "sta: FAIL: cadr_de25.sdc left no collection named cable_frame"
+    incr failures
+} else {
+    set n [get_collection_size $::cable_frame]
+    if {$n == 0} {
+        puts "sta: FAIL: the debug cable's frame pins: 0, so the clause reached nothing"
+        incr failures
+    } else {
+        puts "sta: the debug cable's frame pins: $n"
+    }
+}
+# grid: 60 ns
+assert_instance_timing $tick 6 u_dbg_cable {u_tx|tx_frame u_tx|tx_d}
+# AND THE EIGHT PADS ARE CUT, both ways.  A cut that reached nothing is a
+# connector timed against a clock the far board does not have, and the count
+# is what says it reached all eight rather than some.
+set dbg_pads [get_ports -nowarn {jp1_pin3[1-8]}]
+if {[get_collection_size $dbg_pads] != 8} {
+    puts "sta: FAIL: [get_collection_size $dbg_pads] of the debug cable's pads are ports of this build, wanting 8"
+    incr failures
+} else {
+    set timed [expr {[get_collection_size [get_timing_paths -setup -from $dbg_pads -npaths 20]] \
+                     + [get_collection_size [get_timing_paths -setup -to $dbg_pads -npaths 20]]}]
+    if {$timed > 0} {
+        puts "sta: FAIL: $timed timed paths reach the debug cable's pads, which are asynchronous at both ends"
+        incr failures
+    } else {
+        puts "sta: the debug cable's 8 pads on JP1 are ports of this build and no path through them is timed"
+    }
+}
 # THE MEMORY BOARD, WHEN IT IS BUILT, and `cadr_ddr.sdc`'s two clauses: the
 # adapter's address and data registers at the bus's 80 ns and no other
 # register of the adapter, and the processor's four asynchronous bits and the

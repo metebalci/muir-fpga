@@ -9,7 +9,9 @@ A CADR is debugged by another CADR. The debugger's `DBGOUT` connector goes to
 the debuggee's `DBGIN` connector over the twenty-one wires of MIT's debug
 cable. This project's fabric carries both ends. Every board is a debuggee, and
 a board told to connect is the debugger for a second board on a ribbon between
-two Pmod headers.
+their two connectors. On the Zynq boards that connector is a Pmod header; the
+DE25-Nano has no Pmod, so it is eight of JP1's pins and a cable to a Zynq board
+is an adapter.
 
 muir is a debugger too. It runs on a board's own Arm cores and reaches that
 board's debuggee end through a window of memory-mapped registers, with ordinary
@@ -539,28 +541,36 @@ What it measures rather than assumes:
 Five mutation records are aimed at the join and at the cable's place on the
 arbiter.
 
-## The cable on one Pmod connector
+## The cable on one connector of eight pins
 
 The register window is one transport. A second board is the other.
 `rtl/plumbing/cadr_dbg_tx.sv` and `rtl/plumbing/cadr_dbg_rx.sv` are the
-carrier: one direction of MIT's cable on four Pmod pins, a sender and a
+carrier: one direction of MIT's cable on four header pins, a sender and a
 receiver. `rtl/plumbing/cadr_dbg_cable.sv` puts one sender and two receivers
-on ONE Pmod header and decides which four of its eight pins this board drives.
+on ONE group of eight and decides which four of them this board drives.
 `rtl/plumbing/cadr_dbg_join.sv` lets that connector and the window share one
 DBGIN page.
+
+The module knows nothing about which header it is on. It hands out eight pads
+by index and each board's top level says which pin each index is, so the
+sections below say "header pin" where the Zynq boards say "Pmod pin" and the
+DE25-Nano says "JP1 pin".
 
 **One connector a board, and the other headers carry nothing.** A board is a
 debugger or a debuggee on this cable and never both at once, so a second
 header would buy only the case of a board debugging one machine while another
-debugs it. On the two Zynq boards the register window already covers that
-case: muir on those boards' own Arm cores reaches the DBGIN page whatever the
+debugs it. On all three boards the register window already covers that
+case: muir on a board's own Arm cores reaches the DBGIN page whatever the
 connector is doing.
 
-**Which connector is the board's own decision, and both boards say JA.** Each
-has two headers and nothing in its pin file tells one header from the other. JA
-is the connector because a board needs one. A part whose headers are not alike
-would want the question asked again --- this link rests on a strobe at the far
-end of a ribbon, so a high-speed header would be the one to take.
+**Which connector is the board's own decision, and the two Zynq boards say
+JA.** Each has two Pmod headers and nothing in its pin file tells one header
+from the other. JA is the connector because a board needs one. A part whose
+headers are not alike would want the question asked again --- this link rests
+on a strobe at the far end of a ribbon, so a high-speed header would be the one
+to take. **The DE25-Nano says JP1 pins 31 to 38**, and its two headers are
+alike as well; the section on that board says how those eight were chosen and
+what a cable to a Pmod has to do.
 
 ### What actually crosses, counted off the netlist
 
@@ -653,9 +663,17 @@ The four high pins are the debuggee's. Neither group is ever driven from both
 ends while the two boards hold different roles, which is what makes this full
 duplex with no shared pin.
 
-Two of each four carry signals and two are guards. The header's rows are
-coupled pairs, so each pair takes one signal and the other line of it is held
-at zero. The section on the coupled pairs below has the reason.
+Two of each four carry signals and two are guards. On the Zynq boards the
+header's rows are coupled pairs, so each pair takes one signal and the other
+line of it is held at zero; the section on the coupled pairs below has that
+reason. The DE25-Nano carries the same arrangement on a header whose routing
+nobody has published, for the reasons its own section gives.
+
+**None of this is a fact about any one header.** `cadr_dbg_cable.sv` knows
+eight pads by index and which of them this board drives; which pin each index
+is, is the board's. So the role rules, the wiring detection, the refusal to
+drive a group somebody else is driving and everything the console reports are
+the same on all three boards, and a person who knows one knows the others.
 
 **The pads are bidirectional and they have to be**, because the role is not
 fixed at synthesis. `cadr_dbg_cable.sv` hands out a tri-state enable a pad, so
@@ -695,12 +713,75 @@ package pins as each other. The files are `Arty-Z7-20-Master.xdc` and
 Digilent's schematic names in its comments, so the mapping can be checked
 against the board rather than against memory.
 
+### The DE25-Nano has no Pmod, so its connector is eight of JP1's pins
+
+That board's two headers are 2x20 GPIO connectors and neither is a Pmod, so a
+cable between it and a Zynq board is an adapter rather than a ribbon. The
+question the sections above answered by taking a whole Pmod has to be answered
+again, and it is answered by carrying the Pmod's own numbering across: index
+`k` of the carrier is JP1 pin 31 + `k`, and those eight land on Pmod pins 1, 2,
+3, 4, 7, 8, 9 and 10 in that order, which is the order the table above gives.
+
+| index | JP1 pin | package pin | Pmod pin at the far end | role |
+|---|---|---|---|---|
+| 0 | 31 | H19 | 1 | debugger strobe |
+| 1 | 32 | AH19 | 2 | guard, driven low |
+| 2 | 33 | R19 | 3 | debugger data |
+| 3 | 34 | R14 | 4 | guard, driven low |
+| 4 | 35 | V19 | 7 | debuggee strobe |
+| 5 | 36 | V14 | 8 | guard, driven low |
+| 6 | 37 | AG31 | 9 | debuggee data |
+| 7 | 38 | AL31 | 10 | guard, driven low |
+
+The package pins are Figure 3-18 on page 23 of that board's user manual,
+through `boards/de25-nano/de25_nano_pins.tcl`, which is where every pin of the
+board is written down. The header's own ground is pin 30, immediately before
+the group.
+
+**The signals are on the odd header pins here too, and on this header that is
+not the same statement.** A Pmod's rows are its pins 1 to 6 and 7 to 12, so a
+pair lies along one row; a 2x20 header's rows are its odd pins and its even
+pins, so a pair lies across the two rows. What the two arrangements share is
+the ribbon, since a ribbon pressed onto either connector carries conductor `n`
+to pin `n`: the guard is the adjacent conductor in the cable in both cases. On
+JP1 the run from pin 30 to pin 38 is ground, signal, guard, signal, guard,
+signal, guard, signal, guard, and no two signals are adjacent.
+
+**The coupled-pair argument below is not known to apply to this header.** The
+two Zynq boards route their Pmod pins as coupled differential pairs with
+0-ohm shunts where a termination would go, and that is read off Digilent's
+schematics. No schematic is published for the DE25-Nano and its manual says
+nothing about how JP1 is routed, so nothing is claimed here about coupling
+between its pins 31 and 32. The guards are carried across because the guarded
+arrangement is what both other boards run, because a person who knows one board
+should know this one, and because the guards cost only frame length, which this
+cable has to spare. They are not carried across on the strength of a
+measurement of this board.
+
+**A cable to a Zynq board joins JP1 pin 30 to the Pmod's ground and JP1 pins 31
+to 38 to the Pmod's pins 1 to 4 and 7 to 10, leaving every supply pin open.**
+JP1 carries 5 V on pin 11 and 3.3 V on pin 29, and a Pmod carries 3.3 V on pins
+6 and 12. The grounds must be joined and the supplies must not, which is the
+rule the section on the ribbon gives for two Zynq boards, with this header's
+pin list. Neither of JP1's supply pins is a fabric pin at all, so nothing in
+the design can drive one, and `boards/de25-nano/cadr_de25.sv` names neither.
+
+**No such cable exists, and nothing of this connector has run on silicon.**
+What has run on a real ribbon is the two Zynq boards, which the sections below
+report. On the DE25-Nano the connector is built, linted and read by a check,
+and it has crossed nothing.
+
 ### The ribbon can be made the wrong way round, and one was
 
 A Pmod header is two rows. Pins 1 to 6 are one row and 7 to 12 the other. A
 ribbon whose connector was pressed on the other way up joins each board's pins
 1 to 4 to the other board's pins 7 to 10, in order, and its 7 to 10 to the
 other's 1 to 4.
+
+An adapter to the DE25-Nano can be made the same way round or the wrong way
+round, and the setting below is what answers it there too. A cable of that
+shape does not exist yet, so nothing is known about which way round the first
+one will be made.
 
 **Two boards were found on exactly such a cable on 14 September.** The board
 told to connect drove four pins the far board never listens to and reported
@@ -913,8 +994,11 @@ before anybody makes one.** A twelve-pin Pmod header carries ground on pins 5
 and 11 and 3.3 V on 6 and 12, and a straight ribbon joins both. The grounds
 must be joined. The supplies must not: two boards' regulators tied together is
 not something either of them is built for. A cable for this link joins pins 1
-to 4, pins 7 to 10 and the grounds, and leaves the supply pins open. **A cable
-of this shape exists and the link has run over it.** The one on the bench is a
+to 4, pins 7 to 10 and the grounds, and leaves the supply pins open. An adapter
+to the DE25-Nano's JP1 obeys the same rule with that header's pin list: its
+ground is pin 30, its 5 V is pin 11 and its 3.3 V is pin 29, and only the first
+of the three is joined. **A cable of the Pmod-to-Pmod shape exists and the link
+has run over it; no adapter to a 2x20 header exists.** The one on the bench is a
 manufactured extension, which is why the ribbon is mirrored; the section above
 says what the fabric does about that, and the section on what two boards have
 shown says what the ribbon carried.
@@ -1199,14 +1283,28 @@ count and not a constant transcribed into the check.
 
 ### The attachment, which is built
 
-**Both boards carry the connector, in every configuration.**
+**Every board carries the connector, in every configuration.**
 `boards/arty-z7-20/cadr_arty.sv` and `boards/cora-z7-07s/cadr_cora.sv` bring JA
-out as eight bidirectional pads, and each instantiates
+out as eight bidirectional pads and `boards/de25-nano/cadr_de25.sv` brings out
+JP1 pins 31 to 38 as eight more, and each of the three instantiates
 `cadr_dbg_cable.sv` on them, outside the generate
 block that holds the processing system. That is not tidiness: **a board is
 always a debuggee**, so the connector has to exist on a board with no console
 and no window at all, and a top-level pin nothing drives is a PINMISSING
 besides. Every unassigned header carries nothing and has no constraints.
+
+**And what is this board's own is checked by reading it, because nothing runs
+it.** The DE25-Nano's top level instantiates a generated processor system, so
+it cannot be simulated at all, and lint has no opinion about which header pin a
+pad is or about a literal standing where a signal belongs. So
+`tools/de25_faces_check.py` reads the file: the eight pads' map, driving and
+listening alike, against the pin file and against the connector's own table of
+which index is a signal and which a guard; and the thirty-one wires that join
+the connector, the join, the register window and the machine, each of which
+must be one bare signal named the same at both ends. The two shapes it is
+against are the two lint cannot see, a literal where a signal belongs and a
+crossing between two signals of the same width, and nine mutation records are
+aimed at it and at the lint beside it.
 
 The machine's own DBGOUT page leaves `cadr_machine` for it. Those seven ports
 used to be tied off inside that module with a note saying the wrapper change
@@ -1221,7 +1319,12 @@ constants. The connector made that false: the machine's diagnostic mux reaches
 the carrier's frame registers on every board. Measured while the gate was still
 there, the memory-off Arty Z7-20 came out at -9.600 ns on 596 endpoints with
 the file read by nothing. Each board's flow reads it unconditionally now and
-asserts with `assert_instance_timing` that it reached a path.
+asserts with `assert_instance_timing` that it reached a path. The DE25-Nano's
+`quartus/cadr_de25.sdc` carries the same clause in Quartus's words, on the same
+two registers of the sender at the same six ticks, and its `sta_check.tcl`
+makes the same assertion: those two and no other register of the connector,
+because the two receivers count ticks and a counter given six of them is a
+counter that no longer counts.
 
 What holds the attachment in simulation is `build/dbg_cable.pass`, where the
 testbench is the cable and both boards are real. What holds it on silicon is
@@ -1506,17 +1609,34 @@ were made on the carrier with three data lines a group, which is not the one
 either board carries now. What has crossed the guarded one is a status strobe,
 which is the carrier and not the debugger.
 
+**And the DE25-Nano's connector has shown nothing at all.** It is built, linted
+and read by a check, and no cable from a 2x20 header to a Pmod exists, so
+nothing has crossed it. Four things would have to happen before it could show
+anything, and each of them is a fact about the bench rather than about the
+design. A cable has to be made, joining JP1 pin 30 to the Pmod's ground and JP1
+pins 31 to 38 to the Pmod's pins 1 to 4 and 7 to 10, with JP1's pins 11 and 29
+and the Pmod's pins 6 and 12 open. The bitstream has to be fitted and loaded,
+which is what says the eight pads place, that the pull-downs are legal on those
+pins and that the sender still meets its six ticks. A console has to be
+reachable on the board, since the role is page 0's word 14 and there is nothing
+else that asks for it. And two boards have to be running at once, because the
+cheapest statement this link can make --- a Unibus read of `0o766104` from the
+debugger's own Lisp Listener --- needs a machine at each end.
+
 ## What is not built
 
 **The composition onto the board is done, and so is the connector.**
 `rtl/machine/cadr_dbgin.sv` is instantiated in
 `rtl/machine/cadr_memory_path.sv` beside the three Unibus slaves,
-`cadr_machine.sv` passes both ends of the cable up as ports, and both boards
-put `cadr_dbg_cable.sv` on Pmod JA, with `cadr_dbg_join.sv` between it and the
-page. Both put `cadr_debug_window.sv` behind a general-purpose port as well, so
+`cadr_machine.sv` passes both ends of the cable up as ports, the two Zynq
+boards put `cadr_dbg_cable.sv` on Pmod JA and the DE25-Nano puts it on JP1 pins
+31 to 38, with `cadr_dbg_join.sv` between it and the
+page. All three put `cadr_debug_window.sv` behind a general-purpose port or a
+processor-to-fabric bridge as well, so
 the join has two arms on each. The window is how a program plays the far end of
 this cable. Two boards and a ribbon are no
-longer what is left: the section above says what they have shown. The lines are
+longer what is left for the Zynq boards: the section above says what they have
+shown, and says that the DE25-Nano's connector has shown nothing. The lines are
 the lines `tb/cadr_dbgin_harness.sv` was written with, which is what that
 harness is for: it was the attachment before the attachment landed, and the arbiter it
 instantiates is the module `cadr_memory_path.sv` instantiates rather than a

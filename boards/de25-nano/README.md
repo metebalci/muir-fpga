@@ -175,7 +175,7 @@ interconnect, so that reason has to be met another way or measured.
 | `SW0`, the no-auto-boot switch | `SW0`, the same switch. `SW1` to `SW3` are not assigned. |
 | `BTN0` boots and `BTN1` resets the fabric | `KEY0` boots and `KEY1` resets the fabric. Both are debounced on the board. |
 | six lamps, two of them RGB | `LEDR0` to `LEDR5` carry the Arty Z7-20's six in its order, all green. `LEDR6` and `LEDR7` are dark. |
-| the debug cable on Pmod JA | no Pmod header. The two 2x20 GPIO headers are the candidate, and nothing is decided. |
+| the debug cable on Pmod JA | the same cable on JP1 pins 31 to 38, with the header's ground on pin 30. There is no Pmod header, so a cable to a Zynq board is an adapter. |
 
 **The GPIO headers carry supplies, as a Pmod does, on other pins.** Each has
 5 V on pin 11 and 3.3 V on pin 29, with ground on pins 12 and 30, according to
@@ -183,7 +183,7 @@ the manual's Figure 3-18 on page 23. A cable from one of them to a Zynq
 board's Pmod is therefore an adapter, and the rule in `docs/debug-cable.md`
 that a cable leaves the supply pins open applies with a different pin list.
 That document also asks which header to take on a part whose headers are not
-alike. These two are alike.
+alike. These two are alike, so JP1 is the connector because a board needs one.
 
 **What a read nobody answers does on this board's bridges is not measured.**
 On the Zynq such a read hangs both cores, which is why the register faces there
@@ -382,6 +382,69 @@ requires that no microcycle retired at all and that the tally reads nothing
 asked. Its SHUT configuration then shuts the port under a running machine and
 requires that the machine keeps running and that all 512 of its cycles end on
 the NXM timer, which is the latch.
+
+## The debug cable
+
+**MIT's whole cable is on JP1 pins 31 to 38, in every build of this board.** A
+board is always a debuggee, so the connector sits outside the arm of the top
+level that holds the processor: it answers a debugger that plugs in with
+nothing set, exactly as MIT's board answers one on its DBGIN, and a board told
+to connect becomes the debugger for a second board. `docs/debug-cable.md` is
+the design and the table below is this board's map of it.
+
+| index | JP1 pin | package pin | Pmod pin at the far end | role |
+|---|---|---|---|---|
+| 0 | 31 | H19 | 1 | debugger strobe |
+| 1 | 32 | AH19 | 2 | guard, driven low |
+| 2 | 33 | R19 | 3 | debugger data |
+| 3 | 34 | R14 | 4 | guard, driven low |
+| 4 | 35 | V19 | 7 | debuggee strobe |
+| 5 | 36 | V14 | 8 | guard, driven low |
+| 6 | 37 | AG31 | 9 | debuggee data |
+| 7 | 38 | AL31 | 10 | guard, driven low |
+
+**The index is the Pmod's own numbering carried across**, so a cable that joins
+each pin to its counterpart lands every signal where a Zynq board expects it.
+The signals are on the odd header pins and the guards on the even ones, which
+on this header means no two signals are adjacent in the ribbon, with the
+header's ground on pin 30 at the start of the run. The package pins are the
+manual's Figure 3-18 on page 23, through `de25_nano_pins.tcl`.
+
+**A cable leaves both supply pins open.** JP1 carries 5 V on pin 11 and 3.3 V
+on pin 29, and a Pmod carries 3.3 V on its pins 6 and 12. Two boards'
+regulators tied together is not something either of them is built for. Neither
+of JP1's supply pins is a fabric pin, so nothing in this design can drive one.
+
+**Every pad is pulled down**, because an unplugged connector must read zero and
+not float. Zero is the idle cable, and a floating pad that toggles would look
+to the connector like somebody else driving that group, which is exactly what
+stops a board driving it. The flow makes that with Quartus's
+`WEAK_PULL_DOWN_RESISTOR` and refuses a build in which it did not reach all
+eight.
+
+**The register window is still the other way in.** The connector and the window
+share one DBGIN page through `rtl/plumbing/cadr_dbg_join.sv`, the first to
+assert holding until it lifts, so muir on this board's own cores reaches the
+machine through `--debug-cable-connect 0x20001000` while the connector is doing
+whatever it is doing. On a board built without the processor the window's arm
+is tied off and the connector is the only way in, which is a CADR with one
+cable in it.
+
+**What holds this, and what does not.** Every module under the connector is
+held by a check that runs it: `build/dbg_pmod.pass` for the carrier,
+`build/dbg_cable.pass` for two boards on one ribbon with the testbench as the
+cable, and `build/dbgin.pass`, `build/gp1_split.pass` and `build/unibus.pass`
+for the page, the window and a debug cycle. None of those is this board's: they
+are the modules', and this board instantiates the same modules. What is this
+board's alone is the adapter, and this top level cannot be simulated, so what
+reads it is lint and `tools/de25_faces_check.py`, which holds the pin map above
+and the thirty-one wires of the cable's seam. Nine mutation records are aimed
+at the two.
+
+**Nothing of this connector has run on silicon.** The two Zynq boards have run
+the carrier, the wiring detection and a debug cycle over a real ribbon between
+their Pmod JA connectors. No cable from a 2x20 header to a Pmod has been made,
+so on this board the connector has crossed nothing.
 
 ## The faces on the two bridges
 

@@ -305,13 +305,21 @@ if {$ddr} {
 # is sourced in a child interpreter whose two assignment commands are
 # recorded rather than applied, and only the top level's ports are applied
 # here.  The pin file stays the one place a pin is written.
-set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\])$}
-set wanted_ports 15
+# **AND MIT'S DEBUG CABLE ON JP1 PINS 31 TO 38, IN THE BASE PATTERN AND NOT
+# BEHIND `$ddr`.**  A board is always a DEBUGGEE, so the connector is in every
+# build of this design and its eight pads are placed on every one of them.
+# They are named by a range rather than one by one because the eight are
+# consecutive, which is the whole of the map;
+# `boards/de25-nano/cadr_de25.sv`'s connector section has the table and
+# `tools/de25_pins_check.py` holds it.  The header's four supply pins have no
+# fabric pin at all and so cannot be swept in by any pattern.
+set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\]|jp1_pin3[1-8])$}
+set wanted_ports [expr {15 + 8}]
 # And the memory board's: the processor's LPDDR4 bank, 57 pins, and its 40
 # peripheral pins, every one the pin file has.
 if {$ddr} {
-    set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\]|lpddr4a_.*|hps_.*)$}
-    set wanted_ports [expr {15 + 57 + 40}]
+    set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\]|jp1_pin3[1-8]|lpddr4a_.*|hps_.*)$}
+    set wanted_ports [expr {15 + 8 + 57 + 40}]
 }
 # **AND THE DISPLAY'S THIRTY: THE VIDEO BUS AND THE TRANSMITTER'S TWO WIRES,
 # AND NOT THE OTHER FIVE THE PIN FILE HAS.**  The twenty-four data lines, the
@@ -322,8 +330,8 @@ if {$ddr} {
 # here rather than swept in by a pattern, and the count below is what says
 # the two files still agree.
 if {$hdmi} {
-    set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\]|lpddr4a_.*|hps_.*|hdmi_d\[([0-9]|1[0-9]|2[0-3])\]|hdmi_pclk|hdmi_de|hdmi_hsync|hdmi_vsync|hdmi_scl|hdmi_sda)$}
-    set wanted_ports [expr {15 + 57 + 40 + 30}]
+    set wanted {^(clock50_0|btn\[[01]\]|sw\[[0-3]\]|led\[[0-7]\]|jp1_pin3[1-8]|lpddr4a_.*|hps_.*|hdmi_d\[([0-9]|1[0-9]|2[0-3])\]|hdmi_pclk|hdmi_de|hdmi_hsync|hdmi_vsync|hdmi_scl|hdmi_sda)$}
+    set wanted_ports [expr {15 + 8 + 57 + 40 + 30}]
 }
 set locations {}
 set standards {}
@@ -357,14 +365,52 @@ foreach {port standard} $standards {
         incr standardized
     }
 }
-# One clock, two buttons, four switches and eight LEDs, and on the memory
-# board the processor's 97.  A count that is not the one wanted is a pin file
-# or a port list that has moved under this flow.
+# One clock, two buttons, four switches, eight LEDs and the debug cable's
+# eight pads, and on the memory board the processor's 97.  A count that is not
+# the one wanted is a pin file or a port list that has moved under this flow.
 if {$placed != $wanted_ports || $standardized != $wanted_ports} {
     puts "project: placed $placed ports and gave $standardized a standard, wanting $wanted_ports and $wanted_ports"
     exit 1
 }
 puts "project: $wanted_ports of the pin file's [expr {[llength $locations] / 2}] ports are this top level's"
+
+# **AND THE DEBUG CABLE'S PADS ARE PULLED DOWN, EVERY ONE OF THEM.**  An
+# unplugged connector must read ZERO and not float, because zero is the idle
+# cable this transport is built on: `-DEBUG IN REQ` up and `DEBUG IN ACK`
+# down.  A floating pad that toggles is worse than a wrong level --- every pad
+# enable in `rtl/plumbing/cadr_dbg_cable.sv` is gated on that group's receiver
+# saying nothing is on it, so a board that hears noise on a group never drives
+# it, and a debuggee with nothing plugged in would refuse to answer for ever.
+# Either group can be the one this board is listening to, so all eight are
+# pulled and not four.  `boards/arty-z7-20/cadr_arty.xdc` does the same with
+# Vivado's `PULLTYPE PULLDOWN`.
+#
+# **AND THE COUNT IS ASSERTED**, because an assignment that reaches nothing
+# looks exactly like one that works, and this one reaches nothing at all if a
+# pad is ever renamed.
+#
+# **WHAT IS MEASURED ABOUT IT AND WHAT IS NOT.**  `WEAK_PULL_DOWN_RESISTOR` is
+# an assignment this Quartus knows, and on a scratch project for this exact
+# part --- A5EB013BB23BE4SCS --- it is accepted on `PIN_H19` at 3.3-V LVCMOS
+# and written into the `.qsf`, with no warning.  That is the tool agreeing that
+# the assignment exists; it is NOT the fitter agreeing that the pin's buffer
+# offers a pull-down, which only a fit can say.  Altera's device metadata for
+# the E-series lists a pull direction select for its high-voltage I/O, which is
+# the kind of bank these header pins are in, so there is a reason to expect it
+# and no measurement of it.  The Zynq boards get the same thing from Vivado's
+# `PULLTYPE PULLDOWN`, which has been fitted and run.
+set pulled 0
+foreach {port pin} $locations {
+    if {[regexp {^jp1_pin3[1-8]$} $port]} {
+        set_instance_assignment -name WEAK_PULL_DOWN_RESISTOR ON -to $port
+        incr pulled
+    }
+}
+if {$pulled != 8} {
+    puts "project: pulled $pulled of the debug cable's pads down, wanting 8"
+    exit 1
+}
+puts "project: the debug cable's 8 pads on JP1 are pulled down, so an unplugged connector reads zero"
 
 project_close
 if {$probe_depth > 0} {
