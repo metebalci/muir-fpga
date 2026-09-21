@@ -570,7 +570,7 @@ Linux side builds:
 | | |
 |---|---|
 | `hps-first` | the default. `quartus_pfg` writes the phase-1 bitstream for the flash and `cadr_de25.core.rbf` for the card, and the processor configures the fabric from U-Boot. |
-| `fpga-first` | `cadr_de25_hps.sof`, one file the programmer loads over JTAG that configures the fabric and starts the processor's first stage. This is the board with no flash written. |
+| `fpga-first` | `cadr_de25_hps.sof`, one file the programmer loads over JTAG that configures the fabric and starts the processor's first stage. It is the arrangement for a board whose flash carries no first phase of this project's, and for a download that is to leave the flash alone. |
 
 A bare `.sof` cannot configure a part with a processor in it, which the HPS
 Booting User Guide says in its section 4.5.1, so `quartus/program.sh` loads
@@ -588,14 +588,17 @@ So the `cadr.core.rbf` on an FPGA-first board's card is the HPS-first build of
 the same commit: the same sources and the same build stamp, differing in the
 `HPS_INITIALIZATION` assignment, which decides the configuration order and not
 the design. That board never loads it, because its card says the fabric was
-configured before U-Boot ran; the file is there for the day the flash is
-written.
+configured before U-Boot ran; the file is there for the day that board's flash
+is written. The board this project runs has had its flash written, so its
+card's `uEnv.txt` no longer sets `cadr_fabric_loaded=1` and its loader does
+read `cadr.core.rbf`.
 
 ## Loading it
 
 `make de25-program` loads the bitstream over JTAG, into the part's
-configuration memory, and a power cycle clears it. Nothing here writes the
-QSPI flash. The board's configuration switch was not moved, and JTAG
+configuration memory, and a power cycle clears it. Nothing in this flow writes
+the QSPI flash; "The flash" below says how the flash was written and what it
+holds now. The board's configuration switch was not moved, and JTAG
 configuration worked with it where it was. The programmer must report that
 configuration succeeded.
 
@@ -604,8 +607,20 @@ JTAG USERCODE register, and `quartus/usercode.tcl` reads it back before the
 download and after it, with the USERCODE instruction, `00 0000 0111`, from
 Altera's JTAG boundary-scan guide for the family (document 820038, table 5).
 It reads the IDCODE first, against the part's `4362C0DD`, which is what says
-the scans return a register the right way round. On the board, the part read
-back the stamp of each bitstream loaded into it.
+the scans return a register the right way round.
+
+**That read-back has since been caught giving an answer that was not the
+part's.** During the flash work the programmer reported one build's stamp
+before and after three downloads of differently stamped images, and reported
+it again while the part was holding the programmer's own helper design. So the
+stamp is not on its own a witness that a download took. It has also followed
+the part: every reading recorded in `docs/board.md` changed with its download,
+two of them from `ffffffff` to the new build's stamp and one of them from one
+build's stamp to another's. What separates a reading that follows the part from
+one that does not is not established. Until it is, a download wants a witness
+of its own, and the flash work used a full read-back of the flash against the
+file written instead. This is the project's only witness that a download took,
+so it is worth a slice of its own.
 
 **The plain build and the probe's carry the same stamp when they come from
 one tree**, so USERCODE cannot tell them apart. The JTAG server can. It shows
@@ -614,6 +629,59 @@ hub's own `DESIGN_HASH`, which Quartus writes into the build's `.sld` file.
 It is not the assembler's design hash, as measured. The probe's build shows its
 hash and the plain build shows none, and `program.sh` holds each build to
 that.
+
+### The flash
+
+**The board's QSPI flash carries this project's phase-1 bitstream**, so the
+board comes up from power on its own, with no cable and no build host. Before
+that it came up on the image the maker shipped in that flash, which has no CADR
+in it. What is in the flash now was built at commit `f5ca348`, HPS-first, with
+the processor's first-stage loader from the same build as the card's contents.
+`QSPI_OWNERSHIP` is `HPS`, which gives the processor the flash controller; the
+shipped image leaves it with the device manager, and a kernel that finds it
+that way dies on the driver's first register read.
+
+**The two phases have to agree on the processor's I/O settings, and the tools
+say whether they do.** `quartus_pfg -i` reports an I/O hash for each image it
+writes, `build.sh` prints that line for every build, and `quartus_pfg` checks
+the two against each other. The hash of the image written to the flash and the
+hash of the `cadr.core.rbf` on the card were the same, `26EE4912...`, which is
+what says the phase the flash holds and the phase the card holds came from one
+processor configuration. A pair that disagrees is a pair the processor will not
+configure the fabric from.
+
+**Writing the flash is not this flow's business and nothing here does it.**
+The flash has been written by hand, with the vendor's programmer over the same
+JTAG cable that loads a bitstream.
+
+**A bad image is a repeat rather than a brick**, and that was run rather than
+asserted. The part takes a JTAG download whatever the flash holds, because the
+programmer puts its own helper design into the fabric and reaches the flash
+through it. So the recovery is to write the flash again. The order that was
+run is this project's image written and verified, the factory image written
+back over it and verified against a copy read off the board beforehand, and
+then this project's image written again. Each write was checked by reading the
+whole flash back and comparing it with the file written, which is the check
+that does not depend on the programmer's own report.
+
+**There is no local copy of the factory image any more.** The copy read off the
+board was lost, and recovery now means fetching the maker's published
+`golden_top_hps.jic` from its resource package. That is possible because the
+copy read off the board matched that published file byte for byte apart from
+the file's own trailer, which was measured while the copy still existed. The
+published file will not program this part as it stands, for the reason in the
+next paragraph, so a recovery from it needs the image packaged again with a
+flash loader this part accepts. That repackaging has not been done or tried.
+
+**Two traps here read as a broken board.** The first is that the maker's
+published `golden_top_hps.jic` names flash loader `A5EB013BB23B` and the IDCODE
+`0xC362C0DD`, where this part answers `0x4362C0DD`; the loader that works is
+`A5EB013BB23BCS`. The second is that the part's index in the JTAG scan chain
+moves with what the part is holding. It is 2 with a design that has the
+processor in it, because the processor's debug port joins the chain, and 1 with
+the programmer's helper design or with the part unconfigured. A wrong index is
+reported as `Error (213001): Device name <garbage> is illegal`, which names
+neither the index nor the chain.
 
 ## The probe
 

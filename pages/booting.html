@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>muir-fpga &mdash; booting</title>
-<meta name="description" content="How each board here comes up, in two sequences: a Zynq board from its own microSD card, and the same board from a TFTP server while it is being worked on.">
+<meta name="description" content="How each board here comes up, in three sequences: a Zynq board from its own microSD card, the same board from a TFTP server while it is being worked on, and the DE25-Nano, whose boot crosses a flash and a card.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -78,8 +78,9 @@
       <div class="masthead-text">
         <span class="eyebrow">Boot</span>
         <h1 class="title t-l">How a board comes up</h1>
-        <p class="lede">Two sequences, one for each way a board here starts: a Zynq board from its own card, and the same board from a TFTP server while it is being worked on.</p>
+        <p class="lede">Three sequences, one for each way a board here starts: a Zynq board from its own card, the same board from a TFTP server while it is being worked on, and the DE25-Nano, which boots differently enough to need a drawing of its own.</p>
         <p class="small">The two Zynq boards come up the same way as each other, so one drawing serves both. Where they differ, the drawing says so in a label.</p>
+        <p class="small">The DE25-Nano is the third. Its boot crosses two storage devices rather than one, and its fabric is configured in the middle of the sequence rather than by the loader&rsquo;s first stage.</p>
       </div>
       <svg class="chara corner" viewBox="-4 6 198 124" role="img" aria-label="muir-fpga's board, waving"><use href="#fpga-wave"/></svg>
     </div>
@@ -326,6 +327,118 @@ uEnv.txt      <b>fixed name</b>  imported before any board name is known
     </footer>
   </section>
 
+  <!-- ------------------------------------------------ the DE25-Nano -->
+  <section id="de25" aria-label="The DE25-Nano">
+    <div class="panel bare">
+      <span class="eyebrow">DE25</span>
+      <h2 class="title t-l">The DE25-Nano</h2>
+      <p class="small" style="margin-top:0.4rem;">This board takes the same two paths as the Zynq boards, and reaches them differently. There is no <code>BOOT.BIN</code>, because the first-stage loader is in the QSPI flash; and the fabric is empty until U-Boot fills it.</p>
+    </div>
+
+    <div class="panels two lead-split">
+      <div class="panel">
+        <p class="cap light">The card&rsquo;s one partition. Two names are not this project&rsquo;s to move, and the rest sit in a folder named for the board:</p>
+<pre class="term">u-boot.itb    <b>fixed name</b>  the first stage asks for it by this name
+uEnv.txt      <b>fixed name</b>  imported before any board name is known
+de25-nano/    cadr.core.rbf, the tree, Image, rootfs.cpio.uboot</pre>
+      </div>
+      <div class="panel tone">
+        <p class="say">My first phase is in the flash and everything after it is on the card. My fabric is filled by the loader, not before it.</p>
+        <svg class="chara" viewBox="-4 6 198 124" style="width:44%; align-self:center; margin-top:auto;" role="img" aria-label="muir-fpga's board, waving"><use href="#fpga-wave"/></svg>
+      </div>
+    </div>
+
+    <figure class="panel fig dense">
+      <div class="scroll">
+        <svg viewBox="0 0 1170 780" role="img" aria-label="How the DE25-Nano boots, as a sequence. Four lifelines: the QSPI flash, the microSD card, the processing system and the fabric. The boot crosses two storage devices. At power-on the Secure Device Manager reads the first phase out of the QSPI flash over Active Serial, which is what the MSEL switch selects, and starts U-Boot's first stage, which calibrates the LPDDR4 and finds 1 GiB. Everything after that comes off the microSD card: u-boot.itb, which carries Arm Trusted Firmware's BL31 and U-Boot proper, and then uEnv.txt, which names no server, so the board takes the card path. Then comes the fabric's turn, four steps in this order and all of them before the kernel is fetched: the fabric's image is read off the card; h2f_gp_out is cleared, which shuts the machine's memory gate before the fabric is configured; fpga load puts the CADR into the fabric, from which moment the CADR is running its own boot PROM; bridge enable releases both processor-to-fabric bridges and the FPGA-to-SDRAM bridge the machine's memory comes through; and h2f_gp_out is set, which is the gate opening and the fabric's signal that the bridges are stable. The bridges are opened before the gate is raised, and the kernel is fetched only after both. The loader then reads the device tree, the kernel and the root filesystem image off the card and boots Linux beside the CADR, with the CADR's 128 MB reserved at 0xB0000000. Linux mounts the card read-only, restores the clock from the drive bay because this board has no real-time clock, holds the machine if the card's file of flags asks, and presents the drive, after which the CADR reads the band off the pack. Five programs follow: ozd, the screen over RFB, the serial line, Chaosnet, and a keyboard and mouse on the USB port. On failure the loader says so and tries again ten seconds later, for ever. The QSPI flash is written, and the board has run this whole sequence from power alone with no cable attached to it.">
+          <defs>
+            <marker id="arr-de25" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <text class="d-t" x="10" y="18">how the DE25-Nano boots</text>
+          <text class="d-s" x="185" y="18">the flash carries the first phase; the card carries everything after it</text>
+          <rect class="d-box" x="6" y="28" width="1158" height="742"/>
+          <!-- lifelines.  Two storage devices, which is what this board does that a
+          Zynq board does not: the first phase is in the flash and the rest is on
+          the card. -->
+          <rect class="d-box" x="14" y="34" width="112" height="30"/>
+          <text class="d-t" x="70" y="54" text-anchor="middle">QSPI flash</text>
+          <rect class="d-box" x="150" y="34" width="120" height="30"/>
+          <text class="d-t" x="210" y="54" text-anchor="middle">microSD card</text>
+          <rect class="d-box" x="545" y="34" width="150" height="30"/>
+          <text class="d-t" x="620" y="54" text-anchor="middle">processing system</text>
+          <rect class="d-box" x="1025" y="34" width="120" height="30"/>
+          <text class="d-t" x="1085" y="54" text-anchor="middle">fabric</text>
+          <path class="d-dash" d="M70,64 L70,720 M210,64 L210,720 M1085,64 L1085,342"/>
+          <!-- the processing system, changing hands.  It is one column from the moment
+          the first stage is released. -->
+          <rect class="d-fill" x="605" y="64" width="30" height="114"/>
+          <text class="d-s" x="643" y="126">U-Boot&rsquo;s first stage (SPL)</text>
+          <text class="d-s" x="643" y="142">LPDDR4 calibrated, 1 GiB</text>
+          <rect class="d-fill" x="605" y="178" width="30" height="322"/>
+          <text class="d-s" x="643" y="200">U-Boot</text>
+          <rect class="d-fill" x="605" y="500" width="30" height="220"/>
+          <text class="d-s" x="643" y="522">Linux</text>
+          <!-- The fabric, configured in the MIDDLE of the sequence, after the second
+          stage is already running.  On a Zynq board it is in before the kernel is
+          fetched too, but there the loader's own first stage never touches it. -->
+          <rect class="d-fill" x="1070" y="342" width="30" height="254"/>
+          <text class="d-s" x="1085" y="469" text-anchor="middle" transform="rotate(-90 1085 469)">the CADR, its boot PROM, out of LPDDR4</text>
+          <rect class="d-fill" x="1070" y="596" width="30" height="124"/>
+          <text class="d-s" x="1085" y="658" text-anchor="middle" transform="rotate(-90 1085 658)">the band off the pack</text>
+          <line class="d-line" x1="330" y1="78" x2="605" y2="78" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="467" y="74" text-anchor="middle">power on</text>
+          <line class="d-line" x1="70" y1="104" x2="605" y2="104" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="337" y="100" text-anchor="middle">the first phase, over Active Serial &mdash; MSEL 001</text>
+          <line class="d-line" x1="210" y1="166" x2="605" y2="166" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="407" y="162" text-anchor="middle">u-boot.itb &mdash; BL31, then U-Boot proper</text>
+          <line class="d-line" x1="210" y1="228" x2="605" y2="228" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="407" y="224" text-anchor="middle">uEnv.txt &mdash; names no server, so the card path</text>
+          <!-- cadr_fabric, and the order is the point: the bridges are released BEFORE
+          the gate is raised, and the kernel is fetched only after both. -->
+          <text class="d-t" x="643" y="262">the fabric&rsquo;s turn &mdash; four steps, all before the kernel</text>
+          <line class="d-line" x1="210" y1="288" x2="605" y2="288" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="407" y="284" text-anchor="middle">de25-nano/cadr.core.rbf &mdash; the CADR, 2,125,824 B</text>
+          <text class="d-n" x="643" y="314">1  mw.l gpo 0 &mdash; h2f_gp_out low, the gate shut</text>
+          <line class="d-line" x1="635" y1="342" x2="1070" y2="342" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="852" y="338" text-anchor="middle">2  fpga load &mdash; the CADR enters the fabric</text>
+          <text class="d-n" x="643" y="370">3  bridge enable &mdash; H2F, LWH2F and F2SDRAM released</text>
+          <text class="d-n" x="643" y="394">4  mw.l gpo 1 &mdash; h2f_gp_out high, the gate open</text>
+          <line class="d-line" x1="210" y1="424" x2="605" y2="424" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="407" y="420" text-anchor="middle">de25-nano/ the device tree &mdash; 128 MB reserved at 0xB0000000</text>
+          <line class="d-line" x1="210" y1="450" x2="605" y2="450" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="407" y="446" text-anchor="middle">de25-nano/Image &mdash; the kernel, 41,921,024 B</text>
+          <line class="d-line" x1="210" y1="476" x2="605" y2="476" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="407" y="472" text-anchor="middle">de25-nano/rootfs.cpio.uboot</text>
+          <text class="d-n" x="643" y="492">booti</text>
+          <!-- init.  S80 mounts the card and presents the drive, as it does on a
+          Zynq board; the clock comes back from the bay because no board here
+          shows Linux a real-time clock. -->
+          <line class="d-line" x1="605" y1="540" x2="210" y2="540" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="407" y="536" text-anchor="middle">S80: the card mounted read-only, the clock back from the bay</text>
+          <line class="d-line" x1="635" y1="568" x2="1070" y2="568" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="852" y="564" text-anchor="middle">S80: --no-auto-boot, if fpgarc asks &mdash; the machine held, RUN clear</text>
+          <line class="d-line" x1="635" y1="596" x2="1070" y2="596" marker-end="url(#arr-de25)"/>
+          <text class="d-s" x="852" y="592" text-anchor="middle">S80: the drive comes present &mdash; a labeled pack is the CADR&rsquo;s disk</text>
+          <text class="d-s" x="643" y="624">S84 ozd, S85 the screen over RFB, S86 the serial line,</text>
+          <text class="d-s" x="643" y="640">S87 Chaosnet, S88 a USB keyboard and mouse</text>
+          <text class="d-s" x="643" y="668">login on the serial console</text>
+          <text class="d-s" x="643" y="692">1 GiB &mdash; 0xB0000000 to 0xB7FFFFFF is the CADR&rsquo;s</text>
+          <text class="d-s" x="10" y="732" fill-opacity="0.62">on failure: another try every ten seconds</text>
+          <text class="d-s" x="400" y="732" fill-opacity="0.62">the flash is written, and this sequence has run from power with no cable attached</text>
+        </svg>
+      </div>
+      <figcaption class="cap long">The four steps of the fabric&rsquo;s turn are in the order the boot environment runs them: the image is read, the gate is shut, the CADR is configured, the bridges are released, and only then is the gate opened. The kernel is fetched after all four, so the machine&rsquo;s first memory cycle cannot meet a bridge still in reset.</figcaption>
+      <p class="small">The long form: <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/boot.md#the-card-and-the-two-ways-it-boots">the card, and the two ways it boots</a>.</p>
+    </figure>
+
+    <footer class="wholine">
+      <div class="label">muir-fpga &middot; Booting the DE25-Nano</div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>04</span></div>
+    </footer>
+  </section>
+
   <!-- --------------------------------------------------------- colophon -->
   <section id="colophon" aria-label="Colophon">
     <div class="panel bare">
@@ -351,7 +464,7 @@ uEnv.txt      <b>fixed name</b>  imported before any board name is known
 
     <footer class="wholine">
       <div class="label">muir-fpga &middot; Colophon</div>
-      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>04</span></div>
+      <div class="bar"><span>09/16/26 12:00:00</span><span>USER:</span><span>Cold-booted</span><span>05</span></div>
     </footer>
   </section>
 
