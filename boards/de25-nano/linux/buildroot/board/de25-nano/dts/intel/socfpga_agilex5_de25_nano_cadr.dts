@@ -48,16 +48,47 @@
  *     counter still at zero, and a count that rose by four when the build
  *     host sent five address requests.
  *
- *     THE TRANSMIT SIDE IS A SEPARATE FAULT AND THIS DOES NOT FIX IT.  It is
- *     not a delay at all: the transmit counter advances by the same handful
- *     whether three frames are asked for or forty, with no errors counted and
- *     no transmit timeout logged, so the ring is not being reclaimed and no
- *     skew setting reaches it.  `rgmii-id` is chosen over `rgmii-rxid` so
- *     that the part's transmit delay is in place for whoever repairs that.
- *     THAT HALF IS UNVERIFIED: no frame has ever left this board, so the
- *     transmit delay has never been shown to be right, only the receive one.
- *     Whoever repairs the ring must measure the transmit delay as well, and
- *     must not read this line as evidence that it is already correct.
+ *     THE TRANSMIT SIDE WAS A SEPARATE FAULT AND IS NOT ONE NOW.  Measured
+ *     before this line reached a card, with the mode poked into the loader's
+ *     copy of the tree by hand, the transmit counter advanced by the same
+ *     handful whether three frames were asked for or forty, with no errors and
+ *     no timeout, which is a ring that is not being reclaimed and which no
+ *     skew setting reaches.  Measured again from a card carrying this line,
+ *     the board takes an address, answers a ping in half a millisecond, and
+ *     carries the machine's own network traffic to a host and back.  So the
+ *     stall went with the half-configured interface rather than being a fault
+ *     of its own, and `rgmii-id` is right on both sides rather than only on
+ *     the receive one.  This was found while looking at something else and has
+ *     not been investigated: whoever returns to it should try to reproduce the
+ *     stall before believing it is gone.
+ *   the QSPI FLASH CONTROLLER TURNED OFF.  The controller is shared between
+ *     the processor and the Secure Device Manager, and the manager owns it at
+ *     every power-up.  The processor gets it only by asking over the
+ *     manager's mailbox, and THE FABRIC IMAGE DECIDES WHETHER THE MANAGER
+ *     SAYS YES, through the QSPI Ownership setting the assembler writes into
+ *     that image (Hard Processor System Booting User Guide, document 813762,
+ *     section 4.12; Hard Processor System Technical Reference Manual,
+ *     document 814346, appendix A.2.2).  So Linux can find itself holding a
+ *     controller it may not touch, and the Cadence driver's first register
+ *     read, in `cqspi_wait_idle` called from `cqspi_probe`, then takes an
+ *     external abort.  Measured on this board: a synchronous external abort,
+ *     ESR 0x96000010, on the instruction that reads the configuration
+ *     register, which kills init; and on the boot after it an asynchronous
+ *     SError, ESR 0xbe000011, at the same two functions, which panics the
+ *     kernel.  That is what this board does when it is configured from the
+ *     image its flash carries as shipped, because that image keeps the
+ *     controller for the manager.
+ *
+ *     TURNING THE NODE OFF IS ALTERA'S OWN REMEDY for exactly this case:
+ *     document 813762, Table 17, gives `status = "disabled"` on this node as
+ *     the Linux half of what to build when the manager keeps the controller.
+ *     IT COSTS NOTHING HERE.  A board that DOES own the controller has no
+ *     flash device either, because the part answers a JEDEC identification
+ *     the kernel does not recognize, so `/proc/mtd` is empty and `/dev/mtd*`
+ *     is absent on both kinds of boot alike; and no init script, no program
+ *     and no partition on the card reads the flash.  What is given up is
+ *     reaching the flash from Linux at all, which a remote system update
+ *     would want and nothing on this board does.
  *
  * NOTHING OF THE FABRIC IS DESCRIBED.  As on the Zynq boards the programs
  * reach the faces through /dev/mem, so there is no node for them, and the
@@ -83,4 +114,20 @@
  */
 &gmac0 {
 	phy-mode = "rgmii-id";
+};
+
+/*
+ * The flash controller the Secure Device Manager may be keeping for itself:
+ * see the header.  Nothing here reads the flash, and a board that is allowed
+ * to touch the controller loses nothing by this line.
+ *
+ * THIS LINE REACHES THE KERNEL'S TREE ALONE, which is the one place it is
+ * needed, because U-Boot appends `<tree>-u-boot.dtsi` after this file and
+ * Altera's `socfpga_agilex5_de25_nano-u-boot.dtsi` sets this same node back to
+ * `okay` there.  So the first-stage loader and U-Boot keep the node they have
+ * and nothing about the boot changes; U-Boot binds a driver to it only when a
+ * command asks for the flash, and none of this board's commands does.
+ */
+&qspi {
+	status = "disabled";
 };
