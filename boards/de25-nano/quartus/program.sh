@@ -26,14 +26,25 @@
 # device.  A serial that matches no device, or more than one, is refused, and
 # so is a chain that is not exactly one Agilex 5 part.
 #
-# **WHAT SAYS IT WORKED IS THE BUILD THE PART READS BACK.**  The programmer
-# must report that configuration succeeded on device 1, and that alone is
-# the witness a Zynq board once lost three downloads in six to.  So the build
-# stamp `build.sh` writes into USERCODE is read back by `usercode.tcl`, before
-# the download and after it, with the USERCODE instruction from Altera's
-# boundary-scan guide for the family, and compared with the bitstream's: the
-# part must hold this build afterwards, and the line printed says whether it
-# held it before too, in which case a download cannot be told from none.
+# **THE BUILD THE PART READS BACK IS CHECKED, AND IT IS NOT A WITNESS ON ITS
+# OWN.**  The programmer must report that configuration succeeded, and that
+# report alone is what a Zynq board once lost three downloads in six to.  So
+# the build stamp `build.sh` writes into USERCODE is read back by
+# `usercode.tcl`, before the download and after it, with the USERCODE
+# instruction from Altera's boundary-scan guide for the family, and compared
+# with the bitstream's: the part must hold this build afterwards, and the line
+# printed says whether it held it before too, in which case a download cannot
+# be told from none.
+#
+# **BECAUSE THAT READ-BACK HAS BEEN CAUGHT GIVING AN ANSWER THAT WAS NOT THE
+# PART'S.**  During the flash work it reported one build's stamp before and
+# after three downloads of differently stamped images, and reported it again
+# while the part was holding the programmer's own helper design.  Other
+# readings did follow the part: every one recorded in `docs/board.md` changed
+# with its download.  What separates a reading that follows the part from one
+# that does not is not established, so a download that has to be certain wants
+# a witness of its own, as the flash work took a full read-back of the flash
+# against the file written.  `boards/de25-nano/README.md` records both.
 #
 # **AND THE HUB'S HASH, WHICH TELLS THE TWO BUILDS OF ONE TREE APART.**  The
 # plain build and the probe's carry the same stamp when they are built from

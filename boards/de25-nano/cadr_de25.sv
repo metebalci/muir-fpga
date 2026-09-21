@@ -1477,8 +1477,8 @@ module cadr_de25 #(
   // number invented here would be a lie a program could not see through.
   localparam logic [31:0] NO_BUILD_STAMP = 32'hFFFF_FFFF;
 
-  // The display output is a later slice, so its sleep has nothing behind it
-  // and page 2's word 36 reads `UNMAPPED`.
+  // The console's wires for the display's two settings and its sleep; what a
+  // board built without the display answers is at those ports below.
   logic        con_hdmi_sleep_set, con_hdmi_wake;
   logic [14:0] con_hdmi_sleep_secs;
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
@@ -1652,17 +1652,22 @@ module cadr_de25 #(
   // `mute` moves only at a frame boundary, so the link stops and starts in
   // the blanking.
   //
-  // **WHAT IS BUILT AND NOT SHOWN.**  The board's HDMI connector has never
-  // been wired to anything.  `build/display_out.pass` and
-  // `build/display_sleep.pass` hold the raster, the fetch, the compositor,
-  // both rotations and the sleep; `build/adv7513.pass` holds what leaves the
-  // two-wire pins; `build/de25.pass` holds this wiring; and the fitter holds
-  // the rest.  No monitor has seen any of it, and the pixel clock's pin is a
-  // further open question this file does not close: `de25_nano_pins.tcl`
-  // gives it the 1.1 V standard its bank allows, and the data sheet asks at
-  // least 1.35 V of the part's video inputs.  The board vendor's own
-  // demonstration drives it the same way, and there is no schematic here to
-  // explain how.  `boards/de25-nano/README.md` records that.
+  // **WHAT IS SHOWN AND WHAT IS NOT.**  A monitor on the board's HDMI
+  // connector shows the machine's own screen, and what is typed at a keyboard
+  // at the board appears on it, which ties the pixels at the connector to the
+  // memory this block reads.  The sleep has been seen from both sides: the
+  // monitor goes into its own standby and a key at the board brings it back.
+  // What no monitor has seen here is either rotation, the output selection or
+  // the color board.  `build/display_out.pass` and `build/display_sleep.pass`
+  // hold the raster, the fetch, the compositor, both rotations and the sleep;
+  // `build/adv7513.pass` holds what leaves the two-wire pins;
+  // `build/de25.pass` holds this wiring; and the fitter holds the rest.  The
+  // pixel clock's pin is answered in practice rather than in theory:
+  // `de25_nano_pins.tcl` gives it the 1.1 V standard its bank allows, the
+  // data sheet asks at least 1.35 V of the part's video inputs, the board
+  // vendor's own demonstration drives it the same way, and there is no
+  // schematic here to explain how the two meet.  `docs/board.md` has the
+  // sessions and `boards/de25-nano/README.md` records the pin.
 `ifdef CADR_DE25_HDMI
 
   // The port's own reset is the fabric's, as everything on the memory side

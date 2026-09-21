@@ -750,8 +750,9 @@ It holds:
 their outputs low. A simulation built on them would show a dark connector
 whatever the encoder did. What stands behind the serializer is the fitter and,
 in the end, a monitor. A monitor has now been put on the connector and shows
-the machine's screen as built: 1280x1024 with the CADR's 768x963 centered in it,
-white on black. `docs/board.md` has that reading.
+the machine's own 768x963 screen in a 1280x1024 raster, white on black. That
+reading was taken on a build that centered the first display, before it was
+moved to the raster's left edge, and `docs/board.md` has it and says so.
 
 ### `arty`
 
@@ -1185,17 +1186,18 @@ are written, so a monitor that synchronizes is the evidence the program
 reached it.
 
 **The picture has been described, and a person has typed into it.** The
-monitor shows the machine's own 768 by 963 screen centered in a 1280 by 1024
-raster, white on black, with its black border rather than a picture filling the
-screen, which is this board's display as this document builds it and the same
-picture the Arty Z7-20 shows. The monitor's own menu reports the mode the
-bitstream sends. And what is typed at a USB keyboard plugged into the board
-appears on that monitor, which ties the pixels at the connector to the
-machine's own memory: the key reaches the I/O board's keyboard register, the
-machine paints its frame buffer, this block scans that memory, and the
-transmitter sends it. A recognized picture might be a stale frame or a
-coincidence of geometry; a character that appears when a key is pressed and at
-no other time cannot be.
+monitor shows the machine's own 768 by 963 screen in a 1280 by 1024 raster,
+white on black, with a black border rather than a picture filling the screen,
+and it is the same picture the Arty Z7-20 shows. That reading was taken on a
+build that centered the first display, with a border 256 columns wide on each
+side, and the first display is at the raster's left edge now. The monitor's
+own menu reports the mode the bitstream sends. And what is typed at a USB
+keyboard plugged into the board appears on that monitor, which ties the
+pixels at the connector to the machine's own memory: the key reaches the I/O
+board's keyboard register, the machine paints its frame buffer, this block
+scans that memory, and the transmitter sends it. A recognized picture might
+be a stale frame or a coincidence of geometry; a character that appears when
+a key is pressed and at no other time cannot be.
 
 **What is still not established is what leaves the connector, read from the
 board.** Nothing on the board can read that, and five signals that would say

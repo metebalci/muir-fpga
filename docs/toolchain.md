@@ -177,6 +177,10 @@ writes the build stamp into the JTAG USERCODE register, and
 `boards/de25-nano/quartus/usercode.tcl` reads it back with the USERCODE
 instruction from Altera's boundary-scan guide for the family, before the
 download and after it. The part must hold the bitstream's build afterwards.
+That read-back has since been caught reporting a stamp that was not the
+part's, so it is not on its own a witness that a download took.
+`docs/board.md` has the readings, and `boards/de25-nano/quartus/program.sh`
+says what is and is not established about them.
 
 ## Running the flows
 
