@@ -813,10 +813,11 @@ over unwritten memory, so nothing has drawn a picture on this board yet.
   supplies. See the paragraph above.
 - **The I/O board.** It is the other slave on the seam and the Unibus's
   business.
-- **The color board's picture on HDMI.** `cadr_display_out.sv` scans the
-  first board's window and nothing else. The plan on record is both screens
-  side by side on the one output, which needs a mode wider than the 1280x1024
-  driven today; nothing is built for it.
+- **The color board's picture on HDMI is built and is not this slice's.**
+  `cadr_display_out.sv` scans both windows and draws the first display at the
+  left of the raster and the color board at the right, sharing the columns in
+  the middle that 1280x1024 is too narrow to give them separately.
+  `docs/display-output.md` has the margins.
 - **The color board's own sync program is run and its raster is not**, which
   is the first board's position exactly. What a color cycle would fetch, and
   what the off-board map's converters make of a stored byte, are outside the

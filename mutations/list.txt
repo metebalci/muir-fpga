@@ -13029,52 +13029,136 @@ if {0 && $held ne $want} {
              (((v - VC_W'(RMY0)) & VC_W'(15)) == VC_W'(0));
 @end
 
-@mutation the-modes-back-porch-is-one-pixel-out
+@mutation the-rasters-back-porch-is-one-pixel-out
 @check display_out
 @file rtl/plumbing/cadr_display_out.sv
-@note The four modes' figures are one table and the board passes nothing but
-@note a column number. A back porch one pixel wide of the specification's puts
-@note the picture one pixel across and the line one pixel long, which a monitor
-@note reads as a mode it does not know.
+@note The raster's figures are VESA DMT's own for 1280x1024 at 60 Hz and the
+@note module is where they live. A back porch one pixel wider than the
+@note specification's puts the picture one pixel across and the line one pixel
+@note long, which a monitor reads as a mode it does not know.
 @note
-@note **THE MUTATION IS ON MODE 0's COLUMN, AND IT NO LONGER HAS TO BE.** The
-@note note here used to say that it did: the runner built one binary of a
-@note check and ran it with no argument, which is mode 0, while the Makefile
-@note built all of them and ran each with its own --- so a mutation aimed at
-@note another column would have survived the runner and been caught by the
-@note Makefile, a hole that looks like a finding. That hole is closed. The
-@note runner builds `display_out` once a mode and runs each with its own
-@note argument, as `build/display_out.pass` does, and
-@note `the-fourth-mode-falls-through-to-the-first` below is aimed at a column
-@note nothing but mode 3 elaborates.
+@note The check counts the raster rather than sampling it --- the pixels in a
+@note line, the enabled pixels, the sync's width and its distance from the
+@note data enable --- so one pixel in the back porch moves two of those counts.
 @old
-    parameter int unsigned H_BACK   = (MODE == 1) ?   80 : (MODE >= 2) ?  148 :  248,
+    parameter int unsigned H_BACK   =  248,
 @new
-    parameter int unsigned H_BACK   = (MODE == 1) ?   80 : (MODE >= 2) ?  148 :  249,
+    parameter int unsigned H_BACK   =  249,
 @end
 
-@mutation the-fourth-mode-falls-through-to-the-first
+@mutation the-color-board-is-centered-on-the-raster-again
 @check display_out
 @file rtl/plumbing/cadr_display_out.sv
-@note CEA-861 gives VIC 16 and VIC 34 one blanking table, so columns 2 and 3
-@note of the mode table are the same widths and differ only in the pixel
-@note clock: 148.5 MHz against 74.25, which is 1920x1080 at 60 Hz against the
-@note same picture at 30. The two columns are therefore written `MODE >= 2`,
-@note and the refusal in the module's body is what makes that exactly {2, 3}.
+@note **THIS RECORD REPLACES ONE AIMED AT A VIDEO MODE THAT NO LONGER
+@note EXISTS.** The fabric carried four modes and carries one; the record
+@note that stood here held the fourth column against falling through to the
+@note first. What the module gained in its place is where the two pictures
+@note sit, so that is what the mutations aim at now.
 @note
-@note Written `MODE == 2` instead, mode 3 falls off the end of the ternary
-@note into mode 0's figures and a bitstream built for 1920x1080 drives a
-@note 1280x1024 raster at 148.5 MHz. Nothing crashes; a monitor is told a
-@note mode that does not exist.
+@note The first display sits at the raster's left edge and the color board at
+@note its right, so the two share 64 columns in the middle and everything
+@note either of them draws can be seen. Centered instead, the color board's
+@note 576 by 454 falls WHOLLY INSIDE the first display's 768 by 963 --- so
+@note with both shown the color picture hides the middle of the machine's own
+@note screen and nothing under it can be read at all.
 @note
-@note **THIS IS THE RECORD THAT NEEDS THE RUNNER TO BUILD EVERY COLUMN.**
-@note Modes 0, 1 and 2 are untouched by it, so it is caught by the mode 3
-@note build and by nothing else --- which is the point of running them all,
-@note and is why the note above this one could once say the opposite.
+@note **AND IT IS STILL A PICTURE, WHICH IS WHY IT NEEDS A RECORD.** Both
+@note screens are drawn, both are the right way up and neither is scaled; what
+@note is wrong is only where one of them is, and that is invisible to anything
+@note that does not assert a column number. The check measures the extreme
+@note column each picture reaches, telling the two apart by their colors, and
+@note holds it to 704 and 1279.
 @old
-    parameter int unsigned H_ACTIVE = (MODE == 1) ? 1400 : (MODE >= 2) ? 1920 : 1280,
+  localparam int unsigned CX0  = H_ACTIVE - CPIC_W;
 @new
-    parameter int unsigned H_ACTIVE = (MODE == 1) ? 1400 : (MODE == 2) ? 1920 : 1280,
+  localparam int unsigned CX0  = (H_ACTIVE - CPIC_W) / 2;
+@end
+
+@mutation the-first-display-is-centered-on-the-raster-again
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note **THIS RECORD REPLACES ONE AIMED AT A REFUSAL THAT NO LONGER EXISTS.**
+@note The module's own bound on the video mode is gone with the other three
+@note modes, and so is the record that widened it.
+@note
+@note The other half of the placement, and it is not the same fault as the
+@note record above: the first display centered and the color board where it
+@note belongs leaves the pair sharing 320 columns instead of 64, so the color
+@note board covers most of the machine's screen rather than the right-hand
+@note strip of it. Each margin is held from both sides, because a check that
+@note only asserted the pair's total width would pass either of them moved by
+@note the same amount.
+@old
+  localparam int unsigned MX0  = 0;
+@new
+  localparam int unsigned MX0  = (H_ACTIVE - PIC_W) / 2;
+@end
+
+@mutation the-two-screens-share-one-column-too-many
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note **THIS RECORD REPLACES ONE AIMED AT A REFUSAL THAT NO LONGER EXISTS**,
+@note the module's bound on the video mode written one number too narrow.
+@note
+@note **THE OVERLAP IS 64 COLUMNS AND A MISTAKE OF ONE IS INVISIBLE TO A
+@note PERSON.** The color board one column to the left leaves the raster's
+@note last column black, shifts every color pixel by one, and looks exactly
+@note like the right picture to anybody who has not counted. So the check
+@note asserts the first and the LAST column of each picture rather than that
+@note they overlap: both overlap, and only one of them is right.
+@note
+@note The nibble within a word is the column modulo eight, so this also walks
+@note the color picture's pixels one place along --- which is the second thing
+@note it would take a comparison to see.
+@old
+  localparam int unsigned CX0  = H_ACTIVE - CPIC_W;
+@new
+  localparam int unsigned CX0  = H_ACTIVE - CPIC_W - 1;
+@end
+
+@mutation the-turned-color-board-is-one-column-out
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note **THIS RECORD REPLACES ONE AIMED AT THE BOARD'S REFUSAL OF A VIDEO
+@note MODE**, which went with the modes themselves.
+@note
+@note The same fault a quarter turn round, and it is a different constant:
+@note turned, the pictures are 963 and 454 wide and they share 137 columns
+@note rather than 64. A margin that was right upright and wrong turned is
+@note exactly what a check that ran one orientation would miss, and this
+@note module has two of them and three settings.
+@old
+  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H;
+@new
+  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H - 1;
+@end
+
+@mutation a-lines-bank-is-taken-at-its-first-pixel
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note **THIS RECORD REPLACES ONE AIMED AT THE BOARD'S REFUSAL WRITTEN TOO
+@note NARROW**, and it is the defect the new placement uncovered rather than
+@note an invented one.
+@note
+@note The buffer's output is registered, so the entry a pixel is drawn from is
+@note read at the edge before it and the bank that read uses is the bank in
+@note force an edge before THAT. A line's bank taken at its first pixel is
+@note therefore two pixels late, and the first two columns of every line come
+@note out of the line before it.
+@note
+@note **IT WAS INVISIBLE WHILE THE PICTURE WAS CENTERED**, because those two
+@note pixels were border: 256 columns of black stood in front of the first
+@note display's first column. The first display now begins at the raster's
+@note first column, so they are its own first two pixels, and the check found
+@note this the first time it compared the new placement.
+@note
+@note It is the constant that moves and not the test, so `LINE_TOP` stays
+@note read and lint has nothing to say: written as `hc == '0` instead, the
+@note parameter is orphaned and the compiler does the catching.
+@old
+  localparam int unsigned LINE_TOP  = H_TOTAL - 2;
+@new
+  localparam int unsigned LINE_TOP  = 0;
 @end
 
 @mutation the-output-setting-is-ignored-for-the-color-screen
@@ -13091,96 +13175,6 @@ if {0 && $held ne $want} {
   assign en_c   = cfg_sel[1];
 @new
   assign en_c   = 1'b1;
-@end
-
-# ---------------------------------------------------------------------------
-# Which board may drive which video mode.  `rtl/plumbing/cadr_display_out.sv`
-# has four and the Zynq boards have three: mode 3 is 1920x1080 at 60 Hz, whose
-# 148.5 MHz pixel clock is 1.485 Gb/s down a lane, and the serializer the Arty
-# Z7-20 makes its link with was measured to stop near 1.2.  The DE25-Nano hands
-# a parallel raster to a transmitter part and serializes nothing, so it carries
-# the column.
-#
-# **THE REFUSALS ARE WHAT THESE RECORDS ARE AIMED AT, AND EVERY ONE OF THEM IS
-# MUTATED IN BOTH DIRECTIONS.**  A bound written one number too wide accepts
-# what it should refuse; one written one number too narrow refuses what it
-# should accept; and a bound nothing reaches looks exactly like a bound that
-# works.  So each guard has a record that widens it and a record that narrows
-# it, and `build/hdmi_mode_guard.pass` has a leg for each.
-#
-# What makes this worth four records rather than a comment is what happens
-# without the guard, which was measured: with the Arty's refusal disabled the
-# whole board lints CLEAN at `HDMI_MODE=3` and elaborates a 1920x1080 raster on
-# a 53.9 MHz pixel clock.  Nothing else in the flow asks what mode that is.
-# `docs/display-output.md` has the measurement and the lane rate it turns on.
-# ---------------------------------------------------------------------------
-
-@mutation the-board-accepts-a-mode-it-cannot-clock
-@check hdmi_mode_guard
-@file boards/arty-z7-20/cadr_arty.sv
-@note The bound one number too wide: this board carries video modes 0, 1 and
-@note 2, and a refusal written `> 3` lets mode 3 through. Mode 3 is 1920x1080
-@note at 60 Hz, 148.5 MHz, 1.485 Gb/s a lane, and this board's serializer was
-@note measured to stop near 1.2.
-@note
-@note It does not fail anywhere else. The pixel clock's two MMCM dividers are
-@note a ternary chain ending in mode 0's, so an unrefused 3 takes a divide of
-@note 2 and a multiply of 8.625 and elaborates without complaint. What the
-@note fitter would probably say about the 539 MHz VCO that falls out of it is
-@note an accident of these numbers and not a guard, and a mode whose fall
-@note through landed in range would get a bitstream.
-@old
-  if (HDMI_MODE > 2) begin : g_no_such_mode_here
-@new
-  if (HDMI_MODE > 3) begin : g_no_such_mode_here
-@end
-
-@mutation the-board-refuses-a-mode-it-carries
-@check hdmi_mode_guard
-@file boards/arty-z7-20/cadr_arty.sv
-@note The same bound one number too NARROW, and it is here because a refusal
-@note that refuses everything passes the refusing half of any check that only
-@note asks whether the tool said no. Written `> 1` this board stops taking
-@note mode 2 --- CEA-861's 1920x1080 at 30 Hz, 0.74 Gb/s a lane, which it has
-@note driven --- while going on refusing mode 3 exactly as it should.
-@note
-@note So the check's allowing leg is not decoration: without it this record
-@note survives and the guard reads as correct.
-@old
-  if (HDMI_MODE > 2) begin : g_no_such_mode_here
-@new
-  if (HDMI_MODE > 1) begin : g_no_such_mode_here
-@end
-
-@mutation the-mode-table-takes-a-column-it-does-not-have
-@check hdmi_mode_guard
-@file rtl/plumbing/cadr_display_out.sv
-@note The module's own bound, one number too wide. The table has four columns
-@note and its ternaries end in mode 0's figures, so a fifth number elaborates
-@note a 1280x1024 raster in silence rather than stopping: a bitstream built
-@note for a mode nobody ever wrote, whose first reader would be a monitor.
-@note
-@note This is the general form of what mode 3 would have done before it was
-@note added, and it is worth a record of its own because the table will grow
-@note again.
-@old
-  if (MODE > 3) begin : g_no_such_mode
-@new
-  if (MODE > 4) begin : g_no_such_mode
-@end
-
-@mutation the-mode-table-refuses-a-column-it-has
-@check hdmi_mode_guard
-@file rtl/plumbing/cadr_display_out.sv
-@note And the same bound one number too narrow, which refuses mode 3 --- a
-@note column the table carries and the DE25-Nano builds. The widths are
-@note written `MODE >= 2` precisely because the refusal makes that exactly
-@note {2, 3}, so a refusal at 2 does not quietly narrow the table: it stops
-@note the build, and the check's allowing leg is what notices.
-@old
-  if (MODE > 3) begin : g_no_such_mode
-@new
-  if (MODE > 2) begin : g_no_such_mode
 @end
 
 @mutation the-disparity-moves-the-wrong-way-on-an-inverted-symbol
@@ -17045,18 +17039,27 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .restart(1'b0),
 @end
 
-@mutation de25-the-console-cannot-say-which-mode
+@mutation de25-the-wake-never-reaches-the-display
 @check de25
 @file boards/de25-nano/cadr_de25.sv
-@note The console's word 34 reporting mode 0 whatever the bitstream carries.
-@note A card that names another mode is supposed to be told which bitstream
-@note it wants, and a console that always says 0 tells it the wrong thing.
+@note **THIS RECORD REPLACES ONE AIMED AT THE CONSOLE'S VIDEO-MODE FIELD**,
+@note which went with the other three video modes: word 34 used to carry the
+@note mode the bitstream was built with, and this board used to have to tell
+@note a card which bitstream it wanted.
 @note
-@note Caught because `disp_mode` then has no reader: UNUSEDSIGNAL.
+@note What is left on that face and not held anywhere else on this board is
+@note the wake. `cadr-terminal` pulses it through the console for a key or
+@note the mouse AT THE BOARD, and it is the only thing that brings a sleeping
+@note monitor back; tied low here, the display's timer runs out and nothing
+@note ever starts it over, so the monitor goes dark and stays dark until the
+@note fabric is reset.
+@note
+@note Caught because `con_hdmi_wake` then has no reader in this
+@note configuration: UNUSEDSIGNAL.
 @old
-      .hdmi_mode(disp_mode),
+      .wake(con_hdmi_wake), .sleep_setting(disp_sleep_setting),
 @new
-      .hdmi_mode(2'd0),
+      .wake(1'b0), .sleep_setting(disp_sleep_setting),
 @end
 
 # And the band buffers' write, which is two halves with their own enables so

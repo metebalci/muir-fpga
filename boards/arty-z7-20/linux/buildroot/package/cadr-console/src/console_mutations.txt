@@ -580,33 +580,42 @@
 	    && (w3 & CADR_TALLY_MARK) == CADR_TALLY_MARK;
 @end
 
-@mutation a-1080-mode-loses-the-word-a-card-says
+@mutation the-rotation-is-read-out-of-the-wrong-bits
 @file console_face.c
-@why the card's --hdmi-mode word is looked for inside the line this program prints, so
-@why a name that drops the word leaves a card asking for that mode told it was not
-@why loaded, on the very bitstream that carries it
-@note This is the name as it stood before the two rates were given words of
-@note their own, and it is the shape of the defect somebody would reintroduce
-@note by "tidying" a name back to its resolution.  `1920x1080` is inside both
-@note 1080 names, which is why the resolution alone cannot be that word.
+@why word 34 carries two settings in one word, so where each of them sits in it is a
+@why fact the console and the fabric have to agree on; read two bits up, the rotation
+@why comes out of the word's reserved bits and a monitor stood on its side is reported
+@why upright on every board
+@note **THIS REPLACES A RECORD AIMED AT THE VIDEO MODE.**  Word 34 used to
+@note carry the mode the bitstream was built with, in the two bits this reads
+@note past, and two records here held the vocabulary a card's `--hdmi-mode`
+@note line was allowed to use.  The fabric carries one video mode now, the
+@note flag is gone and so is the field; what is left on the word is the pair
+@note of settings, and this is the one of them a shift can move.
+@note
+@note Every field stays read, so the compiler has nothing to say.
 @old
-	case CONS_HDMI_1920P30: return "1080p30, which is 1920x1080 at 30 Hz";
+	h->rotate = (int)((h->word >> CONS_HDMI_ROT_SHIFT) & CONS_HDMI_ROT_MASK);
 @new
-	case CONS_HDMI_1920P30: return "1920x1080 at 30 Hz";
+	h->rotate = (int)((h->word >> (CONS_HDMI_ROT_SHIFT + 2)) & CONS_HDMI_ROT_MASK);
 @end
 
-@mutation the-two-1080-card-words-are-swapped
+@mutation the-color-board-is-read-off-the-first-displays-bit
 @file console_face.c
-@why each of the four words must name the mode it belongs to and not merely name some
-@why mode: swapped, a card asking for 1080p30 is accepted on the bitstream that cannot
-@why be clocked by the board it was written for, which is the failure the two words
-@why exist to prevent
-@note A check that only counted how many names hold each word would pass this,
-@note which is why the mode a word names is asserted and not only the count.
+@why the two screens are two bits of word 34 and a person is told which of them the
+@why monitor is being sent; read off one bit, a board showing the first display alone
+@why is reported as showing both, and a card that turned the color board off is
+@why answered with a line saying it is on
+@note **THIS REPLACES THE SECOND OF THE TWO VIDEO-MODE RECORDS.**  The word's
+@note mode field and the card's `--hdmi-mode` vocabulary are gone with the
+@note other three modes, so what this word still asserts is where its two
+@note screens sit --- and the two bits are adjacent, which is exactly the
+@note confusion that does not look wrong in a diff.
+@note
+@note `CONS_HDMI_COLOR` stays used by the model that builds the word, so this
+@note is the check's to catch and not the compiler's.
 @old
-	case CONS_HDMI_1920P30: return "1080p30, which is 1920x1080 at 30 Hz";
-	case CONS_HDMI_1920P60: return "1080p60, which is 1920x1080 at 60 Hz";
+	h->color = (h->word & CONS_HDMI_COLOR) != 0;
 @new
-	case CONS_HDMI_1920P30: return "1080p60, which is 1920x1080 at 30 Hz";
-	case CONS_HDMI_1920P60: return "1080p30, which is 1920x1080 at 60 Hz";
+	h->color = (h->word & CONS_HDMI_FIRST) != 0;
 @end

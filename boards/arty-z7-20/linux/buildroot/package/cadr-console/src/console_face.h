@@ -315,13 +315,10 @@ enum cons_display_bit { CONS_TV_LISPM = 1u << 0, CONS_TV_COLOR = 1u << 1 };
 // for a monitor stood on its side.  Both are written at boot by the disk pack
 // program's init step, as `--tv-board` and `--color-tv` are.
 //
-// **THE MODE IS READ ONLY, AND THAT IS A FACT ABOUT AN MMCM RATHER THAN A
-// DECISION.**  A video mode is a pixel clock; the pixel clock comes from an
-// MMCM whose dividers are fixed in the bitstream; and moving one at run time
-// means rewriting the lock and filter registers that go with them, which are
-// Xilinx's own empirical values with no arithmetic behind them.  So a
-// bitstream carries one mode and this word says which one is loaded.
-// `docs/display-output.md` has the measurement.
+// The first display goes to the left of the raster and the color board to the
+// right, sharing the columns in the middle that the raster is too narrow to
+// give them separately, and where they share a column the color board is on
+// top.  `docs/display-output.md` has the margins.
 //
 // Six keys, on word 33's argument: three values and not two, so three keys and
 // no complement, each four printable bytes and none of them zero, all ones,
@@ -339,30 +336,7 @@ enum cons_display_bit { CONS_TV_LISPM = 1u << 0, CONS_TV_COLOR = 1u << 1 };
 enum cons_hdmi_bit { CONS_HDMI_FIRST = 1u << 0, CONS_HDMI_COLOR = 1u << 1 };
 #define CONS_HDMI_ROT_SHIFT   2
 #define CONS_HDMI_ROT_MASK    3u
-#define CONS_HDMI_MODE_SHIFT  4
-#define CONS_HDMI_MODE_MASK   3u
 enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 };
-// The four modes a bitstream can carry, in the order `HDMI_MODE` names them.
-//
-// **TWO OF THEM ARE 1920x1080 AND THE NAMES SAY WHICH.**  CEA-861 gives VIC 34
-// and VIC 16 one blanking table, 2200 by 1125, and tells them apart by the
-// pixel clock: 74.25 MHz is 30 Hz and 148.5 is 60.  So the resolution alone no
-// longer names a mode, and the two are `1080p30` and `1080p60`.  Those are the
-// words a card's `--hdmi-mode` line says as well, because a mode has one name
-// here and `cons_hdmi_mode_name` is where it is written; `1920x1080` alone
-// names neither of them and a card saying it is refused.
-//
-// **AND ONLY THE DE25-NANO CARRIES THE 60 Hz ONE.**  A board that serializes
-// the link in its own fabric stops near 1.2 Gb/s a lane and that mode wants
-// 1.485, so the Zynq boards refuse it when the bitstream is built.  Nothing
-// here can be asked for: the mode is read only, and what this enumeration is
-// for is saying which bitstream is loaded.
-enum cons_hdmi_mode {
-	CONS_HDMI_1280    = 0,
-	CONS_HDMI_1400    = 1,
-	CONS_HDMI_1920P30 = 2,
-	CONS_HDMI_1920P60 = 3
-};
 
 // **AND WHETHER THE BOARD'S ACTIVITY LAMPS BLINK, page 2's word 35.**
 //
@@ -853,7 +827,6 @@ struct cons_hdmi {
 	int first;		/* the first display goes to the monitor */
 	int color;		/* the color board does */
 	int rotate;		/* `enum cons_hdmi_rot` */
-	int mode;		/* `enum cons_hdmi_mode`, read only */
 };
 
 void cons_read_hdmi(struct console *c, struct cons_hdmi *h);
@@ -866,8 +839,6 @@ void cons_say_hdmi(const struct cons_hdmi *h);
 // writes nothing and returns -1.
 int cons_set_hdmi_output(struct console *c, int first, int color);
 int cons_set_hdmi_rotate(struct console *c, int rot);
-// The mode's own name, for a program printing what a bitstream carries.
-const char *cons_hdmi_mode_name(int mode);
 
 // --- whether the activity lamps blink, page 2's word 35 --------------------
 

@@ -24,16 +24,9 @@
 # **`HDMI=1` BUILDS THE DISPLAY OUTPUT INTO THE MEMORY BOARD**: the CADR's two
 # screens read out of the machine's memory and put on the board's ADV7513, as
 # `HDMI=1` does for the Arty Z7-20.  It needs `DDR=1`, because the picture is
-# in the machine's memory.  `HDMI_MODE` is which of the four video modes the
-# bitstream carries --- 0 is 1280x1024 at 60 Hz, 1 is 1400x1050 reduced
-# blanking at 60, 2 is 1920x1080 at 30, 3 is 1920x1080 at 60 --- and the mode
-# is a build and not a setting for the reason `docs/display-output.md` gives.
-# **MODE 3 IS THIS BOARD'S AND NOT THE ARTY Z7-20'S**, because that board
-# serializes the link in fabric where a lane stops near 1.2 Gb/s and this one
-# hands a parallel raster to a transmitter part.  That build goes to
-# `build/de25-ddr-hdmi/`, and it generates a SECOND I/O PLL for the pixel
-# clock, because no counter of the board's 50 MHz gives both the machine's
-# tick and a pixel clock.
+# in the machine's memory.  That build goes to `build/de25-ddr-hdmi/`, and it
+# generates a SECOND I/O PLL for the pixel clock, because no counter of the
+# board's 50 MHz gives both the machine's tick and a pixel clock.
 #
 # **`PROBE_DEPTH` BUILDS THE INSTRUMENTED BOARD INSTEAD**, as it does for the
 # Zynq boards: the machine with `rtl/plumbing/cadr_probe.sv` holding its first
@@ -137,24 +130,19 @@ if [ "$ddr" -eq 1 ]; then
     out=$out-ddr
 fi
 
-# The display output, or not, and which video mode it carries.  **THE FOUR
-# PIXEL CLOCKS ARE THE SPECIFICATIONS' OWN**, and they are written here
-# because this is where the PLL is asked for them: VESA DMT's 1280x1024 at
-# 60 Hz is 108 MHz, CVT reduced blanking's 1400x1050 at 60 is 101 MHz,
-# CEA-861's VIC 34 at 1920x1080 and 30 is 74.25 MHz, and its VIC 16 at
-# 1920x1080 and 60 is 148.5.  The same four are the parameter table in
-# `rtl/plumbing/cadr_display_out.sv`, which carries the raster's own widths
-# beside them, and `tb/cadr_display_out_tb.cpp` carries a third transcription
-# and compares against it; what is here is only the frequency the clock
-# generator is asked to make.
+# The display output, or not.  **THE PIXEL CLOCK IS THE SPECIFICATION'S OWN**,
+# and it is written here because this is where the PLL is asked for it: VESA
+# DMT's 1280x1024 at 60 Hz is 108 MHz.  The raster's own widths are in
+# `rtl/plumbing/cadr_display_out.sv` and `tb/cadr_display_out_tb.cpp` carries
+# a third transcription and compares against it; what is here is only the
+# frequency the clock generator is asked to make.
 #
 # **AND THE TRANSMITTER'S OWN CEILING IS HELD HERE, AT 165 MHz.**  The
 # ADV7513's data sheet in the board's resource package --- Rev. B, page 3 of
 # 12, Table 1 under AC SPECIFICATIONS --- gives its Input Video Clock
 # Frequency a maximum of 165 MHz and its TMDS Output Clock Frequency 20 to
-# 165 MHz, and its first page says 165 MHz supports all video formats up to
-# 1080p.  148.5 is inside it.  The bound is written out rather than left
-# implied because the next mode somebody adds is the one it is for, and
+# 165 MHz.  108 is inside it.  The bound is written out rather than left
+# implied because it is the part's and not this design's, and
 # `sta_check.tcl` holds the same number against what the PLL actually made
 # rather than against what it was asked for.
 hdmi=${HDMI:-0}
@@ -162,16 +150,10 @@ case $hdmi in
     0|1) ;;
     *) refuse "HDMI is '$hdmi'; it is 0, no display output, or 1, with it" ;;
 esac
-hdmi_mode=${HDMI_MODE:-0}
-case $hdmi_mode in
-    0) pixel_mhz=108.0  ; mode_words="1280x1024 at 60 Hz" ;;
-    1) pixel_mhz=101.0  ; mode_words="1400x1050 reduced blanking at 60 Hz" ;;
-    2) pixel_mhz=74.25  ; mode_words="1920x1080 at 30 Hz" ;;
-    3) pixel_mhz=148.5  ; mode_words="1920x1080 at 60 Hz" ;;
-    *) refuse "HDMI_MODE is '$hdmi_mode'; it is 0, 1, 2 or 3" ;;
-esac
+pixel_mhz=108.0
+mode_words="1280x1024 at 60 Hz"
 if [ "$(awk -v p="$pixel_mhz" 'BEGIN { print (p > 165.0) ? 1 : 0 }')" = 1 ]; then
-    refuse "mode $hdmi_mode asks $pixel_mhz MHz of the pixel clock, and the ADV7513 takes 165 MHz at most (data sheet Rev. B, Table 1, Input Video Clock Frequency)"
+    refuse "the video mode asks $pixel_mhz MHz of the pixel clock, and the ADV7513 takes 165 MHz at most (data sheet Rev. B, Table 1, Input Video Clock Frequency)"
 fi
 if [ "$hdmi" -eq 1 ]; then
     [ "$ddr" -eq 1 ] || refuse "HDMI=1 needs DDR=1: the display reads the machine's memory"
@@ -193,7 +175,7 @@ if [ "$ddr" -eq 1 ]; then
     say "the processor and its memory are in this build: LPDDR4 at $mhz MHz, into $out"
 fi
 if [ "$hdmi" -eq 1 ]; then
-    say "the display output is in this build: mode $hdmi_mode, $mode_words, a pixel clock of $pixel_mhz MHz, into $out"
+    say "the display output is in this build: $mode_words, a pixel clock of $pixel_mhz MHz, into $out"
 fi
 rm -rf "$out"
 mkdir -p "$out/ip" "$out/tmp"
@@ -313,7 +295,7 @@ fi
 
 # ------------------------------------------------------- 2. the project
 step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" \
-    HDMI_MODE="$hdmi_mode" DE25_HPS_BOOT="$hps_boot" \
+    DE25_HPS_BOOT="$hps_boot" \
     "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
 # **AND THE PROCESSOR SYSTEM, ON THE MEMORY BOARD.**  `qsys-script` builds it

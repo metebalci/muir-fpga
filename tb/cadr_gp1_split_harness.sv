@@ -319,7 +319,7 @@ module cadr_gp1_split_harness #(
       // that is not there holds.
       .tv_lispm(tv_lispm), .color_tv(color_tv), .tv_map_a(tv_map_a),
       .tv_map_q(24'd0), .tv_color_map_q(24'd0),
-      .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate), .hdmi_mode(2'd0),
+      .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate),
       .steady_lamps(steady_lamps),
       .hdmi_sleep_set(hdmi_sleep_set), .hdmi_sleep_secs(hdmi_sleep_secs),
       .hdmi_wake(hdmi_wake), .hdmi_sleep_fitted(1'b0),

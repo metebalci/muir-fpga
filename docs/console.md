@@ -175,22 +175,11 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  up.**  Six keys: three for the screens --- the first
                  display, the color board, or both --- and three for the
                  rotation.  It reads back a marker of `HD` in the top half,
-                 the mode the FABRIC WAS BUILT WITH in bits 5 and 4, the
-                 rotation in bits 3 and 2, and the two screens in bits 1 and
-                 0.  **The mode is read only**: a video mode is a pixel clock
-                 and a pixel clock comes from a clock manager whose dividers
-                 are fixed in the bitstream, so a bitstream carries one mode
-                 and this says which one is loaded.  Two bits, and there are
-                 four modes: 0 is 1280x1024 at 60 Hz, 1 is 1400x1050 reduced
-                 blanking at 60, 2 is 1080p30 and 3 is 1080p60, which are
-                 1920x1080 at 30 Hz and at 60.  The last two carry their rate
-                 because the resolution alone names neither of them, and those
-                 are the words a card's `--hdmi-mode` line says as well.
-                 **Only the DE25-Nano can carry mode 3**, because a board
-                 that serializes the link in its own fabric cannot reach that
-                 pixel clock; the Zynq boards refuse it when the bitstream is
-                 built.  `docs/display-output.md` has the measurement behind
-                 that
+                 the rotation in bits 3 and 2, and the two screens in bits 1
+                 and 0.  The first display is drawn at the left of the
+                 monitor and the color board at the right, and where they
+                 share a column the color board is on top;
+                 `docs/display-output.md` has the margins
     35 LAMPS    **whether the board's activity lamps blink or hold a
                  level.**  A write of `LAMP_STEADY_KEY`, "STDY", makes them
                  steady, `--no-blinking-leds`; a write of its complement makes
@@ -1368,7 +1357,7 @@ machine's own reset arms read, at the same edges, so the two cannot disagree.
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
 `start`, `boot`, `step N`, `regs`, `status`, `ident`, `switch`, `debug-cable`,
 `debug-cable-connect`, `debug-cable-disconnect`, `debug-cable-wiring`,
-`tv-board`, `color-tv`, `hdmi-output`, `hdmi-rotate`, `hdmi-mode`,
+`tv-board`, `color-tv`, `hdmi-output`, `hdmi-rotate`,
 `hdmi-sleep`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
 `read`, `write`, `examine` and `deposit`. Its `help` says what each does.  It
 also takes `--version`, which names which build the PROGRAM is and touches no
@@ -1496,13 +1485,12 @@ without; and the fan-out stream reaching every destination and counting against
 the cap. One equivalence is recorded in the list rather than left to be found:
 clearing the rotated file's size is written over by the next line's `ftell`.
 
-**Two of them hold the modes' names**, which is the card's vocabulary as well
-as this program's. One takes the word `1080p30` back out of mode 2's name,
-which is how that name stood before the two rates were given words of their
-own; the check then reports that the card's word is inside none of the four
-names. The other swaps the two 1080 words between the modes they belong to,
-which a check that only counted the names holding each word would pass, and is
-why the mode each word names is asserted and not only the count.
+**Two of them hold word 34's two fields against each other.** One reads the
+rotation two bits up, out of the word's reserved bits, so a monitor stood on
+its side is reported upright; the other reads the color board off the first
+display's bit, so a board showing one screen is said to be showing both. The
+two screens are adjacent bits and the rotation is next to them, which is the
+confusion that does not look wrong in a diff.
 
 **The eight mutations below were applied BY HAND** before that runner existed,
 to a scratch copy and reverted, and this table is the record of them. They are

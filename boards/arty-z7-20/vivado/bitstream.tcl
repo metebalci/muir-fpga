@@ -200,35 +200,6 @@ set prove [expr {[info exists ::env(PROVE)] ? $::env(PROVE) : 0}]
 #
 #     DDR=1 HDMI=1 OUTDIR=build/hdmi vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
 set hdmi [expr {[info exists ::env(HDMI)] ? $::env(HDMI) : 0}]
-# **AND WHICH VIDEO MODE IT DRIVES, `HDMI_MODE`.**  A video mode is a pixel
-# clock and a pixel clock comes from an MMCM, whose dividers are fixed in the
-# bitstream; `boards/arty-z7-20/cadr_arty.sv` says at the parameter why that
-# cannot be moved at run time, and `docs/display-output.md` has the two
-# measurements behind it.  So the mode is chosen here and the console reports
-# which one the fabric is.
-#
-#   0  VESA DMT 1280x1024 at 60 Hz      1.08 Gb/s a lane
-#   1  CVT reduced blanking 1400x1050   1.01 Gb/s a lane
-#   2  CEA-861 1920x1080 at 30 Hz       0.74 Gb/s a lane
-#
-# **AND THREE AND NOT FOUR.**  `rtl/plumbing/cadr_display_out.sv` carries a
-# fourth column, CEA-861's VIC 16 at 1920x1080 and 60 Hz, and this board
-# cannot drive it: 148.5 MHz is 1.485 Gb/s a lane and the serializer that
-# makes the link here was measured to stop near 1.2.  It is the DE25-Nano's,
-# where the fabric serializes nothing.  `boards/arty-z7-20/cadr_arty.sv`
-# refuses it at elaboration too, which is the refusal that cannot be gone
-# round; this one is only the earlier and friendlier of the two.
-#
-#     DDR=1 HDMI=1 HDMI_MODE=2 OUTDIR=build/hdmi1080 vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
-set hdmi_mode [expr {[info exists ::env(HDMI_MODE)] ? $::env(HDMI_MODE) : 0}]
-if {$hdmi_mode != 0 && $hdmi_mode != 1 && $hdmi_mode != 2} {
-    puts "BIT: FAILED --- HDMI_MODE=$hdmi_mode is not a mode this board has."
-    puts "BIT: 0 is 1280x1024, 1 is 1400x1050 reduced blanking, 2 is"
-    puts "BIT: 1920x1080 at 30 Hz. Mode 3, 1920x1080 at 60 Hz, wants a lane"
-    puts "BIT: rate of 1.485 Gb/s and this board's serializer stops near 1.2,"
-    puts "BIT: so that mode is the DE25-Nano's. See docs/display-output.md."
-    exit 1
-}
 # **THE SECOND DISPLAY BOARD, `LMTV=1`.**  MIT's color TV --- `lmtv.order`'s
 # "for the color TV, x is 5" --- a second `rtl/machine/cadr_tv.sv` strapped to
 # 0o17200000 with its control words at 0o17377750, its frame buffer a second
@@ -296,7 +267,6 @@ synth_design -top cadr_arty -part $part \
     -generic DDR=$ddr \
     -generic PROVE=$prove \
     -generic HDMI=$hdmi \
-    -generic HDMI_MODE=$hdmi_mode \
     -generic LMTV=$lmtv
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
@@ -414,8 +384,8 @@ if {$hdmi > 0} {
         }
         set hdmi_sleep [concat $hdmi_sleep $found]
     }
-    puts "BIT: the display's clocks are grouped apart from the machine's, mode"
-    puts "BIT: $hdmi_mode, and [llength $hdmi_cross] register(s) of the fetch job,"
+    puts "BIT: the display's clocks are grouped apart from the machine's, and"
+    puts "BIT: [llength $hdmi_cross] register(s) of the fetch job,"
     puts "BIT: [llength $hdmi_map] of the color map's round trip and [llength $hdmi_sleep]"
     puts "BIT: of the sleep timer's two levels are bounded"
 }

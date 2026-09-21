@@ -148,9 +148,8 @@ struct model {
 	int display_deaf_to_the_key;	/* a fabric that takes any value */
 	int display_unmarked;		/* a fabric older than word 33 */
 	// **AND WHAT THE DISPLAY OUTPUT SHOWS**, page 2's word 34: which
-	// screens go to the monitor and which way up, and the mode the
-	// bitstream carries, which nothing here can move.
-	int hdmi_first, hdmi_color, hdmi_rot, hdmi_mode;
+	// screens go to the monitor, and which way up.
+	int hdmi_first, hdmi_color, hdmi_rot;
 	int hdmi_unmarked;		/* a fabric older than word 34 */
 	// **AND WHETHER THE LAMPS BLINK**, page 2's word 35.
 	int lamps_steady;
@@ -280,7 +279,6 @@ static uint32_t model_read(struct console *c, unsigned word)
 		return m->hdmi_unmarked
 			   ? 0u
 			   : ((uint32_t)CONS_HDMI_MARK << 16)
-				 | ((uint32_t)m->hdmi_mode << CONS_HDMI_MODE_SHIFT)
 				 | ((uint32_t)m->hdmi_rot << CONS_HDMI_ROT_SHIFT)
 				 | (m->hdmi_color ? CONS_HDMI_COLOR : 0u)
 				 | (m->hdmi_first ? CONS_HDMI_FIRST : 0u);
@@ -560,14 +558,10 @@ static void model_init(struct model *m)
 	// nothing would answer with.
 	m->tv_lispm = 0;
 	m->color_tv = 0;
-	// A board comes up showing the first display, upright, and this model
-	// is a bitstream built for the middle mode --- which is not the
-	// fabric's default, so that a program printing "1280x1024" from a
-	// constant rather than from the word would be caught.
+	// A board comes up showing the first display, upright.
 	m->hdmi_first = 1;
 	m->hdmi_color = 0;
 	m->hdmi_rot = CONS_HDMI_UPRIGHT;
-	m->hdmi_mode = CONS_HDMI_1400;
 	m->hdmi_unmarked = 0;
 	// And the lamps blink, which is what every board comes up with.
 	m->lamps_steady = 0;
@@ -2231,96 +2225,6 @@ static void check_hdmi(void)
 		CHECK(h.first == 1, "a board came up not showing the first display");
 		CHECK(h.color == 0, "a board came up showing the color board");
 		CHECK(h.rotate == CONS_HDMI_UPRIGHT, "a board came up rotated");
-		CHECK(h.mode == CONS_HDMI_1400, "the mode read %d, and the model is built for %d",
-		      h.mode, CONS_HDMI_1400);
-	}
-	// **THE FOUR NAMES, AND NONE OF THEM INSIDE ANOTHER.**  `cadr-console
-	// hdmi-mode` prints a name and `S80cadr-disk-packs` compares the card's
-	// `--hdmi-mode` word against that line as a SUBSTRING, so a mode whose
-	// name contains another mode's name would make a card asking for the
-	// shorter one match a bitstream carrying the longer.  Two of the four
-	// are 1920x1080 and are told apart only by their rate, which is where
-	// this stops being a formality.
-	{
-		static const int modes[] = {
-			CONS_HDMI_1280, CONS_HDMI_1400,
-			CONS_HDMI_1920P30, CONS_HDMI_1920P60
-		};
-		size_t i, j;
-		for (i = 0; i < sizeof modes / sizeof modes[0]; i++) {
-			const char *a = cons_hdmi_mode_name(modes[i]);
-			CHECK(strcmp(a, cons_hdmi_mode_name(-1)) != 0,
-			      "mode %d has no name of its own", modes[i]);
-			for (j = 0; j < sizeof modes / sizeof modes[0]; j++) {
-				const char *b = cons_hdmi_mode_name(modes[j]);
-				if (i == j)
-					continue;
-				CHECK(strstr(b, a) == NULL,
-				      "the name of mode %d, \"%s\", is inside the"
-				      " name of mode %d, \"%s\"",
-				      modes[i], a, modes[j], b);
-			}
-		}
-	}
-	// **AND THE CARD'S FOUR WORDS, EACH INSIDE EXACTLY ONE OF THE NAMES.**
-	// The check above says no name swallows another, which is about the
-	// names; this one is about the words a card may write on the
-	// `--hdmi-mode` line, and it is the stronger claim.  The card says a
-	// word, `S80cadr-disk-packs` looks for it in the line the console
-	// prints, and a word in two names would make a card that asked for one
-	// mode accept a bitstream carrying the other WITHOUT SAYING SO --- which
-	// is what a flag that asks rather than sets exists to prevent.  So each
-	// word must name one mode and no other, and the mode it names is
-	// asserted rather than only the count.
-	{
-		static const struct { const char *word; int mode; } words[] = {
-			{ "1280x1024", CONS_HDMI_1280 },
-			{ "1400x1050", CONS_HDMI_1400 },
-			{ "1080p30",   CONS_HDMI_1920P30 },
-			{ "1080p60",   CONS_HDMI_1920P60 }
-		};
-		static const int modes[] = {
-			CONS_HDMI_1280, CONS_HDMI_1400,
-			CONS_HDMI_1920P30, CONS_HDMI_1920P60
-		};
-		size_t i, j;
-		for (i = 0; i < sizeof words / sizeof words[0]; i++) {
-			int found = 0;
-			for (j = 0; j < sizeof modes / sizeof modes[0]; j++) {
-				if (strstr(cons_hdmi_mode_name(modes[j]), words[i].word) == NULL)
-					continue;
-				++found;
-				CHECK(modes[j] == words[i].mode,
-				      "the card's word \"%s\" is inside the name of"
-				      " mode %d, \"%s\", and it names mode %d",
-				      words[i].word, modes[j],
-				      cons_hdmi_mode_name(modes[j]), words[i].mode);
-			}
-			CHECK(found == 1,
-			      "the card's word \"%s\" is inside %d of the four names"
-			      " and it must be inside exactly one",
-			      words[i].word, found);
-		}
-	}
-	// **AND `1920x1080` IS INSIDE TWO OF THEM, WHICH IS WHY A CARD MAY NOT
-	// SAY IT.**  This is the control for the case above and it is asserted
-	// rather than assumed: the refusal in `S80cadr-disk-packs` names that
-	// word, and a check that only required the four good words to work would
-	// pass just as well on names where the bare word was unambiguous and the
-	// refusal was reachable by nothing.
-	{
-		static const int modes[] = {
-			CONS_HDMI_1280, CONS_HDMI_1400,
-			CONS_HDMI_1920P30, CONS_HDMI_1920P60
-		};
-		size_t j;
-		int found = 0;
-		for (j = 0; j < sizeof modes / sizeof modes[0]; j++)
-			if (strstr(cons_hdmi_mode_name(modes[j]), "1920x1080") != NULL)
-				++found;
-		CHECK(found == 2,
-		      "\"1920x1080\" is inside %d of the four names; the card's"
-		      " refusal of it says it is inside two", found);
 	}
 	// The three screen keys, each leaving the rotation alone.
 	cons_set_hdmi_rotate(&c, CONS_HDMI_CW);

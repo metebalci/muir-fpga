@@ -1876,9 +1876,16 @@ read the monitor's EDID.
 
 ### What should appear
 
-The machine's own screen, 768 by 963, centered in a 1280 by 1024 raster with a
-black border 256 pixels wide on each side and about 30 rows deep above and
-below. White on black.
+The machine's own screen, 768 by 963, at the LEFT of a 1280 by 1024 raster:
+columns 0 to 767, rows 30 to 992, with 512 columns of black to the right of it
+and about 30 rows above and below. White on black. With a color board fitted
+and `--hdmi-output both` on the card, the color screen's 576 by 454 sits at the
+right of the same raster, columns 704 to 1279, over the first display in the 64
+columns they share.
+
+**The sessions recorded below were taken on a build that centered the first
+display**, with a border 256 columns wide on each side, and they describe what
+was on the monitor then.
 
 The board takes about fifteen seconds to boot Linux and the CADR takes a while
 longer to load its microcode off the pack and paint anything, so the first
@@ -2549,8 +2556,7 @@ on this board.
 
 **The serial line on this board has still carried nothing.** The second display
 board, the two rotations and the output selection are all built and none of
-them has been seen here. The only mode a monitor has seen on this board is
-1280x1024 at 60 Hz.
+them has been seen here.
 
 ### What this settles, and what it does not
 

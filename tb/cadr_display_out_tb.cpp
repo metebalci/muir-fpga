@@ -32,39 +32,41 @@
 // different in all three channels, so that a channel order the other way round,
 // a map applied to the wrong screen and an index off by one are all visible.
 //
-// THE MODE IS THE BINARY'S, and `argv[1]` says which: the raster's figures are
-// parameters of the module and four builds carry the four. The table below is
-// transcribed from the specifications rather than from the module, which is
-// what makes comparing it worth anything.
+// THE RASTER IS VESA DMT's 1280x1024 at 60 Hz, transcribed below from the
+// specification rather than from the module, which is what makes comparing it
+// worth anything.
 //
-// **MODE 3 IS MODE 2'S RASTER AT TWICE THE PIXEL CLOCK, AND THAT IS WHY IT IS
-// RUN AT ALL.**  CEA-861's VIC 16 and its VIC 34 are the same 2200 by 1125
-// grid; what tells them apart is 148.5 MHz against 74.25, which is 60 Hz
-// against 30.  So the two elaborate the same widths and the check that matters
-// for the new column is not the geometry but the ratio between the two clocks:
-// mode 3 gives the memory side the SHORTEST line of the four --- 2200 pixels
-// at 148.5 MHz is 14.81 us, against mode 0's 15.63 --- and this file runs the
-// memory side at its own 10.000 ns whatever the raster does.  A mode that
-// asked more of the port than the port can give shows here as the underrun
-// this check already knows how to see.
+// **AND WHERE EACH PICTURE SITS IS ASSERTED AS A FIRST AND A LAST COLUMN AND
+// NOT AS AN OVERLAP.**  The first display is at the raster's left edge and the
+// color board at its right, so the two overlap by 768 + 576 - 1280 = 64
+// columns upright and by 963 + 454 - 1280 = 137 turned. An overlap of 64 is
+// small enough that a margin one pixel out is invisible to a person and fatal
+// to a comparison, so this measures the extreme columns and rows each picture
+// actually reaches --- recovered from the pixels as everything else here is
+// --- and holds each of the eight to its own number. The two screens are told
+// apart by their colors: the first display draws only black and white, the
+// color board only entries of a map with no channel zero and none of them
+// 0xFF, so a white pixel is the first display's and a map entry is the color
+// board's, whichever is drawn over which.
 //
 // The configurations:
 //
 //   A  mono upright, the port at its ordinary speed.  A whole frame compared
 //      pixel for pixel, the raster's own figures counted rather than sampled,
-//      and every burst's shape asserted.  RUN FOR ALL FOUR MODES.
+//      and every burst's shape asserted.
 //   B  the port slowed until it cannot keep up.  **A STIMULUS FAST ENOUGH
 //      HIDES THE RACE IT EXISTS TO SHOW**: at the real speed the fetcher is a
 //      whole line ahead and the underrun path is dead code no mutation can
 //      reach.  Slowed, the raster must report it and show black.
 //   C  the color board alone, upright: four-bit pixels through the map.
-//   D  both, upright: the color screen drawn OVER the first display.
+//   D  both, upright: the color screen drawn OVER the first display where the
+//      64 columns of overlap are.
 //   E  the first display alone, a quarter turn clockwise.
 //   F  the first display alone, a quarter turn the other way.
-//   G  both, rotated: the overlap and the two band sizes at once.
-//
-// B to G run on the default mode, because what they hold is the compositor and
-// the band fetch rather than the raster, and those do not change with the mode.
+//   G  both, rotated: the 137 columns of overlap and the two band sizes at
+//      once.
+//   H  the color board alone, a quarter turn clockwise, which is the one
+//      placement no other configuration puts an edge on.
 
 #include <cstdarg>
 #include <cstdint>
@@ -80,38 +82,17 @@
 
 namespace {
 
-// The four modes, from their own specifications.  `docs/display-output.md`
-// has the arithmetic; these are the figures it arrives at.
-struct ModeSpec {
-  int ha, hf, hs, hb;
-  int va, vf, vs, vb;
-  int hpos, vpos;
-  uint64_t pclk_half_ps;   // the board's own pixel clock, to the picosecond
-  const char *name;
-};
-const ModeSpec kModes[4] = {
-    {1280, 48, 112, 248, 1024, 1, 3, 38, 1, 1, 4638,
-     "VESA DMT 1280x1024 at 60 Hz"},
-    // Reduced blanking: 160 pixels of horizontal blanking whatever the width,
-    // and the one mode of the four whose VSYNC is negative --- which is the
-    // pair a sink reads reduced blanking by.
-    {1400, 48, 32, 80, 1050, 3, 4, 23, 1, 0, 4961,
-     "CVT reduced blanking 1400x1050 at 60 Hz"},
-    {1920, 88, 44, 148, 1080, 4, 5, 36, 1, 1, 6737,
-     "CEA-861 VIC 34, 1920x1080 at 30 Hz"},
-    // **THE SAME GRID AS THE ONE ABOVE AND TWICE ITS CLOCK.**  CEA-861 gives
-    // VIC 16 and VIC 34 one blanking table between them --- 2200 by 1125,
-    // both syncs positive --- and 148.5 MHz over 2,475,000 is 60 Hz exactly,
-    // where 74.25 is 30.  The half period is 3367 ps, which is 1/297 GHz
-    // rounded to the picosecond this timeline counts in.
-    {1920, 88, 44, 148, 1080, 4, 5, 36, 1, 1, 3367,
-     "CEA-861 VIC 16, 1920x1080 at 60 Hz"},
-};
-
-int M = 0;                       // which mode this binary was built for
-int HA, HF, HS, HB, VA, VF, VS, VB, HT, VT;
-int HPOS, VPOS;
-uint64_t kPclkHalf;
+// The raster, from VESA DMT's own figures for 1280x1024 at 60 Hz: active,
+// front porch, sync, back porch, and both syncs positive.
+// `docs/display-output.md` has the arithmetic these come out of.
+constexpr int HA = 1280, HF = 48, HS = 112, HB = 248;
+constexpr int VA = 1024, VF = 1, VS = 3, VB = 38;
+constexpr int HT = HA + HF + HS + HB;   // 1688
+constexpr int VT = VA + VF + VS + VB;   // 1066
+constexpr int HPOS = 1, VPOS = 1;
+// The board's own pixel clock, to the picosecond: 1688 x 1066 x 59.92 Hz.
+constexpr uint64_t kPclkHalf = 4638;
+constexpr const char *kModeName = "VESA DMT 1280x1024 at 60 Hz";
 
 // The two screens: muir's `WIDTH`/`HEIGHT`/`WORDS_PER_LINE` and its
 // `COLOR_*` counterparts.
@@ -125,7 +106,32 @@ constexpr uint32_t kCBase = 0x1C020000u;
 constexpr int kOutstanding = 8;
 
 // Where each picture sits, upright and rotated.
-int MX0, MY0, CX0, CY0, RMX0, RMY0, RCX0, RCY0;
+//
+// **THE TWO PICTURES ARE PUSHED TO THE RASTER'S TWO SIDES**: the first
+// display's left edge is the raster's left edge and the color board's right
+// edge is the raster's right edge, so the two overlap in the middle by exactly
+// as much as the raster is too narrow to hold them side by side.  Vertically
+// each is centered on its own, an odd margin losing its half pixel at the
+// bottom.
+//
+// That is the rule written out here.  `main` holds the eight numbers it gives
+// against the figures `docs/display-output.md` states, which is a third
+// transcription; and every configuration then measures the extreme column and
+// row the picture actually reached and holds that to the same eight.
+constexpr int MX0 = 0,         MY0 = (VA - kPicH) / 2;
+constexpr int CX0 = HA - kCW,  CY0 = (VA - kCH) / 2;
+constexpr int RMX0 = 0,        RMY0 = (VA - kPicW) / 2;
+constexpr int RCX0 = HA - kCH, RCY0 = (VA - kCW) / 2;
+
+// The rectangle a screen covers for a given rotation: first column, first row,
+// width, height.  Rotated, the picture's width and height change places.
+struct Rect { int x0, y0, w, h; };
+Rect MonoRect(int rot) {
+  return rot == 0 ? Rect{MX0, MY0, kPicW, kPicH} : Rect{RMX0, RMY0, kPicH, kPicW};
+}
+Rect ColorRect(int rot) {
+  return rot == 0 ? Rect{CX0, CY0, kCW, kCH} : Rect{RCX0, RCY0, kCH, kCW};
+}
 
 constexpr uint64_t kClkHalf = 5000;   // 100 MHz
 
@@ -146,7 +152,22 @@ void Fail(const char *fmt, ...) {
 // a bijection on 32 bits, so no two words of a window share a value --- and the
 // two windows use different constants, so no word of one can be a word of the
 // other.
-uint32_t PoisonM(uint32_t w) { return 0xF0000000u ^ (w * 2654435761u); }
+//
+// **THE FIRST DISPLAY'S POISON THEN FOLDS ITS TOP HALF INTO ITS BOTTOM, WHICH
+// IS ALSO A BIJECTION AND IS NOT DECORATION.**  A line is 24 words, and 24 is
+// eight times three, so the words at the start of a line have a word index that
+// is a multiple of eight; multiplied by an odd constant those keep three zero
+// bits at the bottom, and column 0, column 1 and column 2 of the picture were
+// therefore DARK IN EVERY ROW.  That is fine for comparing pixels and fatal for
+// measuring where a picture begins, which is what the placement is held by
+// below --- and the first display's first column is now the raster's first
+// column, so it was exactly the edge that could not be seen.  `x ^ (x >> 16)`
+// is its own inverse, so the composition is still a bijection and no two words
+// share a value.
+uint32_t PoisonM(uint32_t w) {
+  const uint32_t x = 0xF0000000u ^ (w * 2654435761u);
+  return x ^ (x >> 16);
+}
 uint32_t PoisonC(uint32_t w) { return 0x0F0F0F0Fu ^ (w * 2246822519u); }
 
 uint32_t WordAt(uint32_t byte_addr) {
@@ -372,36 +393,76 @@ struct Monitor {
   std::set<long> frame_lengths, vs_widths, active_per_frame;
 };
 
+// ------------------------------------------------- where a picture reached
+//
+// The extreme column and row a screen's own pixels reached, measured from the
+// output alone.  **THE TWO SCREENS ARE TOLD APART BY THEIR COLORS AND NOT BY
+// WHERE THEY ARE**, so this says nothing about the margins it is used to
+// check: the first display draws 0xFFFFFF or nothing, and every entry of the
+// map this check offers has three unequal channels, none of them zero and none
+// 0xFF, so no map entry is white or black.
+struct Extent {
+  int x0 = 1 << 30, x1 = -1, y0 = 1 << 30, y1 = -1;
+  long n = 0;
+  void Note(int x, int y) {
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+    ++n;
+  }
+};
+
+std::set<uint32_t> gMapColors;
+
 struct Result {
   long underruns = 0, compared = 0, mono_beats = 0, color_beats = 0;
   long black_lines = 0, bursts = 0;
   size_t max_in_flight = 0;
+  Extent mono, color;
 };
 
 }  // namespace
 
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
-  if (argc > 1) M = std::atoi(argv[1]);
-  if (M < 0 || M > 3) { std::fprintf(stderr, "FAIL: mode %d\n", M); return 1; }
 
-  HA = kModes[M].ha; HF = kModes[M].hf; HS = kModes[M].hs; HB = kModes[M].hb;
-  VA = kModes[M].va; VF = kModes[M].vf; VS = kModes[M].vs; VB = kModes[M].vb;
-  HPOS = kModes[M].hpos; VPOS = kModes[M].vpos;
-  kPclkHalf = kModes[M].pclk_half_ps;
-  HT = HA + HF + HS + HB;
-  VT = VA + VF + VS + VB;
-  MX0 = (HA - kPicW) / 2;  MY0 = (VA - kPicH) / 2;
-  CX0 = (HA - kCW) / 2;    CY0 = (VA - kCH) / 2;
-  RMX0 = (HA - kPicH) / 2; RMY0 = (VA - kPicW) / 2;
-  RCX0 = (HA - kCH) / 2;   RCY0 = (VA - kCW) / 2;
+  // **THE EIGHT MARGINS, AGAINST THE FIGURES THE DOCUMENT STATES.**  The rule
+  // is written out where they are declared; these are the numbers it must
+  // give, transcribed from `docs/display-output.md` rather than derived, so
+  // that the rule and the arithmetic are two descriptions and can disagree.
+  // The overlaps are 768 + 576 - 1280 upright and 963 + 454 - 1280 turned.
+  auto figure = [&](int got, int want, const char *what) {
+    if (got != want) Fail("%s is %d, want %d", what, got, want);
+  };
+  figure(MX0, 0, "the first display's first column, upright");
+  figure(MX0 + kPicW - 1, 767, "the first display's last column, upright");
+  figure(CX0, 704, "the color board's first column, upright");
+  figure(CX0 + kCW - 1, 1279, "the color board's last column, upright");
+  figure(MX0 + kPicW - CX0, 64, "the columns the two share, upright");
+  figure(MY0, 30, "the first display's first row, upright");
+  figure(MY0 + kPicH - 1, 992, "the first display's last row, upright");
+  figure(CY0, 285, "the color board's first row, upright");
+  figure(CY0 + kCH - 1, 738, "the color board's last row, upright");
+  figure(RMX0, 0, "the first display's first column, turned");
+  figure(RMX0 + kPicH - 1, 962, "the first display's last column, turned");
+  figure(RCX0, 826, "the color board's first column, turned");
+  figure(RCX0 + kCH - 1, 1279, "the color board's last column, turned");
+  figure(RMX0 + kPicH - RCX0, 137, "the columns the two share, turned");
+  figure(RMY0, 128, "the first display's first row, turned");
+  figure(RMY0 + kPicW - 1, 895, "the first display's last row, turned");
+  figure(RCY0, 224, "the color board's first row, turned");
+  figure(RCY0 + kCW - 1, 799, "the color board's last row, turned");
 
-  // **EVERY PICTURE MUST FIT THE MODE, UPRIGHT AND ROTATED**, or the check
-  // would be comparing against a rectangle that runs off the raster and would
-  // report the module's own clamping as a fault.
+  // **BOTH PICTURES MUST FIT THE RASTER, UPRIGHT AND ROTATED**, or the check
+  // would be comparing against a rectangle that runs off it and would report
+  // the module's own wrapping as a fault.
   if (MX0 < 0 || MY0 < 0 || CX0 < 0 || CY0 < 0 ||
-      RMX0 < 0 || RMY0 < 0 || RCX0 < 0 || RCY0 < 0)
-    Fail("mode %d does not hold both screens at 1:1, upright and rotated", M);
+      RMX0 < 0 || RMY0 < 0 || RCX0 < 0 || RCY0 < 0 ||
+      MX0 + kPicW > HA || CX0 + kCW > HA || MY0 + kPicH > VA || CY0 + kCH > VA ||
+      RMX0 + kPicH > HA || RCX0 + kCH > HA || RMY0 + kPicW > VA ||
+      RCY0 + kCW > VA)
+    Fail("the raster does not hold both screens at 1:1, upright and rotated");
 
   // The two poisons must be injective over the words they cover, must make
   // pictures, and must not collide with each other.  Asserted rather than
@@ -441,7 +502,13 @@ int main(int argc, char **argv) {
       if (((e >> 16) == ((e >> 8) & 0xFF)) || (((e >> 8) & 0xFF) == (e & 0xFF)) ||
           ((e >> 16) == (e & 0xFF)))
         Fail("map entry %d has two equal channels, so a channel order cannot be seen", k);
+      // **AND NO MAP ENTRY MAY BE WHITE OR BLACK**, because that is what tells
+      // a color board's pixel from a first display's when the extents below
+      // are measured.
+      if (e == 0xFFFFFFu || e == 0u)
+        Fail("map entry %d is %06x, which is what the first display draws", k, e);
       ent.insert(e);
+      gMapColors.insert(e);
     }
     if (ent.size() != 16) Fail("the map is not injective in the color");
   }
@@ -472,6 +539,7 @@ int main(int argc, char **argv) {
     uint64_t t = 0, next_clk = kClkHalf, next_pclk = kPclkHalf;
     int clk_v = 0, pclk_v = 0;
     long compared = 0, mismatches = 0, black_lines = 0;
+    Extent mono_seen, color_seen;
     int under_seen = 0;
     std::vector<int> line_got(kPicH, -1);
     int line_have = 0;
@@ -612,6 +680,12 @@ int main(int argc, char **argv) {
                 }
               } else if (mismatches == 5) ++bad;
             }
+            // **WHERE EACH PICTURE ACTUALLY REACHED**, taken from the color of
+            // the pixel and not from where it is: white is the first display's
+            // and a map entry is the color board's.  A margin one column out
+            // moves one of these eight numbers by one and nothing else.
+            if (got == 0xFFFFFFu) mono_seen.Note(mon.x, mon.y);
+            else if (gMapColors.count(got)) color_seen.Note(mon.x, mon.y);
             ++compared;
           }
           ++mon.x; ++mon.de_this_line;
@@ -706,6 +780,8 @@ int main(int argc, char **argv) {
     res->mono_beats = per_frame_mono;
     res->color_beats = per_frame_color;
     res->max_in_flight = slave.max_in_flight;
+    res->mono = mono_seen;
+    res->color = color_seen;
     if (slave.ar_handshakes != slave.bursts)
       Fail("%ld address handshakes for %ld bursts", slave.ar_handshakes, slave.bursts);
     // The run stops wherever the frame count runs out, so as many bursts as the
@@ -716,6 +792,66 @@ int main(int argc, char **argv) {
     (void)base_bursts;
     delete dut;
     return mon;
+  };
+
+  // **THE EDGES, MEASURED AND HELD TO THE MARGIN THEY CAME FROM.**  Not that
+  // the two overlap --- an overlap of 64 columns is right at 704 and wrong at
+  // 703, and both overlap --- but the exact first and last column and row each
+  // picture reached.  A screen that is not selected must have drawn nothing at
+  // all, which is the same assertion from the other side and is what catches a
+  // picture that moved onto a screen nobody asked for.
+  auto edges = [&](const Extent &e, const Rect *want, const char *screen,
+                   const char *who) {
+    if (!want) {
+      if (e.n)
+        Fail("%s: %ld pixels of %s were drawn, and that screen is not shown",
+             who, e.n, screen);
+      return;
+    }
+    if (!e.n) {
+      Fail("%s: %s drew no pixel of its own, so its edges cannot be measured",
+           who, screen);
+      return;
+    }
+    if (e.x0 != want->x0)
+      Fail("%s: %s's first column is %d, want %d", who, screen, e.x0, want->x0);
+    if (e.x1 != want->x0 + want->w - 1)
+      Fail("%s: %s's last column is %d, want %d", who, screen, e.x1,
+           want->x0 + want->w - 1);
+    if (e.y0 != want->y0)
+      Fail("%s: %s's first row is %d, want %d", who, screen, e.y0, want->y0);
+    if (e.y1 != want->y0 + want->h - 1)
+      Fail("%s: %s's last row is %d, want %d", who, screen, e.y1,
+           want->y0 + want->h - 1);
+  };
+  auto placed = [&](const Result &r, int sel, int rot, const char *who) {
+    const Rect m = MonoRect(rot), c = ColorRect(rot);
+    // **FIRST, THAT THE BITMAP CAN SHOW THESE EDGES AT ALL.**  The first
+    // display's pixels are the poison's bits, so an edge column whose every
+    // bit is dark --- or one lit only where the color board is drawn over it
+    // --- would move the measurement below with nothing wrong in the module,
+    // and the check would be reporting its own stimulus.  So the REFERENCE
+    // frame's extents are taken the same way and held to the same numbers
+    // first.  The color board needs none of this, its every pixel being a map
+    // entry whatever the bitmap says; it is held here anyway because one rule
+    // for both screens is one rule.
+    Extent rm, rc;
+    for (int y = 0; y < VA; y++)
+      for (int x = 0; x < HA; x++) {
+        const uint32_t w = WantRGB(x, y, sel, rot);
+        if (w == 0xFFFFFFu) rm.Note(x, y);
+        else if (gMapColors.count(w)) rc.Note(x, y);
+      }
+    edges(rm, (sel & 1) ? &m : nullptr, "the first display in the bitmap", who);
+    edges(rc, (sel & 2) ? &c : nullptr, "the color board in the bitmap", who);
+    edges(r.mono, (sel & 1) ? &m : nullptr, "the first display", who);
+    edges(r.color, (sel & 2) ? &c : nullptr, "the color board", who);
+    if (sel == 3)
+      std::fprintf(stderr,
+                   "       measured: the first display %d to %d, the color"
+                   " board %d to %d, sharing %d columns\n",
+                   m.x0, m.x0 + m.w - 1, c.x0, c.x0 + c.w - 1,
+                   m.x0 + m.w - c.x0);
   };
 
   auto one = [&](const std::set<long> &s, long want, const char *what) {
@@ -755,74 +891,103 @@ int main(int argc, char **argv) {
   if (a.mono_beats != static_cast<long>(kPicH) * (kWords / 2))
     Fail("%ld beats a frame for the first display, want %ld --- the picture read once",
          a.mono_beats, static_cast<long>(kPicH) * (kWords / 2));
+  placed(a, 1, 0, "A mono upright");
 
-  if (M == 0) {
-    // ---------------------------------------------------- configuration B
-    Result b;
-    (void)run(1, 0, 40, 200, 3, false, &b, "B mono upright, port slowed");
-    if (!b.underruns) Fail("the port could not keep up and no underrun was reported");
-    if (b.black_lines == 0) Fail("the port could not keep up and no line was shown black");
+  // ------------------------------------------------------ configuration B
+  Result b;
+  (void)run(1, 0, 40, 200, 3, false, &b, "B mono upright, port slowed");
+  if (!b.underruns) Fail("the port could not keep up and no underrun was reported");
+  if (b.black_lines == 0) Fail("the port could not keep up and no line was shown black");
 
-    // ---------------------------------------------------- configuration C
-    Result c;
-    (void)run(2, 0, 0, 0, 4, true, &c, "C color upright");
-    if (c.underruns) Fail("the color screen reported an underrun at the port's own speed");
-    if (c.mono_beats != 0)
-      Fail("%ld beats came out of the first display's window with only the color screen shown",
-           c.mono_beats);
-    if (c.color_beats != static_cast<long>(kCH) * (kCWords / 2))
-      Fail("%ld beats a frame for the color screen, want %ld", c.color_beats,
-           static_cast<long>(kCH) * (kCWords / 2));
+  // ------------------------------------------------------ configuration C
+  Result c;
+  (void)run(2, 0, 0, 0, 4, true, &c, "C color upright");
+  if (c.underruns) Fail("the color screen reported an underrun at the port's own speed");
+  if (c.mono_beats != 0)
+    Fail("%ld beats came out of the first display's window with only the color screen shown",
+         c.mono_beats);
+  if (c.color_beats != static_cast<long>(kCH) * (kCWords / 2))
+    Fail("%ld beats a frame for the color screen, want %ld", c.color_beats,
+         static_cast<long>(kCH) * (kCWords / 2));
+  placed(c, 2, 0, "C color upright");
 
-    // ---------------------------------------------------- configuration D
-    Result d;
-    (void)run(3, 0, 0, 0, 4, true, &d, "D both upright");
-    if (d.underruns) Fail("both screens at once reported an underrun");
-    if (d.mono_beats == 0 || d.color_beats == 0)
-      Fail("both screens were asked for and one window was never read");
+  // ------------------------------------------------------ configuration D
+  Result d;
+  (void)run(3, 0, 0, 0, 4, true, &d, "D both upright");
+  if (d.underruns) Fail("both screens at once reported an underrun");
+  if (d.mono_beats == 0 || d.color_beats == 0)
+    Fail("both screens were asked for and one window was never read");
+  placed(d, 3, 0, "D both upright");
 
-    // -------------------------------------------------- configurations E, F
-    for (int rot = 1; rot <= 2; rot++) {
-      Result e;
-      (void)run(1, rot, 0, getenv("DISP_BW") ? atoi(getenv("DISP_BW")) : 4, 4, true, &e, rot == 1 ? "E mono clockwise" : "F mono anticlockwise");
-      if (e.underruns) Fail("the rotated first display reported an underrun");
-      if (e.max_in_flight < 2)
-        Fail("the band fetch never had two reads in flight, so the address"
-             " channel running ahead of the data is untested");
-      // A band is one word out of each of the picture's rows and there are as
-      // many bands as the picture is words wide, so a frame is the picture.
-      const long want = static_cast<long>(kWords) * kPicH;
-      if (e.mono_beats != want)
-        Fail("%ld beats a frame for the rotated first display, want %ld",
-             e.mono_beats, want);
-    }
-
-    // ---------------------------------------------------- configuration G
-    Result g;
-    (void)run(3, 1, 0, 4, 4, true, &g, "G both clockwise");
-    if (g.underruns) Fail("both screens rotated reported an underrun");
-    if (g.mono_beats == 0 || g.color_beats == 0)
-      Fail("both screens were asked for rotated and one window was never read");
+  // ---------------------------------------------------- configurations E, F
+  for (int rot = 1; rot <= 2; rot++) {
+    Result e;
+    (void)run(1, rot, 0, getenv("DISP_BW") ? atoi(getenv("DISP_BW")) : 4, 4, true, &e, rot == 1 ? "E mono clockwise" : "F mono anticlockwise");
+    if (e.underruns) Fail("the rotated first display reported an underrun");
+    if (e.max_in_flight < 2)
+      Fail("the band fetch never had two reads in flight, so the address"
+           " channel running ahead of the data is untested");
+    // A band is one word out of each of the picture's rows and there are as
+    // many bands as the picture is words wide, so a frame is the picture.
+    const long want = static_cast<long>(kWords) * kPicH;
+    if (e.mono_beats != want)
+      Fail("%ld beats a frame for the rotated first display, want %ld",
+           e.mono_beats, want);
+    placed(e, 1, rot, rot == 1 ? "E mono clockwise" : "F mono anticlockwise");
   }
+
+  // ------------------------------------------------------ configuration G
+  Result g;
+  (void)run(3, 1, 0, 4, 4, true, &g, "G both clockwise");
+  if (g.underruns) Fail("both screens rotated reported an underrun");
+  if (g.mono_beats == 0 || g.color_beats == 0)
+    Fail("both screens were asked for rotated and one window was never read");
+  placed(g, 3, 1, "G both clockwise");
+
+  // ------------------------------------------------------ configuration H
+  //
+  // The color board turned and by itself.  Every pixel of it is a map entry
+  // whatever the bitmap says, so its four edges are exact rather than
+  // measured through a picture that might have no lit bit at its corner ---
+  // and a quarter turn is the one placement no other configuration puts a
+  // color edge on with nothing else in the raster.
+  Result h;
+  (void)run(2, 1, 0, 4, 4, true, &h, "H color clockwise");
+  if (h.underruns) Fail("the rotated color screen reported an underrun");
+  if (h.mono_beats != 0)
+    Fail("%ld beats came out of the first display's window with only the"
+         " rotated color screen shown", h.mono_beats);
+  // A band is one word out of each of its rows, and there are as many bands
+  // as the picture is words wide.
+  if (h.color_beats != static_cast<long>(kCWords) * kCH)
+    Fail("%ld beats a frame for the rotated color screen, want %ld",
+         h.color_beats, static_cast<long>(kCWords) * kCH);
+  placed(h, 2, 1, "H color clockwise");
 
   if (bad) {
     std::fprintf(stderr, "FAIL: %d problems\n", bad);
     return 1;
   }
   std::printf(
-      "ok: mode %d, %s\n"
+      "ok: %s\n"
       "    %ld pixels compared against two DDR windows poisoned injectively in\n"
       "    the address --- the first display's bits, the color board's nibbles\n"
       "    through a sixteen-entry map, and the border black\n"
       "    the raster counted: %d pixels a line, %d of them enabled, hsync %d\n"
       "    wide and %d before de; %d lines a frame, %d enabled, vsync %d;\n"
       "    hsync %s and vsync %s\n"
-      "%s",
-      M, kModes[M].name, a.compared, HT, HA, HS, HS + HB, VT, VA, VS,
+      "    the placement measured from the pixels: upright the first display is\n"
+      "    columns %d to %d and rows %d to %d, the color board columns %d to %d\n"
+      "    and rows %d to %d, sharing %d columns; turned they are columns %d to\n"
+      "    %d and %d to %d, sharing %d\n"
+      "    and: the color screen alone, both with the color one drawn over the\n"
+      "    first, both quarter turns, both rotated at once, the color screen\n"
+      "    turned by itself, and the underrun reported with the port slowed to\n"
+      "    200 clocks a beat\n",
+      kModeName, a.compared, HT, HA, HS, HS + HB, VT, VA, VS,
       HPOS ? "positive" : "negative", VPOS ? "positive" : "negative",
-      M == 0 ? "    and on this mode: the color screen alone, both with the color one\n"
-               "    drawn over the first, both quarter turns, and both rotated at once;\n"
-               "    the underrun reported with the port slowed to 200 clocks a beat\n"
-             : "");
+      MX0, MX0 + kPicW - 1, MY0, MY0 + kPicH - 1,
+      CX0, CX0 + kCW - 1, CY0, CY0 + kCH - 1, MX0 + kPicW - CX0,
+      RMX0, RMX0 + kPicH - 1, RCX0, RCX0 + kCH - 1, RMX0 + kPicH - RCX0);
   return 0;
 }

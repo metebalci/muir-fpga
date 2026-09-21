@@ -1930,7 +1930,6 @@ module cadr_cora #(
         // no HDMI connector, so the word says what it would show and nothing
         // reads it.
         .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
-        .hdmi_mode(2'd0),
         // Whether LD1's green blinks or holds a level, page 2's word 35:
         // `cadr-console blinking-leds` and `--no-blinking-leds`.
         .steady_lamps(con_steady_lamps),
