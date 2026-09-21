@@ -51,7 +51,9 @@ PROG=/usr/bin/cadr-serial
 # board has no terminal of its own and the paragraph above is the whole of why.
 ENDPOINT=0.0.0.0:7641
 PIDFILE=/var/run/cadr-serial.pid
-PACKS=/mnt/packs
+# Where the card is mounted, which `S80cadr-disk-packs` is the one thing
+# that does.  The card is one FAT32 partition and `fpgarc` is at its root.
+CARD=/mnt/card
 
 # **THE CARD'S ONE FILE OF FLAGS, FILTERED TO THIS PROGRAM'S.**  `fpgarc`
 # configures the CADR in the fabric the way `muirrc` beside it configures the
@@ -65,7 +67,7 @@ PACKS=/mnt/packs
 # S80cadr-disk-packs mounts that partition before this runs.  A boot where the
 # mount failed still starts this: it takes the defaults, which are the port
 # above and the register face where the fabric puts it.
-RC="$PACKS/fpgarc"
+RC="$CARD/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
 
@@ -104,7 +106,7 @@ FLAGS="--serial
 # with the line present and commented out under the sentence that says what it
 # does.  No file at all is nobody having been asked, and then this script's own
 # endpoint is what a board has always run on, which is what keeps a boot with
-# the pack partition unmounted working the way it did.
+# the card unmounted working the way it did.
 #
 # Said the other way: the difference between `#--serial 0.0.0.0:7641` and no
 # line at all is the difference between a decision and an accident, and only

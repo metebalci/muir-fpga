@@ -2,51 +2,57 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The disk pack program at boot: the card's two partitions mounted, and
-# cadr-disk-packs serving the CADR's disks from the drive bay at /mnt/packs.
+# The disk pack program at boot: the card mounted, and cadr-disk-packs serving
+# the CADR's disks from the drive bay at /mnt/card/packs.
 #
-# **THE CARD IS WRITTEN ONCE AND NEVER LEAVES THE BOARD.**  That is what the
-# second partition is for: the first holds the loader and the boot files and
-# is not touched at run time, the second holds nothing but disk packs and is
-# where a pack is copied to, renamed out of, or write-protected while the
-# machine runs.  Both are FAT32 --- deliberately, so that the card can be
-# read and written from Windows, which cannot write ext4 --- and the price is
-# no journal, which is why the partition that would hurt to lose is the one
-# that is mounted read-only.
+# **THE CARD IS ONE FAT32 PARTITION AND IT IS MOUNTED READ-WRITE.**  The user
+# formats the card themselves and unpacks a zip onto it, so everything is in
+# one filesystem:
 #
-#   /dev/mmcblk0p1 -> /mnt/card    READ-ONLY.  BOOT.BIN, u-boot.img and
-#                                  uEnv.txt at the root, whose names are
-#                                  fixed, and cadr.bit, the tree, the kernel
-#                                  and the root filesystem in a folder named
-#                                  for the board, which is what the TFTP
-#                                  server's directory for it is called too.
-#                                  A power cut while this
-#                                  is writable is a board that needs a card
-#                                  reader again, and this project's whole
-#                                  point is that it does not.  To replace a
-#                                  boot file from the board:
-#                                      mount -o remount,rw /mnt/card
-#                                      ... cp ...
-#                                      sync && mount -o remount,ro /mnt/card
-#   /dev/mmcblk0p2 -> /mnt/packs   READ-WRITE.  disk-pack-0.img to
-#                                  disk-pack-7.img, whichever exist.  A pack
-#                                  is the one thing on the card the machine
-#                                  writes, and it is written in place --- a
-#                                  pack has to stay the size the drive is, so
-#                                  there is no temporary file and no rename,
-#                                  as muir's diskpack says of its own writes.
-#                                  The program syncs every block it writes.
-#                                  `fpgarc` and `muirrc` are on this partition
-#                                  as well, and `clock` beside them, which THIS
-#                                  script writes at a clean shutdown because the
-#                                  board has no clock of its own.
+#   /dev/mmcblk0p1 -> /mnt/card   READ-WRITE.
+#       BOOT.BIN, u-boot.img (or u-boot.itb) and uEnv.txt at the root, whose
+#       names the loader fixes; README.TXT, `fpgarc` and `muirrc` beside them,
+#       which are the files a person edits; `clock` beside those, which THIS
+#       script writes at a clean shutdown because the board has no clock of
+#       its own; the fabric, the tree, the kernel and the root filesystem in a
+#       folder named for the board, which is what the TFTP server's directory
+#       for it is called too; the band's Lisp files in `sys/` and `site/`; and
+#       the drive bay in `packs/`.
 #
-# Neither the boot ROM nor U-Boot ever looks at the second partition.
+#       A pack is what the machine writes, and it is written in place --- a
+#       pack has to stay the size the drive is, so there is no temporary file
+#       and no rename, as muir's diskpack says of its own writes.  The program
+#       syncs every block it writes.
 #
-# A card without either partition is not a fault here: the program starts
-# anyway, finds an empty bay, says so, and goes on watching --- and the CADR
-# sees a controller with no drive on any of the eight units until a pack is
-# copied in, at which point that unit's drive comes ready with no restart.
+# FAT32 is deliberate, so that the card can be read and written from Windows,
+# which cannot write ext4.  The price is no journal.
+#
+# **AND THE LOADER'S FILES ARE NO LONGER BEHIND A READ-ONLY MOUNT.**  They used
+# to be: the card had two partitions, the first holding the loader and mounted
+# read-only so that the machine's constant writing to a pack could not damage
+# it.  That is given up with the second partition, deliberately, and what makes
+# it bearable is the remedy.  A boot file damaged by a power cut is repaired by
+# unpacking the zip onto the card again; a two-partition image needed the whole
+# card rewritten with a tool that destroys the wrong disk if the device name is
+# wrong.  Nothing here remounts anything read-only, and a file at the root can
+# be replaced from the board with a plain `cp` and a `sync`.
+#
+# **A CARD OF THE OLD TWO-PARTITION SHAPE STILL WORKS, AND IS TOLD IT IS
+# OLD.**  Those cards exist --- this project's own board has one --- and their
+# `fpgarc`, `muirrc`, `clock` and flat drive bay are all on the second
+# partition.  So the mount below takes the second partition when there is one,
+# and the first when there is not, and it says which it found.  It is the one
+# place on the board that knows there were ever two shapes: every other init
+# script reads `/mnt/card/fpgarc`, which is true either way, and the bay's
+# directory reaches the program as `--packs`, which is `/mnt/card/packs` on a
+# card of the new shape and `/mnt/card` on a card of the old one.  `mksd-*.sh`
+# makes only the new shape.
+#
+# A card with no partition this script can mount is not a fault here: the
+# program starts anyway, finds an empty bay, says so, and goes on watching ---
+# and the CADR sees a controller with no drive on any of the eight units until
+# a pack is copied in, at which point that unit's drive comes ready with no
+# restart.
 #
 # The log goes to the console, which is where the board is watched from
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
@@ -92,11 +98,15 @@
 # card's setting would never reach the connector.
 
 PROG=/usr/bin/cadr-disk-packs
-BOOT_DEV=/dev/mmcblk0p1
-PACKS_DEV=/dev/mmcblk0p2
-BOOT=/mnt/card
-PACKS=/mnt/packs
+CARD_DEV=/dev/mmcblk0p1
+OLD_CARD_DEV=/dev/mmcblk0p2
+CARD=/mnt/card
 PIDFILE=/var/run/cadr-disk-packs.pid
+# The drive bay, which is the one thing about the card that is not the same on
+# both shapes, so it is a variable the mount below sets and every use reads.
+# `packs/` on a card of the new shape; the whole of the second partition on a
+# card of the old one, where the bay was that partition's root.
+PACKS="$CARD/packs"
 
 # The card's one file of flags, and cadr-common's reader.  `fpgarc` configures
 # the CADR in the fabric the way `muirrc` beside it configures the CADR inside
@@ -105,7 +115,7 @@ PIDFILE=/var/run/cadr-disk-packs.pid
 # docs/fpgarc.md has every program's list; the reader's header is the
 # contract.  This script keeps no list: it asks for each of its flags by name,
 # and each function below says which.
-RC="$PACKS/fpgarc"
+RC="$CARD/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
 
@@ -125,12 +135,11 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 CLOCK_SH=/usr/share/cadr/clock.sh
 . "$CLOCK_SH"
 
-# **WHERE THE CLOCK IS SAVED**, which is the pack partition, beside the card's
-# file of flags.  That partition is the only place on this board that is both
-# written and still there at the next boot: the boot partition is mounted
-# read-only and the root filesystem is a RAM disk unpacked at every boot.  One
-# line, the fourteen digits `cadr_clock_now` prints.
-CLOCK="$PACKS/clock"
+# **WHERE THE CLOCK IS SAVED**, which is the card, beside the card's file of
+# flags.  The card is the only place on this board that is both written and
+# still there at the next boot, the root filesystem being a RAM disk unpacked
+# at every boot.  One line, the fourteen digits `cadr_clock_now` prints.
+CLOCK="$CARD/clock"
 
 # **THE HOLD MARKER.**  It stands while the machine is held, and it is what
 # `cadr-console` reads to refuse `start` and `step` with muir's own words and
@@ -141,18 +150,50 @@ CLOCK="$PACKS/clock"
 # marker that outlives its hold is a lie about the machine.
 HELD=/var/run/cadr-held
 
+# **THE MOUNT, AND THE ONE PLACE THAT KNOWS THERE WERE EVER TWO CARD SHAPES.**
+# A card made by `mksd-*.sh` is one FAT32 partition holding everything, and
+# that is the shape to build for.  A card of the OLD shape has two, with
+# `fpgarc`, `muirrc`, `clock` and a flat drive bay on the second, and those
+# cards are in boards that are running.  So the second partition is tried
+# first, because a card that has one is old by definition, and the first is
+# taken when there is no second.
+#
+# The order is what makes this safe.  Asking "is there a `packs/` folder?"
+# would need the partition mounted before the question could be put, and
+# mounting the wrong one first is what a board with a card half in its slot
+# does.  Trying the second partition is one `mount` that either works or does
+# not, and on a new card it does not exist at all.
+#
+# The bay's directory follows from which one answered, and it is what reaches
+# the program as `--packs`.  Nothing else on the board differs: every other
+# init script reads `$CARD/fpgarc`, which is the file either way.
+mount_the_card() {
+	mkdir -p "$CARD"
+	if mountpoint -q "$CARD" 2>/dev/null; then
+		# Already mounted, which is what a `restart` that did not reach
+		# its own `stop` leaves.  Here the question CAN be put by
+		# looking, because the filesystem is there: a card with a
+		# `packs/` folder is of the new shape and one without is not.
+		[ -d "$CARD/packs" ] || PACKS="$CARD"
+		echo "cadr-disk-packs: the card is already mounted at $CARD, and the drive bay is $PACKS"
+	elif mount -t vfat -o rw "$OLD_CARD_DEV" "$CARD" 2>/dev/null; then
+		# A card of the old two-partition shape.  Its bay is the root of
+		# this partition and not a folder in it.
+		PACKS="$CARD"
+		echo "cadr-disk-packs: THIS CARD IS OF THE OLD TWO-PARTITION SHAPE: $OLD_CARD_DEV is at $CARD"
+		echo "cadr-disk-packs:   and its drive bay is that partition's own root.  It works, and it is"
+		echo "cadr-disk-packs:   the last shape that will: format the card as ONE FAT32 partition and"
+		echo "cadr-disk-packs:   unpack this board's zip onto it when you next have it in a reader."
+	elif mount -t vfat -o rw "$CARD_DEV" "$CARD" 2>/dev/null; then
+		echo "cadr-disk-packs: the card is at $CARD, read-write, and the drive bay is $PACKS"
+	else
+		echo "cadr-disk-packs: no card at $CARD_DEV; the bay will be empty"
+	fi
+	mkdir -p "$PACKS" 2>/dev/null || true
+}
+
 start() {
-	mkdir -p "$BOOT" "$PACKS"
-	if mountpoint -q "$BOOT" 2>/dev/null || mount -t vfat -o ro "$BOOT_DEV" "$BOOT" 2>/dev/null; then
-		echo "cadr-disk-packs: the boot partition is at $BOOT, read-only"
-	else
-		echo "cadr-disk-packs: no boot partition at $BOOT_DEV"
-	fi
-	if mountpoint -q "$PACKS" 2>/dev/null || mount -t vfat -o rw "$PACKS_DEV" "$PACKS" 2>/dev/null; then
-		echo "cadr-disk-packs: the drive bay is at $PACKS"
-	else
-		echo "cadr-disk-packs: no pack partition at $PACKS_DEV; the bay will be empty"
-	fi
+	mount_the_card
 	set_the_clock
 	set_the_lamps
 	set_the_display_boards
@@ -718,8 +759,11 @@ stop() {
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 	save_the_clock
 	sync
-	umount "$PACKS" 2>/dev/null
-	umount "$BOOT" 2>/dev/null
+	# One mount, so one unmount.  The clock is saved above it, which is the
+	# order that matters: a save after the unmount writes into the root
+	# filesystem's RAM disk and is gone at the next boot, with the file
+	# there to find either way.
+	umount "$CARD" 2>/dev/null
 }
 
 case "$1" in

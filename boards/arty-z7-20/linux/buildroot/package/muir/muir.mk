@@ -126,7 +126,7 @@ define MUIR_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/target/$(RUSTC_TARGET_NAME)/release/muir \
 		$(TARGET_DIR)/usr/bin/muir
 	$(INSTALL) -d -m 0755 $(TARGET_DIR)/root
-	ln -sf /mnt/packs/muirrc $(TARGET_DIR)/root/.muirrc
+	ln -sf /mnt/card/muirrc $(TARGET_DIR)/root/.muirrc
 endef
 
 $(eval $(cargo-package))

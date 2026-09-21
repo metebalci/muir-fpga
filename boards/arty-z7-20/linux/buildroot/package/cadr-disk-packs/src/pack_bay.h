@@ -3,7 +3,7 @@
 //
 // The drive bay: eight units, eight names, one directory.
 //
-// **THE NAMES ARE THE RULE.**  The card's second partition holds nothing but
+// **THE NAMES ARE THE RULE.**  The card's `packs/` folder holds nothing but
 // disk packs, named `disk-pack-0.img` to `disk-pack-7.img`.  Whichever of
 // the eight exist are the drives that are present, and the unit field of a
 // request --- `DA<30:28>`, "that disk unit whose number is currently in bits
@@ -45,9 +45,13 @@
 // The eight units the controller selects between (`rtl/machine/cadr_disk_controller.sv`,
 // the unit slots).
 #define BAY_UNITS 8
-// Where the packs are, and what they are called.  The directory is the
-// card's second partition; `S80cadr-disk-packs` mounts it there.
-#define BAY_DIR "/mnt/packs"
+// Where the packs are, and what they are called.  The card is one FAT32
+// partition, `S80cadr-disk-packs` mounts it at /mnt/card, and the bay is the
+// `packs/` folder in it.  This is only the DEFAULT: that script always passes
+// `--packs`, because a card of the old two-partition shape has its bay at the
+// root of the second partition instead, and the script is the one place on the
+// board that knows there were ever two shapes.
+#define BAY_DIR "/mnt/card/packs"
 #define BAY_NAME_FMT "disk-pack-%u.img"
 
 struct bay_drive {

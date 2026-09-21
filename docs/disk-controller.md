@@ -363,8 +363,8 @@ comes the loop*, until SIGTERM or SIGINT, on which every dirty slot is written
 back and every drive is taken absent.
 
 **THE DRIVE BAY, AND WHY THERE IS NO `--pack` AND NO `--unit`.** The packs
-live on the card's second partition, `/mnt/packs`, named `disk-pack-0.img` to
-`disk-pack-7.img`. Whichever exist are the drives that are present, and the
+live in the card's own folder for them, `/mnt/card/packs`, named
+`disk-pack-0.img` to `disk-pack-7.img`. Whichever exist are the drives that are present, and the
 number in the name is the unit `DA<30:28>` selects. A file is a pack only at
 exactly one of the two geometries' sizes, which is also what makes a pack
 still being copied in not yet a drive. The bay is looked at every `--scan-ms`
@@ -469,8 +469,8 @@ checkwords as the format lays them --- `header_of` with the code over it, the
 code over the data --- and a sector laid with others forgets that at the next
 start. **A sidecar file that persisted the two tables (`pack.meta`) was built
 at this revision and dropped once what it preserved was understood.** The
-pack file is the only disk file on the card, and the program holds exactly
-what muir's `Unit` holds. Several things got simpler.
+pack file is the only file a drive has on the card, and the program holds
+exactly what muir's `Unit` holds. Several things got simpler.
 `pack_file.c` lost its file format, its creation on the first write-back, its
 mismatch rules (magic, version, size, a pack newer than the sidecar by mtime)
 and the flag that overrode them. `struct pack` lost five fields. The disk pack
@@ -632,26 +632,31 @@ and the bitstream must be the one with the request path, `a899799` or later.
 The `997b734` one on the board today has no REQ register, and the feeder would
 read zeros there and serve nothing.
 `boards/arty-z7-20/linux/mksd-buildroot.sh` puts packs in the bay with
-`PACKS="a.img 5=b.img"` and makes partition 2 `PACKS_MB` big. But a pack is
-more usually copied to the running board with `scp` into `/mnt/packs`, which
-is the point of the second partition.
+`PACKS="a.img 5=b.img"` when the card is staged. But a pack is more usually
+copied to the running board with `scp` into `/mnt/card/packs`, which is what
+the card never leaving the board means in practice.
 
 **This is what the console must show, with a pack on the card and the drive
 untimed**, in this order, and nothing else at the same rate:
 
-    cadr-disk-packs: the boot partition is at /mnt/card, read-only
-    cadr-disk-packs: the drive bay is at /mnt/packs
+    cadr-disk-packs: the card is at /mnt/card, read-write, and the drive bay is /mnt/card/packs
     Starting cadr-disk-packs: OK
     cadr-disk-packs: the EMIO tally reads 0x01008100 0x01008100: a fabric with the processing system in it; M_AXI_GP0 may be read
     cadr-disk-packs: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
     cadr-disk-packs: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
-    cadr-disk-packs: the bay is /mnt/packs: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives that are present, and a file whose read-only mark is set is a write-protected drive
+    cadr-disk-packs: the bay is /mnt/card/packs: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives that are present, and a file whose read-only mark is set is a write-protected drive
     cadr-disk-packs: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
-    cadr-disk-packs: 24 slots taken away; the bay is /mnt/packs and the drives are untimed, which is muir's default
-    cadr-disk-packs: unit 0: /mnt/packs/disk-pack-0.img is a drive: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks, writable
+    cadr-disk-packs: 24 slots taken away; the bay is /mnt/card/packs and the drives are untimed, which is muir's default
+    cadr-disk-packs: unit 0: /mnt/card/packs/disk-pack-0.img is a drive: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks, writable
     cadr-disk-packs: unit 0: block 0 word 0 is 0x4c42414c (LABL: a labeled pack); header 0x00000000
     cadr-disk-packs: the bay is looked at every 250 ms, and never in the middle of a transfer
     cadr-disk-packs: polling REQ and DIRTY every 250 us
+
+**A card of the older two-partition shape still runs, and says so** in place
+of the first line, over several lines, with the bay on the second partition's
+own root instead of in a folder. `docs/boot.md` says what to do about it,
+which is to format the card as one partition and unpack the board's zip onto
+it. Nothing else in the transcript differs.
 
 The tally's two words are whatever the machine's memory cycles have counted by
 then. They are 256 and 256 after the boot PROM's parity loop, `0x01008100`

@@ -258,71 +258,70 @@ pays whether or not anybody asks it for a file. Nothing else is paid, because
 the default serves no tree.
 
 **The tree lives on the card and not in memory.** A card that carries a pack
-carries the band's sources beside it, under `sys` on the pack partition, and
-the card's menu names them with `--ozd-root sys=/mnt/packs/sys,ro`. One band
-and the files that belong to it are one thing, and they go on one card
-together.
+carries the band's files beside it, and there are two trees because the band
+uses them two different ways:
 
-The three places it could have gone were measured, on a real FAT32 image made
-by the same `mkfs.vfat -F 32` the card is made with, with the real files
-copied in and the free space read back afterwards. The tree is 513 files in 25
+    sys/    the band's sources, named as --ozd-root sys=/mnt/card/sys,ro
+    site/   the band's site configuration, named as --ozd-root site=/mnt/card/site
+
+**`sys/` is read-only and `site/` is not, and the difference is the point.**
+Sources are a tree nothing reaching the host's socket should write in, so the
+`,ro` is there. A site is the few files that say what this site is --- its host
+table, its logical pathname translations --- and a site is a thing its owner
+changes, so that root is served read-write and carries no `,ro`. The two are
+not the same size: the sources are the table below, and a site configuration
+is a handful of files and a few tens of kilobytes. One band and the files that
+belong to it are one thing, and they go on one card together.
+
+The three places they could have gone were measured, on a real FAT32 image made
+by the same `mkfs.vfat -F 32` a card is made with, with the real files copied in
+and the free space read back afterwards. The sources are 513 files in 25
 directories and 15,857,581 bytes of content.
 
 | where | on the card | in memory, on every board |
 |---|---|---|
 | the root filesystem | 4,309,541 bytes | 17,027,072 bytes |
-| the pack partition, as files | 17,031,168 bytes | nothing |
-| a read-only image on the pack partition | 3,932,160 bytes | nothing but what is read |
+| the card, as files | 17,031,168 bytes | nothing |
+| a read-only image on the card | 3,932,160 bytes | nothing but what is read |
 
 The first is the root filesystem, which is compressed on the card and unpacked
 into memory at every boot: the whole of the tree, on every board, for a
 service that is on by default and whose files many boards will never ask for.
-The second is the pack partition, which is already on the card, is already
-mounted, and costs no memory at all. The third is that partition with the tree
-inside one compressed read-only image, which is smaller on the card and
-demand-paged in use, at the price of a loop mount and a filesystem the kernel
-would have to carry.
+The second is the card itself, which is already there, is already mounted, and
+costs no memory at all. The third is the card with the tree inside one
+compressed read-only image, which is smaller on the card and demand-paged in
+use, at the price of a loop mount and a filesystem the kernel would have to
+carry.
 
 **The second is what the card writes.** It costs the most card and the least
 of everything else, it needs nothing added to the kernel, and the files can be
 read and changed with the card in a reader, which is the reason the settings
-files are on that partition too. The third is what to reach for if a card ever
-runs short.
+files are on the card too. The third is what to reach for if a card ever runs
+short.
 
 **Nothing is served when no tree is named**, which is what a board with an
 empty bay gets. The host still answers the time and the host table, and those
 are the two things that were actually stopping a board with no network. A line
 naming a tree that is not there stops the host in its own words, so the card
-writes that line live exactly when it carries a tree.
+writes that line live exactly when it carries a tree. A release ships `sys/`
+and `site/` on the card empty and both lines commented, because a release
+carries no band.
 
-### The pack partition had to grow, and by how much
+### What a band takes on the card
 
-A pack and its sources did not fit as the card was laid out. The figures are
-all read off a FAT32 image rather than derived:
+The figures are read off a FAT32 image rather than derived:
 
 | | bytes | |
 |---|---|---|
 | the cluster `mkfs.vfat` chooses at these sizes | 4,096 | 8 sectors of 512 |
 | a T-300 pack | 269,565,952 | the file is 269,562,880 |
 | the sources | 17,031,168 | 513 files, 25 directories |
-| the FAT and its reserved sectors | 696,320 | on a 320 MiB partition |
 
-So a pack and a tree together need 273.98 MiB, and the pack partition used to
-default to 272. It held the pack with about 14 MiB to spare, which is two
-megabytes short of the tree.
-
-The partition is now the packs named, plus 8 MiB for the FAT, plus 32 MiB for
-the sources, plus 264 MiB for one more drive. The 32 is double what the tree
-takes today, so it may grow by 97% before the card has to be laid out again,
-and it is set aside whether or not a tree is staged, exactly as the spare
-drive is. A tree larger than that reserve takes the room it needs instead: a
-reserve a real tree overflowed would be a card that failed at the last file
-copied.
-
-That gives 304 MiB for a card staged with an empty bay, which still holds a
-pack copied on afterwards and the sources, and 561 MiB for a card staged with
-its pack. A 320 MiB partition carrying a pack and the tree reads back
-48,250,880 bytes free.
+So a pack and its sources together want about 274 MiB of card, and that is what
+decides how big a card to buy: everything a board itself needs is 12.5 MB on a
+Zynq board and 49.4 MB on the DE25-Nano. **How big the card is is the user's
+own decision**, because the user formats it; nothing in this project sizes a
+partition any more. `docs/boot.md` has the sizes and how to format.
 
 
 ### What address it answers at, and where it listens
@@ -400,8 +399,8 @@ nothing plugged in says that there is no name to wait for and starts at once.
 
 ## How the board tells the program its address
 
-The pack partition carries one file of flags for each of the two CADRs this
-board runs. `fpgarc` configures the machine in the fabric and `muirrc`
+The card carries one file of flags for each of the two CADRs this board runs,
+both at its root. `fpgarc` configures the machine in the fabric and `muirrc`
 configures the machine inside muir, which is the debugger. Both are in muir's
 own rc format, so the two stations are configured the same way with the same
 flag names. `docs/fpgarc.md` is that file, its format and every program's
@@ -525,7 +524,7 @@ send. It would otherwise spend the whole bound at every boot waiting for a
 network it is not going to use, which is what a released card out of the box
 would do. The script says which state the board is in instead.
 
-    cadr-chaosnet: no --chaos-udp in /mnt/packs/fpgarc, so the cable is not plugged in:
+    cadr-chaosnet: no --chaos-udp in /mnt/card/fpgarc, so the cable is not plugged in:
     cadr-chaosnet: the address switches are set and nothing is sent or received.
     cadr-chaosnet: uncomment --chaos-udp in that file, and the peer lines under it,
     cadr-chaosnet: to put this machine on a network.

@@ -3253,8 +3253,10 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
 	@echo "fpgarc: owns and no others, --no-auto-boot holds the machine before the drive,"
 	@echo "fpgarc: --date and --time each set one field of a clock the board does not keep,"
 	@echo "fpgarc: the board's own file and time host is on unless --no-ozd and its address"
-	@echo "fpgarc: is never placed twice, with nothing inferred, and the card mirrors the"
-	@echo "fpgarc: server: the board's four files under the board's own folder"
+	@echo "fpgarc: is never placed twice, with nothing inferred, the card mirrors the server,"
+	@echo "fpgarc: the card's root holds what a loader demands and nothing else, the zip is"
+	@echo "fpgarc: read back out of itself, and a card of the old two-partition shape still"
+	@echo "fpgarc: mounts and is told it is old"
 	@touch $@
 
 # **cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK COMPILES
@@ -3319,7 +3321,7 @@ clean:
 # archive.  boards/arty-z7-20/linux/buildroot/ is the BR2_EXTERNAL tree --- the defconfig, the
 # board's device tree, the start-up routine generated from boards/arty-z7-20/vivado/ps7_init.ops,
 # the kernel config, U-Boot's environment --- and every file in it says why it
-# is as it is.  docs/boot.md, "The Buildroot image", is the procedure.
+# is as it is.  docs/boot.md, "The image", is the procedure.
 #
 # THE BUILD IS NOT UNDER build/ AND NOT UNDER /tmp.  It is several gigabytes
 # and takes an hour the first time; /tmp is a RAM disk on the build host.
@@ -3643,6 +3645,57 @@ buildroot-de25-rebuild: buildroot-de25-check
 	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_DE25) $(BR_OUT_DE25) $(BR_OUT_DE25)/images/rootfs.cpio.uboot
 	@echo "buildroot-de25: images in $(BR_OUT_DE25)/images:"
 	@ls -l $(BR_OUT_DE25)/images/ | grep -v '^total'
+
+# ------------------------------------------------------------ the release
+#
+# **A RELEASE IS THREE ZIPS, ONE A BOARD, AND THIS IS THE ONE COMMAND THAT
+# MAKES THEM.**  There is no card image any more: a user formats a microSD
+# card themselves, as one FAT32 partition in an MBR, and unpacks their board's
+# zip onto it.  Each zip is self-sufficient, names its board in its own file
+# name and inside it, and is what is published for that board.
+#
+#     make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>
+#
+# **THREE ZIPS ARE THREE CHANCES FOR ONE TO BE STALE**, which is why this is
+# one target and not three: a release in which two boards were rebuilt and the
+# third was not is exactly the sort of thing that ships.  So every bitstream is
+# required by name, the target refuses to build a partial release, and it
+# prints the three zips together at the end with their digests, where a missing
+# one is visible.
+#
+# The bitstreams are not in this repository --- they are built by Vivado and by
+# Quartus, which `make check` does not run --- so they are named on the command
+# line.  Each board's Buildroot output must exist: `make buildroot`,
+# `make buildroot-cora` and `make buildroot-de25` build them.
+.PHONY: release
+RELEASE_DIR := build/sd/release
+release:
+	@for v in BIT_ARTY BIT_CORA BIT_DE25; do \
+	    eval "b=\$$$$v"; \
+	    [ -n "$$b" ] || { \
+	        echo "release: $$v is not set.  A release is three zips and this target makes"; \
+	        echo "release: all three, so that one board cannot be left at an older build:"; \
+	        echo "release:   make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>"; \
+	        exit 1; }; \
+	    [ -f "$$b" ] || { echo "release: $$v=$$b is not a file"; exit 1; }; \
+	done
+	BIT=$(BIT_ARTY) \
+	    boards/arty-z7-20/linux/mksd-release.sh
+	IMAGES=$(BR_OUT_CORA)/images \
+	    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+	    BIT=$(BIT_CORA) boards/arty-z7-20/linux/mksd-release.sh
+	IMAGES=$(BR_OUT_DE25)/images \
+	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
+	    BIT=$(BIT_DE25) boards/arty-z7-20/linux/mksd-release.sh
+	@echo
+	@echo "release: three zips, one a board:"
+	@for b in arty-z7-20 cora-z7-07s de25-nano; do \
+	    z=$(RELEASE_DIR)/$$b/cadr-$$b.zip; \
+	    [ -f "$$z" ] || { echo "release: $$z was not built"; exit 1; }; \
+	    printf '  %-44s %10d  %s\n' "$$z" "$$(stat -c %s $$z)" "$$(sha256sum $$z | cut -c1-16)"; \
+	done
+	@echo "release: each is unpacked onto a microSD card formatted as ONE FAT32"
+	@echo "release: partition in an MBR.  docs/boot.md says how."
 
 # ------------------------------------------------------- MD on the composed
 # machine

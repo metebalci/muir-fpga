@@ -6,12 +6,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # `fpgarc`, the card's file of flags
 
 The board runs two CADRs. One is in the fabric. The other is inside muir, which
-is the debugger. Each is configured by one file on the pack partition, in the
+is the debugger. Each is configured by one file at the root of the card, in the
 same format, with the same flag names. `fpgarc` is the fabric machine's and
 `muirrc` is muir's. Somebody who has read one can read the other.
 
-The partition is FAT32, so a laptop with a card reader can edit either file.
-That is the point of putting them there.
+The card is FAT32, so a laptop with a card reader can edit either file. That is
+the point of putting them there, and the root is where a person looks.
 
 ## The format, which is muir's own
 
@@ -23,7 +23,7 @@ stripped, because a card reader leaves them.
     # this machine's own Chaosnet address, in octal
     --chaos-address 3050
     --chaos-udp 0.0.0.0:42042
-    --keyboard-mapping /mnt/packs/terminal.keyboard.mapping.txt
+    --keyboard-mapping /mnt/card/terminal.keyboard.mapping.txt
 
 A flag given twice is settled by the program, which takes the last one.
 
@@ -88,9 +88,9 @@ to. The init script says the line is off and how to turn it on.
 
 **A file that is there and says nothing is not the same as no file.** A file
 that is there has been asked and has answered. No file at all is nobody having
-been asked, and it is also what a boot looks like when the pack partition did
-not mount. A board in that state runs what it has always run: the Chaosnet
-address and the cable, and the serial line on its own endpoint.
+been asked, and it is also what a boot looks like when the card did not mount.
+A board in that state runs what it has always run: the Chaosnet address and
+the cable, and the serial line on its own endpoint.
 
 ## What each program takes
 
@@ -129,8 +129,9 @@ and each maps to one of that program's own flags.
     --ozd-name            its names, the official one first
     --ozd-port            the loopback port it listens on
     --ozd-root            a tree it serves, repeatable.  A card that carries
-                          a pack carries the band's sources under `sys` on
-                          this partition, and this line is live on it
+                          a band carries its sources in `sys/` and its site
+                          configuration in `site/`, and both lines are live
+                          on it
     --ozd-host            a machine in the host table it answers from,
                           repeatable
     --ozd-hosts-text      a band's own host table, whose hosts it also answers
@@ -349,9 +350,9 @@ lets `fpgarc.pass` count the settings, and it holds every flag in every init
 script's list to appearing in the written file exactly once. A flag added to a
 program and not to the card fails that check by name.
 
-Two flags may appear more than once, because they are repeatable by their own
-definition. A peer entry places one Chaosnet address, and a named USB device is
-one device.
+Three flags may appear more than once, because they are repeatable by their
+own definition. A peer entry places one Chaosnet address, a named USB device is
+one device, and a root names one tree, of which the card carries two.
 
 ## A line no program takes is named at boot
 
@@ -455,10 +456,10 @@ as it stands. A lone `--time` is not that time today. The board has no today,
 and a date it invented would be a day nobody meant.
 
 **The clock is saved at a clean shutdown and restored at the next boot.** It is
-fourteen digits, `yyyyMMddHHmmss`, in `clock` on the pack partition beside this
-file. The disk pack program's init script writes it while it is stopping, after
-the program has gone and before the partition is unmounted, and reads it at the
-next boot. The line is cleaned the way a line of this file is, so a carriage
+fourteen digits, `yyyyMMddHHmmss`, in `clock` at the root of the card beside
+this file. The disk pack program's init script writes it while it is stopping,
+after the program has gone and before the card is unmounted, and reads it at
+the next boot. The line is cleaned the way a line of this file is, so a carriage
 return and a space at either end do not matter, and a file holding anything
 else is named at boot and not used. A board that lost its power rather than
 being halted keeps whatever the shutdown before it saved, which is the most a
@@ -497,7 +498,7 @@ drive comes present.** The machine, the programs and every file written want to
 agree from the first second, and a band read with the clock still at the epoch
 is a band whose files are stamped 1970. The step is in that script for the boot
 button's reason: it reads this file and the saved clock, and both are on the
-partition that script is the one thing that mounts.
+card that script is the one thing that mounts.
 
 ## `--no-ozd`
 
@@ -555,10 +556,9 @@ With neither the flag nor the switch the step does nothing and says nothing.
 
 **The step is in that script for two reasons.** It must run before the disk pack
 program starts, because a drive coming present is what lets the boot PROM go on
-and read a band. And it must read this file, which is on the partition that
-script is the one thing that mounts. A step of its own at S79 would have to
-mount that partition itself, which would leave the mount with two owners and
-one unmounter.
+and read a band. And it must read this file, which is on the card that script
+is the one thing that mounts. A step of its own at S79 would have to mount the
+card itself, which would leave the mount with two owners and one unmounter.
 
 **The PROM has already run when the FLAG is what holds it, and that is not a gap
 in the hold.** The CADR starts when the bitstream is loaded, which is seconds
@@ -806,7 +806,7 @@ into the step's other half. The `date` the step reads and writes is stubbed, so
 the clock in the case is the check's own and the build host's is never touched.
 Where in the boot the clock was set is recorded too: it must
 land before the pack program starts and before the console is asked anything.
-The save is held to happening while the partition is still the card's, since a
+The save is held to happening while the card is still mounted, since a
 save after the unmount writes into a RAM disk and is lost at the next boot.
 
 One case in it claims another program's flag on purpose and requires that the
@@ -867,17 +867,34 @@ board. The second is the control: a script that had stopped waiting for
 anything would pass the first. The case that used to require a board with no
 card to wait now requires it not to, since the defaults name no peer at all.
 
-**And it holds the card's layout, by running the card script's own sizing
-rather than restating it.** The function is lifted out on its anchors and
-called with the real byte counts, and what is asserted is that the partition
-it returns holds a pack and the band's sources together, with room for one
-more drive. The control is that the 272 MiB this used to give must not be
-enough, since without that half the case would pass on a partition that had
-not grown at all. A tree larger than the reserve is asserted to take the room
-it needs, with a tree that fits asserted not to change the size, because
-otherwise the term would be the tree's size and not a reserve. The card is
-held to naming the tree exactly when it carries one, both ways, since a line
-naming a tree that is not there stops the host.
+**And it holds how big a card has to be, by running the card script's own
+arithmetic rather than restating it.** The function is lifted out on its
+anchors and called with the real byte counts, and what is asserted is that the
+answer covers a T-300 pack, both of the band's trees and the twelve megabytes
+of loader, kernel, fabric image and root filesystem together. The control is
+that the same card without the pack must come out smaller by about a pack,
+since a function that returned a round number or the boot files alone would
+pass the first half. The rounding is held to going up, because a card of
+exactly the floor is a card with nothing left and the number is advice a
+person acts on. **It is advice and not a size**: there is no partition to
+size any more, the user's own formatter makes it, and what the arithmetic can
+honestly say is how small a card would be too small. The card is held to
+naming a tree exactly when it carries one, both ways, since a line naming a
+tree that is not there stops the host.
+
+**And it holds the root of the card to what belongs there.** That matters more
+with one partition than it did with two, because the root is now both where the
+loader looks and where a person copies things, so it is where a stray file
+lands and a stray file there is one nothing on the board reads. The guard is
+lifted out of the card script and run against a fabricated card twice, once
+clean and once with one extra file, and the second is the point: a guard that
+accepted everything would pass the first.
+
+**And it holds the readback of the zip.** The image used to be read back file
+by file out of each partition with the tool that speaks FAT, because a staging
+that merely copied into a directory says nothing about what the board would
+find. The zip is read back the same way, and the cases require it to catch a
+file the zip did not carry.
 
 `chaosnet.pass` holds the Chaosnet script's own wait for the network, and it now
 also holds that script to taking its own flags out of a file written for the

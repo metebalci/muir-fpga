@@ -4,7 +4,7 @@
 # ONE `fpgarc` FOR SEVERAL PROGRAMS: THE FILTER EVERY INIT SCRIPT READS IT
 # THROUGH.
 #
-# The pack partition carries one file of flags for each of the two CADRs this
+# The card carries one file of flags for each of the two CADRs this
 # board runs.  `fpgarc` configures the machine in the fabric and `muirrc` the
 # machine inside muir, both in muir's own rc format, so somebody who has read
 # one can read the other.

@@ -161,8 +161,3 @@ BR2_TARGET_UBOOT_SPL=y
 BR2_TARGET_UBOOT_SPL_NAME="spl/u-boot-spl-dtb.hex"
 BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_cadr.dts $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/uboot/socfpga_agilex5_de25_nano_cadr-u-boot.dtsi $(BR2_EXTERNAL_CADR_DE25_PATH)/../cadr-reserved.dtsi"
 
-# For the card image boards/arty-z7-20/linux/mksd-buildroot.sh writes at
-# staging time.
-BR2_PACKAGE_HOST_DOSFSTOOLS=y
-BR2_PACKAGE_HOST_GENIMAGE=y
-BR2_PACKAGE_HOST_MTOOLS=y

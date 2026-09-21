@@ -132,8 +132,8 @@ anywhere in that stream would break it.
     machine-halted-first: yes
     packs-program-stopped: unknown
     packs: 1
-    pack: unit=0 bytes=269562880 geometry=815,19,17 read-only=no sha256=... file=/mnt/packs/disk-pack-0.img
-    resume: muir --rtl --timing-model fpga --disk-pack /mnt/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume muir-20260911-193000.chk
+    pack: unit=0 bytes=269562880 geometry=815,19,17 read-only=no sha256=... file=/mnt/card/packs/disk-pack-0.img
+    resume: muir --rtl --timing-model fpga --disk-pack /mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume muir-20260911-193000.chk
 
 The checkpoint's own digest is in there too, so a sidecar that has drifted
 away from the file it was written for is found out as well as a pack that has.
@@ -280,31 +280,34 @@ halted the channel is idle, so within about a millisecond of the halt every
 block the machine has written is on its pack. That is what makes the normal
 capture one command.
 
-    cadr-checkpoint -o /mnt/packs/checkpoints/$(date +%Y%m%d-%H%M%S).chk
+    cadr-checkpoint -o /mnt/card/packs/checkpoints/$(date +%Y%m%d-%H%M%S).chk
 
-It halts the machine, reads it, digests the packs it finds in `/mnt/packs`,
-writes the checkpoint and the sidecar, and starts the machine again. Make
-`/mnt/packs/checkpoints` first; `cadr-disk-packs` stats only the eight
-`disk-pack-N.img` names, so a directory beside them is invisible to it.
-Digesting a T-300 is 269 MB read off the card and hashed, so it takes a
-while, and the machine is halted throughout, which is the point.
+It halts the machine, reads it, digests the packs it finds in
+`/mnt/card/packs`, writes the checkpoint and the sidecar, and starts the
+machine again. Make `/mnt/card/packs/checkpoints` first; `cadr-disk-packs`
+stats only the eight `disk-pack-N.img` names, so a directory beside them is
+invisible to it. Digesting a T-300 is 269 MB read off the card and hashed, so
+it takes a while, and the machine is halted throughout, which is the point.
 
 If you want the packs held still by something stronger than the halt — no
 program that writes packs running at all — there is a longer way, and it has
-one trap in it: **the init script's `stop` unmounts `/mnt/packs`**, so the bay
-has to be brought back read-only before the packs can be digested, and the
-checkpoint then has nowhere on the card to go. That `stop` also writes the
-board's clock to `clock` on that partition before it unmounts it, which is one
-small write and is not a pack.
+one trap in it: **the init script's `stop` unmounts the card**, so it has to be
+brought back read-only before the packs can be digested, and the checkpoint
+then has nowhere on the card to go. That `stop` also writes the board's clock
+to `clock` at the root of the card before it unmounts it, which is one small
+write and is not a pack.
 
     cadr-checkpoint --halt
     /etc/init.d/S80cadr-disk-packs stop
-    mount -t vfat -o ro /dev/mmcblk0p2 /mnt/packs
+    mount -t vfat -o ro /dev/mmcblk0p1 /mnt/card
     cadr-checkpoint --already-halted --leave-halted --packs-stopped \
         -o /tmp/$(date +%Y%m%d-%H%M%S).chk
-    umount /mnt/packs
+    umount /mnt/card
     /etc/init.d/S80cadr-disk-packs start
     cadr-checkpoint --start
+
+On a card of the older two-partition shape that mount is `/dev/mmcblk0p2`, and
+the bay is that partition's own root rather than `packs/` in it.
 
 `--already-halted` refuses to read a machine that is still retiring
 microcycles, so the order cannot be got wrong silently. `--packs-stopped` is

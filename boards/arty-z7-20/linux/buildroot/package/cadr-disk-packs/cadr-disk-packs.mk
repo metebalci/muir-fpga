@@ -10,16 +10,16 @@
 # What is in it:
 #
 #   cadr-disk-packs     serves the CADR's disks from the drive bay on the
-#                         card's second partition, on demand: the controller
+#                         card's `packs/` folder, on demand: the controller
 #                         posts the block it lacks and this fetches it into
 #                         the store, and takes written blocks back; and it
 #                         watches the bay while the machine runs, so a pack
 #                         copied in is a drive spinning up and one renamed
 #                         out is a drive taken away.  src/cadr-disk-packs.c's
 #                         header says how
-#   S80cadr-disk-packs  mounts the card's boot partition read-only at
-#                         /mnt/card and its pack partition read-write at
-#                         /mnt/packs, and starts the program at boot, its log
+#   S80cadr-disk-packs  mounts the card read-write at /mnt/card, the bay
+#                         being the `packs/` folder in it, at
+#                         /mnt/card/packs, and starts the program at boot, its log
 #                         on the console
 #
 # And `make -C src check` on the build host, which needs nothing but a C

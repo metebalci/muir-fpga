@@ -859,7 +859,7 @@ The first is SW0 on the board. The fabric holds the machine: it comes out of
 reset with RUN clear and has never run a microcycle. Nothing in Linux has to do
 anything, and there is no window in which the machine ran.
 
-The second is `--no-auto-boot` in `fpgarc` on the pack partition. Nothing in the
+The second is `--no-auto-boot` in `fpgarc` at the root of the card. Nothing in the
 fabric changes for it. `S80cadr-disk-packs` reads the flag and halts the machine
 before it starts the disk pack program, so no drive ever comes present and
 nothing of a band is loaded.

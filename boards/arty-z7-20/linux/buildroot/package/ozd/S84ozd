@@ -45,7 +45,9 @@
 # and it is the one to use when the host on the network is the one that should
 # win.
 
-PACKS=/mnt/packs
+# Where the card is mounted, which `S80cadr-disk-packs` is the one thing
+# that does.  The card is one FAT32 partition and `fpgarc` is at its root.
+CARD=/mnt/card
 PROG=/usr/bin/ozd
 PIDFILE=/var/run/ozd.pid
 LOG=/var/log/ozd.log
@@ -59,7 +61,7 @@ LOG=/var/log/ozd.log
 # standing and a marker that outlives its host is a lie about the board.
 PEERFILE=/var/run/cadr-ozd.peer
 
-RC="$PACKS/fpgarc"
+RC="$CARD/fpgarc"
 
 # The reader, cadr-common's, installed by that package on the target.  Its
 # header is the contract.  If it is not there this script dies here and the
@@ -153,10 +155,10 @@ OZD_USER=ozd
 # be told by hand, and the host table, which is what makes the band's file host
 # a known host rather than an error raised before a single packet is sent.
 #
-# A tree is named on the card, and the place for it is the pack partition,
+# A tree is named on the card, and the place for it is the card itself,
 # which is on the card and costs no memory:
 #
-#     --ozd-root sys=/mnt/packs/sys,ro
+#     --ozd-root sys=/mnt/card/sys,ro
 #
 # docs/chaosnet.md has the measured sizes behind that and behind the two other
 # places it could have gone.

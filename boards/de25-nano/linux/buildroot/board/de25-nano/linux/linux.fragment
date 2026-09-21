@@ -27,7 +27,7 @@
 #                    kernel and in no mainline one; its supply and its
 #                    1.8 V switch, a fixed regulator and a GPIO one on port B
 #                    of the DesignWare GPIO block; and FAT with the code pages
-#                    a FAT volume names, for the card's two partitions
+#                    a FAT volume names, for the card's one FAT32 partition
 #   the network      EMAC 0, `altr,socfpga-stmmac-agilex5`, with a Micrel
 #                    KSZ9031 at MDIO address 1
 #   USB              the DWC2 controller, `snps,dwc2`, behind a ULPI PHY the

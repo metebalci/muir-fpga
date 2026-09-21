@@ -84,7 +84,7 @@ anchor() {
 
 sandbox() {
 	rm -rf "$WORK"
-	mkdir -p "$WORK/bin" "$WORK/packs" "$WORK/run" "$WORK/mnt"
+	mkdir -p "$WORK/bin" "$WORK/card" "$WORK/run" "$WORK/mnt" "$WORK/dev"
 	: > "$WORK/daemon.calls"
 	: > "$WORK/console.calls"
 	: > "$WORK/ip.calls"
@@ -135,7 +135,7 @@ for a; do
 	--check)
 		echo "\$*" >> "$WORK/ozd.check.calls"
 		if [ "\${OZD_CHECK_FAILS:-no}" = yes ]; then
-			echo "ozd: root /mnt/packs/sys: cannot be resolved: No such file or directory (os error 2)" >&2
+			echo "ozd: root /mnt/card/sys: cannot be resolved: No such file or directory (os error 2)" >&2
 			exit 1
 		fi
 		exit 0
@@ -191,17 +191,28 @@ hdmi-mode)
 	;;
 esac
 EOF
-	# The two the disk script uses on the card.  Nothing is mounted here:
-	# the pack partition is a directory the rewrite points it at, and the
-	# script's own message for a partition it could not mount is part of
-	# what is asserted.
+	# **THE TWO THE DISK SCRIPT USES ON THE CARD.**  Nothing is really
+	# mounted here: the card is a directory the rewrite points the script
+	# at.  What the stub decides is WHICH DEVICE ANSWERS, which is the whole
+	# of how that script tells a card of the new one-partition shape from
+	# one of the old two-partition shape.  `$WORK/mountable` names the
+	# device that mounts, or is empty, which is a board with no card and is
+	# what every case that says nothing about it gets --- so the cases
+	# written before the two shapes existed are unchanged.
+	:> "$WORK/mountable"
+	: > "$WORK/mount.calls"
 	cat > "$WORK/bin/mountpoint" <<EOF
 #!/bin/sh
 exit 1
 EOF
 	cat > "$WORK/bin/mount" <<EOF
 #!/bin/sh
-exit 1
+echo "\$*" >> "$WORK/mount.calls"
+_dev=""
+for _a; do case "\$_a" in $WORK/dev/*) _dev=\$_a ;; esac; done
+[ -n "\$_dev" ] || exit 1
+grep -qx "\$_dev" "$WORK/mountable" 2>/dev/null || exit 1
+exit 0
 EOF
 	# The Chaosnet script's network probes: ready at once, every name
 	# resolving, because the wait itself is chaos_test_boot.sh's to hold.
@@ -276,7 +287,7 @@ EOF
 	# be lost at the next boot, with the file there to find either way.
 	cat > "$WORK/bin/umount" <<EOF
 #!/bin/sh
-if [ -f "$WORK/packs/clock" ]; then
+if [ -f "$WORK/card/clock" ]; then
 	echo "the clock was saved before \$1 was unmounted" >> "$WORK/umount.calls"
 else
 	echo "\$1 was unmounted before the clock was saved" >> "$WORK/umount.calls"
@@ -301,7 +312,12 @@ prepare() {
 	fi
 	cp "$src" "$dst" || return 1
 	chmod +x "$dst"
-	anchor "$dst" "^PACKS=/mnt/packs\$" "PACKS=$WORK/packs" || return 1
+	# **WHERE THE CARD IS MOUNTED, WHICH EVERY ONE OF THE SIX NAMES THE SAME
+	# WAY.**  The card is one FAT32 partition and `fpgarc` is at its root,
+	# so this one rewrite serves all six scripts; a script that spelled it
+	# differently would fail the anchor by name rather than quietly reading
+	# a file that is not there.
+	anchor "$dst" "^CARD=/mnt/card\$" "CARD=$WORK/card" || return 1
 	anchor "$dst" "^FPGARC_SH=/usr/share/cadr/fpgarc.sh\$" \
 	              "FPGARC_SH=$READER" || return 1
 	# **THE DAEMON STARTER IS NOT EVERY SCRIPT'S.**  Five of the six are
@@ -359,7 +375,13 @@ prepare() {
 		              "OZD_PEERFILE=$WORK/run/cadr-ozd.peer" || return 1
 		;;
 	S80cadr-disk-packs)
-		anchor "$dst" "^BOOT=/mnt/card\$" "BOOT=$WORK/mnt/card" || return 1
+		# **THE TWO DEVICES, WHICH ONLY THIS SCRIPT KNOWS ABOUT.**  It is
+		# the one place on the board that knows a card may be of the old
+		# two-partition shape, so it is the one script with devices in
+		# it.  They are rewritten to paths the stubbed `mount` can be
+		# told about, and a rename in the script fails here by name.
+		anchor "$dst" "^CARD_DEV=/dev/mmcblk0p1\$" "CARD_DEV=$WORK/dev/p1" || return 1
+		anchor "$dst" "^OLD_CARD_DEV=/dev/mmcblk0p2\$" "OLD_CARD_DEV=$WORK/dev/p2" || return 1
 		anchor "$dst" "^HELD=/var/run/cadr-held\$" "HELD=$WORK/run/cadr-held" || return 1
 		# The clock's own shell, cadr-common's third file on the target,
 		# beside the reader and the daemon starter.
@@ -449,7 +471,7 @@ else
 	. "$READER"
 
 	sandbox
-	RC="$WORK/packs/fpgarc"
+	RC="$WORK/card/fpgarc"
 
 	# One file with a line for every program on the board, written with
 	# carriage returns as a card reader leaves them, a comment, a blank
@@ -459,7 +481,7 @@ else
 		'' \
 		'--chaos-address 3050' \
 		'--chaos-udp 0.0.0.0:42042' \
-		'  --keyboard-mapping /mnt/packs/a name with spaces.txt  ' \
+		'  --keyboard-mapping /mnt/card/a name with spaces.txt  ' \
 		'--usb-scan-ms 500' \
 		'--poll-us 200' \
 		'--no-auto-boot' \
@@ -484,16 +506,16 @@ else
 
 	case_head "an argument with spaces in it stays one word"
 	got=$(eval "set -- $(fpgarc_args "$RC" --keyboard-mapping)"; printf '%s|%s' "$#" "$2")
-	if [ "$got" = "2|/mnt/packs/a name with spaces.txt" ]; then
+	if [ "$got" = "2|/mnt/card/a name with spaces.txt" ]; then
 		ok "the mapping file is one argument, trimmed at both ends"
 	else
 		fail "the mapping file came back as [$got]"
 	fi
 
 	case_head "an argument with a quote in it survives"
-	printf "%s\r\n" "--keyboard-mapping /mnt/packs/it's here.txt" > "$WORK/packs/quoted"
-	got=$(eval "set -- $(fpgarc_args "$WORK/packs/quoted" --keyboard-mapping)"; printf '%s' "$2")
-	if [ "$got" = "/mnt/packs/it's here.txt" ]; then
+	printf "%s\r\n" "--keyboard-mapping /mnt/card/it's here.txt" > "$WORK/card/quoted"
+	got=$(eval "set -- $(fpgarc_args "$WORK/card/quoted" --keyboard-mapping)"; printf '%s' "$2")
+	if [ "$got" = "/mnt/card/it's here.txt" ]; then
 		ok "a single quote in an argument comes back as itself"
 	else
 		fail "the quoted argument came back as [$got]"
@@ -530,7 +552,7 @@ else
 	fi
 
 	case_head "a file that is not there is not a file with nothing in it"
-	if fpgarc_args "$WORK/packs/no-such-file" --chaos-address > "$WORK/absent"; then
+	if fpgarc_args "$WORK/card/no-such-file" --chaos-address > "$WORK/absent"; then
 		fail "the reader said it read a file that is not there"
 	else
 		ok "a missing file returns 1"
@@ -821,13 +843,13 @@ fi
 # 2.  One file, five scripts, and each program gets its own flags.
 # ---------------------------------------------------------------------------
 sandbox
-RC="$WORK/packs/fpgarc"
+RC="$WORK/card/fpgarc"
 printf '%s\r\n' \
 	'# one file for the whole station' \
 	'--chaos-address 3050' \
 	'--chaos-udp 0.0.0.0:42042' \
 	'--chaos-udp-peer 3060@a-host.invalid:42043' \
-	'--keyboard-mapping /mnt/packs/keys.txt' \
+	'--keyboard-mapping /mnt/card/keys.txt' \
 	'--bow' \
 	'--serial 0.0.0.0:7641' \
 	'--poll-us 250' \
@@ -862,7 +884,7 @@ fi
 case_head "the screen gets its own flags and nobody else's"
 if prepare cadr-terminal S85cadr-terminal; then
 	run_script S85cadr-terminal
-	passes "--keyboard-mapping /mnt/packs/keys.txt" "cadr-terminal"
+	passes "--keyboard-mapping /mnt/card/keys.txt" "cadr-terminal"
 	passes "--bow" "cadr-terminal"
 	passes "--terminal 0.0.0.0:5900" "cadr-terminal"
 	passes_not "--port" "cadr-terminal"
@@ -1163,27 +1185,27 @@ fi
 case_head "the card's flag wins over the mapping file found beside it, and is the only one passed"
 sandbox
 if prepare cadr-terminal S85cadr-terminal; then
-	printf 'key 0 0\n' > "$WORK/packs/terminal.keyboard.mapping.txt"
-	printf '%s\r\n' '--keyboard-mapping /mnt/packs/from-the-card.txt' > "$RC"
+	printf 'key 0 0\n' > "$WORK/card/terminal.keyboard.mapping.txt"
+	printf '%s\r\n' '--keyboard-mapping /mnt/card/from-the-card.txt' > "$RC"
 	run_script S85cadr-terminal
-	passes_once "--keyboard-mapping" "cadr-terminal" "/mnt/packs/from-the-card.txt"
-	passes_not "$WORK/packs/terminal.keyboard.mapping.txt" "cadr-terminal"
+	passes_once "--keyboard-mapping" "cadr-terminal" "/mnt/card/from-the-card.txt"
+	passes_not "$WORK/card/terminal.keyboard.mapping.txt" "cadr-terminal"
 fi
 
 case_head "and the mapping file beside it is passed once when the card says nothing"
 sandbox
 if prepare cadr-terminal S85cadr-terminal; then
-	printf 'key 0 0\n' > "$WORK/packs/terminal.keyboard.mapping.txt"
+	printf 'key 0 0\n' > "$WORK/card/terminal.keyboard.mapping.txt"
 	printf '%s\r\n' '--bow' > "$RC"
 	run_script S85cadr-terminal
 	passes_once "--keyboard-mapping" "cadr-terminal" \
-	            "$WORK/packs/terminal.keyboard.mapping.txt"
+	            "$WORK/card/terminal.keyboard.mapping.txt"
 fi
 
 case_head "and no mapping flag at all when there is neither"
 sandbox
 if prepare cadr-terminal S85cadr-terminal; then
-	rm -f "$WORK/packs/terminal.keyboard.mapping.txt"
+	rm -f "$WORK/card/terminal.keyboard.mapping.txt"
 	printf '%s\r\n' '--bow' > "$RC"
 	run_script S85cadr-terminal
 	passes_not "--keyboard-mapping" "cadr-terminal"
@@ -1217,7 +1239,7 @@ refusal_case() {
 	# card that says the line is off, and a program that is not started
 	# refuses nothing.
 	sandbox
-	printf '%s\r\n' "$3" ${5:+"$5"} > "$WORK/packs/fpgarc"
+	printf '%s\r\n' "$3" ${5:+"$5"} > "$WORK/card/fpgarc"
 	prepare "$1" "$2" || return 1
 
 	case_head "$4: a flag it refuses is printed, and OK is not"
@@ -1272,7 +1294,7 @@ refusal_case cadr-chaosnet   S87cadr-chaosnet  --chaos-trace  cadr-chaosnet
 # flag, and a program that stopped taking it would be a bay that never opens.
 case_head "cadr-disk-packs: a flag it refuses is printed, and OK is not"
 sandbox
-printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	REFUSE=--packs
 	export REFUSE
@@ -1293,7 +1315,7 @@ fi
 
 case_head "a program that dies for a reason that is not its flags says so"
 sandbox
-printf '%s\r\n' '--bow' > "$WORK/packs/fpgarc"
+printf '%s\r\n' '--bow' > "$WORK/card/fpgarc"
 if prepare cadr-terminal S85cadr-terminal; then
 	# The stand-in is replaced by one that goes at once and says nothing,
 	# which is a program that died at start for a reason of its own.  The
@@ -1335,7 +1357,7 @@ printf '%s\r\n' \
 	'--usb-grab' \
 	'--quiet' \
 	'--bwo' \
-	'--not-anybodys-flag 7' > "$WORK/packs/fpgarc"
+	'--not-anybodys-flag 7' > "$WORK/card/fpgarc"
 ran=yes
 for pair in "cadr-disk-packs S80cadr-disk-packs" "cadr-terminal S85cadr-terminal" \
             "cadr-serial S86cadr-serial" "cadr-chaosnet S87cadr-chaosnet" \
@@ -1372,7 +1394,7 @@ fi
 case_head "and a file every program's list covers is reported silently"
 sandbox
 printf '%s\r\n' '--chaos-address 3050' '--bow' '--usb-grab' \
-	'--date 20260920' '--time 1438' > "$WORK/packs/fpgarc"
+	'--date 20260920' '--time 1438' > "$WORK/card/fpgarc"
 ran=yes
 for pair in "cadr-disk-packs S80cadr-disk-packs" "cadr-terminal S85cadr-terminal" \
             "cadr-serial S86cadr-serial" "cadr-chaosnet S87cadr-chaosnet" \
@@ -1409,7 +1431,7 @@ case_head "a flag the Chaosnet program refuses is reported, and the Chaosnet sti
 sandbox
 printf '%s\r\n' \
 	'--chaos-address 3050' \
-	'--chaos-file-root /mnt/packs/file-root' > "$WORK/packs/fpgarc"
+	'--chaos-file-root /mnt/card/file-root' > "$WORK/card/fpgarc"
 ran=yes
 for pair in "cadr-disk-packs S80cadr-disk-packs" "cadr-terminal S85cadr-terminal" \
             "cadr-serial S86cadr-serial" "cadr-chaosnet S87cadr-chaosnet" \
@@ -1459,7 +1481,7 @@ fi
 case_head "--no-auto-boot halts the machine and leaves the marker"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' '--no-auto-boot' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' '--no-auto-boot' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	if grep -qx "halt" "$WORK/console.calls"; then
 		ok "the console was told to halt"
@@ -1495,7 +1517,7 @@ fi
 case_head "without the flag nothing is halted and nothing is said"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	# The console IS asked about the switch --- that is how the fabric's own
 	# hold is found --- and must be told nothing else.
@@ -1530,7 +1552,7 @@ fi
 case_head "a card with no fpgarc at all boots itself"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	rm -f "$WORK/packs/fpgarc"
+	rm -f "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	if grep -qx "halt" "$WORK/console.calls"; then
 		fail "the console was told to halt: $(cat "$WORK/console.calls")"
@@ -1552,7 +1574,7 @@ fi
 case_head "a marker left standing from before is removed at start"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	echo "a hold that is over" > "$WORK/run/cadr-held"
 	run_script S80cadr-disk-packs
 	if [ -f "$WORK/run/cadr-held" ]; then
@@ -1565,7 +1587,7 @@ fi
 case_head "a console that cannot halt says so and does not mark"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--no-auto-boot' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--no-auto-boot' > "$WORK/card/fpgarc"
 	: > "$WORK/daemon.calls"
 	CONSOLE_HALTS=no PATH="$WORK/bin:$PATH" \
 		"$WORK/S80cadr-disk-packs" start > "$WORK/out.held" 2>&1
@@ -1603,7 +1625,7 @@ fi
 case_head "the console's lines into the boot log name the program"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--debug-cable-wiring auto' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--debug-cable-wiring auto' > "$WORK/card/fpgarc"
 	: > "$WORK/daemon.calls"
 	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
 		"$WORK/S80cadr-disk-packs" start > "$WORK/out.cable" 2>&1
@@ -1619,7 +1641,7 @@ fi
 case_head "SW0 holds the machine, and nothing is halted"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	: > "$WORK/daemon.calls"
 	CONSOLE_SWITCH=yes FPGARC_CLAIMED="$WORK/run/claimed" \
 		PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" start \
@@ -1671,7 +1693,7 @@ fi
 case_head "--no-blinking-leds asks the console for steady lamps, and nothing else"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' '--no-blinking-leds' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' '--no-blinking-leds' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	if grep -qx -- "--log /dev/console blinking-leds off" "$WORK/console.calls"; then
 		ok "the console was told blinking-leds off, with the boot log named"
@@ -1699,14 +1721,14 @@ fi
 case_head "without the line the lamps are left to blink, and a console that fails says so"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	if grep -q "blinking-leds" "$WORK/console.calls"; then
 		fail "the console was asked about the lamps by a card that says nothing: $(cat "$WORK/console.calls")"
 	else
 		ok "the console was not asked about the lamps"
 	fi
-	printf '%s\r\n' '--no-blinking-leds' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--no-blinking-leds' > "$WORK/card/fpgarc"
 	: > "$WORK/daemon.calls"
 	CONSOLE_LAMPS=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
 		"$WORK/S80cadr-disk-packs" start > "$WORK/out.lamps" 2>&1
@@ -1733,7 +1755,7 @@ fi
 case_head "--hdmi-sleep hands the console the card's seconds, and nothing else"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' '--hdmi-sleep 120' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' '--hdmi-sleep 120' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	if grep -qx -- "--log /dev/console hdmi-sleep 120" "$WORK/console.calls"; then
 		ok "the console was told hdmi-sleep 120, with the boot log named"
@@ -1761,14 +1783,14 @@ fi
 case_head "without the line the fabric's own sleep stands, and a console that refuses says so"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' '--hdmi-output tv' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' '--hdmi-output tv' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	if grep -q "hdmi-sleep" "$WORK/console.calls"; then
 		fail "the console was asked about sleep by a card that says nothing: $(cat "$WORK/console.calls")"
 	else
 		ok "the console was not asked about sleep"
 	fi
-	printf '%s\r\n' '--hdmi-sleep 0' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--hdmi-sleep 0' > "$WORK/card/fpgarc"
 	: > "$WORK/daemon.calls"
 	: > "$WORK/console.calls"
 	CONSOLE_SLEEP=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
@@ -1813,7 +1835,7 @@ hdmi_name() {
 }
 # $1 the word the card writes, $2 the name the stubbed fabric reports.
 hdmi_mode_run() {
-	printf '%s\r\n' '--chaos-address 3050' "--hdmi-mode $1" > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' "--hdmi-mode $1" > "$WORK/card/fpgarc"
 	: > "$WORK/console.calls"
 	: > "$WORK/daemon.calls"
 	CONSOLE_HDMI_MODE="$2" FPGARC_CLAIMED="$WORK/run/claimed" \
@@ -2002,7 +2024,7 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	# **AND A CARD THAT SAYS NOTHING ABOUT THE MODE ASKS NOTHING**, which is
 	# the control for every leg above: a step that asked whatever the card
 	# said would pass them all.
-	printf '%s\r\n' '--chaos-address 3050' '--hdmi-output tv' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' '--hdmi-output tv' > "$WORK/card/fpgarc"
 	: > "$WORK/console.calls"
 	run_script S80cadr-disk-packs
 	if grep -qx "hdmi-mode" "$WORK/console.calls"; then
@@ -2021,7 +2043,7 @@ fi
 case_head "SW0 and --no-auto-boot together: held once, by the switch"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--no-auto-boot' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--no-auto-boot' > "$WORK/card/fpgarc"
 	CONSOLE_SWITCH=yes FPGARC_CLAIMED="$WORK/run/claimed" \
 		PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" start \
 		> "$WORK/out.both" 2>&1
@@ -2051,7 +2073,7 @@ fi
 case_head "no cadr-console at all, and no flag: the board boots itself"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	rm -f "$WORK/bin/cadr-console"
 	run_script S80cadr-disk-packs
 	if [ -f "$WORK/run/cadr-held" ]; then
@@ -2075,7 +2097,7 @@ fi
 case_head "the step never blocks the boot"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--no-auto-boot' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--no-auto-boot' > "$WORK/card/fpgarc"
 	started=$(date +%s)
 	run_script S80cadr-disk-packs
 	took=$(( $(date +%s) - started ))
@@ -2215,7 +2237,7 @@ case_head "--date and --time set the clock, before anything else starts"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	printf '%s\r\n' '--chaos-address 3050' '--date 20260920' '--time 1438' \
-		> "$WORK/packs/fpgarc"
+		> "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:38:00"
 	clock_set_first
@@ -2232,7 +2254,7 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 		fail "the pack program was not started"
 	fi
 	# Nothing is saved at a start: the save is the shutdown's.
-	if [ -f "$WORK/packs/clock" ]; then
+	if [ -f "$WORK/card/clock" ]; then
 		fail "a start wrote the saved clock, and only a clean shutdown may"
 	else
 		ok "and nothing was saved at start"
@@ -2243,7 +2265,7 @@ case_head "--date alone sets the date and leaves the time of day"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '--date 20260920' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--date 20260920' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 00:00:05"
 	says "--date 20260920"
@@ -2254,7 +2276,7 @@ case_head "--time alone sets the time of day and leaves the date"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '--time 1438' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--time 1438' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "1970-01-01 14:38:00"
 	says "--time 1438"
@@ -2265,7 +2287,7 @@ case_head "--time takes the second when the card gives one"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '--date 20260920' '--time 143805' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--date 20260920' '--time 143805' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:38:05"
 fi
@@ -2273,7 +2295,7 @@ fi
 case_head "a card that says nothing leaves the clock alone and says nothing"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_never "the clock was not set"
 	says_not "cadr-clock"
@@ -2295,8 +2317,8 @@ case_head "a saved clock later than the card's lines does not drop them"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo 20260920140000 > "$WORK/packs/clock"
-	printf '%s\r\n' '--date 20260919' '--time 1200' > "$WORK/packs/fpgarc"
+	echo 20260920140000 > "$WORK/card/clock"
+	printf '%s\r\n' '--date 20260919' '--time 1200' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-19 12:00:00"
 	says "cadr-clock: the clock is 2026-09-19 12:00:00 UTC, --date 20260919 and --time 1200"
@@ -2312,8 +2334,8 @@ case_head "and a saved clock earlier than them lands them the same way"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo 20260918000000 > "$WORK/packs/clock"
-	printf '%s\r\n' '--date 20260919' '--time 1200' > "$WORK/packs/fpgarc"
+	echo 20260918000000 > "$WORK/card/clock"
+	printf '%s\r\n' '--date 20260919' '--time 1200' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-19 12:00:00"
 	says "--date 20260919 and --time 1200"
@@ -2331,8 +2353,8 @@ case_head "a lone --time moves the restored clock and does not start again from 
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo 20260920140000 > "$WORK/packs/clock"
-	printf '%s\r\n' '--time 1500' > "$WORK/packs/fpgarc"
+	echo 20260920140000 > "$WORK/card/clock"
+	printf '%s\r\n' '--time 1500' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 15:00:00"
 	clock_date_unmoved "2026-09-20"
@@ -2350,8 +2372,8 @@ case_head "a lone --time earlier than the saved clock still lands, and the date 
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo 20260918140000 > "$WORK/packs/clock"
-	printf '%s\r\n' '--time 0900' > "$WORK/packs/fpgarc"
+	echo 20260918140000 > "$WORK/card/clock"
+	printf '%s\r\n' '--time 0900' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-18 09:00:00"
 	clock_date_unmoved "2026-09-18"
@@ -2368,8 +2390,8 @@ case_head "a lone --date earlier than the saved clock still lands, and the time 
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo 20260920143805 > "$WORK/packs/clock"
-	printf '%s\r\n' '--date 20260101' > "$WORK/packs/fpgarc"
+	echo 20260920143805 > "$WORK/card/clock"
+	printf '%s\r\n' '--date 20260101' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-01-01 14:38:05"
 	clock_time_unmoved "14:38:05"
@@ -2385,16 +2407,16 @@ case_head "one second either side of the saved clock is set exactly as the card 
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo 20260920143800 > "$WORK/packs/clock"
-	printf '%s\r\n' '--date 20260920' '--time 143801' > "$WORK/packs/fpgarc"
+	echo 20260920143800 > "$WORK/card/clock"
+	printf '%s\r\n' '--date 20260920' '--time 143801' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:38:01"
 fi
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo 20260920143800 > "$WORK/packs/clock"
-	printf '%s\r\n' '--date 20260920' '--time 143759' > "$WORK/packs/fpgarc"
+	echo 20260920143800 > "$WORK/card/clock"
+	printf '%s\r\n' '--date 20260920' '--time 143759' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:37:59"
 	says_not "is not later than"
@@ -2404,8 +2426,8 @@ case_head "a saved clock and no lines at all is restored on its own"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo 20260920140000 > "$WORK/packs/clock"
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	echo 20260920140000 > "$WORK/card/clock"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:00:00"
 	clock_set_first
@@ -2422,8 +2444,8 @@ case_head "a saved clock earlier than the clock the board came up with is still 
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 20260921000000 > "$WORK/now"
-	echo 20260920140000 > "$WORK/packs/clock"
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	echo 20260920140000 > "$WORK/card/clock"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:00:00"
 	says "restored from"
@@ -2432,8 +2454,8 @@ fi
 case_head "and a saved clock with no fpgarc beside it is restored too"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	rm -f "$WORK/packs/fpgarc"
-	echo 20260920140000 > "$WORK/packs/clock"
+	rm -f "$WORK/card/fpgarc"
+	echo 20260920140000 > "$WORK/card/clock"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:00:00"
 fi
@@ -2447,16 +2469,16 @@ case_head "a saved clock a card reader left its marks on is still restored"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '  20260920140000  \r\n' > "$WORK/packs/clock"
-	rm -f "$WORK/packs/fpgarc"
+	printf '  20260920140000  \r\n' > "$WORK/card/clock"
+	rm -f "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:00:00"
 fi
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '2026 0920140000\n' > "$WORK/packs/clock"
-	rm -f "$WORK/packs/fpgarc"
+	printf '2026 0920140000\n' > "$WORK/card/clock"
+	rm -f "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_never "a saved clock with a space in the middle was not used"
 	says "cadr-clock: the clock saved in"
@@ -2466,8 +2488,8 @@ case_head "a saved clock that is not fourteen digits is named and not used"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	echo "hello" > "$WORK/packs/clock"
-	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/packs/fpgarc"
+	echo "hello" > "$WORK/card/clock"
+	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:38:00"
 	says "cadr-clock: the clock saved in"
@@ -2486,7 +2508,7 @@ case_head "a --date that is not a date is named, and --time still lands"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '--date 20261301' '--time 1438' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--date 20261301' '--time 1438' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "1970-01-01 14:38:00"
 	says "cadr-clock: --date 20261301 is not a date"
@@ -2497,7 +2519,7 @@ case_head "a --time that is not a time is named, and --date still lands"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '--date 20260920' '--time 2400' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--date 20260920' '--time 2400' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 00:00:05"
 	says "cadr-clock: --time 2400 is not a time"
@@ -2508,7 +2530,7 @@ case_head "a line with nothing after it is named, and the clock is not set"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '--date' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--date' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_never "the clock was not set from a line with no date on it"
 	says "cadr-clock: --date is there with nothing after it"
@@ -2524,14 +2546,14 @@ case_head "spaces round the value are taken off, and a space inside it is not a 
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '   --date   20260920   ' '  --time  1438  ' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '   --date   20260920   ' '  --time  1438  ' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_once "2026-09-20 14:38:00"
 fi
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '--date 2026 0920' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--date 2026 0920' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_never "a date with a space in it did not reach the clock"
 	says "cadr-clock: --date 2026 0920 is not a date"
@@ -2541,7 +2563,7 @@ case_head "a board whose clock does not read as an instant is said, and nothing 
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo "not-a-clock" > "$WORK/now"
-	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_never "nothing was set against a clock that is not an instant"
 	says "cadr-clock: the board's clock reads [not-a-clock]"
@@ -2555,7 +2577,7 @@ fi
 case_head "a clock the board will not take is said, and the boot goes on"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/card/fpgarc"
 	: > "$WORK/daemon.calls"
 	: > "$WORK/date.calls"
 	DATE_SETS=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
@@ -2577,12 +2599,12 @@ case_head "a clean shutdown saves the clock, before the partition is unmounted"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 20260920143805 > "$WORK/now"
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
-	if [ "$(cat "$WORK/packs/clock" 2>/dev/null)" = 20260920143805 ]; then
+	if [ "$(cat "$WORK/card/clock" 2>/dev/null)" = 20260920143805 ]; then
 		ok "the clock was saved as fourteen digits"
 	else
-		fail "the saved clock is [$(cat "$WORK/packs/clock" 2>/dev/null)], not 20260920143805"
+		fail "the saved clock is [$(cat "$WORK/card/clock" 2>/dev/null)], not 20260920143805"
 	fi
 	if grep -q "cadr-clock: 2026-09-20 14:38:05 UTC saved" "$WORK/out.stop"; then
 		ok "and the console says so"
@@ -2590,7 +2612,7 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 		fail "the console does not say the clock was saved; it says:"
 		sed 's/^/        /' "$WORK/out.stop"
 	fi
-	if grep -q "^the clock was saved before $WORK/packs was unmounted\$" "$WORK/umount.calls"; then
+	if grep -q "^the clock was saved before $WORK/card was unmounted\$" "$WORK/umount.calls"; then
 		ok "and it was saved while the partition was still the card's"
 	else
 		fail "the unmount and the save fell the wrong way round: $(cat "$WORK/umount.calls")"
@@ -2603,7 +2625,7 @@ case_head "and the next boot starts where the last shutdown left off"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 20260920143805 > "$WORK/now"
-	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
 	# The board comes up at the epoch, as it really does with no real-time
 	# clock in it.
@@ -2643,16 +2665,16 @@ lift_board_facts() {
 
 generate_fpgarc() {
 	rm -rf "$WORK/gen"
-	mkdir -p "$WORK/gen/packs"
+	mkdir -p "$WORK/gen/card"
 	lift_board_facts "$WORK/gen/board.sh" || return 1
 	awk '/^CHAOS_ADDR=\$\{CHAOS_ADDR_FPGA/ {on=1}
 	     on {print}
-	     /^\} > "\$OUT\/packs\/fpgarc"$/ {if (on) exit}' "$MKSD" > "$WORK/gen/gen.sh"
+	     /^\} > "\$OUT\/card\/fpgarc"$/ {if (on) exit}' "$MKSD" > "$WORK/gen/gen.sh"
 	if [ ! -s "$WORK/gen/gen.sh" ]; then
 		fail "the fpgarc generator is not where this check looks in mksd-buildroot.sh"
 		return 1
 	fi
-	if [ "$(grep -c '^} > "\$OUT/packs/fpgarc"$' "$WORK/gen/gen.sh")" != "1" ]; then
+	if [ "$(grep -c '^} > "\$OUT/card/fpgarc"$' "$WORK/gen/gen.sh")" != "1" ]; then
 		fail "the fpgarc generator's end is not where this check looks"
 		return 1
 	fi
@@ -2675,10 +2697,12 @@ generate_fpgarc() {
 	  # case that asserts what such a card does about the host on the
 	  # board, because those two things are one decision.
 	  CHAOS_PEER=${5:-}
-	  # $6 is SYS, the band's sources staged onto the packs partition.  The
-	  # menu names the tree exactly when the card carries one, because a
-	  # line naming a tree that is not there stops the host.
+	  # $6 is SYS and $7 SITE, the band's two trees staged onto the card.
+	  # The menu names each tree exactly when the card carries it, because
+	  # a line naming a tree that is not there stops the host, and they are
+	  # two flags because a card may carry one and not the other.
 	  SYS=${6:-}
+	  SITE=${7:-}
 	  CHAOS_DEFAULT_PEER=""
 	  . "$WORK/gen/gen.sh" ) || return 1
 	return 0
@@ -2708,10 +2732,11 @@ live_flags() { tr -d '\r' < "$1" | grep -E '^--' || true; }
 # sentence about one.  The reader treats both as comments; only this tells them
 # apart.
 #
-# Two flags are repeatable by their own definition --- a peer entry places ONE
-# address and a named device is ONE device --- so those may appear more than
-# once.  Everything else must appear exactly once, which is what catches a flag
-# written into the file twice under two different explanations.
+# Three flags are repeatable by their own definition --- a peer entry places
+# ONE address, a named device is ONE device, and a root names ONE tree --- so
+# those may appear more than once.  Everything else must appear exactly once,
+# which is what catches a flag written into the file twice under two different
+# explanations.
 flag_requirements() {
 	for _f in cadr-chaosnet/S87cadr-chaosnet cadr-terminal/S85cadr-terminal \
 	          cadr-serial/S86cadr-serial cadr-usb-input/S88cadr-usb-input \
@@ -2737,7 +2762,7 @@ setting_lines() {
 case_head "the card's file names every flag every program takes from it"
 sandbox
 if generate_fpgarc ""; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	reqs=0
 	missing=0
 	twice=0
@@ -2758,9 +2783,10 @@ if generate_fpgarc ""; then
 			continue
 		fi
 		case "$req" in
-		*--chaos-udp-peer*|*--usb-device*)
-			# Repeatable: a peer entry places one address and a
-			# named device is one device.
+		*--chaos-udp-peer*|*--usb-device*|*--ozd-root*)
+			# Repeatable: a peer entry places one address, a named
+			# device is one device, and a root names one tree ---
+			# the card carries two, `sys` and `site`.
 			;;
 		*)
 			if [ "$n" != 1 ]; then
@@ -2795,17 +2821,17 @@ fi
 case_head "the card is written with the boot button pressed by default"
 sandbox
 if generate_fpgarc ""; then
-	if grep -q '^#--no-auto-boot' "$WORK/gen/packs/fpgarc"; then
+	if grep -q '^#--no-auto-boot' "$WORK/gen/card/fpgarc"; then
 		ok "the line is there and commented out"
 	else
 		fail "there is no commented --no-auto-boot line in what the card script wrote"
 	fi
-	if grep -q '^--no-auto-boot' "$WORK/gen/packs/fpgarc"; then
+	if grep -q '^--no-auto-boot' "$WORK/gen/card/fpgarc"; then
 		fail "and it is also live, which it must not be"
 	else
 		ok "and it is not live"
 	fi
-	if grep -q 'the machine is held at boot' "$WORK/gen/packs/fpgarc"; then
+	if grep -q 'the machine is held at boot' "$WORK/gen/card/fpgarc"; then
 		ok "and the sentence explaining it is beside it"
 	else
 		fail "the line has no sentence explaining it"
@@ -2813,7 +2839,7 @@ if generate_fpgarc ""; then
 	# The reader must agree with the card script about what a comment is.
 	if [ "$HAVE_READER" != yes ]; then
 		fail "there is no reader to agree with the card script"
-	elif fpgarc_has "$WORK/gen/packs/fpgarc" --no-auto-boot; then
+	elif fpgarc_has "$WORK/gen/card/fpgarc" --no-auto-boot; then
 		fail "the reader takes the commented line as a flag"
 	else
 		ok "and the reader does not take it as a flag"
@@ -2823,19 +2849,19 @@ fi
 case_head "NO_AUTO_BOOT=1 makes the same line live"
 sandbox
 if generate_fpgarc "1"; then
-	if grep -q '^--no-auto-boot' "$WORK/gen/packs/fpgarc"; then
+	if grep -q '^--no-auto-boot' "$WORK/gen/card/fpgarc"; then
 		ok "the line is live"
 	else
 		fail "the --no-auto-boot line is not live in what the card script wrote"
 	fi
-	if grep -q 'the machine is held at boot' "$WORK/gen/packs/fpgarc"; then
+	if grep -q 'the machine is held at boot' "$WORK/gen/card/fpgarc"; then
 		ok "and the same sentence is beside it"
 	else
 		fail "the live line has no sentence explaining it"
 	fi
 	if [ "$HAVE_READER" != yes ]; then
 		fail "there is no reader to find the live line"
-	elif fpgarc_has "$WORK/gen/packs/fpgarc" --no-auto-boot; then
+	elif fpgarc_has "$WORK/gen/card/fpgarc" --no-auto-boot; then
 		ok "and the reader finds it"
 	else
 		fail "the reader does not find the live line"
@@ -2843,7 +2869,7 @@ if generate_fpgarc "1"; then
 	# Carriage returns: the card is FAT32 and the file is written CRLF, so
 	# a reader that did not strip them would hand the shell a flag with a
 	# carriage return on it and nothing would match.
-	if grep -q "$(printf '\r')$" "$WORK/gen/packs/fpgarc"; then
+	if grep -q "$(printf '\r')$" "$WORK/gen/card/fpgarc"; then
 		ok "and the card's file is written with carriage returns, as it must be"
 	else
 		fail "the card's file has no carriage returns"
@@ -2858,7 +2884,7 @@ fi
 case_head "the card is written with blinking lamps by default"
 sandbox
 if generate_fpgarc "" "" ""; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	if tr -d '\r' < "$GEN" | grep -qx -- '#--no-blinking-leds'; then
 		ok "the line is there and commented out"
 	else
@@ -2886,7 +2912,7 @@ fi
 case_head "NO_BLINKING_LEDS=1 makes the same line live on a development card"
 sandbox
 if generate_fpgarc "" "" 1; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	if tr -d '\r' < "$GEN" | grep -qx -- '--no-blinking-leds'; then
 		ok "the line is live"
 	else
@@ -2918,7 +2944,7 @@ fi
 case_head "and a released card blinks even when NO_BLINKING_LEDS=1 is set"
 sandbox
 if generate_fpgarc "" 1 1; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	if tr -d '\r' < "$GEN" | grep -qx -- '#--no-blinking-leds'; then
 		ok "the line is written commented out"
 	else
@@ -2945,7 +2971,7 @@ case_head "the card is written with the clock's two lines commented out"
 for _rel in "" 1; do
 	sandbox
 	if generate_fpgarc "" "$_rel"; then
-		GEN="$WORK/gen/packs/fpgarc"
+		GEN="$WORK/gen/card/fpgarc"
 		if [ -n "$_rel" ]; then _which="the released menu"; else _which="the development menu"; fi
 		for f in --date --time; do
 			if tr -d '\r' < "$GEN" | grep -qE "^#$f "; then
@@ -3001,7 +3027,7 @@ done
 case_head "a released card's menu has four live lines and they are the four a board needs"
 sandbox
 if generate_fpgarc "" 1; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
 	want='--chaos-address 177101|--chaos-udp 127.0.0.1:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|'
 	if [ "$got" = "$want" ]; then
@@ -3014,7 +3040,7 @@ fi
 case_head "and the serial line is on it, commented out"
 sandbox
 if generate_fpgarc "" 1; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	for f in --serial; do
 		if tr -d '\r' < "$GEN" | grep -qE "^#$f "; then
 			ok "$f is there as a setting to uncomment"
@@ -3041,7 +3067,7 @@ fi
 case_head "and it is still the whole menu: every flag every program takes is on it"
 sandbox
 if generate_fpgarc "" 1; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	reqs=0
 	missing=0
 	flag_requirements > "$WORK/reqs"
@@ -3069,7 +3095,7 @@ fi
 case_head "and the development card's menu is unchanged: six live lines, the cable and the line among them"
 sandbox
 if generate_fpgarc "" ""; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
 	# The sixth is the JA ribbon's wiring, which is `auto` --- the fabric's
 	# own reset value, so the line changes nothing.  It is live on a card
@@ -3092,7 +3118,7 @@ fi
 case_head "a board given the released menu has its switches set and its cable on the loopback"
 sandbox
 if generate_fpgarc "" 1 && prepare cadr-chaosnet S87cadr-chaosnet; then
-	cp "$WORK/gen/packs/fpgarc" "$WORK/packs/fpgarc"
+	cp "$WORK/gen/card/fpgarc" "$WORK/card/fpgarc"
 	run_script S87cadr-chaosnet
 	passes_once "--chaos-address" "cadr-chaosnet" "177101"
 	# **THE CABLE IS PLUGGED INTO THE BOARD AND INTO NO NETWORK.**  That is
@@ -3111,7 +3137,7 @@ fi
 case_head "and its serial line is off, and its screen is served"
 sandbox
 if generate_fpgarc "" 1 && prepare cadr-serial S86cadr-serial; then
-	cp "$WORK/gen/packs/fpgarc" "$WORK/packs/fpgarc"
+	cp "$WORK/gen/card/fpgarc" "$WORK/card/fpgarc"
 	run_script S86cadr-serial
 	if [ -s "$WORK/daemon.calls" ]; then
 		fail "cadr-serial was started off the released menu: $(given)"
@@ -3126,7 +3152,7 @@ if generate_fpgarc "" 1 && prepare cadr-serial S86cadr-serial; then
 fi
 sandbox
 if generate_fpgarc "" 1 && prepare cadr-terminal S85cadr-terminal; then
-	cp "$WORK/gen/packs/fpgarc" "$WORK/packs/fpgarc"
+	cp "$WORK/gen/card/fpgarc" "$WORK/card/fpgarc"
 	run_script S85cadr-terminal
 	passes_once "--terminal" "cadr-terminal" "0.0.0.0:5900"
 	passes_once "--keyboard-boot" "cadr-terminal" "ctrl,meta"
@@ -3140,13 +3166,13 @@ fi
 #
 # **WHY THIS IS HERE AND NOT IN A CHECK OF ITS OWN.**  This check already runs
 # the real card script's fpgarc generator by lifting it out on its own anchors,
-# because the rest of that script wants a bitstream, a Buildroot output tree
-# and genimage.  The card's LAYOUT has exactly the same shape: two small blocks
-# of the script that can be run alone against fabricated files, and no board.
-# What a staging run proves on top of this is that genimage carried the folder
-# into the image, which is read back there and cannot be read back here.
+# because the rest of that script wants a bitstream and a Buildroot output
+# tree.  The card's LAYOUT has exactly the same shape: small blocks of the
+# script that can be run alone against fabricated files, and no board.  What a
+# staging run proves on top of this is that the real images and the real
+# bitstream went where the block says they go.
 #
-# **THE PROPERTY.**  Three files stay at the root of the boot partition because
+# **THE PROPERTY.**  The loader's files stay at the root of the card because
 # their names are not ours to move --- BOOT.BIN, which the boot ROM reads from
 # the root of the first FAT partition; u-boot.img, which the SPL asks for by
 # that name at the root; and uEnv.txt, which U-Boot imports before any board
@@ -3506,8 +3532,8 @@ sandbox
 # the display's windows are must name the DE25-Nano's, 64 MB into ITS
 # reservation, or a person uncommenting them would point the screen at the
 # wrong memory.  Generated twice from the one block and compared.
-if generate_fpgarc "" "" "" arty-z7-20 && cp "$WORK/gen/packs/fpgarc" "$WORK/fpgarc.arty" \
-   && generate_fpgarc "" "" "" de25-nano && cp "$WORK/gen/packs/fpgarc" "$WORK/fpgarc.de25"; then
+if generate_fpgarc "" "" "" arty-z7-20 && cp "$WORK/gen/card/fpgarc" "$WORK/fpgarc.arty" \
+   && generate_fpgarc "" "" "" de25-nano && cp "$WORK/gen/card/fpgarc" "$WORK/fpgarc.de25"; then
 	if tr -d '\r' < "$WORK/fpgarc.arty" | grep -qx -- '#--window 0x1C000000' \
 	   && tr -d '\r' < "$WORK/fpgarc.arty" | grep -qx -- '#--color-window 0x1C020000'; then
 		ok "the Arty Z7-20's names its display at 0x1C000000 and the color display at 0x1C020000"
@@ -3549,10 +3575,10 @@ fi
 # bought by widening the exemption until nothing is caught.
 case_head "the release guard passes the card's own file of flags and still catches an address"
 sandbox
-mkdir -p "$WORK/rel/card" "$WORK/rel/packs"
+mkdir -p "$WORK/rel/card/packs" "$WORK/rel/card/sys" "$WORK/rel/card/site"
 if lift 'addrs=$(grep -rEoh' '| sort -u || true)' "$WORK/rel/guard.sh" "$MKSDREL" \
    && generate_fpgarc ""; then
-	cp "$WORK/gen/packs/fpgarc" "$WORK/rel/packs/fpgarc"
+	cp "$WORK/gen/card/fpgarc" "$WORK/rel/card/fpgarc"
 	run_guard() {
 		( set -u
 		  OUT="$WORK/rel"
@@ -3575,7 +3601,7 @@ if lift 'addrs=$(grep -rEoh' '| sort -u || true)' "$WORK/rel/guard.sh" "$MKSDREL
 	printf 'serverip=10.0.0.7\nethaddr=02:00:00:00:00:01\n' > "$WORK/rel/card/uEnv.txt"
 	got=$(run_guard)
 	if echo "$got" | grep -q '10\.0\.0\.7'; then
-		ok "and a private address on the boot partition still stops the release"
+		ok "and a private address at the root of the card still stops the release"
 	else
 		fail "the guard no longer catches a private address: the exemptions have eaten it"
 	fi
@@ -3587,14 +3613,14 @@ if lift 'addrs=$(grep -rEoh' '| sort -u || true)' "$WORK/rel/guard.sh" "$MKSDREL
 	rm -f "$WORK/rel/card/uEnv.txt"
 	# And the exemptions are only the addresses that cannot name a host: an
 	# address one away from an exempt one is not exempt.
-	printf -- '--chaos-udp-peer 3060@0.0.0.1:42043\n' > "$WORK/rel/packs/near"
+	printf -- '--chaos-udp-peer 3060@0.0.0.1:42043\n' > "$WORK/rel/card/packs/near"
 	got=$(run_guard)
 	if echo "$got" | grep -q '0\.0\.0\.1'; then
 		ok "and 0.0.0.1 is not 0.0.0.0"
 	else
 		fail "the guard exempts more than the exact strings it names"
 	fi
-	rm -f "$WORK/rel/packs/near"
+	rm -f "$WORK/rel/card/packs/near"
 fi
 
 # ---------------------------------------------------------------------------
@@ -3667,7 +3693,7 @@ ozd_given() { cat "$WORK/daemon.calls"; }
 case_head "the host is on with no card saying anything, and it is given ozd's own words"
 sandbox
 if prepare ozd S84ozd; then
-	: > "$WORK/packs/fpgarc"
+	: > "$WORK/card/fpgarc"
 	run_script S84ozd
 	for want in "--address 177200" "--name OZ,system=UNIX" \
 	            "--listen 127.0.0.1:42142"; do
@@ -3696,7 +3722,7 @@ fi
 case_head "--no-ozd stops it, and nothing is left behind for the Chaosnet to find"
 sandbox
 if prepare ozd S84ozd; then
-	printf -- '--no-ozd\r\n' > "$WORK/packs/fpgarc"
+	printf -- '--no-ozd\r\n' > "$WORK/card/fpgarc"
 	run_script S84ozd
 	if [ -s "$WORK/daemon.calls" ]; then
 		fail "ozd was started with --no-ozd on the card: $(ozd_given)"
@@ -3723,7 +3749,7 @@ fi
 case_head "a setting left beside --no-ozd is not reported as a line nobody took"
 sandbox
 if prepare ozd S84ozd && prepare cadr-usb-input S88cadr-usb-input; then
-	printf -- '--no-ozd\r\n--ozd-port 42142\r\n' > "$WORK/packs/fpgarc"
+	printf -- '--no-ozd\r\n--ozd-port 42142\r\n' > "$WORK/card/fpgarc"
 	: > "$WORK/run/claimed"
 	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
 		"$WORK/S84ozd" start > "$WORK/out.S84ozd" 2>&1
@@ -3737,7 +3763,7 @@ if prepare ozd S84ozd && prepare cadr-usb-input S88cadr-usb-input; then
 	# The control: a flag no list names really is reported, on the same run
 	# of the same reporter.  Without this the case above would pass on a
 	# reporter that had stopped reporting anything at all.
-	printf -- '--no-ozd\r\n--ozd-prt 42142\r\n' > "$WORK/packs/fpgarc"
+	printf -- '--no-ozd\r\n--ozd-prt 42142\r\n' > "$WORK/card/fpgarc"
 	: > "$WORK/run/claimed"
 	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
 		"$WORK/S84ozd" start > /dev/null 2>&1
@@ -3753,16 +3779,16 @@ fi
 case_head "the card's own settings reach ozd, each under ozd's own name"
 sandbox
 if prepare ozd S84ozd; then
-	mkdir -p "$WORK/packs/sys"
+	mkdir -p "$WORK/card/sys"
 	{ printf -- '--ozd-chaos-address 3060\r\n'
 	  printf -- '--ozd-name MIT-OZ,OZ,system=UNIX\r\n'
 	  printf -- '--ozd-port 42242\r\n'
-	  printf -- '--ozd-root sys=%s/packs/sys,ro\r\n' "$WORK"
+	  printf -- '--ozd-root sys=%s/card/sys,ro\r\n' "$WORK"
 	  printf -- '--ozd-host 3050,MIT-LISPM-1,system=LISPM\r\n'
-	  printf -- '--ozd-trace\r\n'; } > "$WORK/packs/fpgarc"
+	  printf -- '--ozd-trace\r\n'; } > "$WORK/card/fpgarc"
 	run_script S84ozd
 	for want in "--address 3060" "--name MIT-OZ,OZ,system=UNIX" \
-	            "--listen 127.0.0.1:42242" "--root sys=$WORK/packs/sys,ro" \
+	            "--listen 127.0.0.1:42242" "--root sys=$WORK/card/sys,ro" \
 	            "--host 3050,MIT-LISPM-1,system=LISPM" "--trace"; do
 		if ozd_given | grep -q -- "$want"; then
 			ok "ozd was given $want"
@@ -3784,7 +3810,7 @@ fi
 case_head "a root the card names and the board has not got stops the host, in ozd's words"
 sandbox
 if prepare ozd S84ozd; then
-	printf -- '--ozd-root sys=/mnt/packs/sys,ro\r\n' > "$WORK/packs/fpgarc"
+	printf -- '--ozd-root sys=/mnt/card/sys,ro\r\n' > "$WORK/card/fpgarc"
 	OZD_CHECK_FAILS=yes run_script S84ozd
 	if [ -s "$WORK/daemon.calls" ]; then
 		fail "the host was started although its own --check refused: $(ozd_given)"
@@ -3807,7 +3833,7 @@ case_head "the machine is given the host on its own board, and only when one is 
 sandbox
 if prepare ozd S84ozd && prepare cadr-chaosnet S87cadr-chaosnet; then
 	printf -- '--chaos-address 177201\r\n--chaos-udp 127.0.0.1:42042\r\n' \
-		> "$WORK/packs/fpgarc"
+		> "$WORK/card/fpgarc"
 	run_script S84ozd
 	if [ -s "$WORK/run/cadr-ozd.peer" ]; then
 		ok "the host left its endpoint behind: $(cat "$WORK/run/cadr-ozd.peer")"
@@ -3840,7 +3866,7 @@ sandbox
 if prepare ozd S84ozd && prepare cadr-chaosnet S87cadr-chaosnet; then
 	{ printf -- '--chaos-address 177201\r\n'
 	  printf -- '--chaos-udp 0.0.0.0:42042\r\n'
-	  printf -- '--chaos-udp-peer 177200@192.0.2.9:42142\r\n'; } > "$WORK/packs/fpgarc"
+	  printf -- '--chaos-udp-peer 177200@192.0.2.9:42142\r\n'; } > "$WORK/card/fpgarc"
 	run_script S84ozd
 	run_script S87cadr-chaosnet
 	if [ "$(given_count -- '--chaos-udp-peer')" = 1 ]; then
@@ -3877,7 +3903,7 @@ sandbox
 if prepare cadr-chaosnet S87cadr-chaosnet; then
 	{ printf -- '--chaos-address 177201\r\n'
 	  printf -- '--chaos-udp 127.0.0.1:42042\r\n'
-	  printf -- '--chaos-udp-peer 177200@127.0.0.1:42142\r\n'; } > "$WORK/packs/fpgarc"
+	  printf -- '--chaos-udp-peer 177200@127.0.0.1:42142\r\n'; } > "$WORK/card/fpgarc"
 	# No address, no route: a board with nothing plugged in.  The real
 	# `network_ready` fails at its first question on such a board.
 	cat > "$WORK/bin/ip" <<EOF
@@ -3909,7 +3935,7 @@ sandbox
 if prepare cadr-chaosnet S87cadr-chaosnet; then
 	{ printf -- '--chaos-address 177201\r\n'
 	  printf -- '--chaos-udp 0.0.0.0:42042\r\n'
-	  printf -- '--chaos-udp-peer 177200@a-host.invalid:42142\r\n'; } > "$WORK/packs/fpgarc"
+	  printf -- '--chaos-udp-peer 177200@a-host.invalid:42142\r\n'; } > "$WORK/card/fpgarc"
 	cat > "$WORK/bin/ip" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/ip.calls"
@@ -3937,7 +3963,7 @@ fi
 case_head "the card writes --no-ozd live when it names a peer, and commented when it does not"
 sandbox
 if generate_fpgarc "" "" "" arty-z7-20 "177200@192.0.2.9:42142"; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	if tr -d '\r' < "$GEN" | grep -qx -- '--no-ozd'; then
 		ok "a card with a file host on its network turns the one on the board off"
 	else
@@ -3946,7 +3972,7 @@ if generate_fpgarc "" "" "" arty-z7-20 "177200@192.0.2.9:42142"; then
 fi
 sandbox
 if generate_fpgarc "" ""; then
-	GEN="$WORK/gen/packs/fpgarc"
+	GEN="$WORK/gen/card/fpgarc"
 	if tr -d '\r' < "$GEN" | grep -qx -- '#--no-ozd'; then
 		ok "and a card with no peer leaves it commented, so the board serves itself"
 	else
@@ -3955,136 +3981,340 @@ if generate_fpgarc "" ""; then
 fi
 
 # ---------------------------------------------------------------------------
-# 9.  THE CARD'S LAYOUT: ONE PACK AND THE SOURCES THAT BELONG TO IT.
+# 9.  THE CARD'S LAYOUT, THE ZIP, AND THE TWO CARD SHAPES THE BOARD MAY MEET.
 #
-# A board that serves itself its own files has to have them, so a card that
-# carries a pack carries the band's sources beside it, on the packs partition
-# rather than in the root filesystem --- which is a RAM disk unpacked at every
-# boot, where sixteen megabytes would be sixteen megabytes of every board's
-# memory whether anybody ever asked for a file or not.
+# The card is ONE FAT32 partition that the user formats themselves and unpacks
+# a zip onto.  Four places on it, so that somebody with the card in a reader can
+# see what each part is for without reading anything: the root, which holds only
+# what a loader demands by name and the three files a person edits; a folder
+# named for the board; `packs/`; and `sys/` and `site/` for the band's Lisp
+# files.
 #
-# **THE ARITHMETIC IS RUN RATHER THAN RESTATED.**  The card script's own
-# sizing function is lifted out on its anchors and called with the real byte
-# counts, and what is asserted is that the partition it returns HOLDS the pair
-# --- measured on a real FAT32 image made by the same mkfs.vfat, with the real
-# files copied in.  A check that compared the function against a formula
-# written here would agree with any formula.
+# **WHAT THIS REPLACED, AND WHAT IT COULD NOT KEEP.**  There used to be an
+# image with two partitions, and this section held the arithmetic that sized
+# them: a check that ran the card script's own sizing function against measured
+# byte counts, with the 272 MiB it once got wrong as the control.  That
+# arithmetic had to be right to the megabyte, because `dd` wrote every byte of
+# an image and an image larger than the card failed part way through the write.
+# It is gone with the image, and it could not be kept: there is no partition to
+# size, the user's own formatter makes it, and a number this script imposed
+# would be a number about nothing.  What replaced it is a REPORT --- how much a
+# card must hold --- and it is still run rather than restated, by the same lift.
 #
-#   a 4,096-byte cluster, which is what mkfs.vfat chooses at these sizes
-#   a T-300 pack        269,565,952 bytes on the card (the file is 269,562,880)
-#   the sources          17,031,168 bytes on the card (513 files, 25 dirs)
-#   the FAT itself          696,320 bytes on a 320 MiB partition
+# What did NOT go is the readback.  The image was read back file by file out of
+# each partition with mtools, because a staging that merely copied into a
+# directory says nothing about what the board would find.  The zip is read back
+# the same way, and the cases below require it to catch a file the zip did not
+# carry.
 # ---------------------------------------------------------------------------
 T300_ON_CARD=269565952
 SYS_ON_CARD=17031168
-FAT_ON_CARD=696320
+SITE_ON_CARD=24576
 
-# The sizing function and its three constants, lifted from the card script.
+# The card's own arithmetic, lifted from the card script.
 lift_sizing() {
-	sed -n '/^PACKS_FAT_MB=/,/^}$/p' "$MKSD" > "$1"
+	sed -n '/^card_needs_mb() {$/,/^}$/p' "$MKSD" > "$1"
 	if [ ! -s "$1" ]; then
-		fail "the packs partition's sizing is not where this check looks in mksd-buildroot.sh"
+		fail "the card's sizing is not where this check looks in mksd-buildroot.sh"
 		return 1
 	fi
-	for _c in PACKS_FAT_MB PACKS_SPARE_MB PACKS_SYS_MB; do
-		if [ "$(grep -c "^$_c=" "$1")" != 1 ]; then
-			fail "$_c is not a constant of its own in the lifted sizing: this check has rotted"
-			return 1
-		fi
-	done
-	if [ "$(grep -c '^packs_partition_mb() {$' "$1")" != 1 ]; then
-		fail "packs_partition_mb is not where this check looks"
+	if [ "$(grep -c '^card_needs_mb() {$' "$1")" != 1 ]; then
+		fail "card_needs_mb is not where this check looks"
 		return 1
 	fi
 	return 0
 }
 
-case_head "the packs partition holds one pack and the sources that belong to it"
+case_head "the card script says how big a card has to be, and says it of what is on the card"
 sandbox
 if lift_sizing "$WORK/sizing.sh"; then
-	# A card staged with its pack: the pack, the tree, and room for one more
-	# drive.
-	mb=$( . "$WORK/sizing.sh"; packs_partition_mb 269562880 $SYS_ON_CARD )
-	need=$(( T300_ON_CARD + SYS_ON_CARD + FAT_ON_CARD ))
+	# A card carrying a T-300, both of the band's trees, and the twelve
+	# megabytes of loader, kernel, fabric and root filesystem a board needs
+	# before it holds anything of the band's at all.
+	boot=12500992
+	mb=$( . "$WORK/sizing.sh"; card_needs_mb $T300_ON_CARD $SYS_ON_CARD $SITE_ON_CARD $boot )
+	need=$(( T300_ON_CARD + SYS_ON_CARD + SITE_ON_CARD + boot ))
 	if [ "$(( mb * 1048576 ))" -ge "$need" ]; then
-		ok "a card with a T-300 gets ${mb} MiB, and the pair needs $(( need / 1048576 + 1 ))"
+		ok "a card with a T-300 and both trees is told ${mb} MiB, and they come to $(( need / 1048576 + 1 ))"
 	else
-		fail "a card with a T-300 gets ${mb} MiB and the pair needs $(( need / 1048576 + 1 ))"
+		fail "a card with a T-300 and both trees is told ${mb} MiB and they come to $(( need / 1048576 + 1 ))"
 	fi
-	# And there is still room for a second drive, which is what the spare
-	# term is for.
-	if [ "$(( mb * 1048576 ))" -ge "$(( need + T300_ON_CARD ))" ]; then
-		ok "and room for one more drive beside them"
+	# **THE CONTROL, AND IT IS THE POINT OF THE CASE.**  A function that
+	# returned a round number, or the boot files alone, would pass the line
+	# above on a small enough input.  So the pack must be IN the answer: the
+	# same card without it must be smaller by about the pack.
+	nopack=$( . "$WORK/sizing.sh"; card_needs_mb 0 $SYS_ON_CARD $SITE_ON_CARD $boot )
+	if [ "$(( mb - nopack ))" -ge "$(( T300_ON_CARD / 1048576 ))" ]; then
+		ok "and the same card without the pack is ${nopack} MiB, which is the pack smaller"
 	else
-		fail "there is no room for a second drive: ${mb} MiB against $(( (need + T300_ON_CARD) / 1048576 + 1 ))"
+		fail "the pack is not in the answer: ${mb} MiB with it and ${nopack} without"
 	fi
-fi
-
-# **THE CASE THE OWNER'S OWN CARDS ARE STAGED IN**: an empty bay, with the
-# sources on the card and a pack copied onto the running board afterwards.
-# That is the one the old default got wrong --- 272 MiB, which held the pack
-# and had about fourteen megabytes left, two short of the tree.
-case_head "and a card staged with an empty bay still holds a pack copied on later, beside the sources"
-sandbox
-if lift_sizing "$WORK/sizing.sh"; then
-	mb=$( . "$WORK/sizing.sh"; packs_partition_mb 0 0 )
-	need=$(( T300_ON_CARD + SYS_ON_CARD + FAT_ON_CARD ))
-	if [ "$(( mb * 1048576 ))" -ge "$need" ]; then
-		ok "an empty bay gets ${mb} MiB, which holds a pack and the sources"
+	# And the megabyte is rounded UP, because a card of exactly the floor is
+	# a card with nothing left, and the number is advice a person acts on.
+	one=$( . "$WORK/sizing.sh"; card_needs_mb 1 0 0 1048576 )
+	if [ "$one" = 2 ]; then
+		ok "and a card holding one byte over a megabyte is told 2 MiB, not 1"
 	else
-		fail "an empty bay gets ${mb} MiB and a pack with the sources needs $(( need / 1048576 + 1 ))"
-	fi
-	# **THE CONTROL, AND IT IS THE POINT OF THE CASE.**  272 MiB is what this
-	# used to give, and it must NOT be enough --- otherwise the two cases
-	# above would pass on a partition that had not grown at all.
-	if [ "$(( 272 * 1048576 ))" -lt "$need" ]; then
-		ok "and the 272 MiB this used to give really is too small for the pair"
-	else
-		fail "272 MiB would have held the pair, so nothing above is measuring anything"
+		fail "1048577 bytes is told $one MiB: the rounding is down, and a card of the floor has nothing left"
 	fi
 fi
 
-# **AND A TREE LARGER THAN THE ROOM SET ASIDE TAKES THE ROOM IT NEEDS.**  A
-# reserve a real tree overflowed would be a card that failed at the last file
-# copied, which is the worst moment to find out.
-case_head "a tree larger than the room set aside for one is still made room for"
+# **THE ROOT HOLDS WHAT THE LOADER DEMANDS AND THE THREE A PERSON EDITS, AND
+# NOTHING ELSE.**  This matters more with one partition than it did with two:
+# the root of the card is now where the loader looks AND where a person copies
+# things, so it is the place a stray file lands, and a stray file at the root is
+# one nothing on the board reads.
+#
+# The guard is lifted out of the card script on its own anchors and run against
+# a fabricated card, once clean and once with one extra file --- and the second
+# is the point, because a guard that accepted everything would pass the first.
+lift_root_guard() {
+	lift 'for e in "$OUT"/card/* "$OUT"/card/.*; do' \
+	     'done' "$1" || return 1
+	return 0
+}
+root_guard() {
+	( set -eu
+	  OUT="$WORK/root"
+	  BOARD_NAME=arty-z7-20
+	  ROOT_NAMES="BOOT.BIN u-boot.img"
+	  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
+	  . "$WORK/rootguard.sh" ) 2>"$WORK/root.err"
+}
+make_root() {
+	rm -rf "$WORK/root"
+	mkdir -p "$WORK/root/card/arty-z7-20" "$WORK/root/card/packs" \
+	         "$WORK/root/card/sys" "$WORK/root/card/site"
+	for f in BOOT.BIN u-boot.img uEnv.txt README.TXT fpgarc muirrc; do
+		echo x > "$WORK/root/card/$f"
+	done
+}
+
+case_head "the card's root holds the loader's fixed names, the three a person edits, and the four folders"
 sandbox
-if lift_sizing "$WORK/sizing.sh"; then
-	big=$(( 100 * 1048576 ))
-	mb=$( . "$WORK/sizing.sh"; packs_partition_mb 269562880 $big )
-	if [ "$(( mb * 1048576 ))" -ge "$(( T300_ON_CARD + big + FAT_ON_CARD ))" ]; then
-		ok "a 100 MiB tree gets its 100 MiB: ${mb} MiB in all"
+if lift_root_guard "$WORK/rootguard.sh"; then
+	make_root
+	if root_guard; then
+		ok "a card laid out the way the script lays it out passes"
 	else
-		fail "a 100 MiB tree was squeezed into the reserve: ${mb} MiB"
+		fail "a card laid out the way the script lays it out is refused: $(cat "$WORK/root.err")"
 	fi
-	# The control: a small tree must not grow the partition past the
-	# reserve, or the term would be the tree's size and not a reserve.
-	small=$( . "$WORK/sizing.sh"; packs_partition_mb 269562880 4096 )
-	reserved=$( . "$WORK/sizing.sh"; packs_partition_mb 269562880 $SYS_ON_CARD )
-	if [ "$small" = "$reserved" ]; then
-		ok "and a tree that fits the reserve does not change the size"
+	# THE CONTROL: one file at the root that is none of those names.  A card
+	# with a stray zImage at the root is exactly what a hand-copied card
+	# looks like, and nothing on the board would read it.
+	make_root
+	echo x > "$WORK/root/card/zImage"
+	if root_guard; then
+		fail "a stray zImage at the root was accepted; this guard accepts anything"
 	else
-		fail "a one-cluster tree gives ${small} MiB and a real one ${reserved}; the reserve is not a reserve"
+		ok "and a stray zImage at the root is refused by name: $(sed 's/^mksd-buildroot: //' "$WORK/root.err")"
+	fi
+	# AND THE SECOND CONTROL: a folder that is none of the four.  An
+	# extra directory on the card is a place a person would put something
+	# nothing reads.
+	make_root
+	mkdir -p "$WORK/root/card/backup"
+	if root_guard; then
+		fail "a stray folder at the root was accepted"
+	else
+		ok "and a stray folder at the root is refused by name"
+	fi
+	# AND THE THIRD: the board's own folder is required to be ALLOWED, which
+	# is the case that would fail if the guard were simply refusing every
+	# directory.
+	make_root
+	if root_guard; then
+		ok "and the board's own folder, packs/, sys/ and site/ are not what it refuses"
+	else
+		fail "the four folders are refused: $(cat "$WORK/root.err")"
 	fi
 fi
 
-case_head "the card names the tree exactly when it carries one"
+# **THE ZIP IS THE CARD, AND IT IS READ BACK OUT RATHER THAN TRUSTED.**  It is
+# what a user unpacks onto a card they formatted, so it is the artifact, and an
+# artifact nobody read back is a claim.  The block is lifted and run against a
+# fabricated card; then it is run again with `zip` stubbed to drop one file,
+# and it must die.  Without the second half the first passes on a block that
+# unpacked nothing and compared nothing.
+lift_zip() {
+	# The block's own last line, which is a named `fi` for exactly this
+	# reason: `lift` stops at the first line that carries the last anchor,
+	# so an anchor inside the block would cut the `fi` off and the lifted
+	# copy would not parse.
+	lift 'ZIP="$(cd "$OUT" && pwd)/cadr-$BOARD_NAME.zip"' \
+	     'fi  # the zip, built and read back' "$1" || return 1
+	return 0
+}
+run_zip() {
+	( set -eu
+	  OUT="$WORK/root"
+	  BOARD_NAME=arty-z7-20
+	  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
+	  PATH="$1:$PATH"
+	  . "$WORK/zip.sh" ) >"$WORK/zip.out" 2>&1
+}
+
+case_head "the zip holds the card, read back out of it rather than trusted"
 sandbox
-if generate_fpgarc "" "" "" arty-z7-20 "" "/some/sys"; then
-	GEN="$WORK/gen/packs/fpgarc"
-	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root sys=/mnt/packs/sys,ro'; then
+if ! command -v zip >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
+	ok "skipped: no zip or unzip on this host"
+elif lift_zip "$WORK/zip.sh"; then
+	make_root
+	echo band > "$WORK/root/card/packs/disk-pack-0.img"
+	echo lisp > "$WORK/root/card/sys/a.lisp"
+	if run_zip "$WORK/bin"; then
+		ok "the card zips and unzips back to itself: $(sed -n 's/^mksd-buildroot: //p' "$WORK/zip.out" | tail -1)"
+	else
+		fail "the card did not zip: $(cat "$WORK/zip.out")"
+	fi
+	# And every folder is really in it, empty ones included, which is what
+	# tells somebody where a band goes.
+	if [ -f "$WORK/root/cadr-arty-z7-20.zip" ]; then
+		z_ok=yes
+		for d in arty-z7-20 packs sys site; do
+			unzip -l "$WORK/root/cadr-arty-z7-20.zip" | grep -q " $d/" \
+				|| { fail "the zip carries no $d/ entry"; z_ok=no; }
+		done
+		[ "$z_ok" = yes ] && ok "and it carries all four folders, the empty site/ among them"
+	fi
+	# **THE CONTROL.**  A `zip` that quietly drops a file is what a readback
+	# is for, and it is not a fancy failure: a zip built from a directory
+	# that was still being written would do the same.
+	mkdir -p "$WORK/badbin"
+	cat > "$WORK/badbin/zip" <<EOF
+#!/bin/sh
+# Everything the real one does, minus one file.
+_args=
+for a; do case "\$a" in README.TXT) ;; *) _args="\$_args \$a" ;; esac; done
+exec $(command -v zip) \$_args -x README.TXT
+EOF
+	chmod +x "$WORK/badbin/zip"
+	make_root
+	if run_zip "$WORK/badbin"; then
+		fail "a zip missing README.TXT was accepted; nothing is being read back"
+	else
+		ok "and a zip that dropped README.TXT is refused: $(sed -n 's/^mksd-buildroot: //p' "$WORK/zip.out" | tail -1)"
+	fi
+fi
+
+# **THE TWO CARD SHAPES THE BOARD MAY MEET.**  `mksd-*.sh` makes one shape, and
+# S80cadr-disk-packs is the one place on the board that knows there was ever
+# another: cards of the old two-partition shape are in boards that are running,
+# with `fpgarc`, `muirrc`, `clock` and a flat drive bay on the second partition.
+# So it takes the second partition when there is one, and the first when there
+# is not, and the drive bay's directory follows.
+#
+# Both halves are required, and the second is the control: a script that always
+# mounted the first partition would pass the new-shape case alone, and a board
+# with an old card would come up with no band and nothing saying why.
+case_head "a card of the new shape is mounted whole and its bay is packs/"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo "$WORK/dev/p1" > "$WORK/mountable"
+	printf -- '--chaos-address 177101\r\n' > "$WORK/card/fpgarc"
+	run_script S80cadr-disk-packs
+	passes_once "--packs" "cadr-disk-packs" "$WORK/card/packs"
+	if grep -q "the card is at $WORK/card, read-write" "$WORK/out.S80cadr-disk-packs"; then
+		ok "and the console says the card is mounted read-write"
+	else
+		fail "the console does not say the card is mounted: $(cat "$WORK/out.S80cadr-disk-packs")"
+	fi
+	if grep -q "OLD TWO-PARTITION" "$WORK/out.S80cadr-disk-packs"; then
+		fail "a card of the new shape was called old"
+	else
+		ok "and it is not called old"
+	fi
+fi
+
+case_head "a card of the OLD two-partition shape still works, and is told it is old"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo "$WORK/dev/p2" > "$WORK/mountable"
+	printf -- '--chaos-address 177101\r\n' > "$WORK/card/fpgarc"
+	run_script S80cadr-disk-packs
+	# The bay is the root of that partition and not a folder in it, which is
+	# where the packs on those cards really are.  This is the whole of what
+	# keeps a running board working, and it is one word of one command line.
+	passes_once "--packs" "cadr-disk-packs" "$WORK/card "
+	if grep -q "OLD TWO-PARTITION SHAPE" "$WORK/out.S80cadr-disk-packs"; then
+		ok "and the console says so, and says to reformat the card and unpack the zip"
+	else
+		fail "an old card is not told it is old: $(cat "$WORK/out.S80cadr-disk-packs")"
+	fi
+	# And it still reads the card's file of flags, which on that shape is on
+	# the partition that mounted.  A board that came up with no settings is
+	# the failure this case exists to catch.
+	if grep -q "177101" "$WORK/daemon.calls" || [ -s "$WORK/card/fpgarc" ]; then
+		ok "and fpgarc is read from the partition that mounted"
+	else
+		fail "fpgarc was not read on an old card"
+	fi
+fi
+
+case_head "and a board with no card it can mount says so and leaves the bay empty"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	: > "$WORK/mountable"
+	run_script S80cadr-disk-packs
+	if grep -q "no card at $WORK/dev/p1" "$WORK/out.S80cadr-disk-packs"; then
+		ok "the console names the device it could not mount"
+	else
+		fail "a board with no card does not say so: $(cat "$WORK/out.S80cadr-disk-packs")"
+	fi
+	# It starts the program anyway, which is what lets a pack copied in later
+	# become a drive with no restart.
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the pack program is started anyway, so a pack copied in later is a drive"
+	else
+		fail "the pack program was not started on a board with no card"
+	fi
+fi
+
+# **THE BAND'S TWO TREES ARE TWO LINES AND TWO DECISIONS.**  A line naming a
+# tree that is not there stops the host in its own words, so each is live
+# exactly when its own tree was staged --- and they are separate, because a
+# card may carry one and not the other.  The sources are read-only and the site
+# configuration is not, which is the difference between a tree of sources and a
+# thing its owner changes.
+case_head "the card names each of the band's trees exactly when it carries that tree"
+sandbox
+if generate_fpgarc "" "" "" arty-z7-20 "" "/some/sys" "/some/site"; then
+	GEN="$WORK/gen/card/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root sys=/mnt/card/sys,ro'; then
 		ok "a card with the sources on it names them, read-only"
 	else
 		fail "a card carrying the sources does not name them"
 	fi
+	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root site=/mnt/card/site'; then
+		ok "and a card with the site configuration names it, and WITHOUT ,ro"
+	else
+		fail "a card carrying the site configuration does not name it read-write"
+	fi
 fi
 sandbox
 if generate_fpgarc "" ""; then
-	GEN="$WORK/gen/packs/fpgarc"
-	if tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-root sys=/mnt/packs/sys,ro'; then
-		ok "and a card without them leaves the line commented, so the host still starts"
+	GEN="$WORK/gen/card/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-root sys=/mnt/card/sys,ro'; then
+		ok "and a card without the sources leaves that line commented, so the host still starts"
 	else
 		fail "a card with no sources still names them, which stops the host"
+	fi
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-root site=/mnt/card/site'; then
+		ok "and a card without the site configuration leaves that line commented too"
+	else
+		fail "a card with no site tree still names it, which stops the host"
+	fi
+fi
+# **AND THE TWO ARE INDEPENDENT**, which is the control for both cases above: a
+# script that wrote both lines from one variable would pass all four.
+sandbox
+if generate_fpgarc "" "" "" arty-z7-20 "" "/some/sys" ""; then
+	GEN="$WORK/gen/card/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root sys=/mnt/card/sys,ro' \
+	   && tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-root site=/mnt/card/site'; then
+		ok "a card with the sources and no site tree names one and comments the other"
+	else
+		fail "the two trees are written from one decision, so a card can never carry only one"
 	fi
 fi
 

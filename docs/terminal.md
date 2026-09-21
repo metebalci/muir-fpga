@@ -336,12 +336,13 @@ muir is in this board's image, built from the commit `muir.commit` pins, and
 that is the same commit `src/input_keymap.h` is generated from. So what it
 prints is the mapping this program already carries:
 
-    muir --keyboard-mapping-dump > /mnt/packs/terminal.keyboard.mapping.txt
+    muir --keyboard-mapping-dump > /mnt/card/terminal.keyboard.mapping.txt
 
-**Where the file lives on the board.** `/mnt/packs/terminal.keyboard.mapping.txt`,
-which is the pack partition that `S80cadr-disk-packs` mounts. The name ends in
-`.txt` because the partition is FAT32, so a laptop with a card reader can
-edit what is on it, and a suffixless file asks a laptop what should open it.
+**Where the file lives on the board.** `/mnt/card/terminal.keyboard.mapping.txt`,
+at the root of the card that `S80cadr-disk-packs` mounts, beside the two files
+of flags a person edits. The name ends in `.txt` because the card is FAT32, so
+a laptop with a card reader can edit what is on it, and a suffixless file asks
+a laptop what should open it.
 `S85cadr-terminal` passes `--keyboard-mapping` only when the file is there.
 
 **The file is read only where there is a keyboard to map onto.** It is read
@@ -505,7 +506,7 @@ holds the restart it makes. `muir`'s `docs/keyboard-boot.md` has the wire link
 by link.
 
 **It belongs in `fpgarc`** with the rest of this program's flags. That file is
-one flag a line in muir's own rc format on the packs partition, and
+one flag a line in muir's own rc format at the root of the card, and
 `docs/fpgarc.md` describes it. `S85cadr-terminal` passes `--keyboard-boot` on
 from it (its `FLAGS` list at `:93-106`), and the line is the flag as it stands:
 
@@ -978,16 +979,16 @@ lines:
       this socket was bound, so nothing was waiting at the machine's cold-boot
       test
 
-With no `terminal.keyboard.mapping.txt` on the pack partition there is no line
-about the mapping, the built-in one being the default. With one there is a
-line saying what was read, and with a file that does not parse there is a line
-saying which line of it was wrong and that the built-in mapping stands:
+With no `terminal.keyboard.mapping.txt` on the card there is no line about the
+mapping, the built-in one being the default. With one there is a line saying
+what was read, and with a file that does not parse there is a line saying
+which line of it was wrong and that the built-in mapping stands:
 
-    cadr-terminal: the keyboard mapping is /mnt/packs/terminal.keyboard.mapping.txt
+    cadr-terminal: the keyboard mapping is /mnt/card/terminal.keyboard.mapping.txt
       over the built-in one: 39 keysyms bound and 22 behind a prefix
-    cadr-terminal: the keyboard mapping /mnt/packs/terminal.keyboard.mapping.txt
+    cadr-terminal: the keyboard mapping /mnt/card/terminal.keyboard.mapping.txt
       was NOT read and the built-in one stands:
-      /mnt/packs/terminal.keyboard.mapping.txt: line 4: Nosuchkey is no key of
+      /mnt/card/terminal.keyboard.mapping.txt: line 4: Nosuchkey is no key of
       this keyboard
 
 The blank line is expected at boot, and it is the point of it. **An unwritten
@@ -1027,14 +1028,15 @@ of the pixels lit.
 (`docs/boot.md`).
 
 **The keyboard mapping file is the one thing here that lives on the card**, and
-no package installs it. It is written by hand on the pack partition, and it is
-optional. The generated `fpgarc` carries a commented `--keyboard-mapping` line
-for it (`mksd-buildroot.sh:698-701`). Two things the card's own tooling does
-not know about it yet: the staging script that writes a card checks partition 2
-against a list of names it expects and would refuse a card carrying this one
-(`mksd-buildroot.sh:1219-1227`), and the `README.TXT` it writes there names the
-settings files one by one. Both are a line each and neither is this package's
-file.
+no package installs it. It is written by hand at the root of the card, beside
+`fpgarc` and `muirrc`, and it is optional. The generated `fpgarc` carries a
+commented `--keyboard-mapping` line for it
+(`mksd-buildroot.sh:996-1001`). Two things the card's own tooling does not know
+about it yet: the staging script asserts the root of the card against the list
+of names it expects and would refuse a card carrying this one
+(`mksd-buildroot.sh:1561-1574`), and the `README.TXT` it writes names the
+settings files one by one and does not name this one. Both are a line each and
+neither is this package's file.
 
 ## The second screen, the color TV's: `--color-terminal`
 

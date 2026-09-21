@@ -68,17 +68,17 @@ ok() {
 # with the two constants rewritten.  $1 is the bound in seconds.
 setup() {
 	rm -rf "$WORK"
-	mkdir -p "$WORK/bin" "$WORK/packs" "$WORK/run"
+	mkdir -p "$WORK/bin" "$WORK/card" "$WORK/run"
 	: > "$WORK/ip.calls"
 	: > "$WORK/nslookup.calls"
 	: > "$WORK/daemon.calls"
 
 	# The two rewrites, each asserted to have matched exactly once.  A
 	# constant that is renamed or moved fails here rather than leaving a
-	# check that runs against /mnt/packs and waits thirty seconds.
+	# check that runs against /mnt/card and waits thirty seconds.
 	cp "$SCRIPT" "$WORK/S87"
 	chmod +x "$WORK/S87"
-	anchor "^PACKS=/mnt/packs\$" "PACKS=$WORK/packs" || return 1
+	anchor "^CARD=/mnt/card\$" "CARD=$WORK/card" || return 1
 	anchor "^WAIT_SECONDS=30\$" "WAIT_SECONDS=$1" || return 1
 	anchor "^FPGARC_SH=/usr/share/cadr/fpgarc.sh\$" "FPGARC_SH=$READER" || return 1
 	# The daemon starter, cadr-common's other shell file: the script sources
@@ -248,7 +248,7 @@ case_head() {
 case_head "the address arrives late, so it waits and then starts"
 setup 30 && {
 	stubs 2 yes
-	cat > "$WORK/packs/fpgarc" <<'RC'
+	cat > "$WORK/card/fpgarc" <<'RC'
 # a station on the development network
 --chaos-address 3050
 --chaos-udp 0.0.0.0:42042
@@ -281,7 +281,7 @@ RC
 case_head "peers named by address, so the resolver is never asked"
 setup 30 && {
 	stubs 0 no
-	cat > "$WORK/packs/fpgarc" <<'RC'
+	cat > "$WORK/card/fpgarc" <<'RC'
 --chaos-address 3050
 --chaos-udp 0.0.0.0:42042
 --chaos-udp-peer 3060@192.0.2.9:42043
@@ -296,7 +296,7 @@ RC
 case_head "a default peer that is a bare port names no host"
 setup 30 && {
 	stubs 0 no
-	cat > "$WORK/packs/fpgarc" <<'RC'
+	cat > "$WORK/card/fpgarc" <<'RC'
 --chaos-address 3050
 --chaos-udp 0.0.0.0:42042
 --chaos-udp-default-peer 42043
@@ -309,7 +309,7 @@ RC
 case_head "a peer line with its endpoint missing is not a name"
 setup 2 && {
 	stubs 0 no
-	cat > "$WORK/packs/fpgarc" <<'RC'
+	cat > "$WORK/card/fpgarc" <<'RC'
 --chaos-address 3050
 --chaos-udp 0.0.0.0:42042
 --chaos-udp-peer
@@ -329,7 +329,7 @@ RC
 case_head "the network never comes, so the bound expires and it starts anyway"
 setup 2 && {
 	stubs -1 yes
-	cat > "$WORK/packs/fpgarc" <<'RC'
+	cat > "$WORK/card/fpgarc" <<'RC'
 --chaos-address 3050
 --chaos-udp 0.0.0.0:42042
 --chaos-udp-peer 3060@a-host.invalid:42043
@@ -350,7 +350,7 @@ RC
 case_head "the resolver alone holds the wait, and the reason names the host"
 setup 2 && {
 	stubs 0 no
-	cat > "$WORK/packs/fpgarc" <<'RC'
+	cat > "$WORK/card/fpgarc" <<'RC'
 --chaos-address 3050
 --chaos-udp 0.0.0.0:42042
 --chaos-udp-peer 3060@a-host.invalid:42043
@@ -373,10 +373,10 @@ RC
 case_head "the file is the whole board's, and this program gets only its own flags"
 setup 2 && {
 	stubs 0 yes
-	cat > "$WORK/packs/fpgarc" <<'RC'
+	cat > "$WORK/card/fpgarc" <<'RC'
 --chaos-address 3050
 --chaos-udp 0.0.0.0:42042
---keyboard-mapping /mnt/packs/keys.txt
+--keyboard-mapping /mnt/card/keys.txt
 --usb-scan-ms 500
 --poll-us 250
 --no-auto-boot
@@ -402,7 +402,7 @@ RC
 case_head "no settings file, so the defaults and no names"
 setup 2 && {
 	stubs 0 yes
-	rm -f "$WORK/packs/fpgarc"
+	rm -f "$WORK/card/fpgarc"
 	run_start
 	no_lookups
 	started

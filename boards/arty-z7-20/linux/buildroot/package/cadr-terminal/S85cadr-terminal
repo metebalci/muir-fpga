@@ -34,11 +34,11 @@
 # it is not there.  A flag this program refuses is otherwise a boot that
 # prints OK with no screen on it.
 #
-# **THE KEYBOARD MAPPING IS A FILE ON THE PACK PARTITION, AND IT IS
-# OPTIONAL.**  S80cadr-disk-packs mounts that partition at /mnt/packs before
+# **THE KEYBOARD MAPPING IS A FILE AT THE ROOT OF THE CARD, AND IT IS
+# OPTIONAL.**  S80cadr-disk-packs mounts the card at /mnt/card before
 # this runs, and the card's `fpgarc` is read from the same place for the same
-# reason: the partition is FAT32, so a laptop with a card reader can edit what
-# is on it, which is why the name ends in `.txt`.  The option is passed only
+# reason: the card is FAT32, so a laptop with a card reader can edit what is
+# on it, which is why the name ends in `.txt`.  The option is passed only
 # when the file is there, because `--keyboard-mapping` naming a file that is
 # not is a thing to report rather than a boot with no screen --- and only when
 # `fpgarc` says nothing about `--keyboard-mapping` itself, which is the rule at
@@ -59,8 +59,10 @@ PROG=/usr/bin/cadr-terminal
 # is the whole of why.
 ENDPOINT=0.0.0.0:5900
 PIDFILE=/var/run/cadr-terminal.pid
-PACKS=/mnt/packs
-KEYS_FILE="$PACKS/terminal.keyboard.mapping.txt"
+# Where the card is mounted, which `S80cadr-disk-packs` is the one thing
+# that does.  The card is one FAT32 partition and `fpgarc` is at its root.
+CARD=/mnt/card
+KEYS_FILE="$CARD/terminal.keyboard.mapping.txt"
 
 # **THE CARD'S ONE FILE OF FLAGS, FILTERED TO THIS PROGRAM'S.**  `fpgarc`
 # configures the CADR in the fabric the way `muirrc` beside it configures the
@@ -70,7 +72,7 @@ KEYS_FILE="$PACKS/terminal.keyboard.mapping.txt"
 # file is not passed to any of them whole --- cadr-common's reader hands back
 # the lines whose flag is in the list below and nothing else.  Its header is
 # the contract and docs/fpgarc.md has every program's list.
-RC="$PACKS/fpgarc"
+RC="$CARD/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
 
