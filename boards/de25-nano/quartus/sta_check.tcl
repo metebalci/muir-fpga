@@ -25,7 +25,11 @@
 #      from the two buttons and SW0 and to the eight LEDs.  A pattern that
 #      matches nothing is silent in a log, so the collections are counted
 #      here.  SW1 to SW3 reach no logic and have no port in the timing
-#      netlist, measured, so `sw[*]` is one port.
+#      netlist, measured, so `sw[*]` is one port.  **AND A COLLECTION THAT
+#      FILE HAS ALREADY MADE IS COUNTED AND NOT REMADE FROM ITS PATTERN**,
+#      wherever it has named one: a pattern written here as well is a second
+#      pattern, and two of them agree until they do not, at which point this
+#      file says a constraint applied to eight things that applied to none.
 #
 #   3. THE MACHINE'S EXCEPTIONS REACH THE PATHS THEIR ARGUMENT IS ABOUT, AND
 #      NO OTHERS.  `cadr_de25.sdc` writes `cadr_machine.xdc`'s three clauses
@@ -348,7 +352,8 @@ proc assert_constraints_scoped {exempt} {
         incr failures
     } else {
         puts "sta: no register outside the machine is relaxed ([get_collection_size $outside] registers asked,\
-              [get_collection_size $exempt] exempt by the probe's and the memory port's own clauses)"
+              [get_collection_size $exempt] exempt by the connector's, the probe's and the memory\
+              port's own clauses, each of which asserts its own split)"
     }
 }
 
@@ -492,16 +497,55 @@ if {![info exists ::cable_frame]} {
 }
 # grid: 60 ns
 assert_instance_timing $tick 6 u_dbg_cable {u_tx|tx_frame u_tx|tx_d}
+# **AND THOSE REGISTERS ARE THE ONE THING OUTSIDE THE MACHINE THE SCOPED
+# INVARIANT BELOW LETS THROUGH**, on the same footing as the debug window's
+# `sts_dbd` and the memory adapter's address and data registers.  The sender
+# is outside `u_machine` by construction --- the cable is the boundary --- so
+# the six-tick clause above relaxes registers that invariant would otherwise
+# catch, and it caught all twenty-four of them the first time this board was
+# fitted with the connector in it.
+#
+# **AND THE EXEMPTION IS THE TWO REGISTERS AND NOT THE INSTANCE.**  An
+# exemption too wide tests nothing and looks exactly like one that is right:
+# named by instance, this would stop the invariant ever speaking for the
+# connector's receivers, whose tick-rate counters are the very thing a stray
+# relaxation must not reach.  Two things keep it honest.  The clause just
+# above has already asserted that the six ticks reached these registers AND no
+# other register of the connector, so the exemption cannot be narrower than
+# what is relaxed without that failing.  And the size is compared with the
+# clause's own collection, so it cannot be wider either: `cable_frame` holds
+# one `|d` pin for each register the clause relaxes, and an exemption naming
+# more registers than that has grown past the argument it stands on.
+set cable_exempt [get_registers -nowarn [cadr_leaves {u_dbg_cable|u_tx|} {tx_frame tx_d}]]
+if {[info exists ::cable_frame]
+    && [get_collection_size $cable_exempt] != [get_collection_size $::cable_frame]} {
+    puts "sta: FAIL: the connector's exemption names [get_collection_size $cable_exempt] registers\
+          and its clause relaxes [get_collection_size $::cable_frame] pins"
+    incr failures
+}
 # AND THE EIGHT PADS ARE CUT, both ways.  A cut that reached nothing is a
 # connector timed against a clock the far board does not have, and the count
 # is what says it reached all eight rather than some.
-set dbg_pads [get_ports -nowarn {jp1_pin3[1-8]}]
-if {[get_collection_size $dbg_pads] != 8} {
-    puts "sta: FAIL: [get_collection_size $dbg_pads] of the debug cable's pads are ports of this build, wanting 8"
+#
+# **THE COLLECTION ASKED ABOUT IS `cadr_de25.sdc`'s OWN AND NOT A SECOND COPY
+# OF ITS PATTERN**, for the reason that file gives where it builds it: a check
+# that re-derives what it is checking is a second pattern, and a build whose
+# cuts reached nothing still passes it as long as the copy here matches
+# something.  That is not hypothetical --- both copies were once
+# `jp1_pin3[1-8]`, which Quartus reads as a bus index and matches with
+# nothing.  So `dbg_pads` is the collection the two `set_false_path`s were
+# written against, and EIGHT is what it must hold: seven is a pad renamed out
+# from under the cut, and nine is a pattern grown wide enough to sweep in a
+# pin that is not a pad.
+if {![info exists ::dbg_pads]} {
+    puts "sta: FAIL: cadr_de25.sdc left no collection named dbg_pads"
+    incr failures
+} elseif {[get_collection_size $::dbg_pads] != 8} {
+    puts "sta: FAIL: the two cuts reached [get_collection_size $::dbg_pads] of the debug cable's pads, wanting 8"
     incr failures
 } else {
-    set timed [expr {[get_collection_size [get_timing_paths -setup -from $dbg_pads -npaths 20]] \
-                     + [get_collection_size [get_timing_paths -setup -to $dbg_pads -npaths 20]]}]
+    set timed [expr {[get_collection_size [get_timing_paths -setup -from $::dbg_pads -npaths 20]] \
+                     + [get_collection_size [get_timing_paths -setup -to $::dbg_pads -npaths 20]]}]
     if {$timed > 0} {
         puts "sta: FAIL: $timed timed paths reach the debug cable's pads, which are asynchronous at both ends"
         incr failures
@@ -574,12 +618,18 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
         }
     }
 }
-set exempt $probe_stable
-if {[get_collection_size $ddr_exempt] > 0} {
+# The three exemptions, each named where its own clause is asserted above:
+# the connector's sender, which is in every build of this board because a
+# board is always a debuggee; the probe's held register; and the memory
+# adapter's and the debug window's.  `add_to_collection` is given no empty
+# collection, which is what the plain build would otherwise hand it.
+set exempt $cable_exempt
+foreach sta_more [list $probe_stable $ddr_exempt] {
+    if {[get_collection_size $sta_more] == 0} { continue }
     if {[get_collection_size $exempt] > 0} {
-        set exempt [add_to_collection $exempt $ddr_exempt]
+        set exempt [add_to_collection $exempt $sta_more]
     } else {
-        set exempt $ddr_exempt
+        set exempt $sta_more
     }
 }
 assert_constraints_scoped $exempt
