@@ -43,10 +43,10 @@ say again what a document already says.
                   switch are crossed off in their places
     de25-nano.html
                   the DE25-Nano, which is upcoming. Its drawing is the Arty
-                  Z7-20's with each block colored by how far along it is on
-                  this board. The page's title links the maker's page for the
-                  board, and its one line says the board is upcoming and names
-                  its FPGA
+                  Z7-20's, with this project's own blocks colored green only
+                  where they are done on this board. The page's title links the
+                  maker's page for the board, and its one line says the board
+                  is upcoming and names its FPGA
     booting.html  how each board comes up, in two sequences: a Zynq board
                   from its own card, and the same board from a TFTP server
                   while it is being worked on. The two Zynq boards come up the
@@ -119,8 +119,8 @@ sentences, because it is read by people who did not write the code, and every
 long form it points at is a Markdown file in `docs/`.
 
 `booting.html`, `debugging.html` and `cadr.html` carry drawings, and all three
-of them draw in `currentColor` alone. **A sequence carries no status color.**
-A board drawing colors a block by how far along it is; a sequence says what
+of them draw in `currentColor` alone. **A sequence carries no block color.**
+A board drawing colors a block by whose work it is; a sequence says what
 happens and in what order, which is a different claim, so what is built and
 what is not is in the caption under each figure, in words.
 
@@ -162,10 +162,11 @@ board does not have crossed off where it stands rather than taken out, so that
 a reader can see what is missing.
 
 **The DE25-Nano's is derived by coloring from a table.** Its drawing is the
-Arty Z7-20's, with every block that would be this project's work colored by the
-status the generator's table gives it for this board, and drawn not started
-until the port reaches it. What is drawn gray stays gray, because those are
-things on a board rather than work. Its fit figures are its logic and its block
+Arty Z7-20's, with every block that is this project's work colored green where
+the generator's table says it is done on this board, and left with no color
+until it is. What is drawn gray stays gray, because those are parts of a board
+rather than work, and what is drawn orange stays orange, because those are
+other projects' programs. Its fit figures are its logic and its block
 memory, as ALMs and M20K, and they come from the board's own fit report. The
 chip is labeled with the board's own FPGA, and the memory with the board's own
 memory. Every other label is still the Arty Z7-20's, and the drawing's HTML
@@ -195,7 +196,7 @@ So a change to a block the Arty Z7-20 shares with the other board is carried
 to that board's drawing by the same edit, at the same coordinates, and the two
 can be compared with `diff`. The
 differences that are meant to be there are the chip's label, the figures
-under the fabric's label, the status colors and the lamp rows, and then
+under the fabric's label, the blocks' colors and the lamp rows, and then
 whatever the derivation itself adds. On the Cora Z7-07S that is the crossed-off
 blocks and the legend's extra swatch, which also moves the legend's other
 swatches, because the row is centered. Anything else in a diff between these two
@@ -207,26 +208,30 @@ and timing figures under each fabric label come from that board's own place and
 route report at the commit its comment names. The DE25-Nano's come from its
 Quartus fit report, as ALMs and M20K.
 
-A block's color says how far along it is, and the legend on each drawing
-carries the words. Green means the board itself has shown it. Turquoise means
-it is built and checked here and has not run on that board. The boards differ:
-a block that is green on one may be turquoise on another, because the claim is
-about a board and not about the code.
+**A block's color says whose work it is, and nothing else**, and the legend on
+each drawing carries the words. Green is this project's work, and done. Orange
+is another project's program, carried onto the board rather than built here.
+Gray is a part of the board itself. The boards differ, because a block that is
+done on one board may not be done on another.
 
-A block with no color at all has not been started. It is drawn so that the
-shape of the machine is known before the work begins. The Color TV --- MIT's
-second display board, on the Xbus beside the monochrome one on both
-pages --- was drawn that way for a while and is turquoise now: it is built and
-checked here, and no monitor has shown its picture.
+A block of this project's that is not done carries no color at all, and the
+legend does not explain it, because a block with no color reads as unfinished
+without being told. It is drawn so that the shape of the machine is known
+before the work reaches it.
+
+**The drawings do not say what has been shown on silicon.** A block cannot say
+both what it is and what has been proved about it without one of the two going
+stale. What a board has shown is in `docs/board.md` instead, session by
+session.
 
 On a drawing derived by crossing off, a block that board does not have carries
 no color at all. It keeps its place, goes dashed, and takes a red cross corner
 to corner with its label left faint. That is the one mark on these drawings
-that says nothing about progress, and the legend calls it "not available on
-this board". A line that exists only to reach such a block stays drawn and goes
-faint with it, as far as the first junction where another line joins it or the
-first box it meets, because past that junction the same wire serves something
-the board does have.
+that is not about whose work a block is, and the legend calls it "not available
+on this board". A line that exists only to reach such a block stays drawn and
+goes faint with it, as far as the first junction where another line joins it or
+the first box it meets, because past that junction the same wire serves
+something the board does have.
 
 ## What `style.css` adds to muir's
 
@@ -243,7 +248,7 @@ drawing's own viewBox units, which scale with the picture.
 
 **There is no dark mode**, as there is none on muir's or ozd's. Paper and ink
 is what this is, and a spot color printed on black is a different object. The
-status colors on the drawings are therefore chosen, and checked, on paper
+blocks' colors on the drawings are therefore chosen, and checked, on paper
 alone.
 
 `.desk-note` is muir's, with the pages added to it as one fixed line, and
@@ -286,6 +291,14 @@ are added for a block a board does not have and for the wires that reach it.
 The outline, the faint label and the faded line use the drawing's own ink
 through `currentColor`. Only the cross has a color of its own, `--st-absent`,
 which is the red the error lamp is already drawn in.
+
+**The class names are older than the meanings they carry.** `d-done` is the
+green, `d-part` the orange and `d-ext` the gray, and the names come from a
+retired scale of how far along a block was. They are left alone because every
+drawing and the generator both write them, and renaming them is a separate
+change. `d-built` and `d-wip` are no longer used by any page here; their rules
+stay because `full-page.html`, the draft above, still draws with `d-wip`, and a
+deleted rule would change that file silently.
 
 ## Looking at it
 

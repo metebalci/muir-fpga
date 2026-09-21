@@ -7,9 +7,9 @@
    and is shared with the board drawings.  This file exists so
    that this page can be worked on without touching that one.
 
-   Nothing here carries a status color.  The board drawings color a block
-   by how far along it is; these figures say what the machine IS, so they
-   are drawn in `currentColor` alone, which is the page's ink. */
+   Nothing here carries one of the block colors.  A board drawing colors a
+   block by whose work it is; these figures say only what the machine IS, so
+   they are drawn in `currentColor` alone, which is the page's ink. */
 
 /* An inner division of a field or a bar: lighter than the box around it,
    so a 48-bit word reads as one word cut into fields rather than as

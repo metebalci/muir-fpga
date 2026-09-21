@@ -161,12 +161,12 @@ and nothing runs at all.
 ### The drawing says both, in two boxes
 
 This was settled with no change to the label, and with a change of shape that
-resolves it instead. The drawing carries it now: a gray box for U-Boot with a
-small green box inside it saying SPL.
+resolves it instead. The drawing carries it now: an orange box for U-Boot with
+a small green box inside it saying SPL.
 
-The worry was that a finished color beside the word "U-Boot" reads as a claim
-that this project wrote U-Boot. It does not. On that drawing the colors answer
-how far along a block is, and gray answers whose code it is.
+The worry was that a color beside the word "U-Boot" reads as a claim that this
+project wrote U-Boot. It does not. On that drawing a block's color answers
+whose work it is, and nothing else.
 
 Three single-word replacements were considered first and each failed for its
 own reason. "boot: SPL, ps7_init" does not fit a narrow rotated strip. "boot
@@ -177,16 +177,16 @@ The label is stacked one letter to a line rather than rotated. The strip is 54
 pixels wide and 93 tall below the first-stage box, and six lines fill 84 of it.
 A rotated label makes the reader tilt their head and a stacked one does not.
 
-Two boxes say what one word could not. Gray is the drawing's existing marker
-for an existing component, which is what muir and the DDR controller already
-carry, so the loader is marked as upstream. The green box inside it is the
-first stage, and it is green because the board boots from it and because the
-start-up routine that stage runs is generated here.
+Two boxes say what one word could not. Orange is the drawing's marker for
+another project's program carried onto the board, which is what muir and ozd
+already carry, so the loader is marked as upstream. The green box inside it is
+the first stage, and it is green because the start-up routine that stage runs
+is generated here.
 
 **The split is a little kind to us and it is worth knowing why.** Only one of
 the four files above lives in the first stage. `ps7_init_gpl.c` is compiled
 into the SPL, and `cadr.env` and the two device trees are read by U-Boot
-proper, which is the gray box. So the green box understates what is ours by
+proper, which is the orange box. So the green box understates what is ours by
 three files, and no arrangement of two boxes on a strip 54 pixels wide will
 say that. This paragraph is where it is said instead.
 

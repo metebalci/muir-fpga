@@ -972,10 +972,10 @@ figures, where the microsecond clock keeps real time and the who-line runs at
 Two things are not shown yet. The serial port's registers are programmed and
 its rate reads back, but characters do not flow, because the line's frame end
 is presented early in `rtl/plumbing/cadr_serial_line.sv`. And nothing has
-driven the debug cable from the board. So the terminal and Chaosnet blocks on
-the drawing go green, and the I/O board keeps the color that says checked here
-and not yet on silicon. Both of those were shown later the same day, and the
-section below supersedes this paragraph.
+driven the debug cable from the board. So the terminal and Chaosnet blocks are
+shown on this board and the I/O board is not: it stays checked here and not yet
+shown on silicon. Both of those were shown later the same day, and the section
+below supersedes this paragraph.
 
 ## The serial line and the debugger, 13 September
 
@@ -1183,8 +1183,8 @@ on the board it would show the terminal's half --- the mapping, the pacing and
 the registers --- carrying a key to the machine.
 
 So the first run with a finger on a real keyboard is still owed, and until it
-happens the drawing's USB input block says checked here and not yet on silicon.
-That run has happened since, and the section of 14 September has it.
+happens the USB input block is checked here and not yet shown on silicon. That
+run has happened since, and the section of 14 September has it.
 
 ## The display, the keyboard and the mouse, 14 September
 
@@ -1205,7 +1205,7 @@ viewer's keys do.
 path. The arrow on the screen follows the hand and a click registers in the
 machine.
 
-So every block on the drawing is now green. Nothing is turquoise.
+So every block on this board's drawing has now been shown on the board itself.
 
 ## The switch, the boot button and the lamps, 14 September
 
@@ -2411,22 +2411,22 @@ are all built and none of them has been seen.
 the machine was not exercised, no key reached the band, and the serial line
 carried nothing. No USB keyboard is attached to this board.
 
-### What the drawing takes from this
+### What this settles, and what it does not
 
-The Chaosnet block goes green, on the grounds the Arty Z7-20's block went green
-on and one witness more: the band's date comes from the network, the program's
-own tally accounts for every frame, and the associated machine's log on another
-host records the answer. The I/O board keeps the color that says checked here
-and not yet shown on silicon, because only its Chaosnet half was used. The
-terminal block keeps it too, its path into the machine being untouched.
+The Chaosnet block is shown on this board, on the grounds the Arty Z7-20's
+block was shown on and one witness more: the band's date comes from the
+network, the program's own tally accounts for every frame, and the associated
+machine's log on another host records the answer. The I/O board is not shown,
+because only its Chaosnet half was used, so it stays checked here and not yet
+shown on silicon. The terminal block is not either, its path into the machine
+being untouched.
 
-The display output block also keeps that color. Silicon has shown that the
-block drives a link a monitor accepts and that its raster runs, which is more
-than was known before it, but the drawing's green says a block has been shown
-on silicon, and what makes this block the display output — that the pixels it
-fetches from memory are the pixels that leave the connector — is the one thing
-above that nothing has yet read. Confirming the geometry at the monitor, or the
-pattern test, would turn it green.
+The display output block is not shown here. Silicon has shown that the block
+drives a link a monitor accepts and that its raster runs, which is more than
+was known before it, but what makes this block the display output — that the
+pixels it fetches from memory are the pixels that leave the connector — is the
+one thing above that nothing has yet read. Confirming the geometry at the
+monitor, or the pattern test, would settle it.
 
 ## The DE25-Nano's keyboard, its picture and its sleep, 21 September 2026
 
@@ -2552,36 +2552,35 @@ board, the two rotations and the output selection are all built and none of
 them has been seen here. The only mode a monitor has seen on this board is
 1280x1024 at 60 Hz.
 
-### What the drawing takes from this
+### What this settles, and what it does not
 
-**The display output block goes green.** The section above names what would
-move it, before the evidence existed: confirming the geometry at the monitor,
-or the pattern test. The geometry is confirmed, and the typing does more than
-confirm it, since it ties the pixels at the connector to the machine's own
-memory in the one direction a coincidence cannot run.
+**The display output block is shown on this board.** The section above names
+what would move it, before the evidence existed: confirming the geometry at the
+monitor, or the pattern test. The geometry is confirmed, and the typing does
+more than confirm it, since it ties the pixels at the connector to the
+machine's own memory in the one direction a coincidence cannot run.
 
-**The USB input block goes green.** The whole of what the block does — reading
+**The USB input block is shown.** The whole of what the block does — reading
 the board's own keyboard and mouse and putting them onto the I/O board through
 the terminal — has now happened on this board, and the keys and the pointer
 arrived in the machine.
 
-**The terminal block goes green.** The section above holds it back for one
+**The terminal block is shown.** The section above holds it back for one
 stated reason, that its path into the machine was untouched; that path carried
 this session's keys and pointer motion. Its other half, the RFB server's
 screen, was read from the build host in that same session.
 
-**The I/O board keeps the color that says checked here and not yet shown on
-silicon.** Its keyboard and its mouse have now carried a person's typing, and
-its Chaosnet registers carried a round trip in the session above, so the reason
-given there — that only its Chaosnet half had been used — no longer holds as
-written. The rule behind it does: a block goes green when the block has been
-shown and not when a part of it has. The serial line on this board has carried
-nothing, and no reading here covers the card's two clocks. A character on the
-serial line would settle it.
+**The I/O board is still not shown whole.** Its keyboard and its mouse have now
+carried a person's typing, and its Chaosnet registers carried a round trip in
+the session above, so the reason given there — that only its Chaosnet half had
+been used — no longer holds as written. The rule behind it does: a block counts
+as shown when the block has been shown and not when a part of it has. The
+serial line on this board has carried nothing, and no reading here covers the
+card's two clocks. A character on the serial line would settle it.
 
-**The TV block and the Color TV block keep that color too.** The machine
+**The TV block and the Color TV block are not shown whole either.** The machine
 painting a screen that reaches the glass says the machine paints, which the
 session above already had; nothing here reads the TV's scan counters or its
 mode register, and no color screen has been composited on this board.
 
-**The serial block keeps it**, its line having carried nothing.
+**The serial block is not shown**, its line having carried nothing.
