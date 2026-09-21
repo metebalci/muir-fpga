@@ -162,31 +162,55 @@ RUNS      its processor and clocks within
     <div class="panel bare">
       <span class="eyebrow">Spec</span>
       <h2 class="title t-l">The boards</h2>
-      <p class="small" style="margin-top:0.4rem;">A cell says yes only where that board itself has run the thing. The two resource figures in each row are that board&rsquo;s own place and route report for the fabric it runs, with the memory, the disk and both display boards in it, in that part&rsquo;s own terms: slices and block RAM on the Zynq boards, ALMs and M20K blocks on the DE25-Nano, and memory built out of logic is counted inside the logic figure rather than beside it. The DE25-Nano can also be built for 1920 by 1080 at 60 hertz, which a monitor has shown once and which leaves nine picoseconds of room on the video bus that leaves the part, so the figures here are its 1280 by 1024 build. What a board has built and checked but never run is on that board&rsquo;s own page.</p>
+      <p class="small" style="margin-top:0.4rem;">A cell says yes where that board itself has run the thing, yes with a qualification where the thing is built into that board and nothing of it has run there yet, and no where the board does not have the thing at all. The two resource figures in each row are that board&rsquo;s own place and route report for the fabric it runs, with the memory, the disk and both display boards in it, in that part&rsquo;s own terms: lookup tables and block RAM on the Zynq boards, ALMs and M20K blocks on the DE25-Nano, and memory built out of logic is counted inside the logic figure rather than beside it. The two logic columns are different units, so their counts do not compare and the percentage is the figure that does: by Altera&rsquo;s own guide for converting a Zynq-7000 design to an Agilex 5 one, an ALM is about 1.3 lookup tables. The DE25-Nano can also be built for 1920 by 1080 at 60 hertz, which a monitor has shown once and which leaves nine picoseconds of room on the video bus that leaves the part, so the figures here are its 1280 by 1024 build. What a board has built and checked but never run is on that board&rsquo;s own page.</p>
     </div>
 
     <div class="panel">
     <!-- One row a board. The figures are each board's own place and route
          report for the fabric that board runs, with the memory, the disk and
          both display boards in it: the two Zynq boards from a clean tree at
-         9d1cf26, and the DE25-Nano at d7529aa with its display built for
+         8d2c1cd, and the DE25-Nano at d7529aa with its display built for
          1280 by 1024. They are the figures that board's own drawing carries
-         under its fabric label. A cell says yes only where that board itself
-         has run the thing. That was once said to be the same claim the
-         drawings' colors make, and it no longer is: since the key was cut to
-         three colors, green says a block is this project's work and done,
-         which means built and checked rather than run on that board. So this
-         table makes its own claim and the note above it says which. Each
+         under its fabric label. A CELL HAS THREE READINGS AND NOT TWO: yes
+         where that board itself has run the thing, yes with a qualification
+         where the thing is built into that board and nothing of it has run
+         there yet, and no where the board does not have the thing at all.
+         The middle one was added because two unlike facts were both reading
+         as no. The Cora Z7-07S has no HDMI connector on it at all, and the
+         DE25-Nano's debug cable is in every bitstream that board builds with
+         no ribbon yet made for its header. It is a footnote in the cell and
+         not a third grade: the five-step status vocabulary this site retired
+         is exactly what it must not grow back into, so there is one
+         qualification here and it is spelled out in the note above.
+         That yes was once said to be the same claim the drawings' colors
+         make, and it no longer is: since the key was cut to three colors,
+         green says a block is this project's work and done, which means built
+         and checked rather than run on that board. So the DE25-Nano's drawing
+         colors its debug cable adapter green while this table's cell for the
+         same thing says yes with a qualification, and both are right about
+         their own question. Each
          resource figure is named in its own part's terms, because one
-         vendor's word for another's part would be wrong: slices and block RAM
-         on the Zynq boards, ALMs and M20K blocks on the DE25-Nano. Memory
-         built out of logic is counted inside the logic figure and never
+         vendor's word for another's part would be wrong: lookup tables and
+         block RAM on the Zynq boards, ALMs and M20K blocks on the DE25-Nano.
+         Lookup tables rather than the occupied slices this table carried
+         before, because a slice counts as occupied the moment anything at all
+         sits in it, so the count overstates how full a part is; a lookup table
+         and an ALM are both direct measures of logic. The two are still
+         different units and the counts do not compare: Altera's own
+         conversion guide puts one ALM at about 1.3 lookup tables, so the
+         percentage is the figure to read across the rows. That is section 2.2,
+         "AMD vs Altera FPGA Resource", of "Design Conversion Guidelines: AMD
+         Zynq 7000 SoC and Ultrascale+ MPSoC to Agilex 5 FPGAs and SoCs",
+         Altera document 826363, revision 2026-01-27:
+         https://docs.altera.com/r/docs/826363/current/design-conversion-guidelines-amd-zynq-7000-soc-and-ultrascale-mpsoc-to-agilextm-5-fpgas-and-socs
+         Memory built out of logic is counted inside the logic figure and never
          reported beside it, which is why neither column names it. Under each
          board's name are its FPGA's product name, its part number and a link
          to its maker's page for it, each on a line of its own so that the
          name column stays narrow on a phone. The debug cable is a column
-         because the other two boards have run it and the DE25-Nano has not,
-         and a table without it would read as though all three were level. -->
+         because it is a thing one of these boards has run and another has
+         only built, and a table without it would read as though all three
+         were level. -->
     <div class="tablescroll" tabindex="0" role="region" aria-label="What each board is and what it does">
       <table class="boardtable">
         <thead>
@@ -206,8 +230,8 @@ RUNS      its processor and clocks within
           <tr>
             <th scope="row" class="board"><a href="arty-z7-20.html">Arty Z7-20</a><span class="pc">Xilinx Zynq 7020</span><span class="pc">XC7Z020</span><span class="pc">made by <a href="https://digilent.com/shop/arty-z7-zynq-7000-soc-development-board/">Digilent</a></span></th>
             <td class="cpu">2 x Arm Cortex-A9, Linux</td>
-            <td class="num">5,274 of 13,300<span class="pc">slices &middot; 39.7%</span></td>
-            <td class="num">45.5 of 140<span class="pc">block RAM &middot; 32.5%</span></td>
+            <td class="num">14,611 of 53,200<span class="pc">LUTs &middot; 27.5%</span></td>
+            <td class="num">46 of 140<span class="pc">block RAM &middot; 32.9%</span></td>
             <td class="st">yes</td>
             <td class="st" title="The board's own card slot.">yes</td>
             <td class="st">yes</td>
@@ -217,8 +241,8 @@ RUNS      its processor and clocks within
           <tr>
             <th scope="row" class="board"><a href="cora-z7-07s.html">Cora Z7-07S</a><span class="pc">Xilinx Zynq 7007S</span><span class="pc">XC7Z007S</span><span class="pc">made by <a href="https://digilent.com/shop/cora-z7-zynq-7000-single-core-for-arm-fpga-soc-development/">Digilent</a></span></th>
             <td class="cpu">1 x Arm Cortex-A9, Linux</td>
-            <td class="num">4,328 of 4,400<span class="pc">slices &middot; 98.4%</span></td>
-            <td class="num">42.5 of 50<span class="pc">block RAM &middot; 85.0%</span></td>
+            <td class="num">13,478 of 14,400<span class="pc">LUTs &middot; 93.6%</span></td>
+            <td class="num">43 of 50<span class="pc">block RAM &middot; 86.0%</span></td>
             <td class="st">yes</td>
             <td class="st" title="The board's own card slot.">yes</td>
             <td class="st no" title="The board has no HDMI connector.">no</td>
@@ -234,7 +258,7 @@ RUNS      its processor and clocks within
             <td class="st" title="The board's own card slot. This part has no card configuration scheme, so the flash carries the first stage and the card carries everything else.">yes</td>
             <td class="st">yes</td>
             <td class="st">yes</td>
-            <td class="st no" title="The connector is in every build of this board, and no cable from its GPIO header to a Pmod has been made, so nothing of it has run here.">no</td>
+            <td class="st" title="The connector is in every build of this board, and no cable from its GPIO header to a Pmod has been made, so nothing of it has run here.">yes<span class="pc">(not tested)</span></td>
           </tr>
         </tbody>
       </table>
