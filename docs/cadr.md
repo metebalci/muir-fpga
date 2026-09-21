@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 This file is the text of the site's
 [page on the real machine](https://muir-fpga.metebalci.com/cadr.html),
-which carries the ten drawings with a one-sentence caption each. What each
+which carries the eleven drawings with a one-sentence caption each. What each
 drawing shows is said here, in the order the page draws them, and the sources
 the drawings were read from are listed at the end.
 
@@ -43,6 +43,20 @@ bits mean the same thing in every class: STAT, ILONG and POPJ.
 
 A JUMP with both its R and P bits set is not a jump at all. It is how the
 microcode writes the control store.
+
+## The macroinstruction
+
+A macroinstruction is 16 bits and there are four classes of it. The low nine
+bits are one field in every class, which MIT calls ADR. Two classes split it
+into a register naming a base and a displacement from it, the branches read it
+as a self-relative offset, and the miscellaneous instructions read it as a
+function number. The top of the word is a two-bit destination or a three-bit
+sub-opcode, and what is left between them is the opcode. The hardware fetches
+these words and picks the current one out of a memory word, and what any field
+of one means is the microcode's rather than the hardware's.
+
+The microcode dispatches on bits 13 to 9 whatever the class. An opcode whose
+bit 13 is a sub-opcode bit therefore takes two entries of that table.
 
 ## The map
 
@@ -126,6 +140,7 @@ leading `0o` are octal, which is how MIT writes an address.
 | the machine, whole | `busint.erface`, muir's `data/cables.txt`, `xspec.text.3`, the three wire lists |
 | the data paths | AI Memo 528, and the CLOCK1 delay-line taps as muir's `clock.rs` has them |
 | the microinstruction | `cadr/ir.bits`, and muir's `isa.rs` for the bit ranges |
+| the macroinstruction | `sys/ucadr/uc-parameters.lisp` and `uc-macrocode.lisp`, `sys/sys2/disass.lisp`, `sys/man/code.text` |
 | the map | AI Memo 528, `docs/map.md`, the VMEM drawings |
 | the address space | `sys/doc/unaddr.text`, muir's `busint.rs`, `cadr_xbus_decode.sv` |
 | the disk | `sys/doc/disk.text`, and muir's `dm.rs` for the multiplexor |
@@ -166,6 +181,18 @@ leading `0o` are octal, which is how MIT writes an address.
   down.
 - `sys/window/shwarm.lisp` is the window system's own use of the display, which
   is what fixes the shape of the screen.
+- `sys/ucadr/uc-macrocode.lisp` is the microcode's main instruction loop, with
+  the dispatch tables it reads a macroinstruction by, and
+  `sys/ucadr/uc-parameters.lisp` defines every field of one by width and
+  position.
+- `sys/sys2/disass.lisp` is MIT's own disassembler. It reads the same fields
+  out of a 16-bit word, and it is the only source here for the opcode as four
+  bits rather than five.
+- `sys/man/code.text` is the manual's chapter on reading compiled code, and it
+  is where the four classes of macroinstruction are named.
+- `sys/ubin/ucadr.mcr` is the microcode the boot PROM loads. The width and the
+  position of every field the microcode dispatches on were read back out of the
+  words it leaves in the control store.
 
 ### This project, and muir
 

@@ -64,7 +64,7 @@ say again what a document already says.
                   whole of each answer is in docs/faq.md. The first is why
                   there is no disk multiplexor block. There are no drawings on
                   it. Its styles are in faq.css beside it
-    cadr.html     the real CADR in ten drawings with one-sentence captions:
+    cadr.html     the real CADR in eleven drawings with one-sentence captions:
                   the machine, its boards, cables and buses, and how it boots.
                   What each drawing shows, and every source it was read from,
                   is in docs/cadr.md
