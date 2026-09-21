@@ -1779,11 +1779,11 @@ module cadr_de25 #(
   assign hdmi_sda = hdmi_sda_oe ? 1'b0 : 1'bz;
 
   // The display's four reports have no register to be read in: this board's
-  // console carries the sleep and the mode and nothing else of it, as the
-  // Arty's does.  They go into a fold for the reason every output of the
-  // machine does --- a signal with no consumer is one synthesis may delete,
-  // and then the register behind it is gone and a check on the board would
-  // be measuring another design.
+  // console carries the sleep and what the output shows and nothing else of
+  // it, as the Arty's does.  They go into a fold for the reason every output
+  // of the machine does --- a signal with no consumer is one synthesis may
+  // delete, and then the register behind it is gone and a check on the board
+  // would be measuring another design.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused_disp;
   assign unused_disp = ^{disp_underrun, disp_rd_error, disp_sleep_due,
@@ -1794,9 +1794,10 @@ module cadr_de25 #(
 
   // NO DISPLAY.  Its port on the share asks for nothing and would take an
   // answer; the machine's second map port stands at entry zero and nothing
-  // reads what comes back; the console's word 34 reports mode 0 and word 36
-  // reads `UNMAPPED`, which is what a board with no timer to report has to
-  // say.  The Cora Z7-07S is the same board on the other vendor.
+  // reads what comes back; the console still answers word 34 with what it
+  // would show, which is what a console is for, and word 36 reads `UNMAPPED`,
+  // which is what a board with no timer to report has to say.  The Cora
+  // Z7-07S is the same board on the other vendor.
   assign dm_araddr   = 32'd0;
   assign dm_arlen    = 4'd0;
   assign dm_arsize   = 2'b11;
