@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>muir-fpga — the MIT CADR in fabric</title>
-<meta name="description" content="The MIT CADR Lisp Machine in the fabric of small FPGA boards, held tick for tick to the muir emulator: what runs on the Arty Z7-20 and the Cora Z7-07S, and what the real machine was.">
+<meta name="description" content="The MIT CADR Lisp Machine in the fabric of small FPGA boards, held tick for tick to the muir emulator: what runs on the Arty Z7-20, the Cora Z7-07S and the DE25-Nano, and what the real machine was.">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="front.css">
 </head>
@@ -162,57 +162,79 @@ RUNS      its processor and clocks within
     <div class="panel bare">
       <span class="eyebrow">Spec</span>
       <h2 class="title t-l">The boards</h2>
+      <p class="small" style="margin-top:0.4rem;">A cell says yes only where that board itself has run the thing. The two resource figures in each row are that board&rsquo;s own place and route report for the fabric it runs, with the memory, the disk and both display boards in it, in that part&rsquo;s own terms: slices and block RAM on the Zynq boards, ALMs and M20K blocks on the DE25-Nano, and memory built out of logic is counted inside the logic figure rather than beside it. The DE25-Nano can also be built for 1920 by 1080 at 60 hertz, which a monitor has shown once and which leaves nine picoseconds of room on the video bus that leaves the part, so the figures here are its 1280 by 1024 build. What a board has built and checked but never run is on that board&rsquo;s own page.</p>
     </div>
 
     <div class="panel">
     <!-- One row a board. The figures are each board's own place and route
-         report, both built from a clean tree at 9d1cf26. They are the figures that board's own drawing carries
+         report for the fabric that board runs, with the memory, the disk and
+         both display boards in it: the two Zynq boards from a clean tree at
+         9d1cf26, and the DE25-Nano at d7529aa with its display built for
+         1280 by 1024. They are the figures that board's own drawing carries
          under its fabric label. A cell says yes only where that board itself
-         has shown the thing, which is the same claim the drawings' colors
-         make. Under each board's name are its FPGA's product name, its part
-         number and a link to its maker's page for it, each on a line of its
-         own so that the name column stays narrow on a phone. The DE25-Nano's
-         row is its name, linked to its own page, its FPGA, its part and its
-         maker, and it says the board is upcoming and nothing more, because
-         nothing has been built for it. -->
+         has run the thing. That was once said to be the same claim the
+         drawings' colors make, and it no longer is: since the key was cut to
+         three colors, green says a block is this project's work and done,
+         which means built and checked rather than run on that board. So this
+         table makes its own claim and the note above it says which. Each
+         resource figure is named in its own part's terms, because one
+         vendor's word for another's part would be wrong: slices and block RAM
+         on the Zynq boards, ALMs and M20K blocks on the DE25-Nano. Memory
+         built out of logic is counted inside the logic figure and never
+         reported beside it, which is why neither column names it. Under each
+         board's name are its FPGA's product name, its part number and a link
+         to its maker's page for it, each on a line of its own so that the
+         name column stays narrow on a phone. The debug cable is a column
+         because the other two boards have run it and the DE25-Nano has not,
+         and a table without it would read as though all three were level. -->
     <div class="tablescroll" tabindex="0" role="region" aria-label="What each board is and what it does">
       <table class="boardtable">
         <thead>
           <tr>
             <th scope="col" class="board">Board</th>
             <th scope="col">CPU</th>
-            <th scope="col">Slices</th>
-            <th scope="col">Block RAM</th>
+            <th scope="col">Fabric logic</th>
+            <th scope="col">Block memory</th>
             <th scope="col">Ethernet</th>
             <th scope="col">microSD</th>
             <th scope="col">HDMI out</th>
             <th scope="col">USB input</th>
+            <th scope="col">Debug cable</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <th scope="row" class="board"><a href="arty-z7-20.html">Arty Z7-20</a><span class="pc">Xilinx Zynq 7020</span><span class="pc">XC7Z020</span><span class="pc">made by <a href="https://digilent.com/shop/arty-z7-zynq-7000-soc-development-board/">Digilent</a></span></th>
             <td class="cpu">2 x Arm Cortex-A9, Linux</td>
-            <td class="num">5,274 of 13,300<span class="pc">39.7%</span></td>
-            <td class="num">45.5 of 140<span class="pc">32.5%</span></td>
+            <td class="num">5,274 of 13,300<span class="pc">slices &middot; 39.7%</span></td>
+            <td class="num">45.5 of 140<span class="pc">block RAM &middot; 32.5%</span></td>
             <td class="st">yes</td>
             <td class="st" title="The board's own card slot.">yes</td>
             <td class="st">yes</td>
             <td class="st">yes</td>
+            <td class="st" title="Run over a real ribbon between this board and the Cora Z7-07S.">yes</td>
           </tr>
           <tr>
             <th scope="row" class="board"><a href="cora-z7-07s.html">Cora Z7-07S</a><span class="pc">Xilinx Zynq 7007S</span><span class="pc">XC7Z007S</span><span class="pc">made by <a href="https://digilent.com/shop/cora-z7-zynq-7000-single-core-for-arm-fpga-soc-development/">Digilent</a></span></th>
             <td class="cpu">1 x Arm Cortex-A9, Linux</td>
-            <td class="num">4,328 of 4,400<span class="pc">98.4%</span></td>
-            <td class="num">42.5 of 50<span class="pc">85.0%</span></td>
+            <td class="num">4,328 of 4,400<span class="pc">slices &middot; 98.4%</span></td>
+            <td class="num">42.5 of 50<span class="pc">block RAM &middot; 85.0%</span></td>
             <td class="st">yes</td>
             <td class="st" title="The board's own card slot.">yes</td>
             <td class="st no" title="The board has no HDMI connector.">no</td>
             <td class="st no" title="The board has no USB host port, so the image leaves the program out.">no</td>
+            <td class="st" title="Run over a real ribbon between this board and the Arty Z7-20.">yes</td>
           </tr>
           <tr>
             <th scope="row" class="board"><a href="de25-nano.html">DE25-Nano</a><span class="pc">Altera Agilex-5E</span><span class="pc">A5EB013B</span><span class="pc">made by <a href="https://www.terasic.com.tw/cgi-bin/page/archive.pl?Language=English&amp;CategoryNo=115&amp;No=1384">Terasic</a></span></th>
-            <td class="st no" colspan="7">upcoming</td>
+            <td class="cpu">2 x Arm Cortex-A76 and 2 x Cortex-A55, Linux</td>
+            <td class="num">16,076 of 46,800<span class="pc">ALMs &middot; 34.4%</span></td>
+            <td class="num">135 of 358<span class="pc">M20K &middot; 37.7%</span></td>
+            <td class="st">yes</td>
+            <td class="st" title="The board's own card slot. This part has no card configuration scheme, so the flash carries the first stage and the card carries everything else.">yes</td>
+            <td class="st">yes</td>
+            <td class="st">yes</td>
+            <td class="st no" title="The connector is in every build of this board, and no cable from its GPIO header to a Pmod has been made, so nothing of it has run here.">no</td>
           </tr>
         </tbody>
       </table>
