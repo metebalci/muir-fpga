@@ -68,3 +68,10 @@ boards/*/local.conf
 # --- BR_WORK, under ~/.cache by default.  Nothing of the build lands here;
 # the staged card and server directories go under build/ like everything
 # else.  A board's linux/local.conf, above, also carries ETHADDR for the new card.
+
+# The working directory for builds, worktrees and evidence.  Big, transient
+# and never committed: a mutation tree is about 16 GB and a fit's tree several
+# more.  It lives inside the repository so that one folder holds the project
+# and its scratch, and it is ignored whole so nothing in it can ever be
+# staged by accident.
+/work/

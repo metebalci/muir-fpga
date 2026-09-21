@@ -62,8 +62,34 @@ set_false_path -to [get_ports {led[*]}]
 # and no input or output delay that would mean anything, so both directions
 # are cut, which is what `boards/arty-z7-20/cadr_arty.xdc` does for the same
 # eight pads on Pmod JA.
-set_false_path -from [get_ports {jp1_pin3[1-8]}]
-set_false_path -to   [get_ports {jp1_pin3[1-8]}]
+#
+# **THE PATTERN IS A WILDCARD, BECAUSE A BRACKET HERE IS A BUS INDEX AND NOT A
+# RANGE.**  The eight pads are eight SCALAR ports, `jp1_pin31` to `jp1_pin38`,
+# and a collection pattern of the shape `jp1_pin3[1-8]` names none of them:
+# Quartus reads the brackets as the index of a bus called `jp1_pin3`, finds no
+# such port, and leaves the collection empty.  Measured on this design:
+# `{jp1_pin3[1-8]}` is 0 ports, `{jp1_pin3*}` is 8 and `{jp1_pin31}` is 1.  An
+# exception written against an empty collection is a warning in a log and a
+# connector nobody is cutting, which is the defect the section below records
+# for a constraint file that was read by nothing, in another disguise: a
+# constraint that reaches nothing looks exactly like one that works.
+#
+# **AND `project.tcl`'s `^jp1_pin3[1-8]$` IS NOT A PRECEDENT FOR WRITING IT
+# THAT WAY HERE.**  That is a Tcl regexp, where the brackets are a character
+# class and the range does mean the eight, which is why the pins were placed
+# and pulled down correctly while these two cuts reached nothing.  The two
+# files name the same eight pads in two languages, and only one of them reads
+# a range.
+#
+# **AND THE COLLECTION IS MADE ONCE**, so that `sta_check.tcl` counts the very
+# collection the two cuts were written against rather than a second copy of
+# the pattern.  A pattern written twice is two patterns: they agree until they
+# do not, and a check that re-derives what it is checking passes on a build
+# where the constraint reached nothing.  This is `cable_frame` below on the
+# same footing.
+set dbg_pads [get_ports {jp1_pin3*}]
+set_false_path -from $dbg_pads
+set_false_path -to   $dbg_pads
 
 # --------------------------------------- and the carrier's own six ticks
 #
