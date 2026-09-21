@@ -133,8 +133,12 @@
 
           <text class="d-s" x="-164" y="48">FPGA fabric logic</text>
           <!-- From the Quartus fit report of the build with the faces and
-               the display output:
-               16,076 ALMs, of which 4,010 hold the small memories, and
+               the display output, built at fe859fb from a clean tree, which
+               is the commit these figures are of: the bitstream's own
+               USERCODE reads fe859fb0.  Timing is met at every corner the
+               part has, the worst being +2.346 ns of setup and +0.000 ns of
+               hold.
+               16,268 ALMs, of which 4,010 hold the small memories, and
                135 M20K blocks.
                A5E 013B: 46,800 ALMs, and 358 M20K blocks of 20 Kbit each,
                895 KB, the same convention as the Zynq boards' block RAM row.
@@ -143,10 +147,10 @@
                The small memories are counted inside the ALMs, as the
                lookup-table memory on the Zynq boards is counted inside the
                slices. -->
-          <text class="d-s" x="-164" y="68">ALM 16,076 of 46,800</text>
+          <text class="d-s" x="-164" y="68">ALM 16,268 of 46,800</text>
           <rect class="d-box" x="-164" y="74" width="136" height="13"/>
-          <rect x="-164" y="74" width="46.7" height="13" fill="currentColor" fill-opacity="0.42"/>
-          <text class="d-n" x="-158" y="84">34.4%</text>
+          <rect x="-164" y="74" width="47.3" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="84">34.8%</text>
           <text class="d-s" x="-164" y="104">M20K 338 KB of 895 KB</text>
           <rect class="d-box" x="-164" y="110" width="136" height="13"/>
           <rect x="-164" y="110" width="51.3" height="13" fill="currentColor" fill-opacity="0.42"/>
