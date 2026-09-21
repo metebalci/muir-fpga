@@ -1110,7 +1110,16 @@ calls the wake and that a viewer's key, a viewer's pointer, a source attaching
 and a source going away do not.
 
 **Nothing holds the board's 100,000,000**, which is a literal like the
-watchdog's second. And no monitor has been put to sleep or woken on silicon yet.
+watchdog's second.
+
+**A monitor has now been put to sleep and woken on silicon**, on the
+DE25-Nano. Set to fifteen seconds, with nobody touching that board's keyboard
+or mouse, the monitor went into its own standby, and a key pressed at the board
+brought the picture back. Both directions were seen at the monitor. Before
+that the setting had been left at never, which is a setting doing what it says
+rather than a mechanism failing. `docs/board.md` has the session. The same
+thing has not been seen on the Arty Z7-20, whose sleep holds the lanes rather
+than the clock it hands a transmitter.
 
 ## What it costs, and whether it is being timed
 
@@ -1352,6 +1361,11 @@ by any document available here; writing the program again costs ten
 milliseconds and removes the question. That is the reason, and it is not a
 measurement.
 
+**A monitor has since gone into standby and come back on this board**, so the
+sleep and the wake work as they are built, with the program written a second
+time. Whether the part would relock without that second program is still not
+known, and nothing here asks it to.
+
 ### What it costs on this board
 
 Built at the commit this section arrived at, the whole memory board with the
@@ -1408,13 +1422,27 @@ before anyone knew the answer. That part transmits nothing until its registers
 are written, so a monitor that synchronizes is the evidence the program
 reached it.
 
-**What is still not established is what leaves the connector.** Nothing on the
-board can read that, and five signals that would say whether the program was
-acknowledged byte by byte, and whether the display is being starved, reach no
-register on any board here. A starved display painting a screen that does not
-change looks exactly like one that is fed. So the picture is the whole of the
-evidence, and the geometry of it has not been described by anyone who saw it.
-`docs/board.md` carries the session and what it did not settle.
+**The picture has been described, and a person has typed into it.** The
+monitor shows the machine's own 768 by 963 screen centered in a 1280 by 1024
+raster, white on black, with its black border rather than a picture filling the
+screen, which is this board's display as this document builds it and the same
+picture the Arty Z7-20 shows. The monitor's own menu reports the mode the
+bitstream sends. And what is typed at a USB keyboard plugged into the board
+appears on that monitor, which ties the pixels at the connector to the
+machine's own memory: the key reaches the I/O board's keyboard register, the
+machine paints its frame buffer, this block scans that memory, and the
+transmitter sends it. A recognized picture might be a stale frame or a
+coincidence of geometry; a character that appears when a key is pressed and at
+no other time cannot be.
+
+**What is still not established is what leaves the connector, read from the
+board.** Nothing on the board can read that, and five signals that would say
+whether the program was acknowledged byte by byte, and whether the display is
+being starved, reach no register on any board here. A starved display painting
+a screen that does not change looks exactly like one that is fed. So a picture
+is still the whole of the evidence that this block is being fed correctly, and
+what the last session adds to it is an eye rather than an instrument.
+`docs/board.md` carries both sessions and what they did not settle.
 
 **And the question about the pin is answered in practice, not in theory.** The
 pixel clock's pin is in a bank whose single-ended standards run from 1.0 V to
@@ -1449,8 +1477,12 @@ what it would take.
 
 **Mode 3 has not been fitted or shown.** The refusals, the raster and the
 arithmetic are checked in simulation; whether 1920x1080 at 60 Hz closes timing
-on the DE25-Nano is a question for a fit, and no monitor has seen any mode on
-this board at all.
+on the DE25-Nano is a question for a fit, and the only mode a monitor has seen
+on that board is mode 0.
+
+**The rotations, the output selection and the second display board have not
+been seen on the DE25-Nano.** Every one of them is built and checked, and no
+monitor has shown a turned picture or a color screen on that board.
 
 ## Looking at it
 

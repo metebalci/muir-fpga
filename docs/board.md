@@ -2427,3 +2427,161 @@ on silicon, and what makes this block the display output — that the pixels it
 fetches from memory are the pixels that leave the connector — is the one thing
 above that nothing has yet read. Confirming the geometry at the monitor, or the
 pattern test, would turn it green.
+
+## The DE25-Nano's keyboard, its picture and its sleep, 21 September 2026
+
+The session above left one thing unread: nothing tied the pixels at the
+connector to the memory the display reads. That tie has now been made at the
+board, and how it was made matters more than the fact of it.
+
+**What is typed at the board's own keyboard appears on the monitor.** A USB
+keyboard plugged into the board is read by `cadr-usb-input`, which hands each
+key to `cadr-terminal`, the one program that maps and paces words onto the I/O
+board's keyboard register. The machine reads that register, paints its frame
+buffer in memory, the display output scans that memory, and the transmitter
+sends it. One keystroke crosses every one of those links, and the far end of it
+is a character on the glass that was not there a moment before.
+
+**That is the reading the rest of this section rests on**, because it is a
+change the observer caused arriving at the connector, which is a stronger thing
+than a picture somebody recognizes. A picture somebody recognizes can be a
+frame that stopped arriving minutes before, or a recognition loose enough to
+fit more than one thing. A character that appears when a key is pressed and at
+no other time can be neither, and
+it runs the whole path in one direction, from the I/O board's keyboard register
+through the machine's own memory to the pixels that leave the board.
+
+**The mouse moves the pointer on the screen.** Its movement and its buttons go
+down the same path, through the same program and onto the I/O board's own
+registers, and the arrow on the glass follows the hand.
+
+**The monitor's own menu reports the mode.** It reports the mode the bitstream
+sends, 1280x1024 at 60 Hz. The section above names that reading as the one that
+separates a monitor which has picked a different mode, since such a monitor
+shows a picture with the wrong geometry; it has now been taken.
+
+**The picture is the one this project describes.** It sits centered in the
+raster with its border rather than filling the screen, and it is the same
+picture the Arty Z7-20 shows: the machine's own 768 by 963 screen in a 1280 by
+1024 raster, white on black, with a black border 256 pixels wide on each side
+and about 30 rows deep above and below. The section above records that the
+geometry and the centering had not been confirmed at the monitor. That is
+superseded here.
+
+### Nothing inside the board was read while this happened
+
+**A keyboard and the cable that programs the board are not attached at the same
+time.** Attaching the keyboard meant unplugging that cable, and that connector
+also carries the processor's serial console, so the console fell silent at the
+moment the keyboard arrived.
+
+So no counter, no tally and no status word stands beside any reading above.
+This session's evidence is entirely what a person saw. That does not weaken the
+tie the typing makes, which is a tie no instrument inside the board could have
+made anyway, since nothing on the board can read what leaves the connector. It
+does mean that nothing here is corroborated from inside, and the record should
+not be read as though it were.
+
+**It makes the demonstration stronger in one way.** With that cable out, the
+board was running on its own, from its own card, on a fabric already
+configured, with nothing attached to it but power, a monitor and a keyboard.
+That is closer to what the board is meant to be than any reading taken with a
+programmer plugged into it.
+
+**And it is a standing constraint on this board rather than an accident of this
+session.** A test that wants the keyboard and the console at the same time
+cannot have both as the board is wired today. Such a test has to be split in
+two, or take its evidence from one side only. Why the two exclude each other is
+not established here; that they do is.
+
+### The sleep, seen from the other side
+
+**The monitor goes into its own standby and comes back.** The sleep had been
+set to never, which is why it appeared to do nothing overnight: that was the
+setting and not the mechanism. Set to fifteen seconds, with nobody touching the
+board's keyboard or mouse, the monitor went into standby by itself, and a key
+pressed at the board brought the picture back. Both directions were seen. The
+section above records the fabric entering the mute and leaving it at a frame
+boundary, measured from inside, and says that nobody was watching the monitor
+at the time; that is superseded here, and the two are the same event read from
+the two sides.
+
+Two further things are inside that one result. The sleep on this board stops
+the clock the fabric hands the transmitter rather than holding lanes of its
+own, and the transmitter's register program is written again at every wake, so
+a monitor that locks again afterwards says the program ran a second time and
+was taken. And only a key or the mouse at the board is allowed to wake it,
+which is a decision `cadr-terminal` makes rather than the fabric; the wake is
+therefore a second reading of the same input path the typing runs.
+
+### What this does not establish
+
+**Five signals that would report the transmitter's state and the display's own
+faults still reach no register on any board.** The transmitter's `configured`
+and `failed`, and its count of the registers the part acknowledged, together
+with the display's sticky `underrun` and its read-error bit, all go into an
+unused fold in the board's top level, and no console command reports any of
+them. So whether the two-wire program was acknowledged byte by byte is still
+not established, and neither is whether the display has ever been starved. **A
+static screen being starved looks exactly like one being fed**, which is what
+that sticky bit exists to tell apart. A picture therefore remains the whole of
+the evidence that the display is being fed correctly, and this session adds a
+person's eye to it rather than an instrument. One console word would carry all
+five.
+
+**The geometry was read against a description and not measured on the glass.**
+What was compared is one board's picture with another's, by an eye that knows
+both. The pattern test — writing a run of known words into the display's window
+and seeing a bar appear where the arithmetic says it must — would measure it,
+and it has not been done.
+
+**The part's stamp was not read again.** The cable that reads it was out, so the
+bitstream under the monitor is taken to be the one the section above
+downloaded, on the grounds that a configured part is not disturbed by
+unplugging the cable. Nothing in this session read it back.
+
+**The keys came over the terminal's input link and not from a viewer.** In
+`screen_server.c` a key from the link and a key from a viewer enter the same
+queue, the same mapping, the same pacing and the same register writer, and they
+differ only in the message that carries them; but that is what the source says,
+not what this session showed. No viewer's key or pointer event has been carried
+on this board.
+
+**The serial line on this board has still carried nothing.** The second display
+board, the two rotations and the output selection are all built and none of
+them has been seen here. The only mode a monitor has seen on this board is
+1280x1024 at 60 Hz.
+
+### What the drawing takes from this
+
+**The display output block goes green.** The section above names what would
+move it, before the evidence existed: confirming the geometry at the monitor,
+or the pattern test. The geometry is confirmed, and the typing does more than
+confirm it, since it ties the pixels at the connector to the machine's own
+memory in the one direction a coincidence cannot run.
+
+**The USB input block goes green.** The whole of what the block does — reading
+the board's own keyboard and mouse and putting them onto the I/O board through
+the terminal — has now happened on this board, and the keys and the pointer
+arrived in the machine.
+
+**The terminal block goes green.** The section above holds it back for one
+stated reason, that its path into the machine was untouched; that path carried
+this session's keys and pointer motion. Its other half, the RFB server's
+screen, was read from the build host in that same session.
+
+**The I/O board keeps the color that says checked here and not yet shown on
+silicon.** Its keyboard and its mouse have now carried a person's typing, and
+its Chaosnet registers carried a round trip in the session above, so the reason
+given there — that only its Chaosnet half had been used — no longer holds as
+written. The rule behind it does: a block goes green when the block has been
+shown and not when a part of it has. The serial line on this board has carried
+nothing, and no reading here covers the card's two clocks. A character on the
+serial line would settle it.
+
+**The TV block and the Color TV block keep that color too.** The machine
+painting a screen that reaches the glass says the machine paints, which the
+session above already had; nothing here reads the TV's scan counters or its
+mode register, and no color screen has been composited on this board.
+
+**The serial block keeps it**, its line having carried nothing.
