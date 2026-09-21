@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # Questions
 
 These are the questions this project is asked, each answered from the file
-that settles it. The site's [FAQ page](https://metebalci.github.io/muir-fpga/faq.html)
+that settles it. The site's [FAQ page](https://muir-fpga.metebalci.com/faq.html)
 gives each answer in a sentence or two and links here for the whole of it.
 
 Every answer rests on a file, and the line under it names that file. Where
