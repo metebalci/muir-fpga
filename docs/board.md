@@ -2714,3 +2714,204 @@ supplying.
 **Nothing about the machine changed here.** This is a session about
 configuration and about what the part holds, and the machine, its fabric and
 its band are the same as in the sessions above.
+
+## A write over the ribbon, 21 September 2026
+
+A word was written into one board's machine by the other board's machine, over
+MIT's debug cable on the ribbon between the two Pmod JA connectors, and read
+back on the far board's own console. Before this every reading the cable had
+carried was a read. The boards are an Arty Z7-20, which took the debugger's
+role, and a Cora Z7-07S, which was the debuggee, and each was running its own
+Lisp world throughout.
+
+**Both boards carry the guarded carrier, and the ribbon was not touched.** Each
+board's own console printed the stamp the bitstream carries: the Arty Z7-20 was
+running fabric `44eff450` and the Cora Z7-07S `0966ffd0`, each with a clean
+tree. Neither is the tree's own commit, and the question that decides whether
+this session says anything is whether the cable's own logic differs.
+`cadr_dbg_tx.sv`, `cadr_dbg_rx.sv`, `cadr_dbg_join.sv`, `cadr_dbgin.sv` and
+`cadr_busint_regs.sv` are byte for byte the same at those two commits and at
+the tree's head, and `cadr_dbg_cable.sv` differs between them by one comment
+and not a line of logic. So the carrier under all of this is the one signal to
+a pair that `docs/debug-cable.md` describes, and it is the carrier the tree
+describes.
+
+**The wiring was found again.** Both boards rest as debuggees with nothing
+driving the connector, which is what two boards on a ribbon look like whether
+the ribbon is there or not, so the first thing done was to give one board the
+role. Under `auto` it read `crossover, detected` within three seconds and said
+the far end was answering; the far board read that a debugger was on the
+connector, and not that the two ends disagreed. Neither machine noticed, and
+both went on running Lisp.
+
+**The forms are MIT's own.** `sys/cc/ldbg.lisp` on the band these boards run
+gives the sequence for a cycle on the debuggee's Unibus: write the modifier
+register at `0o766110` with address bit 17, write the address latch at
+`0o766114` with the address shifted right one place, then read or write
+`0o766100`. Those three were typed at the debugger board's own Lisp Listener as
+two functions, a reader and a writer, and every reading below was made with
+them. `cadr_dbgin.sv` builds the same address, `{modifier[0], address, 1'b0}`.
+
+**The status strobe first, as the control.** A Unibus read of `0o766104` gave
+`0o177400` twice and `0o177500` once, which is `0xff00 | status` with the far
+interface's own busy bit moving under a machine that is running. An unplugged
+connector would have given `0o177777`, the debugger's own timeout. This repeats
+the 15 September reading on this carrier and establishes nothing new.
+
+### All sixteen diagnostic registers, read over the guarded carrier
+
+The far machine was halted from its own console first, so that no instruction
+had been forced and both readers look at the same instant. Its console reported
+not running, with the microcycle counter reading the same figure twice two
+milliseconds apart. Then each of MIT's sixteen registers was read over the
+ribbon, at `0o766000` plus twice the register number, and compared with
+`cadr-console regs` on the far board at that same halt.
+
+| register | over the ribbon | the far board's own console |
+|---|---|---|
+| `IR-LOW` | 423 | `0x01a7` |
+| `IR-MED` | 0 | `0x0000` |
+| `IR-HIGH` | 2048 | `0x0800` |
+| (open) | 65535 | `0xffff` |
+| `OPC` | 284 | `0x011c` |
+| `PC` | 1474 | `0x05c2` |
+| `OB-LOW` | 55086 | `0xd72e` |
+| `OB-HIGH` | 2561 | `0x0a01` |
+| `FLAG-1` | 63488 | `0xf800` |
+| `FLAG-2` | 49367 | `0xc0d7` |
+| `M-LOW` | 942 | `0x03ae` |
+| `M-HIGH` | 2560 | `0x0a00` |
+| `A-LOW` | 942 | `0x03ae` |
+| `A-HIGH` | 2560 | `0x0a00` |
+| `STAT-LOW` | 0 | `0x0000` |
+| `STAT-HIGH` | 0 | `0x0000` |
+
+Sixteen of sixteen. The Listener prints decimal and the console prints
+hexadecimal, so a row is one word written two ways. The two paths share the
+register and nothing else: one is MIT's cable on the ribbon, the other is that
+board's own console on its own general-purpose port.
+
+`FLAG-2` agrees exactly here where the 15 September session had it differing by
+one bit. That difference was CC's own correction of JC-TRUE and not the cable's,
+and nothing in this session runs the correction, so the two readers are reading
+the register verbatim and agree on it.
+
+This is `-DB NEED UB`, the strobe that runs a cycle on the debuggee's Unibus,
+and it is the one thing the guarded carrier had never carried. What had crossed
+it before was a status strobe, which is acknowledged the instant it is made and
+runs no cycle at all.
+
+### The write, and the path it was read back on
+
+**The reader was named before anything was written.** A read that goes wrong
+gives a wrong answer and a comparison catches it; a write that goes wrong
+changes the far machine and nothing compares it afterwards. So the read-back is
+the far board's own console, which reads `MD` out of the console face on its own
+general-purpose port, and never the cable that did the writing.
+
+The target is `MD`, reached by `-UB TO MD`. CC's own `CC-WRITE-MD` writes map
+register octal 16 with `0o177000`, which is valid, write-enabled and the five
+high ones that address `MD`, and then writes the low half-word at `0o174000` and
+the high half-word at `0o174002`. Such a cycle never takes the Xbus and spends
+no microcycle, so it writes a register of the far machine and touches no memory
+at all.
+
+| | |
+|---|---|
+| map register octal 16, read over the ribbon before anything | 0 |
+| written over the ribbon | `0o177000` |
+| `MD` on the far board's own console, before | `0x0a0005c2` |
+| written over the ribbon, low half then high half | 23235 and 42300 |
+| **`MD` on the far board's own console, after** | **`0xa53c5ac3`** |
+| written over the ribbon, the original halves back | 1474 and 2560 |
+| `MD` on the far board's own console, after that | `0x0a0005c2` |
+
+The word `0xa53c5ac3` has each half the complement of the other, so neither is a
+value the machine could have been left holding and neither half can be mistaken
+for the other. It arrived whole, all thirty-two bits of it. The map register was
+put back to nought afterwards and read back as nought.
+
+**The write spent no microcycle and moved nothing else.** The far board's own
+microcycle counter read `1091826969744` before the write and the same figure
+after it, its program counter stood at 2702 either side, and its virtual address
+register did not move. That is what `-UB TO MD` is supposed to do and it is
+measured here rather than argued.
+
+### The far machine stepped and started over the cable
+
+CC's control vocabulary is writes to the clock control register, which is
+`0o766006` on the debuggee's Unibus. With the machine halted, `2` then `0` is
+`CC-CLOCK`, one microcycle, and `1` is run. Both were written over the ribbon
+and counted on the far board's own console.
+
+| | |
+|---|---|
+| the far board's microcycle counter, before | 1091826969744 |
+| `2` then `0` written over the ribbon | |
+| the far board's microcycle counter, after | 1091826969745 |
+| its program counter | 2702, then 2703 |
+| `1` written over the ribbon | |
+| the far board afterwards | running, 12,489 microcycles in 2,000 microseconds |
+
+Exactly one microcycle, counted by the machine that ran it. A silent no-op and a
+silent runaway are the two failures this project keeps meeting, and a counter
+that moves by one tells all three apart. The rate after the start is the rate
+that board runs at.
+
+**The far machine's Lisp world kept its place.** Its screen afterwards carries
+its own Lisp Listener reading at top level, with a live who-line, and its idle
+counter had not been reset, so nothing had typed at it.
+
+### None of it went through the register window
+
+The far board's own register window, read while it was the debuggee, names
+itself `DBUG` and its fault word reads `0x00004000`: the marker, a request count
+of nought in the high half and all three sticky faults clear. So the window
+served no request at all, and what carried the sixteen reads, the six writes,
+the step and the start was the ribbon and nothing else.
+
+**No frame was refused.** Both boards read 0 refused against a saturated 65,535
+heard, before the session and after it, across every reading above. The heard
+counter saturates within a tenth of a second of a connect and is not a rate; the
+refused counter is a total since the fabric came up, and on this ribbon it
+stayed at nought on both boards.
+
+### What this does not establish
+
+**CC itself was not run.** What crossed the cable is CC's own sequences, read
+out of `ldbg.lisp` and `lcadrd.lisp` and typed at a Listener by hand: the cycle,
+the register reads, `CC-WRITE-MD` and `CC-CLOCK`. The program was not loaded and
+none of its state-saving ran, so nothing here says that a CC session works over
+this carrier, only that every cycle such a session is built out of does.
+
+**The halt came from the far board's own console and not over the cable.** A
+machine to be read has to be halted first, and it was halted the safe way so
+that the two readers would look at the same instant. The start and the step did
+go over the cable.
+
+**Nothing was written to the far machine's memory.** `-UB TO MD` writes a
+register and takes no bus, which is why it was chosen: it is the deepest write
+this cable makes that leaves the far machine's memory untouched. A mapped write
+that lands in main memory is a different cycle and has not crossed a ribbon.
+
+**Nothing was measured about the cable's timing.** No beat rate, no round trip
+and no comparison against the 11.05 microseconds the debugger's own interface
+allows a cycle. Those figures are still arithmetic and the checks' own
+measurements.
+
+**The two frames one board refused in the 15 September session are still
+unexplained**, and this session added none to either board.
+
+### What this settles, and what it does not
+
+**The guarded carrier carries the debugger and not merely a strobe.** Every
+register of MIT's diagnostic block crossed it and agreed with the far board's
+own console, and the far machine was stepped and started over it.
+
+**A write crosses it, and the word arrives whole.** That is the direction
+nothing had exercised, on either board pair and over either carrier, and the
+reader is a path that shares nothing with the writer.
+
+**Nothing about the fabric changed here**, and nothing about either board's
+bitstream. Both boards were left running their own bands, as debuggees with
+nothing driving the connector, which is how they were found.

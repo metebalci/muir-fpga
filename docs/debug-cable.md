@@ -1431,10 +1431,52 @@ interface's own, so it finds the bus as it stands. A pull-up, a stuck wire or a
 constant cannot vary, and this byte varies with the far machine's work.
 
 **What this does not show is a register of the far machine.** No word of the
-far machine's state crossed on this carrier, and no `-DB NEED UB` cycle, which
+far machine's state crossed in that session, and no `-DB NEED UB` cycle, which
 is the one that runs a cycle on the debuggee's own Unibus, was made. It is the
 carrier answering a strobe rather than a debugging session. The 5,020 cycles it
-took to watch the counters cost no refused frame on either board.
+took to watch the counters cost no refused frame on either board. The
+subsection below is the session that made those cycles on this same carrier.
+
+### A cycle, and a WRITE, over the guarded carrier
+
+The sixteen diagnostic registers of one board's machine were read over the
+ribbon by the other board's machine, and a word was written into one of its
+registers and read back on its own console. The forms are MIT's own, out of
+`sys/cc/ldbg.lisp` and `sys/cc/lcadrd.lisp`, typed at the debugger board's Lisp
+Listener; CC itself was not loaded. `docs/board.md` has the session with every
+figure.
+
+**All sixteen registers agreed with the far board's own console**, read at one
+halt, the far machine having been halted from that console first so that both
+readers look at the same instant. The two paths share the register and nothing
+else. That is `-DB NEED UB` on the guarded carrier, which had carried only a
+status strobe until then.
+
+**The write went to `MD` through `-UB TO MD`**, which is CC's `CC-WRITE-MD`:
+map register octal 16 set to `0o177000`, then the low half-word at `0o174000`
+and the high half-word at `0o174002`. The far board's own console read `MD` as
+`0x0a0005c2` before and `0xa53c5ac3` after, and `0x0a0005c2` again once the
+original halves had been written back. The two halves of the word written are
+complements of each other, so neither can be mistaken for the other or for
+anything the machine was holding. The read-back is the console on that board's
+own general-purpose port and never the cable that wrote, which is the whole
+point: a read that goes wrong gives a wrong answer and a comparison catches it,
+and a write that goes wrong changes the far machine and nothing compares it.
+
+**The write spent no microcycle.** The far board's own counter read
+`1091826969744` either side of it and its program counter stood at 2702, which
+is what a cycle that never takes the Xbus is supposed to cost.
+
+**And the far machine was stepped and started over the cable.** `2` then `0`
+into the clock control register at `0o766006` is `CC-CLOCK`, and the far board's
+own counter moved by exactly one, from `1091826969744` to `1091826969745`, with
+its program counter going 2702 to 2703. `1` started it, and it ran at 12,489
+microcycles in 2,000 microseconds, which is its own rate. Its Lisp world kept
+its place.
+
+**Nothing went through the window.** The far board's register window read a
+request count of nought and no faults at all, so the ribbon carried every one of
+these cycles. Both boards read 0 frames refused throughout.
 
 ### CC halting the far machine, and the readings compared
 
@@ -1572,9 +1614,12 @@ machine is rebooted.
 
 ### What the boards have not shown
 
-**Nothing has been written to the far machine over the cable.** What has run is
-the halt, the reads and the start. CC can write a scratchpad, main memory and
-the machine's own registers, and none of that has crossed a ribbon.
+**Nothing has been written to the far machine's MEMORY over the cable.** A word
+has been written into a register of it: `MD`, by CC's own `CC-WRITE-MD` through
+map register octal 16, read back on the far board's own console and put back
+again. `-UB TO MD` takes no bus and spends no microcycle, so that write reaches
+a register and no memory at all. A mapped write that lands in main memory, and
+CC's writes to a scratchpad, have not crossed a ribbon.
 
 **The frame counters cannot give a rate.** Page 0's word 15 carries frames
 heard and frames refused, and only a fabric reset clears either. The first
@@ -1604,10 +1649,14 @@ subsection above says what was measured and names the two candidates, neither
 of which is a measurement. It stopped nothing: every cycle was answered and
 every word was right.
 
-**CC has not crossed the guarded carrier.** The halt, the reads and the start
-were made on the carrier with three data lines a group, which is not the one
-either board carries now. What has crossed the guarded one is a status strobe,
-which is the carrier and not the debugger.
+**CC ITSELF has not crossed the guarded carrier, though its vocabulary has.**
+The session with the program loaded --- the full save, the halt, the register
+and scratchpad reads and the start --- was made on the carrier with three data
+lines a group, which is not the one either board carries now. On the guarded
+one every cycle such a session is built out of has crossed, typed at a
+Listener out of `ldbg.lisp` and `lcadrd.lisp` rather than run by the program:
+all sixteen diagnostic registers, `CC-WRITE-MD`, `CC-CLOCK` and the start. What
+is left untried there is CC's own state-saving and everything built on it.
 
 **And the DE25-Nano's connector has shown nothing at all.** It is built, linted
 and read by a check, and no cable from a 2x20 header to a Pmod exists, so
