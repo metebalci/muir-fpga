@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>muir-fpga — the DE25-Nano, upcoming</title>
-<meta name="description" content="The DE25-Nano, an upcoming board for muir-fpga with one Altera Agilex-5E, part A5EB013BB23BE4SCS: the Arty Z7-20&rsquo;s architecture drawing, with this project&rsquo;s own blocks colored green where they are done on this board.">
+<meta name="description" content="The DE25-Nano, an upcoming board for muir-fpga with one Altera Agilex-5E, part A5EB013BB23BE4SCS: the Arty Z7-20&rsquo;s architecture drawing, with every block this project builds for this board colored green.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="wide">
@@ -84,18 +84,17 @@
 
     <figure class="panel fig dense wide">
       <div class="scroll">
-<svg viewBox="20 41 1813 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. Of the twenty-one blocks this project builds for this board, twenty are done and drawn green: display output, F2SDRAM, clock, ICMEM board, CADR board, bus interface, Xbus to DDR, disk controller, TV, Color TV, I/O board, H2F, LWH2F, SPL, terminal, Chaosnet, serial, disk packs, console and USB input. The other one is not done and carries no color: debug cable adapter. The parts drawn gray are components of the board, and muir, ozd and U-Boot are drawn orange, as programs other projects carry onto this board. The lamps at its right are drawn in the color each one lights, which on this board is green for every one of them, as its user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Beside muir, at the right end of the Linux outline, stands ozd, the associated machine a site of these machines takes its files, its time and its host table from over Chaosnet. It runs on a host of its own today, and no line reaches its block, because running it on this board&rsquo;s own processing system, so that a card by itself is a whole site, would be a path on the board and there is none yet. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
+<svg viewBox="20 41 1813 829" role="img" aria-label="The Arty Z7-20&rsquo;s architecture drawing, drawn for the DE25-Nano, whose FPGA is one Altera Agilex-5E, part A5EB013BB23BE4SCS. All twenty-one blocks this project builds for this board are done and drawn green: display output, F2SDRAM, clock, ICMEM board, CADR board, bus interface, debug cable adapter, Xbus to DDR, disk controller, TV, Color TV, I/O board, H2F, LWH2F, SPL, terminal, Chaosnet, serial, disk packs, console and USB input. The parts drawn gray are components of the board, and muir, ozd and U-Boot are drawn orange, as programs other projects carry onto this board. The lamps at its right are drawn in the color each one lights, which on this board is green for every one of them, as its user LEDs are, and the debug cable is drawn on a GPIO header, since the board has no Pmod. HPS means Hard Processor System. Beside muir, at the right end of the Linux outline, stands ozd, the associated machine a site of these machines takes its files, its time and its host table from over Chaosnet. It runs on a host of its own today, and no line reaches its block, because running it on this board&rsquo;s own processing system, so that a card by itself is a whole site, would be a path on the board and there is none yet. Apart from the FPGA fabric and HPS terminology, the chip&rsquo;s label, the CPU cores and their maximum clocks, the memory, the one memory port and the two processor ports&rsquo; own names, the lamps&rsquo; color and the cable&rsquo;s connector, the labels are the Arty Z7-20&rsquo;s and have not been redrawn for this board.">
 
-          <!-- The Arty Z7-20's drawing, generated for the DE25-Nano.  Of the
-               twenty-one blocks this project builds for this board, twenty
-               are done and drawn green: display output, F2SDRAM, clock, ICMEM
-               board, CADR board, bus interface, Xbus to DDR, disk controller,
-               TV, Color TV, I/O board, H2F, LWH2F, SPL, terminal, Chaosnet,
-               serial, disk packs, console and USB input.  The other one is
-               not done and carries no color: debug cable adapter.  The parts
-               drawn gray are components of the board, and muir, ozd and
-               U-Boot are drawn orange, as programs other projects carry onto
-               this board.  The figures under the fabric's label are this
+          <!-- The Arty Z7-20's drawing, generated for the DE25-Nano.  All
+               twenty-one blocks this project builds for this board are done
+               and drawn green: display output, F2SDRAM, clock, ICMEM board,
+               CADR board, bus interface, debug cable adapter, Xbus to DDR,
+               disk controller, TV, Color TV, I/O board, H2F, LWH2F, SPL,
+               terminal, Chaosnet, serial, disk packs, console and USB input.
+               The parts drawn gray are components of the board, and muir, ozd
+               and U-Boot are drawn orange, as programs other projects carry
+               onto this board.  The figures under the fabric's label are this
                board's own fit, as ALMs and M20K, the chip and the memory
                carry this board's parts, the lamps are drawn in the color each
                one lights, green for all of them as this board's user LEDs
@@ -183,7 +182,7 @@
           <text class="d-s" x="723" y="152" text-anchor="middle">the address decode, -HANG,</text>
           <text class="d-s" x="723" y="166" text-anchor="middle">its registers, the map, the cable</text>
 
-          <rect class="d-box" x="1068" y="96" width="188" height="64"/>
+          <rect class="d-box d-done" x="1068" y="96" width="188" height="64"/>
           <text class="d-t" x="1162" y="118" text-anchor="middle">debug cable adapter</text>
           <text class="d-s" x="1162" y="138" text-anchor="middle">the cable both ways, 8 pins</text>
           <text class="d-s" x="1162" y="152" text-anchor="middle">registers at GP1 + 0x1000</text>
