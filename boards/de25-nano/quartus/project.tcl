@@ -220,8 +220,12 @@ set_parameter -name SYNC_PROM_HEX [file join $root build sync_prom.hex]
 #
 # The scheme is the flash's, as the board's DIP switch leaves it by default.
 # This flow writes an SRAM Object File, which is loaded over JTAG and lost at
-# power-off; nothing here writes the flash, and the scheme matters only to a
-# flash image, which a later slice may build.
+# power-off, and on an HPS-first build with a first-stage loader it writes the
+# phase-1 bitstream for the flash as well, which is the image this scheme
+# describes.  Writing that image to the flash is still not this flow's
+# business and nothing here does it: the board's flash was written by hand
+# with the vendor's programmer, and `boards/de25-nano/README.md` says what it
+# holds.
 set_global_assignment -name STRATIXV_CONFIGURATION_SCHEME "ACTIVE SERIAL X4"
 set_global_assignment -name ACTIVE_SERIAL_CLOCK AS_FREQ_125MHZ
 set_global_assignment -name DEVICE_INITIALIZATION_CLOCK OSC_CLK_1_125MHZ

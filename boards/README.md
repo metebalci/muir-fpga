@@ -18,7 +18,7 @@ part family.
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
 | `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Runs on silicon, without display output or USB input. |
-| `de25-nano/` | Terasic DE25-Nano | A5EB013BB23BE4SCS | The machine without its memory, built by Quartus and loaded over JTAG. No processor configuration yet. |
+| `de25-nano/` | Terasic DE25-Nano | A5EB013BB23BE4SCS | Built by Quartus. Runs on silicon with its memory, its band and its display, and boots from power alone. |
 
 **The two Zynq boards run the machine on silicon, and they carry two different
 amounts.** `arty-z7-20/` is the board and is complete. `cora-z7-07s/` has a
@@ -29,12 +29,15 @@ it boots Linux from its card. Its machine is halted today, with no drive. Over
 the Pmod cable it has debugged the Arty Z7-20 and been debugged by it, which
 `docs/board.md` records.
 
-**`de25-nano/` holds the machine without its memory.** It has a top level, a
-Quartus flow, a pin file transcribed from Terasic's user manual, and a README
-that says what the board is and what the rest of the port needs. The machine
-runs its boot PROM there with nothing behind its memory port, as the Arty
-Z7-20's default board does, and it meets timing with the Zynq boards'
-exceptions written again for Quartus.
+**`de25-nano/` holds the whole board.** It has a top level, a Quartus flow, a
+pin file transcribed from Terasic's user manual, the processor's
+configuration, a device tree, a Buildroot image and a README that says what
+the board is and how the port is made. The machine runs there with the
+processor's LPDDR4 behind its memory port, and it meets timing with the Zynq
+boards' exceptions written again for Quartus. On the board it boots Linux
+from its card, loads a band and puts the machine's screen on a monitor, and
+its QSPI flash carries this project's phase-1 bitstream, so it comes up from
+power with nothing else attached.
 
 **Every board here has a processing system beside its fabric, and that is
 deliberate.** What a board has to bring is main memory, a card the machine's
@@ -113,7 +116,7 @@ sizes, how to format a card and what a release carries.
 
 The Arty Z7-20 is the board and stays the board. The Cora was added after it,
 which was not a stated priority and should not be read as one. The DE25-Nano's
-directory came after both and holds the machine without its memory.
+directory came after both.
 
 The Cora was worth settling before the display output block started, because a
 board with no HDMI pulls against exactly that work. And it is the tighter of
@@ -170,11 +173,13 @@ system it would not be, because on such a part this is not the design: every
 one of the answers the next section lists costs logic and block RAM these
 numbers do not include.
 
-**On the DE25-Nano only the machine without its memory is measured.** It
-takes 5,162 of the part's 46,800 adaptive logic modules and 95 of its 358
-M20K blocks. That part is counted in those units rather than in LUTs and
-block RAM tiles, and the board has no memory-on build yet, so it has no row
-in either table. `de25-nano/README.md` has the figures.
+**On the DE25-Nano the fits are in the part's own units.** The machine with
+nothing behind its memory port takes 5,162 of the part's 46,800 adaptive
+logic modules and 95 of its 358 M20K blocks, and with the processor's memory
+behind it and the faces on both bridges it takes 15,028 and 129. That part is
+counted in adaptive logic modules and M20K rather than in LUTs and block RAM
+tiles, so it has no row in either table. `de25-nano/README.md` has the
+figures.
 
 ## Three kinds of new board
 
