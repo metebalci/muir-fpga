@@ -19,7 +19,7 @@
 
    No dark mode. Paper and ink is what this is, as the zine is, so the
    stylesheet names one set of colors and the page keeps them in either
-   setting: a spot color printed on black is a different object. The status
+   setting: a spot color printed on black is a different object. The blocks'
    colors on the architecture drawings are therefore chosen, and checked, on
    paper white alone.
 
@@ -119,27 +119,36 @@
 
   --line: 3px;
 
-  /* How far along each block on an architecture drawing is. This is the one
-     place the drawings take a hue, because "how far along is this" is an axis
-     of its own and the outline is already carrying fabric-or-PS. The stroke
-     does the work and the fill only tints. None of these is the spot pink,
-     which belongs to the page and never to a claim about a block. */
-  --st-done:  #2da44e;   /* on the board: silicon has shown it */
-  --st-built: #0aa2c0;   /* checked in simulation, not yet run on the board */
-  --st-part:  #d97706;   /* partly built, and it is only about building: some
-                            of the block exists and some of it does not.  It
-                            says nothing about verification.  A block that is
-                            whole goes turquoise even if only part of it has
-                            run on the board, because turquoise carries the
-                            assumption that what is built is checked --- in
-                            simulation for fabric, by its own tests for a
-                            program --- and green is reserved for what silicon
-                            itself has shown. */
-  --st-wip:   #8250df;   /* being built now: somebody is in those files today --- violet, since blue sat too near the turquoise */
-  --st-ext:   #d0d7de;   /* an existing component */
+  /* WHOSE WORK EACH BLOCK ON AN ARCHITECTURE DRAWING IS, which is the whole of
+     what these colors say.  This is the one place the drawings take a hue,
+     because whose work a block is is an axis of its own and the outline is
+     already carrying fabric-or-PS.  The stroke does the work and the fill only
+     tints.  None of these is the spot pink, which belongs to the page and
+     never to a claim about a block.
+
+     A block of this project's that is not done carries no color at all, so
+     there is no variable for it and the legend does not name it: a block with
+     no color reads as unfinished without being told.  Nothing here says a
+     block has been shown on silicon; `docs/board.md` says that, session by
+     session.
+
+     The names are older than the meanings.  They came from a retired scale of
+     how far along a block was, and they are left alone because every drawing
+     and the generator both write them. */
+  --st-done:  #2da44e;   /* this project's work, and done */
+  --st-built: #0aa2c0;   /* unused: no page here draws with it */
+  --st-part:  #d97706;   /* another project's program, carried onto the board
+                            rather than built here.  The programs drawn in it
+                            are software and belong to other projects, so
+                            drawing them as the board's own parts would say
+                            they arrived with the board, which they did not. */
+  --st-wip:   #8250df;   /* unused by the published pages; `full-page.html`,
+                            the gitignored draft, still draws with it */
+  --st-ext:   #d0d7de;   /* a part of the board itself */
   --st-absent: #d1495b;  /* not available on this board: the cross, in the same
                             red the error lamp is drawn in.  It is the one mark
-                            on these drawings that is not about progress. */
+                            on these drawings that is not about whose work a
+                            block is. */
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -549,8 +558,8 @@ figcaption { font-size: var(--fs-small); max-width: var(--measure); }
 /* A BLOCK THE BOARD DOES NOT HAVE.  It keeps its place instead of being taken
    out, so that the drawings of two boards are one drawing with parts crossed
    off, and a reader sees what a board is missing rather than inferring it from
-   a gap.  It carries no status color, because a status says how far along a
-   thing is and the answer here is that it is not on this board at all: the
+   a gap.  It carries none of the colors above, because those say whose work a
+   block is and the answer here is that it is not on this board at all: the
    outline goes dashed in the drawing's own ink, the label stays and goes
    faint, and a red cross corner to corner says it plainly.  A wire that exists
    only to reach it goes faint with it. */
@@ -565,18 +574,18 @@ figcaption { font-size: var(--fs-small); max-width: var(--measure); }
    HOW FAR THE FADE REACHES is the whole of the rule: from the absent block
    outwards to the first junction where another line's end lands on it, or to
    the first box it meets.  It keeps currentColor and moves only the stroke's
-   opacity, and it takes no status color: this says what a line is for and not
-   how far along it is. */
+   opacity, and it takes none of the block colors: this says what a line is for
+   and not whose work it is. */
 .d-absent-l { stroke-opacity: 0.35; }
 /* THE ONE RED TEXT ON THESE DRAWINGS, and it says one thing: the debug cable's
    supply pins are open at both ends, because a cable between two boards must not
    join their 3.3 V rails.  It borrows the crossings' red rather than taking a
    color of its own, so that red on a drawing goes on meaning one thing ---
-   something that is not about how far along a block is. */
+   something that is not about whose work a block is. */
 .d-warn, .d-s.d-warn { fill: var(--st-absent); font-weight: 700; }  /* the compound selector outranks .d-s, which sets currentColor later in this file */
-/* A status color on a connection, not a block: the wash a status class
-   carries would fill the shape an open path implies, so lines force it off
-   and keep only the stroke. */
+/* One of the block colors on a connection rather than on a block: the wash
+   such a class carries would fill the shape an open path implies, so lines
+   force it off and keep only the stroke. */
 .d-line.d-done, .d-line.d-built, .d-line.d-part,
 .d-line.d-wip,  .d-line.d-ext { fill: none; }
 /* The legend's own swatches, solid.  A block carries its color washed so the

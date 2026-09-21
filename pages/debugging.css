@@ -13,11 +13,11 @@
    real machine and a page that draws the cable between two of them can then
    be changed one at a time.
 
-   Nothing here carries a status color.  The board drawings color a block by
-   how far along it is; these figures say what the cable IS and what crosses
-   it, so they are drawn in `currentColor` alone, which is the page's ink.
-   What has run on a board and what has not is in the table near the foot of
-   the page, in words.
+   Nothing here carries one of the block colors.  A board drawing colors a
+   block by whose work it is; these figures say only what the cable IS and what
+   crosses it, so they are drawn in `currentColor` alone, which is the page's
+   ink.  What has run on a board and what has not is in the table near the foot
+   of the page, in words.
 
    No `font-size` here is in px except inside the drawings.  Text in an SVG is
    drawn in the drawing's own coordinates and scales with the figure, so it is
