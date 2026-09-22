@@ -47,14 +47,20 @@ say again what a document already says.
                   where they are done on this board. The page's title links the
                   maker's page for the board, and its one line says the board
                   is upcoming and names its FPGA
-    booting.html  how each board comes up, in three sequences: a Zynq board
-                  from its own card, the same board from a TFTP server while
-                  it is being worked on, and the DE25-Nano. The two Zynq
-                  boards come up the same way, so one drawing serves both and
-                  a label says where they differ. The DE25-Nano has a drawing
-                  of its own because its boot crosses two storage devices and
-                  its fabric is configured in the middle of the sequence. The
-                  long form is docs/boot.md
+    booting.html  how each board comes up, in four sequences, two for each
+                  board: from the board's own card, which is how anybody
+                  else's board boots, and with TFTP, which is how this
+                  project's own boards boot while they are being worked on.
+                  The two Zynq boards come up the same way, so one drawing
+                  serves both and a label says where they differ. The
+                  DE25-Nano has a pair of its own because its boot crosses two
+                  storage devices and its fabric is configured in the middle
+                  of the sequence. Its TFTP drawing is there to show how
+                  little the network changes on that board: the first phase
+                  still comes out of the flash, the loader and the file that
+                  chooses the path are still read off the card, and the four
+                  steps that put the CADR in the fabric are the card path's
+                  own. The long form is docs/boot.md
     debugging.html
                   how one CADR debugs another, in six drawings: MIT's cable
                   of twenty-one wires and what CC reaches over it, the two
