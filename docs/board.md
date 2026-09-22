@@ -2915,3 +2915,175 @@ reader is a path that shares nothing with the writer.
 **Nothing about the fabric changed here**, and nothing about either board's
 bitstream. Both boards were left running their own bands, as debuggees with
 nothing driving the connector, which is how they were found.
+
+## The DE25-Nano over TFTP, 22 September 2026
+
+The DE25-Nano booted over the network. Its card was told to name a TFTP
+server, the board was reset, and it fetched the boot command, the fabric's
+image, the device tree, the kernel and the root filesystem from that server by
+itself, configured its fabric from what it had fetched, started Linux and came
+up running its band. The card was then put back as it was, and the board was
+reset again and came up from the card. Both boots were captured on the serial
+console.
+
+This is the path the board's own boot environment has always described and
+that nothing had run. The account below is of one session, and every number in
+it was read off the console.
+
+**The board was found on the card path.** Its `uEnv.txt` named no server, so
+`cadr_try` took the `else` branch and `cadr_card` loaded everything off the
+FAT partition. The card is this board's development card and still has the old
+two-partition shape: the boot partition is mounted read-only at `/mnt/card`
+and the drive bay read-write at `/mnt/packs`. So the edit below needed a
+remount, where on the one-partition card a release ships the partition is
+already read-write and a copy is enough.
+
+**The served set was made byte-identical to the card's.** The five files
+`uEnv.net` asks for were put in a directory named for the board on the TFTP
+server, and the four that also exist on the card were checked by digest
+against the card's own copies rather than against the build they came from.
+They matched. So the test compares two paths and not two sets of files, which
+is the only way its answer means anything: a network boot from a different
+kernel would boot and would say nothing about the path.
+
+**The way back was established before the card was touched.** The risk is
+stated in `uEnv.net`'s own header: the network path never falls back to the
+card, so a board whose card names a server it cannot reach loops in the loader
+for ever and Linux never starts, which leaves the board unable to repair its
+own card. Two things were shown on the board first, and neither needs the
+network. U-Boot offers three seconds of `Hit any key to stop autoboot` on
+every reset, before `bootcmd` runs and therefore before the loop can begin; a
+byte sent in that window gives a prompt. And at that prompt `run cadr_card`
+boots the board off its card whatever `uEnv.txt` says, because `cadr_card`
+never reads `serverip`. Both were run, and the second one booted the board to
+a login prompt. A copy of the original `uEnv.txt` was also put on the
+read-write partition, so the repair itself needs nothing off the board either.
+
+**Then the path was run by hand from that prompt, with the card untouched.**
+`setenv serverip <the TFTP server>` and `run cadr_net` fetched all five files
+and booted. That proved the path before anything on the card depended on it.
+
+**The card was then edited from the running board.** The new `uEnv.txt` was
+generated from the tracked template by the same substitution the card script
+uses, and the control is that generating it with no server reproduces the
+card's own file byte for byte. The board fetched the new file, the boot
+partition was remounted read-write, the file was written, the partition was
+remounted read-only, and the digest was read back off the card. The card never
+left the board.
+
+**The board then took the network path on its own.** The console said `cadr:
+uEnv.txt names a server; fetching over TFTP`, and what followed was five TFTP
+transfers, the fabric's four steps, and Linux:
+
+    de25-nano/uEnv.net                            1,568 B
+    de25-nano/cadr.core.rbf                   2,125,824 B   5.5 MiB/s
+    de25-nano/socfpga_agilex5_de25_nano_cadr.dtb 23,737 B   2.8 MiB/s
+    de25-nano/Image                          41,921,024 B   5.5 MiB/s
+    de25-nano/rootfs.cpio.uboot               4,619,731 B   5.4 MiB/s
+
+That is 48,691,884 bytes over the network. `...FPGA reconfiguration OK!` came
+after the fabric's image, as it does on the card path, so the CADR entered the
+fabric from a file the board had just fetched.
+
+**`uEnv.txt` was read off the card twice, and the console shows both reads.**
+`1979 bytes read in 16 ms` appears once before the DHCP broadcasts and once
+after the bind. That is the second import the environment does deliberately,
+so that a lease cannot displace the server the card named, and this is the
+first time it has been seen happen. The 1,979 bytes are the card's own file
+with the server line in it; without that line it is 1,943.
+
+**From the reset to the login prompt took 28 seconds, against 25 off the
+card.** Both were measured on this board in this session, from the first line
+U-Boot's first stage prints after the reset, with the same logger:
+
+    from the reset          over TFTP    off the card
+    autoboot expires           4.0 s         4.0 s
+    the fabric configured      9.8 s         5.6 s
+    the kernel started        17.2 s        14.0 s
+    the login prompt          28.4 s        25.0 s
+
+**Nearly all of the difference is the link coming up, and it is not the
+transfers.** The bind took 3,534 ms in the run above, and the console says why:
+`Waiting for PHY auto negotiation to complete.. done` comes first, and then
+five BOOTP broadcasts are sent before one is answered. Two binds taken by hand
+from the U-Boot prompt in the same session, on a link that was already up from
+an earlier `dhcp`, printed no negotiation line, needed one broadcast, and took
+3 ms and 4 ms. So the 3.5 seconds is what a cold link costs, which is the real
+case, and 28 seconds is one honest measurement of one boot rather than a figure
+to hold the path to. The transfers themselves were marginally faster than the
+card's reads, at 5.5 against 5.2 MiB/s for the fabric's image and 5.5 against
+5.4 for the kernel.
+
+**Every program came up as it does on the card path.** The tree reserved the
+CADR's 128 MB at `0xB0000000`, the clock came back from the drive bay, the
+drive came present with a labeled pack on unit 0, and the screen, the serial
+line, Chaosnet at 177203 and the USB input program all started. ozd stayed off,
+because this card's file of flags says `--no-ozd`.
+
+**The card was put back, and the board came up from it.** The original
+`uEnv.txt` was written back from the copy on the read-write partition, its
+digest was read off the card and matched, the partition was remounted
+read-only, and the temporary copy was removed. The board was reset and took
+the card path: no server line, no DHCP, no `Filename`, and the five
+`bytes read` lines it has always printed. The machine was then halted, read,
+and started again, and it is running its band.
+
+### What this does not establish
+
+**The fabric was not identified from inside the board.** This part gives the
+fabric no way to read its own stamp, so `cadr-console status` reports no build
+stamp whatever is configured, which the flash session above already recorded.
+What identifies the fabric here is the file: `quartus_pfg -i` on the
+`cadr.core.rbf` that both paths loaded reports `JTAG user code: 0xF5CA3480`,
+which is this project's stamp for commit `f5ca348` with a clean tree. That is
+a reading of a file on the build host and not of the part, and nothing in this
+session corroborates it from the board.
+
+**So the bitstream and the tree are not the same commit, and the reason that
+is tolerable here is narrow.** The fabric is `f5ca348` and the tree is thirty
+commits later. What this session tests is the loader, and the
+three files that define the boot path --- the board's U-Boot environment, the
+served boot command and the card's template --- have not changed in any of
+those commits. They are byte-identical between the two, which was checked
+rather than assumed. Nothing here is evidence about the fabric's logic, and a
+session about the machine would need a bitstream of the tree.
+
+**The card was not written from a reader and no release card was made.** The
+one file that changed was written by the board onto its own card and then
+written back. The card script was not run, and no zip was built or unpacked.
+
+**No release or standalone card was booted over the network**, because a
+release card carries no server and is the card path by definition.
+
+**The DHCP server was not exercised as a fixture.** This board has no MAC of
+its own: U-Boot makes a fresh locally administered one at every boot and Linux
+carries whatever U-Boot made, so the board's address changes from boot to
+boot. The boot above worked with a lease the server chose. A pinned lease was
+not tried and `ethaddr` was not set.
+
+**Nothing was measured about the TFTP server's behavior under load**, and no
+failure of the path was induced. The board was never made to loop, so the
+message the loader prints when a fetch fails was not seen in this session, and
+the ten-second retry was not observed.
+
+### What this settles, and what it does not
+
+**The DE25-Nano's network boot path runs on the board.** Every step in it
+happened: the card's file chose the path, DHCP gave the board an address, the
+boot command came from the server, the fabric was configured from a file
+fetched over the network, and the kernel and the root filesystem followed it.
+The path is no longer something built and not run.
+
+**The fabric can be configured from the network.** That is the step this board
+has that the Zynq boards' path does not exercise the same way, since it runs
+through the processor's own configuration of the fabric rather than through a
+bitstream loader, and it ran here with the image arriving over TFTP.
+
+**A card that names a server is recoverable from the console alone.** The
+three-second window and `run cadr_card` were both run, in that order, before
+the card was changed. That is now a known way back and not an assumption.
+
+**Nothing about the machine changed here.** The fabric is the one the board
+was already running, the band is the same band, and the card's boot partition
+ends the session byte-identical to how it started. The drive bay was written
+to only by the band itself, as it is whenever the board runs.
