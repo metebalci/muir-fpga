@@ -15,7 +15,7 @@ config BR2_PACKAGE_CADR_USB_INPUT
 	  I/O board's registers.  There is one queue behind those
 	  registers and the rate at which words may be handed over is a
 	  rule about the machine, so one program paces them and everything
-	  else is a source --- which is how the reference emulator is
+	  else is a source --- which is how the reference simulator is
 	  arranged too, with one keyboard and up to eight viewers pushing
 	  into it.  docs/usb-input.md has the decision.
 

@@ -28,7 +28,7 @@
 //
 // `strcasecmp` is in the locale's alphabet and muir's `eq_ignore_ascii_case`
 // is in ASCII's, and a board whose locale said otherwise would fold a name
-// differently from the emulator.  So the folding is written out.
+// differently from the simulator.  So the folding is written out.
 
 static int ci_eq(const char *a, const char *b)
 {

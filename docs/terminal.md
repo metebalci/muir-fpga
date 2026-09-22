@@ -223,7 +223,7 @@ in the fabric.
 **The interval is muir's own rate and is not fitted to those measurements.**
 muir attempts one delivery every `TERMINAL_CHECK` microcycles, which is 4,096,
 and a microcycle on this board is 15 ticks of 10 ns. So the interval is
-4,096 x 150 ns. It is the rate at which the reference emulator has always fed
+4,096 x 150 ns. It is the rate at which the reference simulator has always fed
 this same microcode. The board's own passing measurements were 40 ms and 50 ms,
 which are about thirty-four times more generous, so they establish only that
 twenty nanoseconds is far too close.
@@ -638,7 +638,7 @@ itself and sends keysyms and mouse movement over a Unix socket, and they take
 exactly the path a viewer's keys take from there: the same mapping, the same
 queue, the same pacer. One `--keyboard-mapping` file therefore serves both.
 
-That is the reference emulator's own arrangement one seam out. It has one
+That is the reference simulator's own arrangement one seam out. It has one
 `Keyboard` and one `Mouse` per machine, up to eight viewers push into them, and
 one place hands words to the card. A viewer is a source and not an owner.
 

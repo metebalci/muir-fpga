@@ -29,7 +29,7 @@ So the question is which program owns the face. Two shapes were posed.
 
 **(a) was taken.** Three reasons, in the order they weigh.
 
-**It is the shape the reference emulator already has.** muir has one
+**It is the shape the reference simulator already has.** muir has one
 `Keyboard` and one `Mouse` per machine, made once at the start of a run, and
 one place that hands words to the card: `attend` in `main.rs`, every
 `TERMINAL_CHECK` microcycles. Up to eight viewers can be connected at once and

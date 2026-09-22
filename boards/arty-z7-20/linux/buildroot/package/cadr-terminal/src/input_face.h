@@ -171,16 +171,17 @@ uint32_t input_face_lost(struct input_face *f);
 // `TERMINAL_CHECK` microcycles, which is 4,096 (`muir src/main.rs`), and a
 // microcycle on this board is 15 ticks of 10 ns --- a normal microcycle on
 // MIT's 10 ns grid, the read tap and the restart each rounded up.  So the
-// interval is 4,096 x 150 ns, and it is the rate at which the reference emulator has
-// always fed this same microcode.  muir's own comment at that delivery says
-// "a glance every check is far more often than the machine reads it", so this
-// is an upper bound on muir's rate and NOT a measured floor of what the
-// machine needs --- what recommends it is that the reference has always used
-// it and the microcode has always kept up.  The board's own passing
-// measurements --- 40 ms between key events, 50 ms between the four words of
-// a shifted keystroke --- are thirty-four times more generous, so the
-// constant is derived rather than fitted to them; what those measurements
-// establish is only that twenty nanoseconds is far too close.
+// interval is 4,096 x 150 ns, and it is the rate at which the reference
+// simulator has always fed this same microcode.  muir's own comment at that
+// delivery says "a glance every check is far more often than the machine
+// reads it", so this is an upper bound on muir's rate and NOT a measured
+// floor of what the machine needs --- what recommends it is that the
+// reference has always used it and the microcode has always kept up.  The
+// board's own passing measurements --- 40 ms between key events, 50 ms
+// between the four words of a shifted keystroke --- are thirty-four times
+// more generous, so the constant is derived rather than fitted to them; what
+// those measurements establish is only that twenty nanoseconds is far too
+// close.
 #define INPUT_KEY_MICROCYCLES 4096ull
 #define INPUT_KEY_MICROCYCLE_NS 150ull
 #define INPUT_KEY_INTERVAL_NS (INPUT_KEY_MICROCYCLES * INPUT_KEY_MICROCYCLE_NS)
