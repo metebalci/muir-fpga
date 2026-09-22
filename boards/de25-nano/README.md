@@ -153,8 +153,14 @@ fabric's configuration image with `quartus_pfg`, and writes the result to the
 QSPI flash. The first stage then loads Arm Trusted Firmware and U-Boot proper
 from the card, and U-Boot loads the kernel from there. That is the package's
 `Demonstration/SoC_FPGA/GHRD/sof_with_hps.bat` and `sof_to_jic.bat`, and
-Terasic's "Build Linux image from scratch" guide. So the fabric's image and
-the first-stage loader are one file here, and a card holds no first stage.
+Terasic's "Build Linux image from scratch" guide. **This project splits that
+file in two instead**, and "How it is built" below has the flags. What goes to
+the flash is the phase-1 bitstream: the processor's own configuration, its I/O
+settings and its initialization, with the first-stage loader inside it. The
+fabric's own design is the second phase, `cadr.core.rbf`, and it stays on the
+card until U-Boot loads it. So the flash holds no CADR, the card holds no
+first stage, and the two phases have to agree on the processor's I/O, which is
+what the hash printed for each of them says.
 `boards/README.md` keeps `BOOT.BIN`, `u-boot.img` and `uEnv.txt` at the root of
 a Zynq board's card because the boot ROM, the SPL and U-Boot look for them
 there. This board's root carries `u-boot.itb` and `uEnv.txt` and no `BOOT.BIN`
