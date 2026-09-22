@@ -351,7 +351,7 @@ de25-nano/    cadr.core.rbf, the tree, Image, rootfs.cpio.uboot</pre>
 
     <figure class="panel fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 780" role="img" aria-label="How the DE25-Nano boots on its own, as a sequence. Four lifelines: the QSPI flash, the microSD card, the processing system and the fabric. The boot crosses two storage devices. At power-on the Secure Device Manager reads the first phase out of the QSPI flash over Active Serial, which is what the MSEL switch selects, and starts U-Boot's first stage, which calibrates the LPDDR4 and finds 1 GiB. Everything after that comes off the microSD card: u-boot.itb, which carries Arm Trusted Firmware's BL31 and U-Boot proper, and then uEnv.txt, which names no server, so the board takes the card path. Then comes the fabric's turn, four steps in this order and all of them before the kernel is fetched: the fabric's image is read off the card; h2f_gp_out is cleared, which shuts the machine's memory gate before the fabric is configured; fpga load puts the CADR into the fabric, from which moment the CADR is running its own boot PROM; bridge enable releases both processor-to-fabric bridges and the FPGA-to-SDRAM bridge the machine's memory comes through; and h2f_gp_out is set, which is the gate opening and the fabric's signal that the bridges are stable. The bridges are opened before the gate is raised, and the kernel is fetched only after both. The loader then reads the device tree, the kernel and the root filesystem image off the card and boots Linux beside the CADR, with the CADR's 128 MB reserved at 0xB0000000. Linux mounts the card read-write, restores the clock from the drive bay because this board has no real-time clock, holds the machine if the card's file of flags asks, and presents the drive, after which the CADR reads the band off the pack. Five programs follow: ozd, the screen over RFB, the serial line, Chaosnet, and a keyboard and mouse on the USB port. On failure the loader says so and tries again ten seconds later, for ever. The QSPI flash is written, and the board has run this whole sequence from power alone with no cable attached to it.">
+        <svg viewBox="0 0 1170 780" role="img" aria-label="How the DE25-Nano boots on its own, as a sequence. Four lifelines: the QSPI flash, the microSD card, the processing system and the fabric. The boot crosses two storage devices. At power-on the Secure Device Manager reads the first phase out of the QSPI flash over Active Serial, which is what the MSEL switch selects, and starts U-Boot's first stage, which calibrates the LPDDR4 and finds 1 GiB. Everything after that comes off the microSD card: u-boot.itb, which carries Arm Trusted Firmware's BL31 and U-Boot proper, and then uEnv.txt, which names no server, so the board takes the card path. Then comes the fabric's turn, four steps in this order and all of them before the kernel is fetched: the fabric's image is read off the card; h2f_gp_out is cleared, which shuts the machine's memory gate before the fabric is configured; fpga load puts the CADR into the fabric, from which moment the CADR is running its own boot PROM; bridge enable releases both processor-to-fabric bridges and the FPGA-to-SDRAM bridge the machine's memory comes through; and h2f_gp_out is set, which is the gate opening and the fabric's signal that the bridges are stable. The bridges are opened before the gate is raised, and the kernel is fetched only after both. The loader then reads the device tree, the kernel and the root filesystem image off the card and boots Linux beside the CADR, with the CADR's 128 MB reserved at 0xB0000000. Linux mounts the card read-write, restores the clock from the drive bay because this board has no real-time clock, holds the machine if the card's file of flags asks, and presents the drive, after which the CADR reads the band off the pack. Five programs follow: ozd, the screen over RFB, the serial line, Chaosnet, and a keyboard and mouse on the USB port. From the reset to the login prompt took twenty-five seconds, measured on this board on 22 September 2026, and the times down the left are that one boot's. On failure the loader says so and tries again ten seconds later, for ever. The QSPI flash is written, and the board has run this whole sequence from power alone with no cable attached to it.">
           <defs>
             <marker id="arr-de25" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -428,6 +428,17 @@ de25-nano/    cadr.core.rbf, the tree, Image, rootfs.cpio.uboot</pre>
           <text class="d-s" x="643" y="692">1 GiB &mdash; 0xB0000000 to 0xB7FFFFFF is the CADR&rsquo;s</text>
           <text class="d-s" x="10" y="732" fill-opacity="0.62">on failure: another try every ten seconds</text>
           <text class="d-s" x="400" y="732" fill-opacity="0.62">the flash is written, and this sequence has run from power with no cable attached</text>
+
+          <!-- The times of one boot, on this board, off its own card.  Zero is
+          the first line the first stage prints after the reset, and the TFTP
+          drawing below carries the other path's times from the same session and
+          the same logger, so the two columns compare. -->
+          <text class="d-n" x="10" y="130" fill-opacity="0.62">0 s</text>
+          <text class="d-n" x="10" y="232" fill-opacity="0.62">4 s</text>
+          <text class="d-n" x="10" y="346" fill-opacity="0.62">6 s</text>
+          <text class="d-n" x="10" y="496" fill-opacity="0.62">14 s</text>
+          <text class="d-n" x="10" y="672" fill-opacity="0.62">25 s</text>
+          <text class="d-s" x="10" y="752" fill-opacity="0.62">the times down the left are this board&rsquo;s, measured</text>
         </svg>
       </div>
       <figcaption class="cap long">The four steps of the fabric&rsquo;s turn are in the order the boot environment runs them: the image is read, the gate is shut, the CADR is configured, the bridges are released, and only then is the gate opened. The kernel is fetched after all four, so the machine&rsquo;s first memory cycle cannot meet a bridge still in reset.</figcaption>
@@ -445,7 +456,7 @@ de25-nano/    cadr.core.rbf, the tree, Image, rootfs.cpio.uboot</pre>
     <div class="panel bare">
       <span class="eyebrow">TFTP</span>
       <h2 class="title t-l">The DE25-Nano with TFTP (used for development)</h2>
-      <p class="small" style="margin-top:0.4rem;">A change to any of the five served files is then a copy and a reset, and the card is never rewritten. This path is built from the board&rsquo;s own boot environment, and it has not been run on the board.</p>
+      <p class="small" style="margin-top:0.4rem;">A change to any of the five served files is then a copy and a reset, and the card is never rewritten. This path has run on the board: 48,691,884 bytes over the network, and 28 seconds from the reset to the login prompt, against 25 off the card.</p>
     </div>
 
     <div class="panels two">
@@ -459,7 +470,7 @@ de25-nano/    cadr.core.rbf, the tree, Image, rootfs.cpio.uboot</pre>
 
     <figure class="panel fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 910" role="img" aria-label="How the DE25-Nano boots with TFTP, as a sequence. Six lifelines: the QSPI flash, the microSD card, the processing system, the DHCP server, the TFTP server and the fabric. The first steps are the card path's own and this path does not change them. At power-on the Secure Device Manager reads the first phase out of the QSPI flash over Active Serial, which is what the MSEL switch selects, and starts U-Boot's first stage, which calibrates the LPDDR4 and finds 1 GiB. That first stage then loads u-boot.itb off the card, because that is the name it asks for at the root, and it is U-Boot, not the first stage, that speaks TFTP here. U-Boot imports uEnv.txt off the card as well, and on this path that file names a server, so the board takes the network path: it asks the DHCP server for an address, imports the card's uEnv.txt a second time so that a lease cannot displace the server the card named, and fetches the boot command de25-nano/uEnv.net from the TFTP server. Then comes the fabric's turn, the same four steps in the same order as on the card path, all of them before the kernel: the fabric's image de25-nano/cadr.core.rbf is fetched over TFTP rather than read off the card, which is the only thing about the four steps that differs; h2f_gp_out is cleared, which shuts the machine's memory gate before the fabric is configured; fpga load puts the CADR into the fabric, from which moment the CADR is running its own boot PROM; bridge enable releases both processor-to-fabric bridges and the FPGA-to-SDRAM bridge the machine's memory comes through; and h2f_gp_out is set, which is the gate opening and the fabric's signal that the bridges are stable. The device tree, the kernel and the root filesystem image then come over TFTP out of the same directory, with the CADR's 128 MB reserved, and the boot ends in the same booti the card path ends in. Linux asks DHCP for an address of its own, mounts the card read-write and restores the clock from the drive bay because this board has no real-time clock, holds the machine if the card's file of flags asks, and presents the drive, after which the CADR reads the band off the pack. Five programs follow: ozd, the screen over RFB, the serial line, Chaosnet, and a keyboard and mouse on the USB port. On any failure the loader says so and tries again ten seconds later, for ever, and it never falls back to the card's own copies. The TFTP server is named by its role and its address is drawn as a placeholder. This path is built from the board's own boot environment and it has not been run on the board, so the drawing carries no measured byte count and no measured time.">
+        <svg viewBox="0 0 1170 910" role="img" aria-label="How the DE25-Nano boots with TFTP, as a sequence. Six lifelines: the QSPI flash, the microSD card, the processing system, the DHCP server, the TFTP server and the fabric. The first steps are the card path's own and this path does not change them. At power-on the Secure Device Manager reads the first phase out of the QSPI flash over Active Serial, which is what the MSEL switch selects, and starts U-Boot's first stage, which calibrates the LPDDR4 and finds 1 GiB. That first stage then loads u-boot.itb off the card, because that is the name it asks for at the root, and it is U-Boot, not the first stage, that speaks TFTP here. U-Boot imports uEnv.txt off the card as well, and on this path that file names a server, so the board takes the network path: it asks the DHCP server for an address, imports the card's uEnv.txt a second time so that a lease cannot displace the server the card named, and fetches the boot command de25-nano/uEnv.net from the TFTP server. Then comes the fabric's turn, the same four steps in the same order as on the card path, all of them before the kernel: the fabric's image de25-nano/cadr.core.rbf is fetched over TFTP rather than read off the card, which is the only thing about the four steps that differs; h2f_gp_out is cleared, which shuts the machine's memory gate before the fabric is configured; fpga load puts the CADR into the fabric, from which moment the CADR is running its own boot PROM; bridge enable releases both processor-to-fabric bridges and the FPGA-to-SDRAM bridge the machine's memory comes through; and h2f_gp_out is set, which is the gate opening and the fabric's signal that the bridges are stable. The device tree, the kernel and the root filesystem image then come over TFTP out of the same directory, with the CADR's 128 MB reserved, and the boot ends in the same booti the card path ends in. Linux asks DHCP for an address of its own, mounts the card read-write and restores the clock from the drive bay because this board has no real-time clock, holds the machine if the card's file of flags asks, and presents the drive, after which the CADR reads the band off the pack. Five programs follow: ozd, the screen over RFB, the serial line, Chaosnet, and a keyboard and mouse on the USB port. On any failure the loader says so and tries again ten seconds later, for ever, and it never falls back to the card's own copies. The TFTP server is named by its role and its address is drawn as a placeholder. This path has been run on the board, on 22 September 2026, and the byte counts and the times down the left are measured: five files and 48,691,884 bytes over the network, the fabric configured ten seconds after the reset, and a login prompt at twenty-eight seconds, where the same boot off the card reached it at twenty-five.">
           <defs>
             <marker id="arr-de25net" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -519,13 +530,13 @@ de25-nano/    cadr.core.rbf, the tree, Image, rootfs.cpio.uboot</pre>
           <line class="d-line" x1="210" y1="306" x2="545" y2="306" marker-end="url(#arr-de25net)"/>
           <text class="d-s" x="377" y="302" text-anchor="middle">uEnv.txt again &mdash; the card&rsquo;s server, not the lease&rsquo;s</text>
           <line class="d-line" x1="940" y1="334" x2="575" y2="334" marker-end="url(#arr-de25net)"/>
-          <text class="d-s" x="757" y="330" text-anchor="middle">TFTP: de25-nano/uEnv.net &mdash; the boot command</text>
+          <text class="d-s" x="757" y="330" text-anchor="middle">TFTP: de25-nano/uEnv.net &mdash; the boot command, 1,568 B</text>
           <!-- cadr_fabric, unchanged: the bridges are released BEFORE the gate is
           raised, and the kernel is fetched only after both.  What the network
           path changes is the line above them and nothing else. -->
           <text class="d-t" x="583" y="362">the fabric&rsquo;s turn &mdash; the card path&rsquo;s four steps, unchanged</text>
           <line class="d-line" x1="940" y1="388" x2="575" y2="388" marker-end="url(#arr-de25net)"/>
-          <text class="d-s" x="757" y="384" text-anchor="middle">TFTP: de25-nano/cadr.core.rbf &mdash; the CADR</text>
+          <text class="d-s" x="757" y="384" text-anchor="middle">TFTP: de25-nano/cadr.core.rbf &mdash; the CADR, 2,125,824 B</text>
           <text class="d-n" x="583" y="414">1  mw.l gpo 0 &mdash; h2f_gp_out low, the gate shut</text>
           <line class="d-line" x1="575" y1="442" x2="1085" y2="442" marker-end="url(#arr-de25net)"/>
           <text class="d-s" x="830" y="438" text-anchor="middle">2  fpga load &mdash; the CADR enters the fabric</text>
@@ -534,7 +545,7 @@ de25-nano/    cadr.core.rbf, the tree, Image, rootfs.cpio.uboot</pre>
           <line class="d-line" x1="940" y1="524" x2="575" y2="524" marker-end="url(#arr-de25net)"/>
           <text class="d-s" x="757" y="520" text-anchor="middle">TFTP: de25-nano/ the device tree &mdash; 128 MB reserved</text>
           <line class="d-line" x1="940" y1="550" x2="575" y2="550" marker-end="url(#arr-de25net)"/>
-          <text class="d-s" x="757" y="546" text-anchor="middle">TFTP: de25-nano/Image &mdash; the kernel</text>
+          <text class="d-s" x="757" y="546" text-anchor="middle">TFTP: de25-nano/Image &mdash; the kernel, 41,921,024 B</text>
           <line class="d-line" x1="940" y1="576" x2="575" y2="576" marker-end="url(#arr-de25net)"/>
           <text class="d-s" x="757" y="572" text-anchor="middle">TFTP: de25-nano/rootfs.cpio.uboot</text>
           <text class="d-n" x="583" y="592">booti</text>
@@ -555,7 +566,17 @@ de25-nano/    cadr.core.rbf, the tree, Image, rootfs.cpio.uboot</pre>
           <text class="d-s" x="583" y="818">login on the serial console</text>
           <text class="d-s" x="583" y="842">1 GiB &mdash; 0xB0000000 to 0xB7FFFFFF is the CADR&rsquo;s</text>
           <text class="d-s" x="10" y="884" fill-opacity="0.62">on any failure: another try every ten seconds, and never the card&rsquo;s own copies</text>
-          <text class="d-s" x="560" y="884" fill-opacity="0.62">built from the board&rsquo;s own boot environment; not yet run on this board</text>
+
+          <!-- The times of one boot, on this board, read off the console with the
+          same logger the card path's were.  Zero is the first line the first
+          stage prints after the reset, so each label sits on the row the console
+          line belongs to. -->
+          <text class="d-n" x="10" y="130" fill-opacity="0.62">0 s</text>
+          <text class="d-n" x="10" y="232" fill-opacity="0.62">4 s</text>
+          <text class="d-n" x="10" y="446" fill-opacity="0.62">10 s</text>
+          <text class="d-n" x="10" y="596" fill-opacity="0.62">17 s</text>
+          <text class="d-n" x="10" y="822" fill-opacity="0.62">28 s</text>
+          <text class="d-s" x="560" y="884" fill-opacity="0.62">the times down the left are this board&rsquo;s, measured; the same boot off the card reached the prompt at 25 s</text>
         </svg>
       </div>
       <figcaption class="cap long">The same board, the same flash and the same card, with a server in the middle. What the network changes is where the five files come from, and nothing else: the loader is still read off the card, and the boot ends in the same <code>booti</code>.</figcaption>
