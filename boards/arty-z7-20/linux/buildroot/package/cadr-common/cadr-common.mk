@@ -77,7 +77,8 @@ define CADR_COMMON_INSTALL_STAGING_CMDS
 endef
 
 define CADR_COMMON_INSTALL_TARGET_CMDS
-	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install
+	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) \
+		CADR_BOARD=$(CADR_COMMON_BOARD) install
 endef
 
 $(eval $(generic-package))

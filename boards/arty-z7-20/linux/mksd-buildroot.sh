@@ -160,6 +160,12 @@ BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 #                as <its name in images/>:<its name on the card>
 #   FABRIC       the fabric's file in the board's folder, and FABRIC_KIND
 #                what it is, which decides how BIT is read
+#   FAULT        the fault bitstream's file beside it, which the loader
+#                loads when FABRIC cannot be loaded (docs/board.md), and
+#                FAULT_FETCH and FAULT_FETCH_NET where it is fetched: both in
+#                the loader's environment on the DE25-Nano, and the card's in
+#                the loader and the network's in the served uEnv.net on the
+#                Zynq boards, as the fabric's own
 #   KERNEL       the kernel's file in the board's folder
 #   LAST_STEP    the U-Boot environment's last step, which boots the kernel
 #   DTS_DIR      where the board's tree is, under its board/ directory
@@ -170,8 +176,10 @@ BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 #                every address (cadr-common's cadr/cadr_board.h)
 #   REBUILD      the Makefile target that rewrites a stale loader
 #   FABRIC_FETCH which variable of the loader's environment fetches the
-#                fabric's image.  The Zynq boards' `cadr_card` loads all four
-#                files itself.  The DE25-Nano's does not: one of its two
+#                fabric's image, and FABRIC_FETCH_FORM how its value begins.
+#                The Zynq boards' is `cadr_fabric_card`, which `cadr_card`
+#                runs and which falls back to the fault bitstream.  The
+#                DE25-Nano's is a fetch alone: one of its two
 #                arrangements may not configure its own fabric and must not so
 #                much as ask for the image, so the fetch is a variable of its
 #                own that `cadr_fabric` runs only on the path that loads.  The
@@ -183,7 +191,11 @@ case "$BOARD_NAME" in
     FABRIC=cadr.core.rbf
     FABRIC_KIND=rbf
     FABRIC_FETCH=cadr_rbf_card
+    FABRIC_FETCH_FORM="load mmc 0:1"
     FABRIC_FETCH_NET=cadr_rbf_net
+    FAULT=fault.core.rbf
+    FAULT_FETCH=cadr_fault_card
+    FAULT_FETCH_NET=cadr_fault_net
     KERNEL=Image
     LAST_STEP=cadr_booti
     DTS_DIR=dts/intel
@@ -201,8 +213,12 @@ case "$BOARD_NAME" in
     ROOT_FILES="boot.bin:BOOT.BIN u-boot.img:u-boot.img"
     FABRIC=cadr.bit
     FABRIC_KIND=bit
-    FABRIC_FETCH=cadr_card
+    FABRIC_FETCH=cadr_fabric_card
+    FABRIC_FETCH_FORM="if load mmc 0:1"
     FABRIC_FETCH_NET=
+    FAULT=fault.bit
+    FAULT_FETCH=cadr_fault_card
+    FAULT_FETCH_NET=
     KERNEL=zImage
     LAST_STEP=cadr_bootz
     DTS_DIR=dts/xilinx
@@ -225,6 +241,7 @@ LOADER=${ROOT_FILES##*:}
 BOARD_FILES="$FABRIC $BOARD_DTB $KERNEL rootfs.cpio.uboot"
 STAGED_FILES=$BOARD_FILES
 BIT=${BIT:-}
+FAULT_BIT=${FAULT_BIT:-}
 PACKS=${PACKS:-}
 # **THE BAND'S LISP FILES, WHICH GO ON THE CARD BESIDE ITS PACK.**  A pack and
 # the files that belong to it are one band, and they belong on one card
@@ -290,6 +307,23 @@ else
   NO_FABRIC=
   [ -n "$BIT" ] || die "BIT is not set: name the bitstream, e.g. BIT=build/ddr/cadr_arty.bit $0, or NO_FABRIC=1 to stage the fabric's slot empty"
   [ -f "$BIT" ] || die "no bitstream at $BIT"
+fi
+# **AND THE FAULT BITSTREAM, NAMED AS THE FABRIC IS.**  FAULT_BIT is the
+# board's fault bitstream (`tools/fault_zynq.tcl`, `make de25-fault`), which
+# the loader loads when the fabric's own file is missing or will not load, so
+# that a card whose configuration is wrong comes up blinking every lamp and
+# says why on the console, rather than looping in U-Boot where nobody looks.
+# It is staged beside the fabric on the card and on the server.  NO_FAULT=1
+# leaves it out by name; a card without it loops at a fabric that will not
+# load, as every card did before it existed.
+NO_FAULT=${NO_FAULT:-}
+if [ -n "$NO_FAULT" ] && [ "$NO_FAULT" != 0 ]; then
+  [ -z "$FAULT_BIT" ] || die "NO_FAULT=1 and FAULT_BIT=$FAULT_BIT: name the fault bitstream or leave it out, not both"
+else
+  NO_FAULT=
+  [ -n "$FAULT_BIT" ] || die "FAULT_BIT is not set: name the fault bitstream, e.g. FAULT_BIT=build/fault-arty/cadr_arty_fault.bit $0, or NO_FAULT=1 to leave it off"
+  [ -f "$FAULT_BIT" ] || die "no fault bitstream at $FAULT_BIT"
+  STAGED_FILES="$STAGED_FILES $FAULT"
 fi
 
 # The address, the MAC, the Chaosnet peers and the debugger's pack, from the
@@ -513,6 +547,23 @@ else
   echo "mksd-buildroot: bitstream $BIT"
   echo "mksd-buildroot:   $BITLINE"
 fi
+# The fault bitstream the same way, and on the Zynq boards its header must
+# name the fault top level: a CADR bitstream staged as the fault one would be
+# the thing loaded when the CADR's does not load.
+if [ -n "$NO_FAULT" ]; then
+  echo "mksd-buildroot: NO FAULT BITSTREAM (NO_FAULT=1): a fabric that will not load leaves the loader looping"
+elif [ "$FABRIC_KIND" = rbf ]; then
+  echo "mksd-buildroot: the fault bitstream $FAULT_BIT"
+  echo "mksd-buildroot:   $(stat -c %s "$FAULT_BIT") bytes, sha256 $(sha256sum "$FAULT_BIT" | cut -d' ' -f1)"
+else
+  FAULTLINE=$(bitinfo "$FAULT_BIT") || die "$FAULT_BIT does not carry a Xilinx bitstream header"
+  case "$FAULTLINE" in
+    "design cadr_"*"_fault;"*|"design cadr_"*"_fault "*) ;;
+    *) die "$FAULT_BIT is not a fault bitstream: its header says $FAULTLINE" ;;
+  esac
+  echo "mksd-buildroot: fault bitstream $FAULT_BIT"
+  echo "mksd-buildroot:   $FAULTLINE"
+fi
 
 rm -rf "$OUT"
 # **THE FOUR PLACES, MADE WHETHER OR NOT THEY ARE FILLED.**  `packs/`, `sys/`
@@ -534,6 +585,7 @@ for spec in $ROOT_FILES; do
 done
 [ -n "$NO_FABRIC" ] || cp "$BIT" "$OUT/card/$BOARD_NAME/$FABRIC"
 cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/$BOARD_NAME/"
+[ -n "$NO_FAULT" ] || cp "$FAULT_BIT" "$OUT/card/$BOARD_NAME/$FAULT"
 sed -e "s/@SERVERIP@/${SERVERIP:-}/" -e "s/@ETHADDR@/${ETHADDR:-}/" \
     -e '/^serverip=$/d' -e '/^ethaddr=$/d' "$BOARD/uEnv.txt.in" > "$OUT/card/uEnv.txt"
 grep -q '@' "$OUT/card/uEnv.txt" && die "uEnv.txt still carries a marker"
@@ -632,7 +684,11 @@ stage_tree() {
   printf "  %-22s MAC.  A card out of the box has neither.\r\n" ''
   printf "  %-22s this board's own files: the fabric, the\r\n" "$BOARD_NAME/"
   printf "  %-22s kernel, its device tree and its root\r\n" ''
-  printf "  %-22s filesystem.\r\n" ''
+  if [ -n "$NO_FAULT" ]; then
+    printf "  %-22s filesystem.\r\n" ''
+  else
+    printf "  %-22s filesystem, and the fault bitstream.\r\n" ''
+  fi
   printf '  %-22s the disk packs.  See below.\r\n' 'packs/'
   printf "  %-22s the band's Lisp sources, read-only, and its\r\n" 'sys/  site/'
   printf '  %-22s site configuration, which it may write.\r\n' ''
@@ -645,6 +701,13 @@ stage_tree() {
   printf '  %-22s the debugger.  Both are lists of flags, one a\r\n' ''
   printf '  %-22s line, and each says at its top what it is for.\r\n' ''
   printf '\r\n'
+  if [ -z "$NO_FAULT" ]; then
+    printf 'IF EVERY LIGHT ON THE BOARD BLINKS TOGETHER, twice a second and red\r\n'
+    printf "on a color light, the machine's own fabric (%s/%s) could not be\r\n" "$BOARD_NAME" "$FABRIC"
+    printf 'loaded, and the fault bitstream beside it was loaded instead.  Linux\r\n'
+    printf 'still runs and says so on its console.  Check that the file is on the\r\n'
+    printf 'card, is whole, and is for this board.\r\n\r\n'
+  fi
   printf "A CARD MADE FROM ANOTHER BOARD'S ZIP WILL NOT BOOT.  The board looks\r\n"
   printf 'for its own folder by name, so it stops saying it cannot read a file\r\n'
   printf 'under %s/ and says it every ten seconds.  Unpack the right zip.\r\n\r\n' "$BOARD_NAME"
@@ -1398,6 +1461,7 @@ echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M
 # The server: the same five files and the command that fetches them, in the
 # directory named for this board.
 [ -n "$NO_FABRIC" ] || cp "$BIT" "$OUT/server/$BOARD_NAME/$FABRIC"
+[ -n "$NO_FAULT" ] || cp "$FAULT_BIT" "$OUT/server/$BOARD_NAME/$FAULT"
 cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/$BOARD_NAME/"
 cp "$BOARD/uEnv.net" "$OUT/server/$BOARD_NAME/uEnv.net"
 
@@ -1431,12 +1495,12 @@ if [ -x "$HOSTBIN/fdtget" ]; then
 fi
 # **AND THE CARD PATH IS ASKED FOR IN TWO PARTS, BECAUSE IT IS IN TWO PARTS ON
 # ONE OF THE BOARDS.**  `cadr_card` must be there and the fabric's image must
-# be fetched from the card, and on the Zynq boards those are one line:
-# FABRIC_FETCH is `cadr_card` and this asks exactly what it always asked.  On
-# the DE25-Nano the fetch is `cadr_rbf_card`, a variable of its own, so asking
-# for `cadr_card=load mmc 0:1` there refused every loader built since the
-# fabric's image stopped being fetched on the path that does not load it.
-for var in "bootcmd=run cadr_boot" "cadr_card=" "$FABRIC_FETCH=load mmc 0:1" \
+# be fetched from the card.  On the Zynq boards the fetch is
+# `cadr_fabric_card`, which `cadr_card` runs and which falls back to the fault
+# bitstream; on the DE25-Nano it is `cadr_rbf_card`, a variable of its own, so
+# asking for `cadr_card=load mmc 0:1` there refused every loader built since
+# the fabric's image stopped being fetched on the path that does not load it.
+for var in "bootcmd=run cadr_boot" "cadr_card=" "$FABRIC_FETCH=$FABRIC_FETCH_FORM" \
            "cadr_net=" "$LAST_STEP="; do
   strings "$OUT/card/$LOADER" | grep -q "^$var" || die "the U-Boot in $LOADER has no '$var' in its environment"
 done
@@ -1458,6 +1522,13 @@ done
 # either a space or the end of the line follows it.
 strings "$OUT/card/$LOADER" | grep -q "^$FABRIC_FETCH=.*$BOARD_NAME/$FABRIC\( \|$\)" \
   || die "the U-Boot in $LOADER does not load $BOARD_NAME/$FABRIC from the card in $FABRIC_FETCH: it predates the card mirroring the server, and 'make $REBUILD' is what rewrites it"
+# **AND THE FAULT BITSTREAM FROM THE SAME FOLDER**, which a loader built
+# before it existed does not know: such a loader would loop at a fabric that
+# will not load with the fault image beside it unread.
+if [ -z "$NO_FAULT" ]; then
+  strings "$OUT/card/$LOADER" | grep -q "^$FAULT_FETCH=.*$BOARD_NAME/$FAULT\( \|$\)" \
+    || die "the U-Boot in $LOADER does not load $BOARD_NAME/$FAULT from the card in $FAULT_FETCH: it predates the fault bitstream, and 'make $REBUILD' is what rewrites it"
+fi
 for f in $BOARD_DTB $KERNEL rootfs.cpio.uboot; do
   strings "$OUT/card/$LOADER" | grep -q "cadr_card=.*$BOARD_NAME/$f " \
     || die "the U-Boot in $LOADER does not load $BOARD_NAME/$f from the card: it predates the card mirroring the server, and 'make $REBUILD' is what rewrites it"
@@ -1485,6 +1556,14 @@ if [ -n "$FABRIC_FETCH_NET" ]; then
 else
   grep -q "tftpboot [^ ]* $BOARD_NAME/$FABRIC\( \|$\)" "$OUT/server/$BOARD_NAME/uEnv.net" \
     || die "the served uEnv.net does not fetch $BOARD_NAME/$FABRIC"
+fi
+# And the fault bitstream on the network path, where that path fetches it.
+if [ -z "$NO_FAULT" ] && [ -n "$FAULT_FETCH_NET" ]; then
+  strings "$OUT/card/$LOADER" | grep -q "^$FAULT_FETCH_NET=.*$BOARD_NAME/$FAULT\( \|$\)" \
+    || die "the U-Boot in $LOADER does not fetch $BOARD_NAME/$FAULT over TFTP in $FAULT_FETCH_NET: it predates the fault bitstream, and 'make $REBUILD' is what rewrites it"
+elif [ -z "$NO_FAULT" ]; then
+  grep -q "tftpboot [^ ]* $BOARD_NAME/$FAULT\( \|$\)" "$OUT/server/$BOARD_NAME/uEnv.net" \
+    || die "the served uEnv.net does not fetch $BOARD_NAME/$FAULT"
 fi
 if [ -x "$HOSTBIN/mkimage" ]; then
   "$HOSTBIN/mkimage" -l "$OUT/server/$BOARD_NAME/rootfs.cpio.uboot" | grep -q "RAMDisk" || die "rootfs.cpio.uboot is not a U-Boot ramdisk image"
@@ -1542,7 +1621,7 @@ for f in $STAGED_FILES; do
 done
 # And nothing of the board's is left at the root of the card, where a stale
 # copy would be read by nobody and would still look like the file.
-for f in $BOARD_FILES; do
+for f in $BOARD_FILES $FAULT; do
   if [ -e "$OUT/card/$f" ]; then
     die "card/$f is at the root of the card, where nothing reads it"
   fi
@@ -1672,6 +1751,8 @@ echo "  $MODE"
 echo "  the card mirrors the server: card/$BOARD_NAME/ holds the same four files as"
 echo "  server/$BOARD_NAME/, and only $(echo "$ROOT_NAMES" | sed 's/ /, /g'), uEnv.txt, README.TXT, fpgarc and muirrc are at the root"
 [ -z "$NO_FABRIC" ] || echo "  (and the fabric's slot, $BOARD_NAME/$FABRIC, is EMPTY on both: NO_FABRIC=1)"
+[ -n "$NO_FAULT" ] || echo "  and $BOARD_NAME/$FAULT, the fault bitstream the loader takes when $FABRIC will not load, on both"
+[ -z "$NO_FAULT" ] || echo "  (and no fault bitstream, NO_FAULT=1: a fabric that will not load leaves the loader looping)"
 echo "  the served set goes to the server's own directory for this board:"
 echo "    mkdir -p /srv/tftp/$BOARD_NAME && cp $OUT/server/$BOARD_NAME/* /srv/tftp/$BOARD_NAME/"
 card_bytes=$(( $(du -s --block-size=4096 "$OUT/card" | cut -f1) * 4096 ))

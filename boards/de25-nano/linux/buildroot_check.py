@@ -73,6 +73,17 @@
 # branch both ways.  `bridge enable` returns 0 whatever happens, so without the
 # read-back nothing keeps the gate shut on bridges still in reset.
 #
+# **AND THAT A CADR IMAGE THAT DOES NOT LOAD BRINGS UP THE FAULT BITSTREAM,
+# WITH THE GATE SHUT.**  The loading branch of `cadr_fabric` must try the
+# fetch, the gate's 0 and `fpga load` as the test of an inner `if`, open the
+# bridges and the gate only in its `then`, and run `cadr_fault` in its `else`
+# and nowhere else.  `cadr_fault` must fetch `fault.core.rbf` by
+# `cadr_fault_get`, write the gate 0, `fpga load`, `bridge enable` and run the
+# same read-back, each joined to the next by `&&`, and must never write the
+# gate 1: nothing behind it is a memory master.  The fault image is named by
+# its two fetches alone, as the CADR's is, and each path names its own fetch
+# in `cadr_fault_get` before it runs `cadr_fabric`.
+#
 # **WHAT IT DOES NOT HOLD** is U-Boot's behavior.  It reads the environment as
 # text; it does not run hush, so it cannot say that the environment parses or
 # that a `run` inside an `&&` list does what it looks like.  The change this
@@ -114,6 +125,12 @@ BRIDGE_ENABLE = "bridge enable"
 BRIDGES_UP = "cadr_bridges_up"
 GATE_OPEN = "mw.l ${cadr_gpo} 1"
 BRGMODRST_READ = 'setexpr.l cadr_brg *0x10d1102c "&" 0xb'
+# The fault bitstream's image, its two fetches, and the variable each path
+# names its fetch in; and the step that loads it.
+FAULT_FILE = "de25-nano/fault.core.rbf"
+FAULT_GET = "cadr_fault_get"
+FAULT_BY_PATH = {"cadr_card": "cadr_fault_card", "netcmd": "cadr_fault_net"}
+FAULT_STEP = "cadr_fault"
 
 
 def die(*lines):
@@ -331,6 +348,60 @@ def boot(tree):
             " false; fi`, which is the read that was run on the board:"
             % (BRIDGES_UP, BRGMODRST_READ), "    " + (up or "(not defined)"))
 
+    # **AND THE FAULT BITSTREAM WHEN THE CADR'S IMAGE DOES NOT LOAD.**
+    fetchers = sorted(FAULT_BY_PATH.values())
+    named = sorted(n for n, v in paths.items() if FAULT_FILE in v)
+    if named != fetchers:
+        die("%s is named by %s, wanting exactly %s"
+            % (FAULT_FILE, ", ".join(named) or "nothing", " and ".join(fetchers)))
+    for path, want in sorted(FAULT_BY_PATH.items()):
+        value = paths[path]
+        f = re.search(r"\bsetenv\s+%s\s+([^\s;]+)" % re.escape(FAULT_GET), value)
+        if not f:
+            die("%s does not set %s: a CADR image that fails would fetch the fault"
+                " image by whatever the last path left there" % (path, FAULT_GET))
+        if f.group(1) != want:
+            die("%s sets %s to %s, wanting %s" % (path, FAULT_GET, f.group(1), want))
+        if f.group(1) not in env:
+            die("%s sets %s to %s, which %s does not define"
+                % (path, FAULT_GET, f.group(1), UBOOT_ENV))
+        if value.find("run cadr_fabric") < f.start():
+            die("%s sets %s after it has already run cadr_fabric" % (path, FAULT_GET))
+    if "run " + FAULT_STEP in m.group("loaded"):
+        die("cadr_fabric loads the fault bitstream on the branch that found the fabric",
+            "configured already, which may not configure it at all")
+    inner = re.match(r"^\s*if\s+(?P<test>.*?);\s*then\s+(?P<ok>.*?)\s*;?\s*"
+                     r"else\s+(?P<bad>.*?)\s*;?\s*fi\s*;?\s*$", m.group("load"))
+    if not inner:
+        die("the loading branch of cadr_fabric is not one inner if/then/else/fi,",
+            "so a CADR image that fails cannot be told from one that loads:",
+            "    " + m.group("load"))
+    test = inner.group("test")
+    for step in (fetch, "mw.l ${cadr_gpo} 0", "fpga load"):
+        if step not in test:
+            die("the loading branch's inner test does not %r, so its else is not"
+                " the CADR image failing: %s" % (step, test))
+    if GATE_OPEN not in inner.group("ok") or GATE_OPEN in test or GATE_OPEN in inner.group("bad"):
+        die("the gate opens somewhere other than the branch where the CADR image loaded:",
+            "    " + m.group("load"))
+    if inner.group("bad").strip().rstrip(";").strip() != "run " + FAULT_STEP:
+        die("a CADR image that does not load runs %r, wanting `run %s` alone"
+            % (inner.group("bad"), FAULT_STEP))
+    fault = env.get(FAULT_STEP, "")
+    chain = [re.escape(w) for w in ("run ${%s}" % FAULT_GET, "mw.l ${cadr_gpo} 0",
+                                    "fpga load 0 ${cadr_rbf_addr} ${filesize}",
+                                    BRIDGE_ENABLE, "run " + BRIDGES_UP)]
+    if not re.search(r"\s*&&\s*".join(chain), fault):
+        die("%s does not fetch by %s, write the gate 0, `fpga load`, `bridge enable`"
+            " and run %s, each joined to the next by &&:" % (FAULT_STEP, FAULT_GET, BRIDGES_UP),
+            "    " + (fault or "(not defined)"))
+    if GATE_OPEN in fault or "mw.l ${cadr_gpo} 1" in fault or ("${%s}" % RBF_GET) in fault:
+        die("%s opens the memory gate or fetches the CADR's image:" % FAULT_STEP,
+            "    " + fault)
+
+    print("buildroot-de25: a CADR image that does not load brings up %s by %s, "
+          "with the bridges read back and the memory gate left shut"
+          % (FAULT_FILE, FAULT_STEP))
     print("buildroot-de25: the gate opens only after BRGMODRST reads the three "
           "bridges released, on both branches of cadr_fabric")
     print("buildroot-de25: the fabric's image is fetched only where it is used: "

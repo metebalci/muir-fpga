@@ -18590,3 +18590,317 @@ set MAIN_BASE   0x1C000000
 @new
                         (w_on && (w_who == '0) && 1'b0) || rd_out[0] || wr_out[0];
 @end
+
+# ------------------------------------------------------ the fault bitstream
+#
+# `boards/*/cadr_*_fault.sv`, the top level U-Boot loads when the CADR's will
+# not load, simulated by `fault_arty`, `fault_cora` and `fault_de25`
+# (`tb/cadr_fault_tb.cpp`); its stamp's mark in `tools/build_stamp.tcl`, held
+# by `program_tcl`; and the DE25-Nano's loader falling back to it, held by
+# `de25_boot`.  What each record breaks is what a person or a program reads
+# off the board: a lamp out of step, a color that is not red, a window that
+# swallows a read, a tally or a stamp that does not say "fault".
+
+@mutation fault-arty-a-lamp-out-of-phase
+@check fault_arty
+@file boards/arty-z7-20/cadr_arty_fault.sv
+@note LD2 driven from the lamp bit inverted: it still blinks at the rate, so
+@note a check that asked only that each lamp toggles would pass it.  Caught at
+@note "LD2 reads lit while LD0 reads dark: the lamps are not in phase".
+@old
+  assign led    = {4{lit}};
+@new
+  assign led    = {lit, !lit, lit, lit};
+@end
+
+@mutation fault-arty-ld4-shows-green
+@check fault_arty
+@file boards/arty-z7-20/cadr_arty_fault.sv
+@note LD4's green pin driven with the red one, which shows yellow, not red.
+@note Caught at "LD4 green is lit: a color lamp shows red and nothing else".
+@old
+  assign led4_g = 1'b0;
+@new
+  assign led4_g = lit;
+@end
+
+@mutation fault-arty-gp1-swallows-a-read
+@check fault_arty
+@file boards/arty-z7-20/cadr_arty_fault.sv
+@note `M_AXI_GP1`'s default slave never sees a read's address valid, so it
+@note never takes it and never answers: on the board, both Arm cores hang at
+@note the console's first read.  Caught at "port 1 read 80000000 len 0: never
+@note answered".
+@old
+      .s_arlen(gp1_arlen), .s_arid(gp1_arid), .s_arvalid(gp1_arvalid),
+@new
+      .s_arlen(gp1_arlen), .s_arid(gp1_arid), .s_arvalid(gp1_arvalid && 1'b0),
+@end
+
+@mutation fault-arty-the-tally-reads-as-a-cadr
+@check fault_arty
+@file boards/arty-z7-20/cadr_arty_fault.sv
+@note The tally's second word a CADR's, with the marker bit up: `fault.sh`
+@note asks every word for "FALT" and would start the programs.  Caught at
+@note "the tally's second word reads 00018000".
+@old
+  assign gpio_i = {FAULT_WORD, FAULT_WORD};
+@new
+  assign gpio_i = {32'h0001_8000, FAULT_WORD};
+@end
+
+@mutation fault-arty-the-ports-answer-none
+@check fault_arty
+@file boards/arty-z7-20/cadr_arty_fault.sv
+@note `M_AXI_GP0`'s default slave at its own default word, "NONE", so a
+@note program that read the port anyway would not see "FALT".  Caught at
+@note "beat 0 read 4e4f4e45, want FALT".
+@old
+  cadr_gp0_default #(.WORD(FAULT_WORD)) u_gp0 (
+@new
+  cadr_gp0_default u_gp0 (
+@end
+
+@mutation fault-arty-a-memory-read-goes-out
+@check fault_arty
+@file boards/arty-z7-20/cadr_arty_fault.sv
+@note `S_AXI_HP0` asked for a read.  Caught at "memory port 0: the fabric
+@note raised ARVALID".
+@old
+      .hp0_arvalid(1'b0), .hp0_arready(hp0_arready),
+@new
+      .hp0_arvalid(1'b1), .hp0_arready(hp0_arready),
+@end
+
+@mutation fault-lamp-lit-the-wrong-way
+@check fault_arty
+@file rtl/plumbing/cadr_fault_lamp.sv
+@note The lamp bit inverted at its source: every lamp still blinks together
+@note at the rate, half a period out, so a check that compared the lamps only
+@note with one another would pass it.  Caught at "LD0 is lit at
+@note configuration: the first half period is dark".
+@old
+  assign lit = on;
+@new
+  assign lit = !on;
+@end
+
+@mutation fault-lamp-one-tick-short
+@check fault_arty
+@file rtl/plumbing/cadr_fault_lamp.sv
+@note The half period one tick short.  Caught at "LD0 changed 63 ticks after
+@note its last change, want 64".
+@old
+    if (count == W'(HALF_T - 1)) begin
+@new
+    if (count == W'(HALF_T - 2)) begin
+@end
+
+@mutation fault-cora-a-lamp-out-of-phase
+@check fault_cora
+@file boards/cora-z7-07s/cadr_cora_fault.sv
+@note LD1 against LD0.  Caught at "LD1 red reads dark while LD0 red reads lit".
+@old
+  assign led1_r = lit;
+@new
+  assign led1_r = !lit;
+@end
+
+@mutation fault-cora-ld0-shows-green
+@check fault_cora
+@file boards/cora-z7-07s/cadr_cora_fault.sv
+@note LD0's green pin lit with the red.  Caught at "LD0 green is lit".
+@old
+  assign led0_g = 1'b0;
+@new
+  assign led0_g = lit;
+@end
+
+@mutation fault-cora-gp0-swallows-a-read
+@check fault_cora
+@file boards/cora-z7-07s/cadr_cora_fault.sv
+@note `M_AXI_GP0`'s default slave never sees a read.  Caught at "port 0 read
+@note 40000000 len 0: never answered".
+@old
+      .s_arlen(gp0_arlen), .s_arid(gp0_arid), .s_arvalid(gp0_arvalid),
+@new
+      .s_arlen(gp0_arlen), .s_arid(gp0_arid), .s_arvalid(gp0_arvalid && 1'b0),
+@end
+
+@mutation fault-cora-the-tally-reads-as-a-cadr
+@check fault_cora
+@file boards/cora-z7-07s/cadr_cora_fault.sv
+@note The tally's first word a CADR's.  Caught at "the tally's word reads
+@note 00018000".
+@old
+  assign gpio_i = {FAULT_WORD, FAULT_WORD};
+@new
+  assign gpio_i = {FAULT_WORD, 32'h0001_8000};
+@end
+
+@mutation fault-cora-lamp-one-tick-long
+@check fault_cora
+@file rtl/plumbing/cadr_fault_lamp.sv
+@note The half period one tick long.  Caught at "changed 65 ticks after its
+@note last change, want 64".
+@old
+    if (count == W'(HALF_T - 1)) begin
+@new
+    if (count == W'(HALF_T)) begin
+@end
+
+@mutation fault-de25-lamps-lit-high
+@check fault_de25
+@file boards/de25-nano/cadr_de25_fault.sv
+@note The inversion at the pins dropped: this board's LEDs light LOW, so all
+@note eight still blink together, half a period out.  Caught at "LEDR0 is lit
+@note at configuration".
+@old
+  assign led = ~{8{lit}};
+@new
+  assign led = {8{lit}};
+@end
+
+@mutation fault-de25-a-lamp-out-of-phase
+@check fault_de25
+@file boards/de25-nano/cadr_de25_fault.sv
+@note LEDR0 against the other seven.  Caught at "LEDR1 reads ... while LEDR0
+@note reads ...: the lamps are not in phase".
+@old
+  assign led = ~{8{lit}};
+@new
+  assign led = ~{{7{lit}}, !lit};
+@end
+
+@mutation fault-de25-the-lightweight-bridge-swallows-a-read
+@check fault_de25
+@file boards/de25-nano/cadr_de25_fault.sv
+@note The lightweight bridge's default slave never sees a read: the console's
+@note first read of 0x2000_0000 would never be answered.  Caught at "port 1
+@note read 00000000 len 0: never answered".
+@old
+      .s_arlen(lw_arlen), .s_arid(lw_arid), .s_arvalid(lw_arvalid),
+@new
+      .s_arlen(lw_arlen), .s_arid(lw_arid), .s_arvalid(lw_arvalid && 1'b0),
+@end
+
+@mutation fault-de25-the-tally-reads-as-a-cadr
+@check fault_de25
+@file boards/de25-nano/cadr_de25_fault.sv
+@note `h2f_gp_in` a CADR's tally.  Caught at "the tally's word reads
+@note 00008000".
+@old
+  assign gp_in = FAULT_WORD;
+@new
+  assign gp_in = 32'h0000_8000;
+@end
+
+@mutation fault-de25-the-warm-reset-is-never-acknowledged
+@check fault_de25
+@file boards/de25-nano/cadr_de25_fault.sv
+@note The gate told the share is never idle, as it would be with a master
+@note that never finishes: the acknowledgment never comes, and U-Boot's
+@note `bridge enable` waits 300 ms for it and leaves the bridges in reset.
+@note Caught at "the warm-reset request was not acknowledged in 200 ticks".
+@old
+      .idle(1'b1),
+@new
+      .idle(1'b0),
+@end
+
+@mutation fault-de25-a-memory-read-goes-out
+@check fault_de25
+@file boards/de25-nano/cadr_de25_fault.sv
+@note The FPGA-to-SDRAM bridge asked for a read.  Caught at "memory port 4:
+@note the fabric raised ARVALID".
+@old
+  assign f2s_arvalid  = 1'b0;
+@new
+  assign f2s_arvalid  = 1'b1;
+@end
+
+@mutation fault-de25-lamp-never-turns
+@check fault_de25
+@file rtl/plumbing/cadr_fault_lamp.sv
+@note The lamp bit never toggled: every lamp dark for ever.  Caught at "the
+@note lamps changed 0 times".
+@old
+      on    <= !on;
+@new
+      on    <= on;
+@end
+
+@mutation fault-de25-the-gate-acknowledges-before-a-request
+@check fault_de25
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The acknowledgment given without a request pending, whenever the port
+@note is in reset: with the gate shut, before U-Boot asks.  Caught at "the
+@note warm-reset acknowledgment is given with no request standing"; a first
+@note draft of the check looked only with the gate open, and this survived it.
+@old
+    else     ack_n <= !(pending && port_rst);
+@new
+    else     ack_n <= !port_rst;
+@end
+
+@mutation the-fault-stamp-is-not-marked
+@check program_tcl
+@file tools/build_stamp.tcl
+@note The fault bitstream stamped as a CADR is: bit 2 of the nibble left
+@note clear, so USERCODE and USR_ACCESS say a CADR build of that commit.
+@note Caught at "fault pack: nibble 0 gave `4a585e10`, wanting 4a585e14".
+@old
+            set nibble [expr {($nibble & 3) | 4}]
+@new
+            set nibble [expr {$nibble & 3}]
+@end
+
+@mutation the-fault-stamp-of-an-unreadable-tree-is-not-recognized
+@check program_tcl
+@file tools/build_stamp.tcl
+@note `e`, the fault bitstream from a tree git could not read, not counted
+@note as the fault bitstream.  Caught at "fault pack: `4a585e1e` is not
+@note called the fault bitstream".
+@old
+    return [expr {[string index $id 7] in {4 5 6 7 e}}]
+@new
+    return [expr {[string index $id 7] in {4 5 6 7}}]
+@end
+
+@mutation de25-boot-the-fault-bitstream-opens-the-gate
+@check de25_boot
+@file boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env
+@note The gate written 1 after the fault image's bridges are released: the
+@note fabric reads it as "the memory is yours", with no machine behind it.
+@note Caught at "cadr_fault opens the memory gate".
+@old
+	run cadr_bridges_up &&
+	echo "cadr: the fault bitstream is loaded and its bridges are released; the memory gate stays shut"
+@new
+	run cadr_bridges_up && mw.l ${cadr_gpo} 1 &&
+	echo "cadr: the fault bitstream is loaded and its bridges are released; the memory gate stays shut"
+@end
+
+@mutation de25-boot-a-cadr-image-that-fails-loads-nothing
+@check de25_boot
+@file boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env
+@note The fall back gone: a CADR image that does not load leaves the boot
+@note looping, as it did before the fault bitstream.  Caught at "a CADR image
+@note that does not load runs 'echo x', wanting `run cadr_fault` alone".
+@old
+			run cadr_fault;
+@new
+			echo x;
+@end
+
+@mutation de25-boot-the-fault-image-is-fetched-by-the-cadrs-fetch
+@check de25_boot
+@file boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env
+@note `cadr_fault` fetching by `cadr_rbf_get`: the CADR's own image, the one
+@note that just failed, loaded again.  Caught at "cadr_fault does not fetch
+@note by cadr_fault_get".
+@old
+	run ${cadr_fault_get} &&
+@new
+	run ${cadr_rbf_get} &&
+@end

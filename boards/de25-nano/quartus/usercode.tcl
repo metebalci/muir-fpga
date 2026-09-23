@@ -55,6 +55,10 @@ device_lock -timeout 10000
 set locked 1
 lassign [de25_read_usercode $tag] ok held
 if {!$ok} { usercode_fail $held }
+# The fault bitstream's stamp (`tools/build_stamp.tcl`), said in words.
+if {[build_stamp_is_fault $held]} {
+    puts "$tag   that is the FAULT bitstream: no machine, every lamp blinking"
+}
 device_unlock
 set locked 0
 close_device

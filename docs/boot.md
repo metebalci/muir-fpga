@@ -356,7 +356,8 @@ built from a stale U-Boot cannot be handed to a board by accident.
     echo SERVERIP=<the TFTP server's address> >  boards/arty-z7-20/linux/local.conf   # this project's card; omit for a standalone one
     echo ETHADDR=<the board's MAC>            >> boards/arty-z7-20/linux/local.conf   # optional; the console printed it
     make buildroot                                                  # once; ~25 min the first time
-    BIT=<the memory-on board's .bit> boards/arty-z7-20/linux/mksd-buildroot.sh        # stages build/sd/buildroot/
+    BIT=<the memory-on board's .bit> FAULT_BIT=<its fault .bit> \
+        boards/arty-z7-20/linux/mksd-buildroot.sh                   # stages build/sd/buildroot/
     mkdir -p /srv/tftp/arty-z7-20                                   # the board's own directory
     cp build/sd/buildroot/server/arty-z7-20/* /srv/tftp/arty-z7-20/  # the network path's files
 
@@ -369,6 +370,15 @@ them into the `.bit` --- so the provenance of every staging is in its log:
 
     mksd-buildroot: bitstream /srv/tftp/cadr.bit
     mksd-buildroot:   design cadr_arty;UserID=0XFFFFFFFF;Version=2026.1;...  part 7z020clg400  date 2026/09/10  time 07:38:09  4045564 bytes of configuration
+
+**`FAULT_BIT` is mandatory in the same way and names the fault bitstream**,
+which the loader takes when the fabric's own file will not load (`board.md`,
+"The fault bitstream"). It is staged beside the fabric as `fault.bit`, or
+`fault.core.rbf` on the DE25-Nano, on the card and on the server. The script
+refuses a Zynq file whose header does not name a `cadr_*_fault` design, and a
+loader whose environment does not load the fault file from the board's
+folder. `NO_FAULT=1` leaves it out by name, and such a card loops at a fabric
+that will not load, as every card did before the fault bitstream existed.
 
 `PACKS="a.img 5=b.img"` puts disk packs in `packs/`. An entry is `unit=path`,
 or a bare path taking the lowest free unit. Without it the bay is empty, and
@@ -484,6 +494,11 @@ after a board and a 270 MB `.img` and explains nothing.
     cadr-arty-z7-20.zip     about 8.1 MB     12,500,992 B on the card
     cadr-cora-z7-07s.zip    about 8.1 MB     10,498,048 B on the card
     cadr-de25-nano.zip     about 21.9 MB     49,434,624 B on the card
+
+Each zip also carries its board's fault bitstream beside the fabric, and
+`make release` requires `FAULT_ARTY`, `FAULT_CORA` and `FAULT_DE25` beside
+the three bitstreams. The sizes above were measured before that file was
+added.
 
 The download is given to a tenth of a megabyte because it is not the same to
 the byte twice: a zip stores each file's own time, so two builds of the same
@@ -610,7 +625,8 @@ and the section above says what it costs.
 **A release is three zips, one for each board, and one command makes all
 three.**
 
-    make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>
+    make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
+                 FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>
 
 **It is one target rather than three because three zips are three chances for
 one to be stale.** A release in which two boards were rebuilt and the third
@@ -859,8 +875,18 @@ itself, so the remedy for anything lost is to put it back.
    `Filename '...'` / `Bytes transferred = N` pairs. The `fpga loadb` lines
    come after `cadr.bit`, and the same three lines go into the kernel.
 
-4. **If anything fails** --- a file missing on the card, the server down, the
-   cable out --- the board prints the line `cadr: the boot did not happen;
+   **If `cadr.bit` is missing or `fpga loadb` refuses it**, the loader prints
+   `cadr: THE CADR BITSTREAM DID NOT LOAD; loading the fault bitstream, whose
+   lamps all blink`, loads `fault.bit` from the same folder or server
+   directory, and goes on to the kernel. Every lamp then blinks together and
+   Linux says so on the console. `board.md` has what the fault bitstream is
+   and what to check. The DE25-Nano does the same with `fault.core.rbf`,
+   prints `THE CADR IMAGE DID NOT LOAD`, releases the bridges and reads them
+   back as for the CADR, and leaves the memory gate shut.
+
+4. **If anything else fails** --- a file missing on the card, the server
+   down, the cable out, or the fault bitstream itself not loading --- the
+   board prints the line `cadr: the boot did not happen;
    trying again in 10 s`. Another attempt follows ten seconds later, for as
    long as it takes. U-Boot's banner does **not** reappear, because this is a
    loop and not the stepping stone's `reset`. A missing card file is named by

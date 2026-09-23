@@ -88,6 +88,14 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 STOP_SH=/usr/share/cadr/stop.sh
 . "$STOP_SH"
 
+# **AND THE FAULT BITSTREAM**, cadr-common's fifth file on the target: whether
+# the fabric is the one U-Boot loads when the CADR's cannot be loaded, which
+# this program must not be started against.  `cadr_fault_stop` says so on the
+# console once a boot and is asked first in `start`; its header is the whole
+# account, and `docs/board.md` says what the board shows.
+FAULT_SH=/usr/share/cadr/fault.sh
+. "$FAULT_SH"
+
 # **THE FLAGS THIS PROGRAM OWNS**, read off its own argument list
 # (src/cadr-terminal.c).  `--log`, `--no-guard` and `--once` are not here:
 # `--log` is `cadr_daemon`'s, which gives every program the same two
@@ -114,6 +122,8 @@ FLAGS="--terminal
        --no-input-link"
 
 start() {
+	# Nothing here may reach the fault bitstream: `FAULT_SH` above.
+	cadr_fault_stop && return 0
 	# **A DEFAULT OF THIS SCRIPT'S IS PASSED ONLY WHERE THE CARD SAYS
 	# NOTHING.**  Passing both and letting the program take the last one
 	# works, and it put `--terminal 0.0.0.0:5900 --terminal 0.0.0.0:5900`

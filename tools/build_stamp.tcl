@@ -23,6 +23,14 @@
 #         commit where there is one and zero where there is not, so
 #         `0000000f` is a build from something that is not a checkout at all.
 #
+# **THE FAULT BITSTREAM SETS BIT 2 OF THE NIBBLE.**  The top level U-Boot
+# loads when the CADR's cannot be loaded (`boards/*/cadr_*_fault.sv`) is
+# stamped from the same tree by the same code, with the tree's state kept in
+# bits 1 and 0, so its nibble is 4, 5, 6 or 7, and `e` where git could not
+# say how the tree stood.  No CADR build writes any of the five, so
+# `build_stamp_is_fault` can tell the fault bitstream from a USERCODE alone,
+# with no sidecar and no board.  8 to d stay unused.
+#
 # **A DIRTY TREE IS RECORDED AND NEVER REFUSED.**  A bring-up run against an
 # uncommitted change is legitimate work; lying about it is not.
 #
@@ -92,8 +100,9 @@ namespace eval buildstamp {
 
 # The stamp of the tree this file sits in: a list of {userid commit tree}.
 # `commit` and `tree` are for people; `userid` is the eight hex digits that go
-# in the bitstream.
-proc build_stamp_of_tree {} {
+# in the bitstream.  `fault` set is the fault bitstream's stamp: the same
+# commit and tree, with the nibble's bit 2 set (see the header).
+proc build_stamp_of_tree {{fault 0}} {
     set root $::buildstamp::root
     set commit ""
     if {![catch {exec git -C $root rev-parse --short=7 HEAD} out]} {
@@ -101,6 +110,9 @@ proc build_stamp_of_tree {} {
         if {[regexp {^[0-9a-f]{7}$} $out]} { set commit $out }
     }
     if {$commit eq ""} {
+        if {$fault} {
+            return [list "0000000e" "unknown" "no git information, the fault bitstream"]
+        }
         return [list "0000000f" "unknown" "no git information"]
     }
     set nibble 0
@@ -108,7 +120,7 @@ proc build_stamp_of_tree {} {
     if {[catch {exec git -C $root status --porcelain --untracked-files=no} st]} {
         # git answered `rev-parse` and not `status`: say so rather than
         # calling the tree clean, which is the one answer that would be a lie.
-        return [build_stamp_pack $commit 15 "git could not read the tree"]
+        return [build_stamp_pack $commit 15 "git could not read the tree" $fault]
     }
     if {[string trim $st] ne ""} { incr nibble 1 ; lappend words "modified" }
     if {![catch {exec git -C $root status --porcelain --untracked-files=normal} st2]} {
@@ -119,7 +131,7 @@ proc build_stamp_of_tree {} {
         }
     }
     set tree [expr {[llength $words] ? [join $words " and "] : "clean"}]
-    return [build_stamp_pack $commit $nibble $tree]
+    return [build_stamp_pack $commit $nibble $tree $fault]
 }
 
 # The commit and the nibble as one value, with the one value that must never
@@ -127,12 +139,31 @@ proc build_stamp_of_tree {} {
 # reads back, so a build may not be called that; only a commit of seven `f`s
 # with an unreadable tree could do it, and one line makes that impossible
 # rather than merely improbable.
-proc build_stamp_pack {commit nibble tree} {
+#
+# `fault` set marks the fault bitstream: bit 2 of the nibble over the tree's
+# state, and `e` in place of `f` for a tree git could not read.
+proc build_stamp_pack {commit nibble tree {fault 0}} {
+    if {$fault} {
+        if {$nibble == 15} {
+            set nibble 14
+        } else {
+            set nibble [expr {($nibble & 3) | 4}]
+        }
+        set tree "$tree, the fault bitstream"
+    }
     set id [format "%s%x" $commit $nibble]
     if {$id eq "ffffffff"} {
         return [list "0000000f" $commit "$tree, and the build cannot be named"]
     }
     return [list $id $commit $tree]
+}
+
+# Whether eight hex digits are the fault bitstream's stamp: a nibble of 4 to
+# 7, or `e`.  An empty or malformed value is not.
+proc build_stamp_is_fault {id} {
+    set id [build_stamp_norm $id]
+    if {$id eq ""} { return 0 }
+    return [expr {[string index $id 7] in {4 5 6 7 e}}]
 }
 
 # **AND A STAMP MUST NEVER GO THROUGH `expr`.**  Eight hex digits are a
@@ -282,6 +313,11 @@ proc build_stamp_expected {prefix bit} {
         puts "$prefix this bitstream is build $sid by its sidecar; its own header names none."
     } else {
         puts "$prefix this bitstream is build $named"
+    }
+    set which $named
+    if {$which eq ""} { set which $sid }
+    if {[build_stamp_is_fault $which]} {
+        puts "$prefix   and it is the FAULT bitstream: no machine, every lamp blinking"
     }
     if {[llength $side]} {
         puts "$prefix   commit [lindex $side 1], tree [lindex $side 2]"

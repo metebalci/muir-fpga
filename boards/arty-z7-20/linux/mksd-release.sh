@@ -4,11 +4,13 @@
 #
 # Build the zip that is released for a board.
 #
-#     BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
+#     BIT=<the released bitstream> FAULT_BIT=<its fault bitstream> \
+#         boards/arty-z7-20/linux/mksd-release.sh
 #
 #     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
 #     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
-#     BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
+#     BIT=<the Cora's released bitstream> FAULT_BIT=<the Cora's fault bitstream> \
+#         boards/arty-z7-20/linux/mksd-release.sh
 #
 # **ONE ZIP A BOARD, AND A RELEASE IS ALL OF THEM.**  The board enters this
 # script the way it enters the staging script, in the same two variables, and
@@ -97,6 +99,11 @@ OUT=${OUT:-build/sd/release/$BOARD_NAME}
 BIT=${BIT:-}
 [ -n "$BIT" ] || { echo "mksd-release: BIT=<the released bitstream> is required" >&2; exit 1; }
 [ -f "$BIT" ] || { echo "mksd-release: no bitstream at $BIT" >&2; exit 1; }
+# A release always carries the fault bitstream: it is what a stranger's board
+# shows when their card is wrong, and a release is for strangers.
+FAULT_BIT=${FAULT_BIT:-}
+[ -n "$FAULT_BIT" ] || { echo "mksd-release: FAULT_BIT=<the board's fault bitstream> is required" >&2; exit 1; }
+[ -f "$FAULT_BIT" ] || { echo "mksd-release: no fault bitstream at $FAULT_BIT" >&2; exit 1; }
 [ -z "${PACKS:-}" ] || { echo "mksd-release: a release carries no pack; PACKS is for mksd-dev.sh" >&2; exit 1; }
 [ -z "${SYS:-}" ] && [ -z "${SITE:-}" ] \
   || { echo "mksd-release: a release carries no band, so no sys/ and no site/; SYS and SITE are for mksd-dev.sh" >&2; exit 1; }
@@ -106,7 +113,7 @@ BIT=${BIT:-}
 # parameter expansion is not an assignment, it is the command name.
 [ -z "${IMAGES:-}" ] || export IMAGES
 
-OUT="$OUT" BIT="$BIT" STANDALONE=1 RELEASE=1 \
+OUT="$OUT" BIT="$BIT" FAULT_BIT="$FAULT_BIT" NO_FAULT= STANDALONE=1 RELEASE=1 \
     BOARD_DIR="$BOARD_DIR" BOARD_DTB="$BOARD_DTB" \
     boards/arty-z7-20/linux/mksd-buildroot.sh
 

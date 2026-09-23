@@ -438,6 +438,37 @@ proc flow_cases {outdir} {
         lappend bad "of-tree: gave ffffffff, which an unprogrammed part reads"
     }
 
+    # THE FAULT BITSTREAM'S STAMP: the same commit and tree state, with bit 2
+    # of the nibble set, and `e` for a tree git could not read; and the one
+    # proc that tells it from a USERCODE alone.  Every tree state both ways,
+    # because a mark that one state lost would call that fault bitstream a
+    # CADR.
+    lassign [build_stamp_of_tree 1] fid fcommit ftree
+    if {[string range $fid 0 6] ne [string range $id 0 6]} {
+        lappend bad "fault of-tree: `$fid` names another commit than `$id`"
+    }
+    if {![build_stamp_is_fault $fid] || [build_stamp_is_fault $id]} {
+        lappend bad "fault of-tree: `$fid` and `$id` are not told apart"
+    }
+    foreach {nibble want} {0 4 1 5 2 6 3 7 15 e} {
+        set got [lindex [build_stamp_pack 4a585e1 $nibble tree 1] 0]
+        if {$got ne "4a585e1$want"} {
+            lappend bad "fault pack: nibble $nibble gave `$got`, wanting 4a585e1$want"
+        }
+        if {![build_stamp_is_fault $got]} {
+            lappend bad "fault pack: `$got` is not called the fault bitstream"
+        }
+        set cadr [lindex [build_stamp_pack 4a585e1 $nibble tree] 0]
+        if {[build_stamp_is_fault $cadr]} {
+            lappend bad "fault pack: the CADR's `$cadr` is called the fault bitstream"
+        }
+    }
+    foreach v {"" ffffffff 32'h4A585E10 zz} {
+        if {[build_stamp_is_fault $v]} {
+            lappend bad "fault: `$v` is called the fault bitstream"
+        }
+    }
+
     # A bitstream and a sidecar that agree.
     set bit [file join $outdir flow-agrees.bit]
     write_fake_bitstream $bit 4a585e10

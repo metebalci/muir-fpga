@@ -47,6 +47,7 @@ READER="$PKG/cadr-common/src/fpgarc.sh"
 STARTER="$PKG/cadr-common/src/daemon.sh"
 STOPPER="$PKG/cadr-common/src/stop.sh"
 CLOCKSH="$PKG/cadr-common/src/clock.sh"
+FAULTSH="$PKG/cadr-common/src/fault.sh"
 MKSD="$TREE/boards/arty-z7-20/linux/mksd-buildroot.sh"
 MKSDREL="$TREE/boards/arty-z7-20/linux/mksd-release.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-fpgarc-$$}
@@ -95,6 +96,22 @@ sandbox() {
 	: > "$WORK/order.calls"
 	: > "$WORK/ozd.check.calls"
 	: > "$WORK/ssd.fg.calls"
+	: > "$WORK/devmem.calls"
+
+	# **THE TALLY, AS `devmem` READS IT**, which is how `fault.sh` tells the
+	# fault bitstream from the CADR's.  It prints `$WORK/tally` in busybox's
+	# own form, `0x%08X`, or a CADR's tally when the case says nothing, and
+	# records the address it was asked; `$WORK/tally.fails` is a read that
+	# fails.  And `fault.sh` itself, copied with its placeholder made a board:
+	# the Zynq boards unless a case says otherwise.
+	cat > "$WORK/bin/devmem" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/devmem.calls"
+[ -f "$WORK/tally.fails" ] && exit 1
+if [ -s "$WORK/tally" ]; then cat "$WORK/tally"; else echo 0x00018000; fi
+EOF
+	cp "$FAULTSH" "$WORK/fault.sh"
+	anchor "$WORK/fault.sh" "^CADR_FAULT_BOARD=@CADR_BOARD@\$" "CADR_FAULT_BOARD=zynq-7000"
 
 	# **THE REAL ONE FORKS THE PROGRAM AND CLOSES ITS OUTPUT**, which is
 	# what made a refused flag silent, so this does the same: it records
@@ -424,6 +441,22 @@ prepare() {
 	# required to be ABSENT from the sixth, rather than merely allowed to
 	# be missing --- a script that grew one would otherwise start using it
 	# with nothing here noticing.
+	# **AND THE FAULT BITSTREAM'S TEST, WHICH EVERY SCRIPT BUT ozd's
+	# SOURCES**: the five programs touch the fabric and ozd does not, so the
+	# line is required of the five and required to be absent from ozd's,
+	# which must go on serving on a board whose fabric is the fault one.
+	case "$2" in
+	S84ozd)
+		if grep -q "^FAULT_SH=" "$dst"; then
+			fail "S84ozd sources the fault bitstream's test, and ozd touches no fabric"
+			return 1
+		fi
+		;;
+	*)
+		anchor "$dst" "^FAULT_SH=/usr/share/cadr/fault.sh\$" \
+		              "FAULT_SH=$WORK/fault.sh" || return 1
+		;;
+	esac
 	case "$2" in
 	S84ozd)
 		if grep -q "^DAEMON_SH=" "$dst"; then
@@ -508,6 +541,7 @@ run_script() {
 	# run here is a boot, so it starts empty.
 	rm -f "$WORK/run/warned"
 	FPGARC_CLAIMED="$WORK/run/claimed" FPGARC_WARNED="$WORK/run/warned" \
+	CADR_FAULT_SAID="$WORK/run/fault.said" \
 	PATH="$WORK/bin:$PATH" "$WORK/$1" start > "$WORK/out.$1" 2>&1
 	echo "$?" > "$WORK/status.$1"
 }
@@ -3352,8 +3386,15 @@ mkdir -p "$WORK/ub/card"
 if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
 	# Two fabricated loaders, differing in the one thing the refusal reads.
 	# `strings` takes them as they are, being text.
-	printf 'bootcmd=run cadr_boot\ncadr_card=load mmc 0:1 ${a} arty-z7-20/cadr.bit && load mmc 0:1 ${b} arty-z7-20/zynq-arty-z7-20.dtb && load mmc 0:1 ${c} arty-z7-20/zImage && load mmc 0:1 ${d} arty-z7-20/rootfs.cpio.uboot && run cadr_bootz\n' \
-		> "$WORK/ub/new.img"
+	# The loader as it is built now: the fabric through cadr_fabric_card,
+	# which falls back to the fault bitstream in cadr_fault_card.
+	zynq_loader() {
+		printf 'bootcmd=run cadr_boot\ncadr_card=run cadr_fabric_card && load mmc 0:1 ${b} arty-z7-20/zynq-arty-z7-20.dtb && load mmc 0:1 ${c} arty-z7-20/zImage && load mmc 0:1 ${d} arty-z7-20/rootfs.cpio.uboot && run cadr_bootz\n' > "$1"
+		printf 'cadr_fabric_card=if load mmc 0:1 ${a} arty-z7-20/cadr.bit && fpga loadb 0 ${a} ${s}; then echo ok; else run cadr_fault_card; fi\n' >> "$1"
+		[ -z "$2" ] || printf 'cadr_fault_card=echo x; load mmc 0:1 ${a} %s && fpga loadb 0 ${a} ${s}\n' "$2" >> "$1"
+	}
+	zynq_loader "$WORK/ub/new.img" arty-z7-20/fault.bit
+	zynq_loader "$WORK/ub/nofault.img" ""
 	printf 'bootcmd=run cadr_boot\ncadr_card=load mmc 0:1 ${a} cadr.bit && load mmc 0:1 ${b} zynq-arty-z7-20.dtb && load mmc 0:1 ${c} zImage && load mmc 0:1 ${d} rootfs.cpio.uboot && run cadr_bootz\n' \
 		> "$WORK/ub/old.img"
 	lift_board_facts "$WORK/ub/board.sh" || true
@@ -3363,6 +3404,7 @@ if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
 		  OUT="$WORK/ub"
 		  BOARD_NAME=arty-z7-20
 		  BOARD_DTB=zynq-arty-z7-20.dtb
+		  NO_FAULT=
 		  . "$WORK/ub/board.sh"
 		  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
 		  . "$WORK/ub/refuse.sh" ) 2>"$WORK/ub/err"
@@ -3371,6 +3413,15 @@ if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
 		ok "a U-Boot that loads arty-z7-20/cadr.bit and the rest is accepted"
 	else
 		fail "the staging refuses a U-Boot that IS right: $(cat "$WORK/ub/err")"
+	fi
+	# **AND A LOADER THAT PREDATES THE FAULT BITSTREAM**, which would loop
+	# at a fabric that will not load with fault.bit unread beside it.
+	if run_refusal "$WORK/ub/nofault.img"; then
+		fail "the staging accepts a U-Boot that has no fault bitstream to fall back to"
+	elif grep -q 'arty-z7-20/fault.bit' "$WORK/ub/err" && grep -q 'buildroot-rebuild' "$WORK/ub/err"; then
+		ok "and one with no fault bitstream to fall back to is refused, naming fault.bit and the rebuild"
+	else
+		fail "the refusal of a loader without the fault bitstream does not say what it wanted: $(cat "$WORK/ub/err")"
 	fi
 	if run_refusal "$WORK/ub/old.img"; then
 		fail "the staging accepts a U-Boot that loads cadr.bit from the root of the partition"
@@ -3404,6 +3455,8 @@ if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
 		printf 'cadr_card=setenv cadr_rbf_get cadr_rbf_card; run cadr_fabric && load mmc 0:1 ${b} de25-nano/socfpga_agilex5_de25_nano_cadr.dtb && load mmc 0:1 ${c} de25-nano/Image && load mmc 0:1 ${d} de25-nano/rootfs.cpio.uboot && run cadr_booti\n' >> "$1"
 		printf 'cadr_rbf_card=load mmc 0:1 ${a} %s\n' "$2" >> "$1"
 		printf 'cadr_rbf_net=tftpboot ${a} %s\n' "$2" >> "$1"
+		printf 'cadr_fault_card=load mmc 0:1 ${a} de25-nano/fault.core.rbf\n' >> "$1"
+		printf 'cadr_fault_net=tftpboot ${a} de25-nano/fault.core.rbf\n' >> "$1"
 		printf 'cadr_net=dhcp && tftpboot ${a} de25-nano/uEnv.net && run netcmd\n' >> "$1"
 		printf 'cadr_booti=booti ${c} ${d} ${b}\n' >> "$1"
 	}
@@ -3413,6 +3466,7 @@ if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
 		  OUT="$WORK/ub"
 		  BOARD_NAME=de25-nano
 		  BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb
+		  NO_FAULT=
 		  . "$WORK/ub/board.sh"
 		  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
 		  . "$WORK/ub/refuse.sh" ) 2>"$WORK/ub/err"
@@ -3440,10 +3494,10 @@ if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
 			  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
 			  . "$WORK/ub/vars.sh" ) 2>"$WORK/ub/err"
 		}
-		printf 'bootcmd=run cadr_boot\ncadr_card=load mmc 0:1 ${a} arty-z7-20/cadr.bit\ncadr_net=x\ncadr_bootz=y\n' \
+		printf 'bootcmd=run cadr_boot\ncadr_card=run cadr_fabric_card\ncadr_fabric_card=if load mmc 0:1 ${a} arty-z7-20/cadr.bit; then x; fi\ncadr_net=x\ncadr_bootz=y\n' \
 			> "$WORK/ub/vars-arty.img"
 		if run_vars arty-z7-20 "$WORK/ub/vars-arty.img" u-boot.img; then
-			ok "and the Zynq boards' environment is asked for cadr_card=load mmc 0:1, as it always was"
+			ok "and the Zynq boards' environment is asked for cadr_fabric_card=if load mmc 0:1, which falls back to the fault bitstream"
 		else
 			fail "the staging refuses a Zynq environment that IS right: $(cat "$WORK/ub/err")"
 		fi
@@ -3479,9 +3533,11 @@ sandbox
 # A here-document and not a pipe: a `while` on the far end of a pipe runs in a
 # subshell, and the failure count this check exits on would be incremented
 # there and lost --- a case that prints FAIL and still leaves the run green.
-# **AND THE LAST FIELD SAYS WHICH VARIABLE FETCHES THE FABRIC'S IMAGE**, which
-# is not the same one on every board.  The Zynq boards' cadr_card loads all
-# four files itself.  The DE25-Nano's does not: one of its two arrangements
+# **AND THE SIXTH FIELD SAYS WHICH VARIABLE FETCHES THE FABRIC'S IMAGE**, which
+# is not the same one on every board.  The Zynq boards' is cadr_fabric_card,
+# which cadr_card runs and which falls back to the fault bitstream, the
+# seventh field, in cadr_fault_card.  The DE25-Nano's does not load it in
+# cadr_card either: one of its two arrangements
 # may not configure its own fabric and must not so much as ask for the image,
 # so the fetch is a variable of its own that cadr_fabric runs on the path that
 # loads.  What this case is about is the FOLDER --- a loader that looked for a
@@ -3493,8 +3549,8 @@ env_block() {
 	               inside { print }' "$2"
 }
 while IFS= read -r spec; do
-	# <environment>=<board>=<its tree>=<its fabric>=<its kernel>=<what fetches the fabric>
-	IFS='=' read -r env_rel board dtb fabric kernel rbf_var <<EOF_SPEC
+	# <environment>=<board>=<its tree>=<its fabric>=<its kernel>=<what fetches the fabric>=<its fault bitstream>
+	IFS='=' read -r env_rel board dtb fabric kernel rbf_var fault <<EOF_SPEC
 $spec
 EOF_SPEC
 	env_file="$TREE/$env_rel"
@@ -3514,16 +3570,19 @@ EOF_SPEC
 		echo "$block" | grep -q "load mmc 0:1 [^ ]* $board/$f " \
 			|| { fail "$(basename "$env_file")'s cadr_card does not load $board/$f"; bad=1; }
 	done
+	# And the fault bitstream beside the fabric, in the same folder.
+	env_block cadr_fault_card "$env_file" | grep -q "load mmc 0:1 [^ ]* $board/$fault\\( \\|\$\\)" \
+		|| { fail "$(basename "$env_file")'s cadr_fault_card does not load $board/$fault"; bad=1; }
 	# uEnv.txt is imported before any board name is known, so it must NOT
 	# be under the folder: a card whose loader looked for it there would
 	# never read the file that decides which path it takes.
 	grep -q "load mmc 0:1 \${cadr_uenv_addr} uEnv.txt" "$env_file" \
 		|| { fail "$(basename "$env_file") does not import uEnv.txt from the root of the partition"; bad=1; }
-	[ "$bad" = 0 ] && ok "$(basename "$env_file"): all four out of $board/, and uEnv.txt from the root"
+	[ "$bad" = 0 ] && ok "$(basename "$env_file"): all four and $fault out of $board/, and uEnv.txt from the root"
 done <<'ENVS'
-boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env=arty-z7-20=zynq-arty-z7-20.dtb=cadr.bit=zImage=cadr_card
-boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/cadr_cora.env=cora-z7-07s=zynq-cora-z7-07s.dtb=cadr.bit=zImage=cadr_card
-boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env=de25-nano=socfpga_agilex5_de25_nano_cadr.dtb=cadr.core.rbf=Image=cadr_rbf_card
+boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env=arty-z7-20=zynq-arty-z7-20.dtb=cadr.bit=zImage=cadr_fabric_card=fault.bit
+boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/cadr_cora.env=cora-z7-07s=zynq-cora-z7-07s.dtb=cadr.bit=zImage=cadr_fabric_card=fault.bit
+boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env=de25-nano=socfpga_agilex5_de25_nano_cadr.dtb=cadr.core.rbf=Image=cadr_rbf_card=fault.core.rbf
 ENVS
 
 case_head "the DE25-Nano's menu is the Zynq boards' with the DE25-Nano's windows"
@@ -4773,6 +4832,159 @@ if prepare ozd S84ozd; then
 	warns_once S84ozd --ozd-name "2 and 5" 5
 	warns_not S84ozd --ozd-root
 	warns_not S84ozd --ozd-host
+fi
+
+# ---------------------------------------------------------------------------
+# 10.  THE FAULT BITSTREAM: NOTHING THAT TOUCHES THE FABRIC IS STARTED, AND
+#      ONE LINE ON THE CONSOLE SAYS WHY.
+# ---------------------------------------------------------------------------
+#
+# U-Boot loads the fault bitstream when the CADR's cannot be loaded, and its
+# tally reads "FALT" in every word.  A boot on it is run here the way the
+# board runs it, all six scripts in order sharing one /var/run: the five that
+# touch the fabric must start nothing and ask the console nothing, the first
+# of them must say so once and no other must say it again, and the card must
+# still be mounted, because the configuration to be checked is on it.  ozd
+# touches no fabric and goes on.  The control is the same boot with the
+# CADR's tally, a tally one bit away from "FALT", a board where only one of
+# the two words says it, and a tally that cannot be read: each of those
+# starts every program and says nothing about a fault.
+
+fault_boot() {
+	rm -f "$WORK/run/fault.said" "$WORK/run/claimed"
+	: > "$WORK/boot.out"
+	: > "$WORK/boot.daemons"
+	: > "$WORK/console.calls"
+	: > "$WORK/mount.calls"
+	for _s in S80cadr-disk-packs S84ozd S85cadr-terminal S86cadr-serial \
+	          S87cadr-chaosnet S88cadr-usb-input; do
+		run_script "$_s"
+		sed "s|^|$_s: |" "$WORK/out.$_s" >> "$WORK/boot.out"
+		sed "s|^|$_s: |" "$WORK/daemon.calls" >> "$WORK/boot.daemons"
+	done
+}
+
+fault_prepare() {
+	prepare cadr-disk-packs S80cadr-disk-packs && prepare ozd S84ozd \
+	  && prepare cadr-terminal S85cadr-terminal && prepare cadr-serial S86cadr-serial \
+	  && prepare cadr-chaosnet S87cadr-chaosnet && prepare cadr-usb-input S88cadr-usb-input
+}
+
+FAULT_LINE="THE FAULT BITSTREAM IS LOADED"
+
+case_head "on the fault bitstream nothing that touches the fabric starts, and one line says why"
+sandbox
+if fault_prepare; then
+	echo "$WORK/dev/p1" > "$WORK/mountable"
+	printf -- '--chaos-address 177101\r\n--terminal 0.0.0.0:5900\r\n--serial 0.0.0.0:7641\r\n--bwo\r\n' > "$WORK/card/fpgarc"
+	echo 0x46414C54 > "$WORK/tally"
+	fault_boot
+	n=$(grep -c "$FAULT_LINE" "$WORK/boot.out" || true)
+	if [ "$n" = 1 ] && grep -q "^S80cadr-disk-packs: cadr: $FAULT_LINE" "$WORK/boot.out"; then
+		ok "one console line, from the first script, says the fault bitstream is loaded"
+	else
+		fail "the fault line was said $n times, wanting once from S80: $(grep "$FAULT_LINE" "$WORK/boot.out")"
+	fi
+	if grep "$FAULT_LINE" "$WORK/boot.out" | grep -q "check the card's configuration"; then
+		ok "and it says to check the card's configuration"
+	else
+		fail "the fault line does not say to check the card's configuration"
+	fi
+	started=$(grep -v "^S84ozd: " "$WORK/boot.daemons" || true)
+	if [ -z "$started" ]; then
+		ok "none of the five programs that touch the fabric was started"
+	else
+		fail "programs were started on the fault bitstream: $started"
+	fi
+	if [ -s "$WORK/console.calls" ]; then
+		fail "the console was asked something on the fault bitstream: $(cat "$WORK/console.calls")"
+	else
+		ok "and the console was asked nothing"
+	fi
+	if grep -q "^S84ozd: " "$WORK/boot.daemons"; then
+		ok "ozd, which touches no fabric, still started"
+	else
+		fail "ozd was not started on the fault bitstream"
+	fi
+	if grep -q "$WORK/dev/p1" "$WORK/mount.calls" \
+	   && grep -q "the card is at $WORK/card" "$WORK/boot.out"; then
+		ok "and the card is mounted, where the configuration to check is"
+	else
+		fail "the card was not mounted on the fault bitstream: $(cat "$WORK/mount.calls")"
+	fi
+	if grep -q "no program on this board takes these lines" "$WORK/boot.out"; then
+		fail "the card's lines were called unclaimed on a boot that started nothing"
+	else
+		ok "and no line of the card is called unclaimed on a boot that started nothing"
+	fi
+	if grep -qx "0xE000A068 32" "$WORK/devmem.calls" && grep -qx "0xE000A06C 32" "$WORK/devmem.calls" \
+	   && ! grep -qv "^0xE000A06[8C] 32$" "$WORK/devmem.calls"; then
+		ok "the Zynq board's two EMIO words were read, and nothing else"
+	else
+		fail "devmem was asked: $(sort -u "$WORK/devmem.calls" | tr '\n' ' ')"
+	fi
+fi
+
+case_head "the control: the CADR's tally, one a bit from FALT, one word of two, and one unreadable, start everything"
+sandbox
+if fault_prepare; then
+	echo "$WORK/dev/p1" > "$WORK/mountable"
+	printf -- '--chaos-address 177101\r\n--serial 0.0.0.0:7641\r\n' > "$WORK/card/fpgarc"
+	for tally in 0x00018000 0x46414C55 0x46414C54,0x00018000 unreadable; do
+		rm -f "$WORK/tally" "$WORK/tally.fails"
+		case "$tally" in
+		unreadable) : > "$WORK/tally.fails" ;;
+		*,*)
+			# The first word FALT and the second the CADR's: a board is
+			# the fault bitstream only when EVERY word says so.
+			cat > "$WORK/bin/devmem" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/devmem.calls"
+case "\$1" in 0xE000A068) echo ${tally%,*} ;; *) echo ${tally#*,} ;; esac
+EOF
+			chmod +x "$WORK/bin/devmem"
+			;;
+		*) echo "$tally" > "$WORK/tally" ;;
+		esac
+		fault_boot
+		missing=""
+		for p in cadr-disk-packs cadr-terminal cadr-serial cadr-chaosnet cadr-usb-input; do
+			grep -q -- "--exec $WORK/bin/$p" "$WORK/boot.daemons" || missing="$missing $p"
+		done
+		if [ -z "$missing" ] && ! grep -q "$FAULT_LINE" "$WORK/boot.out"; then
+			ok "with the tally $tally every program starts and nothing is called the fault bitstream"
+		else
+			fail "with the tally $tally:${missing:+ not started:$missing;} $(grep "$FAULT_LINE" "$WORK/boot.out")"
+		fi
+	done
+fi
+
+case_head "the DE25-Nano's fault.sh reads the system manager's GPI word and nothing else"
+sandbox
+if prepare cadr-terminal S85cadr-terminal; then
+	cp "$FAULTSH" "$WORK/fault.sh"
+	anchor "$WORK/fault.sh" "^CADR_FAULT_BOARD=@CADR_BOARD@\$" "CADR_FAULT_BOARD=de25-nano"
+	echo 0x46414C54 > "$WORK/tally"
+	rm -f "$WORK/run/fault.said"
+	run_script S85cadr-terminal
+	if [ ! -s "$WORK/daemon.calls" ] && grep -q "$FAULT_LINE" "$WORK/out.S85cadr-terminal" \
+	   && [ "$(sort -u "$WORK/devmem.calls")" = "0x10D120E8 32" ]; then
+		ok "the GPI word at 0x10D120E8 reads FALT, the terminal is not started, and the line is said"
+	else
+		fail "on the DE25-Nano: devmem was asked [$(sort -u "$WORK/devmem.calls" | tr '\n' ' ')]," \
+		     "the program was given [$(given)], and it said: $(cat "$WORK/out.S85cadr-terminal")"
+	fi
+	# And a fault.sh whose placeholder was never made a board calls nothing
+	# the fault bitstream: the programs' own guard is what stands then.
+	cp "$FAULTSH" "$WORK/fault.sh"
+	: > "$WORK/devmem.calls"
+	rm -f "$WORK/run/fault.said"
+	run_script S85cadr-terminal
+	if [ -s "$WORK/daemon.calls" ] && [ ! -s "$WORK/devmem.calls" ]; then
+		ok "a fault.sh that names no board reads nothing and stops nothing"
+	else
+		fail "a fault.sh that names no board: devmem was asked [$(cat "$WORK/devmem.calls")], the program was given [$(given)]"
+	fi
 fi
 
 echo

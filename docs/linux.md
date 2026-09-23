@@ -624,10 +624,10 @@ the `agilex5` platform, with `SOCFPGA_UART_CONFIG=1` putting its console on
 UART 1, which is this board's.
 
 **The fabric is configured by U-Boot, in the middle of the boot.** On a Zynq
-board the bitstream travels inside `BOOT.BIN` and the first-stage loader has put
-it in the fabric before U-Boot runs. Here the first stage carries no fabric
-image, so `cadr.core.rbf` is read off the card or fetched over TFTP and loaded
-through the Secure Device Manager. The four steps are in
+board U-Boot proper loads `cadr.bit` with `fpga loadb` (`cadr_fabric_card` in
+`cadr.env`, and `cadr_fabric_net` in the served `uEnv.net`). Here
+`cadr.core.rbf` is read off the card or fetched over TFTP and loaded through
+the Secure Device Manager. The four steps are in
 `board/de25-nano/uboot/cadr_de25.env`, all of them before the kernel is fetched,
 and they are in this order:
 
@@ -653,6 +653,14 @@ and they are in this order:
    are stable", which is the use the manual gives these bits, and until it rises
    the fabric holds its memory master off, so the machine's first memory cycle
    cannot meet a bridge that is still in reset.
+
+**If the fetch or step 2 fails, the fault bitstream is loaded instead.**
+`cadr_fault` fetches `fault.core.rbf` from the same place, the card or the
+server, and runs steps 1 to 3 for it with the same read-back of `BRGMODRST`.
+It does not run step 4, because the fault bitstream has no memory master, and
+the boot goes on to the kernel. `docs/board.md` says what the fault bitstream
+shows and what to check. The Zynq boards fall back the same way, to
+`fault.bit`, with `fpga loadb`.
 
 **A board whose flash holds no first stage of this project's cannot do step 2 at
 all.** Such a board is brought up over JTAG from one file that configures the

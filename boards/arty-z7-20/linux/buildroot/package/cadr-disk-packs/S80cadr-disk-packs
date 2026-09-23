@@ -159,6 +159,14 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 STOP_SH=/usr/share/cadr/stop.sh
 . "$STOP_SH"
 
+# **AND THE FAULT BITSTREAM**, cadr-common's fifth file on the target: whether
+# the fabric is the one U-Boot loads when the CADR's cannot be loaded, which
+# this program must not be started against.  `cadr_fault_stop` says so on the
+# console once a boot and is asked first in `start`; its header is the whole
+# account, and `docs/board.md` says what the board shows.
+FAULT_SH=/usr/share/cadr/fault.sh
+. "$FAULT_SH"
+
 # **HOW LONG THE PACK PROGRAM IS GIVEN TO STOP: THIRTY SECONDS.**  On SIGTERM
 # it finishes the pass it is in, writes back every dirty slot of the block
 # store (`feeder_flush`, in up to 50 passes), takes the drives absent and
@@ -260,6 +268,11 @@ mount_the_card() {
 start() {
 	mount_the_card
 	set_the_clock
+	# **THE CARD AND THE CLOCK ARE NOT THE FABRIC'S**, so they are done on
+	# the fault bitstream too: the card is where the configuration to be
+	# checked is, and somebody fixing it over the network wants it mounted.
+	# Everything after this asks the fabric something.
+	cadr_fault_stop && return 0
 	set_the_lamps
 	set_the_display_boards
 	set_the_display_output

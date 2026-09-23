@@ -21,4 +21,4 @@
 # whose fabric was configured before U-Boot ran never asks for a file it may
 # not use.  All this line does about it is say which of the two ways of
 # fetching it this path uses: cadr_rbf_net, the served one.
-netcmd=setenv cadr_rbf_get cadr_rbf_net; run cadr_fabric && tftpboot ${cadr_fdt_addr} de25-nano/socfpga_agilex5_de25_nano_cadr.dtb && tftpboot ${cadr_kernel_addr} de25-nano/Image && tftpboot ${cadr_ramdisk_addr} de25-nano/rootfs.cpio.uboot && run cadr_booti
+netcmd=setenv cadr_rbf_get cadr_rbf_net; setenv cadr_fault_get cadr_fault_net; run cadr_fabric && tftpboot ${cadr_fdt_addr} de25-nano/socfpga_agilex5_de25_nano_cadr.dtb && tftpboot ${cadr_kernel_addr} de25-nano/Image && tftpboot ${cadr_ramdisk_addr} de25-nano/rootfs.cpio.uboot && run cadr_booti
