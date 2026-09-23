@@ -54,12 +54,14 @@
 # stopped at the first line of the boot and looped there for ever, on a board
 # that wanted nothing from that file and was otherwise ready to run.
 #
-# So this holds four things about `cadr_de25.env` and the served `uEnv.net`:
+# So this holds five things about `cadr_de25.env` and the served `uEnv.net`:
 # that the image is named in the two fetch commands and nowhere else, that
 # neither path fetches it itself, that each path says which fetch to use and
-# names one the environment defines, and that `cadr_fabric` runs the fetch in
+# names one the environment defines, that `cadr_fabric` runs the fetch in
 # the branch that loads the fabric, before `fpga load`, and not in the branch
-# that finds it loaded already.
+# that finds it loaded already, and that only `cadr_fabric_loaded=1` takes
+# that second branch: its test is evaluated as U-Boot's `test` would for
+# several values, because a test for "set at all" once took `=0` as loaded.
 #
 # **WHAT IT DOES NOT HOLD** is U-Boot's behavior.  It reads the environment as
 # text; it does not run hush, so it cannot say that the environment parses or
@@ -176,6 +178,29 @@ def uenv_file(path):
     return out
 
 
+def uboot_test(expr, env):
+    """One `test ...` of U-Boot's (cmd/test.c) evaluated with `env`, for the
+    forms an `if` in this environment may use: `-n X`, `-z X`, `X = Y` and
+    `X != Y`, each operand a word or a quoted `${name}`.  Anything else is
+    refused rather than guessed at."""
+    words = re.findall(r'"[^"]*"|\S+', expr.strip())
+    if not words or words[0] != "test":
+        die("cannot read %r as a U-Boot test" % expr)
+
+    def value(w):
+        w = w[1:-1] if w.startswith('"') and w.endswith('"') else w
+        return re.sub(r"\$\{(\w+)\}", lambda m: env.get(m.group(1), ""), w)
+
+    args = words[1:]
+    if len(args) == 2 and args[0] in ("-n", "-z"):
+        v = value(args[1])
+        return bool(v) if args[0] == "-n" else not v
+    if len(args) == 3 and args[1] in ("=", "!="):
+        eq = value(args[0]) == value(args[2])
+        return eq if args[1] == "=" else not eq
+    die("cannot read %r as a U-Boot test this check knows" % expr)
+
+
 def boot(tree):
     env = uboot_env(os.path.join(tree, UBOOT_ENV))
     served = uenv_file(os.path.join(tree, UENV_NET))
@@ -225,6 +250,19 @@ def boot(tree):
             "two branches apart:", "    " + fabric)
     if "cadr_fabric_loaded" not in m.group("test"):
         die("cadr_fabric does not branch on cadr_fabric_loaded: %s" % m.group("test"))
+    # **AND THE BRANCH MEANS WHAT THE NAME SAYS.**  `uEnv.txt.in` documents
+    # one value, `cadr_fabric_loaded=1`.  A test for "set at all" took `=0`
+    # for loaded too, and on a board that has to load its fabric that skips
+    # `fpga load` and opens the gate with no fabric behind it.  So the test is
+    # evaluated here, as U-Boot's `test` would, for the values a person might
+    # write, and only `1` may take the branch that does not load.
+    for value in ("", "0", "1", "no", "yes", "false", "10"):
+        taken = uboot_test(m.group("test"), {"cadr_fabric_loaded": value})
+        if taken != (value == "1"):
+            die("cadr_fabric takes the %s branch with cadr_fabric_loaded=%s: %s"
+                % ("already-loaded" if taken else "loading", value or "(unset)",
+                   m.group("test")),
+                "Only the documented value, 1, means the fabric is configured already.")
     fetch = "run ${%s}" % RBF_GET
     if fetch in m.group("loaded"):
         die("cadr_fabric fetches the fabric's image on the branch that found it",
@@ -242,7 +280,8 @@ def boot(tree):
             "already, which the Technical Reference Manual (A.4.2.1) forbids")
 
     print("buildroot-de25: the fabric's image is fetched only where it is used: "
-          "%s by %s, %s by %s, in cadr_fabric's loading branch alone"
+          "%s by %s, %s by %s, in cadr_fabric's loading branch alone, and only "
+          "cadr_fabric_loaded=1 skips that branch"
           % (RBF_BY_PATH["cadr_card"], "cadr_card",
              RBF_BY_PATH["netcmd"], "netcmd"))
 

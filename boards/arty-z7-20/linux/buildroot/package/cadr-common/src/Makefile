@@ -70,19 +70,21 @@ install-staging: all
 	    > $(DESTDIR)/usr/include/cadr/cadr_board.h
 	chmod 0644 $(DESTDIR)/usr/include/cadr/cadr_board.h
 
-# The target.  Three files, all of them shell that the init scripts source and
+# The target.  Four files, all of them shell that the init scripts source and
 # none of them with a build step --- they are read, not compiled --- so `all`
 # says nothing about them and this is the whole of their shipping.  `fpgarc.sh`
 # decides what a program is given out of the card's one file of flags;
 # `daemon.sh` starts it so that a program which will not take what it was given
-# says so on the console instead of dying behind an OK; `clock.sh` is what this
-# board knows about the date, there being no real-time clock in it.
+# says so on the console instead of dying behind an OK; `stop.sh` stops it and
+# waits until it has gone; `clock.sh` is what this board knows about the date,
+# there being no real-time clock in it.
 SHAREDIR := /usr/share/cadr
 
 install:
 	install -d $(DESTDIR)$(SHAREDIR)
 	install -m 0644 fpgarc.sh $(DESTDIR)$(SHAREDIR)/fpgarc.sh
 	install -m 0644 daemon.sh $(DESTDIR)$(SHAREDIR)/daemon.sh
+	install -m 0644 stop.sh $(DESTDIR)$(SHAREDIR)/stop.sh
 	install -m 0644 clock.sh $(DESTDIR)$(SHAREDIR)/clock.sh
 
 # The reader's own check, on the build host, needing nothing but a POSIX

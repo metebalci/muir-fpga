@@ -379,6 +379,16 @@ POSIX `sleep` is certain to take. Five seconds on a board that reaches a login
 in fifteen is the price of a class of failure that has already cost this
 project a night.
 
+Stopping has the opposite problem. `start-stop-daemon -K` sends SIGTERM and
+returns at once, without waiting for the program to exit. So every init script
+stops its program through `cadr_stop`, which `cadr-common` installs at
+`/usr/share/cadr/stop.sh`. It sends SIGTERM, waits until the program has gone,
+and prints `OK` only then. A program still running at the bound is named and
+left running, and the script prints `FAIL`. The bound is five seconds, and
+thirty for the disk pack program, which writes every dirty block back to its
+pack before it exits. Only after that does the disk pack script save the clock,
+sync and unmount the card, and an unmount that fails is printed.
+
 ## Where a program's log is, and how to follow it
 
 `cadr_daemon` starts every daemon with two destinations:

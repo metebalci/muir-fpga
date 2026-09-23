@@ -92,7 +92,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
-       $(BUILD)/de25_jtag.pass \
+       $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass \
        $(BUILD)/de25_linux.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
@@ -181,6 +181,24 @@ $(BUILD)/de25_faces.pass: tools/de25_faces_check.py tools/de25_pins_check.py \
                           rtl/plumbing/cadr_dbg_cable.sv \
                           boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h | $(BUILD)
 	python3 tools/de25_faces_check.py . --stamp $@
+
+# WHERE EACH BOARD'S MEMORY IS, WRITTEN IN SEVERAL FILES THAT NO ONE BUILD
+# READS TOGETHER: the fabric's package, the DE25-Nano's top level, the
+# programs' header, each board's reserved-memory node, the card script and,
+# on the DE25-Nano, U-Boot's GPO register.  Each build is self-consistent, so a
+# number changed in one of them would first be seen on a board.  See
+# `tools/mem_map_check.py`.
+$(BUILD)/mem_map.pass: tools/mem_map_check.py \
+                       rtl/plumbing/cadr_ddr_map.sv \
+                       boards/de25-nano/cadr_de25.sv \
+                       boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h \
+                       boards/arty-z7-20/linux/cadr-reserved.dtsi \
+                       boards/de25-nano/linux/cadr-reserved.dtsi \
+                       boards/arty-z7-20/linux/mksd-buildroot.sh \
+                       boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env \
+                       boards/arty-z7-20/vivado/ddr_check.tcl \
+                       boards/arty-z7-20/vivado/ddr_run.tcl | $(BUILD)
+	python3 tools/mem_map_check.py . --stamp $@
 
 $(BUILD)/phase_gen.pass: $(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
 	$(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
@@ -3085,7 +3103,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
                         $(CHAOSNET_SRC)/chaos_test_boot.sh \
                         $(CHAOSNET_PKG)/S87cadr-chaosnet \
                         $(COMMON_SRC)/fpgarc.sh \
-                        $(COMMON_SRC)/daemon.sh \
+                        $(COMMON_SRC)/daemon.sh $(COMMON_SRC)/stop.sh \
                         $(CHAOSNET_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(CHAOSNET_SRC) check
 	$(MAKE) -C $(CHAOSNET_SRC) all COMMON=host
@@ -3115,7 +3133,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
 # repository's stale-artifact scar in a Makefile --- and the release guard is
 # exactly the thing that sat broken because nobody ran it.
 $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
-                      $(COMMON_SRC)/daemon.sh \
+                      $(COMMON_SRC)/daemon.sh $(COMMON_SRC)/stop.sh \
                       $(COMMON_SRC)/clock.sh \
                       $(COMMON_SRC)/fpgarc_test.sh \
                       $(CHAOSNET_PKG)/S87cadr-chaosnet \
@@ -3176,7 +3194,7 @@ $(BUILD)/usb_input.pass: $(wildcard $(USB_INPUT_SRC)/*.c) $(wildcard $(USB_INPUT
                          $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
                          $(USB_INPUT_SRC)/usb_mutations.txt \
                          $(USB_INPUT_PKG)/S88cadr-usb-input \
-                         $(COMMON_SRC)/fpgarc.sh $(COMMON_SRC)/daemon.sh \
+                         $(COMMON_SRC)/fpgarc.sh $(COMMON_SRC)/daemon.sh $(COMMON_SRC)/stop.sh \
                          $(USB_INPUT_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(USB_INPUT_SRC) check
 	$(MAKE) -C $(USB_INPUT_SRC) all COMMON=host

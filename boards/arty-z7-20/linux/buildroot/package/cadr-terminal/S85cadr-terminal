@@ -82,6 +82,12 @@ FPGARC_SH=/usr/share/cadr/fpgarc.sh
 DAEMON_SH=/usr/share/cadr/daemon.sh
 . "$DAEMON_SH"
 
+# And the stopper, cadr-common's too: `start-stop-daemon -K` sends SIGTERM and
+# returns at once, so `stop` waits for the program to be gone before it says OK
+# and before anything after it runs.  Its header is the whole account.
+STOP_SH=/usr/share/cadr/stop.sh
+. "$STOP_SH"
+
 # **THE FLAGS THIS PROGRAM OWNS**, read off its own argument list
 # (src/cadr-terminal.c).  `--log`, `--no-guard` and `--once` are not here:
 # `--log` is `cadr_daemon`'s, which gives every program the same two
@@ -134,9 +140,7 @@ start() {
 }
 
 stop() {
-	printf "Stopping cadr-terminal: "
-	start-stop-daemon -K -q -p "$PIDFILE"
-	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	cadr_stop cadr-terminal "$PIDFILE"
 }
 
 case "$1" in

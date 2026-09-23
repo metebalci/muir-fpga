@@ -45,6 +45,7 @@ TREE=${TREE:-$(cd "$HERE/../../../../../../.." && pwd)}
 PKG="$TREE/boards/arty-z7-20/linux/buildroot/package"
 READER="$PKG/cadr-common/src/fpgarc.sh"
 STARTER="$PKG/cadr-common/src/daemon.sh"
+STOPPER="$PKG/cadr-common/src/stop.sh"
 CLOCKSH="$PKG/cadr-common/src/clock.sh"
 MKSD="$TREE/boards/arty-z7-20/linux/mksd-buildroot.sh"
 MKSDREL="$TREE/boards/arty-z7-20/linux/mksd-release.sh"
@@ -101,19 +102,31 @@ sandbox() {
 	# where -p says.  A stub that only recorded could not tell a program
 	# that started from one that refused its flags and went, which is the
 	# whole of what `cadr_daemon` is for.
+	#
+	# **AND -K IS THE REAL ONE'S TOO**: SIGTERM to the process the pid file
+	# names, 1 when there is none, and a return at once without waiting for
+	# it to go, which is the whole of why `stop.sh` exists.
 	cat > "$WORK/bin/start-stop-daemon" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/daemon.calls"
 _pidfile=""
 _prog=""
+_kill=no
 while [ \$# -gt 0 ]; do
 	case "\$1" in
+	-K) _kill=yes ;;
 	-p) _pidfile=\$2; shift ;;
 	--exec) _prog=\$2; shift ;;
 	--) shift; break ;;
 	esac
 	shift
 done
+if [ "\$_kill" = yes ]; then
+	_pid=\$(cat "\$_pidfile" 2>/dev/null)
+	[ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null || exit 1
+	kill -TERM "\$_pid"
+	exit 0
+fi
 [ -n "\$_prog" ] || exit 0
 "\$_prog" "\$@" > /dev/null 2>&1 &
 [ -n "\$_pidfile" ] && echo \$! > "\$_pidfile"
@@ -191,9 +204,12 @@ EOF
 	# written before the two shapes existed are unchanged.
 	:> "$WORK/mountable"
 	: > "$WORK/mount.calls"
+	# `mountpoint` says the card is mounted when `$WORK/mounted` stands,
+	# which only the cases about `stop` make, so every case about `start`
+	# sees an unmounted card as it always has.
 	cat > "$WORK/bin/mountpoint" <<EOF
 #!/bin/sh
-exit 1
+[ -f "$WORK/mounted" ]
 EOF
 	cat > "$WORK/bin/mount" <<EOF
 #!/bin/sh
@@ -275,14 +291,40 @@ EOF
 	# that the save happens while the partition is still the card's: a save
 	# after the unmount would write into the root filesystem's RAM disk and
 	# be lost at the next boot, with the file there to find either way.
+	#
+	# **AND IT REFUSES WHILE THE PACK PROGRAM IS STILL RUNNING**, as the
+	# real one does while the program holds its packs open: EBUSY, said on
+	# stderr, which is what a `2>/dev/null` once hid.
 	cat > "$WORK/bin/umount" <<EOF
 #!/bin/sh
+_p=\$(cat "$WORK/run/cadr-disk-packs.pid" 2>/dev/null)
+if [ -n "\$_p" ] && kill -0 "\$_p" 2>/dev/null; then
+	echo "\$1 was unmounted while cadr-disk-packs was still running" >> "$WORK/umount.calls"
+	echo "umount: can't unmount \$1: Device or resource busy" >&2
+	exit 1
+fi
 if [ -f "$WORK/card/clock" ]; then
 	echo "the clock was saved before \$1 was unmounted" >> "$WORK/umount.calls"
 else
 	echo "\$1 was unmounted before the clock was saved" >> "$WORK/umount.calls"
 fi
+rm -f "$WORK/mounted"
 exit 0
+EOF
+	# **A PROGRAM THAT TAKES ITS TIME TO STOP**, as cadr-disk-packs does
+	# while it writes its dirty slots back: SIGTERM, then \$SLOW seconds,
+	# then gone.  With \$DEAF=yes it ignores SIGTERM altogether, which is a
+	# program that does not stop; exec keeps the signal ignored.
+	cat > "$WORK/bin/slow-to-stop" <<EOF
+#!/bin/sh
+if [ "\${DEAF:-no}" = yes ]; then
+	trap '' TERM
+	exec sleep 30
+fi
+trap 'kill \$_w 2>/dev/null; sleep \${SLOW:-1}; exit 0' TERM
+sleep 30 &
+_w=\$!
+wait \$_w
 EOF
 	cat > "$WORK/bin/sync" <<EOF
 #!/bin/sh
@@ -310,6 +352,11 @@ prepare() {
 	anchor "$dst" "^CARD=/mnt/card\$" "CARD=$WORK/card" || return 1
 	anchor "$dst" "^FPGARC_SH=/usr/share/cadr/fpgarc.sh\$" \
 	              "FPGARC_SH=$READER" || return 1
+	# **AND THE STOPPER, WHICH EVERY ONE OF THE SIX SOURCES**, ozd
+	# included: `start-stop-daemon -K` does not wait, and a script that
+	# stops its program without this has gone back to not waiting.
+	anchor "$dst" "^STOP_SH=/usr/share/cadr/stop.sh\$" \
+	              "STOP_SH=$STOPPER" || return 1
 	# **THE DAEMON STARTER IS NOT EVERY SCRIPT'S.**  Five of the six are
 	# our own programs and every one of them is started through
 	# `cadr_daemon`, which is what makes a refused flag loud.  ozd is not
@@ -377,6 +424,9 @@ prepare() {
 		# beside the reader and the daemon starter.
 		anchor "$dst" "^CLOCK_SH=/usr/share/cadr/clock.sh\$" \
 		              "CLOCK_SH=$CLOCKSH" || return 1
+		# Three seconds rather than thirty, so the case of a program that
+		# does not stop is three seconds of this check and not thirty.
+		anchor "$dst" "^PACKS_STOP_SECONDS=30\$" "PACKS_STOP_SECONDS=3" || return 1
 		;;
 	esac
 	return 0
@@ -2367,6 +2417,7 @@ case_head "a clean shutdown saves the clock, before the partition is unmounted"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 20260920143805 > "$WORK/now"
+	: > "$WORK/mounted"
 	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
 	if [ "$(cat "$WORK/card/clock" 2>/dev/null)" = 20260920143805 ]; then
@@ -2393,6 +2444,7 @@ case_head "and the next boot starts where the last shutdown left off"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 20260920143805 > "$WORK/now"
+	: > "$WORK/mounted"
 	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
 	# The board comes up at the epoch, as it really does with no real-time
@@ -2406,6 +2458,125 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 		fail "the board's clock reads [$(cat "$WORK/now")] afterwards"
 	fi
 fi
+
+# **STOP WAITS FOR THE PROGRAM.**  `start-stop-daemon -K` sends SIGTERM and
+# returns at once, and cadr-disk-packs spends the time after SIGTERM writing
+# the machine's dirty blocks back to its packs.  The script used to save the
+# clock and unmount the card straight after `-K`, racing that write-back, and
+# sent the unmount's refusal to /dev/null.  The stand-in here takes a second
+# to go after SIGTERM, and the stubbed `umount` refuses, as the real one does,
+# while it is still there.
+case_head "stop waits for the pack program to finish before it saves the clock and unmounts"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 20260920143805 > "$WORK/now"
+	: > "$WORK/mounted"
+	SLOW=1 "$WORK/bin/slow-to-stop" &
+	_slow=$!
+	echo "$_slow" > "$WORK/run/cadr-disk-packs.pid"
+	sleep 1
+	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
+	if kill -0 "$_slow" 2>/dev/null; then
+		fail "the pack program was still running when stop returned"
+		kill -9 "$_slow" 2>/dev/null
+	else
+		ok "the pack program had exited when stop returned"
+	fi
+	if grep -q "^the clock was saved before $WORK/card was unmounted\$" "$WORK/umount.calls" \
+	   && ! grep -q "still running" "$WORK/umount.calls"; then
+		ok "and the card was unmounted after it, with the clock saved first"
+	else
+		fail "the card was not unmounted after the program had gone: $(cat "$WORK/umount.calls")"
+	fi
+	if grep -q "Stopping cadr-disk-packs: OK" "$WORK/out.stop" \
+	   && ! grep -q "NOT UNMOUNTED" "$WORK/out.stop"; then
+		ok "and the console says OK and nothing else went wrong"
+	else
+		fail "the console does not say a clean stop; it says:"
+		sed 's/^/        /' "$WORK/out.stop"
+	fi
+fi
+
+# And the other side: a program that does not go.  It is said by name and
+# left running, because a kill would lose the blocks it is writing; the clock
+# is saved anyway; and the unmount that then fails is said, where it was
+# once hidden.
+says_stop() {
+	if grep -qF -- "$1" "$WORK/out.stop"; then
+		ok "the console says: $1"
+	else
+		fail "the console does not say [$1]; it says:"
+		sed 's/^/        /' "$WORK/out.stop"
+	fi
+}
+case_head "a pack program that will not stop is said, and so is the unmount that fails"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 20260920143805 > "$WORK/now"
+	: > "$WORK/mounted"
+	DEAF=yes "$WORK/bin/slow-to-stop" &
+	_deaf=$!
+	echo "$_deaf" > "$WORK/run/cadr-disk-packs.pid"
+	sleep 1
+	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
+	echo "$?" > "$WORK/status.stop"
+	kill -9 "$_deaf" 2>/dev/null
+	says_stop "Stopping cadr-disk-packs: FAIL"
+	says_stop "cadr-disk-packs: still running 3 s after it was asked to stop (pid $_deaf); it was left running"
+	says_stop "cadr-clock: 2026-09-20 14:38:05 UTC saved"
+	says_stop "cadr-disk-packs: $WORK/card WAS NOT UNMOUNTED"
+	says_stop "Device or resource busy"
+	if [ "$(cat "$WORK/status.stop")" != 0 ]; then
+		ok "and stop says so in its status"
+	else
+		fail "stop returned 0 with the card still mounted"
+	fi
+fi
+
+# And a board with no card: nothing is mounted, so nothing is unmounted and
+# nothing is said about it.
+case_head "a board with no card mounted has nothing to unmount and says nothing about it"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" stop > "$WORK/out.stop" 2>&1
+	if [ -s "$WORK/umount.calls" ] || grep -q "UNMOUNTED" "$WORK/out.stop"; then
+		fail "an unmounted card was unmounted or complained about: $(cat "$WORK/umount.calls")"
+		sed 's/^/        /' "$WORK/out.stop"
+	else
+		ok "nothing was unmounted and nothing was said"
+	fi
+fi
+
+# **EVERY OTHER SCRIPT WAITS TOO.**  ozd holds files open on the card that
+# the disk pack script unmounts after it, and a `restart` that starts a program
+# while the old one still holds its port starts nothing.  The shutdown runs
+# the scripts in reverse order, so each program must be gone by the time its
+# script returns.
+for pair in "ozd S84ozd" "cadr-terminal S85cadr-terminal" "cadr-serial S86cadr-serial" \
+            "cadr-chaosnet S87cadr-chaosnet" "cadr-usb-input S88cadr-usb-input"; do
+	set -- $pair
+	case_head "$2 stop waits for $1 to exit"
+	sandbox
+	if prepare "$1" "$2"; then
+		SLOW=1 "$WORK/bin/slow-to-stop" &
+		_slow=$!
+		echo "$_slow" > "$WORK/run/$1.pid"
+		sleep 1
+		PATH="$WORK/bin:$PATH" "$WORK/$2" stop > "$WORK/out.stop" 2>&1
+		if kill -0 "$_slow" 2>/dev/null; then
+			fail "$1 was still running when $2 stop returned"
+			kill -9 "$_slow" 2>/dev/null
+		else
+			ok "$1 had exited when $2 stop returned"
+		fi
+		if grep -q "Stopping $1: OK" "$WORK/out.stop"; then
+			ok "and the console says OK"
+		else
+			fail "the console does not say Stopping $1: OK; it says:"
+			sed 's/^/        /' "$WORK/out.stop"
+		fi
+	fi
+done
 
 # ---------------------------------------------------------------------------
 # 6.  The card script writes the line, commented out unless asked.

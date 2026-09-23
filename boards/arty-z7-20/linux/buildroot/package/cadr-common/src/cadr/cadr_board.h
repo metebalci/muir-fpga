@@ -52,8 +52,10 @@
 // The system manager is at 0x10D1_2000 and GPI is its register 0xE8
 // (TF-A's plat/intel/soc/agilex5/include/socfpga_plat_def.h:78 and
 // agilex5_system_manager.h:54).  Those are this project's decisions for the
-// board, PROVISIONAL until the board is up; the fabric's side of every one of
-// them is the DE25-Nano's top level's.
+// board, and the board runs on them.  The fabric's side of every one of them
+// is the DE25-Nano's top level's, and two checks hold the sides together:
+// `tools/de25_faces_check.py` for the faces and `tools/mem_map_check.py` for
+// the memory, the reserved-memory node and U-Boot's GPO register.
 //
 // **THE GUARD ON THE DE25-Nano READS ONE WORD WHERE THE ZYNQ READS TWO.**  The
 // tally the fabric presents is `rtl/plumbing/cadr_mem_count.sv`'s, sixty-four
