@@ -40,15 +40,31 @@
 //              side 1 and the display 2.  The responses are routed by it.
 //   AxLOCK, AxQOS, AxREGION, WUSER    zero.
 //
-// **BY BURST, AND ONE BURST IN FLIGHT PER MASTER AND DIRECTION.**  A master is
-// granted a whole transaction, and it has no second one granted until the
-// first has been answered: its last read beat, or its write response.  That is
-// the whole of the bound this module keeps, and the arithmetic is simple.
-// When the machine asks, what stands between it and its answer is at most
-// the one burst each other master already has in flight, in each direction,
-// and the presentation of one address already on the bus.  The machine's own
-// cycles are single beats, one at a time, so it never has more than one in
-// flight anyway.
+// **BY BURST, AND AT MOST ONE BURST'S WORTH IN FLIGHT PER MASTER AND
+// DIRECTION.**  A master is granted a whole transaction.  Its writes are one at
+// a time: no second write is granted until the first has its response.  Its
+// reads are counted in BEATS: a read is granted only while the beats of that
+// master's reads still to come, with this one's added, are no more than
+// sixteen, `CAP`, which is one full burst.  So a master streaming sixteen-beat
+// bursts --- the pack side, and the display upright --- still has one in
+// flight, and a master asking for single beats --- the display's rotated band
+// fetch, one word out of each source row --- may have as many as it has asked
+// for, up to sixteen.  That is the whole of the bound this module keeps, and
+// the arithmetic is the same as with one burst: when the machine asks, what
+// stands between it and its answer is at most one burst's worth of beats that
+// each other master already has in flight, in each direction, and the
+// presentation of one address already on the bus.  The machine's own cycles
+// are single beats, one at a time, so it never has more than one in flight
+// anyway.
+//
+// **WHY BEATS AND NOT BURSTS.**  With one read in flight per master, the
+// display's rotated fetch waits a whole round trip of the memory for every
+// word, and a band of 963 words does not arrive in the 32 raster lines it has:
+// `docs/display-output.md` says one at a time does not finish in time, and
+// `build/display_share.pass` measures it, the rotated pictures going black at
+// a round trip of 40 clocks behind a share that let one through.  Counting
+// beats gives the display what its own `OUTSTANDING` asks for without letting
+// any master put more in front of the machine than one burst did.
 //
 // **THE MACHINE IS FIRST, AND WHILE IT IS ASKING NOTHING NEW IS GRANTED TO
 // ANYBODY ELSE.**  Priority by port alone is not enough, and that was
@@ -69,9 +85,9 @@
 // fraction of a port they have in hand.
 //
 // Priority by port is still the tie-break among the rest: the pack side is 1
-// and the display 2, and the one-in-flight rule is what keeps that from
-// starving the display, since the pack side cannot be granted again until its
-// burst is answered.
+// and the display 2, and the cap on beats in flight is what keeps that from
+// starving the display, since the pack side's sixteen-beat bursts fill it and
+// it cannot be granted again until its burst is answered.
 //
 // **A GRANT IS A REGISTER AND NOT A WIRE.**  A master that is granted keeps the
 // bus until its address has been taken, because AXI does not allow a valid
@@ -93,10 +109,12 @@
 //
 // There is no muir reference for any of this, as there is none for the AXI
 // adapter.  `tb/cadr_f2sdram_tb.cpp` holds it: the machine's boot PROM through
-// it against a model of the bridge, the rules above on every transaction, and
-// how much a machine cycle may grow with the other two ports streaming ---
-// 27 ticks, measured, against a ceiling of 35 that the one-in-flight rule and
-// the hold put on it.
+// it against a model of the bridge, the rules above on every transaction, what
+// each of the three masters is handed against what the bridge gave, and how
+// much a machine cycle may grow with the other two ports streaming --- 29
+// ticks, measured, against a ceiling of 35 that the one-burst's-worth rule and
+// the hold put on it.  `tb/cadr_display_out_tb.cpp`, built behind this module
+// as `build/display_share.pass`, holds the display's several reads in flight.
 
 `default_nettype none
 
@@ -212,11 +230,24 @@ module cadr_f2sdram_share #(
   assign eligible = machine_busy ? {{(N-1){1'b0}}, 1'b1} : {N{1'b1}};
 
   // --------------------------------------------------------------- reads
+  //
+  // The most beats of reads one master may have in flight: one full burst.
+  // See the header.
+  localparam int unsigned CAP = 16;
+
   logic          ar_on;        // an address is being put to the bridge
   logic [IW-1:0] ar_who;
+  logic [N-1:0][4:0] rd_beats; // beats of this master's reads still to come
   logic [N-1:0]  rd_out;       // a read of this master's is outstanding
+  logic [N-1:0]  ar_fits;      // its next read keeps it within `CAP`
   logic [N-1:0]  ar_can;
-  assign ar_can = (s_arvalid & ~rd_out) & eligible;
+  always_comb begin
+    for (int i = 0; i < N; i++) begin
+      rd_out[i]  = (rd_beats[i] != 5'd0);
+      ar_fits[i] = (6'(rd_beats[i]) + 6'(s_arlen[i]) + 6'd1) <= 6'(CAP);
+    end
+  end
+  assign ar_can = (s_arvalid & ar_fits) & eligible;
 
   assign m_arvalid  = ar_on;
   assign m_arid     = 5'(ar_who);
@@ -289,7 +320,7 @@ module cadr_f2sdram_share #(
     if (rst) begin
       ar_on   <= 1'b0;
       ar_who  <= '0;
-      rd_out  <= '0;
+      rd_beats <= '0;
       w_on    <= 1'b0;
       w_who   <= '0;
       aw_done <= 1'b0;
@@ -303,8 +334,7 @@ module cadr_f2sdram_share #(
           ar_who <= first(ar_can);
         end
       end else if (m_arready) begin
-        ar_on          <= 1'b0;
-        rd_out[ar_who] <= 1'b1;
+        ar_on <= 1'b0;
       end
 
       // The write: granted, its address and its data presented together,
@@ -325,11 +355,21 @@ module cadr_f2sdram_share #(
         end
       end
 
-      // The answers.  A response cannot arrive in the tick its transaction
-      // was taken, so these never meet the two settings above for the same
-      // master.
+      // The reads' beats: the burst's length added when its address is
+      // taken, and one taken away for every beat that comes back for that
+      // master, both in one tick when they meet --- which they do, a master
+      // with a read streaming back being granted its next.
       for (int i = 0; i < N; i++) begin
-        if (m_rvalid && m_rready && m_rlast && r_mine[i]) rd_out[i] <= 1'b0;
+        rd_beats[i] <= rd_beats[i]
+                       + ((ar_on && m_arready && (ar_who == IW'(i)))
+                              ? 5'(s_arlen[i]) + 5'd1 : 5'd0)
+                       - ((m_rvalid && m_rready && r_mine[i]) ? 5'd1 : 5'd0);
+      end
+
+      // The write answers.  A response cannot arrive in the tick its
+      // transaction was taken, so this never meets the setting above for the
+      // same master.
+      for (int i = 0; i < N; i++) begin
         if (m_bvalid && m_bready && b_mine[i]) wr_out[i] <= 1'b0;
       end
     end

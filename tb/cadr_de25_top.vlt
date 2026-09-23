@@ -1,0 +1,8 @@
+`verilator_config
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The one net inside `boards/de25-nano/cadr_de25.sv` that
+// `tb/cadr_de25_top_tb.cpp` reads by name: the enable of the gate on the
+// forwarded pixel clock.  Its header says why no pin can show it.
+public_flat_rd -module "cadr_de25" -var "pclk_on"

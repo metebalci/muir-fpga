@@ -1251,15 +1251,15 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
-    # The DE25-Nano's top level, the first board built by Quartus, and lint
-    # alone for the same reason `arty` is: its PLL is generated at build time
-    # and its reset release is a primitive Quartus supplies, so neither can be
-    # run.  What lint holds is the port list and the fold, as there, and the
-    # few wires only this board has: the reset release reaching the PLL, KEY1
-    # reaching the fabric's reset and SW0 reaching the machine.  TWO BOARD
-    # CONFIGURATIONS, the plain one and `PROBE_DEPTH=1024`, whose generate arm
-    # a lint of the default never elaborates; and its own stubs, which
-    # `de25_check` puts first.
+    # The DE25-Nano's top level, the first board built by Quartus.  Its PLL is
+    # generated at build time and its reset release is a primitive Quartus
+    # supplies, so it cannot be run as it is built.  What lint holds is the
+    # port list and the fold, as for `arty`, in FOUR BOARD CONFIGURATIONS,
+    # each a generate arm or a define the others never elaborate, with its
+    # own stubs, which `de25_check` puts first.  AND THEN THE TOP LEVEL
+    # SIMULATED around shells of those pieces, which is what holds which wire
+    # goes where: measured, lint passed eleven crossed or inverted wires of this
+    # board, and the simulation fails every one.
     "de25": {
         "kind": "lint",
         "sources": ["boards/de25-nano/cadr_de25.sv"],
@@ -1297,6 +1297,20 @@ CHECKS = {
         # `adv7513`.  The encoder and the serializers have no counterpart
         # here: the ADV7513 does both.
         "hdmi": ["rtl/plumbing/cadr_display_out.sv", "rtl/plumbing/cadr_adv7513.sv"],
+        # **AND THE TOP LEVEL SIMULATED**, as `build/de25.pass` runs it after
+        # the four lints: the whole board around the shells in the first two
+        # files, with `tb/cadr_de25_top_tb.cpp` as the processor, its memory
+        # and the transmitter's bus.  Lint cannot tell a crossed pair of wires
+        # from a straight one; this can.  The debug cable's four modules are
+        # named here and not left to the include path, because this is a
+        # build and not a lint.
+        "sim": ["tb/cadr_de25_top.vlt", "tb/cadr_de25_sim_stubs.sv",
+                "rtl/plumbing/cadr_ddr_map.sv", "boards/de25-nano/cadr_de25.sv",
+                "rtl/plumbing/cadr_lamp_clock.sv", "rtl/plumbing/cadr_lamp_microcycle.sv",
+                "rtl/plumbing/cadr_lamp_errhalt.sv",
+                "rtl/plumbing/cadr_dbg_tx.sv", "rtl/plumbing/cadr_dbg_rx.sv",
+                "rtl/plumbing/cadr_dbg_join.sv", "rtl/plumbing/cadr_dbg_cable.sv"],
+        "sim_tb": "tb/cadr_de25_top_tb.cpp",
         "top": "cadr_de25",
         "tb": None,
         "flags": [],
@@ -1459,6 +1473,21 @@ CHECKS = {
                   "-GPIC_W=64", "-GPIC_H=6", "-GWORDS_PER_LINE=2",
                   "-GCPIC_W=16", "-GCPIC_H=4", "-GCWORDS_PER_LINE=2",
                   "-GMONO_ENTRIES=16", "-GCOLOR_ENTRIES=16", "-GSECOND_T=2000"],
+        "golden": None,
+    },
+    # The display output behind the DE25-Nano's share of one port, against a
+    # pipelined memory: the same testbench as `display_out`, built with
+    # `CADR_DISPLAY_SHARE` around `tb/cadr_display_share_harness.sv`, which is
+    # wiring and in `extra`.  Records aimed at the share's reads in flight
+    # belong here: a share that lets the display have one read at a time
+    # draws the rotated pictures black.
+    "display_share": {
+        "sources": ["rtl/plumbing/cadr_f2sdram_share.sv",
+                    "rtl/plumbing/cadr_display_out.sv"],
+        "extra": ["tb/cadr_display_share_harness.sv"],
+        "top": "cadr_display_share_harness",
+        "tb": "tb/cadr_display_out_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-CFLAGS", "-DCADR_DISPLAY_SHARE"],
         "golden": None,
     },
     "hdmi_tx": {
@@ -2435,11 +2464,13 @@ def script_check(args, work, spec):
 
 
 def de25_check(args, work, build_fails=False):
-    """The DE25-Nano's top level, linted, as `build/de25.pass` lints it.
+    """The DE25-Nano's top level, linted and then simulated, as
+    `build/de25.pass` does both.
 
     Lint failing is the mutation being caught, and a mutant that does not
     compile is BROKEN, which `lint_verdict` decides exactly as it does for
-    `arty`.  The copy must have the board's files: `--since` names revisions
+    `arty`.  After the lints, the simulation failing is the mutation being
+    caught, and its build failing is BROKEN.  The copy must have the board's files: `--since` names revisions
     older than this board, and there the check has nothing to lint.
     """
     spec = CHECKS["de25"]
@@ -2485,7 +2516,25 @@ def de25_check(args, work, build_fails=False):
                   work)
     if rc != 0:
         return lint_verdict(out, build_fails)
-    return SURVIVED, "lint passes on all four board configurations"
+    # And the top level simulated, as `build/de25.pass` runs it last.  A copy
+    # from before the simulation existed has only the lints to say anything.
+    sim = spec["sim"] + [spec["sim_tb"]]
+    if not all(os.path.exists(os.path.join(work, f)) for f in sim):
+        return SURVIVED, "lint passes on all four board configurations"
+    obj = os.path.join(work, "obj_de25_top")
+    rc, out = run([args.verilator, "--cc", "--exe", "--build", "-Wall",
+                   "--pins-inout-enables", "-O2", "-CFLAGS", "-O2",
+                   "-Irtl/machine", "-Irtl/plumbing", "-DCADR_DDR_MAP_DE25_NANO",
+                   "-DCADR_DE25_DDR", "-DCADR_DE25_HDMI", "-Mdir", obj,
+                   "--top-module", "cadr_de25"]
+                  + spec["sim"][:2] + tick_pkg(work) + spec["sim"][2:] + ddr + hdmi
+                  + [os.path.join(work, spec["sim_tb"])], work)
+    if rc != 0:
+        return BROKEN, first_problem(out)
+    rc, out = run([os.path.join(obj, "Vcadr_de25")], work)
+    if rc != 0:
+        return CAUGHT, first_problem(out)
+    return SURVIVED, "lint passes on all four board configurations, and the simulation agrees"
 
 
 def generator_check(args, work, spec):

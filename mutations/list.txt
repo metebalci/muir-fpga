@@ -3133,22 +3133,24 @@
 @note moved not one number of the check, which is why the design has the hold
 @note and this record is aimed at it.
 @old
-  assign ar_can = (s_arvalid & ~rd_out) & eligible;
+  assign ar_can = (s_arvalid & ar_fits) & eligible;
 @new
-  assign ar_can = (s_arvalid & ~rd_out) & (machine_busy ? {N{1'b1}} : eligible);
+  assign ar_can = (s_arvalid & ar_fits) & (machine_busy ? {N{1'b1}} : eligible);
 @end
 
 @mutation f2sdram-a-master-may-have-two-bursts-in-flight
 @check f2sdram
 @file rtl/plumbing/cadr_f2sdram_share.sv
-@note One burst in flight per master and direction is the whole of what bounds a
-@note machine cycle: what the machine waits for is what was already accepted when
-@note it asked.  Without the outstanding bit, a streaming master queues as many as
-@note the bridge will take and the machine waits behind all of them.
+@note A burst's worth of reads in flight per master, and one write, is the whole
+@note of what bounds a machine cycle: what the machine waits for is what was
+@note already accepted when it asked.  Without the limit, a streaming master
+@note queues as many as the bridge will take and the machine waits behind all
+@note of them.  The limit is ORed away rather than deleted, so that lint does
+@note not do the catching.
 @old
-  assign ar_can = (s_arvalid & ~rd_out) & eligible;
+  assign ar_can = (s_arvalid & ar_fits) & eligible;
 @new
-  assign ar_can = s_arvalid & eligible;
+  assign ar_can = (s_arvalid & (ar_fits | {N{1'b1}})) & eligible;
 @end
 
 @mutation f2sdram-the-write-data-need-not-finish
@@ -18149,4 +18151,351 @@ set MAIN_BASE   0x1C000000
     if (rst || drain) may_start <= 1'b0;
 @new
     if (rst) may_start <= 1'b0;
+@end
+
+# ------------------------------------------------------------------------
+# What the DE25-Nano's checks were measured missing, and what now catches it.
+# A review ran twenty-seven mutations of the board's plumbing against the
+# checks and twenty-one survived; each is here under the check that now
+# catches it, with the new behaviors the fixes added.  `f2sdram` compares what
+# the pack side and the display are handed, answers with errors, offers a
+# write at a held port and resets the processor; `de25` simulates the top
+# level after linting it; `adv7513` refuses each byte of a write in turn;
+# `display_share` runs the display behind the share against a pipelined
+# memory.
+# ------------------------------------------------------------------------
+
+@mutation f2sdram-the-pack-sides-beat-is-written-with-one-bit-flipped
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note Every beat of the pack side's writes carries bit 0 inverted, and the
+@note machine's are unchanged.  Nothing compared the pack side's data at the
+@note bridge; BUSY and HANDSHAKE now hold every beat it writes to the word it
+@note put up, at its own address.
+@old
+  assign m_wdata  = s_wdata[w_who];
+@new
+  assign m_wdata  = s_wdata[w_who] ^ ((w_who == IW'(1)) ? 64'd1 : 64'd0);
+@end
+
+@mutation f2sdram-the-other-masters-read-data-is-inverted
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note Every master but the machine is handed its read beats inverted.  Caught
+@note by the comparison of every read beat the pack side and the display take
+@note with the one the bridge gave.
+@old
+      s_rdata[i]   = m_rdata;
+@new
+      s_rdata[i]   = (i == 0) ? m_rdata : ~m_rdata;
+@end
+
+@mutation f2sdram-a-long-read-burst-is-cut-to-eight
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note ARLEN loses its top bit, so a sixteen-beat read of the pack side or the
+@note display becomes eight beats; the machine's one-beat reads are unchanged.
+@note Caught by the bridge being asked for a length its master did not ask for,
+@note and by RLAST arriving on the eighth beat of a sixteen-beat burst.
+@old
+  assign m_arlen    = {4'd0, s_arlen[ar_who]};
+@new
+  assign m_arlen    = {4'd0, s_arlen[ar_who] & 4'h7};
+@end
+
+@mutation f2sdram-a-read-error-reaches-a-master-as-exokay
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note RRESP's two bits crossed: a slave error, 10, reaches a master as EXOKAY,
+@note 01.  The bridge model answered OKAY to everything, so nothing could see
+@note it; it now gives slave and decode errors at addresses its own rule picks,
+@note and every answer a master takes is compared with the one given.
+@old
+      s_rresp[i]   = m_rresp;
+@new
+      s_rresp[i]   = {m_rresp[0], m_rresp[1]};
+@end
+
+@mutation f2sdram-a-write-error-reaches-a-master-as-exokay
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The write side of the record above: BRESP's two bits crossed.
+@old
+      s_bresp[i]   = m_bresp;
+@new
+      s_bresp[i]   = {m_bresp[0], m_bresp[1]};
+@end
+
+@mutation f2sdram-the-machines-hold-ends-when-its-address-is-taken
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The hold on the other masters lasts only while the machine's valid
+@note stands, not until its answer is back.  BUSY's bound saw this at one phase
+@note of the machine against the others and not at another; what catches it at
+@note every phase is the hold seen at the bridge: no other master's address is
+@note new while a transaction of the machine's is waiting for its answer.
+@old
+  assign machine_busy = s_arvalid[0] || s_awvalid[0] || rd_out[0] || wr_out[0];
+@new
+  assign machine_busy = s_arvalid[0] || s_awvalid[0];
+@end
+
+@mutation f2sdram-a-write-grant-ignores-the-hold
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The write side of `f2sdram-a-grant-ignores-the-hold`.  No write was ever
+@note offered at a held port that was not yet idle; HANDSHAKE now runs the pack
+@note side's writes as a master of their own and holds a read address on the
+@note bus across the request, so one is.
+@old
+        if (!hold && (aw_can != '0)) begin
+@new
+        if (aw_can != '0) begin
+@end
+
+@mutation f2sdram-idle-ignores-an-address-on-the-bus
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The share reports idle while a read address still stands on the bus, so
+@note the gate resets it with ARVALID up: an address withdrawn.  HANDSHAKE's
+@note bridge takes no read address across the request, so one stands there
+@note when everything else has drained, and the withdrawal is seen.
+@old
+  assign idle = !ar_on && !w_on && (rd_out == '0) && (wr_out == '0);
+@new
+  assign idle = !w_on && (rd_out == '0) && (wr_out == '0);
+@end
+
+@mutation f2sdram-a-reads-beats-are-all-counted-at-its-first
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note A master's reads in flight are counted in beats, and one comes off for
+@note each beat that comes back.  Cleared at any beat instead, a master may be
+@note granted its next burst while the first still streams, and has two
+@note bursts' worth at the bridge.
+@old
+        rd_beats[i] <= rd_beats[i]
+                       + ((ar_on && m_arready && (ar_who == IW'(i)))
+                              ? 5'(s_arlen[i]) + 5'd1 : 5'd0)
+                       - ((m_rvalid && m_rready && r_mine[i]) ? 5'd1 : 5'd0);
+@new
+        rd_beats[i] <= (m_rvalid && m_rready && r_mine[i]) ? 5'd0
+                       : rd_beats[i]
+                       + ((ar_on && m_arready && (ar_who == IW'(i)))
+                              ? 5'(s_arlen[i]) + 5'd1 : 5'd0);
+@end
+
+@mutation f2sdram-a-reads-beats-are-counted-by-the-burst
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note One comes off the count only at a burst's last beat, so a sixteen-beat
+@note burst leaves fifteen behind it for ever and its master is never granted
+@note again.
+@old
+                       - ((m_rvalid && m_rready && r_mine[i]) ? 5'd1 : 5'd0);
+@new
+                       - ((m_rvalid && m_rready && m_rlast && r_mine[i]) ? 5'd1 : 5'd0);
+@end
+
+@mutation f2sdram-a-master-may-have-two-bursts-worth-in-flight
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The cap on a master's reads in flight is one full burst, sixteen beats,
+@note which is what keeps the machine's bound what it was with one burst in
+@note flight.  At thirty-two the display has two of its sixteen-beat bursts at
+@note the bridge in front of the machine.
+@old
+  localparam int unsigned CAP = 16;
+@new
+  localparam int unsigned CAP = 32;
+@end
+
+@mutation the-processors-reset-waits-for-quiet
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The processor's own reset resets the bridge, so it must put the port into
+@note reset at once; here it only holds it and waits for idle, as a request for
+@note quiet does, and a read the reset bridge will never answer keeps it waiting
+@note for ever.  HANDSHAKE now resets the processor under the other masters with
+@note a read in flight.
+@old
+    port_rst <= hps_rst || (hold && idle);
+@new
+    port_rst <= (hold && idle);
+@end
+
+@mutation display-share-the-display-has-one-read-at-a-time
+@check display_share
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The rule the share had before it counted beats: a master has no read
+@note granted while one of its own is outstanding.  The rotated band fetch is
+@note single beats, and at a pipelined round trip of forty clocks one at a time
+@note draws the rotated pictures black.
+@old
+      ar_fits[i] = (6'(rd_beats[i]) + 6'(s_arlen[i]) + 6'd1) <= 6'(CAP);
+@new
+      ar_fits[i] = (rd_beats[i] == 5'd0) && ((6'(s_arlen[i]) + 6'd1) <= 6'(CAP));
+@end
+
+@mutation de25-the-open-bit-and-the-half-bit-are-crossed
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note h2f_gp_out bits 0 and 1 swapped at the memory port: software's open does
+@note not open the port, and the tally's select opens it.  Lint passes it; the
+@note simulation writes the select bit alone and then the open bit.
+@old
+      .h2f_reset(h2f_reset), .gp_open(gp_out[0]), .gp_half(gp_out[1]),
+@new
+      .h2f_reset(h2f_reset), .gp_open(gp_out[1]), .gp_half(gp_out[0]),
+@end
+
+@mutation de25-the-memory-port-never-sees-the-processors-reset
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The memory port's h2f_reset tied low; the bridges still get the real one.
+@note The simulation resets the processor and watches LEDR6 go dark.
+@old
+      .h2f_reset(h2f_reset), .gp_open(gp_out[0]), .gp_half(gp_out[1]),
+@new
+      .h2f_reset(1'b0), .gp_open(gp_out[0]), .gp_half(gp_out[1]),
+@end
+
+@mutation de25-the-memory-port-is-reset-by-the-machine-top
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The port takes the machine's reset, which the hold raises until the port
+@note has been live, which the port's own reset prevents: the machine and its
+@note memory wait for each other for ever.
+@old
+  cadr_f2sdram_port u_memory (
+      .clk(clk), .rst(rst),
+@new
+  cadr_f2sdram_port u_memory (
+      .clk(clk), .rst(mach_rst),
+@end
+
+@mutation de25-the-machine-is-reset-whenever-the-port-shuts-top
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The hold follows the port's level as well as the latch, which the gate's
+@note header says it must not: a processor reset resets the running machine.
+@old
+  assign mach_hold = !may_start;
+@new
+  assign mach_hold = !may_start || !port_live;
+@end
+
+@mutation de25-key0-is-read-the-wrong-way-up
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note KEY0 reads low while pressed; taken without the inversion, -BOOT2 is held
+@note down while nobody touches the button.
+@old
+    btn0_sync <= {btn0_sync[0], !btn[0]};
+@new
+    btn0_sync <= {btn0_sync[0], btn[0]};
+@end
+
+@mutation de25-sw0-is-read-the-wrong-way-up
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note SW0 inverted: the no-auto-boot hold takes the other switch position.
+@old
+    sw0_sync  <= {sw0_sync[1:0], sw[0]};
+@new
+    sw0_sync  <= {sw0_sync[1:0], !sw[0]};
+@end
+
+@mutation de25-hsync-and-vsync-are-crossed
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The two syncs to the ADV7513 swapped at their registers.
+@old
+    vid_hs <= disp_hsync;
+    vid_vs <= disp_vsync;
+@new
+    vid_hs <= disp_vsync;
+    vid_vs <= disp_hsync;
+@end
+
+@mutation de25-red-and-blue-are-crossed
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The bus order the ADV7513's 0x16 setting names, red in the top byte,
+@note reversed.  The simulation shows the color board with a map entry whose
+@note three channels differ.
+@old
+    vid_d  <= {disp_red, disp_green, disp_blue};
+@new
+    vid_d  <= {disp_blue, disp_green, disp_red};
+@end
+
+@mutation de25-the-transmitter-is-rewritten-on-sleep-not-wake
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The restart edge is the rise of asleep rather than its fall.  The
+@note simulation counts the program's writes on the two wires across a sleep
+@note and a wake.
+@old
+  assign hdmi_wake_edge = asleep_q && !disp_asleep;
+@new
+  assign hdmi_wake_edge = !asleep_q && disp_asleep;
+@end
+
+@mutation de25-the-clock-gate-moves-on-the-rising-edge
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The forwarded clock's enable taken on the rising edge: a runt pulse to the
+@note part whenever mute moves.  No pin shows it in a simulation without
+@note delays, so the simulation reads the enable by name and holds it to moving
+@note only while the clock is low.
+@old
+  always_ff @(negedge pclk) pclk_on <= !disp_mute;
+@new
+  always_ff @(posedge pclk) pclk_on <= !disp_mute;
+@end
+
+@mutation de25-two-lamps-are-crossed
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note ERRHALT and disk activity on each other's LED.  The simulation drives the
+@note machine's outputs one at a time and reads the whole row each time.
+@old
+  assign led = ~{1'b0, port_live, promenable, errhalt_lit,
+                 disk_lit, cycle_lamp, clock_lamp, machrun_lamp};
+@new
+  assign led = ~{1'b0, port_live, promenable, disk_lit,
+                 errhalt_lit, cycle_lamp, clock_lamp, machrun_lamp};
+@end
+
+@mutation adv7513-a-refused-address-is-talked-past
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note A refusal of the address byte is ignored and the register byte sent
+@note anyway.  The check refused only a register byte; it now refuses each of
+@note the three bytes of a write in turn.
+@old
+              if (ack_bad) begin
+                // Report it and stop, with a stop so the bus is not left
+@new
+              if (ack_bad && byteno != 2'd0) begin
+                // Report it and stop, with a stop so the bus is not left
+@end
+
+@mutation adv7513-a-refused-value-is-counted-as-written
+@check adv7513
+@file rtl/plumbing/cadr_adv7513.sv
+@note A refusal of the value byte counts the write and carries on.
+@old
+              if (ack_bad) begin
+                // Report it and stop, with a stop so the bus is not left
+                // hung.  `failed` is raised when the stop is through.
+                state <= S_STOP;
+              end else if (byteno == 2'd2) begin
+@new
+              if (ack_bad && byteno != 2'd2) begin
+                // Report it and stop, with a stop so the bus is not left
+                // hung.  `failed` is raised when the stop is through.
+                state <= S_STOP;
+              end else if (byteno == 2'd2) begin
 @end

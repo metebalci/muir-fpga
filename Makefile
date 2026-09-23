@@ -84,6 +84,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass $(BUILD)/chaos_cable.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass $(BUILD)/color_tv.pass \
        $(BUILD)/display_out.pass $(BUILD)/display_sleep.pass \
+       $(BUILD)/display_share.pass \
        $(BUILD)/hdmi_tx.pass $(BUILD)/adv7513.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass $(BUILD)/dbg_cable.pass \
@@ -1809,11 +1810,13 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 # ------------------------------------------------ the DE25-Nano's top level
 #
 # `boards/de25-nano/cadr_de25.sv` is the first board built by Quartus, and
-# like the two Zynq boards it cannot be simulated: its PLL is generated at
-# build time and its reset release is a primitive Quartus supplies.  So this
-# is its lint, and what lint holds is the same as `arty.pass` holds there ---
-# that every output of `cadr_machine` reaches the instance and the fold, and
-# that nothing in the top level is left undriven or unread.
+# like the two Zynq boards it cannot be simulated as it is built: its PLL is
+# generated at build time and its reset release is a primitive Quartus
+# supplies.  So this is first its lint, and what lint holds is the same as
+# `arty.pass` holds there --- that every output of `cadr_machine` reaches the
+# instance and the fold, and that nothing in the top level is left undriven or
+# unread --- and then the top level simulated around shells of those pieces,
+# which is what holds its wiring; the rule below the lint has that.
 #
 # THREE BOARDS, THE PLAIN ONE, THE PROBE'S AND THE MEMORY BOARD.  `PROBE_DEPTH`
 # is a parameter and `CADR_DE25_DDR` a define, because the memory board has
@@ -1827,7 +1830,8 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 # **ITS STUBS ARE ITS OWN**, `tb/cadr_de25_stubs.sv`, and in `tb/` for the
 # reason `tb/cadr_arty_stubs.sv` gives.  The Quartus flow is `make de25`,
 # outside `check`, because it needs Quartus and about eight minutes.
-$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) tb/cadr_de25_stubs.sv | $(BUILD)
+$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) tb/cadr_de25_stubs.sv \
+                   $(BUILD)/obj_de25_top/Vcadr_de25 | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
@@ -1850,7 +1854,28 @@ $(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
 	    $(DE25_DDR) $(DE25_HDMI)
+	$(BUILD)/obj_de25_top/Vcadr_de25
 	@touch $@
+
+# **AND THE TOP LEVEL SIMULATED, WHICH IS WHAT HOLDS ITS WIRING.**  Lint holds
+# that every port is connected; it cannot tell a crossed pair of wires of one
+# width from a straight one, and measured, eleven such faults of this board
+# passed it.  So the whole board --- `CADR_DE25_DDR` and `CADR_DE25_HDMI` --- is
+# built around the shells in `tb/cadr_de25_sim_stubs.sv`, with the machine a
+# shell too, and `tb/cadr_de25_top_tb.cpp` is the processor, its memory, the
+# transmitter's bus, the buttons and a person reading the lamps and the video
+# pins.  Its header has what it holds and why each shell is safe.  Part of
+# `de25.pass`, so that the mutation runner's `de25` and this rule are one
+# check.  About two minutes, most of it the one second the display's sleep
+# takes to fall due.
+DE25_SIM := tb/cadr_de25_top.vlt tb/cadr_de25_sim_stubs.sv $(TICKPKG) \
+            rtl/plumbing/cadr_ddr_map.sv $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI)
+
+$(BUILD)/obj_de25_top/Vcadr_de25: $(DE25_SIM) tb/cadr_de25_top_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) --pins-inout-enables -O2 -CFLAGS -O2 \
+	    -Irtl/machine -Irtl/plumbing $(DE25_MAP) -DCADR_DE25_DDR -DCADR_DE25_HDMI \
+	    -Mdir $(BUILD)/obj_de25_top --top-module cadr_de25 $(DE25_SIM) \
+	    $(abspath tb/cadr_de25_top_tb.cpp)
 
 # THE DE25-NANO'S BITSTREAM, which needs Quartus Prime Pro and is not part of
 # `check`.  `boards/de25-nano/quartus/build.sh` says where Quartus is found
@@ -2571,6 +2596,27 @@ $(BUILD)/obj_display_sleep/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
 
 $(BUILD)/display_sleep.pass: $(BUILD)/obj_display_sleep/Vcadr_display_out
 	$(BUILD)/obj_display_sleep/Vcadr_display_out
+	@touch $@
+
+# THE DISPLAY OUTPUT BEHIND THE DE25-NANO'S SHARE OF ONE PORT: the same
+# testbench as `display_out.pass`, built with `CADR_DISPLAY_SHARE` around
+# `tb/cadr_display_share_harness.sv`, which puts the display on the third port
+# of `rtl/plumbing/cadr_f2sdram_share.sv` as the board does.  Against a memory
+# whose round trip is pipelined, every picture upright and rotated must keep
+# up and, rotated, reach the memory with more than one read in flight.  Its
+# header in the testbench has the figure and what was measured either side of
+# it.  About fifteen seconds.
+DISPLAY_SHARE_SRC := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_f2sdram_share.sv \
+                     tb/cadr_display_share_harness.sv
+
+$(BUILD)/obj_display_share/Vcadr_display_share_harness: $(DISPLAY_SHARE_SRC) \
+                                                      tb/cadr_display_out_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -CFLAGS -DCADR_DISPLAY_SHARE \
+	    -Mdir $(BUILD)/obj_display_share --top-module cadr_display_share_harness \
+	    $(DISPLAY_SHARE_SRC) $(abspath tb/cadr_display_out_tb.cpp)
+
+$(BUILD)/display_share.pass: $(BUILD)/obj_display_share/Vcadr_display_share_harness
+	$(BUILD)/obj_display_share/Vcadr_display_share_harness
 	@touch $@
 
 # The DVI transmitter: three TMDS channels and the clock channel.
