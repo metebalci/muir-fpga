@@ -1656,8 +1656,10 @@ names both.
 `BITSTREAM.CONFIG.USERID` and `BITSTREAM.CONFIG.USR_ACCESS` before every
 `write_bitstream`: the commit's first seven digits, then a nibble which is 0
 for a clean tree, 1 for a modified one, 2 for one carrying an untracked file,
-3 for both, and `f` when git could not say. The part loads both registers at
-configuration. `USERID` goes to the JTAG USERCODE register, which
+3 for both, and `f` when git could not say. The fault bitstream
+(`docs/board.md`) sets bit 2 of that nibble, so its stamp ends in 4 to 7, or
+`e`, and no CADR build's does; it has no console, so it is read over JTAG. The
+part loads both registers at configuration. `USERID` goes to the JTAG USERCODE register, which
 `boards/*/vivado/program.tcl` reads back over a cable. `USR_ACCESS` goes to
 the AXSS register, which `rtl/plumbing/xilinx7/cadr_usr_access.sv` reads from
 inside the fabric and the console carries out on page 2.

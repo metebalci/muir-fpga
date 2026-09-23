@@ -55,6 +55,13 @@
 #define CADR_TALLY_MASK    0x80008000u
 #define CADR_TALLY_MARK    0x00008000u
 
+// "FALT": the tally of the fault bitstream (`boards/*/cadr_*_fault.sv`),
+// which U-Boot loads when the CADR's bitstream cannot be loaded, in every
+// word.  It fails the marker test like any other value; the guard names it,
+// so that `cadr-console status` on such a board says what is loaded.  The
+// fault bitstream's two ports answer every read with the same word.
+#define CADR_TALLY_FAULT   0x46414C54u
+
 // "NONE": what `rtl/plumbing/cadr_gp0_default.sv` answers, the proving boards' default
 // slave --- a board with a GP port and nothing of ours behind it.  It belongs
 // to neither program: the pack side looks for "PACK" and the console for

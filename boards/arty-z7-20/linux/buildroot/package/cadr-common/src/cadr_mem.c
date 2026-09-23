@@ -76,7 +76,10 @@ int cadr_guard(int fd, const char *port)
 		    w2, w3, port);
 		return 0;
 	}
-	if (w2 == 0 && w3 == 0)
+	if (w2 == CADR_TALLY_FAULT && w3 == CADR_TALLY_FAULT)
+		say("the EMIO tally reads FALT twice: THE FAULT BITSTREAM IS LOADED, because the CADR's could not be; "
+		    "not touching %s; check the card's configuration", port);
+	else if (w2 == 0 && w3 == 0)
 		say("the EMIO tally reads zero twice: either the GPIO block's clock is gated (APER_CLK_CTRL bit 22) or there is no instrument; "
 		    "not touching %s, which would hang the processor on a bitstream without the processing system", port);
 	else
@@ -104,7 +107,10 @@ int cadr_guard(int fd, const char *port)
 		    w, port);
 		return 0;
 	}
-	if (w == 0)
+	if (w == CADR_TALLY_FAULT)
+		say("the GPI tally reads FALT: THE FAULT BITSTREAM IS LOADED, because the CADR's could not be; "
+		    "not touching %s; check the card's configuration", port);
+	else if (w == 0)
 		say("the GPI tally reads zero: nothing in the fabric drives h2f_gp_in, or no fabric is loaded; "
 		    "not touching %s, which may hang the processor (--no-guard overrides)", port);
 	else

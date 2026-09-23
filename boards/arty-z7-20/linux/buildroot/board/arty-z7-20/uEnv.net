@@ -37,4 +37,8 @@
 # fdt_high and initrd_high are left unset: U-Boot relocates the tree and the
 # ramdisk into memory it allocates below its own, and the reserved-memory
 # node in its tree keeps that below the CADR's region.
-netcmd=tftpboot ${cadr_bit_addr} arty-z7-20/cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize} && tftpboot ${cadr_fdt_addr} arty-z7-20/zynq-arty-z7-20.dtb && tftpboot ${cadr_kernel_addr} arty-z7-20/zImage && tftpboot ${cadr_ramdisk_addr} arty-z7-20/rootfs.cpio.uboot && run cadr_bootz
+# AND THE FAULT BITSTREAM WHEN THE CADR'S CANNOT BE LOADED, as on the card
+# path (cadr_fabric_card in U-Boot's own environment): fault.bit from the same
+# directory, and the boot goes on, so that Linux says what happened.
+cadr_fabric_net=if tftpboot ${cadr_bit_addr} arty-z7-20/cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize}; then echo "cadr: the CADR bitstream is loaded"; else echo "cadr: THE CADR BITSTREAM DID NOT LOAD; loading the fault bitstream, whose lamps all blink"; tftpboot ${cadr_bit_addr} arty-z7-20/fault.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize}; fi
+netcmd=run cadr_fabric_net && tftpboot ${cadr_fdt_addr} arty-z7-20/zynq-arty-z7-20.dtb && tftpboot ${cadr_kernel_addr} arty-z7-20/zImage && tftpboot ${cadr_ramdisk_addr} arty-z7-20/rootfs.cpio.uboot && run cadr_bootz

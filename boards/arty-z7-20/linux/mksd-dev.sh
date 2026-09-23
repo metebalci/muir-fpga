@@ -4,7 +4,11 @@
 #
 # Build the card this project uses on its own board.
 #
-#     BIT=<a bitstream> boards/arty-z7-20/linux/mksd-dev.sh [PACKS="a.img 3=b.img"]
+#     BIT=<a bitstream> FAULT_BIT=<its fault bitstream> \
+#         boards/arty-z7-20/linux/mksd-dev.sh [PACKS="a.img 3=b.img"]
+#
+# FAULT_BIT, or NO_FAULT=1, reaches mksd-buildroot.sh from the environment,
+# which says what the fault bitstream is and why it is named.
 #
 # This is a wrapper over mksd-buildroot.sh and it is the opposite of
 # mksd-release.sh in the two ways that matter.

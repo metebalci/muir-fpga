@@ -49,6 +49,7 @@ SCRIPT="$HERE/../S87cadr-chaosnet"
 STARTER="$HERE/../../cadr-common/src/daemon.sh"
 STOPPER="$HERE/../../cadr-common/src/stop.sh"
 READER="$HERE/../../cadr-common/src/fpgarc.sh"
+FAULTSH="$HERE/../../cadr-common/src/fault.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-chaosnet-boot-$$}
 fails=0
 cases=0
@@ -88,6 +89,10 @@ setup() {
 	anchor "^DAEMON_SH=/usr/share/cadr/daemon.sh\$" "DAEMON_SH=$STARTER" || return 1
 	# And the stopper, the third: sourced the same way, so the same reason.
 	anchor "^STOP_SH=/usr/share/cadr/stop.sh\$" "STOP_SH=$STOPPER" || return 1
+	# And the fault bitstream's test, the fourth, sourced the same way.  The
+	# source copy names no board, so it never calls a fabric the fault
+	# bitstream here; `fpgarc_test.sh` holds what it does on one.
+	anchor "^FAULT_SH=/usr/share/cadr/fault.sh\$" "FAULT_SH=$FAULTSH" || return 1
 	# The program and its pid file.  `cadr_daemon` really looks for the
 	# process it started, so the stand-in below has to be what is started
 	# and /var/run is not this check's to write in.

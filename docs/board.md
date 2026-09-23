@@ -872,6 +872,79 @@ that no memory means no progress. The fabric's answer is that no memory means
 slow progress. That is the first behavior anyone here observed on silicon that
 was predicted wrongly, and it was predicted wrongly in this file.
 
+## The fault bitstream
+
+**Every lamp blinking together, twice a second, means the machine's own
+bitstream did not load.** U-Boot loads the fault bitstream in its place when
+the card's fabric file is missing, damaged, or for another board, or when a
+future setting names a bitstream the card does not have. A console message
+is hard to see on these boards, and a board that blinks every lamp at once is
+not.
+
+**It has no machine in it.** One register drives every lamp, so the lamps are
+always in step, and each lamp shows what it can show of red.
+
+    Arty Z7-20    LD0 to LD3 green, and LD4 and LD5 red; the RGB lamps' green
+                  and blue pins stay dark
+    Cora Z7-07S   LD0 and LD1 red, with green and blue dark
+    DE25-Nano     LEDR0 to LEDR7, all eight, which are green
+
+Each lamp is dark for the first quarter second after the bitstream loads,
+then lit for a quarter second, then dark, and so on.
+
+**Linux still boots and still runs.** The processing system's side of the
+fabric is the same as under the CADR's bitstream. Every address of both
+general-purpose ports on the Zynq boards, and of both processor-to-fabric
+bridges on the DE25-Nano, is answered by the default slave, because a read
+nothing answers hangs both Arm cores. Each read returns `FALT`, 0x46414C54, and
+each write is dropped. Nothing in the fabric reads or writes memory. On the
+DE25-Nano the fabric answers the warm-reset handshake as the CADR's build
+does, so U-Boot's `bridge enable` releases the bridges, and U-Boot leaves the
+memory gate shut.
+
+**It says what it is, three ways.**
+
+- The tally that every program reads before it touches the fabric reads
+  `FALT` in every word: both EMIO words at 0xE000A068 and 0xE000A06C on a
+  Zynq board, and the system manager's GPI word at 0x10D120E8 on the
+  DE25-Nano. That fails the tally's marker test, so every program refuses the
+  fabric.
+- The init scripts read the same words through `devmem`. On `FALT` they start
+  nothing that touches the fabric, and the first of them prints one line on
+  the console:
+
+      cadr: THE FAULT BITSTREAM IS LOADED, every lamp blinking: the CADR's bitstream could not be loaded, so nothing that touches the fabric is started; check the card's configuration (docs/board.md)
+
+  The card is still mounted and the clock is still set, so the card can be
+  fixed over the network. ozd still runs, because it touches no fabric.
+- The build stamp in USERCODE, and in USR_ACCESS on the Zynq boards, has bit
+  2 of its last digit set: 4, 5, 6 or 7, or `e` where git could not read the
+  tree. No CADR build ends in any of those. `tools/build_stamp.tcl` makes it,
+  and `build_stamp_is_fault` tells it from a CADR's.
+
+**What to check.** Read the console. U-Boot says why the CADR's file did not
+load just before it prints `THE CADR BITSTREAM DID NOT LOAD` (`THE CADR IMAGE
+DID NOT LOAD` on the DE25-Nano). Then look in the board's own folder, on the
+card or on the TFTP server: `cadr.bit` on the Zynq boards and `cadr.core.rbf`
+on the DE25-Nano must be there, whole, and built for this board. A file
+built for another board is expected to be refused by `fpga loadb` or `fpga
+load` and to land here, but that has not yet been tried on a board. On the
+DE25-Nano the core image must also carry the same HPS I/O hash as the first
+phase in the flash, which the Booting User Guide requires of a pair.
+
+**Building it.** The Zynq boards' two come from `tools/fault_zynq.tcl`:
+
+    BOARD=arty OUTDIR=build/fault-arty vivado -mode batch -source tools/fault_zynq.tcl
+    BOARD=cora OUTDIR=build/fault-cora vivado -mode batch -source tools/fault_zynq.tcl
+
+The DE25-Nano's is `make de25-fault DE25_SPL_HEX=<the first-stage loader>`,
+which writes `build/de25-fault/output_files/cadr_de25.core.rbf`. The card
+script takes the file as `FAULT_BIT` and stages it as `fault.bit` or
+`fault.core.rbf` beside the fabric, on the card and on the server.
+`build/fault.pass` simulates all three top levels: the lamps in step, at the
+polarity and the rate, red alone on a color lamp, every window answered with
+`FALT`, the tally, no memory traffic, and the DE25-Nano's handshake.
+
 ## Holding the machine at boot
 
 The CADR starts the instant the part configures. With SW0 off,

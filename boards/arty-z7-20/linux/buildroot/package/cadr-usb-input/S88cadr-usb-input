@@ -65,6 +65,14 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 STOP_SH=/usr/share/cadr/stop.sh
 . "$STOP_SH"
 
+# **AND THE FAULT BITSTREAM**, cadr-common's fifth file on the target: whether
+# the fabric is the one U-Boot loads when the CADR's cannot be loaded, which
+# this program must not be started against.  `cadr_fault_stop` says so on the
+# console once a boot and is asked first in `start`; its header is the whole
+# account, and `docs/board.md` says what the board shows.
+FAULT_SH=/usr/share/cadr/fault.sh
+. "$FAULT_SH"
+
 # **THE FLAGS THIS PROGRAM OWNS**, and it is the `--usb-` spellings alone.
 # The program takes every flag twice --- `--device` and `--usb-device`, and so
 # on --- and src/cadr-usb-input.c says the second spelling is there for this
@@ -88,6 +96,8 @@ FLAGS="--usb-link
 FPGARC_REPEATABLE="--usb-device"
 
 start() {
+	# Nothing here may reach the fault bitstream: `FAULT_SH` above.
+	cadr_fault_stop && return 0
 	set --
 	[ -f "$RC" ] && eval "set -- $(fpgarc_args "$RC" $FLAGS)"
 

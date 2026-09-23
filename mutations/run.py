@@ -1239,6 +1239,47 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # THE FAULT BITSTREAM, on each board's own fault top level:
+    # `build/fault.pass`, three builds, one a board.  What each holds is in
+    # `tb/cadr_fault_tb.cpp`: every lamp in phase, red alone on a color lamp,
+    # at the polarity and the rate; every window of both ports answered with
+    # "FALT"; the tally "FALT"; no memory master; and on the DE25-Nano the
+    # warm-reset handshake.  The default slave has its own check,
+    # `gp0_default`, and is carried here.
+    "fault_arty": {
+        "sources": ["boards/arty-z7-20/cadr_arty_fault.sv",
+                    "rtl/plumbing/cadr_fault_lamp.sv"],
+        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_arty_stubs.sv", "tb/cadr_ps7_sim.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv", "tb/cadr_fault_harness.sv"],
+        "top": "cadr_fault_harness",
+        "tb": "tb/cadr_fault_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY", "-Irtl/plumbing",
+                  "-DCADR_BOARD_ARTY", "-CFLAGS", "-DCADR_BOARD_ARTY"],
+        "golden": None,
+    },
+    "fault_cora": {
+        "sources": ["boards/cora-z7-07s/cadr_cora_fault.sv",
+                    "rtl/plumbing/cadr_fault_lamp.sv"],
+        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_arty_stubs.sv", "tb/cadr_ps7_sim.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv", "tb/cadr_fault_harness.sv"],
+        "top": "cadr_fault_harness",
+        "tb": "tb/cadr_fault_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY", "-Irtl/plumbing",
+                  "-DCADR_BOARD_CORA", "-DCADR_PS7_NO_HP3", "-CFLAGS", "-DCADR_BOARD_CORA"],
+        "golden": None,
+    },
+    "fault_de25": {
+        "sources": ["boards/de25-nano/cadr_de25_fault.sv",
+                    "rtl/plumbing/cadr_fault_lamp.sv",
+                    "rtl/plumbing/cadr_f2sdram_gate.sv"],
+        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_de25_stubs.sv", "tb/cadr_de25_hps_sim.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv", "tb/cadr_fault_harness.sv"],
+        "top": "cadr_fault_harness",
+        "tb": "tb/cadr_fault_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY", "-Irtl/plumbing",
+                  "-DCADR_BOARD_DE25", "-DCADR_DE25_HPS_SIM", "-CFLAGS", "-DCADR_BOARD_DE25"],
+        "golden": None,
+    },
     "arty": {
         "kind": "lint",
         "sources": ["boards/arty-z7-20/cadr_arty.sv"],
@@ -2737,7 +2778,8 @@ def check_makefile():
     # own mutation lists; named here for the same reason.
     # `board_reset` is one `.pass` and three builds, one a board, and each
     # build is its own entry above, `board_reset_arty` and the other two.
-    known = set(CHECKS) | {"board_reset", "ddr_map", "readout_face", "checkpoint",
+    # `fault` is the same shape: `fault_arty`, `fault_cora` and `fault_de25`.
+    known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora", "grid",
                            "de25_pins", "de25_linux"}

@@ -53,7 +53,7 @@ TICKPKG := rtl/machine/cadr_tick_pkg.sv
 .DELETE_ON_ERROR:
 
 .PHONY: check cables ps7 ps7-cora ps7-init ps7-init-cora current mutants \
-        mutants-selftest probe-selftest de25 de25-program de25-probe \
+        mutants-selftest probe-selftest de25 de25-fault de25-program de25-probe \
         disk-golden disk-boot-golden iob-golden busint-regs-golden muir-pin clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
@@ -77,6 +77,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
        $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/board_reset.pass \
+       $(BUILD)/fault.pass \
        $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
        $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
@@ -1471,6 +1472,61 @@ $(BUILD)/board_reset.pass: $(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harne
 	$(BUILD)/obj_board_reset_de25/Vcadr_board_reset_harness
 	@touch $@
 
+# ------------------------------------------------ the fault bitstream, per board
+#
+# THE TOP LEVEL U-BOOT LOADS WHEN THE CADR'S CANNOT BE LOADED: no machine,
+# every lamp blinking together, every window of both ports answered with
+# "FALT", the tally reading "FALT", and nothing mastering memory; on the
+# DE25-Nano the warm-reset handshake answered too.  `tb/cadr_fault_tb.cpp` has
+# what is held.  Each board's fault top level is simulated with the
+# processing system of `board_reset` above, and linted against the real
+# `cadr_ps7.sv` wrapper and the DE25-Nano's processor stub, which are what
+# the fitters build it with.  Seconds.
+FAULT_SIM := tb/cadr_sim_axi.sv rtl/plumbing/cadr_fault_lamp.sv \
+             rtl/plumbing/cadr_gp0_default.sv tb/cadr_fault_harness.sv
+FAULT_ARTY_SRC := boards/arty-z7-20/cadr_arty_fault.sv
+FAULT_CORA_SRC := boards/cora-z7-07s/cadr_cora_fault.sv
+FAULT_DE25_SRC := boards/de25-nano/cadr_de25_fault.sv rtl/plumbing/cadr_f2sdram_gate.sv
+FAULT_VFLAGS := $(VFLAGS) -O2 -CFLAGS -O2 -Wno-PINCONNECTEMPTY -Irtl/plumbing \
+                --top-module cadr_fault_harness
+
+$(BUILD)/obj_fault_arty/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_ARTY_SRC) tb/cadr_arty_stubs.sv \
+        tb/cadr_ps7_sim.sv tb/cadr_fault_tb.cpp | $(BUILD)
+	$(VERILATOR) $(FAULT_VFLAGS) -DCADR_BOARD_ARTY -CFLAGS -DCADR_BOARD_ARTY \
+	    -Mdir $(BUILD)/obj_fault_arty $(FAULT_SIM) tb/cadr_arty_stubs.sv \
+	    tb/cadr_ps7_sim.sv $(FAULT_ARTY_SRC) $(abspath tb/cadr_fault_tb.cpp)
+
+$(BUILD)/obj_fault_cora/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_CORA_SRC) tb/cadr_arty_stubs.sv \
+        tb/cadr_ps7_sim.sv tb/cadr_fault_tb.cpp | $(BUILD)
+	$(VERILATOR) $(FAULT_VFLAGS) -DCADR_BOARD_CORA -DCADR_PS7_NO_HP3 -CFLAGS -DCADR_BOARD_CORA \
+	    -Mdir $(BUILD)/obj_fault_cora $(FAULT_SIM) tb/cadr_arty_stubs.sv \
+	    tb/cadr_ps7_sim.sv $(FAULT_CORA_SRC) $(abspath tb/cadr_fault_tb.cpp)
+
+$(BUILD)/obj_fault_de25/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_DE25_SRC) tb/cadr_de25_stubs.sv \
+        tb/cadr_de25_hps_sim.sv tb/cadr_fault_tb.cpp | $(BUILD)
+	$(VERILATOR) $(FAULT_VFLAGS) -DCADR_BOARD_DE25 -DCADR_DE25_HPS_SIM -CFLAGS -DCADR_BOARD_DE25 \
+	    -Mdir $(BUILD)/obj_fault_de25 $(FAULT_SIM) tb/cadr_de25_stubs.sv \
+	    tb/cadr_de25_hps_sim.sv $(FAULT_DE25_SRC) $(abspath tb/cadr_fault_tb.cpp)
+
+$(BUILD)/fault.pass: $(BUILD)/obj_fault_arty/Vcadr_fault_harness \
+                     $(BUILD)/obj_fault_cora/Vcadr_fault_harness \
+                     $(BUILD)/obj_fault_de25/Vcadr_fault_harness \
+                     boards/arty-z7-20/cadr_ps7.sv boards/cora-z7-07s/cadr_ps7.sv \
+                     tb/cadr_ps7_stub.sv
+	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_arty_fault \
+	    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv boards/arty-z7-20/cadr_ps7.sv \
+	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_fault_lamp.sv $(FAULT_ARTY_SRC)
+	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_cora_fault \
+	    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_fault_lamp.sv $(FAULT_CORA_SRC)
+	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_de25_fault \
+	    tb/cadr_de25_stubs.sv rtl/plumbing/cadr_gp0_default.sv \
+	    rtl/plumbing/cadr_fault_lamp.sv $(FAULT_DE25_SRC)
+	$(BUILD)/obj_fault_arty/Vcadr_fault_harness
+	$(BUILD)/obj_fault_cora/Vcadr_fault_harness
+	$(BUILD)/obj_fault_de25/Vcadr_fault_harness
+	@touch $@
+
 # ------------------------------------------- one transaction per bus cycle
 
 # THE CHECK THE BOARD'S OWN BUG HAS BEEN LIVING BEHIND.  The account of it
@@ -1904,6 +1960,18 @@ de25: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boo
 	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
 	    $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
 	    $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI))
+
+# **AND THE DE25-NANO'S FAULT BITSTREAM**, `boards/de25-nano/cadr_de25_fault.sv`:
+# no machine, every lamp blinking, and the memory board's processor system,
+# which U-Boot loads when the CADR's core image cannot be loaded.  Into
+# `build/de25-fault/`; `DE25_SPL_HEX` makes its core image as for the CADR.
+# The Zynq boards' two are `tools/fault_zynq.tcl`'s, under Vivado.
+de25-fault: rtl/plumbing/cadr_fault_lamp.sv rtl/plumbing/cadr_gp0_default.sv $(FAULT_DE25_SRC) \
+            $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	FAULT=1 DDR=1 HDMI=0 PROBE_DEPTH=0 DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
+	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
+	    boards/de25-nano/quartus/build.sh rtl/plumbing/cadr_fault_lamp.sv \
+	    rtl/plumbing/cadr_gp0_default.sv $(FAULT_DE25_SRC)
 
 # And that bitstream loaded over JTAG, which is volatile: nothing here writes
 # the board's flash.  `boards/de25-nano/quartus/program.sh` finds the board's
@@ -3257,6 +3325,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
                         $(CHAOSNET_PKG)/S87cadr-chaosnet \
                         $(COMMON_SRC)/fpgarc.sh \
                         $(COMMON_SRC)/daemon.sh $(COMMON_SRC)/stop.sh \
+                        $(COMMON_SRC)/fault.sh \
                         $(CHAOSNET_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(CHAOSNET_SRC) check
 	$(MAKE) -C $(CHAOSNET_SRC) all COMMON=host
@@ -3287,7 +3356,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
 # exactly the thing that sat broken because nobody ran it.
 $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(COMMON_SRC)/daemon.sh $(COMMON_SRC)/stop.sh \
-                      $(COMMON_SRC)/clock.sh \
+                      $(COMMON_SRC)/clock.sh $(COMMON_SRC)/fault.sh \
                       $(COMMON_SRC)/fpgarc_test.sh \
                       $(CHAOSNET_PKG)/S87cadr-chaosnet \
                       $(OZD_PKG)/S84ozd \
@@ -3703,7 +3772,11 @@ buildroot-de25-rebuild: buildroot-de25-check
 # zip onto it.  Each zip is self-sufficient, names its board in its own file
 # name and inside it, and is what is published for that board.
 #
-#     make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>
+#     make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
+#                  FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>
+#
+# **AND EACH ZIP CARRIES ITS BOARD'S FAULT BITSTREAM**, the one the loader
+# takes when the CADR's will not load (`docs/board.md`), named the same way.
 #
 # **THREE ZIPS ARE THREE CHANCES FOR ONE TO BE STALE**, which is why this is
 # one target and not three: a release in which two boards were rebuilt and the
@@ -3719,23 +3792,24 @@ buildroot-de25-rebuild: buildroot-de25-check
 .PHONY: release
 RELEASE_DIR := build/sd/release
 release:
-	@for v in BIT_ARTY BIT_CORA BIT_DE25; do \
+	@for v in BIT_ARTY BIT_CORA BIT_DE25 FAULT_ARTY FAULT_CORA FAULT_DE25; do \
 	    eval "b=\$$$$v"; \
 	    [ -n "$$b" ] || { \
 	        echo "release: $$v is not set.  A release is three zips and this target makes"; \
 	        echo "release: all three, so that one board cannot be left at an older build:"; \
 	        echo "release:   make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>"; \
+	        echo "release:                FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>"; \
 	        exit 1; }; \
 	    [ -f "$$b" ] || { echo "release: $$v=$$b is not a file"; exit 1; }; \
 	done
-	BIT=$(BIT_ARTY) \
+	BIT=$(BIT_ARTY) FAULT_BIT=$(FAULT_ARTY) \
 	    boards/arty-z7-20/linux/mksd-release.sh
 	IMAGES=$(BR_OUT_CORA)/images \
 	    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
-	    BIT=$(BIT_CORA) boards/arty-z7-20/linux/mksd-release.sh
+	    BIT=$(BIT_CORA) FAULT_BIT=$(FAULT_CORA) boards/arty-z7-20/linux/mksd-release.sh
 	IMAGES=$(BR_OUT_DE25)/images \
 	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
-	    BIT=$(BIT_DE25) boards/arty-z7-20/linux/mksd-release.sh
+	    BIT=$(BIT_DE25) FAULT_BIT=$(FAULT_DE25) boards/arty-z7-20/linux/mksd-release.sh
 	@echo
 	@echo "release: three zips, one a board:"
 	@for b in arty-z7-20 cora-z7-07s de25-nano; do \

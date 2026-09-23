@@ -86,6 +86,10 @@ install:
 	install -m 0644 daemon.sh $(DESTDIR)$(SHAREDIR)/daemon.sh
 	install -m 0644 stop.sh $(DESTDIR)$(SHAREDIR)/stop.sh
 	install -m 0644 clock.sh $(DESTDIR)$(SHAREDIR)/clock.sh
+	sed 's/^CADR_FAULT_BOARD=@CADR_BOARD@$$/CADR_FAULT_BOARD=$(CADR_BOARD)/' fault.sh \
+	    > $(DESTDIR)$(SHAREDIR)/fault.sh
+	grep -qx 'CADR_FAULT_BOARD=$(CADR_BOARD)' $(DESTDIR)$(SHAREDIR)/fault.sh
+	chmod 0644 $(DESTDIR)$(SHAREDIR)/fault.sh
 
 # The reader's own check, on the build host, needing nothing but a POSIX
 # shell: one `fpgarc` handed to five init scripts, each getting its own flags
