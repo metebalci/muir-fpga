@@ -45,13 +45,28 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 27.** It is
+version is refused by name rather than read wrong. **The version is 33.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
 So the program is tied to the commit of muir that `muir.commit` pins, and a
 muir that moves the format stops the board's checkpoints loading. That failure
 is loud, which is the right way round: the refusal names both versions.
+
+Versions 28 to 33 are what muir's second machine left. muir's `Machine`
+holds either the CADR or QUUX, so its PDL buffer and level-2 map are sized for
+the larger machine, 16,384 and 2,048 words, and the machine's geometry follows
+the level-1 map: the level-1 entry's width, the PDL pointer's width, whether
+the machine has QUUX's multiply and divide, and whether it has QUUX's tick.
+The fabric is a CADR, so the program writes its 1,024 words of each followed
+by zeros, and declares the CADR's geometry: a five-bit level-1 entry, a
+ten-bit PDL pointer, no multiply and divide and no tick. The tick's own state
+follows the geometry, written as a CADR's machine holds it: off, a period of
+16,667 microseconds, and no deadline. The display writes the size QUUX's MONO
+TV would have after its board's tag, 1,920 by 1,080, which a CADR's display
+keeps and never uses. The engine also keeps the instant the instruction in
+`IR` was loaded, which only QUUX's divider reads. The program writes it as
+zero, which is what a freshly built engine holds.
 
 Version 27 adds one byte to the engine: whose nanoseconds its clock counts,
 muir's `TimingModel`. This program declares it. Version 26 added the two sync

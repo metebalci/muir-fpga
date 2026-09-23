@@ -531,17 +531,25 @@ int main(int argc, char **argv)
 	//   imem       8 + 16384*8        = 131080
 	//   mode/clk/opc  6 + 5 + 3       = 14
 	//   debug_ir + prog_reset + boot  = 10
-	//   amem/mmem/dmem/pdl/spc  (8+4096)+(8+128)+(8+8192)+(8+4096)+(8+128) = 16680
+	//   amem/mmem/dmem/pdl/spc  (8+4096)+(8+128)+(8+8192)+(8+65536)+(8+128) = 78120
+	//                                            (the PDL is muir's largest
+	//                                             machine's, 16K words, of
+	//                                             which a CADR has 1K)
 	//   spcptr..dispatch_constant     = 1+2+2+4+2+4+4+4+4+2 = 29
 	//   l1_map     8 + 8192           = 8200
-	//   l2_map     8 + 4096           = 4104
+	//   geometry   1 + 1 + 1 + 1      = 4        (Geometry::CADR: 5, 10, no
+	//                                             multiply and divide, no tick)
+	//   tick       1 + 4 + 8          = 13       (Tick::new: off, 16,667 us,
+	//                                             no deadline)
+	//   l2_map     8 + 8192           = 8200     (2048 entries, QUUX's; a
+	//                                             CADR has 1024)
 	//   boards     4
 	//   main       8 + 65536*4        = 262152
 	//   bus_error..write_buffer  2+2+1+(8+32)*3 = 125
 	//   vmaok      1
 	//   disk       61 + 8             = 69       (no drives: 8 flag bytes)
-	//   tv         1+(8+131072)+4+(8+4096)+2+1+48+1+8+8+1+1 = 135259
-	//                                            (the board's tag, the
+	//   tv         1+2+2+(8+131072)+4+(8+4096)+2+1+48+1+8+8+1+1 = 135263
+	//                                            (the board's tag, MONO TV's size, the
 	//                                             buffer, the mode, the
 	//                                             sync RAM, the color map
 	//                                             as 48 bare bytes, the
@@ -558,7 +566,7 @@ int main(int argc, char **argv)
 	//   trace+flags  (8+96)*2         = 208
 	//   ir..lc       8+8+2+1+1+4+2+2+4 = 32
 	//   19 bools                       = 19
-	//   halted_ns + 4 bools            = 12
+	//   halted_ns + ir_loaded_ns + 4 bools = 20
 	//   busint     (1+1+8) + 42*1 + (1+8+1+1+8+1+1+1+1+8+8+1+2+2+8+8+8+1+1+1+8+8) = 140
 	//   mbusy_sync                     = 1
 	//   bus_addr..bus_acked            = 4+4+1+1+1+1+2+1+8+8+1 = 32
@@ -571,10 +579,10 @@ int main(int argc, char **argv)
 	// reader can check one line instead of one number.
 	{
 		const size_t machine_part =
-			8200 + 131080 + 14 + 10 + 16680 + 29 + 8200 + 4104 + 4 +
-			262152 + 125 + 1 + 69 + 135259 + 1 + 253 + 16;
+			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 13 + 8200 + 4 +
+			262152 + 125 + 1 + 69 + 135263 + 1 + 253 + 16;
 		const size_t rtl_part =
-			208 + 32 + 19 + 12 + 140 + 1 + 32 + 25 + 26 + 24 + 28;
+			208 + 32 + 19 + 20 + 140 + 1 + 32 + 25 + 26 + 24 + 28;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven
 		// keep the body's length and one does not, and the point of
 		// building them is what the ROUND TRIP does with them, so this

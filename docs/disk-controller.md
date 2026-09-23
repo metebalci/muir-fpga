@@ -528,7 +528,8 @@ on its command line. Neither the tree nor the kernel is touched here.
 **The check.** It is `make -C
 boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src check`, on the
 build host, and it needs a C compiler and `build/disk.golden`. Its scratch is
-under `~/.cache/muir-fpga-disk-packs`. The disk pack program's core runs
+under `~/.cache/muir-fpga-disk-packs-` and the package directory's path hashed,
+so two copies of the tree never share one. The disk pack program's core runs
 against a model of the register face at `a899799` --- the tag with the unit,
 REQ, DIRTY, REF, IRQ, IRQEN, DENY, the refusal per slot, `waiting` --- with a
 scripted disk controller behind it that **asks**. Each run of the trace's

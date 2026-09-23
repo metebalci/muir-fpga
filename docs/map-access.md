@@ -155,65 +155,51 @@ second level's index is `{VMAP<4:0>, MAPI<4:0>}`, and `VMAP` is the first
 level's own output. So when one microinstruction writes both, the question is
 whether the second-level write uses the first level's old value or its new one.
 
-**muir answers it two different ways.**
+**The board answers it, and the answer is neither.** Both write pulses are
+`-WP1`, through the 74S37 at VCTL2 1D07. The first-level map is 93425As on
+`mit/cadr/vmem0.drw`, and the 93425A holds its outputs in high impedance while
+it is written. `-VMAP<4:0>` has no other driver and no pull-up, so the TTL
+inputs of the 74S240s at VMEM1 1D08 and VMEM2 1C10 read it high and their
+outputs, the second level's top five address bits, go low. The new
+first-level entry never reaches that address during the 40 ns pulse, and the
+old one is there for less than the part's guaranteed write time. So the
+second-level word lands in block 0, at `{0, MAPI<4:0>}`: the float forces
+only the block number, and the low five bits come through the 74S258s at VMAS
+1C20 as they always do.
 
-`Rtl::step`, which every golden trace comes from and which the fabric is held
-to, computes both addresses before either write:
+muir holds that rule in both of its engines, `Machine::write_map` and `Rtl`'s
+write phase, and holds the two to its netlist engine. It used to answer the
+question two different ways: `Rtl` with the old first-level entry and
+`Machine::write_map` with the new one. The fabric followed `Rtl` then and
+follows the board now. `rtl/machine/cadr_microcycle.sv` addresses the
+second-level write at `adr1_w`, which is `{0, MAPI<4:0>}` when `VMA<26>` is up
+and the usual `{VMAP, MAPI<4:0>}` otherwise.
 
-    let (adr0, adr1) = self.map_address();
-    if bit(self.m.vma as u64, 26) { self.m.l1_map[adr0] = ...; }
-    if bit(self.m.vma as u64, 25) { self.m.l2_map[adr1] = ...; }
+The check's fourth configuration measures this rather than reasoning about it.
+It patches the same microinstruction to a mask of bits 31 to 22, so that each
+of the four writes of `SET-UP-FOUR-PAGES` writes both levels, the first taking
+the first-level entry from 0 to `0o37`. It then reads four words back out of
+the machine. The first-level entry is `0o37`. The first second-level word is
+at index 0 and not at index 992. The second is at index 1, which is the
+control: indexed through the first-level entry, as the fabric used to do, the
+first word would still land at 0, since the entry was 0 when it was written,
+but the three after it would land at 993 to 995.
 
-So `Rtl` uses the OLD first-level entry. `Machine::write_map`, which `micro.rs`
-uses, re-reads the first level after writing it:
-
-    if vma & (1 << 26) != 0 { self.l1_map[l1_index] = (vma >> 27) & 0o37; }
-    if vma & (1 << 25) != 0 {
-        let l1_data = self.l1_map[l1_index] & 0o37;
-        ...
-    }
-
-So `Micro` uses the NEW one. The two engines disagree.
-
-**The fabric follows `Rtl`.** `rtl/machine/cadr_microcycle.sv` reads
-`l1_map[adr0]` combinationally into `vmap`, and both array writes are
-non-blocking in one block, so `adr1` is formed from the old entry. The check's
-fourth configuration measures this rather than reasoning about it. It patches
-the same microinstruction to a mask of bits 31 to 22, so that one instruction
-writes the first-level entry from 0 to `0o37` and the second level in the same
-write phase, and then reads three words back out of the machine. The
-first-level entry is `0o37`, the second-level word is at index 0 and not at
-index 992, and the control entry at index 993 holds the next write, which says
-the first-level write did take effect. So the fabric indexes by the old entry.
-
-**Nothing reaches this case, measured three ways.** In 600,000 microcycles of
-the boot PROM and 2,800,000 of the band there is no microcycle at all with
-`WMAPD` and both `VMA<26>` and `VMA<25>` set. The boot PROM has 67,585
-first-level writes and 65,540 second-level writes and no instruction doing
-both; the band has 72,660 and 86,882 and none. In MIT's own microcode no
-`VMA-WRITE-MAP` names both enables. `LEVEL-1-MAP-MISS` in
+**Nothing in MIT's microcode reaches this case, measured three ways.** In
+600,000 microcycles of the boot PROM and 2,800,000 of the band there is no
+microcycle at all with `WMAPD` and both `VMA<26>` and `VMA<25>` set. The boot
+PROM has 67,585 first-level writes and 65,540 second-level writes and no
+instruction doing both; the band has 72,660 and 86,882 and none. In MIT's own
+microcode no `VMA-WRITE-MAP` names both enables. `LEVEL-1-MAP-MISS` in
 `sys/ucadr/uc-page-fault.lisp` writes the first level alone, then reads main
 memory, then fills the thirty-two second-level entries in a loop, each a
-second-level write alone. The separation is deliberate.
+second-level write alone. The separation is deliberate. `build/sstep.pass`
+reaches the case too, through the debug IR, after first giving the
+first-level entry a nonzero value so that the old ordering and the board's
+put the word in different blocks.
 
-**And the hardware does not define an answer.** The first-level map is 93425As
-on `mit/cadr/vmem0.drw`, whose outputs `-VMAP<4:0>` pass through a 74S04 to
-become the `VMAP<4:0>` that address `mit/cadr/vmem1.drw`. The 93425A has a
-three-state output that is high impedance while the part is deselected or while
-it is being written; muir records that in `src/part.rs`, whose `ram1` returns
-high impedance when the write enable is low and whose comment reads "High
-impedance while deselected or written". Both write pulses are `-WP1`. So on the
-real board the first-level map's outputs are floating exactly while the
-second-level write latches, and the block the word lands in is whatever the
-floating nets settle to. A floating TTL input reads high, which through the
-inverters would give block 0, but that is an inference from float-high and not
-a measurement.
-
-The conclusion is that there is no correct behavior to implement. The fabric
-agrees with the engine it is checked against, the case is unreachable in MIT's
-microcode, and the disagreement that exists is between muir's own two engines.
-It is recorded here so that nobody files it as a fabric defect, and the check
-holds the fabric to `Rtl`'s ordering so that it cannot drift silently.
+Whether the old entry takes a partial write in its first nanoseconds is not
+settled. A CADR running the two-instruction store would settle it.
 
 ## Mutation records
 
@@ -261,7 +247,7 @@ failures apart.
 | `map-access-bits-swapped` | caught | the same line |
 | `map-write-bit-refuses-a-read-too` | caught | the same line |
 | `map-refusal-still-starts-a-cycle` | caught | code 2, microcycle 536,304: a write muir's rule refuses and `-MEMRQ` went out |
-| `level-2-map-write-takes-the-new-first-level-entry` | caught | the level-2 write landed in the new level-1 block |
+| `level-2-map-write-takes-the-new-first-level-entry` | caught | the first level-2 word was also at index 992, the block of the level-1 entry being written |
 
 The first three all fail on the same line, which is worth saying rather than
 hiding: the read-only configuration's permitted read is the one thing all three
@@ -304,10 +290,10 @@ the fourth configuration and by nothing else in the tree.
     @new   assign memgo = memstart;
 
     # The level-2 write indexed by the level-1 entry the same instruction is
-    # writing, which is `Machine::write_map`'s ordering rather than
-    # `Rtl::step`'s.  Only the fourth configuration can see it.
+    # writing, which was `Machine::write_map`'s old ordering.  Only the
+    # fourth configuration can see it.
     @name level-2-map-write-takes-the-new-first-level-entry
     @check map_access
     @file rtl/machine/cadr_microcycle.sv
-    @old         if (vma[25]) l2_map[adr1] <= vma[23:0];
-    @new         if (vma[25]) l2_map[vma[26] ? {vma[31:27], mapi[4:0]} : adr1] <= vma[23:0];
+    @old         if (vma[25]) l2_map[adr1_w] <= vma[23:0];
+    @new         if (vma[25]) l2_map[vma[26] ? {vma[31:27], mapi[4:0]} : adr1_w] <= vma[23:0];

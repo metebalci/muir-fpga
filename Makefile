@@ -107,6 +107,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
        $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/machine_param.pass \
+       $(BUILD)/work_dirs.pass \
        $(BUILD)/board_reset.pass $(BUILD)/fault.pass \
        $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
@@ -615,8 +616,14 @@ $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
 # ever reach: MIT's boot PROM never writes the register and neither does any
 # band, the register being the console's.
 #
+# It also holds three of muir's rules no reference program reaches, each
+# through the console: a write of both map levels lands in level-2 block 0, a
+# prepared cycle goes out at the next master clock with the machine halted,
+# and the trap cycle after a boot is long and counted when `IR` asks. The
+# boot and the mode register's speed are stimulus columns for the last.
+#
 # It shares `MICROCYCLE` and the PROM image with `microcycle.pass` and takes
-# under a second: the script is a few dozen master clocks after a short
+# under a second: the script is a few hundred master clocks after a short
 # warm-up.
 $(BUILD)/sstep.golden: golden/src/sstep.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin sstep > $@
@@ -3229,7 +3236,21 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 # here, and say in the commit WHAT MOVED --- the same rule `muir.commit`
 # states for a trace, because this is one.
 CHECKPOINT_SRC  := boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src
-CHECKPOINT_WORK := $(HOME)/.cache/muir-fpga-checkpoint
+# **THE WORK DIRECTORY IS THIS TREE'S OWN, UNDER ITS `build/`.**  It was one
+# fixed path under `~/.cache` for every tree on the host, and the package's
+# Makefile rebuilds its test binaries there only when they are older than its
+# sources: a second worktree whose sources were older than the last build in
+# the first ran the FIRST tree's binaries and failed its own gate on a format
+# it did not have.  Every call into the package passes it as `WORK`, so the
+# package's own default --- its path hashed, for a run outside this Makefile
+# --- is never the one used here.  `tools/work_dir_check.py`, run by
+# `build/work_dirs.pass`, holds both halves.
+CHECKPOINT_WORK := $(abspath $(BUILD))/checkpoint-work
+
+$(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
+                         $(wildcard boards/arty-z7-20/linux/buildroot/package/*/src/Makefile) | $(BUILD)
+	python3 tools/work_dir_check.py .
+	@touch $@
 # **MOVED WHEN THE COLOR MAP STOPPED BEING ZEROS.**  The fabric keeps the
 # sixteen entries now and offers them on the console face's page 4, so
 # `chk_rtl.c` writes the board's own map where it used to write forty-eight
@@ -3267,7 +3288,23 @@ CHECKPOINT_WORK := $(HOME)/.cache/muir-fpga-checkpoint
 # 12,992.  The file is still 561,516 bytes.  muir under `--timing-model fpga` loads it
 # and saves it back byte for byte and resumes at the same microcycle; without
 # the flag it refuses the file by name.
-CHECKPOINT_SHA  := 2f0beaf2ae57e7036215db3188230121cecc68daf75df945cef8aca57ad78930
+#
+# **AND WHEN IT WENT 27 TO 33.**  muir's `Machine` now holds either of two
+# machines, the CADR and QUUX, so its PDL buffer and level-2 map are the
+# larger machine's, 16,384 and 2,048 words, and `Machine::save` writes the
+# machine's `Geometry` after the level-1 map: the level-1 entry's bits, the
+# PDL pointer's, and whether ALU functions 42 and 43 are QUUX's multiply and
+# divide, and whether it has QUUX's tick.  `chk_rtl.c` writes the fabric's
+# 1,024 words of each and zeros after them, and declares `Geometry::CADR`:
+# five, ten, no and no.  The machine's tick follows, as `Tick::new` leaves
+# it --- off, 16,667 us, no deadline --- and the display writes the size
+# QUUX's MONO TV would have after its board's tag, 1,920 by 1,080, the
+# default a CADR's display keeps.  `Rtl` keeps one more instant, when `IR`
+# was loaded, which only QUUX's divider reads, and the file declares it zero
+# as a fresh `Rtl` has it.  The zeros pack into runs, so the file grew by 30
+# bytes, 561,516 to 561,546.  muir loads it and saves it back byte for byte,
+# and resumes at the same microcycle.
+CHECKPOINT_SHA  := c4711c96352d223404b8cdf51b43b96987833e6dc45a08dc5376002e7fa52def
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
@@ -3277,6 +3314,11 @@ CHECKPOINT_RESUMED := at 78187493520 microcycles, 6548202583200 ns, 1 memory boa
 # already golden's path dependency there and the library half is compiled
 # once for both.
 MUIR_BIN := golden/target/release/muir
+# **AND RUN WITH NO FILE OF FLAGS.**  muir reads `.muirrc` in the directory it
+# runs from or in the home directory, and a home file that says `--machine
+# quux` makes it refuse the CADR's checkpoint by its geometry.  `MUIR_RC`
+# names the file in place of the two looked for, and one that is empty gives
+# the run no flags but the ones written here, so the recipe exports it.
 
 $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(CHECKPOINT_SRC)/checkpoint_test.c \
@@ -3287,13 +3329,13 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
                           $(READOUT_SRC)/cadr_image.h \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
-	$(MAKE) -C $(CHECKPOINT_SRC) check CHK=$(CHECKPOINT_WORK)/out.chk
-	$(MAKE) -C $(CHECKPOINT_SRC) all COMMON=host READOUT=host
-	$(MAKE) -C $(CHECKPOINT_SRC) clean
-	$(MAKE) -C $(CHECKPOINT_SRC) mutants
+	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk
+	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host
+	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
+	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
 	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir/Cargo.toml \
 	    --bin muir --target-dir golden/target
-	@set -e; W=$(CHECKPOINT_WORK); M=$(MUIR_BIN); \
+	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(MUIR_BIN); \
 	 $$M --rtl --timing-model fpga --stop-after 0 --resume $$W/out.chk --checkpoint $$W/back.chk \
 	     > $$W/muir.log 2>&1 \
 	   || { echo "checkpoint: muir REFUSED the file cadr-checkpoint wrote"; \

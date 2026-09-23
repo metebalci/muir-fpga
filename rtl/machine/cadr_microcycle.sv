@@ -571,12 +571,25 @@ module cadr_microcycle #(
   // microcycle and forces NPC to zero.
   logic trap;
 
-  // `-INOP` is the 74S175's own -Q at CONTRL 3D26 wire-ANDed with the
-  // open-collector 74S08 at 3E14, which is what `NOP11` pulls down: the
-  // console's own nop, which stops the instruction in `IR` having any effect
-  // while leaving it there to be looked at.
-  logic inop;
-  assign nop = trap || inop || nop11;
+  // `-NOPA` is the open-collector 74S08 at CONTRL 3E14, `AND(-NOP11,
+  // -INOP)`, wire-ANDed with the 74S175's own -Q at 3D26 that is `-INOP`:
+  // `NOP11` is the console's own nop, which stops the instruction in `IR`
+  // having any effect while leaving it there to be looked at.  `NOP` adds
+  // the trap, `NAND(-TRAP, -NOPA)` at 3E23.
+  //
+  // **THE TWO ARE NOT THE SAME NET, AND THREE THINGS TAKE `NOPA`.**
+  // `ILONG` and `STATBIT` off the 74S10 at FLAG 3E07, and `USE.MD` off VCTL2
+  // 3F18, are gated by `NOPA` and not by `NOP`, so the trap cycle after a
+  // boot is long, and counted, when the instruction standing in `IR` asks,
+  // and reads MD as far as -WAIT and -HANG are concerned.  Everything else a
+  // nop suppresses takes `NOP`.  muir's `Rtl::read_phase` has the same two
+  // (`nopa` and `nop`), and `the_trap_cycle_is_long_and_counted_when_ir_asks`
+  // in its `tests/rtl.rs` holds the trap cycle.  `build/sstep.pass` boots a
+  // halted machine with such an instruction standing and compares the trap
+  // cycle's length and the statistics counter.
+  logic inop, nopa;
+  assign nopa = inop || nop11;
+  assign nop  = trap || nopa;
 
   // page SOURCE: the class, off IR<44:43>, and the misc function off
   // IR<11:10>.  A nopped cycle decodes as nothing at all.
@@ -634,9 +647,11 @@ module cadr_microcycle #(
   assign memrd   = destmem && (ir[20:19] == 2'd1);
   assign ifetch  = needfetch && lcinc;
   assign memop   = memrd || memwr || ifetch;
-  // `USE.MD` is `NOR(-SRCMD, NOPA)` at VCTL1 3F18: this instruction reads MD
-  // and is not nopped.  It is half of -HANG.
-  assign use_md  = srcmd && !nop;
+  // `USE.MD` is `NOR(-SRCMD, NOPA)` at VCTL2 3F18: this instruction reads MD
+  // and is not nopped by a jump or the console.  **`NOPA`, NOT `NOP`**: the
+  // trap does not reach it, so a trap cycle standing on a SRCMD waits and
+  // hangs on a read in flight as any other cycle does.  It is half of -HANG.
+  assign use_md  = srcmd && !nopa;
 
   logic [9:0] wadr_in;
   assign wadr_in = destm ? {5'd0, ir[18:14]} : ir[23:14];
@@ -752,10 +767,11 @@ module cadr_microcycle #(
   end
 
   // page FLAG, the 74S10 at 3E07: `-ILONG` is `NAND(IR45, -NOPA)` and
-  // `STATBIT` is IR<46> the same way.
+  // `STATBIT` is IR<46> the same way.  `-NOPA` and not `-NOP`: the boot
+  // trap nops its cycle without suppressing either (see `nopa` above).
   logic statbit;
-  assign ilong   = ir[45] && !nop;
-  assign statbit = ir[46] && !nop;
+  assign ilong   = ir[45] && !nopa;
+  assign statbit = ir[46] && !nopa;
 
   // ------------------------------------------------- page IREG, the OA mux
 
@@ -929,10 +945,11 @@ module cadr_microcycle #(
       // MAPWR0D is `WMAPD AND VMA26` and MAPWR1D is `WMAPD AND VMA25` at
       // VCTL2 1C15, and both pulses are -WP1, so the two levels are written
       // in the same write phase.  Address and data are the live ones:
-      // nothing latches them.
+      // nothing latches them.  A write of both levels addresses level 2 at
+      // `adr1_w`, not `adr1`; see there.
       if (wmapd) begin
         if (vma[26]) l1_map[adr0] <= vma[31:27];
-        if (vma[25]) l2_map[adr1] <= vma[23:0];
+        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
       end
       if (dispwr) dmem[dadr] <= a[16:0];
     end
@@ -1179,11 +1196,28 @@ module cadr_microcycle #(
 
   logic [15:0] mapi;
   logic [10:0] adr0;
-  logic [9:0]  adr1;
+  logic [9:0]  adr1, adr1_w;
   logic [4:0]  vmap;
   logic [23:0] vmo;
   assign mapi = memstart ? vma[23:8] : md[23:8];
   assign adr0 = mapi[15:5];
+
+  // **A STORE THAT WRITES BOTH LEVELS WRITES LEVEL 2 WITH ITS TOP FIVE
+  // ADDRESS BITS ZERO**, and not at the entry level 1 held.  The two write
+  // pulses are one, `-WP1` through the 74S37 at VCTL2 1D07; level 1 is
+  // 93425As, which hold their outputs in high impedance while written, and
+  // `-VMAP<4:0>` has no other driver and no pull-up, so the 74S240s at VMEM1
+  // 1D08 and VMEM2 1C10 read it high and drive level 2's top five address
+  // bits low.  The low five are `MAPI<12:8>` either way, through the same
+  // 74S258s at VMAS 1C20 whose select is -MEMSTART: the float forces only the
+  // block number.  That is muir's `Rtl::write_phase` since its `c9fea7d`
+  // (`adr1 & 0o37`), and `Machine::write_map` has the whole account, with
+  // `chip_rtl_and_micro_write_both_map_levels_alike` holding the three
+  // engines together.  Microcode 323 writes the levels in separate
+  // stores and MIT's boot PROM writes both at once only while level 1 is
+  // still all zeros, where the two addresses agree, so no reference program
+  // tells them apart; `build/sstep.pass` does, through the debug IR.
+  assign adr1_w = vma[26] ? {5'd0, mapi[4:0]} : adr1;
 `ifdef CADR_RDW_POISON
   // A check's variant: see "THE READ-DURING-WRITE WINDOW" at the end of
   // this module.  The two write enables are the ones the write phase below
@@ -1196,9 +1230,13 @@ module cadr_microcycle #(
     l1_w_q  <= wp && wmapd && vma[26];
     l1_wa_q <= adr0;
     l2_w_q  <= wp && wmapd && vma[25];
-    l2_wa_q <= adr1;
+    l2_wa_q <= adr1_w;
   end
-  assign l1_rdw = l1_w_q && adr0 == l1_wa_q;
+  // Level 1 is poisoned in its WRITE tick as well: nothing samples it there
+  // since a write of both levels stopped addressing level 2 through it
+  // (`adr1_w`), and the read-during-write note at the end of this module has
+  // the account.
+  assign l1_rdw = (wp && wmapd && vma[26]) || (l1_w_q && adr0 == l1_wa_q);
   assign l2_rdw = l2_w_q && adr1 == l2_wa_q;
   assign vmap = l1_rdw ? ~l1_map[adr0] : l1_map[adr0];
   assign adr1 = {vmap, mapi[4:0]};
@@ -1382,7 +1420,7 @@ module cadr_microcycle #(
   logic mbusy_next;
   always_comb begin
     mbusy_next = mbusy;
-    if (mfinish_clearing || mfinishd_level) mbusy_next = 1'b0;
+    if (mfinish_clearing) mbusy_next = 1'b0;
     if (cpu_edge && memgo) mbusy_next = 1'b1;
   end
 
@@ -1525,56 +1563,48 @@ module cadr_microcycle #(
   assign memack_edge      = !n_memack && n_memack_q;
   assign mfinish_clearing = (mfinish_t == 6'd1) && !memack_edge;
 
-  // **A DELAY LINE PASSES A LEVEL, AND A COUNTDOWN OFF ITS RISING EDGE DOES
-  // NOT.  THE DIFFERENCE IS A DEADLOCK, AND IT WAS MET ON SILICON.**
+  // **THE TWO COUNTDOWNS FIRE ONCE A CYCLE, AS muir'S `after_memack` DOES,
+  // AND THERE IS NO LEVEL TERM BESIDE THEM ANY MORE.**
   //
   // -MFINISHD and -RDFINISH are -MEMACK through the TD50 and TD250 at VCTL1
   // 1D23/1D22.  A delay line carries the whole waveform, so while -MEMACK
-  // STANDS its delayed copy stands too, and the two flip flops it clears are
-  // held cleared rather than cleared once.  The countdowns above are loaded
-  // at the acknowledgment's rising edge and fire exactly once, which is the
-  // same thing for every cycle a running machine makes --- and is not the
-  // same thing when the acknowledgment never falls.
+  // stands its delayed copy stands too, and the countdowns here, loaded at
+  // the acknowledgment's rising edge, fire once.  The two differ only when a
+  // cycle is started while an acknowledgment is up: the start zeroes the
+  // countdowns, no fresh rising edge ever comes, and nothing clears MBUSY or
+  // READ IN PROGRESS again.
   //
-  // It never falls when the machine is HALTED with a memory cycle prepared.
-  // -MEMRQ is `MEMSTART AND VMAOK OR MBUSY` and MEMSTART is a cpu-clocked
-  // register, so a machine stopped just after a memory instruction stands
-  // -MEMRQ for the whole halt; `cadr_busint_xbus.sv`'s ACKED state leaves
-  // only on `n_memrq` --- "-XBUS.ACK remains asserted until the -XBUS.RQ
-  // signal is removed by the master" --- so the interface sits
-  // acknowledging, with -MEMGRANT asserted too.  Nothing is wrong yet.
+  // This fabric met that case on silicon while it clocked MEMSTART with the
+  // cpu clock: a machine halted just after a memory instruction stood
+  // -MEMRQ on the frozen MEMSTART, the interface sat in ACKED, and the next
+  // single step started the same cycle a second time into the standing
+  // acknowledgment and armed a -HANG nothing could end.  It carried two
+  // level terms then, which cleared MBUSY and READ IN PROGRESS while the
+  // acknowledgment stood with its countdown run out.
   //
-  // What goes wrong is the next single step.  A step is a cpu edge, MEMGO is
-  // still up on the frozen MEMSTART, so the step sets MBUSY and READ IN
-  // PROGRESS again and zeroes both countdowns --- and there is no second
-  // rising edge of an acknowledgment that has been asserted all along, so
-  // nothing ever clears them.  READ IN PROGRESS standing with `USE.MD` and
-  // no -WAIT (the second -WAIT term is `USE.MD AND MBUSY AND -MEMGRANT`, and
-  // -MEMGRANT is asserted) is -HANG, and -HANG parks the ring for ever: a
-  // parked ring makes no boundary, so no master clock, so
-  // `cadr_busint_xbus.sv` can take no grant, so no acknowledgment can
-  // arrive to end it --- and `cadr_spy_registers.sv`'s `landing` is
-  // `mclk || phase_t == SPEEDCLK_T` with `phase_t` saturating, so no console
-  // write lands either.  RUN, a STEP pulse, the console's own step and the
-  // debugger's clock are all inert; only `rst` is left.
-  //
-  // That is not a theoretical sequence.  It is CC's, verbatim: `CC-STOP-MACH`
-  // is one write of zero to the clock control register with no handshake of
-  // any kind, and `CC-FULL-SAVE` then forces five microinstructions through
-  // the debug IR, the last of which is `CONS-M-SRC-MD` --- `SRCMD`, which is
-  // what `USE.MD` is made of.  `build/park.pass` runs exactly that.
-  //
-  // So the taps are levels here too.  The countdown still places the clear at
-  // the instant it always did; the term below only adds what the delay line
-  // has been doing all along once the countdown has run out and the
-  // acknowledgment is still there.  On a running machine it is reached for
-  // one or two ticks after MBUSY has already gone, where it asserts what is
-  // already true --- no golden trace moves --- and on a halted one it is what
-  // stops the step arming a hang nothing can end.
-  logic ack_standing, mfinishd_level, rdfinish_level;
-  assign ack_standing   = !n_memack && !memack_edge;
-  assign mfinishd_level = ack_standing && (mfinish_t == 6'd0);
-  assign rdfinish_level = ack_standing && (rdfinish_t == 6'd0);
+  // **THE CASE NO LONGER EXISTS, AND THE TERMS ARE GONE WITH IT.**  MEMSTART
+  // is on the master clock now (the start block in the register block
+  // below), so a prepared cycle goes out at the very next master clock edge
+  // and never stands across a halt; and muir, which every trace comes from,
+  // has no state in which a cycle starts with the interface still
+  // acknowledging the last: `Busint::request` asserts that the interface is
+  // Idle, and `Rtl::after_memack` lets it go (`Busint::finish`) at MFINISHD.
+  // In this fabric a start meets a standing acknowledgment only if -MEMRQ
+  // stayed up across the end of the last cycle, which needs a cycle prepared
+  // and not yet started while the last one finished --- and a prepared cycle
+  // waits on MBUSY.SYNC for the last one to finish before it is prepared at
+  // all.  A single step does not wait (MACHRUN's step term bypasses -WAIT),
+  // so a console stepping one memory instruction straight after another
+  // with the first still in flight could prepare the second early; that is
+  // a cycle started while another runs, the state `Busint::request`'s
+  // assertion says muir never enters, and the fabric has no better answer
+  // for it than muir.  `build/park.pass` counts every start and fails if one
+  // meets an acknowledgment or a cycle still running, over its halts at every phase, CC's own entry, and the
+  // console's forced reads and writes of main memory; it has not met one.
+  // Measured before they went: neither term changed MBUSY or READ IN
+  // PROGRESS on a single tick of `machine`, `park`, `map_access`,
+  // `ddr_boot`, `kbd_boot`, `md_compose`, `disk_boot`, `microcycle`,
+  // `microcycle_sys` or `sstep`.
 
   // page Q 2A05-2A11: the 74S194s shift under `QS1`/`QS0`.
   logic qs1, qs0;
@@ -1764,14 +1794,10 @@ module cadr_microcycle #(
         if (mfinish_t != 6'd0) begin
           mfinish_t <= mfinish_t - 6'd1;
           if (mfinish_clearing) mbusy <= 1'b0;
-        end else if (mfinishd_level) begin
-          mbusy <= 1'b0;
         end
         if (rdfinish_t != 6'd0) begin
           rdfinish_t <= rdfinish_t - 6'd1;
           if (rdfinish_t == 6'd1) rd_in_progress <= 1'b0;
-        end else if (rdfinish_level) begin
-          rd_in_progress <= 1'b0;
         end
       end
 
@@ -1877,9 +1903,50 @@ module cadr_microcycle #(
 
         // page VCTL1: the memory cycle.  MEMPREPARE is the write phase's
         // level and MEMSTART its registered copy, so a cycle prepared here
-        // runs over the next microcycle.
+        // goes out at the next master clock edge, below.
         if (destmdr) md <= ob;
-        if (memstart) lvmo <= vmo;
+        // WRCYC and RDCYC are one flip flop, the 74S175 at 1C23 on CLK2A:
+        // load or hold, so the direction is the *starting* instruction's and
+        // it stands until the next cycle starts.
+        if (memop) begin
+          wrcyc <= memwr;
+          rdcyc <= !memwr;
+        end
+        memstart <= memop;
+
+        // page DSPCTL 3C14/3C15: the 25S07s are enabled by -IRDISP and
+        // clocked by CLK3E, so they take IR<41:32> of the DISPATCH itself ---
+        // the word standing before this edge, not the one it loads.  Reading
+        // the new IR here is a cycle early.
+        if (irdisp) dc <= ir[41:32];
+      end else if (mclk_edge) begin
+        // `MEMSTART`'s D is `MEMPREPARE`, `NOR(CLK2C, -MEMOP)` at VCTL1
+        // 1D27, which is low while the cpu clock is held: a master clock
+        // edge that is not a cpu edge clears it, after it has taken out the
+        // cycle it held (below).
+        memstart <= 1'b0;
+      end
+
+      // **THE CYCLE A MICROCYCLE PREPARED GOES OUT AT THE NEXT MASTER CLOCK
+      // EDGE, WHETHER OR NOT THE CPU CLOCK RUNS.**  `MEMSTART` is the 74S175
+      // at ACTL 1E20, and `MBUSY` and `READ IN PROGRESS` the 74S74s at 1D21,
+      // and all three are clocked by `MCLK1A`, the master clock --- not by
+      // the cpu clock.  A running machine's next master clock edge is its
+      // next cpu edge, so there this is what it always was; in a WAIT, and
+      // in a machine the console has halted or is single-stepping, the
+      // cycle goes out at the first master clock with the cpu clock held,
+      // and a stepped read lands before the next step.  This is muir's
+      // `Rtl::start_bus_cycle`, which `Rtl::master_clock_cycle` and the cpu
+      // clock's own edge both call, and it is one block here for the same
+      // reason.  Before muir's `dc2a474` the cycle waited for the next cpu
+      // edge, which the board's netlist does not do
+      // (`chip_and_rtl_start_a_stepped_read_while_halted_alike`).
+      // `build/sstep.pass` steps a refused read and reads the map a halted
+      // machine then addresses by MD; `build/park.pass` halts on reads and
+      // writes of main memory prepared and holds each to its address and
+      // its word.
+      if (mclk_edge && memstart) begin
+        lvmo <= vmo;
         if (memgo) begin
           mbusy      <= 1'b1;
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
@@ -1896,20 +1963,6 @@ module cadr_microcycle #(
           mfinish_t <= 6'd0;
           if (rdcyc) rdfinish_t <= 6'd0;
         end
-        // WRCYC and RDCYC are one flip flop, the 74S175 at 1C23 on CLK2A:
-        // load or hold, so the direction is the *starting* instruction's and
-        // it stands until the next cycle starts.
-        if (memop) begin
-          wrcyc <= memwr;
-          rdcyc <= !memwr;
-        end
-        memstart <= memop;
-
-        // page DSPCTL 3C14/3C15: the 25S07s are enabled by -IRDISP and
-        // clocked by CLK3E, so they take IR<41:32> of the DISPATCH itself ---
-        // the word standing before this edge, not the one it loads.  Reading
-        // the new IR here is a cycle early.
-        if (irdisp) dc <= ir[41:32];
       end
 
       // **`-BOOT` HELD, which is `Rtl::reset` and the trap.**  Written LAST
@@ -2276,11 +2329,17 @@ module cadr_microcycle #(
   // returns the complement of the word, which differs from both the old and
   // the new word in every bit.  If every reference trace still matches, no
   // consumer in the machine samples a memory in its undefined tick on those
-  // programs.  **The write tick itself is NOT poisoned, and that was
-  // measured**: the level-2 write takes its address from the level-1 read in
-  // the tick both are written, and that read must be the OLD word, which
-  // `build/map_access.pass` holds (the level-2 word lands in the old level-1
-  // block, as `Rtl::step` puts it).
+  // programs.
+  //
+  // **The write tick of level 1 is poisoned too, and of the other two it is
+  // not.**  Level 1's used to be left alone because a write of both levels
+  // took level 2's address from the level-1 read of that same tick.  It does
+  // not any more: level 1's 93425As float their outputs while written, and
+  // the level-2 write goes to block 0 (`adr1_w`, muir's `229ffe3`), so no
+  // consumer reads level 1 in the tick it is written, and a poison there is
+  // one more thing the programs are held to rather than an exception.  The
+  // record that used to move the poison onto that tick, to show the check
+  // could fail, is retired with it: it tested an ordering that is gone.
   //
   // What the structure says, from this file: every write is on the edge that
   // ends the tick `wp` is up, the third-to-last of the cycle, so the

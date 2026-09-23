@@ -170,14 +170,20 @@ constexpr uint64_t kPatchOriginal = 0x18020c993076ull;
 constexpr uint32_t kEntryPage[4] = {0u, 0x3dffu, 0x3ff6u, 0x1u};
 constexpr uint32_t kEntryIndex[4] = {0u, 1u, 2u, 3u};
 
-// THE DIRECTED RUN'S THREE ADDRESSES.  On the microcycle that writes the map
-// MD is zero, so the level-1 index is 0 and `MAPI<4:0>` is 0.  The level-1
-// entry goes from 0 to 0o37, so the two orderings put the level-2 word at
-// index {0,0} = 0 and at {0o37,0} = 992, and the three writes after it land
-// at 993, 994 and 995 in either ordering, the level-1 entry being 0o37 by
-// then.  993 is the control: it says the level-1 write took effect.
+// THE DIRECTED RUN'S ADDRESSES.  On the microcycle that writes the map MD is
+// zero, so the level-1 index is 0 and `MAPI<4:0>`, which is MD's, is 0.  Every one of the four
+// writes names both levels, and muir's rule (`Machine::write_map`, which
+// `Rtl` follows since muir's `229ffe3`) is that such a write addresses level
+// 2 with its top five bits ZERO: level 1's 93425As hold their outputs in high
+// impedance while written, `-VMAP<4:0>` floats high and the 74S240s drive
+// the block number low.  So the four words land at 0, 1, 2 and 3 of block 0.
+// Indexed through the level-1 entry instead, as this fabric and `Rtl` did
+// before, the first lands at 0 (the entry was still 0) and the three after
+// it at 993, 994 and 995 (it is 0o37 by then); indexed through the entry
+// being written, all four land at 992 to 995.  Index 1 is the control that
+// tells the three apart, and 992 must hold nothing.
 constexpr uint32_t kL1Index = 0u;
-constexpr uint32_t kOldBlockIndex = 0u;
+constexpr uint32_t kZeroBlockIndex = 0u;
 constexpr uint32_t kNewBlockIndex = 992u;
 
 // The microcycle the entries are read back at: after the last of them at
@@ -445,14 +451,13 @@ Result Run(const Config &cfg, const char *trace_path, const char *prom_path,
       (kRoMap2 << 14) | kEntryIndex[2], (kRoMap2 << 14) | kEntryIndex[3]};
   if (cfg.two_level) {
     // The directed run asks a different question, so it reads different
-    // words: the level-1 entry the same microinstruction wrote, the two
-    // level-2 indices the two orderings would put the word at, and one
-    // entry of the new block as the control that says the level-1 write
-    // took effect at all.
+    // words: the level-1 entry the same microinstruction wrote, the first
+    // word's index in block 0 and in the level-1 entry's block, and the
+    // second word's index in block 0, the control (see kZeroBlockIndex).
     ro_want[1] = (kRoMap1 << 14) | kL1Index;
-    ro_want[2] = (kRoMap2 << 14) | kOldBlockIndex;
+    ro_want[2] = (kRoMap2 << 14) | kZeroBlockIndex;
     ro_want[3] = (kRoMap2 << 14) | kNewBlockIndex;
-    ro_want[4] = (kRoMap2 << 14) | (kNewBlockIndex + 1u);
+    ro_want[4] = (kRoMap2 << 14) | (kZeroBlockIndex + 1u);
   }
   uint64_t ro_got[5] = {0, 0, 0, 0, 0};
   int ro_at = 5;   // 5 means "not started"; set to 0 at kReadbackAt
@@ -677,34 +682,31 @@ int main(int argc, char **argv) {
 
     // ---- THE DIRECTED RUN, which asks one question and not the others.
     //
-    // ONE MICROINSTRUCTION WRITING BOTH LEVELS.  `Rtl::step` computes `adr1`
-    // BEFORE it performs the level-1 write, so it uses the OLD level-1 entry;
-    // `Machine::write_map` re-reads `self.l1_map[l1_index]` AFTER, so it uses
-    // the NEW one.  muir's two engines therefore disagree, and neither trace
-    // can see it: WMAPD with both VMA<26> and VMA<25> occurs on 0 of the
-    // 600,000 microcycles of the boot PROM and 0 of the band's 2,800,000, and
-    // no VMA-WRITE-MAP in MIT's whole microcode names both enables.  This
-    // measures which one the fabric does.
+    // ONE MICROINSTRUCTION WRITING BOTH LEVELS.  muir's rule, in `Rtl` and
+    // `Machine::write_map` alike, is that level 2 is addressed with its top
+    // five bits zero, because level 1's outputs float while it is written
+    // (`kZeroBlockIndex` has the account).  No reference trace can see it:
+    // WMAPD with both VMA<26> and VMA<25> occurs on 0 of the 600,000
+    // microcycles of the boot PROM and 0 of the band's 2,800,000, and no
+    // VMA-WRITE-MAP in MIT's whole microcode names both enables.  This
+    // measures what the fabric does.
     if (c.two_level) {
       Check(x.entry[0] == 037,
             "the level-1 entry holds %u after a write of 0o37, so the "
             "microinstruction did not write level 1 at all", x.entry[0]);
+      Check(x.entry[1] == 0xC00000u,
+            "the first level-2 word is %06x at index %u, wanting c00000 --- "
+            "a write of both levels did not land in block 0",
+            x.entry[1], kZeroBlockIndex);
+      Check(x.entry[2] != 0xC00000u,
+            "the first level-2 word is at index %u too, the block of the "
+            "level-1 entry being written, which is Machine::write_map's old "
+            "ordering and not muir's rule", kNewBlockIndex);
       Check(x.entry[3] == EntryWord(kConfigs[0], 1),
             "the control entry at %u holds %06x, wanting %06x --- the later "
-            "writes did not land in the new block, so this run measures "
-            "nothing", kNewBlockIndex + 1u, x.entry[3],
-            EntryWord(kConfigs[0], 1));
-      const bool old_block = x.entry[1] == 0xC00000u;
-      const bool new_block = x.entry[2] == 0xC00000u;
-      Check(old_block != new_block,
-            "the level-2 word 0xc00000 is at index %u:%s and at index %u:%s, "
-            "which is neither ordering", kOldBlockIndex,
-            old_block ? " yes" : " no", kNewBlockIndex,
-            new_block ? " yes" : " no");
-      Check(old_block,
-            "the level-2 write landed in the NEW level-1 block, where "
-            "Rtl::step --- the engine every golden trace comes from and the "
-            "one this fabric is held to --- puts it in the OLD one");
+            "writes of both levels went through the level-1 entry, which the "
+            "board's floating -VMAP<4:0> does not let them do",
+            kZeroBlockIndex + 1u, x.entry[3], EntryWord(kConfigs[0], 1));
       continue;
     }
 
@@ -828,13 +830,12 @@ int main(int argc, char **argv) {
       std::printf(
           "\n    %s --- %s\n"
           "      level-1 entry %u went to 0o%o, the level-2 word 0xc00000 is at\n"
-          "        index %u and not at %u, and the control entry at %u holds\n"
-          "        %06x --- so the fabric indexes the level-2 write by the OLD\n"
-          "        level-1 entry, which is Rtl::step's ordering and not\n"
-          "        Machine::write_map's.  Neither reference trace reaches this\n"
-          "        and no VMA-WRITE-MAP in MIT's microcode asks for it.\n",
-          c.name, c.what, kL1Index, x.entry[0], kOldBlockIndex,
-          kNewBlockIndex, kNewBlockIndex + 1u, x.entry[3]);
+          "        index %u and not at %u, and the next write's word is at %u,\n"
+          "        %06x --- so a write of both levels addresses level 2 in\n"
+          "        block 0, muir's rule.  Neither reference trace reaches\n"
+          "        this and no VMA-WRITE-MAP in MIT's microcode asks for it.\n",
+          c.name, c.what, kL1Index, x.entry[0], kZeroBlockIndex,
+          kNewBlockIndex, kZeroBlockIndex + 1u, x.entry[3]);
       continue;
     }
     std::printf(

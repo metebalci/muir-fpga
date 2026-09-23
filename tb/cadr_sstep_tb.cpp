@@ -60,10 +60,12 @@
 // trace and retires no microcycle.  The sample is then taken in that same
 // tick, after the registers have moved.
 //
-// **THE STIMULUS IS TWO COLUMNS AND NOTHING ELSE IS DRIVEN.**  The script
-// never reaches a memory cycle --- the boot PROM's first is at microcycle
-// 536,303 and this runs around 2,000 --- so `-MEMACK`, `-MEMGRANT` and
-// `-LOADMD` stand idle and `rdata` is never taken.  A row that stalled would
+// **THE STIMULUS IS FOUR COLUMNS AND NOTHING ELSE IS DRIVEN**: the clock
+// control register, the debug IR, the mode register's two speed bits and
+// the boot button.  The script never reaches a bus cycle --- the boot PROM's
+// first is at microcycle 536,303 and this runs around 2,000, and the one
+// read it steps is to a page the map refuses --- so `-MEMACK`, `-MEMGRANT`
+// and `-LOADMD` stand idle and `rdata` is never taken.  A row that stalled would
 // be several master clocks where every other row is one, and the run says so
 // rather than drifting: the interval between edges is compared against muir's
 // own nanoseconds.
@@ -95,6 +97,7 @@ constexpr uint16_t kLdstat = 1u << 4;
 struct Row {
   uint16_t clk;
   uint64_t dbgir;
+  unsigned mode, boot;
   uint64_t cycles;
   uint16_t pc;
   uint64_t ir;
@@ -108,9 +111,11 @@ bool ParseRow(const char *line, Row &r) {
   return std::sscanf(line,
                      "%4" SCNx16 " %12" SCNx64 " %" SCNx64 " %4" SCNx16
                      " %12" SCNx64 " %4" SCNx16 " %4" SCNx16 " %8" SCNx32
-                     " %8" SCNx32 " %8" SCNx32 " %8" SCNx32 " %" SCNx64 " %31s",
+                     " %8" SCNx32 " %8" SCNx32 " %8" SCNx32 " %" SCNx64
+                     " %x %x %31s",
                      &r.clk, &r.dbgir, &r.cycles, &r.pc, &r.ir, &r.flag1,
-                     &r.flag2, &r.ob, &r.a, &r.m, &r.st, &r.ns, r.what) == 13;
+                     &r.flag2, &r.ob, &r.a, &r.m, &r.st, &r.ns, &r.mode,
+                     &r.boot, r.what) == 15;
 }
 
 // What a console reads back over the diagnostic bus, sampled every tick so
@@ -243,12 +248,52 @@ int main(int argc, char **argv) {
   long last_edge = -1;
   size_t k = 0;          // the next row whose stimulus is to be driven
   size_t compared = 0;
+  size_t boots = 0;
   bool scripting = false;
 
   // The row whose edge has passed and whose answer is still settling.
   bool have_pending = false;
   size_t pending_k = 0;
   uint64_t pending_cycles = 0, pending_len = 0;
+
+  // One row's comparison, against what the console reads now.
+  auto compare = [&]() {
+    const Sample now = take();
+    const Row &r = rows[pending_k];
+
+    // **THE CLAIM THE WHOLE CHECK IS FOR.**  `CYCLES` counts the master
+    // clocks that retired a microcycle, which is the only thing that says
+    // whether a step stepped.  A fabric that drops `STEP` stands still
+    // where the reference moves; one that takes it as a level runs a
+    // microcycle every master clock it is up, and the six rows with
+    // `STEP` held say so.
+    if (pending_cycles != r.cycles)
+      bad += Fail(pending_k, r, "CYCLES", pending_cycles, r.cycles);
+    if (now.pc != r.pc) bad += Fail(pending_k, r, "PC", now.pc, r.pc);
+    if (now.ir != r.ir) bad += Fail(pending_k, r, "IR", now.ir, r.ir);
+    // `FLAG-1` carries `SRUN` at bit 8 and `SSDONE` at bit 9, the two a
+    // console reads to know what the machine is doing.
+    if (now.flag1 != r.flag1)
+      bad += Fail(pending_k, r, "FLAG-1", now.flag1, r.flag1);
+    // `FLAG-2` bit 4 is `NOP`, which is what `NOP11` makes.
+    if (now.flag2 != r.flag2)
+      bad += Fail(pending_k, r, "FLAG-2", now.flag2, r.flag2);
+    if (now.ob != r.ob) bad += Fail(pending_k, r, "OB", now.ob, r.ob);
+    if (now.a != r.a) bad += Fail(pending_k, r, "the A bus", now.a, r.a);
+    if (now.m != r.m) bad += Fail(pending_k, r, "the M bus", now.m, r.m);
+    if (now.st != r.st) bad += Fail(pending_k, r, "ST", now.st, r.st);
+
+    // The master clock's own length.  Nothing here stalls, so every row
+    // is one generator cycle, and a row that is not says the script has
+    // reached a memory cycle it was written to stay clear of.
+    if (pending_len != r.ns)
+      bad += Fail(pending_k, r, "the master clock's length", pending_len,
+                  r.ns);
+
+    have_pending = false;
+    ++compared;
+  };
+
 
   for (long t = 0; t < kMaxTicks && compared < rows.size(); ++t) {
     if (t == 4) dut->rst = 0;
@@ -285,6 +330,43 @@ int main(int argc, char **argv) {
         }
         last_edge = t;
       }
+      // **THE TWO STIMULI A MASTER CLOCK TAKES BEFORE ITS END GO UP AT ITS
+      // START.**  `clk` and the debug IR are sampled at the edge that ends
+      // the row, so they go up a tick before it, below.  The mode register's
+      // speed is not: the synchronizer takes it at `SPEEDCLK`, sixty
+      // nanoseconds into the generator cycle, and muir's `spy_write` of the
+      // mode register comes before the `step` whose `SPEEDCLK` samples it.
+      // And a boot is `Engine::boot` before the `step` that runs the trap
+      // cycle, so `-BOOT` has to have come and gone before the edge that
+      // ends it: pressed for this one tick, just after the row's own
+      // master clock began.  Row `k` is the one about to be driven.
+      //
+      // **AND A BOOT ROW'S PREDECESSOR IS READ HERE, AT THE EDGE, BECAUSE
+      // THE BOOT WILL HAVE CHANGED WHAT A CONSOLE READS BY THE END OF THE
+      // MASTER CLOCK.**  That is only a fair reading if the edge retired no
+      // microcycle: then nothing the datapath shows moved at it but the
+      // master clock's own registers, which have moved already, and the row
+      // is settled.  So the script must halt before it boots, and a boot
+      // after a running row fails here rather than being read early.
+      if (scripting && k < rows.size()) {
+        dut->mode_speed = rows[k].mode & 3u;
+        if (rows[k].boot) {
+          if (!have_pending || k < 2 ||
+              pending_cycles != rows[k - 2].cycles) {
+            std::fprintf(stderr,
+                         "FAIL: row %zu boots, and the row before it is not "
+                         "a halted master clock this check can read at its "
+                         "edge\n",
+                         k);
+            return 1;
+          }
+          compare();
+          ++boots;
+          dut->n_boot = 0;
+        }
+      }
+    } else {
+      dut->n_boot = 1;
     }
 
     if (last_tick && scripting) {
@@ -298,42 +380,7 @@ int main(int argc, char **argv) {
       // taken after the NEXT row's stimulus had been applied would read a
       // mixture of the two --- which is muir's order exactly: `step`, then
       // `spy_read`, and only then the next `spy_write`.
-      if (have_pending) {
-        const Sample now = take();
-        const Row &r = rows[pending_k];
-
-        // **THE CLAIM THE WHOLE CHECK IS FOR.**  `CYCLES` counts the master
-        // clocks that retired a microcycle, which is the only thing that says
-        // whether a step stepped.  A fabric that drops `STEP` stands still
-        // where the reference moves; one that takes it as a level runs a
-        // microcycle every master clock it is up, and the six rows with
-        // `STEP` held say so.
-        if (pending_cycles != r.cycles)
-          bad += Fail(pending_k, r, "CYCLES", pending_cycles, r.cycles);
-        if (now.pc != r.pc) bad += Fail(pending_k, r, "PC", now.pc, r.pc);
-        if (now.ir != r.ir) bad += Fail(pending_k, r, "IR", now.ir, r.ir);
-        // `FLAG-1` carries `SRUN` at bit 8 and `SSDONE` at bit 9, the two a
-        // console reads to know what the machine is doing.
-        if (now.flag1 != r.flag1)
-          bad += Fail(pending_k, r, "FLAG-1", now.flag1, r.flag1);
-        // `FLAG-2` bit 4 is `NOP`, which is what `NOP11` makes.
-        if (now.flag2 != r.flag2)
-          bad += Fail(pending_k, r, "FLAG-2", now.flag2, r.flag2);
-        if (now.ob != r.ob) bad += Fail(pending_k, r, "OB", now.ob, r.ob);
-        if (now.a != r.a) bad += Fail(pending_k, r, "the A bus", now.a, r.a);
-        if (now.m != r.m) bad += Fail(pending_k, r, "the M bus", now.m, r.m);
-        if (now.st != r.st) bad += Fail(pending_k, r, "ST", now.st, r.st);
-
-        // The master clock's own length.  Nothing here stalls, so every row
-        // is one generator cycle, and a row that is not says the script has
-        // reached a memory cycle it was written to stay clear of.
-        if (pending_len != r.ns)
-          bad += Fail(pending_k, r, "the master clock's length", pending_len,
-                      r.ns);
-
-        have_pending = false;
-        ++compared;
-      }
+      if (have_pending) compare();
 
       // And the next row's stimulus goes up now, a tick before the edge that
       // samples it, which is where muir's next `spy_write` falls.
@@ -391,6 +438,20 @@ int main(int argc, char **argv) {
                  "trace tests no step at all\n");
     return 1;
   }
+  // The boot and the mode register are stimulus the trap cycle needs: with
+  // no boot there is no trap cycle, and at extra slow `ILONG` lengthens
+  // nothing, so a trace without both would pass a fabric that gated the two
+  // by the trap.
+  size_t fast = 0;
+  for (const Row &r : rows)
+    if (r.mode != 0) ++fast;
+  if (boots == 0 || fast == 0) {
+    std::fprintf(stderr,
+                 "FAIL: the trace boots %zu times and has %zu rows off extra "
+                 "slow; the trap cycle needs both\n",
+                 boots, fast);
+    return 1;
+  }
   if (idebug == 0 || ldstat == 0) {
     std::fprintf(stderr,
                  "FAIL: the trace has %zu rows under IDEBUG and %zu under "
@@ -403,11 +464,12 @@ int main(int argc, char **argv) {
       "ok: the clock control register agrees with muir over %zu master clocks\n"
       "    %zu halted, %zu with STEP up of which %zu retired a microcycle\n"
       "    %zu under IDEBUG, %zu under NOP11, %zu under LDSTAT\n"
+      "    %zu boot, %zu rows with the mode register off extra slow\n"
       "    compared each row: CYCLES, PC, IR, FLAG-1 (SRUN and SSDONE),\n"
       "    FLAG-2, OB, the A and M buses, ST, and the master clock's length\n"
       "    every column read through spy_eadr/spy_rdata, which is the\n"
       "    diagnostic bus and is what a console has\n",
       rows.size(), halted, stepping, retired_under_step, idebug, nopped,
-      ldstat);
+      ldstat, boots, fast);
   return 0;
 }
