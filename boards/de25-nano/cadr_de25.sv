@@ -1690,7 +1690,9 @@ module cadr_de25 #(
   // raises it only once `cadr_f2sdram_gate.sv` has drained the share, so the
   // display finishes the reads it has in flight first.  It was the fabric's
   // reset alone, which did neither.  Until software opens the port the
-  // display is held in reset, and shows black.
+  // display is held in reset, and shows black.  Its `fabric_rst` is tied low
+  // here: the port's reset already follows KEY1, once the gate's drain has
+  // let the display finish the reads it has out.
   logic        pixel_locked;
   logic        pclk;                    // the mode's pixel clock, in fabric
   logic [3:0]  prst_sync;
@@ -1723,7 +1725,7 @@ module cadr_de25 #(
       .BASE(cadr_ddr_map::DISPLAY_BASE),
       .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE)
   ) u_display (
-      .clk(clk), .rst(disp_rst),
+      .clk(clk), .rst(disp_rst), .fabric_rst(1'b0),
       .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
       .m_arburst(dm_arburst), .m_arvalid(dm_arvalid), .m_arready(dm_arready),
       .m_rdata(dm_rdata), .m_rresp(dm_rresp), .m_rlast(dm_rlast),

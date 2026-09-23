@@ -1135,6 +1135,7 @@ CHECKS = {
     # as `cadr_tick_pkg.sv` does, because the models import it.
     "board_reset_arty": {
         "sources": ["rtl/plumbing/cadr_ddr_map.sv", "boards/arty-z7-20/cadr_arty.sv",
+                    "rtl/plumbing/cadr_display_out.sv",
                     "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp1_split.sv",
                     "rtl/plumbing/cadr_gp0_default.sv", "rtl/plumbing/cadr_disk_pack.sv",
                     "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
@@ -1157,6 +1158,8 @@ CHECKS = {
                   "rtl/plumbing/cadr_lamp_microcycle.sv",
                   "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
                   "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_gp_regs.sv",
+                  "rtl/plumbing/cadr_tmds_encode.sv", "rtl/plumbing/cadr_hdmi_tx.sv",
+                  "rtl/plumbing/xilinx7/cadr_hdmi_phy.sv",
                   "tb/cadr_board_reset_harness.sv"],
         "top": "cadr_board_reset_harness",
         "tb": "tb/cadr_board_reset_tb.cpp",

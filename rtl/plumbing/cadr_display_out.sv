@@ -402,7 +402,13 @@ module cadr_display_out #(
 ) (
     // ------------------------------------------------ the memory domain
     input  var logic        clk,
+    // The port's own reset, from the processing system: the fetch, its AXI
+    // state among it, at once.
     input  var logic        rst,
+    // **THE FABRIC'S RESET**: BTN1, or KEY1.  It resets the settings this
+    // module holds (the sleep timer) at once, and the fetch only once the
+    // reads it has in flight are answered: see `f_drop` below.
+    input  var logic        fabric_rst,
 
     // `S_AXI_HP3`, read only.  This module never writes memory, so the write
     // channels are not here at all rather than tied off somewhere a reader has
@@ -835,6 +841,18 @@ module cadr_display_out #(
   // column, on alternate bands, which is what one word at the head of a 963-word
   // band looks like from the front of the screen.
   logic            stride_go;
+  // **THE FABRIC'S RESET DRAINS THE FETCH BEFORE IT RESETS IT.**  The port is
+  // reset only by the processing system, so a read it has taken it will
+  // answer, and a fetch reset under it would leave that answer in the port for
+  // the next job to take as its own first word.  So the job in hand, when the
+  // fabric's reset comes, runs to its end --- a line, or a band of at most
+  // `OUTSTANDING` reads out at once, which is what every job already is ---
+  // and no new one starts; `f_drop` remembers the reset if it is shorter
+  // than the job.  The fetch is reset in `F_IDLE`, and only then.
+  // `tb/cadr_board_reset_tb.cpp` holds a read across the button, upright and
+  // turned.
+  logic            f_drop, f_quiet;
+  assign f_quiet = fabric_rst || f_drop;
   logic [WC_W-1:0] issued_after;
   logic [WC_W:0]   in_flight;
   assign issued_after = (m_arvalid && m_arready) ? (issued + WC_W'(1)) : issued;
@@ -905,6 +923,7 @@ module cadr_display_out #(
       job_half    <= 1'b0;
       job_words   <= '0;
       rd_error    <= 1'b0;
+      f_drop      <= 1'b0;
     end else begin
       for (int s = 0; s < 2; s++) req_sync[s] <= {req_sync[s][1:0], req_tog[s]};
 
@@ -1009,6 +1028,25 @@ module cadr_display_out #(
 
         default: fstate <= F_IDLE;
       endcase
+
+      // The fabric's reset: noted during a job, and carried out in `F_IDLE`,
+      // written last so that it wins over a job starting in the same tick.
+      if (fabric_rst && (fstate != F_IDLE)) f_drop <= 1'b1;
+      if (f_quiet && (fstate == F_IDLE)) begin
+        for (int s = 0; s < 2; s++) begin
+          req_sync[s] <= '0;
+          req_seen[s] <= 1'b0;
+          fill_n[s]   <= 1'b0;
+        end
+        fstate      <= F_IDLE;
+        c_arvalid   <= 1'b0;
+        s_arvalid   <= 1'b0;
+        issued      <= '0;
+        taken       <= '0;
+        wptr        <= '0;
+        rd_error    <= 1'b0;
+        f_drop      <= 1'b0;
+      end
     end
   end
 
@@ -1102,7 +1140,7 @@ module cadr_display_out #(
   logic             slp_want;   // the timer has run out: mute at the boundary
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || fabric_rst) begin
       slp_secs <= 15'(SLEEP_S);
       slp_left <= 15'(SLEEP_S);
       slp_pre  <= '0;

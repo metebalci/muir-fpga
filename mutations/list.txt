@@ -18499,3 +18499,79 @@ set MAIN_BASE   0x1C000000
                 state <= S_STOP;
               end else if (byteno == 2'd2) begin
 @end
+
+@mutation arty-the-memory-adapter-takes-the-button
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note BTN1 back in `S_AXI_HP0`'s adapter's reset, as it was: a read the port
+@note has taken is left without a master to take its answer, and a write's
+@note data is withdrawn.  Caught at "the machine's memory port: a read taken
+@note before the button was answered after it and its beats were never taken".
+@old
+    assign axi_rst = !port_rst_sync[2];
+@new
+    assign axi_rst = rst || !port_rst_sync[2];
+@end
+
+@mutation cora-the-memory-adapter-takes-the-button
+@check board_reset_cora
+@file boards/cora-z7-07s/cadr_cora.sv
+@note BTN1 back in `S_AXI_HP0`'s adapter's reset, as it was: a read the port
+@note has taken is left without a master to take its answer, and a write's
+@note data is withdrawn.  Caught at "the machine's memory port: a read taken
+@note before the button was answered after it and its beats were never taken".
+@old
+    assign axi_rst = !port_rst_sync[2];
+@new
+    assign axi_rst = rst || !port_rst_sync[2];
+@end
+
+@mutation arty-the-display-port-takes-the-button
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note BTN1 back in the display's port reset, as it was: the fetch is reset with
+@note reads out on `S_AXI_HP3`, and the next job takes their beats as its own.
+@note Caught at "new read addresses taken while a read from before the button
+@note was still owed".
+@old
+        disp_rst      <= !disp_rst_sync[2];
+@new
+        disp_rst      <= rst || !disp_rst_sync[2];
+@end
+
+@mutation arty-the-button-does-not-reach-the-display
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The display's fabric reset tied low: BTN1 leaves the sleep setting as it
+@note was.  Caught at "after display SLEEP".
+@old
+          .clk(clk), .rst(disp_rst), .fabric_rst(rst),
+@new
+          .clk(clk), .rst(disp_rst), .fabric_rst(1'b0),
+@end
+
+@mutation display-the-button-leaves-its-sleep-setting
+@check board_reset_arty
+@file rtl/plumbing/cadr_display_out.sv
+@note The sleep timer reset by the port's reset only.  Caught at "after display
+@note SLEEP".  Written with the input still read, so that lint does not do the
+@note catching.
+@old
+    if (rst || fabric_rst) begin
+      slp_secs <= 15'(SLEEP_S);
+@new
+    if (rst || (fabric_rst && 1'b0)) begin
+      slp_secs <= 15'(SLEEP_S);
+@end
+
+@mutation display-the-button-cuts-the-fetch
+@check board_reset_arty
+@file rtl/plumbing/cadr_display_out.sv
+@note The fetch reset in the middle of a job, reads out and all, which is what
+@note BTN1 did through the port's reset.  Caught at "new read addresses taken
+@note while a read from before the button was still owed".
+@old
+      if (f_quiet && (fstate == F_IDLE)) begin
+@new
+      if (f_quiet && (fstate == F_IDLE || 1'b1)) begin
+@end
