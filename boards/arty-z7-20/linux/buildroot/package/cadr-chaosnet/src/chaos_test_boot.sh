@@ -47,6 +47,7 @@ SCRIPT="$HERE/../S87cadr-chaosnet"
 # this file holds is that THIS script gets its own flags out of the one file
 # and waits for the network before it passes them on.
 STARTER="$HERE/../../cadr-common/src/daemon.sh"
+STOPPER="$HERE/../../cadr-common/src/stop.sh"
 READER="$HERE/../../cadr-common/src/fpgarc.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-chaosnet-boot-$$}
 fails=0
@@ -85,6 +86,8 @@ setup() {
 	# it, so without this rewrite the copy dies at that line and every case
 	# below reports that the program was never started.
 	anchor "^DAEMON_SH=/usr/share/cadr/daemon.sh\$" "DAEMON_SH=$STARTER" || return 1
+	# And the stopper, the third: sourced the same way, so the same reason.
+	anchor "^STOP_SH=/usr/share/cadr/stop.sh\$" "STOP_SH=$STOPPER" || return 1
 	# The program and its pid file.  `cadr_daemon` really looks for the
 	# process it started, so the stand-in below has to be what is started
 	# and /var/run is not this check's to write in.

@@ -33,4 +33,5 @@ tftpblocksize=1468
 # processor may not configure it again.  Uncomment this on such a board's card
 # and U-Boot opens the bridges without loading cadr.core.rbf.  Leave it
 # commented on a board that boots from its flash, where U-Boot loads the fabric.
+# The value is 1; any other value is a board that loads its fabric.
 #cadr_fabric_loaded=1

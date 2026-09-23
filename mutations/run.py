@@ -1171,6 +1171,45 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # WHERE EACH BOARD'S MEMORY IS, written in several files no one build
+    # reads together: the fabric's package, the DE25-Nano's restatement of it,
+    # the programs' header, each board's reserved-memory node, the card
+    # script, U-Boot's GPO register and the Zynq boards' JTAG memory proofs.
+    # `tools/mem_map_check.py` requires them to agree.  Refusing is being
+    # caught.
+    "mem_map": {
+        "kind": "script",
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv",
+                    "boards/de25-nano/cadr_de25.sv",
+                    "boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h",
+                    "boards/arty-z7-20/linux/cadr-reserved.dtsi",
+                    "boards/de25-nano/linux/cadr-reserved.dtsi",
+                    "boards/arty-z7-20/linux/mksd-buildroot.sh",
+                    "boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env",
+                    "boards/arty-z7-20/vivado/ddr_check.tcl",
+                    "boards/arty-z7-20/vivado/ddr_run.tcl"],
+        "cmd": ["tools/mem_map_check.py", "."],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
+    # The DE25-Nano's boot environment, as the `boot` step of
+    # `build/de25_linux.pass` reads it: the fabric's image fetched only on the
+    # branch that loads it, and only `cadr_fabric_loaded=1` taking the branch
+    # that does not.  The rest of that check compiles C, which is the
+    # packages' own mutation lists' to hold; this entry is the step that reads
+    # U-Boot's environment.  Refusing is being caught.
+    "de25_boot": {
+        "kind": "script",
+        "sources": ["boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env"],
+        "cmd": ["boards/de25-nano/linux/buildroot_check.py", "boot",
+                "boards/de25-nano/linux/buildroot"],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # The disk controller's drive and register face, against the program
     # `golden/src/disk.rs` writes.  This is the check that can tell this
     # module from a wire: the boot PROM reads one constant out of it 11,301

@@ -636,11 +636,15 @@ and they are in this order:
    appendix A.4) says to clear them before the processor reconfigures the
    fabric.
 2. `fpga load` puts `cadr.core.rbf` into the fabric.
-3. `bridge enable` releases every bridge between the processor and the fabric:
-   the one the faces sit on, the lightweight one the console sits on, and the
-   FPGA-to-SDRAM bridge the machine's memory comes through. It is U-Boot's own
-   command (`arch/arm/mach-socfpga/misc.c`), and the secure firmware does the
-   work, including the handshake with the fabric.
+3. `bridge enable` asks for every bridge between the processor and the fabric
+   to be released: the one the faces sit on, the lightweight one the console
+   sits on, and the FPGA-to-SDRAM bridge the machine's memory comes through. It
+   is U-Boot's own command (`arch/arm/mach-socfpga/misc.c`), and the secure
+   firmware does the work, including the handshake with the fabric. After
+   `fpga load` it repeats work already done, because the secure firmware
+   releases every bridge itself when a full configuration completes. Its exit
+   status is always 0, even when the bridges stay in reset, so it cannot stop
+   step 4.
 4. Write 1 to the same register. Bit 0 is what the fabric reads as "the bridges
    are stable", which is the use the manual gives these bits, and until it rises
    the fabric holds its memory master off, so the machine's first memory cycle

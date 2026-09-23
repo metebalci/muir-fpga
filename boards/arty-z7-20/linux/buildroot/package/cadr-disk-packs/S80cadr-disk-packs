@@ -127,6 +127,27 @@ FPGARC_SH=/usr/share/cadr/fpgarc.sh
 DAEMON_SH=/usr/share/cadr/daemon.sh
 . "$DAEMON_SH"
 
+# And the stopper, cadr-common's fourth file on the target: `start-stop-daemon
+# -K` sends SIGTERM and returns at once, and `stop` below must not save the
+# clock and unmount the card beside a program that is still writing to it.
+# Its header is the whole account.
+STOP_SH=/usr/share/cadr/stop.sh
+. "$STOP_SH"
+
+# **HOW LONG THE PACK PROGRAM IS GIVEN TO STOP: THIRTY SECONDS.**  On SIGTERM
+# it finishes the pass it is in, writes back every dirty slot of the block
+# store (`feeder_flush`, in up to 50 passes), takes the drives absent and
+# closes the packs (cadr-disk-packs.c, the end of `main`).  The store has 24
+# slots of one block each (PS_SLOTS in pack_side.h), and each write-back is a
+# 1 KB `pwrite` and an `fdatasync` (pack_writeback in pack_file.c), so the
+# worst case is 24 synchronous writes to the card, each of which on FAT may
+# also write the FAT's own blocks.  The SD specification lets an SDHC or SDXC
+# card hold a write busy for up to 500 ms, so 24 x 2 x 500 ms is 24 s at the
+# very worst, and thirty is that with room.  An ordinary stop is far quicker:
+# a slot is written back as soon as it is dirty, so there is seldom more than
+# a few left.
+PACKS_STOP_SECONDS=30
+
 # And the clock, cadr-common's third file on the target.  No board here has a
 # real-time clock in it, so `--date` and `--time` on the card are the only
 # things that can tell this one what day it is, and what one clean shutdown
@@ -381,10 +402,12 @@ say_not_a_time() {
 
 # **THE CLOCK IS SAVED AT A CLEAN SHUTDOWN**, so that the next boot starts
 # where this one left off rather than at the epoch.  It is written at this
-# moment and no other: the pack program is already stopped, so nothing else is
-# writing the partition, and the partition is about to be unmounted --- a save
-# after that would write into the root filesystem's RAM disk, where the file
-# would be there to find and gone at the next boot.
+# moment and no other: `stop` has waited for the pack program to exit, so
+# nothing else is writing the partition, and the partition is about to be
+# unmounted --- a save after that would write into the root filesystem's RAM
+# disk, where the file would be there to find and gone at the next boot.  A
+# pack program that did not exit in time is still writing its packs, which are
+# other files; the clock is saved all the same.
 #
 # A board that lost its power instead of being halted keeps whatever the
 # shutdown before it saved, which is the most a board with no clock in it can
@@ -695,17 +718,29 @@ connect_the_debug_cable() {
 	fi
 }
 
+# **THE ORDER IS THE WHOLE OF IT**: the pack program gone, then the clock
+# saved, then everything synced, then the card unmounted.  `cadr_stop` waits
+# for the program, because it is writing the machine's last blocks back as it
+# leaves.  A program still there at the bound is said and left running rather
+# than killed, since a kill would lose exactly those blocks; the clock is still
+# saved, and the unmount then fails because the packs are open, which is said
+# too.  A card that is not mounted --- a board with no card in it --- has
+# nothing to unmount and nothing is said.
 stop() {
-	printf "Stopping cadr-disk-packs: "
-	start-stop-daemon -K -q -p "$PIDFILE"
-	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	cadr_stop cadr-disk-packs "$PIDFILE" "$PACKS_STOP_SECONDS"
 	save_the_clock
 	sync
 	# One mount, so one unmount.  The clock is saved above it, which is the
 	# order that matters: a save after the unmount writes into the root
 	# filesystem's RAM disk and is gone at the next boot, with the file
 	# there to find either way.
-	umount "$CARD" 2>/dev/null
+	mountpoint -q "$CARD" 2>/dev/null || return 0
+	if ! _unmount_said=$(umount "$CARD" 2>&1); then
+		echo "cadr-disk-packs: $CARD WAS NOT UNMOUNTED, so what is on the card may not" \
+		     "all be written: ${_unmount_said:-umount said nothing}"
+		return 1
+	fi
+	return 0
 }
 
 case "$1" in

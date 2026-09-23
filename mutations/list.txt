@@ -17103,3 +17103,207 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   assign wr_hi    = job_strided ? strided_word : m_rdata[31:0];
   assign wr_lo    = job_strided ? strided_word : m_rdata[63:32];
 @end
+
+# ======================================================================
+# WHERE EACH BOARD'S MEMORY IS, IN EVERY FILE THAT WRITES IT DOWN
+# ======================================================================
+#
+# The machine's 128 MB is one fact per board, written in the fabric's package,
+# the DE25-Nano's top level, the programs' header, each board's reserved-memory
+# node, the card script, U-Boot's environment and the Zynq boards' JTAG memory
+# proofs.  No one build reads them together, and each build is self-consistent,
+# so a number changed in one of them builds everywhere.
+# `tools/mem_map_check.py` requires every copy to agree, and each record below
+# moves one number in one copy.
+
+@mutation mem-map-the-fabric-reserves-half
+@check mem_map
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The package says 64 MB while both device trees still reserve 128.  The
+@note fabric builds, and nothing it writes today leaves the 64 MB, so this is
+@note the quiet kind: the day the display or the spare is used, it is Linux's.
+@note
+@note Caught at "the reservation's size: ... RESERVED_MB says 0x04000000 and
+@note ... cadr-reserved.dtsi reg says 0x08000000".
+@old
+  localparam int unsigned RESERVED_MB   = 128;
+@new
+  localparam int unsigned RESERVED_MB   = 64;
+@end
+
+@mutation mem-map-the-de25-top-restates-another-base
+@check mem_map
+@file boards/de25-nano/cadr_de25.sv
+@note The top level's restatement is what stops a flow without the define;
+@note moved together with the package it would pass elaboration and put the
+@note machine at an address the device tree does not reserve.
+@note
+@note Caught at "main memory: ... MAIN_BASE says 0xB0000000 and
+@note boards/de25-nano/cadr_de25.sv MAIN_BASE says 0xB8000000".
+@old
+  localparam logic [31:0] MAIN_BASE = 32'hB000_0000;
+@new
+  localparam logic [31:0] MAIN_BASE = 32'hB800_0000;
+@end
+
+@mutation mem-map-the-programs-reserve-elsewhere-on-the-de25
+@check mem_map
+@file boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h
+@note The header's own static assertions hold its layout to itself and cannot
+@note see the fabric: a reservation moved with everything under it compiles.
+@note Here only the reservation moves, which those assertions would also
+@note refuse when the header is compiled; this record holds that the check
+@note reads the header's numbers at all, and needs no compiler to do it.
+@note
+@note Caught at "the reservation's base: ... cadr_board.h RESERVED says
+@note 0xA8000000".
+@old
+#define CADR_BOARD_RESERVED_HEX  B0000000
+@new
+#define CADR_BOARD_RESERVED_HEX  A8000000
+@end
+
+@mutation mem-map-the-zynq-color-display-is-a-window-up
+@check mem_map
+@file boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h
+@note The color display 256 KB above the display rather than 128 KB: the
+@note terminal would read an empty window while the fabric draws in the other.
+@note The header's assertions would refuse it when compiled; this record holds
+@note that the check reads the Zynq half as well as the DE25-Nano's.
+@note
+@note Caught at "the color display: ... COLOR_DISPLAY_BASE says 0x1C020000
+@note and cadr_board.h COLOR says 0x1C040000".
+@old
+#define CADR_BOARD_COLOR_HEX     1C020000
+@new
+#define CADR_BOARD_COLOR_HEX     1C040000
+@end
+
+@mutation mem-map-the-zynq-tree-reserves-half
+@check mem_map
+@file boards/arty-z7-20/linux/cadr-reserved.dtsi
+@note The Zynq boards' tree reserves 64 MB: the kernel takes the display and
+@note the spare as ordinary memory while the fabric writes into them.
+@note
+@note Caught at "the reservation's size: ... reg says 0x04000000".
+@old
+			reg = <0x18000000 0x08000000>;
+@new
+			reg = <0x18000000 0x04000000>;
+@end
+
+@mutation mem-map-the-de25-tree-reserves-half
+@check mem_map
+@file boards/de25-nano/linux/cadr-reserved.dtsi
+@note The case the review named: the DE25-Nano's tree reserves 64 MB, the
+@note card script finds a node of the right name and the kernel boots, and the
+@note display at 0xB400_0000 is memory Linux may hand out.
+@note
+@note Caught at "the reservation's size: ... reg says 0x04000000".
+@old
+			reg = <0x0 0xb0000000 0x0 0x08000000>;
+@new
+			reg = <0x0 0xb0000000 0x0 0x04000000>;
+@end
+
+@mutation mem-map-the-de25-node-is-named-for-another-address
+@check mem_map
+@file boards/de25-nano/linux/cadr-reserved.dtsi
+@note The node's unit address is what the card script looks for, so a node
+@note renamed without its reg makes the card script refuse a good tree, and
+@note one whose reg moved without its name passes the card script's test.
+@note
+@note Caught at "the reservation's base: ... unit address says 0xB8000000".
+@old
+		cadr@b0000000 {
+@new
+		cadr@b8000000 {
+@end
+
+@mutation mem-map-the-card-names-the-wrong-display
+@check mem_map
+@file boards/arty-z7-20/linux/mksd-buildroot.sh
+@note The card's `fpgarc` offers the DE25-Nano's display at main memory's
+@note base, so a person who uncomments the line gets the machine's memory
+@note drawn as a picture.
+@note
+@note Caught at "the display: ... DISPLAY_WINDOW says 0xB0000000".
+@old
+    DISPLAY_WINDOW=0xB4000000
+@new
+    DISPLAY_WINDOW=0xB0000000
+@end
+
+@mutation mem-map-uboot-opens-the-gate-at-gpi
+@check mem_map
+@file boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env
+@note The case the review named: U-Boot writes the GPI register, which is
+@note read-only, instead of GPO, so the fabric's gate never opens and the
+@note machine's first memory pass meets a shut port.  Nothing else reads
+@note this number.
+@note
+@note Caught at "the GPO register: ... cadr_gpo says 0x10D120E8".
+@old
+cadr_gpo=0x10d120e4
+@new
+cadr_gpo=0x10d120e8
+@end
+
+@mutation mem-map-the-jtag-memory-check-probes-the-display
+@check mem_map
+@file boards/arty-z7-20/vivado/ddr_check.tcl
+@note The JTAG memory check proves the display's region and calls it main
+@note memory, which passes on a board whose main memory is not reached.
+@note
+@note Caught at "main memory: ... ddr_check.tcl MAIN_BASE says 0x1C000000".
+@old
+set MAIN_BASE   0x18000000
+@new
+set MAIN_BASE   0x1C000000
+@end
+
+@mutation mem-map-the-jtag-memory-run-probes-the-display
+@check mem_map
+@file boards/arty-z7-20/vivado/ddr_run.tcl
+@note As its sibling, for the script that runs the machine over JTAG.
+@note
+@note Caught at "main memory: ... ddr_run.tcl MAIN_BASE says 0x1C000000".
+@old
+set MAIN_BASE   0x18000000
+@new
+set MAIN_BASE   0x1C000000
+@end
+
+# ======================================================================
+# THE DE25-NANO'S BOOT ENVIRONMENT
+# ======================================================================
+
+@mutation de25-boot-any-value-of-fabric-loaded-counts-as-loaded
+@check de25_boot
+@file boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env
+@note The test as it once stood: "set at all".  A card that says
+@note `cadr_fabric_loaded=0` on a board that boots from its flash skips
+@note `fpga load`, `bridge enable` finds no fabric and still returns 0, and
+@note the gate is raised with nothing behind it.
+@note
+@note Caught at "cadr_fabric takes the already-loaded branch with
+@note cadr_fabric_loaded=0".
+@old
+	if test "${cadr_fabric_loaded}" = 1; then
+@new
+	if test -n "${cadr_fabric_loaded}"; then
+@end
+
+@mutation de25-boot-fabric-loaded-is-read-backwards
+@check de25_boot
+@file boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env
+@note The comparison turned round: every board that must load its fabric
+@note skips the load, and the one that may not load it tries.
+@note
+@note Caught at "cadr_fabric takes the already-loaded branch with
+@note cadr_fabric_loaded=(unset)".
+@old
+	if test "${cadr_fabric_loaded}" = 1; then
+@new
+	if test "${cadr_fabric_loaded}" != 1; then
+@end
