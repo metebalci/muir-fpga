@@ -224,9 +224,18 @@ module cadr_f2sdram_share #(
   //
   // The machine while it is asking or waiting, and everybody while it is
   // not: see the header.  Port 0 is the machine's.
+  //
+  // **AND A WRITE OF THE MACHINE'S IS WAITED FOR FROM ITS GRANT, NOT FROM ITS
+  // LAST BEAT.**  Its address valid falls when the bridge takes the address,
+  // and it is not outstanding until the bridge has taken its data too; in the
+  // tick between, the machine is neither asking nor, by `wr_out`, waiting.
+  // Measured without the `w_on` term: over BUSY, 116 reads of the other
+  // masters were granted in that one tick.  With it the hold is what the
+  // header says, from the tick the machine asks to the tick its answer is back.
   logic          machine_busy;
   logic [N-1:0]  eligible;
-  assign machine_busy = s_arvalid[0] || s_awvalid[0] || rd_out[0] || wr_out[0];
+  assign machine_busy = s_arvalid[0] || s_awvalid[0] ||
+                        (w_on && (w_who == '0)) || rd_out[0] || wr_out[0];
   assign eligible = machine_busy ? {{(N-1){1'b0}}, 1'b1} : {N{1'b1}};
 
   // --------------------------------------------------------------- reads

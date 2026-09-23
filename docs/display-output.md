@@ -1183,11 +1183,19 @@ checks the Arty Z7-20 runs, because it is the same module.
 the starts, the stops, every bit and every acknowledge from the levels of the
 two lines, never from a signal inside the module, and compares the byte stream
 with its own second transcription of the program. It measures the six
-intervals the data sheet bounds and prints the worst of each, drives a
-stretched clock and a refused byte, and requires that neither line moves once
-the program is through. `build/de25.pass` lints the board with the display in
-it as a fourth configuration, which is what catches a pin brought out and not
-connected.
+intervals the data sheet bounds and prints the worst of each, and drives a
+stretched clock. It refuses the address, the register and the value byte of
+one write in turn, and each refusal must stop the program at that byte with
+the write uncounted. It requires that neither line moves once the program is
+through. `build/de25.pass` lints the board with the display in it as a fourth
+configuration, which is what catches a pin brought out and not connected. It
+then simulates the board's top level around shells of the processor and the
+machine, which holds the wiring lint cannot see: the syncs, the order of the
+three channels on the video bus, the gate on the forwarded pixel clock, and
+the transmitter written out of reset and at a wake but never at a sleep.
+`build/display_share.pass` runs the display behind the DE25-Nano's share of
+the memory port against a memory with a pipelined round trip, and requires
+every picture, upright and rotated, to keep up.
 
 **These registers do make an ADV7513 transmit, and that was shown rather than
 argued.** The register map is in a document that is not available and the
