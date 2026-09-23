@@ -63,6 +63,16 @@
 # that second branch: its test is evaluated as U-Boot's `test` would for
 # several values, because a test for "set at all" once took `=0` as loaded.
 #
+# **AND THAT THE GATE OPENS ONLY ON BRIDGES READ BACK AS RELEASED.**  Both
+# branches of `cadr_fabric` must run `cadr_bridges_up` between `bridge enable`
+# and the write that opens the gate, joined by `&&`, and `cadr_bridges_up` must
+# be the read that was run at the board's U-Boot prompt.  There BRGMODRST read
+# 0xf before anything was done, still 0xf after `fpga load` had reported
+# success, 0 after `bridge enable` and 0xf again after `bridge disable`; the
+# masked read gave b held and 0 released, and its `if itest.l` took the right
+# branch both ways.  `bridge enable` returns 0 whatever happens, so without the
+# read-back nothing keeps the gate shut on bridges still in reset.
+#
 # **WHAT IT DOES NOT HOLD** is U-Boot's behavior.  It reads the environment as
 # text; it does not run hush, so it cannot say that the environment parses or
 # that a `run` inside an `&&` list does what it looks like.  The change this
@@ -96,6 +106,14 @@ FABRIC_FILE = "de25-nano/cadr.core.rbf"
 # The variable each path names its fetch in, and the fetch each path uses.
 RBF_GET = "cadr_rbf_get"
 RBF_BY_PATH = {"cadr_card": "cadr_rbf_card", "netcmd": "cadr_rbf_net"}
+# The bridges' release, its read-back and the gate, in the order both branches
+# of cadr_fabric must run them.  The read is the one run at the U-Boot prompt:
+# BRGMODRST at 0x10D1_102C, masked to the HPS-to-FPGA, lightweight and
+# FPGA-to-SDRAM bridges' bits, 0xb.
+BRIDGE_ENABLE = "bridge enable"
+BRIDGES_UP = "cadr_bridges_up"
+GATE_OPEN = "mw.l ${cadr_gpo} 1"
+BRGMODRST_READ = 'setexpr.l cadr_brg *0x10d1102c "&" 0xb'
 
 
 def die(*lines):
@@ -279,6 +297,42 @@ def boot(tree):
         die("cadr_fabric loads the fabric on the branch that found it configured",
             "already, which the Technical Reference Manual (A.4.2.1) forbids")
 
+    # **AND THE GATE OPENS ONLY ON BRIDGES READ BACK AS RELEASED, ON BOTH
+    # BRANCHES.**  `bridge enable` returns 0 whatever happens, so its `&&`
+    # cannot keep the gate shut.  And on the board the bridges were still in
+    # reset after `fpga load` had reported success, so the loading branch has
+    # no release of its own to lean on either.  Each branch must run, in this
+    # order, each joined to the next by `&&` with nothing between: `bridge
+    # enable`, the read-back, and the one write that opens the gate.
+    order = r"\s*&&\s*".join(re.escape(w) for w in
+                             (BRIDGE_ENABLE, "run " + BRIDGES_UP, GATE_OPEN))
+    for which, name in (("loaded", "already-loaded"), ("load", "loading")):
+        branch = m.group(which)
+        if branch.count(GATE_OPEN) != 1 or not re.search(order, branch):
+            die("the %s branch of cadr_fabric does not run `run %s` between `%s`"
+                " and `%s`, each joined to the next by &&:"
+                % (name, BRIDGES_UP, BRIDGE_ENABLE, GATE_OPEN),
+                "    " + branch,
+                "`bridge enable` returns 0 whatever happens, and on the board the",
+                "bridges were still in reset after `fpga load`, so only a read-back",
+                "can keep the gate shut.")
+    # **AND THE READ-BACK IS THE ONE RUN AT THE PROMPT**: the register read
+    # and masked, then `itest.l`, whose `if` took the right branch both ways
+    # on the board, with the branch for a bridge still held ending in `false`.
+    up = re.sub(r"\$\{(cadr_brgmodrst)\}", lambda v: env.get(v.group(1), ""),
+                env.get(BRIDGES_UP, ""))
+    b = re.match(r"^\s*(?P<read>[^;]*);\s*if\s+(?P<test>[^;]*);\s*then\s+"
+                 r"(?P<up>.*?)\s*;?\s*else\s+(?P<down>.*?)\s*;?\s*fi\s*$", up)
+    if (not b or b.group("read").strip() != BRGMODRST_READ
+            or b.group("test").strip() != "itest.l ${cadr_brg} == 0"
+            or "false" in b.group("up")
+            or not re.search(r"(^|;)\s*false$", b.group("down").strip())):
+        die("%s is not `%s; if itest.l ${cadr_brg} == 0; then ...; else ...;"
+            " false; fi`, which is the read that was run on the board:"
+            % (BRIDGES_UP, BRGMODRST_READ), "    " + (up or "(not defined)"))
+
+    print("buildroot-de25: the gate opens only after BRGMODRST reads the three "
+          "bridges released, on both branches of cadr_fabric")
     print("buildroot-de25: the fabric's image is fetched only where it is used: "
           "%s by %s, %s by %s, in cadr_fabric's loading branch alone, and only "
           "cadr_fabric_loaded=1 skips that branch"
