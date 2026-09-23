@@ -25,6 +25,20 @@
 // controller take, the bus interface waits for it, exactly as it waits for any
 // slow slave; the Xbus is asynchronous and hangs the machine until `-XBUS.ACK`.
 // That is why this can be written for clarity rather than for a tick count.
+//
+// **EXCEPT THAT IT DOES NOT WAIT FOR EVER.**  The bus interface's NXM timer
+// ends a cycle nobody has answered after about 4.25 us: it lifts -XBUS.RQ,
+// the bridge drops `mem_req`, and the machine sees a nonexistent memory.
+// AXI has no way to call a transaction back, so its answer still comes, and
+// this adapter must take it from the slave --- a response left standing is a
+// hung port --- and throw it away.  It used to deliver it instead, to
+// whatever cycle was asking by then: the next read was acknowledged at once
+// with the old read's word, and a write in that place was acknowledged and
+// never issued.  So a request that drops before its answer marks the
+// transaction ABANDONED; the transaction runs to its end on the AXI side,
+// and then goes back to IDLE rather than to DONE, where the next request
+// issues its own.  Nothing changes for a request that stays up, which is
+// every request the timer does not end: the same states on the same ticks.
 
 `default_nettype none
 
@@ -98,6 +112,15 @@ module cadr_axi_master (
   // put with it, so these are registers and not functions of `mem_req`.
   logic aw_sent, w_sent;
 
+  // The bridge let go of this transaction before its answer came: the NXM
+  // timer ended the cycle.  See the header.
+  logic abandoned;
+
+  // Where a transaction goes when its response arrives: to DONE, which the
+  // bridge sees as the answer, only if the request that asked is still up.
+  logic still_asked;
+  assign still_asked = mem_req && !abandoned;
+
   assign m_axi_awlen   = LEN_ONE;
   assign m_axi_awsize  = SIZE_WORD;
   assign m_axi_awburst = BURST_INCR;
@@ -125,6 +148,7 @@ module cadr_axi_master (
       state         <= IDLE;
       aw_sent       <= 1'b0;
       w_sent        <= 1'b0;
+      abandoned     <= 1'b0;
       mem_rdata     <= 32'd0;
       mem_error     <= 1'b0;
       m_axi_awaddr  <= 32'd0;
@@ -137,6 +161,7 @@ module cadr_axi_master (
             // Latched here and held for the whole transaction: AXI wants the
             // payload stable from valid until ready.
             mem_error <= 1'b0;
+            abandoned <= 1'b0;
             if (mem_write) begin
               m_axi_awaddr <= mem_addr;
               m_axi_wdata  <= mem_wdata;
@@ -161,11 +186,17 @@ module cadr_axi_master (
           end
         end
 
+        // An abandoned write still finishes: AW and W stay up until they
+        // are taken, and B is still waited for.
         WRESP: begin
           if (m_axi_bvalid) begin
-            // OKAY is 00 and EXOKAY 01; SLVERR and DECERR have bit 1 set.
-            if (m_axi_bresp[1]) mem_error <= 1'b1;
-            state <= DONE;
+            if (still_asked) begin
+              // OKAY is 00 and EXOKAY 01; SLVERR and DECERR have bit 1 set.
+              if (m_axi_bresp[1]) mem_error <= 1'b1;
+              state <= DONE;
+            end else begin
+              state <= IDLE;
+            end
           end
         end
 
@@ -173,11 +204,16 @@ module cadr_axi_master (
           if (m_axi_arready) state <= RDATA;
         end
 
+        // And an abandoned read's word is taken off the bus and dropped.
         RDATA: begin
           if (m_axi_rvalid) begin
-            mem_rdata <= m_axi_rdata;
-            if (m_axi_rresp[1]) mem_error <= 1'b1;
-            state <= DONE;
+            if (still_asked) begin
+              mem_rdata <= m_axi_rdata;
+              if (m_axi_rresp[1]) mem_error <= 1'b1;
+              state <= DONE;
+            end else begin
+              state <= IDLE;
+            end
           end
         end
 
@@ -190,6 +226,14 @@ module cadr_axi_master (
 
         default: state <= IDLE;
       endcase
+
+      // The request fell while the transaction was out.  Latched, because a
+      // request can fall and a NEW one rise before the response comes, and
+      // that one is not the one this response answers.
+      if (!mem_req && (state == WRITE || state == WRESP ||
+                       state == READ || state == RDATA)) begin
+        abandoned <= 1'b1;
+      end
     end
   end
 

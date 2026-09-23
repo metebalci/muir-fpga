@@ -9441,25 +9441,21 @@ if {0 && $held ne $want} {
 @note is clear, the request was answered twice, and the read issued one write
 @note transaction where it should have issued none.
 @old
-        RDATA: begin
-          if (m_axi_rvalid) begin
-            mem_rdata <= m_axi_rdata;
-            if (m_axi_rresp[1]) mem_error <= 1'b1;
-            state <= DONE;
-          end
-        end
+            if (still_asked) begin
+              mem_rdata <= m_axi_rdata;
+              if (m_axi_rresp[1]) mem_error <= 1'b1;
+              state <= DONE;
+            end else begin
 @new
-        RDATA: begin
-          if (m_axi_rvalid) begin
-            mem_rdata <= m_axi_rdata;
-            if (m_axi_rresp[1]) mem_error <= 1'b1;
-            m_axi_awaddr <= m_axi_araddr;
-            m_axi_wdata  <= mem_wdata;
-            aw_sent      <= 1'b0;
-            w_sent       <= 1'b0;
-            state        <= WRITE;
-          end
-        end
+            if (still_asked) begin
+              mem_rdata <= m_axi_rdata;
+              if (m_axi_rresp[1]) mem_error <= 1'b1;
+              m_axi_awaddr <= m_axi_araddr;
+              m_axi_wdata  <= mem_wdata;
+              aw_sent      <= 1'b0;
+              w_sent       <= 1'b0;
+              state        <= WRITE;
+            end else begin
 @end
 
 @mutation the-read-is-issued-a-second-time
@@ -11148,9 +11144,9 @@ if {0 && $held ne $want} {
 @note Both counts take this one condition, so a mutation here moves the card's
 @note four-bit Lost Count onto the wrong event with it.
 @old
-  assign rx_refused    = cmd_wr && wr_data[1] && wr_mask[1] && !commit_ok;
+  assign rx_refused    = commit_asked && commit_frame && !commit_ok;
 @new
-  assign rx_refused    = cmd_wr && wr_data[1] && wr_mask[1] && commit_ok;
+  assign rx_refused    = commit_asked && commit_frame && commit_ok;
 @end
 
 @mutation chaos-cable-clears-the-lost-count-on-a-reset
@@ -11214,9 +11210,9 @@ if {0 && $held ne $want} {
 @note stored --- so only comparing the WORDS the machine reads back catches
 @note this.  Caught at "a word the machine read out of the receive buffer".
 @old
-          if (sent + 9'd1 == r_rxlen) xst <= X_GAP;
+          if (sent + 9'd1 == x_len) xst <= X_GAP;
 @new
-          if (sent + 9'd2 == r_rxlen) xst <= X_GAP;
+          if (sent + 9'd2 == x_len) xst <= X_GAP;
 @end
 
 @mutation serial-line-forgets-local-loop-back
@@ -17306,4 +17302,254 @@ set MAIN_BASE   0x1C000000
 	if test "${cadr_fabric_loaded}" = 1; then
 @new
 	if test "${cadr_fabric_loaded}" != 1; then
+@end
+
+# ---------------------------------------------------------------- xbus_axi
+#
+# The adapter behind the DDR bridge, when the NXM timer ends a cycle the
+# memory has not answered.  The late answer must be drained and dropped, and
+# the next cycle must issue its own transaction.  Before this, the next read
+# was acknowledged at once with the old read's word and a write in that place
+# was acknowledged and never issued.
+
+@mutation a-late-read-answers-the-live-request
+@check xbus_axi
+@file rtl/plumbing/cadr_axi_master.sv
+@note THE TEMPTING FIX, AND WRONG.  Asking whether the request is up when the
+@note read data arrives looks like enough, but by then the NEXT cycle's request
+@note is up, and the old read's word is delivered to it --- the defect itself,
+@note back again.  What answers the question is whether the request FELL while
+@note the transaction was out, which is what `abandoned` holds.  Caught at
+@note "the word the read after it was given".
+@old
+        RDATA: begin
+          if (m_axi_rvalid) begin
+            if (still_asked) begin
+@new
+        RDATA: begin
+          if (m_axi_rvalid) begin
+            if (mem_req) begin
+@end
+
+@mutation a-late-write-response-answers-the-live-request
+@check xbus_axi
+@file rtl/plumbing/cadr_axi_master.sv
+@note The same on the write side: the late B is taken as the next cycle's
+@note answer, so a write in that place is acknowledged and never issued.
+@note Caught at "AR handshakes for the read after a late write", whose read
+@note is answered with the stale acknowledgment and never goes out.
+@old
+        WRESP: begin
+          if (m_axi_bvalid) begin
+            if (still_asked) begin
+@new
+        WRESP: begin
+          if (m_axi_bvalid) begin
+            if (mem_req) begin
+@end
+
+@mutation a-dropped-request-is-never-marked
+@check xbus_axi
+@file rtl/plumbing/cadr_axi_master.sv
+@note Nothing marks the transaction abandoned, so every late answer goes to
+@note DONE and is the next cycle's.  Caught at "AR handshakes for the read
+@note after it".
+@old
+        abandoned <= 1'b1;
+@new
+        abandoned <= 1'b0;
+@end
+
+@mutation a-request-dropped-before-ar-is-taken-is-not-marked
+@check xbus_axi
+@file rtl/plumbing/cadr_axi_master.sv
+@note The request can fall before the slave has even taken the address: a
+@note port holding `arready` low past the timer.  Marked only in RDATA, the
+@note drop is missed whenever the next request is up by the time AR goes.
+@note Caught by the held address channel.
+@old
+      if (!mem_req && (state == WRITE || state == WRESP ||
+                       state == READ || state == RDATA)) begin
+@new
+      if (!mem_req && (state == WRITE || state == WRESP ||
+                       state == RDATA)) begin
+@end
+
+@mutation a-request-dropped-before-aw-is-taken-is-not-marked
+@check xbus_axi
+@file rtl/plumbing/cadr_axi_master.sv
+@note The same for a write whose address or data channel the slave holds
+@note shut past the timer.  Caught by the held write address channel.
+@old
+      if (!mem_req && (state == WRITE || state == WRESP ||
+                       state == READ || state == RDATA)) begin
+@new
+      if (!mem_req && (state == WRESP ||
+                       state == READ || state == RDATA)) begin
+@end
+
+@mutation a-new-request-inherits-the-old-abandonment
+@check xbus_axi
+@file rtl/plumbing/cadr_axi_master.sv
+@note The mark is never cleared, so after the first cycle the timer ends every
+@note later transaction is drained as well and nothing is ever answered
+@note again: the machine sees no memory from then on.  Caught at "an
+@note acknowledgment for the read after it".
+@old
+            abandoned <= 1'b0;
+            if (mem_write) begin
+@new
+            if (mem_write) begin
+@end
+
+@mutation the-answer-ignores-a-request-falling-on-its-own-tick
+@check xbus_axi
+@file rtl/plumbing/cadr_axi_master.sv
+@note `abandoned` is a register and takes a tick to rise, so a request that
+@note falls on the very tick the answer comes is not marked yet; the live
+@note `mem_req` is the other half of the test.  Without it the transaction
+@note goes to DONE, and a next request one tick behind finds it standing.
+@note Caught by the sweep of the answer across the timer's tick.
+@old
+  assign still_asked = mem_req && !abandoned;
+@new
+  assign still_asked = !abandoned;
+@end
+
+# ------------------------------------------------------------- chaos_cable
+#
+# The Chaosnet cable's face alone, against the program's calls overlapping
+# the cable's own work.
+
+@mutation chaos-cable-stream-stops-at-the-live-rxlen
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note THE DEFECT, WRITTEN DOWN.  The stream stopped where `RXLEN` said at
+@note each tick, and the next give writes `RXLEN` about 45 ticks after this
+@note one returns, so a frame of 255 words was cut at the next give's length.
+@note Caught at "255 words, then a give of 11 behind them".
+@old
+          if (sent + 9'd1 == x_len) xst <= X_GAP;
+@new
+          if (sent + 9'd1 == r_rxlen) xst <= X_GAP;
+@end
+
+@mutation chaos-cable-bit-count-from-the-live-rxlen
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The other half of the same defect: the card loads its bit counter from
+@note this on the done tick, so the right words with the next give's bit count
+@note are still a wrong frame.  Caught at "chaos_rx_bits at the done".
+@old
+  assign chaos_rx_bits  = {x_len, 4'b0000};     // sixteen bits a word
+@new
+  assign chaos_rx_bits  = {r_rxlen, 4'b0000};   // sixteen bits a word
+@end
+
+@mutation chaos-cable-counts-a-malformed-commit-as-lost
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note A commit of 0 words or of more than 256 is a driver's fault and not a
+@note frame the machine had no room for.  Counted, it moved `LOST` and the
+@note card's Lost Count, which AIM-628 defines as the second and not the
+@note first.  Caught at "LOST after a commit of 0 words".
+@old
+  assign rx_refused    = commit_asked && commit_frame && !commit_ok;
+@new
+  assign rx_refused    = commit_asked && !commit_ok;
+@end
+
+@mutation chaos-cable-takes-257-words-as-a-frame
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The buffer holds 256 words.  One more streams a word past its end and
+@note wraps onto word 0.  Caught at "words streamed for a commit of 257 words".
+@old
+  assign commit_frame = (r_rxlen != 9'd0) && (r_rxlen <= 9'd256);
+@new
+  assign commit_frame = (r_rxlen != 9'd0) && (r_rxlen <= 9'd257);
+@end
+
+@mutation chaos-cable-refuses-a-frame-of-one-word
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The lower bound one off: a commit of no words streams 512 and a frame
+@note of one word goes nowhere.  Caught at "a commit of 1 words".
+@old
+  assign commit_frame = (r_rxlen != 9'd0) && (r_rxlen <= 9'd256);
+@new
+  assign commit_frame = (r_rxlen != 9'd1) && (r_rxlen <= 9'd256);
+@end
+
+@mutation chaos-cable-take-does-not-ask-which-frame
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note THE DEFECT, WRITTEN DOWN.  A take lands on whatever frame is waiting,
+@note so one written for a frame the machine has since cleared drops the new
+@note frame unread and raises Transmit Done for it.  Written as an OR with a
+@note constant so that `tx_seen` is still read and lint has nothing to say.
+@note Caught at "Transmit Done pulses for a take of a frame already cleared".
+@old
+        if (wr_data[0] && wr_mask[0] && tx_valid && tx_seen) begin
+@new
+        if (wr_data[0] && wr_mask[0] && tx_valid && (tx_seen || 1'b1)) begin
+@end
+
+@mutation chaos-cable-a-new-frame-keeps-the-old-read
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The mark survives into the next frame, so the old frame's read answers
+@note for the new one, which is the same race by another route.  Caught at
+@note "STAT's TX_VALID for frame B after a take meant for A".
+@old
+          tx_held  <= cap_len;
+          tx_valid <= 1'b1;
+          tx_seen  <= 1'b0;
+@new
+          tx_held  <= cap_len;
+          tx_valid <= 1'b1;
+@end
+
+@mutation chaos-cable-marks-the-read-when-it-is-asked
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note Marked on the tick `rd` is high rather than the tick the word is
+@note sampled, a frame arriving between the two has its length read and its
+@note mark cleared, so its take is ignored and the machine's frame is offered
+@note and sent twice.  Written with `rd_q` still read so that lint has nothing
+@note to say.  Caught by the poll swept across the frame's arrival, at
+@note "STAT's TX_VALID after a polled take".
+@old
+      if (rd_q && (r_word == 10'd3)) tx_seen <= 1'b1;
+@new
+      if ((rd_q ? rd : rd) && (r_word == 10'd3)) tx_seen <= 1'b1;
+@end
+
+@mutation chaos-cable-marks-a-read-of-rxlen
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The read that ties a take to its frame is `TXLEN`'s, the one
+@note `chaos_face_take` makes first.  Keyed to the register beside it, no take
+@note the program makes is honored.  Caught at "Transmit Done pulses for a
+@note take".
+@old
+      if (rd_q && (r_word == 10'd3)) tx_seen <= 1'b1;
+@new
+      if (rd_q && (r_word == 10'd4)) tx_seen <= 1'b1;
+@end
+
+@mutation chaos-cable-lost-survives-the-module-reset
+@check chaos_cable
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The header says `LOST` survives the card's Reset and is cleared by this
+@note module's `rst`, and this holds the second half, so that the header and
+@note the fabric cannot drift apart again.  Caught at "LOST across this
+@note module's reset input".
+@old
+      tx_seen     <= 1'b0;
+      rd_q        <= 1'b0;
+      lost        <= 32'd0;
+@new
+      tx_seen     <= 1'b0;
+      rd_q        <= 1'b0;
 @end

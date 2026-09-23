@@ -219,6 +219,26 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The bridge and the adapter together, when the NXM timer ends a cycle the
+    # memory has not answered.  No trace: the testbench's slave is the
+    # stimulus, with a latency it sets per cycle.
+    "xbus_axi": {
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+                    "rtl/plumbing/cadr_axi_master.sv"],
+        "extra": ["tb/cadr_xbus_axi_harness.sv"],
+        "top": "cadr_xbus_axi_harness",
+        "tb": "tb/cadr_xbus_axi_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
+    # The Chaosnet cable's face alone, against overlapping calls.
+    "chaos_cable": {
+        "sources": ["rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_gp_regs.sv"],
+        "top": "cadr_chaos_cable",
+        "tb": "tb/cadr_chaos_cable_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
     # The 32-bit word in the port's 64-bit beat.  It was six assignments
     # inside `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr`, where nothing could reach it: that
     # file cannot be simulated, so lint and the fitter were the whole of the

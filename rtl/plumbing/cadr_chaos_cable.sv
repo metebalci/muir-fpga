@@ -53,8 +53,18 @@
 // REFUSAL IS COUNTED IN `LOST`.**  `chaos_face_give` tells a stored frame
 // from a refused one by `LOST` moving and by nothing else, because `RX_BUSY`
 // is up either way; so `LOST` is this module's own count, it saturates
-// rather than wraps, and **it survives a reset** --- a counter that went
-// backwards would make the program read a store as a refusal.
+// rather than wraps, and **it survives the card's Reset** (`chaos_reset`,
+// which the machine writes whenever it likes) --- a counter that went
+// backwards would make the program read a store as a refusal.  It does NOT
+// survive this module's own `rst`, which clears every register here, the
+// frame being built and the frame waiting with it; a give that straddles
+// one reads the change as a refusal and offers its frame again, which after
+// a reset of the whole face is the right answer.
+//
+// **ONLY A BUSY BUFFER IS A REFUSAL.**  A commit whose `RXLEN` is 0 or more
+// than 256 is not a frame and is ignored: nothing is stored and nothing is
+// counted, here or on the card, because neither count is a count of driver
+// faults.  `chaos_face_give` checks the length itself and never writes one.
 //
 // **AND A REFUSED COMMIT IS CARRIED TO THE CARD ON `chaos_rx_lost`, SO THAT
 // THE MACHINE COUNTS IT TOO.**  AIM-628 section 7's Lost Count is packets
@@ -82,7 +92,7 @@
 // `(self.lost + 1) & 0o17` --- and is cleared by Clear Receiver and by
 // Reset, which is what `muir::chaos::board::Interface` does; this one is
 // thirty-two bits
-// and survives a reset, because `chaos_face_give` reads any change in it as
+// and survives that Reset, because `chaos_face_give` reads any change in it as
 // a refusal and a counter that went backwards would make the program read a
 // stored frame as a refused one.  They move together, which is what lets the
 // program print them side by side and a board compare the two ends of the
@@ -141,12 +151,18 @@
 //    3  TXLEN   read only: words in the waiting frame, the trailer counted,
 //               or 0 when none waits
 //    4  RXLEN   how many words the frame about to be committed has.  Read
-//               back so a driver can check it
+//               back so a driver can check it.  A commit takes its own
+//               copy, so a write here while a frame streams does not
+//               reach that frame
 //    5  CTL     written: bit 0 the frame `TXLEN` counted has been taken ---
-//                        drop it and let Transmit Done come up
+//                        drop it and let Transmit Done come up.  Ignored
+//                        unless `TXLEN` was read after that frame arrived,
+//                        so a take cannot land on a frame the program has
+//                        not seen
 //                        bit 1 the `RXLEN` words in the RX window are a
 //                        whole frame: store it and raise Receive Done, or
-//                        refuse it and count it in `LOST`
+//                        refuse it and count it in `LOST`.  Ignored, and
+//                        counted nowhere, if `RXLEN` is 0 or above 256
 //                        bit 2 throw away what is in the RX window
 //               read:    the number of times the machine has Reset its
 //               interface, in bits 31:8.  The three command bits read zero,
@@ -346,6 +362,8 @@ module cadr_chaos_cable #(
   logic [8:0]  tx_held;        // words the card handed over
   logic [15:0] tx_check;       // the check word over them and the source
   logic        tx_valid;       // a frame is waiting for Linux
+  logic        tx_seen;        // ...and Linux has read its `TXLEN`
+  logic        rd_q;           // `rd` a tick ago: the tick a read is sampled
   logic [31:0] lost;
   logic [23:0] resets;
   logic [1:0]  irq_q, irqen;
@@ -360,6 +378,7 @@ module cadr_chaos_cable #(
   logic [8:0]  cap_at, cap_len;
   logic [15:0] crc;
   logic [8:0]  sent;
+  logic [8:0]  x_len;          // the streaming frame's words, taken at its commit
 
   assign chaos_address  = r_myaddr;
   assign chaos_cbl_busy = 1'b0;      // see the header
@@ -373,7 +392,7 @@ module cadr_chaos_cable #(
   assign chaos_rx_valid = (xst == X_STREAM);
   assign chaos_rx_word  = rx_q;
   assign chaos_rx_done  = (xst == X_DONE);
-  assign chaos_rx_bits  = {r_rxlen, 4'b0000};   // sixteen bits a word
+  assign chaos_rx_bits  = {x_len, 4'b0000};     // sixteen bits a word
 
   assign irq = |(irq_q & irqen);
 
@@ -426,20 +445,32 @@ module cadr_chaos_cable #(
   // register and can only be CLEARED by the machine, so a commit allowed
   // here stays allowed for the whole stream --- see the header for the
   // window that leaves and who closes it.
+  //
+  // **A LENGTH THAT IS NOT A FRAME IS NOT A COMMIT AT ALL.**  `RXLEN` of 0,
+  // or more than the buffer's 256 words, is a fault in the driver and not a
+  // frame the machine had no room for, so it is ignored: nothing streams,
+  // Receive Done does not rise, and neither `LOST` nor the card's Lost Count
+  // moves.  `chaos_face_give` never offers one --- it checks 11 to 255 words
+  // itself before it writes anything --- and a driver that did would read
+  // `LOST` unmoved and take the frame as stored, which is why the program
+  // checks the length and not the fabric.
+  logic commit_asked, commit_frame;
+  assign commit_asked = cmd_wr && wr_data[1] && wr_mask[1];
+  assign commit_frame = (r_rxlen != 9'd0) && (r_rxlen <= 9'd256);
+
   logic commit_ok;
-  assign commit_ok = cmd_wr && wr_data[1] && wr_mask[1] &&
-                     !chaos_csr[15] && (xst == X_IDLE) &&
-                     (r_rxlen != 9'd0) && (r_rxlen <= 9'd256);
+  assign commit_ok = commit_asked && commit_frame &&
+                     !chaos_csr[15] && (xst == X_IDLE);
 
   // And a commit the buffer had no room for: THE ONE CONDITION BOTH COUNTS
-  // TAKE.  `chaos_face_give` offers 1 to 255 words and never none, so what a
-  // refusal reaches here is the buffer being busy --- Receive Done up, or a
-  // commit already streaming into it --- which is the state AIM-628 counts.
-  // Combinational, and so on the commit's own tick: the card reads Receive
-  // Done as it stood before anything this tick, which is where muir reads it
-  // too, `advance` running the arrival before `write` applies the store.
+  // TAKE.  What a refusal is here is the buffer being busy --- Receive Done
+  // up, or a commit already streaming into it --- which is the state
+  // AIM-628 counts.  Combinational, and so on the commit's own tick: the
+  // card reads Receive Done as it stood before anything this tick, which is
+  // where muir reads it too, `advance` running the arrival before `write`
+  // applies the store.
   logic rx_refused;
-  assign rx_refused    = cmd_wr && wr_data[1] && wr_mask[1] && !commit_ok;
+  assign rx_refused    = commit_asked && commit_frame && !commit_ok;
   assign chaos_rx_lost = rx_refused;
 
   // The two buffers' own processes, kept pure: nothing but an address and a
@@ -472,6 +503,8 @@ module cadr_chaos_cable #(
       tx_held     <= 9'd0;
       tx_check    <= 16'd0;
       tx_valid    <= 1'b0;
+      tx_seen     <= 1'b0;
+      rd_q        <= 1'b0;
       lost        <= 32'd0;
       resets      <= 24'd0;
       irq_q       <= 2'd0;
@@ -484,6 +517,7 @@ module cadr_chaos_cable #(
       cap_len     <= 9'd0;
       crc         <= 16'd0;
       sent        <= 9'd0;
+      x_len       <= 9'd0;
       stream_at   <= 8'd0;
       chaos_tx_done <= 1'b0;
     end else begin
@@ -494,6 +528,16 @@ module cadr_chaos_cable #(
       rdone_was <= chaos_csr[15];
       txv_was   <= tx_valid;
       irq_q     <= (irq_q & ~irq_clr) | irq_set;
+      rd_q      <= rd;
+
+      // The waiting frame's length has been read.  On the tick the read is
+      // SAMPLED --- `rd` a tick ago, `r_word` unmoved --- so that it is the
+      // frame the program was told about: a frame that arrives on this same
+      // tick clears the bit again below, and its take waits for a read of
+      // its own.  Only a new frame clears it: `tx_valid` can rise in no
+      // other way, and a take, Clear Transmitter or Reset each drop
+      // `tx_valid`, which a take also needs.
+      if (rd_q && (r_word == 10'd3)) tx_seen <= 1'b1;
 
       // --- the frame the machine transmits
       unique case (cst)
@@ -511,6 +555,7 @@ module cadr_chaos_cable #(
           tx_check <= crc_word(crc, r_myaddr);
           tx_held  <= cap_len;
           tx_valid <= 1'b1;
+          tx_seen  <= 1'b0;
           cst      <= C_IDLE;
         end
         default: cst <= C_IDLE;
@@ -533,9 +578,15 @@ module cadr_chaos_cable #(
 
       // --- the frame Linux gives the machine
       unique case (xst)
+        // The length is TAKEN here and the stream reads only its own copy.
+        // It read `RXLEN` live, and the next give writes `RXLEN` as soon as
+        // this one returns --- 45 ticks in, measured --- so a frame of 255
+        // words stopped wherever the next give's length said, and handed the
+        // card that length's bit count.
         X_IDLE: if (commit_ok) begin
           stream_at <= 8'd0;
           sent      <= 9'd0;
+          x_len     <= r_rxlen;
           xst       <= X_PRIME;
         end
         // One tick for the buffer's read of word 0 to reach `rx_q`.
@@ -545,7 +596,7 @@ module cadr_chaos_cable #(
         end
         X_STREAM: begin
           stream_at <= stream_at + 8'd1;
-          if (sent + 9'd1 == r_rxlen) xst <= X_GAP;
+          if (sent + 9'd1 == x_len) xst <= X_GAP;
           else sent <= sent + 9'd1;
         end
         X_GAP:  xst <= X_DONE;
@@ -567,8 +618,16 @@ module cadr_chaos_cable #(
       // Transmit Done come up, and it is gated on there being one: a done
       // pulse with nothing outstanding would raise Transmit Done for a
       // frame the machine never sent.
+      //
+      // **AND ON ITS LENGTH HAVING BEEN READ**, which is what ties a take to
+      // the frame the program read.  `chaos_face_take` reads `TXLEN`, then
+      // the words, then writes the take; if the machine wrote Clear
+      // Transmitter and read START again in between, the take landed on the
+      // NEW frame, dropped it unread and raised Transmit Done for it.  The
+      // new frame clears `tx_seen`, so that take is ignored and the program
+      // finds the new frame waiting at its next poll.
       if (cmd_wr) begin
-        if (wr_data[0] && wr_mask[0] && tx_valid) begin
+        if (wr_data[0] && wr_mask[0] && tx_valid && tx_seen) begin
           tx_valid      <= 1'b0;
           chaos_tx_done <= 1'b1;
         end
@@ -603,13 +662,11 @@ module cadr_chaos_cable #(
   end
 
   // The upper half of a write beat reaches no register here: the widest
-  // word this face takes is the sixteen-bit address switches.  And `rd` is
-  // the face saying a read is owed, which matters only to a register whose
-  // read has an effect --- the serial line's `RDATA` --- and no word here
-  // has one.  Read so that lint's bit granularity has nothing to say, which
-  // is what catches a mutation that drops a bit.
+  // word this face takes is the sixteen-bit address switches.  Read so that
+  // lint's bit granularity has nothing to say, which is what catches a
+  // mutation that drops a bit.
   logic unused_s;
-  assign unused_s = ^{wr_data[31:16], wr_mask[31:16], rd};
+  assign unused_s = ^{wr_data[31:16], wr_mask[31:16]};
 
 endmodule
 
