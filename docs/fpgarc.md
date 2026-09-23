@@ -25,7 +25,20 @@ stripped, because a card reader leaves them.
     --chaos-udp 0.0.0.0:42042
     --keyboard-mapping /mnt/card/terminal.keyboard.mapping.txt
 
-A flag given twice is settled by the program, which takes the last one.
+A flag given on more than one line is taken from its last line. The console
+says so at boot, in one line naming the flag and every line it is on, such as
+`fpgarc: --date is on lines 3 and 7 of /mnt/card/fpgarc; line 7 is used and the
+others are not`. A warning on a board is easy to miss, so the value used is the
+one a person most plausibly meant, and somebody editing a file expects the line
+further down to win.
+
+Every reader of the card follows this rule, and no program is left to settle a
+repeat. The init script hands its program the last line alone. A script that
+also reads a value for itself reads the same line, so the two cannot disagree.
+The ozd script writes the Chaosnet program's peer from `--ozd-chaos-address`
+and hands ozd the same address. The two spellings of a Chaosnet flag, such as
+`--chaos-address` and `--address`, count as one flag. The flags that may repeat
+are listed below, and they keep every line without a warning.
 
 ## One file, several programs
 
@@ -325,9 +338,13 @@ lets `fpgarc.pass` count the settings, and it holds every flag in every init
 script's list to appearing in the written file exactly once. A flag added to a
 program and not to the card fails that check by name.
 
-Three flags may appear more than once, because they are repeatable by their
-own definition. A peer entry places one Chaosnet address, a named USB device is
-one device, and a root names one tree, of which the card carries two.
+Four flags may appear more than once, because they are repeatable by their own
+definition. They are `--chaos-udp-peer` (or `--udp-peer`), `--usb-device`,
+`--ozd-root` and `--ozd-host`. A peer entry places one Chaosnet address, a
+named USB device is one device, a root names one tree, of which the card
+carries two, and a host line places one machine in ozd's host table. Each
+init script names its own repeatable flags to the reader. Every other flag is
+taken from its last line, as the format section says.
 
 ## A line no program takes is named at boot
 

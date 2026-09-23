@@ -107,6 +107,14 @@ PIDFILE=/var/run/cadr-disk-packs.pid
 # `packs/` on a card of the new shape; the whole of the second partition on a
 # card of the old one, where the bay was that partition's root.
 PACKS="$CARD/packs"
+# **THE CARD'S PERMISSIONS, STATED BY THE MOUNT AND NOT BORROWED FROM WHOEVER
+# RAN IT.**  FAT keeps no owner and no mode, so vfat invents them at mount
+# time, and where the mount does not say, it takes the caller's umask.  At boot
+# that is 022; from an ssh session it may be 077, and a card mounted by a
+# restart from there hid `sys/` and `site/` from ozd, which runs as a user of
+# its own.  So the mount names them: root owns everything and keeps write, and
+# every user may read and search, which is what a boot has always given.
+CARD_OPTS=rw,uid=0,gid=0,umask=0022
 
 # The card's one file of flags, and cadr-common's reader.  `fpgarc` configures
 # the CADR in the fabric the way `muirrc` beside it configures the CADR inside
@@ -197,7 +205,7 @@ mount_the_card() {
 		# `packs/` folder is of the new shape and one without is not.
 		[ -d "$CARD/packs" ] || PACKS="$CARD"
 		echo "cadr-disk-packs: the card is already mounted at $CARD, and the drive bay is $PACKS"
-	elif mount -t vfat -o rw "$OLD_CARD_DEV" "$CARD" 2>/dev/null; then
+	elif mount -t vfat -o "$CARD_OPTS" "$OLD_CARD_DEV" "$CARD" 2>/dev/null; then
 		# A card of the old two-partition shape.  Its bay is the root of
 		# this partition and not a folder in it.
 		PACKS="$CARD"
@@ -205,7 +213,7 @@ mount_the_card() {
 		echo "cadr-disk-packs:   and its drive bay is that partition's own root.  It works, and it is"
 		echo "cadr-disk-packs:   the last shape that will: format the card as ONE FAT32 partition and"
 		echo "cadr-disk-packs:   unpack this board's zip onto it when you next have it in a reader."
-	elif mount -t vfat -o rw "$CARD_DEV" "$CARD" 2>/dev/null; then
+	elif mount -t vfat -o "$CARD_OPTS" "$CARD_DEV" "$CARD" 2>/dev/null; then
 		echo "cadr-disk-packs: the card is at $CARD, read-write, and the drive bay is $PACKS"
 	else
 		echo "cadr-disk-packs: no card at $CARD_DEV; the bay will be empty"

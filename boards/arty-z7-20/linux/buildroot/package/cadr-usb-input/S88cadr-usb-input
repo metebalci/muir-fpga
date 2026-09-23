@@ -82,6 +82,11 @@ FLAGS="--usb-link
        --usb-no-keyboard
        --usb-no-mouse"
 
+# A flag on two lines of the card is taken from the last one, with a warning;
+# the reader's header has the rule.  A named device is one device, so that flag
+# keeps every line.
+FPGARC_REPEATABLE="--usb-device"
+
 start() {
 	set --
 	[ -f "$RC" ] && eval "set -- $(fpgarc_args "$RC" $FLAGS)"

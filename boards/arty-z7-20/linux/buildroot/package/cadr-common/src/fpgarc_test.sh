@@ -94,6 +94,7 @@ sandbox() {
 	: > "$WORK/umount.calls"
 	: > "$WORK/order.calls"
 	: > "$WORK/ozd.check.calls"
+	: > "$WORK/ssd.fg.calls"
 
 	# **THE REAL ONE FORKS THE PROGRAM AND CLOSES ITS OUTPUT**, which is
 	# what made a refused flag silent, so this does the same: it records
@@ -106,21 +107,42 @@ sandbox() {
 	# **AND -K IS THE REAL ONE'S TOO**: SIGTERM to the process the pid file
 	# names, 1 when there is none, and a return at once without waiting for
 	# it to go, which is the whole of why `stop.sh` exists.
+	#
+	# **AND -c IS THE REAL ONE'S, AS FAR AS A CHECK THAT IS NOT ROOT CAN
+	# TAKE IT.**  Nobody here can change user, so the stub hands the user
+	# -c names to the program as \$SSD_CHUID, and the ozd stand-in below
+	# refuses to run without it, as the real ozd refuses to run as root.
+	#
+	# **AND WITHOUT -b IT RUNS THE PROGRAM IN THE FOREGROUND**, as the real
+	# one does (busybox's start_stop_daemon.c execs it in place, with the
+	# caller's stdout and stderr, and its status is the program's).  Such a
+	# run is recorded in ssd.fg.calls and not in daemon.calls, which is the
+	# record of what was STARTED and which every case counts flags in.
 	cat > "$WORK/bin/start-stop-daemon" <<EOF
 #!/bin/sh
-echo "\$*" >> "$WORK/daemon.calls"
+_all="\$*"
 _pidfile=""
 _prog=""
 _kill=no
+_bg=no
+_chuid=""
 while [ \$# -gt 0 ]; do
 	case "\$1" in
 	-K) _kill=yes ;;
+	-b) _bg=yes ;;
+	-c) _chuid=\$2; shift ;;
 	-p) _pidfile=\$2; shift ;;
 	--exec) _prog=\$2; shift ;;
 	--) shift; break ;;
 	esac
 	shift
 done
+if [ "\$_kill" = no ] && [ "\$_bg" = no ]; then
+	echo "\$_all" >> "$WORK/ssd.fg.calls"
+	[ -n "\$_prog" ] || exit 0
+	SSD_CHUID=\$_chuid exec "\$_prog" "\$@"
+fi
+echo "\$_all" >> "$WORK/daemon.calls"
 if [ "\$_kill" = yes ]; then
 	_pid=\$(cat "\$_pidfile" 2>/dev/null)
 	[ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null || exit 1
@@ -128,7 +150,7 @@ if [ "\$_kill" = yes ]; then
 	exit 0
 fi
 [ -n "\$_prog" ] || exit 0
-"\$_prog" "\$@" > /dev/null 2>&1 &
+SSD_CHUID=\$_chuid "\$_prog" "\$@" > /dev/null 2>&1 &
 [ -n "\$_pidfile" ] && echo \$! > "\$_pidfile"
 exit 0
 EOF
@@ -141,8 +163,19 @@ EOF
 	# board's start-it-and-run-it-again trick.  \$OZD_CHECK_FAILS makes
 	# that dry run refuse, which is the case where a card names a root
 	# that is not there.
+	#
+	# **AND IT REFUSES TO RUN AS ROOT, FOR --check TOO, AS THE REAL ONE
+	# DOES.**  An init script runs as root, so a run that did not come
+	# through start-stop-daemon's -c with the user S84ozd names is a run as
+	# root, and this refuses it in the real one's words before it looks at
+	# a single flag.  That is what kept ozd from ever starting on a board:
+	# its dry run was run as root and refused.
 	cat > "$WORK/bin/ozd" <<EOF
 #!/bin/sh
+if [ "\${SSD_CHUID:-}" != "$(id -un)" ]; then
+	echo "ozd: refusing to run as root: nothing here needs a privilege, and as root a containment bug would reach every file on this host; run it as a user that owns its roots and nothing else (docs/design.md §6)" >&2
+	exit 1
+fi
 for a; do
 	case "\$a" in
 	--check)
@@ -444,7 +477,11 @@ run_script() {
 	# Where the reader remembers what each script claimed, so that the last
 	# one can name the lines nobody took.  /var/run belongs to the board;
 	# the reader takes this from the environment for exactly this reason.
-	FPGARC_CLAIMED="$WORK/run/claimed" \
+	# And where it remembers which repeated flags it has already warned
+	# about, so that a script asking about one flag twice warns once.  Each
+	# run here is a boot, so it starts empty.
+	rm -f "$WORK/run/warned"
+	FPGARC_CLAIMED="$WORK/run/claimed" FPGARC_WARNED="$WORK/run/warned" \
 	PATH="$WORK/bin:$PATH" "$WORK/$1" start > "$WORK/out.$1" 2>&1
 	echo "$?" > "$WORK/status.$1"
 }
@@ -3746,6 +3783,40 @@ if prepare ozd S84ozd; then
 	fi
 fi
 
+# **THE DRY RUN IS ozd TOO, AND ozd WILL NOT RUN AS ROOT.**  The script ran
+# `--check` itself, as root, before it dropped to the ozd user for the start,
+# and ozd refused it with "refusing to run as root".  So on a board the host
+# never started at all, and the console said FAIL with ozd's words under it.
+# The stand-in refuses exactly that, so this case holds that the dry run goes
+# through the same user as the start.
+case_head "the dry run is run as ozd's own user, because ozd refuses root for --check too"
+sandbox
+if prepare ozd S84ozd; then
+	: > "$WORK/card/fpgarc"
+	run_script S84ozd
+	if grep -q 'refusing to run as root' "$WORK/out.S84ozd"; then
+		fail "ozd was run as root and refused: $(cat "$WORK/out.S84ozd")"
+	else
+		ok "ozd was never run as root"
+	fi
+	if [ -s "$WORK/ozd.check.calls" ]; then
+		ok "the dry run was run, and passed the refusal: $(cat "$WORK/ozd.check.calls")"
+	else
+		fail "the dry run never reached ozd's --check"
+	fi
+	if grep -q -- "-c $(id -un) " "$WORK/ssd.fg.calls" &&
+	   grep -q -- "--check" "$WORK/ssd.fg.calls"; then
+		ok "and it went through start-stop-daemon's -c, as the start does"
+	else
+		fail "the dry run did not go through start-stop-daemon -c: $(cat "$WORK/ssd.fg.calls")"
+	fi
+	if grep -q '^Starting ozd: OK$' "$WORK/out.S84ozd"; then
+		ok "and the host started"
+	else
+		fail "the host did not start: $(cat "$WORK/out.S84ozd")"
+	fi
+fi
+
 case_head "a root the card names and the board has not got stops the host, in ozd's words"
 sandbox
 if prepare ozd S84ozd; then
@@ -4190,6 +4261,53 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	fi
 fi
 
+# **THE CARD'S PERMISSIONS ARE THE MOUNT'S OWN, NOT THE UMASK OF WHOEVER RAN
+# IT.**  FAT keeps no owner and no mode, so vfat makes them up at mount time,
+# from uid=, gid= and the masks, and from the caller's umask where those are
+# not given.  At boot the umask is 022 and ozd, which runs as a user of its own,
+# can read `sys/` and `site/`.  A restart from an ssh session with umask 077
+# mounted the same card with every file root's alone, so ozd could not read the
+# trees and its dry run refused them.  So every vfat mount must name its owner,
+# its group and its masks, with root keeping write and everybody keeping read
+# and directory search.  The stub cannot see a umask, so what is held is the
+# words: each vfat mount the script asked for, on both card shapes.
+mount_opts_hold() {
+	_n=0
+	while IFS= read -r _line; do
+		case "$_line" in *"-t vfat"*) ;; *) continue ;; esac
+		_n=$((_n + 1))
+		_o=$(printf '%s\n' "$_line" | sed -n 's/.*-o \([^ ]*\).*/\1/p')
+		_uid=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^uid=//p')
+		_gid=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^gid=//p')
+		_um=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^umask=//p')
+		_dm=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^dmask=//p')
+		_fm=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^fmask=//p')
+		[ -n "$_dm" ] || _dm=$_um
+		[ -n "$_fm" ] || _fm=$_um
+		if [ "$_uid" != 0 ] || [ -z "$_gid" ] || [ -z "$_dm" ] || [ -z "$_fm" ]; then
+			fail "a card mount leaves its owner, group or masks to the caller: $_line"
+			continue
+		fi
+		# Root keeps write; every user keeps read, and search on directories.
+		if [ $((0$_dm & 0205)) != 0 ] || [ $((0$_fm & 0204)) != 0 ]; then
+			fail "a card mount takes away root's write or another user's read: $_line"
+			continue
+		fi
+		ok "the mount states its own permissions: -o $_o"
+	done < "$WORK/mount.calls"
+	[ "$_n" -gt 0 ] || fail "no vfat mount was asked for, so nothing was held"
+}
+
+case_head "the card's permissions are stated by its mount, on both shapes, whatever the umask"
+for dev in p1 p2; do
+	sandbox
+	if prepare cadr-disk-packs S80cadr-disk-packs; then
+		echo "$WORK/dev/$dev" > "$WORK/mountable"
+		( umask 077; run_script S80cadr-disk-packs )
+		mount_opts_hold
+	fi
+done
+
 case_head "and a board with no card it can mount says so and leaves the bay empty"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
@@ -4255,6 +4373,277 @@ if generate_fpgarc "" "" "" arty-z7-20 "" "/some/sys" ""; then
 	else
 		fail "the two trees are written from one decision, so a card can never carry only one"
 	fi
+fi
+
+# ---------------------------------------------------------------------------
+# 9.  A FLAG GIVEN TWICE IS TAKEN FROM ITS LAST LINE, AND THE CONSOLE IS TOLD.
+#
+# A card edited in a reader can end up saying one thing twice: a line
+# uncommented under one that was already live, or a value added at the bottom
+# without the old one being deleted.  Somebody editing a file expects the line
+# further down to win, and a warning on a board is easy to miss, so the value
+# used is the last line's.  Every reader of the card has to agree on that, or
+# two programs act on two different lines of one file: the ozd script once
+# wrote the Chaosnet peer from the first `--ozd-chaos-address` while ozd itself
+# was handed every line.  So each script hands its program ONE line for each
+# flag, the last, and never leaves the choice to the program.
+#
+# A flag that is repeatable by its own definition --- a peer, a device, a root,
+# a host --- keeps every line, and says nothing.
+# ---------------------------------------------------------------------------
+
+# The console's lines about a repeated flag, from one script's last start.
+repeat_lines() { grep -F -- "fpgarc: $2 " "$WORK/out.$1" | grep -F 'is on lines' || true; }
+
+# The script warned about $2 exactly once, naming the lines $3 and the line
+# used $4.
+warns_once() {
+	_w=$(repeat_lines "$1" "$2")
+	_n=$(printf '%s' "$_w" | grep -c . || true)
+	if [ "$_n" != 1 ]; then
+		fail "$1 warned about $2 $_n times and once is right; the console says:"
+		sed 's/^/        /' "$WORK/out.$1"
+		return 1
+	fi
+	case "$_w" in
+	*"is on lines $3 "*"line $4 is used"*)
+		ok "$1 warned once that $2 is on lines $3 and line $4 is used" ;;
+	*)
+		fail "$1 warned about $2 without naming lines $3 and line $4: $_w" ;;
+	esac
+}
+
+warns_not() {
+	if [ -n "$(repeat_lines "$1" "$2")" ]; then
+		fail "$1 warned about $2, which may be given more than once: $(repeat_lines "$1" "$2")"
+	else
+		ok "$1 did not warn about $2, which may be given more than once"
+	fi
+}
+
+if [ "$HAVE_READER" = yes ]; then
+	sandbox
+	RC="$WORK/card/fpgarc"
+	FPGARC_WARNED="$WORK/run/warned"
+
+	case_head "the reader takes a repeated flag from its last line, counting lines as the file does"
+	printf '%s\r\n' \
+		'# a comment is a line' \
+		'--chaos-udp 0.0.0.0:1' \
+		'' \
+		'--chaos-udp 0.0.0.0:2' > "$RC"
+	rm -f "$FPGARC_WARNED"
+	got=$(eval "set -- $(fpgarc_args "$RC" --chaos-udp 2> "$WORK/err")"; printf '[%s]' "$@")
+	if [ "$got" = "[--chaos-udp][0.0.0.0:2]" ]; then
+		ok "only the last line came back: $got"
+	else
+		fail "a flag on two lines came back as $got, wanting the last line alone"
+	fi
+	if grep -qF -- "fpgarc: --chaos-udp is on lines 2 and 4 of $RC; line 4 is used" "$WORK/err"; then
+		ok "and the warning names the flag, both lines and the one used"
+	else
+		fail "the warning does not name --chaos-udp on lines 2 and 4: [$(cat "$WORK/err")]"
+	fi
+
+	case_head "three lines are all named, and the last is the one used"
+	printf '%s\r\n' '--date 20260101' '--bow' '--date 20260202' '#--date 1' \
+		'--date 20260303' > "$RC"
+	rm -f "$FPGARC_WARNED"
+	got=$(eval "set -- $(fpgarc_args "$RC" --date --bow 2> "$WORK/err")"; printf '[%s]' "$@")
+	if [ "$got" = "[--bow][--date][20260303]" ]; then
+		ok "the file's order stands and the last --date is the only one: $got"
+	else
+		fail "three --date lines came back as $got"
+	fi
+	if grep -qF -- "fpgarc: --date is on lines 1, 3 and 5 of $RC; line 5 is used" "$WORK/err"; then
+		ok "and all three lines are named"
+	else
+		fail "the warning does not name lines 1, 3 and 5: [$(cat "$WORK/err")]"
+	fi
+
+	case_head "a bare flag given twice is one word, and is warned about too"
+	printf '%s\r\n' '--no-auto-boot' '--no-auto-boot' > "$RC"
+	rm -f "$FPGARC_WARNED"
+	got=$(eval "set -- $(fpgarc_args "$RC" --no-auto-boot 2> "$WORK/err")"; printf '[%s]' "$@")
+	if [ "$got" = "[--no-auto-boot]" ]; then
+		ok "--no-auto-boot came back once"
+	else
+		fail "--no-auto-boot on two lines came back as $got"
+	fi
+	if grep -qF -- "fpgarc: --no-auto-boot is on lines 1 and 2" "$WORK/err"; then
+		ok "and it is warned about"
+	else
+		fail "a bare flag on two lines is not warned about: [$(cat "$WORK/err")]"
+	fi
+
+	case_head "a last line with no newline after it is still the last line"
+	printf -- '--date 20260101\r\n--date 20260202' > "$RC"
+	rm -f "$FPGARC_WARNED"
+	got=$(eval "set -- $(fpgarc_args "$RC" --date 2> "$WORK/err")"; printf '[%s]' "$@")
+	if [ "$got" = "[--date][20260202]" ]; then
+		ok "the unterminated last line is the one used"
+	else
+		fail "a file ending without a newline came back as $got"
+	fi
+
+	case_head "asking about one repeated flag twice warns once"
+	printf '%s\r\n' '--date 20260101' '--date 20260202' > "$RC"
+	rm -f "$FPGARC_WARNED"
+	{ fpgarc_has "$RC" --date && fpgarc_args "$RC" --date > /dev/null; } 2> "$WORK/err"
+	n=$(grep -c 'is on lines' "$WORK/err" || true)
+	if [ "$n" = 1 ]; then
+		ok "fpgarc_has and then fpgarc_args said it once"
+	else
+		fail "one repeated flag was warned about $n times: [$(cat "$WORK/err")]"
+	fi
+
+	case_head "a flag the caller calls repeatable keeps every line and says nothing"
+	printf '%s\r\n' '--usb-device /dev/input/event1' '--usb-scan-ms 1' \
+		'--usb-device /dev/input/event2' > "$RC"
+	rm -f "$FPGARC_WARNED"
+	got=$(FPGARC_REPEATABLE=--usb-device; eval "set -- $(fpgarc_args "$RC" --usb-device --usb-scan-ms 2> "$WORK/err")"; printf '[%s]' "$@")
+	if [ "$got" = "[--usb-device][/dev/input/event1][--usb-scan-ms][1][--usb-device][/dev/input/event2]" ]; then
+		ok "both devices came back, in the file's order"
+	else
+		fail "a repeatable flag came back as $got"
+	fi
+	if [ -s "$WORK/err" ]; then
+		fail "a repeatable flag was warned about: [$(cat "$WORK/err")]"
+	else
+		ok "and nothing was said"
+	fi
+
+	case_head "two spellings of one flag are one flag"
+	printf '%s\r\n' '--chaos-address 3050' '--address 3060' > "$RC"
+	rm -f "$FPGARC_WARNED"
+	got=$(FPGARC_SPELLINGS='--address --chaos-address
+--udp --chaos-udp'; eval "set -- $(fpgarc_args "$RC" --address --chaos-address 2> "$WORK/err")"; printf '[%s]' "$@")
+	if [ "$got" = "[--address][3060]" ]; then
+		ok "the last line's spelling and value alone: $got"
+	else
+		fail "one flag in two spellings came back as $got"
+	fi
+	if grep -qF -- "is on lines 1 and 2 of $RC; line 2 is used" "$WORK/err"; then
+		ok "and it is warned about as one flag"
+	else
+		fail "two spellings of one flag are not warned about: [$(cat "$WORK/err")]"
+	fi
+	unset FPGARC_WARNED
+fi
+
+sandbox
+RC="$WORK/card/fpgarc"
+
+case_head "cadr-chaosnet: each flag once from its last line, either spelling, and every peer"
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	printf '%s\r\n' '--chaos-address 3050' '--address 3060' \
+		'--chaos-udp 0.0.0.0:1' '--chaos-udp 0.0.0.0:42042' \
+		'--chaos-udp-peer 3070@192.0.2.1:1' '--udp-peer 3071@192.0.2.2:2' > "$RC"
+	run_script S87cadr-chaosnet
+	n=$(( $(given_count --chaos-address) + $(given_count --address) ))
+	if [ "$n" = 1 ] && grep -q -- "--address 3060" "$WORK/daemon.calls"; then
+		ok "the address was given once, and it is the last line's"
+	else
+		fail "the address was given $n times, wanting --address 3060 once: $(given)"
+	fi
+	passes_once --chaos-udp cadr-chaosnet 0.0.0.0:42042
+	passes "--chaos-udp-peer 3070@192.0.2.1:1" cadr-chaosnet
+	passes "--udp-peer 3071@192.0.2.2:2" cadr-chaosnet
+	if grep -qF 'is on lines 1 and 2' "$WORK/out.S87cadr-chaosnet"; then
+		ok "the address's two lines were warned about"
+	else
+		fail "the address's two lines were not warned about"
+	fi
+	warns_once S87cadr-chaosnet --chaos-udp "3 and 4" 4
+	warns_not S87cadr-chaosnet --chaos-udp-peer
+	warns_not S87cadr-chaosnet --udp-peer
+fi
+
+case_head "cadr-terminal: each flag once, from its last line"
+if prepare cadr-terminal S85cadr-terminal; then
+	printf '%s\r\n' '--terminal 5901' '--bow' '--terminal 5902' '--bow' > "$RC"
+	run_script S85cadr-terminal
+	passes_once --terminal cadr-terminal 5902
+	passes_once --bow cadr-terminal
+	warns_once S85cadr-terminal --terminal "1 and 3" 3
+	warns_once S85cadr-terminal --bow "2 and 4" 4
+fi
+
+case_head "cadr-serial: each flag once, from its last line"
+if prepare cadr-serial S86cadr-serial; then
+	printf '%s\r\n' '--serial 0.0.0.0:7641' '--serial 0.0.0.0:7642' > "$RC"
+	run_script S86cadr-serial
+	passes_once --serial cadr-serial 0.0.0.0:7642
+	warns_once S86cadr-serial --serial "1 and 2" 2
+fi
+
+case_head "cadr-usb-input: each flag once from its last line, and every device"
+if prepare cadr-usb-input S88cadr-usb-input; then
+	printf '%s\r\n' '--usb-scan-ms 500' '--usb-device /dev/input/event1' \
+		'--usb-scan-ms 600' '--usb-device /dev/input/event2' > "$RC"
+	run_script S88cadr-usb-input
+	passes_once --usb-scan-ms cadr-usb-input 600
+	passes "--usb-device /dev/input/event1" cadr-usb-input
+	passes "--usb-device /dev/input/event2" cadr-usb-input
+	warns_once S88cadr-usb-input --usb-scan-ms "1 and 3" 3
+	warns_not S88cadr-usb-input --usb-device
+fi
+
+case_head "cadr-disk-packs: the clock, the display and the boot button take the last line"
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	printf '%s\r\n' '--date 20260101' '--hdmi-sleep 120' '--no-auto-boot' \
+		'--date 20270202' '--hdmi-sleep 240' '--no-auto-boot' > "$RC"
+	run_script S80cadr-disk-packs
+	clock_set_once "2027-02-02 00:00:05"
+	if grep -qx -- "--log /dev/console hdmi-sleep 240" "$WORK/console.calls" &&
+	   ! grep -q -- "hdmi-sleep 120" "$WORK/console.calls"; then
+		ok "the console was told hdmi-sleep 240 and not 120"
+	else
+		fail "the console was not told the last --hdmi-sleep alone: $(cat "$WORK/console.calls")"
+	fi
+	warns_once S80cadr-disk-packs --date "1 and 4" 4
+	warns_once S80cadr-disk-packs --hdmi-sleep "2 and 5" 5
+	warns_once S80cadr-disk-packs --no-auto-boot "3 and 6" 6
+fi
+
+# **THE ONE THIS SECTION WAS WRITTEN FOR.**  The peer file is what the Chaosnet
+# program reads to reach the host on this board, and ozd's own --address is the
+# address the host answers at.  Two lines on the card must not make those two
+# different addresses.
+case_head "ozd: the peer file and ozd's own address are the card's last line, and agree"
+if prepare ozd S84ozd; then
+	mkdir -p "$WORK/card/sys" "$WORK/card/site"
+	printf '%s\r\n' '--ozd-chaos-address 177300' '--ozd-name A,system=UNIX' \
+		"--ozd-root sys=$WORK/card/sys,ro" '--ozd-chaos-address 177301' \
+		'--ozd-name B,system=UNIX' "--ozd-root site=$WORK/card/site" \
+		'--ozd-host 3050,X,system=LISPM' '--ozd-host 3051,Y,system=LISPM' > "$RC"
+	run_script S84ozd
+	peer=$(cat "$WORK/run/cadr-ozd.peer" 2>/dev/null)
+	if [ "$peer" = "177301@127.0.0.1:42142" ]; then
+		ok "the peer file names the last line's address: $peer"
+	else
+		fail "the peer file says [$peer], wanting 177301@127.0.0.1:42142"
+	fi
+	passes_once --address ozd 177301
+	# The address ozd was given, read out of its own arguments and compared
+	# with the peer file's, so that the two are held to each other and not
+	# only each to a constant here.
+	given_addr=$(tr ' ' '\n' < "$WORK/daemon.calls" | sed -n '/^--address$/{n;p;}' | tail -n 1)
+	if [ -n "$given_addr" ] && [ "$given_addr" = "${peer%%@*}" ]; then
+		ok "and ozd answers at the address the peer file names"
+	else
+		fail "ozd was given --address [$given_addr] and the peer file names [${peer%%@*}]"
+	fi
+	passes_once --name ozd B,system=UNIX
+	passes "--root sys=$WORK/card/sys,ro" ozd
+	passes "--root site=$WORK/card/site" ozd
+	passes "--host 3050,X,system=LISPM" ozd
+	passes "--host 3051,Y,system=LISPM" ozd
+	warns_once S84ozd --ozd-chaos-address "1 and 4" 4
+	warns_once S84ozd --ozd-name "2 and 5" 5
+	warns_not S84ozd --ozd-root
+	warns_not S84ozd --ozd-host
 fi
 
 echo
