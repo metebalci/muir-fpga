@@ -71,7 +71,7 @@ module cadr_display_share_harness (
   logic [63:0] d_rdata;
 
   cadr_display_out u_display (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .fabric_rst(1'b0),
       .m_araddr(d_araddr), .m_arlen(d_arlen), .m_arsize(d_arsize),
       .m_arburst(d_arburst), .m_arvalid(d_arvalid), .m_arready(d_arready),
       .m_rdata(d_rdata), .m_rresp(d_rresp), .m_rlast(d_rlast),

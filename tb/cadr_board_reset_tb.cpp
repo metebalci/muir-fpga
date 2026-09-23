@@ -329,6 +329,7 @@ struct MemRead {
   int len;
   long due;
   int beat = 0;
+  bool pre = false;            // asked for before the button went down
 };
 struct MemWrite {
   int id;
@@ -350,8 +351,13 @@ struct Mem {
   bool last_arready = true, last_awready = true, last_wready = true;
   // Reads carrying this ID are taken and never answered, while it is >= 0.
   int stall_id = -1;
+  // Write beats refused while this is set: an address taken and its data
+  // left waiting.
+  bool stall_w = false;
   long ar_by_id[32] = {};
   long withdrawn = 0;
+  // Addresses taken while a read from before the button was still owed.
+  long mixed = 0;
 };
 Mem mems[5];
 
@@ -378,8 +384,12 @@ void cadr_sim_mem(int port, svBit rst, int awaddr, int awlen, int awid,
     long counts[32];
     for (int i = 0; i < 32; i++) counts[i] = m.ar_by_id[i];
     const long withdrawn = m.withdrawn;
+    const long mixed = m.mixed;
+    const bool stall_w = m.stall_w;
     m = Mem();
     m.stall_id = stall;
+    m.mixed = mixed;
+    m.stall_w = stall_w;
     for (int i = 0; i < 32; i++) m.ar_by_id[i] = counts[i];
     m.withdrawn = withdrawn;
     m.arready = m.awready = m.wready = false;
@@ -400,6 +410,8 @@ void cadr_sim_mem(int port, svBit rst, int awaddr, int awlen, int awid,
       r.addr = static_cast<uint32_t>(araddr);
       r.len = arlen;
       r.due = now + 12;
+      for (const MemRead &q : m.rq)
+        if (q.pre) { ++m.mixed; break; }
       m.rq.push_back(r);
       ++m.ar_by_id[arid & 31];
     }
@@ -431,7 +443,7 @@ void cadr_sim_mem(int port, svBit rst, int awaddr, int awlen, int awid,
     }
     (void)awlen;
     m.awready = true;
-    m.wready = true;
+    m.wready = !m.stall_w;
     m.last_arready = m.arready;
     m.last_awready = m.awready;
     m.last_wready = m.wready;
@@ -526,6 +538,11 @@ std::vector<Reg> regs() {
       // leaves this, so only the fabric's reset clears it.
       {"input KEY", 0, INPUT + 0x08, 0x0012'3456, 0x0112'3456, 0},
       {"console LAMPS", 1, CONS + 0x8C, 0x5354'4459, 0x4C44'0001, 0x4C44'0000},
+#if !defined(CADR_BOARD_CORA)
+      // The display's sleep setting, which the display holds and the console
+      // reads back: seven seconds, and 300 at reset.
+      {"display SLEEP", 1, CONS + 0x90, 0x4853'0007, 0x5A5A'0007, 0x5A5A'012C},
+#endif
   };
 }
 
@@ -693,6 +710,117 @@ int main(int argc, char **argv) {
       else
         std::printf("%s: the display asked again %ld ticks after the port reopened\n",
                     BOARD, t);
+    }
+  }
+
+  // --- the Zynq boards' memory ports: the button with a transaction the
+  // processing system is keeping.  The high-performance ports are reset only
+  // by the processing system, so what it has taken it will answer and what
+  // it is owed it will wait for.
+  if (!DE25) {
+    auto press_for = [&](long n) {
+      pressed = true;
+      for (long i = 0; i < n; i++) tick();
+      pressed = false;
+    };
+    auto mark_pre = [&](Mem &m) {
+      for (MemRead &q : m.rq) q.pre = true;
+    };
+    auto owes_pre = [&](const Mem &m) {
+      for (const MemRead &q : m.rq)
+        if (q.pre) return true;
+      return false;
+    };
+    // A read held unanswered across the button, then answered: the master
+    // must take its beats, and ask for nothing after the release until it
+    // has.
+    // `one_out` says the master has one read out at a time, as the adapter and
+    // the display's line fetch do, so any address after the release while
+    // the old read is owed is a new job's.  The display's band fetch keeps
+    // several out, and asks for more of the same band as the old ones come
+    // back, so for it only the drain itself is held.
+    auto read_across = [&](int port, const char *what, long limit, bool one_out) {
+      Mem &m = mems[port];
+      m.stall_id = 0;
+      const long asked = m.ar_by_id[0];
+      long waited = 0;
+      while (m.ar_by_id[0] == asked && waited < limit) { tick(); ++waited; }
+      if (m.ar_by_id[0] == asked) {
+        fail("%s: no read reached the port in %ld ticks", what, limit);
+        m.stall_id = -1;
+        return;
+      }
+      run(20);
+      press_for(2000);
+      // What the port still owes at the release was asked for before it, by
+      // the job the fetch had in hand.  A master reset under it asks again
+      // for something new, and takes these beats as that answer.
+      mark_pre(m);
+      const long mixed0 = m.mixed;
+      run(50);
+      m.stall_id = -1;
+      long t = 0;
+      while (owes_pre(m) && t < 2000) { tick(); ++t; }
+      const int before = failures;
+      if (owes_pre(m))
+        fail("%s: a read taken before the button was answered after it and "
+             "its beats were never taken", what);
+      if (one_out && m.mixed != mixed0)
+        fail("%s: %ld read addresses taken after the release while a read "
+             "from before it was still owed, which then answers the new one", what,
+             m.mixed - mixed0);
+      if (failures == before)
+        std::printf("%s: %s, the read held across the button was taken %ld "
+                    "ticks after its answer came\n", BOARD, what, t);
+    };
+#if defined(CADR_BOARD_ARTY)
+    // The display, upright, which reads a line a burst, and then turned,
+    // which reads a band a word at a time with several out at once.  After
+    // each it must fetch again: a fetch that drained and never came back
+    // would pass the rest.
+    auto resumes = [&](const char *what) {
+      const long asked = mems[3].ar_by_id[0];
+      long t = 0;
+      while (mems[3].ar_by_id[0] == asked && t < 3'000'000) { tick(); ++t; }
+      if (mems[3].ar_by_id[0] == asked)
+        fail("%s: the display never read again after the button", what);
+    };
+    read_across(3, "the display's port, upright", 3'000'000, true);
+    resumes("upright");
+    add(1, "turn the display a quarter", true, CONS + 0x88, 0, 0x4852'4357, false, 0, now);
+    if (!settle(4000)) fail("the write that turns the display did not finish");
+    // The turn takes effect at a frame's end, and a frame is some 1.7
+    // million ticks with the pixel clock at the fabric's.
+    run(2'000'000);
+    read_across(3, "the display's port, turned", 3'000'000, false);
+    resumes("turned");
+#endif
+    // The machine's first memory cycle is PAGE-0-PARITY-FIX, some 118 ms
+    // after its reset; the button above was the last one.
+    read_across(0, "the machine's memory port", 20'000'000, true);
+    // And a write whose address is taken and whose data is not: the master
+    // must go on offering the beat, and take the response.
+    {
+      Mem &m = mems[0];
+      m.stall_w = true;
+      long waited = 0;
+      while (m.aw.empty() && waited < 20'000'000) { tick(); ++waited; }
+      if (m.aw.empty()) {
+        fail("the machine's memory port: no write reached it");
+      } else {
+        run(20);
+        press_for(2000);
+        run(50);
+        m.stall_w = false;
+        long t = 0;
+        while ((!m.aw.empty() || m.bvalid) && t < 2000) { tick(); ++t; }
+        if (!m.aw.empty() || m.bvalid)
+          fail("the machine's memory port: a write whose address was taken "
+               "before the button was never finished");
+        else
+          std::printf("%s: the write held across the button finished %ld "
+                      "ticks after its data was taken\n", BOARD, t);
+      }
     }
   }
 

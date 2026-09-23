@@ -648,9 +648,9 @@ module cadr_cora #(
   //     mounted pack with it: `cadr_disk_pack.sv`'s registers are the disk
   //     pack program's state, not the machine's, and a restart of the CADR is
   //     not a reason to forget which file is in the drive.
-  //   - **It would reset `cadr_axi_master` mid-transaction**, through
-  //     `axi_rst`, which is an AXI protocol violation the PS7 cannot recover
-  //     from --- VALID dropped without READY, or R beats returned to a master
+  //   - **It would reset `cadr_axi_master` mid-transaction**, as BTN1 did
+  //     through `axi_rst` until the adapter was given the port's reset alone,
+  //     which is an AXI protocol violation the PS7 cannot recover from --- VALID dropped without READY, or R beats returned to a master
   //     with RREADY low.  It is also unnecessary: the machine drops `mem_req`
   //     at reset, `cadr_axi_master` finishes its transaction and returns to
   //     IDLE when it sees that (its `DONE` state), and `cadr_xbus_ddr`'s
@@ -1076,8 +1076,20 @@ module cadr_cora #(
       port_rst_sync <= {port_rst_sync[1:0], hp0_aresetn};
     end
 
+    // **THE ADAPTER TAKES THE PORT'S RESET AND NOT BTN1.**  `S_AXI_HP0` is
+    // reset only by the processing system, so a read it has taken it will
+    // answer and a write whose address it has taken it will wait for the data
+    // of.  An adapter reset by BTN1 dropped its valids and left the answer in
+    // the port, where the machine's next read took it as its own.  Not
+    // resetting it is the argument the note at `mach_rst` already makes for
+    // the console's reset: the machine drops `mem_req` in reset, the adapter
+    // finishes the transaction in hand and goes back to IDLE from DONE, and
+    // the machine's first memory cycle after a reset is PAGE-0-PARITY-FIX,
+    // 118 ms later.  `tb/cadr_board_reset_tb.cpp` holds a read and a write
+    // across the button.  The witness of a `PROVE` board is not an AXI master
+    // and keeps BTN1, as it did.
     logic axi_rst;
-    assign axi_rst = rst || !port_rst_sync[2];
+    assign axi_rst = !port_rst_sync[2];
 
     // WHAT THE ADAPTER IS ASKED FOR, which is the machine's request on the
     // board this file exists to build and the witness's on a `PROVE` one.
@@ -1155,7 +1167,7 @@ module cadr_cora #(
           .clk(clk),
           // Held while the port is dead, so nothing goes out before
           // `SAXIHP0ARESETN` says `S_AXI_HP0` can answer it.
-          .rst(axi_rst),
+          .rst(rst || axi_rst),
           .go(prove_go),
           .mem_req(port_req), .mem_write(port_write),
           .mem_addr(port_addr), .mem_wdata(port_wdata),

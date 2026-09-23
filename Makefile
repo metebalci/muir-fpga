@@ -1438,10 +1438,10 @@ BOARD_RESET_VFLAGS := $(VFLAGS) -O2 -CFLAGS -O2 -Wno-PINCONNECTEMPTY \
                       --top-module cadr_board_reset_harness
 
 $(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harness: $(BOARD_RESET_ZYNQ) \
-        boards/arty-z7-20/cadr_arty.sv tb/cadr_board_reset_tb.cpp | $(BUILD)
+        $(DISPLAY_SRC) boards/arty-z7-20/cadr_arty.sv tb/cadr_board_reset_tb.cpp | $(BUILD)
 	$(VERILATOR) $(BOARD_RESET_VFLAGS) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
 	    -DCADR_BOARD_ARTY -CFLAGS -DCADR_BOARD_ARTY -Mdir $(BUILD)/obj_board_reset_arty \
-	    $(BOARD_RESET_ZYNQ) boards/arty-z7-20/cadr_arty.sv \
+	    $(BOARD_RESET_ZYNQ) $(DISPLAY_SRC) boards/arty-z7-20/cadr_arty.sv \
 	    $(abspath tb/cadr_board_reset_tb.cpp)
 
 $(BUILD)/obj_board_reset_cora/Vcadr_board_reset_harness: $(BOARD_RESET_ZYNQ) \

@@ -74,9 +74,12 @@ module MMCME2_BASE #(
   assign CLKOUT0   = CLKIN1;
   assign CLKFBOUT  = CLKIN1;
   assign LOCKED    = !RST && !PWRDWN;
+  // The second output passes the input through as the first does, so that a
+  // display built on this stub has a pixel clock: `tb/cadr_board_reset_tb.cpp`
+  // runs the Arty Z7-20's display on it.
+  assign CLKOUT1   = CLKIN1;
 
   assign CLKOUT0B  = 1'b0;
-  assign CLKOUT1   = 1'b0;
   assign CLKOUT1B  = 1'b0;
   assign CLKOUT2   = 1'b0;
   assign CLKOUT2B  = 1'b0;

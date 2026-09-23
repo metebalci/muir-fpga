@@ -548,10 +548,13 @@ because it resets the bridge too. `tb/cadr_board_reset_tb.cpp` holds all of
 this on each board's own top level, and `tb/cadr_f2sdram_reset_tb.cpp` holds
 the memory port.
 
-On the Zynq boards the machine's memory port, `S_AXI_HP0`, and the display's,
-`S_AXI_HP3`, are still reset by BTN1 at once. By the same mechanism a
-transaction in flight there when the button goes down can be cut in half. That
-has not been measured and is not yet fixed.
+The Zynq boards' memory ports keep the same rule. The machine's adapter on
+`S_AXI_HP0` takes the port's reset alone. The machine drops its request in
+reset, so the adapter finishes the transaction in hand and goes idle. The
+display on `S_AXI_HP3` takes BTN1 at its own `fabric_rst`, which resets its
+sleep setting at once. Its fetch finishes the job it has in hand, a line or a
+band, and is reset only then. `tb/cadr_board_reset_tb.cpp` holds a read on
+each port and a write on `S_AXI_HP0` unanswered across the button.
 
 Two other things press the same boot line. The first is the keyboard's boot
 chord. Holding both Controls and both Metas with Rubout cold-boots the machine,

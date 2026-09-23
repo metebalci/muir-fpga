@@ -30,7 +30,7 @@ module cadr_board_reset_harness #(
   /* verilator lint_off PINCONNECTEMPTY */
 `ifdef CADR_BOARD_ARTY
   cadr_arty #(
-      .PROM_HEX(PROM_HEX), .SYNC_PROM_HEX(SYNC_PROM_HEX), .DDR(1)
+      .PROM_HEX(PROM_HEX), .SYNC_PROM_HEX(SYNC_PROM_HEX), .DDR(1), .HDMI(1)
   ) u_top (
       .sysclk(clk), .btn({2'b00, btn}), .sw(2'b00),
       .led(), .led4_r(), .led4_g(), .led4_b(), .led5_r(), .led5_g(), .led5_b(),
