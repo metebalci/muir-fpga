@@ -54,7 +54,11 @@ endif
 HOSTCC ?= cc
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 GOLDEN ?= $(abspath ../../../../../../../build/disk.golden)
-WORK   ?= $(HOME)/.cache/muir-fpga-disk-packs
+# The work directory is this directory's own, by its path hashed, as
+# `cadr-console`'s and `cadr-terminal`'s are: one fixed path for every tree at
+# once let one worktree's newer binaries run in place of another's sources.
+# The top-level Makefile passes its own, under its `build/`.
+WORK   ?= $(HOME)/.cache/muir-fpga-disk-packs-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 
 CFLAGS += -Wall -Wextra -std=gnu11
 

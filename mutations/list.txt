@@ -1945,9 +1945,9 @@
 @note stored asks the plainest possible question about the map: is anything
 @note the check compares downstream of what the map holds?
 @old
-        if (vma[25]) l2_map[adr1] <= vma[23:0];
+        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
 @new
-        if (vma[25]) l2_map[adr1] <= vma[23:0] ^ 24'd1;
+        if (vma[25]) l2_map[adr1_w] <= vma[23:0] ^ 24'd1;
 @end
 
 @mutation the-read-finish-delay-is-charged-in-full
@@ -2040,7 +2040,7 @@
 @note the band does. A nopped cycle naming MD as its source is
 @note not something the PROM's own program does.
 @old
-  assign use_md  = srcmd && !nop;
+  assign use_md  = srcmd && !nopa;
 @new
   assign use_md  = srcmd;
 @end
@@ -7923,9 +7923,9 @@ if {0 && $held ne $want} {
 @note this is the check the property belongs to, and because here it fails on
 @note the ADDRESS as well as on the permission.
 @old
-        if (vma[25]) l2_map[adr1] <= vma[23:0];
+        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
 @new
-        if (vma[25]) l2_map[adr1 ^ 10'd1] <= vma[23:0];
+        if (vma[25]) l2_map[adr1_w ^ 10'd1] <= vma[23:0];
 @end
 
 @mutation a-read-translates-through-a-stale-map-entry
@@ -7960,8 +7960,10 @@ if {0 && $held ne $want} {
 @note The address does not come through it at all; it comes through `vmo`
 @note here, which is what this record moves.
 @old
+          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
           phys_r     <= {vmo[13:0], vma[7:0]};
 @new
+          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
           phys_r     <= {lvmo[13:0], vma[7:0]};
 @end
 
@@ -8016,8 +8018,10 @@ if {0 && $held ne $want} {
 @note it, so the first read takes a word muir never had.  Measured: `machine`
 @note SURVIVES this and `map_boot` catches it.
 @old
+          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
           phys_r     <= {vmo[13:0], vma[7:0]};
 @new
+          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
           phys_r     <= {vmo[13:0] + 14'd1, vma[7:0]};
 @end
 
@@ -8133,11 +8137,17 @@ if {0 && $held ne $want} {
 @note settle to.  The record exists to stop the fabric drifting off `Rtl`
 @note silently, not because either ordering is known to be right.
 @note
+@note Those nets have since been settled: `-VMAP<4:0>` has no other driver and
+@note no pull-up, so the 74S240s read it high and level 2's top five address
+@note bits go LOW, and muir's `Rtl` writes level 2 at block 0 (`229ffe3`).
+@note That is `adr1_w`, and `both-levels-write-level-2-through-level-1` is the
+@note record for the ordering this one used to stand beside.
+@note
 @note Caught by the check's fourth configuration alone.
 @old
-        if (vma[25]) l2_map[adr1] <= vma[23:0];
+        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
 @new
-        if (vma[25]) l2_map[vma[26] ? {vma[31:27], mapi[4:0]} : adr1] <= vma[23:0];
+        if (vma[25]) l2_map[vma[26] ? {vma[31:27], mapi[4:0]} : adr1_w] <= vma[23:0];
 @end
 
 # ---------------------------------------------------------------------------
@@ -12755,9 +12765,9 @@ if {0 && $held ne $want} {
 @note Caught at "row 31 (cc-read-a-mem-1, clk 000e): FLAG-2 is c0c3, the
 @note reference says c0d3" --- bit 4, which is NOP itself.
 @old
-  assign nop = trap || inop || nop11;
+  assign nopa = inop || nop11;
 @new
-  assign nop = trap || inop || (nop11 && 1'b0);
+  assign nopa = inop || (nop11 && 1'b0);
 @end
 
 @mutation sstep-the-statistics-counter-does-not-load
@@ -12780,6 +12790,71 @@ if {0 && $held ne $want} {
         if (ldstat) st <= iwr[31:0];
 @new
         if (ldstat && 1'b0) st <= iwr[31:0];
+@end
+
+@mutation sstep-the-master-clock-start-leaves-memstart-up
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note The master clock starts the pending cycle but does not clear `MEMSTART`.
+@note Its D is `MEMPREPARE`, `NOR(CLK2C, -MEMOP)` at VCTL1 1D27, which is low
+@note while the cpu clock is held, so the edge that takes the cycle out also
+@note drops it; left up, the map stays addressed by `VMA` for the whole halt,
+@note and a later cpu edge would start the same cycle a second time.
+@old
+        memstart <= 1'b0;
+      end
+
+      // **THE CYCLE A MICROCYCLE PREPARED GOES OUT AT THE NEXT MASTER CLOCK
+@new
+      end
+
+      // **THE CYCLE A MICROCYCLE PREPARED GOES OUT AT THE NEXT MASTER CLOCK
+@end
+
+@mutation sstep-the-trap-cycle-is-never-long
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note muir's `rtl` before `dc2a474`: `ILONG` gated by `NOP`, which includes the
+@note trap, where the 74S10 at FLAG 3E07 takes `-NOPA`, `AND(-NOP11, -INOP)` at
+@note CONTRL 3E14, which does not.  The trap cycle after a boot is long when
+@note `IR<45>` asks.  The length shows at normal speed only, which is why the
+@note script writes the mode register before it boots.
+@old
+  assign ilong   = ir[45] && !nopa;
+@new
+  assign ilong   = ir[45] && !nop;
+@end
+
+@mutation sstep-the-trap-cycle-is-never-counted
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note `STATBIT` gated by `NOP` rather than `NOPA`, the same mistake as
+@note `sstep-the-trap-cycle-is-never-long` on the other half of FLAG 3E07: the
+@note statistics counter does not move on the trap cycle when `IR<46>` asks.
+@old
+  assign statbit = ir[46] && !nopa;
+@new
+  assign statbit = ir[46] && !nop;
+@end
+
+@mutation sstep-both-levels-write-level-2-through-level-1
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note muir's `rtl` before `229ffe3`: a store with both `VMA<26>` and `VMA<25>`
+@note up writes level 2 at the entry level 1 held before the store.  Level 1's
+@note 93425As hold their outputs in high impedance while written, `-VMAP<4:0>`
+@note floats high, and the 74S240s at VMEM1 1D08 and VMEM2 1C10 drive level
+@note 2's top five address bits low, so the word lands in block 0.  The
+@note script gives level 1 a nonzero entry first, so the two blocks differ,
+@note and reads the map back through `SRCMAP` --- block 0, and then the old
+@note block with level 1 pointed back at it, because CC's round runs the
+@note store twice and the second time level 1 is 0 already, so block 0 holds
+@note the word under either rule and only the old block tells them apart.
+@note Reading block 0 alone let this survive the first full run.
+@old
+  assign adr1_w = vma[26] ? {5'd0, mapi[4:0]} : adr1;
+@new
+  assign adr1_w = adr1;
 @end
 
 @mutation console-the-clock-register-drops-the-step-bit
@@ -13512,107 +13587,104 @@ if {0 && $held ne $want} {
       if (ub_md_take) md <= {ub_md_data[15:0], ub_md_data[31:16]};
 @end
 
-@mutation the-acknowledgement-stops-holding-read-in-progress-down
+@mutation park-a-prepared-cycle-waits-for-the-cpu-edge
 @check park
 @file rtl/machine/cadr_microcycle.sv
-@note -RDFINISH is -MEMACK through the TD50 and TD250 at VCTL1 1D23/1D22,
-@note which are DELAY LINES: they carry the whole waveform, so while -MEMACK
-@note stands its delayed copy stands and READ IN PROGRESS is held cleared.
-@note This takes that away and leaves only the countdown loaded at the
-@note acknowledgment's rising edge, which is what the module had until this
-@note deadlock was met on silicon.
-@note
-@note What it costs is not a wrong number anywhere: every cycle a RUNNING
-@note machine makes is identical, because the acknowledgment always falls
-@note there. It costs a halted machine, whose frozen MEMSTART stands -MEMRQ
-@note and holds the interface acknowledging: the next single step arms READ
-@note IN PROGRESS off that frozen MEMSTART with the countdown zeroed and no
-@note second rising edge left to fall, so -HANG parks the ring, a parked
-@note ring makes no master clock, no grant can be taken, no acknowledgment
-@note can arrive, and no console write can land. Only a reset is left.
-@note
-@note Six checks, two processor traces and a hardware capture pass over it,
-@note because none of them halts the machine. CC's entry does, and it was
-@note wedging one entry in three on the board.
-@note
-@note Caught at the second halt of the sweep, before CC is reached at all:
-@note "halt k=2: the ring is parked --- no master clock for 4909 ticks, at
-@note PC 313 memstart 0 rdcyc 1 -MEMRQ 1 -MEMGRANT 1 -MEMACK 1 MBUSY 0".
-@note Not caught by ddr_boot, machine, map_access, map_boot, md_compose,
-@note md_hold, md_hold_sys, microcycle, microcycle_sys, probe, readout or
-@note sstep, each of which builds this file.
+@note muir's `rtl` before `dc2a474`, half of it: the start taken only at a
+@note cpu edge.  A master clock with the cpu clock held still drops
+@note MEMSTART, so the cycle a halted machine had prepared is lost rather
+@note than late.  `MEMSTART` is the 74S175 at ACTL 1E20 on `MCLK1A`, so on the
+@note board it goes out there.  The check halts on reads of main memory
+@note prepared and wants each to reach memory with the machine halted.
 @old
-        end else if (rdfinish_level) begin
-          rd_in_progress <= 1'b0;
-        end
+      if (mclk_edge && memstart) begin
+        lvmo <= vmo;
 @new
-        end else if (rdfinish_level && 1'b0) begin
-          rd_in_progress <= 1'b0;
-        end
+      if (cpu_edge && memstart) begin
+        lvmo <= vmo;
 @end
 
-@mutation the-acknowledgement-stops-holding-mbusy-down
+@mutation park-a-cycle-taken-out-at-a-master-clock-sets-no-mbusy
 @check park
 @file rtl/machine/cadr_microcycle.sv
-@note The other half of the same delay line: -MFINISHD is the 30 ns tap and
-@note MBUSY "clears on MEMACK or RESET" through it. With only the one-shot
-@note countdown, a step taken on a halted machine sets MBUSY off the frozen
-@note MEMSTART and nothing clears it, so -MEMRQ stands for ever on MBUSY
-@note itself, the bus interface never leaves ACKED, and MBUSY.SYNC holds the
-@note first -WAIT term up: the machine cannot be started again even though
-@note the ring is still turning. The check reads that as a machine that did
-@note not restart rather than as a parked ring, and the two are different
-@note failures of the same defect.
-@note
-@note **AND IT SURVIVED THE CHECK AS FIRST WRITTEN**, which is why the check
-@note now asks a second thing of a restarted machine. With only the READ IN
-@note PROGRESS half of the fix the ring never parks, microcycles retire and
-@note the console answers --- so a check that asks only whether the machine
-@note is alive calls this healthy, while every memory cycle is being
-@note acknowledged before it has happened. What catches it is
-@note "halt k=2: -MEMRQ never fell in 4,000 ticks of a running machine ---
-@note the bus was never let go, at PC 311 ... -MEMACK 0 MBUSY 1", and the
-@note line after it about -MEMACK standing. Not caught by ddr_boot, machine,
-@note map_access, map_boot, md_compose, md_hold, md_hold_sys, microcycle,
-@note microcycle_sys, probe, readout or sstep.
+@note `MBUSY`, the 74S74 at ACTL 1D21, left down when the cycle goes out at a
+@note master clock with the cpu clock held.  It is on `MCLK1A` beside
+@note `MEMSTART`, so it comes up on that edge.  Written as a hold on the held
+@note edge alone, because a cpu edge that set no MBUSY is every trace's to
+@note catch.  The check asserts MBUSY at every held start.
 @old
-        end else if (mfinishd_level) begin
-          mbusy <= 1'b0;
-        end
+          mbusy      <= 1'b1;
+          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
 @new
-        end else if (mfinishd_level && 1'b0) begin
-          mbusy <= 1'b0;
-        end
+          mbusy      <= cpu_edge ? 1'b1 : mbusy;
+          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
 @end
 
-@mutation the-standing-acknowledgement-is-read-off-the-grant
+@mutation park-a-read-taken-out-at-a-master-clock-has-no-read-in-progress
 @check park
 @file rtl/machine/cadr_microcycle.sv
-@note The delayed level has to be made of -MEMACK and not of -MEMGRANT, and
-@note the two are easy to confuse: the interface asserts -MEMGRANT in
-@note GRANTED, UB and ACKED, so it is up for the whole cycle and -MEMACK
-@note only for the end of it. Read off the grant, the level is asserted from
-@note the moment the bus is taken, so the first tick at which a countdown is
-@note zero clears READ IN PROGRESS and MBUSY while the slave is still being
-@note waited for.
-@note
-@note Every signal stays read, so this is the check's to catch and not
-@note lint's.
-@note
-@note It is caught by the check's own GUARD rather than by its property, and
-@note that is worth saying plainly: clearing READ IN PROGRESS at the grant
-@note breaks memory cycles so thoroughly that no halt in the sweep ever
-@note freezes MEMSTART up on a read, and the line that fails is "no halt in
-@note the sweep froze MEMSTART up on a read, so the hazard was never reached
-@note and this check proves nothing". That guard is there because a check
-@note whose stimulus stopped reaching the hazard would otherwise pass in
-@note silence, and here it is doing exactly the job it was put there for.
+@note `READ IN PROGRESS`, the other 74S74 at ACTL 1D21, left down on a read
+@note that goes out at a master clock with the cpu clock held.  It is half of
+@note `-HANG`, so the next instruction to read MD would not wait for the word.
 @old
-  assign ack_standing   = !n_memack && !memack_edge;
+          if (rdcyc) rd_in_progress <= 1'b1;
+        end
+        // The two countdowns, off the held copy rather than off the map. See
 @new
-  assign ack_standing   = !n_memgrant && !memack_edge;
+          if (rdcyc && cpu_edge) rd_in_progress <= 1'b1;
+        end
+        // The two countdowns, off the held copy rather than off the map. See
 @end
 
+@mutation park-a-cycle-taken-out-at-a-master-clock-goes-to-the-last-address
+@check park
+@file rtl/machine/cadr_microcycle.sv
+@note The address register left as the last cycle had it when a cycle goes
+@note out at a master clock with the cpu clock held.  The check halts on a
+@note read of main memory prepared and wants memory asked for the word at the
+@note address the machine held when the microcycle retired, and MD to hold
+@note what memory gave.
+@old
+          phys_r     <= {vmo[13:0], vma[7:0]};
+          wdata      <= md;
+@new
+          phys_r     <= cpu_edge ? {vmo[13:0], vma[7:0]} : phys_r;
+          wdata      <= md;
+@end
+
+@mutation park-a-write-taken-out-at-a-master-clock-writes-the-last-word
+@check park
+@file rtl/machine/cadr_microcycle.sv
+@note The word register left as the last cycle had it when a write goes out
+@note at a master clock with the cpu clock held.  The bus interface holds the
+@note word from the edge the request goes out on (`xspec.text.3`), and muir's
+@note `start_bus_cycle` captures MD there.  The check forces a store to main
+@note memory through the debug IR on a halted machine and wants memory to
+@note hold MD.
+@old
+          wdata      <= md;
+          // READ IN PROGRESS comes up on the same edge for a read, and has no
+@new
+          wdata      <= cpu_edge ? md : wdata;
+          // READ IN PROGRESS comes up on the same edge for a read, and has no
+@end
+
+
+@mutation park-the-trap-cycle-does-not-read-md
+@check park
+@file rtl/machine/cadr_microcycle.sv
+@note muir's `rtl` before `dc2a474`: `USE.MD` gated by `NOP`, which includes the
+@note trap, where `NOR(-SRCMD, NOPA)` at VCTL2 3F18 takes `-NOPA`, which does
+@note not.  The trap cycle after a boot then ignores a read still in flight,
+@note where the board hangs it until READ IN PROGRESS falls.  The check
+@note forces a slow read on a halted machine with `(MD)` standing in IR,
+@note presses the boot button while the read is in flight, and wants the trap
+@note cycle to run no earlier than READ IN PROGRESS falls.
+@old
+  assign use_md  = srcmd && !nopa;
+@new
+  assign use_md  = srcmd && !nop;
+@end
 # ===========================================================================
 # THE KEYBOARD'S BOOT WORD AND THE LIGHT PANEL'S BUTTON
 #
@@ -16115,33 +16187,6 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   assign sw0_level = sw0_sync[2];
 @new
   assign sw0_level = 1'b0;
-@end
-
-@mutation the-level-1-map-is-read-in-its-undefined-tick
-@check rdw_poison_map
-@file rtl/machine/cadr_microcycle.sv
-@note The poison check's own window, moved one tick earlier onto the write
-@note tick of the level-1 map, which is the one tick in which the machine
-@note does read a memory it is writing: the level-2 write takes its address
-@note from the level-1 read of that same tick, and `Rtl::step` puts it in
-@note the OLD level-1 block. So this is what the check would see if the
-@note undefined tick of an Altera MLAB were a tick the machine samples, and
-@note it must be caught or the check is blind to the thing it is for.
-@note
-@note Measured before the record was written: poisoning the write tick of all
-@note three memories fails `map_access`'s patched PROM, with the level-2 word
-@note landing in the NEW level-1 block, and passes both programs the
-@note processor checks run, neither of which writes both levels in one write
-@note phase. No mutation of the design that keeps its behavior puts a
-@note sampled read into the undefined tick on those programs: taking the
-@note dispatch word or the map's word on MF a tick before the boundary both
-@note survived the poison, because no program reads an entry in the
-@note instruction right after writing it. That is the finding the check
-@note holds, and this record is how it stays able to fail.
-@old
-  assign l1_rdw = l1_w_q && adr0 == l1_wa_q;
-@new
-  assign l1_rdw = (wp && wmapd && vma[26]) || (l1_w_q && adr0 == l1_wa_q);
 @end
 
 # ======================================================================

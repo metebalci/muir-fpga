@@ -74,6 +74,42 @@
 #define MUIR_TV_COLOR_MAP_BYTES (16u * MUIR_TV_COLOR_CHANNELS)
 // muir's own `chaos::Config::default().address`, src/chaos/mod.rs:139.
 #define MUIR_CHAOS_ADDRESS 0177001u
+// `Geometry::CADR`, src/machine.rs: a level-1 map entry of five bits, a PDL
+// pointer and index of ten, and no multiply and divide instructions.
+// `Machine::save` writes the three after the level-1 map, and `Machine::load`
+// takes (5, 10, false) as the CADR.
+#define MUIR_L1_BITS 5u
+#define MUIR_PDL_BITS 10u
+#define MUIR_MULDIV 0u
+// QUUX's tick is not the CADR's either: `Geometry::CADR.tick` is false, and
+// `Tick::new` (src/machine.rs) is what a CADR's machine holds --- off, a
+// period of 16,667 us, and no deadline, which is `u64::MAX`.
+#define MUIR_TICK 0u
+#define MUIR_TICK_PERIOD_US 16667u
+// The size QUUX's MONO TV would have, which `Tv::save` writes for every
+// board: `tv::MONO_TV_WIDTH` by `MONO_TV_HEIGHT`, the default a CADR's
+// display keeps and never uses.
+#define MUIR_MONO_TV_WIDTH 1920u
+#define MUIR_MONO_TV_HEIGHT 1080u
+// **THE ARRAYS ARE muir's LARGEST MACHINE'S, NOT THE CADR's.**  `PDL_WORDS`
+// and `L2_MAP_WORDS` in src/machine.rs are QUUX's sixteen thousand PDL words
+// and two thousand level-2 entries, so that one `Machine` holds either
+// machine; a CADR uses the first 1,024 of each and `Machine::new` leaves the
+// rest zero.  The fabric is a CADR and has only those 1,024, so the file
+// carries the words read and then zeros, which is what muir's own CADR
+// would write.
+#define MUIR_PDL_WORDS (16u * 1024u)
+#define MUIR_L2_MAP_WORDS 2048u
+
+// `w.u32s` over one of muir's arrays of which the fabric holds the first
+// `have` words: the count muir's array has, the words read, then zeros.
+static void emit_u32s_padded(struct chk *w, const uint32_t *v, size_t have,
+			     size_t total)
+{
+	chk_u64(w, (uint64_t)total);
+	for (size_t i = 0; i < total; ++i)
+		chk_u32(w, i < have ? v[i] : 0u);
+}
 
 // --- Machine ---------------------------------------------------------------
 
@@ -222,13 +258,15 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 	// so a resume given the board's own setting says so rather than running
 	// the wrong machine.
 #if CHK_MUTATE == 4
-	// The other board's tag.  It LOADS --- `Tv::load` takes 0 and 1 and
-	// refuses anything else --- and the body is the same length, so only
+	// The other board's tag.  It LOADS --- `Tv::load` takes 0, 1 and
+	// QUUX's 2 and refuses anything else --- and the body is the same length, so only
 	// muir's own cross-check against `--tv-board` can say anything.
 	chk_u8(w, 1);
 #else
 	chk_u8(w, MUIR_TV_BOARD_SIMPLE);	/* DECLARED board */
 #endif
+	chk_u16(w, MUIR_MONO_TV_WIDTH);		/* NONE mono_tv_size */
+	chk_u16(w, MUIR_MONO_TV_HEIGHT);
 	chk_u32s(w, img->tv, IMG_TV_WORDS);	/* READ, out of DDR */
 	chk_u32(w, 0);				/* NONE mode */
 	static const uint8_t zero_sync[IMG_TV_SYNC] = { 0 };
@@ -478,7 +516,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u32s(w, img->amem, IMG_AMEM_WORDS);		/* READ */
 	chk_u32s(w, img->mmem, IMG_MMEM_WORDS);		/* READ */
 	chk_u32s(w, img->dmem, IMG_DMEM_WORDS);		/* READ */
-	chk_u32s(w, img->pdl, IMG_PDL_WORDS);		/* READ */
+	emit_u32s_padded(w, img->pdl, IMG_PDL_WORDS, MUIR_PDL_WORDS);	/* READ */
 	chk_u32s(w, img->spc, IMG_SPC_WORDS);		/* READ */
 	chk_u8(w, img->spcptr);				/* READ */
 	chk_u16(w, img->pdl_ptr);			/* READ */
@@ -510,7 +548,16 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u32(w, 0);					/* IDLE interrupt_control */
 	chk_u16(w, img->dc);				/* READ dispatch_constant */
 	chk_u32s(w, img->l1_map, IMG_L1_WORDS);		/* READ */
-	chk_u32s(w, img->l2_map, IMG_L2_WORDS);		/* READ */
+	// `Machine::geometry`: the fabric is a CADR, `Geometry::CADR`.
+	chk_u8(w, MUIR_L1_BITS);			/* DECLARED l1_bits */
+	chk_u8(w, MUIR_PDL_BITS);			/* DECLARED pdl_bits */
+	chk_bool(w, MUIR_MULDIV);			/* DECLARED muldiv */
+	chk_bool(w, MUIR_TICK);				/* DECLARED tick */
+	// `Tick::save`: the machine's tick, which a CADR has and never turns on.
+	chk_bool(w, 0);					/* NONE tick.enabled */
+	chk_u32(w, MUIR_TICK_PERIOD_US);		/* NONE tick.period_us */
+	chk_u64(w, ~(uint64_t)0);			/* NONE tick.deadline_ns */
+	emit_u32s_padded(w, img->l2_map, IMG_L2_WORDS, MUIR_L2_MAP_WORDS);	/* READ */
 	chk_u32(w, img->boards);			/* the count, again */
 	chk_u32s(w, img->main, (size_t)img->boards * IMG_BOARD_WORDS);	/* READ */
 	// The bus interface's own registers.  **THE READOUT WINDOW DOES NOT
@@ -614,6 +661,10 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// NONE: OPC-CK is the OPC control register's, which is not built.
 	chk_bool(w, 0);					/* NONE opc_ck */
 	chk_u64(w, 0);					/* IDLE halted_ns */
+	// When the instruction standing in `IR` was clocked in.  Only QUUX's
+	// divider reads it, so a CADR's value changes nothing; zero is what a
+	// fresh `Rtl` holds.
+	chk_u64(w, 0);					/* IDLE ir_loaded_ns */
 	chk_bool(w, img_flag(img, IMG_F_MEMSTART));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_MBUSY));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_RDCYC));	/* READ */
