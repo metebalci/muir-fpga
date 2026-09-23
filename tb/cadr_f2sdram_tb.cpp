@@ -38,28 +38,27 @@
 // THE SIX CONFIGURATIONS.
 //
 //   OPEN     software opens the port on `h2f_gp_out[0]`, a millisecond after
-//            the fabric's reset, as U-Boot does seconds after it.  The
-//            machine must retire NO microcycle before the port is live ---
-//            which is the ordering `cadr_f2sdram_gate.sv` holds, and without
-//            it the machine's one memory pass meets a shut port on every
-//            board every time --- and then runs the parity loop: 512
-//            transactions, 256 reads and 256 writes, each at its own address,
-//            each write carrying the word its own read returned, the region
-//            its poison again afterwards, and the tally reading 256 and 256
-//            asked and answered.
+//            the fabric's reset, as U-Boot does seconds after it.  The port's
+//            `may_start` must stay down until the port is live and rise the
+//            tick after --- the board holds its machine in reset on it, which
+//            `build/de25.pass` holds on the board's own line --- and the
+//            machine, let go by this testbench at the tick the board would
+//            let it go, runs the parity loop: 512 transactions, 256 reads and
+//            256 writes, each at its own address, each write carrying the
+//            word its own read returned, the region its poison again
+//            afterwards, and the tally reading 256 and 256 asked and answered.
 //
 //   NEVER    software never opens the port, which is a board on which nobody
 //            has run `bridge enable` or written the general-purpose register.
-//            The machine never leaves reset: not one microcycle, nothing at
-//            the bridge, and a tally reading nothing asked and nothing
-//            answered.  A board that cannot reach its memory does not pretend
-//            to run, and this is the control for the check above.
+//            The port never comes live, `may_start` never rises, nothing
+//            reaches the bridge, and the tally reads nothing asked and
+//            nothing answered.
 //
 //   SHUT     the port opened and then shut under a running machine, which is
-//            what the processor's own reset does to those bits.  The machine
-//            keeps running --- the hold is a latch and not the level --- asks
-//            512 times, and NOTHING reaches the bridge: not an address, not a
-//            beat.  The tally must read the same 256 and 256 asked, and
+//            what the processor's own reset does to those bits.  `may_start`
+//            stays up --- it is a latch and not the level --- the machine
+//            asks 512 times, and NOTHING reaches the bridge: not an address,
+//            not a beat.  The tally must read the same 256 and 256 asked, and
 //            nothing answered --- the reading the whole instrument exists to
 //            make possible, and the one a counter of the fabric's own
 //            intentions cannot produce.
@@ -71,7 +70,12 @@
 //   BUSY     the same, with the disk pack side's port and the display's
 //            streaming bursts at the arbiter the whole time.  Every machine
 //            cycle is compared with its own self in QUIET, and the growth is
-//            bounded: see "THE BOUND" below.
+//            bounded: see "THE BOUND" below.  And every beat the other two
+//            write reaches the bridge as they wrote it, every read beat and
+//            write answer they are handed is the one the bridge gave ---
+//            data, RLAST where their burst ends, and the slave and decode
+//            errors the model gives at addresses its own rule picks --- and
+//            the bridge is asked for the lengths they asked for.
 //
 //   HANDSHAKE  the processor asks the fabric to be quiet in the middle of the
 //            parity loop, which is what its secure firmware does before it
@@ -79,15 +83,21 @@
 //            the request is seen, traffic must resume when the request goes
 //            away, and the cycles that met the held port must end on the bus
 //            interface's NXM timer and nothing else --- which is what a
-//            memory cycle does on a board with no memory at all.
+//            memory cycle does on a board with no memory at all.  The bridge
+//            takes no read address across the request, so one stands on the
+//            bus while everything else drains, and the pack side's writes
+//            are offered at the held port by a writer of their own.  The
+//            display fetches single beats half the time, several in flight.
+//            And later in the same run the processor resets: the port must
+//            go into reset at once with a read outstanding, and come back.
 //
 // THE BOUND, WHICH IS THE ARBITER'S WHOLE CLAIM.  A machine cycle waits at
 // most for what was already in flight when it asked.  With the bridge model
 // fixed at `kFixedArWait` ticks to take an address, `kFixedLatency` ticks to
 // the first beat and one beat a tick, that is: the address on the bus when
 // the machine asked (at most `kFixedArWait` + 1 ticks), plus the beats of the
-// other masters' bursts already accepted ahead of it, which one in flight per
-// master and direction caps at two bursts of sixteen.  The number below is
+// other masters' bursts already accepted ahead of it, which a burst's worth
+// in flight per master and direction caps at two bursts of sixteen.  The number below is
 // measured and not rounded, so a tick more fails, and the mutations just
 // outside it --- a second burst let through, the machine not first --- are in
 // `mutations/list.txt`.
@@ -127,9 +137,11 @@ constexpr uint32_t kDisplayBase = kMainBase + 0x00200000u;
 constexpr int kOtherBeats = 16;   // the pack side's burst, and the display's
 // **AND THE DISPLAY OFFERS MORE THAN ONE AT A TIME**, as the display output on
 // the Zynq boards does: its port there is built with eight reads in flight
-// (`cadr_display_out.sv`'s `OUTSTANDING`).  What holds it to one here is the
-// arbiter, and a stimulus that offered one would leave that nothing to do ---
-// the lesson that a stimulus more polite than the real consumer tests less.
+// (`cadr_display_out.sv`'s `OUTSTANDING`).  What holds it here is the
+// arbiter --- to one burst of sixteen beats at a time, or a burst's worth of
+// single beats --- and a stimulus that offered one would leave that nothing to
+// do: the lesson that a stimulus more polite than the real consumer tests
+// less.
 constexpr int kDisplayOffered = 8;
 // How long the pack side leaves its write response standing before it takes
 // it: see the master's own code below.
@@ -162,6 +174,41 @@ constexpr long kOpenTick = 100000L;
 // milliseconds, so the machine is running and its memory pass is still a
 // hundred milliseconds away.
 constexpr long kShutTick = 200000L;
+// And when the machine is let go: six ticks after software opens the port,
+// which is the tick the board lets it go --- the port live after the
+// synchronizer's three and its register, `may_start` one after that, and the
+// machine's reset register one after that, which `build/de25.pass` holds on
+// the board's own line.  **THE TICK MATTERS HERE AND IT IS NOT A DETAIL**:
+// BUSY's bound is measured against the other masters at the phase this puts
+// the machine at, and measured, letting the machine go ninety-four ticks
+// later left `cand-share-the-machines-hold-ends-when-its-address-is-taken`
+// under the bound.  So it reproduces the board's phase rather than choosing
+// one.
+constexpr long kReleaseDelay = 6L;
+// **THE PROCESSOR'S OWN RESET**, for the configuration that has one: how long
+// `h2f_reset` stands, how long the general-purpose bits stay cleared after it
+// rose (software writes them again once it is back), and for how long before
+// it the bridge withholds read data, so that a read of somebody's is in
+// flight when it comes.
+constexpr long kHpsResetTicks = 1000L;
+constexpr long kHpsReopenTicks = 3000L;
+constexpr long kReadStallTicks = 50L;
+// How long the port may take to go into reset after the processor's reset
+// rises: three synchronizer stages and the register behind them.
+constexpr long kResetDropBound = 4L;
+// **THE HANDSHAKE'S ALLOWANCE**: the request crosses three synchronizer
+// stages before `hold` rises, and a grant registered on the edge before that
+// is on the bus the tick after, so four ticks.  This is argued from the gate
+// and not measured to the tick: with the bridge taking no read address across
+// the request, nothing new is offered in its first ticks anyway, and measured,
+// an allowance of two passes the clean run as well.
+constexpr long kHeldSlack = 4L;
+// The span of the bridge's refusal to take a read address around the request:
+// from long enough before it for everything in flight to have drained, to
+// long enough after it that the share must have gone quiet or given itself
+// away.
+constexpr long kStallBefore = 60L;
+constexpr long kStallAfter = 200L;
 constexpr long kTicksLong = 40000000L;
 constexpr long kTicksShort = 26000000L;
 
@@ -206,6 +253,52 @@ uint32_t Poison(int word) {
 // of its own, so that a stray read is not mistaken for a poisoned one.
 uint32_t Elsewhere(uint32_t addr) { return 0xC0DE0000u ^ addr; }
 
+// **WHAT THE OTHER TWO MASTERS ARE GIVEN IS COMPARED TOO, NOT ONLY THE
+// MACHINE'S.**  The share routes three masters' data, lengths and answers,
+// and a check that compared the machine's alone would pass a share that
+// handed the pack side the machine's write data or turned the display's
+// errors into successes.  So each of the three expectations below is the
+// testbench's own, written from the address and nothing the fabric says:
+//
+//   PackBeat   what the pack side writes into one beat of a burst, injective
+//              in the beat's address, so a beat written anywhere else or
+//              carrying another master's word is seen as the wrong word.
+//   DisplayBeat what a beat of the display's region holds, which nobody
+//              writes: the model's own `Elsewhere` words, whole.
+//   ReadResp,  the bridge's answers, and NOT ALL OKAY: a slave error and a
+//   WriteResp  decode error at addresses chosen by a rule that is the
+//              testbench's, so a share that dropped, crossed or rerouted a
+//              response bit gives a master an answer the rule did not.  The
+//              machine's page is always answered OKAY, because what the
+//              machine makes of an error is not this check's question.
+uint64_t PackBeat(uint32_t addr) {
+  return (static_cast<uint64_t>(addr) << 16) ^ 0x5151515151515151ULL ^
+         (static_cast<uint64_t>(addr >> 3) * 0x9E3779B97F4A7C15ULL);
+}
+
+// Where the display asks for single beats rather than bursts, in the
+// configuration that has it do both: alternate kilobytes of its region.
+bool DisplaySingles(uint32_t addr) { return ((addr >> 10) & 1u) != 0; }
+
+uint64_t DisplayBeat(uint32_t addr) {
+  return (static_cast<uint64_t>(Elsewhere(addr + 4)) << 32) | Elsewhere(addr);
+}
+
+// Per beat for a read, per burst for a write.  0 OKAY, 2 SLVERR, 3 DECERR.
+// Never 1, EXOKAY, which is the answer to an exclusive access and this port
+// makes none.
+constexpr uint32_t kErrorsFrom = kMainBase + 0x00100000u;
+int ReadResp(uint32_t beat_addr) {
+  if (beat_addr < kErrorsFrom) return 0;
+  const uint32_t k = (beat_addr >> 3) % 7u;
+  return k == 3u ? 2 : (k == 5u ? 3 : 0);
+}
+int WriteResp(uint32_t burst_addr) {
+  if (burst_addr < kErrorsFrom) return 0;
+  const uint32_t k = (burst_addr >> 7) % 5u;
+  return k == 2u ? 2 : (k == 4u ? 3 : 0);
+}
+
 // One transaction as the model took it.
 struct Txn {
   long tick;
@@ -245,6 +338,25 @@ struct Run {
   long resumed = 0;             // transactions after the request went away
   long left_in_flight = 0;      // what the bridge took and never answered
   bool bad_protocol = false;
+  // `may_start`, the port's own report that it has been live
+  long first_may_tick = -1;
+  long may_before_live = 0;     // ticks it stood before the port was live
+  long may_dropped = 0;         // ticks it was down again after it rose
+  // What the other two masters were given, against the testbench's own
+  // expectations: see `PackBeat` and the rest.
+  long pack_w_beats = 0, pack_r_beats = 0, display_r_beats = 0;
+  long pack_b_seen = 0;
+  long errors_given = 0;        // slave and decode errors the masters received
+  long other_wrong = 0;         // a word, a length or an answer not the one sent
+  // The processor's own reset in the middle of a run.
+  // The most any one other master had at the bridge at once: reads, and
+  // their beats still to come.
+  long most_reads[3] = {0, 0, 0}, most_beats[3] = {0, 0, 0};
+  // Another master's new address put to the bridge while a transaction of the
+  // machine's was already in it: see the hold's note at the loop.
+  long granted_under_machine = 0;
+  long reset_live_drop = -1;    // ticks from the reset to the port shut
+  long live_after_reset = -1;   // tick the port was live again
 };
 
 // ---------------------------------------------------------------- the model
@@ -306,7 +418,7 @@ struct Bridge {
 // The rules of the bridge and of AXI, on one address.
 void CheckAddress(Run &run, long t, const char *what, int id, uint32_t addr,
                   int len, int size, int burst, int cache, int prot,
-                  int user, int qos, int lock, int region) {
+                  int user, int qos, int lock, int region, int want_len) {
   auto bad = [&](const char *why, long got, long want) {
     run.bad_protocol = true;
     Check(false, "tick %ld: the %s of %08x (id %d) %s: %ld, wanting %ld", t,
@@ -324,6 +436,13 @@ void CheckAddress(Run &run, long t, const char *what, int id, uint32_t addr,
   if (addr < kMainBase || addr >= kMainBase + kReservedSize)
     bad("is outside the reservation", addr, kMainBase);
   if (id == kMachineId && len != 0) bad("is not one beat", len, 0);
+  // **AND THE BRIDGE IS ASKED FOR THE LENGTH THE MASTER ASKED FOR**: a
+  // length changed on its way through the share is a burst the bridge answers
+  // with fewer beats, or more, than the master will take.  The share puts a
+  // master's address to the bridge in the tick it takes it from the master,
+  // so what the master asked for is what it presented in this same tick.
+  if (id != kMachineId && len != want_len)
+    bad("is not the length its master asked for", len, want_len);
   // AXI4: a burst may not cross a 4 KB boundary.
   const uint32_t last = addr + static_cast<uint32_t>(len + 1) * 8u - 1u;
   if ((addr >> 12) != (last >> 12)) bad("crosses a 4 KB boundary", last, addr);
@@ -339,6 +458,18 @@ struct Config {
   long ticks;
   long quiet_from = -1; // tick the processor asks for quiet, or -1
   long quiet_to = -1;
+  // **THE PACK SIDE'S WRITES AND READS AS TWO MASTERS OF THEIR OWN**, each
+  // with one burst in flight, rather than one after the other: a write is
+  // then offered whenever the last one is answered, whatever the reads are
+  // doing, which is what makes a write stand at a held port.
+  bool split_pack = false;
+  // The bridge takes no read address in this span, so that an address is
+  // standing on the bus when the request arrives and after everything else
+  // has drained: see HANDSHAKE.
+  long stall_ar_from = -1, stall_ar_to = -1;
+  // The processor's own reset, at this tick for `kHpsResetTicks`, with the
+  // read data withheld just before it so that a read is outstanding.
+  long hps_reset_at = -1;
 };
 
 Run Simulate(const Config &cfg) {
@@ -353,6 +484,7 @@ Run Simulate(const Config &cfg) {
 
   dut->clk = 0;
   dut->rst = 1;
+  dut->mach_rst = 1;
   dut->h2f_reset = 1;
   dut->gp_open = 0;
   dut->gp_half = 0;
@@ -431,6 +563,30 @@ Run Simulate(const Config &cfg) {
   };
   int pack_gap = 0, display_gap = 0;
 
+  // **WHAT EACH OTHER MASTER HAS IN FLIGHT, BY ITS OWN ACCOUNT**, so that
+  // every beat it is handed can be held to the burst it asked for: the
+  // address, the beat's place in it and where RLAST must fall.  A master's
+  // reads come back in the order it asked for them, AXI's rule within one ID.
+  struct Asked { uint32_t addr; int got; int beats; };
+  std::deque<Asked> pack_reads, display_reads;
+  uint32_t pack_w_burst = 0;      // the pack side's write awaiting its answer
+  // The split pack side's own two: a writer and a reader.  The reader reads
+  // back the burst the writer last had answered.
+  int writer_phase = 0;           // 0 address, 1 data, 2 answer
+  int writer_beat = 0;
+  uint32_t writer_addr = kPackBase;
+  int writer_gap = 0;
+  bool reader_busy = false, reader_asking = false;
+  uint32_t reader_addr = 0;
+  long written_bursts = 0;
+  uint32_t last_written = 0;
+  // The bridge's side, for the held window: a valid that is new this tick.
+  bool prev_arvalid = false, prev_awvalid = false;
+  bool prev_ar_hs = false, prev_aw_hs = false;
+  // Whether the bridge held a transaction of the machine's at the start of
+  // this tick and of the one before.
+  bool machine_in_bridge = false, machine_in_bridge_prev = false;
+
   long micro = 0;
   int to_last = 0;
   bool req_last = false, done_last = false;
@@ -447,10 +603,31 @@ Run Simulate(const Config &cfg) {
     // The port comes live after the fabric's reset, as on the board: the
     // fabric runs from configuration and software opens the port whenever it
     // gets there.
-    dut->h2f_reset = (t < 16) ? 1 : 0;
+    //
+    // **AND THE PROCESSOR'S OWN RESET**, in the one configuration that asks
+    // for it: `h2f_reset` up, and the general-purpose bits low with it, which
+    // the manual says the hardware does during every processor reset, until
+    // software writes them again.
+    const bool in_hps_reset =
+        cfg.hps_reset_at >= 0 && t >= cfg.hps_reset_at &&
+        t < cfg.hps_reset_at + kHpsResetTicks;
+    const bool gp_cleared =
+        cfg.hps_reset_at >= 0 && t >= cfg.hps_reset_at &&
+        t < cfg.hps_reset_at + kHpsReopenTicks;
+    const bool model_reset = (t < 16) || in_hps_reset;
+    dut->h2f_reset = model_reset ? 1 : 0;
     dut->gp_open =
-        (cfg.open && t >= kOpenTick && (cfg.close_at < 0 || t < cfg.close_at))
+        (cfg.open && t >= kOpenTick && (cfg.close_at < 0 || t < cfg.close_at) &&
+         !gp_cleared)
             ? 1 : 0;
+    // **THE MACHINE IS LET GO BY THE TESTBENCH**, at the tick the board would
+    // let it go after software opens the port, and never on a port nobody
+    // opens.  The board
+    // makes the same choice from `may_start`; that line is held by
+    // `build/de25.pass`, which simulates the top level, and this check holds
+    // `may_start` itself.
+    dut->mach_rst =
+        (t < 8 || !(cfg.open && t >= kOpenTick + kReleaseDelay)) ? 1 : 0;
     dut->warm_req_n =
         (cfg.quiet_from >= 0 && t >= cfg.quiet_from && t < cfg.quiet_to) ? 0 : 1;
 
@@ -460,9 +637,26 @@ Run Simulate(const Config &cfg) {
     dut->f2s_arready = 0;
     dut->f2s_awready = 0;
     dut->f2s_wready = 0;
-    if (!dut->rst) {
+    // **A BRIDGE IN RESET HOLDS NOTHING AND ANSWERS NOTHING**, which is what
+    // the processor's reset does to it: what it had taken is gone, and so is
+    // any answer it had put up.
+    if (model_reset) {
+      bridge.reads.clear();
+      bridge.writes.clear();
+      bridge.ar_held = bridge.aw_held = bridge.w_held = false;
+      dut->f2s_rvalid = 0;
+      dut->f2s_rlast = 0;
+      dut->f2s_bvalid = 0;
+    }
+    const bool ar_stalled = t >= cfg.stall_ar_from && t < cfg.stall_ar_to;
+    const bool r_stalled = cfg.hps_reset_at >= 0 &&
+                           t >= cfg.hps_reset_at - kReadStallTicks &&
+                           t < cfg.hps_reset_at;
+    if (!dut->rst && !model_reset) {
       if (dut->f2s_arvalid) {
-        if (bridge.ar_wait > 0) --bridge.ar_wait;
+        if (ar_stalled) {
+          // taken by nobody for now
+        } else if (bridge.ar_wait > 0) --bridge.ar_wait;
         else dut->f2s_arready = 1;
       } else {
         bridge.ar_wait = bridge.Wait(kFixedArWait);
@@ -491,13 +685,15 @@ Run Simulate(const Config &cfg) {
     }
 
     // Read data: the head of the queue, one beat a tick, after its latency.
-    if (!bridge.reads.empty()) {
+    // Withheld, but never withdrawn, just before the processor's reset.
+    if (!bridge.reads.empty() && !(r_stalled && !dut->f2s_rvalid)) {
       Bridge::Rd &rd = bridge.reads.front();
       if (t >= rd.start + (cfg.varying ? 4 + (rd.id * 3) % 7 : kFixedLatency)) {
+        const uint32_t at = rd.addr + 8u * static_cast<uint32_t>(rd.sent);
         dut->f2s_rvalid = 1;
         dut->f2s_rid = static_cast<uint8_t>(rd.id);
-        dut->f2s_rdata = bridge.Beat(rd.addr + 8u * static_cast<uint32_t>(rd.sent));
-        dut->f2s_rresp = 0;
+        dut->f2s_rdata = bridge.Beat(at);
+        dut->f2s_rresp = static_cast<uint8_t>(ReadResp(at));
         dut->f2s_rlast = (rd.sent + 1 == rd.beats) ? 1 : 0;
       }
     }
@@ -507,19 +703,44 @@ Run Simulate(const Config &cfg) {
       if (t >= wr.at + (cfg.varying ? 3 : 2)) {
         dut->f2s_bvalid = 1;
         dut->f2s_bid = static_cast<uint8_t>(wr.id);
-        dut->f2s_bresp = 0;
+        dut->f2s_bresp = static_cast<uint8_t>(WriteResp(wr.addr));
       }
     }
 
     // --------------------------------------------- the other two masters
-    if (cfg.others && !dut->rst && others_on) {
+    if (cfg.others && !dut->rst && others_on && cfg.split_pack) {
+      // The pack side as a writer and a reader of its own.
+      dut->p_awvalid = (writer_phase == 0 && writer_gap == 0) ? 1 : 0;
+      dut->p_awaddr = writer_addr;
+      dut->p_awlen = kOtherBeats - 1;
+      dut->p_wvalid = (writer_phase == 1) ? 1 : 0;
+      dut->p_wdata = PackBeat(writer_addr + 8u * static_cast<uint32_t>(writer_beat));
+      dut->p_wlast = (writer_beat + 1 == kOtherBeats) ? 1 : 0;
+      dut->p_bready = 1;
+      // The reader takes the address to read when it starts to ask, and
+      // keeps it until the address is taken: AXI does not let it move.
+      if (!reader_busy && !reader_asking && written_bursts > 0) {
+        reader_asking = true;
+        reader_addr = last_written;
+      }
+      dut->p_arvalid = reader_asking ? 1 : 0;
+      dut->p_araddr = reader_addr;
+      dut->p_arlen = kOtherBeats - 1;
+      // **AND THE DISPLAY AS IT FETCHES A ROTATED BAND** half the time:
+      // single beats, as many at once as it offers, which the share lets
+      // through up to a burst's worth --- routed back by ID in among the pack
+      // side's bursts, which is what this configuration adds to BUSY's.
+      dut->d_arvalid =
+          (display_out < kDisplayOffered && display_gap == 0) ? 1 : 0;
+      dut->d_araddr = display_addr;
+      dut->d_arlen = DisplaySingles(display_addr) ? 0 : kOtherBeats - 1;
+    } else if (cfg.others && !dut->rst && others_on) {
       // The pack side: a sixteen-beat write, then a sixteen-beat read.
       dut->p_awvalid = (pack_phase == 0 && !pack_w_out && pack_gap == 0) ? 1 : 0;
       dut->p_awaddr = pack_addr;
       dut->p_awlen = kOtherBeats - 1;
       dut->p_wvalid = (pack_phase == 1) ? 1 : 0;
-      dut->p_wdata = (static_cast<uint64_t>(pack_addr) << 16) ^
-                     (0x5151515151515151ULL + pack_beat);
+      dut->p_wdata = PackBeat(pack_addr + 8u * static_cast<uint32_t>(pack_beat));
       dut->p_wlast = (pack_beat + 1 == kOtherBeats) ? 1 : 0;
       dut->p_arvalid = (pack_phase == 2 && !pack_r_out) ? 1 : 0;
       dut->p_araddr = pack_addr;
@@ -536,6 +757,10 @@ Run Simulate(const Config &cfg) {
           (display_out < kDisplayOffered && display_gap == 0) ? 1 : 0;
       dut->d_araddr = display_addr;
       dut->d_arlen = kOtherBeats - 1;
+    } else if (cfg.others) {
+      // Held in reset with the bridge, as the board holds them.
+      dut->p_awvalid = 0; dut->p_wvalid = 0; dut->p_arvalid = 0;
+      dut->d_arvalid = 0;
     }
 
     dut->eval();
@@ -561,6 +786,17 @@ Run Simulate(const Config &cfg) {
     const int p_r_hs = dut->p_rvalid && dut->p_rready;
     const int p_r_last = dut->p_rlast;
     const int d_ar_hs = dut->d_arvalid && dut->d_arready;
+    const uint64_t p_r_data = dut->p_rdata;
+    const int p_r_resp = dut->p_rresp;
+    const int p_b_hs = dut->p_bvalid && dut->p_bready;
+    const int p_b_resp = dut->p_bresp;
+    const int d_r_hs = dut->d_rvalid && dut->d_rready;
+    const uint64_t d_r_data = dut->d_rdata;
+    const int d_r_resp = dut->d_rresp;
+    const int d_r_last = dut->d_rlast;
+    const uint32_t p_ar_addr = dut->p_araddr, d_ar_addr = dut->d_araddr;
+    const int d_ar_len = dut->d_arlen;
+    const uint32_t p_aw_addr = dut->p_awaddr;
 
     // A VALID MAY NOT MOVE BEFORE ITS READY, AND ITS PAYLOAD MAY NOT CHANGE.
     if (s_arvalid && !s_arready) {
@@ -613,14 +849,63 @@ Run Simulate(const Config &cfg) {
     // NOTHING GOES OUT WHILE THE PORT IS SHUT OR HELD.  The gate's three
     // synchronizers are three ticks deep, so a request raised at `t` may
     // still see an address put at `t + 3`; after that, nothing.
-    const bool held = (cfg.quiet_from >= 0 && t >= cfg.quiet_from + 4 &&
+    //
+    // **WHAT IS COUNTED IS A NEW ADDRESS PUT TO THE BRIDGE, NOT ONE TAKEN.**
+    // An address granted before the request stays on the bus until the
+    // bridge takes it, because AXI does not let it be withdrawn, and HANDSHAKE
+    // makes sure one does: the bridge takes no read address across the
+    // request.  So a handshake inside the window is legal; a valid that was
+    // not there the tick before, or follows one just taken, is a grant made
+    // while the port was held.
+    const bool held = (cfg.quiet_from >= 0 && t >= cfg.quiet_from + kHeldSlack &&
                        t < cfg.quiet_to);
+    const bool new_ar = s_arvalid && (!prev_arvalid || prev_ar_hs);
+    const bool new_aw = s_awvalid && (!prev_awvalid || prev_aw_hs);
+    // **THE HOLD, SEEN AT THE BRIDGE.**  From the tick the machine asks until
+    // its answer is back, the share grants nobody else anything new.  A grant
+    // is a register, so an address granted on one edge is on the bus the tick
+    // after: an address of another master's that is NEW at this tick was
+    // granted on the edge that ended the last one, and if the bridge held a
+    // transaction of the machine's at the start of that tick, the machine was
+    // waiting for it and the grant broke the hold.  Counted in every run;
+    // BUSY's bound sees the same fault only at the phases where it costs the
+    // machine a tick more than the bound, which is not all of them.
+    //
+    // **A WRITE COUNTS FROM ITS LAST DATA BEAT AND NOT FROM ITS ADDRESS**, and
+    // that is the share as built rather than as its header words it: measured,
+    // in the tick between the bridge taking the machine's write address and
+    // taking its data, the machine's valids are down and its write is not yet
+    // outstanding, and 116 reads of the other masters were granted in that
+    // tick over BUSY.  One tick, and it is the header's claim that is wider
+    // than the code; this counts what the code promises.
+    machine_in_bridge_prev = machine_in_bridge;
+    machine_in_bridge = false;
+    for (const auto &rd : bridge.reads)
+      if (rd.id == kMachineId) machine_in_bridge = true;
+    for (const auto &wr : bridge.writes)
+      if (wr.id == kMachineId && wr.done) machine_in_bridge = true;
+    if (machine_in_bridge_prev &&
+        ((new_ar && s_arid != kMachineId) || (new_aw && s_awid != kMachineId))) {
+      if (out.granted_under_machine == 0)
+        std::printf("  (%s: master %d was granted at tick %ld with the machine's "
+                    "transaction in the bridge)\n", cfg.name,
+                    new_ar ? s_arid : s_awid, t);
+      ++out.granted_under_machine;
+    }
+    if (held && (new_ar || new_aw)) {
+      if (out.held_issues == 0)
+        std::printf("  (%s: a %s address was put to the bridge at tick %ld, "
+                    "the request having come at %ld)\n", cfg.name,
+                    new_ar ? "read" : "write", t, cfg.quiet_from);
+      ++out.held_issues;
+    }
+    prev_arvalid = s_arvalid; prev_awvalid = s_awvalid;
+    prev_ar_hs = s_arvalid && s_arready; prev_aw_hs = s_awvalid && s_awready;
     if ((s_arvalid && s_arready) || (s_awvalid && s_awready)) {
       if (!cfg.open) {
         out.bad_protocol = true;
         Check(false, "tick %ld: a transaction reached the bridge with the port shut", t);
       }
-      if (held) ++out.held_issues;
       if (cfg.quiet_to >= 0 && t >= cfg.quiet_to) ++out.resumed;
     }
 
@@ -643,7 +928,36 @@ Run Simulate(const Config &cfg) {
       out.last_edge_tick = t;
     }
     if (dut->live && out.first_live_tick < 0) out.first_live_tick = t;
-    if (dut->live) others_on = true;
+    if (dut->live && !in_hps_reset) others_on = true;
+    // **`may_start` IS THE PORT'S OWN REPORT THAT IT HAS BEEN LIVE**, and
+    // what the board holds the machine on: never before the port is live,
+    // up the tick after it first is, and then a latch that nothing but the
+    // fabric's reset lowers --- not software shutting the port, not the
+    // processor's own reset.
+    if (dut->may_start) {
+      if (out.first_may_tick < 0) out.first_may_tick = t;
+      if (out.first_live_tick < 0) ++out.may_before_live;
+    } else if (out.first_may_tick >= 0) {
+      ++out.may_dropped;
+    }
+    // The processor's own reset puts the port into reset AT ONCE, whatever is
+    // in flight, because the bridge is reset with it: the three stages of
+    // the synchronizer and the register behind them, and no waiting for quiet.
+    if (cfg.hps_reset_at >= 0 && t >= cfg.hps_reset_at) {
+      if (!dut->live && out.reset_live_drop < 0)
+        out.reset_live_drop = t - cfg.hps_reset_at;
+      if (dut->live && t >= cfg.hps_reset_at + kHpsResetTicks &&
+          out.live_after_reset < 0)
+        out.live_after_reset = t;
+    }
+    if (in_hps_reset) {
+      others_on = false;
+      pack_phase = 0; pack_beat = 0; pack_w_out = false; pack_r_out = false;
+      pack_b_held = 0; display_out = 0;
+      pack_reads.clear(); display_reads.clear();
+      writer_phase = 0; writer_beat = 0; reader_busy = false;
+      reader_asking = false;
+    }
     if (dut->timed_out && !to_last) ++out.timeouts;
     to_last = dut->timed_out;
     out.final_pc = dut->pc;
@@ -680,8 +994,19 @@ Run Simulate(const Config &cfg) {
       CheckAddress(out, t, "read", s_arid, s_araddr, dut->f2s_arlen,
                    dut->f2s_arsize, dut->f2s_arburst, dut->f2s_arcache,
                    dut->f2s_arprot, dut->f2s_aruser, dut->f2s_arqos,
-                   dut->f2s_arlock, dut->f2s_arregion);
+                   dut->f2s_arlock, dut->f2s_arregion,
+                   s_arid == kDisplayId ? d_ar_len : kOtherBeats - 1);
       bridge.reads.push_back({s_arid, s_araddr, dut->f2s_arlen + 1, 0, t});
+      if (s_arid >= 0 && s_arid < 3) {
+        long n = 0, beats = 0;
+        for (const auto &rd : bridge.reads) {
+          if (rd.id != s_arid) continue;
+          ++n;
+          beats += rd.beats - rd.sent;
+        }
+        if (n > out.most_reads[s_arid]) out.most_reads[s_arid] = n;
+        if (beats > out.most_beats[s_arid]) out.most_beats[s_arid] = beats;
+      }
       bridge.ar_wait = bridge.Wait(kFixedArWait);
       if (s_arid != kMachineId && req_at >= 0) ++ahead;
       if (s_arid == kMachineId) {
@@ -702,7 +1027,7 @@ Run Simulate(const Config &cfg) {
       CheckAddress(out, t, "write", s_awid, s_awaddr, dut->f2s_awlen,
                    dut->f2s_awsize, dut->f2s_awburst, dut->f2s_awcache,
                    dut->f2s_awprot, dut->f2s_awuser, dut->f2s_awqos,
-                   dut->f2s_awlock, dut->f2s_awregion);
+                   dut->f2s_awlock, dut->f2s_awregion, kOtherBeats - 1);
       bridge.writes.push_back({s_awid, s_awaddr, dut->f2s_awlen + 1, 0, false, t});
       bridge.aw_wait = bridge.Wait(kFixedArWait);
       if (s_awid != kMachineId && req_at >= 0) ++ahead;
@@ -725,6 +1050,17 @@ Run Simulate(const Config &cfg) {
         if (dut->f2s_wuser != 0) {
           out.bad_protocol = true;
           Check(false, "tick %ld: a write beat carries WUSER %d", t, (int)dut->f2s_wuser);
+        }
+        if (open->id == kPackId) {
+          // THE PACK SIDE'S BEAT IS THE ONE IT PUT UP, WHOLE, AT ITS ADDRESS.
+          ++out.pack_w_beats;
+          if (s_wdata != PackBeat(at) || s_wstrb != 0xFFu) {
+            if (out.other_wrong++ < 5)
+              Check(false, "tick %ld: the pack side's beat at %08x reached the "
+                    "bridge as %016" PRIx64 " with strobes %02x, and it wrote "
+                    "%016" PRIx64 " with all eight", t, at, s_wdata, s_wstrb,
+                    PackBeat(at));
+          }
         }
         if (open->id == kMachineId) {
           // The machine's word is four bytes in one half of the beat and
@@ -783,8 +1119,83 @@ Run Simulate(const Config &cfg) {
       dut->f2s_bvalid = 0;
     }
 
+    // WHAT THE OTHER TWO MASTERS WERE HANDED, against what they asked for.
+    if (cfg.others && !in_hps_reset) {
+      auto expect_beat = [&](std::deque<Asked> &q, const char *who,
+                             uint64_t data, int resp, int last,
+                             uint64_t (*want)(uint32_t)) {
+        if (q.empty()) {
+          if (out.other_wrong++ < 5)
+            Check(false, "tick %ld: the %s was handed a read beat it never "
+                  "asked for", t, who);
+          return;
+        }
+        Asked &a = q.front();
+        const uint32_t at = a.addr + 8u * static_cast<uint32_t>(a.got);
+        const int want_last = (a.got + 1 == a.beats) ? 1 : 0;
+        if (resp != 0) ++out.errors_given;
+        if (data != want(at) || resp != ReadResp(at) || last != want_last) {
+          if (out.other_wrong++ < 5)
+            Check(false, "tick %ld: the %s's beat %d of its read at %08x came "
+                  "as %016" PRIx64 " answer %d last %d, and the bridge was "
+                  "given %016" PRIx64 " answer %d last %d", t, who, a.got,
+                  a.addr, data, resp, last, want(at), ReadResp(at), want_last);
+        }
+        ++a.got;
+        if (last || a.got == a.beats) q.pop_front();
+      };
+      if (p_r_hs) {
+        ++out.pack_r_beats;
+        expect_beat(pack_reads, "pack side", p_r_data, p_r_resp, p_r_last,
+                    PackBeat);
+      }
+      if (d_r_hs) {
+        ++out.display_r_beats;
+        expect_beat(display_reads, "display", d_r_data, d_r_resp, d_r_last,
+                    DisplayBeat);
+      }
+      if (p_b_hs) {
+        ++out.pack_b_seen;
+        if (p_b_resp != 0) ++out.errors_given;
+        if (p_b_resp != WriteResp(pack_w_burst)) {
+          if (out.other_wrong++ < 5)
+            Check(false, "tick %ld: the pack side's write at %08x was answered "
+                  "%d, and the bridge answered it %d", t, pack_w_burst,
+                  p_b_resp, WriteResp(pack_w_burst));
+        }
+      }
+      if (p_ar_hs) pack_reads.push_back({p_ar_addr, 0, kOtherBeats});
+      if (d_ar_hs) display_reads.push_back({d_ar_addr, 0, d_ar_len + 1});
+      if (p_aw_hs) pack_w_burst = p_aw_addr;
+    }
+
+    // The split pack side's writer and reader, after the edge.
+    if (cfg.others && !dut->rst && others_on && cfg.split_pack) {
+      if (writer_phase == 0 && p_aw_hs) { writer_phase = 1; writer_beat = 0; }
+      else if (writer_phase == 1 && p_w_hs) {
+        if (++writer_beat == kOtherBeats) writer_phase = 2;
+      } else if (writer_phase == 2 && p_b_hs) {
+        last_written = writer_addr;
+        ++written_bursts;
+        writer_addr += 8u * kOtherBeats;
+        if (writer_addr >= kPackBase + 0x10000u) writer_addr = kPackBase;
+        writer_phase = 0;
+        writer_gap = next_gap(5u);
+      }
+      if (writer_gap > 0) --writer_gap;
+      if (p_ar_hs) { reader_busy = true; reader_asking = false; }
+      if (p_r_hs && p_r_last) reader_busy = false;
+      if (d_ar_hs) {
+        ++display_out;
+        display_addr += 8u * static_cast<uint32_t>(d_ar_len + 1);
+        if (display_addr >= kDisplayBase + 0x10000u) display_addr = kDisplayBase;
+        display_gap = d_ar_len == 0 ? 0 : next_gap(kDisplayGapSpan);
+      }
+      if (display_gap > 0) --display_gap;
+    }
+
     // The other two masters' own state machines, after the edge.
-    if (cfg.others && !dut->rst && others_on) {
+    if (cfg.others && !dut->rst && others_on && !cfg.split_pack) {
       if (p_aw_hs) {
         pack_w_out = true;
         pack_phase = 1;
@@ -997,19 +1408,24 @@ int main(int argc, char **argv) {
         "OPEN: the last clock edge was at tick %ld of %ld, so the machine is "
         "not running at the end", open.last_edge_tick, kTicksLong);
   Check(open.final_pc != 040, "OPEN: the machine ended at PC 40, ERROR-DISK-ERROR");
-  // **AND THE MACHINE DID NOT RUN BEFORE ITS MEMORY DID.**  The port comes
-  // live a millisecond in; a machine released at the fabric's reset would
-  // have retired some 6,666 microcycles by then, and on the board it would
-  // have spent its ONE pass over main memory against a shut port.
+  // **AND `may_start` SAYS THE PORT HAS BEEN LIVE, AND NOTHING ELSE.**  The
+  // board holds its machine in reset on it; that the board does is
+  // `build/de25.pass`'s to hold, because the line is the top level's, and
+  // what is held here is the report: down until the port is live, up the
+  // tick after, and up from then on.
   Check(open.first_live_tick >= 0,
         "OPEN: the port never came live at all");
-  Check(open.first_edge_tick > open.first_live_tick,
-        "OPEN: the machine retired its first microcycle at tick %ld and the "
-        "port came live at tick %ld, so the machine ran before its memory did",
-        open.first_edge_tick, open.first_live_tick);
-  std::printf("  the port came live at tick %ld and the machine's first\n"
-              "    microcycle retired at tick %ld\n",
-              open.first_live_tick, open.first_edge_tick);
+  Check(open.may_before_live == 0,
+        "OPEN: may_start stood for %ld ticks before the port was ever live",
+        open.may_before_live);
+  Check(open.first_may_tick == open.first_live_tick + 1,
+        "OPEN: may_start rose at tick %ld and the port came live at tick %ld, "
+        "wanting the tick after", open.first_may_tick, open.first_live_tick);
+  Check(open.may_dropped == 0,
+        "OPEN: may_start fell again for %ld ticks", open.may_dropped);
+  std::printf("  the port came live at tick %ld and may_start rose at tick %ld;\n"
+              "    the machine's first microcycle retired at tick %ld\n",
+              open.first_live_tick, open.first_may_tick, open.first_edge_tick);
   std::printf("  %zu transactions, %ld reads and %ld writes, every one at its\n"
               "    own address, each write carrying the word its own read\n"
               "    returned; %d words of the region are their poison again\n",
@@ -1024,21 +1440,19 @@ int main(int argc, char **argv) {
 
   // ---------------------------------------------------------------- NEVER
   //
-  // The other half of the ordering: with the port never opened the machine
-  // never starts.  Twenty milliseconds, which is 133,000 microcycles a
-  // released machine would have retired.
+  // The other half: with the port never opened it never comes live, so
+  // `may_start` never rises and a board holding its machine on it never lets
+  // it go.  The machine is held here by the testbench, and nothing may reach
+  // the bridge.  Twenty milliseconds.
   const Config never_cfg{"NEVER", false, -1, true, false, 2000000L};
   Run never = Simulate(never_cfg);
   std::printf("\nNEVER: software never opened the port\n");
   Check(never.first_live_tick < 0,
         "NEVER: the port came live at tick %ld with nobody opening it",
         never.first_live_tick);
-  Check(never.first_edge_tick < 0,
-        "NEVER: the machine retired a microcycle at tick %ld with its memory "
-        "port never opened, and it must be held in reset until the port is "
-        "live", never.first_edge_tick);
-  Check(never.micro == 0,
-        "NEVER: %ld microcycles retired, wanting none", never.micro);
+  Check(never.first_may_tick < 0,
+        "NEVER: may_start rose at tick %ld with the port never opened",
+        never.first_may_tick);
   Check(never.ar_seen == 0 && never.aw_seen == 0,
         "NEVER: %ld read and %ld write addresses reached the bridge, wanting "
         "none at all", never.ar_seen, never.aw_seen);
@@ -1050,7 +1464,7 @@ int main(int argc, char **argv) {
         "NEVER: the tally answers %ld reads and %ld writes, wanting none",
         never.answered_reads, never.answered_writes);
   CheckMarkers(never, "NEVER");
-  std::printf("  no microcycle retired in %ld ticks and nothing reached the "
+  std::printf("  may_start never rose in %ld ticks and nothing reached the "
               "bridge;\n    the tally reads %08x and %08x, with the marker in "
               "each half\n",
               never_cfg.ticks, never.tally_high, never.tally_low);
@@ -1060,12 +1474,13 @@ int main(int argc, char **argv) {
   Run shut = Simulate(shut_cfg);
   std::printf("\nSHUT: software opened the port and shut it again under the "
               "running machine\n");
-  Check(shut.first_edge_tick > shut.first_live_tick && shut.first_live_tick >= 0,
-        "SHUT: the machine's first microcycle was at tick %ld and the port "
-        "came live at tick %ld", shut.first_edge_tick, shut.first_live_tick);
   Check(shut.micro > 100000,
-        "SHUT: %ld microcycles retired, and shutting the port must not stop a "
-        "machine that has already started", shut.micro);
+        "SHUT: %ld microcycles retired, so the machine never reached its "
+        "memory pass", shut.micro);
+  Check(shut.first_may_tick >= 0 && shut.may_dropped == 0,
+        "SHUT: may_start rose at tick %ld and was down again for %ld ticks "
+        "after the port was shut, and it is a latch", shut.first_may_tick,
+        shut.may_dropped);
   Check(shut.ar_seen == 0 && shut.aw_seen == 0,
         "SHUT: %ld read and %ld write addresses reached the bridge, wanting "
         "none at all", shut.ar_seen, shut.aw_seen);
@@ -1128,6 +1543,38 @@ int main(int argc, char **argv) {
   Check(busy.pack_bursts > 1000 && busy.display_bursts > 1000,
         "BUSY: the pack side moved %ld read bursts and the display %ld, and "
         "both stream for the whole run", busy.pack_bursts, busy.display_bursts);
+  // **AND WHAT THEY WERE HANDED IS WHAT THE BRIDGE GAVE**: every beat of the
+  // pack side's writes at the bridge, every read beat each of them took and
+  // every write answer, word for word, answer for answer and RLAST where
+  // sixteen beats put it --- including the slave and decode errors the model
+  // gives at the addresses its own rule picks.
+  auto others_held = [](const Run &r, const char *name) {
+    Check(r.other_wrong == 0,
+          "%s: %ld beats or answers reached the other two masters other than "
+          "the bridge gave them", name, r.other_wrong);
+    Check(r.pack_w_beats > 1000 && r.pack_r_beats > 1000 &&
+              r.display_r_beats > 1000 && r.pack_b_seen > 100,
+          "%s: the pack side wrote %ld beats, read %ld and had %ld writes "
+          "answered, and the display read %ld beats, so too little was "
+          "compared", name, r.pack_w_beats, r.pack_r_beats, r.pack_b_seen,
+          r.display_r_beats);
+    Check(r.errors_given > 100,
+          "%s: only %ld error answers reached the other masters, so the "
+          "answers were barely tested", name, r.errors_given);
+    // **AND NO MASTER EVER HAD MORE THAN A BURST'S WORTH OF READS AT THE
+    // BRIDGE**, which is the share's whole bound: what the machine may find in
+    // front of it.
+    Check(r.granted_under_machine == 0,
+          "%s: %ld addresses of the other masters were granted while a "
+          "transaction of the machine's was waiting for its answer", name,
+          r.granted_under_machine);
+    for (int id = kPackId; id <= kDisplayId; ++id)
+      Check(r.most_beats[id] <= kOtherBeats,
+            "%s: master %d had %ld beats of reads at the bridge at once, and "
+            "the share allows a burst's worth, %d", name, id, r.most_beats[id],
+            kOtherBeats);
+  };
+  others_held(busy, "BUSY");
   // **AND THE MACHINE WENT FIRST.**  What it waits for at the arbiter is the
   // address already on the bus when it asked; the measured worst is two, one
   // for each of the ticks its own adapter takes to raise its request behind
@@ -1146,8 +1593,8 @@ int main(int argc, char **argv) {
   // **THE BOUND, MEASURED AND NOT ROUNDED.**  What a machine cycle may wait
   // for is what was already in flight when it asked: the address on the bus
   // (at most `kFixedArWait` + 1 ticks) and the beats of the bursts the two
-  // other masters have accepted ahead of it, which one in flight per master
-  // and direction caps at two of sixteen --- a ceiling of 35 ticks.  What the
+  // other masters have accepted ahead of it, which a burst's worth in flight
+  // per master and direction caps at two of sixteen --- a ceiling of 35 ticks.  What the
   // two runs below actually reach is 29, and that is the number held to: a
   // tick more fails.  The mutations just outside it are a second burst let
   // through, and the hold that keeps the other masters from being granted
@@ -1195,6 +1642,21 @@ int main(int argc, char **argv) {
   // stop testing the day the loop moved.
   hs_cfg.quiet_from = open.machine[100].tick;
   hs_cfg.quiet_to = hs_cfg.quiet_from + 20000L;
+  // **AND TWO THINGS THE REQUEST MUST MEET, MADE CERTAIN RATHER THAN LEFT TO
+  // TIMING.**  The bridge takes no read address from shortly before the
+  // request to shortly after it, so everything else has drained and one
+  // address stands on the bus: the share is not idle while it stands, and
+  // must not say it is.  And the pack side's writes run as a master of their
+  // own, so a write is offered at the held port while that address stands:
+  // the hold stops a write's grant as it stops a read's.
+  hs_cfg.split_pack = true;
+  hs_cfg.stall_ar_from = hs_cfg.quiet_from - kStallBefore;
+  hs_cfg.stall_ar_to = hs_cfg.quiet_from + kStallAfter;
+  // **AND THE PROCESSOR'S OWN RESET, LATER IN THE SAME RUN**, long after the
+  // loop and with the other two streaming: it resets the bridge, so it must
+  // put the port into reset at once and not wait for the answers the bridge
+  // will now never give.
+  hs_cfg.hps_reset_at = 20000000L;
   Run hs = Simulate(hs_cfg);
   std::printf("\nHANDSHAKE: the processor asked the fabric to be quiet for "
               "200 us in the middle of the loop\n");
@@ -1212,6 +1674,24 @@ int main(int argc, char **argv) {
   Check(hs.left_in_flight == 0,
         "HANDSHAKE: the bridge was left holding %ld transactions nobody took, "
         "so the port was cut off in the middle of one", hs.left_in_flight);
+  others_held(hs, "HANDSHAKE");
+  // **SEVERAL READS OF ONE MASTER IN FLIGHT, ROUTED BACK BY ID**: the display's
+  // single beats, as its rotated band fetch makes them, up to a burst's worth
+  // at once, among the pack side's bursts --- and every beat of both compared
+  // above.  One at a time here would be the share holding the display to a
+  // round trip a word.
+  Check(hs.most_reads[kDisplayId] >= 2,
+        "HANDSHAKE: the display never had more than %ld read at the bridge at "
+        "once", hs.most_reads[kDisplayId]);
+  Check(hs.reset_live_drop >= 0 && hs.reset_live_drop <= kResetDropBound,
+        "HANDSHAKE: the port went into reset %ld ticks after the processor's "
+        "reset, wanting at most %ld whatever was in flight",
+        hs.reset_live_drop, kResetDropBound);
+  Check(hs.live_after_reset >= 0,
+        "HANDSHAKE: the port never came live again after the processor's reset");
+  Check(hs.may_dropped == 0,
+        "HANDSHAKE: may_start was down for %ld ticks after the processor's "
+        "reset, and only the fabric's reset may lower it", hs.may_dropped);
   // **THE ACKNOWLEDGMENT: GIVEN, AND ONLY WHEN THERE IS NOTHING IN FLIGHT.**
   // The processor's reset manager waits for it before it resets the bridge,
   // and its whole meaning is that the fabric has gone quiet.
@@ -1261,6 +1741,16 @@ int main(int argc, char **argv) {
   Check(changed_page <= missing,
         "HANDSHAKE: %ld words of page 0 changed, and the window took only %ld "
         "transactions away", changed_page, missing);
+  std::printf("  the processor's reset shut the port in %ld ticks and it was "
+              "live again at tick %ld\n", hs.reset_live_drop,
+              hs.live_after_reset);
+  std::printf("  the pack side was handed %ld read beats and %ld answers and "
+              "the display %ld read\n    beats, as the bridge gave them, %ld "
+              "of them errors; the pack side's %ld\n    write beats reached "
+              "the bridge as it wrote them; the display had up to %ld\n    "
+              "reads at the bridge at once\n", hs.pack_r_beats, hs.pack_b_seen,
+              hs.display_r_beats, hs.errors_given, hs.pack_w_beats,
+              hs.most_reads[kDisplayId]);
   std::printf("  nothing was put to the bridge while the request stood, %ld "
               "transactions after it;\n    the acknowledgment came at tick %ld "
               "and never with work in the bridge;\n    %ld of the loop's 512 "

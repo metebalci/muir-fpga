@@ -231,14 +231,20 @@
 // `WRITE-COLOR-MAP` writes the map while the machine runs and a map loaded at
 // reset would be the power-on map for ever.
 //
-// **THE INDEX AND THE WORD CROSS THE DOMAINS AS ONE SLOW BUS, AND THEY ARE
-// BOUNDED RATHER THAN LEFT OPEN.**  `map_a` is set at the first pixel of a line
-// and `map_q` is taken eight pixels later, so the round trip --- out of this
-// module, through `cadr_machine` into the color board's map, and back --- has 74
-// ns to settle against a bus that changes once every 15.7 microseconds.  That is
-// the `req_line` argument one level up, and like it the path carries a
-// `set_max_delay -datapath_only` in `rtl/plumbing/xilinx7/cadr_hdmi.xdc` so that
-// an asynchronous clock group cannot make it a route of any length at all.
+// **THE INDEX AND THE WORD CROSS THE DOMAINS AS ONE SLOW BUS.**  `map_a` is
+// set at the first pixel of a line and `map_q` is taken eight pixels later, so
+// the round trip --- out of this module, through `cadr_machine` into the color
+// board's map, and back --- has 74 ns to settle against a bus that changes
+// once every 15.7 microseconds.  That is the `req_line` argument one level up.
+// **WHAT BOUNDS THE ROUTE DIFFERS BY VENDOR, AND ON THE DE25-NANO NOTHING
+// DOES.**  `boards/de25-nano/quartus/cadr_hdmi.sdc` writes no bound for it,
+// and its asynchronous group between the machine's clock and the pixel clock
+// cuts the path, so there the route is the placer's and 74 ns against a route
+// of a few nanoseconds is the margin.  `rtl/plumbing/xilinx7/cadr_hdmi.xdc`
+// writes a `set_max_delay -datapath_only` of 20 ns for it; that file's own
+// note records, measured, that the asynchronous clock group overrides the
+// fetch job's bound and the sleep pair's in Vivado's precedence, and the same
+// precedence applies to this one, which has not been measured by itself.
 // A write landing exactly at the sample gives one entry one wrong frame, which
 // is the tearing rule above applied to the map.
 //

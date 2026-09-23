@@ -77,8 +77,23 @@
 #include <set>
 #include <vector>
 
-#include "Vcadr_display_out.h"
 #include "verilated.h"
+
+// **BUILT TWICE.**  Alone, it is `build/display_out.pass`: the display against
+// a port of its own, which is the Zynq boards' `S_AXI_HP3`.  With
+// `CADR_DISPLAY_SHARE` defined it is `build/display_share.pass`: the same
+// display behind `rtl/plumbing/cadr_f2sdram_share.sv`, as the DE25-Nano wires
+// it, through `tb/cadr_display_share_harness.sv`, whose port list is the
+// display's own --- against a memory whose latency is PIPELINED, as a real
+// one is, and at a round trip at which one read in flight cannot fetch a
+// rotated band in time.  `main` says which configurations each runs.
+#ifdef CADR_DISPLAY_SHARE
+#include "Vcadr_display_share_harness.h"
+typedef Vcadr_display_share_harness Dut;
+#else
+#include "Vcadr_display_out.h"
+typedef Vcadr_display_out Dut;
+#endif
 
 namespace {
 
@@ -104,6 +119,23 @@ constexpr int kCLineBytes = kCWords * 4;  // 288
 constexpr uint32_t kBase = 0x1C000000u;
 constexpr uint32_t kCBase = 0x1C020000u;
 constexpr int kOutstanding = 8;
+
+// **THE PIPELINED MEMORY, FOR THE BUILD BEHIND THE SHARE.**  Every read is
+// answered `kShareLatency` clocks after its address is taken, however many are
+// in flight --- which is what a memory controller does and what a slave that
+// answered one at a time would hide --- and the bridge takes up to
+// `kBridgeDepth` addresses.  **THE BOARD'S OWN ROUND TRIP HAS NOT BEEN
+// MEASURED**, so this is a figure and not the board's: 40 clocks, 400 ns.
+// Measured here, with one read in flight the share turned both rotated
+// pictures that show the color board black at 40; counting beats instead,
+// every picture keeps up to 60 and the one with both screens rotated
+// underruns at 80, where what runs out is the display's own eight reads in
+// flight and not the share.  So
+// a round trip on the board above about 600 ns would still show black bands
+// rotated, and the measurement that settles it is that round trip.
+constexpr int kShareLatency = 40;
+constexpr int kBridgeDepth = 32;
+int gPipeLatency = -1;     // -1: the serialized slave below; else pipelined
 
 // Where each picture sits, upright and rotated.
 //
@@ -255,6 +287,7 @@ struct Burst {
   uint32_t addr;
   int len;
   int beat;
+  long ready_at;    // the pipelined memory's: when its first beat may go
 };
 
 struct Slave {
@@ -262,6 +295,8 @@ struct Slave {
   int beat_wait = 0;    // clocks before each beat
   int arw = 0, bw = 0;
   int rot = 0;          // what this configuration asked for
+  int pipe_latency = -1;  // see `kShareLatency`
+  long now = 0;
   int live = 0;         // the settings have taken: compare from here
   long dump = 0;
 
@@ -297,9 +332,10 @@ struct Slave {
            (static_cast<uint64_t>(WordAt(a + 4)) << 32);
   }
 
-  void Drive(Vcadr_display_out *dut) {
-    dut->m_arready = (q.size() < static_cast<size_t>(kOutstanding) && arw == 0) ? 1 : 0;
-    if (!q.empty() && bw == 0) {
+  void Drive(Dut *dut) {
+    const size_t depth = pipe_latency >= 0 ? kBridgeDepth : kOutstanding;
+    dut->m_arready = (q.size() < depth && arw == 0) ? 1 : 0;
+    if (!q.empty() && (pipe_latency >= 0 ? now >= q.front().ready_at : bw == 0)) {
       const Burst &b = q.front();
       dut->m_rvalid = 1;
       dut->m_rdata = BeatData(b.addr + static_cast<uint32_t>(8 * b.beat));
@@ -310,7 +346,7 @@ struct Slave {
     }
   }
 
-  void Sample(Vcadr_display_out *dut) {
+  void Sample(Dut *dut) {
     s_arvalid = dut->m_arvalid; s_arready = dut->m_arready;
     s_rvalid = dut->m_rvalid;   s_rready = dut->m_rready;
     s_rlast = dut->m_rlast;
@@ -318,7 +354,8 @@ struct Slave {
     s_arsize = dut->m_arsize;   s_arburst = dut->m_arburst;
   }
 
-  void AfterEdge(Vcadr_display_out *dut) {
+  void AfterEdge(Dut *dut) {
+    ++now;
     if (arw > 0) --arw;
     if (s_arvalid && s_arready) {
       ++ar_handshakes; ++bursts;
@@ -355,7 +392,7 @@ struct Slave {
       }
       (void)rows;
       if (a < base) Fail("address %08x is below its window's base %08x", a, base);
-      q.push_back(Burst{a, len, 0});
+      q.push_back(Burst{a, len, 0, now + pipe_latency});
       if (q.size() > max_in_flight) max_in_flight = q.size();
       if (q.size() > static_cast<size_t>(kOutstanding))
         Fail("%zu reads in flight, and the master may hold %d", q.size(), kOutstanding);
@@ -516,8 +553,9 @@ int main(int argc, char **argv) {
   auto run = [&](int sel, int rot, int ar_wait, int beat_wait, long frames_wanted,
                  bool compare, Result *res, const char *who = "?") {
     std::fprintf(stderr, "    -- configuration %s: sel %d rot %d --\n", who, sel, rot);
-    auto *dut = new Vcadr_display_out;
+    auto *dut = new Dut;
     Slave slave;
+    slave.pipe_latency = gPipeLatency;
     slave.ar_wait = ar_wait;
     slave.beat_wait = beat_wait;
     slave.rot = rot;
@@ -862,6 +900,51 @@ int main(int argc, char **argv) {
       ++bad;
     }
   };
+
+#ifdef CADR_DISPLAY_SHARE
+  // **BEHIND THE SHARE: THE PICTURE KEEPS UP AT A PIPELINED ROUND TRIP.**
+  // Every configuration that fetches differently --- a line upright, a band
+  // rotated, one screen and both --- compared pixel for pixel as the plain
+  // build compares it, with no underrun allowed and, rotated, more than one
+  // read seen in flight through the share: the band fetch's reads are single
+  // beats, and a share that let one through at a time would finish a band
+  // late and draw it black.
+  {
+    gPipeLatency = kShareLatency;
+    struct Case { int sel, rot; const char *who; };
+    const Case cases[] = {
+        {1, 0, "A mono upright"},       {2, 0, "C color upright"},
+        {1, 1, "E mono clockwise"},     {1, 2, "F mono anticlockwise"},
+        {3, 1, "G both clockwise"},     {2, 1, "H color clockwise"},
+    };
+    long compared = 0;
+    size_t most = 0;
+    for (const Case &k : cases) {
+      Result r;
+      (void)run(k.sel, k.rot, 0, 0, 4, true, &r, k.who);
+      if (r.underruns)
+        Fail("%s: an underrun behind the share at a round trip of %d clocks",
+             k.who, kShareLatency);
+      if (k.rot && r.max_in_flight < 2)
+        Fail("%s: at most %zu read in flight reached the memory through the "
+             "share, and the band fetch needs several", k.who, r.max_in_flight);
+      placed(r, k.sel, k.rot, k.who);
+      compared += r.compared;
+      if (r.max_in_flight > most) most = r.max_in_flight;
+    }
+    if (bad) {
+      std::fprintf(stderr, "FAIL: %d problems\n", bad);
+      return 1;
+    }
+    std::printf(
+        "ok: %s behind the DE25-Nano's share of one port\n"
+        "    a memory answering every read %d clocks after its address,\n"
+        "    pipelined; both screens upright and rotated, %ld pixels compared,\n"
+        "    no underrun, and up to %zu reads in flight through the share\n",
+        kModeName, kShareLatency, compared, most);
+    return 0;
+  }
+#endif
 
   // ------------------------------------------------------ configuration A
   Result a;

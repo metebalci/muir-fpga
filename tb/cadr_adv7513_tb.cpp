@@ -42,17 +42,20 @@
 //     outside it in `mutations/list.txt`;
 //   - a stretched clock, followed rather than talked over, and the stretch
 //     counted so that a check where it never happened cannot pass;
-//   - a byte the part does not acknowledge, which must stop the program,
-//     raise `failed`, leave `configured` down, put a stop on the bus and
-//     send nothing more;
+//   - a byte the part does not acknowledge, the address, the register or
+//     the value of one write, each of which must stop the program at that
+//     byte, leave the write uncounted, raise `failed`, leave `configured`
+//     down, put a stop on the bus and send nothing more;
 //   - the bus left alone once the program is through: neither line moves
 //     again;
 //   - `restart`, which must run the whole program again, byte for byte.
 //
-// WHAT IT DOES NOT HOLD, AND NOTHING DOES.  That these registers and these
-// values make an ADV7513 transmit.  That is the part's, it is in a document
-// that is not on this machine, and this board's connector has never been
-// wired to a monitor.  The module's header says the same.
+// WHAT IT DOES NOT HOLD.  That these registers and these values make an
+// ADV7513 transmit.  That is the part's, and it is in a document that is not
+// on this machine.  What speaks for it is the board: a monitor on the
+// DE25-Nano's connector has shown the machine's screen with this program
+// written, which is evidence for the program as a whole and not for any one
+// value in it.  The module's header says the same.
 
 #include <cstdint>
 #include <cstdio>
@@ -561,11 +564,21 @@ int main(int argc, char **argv) {
 
   // ================================= 4. a byte the part does not acknowledge
   //
-  // Refused on the second byte of the fifth write, which is a register byte
-  // in the middle of the program: four writes must be through, the fifth
-  // must stop where it was refused, and nothing may follow it.
-  {
-    const long kRefuseAt = 4 * 3 + 2;     // the 14th byte of the run
+  // **EACH OF THE THREE BYTES OF A WRITE, REFUSED IN TURN**: the address, the
+  // register and the value of the fifth write, which is the middle of the
+  // program.  A refusal is the part saying it did not take the byte, and it
+  // means the same thing wherever it falls: four writes must be through, the
+  // fifth must stop at the byte that was refused and not be counted, and
+  // nothing may follow it.  Only the register byte was refused here once,
+  // and a module that talked past a refused ADDRESS --- which is the refusal
+  // a part that is not there at all gives --- or counted a refused VALUE as
+  // written passed every line of this file.
+  static const char *const kByteName[3] = {"address", "register", "value"};
+  long refusals_run = 0;
+  for (int which = 0; which < 3; ++which) {
+    const long kRefuseAt = 4 * 3 + 1 + which;   // the fifth write's byte
+    char what[96];
+    std::snprintf(what, sizeof what, "a refused %s byte", kByteName[which]);
     Bus bus;
     bus.dut = new Vcadr_adv7513;
     bus.slave.ack_setup = 300;   // three microseconds after the fall
@@ -578,26 +591,42 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 8; ++i) bus.Step();
     bus.dut->rst = 0;
     RunUntilSettled(bus, kBudget);
-    if (!bus.dut->failed) Fail("a refused byte did not raise `failed`");
-    if (bus.dut->configured) Fail("a refused byte still reported `configured`");
-    if (bus.dut->writes != 4) Failf("writes before the refusal", bus.dut->writes, 4);
-    if (bus.an.nacks != 1) Failf("refusals seen on the bus", bus.an.nacks, 1);
+    if (!bus.dut->failed)
+      std::fprintf(stderr, "%s did not raise `failed`\n", what), ++bad;
+    if (bus.dut->configured)
+      std::fprintf(stderr, "%s still reported `configured`\n", what), ++bad;
+    if (bus.dut->writes != 4)
+      std::fprintf(stderr, "%s: `writes` is %d, and only the four writes before "
+                   "it were taken\n", what, (int)bus.dut->writes), ++bad;
+    if (bus.an.nacks != 1)
+      std::fprintf(stderr, "%s: %ld refusals seen on the bus, expected 1\n", what,
+                   bus.an.nacks), ++bad;
     if ((long)bus.an.txns.size() != 5)
-      Failf("transactions before the module gave up", (long)bus.an.txns.size(), 5);
-    if (bus.an.stops != 5) Failf("stops, so the bus was released", bus.an.stops, 5);
-    // The first four are whole, and the fifth stopped after two bytes.
-    for (int i = 0; i < 4; ++i) {
+      std::fprintf(stderr, "%s: %zu transactions before the module gave up, "
+                   "expected 5\n", what, bus.an.txns.size()), ++bad;
+    if (bus.an.stops != 5)
+      std::fprintf(stderr, "%s: %ld stops, expected 5, so the bus was not "
+                   "released\n", what, bus.an.stops), ++bad;
+    // The first four are whole, and the fifth stopped at the refused byte.
+    for (int i = 0; i < 4 && i < (int)bus.an.txns.size(); ++i) {
       if (bus.an.txns[i].bytes.size() != 3)
         Failf("bytes in a whole write", (long)bus.an.txns[i].bytes.size(), 3);
     }
-    if (bus.an.txns[4].bytes.size() != 2)
-      Failf("bytes in the refused write", (long)bus.an.txns[4].bytes.size(), 2);
-    if (!bus.an.txns[4].stopped) Fail("the refused write left the bus without a stop");
+    if (bus.an.txns.size() >= 5) {
+      if ((int)bus.an.txns[4].bytes.size() != which + 1)
+        std::fprintf(stderr, "%s: the refused write carried %zu bytes, and it "
+                     "must end at the refused one, the %d%s\n", what,
+                     bus.an.txns[4].bytes.size(), which + 1,
+                     which == 0 ? "st" : which == 1 ? "nd" : "rd"), ++bad;
+      if (!bus.an.txns[4].stopped)
+        std::fprintf(stderr, "%s left the bus without a stop\n", what), ++bad;
+    }
     // And nothing more.
     bus.an.watch_quiet = true;
     for (int i = 0; i < 40000; ++i) bus.Step();
     if (bus.an.moves_after_done != 0)
-      Failf("moves of either line after a refusal", bus.an.moves_after_done, 0);
+      std::fprintf(stderr, "%s: %ld moves of either line after it\n", what,
+                   bus.an.moves_after_done), ++bad;
     // A restart must clear it and try again.
     bus.an.watch_quiet = false;
     bus.slave.nack_after_bytes = -1;
@@ -606,10 +635,13 @@ int main(int argc, char **argv) {
     bus.dut->restart = 1;
     bus.Step();
     bus.dut->restart = 0;
-    if (bus.dut->failed) Fail("a restart did not clear `failed`");
+    if (bus.dut->failed)
+      std::fprintf(stderr, "%s: a restart did not clear `failed`\n", what), ++bad;
     RunUntilSettled(bus, kBudget);
-    if (!bus.dut->configured) Fail("a restart after a refusal did not finish the program");
+    if (!bus.dut->configured)
+      std::fprintf(stderr, "%s: a restart did not finish the program\n", what), ++bad;
     CheckRun(bus.an, before, "the program after a refusal and a restart");
+    ++refusals_run;
     delete bus.dut;
   }
 
@@ -629,13 +661,14 @@ int main(int argc, char **argv) {
       "      each the worst measured off the waveform.\n"
       "    no move of SDA at any edge of SCL, and neither line moves in the\n"
       "      %ld ticks after the program.\n"
-      "    a clock stretched %ld times, followed; a refused byte stopping the\n"
-      "      program with a stop on the bus, `failed` up and `configured` down;\n"
-      "      and a restart running the whole program again.\n",
+      "    a clock stretched %ld times, followed; a refused address, register\n"
+      "      and value byte, %ld runs, each stopping the program at that byte\n"
+      "      with a stop on the bus, four writes counted, `failed` up and\n"
+      "      `configured` down; and a restart running the whole program again.\n",
       kEntries, kWriteAddr, 3 * kEntries, Ns(program_ticks) / 1e6,
       worst_scl_khz, kSclMaxHz / 1e3,
       worst[0], kSdaSetupNs, worst[1], kSdaHoldNs, worst[2], kStartSetupNs,
       worst[3], kStartHoldNs, worst[4], kStopSetupNs,
-      quiet_checked, stretches_seen);
+      quiet_checked, stretches_seen, refusals_run);
   return 0;
 }

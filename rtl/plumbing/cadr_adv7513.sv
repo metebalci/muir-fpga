@@ -117,8 +117,9 @@
 // input clock goes away and comes back; whether it relocks by itself is not
 // established by any document here, and re-running the program costs about
 // ten milliseconds at a wake and removes the question.  That is the honest
-// reason and it is not a measurement: no monitor has been on this
-// connector.
+// reason and it is not a measurement: the sleep and the wake have been seen
+// at the board (`docs/board.md`, 21 September), with the program re-run at
+// the wake, and nobody has tried a wake without it.
 //
 // WHAT IS REPORTED RATHER THAN SWALLOWED
 //
@@ -132,12 +133,16 @@
 //
 // WHAT NOTHING HERE HOLDS
 //
-// **The program has never been written to a part.**  `build/adv7513.pass`
-// holds what leaves the two pins --- the framing, the byte stream, the
-// acknowledges, the intervals and the re-run --- against a decoder that
-// recovers all of it from the two wires, and that is a check on this module
-// and not evidence about the ADV7513.  The connector on this board has never
-// been wired to a monitor.
+// **What speaks for the program is the board, and only for the whole of
+// it.**  `build/adv7513.pass` holds what leaves the two pins --- the framing,
+// the byte stream, the acknowledges, the intervals and the re-run --- against
+// a decoder that recovers all of it from the two wires, and that is a check on
+// this module and not evidence about the ADV7513.  The evidence about the part
+// is `docs/board.md`'s sessions of 20 and 21 September: with this program
+// written, a monitor on the board's connector showed the machine's screen,
+// with a key typed at the board appearing on it.  That says the program as a
+// whole makes the part transmit this mode; it says nothing about any one
+// register, and no value here has been tried against another.
 //
 // Nothing reads the part's interrupt pin and nothing reads hot-plug detect,
 // so the program is written whether or not a monitor is attached.  That is

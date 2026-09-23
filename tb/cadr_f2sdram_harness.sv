@@ -5,19 +5,28 @@
 // `rtl/plumbing/cadr_f2sdram_port.sv`, with the processor's own side brought
 // out for `tb/cadr_f2sdram_tb.cpp` to be.
 //
-// **THE WIRING IS THE BOARD'S**, because the board's wiring is the module:
+// **THE PATH IS THE BOARD'S**, because the path is the module:
 // `boards/de25-nano/cadr_de25.sv` instantiates the same `cadr_f2sdram_port`
-// with the same four signals from the processor and the same two tied-off
-// master ports, and nothing of the path lives in the top level.  What this
-// harness adds is the processor's end of those wires, so that a testbench can
-// open the port, shut it, ask for quiet, read the tally, and answer AXI.
+// with the same four signals from the processor and the same two other
+// master ports.  What this harness adds is the processor's end of those
+// wires, so that a testbench can open the port, shut it, ask for quiet, reset
+// the processor, read the tally, and answer AXI.  How the top level wires the
+// port is not held here: `build/de25.pass` simulates the top level itself.
 //
-// **THE OTHER TWO MASTERS ARE INPUTS HERE AND TIED OFF THERE**, which is the
-// point of two of the configurations: on the board nothing drives the disk
-// pack side's port or the display's, and what the check has to establish is
-// what they will cost the machine when something does.  So they are driven
-// from the testbench, in the AXI3 shape `cadr_disk_pack.sv` and
-// `cadr_display_out.sv` have.
+// **THE OTHER TWO MASTERS ARE INPUTS HERE**, driven from the testbench in the
+// AXI3 shape `cadr_disk_pack.sv` and `cadr_display_out.sv` have.  On the board
+// those two modules drive them; here the testbench does, so that what they
+// cost the machine can be measured and what reaches them can be compared
+// with what the bridge model sent.
+//
+// **THE MACHINE'S RESET IS AN INPUT, AND IT IS THE TESTBENCH'S STIMULUS.**
+// The board holds the machine in reset until the port has been live once,
+// and that line is the board's own: a copy of it here would be a check of the
+// copy.  So this harness brings `may_start` out, the port's own report, and
+// takes the machine's reset in; `tb/cadr_f2sdram_tb.cpp` holds `may_start`
+// to what the port says it means, and the board's use of it is held where
+// the board's own line is, by the simulation of the top level in
+// `build/de25.pass`.
 //
 // IT IS IN `tb/` FOR THE REASON `tb/cadr_de25_stubs.sv` GIVES: the Quartus
 // flow builds the board from a list the Makefile names, and a harness in
@@ -35,6 +44,8 @@ module cadr_f2sdram_harness #(
 ) (
     input  var logic clk,
     input  var logic rst,
+    // The machine's reset: see the header.
+    input  var logic mach_rst,
 
     // --- the processor's side of the port ---------------------------------
     input  var logic        h2f_reset,
@@ -44,6 +55,7 @@ module cadr_f2sdram_harness #(
     output var logic        warm_ack_n,
     output var logic [31:0] gp_in,
     output var logic        live,
+    output var logic        may_start,
 
     // --- what the machine is doing ----------------------------------------
     output var logic        clock_edge,
@@ -176,17 +188,6 @@ module cadr_f2sdram_harness #(
   logic [2:0]  ub_ssyn_by;
   logic        sintr;   // -XBUS.INTR, the machine's own; read by nothing here
   logic [31:0] mem_rdata;
-
-  // **THE MACHINE'S RESET IS THE BOARD'S, AND IT WAITS FOR THE PORT.**
-  // `boards/de25-nano/cadr_de25.sv` holds the machine in reset until
-  // `may_start` is up, which is the port having been live once since the
-  // fabric's reset; `rtl/plumbing/cadr_f2sdram_gate.sv`'s header gives the
-  // measurement that makes it an ordering rather than a precaution.  A
-  // harness that released the machine at the fabric's reset would run a
-  // machine no board runs, and the fault this exists to stop would pass
-  // through it unseen.  Registered, as the board registers it.
-  logic may_start, mach_rst;
-  always_ff @(posedge clk) mach_rst <= rst || !may_start;
 
   // The DDR=1 board's configuration exactly: no interrupt, no Xbus device,
   // 32 boards of memory declared.
