@@ -640,11 +640,15 @@ and they are in this order:
    to be released: the one the faces sit on, the lightweight one the console
    sits on, and the FPGA-to-SDRAM bridge the machine's memory comes through. It
    is U-Boot's own command (`arch/arm/mach-socfpga/misc.c`), and the secure
-   firmware does the work, including the handshake with the fabric. After
-   `fpga load` it repeats work already done, because the secure firmware
-   releases every bridge itself when a full configuration completes. Its exit
+   firmware does the work, including the handshake with the fabric. It is the
+   step that releases them after `fpga load` too. Read back on the board at
+   the U-Boot prompt, the reset manager's `BRGMODRST` held every bridge in
+   reset (`0xf`) after `fpga load` had reported success, read `0` after
+   `bridge enable`, and read `0xf` again after `bridge disable`. Its exit
    status is always 0, even when the bridges stay in reset, so it cannot stop
-   step 4.
+   step 4 by itself. The environment's `cadr_bridges_up` therefore reads
+   `BRGMODRST` back after it and fails unless the three bridges this board
+   uses are released, and step 4 runs only when that read passes.
 4. Write 1 to the same register. Bit 0 is what the fabric reads as "the bridges
    are stable", which is the use the manual gives these bits, and until it rises
    the fabric holds its memory master off, so the machine's first memory cycle
