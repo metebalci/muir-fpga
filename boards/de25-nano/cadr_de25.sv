@@ -34,9 +34,13 @@
 // those is this board's: they are the modules', and this board instantiates
 // the same modules.  What is this board's ALONE is the adapter below --- which
 // header pin carries which of the carrier's eight lines, and which nets join
-// the connector, the join, the window and the machine --- and this file cannot
-// be simulated, so what holds the adapter is lint and
-// `tools/de25_faces_check.py`, which reads the pin map and the nets alike.
+// the connector, the join, the window and the machine --- and what holds the
+// adapter is lint and `tools/de25_faces_check.py`, which reads the pin map and
+// the nets alike.  This file IS simulated, by `build/de25.pass` after its
+// lints, around shells of the PLLs, the processor and the machine
+// (`tb/cadr_de25_sim_stubs.sv` and `tb/cadr_de25_top_tb.cpp`); that holds the
+// memory port's wiring, the resets, the keys, the switch, the lamps and the
+// video and two-wire pins, and it does not drive JP1.
 // **NOTHING OF THIS CONNECTOR HAS RUN ON SILICON.**  The Zynq boards' two ends
 // have run on a real ribbon; no cable from a 2x20 header to a Pmod exists, so
 // this one has crossed nothing.

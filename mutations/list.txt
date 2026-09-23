@@ -18235,7 +18235,8 @@ set MAIN_BASE   0x1C000000
 @note every phase is the hold seen at the bridge: no other master's address is
 @note new while a transaction of the machine's is waiting for its answer.
 @old
-  assign machine_busy = s_arvalid[0] || s_awvalid[0] || rd_out[0] || wr_out[0];
+  assign machine_busy = s_arvalid[0] || s_awvalid[0] ||
+                        (w_on && (w_who == '0)) || rd_out[0] || wr_out[0];
 @new
   assign machine_busy = s_arvalid[0] || s_awvalid[0];
 @end
@@ -18574,4 +18575,18 @@ set MAIN_BASE   0x1C000000
       if (f_quiet && (fstate == F_IDLE)) begin
 @new
       if (f_quiet && (fstate == F_IDLE || 1'b1)) begin
+@end
+
+@mutation f2sdram-the-machines-write-is-not-waited-for-until-its-data-is-in
+@check f2sdram
+@file rtl/plumbing/cadr_f2sdram_share.sv
+@note The hold on the other masters has a one-tick gap: after the bridge takes
+@note the machine's write address and before it takes the data, the machine is
+@note neither asking nor outstanding, and the others are granted.  Measured,
+@note 116 reads over BUSY.  Caught by the hold seen at the bridge, which counts
+@note a write of the machine's from its address.
+@old
+                        (w_on && (w_who == '0)) || rd_out[0] || wr_out[0];
+@new
+                        (w_on && (w_who == '0) && 1'b0) || rd_out[0] || wr_out[0];
 @end

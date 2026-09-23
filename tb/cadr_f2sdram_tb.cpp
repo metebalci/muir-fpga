@@ -88,8 +88,12 @@
 //            bus while everything else drains, and the pack side's writes
 //            are offered at the held port by a writer of their own.  The
 //            display fetches single beats half the time, several in flight.
-//            And later in the same run the processor resets: the port must
-//            go into reset at once with a read outstanding, and come back.
+//            After the loop, with the machine asking nothing, the processor
+//            asks for quiet a second time, with the same stall and the read
+//            data then withheld, so a read grant at the held port has
+//            somebody to go to.  And later in the same run the processor
+//            resets: the port must go into reset at once with a read
+//            outstanding, and come back.
 //
 // THE BOUND, WHICH IS THE ARBITER'S WHOLE CLAIM.  A machine cycle waits at
 // most for what was already in flight when it asked.  With the bridge model
@@ -209,6 +213,19 @@ constexpr long kHeldSlack = 4L;
 // away.
 constexpr long kStallBefore = 60L;
 constexpr long kStallAfter = 200L;
+// How long the bridge then withholds read data after it takes that address,
+// in the second request only.  **ADDED BECAUSE A RECORD STOPPED BEING CAUGHT
+// BY LUCK**: in the first request the machine is in its memory loop and
+// always has a write waiting at the held port, and while it asks the share
+// makes nobody else eligible, so a read grant that ignored the hold had
+// nobody to grant to.  It had been caught at a phase where the machine was
+// not asking; closing the hold's one-tick gap moved the phase.  So the second
+// request comes after the loop, when the machine asks nothing, and with a
+// read outstanding and no address on the bus the share is not idle and the
+// other masters are asking: only the hold stops the grant.
+constexpr long kReadHoldAfter = 300L;
+// The second request's window.
+constexpr long kQuiet2Ticks = 20000L;
 constexpr long kTicksLong = 40000000L;
 constexpr long kTicksShort = 26000000L;
 
@@ -335,6 +352,7 @@ struct Run {
   long held_issues = 0;         // transactions started while the port is held
   long ack_while_busy = 0;      // the handshake acknowledged with work in it
   long ack_ticks = -1;          // when the acknowledgment came
+  long ack2_ticks = -1;         // and for the second request
   long resumed = 0;             // transactions after the request went away
   long left_in_flight = 0;      // what the bridge took and never answered
   bool bad_protocol = false;
@@ -467,6 +485,10 @@ struct Config {
   // standing on the bus when the request arrives and after everything else
   // has drained: see HANDSHAKE.
   long stall_ar_from = -1, stall_ar_to = -1;
+  // A second request for quiet, long after the machine's memory loop, with
+  // the same stall around it and the read data withheld after it: see
+  // HANDSHAKE.  Its window is `kQuiet2Ticks` long.
+  long quiet2_from = -1;
   // The processor's own reset, at this tick for `kHpsResetTicks`, with the
   // read data withheld just before it so that a read is outstanding.
   long hps_reset_at = -1;
@@ -615,6 +637,8 @@ Run Simulate(const Config &cfg) {
         cfg.hps_reset_at >= 0 && t >= cfg.hps_reset_at &&
         t < cfg.hps_reset_at + kHpsReopenTicks;
     const bool model_reset = (t < 16) || in_hps_reset;
+    const long q2 = cfg.quiet2_from;
+    const bool in_quiet2 = q2 >= 0 && t >= q2 && t < q2 + kQuiet2Ticks;
     dut->h2f_reset = model_reset ? 1 : 0;
     dut->gp_open =
         (cfg.open && t >= kOpenTick && (cfg.close_at < 0 || t < cfg.close_at) &&
@@ -629,7 +653,8 @@ Run Simulate(const Config &cfg) {
     dut->mach_rst =
         (t < 8 || !(cfg.open && t >= kOpenTick + kReleaseDelay)) ? 1 : 0;
     dut->warm_req_n =
-        (cfg.quiet_from >= 0 && t >= cfg.quiet_from && t < cfg.quiet_to) ? 0 : 1;
+        ((cfg.quiet_from >= 0 && t >= cfg.quiet_from && t < cfg.quiet_to) ||
+         in_quiet2) ? 0 : 1;
 
     // ------------------------------------------------------- the bridge
     // Ready when it has no address of that kind in hand and its wait has
@@ -648,10 +673,19 @@ Run Simulate(const Config &cfg) {
       dut->f2s_rlast = 0;
       dut->f2s_bvalid = 0;
     }
-    const bool ar_stalled = t >= cfg.stall_ar_from && t < cfg.stall_ar_to;
-    const bool r_stalled = cfg.hps_reset_at >= 0 &&
-                           t >= cfg.hps_reset_at - kReadStallTicks &&
-                           t < cfg.hps_reset_at;
+    const bool ar_stalled =
+        (t >= cfg.stall_ar_from && t < cfg.stall_ar_to) ||
+        (q2 >= 0 && t >= q2 - kStallBefore && t < q2 + kStallAfter);
+    // And once the standing read address has been taken, its data is
+    // withheld a while too: the share then has a read outstanding and no
+    // address on the bus, so it is not idle and could grant a read, and the
+    // masters are still asking.  Only the hold stops that grant, and this is
+    // the span that shows whether it does.
+    const bool r_stalled =
+        (cfg.hps_reset_at >= 0 && t >= cfg.hps_reset_at - kReadStallTicks &&
+         t < cfg.hps_reset_at) ||
+        (q2 >= 0 && t >= q2 + kStallAfter &&
+         t < q2 + kStallAfter + kReadHoldAfter);
     if (!dut->rst && !model_reset) {
       if (dut->f2s_arvalid) {
         if (ar_stalled) {
@@ -858,7 +892,8 @@ Run Simulate(const Config &cfg) {
     // not there the tick before, or follows one just taken, is a grant made
     // while the port was held.
     const bool held = (cfg.quiet_from >= 0 && t >= cfg.quiet_from + kHeldSlack &&
-                       t < cfg.quiet_to);
+                       t < cfg.quiet_to) ||
+                      (q2 >= 0 && t >= q2 + kHeldSlack && t < q2 + kQuiet2Ticks);
     const bool new_ar = s_arvalid && (!prev_arvalid || prev_ar_hs);
     const bool new_aw = s_awvalid && (!prev_awvalid || prev_aw_hs);
     // **THE HOLD, SEEN AT THE BRIDGE.**  From the tick the machine asks until
@@ -871,19 +906,18 @@ Run Simulate(const Config &cfg) {
     // BUSY's bound sees the same fault only at the phases where it costs the
     // machine a tick more than the bound, which is not all of them.
     //
-    // **A WRITE COUNTS FROM ITS LAST DATA BEAT AND NOT FROM ITS ADDRESS**, and
-    // that is the share as built rather than as its header words it: measured,
-    // in the tick between the bridge taking the machine's write address and
-    // taking its data, the machine's valids are down and its write is not yet
-    // outstanding, and 116 reads of the other masters were granted in that
-    // tick over BUSY.  One tick, and it is the header's claim that is wider
-    // than the code; this counts what the code promises.
+    // **A WRITE COUNTS FROM ITS ADDRESS**, because from the tick the bridge
+    // takes it the machine is waiting for its answer, whether or not its data
+    // has been taken yet.  Measured before the share held for it: in the tick
+    // between the bridge taking the machine's write address and taking its
+    // data, the machine's valids were down and its write not yet outstanding,
+    // and 116 reads of the other masters were granted in that tick over BUSY.
     machine_in_bridge_prev = machine_in_bridge;
     machine_in_bridge = false;
     for (const auto &rd : bridge.reads)
       if (rd.id == kMachineId) machine_in_bridge = true;
     for (const auto &wr : bridge.writes)
-      if (wr.id == kMachineId && wr.done) machine_in_bridge = true;
+      if (wr.id == kMachineId) machine_in_bridge = true;
     if (machine_in_bridge_prev &&
         ((new_ar && s_arid != kMachineId) || (new_aw && s_awid != kMachineId))) {
       if (out.granted_under_machine == 0)
@@ -896,7 +930,8 @@ Run Simulate(const Config &cfg) {
       if (out.held_issues == 0)
         std::printf("  (%s: a %s address was put to the bridge at tick %ld, "
                     "the request having come at %ld)\n", cfg.name,
-                    new_ar ? "read" : "write", t, cfg.quiet_from);
+                    new_ar ? "read" : "write", t,
+                    in_quiet2 ? q2 : cfg.quiet_from);
       ++out.held_issues;
     }
     prev_arvalid = s_arvalid; prev_awvalid = s_awvalid;
@@ -915,6 +950,7 @@ Run Simulate(const Config &cfg) {
     // and the bridge's own queues are of the same instant.
     if (!dut->warm_ack_n && !dut->rst) {
       if (out.ack_ticks < 0) out.ack_ticks = t;
+      if (in_quiet2 && out.ack2_ticks < 0) out.ack2_ticks = t;
       if (!bridge.reads.empty() || !bridge.writes.empty()) ++out.ack_while_busy;
     }
 
@@ -1657,6 +1693,7 @@ int main(int argc, char **argv) {
   // put the port into reset at once and not wait for the answers the bridge
   // will now never give.
   hs_cfg.hps_reset_at = 20000000L;
+  hs_cfg.quiet2_from = 16000000L;
   Run hs = Simulate(hs_cfg);
   std::printf("\nHANDSHAKE: the processor asked the fabric to be quiet for "
               "200 us in the middle of the loop\n");
@@ -1701,6 +1738,11 @@ int main(int argc, char **argv) {
   Check(hs.ack_ticks >= hs_cfg.quiet_from && hs.ack_ticks < hs_cfg.quiet_to,
         "HANDSHAKE: the acknowledgment came at tick %ld, outside the window "
         "%ld to %ld", hs.ack_ticks, hs_cfg.quiet_from, hs_cfg.quiet_to);
+  Check(hs.ack2_ticks >= hs_cfg.quiet2_from &&
+            hs.ack2_ticks < hs_cfg.quiet2_from + kQuiet2Ticks,
+        "HANDSHAKE: the second request, after the loop, was acknowledged at "
+        "tick %ld, outside its window from %ld", hs.ack2_ticks,
+        hs_cfg.quiet2_from);
   Check(hs.ack_while_busy == 0,
         "HANDSHAKE: the acknowledgment stood for %ld ticks while the bridge "
         "still held work of ours", hs.ack_while_busy);
