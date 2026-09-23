@@ -114,7 +114,24 @@ PACKS="$CARD/packs"
 # restart from there hid `sys/` and `site/` from ozd, which runs as a user of
 # its own.  So the mount names them: root owns everything and keeps write, and
 # every user may read and search, which is what a boot has always given.
-CARD_OPTS=rw,uid=0,gid=0,umask=0022
+#
+# **AND THE ozd GROUP MAY WRITE THE CARD.**  ozd serves the band's `site` tree
+# read-write, so that a band can save the host table it generates there, and
+# ozd refuses a writable root it cannot write.  So the card's group is ozd's
+# and the group keeps write: `umask=0002`, which is rwx for root and the group
+# and r-x for everybody else.  **THE COST, ACCEPTED: ozd CAN WRITE THE WHOLE
+# CARD**, the packs, the boot files and `fpgarc` included, because FAT has no
+# owner per directory and one mount gives every file the same group.  The
+# group's id is looked up here at boot and not written in, because Buildroot
+# picks it when it builds the image.  An image built without ozd has no such
+# group, and its card is mounted with CARD_OPTS_ROOT, root's alone, as it
+# always was.
+#
+# Everything else that writes the card runs as root --- this script's clock,
+# the pack program, cadr-checkpoint, muir --- and root keeps write either way.
+CARD_GROUP=ozd
+CARD_OPTS_ROOT=rw,uid=0,gid=0,umask=0022
+CARD_OPTS=$CARD_OPTS_ROOT
 
 # The card's one file of flags, and cadr-common's reader.  `fpgarc` configures
 # the CADR in the fabric the way `muirrc` beside it configures the CADR inside
@@ -198,12 +215,21 @@ HELD=/var/run/cadr-held
 # init script reads `$CARD/fpgarc`, which is the file either way.
 mount_the_card() {
 	mkdir -p "$CARD"
+	# The ozd group's id, or nothing when the image has no ozd.  Only a
+	# number is taken, so an `id` that printed words is the same as none.
+	_card_gid=$(id -g "$CARD_GROUP" 2>/dev/null)
+	case "$_card_gid" in
+	''|*[!0-9]*) CARD_OPTS=$CARD_OPTS_ROOT; _card_gid="" ;;
+	*) CARD_OPTS="rw,uid=0,gid=$_card_gid,umask=0002" ;;
+	esac
+	_card_mounted=now
 	if mountpoint -q "$CARD" 2>/dev/null; then
 		# Already mounted, which is what a `restart` that did not reach
 		# its own `stop` leaves.  Here the question CAN be put by
 		# looking, because the filesystem is there: a card with a
 		# `packs/` folder is of the new shape and one without is not.
 		[ -d "$CARD/packs" ] || PACKS="$CARD"
+		_card_mounted=already
 		echo "cadr-disk-packs: the card is already mounted at $CARD, and the drive bay is $PACKS"
 	elif mount -t vfat -o "$CARD_OPTS" "$OLD_CARD_DEV" "$CARD" 2>/dev/null; then
 		# A card of the old two-partition shape.  Its bay is the root of
@@ -217,6 +243,16 @@ mount_the_card() {
 		echo "cadr-disk-packs: the card is at $CARD, read-write, and the drive bay is $PACKS"
 	else
 		echo "cadr-disk-packs: no card at $CARD_DEV; the bay will be empty"
+		_card_gid=none
+	fi
+	# What this mount gave the card, said only when this script mounted it:
+	# a card that was already mounted keeps whatever its mount gave it.
+	if [ "$_card_gid" = none ] || [ "$_card_mounted" = already ]; then
+		:
+	elif [ -n "$_card_gid" ]; then
+		echo "cadr-disk-packs: the $CARD_GROUP group (gid $_card_gid) may write the card, so ozd can serve site/ read-write"
+	else
+		echo "cadr-disk-packs: there is no $CARD_GROUP user on this image, so the card is root's alone ($CARD_OPTS_ROOT)"
 	fi
 	mkdir -p "$PACKS" 2>/dev/null || true
 }

@@ -170,6 +170,13 @@ OZD_USER=ozd
 # which is on the card and costs no memory:
 #
 #     --ozd-root sys=/mnt/card/sys,ro
+#     --ozd-root site=/mnt/card/site
+#
+# `sys` is the band's sources and is read-only.  `site` is its site
+# configuration and is served read-write, so that a band can save the host
+# table it generates.  ozd refuses a writable root it cannot write, so
+# S80cadr-disk-packs mounts the card with this user's group and gives the group
+# write; ozd can therefore write the whole card, which is the accepted cost.
 #
 # docs/chaosnet.md has the measured sizes behind that and behind the two other
 # places it could have gone.

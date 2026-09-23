@@ -144,7 +144,7 @@ and each maps to one of that program's own flags.
     --ozd-root            a tree it serves, repeatable.  A card that carries
                           a band carries its sources in `sys/` and its site
                           configuration in `site/`, and both lines are live
-                          on it
+                          on it.  `sys` carries `,ro` and `site` does not
     --ozd-host            a machine in the host table it answers from,
                           repeatable
     --ozd-hosts-text      a band's own host table, whose hosts it also answers
@@ -155,6 +155,18 @@ and each maps to one of that program's own flags.
 and the serial line and is deliberate: a board with no network had no file
 host and no time host at all, and one on the board costs almost nothing. The
 section below is about the flag that turns it off.
+
+**The `site` tree is served read-write, and so the host can write the whole
+card.** A band saves the host table it generates into `site/`, and the host
+refuses a writable tree it cannot write. So `S80cadr-disk-packs` mounts the
+card with its group set to the `ozd` group and `umask=0002`: root and that
+group may write, and everybody may read. The group's id is looked up at boot,
+because the image picks it when it is built. An image without the `ozd` user
+mounts the card as root's alone, with `umask=0022`, and says so on the console.
+The cost is accepted: FAT has no owner per directory, so the host can write
+every file on the card, the packs, the boot files and this file included, and
+not only `site/`. `sys` stays `,ro`, so the host itself refuses to write the
+sources.
 
 **There is no flag for the address it listens on, only for the port.** It
 authenticates nobody, so an endpoint flag would let a card put it on a network
