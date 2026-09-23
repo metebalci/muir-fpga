@@ -197,7 +197,16 @@ module cadr_cora #(
     // boot, and a machine with none gives the NXM at those addresses ---
     // which is how `COLOR-EXISTS-P` finds out.  Zero leaves the slot out of
     // the fabric entirely, for a part with no room for it.
-    parameter int unsigned LMTV = 1
+    parameter int unsigned LMTV = 1,
+
+    // **WHICH MACHINE, AND ON THIS BOARD IT IS THE CADR ALONE.**  QUUX, the
+    // evolved CADR, is a bitstream of its own on the Arty Z7-20 and the
+    // DE25-Nano and is not built for this board, so any other name stops
+    // elaboration below, as `vivado/bitstream.tcl` refuses it before
+    // synthesis.  The parameter is here, rather than absent, so that a
+    // `MACHINE` handed to this board is refused by name instead of being
+    // dropped as a generic nothing declares.
+    parameter string MACHINE = "cadr"
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     // BTN0 boots the machine and BTN1 resets the fabric.  Two buttons is what
@@ -235,6 +244,10 @@ module cadr_cora #(
     // so a cable between the two boards needs nothing said about it.
     inout  wire  [7:0]     ja
 );
+
+  if (MACHINE != "cadr") begin : g_cadr_only
+    $error("cadr_cora: MACHINE is \"%s\", and the Cora Z7-07S builds the CADR only", MACHINE);
+  end
 
   // ------------------------------------------------------------ the clock
   //
@@ -832,7 +845,8 @@ module cadr_cora #(
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
-      .LMTV(LMTV)
+      .LMTV(LMTV),
+      .MACHINE(MACHINE)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO

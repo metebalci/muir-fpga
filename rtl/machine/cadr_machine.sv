@@ -63,7 +63,15 @@ module cadr_machine #(
     // and is then a machine with one display, which is what
     // `busint::decode` describes and what every reference trace but
     // `color_tv.golden` was taken on.
-    parameter int LMTV = 1
+    parameter int LMTV = 1,
+
+    // **WHICH MACHINE THIS IS**: "cadr", MIT's, or "quux", the evolved CADR.
+    // Every board's top level hands it down, and the make variable of the
+    // same name sets it.  **NOTHING HERE READS IT YET BUT THE GUARD BELOW**,
+    // so both values build the CADR, exactly as the CADR has always been
+    // built; what QUUX changes arrives with muir's description of it, and
+    // until then a QUUX bitstream is the CADR under another name.
+    parameter string MACHINE = "cadr"
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -512,6 +520,12 @@ module cadr_machine #(
     input  var logic        port_read_ack,
     input  var logic        port_write_ack
 );
+
+  // A machine this file does not know stops elaboration, in every tool,
+  // rather than building the CADR under a name nobody meant.
+  if (MACHINE != "cadr" && MACHINE != "quux") begin : g_unknown_machine
+    $error("cadr_machine: MACHINE is \"%s\", and it is \"cadr\" or \"quux\"", MACHINE);
+  end
 
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;

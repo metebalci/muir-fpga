@@ -22,10 +22,40 @@ VFLAGS := --cc --exe --build -Wall
 # MIT'S GRID, WHICH EVERY TICK COUNT IN THE FABRIC DERIVES FROM.  It goes in
 # every source list that builds a module naming an instant, and in exactly
 # one list per rule --- a file handed to Verilator twice is a module defined
-# twice.  So it is in `$(MACHINE)` and not in `$(GP0)` or `$(GP1)`, which the
-# board passes name beside it.  Vivado needs no such care: both flows read
+# twice.  So it is in `$(MACHINE_SRC)` and not in `$(GP0)` or `$(GP1)`, which
+# the board passes name beside it.  Vivado needs no such care: both flows read
 # `[glob rtl/*/*.sv]`, which already takes it, and order it themselves.
 TICKPKG := rtl/machine/cadr_tick_pkg.sv
+
+# **WHICH MACHINE A BOARD'S BITSTREAM IS**: `cadr`, MIT's, or `quux`, the
+# evolved CADR.  Every sibling project selects the machine the same way, with
+# `cadr` the default.  It reaches `cadr_machine` as its `MACHINE` parameter
+# through each board's top level, and the board flows keep the two builds
+# apart by directory and by file name.  **QUUX IS A SEPARATE BITSTREAM, ON THE
+# ARTY Z7-20 AND THE DE25-NANO ONLY**; the Cora Z7-07S builds the CADR alone,
+# and both its top level and its flow refuse anything else.
+#
+# **`check` AND `mutants` ARE THE CADR'S**, because every reference trace they
+# compare against is muir's CADR, and there is no QUUX trace to hold a QUUX
+# build to yet.  So both refuse `MACHINE=quux` rather than report the CADR's
+# result under the other machine's name.  `machine_param.pass` is what holds
+# the parameter's path for both values.
+#
+# The name was the machine's source list until the QUUX build arrived; that
+# list is `$(MACHINE_SRC)` now, so that `make de25 MACHINE=quux` sets this and
+# cannot replace the list.
+MACHINE ?= cadr
+ifneq ($(words $(MACHINE)),1)
+$(error MACHINE is '$(MACHINE)'; it is cadr, MIT's machine, or quux, the evolved CADR)
+endif
+ifeq ($(filter cadr quux,$(MACHINE)),)
+$(error MACHINE is '$(MACHINE)'; it is cadr, MIT's machine, or quux, the evolved CADR)
+endif
+ifneq ($(MACHINE),cadr)
+ifneq ($(filter check mutants mutants-selftest,$(or $(MAKECMDGOALS),check)),)
+$(error MACHINE=$(MACHINE): `make check` and `make mutants` hold the CADR to muir's CADR traces, and there are no QUUX traces yet)
+endif
+endif
 
 # **A RECIPE THAT FAILS LEAVES NO TARGET BEHIND.**  Without this, a rule whose
 # command redirects into `$@` leaves whatever the command managed to write ---
@@ -76,8 +106,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
-       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/board_reset.pass \
-       $(BUILD)/fault.pass \
+       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/machine_param.pass \
+       $(BUILD)/board_reset.pass $(BUILD)/fault.pass \
        $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
        $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
@@ -615,14 +645,14 @@ $(BUILD)/sstep.pass: $(BUILD)/obj_sstep/Vcadr_microcycle \
 # now land: they used to be answered from the trace by the testbench, and that
 # line is gone. It joins `nomem`, `ddr_boot`, `mem_count`, `arty` and `probe`
 # through this variable, all of which build the whole machine.
-MACHINE := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
-           rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv rtl/plumbing/cadr_xbus_ddr.sv \
-           rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv rtl/machine/cadr_tv.sv \
-           rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
-           rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
-           rtl/machine/cadr_dbgin.sv \
-           rtl/plumbing/cadr_bus_audit.sv \
-           rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
+MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
+               rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv rtl/plumbing/cadr_xbus_ddr.sv \
+               rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv rtl/machine/cadr_tv.sv \
+               rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
+               rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
+               rtl/machine/cadr_dbgin.sv \
+               rtl/plumbing/cadr_bus_audit.sv \
+               rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
 
 # `M_AXI_GP0` split five ways: the decode, the AXI3 register face the three
 # card faces share, and the far ends of the I/O board's four cables.  Named
@@ -644,7 +674,7 @@ GP1 := rtl/plumbing/cadr_gp1_split.sv
 # lets the connector and the window share one DBGIN page.  Named here for the
 # same reason GP0 and GP1 are, and it goes on EVERY board rather than only the
 # ones with a processing system, because the pins are the top level's and a
-# top-level output nothing drives is a PINMISSING.  Not in `$(MACHINE)`:
+# top-level output nothing drives is a PINMISSING.  Not in `$(MACHINE_SRC)`:
 # `cadr_machine` does not instantiate either of them, and a check that builds
 # a module nothing in it reaches is a check with a source it cannot mutate.
 DBGPMOD := rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/cadr_dbg_rx.sv \
@@ -726,11 +756,11 @@ DE25_HDMI := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_adv7513.sv
 # without it.  No Zynq rule sets it.
 DE25_MAP := -DCADR_DDR_MAP_DE25_NANO
 
-$(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_machine/Vcadr_machine: $(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_machine_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_machine_tb.cpp)
 
 $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
@@ -748,11 +778,11 @@ $(BUILD)/power_on.golden: golden/src/power_on.rs golden/src/trace.rs \
                           golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin power_on > $@
 
-$(BUILD)/obj_power_on/Vcadr_machine: $(MACHINE) tb/cadr_power_on_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_power_on/Vcadr_machine: $(MACHINE_SRC) tb/cadr_power_on_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) --public-flat-rw -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_power_on \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_power_on_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_power_on_tb.cpp)
 
 $(BUILD)/power_on.pass: $(BUILD)/obj_power_on/Vcadr_machine \
                         $(BUILD)/power_on.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
@@ -769,11 +799,11 @@ $(BUILD)/power_on.pass: $(BUILD)/obj_power_on/Vcadr_machine \
 #
 # It runs the machine twice, 200 ms of machine time each way, and takes about
 # twenty seconds.
-$(BUILD)/obj_ddr_boot/Vcadr_machine: $(MACHINE) tb/cadr_ddr_boot_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_ddr_boot/Vcadr_machine: $(MACHINE_SRC) tb/cadr_ddr_boot_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_ddr_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_ddr_boot_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_ddr_boot_tb.cpp)
 
 $(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_ddr_boot/Vcadr_machine
@@ -792,11 +822,11 @@ $(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.h
 #
 # No memory is modeled, deliberately: the PROM's first main-memory cycle is
 # at microcycle 536,303 and nothing here runs that far.  It takes a second.
-$(BUILD)/obj_kbd_boot/Vcadr_machine: $(MACHINE) tb/cadr_kbd_boot_tb.cpp | $(BUILD)
+$(BUILD)/obj_kbd_boot/Vcadr_machine: $(MACHINE_SRC) tb/cadr_kbd_boot_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_kbd_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_kbd_boot_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_kbd_boot_tb.cpp)
 
 $(BUILD)/kbd_boot.pass: $(BUILD)/obj_kbd_boot/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_kbd_boot/Vcadr_machine
@@ -818,11 +848,11 @@ $(BUILD)/kbd_boot.pass: $(BUILD)/obj_kbd_boot/Vcadr_machine $(BUILD)/boot_prom.h
 # passes one of the two cases alone.
 #
 # No memory, for the check above's reason.  It takes about a second.
-$(BUILD)/obj_no_auto_boot/Vcadr_machine: $(MACHINE) tb/cadr_no_auto_boot_tb.cpp | $(BUILD)
+$(BUILD)/obj_no_auto_boot/Vcadr_machine: $(MACHINE_SRC) tb/cadr_no_auto_boot_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_no_auto_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_no_auto_boot_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_no_auto_boot_tb.cpp)
 
 $(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_no_auto_boot/Vcadr_machine
@@ -842,11 +872,11 @@ $(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boo
 #
 # No memory, for `kbd_boot`'s reason: the PROM's first main-memory cycle is at
 # microcycle 536,303 and nothing here runs that far.  It takes a few seconds.
-$(BUILD)/obj_promenable/Vcadr_machine: $(MACHINE) tb/cadr_promenable_tb.cpp | $(BUILD)
+$(BUILD)/obj_promenable/Vcadr_machine: $(MACHINE_SRC) tb/cadr_promenable_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_promenable \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_promenable_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_promenable_tb.cpp)
 
 $(BUILD)/promenable.pass: $(BUILD)/obj_promenable/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_promenable/Vcadr_machine
@@ -920,11 +950,11 @@ $(BUILD)/blink_lamps.pass: $(BUILD)/obj_blink_lamps/Vcadr_blink_lamps_harness
 # muir is exact with no exemption anywhere; every other address holds a poison
 # injective in it, so a read the map sends a page wide takes a word muir never
 # had.  Thirteen seconds, the same 600,000 microcycles as `machine.pass`.
-$(BUILD)/obj_map_boot/Vcadr_machine: $(MACHINE) tb/cadr_map_boot_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_map_boot/Vcadr_machine: $(MACHINE_SRC) tb/cadr_map_boot_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_map_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_map_boot_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_map_boot_tb.cpp)
 
 $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
                         $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
@@ -958,11 +988,11 @@ $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
 # It skips, and says so, when the System 100 release is not here, as its
 # neighbors do; the sum is checked before the archive is used and the pack is
 # decompressed fresh for the run and removed after.  Twenty-five seconds.
-$(BUILD)/obj_band/Vcadr_machine: $(MACHINE) tb/cadr_band_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_band/Vcadr_machine: $(MACHINE_SRC) tb/cadr_band_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_band_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_band_tb.cpp)
 
 .PHONY: band
 band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
@@ -1010,11 +1040,11 @@ band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom
 # itself to the band's own 1,062,507-microcycle floor and to having fetched a
 # block, and a run stopped before either is a failure by design rather than an
 # instrument that quietly did nothing.
-$(BUILD)/obj_hash_watch/Vcadr_machine: $(MACHINE) tb/cadr_hash_watch_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_hash_watch/Vcadr_machine: $(MACHINE_SRC) tb/cadr_hash_watch_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_hash_watch \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_hash_watch_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_hash_watch_tb.cpp)
 
 .PHONY: hash-watch
 hash-watch: $(BUILD)/obj_hash_watch/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
@@ -1060,7 +1090,7 @@ hash-watch: $(BUILD)/obj_hash_watch/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUIL
 # It stops as soon as three transfers have been made, so nothing in it depends
 # on what the machine does with a microcode band that is poison.  About half a
 # million microcycles.
-AXI_CHANNEL_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+AXI_CHANNEL_SRC := $(MACHINE_SRC) rtl/plumbing/cadr_axi_master.sv \
                    rtl/plumbing/cadr_axi_widen.sv tb/cadr_band_axi_harness.sv
 
 $(BUILD)/obj_axi_channel/Vcadr_band_axi_harness: $(AXI_CHANNEL_SRC) \
@@ -1124,7 +1154,7 @@ $(BUILD)/axi_channel.pass: $(BUILD)/obj_axi_channel/Vcadr_band_axi_harness \
 # never reached the disk has not used the seam this harness exists to carry.
 # The calibration run above is one of those, and its watch lines are the point
 # of it rather than its exit code.
-BAND_AXI_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+BAND_AXI_SRC := $(MACHINE_SRC) rtl/plumbing/cadr_axi_master.sv \
                 rtl/plumbing/cadr_axi_widen.sv tb/cadr_band_axi_harness.sv
 
 $(BUILD)/obj_band_axi/Vcadr_band_axi_harness: $(BAND_AXI_SRC) \
@@ -1181,7 +1211,7 @@ band-axi: $(BUILD)/obj_band_axi/Vcadr_band_axi_harness $(BUILD)/rtl_sys.golden \
 # It stops at three transfers for `axi_channel`'s reason: the label is poison
 # and the PROM halts at `PC 0o26`, and a machine running poison as
 # microinstructions is not a stimulus anybody can reason about.
-PACK_CHANNEL_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+PACK_CHANNEL_SRC := $(MACHINE_SRC) rtl/plumbing/cadr_axi_master.sv \
                     rtl/plumbing/cadr_axi_widen.sv \
                     rtl/plumbing/cadr_disk_pack.sv tb/cadr_pack_axi_harness.sv
 
@@ -1262,7 +1292,7 @@ $(BUILD)/rdw_poison_disk.pass: $(BUILD)/obj_rdw_poison_disk/Vcadr_pack_axi_harne
 # Not in `make check`, for `band-axi`'s reason: a run to the board's own fault
 # is an hour of Verilator.  `$(BUILD)/pack_channel.pass` is the check this
 # leaves behind.  The flags are `band-axi`'s, name for name.
-PACK_BAND_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+PACK_BAND_SRC := $(MACHINE_SRC) rtl/plumbing/cadr_axi_master.sv \
                  rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_disk_pack.sv \
                  tb/cadr_pack_axi_harness.sv
 
@@ -1317,11 +1347,11 @@ pack-band: $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness $(BUILD)/rtl_sys.golden
 # header says what that costs and `docs/map-access.md` argues it.
 #
 # Four runs, three of 600,000 microcycles and one short, about a minute.
-$(BUILD)/obj_map_access/Vcadr_machine: $(MACHINE) tb/cadr_map_access_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_map_access/Vcadr_machine: $(MACHINE_SRC) tb/cadr_map_access_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_map_access \
 	    -GPROM_HEX='"$(abspath $(BUILD))/map_access_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_map_access_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_map_access_tb.cpp)
 
 $(BUILD)/map_access.pass: $(BUILD)/obj_map_access/Vcadr_machine \
                           $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
@@ -1350,7 +1380,7 @@ $(BUILD)/map_access.pass: $(BUILD)/obj_map_access/Vcadr_machine \
 # same in both.
 #
 # It runs the machine twice, 200 ms of machine time each way.
-MEM_COUNT_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
+MEM_COUNT_SRC := $(MACHINE_SRC) rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
                  rtl/plumbing/cadr_mem_count.sv tb/cadr_mem_count_harness.sv
 
 $(BUILD)/obj_mem_count/Vcadr_mem_count_harness: $(MEM_COUNT_SRC) \
@@ -1380,7 +1410,7 @@ $(BUILD)/mem_count.pass: $(BUILD)/obj_mem_count/Vcadr_mem_count_harness \
 # machine puts on the bridge are the board's and the model watches those.
 #
 # It runs the machine five times, a couple of minutes.
-F2SDRAM_SRC := $(MACHINE) $(F2SDRAM) tb/cadr_f2sdram_harness.sv
+F2SDRAM_SRC := $(MACHINE_SRC) $(F2SDRAM) tb/cadr_f2sdram_harness.sv
 
 $(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness: $(F2SDRAM_SRC) \
                                             tb/cadr_f2sdram_tb.cpp tb/cadr_tick.h | $(BUILD)
@@ -1426,7 +1456,7 @@ $(BUILD)/f2sdram.pass: $(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness \
 # the machine runs from its PROM as it does on the board.  A few minutes to
 # build the three, seconds to run.
 BOARD_RESET_SIM := tb/cadr_sim_axi.sv tb/cadr_board_reset_harness.sv
-BOARD_RESET_ZYNQ := $(BOARD_RESET_SIM) $(MACHINE) $(BOARD_STUBS) tb/cadr_ps7_sim.sv \
+BOARD_RESET_ZYNQ := $(BOARD_RESET_SIM) $(MACHINE_SRC) $(BOARD_STUBS) tb/cadr_ps7_sim.sv \
                     rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
                     rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
                     rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv \
@@ -1453,7 +1483,7 @@ $(BUILD)/obj_board_reset_cora/Vcadr_board_reset_harness: $(BOARD_RESET_ZYNQ) \
 	    $(BOARD_RESET_ZYNQ) boards/cora-z7-07s/cadr_cora.sv \
 	    $(abspath tb/cadr_board_reset_tb.cpp)
 
-BOARD_RESET_DE25 := $(BOARD_RESET_SIM) $(MACHINE) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI) \
+BOARD_RESET_DE25 := $(BOARD_RESET_SIM) $(MACHINE_SRC) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI) \
                     tb/cadr_de25_stubs.sv tb/cadr_de25_hps_sim.sv
 
 $(BUILD)/obj_board_reset_de25/Vcadr_board_reset_harness: $(BOARD_RESET_DE25) \
@@ -1551,7 +1581,7 @@ $(BUILD)/fault.pass: $(BUILD)/obj_fault_arty/Vcadr_fault_harness \
 # to say about.
 #
 # It runs the machine once, 200 ms of machine time, about seventeen seconds.
-BUS_AUDIT_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+BUS_AUDIT_SRC := $(MACHINE_SRC) rtl/plumbing/cadr_axi_master.sv \
                  rtl/plumbing/cadr_axi_widen.sv tb/cadr_bus_audit_harness.sv
 
 $(BUILD)/obj_bus_audit/Vcadr_bus_audit_harness: $(BUS_AUDIT_SRC) \
@@ -1624,11 +1654,11 @@ $(BUILD)/bus_audit_unit.pass: $(BUILD)/obj_bus_audit_unit/Vcadr_bus_audit
 # be made to fault on demand.
 #
 # It runs about 30,000 ticks and takes under a second.
-$(BUILD)/obj_audit_window/Vcadr_machine: $(MACHINE) tb/cadr_audit_window_tb.cpp | $(BUILD)
+$(BUILD)/obj_audit_window/Vcadr_machine: $(MACHINE_SRC) tb/cadr_audit_window_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $(BUILD)/obj_audit_window \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) \
+	    --top-module cadr_machine $(MACHINE_SRC) \
 	    $(abspath tb/cadr_audit_window_tb.cpp)
 
 $(BUILD)/audit_window.pass: $(BUILD)/obj_audit_window/Vcadr_machine \
@@ -1650,11 +1680,11 @@ $(BUILD)/audit_window.pass: $(BUILD)/obj_audit_window/Vcadr_machine \
 nomem: $(BUILD)/obj_nomem/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_nomem/Vcadr_machine
 
-$(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE_SRC) tb/cadr_nomem_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_nomem \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_nomem_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_nomem_tb.cpp)
 
 # ------------------------------------------------------------- the top level
 
@@ -1682,7 +1712,7 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp tb/cadr_tick.h
 # is also the only pass that elaborates `rtl/plumbing/cadr_disk_pack.sv` under the top
 # level, on the processing system's `S_AXI_HP2` and `M_AXI_GP0`.
 #
-# FIVE TIMES NOW, and `$(MACHINE)` COMES FIRST IN EVERY ONE. The top level
+# FIVE TIMES NOW, and `$(MACHINE_SRC)` COMES FIRST IN EVERY ONE. The top level
 # takes the witness's address from `cadr_ddr_map::main_byte_address`, and a
 # package has to be parsed before the file that reads it --- so the machine's
 # sources, which carry the package, precede `boards/arty-z7-20/cadr_arty.sv` on every
@@ -1693,7 +1723,7 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp tb/cadr_tick.h
 # writing a word, and the fabric reading one back and writing it out again at
 # a second address. They are a branch only those builds reach, and nothing
 # else elaborates `cadr_prove.sv` at all.
-$(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_probe.sv \
+$(BUILD)/arty.pass: $(MACHINE_SRC) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_probe.sv \
                     boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
                     rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
@@ -1706,19 +1736,19 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_arty $(BOARD_STUBS) $(MACHINE) boards/arty-z7-20/cadr_arty.sv $(DBGPMOD)
+	    --top-module cadr_arty $(BOARD_STUBS) $(MACHINE_SRC) boards/arty-z7-20/cadr_arty.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
-	    --top-module cadr_arty $(BOARD_STUBS) $(MACHINE) \
+	    --top-module cadr_arty $(BOARD_STUBS) $(MACHINE_SRC) \
 	    boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_probe.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 \
 	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
+	    $(MACHINE_SRC) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
@@ -1727,7 +1757,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=1 \
 	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
+	    $(MACHINE_SRC) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
@@ -1736,7 +1766,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=2 \
 	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
+	    $(MACHINE_SRC) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
@@ -1752,13 +1782,13 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 -GHDMI=1 \
 	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
+	    $(MACHINE_SRC) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY_SRC)
 # AND THE DEBUG CABLE'S TWO, AT THEIR OWN DEFAULT PARAMETERS, WHICH IS STILL
 # WORTH A PASS OF ITS OWN. Both are composed now --- `cadr_dbgin.sv` is in
-# `$(MACHINE)`, so every pass above elaborates it, and
+# `$(MACHINE_SRC)`, so every pass above elaborates it, and
 # `cadr_debug_window.sv` is on the three that bring a PS7 out --- but the
 # `dbgin` check elaborates them with the harness's own overrides, where
 # `WATCHDOG_T` is 4,096 against the module's 100,000,000. That is a
@@ -1796,7 +1826,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/cadr_
 # every one of the PS7's 620 pins are the same on both parts.  A second set of
 # stubs would be a second description of one hard block, and `tb/` is not a
 # board's directory.
-$(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr_probe.sv \
+$(BUILD)/cora.pass: $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr_probe.sv \
                     boards/cora-z7-07s/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
                     rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
@@ -1808,13 +1838,13 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE) boards/cora-z7-07s/cadr_cora.sv \
+	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv \
 	    rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
-	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE) \
+	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE_SRC) \
 	    boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr_probe.sv \
 	    rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
@@ -1822,7 +1852,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 \
 	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
@@ -1833,7 +1863,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=1 \
 	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
@@ -1844,7 +1874,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 -GLMTV=0 \
 	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
@@ -1855,12 +1885,47 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=2 \
 	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
-	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
 	    rtl/plumbing/cadr_lamp_microcycle.sv
+	@touch $@
+
+# ------------------------------------------------- which machine is built
+#
+# **`MACHINE` REACHES `cadr_machine` ON EVERY BOARD, FOR BOTH VALUES**, and
+# nothing else here could say so: nothing inside the machine reads it yet, so
+# a top level that dropped it would build the CADR under QUUX's name and
+# every other check would stay green.  `tools/machine_param_check.py` lints
+# each top level with each value and reads the parameter back at `u_machine`
+# out of Verilator's elaborated tree; requires a near miss to stop
+# elaboration in `u_machine` and QUUX to stop it in the Cora's top level; and
+# runs the refusals the Vivado flows and the DE25-Nano's two scripts make
+# before any vendor tool is looked for.  Its header says what it cannot see.
+#
+# Then make's own half, which the script cannot run: `make de25` hands the
+# machine to the Quartus flow, and `check` refuses QUUX.  `-n` prints the
+# recipe without running it.
+MACHINE_PARAM_SRC := $(wildcard rtl/*/*.sv rtl/*/*/*.sv boards/*/*.sv) \
+                     tb/cadr_arty_stubs.sv tb/cadr_usr_access_stub.sv \
+                     tb/cadr_ps7_stub.sv tb/cadr_de25_stubs.sv \
+                     boards/arty-z7-20/vivado/bitstream.tcl \
+                     boards/cora-z7-07s/vivado/bitstream.tcl \
+                     boards/de25-nano/quartus/build.sh \
+                     boards/de25-nano/quartus/program.sh
+
+$(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) Makefile | $(BUILD)
+	VERILATOR=$(VERILATOR) TCLSH=$(TCLSH) python3 tools/machine_param_check.py .
+	$(MAKE) -s -n de25 MACHINE=quux | tr -d '\\\n' \
+	    | grep -q 'MACHINE=quux .*boards/de25-nano/quartus/build.sh' \
+	    || { echo "machine: make de25 MACHINE=quux does not hand the machine to build.sh"; exit 1; }
+	@echo "machine: ok      make de25 MACHINE=quux hands the machine to build.sh"
+	! $(MAKE) -s -n check MACHINE=quux > /dev/null 2> $(BUILD)/machine_param.err
+	grep -q 'there are no QUUX traces yet' $(BUILD)/machine_param.err
+	@echo "machine: ok      make check MACHINE=quux is refused"
+	@rm -f $(BUILD)/machine_param.err
 	@touch $@
 
 # ------------------------------------------------ the DE25-Nano's top level
@@ -1886,29 +1951,29 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/cadr
 # **ITS STUBS ARE ITS OWN**, `tb/cadr_de25_stubs.sv`, and in `tb/` for the
 # reason `tb/cadr_arty_stubs.sv` gives.  The Quartus flow is `make de25`,
 # outside `check`, because it needs Quartus and about eight minutes.
-$(BUILD)/de25.pass: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) tb/cadr_de25_stubs.sv \
+$(BUILD)/de25.pass: $(MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) tb/cadr_de25_stubs.sv \
                    $(BUILD)/obj_de25_top/Vcadr_de25 | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP)
+	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE_SRC) $(DE25_TOP)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
-	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
+	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE_SRC) $(DE25_TOP) \
 	    $(DE25_PROBE)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    -DCADR_DE25_DDR \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
+	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE_SRC) $(DE25_TOP) \
 	    $(DE25_DDR)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
 	    -DCADR_DE25_DDR -DCADR_DE25_HDMI \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE) $(DE25_TOP) \
+	    --top-module cadr_de25 tb/cadr_de25_stubs.sv $(MACHINE_SRC) $(DE25_TOP) \
 	    $(DE25_DDR) $(DE25_HDMI)
 	$(BUILD)/obj_de25_top/Vcadr_de25
 	@touch $@
@@ -1940,6 +2005,9 @@ $(BUILD)/obj_de25_top/Vcadr_de25: $(DE25_SIM) tb/cadr_de25_top_tb.cpp | $(BUILD)
 # and `DDR=1` the memory board, the processor and its LPDDR4 behind the
 # machine's memory port, into `build/de25-ddr/`, with `DE25_DDR_MHZ` the
 # LPDDR4's speed: 1066.667 by default, or 1333.333 on a rev B board.
+# `MACHINE=quux` builds the evolved CADR instead, into `build/de25-quux/` and
+# the same suffixes after it, so that neither machine's build replaces the
+# other's.
 PROBE_DEPTH ?= 0
 DDR ?= 0
 # **`HDMI=1` BUILDS THE DISPLAY OUTPUT INTO THE MEMORY BOARD**, into
@@ -1952,11 +2020,11 @@ DE25_DDR_MHZ ?= 1066.667
 # programmer takes: `boards/de25-nano/quartus/build.sh` says what each makes.
 DE25_HPS_BOOT ?= hps-first
 DE25_SPL_HEX ?=
-de25: $(MACHINE) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+de25: $(MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
-	    HDMI=$(HDMI) \
+	    HDMI=$(HDMI) MACHINE=$(MACHINE) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
-	    boards/de25-nano/quartus/build.sh $(MACHINE) $(DE25_TOP) \
+	    boards/de25-nano/quartus/build.sh $(MACHINE_SRC) $(DE25_TOP) \
 	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
 	    $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
 	    $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI))
@@ -1977,7 +2045,8 @@ de25-fault: rtl/plumbing/cadr_fault_lamp.sv rtl/plumbing/cadr_gp0_default.sv $(F
 # the board's flash.  `boards/de25-nano/quartus/program.sh` finds the board's
 # cable by the serial in `boards/de25-nano/local.conf`.
 de25-program:
-	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) HDMI=$(HDMI) boards/de25-nano/quartus/program.sh
+	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) HDMI=$(HDMI) MACHINE=$(MACHINE) \
+	    boards/de25-nano/quartus/program.sh
 
 # And the probe's capture read off that board and compared with muir: the
 # silicon half of what `build/probe.pass` holds in simulation.  The reader is
@@ -2022,7 +2091,7 @@ $(BUILD)/de25_jtag.pass: boards/de25-nano/quartus/probe.tcl \
 #
 # The harness is in `tb/` for the reason `tb/cadr_arty_stubs.sv` gives: both
 # Vivado scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`.
-PROBE_SRC := $(MACHINE) rtl/plumbing/cadr_probe.sv rtl/plumbing/agilex5/cadr_probe_vjtag.sv \
+PROBE_SRC := $(MACHINE_SRC) rtl/plumbing/cadr_probe.sv rtl/plumbing/agilex5/cadr_probe_vjtag.sv \
              tb/cadr_probe_harness.sv
 
 $(BUILD)/obj_probe/Vcadr_probe_harness: $(PROBE_SRC) tb/cadr_probe_tb.cpp | $(BUILD)
@@ -2366,11 +2435,11 @@ $(BUILD)/rdw_poison_sys.pass: $(BUILD)/obj_rdw_poison/Vcadr_microcycle \
 # the two programs above does it, and `map_access.pass`'s patched boot PROM
 # does, so the same harness runs under the poison too.  Its own patched PROM
 # goes to a file of its own, so that the two can run at once.
-$(BUILD)/obj_rdw_poison_map/Vcadr_machine: $(MACHINE) tb/cadr_map_access_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_rdw_poison_map/Vcadr_machine: $(MACHINE_SRC) tb/cadr_map_access_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 +define+CADR_RDW_POISON -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_rdw_poison_map \
 	    -GPROM_HEX='"$(abspath $(BUILD))/rdw_poison_map_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_map_access_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_map_access_tb.cpp)
 
 $(BUILD)/rdw_poison_map.pass: $(BUILD)/obj_rdw_poison_map/Vcadr_machine \
                               $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
@@ -3833,11 +3902,11 @@ release:
 #
 # It also compares the direction of every DDR transaction against the
 # processor's own WRCYC, which nothing else in `make check` does.
-$(BUILD)/obj_md_compose/Vcadr_machine: $(MACHINE) tb/cadr_md_compose_tb.cpp tb/cadr_tick.h | $(BUILD)
+$(BUILD)/obj_md_compose/Vcadr_machine: $(MACHINE_SRC) tb/cadr_md_compose_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_md_compose \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_md_compose_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_md_compose_tb.cpp)
 
 $(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_md_compose/Vcadr_machine
@@ -3853,11 +3922,11 @@ $(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_pr
 # the memory path is under the processor and a memory cycle can actually be
 # outstanding.  `sstep` scripts the same register against muir row for row
 # and its own header says it never reaches a memory cycle.
-$(BUILD)/obj_park/Vcadr_machine: $(MACHINE) tb/cadr_park_tb.cpp | $(BUILD)
+$(BUILD)/obj_park/Vcadr_machine: $(MACHINE_SRC) tb/cadr_park_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_park \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_park_tb.cpp)
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_park_tb.cpp)
 
 $(BUILD)/park.pass: $(BUILD)/obj_park/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_park/Vcadr_machine

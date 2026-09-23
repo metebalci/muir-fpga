@@ -1377,6 +1377,30 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # WHICH MACHINE A BOARD IS BUILT AS, "cadr" or "quux", which nothing in
+    # the machine reads yet: so a top level that dropped the parameter would
+    # build the CADR under the other name with every other check green.
+    # `tools/machine_param_check.py` reads the value back at `u_machine` out
+    # of Verilator's elaborated tree for each board and each value, requires
+    # the refusals of a name that is not a machine and of QUUX on the Cora,
+    # and runs the flows' own refusals.  Its header is the argument.
+    # Refusing is being caught.
+    "machine_param": {
+        "kind": "script",
+        "sources": ["boards/arty-z7-20/cadr_arty.sv",
+                    "boards/de25-nano/cadr_de25.sv",
+                    "boards/cora-z7-07s/cadr_cora.sv",
+                    "rtl/machine/cadr_machine.sv",
+                    "boards/arty-z7-20/vivado/bitstream.tcl",
+                    "boards/cora-z7-07s/vivado/bitstream.tcl",
+                    "boards/de25-nano/quartus/build.sh",
+                    "boards/de25-nano/quartus/program.sh"],
+        "cmd": ["tools/machine_param_check.py", "."],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # WHERE EACH BOARD'S MEMORY IS, written in several files no one build
     # reads together: the fabric's package, the DE25-Nano's restatement of it,
     # the programs' header, each board's reserved-memory node, the card

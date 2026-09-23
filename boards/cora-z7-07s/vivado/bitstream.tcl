@@ -45,6 +45,16 @@
 # NOTHING BUILT BY THIS HAS BEEN ON SILICON. No Cora Z7-07S has ever been
 # programmed with a bitstream from this repository.
 
+# **THIS BOARD BUILDS THE CADR AND NOTHING ELSE.**  QUUX, the evolved CADR,
+# is a bitstream of its own on the Arty Z7-20 and the DE25-Nano, and
+# `MACHINE=quux` is refused here before anything is written, rather than
+# building the CADR under the other machine's name.  `cadr_cora.sv` refuses
+# it at elaboration as well, for a flow that does not come through here.
+if {[info exists ::env(MACHINE)] && $::env(MACHINE) ne "cadr"} {
+    puts "BIT: FAILED --- MACHINE=$::env(MACHINE), and the Cora Z7-07S builds the"
+    puts "BIT: CADR only. QUUX is built for the Arty Z7-20 and the DE25-Nano."
+    exit 1
+}
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z007sclg400-1"}]
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/bitstream"}]
 file mkdir $outdir

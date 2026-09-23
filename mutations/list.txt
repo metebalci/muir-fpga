@@ -18904,3 +18904,132 @@ set MAIN_BASE   0x1C000000
 @new
 	run ${cadr_rbf_get} &&
 @end
+
+# WHICH MACHINE A BOARD IS BUILT AS.  `MACHINE` is "cadr" or "quux", and
+# nothing inside the machine reads it yet but the guard that refuses any
+# other name, so the CADR's checks cannot see it at all.
+# `tools/machine_param_check.py` reads it back at each top level's
+# `u_machine`, and runs the refusals of the Cora's top level and of the
+# board flows.
+
+@mutation machine-param-the-arty-hands-down-the-cadr
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's top level names the CADR to the machine whatever it was
+@note asked to build, so a QUUX bitstream is the CADR under the other name.
+@note Lint passes: the top level's parameter is still read, by nothing.
+@old
+      .MACHINE(MACHINE)
+@new
+      .MACHINE(MACHINE == "quux" ? "cadr" : MACHINE)
+@end
+
+@mutation machine-param-the-de25-hands-down-the-cadr
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note The DE25-Nano's top level names the CADR to the machine whatever it was
+@note asked to build, as the Arty's record does one board along.
+@old
+      .MACHINE(MACHINE)
+@new
+      .MACHINE(MACHINE == "quux" ? "cadr" : MACHINE)
+@end
+
+@mutation machine-param-the-cora-builds-quux
+@check machine_param
+@file boards/cora-z7-07s/cadr_cora.sv
+@note The Cora's top level takes QUUX as well as the CADR, so a build asked
+@note for the machine this board does not carry goes ahead.
+@old
+  if (MACHINE != "cadr") begin : g_cadr_only
+@new
+  if (MACHINE != "cadr" && MACHINE != "quux") begin : g_cadr_only
+@end
+
+@mutation machine-param-the-machine-takes-any-name
+@check machine_param
+@file rtl/machine/cadr_machine.sv
+@note The machine's guard never fires, so a name that is neither machine
+@note builds the CADR under that name.
+@old
+  if (MACHINE != "cadr" && MACHINE != "quux") begin : g_unknown_machine
+@new
+  if (MACHINE != "cadr" && MACHINE != "quux" && 1'b0) begin : g_unknown_machine
+@end
+
+@mutation machine-param-the-machine-refuses-quux
+@check machine_param
+@file rtl/machine/cadr_machine.sv
+@note The machine's guard names QUUX wrongly, so every QUUX build stops at
+@note elaboration and the CADR's builds are untouched.
+@old
+  if (MACHINE != "cadr" && MACHINE != "quux") begin : g_unknown_machine
+@new
+  if (MACHINE != "cadr" && MACHINE != "qux") begin : g_unknown_machine
+@end
+
+@mutation machine-param-the-arty-flow-takes-any-name
+@check machine_param
+@file boards/arty-z7-20/vivado/bitstream.tcl
+@note The Arty's Vivado flow takes a name that is not a machine and goes on
+@note to synthesis, where only the machine's own guard would stop it.
+@old
+if {$machine ne "cadr" && $machine ne "quux"} {
+@new
+if {$machine ne "cadr" && $machine ne "quux" && 0} {
+@end
+
+@mutation machine-param-the-arty-flow-builds-quux-anywhere
+@check machine_param
+@file boards/arty-z7-20/vivado/bitstream.tcl
+@note A QUUX build into a directory that does not say so goes ahead, and a
+@note QUUX build into `build/ddr` replaces the CADR's reports there.
+@old
+if {$machine eq "quux" && [string first quux [file tail $outdir]] < 0} {
+@new
+if {$machine eq "quux" && [string first quux [file tail $outdir]] < -1} {
+@end
+
+@mutation machine-param-the-cora-flow-builds-quux
+@check machine_param
+@file boards/cora-z7-07s/vivado/bitstream.tcl
+@note The Cora's Vivado flow takes QUUX and goes on to synthesis, where only
+@note the top level's own refusal would stop it.
+@old
+if {[info exists ::env(MACHINE)] && $::env(MACHINE) ne "cadr"} {
+@new
+if {[info exists ::env(MACHINE)] && $::env(MACHINE) ne "cadr" && 0} {
+@end
+
+@mutation machine-param-the-de25-build-takes-any-name
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note The DE25-Nano's build takes a name that is not a machine and goes on
+@note toward Quartus, where only the machine's own guard would stop it.
+@old
+    cadr|quux) ;;
+@new
+    *) ;;
+@end
+
+@mutation machine-param-the-de25-fault-build-takes-quux
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note The DE25-Nano's build takes QUUX beside FAULT=1 and goes on to build a
+@note fault bitstream, which carries no machine, under a machine's name.
+@old
+if [ "${FAULT:-0}" = 1 ] && [ "$machine" != cadr ]; then
+@new
+if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
+@end
+
+@mutation machine-param-the-de25-program-takes-any-name
+@check machine_param
+@file boards/de25-nano/quartus/program.sh
+@note The DE25-Nano's programmer takes a name that is not a machine, and
+@note then looks for a build directory named after it.
+@old
+    cadr|quux) ;;
+@new
+    *) ;;
+@end
