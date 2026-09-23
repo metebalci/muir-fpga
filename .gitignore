@@ -75,3 +75,6 @@ boards/*/local.conf
 # and its scratch, and it is ignored whole so nothing in it can ever be
 # staged by accident.
 /work/
+
+# Handovers from sibling projects, each with a note of its source commit.
+ref/
