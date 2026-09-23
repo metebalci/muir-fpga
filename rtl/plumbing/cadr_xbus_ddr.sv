@@ -80,6 +80,10 @@ module cadr_xbus_ddr
   logic done;
   assign dev_ack = asked && (done || mem_done);
 
+  // A cycle the NXM timer ends drops `asked`, and `mem_req` with it, while
+  // the transaction behind it may still be out.  Its late answer belongs to
+  // no cycle: `cadr_axi_master.sv` drains it without raising `mem_done`, so
+  // the next cycle waits for a transaction of its own.
   assign mem_req   = asked && !done;
   assign mem_write = dev_write;
 

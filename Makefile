@@ -58,7 +58,7 @@ TICKPKG := rtl/machine/cadr_tick_pkg.sv
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
-       $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
+       $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass $(BUILD)/xbus_axi.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/rdw_poison.pass $(BUILD)/rdw_poison_sys.pass \
@@ -81,7 +81,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
        $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
-       $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
+       $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass $(BUILD)/chaos_cable.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass $(BUILD)/color_tv.pass \
        $(BUILD)/display_out.pass $(BUILD)/display_sleep.pass \
        $(BUILD)/hdmi_tx.pass $(BUILD)/adv7513.pass \
@@ -227,6 +227,21 @@ $(BUILD)/obj_axi_master/Vcadr_axi_master: rtl/plumbing/cadr_axi_master.sv tb/cad
 
 $(BUILD)/axi_master.pass: $(BUILD)/obj_axi_master/Vcadr_axi_master
 	$(BUILD)/obj_axi_master/Vcadr_axi_master
+	@touch $@
+
+# The DDR bridge and the adapter together, when the NXM timer ends a cycle the
+# memory has not answered: the late answer is drained and thrown away, and the
+# next cycle issues a transaction of its own.  The slave is the testbench's,
+# with a latency it sets per cycle.
+XBUS_AXI_SRC := rtl/plumbing/cadr_ddr_map.sv rtl/plumbing/cadr_xbus_ddr.sv \
+                rtl/plumbing/cadr_axi_master.sv tb/cadr_xbus_axi_harness.sv
+
+$(BUILD)/obj_xbus_axi/Vcadr_xbus_axi_harness: $(XBUS_AXI_SRC) tb/cadr_xbus_axi_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_xbus_axi \
+	    --top-module cadr_xbus_axi_harness $(XBUS_AXI_SRC) $(abspath tb/cadr_xbus_axi_tb.cpp)
+
+$(BUILD)/xbus_axi.pass: $(BUILD)/obj_xbus_axi/Vcadr_xbus_axi_harness
+	$(BUILD)/obj_xbus_axi/Vcadr_xbus_axi_harness
 	@touch $@
 
 # ---------------------------------------------------------- the widening
@@ -2587,6 +2602,21 @@ $(BUILD)/gp0_split.pass: $(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness \
                          $(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness
 	$(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness
 	$(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness
+	@touch $@
+
+# The Chaosnet cable's face alone, against the program's calls overlapping
+# the cable's own work: a give landing while the last frame still streams, a
+# commit whose length is not a frame, and a take racing the machine's Clear
+# Transmitter.  `gp0_split` carries a frame at a time across the whole seam;
+# this is what happens between two of them.
+CHAOS_CABLE_SRC := rtl/plumbing/cadr_gp_regs.sv rtl/plumbing/cadr_chaos_cable.sv
+
+$(BUILD)/obj_chaos_cable/Vcadr_chaos_cable: $(CHAOS_CABLE_SRC) tb/cadr_chaos_cable_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_chaos_cable \
+	    --top-module cadr_chaos_cable $(CHAOS_CABLE_SRC) $(abspath tb/cadr_chaos_cable_tb.cpp)
+
+$(BUILD)/chaos_cable.pass: $(BUILD)/obj_chaos_cable/Vcadr_chaos_cable
+	$(BUILD)/obj_chaos_cable/Vcadr_chaos_cable
 	@touch $@
 
 # ----------------------------------------------------- `M_AXI_GP1`, split
