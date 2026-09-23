@@ -244,6 +244,7 @@ module cadr_dbgin_harness #(
   ) window (
       .clk        (clk),
       .rst        (rst),
+      .fabric_rst (1'b0),
       .s_awaddr   (s_awaddr),
       .s_awlen    (s_awlen),
       .s_awid     (s_awid),

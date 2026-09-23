@@ -1124,11 +1124,21 @@ module cadr_de25 #(
   // its cable is out, the Chaosnet's address switches read zero, and the
   // input face's queue is empty --- which is exactly what the tie-offs of the
   // board without a processor give the machine.
+  //
+  // **AND NOTHING ELSE, BECAUSE A TRANSACTION ON A BRIDGE IS THE
+  // PROCESSOR'S.**  `h2f_rst` was once `rst ||` the bridges' reset, so KEY1
+  // held both splitters and every face in their address states with AWREADY
+  // and ARREADY high: an address taken then, or one in flight when the key
+  // went down, was never answered.  So the splitters and the default slaves
+  // take the bridges' reset alone, and every face takes KEY1 at `fabric_rst`,
+  // which resets its registers and never its AXI state.  `docs/board.md`
+  // has the rule, and `tb/cadr_board_reset_tb.cpp` presses KEY1 under reads
+  // and writes on every page of both bridges.
   logic [2:0] h2f_rst_s;
   logic       h2f_rst;
   always_ff @(posedge clk) begin
     h2f_rst_s <= {h2f_rst_s[1:0], h2f_reset};
-    h2f_rst   <= rst || h2f_rst_s[2];
+    h2f_rst   <= h2f_rst_s[2];
   end
 
   // ------------------------------------- the HPS-to-FPGA bridge, four faces
@@ -1250,7 +1260,10 @@ module cadr_de25 #(
   // **THE PACK SIDE**, its register face on this bridge and its master on the
   // share's second port.  **ITS RESET IS THE BRIDGE'S AND THE BRIDGE'S
   // ALONE**, as every other face on both bridges takes, and the memory port's
-  // liveness reaches it as a signal instead.
+  // liveness reaches it as a signal instead.  KEY1 reaches it at
+  // `fabric_rst`: its registers at once, and its master once the burst it
+  // has in flight on the share has ended, so that the gate's drain finds it
+  // finishing rather than abandoned.
   //
   // The reason is a defect this board had and the Zynq boards cannot have.
   // The reset here was once the bridge's and the memory port's together, in
@@ -1278,7 +1291,7 @@ module cadr_de25 #(
   cadr_disk_pack #(
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
   ) u_pack (
-      .clk(clk), .rst(h2f_rst), .port_live(port_live),
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst), .port_live(port_live),
       .s_awaddr(h2fp_awaddr), .s_awlen(h2fp_awlen), .s_awid(h2fp_awid),
       .s_awvalid(h2fp_awvalid), .s_awready(h2fp_awready),
       .s_wdata(h2fp_wdata), .s_wstrb(h2fp_wstrb), .s_wlast(h2fp_wlast),
@@ -1311,7 +1324,7 @@ module cadr_de25 #(
   );
 
   cadr_chaos_cable #(.ID_W(4), .LEN_W(8)) u_chaos (
-      .clk(clk), .rst(h2f_rst),
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
       .s_awaddr(h2fc_awaddr), .s_awlen(h2fc_awlen), .s_awid(h2fc_awid),
       .s_awvalid(h2fc_awvalid), .s_awready(h2fc_awready),
       .s_wdata(h2fc_wdata), .s_wstrb(h2fc_wstrb), .s_wlast(h2fc_wlast),
@@ -1336,7 +1349,7 @@ module cadr_de25 #(
   );
 
   cadr_serial_line #(.ID_W(4), .LEN_W(8)) u_serial (
-      .clk(clk), .rst(h2f_rst),
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
       .s_awaddr(h2fs_awaddr), .s_awlen(h2fs_awlen), .s_awid(h2fs_awid),
       .s_awvalid(h2fs_awvalid), .s_awready(h2fs_awready),
       .s_wdata(h2fs_wdata), .s_wstrb(h2fs_wstrb), .s_wlast(h2fs_wlast),
@@ -1366,7 +1379,7 @@ module cadr_de25 #(
   // The face's own reset stays the BRIDGE'S, because resetting an AXI state
   // machine mid-transaction is how a console would hang a core.
   cadr_input_cables #(.ID_W(4), .LEN_W(8)) u_input (
-      .clk(clk), .rst(h2f_rst), .mach_rst(mach_rst),
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst), .mach_rst(mach_rst),
       .s_awaddr(h2fi_awaddr), .s_awlen(h2fi_awlen), .s_awid(h2fi_awid),
       .s_awvalid(h2fi_awvalid), .s_awready(h2fi_awready),
       .s_wdata(h2fi_wdata), .s_wstrb(h2fi_wstrb), .s_wlast(h2fi_wlast),
@@ -1485,7 +1498,7 @@ module cadr_de25 #(
   cadr_console #(
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
   ) u_console (
-      .clk(clk), .rst(h2f_rst),
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
       .s_awaddr(lwc_awaddr), .s_awlen(lwc_awlen), .s_awid(lwc_awid),
       .s_awvalid(lwc_awvalid), .s_awready(lwc_awready),
       .s_wdata(lwc_wdata), .s_wstrb(lwc_wstrb), .s_wlast(lwc_wlast),
@@ -1553,7 +1566,7 @@ module cadr_de25 #(
   cadr_debug_window #(
       .REG_BASE(32'h0000_1000), .ID_W(4), .LEN_W(8)
   ) u_debug_window (
-      .clk(clk), .rst(h2f_rst),
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
       .s_awaddr(lwd_awaddr), .s_awlen(lwd_awlen), .s_awid(lwd_awid),
       .s_awvalid(lwd_awvalid), .s_awready(lwd_awready),
       .s_wdata(lwd_wdata), .s_wstrb(lwd_wstrb), .s_wlast(lwd_wlast),
@@ -1670,12 +1683,14 @@ module cadr_de25 #(
   // sessions and `boards/de25-nano/README.md` records the pin.
 `ifdef CADR_DE25_HDMI
 
-  // The port's own reset is the fabric's, as everything on the memory side
-  // of this board takes; the machine's memory is opened by software seconds
-  // later, and a display that asked for a word before then waits on the
-  // share rather than failing --- what it shows meanwhile is a black line
-  // and a sticky `underrun`, which is what that module does when a fill is
-  // late.
+  // **THE DISPLAY'S RESET IS THE MEMORY PORT'S OWN**, `!port_live`: the
+  // port in reset.  The processor's reset raises it at once, as it resets
+  // the bridge, so a display waiting on beats the bridge will never send is
+  // restarted rather than left waiting for ever; and the fabric's reset
+  // raises it only once `cadr_f2sdram_gate.sv` has drained the share, so the
+  // display finishes the reads it has in flight first.  It was the fabric's
+  // reset alone, which did neither.  Until software opens the port the
+  // display is held in reset, and shows black.
   logic        pixel_locked;
   logic        pclk;                    // the mode's pixel clock, in fabric
   logic [3:0]  prst_sync;
@@ -1683,6 +1698,10 @@ module cadr_de25 #(
   logic        disp_de, disp_hsync, disp_vsync, disp_mute, disp_sleep_due;
   logic [7:0]  disp_red, disp_green, disp_blue;
   logic        disp_underrun, disp_rd_error;
+  // A register, for the reason `mach_rst` is one: it lands on every
+  // register of the display's fetch.
+  logic        disp_rst;
+  always_ff @(posedge clk) disp_rst <= !port_live;
 
   // 50 MHz in, the mode's pixel clock out.  `build.sh` asks the IP for the
   // frequency this mode wants and refuses a generator that cannot make it,
@@ -1704,7 +1723,7 @@ module cadr_de25 #(
       .BASE(cadr_ddr_map::DISPLAY_BASE),
       .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE)
   ) u_display (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(disp_rst),
       .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
       .m_arburst(dm_arburst), .m_arvalid(dm_arvalid), .m_arready(dm_arready),
       .m_rdata(dm_rdata), .m_rresp(dm_rresp), .m_rlast(dm_rlast),

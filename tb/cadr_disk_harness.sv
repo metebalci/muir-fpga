@@ -39,6 +39,8 @@ module cadr_disk_harness #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
+    // The fabric's reset, at the pack side only: see `cadr_disk_pack.sv`.
+    input  var logic        fabric_rst,
     input  var logic        xbus_init,
 
     // --- the Xbus slave face, as `cadr_disk_controller` has it ----------
@@ -172,7 +174,7 @@ module cadr_disk_harness #(
   cadr_disk_pack #(
       .SLOTS(SLOTS)
   ) u_pack (
-      .clk(clk), .rst(rst), .port_live(1'b1),
+      .clk(clk), .rst(rst), .fabric_rst(fabric_rst), .port_live(1'b1),
       .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
       .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
       .s_wdata(gp0_wdata), .s_wstrb(gp0_wstrb), .s_wlast(gp0_wlast),

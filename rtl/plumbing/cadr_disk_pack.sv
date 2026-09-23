@@ -219,7 +219,19 @@ module cadr_disk_pack #(
     parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
+    // The port's own reset, from the processing system: the face's state
+    // machines, the registers and the master, all at once.
     input  var logic        rst,
+    // **THE FABRIC'S RESET**, which resets the registers and the master and
+    // never the face's AXI state, so a transaction the processor has started
+    // on the face is answered whether the fabric's reset lands before it,
+    // during it or across it.  **IT SHOULD REACH THE MASTER ONLY ONCE THE
+    // MEMORY PORT IS QUIET**, because a burst the master has started is one
+    // the port will finish.  On the DE25-Nano it is: this is the fabric's
+    // reset as `cadr_f2sdram_gate.sv` delivers it, after the share has
+    // drained.  The Zynq boards still give it the button's reset at once,
+    // which can cut a burst on `S_AXI_HP2`; `docs/board.md` says so.
+    input  var logic        fabric_rst,
 
     // **WHETHER THE MASTER'S MEMORY PORT IS LIVE.**  A move has nowhere to
     // put a block while it is low, so a command written then is refused and
@@ -551,23 +563,6 @@ module cadr_disk_pack #(
       r_id  <= '0;
       r_left <= '0;
       w_bad <= 1'b0;
-      r_addr  <= 32'd0;
-      r_tag   <= 31'd0;
-      r_slot  <= 5'd0;
-      r_drive <= 25'd0;
-      refused <= 1'b0;
-      go_q    <= 4'd0;
-      ch_active_q <= 1'b0;
-      ch_waiting_q <= 1'b0;
-      ch_slot_q   <= 5'd0;
-      req_valid_q <= 1'b0;
-      req_tag_q   <= 31'd0;
-      dirty    <= '0;
-      ref_bits <= '0;
-      irq_q    <= 3'd0;
-      irqen    <= 3'd0;
-      irq_r    <= 1'b0;
-      busy_q   <= 1'b0;
       w_in    <= 1'b0;
       rdata_q <= 32'd0;
       rresp_q <= 2'b00;
@@ -667,6 +662,34 @@ module cadr_disk_pack #(
         default: rst_r <= R_ADDR;
       endcase
     end
+
+    // **THE REGISTERS, WHICH THE FABRIC'S RESET RESETS AS WELL AS THE PORT'S.**
+    // Everything above this is the face's own AXI state --- the two state
+    // machines and what each carries for the transaction in flight --- and
+    // only `rst` touches it, so a transaction the processor has started is
+    // answered whether the fabric's reset lands before it, during it or
+    // across it.  What follows is the pack side's own state, which the
+    // fabric's reset takes back to power-on as `docs/board.md` says; written
+    // last, so that it wins over anything assigned above in the same tick.
+    if (rst || fabric_rst) begin
+      r_addr  <= 32'd0;
+      r_tag   <= 31'd0;
+      r_slot  <= 5'd0;
+      r_drive <= 25'd0;
+      refused <= 1'b0;
+      go_q    <= 4'd0;
+      ch_active_q <= 1'b0;
+      ch_waiting_q <= 1'b0;
+      ch_slot_q   <= 5'd0;
+      req_valid_q <= 1'b0;
+      req_tag_q   <= 31'd0;
+      dirty    <= '0;
+      ref_bits <= '0;
+      irq_q    <= 3'd0;
+      irqen    <= 3'd0;
+      irq_r    <= 1'b0;
+      busy_q   <= 1'b0;
+    end
   end
 
   // The AXI3 length and the write ID are not read here: a register access is
@@ -679,10 +702,37 @@ module cadr_disk_pack #(
   // The HP2 master: the block between DDR and the store
   // ------------------------------------------------------------------------
   //
-  // One burst in flight at a time, the address channel first and the
-  // response waited for before the next, which is `cadr_axi_master.sv`'s
-  // shape one burst wide.  A block is nine bursts and ~300 ticks either way;
-  // a drive's sector is 968 us, so nothing here is the constraint.
+  // One burst in flight at a time, the response waited for before the next,
+  // which is `cadr_axi_master.sv`'s shape one burst wide.  A block is nine
+  // bursts and ~300 ticks either way; a drive's sector is 968 us, so nothing
+  // here is the constraint.
+  //
+  // **A WRITE BURST'S ADDRESS AND ITS DATA GO OUT INDEPENDENTLY.**  AXI lets a
+  // slave wait for WVALID before it raises AWREADY, so a master that holds
+  // its first beat back until the address is taken can wait on a slave that
+  // is waiting on it.  `aw_on` is the address's valid, raised as the burst
+  // starts and dropped at its handshake, and the beats follow the store's
+  // reads whatever it is doing.  `tb/cadr_disk_pack_tb.cpp` offers AWREADY
+  // only after a beat has been offered.
+  //
+  // **A FETCH THAT FAILED LEAVES ITS SLOT TAKEN AWAY.**  A beat with SLVERR
+  // or DECERR, or a burst that did not end where it should, sets `error`, and
+  // then `P_TAG` does not write the tag: the slot stays as `P_TAKE` left it,
+  // invalid, which is what the disk pack program assumes of a fetch that
+  // reports an error.  A valid tag over words that did not arrive would give
+  // the machine a block that is not the pack's.
+  //
+  // **THE FABRIC'S RESET DRAINS THE MASTER BEFORE IT RESETS IT.**  A burst the
+  // master has started is one the processing system will finish: an address
+  // taken will be answered and a write whose address is out must have its
+  // beats.  So `fabric_rst` resets the master at once only when nothing is
+  // owed on the port (`P_IDLE`, `P_TAKE`, `P_TAG`).  Otherwise it sets
+  // `p_drop`, the burst in flight runs to its end, and the move stops there
+  // instead of going on to its next burst or its tag: the slot stays taken
+  // away and `done` does not rise.  `busy` stays up until the burst has
+  // ended, so a command written meanwhile is refused as busy rather than
+  // lost.  Only `rst`, the port's own reset, which resets the port with it,
+  // resets the master at once.
   typedef enum logic [3:0] {
     P_IDLE,
     P_TAKE,     // the slot's block taken away, one tick
@@ -699,6 +749,12 @@ module cadr_disk_pack #(
     P_B         // the burst's response
   } pstate_e;
   pstate_e pst;
+
+  // The write burst's address is out and not yet taken; and the move is
+  // being dropped at the end of its burst, the fabric's reset having come.
+  logic aw_on, p_drop;
+  logic owed;
+  assign owed = !((pst == P_IDLE) || (pst == P_TAKE) || (pst == P_TAG)) || aw_on;
 
   logic        p_write;            // the move in progress is a write-back
   logic [3:0]  p_burst;            // 0..8
@@ -772,7 +828,7 @@ module cadr_disk_pack #(
   assign m_awlen   = meta ? LEN_META : LEN_DATA;
   assign m_awsize  = SIZE_BEAT;
   assign m_awburst = BURST_INCR;
-  assign m_awvalid = (pst == P_AW);
+  assign m_awvalid = aw_on;
   assign m_wvalid  = (pst == P_W5);
   assign m_wdata   = {whi, wlo};
   // The pad after the data checkword is never written: the record's last
@@ -823,8 +879,9 @@ module cadr_disk_pack #(
           seam_wdata = rb_data[31:0];
         end
       end
+      // Only a fetch that met no error tags its slot: see above.
       P_TAG: begin
-        seam_we    = 1'b1;
+        seam_we    = !error;
         seam_addr  = ST_TAG;
         seam_wdata = {1'b0, p_tag};
       end
@@ -862,6 +919,8 @@ module cadr_disk_pack #(
 
   always_ff @(posedge clk) begin
     if (rst) begin
+      aw_on      <= 1'b0;
+      p_drop     <= 1'b0;
       pst        <= P_IDLE;
       p_write    <= 1'b0;
       p_burst    <= 4'd0;
@@ -880,6 +939,7 @@ module cadr_disk_pack #(
       error      <= 1'b0;
       burst_addr <= 32'd0;
     end else begin
+      if (m_awvalid && m_awready) aw_on <= 1'b0;
       unique case (pst)
         P_IDLE: if (go_any && !refuse) begin
           // Latched here and held for the whole move: Linux may rewrite the
@@ -930,7 +990,7 @@ module cadr_disk_pack #(
             if (last_beat) begin
               p_burst    <= p_burst + 4'd1;
               burst_addr <= addr_of(p_base, p_burst + 4'd1);
-              pst        <= last_burst ? P_TAG : P_AR;
+              pst        <= p_drop ? P_IDLE : last_burst ? P_TAG : P_AR;
             end else begin
               p_beat <= p_beat + 4'd1;
             end
@@ -941,7 +1001,7 @@ module cadr_disk_pack #(
               // beat of the last burst.
               p_burst    <= p_burst + 4'd1;
               burst_addr <= addr_of(p_base, p_burst + 4'd1);
-              pst        <= P_TAG;
+              pst        <= p_drop ? P_IDLE : P_TAG;
             end else begin
               hi_word    <= rb_data[63:32];
               hi_pending <= 1'b1;
@@ -953,7 +1013,10 @@ module cadr_disk_pack #(
           done <= 1'b1;
           pst  <= P_IDLE;
         end
-        P_AW: if (m_awready) begin
+        // The address goes out and the beats start in the same tick: see
+        // above.
+        P_AW: begin
+          aw_on  <= 1'b1;
           p_beat <= 4'd0;
           pst    <= P_W0;
         end
@@ -981,21 +1044,44 @@ module cadr_disk_pack #(
           burst_addr <= addr_of(p_base, p_burst + 4'd1);
           if (last_burst) begin
             busy <= 1'b0;
-            done <= 1'b1;
+            done <= !p_drop;
             pst  <= P_IDLE;
           end else begin
-            pst <= P_AW;
+            pst <= p_drop ? P_IDLE : P_AW;
           end
         end
         default: pst <= P_IDLE;
       endcase
+
+      // A drained burst has ended: the move stopped there, neither done nor
+      // in error, and the master is free.  A command written in the tick it
+      // took to get here was refused as busy.
+      if (p_drop && (pst == P_IDLE)) begin
+        busy   <= 1'b0;
+        done   <= 1'b0;
+        error  <= 1'b0;
+        p_drop <= 1'b0;
+      end
+
+      // The fabric's reset: at once when nothing is owed, and otherwise at
+      // the end of the burst in flight.  See above.
+      if (fabric_rst) begin
+        done  <= 1'b0;
+        error <= 1'b0;
+        if (!owed) begin
+          pst        <= P_IDLE;
+          busy       <= 1'b0;
+          hi_pending <= 1'b0;
+          rb_valid   <= 1'b0;
+        end else p_drop <= 1'b1;
+      end
     end
   end
 
   // Whether the move in progress is a bare take-away, which ends at P_TAKE.
   logic take_only;
   always_ff @(posedge clk) begin
-    if (rst) take_only <= 1'b0;
+    if (rst || fabric_rst) take_only <= 1'b0;
     else if (pst == P_IDLE && go_any && !refuse) take_only <= go_take;
   end
 

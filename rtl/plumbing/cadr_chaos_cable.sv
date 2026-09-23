@@ -56,7 +56,8 @@
 // rather than wraps, and **it survives the card's Reset** (`chaos_reset`,
 // which the machine writes whenever it likes) --- a counter that went
 // backwards would make the program read a store as a refusal.  It does NOT
-// survive this module's own `rst`, which clears every register here, the
+// survive this module's own `rst` or `fabric_rst`, either of which clears
+// every register here, the
 // frame being built and the frame waiting with it; a give that straddles
 // one reads the change as a refusal and offers its frame again, which after
 // a reset of the whole face is the right answer.
@@ -230,7 +231,14 @@ module cadr_chaos_cable #(
     parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
+    // The port's own reset, from the processing system.  It alone resets
+    // `cadr_gp_regs.sv`, the state machines that answer the port.
     input  var logic        rst,
+    // **THE FABRIC'S RESET**, which resets this face's registers and never
+    // its AXI state, so a transaction the processor has started is answered
+    // whether the fabric's reset lands before it, during it or across it.
+    // `docs/board.md` has the rule.
+    input  var logic        fabric_rst,
 
     // --- the face: one 4 KB page of `M_AXI_GP0`, the offset only ---------
     input  var logic [11:0] s_awaddr,
@@ -497,7 +505,7 @@ module cadr_chaos_cable #(
   assign irq_clr = (wr && w_word == 10'd7) ? (wr_data[1:0] & wr_mask[1:0]) : 2'd0;
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || fabric_rst) begin
       r_myaddr    <= 16'd0;
       r_rxlen     <= 9'd0;
       tx_held     <= 9'd0;

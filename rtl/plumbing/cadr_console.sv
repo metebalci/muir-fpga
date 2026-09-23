@@ -717,7 +717,13 @@ module cadr_console #(
     parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
+    // The port's own reset, from the processing system.  It alone resets the
+    // two state machines that answer the port.
     input  var logic        rst,
+    // **THE FABRIC'S RESET**: BTN1 or KEY1, or the clock generator losing
+    // lock.  It resets the console's registers and never its AXI state: see
+    // the face's state machines below, and `docs/board.md`.
+    input  var logic        fabric_rst,
 
     // --- The processor's general-purpose port, on which the processor is
     // --- the master.  32 bits, one write and one read in flight at once;
@@ -939,7 +945,7 @@ module cadr_console #(
   // one tick later, `cadr_arty.sv` registering the OR, and that tick is the
   // whole of the skew between the two clocks.
   always_ff @(posedge clk) begin
-    if (rst || mach_rst) begin
+    if (rst || fabric_rst || mach_rst) begin
       cycles <= 64'd0;
       ticks  <= 64'd0;
     end else begin
@@ -1293,7 +1299,7 @@ module cadr_console #(
   logic answered, lost_ever;
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || fabric_rst) begin
       est       <= E_IDLE;
       eng_for_w <= 1'b0;
       eng_done  <= 1'b0;
@@ -1554,62 +1560,11 @@ module cadr_console #(
       r_hi_q      <= 1'b0;
       r_map_q     <= 1'b0;
       map_word    <= 24'd0;
-      // **A MACHINE COMES UP WITH ONE SIMPLE TV AND NO COLOR BOARD**, which
-      // is muir's own default --- `Board::default` is `SimpleTv` and
-      // `Machine::new` leaves `color_tv` at `None` --- and is the backplane
-      // every check written before the second board was built ran against.
-      // A card that wants otherwise says so in `fpgarc` and the disk pack
-      // program writes it here before the drive is presented.
-      tv_lispm    <= 1'b0;
-      color_tv    <= 1'b0;
-      // **AND THE MONITOR SHOWS THE FIRST DISPLAY, UPRIGHT**, which is the
-      // machine's own screen the way this board has always drawn it.  A card
-      // that wants otherwise says so in `fpgarc`.
-      hdmi_out    <= 2'b01;
-      hdmi_rotate <= 2'd0;
-      // **AND THE LAMPS BLINK**, which is how every board has always come up:
-      // a blink is honest about a stopped clock by construction, and a card
-      // that wants a level says so in `fpgarc`.
-      steady_lamps <= 1'b0;
-      // Nothing is asked of the display output's sleep out of reset; the
-      // display holds its own default.
-      hdmi_sleep_set  <= 1'b0;
-      hdmi_sleep_secs <= 15'd0;
-      hdmi_wake       <= 1'b0;
       r_idx_q     <= 5'd0;
       r_spy       <= 16'd0;
       r_lost      <= 1'b0;
       held_arm    <= 1'b0;
-      cycles_hi_q <= 32'd0;
-      ticks_hi_q  <= 32'd0;
-      held_vma    <= 32'd0;
-      held_q      <= 32'd0;
-      held_md     <= 32'd0;
-      // **NOT ZERO**, because zero is a word a memory can hold and an
-      // address a reader can ask for.  `RO_NONE` is the reserved selector
-      // and `RO_NO_MEMORY` is what the machine answers for one, so a face
-      // read before anything was asked says "nothing has been asked" in
-      // both words rather than answering word zero of the control store.
-      // `cadr_microcycle.sv` declares both and this repeats them; they are
-      // parameters of the window and not of either module.
-      ro_addr      <= RO_NONE;
-      held_ro_echo <= RO_NONE;
-      held_ro_data <= RO_NO_MEMORY;
-      ro_arm       <= 1'b0;
-      mach_rst    <= 1'b0;
-      rst_t       <= 7'd0;
-      resets      <= 8'd0;
-      mach_boot   <= 1'b0;
-      boot_t      <= 7'd0;
-      boots       <= 8'd0;
-      // **A BOARD COMES UP A DEBUGGEE**, which is the power-on state of any
-      // CADR: it listens on the connector and nothing has to be set for it.
-      dbg_connect <= 1'b0;
-      connects    <= 7'd0;
-      // **AND IT COMES UP LOOKING**, which is `cadr_dbg_cable.sv`'s own
-      // default and muir's shape of it: a board that looks is right more
-      // often than a board that assumes.
-      dbg_wiring  <= 2'd0;
+      ro_arm      <= 1'b0;
     end else begin
       // --- the machine's reset, counted out.  Written first so that the
       // write channel below can arm it in the same tick and win: a pulse
@@ -1815,6 +1770,69 @@ module cadr_console #(
         end
         default: rst_r <= R_ADDR;
       endcase
+    end
+
+    // **THE REGISTERS, WHICH THE FABRIC'S RESET RESETS AS WELL AS THE PORT'S.**
+    // Everything above this is the port's own state --- the two state
+    // machines and what each carries for the transaction in flight --- and
+    // only `rst`, the port's reset, touches it, so a transaction the
+    // processor has started is answered whether the fabric's reset lands
+    // before it, during it or across it.  What follows is the console's own
+    // state, and the fabric's reset takes it back to what it was at power-on,
+    // as `docs/board.md` says; written last, so that it wins over anything
+    // the state machines assigned in the same tick.
+    if (rst || fabric_rst) begin
+      // **A MACHINE COMES UP WITH ONE SIMPLE TV AND NO COLOR BOARD**, which
+      // is muir's own default --- `Board::default` is `SimpleTv` and
+      // `Machine::new` leaves `color_tv` at `None` --- and is the backplane
+      // every check written before the second board was built ran against.
+      // A card that wants otherwise says so in `fpgarc` and the disk pack
+      // program writes it here before the drive is presented.
+      tv_lispm    <= 1'b0;
+      color_tv    <= 1'b0;
+      // **AND THE MONITOR SHOWS THE FIRST DISPLAY, UPRIGHT**, which is the
+      // machine's own screen the way this board has always drawn it.  A card
+      // that wants otherwise says so in `fpgarc`.
+      hdmi_out    <= 2'b01;
+      hdmi_rotate <= 2'd0;
+      // **AND THE LAMPS BLINK**, which is how every board has always come up:
+      // a blink is honest about a stopped clock by construction, and a card
+      // that wants a level says so in `fpgarc`.
+      steady_lamps <= 1'b0;
+      // Nothing is asked of the display output's sleep out of reset; the
+      // display holds its own default.
+      hdmi_sleep_set  <= 1'b0;
+      hdmi_sleep_secs <= 15'd0;
+      hdmi_wake       <= 1'b0;
+      cycles_hi_q <= 32'd0;
+      ticks_hi_q  <= 32'd0;
+      held_vma    <= 32'd0;
+      held_q      <= 32'd0;
+      held_md     <= 32'd0;
+      // **NOT ZERO**, because zero is a word a memory can hold and an
+      // address a reader can ask for.  `RO_NONE` is the reserved selector
+      // and `RO_NO_MEMORY` is what the machine answers for one, so a face
+      // read before anything was asked says "nothing has been asked" in
+      // both words rather than answering word zero of the control store.
+      // `cadr_microcycle.sv` declares both and this repeats them; they are
+      // parameters of the window and not of either module.
+      ro_addr      <= RO_NONE;
+      held_ro_echo <= RO_NONE;
+      held_ro_data <= RO_NO_MEMORY;
+      mach_rst    <= 1'b0;
+      rst_t       <= 7'd0;
+      resets      <= 8'd0;
+      mach_boot   <= 1'b0;
+      boot_t      <= 7'd0;
+      boots       <= 8'd0;
+      // **A BOARD COMES UP A DEBUGGEE**, which is the power-on state of any
+      // CADR: it listens on the connector and nothing has to be set for it.
+      dbg_connect <= 1'b0;
+      connects    <= 7'd0;
+      // **AND IT COMES UP LOOKING**, which is `cadr_dbg_cable.sv`'s own
+      // default and muir's shape of it: a board that looks is right more
+      // often than a board that assumes.
+      dbg_wiring  <= 2'd0;
     end
   end
 

@@ -390,8 +390,10 @@ It is a latch and not the level: once the machine is running, software
 lowering the bit or the processor resetting does not reset the machine, any
 more than `SAXIHP0ARESETN` falling resets the Zynq's. What a shut port does to
 a running machine is what a board with no memory does. The fabric's own reset
-re-arms it, so KEY1 restarts the machine and it waits for the port again,
-which takes a handful of ticks with the port already open. `--no-auto-boot`
+re-arms it, so KEY1 restarts the machine and it waits for the port again.
+KEY1 does not cut a transaction on the bridge in half: the port is drained
+first, and the machine waits until it has been reset, which takes the drain
+and a handful of ticks with the port already open. `--no-auto-boot`
 and SW0 are unchanged: SW0 is read when the machine's reset releases, which is
 now the moment its memory is ready.
 

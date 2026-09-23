@@ -519,14 +519,39 @@ away should be hard to press by accident. That argument lost to having the same
 control be the same button everywhere.
 
 **What the fabric reset is, and what it is not.** It resets the logic in the
-fabric. That is the machine, the console's and the disk pack's register faces,
-and the lamps. The processing system and Linux keep running across it, and it
-does not reload the bitstream. So on a Zynq board the programs under Linux keep
-the view of the register faces they had before, and after BTN1 the disk pack
-program and the console are out of step with the fabric until they are
-restarted. `rst -srst` over JTAG resets everything, and it is the reset to
+fabric. That is the machine, the registers of every face the programs under
+Linux use, and the lamps. The processing system and Linux keep running across
+it, and it does not reload the bitstream. So on a Zynq board the programs under
+Linux keep the view of the register faces they had before, and after BTN1 the
+disk pack program and the console are out of step with the fabric until they
+are restarted. `rst -srst` over JTAG resets everything, and it is the reset to
 reach for on a Zynq board. BTN1 exists for uniformity across the boards, and
 for a part with no processing system and nothing else to reset it with.
+
+**The fabric reset never breaks a transaction the processing system has
+started.** A read that the fabric takes and never answers hangs both Arm cores.
+So every read and write the processor makes on a general-purpose port, or on
+the DE25-Nano's two processor-to-fabric bridges, is answered, whether it
+arrives before the reset, while the button is held, or across the release. The
+state machines that answer a port are reset only by the processing system's
+own reset of that port. The fabric reset reaches each face at a separate
+input, `fabric_rst`, which resets the face's registers and nothing else. The
+same holds for the pack side's master, which finishes the burst it has in
+flight before the fabric reset resets it.
+
+On the DE25-Nano the fabric reset does not cut the FPGA-to-SDRAM bridge either,
+because the bridge is reset only by the processor. The memory port is drained
+first. Nothing new is put to the bridge, what is in flight finishes, and then
+the port is reset, with the machine held in reset until it has been. The
+processor's own reset still resets the port at once, and the display with it,
+because it resets the bridge too. `tb/cadr_board_reset_tb.cpp` holds all of
+this on each board's own top level, and `tb/cadr_f2sdram_reset_tb.cpp` holds
+the memory port.
+
+On the Zynq boards the machine's memory port, `S_AXI_HP0`, and the display's,
+`S_AXI_HP3`, are still reset by BTN1 at once. By the same mechanism a
+transaction in flight there when the button goes down can be cut in half. That
+has not been measured and is not yet fixed.
 
 Two other things press the same boot line. The first is the keyboard's boot
 chord. Holding both Controls and both Metas with Rubout cold-boots the machine,

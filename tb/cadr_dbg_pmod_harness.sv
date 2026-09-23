@@ -268,7 +268,7 @@ module cadr_dbg_pmod_harness #(
       .REG_BASE(32'h8000_1000),
       .WATCHDOG_T(WATCHDOG_T)
   ) u_window (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .fabric_rst(1'b0),
       .s_awaddr(s_awaddr), .s_awlen(s_awlen), .s_awid(s_awid),
       .s_awvalid(s_awvalid), .s_awready(s_awready),
       .s_wdata(s_wdata), .s_wstrb(s_wstrb), .s_wlast(s_wlast),

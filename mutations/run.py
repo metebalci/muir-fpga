@@ -797,6 +797,23 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # THE PORT'S TWO RESETS WITH TRANSACTIONS IN FLIGHT, the second half of
+    # `build/f2sdram.pass`: the machine's side of the port driven directly, the
+    # fabric's reset pulsed under a read, a write and the pack side's burst,
+    # and the processor's reset raised under a read the bridge drops.  The
+    # machine is not in it, so it is seconds where `f2sdram` is minutes, and a
+    # record aimed at the gate's two resets belongs here.
+    "f2sdram_reset": {
+        "sources": ["rtl/plumbing/cadr_f2sdram_gate.sv",
+                    "rtl/plumbing/cadr_f2sdram_share.sv",
+                    "rtl/plumbing/cadr_f2sdram_port.sv"],
+        "extra": ["rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
+                  "rtl/plumbing/cadr_mem_count.sv"],
+        "top": "cadr_f2sdram_port",
+        "tb": "tb/cadr_f2sdram_reset_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/plumbing"],
+        "golden": None,
+    },
     # AND THE DEFAULT SLAVE AT THE AGILEX 5 BRIDGES' SHAPE, four bits of ID
     # and eight of read length: the same module and the same testbench, built
     # as `build/gp0_default.pass` builds it a second time.  A record aimed at
@@ -1108,6 +1125,117 @@ CHECKS = {
     # UNUSEDSIGNAL. `extra` rather than `sources` for everything below the top
     # level, because `check_coverage` asks that every source a check builds has
     # a mutation aimed at it and only cadr_arty.sv does.
+    # THE FABRIC'S RESET UNDER THE PROCESSOR'S TRANSACTIONS, on each board's
+    # own top level: `build/board_reset.pass`, three builds, one a board.  The
+    # only checks that simulate a top level, so a record aimed at which reset
+    # a top level gives which module belongs here, and so does one aimed at a
+    # face's split between the port's reset and the fabric's: no module check
+    # raises the fabric's reset under traffic.  `tb/cadr_board_reset_tb.cpp`
+    # says what each holds.  The package with the processor's DPI goes first,
+    # as `cadr_tick_pkg.sv` does, because the models import it.
+    "board_reset_arty": {
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "boards/arty-z7-20/cadr_arty.sv",
+                    "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp1_split.sv",
+                    "rtl/plumbing/cadr_gp0_default.sv", "rtl/plumbing/cadr_disk_pack.sv",
+                    "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
+                    "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_console.sv",
+                    "rtl/plumbing/cadr_debug_window.sv"],
+        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_ps7_sim.sv",
+                  "tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv",
+                  "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+                  "rtl/machine/cadr_xbus_decode.sv",
+                  "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+                  "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
+                  "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+                  "rtl/machine/cadr_busint_regs.sv", "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+                  "rtl/plumbing/cadr_bus_audit.sv", "rtl/machine/cadr_memory_path.sv",
+                  "rtl/machine/cadr_machine.sv",
+                  "rtl/plumbing/cadr_dbg_tx.sv", "rtl/plumbing/cadr_dbg_rx.sv",
+                  "rtl/plumbing/cadr_dbg_join.sv", "rtl/plumbing/cadr_dbg_cable.sv",
+                  "rtl/plumbing/cadr_lamp_errhalt.sv", "rtl/plumbing/cadr_lamp_clock.sv",
+                  "rtl/plumbing/cadr_lamp_microcycle.sv",
+                  "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
+                  "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_gp_regs.sv",
+                  "tb/cadr_board_reset_harness.sv"],
+        "top": "cadr_board_reset_harness",
+        "tb": "tb/cadr_board_reset_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY",
+                  "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-DCADR_BOARD_ARTY", "-CFLAGS", "-DCADR_BOARD_ARTY"],
+        "golden": None,
+        "gprom": True,
+    },
+    "board_reset_cora": {
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "boards/cora-z7-07s/cadr_cora.sv",
+                    "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp1_split.sv",
+                    "rtl/plumbing/cadr_gp0_default.sv", "rtl/plumbing/cadr_disk_pack.sv",
+                    "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
+                    "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_console.sv",
+                    "rtl/plumbing/cadr_debug_window.sv"],
+        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_ps7_sim.sv",
+                  "tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv",
+                  "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+                  "rtl/machine/cadr_xbus_decode.sv",
+                  "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+                  "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
+                  "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+                  "rtl/machine/cadr_busint_regs.sv", "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+                  "rtl/plumbing/cadr_bus_audit.sv", "rtl/machine/cadr_memory_path.sv",
+                  "rtl/machine/cadr_machine.sv",
+                  "rtl/plumbing/cadr_dbg_tx.sv", "rtl/plumbing/cadr_dbg_rx.sv",
+                  "rtl/plumbing/cadr_dbg_join.sv", "rtl/plumbing/cadr_dbg_cable.sv",
+                  "rtl/plumbing/cadr_lamp_errhalt.sv", "rtl/plumbing/cadr_lamp_clock.sv",
+                  "rtl/plumbing/cadr_lamp_microcycle.sv",
+                  "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
+                  "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_gp_regs.sv",
+                  "tb/cadr_board_reset_harness.sv"],
+        "top": "cadr_board_reset_harness",
+        "tb": "tb/cadr_board_reset_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY",
+                  "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-DCADR_BOARD_CORA", "-DCADR_PS7_NO_HP3",
+                  "-CFLAGS", "-DCADR_BOARD_CORA"],
+        "golden": None,
+        "gprom": True,
+    },
+    "board_reset_de25": {
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "boards/de25-nano/cadr_de25.sv",
+                    "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp1_split.sv",
+                    "rtl/plumbing/cadr_gp0_default.sv", "rtl/plumbing/cadr_disk_pack.sv",
+                    "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
+                    "rtl/plumbing/cadr_input_cables.sv", "rtl/plumbing/cadr_console.sv",
+                    "rtl/plumbing/cadr_debug_window.sv",
+                    "rtl/plumbing/cadr_f2sdram_gate.sv", "rtl/plumbing/cadr_f2sdram_share.sv",
+                    "rtl/plumbing/cadr_f2sdram_port.sv", "rtl/plumbing/cadr_display_out.sv"],
+        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_de25_hps_sim.sv", "tb/cadr_de25_stubs.sv",
+                  "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+                  "rtl/machine/cadr_xbus_decode.sv",
+                  "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+                  "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
+                  "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+                  "rtl/machine/cadr_busint_regs.sv", "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+                  "rtl/plumbing/cadr_bus_audit.sv", "rtl/machine/cadr_memory_path.sv",
+                  "rtl/machine/cadr_machine.sv",
+                  "rtl/plumbing/cadr_dbg_tx.sv", "rtl/plumbing/cadr_dbg_rx.sv",
+                  "rtl/plumbing/cadr_dbg_join.sv", "rtl/plumbing/cadr_dbg_cable.sv",
+                  "rtl/plumbing/cadr_lamp_errhalt.sv", "rtl/plumbing/cadr_lamp_clock.sv",
+                  "rtl/plumbing/cadr_lamp_microcycle.sv",
+                  "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
+                  "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_gp_regs.sv",
+                  "rtl/plumbing/cadr_adv7513.sv",
+                  "tb/cadr_board_reset_harness.sv"],
+        "top": "cadr_board_reset_harness",
+        "tb": "tb/cadr_board_reset_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY",
+                  "-Irtl/machine", "-Irtl/plumbing", "-DCADR_DDR_MAP_DE25_NANO",
+                  "-DCADR_BOARD_DE25", "-DCADR_DE25_DDR", "-DCADR_DE25_HDMI",
+                  "-DCADR_DE25_HPS_SIM", "-CFLAGS", "-DCADR_BOARD_DE25"],
+        "golden": None,
+        "gprom": True,
+    },
     "arty": {
         "kind": "lint",
         "sources": ["boards/arty-z7-20/cadr_arty.sv"],
@@ -2555,7 +2683,9 @@ def check_makefile():
     # the board programs compiled with that board's address map.  C, like
     # `chaosnet`'s, and what bites on the code it compiles is the packages'
     # own mutation lists; named here for the same reason.
-    known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
+    # `board_reset` is one `.pass` and three builds, one a board, and each
+    # build is its own entry above, `board_reset_arty` and the other two.
+    known = set(CHECKS) | {"board_reset", "ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora", "grid",
                            "de25_pins", "de25_linux"}

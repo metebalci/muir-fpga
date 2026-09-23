@@ -83,6 +83,9 @@ module cadr_gp0_split_harness #(
     input  var logic        clk,
     // The port's reset: the splitter and the four faces behind it.
     input  var logic        rst,
+    // The fabric's reset: the faces' registers and never the port's AXI
+    // state.  The splitter and the default slave never see it.
+    input  var logic        fabric_rst,
     // The MACHINE's, which resets the card and empties the input face's
     // queue.  See the header.
     input  var logic        card_rst,
@@ -297,7 +300,7 @@ module cadr_gp0_split_harness #(
   logic        pk_timed;
 
   cadr_disk_pack #(.REG_BASE(PACK_BASE), .ID_W(ID_W), .LEN_W(LEN_W)) u_pack (
-      .clk(clk), .rst(rst), .port_live(port_live),
+      .clk(clk), .rst(rst), .fabric_rst(fabric_rst), .port_live(port_live),
       .s_awaddr(p_awaddr), .s_awlen(p_awlen), .s_awid(p_awid),
       .s_awvalid(p_awvalid), .s_awready(p_awready),
       .s_wdata(p_wdata), .s_wstrb(p_wstrb), .s_wlast(p_wlast),
@@ -337,7 +340,7 @@ module cadr_gp0_split_harness #(
   logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
 
   cadr_chaos_cable #(.ID_W(ID_W), .LEN_W(LEN_W)) u_chaos (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .fabric_rst(fabric_rst),
       .s_awaddr(c_awaddr), .s_awlen(c_awlen), .s_awid(c_awid),
       .s_awvalid(c_awvalid), .s_awready(c_awready),
       .s_wdata(c_wdata), .s_wstrb(c_wstrb), .s_wlast(c_wlast),
@@ -370,7 +373,7 @@ module cadr_gp0_split_harness #(
   logic [7:0]  ser_tx_data, ser_rx_data;
 
   cadr_serial_line #(.ID_W(ID_W), .LEN_W(LEN_W)) u_serial (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .fabric_rst(fabric_rst),
       .s_awaddr(l_awaddr), .s_awlen(l_awlen), .s_awid(l_awid),
       .s_awvalid(l_awvalid), .s_awready(l_awready),
       .s_wdata(l_wdata), .s_wstrb(l_wstrb), .s_wlast(l_wlast),
@@ -398,7 +401,7 @@ module cadr_gp0_split_harness #(
   logic [7:0]  iob_csr_face;
 
   cadr_input_cables #(.ID_W(ID_W), .LEN_W(LEN_W)) u_input (
-      .clk(clk), .rst(rst), .mach_rst(card_rst),
+      .clk(clk), .rst(rst), .fabric_rst(fabric_rst), .mach_rst(card_rst),
       .s_awaddr(i_awaddr), .s_awlen(i_awlen), .s_awid(i_awid),
       .s_awvalid(i_awvalid), .s_awready(i_awready),
       .s_wdata(i_wdata), .s_wstrb(i_wstrb), .s_wlast(i_wlast),

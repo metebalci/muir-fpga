@@ -76,7 +76,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
-       $(BUILD)/arty.pass $(BUILD)/cora.pass \
+       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/board_reset.pass \
        $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
        $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
@@ -1388,9 +1388,86 @@ $(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness: $(F2SDRAM_SRC) \
 	    --top-module cadr_f2sdram_harness $(F2SDRAM_SRC) \
 	    $(abspath tb/cadr_f2sdram_tb.cpp)
 
+# AND THE PORT'S TWO RESETS WITH TRANSACTIONS IN FLIGHT, which the machine's
+# own traffic cannot reach: its reads are 118 ms into a boot and a reset
+# there would land between them.  `tb/cadr_f2sdram_reset_tb.cpp` drives the
+# machine's side of `rtl/plumbing/cadr_f2sdram_port.sv` directly, with the
+# fabric's reset pulsed under a read, a write and the pack side's burst, and
+# the processor's reset raised under a read the bridge then drops.
+$(BUILD)/obj_f2sdram_reset/Vcadr_f2sdram_port: $(F2SDRAM) tb/cadr_f2sdram_reset_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/plumbing -Mdir $(BUILD)/obj_f2sdram_reset \
+	    --top-module cadr_f2sdram_port $(F2SDRAM) $(abspath tb/cadr_f2sdram_reset_tb.cpp)
+
 $(BUILD)/f2sdram.pass: $(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness \
+                       $(BUILD)/obj_f2sdram_reset/Vcadr_f2sdram_port \
                        $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_f2sdram/Vcadr_f2sdram_harness
+	$(BUILD)/obj_f2sdram_reset/Vcadr_f2sdram_port
+	@touch $@
+
+# ---------------------------------------------- the fabric's reset, per board
+#
+# THE ONLY CHECK THAT SIMULATES A BOARD'S TOP LEVEL.  Every other check
+# drives a module, and a module cannot say which reset its top level gives
+# it.  The fabric's reset (BTN1, KEY1, the clock generator losing lock) must
+# reset the machine and the faces' registers and never break an AXI
+# transaction the processor has started; which reset reaches which module is
+# decided in `boards/*/cadr_*.sv` and nowhere else.  So each board's own top
+# level is built here with a processing system that drives its ports,
+# `tb/cadr_ps7_sim.sv` or `tb/cadr_de25_hps_sim.sv`, and the button is
+# pressed under reads and writes on every page of both ports.
+# `tb/cadr_board_reset_tb.cpp` has the rule and what is checked, including
+# the DE25-Nano's memory port: the machine waiting for it, and the
+# processor's reset resetting it and the display but not the machine.
+#
+# The stubs pass each board's oscillator through as the fabric's clock, and
+# the machine runs from its PROM as it does on the board.  A few minutes to
+# build the three, seconds to run.
+BOARD_RESET_SIM := tb/cadr_sim_axi.sv tb/cadr_board_reset_harness.sv
+BOARD_RESET_ZYNQ := $(BOARD_RESET_SIM) $(MACHINE) $(BOARD_STUBS) tb/cadr_ps7_sim.sv \
+                    rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
+                    rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
+                    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv \
+                    $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) \
+                    rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_clock.sv \
+                    rtl/plumbing/cadr_lamp_microcycle.sv
+BOARD_RESET_VFLAGS := $(VFLAGS) -O2 -CFLAGS -O2 -Wno-PINCONNECTEMPTY \
+                      -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+                      -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+                      --top-module cadr_board_reset_harness
+
+$(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harness: $(BOARD_RESET_ZYNQ) \
+        boards/arty-z7-20/cadr_arty.sv tb/cadr_board_reset_tb.cpp | $(BUILD)
+	$(VERILATOR) $(BOARD_RESET_VFLAGS) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
+	    -DCADR_BOARD_ARTY -CFLAGS -DCADR_BOARD_ARTY -Mdir $(BUILD)/obj_board_reset_arty \
+	    $(BOARD_RESET_ZYNQ) boards/arty-z7-20/cadr_arty.sv \
+	    $(abspath tb/cadr_board_reset_tb.cpp)
+
+$(BUILD)/obj_board_reset_cora/Vcadr_board_reset_harness: $(BOARD_RESET_ZYNQ) \
+        boards/cora-z7-07s/cadr_cora.sv tb/cadr_board_reset_tb.cpp | $(BUILD)
+	$(VERILATOR) $(BOARD_RESET_VFLAGS) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
+	    -DCADR_BOARD_CORA -DCADR_PS7_NO_HP3 -CFLAGS -DCADR_BOARD_CORA \
+	    -Mdir $(BUILD)/obj_board_reset_cora \
+	    $(BOARD_RESET_ZYNQ) boards/cora-z7-07s/cadr_cora.sv \
+	    $(abspath tb/cadr_board_reset_tb.cpp)
+
+BOARD_RESET_DE25 := $(BOARD_RESET_SIM) $(MACHINE) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI) \
+                    tb/cadr_de25_stubs.sv tb/cadr_de25_hps_sim.sv
+
+$(BUILD)/obj_board_reset_de25/Vcadr_board_reset_harness: $(BOARD_RESET_DE25) \
+        tb/cadr_board_reset_tb.cpp | $(BUILD)
+	$(VERILATOR) $(BOARD_RESET_VFLAGS) -Irtl/machine -Irtl/plumbing $(DE25_MAP) \
+	    -DCADR_BOARD_DE25 -DCADR_DE25_DDR -DCADR_DE25_HDMI -DCADR_DE25_HPS_SIM \
+	    -CFLAGS -DCADR_BOARD_DE25 -Mdir $(BUILD)/obj_board_reset_de25 \
+	    $(BOARD_RESET_DE25) $(abspath tb/cadr_board_reset_tb.cpp)
+
+$(BUILD)/board_reset.pass: $(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harness \
+                           $(BUILD)/obj_board_reset_cora/Vcadr_board_reset_harness \
+                           $(BUILD)/obj_board_reset_de25/Vcadr_board_reset_harness \
+                           $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harness
+	$(BUILD)/obj_board_reset_cora/Vcadr_board_reset_harness
+	$(BUILD)/obj_board_reset_de25/Vcadr_board_reset_harness
 	@touch $@
 
 # ------------------------------------------- one transaction per bus cycle

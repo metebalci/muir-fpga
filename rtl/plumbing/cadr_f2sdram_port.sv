@@ -28,7 +28,16 @@
 //
 // **THE OTHER TWO PORTS OF THE SHARE COME OUT HERE**, the disk pack side's,
 // read and write, and the display's, read only, in the AXI3 shape their
-// modules already have.  Both are tied off at the top level today.
+// modules already have.  The top level wires both: `cadr_disk_pack.sv`'s
+// master, and `cadr_display_out.sv` on a build that carries a display.
+//
+// **THE FABRIC'S RESET REACHES THE ADAPTER AND THE SHARE ONLY THROUGH THE
+// GATE'S DRAIN**, never at once: `cadr_f2sdram_gate.sv` has why.  So the two
+// other masters must keep running until the share is idle.  The pack side
+// takes the fabric's reset at its own `fabric_rst`, which ends the burst in
+// flight before it resets anything, and the display takes `!live`, the
+// port's own reset, which the drain raises once the share is idle and the
+// processor's reset raises at once.
 //
 // **THE TALLY IS READ ON `h2f_gp_in`**, the system manager's GPI register at
 // `0x10D1_20E8`, which software reads with nobody at the board.  That is 32
@@ -49,7 +58,8 @@
 
 module cadr_f2sdram_port (
     input  var logic clk,
-    // The fabric's reset.
+    // The fabric's reset.  It resets the tally at once and the port only
+    // through the gate's drain.
     input  var logic rst,
 
     // --- the machine's memory port ----------------------------------------
