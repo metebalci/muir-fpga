@@ -9,6 +9,8 @@
 #
 # The second loads the instrumented build from `build/de25-probe/`, which
 # `make de25 PROBE_DEPTH=1024` writes, and the first the plain one.
+# `MACHINE=quux` loads the evolved CADR's build from `build/de25-quux/` and
+# the same suffixes after it, as `build.sh` names them.
 #
 # **VOLATILE, AND NOTHING ELSE.**  This loads `build/de25/output_files/
 # cadr_de25.sof` into the part's configuration memory, which a power cycle
@@ -69,6 +71,12 @@ cd "$root"
 say() { printf 'de25-program: %s\n' "$*"; }
 refuse() { printf 'de25-program: REFUSED: %s\n' "$*" >&2; exit 1; }
 
+machine=${MACHINE:-cadr}
+case $machine in
+    cadr|quux) ;;
+    *) refuse "MACHINE is '$machine'; it is cadr, MIT's machine, or quux, the evolved CADR" ;;
+esac
+
 conf=boards/de25-nano/local.conf
 conf_value() {
     [ -f "$conf" ] || return 0
@@ -85,6 +93,9 @@ serial=${DE25_SERIAL:-$(conf_value DE25_SERIAL)}
 [ -n "$serial" ] || refuse "set DE25_SERIAL, or add a DE25_SERIAL= line to $conf"
 
 out=build/de25
+if [ "$machine" = quux ]; then
+    out=$out-quux
+fi
 case ${DDR:-0} in
     ''|0) ;;
     *)    out=$out-ddr ;;
@@ -106,7 +117,7 @@ esac
 # Booting User Guide (document 813762) says in its section 4.5.1, and
 # `build.sh` writes `cadr_de25_hps.sof` beside the `.sof` when it is given the
 # processor's first-stage loader.
-hps_sof=$out/output_files/cadr_de25_hps.sof
+hps_sof=$out/output_files/${machine}_de25_hps.sof
 sof=$out/output_files/cadr_de25.sof
 if [ -s "$hps_sof" ]; then
     sof=$hps_sof
@@ -223,7 +234,7 @@ held=$(block | sed -n 's/^ *Design hash *\([0-9A-F]*\).*/\1/p' | head -n 1)
 if [ -n "$held" ]; then
     [ "$held" = "$built" ] || refuse "the part's hub reports design $held, and this build's is ${built:-not in $sld}"
     say "the part's hub reports design $held, this build's"
-elif [ "$out" = build/de25-probe ]; then
+elif [ "$out" = build/de25-probe ] || [ "$out" = build/de25-quux-probe ]; then
     refuse "the part's hub reports no design, and the probe's build has a node on it"
 else
     say "the part's hub reports no design, as the plain build's, with no node, does"

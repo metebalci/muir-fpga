@@ -7,8 +7,8 @@
 #
 #     quartus_sh -t boards/de25-nano/quartus/project.tcl <build dir> <userid> <source>...
 #
-# from the repository's root.  The sources are the Makefile's `$(MACHINE)` and
-# `$(DE25_TOP)`, in that order, then `$(DE25_PROBE)` when the probe is built
+# from the repository's root.  The sources are the Makefile's
+# `$(MACHINE_SRC)` and `$(DE25_TOP)`, in that order, then `$(DE25_PROBE)` when the probe is built
 # and `$(DE25_DDR)` when the memory board is, so that the list of what the
 # board is built from is written once, beside the lint that reads the same
 # list.  `PROBE_DEPTH` in the environment is the probe's depth, and zero or
@@ -56,6 +56,15 @@ if {$fault ne "0" && $fault ne "1"} {
 }
 if {$fault && (!$ddr || $hdmi || $probe_depth > 0)} {
     puts "project: FAULT needs DDR and takes neither HDMI nor a probe"
+    exit 1
+}
+set machine [expr {[info exists ::env(MACHINE)] ? $::env(MACHINE) : "cadr"}]
+if {$machine ne "cadr" && $machine ne "quux"} {
+    puts "project: MACHINE is '$machine', which is neither cadr nor quux"
+    exit 1
+}
+if {$fault && $machine ne "cadr"} {
+    puts "project: FAULT takes no MACHINE=$machine: the fault bitstream carries no machine"
     exit 1
 }
 set userid  [lindex $argv 1]
@@ -229,6 +238,13 @@ if {!$fault} {
 if {!$fault} {
     set_parameter -name PROM_HEX      [file join $root build boot_prom.hex]
     set_parameter -name SYNC_PROM_HEX [file join $root build sync_prom.hex]
+}
+
+# **WHICH MACHINE**, set only for QUUX, so that the CADR's project is the one
+# it has always been and takes the top level's default.  `build.sh` reads the
+# value back out of the synthesis report under `u_machine` for both.
+if {!$fault && $machine eq "quux"} {
+    set_parameter -name MACHINE quux
 }
 
 # ------------------------------------------------------ the configuration

@@ -142,7 +142,13 @@ module cadr_arty #(
     // boot, and a machine with none gives the NXM at those addresses ---
     // which is how `COLOR-EXISTS-P` finds out.  Zero leaves the slot out of
     // the fabric entirely, for a part with no room for it.
-    parameter int unsigned LMTV = 1
+    parameter int unsigned LMTV = 1,
+
+    // **WHICH MACHINE**: "cadr", MIT's, or "quux", the evolved CADR, each a
+    // bitstream of its own on this board.  Handed to `cadr_machine` as it
+    // stands, which refuses a name it does not know; the flow's `MACHINE`
+    // sets it, and `build/machine_param.pass` holds that it arrives.
+    parameter string MACHINE = "cadr"
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -845,7 +851,8 @@ module cadr_arty #(
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
-      .LMTV(LMTV)
+      .LMTV(LMTV),
+      .MACHINE(MACHINE)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO

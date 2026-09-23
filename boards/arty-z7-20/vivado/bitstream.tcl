@@ -121,8 +121,34 @@
 # bitstream that fails timing is not a working machine, but it is a working
 # flow, and the two unknowns are worth separating rather than compounding.
 
+# **WHICH MACHINE**, which is asked first and refused before anything is
+# written, so that a wrong name leaves no directory behind it:
+#
+#     MACHINE=quux DDR=1 HDMI=1 OUTDIR=build/arty-quux-hdmi vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
+#
+# `cadr`, the default, is MIT's machine and this flow exactly as it was.
+# `quux` is the evolved CADR, a bitstream of its own: the top level's
+# `MACHINE` generic, a default directory of `build/arty-quux`, and a file
+# named `quux_arty.bit` instead of `cadr_arty.bit`.  **A QUUX BUILD MUST NAME
+# ITS MACHINE IN ITS DIRECTORY**, because the reports beside the bitstream
+# carry no machine in their names, and a QUUX build into `build/ddr` would
+# replace the CADR's.  The generic is passed only for QUUX, so the CADR's
+# synthesis command is the one it has always been.
+set machine [expr {[info exists ::env(MACHINE)] ? $::env(MACHINE) : "cadr"}]
+if {$machine ne "cadr" && $machine ne "quux"} {
+    puts "BIT: FAILED --- MACHINE=$machine is not a machine. It is cadr, MIT's"
+    puts "BIT: machine, or quux, the evolved CADR."
+    exit 1
+}
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z020clg400-1"}]
-set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/bitstream"}]
+set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) \
+                      : ($machine eq "quux" ? "build/arty-quux" : "build/bitstream")}]
+if {$machine eq "quux" && [string first quux [file tail $outdir]] < 0} {
+    puts "BIT: FAILED --- MACHINE=quux into OUTDIR=$outdir, whose name does not say"
+    puts "BIT: quux. Name the directory for the machine, as build/arty-quux-ddr."
+    exit 1
+}
+puts "BIT: the machine is $machine"
 file mkdir $outdir
 
 # HOW LONG A TICK IS, ASKED OF THE FABRIC THAT DECIDES IT.  The board's own
@@ -267,7 +293,8 @@ synth_design -top cadr_arty -part $part \
     -generic DDR=$ddr \
     -generic PROVE=$prove \
     -generic HDMI=$hdmi \
-    -generic LMTV=$lmtv
+    -generic LMTV=$lmtv \
+    {*}[expr {$machine eq "quux" ? [list -generic MACHINE=quux] : {}}]
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilization and timing prose below describes."
@@ -680,7 +707,7 @@ set stamp [build_stamp_of_tree]
 puts "BIT: build [lindex $stamp 0] --- commit [lindex $stamp 1], tree [lindex $stamp 2]"
 build_stamp_apply [current_design] [lindex $stamp 0]
 
-set bit $outdir/cadr_arty.bit
+set bit $outdir/${machine}_arty.bit
 write_bitstream -force $bit
 if {![file exists $bit]} {
     puts "BIT: FAILED --- write_bitstream left no file at $bit"

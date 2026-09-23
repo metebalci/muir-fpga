@@ -36,6 +36,13 @@
 # second eight-minute build.  Zero, or no value, is the plain board.  With
 # both, the directory is `build/de25-ddr-probe/`.
 #
+# **`MACHINE=quux` BUILDS THE EVOLVED CADR**, a bitstream of its own, into
+# `build/de25-quux/` with the same suffixes after it, so that neither
+# machine's build removes the other's.  The processor's files it writes are
+# named `quux_de25.*` in place of `cadr_de25.*`, because those are the files
+# that leave the directory; the project and its `.sof` keep the top level's
+# name.  `cadr`, or no value, is MIT's machine and this flow as it was.
+#
 # **WHERE QUARTUS IS** comes from `QUARTUS_ROOTDIR` in the environment, or
 # from a `QUARTUS_ROOTDIR=` line in the gitignored
 # `boards/de25-nano/local.conf`.  It names the installation's `quartus`
@@ -69,6 +76,23 @@ say() { printf 'de25: %s\n' "$*"; }
 refuse() { printf 'de25: REFUSED: %s\n' "$*" >&2; exit 1; }
 
 [ "$#" -gt 0 ] || refuse "no sources given; run this through \`make de25\`"
+
+# Which machine, asked before anything else so that a wrong name is refused
+# whatever else is missing.
+machine=${MACHINE:-cadr}
+case $machine in
+    cadr|quux) ;;
+    *) refuse "MACHINE is '$machine'; it is cadr, MIT's machine, or quux, the evolved CADR" ;;
+esac
+# **A FAULT BUILD CARRIES NO MACHINE**, so it is neither the CADR's nor
+# QUUX's, and `MACHINE=quux` beside `FAULT=1` is refused rather than dropped:
+# there is one fault bitstream a board, in one directory.  `cadr`, the
+# default, names nothing there, and the files keep the CADR build's names.
+# Asked here, with the machine, so that it is refused before Quartus is
+# looked for; `FAULT` itself is read further down.
+if [ "${FAULT:-0}" = 1 ] && [ "$machine" != cadr ]; then
+    refuse "FAULT=1 takes no MACHINE=$machine: the fault bitstream carries no machine"
+fi
 
 conf=boards/de25-nano/local.conf
 conf_value() {
@@ -126,6 +150,9 @@ case $mhz in
     *) refuse "DE25_DDR_MHZ is '$mhz'; the LPDDR4 runs at 1066.667 (either revision) or 1333.333 (rev B)" ;;
 esac
 out=build/de25
+if [ "$machine" = quux ]; then
+    out=$out-quux
+fi
 if [ "$ddr" -eq 1 ]; then
     out=$out-ddr
 fi
@@ -199,6 +226,9 @@ if [ "$fault" -eq 1 ]; then
 fi
 if [ "$hdmi" -eq 1 ]; then
     say "the display output is in this build: $mode_words, a pixel clock of $pixel_mhz MHz, into $out"
+fi
+if [ "$fault" -eq 0 ]; then
+    say "the machine is $machine, into $out"
 fi
 rm -rf "$out"
 mkdir -p "$out/ip" "$out/tmp"
@@ -321,7 +351,7 @@ if [ "$depth" -gt 0 ]; then
 fi
 
 # ------------------------------------------------------- 2. the project
-step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" FAULT="$fault" \
+step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" FAULT="$fault" MACHINE="$machine" \
     DE25_HPS_BOOT="$hps_boot" \
     "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
@@ -476,6 +506,24 @@ elif grep -q "$disp_line" "$rpt" || grep -q "$adv_line" "$rpt"; then
 fi
 fi
 
+# **THE MACHINE IS THE ONE THIS BUILD WAS ASKED FOR**, as synthesis records
+# `cadr_machine`'s parameters under the instance `u_machine`: a string
+# parameter's row there is its name, its value and `String`.  A value that
+# stopped reaching the machine would build the CADR under the other name, and
+# nothing in the fit's size would say so.  The fault bitstream has no
+# `u_machine` to read, and its own checks above have already refused one, so
+# there the read-back is skipped rather than failed.
+if [ "$fault" -eq 0 ]; then
+    got_machine=$(awk '
+        /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
+        inside && /^; Parameter Settings/ { exit }
+        inside && /^; MACHINE *;/ { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
+    ' "$rpt")
+    [ "$got_machine" = "$machine" ] \
+        || refuse "synthesis gave u_machine MACHINE '${got_machine:-nothing}', wanting $machine; see $dir/$rpt"
+    say "synthesis gave u_machine MACHINE $machine"
+fi
+
 step 5-fit "$bin/quartus_fit" cadr_de25
 if grep -q '^Info (24849)' 5-fit.log; then
     say "$(grep '^Info (24849)' 5-fit.log | head -n 1)"
@@ -563,13 +611,13 @@ if [ "$ddr" -eq 1 ] && [ -n "$spl" ]; then
     case $spl in /*) ;; *) spl=$root/$spl ;; esac
     [ -s "$spl" ] || refuse "DE25_SPL_HEX names $spl, which is not there"
     if [ "$hps_boot" = fpga-first ]; then
-        step 9-pfg "$bin/quartus_pfg" -c "$sof" output_files/cadr_de25_hps.sof \
+        step 9-pfg "$bin/quartus_pfg" -c "$sof" output_files/${machine}_de25_hps.sof \
             -o hps_path="$spl"
-        made=output_files/cadr_de25_hps.sof
+        made=output_files/${machine}_de25_hps.sof
     else
-        step 9-pfg "$bin/quartus_pfg" -c "$sof" output_files/cadr_de25.rbf \
+        step 9-pfg "$bin/quartus_pfg" -c "$sof" output_files/${machine}_de25.rbf \
             -o hps_path="$spl" -o hps=on
-        made=output_files/cadr_de25.hps.rbf
+        made=output_files/${machine}_de25.hps.rbf
     fi
     [ -s "$made" ] || refuse "$made was not written; see $dir/9-pfg.log"
     say "$(wc -c < "$made" | tr -d ' ') bytes in $dir/$made, from $spl"

@@ -183,7 +183,14 @@ module cadr_de25 #(
     parameter string PROM_HEX = "build/boot_prom.hex",
     // MIT's TV sync PROM, for the display: `rtl/machine/cadr_tv.sv`.
     parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
-    parameter int unsigned PROBE_DEPTH = 0
+    parameter int unsigned PROBE_DEPTH = 0,
+    // **WHICH MACHINE**: "cadr", MIT's, or "quux", the evolved CADR, each a
+    // bitstream of its own on this board.  A parameter and not a define,
+    // because it changes nothing in the port list.  Handed to `cadr_machine`
+    // as it stands, which refuses a name it does not know; `make de25
+    // MACHINE=quux` sets it, and `build/machine_param.pass` holds that it
+    // arrives.
+    parameter string MACHINE = "cadr"
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
     input  var logic       clock50_0,
@@ -512,7 +519,8 @@ module cadr_de25 #(
 
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
-      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+      .SYNC_PROM_HEX(SYNC_PROM_HEX),
+      .MACHINE(MACHINE)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       .sintr_o(sintr),
