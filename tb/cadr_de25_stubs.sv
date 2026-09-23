@@ -95,6 +95,10 @@ module cadr_de25_vjtag (
   /* verilator lint_on UNUSEDSIGNAL */
 endmodule
 
+// `tb/cadr_board_reset_tb.cpp` builds the top level with a processor that
+// drives its bridges, `tb/cadr_de25_hps_sim.sv`, and defines
+// `CADR_DE25_HPS_SIM` to leave this one out.
+`ifndef CADR_DE25_HPS_SIM
 // `cadr_de25_hps`   the processor system that `boards/de25-nano/quartus/hps.tcl`
 //                   describes and `build.sh` generates for the memory board:
 //                   the Agilex 5 processor, its LPDDR4 controller, and the
@@ -440,6 +444,7 @@ module cadr_de25_hps (
                     hps_f2sdram_awregion};
   /* verilator lint_on UNUSEDSIGNAL */
 endmodule
+`endif
 
 /* verilator lint_on DECLFILENAME */
 

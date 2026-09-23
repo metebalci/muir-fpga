@@ -28,12 +28,26 @@
 //
 // **SHUTTING THE PORT DOES NOT CUT A TRANSACTION IN HALF.**  A master that has
 // put a valid address to the bridge may not take it back, and a bridge that
-// has taken one will answer it.  So when the port is shut, or when the
-// processor asks the fabric to be quiet, the share is told to grant nothing
-// new (`hold`), and the adapter and the share go into reset only once the
-// share says nothing is granted or outstanding (`idle`).  Only the
-// processor's own reset puts them into reset at once, because it resets the
-// bridge with them.
+// has taken one will answer it.  So when the port is shut, when the processor
+// asks the fabric to be quiet, or when the FABRIC's own reset comes (KEY1, or
+// the PLL losing lock), the share is told to grant nothing new (`hold`), and
+// the adapter and the share go into reset only once the share says nothing
+// is granted or outstanding (`idle`).  Only the processor's own reset puts
+// them into reset at once, because it resets the bridge with them.
+//
+// **THE FABRIC'S RESET IS LATCHED, BECAUSE IT MAY BE SHORTER THAN THE DRAIN.**
+// `drain` is set by `rst` and cleared only once the port has been in reset
+// with `rst` gone, so a pulse of one tick still takes the port through
+// hold, idle and reset.  The fabric's reset once cut the port at once: a
+// read the machine had outstanding left its beat in the bridge's read
+// channel, the machine's next read took that beat as its own answer, and
+// every read after it was one word late for good.
+// `tb/cadr_f2sdram_reset_tb.cpp` pulses the fabric's reset under an
+// outstanding read, a write and a burst of the pack side's, and requires
+// every later read to return its own word.  The masters must keep running while
+// they drain, so the pack side takes the fabric's reset at its own
+// `fabric_rst`, which finishes a burst before it resets anything, and the
+// display takes `live` and not the fabric's reset.
 //
 // **THE WARM-RESET HANDSHAKE.**  Enabling the FPGA-to-SDRAM bridge brings out
 // `h2f_warm_reset_handshake`, and the user must drive its acknowledgment (the
@@ -69,8 +83,12 @@
 // more than `SAXIHP0ARESETN` falling resets the Zynq's.  What a shut port does
 // to a running machine is what a board with no memory does, which is the whole
 // of `cadr_f2sdram_share.sv`'s and this module's other business.  The fabric's
-// own reset re-arms it, so KEY1 restarts the machine and it waits for the port
-// again --- a handful of ticks, the port being open already.
+// own reset re-arms it, and it is not set again until the drain above has
+// put the port through its reset, so KEY1 restarts the machine and it waits
+// for the port again --- the drain and a handful of ticks, the port being
+// open already.  **That is also what keeps a drained answer from reaching
+// the restarted machine**: the adapter is in reset between the old
+// transaction's end and the machine's first new one.
 //
 // All three inputs from the processor are asynchronous to this clock and are
 // synchronized in, three stages each, as the Zynq boards synchronize theirs.
@@ -110,34 +128,45 @@ module cadr_f2sdram_gate (
   assign opened  = open_s[2];
   assign pending = req_s[2];
 
-  assign hold = hps_rst || !opened || pending;
+  // The fabric's reset, held until the port has been through its reset.
+  logic drain;
+  always_ff @(posedge clk) begin
+    if (rst) drain <= 1'b1;
+    else if (port_rst) drain <= 1'b0;
+  end
+
+  assign hold = hps_rst || !opened || pending || drain;
 
   // Registered, so that the reset the adapter and the share see is a
   // register's output and no longer a function of three synchronizers.
   //
-  // **AND BOTH HAVE THE SAFE VALUE AT THE FABRIC'S RESET**, which is also the
-  // value they power up at, the board being built with no power-up don't
-  // care: the port in reset, and the handshake NOT acknowledged.  An
+  // **THE PORT'S RESET TAKES NO TERM OF THE FABRIC'S RESET DIRECTLY.**  The
+  // fabric's reset reaches it through `drain` and `hold`, and so only once
+  // the share is idle: see the header.  So it has no reset value of its own,
+  // and powers up low; the port is shut at configuration (`h2f_gp_out[0]` is
+  // low), so `hold` is up and it rises a tick later, the share powering up
+  // idle.  **The acknowledgment keeps the safe
+  // value at the fabric's reset**, which is also the value it powers up at,
+  // the board being built with no power-up don't care: NOT acknowledged.  An
   // acknowledgment is the fabric saying it has gone quiet, and a register
   // that says so before it has run is a fabric answering for a machine it
   // has not seen.
   always_ff @(posedge clk) begin
-    if (rst) begin
-      port_rst <= 1'b1;
-      ack_n    <= 1'b1;
-    end else begin
-      port_rst <= hps_rst || (hold && idle);
-      ack_n    <= !(pending && port_rst);
-    end
+    port_rst <= hps_rst || (hold && idle);
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) ack_n <= 1'b1;
+    else     ack_n <= !(pending && port_rst);
   end
 
   assign live = !port_rst;
 
   // The machine's hold, latched: see the header.  Set by the port becoming
-  // live and cleared only by the fabric's reset, so a port shut under a
-  // running machine leaves the machine running.
+  // live and cleared only by the fabric's reset and the drain it starts, so
+  // a port shut under a running machine leaves the machine running.
   always_ff @(posedge clk) begin
-    if (rst) may_start <= 1'b0;
+    if (rst || drain) may_start <= 1'b0;
     else if (live) may_start <= 1'b1;
   end
 

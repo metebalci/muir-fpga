@@ -3209,9 +3209,9 @@
 @note whatever is still in the air.  Acknowledged on the request alone, it is
 @note given while a transaction is still outstanding.
 @old
-      ack_n    <= !(pending && port_rst);
+    else     ack_n <= !(pending && port_rst);
 @new
-      ack_n    <= !pending;
+    else     ack_n <= !pending;
 @end
 
 @mutation the-port-is-cut-off-in-the-middle-of-a-transaction
@@ -3222,9 +3222,9 @@
 @note the adapter goes away with a read outstanding and the bridge is left
 @note holding an answer nobody will take.
 @old
-      port_rst <= hps_rst || (hold && idle);
+    port_rst <= hps_rst || (hold && idle);
 @new
-      port_rst <= hps_rst || (hold && (idle || 1'b1));
+    port_rst <= hps_rst || (hold && (idle || 1'b1));
 @end
 
 @mutation the-tally-counts-another-masters-answers
@@ -4830,17 +4830,18 @@ if {0 && $held ne $want} {
 @mutation pack-offers-the-write-address-twice
 @check disk_pack
 @file rtl/plumbing/cadr_disk_pack.sv
-@note AWVALID held up into the first data beat's state offers the burst's
-@note address a second time after it was taken, and a slave that only
-@note recorded the address could not tell --- the fault
-@note `awvalid-held-up-after-awready` holds one port along.
+@note AWVALID left up after its handshake offers the burst's address a second
+@note time after it was taken, and a slave that only recorded the address
+@note could not tell --- the fault `awvalid-held-up-after-awready` holds one
+@note port along.  `aw_on` is the valid since the address and the data went
+@note out independently, and this keeps it from falling.
 @note `tb/cadr_pack_side.h`'s slave takes every address it is offered, open
 @note burst or not, and counts: caught at "a second write address before
 @note the response".
 @old
-  assign m_awvalid = (pst == P_AW);
+      if (m_awvalid && m_awready) aw_on <= 1'b0;
 @new
-  assign m_awvalid = (pst == P_AW) || (pst == P_W0);
+      if (m_awvalid && m_awready && 1'b0) aw_on <= 1'b0;
 @end
 
 @mutation pack-honours-no-interlock
@@ -6435,10 +6436,10 @@ if {0 && $held ne $want} {
 @note reference says 0x927c0" --- 1,200,002 against 600,000, which is the
 @note count of two runs where the reference has one.
 @old
-    if (rst || mach_rst) begin
+    if (rst || fabric_rst || mach_rst) begin
       cycles <= 64'd0;
 @new
-    if (rst) begin
+    if (rst || fabric_rst) begin
       cycles <= 64'd0;
 @end
 
@@ -16169,9 +16170,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note memory did"; and at NEVER, "the machine retired a microcycle ... with
 @note its memory port never opened".
 @old
-    if (rst) may_start <= 1'b0;
+    if (rst || drain) may_start <= 1'b0;
 @new
-    if (rst) may_start <= 1'b1;
+    if (rst || drain) may_start <= 1'b1;
 @end
 
 @mutation the-machines-hold-follows-the-port-rather-than-latching
@@ -16416,7 +16417,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   cadr_disk_pack #(
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
   ) u_pack (
-      .clk(clk), .rst(h2f_rst), .port_live(port_live),
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst), .port_live(port_live),
 @new
   logic pack_rst;
   always_ff @(posedge clk) pack_rst <= h2f_rst || !port_live;
@@ -16424,7 +16425,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   cadr_disk_pack #(
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
   ) u_pack (
-      .clk(clk), .rst(pack_rst), .port_live(port_live),
+      .clk(clk), .rst(pack_rst), .fabric_rst(rst), .port_live(port_live),
 @end
 
 @mutation de25-the-console-is-held-while-the-memory-is-shut
@@ -16445,7 +16446,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   cadr_console #(
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
   ) u_console (
-      .clk(clk), .rst(h2f_rst),
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
 @new
   logic con_rst;
   always_ff @(posedge clk) con_rst <= h2f_rst || !port_live;
@@ -16453,7 +16454,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   cadr_console #(
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
   ) u_console (
-      .clk(clk), .rst(con_rst),
+      .clk(clk), .rst(con_rst), .fabric_rst(rst),
 @end
 
 # ======================================================================
@@ -17552,4 +17553,600 @@ set MAIN_BASE   0x1C000000
 @new
       tx_seen     <= 1'b0;
       rd_q        <= 1'b0;
+@end
+
+# ---------------------------------------------------------------------------
+# THE FABRIC'S RESET NEVER BREAKS A TRANSACTION THE PROCESSOR STARTED.
+#
+# BTN1, KEY1 and the clock generator losing lock reset the machine and the
+# faces' registers; the AXI state that answers the processor's ports is reset
+# only by the processing system's own reset of those ports.  The rule is in
+# `docs/board.md`.  `board_reset_arty`, `_cora` and `_de25` simulate each
+# board's own top level with the processor driving its ports and the button
+# pressed under traffic (`tb/cadr_board_reset_tb.cpp`); `f2sdram_reset` holds
+# the DE25-Nano's memory port to the same rule on the FPGA-to-SDRAM bridge;
+# `disk_pack` holds the pack side's master to it.  Each record below puts one
+# piece of the old arrangement back, or takes one piece of the new one away.
+
+@mutation arty-the-gp0-port-takes-the-button
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note BTN1 back in the general-purpose port's reset, as it was: the splitter
+@note and every face on `M_AXI_GP0` held in their address states with
+@note ARREADY and AWREADY high while the button is down, so a read taken then,
+@note or in flight when it went down, is never answered and both Arm cores
+@note hang.  Caught at "press before pack: never answered (address taken)".
+@old
+      gp0_rst_s    <= !gp0_rst_sync[2];
+@new
+      gp0_rst_s    <= rst || !gp0_rst_sync[2];
+@end
+
+@mutation arty-the-gp1-port-takes-the-button
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The same on `M_AXI_GP1`: the splitter, the console and the debug
+@note window.  Caught at "press before window: never answered".
+@old
+      gp1_rst      <= !gp1_rst_sync[2];
+@new
+      gp1_rst      <= rst || !gp1_rst_sync[2];
+@end
+
+@mutation arty-the-pack-face-takes-the-button
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The same at the pack side alone, whose reset is made apart from the
+@note splitter's: its face swallows a read of its page while BTN1 is down.
+@old
+        pack_rst      <= !pack_rst_sync[2];
+@new
+        pack_rst      <= rst || !pack_rst_sync[2];
+@end
+
+@mutation cora-the-gp0-port-takes-the-button
+@check board_reset_cora
+@file boards/cora-z7-07s/cadr_cora.sv
+@note BTN1 back in the general-purpose port's reset, as it was: the splitter
+@note and every face on `M_AXI_GP0` held in their address states with
+@note ARREADY and AWREADY high while the button is down, so a read taken then,
+@note or in flight when it went down, is never answered and both Arm cores
+@note hang.  Caught at "press before pack: never answered (address taken)".
+@old
+      gp0_rst_s    <= !gp0_rst_sync[2];
+@new
+      gp0_rst_s    <= rst || !gp0_rst_sync[2];
+@end
+
+@mutation cora-the-gp1-port-takes-the-button
+@check board_reset_cora
+@file boards/cora-z7-07s/cadr_cora.sv
+@note The same on `M_AXI_GP1`: the splitter, the console and the debug
+@note window.  Caught at "press before window: never answered".
+@old
+      gp1_rst      <= !gp1_rst_sync[2];
+@new
+      gp1_rst      <= rst || !gp1_rst_sync[2];
+@end
+
+@mutation cora-the-pack-face-takes-the-button
+@check board_reset_cora
+@file boards/cora-z7-07s/cadr_cora.sv
+@note The same at the pack side alone, whose reset is made apart from the
+@note splitter's: its face swallows a read of its page while BTN1 is down.
+@old
+        pack_rst      <= !pack_rst_sync[2];
+@new
+        pack_rst      <= rst || !pack_rst_sync[2];
+@end
+
+@mutation arty-the-button-does-not-reach-the-chaos-face
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The face's fabric reset tied low: every transaction is still answered,
+@note and BTN1 no longer resets the face's registers, which the documented
+@note behavior says it does.  Caught at the register the control wrote,
+@note read back after the release.
+@old
+    cadr_chaos_cable u_chaos (
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst),
+@new
+    cadr_chaos_cable u_chaos (
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(1'b0),
+@end
+
+@mutation arty-the-button-does-not-reach-the-serial-face
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The face's fabric reset tied low: every transaction is still answered,
+@note and BTN1 no longer resets the face's registers, which the documented
+@note behavior says it does.  Caught at the register the control wrote,
+@note read back after the release.
+@old
+    cadr_serial_line u_serial (
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst),
+@new
+    cadr_serial_line u_serial (
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(1'b0),
+@end
+
+@mutation arty-the-button-does-not-reach-the-input-face
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The face's fabric reset tied low: every transaction is still answered,
+@note and BTN1 no longer resets the face's registers, which the documented
+@note behavior says it does.  Caught at the register the control wrote,
+@note read back after the release.
+@old
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst), .mach_rst(mach_rst),
+@new
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(1'b0), .mach_rst(mach_rst),
+@end
+
+@mutation arty-the-button-does-not-reach-the-console-face
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The face's fabric reset tied low: every transaction is still answered,
+@note and BTN1 no longer resets the face's registers, which the documented
+@note behavior says it does.  Caught at the register the control wrote,
+@note read back after the release.
+@old
+    cadr_console u_console (
+        .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
+@new
+    cadr_console u_console (
+        .clk(clk), .rst(gp1_rst), .fabric_rst(1'b0),
+@end
+
+@mutation arty-the-button-does-not-reach-the-window-face
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The face's fabric reset tied low: every transaction is still answered,
+@note and BTN1 no longer resets the face's registers, which the documented
+@note behavior says it does.  Caught at the register the control wrote,
+@note read back after the release.
+@old
+    ) u_debug_window (
+        .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
+@new
+    ) u_debug_window (
+        .clk(clk), .rst(gp1_rst), .fabric_rst(1'b0),
+@end
+
+@mutation arty-the-button-does-not-reach-the-pack-face
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The face's fabric reset tied low: every transaction is still answered,
+@note and BTN1 no longer resets the face's registers, which the documented
+@note behavior says it does.  Caught at the register the control wrote,
+@note read back after the release.
+@old
+          .clk(clk), .rst(pack_rst), .fabric_rst(rst),
+@new
+          .clk(clk), .rst(pack_rst), .fabric_rst(1'b0),
+@end
+
+@mutation de25-the-bridges-take-key1
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note KEY1 back in both processor-to-fabric bridges' reset, as it was: both
+@note splitters and every face held in their address states while the key is
+@note down.  Caught at "press before pack: never answered (address taken)".
+@old
+    h2f_rst   <= h2f_rst_s[2];
+@new
+    h2f_rst   <= rst || h2f_rst_s[2];
+@end
+
+@mutation de25-key1-does-not-reach-the-chaos-face
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note The face's fabric reset tied low: KEY1 no longer resets its registers.
+@note Caught at the register the control wrote, read back after the release.
+@old
+  cadr_chaos_cable #(.ID_W(4), .LEN_W(8)) u_chaos (
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
+@new
+  cadr_chaos_cable #(.ID_W(4), .LEN_W(8)) u_chaos (
+      .clk(clk), .rst(h2f_rst), .fabric_rst(1'b0),
+@end
+
+@mutation de25-key1-does-not-reach-the-serial-face
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note The face's fabric reset tied low: KEY1 no longer resets its registers.
+@note Caught at the register the control wrote, read back after the release.
+@old
+  cadr_serial_line #(.ID_W(4), .LEN_W(8)) u_serial (
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
+@new
+  cadr_serial_line #(.ID_W(4), .LEN_W(8)) u_serial (
+      .clk(clk), .rst(h2f_rst), .fabric_rst(1'b0),
+@end
+
+@mutation de25-key1-does-not-reach-the-input-face
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note The face's fabric reset tied low: KEY1 no longer resets its registers.
+@note Caught at the register the control wrote, read back after the release.
+@old
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst), .mach_rst(mach_rst),
+@new
+      .clk(clk), .rst(h2f_rst), .fabric_rst(1'b0), .mach_rst(mach_rst),
+@end
+
+@mutation de25-key1-does-not-reach-the-window-face
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note The face's fabric reset tied low: KEY1 no longer resets its registers.
+@note Caught at the register the control wrote, read back after the release.
+@old
+  ) u_debug_window (
+      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
+@new
+  ) u_debug_window (
+      .clk(clk), .rst(h2f_rst), .fabric_rst(1'b0),
+@end
+
+@mutation de25-the-display-is-not-reset-by-the-processor
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note The display's reset back to the fabric's alone, as it was.  The processor's
+@note reset resets the bridge, which drops the reads the display has in flight,
+@note and the display waits for their beats for ever: the screen stays black
+@note until KEY1.  Caught at "the display never asked again after the
+@note processor's reset".
+@old
+  always_ff @(posedge clk) disp_rst <= !port_live;
+@new
+  always_ff @(posedge clk) disp_rst <= rst;
+@end
+
+@mutation de25-the-memory-port-is-reset-by-the-machine
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note The memory port takes the machine's reset, which the port's own hold is a
+@note term of: the machine waits for the port and the port for the machine, for
+@note ever.  Caught at "the memory port is not live after software opened it".
+@old
+  cadr_f2sdram_port u_memory (
+      .clk(clk), .rst(rst),
+@new
+  cadr_f2sdram_port u_memory (
+      .clk(clk), .rst(mach_rst),
+@end
+
+@mutation de25-the-machine-is-reset-whenever-the-port-shuts
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note The machine's hold follows the port's level as well as the latch, which
+@note the gate's header says it must not: the processor's reset then resets the
+@note running machine.  Caught at "the processor's reset reset the running
+@note machine".
+@old
+  assign mach_hold = !may_start;
+@new
+  assign mach_hold = !may_start || !port_live;
+@end
+
+@mutation console-the-button-resets-its-axi-state
+@check board_reset_arty
+@file rtl/plumbing/cadr_console.sv
+@note The fabric's reset put back into the console's AXI state machines: a read
+@note or write the processor started is abandoned with its address taken.
+@old
+    if (rst) begin
+      wst         <= W_ADDR;
+@new
+    if (rst || fabric_rst) begin
+      wst         <= W_ADDR;
+@end
+
+@mutation console-the-button-leaves-its-registers
+@check board_reset_arty
+@file rtl/plumbing/cadr_console.sv
+@note The console's registers reset by the port's reset only: BTN1 leaves the
+@note lamps steady.  Caught at "after console LAMPS".
+@old
+    if (rst || fabric_rst) begin
+      // **A MACHINE COMES UP WITH ONE SIMPLE TV AND NO COLOR BOARD**, which
+@new
+    if (rst) begin
+      // **A MACHINE COMES UP WITH ONE SIMPLE TV AND NO COLOR BOARD**, which
+@end
+
+@mutation console-the-button-leaves-its-engine
+@check board_reset_arty
+@file rtl/plumbing/cadr_console.sv
+@note The diagnostic engine reset by the port's reset only: STAT's `answered`
+@note and `lost` outlive BTN1.  Caught at "after: the console's STAT still
+@note reads `answered`".
+@old
+    if (rst || fabric_rst) begin
+      est       <= E_IDLE;
+@new
+    if (rst) begin
+      est       <= E_IDLE;
+@end
+
+@mutation console-the-button-leaves-the-cycle-count
+@check board_reset_arty
+@file rtl/plumbing/cadr_console.sv
+@note CYCLES and TICKS not cleared by BTN1, which restarts the machine they
+@note count.  Caught at "after: CYCLES reads ... it was not reset".
+@old
+    if (rst || fabric_rst || mach_rst) begin
+      cycles <= 64'd0;
+@new
+    if (rst || mach_rst) begin
+      cycles <= 64'd0;
+@end
+
+@mutation pack-the-button-resets-its-axi-state
+@check board_reset_arty
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The fabric's reset put back into the pack side's face state machines.
+@old
+    if (rst) begin
+      wst   <= W_ADDR;
+@new
+    if (rst || fabric_rst) begin
+      wst   <= W_ADDR;
+@end
+
+@mutation pack-the-button-leaves-its-registers
+@check board_reset_arty
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The pack side's registers reset by the port's reset only: BTN1 leaves
+@note ADDR as it was.  Caught at "after pack ADDR".
+@old
+    if (rst || fabric_rst) begin
+      r_addr  <= 32'd0;
+@new
+    if (rst) begin
+      r_addr  <= 32'd0;
+@end
+
+@mutation window-the-button-resets-its-axi-state
+@check board_reset_arty
+@file rtl/plumbing/cadr_debug_window.sv
+@note The fabric's reset put back into the debug window's state machines.
+@old
+    if (rst) begin
+      wst      <= W_ADDR;
+@new
+    if (rst || fabric_rst) begin
+      wst      <= W_ADDR;
+@end
+
+@mutation window-the-button-leaves-its-registers
+@check board_reset_arty
+@file rtl/plumbing/cadr_debug_window.sv
+@note The window's request and faults reset by the port's reset only.  Caught at
+@note "after window FAULTS".
+@note Written with the input still read, so that lint does not do the
+@note catching.
+@old
+    if (rst || fabric_rst) begin
+      standing   <= 1'b0;
+@new
+    if (rst || (fabric_rst && 1'b0)) begin
+      standing   <= 1'b0;
+@end
+
+@mutation chaos-the-button-resets-its-axi-state
+@check board_reset_arty
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The fabric's reset put into the face's `cadr_gp_regs.sv`, its AXI
+@note state machines: a transaction on its page abandoned with its address
+@note taken.
+@old
+      .clk(clk), .rst(rst),
+@new
+      .clk(clk), .rst(rst || fabric_rst),
+@end
+
+@mutation chaos-the-button-leaves-its-registers
+@check board_reset_arty
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The face's registers reset by the port's reset only.  Caught at the
+@note register the control wrote, read back after the release.
+@note Written with the input still read, so that lint does not do the
+@note catching.
+@old
+    if (rst || fabric_rst) begin
+      r_myaddr    <= 16'd0;
+@new
+    if (rst || (fabric_rst && 1'b0)) begin
+      r_myaddr    <= 16'd0;
+@end
+
+@mutation serial-the-button-resets-its-axi-state
+@check board_reset_arty
+@file rtl/plumbing/cadr_serial_line.sv
+@note The fabric's reset put into the face's `cadr_gp_regs.sv`, its AXI
+@note state machines: a transaction on its page abandoned with its address
+@note taken.
+@old
+      .clk(clk), .rst(rst),
+@new
+      .clk(clk), .rst(rst || fabric_rst),
+@end
+
+@mutation serial-the-button-leaves-its-registers
+@check board_reset_arty
+@file rtl/plumbing/cadr_serial_line.sv
+@note The face's registers reset by the port's reset only.  Caught at the
+@note register the control wrote, read back after the release.
+@note Written with the input still read, so that lint does not do the
+@note catching.
+@old
+    if (rst || fabric_rst) begin
+      acc        <= 32'd0;
+@new
+    if (rst || (fabric_rst && 1'b0)) begin
+      acc        <= 32'd0;
+@end
+
+@mutation input-the-button-resets-its-axi-state
+@check board_reset_arty
+@file rtl/plumbing/cadr_input_cables.sv
+@note The fabric's reset put into the face's `cadr_gp_regs.sv`, its AXI
+@note state machines: a transaction on its page abandoned with its address
+@note taken.
+@old
+      .clk(clk), .rst(rst),
+@new
+      .clk(clk), .rst(rst || fabric_rst),
+@end
+
+@mutation input-the-button-leaves-its-registers
+@check board_reset_arty
+@file rtl/plumbing/cadr_input_cables.sv
+@note The face's registers reset by the port's reset only.  Caught at the
+@note register the control wrote, read back after the release.
+@note Written with the input still read, so that lint does not do the
+@note catching.
+@old
+    if (rst || fabric_rst) begin
+      head       <= '0;
+@new
+    if (rst || (fabric_rst && 1'b0)) begin
+      head       <= '0;
+@end
+
+@mutation pack-the-button-cuts-the-master-mid-burst
+@check disk_pack
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The fabric's reset resets the master at once, burst or no burst: the
+@note port is left owing beats to a master that no longer takes them, and on
+@note the DE25-Nano the share can never go idle.  Caught at "a read burst left
+@note open by the fabric's reset".
+@old
+        if (!owed) begin
+@new
+        if (!owed || 1'b1) begin
+@end
+
+@mutation pack-a-drained-fetch-goes-on
+@check disk_pack
+@file rtl/plumbing/cadr_disk_pack.sv
+@note A fetch the fabric's reset caught goes on to its next burst when the one
+@note in flight ends, into a store and a machine that were reset under it.
+@note Caught at "read bursts a fetch made across the fabric's reset".
+@old
+              pst        <= p_drop ? P_IDLE : last_burst ? P_TAG : P_AR;
+@new
+              pst        <= last_burst ? P_TAG : P_AR;
+@end
+
+@mutation pack-a-drained-write-back-goes-on
+@check disk_pack
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The same for a write-back.  Caught at "write bursts a write-back made
+@note across the fabric's reset".
+@old
+            pst <= p_drop ? P_IDLE : P_AW;
+@new
+            pst <= P_AW;
+@end
+
+@mutation pack-a-drained-move-stays-busy
+@check disk_pack
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The end of a drained burst leaves the master busy for ever, so no command
+@note is taken again.  Caught at "the status word after the fabric's reset".
+@old
+      if (p_drop && (pst == P_IDLE)) begin
+@new
+      if (1'b0) begin
+@end
+
+@mutation pack-a-failed-fetch-is-tagged
+@check disk_pack
+@file rtl/plumbing/cadr_disk_pack.sv
+@note A fetch that met SLVERR tags its slot all the same, over words that did
+@note not arrive, which is what the code did: the machine is given a block that
+@note is not the pack's, and the disk pack program, which reads the error and
+@note treats the slot as empty, is out of step with the store.  Caught at "REQ
+@note after a fetch that failed: its slot must be taken away".
+@old
+        seam_we    = !error;
+@new
+        seam_we    = 1'b1;
+@end
+
+@mutation pack-the-data-waits-for-the-write-address
+@check disk_pack
+@file rtl/plumbing/cadr_disk_pack.sv
+@note The first beat held back until the address is taken, which is what the
+@note code did.  AXI lets a slave wait for WVALID before it raises AWREADY, and
+@note such a slave and this master wait on each other for ever.  Caught at "a
+@note write-back to a port that waits for the data".
+@old
+  assign m_wvalid  = (pst == P_W5);
+@new
+  assign m_wvalid  = (pst == P_W5) && !aw_on;
+@end
+
+@mutation gate-the-fabric-reset-cuts-the-port
+@check f2sdram_reset
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The fabric's reset puts the port into reset at once, as it did: a read
+@note outstanding at the bridge leaves its beat in the read channel, and every
+@note read after it takes the one before's word.  Caught at "the read of ...
+@note returned ..., want ...".
+@old
+    port_rst <= hps_rst || (hold && idle);
+@new
+    port_rst <= hps_rst || rst || (hold && idle);
+@end
+
+@mutation gate-the-processors-reset-waits-for-quiet
+@check f2sdram_reset
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The processor's own reset no longer resets the port at once; it only holds
+@note it and waits for idle, as the fabric's reset does.  The bridge in reset
+@note drops what it owed, so idle never comes and the port stays live over a
+@note reset bridge.  Caught at "the processor's reset did not reset the port
+@note at once".
+@old
+    port_rst <= hps_rst || (hold && idle);
+@new
+    port_rst <= hold && idle;
+@end
+
+@mutation gate-a-short-fabric-reset-is-not-drained
+@check f2sdram_reset
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The drain not latched: the fabric's reset holds the port only while it
+@note lasts, and a pulse shorter than the answer it is waiting for lets the
+@note machine go with that answer still owed.  Caught at "the machine was let
+@note go while the bridge still owed it an answer".
+@old
+    if (rst) drain <= 1'b1;
+@new
+    if (1'b0) drain <= 1'b1;
+@end
+
+@mutation gate-the-drain-ends-before-the-port-is-reset
+@check f2sdram_reset
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The drain let go at once instead of once the port has been reset.
+@old
+    else if (port_rst) drain <= 1'b0;
+@new
+    else drain <= 1'b0;
+@end
+
+@mutation gate-the-machine-goes-before-the-drain-ends
+@check f2sdram_reset
+@file rtl/plumbing/cadr_f2sdram_gate.sv
+@note The machine's hold released by the end of the fabric's reset and not by
+@note the end of the drain.  Caught at "the machine was let go while the
+@note bridge still owed it an answer".
+@old
+    if (rst || drain) may_start <= 1'b0;
+@new
+    if (rst) may_start <= 1'b0;
 @end

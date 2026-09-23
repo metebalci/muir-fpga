@@ -407,7 +407,7 @@ module cadr_pack_axi_harness #(
   // want of memory would be a different check.  `build/gp0_split.pass` is
   // where the port is shut.
   cadr_disk_pack u_pack (
-      .clk(clk), .rst(rst), .port_live(1'b1),
+      .clk(clk), .rst(rst), .fabric_rst(1'b0), .port_live(1'b1),
       .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
       .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
       .s_wdata(gp0_wdata), .s_wstrb(gp0_wstrb), .s_wlast(gp0_wlast),

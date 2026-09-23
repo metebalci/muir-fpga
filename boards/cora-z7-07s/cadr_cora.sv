@@ -1470,14 +1470,21 @@ module cadr_cora #(
 
       logic [2:0] pack_rst_sync;
       // A register, not a gate: the pack side has some three hundred
-      // registers to reset, and made as `rst || !pack_rst_sync[2]` the
-      // machine's synchronizer was on every one of their reset pins across
-      // the distance between the two.  One tick later on a reset the PS
-      // releases at a moment of software's choosing, which nothing counts.
+      // registers to reset, and made as a gate the synchronizer was on every
+      // one of their reset pins across the distance between the two.  One
+      // tick later on a reset the PS releases at a moment of software's
+      // choosing, which nothing counts.
+      //
+      // **THE PORT'S RESET ONLY, AND THE FABRIC'S GOES IN AT `fabric_rst`.**
+      // The face's AXI state machines take `pack_rst` and nothing else, so a
+      // register read the processor has started is answered whether BTN1
+      // comes before it, during it or across it; the registers and the
+      // master take BTN1 as well, the master once its burst on `S_AXI_HP2`
+      // has ended.  `rtl/plumbing/cadr_disk_pack.sv` has both halves.
       logic pack_rst;
       always_ff @(posedge clk) begin
         pack_rst_sync <= {pack_rst_sync[1:0], hp2_aresetn && gp0_aresetn};
-        pack_rst      <= rst || !pack_rst_sync[2];
+        pack_rst      <= !pack_rst_sync[2];
       end
 
       // `port_live` is the memory port's own liveness, which here is the half
@@ -1488,7 +1495,8 @@ module cadr_cora #(
       // the bridge's reset alone and this level does the rest, which
       // `rtl/plumbing/cadr_disk_pack.sv`'s header sets out.
       cadr_disk_pack u_pack (
-          .clk(clk), .rst(pack_rst), .port_live(pack_rst_sync[2]),
+          .clk(clk), .rst(pack_rst), .fabric_rst(rst),
+          .port_live(pack_rst_sync[2]),
           .s_awaddr(gp0p_awaddr), .s_awlen(gp0p_awlen), .s_awid(gp0p_awid),
           .s_awvalid(gp0p_awvalid), .s_awready(gp0p_awready),
           .s_wdata(gp0p_wdata), .s_wstrb(gp0p_wstrb), .s_wlast(gp0p_wlast),
@@ -1609,11 +1617,22 @@ module cadr_cora #(
     // console are: before Linux is up the faces read zero, so the serial
     // port's `CTL` is zero and its cable is out, and the Chaosnet's address
     // switches read zero --- which is exactly what the tie-off did.
+    //
+    // **AND BY NOTHING ELSE, BECAUSE A GENERAL-PURPOSE PORT'S TRANSACTION IS
+    // THE PROCESSOR'S.**  `gp0_rst_s` was once `rst ||` the port's reset, so
+    // BTN1 held the splitter and every face in their address states with
+    // AWREADY and ARREADY high: an address taken then, or one in flight when
+    // the button went down, was never answered, and both Arm cores hung.  So
+    // the splitter and the default slave take the port's reset alone, and
+    // the three faces take BTN1 at `fabric_rst`, which resets their registers
+    // and never their AXI state.  `docs/board.md` has the rule, and
+    // `tb/cadr_board_reset_tb.cpp` presses the button under reads and writes
+    // on every page of both ports.
     logic [2:0] gp0_rst_sync;
     logic gp0_rst_s;
     always_ff @(posedge clk) begin
       gp0_rst_sync <= {gp0_rst_sync[1:0], gp0_aresetn};
-      gp0_rst_s    <= rst || !gp0_rst_sync[2];
+      gp0_rst_s    <= !gp0_rst_sync[2];
     end
 
     cadr_gp0_split u_gp0_split (
@@ -1682,7 +1701,7 @@ module cadr_cora #(
     );
 
     cadr_chaos_cable u_chaos (
-        .clk(clk), .rst(gp0_rst_s),
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst),
         .s_awaddr(gp0c_awaddr), .s_awlen(gp0c_awlen), .s_awid(gp0c_awid),
         .s_awvalid(gp0c_awvalid), .s_awready(gp0c_awready),
         .s_wdata(gp0c_wdata), .s_wstrb(gp0c_wstrb), .s_wlast(gp0c_wlast),
@@ -1708,7 +1727,7 @@ module cadr_cora #(
     );
 
     cadr_serial_line u_serial (
-        .clk(clk), .rst(gp0_rst_s),
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst),
         .s_awaddr(gp0s_awaddr), .s_awlen(gp0s_awlen), .s_awid(gp0s_awid),
         .s_awvalid(gp0s_awvalid), .s_awready(gp0s_awready),
         .s_wdata(gp0s_wdata), .s_wstrb(gp0s_wstrb), .s_wlast(gp0s_wlast),
@@ -1741,7 +1760,7 @@ module cadr_cora #(
     // `con_mach_rst` would have frozen both Arm cores, which the note at
     // `mach_rst` above sets out at length.
     cadr_input_cables u_input (
-        .clk(clk), .rst(gp0_rst_s), .mach_rst(mach_rst),
+        .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst), .mach_rst(mach_rst),
         .s_awaddr(gp0i_awaddr), .s_awlen(gp0i_awlen), .s_awid(gp0i_awid),
         .s_awvalid(gp0i_awvalid), .s_awready(gp0i_awready),
         .s_wdata(gp0i_wdata), .s_wstrb(gp0i_wstrb), .s_wlast(gp0i_wlast),
@@ -1780,12 +1799,14 @@ module cadr_cora #(
     // Reset by the port's own reset, synchronized, as the pack side is ---
     // and the machine is NOT reset with it: a console that reset the machine
     // when Linux came up would be a console that could never be attached to
-    // a running machine, which is the only time it is wanted.
+    // a running machine, which is the only time it is wanted.  **And BTN1
+    // reaches the console and the window only at `fabric_rst`**, their
+    // registers and never their AXI state, for the reason `gp0_rst_s` gives.
     logic [2:0] gp1_rst_sync;
     logic gp1_rst;
     always_ff @(posedge clk) begin
       gp1_rst_sync <= {gp1_rst_sync[1:0], gp1_aresetn};
-      gp1_rst      <= rst || !gp1_rst_sync[2];
+      gp1_rst      <= !gp1_rst_sync[2];
     end
 
     cadr_gp1_split u_gp1_split (
@@ -1856,7 +1877,7 @@ module cadr_cora #(
     cadr_debug_window #(
         .REG_BASE(32'h8000_1000)
     ) u_debug_window (
-        .clk(clk), .rst(gp1_rst),
+        .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
         .s_awaddr(gp1d_awaddr), .s_awlen(gp1d_awlen), .s_awid(gp1d_awid),
         .s_awvalid(gp1d_awvalid), .s_awready(gp1d_awready),
         .s_wdata(gp1d_wdata), .s_wstrb(gp1d_wstrb), .s_wlast(gp1d_wlast),
@@ -1909,7 +1930,7 @@ module cadr_cora #(
     /* verilator lint_on UNUSEDSIGNAL */
 
     cadr_console u_console (
-        .clk(clk), .rst(gp1_rst),
+        .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
         .s_awaddr(gp1c_awaddr), .s_awlen(gp1c_awlen), .s_awid(gp1c_awid),
         .s_awvalid(gp1c_awvalid), .s_awready(gp1c_awready),
         .s_wdata(gp1c_wdata), .s_wstrb(gp1c_wstrb), .s_wlast(gp1c_wlast),

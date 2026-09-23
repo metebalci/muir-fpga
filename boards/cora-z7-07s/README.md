@@ -191,11 +191,13 @@ each. The cost is that the control which throws the machine's state away sits
 next to the one that restarts it politely.
 
 The fabric reset resets the logic in the fabric. That is the machine, the
-console's and the disk pack's register faces, and the lamps. The processing
-system and Linux keep running across it, and it does not reload the bitstream.
-The programs under Linux keep the view of the register faces they had before,
-so after BTN1 the disk pack program and the console are out of step with the
-fabric until they are restarted. `rst -srst` over JTAG resets everything, and
+registers of every face the programs under Linux use, and the lamps. It never
+breaks a transaction the processor has started on a general-purpose port, and
+`docs/board.md` has the rule. The processing system and Linux keep running
+across it, and it does not reload the bitstream. The programs under Linux keep
+the view of the register faces they had before, so after BTN1 the disk pack
+program and the console are out of step with the fabric until they are
+restarted. `rst -srst` over JTAG resets everything, and
 on a board with a processing system that is the reset to reach for.
 
 ## The debug cable

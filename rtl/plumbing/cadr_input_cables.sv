@@ -217,8 +217,14 @@ module cadr_input_cables #(
 ) (
     input  var logic        clk,
     // The PORT's reset: this face's own, released when Linux brings the
-    // general purpose port up.
+    // general purpose port up.  It alone resets `cadr_gp_regs.sv`, the state
+    // machines that answer the port.
     input  var logic        rst,
+    // **THE FABRIC'S RESET**, which resets this face's registers and never
+    // its AXI state, so a transaction the processor has started is answered
+    // whether the fabric's reset lands before it, during it or across it.
+    // `docs/board.md` has the rule.
+    input  var logic        fabric_rst,
     // **THE MACHINE'S reset, which EMPTIES THE QUEUE**: leg 2 of the
     // autoboot trap in the header.  A separate port and not an OR into
     // `rst`, because resetting this face's AXI state machine mid-transaction
@@ -403,7 +409,7 @@ module cadr_input_cables #(
   assign flush = wr && (w_word == 10'd5) && wr_data[0] && wr_mask[0];
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || fabric_rst) begin
       head       <= '0;
       tail       <= '0;
       count      <= '0;

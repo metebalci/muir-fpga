@@ -230,7 +230,14 @@ module cadr_serial_line #(
     parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
+    // The port's own reset, from the processing system.  It alone resets
+    // `cadr_gp_regs.sv`, the state machines that answer the port.
     input  var logic        rst,
+    // **THE FABRIC'S RESET**, which resets this face's registers and never
+    // its AXI state, so a transaction the processor has started is answered
+    // whether the fabric's reset lands before it, during it or across it.
+    // `docs/board.md` has the rule.
+    input  var logic        fabric_rst,
 
     // --- the face: one 4 KB page of `M_AXI_GP0`, the offset only ---------
     input  var logic [11:0] s_awaddr,
@@ -539,7 +546,7 @@ module cadr_serial_line #(
   // The line
   // ------------------------------------------------------------------------
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || fabric_rst) begin
       acc        <= 32'd0;
       div_cnt    <= 13'd0;
       r_ctl      <= 3'd0;

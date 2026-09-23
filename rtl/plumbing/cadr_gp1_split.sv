@@ -133,6 +133,11 @@ module cadr_gp1_split #(
     parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,
+    // **THE PORT'S OWN RESET AND NOTHING ELSE**, never the fabric's.  This
+    // module is AXI state and nothing more, so a reset of it with a
+    // transaction in flight takes the address and never answers it, which
+    // hangs both Arm cores.  Only the processing system's reset of the port
+    // may reset it; `docs/board.md` has the rule.
     input  var logic        rst,
 
     // --- M_AXI_GP1 as the PS drives it: 32 bits, AXI3, the PS the master ---

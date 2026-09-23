@@ -88,6 +88,9 @@ module cadr_gp1_split_harness #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
+    // The fabric's reset: the faces' registers and never the port's AXI
+    // state.  The splitter and the default slave never see it.
+    input  var logic        fabric_rst,
 
     // --- `M_AXI_GP1` as the PS would drive it -----------------------------
     input  var logic [31:0] m_awaddr,
@@ -274,7 +277,7 @@ module cadr_gp1_split_harness #(
   logic [14:0] hdmi_sleep_secs;
 
   cadr_console #(.REG_BASE(CON_BASE), .ID_W(ID_W), .LEN_W(LEN_W)) u_console (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .fabric_rst(fabric_rst),
       .s_awaddr(c_awaddr), .s_awlen(c_awlen), .s_awid(c_awid),
       .s_awvalid(c_awvalid), .s_awready(c_awready),
       .s_wdata(c_wdata), .s_wstrb(c_wstrb), .s_wlast(c_wlast),
@@ -345,7 +348,7 @@ module cadr_gp1_split_harness #(
       .WATCHDOG_T(WATCHDOG_T),
       .ID_W(ID_W), .LEN_W(LEN_W)
   ) u_window (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .fabric_rst(fabric_rst),
       .s_awaddr(d_awaddr), .s_awlen(d_awlen), .s_awid(d_awid),
       .s_awvalid(d_awvalid), .s_awready(d_awready),
       .s_wdata(d_wdata), .s_wstrb(d_wstrb), .s_wlast(d_wlast),

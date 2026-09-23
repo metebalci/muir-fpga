@@ -180,6 +180,10 @@ struct Hp2Slave {
   // Answer the n'th burst (counting AW and AR together from zero) with
   // SLVERR; -1 for none.
   long refuse_burst = -1;
+  // Take a write address only while a data beat is offered beside it, which
+  // AXI allows a slave: a master that holds its data back until its address
+  // is taken waits on this slave for ever.
+  bool aw_waits_for_w = false;
   long bursts = 0;
 
   // The tally, and the protocol errors seen.
@@ -221,7 +225,7 @@ struct Hp2Slave {
     // offering a second address, which is what
     // `awvalid-held-up-after-awready` holds; taking it and counting it is
     // what makes the duplicate a failure rather than a stall.
-    if (dut->hp2_awvalid) {
+    if (dut->hp2_awvalid && (!aw_waits_for_w || dut->hp2_wvalid)) {
       if (aw_wait > 0) { --aw_wait; dut->hp2_awready = 0; }
       else dut->hp2_awready = 1;
     } else dut->hp2_awready = 0;

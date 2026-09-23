@@ -586,9 +586,50 @@ int main(int argc, char **argv) {
     if (!(st & ST_ERROR)) Fail("the error bit after SLVERR", st, ST_ERROR);
     else ++error_moves;
     hp2.refuse_burst = -1;
+    // **A FETCH THAT FAILED LEAVES ITS SLOT TAKEN AWAY**, so a Read of the
+    // block waits for it and asks for it, as the disk pack program assumes;
+    // a slot tagged over words that did not arrive would be read instead.
+    const unsigned page = 0xA8;
+    fill_page(page);
+    ccw(CLP, page);
+    do_write(0, 00);
+    do_write(1, CLP);
+    do_write(2, tag_of(x.c, x.h, x.b));
+    do_write(3, 0);
+    d_rq = 0;
+    for (int q = 0; q < 200; ++q) run_tick(false);
+    const uint32_t rq = reg_read(R_REQ);
+    if (rq != (REQ_VALID | tag_of(x.c, x.h, x.b)))
+      Fail("REQ after a fetch that failed: its slot must be taken away", rq,
+           REQ_VALID | tag_of(x.c, x.h, x.b));
     st = fetch(x.at, tag_of(x.c, x.h, x.b), x.slot, "the fetch after it");
     if (st & ST_ERROR) Fail("the error bit after a clean fetch", st, 0);
     ++fetches;
+    settle_walk();
+    if (page_is(page, [&](int i) { return rec_word(x.at, i); }, "the Read that waited out a failed fetch"))
+      ++reads_compared;
+    reg_write(R_IRQ, 0x7);
+    bus_idle();
+  }
+
+  // ========================================================================
+  phase = "a port that takes a write's address only beside its data";
+  {
+    // AXI lets a slave wait for WVALID before it raises AWREADY, so the
+    // first beat must not wait for the address to be taken.
+    hp2.aw_waits_for_w = true;
+    const Held &x = held[4];
+    const uint64_t to = fresh();
+    writeback(to, x.slot, "a write-back to a port that waits for the data");
+    ++writebacks;
+    hp2.aw_waits_for_w = false;
+    uint32_t got[RECORD_WORDS];
+    ddr.record(to, got);
+    for (int i = 0; i < 256; ++i)
+      if (got[i] != rec_word(x.at, i)) {
+        Fail("a word written back to a port that waits for the data", got[i], rec_word(x.at, i));
+        break;
+      }
   }
 
   // ========================================================================
@@ -1284,6 +1325,56 @@ int main(int argc, char **argv) {
       if (hp2.ar_addrs[i] != want) ++bad_addr;
     }
     if (bad_addr) Fail("read bursts not where the record's are", bad_addr, 0);
+  }
+
+  // ========================================================================
+  // After the tally, because it moves part of a block, which the tally's
+  // arithmetic of nine bursts a move does not count.
+  phase = "the fabric's reset under a move";
+  {
+    // **THE FABRIC'S RESET DRAINS THE MASTER BEFORE IT RESETS IT.**  The
+    // burst in flight when it lands runs to its end, whole, and nothing
+    // after it starts: a burst cut short would leave the port owing beats
+    // to a master that no longer takes them.  And the registers are reset.
+    auto pulse_fabric = [&](int n) {
+      dut->fabric_rst = 1;
+      for (int i = 0; i < n; ++i) run_tick(false);
+      dut->fabric_rst = 0;
+    };
+    const Held &x = held[7];
+    long b0 = hp2.bursts;
+    go(x.at, tag_of(x.c, x.h, x.b), x.slot, CTL_FETCH);
+    for (int n = 0; n < 5000 && !(hp2.bursts - b0 == 3 && hp2.r_beats >= 4); ++n) run_tick(false);
+    if (!hp2.ar_open) Say("the fetch was not in a burst when the fabric's reset came");
+    pulse_fabric(5);
+    for (int q = 0; q < 400; ++q) run_tick(false);
+    if (hp2.ar_open) Say("a read burst left open by the fabric's reset");
+    if (hp2.bursts - b0 != 3) Fail("read bursts a fetch made across the fabric's reset", hp2.bursts - b0, 3);
+    uint32_t st = reg_read(R_CTL);
+    if (st & (ST_BUSY | ST_DONE | ST_ERROR)) Fail("the status word after the fabric's reset", st, 0);
+    if (reg_read(R_ADDR) != 0) Fail("ADDR after the fabric's reset", reg_read(R_ADDR), 0);
+    // A write-back, the reset in its second burst's beats.
+    b0 = hp2.bursts;
+    const uint64_t to = fresh();
+    go(to, 0, held[8].slot, CTL_WRITE);
+    const long w0 = hp2.w_count;
+    for (int n = 0; n < 5000 && hp2.w_count - w0 < 16 + 5; ++n) run_tick(false);
+    pulse_fabric(5);
+    for (int q = 0; q < 600; ++q) run_tick(false);
+    if (hp2.aw_open || hp2.b_pending) Say("a write burst left owing by the fabric's reset");
+    if (hp2.bursts - b0 != 2) Fail("write bursts a write-back made across the fabric's reset", hp2.bursts - b0, 2);
+    if (hp2.w_count - w0 != 32) Fail("write beats across the fabric's reset", hp2.w_count - w0, 32);
+    st = reg_read(R_CTL);
+    if (st & (ST_BUSY | ST_DONE | ST_ERROR)) Fail("the status word after the fabric's reset", st, 0);
+    // And the pack side works after it.
+    fetch(x.at, tag_of(x.c, x.h, x.b), x.slot, "a fetch after the fabric's reset");
+    const unsigned page = 0xA9;
+    fill_page(page);
+    ccw(CLP, page);
+    reg_write(R_DRIVE, 0x00000001u);
+    command(00, CLP, tag_of(x.c, x.h, x.b));
+    if (!page_is(page, [&](int i) { return rec_word(x.at, i); }, "a Read after the fabric's reset"))
+      Say("the pack side did not work after the fabric's reset");
   }
 
   delete dut;

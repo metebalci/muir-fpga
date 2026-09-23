@@ -161,17 +161,19 @@
 // attribute to a process, and a constant a program can recognize is the safer
 // failure.
 //
-// **WHERE THE WINDOW SITS IS NOT DECIDED.**  `REG_BASE` is a parameter and
-// this module is a whole-port slave, so it drops onto a port of its own
-// unchanged or behind a split.  `docs/debug-cable.md` has the question with
-// its numbers.
+// **WHERE THE WINDOW SITS.**  `REG_BASE` is a parameter and this module is a
+// whole-port slave, so it drops onto a port of its own unchanged or behind a
+// split.  Every board puts it behind `cadr_gp1_split.sv`, on the page after
+// the console's: `0x8000_1000` on the Zynq boards' `M_AXI_GP1`, and offset
+// `0x1000` into the DE25-Nano's lightweight bridge.  `docs/debug-cable.md`
+// has the map and the reasons.
 
 `default_nettype none
 
 module cadr_debug_window #(
-    // Where the sixteen words sit.  `0x8000_0000` is the first address
-    // `M_AXI_GP1` decodes to the fabric in the Zynq-7000 PS address map, as
-    // `0x4000_0000` is `M_AXI_GP0`'s.
+    // Where the sixteen words sit.  Every board sets it: see the header.
+    // This default, the second 128 bytes of `M_AXI_GP1`'s first page, is
+    // what `tb/cadr_dbgin_harness.sv` builds, and it is no board's address.
     parameter logic [31:0] REG_BASE = 32'h8000_0080,
     // muir's `fabric::DBUG`: "DBUG", 'D' in the most significant byte.
     parameter logic [31:0] IDENT    = 32'h4442_5547,
@@ -204,7 +206,15 @@ module cadr_debug_window #(
     parameter int unsigned LEN_W = 4
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
+    // The port's own reset, from the processing system.  It alone resets the
+    // two state machines that answer the port.
     input  var logic        rst,
+    // **THE FABRIC'S RESET**: BTN1 or KEY1, or the clock generator losing
+    // lock.  It resets the window's registers and never its AXI state, so a
+    // transaction the processor has started is answered whether the fabric's
+    // reset lands before it, during it or across it.  `docs/board.md` has
+    // the rule and `tb/cadr_board_reset_tb.cpp` holds it on each board.
+    input  var logic        fabric_rst,
 
     // --- the general-purpose port, on which the processor is the master.
     // --- 32 bits, one write and one read in flight at once; `ID_W` and
@@ -375,7 +385,7 @@ module cadr_debug_window #(
 
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || fabric_rst) begin
       standing   <= 1'b0;
       seq        <= 4'd0;
       count      <= 16'd0;
@@ -460,7 +470,7 @@ module cadr_debug_window #(
   end
 
   // ------------------------------------------------------------------------
-  // The port's two state machines
+  // The port's two state machines, which only the port's own reset resets
   // ------------------------------------------------------------------------
 
   logic w_last_q;
