@@ -121,6 +121,16 @@ FLAGS="--address --chaos-address
        --udp-default-peer --chaos-udp-default-peer
        --trace --chaos-trace"
 
+# **A FLAG ON TWO LINES OF THE CARD IS TAKEN FROM THE LAST ONE**, with a warning
+# on the console, and the program is handed that line alone; the reader's
+# header has the rule.  Each line of FLAGS above is one flag in two spellings,
+# so `--chaos-address` on one line and `--address` on another are one flag
+# given twice, and the reader is told so by being given the list itself.  A
+# peer places one address, so the peer lines are the one flag here that keeps
+# every line.
+FPGARC_SPELLINGS=$FLAGS
+FPGARC_REPEATABLE="--udp-peer --chaos-udp-peer"
+
 # **THE TWO DEFAULTS, AND THE RULE THAT DECIDES WHICH OF THEM IS EVER PASSED.**
 # System 100's own address, and CHUDP's own port on every interface.
 #

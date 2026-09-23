@@ -108,6 +108,11 @@ FLAGS="--no-ozd
        --ozd-hosts-text
        --ozd-trace"
 
+# A flag on two lines of the card is taken from the last one, with a warning;
+# the reader's header has the rule.  A root names one tree and a host line one
+# machine, so those two keep every line.
+FPGARC_REPEATABLE="--ozd-root --ozd-host"
+
 # **THE DEFAULTS, AND WHY EACH IS WHAT IT IS.**
 #
 # THE ADDRESS IS THE ONE THE BAND CALLS, and it is not free to choose.  A band
@@ -227,10 +232,16 @@ start() {
 	mkdir -p "$BASE_ROOT" 2>/dev/null
 	chown -R "$OZD_USER" "$BASE_ROOT" 2>/dev/null
 
-	# The defaults first and the card's lines after them, so that a card
-	# line wins, which is muir's rule and the rule everywhere in this file.
-	set -- --address "$DEFAULT_ADDRESS" --name "$DEFAULT_NAME" \
-	       --listen "127.0.0.1:$port" --root "$BASE_ROOT"
+	# The defaults first and the card's lines after them.  A default is
+	# passed only where the card says nothing about it, which is the rule
+	# every other script here follows, so each flag stands on ozd's command
+	# line once.  **AND THE ADDRESS ozd IS GIVEN IS THE ONE THE PEER FILE
+	# NAMES BELOW**: both come from the card's last `--ozd-chaos-address`
+	# line, because the reader hands out no other.
+	set -- --listen "127.0.0.1:$port" --root "$BASE_ROOT"
+	fpgarc_has "$RC" --ozd-chaos-address ||
+		set -- --address "$DEFAULT_ADDRESS" "$@"
+	fpgarc_has "$RC" --ozd-name || set -- "$@" --name "$DEFAULT_NAME"
 	card=$(fpgarc_args "$RC" $FLAGS)
 	eval "set -- \"\$@\" $(eval "to_ozd $card")"
 
@@ -246,7 +257,18 @@ start() {
 	# else: without it ozd reads .ozdrc from the working directory or from
 	# a home directory, and an init script's working directory is not a
 	# thing anybody meant to configure a board with.
-	if ! "$PROG" --check -c /dev/null "$@" > "$PIDFILE.check" 2>&1; then
+	#
+	# **AND IT IS RUN AS ozd'S OWN USER, AS THE START IS.**  ozd refuses to
+	# run as root for `--check` too, so a dry run from this script as root
+	# refused every time and the host never started on a board.  It is also
+	# the right question: whether ozd's user can reach the roots, not
+	# whether root can.  The tool is the start's own, start-stop-daemon's
+	# `-c`.  Without `-b` busybox's execs the program in place, so its
+	# output is this redirection's and its status is ozd's.  With no `-p`
+	# it first looks in /proc for a running $PROG and says so instead of
+	# running it, which is the answer the start below would give too.
+	if ! start-stop-daemon -S -c "$OZD_USER" --exec "$PROG" -- \
+	    --check -c /dev/null "$@" > "$PIDFILE.check" 2>&1; then
 		echo "Starting ozd: FAIL"
 		sed 's/^/ozd: /' "$PIDFILE.check"
 		rm -f "$PIDFILE.check"

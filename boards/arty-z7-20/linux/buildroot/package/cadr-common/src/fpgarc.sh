@@ -42,9 +42,12 @@
 #   fpgarc_args FILE FLAG...
 #       Prints the lines of FILE whose flag is one of FLAG..., as shell-quoted
 #       words on one line, for `eval set --`.  A flag with an argument is two
-#       words and a bare flag is one.  Order is the file's.  Prints nothing
-#       and returns 1 when FILE does not exist, so a caller can tell "no file"
-#       from "a file with nothing of mine in it"; returns 0 otherwise.
+#       words and a bare flag is one.  Order is the file's.  A flag on more
+#       than one line is printed from its LAST line only, and a warning naming
+#       it and every one of its lines goes to stderr; see below.  Prints
+#       nothing and returns 1 when FILE does not exist, so a caller can tell
+#       "no file" from "a file with nothing of mine in it"; returns 0
+#       otherwise.
 #
 #   fpgarc_has FILE FLAG
 #       True when FILE names FLAG, with an argument or without.  It is how a
@@ -53,6 +56,13 @@
 #       False for a file that is not there.  It claims FLAG exactly as
 #       fpgarc_args does, which is right --- a script only asks about a flag
 #       it owns.
+#
+#   FPGARC_REPEATABLE, FPGARC_SPELLINGS
+#       Set by a calling script, before it asks.  The first names the flags
+#       its program takes more than once by their own definition, which keep
+#       every line and are never warned about.  The second is the script's own
+#       FLAGS list when one line of it holds two spellings of one flag, so
+#       that the two spellings count as one flag.
 #
 #   fpgarc_say_unclaimed FILE
 #       Print one line naming the flags in FILE that no program on this board
@@ -94,6 +104,26 @@
 # first rather than last.
 FPGARC_CLAIMED=${FPGARC_CLAIMED:-/var/run/cadr-fpgarc.claimed}
 #
+# **A FLAG ON TWO LINES IS TAKEN FROM THE LAST ONE, AND THE CONSOLE IS TOLD.**
+# A card edited in a reader can say one thing twice: a line uncommented below
+# one that was already live, or a new value added at the bottom with the old one
+# left in.  A warning on a board is easy to miss, so the value used must be the
+# one a person most plausibly meant, and somebody editing a file expects the
+# line further down to win.  Every program here takes the last flag it is given
+# as well, but that is not relied on: each program is handed ONE line for such a
+# flag, the last, so that a script which reads a value for itself and the
+# program it starts cannot act on two different lines.  The ozd script once
+# wrote the Chaosnet peer from the first `--ozd-chaos-address` while ozd itself
+# was handed every line.
+#
+# The warning goes to stderr, which is the console at boot, and names the flag
+# and every line it is on, counted as an editor counts them.  A script asks
+# about one flag more than once --- `fpgarc_has` before `fpgarc_args` --- so the
+# flags already warned about are remembered here and each is said once a boot.
+# If this cannot be written the warning may be said twice, which is the right
+# way round to fail.
+FPGARC_WARNED=${FPGARC_WARNED:-/var/run/cadr-fpgarc.warned}
+#
 # HOW A CALLER USES IT.  The words are quoted, so they go back through `eval`
 # and an argument with a space in it survives:
 #
@@ -127,17 +157,81 @@ fpgarc_quote() {
 	printf "'%s' " "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
-# The file, cleaned the way muir reads its own: carriage returns gone,
-# comments and blank lines dropped, each line trimmed, and the gap between a
-# flag and its argument reduced to one space so the two can be split apart
-# with no word-splitting of the argument itself.
-fpgarc_lines() {
-	tr -d '\r' < "$1" | sed \
-		-e '/^[[:space:]]*#/d' \
-		-e 's/^[[:space:]]*//' \
+# The file, cleaned the way muir reads its own, with each line's number in the
+# file in front of it: carriage returns gone, comments and blank lines dropped,
+# each line trimmed, and the gap between a flag and its argument reduced to
+# one space so the two can be split apart with no word-splitting of the
+# argument itself.  The number is counted before anything is dropped, so it
+# is the line a person finds in an editor.
+#
+# **THE `echo` IS FOR A LAST LINE WITH NO NEWLINE AFTER IT**, which is what an
+# editor on a laptop may leave and exactly where a line is added.  GNU sed
+# passes such a line on unterminated, and `read` then returns false on it, so
+# dash and bash dropped the card's last line.  One more newline is at worst a
+# blank line, which is dropped.
+fpgarc_numbered() {
+	{ tr -d '\r' < "$1"; echo; } | sed -n -e '=' -e 'p' | sed -e 'N' -e 's/\n/ /' | sed \
+		-e '/^[0-9]* [[:space:]]*#/d' \
+		-e 's/^\([0-9]*\) [[:space:]]*/\1 /' \
 		-e 's/[[:space:]]*$//' \
-		-e '/^$/d' \
-		-e 's/^\([^[:space:]][^[:space:]]*\)[[:space:]][[:space:]]*/\1 /'
+		-e '/^[0-9]*$/d' \
+		-e 's/^\([0-9]* [^[:space:]][^[:space:]]*\)[[:space:]][[:space:]]*/\1 /'
+}
+
+# The same lines without their numbers.
+fpgarc_lines() {
+	fpgarc_numbered "$1" | sed 's/^[0-9]* //'
+}
+
+# Which flag FLAG is a spelling of: the first word of its line in
+# FPGARC_SPELLINGS, or FLAG itself.
+fpgarc_key() {
+	_fpgarc_k=
+	if [ -n "${FPGARC_SPELLINGS:-}" ]; then
+		_fpgarc_k=$(printf '%s\n' "$FPGARC_SPELLINGS" | while read -r _fpgarc_s; do
+			for _fpgarc_w in $_fpgarc_s; do
+				[ "$_fpgarc_w" = "$1" ] || continue
+				printf '%s' "${_fpgarc_s%%[[:space:]]*}"
+				exit 0
+			done
+		done)
+	fi
+	printf '%s' "${_fpgarc_k:-$1}"
+}
+
+# True when the flag whose key is $1, written as $2, may be given more than
+# once.  Either spelling may be the one FPGARC_REPEATABLE names.
+fpgarc_repeatable() {
+	for _fpgarc_r in ${FPGARC_REPEATABLE:-}; do
+		[ "$_fpgarc_r" = "$1" ] || [ "$_fpgarc_r" = "$2" ] && return 0
+	done
+	return 1
+}
+
+# "3 and 7", or "3, 5 and 7", out of numbers one a line.
+fpgarc_and() {
+	_fpgarc_list=
+	_fpgarc_prev=
+	for _fpgarc_i in $1; do
+		if [ -n "$_fpgarc_prev" ]; then
+			_fpgarc_list="${_fpgarc_list:+$_fpgarc_list, }$_fpgarc_prev"
+		fi
+		_fpgarc_prev=$_fpgarc_i
+	done
+	printf '%s' "${_fpgarc_list:+$_fpgarc_list and }$_fpgarc_prev"
+}
+
+# Say once a boot that a flag is on more than one line.  $1 the file, $2 the
+# flag's key, $3 its line numbers, $4 the spellings it was written in.
+fpgarc_warn_repeat() {
+	if [ -n "${FPGARC_WARNED:-}" ]; then
+		grep -qx -- "$2" "$FPGARC_WARNED" 2>/dev/null && return 0
+		{ printf '%s\n' "$2"; } 2>/dev/null >> "$FPGARC_WARNED" || :
+	fi
+	_fpgarc_last=
+	for _fpgarc_i in $3; do _fpgarc_last=$_fpgarc_i; done
+	echo "fpgarc: $4 is on lines $(fpgarc_and "$3") of $1;" \
+	     "line $_fpgarc_last is used and the others are not" >&2
 }
 
 fpgarc_args() {
@@ -160,7 +254,24 @@ fpgarc_args() {
 		done 2>/dev/null >> "$FPGARC_CLAIMED" || :
 	fi
 	[ -f "$_fpgarc_file" ] || return 1
-	fpgarc_lines "$_fpgarc_file" | while IFS= read -r _fpgarc_line; do
+	# The lines this caller asked for, one a line as `NUMBER KEY LINE`, where
+	# KEY is the flag whichever spelling the line used.
+	_fpgarc_mine=$(fpgarc_numbered "$_fpgarc_file" | while IFS= read -r _fpgarc_line; do
+		_fpgarc_n=${_fpgarc_line%% *}
+		_fpgarc_line=${_fpgarc_line#* }
+		_fpgarc_flag=${_fpgarc_line%% *}
+		for _fpgarc_want in "$@"; do
+			[ "$_fpgarc_flag" = "$_fpgarc_want" ] || continue
+			printf '%s %s %s\n' "$_fpgarc_n" "$(fpgarc_key "$_fpgarc_flag")" "$_fpgarc_line"
+			break
+		done
+	done)
+	printf '%s\n' "$_fpgarc_mine" | while IFS= read -r _fpgarc_entry; do
+		[ -n "$_fpgarc_entry" ] || continue
+		_fpgarc_n=${_fpgarc_entry%% *}
+		_fpgarc_line=${_fpgarc_entry#* }
+		_fpgarc_key=${_fpgarc_line%% *}
+		_fpgarc_line=${_fpgarc_line#* }
 		case "$_fpgarc_line" in
 		*' '*)
 			_fpgarc_flag=${_fpgarc_line%% *}
@@ -173,12 +284,31 @@ fpgarc_args() {
 			_fpgarc_valued=0
 			;;
 		esac
-		for _fpgarc_want in "$@"; do
-			[ "$_fpgarc_flag" = "$_fpgarc_want" ] || continue
-			fpgarc_quote "$_fpgarc_flag"
-			[ "$_fpgarc_valued" = 1 ] && fpgarc_quote "$_fpgarc_value"
-			break
-		done
+		# **ONE LINE A FLAG, THE LAST.**  Every line of this flag, in
+		# either spelling; a line that is not the last is dropped, and the
+		# last one says so once.
+		if ! fpgarc_repeatable "$_fpgarc_key" "$_fpgarc_flag"; then
+			_fpgarc_at=
+			_fpgarc_names=
+			while read -r _fpgarc_a _fpgarc_b _fpgarc_c; do
+				[ "$_fpgarc_b" = "$_fpgarc_key" ] || continue
+				_fpgarc_at="$_fpgarc_at $_fpgarc_a"
+				case " $_fpgarc_names " in
+				*" ${_fpgarc_c%% *} "*) ;;
+				*) _fpgarc_names="${_fpgarc_names:+$_fpgarc_names or }${_fpgarc_c%% *}" ;;
+				esac
+			done <<-EOF
+			$_fpgarc_mine
+			EOF
+			_fpgarc_last=
+			for _fpgarc_i in $_fpgarc_at; do _fpgarc_last=$_fpgarc_i; done
+			[ "$_fpgarc_n" = "$_fpgarc_last" ] || continue
+			[ "$_fpgarc_at" = " $_fpgarc_n" ] ||
+				fpgarc_warn_repeat "$_fpgarc_file" "$_fpgarc_key" \
+					"$_fpgarc_at" "$_fpgarc_names"
+		fi
+		fpgarc_quote "$_fpgarc_flag"
+		[ "$_fpgarc_valued" = 1 ] && fpgarc_quote "$_fpgarc_value"
 	done
 	return 0
 }
