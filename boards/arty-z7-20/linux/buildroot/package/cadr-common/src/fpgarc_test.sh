@@ -253,6 +253,32 @@ for _a; do case "\$_a" in $WORK/dev/*) _dev=\$_a ;; esac; done
 grep -qx "\$_dev" "$WORK/mountable" 2>/dev/null || exit 1
 exit 0
 EOF
+	# **WHO THE ozd USER IS, WHICH THE IMAGE DECIDES AND THE CASE SAYS.**
+	# Buildroot picks the user's ids when it builds the image, so the disk
+	# script asks for its group at boot.  \`$WORK/ozd.gid\` holds the gid
+	# the image gave it, and its absence is an image built without ozd.
+	# Every case gets one unless it says otherwise, because every image this
+	# project builds has the host.  Any other question goes to the real id.
+	echo 1042 > "$WORK/ozd.gid"
+	_realid=$(command -v id)
+	cat > "$WORK/bin/id" <<EOF
+#!/bin/sh
+case "\$*" in
+"-g ozd"|"-G ozd"|"ozd"|"-u ozd")
+	if [ -s "$WORK/ozd.gid" ]; then
+		case "\$1" in
+		-u) echo 1041 ;;
+		-g|-G) cat "$WORK/ozd.gid" ;;
+		*) echo "uid=1041(ozd) gid=\$(cat "$WORK/ozd.gid")(ozd)" ;;
+		esac
+		exit 0
+	fi
+	echo "id: unknown user ozd" >&2
+	exit 1
+	;;
+esac
+exec "$_realid" "\$@"
+EOF
 	# The Chaosnet script's network probes: ready at once, every name
 	# resolving, because the wait itself is chaos_test_boot.sh's to hold.
 	cat > "$WORK/bin/ip" <<EOF
@@ -4307,6 +4333,109 @@ for dev in p1 p2; do
 		mount_opts_hold
 	fi
 done
+
+# **AND THE ozd GROUP MAY WRITE THE CARD**, so that the host can serve the
+# band's `site` tree read-write and the band can save its host table there.
+# FAT has no owner per directory, so the group can write the whole card, which
+# is the accepted cost.  The group is looked up when the board boots, because
+# Buildroot picks its id when it builds the image: two gids are tried, so a
+# script that wrote one image's number in would fail the other.  Each vfat
+# mount must name that gid, give the group write and search, and still pass
+# `mount_opts_hold` above, which is root's write and everybody's read.
+group_may_write() {
+	_n=0
+	while IFS= read -r _line; do
+		case "$_line" in *"-t vfat"*) ;; *) continue ;; esac
+		_n=$((_n + 1))
+		_o=$(printf '%s\n' "$_line" | sed -n 's/.*-o \([^ ]*\).*/\1/p')
+		_gid=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^gid=//p')
+		_um=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^umask=//p')
+		_dm=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^dmask=//p')
+		_fm=$(printf '%s\n' "$_o" | tr ',' '\n' | sed -n 's/^fmask=//p')
+		[ -n "$_dm" ] || _dm=$_um
+		[ -n "$_fm" ] || _fm=$_um
+		if [ "$_gid" != "$1" ]; then
+			fail "the card is mounted for gid '$_gid' and the ozd group is $1: $_line"
+			continue
+		fi
+		if [ -z "$_dm" ] || [ -z "$_fm" ] \
+		   || [ $((0$_dm & 0070)) != 0 ] || [ $((0$_fm & 0060)) != 0 ]; then
+			fail "the card's group cannot write it or search its folders: $_line"
+			continue
+		fi
+		ok "the ozd group, gid $1, may write the card: -o $_o"
+	done < "$WORK/mount.calls"
+	[ "$_n" -gt 0 ] || fail "no vfat mount was asked for, so nothing was held"
+}
+
+case_head "the ozd group may write the card, on both shapes, whatever gid the image gave it"
+for gid in 1042 977; do
+	for dev in p1 p2; do
+		sandbox
+		if prepare cadr-disk-packs S80cadr-disk-packs; then
+			echo "$gid" > "$WORK/ozd.gid"
+			echo "$WORK/dev/$dev" > "$WORK/mountable"
+			( umask 077; run_script S80cadr-disk-packs )
+			group_may_write "$gid"
+			mount_opts_hold
+			# The pack program runs as root and still gets its bay.
+			if grep -q -- "--packs" "$WORK/daemon.calls"; then
+				ok "and the pack program, which runs as root, is started with its bay"
+			else
+				fail "the pack program was not started: $(cat "$WORK/out.S80cadr-disk-packs")"
+			fi
+			if grep -q "no ozd user" "$WORK/out.S80cadr-disk-packs"; then
+				fail "an image with ozd is told it has none: $(cat "$WORK/out.S80cadr-disk-packs")"
+			else
+				ok "and the console does not say the image lacks ozd"
+			fi
+		fi
+	done
+done
+
+# **AN IMAGE WITHOUT ozd KEEPS THE CARD ROOT'S, AND SAYS SO.**  There is no
+# group to give it to, so the options are the ones every board had before the
+# group was given write: root owns the card and every user reads it.
+case_head "an image with no ozd user mounts the card as root's, and the console says why"
+for dev in p1 p2; do
+	sandbox
+	if prepare cadr-disk-packs S80cadr-disk-packs; then
+		rm -f "$WORK/ozd.gid"
+		echo "$WORK/dev/$dev" > "$WORK/mountable"
+		run_script S80cadr-disk-packs
+		if grep -q -- "-t vfat -o rw,uid=0,gid=0,umask=0022 " "$WORK/mount.calls"; then
+			ok "the card is mounted rw,uid=0,gid=0,umask=0022"
+		else
+			fail "an image without ozd does not mount the card as root's: $(cat "$WORK/mount.calls")"
+		fi
+		mount_opts_hold
+		if grep -q "no ozd user" "$WORK/out.S80cadr-disk-packs"; then
+			ok "and the console says there is no ozd user"
+		else
+			fail "the console does not say why the card is root's: $(cat "$WORK/out.S80cadr-disk-packs")"
+		fi
+		if grep -q -- "--packs" "$WORK/daemon.calls"; then
+			ok "and the pack program is started with its bay"
+		else
+			fail "the pack program was not started without ozd"
+		fi
+	fi
+done
+
+# **A BOARD WITH NO CARD SAYS NOTHING ABOUT ozd**, because nothing was mounted
+# and so nothing about the card's group happened.
+case_head "a board with no card and no ozd user says only that there is no card"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	rm -f "$WORK/ozd.gid"
+	: > "$WORK/mountable"
+	run_script S80cadr-disk-packs
+	if grep -q "no ozd user" "$WORK/out.S80cadr-disk-packs"; then
+		fail "a board with no card talks about the card's group: $(cat "$WORK/out.S80cadr-disk-packs")"
+	else
+		ok "the console does not talk about a card that is not there"
+	fi
+fi
 
 case_head "and a board with no card it can mount says so and leaves the bay empty"
 sandbox

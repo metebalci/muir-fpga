@@ -273,6 +273,14 @@ not the same size: the sources are the table below, and a site configuration
 is a handful of files and a few tens of kilobytes. One band and the files that
 belong to it are one thing, and they go on one card together.
 
+**The host can write the whole card, and that cost is accepted.** The host
+runs as the `ozd` user and refuses a writable tree it cannot write, so the card
+is mounted with its group set to the `ozd` group and the group may write. FAT
+has no owner per directory, so one mount gives every file the same group, and
+the host can write the packs and the boot files as well as `site/`. The `,ro`
+on `sys` is what keeps the host from writing the sources. `docs/fpgarc.md` has
+the mount's options.
+
 The three places they could have gone were measured, on a real FAT32 image made
 by the same `mkfs.vfat -F 32` a card is made with, with the real files copied in
 and the free space read back afterwards. The sources are 513 files in 25

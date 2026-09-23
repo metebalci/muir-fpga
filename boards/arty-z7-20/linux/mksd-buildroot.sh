@@ -238,8 +238,11 @@ PACKS=${PACKS:-}
 #   SITE   the band's site configuration --- its host table, its logical
 #          pathname translations, the few files that say what THIS site is ---
 #          staged as `site/` and named as `--ozd-root site=/mnt/card/site`.
-#          Read-WRITE, because a site is a thing its owner changes.  The tree
-#          this project ships beside is five files and 24 KB.
+#          Read-WRITE, because a site is a thing its owner changes, and
+#          S80cadr-disk-packs mounts the card so that ozd's group may write
+#          it.  FAT has no owner per directory, so ozd can then write the
+#          whole card, which is the accepted cost.  The tree this project
+#          ships beside is five files and 24 KB.
 #
 # They go on the card and not in the root filesystem, because that filesystem
 # is a RAM disk unpacked at every boot: seventeen megabytes there is seventeen
@@ -961,6 +964,9 @@ fi
   printf "# may.  The SITE tree has no ,ro, because a site configuration --- its\r\n"
   printf "# host table, its logical pathname translations --- is a thing its\r\n"
   printf "# owner changes, and a band that edits it should be able to save it.\r\n"
+  printf "# The card is mounted so that the host's group may write it, and FAT\r\n"
+  printf "# has no owner per folder, so the host can write every file on this\r\n"
+  printf "# card and not only site/.  That cost is accepted.\r\n"
   printf "# The user's own directory is always there and is always in memory, so\r\n"
   printf "# a band that compiles a system has somewhere to put its warnings\r\n"
   printf "# without a line here.\r\n"
