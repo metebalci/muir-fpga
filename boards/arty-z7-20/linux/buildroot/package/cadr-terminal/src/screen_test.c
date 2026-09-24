@@ -3981,6 +3981,331 @@ static void check_keyboard_trace(void)
 	}
 }
 
+// ---- QUUX's SCREEN, MONO TV ----------------------------------------------
+//
+// 1280 x 1024 at one bit a pixel, 40 words a line (muir docs/quux.md, "MONO
+// TV, the display").  **EVERY NUMBER BELOW IS A LITERAL**, worked out by hand
+// from muir's `Tv::pixel`, `bit = y * words_per_line * 32 + x`, with 40 words
+// a line: nothing here takes the stride from the header the program uses, so
+// a header that said 24 would fail here rather than agree.  `canvas` is the
+// first board's size, so this has a viewer's canvas of its own.
+
+struct mono_anchor { unsigned word, bit, x, y; const char *what; };
+
+static const struct mono_anchor MONO_ANCHORS[] = {
+	{ 0, 0, 0, 0, "word 0 bit 0 is the top-left pixel" },
+	{ 0, 31, 31, 0, "word 0 bit 31 is the rightmost pixel of the first word" },
+	{ 1, 0, 32, 0, "word 1 bit 0 is the pixel after it" },
+	{ 23, 31, 767, 0, "word 23 bit 31 is pixel 767 of line 0, where the CADR's line ends" },
+	{ 24, 0, 768, 0, "word 24 bit 0 is still line 0, which on the CADR is line 1" },
+	{ 39, 31, 1279, 0, "word 39 bit 31 is the last pixel of line 0" },
+	{ 40, 0, 0, 1, "word 40 bit 0 is the first pixel of line 1" },
+	{ 40 * 512 + 20, 0, 640, 512, "the middle of the screen" },
+	{ 40 * 1023, 0, 0, 1023, "word 40,920 bit 0 is the first pixel of the last line" },
+	{ 40 * 1023 + 39, 31, 1279, 1023, "word 40,959 bit 31 is the bottom-right pixel" },
+};
+
+static uint8_t mono_canvas[1024 * 1280];
+static uint8_t mono_want[1024 * 1280];
+static uint32_t mono_window[40960];
+
+// A lit bit at `x`, `y`, by muir's rule with the stride written out.
+static void mono_set_lit(uint32_t *w, unsigned x, unsigned y)
+{
+	const unsigned bit = y * 40u * 32u + x;
+	w[bit / 32u] |= 1u << (bit % 32u);
+}
+
+// One whole-screen update onto `mono_canvas`, Raw or RRE, the pixels being
+// only ever white or black.  Returns how many rectangles came, or -1; `ry0`
+// and `rh0` are the first rectangle's rows, for the incremental check.
+static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
+{
+	if (client_need(c, 4) < 0)
+		return -1;
+	if (c->in[0] != 0) {
+		fail(__LINE__, "MONO TV: message type %u where an update was due", c->in[0]);
+		return -1;
+	}
+	const unsigned rects = be16at(c->in + 2);
+	client_take(c, 4);
+	for (unsigned r = 0; r < rects; ++r) {
+		if (client_need(c, 12) < 0)
+			return -1;
+		const unsigned x = be16at(c->in), y = be16at(c->in + 2);
+		const unsigned w = be16at(c->in + 4), h = be16at(c->in + 6);
+		const int32_t enc = (int32_t)be32at(c->in + 8);
+		client_take(c, 12);
+		if (r == 0 && ry0) {
+			*ry0 = y;
+			*rh0 = h;
+		}
+		if (x + w > 1280u || y + h > 1024u) {
+			fail(__LINE__, "MONO TV: a rectangle at %u,%u of %ux%u leaves the screen",
+			     x, y, w, h);
+			return -1;
+		}
+		if (enc == RFB_ENCODING_RAW) {
+			const size_t n = (size_t)w * h * c->n;
+			if (client_need(c, n) < 0)
+				return -1;
+			for (unsigned dy = 0; dy < h; ++dy)
+				for (unsigned dx = 0; dx < w; ++dx) {
+					const int v = client_pixel(c, c->in + ((size_t)dy * w + dx) * c->n);
+					if (v < 0) {
+						fail(__LINE__, "MONO TV: pixel %u,%u is neither black "
+						     "nor white", x + dx, y + dy);
+						return -1;
+					}
+					mono_canvas[(size_t)(y + dy) * 1280u + x + dx] = (uint8_t)v;
+				}
+			client_take(c, n);
+		} else if (enc == RFB_ENCODING_RRE) {
+			if (client_need(c, 4 + c->n) < 0)
+				return -1;
+			const uint32_t count = be32at(c->in);
+			const int background = client_pixel(c, c->in + 4);
+			if (background < 0) {
+				fail(__LINE__, "MONO TV: the RRE background is neither color");
+				return -1;
+			}
+			client_take(c, 4 + c->n);
+			for (unsigned dy = 0; dy < h; ++dy)
+				for (unsigned dx = 0; dx < w; ++dx)
+					mono_canvas[(size_t)(y + dy) * 1280u + x + dx] = (uint8_t)background;
+			const size_t each = c->n + 8;
+			if (client_need(c, each * count) < 0)
+				return -1;
+			for (uint32_t k = 0; k < count; ++k) {
+				const uint8_t *p = c->in + each * k;
+				const int v = client_pixel(c, p);
+				const unsigned sx = be16at(p + c->n), sy = be16at(p + c->n + 2);
+				const unsigned sw = be16at(p + c->n + 4), sh = be16at(p + c->n + 6);
+				if (v < 0 || sx + sw > w || sy + sh > h) {
+					fail(__LINE__, "MONO TV: a bad RRE subrectangle");
+					return -1;
+				}
+				for (unsigned q = 0; q < sh; ++q)
+					for (unsigned p2 = 0; p2 < sw; ++p2)
+						mono_canvas[(size_t)(y + sy + q) * 1280u + x + sx + p2] =
+							(uint8_t)v;
+			}
+			client_take(c, each * count);
+		} else {
+			fail(__LINE__, "MONO TV: encoding %d, which this server does not offer", enc);
+			return -1;
+		}
+	}
+	return (int)rects;
+}
+
+// The canvas against `mono_want`, every pixel.
+static void mono_compare(const char *what)
+{
+	unsigned differ = 0;
+	for (unsigned i = 0; i < 1024u * 1280u; ++i)
+		if (mono_canvas[i] != mono_want[i]) {
+			if (differ < 3)
+				fail(__LINE__, "%s: pixel %u,%u is %u, wanting %u", what,
+				     i % 1280u, i / 1280u, mono_canvas[i], mono_want[i]);
+			++differ;
+		}
+	CHECK(differ == 0, "%s: %u of 1,310,720 pixels differ", what, differ);
+}
+
+static void check_quux_screen(void)
+{
+	static const struct rfb_format rgb888 = { 32, 24, 0, 1, 255, 255, 255, 16, 8, 0 };
+	static const int32_t rre_list[] = { RFB_ENCODING_RRE, RFB_ENCODING_RAW };
+
+	// 1.  **THE MACHINE IS muir'S WORD**, `--machine cadr|quux`, and
+	//     nothing else is taken: a card that says `QUUX` or `quux2` is a
+	//     card this program says it does not understand, never one it
+	//     quietly serves as a CADR.
+	{
+		enum screen_machine m = SCREEN_MACHINE_QUUX;
+		CHECK(screen_machine_parse("cadr", &m) == 0 && m == SCREEN_MACHINE_CADR,
+		      "--machine cadr was not the CADR");
+		m = SCREEN_MACHINE_CADR;
+		CHECK(screen_machine_parse("quux", &m) == 0 && m == SCREEN_MACHINE_QUUX,
+		      "--machine quux was not QUUX");
+		static const char *const refused[] = { "QUUX", "Cadr", "", "quux2", "cad",
+							"qu", "cadr ", "mono-tv" };
+		for (unsigned k = 0; k < sizeof refused / sizeof *refused; ++k)
+			CHECK(screen_machine_parse(refused[k], &m) != 0,
+			      "--machine \"%s\" was taken; only cadr and quux are machines",
+			      refused[k]);
+		CHECK(strcmp(screen_machine_name(SCREEN_MACHINE_CADR), "cadr") == 0
+		      && strcmp(screen_machine_name(SCREEN_MACHINE_QUUX), "quux") == 0,
+		      "the machines' names are %s and %s, wanting cadr and quux",
+		      screen_machine_name(SCREEN_MACHINE_CADR),
+		      screen_machine_name(SCREEN_MACHINE_QUUX));
+	}
+
+	// 2.  **EACH MACHINE'S SCREEN**, as literals.  The CADR's is the
+	//     first board's and QUUX's is MONO TV's, and the window mapped is
+	//     the board's 32,768 words or MONO TV's 40,960.
+	screen_frame_init_for(&frame, SCREEN_MACHINE_CADR, 0);
+	CHECK(frame.width == 768 && frame.height == 963 && frame.words_per_line == 24
+	      && frame.visible_words == 23112 && frame.bpp == 1,
+	      "the CADR's screen is %ux%u, %u words a line, %u words, %u bpp; wanting "
+	      "768x963, 24, 23,112, 1", frame.width, frame.height, frame.words_per_line,
+	      frame.visible_words, frame.bpp);
+	screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 1);
+	CHECK(frame.width == 1280 && frame.height == 1024 && frame.words_per_line == 40
+	      && frame.visible_words == 40960 && frame.bpp == 1 && frame.black_on_white == 1,
+	      "QUUX's screen is %ux%u, %u words a line, %u words, %u bpp, BOW %d; wanting "
+	      "1280x1024, 40, 40,960, 1, BOW as asked", frame.width, frame.height,
+	      frame.words_per_line, frame.visible_words, frame.bpp, frame.black_on_white);
+	screen_frame_init_mono(&frame, 0);
+	CHECK(frame.width == 1280 && frame.height == 1024 && frame.words_per_line == 40
+	      && frame.visible_words == 40960 && frame.black_on_white == 0,
+	      "MONO TV's frame is %ux%u, %u words a line, %u words, BOW %d",
+	      frame.width, frame.height, frame.words_per_line, frame.visible_words,
+	      frame.black_on_white);
+	CHECK(screen_window_bytes(SCREEN_MACHINE_CADR) == 131072u,
+	      "the CADR's window is %u bytes, wanting 131,072",
+	      screen_window_bytes(SCREEN_MACHINE_CADR));
+	CHECK(screen_window_bytes(SCREEN_MACHINE_QUUX) == 163840u,
+	      "QUUX's window is %u bytes, wanting 163,840",
+	      screen_window_bytes(SCREEN_MACHINE_QUUX));
+	CHECK(screen_machine_has_color(SCREEN_MACHINE_CADR) == 1,
+	      "the CADR was said to have no color TV");
+	CHECK(screen_machine_has_color(SCREEN_MACHINE_QUUX) == 0,
+	      "QUUX was said to have a color TV, which it has not");
+
+	// 3.  **THE ANCHORS**, one bit in an empty screen, through
+	//     `screen_value` --- which is what RRE and a rectangle's ends ask
+	//     --- with BOW clear and set.
+	for (int bow = 0; bow <= 1; ++bow)
+		for (unsigned k = 0; k < sizeof MONO_ANCHORS / sizeof *MONO_ANCHORS; ++k) {
+			const struct mono_anchor *a = &MONO_ANCHORS[k];
+			screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, bow);
+			memset(frame.words, 0, sizeof frame.words);
+			frame.words[a->word] = 1u << a->bit;
+			const unsigned lit_shows = bow ? 0u : 1u;
+			// Bounded by the frame's own size, which step 2 held to
+			// 1280x1024; a literal bound here lets the compiler walk
+			// the color branch of `screen_value` past its buffer.
+			unsigned n = 0, fx = 1280, fy = 1024;
+			for (unsigned y = 0; y < frame.height; ++y)
+				for (unsigned x = 0; x < frame.width; ++x)
+					if (screen_value(&frame, x, y) == lit_shows) {
+						if (n == 0) {
+							fx = x;
+							fy = y;
+						}
+						++n;
+					}
+			CHECK(n == 1 && fx == a->x && fy == a->y,
+			      "MONO TV, %s (BOW %s): word %u bit %u lit %u pixels, the first at "
+			      "%u,%u; wanting exactly one at %u,%u", a->what, bow ? "set" : "clear",
+			      a->word, a->bit, n, fx, fy, a->x, a->y);
+		}
+
+	// 4.  **THE WHOLE SCREEN THROUGH A VIEWER**, read out of a window of
+	//     40,960 words, pixel for pixel, Raw and RRE, BOW clear and set.
+	//     The picture is diagonal bands with a box in the last line's
+	//     corner, so that a row taken for another, a word for its
+	//     neighbor, or a screen cut short at 963 lines or 768 pixels all
+	//     show.
+	memset(mono_window, 0, sizeof mono_window);
+	for (unsigned y = 0; y < 1024u; ++y)
+		for (unsigned x = 0; x < 1280u; ++x)
+			if ((x + 3u * y) % 29u < 5u || (x >= 1200u && y >= 1000u))
+				mono_set_lit(mono_window, x, y);
+	for (int bow = 0; bow <= 1; ++bow)
+		for (int rre = 0; rre <= 1; ++rre) {
+			char what[96];
+			snprintf(what, sizeof what, "MONO TV's whole screen, %s, BOW %s",
+				 rre ? "RRE" : "Raw", bow ? "set" : "clear");
+			for (unsigned y = 0; y < 1024u; ++y)
+				for (unsigned x = 0; x < 1280u; ++x) {
+					const int lit = (x + 3u * y) % 29u < 5u
+							|| (x >= 1200u && y >= 1000u);
+					mono_want[(size_t)y * 1280u + x] = (uint8_t)(lit != bow);
+				}
+			screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, bow);
+			screen_frame_read(&frame, mono_window);
+			struct client c;
+			if (open_viewer(&c, "RFB 003.008\n", &rgb888, rre ? rre_list : NULL,
+					rre ? 2 : 0) < 0) {
+				fail(__LINE__, "%s: no viewer", what);
+				return;
+			}
+			CHECK(c.told_w == 1280 && c.told_h == 1024,
+			      "%s: a viewer was told %ux%u, wanting 1280x1024", what,
+			      c.told_w, c.told_h);
+			memset(mono_canvas, 0xFF, sizeof mono_canvas);
+			tick();
+			client_request(&c, 0, 0, 0, 1280, 1024);
+			if (mono_update(&c, NULL, NULL) < 0)
+				fail(__LINE__, "%s: no update", what);
+			else
+				mono_compare(what);
+			client_close(&c);
+			settle();
+		}
+
+	// 5.  **AN INCREMENTAL UPDATE BELOW THE CADR'S LAST LINE.**  One pixel
+	//     changes on line 1020, which the first board does not have, and
+	//     the update that follows is that one row and nothing else.
+	{
+		for (unsigned y = 0; y < 1024u; ++y)
+			for (unsigned x = 0; x < 1280u; ++x)
+				mono_want[(size_t)y * 1280u + x] =
+					(uint8_t)((x + 3u * y) % 29u < 5u || (x >= 1200u && y >= 1000u));
+		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0);
+		screen_frame_read(&frame, mono_window);
+		struct client c;
+		if (open_viewer(&c, "RFB 003.008\n", &rgb888, NULL, 0) < 0) {
+			fail(__LINE__, "MONO TV incremental: no viewer");
+			return;
+		}
+		memset(mono_canvas, 0xFF, sizeof mono_canvas);
+		tick();
+		client_request(&c, 0, 0, 0, 1280, 1024);
+		if (mono_update(&c, NULL, NULL) < 0) {
+			fail(__LINE__, "MONO TV incremental: no first update");
+			client_close(&c);
+			settle();
+			return;
+		}
+		mono_set_lit(mono_window, 1100u, 1020u);
+		screen_frame_read(&frame, mono_window);
+		mono_want[1020u * 1280u + 1100u] = 1;
+		client_request(&c, 1, 0, 0, 1280, 1024);
+		unsigned ry = 0, rh = 0;
+		const int rects = mono_update(&c, &ry, &rh);
+		CHECK(rects == 1 && ry == 1020 && rh == 1,
+		      "MONO TV incremental: %d rectangles, the first at row %u for %u rows; "
+		      "wanting one, row 1020, one row", rects, ry, rh);
+		mono_compare("MONO TV after a change on line 1020");
+		client_close(&c);
+		settle();
+	}
+
+	// 6.  **THE FRAME TAKES ALL 40,960 WORDS**, the last of them too: a
+	//     window of zeros but its final word is not a blank screen.
+	{
+		memset(mono_window, 0, sizeof mono_window);
+		mono_window[40959] = 0x80000000u;
+		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0);
+		screen_frame_read(&frame, mono_window);
+		CHECK(frame.words[40959] == 0x80000000u,
+		      "MONO TV's last word was read as 0x%08x", frame.words[40959]);
+		CHECK(screen_frame_blank(&frame) == SCREEN_BLANK_NO,
+		      "a MONO TV screen lit only in its last word was called blank (%d)",
+		      screen_frame_blank(&frame));
+		CHECK(screen_frame_lit(&frame) == 1, "MONO TV: %lu pixels lit, wanting 1",
+		      screen_frame_lit(&frame));
+		// The frame's own last pixel, which step 2 held to 1279,1023.
+		CHECK(screen_value(&frame, frame.width - 1u, frame.height - 1u) == 1,
+		      "MONO TV's bottom-right pixel is not the last word's bit 31");
+	}
+	screen_frame_init(&frame, 0);
+}
+
 int main(int argc, char **argv)
 {
 	// A viewer that is dropped mid-write must not take the check with it:
@@ -4072,6 +4397,9 @@ int main(int argc, char **argv)
 
 	printf("--- the second screen, the color TV's: 576x454 at four bits a pixel\n");
 	check_color_screen();
+
+	printf("--- QUUX's screen, MONO TV: 1280x1024 at one bit a pixel, 40 words a line\n");
+	check_quux_screen();
 
 	printf("--- the keyboard: muir's mapping onto MIT's own key table\n");
 	check_keyboard();

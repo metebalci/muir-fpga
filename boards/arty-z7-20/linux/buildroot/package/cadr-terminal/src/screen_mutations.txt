@@ -59,9 +59,9 @@
 @note RRE asks the rule for every pixel, so this is the pass that reaches it;
 @note a whole-width Raw rectangle goes through `row_byte` instead.
 @old
-	const unsigned bit = y * SCREEN_WORDS_PER_LINE * 32u + x;
+	const unsigned bit = y * words_per_line * 32u + x;
 @new
-	const unsigned bit = y * (SCREEN_WORDS_PER_LINE - 1u) * 32u + x;
+	const unsigned bit = y * (words_per_line - 1u) * 32u + x;
 @end
 
 @mutation line-stride-a-word-short-in-the-encoder
@@ -79,9 +79,9 @@
 @note muir src/simpletv.rs:268.  The anchors run in both directions of BOW,
 @note so a program that had simply lost the BOW term would also be caught.
 @old
-	return screen_lit(words, x, y) != (bow != 0);
+	return screen_lit(words, words_per_line, x, y) != (bow != 0);
 @new
-	return screen_lit(words, x, y) == (bow != 0);
+	return screen_lit(words, words_per_line, x, y) == (bow != 0);
 @end
 
 @mutation the-update-rectangle-starts-a-row-late
@@ -1303,4 +1303,127 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	return DWAKE_MARK_OF(v) == DWAKE_MARK ? 1 : 0;
 @new
 	return 1;
+@end
+
+# ---- QUUX's screen, MONO TV ----------------------------------------------
+#
+# One record for each number MONO TV's frame is given and one for each way the
+# machine could be chosen wrong.  `check_quux_screen` holds all of them on
+# literals.
+#
+# **THE BUFFERS SIZED BY THE LARGEST SCREEN HAVE NO RECORD, AND THAT IS
+# MEASURED.**  A record capping `changed_rows` at the CADR's 963 lines
+# survived, and rightly: the cap counts runs of changed rows, and 1,024 lines
+# hold at most 512 runs, so no screen can reach it.  Shrinking the arrays
+# themselves is an overrun that no assertion here would see.  The
+# `_Static_assert`s in `screen_geom.h` hold their sizes instead, at build.
+
+@mutation mono-tv-has-the-cadrs-line-length
+@file screen_frame.c
+@why QUUX's word 40 bit 0 is the first pixel of line 1; at the CADR's 24 words a line it is pixel 512 of line 1
+@old
+	f->words_per_line = SCREEN_MONO_WORDS_PER_LINE;
+@new
+	f->words_per_line = SCREEN_WORDS_PER_LINE;
+@end
+
+@mutation mono-tv-is-cut-at-the-cadrs-last-line
+@file screen_frame.c
+@why a viewer of QUUX's screen is told 1280x1024, and a screen of 963 lines is told something else
+@old
+	f->height = SCREEN_MONO_HEIGHT;
+@new
+	f->height = SCREEN_HEIGHT;
+@end
+
+@mutation mono-tv-is-the-cadrs-width
+@file screen_frame.c
+@why a viewer of QUUX's screen is told 1280 pixels across, and 768 is the CADR's
+@old
+	f->width = SCREEN_MONO_WIDTH;
+@new
+	f->width = SCREEN_WIDTH;
+@end
+
+@mutation mono-tv-reads-only-the-cadrs-words
+@file screen_frame.c
+@why the frame takes all 40,960 words: a screen lit only in its last word is not blank
+@old
+	f->visible_words = SCREEN_MONO_VISIBLE_WORDS;
+@new
+	f->visible_words = SCREEN_VISIBLE_WORDS;
+@end
+
+@mutation quux-is-served-the-cadrs-screen
+@file screen_frame.c
+@why --machine quux must give MONO TV's frame, 1280x1024 at 40 words a line
+@old
+	if (m == SCREEN_MACHINE_QUUX)
+		screen_frame_init_mono(f, black_on_white);
+@new
+	if (m == SCREEN_MACHINE_CADR)
+		screen_frame_init_mono(f, black_on_white);
+@end
+
+@mutation the-machine-is-read-without-case
+@file screen_frame.c
+@why muir takes `quux` and nothing else; `QUUX` must be refused, not quietly taken
+@old
+	if (strcmp(word, "quux") == 0) {
+@new
+	if (strcasecmp(word, "quux") == 0) {
+@end
+
+@mutation the-machine-is-read-by-its-first-letters
+@file screen_frame.c
+@why `quux2` is not a machine, and a prefix match would take it as QUUX
+@old
+	if (strcmp(word, "quux") == 0) {
+@new
+	if (strncmp(word, "quux", 4) == 0) {
+@end
+
+@mutation the-cadr-is-read-by-its-first-letters
+@file screen_frame.c
+@why `cad` is not a machine, and a prefix match would take it as the CADR
+@old
+	if (strcmp(word, "cadr") == 0) {
+@new
+	if (strncmp(word, "cadr", strlen(word)) == 0) {
+@end
+
+@mutation quux-is-named-cadr
+@file screen_frame.c
+@why the program's line says which machine it serves, and it must say quux on QUUX
+@old
+	return m == SCREEN_MACHINE_QUUX ? "quux" : "cadr";
+@new
+	return "cadr";
+@end
+
+@mutation quux-maps-the-cadrs-window
+@file screen_frame.c
+@why QUUX's window is MONO TV's 40,960 words, 163,840 bytes; the CADR's 128 KB stops 8,192 words short
+@old
+	return m == SCREEN_MACHINE_QUUX ? SCREEN_MONO_WINDOW_BYTES : SCREEN_WINDOW_BYTES;
+@new
+	return SCREEN_WINDOW_BYTES;
+@end
+
+@mutation quux-is-given-a-color-tv
+@file screen_frame.c
+@why QUUX has no color board, and its MONO TV's buffer runs over the color window
+@old
+	return m == SCREEN_MACHINE_CADR;
+@new
+	return 1;
+@end
+
+@mutation the-pixel-rule-takes-the-cadrs-stride
+@file screen_frame.h
+@why the MONO TV anchors: the rule a rectangle's ends and RRE ask must use the fitted screen's words a line
+@old
+	return (unsigned)screen_shows_white(f->words, f->words_per_line, x, y, f->black_on_white);
+@new
+	return (unsigned)screen_shows_white(f->words, SCREEN_WORDS_PER_LINE, x, y, f->black_on_white);
 @end

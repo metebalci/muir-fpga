@@ -988,6 +988,7 @@ printf '%s\r\n' \
 	'--chaos-udp-peer 3060@a-host.invalid:42043' \
 	'--keyboard-mapping /mnt/card/keys.txt' \
 	'--bow' \
+	'--machine quux' \
 	'--serial 0.0.0.0:7641' \
 	'--poll-us 250' \
 	'--quiet' \
@@ -1016,6 +1017,7 @@ if prepare cadr-chaosnet S87cadr-chaosnet; then
 	passes_not "--poll-us" "cadr-chaosnet"
 	passes_not "--date" "cadr-chaosnet"
 	passes_not "--time" "cadr-chaosnet"
+	passes_not "--machine" "cadr-chaosnet"
 fi
 
 case_head "the screen gets its own flags and nobody else's"
@@ -1023,6 +1025,7 @@ if prepare cadr-terminal S85cadr-terminal; then
 	run_script S85cadr-terminal
 	passes "--keyboard-mapping /mnt/card/keys.txt" "cadr-terminal"
 	passes "--bow" "cadr-terminal"
+	passes "--machine quux" "cadr-terminal"
 	passes "--terminal 0.0.0.0:5900" "cadr-terminal"
 	passes_not "--port" "cadr-terminal"
 	passes_not "--chaos-address" "cadr-terminal"
@@ -1062,6 +1065,7 @@ if prepare cadr-usb-input S88cadr-usb-input; then
 	passes_not "--chaos-address" "cadr-usb-input"
 	passes_not "--keyboard-mapping" "cadr-usb-input"
 	passes_not "--bow" "cadr-usb-input"
+	passes_not "--machine" "cadr-usb-input"
 	passes_not "--date" "cadr-usb-input"
 	passes_not "--time" "cadr-usb-input"
 fi

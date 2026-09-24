@@ -77,6 +77,37 @@ void screen_frame_init(struct screen_frame *f, int black_on_white);
 // `screen_frame_map` is how the real one arrives.
 void screen_frame_init_color(struct screen_frame *f);
 
+// **QUUX's MONO TV**: 1280 x 1024 at one bit a pixel, 40 words a line, with
+// `MODE BOW` as on the CADR.  `screen_geom.h` has every number's source.
+void screen_frame_init_mono(struct screen_frame *f, int black_on_white);
+
+// **WHICH SCREEN A MACHINE HAS, AND THE PROGRAM IS TOLD WHICH MACHINE.**
+// QUUX's feature page says its screen's size at words 11 to 13, and a CADR
+// answers nothing there, but the page is an Xbus device inside the machine:
+// the processing system reaches the display's buffer as DDR, the faces on
+// the port behind them and the console on its own, and none of them carries
+// a read of the machine's I/O page.  The build stamp names a commit and how
+// the tree stood, and not which machine was built.  So the machine is a
+// flag, `--machine cadr|quux`, muir's own word and muir's own two spellings,
+// and the default is the CADR.
+//
+// `screen_machine_parse` takes exactly muir's words and refuses anything
+// else, returning -1; `screen_machine_name` is the word back.
+int screen_machine_parse(const char *word, enum screen_machine *out);
+const char *screen_machine_name(enum screen_machine m);
+
+// The main screen of machine `m`: the CADR's first display board, or QUUX's
+// MONO TV.
+void screen_frame_init_for(struct screen_frame *f, enum screen_machine m, int black_on_white);
+
+// How many bytes of the display's window to map: the CADR board's 32,768
+// words, all of which it answers, or MONO TV's 40,960, which is its buffer.
+unsigned screen_window_bytes(enum screen_machine m);
+
+// Whether the machine can have the color TV: the CADR can, and QUUX has no
+// color board, its MONO TV's buffer running over the color window.
+int screen_machine_has_color(enum screen_machine m);
+
 // The sixteen colors, `[color][channel]` with red first.
 void screen_frame_map(struct screen_frame *f, const uint8_t map[SCREEN_COLORS][3]);
 
@@ -100,7 +131,7 @@ static inline unsigned screen_value(const struct screen_frame *f, unsigned x, un
 {
 	if (f->bpp == SCREEN_COLOR_BPP)
 		return screen_color_index(f->words, x, y);
-	return (unsigned)screen_shows_white(f->words, x, y, f->black_on_white);
+	return (unsigned)screen_shows_white(f->words, f->words_per_line, x, y, f->black_on_white);
 }
 
 // How many distinct values a pixel of this screen can take: two or sixteen.
