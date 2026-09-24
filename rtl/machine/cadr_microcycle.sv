@@ -284,7 +284,7 @@ module cadr_microcycle #(
 
   // ------------------------------------------------------------ the clock
 
-  logic tpclk, n_tpclk, tptse, n_tpwp, n_tpwpiram, n_tpr60;
+  logic tpclk, n_tpclk, tptse, n_tpwp, n_tpwpiram, n_tpr60, gen_penult, gen_last;
   logic ilong;
   logic [1:0] speed;
 
@@ -299,7 +299,9 @@ module cadr_microcycle #(
       .tptse      (tptse),
       .n_tpwp     (n_tpwp),
       .n_tpwpiram (n_tpwpiram),
-      .n_tpr60    (n_tpr60)
+      .n_tpr60    (n_tpr60),
+      .penult     (gen_penult),
+      .last       (gen_last)
   );
 
   // TPCLK rising is -TPR0: the boundary, where the read phase of the next
@@ -554,8 +556,17 @@ module cadr_microcycle #(
   // write ON the boundary and IR took the word the store held before it:
   // every word the boot PROM loads read back all ones, measured.  The leading
   // edge is the end of the read phase, six ticks before the boundary.
+  //
+  // **AND GATED BY MACHRUN**, as the scratchpads' `wp` below is: `TPWPIRAM`
+  // is gated at CLOCK2 1C10 as `TPWP` is, so a generator cycle `-WAIT` holds
+  // writes nothing.  The address and the word are registers, so the one
+  // pulse that fires lands the same word the repeats used to.  Taken at the
+  // leading edge, MACHRUN is read six ticks before the edge that decides the
+  // cycle, and what can move it in between is the console's write of
+  // ERRSTOP or STATHENB and nothing of the machine's own: every other term
+  // of it moves only at a master clock.
   logic n_tpwpiram_q, iwe;
-  assign iwe = iwrited && !n_tpwpiram && n_tpwpiram_q;
+  assign iwe = iwrited && !n_tpwpiram && n_tpwpiram_q && machrun;
 
   always_ff @(posedge clk) begin
     n_tpwpiram_q <= n_tpwpiram;
@@ -705,7 +716,7 @@ module cadr_microcycle #(
   logic        dmem_w_q;
   logic [10:0] dmem_wa_q;
   always_ff @(posedge clk) begin
-    dmem_w_q  <= wp && dispwr;
+    dmem_w_q  <= mw && dispwr;
     dmem_wa_q <= dadr;
   end
   logic dmem_rdw;
@@ -920,15 +931,61 @@ module cadr_microcycle #(
 
   // The write pulses.  `-AWPA` at ACTL 3B30, `-MWPA` at MCTL 4B22, `-PWPA` at
   // 4D20 and `-SWPA` at SPC 4E30 are all -WP gated by a *registered* enable,
-  // so everything stored here belongs to the previous instruction.  Taken on
-  // the pulse's leading edge, which is thirty nanoseconds into a write phase
-  // where the address and the word have been stable since the boundary.
-  logic n_tpwp_q, wp;
-  assign wp = !n_tpwp && n_tpwp_q;
+  // so everything stored here belongs to the previous instruction.
+  //
+  // **TAKEN AS THE PULSE ENDS, AND ONLY IN A GENERATOR CYCLE MACHRUN RUNS.**
+  // Three rules of muir's `rtl` since its `bc6af67`, each held against the
+  // netlist by its `tests/dispatch_write_order.rs` and here by
+  // `build/dispatch_write_order.pass`, which runs those programs on the whole
+  // machine:
+  //
+  //   - **A RAM takes the address and the word it is given as the pulse
+  //     ends**, and the pulse ends at the cycle's boundary (`WP_OFF_NS`
+  //     limited to the restart, `clock.rs`).  For the scratchpads that is
+  //     the same word either way, their address and data being registers
+  //     that stand from the boundary.  For the map and the dispatch memory
+  //     it is not: their address is the live `MAPI` and `DADR`, both off MD
+  //     when MEMSTART is down, and MD moves inside a microcycle `-HANG`
+  //     holds.  So a pending map write or a dispatch write in a hung cycle
+  //     lands at MD as the bus has left it at the boundary: the word read
+  //     if it has landed, the one before it if not.  The hang parks the
+  //     generator after the pulse (`cadr_phase_gen.sv`, `park_at`), so the
+  //     pulse's end is the park's first tick and it fires once.
+  //   - **A read in the microcycle that writes the same memory gets the OLD
+  //     word.**  On the CADR which word the edge sees is a race, the 93425A
+  //     floating while written, and QUUX defines it as the old word; muir's
+  //     `rtl` has it on the CADR as well, reading in `Rtl::read_phase` and
+  //     writing in `Rtl::write_phase` after it.  Here the write is on the
+  //     boundary's own tick, so everything registered at that edge --- NPC
+  //     off a dispatch word, OB off `MAP(MD)` or off a dispatch on a map bit
+  //     --- is built from the word the RAM held before it.  This is why the
+  //     pulse is taken at its end: at its leading edge the new word was in
+  //     the RAM three ticks before the edge that read it.
+  //   - **`-WAIT` fires no write pulse.**  `TPWP` is `NOR(latch, -MACHRUNA)`
+  //     at CLOCK2 1C10, and `-WAIT` is a term of MACHRUN, so a held
+  //     generator cycle writes nothing and a pending write lands once, in
+  //     the cycle that runs.  On the pulse's end tick MACHRUN is the value
+  //     `cpu_edge` takes at that same tick when the cycle is not hung, so a
+  //     cycle writes exactly when it ends in a cpu edge; in a hung cycle no
+  //     master clock runs until the hang ends, so nothing it is made of can
+  //     move before that edge either.  A halted machine writes nothing as
+  //     well, and its pending writes wait for the next microcycle, as
+  //     `Rtl::step` leaves them.
+  //
+  // The generator knows nothing of MACHRUN (its header says why), so the gate
+  // is here, where MACHRUN is.
+  logic n_tpwp_q, wp_end, wp;
+  assign wp_end = n_tpwp && !n_tpwp_q;
+  assign wp     = wp_end && machrun;
 
   always_ff @(posedge clk) begin
     n_tpwp_q <= n_tpwp;
-    // The latches follow the memories while CLK is high, and hold.
+    // The latches follow the memories while CLK is high, and hold.  **Their
+    // phase is not observable since the writes moved to the boundary's own
+    // tick**: no write lands while either phase would be following, so
+    // following in the write phase gives the same words, and nothing checks
+    // it (the record that did is retired in `mutations/list.txt`).  Written
+    // the board's way, not relied on.
     if (tpclk) begin
       amem_q <= amem[aadr];
       mmem_q <= mmem[madr];
@@ -942,11 +999,14 @@ module cadr_microcycle #(
       // "at the pointer the edge has already moved to": the 82S21s are
       // addressed by SPCPTR<4:0> with no offset.
       if (spushd)    spcm[spcptr]     <= spcw;
-      // MAPWR0D is `WMAPD AND VMA26` and MAPWR1D is `WMAPD AND VMA25` at
-      // VCTL2 1C15, and both pulses are -WP1, so the two levels are written
-      // in the same write phase.  Address and data are the live ones:
-      // nothing latches them.  A write of both levels addresses level 2 at
-      // `adr1_w`, not `adr1`; see there.
+    end
+    // MAPWR0D is `WMAPD AND VMA26` and MAPWR1D is `WMAPD AND VMA25` at
+    // VCTL2 1C15, and both pulses are -WP1, so the two levels are written
+    // in the same write phase.  Address and data are the live ones:
+    // nothing latches them.  A write of both levels addresses level 2 at
+    // `adr1_w`, not `adr1`; see there.  **On `mw` and not on `wp`**: see
+    // "WHERE A HUNG CYCLE'S MAP AND DISPATCH WRITE LANDS" below.
+    if (mw) begin
       if (wmapd) begin
         if (vma[26]) l1_map[adr0] <= vma[31:27];
         if (vma[25]) l2_map[adr1_w] <= vma[23:0];
@@ -1227,16 +1287,24 @@ module cadr_microcycle #(
   logic [9:0]  l2_wa_q;
   logic        l1_rdw, l2_rdw;
   always_ff @(posedge clk) begin
-    l1_w_q  <= wp && wmapd && vma[26];
+    l1_w_q  <= mw && wmapd && vma[26];
     l1_wa_q <= adr0;
-    l2_w_q  <= wp && wmapd && vma[25];
+    l2_w_q  <= mw && wmapd && vma[25];
     l2_wa_q <= adr1_w;
   end
   // Level 1 is poisoned in its WRITE tick as well: nothing samples it there
   // since a write of both levels stopped addressing level 2 through it
   // (`adr1_w`), and the read-during-write note at the end of this module has
-  // the account.
-  assign l1_rdw = (wp && wmapd && vma[26]) || (l1_w_q && adr0 == l1_wa_q);
+  // the account.  **Since the write moved to the pulse's end that tick is a
+  // boundary** in a microcycle that runs (in a hung one it is not; `mw`'s
+  // note), so the poisoned word stands on the tick the boundary
+  // registers what the map gave; "poisoned reads on a boundary" counts those
+  // ticks, and a reference program passing says none of them reached a
+  // register --- no instruction at such a boundary read the map.  One that
+  // does gets the old word by muir's rule (`wp`'s note), which
+  // `build/dispatch_write_order.pass` holds and this variant would call
+  // poison.
+  assign l1_rdw = (mw && wmapd && vma[26]) || (l1_w_q && adr0 == l1_wa_q);
   assign l2_rdw = l2_w_q && adr1 == l2_wa_q;
   assign vmap = l1_rdw ? ~l1_map[adr0] : l1_map[adr0];
   assign adr1 = {vmap, mapi[4:0]};
@@ -1334,7 +1402,8 @@ module cadr_microcycle #(
   // noticed at once, because arbitration starts at the grant and has to know
   // then which bus it is arbitrating for.
   logic [21:0] phys_r;
-  assign phys = memstart ? {vmo[13:0], vma[7:0]} : phys_r;
+  // `phys` itself is assigned below `vmas`, whose low byte it takes at the
+  // edge a cycle starts on; see `vma_bus` there.
 
   // page VMA: the register, and what it takes.  An instruction fetch puts the
   // location counter's word address up instead of OB.
@@ -1345,6 +1414,37 @@ module cadr_microcycle #(
   assign wmap    = destmem && (ir[20:19] == 2'd3);
   assign vmaenb  = destvma || ifetch;
   assign vmas    = ifetch ? {8'd0, lc[25:2]} : ob;
+
+  // **`-VMA7..0` ON THE CABLES IS THE VMA THE EDGE HAS JUST LOADED.**  The
+  // page, `-PMA21..8`, comes through the latch at VMEMDR off the map that
+  // VMA addressed through the microcycle before; the word within it comes
+  // straight off the VMA register.  So an instruction that loads VMA in the
+  // microcycle whose edge starts a prepared cycle --- a `VMA-WRITE-MAP` or an
+  // instruction fetch straight after a `VMA-START-READ` --- moves the low
+  // eight bits of the address the cycle goes to, and not its page.  muir's
+  // `Rtl::clock_edge` loads VMA before `Rtl::start_bus_cycle` takes
+  // `bus_addr` from `LVMO` and `VMA<7:0>`, and its
+  // `tests/dispatch_write_order.rs` says the netlist does the same: the read
+  // under such a store comes back from the other word, 0 there.  At a master
+  // clock that is not a cpu edge VMA does not move, and this is VMA itself.
+  // `build/dispatch_write_order.pass` holds it on two programs
+  // (`map-write-into-hang`, `dispatch-held-by-wait-0`).
+  logic [7:0] vma_bus;
+  assign vma_bus = (cpu_edge && vmaenb) ? vmas[7:0] : vma[7:0];
+  assign phys    = memstart ? {vmo[13:0], vma_bus} : phys_r;
+
+  // **AND THE WORD A WRITE CARRIES IS THE MD THAT EDGE HAS JUST LOADED**,
+  // for the same reason: `MEM<31:0>` is driven from MD's own outputs, and
+  // `Rtl::clock_edge` loads MD from OB under `DESTMDR` before
+  // `Rtl::start_bus_cycle` takes `bus_data`.  So an instruction that stores
+  // into MD in the microcycle whose edge starts a prepared write changes the
+  // word written.  `md-loaded-as-a-write-starts` in
+  // `build/dispatch_write_order.pass` holds it.  The bus's own strobe into
+  // MD is left out: a strobe at the edge a cycle starts on would belong to a
+  // cycle still running while another starts, which `Busint::request`
+  // asserts muir never does and `build/park.pass` counts here.
+  logic [31:0] md_bus;
+  assign md_bus = (cpu_edge && destmdr) ? ob : md;
 
   // ------------------------------------------------------------- VCTL1
   //
@@ -1450,9 +1550,201 @@ module cadr_microcycle #(
   // A cycle that waits is not lost: the master holds `-UB MSYN` and the
   // register block holds `-UB TO MD` with it, so `ub_md_req` stands until it
   // is taken --- "there being no timeout for this master".
+  //
+  // **AND NOT IN A RUNNING MICROCYCLE'S LAST TWO TICKS.**  `mw`'s placement
+  // below puts a map or dispatch write two ticks from any move of MD, and it
+  // is built on MD not moving at the end of those two ticks but by the
+  // hung cycle's own strobe.  A word taken in the last tick reached the
+  // write a microcycle that runs makes on the next, and in a hung cycle one
+  // taken in either tick would move MD where the placement has already
+  // chosen on the strength of it standing still.  muir does not model this
+  // master against a running machine at all --- "the debuggee CC works on
+  // is halted", `Busint::debug_xbus_edge` --- and on a halted machine, which
+  // is where CC writes MD, nothing here changes.  A running machine keeps
+  // the master waiting two ticks at most, which the Unibus allows: "there
+  // being no timeout for this master".  `md_compose` holds it.
   logic ub_md_take;
-  assign ub_md_take = ub_md_req && !md_pending && !mbusy && !(cpu_edge && destmdr);
+  assign ub_md_take = ub_md_req && !md_pending && !mbusy && !(cpu_edge && destmdr)
+                   && !(machrun && (gen_penult || gen_last));
   assign ub_md_ack  = ub_md_take;
+
+  // ------------------------------------ WHERE A HUNG CYCLE'S MAP AND
+  // ------------------------------------ DISPATCH WRITE LANDS
+  //
+  // **`mw` IS THE TICK THE MAP AND THE DISPATCH MEMORY ARE REALLY WRITTEN,
+  // AND IN A CYCLE -HANG HOLDS IT IS NOT ALWAYS `wp`'s.**  `wp`'s note has
+  // muir's rule: the write takes its address and word as the pulse ends,
+  // with MD as the bus has left it then, and in a hung cycle the pulse ends
+  // on the park's first tick.  Call that tick K and the cycle's last tick
+  // before it L.  Taken there literally, two paths had one tick, measured on
+  // the routed Arty at the merge of muir's `bc6af67`:
+  //
+  //   - MD strobed off the bus in L, into the write's address at K: MD
+  //     through the M bus, the rotator and both map levels into the dispatch
+  //     memory's write address, 15.2 ns;
+  //   - the write at K, into the registers of a boundary that ends the hang
+  //     on the very next edge: level 1 through level 2 and the dispatch
+  //     memory into the PC, 19.0 ns.  On the DE25-Nano an MLAB gives the new
+  //     word only from the edge after its write, so there the path had
+  //     nothing at all.
+  //
+  // Neither tick is one the rule needs.  The write's address is a function
+  // of MD and of registers that stand still for the whole cycle (IR, VMA,
+  // the A latch, the maps it has not written yet), and nothing samples the
+  // three memories between L-1 and the boundary but the boundary itself
+  // (the readout aside, which has a clause of its own).  So the same word
+  // can go to the same address two ticks early or a tick late, and which is
+  // chosen by where MD last moved and whether the read has been
+  // acknowledged:
+  //
+  //   - **EARLY, at the end of L-1**, when READ IN PROGRESS is counting down
+  //     and will still be up in L (`rd_holds`: the acknowledgment has come,
+  //     so no strobe is left for this read, and the cycle will park) and MD
+  //     did not move at the end of L-2.  The address in L-1 is the address
+  //     in K, and the new word is in the memory three edges before the
+  //     earliest boundary, the one a hang ending at K gives.
+  //   - **ON TIME, at the end of K**, when MD did not move at the end of L.
+  //     Not early means the read was acknowledged no sooner than L-1, or MD
+  //     moved at the end of L-2 with it, so READ IN PROGRESS falls
+  //     `RD_FINISH_T` or more after L-2 and no boundary is near; and MD
+  //     moved at the end of L-1 at the latest.
+  //   - **LATE, at the end of K+1**, when MD moved at the end of L.  What
+  //     moved it was this read's own strobe --- a foreign master's word is
+  //     kept out of the cycle's last two ticks (`ub_md_take`), and a held
+  //     word is committed at a boundary or on a hang's first tick --- and
+  //     nothing moves it again at the end of K: the strobe has no second, and
+  //     a foreign master waits for MBUSY, which falls `MFINISHD_T` after the
+  //     acknowledgment, after K.  So the address in K+1 is the address in K,
+  //     and the boundary is `RD_FINISH_T` or more past the strobe.
+  //
+  // In a cycle that is not held the pulse ends on the boundary's own tick,
+  // `mw` is `wp` there, and the boundary reads the old word.  MD did not
+  // move at the end of L: with -HANG down a strobe waits in `md_held`, and a
+  // foreign master's word is kept out of the cycle's last two ticks.
+  //
+  // **Every write is therefore two edges or more after any move of MD, and
+  // a boundary that reads it is on the write's own edge or three edges or
+  // more after it**, which `rtl/plumbing/xilinx7/cadr_machine.xdc` and
+  // `boards/de25-nano/quartus/cadr_de25.sdc` state as two ticks and three.
+  // `CADR_GAP_MONITOR` below measures both on every tick of the checks that
+  // define it and fails a run on a tick less.
+  //
+  // **AND WHAT DECIDES IT IS REGISTERS, NOT THE BUS.**  The write enables
+  // fan out to every primitive of the three memories (the dispatch memory
+  // alone is 272 of them), and a strobe's own gates in front of that fanout
+  // were a tick-long path of their own.  So MD's moves reach `mw` only
+  // through `md_we_q`, and the early write's other terms are
+  // the generator's `penult`, the countdown, and -HANG and MACHRUN, which in
+  // a hung cycle whose read has been acknowledged stand still from the
+  // boundary before: READ IN PROGRESS is up until the countdown ends, the
+  // grant is not withdrawn until MBUSY has fallen, so -WAIT's bus half is
+  // down, and the console's registers land at a boundary or at SPEEDCLK.
+  //
+  // WHAT IS NOT THE SAME TICK AS `wp`, AND WHY NOTHING SEES IT.  Early, the
+  // memories hold the new word through L and K; late, the old one through
+  // K+1.  L is inside the cycle, K is not a boundary --- the ring is parked
+  // --- and K+1 is not one after a strobe.  The registers loaded every tick
+  // read no memory here but the map, and only while MEMSTART is up, when the
+  // map is addressed by VMA; and a map write under MEMSTART writes nothing:
+  // MEMSTART and WMAPD come from one instruction only through its
+  // instruction fetch, whose VMA has bits 31:24 clear, so VMA<26> and
+  // VMA<25> are both zero.
+  //
+  // MACHRUN, which `wp` reads at K, the early write reads at L-1.  In a hung
+  // cycle no master clock edge comes between them, -WAIT is down, and the
+  // console's registers do not land (`cadr_spy_registers.sv`'s `landing` is
+  // the boundary or SPEEDCLK, which is well before L-1), so the two are the
+  // same value.
+  logic md_we, md_we_q, rd_holds;
+  logic mw, mw_early, mw_early_q, mw_early_q2, wp_parked, mw_now, mw_late_q;
+
+  // MD's clock enable, as the MD register's own process below takes it: MD
+  // loads at the end of every tick this is up.
+  assign md_we = (loadmd_edge && (mclk_edge || hang))
+              || (!loadmd_edge && md_pending && (mclk_edge || hang))
+              || ub_md_take
+              || (cpu_edge && destmdr);
+
+  // The acknowledgment has come (`rdfinish_t` is loaded at -MEMACK and runs
+  // to zero, READ IN PROGRESS falling as it leaves one) and READ IN
+  // PROGRESS will still be up in the next tick.
+  assign rd_holds = rdfinish_t >= 6'd2;
+
+  assign mw_early  = gen_penult && hang && machrun && rd_holds && !md_we_q;
+  // K of a parked cycle whose write did not go early.  In K `md_we_q` is
+  // MD's move at the end of L.
+  assign wp_parked = wp && !tpclk && !mw_early_q2;
+  assign mw_now    = wp_parked && !md_we_q;
+  assign mw        = (wp && tpclk) || mw_early || mw_now || mw_late_q;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      md_we_q     <= 1'b0;
+      mw_early_q  <= 1'b0;
+      mw_early_q2 <= 1'b0;
+      mw_late_q   <= 1'b0;
+    end else begin
+      md_we_q     <= md_we;
+      mw_early_q  <= mw_early;
+      mw_early_q2 <= mw_early_q;
+      mw_late_q   <= wp_parked && md_we_q;
+    end
+  end
+
+`ifdef CADR_GAP_MONITOR
+  // A CHECK'S INSTRUMENT AND NEVER A BOARD'S.  The two counts the timing
+  // clauses state for `mw`, measured on every tick: from the last tick MD
+  // loaded to a write (at least two), and from a write to the next edge a
+  // boundary's registers take (zero, the boundary's own tick, or at least
+  // three).  Either a tick short fails the run.  The counts say which
+  // placements a run reached --- an early write whose hang ends on the edge
+  // after the pulse, three edges on, and a late write after MD moved at the
+  // end of L and of L-1 --- and
+  // `tb/cadr_dispatch_write_order_tb.cpp` fails unless its programs reached
+  // all three, since a bound nothing came near was not measured.
+  longint signed gm_t = 0, gm_md = -100, gm_mw = -100;
+  logic gm_mw_early, gm_wr;
+  // MD's moves are taken from MD itself and not from `md_we`, so that the
+  // monitor does not share a mistake with what it measures: a word that
+  // differs from the last tick's moved at the end of the tick before.
+  logic [31:0] gm_md_was;
+  longint signed gm_md_now;
+  assign gm_md_now = (md != gm_md_was) ? gm_t - 1 : gm_md;
+  // A write that writes something: `mw` is up in every microcycle, and only
+  // an enabled level or a dispatch write puts an address on a write port.
+  assign gm_wr = mw && ((wmapd && (vma[26] || vma[25])) || dispwr);
+  longint unsigned gm_writes = 0, gm_early = 0, gm_late_l = 0, gm_late_lm1 = 0;
+  longint unsigned gm_early_b3 = 0;
+  longint signed gm_min_md = 1000, gm_min_b = 1000;
+  always_ff @(posedge clk) begin
+    if (!rst) begin
+      gm_t <= gm_t + 1;
+      gm_md_was <= md;
+      if (md != gm_md_was) gm_md <= gm_t - 1;
+      if (gm_wr) begin
+        gm_writes <= gm_writes + 1;
+        if (gm_t - gm_md_now < gm_min_md) gm_min_md <= gm_t - gm_md_now;
+        if (gm_t - gm_md_now < 2)
+          $fatal(1, "gap monitor: a map or dispatch write %0d tick after MD moved", gm_t - gm_md_now);
+        gm_mw <= gm_t;
+        gm_mw_early <= mw_early;
+        if (mw_early) gm_early <= gm_early + 1;
+        if (mw_early && md_we)
+          $fatal(1, "gap monitor: MD moves at the end of an early write's own tick");
+        // The MD bound, two ticks, met by a late write after MD moved at the
+        // end of L and by one on time after it moved at the end of L-1.
+        if (mw_late_q && gm_t - gm_md_now == 2) gm_late_l <= gm_late_l + 1;
+        if (mw_now && gm_t - gm_md_now == 2) gm_late_lm1 <= gm_late_lm1 + 1;
+      end
+      if (mclk_edge && gm_t != gm_mw) begin
+        if (gm_t - gm_mw < gm_min_b) gm_min_b <= gm_t - gm_mw;
+        if (gm_t - gm_mw < 3)
+          $fatal(1, "gap monitor: a boundary %0d tick after a map or dispatch write", gm_t - gm_mw);
+        if (gm_t - gm_mw == 3 && gm_mw_early) gm_early_b3 <= gm_early_b3 + 1;
+      end
+    end
+  end
+`endif
 
   // **THE IR-DERIVED HALF OF EACH -WAIT TERM IS HELD**, and the other half is
   // not.  Each term is one thing the instruction wants AND one thing the bus
@@ -1765,7 +2057,23 @@ module cadr_microcycle #(
       // microcycles, measured, where the 5 ns grid met it on words MD already
       // held.  `DESTMDR` below still wins at a cpu edge, as it does over a
       // held word.
-      if (loadmd_edge && mclk_edge) begin
+      //
+      // **AND WHILE -HANG IS UP THE STROBE IS MD AT ONCE**, not a tick later
+      // through `md_held`.  A hung cycle's write pulse ends at its boundary
+      // and the map and dispatch writes take MD as the bus has left it
+      // there (`wp`'s note): muir's `Rtl::step` lands every word whose
+      // `-LOADMD` is at or before that instant.  Through `md_held` a word
+      // strobed two ticks before the pulse's end missed it, measured on
+      // `dispatch-on-md-gap-3` in `build/dispatch_write_order.pass`.  Nothing
+      // else reads MD inside a hung cycle before its boundary, so the tick
+      // moves nothing else.  **What this still does not reach**: a strobe on
+      // the pulse's last tick or its end.  The strobe is seen a tick after
+      // `-LOADMD` falls (`n_loadmd_q`), so a word acknowledged in the last
+      // tick before the pulse's end lands after it, where muir lands it
+      // before; no program here puts an acknowledgment there, and doing so
+      // would need `rdata` on the dispatch and map address paths in the
+      // same tick.
+      if (loadmd_edge && (mclk_edge || hang)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -1950,8 +2258,8 @@ module cadr_microcycle #(
         if (memgo) begin
           mbusy      <= 1'b1;
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[13:0], vma[7:0]};
-          wdata      <= md;
+          phys_r     <= {vmo[13:0], vma_bus};
+          wdata      <= md_bus;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
           // falling time until -MEMACK gives it one.
           if (rdcyc) rd_in_progress <= 1'b1;
@@ -2040,7 +2348,7 @@ module cadr_microcycle #(
   //
   //   - **a write pulse with the address muxed writes the readout's
   //     address.**  `dmem[dadr]`, `l1_map[adr0]` and `l2_map[adr1]` are
-  //     written under `wp` at an address that is *the same expression* as
+  //     written under `mw` at an address that is *the same expression* as
   //     the read's, so a mux on it moves the write with the read.  A
   //     readout that can corrupt the dispatch memory is not an instrument.
   //   - **`dadr`, `adr0` and `adr1` are the machine's own longest
@@ -2342,9 +2650,14 @@ module cadr_microcycle #(
   // could fail, is retired with it: it tested an ordering that is gone.
   //
   // What the structure says, from this file: every write is on the edge that
-  // ends the tick `wp` is up, the third-to-last of the cycle, so the
-  // undefined tick is the second-to-last, and the boundary that samples the
-  // dispatch word and the map is the edge that ends the last.  The one register that samples the map on
+  // ends the tick `mw` is up.  In a microcycle that runs that is the
+  // boundary's own tick since muir's `bc6af67` (the write pulse is taken as
+  // it ends; see `wp`), so what the boundary samples is the word before the
+  // write and the undefined tick is the first of the next microcycle, where
+  // no boundary samples anything.  In a hung one it is two ticks before the
+  // pulse's end, at it, or a tick after it, and the boundary is three ticks
+  // after it at the least (`mw`'s note), so the undefined tick is never a
+  // boundary's.  The one register that samples the map on
   // every tick is `memgo_q`, through `vmaok`, and it reads the map only while
   // MEMSTART is up.  MEMSTART and WMAPD come from one instruction, and the
   // only way they are up together is an instruction fetch in the instruction
@@ -2358,7 +2671,11 @@ module cadr_microcycle #(
     if (l2_rdw)   n_l2_rdw   <= n_l2_rdw + 1;
     if ((dmem_rdw || l1_rdw || l2_rdw) && cpu_edge) n_on_boundary <= n_on_boundary + 1;
     if ((l1_rdw || l2_rdw) && memstart) n_under_memstart <= n_under_memstart + 1;
-    if (wp && wmapd && memstart) n_write_under_memstart <= n_write_under_memstart + 1;
+    if (mw && wmapd && memstart) n_write_under_memstart <= n_write_under_memstart + 1;
+    // `mw`'s note says a map write under MEMSTART writes nothing, VMA<26>
+    // and VMA<25> being clear under an instruction fetch.  Held here.
+    if (mw && wmapd && memstart && (vma[26] || vma[25]))
+      $fatal(1, "rdw_poison: a map level written while MEMSTART is up");
   end
   // A poison that never fired tested nothing, so a program that never wrote
   // one of the three memories fails the check rather than passing it.

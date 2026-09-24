@@ -85,7 +85,18 @@ module cadr_phase_gen (
     (* max_fanout = 3 *)
     output var logic       n_tpwp,     // write pulse    CLOCK2 1C06 pin 8
     output var logic       n_tpwpiram, // control store  CLOCK2 1C13 pin 8
-    output var logic       n_tpr60     // -TPR60, SPEEDCLK's source
+    output var logic       n_tpr60,    // -TPR60, SPEEDCLK's source
+    // **THE TICK BEFORE THE CYCLE'S LAST**, whose successor either restarts
+    // the ring or, with -HANG up, parks it.  Not a net of the board: it is
+    // where `cadr_microcycle.sv` places the map's and the dispatch memory's
+    // write in a hung cycle whose read has been acknowledged (its `mw`), two
+    // ticks before the pulse would end.  A compare of the counter against a
+    // register, as the taps are.
+    output var logic       penult,
+    // And the cycle's last tick, the one whose end restarts the ring or parks
+    // it.  `cadr_microcycle.sv` keeps a foreign master's word out of MD in
+    // this tick and the one before it (`ub_md_take`).
+    output var logic       last
 );
 
   // Speed, as clock.rs names it: SSPEED1,SSPEED0 = 00 ExtraSlow, 01 Slow,
@@ -161,6 +172,7 @@ module cadr_phase_gen (
   logic [5:0] wpiram_off_at;   // -TPW45
   logic [5:0] wrap_at;         // the last tick of the cycle
   logic [5:0] park_at;         // where -HANG holds the ring
+  logic [5:0] penult_at;       // the tick before the last
 
   // The cycle is `read_t + RESTART_T` ticks long, phases 0 .. cycle_t-1.
   // `park_at` is that length: where the generator sits when -HANG holds the
@@ -197,6 +209,7 @@ module cadr_phase_gen (
       wpiram_off_at <= 6'(READ_NORMAL_T) + 6'(WPIRAM_OFF_T) - 6'd1;
       wrap_at       <= 6'(READ_NORMAL_T) + 6'(RESTART_T) - 6'd1;
       park_at       <= 6'(READ_NORMAL_T) + 6'(RESTART_T);
+      penult_at     <= 6'(READ_NORMAL_T) + 6'(RESTART_T) - 6'd2;
       tpclk      <= 1'b0;
       tptse      <= 1'b0;
       n_tpwp     <= 1'b1;
@@ -222,6 +235,7 @@ module cadr_phase_gen (
         wpiram_off_at <= read_sel + 6'(WPIRAM_OFF_T) - 6'd1;
         wrap_at       <= read_sel + 6'(RESTART_T) - 6'd1;
         park_at       <= read_sel + 6'(RESTART_T);
+        penult_at     <= read_sel + 6'(RESTART_T) - 6'd2;
       end
 
       if (phase == tpclk_off_at) begin                          // ReadEnd
@@ -238,6 +252,9 @@ module cadr_phase_gen (
   assign n_tpr60 = !(running && phase >= 6'(TPR60_ON_T) && phase < 6'(TPR60_OFF_T));
 
   assign n_tpclk = !tpclk;
+
+  assign penult = running && (phase == penult_at);
+  assign last   = running && (phase == wrap_at);
 
 endmodule
 

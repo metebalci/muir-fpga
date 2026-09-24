@@ -142,15 +142,16 @@ constexpr uint32_t kLift     = 0x4C494654u;   // "LIFT"
 constexpr long     kLeadT    = GridTicks(100);  // busint::DEBUG_OUT_REQUEST_NS
 constexpr long     kMsynT    = GridTicks(100);  // busint::DEBUG_MSYN_NS
 constexpr long     kReleaseT = GridTicks(100);  // busint::DEBUG_RELEASE_NS
-// `busint::DIAGNOSTIC_NS` is fifty ticks, and the fifty-first is the edge at
-// which the master asserted `-UB MSYN`: **a level settled at the end of tick
-// t is what tick t+1's edge consumes**, and `cadr_spy_registers.sv` counts
-// from the first edge that sees the strobe.  That block's own timing is held
-// to muir by `build/machine.pass` and is not this check's to re-derive; what
-// is this check's is that the debug master waits for the slave's own answer
-// and acknowledges exactly there, which is what a constant rather than a
-// range says.
-constexpr long     kSsynT    = GridTicks(250) + 1;
+// `busint::DIAGNOSTIC_NS` after the edge at which the master asserted
+// `-UB MSYN`.  That block's own timing is held to muir by
+// `build/dispatch_write_order.pass`, whose `mode-speed-written-*` programs
+// write the mode register over the Unibus and compare every microcycle's
+// length and the cycle's -MEMACK against muir's; it used to be a tick more
+// here, when the block counted from the first edge that saw the strobe and
+// both came out a tick late.  What is this check's is that the debug master
+// waits for the slave's own answer and acknowledges exactly there, which is
+// what a constant rather than a range says.
+constexpr long     kSsynT    = GridTicks(250);
 constexpr long     kWatchdogT = 4096;         // the harness's own, shrunk
 
 uint32_t Win(unsigned i) { return kBase + 4u * i; }

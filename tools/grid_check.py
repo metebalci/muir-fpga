@@ -38,7 +38,10 @@ after it, so some deadlines are an instant's count and one tick more or less:
 the IR to the latch at the fast read tap is `ticks(75) - 1`.  Such a count is
 tagged `# grid: 75 ns - 1 tick` or `# grid: 60 ns + 1 tick`, and held to that.
 The tick is the fabric's and not MIT's, which is why it is written out rather
-than folded into a nanosecond figure no drawing has.
+than folded into a nanosecond figure no drawing has.  A count the fabric
+places by ticks alone, such as the map's and the dispatch memory's writes
+around a hung microcycle, is tagged `# grid: 0 ns + 3 ticks`, the offset being
+any number of ticks.
 
 **A COUNT TWO INSTANTS SHARE.**  Two instants of different nanoseconds can come
 to one count at a coarse grid --- 75 and 80 are both eight ticks at 10 ns ---
@@ -199,9 +202,12 @@ STATEMENT = re.compile(
     r"(?:set_multicycle_path\s+-(setup|hold)\s+(\d+)"
     r"|(assert_multicycle_applied|assert_instance_timing|assert_clause_timing)\s+\$tick\s+(\d+))")
 TAG = re.compile(
-    r"^\s*#\s*(?:grid:\s*(\d+)\s*ns(?:\s*([+-])\s*1\s*tick)?"
+    r"^\s*#\s*(?:grid:\s*(\d+)\s*ns(?:\s*([+-])\s*(\d+)\s*ticks?)?"
     r"(?:\s*\(shared with\s+([\d\s,and]+?)\s*ns\))?"
     r"|(board ticks))\s*$")
+# A tag's groups: 1 the nanoseconds, 2 and 3 the sign and the number of
+# fabric ticks either side of them, 4 the instants it shares a count with,
+# 5 `board ticks`.
 
 
 def ticks(ns, grid):
@@ -244,13 +250,15 @@ def check_constraints(root, grid):
             t = tags[0]
             kind = m.group(1) or m.group(3)
             count = int(m.group(2) or m.group(4))
-            if t.group(4):
+            if t.group(5):
                 found.append((where, kind, None, count, []))
                 continue
             ns = int(t.group(1))
-            off = {"+": 1, "-": -1, None: 0}[t.group(2)]
+            ticks_off = int(t.group(3)) if t.group(2) else 0
+            off = {"+": ticks_off, "-": -ticks_off, None: 0}[t.group(2)]
             want = ticks(ns, grid) + off
-            said = f"{ns} ns" + (f" {t.group(2)} 1 tick" if off else "")
+            said = f"{ns} ns" + (f" {t.group(2)} {ticks_off} tick{'s' if ticks_off != 1 else ''}"
+                                 if off else "")
             if kind == "hold":
                 if count != want - 1:
                     fail(f"{where}: a hold of {count} beside {said}, which is {want} ticks at "
@@ -258,7 +266,7 @@ def check_constraints(root, grid):
             elif count != want:
                 fail(f"{where}: {count} ticks for {said}, which is {want} at the {grid} ns "
                      f"grid of rtl/machine/cadr_tick_pkg.sv")
-            shared = sorted({int(x) for x in re.findall(r"\d+", t.group(3) or "")})
+            shared = sorted({int(x) for x in re.findall(r"\d+", t.group(4) or "")})
             # An instant a tick either side is its own instant: it shares a
             # count with nothing by virtue of its nanoseconds.
             found.append((where, kind, ns if not off else said, count, shared))

@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 33.** It is
+version is refused by name rather than read wrong. **The version is 35.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
@@ -63,10 +63,18 @@ by zeros, and declares the CADR's geometry: a five-bit level-1 entry, a
 ten-bit PDL pointer, no multiply and divide and no tick. The tick's own state
 follows the geometry, written as a CADR's machine holds it: off, a period of
 16,667 microseconds, and no deadline. The display writes the size QUUX's MONO
-TV would have after its board's tag, 1,920 by 1,080, which a CADR's display
-keeps and never uses. The engine also keeps the instant the instruction in
+TV would have after its board's tag, which a CADR's display keeps and never
+uses. That size is 1,280 by 1,024 from version 35 on, and was 1,920 by 1,080
+before it. The engine also keeps the instant the instruction in
 `IR` was loaded, which only QUUX's divider reads. The program writes it as
 zero, which is what a freshly built engine holds.
+
+Version 34 adds the microcycle length of QUUX's synchronous timing model to the
+engine's timing byte. The fabric declares muir's grid model, which carries no
+such length, so the program writes the same byte as before. Version 35 adds
+one flag to the engine: whether a microcycle held by `-HANG` has already fired
+its write pulse. The flag is set only inside a hung microcycle, and a halted
+machine is never inside one, so the program writes it as false.
 
 Version 27 adds one byte to the engine: whose nanoseconds its clock counts,
 muir's `TimingModel`. This program declares it. Version 26 added the two sync

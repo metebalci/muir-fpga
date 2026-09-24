@@ -152,7 +152,8 @@ proc cadr_leaves {prefix names} {
 set fast [add_to_collection [get_registers -nowarn {*u_phase_gen*}] \
               [get_registers -nowarn [cadr_leaves {*|} {mfinish_t rdfinish_t elapsed
                   vco_count arb_t phase_t n_memack_q n_loadmd_q n_tpwpiram_q n_tpwp_q
-                  deskewed ub_acked ub_loadmd tpclk_q}]]]
+                  deskewed ub_acked ub_loadmd tpclk_q
+                  md_we_q mw_early_q mw_early_q2 mw_late_q}]]]
 set out_whole [get_registers -nowarn {u_machine|disk|* u_machine|audit|*
                                       u_machine|memory|tv|* u_machine|memory|iob|*
                                       u_machine|memory|busint_regs|*}]
@@ -177,31 +178,35 @@ set_multicycle_path -hold  7 -from $slow -to $slow
 #
 # `cadr_machine.xdc`'s split-path clauses, written again: the scratchpad
 # latches in and out, the latches into the dispatch memory's write, the
-# control store's word, and the second hop of the other every-tick
-# registers.  The argument for every count is that file's.  What differs:
+# control store's word, MD into the writes a hung microcycle's pulse takes,
+# and the second hop of the other every-tick registers.  The argument for
+# every count is that file's.  What differs:
 #
 #   - The latches here are the M20K blocks' own address registers, loaded
 #     while TPCLK is high, which is the same register the Zynq boards' block
 #     RAMs hold; so the four memories are named whole, by the keepers of the
-#     blocks Quartus inferred for them.
-#   - **THE MAPS' WRITE HAS NO CLAUSE HERE, BECAUSE QUARTUS TIMES NO PATH
-#     FROM IT.**  Both levels are MLABs read without a clock, and a word
-#     written into an MLAB reaches its output through no arc the timing
-#     analyzer reports: asked at f016b65, nothing starts at either map but
-#     the readout copy's own read address.  A clause written `-from` the maps
-#     would be a clause that reaches nothing.  What bounds that path on this
-#     board is the MLAB itself, which gives the new word from the edge after
-#     the one that wrote it (`project.tcl`, and the read-during-write window
-#     at the end of `cadr_microcycle.sv`), and the rest of the path, from the
-#     level-1 map's output to the PC's `d`, against the twenty nanoseconds the
-#     two ticks after that edge give.  Measured at the 0 C slow corner: 19.0
-#     ns on the fit of f016b65, and 20.1 ns on the fit that added the clauses
-#     above, which moved nothing on this path but the placement.  **SO THIS
-#     PATH IS AT OR OVER ITS TIME, AND NOTHING HERE CAN TIME IT**: the MLAB's
-#     own delay from the edge to its output is not reported, and a clause
-#     `-through` the maps would take the reads from MD as well, which have the
-#     whole microcycle and need more than two ticks.  It wants a change to the
-#     design, not to this file.
+#     blocks Quartus inferred for them.  The stack is one of them, so its
+#     write into its latch is inside the block and has no clause here.
+#   - **THE MAPS' AND THE DISPATCH MEMORY'S WRITES HAVE NO CLAUSE HERE,
+#     BECAUSE QUARTUS TIMES NO PATH FROM THEM.**  All three are MLABs read
+#     without a clock, and a word written into an MLAB reaches its output
+#     through no arc the timing analyzer reports: asked at f016b65, nothing
+#     starts at either map but the readout copy's own read address.  A clause
+#     written `-from` them would be a clause that reaches nothing.  What
+#     bounds that path on this board is the MLAB itself, which gives the new
+#     word from the edge after the one that wrote it (`project.tcl`, and the
+#     read-during-write window at the end of `cadr_microcycle.sv`), and the
+#     rest of the path, from the level-1 map's output to the PC's `d`.
+#     **The design gives that path three ticks**: `cadr_microcycle.sv`'s
+#     `mw` puts every write three edges or more before the boundary that
+#     reads it, so the new word is out of the MLAB two ticks before the PC
+#     takes it.  Measured at the 0 C slow corner at the merge of muir's
+#     `bc6af67`: 14.6 ns from the level-1 map's output to the PC's `d`, and
+#     12.5 from the dispatch memory's.  Taken literally at the pulse's end, a
+#     write in a hung microcycle had the boundary on the next edge, where the
+#     MLAB is still in the tick it does not define.
+#   - The write side of an MLAB is registers and is timed, so MD into the
+#     writes' address has its clause here as on the Zynq boards: two ticks.
 set split_pr {u_machine|processor}
 set split_latch_addr [get_registers -nowarn [concat \
     [cadr_leaves "${split_pr}|" {ir pdl_ptr pdl_idx spcptr}]]]
@@ -209,6 +214,10 @@ set split_latch [get_keepers -nowarn [list "${split_pr}|amem_rtl_*" "${split_pr}
                                            "${split_pr}|pdl_rtl_*" "${split_pr}|spcm_rtl_*"]]
 set split_dmem [get_keepers -nowarn [list "${split_pr}|dmem_rtl_*"]]
 set split_cstore [get_keepers -nowarn [list "${split_pr}|imem_rtl_*" "${split_pr}|prom_mem_rtl_*"]]
+set split_md [get_registers -nowarn [cadr_leaves "${split_pr}|" {md}]]
+set split_md_held [get_registers -nowarn [cadr_leaves "${split_pr}|" {md_held}]]
+set split_md_writes [get_keepers -nowarn [list "${split_pr}|l1_map_rtl_*" "${split_pr}|l2_map_rtl_*" \
+                                               "${split_pr}|dmem_rtl_*"]]
 set split_every_tick [get_registers -nowarn [concat \
     [cadr_leaves "${split_pr}|" {memgo_q destmem_q use_md_q ifetch_q}] \
     [cadr_leaves {u_machine|memory|} {is_memory device nxm unibus ub_addr}]]]
@@ -221,14 +230,25 @@ set_multicycle_path -hold  6 -from $split_latch_addr -to $split_latch
 set_multicycle_path -setup 7 -from $split_latch -to $slow
 set_multicycle_path -hold  6 -from $split_latch -to $slow
 
-# After the clause above, which it narrows.
-# grid: 30 ns + 1 tick
-set_multicycle_path -setup 4 -from $split_latch -to $split_dmem
-set_multicycle_path -hold  3 -from $split_latch -to $split_dmem
+# After the clause above: a hung microcycle whose read has been acknowledged
+# writes the dispatch memory on the tick before its last.
+# grid: 60 ns - 1 tick
+set_multicycle_path -setup 5 -from $split_latch -to $split_dmem
+set_multicycle_path -hold  4 -from $split_latch -to $split_dmem
 
 # grid: 60 ns - 1 tick
 set_multicycle_path -setup 5 -from $split_cstore -to $slow
 set_multicycle_path -hold  4 -from $split_cstore -to $slow
+
+# MD into the writes' address: two ticks at the least, `mw`'s placement.
+# grid: 0 ns + 2 ticks
+set_multicycle_path -setup 2 -from $split_md -to $split_md_writes
+set_multicycle_path -hold  1 -from $split_md -to $split_md_writes
+
+# MD_HELD into MD, on the tick after the strobe held it.
+# grid: 0 ns + 1 tick
+set_multicycle_path -setup 1 -from $split_md_held -to $split_md
+set_multicycle_path -hold  0 -from $split_md_held -to $split_md
 
 # grid: 60 ns
 set_multicycle_path -setup 6 -from $split_every_tick -to $slow
