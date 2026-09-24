@@ -529,8 +529,15 @@ if {$clocks < 2} {
 # too, so a relaxed set that reached nothing would still find the display's
 # eight here. The audit's own assertion just below is this clause's sharp
 # half, being registers only `slow` relaxes.
-# grid: 75 ns (shared with 80 ns)
-assert_multicycle_applied $tick 8
+# On QUUX the relaxed set is K ticks (`quux_machine.xdc`), and the count is
+# asked at K; K = 4 is no other clause's count on this board.
+if {$machine ne "quux"} {
+    # grid: 75 ns (shared with 80 ns)
+    assert_multicycle_applied $tick 8
+} else {
+    # sync: K
+    assert_multicycle_applied $tick 4
+}
 # **AND WHICH SET THE TRANSACTION AUDIT'S REGISTERS FELL INTO, ASKED DIRECTLY
 # RATHER THAN INFERRED FROM A COUNT.** `rtl/plumbing/cadr_bus_audit.sv` is 347
 # registers under `cadr_machine`, which relaxes everything it does not name ---
@@ -561,8 +568,13 @@ assert_multicycle_applied $tick 8
 # 150.000 ns and the same refusal. A flow nobody runs is a flow that says
 # nothing, which is this project's oldest lesson in a new place.
 # grid: 75 ns
-if {$port > 0} {
+if {$port > 0 && $machine ne "quux"} {
     assert_instance_timing $tick 8 *u_machine/audit/* \
+        {*audit/first_* *audit/micro_reg* *audit/word_reg*}
+} elseif {$port > 0} {
+    # QUUX's relaxed set is K ticks.
+    # sync: K
+    assert_instance_timing $tick 4 *u_machine/audit/* \
         {*audit/first_* *audit/micro_reg* *audit/word_reg*}
 } else {
     puts "XDC: the audit has no registers on a board with no console to read\
@@ -635,56 +647,59 @@ if {$machine ne "quux"} {
 assert_instance_timing $tick 15 *u_machine/memory/busint_regs/* \
     {*wr_buf_reg* *ub_map_reg*}
 
-# AND THE SPLIT PATHS `cadr_machine.xdc` NARROWS BELOW THE RELAXED SET, each
-# asked of its own paths: none may ask for more than its clause gives, and at
-# least one must ask for exactly that. The clauses are written at the relaxed
-# set's own priority, so this is what says the tool ranked them above it.
-# grid: 75 ns - 1 tick
-assert_clause_timing $tick 7 "IR into the scratchpad latches" \
-    {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
-    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
-     *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
-# grid: 60 ns + 1 tick
-assert_clause_timing $tick 7 "out of the scratchpad latches" \
-    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
-     *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
-# grid: 60 ns - 1 tick
-assert_clause_timing $tick 5 "the latches into the dispatch memory's write" \
-    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
-     *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*} {*processor/dmem_reg*}
-# grid: 60 ns - 1 tick
-assert_clause_timing $tick 5 "the control store's word" \
-    {*processor/imem_reg* *processor/imem_q_reg* *processor/prom_q_reg*}
-# grid: 0 ns + 3 ticks
-assert_clause_timing $tick 3 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
-# grid: 0 ns + 3 ticks
-assert_clause_timing $tick 3 "the dispatch memory's write" {*processor/dmem_reg*}
-# grid: 0 ns + 1 tick
-assert_clause_timing $tick 1 "the three memories' writes into the readout" \
-    {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
-    {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
-# grid: 0 ns + 2 ticks
-assert_clause_timing $tick 2 "MD into the writes' address" {*processor/md_reg*} \
-    {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
-# grid: 0 ns + 1 tick
-assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" \
-    {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_k1_q_reg*
-     *processor/mw_late2_q_reg*}
-# grid: 0 ns + 1 tick
-assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
-# grid: 0 ns + 1 tick
-assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
-    {*processor/spc_q_reg*}
-# grid: 60 ns
-assert_clause_timing $tick 6 "the second hop of the every-tick registers" \
-    {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
-     *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
-     *memory/unibus_reg* *memory/ub_addr_reg*}
+if {$machine ne "quux"} {
+    # AND THE SPLIT PATHS `cadr_machine.xdc` NARROWS BELOW THE RELAXED SET, each
+    # asked of its own paths: none may ask for more than its clause gives, and at
+    # least one must ask for exactly that. The clauses are written at the relaxed
+    # set's own priority, so this is what says the tool ranked them above it.
+    # grid: 75 ns - 1 tick
+    assert_clause_timing $tick 7 "IR into the scratchpad latches" \
+        {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
+        {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
+         *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
+    # grid: 60 ns + 1 tick
+    assert_clause_timing $tick 7 "out of the scratchpad latches" \
+        {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
+         *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
+    # grid: 60 ns - 1 tick
+    assert_clause_timing $tick 5 "the latches into the dispatch memory's write" \
+        {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
+         *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*} {*processor/dmem_reg*}
+    # grid: 60 ns - 1 tick
+    assert_clause_timing $tick 5 "the control store's word" \
+        {*processor/imem_reg* *processor/imem_q_reg* *processor/prom_q_reg*}
+    # grid: 0 ns + 3 ticks
+    assert_clause_timing $tick 3 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
+    # grid: 0 ns + 3 ticks
+    assert_clause_timing $tick 3 "the dispatch memory's write" {*processor/dmem_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the three memories' writes into the readout" \
+        {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
+        {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
+    # grid: 0 ns + 2 ticks
+    assert_clause_timing $tick 2 "MD into the writes' address" {*processor/md_reg*} \
+        {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" \
+        {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_k1_q_reg*
+         *processor/mw_late2_q_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
+        {*processor/spc_q_reg*}
+    # grid: 60 ns
+    assert_clause_timing $tick 6 "the second hop of the every-tick registers" \
+        {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
+         *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
+         *memory/unibus_reg* *memory/ub_addr_reg*}
+}
 
-# QUUX'S TWO CLAUSES, `quux_machine.xdc`, ASKED WHAT THEY REACHED.  The tick's
-# countdown and the divider's steps must be there for the paths into them to
-# be relaxed, and the paths into the divider from the relaxed set must ask for
-# exactly the latches' seven ticks and none for more.
+# QUUX'S CLAUSES, `quux_machine.xdc`, ASKED WHAT THEY REACHED, at K = 4.
+# Every clause of the CADR's file is re-issued there at QUUX's counts, so each
+# is asked here the same two ways: none of its paths may ask for more than
+# its count, and at least one must ask for exactly that.  The tick's
+# countdown must be in the design for its paths to be the tick's.
 if {$machine eq "quux"} {
     set quux_tick_cells [get_cells -quiet -hier -filter {NAME =~ *processor/g_quux_tick.tk_us_reg* && IS_SEQUENTIAL}]
     if {[llength $quux_tick_cells] == 0} {
@@ -692,10 +707,55 @@ if {$machine eq "quux"} {
         puts "BIT: in rtl/plumbing/xilinx7/quux_machine.xdc is on nothing."
         exit 1
     }
-    # grid: 60 ns + 1 tick
-    assert_clause_timing $tick 7 "into QUUX's divider" \
-        {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
-         *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg* *processor/q_reg*} \
+    set q_latch {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
+                 *processor/mmem_q_reg* *processor/spc_q_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "IR into the scratchpad latches" \
+        {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
+        $q_latch
+    # sync: K - 1
+    assert_clause_timing $tick 3 "out of the scratchpad latches" $q_latch
+    # sync: K - 1
+    assert_clause_timing $tick 3 "the latches into the dispatch memory's write" $q_latch \
+        {*processor/dmem_reg*}
+    # sync: K
+    assert_clause_timing $tick 4 "the control store's word" \
+        {*processor/imem_reg* *processor/imem_q_reg* *processor/prom_q_reg*}
+    # sync: K
+    assert_clause_timing $tick 4 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
+    # sync: K
+    assert_clause_timing $tick 4 "the dispatch memory's write" {*processor/dmem_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the three memories' writes into the readout" \
+        {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
+        {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
+    # sync: K
+    assert_clause_timing $tick 4 "MD into the writes' address" {*processor/md_reg*} \
+        {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
+        {*processor/spc_q_reg*}
+    # grid: 0 ns + 2 ticks
+    assert_clause_timing $tick 2 "into the every-tick registers" \
+        {*processor/ir_reg* *processor/vma_reg* *processor/memstart_reg* *processor/md_reg*} \
+        {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
+         *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
+         *memory/unibus_reg* *memory/ub_addr_reg*}
+    # sync: K - 2
+    assert_clause_timing $tick 2 "the second hop of the every-tick registers" \
+        {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
+         *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
+         *memory/unibus_reg* *memory/ub_addr_reg*}
+    # sync: K
+    assert_clause_timing $tick 4 "the edge's registers into QUUX's divider" \
+        {*processor/q_reg* *processor/ir_reg*} {*processor/g_quux_muldiv.muldiv/dv_*}
+    # sync: K - 1
+    assert_clause_timing $tick 3 "the latches into QUUX's divider" $q_latch \
+        {*processor/g_quux_muldiv.muldiv/dv_*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" {*processor/md_held_reg*} \
         {*processor/g_quux_muldiv.muldiv/dv_*}
     puts "BIT: QUUX: [llength $quux_tick_cells] tick countdown cells"
 }

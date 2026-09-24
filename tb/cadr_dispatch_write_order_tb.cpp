@@ -324,6 +324,9 @@ int Run(const Program &p, Totals &tot) {
         ack_armed = false;
         fin_armed = true;
         tot.ack_slip[static_cast<long>(ack_want) - ns_now]++;
+        if (static_cast<long>(ack_want) != ns_now)
+          std::fprintf(stderr, "  %s: -MEMACK %+ld ns from muir, at %ld ns\n", p.name.c_str(),
+                       static_cast<long>(ack_want) - ns_now, ns_now);
       }
       // `mbusy` falls on the edge before MFINISHD's instant, so the edge
       // after this one is the first whose registers see it down.

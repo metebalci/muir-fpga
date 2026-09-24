@@ -48,6 +48,7 @@ int main(int argc, char **argv) {
       return 2;
     }
     dut->m = m;
+    dut->dm = m;
     dut->a = a;
     dut->q = q;
     dut->load = 1;
@@ -56,6 +57,7 @@ int main(int argc, char **argv) {
     // The operands are poisoned after the load, as the M bus would move
     // under a divider that went on reading it.
     dut->m = ~m;
+    dut->dm = ~m;
     dut->a = ~a;
     dut->q = ~q;
     // Two steps a tick: the words are there sixteen ticks after the load.

@@ -597,7 +597,20 @@ module cadr_busint_xbus (
               end
               // "SACKD withdraws the grant" --- strictly after, so a master
               // clock landing exactly on the wait does not take it.
-              3'd3: if (arb_t > 9'(UB_SELECT_T)) begin
+              //
+              // **`>=` AND NOT `>`, IN THIS FILE'S FRAME.**  `arb_t` is zero
+              // over the tick after -SACK's edge, so over the tick ending at
+              // an edge N ticks on it reads N - 1, and "strictly after" the
+              // wait, N > UB_SELECT_T, is `arb_t >= UB_SELECT_T`.  Written
+              // `>`, a master clock one tick past the wait did not take it
+              // and waited a microcycle more.  No CADR microcycle that runs
+              // or waits lands a master clock 21 ticks after -SACK --- the
+              // shortest is 14 --- and no trace has a hang ending there, so
+              // no CADR trace can tell the two; QUUX's microcycle of 3
+              // ticks lands one there every time, and the mode register's
+              // writes in `build/dispatch_write_order.quux.k3.pass` were
+              // acknowledged 30 ns after muir's.
+              3'd3: if (arb_t >= 9'(UB_SELECT_T)) begin
                 stage     <= 3'd4;
                 ub_master <= 1'b1;
               end

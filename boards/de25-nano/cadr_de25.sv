@@ -190,7 +190,16 @@ module cadr_de25 #(
     // as it stands, which refuses a name it does not know; `make de25
     // MACHINE=quux` sets it, and `build/machine_param.pass` holds that it
     // arrives.
-    parameter string MACHINE = "cadr"
+    parameter string MACHINE = "cadr",
+
+    // **QUUX'S MICROCYCLE ON THIS BOARD**: four ticks, 40 ns, and no more
+    // for an `ILONG` instruction (H1a, muir's `--timing-model sync
+    // --sync-cycle-ticks 4`).  Four is QUUX's least (`quux_phase_gen.sv`),
+    // so the three the plan hoped for here is not a K this machine takes.
+    // The fit at this K is what entitles it, against the counts
+    // `quartus/quux_de25.sdc` states.  The CADR reads neither.
+    parameter int unsigned SYNC_K = 4,
+    parameter int unsigned SYNC_L = 0
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
     input  var logic       clock50_0,
@@ -520,7 +529,9 @@ module cadr_de25 #(
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
-      .MACHINE(MACHINE)
+      .MACHINE(MACHINE),
+      .SYNC_K(SYNC_K),
+      .SYNC_L(SYNC_L)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       .sintr_o(sintr),

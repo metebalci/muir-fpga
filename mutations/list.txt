@@ -12802,9 +12802,9 @@ if {0 && $held ne $want} {
 @note which is this project's own convention and is here doing the work the
 @note convention was adopted for.
 @old
-  assign i = idebug ? debug_ir : (promenable ? prom_q : imem_q);
+  assign i = idebug ? debug_ir : (promenable ? prom_q : ((QUUX && iwrited) ? iwr : imem_q));
 @new
-  assign i = (idebug && 1'b0) ? debug_ir : (promenable ? prom_q : imem_q);
+  assign i = (idebug && 1'b0) ? debug_ir : (promenable ? prom_q : ((QUUX && iwrited) ? iwr : imem_q));
 @end
 
 @mutation sstep-nop11-does-not-nop-the-cycle
@@ -19031,9 +19031,9 @@ set MAIN_BASE   0x1C000000
 @note asked to build, so a QUUX bitstream is the CADR under the other name.
 @note Lint passes: the top level's parameter is still read, by nothing.
 @old
-      .MACHINE(MACHINE)
+      .MACHINE(MACHINE),
 @new
-      .MACHINE(MACHINE == "quux" ? "cadr" : MACHINE)
+      .MACHINE(MACHINE == "quux" ? "cadr" : MACHINE),
 @end
 
 @mutation machine-param-the-de25-hands-down-the-cadr
@@ -19042,9 +19042,9 @@ set MAIN_BASE   0x1C000000
 @note The DE25-Nano's top level names the CADR to the machine whatever it was
 @note asked to build, as the Arty's record does one board along.
 @old
-      .MACHINE(MACHINE)
+      .MACHINE(MACHINE),
 @new
-      .MACHINE(MACHINE == "quux" ? "cadr" : MACHINE)
+      .MACHINE(MACHINE == "quux" ? "cadr" : MACHINE),
 @end
 
 @mutation machine-param-the-cora-builds-quux
@@ -19338,9 +19338,9 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @note where the synchronizer takes the register as it stood: the new speed
 @note reaches the generator a cycle after muir's, 220 ns where muir runs 150.
 @old
-  assign landing = mclk || (phase_t == 6'(SPEEDCLK_T) - 6'd3);
+  assign landing = mclk || (!SYNC && phase_t == 6'(SPEEDCLK_T) - 6'd3);
 @new
-  assign landing = mclk || (phase_t == 6'(SPEEDCLK_T) - 6'd2);
+  assign landing = mclk || (!SYNC && phase_t == 6'(SPEEDCLK_T) - 6'd2);
 @end
 
 @mutation the-register-strobe-counts-msyn-from-one
@@ -19369,7 +19369,7 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @note `speed-written-on-speedclk` and `speed-written-before-speedclk`, 150
 @note and 160 ns where muir's `rtl` has 220.
 @old
-  assign early = !mclk && (phase_t == 6'(SPEEDCLK_T) - 6'd3) && strobe_due && !early_taken;
+  assign early = !SYNC && !mclk && (phase_t == 6'(SPEEDCLK_T) - 6'd3) && strobe_due && !early_taken;
 @new
   assign early = 1'b0 && strobe_due && !early_taken;
 @end
@@ -20057,7 +20057,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-tick-is-late-by-a-tick
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The first period after a write is one tick longer than muir's: the
 @note count starts at the edge a tick late and does not make up the tick.
@@ -20068,7 +20068,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-tick-flag-is-not-sticky
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The flag is up only in the tick of its rise, where it stays up until
 @note cleared.
@@ -20079,7 +20079,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-clear-does-not-clear
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A write with `<1>` set leaves the flag up.
 @old
@@ -20089,7 +20089,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-period-write-does-not-restart
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A period written while the tick runs takes effect at the next rise
 @note rather than starting a period from now.
@@ -20100,7 +20100,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-source-17-swaps-its-bits
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Source 17 reads the enable in `<0>` and the flag in `<1>`.
 @old
@@ -20110,7 +20110,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-source-17-reads-the-flag-live
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Source 17 reads the flag as it stands through the microcycle, not as
 @note it stood when the microcycle started, so a rise mid-cycle is seen a
@@ -20122,7 +20122,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-tick-does-not-interrupt
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The flag never reaches the interrupt jump conditions test.
 @old
@@ -20132,7 +20132,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-tick-interrupts-through-its-own-clear
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The interrupt taken at the edge of a clear is the flag before the
 @note clear, where muir takes the interrupt after the write.
@@ -20143,7 +20143,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-tick-is-not-on-sintr
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_machine.sv
 @note The tick's interrupt does not reach `SINTR`, so jump condition 5
 @note never sees it.
@@ -20156,14 +20156,13 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @mutation quux-the-divider-reads-its-operands-late
 @check quux_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
-@note The divider takes its operands at the fiftieth tick, so its steps are
-@note not done by the edge that ends a `DIV`'s microcycle, sixty ticks after
-@note the edge that loaded it at QUUX's one rate.  (At the fortieth they are,
-@note two steps a tick.)
+@note The divider takes its operands 46 ticks late, the fiftieth at a K of
+@note four, so its steps are not done by the edge that ends a `DIV`'s
+@note microcycle, forty ticks after the edge that loaded it.
 @old
-    assign div_load = div_t == 6'd7;
+    assign div_load = div_t == 6'(DIV_LOAD_T);
 @new
-    assign div_load = div_t == 6'd50;
+    assign div_load = div_t == 6'(DIV_LOAD_T) + 6'd46;
 @end
 
 @mutation quux-the-divider-reads-its-operands-at-the-edge
@@ -20172,13 +20171,13 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note The divider takes its operands in the tick after the edge, before the
 @note scratchpad latches have followed the new address.
 @old
-    assign div_load = div_t == 6'd7;
+    assign div_load = div_t == 6'(DIV_LOAD_T);
 @new
-    assign div_load = div_t == 6'd1;
+    assign div_load = div_t == 6'(DIV_LOAD_T) - 6'(DIV_LOAD_T - 1);
 @end
 
 @mutation quux-the-tick-counts-a-microsecond-short
-@check quux_tick_quux
+@check quux_ticksync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A microsecond is 99 ticks after a rise, so every period after the
 @note first is a tick short a microsecond.
@@ -20255,29 +20254,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
   assign vmap = (wmapd && vma[26]) ? l1_store  : vmap_rd;
 @end
 
-@mutation quux-boots-extra-slow
-@check machine_quux
-@file rtl/machine/cadr_microcycle.sv
-@note QUUX has one rate, the CADR's normal, from the boot on; the CADR's
-@note extra slow at reset lengthens QUUX's first microcycles.
-@old
-  localparam logic [1:0] SPEED_AT_RESET = QUUX ? 2'b10 : 2'b00;
-@new
-  localparam logic [1:0] SPEED_AT_RESET = 2'b00;
-@end
-
-@mutation quux-takes-the-speed-bits
-@check dispatch_write_order_quux
-@file rtl/machine/cadr_microcycle.sv
-@note QUUX's mode register's speed bits go nowhere: the programs that write
-@note extra slow and slow run on at QUUX's one rate
-@note (`speed-written-on-speedclk`, `speed-written-before-speedclk`).
-@old
-  assign mode_speed_in = QUUX ? 2'b10 : mode_speed;
-@new
-  assign mode_speed_in = mode_speed;
-@end
-
 @mutation quux-has-no-wait-for-md
 @check dispatch_write_order_quux
 @file rtl/machine/cadr_microcycle.sv
@@ -20313,17 +20289,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
         if (mclk_edge) hold_rip <= rd_in_progress || (rip_tail != 2'd0);
 @end
 
-@mutation quux-hangs-as-the-cadr-does
-@check dispatch_write_order_quux
-@file rtl/machine/cadr_microcycle.sv
-@note QUUX has no hung microcycle: a hang runs the write pulse at the MD from
-@note before the read, where QUUX's wait writes at the word read.
-@old
-  assign hang = !QUUX && use_md && rd_in_progress && !wait_;
-@new
-  assign hang = use_md && rd_in_progress && !wait_;
-@end
-
 @mutation quux-div-of-md-is-not-reloaded-from-the-word-read
 @check quux_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
@@ -20331,21 +20296,22 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note divides the old word without the reload: here it reloads only at the
 @note tick it loads anyway.
 @old
-    assign div_reload = div_md && div_strobed2;
+    assign div_reload = div_md && div_strobed;
 @new
-    assign div_reload = div_md && div_strobed2 && div_t == 6'd7;
+    assign div_reload = div_md && div_strobed && div_t == 6'(DIV_LOAD_T);
 @end
 
 @mutation quux-div-of-md-takes-the-m-bus
-@check quux_divmd_quux
+@check quux_divmdsync_quux_l1
 @file rtl/machine/cadr_microcycle.sv
-@note The word read is in `div_word` a master clock edge before it is in MD;
-@note taken from the M bus while it is pending, the reload divides the old
-@note word.
+@note A word strobed before the `DIV`'s own load is in `md_held` a master
+@note clock edge before it is in MD; loaded from MD then, the divider takes
+@note the word from before the read, and the reload that went before is
+@note overwritten.
 @old
-    assign div_m      = div_md ? (div_have ? div_word : md) : m;
+    assign div_m      = (div_reload || (div_md && div_have)) ? md_held : div_md ? md : m;
 @new
-    assign div_m      = div_md ? (div_have ? (m | (div_word & 32'd0)) : md) : m;
+    assign div_m      = (div_reload || (div_md && div_have && 1'b0)) ? md_held : div_md ? md : m;
 @end
 
 @mutation the-divider-takes-a-step-a-tick
@@ -20386,4 +20352,244 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @new
         if (1'b0) begin
           tk_flag_s    <= tk_flag;
+@end
+
+# ---------------------------------------------------------------- H1a
+#
+# QUUX'S SYNCHRONOUS MICROCYCLE OF K TICKS: its generator, the writes on the
+# edge, the control store read at the edge from NPC with the word written
+# bypassed, the latches that follow every tick, the divider's reload on the
+# strobe, and the Unibus arbitration's wait in this fabric's frame.  Each
+# behavior that moves with K has a record at K = 4 and one at K = 3.
+
+@mutation quux-gen-wraps-a-tick-early
+@check phase_gen_quux
+@file rtl/machine/quux_phase_gen.sv
+@note A microcycle of K - 1 ticks.
+@old
+  assign wrap = (phase == 6'(SYNC_K - 1) && !(ilong && SYNC_L != 0))
+@new
+  assign wrap = (phase == 6'(SYNC_K - 2) && !(ilong && SYNC_L != 0))
+@end
+
+@mutation quux-gen-wraps-a-tick-late
+@check phase_gen_quux
+@file rtl/machine/quux_phase_gen.sv
+@note A microcycle of K + 1 ticks.
+@old
+  assign wrap = (phase == 6'(SYNC_K - 1) && !(ilong && SYNC_L != 0))
+@new
+  assign wrap = (phase == 6'(SYNC_K) && !(ilong && SYNC_L != 0))
+@end
+
+@mutation quux-gen-ilong-adds-nothing
+@check quux_divmd_quux_l1
+@file rtl/machine/quux_phase_gen.sv
+@note `ILONG` read by nothing: every microcycle is K ticks where muir makes
+@note an `ILONG` one K + L.
+@old
+  assign wrap = (phase == 6'(SYNC_K - 1) && !(ilong && SYNC_L != 0))
+@new
+  assign wrap = (phase == 6'(SYNC_K - 1) && !(1'b0 && SYNC_L != 0))
+@end
+
+@mutation quux-gen-ilong-adds-a-tick-too-many
+@check phase_gen_quux
+@file rtl/machine/quux_phase_gen.sv
+@note An `ILONG` microcycle of K + L + 1 ticks.
+@old
+             || (phase == 6'(SYNC_K + SYNC_L - 1) && ilong);
+@new
+             || (phase == 6'(SYNC_K + SYNC_L) && ilong);
+@end
+
+@mutation quux-writes-a-tick-before-the-edge
+@check quux_pdlsync_quux
+@file rtl/machine/quux_phase_gen.sv
+@note The write pulse a tick early: the maps and the dispatch memory are
+@note written a tick before the edge that reads them, which then takes the
+@note new word where QUUX reads the old.
+@old
+  assign last_next  = (phase_next == 6'(SYNC_K - 1) && !(ilong && SYNC_L != 0))
+@new
+  assign last_next  = (phase_next == 6'(SYNC_K - 2) && !(ilong && SYNC_L != 0))
+@end
+
+@mutation quux-control-store-without-the-bypass
+@check machine_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The word a `WRITE-I-MEM` writes lands on the edge that loads IR, so
+@note without the bypass IR takes the word the address held before it.
+@old
+  assign i = idebug ? debug_ir : (promenable ? prom_q : ((QUUX && iwrited) ? iwr : imem_q));
+@new
+  assign i = idebug ? debug_ir : (promenable ? prom_q : ((1'b0 && iwrited) ? iwr : imem_q));
+@end
+
+@mutation quux-control-store-read-every-tick
+@check machine_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Read every tick at NPC, the word follows the next instruction's NPC
+@note once IR has moved, and IR takes a word from two ahead.
+@old
+  assign cs_read = !QUUX || cpu_edge || !started;
+@new
+  assign cs_read = 1'b1;
+@end
+
+@mutation quux-control-store-read-at-pc
+@check machine_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Read at the edge from PC, which that edge is only now moving: the word
+@note is the instruction's own and not the next.
+@old
+  assign cs_ra   = QUUX ? npc : cs_radr;
+@new
+  assign cs_ra   = cs_radr;
+@end
+
+@mutation quux-latches-follow-only-at-the-boundary
+@check machine_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Loaded only while TPCLK is up, which on QUUX is the boundary's tick,
+@note before IR moves: every latch holds the instruction before's word.
+@old
+    if (tpclk || QUUX) begin
+@new
+    if (tpclk) begin
+@end
+
+@mutation quux-pdl-latch-a-tick-late
+@check quux_pdlsync_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A register after the block RAM's output, loaded while TPCLK was up a
+@note tick before: on QUUX that is the boundary's tick, so it holds the word
+@note at the pointer before the edge.
+@old
+    assign pdl_q = pdl_rd;
+@new
+    always_ff @(posedge clk) if (tpclk_q) pdl_q <= pdl_rd;
+@end
+
+@mutation quux-div-of-md-reloaded-two-ticks-after-the-strobe
+@check quux_divmd_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Reloaded two ticks after the strobe, the divider is done 18 ticks
+@note after it, and the microcycle that runs can end on that edge: where
+@note the wait for MD and not the divider's own hold is the longer, as in
+@note `divmd`'s short gaps.
+@old
+    assign div_reload = div_md && div_strobed;
+@new
+    logic div_strobed_q;
+    always_ff @(posedge clk) div_strobed_q <= div_strobed;
+    assign div_reload = div_md && div_strobed_q;
+@end
+
+@mutation quux-dividing-asked-at-the-cycles-end
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The divider's hold asked of the ticks since the load at the edge that
+@note would end the cycle, not at its start: the `DIV` runs a microcycle
+@note early.
+@old
+    assign dividing = div_held && (div_start < 6'd33);
+@new
+    assign dividing = div_held && ((div_t | (div_start & 6'd0)) < 6'd33);
+@end
+
+@mutation machine-param-the-arty-drops-its-k
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's top level hands the machine a K other than its own, so the
+@note bitstream runs at a K no constraint states.
+@old
+      .SYNC_K(SYNC_K),
+@new
+      .SYNC_K(SYNC_K + 1),
+@end
+
+@mutation machine-param-the-de25-drops-its-k
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note The same on the DE25-Nano.
+@old
+      .SYNC_K(SYNC_K),
+@new
+      .SYNC_K(SYNC_K + 1),
+@end
+
+@mutation grid-quux-arty-relaxed-set-a-tick-wide
+@check grid
+@file rtl/plumbing/xilinx7/quux_machine.xdc
+@note QUUX's relaxed set at K + 1 on the Arty.
+@old
+set_multicycle_path -setup 4 -from $slow -to $slow
+@new
+set_multicycle_path -setup 5 -from $slow -to $slow
+@end
+
+@mutation grid-quux-arty-out-of-the-latches-at-k
+@check grid
+@file rtl/plumbing/xilinx7/quux_machine.xdc
+@note Out of the latches at K, where the latch holds its word from the tick
+@note after the edge.
+@old
+set_multicycle_path -setup 3 -from $split_latch -to $slow
+@new
+set_multicycle_path -setup 4 -from $split_latch -to $slow
+@end
+
+@mutation grid-quux-de25-relaxed-set-a-tick-wide
+@check grid
+@file boards/de25-nano/quartus/quux_de25.sdc
+@note QUUX's relaxed set at K + 1 on the DE25-Nano.
+@old
+set_multicycle_path -setup 4 -from $slow -to $slow
+@new
+set_multicycle_path -setup 5 -from $slow -to $slow
+@end
+
+@mutation grid-quux-de25-every-tick-second-hop-a-tick-wide
+@check grid
+@file boards/de25-nano/quartus/quux_de25.sdc
+@note The every-tick registers' second hop at K - 1, which with the first
+@note hop's two ticks is K + 1.
+@old
+set_multicycle_path -setup 2 -from $split_every_tick -to $slow
+@new
+set_multicycle_path -setup 3 -from $split_every_tick -to $slow
+@end
+
+@mutation grid-quux-arty-k-moved-alone
+@check grid
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's K moved and its constraints not: every `# sync:` count is
+@note then a tick short.
+@old
+    parameter int unsigned SYNC_K = 4,
+@new
+    parameter int unsigned SYNC_K = 5,
+@end
+
+@mutation quux-control-store-written-nowhere
+@check quux_imemsync_quux
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX's control store never written: IR takes every word written from
+@note `IWR`, so only a word run from the store after it is written can see.
+@old
+      if (iwe_q) imem[cs_port] <= iwd_q;
+@new
+      if (1'b0) imem[cs_port] <= iwd_q;
+@end
+
+@mutation quux-control-store-written-at-the-moved-pc
+@check quux_imemsync_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Written a tick after the edge at PC, which that edge has moved to the
+@note return address, instead of at the address the write was for.
+@old
+  assign cs_port = iwe_q ? iwa_q : cs_ra;
+@new
+  assign cs_port = iwe_q ? (pc | (iwa_q & 14'd0)) : cs_ra;
 @end

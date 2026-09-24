@@ -548,6 +548,53 @@ number dangerous, and they are the reason this document exists.
 | 29 | **The display's sync program keeps its phase from the write that restarts it.** | `Tv::restart` puts the origin at that write. The accumulator starts again at zero there and drops the old program's remainder. Held by `tv-sync-phase-survives-a-restart`. |
 | 30 | **A path split by a register that loads every tick, or launched by a write inside the cycle, has less than the relaxed set's eight ticks, and its constraint says how much less.** IR to the scratchpad latches has the read tap less one tick, seven at fast speed. The latches to the next boundary have the restart plus one tick, seven at every speed, and to the dispatch memory's write they have the restart less one tick, five. The control store's word has five after a `WRITE-I-MEM`. A write of either map level or of the dispatch memory reaches a boundary three ticks later at the least, and MD reaches those writes' address two ticks later at the least. MD_HELD into MD and the stack's write into its latch have one tick, and so do the three memories' writes into the readout's copies. The second hop out of `memgo_q`, the held halves of -WAIT and the memory path's held decode has `ticks(60)`, so that both hops together fit the fast microcycle. | The processor's registers move one tick after the generator's boundary, the latches last load at the read tap, and the write pulse ends on the boundary's own tick. In a microcycle `-HANG` holds, the pulse ends on the park's first tick and the boundary that ends the hang can be the next edge, and MD takes the bus's strobe at once. There the maps' and the dispatch memory's write is placed two ticks early, a tick late, or two ticks late when the read's strobe falls on the pulse's end, with the address and word the pulse's end would take, so that it is two ticks from MD and three from the boundary. Nothing but the boundary reads those memories in between, and `cadr_microcycle.sv`'s `mw` says why. `CADR_GAP_MONITOR` measures both counts on every tick of the checks that define it, and `dispatch_write_order` brings a write to each bound. A count one tick either side of an instant is tagged `# grid: 75 ns - 1 tick` or `# grid: 60 ns + 1 tick`, a count of the fabric's own ticks `# grid: 0 ns + 3 ticks`, and `tools/grid_check.py` holds it. The clauses are in `cadr_machine.xdc` and `cadr_de25.sdc`, the flows assert that each took and that nothing wider reaches its paths, and each has a `grid` mutation record one tick outside it. The DE25-Nano has no clause for the maps' or the dispatch memory's write, because Quartus times no path out of an MLAB's write. There the three ticks leave the tick in which an MLAB gives no defined word unread. |
 
+## QUUX's synchronous microcycle
+
+QUUX does not replay the CADR's delay line. Its microcycle is a fixed number
+of ticks, K, and an `ILONG` instruction takes L ticks more. This is muir's
+`TimingModel::Sync { cycle_ticks, ilong_ticks }`, run as `--timing-model sync
+--sync-cycle-ticks K`. K and L belong to a board: the Arty Z7-20 and the
+DE25-Nano both run at K = 4 and L = 0, which is 40 ns a microcycle. Four is
+the least K QUUX takes. A `DIV` whose M source is MD needs the word read in
+the divider 17 ticks before the edge that ends the microcycle it runs in.
+That microcycle can start 14 ticks after the word's strobe, and the
+earliest the divider can take the word from a register is the tick after
+the strobe. Each board's top level states
+K as `SYNC_K`, and its QUUX constraint file states the same K
+(`quux_machine.xdc`, `quux_de25.sdc`). `tools/grid_check.py` holds every
+`# sync:` count to that board's `SYNC_K`.
+
+Inside a microcycle:
+
+- `rtl/machine/quux_phase_gen.sv` counts K ticks, or K + L, and raises TPCLK
+  on the boundary's tick. It has no read tap, no TSE, no SELECT and no
+  `-TPR60`, and it ignores `-HANG`, because QUUX has no hung microcycle.
+- Every write lands on the edge that ends the microcycle. That covers the
+  scratchpads, the stack, both map levels, the dispatch memory and the
+  control store. A read of a RAM in the same microcycle as its write gets
+  the old word.
+- The control store is read at the edge from NPC, and its word stands for
+  the whole microcycle. A `WRITE-I-MEM`'s word is bypassed onto the I bus,
+  as muir's `Rtl::read_phase` does.
+- The scratchpad latches load on every tick. Each holds its word from the
+  tick after the edge until the next edge.
+- `-WAIT`, the wait for MD and the divider's hold stop a microcycle in whole
+  K-tick cycles, with the master clock running and no write. Each is tested
+  at the cycle's start.
+- A console write lands at the master clock edge, and nowhere else.
+
+What stays in nanoseconds is everything on the bus side: the setup, strobe
+and acknowledgment times, `-MFINISHD` and `-RDFINISH`, the Unibus figures,
+the I/O board's clocks and the disk's spans. They are on the grid as they
+are for the CADR. Only the master clock that samples them comes every K
+ticks.
+
+The traces QUUX is held to are taken at a K and an L named in their files:
+`rtl.quux.k4.golden`, `quux_divmd.quux.k4l1.golden` and so on. `make check
+MACHINE=quux` runs them at `SYNC_K` and `SYNC_L`, which are 4 and 0 unless
+the command line sets them. It also runs the programs with `ILONG`
+instructions at an L of one.
+
 ## What is not MIT's timing at all
 
 Some tick counts in the tree name no nanosecond figure and must not be given

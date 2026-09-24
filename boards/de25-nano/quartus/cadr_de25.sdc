@@ -168,7 +168,10 @@ set quux_fast [get_registers -nowarn {u_machine|processor|*tk_pre u_machine|proc
                                       u_machine|processor|*g_quux_hold.rip_tail u_machine|processor|*g_quux_hold.rip_tail[*]
                                       u_machine|processor|*div_md u_machine|processor|*div_strobed
                                       u_machine|processor|*div_strobed2 u_machine|processor|*div_have
-                                      u_machine|processor|*div_word u_machine|processor|*div_word[*]}]
+                                      u_machine|processor|*div_word u_machine|processor|*div_word[*]
+                                      u_machine|processor|iwe_q
+                                      u_machine|processor|iwa_q u_machine|processor|iwa_q[*]
+                                      u_machine|processor|iwd_q u_machine|processor|iwd_q[*]}]
 if {[get_collection_size $quux_fast] > 0} {
     set fast [add_to_collection $fast $quux_fast]
 }
