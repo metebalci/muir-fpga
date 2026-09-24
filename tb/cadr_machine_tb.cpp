@@ -147,41 +147,33 @@ namespace {
 constexpr int kTickNs = kGridNs;
 
 // WHERE AN ACKNOWLEDGMENT LANDS, against muir's own column, in the units the
-// histogram at the end prints: muir minus the fabric as this testbench
-// observes it.
+// histogram at the end prints: muir minus the fabric.
 //
-// **-5 IS EXACT AGREEMENT, AND THE FIVE IS THIS INSTRUMENT'S OWN TICK.**  The
-// observation is made at the top of a tick, before that tick's edge, so an
-// acknowledgment the fabric makes at edge `e` is read at `e + 1` and mapped to
-// that edge's nanosecond.  It does not matter how the acknowledgment was
-// made: registered, as the NXM timer's is, or combinational, as the disk
-// controller's is, the value seen at the top of `e + 1` is the value edge `e`
-// settled.  That is measured in the same run rather than left to this
-// comment: every device cycle the disk controller answers must read this
-// number too, and those are the cycles whose grant and length already agree
-// with muir exactly.
-constexpr int kInstrumentSlipNs = -kTickNs;
+// **ZERO IS AGREEMENT, AND IT IS READ AT THE EDGE THAT TAKES IT.**  muir
+// counts a change that falls exactly on an edge as before the edge, so an
+// acknowledgment at instant T is one the registers clocked at T see.  The
+// instrument reads -MEMACK with this tick's inputs settled and before this
+// tick's edge, which is exactly what that edge takes, whether the
+// acknowledgment is a register (the read deskew, the NXM timer), a gate off
+// a register (the disk controller, off -XBUS.RQ) or a gate off this
+// testbench's own `mem_done` (a write of main memory).  Every cycle of the
+// program is held to it.
+//
+// It used to be read at the top of the tick, before the inputs, and so read
+// a testbench-driven write a tick late and every other source on time; a
+// constant of one tick, called the instrument's own, was then required of
+// the disk controller's cycles and the NXM timer's --- which were in fact a
+// tick late, and the whole machine with them.  `RD_FINISH_T`'s note in
+// `rtl/machine/cadr_microcycle.sv` has that story.
+constexpr int kInstrumentSlipNs = 0;
 
 // WHERE THE NXM TIMER'S ACKNOWLEDGMENT LANDS.  The two cycles this program
 // sends to empty Xbus space must both read this.  They move when the bus
 // interface's free-running timeout oscillator changes phase, and the only
 // thing that changes its phase is the tick reset is released on, which is why
 // this is the one witness the boot PROM has to the reset network arriving
-// everywhere at once.  It is the instrument's tick and nothing else: the NXM
-// timer agrees with muir to the nanosecond.
-//
-// **IT READ +5 BEFORE THE FIX FOR ISSUE #21, AND ALL TEN NANOSECONDS WERE THE
-// OSCILLATOR'S PHASE.**  Measured on this program by reading the oscillator
-// itself: its output rose at muir-mapped instants 840 modulo 850, and
-// `NXM TIMEOUT` was registered on the same edge as the sixth of those rises.
-// So the timer was exact against the oscillator, and the oscillator was two
-// ticks early against muir.  It started at the reset edge, where muir's
-// power-on is the instant the ring starts, and the processor and the bus
-// interface count that instant two edges after the reset edge.
-// `cadr_busint_xbus.sv` says why at `POWER_ON_T`.  Neither suspect the issue
-// first named was the cause: the timer does not take an edge before the
-// oscillator has it, and this instrument's tick was already inside the -5
-// every combinationally answered cycle reads.
+// everywhere at once.  Issue #21 was the oscillator two ticks early;
+// `cadr_busint_xbus.sv` says why at `POWER_ON_T`.
 constexpr int kNxmAckSlipNs = kInstrumentSlipNs;
 
 // "a write is acknowledged at once, a read XBUS_ACK_NS later, which is the
@@ -530,81 +522,8 @@ int main(int argc, char **argv) {
     // survived the moment the tolerance admitted -5. So the instant is
     // compared to muir's rather than inferred from what it does.
 
-    // WHERE THE FABRIC'S OWN -MEMACK LANDS, against muir's. Measured rather
-    // than fitted: a constant chosen to make two checks agree is a constant
-    // hiding a difference, and this says whether there is one and how big.
-    //
-    // **READ THE NUMBERS IT PRINTS WITH THIS IN MIND: IT SAMPLES AT THE TOP
-    // OF THE TICK, SO IT READS ONE TICK LATE.**  It samples `n_memack` here,
-    // before this tick's edge and before the slave's answer has been driven
-    // and eval'd, so what it sees is what the previous edge settled, and an
-    // acknowledgment reads back a tick after it happened --- registered or
-    // combinational alike.  `kInstrumentSlipNs` is that tick, and the leg
-    // below holds every device cycle the disk controller answers to it.
-    // Measured, and the size of it: the printed histogram says -5 on every
-    // device read and -5 on every device write, which is the instrument's
-    // one tick and nothing else.  **THE DEVICE WRITES USED TO
-    // READ -10 AND THE DISK CONTROLLER MOVED THEM**: when this testbench
-    // answered them, all 5,650 came back a tick late --- 17 ticks from the
-    // grant against muir's 16, the signature of an answer worked out before
-    // the clock edge rather than after it --- and
-    // `rtl/machine/cadr_disk_controller.sv`, answering combinationally off
-    // `dev_rq` inside the fabric, lands them at muir's own 16.  The reads were
-    // 28 ticks from the grant either way, which is muir's 28.
-    //
-    // The rest of the histogram is main memory and is the testbench's own
-    // rounding, not the fabric's: the 256 writes spread over -9, -7 and -5
-    // in 78, 104 and 74, the 256 reads over -4, -2 and 0 in the same three
-    // counts, the two NXM cycles at +5 and the single Unibus write at -10.
-    // Measured at the commit that added the disk controller, and the NXM
-    // cycles read -5 since the fix for issue #21; the shape
-    // follows from `ack_at_tick` being rounded up to a tick, and it is here
-    // so that a change in it is visible as a change and not read as noise.
-    //
-    // Moving both --- the answer to after the edge, and this observation to
-    // after the second eval --- collapses the histogram to sub-tick, and was
-    // tried: `tb/cadr_busint_xbus_tb.cpp` already does it that way and says
-    // why.  It is not here because on its own it turns this check red on 58
-    // microcycles, each exactly one 220 ns wait long, which nobody has
-    // characterized.  See the `RD_FINISH_T` comment in
-    // `rtl/machine/cadr_microcycle.sv` and issue #11.
-    //
-    // Anyone re-deriving these numbers should move the observation first and
-    // measure again.  Two published readings of this histogram were wrong
-    // because that was not done.
-    if (acked_armed && !dut->n_memack_o) {
-      acked_armed = false;
-      const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
-      const long slip = static_cast<long>(ack_for_cur) - ns_now;
-      ack_error[slip]++;
-      // The yardstick itself: a cycle the disk controller answered, whose
-      // grant and length already agree with muir exactly, reads the
-      // instrument's tick and nothing else.  If it does not, the -5 the NXM
-      // leg below requires stops meaning agreement.
-      if (dev_cycle && !cur_nxm && !pack_trace) {
-        ++dev_acks_measured;
-        if (slip != kInstrumentSlipNs) {
-          if (!dev_ack_wrong)
-            std::fprintf(stderr,
-                         "FAIL: a device cycle the disk controller answered "
-                         "read %+ld ns from muir, wanting the instrument's own "
-                         "%+ld\n",
-                         slip, static_cast<long>(kInstrumentSlipNs));
-          ++dev_ack_wrong;
-        }
-      }
-      if (cur_nxm && !pack_trace) {
-        ++nxm_acks;
-        if (slip != kNxmAckSlipNs) {
-          std::fprintf(stderr,
-                       "FAIL: the NXM timer ended a cycle %+ld ns from muir, "
-                       "wanting %+ld --- the timeout oscillator free-runs from "
-                       "reset, so its phase is the reset release's\n",
-                       slip, static_cast<long>(kNxmAckSlipNs));
-          ++nxm_ack_wrong;
-        }
-      }
-    }
+    // WHERE THE FABRIC'S OWN -MEMACK LANDS, against muir's: read before this
+    // tick's edge, below, once the inputs are driven.  See `kInstrumentSlipNs`.
 
     if (bus_outstanding && dut->unibus) {
       was_unibus = true;
@@ -650,6 +569,43 @@ int main(int argc, char **argv) {
     // where it would not normally be, because MD is compared every
     // microcycle: a processor that got the direction wrong would take the
     // wrong word and say so on the next SRCMD.
+
+    // Settle this tick's inputs without an edge, so that what is read here is
+    // what the edge about to come takes.
+    dut->eval();
+    if (acked_armed && !dut->n_memack_o) {
+      acked_armed = false;
+      const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
+      const long slip = static_cast<long>(ack_for_cur) - ns_now;
+      ack_error[slip]++;
+      // The yardstick itself: a cycle the disk controller answered, whose
+      // grant and length already agree with muir exactly, reads the
+      // same zero and nothing else.  If it does not, the zero the NXM
+      // leg below requires stops meaning agreement.
+      if (dev_cycle && !cur_nxm && !pack_trace) {
+        ++dev_acks_measured;
+        if (slip != kInstrumentSlipNs) {
+          if (!dev_ack_wrong)
+            std::fprintf(stderr,
+                         "FAIL: a device cycle the disk controller answered "
+                         "read %+ld ns from muir, wanting "
+                         "%+ld\n",
+                         slip, static_cast<long>(kInstrumentSlipNs));
+          ++dev_ack_wrong;
+        }
+      }
+      if (cur_nxm && !pack_trace) {
+        ++nxm_acks;
+        if (slip != kNxmAckSlipNs) {
+          std::fprintf(stderr,
+                       "FAIL: the NXM timer ended a cycle %+ld ns from muir, "
+                       "wanting %+ld --- the timeout oscillator free-runs from "
+                       "reset, so its phase is the reset release's\n",
+                       slip, static_cast<long>(kNxmAckSlipNs));
+          ++nxm_ack_wrong;
+        }
+      }
+    }
 
     dut->clk = 1;
     dut->eval();
@@ -910,8 +866,15 @@ int main(int argc, char **argv) {
   }
 
   std::printf("    -MEMACK against muir, in nanoseconds (muir minus fabric):\n");
-  for (const auto &e : ack_error)
+  long ack_slipped = 0;
+  for (const auto &e : ack_error) {
     std::printf("             %+5ld ns  %ld cycles\n", e.first, e.second);
+    if (e.first != kInstrumentSlipNs) ack_slipped += e.second;
+  }
+  if (ack_slipped) {
+    std::fprintf(stderr, "FAIL: %ld acknowledgments are not at muir's instant\n", ack_slipped);
+    ++bad;
+  }
 
   dut->final();
   delete dut;
@@ -1053,14 +1016,14 @@ int main(int argc, char **argv) {
     ++thin;
   }
   // **AND THE YARDSTICK THE NXM LEG IS READ AGAINST MUST HAVE BEEN MEASURED.**
-  // The -5 above means agreement only because every device cycle reads the
+  // The zero above means agreement only because every device cycle reads the
   // same number, so a run in which none was measured, or some were missed,
   // leaves that number standing on a comment.
   if (dev_ack_wrong || (!pack_trace && dev_acks_measured != device_cycles)) {
     std::fprintf(stderr,
                  "FAIL: %ld of %ld device cycles were measured against muir's "
-                 "acknowledgment and %ld of them read other than the "
-                 "instrument's own %+d ns\n",
+                 "acknowledgment and %ld of them read other than "
+                 "%+d ns\n",
                  dev_acks_measured, device_cycles, dev_ack_wrong,
                  kInstrumentSlipNs);
     ++thin;
@@ -1187,7 +1150,7 @@ int main(int argc, char **argv) {
   std::printf("    %ld cycles ended on the NXM timer, each acknowledging %+d ns\n"
               "      from muir --- the free-running timeout oscillator's phase,\n"
               "      and so the tick the reset network was released on --- on the\n"
-              "      yardstick %ld device cycles read at the instrument's own tick\n",
+              "      yardstick %ld device cycles read at muir's instant\n",
               nxm_acks, kNxmAckSlipNs, dev_acks_measured);
 
   // What this program did not reach, printed from the counts rather than

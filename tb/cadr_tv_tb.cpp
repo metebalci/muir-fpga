@@ -672,7 +672,10 @@ static int run_trace(const char *path) {
     dut->phys = r.phys;
     dut->wdata = r.wdata;
 
-    dut->clk = 1;
+    // What the edge at this tick takes, for everything asynchronous:
+    // -MEMACK, -LOADMD and NXM TIMEOUT are compared before the edge with the
+    // inputs settled, and -MEMGRANT, a flip flop on the master clock, after
+    // it.  `tb/cadr_busint_xbus_tb.cpp` gives the argument.
     dut->eval();
 
     // DDR answers on the tick the bridge asks, and the port is held to the
@@ -692,11 +695,9 @@ static int run_trace(const char *path) {
     }
     dut->eval();
 
-    if (dut->n_memgrant != r.n_memgrant) bad += Fail(tick, "-MEMGRANT", dut->n_memgrant, r.n_memgrant, r);
     if (dut->n_memack != r.n_memack) bad += Fail(tick, "-MEMACK", dut->n_memack, r.n_memack, r);
     if (dut->n_loadmd != r.n_loadmd) bad += Fail(tick, "-LOADMD", dut->n_loadmd, r.n_loadmd, r);
     if (dut->timed_out != r.timed_out) bad += Fail(tick, "NXM TIMEOUT", dut->timed_out, r.timed_out, r);
-    if (dut->tv_intr != r.intr) bad += Fail(tick, "-XBUS.INTR", dut->tv_intr, r.intr, r);
 
     if (req && wr) {
       if (dut->mem_wdata != r.wdata) bad += Fail(tick, "the word on the memory port", dut->mem_wdata, r.wdata, r);
@@ -740,6 +741,12 @@ static int run_trace(const char *path) {
       else ++nxm_cycles;
     }
     memrq_last = r.n_memrq;
+
+    dut->clk = 1;
+    dut->eval();
+    if (dut->n_memgrant != r.n_memgrant)
+      bad += Fail(tick, "-MEMGRANT", dut->n_memgrant, r.n_memgrant, r);
+    if (dut->tv_intr != r.intr) bad += Fail(tick, "-XBUS.INTR", dut->tv_intr, r.intr, r);
 
     dut->clk = 0;
     dut->eval();

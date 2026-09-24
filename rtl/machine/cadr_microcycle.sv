@@ -1510,19 +1510,17 @@ module cadr_microcycle #(
   assign mbusy_o = mbusy;
   assign mbusy_sync_o = mbusy_sync;
 
-  // What MBUSY will hold after this tick, which is what MBUSY.SYNC has to
-  // register.  `-MFINISHD` clearing MBUSY in the very tick MCLK1A samples it
-  // is not a rare case: it is where a whole 220 ns wait cycle turns on, and
-  // measured, it is the difference on the disk loop's every third stall.
-  // `Rtl::master_clock_cycle` runs `after_memack` before it takes MBUSY.SYNC,
-  // so the clear is seen; a register sampling MBUSY as it stood would wait a
-  // cycle too long.
-  logic mbusy_next;
-  always_comb begin
-    mbusy_next = mbusy;
-    if (mfinish_clearing) mbusy_next = 1'b0;
-    if (cpu_edge && memgo) mbusy_next = 1'b1;
-  end
+  // **`mbusy` IS MBUSY AS THE NEXT EDGE SEES IT**, which is the frame the
+  // `MFINISHD_T` note sets out: it falls on the edge BEFORE -MFINISHD's
+  // instant, so every register clocked at that instant takes it clear ---
+  // MBUSY.SYNC above all, where a whole wait cycle turns on.  muir's
+  // `Rtl::master_clock_cycle` runs `after_memack` before it takes
+  // MBUSY.SYNC, so an MFINISHD on the edge ends the wait there
+  // (`mfinishd_on_the_master_clock_edge_itself_is_taken_as_before_it`).
+  // This used to be a look-ahead, `mbusy_next`, beside a register that fell
+  // ON the instant: MBUSY.SYNC saw the clear on the edge, but -MEMRQ, the
+  // -WAIT term on USE.MD and the debugger's `UB MD LOAD` gate saw it a tick
+  // late, and -MEMRQ is what ends -MEMACK.
 
   // **`UB MD LOAD`, AND WHY IT IS GATED THE WAY IT IS.**  `Busint::debug_
   // xbus_edge` takes the grant for a write of `MD` only when the interface
@@ -1794,60 +1792,51 @@ module cadr_microcycle #(
   // on the tap ordering `src/part.rs` records.  `MBUSY` clears on `-MFINISHD`,
   // the 30 ns tap of the same TD50.  Two countdowns off the acknowledgment.
   //
-  // **-RDFINISH is two ticks short of its 140, and here is the derivation.**
-  // Ending a hang costs this fabric two ticks that the board spends in gate
-  // propagation delay, and they are countable:
+  // **WHERE AN ASYNCHRONOUS CHANGE SITS AGAINST THE GRID.**  muir's `Rtl`
+  // carries the bus to an edge before it takes the edge (`after_memack` runs
+  // at `now >= at`), so a change that falls exactly on an edge counts as
+  // BEFORE it, and MIT's board agrees wherever the tie comes from rounding
+  // onto the grid.  In this fabric a register moving at the edge at T is seen
+  // only by the edge at T + 1 tick, so a change at instant T has to be on the
+  // D inputs of the registers clocked at T: combinational over the tick that
+  // ends at T.  Every constant here is counted in that frame, and so is
+  // every acknowledgment the bus interface makes (`dev_rq`, `ub_msyn` and
+  // the NXM timer in `cadr_busint_xbus.sv`).  With -MEMACK at instant A:
   //
-  //   tick X     the countdown reaches its end, so RD.IN.PROGRESS falls;
-  //              being a register, it is visible from X+1
-  //   tick X+1   the parked generator samples -HANG before this edge, sees it
-  //              lifted, and raises TPCLK
-  //   tick X+2   the boundary is observed
+  //   `memack_edge` is up over the tick ending at A, so both countdowns are
+  //   loaded at A, `MFINISHD_T` at A and `RD_FINISH_T` at A;
   //
-  // So the boundary is at `memack + N + 2`, and the boundary is what muir
-  // puts at `memack + 140`. Hence N = 28 - 2. Charged in full, every hang
-  // ends 10 ns after muir ends it, and there are 11,404 of them in the boot
-  // PROM alone.
+  //   `mfinish_clearing` is up while `mfinish_t` is 1, the tick ending at
+  //   A + 10 x MFINISHD_T, and `mbusy` falls on that edge.  A register is
+  //   seen one edge after it moves, so MBUSY is down for every register
+  //   clocked at A + 10 x (MFINISHD_T + 1), which has to be A + 30: hence
+  //   ticks(30) - 1.  A master clock edge at A + 30 takes MBUSY.SYNC clear,
+  //   `mfinishd_on_the_master_clock_edge_itself_is_taken_as_before_it`;
+  //   `mfinishd-on-an-edge` in `build/dispatch_write_order.pass` holds it.
   //
-  // **THE DERIVATION ABOVE PREDICTS 28 - 2. THE MEASUREMENT SAYS 28 - 3, AND
-  // NOBODY KNOWS WHY.**  This comment used to explain the third tick, and the
-  // explanation was wrong.  It said the tick belonged to
-  // `tb/cadr_machine_tb.cpp`, which placed -MEMACK a tick late; correct the
-  // placement, it said, and 28 - 2 would come out exact.
+  //   READ IN PROGRESS falls at A + 10 x RD_FINISH_T, and a hang costs this
+  //   fabric two ticks from there that the board spends in gate delay: -HANG
+  //   is down over the next tick, the parked generator raises TPCLK on the
+  //   edge after it, and the boundary is a level over the tick TPCLK rose
+  //   in, so the registers move on the edge after that.  The boundary is
+  //   therefore at A + 10 x (RD_FINISH_T + 2), and muir puts it at A + 140.
+  //   Hence ticks(140) - 2.
   //
-  // Both halves have now been measured and both are false.  The placement
-  // *was* a tick late --- the testbench worked the slave's answer out before
-  // the clock edge rather than after it, so every acknowledgment the
-  // interface makes combinationally, which is every write, arrived a tick
-  // behind: 17 ticks from the grant against muir's 16, on all 5,650 writes,
-  // while reads were already exact at 28.  Fixing it collapses the reported
-  // error to sub-tick.  But 28 - 2 is five nanoseconds long on all 11,301
-  // reads of the boot PROM **whether or not the placement is corrected**, and
-  // 28 - 3 is exact both ways.  So the constant was never compensating for
-  // the testbench, and the derivation is short by a tick for some reason not
-  // yet found.
-  //
-  // What the corrected placement does expose is 58 microcycles, each exactly
-  // one 220 ns wait long --- a *wait* breaking where every hang stays exact,
-  // which is the shape #11 has always had: a wait ends at a master clock and
-  // notices only what straddles a boundary, a hang ends at the tap and
-  // notices every tick.  The obvious predicate for them --- exempt a
-  // microcycle whose bus cycle muir answered off the five-nanosecond grid,
-  // named from the reference and never from the size of the disagreement ---
-  // covers about a third, so it is a fudge and is not here.  The testbench
-  // fix is not committed either, because on its own it turns the composed
-  // check red.
-  //
-  // The other alternative was 28 - 2 with a tolerance in the composed check,
-  // and that was tried and reverted: a one-tick tolerance there admitted
-  // exactly the -5 ns on which `the-grant-comes-a-microcycle-early` was
-  // caught, and blinded the check to a grant a whole microcycle early.
-  //
-  // **So this number is right and we do not know why**, which is a worse
-  // comment to write and a better one to read than the confident wrong story
-  // it replaces.  Left as measured, with #11 holding the question.
-  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(30);
-  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
+  // **THIS WAS `ticks(140) - 3`, AND THE THIRD TICK WAS COMPENSATING AN
+  // ACKNOWLEDGMENT A TICK LATE.**  The derivation above always said two; the
+  // measurement said three, and the comment here called the difference a
+  // mystery.  It was the frame: `-XBUS.RQ`, `-UB MSYN` and the NXM timer each
+  // put their acknowledgment one tick after muir's instant in the frame
+  // above, so the disk controller's answers, which are most of the boot
+  // PROM's hangs, arrived a tick late and a countdown a tick short made the
+  // hang come out right.  Main-memory reads were placed correctly by
+  // `tb/cadr_machine_tb.cpp` and ended their hangs early, where no hang
+  // stretched far enough to show it; `tb/cadr_dispatch_write_order_tb.cpp`
+  // answered its reads a tick late to match.  Measured in the processor's
+  // own `n_memack_q`, the first edge whose registers saw -MEMACK, every
+  // source now lands on muir's instant, and with it two is exact.
+  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(30) - 1;
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 2;
 
   logic       n_memack_q;
   logic [5:0] mfinish_t, rdfinish_t;
@@ -2056,7 +2045,11 @@ module cadr_microcycle #(
       // exactly on a boundary: three times in the band's 2,800,000
       // microcycles, measured, where the 5 ns grid met it on words MD already
       // held.  `DESTMDR` below still wins at a cpu edge, as it does over a
-      // held word.
+      // held word.  The strobe is on the boundary's own tick exactly when
+      // -LOADMD's instant IS the boundary, in the frame `MFINISHD_T`'s note
+      // sets out: the edge clocks the old MD, and the microcycle it starts
+      // reads the new one --- `md-acked-on-an-edge` in
+      // `build/dispatch_write_order.pass`.
       //
       // **AND WHILE -HANG IS UP THE STROBE IS MD AT ONCE**, not a tick later
       // through `md_held`.  A hung cycle's write pulse ends at its boundary
@@ -2116,7 +2109,7 @@ module cadr_microcycle #(
         // half of a clock cycle, the busy condition (MEMRQ) must be
         // synchronized."  It is on the *master* clock, so it goes on
         // following MEMRQ through a WAIT --- which is what ends the wait.
-        mbusy_sync <= (memstart && vmaok) || mbusy_next;
+        mbusy_sync <= (memstart && vmaok) || mbusy;
         promdisabled <= promdisable;
         // OLORD1 1A10 takes RUN into SRUN on MCLK5A, and STEP twice over
         // into SSTEP and then SSDONE.  The order matters and is muir's:

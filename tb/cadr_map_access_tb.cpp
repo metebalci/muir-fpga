@@ -468,6 +468,12 @@ Result Run(const Config &cfg, const char *trace_path, const char *prom_path,
   bool bus_outstanding = false;
   uint32_t held_rdata = 0;
   long ack_at_tick = 0;
+  // WHERE -MEMACK LANDS, against muir's: read with the tick's inputs driven
+  // and before its edge, which is what that edge takes.  An acknowledgment
+  // at muir's instant is on the D inputs of the edge at it, `tb/cadr_machine_tb.cpp`'s
+  // `kInstrumentSlipNs` has the argument.
+  bool ack_armed = false;
+  std::map<long, long> ack_slip;
   bool req_seen = false;
   uint64_t md_at_last_edge = 0;
 
@@ -510,6 +516,11 @@ Result Run(const Config &cfg, const char *trace_path, const char *prom_path,
       dut->mem_done = 1;
     }
 
+    dut->eval();
+    if (ack_armed && !dut->n_memack_o) {
+      ack_armed = false;
+      ack_slip[static_cast<long>(ack_at_tick - static_cast<long>(t)) * kTickNs]++;
+    }
     dut->clk = 1;
     dut->eval();
 
@@ -605,6 +616,7 @@ Result Run(const Config &cfg, const char *trace_path, const char *prom_path,
         answered = false;
         ack_at_tick =
             t + static_cast<long>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);
+        ack_armed = ack_for[k] != 0;
       }
 
       ++k;
@@ -636,6 +648,13 @@ Result Run(const Config &cfg, const char *trace_path, const char *prom_path,
   Check(ro_at == 5,
         "%s: the console readout never answered; %d of 5 words came back",
         cfg.name, ro_at < 5 ? ro_at : 5);
+
+  long ack_slipped = 0;
+  for (const auto &e : ack_slip) {
+    std::printf("    -MEMACK %+ld ns from muir on %ld cycles\n", e.first, e.second);
+    if (e.first) ack_slipped += e.second;
+  }
+  Check(ack_slipped == 0, "%s: %ld acknowledgments are not at muir's instant", cfg.name, ack_slipped);
 
   dut->final();
   delete dut;

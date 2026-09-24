@@ -271,6 +271,37 @@ for a slow sync instruction. That is also muir's answer: under
 instant, so the timeout oscillator's edges fall at 0, 430, 850 and 1,280 ns,
 measured on the composed machine.
 
+### A change on an edge counts as before it
+
+muir carries the bus to an edge before it takes the edge, so an asynchronous
+change that falls exactly on an edge is seen by that edge. MIT's board agrees
+wherever the tie comes from rounding onto the grid. The two rules this settles
+are that a word strobed into MD on a boundary is read by the microcycle that
+boundary starts, and that MFINISHD on a master clock edge ends a wait on
+MBUSY.SYNC at that edge.
+
+In the fabric this fixes where an instant sits. A change at instant T has to
+be on the D inputs of the registers clocked at T, so it is combinational over
+the tick that ends at T. A register that moves at T is seen only by the edge
+after it, so a register that stands for an asynchronous level moves on the
+edge before its instant. That is why several constants are one tick short:
+
+- `-XBUS.RQ` and `-UB MSYN` rise at `elapsed >= SETUP_T - 1` and
+  `UB_ADDRESS_T - 1`, counted from the grant's edge;
+- `MFINISHD_T` is `ticks(30) - 1`, because `MBUSY` is a register;
+- the NXM timer takes its last rise on the edge before the rise;
+- `RD_FINISH_T` is `ticks(140) - 2`, because ending a hang costs the fabric
+  two ticks of its own: one for -HANG to lift and the generator to raise
+  TPCLK, one for the boundary to reach the registers.
+- the register block lands a write at SPEEDCLK two ticks ahead of it, for
+  the synchronizer, so a strobe due on either of those ticks is landed
+  there from the word on the bus.
+
+Every check that compares an acknowledgment with muir reads it in this frame,
+before the edge and with the tick's inputs driven, and prints the
+difference. `dispatch_write_order` holds programs that put each tie on an
+edge.
+
 ### Power-on is two edges after the reset edge, for every oscillator
 
 The reference counts every free-running clock in whole periods from its
@@ -394,10 +425,10 @@ ring, **T** for a triggered delay, **F** for free-running.
 
 | Instant | ns | Class | Source | Constant | 5 ns | 10 ns |
 |---|---|---|---|---|---|---|
-| master setup before `-XBUS.RQ` | 80 | T | `busint::SETUP_NS`, `xspec.text.3` | `SETUP_T` | 16 | 8 |
+| master setup before `-XBUS.RQ` | 80 | T | `busint::SETUP_NS`, `xspec.text.3` | `SETUP_T`, less one | 16 | 8 |
 | read deskew, TD100 at REQLM 0C09 | 60 | T | `busint::XBUS_ACK_NS` | `DESKEW_T` | 12 | 6 |
 | `-SACK` to the grant | 200 | T | `busint::UNIBUS_SELECT_NS` | `UB_SELECT_T` | 40 | 20 |
-| grant to `-UB MSYN` | 100 | T | `busint::UNIBUS_ADDRESS_NS` | `UB_ADDRESS_T` | 20 | 10 |
+| grant to `-UB MSYN` | 100 | T | `busint::UNIBUS_ADDRESS_NS` | `UB_ADDRESS_T`, less one | 20 | 10 |
 | `-UB SSYN` to `-LMACK` | 150 | T | `busint::UNIBUS_ACK_NS` | `UB_ACK_T` | 30 | 15 |
 | `-UB SSYN` to the MD strobe | 100 | T | `busint::UNIBUS_STROBE_NS` | `UB_STROBE_T` | 20 | 10 |
 | timeout oscillator, half period | 425 | F | `chip::VCO_PERIOD` | `VCO_HALF_NS` | 85 | 43 then 42 |
@@ -408,8 +439,8 @@ ring, **T** for a triggered delay, **F** for free-running.
 | Instant | ns | Class | Source | Constant | 5 ns | 10 ns |
 |---|---|---|---|---|---|---|
 | SPEEDCLK, the speed synchronizer | 60 | R | `clock::TPR60_NS` | `SPEEDCLK_T`, less one | 12 | 6 |
-| `-MFINISHD`, TD50 at VCTL1 1D23 | 30 | T | `busint::MFINISHD_NS` | `MFINISHD_T` | 6 | 3 |
-| `-RDFINISH`, TD250 at VCTL1 1D22 | 140 | T | the tap ordering | `RD_FINISH_T`, less three | 28 | 14 |
+| `-MFINISHD`, TD50 at VCTL1 1D23 | 30 | T | `busint::MFINISHD_NS` | `MFINISHD_T`, less one | 6 | 3 |
+| `-RDFINISH`, TD250 at VCTL1 1D22 | 140 | T | the tap ordering | `RD_FINISH_T`, less two | 28 | 14 |
 
 ### The register blocks — `cadr_spy_registers.sv`, `cadr_busint_regs.sv`
 

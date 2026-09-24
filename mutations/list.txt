@@ -586,9 +586,65 @@
 @note the cycle was acknowledged would break every slave that obeys the
 @note specification.
 @old
-  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T)) || state == ACKED;
+  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1) || ack_standing;
 @new
-  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T));
+  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1);
+@end
+@mutation xbus-rq-goes-out-a-tick-after-its-instant
+@check machine
+@file rtl/machine/cadr_busint_xbus.sv
+@note `-XBUS.RQ` is SETUP_NS after the grant, and a change at an edge is one
+@note that edge sees, so the request stands over the tick that ENDS at its
+@note instant.  At `elapsed >= SETUP_T` it rose a tick later, and every
+@note device the fabric answers itself answered a tick after muir: all
+@note 16,951 of the boot PROM's disk-controller cycles read -10 ns on the
+@note machine's instrument, which then called that tick its own.
+@old
+  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1) || ack_standing;
+@new
+  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T)) || ack_standing;
+@end
+@mutation ub-msyn-goes-out-a-tick-after-its-instant
+@check dispatch_write_order
+@file rtl/machine/cadr_busint_xbus.sv
+@note `-UB MSYN` is UNIBUS_ADDRESS_NS after the grant, in the same frame as
+@note `-XBUS.RQ`.  A tick later, every Unibus slave counts from a strobe a
+@note tick late and the cycle is acknowledged a tick after muir:
+@note `mode-speed-written-*` hold their six mode-register writes to muir's
+@note instant.
+@old
+  assign ub_msyn  = (state == UB && elapsed >= 10'(UB_ADDRESS_T) - 10'd1);
+@new
+  assign ub_msyn  = (state == UB && elapsed >= 10'(UB_ADDRESS_T));
+@end
+@mutation memack-outlives-memrq-by-a-tick
+@check busint_xbus
+@file rtl/machine/cadr_busint_xbus.sv
+@note "MEMRQ drops when MEMACK rises, which causes MEMACK to drop": muir's
+@note `Busint::finish` takes the acknowledgment away at the instant the cpu
+@note lifts -MEMRQ.  Held until `ACKED` gives way to `IDLE` on the edge
+@note after, -MEMACK stands a tick past it.
+@old
+  assign ack_standing = (state == ACKED) && !n_memrq;
+@new
+  assign ack_standing = (state == ACKED);
+@end
+@mutation the-nxm-timeout-is-taken-at-the-rise-itself
+@check dispatch_write_order
+@file rtl/machine/cadr_busint_xbus.sv
+@note -MEMACK at the sixth rise has to be on the D inputs of the edge at the
+@note rise, so `ACKED` is taken on the edge before.  Taken on the rise's own
+@note edge, as it was, every cycle nothing answered is acknowledged a tick
+@note after muir, and an MFINISHD that falls on a master clock edge loses
+@note it: `mfinishd-on-an-edge-nxm` waits one 150 ns cycle more, and
+@note `md-acked-on-an-edge-nxm` shows MD a microcycle late.
+@old
+  assign nxm_due = tmr_fell && !vco && !vco_toggle
+                && (tmr_rises + 4'd1 == tmr_want)
+                && (vco_acc >= 9'(VCO_HALF_NS - 2 * cadr_tick_pkg::TICK_NS));
+@new
+  assign nxm_due = tmr_fell && !vco && vco_toggle
+                && (tmr_rises + 4'd1 == tmr_want);
 @end
 
 @mutation the-setup-time-is-short
@@ -692,7 +748,7 @@
 @end
 
 @mutation the-timer-counts-an-edge-a-tick-after-the-output-takes-it
-@check busint_xbus
+@check dispatch_write_order
 @file rtl/machine/cadr_busint_xbus.sv
 @note THE READING OF ISSUE #21 THAT WAS REFUTED, WRITTEN AS A MUTATION.  The
 @note first account of the issue said the timer tests `vco` on the tick it
@@ -715,6 +771,14 @@
 @note debug cycle to sit the same way, so a shift that moves both alike is
 @note absorbed; nor by `ddr_boot`, `md_compose`, `park` or `probe`, which
 @note compare no timeout against muir.
+@note
+@note SINCE -MEMACK WAS PUT AT ITS INSTANT the last rise is taken a tick ahead
+@note by `nxm_due`, which reads the accumulator rather than this count, so a
+@note tick late here no longer moves any timeout: only a first fall on the
+@note grant's own edge still tells the two apart.  The busint_xbus trace has
+@note none, measured; `nxm-fall-on-the-grant-edge` in
+@note `build/dispatch_write_order.pass` puts one there, and this record moved
+@note to it.
 @old
         if (vco_toggle) begin
           if (!tmr_fell && vco) begin
@@ -786,7 +850,7 @@
 @note goes when the cpu lifts -MEMRQ. What outlives the cycle is the NXM bit
 @note in the bus error register at REQERR, which is not this slice.
 @old
-  assign timed_out  = (state == ACKED) && nxm;
+  assign timed_out  = ack_standing && nxm;
 @new
   assign timed_out  = nxm;
 @end
@@ -1930,81 +1994,44 @@
 @end
 
 @mutation the-read-finish-delay-is-charged-in-full
-@check microcycle
+@check dispatch_write_order
 @file rtl/machine/cadr_microcycle.sv
 @note `-RDFINISH` is `-MFINISH` through the TD50 at VCTL1 1D23 and the TD250
 @note at 1D22 --- 140 ns on the tap ordering --- and the fabric charges two
-@note ticks fewer, deliberately: ending a hang costs it two ticks the board
-@note spends in gate propagation, one for the parked generator to see -HANG
-@note lift and one to raise TPCLK.
-@note
-@note A number chosen to make a check pass is exactly what a mutation list
-@note exists to interrogate. Charged in full, the claim is that every one of
-@note the boot PROM's 11,404 hangs ends late --- so if this survives, the
-@note shortfall was never load-bearing at all.
-@note
-@note The shortfall is derived for two of its three ticks and measured for
-@note the third --- see `the-read-finish-delay-is-a-tick-longer`, which also
-@note records that the explanation this list used to give for that third
-@note tick has been disproved.
+@note ticks fewer, derived: ending a hang costs it two ticks the board spends
+@note in gate delay, one for -HANG to lift and the parked generator to raise
+@note TPCLK, one for the boundary's level to reach the registers.  Charged in
+@note full, every hang ends two ticks late.
 @old
-  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 2;
 @new
   localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140);
 @end
-
 @mutation the-read-finish-delay-is-a-tick-longer
 @check machine
 @file rtl/machine/cadr_microcycle.sv
-@note The boundary is `memack + N + 2`: the countdown expires at tick X,
-@note RD.IN.PROGRESS is visible from X+1, the parked generator samples -HANG
-@note pre-edge at the posedge ending X+1 and raises TPCLK. Wanting `memack +
-@note 28` gives N = 26, which is two ticks short of 140.
-@note
-@note The constant is THREE short and the derivation accounts for two. This
-@note record used to be named for the third --- it claimed the tick belonged
-@note to a testbench placing -MEMACK a tick late, and that correcting the
-@note placement would make `- 2` exact. **That has been measured and it is
-@note false.** The placement really was a tick late, on every write, and
-@note correcting it collapses the acknowledgment error to sub-tick; `- 2` is
-@note still five nanoseconds long on all 11,301 reads either way, and `- 3`
-@note is exact either way. The name went with the story.
-@note
-@note What the record still holds is what it always tested: this constant is
-@note load-bearing to a tick on the composed check, and the check says so on
-@note 11,301 microcycles. Why 28 - 3 rather than the derived 28 - 2 is open,
-@note and is issue #11.
-@note
-@note ON THE COMPOSED CHECK, AND MEASURED RATHER THAN ASSUMED. `- 2` makes
-@note the STANDALONE exact --- its 11,301 sub-tick slips go to zero --- so it
-@note survives there and says nothing. It is the composed check that pays,
-@note because it has the real bus interface under it rather than a model of
-@note one, and a record has to sit on the check that pays.
+@note One tick outside the derived constant, on the composed check, where
+@note the bus interface under the processor is the real one and every
+@note acknowledgment is held to muir's instant.  Every hang then ends a tick
+@note late.
 @old
-  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
-@new
   localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 2;
-@end
-
-@mutation a-hang-ends-a-tick-late-on-the-machine
-@check machine
-@file rtl/machine/cadr_microcycle.sv
-@note The composed check's own edge, and it has moved back twice. It
-@note exempted a WHOLE tick for one commit, which is what let a
-@note microcycle-early grant pass as a five-nanosecond length slip; the
-@note exemption then went back under a tick, and now there is none at all ---
-@note the check requires every length exact and guards that count at zero.
-@note So one tick is comfortably outside it, which is what this carries.
-@note
-@note Kept as a record of its own rather than left to the standalone's,
-@note because the two checks measure against different references --- the
-@note standalone's -MEMACK is its own model, the composed one's comes from
-@note the real bus interface --- and an edge is only tested on the check that
-@note has it.
-@old
-  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
 @new
-  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 4;
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 1;
+@end
+@mutation the-read-finish-delay-is-the-old-tick-short
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note The constant as it stood, `ticks(140) - 3`, three short where the
+@note derivation accounts for two.  The third tick was compensating
+@note acknowledgments a tick late --- `-XBUS.RQ`, `-UB MSYN` and the NXM
+@note timer, and this check's own reads --- and with every acknowledgment at
+@note muir's instant it ends every hang a tick early: the popj-into-hang and
+@note dispatch-on-md programs.  Issue #11's question, answered.
+@old
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 2;
+@new
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
 @end
 
 @mutation use-md-does-not-mind-a-nopped-cycle
@@ -2252,9 +2279,42 @@
 @note read off the part, where RD_FINISH_T is a number chosen. Both deserve
 @note interrogating and only one was.
 @old
-  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(30);
+  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(30) - 1;
 @new
-  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(50);
+  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(50) - 1;
+@end
+@mutation mbusy-falls-on-its-instant-and-not-the-edge-before
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note `mbusy` is a register, seen one edge after it moves, so it falls on the
+@note edge BEFORE -MFINISHD's instant for MBUSY.SYNC to take it clear at the
+@note instant.  Falling on the instant itself, an MFINISHD on a master clock
+@note edge is taken as after it, and a -WAIT on MBUSY.SYNC runs one
+@note generator cycle more: `mfinishd-on-an-edge`, 1100 ns where muir's
+@note `rtl` has 880.
+@old
+  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(30) - 1;
+@new
+  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(30);
+@end
+@mutation a-strobe-on-the-boundary-waits-a-microcycle-in-the-programs
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note `a-strobe-on-the-boundary-waits-a-microcycle` on the check that places
+@note the tie on purpose: `md-acked-on-an-edge` acknowledges a read on the
+@note edge that ends a microcycle, and the microcycle that edge starts reads
+@note the word.  Held for the next boundary, MD is the old word for one
+@note microcycle more.
+@old
+      if (loadmd_edge && (mclk_edge || hang)) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
+@new
+      if (loadmd_edge && hang) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
 @end
 
 @mutation a-hang-may-be-taken-while-a-wait-is-up
@@ -12872,9 +12932,9 @@ if {0 && $held ne $want} {
 @note not run exactly one microcycle is 0x0, the reference says 0x1" --- the
 @note first of the check's sixteen halts.
 @old
-            step   <= held[1];
+            step   <= land_word[1];
 @new
-            step   <= held[1] && 1'b0;
+            step   <= land_word[1] && 1'b0;
 @end
 
 @mutation console-the-debug-ir-halves-are-written-to-one-half
@@ -12899,9 +12959,9 @@ if {0 && $held ne $want} {
 @note Caught at "tick 26894030: the debug IR read back through IR is
 @note 0x300000210, the reference says 0x302101028".
 @old
-          REG_IR_MED:  debug_ir[31:16] <= held;
+          REG_IR_MED:  debug_ir[31:16] <= land_word;
 @new
-          REG_IR_MED:  debug_ir[15:0]  <= held;
+          REG_IR_MED:  debug_ir[15:0]  <= land_word;
 @end
 
 # ---------------------------------------------------------------------------
@@ -19262,12 +19322,32 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @mutation the-register-strobe-counts-msyn-from-one
 @check dispatch_write_order
 @file rtl/machine/cadr_spy_registers.sv
-@note The register strobe a tick after muir's `answered`: the mode word misses
-@note the SPEEDCLK muir lands it at, and the speed changes a cycle late.
+@note The register strobe a tick after muir's `answered`, as SPEEDCLK's
+@note landing sees it: a mode word strobed on SPEEDCLK itself misses the
+@note SPEEDCLK muir lands it at, and the speed changes a cycle late ---
+@note `speed-written-on-speedclk`.  The strobe's own line, where a word not
+@note due by SPEEDCLK is held for the next landing, is not the record's: the
+@note processor's own writes never strobe on a boundary (250 ns from the
+@note grant is no sum of generator cycles), so a tick there moves nothing a
+@note check can see, measured over 540 mode-write programs.
 @old
-        if (ub_write && running && elapsed == 9'(STROBE_T) - 9'd1) begin
+                   && (elapsed == 9'(STROBE_T) - 9'd1 || elapsed == 9'(STROBE_T) - 9'd2);
 @new
-        if (ub_write && running && elapsed == 9'(STROBE_T)) begin
+                   && (elapsed == 9'(STROBE_T) || elapsed == 9'(STROBE_T) - 9'd1);
+@end
+@mutation a-strobe-on-speedclk-waits-for-the-next-landing
+@check dispatch_write_order
+@file rtl/machine/cadr_spy_registers.sv
+@note muir lands a write strobed on or before SPEEDCLK at that SPEEDCLK, and
+@note the landing here is two ticks ahead of it.  Without the look-ahead a
+@note strobe on either of those ticks waits for the next boundary, and the
+@note speed reaches the generator a cycle after muir's:
+@note `speed-written-on-speedclk` and `speed-written-before-speedclk`, 150
+@note and 160 ns where muir's `rtl` has 220.
+@old
+  assign early = !mclk && (phase_t == 6'(SPEEDCLK_T) - 6'd3) && strobe_due && !early_taken;
+@new
+  assign early = 1'b0 && strobe_due && !early_taken;
 @end
 
 @mutation the-register-block-ssyn-counts-msyn-from-one

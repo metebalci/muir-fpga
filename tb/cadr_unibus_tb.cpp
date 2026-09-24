@@ -184,6 +184,9 @@ enum IfaceKind { kDiagnostic = 0, kIntCtl, kIntCtl2, kErrStatus, kUnwired, kMap,
 // The sweep's window: both blocks, what is between them and a page either side.
 const unsigned kSweepFirst = 0763000, kSweepLast = 0770776;
 
+// `busint::MFINISHD_NS`: from -MEMACK to the processor lifting -MEMRQ.
+constexpr long kMfinishdNs = 30;
+
 // `chip::VCO_PERIOD`, the REQTIM oscillator's 850 ns.  It sizes the phase
 // table the trace fills; every value in it is muir's.
 constexpr long kVcoPeriodNs = 850;
@@ -740,6 +743,18 @@ int main(int argc, char **argv) {
   };
 
   // Idle ticks, with -MEMRQ up.
+  // The processor lifts -MEMRQ with MBUSY, `-MFINISHD` 30 ns after the
+  // acknowledgment, and not the instant it sees it: the bus interface drops
+  // -MEMACK and NXM TIMEOUT the moment -MEMRQ goes, so a release on the
+  // acknowledgment's own tick would take them away before anything clocked
+  // them.  Called on the tick after the edge that showed -MEMACK, which is
+  // the acknowledgment's instant; the edge that takes the release is 30 ns
+  // after it.
+  auto Release = [&]() {
+    for (long w = 0; w < GridTicks(kMfinishdNs); ++w) Tick();
+    dut->n_memrq = 1;
+  };
+
   auto Idle = [&](long n) {
     for (long i = 0; i < n && failures < kMaxFailures; ++i) Tick();
   };
@@ -781,7 +796,7 @@ int main(int argc, char **argv) {
     // -MEMRQ up, and wait for the interface to come back to rest.  A cycle
     // ends where the processor lifts it; the card wants the strobe down for a
     // tick before the next one, which it gets and then some.
-    dut->n_memrq = 1;
+    Release();
     for (long guard = 0; guard < 200; ++guard) {
       Tick();
       if (dut->n_memgrant && !dut->ub_msyn_o) break;
@@ -1375,7 +1390,7 @@ int main(int argc, char **argv) {
                        (unsigned)(c.answered() ? c.by : 0), 2, "the arbiter");
     else
       ++card_reads;
-    dut->n_memrq = 1;
+    Release();
     for (long g = 0; g < 200; ++g) {
       Tick();
       if (dut->n_memgrant && !dut->ub_msyn_o) break;
@@ -1842,7 +1857,7 @@ int main(int argc, char **argv) {
         Tick();
         if (!dut->n_memack) break;
       }
-      dut->n_memrq = 1;
+      Release();
       for (long g = 0; g < 200; ++g) {
         Tick();
         if (dut->n_memgrant && !dut->ub_msyn_o) break;
@@ -1878,7 +1893,7 @@ int main(int argc, char **argv) {
         Tick();
         if (!dut->n_memack) break;
       }
-      dut->n_memrq = 1;
+      Release();
       for (long g = 0; g < 200; ++g) {
         Tick();
         if (dut->n_memgrant) break;

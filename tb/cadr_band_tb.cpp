@@ -647,6 +647,12 @@ int main(int argc, char **argv) {
   // The processor's cycle in flight and when muir's own interface answered it.
   bool bus_outstanding = false;
   int64_t ack_at_tick = 0;
+  // WHERE -MEMACK LANDS, against muir's: read with the tick's inputs driven
+  // and before its edge, which is what that edge takes.  An acknowledgment
+  // at muir's instant is on the D inputs of the edge at it, `tb/cadr_machine_tb.cpp`'s
+  // `kInstrumentSlipNs` has the argument.
+  bool ack_armed = false;
+  std::map<long, long> ack_slip;
   long mem_unkeyed = 0;     // cycles muir has no column for: the channel's
 
   // ------------------------------------------------------------- the clock
@@ -861,6 +867,11 @@ int main(int argc, char **argv) {
       }
     }
 
+    dut->eval();
+    if (ack_armed && !dut->n_memack_o) {
+      ack_armed = false;
+      ack_slip[static_cast<long>(ack_at_tick - static_cast<int64_t>(t)) * kTickNs]++;
+    }
     dut->clk = 1;
     dut->eval();
 
@@ -1115,6 +1126,7 @@ int main(int argc, char **argv) {
           bus_outstanding = true;
           ack_at_tick = static_cast<int64_t>(t) +
               static_cast<int64_t>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);
+          ack_armed = ack_for[k] != 0;
         }
 
         // Aligned: take the next reference row.  Not when the comparison has
@@ -1137,6 +1149,13 @@ int main(int argc, char **argv) {
     prev = take();
   }
   if (!stopped_because && t >= max_ticks) stopped_because = "the tick budget ran out";
+
+  long ack_slipped = 0;
+  for (const auto &e : ack_slip) {
+    std::printf("    -MEMACK %+ld ns from muir on %ld cycles\n", e.first, e.second);
+    if (e.first) ack_slipped += e.second;
+  }
+  if (ack_slipped) { std::fprintf(stderr, "FAIL: %ld acknowledgments are not at muir's instant\n", ack_slipped); ++bad; }
 
   dut->final();
   delete dut;

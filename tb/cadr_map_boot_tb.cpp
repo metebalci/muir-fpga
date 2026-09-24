@@ -333,6 +333,12 @@ int main(int argc, char **argv) {
   bool answered = false;
   uint32_t held_rdata = 0;
   long ack_at_tick = 0;
+  // WHERE -MEMACK LANDS, against muir's: read with the tick's inputs driven
+  // and before its edge, which is what that edge takes.  An acknowledgment
+  // at muir's instant is on the D inputs of the edge at it, `tb/cadr_machine_tb.cpp`'s
+  // `kInstrumentSlipNs` has the argument.
+  bool ack_armed = false;
+  std::map<long, long> ack_slip;
   long reads = 0, writes = 0, off_page = 0, misaligned = 0, arb = 0;
   std::vector<int> read_count(kPageWords, 0), write_count(kPageWords, 0);
   std::vector<uint32_t> first_stray;   // the addresses that left page 0
@@ -396,6 +402,11 @@ int main(int argc, char **argv) {
       dut->mem_done = 1;
     }
 
+    dut->eval();
+    if (ack_armed && !dut->n_memack_o) {
+      ack_armed = false;
+      ack_slip[static_cast<long>(ack_at_tick - static_cast<long>(t)) * kTickNs]++;
+    }
     dut->clk = 1;
     dut->eval();
 
@@ -446,6 +457,7 @@ int main(int argc, char **argv) {
         // can only see it at a tick at or after it.
         ack_at_tick =
             t + static_cast<long>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);
+        ack_armed = ack_for[k] != 0;
       }
 
       ++k;
@@ -464,6 +476,13 @@ int main(int argc, char **argv) {
     dut->eval();
     prev = take();
   }
+  long ack_slipped = 0;
+  for (const auto &e : ack_slip) {
+    std::printf("    -MEMACK %+ld ns from muir on %ld cycles\n", e.first, e.second);
+    if (e.first) ack_slipped += e.second;
+  }
+  if (ack_slipped) { std::fprintf(stderr, "FAIL: %ld acknowledgments are not at muir's instant\n", ack_slipped); ++bad; }
+
   dut->final();
   delete dut;
   std::fclose(f);
