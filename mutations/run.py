@@ -590,11 +590,14 @@ CHECKS = {
     # which write pulse fires, when it takes its address, and which VMA the
     # bus address takes its low byte from.
     "dispatch_write_order": {
+        # The bus interface is named because the edge-tie programs hold its
+        # acknowledgment instants: the NXM timer's, and `-UB MSYN`'s through
+        # the mode-register writes.
         "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
-                    "rtl/machine/cadr_spy_registers.sv"],
+                    "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_busint_xbus.sv"],
         "extra": [
             "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
-            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv",
             "rtl/machine/cadr_disk_controller.sv",
             "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
             "rtl/machine/cadr_busint_regs.sv", "rtl/machine/cadr_console_bus.sv",

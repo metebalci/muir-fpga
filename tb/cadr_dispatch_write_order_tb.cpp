@@ -59,7 +59,6 @@ constexpr int kTickNs = kGridNs;
 constexpr int kXbusAckNs = 60;
 constexpr uint32_t kMainBase = 0x18000000u;
 constexpr uint32_t kNotAnswering = 0xDEADBEE5u;
-constexpr long kReadTicks = 1;
 
 // The trace's columns, in the order `golden/src/trace.rs` prints them.
 enum Col {
@@ -197,6 +196,7 @@ struct Totals {
   uint64_t gm_writes = 0, gm_early = 0, gm_early_b3 = 0, gm_late_l = 0, gm_late_lm1 = 0;
   int64_t gm_min_md = 1000, gm_min_b = 1000;
   std::map<long, long> ack_slip;   // muir's -MEMACK minus the fabric's, ns
+  std::map<long, long> fin_slip;   // muir's MFINISHD minus the fabric's, ns
 };
 
 int Run(const Program &p, Totals &tot) {
@@ -252,7 +252,8 @@ int Run(const Program &p, Totals &tot) {
   size_t k = 0;
   long last_edge = -1;
   uint64_t prev_ns = 0;
-  bool bus_outstanding = false, ack_armed = false;
+  bool bus_outstanding = false, ack_armed = false, fin_armed = false;
+  bool memack_q_was = true, mbusy_was = false;
   long ack_at_tick = 0;
   uint64_t ack_want = 0;
   const long kMaxTicks = static_cast<long>(p.rows) * 200 + 1024;
@@ -275,15 +276,16 @@ int Run(const Program &p, Totals &tot) {
 
     dut->mem_done = 0;
     dut->mem_rdata = kNotAnswering;
-    // A read is answered `XBUS_ACK_NS` before muir's acknowledgment, and one
-    // tick later than that; a write at muir's acknowledgment.  Measured, not
-    // fitted: without the tick every read acknowledged 10 ns before muir's,
-    // which is also what `tb/cadr_machine_tb.cpp`'s histogram prints for its
-    // 256 reads of main memory (+0 against its instrument's -10), and a hang
-    // then ended 10 ns early; with it a write acknowledged 10 ns late.  The
-    // slip is held to zero on every cycle below.
+    // A read is answered `XBUS_ACK_NS` before muir's acknowledgment and a
+    // write at it, each on the tick whose edge takes it: an acknowledgment at
+    // muir's instant is on the D inputs of the edge at that instant, which is
+    // how muir's `Rtl` counts a change on an edge.  This used to answer reads
+    // a tick later, measured against an instrument that read -MEMACK after
+    // the edge; that frame held every read a tick late, and `RD_FINISH_T` a
+    // tick short made the hangs come out right.  The slip, read before the
+    // edge in the processor's own `n_memack_q`, is held to zero below.
     const long answer_tick =
-        ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs - kReadTicks);
+        ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
     if (dut->mem_req && bus_outstanding && t >= answer_tick) {
       const long w = (static_cast<long>(dut->mem_addr) - static_cast<long>(kMainBase)) / 4;
       if (dut->mem_write) {
@@ -303,12 +305,25 @@ int Run(const Program &p, Totals &tot) {
     if (bus_outstanding && !dut->mem_req && !dut->dev_rq && t > ack_at_tick)
       bus_outstanding = false;
 
-    // WHERE -MEMACK LANDS, against muir's.  Observed after the edge, so an
-    // acknowledgment the edge at tick `t` settled is that edge's nanosecond.
-    if (ack_armed && !dut->n_memack_o) {
-      ack_armed = false;
+    // WHERE -MEMACK LANDS, against muir's: the first edge whose registers
+    // took it low.
+    {
       const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
-      tot.ack_slip[static_cast<long>(ack_want) - ns_now]++;
+      const bool memack_q = PROC(n_memack_q);
+      const bool mbusy = PROC(mbusy);
+      if (ack_armed && memack_q_was && !memack_q) {
+        ack_armed = false;
+        fin_armed = true;
+        tot.ack_slip[static_cast<long>(ack_want) - ns_now]++;
+      }
+      // `mbusy` falls on the edge before MFINISHD's instant, so the edge
+      // after this one is the first whose registers see it down.
+      if (fin_armed && mbusy_was && !mbusy) {
+        fin_armed = false;
+        tot.fin_slip[static_cast<long>(ack_want) + 30 - (ns_now + kTickNs)]++;
+      }
+      memack_q_was = memack_q;
+      mbusy_was = mbusy;
     }
 
     if (dut->clock_edge) {
@@ -428,6 +443,10 @@ int main(int argc, char **argv) {
   long slipped = 0;
   for (const auto &e : tot.ack_slip) {
     std::printf("    -MEMACK %+ld ns from muir on %ld cycles\n", e.first, e.second);
+    if (e.first) slipped += e.second;
+  }
+  for (const auto &e : tot.fin_slip) {
+    std::printf("    MFINISHD %+ld ns from muir on %ld cycles\n", e.first, e.second);
     if (e.first) slipped += e.second;
   }
   if (slipped) {

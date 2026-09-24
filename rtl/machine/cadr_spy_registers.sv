@@ -172,6 +172,27 @@ module cadr_spy_registers (
   logic [3:0]  held_eadr;
   assign landing = mclk || (phase_t == 6'(SPEEDCLK_T) - 6'd3);
 
+  // **A WRITE STROBED ON OR BEFORE SPEEDCLK IS SPEEDCLK'S, EVEN WHEN ITS
+  // STROBE COMES AFTER THIS LANDING.**  muir lands every write whose strobe
+  // is at or before the SPEEDCLK instant (`Rtl::land_write` at `now >= at`),
+  // so a strobe exactly on SPEEDCLK counts as before it.  The landing above
+  // is two ticks ahead of SPEEDCLK for the synchronizer's sake, and a strobe
+  // on either of those two ticks has not happened yet when it lands.  The
+  // strobe's tick is this slave's own count, so it is known: a strobe due on
+  // this tick or the next is landed here, from the word the master holds on
+  // the bus until the cycle ends, and not strobed again.  Without it a
+  // speed written on SPEEDCLK reached the generator a cycle after muir's:
+  // `speed-written-on-speedclk` in `build/dispatch_write_order.pass`.
+  logic strobe_due, early, early_taken;
+  assign strobe_due = ub_msyn && selected && ub_write && running
+                   && (elapsed == 9'(STROBE_T) - 9'd1 || elapsed == 9'(STROBE_T) - 9'd2);
+  assign early = !mclk && (phase_t == 6'(SPEEDCLK_T) - 6'd3) && strobe_due && !early_taken;
+
+  logic [15:0] land_word;
+  logic [3:0]  land_eadr;
+  assign land_word = pending ? held : ub_wdata;
+  assign land_eadr = pending ? held_eadr : spy_eadr;
+
   // **THE COUNT FROM -UB MSYN IS ONE SHORT OF EACH INSTANT.**  `elapsed` is
   // zero on the first tick this block sees -UB MSYN, which is the tick after
   // the edge the master raised it on, so the edge `N` ticks after -UB MSYN
@@ -229,6 +250,7 @@ module cadr_spy_registers (
       pending     <= 1'b0;
       held        <= 16'd0;
       held_eadr   <= 4'd0;
+      early_taken <= 1'b0;
     end else begin
       prog_reset <= 1'b0;
       prog_boot  <= 1'b0;
@@ -236,9 +258,9 @@ module cadr_spy_registers (
       if (mclk) phase_t <= 6'd0;
       else if (!(&phase_t)) phase_t <= phase_t + 6'd1;
 
-      if (pending && landing) begin
+      if ((pending && landing) || early) begin
         pending <= 1'b0;
-        unique case (held_eadr)
+        unique case (land_eadr)
           // **THE CLOCK CONTROL REGISTER IS FIVE BITS AND NOT ONE.**  It took
           // bit 0 alone until CC, over the debug cable, wrote `16` octal at
           // it and the machine did not move: `CC-EXECUTE` loads the debug IR
@@ -246,29 +268,31 @@ module cadr_spy_registers (
           // `IDEBUG` all dropped the forced microinstruction never ran and
           // the debugger read back its own stale OBUS.
           REG_CLK: begin
-            run    <= held[0];
-            step   <= held[1];
-            nop11  <= held[2];
-            idebug <= held[3];
-            ldstat <= held[4];
+            run    <= land_word[0];
+            step   <= land_word[1];
+            nop11  <= land_word[2];
+            idebug <= land_word[3];
+            ldstat <= land_word[4];
           end
-          REG_IR_LOW:  debug_ir[15:0]  <= held;
-          REG_IR_MED:  debug_ir[31:16] <= held;
-          REG_IR_HIGH: debug_ir[47:32] <= held;
+          REG_IR_LOW:  debug_ir[15:0]  <= land_word;
+          REG_IR_MED:  debug_ir[31:16] <= land_word;
+          REG_IR_HIGH: debug_ir[47:32] <= land_word;
           REG_MODE: begin
-            mode_speed  <= {held[1], held[0]};
-            errstop     <= held[2];
-            stathenb    <= held[3];
+            mode_speed  <= {land_word[1], land_word[0]};
+            errstop     <= land_word[2];
+            stathenb    <= land_word[3];
             // bit 4 is TRAPENB, the memory parity trap on page TRAP
-            promdisable <= held[5];
+            promdisable <= land_word[5];
           end
           default: ;
         endcase
       end
+      if (early) early_taken <= 1'b1;
       if (!ub_msyn) begin
         running <= 1'b0;
         elapsed <= 9'd0;
         ub_ssyn <= 1'b0;
+        early_taken <= 1'b0;
       end else if (selected) begin
         running <= 1'b1;
         if (elapsed != 9'h1FF) elapsed <= elapsed + 9'd1;
@@ -282,7 +306,7 @@ module cadr_spy_registers (
 
         // The trailing edge of -LDMODE or -LDCLK, where the word is taken.
         // It is applied above, at the machine's next look.
-        if (ub_write && running && elapsed == 9'(STROBE_T) - 9'd1) begin
+        if (ub_write && running && elapsed == 9'(STROBE_T) - 9'd1 && !early && !early_taken) begin
           pending   <= 1'b1;
           held      <= ub_wdata;
           held_eadr <= spy_eadr;

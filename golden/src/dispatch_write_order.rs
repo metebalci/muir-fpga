@@ -204,12 +204,21 @@ const E: u64 = 0o1300;
 const DISPATCH_WORD: u32 = 0o123456;
 
 fn read_then(name: &str, setup: &[(u32, u64)], then: Vec<Insn>) -> Program {
+    read_then_pre(name, 0, setup, then)
+}
+
+/// `read_then` with `pre` fillers before the read, which move it against
+/// the grid and the NXM timer's oscillator.
+fn read_then_pre(name: &str, pre: usize, setup: &[(u32, u64)], then: Vec<Insn>) -> Program {
     let mut p = vec![filler()];
     constant(MD_BEFORE, 1, &mut p);
     constant(VADDR, 12, &mut p);
     constant(0o20, 14, &mut p);
     for &(v, r) in setup {
         constant(v, r, &mut p);
+    }
+    for _ in 0..pre {
+        p.push(filler());
     }
     p.push(Insn::new(ALU | SETM | m_src(1) | a_src(3) | MD));
     p.push(Insn::new(ALU | SETM | m_src(14) | a_src(3) | PDL_POINTER));
@@ -293,6 +302,45 @@ fn popj_into_hang(name: &str, pre: usize, n: usize, i: usize, long: bool) -> Pro
     prog
 }
 
+// This file's own: an asynchronous change that falls exactly on a clock
+// edge.  muir's `Rtl` carries the bus to an edge before it takes the edge
+// (`after_memack` runs at `now >= at`), so a change on the edge counts as
+// before it, which is what MIT's board does too:
+//
+//   - `-LOADMD` on a boundary: the edge clocks the OLD `MD`, and the
+//     microcycle the edge starts reads the NEW one from its first instant;
+//   - `MFINISHD`, the acknowledgment plus 30 ns, on a master clock edge:
+//     `MBUSY.SYNC` takes `MBUSY` already clear there, and a `-WAIT` on it
+//     ends at that edge.
+//
+// `pre` fillers before the read (the first `il` under `ILONG`), then `n`
+// fillers and a `DESTMEM` that waits on `MBUSY.SYNC`: `VMA<-` alone, or
+// `VMA-WRITE-MAP<-` and `M13<-MD` after it.  With `nxm` the read goes to a
+// page past the end of main memory, so the NXM timer ends it.  The
+// parameters are the ones a sweep found the tie at on this grid; each
+// program's name says which tie it is.
+fn edge_tie(name: &str, speed: u16, pre: usize, n: usize, il: usize, nxm: bool, map: bool) -> Program {
+    let mut then = vec![filler(); n];
+    if map {
+        then.push(Insn::new(ALU | SETM | m_src(2) | a_src(3) | WRITE_MAP));
+        then.push(Insn::new(ALU | SETM | SRC_MD | a_src(3) | m_dest(13)));
+    } else {
+        then.push(Insn::new(ALU | SETM | m_src(12) | a_src(3) | VMA));
+    }
+    let setup: &[(u32, u64)] = if map { &[(MAP_STORE, 2)] } else { &[] };
+    let mut prog = read_then_pre(name, pre, setup, then);
+    let first = prog.prom.iter().position(|w| w.raw() == (ALU | SETM | m_src(1) | a_src(3) | MD)).unwrap() - pre;
+    for k in 0..il.min(pre) {
+        prog.prom[first + k] = ilong(prog.prom[first + k]);
+    }
+    prog.speed = speed;
+    if nxm {
+        prog.l2[0] = (1, (1 << 23) | (1 << 22) | 0o20000);
+        prog.main.clear();
+    }
+    prog
+}
+
 // This file's own: the processor writing the mode register's speed bits.
 // Unibus `0o766012` is physical `0o17773005`, reached here from VMA `0o1005`
 // through level-2 entry 2, as MIT's boot PROM reaches it (`promh.text`).
@@ -304,21 +352,28 @@ const MODE_NORMAL: u32 = 2;
 /// Writes the speed bits and runs on at the new speed; `pad` fillers between
 /// loading MD and starting the write move the write against the generator.
 fn speed_written(name: &str, pad: usize) -> Program {
+    speed_written_from(name, 0, MODE_NORMAL, pad, None)
+}
+
+/// `speed_written` from the speed `from`, writing `word`, with the filler
+/// `long` after the write's start under `ILONG` if one is named.
+fn speed_written_from(name: &str, from: u16, word: u32, pad: usize, long: Option<usize>) -> Program {
     let mut p = vec![filler()];
     constant(MODE_VADDR, 20, &mut p);
-    constant(MODE_NORMAL, 21, &mut p);
+    constant(word, 21, &mut p);
     p.push(Insn::new(ALU | SETM | m_src(21) | a_src(3) | MD));
     for _ in 0..pad {
         p.push(filler());
     }
     p.push(Insn::new(ALU | SETM | m_src(20) | a_src(3) | START_WRITE));
-    for _ in 0..40 {
-        p.push(filler());
+    for k in 0..40 {
+        p.push(if Some(k) == long { ilong(filler()) } else { filler() });
     }
     let here = p.len();
     p.push(halt_here(here));
     let mut prog = program(name, p, 200);
     prog.l2.push((2, MODE_PAGE));
+    prog.speed = from;
     prog
 }
 
@@ -417,13 +472,32 @@ fn programs() -> Vec<Program> {
     all.push(prog);
     // Measured on the fabric with `CADR_GAP_MONITOR`, and muir's `rtl`
     // returns through the new word in all three (M 5 = `AT_NEW_DPC`).
-    all.push(popj_into_hang("popj-into-hang-late", 3, 4, 0, true));
-    all.push(popj_into_hang("popj-into-hang-on-time", 0, 4, 0, true));
-    all.push(popj_into_hang("popj-into-hang-on-time-acked", 2, 4, 1, true));
+    all.push(popj_into_hang("popj-into-hang-late", 1, 4, 0, true));
+    all.push(popj_into_hang("popj-into-hang-on-time", 3, 4, 0, true));
+    all.push(popj_into_hang("popj-into-hang-on-time-acked", 0, 4, 0, true));
     all.push(popj_into_hang("popj-into-hang-early", 3, 5, 0, false));
     for pad in 0..6 {
         all.push(speed_written(&format!("mode-speed-written-{pad}"), pad));
     }
+    // A read acknowledged on the edge that ends a microcycle, at extra slow
+    // speed: the next microcycle reads the word.
+    all.push(edge_tie("md-acked-on-an-edge", 0, 11, 0, 0, false, false));
+    // The same through the NXM timer, at normal speed.
+    all.push(edge_tie("md-acked-on-an-edge-nxm", 2, 9, 0, 2, true, false));
+    // MFINISHD on a master clock edge while `VMA<-` waits on MBUSY.SYNC.
+    all.push(edge_tie("mfinishd-on-an-edge", 0, 2, 1, 0, false, false));
+    all.push(edge_tie("mfinishd-on-an-edge-nxm", 2, 4, 1, 4, true, false));
+    // And while `VMA-WRITE-MAP<-` waits on it.
+    all.push(edge_tie("mfinishd-on-an-edge-write-map", 0, 1, 1, 0, false, true));
+    // The NXM timer's first fall on the grant's own edge, which the board
+    // does not count: an enable landing exactly on an edge misses it.
+    all.push(edge_tie("nxm-fall-on-the-grant-edge", 0, 7, 0, 0, true, false));
+    // A mode-register write strobed on SPEEDCLK, from normal speed with an
+    // ILONG cycle after the grant (190 + 60 = 250 ns from the grant), and a
+    // tick before it, from slow speed (200 + 50).  muir lands both at that
+    // SPEEDCLK, so the next generator cycle already runs extra slow.
+    all.push(speed_written_from("speed-written-on-speedclk", 2, 0, 0, Some(7)));
+    all.push(speed_written_from("speed-written-before-speedclk", 1, 0, 0, Some(7)));
     all
 }
 

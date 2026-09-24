@@ -517,12 +517,15 @@ int main(int argc, char **argv) {
     dut->wdata = r.wdata;
     dut->boards = static_cast<unsigned>(r.boards);
 
-    dut->clk = 1;
+    // **ROW n IS WHAT THE EDGE AT n SEES, FOR EVERYTHING ASYNCHRONOUS**:
+    // -MEMACK, -LOADMD and NXM TIMEOUT are compared before the edge with this
+    // row's inputs settled, and -MEMGRANT, a flip flop on the master clock,
+    // after it.  `tb/cadr_busint_xbus_tb.cpp` gives the argument.
     dut->eval();
 
-    // DDR answers device_ns after the bridge asked. Worked out after the edge
-    // has settled mem_req, and fed back with a second eval that moves no
-    // register --- the same shape the Xbus slave had.
+    // DDR answers device_ns after the bridge asked, both read in the same
+    // frame, before the edge, and fed back with a second eval that moves no
+    // register --- the same shape the Xbus slave has.
     if (dut->mem_req && !req_last) req_since = r.tick;
     if (!dut->mem_req) req_since = -1;
     req_last = dut->mem_req;
@@ -537,8 +540,6 @@ int main(int argc, char **argv) {
     }
     dut->eval();
 
-    if (dut->n_memgrant != r.n_memgrant)
-      bad += Fail(r, "-MEMGRANT", dut->n_memgrant, r.n_memgrant);
     if (dut->n_memack != r.n_memack)
       bad += Fail(r, "-MEMACK", dut->n_memack, r.n_memack);
     if (dut->n_loadmd != r.n_loadmd)
@@ -597,6 +598,11 @@ int main(int argc, char **argv) {
         bad += Fail(r, "MEM<31:0> on a cycle nothing answered", dut->rdata, 0);
     }
     memack_last = r.n_memack;
+
+    dut->clk = 1;
+    dut->eval();
+    if (dut->n_memgrant != r.n_memgrant)
+      bad += Fail(r, "-MEMGRANT", dut->n_memgrant, r.n_memgrant);
 
     dut->clk = 0;
     dut->eval();

@@ -66,14 +66,13 @@
 //!
 //! **Three instants, and where the fabric parts from muir on them.**
 //!
-//! - A write **lands one tick after `-XBUS.RQ` rises.**  muir's `Rtl` hands
-//!   the word to the slave at `answered_at`, the request's own instant; a
-//!   register in fabric takes it at the clock edge after the request is
-//!   first seen, and on the board the 25LS2519 clocks on `-LOAD MODE`, a
-//!   gate or two behind `XBUS RQ`.  So the reference writes the model at
-//!   `answered_at` plus a tick, and says so here rather than hiding a tick in
-//!   a tolerance.  It is the same tick the disk controller's `STORE_HOLD_NS`
-//!   carries, one instead of two because nothing here decodes a START.
+//! - A write **lands on `-XBUS.RQ`'s own instant**, `answered_at`, where
+//!   muir's `Rtl` hands the word to the slave.  `-XBUS.RQ` is up over the
+//!   tick that ends at its instant (`dev_rq` in `cadr_busint_xbus.sv`: a
+//!   change at an edge is one that edge sees), so the register takes the
+//!   word at that edge, and the testbench compares `-XBUS.INTR`, a register,
+//!   after it.  This used to be `answered_at` plus a tick, which was
+//!   `dev_rq` itself rising a tick after muir's instant.
 //! - A read is made **at `answered_at`**, muir's own instant, while the
 //!   fabric's MD takes the lines at the 60 ns deskew tap, six ticks on.
 //!   Two things can move in between: the vertical flag, at a `-TVMA CLR`,
@@ -230,11 +229,11 @@ impl Prog {
         self.ev.push(Event { at: self.cursor, op: Op::Init });
     }
     /// A write whose word must LAND --- reach the register --- at exactly
-    /// `tick`: the grant is SETUP_TICKS + 1 before it and must fall on a
+    /// `tick`: the grant is SETUP_TICKS before it and must fall on a
     /// master clock edge, so not every tick is reachable.  The request goes
     /// out a few ticks before that edge, on an idle bus.
     fn write_landing_at(&mut self, tick: u64, phys: u32, wdata: u32) {
-        let grant = tick - SETUP_TICKS - 1;
+        let grant = tick - SETUP_TICKS;
         assert_eq!(grant % MICROCYCLE_TICKS, 0, "a store cannot land at tick {tick}: the grant would be off the master clock");
         self.at(grant - 4);
         self.ev.push(Event { at: self.cursor, op: Op::Cycle { write: true, phys, wdata, land_at: Some(tick) } });
@@ -279,24 +278,24 @@ fn main() {
     // arithmetic.
     //
     // A write can only LAND on ticks the grant reaches: `write_landing_at`
-    // needs `tick - SETUP_TICKS - 1` on a master clock edge, which is
-    // `tick == 9 (mod 19)`.  `ORIGIN_T` is one of those, a frame is 7 mod 19
+    // needs `tick - SETUP_TICKS` on a master clock edge, which is
+    // `tick == 8 (mod 19)`.  `ORIGIN_T` is one of those, a frame is 7 mod 19
     // and the preset 1,600 ticks into a run is 4 mod 19, so every preset is
-    // `13 + 7k (mod 19)`, and the three instants a store has to be put at
+    // `12 + 7k (mod 19)`, and the three instants a store has to be put at
     // --- one tick after a preset, on one, and one tick before --- are
     // reachable at `k = 2`, `13` and `5` and again every nineteen frames.
     // **That is why the trace runs to twenty-five frames**: the three cases
     // keep the order the argument at the top gives them, after, on, before,
     // and the `before` case then falls at the twenty-fourth preset.
-    const ORIGIN_T: u64 = 1_545_621;
+    const ORIGIN_T: u64 = 1_545_620;
     // `sync::prom()` in clock mode 0: 32 instructions of 500 ns.
     const TVMA_CLR_T: u64 = 1_600;
     let preset = |k: u64| ORIGIN_T + TVMA_CLR_T + k * f;
-    assert_eq!(ORIGIN_T % MICROCYCLE_TICKS, (SETUP_TICKS + 1) % MICROCYCLE_TICKS, "the origin is not a tick a store can land on");
+    assert_eq!(ORIGIN_T % MICROCYCLE_TICKS, SETUP_TICKS % MICROCYCLE_TICKS, "the origin is not a tick a store can land on");
     for (k, want) in [(2u64, 1i64), (13, 0), (24, -1)] {
         let tick = (preset(k) as i64 + want) as u64;
         assert_eq!(
-            (tick - SETUP_TICKS - 1) % MICROCYCLE_TICKS,
+            (tick - SETUP_TICKS) % MICROCYCLE_TICKS,
             0,
             "a store cannot be placed at {want:+} ticks of preset {k}"
         );
@@ -674,10 +673,10 @@ fn main() {
             cycle += 1;
         }
 
-        // A write lands one tick after -XBUS.RQ: see the top.
+        // A write lands at -XBUS.RQ's instant: see the top.
         if memrq && wrcyc && !landed
             && let Some(answered) = bi.answered_at()
-            && now == answered + TICK_NS
+            && now == answered
         {
             landed = true;
             if let Some(want) = land_at {

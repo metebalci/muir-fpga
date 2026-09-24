@@ -245,6 +245,23 @@ module cadr_busint_xbus (
   logic [3:0] tmr_want;   // and how many this cycle's table asks for
   assign tmr_want = select_debug ? 4'(DBG_RISES) : 4'(NXM_RISES);
 
+  // **THE LAST RISE IS TAKEN A TICK AHEAD, SO THAT -MEMACK IS AT ITS
+  // INSTANT.**  `vco` is a register that moves at the edge of its instant,
+  // which is right for counting its edges; but -MEMACK at the sixth rise R
+  // has to be on the D inputs of the edge at R, so `ACKED` is taken on the
+  // edge before.  This is that edge: the output is low, the rises before
+  // the last are counted, and the accumulator toggles on the next tick ---
+  // `vco_toggle`'s own test one tick further on.  The first fall and the
+  // rises before the last are counted exactly as they were, so which
+  // oscillator edges belong to a cycle does not move.  Taken at the rise
+  // itself, as it was, every cycle nothing answered was acknowledged a tick
+  // after muir's, and an `MFINISHD` that falls on a master clock edge lost
+  // that edge: `mfinishd-on-an-edge-nxm` in `build/dispatch_write_order.pass`.
+  logic       nxm_due;
+  assign nxm_due = tmr_fell && !vco && !vco_toggle
+                && (tmr_rises + 4'd1 == tmr_want)
+                && (vco_acc >= 9'(VCO_HALF_NS - 2 * cadr_tick_pkg::TICK_NS));
+
   state_e     state;
   logic [2:0] stage;
   assign arb_stage = 3'(state);            // where the arbitration has got to
@@ -278,13 +295,33 @@ module cadr_busint_xbus (
   logic       answered;         // the slave has answered; the deskew is running
   logic [9:0] answered_at;      // `elapsed` when it did
 
+  // **"MEMRQ DROPS WHEN MEMACK RISES, WHICH CAUSES MEMACK TO DROP."**  The
+  // acknowledgment, -XBUS.RQ and NXM TIMEOUT go the instant the cpu lifts
+  // -MEMRQ, as muir's `Busint::finish` takes them at MFINISHD, and not on the
+  // edge after it, where `ACKED` gives way to `IDLE`.  `-MEMRQ` is the cpu's
+  // `mbusy`, which falls on the edge before its instant.
+  logic ack_standing;
+  assign ack_standing = (state == ACKED) && !n_memrq;
+
   // SETUP_T after the grant the request goes out, and it stays out until the
   // cpu lifts -MEMRQ, which lifts -XBUS.RQ with it.
-  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T)) || state == ACKED;
+  //
+  // **ONE TICK SHORT OF SETUP_T, AND THAT IS THE INSTANT, NOT AN EARLY ONE.**
+  // An asynchronous change at instant T is one the registers clocked at T
+  // see, so it is combinational over the tick that ends at T --- the frame
+  // `cadr_microcycle.sv` states at `MFINISHD_T`.  `elapsed` is zero over the
+  // tick after the grant's edge, so `elapsed >= SETUP_T - 1` is up over the
+  // tick that ends at the grant plus 80 ns.  At `SETUP_T` every device the
+  // fabric answers itself (the disk controller, the display, the feature
+  // page), which answers off this line, acknowledged a tick after muir.
+  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1) || ack_standing;
   assign dev_write = write;
 
-  // The Unibus master's own strobe, UNIBUS_ADDRESS_NS after the grant.
-  assign ub_msyn  = (state == UB && elapsed >= 10'(UB_ADDRESS_T));
+  // The Unibus master's own strobe, UNIBUS_ADDRESS_NS after the grant: one
+  // tick short in `elapsed`, for the reason `dev_rq` gives.  Every Unibus
+  // slave counts from it, so at `UB_ADDRESS_T` the whole Unibus cycle, its
+  // register strobe and its acknowledgment ran a tick after muir's.
+  assign ub_msyn  = (state == UB && elapsed >= 10'(UB_ADDRESS_T) - 10'd1);
   assign ub_write = write;
 
   // "MSYN OUT drops at SSYN T100 and -LOADMD rises with it, so the word lands
@@ -354,7 +391,7 @@ module cadr_busint_xbus (
                    && (elapsed >= answered_at + 10'(DESKEW_T) - 10'd1);
 
   logic acked;
-  assign acked = (state == ACKED)
+  assign acked = ack_standing
               || (state == GRANTED && ((write && answering) || deskewed))
               || (state == UB && ub_acked);
 
@@ -368,7 +405,7 @@ module cadr_busint_xbus (
   // The flag belongs to the cycle standing, as `Ack::timed_out` does: it goes
   // when the cpu lifts -MEMRQ and the cycle is over. What outlives the cycle is
   // the NXM bit in the bus error register at REQERR, which is not this slice.
-  assign timed_out  = (state == ACKED) && nxm;
+  assign timed_out  = ack_standing && nxm;
   // `Busint::busy`, verbatim: a cycle is in flight from the tick -MEMRQ is
   // taken to the tick the processor lifts it.
   assign busy       = (state != IDLE);
@@ -437,21 +474,22 @@ module cadr_busint_xbus (
       // output takes it.  `vco_toggle` says this edge flips `vco`, so `vco`
       // read here is the value it is flipping FROM: high means a fall, low a
       // rise.  That is how a register sees an edge this very clock edge
-      // makes, and it is not early --- `NXM TIMEOUT` and the sixth rise of
-      // `vco` settle on one edge, which is the rise's instant.  Testing the
-      // output after it has moved lands every timeout a tick late, which
+      // makes, and it is not early.  Testing the output after it has moved
+      // lands every timeout a tick late, which
       // `the-timer-counts-an-edge-a-tick-after-the-output-takes-it` holds.
+      // The last rise is not counted here but taken a tick ahead of it, by
+      // `nxm_due`: see the note there.
       if (state == GRANTED || state == UB) begin
         if (vco_toggle) begin
           if (!tmr_fell && vco) begin
             tmr_fell <= 1'b1;
           end else if (tmr_fell && !vco) begin
             tmr_rises <= tmr_rises + 4'd1;
-            if (tmr_rises + 4'd1 == tmr_want) begin
-              state <= ACKED;
-              nxm   <= 1'b1;
-            end
           end
+        end
+        if (nxm_due) begin
+          state <= ACKED;
+          nxm   <= 1'b1;
         end
       end
 

@@ -128,7 +128,20 @@ int main(int argc, char **argv) {
     dut->n_memrq = r.n_memrq;
     dut->wrcyc = r.wrcyc;
 
-    dut->clk = 1;
+    // **ROW n IS WHAT THE EDGE AT n SEES, FOR EVERYTHING ASYNCHRONOUS.**
+    // muir counts a change that falls exactly on an edge as before it
+    // (`bi.ack_at() <= now` in the generator), so an acknowledgment at
+    // instant n is one the registers clocked at n take: it has to stand on
+    // their D inputs over the tick that ends at n.  So -MEMACK, -LOADMD and
+    // NXM TIMEOUT are compared before the edge, with this row's inputs
+    // settled; -MEMGRANT is a flip flop on the master clock, which muir
+    // moves at the edge, and is compared after it.
+    //
+    // They were all compared after the edge, which is the frame where an
+    // acknowledgment at n is one the edge at n does NOT see.  In that frame
+    // this check held the interface to acknowledging a tick after muir, and
+    // the whole machine inherited it: `RD_FINISH_T`'s note in
+    // `cadr_microcycle.sv` has what that cost.
     dut->eval();
 
     // Last tick's -XBUS.RQ, kept before `rq_last` moves on: the rule below
@@ -136,9 +149,9 @@ int main(int argc, char **argv) {
     const int rq_before = rq_last;
 
     // The slave is combinational, as an Xbus slave is: it sees -XBUS.RQ and
-    // answers device_ns later, in the same tick if device_ns is zero. So its
-    // answer is worked out after the edge has settled dev_rq, and fed back in
-    // with a second eval that moves no register.
+    // answers device_ns later, on the same edge if device_ns is zero.  Both
+    // are read in the same frame, before the edge, so a request standing
+    // over the tick that ends at n went out at n.
     if (dut->dev_rq && !rq_last) rq_since = r.tick;
     if (!dut->dev_rq) rq_since = -1;
     rq_last = dut->dev_rq;
@@ -149,8 +162,6 @@ int main(int argc, char **argv) {
                    ((r.tick - rq_since) * kGridNs >= r.device_ns);
     dut->eval();
 
-    if (dut->n_memgrant != r.n_memgrant)
-      bad += Fail(r, "-MEMGRANT", dut->n_memgrant, r.n_memgrant);
     if (dut->n_memack != r.n_memack)
       bad += Fail(r, "-MEMACK", dut->n_memack, r.n_memack);
     if (dut->n_loadmd != r.n_loadmd)
@@ -180,6 +191,11 @@ int main(int argc, char **argv) {
         bad += Fail(r, "-XBUS.RQ at the acknowledgment", 0, 1);
     }
     memack_last = r.n_memack;
+
+    dut->clk = 1;
+    dut->eval();
+    if (dut->n_memgrant != r.n_memgrant)
+      bad += Fail(r, "-MEMGRANT", dut->n_memgrant, r.n_memgrant);
 
     dut->clk = 0;
     dut->eval();

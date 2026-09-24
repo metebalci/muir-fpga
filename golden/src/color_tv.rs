@@ -43,7 +43,7 @@
 //!   and the column is compared at every tick.
 //!
 //! The columns, the instants and the rules are `golden/src/tv.rs`'s and that
-//! file has the argument for each: a write lands one tick after `-XBUS.RQ`,
+//! file has the argument for each: a write lands at `-XBUS.RQ`'s instant,
 //! a read is made at the request's own instant, and a read of a mode
 //! register may not straddle a `-TVMA CLR` or a sync-bit change or fall
 //! inside the first instruction of a run.
@@ -456,11 +456,11 @@ fn main() {
             cycle += 1;
         }
 
-        // A write lands one tick after `-XBUS.RQ`: `golden/src/tv.rs` has the
+        // A write lands at `-XBUS.RQ`'s instant: `golden/src/tv.rs` has the
         // argument.
         if memrq && wrcyc && !landed
             && let Some(answered) = bi.answered_at()
-            && now == answered + TICK_NS
+            && now == answered
         {
             landed = true;
             if let Some((color, r)) = which_register(phys) {
