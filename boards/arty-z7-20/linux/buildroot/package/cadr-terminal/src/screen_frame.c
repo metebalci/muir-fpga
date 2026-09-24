@@ -3,6 +3,8 @@
 //
 // The frame; `screen_frame.h` says why the copy is the frame.
 
+#include <string.h>
+
 #include "screen_frame.h"
 
 void screen_frame_init(struct screen_frame *f, int black_on_white)
@@ -33,6 +35,52 @@ void screen_frame_init_color(struct screen_frame *f)
 	// invert, and muir's `Tv::color` takes no notice of the mode register
 	// either.
 	f->black_on_white = 0;
+}
+
+void screen_frame_init_mono(struct screen_frame *f, int black_on_white)
+{
+	screen_frame_init(f, black_on_white);
+	f->width = SCREEN_MONO_WIDTH;
+	f->height = SCREEN_MONO_HEIGHT;
+	f->words_per_line = SCREEN_MONO_WORDS_PER_LINE;
+	f->visible_words = SCREEN_MONO_VISIBLE_WORDS;
+}
+
+// muir's own two words and nothing else: `--machine wants cadr or quux`.
+int screen_machine_parse(const char *word, enum screen_machine *out)
+{
+	if (strcmp(word, "cadr") == 0) {
+		*out = SCREEN_MACHINE_CADR;
+		return 0;
+	}
+	if (strcmp(word, "quux") == 0) {
+		*out = SCREEN_MACHINE_QUUX;
+		return 0;
+	}
+	return -1;
+}
+
+const char *screen_machine_name(enum screen_machine m)
+{
+	return m == SCREEN_MACHINE_QUUX ? "quux" : "cadr";
+}
+
+void screen_frame_init_for(struct screen_frame *f, enum screen_machine m, int black_on_white)
+{
+	if (m == SCREEN_MACHINE_QUUX)
+		screen_frame_init_mono(f, black_on_white);
+	else
+		screen_frame_init(f, black_on_white);
+}
+
+unsigned screen_window_bytes(enum screen_machine m)
+{
+	return m == SCREEN_MACHINE_QUUX ? SCREEN_MONO_WINDOW_BYTES : SCREEN_WINDOW_BYTES;
+}
+
+int screen_machine_has_color(enum screen_machine m)
+{
+	return m == SCREEN_MACHINE_CADR;
 }
 
 void screen_frame_map(struct screen_frame *f, const uint8_t map[SCREEN_COLORS][3])

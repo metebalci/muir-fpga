@@ -184,6 +184,7 @@ one means. `--terminal` takes nothing, a port, an address, or address:port.
     --keyboard-boot       the chord a cold boot is asked for with
     --keyboard-boot-trace say when a key-up is held behind a boot word
     --bow                 the display's MODE BOW
+    --machine             which machine the bitstream is: cadr or quux
     --window              the display's region
     --interval-ms         how often the window is read
     --no-rre              send every rectangle Raw

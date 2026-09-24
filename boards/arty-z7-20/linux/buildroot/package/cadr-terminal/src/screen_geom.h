@@ -114,6 +114,58 @@
 // `MODE<2>`, `MODE BOW`, for whoever quotes the number: muir tv.rs:260.
 #define SCREEN_MODE_BOW         0004u
 
+// ---- QUUX's SCREEN, MONO TV ----------------------------------------------
+//
+// QUUX, the evolved CADR, is a bitstream of its own, and its display is not
+// either of the CADR's boards but MONO TV: a one-bit frame buffer and a mode
+// register, with no sync program, no color map and no interrupt.  Its
+// numbers, read out of muir's `docs/quux.md` "MONO TV, the display" and
+// `src/tv.rs` at the commit `muir.commit` pins, bc6af67:
+//
+//   1280 pixels across            docs/quux.md: "1280 by 1024 unless
+//   1024 lines                      `--mono-tv-size` gives another size";
+//                                   `Tv::set_mono_tv_size(1280, 1024)` is
+//                                   what this project's bitstreams carry
+//   40 words to a line            `Tv::screen`, `w / 32`: 1280 bits is 40
+//                                   whole words
+//   40,960 words in the buffer    `Tv::buffer_words`, 1024 x 40, physical
+//                                   17000000-17117777; every word of it is
+//                                   the picture, and one past it is NXM
+//   the same base in memory       docs/quux.md: "The buffer starts where the
+//                                   CADR's does", so the display's window at
+//                                   <cadr/cadr_board.h>'s base, 160 KB of it
+//                                   where the CADR's is 128 KB.  **The
+//                                   fabric's MONO TV is not built yet**:
+//                                   `rtl/plumbing/cadr_ddr_map.sv` decodes
+//                                   fifteen bits of offset, 32,768 words,
+//                                   and QUUX's needs sixteen
+//
+// **WHICH BIT IS WHICH PIXEL IS THE CADR'S RULE WITH ITS OWN LINE LENGTH.**
+// muir's `Tv::pixel` is `bit = y * self.screen().2 * 32 + x`, the words a
+// line being whichever screen is fitted, so `screen_lit` below takes the
+// words a line as an argument rather than the first board's 24.  The low bit
+// of a word is the leftmost pixel on both machines.
+//
+// **MODE BOW IS THE SAME BIT**, mode register bit 2, and this program still
+// cannot read it: `--bow` says it, as on the CADR.
+//
+// **AND THE 160 KB RUN OVER THE COLOR TV'S WINDOW**, which is 128 KB above
+// the display's.  QUUX has no color board, so nothing else is there; that is
+// why `--color-terminal` is refused on QUUX rather than served out of the
+// top of MONO TV's buffer.
+#define SCREEN_MONO_WIDTH           1280u
+#define SCREEN_MONO_HEIGHT          1024u
+#define SCREEN_MONO_WORDS_PER_LINE  40u
+#define SCREEN_MONO_VISIBLE_WORDS   (SCREEN_MONO_HEIGHT * SCREEN_MONO_WORDS_PER_LINE)
+#define SCREEN_MONO_WINDOW_BYTES    (SCREEN_MONO_VISIBLE_WORDS * 4u)
+
+// Which machine the bitstream is: muir's `--machine cadr|quux`, the word for
+// word the same.  `screen_frame.h` says why the program is told it.
+enum screen_machine {
+	SCREEN_MACHINE_CADR = 0,
+	SCREEN_MACHINE_QUUX = 1,
+};
+
 // ---- THE SECOND SCREEN, the color TV --------------------------------------
 //
 // MIT's second display board, `cadrtv/lmtv.order`'s "For the normal TV, x is
@@ -162,31 +214,38 @@
 #define SCREEN_COLOR_VISIBLE_WORDS  (SCREEN_COLOR_HEIGHT * SCREEN_COLOR_WORDS_PER_LINE)
 #define SCREEN_COLOR_BASE           CADR_BOARD_COLOR_BASE
 
-// The larger of the two screens, in frame-buffer words: 963 x 24 = 23,112
-// against 454 x 72 = 32,688.  **The color screen is the bigger one**, which
-// is worth knowing before sizing anything by the first board's figure.
-#if SCREEN_COLOR_VISIBLE_WORDS > SCREEN_VISIBLE_WORDS
-#define SCREEN_MAX_VISIBLE_WORDS SCREEN_COLOR_VISIBLE_WORDS
-#else
-#define SCREEN_MAX_VISIBLE_WORDS SCREEN_VISIBLE_WORDS
-#endif
-#if SCREEN_COLOR_HEIGHT > SCREEN_HEIGHT
-#define SCREEN_MAX_HEIGHT SCREEN_COLOR_HEIGHT
-#else
-#define SCREEN_MAX_HEIGHT SCREEN_HEIGHT
-#endif
+// The largest of the three screens, in frame-buffer words: 963 x 24 =
+// 23,112, 454 x 72 = 32,688, and MONO TV's 1024 x 40 = 40,960.  **MONO TV is
+// the biggest in words and in lines**, which is worth knowing before sizing
+// anything by the first board's figure; the asserts below say so rather than
+// choosing, so that a screen made bigger later stops the build instead of
+// overrunning a buffer sized by the old one.
+#define SCREEN_MAX_VISIBLE_WORDS SCREEN_MONO_VISIBLE_WORDS
+#define SCREEN_MAX_HEIGHT        SCREEN_MONO_HEIGHT
+_Static_assert(SCREEN_MAX_VISIBLE_WORDS >= SCREEN_VISIBLE_WORDS
+	       && SCREEN_MAX_VISIBLE_WORDS >= SCREEN_COLOR_VISIBLE_WORDS,
+	       "a frame holds the largest screen's words");
+_Static_assert(SCREEN_MAX_HEIGHT >= SCREEN_HEIGHT && SCREEN_MAX_HEIGHT >= SCREEN_COLOR_HEIGHT,
+	       "a frame holds the largest screen's lines");
+// And MONO TV's window stays inside the display's share of the reservation,
+// below the spare 8 MB up.
+_Static_assert(SCREEN_BASE + SCREEN_MONO_WINDOW_BYTES <= CADR_BOARD_SPARE_BASE,
+	       "MONO TV's buffer fits below the spare");
 
-// Whether the bit at `x`, `y` is set --- muir's `Tv::pixel`.
-static inline int screen_lit(const uint32_t *words, unsigned x, unsigned y)
+// Whether the bit at `x`, `y` is set --- muir's `Tv::pixel`, whose stride is
+// the fitted screen's words a line: 24 on the CADR's board, 40 on MONO TV.
+static inline int screen_lit(const uint32_t *words, unsigned words_per_line, unsigned x,
+			     unsigned y)
 {
-	const unsigned bit = y * SCREEN_WORDS_PER_LINE * 32u + x;
+	const unsigned bit = y * words_per_line * 32u + x;
 	return (int)((words[bit / 32u] >> (bit % 32u)) & 1u);
 }
 
 // Whether the monitor shows it white --- muir's `Tv::shows_white`.
-static inline int screen_shows_white(const uint32_t *words, unsigned x, unsigned y, int bow)
+static inline int screen_shows_white(const uint32_t *words, unsigned words_per_line,
+				     unsigned x, unsigned y, int bow)
 {
-	return screen_lit(words, x, y) != (bow != 0);
+	return screen_lit(words, words_per_line, x, y) != (bow != 0);
 }
 
 // The color at `x`, `y` on the second screen --- muir's `Tv::color` --- as

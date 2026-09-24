@@ -25,7 +25,7 @@ keyboard and mouse later, when the I/O board exists.
 ## What it is, and what it is not
 
     cadr-terminal [--terminal [<endpoint>]] [--log PATH] [--bow]
-                  [--window ADDR] [--interval-ms N] [--no-rre]
+                  [--machine cadr|quux] [--window ADDR] [--interval-ms N] [--no-rre]
                   [--no-guard] [--no-input] [--input ADDR]
                   [--keyboard-mapping FILE] [--keyboard-boot KEYS]
                   [--keyboard-boot-trace] [--once]
@@ -165,6 +165,46 @@ like. muir drawing MIT's System 100 band at microcycle 200,000,000 has mode 0
 and 7,572 of its 739,584 pixels lit: **white text on black, one per cent of
 the screen**.
 
+
+## QUUX's screen: `--machine quux`
+
+QUUX, the evolved CADR, is a bitstream of its own. Its display is MONO TV
+rather than either of the CADR's boards: a one-bit frame buffer and a mode
+register, with no sync program, no color map and no interrupt. muir's
+`docs/quux.md` is the contract, and `screen_geom.h` cites it beside each number.
+
+| | CADR | QUUX, MONO TV |
+|---|---|---|
+| pixels across | 768 | 1280 |
+| lines | 963 | 1024 |
+| words to a line | 24 | 40 |
+| words of the picture | 23,112 | 40,960 |
+| window mapped | 128 KB | 160 KB |
+| color TV | may be fitted | none |
+
+The buffer starts where the CADR's does, at physical `17000000`, so this
+program maps the window at the same base in memory. **The fabric's MONO TV is
+not built yet.** It must put all 40,960 words there, which is one address bit
+more than the CADR's 32,768-word window decodes today. Pixel `x` of line `y` is bit `x mod 32` of word
+`40y + x/32` on QUUX, the CADR's rule with its own line length. `MODE BOW` is
+the same bit 2 of the mode register, and `--bow` still says it.
+
+**The program is told the machine and does not ask.** QUUX's feature page at
+physical `17377000` gives the screen at words 11 to 13, and a CADR answers
+nothing there. But that page is an Xbus device inside the machine. The
+processing system reaches the display's buffer as memory, the faces on their
+port and the console on its own, and none of them carries a read of the
+machine's I/O page. The build stamp names a commit and how the tree stood, not
+which machine was built. So `--machine cadr|quux` says which: it is muir's own
+flag with muir's own two words, and the default is `cadr`. Any other word is
+refused. The card carries it as a commented line in `fpgarc`.
+
+`--color-terminal` is refused with `--machine quux`. QUUX has no color TV, and
+MONO TV's 160 KB run over the window the color board's would have.
+
+**The keyboard and mouse are unchanged.** They go through the same input face
+on both machines today. QUUX's register page will carry them instead, and this
+program's input half moves with it when that page is built.
 
 ## What a key is, and what the machine is told
 
@@ -1098,6 +1138,9 @@ fits one, and then binds and serves a black screen anyway.
 
 ## What is not built
 
+- **Asking the fabric which machine it is.** A word in the console's face
+  carrying QUUX's feature page, or the machine in the build stamp, would let
+  `--machine` go. Neither exists, so the card says it.
 - **Reading `MODE BOW`**, which is described above. It is fabric work in three
   files, none of them this program's, and the section above says which.
 - **Encodings past Raw and RRE.** Hextile and ZRLE would both beat RRE on a

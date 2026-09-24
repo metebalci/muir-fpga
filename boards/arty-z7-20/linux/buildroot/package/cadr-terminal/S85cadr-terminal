@@ -101,6 +101,13 @@ FAULT_SH=/usr/share/cadr/fault.sh
 # `--log` is `cadr_daemon`'s, which gives every program the same two
 # destinations, and the other two are a person's at a prompt.
 #
+# **`--machine cadr|quux` SAYS WHICH MACHINE THE BITSTREAM IS**, and so which
+# screen: the CADR's 768 by 963 or QUUX's MONO TV, 1280 by 1024.  The program
+# cannot ask the fabric, so a card carrying a QUUX bitstream says
+# `--machine quux` here.  It is this program's today because it is the only one
+# that differs; the word is muir's, and a program that comes to need it too
+# shares it by the reader's rules rather than inventing another.
+#
 # **`--port` AND `--bind` ARE GONE FROM THE PROGRAM ITSELF**, and that is what
 # `--terminal` is.  They were words this program and the serial line both took,
 # so no list could claim either and no `fpgarc` line could say where either
@@ -113,6 +120,7 @@ FLAGS="--terminal
        --keyboard-boot
        --keyboard-boot-trace
        --bow
+       --machine
        --window
        --interval-ms
        --no-rre

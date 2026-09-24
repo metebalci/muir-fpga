@@ -76,12 +76,23 @@
 // swaps it.  `screen_geom.h` and `docs/terminal.md` say what reading it would
 // take.
 //
+// **WHICH MACHINE, AND SO WHICH SCREEN.**  QUUX, the evolved CADR, is a
+// bitstream of its own whose display is MONO TV: 1280 x 1024 at one bit a
+// pixel, 40 words a line, its buffer where the CADR's is and 160 KB of it,
+// and no color board.  QUUX's feature page says so at words 11 to 13, but
+// that page is an Xbus device inside the machine and nothing this program
+// can map reaches it, and the build stamp names a commit and not a machine.
+// So `--machine cadr|quux` says which, muir's own flag and muir's own two
+// words, and the default is the CADR.  `screen_frame.h` has the whole
+// argument.  The keyboard and the mouse are the same on both today; QUUX's
+// register page will move them, and this program with them.
+//
 // WHAT IT PRINTS, low rate on purpose: one line when it starts, one when a
 // viewer connects or leaves, one the first time a viewer sends input, one
 // when the screen goes blank or stops being blank, and NOTHING per frame.  A
 // summary at most once a minute, and only while the counts move.
 //
-//     cadr-terminal [--terminal [<endpoint>]] [--log PATH]... [--bow]
+//     cadr-terminal [--terminal [<endpoint>]] [--log PATH]... [--bow] [--machine cadr|quux]
 //                   [--interval-ms N] [--no-rre] [--no-guard] [--no-input]
 //                   [--input ADDR] [--keyboard-mapping FILE]
 //                   [--keyboard-boot KEYS] [--keyboard-boot-trace]
@@ -182,6 +193,10 @@ static void usage(void)
 		"                    stdout.  A destination that is a file is capped at 1 MiB\n"
 		"                    and rotated to <name>.1 (the root filesystem is a RAM disk)\n"
 		"  --bow             the display's MODE BOW: one bits are black (default: white)\n"
+		"  --machine cadr|quux       which machine the bitstream is, muir's own flag: the\n"
+		"                            CADR's screen, 768x963 at 24 words a line, or QUUX's\n"
+		"                            MONO TV, 1280x1024 at 40, which has no color TV\n"
+		"                            (default cadr)\n"
 		"  --color-terminal [<endpoint>]\n"
 		"                            the SECOND screen, the color TV's, served as the\n"
 		"                            first one is: 576x454 at four bits a pixel through\n"
@@ -249,6 +264,8 @@ int main(int argc, char **argv)
 	int want_color = 0, have_color_spec = 0;
 	const char *color_spec = "";
 	int bow = 0, no_guard = 0, once = 0, no_rre = 0, no_input = 0, no_link = 0;
+	// Which machine the bitstream is, and so which screen: `--machine`.
+	enum screen_machine machine = SCREEN_MACHINE_CADR;
 	int boot_trace = 0, key_trace = 0;
 	const char *link_path = CADR_INPUT_LINK_PATH;
 	// `--keyboard-boot`, whose default is muir's: either Control and either
@@ -264,6 +281,7 @@ int main(int argc, char **argv)
 		{ "color-window", required_argument, NULL, 'W' },
 		{ "log", required_argument, NULL, 'l' },
 		{ "bow", no_argument, NULL, 'B' },
+		{ "machine", required_argument, NULL, 'm' },
 		{ "window", required_argument, NULL, 'w' },
 		{ "interval-ms", required_argument, NULL, 'i' },
 		{ "no-rre", no_argument, NULL, 'R' },
@@ -281,7 +299,7 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "t::c::W:l:Bw:i:RGIn:k:K:TML:Noh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "t::c::W:l:Bm:w:i:RGIn:k:K:TML:Noh", opts, NULL)) != -1) {
 		switch (c) {
 		case 't': {
 			// **THE ENDPOINT IS OPTIONAL, AS muir'S IS, AND getopt
@@ -327,6 +345,17 @@ int main(int argc, char **argv)
 			break;
 		case 'l': cadr_log_dest(optarg); break;
 		case 'B': bow = 1; break;
+		case 'm':
+			// Refused and not fallen back on: a CADR's screen served
+			// off a QUUX bitstream is a picture of the right memory
+			// cut into the wrong lines, which looks like a fault in
+			// the machine rather than in the card.
+			if (screen_machine_parse(optarg, &machine) != 0) {
+				fprintf(stderr, "cadr-terminal: --machine %s: wants cadr or quux\n",
+					optarg);
+				return 2;
+			}
+			break;
 		case 'w':
 			if (cadr_parse_u32("--window", optarg, &window_phys) != 0)
 				return 2;
@@ -375,6 +404,14 @@ int main(int argc, char **argv)
 			argv[optind]);
 		return 2;
 	}
+	// **QUUX HAS NO COLOR TV**, and MONO TV's 160 KB run over the window
+	// the color board's would have: a second screen served there would be
+	// the bottom of the first one.
+	if (want_color && !screen_machine_has_color(machine)) {
+		fprintf(stderr, "cadr-terminal: --color-terminal with --machine %s: that "
+			"machine has no color TV\n", screen_machine_name(machine));
+		return 2;
+	}
 	if (cadr_log_open("cadr-terminal: ") < 0)
 		return 2;
 
@@ -386,18 +423,21 @@ int main(int argc, char **argv)
 	if (!no_guard && cadr_guard(mem, "the display's window") < 0)
 		return 1;
 	// 2. The window.
-	volatile uint32_t *window = cadr_map(mem, window_phys, SCREEN_WINDOW_BYTES,
+	const unsigned window_bytes = screen_window_bytes(machine);
+	volatile uint32_t *window = cadr_map(mem, window_phys, window_bytes,
 					     "the display's window");
 	if (!window)
 		return 1;
 
 	struct screen_frame frame;
-	screen_frame_init(&frame, bow);
+	screen_frame_init_for(&frame, machine, bow);
 	screen_frame_read(&frame, window);
-	say("the display's window is %u KB at 0x%08x; the screen is %ux%u, %u words a line, "
-	    "%u of the window's %u words, one bit a pixel, a one bit %s",
-	    SCREEN_WINDOW_BYTES / 1024u, window_phys, SCREEN_WIDTH, SCREEN_HEIGHT,
-	    SCREEN_WORDS_PER_LINE, SCREEN_VISIBLE_WORDS, SCREEN_WINDOW_WORDS,
+	say("the machine is %s (--machine): its display's window is %u KB at 0x%08x; the "
+	    "screen is %ux%u, %u words a line, %u of the window's %u words, one bit a pixel, "
+	    "a one bit %s",
+	    machine == SCREEN_MACHINE_QUUX ? "QUUX, whose screen is MONO TV" : "the CADR",
+	    window_bytes / 1024u, window_phys, frame.width, frame.height,
+	    frame.words_per_line, frame.visible_words, window_bytes / 4u,
 	    bow ? "BLACK (MODE BOW, --bow)" : "WHITE (MODE BOW clear, the fabric's power-on state)");
 
 	int blank = screen_frame_blank(&frame);
@@ -408,7 +448,7 @@ int main(int argc, char **argv)
 		    blank_word(blank), frame.words[0]);
 	else
 		say("the screen has content: %lu of %u pixels lit",
-		    screen_frame_lit(&frame), SCREEN_WIDTH * SCREEN_HEIGHT);
+		    screen_frame_lit(&frame), frame.width * frame.height);
 	if (once)
 		return 0;
 
@@ -662,7 +702,7 @@ int main(int argc, char **argv)
 			if (now_blank != blank) {
 				if (now_blank == SCREEN_BLANK_NO)
 					say("the screen has content: %lu of %u pixels lit",
-					    screen_frame_lit(&frame), SCREEN_WIDTH * SCREEN_HEIGHT);
+					    screen_frame_lit(&frame), frame.width * frame.height);
 				else
 					say("the screen has gone blank: %s", blank_word(now_blank));
 				blank = now_blank;
