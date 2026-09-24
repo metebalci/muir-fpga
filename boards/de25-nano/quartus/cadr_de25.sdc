@@ -173,6 +173,67 @@ set slow [add_to_collection $slow $held]
 set_multicycle_path -setup 8 -from $slow -to $slow
 set_multicycle_path -hold  7 -from $slow -to $slow
 
+# ------------------------------------------------------ the split paths
+#
+# `cadr_machine.xdc`'s split-path clauses, written again: the scratchpad
+# latches in and out, the latches into the dispatch memory's write, the
+# control store's word, and the second hop of the other every-tick
+# registers.  The argument for every count is that file's.  What differs:
+#
+#   - The latches here are the M20K blocks' own address registers, loaded
+#     while TPCLK is high, which is the same register the Zynq boards' block
+#     RAMs hold; so the four memories are named whole, by the keepers of the
+#     blocks Quartus inferred for them.
+#   - **THE MAPS' WRITE HAS NO CLAUSE HERE, BECAUSE QUARTUS TIMES NO PATH
+#     FROM IT.**  Both levels are MLABs read without a clock, and a word
+#     written into an MLAB reaches its output through no arc the timing
+#     analyzer reports: asked at f016b65, nothing starts at either map but
+#     the readout copy's own read address.  A clause written `-from` the maps
+#     would be a clause that reaches nothing.  What bounds that path on this
+#     board is the MLAB itself, which gives the new word from the edge after
+#     the one that wrote it (`project.tcl`, and the read-during-write window
+#     at the end of `cadr_microcycle.sv`), and the rest of the path, from the
+#     level-1 map's output to the PC's `d`, against the twenty nanoseconds the
+#     two ticks after that edge give.  Measured at the 0 C slow corner: 19.0
+#     ns on the fit of f016b65, and 20.1 ns on the fit that added the clauses
+#     above, which moved nothing on this path but the placement.  **SO THIS
+#     PATH IS AT OR OVER ITS TIME, AND NOTHING HERE CAN TIME IT**: the MLAB's
+#     own delay from the edge to its output is not reported, and a clause
+#     `-through` the maps would take the reads from MD as well, which have the
+#     whole microcycle and need more than two ticks.  It wants a change to the
+#     design, not to this file.
+set split_pr {u_machine|processor}
+set split_latch_addr [get_registers -nowarn [concat \
+    [cadr_leaves "${split_pr}|" {ir pdl_ptr pdl_idx spcptr}]]]
+set split_latch [get_keepers -nowarn [list "${split_pr}|amem_rtl_*" "${split_pr}|mmem_rtl_*" \
+                                           "${split_pr}|pdl_rtl_*" "${split_pr}|spcm_rtl_*"]]
+set split_dmem [get_keepers -nowarn [list "${split_pr}|dmem_rtl_*"]]
+set split_cstore [get_keepers -nowarn [list "${split_pr}|imem_rtl_*" "${split_pr}|prom_mem_rtl_*"]]
+set split_every_tick [get_registers -nowarn [concat \
+    [cadr_leaves "${split_pr}|" {memgo_q destmem_q use_md_q ifetch_q}] \
+    [cadr_leaves {u_machine|memory|} {is_memory device nxm unibus ub_addr}]]]
+
+# grid: 75 ns - 1 tick
+set_multicycle_path -setup 7 -from $split_latch_addr -to $split_latch
+set_multicycle_path -hold  6 -from $split_latch_addr -to $split_latch
+
+# grid: 60 ns + 1 tick
+set_multicycle_path -setup 7 -from $split_latch -to $slow
+set_multicycle_path -hold  6 -from $split_latch -to $slow
+
+# After the clause above, which it narrows.
+# grid: 30 ns + 1 tick
+set_multicycle_path -setup 4 -from $split_latch -to $split_dmem
+set_multicycle_path -hold  3 -from $split_latch -to $split_dmem
+
+# grid: 60 ns - 1 tick
+set_multicycle_path -setup 5 -from $split_cstore -to $slow
+set_multicycle_path -hold  4 -from $split_cstore -to $slow
+
+# grid: 60 ns
+set_multicycle_path -setup 6 -from $split_every_tick -to $slow
+set_multicycle_path -hold  5 -from $split_every_tick -to $slow
+
 # ------------------------------------ the bus's own eighty nanoseconds
 #
 # The display board takes the master's word at the first tick of -XBUS.RQ,

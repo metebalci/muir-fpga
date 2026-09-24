@@ -171,10 +171,12 @@ $(BUILD)/obj_phase_gen/Vcadr_phase_gen: $(TICKPKG) rtl/machine/cadr_phase_gen.sv
 # muir under, and every timing constraint that writes a count of ticks as a
 # literal.  They cannot share a literal across four languages, and a grid that
 # differs between them still builds, so this is what says they agree.  See
-# `tools/grid_check.py` and `docs/timing.md`.
+# `tools/grid_check.py` and `docs/timing.md`.  The two files named beside the
+# wildcards are the ones `mutations/run.py`'s `grid` records are aimed at.
 $(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard golden/src/*.rs) \
                     $(wildcard rtl/*/*.xdc rtl/*/*/*.xdc boards/*/*.xdc boards/*/vivado/*.tcl) \
                     $(wildcard boards/*/quartus/*.sdc boards/*/quartus/*.tcl) \
+                    rtl/plumbing/xilinx7/cadr_machine.xdc boards/de25-nano/quartus/cadr_de25.sdc \
                     boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk.h \
                     boards/arty-z7-20/linux/buildroot/package/cadr-console/src/console_test.c | $(BUILD)
 	python3 tools/grid_check.py .

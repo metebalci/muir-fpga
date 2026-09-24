@@ -395,6 +395,46 @@ proc assert_instance_timing {period cycles instance relaxed {elsewhere {}}} {
     }
 }
 
+# A SPLIT-PATH CLAUSE TOOK, AND NOTHING WIDER REACHES ITS PATHS: every
+# endpoint's worst setup path from `from` to `to`, the very collections
+# `cadr_de25.sdc` wrote the clause against, asks for at most `cycles` ticks,
+# and at least one for exactly that.  The clauses sit at the relaxed set's own
+# priority, after it, so the first half is what says the analyzer ranked them
+# above it; the second is the clause that reached nothing.
+proc assert_clause_timing {period cycles what from to} {
+    global failures
+    set want [expr {$period * $cycles}]
+    if {[get_collection_size $from] == 0 || [get_collection_size $to] == 0} {
+        puts "sta: FAIL: $what: the clause's collections are empty, so it reached nothing"
+        incr failures
+        return
+    }
+    set hist {}
+    set over 0
+    set first ""
+    foreach_in_collection p [get_timing_paths -setup -from $from -to $to -npaths 200000 -nworst 1] {
+        set rel [get_path_info $p -clock_relationship]
+        dict incr hist [format %.3f $rel]
+        if {$rel > $want + 0.001} {
+            incr over
+            if {$first eq ""} {
+                set first "[get_node_info -name [get_path_info $p -from]] -> [get_node_info -name [get_path_info $p -to]] at $rel ns"
+            }
+        }
+    }
+    set key [format %.3f $want]
+    set n [expr {[dict exists $hist $key] ? [dict get $hist $key] : 0}]
+    if {$over > 0} {
+        puts "sta: FAIL: $what: $over endpoints ask for more than $key ns, so the clause did not outrank the relaxed set; first: $first"
+        incr failures
+    } elseif {$n == 0} {
+        puts "sta: FAIL: $what: no endpoint asks for $key ns, so the clause reached nothing; endpoints: [said $hist]"
+        incr failures
+    } else {
+        puts "sta: $what: $n endpoints at $key ns and none above it: the clause took"
+    }
+}
+
 # The same leaf patterns `cadr_de25.sdc` names registers by.
 if {[llength [info procs cadr_leaves]] == 0} {
     proc cadr_leaves {prefix names} {
@@ -647,6 +687,27 @@ assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb w
 # the register strobe.
 # grid: 150 ns
 assert_instance_timing $tick 15 u_machine|memory|busint_regs {wr_buf ub_map}
+# And the split paths `cadr_de25.sdc` narrows below the relaxed set, asked of
+# the collections it wrote them against.  The maps' write has no clause on
+# this board, and that file says why.
+foreach sta_var {split_latch_addr split_latch split_dmem split_cstore split_every_tick} {
+    if {![info exists ::$sta_var] || [get_collection_size [set ::$sta_var]] == 0} {
+        puts "sta: FAIL: cadr_de25.sdc left no collection $sta_var, or an empty one"
+        incr failures
+    } else {
+        puts "sta: $sta_var: [get_collection_size [set ::$sta_var]]"
+    }
+}
+# grid: 75 ns - 1 tick
+assert_clause_timing $tick 7 "IR into the scratchpad latches" $::split_latch_addr $::split_latch
+# grid: 60 ns + 1 tick
+assert_clause_timing $tick 7 "out of the scratchpad latches" $::split_latch $::slow
+# grid: 30 ns + 1 tick
+assert_clause_timing $tick 4 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
+# grid: 60 ns - 1 tick
+assert_clause_timing $tick 5 "the control store's word" $::split_cstore $::slow
+# grid: 60 ns
+assert_clause_timing $tick 6 "the second hop of the every-tick registers" $::split_every_tick $::slow
 # The transaction audit has no register on a board with no console to read
 # it, and `cadr_machine.xdc`'s clause for it is then empty by construction, as
 # the Zynq flow says of its own memory-off board.
