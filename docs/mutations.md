@@ -88,6 +88,16 @@ as surviving when lint had rejected them and a stale binary ran. A record can
 declare `@build-fails` when the refusal to build is itself the finding, and a
 record carrying it that then builds is broken too.
 
+Most of a mutant's build is text no mutation touched: Verilator's runtime,
+the testbench, and the parts of the model outside the mutated module. With
+`--ccache`, which `make mutants` passes, the builds compile through ccache, so
+only the changed translation units are compiled again. This does not weaken
+the rule above. A cached object is keyed on the exact text it was compiled
+from, so a mutated unit is always compiled, and every mutant is still linked
+and run. The records also run longest first, with the known holes ahead of
+all of them, because a survivor then runs every other check that builds its
+file. The order changes nothing else, and the report stays in list order.
+
 Three flags matter in practice. `--rev` mutates a commit's sources rather than
 the files on disk, so a run is against a commit and not against whatever the
 shared tree held at the time. `--since` re-runs every survivor and hole

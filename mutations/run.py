@@ -65,6 +65,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -2302,6 +2303,26 @@ def run(cmd, cwd, env=None):
     return p.returncode, out
 
 
+def build_env(args):
+    """The environment a Verilator build runs in: ccache, when asked for.
+
+    **A CACHED OBJECT IS NOT A STALE BINARY.**  `docs/mutations.md`'s trap is
+    a build that did not happen and an old executable that ran.  ccache keys
+    each object on the compiler, its flags and the preprocessed text of the
+    translation unit, so a mutated unit is a miss and is compiled; what hits
+    is text no mutation touched, and above all Verilator's own runtime,
+    `verilated.cpp`, which every build here compiled afresh.  The link always
+    runs.  `CCACHE_BASEDIR` makes the per-mutant absolute paths relative, so
+    one mutant's unchanged units hit for the next.  ccache locks its own
+    cache, so the jobs share it safely.  Without `--ccache` the environment
+    is left alone and every build compiles everything, as before.
+    """
+    if not args.ccache:
+        return None
+    return {"OBJCACHE": "ccache", "CCACHE_DIR": args.ccache,
+            "CCACHE_BASEDIR": args.work, "CCACHE_MAXSIZE": args.ccache_size}
+
+
 def panic_message(out):
     """What a generator said as it refused, not merely that it did.
 
@@ -2429,7 +2450,7 @@ def build_and_run(args, work, check, build_fails=False):
     # that builds rather than lints.
     cmd += spec.get("extra", [])
     cmd += [os.path.join(work, spec["tb"])]
-    rc, out = run(cmd, work)
+    rc, out = run(cmd, work, build_env(args))
     if rc != 0:
         return BROKEN, first_problem(out)
 
@@ -2652,7 +2673,7 @@ def de25_check(args, work, build_fails=False):
                    "-DCADR_DE25_DDR", "-DCADR_DE25_HDMI", "-Mdir", obj,
                    "--top-module", "cadr_de25"]
                   + spec["sim"][:2] + tick_pkg(work) + spec["sim"][2:] + ddr + hdmi
-                  + [os.path.join(work, spec["sim_tb"])], work)
+                  + [os.path.join(work, spec["sim_tb"])], work, build_env(args))
     if rc != 0:
         return BROKEN, first_problem(out)
     rc, out = run([os.path.join(obj, "Vcadr_de25")], work)
@@ -2953,6 +2974,9 @@ def self_test(args):
     plain = [m for m in mutations if not m.hole]
     if not plain:
         die("--self-test wants at least one record without an @hole")
+    # Each case runs as the run itself would, through ccache when it does.
+    cached = ["--ccache", args.ccache, "--ccache-size", args.ccache_size] \
+        if args.ccache else []
     # The cheapest check to build, so the cases cost two builds each --- and
     # one that VERILATES, so that "a mutation lint rejects" has a build to
     # reject it. A generator would cost a cargo build and its "not verilog at
@@ -3016,7 +3040,7 @@ def self_test(args):
                "--work", os.path.join(root, "case%d" % i),
                "--list", path, "--jobs", "2",
                "--verilator", args.verilator, "--cargo", args.cargo,
-               "--tclsh", args.tclsh]
+               "--tclsh", args.tclsh] + cached
         rc, out = run(cmd, REPO)
         ok = (rc != 0) == (want_rc != 0) and want_text in out
         sys.stdout.write("  %-34s %s\n" % (what, "ok" if ok else "FAILED"))
@@ -3049,7 +3073,7 @@ def self_test(args):
                "--work", os.path.join(root, "generators"),
                "--list", path, "--jobs", "2",
                "--verilator", args.verilator, "--cargo", args.cargo,
-               "--tclsh", args.tclsh]
+               "--tclsh", args.tclsh] + cached
         rc, out = run(cmd, REPO)
         reasons = set(l.strip() for l in out.split("\n") if "assertion" in l)
         ok = rc != 0 and "A HOLE THAT CLOSED" in out and len(reasons) >= 2
@@ -3084,7 +3108,7 @@ def self_test(args):
                    "--list", path, "--jobs", "2",
                    "--rev", here_rev, "--since", here_rev,
                    "--verilator", args.verilator, "--cargo", args.cargo,
-                   "--tclsh", args.tclsh]
+                   "--tclsh", args.tclsh] + cached
             rc, out = run(cmd, REPO)
             ok = "A CHECK THAT GOT WEAKER" not in out and "not caught there" in out
             sys.stdout.write("  %-34s %s\n"
@@ -3101,8 +3125,10 @@ def self_test(args):
     # against the copy. `make mutants` from the repo root is this invocation.
     here = os.path.join(root, "relative")
     os.makedirs(os.path.join(here, "work"))
+    # The PROM images as well as the traces: every check is handed
+    # `sync_prom.hex`, and without it this case died on a missing file.
     for name in os.listdir(args.goldens):
-        if name.endswith(".golden"):
+        if name.endswith((".golden", ".hex")):
             shutil.copy(os.path.join(args.goldens, name),
                         os.path.join(here, name))
     cmd = [sys.executable, os.path.abspath(__file__),
@@ -3111,6 +3137,9 @@ def self_test(args):
            "--only", cheap.name, "--jobs", "2",
            "--verilator", args.verilator, "--cargo", args.cargo,
            "--tclsh", args.tclsh]
+    if args.ccache:
+        cmd += ["--ccache", os.path.relpath(args.ccache, here),
+                "--ccache-size", args.ccache_size]
     rc, out = run(cmd, here)
     ok = rc == 0 and "ok: every mutation was caught" in out
     sys.stdout.write("  %-34s %s\n"
@@ -3155,6 +3184,11 @@ def main():
                          "on disk; use it whenever anyone else may be editing")
     ap.add_argument("--self-test", action="store_true",
                     help="check the runner's own guarantees, not the fabric")
+    ap.add_argument("--ccache", default=None, metavar="DIR",
+                    help="compile the Verilator builds through ccache, with "
+                         "its cache in DIR")
+    ap.add_argument("--ccache-size", default="10G",
+                    help="the most the ccache directory may hold")
     args = ap.parse_args()
 
     # Every check is built and run with its working directory set to the
@@ -3172,6 +3206,12 @@ def main():
     args.goldens = os.path.abspath(args.goldens)
     args.work = os.path.abspath(args.work)
     args.list = os.path.abspath(args.list)
+    if args.ccache:
+        args.ccache = os.path.abspath(args.ccache)
+        # Without the program every build would fail and every record read
+        # BROKEN; say what is missing once instead.
+        if shutil.which("ccache") is None:
+            die("--ccache: there is no ccache on the PATH")
 
     if args.jobs <= 0:
         # Half the cpus, not all of them, and the reason is memory rather
@@ -3235,9 +3275,17 @@ def main():
         muir_beside(args.work)
     copy_tree(base, with_golden=any(needs_golden(c) for c in wanted), rev=args.rev)
     baseline_bad = False
+    # How long each check took here, which is what the records are ordered by.
+    took = {}
+
+    def timed(check):
+        start = time.time()
+        result = build_and_run(args, base, check)
+        took[check] = time.time() - start
+        return result
+
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
-        futures = dict((pool.submit(build_and_run, args, base, c), c)
-                       for c in wanted)
+        futures = dict((pool.submit(timed, c), c) for c in wanted)
         for f in concurrent.futures.as_completed(futures):
             check = futures[f]
             verdict, detail = f.result()
@@ -3287,9 +3335,19 @@ def main():
                     m.also.append(other)
         return m
 
+    # THE LONGEST RECORDS GO FIRST, so that the run does not end on a few of
+    # them with every other job idle.  A record carrying `@hole` goes ahead
+    # of everything: it is expected to survive, and a survivor then runs
+    # every other check that builds its file, one after another.  The rest
+    # are ordered by what their check's baseline took a moment ago on this
+    # machine, so there is no table of costs to keep in step with the checks.
+    # Only the order changes: every record still runs its own check, and the
+    # report is in list order.
+    order = sorted(mutations,
+                   key=lambda m: (m.hole is None, -took.get(m.check, 0)))
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         done = 0
-        for m in pool.map(one, mutations):
+        for m in pool.map(one, order):
             done += 1
             mark = {CAUGHT: ".", HOLE: "h", SURVIVED: "S",
                     CLOSED: "C", BROKEN: "B", UNAPPLIED: "U"}[m.verdict]

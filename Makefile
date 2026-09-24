@@ -2340,6 +2340,16 @@ MUTREV ?= HEAD
 # which only leaves idle cores unused.
 MUTJOBS ?= 16
 
+# **WHERE ccache KEEPS THE MUTANTS' OBJECTS.**  Every mutant used to compile
+# Verilator's runtime, its testbench and the whole model from nothing, and
+# most of that text is the same in every mutant.  Through ccache only what the
+# mutation changed is compiled.  A cached object is keyed on the text it was
+# compiled from, so it cannot be a stale binary.  The cache outlives the run
+# and ccache evicts the oldest objects past the size.  Empty turns it off.
+MUTCCACHE ?= $(HOME)/.cache/muir-fpga-ccache
+MUTCCACHE_SIZE ?= 10G
+MUTCACHEFLAGS := $(if $(MUTCCACHE),--ccache '$(MUTCCACHE)' --ccache-size $(MUTCCACHE_SIZE))
+
 # The goldens every check needs, including the processor's two: the stage-4
 # mutations are of `cadr_microcycle.sv`, so a run from a clean build directory
 # needs the traces they are checked against. Without them the runner stops and
@@ -2365,7 +2375,7 @@ mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/dispatch_write_order.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
-	    --jobs $(MUTJOBS) --rev $(MUTREV)
+	    --jobs $(MUTJOBS) --rev $(MUTREV) $(MUTCACHEFLAGS)
 
 # The runner's own guarantees, against lists written to fail: a mutation
 # that does not apply, one that lint rejects, a survivor with nothing
@@ -2380,7 +2390,7 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
              | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
-	    --self-test
+	    --self-test $(MUTCACHEFLAGS)
 
 # ------------------------------------------- the processor, on a System pack
 
