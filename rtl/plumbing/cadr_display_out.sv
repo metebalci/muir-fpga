@@ -507,7 +507,13 @@ module cadr_display_out #(
   localparam int unsigned CX0  = H_ACTIVE - CPIC_W;
   localparam int unsigned CY0  = (V_ACTIVE - CPIC_H) / 2;
   localparam int unsigned RMX0 = 0;
-  localparam int unsigned RMY0 = (V_ACTIVE - PIC_W)  / 2;
+  // **A PICTURE WIDER THAN THE RASTER IS HIGH IS NOT TURNED A QUARTER TURN.**
+  // QUUX's MONO TV is 1280 by 1024 and fills the raster upright, so on its
+  // side it would not fit; `ROTATABLE` is what says so, and `rotate` is taken
+  // as upright for such a picture (`rot_s1` below).  The CADR's 768 by 963
+  // fits either way and is exactly what it was.
+  localparam bit          ROTATABLE = PIC_W <= V_ACTIVE;
+  localparam int unsigned RMY0 = ROTATABLE ? (V_ACTIVE - PIC_W)  / 2 : 0;
   localparam int unsigned RCX0 = H_ACTIVE - CPIC_H;
   localparam int unsigned RCY0 = (V_ACTIVE - CPIC_W) / 2;
 
@@ -711,6 +717,8 @@ module cadr_display_out #(
   // starts at word column zero; the other way starts at the last one, because
   // there the source column counts down as the raster line counts up.
   localparam logic [31:0] MONO_ROT_TOP  = BASE       + 32'(((PIC_W  - 1) >> 5) << 2);
+  // What the upright first display's line `LOOK`, one, is past its first line.
+  localparam logic [31:0] MONO_LEAD     = (MY0 == 0) ? 32'(LINE_BYTES) : 32'd0;
   localparam logic [31:0] COLOR_ROT_TOP = COLOR_BASE + 32'(((CPIC_W - 1) >> 3) << 2);
 
   // The four addresses, and the line each `ask` one is for.  The `show` pair is
@@ -745,9 +753,13 @@ module cadr_display_out #(
   // **THE FIRST LINE'S `ask` ADDRESS IS THE FIRST LINE'S `show` ADDRESS**, so
   // one reload serves both, and that holds because `LOOK` is inside the top
   // margin: one line against the first display's 30 and the color board's 285
-  // upright, 32 against 128 and 8 against 224 turned.  A picture whose top
-  // margin were narrower than its lead would want the address for line `LOOK`
-  // here instead, and is a picture this raster could not hold.
+  // upright, 32 against 128 and 8 against 224 turned.
+  //
+  // **QUUX'S MONO TV HAS NO TOP MARGIN**: 1024 lines on a raster of 1024, so
+  // upright its line `LOOK` is its SECOND line, and the reload gives that
+  // line's address, one stride on (`MONO_LEAD`).  It is never turned
+  // (`ROTATABLE`), so the rotated leads are not met.  The CADR's pictures
+  // have their margins and their lead is zero.
   logic [1:0]      rot_next;
   logic [31:0]     mono_step, color_step, mono_first, color_first;
   logic [31:0]     mono_first_next, color_first_next;
@@ -1310,7 +1322,7 @@ module cadr_display_out #(
     end else begin
       for (int s = 0; s < 2; s++) ack_sync[s] <= {ack_sync[s][1:0], fill_n[s]};
       sel_s1 <= out_sel; sel_s2 <= sel_s1;
-      rot_s1 <= rotate;  rot_s2 <= rot_s1;
+      rot_s1 <= ROTATABLE ? rotate : 2'd0;  rot_s2 <= rot_s1;
       slp_want_s1 <= slp_want; slp_want_s2 <= slp_want_s1;
 
       hc <= hc_n;
@@ -1378,7 +1390,8 @@ module cadr_display_out #(
         // addresses and both ahead-lines are reloaded here rather than stepped.
         m_show_addr <= mono_first_next;
         c_show_addr <= color_first_next;
-        va_m <= look_m_next;  m_ask_addr <= mono_first_next;
+        va_m <= look_m_next;
+        m_ask_addr <= mono_first_next + ((rot_next == 2'd0) ? MONO_LEAD : 32'd0);
         va_c <= look_c_next;  c_ask_addr <= color_first_next;
         settled <= 1'b1;
         if ((cfg_sel != sel_s2) || (cfg_rot != rot_next)) begin

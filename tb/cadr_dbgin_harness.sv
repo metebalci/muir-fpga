@@ -385,6 +385,9 @@ module cadr_dbgin_harness #(
 
   logic ub_md_ack_u;
 
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic unused_tick_irq;
+  /* verilator lint_on UNUSEDSIGNAL */
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
   ) processor (
@@ -423,6 +426,8 @@ module cadr_dbgin_harness #(
       .ub_md_data  (32'd0),
       .ub_md_ack   (ub_md_ack_u),
       .sintr       (sintr),
+      // QUUX's tick, which a CADR processor holds at zero and nothing here reads.
+      .tick_irq    (unused_tick_irq),
       .pc          (pc),
       .lpc         (lpc),
       .opc         (opc),

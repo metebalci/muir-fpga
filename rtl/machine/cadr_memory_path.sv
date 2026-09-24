@@ -129,7 +129,14 @@ module cadr_memory_path #(
     // `LMTV` zero, and then the color addresses give the NXM whatever the
     // console asks for --- which is a machine with no color board, exactly
     // as `busint::decode` describes one.
-    parameter int LMTV = 1
+    parameter int LMTV = 1,
+
+    // "cadr" or "quux", from `cadr_machine.sv`: which machine's Xbus I/O
+    // space the three decodes below describe, and which display board is
+    // the first: the CADR's SIMPLE or LISPM TV, `cadr_tv.sv`, or QUUX's MONO
+    // TV, `quux_mono_tv.sv`, of `MONO_TV_WORDS` words.
+    parameter string MACHINE = "cadr",
+    parameter int unsigned MONO_TV_WORDS = 40960
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -736,7 +743,7 @@ module cadr_memory_path #(
   logic color_fitted;
   assign color_fitted = (LMTV != 0) && color_tv;
 
-  cadr_xbus_decode decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .MONO_TV_WORDS(MONO_TV_WORDS)) decode (
       .color_tv(color_fitted),
       .phys  (phys),
       .boards(boards),
@@ -758,7 +765,7 @@ module cadr_memory_path #(
   logic ch_memory_c, ch_memory;
   logic ch_device_c, ch_nxm_c, ch_unibus_c;
 
-  cadr_xbus_decode ch_decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .MONO_TV_WORDS(MONO_TV_WORDS)) ch_decode (
       .color_tv(color_fitted),
       .phys  (ch_addr),
       .boards(boards),
@@ -793,7 +800,7 @@ module cadr_memory_path #(
   logic        mp_own, mp_ack_q, mp_memory, mp_memory_c;
   logic        mp_device_c, mp_nxm_c, mp_unibus_c;
 
-  cadr_xbus_decode mp_decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .MONO_TV_WORDS(MONO_TV_WORDS)) mp_decode (
       .color_tv(color_fitted),
       .phys  (map_addr),
       .boards(boards),
@@ -865,8 +872,8 @@ module cadr_memory_path #(
   // are strapped to two 32,768-word slots --- so `bus_display_color` picks
   // between them and never both.
   assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
-                                                : (is_memory || tv_fb || tvc_fb);
-  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
+                                                : (is_memory || tv_fb || tvc_fb || mono_fb);
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
   assign bus_display_color = !ch_own && !mp_own && tvc_fb;
 
   // The channel's answer comes a tick after main memory's, because the
@@ -1200,7 +1207,7 @@ module cadr_memory_path #(
       .select_debug (select_debug)
   );
 
-  cadr_xbus_ddr main_memory (
+  cadr_xbus_ddr #(.MACHINE(MACHINE)) main_memory (
       .clk      (clk),
       .rst      (rst),
       .sel      (bus_sel),
@@ -1257,7 +1264,11 @@ module cadr_memory_path #(
       .board_lispm(tv_lispm),
       // The first display board is always in the backplane.  A CADR with no
       // display at all is not a machine anything here has a reference for.
-      .fitted     (1'b1),
+      // **ON QUUX IT IS NOT FITTED**, MONO TV being QUUX's first display
+      // below, so it answers nothing and raises nothing; it stays at this
+      // instance, rather than in a branch of its own, so that the CADR's
+      // board keeps the name its constraints and checks know it by.
+      .fitted     (MACHINE != "quux"),
       .sel        (device),
       .dev_rq     (dev_rq),
       .dev_write  (dev_write),
@@ -1277,6 +1288,41 @@ module cadr_memory_path #(
       .disp_map_a (4'd0),
       .disp_map_q (unused_first_map)
   );
+
+  // **QUUX'S FIRST DISPLAY IS MONO TV**, `quux_mono_tv.sv`, a frame buffer
+  // and one register: no sync program, no color map and no interrupt.  It
+  // answers beside the unfitted board above and the joins below take both;
+  // on the CADR its four lines are zero.
+  logic        mono_ack, mono_drives, mono_fb;
+  logic [31:0] mono_rdata;
+  if (MACHINE == "quux") begin : g_quux_mono_tv
+    logic mono_bow;
+    quux_mono_tv #(
+        .BUFFER_WORDS(MONO_TV_WORDS)
+    ) mono_tv (
+        .clk      (clk),
+        .rst      (rst),
+        .sel      (device),
+        .dev_rq   (dev_rq),
+        .dev_write(dev_write),
+        .phys     (phys),
+        .wdata    (wdata),
+        .dev_ack  (mono_ack),
+        .rdata    (mono_rdata),
+        .drives   (mono_drives),
+        .fb_sel   (mono_fb),
+        .bow      (mono_bow)
+    );
+    // Black-on-white reaches nothing yet: the display output's polarity is a
+    // setting of the board's (`BOW` in `cadr_display_out.sv`).
+    logic unused_mono;
+    assign unused_mono = mono_bow;
+  end else begin : g_cadr_no_mono_tv
+    assign mono_ack    = 1'b0;
+    assign mono_drives = 1'b0;
+    assign mono_fb     = 1'b0;
+    assign mono_rdata  = 32'd0;
+  end
 
   // --- and the second display board, the color TV -------------------------
   //
@@ -1348,7 +1394,7 @@ module cadr_memory_path #(
   // them, and the word from whichever slave answered.  Nothing answers the
   // processor while the channel has the bus: its cycle simply waits, which is
   // what the per-word arbitration bounds.
-  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || device_ack);
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || mono_ack || device_ack);
   // The word from whichever slave answered. A Unibus register is sixteen bits
   // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.  The
   // display drives the lines only while answering a READ of a control word
@@ -1379,6 +1425,7 @@ module cadr_memory_path #(
   assign rdata   = ub_ssyn      ? {16'h0000, ub_rdata}
                  : tv_drives    ? tv_rdata
                  : tvc_drives   ? tvc_rdata
+                 : mono_drives  ? mono_rdata
                  : device_ack   ? device_rdata
                                 : memory_rdata;
 

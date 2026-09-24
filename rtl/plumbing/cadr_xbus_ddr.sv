@@ -37,7 +37,11 @@
 
 module cadr_xbus_ddr
   import cadr_ddr_map::*;
-(
+#(
+    // "cadr" or "quux": QUUX's display window is MONO TV's, 16 bits of
+    // offset where the CADR boards' is 15.
+    parameter string MACHINE = "cadr"
+) (
     input  var logic        clk,
     input  var logic        rst,
 
@@ -93,7 +97,11 @@ module cadr_xbus_ddr
   // request, the direction and the word are the same either way.
   logic [31:0] main_addr, display_addr, color_addr;
   assign main_addr    = main_byte_address(phys);
+  if (MACHINE == "quux") begin : g_quux_display
+    assign display_addr = mono_display_byte_address(phys[15:0]);
+  end else begin : g_cadr_display
   assign display_addr = display_byte_address(phys[14:0]);
+  end
   assign color_addr   = color_display_byte_address(phys[14:0]);
   assign mem_addr     = display ? (display_color ? color_addr : display_addr) : main_addr;
   assign mem_wdata    = wdata;

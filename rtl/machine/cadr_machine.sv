@@ -67,10 +67,11 @@ module cadr_machine #(
 
     // **WHICH MACHINE THIS IS**: "cadr", MIT's, or "quux", the evolved CADR.
     // Every board's top level hands it down, and the make variable of the
-    // same name sets it.  **NOTHING HERE READS IT YET BUT THE GUARD BELOW**,
-    // so both values build the CADR, exactly as the CADR has always been
-    // built; what QUUX changes arrives with muir's description of it, and
-    // until then a QUUX bitstream is the CADR under another name.
+    // same name sets it.  **EVERY QUUX ADDITION IS BEHIND IT AND ELABORATES
+    // TO NOTHING FOR THE CADR**: the CADR's text stands in each `g_cadr`
+    // branch as it stood before QUUX existed, and `make check` holds it to
+    // muir's CADR.  What QUUX is, is muir's `Geometry::QUUX` and
+    // `docs/quux.md` at the pin, summarized under "QUUX" below.
     parameter string MACHINE = "cadr"
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
@@ -527,6 +528,38 @@ module cadr_machine #(
     $error("cadr_machine: MACHINE is \"%s\", and it is \"cadr\" or \"quux\"", MACHINE);
   end
 
+  // ------------------------------------------------------------------ QUUX
+  //
+  // **QUUX, THE EVOLVED CADR, AS muir'S `Geometry::QUUX` HAS IT AT THE PIN**,
+  // revision 4.  Each difference is built where the CADR's own part is, behind
+  // `MACHINE`, and each module says in its header what holds it:
+  //
+  //   the six-bit level-1 map entry, read in `MAP(MD)<29:24>` and written
+  //   from `VMA<31:27>` and `VMA<24>`, and the 2,048-entry level 2
+  //                                                  `cadr_microcycle.sv`
+  //   the MACHINE-ID in functional sources 16 and 36     `cadr_microcycle.sv`
+  //   the feature page at `17377000`                     `quux_feature_page.sv`
+  //   the 16K-word PDL buffer, its pointer and index 14 bits
+  //                                                  `cadr_microcycle.sv`
+  //   the boot PROM, version 1000, which is the image `PROM_HEX` names: every
+  //   QUUX build and check hands it `build/boot_prom.quux.hex`
+  //   MONO TV in place of the SIMPLE and LISPM TV, 1280 by 1024, and no
+  //   color board                                     `quux_mono_tv.sv`
+  //   `MUL` and `DIV` in one instruction each, and the divider's hold
+  //                                   `quux_muldiv.sv`, `cadr_microcycle.sv`
+  //   the processor's tick: destinations 3 and 4, source 17 and the
+  //   interrupt                                        `cadr_microcycle.sv`
+  //
+  // The values every part reads are decided once, here.
+  localparam bit          QUUX       = MACHINE == "quux";
+  // `(0x5155 << 16) | (4 << 4) | 4`: the signature, hardware revision 4 and
+  // processor type 4, `Geometry::QUUX.machine_id`.
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
+  // MONO TV at the size every QUUX bitstream builds: 1280 by 1024, one bit
+  // a pixel, 40 words a line at `17000000`.
+  localparam int unsigned MONO_TV_WIDTH  = 1280;
+  localparam int unsigned MONO_TV_HEIGHT = 1024;
+
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;
   logic        n_memrq, rdcyc;
@@ -648,10 +681,17 @@ module cadr_machine #(
   logic xbus_intr;
   logic ub_int;
   assign xbus_intr = disk_intr || tv_intr;
-  assign sintr_o   = xbus_intr || ub_int;
+  // And on QUUX its tick, `Machine::interrupt`'s third term, which is the
+  // processor's own and so reaches neither the Xbus nor the bus interface's
+  // interrupt status; `cadr_microcycle.sv` says when it is up.  Zero on the
+  // CADR.
+  logic tick_irq;
+  assign sintr_o   = xbus_intr || ub_int || tick_irq;
 
   cadr_microcycle #(
-      .PROM_HEX(PROM_HEX)
+      .PROM_HEX(PROM_HEX),
+      .MACHINE(MACHINE),
+      .MACHINE_ID(MACHINE_ID)
   ) processor (
       .clk         (clk),
       .rst         (rst),
@@ -673,6 +713,7 @@ module cadr_machine #(
       .spy_eadr    (spy_eadr),
       .spy_rdata   (spy_rdata),
       .sintr       (sintr_o),
+      .tick_irq    (tick_irq),
       .n_memack    (n_memack),
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
@@ -735,8 +776,12 @@ module cadr_machine #(
   );
 
   cadr_memory_path #(
-      .LMTV(LMTV),
-      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+      // QUUX has no color board: the color TV is a LISPM TV strapped
+      // elsewhere, and QUUX's bitstream has neither of the CADR's boards.
+      .LMTV(QUUX ? 0 : LMTV),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX),
+      .MACHINE(MACHINE),
+      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT)
   ) memory (
       .clk        (clk),
       .rst        (rst),
@@ -980,8 +1025,38 @@ module cadr_machine #(
       .ch_hit   (ch_hit)
   );
 
+  // **QUUX'S FEATURE PAGE IS A SLAVE ON THE SAME SEAM**, beside the disk and
+  // joined the same way: the decode makes page 36776 a device only on QUUX,
+  // and the page and the disk's four registers are disjoint, so the two
+  // cannot both answer one cycle.
+  if (QUUX) begin : g_quux_feature_page
+    logic        feature_ack, feature_drives;
+    logic [31:0] feature_rdata;
+
+    quux_feature_page #(
+        .MACHINE_ID   (MACHINE_ID),
+        .SCREEN_WIDTH (MONO_TV_WIDTH),
+        .SCREEN_HEIGHT(MONO_TV_HEIGHT),
+        .SCREEN_WPL   (MONO_TV_WIDTH / 32)
+    ) feature_page (
+        .clk      (clk),
+        .rst      (rst),
+        .sel      (device),
+        .phys     (phys),
+        .dev_write(dev_write),
+        .dev_ack  (feature_ack),
+        .drives   (feature_drives),
+        .rdata    (feature_rdata)
+    );
+
+    assign dev_ack_joined   = disk_ack || feature_ack || device_ack;
+    assign dev_rdata_joined = disk_drives    ? disk_rdata
+                            : feature_drives ? feature_rdata
+                                             : device_rdata;
+  end else begin : g_cadr_seam
   assign dev_ack_joined   = disk_ack || device_ack;
   assign dev_rdata_joined = disk_drives ? disk_rdata : device_rdata;
+  end
 
   // ------------------------------------------------- the transaction audit
   //

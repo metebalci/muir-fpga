@@ -7,10 +7,11 @@
 
 `MACHINE` is "cadr", MIT's machine, or "quux", the evolved CADR.  Each board's
 top level takes it as a parameter and hands it to `cadr_machine`, and the
-board flows set it from the make variable of the same name.  Nothing inside
-the machine reads it yet but the guard that refuses a name it does not know,
-so a top level that dropped it on the floor would build the CADR under the
-other name, with every check green.  This asks the question directly.
+board flows set it from the make variable of the same name.  A top level that
+dropped it on the floor would build the CADR under the other name, and every
+check of the board itself would stay green: what holds QUUX is the machine's
+own checks, which build `cadr_machine` with the value directly.  This asks the
+question of the top levels.
 
 **THE VALUE IS READ AT THE INSTANCE, NOT INFERRED FROM THE TEXT.**  For each
 board, each configuration and each value, Verilator elaborates the top level
@@ -38,8 +39,8 @@ build and program scripts refuse a name that is not a machine and accept
 both, and the build script refuses QUUX beside `FAULT=1`, because the fault
 bitstream carries no machine.
 
-WHAT THIS DOES NOT SAY.  It says nothing about what QUUX is, because nothing
-is built for it yet.  It does not run Vivado or Quartus, so it does not see
+WHAT THIS DOES NOT SAY.  It says nothing about what QUUX is: that is
+`make check MACHINE=quux`, against muir's own QUUX.  It does not run Vivado or Quartus, so it does not see
 the generic reach synthesis there; `boards/de25-nano/quartus/build.sh` reads
 the value back out of Quartus's synthesis report, and the Arty's flow has no
 such read-back.  It does not check where either flow writes its build.

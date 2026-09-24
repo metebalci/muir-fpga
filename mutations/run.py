@@ -120,6 +120,31 @@ def tick_pkg(work):
     """The grid's package, if this copy of the tree has one."""
     return [TICK_PKG] if os.path.exists(os.path.join(work, TICK_PKG)) else []
 
+# `machine`'s entry, named once because QUUX's checks are the same build
+# with another PROM, another trace and, for QUUX, another `MACHINE`.
+MACHINE_CHECK = {
+    "sources": [
+        "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+        "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+        "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+        "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+        "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+    ],
+    # Built because `cadr_machine` instantiates it; the console's own
+    # check is what holds it, so no mutation is aimed at it here.
+    "extra": ["rtl/machine/cadr_console_state.sv"],
+    "top": "cadr_machine",
+    "tb": "tb/cadr_machine_tb.cpp",
+    "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+    "golden": "rtl.golden",
+    "gprom": True,
+}
+
+# The files only a QUUX build compiles: `cadr_machine` names each under
+# `MACHINE == "quux"`, and a CADR build finds none of them.
+QUUX_SOURCES = ["rtl/machine/quux_feature_page.sv", "rtl/machine/quux_mono_tv.sv",
+                "rtl/machine/quux_muldiv.sv"]
+
 CHECKS = {
     "phase_gen": {
         "sources": ["rtl/machine/cadr_phase_gen.sv"],
@@ -494,22 +519,105 @@ CHECKS = {
     # `gprom` because this rule passes the PROM image as a parameter with an
     # absolute path rather than leaning on the relative default, as the
     # Makefile does.
-    "machine": {
-        "sources": [
-            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
-            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
-            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
-            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
-            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
-        ],
-        # Built because `cadr_machine` instantiates it; the console's own
-        # check is what holds it, so no mutation is aimed at it here.
-        "extra": ["rtl/machine/cadr_console_state.sv"],
-        "top": "cadr_machine",
-        "tb": "tb/cadr_machine_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
-        "golden": "rtl.golden",
-        "gprom": True,
+    "machine": MACHINE_CHECK,
+    # **THE SAME MACHINE CHECK ON QUUX**, and QUUX's programs on both
+    # machines.  `machine_quux` is `machine` built with `MACHINE="quux"` and
+    # QUUX's boot PROM against muir's trace of that PROM on QUUX; each
+    # `quux_<program>` is the whole machine built with a program of
+    # `golden/src/quux.rs` as its PROM image, `_quux` on QUUX and without it
+    # on the CADR, where it holds the CADR's side of the difference.  `prom`
+    # names the PROM image among the goldens, and `machine` says which
+    # machine a check holds, which is what `--machine` selects by.
+    # QUUX's decode over every address: the feature page and MONO TV's buffer.
+    "xbus_decode_quux": {
+        "sources": ["rtl/machine/cadr_xbus_decode.sv"],
+        "top": "cadr_xbus_decode",
+        "tb": "tb/cadr_xbus_decode_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", '-GMACHINE="quux"'],
+        "golden": "xbus_decode.quux.golden",
+        "machine": "quux",
+    },
+    "machine_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "rtl.quux.golden",
+        "prom": "boot_prom.quux.hex",
+        "machine": "quux",
+    }),
+    "quux_map": dict(MACHINE_CHECK, **{
+        "golden": "quux_map.golden",
+        "prom": "quux_map_prom.hex",
+    }),
+    "quux_map_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_map.quux.golden",
+        "prom": "quux_map_prom.hex",
+        "machine": "quux",
+    }),
+    "quux_tv": dict(MACHINE_CHECK, **{
+        "golden": "quux_tv.golden",
+        "prom": "quux_tv_prom.hex",
+    }),
+    "quux_tv_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_tv.quux.golden",
+        "prom": "quux_tv_prom.hex",
+        "machine": "quux",
+    }),
+    "quux_muldiv": dict(MACHINE_CHECK, **{
+        "golden": "quux_muldiv.golden",
+        "prom": "quux_muldiv_prom.hex",
+    }),
+    "quux_muldiv_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_muldiv.quux.golden",
+        "prom": "quux_muldiv_prom.hex",
+        "machine": "quux",
+    }),
+    "quux_tick": dict(MACHINE_CHECK, **{
+        "golden": "quux_tick.golden",
+        "prom": "quux_tick_prom.hex",
+    }),
+    "quux_tick_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_tick.quux.golden",
+        "prom": "quux_tick_prom.hex",
+        "machine": "quux",
+    }),
+    "quux_divmd": dict(MACHINE_CHECK, **{
+        "golden": "quux_divmd.golden",
+        "prom": "quux_divmd_prom.hex",
+    }),
+    "quux_divmd_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_divmd.quux.golden",
+        "prom": "quux_divmd_prom.hex",
+        "machine": "quux",
+    }),
+    "quux_tickwait": dict(MACHINE_CHECK, **{
+        "golden": "quux_tickwait.golden",
+        "prom": "quux_tickwait_prom.hex",
+    }),
+    "quux_tickwait_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_tickwait.quux.golden",
+        "prom": "quux_tickwait_prom.hex",
+        "machine": "quux",
+    }),
+    # QUUX's multiply and divide on their own, against `muldiv::run`.
+    "muldiv_quux": {
+        "sources": ["rtl/machine/quux_muldiv.sv"],
+        "top": "quux_muldiv",
+        "tb": "tb/quux_muldiv_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "muldiv.quux.golden",
+        "machine": "quux",
     },
     # EVERY FREE-RUNNING CLOCK OF THE COMPOSED MACHINE AGAINST muir, from the
     # processor's origin: the I/O board's clocks and the display's program from
@@ -1430,9 +1538,10 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
-    # WHICH MACHINE A BOARD IS BUILT AS, "cadr" or "quux", which nothing in
-    # the machine reads yet: so a top level that dropped the parameter would
-    # build the CADR under the other name with every other check green.
+    # WHICH MACHINE A BOARD IS BUILT AS, "cadr" or "quux": the machine's QUUX
+    # checks build `cadr_machine` with the value directly, so a top level that
+    # dropped the parameter would build the CADR under the other name with
+    # every other check green.
     # `tools/machine_param_check.py` reads the value back at `u_machine` out
     # of Verilator's elaborated tree for each board and each value, requires
     # the refusals of a name that is not a machine and of QUUX on the Cora,
@@ -1577,6 +1686,17 @@ CHECKS = {
         "tb": "tb/cadr_display_out_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": None,
+    },
+    # QUUX's picture, MONO TV at 1280 by 1024, as the Makefile builds it.
+    "display_out_quux": {
+        "sources": ["rtl/plumbing/cadr_display_out.sv"],
+        "top": "cadr_display_out",
+        "tb": "tb/cadr_display_out_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2 -DCADR_DISPLAY_QUUX",
+                  "-GPIC_W=1280", "-GPIC_H=1024", "-GWORDS_PER_LINE=40",
+                  "-GCOLOR_BASE=470024192"],
+        "golden": None,
+        "machine": "quux",
     },
     # The display output's sleep timer and mute, on the small raster and the
     # short second the Makefile's `DISPLAY_SLEEP_G` builds it with.  The same
@@ -2007,6 +2127,16 @@ CHECKS = {
         "golden": None,
     },
 }
+
+# The same programs, and muir's own of QUUX, on the machine built as QUUX:
+# `golden/src/dispatch_write_order.rs --machine quux`.  QUUX's wait for MD,
+# its old word in a RAM's own write cycle and its one rate are held here.
+CHECKS["dispatch_write_order_quux"] = dict(CHECKS["dispatch_write_order"], **{
+    "extra": CHECKS["dispatch_write_order"]["extra"] + QUUX_SOURCES,
+    "flags": CHECKS["dispatch_write_order"]["flags"] + ['-GMACHINE="quux"'],
+    "golden": "dispatch_write_order.quux.golden",
+    "machine": "quux",
+})
 
 # The three files golden/src/cables.rs writes.  `current` regenerates them and
 # fails if anything moved; this does the same to a copy.
@@ -2441,6 +2571,11 @@ def build_and_run(args, work, check, build_fails=False):
         # the mutant's work directory so two mutants cannot share one file.
         cmd += ["-GPROM_HEX=\"%s\""
                 % os.path.join(work, spec["gprom_path"])]
+    elif spec.get("prom"):
+        # A check built with a PROM image of its own among the goldens:
+        # QUUX's boot PROM, or a program of `golden/src/quux.rs`.
+        cmd += ["-GPROM_HEX=\"%s\""
+                % os.path.join(args.goldens, spec["prom"])]
     elif spec.get("gprom"):
         cmd += ["-GPROM_HEX=\"%s\""
                 % os.path.join(args.goldens, "boot_prom.hex")]
@@ -2894,7 +3029,17 @@ def check_makefile():
     # `gp1_split`, all three of which have entries in `CHECKS` and were simply
     # never being looked at.  A guard that cannot see a whole class of name is
     # the shape of failure this file is full of.
-    for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z0-9_]+)\.pass", text))):
+    # **AND QUUX'S CHECKS, WHICH THE PATTERN ABOVE COULD NOT SEE.**  A QUUX
+    # check is `<name>.quux.pass`, which is this runner's `<name>_quux`, and
+    # the programs of `golden/src/quux.rs` are pattern rules over the
+    # Makefile's `QUUX_PROGRAMS`, so each program is two checks by name.
+    names = set(re.findall(r"\$\(BUILD\)/([a-z0-9_]+)\.pass", text))
+    names |= set(n + "_quux" for n in
+                 re.findall(r"\$\(BUILD\)/([a-z0-9_]+)\.quux\.pass", text))
+    programs = re.search(r"^QUUX_PROGRAMS := (.*)$", text, re.M)
+    for prog in (programs.group(1).split() if programs else []):
+        names |= {"quux_" + prog, "quux_" + prog + "_quux"}
+    for found in sorted(names):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"
                            % found)
@@ -3185,6 +3330,9 @@ def main():
     ap.add_argument("--rev", default=None,
                     help="mutate this commit's sources rather than the files "
                          "on disk; use it whenever anyone else may be editing")
+    ap.add_argument("--machine", default=None, choices=["cadr", "quux"],
+                    help="run only the records aimed at checks of this machine; "
+                         "both when not given")
     ap.add_argument("--self-test", action="store_true",
                     help="check the runner's own guarantees, not the fabric")
     ap.add_argument("--ccache", default=None, metavar="DIR",
@@ -3235,6 +3383,12 @@ def main():
     # and warning that a file has no mutation because this run asked for a
     # different check would be noise on every filtered run.
     everything = list(mutations)
+    if args.machine:
+        # Which machine a check holds: its `machine`, the CADR's if unsaid.
+        mutations = [m for m in mutations
+                     if CHECKS[m.check].get("machine", "cadr") == args.machine]
+        if not mutations:
+            die("--machine %s matches nothing" % args.machine)
     if args.only:
         mutations = [m for m in mutations
                      if args.only in m.name or args.only in m.check]

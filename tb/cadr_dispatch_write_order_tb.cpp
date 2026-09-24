@@ -108,6 +108,14 @@ std::vector<uint32_t> Words(const char *p) {
   return out;
 }
 
+// Which machine the golden's programs ran on: its header names QUUX with
+// `machine: quux`, and the fabric under test is then built as QUUX.  QUUX's
+// level 2 is 2048 entries and its PDL 16K words, and it has no hung
+// microcycle, so the two bounds a hung write is held to are not reached.
+bool quux = false;
+size_t L2Words() { return quux ? 2048 : 1024; }
+size_t PdlWords() { return quux ? 16384 : 1024; }
+
 bool Load(const char *path, std::vector<Program> &all) {
   std::FILE *f = std::fopen(path, "r");
   if (!f) {
@@ -117,6 +125,7 @@ bool Load(const char *path, std::vector<Program> &all) {
   char line[1024];
   Program *p = nullptr;
   while (std::fgets(line, sizeof line, f)) {
+    if (line[0] == '#' && std::strstr(line, "machine: quux")) quux = true;
     if (line[0] == '#' || line[0] == '\n') continue;
     char tag[32] = {0}, sub[32] = {0};
     unsigned long long a = 0, b = 0;
@@ -193,7 +202,7 @@ struct Totals {
   long rows = 0, stalls = 0, reads = 0, writes = 0, disp_writes = 0;
   // `CADR_GAP_MONITOR`'s counts, summed over the programs: where a hung
   // cycle's map or dispatch write landed (`mw` in `cadr_microcycle.sv`).
-  uint64_t gm_writes = 0, gm_early = 0, gm_early_b3 = 0, gm_late_l = 0, gm_late_lm1 = 0;
+  uint64_t gm_writes = 0, gm_early = 0, gm_early_b3 = 0, gm_late_l = 0, gm_late_k = 0;
   int64_t gm_min_md = 1000, gm_min_b = 1000;
   std::map<long, long> ack_slip;   // muir's -MEMACK minus the fabric's, ns
   std::map<long, long> fin_slip;   // muir's MFINISHD minus the fabric's, ns
@@ -220,9 +229,9 @@ int Run(const Program &p, Totals &tot) {
   for (size_t k = 0; k < 1024; ++k) PROC(prom_mem)[k] = k < p.prom.size() ? p.prom[k] : 0;
   for (size_t k = 0; k < 2048; ++k) PROC(dmem)[k] = 0;
   for (size_t k = 0; k < 2048; ++k) PROC(l1_map)[k] = 0;
-  for (size_t k = 0; k < 1024; ++k) PROC(l2_map)[k] = 0;
+  for (size_t k = 0; k < L2Words(); ++k) PROC(l2_map)[k] = 0;
   for (size_t k = 0; k < 1024; ++k) PROC(amem)[k] = 0;
-  for (size_t k = 0; k < 1024; ++k) PROC(pdl)[k] = 0;
+  for (size_t k = 0; k < PdlWords(); ++k) PROC(pdl)[k] = 0;
   for (size_t k = 0; k < 32; ++k) PROC(mmem)[k] = 0;
   for (size_t k = 0; k < 32; ++k) PROC(spcm)[k] = 0;
   for (const auto &e : p.l2) PROC(l2_map)[e.first] = e.second;
@@ -386,21 +395,21 @@ int Run(const Program &p, Totals &tot) {
   }
   bad += Memory(p, "the dispatch memory", PROC(dmem), 2048, p.end_dmem);
   bad += Memory(p, "the level-1 map", PROC(l1_map), 2048, p.end_l1);
-  bad += Memory(p, "the level-2 map", PROC(l2_map), 1024, p.end_l2);
-  bad += Memory(p, "the PDL", PROC(pdl), 1024, p.end_pdl);
+  bad += Memory(p, "the level-2 map", PROC(l2_map), L2Words(), p.end_l2);
+  bad += Memory(p, "the PDL", PROC(pdl), PdlWords(), p.end_pdl);
 #ifdef CADR_GAP_MONITOR
   std::printf("    %-26s writes %" PRIu64 ", early %" PRIu64 " (boundary three on %" PRIu64
-              "), two ticks after MD late %" PRIu64 " and on time %" PRIu64 "; nearest MD %" PRId64
+              "), two ticks after MD a tick late %" PRIu64 " and two late %" PRIu64 "; nearest MD %" PRId64
               ", nearest boundary %" PRId64 "\n",
               p.name.c_str(), static_cast<uint64_t>(PROC(gm_writes)),
               static_cast<uint64_t>(PROC(gm_early)), static_cast<uint64_t>(PROC(gm_early_b3)),
-              static_cast<uint64_t>(PROC(gm_late_l)), static_cast<uint64_t>(PROC(gm_late_lm1)),
+              static_cast<uint64_t>(PROC(gm_late_l)), static_cast<uint64_t>(PROC(gm_late_k)),
               static_cast<int64_t>(PROC(gm_min_md)), static_cast<int64_t>(PROC(gm_min_b)));
   tot.gm_writes += PROC(gm_writes);
   tot.gm_early += PROC(gm_early);
   tot.gm_early_b3 += PROC(gm_early_b3);
   tot.gm_late_l += PROC(gm_late_l);
-  tot.gm_late_lm1 += PROC(gm_late_lm1);
+  tot.gm_late_k += PROC(gm_late_k);
   tot.gm_min_md = std::min<int64_t>(tot.gm_min_md, static_cast<int64_t>(PROC(gm_min_md)));
   tot.gm_min_b = std::min<int64_t>(tot.gm_min_b, static_cast<int64_t>(PROC(gm_min_b)));
 #endif
@@ -465,15 +474,15 @@ int main(int argc, char **argv) {
   // came to both bounds, since a bound nothing came near was not measured.
   // An early write whose hang ends on the edge after the pulse is the one
   // the boundary reads three edges after it; a late write follows MD moving
-  // at the end of the cycle's last tick, and one on time MD moving at the
-  // end of the tick before, both two ticks on.
+  // at the end of the cycle's last tick, and one two late MD moving at the
+  // end of the pulse's own tick, a strobe on that edge, both two ticks on.
   std::printf("    map and dispatch writes: %" PRIu64 ", %" PRIu64 " early (%" PRIu64
               " with the boundary three edges on); two ticks after MD moved, %" PRIu64 " late and %" PRIu64
-              " on time; nearest MD %" PRId64 " ticks, nearest boundary %" PRId64 "\n",
-              tot.gm_writes, tot.gm_early, tot.gm_early_b3, tot.gm_late_l, tot.gm_late_lm1,
+              " two late; nearest MD %" PRId64 " ticks, nearest boundary %" PRId64 "\n",
+              tot.gm_writes, tot.gm_early, tot.gm_early_b3, tot.gm_late_l, tot.gm_late_k,
               tot.gm_min_md, tot.gm_min_b);
-  if (!tot.gm_early_b3 || !tot.gm_late_l || !tot.gm_late_lm1 || tot.gm_min_md != 2 ||
-      tot.gm_min_b != 3) {
+  if (!quux && (!tot.gm_early_b3 || !tot.gm_late_l || !tot.gm_late_k || tot.gm_min_md != 2 ||
+                tot.gm_min_b != 3)) {
     std::fprintf(stderr, "FAIL: the programs did not bring a hung write to both of its bounds\n");
     return 1;
   }

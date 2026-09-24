@@ -18,10 +18,27 @@
 // the memory board's address switch has six bits, so the space is 64 slots of
 // 64K words, and the top four are taken by the display, the disk controller
 // and the Unibus.
+//
+// **QUUX DECODES ITS OWN XBUS I/O SPACE.**  With `MACHINE` "quux" the
+// feature page, physical `17377000`-`17377377` (page 36776), is a device:
+// muir's `Geometry::feature_word` answers it as `Responder::Device` ahead of
+// `busint::decode_for`, and `Rtl::start_bus_cycle` does the same.  And the
+// main display's buffer is MONO TV's, `MONO_TV_WORDS` from `17000000`
+// (`busint::decode_for` with `Tv::buffer_words`), 40,960 words at the
+// bitstreams' 1280 by 1024, where the CADR's two boards have 32,768.  The
+// CADR's decode is the text below `g_cadr`, unchanged, and nothing on the
+// CADR answers that page.  What holds each: `build/xbus_decode.pass` the
+// CADR's over all 4,194,304 addresses, and `build/xbus_decode.quux.pass`
+// QUUX's, against a golden that asks muir the same question on QUUX.
 
 `default_nettype none
 
-module cadr_xbus_decode (
+module cadr_xbus_decode #(
+    // "cadr" or "quux"; `cadr_machine.sv` refuses anything else.
+    parameter string MACHINE = "cadr",
+    // MONO TV's buffer, in words, on QUUX: `cadr_machine.sv` decides it.
+    parameter int unsigned MONO_TV_WORDS = 40960
+) (
     // The bottom two bits pick a register *inside* a device rather than which
     // device: every region in Xbus I/O space is aligned to at least four
     // words, and the display's eight control registers to eight. So the decode
@@ -87,8 +104,28 @@ module cadr_xbus_decode (
   assign color_buffer  = phys[21:15] == 7'd122;      // 0o17200000, 32768 words
   assign color_control = phys[21:3]  == 19'd507901;  // 0o17377750, 8 words
 
+  if (MACHINE == "quux") begin : g_quux
+    // The feature page, `Geometry::FEATURE_PAGE`, 256 words, and MONO TV's
+    // buffer in place of the CADR boards' 32K words.
+    logic feature_page, mono_buffer;
+    assign feature_page = page == 14'o36776;
+    assign mono_buffer  = (phys - 22'o17000000) < 22'(MONO_TV_WORDS);
+    logic color;
+    assign color  = color_tv && (color_buffer || color_control);
+    // MONO TV answers two of the eight registers the CADR's boards do: 0,
+    // the mode register, and 4, the color map's write kept for a color
+    // display to come.  1 to 3 and 5 to 7 are not there, and time out with
+    // the Xbus NXM bit (`Tv::control_registers`, `busint::decode_for`).
+    logic mono_control;
+    assign mono_control = tv_control && (phys[1:0] == 2'd0);
+    assign device = xbus_io && (mono_buffer || mono_control || disk_regs || feature_page || color);
+    // `tv_buffer` is the CADR boards' window and has no reader here.
+    logic unused_tv_buffer;
+    assign unused_tv_buffer = tv_buffer;
+  end else begin : g_cadr
   assign device = xbus_io && (tv_buffer || tv_control || disk_regs
                               || (color_tv && (color_buffer || color_control)));
+  end
 
   // A board is 64K words and they start at zero, so the whole comparison is on
   // the slot number.

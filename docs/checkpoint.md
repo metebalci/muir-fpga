@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 35.** It is
+version is refused by name rather than read wrong. **The version is 37.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
@@ -75,6 +75,17 @@ such length, so the program writes the same byte as before. Version 35 adds
 one flag to the engine: whether a microcycle held by `-HANG` has already fired
 its write pulse. The flag is set only inside a hung microcycle, and a halted
 machine is never inside one, so the program writes it as false.
+
+Version 36 adds QUUX's memory cache. The bus interface gains the cache and
+QUUX's own memory timing, each an option, and four fields beside them: the
+cycle's address, whether the cache answered it, and when the write buffer and
+the memory are free again. The machine gains one flag, whether the disk
+controller has written memory since the engine last looked, which is what
+empties the cache. A CADR has neither the cache nor that timing, so the
+program writes both options absent, the four fields as a new bus interface
+holds them, and the flag as false. Version 37 adds QUUX's block-disk after the
+disk controller, as an option. The CADR fits none, so the program writes it
+absent.
 
 Version 27 adds one byte to the engine: whose nanoseconds its clock counts,
 muir's `TimingModel`. This program declares it. Version 26 added the two sync

@@ -35,12 +35,18 @@
 //!   `Rtl::start_bus_cycle`: `map-write-into-hang` and
 //!   `dispatch-held-by-wait-0` load VMA there, and
 //!   `md-loaded-as-a-write-starts` loads MD.
-//! - **A read in the microcycle that writes the same memory gets the OLD
-//!   word**, as QUUX defines it and muir's `rtl` has it on the CADR too
-//!   (`Rtl::read_phase` reads, `Rtl::write_phase` writes after): a `POPJ` in
-//!   a dispatch write (`popj-0` to `-3`), `MAP(MD)` after a map write
-//!   (`map-source-after-write`), and a dispatch on a map bit after one
-//!   (`map-dispatch-after-write`).
+//! - **A read in the microcycle that writes the same memory gets the NEW
+//!   word on the CADR and the OLD word on QUUX**: on the CADR the board's
+//!   race settled as muir's netlist model settles it, and on QUUX as QUUX
+//!   defines it (`Geometry::old_word_while_written`).  A `POPJ` in a dispatch
+//!   write (`popj-0` to `-3`, and `x-popj-*` and QUUX's `q-popj-*`, whose
+//!   read finishes inside the microcycle or which wait for it), `MAP(MD)`
+//!   after a map write (`map-source-after-write`), and a dispatch on a map
+//!   bit after one (`map-dispatch-after-write`).
+//! - **QUUX has no hung microcycle**: a microcycle that reads `MD` with a
+//!   read in flight waits whole cycles and runs once, whole, so its writes
+//!   take their addresses from the word read (`dispatch-on-md-gap-*` and
+//!   `map-write-into-hang` on QUUX).
 //!
 //! **The format**, one program after another:
 //!
@@ -56,20 +62,20 @@
 //! end spcptr P               its pointer
 //! end dmem IDX WORD          each nonzero dispatch word at the end
 //! end l1 IDX WORD            each nonzero level-1 entry
-//! end l2 IDX WORD            each nonzero level-2 entry of the CADR's 1024
-//! end pdl IDX WORD           each nonzero PDL word of the CADR's 1024
+//! end l2 IDX WORD            each nonzero level-2 entry: the CADR's 1024, QUUX's 2048
+//! end pdl IDX WORD           each nonzero PDL word: the CADR's 1024, QUUX's 16384
 //! done
 //! ```
 //!
 //! Every value is hexadecimal. A memory the lists name no entry of is zero
 //! everywhere, and the testbench checks every word of it.
 
+mod machine_axis;
 mod trace;
 
 use muir::engine::Engine;
 use muir::isa::Insn;
 use muir::isa::asm::*;
-use muir::machine::Machine;
 
 // --- the programs, as muir's test builds them -------------------------------
 
@@ -167,9 +173,17 @@ const NEW_L2: u32 = 0o7654321;
 const MAP_STORE: u32 = (1 << 25) | NEW_L2;
 
 fn map_write_then(name: &str, then: Vec<Insn>) -> Program {
+    map_store_then(name, MAP_STORE, then)
+}
+
+/// A level-1 store: entry 15 at the level-1 index `MAP_MD` names.
+const MAP_STORE_L1: u32 = (0o15 << 27) | (1 << 26);
+
+/// `map_write_then` with the store word `store`.
+fn map_store_then(name: &str, store: u32, then: Vec<Insn>) -> Program {
     let mut p = vec![filler()];
     constant(MAP_MD, 1, &mut p);
-    constant(MAP_STORE, 2, &mut p);
+    constant(store, 2, &mut p);
     constant(AT_OLD_DPC, 7, &mut p);
     constant(AT_NEW_DPC, 8, &mut p);
     p.push(Insn::new(ALU | SETZ | m_dest(5)));
@@ -302,6 +316,56 @@ fn popj_into_hang(name: &str, pre: usize, n: usize, i: usize, long: bool) -> Pro
     prog
 }
 
+// muir's `hung_popj`, as this project's sessions first built it and muir's
+// `tests/dispatch_write_order.rs` took it up: a return address pushed, `MD`
+// set to `MD_BEFORE`, `pre` fillers, a read of `VADDR`, `n` fillers (the first
+// `i` under `ILONG`), then the `POPJ` in a dispatch write addressed by
+// `MD<2:0>` (under `ILONG` if `xl`), at normal speed.  Words 1300 and 1301 go
+// to `OLD_DPC` and `NEW_DPC`, and the read brings back 0, so a write that
+// takes the word read writes 1300 and the `POPJ` reads what it wrote there.
+// On the CADR muir takes the word written in every shape
+// (`a_popj_dispatch_write_whose_read_finishes_inside_its_hung_microcycle_takes_the_new_word`).
+fn hung_popj(name: &str, pre: usize, n: usize, i: usize, xl: bool) -> Program {
+    let mut p = vec![filler()];
+    constant(MD_BEFORE, 1, &mut p);
+    constant(VADDR, 12, &mut p);
+    constant(AT_OLD_DPC, 7, &mut p);
+    constant(AT_NEW_DPC, 8, &mut p);
+    constant(DR | 0o1234, 2, &mut p);
+    constant(RET_PC, 15, &mut p);
+    p.push(Insn::new(ALU | SETM | m_src(15) | a_src(3) | SPC_PUSH));
+    p.push(Insn::new(ALU | SETZ | m_dest(5)));
+    for _ in 0..pre {
+        p.push(filler());
+    }
+    p.push(Insn::new(ALU | SETM | m_src(1) | a_src(3) | MD));
+    p.push(filler());
+    p.push(Insn::new(ALU | SETM | m_src(12) | a_src(3) | START_READ));
+    for k in 0..n {
+        p.push(if k < i { ilong(filler()) } else { filler() });
+    }
+    let x = Insn::new(DISPATCH | DMEM_WRITE | POPJ | SRC_MD | d_len(3) | a_src(2) | d_addr(E));
+    p.push(if xl { ilong(x) } else { x });
+    p.push(filler());
+    p.push(copy(7, 5));
+    let here = p.len();
+    p.push(halt_here(here));
+    assert!(p.len() < RET_PC as usize);
+    p.resize(512, filler());
+    p[RET_PC as usize] = copy(8, 5);
+    p[RET_PC as usize + 1] = halt_here(RET_PC as usize + 1);
+    p[NEW_DPC as usize] = copy(8, 5);
+    p[NEW_DPC as usize + 1] = halt_here(NEW_DPC as usize + 1);
+    p[OLD_DPC as usize] = copy(7, 5);
+    p[OLD_DPC as usize + 1] = halt_here(OLD_DPC as usize + 1);
+    let mut prog = program(name, p, HELD_CYCLES);
+    prog.speed = NORMAL_SPEED;
+    prog.l2.push((1, (1 << 23) | (1 << 22) | 0o100));
+    prog.dmem.push((E as usize, OLD_DPC));
+    prog.dmem.push((E as usize + 1, NEW_DPC));
+    prog
+}
+
 // This file's own: an asynchronous change that falls exactly on a clock
 // edge.  muir's `Rtl` carries the bus to an edge before it takes the edge
 // (`after_memack` runs at `now >= at`), so a change on the edge counts as
@@ -377,13 +441,24 @@ fn speed_written_from(name: &str, from: u16, word: u32, pad: usize, long: Option
     prog
 }
 
-fn programs() -> Vec<Program> {
+fn programs(which: machine_axis::Which) -> Vec<Program> {
     let mut all = Vec::new();
     for (k, (old, new)) in POPJ_CASES.into_iter().enumerate() {
         all.push(popj_program(&format!("popj-{k}"), old, new));
     }
     all.push(map_write_then(
         "map-source-after-write",
+        vec![
+            Insn::new(ALU | SETM | SRC_MAP | a_src(3) | m_dest(10)),
+            Insn::new(ALU | SETM | SRC_MAP | a_src(3) | m_dest(11)),
+        ],
+    ));
+    // And level 1: `MAP(MD)<28:24>` in the instruction after a level-1 store,
+    // this file's own.  Level 2 is still read through the entry level 1
+    // held, on both machines.
+    all.push(map_store_then(
+        "map-level-1-source-after-write",
+        MAP_STORE_L1,
         vec![
             Insn::new(ALU | SETM | SRC_MAP | a_src(3) | m_dest(10)),
             Insn::new(ALU | SETM | SRC_MAP | a_src(3) | m_dest(11)),
@@ -498,6 +573,40 @@ fn programs() -> Vec<Program> {
     // SPEEDCLK, so the next generator cycle already runs extra slow.
     all.push(speed_written_from("speed-written-on-speedclk", 2, 0, 0, Some(7)));
     all.push(speed_written_from("speed-written-before-speedclk", 1, 0, 0, Some(7)));
+    // muir's shapes of a `POPJ` in a dispatch write whose read finishes
+    // inside its hung microcycle, or on the pulse's end: the three the board
+    // is measured on (`INSIDE`), the three on this grid
+    // (`rtl_on_the_fpga_grid_takes_the_new_word_in_muir_fpgas_hung_popj_programs`),
+    // and the five of the 240 whose acknowledgment falls on the hung cycle's
+    // pulse end, which place the write two ticks late.
+    for (pre, n, i, xl) in [
+        (2, 6, 0, false), (2, 5, 3, false), (5, 5, 1, true),
+        (2, 5, 2, false), (2, 5, 0, true),
+        (2, 4, 0, true), (2, 4, 1, false), (4, 4, 0, true), (4, 4, 1, true), (4, 4, 2, false),
+    ] {
+        all.push(hung_popj(&format!("x-popj-{pre}-{n}-{i}-{}", xl as u8), pre, n, i, xl));
+    }
+    // **ON QUUX, THE SAME PROGRAMS AND muir's OWN OF QUUX**: every program
+    // above runs on QUUX as well, where a RAM read in its own write cycle
+    // gives the old word and a microcycle that reads MD with a read in
+    // flight waits whole cycles and runs once (`on_quux_*` in muir's test).
+    // And `quux_hung_popj_one_word`'s shapes: the read brings back a word
+    // with `MD_BEFORE`'s low three bits, so the dispatch writes and reads
+    // one word, which holds `OLD_DPC` with `R` clear; the old word goes
+    // there and leaves the stack pointer at 1.
+    if which == machine_axis::Which::Quux {
+        let low = MD_BEFORE & 7;
+        for pre in [0, 2, 4] {
+            for n in 3..8 {
+                for xl in [false, true] {
+                    let mut p = hung_popj(&format!("q-popj-{pre}-{n}-0-{}", xl as u8), pre, n, 0, xl);
+                    p.dmem = vec![(E as usize + low as usize, OLD_DPC)];
+                    p.main = vec![(PHYS, low)];
+                    all.push(p);
+                }
+            }
+        }
+    }
     all
 }
 
@@ -510,13 +619,24 @@ fn nonzero(tag: &str, words: &[u32]) {
 }
 
 fn main() {
+    // `--machine quux` runs the programs on QUUX (`machine_axis.rs`), and the
+    // testbench reads which machine from the header's `machine:` line.
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let which = machine_axis::take(&mut args);
+    if let Some(a) = args.first() {
+        eprintln!("dispatch_write_order: unknown argument `{a}`; usage: dispatch_write_order [--machine cadr|quux]");
+        std::process::exit(2);
+    }
+    let quux = which == machine_axis::Which::Quux;
     println!("{}", trace::COLUMNS);
-    println!("# generated by golden/src/dispatch_write_order.rs from muir's rtl engine");
+    println!(
+        "# generated by golden/src/dispatch_write_order.rs from muir's rtl engine, machine: {}",
+        which.name()
+    );
     println!("{}", trace::RADIX);
 
-    for p in programs() {
-        let mut m = Machine::new();
-        m.load_prom(&p.prom);
+    for p in programs(which) {
+        let mut m = which.machine(&p.prom);
         for &(k, w) in &p.l2 {
             m.l2_map[k] = w;
         }
@@ -527,7 +647,8 @@ fn main() {
             m.main[a as usize] = w;
         }
         println!("program {} {:x}", p.name, p.rows);
-        if p.speed != 0 {
+        // QUUX has no speed bits: its programs run at its one rate.
+        if p.speed != 0 && !quux {
             println!("speed {:x}", p.speed);
         }
         for (k, i) in p.prom.iter().enumerate() {
@@ -547,7 +668,9 @@ fn main() {
         e.boot();
         // The speed, as a console leaves the mode register once the boot has
         // let go of it (`Rtl::reset` clears the register).
-        e.machine_mut().mode.write(p.speed);
+        if !quux {
+            e.machine_mut().mode.write(p.speed);
+        }
         let mut t = trace::Trace::new(&e);
         for cycle in 0..p.rows {
             match t.row(&mut e, cycle) {
@@ -568,8 +691,11 @@ fn main() {
         let dmem: Vec<u32> = mm.dmem.iter().map(|&w| w & 0o377777).collect();
         nonzero("dmem", &dmem);
         nonzero("l1", &mm.l1_map);
-        nonzero("l2", &mm.l2_map[..1024]);
-        nonzero("pdl", &mm.pdl[..1024]);
+        // The machine's own sizes: the CADR's 1024 each, QUUX's 2048 entries
+        // of level 2 and 16K words of PDL.
+        let (l2_words, pdl_words) = if quux { (2048, 16384) } else { (1024, 1024) };
+        nonzero("l2", &mm.l2_map[..l2_words]);
+        nonzero("pdl", &mm.pdl[..pdl_words]);
         println!("done");
         eprintln!(
             "dispatch_write_order: {:<24} {} microcycles, {} ns ({} stalled), PC {:o}, M5 {:o} M13 {:o}",

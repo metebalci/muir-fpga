@@ -2108,7 +2108,12 @@ module cadr_arty #(
 
       cadr_display_out #(
           .BASE(cadr_ddr_map::DISPLAY_BASE),
-          .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE)
+          .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
+          // QUUX shows MONO TV, 1280 by 1024 at 40 words a line, filling the
+          // raster; the CADR its first board's 768 by 963 at 24.
+          .PIC_W         (MACHINE == "quux" ? 1280 : 768),
+          .PIC_H         (MACHINE == "quux" ? 1024 : 963),
+          .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 24)
       ) u_display (
           .clk(clk), .rst(disp_rst), .fabric_rst(rst),
           .m_araddr(hp3_araddr), .m_arlen(hp3_arlen), .m_arsize(hp3_arsize),
