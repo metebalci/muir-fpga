@@ -384,3 +384,72 @@ proc assert_multicycle_applied {period cycles {limit 100000}} {
     }
     exit 1
 }
+
+# **A CLAUSE THAT NARROWS THE RELAXED SET TOOK, AND NOTHING WIDER REACHES ITS
+# PATHS.**  `cadr_machine.xdc`'s split-path clauses give a register fewer
+# ticks than `slow` does, and they are written at the same priority as the
+# relaxed set's own clause and after it --- so what decides whether one took
+# is the tool's ranking, which a count of exceptions cannot see.  Asked of the
+# paths instead: every endpoint's worst setup path out of the cells `from`
+# names, ending at a cell `to` names (any of the machine's registers when `to`
+# is empty), must ask for AT MOST `cycles` ticks, and at least one must ask
+# for exactly that.
+# The first half is the one that matters: a clause ranked below the relaxed
+# set leaves its paths at eight ticks and every slack figure unchanged, which
+# looks exactly like a clause that worked.  The second is the empty clause.
+# The names are patterns on the full cell name, so the same call serves the
+# board and the out-of-context fit.
+proc assert_clause_timing {period cycles what from {to {}}} {
+    set want [expr {$period * $cycles}]
+    set fc {}
+    foreach pat $from {
+        set fc [concat $fc [get_cells -quiet -hier -filter "NAME =~ $pat && IS_SEQUENTIAL"]]
+    }
+    if {[llength $fc] == 0} {
+        puts "XDC: FAILED --- $what: no cell matched $from, so the clause"
+        puts "XDC: that names them in cadr_machine.xdc is empty and its paths"
+        puts "XDC: keep the relaxed set's eight ticks in silence."
+        exit 1
+    }
+    if {[llength $to] == 0} {
+        # The machine's registers, as the clause's `-to $slow` names them: a
+        # path out of the machine is another file's clause and deadline ---
+        # the map reaches the debug cable's frame, which the carrier's beat
+        # bounds --- and out of context the machine is the whole design.
+        if {[llength [get_cells -quiet u_machine]] > 0} {
+            set tc [filter [all_registers] {NAME =~ u_machine/*}]
+        } else {
+            set tc [all_registers]
+        }
+    } else {
+        set tc {}
+        foreach pat $to {
+            set tc [concat $tc [get_cells -quiet -hier -filter "NAME =~ $pat && IS_SEQUENTIAL"]]
+        }
+    }
+    set hist {}
+    set over 0
+    set worst ""
+    foreach p [get_timing_paths -quiet -setup -from $fc -to $tc -max_paths 100000 -nworst 1] {
+        set req [get_property REQUIREMENT $p]
+        dict incr hist [format %.3f $req]
+        if {$req > $want + 0.001} {
+            incr over
+            if {$worst eq ""} { set worst "[get_property STARTPOINT_PIN $p] -> [get_property ENDPOINT_PIN $p] asks for $req ns" }
+        }
+    }
+    set n [expr {[dict exists $hist [format %.3f $want]] ? [dict get $hist [format %.3f $want]] : 0}]
+    if {$over > 0} {
+        puts "XDC: FAILED --- $what: $over paths out of [llength $fc] cells ask for more"
+        puts "XDC: than [format %.3f $want] ns, so the clause did not outrank the relaxed"
+        puts "XDC: set there. First: $worst"
+        exit 1
+    }
+    if {$n == 0} {
+        puts "XDC: FAILED --- $what: no path out of [llength $fc] cells asks for"
+        puts "XDC: [format %.3f $want] ns, so the clause reached nothing."
+        exit 1
+    }
+    puts "XDC: $what --- $n paths out of [llength $fc] cells at\
+          [format %.3f $want] ns and none above it: the clause took"
+}

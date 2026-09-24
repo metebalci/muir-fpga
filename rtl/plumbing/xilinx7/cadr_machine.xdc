@@ -401,6 +401,128 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
 set_multicycle_path -setup 8 -from $slow -to $slow
 set_multicycle_path -hold  7 -from $slow -to $slow
 
+# ------------------------------------------------ THE SPLIT PATHS
+#
+# **THE CLAUSE ABOVE GIVES EVERY HOP EIGHT TICKS, AND SOME PATHS ARE TWO HOPS
+# OR START LATE.**  Eight ticks is right for a register loaded at the boundary
+# and read at the next one, which is the whole microcycle away.  It is too
+# wide for three kinds of path, and each has a clause below with the time the
+# machine really gives it.  Counted from the tick the source moves to the tick
+# the destination takes it, with the processor's registers moving one tick
+# after the generator's boundary (`cadr_microcycle.sv`'s `boundary`), a write
+# pulse landing one tick after `-TPW30` and the scratchpad latches following
+# while TPCLK is high, so that their last load is at the read tap itself.
+# Measured tick by tick on a verilated `cadr_microcycle` at fast speed: IR
+# moves at phase 1, the latches last load at phase 8, the write pulse writes at
+# phase 12 and the next IR moves at phase 1 of the next cycle, fourteen ticks
+# on.
+#
+#   - THE SCRATCHPAD LATCHES are a register loaded every tick of the read
+#     phase between IR and the boundary, so a path through them is two hops.
+#     Into them: IR moves one tick after the boundary and the latch closes at
+#     the read tap, so the window is the tap less a tick, SEVEN at fast
+#     speed, where the clause above allowed eight.  Out of them: the latch's
+#     last load is at the read tap and the next boundary's registers take it
+#     `ticks(60)` and one tick later, SEVEN at every speed.  And to the
+#     dispatch memory's write, which lands one tick after `-TPW30`, FOUR.
+#     Seven and seven is fourteen, the fast microcycle, where eight and eight
+#     would have allowed sixteen.
+#   - THE CONTROL STORE'S WORD is a register loaded every tick, and after a
+#     `WRITE-I-MEM` it moves mid-cycle: the write is one tick after the read
+#     tap, the word is out a tick after that, and IR takes it at the
+#     boundary, `ticks(60)` less one later: FIVE.  The PROM shares the I bus
+#     with it and is held to the same five, which with the address's eight
+#     keeps the two hops inside the fast microcycle.
+#   - THE MAPS ARE WRITTEN IN THE WRITE PHASE AND READ WITHOUT A CLOCK.  The
+#     word a write puts in the level-1 or level-2 map is at the map's output
+#     at once, and what reads the map at the next boundary --- the dispatch
+#     address, the M bus, MD, the console's read-back --- takes the new word:
+#     `-TPW30` to the restart, THREE ticks, where the clause above allowed
+#     eight.  `-from` the maps' cells names only the paths their write clock
+#     launches; a read through them starts at MD or VMA, which move at the
+#     boundary and keep the whole microcycle.
+#   - EVERY OTHER REGISTER LOADED EVERY TICK FROM THE BOUNDARY'S REGISTERS
+#     AND READ AT THE NEXT BOUNDARY is two hops the same way: `memgo_q`, the
+#     three held halves of -WAIT, and the memory path's held decode.  The
+#     first hop keeps the relaxed set's `ticks(75)`; the second gets
+#     `ticks(60)`, SIX, so that the two sum to the fast microcycle.
+#
+# MEASURED BEFORE THE CLAUSES EXISTED, on the routed DDR=1 HDMI=1 Arty at
+# f016b65 and the 10 ns tick, as requirement less slack: into the latches
+# 5.8 ns, out of them 27.4 ns, latch to the dispatch memory's write 20.2 ns;
+# the control store's address 6.7 ns and its word 8.2 ns; `memgo_q` 15.4 ns in
+# and 6.7 out, the -WAIT halves 7.8 and 8.3, the held decode 19.0 and 11.6.
+# **AND THE LEVEL-1 MAP'S WRITE TO THE CONTROL STORE'S ADDRESS 33.5 ns**,
+# through level 2, the M bus and the dispatch memory, against the thirty the
+# machine gives it; level 2's is 27.5 ns.  That one path was over its real
+# time and passing, which is the too-wide exemption this file keeps meeting.
+#
+# Each clause is written `-from X -to $slow`, the priority of the clause
+# above, and after it, and the flows assert that every path out of X asks for
+# the new count and none for more: a clause the tool ranked below the relaxed
+# set would leave every figure exactly as it was.
+set split_latch_addr [filter [all_registers] {NAME =~ *processor/ir_reg*      || \
+                                              NAME =~ *processor/pdl_ptr_reg* || \
+                                              NAME =~ *processor/pdl_idx_reg* || \
+                                              NAME =~ *processor/spcptr_reg*}]
+set split_latch [filter [all_registers] {NAME =~ *processor/amem_reg*   || \
+                                         NAME =~ *processor/mmem_reg*   || \
+                                         NAME =~ *processor/pdl_reg*    || \
+                                         NAME =~ *processor/amem_q_reg* || \
+                                         NAME =~ *processor/mmem_q_reg* || \
+                                         NAME =~ *processor/pdl_q_reg*  || \
+                                         NAME =~ *processor/spc_q_reg*}]
+set split_dmem [filter [all_registers] {NAME =~ *processor/dmem_reg*}]
+set split_cstore [filter [all_registers] {(REF_NAME =~ RAMB* && NAME =~ *processor/* && \
+                                           NAME !~ *processor/amem_reg* && \
+                                           NAME !~ *processor/mmem_reg* && \
+                                           NAME !~ *processor/pdl_reg*) || \
+                                          NAME =~ *processor/imem_q_reg* || \
+                                          NAME =~ *processor/prom_q_reg*}]
+set split_maps [filter [all_registers] {NAME =~ *processor/l1_map_reg* || \
+                                        NAME =~ *processor/l2_map_reg*}]
+set split_every_tick [filter [all_registers] {NAME =~ *processor/memgo_q_reg*   || \
+                                              NAME =~ *processor/destmem_q_reg* || \
+                                              NAME =~ *processor/use_md_q_reg*  || \
+                                              NAME =~ *processor/ifetch_q_reg*  || \
+                                              NAME =~ *memory/is_memory_reg*    || \
+                                              NAME =~ *memory/device_reg*       || \
+                                              NAME =~ *memory/nxm_reg*          || \
+                                              NAME =~ *memory/unibus_reg*       || \
+                                              NAME =~ *memory/ub_addr_reg*}]
+
+# Into the latches: the fast read tap less the tick IR moves after it.
+# grid: 75 ns - 1 tick
+set_multicycle_path -setup 7 -from $split_latch_addr -to $split_latch
+set_multicycle_path -hold  6 -from $split_latch_addr -to $split_latch
+
+# Out of the latches: the restart after the read tap, and the tick the
+# boundary's registers take.
+# grid: 60 ns + 1 tick
+set_multicycle_path -setup 7 -from $split_latch -to $slow
+set_multicycle_path -hold  6 -from $split_latch -to $slow
+
+# Out of the latches into the dispatch memory's write, one tick after -TPW30.
+# After the clause above, which it narrows.
+# grid: 30 ns + 1 tick
+set_multicycle_path -setup 4 -from $split_latch -to $split_dmem
+set_multicycle_path -hold  3 -from $split_latch -to $split_dmem
+
+# The control store's word, from the write a tick after the read tap.
+# grid: 60 ns - 1 tick
+set_multicycle_path -setup 5 -from $split_cstore -to $slow
+set_multicycle_path -hold  4 -from $split_cstore -to $slow
+
+# The maps' write, -TPW30, to the restart, -TPW60.
+# grid: 30 ns
+set_multicycle_path -setup 3 -from $split_maps -to $slow
+set_multicycle_path -hold  2 -from $split_maps -to $slow
+
+# The second hop of every other every-tick register.
+# grid: 60 ns
+set_multicycle_path -setup 6 -from $split_every_tick -to $slow
+set_multicycle_path -hold  5 -from $split_every_tick -to $slow
+
 # THE BUS'S OWN EIGHTY NANOSECONDS, FOR THE SLAVES THAT ARE INSIDE THIS FILE.
 #
 # `rtl/plumbing/cadr_xbus_ddr.sv` quotes the bus rule that a master must

@@ -436,6 +436,9 @@ assert_instance_timing $tick 6 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
 # source rather than remembered here. Pure Tcl and no design, so it runs
 # before anything is elaborated and fails naming both files.
 assert_cable_beat rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
+# At a 10 ns grid this count is shared with the second hop of the every-tick
+# registers, `ticks(60)` in `cadr_machine.xdc`, so it no longer says on its own
+# that the carrier's clause reached a path; the instance assertion above does.
 # board ticks
 assert_multicycle_applied $tick 6
 
@@ -457,6 +460,34 @@ assert_instance_timing $tick 8 *u_machine/memory/tv/* {*color_map_reg* *pointer_
 # grid: 150 ns
 assert_instance_timing $tick 15 *u_machine/memory/busint_regs/* \
     {*wr_buf_reg* *ub_map_reg*}
+
+# AND THE SPLIT PATHS `cadr_machine.xdc` NARROWS BELOW THE RELAXED SET, each
+# asked of its own paths: none may ask for more than its clause gives, and at
+# least one must ask for exactly that. The clauses are written at the relaxed
+# set's own priority, so this is what says the tool ranked them above it.
+# grid: 75 ns - 1 tick
+assert_clause_timing $tick 7 "IR into the scratchpad latches" \
+    {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
+     *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
+# grid: 60 ns + 1 tick
+assert_clause_timing $tick 7 "out of the scratchpad latches" \
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
+     *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
+# grid: 30 ns + 1 tick
+assert_clause_timing $tick 4 "the latches into the dispatch memory's write" \
+    {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
+     *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*} {*processor/dmem_reg*}
+# grid: 60 ns - 1 tick
+assert_clause_timing $tick 5 "the control store's word" \
+    {*processor/imem_reg* *processor/imem_q_reg* *processor/prom_q_reg*}
+# grid: 30 ns
+assert_clause_timing $tick 3 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
+# grid: 60 ns
+assert_clause_timing $tick 6 "the second hop of the every-tick registers" \
+    {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
+     *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
+     *memory/unibus_reg* *memory/ub_addr_reg*}
 
 opt_design
 place_design

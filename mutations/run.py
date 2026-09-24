@@ -1377,6 +1377,25 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # THE TIMING CONSTRAINTS' COUNTS, held to MIT's grid.  `tools/grid_check.py`
+    # requires every multicycle count under `rtl/` and `boards/` to be the
+    # count of the instant its `# grid:` tag names, so a clause widened past
+    # the time the machine gives its paths --- a tick past the split paths'
+    # bounds, which is what a wrong multicycle IS --- is refused.  No
+    # simulation can see a constraint, and this is the one check that reads
+    # them.  It reads `golden/src/`'s grid constants as well, so the copy
+    # carries `golden/` (`golden_tree`).  Refusing is being caught.
+    "grid": {
+        "kind": "script",
+        "golden_tree": True,
+        "sources": ["rtl/plumbing/xilinx7/cadr_machine.xdc",
+                    "boards/de25-nano/quartus/cadr_de25.sdc"],
+        "cmd": ["tools/grid_check.py", "."],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # WHICH MACHINE A BOARD IS BUILT AS, "cadr" or "quux", which nothing in
     # the machine reads yet: so a top level that dropped the parameter would
     # build the CADR under the other name with every other check green.
@@ -2119,6 +2138,13 @@ def die(msg):
     sys.exit(2)
 
 
+def needs_golden(check):
+    """Whether a check's copy must carry `golden/`: a generator's, which is
+    built there, and a script that reads it, which says so in `golden_tree`."""
+    spec = CHECKS[check]
+    return spec.get("kind") == "generator" or bool(spec.get("golden_tree"))
+
+
 def copy_tree(dest, with_golden=False, rev=None):
     """A private rtl/ and tb/ to mutate.  Never the working tree.
 
@@ -2805,7 +2831,7 @@ def check_makefile():
     # `fault` is the same shape: `fault_arty`, `fault_cora` and `fault_de25`.
     known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
-                           "usb_input", "fpgarc", "cora", "grid",
+                           "usb_input", "fpgarc", "cora",
                            "de25_pins", "de25_linux"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
@@ -3177,7 +3203,7 @@ def main():
     generators = any(CHECKS[c].get("kind") == "generator" for c in wanted)
     if generators:
         muir_beside(args.work)
-    copy_tree(base, with_golden=generators, rev=args.rev)
+    copy_tree(base, with_golden=any(needs_golden(c) for c in wanted), rev=args.rev)
     baseline_bad = False
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         futures = dict((pool.submit(build_and_run, args, base, c), c)
@@ -3201,8 +3227,7 @@ def main():
 
     def one(m):
         work = os.path.join(args.work, m.name)
-        copy_tree(work, with_golden=CHECKS[m.check].get("kind") == "generator",
-                  rev=args.rev)
+        copy_tree(work, with_golden=needs_golden(m.check), rev=args.rev)
         problem = apply(work, m, args.list)
         if problem:
             m.verdict, m.detail = UNAPPLIED, problem
@@ -3260,8 +3285,7 @@ def main():
 
             def before(m):
                 work = os.path.join(args.work, "since", m.name)
-                copy_tree(work, with_golden=CHECKS[m.check].get("kind")
-                          == "generator", rev=args.since)
+                copy_tree(work, with_golden=needs_golden(m.check), rev=args.since)
                 if apply(work, m, args.list) is None:
                     verdict, _ = build_and_run(args, work, m.check)
                     if verdict == CAUGHT:

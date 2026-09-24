@@ -19078,3 +19078,130 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @new
     *) ;;
 @end
+
+@mutation grid-zynq-the-latch-window-is-the-relaxed-eight
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The Zynq boards' IR-to-scratchpad-latch clause gives the path eight ticks,
+@note the relaxed set's own, where the latch closes at the fast read tap
+@note seven ticks after IR moves: one tick outside the window.
+@old
+set_multicycle_path -setup 7 -from $split_latch_addr -to $split_latch
+@new
+set_multicycle_path -setup 8 -from $split_latch_addr -to $split_latch
+@end
+
+@mutation grid-zynq-the-latch-output-takes-eight
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The latches' second hop is given eight ticks where the next boundary
+@note takes their word seven after they close, so the two hops may sum past
+@note the fast microcycle.
+@old
+set_multicycle_path -setup 7 -from $split_latch -to $slow
+@new
+set_multicycle_path -setup 8 -from $split_latch -to $slow
+@end
+
+@mutation grid-zynq-the-latch-to-dispatch-write-takes-five
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The latches into the dispatch memory's write are given five ticks,
+@note where the write lands four after the latch closes.
+@old
+set_multicycle_path -setup 4 -from $split_latch -to $split_dmem
+@new
+set_multicycle_path -setup 5 -from $split_latch -to $split_dmem
+@end
+
+@mutation grid-zynq-the-control-store-word-takes-six
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The control store's word is given six ticks, where after a
+@note WRITE-I-MEM it reaches IR five after it is out of the block.
+@old
+set_multicycle_path -setup 5 -from $split_cstore -to $slow
+@new
+set_multicycle_path -setup 6 -from $split_cstore -to $slow
+@end
+
+@mutation grid-zynq-the-map-write-takes-four
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note A write of either level of the map is given four ticks to reach the
+@note next boundary, which is three ticks after the write.
+@old
+set_multicycle_path -setup 3 -from $split_maps -to $slow
+@new
+set_multicycle_path -setup 4 -from $split_maps -to $slow
+@end
+
+@mutation grid-zynq-the-every-tick-second-hop-takes-seven
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The second hop out of `memgo_q`, the -WAIT halves and the held decode
+@note is given seven ticks, so with the first hop's eight the two may sum
+@note past the fast microcycle's fourteen.
+@old
+set_multicycle_path -setup 6 -from $split_every_tick -to $slow
+@new
+set_multicycle_path -setup 7 -from $split_every_tick -to $slow
+@end
+
+@mutation grid-de25-the-latch-window-is-the-relaxed-eight
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The DE25-Nano's IR-to-scratchpad-latch clause gives the path eight ticks,
+@note the relaxed set's own, where the latch closes at the fast read tap
+@note seven ticks after IR moves: one tick outside the window.
+@old
+set_multicycle_path -setup 7 -from $split_latch_addr -to $split_latch
+@new
+set_multicycle_path -setup 8 -from $split_latch_addr -to $split_latch
+@end
+
+@mutation grid-de25-the-latch-output-takes-eight
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The latches' second hop is given eight ticks where the next boundary
+@note takes their word seven after they close, so the two hops may sum past
+@note the fast microcycle.
+@old
+set_multicycle_path -setup 7 -from $split_latch -to $slow
+@new
+set_multicycle_path -setup 8 -from $split_latch -to $slow
+@end
+
+@mutation grid-de25-the-latch-to-dispatch-write-takes-five
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The latches into the dispatch memory's write are given five ticks,
+@note where the write lands four after the latch closes.
+@old
+set_multicycle_path -setup 4 -from $split_latch -to $split_dmem
+@new
+set_multicycle_path -setup 5 -from $split_latch -to $split_dmem
+@end
+
+@mutation grid-de25-the-control-store-word-takes-six
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The control store's word is given six ticks, where after a
+@note WRITE-I-MEM it reaches IR five after it is out of the block.
+@old
+set_multicycle_path -setup 5 -from $split_cstore -to $slow
+@new
+set_multicycle_path -setup 6 -from $split_cstore -to $slow
+@end
+
+@mutation grid-de25-the-every-tick-second-hop-takes-seven
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The second hop out of `memgo_q`, the -WAIT halves and the held decode
+@note is given seven ticks, so with the first hop's eight the two may sum
+@note past the fast microcycle's fourteen.
+@old
+set_multicycle_path -setup 6 -from $split_every_tick -to $slow
+@new
+set_multicycle_path -setup 7 -from $split_every_tick -to $slow
+@end
