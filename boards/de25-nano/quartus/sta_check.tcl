@@ -676,8 +676,15 @@ assert_constraints_scoped $exempt
 # At a 10 ns grid this count is shared: the bus's setup below is eight ticks
 # too, so a relaxed set that reached nothing would still find the display's
 # eight here.  The instance assertions are the sharp half.
-# grid: 75 ns (shared with 80 ns)
-assert_multicycle_applied $tick 8
+set sta_quux [expr {[info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux"}]
+if {!$sta_quux} {
+    # grid: 75 ns (shared with 80 ns)
+    assert_multicycle_applied $tick 8
+} else {
+    # QUUX's relaxed set is K ticks, `quux_de25.sdc`.
+    # sync: K
+    assert_multicycle_applied $tick 4
+}
 # The display board's word, relaxed at its `d` pins only.  Its three held
 # decodes are in the relaxed set, at the same eight ticks, and are left out of
 # both halves.
@@ -703,34 +710,54 @@ foreach sta_var {split_latch_addr split_latch split_dmem split_cstore split_ever
         puts "sta: $sta_var: [get_collection_size [set ::$sta_var]]"
     }
 }
-# grid: 75 ns - 1 tick
-assert_clause_timing $tick 7 "IR into the scratchpad latches" $::split_latch_addr $::split_latch
-# grid: 60 ns + 1 tick
-assert_clause_timing $tick 7 "out of the scratchpad latches" $::split_latch $::slow
-# grid: 60 ns - 1 tick
-assert_clause_timing $tick 5 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
-# grid: 60 ns - 1 tick
-assert_clause_timing $tick 5 "the control store's word" $::split_cstore $::slow
-# grid: 60 ns
-assert_clause_timing $tick 6 "the second hop of the every-tick registers" $::split_every_tick $::slow
-# grid: 0 ns + 2 ticks
-assert_clause_timing $tick 2 "MD into the writes' address" $::split_md $::split_md_writes
-# grid: 0 ns + 1 tick
-assert_clause_timing $tick 1 "MD_HELD into MD" $::split_md_held $::split_md
-# The registers that place the maps' and the dispatch memory's write in a hung
-# microcycle are the tick's own, out of the relaxed set by name.
-set sta_mw [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]
-# grid: 0 ns + 1 tick
-assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" $sta_mw $::slow
-# And QUUX's divider, whose operands `quux_de25.sdc` gives the latches' seven
-# ticks: none may ask for more, and at least one must ask for that.
-if {[info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux"} {
+if {!$sta_quux} {
+    # grid: 75 ns - 1 tick
+    assert_clause_timing $tick 7 "IR into the scratchpad latches" $::split_latch_addr $::split_latch
+    # grid: 60 ns + 1 tick
+    assert_clause_timing $tick 7 "out of the scratchpad latches" $::split_latch $::slow
+    # grid: 60 ns - 1 tick
+    assert_clause_timing $tick 5 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
+    # grid: 60 ns - 1 tick
+    assert_clause_timing $tick 5 "the control store's word" $::split_cstore $::slow
+    # grid: 60 ns
+    assert_clause_timing $tick 6 "the second hop of the every-tick registers" $::split_every_tick $::slow
+    # grid: 0 ns + 2 ticks
+    assert_clause_timing $tick 2 "MD into the writes' address" $::split_md $::split_md_writes
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "MD_HELD into MD" $::split_md_held $::split_md
+    # The registers that place the maps' and the dispatch memory's write in a hung
+    # microcycle are the tick's own, out of the relaxed set by name.
+    set sta_mw [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" $sta_mw $::slow
+}
+# QUUX's clauses, `quux_de25.sdc`, at K = 4: every one the CADR's file has,
+# re-issued at QUUX's counts, each asked the same two ways.
+if {$sta_quux} {
     if {![info exists ::quux_divider]} {
-        puts "sta: FAIL: quux_de25.sdc was not read, so QUUX's divider has no clause"
+        puts "sta: FAIL: quux_de25.sdc was not read, so QUUX's clauses are not in"
         incr failures
     } else {
-        # grid: 60 ns + 1 tick
-        assert_clause_timing $tick 7 "into QUUX's divider" $::slow $::quux_divider
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "IR into the scratchpad latches" $::split_latch_addr $::split_latch
+        # sync: K - 1
+        assert_clause_timing $tick 3 "out of the scratchpad latches" $::split_latch $::slow
+        # sync: K - 1
+        assert_clause_timing $tick 3 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
+        # sync: K
+        assert_clause_timing $tick 4 "the control store's word" $::split_cstore $::slow
+        # grid: 0 ns + 2 ticks
+        assert_clause_timing $tick 2 "into the every-tick registers" $::split_latch_addr $::split_every_tick
+        # sync: K - 2
+        assert_clause_timing $tick 2 "the second hop of the every-tick registers" $::split_every_tick $::slow
+        # sync: K
+        assert_clause_timing $tick 4 "MD into the writes' address" $::split_md $::split_md_writes
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "MD_HELD into MD" $::split_md_held $::split_md
+        # sync: K - 1
+        assert_clause_timing $tick 3 "the latches into QUUX's divider" $::split_latch $::quux_divider
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" $::split_md_held $::quux_divider
     }
 }
 # The transaction audit has no register on a board with no console to read

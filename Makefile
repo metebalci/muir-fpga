@@ -60,6 +60,15 @@ ifeq ($(filter cadr quux,$(MACHINE)),)
 $(error MACHINE is '$(MACHINE)'; it is cadr, MIT's machine, or quux, the evolved CADR)
 endif
 
+# **QUUX'S MICROCYCLE, IN TICKS**: K, and L more for an `ILONG` instruction
+# (`QUUX_TIMED` below says what they are and which checks take them).  The
+# CADR's microcycle is its delay line's, so neither means anything there.
+SYNC_K ?= 4
+SYNC_L ?= 0
+qtag = k$(1)$(if $(filter-out 0,$(2)),l$(2))
+QK   := $(call qtag,$(SYNC_K),$(SYNC_L))
+QKL1 := $(call qtag,$(SYNC_K),1)
+
 # **A RECIPE THAT FAILS LEAVES NO TARGET BEHIND.**  Without this, a rule whose
 # command redirects into `$@` leaves whatever the command managed to write ---
 # and `$(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex` is written by `... --bin prom > $@`, so a cargo
@@ -138,10 +147,22 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
 # each of the programs in `golden/src/quux.rs` that reach what that PROM does
 # not.  The CADR runs the same programs in `CHECK_CADR` above.
 QUUX_PROGRAMS := map tv muldiv tick divmd tickwait
-CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.pass \
-       $(BUILD)/dispatch_write_order.quux.pass \
+# QUUX's own, at its synchronous microcycle: the same but `tick`, whose
+# cleared segment was made for the CADR's 15-tick microcycle and sees at most
+# one rise at K ticks; `ticksync` is it with three times the reads
+# (`golden/src/quux.rs`).  The CADR's side of `tick` is unchanged.  And
+# `pdlsync`, QUUX's alone: a push into the PDL buffer and a pop after it;
+# and `imemsync`, words written into the control store and run.
+QUUX_SYNC_PROGRAMS := map tv muldiv ticksync divmd tickwait pdlsync imemsync
+# And the two taken at an L of one as well: `divmd`, whose `DIV`s are half
+# `ILONG`, and `divmdsync`, whose one `ILONG` filler at an L of one moves the
+# word read a tick against the microcycles (`golden/src/quux.rs`).
+QUUX_L1_PROGRAMS := divmd divmdsync
+CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
+       $(BUILD)/dispatch_write_order.quux.$(QK).pass \
        $(BUILD)/display_out.quux.pass $(BUILD)/muldiv.quux.pass \
-       $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.quux.pass) \
+       $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QK).pass) \
+       $(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QKL1).pass) $(BUILD)/phase_gen.quux.$(QKL1).pass \
        $(BUILD)/machine_param.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -197,6 +218,8 @@ $(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard gol
                     $(wildcard rtl/*/*.xdc rtl/*/*/*.xdc boards/*/*.xdc boards/*/vivado/*.tcl) \
                     $(wildcard boards/*/quartus/*.sdc boards/*/quartus/*.tcl) \
                     rtl/plumbing/xilinx7/cadr_machine.xdc boards/de25-nano/quartus/cadr_de25.sdc \
+                    rtl/plumbing/xilinx7/quux_machine.xdc boards/de25-nano/quartus/quux_de25.sdc \
+                    boards/arty-z7-20/cadr_arty.sv boards/de25-nano/cadr_de25.sv \
                     boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk.h \
                     boards/arty-z7-20/linux/buildroot/package/cadr-console/src/console_test.c | $(BUILD)
 	python3 tools/grid_check.py .
@@ -688,7 +711,7 @@ $(BUILD)/sstep.pass: $(BUILD)/obj_sstep/Vcadr_microcycle \
 # now land: they used to be answered from the trace by the testbench, and that
 # line is gone. It joins `nomem`, `ddr_boot`, `mem_count`, `arty` and `probe`
 # through this variable, all of which build the whole machine.
-MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
+MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/quux_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
                rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv rtl/plumbing/cadr_xbus_ddr.sv \
                rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv rtl/machine/cadr_tv.sv \
                rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
@@ -845,23 +868,8 @@ $(BUILD)/dispatch_write_order.pass: $(BUILD)/obj_dispatch_write_order/Vcadr_mach
 # **THE SAME ON QUUX**: every program above run on QUUX, and muir's own of
 # QUUX, where a RAM read in its own write cycle gives the old word and a
 # microcycle that reads MD with a read in flight waits whole cycles and runs
-# once, whole (`golden/src/dispatch_write_order.rs --machine quux`).
-$(BUILD)/dispatch_write_order.quux.golden: golden/src/dispatch_write_order.rs golden/src/trace.rs \
-                                           $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
-	$(GOLDEN) --release --bin dispatch_write_order -- --machine quux > $@
-
-$(BUILD)/obj_dispatch_write_order_quux/Vcadr_machine: $(MACHINE_SRC) tb/cadr_dispatch_write_order_tb.cpp tb/cadr_tick.h | $(BUILD)
-	$(VERILATOR) $(VFLAGS) --public-flat-rw -O2 -CFLAGS -O2 +define+CADR_GAP_MONITOR -CFLAGS -DCADR_GAP_MONITOR -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_dispatch_write_order_quux \
-	    -GMACHINE='"quux"' \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.quux.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_dispatch_write_order_tb.cpp)
-
-$(BUILD)/dispatch_write_order.quux.pass: $(BUILD)/obj_dispatch_write_order_quux/Vcadr_machine \
-                                         $(BUILD)/dispatch_write_order.quux.golden \
-                                         $(BUILD)/boot_prom.quux.hex $(BUILD)/sync_prom.hex
-	$(BUILD)/obj_dispatch_write_order_quux/Vcadr_machine $(BUILD)/dispatch_write_order.quux.golden
-	@touch $@
+# once, whole (`golden/src/dispatch_write_order.rs --machine quux`).  Its
+# rules are in `QUUX_TIMED` below, one set for each of QUUX's timings.
 
 # ------------------------------------------------ the whole machine, QUUX
 #
@@ -878,21 +886,8 @@ $(BUILD)/dispatch_write_order.quux.pass: $(BUILD)/obj_dispatch_write_order_quux/
 $(BUILD)/boot_prom.quux.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin prom -- --machine quux > $@
 
-$(BUILD)/rtl.quux.golden: golden/src/rtl.rs golden/src/trace.rs $(GOLDEN_AXIS) \
-                         golden/Cargo.toml | $(BUILD)
-	$(GOLDEN) --release --bin rtl -- --machine quux > $@
-
-$(BUILD)/obj_machine_quux/Vcadr_machine: $(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
-	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine_quux \
-	    -GMACHINE='"quux"' \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.quux.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_machine_tb.cpp)
-
-$(BUILD)/machine.quux.pass: $(BUILD)/obj_machine_quux/Vcadr_machine \
-                            $(BUILD)/rtl.quux.golden $(BUILD)/boot_prom.quux.hex $(BUILD)/sync_prom.hex
-	$(BUILD)/obj_machine_quux/Vcadr_machine $(BUILD)/rtl.quux.golden
-	@touch $@
+# The trace and the machine built at each of QUUX's timings are in
+# `QUUX_TIMED` below.
 
 # ----------------------------------------------- QUUX's multiply and divide
 #
@@ -929,8 +924,8 @@ QUUX_GOLDEN := golden/src/quux.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Carg
 
 # Kept: pattern rules make these intermediate, and make deletes an
 # intermediate file after the run, which would rebuild every model each time.
-.PRECIOUS: $(BUILD)/quux_%_prom.hex $(BUILD)/quux_%.golden $(BUILD)/quux_%.quux.golden \
-           $(BUILD)/obj_quux_%/Vcadr_machine $(BUILD)/obj_quux_%_quux/Vcadr_machine
+.PRECIOUS: $(BUILD)/quux_%_prom.hex $(BUILD)/quux_%.golden \
+           $(BUILD)/obj_quux_%/Vcadr_machine
 
 $(BUILD)/quux_%_prom.hex: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --prom > $@
@@ -938,18 +933,8 @@ $(BUILD)/quux_%_prom.hex: $(QUUX_GOLDEN) | $(BUILD)
 $(BUILD)/quux_%.golden: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine cadr > $@
 
-$(BUILD)/quux_%.quux.golden: $(QUUX_GOLDEN) | $(BUILD)
-	$(GOLDEN) --release --bin quux -- --program $* --machine quux > $@
-
 $(BUILD)/obj_quux_%/Vcadr_machine: $(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_quux_$* \
-	    -GPROM_HEX='"$(abspath $(BUILD))/quux_$*_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_machine_tb.cpp)
-
-$(BUILD)/obj_quux_%_quux/Vcadr_machine: $(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
-	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_quux_$*_quux \
-	    -GMACHINE='"quux"' \
 	    -GPROM_HEX='"$(abspath $(BUILD))/quux_$*_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_machine_tb.cpp)
@@ -959,10 +944,99 @@ $(BUILD)/quux_%.pass: $(BUILD)/obj_quux_%/Vcadr_machine $(BUILD)/quux_%.golden \
 	$(BUILD)/obj_quux_$*/Vcadr_machine $(BUILD)/quux_$*.golden
 	@touch $@
 
-$(BUILD)/quux_%.quux.pass: $(BUILD)/obj_quux_%_quux/Vcadr_machine $(BUILD)/quux_%.quux.golden \
-                           $(BUILD)/quux_%_prom.hex $(BUILD)/sync_prom.hex
-	$(BUILD)/obj_quux_$*_quux/Vcadr_machine $(BUILD)/quux_$*.quux.golden
-	@touch $@
+
+# ------------------------------------------------ QUUX's timings, H1a
+#
+# **QUUX'S MICROCYCLE IS K TICKS, AND AN `ILONG` INSTRUCTION'S K + L**, where
+# the CADR's is its delay line's (muir's `TimingModel::Sync`, `--timing-model
+# sync --sync-cycle-ticks K`).  K and L are a board's: the fit is what says
+# its longest path settles in K ticks, so `SYNC_K` and `SYNC_L` are
+# parameters of each board's top level, the Arty's K being 4, and every
+# trace QUUX is held to is taken at a K and an L named in its file name,
+# `<check>.quux.k4.golden`, or `.k4l1` with an L.  `make check MACHINE=quux`
+# runs the checks at `SYNC_K` and `SYNC_L`, 4 and 0 unless the command line
+# says otherwise.  **K IS FOUR AT THE LEAST**: at three a `DIV` of MD would
+# need the word read in the divider on its strobe's own tick, off a bus whose
+# cone is two ticks deep (`rtl/machine/quux_phase_gen.sv` refuses it), so both
+# boards run at four and the rules are made for four alone.
+# Each K also runs `quux_divmd`, whose program has `ILONG` instructions, at
+# an L of one, and the phase generator alone at K and K + 1, since muir's
+# command line always gives an L of zero and a nonzero L is reachable only
+# through its library, as it is here.
+#
+# The rules for one timing are `QUUX_TIMED`, instantiated for each of
+# `QUUX_TIMINGS` as `K:L`; a timing named nowhere here has no rules, so a
+# `SYNC_K` of five stops with no rule to make the target.  A K is added here
+# when a board is fitted at it.
+QUUX_TIMINGS := 4:0 4:1
+# `SYNC_K`, `SYNC_L`, `QK` and `QKL1` are set at the top, beside `MACHINE`,
+# because `check`'s prerequisites are expanded where the rule is read.
+
+# $(1) the timing's tag, $(2) K, $(3) L.
+define QUUX_TIMED
+$$(BUILD)/rtl.quux.$(1).golden: golden/src/rtl.rs golden/src/trace.rs $$(GOLDEN_AXIS) \
+                               golden/Cargo.toml | $$(BUILD)
+	$$(GOLDEN) --release --bin rtl -- --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/obj_machine_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_machine_quux_$(1) \
+	    -GMACHINE='"quux"' -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/boot_prom.quux.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+$$(BUILD)/machine.quux.$(1).pass: $$(BUILD)/obj_machine_quux_$(1)/Vcadr_machine \
+                                 $$(BUILD)/rtl.quux.$(1).golden $$(BUILD)/boot_prom.quux.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_machine_quux_$(1)/Vcadr_machine $$(BUILD)/rtl.quux.$(1).golden
+	@touch $$@
+
+$$(BUILD)/dispatch_write_order.quux.$(1).golden: golden/src/dispatch_write_order.rs golden/src/trace.rs \
+                                                $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
+	$$(GOLDEN) --release --bin dispatch_write_order -- --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/obj_dispatch_write_order_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_dispatch_write_order_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) --public-flat-rw -O2 -CFLAGS -O2 +define+CADR_GAP_MONITOR -CFLAGS -DCADR_GAP_MONITOR -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_dispatch_write_order_quux_$(1) \
+	    -GMACHINE='"quux"' -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/boot_prom.quux.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_dispatch_write_order_tb.cpp)
+
+$$(BUILD)/dispatch_write_order.quux.$(1).pass: $$(BUILD)/obj_dispatch_write_order_quux_$(1)/Vcadr_machine \
+                                              $$(BUILD)/dispatch_write_order.quux.$(1).golden \
+                                              $$(BUILD)/boot_prom.quux.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_dispatch_write_order_quux_$(1)/Vcadr_machine $$(BUILD)/dispatch_write_order.quux.$(1).golden
+	@touch $$@
+
+.PRECIOUS: $$(BUILD)/quux_%.quux.$(1).golden $$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine
+
+$$(BUILD)/quux_%.quux.$(1).golden: $$(QUUX_GOLDEN) | $$(BUILD)
+	$$(GOLDEN) --release --bin quux -- --program $$* --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_quux_$$*_quux_$(1) \
+	    -GMACHINE='"quux"' -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux_$$*_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+$$(BUILD)/quux_%.quux.$(1).pass: $$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine $$(BUILD)/quux_%.quux.$(1).golden \
+                                $$(BUILD)/quux_%_prom.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_quux_$$*_quux_$(1)/Vcadr_machine $$(BUILD)/quux_$$*.quux.$(1).golden
+	@touch $$@
+
+$$(BUILD)/phase_gen.quux.$(1).golden: golden/src/phase_gen.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
+	$$(GOLDEN) --release --bin phase_gen -- --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/obj_phase_gen_quux_$(1)/Vquux_phase_gen: rtl/machine/quux_phase_gen.sv tb/quux_phase_gen_tb.cpp | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) -Mdir $$(BUILD)/obj_phase_gen_quux_$(1) --top-module quux_phase_gen \
+	    -GSYNC_K=$(2) -GSYNC_L=$(3) -CFLAGS '-DSYNC_K_TB=$(2) -DSYNC_L_TB=$(3)' \
+	    rtl/machine/quux_phase_gen.sv $$(abspath tb/quux_phase_gen_tb.cpp)
+
+$$(BUILD)/phase_gen.quux.$(1).pass: $$(BUILD)/obj_phase_gen_quux_$(1)/Vquux_phase_gen $$(BUILD)/phase_gen.quux.$(1).golden
+	$$(BUILD)/obj_phase_gen_quux_$(1)/Vquux_phase_gen $$(BUILD)/phase_gen.quux.$(1).golden
+	@touch $$@
+endef
+$(foreach t,$(QUUX_TIMINGS),$(eval $(call QUUX_TIMED,$(call qtag,$(word 1,$(subst :, ,$(t))),$(word 2,$(subst :, ,$(t)))),$(word 1,$(subst :, ,$(t))),$(word 2,$(subst :, ,$(t))))))
 
 # EVERY FREE-RUNNING CLOCK OF THE COMPOSED MACHINE AGAINST muir, from the
 # processor's origin.  Each clock's own check sets muir's t = 0 from its own
@@ -2122,7 +2196,7 @@ $(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) M
 	    | grep -q 'MACHINE=quux .*boards/de25-nano/quartus/build.sh' \
 	    || { echo "machine: make de25 MACHINE=quux does not hand the machine to build.sh"; exit 1; }
 	@echo "machine: ok      make de25 MACHINE=quux hands the machine to build.sh"
-	@echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx '$(BUILD)/machine.quux.pass' \
+	@echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx '$(BUILD)/machine.quux.$(QK).pass' \
 	    || { echo "machine: make check MACHINE=quux does not hold the machine built as QUUX"; exit 1; }
 	@! echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx '$(BUILD)/machine.pass' \
 	    || { echo "machine: make check MACHINE=quux holds the CADR's machine check"; exit 1; }
@@ -2532,12 +2606,15 @@ mutants-anchors:
 # mutants` runs the records aimed at the CADR's checks, the CADR's side of
 # QUUX's programs included, and `make mutants MACHINE=quux` those aimed at
 # QUUX's.  `mutations/run.py` without `--machine` runs both.
-MUTANT_QUUX = $(BUILD)/rtl.quux.golden $(BUILD)/boot_prom.quux.hex $(BUILD)/xbus_decode.quux.golden \
-              $(BUILD)/dispatch_write_order.quux.golden \
+MUTANT_QUUX = $(BUILD)/boot_prom.quux.hex $(BUILD)/xbus_decode.quux.golden \
               $(BUILD)/muldiv.quux.golden \
-              $(QUUX_PROGRAMS:%=$(BUILD)/quux_%_prom.hex) \
+              $(patsubst %,$(BUILD)/quux_%_prom.hex,$(sort $(QUUX_PROGRAMS) $(QUUX_SYNC_PROGRAMS) $(QUUX_L1_PROGRAMS))) \
               $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.golden) \
-              $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.quux.golden)
+              $(foreach q,k4,$(BUILD)/rtl.quux.$(q).golden \
+                  $(BUILD)/dispatch_write_order.quux.$(q).golden \
+                  $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(q).golden)) \
+              $(foreach q,k4l1,$(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(q).golden) \
+                  $(BUILD)/phase_gen.quux.$(q).golden)
 
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \

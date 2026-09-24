@@ -148,7 +148,17 @@ module cadr_arty #(
     // bitstream of its own on this board.  Handed to `cadr_machine` as it
     // stands, which refuses a name it does not know; the flow's `MACHINE`
     // sets it, and `build/machine_param.pass` holds that it arrives.
-    parameter string MACHINE = "cadr"
+    parameter string MACHINE = "cadr",
+
+    // **QUUX'S MICROCYCLE ON THIS BOARD**: four ticks, 40 ns, and no more for
+    // an `ILONG` instruction (H1a, muir's `--timing-model sync
+    // --sync-cycle-ticks 4`).  The fit at this K is what entitles it: its
+    // longest path, the map into the next address, and the multiplier out of
+    // the A memory, settle inside the four ticks and the three that the
+    // constraint file `quux_machine.xdc` states for them.  The CADR reads
+    // neither.
+    parameter int unsigned SYNC_K = 4,
+    parameter int unsigned SYNC_L = 0
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -852,7 +862,9 @@ module cadr_arty #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),
-      .MACHINE(MACHINE)
+      .MACHINE(MACHINE),
+      .SYNC_K(SYNC_K),
+      .SYNC_L(SYNC_L)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO

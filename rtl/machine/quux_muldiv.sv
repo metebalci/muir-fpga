@@ -39,21 +39,22 @@
 // after `load`.  QUUX's definition gives the divide 330 ns, "a quotient bit
 // each 10 ns for the 32 steps, and one 10 ns tick to load the result"
 // (`muldiv::DIV_NS`), and the processor holds a `DIV` that long from the edge
-// that loaded `IR`; the processor raises `load` seven ticks after that edge,
-// when the scratchpad latches have closed and the M bus has settled
-// (`cadr_machine.xdc`'s seven ticks out of the latches), so the words are
-// there 24 ticks after it, well inside the hold.
+// that loaded `IR`, in whole microcycles of K ticks; the processor raises
+// `load` K ticks after that edge, when the scratchpad latches hold the
+// operands, so the words are there K + 17 ticks after it, well inside the
+// hold.
 //
 // **WHY TWO: A `DIV` WHOSE M SOURCE IS `MD`, WITH A READ IN FLIGHT.**  QUUX
 // has no hung microcycle (muir's `Geometry::hangs`): such a `DIV` waits,
 // whole microcycles, until READ IN PROGRESS falls, and then runs once, so
 // it divides the word the read brings, as muir's last read phase sees it.
-// The word is in hand at `-LOADMD`, and the processor loads the divider
-// again from it two ticks after (`div_word`); the microcycle that then runs
-// ends no sooner than 290 ns after the strobe --- READ IN PROGRESS falls 140
-// ns after it and the microcycle is 150 --- where a step a tick would need
-// 330.  `build/quux_divmd.quux.pass` holds it: a `DIV` of `MD` at four
-// distances from the read's start, with and without `ILONG`.
+// The processor loads the divider again from that word a tick after its
+// strobe (`md_held`), and the microcycle that then runs ends no sooner than
+// 180 ns after the strobe --- READ IN PROGRESS falls 140 ns after it and the
+// microcycle is K = 4 ticks --- where the divider is done 170 ns after it.
+// A step a tick would need 330.  `build/quux_divmd.quux.*` and
+// `build/quux_divmdsync.quux.*` hold it: a `DIV` of MD at every distance
+// from its read.
 //
 // What holds it: `build/muldiv.quux.pass` against `muldiv::run` itself over
 // thousands of operands chosen at the edges of both representations and at
@@ -70,6 +71,12 @@ module quux_muldiv (
     // Take the operands and start the 32 steps.
     input  var logic        load,
     input  var logic [31:0] m,
+    // The divider's own M operand, which is `m` but for a `DIV` of MD, where
+    // the processor hands it the word read (`cadr_microcycle.sv`'s `div_m`).
+    // A port of its own so that the multiplier's M operand, which reaches
+    // the output bus without a register, is never the bus the word is read
+    // off: `MEM<31:0>` is driven from the output bus too.
+    input  var logic [31:0] dm,
     input  var logic [31:0] a,
     input  var logic [31:0] q,
     output var logic [31:0] mul_ob,
@@ -110,7 +117,7 @@ module quux_muldiv (
       dv_a <= 32'd0;
       dv_k <= 6'd32;
     end else if (load) begin
-      dv_r <= m;
+      dv_r <= dm;
       dv_q <= q;
       dv_a <= a;
       dv_k <= 6'd0;

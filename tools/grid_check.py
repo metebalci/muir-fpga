@@ -178,7 +178,23 @@ UNTIMED = [
 NEEDS_SETTING = ["Rtl::new(", "Controller::default("]
 
 
+SYNC_BUILDER = "machine_axis.rs"
+
+
 def check_timing_model(root):
+    # **QUUX'S SYNCHRONOUS MICROCYCLE, AND ONLY QUUX'S.**  `TimingModel::Sync`
+    # is built in one place, `machine_axis::take_timing`, in its QUUX arm, so
+    # that no CADR trace can be taken on it.  A `Sync { cycle_ticks: ...}`
+    # built anywhere else, or in that file outside the arm, fails.
+    for rs in sorted((root / "golden/src").glob("*.rs")):
+        text = rs.read_text()
+        for m in re.finditer(r"TimingModel::Sync\s*\{\s*cycle_ticks\s*:", text):
+            if rs.name != SYNC_BUILDER:
+                fail(f"golden/src/{rs.name} builds `TimingModel::Sync`; only "
+                     f"`{SYNC_BUILDER}`'s QUUX arm may")
+            before = text[:m.start()]
+            if before.rfind("Which::Quux =>") < before.rfind("Which::Cadr =>"):
+                fail(f"golden/src/{rs.name} builds `TimingModel::Sync` outside its QUUX arm")
     for rs in sorted((root / "golden/src").glob("*.rs")):
         text = rs.read_text()
         for bad, good in UNTIMED:
@@ -204,7 +220,28 @@ STATEMENT = re.compile(
 TAG = re.compile(
     r"^\s*#\s*(?:grid:\s*(\d+)\s*ns(?:\s*([+-])\s*(\d+)\s*ticks?)?"
     r"(?:\s*\(shared with\s+([\d\s,and]+?)\s*ns\))?"
-    r"|(board ticks))\s*$")
+    r"|(board ticks)"
+    r"|sync:\s*K(?:\s*([+-])\s*(\d+))?)\s*$")
+
+# **QUUX'S MICROCYCLE, K TICKS, IS A BOARD'S AND NOT THE GRID'S** (H1a).  A
+# count of QUUX's is tagged `# sync: K`, or `# sync: K - 1` and the like, and
+# held to the SYNC_K of the board whose constraints the file is: the default
+# of that parameter in the board's top level, which is what its bitstream is
+# built at.  A file that is no board's may not use the tag.
+SYNC_BOARDS = [
+    ("rtl/plumbing/xilinx7/", "boards/arty-z7-20/cadr_arty.sv"),
+    ("boards/arty-z7-20/", "boards/arty-z7-20/cadr_arty.sv"),
+    ("boards/de25-nano/", "boards/de25-nano/cadr_de25.sv"),
+]
+
+
+def board_sync_k(root, rel):
+    for prefix, top in SYNC_BOARDS:
+        if rel.startswith(prefix):
+            return one(root / top,
+                       r"^\s*parameter\s+int\s+unsigned\s+SYNC_K\s*=\s*(\d+)\s*,?\s*$",
+                       "the board's SYNC_K"), top
+    return None, None
 # A tag's groups: 1 the nanoseconds, 2 and 3 the sign and the number of
 # fabric ticks either side of them, 4 the instants it shares a count with,
 # 5 `board ticks`.
@@ -250,6 +287,24 @@ def check_constraints(root, grid):
             t = tags[0]
             kind = m.group(1) or m.group(3)
             count = int(m.group(2) or m.group(4))
+            if t.group(0).split("#", 1)[1].strip().startswith("sync:"):
+                rel = str(path.relative_to(root))
+                k, top = board_sync_k(root, rel)
+                if k is None:
+                    fail(f"{where}: a `# sync:` count in a file that is no board's, so there "
+                         f"is no SYNC_K to hold it to")
+                off = int(t.group(7)) if t.group(6) else 0
+                want = k + (off if t.group(6) == "+" else -off)
+                said = "K" + (f" {t.group(6)} {off}" if t.group(6) else "")
+                if kind == "hold":
+                    if count != want - 1:
+                        fail(f"{where}: a hold of {count} beside {said}, which is {want} ticks "
+                             f"at {top}'s SYNC_K of {k}: the hold is one less, {want - 1}")
+                elif count != want:
+                    fail(f"{where}: {count} ticks for {said}, which is {want} at {top}'s "
+                         f"SYNC_K of {k}")
+                found.append((where, kind, None, count, []))
+                continue
             if t.group(5):
                 found.append((where, kind, None, count, []))
                 continue

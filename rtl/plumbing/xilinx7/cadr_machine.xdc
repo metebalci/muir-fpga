@@ -371,8 +371,11 @@
 # of -XBUS.RQ.  And QUUX's wait for MD: `hold_mclk_q`, the master clock edge a
 # tick on, `rip_tail`, a countdown, and `hold_rip`, which takes READ IN
 # PROGRESS on one tick and must see that tick's value; and the divider's
-# `div_md`, `div_strobed`, `div_strobed2`, `div_have` and `div_word`, the
-# word a strobe brings, which the divider loads two ticks after it.  The tick's status as a microcycle reads it (`tk_flag_s`,
+# `div_md`, `div_strobed` and `div_have`, which say a strobe has brought
+# the word the divider loads a tick after it (`div_strobed2` and `div_word`
+# are names of an earlier build, matching nothing now); and QUUX's control
+# store's write, `iwe_q`, `iwa_q` and `iwd_q`, taken a tick after the edge
+# and written on the next.  The tick's status as a microcycle reads it (`tk_flag_s`,
 # `tk_enabled_s`) is sampled at the master clock edge and stands through the
 # microcycle, so it stays in the set, as the divider's held decode does.
 # What QUUX alone relaxes beyond this is in `quux_machine.xdc`, read only for a
@@ -410,6 +413,9 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *div_strobed2_reg* && \
                                   NAME !~ *div_have_reg*     && \
                                   NAME !~ *div_word_reg*     && \
+                                  NAME !~ *processor/iwe_q_reg*  && \
+                                  NAME !~ *processor/iwa_q_reg*  && \
+                                  NAME !~ *processor/iwd_q_reg*  && \
                                   NAME !~ *muldiv/dv_*       && \
                                   (NAME !~ *mono_tv/* || NAME =~ *mono_tv/ctl_reg* || \
                                                          NAME =~ *mono_tv/fb_reg* || \

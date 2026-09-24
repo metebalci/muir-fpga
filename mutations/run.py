@@ -143,7 +143,7 @@ MACHINE_CHECK = {
 # The files only a QUUX build compiles: `cadr_machine` names each under
 # `MACHINE == "quux"`, and a CADR build finds none of them.
 QUUX_SOURCES = ["rtl/machine/quux_feature_page.sv", "rtl/machine/quux_mono_tv.sv",
-                "rtl/machine/quux_muldiv.sv"]
+                "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_phase_gen.sv"]
 
 CHECKS = {
     "phase_gen": {
@@ -581,11 +581,28 @@ CHECKS = {
         "golden": "quux_tick.golden",
         "prom": "quux_tick_prom.hex",
     }),
-    "quux_tick_quux": dict(MACHINE_CHECK, **{
+    # QUUX's side of `tick` is `ticksync`, at its synchronous microcycle.
+    # Words written into the control store and run, QUUX's alone.
+    "quux_imemsync_quux": dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_tick.quux.golden",
-        "prom": "quux_tick_prom.hex",
+        "golden": "quux_imemsync.quux.golden",
+        "prom": "quux_imemsync_prom.hex",
+        "machine": "quux",
+    }),
+    # A push and a pop, QUUX's alone (`golden/src/quux.rs --program pdlsync`).
+    "quux_pdlsync_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_pdlsync.quux.golden",
+        "prom": "quux_pdlsync_prom.hex",
+        "machine": "quux",
+    }),
+    "quux_ticksync_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_ticksync.quux.golden",
+        "prom": "quux_ticksync_prom.hex",
         "machine": "quux",
     }),
     "quux_divmd": dict(MACHINE_CHECK, **{
@@ -1531,7 +1548,10 @@ CHECKS = {
         "kind": "script",
         "golden_tree": True,
         "sources": ["rtl/plumbing/xilinx7/cadr_machine.xdc",
-                    "boards/de25-nano/quartus/cadr_de25.sdc"],
+                    "boards/de25-nano/quartus/cadr_de25.sdc",
+                    "rtl/plumbing/xilinx7/quux_machine.xdc",
+                    "boards/de25-nano/quartus/quux_de25.sdc",
+                    "boards/arty-z7-20/cadr_arty.sv"],
         "cmd": ["tools/grid_check.py", "."],
         "top": None,
         "tb": None,
@@ -2132,11 +2152,56 @@ CHECKS = {
 # `golden/src/dispatch_write_order.rs --machine quux`.  QUUX's wait for MD,
 # its old word in a RAM's own write cycle and its one rate are held here.
 CHECKS["dispatch_write_order_quux"] = dict(CHECKS["dispatch_write_order"], **{
-    "extra": CHECKS["dispatch_write_order"]["extra"] + QUUX_SOURCES,
+    "sources": CHECKS["dispatch_write_order"]["sources"] + ["rtl/machine/quux_phase_gen.sv"],
+    "extra": CHECKS["dispatch_write_order"]["extra"] + [
+        f for f in QUUX_SOURCES if f != "rtl/machine/quux_phase_gen.sv"],
     "flags": CHECKS["dispatch_write_order"]["flags"] + ['-GMACHINE="quux"'],
     "golden": "dispatch_write_order.quux.golden",
     "machine": "quux",
 })
+
+# **QUUX'S TIMINGS (H1a).**  Every check that holds QUUX to a trace of muir's
+# `rtl` holds it at a microcycle of K ticks, and the trace and the build name
+# K (`QUUX_TIMED` in the Makefile): `<check>.quux.k4.golden`, built with
+# `-GSYNC_K=4`.  The keys above are K = 4, both boards' K and the least QUUX
+# takes (`quux_phase_gen.sv` says why).  `quux_divmd_quux_l1` and `quux_divmdsync_quux_l1`
+# are the machine checks at an L of one, and `phase_gen_quux` holds the
+# generator alone at K and K + 1.  A key missing here selects zero records
+# and reports success, which is why the keys are made by rule and not by hand.
+def _timed(key, k, l):
+    spec = CHECKS[key]
+    tag = "k%d" % k + ("l%d" % l if l else "")
+    golden = spec["golden"].replace(".quux.golden", ".quux.%s.golden" % tag)
+    assert golden != spec["golden"], key
+    return dict(spec, **{
+        "flags": spec["flags"] + ["-GSYNC_K=%d" % k, "-GSYNC_L=%d" % l],
+        "golden": golden,
+    })
+
+QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
+    ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "ticksync", "divmd", "tickwait", "pdlsync",
+                                  "imemsync")]
+CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
+# `divmdsync`, QUUX's alone, at an L of one: its `ILONG` fillers are
+# what moves a read's word into the ticks between a `DIV`'s edge and its load.
+CHECKS["quux_divmdsync_quux"] = dict(CHECKS["quux_divmd_quux"], **{
+    "golden": "quux_divmdsync.quux.golden",
+    "prom": "quux_divmdsync_prom.hex",
+})
+CHECKS["quux_divmdsync_quux_l1"] = _timed("quux_divmdsync_quux", 4, 1)
+del CHECKS["quux_divmdsync_quux"]
+for _key in QUUX_TIMED_KEYS:
+    CHECKS[_key] = _timed(_key, 4, 0)
+for _key, (_k, _l) in (("phase_gen_quux", (4, 1)),):
+    CHECKS[_key] = {
+        "sources": ["rtl/machine/quux_phase_gen.sv"],
+        "top": "quux_phase_gen",
+        "tb": "tb/quux_phase_gen_tb.cpp",
+        "flags": ["-GSYNC_K=%d" % _k, "-GSYNC_L=%d" % _l,
+                  "-CFLAGS", "-DSYNC_K_TB=%d -DSYNC_L_TB=%d" % (_k, _l)],
+        "golden": "phase_gen.quux.k%dl%d.golden" % (_k, _l),
+        "machine": "quux",
+    }
 
 # The three files golden/src/cables.rs writes.  `current` regenerates them and
 # fails if anything moved; this does the same to a copy.
@@ -3035,10 +3100,19 @@ def check_makefile():
     # Makefile's `QUUX_PROGRAMS`, so each program is two checks by name.
     names = set(re.findall(r"\$\(BUILD\)/([a-z0-9_]+)\.pass", text))
     names |= set(n + "_quux" for n in
-                 re.findall(r"\$\(BUILD\)/([a-z0-9_]+)\.quux\.pass", text))
+                 re.findall(r"\$\(BUILD\)/([a-z0-9_]+)\.quux\.(?:\$\(QKL?1?\)\.)?pass", text))
     programs = re.search(r"^QUUX_PROGRAMS := (.*)$", text, re.M)
     for prog in (programs.group(1).split() if programs else []):
-        names |= {"quux_" + prog, "quux_" + prog + "_quux"}
+        names |= {"quux_" + prog}
+    # QUUX runs its own list at its synchronous microcycle (`ticksync` for
+    # `tick`), so a program's QUUX check is named from that one.
+    programs = re.search(r"^QUUX_SYNC_PROGRAMS := (.*)$", text, re.M)
+    for prog in (programs.group(1).split() if programs else []):
+        names |= {"quux_" + prog + "_quux"}
+    # And the programs QUUX also runs at an L of one, `<program>_quux_l1`.
+    programs = re.search(r"^QUUX_L1_PROGRAMS := (.*)$", text, re.M)
+    for prog in (programs.group(1).split() if programs else []):
+        names |= {"quux_" + prog + "_quux_l1"}
     for found in sorted(names):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

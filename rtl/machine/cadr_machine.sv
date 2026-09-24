@@ -72,7 +72,15 @@ module cadr_machine #(
     // branch as it stood before QUUX existed, and `make check` holds it to
     // muir's CADR.  What QUUX is, is muir's `Geometry::QUUX` and
     // `docs/quux.md` at the pin, summarized under "QUUX" below.
-    parameter string MACHINE = "cadr"
+    parameter string MACHINE = "cadr",
+
+    // **QUUX'S MICROCYCLE, IN TICKS** (H1a): K, and L more for an `ILONG`
+    // instruction, muir's `TimingModel::Sync { cycle_ticks, ilong_ticks }`.
+    // A board's own, from its top level: the fit is what says its longest
+    // path settles in K ticks, and the board's constraint file states K.
+    // Nothing on the CADR reads either; `cadr_microcycle.sv` has the rest.
+    parameter int unsigned SYNC_K = 4,
+    parameter int unsigned SYNC_L = 0
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -691,7 +699,9 @@ module cadr_machine #(
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX),
       .MACHINE(MACHINE),
-      .MACHINE_ID(MACHINE_ID)
+      .MACHINE_ID(MACHINE_ID),
+      .SYNC_K(SYNC_K),
+      .SYNC_L(SYNC_L)
   ) processor (
       .clk         (clk),
       .rst         (rst),

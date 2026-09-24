@@ -1007,7 +1007,11 @@ module cadr_memory_path #(
   logic unused_page;
   assign unused_page = &{1'b0, ub_page[13:9]};
 
-  cadr_spy_registers spy_registers (
+  // QUUX lands a console write at the master clock edge alone: see
+  // `cadr_spy_registers.sv`'s `SYNC`.
+  cadr_spy_registers #(
+      .SYNC(MACHINE == "quux")
+  ) spy_registers (
       .clk        (clk),
       .rst        (rst),
       .mclk       (mclk),

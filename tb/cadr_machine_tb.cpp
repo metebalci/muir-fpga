@@ -268,6 +268,7 @@ int main(int argc, char **argv) {
     std::vector<uint64_t> acks;     // and every row's ack column
     std::vector<uint64_t> mds;      // every row's md column
     std::vector<char> stalled_srcmd;
+    std::vector<uint64_t> ends;     // every row's ns column, its end
 
     while (std::fgets(line, sizeof line, f)) {
       if (line[0] == '#') {
@@ -304,6 +305,7 @@ int main(int argc, char **argv) {
       // there, in the fabric as in `Rtl::clock_edge`, so on an unstalled row
       // the loaded word is discarded either way.
       mds.push_back(r.v[kMd]);
+      ends.push_back(r.v[kNs]);
       stalled_srcmd.push_back(r.v[kStall] != 0);
       if (r.v[kBus]) bus_at.push_back(total_rows);
       ++total_rows;
@@ -324,6 +326,29 @@ int main(int argc, char **argv) {
       size_t j = i;
       while (j < acks.size() && acks[j] == 0) ++j;
       ack_for[i] = (j < acks.size()) ? acks[j] : 0;
+      // **THE WORD A READ BRINGS IS THE WORD OF THE ROW ITS -LOADMD LANDS
+      // IN, AND THE MEMORY MAY BE ASKED FOR IT ROWS EARLIER.**  The bridge
+      // takes `mem_rdata` when the memory answers, which is the deskew and
+      // more before -LOADMD; with the CADR's microcycles of fourteen ticks
+      // and more that is the same row, and with QUUX's of three or four it
+      // can be several rows before, whose own column is the word from
+      // before the read.  So every row of a read's flight carries the word
+      // of the row the strobe falls in: the first whose end is at or past
+      // the acknowledgment, by the rule above, and the row after it when
+      // the acknowledgment is on that row's own end, a strobe on an edge
+      // being that edge's.  Measured on `quux_divmdsync` at K = 4: a word
+      // acknowledged two ticks into a `DIV`'s microcycle was handed the
+      // word from before, from a row three microcycles earlier.
+      if (ack_for[i] != 0) {
+        size_t a = i;
+        while (a < total_rows && ends[a] < ack_for[i]) ++a;
+        if (a < total_rows) {
+          const uint64_t word = (ends[a] == ack_for[i])
+                                    ? (a + 1 < total_rows ? mds[a + 1] : mds[a])
+                                    : rdata_for[a];
+          for (size_t x = i; x <= a; ++x) rdata_for[x] = word;
+        }
+      }
       // A cycle whose answer is not known at the boundary it started on had
       // to arbitrate for the Unibus first. THE FABRIC'S BUS INTERFACE HAS NO
       // UNIBUS PATH --- `cadr_busint_xbus.sv` is the Xbus half --- so neither

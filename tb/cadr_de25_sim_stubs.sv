@@ -591,7 +591,9 @@ module cadr_machine #(
     parameter string PROM_HEX = "",
     parameter string SYNC_PROM_HEX = "",
     parameter int LMTV = 1,
-    parameter string MACHINE = "cadr"
+    parameter string MACHINE = "cadr",
+    parameter int unsigned SYNC_K = 4,
+    parameter int unsigned SYNC_L = 0
 ) (
     input  var logic         clk,
     input  var logic         rst,

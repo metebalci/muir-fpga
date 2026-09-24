@@ -77,6 +77,7 @@ BOARDS = {
             "DDR=1 HDMI=1": (["-GDDR=1", "-GHDMI=1"], ["tb/cadr_ps7_stub.sv"]),
         },
         "machines": ["cadr", "quux"],
+        "sync_k": 4,
     },
     "de25": {
         "top": "cadr_de25",
@@ -90,6 +91,7 @@ BOARDS = {
             "DDR=1 HDMI=1": (["-DCADR_DE25_DDR", "-DCADR_DE25_HDMI"], []),
         },
         "machines": ["cadr", "quux"],
+        "sync_k": 4,
     },
     "cora": {
         "top": "cadr_cora",
@@ -190,6 +192,26 @@ def machine_at_instance(tree, top):
     return values[0], None
 
 
+def sync_k_at_generator(tree):
+    """The SYNC_K of the one `quux_phase_gen` the tree elaborates."""
+    mods = []
+    walk(tree, lambda n: mods.append(n)
+         if n.get("type") == "MODULE" and n.get("origName") == "quux_phase_gen" else None)
+    if len(mods) != 1:
+        return None, "%d quux_phase_gen modules in the tree" % len(mods)
+    values = []
+
+    def param(n):
+        if n.get("type") == "VAR" and n.get("name") == "SYNC_K" and n.get("isParam"):
+            v = n.get("valuep") or []
+            values.append(v[0]["name"] if len(v) == 1 and v[0].get("type") == "CONST" else None)
+    walk(mods[0], param)
+    if len(values) != 1 or values[0] is None:
+        return None, "no constant SYNC_K in quux_phase_gen"
+    # Verilator writes a constant as 32'h4 or 32'sh4.
+    return int(values[0].split("h")[-1], 16), None
+
+
 def reaches(board, config, value, scratch):
     """The value asked for lints clean and is the value at u_machine."""
     top = BOARDS[board]["top"]
@@ -215,6 +237,21 @@ def reaches(board, config, value, scratch):
         say(False, "%s --- it elaborates \"%s\"" % (what, got))
     else:
         say(True, what)
+    # **AND QUUX'S K REACHES ITS GENERATOR**: the board's own SYNC_K, through
+    # `cadr_machine` and `cadr_microcycle`, is the K `quux_phase_gen` counts.
+    # A top level that dropped it would build the machine at the default K
+    # and every trace at that K would still pass.
+    if want == "quux":
+        k_want = BOARDS[board]["sync_k"]
+        kwhat = "%s, %s, MACHINE=quux: the microcycle is SYNC_K=%d ticks at the generator" % (
+            top, config, k_want)
+        k, why = sync_k_at_generator(tree)
+        if k is None:
+            say(False, "%s --- %s" % (kwhat, why))
+        elif k != k_want:
+            say(False, "%s --- it counts %d" % (kwhat, k))
+        else:
+            say(True, kwhat)
 
 
 def refused_at(board, config, value, message, instance):

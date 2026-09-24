@@ -491,6 +491,15 @@ const TICK_US: u32 = 3;
 /// The reads of the cleared segment, each after a clear.
 const TICK_CLEARED_READS: u64 = 40;
 
+/// **The same on QUUX's synchronous microcycle, `ticksync`**: a read a
+/// clear and a filler after it is three microcycles, twelve ticks at a K of
+/// four and nine at three, so a rise a microsecond apart falls in the one
+/// filler's window about one time in three, and forty reads see one or none.
+/// A hundred and twenty see several at either K.  `tick` itself is the
+/// CADR's side and QUUX's at the CADR's microcycle, and is left as it is so
+/// that the CADR's trace does not move.
+const TICKSYNC_CLEARED_READS: u64 = 120;
+
 /// A period whose rises land on QUUX's microcycle boundaries: 300 ticks is
 /// twenty of its one rate's 15-tick microcycles.
 const TICK_ON_A_BOUNDARY_US: u32 = 3;
@@ -507,6 +516,10 @@ const PGF_OR_INT: u64 = (1 << 5) | 5;
 /// the flag up; the interrupt enabled in `INTERRUPT-CONTROL`; a new period
 /// written while it runs; and the tick turned off.
 fn tick_program() -> Prog {
+    tick_program_with(TICK_CLEARED_READS)
+}
+
+fn tick_program_with(cleared_reads: u64) -> Prog {
     let mut p = Prog::new();
     let mut k = 0u64;
     let reads = |p: &mut Prog, k: &mut u64, n: u32| {
@@ -553,7 +566,7 @@ fn tick_program() -> Prog {
     p.konst(0o706, 1);
     p.konst(0o707, 3);
     p.to(0o706, fdest(4));
-    for _ in 0..TICK_CLEARED_READS {
+    for _ in 0..cleared_reads {
         p.to(0o707, fdest(3));
         p.fill(1);
         p.source(0o17, RESULT + k);
@@ -567,15 +580,15 @@ fn tick_program() -> Prog {
     p
 }
 
-fn check_tick(which: Which, m: &muir::machine::Machine) {
-    let reads: Vec<u32> = (0..134 + TICK_CLEARED_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
+fn check_tick(which: Which, m: &muir::machine::Machine, cleared_reads: u64) {
+    let reads: Vec<u32> = (0..134 + cleared_reads).map(|k| m.amem[(RESULT + k) as usize]).collect();
     if which == Which::Quux {
         assert!(reads.contains(&3), "QUUX: the flag was seen up while enabled");
         assert!(reads.contains(&2), "QUUX: the flag was seen down while enabled");
         assert_eq!(&reads[..4], &[0, 0, 0, 0], "QUUX: the tick off reads 0");
         assert_eq!(reads[reads.len() - 1], 0, "QUUX: turned off, it reads 0 again");
         assert!(!m.tick.enabled, "QUUX: the tick is off at the end");
-        let cleared = &reads[130..130 + TICK_CLEARED_READS as usize];
+        let cleared = &reads[130..130 + cleared_reads as usize];
         let up = cleared.iter().filter(|&&w| w == 3).count();
         assert!(up >= 3 && up < cleared.len() / 2, "QUUX: the cleared segment saw {up} rises");
     } else {
@@ -699,6 +712,187 @@ const DIVMD_GAPS: [usize; 4] = [0, 1, 2, 3];
 /// instruction after the start and the read goes out while the divider holds
 /// it, and from one filler on the read is out when it starts; either way it
 /// then waits for the word, whole microcycles, and runs once.
+/// **`divmdsync`: the same, at QUUX's synchronous microcycle**, where every
+/// microcycle is K ticks and a read's word therefore lands at the same tick
+/// of a microcycle whatever the fillers before it.  The read's word comes
+/// about 620 ns after the read goes out, so the gaps put the `DIV`'s own
+/// edge across the last few microcycles before it, and each gap is taken
+/// again with one and with two fillers of `ILONG` after the one that sends
+/// the read out, which at an L of one move the `DIV` a tick and two against
+/// the word: some trial then lands the word in the ticks between a `DIV`'s
+/// edge and its load, where the divider takes the word strobed and not `MD`
+/// (`div_word` in `cadr_microcycle.sv`).  At an L of zero the `ILONG`
+/// fillers are fillers.  Each trial keeps the output bus, the remainder.
+const DIVMDSYNC_GAPS: std::ops::RangeInclusive<usize> = 12..=22;
+const DIVMDSYNC_SHIFTS: usize = 3;
+
+fn divmdsync_program() -> Prog {
+    let mut p = Prog::new();
+    wait_setup(&mut p, DIVMD_M);
+    p.konst(0o306, DIVMD_A);
+    p.konst(0o307, DIVMD_Q);
+    p.konst(0o310, MD_BEFORE_READ);
+    let mut k = 0u64;
+    for gap in DIVMDSYNC_GAPS {
+        for shift in 0..DIVMDSYNC_SHIFTS {
+            p.i(ALU | SETA | a_src(0o307) | Q_LOAD);
+            p.to(0o310, MD);
+            p.to(0o305, START_READ);
+            p.fill(1);
+            for _ in 0..shift {
+                p.i(filler().raw() | 1 << 45);
+            }
+            p.fill(gap);
+            p.i(DIV_CODE | SRC_MD | a_src(0o306) | a_dest(RESULT + k));
+            k += 1;
+        }
+    }
+    p.park();
+    p
+}
+
+fn check_divmdsync(which: Which, m: &muir::machine::Machine) {
+    use muir::muldiv;
+    if which != Which::Quux {
+        return;
+    }
+    let trials = DIVMDSYNC_GAPS.count() * DIVMDSYNC_SHIFTS;
+    let (ob, _) = muldiv::run(muldiv::Op::Div, DIVMD_M, DIVMD_A, DIVMD_Q);
+    for k in 0..trials as u64 {
+        assert_eq!(m.amem[(RESULT + k) as usize], ob, "QUUX: DIV {k} divides the word read");
+    }
+}
+
+// ------------------------------------------------------------- pdlsync
+
+/// **A push into the PDL buffer and a pop of it straight after**, QUUX's
+/// alone, at its synchronous microcycle.  A push's write lands on the edge
+/// that ends the microcycle after it, the pop reads at the pointer the push
+/// moved, and with no filler between them the pop is that very microcycle,
+/// which reads the word from before, the buffer having no pass-around; with
+/// a filler the pop reads the word pushed.  So a write that landed a tick
+/// before its edge, or a latch that took the word before the edge had
+/// written it, reads the wrong word on some trial.
+const PDLSYNC_TRIALS: u64 = 12;
+
+/// The word at the index, and the reads of it beside a push.
+const PDLSYNC_AT_INDEX: u32 = 0x3c5a_a5c3;
+const PDLSYNC_INDEX_TRIALS: u64 = 4;
+
+fn pdlsync_program() -> Prog {
+    let mut p = Prog::new();
+    p.konst(0o320, 0o100);
+    p.to(0o320, fdest(0o14));
+    for k in 0..PDLSYNC_TRIALS {
+        p.konst(0o330 + k, 0o1001 * (k as u32 + 1) + 0x5a00_0000);
+    }
+    for k in 0..PDLSYNC_TRIALS {
+        p.to(0o330 + k, fdest(0o11));
+        p.fill((k % 4) as usize);
+        p.source(0o24, RESULT + k);
+    }
+    // And a read of the buffer at the index, not the pointer, in the very
+    // microcycle whose edge lands a push: the one port is the push's write
+    // and the index's read in the same microcycle, and the read must be the
+    // index's word.
+    p.konst(0o321, 0o40);
+    p.to(0o321, fdest(0o13));
+    p.konst(0o322, PDLSYNC_AT_INDEX);
+    p.to(0o322, fdest(0o12));
+    p.fill(1);
+    for k in 0..PDLSYNC_INDEX_TRIALS {
+        p.to(0o330 + k, fdest(0o11));
+        p.source(0o05, RESULT + PDLSYNC_TRIALS + k);
+    }
+    p.park();
+    p
+}
+
+fn check_pdlsync(which: Which, m: &muir::machine::Machine) {
+    if which != Which::Quux {
+        return;
+    }
+    // With a filler between them the pop reads the word pushed; with none
+    // it is the microcycle whose edge lands the push, and it reads what the
+    // location held before, the PDL buffer having no pass-around: the word
+    // the trial before left there, or zero.
+    let word = |k: u64| 0o1001 * (k as u32 + 1) + 0x5a00_0000;
+    for k in 0..PDLSYNC_TRIALS {
+        let want = if k % 4 != 0 { word(k) } else if k == 0 { 0 } else { word(k - 1) };
+        assert_eq!(m.amem[(RESULT + k) as usize], want, "QUUX: pop {k}, {} fillers after its push", k % 4);
+    }
+    for k in 0..PDLSYNC_INDEX_TRIALS {
+        assert_eq!(m.amem[(RESULT + PDLSYNC_TRIALS + k) as usize], PDLSYNC_AT_INDEX,
+                   "QUUX: the index's word, read beside push {k}");
+    }
+}
+
+// ------------------------------------------------------------ imemsync
+
+/// **A word written into the control store and executed**, QUUX's alone, at
+/// its synchronous microcycle.  QUUX's store is written on the edge that
+/// ends the microcycle after the `WRITE-I-MEM` (a tick after it, in the
+/// fabric, through the port the read uses), and IR takes the word written
+/// from `IWR` and not from the store, so the boot PROM's loading of the
+/// store --- a `WRITE-I-MEM` and a pop back, sixteen thousand times --- never
+/// reads a word back and cannot tell a write that went nowhere.  Here each
+/// trial writes three words above the PROM, an ALU instruction that stores a
+/// marker, a jump back and a filler after it, and runs them, some straight
+/// after the writes and some after fillers.
+const IMEMSYNC_TRIALS: u64 = 6;
+const IMEMSYNC_AT: u64 = 0o4000;
+
+fn imemsync_program() -> Prog {
+    let mut p = Prog::new();
+    // `A[a]`'s low sixteen bits and `M[m]` are the word a `WRITE-I-MEM`
+    // with those sources writes: `IWR` is `{A<15:0>, M<31:0>}`.
+    let write = |p: &mut Prog, at: u64, word: u64, k: u64| {
+        p.konst(0o350, (word >> 32) as u32);
+        p.konst(0o351, (word & 0xffff_ffff) as u32);
+        p.i(ALU | SETA | a_src(0o351) | m_dest(1));
+        p.fill(1);
+        p.i(JUMP | R | P | ALWAYS | target(at) | a_src(0o350) | m_src(1));
+        p.fill(1 + (k % 3) as usize);
+    };
+    for k in 0..IMEMSYNC_TRIALS {
+        p.konst(0o352, 0x6100_0000 + k as u32);
+        let at = IMEMSYNC_AT + 3 * k;
+        let store = ALU | SETA | a_src(0o352) | a_dest(RESULT + k);
+        // The jump back is to the word after the jump that runs the pair,
+        // which is two on from here once the two writes are laid down; the
+        // writes are the same length whatever the word, so it is counted.
+        let here = p.at();
+        let mut probe = Prog::new();
+        write(&mut probe, at, 0, k);
+        write(&mut probe, at + 1, 0, k);
+        write(&mut probe, at + 2, 0, k);
+        let back = here + probe.at() + (k % 2) + 1;
+        write(&mut p, at, store, k);
+        write(&mut p, at + 1, JUMP | target(back) | ALWAYS | N, k);
+        // And the word after the jump back, which the jump fetches and does
+        // not run: written, so that no word is fetched that was never
+        // written, the control store's power-on contents being a convention
+        // this fabric and muir do not share (all ones here, zero there).
+        write(&mut p, at + 2, filler().raw(), k);
+        p.fill((k % 2) as usize);
+        p.i(JUMP | target(at) | ALWAYS | N);
+        assert_eq!(p.at(), back, "imemsync: the jump back lands where it was aimed");
+        p.fill(1);
+    }
+    p.park();
+    p
+}
+
+fn check_imemsync(which: Which, m: &muir::machine::Machine) {
+    if which != Which::Quux {
+        return;
+    }
+    for k in 0..IMEMSYNC_TRIALS {
+        assert_eq!(m.amem[(RESULT + k) as usize], 0x6100_0000 + k as u32,
+                   "QUUX: the word written into the control store ran, trial {k}");
+    }
+}
+
 fn divmd_program() -> Prog {
     let mut p = Prog::new();
     wait_setup(&mut p, DIVMD_M);
@@ -809,7 +1003,11 @@ fn cycles(name: &str) -> u64 {
         "tv" => 560,
         "muldiv" => 540,
         "tick" => 1350,
+        "ticksync" => 1350 + 3 * (TICKSYNC_CLEARED_READS - TICK_CLEARED_READS),
         "divmd" => 900,
+        "divmdsync" => 3000,
+        "pdlsync" => 300,
+        "imemsync" => 800,
         "tickwait" => 2600,
         _ => unreachable!(),
     }
@@ -821,10 +1019,14 @@ fn program(name: &str) -> Prog {
         "tv" => tv_program(),
         "muldiv" => muldiv_program(),
         "tick" => tick_program(),
+        "ticksync" => tick_program_with(TICKSYNC_CLEARED_READS),
         "divmd" => divmd_program(),
+        "divmdsync" => divmdsync_program(),
+        "pdlsync" => pdlsync_program(),
+        "imemsync" => imemsync_program(),
         "tickwait" => tickwait_program(),
         _ => {
-            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, divmd, tickwait");
+            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait");
             std::process::exit(2);
         }
     }
@@ -833,6 +1035,7 @@ fn program(name: &str) -> Prog {
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let which = machine_axis::take(&mut args);
+    let timing = machine_axis::take_timing(which, &mut args);
     let mut name = None;
     let mut prom_only = false;
     let mut it = args.into_iter();
@@ -847,7 +1050,10 @@ fn main() {
         }
     }
     let Some(name) = name else {
-        eprintln!("usage: quux --program <name> [--machine cadr|quux] [--prom]");
+        eprintln!(
+            "usage: quux --program <name> [--machine cadr|quux] \
+             [--sync-cycle-ticks K [--sync-ilong-ticks L]] [--prom]"
+        );
         std::process::exit(2);
     };
     let prog = program(&name);
@@ -862,12 +1068,13 @@ fn main() {
         return;
     }
 
-    let mut e = trace::engine(which.machine(&prom));
+    let mut e = trace::engine_on(which.machine(&prom), timing);
     e.boot();
     println!("{}", trace::COLUMNS);
     println!(
-        "# generated by golden/src/quux.rs from muir's rtl engine: program {name}, machine: {}",
-        which.name()
+        "# generated by golden/src/quux.rs from muir's rtl engine: program {name}, machine: {}{}",
+        which.name(),
+        machine_axis::timing_suffix(which, timing)
     );
     println!("{}", trace::RADIX);
     let n = cycles(&name);
@@ -885,8 +1092,12 @@ fn main() {
         "map" => check_map(which, e.machine()),
         "tv" => check_tv(which, e.machine()),
         "muldiv" => check_muldiv(which, e.machine()),
-        "tick" => check_tick(which, e.machine()),
+        "tick" => check_tick(which, e.machine(), TICK_CLEARED_READS),
+        "ticksync" => check_tick(which, e.machine(), TICKSYNC_CLEARED_READS),
         "divmd" => check_divmd(which, e.machine()),
+        "divmdsync" => check_divmdsync(which, e.machine()),
+        "pdlsync" => check_pdlsync(which, e.machine()),
+        "imemsync" => check_imemsync(which, e.machine()),
         "tickwait" => check_tickwait(which, e.machine()),
         _ => unreachable!(),
     }

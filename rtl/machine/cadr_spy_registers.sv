@@ -39,7 +39,15 @@
 
 `default_nettype none
 
-module cadr_spy_registers (
+module cadr_spy_registers #(
+    // **QUUX'S SYNCHRONOUS MICROCYCLE** (H1a): a write lands at the master
+    // clock edge and nowhere else, as muir's `sync` lands every write at the
+    // edge (`Rtl::speedclk_at` answers none: the microcycle is shorter than
+    // the 60 ns SPEEDCLK comes at, and QUUX has no speed synchronizer to
+    // feed).  So `landing` is `mclk` alone and there is no early landing.
+    // Zero, the CADR's two instants, everywhere but QUUX's memory path.
+    parameter bit SYNC = 1'b0
+) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
 
@@ -170,7 +178,7 @@ module cadr_spy_registers (
   logic        pending;
   logic [15:0] held;
   logic [3:0]  held_eadr;
-  assign landing = mclk || (phase_t == 6'(SPEEDCLK_T) - 6'd3);
+  assign landing = mclk || (!SYNC && phase_t == 6'(SPEEDCLK_T) - 6'd3);
 
   // **A WRITE STROBED ON OR BEFORE SPEEDCLK IS SPEEDCLK'S, EVEN WHEN ITS
   // STROBE COMES AFTER THIS LANDING.**  muir lands every write whose strobe
@@ -186,7 +194,7 @@ module cadr_spy_registers (
   logic strobe_due, early, early_taken;
   assign strobe_due = ub_msyn && selected && ub_write && running
                    && (elapsed == 9'(STROBE_T) - 9'd1 || elapsed == 9'(STROBE_T) - 9'd2);
-  assign early = !mclk && (phase_t == 6'(SPEEDCLK_T) - 6'd3) && strobe_due && !early_taken;
+  assign early = !SYNC && !mclk && (phase_t == 6'(SPEEDCLK_T) - 6'd3) && strobe_due && !early_taken;
 
   logic [15:0] land_word;
   logic [3:0]  land_eadr;
