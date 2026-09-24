@@ -682,7 +682,11 @@ assert_multicycle_applied $tick 8
 # decodes are in the relaxed set, at the same eight ticks, and are left out of
 # both halves.
 # grid: 80 ns
-assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb which}
+# QUUX's first display is MONO TV, which keeps no word relaxed at its pins,
+# and the CADR's board is not fitted there, so the clause has nothing to reach.
+if {!([info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux")} {
+    assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb which}
+}
 # The bus interface's register block: the Unibus map and its write buffer at
 # the register strobe.
 # grid: 150 ns
@@ -715,9 +719,20 @@ assert_clause_timing $tick 2 "MD into the writes' address" $::split_md $::split_
 assert_clause_timing $tick 1 "MD_HELD into MD" $::split_md_held $::split_md
 # The registers that place the maps' and the dispatch memory's write in a hung
 # microcycle are the tick's own, out of the relaxed set by name.
-set sta_mw [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md_we_q mw_early_q mw_early_q2 mw_late_q}]]
+set sta_mw [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]
 # grid: 0 ns + 1 tick
 assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" $sta_mw $::slow
+# And QUUX's divider, whose operands `quux_de25.sdc` gives the latches' seven
+# ticks: none may ask for more, and at least one must ask for that.
+if {[info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux"} {
+    if {![info exists ::quux_divider]} {
+        puts "sta: FAIL: quux_de25.sdc was not read, so QUUX's divider has no clause"
+        incr failures
+    } else {
+        # grid: 60 ns + 1 tick
+        assert_clause_timing $tick 7 "into QUUX's divider" $::slow $::quux_divider
+    }
+}
 # The transaction audit has no register on a board with no console to read
 # it, and `cadr_machine.xdc`'s clause for it is then empty by construction, as
 # the Zynq flow says of its own memory-off board.

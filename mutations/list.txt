@@ -1134,10 +1134,10 @@
 @note untouched by that.
 @old
   assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
-                                                : (is_memory || tv_fb || tvc_fb);
+                                                : (is_memory || tv_fb || tvc_fb || mono_fb);
 @new
   assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
-                                                : (is_memory || tv_fb || tvc_fb || nxm);
+                                                : (is_memory || tv_fb || tvc_fb || mono_fb || nxm);
 @end
 
 @mutation every-cycle-is-a-read-on-the-xbus
@@ -1887,9 +1887,9 @@
 @note The boot PROM reads the map once in 600,000 microcycles, so this is
 @note the band's to catch or nobody's.
 @old
-  assign vmo  = l2_map[adr1];
+  assign vmo_rd  = l2_map[adr1];
 @new
-  assign vmo  = l2_map[{adr1[8:0], adr1[9]}];
+  assign vmo_rd  = l2_map[{adr1[8:0], adr1[9]}];
 @end
 
 @mutation the-first-map-level-is-read-at-the-wrong-entry
@@ -1899,9 +1899,9 @@
 @note signal to mutate: eleven bits of `MAPI` pick the level-1 entry, and
 @note `adr0` addresses that RAM's write too.
 @old
-  assign vmap = l1_map[adr0];
+  assign vmap_rd = l1_map[adr0];
 @new
-  assign vmap = l1_map[{adr0[9:0], adr0[10]}];
+  assign vmap_rd = l1_map[{adr0[9:0], adr0[10]}];
 @end
 
 # RETIRED at muir's `bc6af67`: `the-scratchpad-latches-follow-in-the-wrong-phase`,
@@ -1970,14 +1970,14 @@
 @note block RAM, THIS CHECK WOULD NOT OBJECT. That has to be decided from
 @note the timing, not from here.
 @old
-  assign vmap = l1_map[adr0];
+  assign vmap_rd = l1_map[adr0];
 @new
   logic [4:0] vmap_d [0:27];
   always_ff @(posedge clk) begin
     vmap_d[0] <= l1_map[adr0];
     for (int d = 1; d < 28; d++) vmap_d[d] <= vmap_d[d-1];
   end
-  assign vmap = vmap_d[27];
+  assign vmap_rd = vmap_d[27];
 @end
 
 @mutation the-map-is-written-with-the-wrong-frame
@@ -2101,9 +2101,11 @@
 @note the term is now written with that name and held a tick, so the line
 @note reads `ifetch_q && mbusy_sync`. What the mutation does is unchanged.
 @old
-              || (ifetch_q && mbusy_sync);
+              || (ifetch_q && mbusy_sync)
+              || dividing;
 @new
-              || (ifetch_q && mbusy_sync && 1'b0);
+              || (ifetch_q && mbusy_sync && 1'b0)
+              || dividing;
 @end
 
 
@@ -2330,9 +2332,9 @@
 @note disagree with muir; it should fail to make progress at all, and the
 @note testbench's own "never ran" assertion is what would say so.
 @old
-  assign hang = use_md && rd_in_progress && !wait_;
+  assign hang = !QUUX && use_md && rd_in_progress && !wait_;
 @new
-  assign hang = use_md && rd_in_progress;
+  assign hang = !QUUX && use_md && rd_in_progress;
 @end
 
 @mutation a-tap-lands-at-the-wrap
@@ -5985,9 +5987,9 @@ if {0 && $held ne $want} {
 @note `&& !mp_own`, a third master on the Xbus whose cycles are never the
 @note display's.
 @old
-  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
 @new
-  assign bus_display       = ch_own && !mp_own && (tv_fb || tvc_fb);
+  assign bus_display       = ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
 @end
 
 @mutation tv-register-word-not-selected-in-the-path
@@ -9098,9 +9100,9 @@ if {0 && $held ne $want} {
 @note this one is written as an inversion: a zero that is always zero cannot
 @note tell an AND from an OR, but it can tell a zero from a one.
 @old
-  assign sintr_o   = xbus_intr || ub_int;
+  assign sintr_o   = xbus_intr || ub_int || tick_irq;
 @new
-  assign sintr_o   = xbus_intr || !ub_int;
+  assign sintr_o   = xbus_intr || !ub_int || tick_irq;
 @end
 
 @mutation dbgin-request-arrives-with-its-levels
@@ -9636,10 +9638,10 @@ if {0 && $held ne $want} {
 @note arm: the processor's is the last of the three and is what this breaks.
 @old
   assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
-                                                : (is_memory || tv_fb || tvc_fb);
+                                                : (is_memory || tv_fb || tvc_fb || mono_fb);
 @new
   assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
-                                                : (is_memory || tv_fb || tvc_fb
+                                                : (is_memory || tv_fb || tvc_fb || mono_fb
                                                    || (device && cpu_write));
 @end
 
@@ -12734,9 +12736,9 @@ if {0 && $held ne $want} {
 @note Caught at "row 11 (cc-clock, clk 0002): CYCLES is 7d5, the reference
 @note says 7d6" --- the first `CC-CLOCK` of the script.
 @old
-  assign machrun  = stepping || (srun && !errhalt && !stathalt && !wait_);
+  assign machrun  = (stepping || (srun && !errhalt && !stathalt && !wait_)) && !quux_hold;
 @new
-  assign machrun  = (stepping && 1'b0) || (srun && !errhalt && !stathalt && !wait_);
+  assign machrun  = ((stepping && 1'b0) || (srun && !errhalt && !stathalt && !wait_)) && !quux_hold;
 @end
 
 @mutation sstep-ssdone-rises-with-sstep-rather-than-behind-it
@@ -12755,11 +12757,11 @@ if {0 && $held ne $want} {
 @note here: it catches the defect at the master clock the step was asked at,
 @note where CYCLES can only speak at the one it was owed.
 @old
-        ssdone <= sstep;
-        sstep <= step;
+          ssdone <= sstep;
+          sstep <= step;
 @new
-        ssdone <= step;
-        sstep <= step;
+          ssdone <= step;
+          sstep <= step;
 @end
 
 @mutation sstep-the-step-is-a-level-and-not-an-edge
@@ -12909,7 +12911,7 @@ if {0 && $held ne $want} {
 @note the word under either rule and only the old block tells them apart.
 @note Reading block 0 alone let this survive the first full run.
 @old
-  assign adr1_w = vma[26] ? {5'd0, mapi[4:0]} : adr1;
+  assign adr1_w = vma[26] ? {L1_BITS'(0), mapi[4:0]} : adr1;
 @new
   assign adr1_w = adr1;
 @end
@@ -15829,9 +15831,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note past the reachable end of main memory and is a word the machine's own
 @note program could be using.
 @old
-  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
 @new
-  assign bus_display       = !ch_own && !mp_own && tv_fb;
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || mono_fb);
 @end
 
 @mutation the-color-board-never-acknowledges
@@ -15845,10 +15847,10 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note it stays read and can never add anything: a mutation that leaves a
 @note signal unread is caught by lint and not by the check.
 @old
-  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || device_ack);
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || mono_ack || device_ack);
 @new
   assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || (tvc_ack && tv_ack)
-                                          || device_ack);
+                                          || mono_ack || device_ack);
 @end
 
 @mutation the-color-boards-word-comes-from-the-other-board
@@ -16125,8 +16127,12 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note one contiguous block of text.
 @old
   cadr_memory_path #(
-      .LMTV(LMTV),
-      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+      // QUUX has no color board: the color TV is a LISPM TV strapped
+      // elsewhere, and QUUX's bitstream has neither of the CADR's boards.
+      .LMTV(QUUX ? 0 : LMTV),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX),
+      .MACHINE(MACHINE),
+      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT)
   ) memory (
       .clk        (clk),
       .rst        (rst),
@@ -16134,8 +16140,12 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   logic rst_late;
   always_ff @(posedge clk) rst_late <= rst;
   cadr_memory_path #(
-      .LMTV(LMTV),
-      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+      // QUUX has no color board: the color TV is a LISPM TV strapped
+      // elsewhere, and QUUX's bitstream has neither of the CADR's boards.
+      .LMTV(QUUX ? 0 : LMTV),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX),
+      .MACHINE(MACHINE),
+      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT)
   ) memory (
       .clk        (clk),
       .rst        (rst_late),
@@ -19277,28 +19287,42 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
         penult_at     <= read_sel + 6'(RESTART_T) - 6'd1;
 @end
 
-@mutation a-late-write-lands-on-time
+@mutation a-late-write-lands-a-tick-late-over-a-strobe
 @check dispatch_write_order
 @file rtl/machine/cadr_microcycle.sv
-@note A hung write whose MD moved on the cycle's last edge taken on time, a
-@note tick after MD, as well as late.  The word is the same, and the gap
-@note monitor fails the run on `popj-into-hang-late`.
+@note A hung write whose MD moved on the pulse's own edge, a strobe there,
+@note taken a tick late as well as two late: a tick after MD, which the gap
+@note monitor fails, and at the word read either way.
 @old
-  assign mw_now    = wp_parked && !md_we_q;
+  assign mw_late1  = mw_k1_q && !md_we_q;
 @new
-  assign mw_now    = wp_parked;
+  assign mw_late1  = mw_k1_q;
 @end
 
-@mutation no-late-write
+@mutation no-two-late-write
 @check dispatch_write_order
 @file rtl/machine/cadr_microcycle.sv
-@note Without the late write a hung write whose MD moved on the cycle's last
-@note edge is never made: `popj-into-hang-late` falls through where muir's
-@note `rtl` returns, and `dispatch-on-md-gap-3` leaves the word unwritten.
+@note Without the write two late, a hung write whose read is acknowledged on
+@note the pulse's own edge is never made: the `x-popj` shapes whose strobe
+@note falls there leave the dispatch word unwritten.
 @old
-      mw_late_q   <= wp_parked && md_we_q;
+      mw_late2_q  <= mw_k1_q && md_we_q;
 @new
-      mw_late_q   <= wp_parked && md_we_q && mw_early_q;
+      mw_late2_q  <= mw_k1_q && md_we_q && mw_early_q;
+@end
+
+@mutation a-late-write-lands-on-time-before-a-strobe
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note The placement as it stood before muir's `ffbb76a`: the late write at
+@note the pulse's own tick when MD did not move at the end of L.  It takes MD
+@note as it stood before a strobe on that edge, where muir, which counts a
+@note change on an edge as before it, takes the word read: five of the 240
+@note `x-popj` shapes, `x-popj-2-4-0-1` among the programs here.
+@old
+  assign mw_late1  = mw_k1_q && !md_we_q;
+@new
+  assign mw_late1  = wp_parked && !md_we_q;
 @end
 
 # --- the processor's own write of the mode register -------------------------
@@ -19581,4 +19605,785 @@ set_multicycle_path -setup 3 -from $split_md -to $split_md_writes
 set_multicycle_path -setup 1 -from $split_md_held -to $split_md
 @new
 set_multicycle_path -setup 2 -from $split_md_held -to $split_md
+@end
+
+# ------------------------------------------------------------------ QUUX
+#
+# QUUX, the evolved CADR: what `cadr_machine` builds under `MACHINE ==
+# "quux"`, held by the checks that build it so --- `machine_quux` on QUUX's
+# own boot PROM, and each `quux_<program>_quux` on a program of
+# `golden/src/quux.rs` --- and, for the gate that keeps it out of the CADR,
+# by the CADR's side of the same programs, `quux_<program>`.
+
+@mutation quux-the-cadr-is-built-as-quux
+@check quux_map
+@file rtl/machine/cadr_microcycle.sv
+@note The processor takes every CADR build for QUUX: a six-bit map, the
+@note MACHINE-ID in source 16 and a 16K PDL buffer on MIT's machine.  The
+@note CADR's side of the map program reads source 16 as all ones and
+@note wraps its PDL pointer at 1,024.
+@old
+  localparam bit          QUUX      = MACHINE == "quux";
+@new
+  localparam bit          QUUX      = MACHINE == "quux" || MACHINE == "cadr";
+@end
+
+@mutation quux-the-sixth-level-1-bit-is-not-written
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A level-1 store drops `VMA<24>`, so entry 41 is stored as 01: the
+@note CADR's five bits in QUUX's six.
+@old
+    assign l1_store = {vma[24], vma[31:27]};
+@new
+    assign l1_store = {1'b0, vma[31:27]};
+@end
+
+@mutation quux-map-md-reads-bit-29-as-zero
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `MAP(MD)<29>` reads the CADR's hard zero on QUUX, while the map
+@note itself holds six bits.
+@old
+    assign mf_map = {!pfw, !pfr, vmap, vmo};
+@new
+    assign mf_map = {!pfw, !pfr, vmap[5] & 1'b0, vmap[4:0], vmo};
+@end
+
+@mutation quux-level-2-is-written-as-the-cadrs-1024
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A level-2 store drops the block number's sixth bit, so the entry for
+@note block 41 lands in block 01 and a translation through block 41 finds
+@note nothing there.
+@old
+        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
+@new
+        if (vma[25]) l2_map[adr1_w ^ {adr1_w[L1_BITS+4], {(L1_BITS+4){1'b0}}}] <= vma[23:0];
+@end
+
+@mutation quux-machine-id-says-another-processor
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Source 16 answers processor type 1 rather than 4.
+@old
+      mf = MACHINE_ID;
+@new
+      mf = {MACHINE_ID[31:4], 4'd1};
+@end
+
+@mutation quux-source-36-is-not-source-16
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `IR<30>` is taken into the decode, so source 36 reads the open bus
+@note where muir's reads the MACHINE-ID.
+@old
+    end else if (QUUX && group_b && ir[28:26] == 3'd6) begin
+@new
+    end else if (QUUX && group_b && ir[28:26] == 3'd6 && !ir[30]) begin
+@end
+
+@mutation quux-source-17-reads-the-open-bus
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Source 17 reads ones where QUUX's tick, off, reads zero.
+@old
+      mf = tick_status;
+@new
+      mf = ~tick_status;
+@end
+
+@mutation quux-the-pdl-pointer-is-twelve-bits
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A 4K PDL buffer where QUUX's is 16K: the index written with 177777
+@note reads back 7777, and the push from 37777 lands elsewhere.
+@old
+  localparam int unsigned PDL_BITS  = QUUX ? 14 : 10;
+@new
+  localparam int unsigned PDL_BITS  = QUUX ? 12 : 10;
+@end
+
+@mutation quux-the-pdl-write-takes-the-read-address
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The shared port's address is the read's when the write pulse fires.
+@old
+    assign pdla   = pdl_we ? pdla_write : pdla_read;
+@new
+    assign pdla   = pdl_we ? pdla_read : pdla_write;
+@end
+
+@mutation quux-the-feature-page-is-not-decoded
+@check quux_map_quux
+@file rtl/machine/cadr_xbus_decode.sv
+@note The decode puts the feature page on page 36777, which the display
+@note and the disk already answer, so a read of the page times out.
+@old
+    assign feature_page = page == 14'o36776;
+@new
+    assign feature_page = page == 14'o36777;
+@end
+
+@mutation quux-the-feature-page-is-128-words
+@check quux_map_quux
+@file rtl/machine/quux_feature_page.sv
+@note The word is chosen by seven bits, so word 200 reads word 0.
+@old
+      which <= phys[7:0];
+@new
+      which <= {1'b0, phys[6:0]};
+@end
+
+@mutation quux-the-feature-page-says-five-bits
+@check quux_map_quux
+@file rtl/machine/quux_feature_page.sv
+@note Word 1 says the CADR's five-bit entry.
+@old
+      8'o1:    word = 32'(L1_BITS);
+@new
+      8'o1:    word = 32'(L1_BITS - 1);
+@end
+
+@mutation quux-the-feature-page-says-60-words-a-line
+@check quux_map_quux
+@file rtl/machine/quux_feature_page.sv
+@note Word 12 says muir's default 1920-pixel line, not the bitstream's.
+@old
+      8'o12:   word = {16'd1, 16'(SCREEN_WPL)};
+@new
+      8'o12:   word = {16'd1, 16'(SCREEN_WPL + 20)};
+@end
+
+@mutation quux-a-write-of-the-feature-page-is-not-acknowledged
+@check quux_map_quux
+@file rtl/machine/quux_feature_page.sv
+@note The page answers reads only, so a write waits out the timeout and
+@note sets NXM, where muir's device takes it and drops it.
+@old
+  assign dev_ack = mine;
+@new
+  assign dev_ack = mine && !dev_write;
+@end
+
+@mutation quux-the-feature-page-is-not-on-the-seam
+@check quux_map_quux
+@file rtl/machine/cadr_machine.sv
+@note The page's acknowledgment is left off the seam, so every read of it
+@note times out.
+@old
+    assign dev_ack_joined   = disk_ack || feature_ack || device_ack;
+@new
+    assign dev_ack_joined   = disk_ack || (feature_ack && feature_drives && 1'b0) || device_ack;
+@end
+
+@mutation quux-mono-tv-keeps-the-wrong-mode-bit
+@check quux_tv_quux
+@file rtl/machine/quux_mono_tv.sv
+@note Register 0 keeps bit 3, the CADR board's interrupt enable, where MONO
+@note TV keeps black-on-white alone.
+@old
+      if (store_now && which == 3'd0) bow <= wdata[2];
+@new
+      if (store_now && which == 3'd0) bow <= wdata[3];
+@end
+
+@mutation quux-mono-tv-reads-black-on-white-in-bit-3
+@check quux_tv_quux
+@file rtl/machine/quux_mono_tv.sv
+@note The mode register reads black-on-white back one bit up.
+@old
+  assign rdata = drives ? ((which == 3'd0) ? {29'd0, bow, 2'd0} : 32'd0) : 32'd0;
+@new
+  assign rdata = drives ? ((which == 3'd0) ? {28'd0, bow, 3'd0} : 32'd0) : 32'd0;
+@end
+
+@mutation quux-mono-tv-register-4-is-register-0
+@check quux_tv_quux
+@file rtl/machine/quux_mono_tv.sv
+@note The register is chosen by two bits, so register 4 reads the mode.
+@old
+  assign rdata = drives ? ((which == 3'd0) ? {29'd0, bow, 2'd0} : 32'd0) : 32'd0;
+@new
+  assign rdata = drives ? ((which[1:0] == 2'd0 && which[2] == which[2]) ? {29'd0, bow, 2'd0} : 32'd0) : 32'd0;
+@end
+
+@mutation quux-mono-tv-buffer-is-a-word-short
+@check quux_tv_quux
+@file rtl/machine/quux_mono_tv.sv
+@note The buffer's last word, `17117777`, is not claimed, so its cycle
+@note times out.  A bound with a mutation just inside it.
+@old
+  assign fb_c  = sel && ((phys - BUFFER) < 22'(BUFFER_WORDS));
+@new
+  assign fb_c  = sel && ((phys - BUFFER) < 22'(BUFFER_WORDS - 1));
+@end
+
+@mutation quux-mono-tv-registers-refuse-writes
+@check quux_tv_quux
+@file rtl/machine/quux_mono_tv.sv
+@note The registers acknowledge reads only, so every write of them times out.
+@old
+  assign dev_ack = ctl;
+@new
+  assign dev_ack = ctl && !dev_write;
+@end
+
+@mutation quux-the-cadrs-board-is-fitted-on-quux
+@check quux_tv_quux
+@file rtl/machine/cadr_memory_path.sv
+@note The CADR's first display board is fitted on QUUX beside MONO TV, so it
+@note answers the registers too, reads its own mode and raises its vertical
+@note interrupt.
+@old
+      .fitted     (MACHINE != "quux"),
+@new
+      .fitted     (1'b1),
+@end
+
+@mutation quux-the-decode-answers-one-past-mono-tv
+@check xbus_decode_quux
+@file rtl/machine/cadr_xbus_decode.sv
+@note The decode takes one word past MONO TV's buffer.  A bound with a
+@note mutation just outside it.
+@old
+    assign mono_buffer  = (phys - 22'o17000000) < 22'(MONO_TV_WORDS);
+@new
+    assign mono_buffer  = (phys - 22'o17000000) <= 22'(MONO_TV_WORDS);
+@end
+
+@mutation quux-the-bridge-folds-mono-tv-onto-32k
+@check quux_tv_quux
+@file rtl/plumbing/cadr_xbus_ddr.sv
+@note The bridge addresses MONO TV with the CADR boards' fifteen bits, so
+@note the buffer's top 8K words land on its bottom 8K.
+@old
+    assign display_addr = mono_display_byte_address(phys[15:0]);
+@new
+    assign display_addr = mono_display_byte_address({1'b0, phys[14:0]} ^ {phys[15], 15'd0} ^ {phys[15], 15'd0});
+@end
+
+@mutation quux-mono-tv-is-turned-when-asked
+@check display_out_quux
+@file rtl/plumbing/cadr_display_out.sv
+@note A picture that does not fit the raster on its side is turned when a
+@note quarter turn is asked for.
+@old
+      rot_s1 <= ROTATABLE ? rotate : 2'd0;  rot_s2 <= rot_s1;
+@new
+      rot_s1 <= rotate;  rot_s2 <= rot_s1;
+@end
+
+@mutation quux-mono-tv-fetches-its-first-line-twice
+@check display_out_quux
+@file rtl/plumbing/cadr_display_out.sv
+@note With no top margin the reload asks for the first line where the line
+@note one ahead is the second, so every line shows the one above it.
+@old
+  localparam logic [31:0] MONO_LEAD     = (MY0 == 0) ? 32'(LINE_BYTES) : 32'd0;
+@new
+  localparam logic [31:0] MONO_LEAD     = (MY0 == 0) ? 32'd0 : 32'(LINE_BYTES);
+@end
+
+@mutation quux-mul-drops-m
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note `MUL` leaves the M operand out of the product, which the 32 steps
+@note shift down into the low word.
+@old
+  assign product = 64'(signed'(m)) + signed'({{31{a[31]}}, a}) * signed'({32'd0, q});
+@new
+  assign product = 64'(signed'(m & 32'd0)) + signed'({{31{a[31]}}, a}) * signed'({32'd0, q});
+@end
+
+@mutation quux-mul-takes-a-unsigned
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note The multiplicand is taken unsigned, where the array's ninth slice
+@note sign-extends it.
+@old
+  assign product = 64'(signed'(m)) + signed'({{31{a[31]}}, a}) * signed'({32'd0, q});
+@new
+  assign product = 64'(signed'(m)) + signed'({{31{a[31] & 1'b0}}, a}) * signed'({32'd0, q});
+@end
+
+@mutation quux-mul-takes-m-unsigned
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note M is added zero-extended, where the array sign-extends it.
+@old
+  assign product = 64'(signed'(m)) + signed'({{31{a[31]}}, a}) * signed'({32'd0, q});
+@new
+  assign product = 64'(m) + signed'({{31{a[31]}}, a}) * signed'({32'd0, q});
+@end
+
+@mutation quux-div-first-step-is-an-ordinary-one
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note The first step decides by `Q<0>` as the other 31 do, where
+@note `DIVIDE-FIRST-STEP` always takes the positive branch.
+@old
+  assign sub1 = (dv_k == 6'd0) ? !dv_a[31] : (dv_q[0] ^ dv_a[31]);
+@new
+  assign sub1 = (dv_k == 6'd0) ? (dv_q[0] ^ dv_a[31]) : (dv_q[0] ^ dv_a[31]);
+@end
+
+@mutation quux-div-shifts-the-quotient-bit-uncomplemented
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note The quotient bit is the array's sign, not its complement: the first
+@note step of each tick.
+@old
+  assign q1   = {dv_q[30:0], !f1[31]};
+@new
+  assign q1   = {dv_q[30:0], f1[31]};
+@end
+
+@mutation quux-div-second-step-shifts-the-quotient-bit-uncomplemented
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note The same in the second step of each tick.
+@old
+      dv_q <= {q1[30:0], !f2[31]};
+@new
+      dv_q <= {q1[30:0], f2[31]};
+@end
+
+@mutation quux-div-second-step-decides-as-a-first-step
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note The second step of a tick is never a divide's first: it decides by
+@note `Q<0>` of the step before.
+@old
+  assign sub2 = q1[0] ^ dv_a[31];
+@new
+  assign sub2 = !dv_a[31];
+@end
+
+@mutation quux-div-is-31-steps
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note Two steps short, one tick of two steps.
+@old
+    end else if (dv_k != 6'd32) begin
+@new
+    end else if (dv_k != 6'd30) begin
+@end
+
+@mutation quux-mul-decodes-as-div
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Function 42 is taken for the divide.
+@old
+    assign quux_mul = iralu && ir[8] && (ir[4:3] == 2'd2);
+@new
+    assign quux_mul = iralu && ir[8] && (ir[4:3] == 2'd3);
+@end
+
+@mutation quux-div-looks-at-ir-7
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `DIV` also requires `IR<7>` clear, a bit the 74S139 does not look at.
+@old
+    assign quux_div = iralu && ir[8] && (ir[4:3] == 2'd3);
+@new
+    assign quux_div = iralu && ir[8] && (ir[4:3] == 2'd3) && !ir[7];
+@end
+
+@mutation quux-mul-output-selector-honored
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `MUL` drives the output bus only when `IR<13:12>` selects the ALU.
+@old
+    if (quux_mul) ob = mul_ob;
+@new
+    if (quux_mul && osel == 2'b01) ob = mul_ob;
+@end
+
+@mutation quux-div-leaves-q
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `DIV` does not load `Q`.
+@old
+        if (quux_div) q <= div_q;
+@new
+        if (quux_div && qs1 && qs0) q <= div_q;
+@end
+
+@mutation quux-the-divider-holds-22-ticks
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The hold ends at 22 ticks, so at the boot's 22-tick cycle a `DIV` is
+@note held one generator cycle where muir holds two.  At the one speed the
+@note programs run, any end from 23 to 44 ticks holds the same two cycles,
+@note so this and the next are the bounds just outside what is checked.
+@old
+    assign dividing = div_held && (div_start < 6'd33);
+@new
+    assign dividing = div_held && (div_start < 6'd22);
+@end
+
+@mutation quux-the-divider-holds-45-ticks
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The hold runs to 45 ticks, so at the extra slow 22-tick cycle the
+@note `DIV` waits a master clock more.
+@old
+    assign dividing = div_held && (div_start < 6'd33);
+@new
+    assign dividing = div_held && (div_start < 6'd45);
+@end
+
+@mutation quux-a-nopped-div-holds
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A `DIV` standing nopped still holds the machine.
+@old
+        div_held <= quux_div;
+@new
+        div_held <= quux_div || (ir[44:43] == 2'd0 && ir[8] && ir[4:3] == 2'd3);
+@end
+
+@mutation quux-the-divider-asks-at-the-cycles-end
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The hold is asked of the time at the edge that would end the cycle,
+@note where muir asks it of the cycle's start, so a `DIV` is held one
+@note generator cycle short.
+@old
+    assign dividing = div_held && (div_start < 6'd33);
+@new
+    assign dividing = div_held && (div_t < 6'd33) && (div_start == div_start);
+@end
+
+@mutation quux-the-tick-is-late-by-a-tick
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The first period after a write is one tick longer than muir's: the
+@note count starts at the edge a tick late and does not make up the tick.
+@old
+          tk_pre     <= 7'(TICKS_A_US - 2);
+@new
+          tk_pre     <= 7'(TICKS_A_US - 1);
+@end
+
+@mutation quux-the-tick-flag-is-not-sticky
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The flag is up only in the tick of its rise, where it stays up until
+@note cleared.
+@old
+            tk_sticky <= 1'b1;
+@new
+            tk_sticky <= tk_sticky;
+@end
+
+@mutation quux-a-clear-does-not-clear
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A write with `<1>` set leaves the flag up.
+@old
+    assign tk_clear   = tk_w_ctl && l[1] && tk_w_flag;
+@new
+    assign tk_clear   = tk_w_ctl && l[1] && tk_w_flag && 1'b0;
+@end
+
+@mutation quux-a-period-write-does-not-restart
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A period written while the tick runs takes effect at the next rise
+@note rather than starting a period from now.
+@old
+    assign tk_restart = (tk_w_ctl && l[0] && !tk_w_en) || (tk_w_per && tk_w_en);
+@new
+    assign tk_restart = (tk_w_ctl && l[0] && !tk_w_en) || (tk_w_per && tk_w_en && 1'b0);
+@end
+
+@mutation quux-source-17-swaps-its-bits
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Source 17 reads the enable in `<0>` and the flag in `<1>`.
+@old
+    assign tick_status = {30'd0, tk_enabled_s, tk_flag_s};
+@new
+    assign tick_status = {30'd0, tk_flag_s, tk_enabled_s};
+@end
+
+@mutation quux-source-17-reads-the-flag-live
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Source 17 reads the flag as it stands through the microcycle, not as
+@note it stood when the microcycle started, so a rise mid-cycle is seen a
+@note cycle early.
+@old
+    assign tick_status = {30'd0, tk_enabled_s, tk_flag_s};
+@new
+    assign tick_status = {30'd0, tk_enabled_s, tk_flag || (tk_flag_s && !tk_flag_s)};
+@end
+
+@mutation quux-the-tick-does-not-interrupt
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The flag never reaches the interrupt jump conditions test.
+@old
+    assign tick_irq    = tk_enabled_s && tk_flag_s
+@new
+    assign tick_irq    = tk_enabled_s && tk_flag_s && 1'b0
+@end
+
+@mutation quux-the-tick-interrupts-through-its-own-clear
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The interrupt taken at the edge of a clear is the flag before the
+@note clear, where muir takes the interrupt after the write.
+@old
+                      && !(desttickctl && (!ob[0] || ob[1])) && !desttickper;
+@new
+                      && !(desttickctl && !ob[0]) && !desttickper && (ob[1] || !ob[1]);
+@end
+
+@mutation quux-the-tick-is-not-on-sintr
+@check quux_tick_quux
+@file rtl/machine/cadr_machine.sv
+@note The tick's interrupt does not reach `SINTR`, so jump condition 5
+@note never sees it.
+@old
+  assign sintr_o   = xbus_intr || ub_int || tick_irq;
+@new
+  assign sintr_o   = xbus_intr || ub_int || (tick_irq && 1'b0);
+@end
+
+@mutation quux-the-divider-reads-its-operands-late
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The divider takes its operands at the fiftieth tick, so its steps are
+@note not done by the edge that ends a `DIV`'s microcycle, sixty ticks after
+@note the edge that loaded it at QUUX's one rate.  (At the fortieth they are,
+@note two steps a tick.)
+@old
+    assign div_load = div_t == 6'd7;
+@new
+    assign div_load = div_t == 6'd50;
+@end
+
+@mutation quux-the-divider-reads-its-operands-at-the-edge
+@check quux_muldiv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The divider takes its operands in the tick after the edge, before the
+@note scratchpad latches have followed the new address.
+@old
+    assign div_load = div_t == 6'd7;
+@new
+    assign div_load = div_t == 6'd1;
+@end
+
+@mutation quux-the-tick-counts-a-microsecond-short
+@check quux_tick_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A microsecond is 99 ticks after a rise, so every period after the
+@note first is a tick short a microsecond.
+@old
+            tk_pre <= 7'(TICKS_A_US - 1);
+@new
+            tk_pre <= 7'(TICKS_A_US - 2);
+@end
+
+@mutation the-cadr-dispatch-write-reads-the-old-word
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note On the CADR a `POPJ` in a dispatch write reads the word written, muir's
+@note netlist model's answer to the board's race.  Reading the RAM instead
+@note gives the old word in a microcycle that runs: `popj-0` to `-2` and the
+@note `x-popj` shapes whose read has finished.
+@old
+  assign dram_q = (!QUUX && dispwr) ? a[16:0] : dram_rd;
+@new
+  assign dram_q = dram_rd;
+@end
+
+@mutation quux-dispatch-write-reads-the-new-word
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX defines the old word in a RAM's own write cycle; the CADR's bypass
+@note on QUUX gives the new one.
+@old
+  assign dram_q = (!QUUX && dispwr) ? a[16:0] : dram_rd;
+@new
+  assign dram_q = dispwr ? a[16:0] : dram_rd;
+@end
+
+@mutation the-cadr-level-1-map-reads-the-old-word-after-a-store
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note `MAP(MD)` in the microcycle a level-1 store's write lands reads the
+@note entry stored, on the CADR: `map-level-1-source-after-write`.
+@old
+  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store  : vmap_rd;
+@new
+  assign vmap = vmap_rd;
+@end
+
+@mutation the-cadr-level-2-map-reads-the-old-word-after-a-store
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note `MAP(MD)` and a dispatch on a map bit in the microcycle a level-2
+@note store's write lands read the word stored, on the CADR:
+@note `map-source-after-write` and `map-dispatch-after-write`.
+@old
+  assign vmo  = (!QUUX && wmapd && vma[25]) ? vma[23:0] : vmo_rd;
+@new
+  assign vmo  = vmo_rd;
+@end
+
+@mutation quux-level-2-map-reads-the-new-word-after-a-store
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX reads the old word in the microcycle a map store's write lands.
+@old
+  assign vmo  = (!QUUX && wmapd && vma[25]) ? vma[23:0] : vmo_rd;
+@new
+  assign vmo  = (wmapd && vma[25]) ? vma[23:0] : vmo_rd;
+@end
+
+@mutation quux-level-1-map-reads-the-new-word-after-a-store
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The same for level 1: `map-level-1-source-after-write` on QUUX.
+@old
+  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store  : vmap_rd;
+@new
+  assign vmap = (wmapd && vma[26]) ? l1_store  : vmap_rd;
+@end
+
+@mutation quux-boots-extra-slow
+@check machine_quux
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX has one rate, the CADR's normal, from the boot on; the CADR's
+@note extra slow at reset lengthens QUUX's first microcycles.
+@old
+  localparam logic [1:0] SPEED_AT_RESET = QUUX ? 2'b10 : 2'b00;
+@new
+  localparam logic [1:0] SPEED_AT_RESET = 2'b00;
+@end
+
+@mutation quux-takes-the-speed-bits
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX's mode register's speed bits go nowhere: the programs that write
+@note extra slow and slow run on at QUUX's one rate
+@note (`speed-written-on-speedclk`, `speed-written-before-speedclk`).
+@old
+  assign mode_speed_in = QUUX ? 2'b10 : mode_speed;
+@new
+  assign mode_speed_in = mode_speed;
+@end
+
+@mutation quux-has-no-wait-for-md
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Without the wait a microcycle reading MD with a read in flight runs at
+@note once on the old word.
+@old
+    assign quux_hold = use_md_q && hold_rip;
+@new
+    assign quux_hold = 1'b0;
+@end
+
+@mutation quux-wait-for-md-ends-two-edges-early
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note READ IN PROGRESS as muir has it falls 140 ns after the acknowledgment;
+@note the fabric's register falls two ticks sooner.  Without the tail the
+@note wait ends a master clock edge early wherever that edge falls in those
+@note two ticks.
+@old
+        if (hold_mclk_q) hold_rip <= rd_in_progress || (rip_tail != 2'd0);
+@new
+        if (hold_mclk_q) hold_rip <= rd_in_progress;
+@end
+
+@mutation quux-wait-for-md-asks-a-tick-early
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The question is READ IN PROGRESS as the edge left it, taken a tick
+@note after the edge; taken at the edge it is the question the tick before.
+@old
+        if (hold_mclk_q) hold_rip <= rd_in_progress || (rip_tail != 2'd0);
+@new
+        if (mclk_edge) hold_rip <= rd_in_progress || (rip_tail != 2'd0);
+@end
+
+@mutation quux-hangs-as-the-cadr-does
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX has no hung microcycle: a hang runs the write pulse at the MD from
+@note before the read, where QUUX's wait writes at the word read.
+@old
+  assign hang = !QUUX && use_md && rd_in_progress && !wait_;
+@new
+  assign hang = use_md && rd_in_progress && !wait_;
+@end
+
+@mutation quux-div-of-md-is-not-reloaded-from-the-word-read
+@check quux_divmd_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A `DIV` of MD whose read lands after the divider took its operands
+@note divides the old word without the reload: here it reloads only at the
+@note tick it loads anyway.
+@old
+    assign div_reload = div_md && div_strobed2;
+@new
+    assign div_reload = div_md && div_strobed2 && div_t == 6'd7;
+@end
+
+@mutation quux-div-of-md-takes-the-m-bus
+@check quux_divmd_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The word read is in `div_word` a master clock edge before it is in MD;
+@note taken from the M bus while it is pending, the reload divides the old
+@note word.
+@old
+    assign div_m      = div_md ? (div_have ? div_word : md) : m;
+@new
+    assign div_m      = div_md ? (div_have ? (m | (div_word & 32'd0)) : md) : m;
+@end
+
+@mutation the-divider-takes-a-step-a-tick
+@check muldiv_quux
+@file rtl/machine/quux_muldiv.sv
+@note One step a tick is 33 ticks from the load, which a `DIV` of MD whose
+@note read lands late does not have; the unit check reads the words 16
+@note ticks after the load.
+@old
+      dv_r <= {f2[30:0], q1[31]};
+      dv_q <= {q1[30:0], !f2[31]};
+      dv_k <= dv_k + 6'd2;
+@new
+      dv_r <= {f1[30:0], dv_q[31]} ^ (f2[31:0] & 32'd0);
+      dv_q <= q1;
+      dv_k <= dv_k + 6'd1;
+@end
+
+@mutation mono-tv-answers-all-eight-registers
+@check xbus_decode_quux
+@file rtl/machine/cadr_xbus_decode.sv
+@note MONO TV answers registers 0 and 4 only; 1 to 3 and 5 to 7 time out.
+@old
+    assign mono_control = tv_control && (phys[1:0] == 2'd0);
+@new
+    assign mono_control = tv_control;
+@end
+
+@mutation quux-tick-flag-taken-where-the-wait-began
+@check quux_tickwait_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The flag a waiting microcycle passes on is the flag at the master
+@note clock edge it finally runs from; kept from where the wait began, a
+@note rise while it waits is missed.
+@old
+        if (mclk_edge && !cpu_edge) begin
+          tk_flag_s    <= tk_flag;
+@new
+        if (1'b0) begin
+          tk_flag_s    <= tk_flag;
 @end

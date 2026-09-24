@@ -494,7 +494,8 @@ assert_clause_timing $tick 2 "MD into the writes' address" {*processor/md_reg*} 
     {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
 # grid: 0 ns + 1 tick
 assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" \
-    {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_late_q_reg*}
+    {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_k1_q_reg*
+     *processor/mw_late2_q_reg*}
 # grid: 0 ns + 1 tick
 assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
 # grid: 0 ns + 1 tick

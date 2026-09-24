@@ -247,7 +247,9 @@ if {$prove != 0 && $prove != 1 && $prove != 2} {
 # Everything below asks this rather than `$ddr`.
 set port [expr {($ddr > 0 || $prove > 0 || $hdmi > 0) ? 1 : 0}]
 
-set prom build/boot_prom.hex
+# QUUX boots from its own PROM, version 1000, which `make
+# build/boot_prom.quux.hex` writes out of muir's `data/quux-promh.mcr`.
+set prom [expr {$machine eq "quux" ? "build/boot_prom.quux.hex" : "build/boot_prom.hex"}]
 if {![file exists $prom]} {
     puts "BIT: $prom is missing; run `make $prom` first"
     exit 1
@@ -330,6 +332,8 @@ if {$prove > 0} {
 # care how many there are.
 read_xdc boards/arty-z7-20/cadr_arty.xdc
 read_xdc -ref cadr_machine rtl/plumbing/xilinx7/cadr_machine.xdc
+# QUUX's own clauses, which would reach every path on the CADR.
+if {$machine eq "quux"} { read_xdc -ref cadr_machine rtl/plumbing/xilinx7/quux_machine.xdc }
 # Only when the BSCANE2 it names is in the design. See the switch above.
 if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # And the same rule for the memory port's own deadline: every object
@@ -380,7 +384,8 @@ if {$hdmi > 0} {
     # longer one: out of the pixel domain, through the color board's map inside
     # `cadr_machine`, and back.
     set hdmi_map [get_cells -quiet -hier -filter {NAME =~ *map_idx_reg*}]
-    if {[llength $hdmi_map] == 0} {
+    # QUUX has no color board, so the round trip has nothing at its far end.
+    if {[llength $hdmi_map] == 0 && $machine ne "quux"} {
         puts "BIT: FAILED --- no `map_idx` register was found, so the color"
         puts "BIT: map's round trip through rtl/machine/cadr_tv.sv is timed by"
         puts "BIT: nothing at all: the clock group above makes it a false path"
@@ -620,8 +625,12 @@ assert_multicycle_applied $tick 6
 # gives the same eight ticks the bus's setup does, so they are named as
 # relaxed ELSEWHERE: left out of both halves rather than read as swallowed.
 # grid: 80 ns
-assert_instance_timing $tick 8 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*} \
-    {*memory/tv/ctl_reg* *memory/tv/fb_reg* *memory/tv/which_reg*}
+# QUUX's first display is MONO TV, which keeps no word relaxed at its pins,
+# and the CADR's board is not fitted there, so the clause has nothing to reach.
+if {$machine ne "quux"} {
+    assert_instance_timing $tick 8 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*} \
+        {*memory/tv/ctl_reg* *memory/tv/fb_reg* *memory/tv/which_reg*}
+}
 # grid: 150 ns
 assert_instance_timing $tick 15 *u_machine/memory/busint_regs/* \
     {*wr_buf_reg* *ub_map_reg*}
@@ -659,7 +668,8 @@ assert_clause_timing $tick 2 "MD into the writes' address" {*processor/md_reg*} 
     {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
 # grid: 0 ns + 1 tick
 assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" \
-    {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_late_q_reg*}
+    {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_k1_q_reg*
+     *processor/mw_late2_q_reg*}
 # grid: 0 ns + 1 tick
 assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
 # grid: 0 ns + 1 tick
@@ -670,6 +680,25 @@ assert_clause_timing $tick 6 "the second hop of the every-tick registers" \
     {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
      *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
      *memory/unibus_reg* *memory/ub_addr_reg*}
+
+# QUUX'S TWO CLAUSES, `quux_machine.xdc`, ASKED WHAT THEY REACHED.  The tick's
+# countdown and the divider's steps must be there for the paths into them to
+# be relaxed, and the paths into the divider from the relaxed set must ask for
+# exactly the latches' seven ticks and none for more.
+if {$machine eq "quux"} {
+    set quux_tick_cells [get_cells -quiet -hier -filter {NAME =~ *processor/g_quux_tick.tk_us_reg* && IS_SEQUENTIAL}]
+    if {[llength $quux_tick_cells] == 0} {
+        puts "BIT: FAILED --- QUUX's tick countdown is not in the design, so its clause"
+        puts "BIT: in rtl/plumbing/xilinx7/quux_machine.xdc is on nothing."
+        exit 1
+    }
+    # grid: 60 ns + 1 tick
+    assert_clause_timing $tick 7 "into QUUX's divider" \
+        {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
+         *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg* *processor/q_reg*} \
+        {*processor/g_quux_muldiv.muldiv/dv_*}
+    puts "BIT: QUUX: [llength $quux_tick_cells] tick countdown cells"
+}
 
 opt_design
 place_design

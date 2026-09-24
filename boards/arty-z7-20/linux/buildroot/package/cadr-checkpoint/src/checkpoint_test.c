@@ -541,6 +541,7 @@ int main(int argc, char **argv)
 	//                                             multiply and divide, no tick)
 	//   tick       1 + 4 + 8          = 13       (Tick::new: off, 16,667 us,
 	//                                             no deadline)
+	//   dma_written 1
 	//   l2_map     8 + 8192           = 8200     (2048 entries, QUUX's; a
 	//                                             CADR has 1024)
 	//   boards     4
@@ -548,6 +549,7 @@ int main(int argc, char **argv)
 	//   bus_error..write_buffer  2+2+1+(8+32)*3 = 125
 	//   vmaok      1
 	//   disk       61 + 8             = 69       (no drives: 8 flag bytes)
+	//   block_disk 1                  = 1        (none: the flag alone)
 	//   tv         1+2+2+(8+131072)+4+(8+4096)+2+1+48+1+8+8+1+1 = 135263
 	//                                            (the board's tag, MONO TV's size, the
 	//                                             buffer, the mode, the
@@ -567,7 +569,10 @@ int main(int argc, char **argv)
 	//   ir..lc       8+8+2+1+1+4+2+2+4 = 32
 	//   19 bools                       = 19
 	//   halted_ns + ir_loaded_ns + pulsed + 4 bools = 21
-	//   busint     (1+1+8) + 42*1 + (1+8+1+1+8+1+1+1+1+8+8+1+2+2+8+8+8+1+1+1+8+8) = 140
+	//   busint     (1+1+8) + 42*1 + (1+8+1+1+8+1+1+1+1+8+8+1+2+2+8+8+8+1+1+1+8+8)
+	//              + (1+4+1+8+1+8) = 163  (the cache and QUUX's memory
+	//                                      timing, both absent, and the
+	//                                      four fields beside them)
 	//   mbusy_sync                     = 1
 	//   bus_addr..bus_acked            = 4+4+1+1+1+1+2+1+8+8+1 = 32
 	//   debug_*                        = 1+1+1+1+1+1+8+1+2+8 = 25
@@ -579,10 +584,10 @@ int main(int argc, char **argv)
 	// reader can check one line instead of one number.
 	{
 		const size_t machine_part =
-			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 13 + 8200 + 4 +
-			262152 + 125 + 1 + 69 + 135263 + 1 + 253 + 16;
+			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 13 + 1 + 8200 + 4 +
+			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 253 + 16;
 		const size_t rtl_part =
-			208 + 32 + 19 + 21 + 140 + 1 + 32 + 25 + 26 + 24 + 28;
+			208 + 32 + 19 + 21 + 163 + 1 + 32 + 25 + 26 + 24 + 28;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven
 		// keep the body's length and one does not, and the point of
 		// building them is what the ROUND TRIP does with them, so this

@@ -133,6 +133,10 @@ if {$fault} {
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_de25_fault.sdc]
 } else {
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_de25.sdc]
+    # QUUX's own two clauses, which would reach every path on the CADR.
+    if {$machine eq "quux"} {
+        set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus quux_de25.sdc]
+    }
 }
 
 # **THE BOARD'S MAP OF THE PROCESSOR'S MEMORY, ALWAYS**, and the memory board's
@@ -236,7 +240,9 @@ if {!$fault} {
 # start without them, and the synthesis report's parameter table is where the
 # two paths can be read back.
 if {!$fault} {
-    set_parameter -name PROM_HEX      [file join $root build boot_prom.hex]
+    # QUUX boots from its own PROM, version 1000.
+    set_parameter -name PROM_HEX      [file join $root build \
+        [expr {$machine eq "quux" ? "boot_prom.quux.hex" : "boot_prom.hex"}]]
     set_parameter -name SYNC_PROM_HEX [file join $root build sync_prom.hex]
 }
 

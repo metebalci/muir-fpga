@@ -99,8 +99,33 @@
 
 module cadr_microcycle #(
     // MIT's boot PROM as `golden/src/prom.rs` writes it: 1024 words of
-    // twelve hex digits.  Generated into build/, never committed.
-    parameter string PROM_HEX = "build/boot_prom.hex"
+    // twelve hex digits.  Generated into build/, never committed.  On QUUX
+    // it is QUUX's boot PROM, version 1000, which `cadr_machine.sv` is handed.
+    parameter string PROM_HEX = "build/boot_prom.hex",
+
+    // "cadr" or "quux", from `cadr_machine.sv`, and QUUX's MACHINE-ID, which
+    // is decided there.  **QUUX'S PARTS OF THIS PROCESSOR**, each behind
+    // `QUUX` below and each the CADR's own text on the CADR:
+    //
+    //   - the level-1 map entry is `L1_BITS` wide, six on QUUX: written from
+    //     `VMA<31:27>` with `VMA<24>` as its sixth bit, read in `MAP(MD)<29:24>`
+    //     (the CADR's `<29>` is the 74S240's hard zero), and level 2 is
+    //     `32 << L1_BITS` entries, 2,048.  muir's `Geometry::l1_from_vma`,
+    //     `l1_mask` and `l2_index`, and `Rtl::map_address`.
+    //   - functional sources 16 and 36 are the MACHINE-ID, `IR<30>` being in
+    //     no source decode, and 17 is QUUX's tick, which reads 0 while it is
+    //     off; the CADR drives none of the three and reads all ones.
+    //   - the PDL buffer is `1 << PDL_BITS` words, 16K on QUUX, its pointer
+    //     and index `PDL_BITS` wide, written from `OB` masked, read back whole
+    //     in sources 2 and 3, and wrapping at the buffer's own size.
+    //
+    // What holds each: `build/quux_map.quux.pass` against muir's QUUX and
+    // `build/quux_map.pass` against its CADR, the program being
+    // `golden/src/quux.rs --program map`; `build/machine.quux.pass`, QUUX's
+    // boot PROM clearing all 16K words of the PDL buffer and 64 blocks of
+    // level 2; and the records aimed at each in `mutations/list.txt`.
+    parameter string MACHINE = "cadr",
+    parameter logic [31:0] MACHINE_ID = 32'h5155_0044
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,          // RESET, synchronous, active high
@@ -197,6 +222,11 @@ module cadr_microcycle #(
     input  var logic        n_loadmd,     // -LOADMD, which strobes MD
     input  var logic [31:0] rdata,        // MEM<31:0> into the cpu
     input  var logic        sintr,        // SINTR, the interrupt off the cables
+    // QUUX's tick as `Machine::interrupt` takes it: the flag, while enabled,
+    // ORed into the interrupt that jump conditions 5 and 6 test.
+    // `cadr_machine.sv` ORs it into `SINTR` beside the cables' two; on the
+    // CADR it is a constant zero.  The block that makes it says when.
+    output var logic        tick_irq,
 
     // --- `UB MD LOAD`, `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17: MD's
     // THIRD writer, and the only one that is not the processor's own.  A
@@ -281,6 +311,13 @@ module cadr_microcycle #(
 
   localparam int unsigned IMEM_WORDS = 16384;
   localparam int unsigned PROM_WORDS = 1024;
+
+  // QUUX's widths, and the CADR's: `Geometry::QUUX` and `Geometry::CADR`.
+  localparam bit          QUUX      = MACHINE == "quux";
+  localparam int unsigned L1_BITS   = QUUX ? 6 : 5;
+  localparam int unsigned L2_WORDS  = 32 << L1_BITS;
+  localparam int unsigned PDL_BITS  = QUUX ? 14 : 10;
+  localparam int unsigned PDL_WORDS = 1 << PDL_BITS;
 
   // ------------------------------------------------------------ the clock
 
@@ -367,6 +404,9 @@ module cadr_microcycle #(
   // in four words: "raising step clocks the machine once".  It must be
   // lowered again before the next, which is why CC writes `2` then `0`.
   logic errhalt, stathalt, machrun, stepping;
+  // QUUX's wait for MD, outside the step's bypass: see "QUUX HAS NO HUNG
+  // MICROCYCLE" at `-HANG` below.  A constant zero on the CADR.
+  logic quux_hold;
   assign machrun_o  = machrun;
   assign errhalt_o  = errhalt;
   assign stathalt_o = stathalt;
@@ -375,7 +415,9 @@ module cadr_microcycle #(
   assign errhalt  = errstop && halted;
   assign stathalt = stathenb && statstop;
   assign stepping = sstep && !ssdone;
-  assign machrun  = stepping || (srun && !errhalt && !stathalt && !wait_);
+  logic step_kept;
+  assign step_kept = stepping && quux_hold;
+  assign machrun  = (stepping || (srun && !errhalt && !stathalt && !wait_)) && !quux_hold;
 
   logic cpu_edge;
   assign cpu_edge = mclk_edge && machrun;
@@ -401,14 +443,26 @@ module cadr_microcycle #(
 
   logic [1:0] speed_a;
 
+  // **QUUX HAS ONE RATE AND NO SPEED BITS** (`Geometry::speed_bits`,
+  // "One rate" in muir's `docs/quux.md`): every microcycle is the CADR's
+  // normal one from the boot on, and a write of the mode register's bits 1
+  // and 0 goes nowhere --- here it reaches neither stage of the synchronizer,
+  // and the readout's copy of the register reads them as zero.  The CADR
+  // boots extra slow and runs at what is written.  What holds it: every QUUX
+  // trace, each of whose microcycles is timed from the boot on.
+  localparam logic [1:0] SPEED_AT_RESET = QUUX ? 2'b10 : 2'b00;
+  logic [1:0] mode_speed_in;
+  assign mode_speed_in = QUUX ? 2'b10 : mode_speed;
+
   always_ff @(posedge clk) begin
     if (rst) begin
       tpclk_q    <= 1'b0;
       started    <= 1'b0;
       phase_t    <= 6'd0;
       clock_edge <= 1'b0;
-      speed      <= 2'b00;   // ExtraSlow, as `Rtl::new` comes up
-      speed_a    <= 2'b00;
+      // ExtraSlow, as `Rtl::new` comes up, on the CADR; normal on QUUX.
+      speed      <= SPEED_AT_RESET;
+      speed_a    <= SPEED_AT_RESET;
     end else begin
       tpclk_q    <= tpclk;
       clock_edge <= cpu_edge;
@@ -420,7 +474,7 @@ module cadr_microcycle #(
       end
       if (speedclk) begin
         speed   <= speed_a;
-        speed_a <= mode_speed;
+        speed_a <= mode_speed_in;
       end
     end
   end
@@ -642,6 +696,11 @@ module cadr_microcycle #(
   assign mid_group  = destm && !ir[23] && ir[22];
   assign destlc     = low_group && (ir[21:19] == 3'd1);
   assign destintctl = low_group && (ir[21:19] == 3'd2);
+  // QUUX's tick, functional destinations 3 and 4 (`machine::Tick`); on the
+  // CADR the low group decodes neither, and only M is written.
+  logic desttickctl, desttickper;
+  assign desttickctl = QUUX && low_group && (ir[21:19] == 3'd3);
+  assign desttickper = QUUX && low_group && (ir[21:19] == 3'd4);
   assign destpdltop = mid_group && (ir[21:19] == 3'd0);
   assign destpdl_p  = mid_group && (ir[21:19] == 3'd1);
   assign destpdl_x  = mid_group && (ir[21:19] == 3'd2);
@@ -699,7 +758,7 @@ module cadr_microcycle #(
   logic [7:0]  dmask;
   logic        dmap, daddr0;
   logic [10:0] dadr;
-  logic [16:0] dram_q;
+  logic [16:0] dram_q, dram_rd;
   logic        dr, dp, dn, dfall, dispwr;
   logic [13:0] dpc;
 
@@ -721,10 +780,24 @@ module cadr_microcycle #(
   end
   logic dmem_rdw;
   assign dmem_rdw = dmem_w_q && dadr == dmem_wa_q;
-  assign dram_q   = dmem_rdw ? ~dmem[dadr] : dmem[dadr];
+  assign dram_rd  = dmem_rdw ? ~dmem[dadr] : dmem[dadr];
 `else
-  assign dram_q = dmem[dadr];
+  assign dram_rd = dmem[dadr];
 `endif
+  // **A DISPATCH WRITE READS THE WORD IT WRITES, ON THE CADR**, and the word
+  // from before it on QUUX (`Geometry::old_word_while_written`).  The only
+  // reader in such a microcycle is a `POPJ`'s, through `R` and `DPC`: a
+  // dispatch write does not dispatch.  On the board the 93425A's output is
+  // high impedance while written and the pulse ends at the edge, which muir
+  // takes from its netlist model as the word written, `a & 0o377777` in
+  // `Rtl::read_phase` --- the board's race, settled the netlist's way and
+  // unverified on a CADR.  So the CADR's word is the A bus, the word being
+  // written, whether the write has landed yet or not: early, on time or late
+  // in a hung microcycle, and on the boundary's own tick in one that runs.
+  // QUUX's RAM gives the old word, since the write lands on the edge that
+  // reads it.  What holds it: the `popj-*` and `x-popj-*` programs of
+  // `build/dispatch_write_order.pass` and `build/dispatch_write_order.quux.pass`.
+  assign dram_q = (!QUUX && dispwr) ? a[16:0] : dram_rd;
   assign dr     = dram_q[16];
   assign dp     = dram_q[15];
   assign dn     = dram_q[14];
@@ -821,7 +894,7 @@ module cadr_microcycle #(
 
   logic [31:0] amem [0:1023];
   logic [31:0] mmem [0:31];
-  logic [31:0] pdl  [0:1023];
+  logic [31:0] pdl  [0:PDL_WORDS-1];
   logic [20:0] spcm [0:31];
 
   logic [31:0] amem_q, mmem_q, pdl_q;
@@ -863,11 +936,48 @@ module cadr_microcycle #(
   // page PDLCTL: `PDLP` is `(CLK AND IR30) OR (-CLK AND -PWIDX)` off the
   // 74S51 at 4D07, so the PDL is addressed by IR<30> in the read phase and by
   // the pending write's own `PWIDX` in the write phase.
-  logic [9:0] pdl_ptr, pdl_idx;
-  logic [9:0] pdla_read, pdla_write;
+  logic [PDL_BITS-1:0] pdl_ptr, pdl_idx;
+  logic [PDL_BITS-1:0] pdla_read, pdla_write;
   logic       pwidx, pdlwrited, pdlwrite, pdlcnt;
   assign pdla_read  = ir[30] ? pdl_ptr : pdl_idx;
   assign pdla_write = pwidx  ? pdl_idx : pdl_ptr;
+
+  // **THE PDL BUFFER, IN A PROCESS OF ITS OWN.**  On the CADR it is the
+  // latch and the write pulse exactly as the other scratchpads have them.
+  //
+  // **ON QUUX IT IS 16K WORDS, SIXTEEN BLOCK RAMS, AND ONE PORT OF THEM.**
+  // The readout below takes the second port, so the machine's read and its
+  // write share one address, which they can: the latch follows while TPCLK
+  // is high and the write pulse fires with it low, and if they ever wanted
+  // the port in the same tick the write would take it, which the trace would
+  // show.  And the block RAM is read every tick, the latch being a register
+  // of its own after it that takes the word while TPCLK was high a tick
+  // earlier, the RAM's own tick: a RAM whose output held while TPCLK was low
+  // was built by the tool out of a select it made from TPCLK outside the
+  // machine, where no constraint of the machine's reaches, and every path
+  // through the M bus was then timed from it at one tick.  The latch closes
+  // a tick later than the others, still six ticks before the write pulse.
+  if (QUUX) begin : g_quux_pdl
+    logic                pdl_we;
+    logic [PDL_BITS-1:0] pdla;
+    logic [31:0]         pdl_rd;
+    assign pdl_we = wp && pdlwrited;
+    assign pdla   = pdl_we ? pdla_write : pdla_read;
+    always_ff @(posedge clk) begin
+      if (pdl_we) pdl[pdla] <= l;
+      pdl_rd <= pdl[pdla];
+    end
+    always_ff @(posedge clk) begin
+      if (tpclk_q) pdl_q <= pdl_rd;
+    end
+  end else begin : g_cadr_pdl
+    always_ff @(posedge clk) begin
+      if (tpclk) pdl_q <= pdl[pdla_read];
+      if (wp) begin
+        if (pdlwrited) pdl[pdla_write]  <= l;
+      end
+    end
+  end
   assign pdlwrite   = destpdltop || destpdl_x || destpdl_p;
   assign pdlcnt     = (!nop && srcpdlpop) || destpdl_p;
 
@@ -951,16 +1061,18 @@ module cadr_microcycle #(
   //     if it has landed, the one before it if not.  The hang parks the
   //     generator after the pulse (`cadr_phase_gen.sv`, `park_at`), so the
   //     pulse's end is the park's first tick and it fires once.
-  //   - **A read in the microcycle that writes the same memory gets the OLD
-  //     word.**  On the CADR which word the edge sees is a race, the 93425A
-  //     floating while written, and QUUX defines it as the old word; muir's
-  //     `rtl` has it on the CADR as well, reading in `Rtl::read_phase` and
-  //     writing in `Rtl::write_phase` after it.  Here the write is on the
+  //   - **A read in the microcycle that writes the same memory gets the
+  //     OLD word on QUUX and the NEW word on the CADR.**  On the CADR which
+  //     word the edge sees is a race, the 93425A floating while written, and
+  //     muir's engines take its netlist model's answer, the word written;
+  //     QUUX defines it as the old word.  Here the write is on the
   //     boundary's own tick, so everything registered at that edge --- NPC
   //     off a dispatch word, OB off `MAP(MD)` or off a dispatch on a map bit
-  //     --- is built from the word the RAM held before it.  This is why the
-  //     pulse is taken at its end: at its leading edge the new word was in
-  //     the RAM three ticks before the edge that read it.
+  //     --- is built from the word the RAM held before it, which is QUUX's
+  //     answer; the CADR's passes the word being written around the RAM
+  //     (`dram_q`, `vmap`, `vmo`).  The pulse is taken at its end so that
+  //     QUUX's answer is the RAM's own: at its leading edge the new word was
+  //     in the RAM three ticks before the edge that read it.
   //   - **`-WAIT` fires no write pulse.**  `TPWP` is `NOR(latch, -MACHRUNA)`
   //     at CLOCK2 1C10, and `-WAIT` is a term of MACHRUN, so a held
   //     generator cycle writes nothing and a pending write lands once, in
@@ -989,13 +1101,11 @@ module cadr_microcycle #(
     if (tpclk) begin
       amem_q <= amem[aadr];
       mmem_q <= mmem[madr];
-      pdl_q  <= pdl[pdla_read];
       spc_q  <= spcm[spcptr];
     end
     if (wp) begin
       if (destd)     amem[wadr]       <= l;
       if (destmd)    mmem[wadr[4:0]]  <= l;
-      if (pdlwrited) pdl[pdla_write]  <= l;
       // "at the pointer the edge has already moved to": the 82S21s are
       // addressed by SPCPTR<4:0> with no offset.
       if (spushd)    spcm[spcptr]     <= spcw;
@@ -1008,7 +1118,7 @@ module cadr_microcycle #(
     // "WHERE A HUNG CYCLE'S MAP AND DISPATCH WRITE LANDS" below.
     if (mw) begin
       if (wmapd) begin
-        if (vma[26]) l1_map[adr0] <= vma[31:27];
+        if (vma[26]) l1_map[adr0] <= l1_store;
         if (vma[25]) l2_map[adr1_w] <= vma[23:0];
       end
       if (dispwr) dmem[dadr] <= a[16:0];
@@ -1031,6 +1141,10 @@ module cadr_microcycle #(
   assign srcmd     = group_b && (ir[28:26] == 3'd2);
   assign srclc     = group_b && (ir[28:26] == 3'd3);
 
+  // QUUX's tick, as source 17 reads it: `<1>` the enable and `<0>` the
+  // flag, `machine::Tick::status`.  The tick is built below, at page FLAG.
+  logic [31:0] tick_status;
+
   logic [31:0] mf;
   always_comb begin
     if (srclc) begin
@@ -1042,9 +1156,9 @@ module cadr_microcycle #(
     end else if (srcdc) begin
       mf = {22'd0, dc};
     end else if (srcpdlptr) begin
-      mf = {22'd0, pdl_ptr};
+      mf = 32'(pdl_ptr);
     end else if (srcpdlidx) begin
-      mf = {22'd0, pdl_idx};
+      mf = 32'(pdl_idx);
     end else if (srcq) begin
       mf = q;
     end else if (srcmd) begin
@@ -1053,6 +1167,12 @@ module cadr_microcycle #(
       mf = vma;
     end else if (srcmap) begin
       mf = mf_map;
+    end else if (QUUX && group_b && ir[28:26] == 3'd6) begin
+      // QUUX's MACHINE-ID, sources 16 and 36 (`Rtl::read_phase`).
+      mf = MACHINE_ID;
+    end else if (QUUX && group_b && ir[28:26] == 3'd7) begin
+      // QUUX's tick, source 17: `<1>` the enable and `<0>` the flag.
+      mf = tick_status;
     end else begin
       // "Functional sources 0o15, 0o16 and 0o17: the 74S138 that decodes
       // IR<28:26> ... has those three outputs unconnected, so nothing on page
@@ -1191,6 +1311,54 @@ module cadr_microcycle #(
   // exactly A = B."
   assign aeqm = &alu_f[31:0];
 
+  // -------------------------------------------- QUUX's multiply and divide
+  //
+  // **ALU FUNCTIONS 42 AND 43 ARE `MUL` AND `DIV` ON QUUX** (revision 3),
+  // `muldiv::decode`: an ALU-class instruction, not nopped, with `IR<8>` set
+  // and `IR<4:3>` 2 or 3, `IR<7:5>` not looked at.  On the CADR the 74S139 at
+  // SOURCE 3D04 has those outputs unconnected and 42 and 43 are the 74S181's
+  // functions their bits select, which is what the ALU above makes of them
+  // on either machine.  Both drive the output bus and load `Q` whatever
+  // `IR<13:12>` and `IR<1:0>` say (below, at `ob` and at page Q), and `DIV`
+  // holds `-WAIT` for 33 ticks (`dividing`, at VCTL1).  `quux_muldiv.sv` is
+  // the arithmetic and says what holds it.
+  logic        quux_mul, quux_div;
+  logic [31:0] mul_ob, mul_q, div_ob, div_q;
+  // The divider takes its operands seven ticks after every edge that loads
+  // `IR`, the scratchpad latches' seven, and steps from there; `div_t` is
+  // at the divider's hold below.
+  logic        div_load;
+  // And again from the word a read brings, where the `DIV`'s M source is
+  // `MD` and the word comes after that: see "QUUX'S DIVIDER IS BUSY".
+  logic        div_reload;
+  logic [31:0] div_m;
+  if (QUUX) begin : g_quux_muldiv
+    assign quux_mul = iralu && ir[8] && (ir[4:3] == 2'd2);
+    assign quux_div = iralu && ir[8] && (ir[4:3] == 2'd3);
+    quux_muldiv muldiv (
+        .clk   (clk),
+        .rst   (rst),
+        .load  (div_load || div_reload),
+        .m     (div_m),
+        .a     (a),
+        .q     (q),
+        .mul_ob(mul_ob),
+        .mul_q (mul_q),
+        .div_ob(div_ob),
+        .div_q (div_q)
+    );
+  end else begin : g_cadr_no_muldiv
+    // The load is made at the divider's hold, a constant zero here.
+    logic unused_div_load;
+    assign unused_div_load = div_load ^ div_reload ^ (^div_m);
+    assign quux_mul = 1'b0;
+    assign quux_div = 1'b0;
+    assign mul_ob   = 32'd0;
+    assign mul_q    = 32'd0;
+    assign div_ob   = 32'd0;
+    assign div_q    = 32'd0;
+  end
+
   // page MO, and the output select on page OB.
   logic [31:0] mo;
   logic [1:0]  osel;
@@ -1205,6 +1373,9 @@ module cadr_microcycle #(
       // `(ALU << 1)` with `Q<31>` shifted in at the bottom.
       default: ob = {alu_f[30:0], q[31]};
     endcase
+    // QUUX's `MUL` and `DIV` drive the output bus whatever `IR<13:12>` says.
+    if (quux_mul) ob = mul_ob;
+    if (quux_div) ob = div_ob;
   end
 
   // page FLAG: the jump conditions, off the 74S151 at 3E01.
@@ -1251,14 +1422,14 @@ module cadr_microcycle #(
   // `MAPI` is `VMA` while `MEMSTART` is up and `MD` otherwise, off the
   // 74S258s at VMAS 1C20 and its fellows, whose select is -MEMSTART.
 
-  logic [4:0]  l1_map [0:2047];
-  logic [23:0] l2_map [0:1023];
+  logic [L1_BITS-1:0] l1_map [0:2047];
+  logic [23:0]        l2_map [0:L2_WORDS-1];
 
   logic [15:0] mapi;
   logic [10:0] adr0;
-  logic [9:0]  adr1, adr1_w;
-  logic [4:0]  vmap;
-  logic [23:0] vmo;
+  logic [L1_BITS+4:0] adr1, adr1_w;
+  logic [L1_BITS-1:0] vmap, vmap_rd;
+  logic [23:0] vmo, vmo_rd;
   assign mapi = memstart ? vma[23:8] : md[23:8];
   assign adr0 = mapi[15:5];
 
@@ -1277,14 +1448,24 @@ module cadr_microcycle #(
   // stores and MIT's boot PROM writes both at once only while level 1 is
   // still all zeros, where the two addresses agree, so no reference program
   // tells them apart; `build/sstep.pass` does, through the debug IR.
-  assign adr1_w = vma[26] ? {5'd0, mapi[4:0]} : adr1;
+  assign adr1_w = vma[26] ? {L1_BITS'(0), mapi[4:0]} : adr1;
+
+  // The entry a level-1 store writes: `VMA<31:27>`, "VMA<26>=1 writes the
+  // level 1 map from VMA<31-27>" in `mit/cadr/ir.bits`, and on QUUX
+  // `VMA<24>` above them, `Geometry::l1_from_vma`.
+  logic [L1_BITS-1:0] l1_store;
+  if (QUUX) begin : g_quux_l1_store
+    assign l1_store = {vma[24], vma[31:27]};
+  end else begin : g_cadr_l1_store
+    assign l1_store = vma[31:27];
+  end
 `ifdef CADR_RDW_POISON
   // A check's variant: see "THE READ-DURING-WRITE WINDOW" at the end of
   // this module.  The two write enables are the ones the write phase below
   // uses, restated here because the read is here.
   logic        l1_w_q, l2_w_q;
   logic [10:0] l1_wa_q;
-  logic [9:0]  l2_wa_q;
+  logic [L1_BITS+4:0] l2_wa_q;
   logic        l1_rdw, l2_rdw;
   always_ff @(posedge clk) begin
     l1_w_q  <= mw && wmapd && vma[26];
@@ -1301,19 +1482,32 @@ module cadr_microcycle #(
   // registers what the map gave; "poisoned reads on a boundary" counts those
   // ticks, and a reference program passing says none of them reached a
   // register --- no instruction at such a boundary read the map.  One that
-  // does gets the old word by muir's rule (`wp`'s note), which
-  // `build/dispatch_write_order.pass` holds and this variant would call
-  // poison.
+  // does gets the word written on the CADR, passed around the RAM, and the
+  // old word on QUUX (`wp`'s note), which the two `dispatch_write_order`
+  // checks hold and this variant would call poison.
   assign l1_rdw = (mw && wmapd && vma[26]) || (l1_w_q && adr0 == l1_wa_q);
   assign l2_rdw = l2_w_q && adr1 == l2_wa_q;
-  assign vmap = l1_rdw ? ~l1_map[adr0] : l1_map[adr0];
-  assign adr1 = {vmap, mapi[4:0]};
-  assign vmo  = l2_rdw ? ~l2_map[adr1] : l2_map[adr1];
+  assign vmap_rd = l1_rdw ? ~l1_map[adr0] : l1_map[adr0];
+  assign adr1    = {vmap_rd, mapi[4:0]};
+  assign vmo_rd  = l2_rdw ? ~l2_map[adr1] : l2_map[adr1];
 `else
-  assign vmap = l1_map[adr0];
-  assign adr1 = {vmap, mapi[4:0]};
-  assign vmo  = l2_map[adr1];
+  assign vmap_rd = l1_map[adr0];
+  assign adr1    = {vmap_rd, mapi[4:0]};
+  assign vmo_rd  = l2_map[adr1];
 `endif
+
+  // **IN THE MICROCYCLE A MAP STORE'S WRITE LANDS, THE CADR READS THE WORD
+  // WRITTEN**, and QUUX the word from before (`Geometry::old_word_while_
+  // written`).  `WMAPD` is up for exactly that microcycle, and the map is
+  // then addressed by `MAPI`, which is where the write goes, so a level
+  // being written reads its store: level 1 `VMA<31:27>` (`l1_store`), level 2
+  // `VMA<23:0>`.  muir's `Rtl::read_phase` does the same from its netlist
+  // model's answer to the board's race, and addresses level 2 through the
+  // level-1 word the RAM still holds, as `adr1` here does.  What reads it:
+  // `MAP(MD)` and a dispatch on a map bit (`map-source-after-write` and
+  // `map-dispatch-after-write` in `build/dispatch_write_order.pass`).
+  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store  : vmap_rd;
+  assign vmo  = (!QUUX && wmapd && vma[25]) ? vma[23:0] : vmo_rd;
 
   // page VMEMDR 1D14: a 74S373 transparent while MEMSTART, so on such a cycle
   // it is already following the word the map is putting out.  -PFR and -PFW
@@ -1339,7 +1533,12 @@ module cadr_microcycle #(
   // hard zero on its output.  A one there would be right for a '241, which is
   // what this is easy to mistake it for."
   logic [31:0] mf_map;
+  if (QUUX) begin : g_quux_mf_map
+    // QUUX's sixth bit is `MAP(MD)<29>`, where the CADR's 74S240 drives zero.
+    assign mf_map = {!pfw, !pfr, vmap, vmo};
+  end else begin : g_cadr_mf_map
   assign mf_map = {!pfw, !pfr, 1'b0, vmap, vmo};
+  end
 
   // page MD 2A20-2B14, and the address the cables carry.
   //
@@ -1591,7 +1790,7 @@ module cadr_microcycle #(
   // the A latch, the maps it has not written yet), and nothing samples the
   // three memories between L-1 and the boundary but the boundary itself
   // (the readout aside, which has a clause of its own).  So the same word
-  // can go to the same address two ticks early or a tick late, and which is
+  // can go to the same address two ticks early or a tick or two late, and which is
   // chosen by where MD last moved and whether the read has been
   // acknowledged:
   //
@@ -1601,22 +1800,31 @@ module cadr_microcycle #(
   //     did not move at the end of L-2.  The address in L-1 is the address
   //     in K, and the new word is in the memory three edges before the
   //     earliest boundary, the one a hang ending at K gives.
-  //   - **ON TIME, at the end of K**, when MD did not move at the end of L.
+  //   - **LATE, at the end of K+1**, when MD did not move at the end of K.
   //     Not early means the read was acknowledged no sooner than L-1, or MD
   //     moved at the end of L-2 with it, so READ IN PROGRESS falls
-  //     `RD_FINISH_T` or more after L-2 and no boundary is near; and MD
-  //     moved at the end of L-1 at the latest.
-  //   - **LATE, at the end of K+1**, when MD moved at the end of L.  What
-  //     moved it was this read's own strobe --- a foreign master's word is
-  //     kept out of the cycle's last two ticks (`ub_md_take`), and a held
-  //     word is committed at a boundary or on a hang's first tick --- and
-  //     nothing moves it again at the end of K: the strobe has no second, and
-  //     a foreign master waits for MBUSY, which falls `MFINISHD_T` after the
-  //     acknowledgment, after K.  So the address in K+1 is the address in K,
-  //     and the boundary is `RD_FINISH_T` or more past the strobe.
+  //     `RD_FINISH_T` or more after L-2 and no boundary is near.  MD last
+  //     moved at the end of L at the latest --- by this read's own strobe; a
+  //     foreign master's word is kept out of the cycle's last two ticks
+  //     (`ub_md_take`), and a held word is committed at a boundary or on a
+  //     hang's first tick --- so the address in K+1 is the address MD left
+  //     at the pulse's end, two ticks or more on.
+  //   - **TWO LATE, at the end of K+2**, when MD moved at the end of K: the
+  //     strobe fell on the pulse's end, and a change on an edge counts as
+  //     before it, so the write takes the word read (muir's `after_memack`
+  //     at the pulse's end, before `write_phase`).  Nothing moves MD again:
+  //     the strobe has no second, and a foreign master waits for MBUSY,
+  //     which falls `MFINISHD_T` after the acknowledgment.  The boundary is
+  //     `RD_FINISH_T` or more past the strobe.
+  //
+  //     The late write was ON TIME, at the end of K, when MD had not moved
+  //     at the end of L, and so took MD as it stood before a strobe on that
+  //     edge: five of muir's 240 `x-popj` shapes, each a read acknowledged
+  //     exactly at a hung cycle's pulse end, wrote the dispatch word at the
+  //     MD from before the read where muir writes it at the word read.
   //
   // In a cycle that is not held the pulse ends on the boundary's own tick,
-  // `mw` is `wp` there, and the boundary reads the old word.  MD did not
+  // `mw` is `wp` there, and the RAM gives the boundary the old word.  MD did not
   // move at the end of L: with -HANG down a strobe waits in `md_held`, and a
   // foreign master's word is kept out of the cycle's last two ticks.
   //
@@ -1640,8 +1848,8 @@ module cadr_microcycle #(
   //
   // WHAT IS NOT THE SAME TICK AS `wp`, AND WHY NOTHING SEES IT.  Early, the
   // memories hold the new word through L and K; late, the old one through
-  // K+1.  L is inside the cycle, K is not a boundary --- the ring is parked
-  // --- and K+1 is not one after a strobe.  The registers loaded every tick
+  // K+1 or K+2.  L is inside the cycle, K is not a boundary --- the ring is
+  // parked --- and neither K+1 nor K+2 is one after a strobe.  The registers loaded every tick
   // read no memory here but the map, and only while MEMSTART is up, when the
   // map is addressed by VMA; and a map write under MEMSTART writes nothing:
   // MEMSTART and WMAPD come from one instruction only through its
@@ -1654,7 +1862,7 @@ module cadr_microcycle #(
   // the boundary or SPEEDCLK, which is well before L-1), so the two are the
   // same value.
   logic md_we, md_we_q, rd_holds;
-  logic mw, mw_early, mw_early_q, mw_early_q2, wp_parked, mw_now, mw_late_q;
+  logic mw, mw_early, mw_early_q, mw_early_q2, wp_parked, mw_k1_q, mw_late1, mw_late2_q;
 
   // MD's clock enable, as the MD register's own process below takes it: MD
   // loads at the end of every tick this is up.
@@ -1669,23 +1877,26 @@ module cadr_microcycle #(
   assign rd_holds = rdfinish_t >= 6'd2;
 
   assign mw_early  = gen_penult && hang && machrun && rd_holds && !md_we_q;
-  // K of a parked cycle whose write did not go early.  In K `md_we_q` is
-  // MD's move at the end of L.
+  // K of a parked cycle whose write did not go early.
   assign wp_parked = wp && !tpclk && !mw_early_q2;
-  assign mw_now    = wp_parked && !md_we_q;
-  assign mw        = (wp && tpclk) || mw_early || mw_now || mw_late_q;
+  // K+1 of a parked cycle whose write did not go early.  In K+1 `md_we_q`
+  // is MD's move at the end of K.
+  assign mw_late1  = mw_k1_q && !md_we_q;
+  assign mw        = (wp && tpclk) || mw_early || mw_late1 || mw_late2_q;
 
   always_ff @(posedge clk) begin
     if (rst) begin
       md_we_q     <= 1'b0;
       mw_early_q  <= 1'b0;
       mw_early_q2 <= 1'b0;
-      mw_late_q   <= 1'b0;
+      mw_k1_q     <= 1'b0;
+      mw_late2_q  <= 1'b0;
     end else begin
       md_we_q     <= md_we;
       mw_early_q  <= mw_early;
       mw_early_q2 <= mw_early_q;
-      mw_late_q   <= wp_parked && md_we_q;
+      mw_k1_q     <= wp_parked;
+      mw_late2_q  <= mw_k1_q && md_we_q;
     end
   end
 
@@ -1696,8 +1907,8 @@ module cadr_microcycle #(
   // boundary's registers take (zero, the boundary's own tick, or at least
   // three).  Either a tick short fails the run.  The counts say which
   // placements a run reached --- an early write whose hang ends on the edge
-  // after the pulse, three edges on, and a late write after MD moved at the
-  // end of L and of L-1 --- and
+  // after the pulse, three edges on, a late write after MD moved at the end
+  // of L, and one two late after it moved at the end of K --- and
   // `tb/cadr_dispatch_write_order_tb.cpp` fails unless its programs reached
   // all three, since a bound nothing came near was not measured.
   longint signed gm_t = 0, gm_md = -100, gm_mw = -100;
@@ -1711,7 +1922,7 @@ module cadr_microcycle #(
   // A write that writes something: `mw` is up in every microcycle, and only
   // an enabled level or a dispatch write puts an address on a write port.
   assign gm_wr = mw && ((wmapd && (vma[26] || vma[25])) || dispwr);
-  longint unsigned gm_writes = 0, gm_early = 0, gm_late_l = 0, gm_late_lm1 = 0;
+  longint unsigned gm_writes = 0, gm_early = 0, gm_late_l = 0, gm_late_k = 0;
   longint unsigned gm_early_b3 = 0;
   longint signed gm_min_md = 1000, gm_min_b = 1000;
   always_ff @(posedge clk) begin
@@ -1730,9 +1941,9 @@ module cadr_microcycle #(
         if (mw_early && md_we)
           $fatal(1, "gap monitor: MD moves at the end of an early write's own tick");
         // The MD bound, two ticks, met by a late write after MD moved at the
-        // end of L and by one on time after it moved at the end of L-1.
-        if (mw_late_q && gm_t - gm_md_now == 2) gm_late_l <= gm_late_l + 1;
-        if (mw_now && gm_t - gm_md_now == 2) gm_late_lm1 <= gm_late_lm1 + 1;
+        // end of L and by one two late after it moved at the end of K.
+        if (mw_late1 && gm_t - gm_md_now == 2) gm_late_l <= gm_late_l + 1;
+        if (mw_late2_q && gm_t - gm_md_now == 2) gm_late_k <= gm_late_k + 1;
       end
       if (mclk_edge && gm_t != gm_mw) begin
         if (gm_t - gm_mw < gm_min_b) gm_min_b <= gm_t - gm_mw;
@@ -1777,7 +1988,99 @@ module cadr_microcycle #(
   logic destmem_q, use_md_q, ifetch_q;
   assign wait_ = (destmem_q && mbusy_sync)
               || (use_md_q && mbusy && n_memgrant)
-              || (ifetch_q && mbusy_sync);
+              || (ifetch_q && mbusy_sync)
+              || dividing;
+
+  // **QUUX'S DIVIDER IS BUSY**, a `-WAIT` term of QUUX's own (`Rtl::dividing`):
+  // a `DIV` stands in `IR`, not nopped, and `muldiv::DIV_NS`, 330 ns, 33
+  // ticks, have not passed since the edge that loaded it.  The master clock
+  // runs on, so the bus interface carries on; a single step is not held, as
+  // `-WAIT` holds none; and the decode is held a tick, as the other three
+  // terms' IR-derived halves are.  On the CADR the term is a constant zero.
+  //
+  // **muir ASKS AT THE START OF A GENERATOR CYCLE AND THIS AT ITS END.**
+  // `Rtl::stall` is taken before a microcycle's read phase, at the edge that
+  // loaded `IR` and then at each master clock it holds, and the microcycle
+  // runs a whole generator cycle after the last; here -WAIT is a term of
+  // `MACHRUN`, read at the edge that would end the cycle.  So the question
+  // asked at an edge is muir's question at the edge BEFORE it: `div_start`
+  // is the ticks from the loading edge to the start of the generator cycle
+  // now ending, zero at the loading edge and the count at each held master
+  // clock.  Two held cycles at the extra slow speed and three at the normal
+  // and the fast, as muir measures.
+  logic       dividing;
+  if (QUUX) begin : g_quux_divider_hold
+    logic       div_held;
+    logic [5:0] div_t, div_start;
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        div_held  <= 1'b0;
+        div_t     <= 6'd63;
+        div_start <= 6'd63;
+      end else begin
+        div_held <= quux_div;
+        if (cpu_edge)            div_t <= 6'd1;
+        else if (div_t != 6'd63) div_t <= div_t + 6'd1;
+        if (cpu_edge)            div_start <= 6'd0;
+        else if (mclk_edge)      div_start <= div_t;
+      end
+    end
+    assign dividing = div_held && (div_start < 6'd33);
+    assign div_load = div_t == 6'd7;
+
+    // **A `DIV` OF `MD` DIVIDES THE WORD ITS READ BRINGS.**  QUUX has no hung
+    // microcycle: a `DIV` whose M source is `MD`, with a read in flight,
+    // waits whole microcycles until READ IN PROGRESS falls and runs once
+    // (`quux_hold`), so muir's last read phase gives it the word read.  The
+    // word is in `md_held` from the strobe, a master clock edge before it is
+    // in `MD`, and the divider takes it from there: its M operand is `MD`
+    // as it will stand, and it loads again two ticks after a word is
+    // strobed.  So the divide runs from the strobe, at least 290 ns before
+    // the microcycle ends (`quux_muldiv.sv`).  Every other M source is the M bus,
+    // as it stands from the latches' close.  `build/quux_divmd.quux.pass`
+    // holds it.
+    //
+    // The strobed word is `div_word`, taken the tick after the strobe from
+    // where the strobe left it --- `md_held`, or `MD` itself when the strobe
+    // fell on a master clock edge --- and the divider loads it the tick after
+    // that.  Both are in the relaxed set, whose paths into the divider are
+    // given seven ticks, so the copy is a register every tick reads and the
+    // constraint files keep it out of that set with `div_md`, `div_strobed`,
+    // `div_strobed2` and `div_have`.  It is not taken off the bus: `rdata` is
+    // `MEM<31:0>`, which the processor's own output bus drives as well, and
+    // the whole datapath is behind it.  `div_have` says a word was strobed
+    // in this microcycle, and the edge that ends it lets it go.  A reload
+    // before the latches close, seven ticks into the microcycle, is
+    // overwritten by the load there.
+    logic        div_md, div_strobed, div_strobed2, div_have;
+    logic [31:0] div_word;
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        div_md       <= 1'b0;
+        div_strobed  <= 1'b0;
+        div_strobed2 <= 1'b0;
+        div_have     <= 1'b0;
+        div_word     <= 32'd0;
+      end else begin
+        div_md       <= quux_div && srcmd;
+        div_strobed  <= loadmd_edge;
+        div_strobed2 <= div_strobed;
+        if (div_strobed) begin
+          div_word <= md_pending ? md_held : md;
+          div_have <= 1'b1;
+        end else if (cpu_edge) begin
+          div_have <= 1'b0;
+        end
+      end
+    end
+    assign div_m      = div_md ? (div_have ? div_word : md) : m;
+    assign div_reload = div_md && div_strobed2;
+  end else begin : g_cadr_no_divider_hold
+    assign dividing   = 1'b0;
+    assign div_load   = 1'b0;
+    assign div_reload = 1'b0;
+    assign div_m      = m;
+  end
   // A WAIT comes first, and this is not a tidiness: parking the generator
   // stops the master clock, and the master clock is what MBUSY.SYNC follows
   // MEMRQ on --- so a park taken while -WAIT is up would hold the cpu clock
@@ -1785,7 +2088,30 @@ module cadr_microcycle #(
   // `Hang` for the same reason and is the reference here.  The board's own
   // answer is the `-CLK3G` term on the 74S10 at 3F17, which gates -HANG to
   // part of the cycle; muir leaves that term out and so does this.
-  assign hang = use_md && rd_in_progress && !wait_;
+  assign hang = !QUUX && use_md && rd_in_progress && !wait_;
+
+  // **QUUX HAS NO HUNG MICROCYCLE** (`Geometry::hangs`, `Stall::Hold` in
+  // muir's `Rtl::stall`).  A microcycle that reads MD while READ IN PROGRESS
+  // is up does not run its read phase and write pulse and then park the
+  // generator: it waits as for -WAIT, whole generator cycles with the master
+  // clock running and no write pulse, and runs once, whole, when the word is
+  // in MD.  Unlike -WAIT a single step does not pass it, so the term is
+  // outside the step's half of MACHRUN, and a step asked for while it stands
+  // is kept until it lets go (`step_kept` at OLORD1 below).  Its writes then
+  // take their addresses from the word read.
+  //
+  // **muir ASKS AT THE START OF A GENERATOR CYCLE AND THIS AT ITS END**, as
+  // for the divider's hold: `hold_rip` is READ IN PROGRESS as muir has it at
+  // the master clock edge that began the generator cycle now ending, taken
+  // a tick after that edge (`hold_mclk_q`) from the registers the edge
+  // left.  muir's READ IN PROGRESS falls at the acknowledgment plus 140 ns,
+  // and a fall on an edge counts as before it; this fabric's register falls
+  // two edges sooner,
+  // `RD_FINISH_T` being counted to the hang's boundary (see there), so
+  // `rip_tail` carries it those two ticks.  What holds it:
+  // `build/dispatch_write_order.quux.pass`, muir's `on_quux_*` programs,
+  // whose microcycles wait for the word read, and `build/machine.quux.pass`.
+  // The hold itself is built below the two countdowns it reads.
 
   // "Cleared by MEMACK delayed by about 150 ns" --- `-RDFINISH` is `-MFINISH`
   // through the TD50 at VCTL1 1D23 and then the TD250 at 1D22, which is 140 ns
@@ -1844,6 +2170,28 @@ module cadr_microcycle #(
   assign memack_edge      = !n_memack && n_memack_q;
   assign mfinish_clearing = (mfinish_t == 6'd1) && !memack_edge;
 
+  // QUUX's wait for MD, whose account is at `-HANG` above.
+  if (QUUX) begin : g_quux_hold
+    logic       hold_mclk_q, hold_rip;
+    logic [1:0] rip_tail;
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        hold_mclk_q <= 1'b0;
+        hold_rip <= 1'b0;
+        rip_tail <= 2'd0;
+      end else begin
+        hold_mclk_q <= mclk_edge;
+        if (memack_edge)                                    rip_tail <= 2'd0;
+        else if (rd_in_progress && rdfinish_t == 6'd1)      rip_tail <= 2'd2;
+        else if (rip_tail != 2'd0)                          rip_tail <= rip_tail - 2'd1;
+        if (hold_mclk_q) hold_rip <= rd_in_progress || (rip_tail != 2'd0);
+      end
+    end
+    assign quux_hold = use_md_q && hold_rip;
+  end else begin : g_cadr_no_hold
+    assign quux_hold = 1'b0;
+  end
+
   // **THE TWO COUNTDOWNS FIRE ONCE A CYCLE, AS muir'S `after_memack` DOES,
   // AND THERE IS NO LEVEL TERM BESIDE THEM ANY MORE.**
   //
@@ -1886,6 +2234,157 @@ module cadr_microcycle #(
   // PROGRESS on a single tick of `machine`, `park`, `map_access`,
   // `ddr_boot`, `kbd_boot`, `md_compose`, `disk_boot`, `microcycle`,
   // `microcycle_sys` or `sstep`.
+
+  // ---------------------------------------------- QUUX's tick (revision 4)
+  //
+  // **A PERIODIC FLAG IN THE PROCESSOR, THE MACHINE'S CLOCK IN PLACE OF THE
+  // CADR DISPLAY'S VERTICAL INTERRUPT**: muir's `machine::Tick`, ported.
+  // Destination 3 is its control, `<0>` the enable, and a write with `<1>`
+  // set clears the flag; destination 4 its period in microseconds, `<23:0>`,
+  // 0 taken as 1; source 17 reads `<0>` the flag and `<1>` the enable.  The
+  // flag rises a period after the tick is enabled or its period written, then
+  // every period after, whether or not it was cleared between; a clear takes
+  // it down until the next.  While enabled it is ORed into the interrupt that
+  // jump conditions 5 and 6 test (`tick_irq`).  The period is 16,667 us at
+  // reset, and `-RESET` --- the fabric's reset and every boot --- turns the
+  // tick off and puts the period back.
+  //
+  // **THE INSTANTS ARE muir'S.**  A write lands at the edge that ends its
+  // microcycle, `Rtl::clock_edge`'s `now`, so a period starts from that
+  // edge and the flag rises exactly a period later.  Source 17 is read at the
+  // instant its microcycle's read phase starts, after the edge before it has
+  // landed its write (`Rtl::read_phase` at `self.ns`), so the status a
+  // microcycle reads is the tick as it stood at the master clock edge it
+  // started on, with that edge's own write in it (`tk_*_s`).  And `SINTR` is
+  // `Machine::interrupt()` taken at the end of `Rtl::clock_edge`, after the
+  // writes, at the instant the microcycle started (`Machine::ns`): so it is
+  // the flag this microcycle started with, unless this microcycle's own write
+  // moves the next rise past it or turns the tick off.  The fabric lands the
+  // write a tick after the edge, from `L`, and counts that tick into the
+  // period; the block says why.
+  //
+  // **WHAT THAT INSTANT IS NOT, AND IS UNVERIFIED HERE.**  muir's
+  // `Machine::ns` moves to the instant of a bus event when a microcycle is
+  // held for the bus, so a flag that rises inside a microcycle held for
+  // memory is taken at that event there and at the microcycle's start here.
+  // No program here raises the tick across a memory wait, so no check
+  // compares the two; a program that did would.
+  //
+  // What holds it: `build/quux_tick.quux.pass` against muir's QUUX, a program
+  // that reads source 17 every microcycle across rises, clears, a period
+  // written while running and the tick turned off, and tests condition 5 with
+  // the interrupt enabled; `build/quux_tick.pass` holds the CADR's side of the
+  // same program, source 17 all ones and destinations 3 and 4 writing M alone.
+  if (QUUX) begin : g_quux_tick
+    localparam logic [23:0] PERIOD_US_AT_RESET = 24'd16667;
+    localparam int unsigned TICKS_A_US = 1000 / cadr_tick_pkg::TICK_NS;
+
+    // **A MICROSECOND PRESCALER AND A COUNT OF MICROSECONDS**, not a count of
+    // ticks: a period is `tk_us` whole microseconds of `TICKS_A_US` ticks
+    // each, so a write loads the count straight from the word written, with
+    // no multiply between `OB` and a register that runs every tick.
+    // `tk_pre` is the ticks left in the current microsecond, less one, and
+    // `tk_us` the microseconds left, counted down to one; a period of 0 is
+    // counted as 1 by the same comparison.  The flag rises in the tick both
+    // run out, and both reload for the next period.
+    logic        tk_enabled, tk_sticky, tk_flag_s, tk_enabled_s;
+    logic [23:0] tk_period_us, tk_us;
+    logic [6:0]  tk_pre;
+    logic        tk_rise;
+    assign tk_rise = tk_enabled && (tk_pre == 7'd0) && (tk_us <= 24'd1);
+
+    logic tk_flag;
+    assign tk_flag = tk_enabled && (tk_sticky || tk_rise);
+
+    // **THE WRITE LANDS A TICK AFTER ITS EDGE, FROM `L`**, which is the word
+    // `OB` gave at that edge, so that nothing of the datapath reaches these
+    // every-tick registers in the tick it moves.  What the write depends on
+    // is taken at the edge itself --- which destination, whether the tick
+    // was on, whether its flag was up --- and the count it starts is one
+    // tick shorter, so the next rise is a period after the edge, muir's
+    // `now`.  A rise in the tick between is the period's own and stands.
+    logic tk_w, tk_w_ctl, tk_w_per, tk_w_en, tk_w_flag;
+    logic tk_restart, tk_clear, tk_off, tk_moves;
+    assign tk_restart = (tk_w_ctl && l[0] && !tk_w_en) || (tk_w_per && tk_w_en);
+    assign tk_clear   = tk_w_ctl && l[1] && tk_w_flag;
+    assign tk_off     = tk_w_ctl && !l[0];
+    assign tk_moves   = tk_restart || tk_clear || tk_off;
+
+    always_ff @(posedge clk) begin
+      if (rst || !n_boot) begin
+        tk_enabled   <= 1'b0;
+        tk_sticky    <= 1'b0;
+        tk_period_us <= PERIOD_US_AT_RESET;
+        tk_us        <= 24'd0;
+        tk_pre       <= 7'd0;
+        tk_flag_s    <= 1'b0;
+        tk_enabled_s <= 1'b0;
+        tk_w         <= 1'b0;
+        tk_w_ctl     <= 1'b0;
+        tk_w_per     <= 1'b0;
+        tk_w_en      <= 1'b0;
+        tk_w_flag    <= 1'b0;
+      end else begin
+        // What the edge knows, for the tick after it.
+        tk_w      <= cpu_edge;
+        tk_w_ctl  <= cpu_edge && desttickctl;
+        tk_w_per  <= cpu_edge && desttickper;
+        tk_w_en   <= tk_enabled;
+        tk_w_flag <= tk_flag;
+
+        // A clear is of the flag as it stood at the edge, before a rise
+        // this tick, which the period below then raises again.
+        if (tk_clear) tk_sticky <= 1'b0;
+        // The period runs on its own: a rise every period while enabled.
+        if (tk_enabled) begin
+          if (tk_pre == 7'd0) begin
+            tk_pre <= 7'(TICKS_A_US - 1);
+            if (tk_us <= 24'd1) begin
+              tk_us     <= tk_period_us;
+              tk_sticky <= 1'b1;
+            end else begin
+              tk_us <= tk_us - 24'd1;
+            end
+          end else begin
+            tk_pre <= tk_pre - 7'd1;
+          end
+        end
+        // The writes, over it.
+        if (tk_w_per) tk_period_us <= l[23:0];
+        if (tk_restart) begin
+          tk_enabled <= 1'b1;
+          tk_sticky  <= 1'b0;
+          tk_pre     <= 7'(TICKS_A_US - 2);
+          tk_us      <= tk_w_per ? l[23:0] : tk_period_us;
+        end
+        if (tk_off) begin
+          tk_enabled <= 1'b0;
+          tk_sticky  <= 1'b0;
+        end
+        // What the microcycle standing reads, as it stood at the master
+        // clock edge the microcycle started on: at a held edge the flag of
+        // that tick, and at an edge that ran a microcycle, the tick after
+        // it, with that edge's write in it.
+        if (mclk_edge && !cpu_edge) begin
+          tk_flag_s    <= tk_flag;
+          tk_enabled_s <= tk_enabled;
+        end else if (tk_w) begin
+          tk_flag_s    <= tk_w_flag && !tk_moves;
+          tk_enabled_s <= tk_off ? 1'b0 : (tk_w_en || tk_restart);
+        end
+      end
+    end
+
+    assign tick_status = {30'd0, tk_enabled_s, tk_flag_s};
+    assign tick_irq    = tk_enabled_s && tk_flag_s
+                      && !(desttickctl && (!ob[0] || ob[1])) && !desttickper;
+  end else begin : g_cadr_no_tick
+    assign tick_status = 32'd0;
+    assign tick_irq    = 1'b0;
+    // The two destinations decode to zero on the CADR; named so lint sees them read.
+    logic unused_tick;
+    assign unused_tick = desttickctl ^ desttickper;
+  end
 
   // page Q 2A05-2A11: the 74S194s shift under `QS1`/`QS0`.
   logic qs1, qs0;
@@ -1980,8 +2479,8 @@ module cadr_microcycle #(
       destspcd     <= 1'b0;
       reta         <= 14'd0;
       spcptr       <= 5'd0;
-      pdl_ptr      <= 10'd0;
-      pdl_idx      <= 10'd0;
+      pdl_ptr      <= '0;
+      pdl_idx      <= '0;
       lc           <= 26'd0;
       lc_byte_mode <= 1'b0;
       int_enable   <= 1'b0;
@@ -2115,8 +2614,13 @@ module cadr_microcycle #(
         // into SSTEP and then SSDONE.  The order matters and is muir's:
         // SSDONE takes the OLD SSTEP, so the two are one master clock apart
         // and `SSTEP AND -SSDONE` is true for exactly one of them.
-        ssdone <= sstep;
-        sstep <= step;
+        // A step QUUX's wait for MD holds is kept, as the board's `-HANG`
+        // keeps one by stopping this clock: the two flops stand until the
+        // wait lets go, and the step then runs its microcycle.
+        if (!step_kept) begin
+          ssdone <= sstep;
+          sstep <= step;
+        end
         srun <= run;
         // The 74LS109 at OLORD2 1A18 drops the trap at the first edge whose
         // J, SRUN, was up.
@@ -2167,10 +2671,10 @@ module cadr_microcycle #(
         if (spcnt) spcptr <= spush ? spcptr + 5'd1 : spcptr - 5'd1;
 
         // page PDLPTR
-        if (destpdlx) pdl_idx <= ob[9:0];
-        if (destpdlp) pdl_ptr <= ob[9:0];
+        if (destpdlx) pdl_idx <= ob[PDL_BITS-1:0];
+        if (destpdlp) pdl_ptr <= ob[PDL_BITS-1:0];
         else if (pdlcnt)
-          pdl_ptr <= (!nop && srcpdlpop) ? pdl_ptr - 10'd1 : pdl_ptr + 10'd1;
+          pdl_ptr <= (!nop && srcpdlpop) ? pdl_ptr - PDL_BITS'(1) : pdl_ptr + PDL_BITS'(1);
 
         // page LC: the 74S169s count by one or two, byte mode deciding which.
         if (destlc) lc <= ob[25:0];
@@ -2196,6 +2700,9 @@ module cadr_microcycle #(
             default: q <= alu_f[31:0];
           endcase
         end
+        // QUUX's `MUL` and `DIV` load `Q` whatever `IR<1:0>` says.
+        if (quux_mul) q <= mul_q;
+        if (quux_div) q <= div_q;
 
         // page VCTL2: the map write is delayed, gated by WMAPD.
         wmapd <= wmap;
@@ -2444,7 +2951,7 @@ module cadr_microcycle #(
   logic [31:0] ro_amem_q, ro_mmem_q, ro_pdl_q;
   logic [20:0] ro_spc_q;
   logic [16:0] ro_dmem_q;
-  logic [4:0]  ro_map1_q;
+  logic [L1_BITS-1:0] ro_map1_q;
   logic [23:0] ro_map2_q;
   logic [13:0] ro_opcs_q;
   logic [47:0] ro_regs_q;
@@ -2514,15 +3021,15 @@ module cadr_microcycle #(
       RG_ST:     ro_regs = {16'd0, st};
       RG_LC:     ro_regs = {22'd0, lc};
       RG_WADR:   ro_regs = {38'd0, wadr};
-      RG_PDLPTR: ro_regs = {38'd0, pdl_ptr};
-      RG_PDLIDX: ro_regs = {38'd0, pdl_idx};
+      RG_PDLPTR: ro_regs = 48'(pdl_ptr);
+      RG_PDLIDX: ro_regs = 48'(pdl_idx);
       RG_SPCPTR: ro_regs = {43'd0, spcptr};
       RG_RETA:   ro_regs = {34'd0, reta};
       RG_DC:     ro_regs = {38'd0, dc};
       RG_LVMO:   ro_regs = {24'd0, lvmo};
       RG_MDHELD: ro_regs = {16'd0, md_held};
       RG_PHYS:   ro_regs = {26'd0, phys_r};
-      RG_SPEED:  ro_regs = {42'd0, mode_speed, speed_a, speed};
+      RG_SPEED:  ro_regs = {42'd0, QUUX ? 2'b00 : mode_speed, speed_a, speed};
       RG_FLAGS:  ro_regs = ro_flags;
       default:   ro_regs = RO_NO_MEMORY;
     endcase
@@ -2538,7 +3045,7 @@ module cadr_microcycle #(
     ro_prom_q <= prom_mem[ro_a0[9:0]];
     ro_amem_q <= amem[ro_a0[9:0]];
     ro_mmem_q <= mmem[ro_a0[4:0]];
-    ro_pdl_q  <= pdl[ro_a0[9:0]];
+    ro_pdl_q  <= pdl[ro_a0[PDL_BITS-1:0]];
     ro_spc_q  <= spcm[ro_a0[4:0]];
 `ifdef CADR_RDW_POISON
     // The readout's copies are the same memories on a board, so their reads
@@ -2547,12 +3054,12 @@ module cadr_microcycle #(
                ? ~dmem[ro_a0[10:0]] : dmem[ro_a0[10:0]];
     ro_map1_q <= (l1_w_q && ro_a0[10:0] == l1_wa_q)
                ? ~l1_map[ro_a0[10:0]] : l1_map[ro_a0[10:0]];
-    ro_map2_q <= (l2_w_q && ro_a0[9:0] == l2_wa_q)
-               ? ~l2_map[ro_a0[9:0]] : l2_map[ro_a0[9:0]];
+    ro_map2_q <= (l2_w_q && ro_a0[L1_BITS+4:0] == l2_wa_q)
+               ? ~l2_map[ro_a0[L1_BITS+4:0]] : l2_map[ro_a0[L1_BITS+4:0]];
 `else
     ro_dmem_q <= dmem[ro_a0[10:0]];
     ro_map1_q <= l1_map[ro_a0[10:0]];
-    ro_map2_q <= l2_map[ro_a0[9:0]];
+    ro_map2_q <= l2_map[ro_a0[L1_BITS+4:0]];
 `endif
     ro_opcs_q <= opcs[ro_a0[2:0]];
     ro_regs_q <= ro_regs;
@@ -2568,7 +3075,7 @@ module cadr_microcycle #(
       RO_PDL:  ro_word = {16'd0, ro_pdl_q};
       RO_SPC:  ro_word = {27'd0, ro_spc_q};
       RO_DMEM: ro_word = {31'd0, ro_dmem_q};
-      RO_MAP1: ro_word = {43'd0, ro_map1_q};
+      RO_MAP1: ro_word = 48'(ro_map1_q);
       RO_MAP2: ro_word = {24'd0, ro_map2_q};
       RO_OPCS: ro_word = {34'd0, ro_opcs_q};
       RO_REGS: ro_word = ro_regs_q;

@@ -53,8 +53,8 @@
 #     `tpclk_q`. Note these are named, not matched on `_q`, because the
 #     scratchpad latches share that suffix and must not be caught.
 #   - Nor does a tick's event held for the next: `md_we_q`, MD's move at the
-#     end of the tick before, and `mw_early_q`, `mw_early_q2` and
-#     `mw_late_q`, which place the maps' and the dispatch memory's write in a
+#     end of the tick before, and `mw_early_q`, `mw_early_q2`, `mw_k1_q`
+#     and `mw_late2_q`, which place the maps' and the dispatch memory's write in a
 #     hung microcycle (`cadr_microcycle.sv`'s `mw`) and are those memories'
 #     write enables a tick on.
 #   - Nor does an acknowledgment. `deskewed`, `ub_acked` and `ub_loadmd` are
@@ -361,6 +361,22 @@
 # `report_exceptions`, or `get_timing_paths -through [get_cells */audit/*]`,
 # which of its paths carry the relaxed set's requirement, and expect only the
 # record, the microcycle counter and the readout word to.
+#
+# **AND QUUX'S REGISTERS THAT RUN EVERY TICK, WHICH MATCH NOTHING ON THE
+# CADR.**  The tick's `tk_pre` and `tk_us`, the countdown of the period, and
+# `tk_sticky`, the flag it raises; the divider's `div_t` and `div_start`, which count the
+# ticks since `IR` was loaded, and its steps, `dv_*`, a step a tick; and MONO
+# TV but for its three held matches, as
+# the CADR's display board is, its `taken` and `bow` taken at the first tick
+# of -XBUS.RQ.  And QUUX's wait for MD: `hold_mclk_q`, the master clock edge a
+# tick on, `rip_tail`, a countdown, and `hold_rip`, which takes READ IN
+# PROGRESS on one tick and must see that tick's value; and the divider's
+# `div_md`, `div_strobed`, `div_strobed2`, `div_have` and `div_word`, the
+# word a strobe brings, which the divider loads two ticks after it.  The tick's status as a microcycle reads it (`tk_flag_s`,
+# `tk_enabled_s`) is sampled at the master clock edge and stands through the
+# microcycle, so it stays in the set, as the divider's held decode does.
+# What QUUX alone relaxes beyond this is in `quux_machine.xdc`, read only for a
+# QUUX build.
 
 set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *mfinish_t_reg*    && \
@@ -379,7 +395,25 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *tpclk_q_reg*      && \
                                   NAME !~ *processor/md_we_q_reg*   && \
                                   NAME !~ *processor/mw_early_q*    && \
-                                  NAME !~ *processor/mw_late_q_reg* && \
+                                  NAME !~ *processor/mw_k1_q_reg*   && \
+                                  NAME !~ *processor/mw_late2_q_reg* && \
+                                  NAME !~ *tk_pre_reg*       && \
+                                  NAME !~ *tk_us_reg*        && \
+                                  NAME !~ *tk_sticky_reg*    && \
+                                  NAME !~ *div_t_reg*        && \
+                                  NAME !~ *div_start_reg*    && \
+                                  NAME !~ *g_quux_hold.hold_mclk_q_reg* && \
+                                  NAME !~ *g_quux_hold.hold_rip_reg* && \
+                                  NAME !~ *g_quux_hold.rip_tail_reg* && \
+                                  NAME !~ *div_md_reg*       && \
+                                  NAME !~ *div_strobed_reg*  && \
+                                  NAME !~ *div_strobed2_reg* && \
+                                  NAME !~ *div_have_reg*     && \
+                                  NAME !~ *div_word_reg*     && \
+                                  NAME !~ *muldiv/dv_*       && \
+                                  (NAME !~ *mono_tv/* || NAME =~ *mono_tv/ctl_reg* || \
+                                                         NAME =~ *mono_tv/fb_reg* || \
+                                                         NAME =~ *mono_tv/which_reg*) && \
                                   (NAME !~ *disk/* || NAME =~ *disk/mine_reg* || \
                                                       NAME =~ *disk/which_reg*) && \
                                   (NAME !~ *audit/* || NAME =~ *audit/first_* || \

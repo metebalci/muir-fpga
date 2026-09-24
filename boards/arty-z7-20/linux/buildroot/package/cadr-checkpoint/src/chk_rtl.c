@@ -493,6 +493,15 @@ static void emit_busint(struct chk *w, const struct cadr_image *img)
 	chk_bool(w, 0);			/* debug_out_pending */
 	chk_u64(w, ~(uint64_t)0);	/* debug_out_timeout_at */
 	chk_u64(w, MUIR_MEMORY_NEXT);	/* memory_next */
+	// Version 36: QUUX's memory cache and its own memory timing, neither of
+	// which a CADR has, and the cycle's address and hit that only the cache
+	// reads: `Busint::new` holds each as written here.
+	chk_bool(w, 0);			/* NONE cache, an opt */
+	chk_u32(w, 0);			/* IDLE addr */
+	chk_bool(w, 0);			/* IDLE cached */
+	chk_u64(w, 0);			/* IDLE buffer_free_at */
+	chk_bool(w, 0);			/* NONE memory_timing, an opt */
+	chk_u64(w, 0);			/* IDLE memory_free_at */
 }
 
 void chk_rtl_body(struct chk *w, const struct cadr_image *img,
@@ -558,6 +567,11 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, 0);					/* NONE tick.enabled */
 	chk_u32(w, MUIR_TICK_PERIOD_US);		/* NONE tick.period_us */
 	chk_u64(w, ~(uint64_t)0);			/* NONE tick.deadline_ns */
+	// `Machine::dma_written`, version 36: the disk controller wrote since
+	// the engine last looked, which only QUUX's memory cache reads.  A CADR
+	// has no cache, and a halted board's controller has told nothing it has
+	// not already been asked for, so it is false.
+	chk_bool(w, 0);					/* IDLE dma_written */
 	emit_u32s_padded(w, img->l2_map, IMG_L2_WORDS, MUIR_L2_MAP_WORDS);	/* READ */
 	chk_u32(w, img->boards);			/* the count, again */
 	chk_u32s(w, img->main, (size_t)img->boards * IMG_BOARD_WORDS);	/* READ */
@@ -582,6 +596,10 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u16s(w, sixteen, 16);			/* NONE write_buffer */
 	chk_bool(w, img_flag(img, IMG_F_VMAOK));	/* READ */
 	emit_disk(w, d);
+	// `Machine::block_disk`, version 37: QUUX's block-disk when it is fitted
+	// in the CADR controller's place.  The CADR fits none, so the option is
+	// written absent and nothing follows it.
+	chk_bool(w, 0);					/* NONE block_disk */
 	emit_tv(w, img);
 	// **WHETHER A SECOND DISPLAY BOARD WAS ON THE BACKPLANE**, and the
 	// board itself after it when there was one (`Machine::save`,

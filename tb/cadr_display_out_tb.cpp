@@ -111,13 +111,28 @@ constexpr const char *kModeName = "VESA DMT 1280x1024 at 60 Hz";
 
 // The two screens: muir's `WIDTH`/`HEIGHT`/`WORDS_PER_LINE` and its
 // `COLOR_*` counterparts.
+//
+// **QUUX'S BUILD, `CADR_DISPLAY_QUUX`, SHOWS MONO TV INSTEAD**: 1280 by 1024
+// at 40 words a line, which fills the raster upright and does not fit it on
+// its side, so the module keeps it upright whatever `rotate` says; and QUUX
+// has no color board.  Its configurations are A and B below and Q, which
+// asks for both quarter turns and holds the picture upright.
+#ifdef CADR_DISPLAY_QUUX
+constexpr int kPicW = 1280, kPicH = 1024, kWords = 40;
+#else
 constexpr int kPicW = 768, kPicH = 963, kWords = 24;
+#endif
 constexpr int kCW = 576, kCH = 454, kCWords = 72;
 constexpr int kLineBytes = kWords * 4;    // 96
 constexpr int kCLineBytes = kCWords * 4;  // 288
 
 constexpr uint32_t kBase = 0x1C000000u;
+#ifdef CADR_DISPLAY_QUUX
+// QUUX has no color board, and its window is put past MONO TV's 40,960 words.
+constexpr uint32_t kCBase = 0x1C040000u;
+#else
 constexpr uint32_t kCBase = 0x1C020000u;
+#endif
 constexpr int kOutstanding = 8;
 
 // **THE PIPELINED MEMORY, FOR THE BUILD BEHIND THE SHARE.**  Every read is
@@ -136,6 +151,9 @@ constexpr int kOutstanding = 8;
 constexpr int kShareLatency = 40;
 constexpr int kBridgeDepth = 32;
 int gPipeLatency = -1;     // -1: the serialized slave below; else pipelined
+// What `rotate` is driven with, when it is not what the configuration expects
+// to see: QUUX's configuration Q asks for a quarter turn and expects upright.
+int gDriveRotate = -1;
 
 // Where each picture sits, upright and rotated.
 //
@@ -472,6 +490,14 @@ int main(int argc, char **argv) {
   auto figure = [&](int got, int want, const char *what) {
     if (got != want) Fail("%s is %d, want %d", what, got, want);
   };
+#ifdef CADR_DISPLAY_QUUX
+  figure(MX0, 0, "MONO TV's first column");
+  figure(MX0 + kPicW - 1, 1279, "MONO TV's last column");
+  figure(MY0, 0, "MONO TV's first row");
+  figure(MY0 + kPicH - 1, 1023, "MONO TV's last row");
+  if (MX0 + kPicW > HA || MY0 + kPicH > VA)
+    Fail("the raster does not hold MONO TV at 1:1");
+#else
   figure(MX0, 0, "the first display's first column, upright");
   figure(MX0 + kPicW - 1, 767, "the first display's last column, upright");
   figure(CX0, 704, "the color board's first column, upright");
@@ -500,6 +526,7 @@ int main(int argc, char **argv) {
       RMX0 + kPicH > HA || RCX0 + kCH > HA || RMY0 + kPicW > VA ||
       RCY0 + kCW > VA)
     Fail("the raster does not hold both screens at 1:1, upright and rotated");
+#endif
 
   // The two poisons must be injective over the words they cover, must make
   // pictures, and must not collide with each other.  Asserted rather than
@@ -564,7 +591,7 @@ int main(int argc, char **argv) {
 
     dut->clk = 0; dut->pclk = 0; dut->rst = 1; dut->prst = 1;
     dut->out_sel = static_cast<uint8_t>(sel);
-    dut->rotate = static_cast<uint8_t>(rot);
+    dut->rotate = static_cast<uint8_t>(gDriveRotate >= 0 ? gDriveRotate : rot);
     dut->m_arready = 0; dut->m_rdata = 0; dut->m_rresp = 0;
     dut->m_rlast = 0; dut->m_rvalid = 0; dut->map_q = 0;
     // Nobody writes the sleep setting or wakes the display here: the
@@ -982,6 +1009,35 @@ int main(int argc, char **argv) {
   if (!b.underruns) Fail("the port could not keep up and no underrun was reported");
   if (b.black_lines == 0) Fail("the port could not keep up and no line was shown black");
 
+#ifdef CADR_DISPLAY_QUUX
+  // ------------------------------------------------------ configuration Q
+  //
+  // Both quarter turns asked for, and the picture shown upright: every pixel
+  // compared against the upright picture, and the frame read line by line.
+  for (int turn = 1; turn <= 2; turn++) {
+    Result qr;
+    gDriveRotate = turn;
+    (void)run(1, 0, 0, 0, 4, true, &qr, turn == 1 ? "Q asked clockwise" : "Q asked anticlockwise");
+    gDriveRotate = -1;
+    if (qr.underruns) Fail("MONO TV asked to turn reported an underrun");
+    if (qr.mono_beats != static_cast<long>(kPicH) * (kWords / 2))
+      Fail("%ld beats a frame for MONO TV asked to turn, want %ld, read upright",
+           qr.mono_beats, static_cast<long>(kPicH) * (kWords / 2));
+    placed(qr, 1, 0, turn == 1 ? "Q asked clockwise" : "Q asked anticlockwise");
+  }
+  if (bad) {
+    std::fprintf(stderr, "FAIL: %d problems\n", bad);
+    return 1;
+  }
+  std::printf(
+      "ok: %s, QUUX's MONO TV\n"
+      "    %ld pixels compared against a DDR window poisoned injectively in the\n"
+      "    address, 1280 by 1024 at 40 words a line, filling the raster from\n"
+      "    column %d to %d and row %d to %d; the underrun reported with the port\n"
+      "    slowed; and both quarter turns asked for and the picture kept upright\n",
+      kModeName, a.compared, MX0, MX0 + kPicW - 1, MY0, MY0 + kPicH - 1);
+  return 0;
+#else
   // ------------------------------------------------------ configuration C
   Result c;
   (void)run(2, 0, 0, 0, 4, true, &c, "C color upright");
@@ -1073,4 +1129,5 @@ int main(int argc, char **argv) {
       CX0, CX0 + kCW - 1, CY0, CY0 + kCH - 1, MX0 + kPicW - CX0,
       RMX0, RMX0 + kPicH - 1, RCX0, RCX0 + kCH - 1, RMX0 + kPicH - RCX0);
   return 0;
+#endif
 }

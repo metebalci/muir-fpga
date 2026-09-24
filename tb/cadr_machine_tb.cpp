@@ -243,6 +243,19 @@ int main(int argc, char **argv) {
   // the acknowledgment times, which are the only thing needing to be known
   // before their row, and once to drive the DUT.
   bool pack_trace = false;
+  // **A PROGRAM OF `golden/src/quux.rs` IS NOT THE BOOT PROM.**  Each is a
+  // few hundred microcycles written to reach one of QUUX's differences, run
+  // on either machine, so the counts below that describe what MIT's boot PROM
+  // does --- its 16,951 disk polls, its two NXM cycles, its 512 memory
+  // cycles, the disk's `0x2321` in MD --- describe nothing about it and are
+  // not asserted.  Every row is compared exactly as on the boot PROM, and the
+  // generator itself asserts what the program reached.
+  bool script_trace = false;
+  // **QUUX'S BOOT PROM TRACE RUNS AS FAR AS MIT'S**, 131,073 microcycles
+  // longer for its larger clearing (`golden/src/rtl.rs`), so it carries the
+  // memory sizing's NXM cycles, the disk's polls and `0x2321` in MD, and every
+  // guard below holds it as it holds MIT's.  This names the run in messages.
+  bool quux_prom = false;
   std::vector<uint64_t> ack_for;
   std::vector<uint64_t> rdata_for;
   std::vector<uint64_t> md_at_row;
@@ -259,6 +272,8 @@ int main(int argc, char **argv) {
     while (std::fgets(line, sizeof line, f)) {
       if (line[0] == '#') {
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
+        if (std::strstr(line, "golden/src/quux.rs")) script_trace = true;
+        if (std::strstr(line, "QUUX's boot PROM")) quux_prom = true;
         continue;
       }
       if (line[0] == '\n') continue;
@@ -480,6 +495,7 @@ int main(int argc, char **argv) {
   // placement is the 512, through `mem_done`.  The check should fail rather
   // than shrink quietly if either count ever goes to none.
   long mem_cycles = 0, device_cycles = 0;
+  long ddr_addrs_checked = 0;
   // -XBUS.INTR: how many microcycles it was compared on, how many it was up
   // on, and how many rows held the disk's status word in MD --- the guard
   // that says the zero above is a live zero and not a dead controller.
@@ -487,6 +503,8 @@ int main(int argc, char **argv) {
   long dev_writes_checked = 0;
   std::map<uint32_t,long> dev_words;
   long ack_at_tick = 0;
+  long armed_row = -1;
+  long early_grants = 0;
   size_t unanswerable = 0;
   std::set<uint64_t> a_values, m_values, ob_values;
 
@@ -510,6 +528,27 @@ int main(int argc, char **argv) {
     // used for; taking it from the bridge's own `mem_write` times the answer
     // and never chooses the data.
     dut->mem_done = 0;
+    // **WHERE IN DDR THE BRIDGE PUT THE WORD**, once a cycle, against the
+    // map transcribed from `rtl/plumbing/cadr_ddr_map.sv` for the Zynq
+    // boards, which is the map this model is built with: main memory at
+    // 0x18000000 a word a four bytes, and the first display's buffer at
+    // 0x1C000000 from `17000000`, the same rule for the CADR's 32K words and
+    // QUUX's MONO TV's 40,960.  Nothing else here looks at the address, so a
+    // display window folded onto the wrong words would read back whatever the
+    // trace hands it and pass.
+    if (dut->mem_req && !saw_mem_req) {
+      const uint32_t p = dut->phys;
+      const uint32_t fb = 017000000u;
+      const uint32_t want = (p >= fb && p - fb < 0200000u) ? 0x1C000000u + ((p - fb) << 2)
+                                                           : 0x18000000u + (p << 2);
+      ++ddr_addrs_checked;
+      if (dut->mem_addr != want) {
+        std::fprintf(stderr,
+                     "microcycle %zu: the bridge asked DDR for %08x for word %o, want %08x\n",
+                     k, dut->mem_addr, p, want);
+        ++bad;
+      }
+    }
     if (dut->mem_req) saw_mem_req = true;
     if (dut->dev_rq && dut->device) saw_device = true;
     if (dut->ub_msyn) saw_ub = true;
@@ -582,7 +621,13 @@ int main(int argc, char **argv) {
       // grant and length already agree with muir exactly, reads the
       // same zero and nothing else.  If it does not, the zero the NXM
       // leg below requires stops meaning agreement.
-      if (dev_cycle && !cur_nxm && !pack_trace) {
+      // **A DEVICE CYCLE THE DDR BRIDGE ANSWERS IS NOT THE YARDSTICK.**  A
+      // display's frame buffer is a device on the Xbus and a window onto the
+      // bridge, so its acknowledgment is this testbench's DDR placement,
+      // rounded to its tick like main memory's, and not a slave's own.  MIT's
+      // boot PROM never touches the frame buffer; the display's programs of
+      // `golden/src/quux.rs` do, and the length check still holds every one.
+      if (dev_cycle && !cur_nxm && !pack_trace && !saw_mem_req) {
         ++dev_acks_measured;
         if (slip != kInstrumentSlipNs) {
           if (!dev_ack_wrong)
@@ -621,6 +666,71 @@ int main(int argc, char **argv) {
 
     if (bus_outstanding && !dut->mem_req && !dut->dev_rq && t > ack_at_tick) {
       bus_outstanding = false;
+    }
+
+    // The bus cycle row `k` starts, and when the interface will answer:
+    // `ns_at_t` is muir's instant for this tick.  Called at the row's own
+    // edge, or earlier where the cycle starts inside a microcycle that is
+    // held --- QUUX's divider holds a `DIV` over the master clock edges its
+    // read goes out on --- so that the answer is placed from the instant the
+    // cycle really started.
+    auto arm_bus = [&](const Row &r, uint64_t ns_at_t) {
+      ++grants_checked;
+      bus_outstanding = true;
+      // THE WORD AT THE XBUS SEAM.  `dev_wdata` is a register of its
+      // own --- `wdata <= md` at the edge that starts the cycle --- so MD
+      // being compared every microcycle says nothing about it, and a slave
+      // hung here would be the first thing to notice it was wrong. The
+      // reference is the trace's own MD column for the row that started
+      // the cycle, which is muir's and not the DUT's.
+      //
+      // **AND ON THIS PROGRAM IT SAYS ONLY THAT THE WORD IS ZERO.**  All
+      // 5,650 device writes the boot PROM makes carry the same word, and
+      // that word is zero --- the count is on this check's own output for
+      // that reason.  So any bijection on the bits is invisible here: a
+      // rotation of `dev_wdata` survives, measured, and is an equivalence
+      // *on this trace* rather than in general.  Same shape as the control
+      // store's all-zero pass, and the same answer: what catches a wiring
+      // fault here is a mutation that makes a nonzero word out of a zero
+      // one, and what would catch a bijection is a trace that writes
+      // something else.
+      if (dut->device && dut->wrcyc) {
+        ++dev_writes_checked;
+        dev_words[dut->dev_wdata]++;
+        if (dut->dev_wdata != md_at_row[k])
+          bad += Fail(r, "the word at the Xbus seam", dut->dev_wdata,
+                      md_at_row[k]);
+      }
+      dev_cycle = dut->device;
+      dev_acked = false;
+      cur_nxm = dut->nxm;
+      if (dut->device) ++device_cycles;
+      else if (!dut->nxm && !dut->unibus) ++mem_cycles;
+      acked_armed = ack_for[k] != 0;
+      ack_for_cur = ack_for[k];
+      saw_mem_req = false;
+      saw_device = false;
+      saw_ub = false;
+      // Rounded *up*: a memory board answers on its own refresh clock, so
+      // muir's acknowledgment is not on the five-nanosecond grid, and the
+      // fabric can only see it at a tick at or after it. Truncating instead
+      // ends a wait one 220 ns cycle early wherever the acknowledgment
+      // falls within a tick of a master clock edge.
+      ack_at_tick =
+          t + static_cast<long>((ack_for[k] - ns_at_t + kTickNs - 1) / kTickNs);
+      armed_row = static_cast<long>(k);
+      ++cycles_run;
+    };
+
+    // **A CYCLE THAT STARTS INSIDE A HELD MICROCYCLE**: the grant falls at a
+    // master clock edge that is not the row's own, and the row's cycle is
+    // armed there.  Only QUUX's divider holds a microcycle over the edge its
+    // own read goes out on; on the CADR the grant falls at the row's edge,
+    // which the check at that edge holds.
+    if (!dut->clock_edge && prev_n_memgrant && !dut->n_memgrant_o && k < total_rows &&
+        cur.v[kBus] && armed_row != static_cast<long>(k)) {
+      ++early_grants;
+      arm_bus(cur, prev_ns + static_cast<uint64_t>(t - last_edge) * kTickNs);
     }
 
     if (dut->clock_edge) {
@@ -736,7 +846,7 @@ int main(int argc, char **argv) {
       // muir grants at the edge the cycle starts on --- `Rtl::clock_edge`
       // calls `Busint::request` and `Busint::mclk_edge` there --- so the
       // fabric's -MEMGRANT must fall at this edge and not at an earlier one.
-      if (r.v[kBus]) {
+      if (r.v[kBus] && armed_row != static_cast<long>(k)) {
         if (!prev_n_memgrant) {
           std::fprintf(stderr,
                        "microcycle %" PRIu64 ": -MEMGRANT was already out "
@@ -744,50 +854,7 @@ int main(int argc, char **argv) {
                        r.v[kCycle]);
           ++bad;
         }
-        ++grants_checked;
-        bus_outstanding = true;
-        // THE WORD AT THE XBUS SEAM.  `dev_wdata` is a register of its
-        // own --- `wdata <= md` at the edge that starts the cycle --- so MD
-        // being compared every microcycle says nothing about it, and a slave
-        // hung here would be the first thing to notice it was wrong. The
-        // reference is the trace's own MD column for the row that started
-        // the cycle, which is muir's and not the DUT's.
-        //
-        // **AND ON THIS PROGRAM IT SAYS ONLY THAT THE WORD IS ZERO.**  All
-        // 5,650 device writes the boot PROM makes carry the same word, and
-        // that word is zero --- the count is on this check's own output for
-        // that reason.  So any bijection on the bits is invisible here: a
-        // rotation of `dev_wdata` survives, measured, and is an equivalence
-        // *on this trace* rather than in general.  Same shape as the control
-        // store's all-zero pass, and the same answer: what catches a wiring
-        // fault here is a mutation that makes a nonzero word out of a zero
-        // one, and what would catch a bijection is a trace that writes
-        // something else.
-        if (dut->device && dut->wrcyc) {
-          ++dev_writes_checked;
-          dev_words[dut->dev_wdata]++;
-          if (dut->dev_wdata != md_at_row[k])
-            bad += Fail(r, "the word at the Xbus seam", dut->dev_wdata,
-                        md_at_row[k]);
-        }
-        dev_cycle = dut->device;
-        dev_acked = false;
-        cur_nxm = dut->nxm;
-        if (dut->device) ++device_cycles;
-        else if (!dut->nxm && !dut->unibus) ++mem_cycles;
-        acked_armed = ack_for[k] != 0;
-        ack_for_cur = ack_for[k];
-        saw_mem_req = false;
-        saw_device = false;
-        saw_ub = false;
-        // Rounded *up*: a memory board answers on its own refresh clock, so
-        // muir's acknowledgment is not on the five-nanosecond grid, and the
-        // fabric can only see it at a tick at or after it. Truncating instead
-        // ends a wait one 220 ns cycle early wherever the acknowledgment
-        // falls within a tick of a master clock edge.
-        ack_at_tick =
-            t + static_cast<long>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);
-        ++cycles_run;
+        arm_bus(r, r.v[kNs]);
       }
       if (r.v[kLc]) ++lc_moved;
       if (r.v[kPromdis]) ++promdis_rows;
@@ -943,7 +1010,7 @@ int main(int argc, char **argv) {
   // talks to the disk, and 347 of its 141,849 bus cycles arbitrate. A tenth
   // of them would mean the exemption had become the rule and was covering
   // something other than the missing Unibus path.
-  if (unibus_cycles * 100 > cycles_run) {
+  if (!script_trace && unibus_cycles * 100 > cycles_run) {
     std::fprintf(stderr,
                  "FAIL: %ld of %ld bus cycles arbitrated for the Unibus; the "
                  "length check exempts those and cannot exempt that share\n",
@@ -981,7 +1048,7 @@ int main(int argc, char **argv) {
                  "live again\n",
                  dev_words.size());
   }
-  if (dev_writes_checked == 0) {
+  if (dev_writes_checked == 0 && !script_trace) {
     std::fprintf(stderr,
                  "FAIL: no device write put a word on the Xbus seam, so "
                  "`dev_wdata` is claimed correct by a check that never "
@@ -996,7 +1063,7 @@ int main(int argc, char **argv) {
   // selecting the disk, both show up here as a count that is not the whole
   // 16,951 --- and a timed-out device cycle is not a quiet degradation, it is
   // a poll the machine waits 4.25 us for.
-  if (device_answers != device_cycles || device_timeouts) {
+  if (!script_trace && (device_answers != device_cycles || device_timeouts)) {
     std::fprintf(stderr,
                  "FAIL: of %ld device cycles the fabric answered %ld and the "
                  "NXM timer ended %ld; every one is the disk controller's and "
@@ -1007,7 +1074,7 @@ int main(int argc, char **argv) {
   // **AND THE CYCLES THE COMPARISON ABOVE RESTS ON MUST HAVE HAPPENED.**  A
   // program that sent none would pass it by comparing nothing, which is the
   // shape this file guards everywhere else.  This one sends exactly two.
-  if (nxm_ack_wrong || (nxm_acks != 2 && !pack_trace)) {
+  if (nxm_ack_wrong || (nxm_acks != 2 && !pack_trace && !script_trace)) {
     std::fprintf(stderr,
                  "FAIL: %ld cycles ended on the NXM timer and %ld of them "
                  "acknowledged away from muir's instant; this program sends "
@@ -1019,7 +1086,8 @@ int main(int argc, char **argv) {
   // The zero above means agreement only because every device cycle reads the
   // same number, so a run in which none was measured, or some were missed,
   // leaves that number standing on a comment.
-  if (dev_ack_wrong || (!pack_trace && dev_acks_measured != device_cycles)) {
+  if (dev_ack_wrong ||
+      (!pack_trace && !script_trace && dev_acks_measured != device_cycles)) {
     std::fprintf(stderr,
                  "FAIL: %ld of %ld device cycles were measured against muir's "
                  "acknowledgment and %ld of them read other than "
@@ -1028,7 +1096,7 @@ int main(int argc, char **argv) {
                  kInstrumentSlipNs);
     ++thin;
   }
-  if (device_cycles == 0) {
+  if (device_cycles == 0 && !script_trace) {
     std::fprintf(stderr,
                  "FAIL: none of %ld bus cycles reached an Xbus device, so the "
                  "disk controller's registers are claimed correct by a check "
@@ -1046,7 +1114,7 @@ int main(int argc, char **argv) {
   // fabric that ignored the enable would raise the line and fail.  If MD
   // never holds that word the guarantee is gone and this says so rather than
   // passing on a controller that has stopped answering.
-  if (status_rows == 0) {
+  if (status_rows == 0 && !script_trace) {
     std::fprintf(stderr,
                  "FAIL: MD never held the disk's 0x2321, so nothing says the "
                  "controller was not-active while -XBUS.INTR was compared "
@@ -1054,7 +1122,7 @@ int main(int argc, char **argv) {
                  sintr_checked);
     ++thin;
   }
-  if (mem_cycles == 0) {
+  if (mem_cycles == 0 && !script_trace) {
     std::fprintf(stderr,
                  "FAIL: none of %ld bus cycles reached main memory; every one "
                  "was answered from the trace and the DDR bridge was never "
@@ -1062,14 +1130,14 @@ int main(int argc, char **argv) {
                  cycles_run);
     ++thin;
   }
-  if (other_speed && !pack_trace) {
+  if (other_speed && !pack_trace && !script_trace) {
     std::fprintf(stderr,
                  "FAIL: %ld microcycles run at other than extra slow; ILONG is "
                  "claimed to change nothing here\n",
                  other_speed);
     ++thin;
   }
-  if (ram_executes && !pack_trace) {
+  if (ram_executes && !pack_trace && !script_trace) {
     std::fprintf(stderr,
                  "FAIL: %ld microcycles run microcode out of the control "
                  "store; PROMDISABLE is claimed never set\n",
@@ -1086,7 +1154,7 @@ int main(int argc, char **argv) {
       {"microcycles the bus held off", stalls},
   };
   for (const auto &e : reached) {
-    if (e.n == 0) {
+    if (e.n == 0 && !script_trace) {
       std::fprintf(stderr, "FAIL: the run reached no %s\n", e.what);
       ++thin;
     }
@@ -1138,7 +1206,10 @@ int main(int argc, char **argv) {
       "      not-active was true and the zero compared is the enable's\n"
       "    driven from the trace, and going with the memory path: MD, the\n"
       "             word -LOADMD strobes into it; the console's registers\n",
-      k, pack_trace ? "on a System 100 band" : "on MIT's boot PROM",
+      k, pack_trace ? "on a System 100 band"
+                    : script_trace ? "on a program of golden/src/quux.rs"
+                    : quux_prom  ? "on QUUX's boot PROM"
+                                 : "on MIT's boot PROM",
       lengths_checked, sub_tick, best_slip, worst_slip, arb_skipped,
       unibus_cycles, cycles_run, mem_cycles, device_cycles,
       device_answers, device_timeouts,
@@ -1147,6 +1218,8 @@ int main(int argc, char **argv) {
       prom_fetches, ram_fetches, stalls, map_sources, q_shifts, ilongs,
       a_values.size(), m_values.size(), ob_values.size(), grants_checked,
       sintr_checked, sintr_raised, status_rows);
+  std::printf("    %ld DDR addresses compared against the board's map\n", ddr_addrs_checked);
+  std::printf("    %ld bus cycles started inside a held microcycle\n", early_grants);
   std::printf("    %ld cycles ended on the NXM timer, each acknowledging %+d ns\n"
               "      from muir --- the free-running timeout oscillator's phase,\n"
               "      and so the tick the reset network was released on --- on the\n"

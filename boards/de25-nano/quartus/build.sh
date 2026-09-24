@@ -110,7 +110,10 @@ for tool in "$bin/quartus_sh" "$bin/quartus_ipgenerate" "$bin/quartus_syn" \
     [ -x "$tool" ] || refuse "$tool is not there"
 done
 
-for image in build/boot_prom.hex build/sync_prom.hex; do
+# QUUX's boot PROM is its own, version 1000.
+prom_image=build/boot_prom.hex
+[ "$machine" = quux ] && prom_image=build/boot_prom.quux.hex
+for image in "$prom_image" build/sync_prom.hex; do
     [ -s "$image" ] || refuse "$image is missing; \`make de25\` builds it first"
 done
 
