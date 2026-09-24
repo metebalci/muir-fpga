@@ -78,6 +78,9 @@ constexpr uint32_t kNotAnswering = 0xDEADBEE5u;
 // Far enough past the parity loop's 512 cycles, which close at about 118 ms.
 constexpr long kTicks = 40000000L;
 
+// How many ticks of a microcycle the foreign master's writes are started at.
+constexpr int kPhases = 22;
+
 // A poison injective in the word, and never zero, so "MD took nothing" and
 // "MD took the word" cannot be confused.  Bit 0 is cleared so that the boot
 // PROM's disk-ready test reads the same as `ddr_boot`'s configuration A.
@@ -135,8 +138,15 @@ struct Run {
   long md_gate_waits = 0;      // ticks the request stood while the gate held
   long md_wait_mbusy = 0;      // of those, ticks MBUSY was the term holding it
   long md_wait_pending = 0;    // and ticks md_pending was
+
   long md_word_wrong = 0;      // loads after which MD did not hold the word
   long md_across_processor = 0; // loads taken while the processor owned MD
+  // A running machine keeps the word out of a microcycle's last two ticks
+  // (`ub_md_take` in `cadr_microcycle.sv`), where the map's and dispatch
+  // memory's write is placed on MD standing still.
+  long md_running = 0;         // loads taken with MACHRUN up
+  long md_running_late = 0;    // of those, loads in a cycle's last two ticks
+  long md_late_refusals = 0;   // ticks the request stood there, refused
   long md_answered = 0;        // mapped writes of MD the interface answered
   long md_load_on_even = 0;    // a load on the EVEN word, which is the buffer
   long md_load_missing = 0;    // an odd word that never reached the load
@@ -436,6 +446,10 @@ Run Simulate() {
         // either could bite rather than leaving it to be guessed.
         if (root->cadr_machine__DOT__processor__DOT__mbusy) ++out.md_wait_mbusy;
         if (root->cadr_machine__DOT__processor__DOT__md_pending) ++out.md_wait_pending;
+        if (root->cadr_machine__DOT__processor__DOT__machrun &&
+            (root->cadr_machine__DOT__processor__DOT__gen_penult ||
+             root->cadr_machine__DOT__processor__DOT__gen_last))
+          ++out.md_late_refusals;
       }
       dut->clk = 0;
       dut->eval();
@@ -473,6 +487,12 @@ Run Simulate() {
           if (root->cadr_machine__DOT__processor__DOT__md_pending ||
               root->cadr_machine__DOT__processor__DOT__mbusy)
             ++out.md_across_processor;
+          if (root->cadr_machine__DOT__processor__DOT__machrun) {
+            ++out.md_running;
+            if (root->cadr_machine__DOT__processor__DOT__gen_penult ||
+                root->cadr_machine__DOT__processor__DOT__gen_last)
+              ++out.md_running_late;
+          }
         }
         if (dut->con_ssyn) {
           answered = 1;
@@ -505,6 +525,20 @@ Run Simulate() {
       // `-LOADMD ACK` at REQLM 0A11 is what acknowledges the cycle, which is
       // the whole of what used to hang.
       out.md_answered += Foreign(base + 2, 1, pairs[i][1], 8000);
+      if (out.md_loads != before + 1) ++out.md_load_missing;
+    }
+    // AND THE SAME WRITE STARTED AT EVERY TICK OF A MICROCYCLE, so that some
+    // request stands in a running microcycle's last two ticks, which
+    // `ub_md_take` keeps it out of.  The three above meet MBUSY; these meet
+    // the cycle's end.  `kPhases` covers the longest microcycle the boot
+    // PROM runs, 22 ticks at extra slow.
+    for (int d = 0; d < kPhases; ++d) {
+      const unsigned base = 0140000u + (016u << 10) + (0x24u << 2);
+      for (long g = 0; g < 4000 && !root->cadr_machine__DOT__processor__DOT__clock_edge; ++g)
+        TickMd();
+      for (int k = 0; k < d; ++k) TickMd();
+      const long before = out.md_loads;
+      out.md_answered += Foreign(base + 2, 1, 0x5A00u + static_cast<unsigned>(d), 8000);
       if (out.md_loads != before + 1) ++out.md_load_missing;
     }
   }
@@ -546,8 +580,11 @@ int main(int argc, char **argv) {
   std::printf("    cycles answered    %ld by -LOADMD ACK\n", r.md_answered);
   std::printf("    ticks the gate held the request off  %ld --- %ld on MBUSY, %ld on md_pending\n",
               r.md_gate_waits, r.md_wait_mbusy, r.md_wait_pending);
+
   std::printf("    loads across the processor's own MD path  %ld\n", r.md_across_processor);
   std::printf("    loads after which MD did not hold the word  %ld\n", r.md_word_wrong);
+  std::printf("    loads with the machine running  %ld, in a cycle's last two ticks %ld; "
+              "ticks refused there %ld\n", r.md_running, r.md_running_late, r.md_late_refusals);
   std::printf("    loads on the even word (the buffer's)  %ld\n", r.md_load_on_even);
   std::printf("    odd words that never reached a load  %ld\n", r.md_load_missing);
 
@@ -623,9 +660,10 @@ int main(int argc, char **argv) {
   // `UB MD LOAD`.  Three pairs, three loads, three acknowledgments; the word
   // in `MD` after every one of them; and the invariant that no load was taken
   // at an edge where the processor's own path into `MD` was live.
-  Check(r.md_loads == 3, "%ld writes of MD reached UB MD LOAD, wanting 3", r.md_loads);
-  Check(r.md_answered == 3,
-        "%ld mapped writes of MD were acknowledged, wanting 3 --- -LOADMD ACK is "
+  Check(r.md_loads == 3 + kPhases, "%ld writes of MD reached UB MD LOAD, wanting %d",
+        r.md_loads, 3 + kPhases);
+  Check(r.md_answered == 3 + kPhases,
+        "%ld mapped writes of MD were acknowledged, wanting 25 --- -LOADMD ACK is "
         "what answers the cycle and a debugger hangs for ever without it",
         r.md_answered);
   // In nanoseconds of MIT's time and not in ticks, so that the bar is the
@@ -648,6 +686,15 @@ int main(int argc, char **argv) {
         "%ld writes of MD were taken while the processor's own MBUSY or "
         "md_pending was up",
         r.md_across_processor);
+  // A running machine keeps the debugger's word out of a microcycle's last
+  // two ticks; a request that stood there is what makes that a measurement.
+  Check(r.md_running > 0, "no write of MD was taken with the machine running");
+  Check(r.md_late_refusals > 0,
+        "no request for MD stood in a running microcycle's last two ticks, so "
+        "the rule that keeps it out of them was not measured");
+  Check(r.md_running_late == 0,
+        "%ld writes of MD were taken in a running microcycle's last two ticks",
+        r.md_running_late);
 
   if (fails) {
     std::printf("\nmd_compose: %d failures\n", fails);

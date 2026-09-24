@@ -1672,9 +1672,9 @@
 @note grid the trailing edge was three ticks clear of the boundary and the two
 @note edges were indistinguishable.
 @old
-  assign iwe = iwrited && !n_tpwpiram && n_tpwpiram_q;
+  assign iwe = iwrited && !n_tpwpiram && n_tpwpiram_q && machrun;
 @new
-  assign iwe = iwrited && n_tpwpiram && !n_tpwpiram_q;
+  assign iwe = iwrited && n_tpwpiram && !n_tpwpiram_q && machrun;
 @end
 
 @mutation a-strobe-on-the-boundary-waits-a-microcycle
@@ -1690,7 +1690,7 @@
 @note already hold.  Aimed at `microcycle_sys` because the boot PROM's trace
 @note never places one.
 @old
-      if (loadmd_edge && mclk_edge) begin
+      if (loadmd_edge && (mclk_edge || hang)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -1711,7 +1711,7 @@
 @note the band's view of the same line; this is the directed one, which runs
 @note in a minute on the boot PROM.
 @old
-      if (loadmd_edge && mclk_edge) begin
+      if (loadmd_edge && (mclk_edge || hang)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -1840,40 +1840,19 @@
   assign vmap = l1_map[{adr0[9:0], adr0[10]}];
 @end
 
-@mutation the-scratchpad-latches-follow-in-the-wrong-phase
-@check microcycle_sys
-@file rtl/machine/cadr_microcycle.sv
-@note The third of the three things `rtl.rs`'s header calls easy to model one
-@note step out of place, and the one the other two mutations here do not
-@note reach. The 93425As have no clock pin: what holds a word between phases
-@note is the 74S373 at ALATCH, MLATCH, PLATCH or SPCLCH, which follows the
-@note memory while CLK is HIGH and holds through the write phase.
-@note "Modeling the memory as a register loaded early is the 74S373 drawn
-@note one state too soon." Following in the write phase instead is that
-@note drawing, exactly: every source reads the cycle before's word, and the
-@note write pulses now land while the latches are still following, which is
-@note the read-during-write question the real phasing settles for nothing.
-@note
-@note On the band, and measured rather than reasoned: the boot
-@note PROM does not catch this and the band does. Six hundred
-@note thousand microcycles of a program that loads the control
-@note store leave the scratchpads reading the same few words
-@note often enough that a phase's staleness does not show.
-@old
-    if (tpclk) begin
-      amem_q <= amem[aadr];
-      mmem_q <= mmem[madr];
-      pdl_q  <= pdl[pdla_read];
-      spc_q  <= spcm[spcptr];
-    end
-@new
-    if (!tpclk) begin
-      amem_q <= amem[aadr];
-      mmem_q <= mmem[madr];
-      pdl_q  <= pdl[pdla_read];
-      spc_q  <= spcm[spcptr];
-    end
-@end
+# RETIRED at muir's `bc6af67`: `the-scratchpad-latches-follow-in-the-wrong-phase`,
+# the 74S373s at ALATCH, MLATCH, PLATCH and SPCLCH following the memories in
+# the write phase instead of the read phase.  What made it visible was a
+# pending write landing inside the write phase while the latch followed: the
+# PDL has no pass-around, so an instruction reading the word the one before it
+# was writing saw the new word where the board and muir see the old, and the
+# band caught that.  The write pulses are now taken as they end, on the
+# boundary's own tick, so no write lands while either phase's latch is
+# following, and every register the datapath feeds is loaded at the boundary
+# from a word read at the instruction's own address.  Measured: it survived
+# every check in the gate at this commit, on both programs.  There is no
+# longer a tick at which the two phasings differ, so the record tested an
+# ordering that is gone, as the level-1 poison record retired earlier did.
 
 @mutation the-stacks-push-pass-around-is-inverted
 @check microcycle
@@ -2348,9 +2327,27 @@
 @note the microcycle waiting on the word would never see it. Dropping the
 @note hang term is the deadlock the two-stage hold exists to avoid, and it
 @note is a claim of the same kind as -WAIT coming before -HANG.
+@note
+@note **Both hang terms, since muir's `bc6af67`.**  A strobe under -HANG now
+@note goes into MD at once rather than through `md_held`, so dropping the
+@note term from the held word's commit alone moves nothing: no word is held
+@note when a hang begins, measured --- it survived every check.  The word
+@note is kept out of MD for the whole hang only when both go.
 @old
+      if (loadmd_edge && (mclk_edge || hang)) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
+        md_held    <= rdata;
+        md_pending <= 1'b1;
       end else if (md_pending && (mclk_edge || hang)) begin
 @new
+      if (loadmd_edge && mclk_edge) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
+        md_held    <= rdata;
+        md_pending <= 1'b1;
       end else if (md_pending && mclk_edge) begin
 @end
 
@@ -2370,9 +2367,9 @@
 @note a register, and a register on a signal is an invitation to move its
 @note source back one more step.
 @old
-  assign phys = memstart ? {vmo[13:0], vma[7:0]} : phys_r;
+  assign phys    = memstart ? {vmo[13:0], vma_bus} : phys_r;
 @new
-  assign phys = phys_r;
+  assign phys    = phys_r;
 @end
 
 @mutation the-held-decode-is-a-microcycle-late
@@ -7961,10 +7958,10 @@ if {0 && $held ne $want} {
 @note here, which is what this record moves.
 @old
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[13:0], vma[7:0]};
+          phys_r     <= {vmo[13:0], vma_bus};
 @new
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {lvmo[13:0], vma[7:0]};
+          phys_r     <= {lvmo[13:0], vma_bus};
 @end
 
 @mutation the-access-bit-comes-from-the-page-half-of-the-map-word
@@ -8019,10 +8016,10 @@ if {0 && $held ne $want} {
 @note SURVIVES this and `map_boot` catches it.
 @old
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[13:0], vma[7:0]};
+          phys_r     <= {vmo[13:0], vma_bus};
 @new
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[13:0] + 14'd1, vma[7:0]};
+          phys_r     <= {vmo[13:0] + 14'd1, vma_bus};
 @end
 
 @mutation the-memory-address-loses-its-page-bit
@@ -13560,9 +13557,9 @@ if {0 && $held ne $want} {
 @note second says what that costs, and it is the running boot PROM that makes
 @note there be any such tick at all.
 @old
-  assign ub_md_take = ub_md_req && !md_pending && !mbusy && !(cpu_edge && destmdr);
+  assign ub_md_take = ub_md_req && !md_pending && !mbusy && !(cpu_edge && destmdr)
 @new
-  assign ub_md_take = ub_md_req && !md_pending && !(cpu_edge && destmdr);
+  assign ub_md_take = ub_md_req && !md_pending && !(cpu_edge && destmdr)
 @end
 
 @mutation md-compose-the-debuggers-word-reaches-md-with-its-halves-crossed
@@ -13645,11 +13642,11 @@ if {0 && $held ne $want} {
 @note address the machine held when the microcycle retired, and MD to hold
 @note what memory gave.
 @old
-          phys_r     <= {vmo[13:0], vma[7:0]};
-          wdata      <= md;
+          phys_r     <= {vmo[13:0], vma_bus};
+          wdata      <= md_bus;
 @new
-          phys_r     <= cpu_edge ? {vmo[13:0], vma[7:0]} : phys_r;
-          wdata      <= md;
+          phys_r     <= cpu_edge ? {vmo[13:0], vma_bus} : phys_r;
+          wdata      <= md_bus;
 @end
 
 @mutation park-a-write-taken-out-at-a-master-clock-writes-the-last-word
@@ -13662,10 +13659,10 @@ if {0 && $held ne $want} {
 @note memory through the debug IR on a halted machine and wants memory to
 @note hold MD.
 @old
-          wdata      <= md;
+          wdata      <= md_bus;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
 @new
-          wdata      <= cpu_edge ? md : wdata;
+          wdata      <= cpu_edge ? md_bus : wdata;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
 @end
 
@@ -19079,6 +19076,225 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
     *) ;;
 @end
 
+# --- writes against the reads beside them: muir's `bc6af67` -----------------
+#
+# muir's `tests/dispatch_write_order.rs`, run on the whole machine by
+# `build/dispatch_write_order.pass`.  One record for each rule the fabric took
+# from it.  The control store's pulse is gated by MACHRUN as well, and has no
+# record: its address and word are registers, so a pulse repeated in a held
+# cycle writes the same word again and nothing can tell it from one pulse.
+
+@mutation a-write-pulse-fires-in-a-cycle-wait-holds
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note `TPWP` is `NOR(latch, -MACHRUNA)` at CLOCK2 1C10, so a generator cycle
+@note `-WAIT` holds fires no write pulse.  Without the gate a dispatch write
+@note addressed by MD fires in every held cycle, and while the read before it
+@note lands MD moves: `dispatch-held-by-wait-1` to `-3` then leave the word at
+@note `MD<2:0>` = 2 as well as at 5, where muir's `rtl` writes it once.
+@old
+  assign wp     = wp_end && machrun;
+@new
+  assign wp     = wp_end;
+@end
+
+@mutation a-write-is-taken-at-the-pulse-leading-edge
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note Where this stood before muir's `bc6af67`: the scratchpads, the map and
+@note the dispatch memory written as the pulse begins, three ticks before the
+@note boundary.  The dispatch word a `POPJ` in a dispatch write reads is then
+@note the new one (`popj-0` to `-2`), and so are `MAP(MD)` and a dispatch on
+@note a map bit right after a map write, where muir's `rtl` reads the old;
+@note and a hung dispatch write addressed by MD misses a word landed before
+@note the pulse ends (`dispatch-on-md-gap-3`).
+@old
+  assign wp_end = n_tpwp && !n_tpwp_q;
+@new
+  assign wp_end = !n_tpwp && n_tpwp_q;
+@end
+
+@mutation a-hung-cycle-strobe-waits-a-tick-in-md-held
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note While `-HANG` is up a strobed word is MD at once.  Through `md_held` it
+@note is a tick later, and a word acknowledged two ticks before a hung
+@note cycle's write pulse ends misses the pulse: `dispatch-on-md-gap-3` writes
+@note at `MD<2:0>` = 2 where muir's `rtl` writes at 5.
+@old
+      if (loadmd_edge && (mclk_edge || hang)) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
+@new
+      if (loadmd_edge && mclk_edge) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
+@end
+
+@mutation the-bus-address-takes-the-vma-from-before-the-edge
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note `-VMA7..0` is the VMA register's own output, so an instruction that
+@note loads VMA in the microcycle whose edge starts a prepared cycle moves the
+@note word that cycle reads; muir's `Rtl::clock_edge` loads VMA before
+@note `start_bus_cycle` takes the address.  Taken from the VMA before the
+@note edge, `map-write-into-hang` and `dispatch-held-by-wait-0` read the word
+@note at the old address, where muir's `rtl` reads 0.
+@old
+  assign vma_bus = (cpu_edge && vmaenb) ? vmas[7:0] : vma[7:0];
+@new
+  assign vma_bus = vma[7:0];
+@end
+
+@mutation the-write-word-takes-the-md-from-before-the-edge
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note `MEM<31:0>` is driven from MD's outputs, and muir's `Rtl::clock_edge`
+@note loads MD under `DESTMDR` before `start_bus_cycle` takes the word a
+@note write carries.  Taken from the MD before the edge,
+@note `md-loaded-as-a-write-starts` writes the word stored before the one its
+@note own instruction stores, and reads it back into M 13.
+@old
+  assign md_bus = (cpu_edge && destmdr) ? ob : md;
+@new
+  assign md_bus = md;
+@end
+
+# --- where a hung microcycle's map and dispatch write lands ------------------
+#
+# `cadr_microcycle.sv`'s `mw` puts the write two ticks before the pulse would
+# end, at it, or a tick after it, with the address and word the pulse's end
+# would take, so that every write is two ticks or more after MD moved and
+# three or more before the boundary that reads it.  A placement that moves
+# the word is caught by the programs agreeing with muir; one that keeps the
+# word but moves the tick is caught by `CADR_GAP_MONITOR`, which the check is
+# built with and which fails a run on a tick short.  The programs reach both
+# bounds, and the check fails if they stop reaching them.
+#
+# One term has no record: `rd_holds` asks that READ IN PROGRESS still be up
+# in the cycle's last tick, and every program that reaches a countdown ending
+# there is one where the fabric already parts from muir's `rtl`, which treats
+# a microcycle that starts hung as hung even when the read finishes inside
+# it.  An agreeing program cannot tell that term from a weaker one.
+
+@mutation an-early-write-ignores-md-moving-before-it
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note The early write is taken only when MD did not move on the edge before
+@note it.  Without that it lands one tick after MD took the read's word,
+@note in `popj-into-hang-on-time-acked`, and the gap monitor fails the run.
+@old
+  assign mw_early  = gen_penult && hang && machrun && rd_holds && !md_we_q;
+@new
+  assign mw_early  = gen_penult && hang && machrun && rd_holds;
+@end
+
+@mutation no-early-write-in-a-hung-cycle
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note With no early write, a hung dispatch write whose hang ends on the edge
+@note after the pulse lands on time, one tick before the boundary that reads
+@note it (`popj-into-hang-early`).  The word is the same, and the gap monitor
+@note fails the run on the tick.  `TPCLK` is down in the write phase, so the
+@note term is false there.
+@old
+  assign mw_early  = gen_penult && hang && machrun && rd_holds && !md_we_q;
+@new
+  assign mw_early  = gen_penult && hang && machrun && rd_holds && !md_we_q && tpclk;
+@end
+
+@mutation the-early-write-on-the-cycles-last-tick
+@check dispatch_write_order
+@file rtl/machine/cadr_phase_gen.sv
+@note The early write a tick later, on the cycle's last tick: two edges
+@note before a boundary that ends the hang after the pulse, which an MLAB does
+@note not allow for, and the gap monitor fails the run.
+@old
+        penult_at     <= read_sel + 6'(RESTART_T) - 6'd2;
+@new
+        penult_at     <= read_sel + 6'(RESTART_T) - 6'd1;
+@end
+
+@mutation a-late-write-lands-on-time
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note A hung write whose MD moved on the cycle's last edge taken on time, a
+@note tick after MD, as well as late.  The word is the same, and the gap
+@note monitor fails the run on `popj-into-hang-late`.
+@old
+  assign mw_now    = wp_parked && !md_we_q;
+@new
+  assign mw_now    = wp_parked;
+@end
+
+@mutation no-late-write
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note Without the late write a hung write whose MD moved on the cycle's last
+@note edge is never made: `popj-into-hang-late` falls through where muir's
+@note `rtl` returns, and `dispatch-on-md-gap-3` leaves the word unwritten.
+@old
+      mw_late_q   <= wp_parked && md_we_q;
+@new
+      mw_late_q   <= wp_parked && md_we_q && mw_early_q;
+@end
+
+# --- the processor's own write of the mode register -------------------------
+#
+# `mode-speed-written-0` to `-5` in `build/dispatch_write_order.pass` write
+# the speed bits over the Unibus at six phases and run on; muir's step lands
+# the word at SPEEDCLK before the synchronizer takes it.
+
+@mutation the-mode-register-lands-after-speedclk
+@check dispatch_write_order
+@file rtl/machine/cadr_spy_registers.sv
+@note The word landed a tick later, on the edge that is SPEEDCLK itself,
+@note where the synchronizer takes the register as it stood: the new speed
+@note reaches the generator a cycle after muir's, 220 ns where muir runs 150.
+@old
+  assign landing = mclk || (phase_t == 6'(SPEEDCLK_T) - 6'd3);
+@new
+  assign landing = mclk || (phase_t == 6'(SPEEDCLK_T) - 6'd2);
+@end
+
+@mutation the-register-strobe-counts-msyn-from-one
+@check dispatch_write_order
+@file rtl/machine/cadr_spy_registers.sv
+@note The register strobe a tick after muir's `answered`: the mode word misses
+@note the SPEEDCLK muir lands it at, and the speed changes a cycle late.
+@old
+        if (ub_write && running && elapsed == 9'(STROBE_T) - 9'd1) begin
+@new
+        if (ub_write && running && elapsed == 9'(STROBE_T)) begin
+@end
+
+@mutation the-register-block-ssyn-counts-msyn-from-one
+@check dispatch_write_order
+@file rtl/machine/cadr_spy_registers.sv
+@note -UB SSYN a tick after muir's `DIAGNOSTIC_NS`: the write's -MEMACK lands
+@note 10 ns after muir's on all six programs, which the check's own
+@note acknowledgment measure refuses.
+@old
+        if (running && elapsed >= 9'(SSYN_T) - 9'd1) ub_ssyn <= 1'b1;
+@new
+        if (running && elapsed >= 9'(SSYN_T)) ub_ssyn <= 1'b1;
+@end
+
+@mutation a-running-machine-takes-a-foreign-md-word-at-a-cycles-end
+@check md_compose
+@file rtl/machine/cadr_microcycle.sv
+@note A foreign master's write of MD is kept out of a running microcycle's
+@note last two ticks, where `mw` places the map's and dispatch memory's write
+@note on MD standing still.  Without that, of the writes `md_compose` starts
+@note at every tick of a microcycle two are taken there, and none is refused.
+@old
+                   && !(machrun && (gen_penult || gen_last));
+@new
+                   && !(machrun && (gen_penult && gen_last));
+@end
+
 @mutation grid-zynq-the-latch-window-is-the-relaxed-eight
 @check grid
 @file rtl/plumbing/xilinx7/cadr_machine.xdc
@@ -19103,15 +19319,16 @@ set_multicycle_path -setup 7 -from $split_latch -to $slow
 set_multicycle_path -setup 8 -from $split_latch -to $slow
 @end
 
-@mutation grid-zynq-the-latch-to-dispatch-write-takes-five
+@mutation grid-zynq-the-latch-to-dispatch-write-takes-six
 @check grid
 @file rtl/plumbing/xilinx7/cadr_machine.xdc
-@note The latches into the dispatch memory's write are given five ticks,
-@note where the write lands four after the latch closes.
+@note The latches into the dispatch memory's write are given six ticks, where
+@note a hung microcycle whose read has been acknowledged writes it on the tick
+@note before its last, five after the latch closes.
 @old
-set_multicycle_path -setup 4 -from $split_latch -to $split_dmem
-@new
 set_multicycle_path -setup 5 -from $split_latch -to $split_dmem
+@new
+set_multicycle_path -setup 6 -from $split_latch -to $split_dmem
 @end
 
 @mutation grid-zynq-the-control-store-word-takes-six
@@ -19129,7 +19346,8 @@ set_multicycle_path -setup 6 -from $split_cstore -to $slow
 @check grid
 @file rtl/plumbing/xilinx7/cadr_machine.xdc
 @note A write of either level of the map is given four ticks to reach the
-@note next boundary, which is three ticks after the write.
+@note registers, where `mw` puts an early write in a hung microcycle three
+@note edges before the boundary a hang ending after the pulse gives.
 @old
 set_multicycle_path -setup 3 -from $split_maps -to $slow
 @new
@@ -19172,15 +19390,16 @@ set_multicycle_path -setup 7 -from $split_latch -to $slow
 set_multicycle_path -setup 8 -from $split_latch -to $slow
 @end
 
-@mutation grid-de25-the-latch-to-dispatch-write-takes-five
+@mutation grid-de25-the-latch-to-dispatch-write-takes-six
 @check grid
 @file boards/de25-nano/quartus/cadr_de25.sdc
-@note The latches into the dispatch memory's write are given five ticks,
-@note where the write lands four after the latch closes.
+@note The latches into the dispatch memory's write are given six ticks, where
+@note a hung microcycle whose read has been acknowledged writes it on the tick
+@note before its last, five after the latch closes.
 @old
-set_multicycle_path -setup 4 -from $split_latch -to $split_dmem
-@new
 set_multicycle_path -setup 5 -from $split_latch -to $split_dmem
+@new
+set_multicycle_path -setup 6 -from $split_latch -to $split_dmem
 @end
 
 @mutation grid-de25-the-control-store-word-takes-six
@@ -19204,4 +19423,82 @@ set_multicycle_path -setup 6 -from $split_cstore -to $slow
 set_multicycle_path -setup 6 -from $split_every_tick -to $slow
 @new
 set_multicycle_path -setup 7 -from $split_every_tick -to $slow
+@end
+
+@mutation grid-zynq-the-dispatch-write-takes-four
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The dispatch memory's write is given four ticks to reach the registers,
+@note where an early write in a hung microcycle is three edges before its
+@note boundary, measured over `dispatch_write_order`'s programs.
+@old
+set_multicycle_path -setup 3 -from $split_dmem -to $slow
+@new
+set_multicycle_path -setup 4 -from $split_dmem -to $slow
+@end
+
+@mutation grid-zynq-the-readout-takes-two
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The three memories' writes are given two ticks into the readout's
+@note copies, which are loaded every tick and take a new word on the next.
+@old
+set_multicycle_path -setup 1 -from $split_md_writes -to $split_readout
+@new
+set_multicycle_path -setup 2 -from $split_md_writes -to $split_readout
+@end
+
+@mutation grid-zynq-md-into-the-writes-takes-three
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note MD into the address of a map or dispatch memory write is given three
+@note ticks, where `mw` puts a write two ticks after MD's last move.
+@old
+set_multicycle_path -setup 2 -from $split_md -to $split_md_writes
+@new
+set_multicycle_path -setup 3 -from $split_md -to $split_md_writes
+@end
+
+@mutation grid-zynq-md-held-into-md-takes-two
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note MD_HELD into MD is given two ticks, where a hang takes the held word the
+@note tick after the strobe held it.
+@old
+set_multicycle_path -setup 1 -from $split_md_held -to $split_md
+@new
+set_multicycle_path -setup 2 -from $split_md_held -to $split_md
+@end
+
+@mutation grid-zynq-the-stack-write-takes-two
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The stack's write into the stack's latch is given two ticks, where the
+@note write is on the boundary's edge and the latch follows on the next.
+@old
+set_multicycle_path -setup 1 -from $split_spcm -to $split_spc_q
+@new
+set_multicycle_path -setup 2 -from $split_spcm -to $split_spc_q
+@end
+
+@mutation grid-de25-md-into-the-writes-takes-three
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The DE25-Nano's MD into the MLABs' write address is given three ticks,
+@note where `mw` puts a write two ticks after MD's last move.
+@old
+set_multicycle_path -setup 2 -from $split_md -to $split_md_writes
+@new
+set_multicycle_path -setup 3 -from $split_md -to $split_md_writes
+@end
+
+@mutation grid-de25-md-held-into-md-takes-two
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The DE25-Nano's MD_HELD into MD is given two ticks, where a hang takes
+@note the held word the tick after the strobe held it.
+@old
+set_multicycle_path -setup 1 -from $split_md_held -to $split_md
+@new
+set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end

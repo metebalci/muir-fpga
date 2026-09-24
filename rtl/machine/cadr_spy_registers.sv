@@ -150,6 +150,19 @@ module cadr_spy_registers (
   // opportunity, which is up to a microcycle away. Applying it at the strobe
   // instead sets PROMDISABLE a microcycle early, measured on the band at
   // 1,410,034 against muir's 1,410,035.
+  //
+  // **AND AT SPEEDCLK THE WORD LANDS BEFORE THE SYNCHRONIZER TAKES IT.**
+  // muir's step calls `land_write` at `SPEEDCLK_NS` and then `speedclk`, so a
+  // speed written by then is the one the synchronizer shifts in at that same
+  // instant.  The synchronizer in `cadr_microcycle.sv` shifts on the edge
+  // that is SPEEDCLK, the end of the tick its `phase_t` reads five; this
+  // counter reads one less than that one over the same ticks (it starts at
+  // zero on the tick after the boundary, where that one starts at one), so
+  // SPEEDCLK's edge ends this counter's tick four, and the word has to be in
+  // the register on the edge before it: tick three.  Landed where it used to
+  // be, on this counter's tick six, a speed the processor wrote reached the
+  // generator a cycle after muir's, at every write phase tried
+  // (`mode-speed-written-0` to `-5` in `build/dispatch_write_order.pass`).
   localparam int unsigned SPEEDCLK_T = cadr_tick_pkg::ticks(60);
 
   logic [5:0]  phase_t;      // ticks since the boundary
@@ -157,7 +170,19 @@ module cadr_spy_registers (
   logic        pending;
   logic [15:0] held;
   logic [3:0]  held_eadr;
-  assign landing = mclk || (phase_t == 6'(SPEEDCLK_T));
+  assign landing = mclk || (phase_t == 6'(SPEEDCLK_T) - 6'd3);
+
+  // **THE COUNT FROM -UB MSYN IS ONE SHORT OF EACH INSTANT.**  `elapsed` is
+  // zero on the first tick this block sees -UB MSYN, which is the tick after
+  // the edge the master raised it on, so the edge `N` ticks after -UB MSYN
+  // ends the tick `elapsed` reads `N - 1`.  Compared against `N`, the
+  // register strobe and -UB SSYN both came a tick late: the mode register
+  // missed a SPEEDCLK muir's `answered` makes, and the cycle's -MEMACK was
+  // 10 ns after muir's, measured by `build/dispatch_write_order.pass` on the
+  // processor's own writes of the mode register.  The write pulse's leading
+  // edge below is counted the same way and has not been moved: nothing here
+  // writes the two pulse bits against muir, so which tick it belongs on is
+  // not measured.
 
   // `-BOOT` is a LEVEL on two of its three sources --- a finger on a button,
   // and the console's register holding the line down --- so `RESET` is held
@@ -257,13 +282,13 @@ module cadr_spy_registers (
 
         // The trailing edge of -LDMODE or -LDCLK, where the word is taken.
         // It is applied above, at the machine's next look.
-        if (ub_write && running && elapsed == 9'(STROBE_T)) begin
+        if (ub_write && running && elapsed == 9'(STROBE_T) - 9'd1) begin
           pending   <= 1'b1;
           held      <= ub_wdata;
           held_eadr <= spy_eadr;
         end
 
-        if (running && elapsed >= 9'(SSYN_T)) ub_ssyn <= 1'b1;
+        if (running && elapsed >= 9'(SSYN_T) - 9'd1) ub_ssyn <= 1'b1;
       end
 
       // **`-BOOT` HELD IS `RESET` HELD**, and this is the reset arm above

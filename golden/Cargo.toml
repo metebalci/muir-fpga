@@ -75,3 +75,7 @@ path = "src/busint_regs.rs"
 [[bin]]
 name = "sstep"
 path = "src/sstep.rs"
+
+[[bin]]
+name = "dispatch_write_order"
+path = "src/dispatch_write_order.rs"

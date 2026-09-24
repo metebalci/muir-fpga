@@ -506,7 +506,7 @@ CHECKS = {
         "extra": ["rtl/machine/cadr_console_state.sv"],
         "top": "cadr_machine",
         "tb": "tb/cadr_machine_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": "rtl.golden",
         "gprom": True,
     },
@@ -581,6 +581,36 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # WRITES AGAINST THE READS BESIDE THEM: muir's own
+    # `tests/dispatch_write_order.rs` programs, run on the whole machine and
+    # held to `rtl` every microcycle and every word of the end state.  The
+    # programs and the memories they start from are loaded into the fabric's
+    # arrays, hence `--public-flat-rw`.  Records aimed here are the ones about
+    # which write pulse fires, when it takes its address, and which VMA the
+    # bus address takes its low byte from.
+    "dispatch_write_order": {
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+                    "rtl/machine/cadr_spy_registers.sv"],
+        "extra": [
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv",
+            "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_busint_regs.sv", "rtl/machine/cadr_console_bus.sv",
+            "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_dispatch_write_order_tb.cpp",
+        # With the gap monitor, which is what catches a write placed a tick
+        # too near MD or the boundary with the word still right.
+        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR",
+                  "-CFLAGS", "-DCADR_GAP_MONITOR", "--public-flat-rw", "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-Iboards/arty-z7-20"],
+        "golden": "dispatch_write_order.golden",
+        "gprom": True,
+    },
     # A HALTED MACHINE MUST GO ON MAKING MASTER CLOCKS.  `Rtl::step` answers
     # a halted machine before it looks at the bus at all, so muir never takes
     # a `-HANG` there; this is that property on the composed machine, where a
@@ -606,7 +636,7 @@ CHECKS = {
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_park_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
+        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "--public-flat-rw", "-Irtl/machine",
                   "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
                   "-Iboards/arty-z7-20"],
         "golden": None,
@@ -623,7 +653,7 @@ CHECKS = {
         "extra": ["rtl/machine/cadr_console_state.sv"],
         "top": "cadr_machine",
         "tb": "tb/cadr_ddr_boot_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": None,
         "gprom": True,
     },

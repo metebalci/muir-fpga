@@ -1,0 +1,512 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+//! Writes that land in the microcycle that reads the same memory, and writes
+//! whose microcycle is held, out of muir's own `rtl` engine.
+//!
+//! The programs are muir's `tests/dispatch_write_order.rs`, built here from
+//! the same library calls, so the fabric runs what muir's own test runs.
+//! That test runs each program on `chip` (MIT's netlist), `rtl` and `micro`
+//! under the board's own nanoseconds and compares the end states. This takes
+//! `rtl` alone, under the fabric's grid ([`trace::TIMING`]), and writes every
+//! microcycle and the end state, which `tb/cadr_dispatch_write_order_tb.cpp`
+//! holds the whole machine to.
+//!
+//! **What the programs hold**, each against muir's rule:
+//!
+//! - **`-WAIT` fires no write pulse.** `TPWP` is `NOR(latch, -MACHRUNA)` at
+//!   CLOCK2 1C10 and `-WAIT` drops `MACHRUN`, so a write pending across a
+//!   held generator cycle lands once, when the cycle runs.
+//!   `dispatch-held-by-wait-1` to `-3` are this file's own programs, not
+//!   muir's: a dispatch write addressed by `MD` that a `-WAIT` holds while
+//!   the read lands, so a pulse in a held cycle would write a second word at
+//!   the `MD` before the read. `-0` is the same write with no gap, which
+//!   nothing holds; its fetch loads VMA under the read in flight, so it also
+//!   holds where the bus address takes `VMA<7:0>` from, as
+//!   `map-write-into-hang` does. muir's PDL and SPC programs write at a register's
+//!   address, where a repeated pulse lands on the same word, so they hold
+//!   that the machine gets there and cannot see a repeat.
+//! - **`-HANG` runs the hung cycle's write pulse**, and the pending writes
+//!   and a dispatch write take their address and data as the pulse ends, at
+//!   the cycle's boundary, with `MD` as the bus has left it then.
+//!   `map-write-into-hang` and `dispatch-on-md-gap-0` to `-3`.
+//! - **The bus cycle takes the VMA and the MD the edge that starts it has
+//!   just loaded**, as `Rtl::clock_edge` loads both before
+//!   `Rtl::start_bus_cycle`: `map-write-into-hang` and
+//!   `dispatch-held-by-wait-0` load VMA there, and
+//!   `md-loaded-as-a-write-starts` loads MD.
+//! - **A read in the microcycle that writes the same memory gets the OLD
+//!   word**, as QUUX defines it and muir's `rtl` has it on the CADR too
+//!   (`Rtl::read_phase` reads, `Rtl::write_phase` writes after): a `POPJ` in
+//!   a dispatch write (`popj-0` to `-3`), `MAP(MD)` after a map write
+//!   (`map-source-after-write`), and a dispatch on a map bit after one
+//!   (`map-dispatch-after-write`).
+//!
+//! **The format**, one program after another:
+//!
+//! ```text
+//! program NAME ROWS          a program and how many microcycles it runs
+//! prom ADDR WORD             the boot PROM, every word the program has
+//! l2 IDX WORD                the level-2 map before the boot
+//! dmem IDX WORD              the dispatch memory before the boot
+//! main PHYS WORD             main memory before the boot
+//! r COLUMNS                  one microcycle, in `trace.rs`'s columns
+//! end mmem W0 .. W31         the M memory at the end
+//! end spc W0 .. W31          the micro-stack at the end
+//! end spcptr P               its pointer
+//! end dmem IDX WORD          each nonzero dispatch word at the end
+//! end l1 IDX WORD            each nonzero level-1 entry
+//! end l2 IDX WORD            each nonzero level-2 entry of the CADR's 1024
+//! end pdl IDX WORD           each nonzero PDL word of the CADR's 1024
+//! done
+//! ```
+//!
+//! Every value is hexadecimal. A memory the lists name no entry of is zero
+//! everywhere, and the testbench checks every word of it.
+
+mod trace;
+
+use muir::engine::Engine;
+use muir::isa::Insn;
+use muir::isa::asm::*;
+use muir::machine::Machine;
+
+// --- the programs, as muir's test builds them -------------------------------
+
+/// `v` into M memory `r`: zero, then one doubling a bit, with the bit as the
+/// carry in.
+fn constant(v: u32, r: u64, out: &mut Vec<Insn>) {
+    out.push(Insn::new(ALU | SETZ | m_dest(r)));
+    for b in (0..32).rev() {
+        let c = if (v >> b) & 1 != 0 { CARRY_IN } else { 0 };
+        out.push(Insn::new(ALU | M_PLUS_M | c | m_src(r) | a_src(r) | m_dest(r)));
+    }
+}
+
+fn copy(from: u64, to: u64) -> Insn {
+    Insn::new(ALU | SETM | m_src(from) | a_src(3) | m_dest(to))
+}
+
+fn halt_here(at: usize) -> Insn {
+    Insn::new(JUMP | target(at as u64) | ALWAYS)
+}
+
+/// Functional destination 23, `VMA-WRITE-MAP`, also into M 37.
+const WRITE_MAP: u64 = (0o23 << 19) | (0o37 << 14);
+/// Functional source 11, `MAP(MD)`.
+const SRC_MAP: u64 = src(0o11);
+
+/// A program, the state it starts from, and how long it runs.
+struct Program {
+    name: String,
+    prom: Vec<Insn>,
+    l2: Vec<(usize, u32)>,
+    dmem: Vec<(usize, u32)>,
+    main: Vec<(u32, u32)>,
+    rows: u64,
+    /// `{SPEED1, SPEED0}` of the mode register at the boot, as a console
+    /// leaves it; zero, extra slow, unless a program says otherwise.
+    speed: u16,
+}
+
+fn program(name: &str, p: Vec<Insn>, rows: u64) -> Program {
+    let mut p = p;
+    p.resize(512, filler());
+    Program { name: name.into(), prom: p, l2: vec![], dmem: vec![], main: vec![], rows, speed: 0 }
+}
+
+// Q3: a dispatch memory write in the instruction that also pops.
+const D: u64 = 0o1200;
+const DR: u32 = 1 << 16;
+const DP: u32 = 1 << 15;
+const DN: u32 = 1 << 14;
+const RETURNED: u32 = 0o1111;
+const AT_OLD_DPC: u32 = 0o2222;
+const AT_NEW_DPC: u32 = 0o3333;
+const SUB: usize = 0o400;
+const OLD_DPC: u32 = 0o440;
+const NEW_DPC: u32 = 0o460;
+
+fn popj_program(name: &str, old: u32, new: u32) -> Program {
+    let mut p = vec![filler()];
+    constant(old, 1, &mut p);
+    constant(new, 2, &mut p);
+    constant(RETURNED, 6, &mut p);
+    constant(AT_OLD_DPC, 7, &mut p);
+    constant(AT_NEW_DPC, 8, &mut p);
+    p.push(Insn::new(ALU | SETZ | m_dest(5)));
+    p.push(Insn::new(DISPATCH | DMEM_WRITE | a_src(1) | d_addr(D)));
+    p.push(filler());
+    p.push(filler());
+    p.push(Insn::new(JUMP | P | ALWAYS | target(SUB as u64)));
+    p.push(filler());
+    p.push(copy(6, 5));
+    let here = p.len();
+    p.push(halt_here(here));
+    assert!(p.len() < SUB);
+    p.resize(512, filler());
+    p[SUB] = Insn::new(DISPATCH | DMEM_WRITE | POPJ | a_src(2) | d_addr(D));
+    for (at, from) in [(OLD_DPC as usize, 7), (NEW_DPC as usize, 8)] {
+        p[at] = copy(from, 5);
+        p[at + 1] = halt_here(at + 1);
+    }
+    program(name, p, 240)
+}
+
+const POPJ_CASES: [(u32, u32); 4] = [
+    (DR | OLD_DPC, NEW_DPC),
+    (OLD_DPC, DR | NEW_DPC),
+    (OLD_DPC, NEW_DPC),
+    (DR | DP | OLD_DPC, DR | DN | NEW_DPC),
+];
+
+// Q3b: a map write, and the instruction straight after it.
+const MAP_MD: u32 = (0o100 << 13) | (3 << 8) | 2;
+const OLD_L2: u32 = 0o1234567 & !(1 << 18);
+const NEW_L2: u32 = 0o7654321;
+const MAP_STORE: u32 = (1 << 25) | NEW_L2;
+
+fn map_write_then(name: &str, then: Vec<Insn>) -> Program {
+    let mut p = vec![filler()];
+    constant(MAP_MD, 1, &mut p);
+    constant(MAP_STORE, 2, &mut p);
+    constant(AT_OLD_DPC, 7, &mut p);
+    constant(AT_NEW_DPC, 8, &mut p);
+    p.push(Insn::new(ALU | SETZ | m_dest(5)));
+    p.push(Insn::new(ALU | SETM | m_src(1) | a_src(3) | MD));
+    p.push(filler());
+    p.push(filler());
+    p.push(Insn::new(ALU | SETM | m_src(2) | a_src(3) | WRITE_MAP));
+    p.extend(then);
+    let here = p.len();
+    p.push(halt_here(here));
+    assert!(p.len() < OLD_DPC as usize);
+    p.resize(512, filler());
+    for (at, from) in [(OLD_DPC as usize, 7), (NEW_DPC as usize, 8)] {
+        p[at] = copy(from, 5);
+        p[at + 1] = halt_here(at + 1);
+    }
+    let mut prog = program(name, p, 240);
+    prog.l2.push((3, OLD_L2));
+    prog
+}
+
+// Q4: writes pending across a held microcycle.
+const VADDR: u32 = (1 << 8) | 5;
+const PHYS: u32 = (0o100 << 8) | 5;
+const READ_WORD: u32 = (0o100 << 13) | (7 << 8) | 5;
+const MD_BEFORE: u32 = MAP_MD;
+const HELD_CYCLES: u64 = 400;
+const PDL_POINTER: u64 = (0o14 << 19) | (0o37 << 14);
+const PDL_TOP: u64 = (0o10 << 19) | (0o37 << 14);
+const SPC_PUSH: u64 = (0o15 << 19) | (0o37 << 14);
+const E: u64 = 0o1300;
+const DISPATCH_WORD: u32 = 0o123456;
+
+fn read_then(name: &str, setup: &[(u32, u64)], then: Vec<Insn>) -> Program {
+    let mut p = vec![filler()];
+    constant(MD_BEFORE, 1, &mut p);
+    constant(VADDR, 12, &mut p);
+    constant(0o20, 14, &mut p);
+    for &(v, r) in setup {
+        constant(v, r, &mut p);
+    }
+    p.push(Insn::new(ALU | SETM | m_src(1) | a_src(3) | MD));
+    p.push(Insn::new(ALU | SETM | m_src(14) | a_src(3) | PDL_POINTER));
+    p.push(filler());
+    p.push(Insn::new(ALU | SETM | m_src(12) | a_src(3) | START_READ));
+    p.extend(then);
+    for _ in 0..4 {
+        p.push(filler());
+    }
+    let here = p.len();
+    p.push(halt_here(here));
+    let mut prog = program(name, p, HELD_CYCLES);
+    prog.l2.push((1, (1 << 23) | (1 << 22) | 0o100));
+    prog.main.push((PHYS, READ_WORD));
+    prog
+}
+
+// This file's own: a hung dispatch write that the boundary ending its hang
+// reads back, at the two nearest distances the fabric allows.
+//
+// muir's `rtl` runs a hung cycle's write pulse and then takes the read phase
+// again (`Rtl::step_body`, the `pulsed` write before `stall_for`), so the
+// boundary that ends the hang reads the word the pulse wrote: a `POPJ` in a
+// dispatch write addressed by MD returns through the new word's `DR`, where
+// in a cycle that runs it reads the old one (`popj-0` to `-3`).  These run at
+// normal speed, fifteen ticks a microcycle and nineteen under `ILONG`, so
+// that the read's acknowledgment can be put on any tick of the hung cycle.
+// Where the fabric writes the memory is `mw` in `cadr_microcycle.sv`: two
+// ticks from any move of MD and two before the boundary.  These are the
+// programs that bring a write to each bound --- MD strobed off the bus in
+// the cycle's last tick or the one before it, so the write lands a tick
+// late, and a hang that ends on the edge after the pulse, so it lands a tick
+// early and the boundary reads it two edges on ---
+// and `tb/cadr_dispatch_write_order_tb.cpp` fails unless all three were met.
+const RET_PC: u32 = 0o500;
+/// `{SPEED1, SPEED0}` = normal: 85 ns read taps, nine ticks, fifteen a cycle.
+const NORMAL_SPEED: u16 = 2;
+
+fn ilong(i: Insn) -> Insn {
+    Insn::new(i.raw() | (1 << 45))
+}
+
+/// The read of `read_then` with `pre` fillers before it, which move the
+/// request against the memory board's own oscillator; `n` fillers after it,
+/// the first `i` of them under `ILONG`, then the hung `DISPATCH | DMEM_WRITE
+/// | POPJ` addressed by `MD<2:0>`, under `ILONG` if `long`.  The word written has `DR`, so the `POPJ` returns
+/// to `RET_PC` if the boundary reads it and falls through if it reads the old
+/// word, zero; M 5 says which (`AT_NEW_DPC` returned, `AT_OLD_DPC` fell).
+fn popj_into_hang(name: &str, pre: usize, n: usize, i: usize, long: bool) -> Program {
+    let mut p = vec![filler()];
+    constant(MD_BEFORE, 1, &mut p);
+    constant(VADDR, 12, &mut p);
+    constant(AT_OLD_DPC, 7, &mut p);
+    constant(AT_NEW_DPC, 8, &mut p);
+    constant(DR | 0o1234, 2, &mut p);
+    constant(RET_PC, 15, &mut p);
+    p.push(Insn::new(ALU | SETM | m_src(15) | a_src(3) | SPC_PUSH));
+    p.push(Insn::new(ALU | SETZ | m_dest(5)));
+    for _ in 0..pre {
+        p.push(filler());
+    }
+    p.push(Insn::new(ALU | SETM | m_src(1) | a_src(3) | MD));
+    p.push(filler());
+    p.push(Insn::new(ALU | SETM | m_src(12) | a_src(3) | START_READ));
+    for k in 0..n {
+        p.push(if k < i { ilong(filler()) } else { filler() });
+    }
+    let x = Insn::new(DISPATCH | DMEM_WRITE | POPJ | SRC_MD | d_len(3) | a_src(2) | d_addr(E));
+    p.push(if long { ilong(x) } else { x });
+    p.push(filler());
+    p.push(copy(7, 5));
+    let here = p.len();
+    p.push(halt_here(here));
+    assert!(p.len() < RET_PC as usize);
+    p.resize(512, filler());
+    p[RET_PC as usize] = copy(8, 5);
+    p[RET_PC as usize + 1] = halt_here(RET_PC as usize + 1);
+    let mut prog = program(name, p, HELD_CYCLES);
+    prog.speed = NORMAL_SPEED;
+    prog.l2.push((1, (1 << 23) | (1 << 22) | 0o100));
+    prog
+}
+
+// This file's own: the processor writing the mode register's speed bits.
+// Unibus `0o766012` is physical `0o17773005`, reached here from VMA `0o1005`
+// through level-2 entry 2, as MIT's boot PROM reaches it (`promh.text`).
+const MODE_VADDR: u32 = 0o1005;
+const MODE_PAGE: u32 = (1 << 23) | (1 << 22) | 0o37766;
+/// `SPY<1:0>` = `{SPEED1, SPEED0}` = normal.
+const MODE_NORMAL: u32 = 2;
+
+/// Writes the speed bits and runs on at the new speed; `pad` fillers between
+/// loading MD and starting the write move the write against the generator.
+fn speed_written(name: &str, pad: usize) -> Program {
+    let mut p = vec![filler()];
+    constant(MODE_VADDR, 20, &mut p);
+    constant(MODE_NORMAL, 21, &mut p);
+    p.push(Insn::new(ALU | SETM | m_src(21) | a_src(3) | MD));
+    for _ in 0..pad {
+        p.push(filler());
+    }
+    p.push(Insn::new(ALU | SETM | m_src(20) | a_src(3) | START_WRITE));
+    for _ in 0..40 {
+        p.push(filler());
+    }
+    let here = p.len();
+    p.push(halt_here(here));
+    let mut prog = program(name, p, 200);
+    prog.l2.push((2, MODE_PAGE));
+    prog
+}
+
+fn programs() -> Vec<Program> {
+    let mut all = Vec::new();
+    for (k, (old, new)) in POPJ_CASES.into_iter().enumerate() {
+        all.push(popj_program(&format!("popj-{k}"), old, new));
+    }
+    all.push(map_write_then(
+        "map-source-after-write",
+        vec![
+            Insn::new(ALU | SETM | SRC_MAP | a_src(3) | m_dest(10)),
+            Insn::new(ALU | SETM | SRC_MAP | a_src(3) | m_dest(11)),
+        ],
+    ));
+    let mut p = map_write_then(
+        "map-dispatch-after-write",
+        vec![Insn::new(DISPATCH | (1 << 8) | a_src(3) | m_src(3) | d_addr(E)), filler()],
+    );
+    p.dmem.push((E as usize, OLD_DPC));
+    p.dmem.push((E as usize + 1, NEW_DPC));
+    all.push(p);
+    for (name, dest) in [("pdl-across-wait", PDL_TOP), ("spc-across-wait", SPC_PUSH)] {
+        all.push(read_then(
+            name,
+            &[(0o765432, 4)],
+            vec![
+                Insn::new(ALU | SETM | m_src(4) | a_src(3) | dest),
+                Insn::new(ALU | SETM | m_src(12) | a_src(3) | VMA),
+                Insn::new(ALU | SETM | SRC_MD | a_src(3) | m_dest(13)),
+            ],
+        ));
+    }
+    all.push(read_then(
+        "map-store-held-by-wait",
+        &[(MAP_STORE, 2)],
+        vec![
+            filler(),
+            Insn::new(ALU | SETM | m_src(2) | a_src(3) | WRITE_MAP),
+            Insn::new(ALU | SETM | SRC_MD | a_src(3) | m_dest(13)),
+        ],
+    ));
+    all.push(read_then(
+        "map-write-into-hang",
+        &[(MAP_STORE, 2)],
+        vec![
+            Insn::new(ALU | SETM | m_src(2) | a_src(3) | WRITE_MAP),
+            Insn::new(ALU | SETM | SRC_MD | a_src(3) | m_dest(13)),
+        ],
+    ));
+    for gap in 0..4 {
+        let mut then = vec![filler(); gap];
+        then.push(Insn::new(DISPATCH | DMEM_WRITE | SRC_MD | d_len(3) | a_src(2) | d_addr(E)));
+        all.push(read_then(&format!("dispatch-on-md-gap-{gap}"), &[(DISPATCH_WORD, 2)], then));
+    }
+    // This file's own: the same dispatch write, with `IR<24>` so that it also
+    // asks for the next instruction word. From one filler on, `LCINC AND
+    // NEEDFETCH AND MBUSY.SYNC`, `-WAIT`'s third term at VCTL1 3F16, holds it
+    // until the read before it has finished --- and `MD` takes the read's
+    // word inside that wait, so a write pulse in a held cycle would land at
+    // `MD<2:0>` = 2 and the cycle that runs at 5. The fetch it asks for is at
+    // `VMA` 0, which the map refuses, so no second cycle runs.
+    for gap in 0..4 {
+        let mut then = vec![filler(); gap];
+        then.push(Insn::new(
+            DISPATCH | DMEM_WRITE | SRC_MD | d_len(3) | a_src(2) | d_addr(E) | (1 << 24),
+        ));
+        all.push(read_then(&format!("dispatch-held-by-wait-{gap}"), &[(DISPATCH_WORD, 2)], then));
+    }
+    // This file's own as well: `MD` loaded by the instruction at whose edge a
+    // prepared write goes out. `Rtl::clock_edge` loads `MD` before
+    // `Rtl::start_bus_cycle` takes the word the cycle carries, so the word
+    // written is the one this instruction stores. It is read back into M 13.
+    let mut p = vec![filler()];
+    constant(0o111111, 1, &mut p);
+    constant(0o222222, 2, &mut p);
+    constant(VADDR, 12, &mut p);
+    p.push(Insn::new(ALU | SETM | m_src(1) | a_src(3) | MD));
+    p.push(filler());
+    p.push(Insn::new(ALU | SETM | m_src(12) | a_src(3) | START_WRITE));
+    p.push(Insn::new(ALU | SETM | m_src(2) | a_src(3) | MD));
+    for _ in 0..4 {
+        p.push(filler());
+    }
+    p.push(Insn::new(ALU | SETZ | MD));
+    p.push(Insn::new(ALU | SETM | m_src(12) | a_src(3) | START_READ));
+    p.push(filler());
+    p.push(Insn::new(ALU | SETM | SRC_MD | a_src(3) | m_dest(13)));
+    for _ in 0..4 {
+        p.push(filler());
+    }
+    let here = p.len();
+    p.push(halt_here(here));
+    let mut prog = program("md-loaded-as-a-write-starts", p, HELD_CYCLES);
+    prog.l2.push((1, (1 << 23) | (1 << 22) | 0o100));
+    all.push(prog);
+    // Measured on the fabric with `CADR_GAP_MONITOR`, and muir's `rtl`
+    // returns through the new word in all three (M 5 = `AT_NEW_DPC`).
+    all.push(popj_into_hang("popj-into-hang-late", 3, 4, 0, true));
+    all.push(popj_into_hang("popj-into-hang-on-time", 0, 4, 0, true));
+    all.push(popj_into_hang("popj-into-hang-on-time-acked", 2, 4, 1, true));
+    all.push(popj_into_hang("popj-into-hang-early", 3, 5, 0, false));
+    for pad in 0..6 {
+        all.push(speed_written(&format!("mode-speed-written-{pad}"), pad));
+    }
+    all
+}
+
+fn nonzero(tag: &str, words: &[u32]) {
+    for (k, &w) in words.iter().enumerate() {
+        if w != 0 {
+            println!("end {tag} {k:x} {w:x}");
+        }
+    }
+}
+
+fn main() {
+    println!("{}", trace::COLUMNS);
+    println!("# generated by golden/src/dispatch_write_order.rs from muir's rtl engine");
+    println!("{}", trace::RADIX);
+
+    for p in programs() {
+        let mut m = Machine::new();
+        m.load_prom(&p.prom);
+        for &(k, w) in &p.l2 {
+            m.l2_map[k] = w;
+        }
+        for &(k, w) in &p.dmem {
+            m.dmem[k] = w;
+        }
+        for &(a, w) in &p.main {
+            m.main[a as usize] = w;
+        }
+        println!("program {} {:x}", p.name, p.rows);
+        if p.speed != 0 {
+            println!("speed {:x}", p.speed);
+        }
+        for (k, i) in p.prom.iter().enumerate() {
+            println!("prom {k:x} {:x}", i.raw());
+        }
+        for &(k, w) in &p.l2 {
+            println!("l2 {k:x} {w:x}");
+        }
+        for &(k, w) in &p.dmem {
+            println!("dmem {k:x} {w:x}");
+        }
+        for &(a, w) in &p.main {
+            println!("main {a:x} {w:x}");
+        }
+
+        let mut e = trace::engine(m);
+        e.boot();
+        // The speed, as a console leaves the mode register once the boot has
+        // let go of it (`Rtl::reset` clears the register).
+        e.machine_mut().mode.write(p.speed);
+        let mut t = trace::Trace::new(&e);
+        for cycle in 0..p.rows {
+            match t.row(&mut e, cycle) {
+                Ok(line) => println!("r {line}"),
+                Err(h) => {
+                    eprintln!("dispatch_write_order: {} stopped at microcycle {cycle}: {h:?}", p.name);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        let mm = e.machine();
+        let words = |v: &[u32]| v.iter().map(|w| format!("{w:x}")).collect::<Vec<_>>().join(" ");
+        println!("end mmem {}", words(&mm.mmem));
+        let spc: Vec<u32> = mm.spc.iter().map(|&w| w & 0o1777777).collect();
+        println!("end spc {}", words(&spc));
+        println!("end spcptr {:x}", mm.spcptr);
+        let dmem: Vec<u32> = mm.dmem.iter().map(|&w| w & 0o377777).collect();
+        nonzero("dmem", &dmem);
+        nonzero("l1", &mm.l1_map);
+        nonzero("l2", &mm.l2_map[..1024]);
+        nonzero("pdl", &mm.pdl[..1024]);
+        println!("done");
+        eprintln!(
+            "dispatch_write_order: {:<24} {} microcycles, {} ns ({} stalled), PC {:o}, M5 {:o} M13 {:o}",
+            p.name,
+            p.rows,
+            e.ns(),
+            e.stalled_ns(),
+            e.pc(),
+            mm.mmem[5],
+            mm.mmem[13]
+        );
+
+    }
+}

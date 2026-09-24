@@ -93,7 +93,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/rdw_poison.pass $(BUILD)/rdw_poison_sys.pass \
        $(BUILD)/rdw_poison_map.pass \
-       $(BUILD)/sstep.pass \
+       $(BUILD)/sstep.pass $(BUILD)/dispatch_write_order.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
        $(BUILD)/md_inject.pass $(BUILD)/md_compose.pass \
        $(BUILD)/park.pass \
@@ -766,7 +766,7 @@ DE25_HDMI := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_adv7513.sv
 DE25_MAP := -DCADR_DDR_MAP_DE25_NANO
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
+	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_machine_tb.cpp)
@@ -774,6 +774,37 @@ $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cad
 $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_machine/Vcadr_machine $(BUILD)/rtl.golden
+	@touch $@
+
+# ------------------------------------------ writes against the reads beside them
+#
+# A write that lands in the microcycle reading the same memory, and a write
+# whose microcycle is held.  `golden/src/dispatch_write_order.rs` builds muir's
+# own `tests/dispatch_write_order.rs` programs and runs them on `rtl` under the
+# grid; `tb/cadr_dispatch_write_order_tb.cpp` loads each program and the
+# memories it starts from into the whole machine and holds every microcycle
+# and every word of the end state to it.  Three of muir's rules, which no
+# reference program reaches: a `-WAIT` fires no write pulse, a `-HANG`'s write
+# pulse runs and takes `MD` as the bus has left it at the boundary, and a read
+# in the microcycle that writes the same memory gets the old word.
+#
+# Built with `--public-flat-rw`, because the programs start from memories
+# nothing but a program could otherwise fill, and the end state is read out of
+# the arrays themselves.
+$(BUILD)/dispatch_write_order.golden: golden/src/dispatch_write_order.rs golden/src/trace.rs \
+                                      golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin dispatch_write_order > $@
+
+$(BUILD)/obj_dispatch_write_order/Vcadr_machine: $(MACHINE_SRC) tb/cadr_dispatch_write_order_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) --public-flat-rw -O2 -CFLAGS -O2 +define+CADR_GAP_MONITOR -CFLAGS -DCADR_GAP_MONITOR -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_dispatch_write_order \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_dispatch_write_order_tb.cpp)
+
+$(BUILD)/dispatch_write_order.pass: $(BUILD)/obj_dispatch_write_order/Vcadr_machine \
+                                    $(BUILD)/dispatch_write_order.golden \
+                                    $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_dispatch_write_order/Vcadr_machine $(BUILD)/dispatch_write_order.golden
 	@touch $@
 
 # EVERY FREE-RUNNING CLOCK OF THE COMPOSED MACHINE AGAINST muir, from the
@@ -809,7 +840,7 @@ $(BUILD)/power_on.pass: $(BUILD)/obj_power_on/Vcadr_machine \
 # It runs the machine twice, 200 ms of machine time each way, and takes about
 # twenty seconds.
 $(BUILD)/obj_ddr_boot/Vcadr_machine: $(MACHINE_SRC) tb/cadr_ddr_boot_tb.cpp tb/cadr_tick.h | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_ddr_boot \
+	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_ddr_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_ddr_boot_tb.cpp)
@@ -998,7 +1029,7 @@ $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
 # neighbors do; the sum is checked before the archive is used and the pack is
 # decompressed fresh for the run and removed after.  Twenty-five seconds.
 $(BUILD)/obj_band/Vcadr_machine: $(MACHINE_SRC) tb/cadr_band_tb.cpp tb/cadr_tick.h | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band \
+	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_band_tb.cpp)
@@ -2330,7 +2361,8 @@ mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/disk.golden $(BUILD)/disk_boot.golden $(BUILD)/tv.golden \
          $(BUILD)/tv_lispm.golden $(BUILD)/color_tv.golden \
          $(BUILD)/iob.golden $(BUILD)/busint_regs.golden $(BUILD)/power_on.golden \
-         $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
+         $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden \
+         $(BUILD)/dispatch_write_order.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
 	    --jobs $(MUTJOBS) --rev $(MUTREV)
@@ -3306,7 +3338,17 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # as a fresh `Rtl` has it.  The zeros pack into runs, so the file grew by 30
 # bytes, 561,516 to 561,546.  muir loads it and saves it back byte for byte,
 # and resumes at the same microcycle.
-CHECKPOINT_SHA  := c4711c96352d223404b8cdf51b43b96987833e6dc45a08dc5376002e7fa52def
+#
+# **AND WHEN IT WENT 33 TO 35.**  Version 34 gives the timing byte the
+# microcycle length of QUUX's `sync` model, which `Fpga` does not carry, so
+# the byte is unchanged.  Version 35 adds `Rtl::pulsed`, one flag after the
+# instant `IR` was loaded, which the file declares false: it is set only
+# inside a microcycle `-HANG` holds, and a halted machine is never in one.
+# And MONO TV's default size, which a CADR's display keeps, is 1,280 by 1,024
+# where it was 1,920 by 1,080.  The one byte added and the new size's packing
+# leave the file one byte SHORTER, 561,546 to 561,545.  muir loads it and
+# saves it back byte for byte, and resumes at the same microcycle.
+CHECKPOINT_SHA  := acee89b6242c030af995376c37679bfdf624f7e0ea767c29be0463f9f42ccf68
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
@@ -3967,7 +4009,7 @@ $(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_pr
 # outstanding.  `sstep` scripts the same register against muir row for row
 # and its own header says it never reaches a memory cycle.
 $(BUILD)/obj_park/Vcadr_machine: $(MACHINE_SRC) tb/cadr_park_tb.cpp | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_park \
+	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_park \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_park_tb.cpp)

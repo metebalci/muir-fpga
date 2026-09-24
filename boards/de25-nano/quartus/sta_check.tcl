@@ -688,9 +688,10 @@ assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb w
 # grid: 150 ns
 assert_instance_timing $tick 15 u_machine|memory|busint_regs {wr_buf ub_map}
 # And the split paths `cadr_de25.sdc` narrows below the relaxed set, asked of
-# the collections it wrote them against.  The maps' write has no clause on
-# this board, and that file says why.
-foreach sta_var {split_latch_addr split_latch split_dmem split_cstore split_every_tick} {
+# the collections it wrote them against.  The maps' and the dispatch memory's
+# writes have no clause on this board, and that file says why.
+foreach sta_var {split_latch_addr split_latch split_dmem split_cstore split_every_tick
+                 split_md split_md_held split_md_writes} {
     if {![info exists ::$sta_var] || [get_collection_size [set ::$sta_var]] == 0} {
         puts "sta: FAIL: cadr_de25.sdc left no collection $sta_var, or an empty one"
         incr failures
@@ -702,12 +703,21 @@ foreach sta_var {split_latch_addr split_latch split_dmem split_cstore split_ever
 assert_clause_timing $tick 7 "IR into the scratchpad latches" $::split_latch_addr $::split_latch
 # grid: 60 ns + 1 tick
 assert_clause_timing $tick 7 "out of the scratchpad latches" $::split_latch $::slow
-# grid: 30 ns + 1 tick
-assert_clause_timing $tick 4 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
+# grid: 60 ns - 1 tick
+assert_clause_timing $tick 5 "the latches into the dispatch memory's write" $::split_latch $::split_dmem
 # grid: 60 ns - 1 tick
 assert_clause_timing $tick 5 "the control store's word" $::split_cstore $::slow
 # grid: 60 ns
 assert_clause_timing $tick 6 "the second hop of the every-tick registers" $::split_every_tick $::slow
+# grid: 0 ns + 2 ticks
+assert_clause_timing $tick 2 "MD into the writes' address" $::split_md $::split_md_writes
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "MD_HELD into MD" $::split_md_held $::split_md
+# The registers that place the maps' and the dispatch memory's write in a hung
+# microcycle are the tick's own, out of the relaxed set by name.
+set sta_mw [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md_we_q mw_early_q mw_early_q2 mw_late_q}]]
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" $sta_mw $::slow
 # The transaction audit has no register on a board with no console to read
 # it, and `cadr_machine.xdc`'s clause for it is then empty by construction, as
 # the Zynq flow says of its own memory-off board.

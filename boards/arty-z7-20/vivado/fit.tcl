@@ -140,15 +140,32 @@ assert_clause_timing $tick 7 "IR into the scratchpad latches" \
 assert_clause_timing $tick 7 "out of the scratchpad latches" \
     {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
      *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
-# grid: 30 ns + 1 tick
-assert_clause_timing $tick 4 "the latches into the dispatch memory's write" \
+# grid: 60 ns - 1 tick
+assert_clause_timing $tick 5 "the latches into the dispatch memory's write" \
     {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
      *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*} {*processor/dmem_reg*}
 # grid: 60 ns - 1 tick
 assert_clause_timing $tick 5 "the control store's word" \
     {*processor/imem_reg* *processor/imem_q_reg* *processor/prom_q_reg*}
-# grid: 30 ns
+# grid: 0 ns + 3 ticks
 assert_clause_timing $tick 3 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
+# grid: 0 ns + 3 ticks
+assert_clause_timing $tick 3 "the dispatch memory's write" {*processor/dmem_reg*}
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "the three memories' writes into the readout" \
+    {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
+    {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
+# grid: 0 ns + 2 ticks
+assert_clause_timing $tick 2 "MD into the writes' address" {*processor/md_reg*} \
+    {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" \
+    {*processor/md_we_q_reg* *processor/mw_early_q* *processor/mw_late_q_reg*}
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
+    {*processor/spc_q_reg*}
 # grid: 60 ns
 assert_clause_timing $tick 6 "the second hop of the every-tick registers" \
     {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*

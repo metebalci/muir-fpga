@@ -88,9 +88,10 @@
 #define MUIR_TICK_PERIOD_US 16667u
 // The size QUUX's MONO TV would have, which `Tv::save` writes for every
 // board: `tv::MONO_TV_WIDTH` by `MONO_TV_HEIGHT`, the default a CADR's
-// display keeps and never uses.
-#define MUIR_MONO_TV_WIDTH 1920u
-#define MUIR_MONO_TV_HEIGHT 1080u
+// display keeps and never uses.  1280 by 1024 since muir's `bc6af67`, the
+// HDMI mode this fabric's boards drive; 1920 by 1080 before it.
+#define MUIR_MONO_TV_WIDTH 1280u
+#define MUIR_MONO_TV_HEIGHT 1024u
 // **THE ARRAYS ARE muir's LARGEST MACHINE'S, NOT THE CADR's.**  `PDL_WORDS`
 // and `L2_MAP_WORDS` in src/machine.rs are QUUX's sixteen thousand PDL words
 // and two thousand level-2 entries, so that one `Machine` holds either
@@ -665,6 +666,12 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// divider reads it, so a CADR's value changes nothing; zero is what a
 	// fresh `Rtl` holds.
 	chk_u64(w, 0);					/* IDLE ir_loaded_ns */
+	// `Rtl::pulsed`: whether the write pulse of a microcycle that `-HANG`
+	// holds has already fired.  It is set inside a hung step and taken at
+	// the step's end, and a halted machine is never inside a hang --- the
+	// generator is parked, so no master clock can halt it there --- so it is
+	// false wherever this program reads the machine.
+	chk_bool(w, 0);					/* IDLE pulsed */
 	chk_bool(w, img_flag(img, IMG_F_MEMSTART));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_MBUSY));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_RDCYC));	/* READ */

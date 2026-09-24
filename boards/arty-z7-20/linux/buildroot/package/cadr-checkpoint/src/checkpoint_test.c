@@ -566,7 +566,7 @@ int main(int argc, char **argv)
 	//   trace+flags  (8+96)*2         = 208
 	//   ir..lc       8+8+2+1+1+4+2+2+4 = 32
 	//   19 bools                       = 19
-	//   halted_ns + ir_loaded_ns + 4 bools = 20
+	//   halted_ns + ir_loaded_ns + pulsed + 4 bools = 21
 	//   busint     (1+1+8) + 42*1 + (1+8+1+1+8+1+1+1+1+8+8+1+2+2+8+8+8+1+1+1+8+8) = 140
 	//   mbusy_sync                     = 1
 	//   bus_addr..bus_acked            = 4+4+1+1+1+1+2+1+8+8+1 = 32
@@ -582,7 +582,7 @@ int main(int argc, char **argv)
 			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 13 + 8200 + 4 +
 			262152 + 125 + 1 + 69 + 135263 + 1 + 253 + 16;
 		const size_t rtl_part =
-			208 + 32 + 19 + 20 + 140 + 1 + 32 + 25 + 26 + 24 + 28;
+			208 + 32 + 19 + 21 + 140 + 1 + 32 + 25 + 26 + 24 + 28;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven
 		// keep the body's length and one does not, and the point of
 		// building them is what the ROUND TRIP does with them, so this
