@@ -27,14 +27,25 @@
 # request, so the path into those three registers has eight ticks and the
 # request itself keeps one.  The `|d` pins and not the registers, so that the
 # clock enables keep their tick.
+#
+# **AND FROM THE PROCESSOR'S REGISTERS ONLY**, as that file now says: the
+# disk controller's channel and the Unibus map's window pass through the
+# same bridge three ticks after their masters load them, the arbiter's
+# flags two and one, and they keep the tick.  So the eight go to the
+# processor, the console registers that drive it and the displays' held
+# decode `fb`, and nothing else is named.
 set ddr_contract [get_pins -nowarn {u_memory|u_axi|m_axi_awaddr[*]|d
                                 u_memory|u_axi|m_axi_araddr[*]|d
                                 u_memory|u_axi|m_axi_wdata[*]|d}]
+set ddr_cycle [get_registers -nowarn {u_machine|processor|*
+                                      u_machine|memory|spy_registers|*
+                                      u_machine|memory|tv|fb
+                                      u_machine|memory|g_color_tv.tv_color|fb}]
 # Only where it names something: QUUX's build removes the CADR's adapter.
 if {[get_collection_size $ddr_contract] > 0} {
     # grid: 80 ns
-    set_multicycle_path -setup 8 -to $ddr_contract
-    set_multicycle_path -hold  7 -to $ddr_contract
+    set_multicycle_path -setup 8 -from $ddr_cycle -to $ddr_contract
+    set_multicycle_path -hold  7 -from $ddr_cycle -to $ddr_contract
 }
 
 # **AND QUUX'S ADAPTER**, `quux_axi_master.sv`, written FROM the processor's

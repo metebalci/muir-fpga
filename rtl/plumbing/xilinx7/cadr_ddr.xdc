@@ -92,10 +92,41 @@
 # the rule requires is the safe direction to be wrong in, and it is written
 # here rather than discovered later.
 #
+# **AND ONLY THE PROCESSOR'S CYCLE HAS THE 80 ns, SO THE CLAUSE IS WRITTEN
+# FROM ITS REGISTERS.**  Two other masters reach the adapter through the same
+# bridge since the cone above was measured: the disk controller's channel and
+# the Unibus map's window, `cadr_memory_path.sv`'s arbiter handing each the
+# bus.  Neither is the bus master the 80 ns sentence is about, and neither
+# waits for it.  Each loads its address, word and request at one edge; the
+# arbiter's owner flag (`ch_own`, `mp_own`) follows a tick later, its idle
+# tick (`owner_d`) another, and the adapter takes the word at the next.
+# Measured with instrumented copies of the machine's and the Unibus's
+# testbenches, timing every take: three ticks from the master's registers,
+# two from the owner flag, one from the idle tick, for 1,632 channel words
+# in the machine and the six mapped cycles of `build/unibus.pass` that reach
+# main memory.  A clause written `-to` the adapter gave them all
+# eight.  So the eight go to the processor's registers, whose address and
+# word are loaded at the grant with `memstart` falling there (every
+# processor take of the boot trace: `phys_r` and `memstart` exactly eight
+# ticks, the word at least eight), to the console registers that drive the
+# processor, and to the display boards' held decode `fb`, which is the
+# bridge's display select and stands from before the grant.  Everything else
+# keeps its tick: the channel, the map's window, the arbiter, and the bus
+# interface's own state, which the fanin now reaches.  The fanin of the
+# three registers' `D` pins, measured on the synthesized board: the
+# processor's datapath, `spy_registers`, both displays' `fb`, the channel's
+# `ch_addr_r` and `ch_wdata_r`, the map window's address and word in
+# `busint_regs`, `ch_own`, `mp_own` and the bus interface's state.  The flows
+# assert that the channel, the map's window and the arbiter ask for one tick.
+#
 # `cadr_tick_pkg::ticks(80)`: eight at a 10 ns grid.
 # grid: 80 ns
 set contract [get_pins -quiet {g_ddr.u_axi/m_axi_awaddr_reg[*]/D \
                                g_ddr.u_axi/m_axi_araddr_reg[*]/D \
                                g_ddr.u_axi/m_axi_wdata_reg[*]/D}]
-set_multicycle_path -setup 8 -to $contract
-set_multicycle_path -hold  7 -to $contract
+set cycle [filter [all_registers] {NAME =~ u_machine/processor/* || \
+                                   NAME =~ u_machine/memory/spy_registers/* || \
+                                   NAME =~ u_machine/memory/tv/fb_reg* || \
+                                   NAME =~ u_machine/memory/g_color_tv.tv_color/fb_reg*}]
+set_multicycle_path -setup 8 -from $cycle -to $contract
+set_multicycle_path -hold  7 -from $cycle -to $contract

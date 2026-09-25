@@ -1679,6 +1679,7 @@ CHECKS = {
                     "rtl/plumbing/xilinx7/quux_machine.xdc",
                     "boards/de25-nano/quartus/quux_de25.sdc",
                     "rtl/plumbing/xilinx7/quux_ddr.xdc",
+                    "rtl/plumbing/xilinx7/cadr_ddr.xdc",
                     "boards/de25-nano/quartus/cadr_ddr.sdc",
                     "boards/arty-z7-20/cadr_arty.sv"],
         "cmd": ["tools/grid_check.py", "."],

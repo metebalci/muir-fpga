@@ -243,6 +243,7 @@ $(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard gol
                     rtl/plumbing/xilinx7/cadr_machine.xdc boards/de25-nano/quartus/cadr_de25.sdc \
                     rtl/plumbing/xilinx7/quux_machine.xdc boards/de25-nano/quartus/quux_de25.sdc \
                     rtl/plumbing/xilinx7/quux_ddr.xdc boards/de25-nano/quartus/cadr_ddr.sdc \
+                    rtl/plumbing/xilinx7/cadr_ddr.xdc \
                     boards/arty-z7-20/cadr_arty.sv boards/de25-nano/cadr_de25.sv \
                     boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk.h \
                     boards/arty-z7-20/linux/buildroot/package/cadr-console/src/console_test.c | $(BUILD)

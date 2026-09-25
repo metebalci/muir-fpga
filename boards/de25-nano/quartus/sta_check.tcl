@@ -648,8 +648,44 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
         }
     }
     if {!$sta_quux} {
+        # The adapter's address and data at the bus's 80 ns from the
+        # processor's registers and at the tick from everything else, so each
+        # is reached at two requirements and is left out of the instance
+        # question: no other register of the adapter at eight.
+        set a_all [get_registers -nowarn {u_memory|u_axi|*}]
+        set a_named [get_registers -nowarn [concat \
+            [cadr_leaves {u_memory|u_axi|} {m_axi_awaddr m_axi_araddr m_axi_wdata}]]]
+        set a_rest [remove_from_collection $a_all $a_named]
+        set a_req [requirements [data_pins $a_rest]]
+        set a_want [format %.3f [expr {$tick * 8}]]
+        if {[get_collection_size $a_all] == 0} {
+            puts "sta: FAIL: the CADR's adapter, u_memory|u_axi, has no registers"
+            incr failures
+        } elseif {[dict exists $a_req $a_want]} {
+            puts "sta: FAIL: [dict get $a_req $a_want] other registers of the CADR's adapter ask for $a_want ns"
+            incr failures
+        } else {
+            puts "sta: the CADR's adapter: [get_collection_size $a_rest] registers besides its address and data, none at $a_want ns"
+        }
+        # And `cadr_ddr.sdc`'s clause from the processor alone: the eight
+        # from its registers, and one tick from the disk's channel, the
+        # Unibus map's window and the arbiter, which pass through the same
+        # bridge without the bus's time.
         # grid: 80 ns
-        assert_instance_timing $tick 8 u_memory|u_axi {m_axi_awaddr m_axi_araddr m_axi_wdata}
+        assert_clause_timing $tick 8 "the processor's cycle into the adapter" \
+            $::ddr_cycle $a_named
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the disk's channel into the adapter" \
+            [get_registers -nowarn {u_machine|g_cadr_disk.disk|*}] $a_named
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the Unibus map's window into the adapter" \
+            [get_registers -nowarn {u_machine|memory|busint_regs|*}] $a_named
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the Xbus arbiter into the adapter" \
+            [get_registers -nowarn {u_machine|memory|ch_own u_machine|memory|mp_own u_machine|memory|owner_d[*]}] $a_named
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the bus interface's state into the adapter" \
+            [get_registers -nowarn {u_machine|memory|g_cadr_busint.busint|*}] $a_named
     } else {
         # QUUX's adapter, `cadr_ddr.sdc`'s second clause: its address and
         # data at the bus's 80 ns from the processor's registers, and at the

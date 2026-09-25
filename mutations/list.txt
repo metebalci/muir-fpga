@@ -21694,3 +21694,23 @@ set_multicycle_path -setup 3 -from $quux_status_s -to $quux_cache_held
 @new
 set_multicycle_path -setup 4 -from $quux_status_s -to $quux_cache_held
 @end
+
+@mutation grid-cadr-arty-adapter-a-tick-wide
+@check grid
+@file rtl/plumbing/xilinx7/cadr_ddr.xdc
+@note The processor's cycle into the CADR's adapter at 90 ns.
+@old
+set_multicycle_path -setup 8 -from $cycle -to $contract
+@new
+set_multicycle_path -setup 9 -from $cycle -to $contract
+@end
+
+@mutation grid-cadr-de25-adapter-a-tick-wide
+@check grid
+@file boards/de25-nano/quartus/cadr_ddr.sdc
+@note The same on the DE25-Nano.
+@old
+    set_multicycle_path -setup 8 -from $ddr_cycle -to $ddr_contract
+@new
+    set_multicycle_path -setup 9 -from $ddr_cycle -to $ddr_contract
+@end
