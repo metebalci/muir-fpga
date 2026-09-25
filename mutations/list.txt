@@ -22020,3 +22020,104 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
             state <= ACKED;
           end else if (ub_msyn && ub_ssyn && !ssyn_seen) begin
 @end
+
+# WHAT EVERY BOARD'S IMAGE MUST CARRY, derived from the packages' install
+# rules by `rootfs_check.py packages` with no Buildroot at all.  The image
+# check runs that derivation only as the last step of a whole image build, and
+# it refused cadr-common's install for every image of every board while
+# nothing on the way to a commit ran it.  These records break the parser, an
+# install rule and a script's path, and each is caught by the derivation
+# refusing or by the installed scripts naming a file the derivation does not
+# say is installed.
+
+@mutation rootfs-the-delegation-is-matched-by-the-old-pattern
+@check rootfs_packages
+@file boards/arty-z7-20/linux/rootfs_check.py
+@note The hand-off to a package's own Makefile recognized only as
+@note `DESTDIR=$(TARGET_DIR) install`, the pattern that stopped matching
+@note cadr-common when its install line gained `CADR_BOARD=...`.  Caught at
+@note "cadr-common: an install command this check cannot read".
+@old
+        handed = delegation(line, name, pkgdir)
+@new
+        handed = delegation(line, name, pkgdir) if re.search(r"\$\(MAKE\).*DESTDIR=\$\(TARGET_DIR\)\s+install\b", line) else None
+@end
+
+@mutation rootfs-the-delegation-reads-a-variable-as-a-goal
+@check rootfs_packages
+@file boards/arty-z7-20/linux/rootfs_check.py
+@note Only DESTDIR read as a variable on the $(MAKE) line, so
+@note `CADR_BOARD=...` counts as a second goal.  Caught at "$(MAKE) is run
+@note for 2 goals, wanting exactly one".
+@old
+        if m:
+            overrides[m.group(1)] = expand(m.group(2), mk_vars)
+@new
+        if m and m.group(1) == "DESTDIR":
+            overrides[m.group(1)] = expand(m.group(2), mk_vars)
+@end
+
+@mutation rootfs-a-sed-into-destdir-is-not-read
+@check rootfs_packages
+@file boards/arty-z7-20/linux/rootfs_check.py
+@note The `sed ... > $(DESTDIR)/...` shape not recognized, as before:
+@note cadr-common's `fault.sh` stops the derivation.  Caught at "the
+@note `install` rule of .../cadr-common/src/Makefile runs a command this check
+@note cannot read".
+@old
+        if words[0] == "sed":
+@new
+        if words[0] == "sed-not-read":
+@end
+
+@mutation rootfs-a-sed-is-read-and-installs-nothing
+@check rootfs_packages
+@file boards/arty-z7-20/linux/rootfs_check.py
+@note The sed accepted and its output dropped from the derived set, so
+@note `/usr/share/cadr/fault.sh` would never be compared.  Caught at the
+@note `chmod` after it, which changes the mode of a file nothing before it
+@note installs.
+@old
+            paths[path] = None
+            origin(path, args[1])
+@new
+            origin(path, args[1])
+@end
+
+@mutation rootfs-cadr-common-hands-its-target-to-install-staging
+@check rootfs_packages
+@file boards/arty-z7-20/linux/buildroot/package/cadr-common/cadr-common.mk
+@note The target install run as `install-staging`, which puts the library
+@note and headers in the target and none of the shell files.  Caught at "the
+@note `install-staging` rule of .../cadr-common/src/Makefile runs a command
+@note this check cannot read", its `{ printf ...; cat ...; } > ...`.
+@old
+		CADR_BOARD=$(CADR_COMMON_BOARD) install
+@new
+		CADR_BOARD=$(CADR_COMMON_BOARD) install-staging
+@end
+
+@mutation rootfs-clock-sh-installed-under-another-name
+@check rootfs_packages
+@file boards/arty-z7-20/linux/buildroot/package/cadr-common/src/Makefile
+@note `clock.sh` installed as `/usr/share/cadr/clk.sh`.  The derivation
+@note reads it cleanly and is wrong; S80cadr-disk-packs names
+@note `/usr/share/cadr/clock.sh`.  Caught at "A SCRIPT ON THE TARGET NAMES A
+@note FILE NO PACKAGE INSTALLS".
+@old
+	install -m 0644 clock.sh $(DESTDIR)$(SHAREDIR)/clock.sh
+@new
+	install -m 0644 clock.sh $(DESTDIR)$(SHAREDIR)/clk.sh
+@end
+
+@mutation rootfs-an-init-script-names-a-fault-file-nothing-installs
+@check rootfs_packages
+@file boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/S87cadr-chaosnet
+@note S87cadr-chaosnet sourcing `/usr/share/cadr/faults.sh`, a file no
+@note package installs.  Caught at "A SCRIPT ON THE TARGET NAMES A FILE NO
+@note PACKAGE INSTALLS".
+@old
+FAULT_SH=/usr/share/cadr/fault.sh
+@new
+FAULT_SH=/usr/share/cadr/faults.sh
+@end

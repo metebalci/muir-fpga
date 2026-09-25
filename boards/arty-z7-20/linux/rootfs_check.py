@@ -37,13 +37,23 @@
 #     INSTALL_INIT_SYSV;
 #   * and where that .mk delegates the target install to the program's own
 #     `src/Makefile` --- `$(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install`,
-#     which is what every package of ours does --- the `install:` rule of that
-#     Makefile, which is where `usr/bin/cadr-*` and `usr/share/cadr/*.sh`
-#     actually come from.
+#     which is what every package of ours does, with any other `NAME=value`
+#     on that line handed on as make would hand it --- the rule of that
+#     Makefile for the goal named, which is where `usr/bin/cadr-*` and
+#     `usr/share/cadr/*.sh` actually come from.  That rule is read command by
+#     command, for what each one writes: an install(1), a sed(1) redirected
+#     into one file under $(DESTDIR), a grep -q that only tests, and a chmod
+#     of a file already derived.
 #
 # A command in either file that this cannot classify is a FAILURE here and not
 # a quiet omission, because a derivation that comes out short is the shape of
-# every silent-omission bug this repository has recorded.  A package added
+# every silent-omission bug this repository has recorded.  THE DERIVATION HAS
+# REFUSED BEFORE, FOR EVERY IMAGE OF EVERY BOARD, AND NOTHING SAID SO: cadr-
+# common's install line gained a `CADR_BOARD=` and its rule a sed, and this
+# check, which runs only after a whole image build, stopped every build that
+# reached it.  So `rootfs_check.py packages <BR2_EXTERNAL>` runs the same
+# derivation with no Buildroot at all, in `make check`, and holds it to the
+# paths the installed scripts name (see `packages_check`).  A package added
 # under `package/` joins the set by existing; a typed list would rot, and the
 # one in the Makefile's BR_RECONFIGURE had already rotted once.
 #
@@ -63,6 +73,7 @@ import gzip
 import hashlib
 import os
 import re
+import shlex
 import struct
 import sys
 import zlib
@@ -83,12 +94,23 @@ def die(what, *rest):
 # ------------------------------------------------------------- the source tree
 
 
-def make_vars(text):
-    """The simple `NAME := value` assignments of a Makefile, expanded."""
-    table = {}
+def make_vars(text, overrides=None):
+    """The `NAME := value` assignments of a Makefile, expanded.
+
+    A name assigned more than once with different values is left unexpanded:
+    those are the arms of a conditional, and which arm holds depends on what
+    the build was given, which this cannot know.  A destination that names
+    one is refused below rather than resolved to whichever arm came last.
+    `overrides` are the command line's `NAME=value`, which GNU make lets win
+    over every assignment in the file."""
+    table, seen = {}, {}
     for name, value in re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)\s*[:?]?=\s*(.*)$",
                                   text, re.M):
-        table[name] = value.strip()
+        seen.setdefault(name, set()).add(value.strip())
+    for name, values in seen.items():
+        if len(values) == 1:
+            table[name] = values.pop()
+    table.update(overrides or {})
     for _ in range(4):                      # a value naming another value
         for name, value in list(table.items()):
             table[name] = re.sub(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)",
@@ -116,70 +138,227 @@ def logical_lines(text):
     return out
 
 
-def src_install_paths(makefile, where):
-    """What `make DESTDIR=... install` in a src/Makefile puts on the target.
+def shell_words(command):
+    """A recipe line's words, quotes removed, shell operators their own words.
 
-    Every command of the `install:` rule must be an `install(1)`: a `-d` makes
-    a directory and installs nothing, and anything else names a destination
-    under $(DESTDIR).  A command this cannot read stops the build rather than
-    being skipped."""
+    Parentheses are not operators here: `$(DESTDIR)` is one word."""
+    lex = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+    lex.whitespace_split = True
+    return list(lex)
+
+
+def recipe(text, goal):
+    """The commands of the rule for `goal`, continuations joined.  None if the
+    Makefile has no such rule."""
+    lines = text.splitlines()
+    for at, line in enumerate(lines):
+        if re.match(r"^%s\s*:(?!=)" % re.escape(goal), line):
+            break
+    else:
+        return None
+    body = []
+    for line in lines[at + 1:]:
+        if not line.startswith("\t"):
+            break                           # a blank line or the next rule
+        body.append(line)
+    commands = []
+    for line in logical_lines("\n".join(body)):
+        if line and not line.startswith("#"):
+            commands.append(line)
+    return commands
+
+
+def under_destdir(word, makefile, where, command):
+    """A word naming a path under $(DESTDIR), as the path on the target.
+
+    Whatever is left of the word must be a plain path: a variable still
+    standing in it is one this check could not resolve, and a path it cannot
+    resolve is a path it cannot compare."""
+    if not word.startswith("$(DESTDIR)"):
+        die("%s: %s writes outside $(DESTDIR):" % (where, makefile),
+            "    " + command)
+    path = word[len("$(DESTDIR)"):].lstrip("/")
+    if "$" in path:
+        die("%s: %s names a destination this check cannot resolve:"
+            % (where, makefile), "    " + command,
+            "",
+            "A variable in it has no single value here (it is set in more "
+            "than one arm of a",
+            "conditional, or not at all), so the file it installs cannot be "
+            "named.")
+    return path
+
+
+def refuse(where, makefile, command, goal):
+    die("%s: the `%s` rule of %s runs a command this check "
+        "cannot read:" % (where, goal, makefile),
+        "    " + command,
+        "",
+        "Every command there must be an install(1), a sed(1) whose output is "
+        "redirected to one",
+        "file under $(DESTDIR), a grep -q that only tests, or a chmod of a "
+        "file already derived,",
+        "so that what reaches the target can be derived from the source "
+        "tree.  Teach this check",
+        "the new shape or keep the rule to those; do not leave the file out "
+        "of the check.")
+
+
+def src_install_paths(makefile, where, goal="install", overrides=None,
+                      origins=None):
+    """What `make DESTDIR=... <goal>` in a src/Makefile puts on the target.
+
+    Four shapes of command are read, and each is read for what it writes:
+
+      * `install(1)`: a `-d` makes a directory and installs nothing, and
+        anything else names a destination under $(DESTDIR);
+      * `sed ... SOURCE > $(DESTDIR)/PATH`: a filter whose one output is a
+        file on the target, which is PATH (not in place: `-i` is refused);
+      * `grep -q ...`: a test, writing nothing;
+      * `chmod MODE $(DESTDIR)/PATH`: a mode, on a PATH this rule has
+        already put there, so nothing new.
+
+    A command in any other shape, or with any other shell operator in it,
+    stops the build rather than being skipped.  `overrides` are the
+    variables the .mk hands this make on its command line.  Where `origins`
+    is given, each path installed from a file in the source tree is entered
+    there with that file."""
     text = open(makefile).read()
-    table = make_vars(text)
+    table = make_vars(text, overrides)
+    here = os.path.dirname(makefile)
+    commands = recipe(text, goal)
+    if commands is None:
+        die("%s: %s has no `%s:` rule" % (where, makefile, goal))
     paths = {}
-    in_rule = False
-    for line in text.splitlines():
-        if re.match(r"^install\s*:", line):
-            in_rule = True
-            continue
-        if in_rule:
-            if not line.strip():
-                break
-            if not line.startswith("\t"):
-                break
-            command = line.strip()
-            words = [expand(w, table) for w in command.split()]
-            if words[0] != "install":
-                die("%s: the install rule of %s runs a command this check "
-                    "cannot read:" % (where, makefile),
-                    "    " + command,
-                    "",
-                    "Every command there must be an install(1), so that what "
-                    "reaches the target can be",
-                    "derived from the source tree.  Teach this check the new "
-                    "shape or keep the rule to",
-                    "install(1); do not leave the file out of the check.")
+
+    def origin(path, source):
+        full = os.path.join(here, source)
+        if origins is not None and "$" not in source and os.path.isfile(full):
+            origins[path] = full
+
+    for command in commands:
+        try:
+            words = [expand(w, table) for w in shell_words(command)]
+        except ValueError:                  # an unbalanced quote
+            refuse(where, makefile, command, goal)
+        operators = [w for w in words if re.fullmatch(r"[;&|<>]+", w)]
+        if words[0] == "install":
+            if operators:
+                refuse(where, makefile, command, goal)
             if "-d" in words:
                 continue                    # a directory, not a file
             args = [w for w in words[1:] if not w.startswith("-")]
+            # `install -m MODE FILE DEST` swallows MODE as an argument
+            if args and words[words.index(args[0]) - 1] == "-m":
+                args = args[1:]
             if len(args) < 2:
                 die("%s: cannot tell source from destination in:" % where,
                     "    " + command)
-            # `install -m MODE FILE DEST` swallows MODE as an argument
-            if words[words.index(args[0]) - 1] == "-m":
-                args = args[1:]
             sources, dest = args[:-1], args[-1]
-            if not dest.startswith("$(DESTDIR)"):
-                die("%s: %s installs outside $(DESTDIR):" % (where, makefile),
-                    "    " + command)
-            dest = dest[len("$(DESTDIR)"):].lstrip("/")
+            path = under_destdir(dest, makefile, where, command)
             if command.rstrip().endswith("/") or dest.endswith("/"):
                 for s in sources:
-                    paths[os.path.join(dest.rstrip("/"),
-                                       os.path.basename(s))] = None
+                    full = os.path.join(path.rstrip("/"), os.path.basename(s))
+                    paths[full] = None
+                    origin(full, s)
             else:
-                paths[dest] = None
+                if len(sources) != 1:
+                    die("%s: several sources and a destination that is not "
+                        "a directory:" % where, "    " + command)
+                paths[path] = None
+                origin(path, sources[0])
+            continue
+        if words[0] == "sed":
+            if operators != [">"] or words.index(">") != len(words) - 2:
+                refuse(where, makefile, command, goal)
+            if any(w == "-i" or w.startswith("--in-place") or
+                   (re.fullmatch(r"-[a-zA-Z]+", w) and "i" in w)
+                   for w in words[1:-2]):
+                refuse(where, makefile, command, goal)
+            args = [w for w in words[1:-2] if not w.startswith("-")]
+            if len(args) != 2:              # the script and one input file
+                die("%s: cannot tell the script from the input in:" % where,
+                    "    " + command)
+            path = under_destdir(words[-1], makefile, where, command)
+            paths[path] = None
+            origin(path, args[1])
+            continue
+        if words[0] == "grep":
+            if operators or not any(re.fullmatch(r"-[a-zA-Z]*q[a-zA-Z]*", w)
+                                    for w in words[1:]):
+                refuse(where, makefile, command, goal)
+            continue                        # a test; it writes nothing
+        if words[0] == "chmod":
+            if operators or len(words) < 3:
+                refuse(where, makefile, command, goal)
+            for w in words[2:]:
+                path = under_destdir(w, makefile, where, command)
+                if path not in paths:
+                    die("%s: %s changes the mode of %s, which nothing before "
+                        "it in the rule installs:" % (where, makefile, path),
+                        "    " + command)
+            continue
+        refuse(where, makefile, command, goal)
     if not paths:
         die("%s: %s has an install rule that installs nothing on the target"
             % (where, makefile))
     return paths
 
 
-def package_paths(pkgdir, name):
+def delegation(line, name, pkgdir):
+    """A .mk line handing the target install to the package's own Makefile,
+    read word by word: `$(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) [NAME=value
+    ...] <goal>`.  Returns (goal, the command line's variables), or None when
+    the line does not run $(MAKE).  Any other word stops the build: a
+    variable in any position is read as one, and a second goal or an option
+    this does not know would change which files are installed."""
+    words = line.split()
+    if "$(MAKE)" not in words:
+        return None
+    at = words.index("$(MAKE)")
+    if any(w != "$(TARGET_MAKE_ENV)" for w in words[:at]):
+        die("%s: something before $(MAKE) this check cannot read:" % name,
+            "    " + line)
+    rest = words[at + 1:]
+    directory, goals, overrides = None, [], {}
+    mk_vars = make_vars(open(os.path.join(pkgdir, name + ".mk")).read())
+    i = 0
+    while i < len(rest):
+        w = rest[i]
+        if w == "-C" and i + 1 < len(rest):
+            directory = rest[i + 1]
+            i += 2
+            continue
+        m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)=(\S*)", w)
+        if m:
+            overrides[m.group(1)] = expand(m.group(2), mk_vars)
+        elif w.startswith("-"):
+            die("%s: an option to $(MAKE) this check does not know:" % name,
+                "    " + line)
+        else:
+            goals.append(w)
+        i += 1
+    if directory != "$(@D)":
+        die("%s: $(MAKE) is not run in the package's own build directory:"
+            % name, "    " + line)
+    if overrides.get("DESTDIR") != "$(TARGET_DIR)":
+        die("%s: $(MAKE) is not given DESTDIR=$(TARGET_DIR):" % name,
+            "    " + line)
+    if len(goals) != 1:
+        die("%s: $(MAKE) is run for %d goals, wanting exactly one:"
+            % (name, len(goals)), "    " + line)
+    del overrides["DESTDIR"]
+    return goals[0], overrides
+
+
+def package_paths(pkgdir, name, origins=None):
     """What one package installs: its .mk's own commands, and the src/Makefile
     install rule where the .mk delegates to it.
 
     The value of each path is the symlink target where the .mk makes a symlink,
-    and None where it is a plain file."""
+    and None where it is a plain file.  Where `origins` is given, each path
+    installed from a file in this tree (an init script, a shell file) is
+    entered there with that file."""
     mk = os.path.join(pkgdir, name + ".mk")
     if not os.path.isfile(mk):
         die("%s has no %s.mk" % (pkgdir, name))
@@ -199,12 +378,15 @@ def package_paths(pkgdir, name):
         if "$(TARGET_DIR)" not in line:
             die("%s: an install command naming no $(TARGET_DIR):" % name,
                 "    " + line)
-        if re.search(r"\$\(MAKE\).*DESTDIR=\$\(TARGET_DIR\)\s+install\b", line):
+        handed = delegation(line, name, pkgdir)
+        if handed:
+            goal, overrides = handed
             src = os.path.join(pkgdir, "src", "Makefile")
             if not os.path.isfile(src):
                 die("%s hands its target install to %s and there is no such "
                     "file" % (name, src))
-            paths.update(src_install_paths(src, name))
+            paths.update(src_install_paths(src, name, goal, overrides,
+                                           origins))
             continue
         words = line.split()
         if words[0] == "ln" and "-sf" in words:
@@ -222,6 +404,11 @@ def package_paths(pkgdir, name):
                 die("%s: an install whose destination is not under "
                     "$(TARGET_DIR):" % name, "    " + line)
             paths[dest[len("$(TARGET_DIR)/"):]] = None
+            m = re.fullmatch(r"\$\([A-Z0-9_]+_PKGDIR\)/(\S+)", words[-2])
+            if origins is not None and m and \
+                    os.path.isfile(os.path.join(pkgdir, m.group(1))):
+                origins[dest[len("$(TARGET_DIR)/"):]] = \
+                    os.path.join(pkgdir, m.group(1))
             continue
         die("%s: an install command this check cannot read:" % name,
             "    " + line,
@@ -233,17 +420,19 @@ def package_paths(pkgdir, name):
     return paths
 
 
-def expected_files(external, config):
+def expected_files(external, config, origins=None):
     """Every path our enabled packages put on the target.
 
     `external` is a BR2_EXTERNAL as Buildroot takes it, so it may name more
     than one tree: the Cora Z7-07S's image is built from both, its own holding
-    only the board and every package being the other's."""
+    only the board and every package being the other's.  A `config` of None
+    counts every package, which is what `packages` below asks."""
     roots = [os.path.join(tree, "package") for tree in external.split(":")]
     if not any(os.path.isdir(r) for r in roots):
         die("no package directory in any of " + external)
-    symbols = set(re.findall(r"^(BR2_PACKAGE_[A-Z0-9_]+)=y$",
-                             open(config).read(), re.M))
+    symbols = None if config is None else \
+        set(re.findall(r"^(BR2_PACKAGE_[A-Z0-9_]+)=y$",
+                       open(config).read(), re.M))
     expected, packages = {}, 0
     for pkgdir in sorted(os.path.join(r, n) for r in roots
                          if os.path.isdir(r) for n in os.listdir(r)):
@@ -257,13 +446,14 @@ def expected_files(external, config):
                         open(cfg).read(), re.M)
         if not sym:
             die("%s/Config.in declares no BR2_PACKAGE_ symbol" % name)
-        if sym.group(1) not in symbols:
+        if symbols is not None and sym.group(1) not in symbols:
             continue                        # not in this board's image
         packages += 1
-        for path, link in package_paths(pkgdir, name).items():
+        for path, link in package_paths(pkgdir, name, origins).items():
             expected[path] = link
     if not packages:
-        die("no package under %s is enabled in %s;" % (external, config),
+        die("no package under %s is enabled in %s;"
+            % (external, config or "any configuration"),
             "the check would be vacuous, which is no check at all.")
     return expected, packages
 
@@ -329,6 +519,77 @@ def cpio_entries(blob):
 # -------------------------------------------------------------------- the check
 
 
+def ours(path):
+    """A path on the target that only our packages would put there."""
+    base = os.path.basename(path)
+    return (path.startswith("usr/share/cadr/") or "cadr" in base
+            or base in ("muir", "ozd"))
+
+
+# A path an installed script names, as `PROG=/usr/bin/cadr-serial` or
+# `FPGARC_SH=/usr/share/cadr/fpgarc.sh` do.  It starts at a word boundary so
+# that `$WORK/usr/bin/x` in a test is not read as one.
+NAMED_PATH = re.compile(r"(?<![\w./$-])/((?:usr|etc)/[\w./+-]*[\w+-])")
+
+
+def packages_check(external):
+    """The derivation alone, over every package, with no Buildroot at all.
+
+    `make check` runs this, because the image check runs only after a whole
+    Buildroot build, and a refusal there is found by whoever next builds an
+    image --- the derivation refused two shapes of cadr-common's for every
+    image of every board, and no build that ran in between said so where
+    anyone looked.  A refusal here is the same refusal, at the commit.
+
+    And one thing a derivation cannot ask of itself: whether it is RIGHT.  A
+    renamed destination derives cleanly to the wrong name.  The witness here
+    is the scripts the packages install, which name the files they run by
+    their paths on the target: every such path of ours that an installed
+    script names must be one the derivation says some package installs.
+    That is a second, independent statement of the same set, written by
+    whoever wrote the script, and the two have to agree."""
+    origins = {}
+    expected, count = expected_files(external, None, origins)
+    named, scripts = {}, 0
+    for path, source in sorted(origins.items()):
+        with open(source, "rb") as f:
+            head = f.read(2)
+        if head != b"#!" and not source.endswith(".sh"):
+            continue                        # not a script
+        scripts += 1
+        for number, line in enumerate(open(source), 1):
+            if line.lstrip().startswith("#"):
+                continue                    # a comment names nothing it runs
+            for m in NAMED_PATH.finditer(line):
+                if ours(m.group(1)):
+                    named.setdefault(m.group(1), []).append(
+                        "%s:%d" % (source, number))
+    if not scripts or not named:
+        die("no installed script names a path of ours; the cross-check would "
+            "be vacuous, which is no check at all.")
+    missing = sorted(p for p in named if p not in expected)
+    if missing:
+        print("the packages: A SCRIPT ON THE TARGET NAMES A FILE NO PACKAGE "
+              "INSTALLS.", file=sys.stderr)
+        print(file=sys.stderr)
+        for p in missing:
+            print("    /%-32s named at %s" % (p, ", ".join(named[p])),
+                  file=sys.stderr)
+        print(file=sys.stderr)
+        print("Either the install rule puts it somewhere else, or the script "
+              "names a file that is", file=sys.stderr)
+        print("not there.  The derivation says the packages install:",
+              file=sys.stderr)
+        for p in sorted(expected):
+            print("    /" + p, file=sys.stderr)
+        sys.exit(1)
+    for p in sorted(expected):
+        print("    /" + p)
+    print("the packages: %d file(s) of %d package(s) derived; the %d path(s) "
+          "of ours that %d installed script(s) name are all among them"
+          % (len(expected), count, len(named), scripts))
+
+
 def target_bytes(target, path):
     full = os.path.join(target, path)
     if os.path.islink(full):
@@ -339,9 +600,16 @@ def target_bytes(target, path):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "packages":
+        for path in sys.argv[2].split(":"):
+            if not os.path.isdir(path):
+                die("no such directory: " + path)
+        packages_check(sys.argv[2])
+        return
     if len(sys.argv) != 4:
         die("usage: rootfs_check.py <BR2_EXTERNAL> <output directory> "
-            "<image>")
+            "<image>",
+            "       rootfs_check.py packages <BR2_EXTERNAL>")
     external, out, image = sys.argv[1:]
     config = os.path.join(out, ".config")
     target = os.path.join(out, "target")
@@ -387,7 +655,7 @@ def main():
         kind = entries[path][0] & 0o170000
         if kind not in (0o100000, 0o120000):
             continue
-        if ("cadr" in base or base in ("muir", "ozd")) and path not in expected:
+        if ours(path) and path not in expected:
             stale.append(path)
 
     if absent or differ or stale:

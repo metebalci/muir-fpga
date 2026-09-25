@@ -138,7 +138,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
        $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass \
-       $(BUILD)/de25_linux.pass \
+       $(BUILD)/de25_linux.pass $(BUILD)/rootfs_packages.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.pass) \
        muir-pin current
@@ -4261,6 +4261,29 @@ BR_ROOTFS_CHECK := boards/arty-z7-20/linux/rootfs_check.py
 # The inner make gets a clean MAKEFLAGS anyway (see above), so nothing the
 # sub-make convention would have carried is lost.
 BR_MAKE     := $(MAKE)
+
+# **THE IMAGE CHECK'S DERIVATION, AT THE COMMIT, WITH NO BUILDROOT.**  The
+# check above runs only as the last step of a whole image build, so when the
+# derivation refused a package's install rule it refused it for every image
+# of every board, and nothing on the way to a commit ran it.  This runs the
+# same derivation over every package, and holds it to the one witness it
+# cannot supply itself: every file of ours that an installed script names by
+# its path on the target (`PROG=/usr/bin/...`, `FPGARC_SH=/usr/share/cadr/...`)
+# must be one the derivation says a package installs, so a destination renamed
+# in an install rule, or a file the derivation stopped seeing, is caught here
+# and not on a board.  The files the mutation records name are listed by path;
+# the wildcards are every other package's.
+$(BUILD)/rootfs_packages.pass: boards/arty-z7-20/linux/rootfs_check.py \
+        boards/arty-z7-20/linux/buildroot/package/cadr-common/cadr-common.mk \
+        boards/arty-z7-20/linux/buildroot/package/cadr-common/src/Makefile \
+        boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/S87cadr-chaosnet \
+        $(wildcard $(BR_EXTERNAL)/package/*/*.mk) \
+        $(wildcard $(BR_EXTERNAL)/package/*/Config.in) \
+        $(wildcard $(BR_EXTERNAL)/package/*/S[0-9]*) \
+        $(wildcard $(BR_EXTERNAL)/package/*/src/Makefile) \
+        $(wildcard $(BR_EXTERNAL)/package/*/src/*.sh) | $(BUILD)
+	python3 $(BR_ROOTFS_CHECK) packages $(BR_EXTERNAL)
+	@touch $@
 
 .PHONY: buildroot buildroot-check buildroot-packages-check buildroot-rebuild \
         buildroot-cora buildroot-cora-check buildroot-cora-rebuild
