@@ -265,8 +265,11 @@ int main(int argc, char **argv) {
   // word from the wrong line or a write that never went out reads back
   // wrong, and MD is compared every microcycle.  It answers in one to five
   // ticks, sooner than the nominal 380 and 290 ns, so every acknowledgment
-  // is the port's floor and must land on muir's instant.  The frame buffer
-  // is still an Xbus device's, placed from the trace as before.
+  // is the port's floor and must land on muir's instant.  MONO TV's frame
+  // buffer is memory too (contract Q7), at the display's base: the port
+  // fills its lines and writes it through as it does main memory's, and
+  // every write it owes lands here, in order, which is what the scanout
+  // reading these words is owed.
   bool quux_machine = false;
   // Key words for the keyboard's cable, by the microcycle they go in before,
   // and the ones not yet on it: one a tick, from the tick that microcycle
@@ -566,6 +569,12 @@ int main(int argc, char **argv) {
   // QUUX's main memory: its words, when the operation standing is due, and
   // the writes the processor's cycles owe it, in order.
   constexpr uint32_t kMainBase = 0x18000000u;
+  // MONO TV's frame buffer: `tv::BUFFER`, 40,960 words, at the display's
+  // base, `cadr_ddr_map::DISPLAY_BASE` on the Zynq boards.
+  constexpr uint32_t kFbBase = 0x1C000000u;
+  constexpr uint32_t kFb = 017000000u, kFbWords = 40960u;
+  auto q_fb = [&](uint32_t p) { return p >= kFb && p - kFb < kFbWords; };
+  long q_fb_fills = 0, q_fb_writes = 0;
   std::map<uint32_t, uint32_t> q_mem;
   std::vector<std::pair<uint32_t, uint32_t>> q_owed;
   long q_due = -1;
@@ -608,16 +617,21 @@ int main(int argc, char **argv) {
     // and never chooses the data.
     dut->mem_done = 0;
     // QUUX's main memory, answering the port (see `quux_machine`).
-    const bool q_main = quux_machine && dut->mem_req && dut->mem_addr >= kMainBase &&
-                        dut->mem_addr < kMainBase + (4u << 22);
+    const bool q_in_fb = dut->mem_addr >= kFbBase && dut->mem_addr < kFbBase + 4u * kFbWords;
+    const bool q_main = quux_machine && dut->mem_req &&
+                        ((dut->mem_addr >= kMainBase && dut->mem_addr < kMainBase + (4u << 22)) ||
+                         q_in_fb);
     if (q_main) {
       if (q_due < 0) q_due = t + 1 + static_cast<long>(q_rng() % 5);
       if (t >= q_due) {
-        const uint32_t w = (dut->mem_addr - kMainBase) >> 2;
+        // The word's physical address, main memory's or the frame buffer's.
+        const uint32_t w = q_in_fb ? kFb + ((dut->mem_addr - kFbBase) >> 2)
+                                   : (dut->mem_addr - kMainBase) >> 2;
         if (!q_answered) {
           q_answered = true;
           if (dut->mem_line) {
             ++q_fills;
+            if (q_in_fb) ++q_fb_fills;
             if ((w & 3) || dut->mem_write) {
               std::fprintf(stderr, "microcycle %zu: a line fill at %08x, not a line's address\n", k,
                            dut->mem_addr);
@@ -633,6 +647,7 @@ int main(int argc, char **argv) {
             }
           } else if (dut->mem_write) {
             ++q_writes;
+            if (q_in_fb) ++q_fb_writes;
             if (q_owed.empty()) {
               std::fprintf(stderr, "microcycle %zu: main memory written at word %o, which no cycle wrote\n",
                            k, w);
@@ -742,9 +757,9 @@ int main(int argc, char **argv) {
     // Settle this tick's inputs without an edge, so that what is read here is
     // what the edge about to come takes.
     dut->eval();
-    if (acked_armed && !dut->n_memack_o) {
+    // The acknowledgment, measured at `ns_now`: see `kInstrumentSlipNs`.
+    auto measure_ack = [&](long ns_now) {
       acked_armed = false;
-      const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
       const long slip = static_cast<long>(ack_for_cur) - ns_now;
       ack_error[slip]++;
       if (slip != 0 && ack_error[slip] <= 3)
@@ -783,7 +798,13 @@ int main(int argc, char **argv) {
           ++nxm_ack_wrong;
         }
       }
-    }
+        };
+    // **AN ACKNOWLEDGMENT IN THE TICK THAT GRANTS THE CYCLE** (QUUX's empty
+    // address, contract Q7) is read here before the edge that arms its row,
+    // so it is kept and measured once the edge has armed it, below.
+    const bool ack_low_pre = !dut->n_memack_o;
+    const long ns_pre = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
+    if (acked_armed && ack_low_pre) measure_ack(ns_pre);
 
     dut->clk = 1;
     dut->eval();
@@ -836,9 +857,10 @@ int main(int argc, char **argv) {
       }
       dev_cycle = dut->device;
       dev_acked = false;
-      // A write of QUUX's main memory is owed to main memory, the word the
-      // trace's MD column says the cycle carries.
-      if (quux_machine && dut->wrcyc && !dut->device && !dut->nxm && !dut->unibus)
+      // A write of QUUX's main memory or frame buffer is owed to it, the
+      // word the trace's MD column says the cycle carries.
+      if (quux_machine && dut->wrcyc &&
+          ((!dut->device && !dut->nxm && !dut->unibus) || q_fb(dut->phys)))
         q_owed.emplace_back(dut->phys, static_cast<uint32_t>(md_at_row[k]));
       cur_nxm = dut->nxm;
       if (dut->device) ++device_cycles;
@@ -868,6 +890,7 @@ int main(int argc, char **argv) {
         cur.v[kBus] && armed_row != static_cast<long>(k)) {
       ++early_grants;
       arm_bus(cur, prev_ns + static_cast<uint64_t>(t - last_edge) * kTickNs);
+      if (acked_armed && ack_low_pre) measure_ack(ns_pre);
     }
 
     if (dut->clock_edge) {
@@ -995,6 +1018,7 @@ int main(int argc, char **argv) {
           ++bad;
         }
         arm_bus(r, r.v[kNs]);
+        if (acked_armed && ack_low_pre) measure_ack(ns_pre);
       }
       if (r.v[kLc]) ++lc_moved;
       if (r.v[kPromdis]) ++promdis_rows;
@@ -1083,8 +1107,16 @@ int main(int argc, char **argv) {
   }
 
   if (quux_machine) {
-    std::printf("    QUUX's main memory: %ld line fills and %ld writes answered here, %zu writes "
-                "still owed\n", q_fills, q_writes, q_owed.size());
+    std::printf("    QUUX's main memory: %ld line fills and %ld writes answered here, %ld and %ld "
+                "of them the frame buffer's, %zu writes still owed\n", q_fills, q_writes,
+                q_fb_fills, q_fb_writes, q_owed.size());
+    // The write buffer holds one write; every other write a cycle made has
+    // reached DDR, where the scanout reads the frame buffer's.
+    if (q_owed.size() > 1) {
+      std::fprintf(stderr, "FAIL: %zu writes never reached DDR, where the write buffer holds one\n",
+                   q_owed.size());
+      ++bad;
+    }
   }
   std::printf("    -MEMACK against muir, in nanoseconds (muir minus fabric):\n");
   long ack_slipped = 0;
@@ -1326,7 +1358,21 @@ int main(int argc, char **argv) {
                  sintr_checked);
     ++thin;
   }
-  if (mem_cycles == 0 && !script_trace) {
+  // **QUUX'S BOOT PROM TOUCHES NO MAIN MEMORY WITHOUT A PACK**, measured on
+  // its trace at the pin: it saves nothing (muir's contract Q8, its buffer
+  // being page 3, filled only from a label it never reads here), so its
+  // every cycle is block-disk's status, polled.  Main memory is held on QUUX
+  // by the programs of `golden/src/quux.rs` and by `build/quux_port.quux.*`,
+  // and this run must then reach none of it: a cycle of main memory's here
+  // would be a PROM that is not the one the trace was taken from.
+  if (quux_prom && mem_cycles != 0) {
+    std::fprintf(stderr,
+                 "FAIL: %ld of %ld bus cycles of QUUX's boot PROM reached main memory, "
+                 "which with no pack it never touches\n",
+                 mem_cycles, cycles_run);
+    ++thin;
+  }
+  if (mem_cycles == 0 && !script_trace && !quux_prom) {
     std::fprintf(stderr,
                  "FAIL: none of %ld bus cycles reached main memory; every one "
                  "was answered from the trace and the DDR bridge was never "

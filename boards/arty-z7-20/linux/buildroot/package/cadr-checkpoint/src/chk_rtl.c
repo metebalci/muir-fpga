@@ -640,8 +640,24 @@ static void emit_tick(struct chk *w, const struct cadr_image *img)
 	chk_u64(w, quux_deadline(&q->timer[1], q->interval_us));	/* READ */
 }
 
+// `disk_image.rs`'s `Disk::save`, block-disk's disk (version 41, contract
+// Q8a): its size in blocks and the blocks written that the file does not
+// hold.  The size is the pack file's own, in 1,024-byte blocks, which is
+// the drive bay's geometry multiplied out, and muir refuses a checkpoint
+// whose size is not the resuming disk's.  None is written: the board's pack
+// on the card is written through by `cadr-disk-packs`, as a unit's is.
+static void emit_quux_disk(struct chk *w, const struct chk_declared *d)
+{
+	uint32_t blocks = d->cylinders[0] * d->heads[0] * d->blocks_per_track[0];
+#if CHK_MUTATE == 17
+	blocks -= 1;
+#endif
+	chk_u32(w, blocks);		/* DECLARED, the file's size */
+	chk_u64(w, 0);			/* IDLE written, no blocks */
+}
+
 // `BlockDisk::save`: the four registers, when the transfer is done, the
-// clock it was last told, a block's time, the three errors, and the pack.
+// clock it was last told, a block's time, the three errors, and the disk.
 static void emit_block_disk(struct chk *w, const struct cadr_image *img,
 			    const struct chk_declared *d)
 {
@@ -673,10 +689,11 @@ static void emit_block_disk(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, q->past_end);			/* READ */
 	chk_bool(w, q->nxm);				/* READ */
 	chk_bool(w, q->bad_command);			/* READ */
-	// The pack: one, unit 0, a flag and then the unit (`w.opt`).
+	// The disk: the bay's one pack, unit 0, a flag and then the disk
+	// (`w.opt`).
 	if (d->present & 1u) {
 		chk_bool(w, 1);
-		emit_unit(w, d, 0);
+		emit_quux_disk(w, d);
 	} else {
 		chk_bool(w, 0);
 	}
@@ -988,7 +1005,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// When the instruction standing in `IR` was clocked in.  Only QUUX's
 	// divider reads it, so a CADR's value changes nothing; zero is what a
 	// fresh `Rtl` holds.
-	chk_u64(w, 0);					/* IDLE ir_loaded_ns */
+	chk_u64(w, 0);					/* IDLE div_from_ns */
 	// `Rtl::pulsed`: whether the write pulse of a microcycle that `-HANG`
 	// holds has already fired.  It is set inside a hung step and taken at
 	// the step's end, and a halted machine is never inside a hang --- the
@@ -1240,6 +1257,8 @@ const char *chk_rtl_mutation(void)
 	return "the control store under QUUX's PROM written as the fabric's RAM holds it";
 #elif CHK_MUTATE == 16
 	return "the register page's bus errors written 0";
+#elif CHK_MUTATE == 17
+	return "block-disk's disk written a block smaller than the pack file";
 #else
 	return NULL;
 #endif

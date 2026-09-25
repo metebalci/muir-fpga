@@ -125,7 +125,7 @@ module cadr_microcycle #(
     // boot PROM clearing all 16K words of the PDL buffer and 64 blocks of
     // level 2; and the records aimed at each in `mutations/list.txt`.
     parameter string MACHINE = "cadr",
-    parameter logic [31:0] MACHINE_ID = 32'h5155_0074,
+    parameter logic [31:0] MACHINE_ID = 32'h5155_0084,
     // **QUUX'S MICROCYCLE IN TICKS** (H1a, muir's `TimingModel::Sync`): K,
     // and L more for an `ILONG` instruction.  A board's, from its top level
     // through `cadr_machine.sv`; nothing on the CADR reads either.  See
@@ -2156,9 +2156,14 @@ module cadr_microcycle #(
               || dividing;
 
   // **QUUX'S DIVIDER IS BUSY**, a `-WAIT` term of QUUX's own (`Rtl::dividing`):
-  // a `DIV` stands in `IR`, not nopped, and `muldiv::DIV_NS`, 330 ns, 33
-  // ticks, have not passed since the edge that loaded it.  The master clock
-  // runs on, so the bus interface carries on; a single step is not held, as
+  // a `DIV` stands in `IR`, not nopped, and `muldiv::DIV_CYCLES`, nine
+  // generator cycles, have not passed since its operands were ready: since
+  // the edge that loaded it, or, for a `DIV` whose M source is `MD` with a
+  // read in flight, since the end of the last generator cycle QUUX's wait
+  // for MD held it (`quux_hold`, muir's MD interlock).  A `DIV` is ten
+  // microcycles in all, its own and nine held, 400 ns at a K of four for a
+  // register; for `MD`, nine held after the word has landed.  The master
+  // clock runs on, so the bus carries on; a single step is not held, as
   // `-WAIT` holds none; and the decode is held a tick, as the other three
   // terms' IR-derived halves are.  On the CADR the term is a constant zero.
   //
@@ -2168,56 +2173,58 @@ module cadr_microcycle #(
   // runs a whole generator cycle after the last; here -WAIT is a term of
   // `MACHRUN`, read at the edge that would end the cycle.  So the question
   // asked at an edge is muir's question at the edge BEFORE it: `div_start`
-  // is the ticks from the loading edge to the start of the generator cycle
-  // now ending, zero at the loading edge and the count at each held master
-  // clock.  Two held cycles at the extra slow speed and three at the normal
-  // and the fast, as muir measures.
+  // is the generator cycles from the operands' readiness to the start of
+  // the one now ending, zero at the loading edge, and `quux_hold` is muir's
+  // MD interlock at that start (`hold_rip`'s note), after which the count
+  // starts again from the edge that ends the cycle it held.  muir's other
+  // half of the interlock, `MBUSY` with no grant, is never true at a
+  // question on QUUX, whose port grants at the edge that takes a request.
   logic       dividing;
   if (QUUX) begin : g_quux_divider_hold
     logic       div_held;
-    logic [5:0] div_t, div_start;
+    logic [5:0] div_t;
+    logic [3:0] div_start;
     always_ff @(posedge clk) begin
       if (rst) begin
         div_held  <= 1'b0;
         div_t     <= 6'd63;
-        div_start <= 6'd63;
+        div_start <= 4'd15;
       end else begin
         div_held <= quux_div;
         if (cpu_edge)            div_t <= 6'd1;
         else if (div_t != 6'd63) div_t <= div_t + 6'd1;
-        if (cpu_edge)            div_start <= 6'd0;
-        else if (mclk_edge)      div_start <= div_t;
+        if (cpu_edge)                    div_start <= 4'd0;
+        else if (mclk_edge && quux_hold) div_start <= 4'd0;
+        else if (mclk_edge && div_start != 4'd15) div_start <= div_start + 4'd1;
       end
     end
-    assign dividing = div_held && (div_start < 6'd33);
+    // `muldiv::DIV_CYCLES`.
+    localparam int unsigned DIV_CYCLES = 9;
+    assign dividing = div_held && (div_start < 4'(DIV_CYCLES));
     // **THE LOAD IS K TICKS AFTER THE EDGE, THE NEXT MASTER CLOCK'S TICK**:
     // the latches have the operands from the tick after the edge, and
     // nothing the M bus is made of moves before the next master clock, the
-    // earliest a word read can reach MD.  A `DIV` is held at least nine
-    // microcycles, so the load always falls in one it waits through, with
-    // `ceil(33/K) K - K` ticks of the hold to spare against the divider's
-    // seventeen.
+    // earliest a word read can reach MD.  A `DIV` is held nine microcycles
+    // at the least, so the load always falls in one it waits through, with
+    // `9 K - K` ticks of the hold to spare against the divider's seventeen,
+    // fifteen at a K of four.
     localparam int unsigned DIV_LOAD_T = SYNC_K;
     assign div_load = div_t == 6'(DIV_LOAD_T);
 
     // **A `DIV` OF `MD` DIVIDES THE WORD ITS READ BRINGS.**  QUUX has no hung
     // microcycle: a `DIV` whose M source is `MD`, with a read in flight,
     // waits whole microcycles until READ IN PROGRESS falls and runs once
-    // (`quux_hold`), so muir's last read phase gives it the word read.  The
-    // word reaches MD only at the next master clock edge, and the divider
-    // cannot wait for that: the microcycle that runs can end as soon as
-    // `RD_FINISH_NS` and K ticks after the acknowledgment, 180 ns at a K of
-    // four, and the divider is done sixteen ticks after it is loaded.
+    // (`quux_hold`), so muir's last read phase gives it the word read, and
+    // it is then held nine microcycles more (`div_start` above).  The word
+    // reaches MD only at the next master clock edge after its strobe.
     //
     // **SO THE DIVIDER IS LOADED A TICK AFTER THE STROBE, FROM `md_held`**,
     // which on QUUX takes every strobed word, and is done seventeen ticks
-    // after the strobe, which the edge eighteen or more after it takes: at
-    // a K of four the microcycle that runs ends 18 ticks after the strobe at
-    // the soonest.  It is taken from the register and not off the bus on the
+    // after the strobe, well inside the nine microcycles that follow the
+    // wait.  It is taken from the register and not off the bus on the
     // strobe's own tick, which would be a tick sooner, because `MEM<31:0>`'s
     // cone reaches back through the map to MEMSTART: 19.3 ns into a one-tick
-    // path, measured on the routed Arty at K = 4.  That tick is why QUUX's K
-    // is four at the least (`quux_phase_gen.sv`).
+    // path, measured on the routed Arty at K = 4.
     //
     // A strobe before the `DIV`'s own load, K ticks into its first
     // microcycle, is that load's: `div_have` says one was strobed since the
@@ -2645,7 +2652,15 @@ module cadr_microcycle #(
       // before; no program here puts an acknowledgment there, and doing so
       // would need `rdata` on the dispatch and map address paths in the
       // same tick.
-      if (loadmd_edge && (mclk_edge || hang)) begin
+      //
+      // **AND NOT A STROBE IN THE TICK THAT GRANTS ITS OWN CYCLE**, which is
+      // QUUX's address nothing answers (contract Q7, `quux_mem_port.sv`),
+      // acknowledged at the grant's instant.  muir's `Rtl` grants the cycle
+      // at the edge and finds it acknowledged only when it next carries the
+      // bus forward, after the edge, so its word reaches MD at the next
+      // master clock edge: `md-acked-on-an-edge-nxm` and
+      // `nxm-fall-on-the-grant-edge` in `build/dispatch_write_order.quux.pass`.
+      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -2856,7 +2871,14 @@ module cadr_microcycle #(
         // The two countdowns, off the held copy rather than off the map. See
         // the note at `memgo_q`: the same decision, one tick older, and the
         // only difference the tool sees is where the path starts.
-        if (memgo_q) begin
+        //
+        // **NOT WHEN THE CYCLE IS ACKNOWLEDGED AT ITS OWN GRANT**, which QUUX
+        // does for an address nothing answers (contract Q7,
+        // `quux_mem_port.sv`): its -MEMACK falls in the tick that takes the
+        // request, so the countdowns loaded above for it are this cycle's,
+        // and clearing them would leave READ IN PROGRESS and MBUSY up for
+        // good.  On the CADR no acknowledgment falls in the tick of a grant.
+        if (memgo_q && !(QUUX && memack_edge)) begin
           mfinish_t <= 6'd0;
           if (rdcyc) rdfinish_t <= 6'd0;
         end

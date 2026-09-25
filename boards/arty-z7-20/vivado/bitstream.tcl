@@ -340,7 +340,6 @@ if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # `rtl/plumbing/xilinx7/cadr_ddr.xdc` names is inside `g_ddr`, so reading it against the
 # default board would be four critical warnings about absent objects.
 if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_ddr.xdc }
-if {$port > 0 && $machine eq "quux"} { read_xdc rtl/plumbing/xilinx7/quux_ddr.xdc }
 
 # The display output's clocks, and the one crossing between them and the
 # machine's.  Read only when the display is built, on `cadr_ddr.xdc`'s own
@@ -625,31 +624,23 @@ if {$port > 0 && $machine ne "quux"} {
     assert_clause_timing $tick 1 "the bus interface's state into the adapter" \
         {*g_cadr_busint.busint/*} $a_addr
 }
-# **QUUX'S ADAPTER**, `quux_ddr.xdc`: the bus's 80 ns into its address and
-# data registers from the processor's registers, whose device cycle is the
-# only word that has them, and no other register of it; and one tick from
-# everything else that reaches them: QUUX's memory port's own registers,
-# which are its cache's operations, and the block-disk's channel.
+# **QUUX'S ADAPTER HAS NO CLAUSE** (contract Q7): the processor's cycles
+# never reach it, the frame buffer being the cache's and the device
+# registers the register decode's, so every word it takes is one of QUUX's
+# memory port's registers or of the block-disk's channel, loaded one to
+# three ticks before.  No register of it at the bus's 80 ns, and a tick from
+# each of the two.
 if {$port > 0 && $machine eq "quux"} {
     set q_addr {*g_ddr.g_qaxi.u_qaxi/m_awaddr_reg* *g_ddr.g_qaxi.u_qaxi/m_araddr_reg* *g_ddr.g_qaxi.u_qaxi/m_wdata_reg*
                 *g_ddr.g_qaxi.u_qaxi/m_wstrb_reg* *g_ddr.g_qaxi.u_qaxi/half_reg*}
-    # No other register of the adapter at eight: the three are the clause's
-    # and are left out of this question (`elsewhere`), each reached from two
-    # sources at two requirements, which the two clauses below ask apart.
     # grid: 80 ns
-    assert_instance_timing $tick 8 *g_ddr.g_qaxi.u_qaxi/* {} \
-        {*m_awaddr_reg* *m_araddr_reg* *m_wdata_reg* *m_wstrb_reg* *half_reg*}
-    # grid: 80 ns
-    assert_clause_timing $tick 8 "the processor's device cycle into QUUX's adapter" \
-        {*u_machine/processor/*} $q_addr
+    assert_instance_timing $tick 8 *g_ddr.g_qaxi.u_qaxi/* {}
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "QUUX's port's operations into its adapter" \
         {*memory/g_quux_port.port/*} $q_addr
-    # And the block-disk's transfer words, which pass through the same bridge
+    # And the block-disk's transfer words, which pass through the bridge
     # three ticks after the channel loads them, and the arbiter's registers,
-    # which hand it the bus one and two ticks before: one tick each, which
-    # an exception written to the adapter rather than from the processor
-    # would have made eight.
+    # which hand it the bus one and two ticks before: one tick each.
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "block-disk's words into QUUX's adapter" \
         {*g_quux_disk.disk/*} $q_addr

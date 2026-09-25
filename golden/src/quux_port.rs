@@ -2,32 +2,37 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 //! The reference trace for `rtl/machine/quux_mem_port.sv`: QUUX's memory
-//! port (contract Q6, revision 7), out of muir's own
-//! `memory_port::MemoryPort`, tick by tick.
+//! port and register decode (contracts Q6 and Q7, revision 8), out of muir's
+//! own `memory_port::MemoryPort`, tick by tick.
 //!
 //! The port is the processor's cycle on QUUX, where there is no bus
-//! interface: main memory through the cache --- 4K words in lines of 4,
-//! 2-way, a hit in 20 ns --- to main memory at its nominal timing, a line
-//! fill in 380 ns and a write in 290, one operation at a time, a write
-//! acknowledged after the hit time by the write buffer; the Xbus's devices
-//! answered `SETUP_NS` after the grant, a read deskewed `XBUS_ACK_NS` more;
-//! and an address nothing answers timed out as on the CADR, at the free-
-//! running oscillator's first rise after the grant plus 4,250 ns.
+//! interface and no device bus.  The memory bus: main memory and MONO TV's
+//! frame buffer, through the cache --- 4K words in lines of 4, 2-way, a hit
+//! in 20 ns --- to main memory at its nominal timing, a line fill in 380 ns
+//! and a write in 290, one operation at a time, a write acknowledged after
+//! the hit time by the write buffer.  A device register, taken at the edge
+//! that grants the cycle and acknowledged a microcycle on, never cached.
+//! And an address nothing answers, which fails at once, in the edge that
+//! takes it, with the NXM bit: no timer.
 //!
 //! Each row is one tick of MIT's grid: the stimulus the processor puts on
 //! the port --- `-MEMRQ`, `WRCYC`, which of the three the held decode calls
-//! the address, the address and the word, the master clock, and the block-
-//! disk's pulse that invalidates the cache --- and what muir's port does
-//! with it: `-MEMGRANT`, `-MEMACK`, `-LOADMD`, `NXM TIMEOUT`, whether the
-//! cycle is main memory's, and the word a read of main memory brings.
+//! the address, the address and the word, the master clock, the block-
+//! disk's pulse that invalidates the cache, and the word a device register
+//! gives when it is asked --- and what muir's port does with it:
+//! `-MEMGRANT`, `-MEMACK`, `-LOADMD`, `NXM TIMEOUT`, whether the cycle is
+//! the memory bus's, and the word a read brings.
 //!
 //! **THE WORD IS THIS PROGRAM'S, MUIR'S PORT HOLDING NONE.**  muir's cache
 //! holds tags only (`cache.rs`: "rtl takes a read's word from main memory
-//! when the cycle ends"), so what a read returns is main memory as the
-//! processor has left it: every word starts as [`initial`], which the
-//! testbench's memory computes the same way, and a write changes it from
-//! its grant.  The fabric's cache holds data, and this is what it must hand
-//! back, hit or miss.
+//! when the cycle ends"), so what a read returns is the memory as the
+//! processor has left it: every word, main memory's and the frame buffer's,
+//! starts as [`initial`], which the testbench's memory computes the same
+//! way, and a write changes it from its grant.  The fabric's cache holds
+//! data, and this is what it must hand back, hit or miss.  A device's word
+//! is a fresh one for each cycle, which the testbench's register hands the
+//! port only in the tick it is asked, so a word taken at any other tick
+//! reads wrong.
 //!
 //! **THE TIMES ARE MUIR'S AND THE MEMORY'S ARE A FLOOR.**  The testbench
 //! plays main memory answering sooner than the nominal figures, as a board
@@ -42,7 +47,8 @@
 //!
 //! Every choice is a seeded generator's, so the trace is the same every
 //! run; the addresses gather into a few sets with more tags than ways, so
-//! lines are evicted, refilled and hit in every order the two ways allow.
+//! lines are evicted, refilled and hit in every order the two ways allow,
+//! the frame buffer's among main memory's.
 
 mod machine_axis;
 
@@ -58,6 +64,11 @@ const TICKS: u64 = 400_000;
 
 /// Main memory's end, QUUX's 2M words (`Machine::new`).
 const MAIN_WORDS: u32 = 32 << 16;
+
+/// MONO TV's frame buffer, on the memory bus (contract Q7): `tv::BUFFER`,
+/// 40,960 words at the bitstreams' 1280 by 1024.
+const FB: u32 = muir::tv::BUFFER;
+const FB_WORDS: u32 = 1280 * 1024 / 32;
 
 /// Main memory's word before anything writes it, the same function the
 /// testbench's memory starts from.  A multiplicative hash of the address,
@@ -80,7 +91,9 @@ impl Rng {
     }
 }
 
-/// Which of the three the held decode calls an address.
+/// Which of the three the held decode calls an address: the memory bus
+/// (main memory or the frame buffer, told apart by the address), a device
+/// register, or nothing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
     Memory,
@@ -96,8 +109,11 @@ impl Kind {
             Kind::Nothing => 2,
         }
     }
+    /// As `Rtl::start_bus_cycle` gives it: the frame buffer is
+    /// `Responder::Memory(0)`, the port reading no board number.
     fn responder(self, phys: u32) -> Responder {
         match self {
+            Kind::Memory if phys >= FB => Responder::Memory(0),
             Kind::Memory => Responder::Memory((phys >> 16) as u8),
             Kind::Device => Responder::Device,
             Kind::Nothing => Responder::NoXbus,
@@ -115,6 +131,16 @@ fn memory_address(rng: &mut Rng, last: u32) -> u32 {
     }
     if rng.below(8) == 0 {
         return rng.below(MAIN_WORDS);
+    }
+    // The frame buffer, now and then: its first and last lines, and one
+    // whose set is among main memory's below, so the two fight for a way.
+    if rng.below(6) == 0 {
+        return match rng.below(4) {
+            0 => FB + rng.below(4),
+            1 => FB + FB_WORDS - 4 + rng.below(4),
+            2 => FB + (7 << 2) + rng.below(4),
+            _ => FB + rng.below(FB_WORDS),
+        };
     }
     const SETS: [u32; 8] = [0, 1, 2, 7, 64, 255, 256, 511];
     // Two tags a bit apart, and one with every bit main memory has.
@@ -153,6 +179,11 @@ fn main() {
     let mut port = MemoryPort::new();
     port.keep_timing_model(timing);
     let mut main: Vec<u32> = (0..MAIN_WORDS).map(initial).collect();
+    let mut fb: Vec<u32> = (FB..FB + FB_WORDS).map(initial).collect();
+    // The memory bus's word at `phys`, main memory's or the frame buffer's.
+    fn cell<'a>(main: &'a mut [u32], fb: &'a mut [u32], phys: u32) -> &'a mut u32 {
+        if phys >= FB { &mut fb[(phys - FB) as usize] } else { &mut main[phys as usize] }
+    }
     let mut rng = Rng(0x0005_1ED6_C0FF_EE01);
 
     let mut cycle: u64 = 0;
@@ -161,6 +192,8 @@ fn main() {
     let mut kind = Kind::Memory;
     let mut phys: u32 = 0;
     let mut wdata: u32 = 0;
+    // The word a device register gives this cycle, when it is asked.
+    let mut dev_word: u32 = 0;
     let mut next_request_at: u64 = 12 * TICK_NS;
     let mut release_at: Option<u64> = None;
     let mut acked_at: Option<u64> = None;
@@ -172,7 +205,7 @@ fn main() {
     // Coverage, asserted at the end: a trace that never evicted or never
     // waited for the write buffer would agree everywhere and mean little.
     let (mut hits, mut misses, mut writes, mut devices, mut nothings, mut pulses) = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
-    let (mut buffer_waits, mut fill_waits) = (0u64, 0u64);
+    let (mut buffer_waits, mut fill_waits, mut fb_cycles) = (0u64, 0u64, 0u64);
     let mut granted_at: u64 = 0;
     let mut last_memory: u32 = 0;
 
@@ -181,8 +214,8 @@ fn main() {
         machine_axis::timing_name(timing)
     );
     println!("# initial(phys) = ((phys + 1) * 0x9E3779B1) ^ 0x3C5AA5C3, 32 bits");
-    println!("# tick mclk n_memrq wrcyc kind phys wdata inval | n_memgrant n_memack n_loadmd timed_out cached word");
-    println!("# kind: 0 main memory, 1 an Xbus device, 2 nothing; every value decimal");
+    println!("# tick mclk n_memrq wrcyc kind phys wdata inval dev_word | n_memgrant n_memack n_loadmd timed_out cached word");
+    println!("# kind: 0 the memory bus (main memory, or the frame buffer at {FB} up), 1 a device register, 2 nothing; every value decimal");
 
     for tick in 0..TICKS {
         let now = tick * TICK_NS;
@@ -228,11 +261,23 @@ fn main() {
                 }
                 // The addresses are the stimulus's; the decode is the held
                 // one, which this check is given and `xbus_decode.quux`
-                // holds over every address.
-                Kind::Device => 0o17377774 + rng.below(4),
-                Kind::Nothing => MAIN_WORDS + rng.below(0o1000000),
+                // holds over every address.  Block-disk's, the register
+                // page's and MONO TV's mode register.
+                Kind::Device => match rng.below(3) {
+                    0 => 0o17377774 + rng.below(4),
+                    1 => 0o17377000 + rng.below(0o400),
+                    _ => 0o17377760,
+                },
+                // Past main memory's end, past the frame buffer's, and the
+                // old Unibus window.
+                Kind::Nothing => match rng.below(3) {
+                    0 => MAIN_WORDS + rng.below(0o1000000),
+                    1 => FB + FB_WORDS + rng.below(0o1000),
+                    _ => 0o17400000 + rng.below(0o100000),
+                },
             };
             wdata = rng.next();
+            dev_word = rng.next();
             if invalidate_owed {
                 port.invalidate_cache();
                 invalidate_owed = false;
@@ -268,11 +313,20 @@ fn main() {
                 match kind {
                     Kind::Memory if write => {
                         writes += 1;
-                        main[phys as usize] = wdata;
+                        *cell(&mut main, &mut fb, phys) = wdata;
                     }
-                    Kind::Memory => word = main[phys as usize],
-                    Kind::Device => devices += 1,
-                    Kind::Nothing => nothings += 1,
+                    Kind::Memory => word = *cell(&mut main, &mut fb, phys),
+                    Kind::Device => {
+                        devices += 1;
+                        word = dev_word;
+                    }
+                    Kind::Nothing => {
+                        nothings += 1;
+                        word = 0;
+                    }
+                }
+                if kind == Kind::Memory && phys >= FB {
+                    fb_cycles += 1;
                 }
                 if kind == Kind::Memory && write && ack.at > granted_at + 20 {
                     buffer_waits += 1;
@@ -287,7 +341,7 @@ fn main() {
         let b = |v: bool| u8::from(v);
         let cached = acked && kind == Kind::Memory;
         println!(
-            "{tick} {} {} {} {} {phys} {wdata} {} {} {} {} {} {} {}",
+            "{tick} {} {} {} {} {phys} {wdata} {} {dev_word} {} {} {} {} {} {}",
             b(mclk),
             b(!memrq),
             b(write),
@@ -298,16 +352,18 @@ fn main() {
             b(!acked),
             b(timed_out),
             b(cached),
-            if cached && !write { word } else { 0 },
+            if acked && !write { word } else { 0 },
         );
     }
 
     eprintln!(
         "quux_port: {cycle} cycles over {TICKS} ticks: {hits} read hits, {misses} read misses, \
-         {writes} writes, {devices} device cycles, {nothings} timeouts, {pulses} invalidations, \
+         {writes} writes, {fb_cycles} of the frame buffer's cycles, {devices} device register \
+         cycles, {nothings} addresses nothing answers, {pulses} invalidations, \
          {buffer_waits} writes the full buffer held, {fill_waits} fills behind a draining write"
     );
     assert!(buffer_waits > 100 && fill_waits > 100, "the trace never waited on main memory's timing");
     assert!(hits > 1000 && misses > 1000 && writes > 1000, "the trace reached too little of the cache");
-    assert!(devices > 100 && nothings > 20 && pulses > 20, "the trace reached too little of the Xbus");
+    assert!(fb_cycles > 1000, "the trace reached too little of the frame buffer");
+    assert!(devices > 100 && nothings > 20 && pulses > 20, "the trace reached too little of the registers");
 }

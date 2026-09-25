@@ -555,11 +555,12 @@ of ticks, K, and an `ILONG` instruction takes L ticks more. This is muir's
 `TimingModel::Sync { cycle_ticks, ilong_ticks }`, run as `--timing-model sync
 --sync-cycle-ticks K`. K and L belong to a board: the Arty Z7-20 and the
 DE25-Nano both run at K = 4 and L = 0, which is 40 ns a microcycle. Four is
-the least K QUUX takes. A `DIV` whose M source is MD needs the word read in
-the divider 17 ticks before the edge that ends the microcycle it runs in.
-That microcycle can start 14 ticks after the word's strobe, and the
-earliest the divider can take the word from a register is the tick after
-the strobe. Each board's top level states
+the least K QUUX takes. It was set when a `DIV` whose M source is MD could
+run in the microcycle after its word landed, 14 ticks after the strobe,
+with the divider needing the word 17 ticks before that microcycle's end.
+Since the `DIV` rule below, a `DIV` is held nine microcycles after its
+operands are ready, so that argument no longer sets the floor. The floor is
+unchanged until a fit at a smaller K says otherwise. Each board's top level states
 K as `SYNC_K`, and its QUUX constraint file states the same K
 (`quux_machine.xdc`, `quux_de25.sdc`). `tools/grid_check.py` holds every
 `# sync:` count to that board's `SYNC_K`.
@@ -581,6 +582,13 @@ Inside a microcycle:
 - `-WAIT`, the wait for MD and the divider's hold stop a microcycle in whole
   K-tick cycles, with the master clock running and no write. Each is tested
   at the cycle's start.
+- A `DIV` takes ten microcycles, its own and nine held, counted from when its
+  operands are ready. A register is ready at once, so a `DIV` of a register
+  takes 400 ns at K = 4. For MD the count starts at the end of the last cycle
+  the wait for MD held, so a `DIV` of MD is held nine microcycles after its
+  word has landed. A `MUL` runs one microcycle after the same wait. This is
+  muir's `muldiv::DIV_CYCLES`, and `build/quux_divmd.quux.*` and
+  `build/quux_muldiv.quux.*` hold it.
 - A console write lands at the master clock edge, and nowhere else.
 - There are no speed bits and no speed synchronizer. The mode register's
   bits 1 and 0 go nowhere.
@@ -597,16 +605,26 @@ the I/O board's clocks and the disk's spans. They are on the grid as they
 are for the CADR. Only the master clock that samples them comes every K
 ticks.
 
-## QUUX's memory port
+## QUUX's memory port and device registers
 
-QUUX has no bus interface. Its main memory is not on the Xbus: the
-processor reaches it through its own memory port, `rtl/machine/
-quux_mem_port.sv`, and a cache in front of it, `rtl/machine/quux_cache.sv`.
-The cache holds 4,096 words in lines of four, two ways to a set. It is
-write-through, allocates a line on a read miss and never on a write, and
-holds main memory only. Nothing past main memory's end and nothing on the
-Xbus is cached. This is muir's `memory_port::MemoryPort`, and
-`build/quux_port.quux.k4.pass` holds the module to it tick for tick.
+QUUX has no bus interface and no device bus. The processor's cycle goes one
+of three ways, by its address, through `rtl/machine/quux_mem_port.sv`:
+
+- **The memory bus**: main memory and MONO TV's frame buffer, through a
+  cache, `rtl/machine/quux_cache.sv`. The cache holds 4,096 words in lines
+  of four, two ways to a set. It is write-through, allocates a line on a
+  read miss and never on a write, and holds the memory bus's words only.
+- **A device register**: MONO TV's, block-disk's, and the feature and
+  register page's, reached by the processor's register decode and never
+  cached. A register access takes two microcycles: the register is taken at
+  the grant and the cycle is acknowledged a microcycle, K ticks, later.
+- **Nothing**: past main memory's end, past the frame buffer's, between the
+  registers, and in the old Unibus window. The cycle fails at once, in the
+  tick that takes it, with word 101's NXM bit set and a read giving zero.
+  There is no timer.
+
+This is muir's `memory_port::MemoryPort`, and `build/quux_port.quux.k4.pass`
+holds the module to it tick for tick.
 
 - A read that hits is answered two ticks, 20 ns, after its grant. The RAMs
   are read at the grant's edge from the map's output, which has had the
@@ -622,29 +640,35 @@ Xbus is cached. This is muir's `memory_port::MemoryPort`, and
   carry the arithmetic: when main memory is next free, and when the write
   buffer is. In simulation a memory faster than the figures makes every
   acknowledgment muir's own. On a board QUUX is never faster than muir.
-- A cycle of main memory is released on its acknowledgment: `MBUSY` and
-  `READ IN PROGRESS` fall with it, where an Xbus cycle keeps the 30 ns and
-  140 ns delays.
-- An Xbus device is answered as on the CADR, 80 ns after the grant, and a
-  read is deskewed 60 ns more. An address nothing answers times out at the
-  CADR's instant, the free-running oscillator's first rise after the grant
-  plus 4,250 ns.
+- A cycle of the memory bus is released on its acknowledgment: `MBUSY` and
+  `READ IN PROGRESS` fall with it, where a register's cycle and an empty
+  address keep the 30 ns and 140 ns delays.
+- A device register is asked in the one tick after the grant, the first in
+  which its own held match has the grant's address, and its word is taken
+  in that tick and held for the strobe. muir takes it at the grant's
+  instant. The tick between them falls inside the microcycle the grant
+  starts, and the machine's traces agree on every register read and write
+  they make.
+- An empty address is acknowledged in the tick that takes the request,
+  from the held decode, which has had the address since two ticks into the
+  microcycle before the grant. Its zero reaches MD at the next master clock
+  edge and not at the grant's own, because muir finds the cycle acknowledged
+  only after the edge that grants it.
 - A line fill is two 64-bit beats at a 16-byte boundary,
   `rtl/plumbing/quux_axi_master.sv`, on the Arty's `S_AXI_HP0` and on the
   DE25-Nano's FPGA-to-SDRAM bridge.
 
-**A `DIV` of MD after a read of main memory is not settled.** Under the
-cached release the microcycle that divides the word read runs as soon as
-the word lands, and the divider needs the word 17 ticks before that
-microcycle ends, which it cannot have. muir divides at once. Until the
-ruling on which of the two moves, `quux_divmd` at an L of zero and one is
-left out of `make check MACHINE=quux` by name (`QUUX_PENDING` in the
-Makefile, which prints what it skips and why), and its mutation records are
-kept and not run (`PENDING` in `mutations/run.py`).
+MONO TV's frame buffer is in DDR at the display's base, where the scanout
+reads it on its own port. The cache writes it through, so the scanout sees
+each word once the write buffer has drained, one write at the most behind
+the processor. `tb/cadr_machine_tb.cpp` holds that every write a cycle
+makes reaches DDR, in order, with at most the buffer's one still owed at
+the end. `cadr-terminal` reads the same words from DDR, not from the cache,
+so it needs nothing more. `cadr-checkpoint` reads them after a halt, which
+drains the write buffer first.
 
-MONO TV's frame buffer stays an uncached Xbus device, and block-disk's
-transfers reach main memory word by word through the same port, as its
-uncached requester. The port serves one operation at a time, in order: a
+Block-disk's transfers reach main memory word by word through the same
+port, as its uncached requester. The port serves one operation at a time, in order: a
 buffered write first, then a line fill, then the uncached requester. That
 order is the first coherence rule, so a transfer reads every word the
 processor wrote before START. The whole cache is invalidated at the grant
@@ -654,18 +678,15 @@ processor read hits a word from before the transfer after DONE, which is the
 second rule. The coherence run of `build/quux_port.quux.k4.pass` holds both
 rules with the processor and a transfer running together.
 
-Only the processor's device cycle has the bus's 80 ns into QUUX's memory
-adapter. Its address and word are loaded at the grant, and the adapter takes
-them at the first edge -XBUS.RQ stands, eight ticks later. So the constraint
-(`quux_ddr.xdc` on the Arty, `cadr_ddr.sdc` on the DE25-Nano) gives eight
-ticks to paths from the processor's registers and names no others. The port's
-own cache operations are registers of the port, loaded a tick before the
-adapter takes them. A block-disk transfer word passes through the same bridge
-three ticks after the channel loads it, and the arbiter hands it the bus one
-and two ticks before that. Both keep one tick, and the flows assert that no
-path from the channel or the arbiter into the adapter asks for more.
-`quux-the-port-s-setup-time-is-short` is the mutation one tick outside the
-eight.
+QUUX's memory adapter has no timing exception. Nothing of the processor's
+reaches it: the frame buffer is the cache's and the registers are the
+register decode's, and the bridge's processor arm is a constant on QUUX.
+The port's own cache operations are registers of the port, loaded a tick
+before the adapter takes them. A block-disk transfer word passes through the
+bridge three ticks after the channel loads it, and the arbiter hands it the
+bus one and two ticks before that. The flows assert that no register of the
+adapter asks for the bus's 80 ns and that each of these paths asks for one
+tick.
 
 The traces QUUX is held to are taken at a K and an L named in their files:
 `rtl.quux.k4.golden`, `quux_divmd.quux.k4l1.golden` and so on. `make check

@@ -274,6 +274,11 @@ static void fill(struct model *m)
 #define Q_MOUSE_Y   0x2c7u
 #define Q_BUTTONS   5u
 #define Q_TICK_TICKS (16667u * 100u)
+// Block-disk's disk, declared as a pack of this geometry on unit 0: 256
+// blocks, `DISK_BLOCKS` in `golden/src/quux_checkpoint.rs`.
+#define Q_DISK_CYLINDERS 16u
+#define Q_DISK_HEADS     1u
+#define Q_DISK_BPT       16u
 
 static void fill_quux(struct model *m)
 {
@@ -889,9 +894,15 @@ int main(int argc, char **argv)
 		for (size_t i = 0; i < IMG_QUUX_TV_WORDS; ++i)
 			qi.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
 
+		// QUUX's drive bay: one pack, unit 0, block-disk's disk.
+		struct chk_declared qdecl = decl;
+		qdecl.present = 1u;
+		qdecl.cylinders[0] = Q_DISK_CYLINDERS;
+		qdecl.heads[0] = Q_DISK_HEADS;
+		qdecl.blocks_per_track[0] = Q_DISK_BPT;
 		struct chk qb;
 		chk_init(&qb);
-		chk_rtl_body(&qb, &qi, &decl);
+		chk_rtl_body(&qb, &qi, &qdecl);
 		// **THE BODY'S LENGTH, AGAIN AN ARITHMETIC EXPRESSION**: the
 		// CADR's, and what QUUX has that it has not --- block-disk's
 		// forty-four bytes after its flag, MONO TV's 8,192 words past the
@@ -899,9 +910,11 @@ int main(int argc, char **argv)
 		// after the timing model's tag; and in place of the bus interface's
 		// 163 bytes, the memory port's (version 40): its state, direction,
 		// address and flag, the cache's shape, counts and 512 empty sets,
-		// and the two timings and two instants.
+		// and the two timings and two instants; and block-disk's disk
+		// (version 41), its size in blocks and a count of none written.
 		const size_t quux_len = cadr_body_len + 44 + 8192 * 4 + 5 * 4 + 2 -
-			163 + (1 + 1 + 4 + 1) + (4 * 3 + 8 + 1 + 8 + 8 + 512 * 4) + 8 * 4;
+			163 + (1 + 1 + 4 + 1) + (4 * 3 + 8 + 1 + 8 + 8 + 512 * 4) + 8 * 4 +
+			(4 + 8);
 		if (!chk_rtl_mutation() && qb.len != quux_len)
 			fail("QUUX's body's length", qb.len, quux_len);
 		if (quux_out && chk_write_file(quux_out, "rtl", 1, &qb) != 0) {

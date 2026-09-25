@@ -28,6 +28,7 @@ mod machine_axis;
 mod trace;
 
 use muir::block_disk::{self, BlockDisk};
+use muir::disk_image::Disk;
 use muir::engine::Engine;
 use muir::isa::Insn;
 use muir::machine::{Geometry, Machine, QUUX_PROM_BASE, Tick};
@@ -65,6 +66,10 @@ const KEYS_READ: u64 = 59;
 const MOUSE_X: i32 = 0x5a3;
 const MOUSE_Y: i32 = 0x2c7;
 const MOUSE_BUTTONS: u8 = 5;
+/// Block-disk's disk, in blocks: the pack file's size in 1,024-byte blocks,
+/// which the C side declares as its geometry's product and
+/// `build/checkpoint.quux.pass` makes a file of for muir's resume.
+const DISK_BLOCKS: u32 = 16 * 1 * 16;
 
 fn main() {
     // The machine and its timing as every trace takes them
@@ -79,10 +84,13 @@ fn main() {
     let path = args[0].clone();
 
     // `main.rs`'s `machine` for `--machine quux`: block-disk and MONO TV at
-    // the bitstreams' 1280 by 1024, one memory board, no pack.
+    // the bitstreams' 1280 by 1024, one memory board, and a disk of
+    // `DISK_BLOCKS` blocks with none written (contract Q8a, format 41).
     let mut m = Machine::with_memory_boards(1);
     m.geometry = Geometry::QUUX;
-    m.block_disk = Some(BlockDisk::new(block_disk::BLOCK_NS));
+    let mut bd = BlockDisk::new(block_disk::BLOCK_NS);
+    bd.attach(Disk::blank(DISK_BLOCKS));
+    m.block_disk = Some(bd);
     m.tv.set_mono_tv_size(1280, 1024);
     m.tv.set_board(Board::MonoTv);
     m.plug_chaos(0);

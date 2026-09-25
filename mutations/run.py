@@ -1678,7 +1678,6 @@ CHECKS = {
                     "boards/de25-nano/quartus/cadr_de25.sdc",
                     "rtl/plumbing/xilinx7/quux_machine.xdc",
                     "boards/de25-nano/quartus/quux_de25.sdc",
-                    "rtl/plumbing/xilinx7/quux_ddr.xdc",
                     "rtl/plumbing/xilinx7/cadr_ddr.xdc",
                     "boards/de25-nano/quartus/cadr_ddr.sdc",
                     "boards/arty-z7-20/cadr_arty.sv"],
@@ -2276,25 +2275,6 @@ CHECKS = {
         "sources": ["golden/src/busint_xbus.rs"],
         "golden": None,
     },
-    # QUUX's derived acknowledgment (`golden/src/trace.rs`'s `QuuxPort`), at
-    # muir's pin, where muir brings out no acknowledgment of QUUX's port.
-    # The generator refuses a derivation muir's own processor contradicts;
-    # one it cannot contradict --- a device's read a tick early, both instants
-    # rounding to one edge --- only the fabric sees, so this builds the
-    # generator and the machine from the copy and runs a program of QUUX's
-    # through the machine's testbench (`tools/quux_derivation_check.py`).
-    "quux_derivation": {
-        "kind": "script",
-        "golden_tree": True,
-        "broken_rc": 3,
-        "sources": ["golden/src/trace.rs"],
-        "cmd": ["tools/quux_derivation_check.py", "."],
-        "top": None,
-        "tb": None,
-        "flags": [],
-        "golden": None,
-        "machine": "quux",
-    },
 }
 
 # The same programs, and muir's own of QUUX, on the machine built as QUUX:
@@ -2328,17 +2308,11 @@ def _timed(key, k, l):
     })
 
 # **CHECKS PENDING A RULING**, the Makefile's `QUUX_PENDING` in this file's
-# names: left out of `make check MACHINE=quux` until muir rules on a `DIV` of
-# MD under contract Q6's cached release.  Their records are kept and are
-# not run: a baseline that fails for a ruling not yet made would stop every
-# record.  Each run says how many it left and why.
-PENDING = {
-    "quux_divmd_quux": "DIV of MD under the cached release: muir ruling pending",
-    "quux_divmd_quux_l1": "DIV of MD under the cached release: muir ruling pending",
-    # Its one record breaks the divider's reload from `md_held`, the
-    # mechanism the ruling replaces.
-    "quux_divmdsync_quux_l1": "DIV of MD under the cached release: muir ruling pending",
-}
+# names: left out of `make check MACHINE=quux` until muir rules.  Their
+# records are kept and are not run: a baseline that fails for a ruling not
+# yet made would stop every record.  Each run says how many it left and why.
+# None is pending now.
+PENDING = {}
 
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
     ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
@@ -3684,9 +3658,9 @@ def main():
     # mutation caught, so nothing runs until the unmutated copy is clean.
     sys.stdout.write("baseline, on an unmutated copy:\n")
     base = os.path.join(args.work, "baseline")
-    # A generator builds muir, and so does a script that builds a generator
-    # (`quux_derivation`); a script that only reads `golden/` is given the
-    # link as well, which costs it nothing.
+    # A generator builds muir, and so would a script that builds a
+    # generator; a script that only reads `golden/` is given the link as
+    # well, which costs it nothing.
     if any(needs_golden(c) for c in wanted):
         muir_beside(args.work)
     copy_tree(base, with_golden=any(needs_golden(c) for c in wanted), rev=args.rev)

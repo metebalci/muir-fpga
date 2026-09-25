@@ -1,30 +1,40 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// QUUX's memory port (contract Q6, revision 7): the processor's cycle on a
-// machine with no bus interface.  muir's `memory_port::MemoryPort` is the
-// reference, and `build/quux_port.quux.pass` holds this module to it tick
-// for tick (`golden/src/quux_port.rs`).  The cycle goes one of three ways,
-// by the held decode of its physical address:
+// QUUX's memory port and register decode (contracts Q6 and Q7, revision
+// 8): the processor's cycle on a machine with no bus interface and no
+// device bus.  muir's `memory_port::MemoryPort` is the reference, and
+// `build/quux_port.quux.pass` holds this module to it tick for tick
+// (`golden/src/quux_port.rs`).  The cycle goes one of three ways, by the
+// held decode of its physical address:
 //
-//   MAIN MEMORY, through the cache (`quux_cache.sv`) to the memory
-//   controller below.  A read that hits is answered two ticks after the
-//   grant; a miss fills its line and a write goes through, one operation of
-//   main memory at a time, at the nominal timing: a line fill in 380 ns, a
-//   write in 290, a write acknowledged after the hit time by the write
-//   buffer, or when the buffer's last write is done.  No Xbus cycle, no
-//   setup, no deskew, and `cached` says so to the processor, whose MBUSY and
-//   READ IN PROGRESS then fall on the acknowledgment itself (muir's
-//   `Ack::cached`).
+//   THE MEMORY BUS, main memory and MONO TV's frame buffer, through the
+//   cache (`quux_cache.sv`) to the memory controller below.  A read that
+//   hits is answered two ticks after the grant; a miss fills its line and a
+//   write goes through, one operation of main memory at a time, at the
+//   nominal timing: a line fill in 380 ns, a write in 290, a write
+//   acknowledged after the hit time by the write buffer, or when the
+//   buffer's last write is done.  `cached` says so to the processor, whose
+//   MBUSY and READ IN PROGRESS then fall on the acknowledgment itself
+//   (muir's `Ack::cached`).  The frame buffer is DDR at the display's base,
+//   where the scanout reads it on its own port; the cache writes through,
+//   so every word written reaches it once the write buffer has drained.
 //
-//   AN XBUS DEVICE: `-XBUS.RQ` 80 ns after the grant, the device's answer,
-//   and a read deskewed 60 ns more, exactly as the CADR's bus interface runs
-//   an Xbus cycle (`cadr_busint_xbus.sv`, which this repeats for QUUX alone:
-//   the CADR keeps its interface untouched).
+//   A DEVICE REGISTER, MONO TV's, block-disk's or the register page's:
+//   taken at the grant and acknowledged a microcycle on, `K` ticks, with no
+//   setup and no deskew, never cached.  The register is asked in the one
+//   tick after the grant (`dev_rq`), which is the first tick its own held
+//   match has the grant's address, and its word is taken in that tick and
+//   held for the strobe.  muir takes it at the grant's instant; the tick
+//   between is inside the microcycle the grant starts, which reads nothing
+//   of the register, and the acknowledgment is muir's to the tick.
 //
-//   NOTHING: the CADR's timeout, the free-running oscillator's first rise
-//   after the grant plus 4,250 ns (`busint::nxm_timeout_at`), with `NXM
-//   TIMEOUT` for word 101's Xbus NXM bit.
+//   NOTHING: a decode miss, failing at once, `-MEMACK` in the very tick
+//   that takes the request, with `NXM TIMEOUT` for word 101's NXM bit and a
+//   word of zero.  No timer.  The held decode has had the address since the
+//   tick after the map settled, two ticks into the microcycle before the
+//   grant (`cadr_machine.xdc`'s split every-tick registers), so it is good
+//   in the tick the request is taken.
 //
 // **THE NOMINAL TIMING IS A FLOOR** (the contract's clarification).  Main
 // memory's real answer comes when it comes --- the Arty's HP0 in about 21
@@ -41,16 +51,16 @@
 //
 // **THE MEMORY CONTROLLER IS ONE ORDERED PORT, WITH ONE OPERATION IN
 // FLIGHT**: the write buffer's word first, then a line fill, then the
-// uncached requester --- the Xbus bridge's (`cadr_xbus_ddr.sv`), carrying
-// MONO TV's frame buffer, which the contract keeps an uncached Xbus device,
-// and block-disk's transfers.  The order is the coherence: a transfer that
-// reads main memory is served after the buffered write, so it sees every
-// word the processor wrote before START (the contract's first rule); a
-// line filled before a transfer's word is written is dropped from the cache
-// when the word lands (`quux_cache.sv`'s `snoop`, the second).  The seam
-// out is the machine's `mem_*`, a level held until done as
-// `rtl/plumbing/cadr_axi_master.sv` takes it, with `mem_line` asking four
-// words, two 64-bit beats, and the whole line back on `mem_rline`.
+// uncached requester --- block-disk's transfers, by the memory path's
+// bridge (`cadr_xbus_ddr.sv`), which carries nothing of the processor's on
+// QUUX.  The order is the coherence: a transfer that reads main memory is
+// served after the buffered write, so it sees every word the processor
+// wrote before START (the contract's first rule); a line filled before a
+// transfer's word is written is dropped from the cache when the word lands
+// (`quux_cache.sv`'s `snoop`, the second).  The seam out is the machine's
+// `mem_*`, a level held until done as `rtl/plumbing/cadr_axi_master.sv`
+// takes it, with `mem_line` asking four words, two 64-bit beats, and the
+// whole line back on `mem_rline`.
 //
 // `drained` is up when no write waits in the buffer and main memory is
 // idle: what the host waits for, after a halt, before it reads main memory
@@ -63,7 +73,11 @@ module quux_mem_port
 #(
     // QUUX's nominal main memory, `MemoryTiming::NOMINAL`, in ticks.
     parameter int unsigned READ_T  = cadr_tick_pkg::ticks(380),
-    parameter int unsigned WRITE_T = cadr_tick_pkg::ticks(290)
+    parameter int unsigned WRITE_T = cadr_tick_pkg::ticks(290),
+    // QUUX's microcycle in ticks, the machine's `SYNC_K`: a device
+    // register is acknowledged this long after the grant, muir's
+    // `cycle_ns(Speed::Normal, false)`, whatever `ILONG` does.
+    parameter int unsigned K = 4
 ) (
     input  var logic         clk,
     input  var logic         rst,
@@ -74,21 +88,27 @@ module quux_mem_port
     input  var logic         wrcyc,
     input  var logic [21:0]  phys,       // the map's output at the grant
     input  var logic [31:0]  wdata,
-    // The held decode: main memory.  Anything else is the Xbus's, a
-    // device's or nothing's, and a device says so by answering.
+    // The held decode: the memory bus (main memory or the frame buffer),
+    // or a device register.  Neither is an address nothing answers.  Their
+    // OR is good in the tick that takes the request, which is all an empty
+    // address needs; which of the two it is, from the first tick after the
+    // grant, which is when the frame buffer's own held match has the
+    // grant's address (`cadr_memory_path.sv`).
     input  var logic         is_memory,
+    input  var logic         is_device,
     output var logic         n_memgrant,
     output var logic         n_memack,
     output var logic         n_loadmd,
     output var logic         timed_out,
-    output var logic         cached,     // the cycle is main memory's
-    output var logic [31:0]  word,       // a read of main memory's word
+    output var logic         cached,     // the cycle is the memory bus's
+    output var logic [31:0]  word,       // the word a read brings, any read
     output var logic         busy,
 
-    // The Xbus, for a device's cycle.
+    // The register decode: a device register asked, for one tick, and the
+    // word it gives in that tick.
     output var logic         dev_rq,
     output var logic         dev_write,
-    input  var logic         dev_ack,
+    input  var logic [31:0]  dev_rdata,
 
     // A block-disk register was written: the whole cache goes at the next
     // grant, muir's `dma_written`.
@@ -122,77 +142,53 @@ module quux_mem_port
     output var logic [31:0]  misses
 );
 
-  localparam int unsigned SETUP_T  = cadr_tick_pkg::ticks(80);
-  localparam int unsigned DESKEW_T = cadr_tick_pkg::ticks(60);
-  localparam int unsigned HIT_T    = cadr_tick_pkg::ticks(20);
-
-  // ----------------------------------------------- the timeout oscillator
-  //
-  // `cadr_busint_xbus.sv`'s, line for line: the 74LS124 at REQTIM 0A01,
-  // 850 ns, free-running from power-on high first, whose gated output the
-  // grant opens; `NXM TIMEOUT` on the sixth rise.  See that file for the
-  // arithmetic and for why the period stays in nanoseconds.
-  localparam int unsigned VCO_HALF_NS = 425;
-  localparam int unsigned POWER_ON_T  = cadr_tick_pkg::POWER_ON_EDGES;
-  localparam int unsigned NXM_RISES   = 6;
-
-  logic [8:0] vco_acc;
-  logic       vco, vco_toggle;
-  logic [8:0] vco_next, vco_less;
-  assign vco_next   = vco_acc + 9'(cadr_tick_pkg::TICK_NS);
-  assign vco_less   = vco_next - 9'(VCO_HALF_NS);
-  assign vco_toggle = (vco_acc >= 9'(VCO_HALF_NS - cadr_tick_pkg::TICK_NS));
-
-  logic       nxm, tmr_fell;
-  logic [3:0] tmr_rises;
-  logic       nxm_due;
-  assign nxm_due = tmr_fell && !vco && !vco_toggle
-                && (tmr_rises + 4'd1 == 4'(NXM_RISES))
-                && (vco_acc >= 9'(VCO_HALF_NS - 2 * cadr_tick_pkg::TICK_NS));
+  localparam int unsigned HIT_T = cadr_tick_pkg::ticks(20);
 
   // ------------------------------------------------------- the cycle
   typedef enum logic [1:0] {IDLE, REQUESTED, GRANTED, ACKED} state_e;
   state_e state;
   logic       write;
   logic       first;        // the first tick of GRANTED: the lookup's answer
-  logic       kmem;         // the cycle is main memory's, from its first tick
-  logic [9:0] elapsed;
-  logic       answered, deskewed;
-  logic [9:0] answered_at;
+  logic       kmem;         // the cycle is the memory bus's, from its first tick
+  logic       kdev;         // the cycle is a device register's, the same
+  logic       nxm;          // the cycle was an address nothing answers
+  logic [5:0] elapsed;      // ticks since the grant, for a register's: K is
+                            // at most 63 (`quux_phase_gen.sv`)
+  logic [31:0] dev_word;    // the register's word, taken when it was asked
 
   logic take;
   assign take = (state == IDLE || state == REQUESTED) && !n_memrq && mclk;
 
-  logic mem_cycle;
+  // An address nothing answers fails in the tick that takes it.
+  logic empty;
+  assign empty = take && !is_memory && !is_device;
+
+  // `kmem` and `kdev` are taken at the end of the first tick; in it the
+  // held decode itself is read.
+  logic mem_cycle, dev_cycle;
   assign mem_cycle = first ? is_memory : kmem;
+  assign dev_cycle = first ? (is_device && !is_memory) : kdev;
 
   logic ack_standing;
   assign ack_standing = (state == ACKED) && !n_memrq;
 
-  // `kmem` and not `mem_cycle`: in the first tick `elapsed` is zero and
-  // the request is not yet out, so the held flag is all this needs.
-  assign dev_rq    = !kmem && ((state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1)
-                               || ack_standing);
+  // The register, asked once, in the first tick after the grant.
+  assign dev_rq    = (state == GRANTED) && first && dev_cycle;
   assign dev_write = write;
 
-  logic answering, deskew_due;
-  assign answering  = (state == GRANTED) && dev_rq && dev_ack;
-  assign deskew_due = answered && (state == GRANTED)
-                   && (elapsed >= answered_at + 10'(DESKEW_T) - 10'd1);
-
-  // Main memory's acknowledgment, a register set at the edge before its
+  // The memory bus's acknowledgment, a register set at the edge before its
   // instant (`ack_in` below).
   logic mack_q;
 
   logic acked;
-  assign acked = ack_standing
+  assign acked = ack_standing || empty
               || (state == GRANTED && mem_cycle && mack_q)
-              || (state == GRANTED && !mem_cycle && ((write && answering) || deskewed));
+              || (state == GRANTED && dev_cycle && elapsed == 6'(K - 1));
 
   assign n_memgrant = !(state == GRANTED || state == ACKED);
   assign n_memack   = !acked;
   assign n_loadmd   = !acked;
-  assign timed_out  = ack_standing && nxm;
+  assign timed_out  = empty || (ack_standing && nxm);
   assign busy       = (state != IDLE);
   assign cached     = (state == GRANTED || state == ACKED) && mem_cycle;
 
@@ -273,7 +269,9 @@ module quux_mem_port
   logic [31:0] wb_word;
   logic [31:0] line_word [4];
   logic        from_line;
-  assign word = from_line ? line_word[line_phys[1:0]] : c_word;
+  assign word = (empty || nxm) ? 32'd0
+              : dev_cycle      ? dev_word
+              : from_line      ? line_word[line_phys[1:0]] : c_word;
 
   // A write enters the buffer at its acknowledgment, when the one before it
   // has really gone: the count alone is muir's, the flag is the board's.
@@ -285,11 +283,9 @@ module quux_mem_port
   // **THE UNCACHED REQUESTER PASSES STRAIGHT THROUGH** when main memory is
   // idle and nothing of the cache's waits: `mem_*` are the bridge's own
   // wires then, and its answer is main memory's, with no register between.
-  // So a frame-buffer cycle is answered as it was on the bridge alone, which
-  // is muir's instant in simulation, and only a cache operation already in
-  // flight can delay it --- which the testbench's main memory, answering in
-  // a few ticks, never lets reach a device's 80 ns of setup.  The cache's
-  // own operations are registered.
+  // Block-disk's contract fixes the outcome of a transfer and not its time,
+  // so its words wait behind a cache operation in flight without moving
+  // anything muir holds.  The cache's own operations are registered.
   typedef enum logic [1:0] {M_IDLE, M_BUSY, M_LET_GO, M_THROUGH} mstate_e;
   mstate_e mstate;
   typedef enum logic {OP_WRITE, OP_FILL} op_e;
@@ -326,26 +322,13 @@ module quux_mem_port
 
   always_ff @(posedge clk) begin
     if (rst) begin
-      vco_acc <= 9'(VCO_HALF_NS - POWER_ON_T * cadr_tick_pkg::TICK_NS);
-      vco     <= 1'b0;
-    end else if (vco_toggle) begin
-      vco_acc <= vco_less;
-      vco     <= !vco;
-    end else begin
-      vco_acc <= vco_next;
-    end
-
-    if (rst) begin
       state       <= IDLE;
       write       <= 1'b0;
       first       <= 1'b0;
       kmem        <= 1'b0;
-      elapsed     <= 10'd0;
-      answered    <= 1'b0;
-      answered_at <= 10'd0;
-      deskewed    <= 1'b0;
-      tmr_fell    <= 1'b0;
-      tmr_rises   <= 4'd0;
+      kdev        <= 1'b0;
+      elapsed     <= 6'd0;
+      dev_word    <= 32'd0;
       nxm         <= 1'b0;
       mack_q      <= 1'b0;
       free_in     <= '0;
@@ -378,36 +361,27 @@ module quux_mem_port
       if (free_in != '0) free_in <= free_in - 1'b1;
       if (buf_in  != '0) buf_in  <= buf_in  - 1'b1;
       if (ack_in  != '0) ack_in  <= ack_in  - 1'b1;
-      deskewed <= deskew_due;
       mack_q   <= 1'b0;
 
       if (invalidate) inval_owed <= 1'b1;
       if (take) inval_owed <= 1'b0;
 
-      if (state == GRANTED && !mem_cycle) begin
-        if (vco_toggle) begin
-          if (!tmr_fell && vco) tmr_fell <= 1'b1;
-          else if (tmr_fell && !vco) tmr_rises <= tmr_rises + 4'd1;
-        end
-        if (nxm_due) begin
-          state <= ACKED;
-          nxm   <= 1'b1;
-        end
-      end
+      // The register's word, in the tick it is asked.
+      if (dev_rq) dev_word <= dev_rdata;
 
       unique case (state)
         IDLE, REQUESTED: begin
           if (!n_memrq) begin
             write <= wrcyc;
             if (mclk) begin
-              state       <= GRANTED;
-              first       <= 1'b1;
-              elapsed     <= 10'd0;
-              answered    <= 1'b0;
-              answered_at <= 10'd0;
-              tmr_fell    <= 1'b0;
-              tmr_rises   <= 4'd0;
-              nxm         <= 1'b0;
+              // An address nothing answers is acknowledged in this tick and
+              // stands acknowledged from the edge.
+              state       <= empty ? ACKED : GRANTED;
+              first       <= !empty;
+              elapsed     <= 6'd0;
+              kmem        <= 1'b0;
+              kdev        <= 1'b0;
+              nxm         <= empty;
               from_line   <= 1'b0;
             end else begin
               state <= REQUESTED;
@@ -419,8 +393,11 @@ module quux_mem_port
 
         GRANTED: begin
           first <= 1'b0;
-          if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
-          if (first) kmem <= is_memory;
+          if (elapsed != 6'h3F) elapsed <= elapsed + 6'd1;
+          if (first) begin
+            kmem <= is_memory;
+            kdev <= is_device && !is_memory;
+          end
           settle <= 1'b0;
           if (decide) begin
             // muir's `memory_cycle`, at the grant: the start is when main
@@ -469,9 +446,6 @@ module quux_mem_port
               wb_phys  <= line_phys;
               wb_word  <= wdata;
             end
-          end else if (answering && !answered) begin
-            answered    <= 1'b1;
-            answered_at <= elapsed;
           end
         end
 
@@ -504,7 +478,7 @@ module quux_mem_port
               mreq_q   <= 1'b1;
               mwrite_q <= 1'b1;
               mline_q  <= 1'b0;
-              maddr_q  <= main_byte_address(wb_phys);
+              maddr_q  <= quux_byte_address(wb_phys);
               mwdata_q <= wb_word;
               wb_sent  <= 1'b1;
               mstate   <= M_BUSY;
@@ -513,7 +487,7 @@ module quux_mem_port
               mreq_q   <= 1'b1;
               mwrite_q <= 1'b0;
               mline_q  <= 1'b1;
-              maddr_q  <= main_byte_address({fill_phys[21:2], 2'b00});
+              maddr_q  <= quux_byte_address({fill_phys[21:2], 2'b00});
               mstate   <= M_BUSY;
             end
           end

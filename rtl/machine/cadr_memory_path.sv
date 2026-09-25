@@ -136,7 +136,11 @@ module cadr_memory_path #(
     // the first: the CADR's SIMPLE or LISPM TV, `cadr_tv.sv`, or QUUX's MONO
     // TV, `quux_mono_tv.sv`, of `MONO_TV_WORDS` words.
     parameter string MACHINE = "cadr",
-    parameter int unsigned MONO_TV_WORDS = 40960
+    parameter int unsigned MONO_TV_WORDS = 40960,
+    // QUUX's microcycle in ticks, `cadr_machine.sv`'s `SYNC_K`: a device
+    // register's cycle is acknowledged this long after its grant
+    // (`quux_mem_port.sv`).  Unread on the CADR.
+    parameter int unsigned SYNC_K = 4
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -923,10 +927,20 @@ module cadr_memory_path #(
   logic [21:0] bus_phys;
   logic [31:0] bus_wdata;
   logic        bus_write, bus_rq, bus_sel, bus_display, bus_display_color;
-  assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : phys;
-  assign bus_wdata = ch_own ? ch_wdata : mp_own ? map_wdata : wdata;
-  assign bus_write = ch_own ? ch_write : mp_own ? map_write : cpu_write;
-  assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : cpu_rq);
+  // The processor's arm of the bridge, which QUUX has not got (below): its
+  // address, word and request reach nothing there, so that no path runs
+  // from the processor through the bridge into the memory's adapter.
+  logic [21:0] br_cpu_phys;
+  logic [31:0] br_cpu_wdata;
+  logic        br_cpu_write, br_cpu_rq;
+  assign br_cpu_phys  = QUUX ? 22'd0 : phys;
+  assign br_cpu_wdata = QUUX ? 32'd0 : wdata;
+  assign br_cpu_write = QUUX ? 1'b0  : cpu_write;
+  assign br_cpu_rq    = QUUX ? 1'b0  : cpu_rq;
+  assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : br_cpu_phys;
+  assign bus_wdata = ch_own ? ch_wdata : mp_own ? map_wdata : br_cpu_wdata;
+  assign bus_write = ch_own ? ch_write : mp_own ? map_write : br_cpu_write;
+  assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : br_cpu_rq);
   // The bridge answers main memory and the display boards' frame buffers, at
   // three bases; the channel reaches only the first.  `tv_fb` and `tvc_fb`
   // are held in `cadr_tv`, as `is_memory` is held here, so this is a mux on
@@ -934,13 +948,14 @@ module cadr_memory_path #(
   // are strapped to two 32,768-word slots --- so `bus_display_color` picks
   // between them and never both.
   //
-  // **ON QUUX MAIN MEMORY IS NOT ON THE XBUS** (contract Q6): the processor's
-  // main-memory cycles are the port's and never reach the bridge, which
-  // answers the processor for MONO TV's frame buffer alone.
+  // **ON QUUX NOTHING OF THE PROCESSOR'S IS ON THE BRIDGE** (contracts Q6
+  // and Q7): main memory and MONO TV's frame buffer are the memory port's,
+  // through its cache, and the device registers are the register decode's,
+  // so the bridge carries block-disk's transfers alone.
   logic cpu_bridged;
-  assign cpu_bridged       = QUUX ? mono_fb : (is_memory || tv_fb || tvc_fb || mono_fb);
+  assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb);
   assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory : cpu_bridged;
-  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
   assign bus_display_color = !ch_own && !mp_own && tvc_fb;
 
   // The channel's answer comes a tick after main memory's, because the
@@ -980,7 +995,7 @@ module cadr_memory_path #(
       owner_d   <= owner;
       ch_ack_q  <= ch_own && !changing && (memory_ack || !ch_memory);
       mp_ack_q  <= mp_own && !changing && memory_ack;
-      if (!ch_own) ch_own <= ch_req && !cpu_rq && !mp_own;
+      if (!ch_own) ch_own <= ch_req && !br_cpu_rq && !mp_own;
       else if (ch_done) ch_own <= 1'b0;
       // The map's window waits for the processor AND for the channel, and it
       // lets go at the end of its word like the channel --- or at once if its
@@ -1000,7 +1015,7 @@ module cadr_memory_path #(
       // the register in `bus_sel` keeps that held for the cycle, which is
       // what the channel does one line up.  `map_addr` is itself a register,
       // so this is a decode between two registers and not the map's ripple.
-      if (!mp_own) mp_own <= map_req && mp_memory_c && !cpu_rq && !ch_own && !ch_req;
+      if (!mp_own) mp_own <= map_req && mp_memory_c && !br_cpu_rq && !ch_own && !ch_req;
       else if (map_done || !map_req) mp_own <= 1'b0;
     end
   end
@@ -1037,13 +1052,21 @@ module cadr_memory_path #(
   end
 
   // **ON QUUX THE PROCESSOR'S CYCLE IS THE MEMORY PORT'S, AND THERE IS NO
-  // BUS INTERFACE** (contract Q6, muir's `memory_port::MemoryPort` in place
-  // of `busint::Busint`): main memory through the cache on its own port, the
-  // Xbus for devices alone, the CADR's timeout for an address nothing
-  // answers.  `quux_mem_port.sv` says the rest.  The bridge below is then
-  // the Xbus's own, for MONO TV's frame buffer and block-disk's transfers,
-  // and asks main memory through the port as its uncached requester.  The
-  // CADR keeps its bus interface, untouched.
+  // BUS INTERFACE AND NO DEVICE BUS** (contracts Q6 and Q7, muir's
+  // `memory_port::MemoryPort` in place of `busint::Busint`): main memory and
+  // MONO TV's frame buffer through the cache on its own port, the device
+  // registers by the register decode in two microcycles, and an address
+  // nothing answers failing at once.  `quux_mem_port.sv` says the rest.  The
+  // bridge below then carries block-disk's transfers alone, and asks main
+  // memory through the port as its uncached requester.  The CADR keeps its
+  // bus interface, untouched.
+  //
+  // **THE FRAME BUFFER IS TOLD FROM THE REGISTERS BY MONO TV'S OWN HELD
+  // MATCH**, `mono_fb`, which the decode's `device` contains: it has the
+  // grant's address from the first tick after the grant, which is when the
+  // port reads which of the two a cycle is.  In the tick that takes the
+  // request only their OR is read, to find an address nothing answers, and
+  // the OR is `is_memory || device` whatever `mono_fb` holds then.
   logic        br_req, br_write, br_done;
   logic [31:0] br_addr, br_wdata, br_rdata;
   logic [31:0] port_word;
@@ -1054,7 +1077,7 @@ module cadr_memory_path #(
   assign br_done_o  = br_done;
 
   if (QUUX) begin : g_quux_port
-    quux_mem_port port (
+    quux_mem_port #(.K(SYNC_K)) port (
         .clk        (clk),
         .rst        (rst),
         .mclk       (mclk),
@@ -1062,7 +1085,8 @@ module cadr_memory_path #(
         .wrcyc      (wrcyc),
         .phys       (phys),
         .wdata      (wdata),
-        .is_memory  (is_memory),
+        .is_memory  (is_memory || (device && mono_fb)),
+        .is_device  (device && !mono_fb),
         .n_memgrant (n_memgrant),
         .n_memack   (n_memack),
         .n_loadmd   (n_loadmd),
@@ -1072,7 +1096,7 @@ module cadr_memory_path #(
         .busy       (busint_busy),
         .dev_rq     (cpu_rq),
         .dev_write  (cpu_write),
-        .dev_ack    (dev_ack),
+        .dev_rdata  (mono_drives ? mono_rdata : device_rdata),
         .invalidate (quux_invalidate),
         .u_req      (br_req),
         .u_write    (br_write),
@@ -1098,8 +1122,10 @@ module cadr_memory_path #(
     assign ub_msyn   = 1'b0;
     assign ub_write  = 1'b0;
     assign arb_stage = 3'd0;
+    // The register decode answers every register at the grant's
+    // instant, so nothing waits for a register's acknowledgment.
     logic unused_quux_port;
-    assign unused_quux_port = ^{unibus, select_debug, ub_ssyn};
+    assign unused_quux_port = ^{unibus, select_debug, ub_ssyn, dev_ack};
   end else begin : g_cadr_busint
     cadr_busint_xbus busint (
         .clk        (clk),
@@ -1135,7 +1161,8 @@ module cadr_memory_path #(
     assign cache_hits   = 32'd0;
     assign cache_misses = 32'd0;
     logic unused_cadr_port;
-    assign unused_cadr_port = ^{mem_rline, quux_invalidate};
+    // And MONO TV's buffer match, which only QUUX's port reads.
+    assign unused_cadr_port = ^{mem_rline, quux_invalidate, mono_fb};
   end
 
   // `SELECT DEBUG`, which never leaves this module: the DBGOUT page makes it
@@ -1368,7 +1395,7 @@ module cadr_memory_path #(
       .select_debug (select_debug)
   );
 
-  cadr_xbus_ddr #(.MACHINE(MACHINE)) main_memory (
+  cadr_xbus_ddr main_memory (
       .clk      (clk),
       .rst      (rst),
       .sel      (bus_sel),
@@ -1389,8 +1416,10 @@ module cadr_memory_path #(
   );
 
   // What the other slaves see: the processor's cycle and never the channel's.
-  // See the note at the top --- the channel reaches main memory alone.
-  assign dev_rq    = ch_own ? 1'b0 : cpu_rq;
+  // See the note at the top --- the channel reaches main memory alone.  On
+  // QUUX the registers are not on the bridge's bus at all, so a transfer
+  // holding the bridge cannot keep a register from being asked.
+  assign dev_rq    = (ch_own && !QUUX) ? 1'b0 : cpu_rq;
   assign dev_write = cpu_write;
 
   // --- the display, the second Xbus slave that is not main memory ---------
@@ -1583,9 +1612,10 @@ module cadr_memory_path #(
   // zero.  **Which of the two is right is a question about the real Xbus and
   // is not this file's to decide**, so nothing is changed here: it is written
   // down where somebody meeting the line will meet it.
-  // On QUUX a cycle of main memory's takes the port's word, which the cache
-  // or the line brought (`quux_mem_port.sv`); nothing else answers it.
-  assign rdata   = cached       ? port_word
+  // On QUUX every cycle's word is the port's: the cache's or the line's
+  // for the memory bus, the register's as it was when asked, and zero for
+  // an address nothing answers (`quux_mem_port.sv`).
+  assign rdata   = QUUX         ? port_word
                  : ub_ssyn      ? {16'h0000, ub_rdata}
                  : tv_drives    ? tv_rdata
                  : tvc_drives   ? tvc_rdata
