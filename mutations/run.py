@@ -1759,6 +1759,25 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # What every board's image must carry, derived from the packages' own
+    # install rules, as `build/rootfs_packages.pass` runs it with no Buildroot:
+    # the derivation that `rootfs_check.py` compares an image against, and the
+    # installed scripts' own paths held to it.  A record aimed at the parser,
+    # at an install rule or at a script's path is caught when the derivation
+    # refuses or the two disagree.  Refusing is being caught.
+    "rootfs_packages": {
+        "kind": "script",
+        "sources": ["boards/arty-z7-20/linux/rootfs_check.py",
+                    "boards/arty-z7-20/linux/buildroot/package/cadr-common/cadr-common.mk",
+                    "boards/arty-z7-20/linux/buildroot/package/cadr-common/src/Makefile",
+                    "boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/S87cadr-chaosnet"],
+        "cmd": ["boards/arty-z7-20/linux/rootfs_check.py", "packages",
+                "boards/arty-z7-20/linux/buildroot"],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # The DE25-Nano's boot environment, as the `boot` step of
     # `build/de25_linux.pass` reads it: the fabric's image fetched only on the
     # branch that loads it, and only `cadr_fabric_loaded=1` taking the branch
