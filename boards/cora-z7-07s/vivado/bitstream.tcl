@@ -413,8 +413,34 @@ if {$port > 0} {
 # the requirement and no other register of the adapter may.
 # grid: 80 ns
 if {$port > 0} {
-    assert_instance_timing $tick 8 *g_ddr.u_axi/* \
+    # No other register of the adapter at eight.  The three are left out of
+    # this question (`elsewhere`): the clause is written from the processor,
+    # so each is reached at two requirements, eight from the processor and
+    # one from the other masters, which the clause assertions below ask apart.
+    # grid: 80 ns
+    assert_instance_timing $tick 8 *g_ddr.u_axi/* {} \
         {*m_axi_awaddr_reg* *m_axi_araddr_reg* *m_axi_wdata_reg*}
+    # And the words that pass through the same bridge without the bus's
+    # time: the disk controller's channel and the Unibus map's window, three
+    # ticks after their masters load them, the arbiter's flags two and one,
+    # and the bus interface's own state.  One tick each, which a clause
+    # written to the adapter rather than from the processor made eight.
+    set a_addr {*g_ddr.u_axi/m_axi_awaddr_reg* *g_ddr.u_axi/m_axi_araddr_reg* *g_ddr.u_axi/m_axi_wdata_reg*}
+    # grid: 80 ns
+    assert_clause_timing $tick 8 "the processor's cycle into the adapter" \
+        {*u_machine/processor/*} $a_addr
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the disk's channel into the adapter" \
+        {*g_cadr_disk.disk/*} $a_addr
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the Unibus map's window into the adapter" \
+        {*memory/busint_regs/*} $a_addr
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the Xbus arbiter into the adapter" \
+        {*memory/ch_own_reg* *memory/mp_own_reg* *memory/owner_d_reg*} $a_addr
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the bus interface's state into the adapter" \
+        {*g_cadr_busint.busint/*} $a_addr
 }
 # And the debug cable's six ticks, the same way and for the same reason. The
 # instance assertion is the narrow half --- `sts_dbd_reg` may carry it and no
