@@ -1133,9 +1133,9 @@
 @note arm --- the one this record names --- is the last of the three and is
 @note untouched by that.
 @old
-  assign cpu_bridged       = QUUX ? mono_fb : (is_memory || tv_fb || tvc_fb || mono_fb);
+  assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb);
 @new
-  assign cpu_bridged       = QUUX ? mono_fb : (is_memory || tv_fb || tvc_fb || mono_fb || nxm);
+  assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb || nxm);
 @end
 
 @mutation every-cycle-is-a-read-on-the-xbus
@@ -1752,7 +1752,7 @@
 @note already hold.  Aimed at `microcycle_sys` because the boot PROM's trace
 @note never places one.
 @old
-      if (loadmd_edge && (mclk_edge || hang)) begin
+      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -1773,7 +1773,7 @@
 @note the band's view of the same line; this is the directed one, which runs
 @note in a minute on the boot PROM.
 @old
-      if (loadmd_edge && (mclk_edge || hang)) begin
+      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -2306,12 +2306,12 @@
 @note the word.  Held for the next boundary, MD is the old word for one
 @note microcycle more.
 @old
-      if (loadmd_edge && (mclk_edge || hang)) begin
+      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @new
-      if (loadmd_edge && hang) begin
+      if (loadmd_edge && hang && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -2394,7 +2394,7 @@
 @note when a hang begins, measured --- it survived every check.  The word
 @note is kept out of MD for the whole hang only when both go.
 @old
-      if (loadmd_edge && (mclk_edge || hang)) begin
+      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -2402,7 +2402,7 @@
         md_pending <= 1'b1;
       end else if (md_pending && (mclk_edge || hang)) begin
 @new
-      if (loadmd_edge && mclk_edge) begin
+      if (loadmd_edge && mclk_edge && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -4567,10 +4567,10 @@ if {0 && $held ne $want} {
 @note behind the channel. The release --- which is what this record breaks ---
 @note is unchanged.
 @old
-      if (!ch_own) ch_own <= ch_req && !cpu_rq && !mp_own;
+      if (!ch_own) ch_own <= ch_req && !br_cpu_rq && !mp_own;
       else if (ch_done) ch_own <= 1'b0;
 @new
-      if (!ch_own) ch_own <= ch_req && !cpu_rq && !mp_own;
+      if (!ch_own) ch_own <= ch_req && !br_cpu_rq && !mp_own;
       else if (ch_done && ch_addr[0]) ch_own <= 1'b0;
 @end
 
@@ -5985,9 +5985,9 @@ if {0 && $held ne $want} {
 @note `&& !mp_own`, a third master on the Xbus whose cycles are never the
 @note display's.
 @old
-  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
 @new
-  assign bus_display       = ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
+  assign bus_display       = ch_own && !mp_own && (tv_fb || tvc_fb);
 @end
 
 @mutation tv-register-word-not-selected-in-the-path
@@ -9635,10 +9635,10 @@ if {0 && $held ne $want} {
 @note Re-aimed when the Unibus map's window landed and the mux gained a third
 @note arm: the processor's is the last of the three and is what this breaks.
 @old
-  assign cpu_bridged       = QUUX ? mono_fb : (is_memory || tv_fb || tvc_fb || mono_fb);
+  assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb);
 @new
-  assign cpu_bridged       = QUUX ? mono_fb : (is_memory || tv_fb || tvc_fb || mono_fb
-                                               || (device && cpu_write));
+  assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb
+                                            || (device && cpu_write));
 @end
 
 # ----------------------------------------------------------- bus_audit_unit
@@ -9958,9 +9958,9 @@ if {0 && $held ne $want} {
 @note third arm, `mp_own`, which is the mapped cycle's translated address and
 @note is untouched here.
 @old
-  assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : phys;
+  assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : br_cpu_phys;
 @new
-  assign bus_phys  = ch_own ? {ch_addr[21:1], ~ch_addr[0]} : mp_own ? map_addr : phys;
+  assign bus_phys  = ch_own ? {ch_addr[21:1], ~ch_addr[0]} : mp_own ? map_addr : br_cpu_phys;
 @end
 
 # ------------------------------------------- the audit wired into the machine
@@ -10062,25 +10062,6 @@ if {0 && $held ne $want} {
   assign cpu_memory_o   = cpu_bridged;
 @new
   assign cpu_memory_o   = QUUX ? mono_fb : (is_memory || (tv_fb && 1'b0) || tvc_fb || mono_fb);
-@end
-
-@mutation the-audit-forgets-mono-tv-s-buffer
-@check quux_tv_quux
-@file rtl/machine/cadr_memory_path.sv
-@note THE SAME FLAG WITH QUUX'S FIRST DISPLAY LEFT OUT, WHICH IS HOW IT SHIPPED.
-@note `bus_sel` took `mono_fb` when MONO TV landed and the audit's flag did
-@note not, so every processor cycle to MONO TV's buffer was a cycle the bridge
-@note answered and the audit called not memory's: `quux_tv` at K = 4 counted
-@note five faults, the first clause 5 at word 17000000, measured, and nothing
-@note read the audit on any program but MIT's boot PROM.  The machine check's
-@note testbench now reads the audit through the readout window at the end of
-@note every run, and this is what it holds on QUUX.  Written as a term that is
-@note never true rather than by deleting it, so `mono_fb` stays read and lint
-@note does not do the catching.
-@old
-  assign cpu_memory_o   = cpu_bridged;
-@new
-  assign cpu_memory_o   = QUUX ? (mono_fb && 1'b0) : cpu_bridged;
 @end
 
 @mutation the-audit-stops-watching-the-port
@@ -15894,9 +15875,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note past the reachable end of main memory and is a word the machine's own
 @note program could be using.
 @old
-  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
 @new
-  assign bus_display       = !ch_own && !mp_own && (tv_fb || mono_fb);
+  assign bus_display       = !ch_own && !mp_own && tv_fb;
 @end
 
 @mutation the-color-board-never-acknowledges
@@ -16195,7 +16176,8 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .LMTV(QUUX ? 0 : LMTV),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
-      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT)
+      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT),
+      .SYNC_K(SYNC_K)
   ) memory (
       .clk        (clk),
       .rst        (rst),
@@ -16208,7 +16190,8 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .LMTV(QUUX ? 0 : LMTV),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
-      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT)
+      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT),
+      .SYNC_K(SYNC_K)
   ) memory (
       .clk        (clk),
       .rst        (rst_late),
@@ -19255,12 +19238,12 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @note cycle's write pulse ends misses the pulse: `dispatch-on-md-gap-3` writes
 @note at `MD<2:0>` = 2 where muir's `rtl` writes at 5.
 @old
-      if (loadmd_edge && (mclk_edge || hang)) begin
+      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @new
-      if (loadmd_edge && mclk_edge) begin
+      if (loadmd_edge && mclk_edge && !(QUUX && memstart && memgo_q)) begin
         md         <= rdata;
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -19818,26 +19801,30 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
       8'o12:   word = {16'd1, 16'(SCREEN_WPL + 20)};
 @end
 
-@mutation quux-a-write-of-the-feature-page-is-not-acknowledged
-@check quux_map_quux
+@mutation quux-a-write-of-the-feature-page-is-not-taken
+@check quux_page_quux
 @file rtl/machine/quux_feature_page.sv
-@note The page answers reads only, so a write waits out the timeout and
-@note sets NXM, where muir's device takes it and drops it.
+@note The page takes reads only, so a write of the keyboard's status, the
+@note bus errors or error stop goes nowhere, where muir's register takes it.
+@note (Its acknowledgment no longer carries anything: the register decode
+@note acknowledges a register a microcycle after the grant, contract Q7.)
 @old
-  assign dev_ack = mine;
+  assign take = mine && dev_rq && !taken;
 @new
-  assign dev_ack = mine && !dev_write;
+  assign take = mine && dev_rq && !taken && !dev_write;
 @end
 
 @mutation quux-the-feature-page-is-not-on-the-seam
 @check quux_map_quux
 @file rtl/machine/cadr_machine.sv
-@note The page's acknowledgment is left off the seam, so every read of it
-@note times out.
+@note The page's word is left off the seam, so every read of it takes what
+@note the seam holds without it.
 @old
-    assign dev_ack_joined   = disk_ack || feature_ack || device_ack;
+    assign dev_rdata_joined = disk_drives    ? disk_rdata
+                            : feature_drives ? feature_rdata
 @new
-    assign dev_ack_joined   = disk_ack || (feature_ack && feature_drives && 1'b0) || device_ack;
+    assign dev_rdata_joined = disk_drives    ? disk_rdata
+                            : (feature_drives && 1'b0) ? feature_rdata
 @end
 
 @mutation quux-mono-tv-keeps-the-wrong-mode-bit
@@ -19885,11 +19872,13 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @mutation quux-mono-tv-registers-refuse-writes
 @check quux_tv_quux
 @file rtl/machine/quux_mono_tv.sv
-@note The registers acknowledge reads only, so every write of them times out.
+@note The mode register takes no write, so black-on-white never changes and
+@note `quux_tv` reads its own write back wrong.  (Its acknowledgment no
+@note longer carries anything: contract Q7.)
 @old
-  assign dev_ack = ctl;
+  assign store_now = ctl && dev_rq && dev_write && !taken;
 @new
-  assign dev_ack = ctl && !dev_write;
+  assign store_now = ctl && dev_rq && dev_write && !taken && 1'b0;
 @end
 
 @mutation quux-the-cadrs-board-is-fitted-on-quux
@@ -19915,15 +19904,16 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     assign mono_buffer  = (phys - 22'o17000000) <= 22'(MONO_TV_WORDS);
 @end
 
-@mutation quux-the-bridge-folds-mono-tv-onto-32k
+@mutation quux-the-port-folds-mono-tv-onto-32k
 @check quux_tv_quux
-@file rtl/plumbing/cadr_xbus_ddr.sv
-@note The bridge addresses MONO TV with the CADR boards' fifteen bits, so
-@note the buffer's top 8K words land on its bottom 8K.
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The memory bus addresses MONO TV with the CADR boards' fifteen bits,
+@note so the buffer's top 8K words land on its bottom 8K and its last word,
+@note which `quux_tv` writes and reads, reads back the word below.
 @old
-    assign display_addr = mono_display_byte_address(phys[15:0]);
+    return (phys >= 22'o17000000) ? mono_display_byte_address(phys[15:0])
 @new
-    assign display_addr = mono_display_byte_address({1'b0, phys[14:0]} ^ {phys[15], 15'd0} ^ {phys[15], 15'd0});
+    return (phys >= 22'o17000000) ? mono_display_byte_address({1'b0, phys[14:0]})
 @end
 
 @mutation quux-mono-tv-is-turned-when-asked
@@ -20073,28 +20063,25 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
         if (quux_div && qs1 && qs0) q <= div_q;
 @end
 
-@mutation quux-the-divider-holds-22-ticks
+@mutation quux-the-divider-holds-eight-cycles
 @check quux_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
-@note The hold ends at 22 ticks, so at the boot's 22-tick cycle a `DIV` is
-@note held one generator cycle where muir holds two.  At the one speed the
-@note programs run, any end from 23 to 44 ticks holds the same two cycles,
-@note so this and the next are the bounds just outside what is checked.
+@note A `DIV` is held eight microcycles where muir holds nine
+@note (`muldiv::DIV_CYCLES`), so a `DIV` of a register runs 40 ns early.
 @old
-    assign dividing = div_held && (div_start < 6'd33);
+    assign dividing = div_held && (div_start < 4'(DIV_CYCLES));
 @new
-    assign dividing = div_held && (div_start < 6'd22);
+    assign dividing = div_held && (div_start < 4'(DIV_CYCLES - 1));
 @end
 
-@mutation quux-the-divider-holds-45-ticks
+@mutation quux-the-divider-holds-ten-cycles
 @check quux_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
-@note The hold runs to 45 ticks, so at the extra slow 22-tick cycle the
-@note `DIV` waits a master clock more.
+@note A `DIV` is held ten microcycles, a master clock more than muir's nine.
 @old
-    assign dividing = div_held && (div_start < 6'd33);
+    assign dividing = div_held && (div_start < 4'(DIV_CYCLES));
 @new
-    assign dividing = div_held && (div_start < 6'd45);
+    assign dividing = div_held && (div_start < 4'(DIV_CYCLES + 1));
 @end
 
 @mutation quux-a-nopped-div-holds
@@ -20107,16 +20094,17 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
         div_held <= quux_div || (ir[44:43] == 2'd0 && ir[8] && ir[4:3] == 2'd3);
 @end
 
-@mutation quux-the-divider-asks-at-the-cycles-end
-@check quux_muldiv_quux
+@mutation quux-a-div-of-md-counts-from-ir
+@check quux_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
-@note The hold is asked of the time at the edge that would end the cycle,
-@note where muir asks it of the cycle's start, so a `DIV` is held one
-@note generator cycle short.
+@note A `DIV` of MD counts its nine from the edge that loaded `IR` and not
+@note from the end of the MD interlock, the rule before muir's c678c82: the
+@note `DIV` runs as soon as the word has landed, before the divider has
+@note divided it.
 @old
-    assign dividing = div_held && (div_start < 6'd33);
+        else if (mclk_edge && quux_hold) div_start <= 4'd0;
 @new
-    assign dividing = div_held && (div_t < 6'd33) && (div_start == div_start);
+        else if (mclk_edge && quux_hold && 1'b0) div_start <= 4'd0;
 @end
 
 @mutation quux-the-divider-reads-its-operands-late
@@ -20260,12 +20248,16 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-div-of-md-takes-the-m-bus
-@check quux_divmdsync_quux_l1
+@check quux_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A word strobed before the `DIV`'s own load is in `md_held` a master
 @note clock edge before it is in MD; loaded from MD then, the divider takes
 @note the word from before the read, and the reload that went before is
 @note overwritten.
+@note Re-aimed at `divmd` from `divmdsync`, whose gaps were set for the Xbus's
+@note read and whose reads now all hit the cache long before the `DIV`;
+@note `divmd`'s `DIV` two after a read that hits has its edge at the grant
+@note and the word strobed two ticks later, before its load.
 @old
     assign div_m      = (div_reload || (div_md && div_have)) ? md_held : div_md ? md : m;
 @new
@@ -20415,31 +20407,15 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     always_ff @(posedge clk) if (tpclk_q) pdl_q <= pdl_rd;
 @end
 
-@mutation quux-div-of-md-reloaded-two-ticks-after-the-strobe
+@mutation quux-a-div-of-md-counts-a-cycle-early
 @check quux_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
-@note Reloaded two ticks after the strobe, the divider is done 18 ticks
-@note after it, and the microcycle that runs can end on that edge: where
-@note the wait for MD and not the divider's own hold is the longer, as in
-@note `divmd`'s short gaps.
+@note The count after the MD interlock starts at one, so a `DIV` of MD is
+@note held eight microcycles after its word where muir holds nine.
 @old
-    assign div_reload = div_md && div_strobed;
+        else if (mclk_edge && quux_hold) div_start <= 4'd0;
 @new
-    logic div_strobed_q;
-    always_ff @(posedge clk) div_strobed_q <= div_strobed;
-    assign div_reload = div_md && div_strobed_q;
-@end
-
-@mutation quux-dividing-asked-at-the-cycles-end
-@check quux_muldiv_quux
-@file rtl/machine/cadr_microcycle.sv
-@note The divider's hold asked of the ticks since the load at the edge that
-@note would end the cycle, not at its start: the `DIV` runs a microcycle
-@note early.
-@old
-    assign dividing = div_held && (div_start < 6'd33);
-@new
-    assign dividing = div_held && ((div_t | (div_start & 6'd0)) < 6'd33);
+        else if (mclk_edge && quux_hold) div_start <= 4'd1;
 @end
 
 @mutation machine-param-the-arty-drops-its-k
@@ -20816,7 +20792,7 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @file rtl/machine/cadr_machine.sv
 @note The MACHINE-ID of revision 4, before the clocks and the register page.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
 @end
@@ -20871,29 +20847,6 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
   assign irq = (|in_irq) || chaos_ireq;
 @new
   assign irq = (|in_irq) || (chaos_ireq && 1'b0);
-@end
-
-@mutation quux-a-page-read-is-taken-twice
-@check quux_page_quux
-@file rtl/machine/quux_feature_page.sv
-@note The page answers every tick of `-XBUS.RQ`, not once a cycle, so a read
-@note of the keyboard's FIFO pops a word each tick the request stands.
-@old
-  assign take = mine && dev_rq && !taken;
-@new
-  assign take = mine && dev_rq && (taken || !taken);
-@end
-
-@mutation quux-the-keyboard-enable-reaches-sintr-a-cycle-late
-@check quux_page_quux
-@file rtl/machine/quux_input.sv
-@note The keyboard's interrupt from the registers and not from what this
-@note tick leaves them, so an enable written on the edge `SINTR` is taken at
-@note reaches it a microcycle late.  Measured before the fix on this program.
-@old
-  assign kbd_enable_n   = (wr && which == KBD_STATUS) ? wdata[8] : kbd_enable;
-@new
-  assign kbd_enable_n   = kbd_enable | (wr & wdata[8] & 1'b0);
 @end
 
 @mutation quux-the-fifo-is-sixty-three
@@ -21257,7 +21210,7 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 # holds `quux_mem_port.sv` and `quux_cache.sv` to muir's `MemoryPort` tick for
 # tick and then to coherence with a transfer beside the processor;
 # `quux_axi_master_quux` holds the line fill on the port; `machine_quux` the
-# port in the machine; `quux_derivation` the trace's derived acknowledgment.
+# port in the machine.
 
 @mutation quux-hit-ignores-the-valid-bit
 @check quux_port_quux
@@ -21418,25 +21371,26 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
   assign ack_e = (buf_in > CW'(HIT_T)) ? CW'(HIT_T) : CW'(HIT_T);
 @end
 
-@mutation quux-a-device-read-is-not-deskewed
+@mutation quux-a-register-is-acknowledged-a-tick-early
 @check quux_port_quux
 @file rtl/machine/quux_mem_port.sv
-@note A device's read is acknowledged as it answers, not 60 ns later.
+@note A device register's cycle is acknowledged 30 ns after its grant at a
+@note K of four, not a microcycle on.
 @old
-  localparam int unsigned DESKEW_T = cadr_tick_pkg::ticks(60);
+              || (state == GRANTED && dev_cycle && elapsed == 6'(K - 1));
 @new
-  localparam int unsigned DESKEW_T = cadr_tick_pkg::ticks(10);
+              || (state == GRANTED && dev_cycle && elapsed == 6'(K - 2));
 @end
 
-@mutation quux-the-timeout-a-rise-early
+@mutation quux-an-empty-address-waits-for-the-grant
 @check quux_port_quux
 @file rtl/machine/quux_mem_port.sv
-@note An address nothing answers times out on the fifth rise of the gated
-@note oscillator, 850 ns before the CADR's.
+@note An address nothing answers is acknowledged from the edge that grants
+@note it, a tick after muir's instant, not in the tick that takes it.
 @old
-  localparam int unsigned NXM_RISES   = 6;
+  assign acked = ack_standing || empty
 @new
-  localparam int unsigned NXM_RISES   = 5;
+  assign acked = ack_standing
 @end
 
 @mutation quux-the-fill-asks-the-word-not-the-line
@@ -21445,9 +21399,9 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note The line fill asks at the word's own address, so the line is four
 @note words from the wrong boundary.
 @old
-              maddr_q  <= main_byte_address({fill_phys[21:2], 2'b00});
+              maddr_q  <= quux_byte_address({fill_phys[21:2], 2'b00});
 @new
-              maddr_q  <= main_byte_address(fill_phys);
+              maddr_q  <= quux_byte_address(fill_phys);
 @end
 
 @mutation quux-the-miss-word-is-the-line-s-first
@@ -21455,40 +21409,41 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @file rtl/machine/quux_mem_port.sv
 @note A read that missed is handed the line's first word, not its own.
 @old
-  assign word = from_line ? line_word[line_phys[1:0]] : c_word;
+              : from_line      ? line_word[line_phys[1:0]] : c_word;
 @new
-  assign word = from_line ? line_word[0] : c_word;
+              : from_line      ? line_word[0] : c_word;
 @end
 
-@mutation quux-main-memory-cycles-time-out
+@mutation quux-a-register-is-asked-twice
 @check quux_port_quux
 @file rtl/machine/quux_mem_port.sv
-@note The timeout's counter runs on main memory's cycles as well, so a line
-@note fill slower than 4.25 us is ended as an address nothing answers.
+@note The register is asked in the two ticks after the grant, so a read
+@note that moves something --- the keyboard's FIFO --- moves it twice.
 @old
-      if (state == GRANTED && !mem_cycle) begin
-        if (vco_toggle) begin
+  assign dev_rq    = (state == GRANTED) && first && dev_cycle;
 @new
-      if (state == GRANTED) begin
-        if (vco_toggle) begin
+  assign dev_rq    = (state == GRANTED) && (elapsed < 6'd2) && dev_cycle;
 @end
 
-@mutation quux-main-memory-goes-out-on-the-xbus
+@mutation quux-the-memory-bus-asks-a-register
 @check quux_port_quux
 @file rtl/machine/quux_mem_port.sv
-@note A cycle of main memory's raises -XBUS.RQ as a device's would.
+@note A cycle of the memory bus asks a device register as well, as the Xbus
+@note put main memory's cycles before every slave.
 @old
-  assign dev_rq    = !kmem && ((state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1)
+  assign dev_rq    = (state == GRANTED) && first && dev_cycle;
 @new
-  assign dev_rq    = ((state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1)
+  assign dev_rq    = (state == GRANTED) && first && (dev_cycle || mem_cycle);
 @end
 
 @mutation quux-cycle-release-waits-mfinishd
-@check machine_quux
+@check quux_memedge_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A cycle of main memory's releases MBUSY and READ IN PROGRESS through
 @note the Xbus's two delays, 30 ns and 140 ns, where muir releases it on the
 @note acknowledgment itself.
+@note Re-aimed at `memedge` from QUUX's boot, whose PROM touches no main
+@note memory without a pack since muir's Q8 (it saves nothing).
 @old
   assign released_now = QUUX && memack_edge && cached;
 @new
@@ -21509,16 +21464,14 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @mutation quux-main-memory-word-from-the-bridge
 @check quux_memedge_quux
 @file rtl/machine/cadr_memory_path.sv
-@note A read of main memory takes its word off the Xbus bridge, which never
-@note answered it, and not off the memory port.  (The bridge's own select
-@note widened to main memory is no mutation: the port never raises -XBUS.RQ
-@note on main memory's cycles, so the bridge is never asked.)
-@note The boot trace reads only words main memory holds as zero, which the
-@note bridge's idle word matches; `memedge` reads back words it wrote.
+@note A read on QUUX takes its word off the bridge, which never answered
+@note it, and not off the memory port.  The boot trace reads only words
+@note main memory holds as zero, which the bridge's idle word matches;
+@note `memedge` reads back words it wrote.
 @old
-  assign rdata   = cached       ? port_word
+  assign rdata   = QUUX         ? port_word
 @new
-  assign rdata   = cached && 1'b0 ? port_word
+  assign rdata   = QUUX && 1'b0 ? port_word
 @end
 
 @mutation quux-block-disk-writes-do-not-invalidate
@@ -21532,14 +21485,15 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
       if (invalidate) inval_owed <= 1'b0;
 @end
 
-@mutation quux-machine-id-revision-6
+@mutation quux-machine-id-revision-7
 @check quux_map_quux
 @file rtl/machine/cadr_machine.sv
-@note MACHINE-ID says revision 6, from before the memory port.
+@note MACHINE-ID says revision 7, the memory port's, from before the device
+@note registers.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
 @new
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0064;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
 @end
 
 @mutation quux-line-read-is-one-beat
@@ -21595,63 +21549,15 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
               m_araddr <= {mem_addr[31:3], 3'b000};
 @end
 
-@mutation quux-derived-device-read-a-tick-late
-@check quux_derivation
-@file golden/src/trace.rs
-@note The trace's derived acknowledgment of a device's read is 70 ns after
-@note its answer, not 60: muir's processor, which starts the microcycle
-@note reading MD at the edge after READ IN PROGRESS falls, contradicts it.
-@old
-        let ack = answered + if device_read { muir::busint::XBUS_ACK_NS } else { 0 };
-@new
-        let ack = answered + if device_read { muir::busint::XBUS_ACK_NS + 10 } else { 0 };
-@end
-
-@mutation quux-derived-device-read-a-tick-early
-@check quux_derivation
-@file golden/src/trace.rs
-@note The trace's derived acknowledgment of a device's read is 50 ns after
-@note its answer, not 60.  muir's processor cannot see this --- both instants
-@note round to one edge --- and the fabric's -MEMACK can.
-@old
-        let ack = answered + if device_read { muir::busint::XBUS_ACK_NS } else { 0 };
-@new
-        let ack = answered + if device_read { muir::busint::XBUS_ACK_NS - 10 } else { 0 };
-@end
-
-@mutation quux-the-port-s-setup-time-is-short
-@check quux_tv_quux
+@mutation quux-the-register-s-word-taken-a-tick-late
+@check quux_port_quux
 @file rtl/machine/quux_mem_port.sv
-@note -XBUS.RQ a tick early: seven ticks from the grant where the bus gives
-@note the address eight.  One tick outside `quux_ddr.xdc`'s and
-@note `cadr_ddr.sdc`'s clause, which gives the processor's registers eight
-@note into QUUX's adapter because the adapter takes MONO TV's word at the
-@note first edge -XBUS.RQ stands.  A request a tick early is an
-@note acknowledgment a tick early, which the trace compares.
+@note The register's word is taken in the tick after it was asked, when the
+@note register's held match may be another address's.
 @old
-  localparam int unsigned SETUP_T  = cadr_tick_pkg::ticks(80);
+      if (dev_rq) dev_word <= dev_rdata;
 @new
-  localparam int unsigned SETUP_T  = cadr_tick_pkg::ticks(70);
-@end
-
-@mutation grid-quux-arty-adapter-a-tick-wide
-@check grid
-@file rtl/plumbing/xilinx7/quux_ddr.xdc
-@note The processor's device cycle into QUUX's adapter at 90 ns.
-@old
-set_multicycle_path -setup 8 -from $qcycle -to $qcontract
-@new
-set_multicycle_path -setup 9 -from $qcycle -to $qcontract
-@end
-
-@mutation grid-quux-de25-adapter-a-tick-wide
-@check grid
-@file boards/de25-nano/quartus/cadr_ddr.sdc
-@note The same on the DE25-Nano.
-@old
-    set_multicycle_path -setup 8 -from $qddr_cycle -to $qddr_contract
-@new
-    set_multicycle_path -setup 9 -from $qddr_cycle -to $qddr_contract
+      if (state == GRANTED && elapsed == 6'd1 && kdev) dev_word <= dev_rdata;
 @end
 
 @mutation grid-quux-arty-cache-address-a-tick-wide
@@ -21693,6 +21599,80 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 set_multicycle_path -setup 3 -from $quux_status_s -to $quux_cache_held
 @new
 set_multicycle_path -setup 4 -from $quux_status_s -to $quux_cache_held
+@end
+
+# ----------------------------------- QUUX's device registers, Q7, and Q8a
+#
+# Contract Q7, revision 8: no device bus.  The frame buffer is on the memory
+# bus through the cache, a device register is taken at the grant and
+# acknowledged a microcycle on, and an address nothing answers fails in the
+# tick that takes it.  `quux_port_quux` holds the port to muir's
+# `MemoryPort` with the frame buffer and the registers in it; the machine's
+# programs hold the rest.  And block-disk's disk of any size up to 2^28
+# blocks (contract Q8a), which `quux_block_disk_quux` holds three blocks
+# short of it.
+
+@mutation quux-the-frame-buffer-is-a-register
+@check quux_tv_quux
+@file rtl/machine/cadr_memory_path.sv
+@note MONO TV's frame buffer is taken as a device register and not as the
+@note memory bus's: no cache and no DDR, the register decode answering it
+@note with whatever the seam holds.
+@old
+        .is_memory  (is_memory || (device && mono_fb)),
+        .is_device  (device && !mono_fb),
+@new
+        .is_memory  (is_memory || (device && mono_fb && 1'b0)),
+        .is_device  (device && !(mono_fb && 1'b0)),
+@end
+
+@mutation quux-the-frame-buffer-at-main-memory-s-base
+@check quux_port_quux
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The memory bus puts the frame buffer at main memory's base, 17000000
+@note words in, where the scanout never reads it.  A machine that reads back
+@note what it wrote there sees nothing wrong; the port's memory, which keeps
+@note the display's region apart, does.
+@old
+    return (phys >= 22'o17000000) ? mono_display_byte_address(phys[15:0])
+                                  : main_byte_address(phys);
+@new
+    return main_byte_address(phys);
+@end
+
+@mutation quux-an-empty-ack-clears-its-own-countdowns
+@check quux_tv_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The grant's edge clears the two countdowns that an address nothing
+@note answers loaded in the same tick, so READ IN PROGRESS never falls and
+@note the machine waits for good on `quux_tv`'s read one past the buffer.
+@old
+        if (memgo_q && !(QUUX && memack_edge)) begin
+@new
+        if (memgo_q) begin
+@end
+
+@mutation quux-an-empty-read-lands-at-the-grant
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note An address nothing answers puts its zero in MD at the grant's own edge,
+@note a microcycle before muir finds it acknowledged (`md-acked-on-an-edge-nxm`).
+@old
+      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
+@new
+      if (loadmd_edge && (mclk_edge || hang)) begin
+@end
+
+@mutation quux-block-disk-keeps-24-bits-of-address
+@check quux_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The disk address register keeps 24 bits, a T-300's reach, where a
+@note QUUX disk runs to 2^28 blocks: the last blocks of a large disk are
+@note asked for sixteen million blocks low.
+@old
+          2'd2: da  <= {4'd0, wdata[27:0]};
+@new
+          2'd2: da  <= {8'd0, wdata[23:0]};
 @end
 
 @mutation grid-cadr-arty-adapter-a-tick-wide

@@ -570,10 +570,10 @@ module cadr_machine #(
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (7 << 4) | 4`: the signature, hardware revision 7 ---
-  // the memory port of contract Q6 --- and processor type 4,
-  // `Geometry::QUUX.machine_id`.
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
+  // `(0x5155 << 16) | (8 << 4) | 4`: the signature, hardware revision 8 ---
+  // the device registers of contract Q7, after contract Q6's memory port ---
+  // and processor type 4, `Geometry::QUUX.machine_id`.
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
   // MONO TV at the size every QUUX bitstream builds: 1280 by 1024, one bit
   // a pixel, 40 words a line at `17000000`.
   localparam int unsigned MONO_TV_WIDTH  = 1280;
@@ -833,7 +833,8 @@ module cadr_machine #(
       .LMTV(QUUX ? 0 : LMTV),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
-      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT)
+      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT),
+      .SYNC_K(SYNC_K)
   ) memory (
       .clk        (clk),
       .rst        (rst),

@@ -183,15 +183,16 @@ register, with no sync program, no color map and no interrupt. muir's
 | color TV | may be fitted | none |
 
 The buffer starts where the CADR's does, at physical `17000000`, so this
-program maps the window at the same base in memory. **The fabric's MONO TV is
-not built yet.** It must put all 40,960 words there, which is one address bit
-more than the CADR's 32,768-word window decodes today. Pixel `x` of line `y` is bit `x mod 32` of word
+program maps the window at the same base in memory, all 40,960 words of it.
+On QUUX the buffer is on the memory bus with main memory, and the machine's
+cache writes it through to DDR, so what this program reads is at most one
+write behind the processor. Pixel `x` of line `y` is bit `x mod 32` of word
 `40y + x/32` on QUUX, the CADR's rule with its own line length. `MODE BOW` is
 the same bit 2 of the mode register, and `--bow` still says it.
 
 **The program is told the machine and does not ask.** QUUX's feature page at
 physical `17377000` gives the screen at words 11 to 13, and a CADR answers
-nothing there. But that page is an Xbus device inside the machine. The
+nothing there. But that page is a device register inside the machine. The
 processing system reaches the display's buffer as memory, the faces on their
 port and the console on its own, and none of them carries a read of the
 machine's I/O page. The build stamp names a commit and how the tree stood, not

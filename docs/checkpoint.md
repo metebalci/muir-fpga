@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 40.** It is
+version is refused by name rather than read wrong. **The version is 41.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
@@ -104,6 +104,16 @@ machine resumed from this file misses where the one saved would have hit.
 That moves when a read is answered and never what it reads, because the
 cache is write-through and every line it holds is main memory's word. The
 cache's lines are not read from the fabric.
+
+Version 41 writes QUUX's block-disk disk as a disk of any size, where it
+wrote a T-300's drive: its size in blocks and the blocks written that the
+file does not hold. The size is the pack file's own, 1,024 bytes a block,
+and muir refuses a checkpoint whose size is not the resuming disk's. The
+program writes no written blocks, because `cadr-disk-packs` writes the
+machine's blocks straight through to the card. The engine's instant that
+QUUX's divider counts from is renamed, being now when the `DIV`'s operands
+were ready, and is written as zero as before. The CADR's file changes in its
+version alone.
 
 On QUUX the program also waits, after the halt and before it reads main
 memory, for the memory port to say its write buffer is empty (bit 33 of the

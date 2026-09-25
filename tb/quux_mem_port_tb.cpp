@@ -5,8 +5,8 @@
 // every tick.  The trace is golden/src/quux_port.rs's, out of muir's own
 // memory_port::MemoryPort, and carries the processor's stimulus as well as
 // what the port must do with it: -MEMGRANT, -MEMACK, -LOADMD, NXM TIMEOUT,
-// whether the cycle was main memory's, and the word a read of main memory
-// brings.
+// whether the cycle was the memory bus's, and the word a read brings, from
+// main memory, the frame buffer or a device register.
 //
 // **MAIN MEMORY IS THIS PROGRAM'S, AND IT IS A MEMORY.**  It starts as the
 // generator's `initial` and is changed by what the port writes, and nothing
@@ -24,15 +24,26 @@
 // faster than muir, and one that waited for the memory rather than the count
 // would move with the latency; both fail here.
 //
-// **AND A SECOND REQUESTER SHARES IT**: the uncached one, which on the
-// machine is the Xbus bridge carrying MONO TV's frame buffer.  It asks for
-// words outside main memory at random, reads and writes, and holds its own
-// copy of what it wrote there to check its reads; the port must serve it
-// between the processor's operations without moving one of muir's instants.
+// **THE FRAME BUFFER IS MEMORY TOO** (contract Q7): its words are this
+// program's at the display's base, `cadr_ddr_map::DISPLAY_BASE`, starting
+// as `Initial` like main memory's, filled a line at a time and written
+// through.  A word the port put at main memory's base, or a write that never
+// reached the display's, reads back wrong; and the scanout reads these same
+// words, so every write reaching them is what the display is owed.
 //
-// The Xbus device is this program too, answering the instant -XBUS.RQ goes
-// out, as muir's `IDEAL_DEVICE_NS` has it; the NXM timer's instants are the
-// CADR's and the frame is the whole machine's (`tb/cadr_busint_xbus_tb.cpp`
+// **AND A SECOND REQUESTER SHARES IT**: the uncached one, which on the
+// machine is block-disk's transfers.  It asks for words of DDR no cycle of
+// the trace touches, past main memory's two million, reads and writes, and
+// holds its own copy of what it wrote there to check its reads; the port
+// must serve it between the processor's operations without moving one of
+// muir's instants.  The coherence run below is where it shares words.
+//
+// **A DEVICE REGISTER IS THIS PROGRAM TOO**, and it gives its word only in
+// the tick the port asks it, the first tick after the grant: every other
+// tick it drives the complement, so a word taken a tick early or late reads
+// wrong.  And it is asked exactly once, in that tick, and never for a cycle
+// that is not a device register's: a register read twice would pop a FIFO
+// twice.  The frame is the whole machine's (`tb/cadr_busint_xbus_tb.cpp`
 // says why t = 0 is two edges after reset).
 
 #include <cerrno>
@@ -51,7 +62,11 @@ namespace {
 
 constexpr uint32_t kMainWords = 32u << 16;
 constexpr uint32_t kMainBase = 0x18000000u;   // cadr_ddr_map::MAIN_BASE, Zynq
-constexpr uint32_t kOtherBase = 0x1C000000u;  // the bridge's, outside main memory
+constexpr uint32_t kFbBase = 0x1C000000u;     // cadr_ddr_map::DISPLAY_BASE, Zynq
+constexpr uint32_t kFb = 017000000u;          // tv::BUFFER, the frame buffer's first word
+constexpr uint32_t kFbWords = 40960u;         // MONO TV at 1280 by 1024
+// The uncached requester's words: DDR past main memory's two million.
+constexpr uint32_t kOtherBase = kMainBase + 4u * kMainWords;
 constexpr int kMaxLatency = 6;
 
 uint32_t Initial(uint32_t phys) { return (phys + 1u) * 0x9E3779B1u ^ 0x3C5AA5C3u; }
@@ -70,6 +85,7 @@ struct Row {
   int mclk, n_memrq, wrcyc, kind;
   unsigned phys, wdata;
   int inval;
+  unsigned dev_word;
   int n_memgrant, n_memack, n_loadmd, timed_out, cached;
   unsigned word;
 };
@@ -112,7 +128,8 @@ int RunCoherence(Vquux_mem_port *dut) {
   dut->u_req = 0;
   dut->mem_done = 0;
   dut->invalidate = 0;
-  dut->dev_ack = 0;
+  dut->is_device = 0;
+  dut->dev_rdata = 0;
 
   // Words the processor writes and words the transfer writes, in the same
   // few sets, so that each drops the other's lines as well as its own.
@@ -299,7 +316,8 @@ int main(int argc, char **argv) {
   dut->mclk = 0;
   dut->n_memrq = 1;
   dut->wrcyc = 0;
-  dut->dev_ack = 0;
+  dut->is_device = 0;
+  dut->dev_rdata = 0;
   dut->mem_done = 0;
   dut->u_req = 0;
   dut->invalidate = 0;
@@ -315,6 +333,8 @@ int main(int argc, char **argv) {
 
   std::vector<uint32_t> main(kMainWords);
   for (uint32_t a = 0; a < kMainWords; ++a) main[a] = Initial(a);
+  std::vector<uint32_t> fb(kFbWords);
+  for (uint32_t a = 0; a < kFbWords; ++a) fb[a] = Initial(kFb + a);
   std::map<uint32_t, uint32_t> other;   // the uncached requester's words
   Rng rng{0x6d656d6f7279ull};
 
@@ -326,18 +346,22 @@ int main(int argc, char **argv) {
   long u_next = 50;
 
   long checked = 0, acks = 0, words = 0, fills = 0, writes_seen = 0, reads_u = 0, writes_u = 0;
-  long timeouts = 0, grants = 0;
+  long timeouts = 0, grants = 0, fb_fills = 0, fb_writes = 0, dev_asked = 0, dev_words = 0;
+  // The row whose edge granted the cycle standing, and whether its device
+  // register has been asked.
+  long grant_row = -1;
+  bool asked = false;
   int bad = 0;
   char line[256];
 
   while (std::fgets(line, sizeof line, f)) {
     if (line[0] == '#' || line[0] == '\n') continue;
     Row r;
-    const int n = std::sscanf(line, "%ld %d %d %d %d %u %u %d %d %d %d %d %d %u", &r.tick,
+    const int n = std::sscanf(line, "%ld %d %d %d %d %u %u %d %u %d %d %d %d %d %u", &r.tick,
                               &r.mclk, &r.n_memrq, &r.wrcyc, &r.kind, &r.phys, &r.wdata,
-                              &r.inval, &r.n_memgrant, &r.n_memack, &r.n_loadmd,
+                              &r.inval, &r.dev_word, &r.n_memgrant, &r.n_memack, &r.n_loadmd,
                               &r.timed_out, &r.cached, &r.word);
-    if (n != 14) {
+    if (n != 15) {
       std::fprintf(stderr, "%s: cannot parse: %s", path, line);
       return 2;
     }
@@ -348,6 +372,7 @@ int main(int argc, char **argv) {
     dut->phys = r.phys;
     dut->wdata = r.wdata;
     dut->is_memory = (r.kind == 0);
+    dut->is_device = (r.kind == 1);
     dut->invalidate = r.inval;
 
     // Main memory: an operation is answered `latency` ticks after it is
@@ -372,8 +397,22 @@ int main(int argc, char **argv) {
         } else {
           bad += Fail(r, "a single read of main memory, which only the bridge makes", a, 0);
         }
+      } else if (a >= kFbBase && a < kFbBase + 4 * kFbWords) {
+        const uint32_t w = (a - kFbBase) >> 2;
+        if (dut->mem_line) {
+          if (dut->mem_write || (w & 3)) {
+            bad += Fail(r, "a line fill's address, not a line's", a, a & ~15u);
+          }
+          for (int k = 0; k < 4; ++k) dut->mem_rline[k] = fb[(w & ~3u) + k];
+          ++fb_fills;
+        } else if (dut->mem_write) {
+          fb[w] = dut->mem_wdata;
+          ++fb_writes;
+        } else {
+          bad += Fail(r, "a single read of the frame buffer, which only a fill makes", a, 0);
+        }
       } else if (a >= kOtherBase && a < kOtherBase + 0x10000u) {
-        if (dut->mem_line) bad += Fail(r, "a line fill outside main memory", a, 0);
+        if (dut->mem_line) bad += Fail(r, "a line fill by the uncached requester", a, 0);
         if (dut->mem_write) other[a] = dut->mem_wdata;
         else dut->mem_rdata = other.count(a) ? other[a] : ~a;
       } else {
@@ -402,15 +441,24 @@ int main(int argc, char **argv) {
     dut->u_phys = 0;
 
     dut->eval();
-    // The device answers the instant it is asked.
-    dut->dev_ack = (r.kind == 1) && dut->dev_rq;
+    // The device register gives its word in the tick it is asked and its
+    // complement in every other.
+    dut->dev_rdata = dut->dev_rq ? r.dev_word : ~r.dev_word;
     dut->eval();
 
-    // **MAIN MEMORY IS NOT ON THE XBUS** (contract Q6): a cycle of main
-    // memory's never raises -XBUS.RQ.  Nothing in muir's trace can see it,
-    // since no device answers main memory's address; the contract can.
-    if (r.kind == 0 && dut->dev_rq)
-      bad += Fail(r, "-XBUS.RQ on a cycle of main memory's", dut->dev_rq, 0);
+    // **A REGISTER IS ASKED ONCE, IN THE TICK AFTER THE GRANT, AND ONLY A
+    // REGISTER'S CYCLE ASKS** (contract Q7): the memory bus's cycles and an
+    // address nothing answers reach no register at all.
+    if (dut->dev_rq) {
+      if (r.kind != 1) bad += Fail(r, "a register asked on a cycle that is not a register's", 1, 0);
+      else if (asked) bad += Fail(r, "a register asked a second time", 1, 0);
+      else if (r.tick != grant_row + 1)
+        bad += Fail(r, "a register asked, ticks after the grant", r.tick - grant_row, 1);
+      asked = true;
+      ++dev_asked;
+    }
+    if (dut->dev_write != r.wrcyc && dut->dev_rq)
+      bad += Fail(r, "the register's direction", dut->dev_write, r.wrcyc);
     if (dut->n_memack != r.n_memack) bad += Fail(r, "-MEMACK", dut->n_memack, r.n_memack);
     if (dut->n_loadmd != r.n_loadmd) bad += Fail(r, "-LOADMD", dut->n_loadmd, r.n_loadmd);
     if (dut->timed_out != r.timed_out)
@@ -418,9 +466,10 @@ int main(int argc, char **argv) {
     if (!r.n_memack) {
       ++acks;
       if (dut->cached != r.cached) bad += Fail(r, "cached", dut->cached, r.cached);
-      if (r.cached && !r.wrcyc) {
+      if (!r.wrcyc) {
         ++words;
-        if (dut->word != r.word) bad += Fail(r, "the word main memory's read brings", dut->word, r.word);
+        if (r.kind == 1) ++dev_words;
+        if (dut->word != r.word) bad += Fail(r, "the word a read brings", dut->word, r.word);
       }
       if (r.timed_out) ++timeouts;
     }
@@ -436,10 +485,17 @@ int main(int argc, char **argv) {
       u_next = r.tick + 1 + static_cast<long>(rng.Below(300));
     }
 
+    const bool was_granted = !dut->n_memgrant;
     dut->clk = 1;
     dut->eval();
     if (dut->n_memgrant != r.n_memgrant)
       bad += Fail(r, "-MEMGRANT", dut->n_memgrant, r.n_memgrant);
+    if (!was_granted && !dut->n_memgrant) {
+      grant_row = r.tick;
+      asked = false;
+    }
+    if (r.kind == 1 && !r.n_memack && !asked && r.n_memrq == 0)
+      bad += Fail(r, "a register's cycle acknowledged without the register asked", 0, 1);
     if (!r.n_memgrant && r.mclk) ++grants;
     dut->clk = 0;
     dut->eval();
@@ -451,11 +507,13 @@ int main(int argc, char **argv) {
   }
 
   std::printf("quux_mem_port: %ld ticks against muir's MemoryPort; %ld acknowledgments, %ld words "
-              "of main memory read, %ld line fills and %ld writes reached main memory, %ld "
-              "timeouts; the uncached requester made %ld reads and %ld writes; hits %u, misses %u\n",
-              checked, acks, words, fills, writes_seen, timeouts, reads_u, writes_u, dut->hits,
-              dut->misses);
+              "read, %ld of them a register's; %ld line fills and %ld writes reached main memory, "
+              "%ld and %ld the frame buffer; %ld registers asked; %ld addresses nothing answers; "
+              "the uncached requester made %ld reads and %ld writes; hits %u, misses %u\n",
+              checked, acks, words, dev_words, fills, writes_seen, fb_fills, fb_writes, dev_asked,
+              timeouts, reads_u, writes_u, dut->hits, dut->misses);
   if (!bad && (fills < 1000 || writes_seen < 1000 || words < 3000 || timeouts < 20 ||
+               fb_fills < 100 || fb_writes < 100 || dev_words < 500 || dev_asked < 1000 ||
                reads_u < 100 || writes_u < 100)) {
     std::fprintf(stderr, "FAIL: the run reached too little of the port to say anything\n");
     ++bad;

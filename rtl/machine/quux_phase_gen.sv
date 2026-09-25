@@ -59,13 +59,12 @@ module quux_phase_gen #(
 );
 
   // **K IS FOUR AT THE LEAST.**  Not for this counter's sake, which would
-  // count two: a `DIV` of MD needs its word in the divider seventeen ticks
-  // before the edge that ends the microcycle it runs, which READ IN
-  // PROGRESS lets start 14 ticks after the strobe, and the word is in a
-  // register the divider can be loaded from one tick after the strobe
-  // (`cadr_microcycle.sv`, "A `DIV` OF `MD`").  So 14 + K >= 18.  At a K of
-  // three the word would have to go into the divider straight off the bus
-  // on the strobe's own tick, and the bus's cone is two ticks deep.
+  // count two.  The floor was set when a `DIV` of MD could run in the
+  // microcycle after its word landed, 14 ticks after the strobe, with the
+  // divider needing the word 17 ticks before that microcycle's end: 14 + K
+  // >= 18.  A `DIV` is now held nine microcycles after its operands are
+  // ready (`cadr_microcycle.sv`, "QUUX'S DIVIDER IS BUSY"), so that no longer
+  // sets the floor; it stands until a fit at a smaller K says otherwise.
   if (SYNC_K < 4 || SYNC_K + SYNC_L > 63) begin : g_bad_k
     $error("quux_phase_gen: SYNC_K is %0d and SYNC_L %0d; QUUX's microcycle is 4 to 63 ticks",
            SYNC_K, SYNC_L);

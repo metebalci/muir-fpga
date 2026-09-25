@@ -687,27 +687,23 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
         assert_clause_timing $tick 1 "the bus interface's state into the adapter" \
             [get_registers -nowarn {u_machine|memory|g_cadr_busint.busint|*}] $a_named
     } else {
-        # QUUX's adapter, `cadr_ddr.sdc`'s second clause: its address and
-        # data at the bus's 80 ns from the processor's registers, and at the
-        # tick from everything else; no other register of it at eight.
+        # QUUX's adapter, `cadr_ddr.sdc`: no clause, so no register of it at
+        # the bus's 80 ns, its address and data among them, and its words at
+        # the tick from the port's registers and from block-disk's.
         set q_all [get_registers -nowarn {u_memory|u_qaxi|*}]
         set q_named [get_registers -nowarn [concat \
             [cadr_leaves {u_memory|u_qaxi|} {m_awaddr m_araddr m_wdata m_wstrb half}]]]
-        set q_rest [remove_from_collection $q_all $q_named]
-        set q_req [requirements [data_pins $q_rest]]
+        set q_req [requirements [data_pins $q_all]]
         set q_want [format %.3f [expr {$tick * 8}]]
         if {[get_collection_size $q_all] == 0} {
             puts "sta: FAIL: QUUX's adapter, u_memory|u_qaxi, has no registers"
             incr failures
         } elseif {[dict exists $q_req $q_want]} {
-            puts "sta: FAIL: [dict get $q_req $q_want] other registers of QUUX's adapter ask for $q_want ns"
+            puts "sta: FAIL: [dict get $q_req $q_want] registers of QUUX's adapter ask for $q_want ns"
             incr failures
         } else {
-            puts "sta: QUUX's adapter: [get_collection_size $q_rest] registers besides its address and data, none at $q_want ns"
+            puts "sta: QUUX's adapter: [get_collection_size $q_all] registers, none at $q_want ns"
         }
-        # grid: 80 ns
-        assert_clause_timing $tick 8 "the processor's device cycle into QUUX's adapter" \
-            $::qddr_cycle $q_named
         # grid: 0 ns + 1 tick
         assert_clause_timing $tick 1 "QUUX's port's operations into its adapter" \
             $::qddr_port $q_named

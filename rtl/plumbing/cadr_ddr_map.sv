@@ -152,6 +152,16 @@ package cadr_ddr_map;
     return COLOR_DISPLAY_BASE + (32'(offset) << 2);
   endfunction
 
+  // QUUX's memory bus (contract Q7): main memory, and MONO TV's frame
+  // buffer from `17000000`, which is past main memory's reach
+  // (`MAIN_WORDS_REACHABLE` is exactly `17000000`) and 64K-word aligned, so
+  // its offset is the low sixteen bits.  The cache fills and writes through
+  // at these addresses, and the display's scanout reads the buffer's.
+  function automatic logic [31:0] quux_byte_address(input logic [21:0] phys);
+    return (phys >= 22'o17000000) ? mono_display_byte_address(phys[15:0])
+                                  : main_byte_address(phys);
+  endfunction
+
 endpackage
 /* verilator lint_on UNUSEDPARAM */
 
