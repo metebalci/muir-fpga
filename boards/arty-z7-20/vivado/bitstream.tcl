@@ -759,6 +759,18 @@ if {$machine eq "quux"} {
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" {*processor/md_held_reg*} \
         {*processor/g_quux_muldiv.muldiv/dv_*}
+    # And what a microcycle reads of QUUX's clocks: the microsecond clock
+    # the whole microcycle, the status a tick less, and `L` into the status,
+    # which is loaded from it a tick after the edge, at the tick.
+    # sync: K
+    assert_clause_timing $tick 4 "the microsecond clock a microcycle reads" \
+        {*processor/g_quux_tick.clocks/usec_s_reg*}
+    # sync: K - 1
+    assert_clause_timing $tick 3 "the clocks' status a microcycle reads" \
+        {*processor/g_quux_tick.clocks/flag_s_reg* *processor/g_quux_tick.clocks/en_s_reg*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "L into the clocks' status" {*processor/l_reg*} \
+        {*processor/g_quux_tick.clocks/flag_s_reg* *processor/g_quux_tick.clocks/en_s_reg*}
     puts "BIT: QUUX: [llength $quux_tick_cells] tick countdown cells"
 }
 

@@ -20443,6 +20443,38 @@ set_multicycle_path -setup 2 -from $split_every_tick -to $slow
 set_multicycle_path -setup 3 -from $split_every_tick -to $slow
 @end
 
+@mutation grid-quux-de25-usec-a-tick-wide
+@check grid
+@file boards/de25-nano/quartus/quux_de25.sdc
+@note The microsecond clock a microcycle reads at K + 1 on the DE25-Nano,
+@note where it is loaded at the edge and read at the next.
+@old
+set_multicycle_path -setup 4 -from $quux_usec_s -to $slow
+@new
+set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
+@end
+
+@mutation grid-quux-de25-status-at-k
+@check grid
+@file boards/de25-nano/quartus/quux_de25.sdc
+@note The clocks' status at K on the DE25-Nano, where it is loaded a tick
+@note after an edge that runs a microcycle.
+@old
+set_multicycle_path -setup 3 -from $quux_status_s -to $slow
+@new
+set_multicycle_path -setup 4 -from $quux_status_s -to $slow
+@end
+
+@mutation grid-quux-arty-status-at-k
+@check grid
+@file rtl/plumbing/xilinx7/quux_machine.xdc
+@note The same on the Arty, which is what its relaxed set gave the status.
+@old
+set_multicycle_path -setup 3 -from $quux_status_s -to $slow
+@new
+set_multicycle_path -setup 4 -from $quux_status_s -to $slow
+@end
+
 @mutation grid-quux-arty-k-moved-alone
 @check grid
 @file boards/arty-z7-20/cadr_arty.sv

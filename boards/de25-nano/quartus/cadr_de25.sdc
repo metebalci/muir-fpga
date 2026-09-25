@@ -157,8 +157,9 @@ set fast [add_to_collection [get_registers -nowarn {*u_phase_gen*}] \
 # And QUUX's registers that run every tick, which match nothing on the CADR:
 # `cadr_machine.xdc` names them and says why.  A generate block's name comes
 # before the leaf's here, so the patterns end at the leaf.  QUUX's clocks
-# are out whole here, the status a microcycle reads with them, which is a
-# tick tighter than the Zynq boards' clause and no looser.
+# are out whole here, the status a microcycle reads with them, and
+# `quux_de25.sdc` gives that status and the microsecond clock the time the
+# microcycle really leaves them.
 set quux_fast [get_registers -nowarn {u_machine|processor|g_quux_tick.clocks|*
                                       u_machine|g_quux_feature_page.feature_page|taken
                                       u_machine|g_quux_feature_page.feature_page|held
