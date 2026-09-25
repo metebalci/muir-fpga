@@ -1633,6 +1633,157 @@ fn check_memedge(which: Which, m: &muir::machine::Machine) {
     }
 }
 
+// ------------------------------------------------------- the bus reset
+
+/// The page of the display's registers and the disk's, `17377400`: the
+/// display's at word 360, the disk's four at 374-377.
+const DEVICE_PAGE: u32 = 0o36777;
+/// The Unibus as the Xbus sees it, `17772000`: the I/O board's KBD CSR,
+/// Unibus `764112`, at word 45, and the Chaosnet interface's CSR, `764140`,
+/// at word 60.
+const UNIBUS_PAGE: u32 = 0o37764;
+/// The disk's registers, as words of [`DEVICE_PAGE`].
+const DISK_STATUS: u32 = 0o374;
+const DISK_CLP: u32 = 0o375;
+const DISK_DA: u32 = 0o376;
+const DISK_START: u32 = 0o377;
+/// The reads the program makes on each side of the reset.
+const BUSRESET_READS: u64 = 7;
+
+/// **`PROG.UNIBUS.RESET`, `INTERRUPT-CONTROL<28>`, AND WHAT IT CLEARS**
+/// (muir's `Machine::bus_reset`): the interface puts it on the backplane as
+/// `-XBUS INIT` and `-UB INIT`, and each board clears what its own reset pin
+/// clears --- the display's vertical flag (`Tv::xbus_init`), the disk's
+/// command and errors (`Controller::xbus_init` on the CADR,
+/// `BlockDisk::xbus_init` on QUUX), and the I/O board's interrupt enables,
+/// its Chaosnet interface and its serial line (`IoBoard::unibus_init`).
+/// muir's `Rtl` does it as the `INTERRUPT-CONTROL` write that raises the bit
+/// lands.
+///
+/// Each device is left with something the reset clears: the disk's command
+/// with its done interrupt enabled --- on QUUX a command block-disk does not
+/// have, STARTed, so that the transfer stops by error with `<13>` --- the
+/// display's vertical flag with its interrupt enabled, and on QUUX the
+/// Chaosnet interface's Clear Transmitter and transmit interrupt enable,
+/// through the register page's word 140.  Then the bit is raised and
+/// lowered, and everything is read again.  In order, each read into
+/// `A[200 + k]` and again into `A[200 + 7 + k]` after the reset:
+///
+///   0-2   the disk's status, its last memory address and its disk address
+///   3     the display's register 0
+///   4     QUUX: the Chaosnet interface's CSR; the CADR: the disk's last
+///         memory address again
+///   5     QUUX: the register page's word 100, who is interrupting; the
+///         CADR: the display's register 0 again
+///   6     the disk's status again, after the others
+///
+/// Every read is followed by a jump on condition 5, which tests the
+/// interrupt all the way, so that `SINTR` moves on rows the testbench
+/// compares it on.
+fn busreset_program() -> Prog {
+    let quux = BASE.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    let mut p = Prog::new();
+    let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
+    let mut k = 0u64;
+    // The map: level 1 entry 3 at region 7; level 2 slot 0 the devices,
+    // slot 1 the register page, slot 2 the Unibus.
+    p.konst(0o300, va(0, 0));
+    p.konst(0o301, level_1_store(3));
+    p.to(0o300, MD);
+    p.to(0o301, fdest(0o23));
+    p.fill(2);
+    for (slot, page) in [(0u32, DEVICE_PAGE), (1, FEATURE_PAGE), (2, UNIBUS_PAGE)] {
+        p.konst(0o302, va(slot, 0));
+        p.konst(0o303, level_2_store(page));
+        p.to(0o302, MD);
+        p.to(0o303, fdest(0o23));
+        p.fill(2);
+    }
+    let rd = |p: &mut Prog, k: &mut u64, addr: u32| {
+        p.konst(0o304, addr);
+        p.read(0o304, RESULT + *k);
+        *k += 1;
+        let here = p.at();
+        p.i(JUMP | target(here + 2) | PGF_OR_INT | N);
+        p.fill(1);
+    };
+    let wr = |p: &mut Prog, addr: u32, v: u32| {
+        p.konst(0o305, v);
+        p.konst(0o304, addr);
+        p.to(0o305, MD);
+        p.to(0o304, START_WRITE);
+        p.fill(2);
+    };
+    // The CADR's Chaosnet interface and I/O board are on the Unibus, whose
+    // acknowledgments the fabric does not yet give at muir's instants (a
+    // write 10 ns early, a read of the KBD CSR 1,000 ns late, measured), so
+    // on the CADR the two are not reached here and the disk's and the
+    // display's registers are read in their place.  QUUX's network is on the
+    // register page and is reached; the wire is the same one.
+    let chaos = if quux { va(1, 0o140) } else { va(0, DISK_CLP) };
+    let fifth = if quux { va(1, 0o100) } else { va(0, TV_CONTROL) };
+    // The disk: the done interrupt enabled, and on QUUX a transfer started
+    // with a command block-disk does not have.
+    wr(&mut p, va(0, DISK_STATUS), (1 << 11) | if quux { 0o17 } else { 0 });
+    if quux {
+        wr(&mut p, va(0, DISK_CLP), 0o1234);
+        wr(&mut p, va(0, DISK_DA), 0o5670);
+        wr(&mut p, va(0, DISK_START), 0);
+    }
+    // The display's vertical flag and its interrupt enable.
+    wr(&mut p, va(0, TV_CONTROL), 0o30);
+    // The Chaosnet interface: Clear Transmitter, `<8>`, and the transmit
+    // interrupt enable, `<5>`.
+    if quux {
+        wr(&mut p, chaos, (1 << 8) | (1 << 5));
+    }
+    for _ in 0..2 {
+        for addr in [va(0, DISK_STATUS), va(0, DISK_CLP), va(0, DISK_DA), va(0, TV_CONTROL), chaos, fifth,
+                     va(0, DISK_STATUS)] {
+            rd(&mut p, &mut k, addr);
+        }
+        if k == BUSRESET_READS {
+            // The reset: `INTERRUPT-CONTROL<28>` raised, then lowered, the
+            // other three bits held at zero.
+            p.konst(0o306, 1 << 28);
+            p.konst(0o307, 0);
+            p.to(0o306, fdest(DEST_INTCTL));
+            p.fill(4);
+            p.to(0o307, fdest(DEST_INTCTL));
+            p.fill(2);
+        }
+    }
+    assert_eq!(k, 2 * BUSRESET_READS, "busreset: the reads counted");
+    p.park();
+    p
+}
+
+fn check_busreset(which: Which, m: &muir::machine::Machine) {
+    let r = |k: u64| m.amem[(RESULT + k) as usize];
+    let after = |k: u64| r(BUSRESET_READS + k);
+    // Before: the disk's done interrupt requested, the Chaosnet
+    // interface's transmit interrupt enabled.
+    assert_ne!(r(0) & (1 << 3), 0, "{which:?}: the disk's done interrupt, before the reset");
+    // After: the command's enable gone and with it the request, the
+    // network's enable gone, the disk address standing.
+    assert_eq!(after(0) & (1 << 3), 0, "{which:?}: the disk's done interrupt, after the reset");
+    assert_eq!(after(6), after(0), "{which:?}: the disk's status, read twice after the reset");
+    assert!(!m.interrupt(), "{which:?}: nothing interrupts after the reset");
+    if which == Which::Quux {
+        assert_eq!(r(0), 0o21011, "QUUX: block-disk stopped by error, its interrupt requested, no pack");
+        assert_eq!(after(0), 0o1001, "QUUX: block-disk not active, no pack, the error cleared");
+        assert_eq!((r(2), after(2)), (0o5670, 0o5670), "QUUX: the disk address has no pin on -XBUS INIT");
+        assert_eq!((r(5), after(5)), (0o44, 0), "QUUX: word 100, the disk and the network, then nothing");
+        assert_ne!(r(4) & (1 << 5), 0, "QUUX: the network's enable, before the reset");
+        assert_eq!(after(4) & (1 << 5), 0, "QUUX: the network's enable, after the reset");
+    } else {
+        assert_eq!(after(0), r(0) & !(1 << 3), "CADR: the controller's status loses the request alone");
+        assert_ne!(r(3) & 0o20, 0, "CADR: the display's vertical flag, before the reset");
+        assert_eq!(after(3), r(3) & !0o20, "CADR: the display's vertical flag, after the reset");
+        assert_eq!(after(5), after(3), "CADR: the display's register 0, read twice after the reset");
+    }
+}
+
 fn cycles(name: &str, which: Which) -> u64 {
     match name {
         "clocks" if which == Which::Cadr => 1600,
@@ -1651,6 +1802,7 @@ fn cycles(name: &str, which: Which) -> u64 {
         "clockwait" => 1400,
         "tickwin" => 2000,
         "memedge" => 2800,
+        "busreset" => 700,
         _ => unreachable!(),
     }
 }
@@ -1676,8 +1828,9 @@ fn program(name: &str) -> Prog {
         "clockwait" => clockwait_program(),
         "tickwin" => tickwin_program(),
         "memedge" => memedge_program(),
+        "busreset" => busreset_program(),
         _ => {
-            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait, memedge");
+            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait, memedge, busreset");
             std::process::exit(2);
         }
     }
@@ -1797,6 +1950,7 @@ fn main() {
         "clockwait" => check_clockwait(which, e.machine()),
         "tickwin" => check_tickwin(which, e.machine()),
         "memedge" => check_memedge(which, e.machine()),
+        "busreset" => check_busreset(which, e.machine()),
         _ => unreachable!(),
     }
     eprintln!(

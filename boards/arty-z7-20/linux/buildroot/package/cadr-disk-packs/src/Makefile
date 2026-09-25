@@ -84,6 +84,24 @@ install: all
 	install -d $(DESTDIR)/usr/bin
 	install -m 0755 $(PROGRAMS) $(DESTDIR)/usr/bin/
 
+# **QUUX'S DISK AS A LIBRARY, STAGING ONLY**, for `cadr-checkpoint`, which
+# binds a QUUX disk by the same test the drive bay makes of it and must not
+# carry a second copy of that test.  `cadr-readout`'s shape: the header in a
+# cadr/ directory of its own, so the consumer writes the same quoted include
+# on the host, where the directory is this one.
+LIB := libquux-disk.a
+
+$(LIB): quux_disk.o
+	$(AR) rcs $@ quux_disk.o
+
+quux_disk.o: quux_disk.c quux_disk.h
+	$(CC) $(CFLAGS) -c -o $@ quux_disk.c
+
+install-staging: $(LIB)
+	install -d $(DESTDIR)/usr/lib $(DESTDIR)/usr/include/cadr
+	install -m 0644 $(LIB) $(DESTDIR)/usr/lib/
+	install -m 0644 quux_disk.h $(DESTDIR)/usr/include/cadr/
+
 # The check.  Its own object directory, so a target build and a host build
 # never share a binary.
 check: $(WORK)/feeder_test
@@ -101,6 +119,6 @@ mutants:
 	python3 mutate.py --list pack_mutations.txt --work $(WORK)/mutants --golden $(GOLDEN) --q8-disks $(Q8_DISKS) $(MUTANT_ARGS)
 
 clean:
-	rm -f $(PROGRAMS)
+	rm -f $(PROGRAMS) $(LIB) quux_disk.o
 
-.PHONY: all install check mutants clean
+.PHONY: all install install-staging check mutants clean

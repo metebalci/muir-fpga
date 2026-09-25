@@ -12,20 +12,21 @@
 # the build host.
 #
 # **TWO SOURCE LISTS FOR EACH BORROWED LIBRARY, AND WHICH IS FOR WHICH BUILD.**
-# This program borrows twice: /dev/mem, the EMIO tally guard and the logging
-# are cadr-common's, and the console's readout window is cadr-readout's.
+# This program borrows three times: /dev/mem, the EMIO tally guard and the
+# logging are cadr-common's, the console's readout window is cadr-readout's,
+# and the test that says a file is QUUX's disk is cadr-disk-packs's.
 # Buildroot's `local` site method rsyncs only THIS directory into the build
-# tree, so neither sibling's files are there at target-build time and a
-# relative include of them would build here and fail under Buildroot. Both
-# packages therefore install a static library and their headers into the
-# staging tree, and this links against them. So:
+# tree, so no sibling's files are there at target-build time and a
+# relative include of them would build here and fail under Buildroot. All
+# three packages therefore install a static library and their headers into
+# the staging tree, and this links against them. So:
 #
-#   the target build (`all`)   -lcadr-common -lcadr-readout, and the headers
+#   the target build (`all`)   -lcadr-common -lcadr-readout -lquux-disk, and the headers
 #                              out of the staging tree
 #   the host build (`check`)   the same .c files compiled straight from the
 #                              sibling directories, where `..` is real
 #
-# `make all COMMON=host READOUT=host` builds the program itself the host way,
+# `make all COMMON=host READOUT=host DISK=host` builds the program itself the host way,
 # which is how it is compiled here without Buildroot.
 #
 # **NOTHING OF cadr-readout IS COPIED INTO THIS DIRECTORY.**  `readout.c`,
@@ -64,6 +65,20 @@ READOUT_INC  ?=
 READOUT_LINK := -lcadr-readout
 endif
 
+# And QUUX's disk, `cadr-disk-packs`'s `quux_disk.c`, the same way: its
+# header beside the readout's in the staging tree's `usr/include/cadr`, which
+# `READOUT_INC` already names on the target.
+DISK         ?= staging
+DISK_DIR     := ../../cadr-disk-packs/src
+DISK_SRC     := $(DISK_DIR)/quux_disk.c
+ifeq ($(DISK),host)
+DISK_INC     := -I$(DISK_DIR)
+DISK_LINK    := $(DISK_SRC)
+else
+DISK_INC     :=
+DISK_LINK    := -lquux-disk
+endif
+
 HOSTCC ?= cc
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 # The work directory is this directory's own, by its path hashed, as
@@ -72,13 +87,25 @@ HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 # The top-level Makefile passes its own, under its `build/`.
 WORK   ?= $(HOME)/.cache/muir-fpga-checkpoint-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 
+# QUUX's disks (contract Q8), which the binding's check holds a QUUX disk's
+# detection to: muir's `data/quux-disk*`, made by qemu, from the muir beside
+# this repository as `golden/Cargo.toml` finds it, and held to the digests
+# `cadr-disk-packs` records for the same five files before the check reads
+# them.  `Q8_DISKS=<dir>` names another directory holding them.
+Q8_DISKS ?= $(abspath ../../../../../../../../muir/data)
+Q8_SUMS  := ../../cadr-disk-packs/src/q8_disks.sha256
+Q8_VERIFY = @for f in $$(awk '{print $$2}' $(Q8_SUMS)); do \
+	    test -f $(Q8_DISKS)/$$f || { echo "no $(Q8_DISKS)/$$f: QUUX's disks are muir's data/quux-disk*; or pass Q8_DISKS=<dir>"; exit 1; }; done; \
+	sed 's|  |  $(Q8_DISKS)/|' $(Q8_SUMS) | sha256sum -c --quiet - \
+	    || { echo "the disks in $(Q8_DISKS) are not the ones this check is held to ($(Q8_SUMS))"; exit 1; }
+
 CFLAGS += -Wall -Wextra -std=gnu11
 
 all: $(PROGRAMS)
 
 cadr-checkpoint: cadr-checkpoint.c $(CORE) $(HEADERS)
-	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(READOUT_INC) $(LDFLAGS) -o $@ \
-	    cadr-checkpoint.c $(CORE) $(READOUT_LINK) $(COMMON_LINK)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(READOUT_INC) $(DISK_INC) $(LDFLAGS) -o $@ \
+	    cadr-checkpoint.c $(CORE) $(READOUT_LINK) $(DISK_LINK) $(COMMON_LINK)
 
 install: all
 	install -d $(DESTDIR)/usr/bin
@@ -92,14 +119,15 @@ install: all
 # gets something for muir to open, and `QCHK` the QUUX machine's, which
 # `build/checkpoint.quux.pass` compares with muir's own.
 check: $(WORK)/checkpoint_test
-	$(WORK)/checkpoint_test $(WORK) $(CHK) $(QCHK)
+	$(Q8_VERIFY)
+	$(WORK)/checkpoint_test $(WORK) $(Q8_DISKS) $(CHK) $(QCHK)
 
 $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                          $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
-                         $(READOUT_DIR)/cadr_image.h
+                         $(READOUT_DIR)/cadr_image.h $(DISK_SRC) $(DISK_DIR)/quux_disk.h
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -I$(READOUT_DIR) -I$(COMMON_DIR) -o $@ checkpoint_test.c \
-	    $(CORE) $(READOUT_SRC)
+	$(HOSTCC) $(HOSTCFLAGS) -I$(READOUT_DIR) -I$(COMMON_DIR) -I$(DISK_DIR) -o $@ checkpoint_test.c \
+	    $(CORE) $(READOUT_SRC) $(DISK_SRC)
 
 # The mutants. **A ROUND TRIP THAT CANNOT FAIL IS NOT EVIDENCE**, so the same
 # check is built again with each value of `CHK_MUTATE` and `build/checkpoint
@@ -116,10 +144,10 @@ mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                            $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
-                           $(READOUT_DIR)/cadr_image.h
+                           $(READOUT_DIR)/cadr_image.h $(DISK_SRC) $(DISK_DIR)/quux_disk.h
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -DCHK_MUTATE=$* -I$(READOUT_DIR) -I$(COMMON_DIR) -o $@ \
-	    checkpoint_test.c $(CORE) $(READOUT_SRC)
+	$(HOSTCC) $(HOSTCFLAGS) -DCHK_MUTATE=$* -I$(READOUT_DIR) -I$(COMMON_DIR) -I$(DISK_DIR) -o $@ \
+	    checkpoint_test.c $(CORE) $(READOUT_SRC) $(DISK_SRC)
 
 clean:
 	rm -f $(PROGRAMS)

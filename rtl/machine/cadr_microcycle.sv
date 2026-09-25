@@ -246,6 +246,17 @@ module cadr_microcycle #(
     // And each of QUUX's two clock flags as it stands, for the register
     // page's word 100 (`quux_clocks.sv`'s `pending`); zero on the CADR.
     output var logic [1:0]  clock_pending,
+    // `PROG.UNIBUS.RESET`, `INTERRUPT-CONTROL<28>` at FLAG 3E08 as it
+    // stands.  On the board it crosses the cable as `-BUS.RESET` to the bus
+    // interface, whose `RESET` puts `-XBUS INIT` and `-UB INIT` on the
+    // backplane; `cadr_machine.sv` makes that reset of the boards out of its
+    // rise, as muir's `Rtl` calls `Machine::bus_reset` when the write that
+    // raises it lands.
+    output var logic        prog_unibus_reset_o,
+    // And that this microcycle's `INTERRUPT-CONTROL` write raises it: muir
+    // resets the boards as the write lands, so the interrupt the edge ending
+    // this microcycle takes is already the reset boards' (`cadr_machine.sv`).
+    output var logic        prog_unibus_reset_rising,
 
     // --- `UB MD LOAD`, `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17: MD's
     // THIRD writer, and the only one that is not the processor's own.  A
@@ -1282,6 +1293,8 @@ module cadr_microcycle #(
   // page MF: the functional sources, off the two 74S138s that decode
   // IR<28:26> under IR<31> and IR<29>.
   logic prog_unibus_reset;
+  assign prog_unibus_reset_o = prog_unibus_reset;
+  assign prog_unibus_reset_rising = destintctl && ob[28] && !prog_unibus_reset;
   logic srcdc, srcpdlptr, srcpdlidx, srcopc, srcq, srcvma, srcmap, srcmd, srclc;
   assign srcdc     = group_a && (ir[28:26] == 3'd0);
   assign srcpdlptr = group_a && (ir[28:26] == 3'd2);
@@ -2920,12 +2933,10 @@ module cadr_microcycle #(
         wrcyc          <= 1'b0;
         mbusy          <= 1'b0;
         // FLAG 3E08, the 25LS2519, all four of the bits this fabric has of
-        // it.  `PROG.UNIBUS.RESET` is `INTERRUPT-CONTROL<28>` and reaches
-        // nothing here yet --- on the board it crosses to the bus interface
-        // and is one of the four inputs of the `RESET` that makes `-XBUS
-        // INIT` and `-UB INIT` --- so no check can tell a fabric that clears
-        // it from one that does not.  `Rtl::reset` clears it, and a register
-        // the machine has is worth more than an absence.
+        // it.  `PROG.UNIBUS.RESET` is `INTERRUPT-CONTROL<28>`; it crosses to
+        // the bus interface as one of the four inputs of the `RESET` that
+        // makes `-XBUS INIT` and `-UB INIT` (`prog_unibus_reset_o`), and
+        // `Rtl::reset` clears it.
         lc_byte_mode   <= 1'b0;
         int_enable     <= 1'b0;
         sequence_break <= 1'b0;

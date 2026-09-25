@@ -4,6 +4,7 @@ config BR2_PACKAGE_CADR_CHECKPOINT
 	bool "cadr-checkpoint"
 	select BR2_PACKAGE_CADR_COMMON
 	select BR2_PACKAGE_CADR_READOUT
+	select BR2_PACKAGE_CADR_DISK_PACKS
 	help
 	  The checkpoint program. It reads the CADR's own memories
 	  through the console's readout window and its main memory

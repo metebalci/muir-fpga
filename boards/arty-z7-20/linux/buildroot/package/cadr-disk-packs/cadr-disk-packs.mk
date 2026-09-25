@@ -38,9 +38,15 @@ CADR_DISK_PACKS_LICENSE = AGPL-3.0-or-later
 # src/ and a sibling's files are not there when this builds.
 # package/cadr-common/cadr-common.mk's header has the argument.
 CADR_DISK_PACKS_DEPENDENCIES = cadr-common
+# QUUX's disk as a library, which cadr-checkpoint links.
+CADR_DISK_PACKS_INSTALL_STAGING = YES
 
 define CADR_DISK_PACKS_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
+endef
+
+define CADR_DISK_PACKS_INSTALL_STAGING_CMDS
+	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D) DESTDIR=$(STAGING_DIR) install-staging
 endef
 
 define CADR_DISK_PACKS_INSTALL_TARGET_CMDS

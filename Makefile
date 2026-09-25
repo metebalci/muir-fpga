@@ -123,7 +123,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/board_reset.pass $(BUILD)/fault.pass \
        $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
-       $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
+       $(BUILD)/disk.pass $(BUILD)/disk_pack.pass $(BUILD)/disk_packs.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass $(BUILD)/chaos_cable.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass $(BUILD)/color_tv.pass \
@@ -146,7 +146,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
 # QUUX's checks: the whole machine built as QUUX on QUUX's own boot PROM, and
 # each of the programs in `golden/src/quux.rs` that reach what that PROM does
 # not.  The CADR runs the same programs in `CHECK_CADR` above.
-QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks
+QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset
 # QUUX's own, at its synchronous microcycle: the same but `tick` and
 # `tickwait`, which were revision 4's tick, whose period destination 4 set;
 # revision 5 fixes the tick at 60 Hz and gives destination 4 to the interval
@@ -155,8 +155,10 @@ QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks
 # taken at (`golden/src/quux.rs`).  The CADR's sides of `tick` and
 # `tickwait` are unchanged.  And `pdlsync`, QUUX's alone: a push into the PDL
 # buffer and a pop after it; and `imemsync`, words written into the control
-# store and run, below QUUX's PROM and over it.
-QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page clockwait memedge
+# store and run, below QUUX's PROM and over it.  And `busreset`, on both
+# machines: `PROG.UNIBUS.RESET` and what each board clears on `-XBUS INIT` and
+# `-UB INIT`, block-disk's command and errors on QUUX.
+QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page clockwait memedge busreset
 # And those taken at an L of one as well: `divmd`, whose `DIV`s are half
 # `ILONG`, `divmdsync`, whose one `ILONG` filler at an L of one moves the
 # word read a tick against the microcycles, and `tickwin`, whose `ILONG`s put
@@ -3698,6 +3700,13 @@ CHECKPOINT_SRC  := boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src
 # --- is never the one used here.  `tools/work_dir_check.py`, run by
 # `build/work_dirs.pass`, holds both halves.
 CHECKPOINT_WORK := $(abspath $(BUILD))/checkpoint-work
+# **QUUX'S DISKS (contract Q8)**: muir's `data/quux-disk*`, made by qemu, from
+# the pinned muir beside this repository, the one `golden/Cargo.toml` resolves
+# as `../../muir`.  `cadr-disk-packs` holds its QUUX disk layer to them and
+# `cadr-checkpoint` its binding of a QUUX disk, each checking the five files'
+# digests (`q8_disks.sha256`) before it reads them.
+DISK_PACKS_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src
+Q8_DISKS ?= $(abspath $(MUIR)/muir/data)
 
 $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
                          $(wildcard boards/arty-z7-20/linux/buildroot/package/*/src/Makefile) | $(BUILD)
@@ -3818,10 +3827,12 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(CHECKPOINT_SRC)/sha256.c $(CHECKPOINT_SRC)/sha256.h \
                           $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
                           $(READOUT_SRC)/cadr_image.h \
+                          $(DISK_PACKS_SRC)/quux_disk.c $(DISK_PACKS_SRC)/quux_disk.h \
+                          $(DISK_PACKS_SRC)/q8_disks.sha256 \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
 	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk \
-	    QCHK=$(CHECKPOINT_WORK)/quux.chk
-	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host
+	    QCHK=$(CHECKPOINT_WORK)/quux.chk Q8_DISKS=$(Q8_DISKS)
+	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
 	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir/Cargo.toml \
@@ -3846,7 +3857,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	 echo "checkpoint: resumed $$(grep '^resumed' $$W/muir.log | sed 's/^resumed: [^ ]* //'),"; \
 	 echo "checkpoint: and the file is the one the digest was recorded for."; \
 	 for m in 1 2 3 4 5 6 7 8; do \
-	   $$W/checkpoint_test-$$m $$W $$W/mut-$$m.chk > $$W/mut-$$m.out 2>&1 \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/mut-$$m.chk > $$W/mut-$$m.out 2>&1 \
 	     || { echo "checkpoint: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
 	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out); \
@@ -3907,7 +3918,7 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	 echo "checkpoint.quux: $$(stat -c%s $$W/quux.chk) bytes, the same as muir's own for the same machine,"; \
 	 echo "checkpoint.quux: loaded and saved back identically, resumed $$(grep '^resumed' $$W/quux-muir.log | sed 's/^resumed: [^ ]* //')"; \
 	 for m in 9 10 11 12 13 14 15 16 17; do \
-	   $$W/checkpoint_test-$$m $$W $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/qmut-$$m.out; exit 1; }; \
 	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-$$m.out); \
@@ -3974,6 +3985,32 @@ TERMINAL_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-terminal
 TERMINAL_SRC := $(TERMINAL_PKG)/src
 USB_INPUT_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-usb-input
 USB_INPUT_SRC := $(USB_INPUT_PKG)/src
+
+# **`cadr-disk-packs`'s OWN CHECK AND ITS OWN MUTATIONS.**  The package has
+# had a `make check` --- the feeder against a scripted controller and
+# `build/disk.golden`, the drive bay against a directory of real files, and
+# QUUX's disk layer against muir's qemu-made disks --- and a `make mutants`
+# over `pack_mutations.txt`, and until this target `make check` ran neither:
+# the DE25's program check compiled the package and nothing held what it
+# does.  `mutate.py` prints "N caught, 0 survived, 0 broken" and fails on a
+# survivor or a record that did not build.  The host build of the program and
+# of the QUUX disk library `cadr-checkpoint` links are made and removed after.
+# Its own work directory under this tree's `build/`, as the checkpoint's is.
+DISK_PACKS_WORK := $(abspath $(BUILD))/disk-packs-work
+$(BUILD)/disk_packs.pass: $(wildcard $(DISK_PACKS_SRC)/*.c) $(wildcard $(DISK_PACKS_SRC)/*.h) \
+                          $(DISK_PACKS_SRC)/Makefile $(DISK_PACKS_SRC)/mutate.py \
+                          $(DISK_PACKS_SRC)/pack_mutations.txt $(DISK_PACKS_SRC)/q8_disks.sha256 \
+                          $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
+                          $(BUILD)/disk.golden | $(BUILD)
+	$(MAKE) -C $(DISK_PACKS_SRC) check WORK=$(DISK_PACKS_WORK) \
+	    GOLDEN=$(abspath $(BUILD))/disk.golden Q8_DISKS=$(Q8_DISKS)
+	$(MAKE) -C $(DISK_PACKS_SRC) mutants WORK=$(DISK_PACKS_WORK) \
+	    GOLDEN=$(abspath $(BUILD))/disk.golden Q8_DISKS=$(Q8_DISKS)
+	$(MAKE) -C $(DISK_PACKS_SRC) all libquux-disk.a COMMON=host
+	$(MAKE) -C $(DISK_PACKS_SRC) clean
+	@echo "disk_packs: the program builds, its feeder, drive bay and QUUX disk layer agree with"
+	@echo "disk_packs: muir's trace and qemu's disks, and every record in its list is caught"
+	@touch $@
 
 # The init script and the check that runs it are prerequisites too.  The
 # package ships three things --- the program, its mutations and the script that
@@ -4390,7 +4427,7 @@ $(BUILD)/de25_linux.pass: $(BR_DE25_CHECK) \
 	@rm -rf $(DE25_LINUX_WORK) && mkdir -p $(DE25_LINUX_WORK)/bin
 	@cp -a $(BR_EXTERNAL)/package $(DE25_LINUX_WORK)/package
 	@set -e; for p in $(DE25_LINUX_PROGRAMS); do \
-	    MAKEFLAGS= $(BR_MAKE) -s -C $(DE25_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host \
+	    MAKEFLAGS= $(BR_MAKE) -s -C $(DE25_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host DISK=host \
 	        CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -DCADR_BOARD_DE25_NANO"; \
 	    cp $(DE25_LINUX_WORK)/package/$$p/src/$$p $(DE25_LINUX_WORK)/bin/; \
 	done

@@ -402,6 +402,8 @@ int main(int argc, char **argv)
 	// --- is not there is found out while the machine is still running.
 	struct binding bind;
 	bind_init(&bind);
+	// Before a pack is looked at: which machine's rule says what a pack is.
+	bind.quux = quux;
 	char err[1024] = "";
 	for (unsigned i = 0; i < npacks; ++i) {
 		if (bind_add(&bind, packs[i], err, sizeof err) != 0) {

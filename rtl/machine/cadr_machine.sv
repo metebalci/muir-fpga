@@ -724,7 +724,40 @@ module cadr_machine #(
   // **ON QUUX THE UNIBUS INTERRUPT DOES NOT REACH THE PROCESSOR**, QUUX
   // having no Unibus (contract Q5, `Machine::interrupt_at`'s
   // `geometry.unibus`): its devices interrupt through the register page.
-  assign sintr_o   = xbus_intr || (ub_int && !QUUX) || tick_irq || page_irq;
+  // **`-XBUS INIT` AND `-UB INIT`: THE POWER-ON RESET, AND THE PROCESSOR'S
+  // `PROG.UNIBUS.RESET`.**  On the board the bus interface's `RESET` (the
+  // 74S10 at DBGIN 0A14) is made from `-LM UNIBUS RESET`, the processor's
+  // `PROG.UNIBUS.RESET` (`INTERRUPT-CONTROL<28>`, over the cable as
+  // `-BUS.RESET`), the debug cable's `-DEBUGEE RESET` and `UNIBUS INIT IN`,
+  // and it reaches every board on the backplane.  muir's `Rtl` calls
+  // `Machine::bus_reset` when the `INTERRUPT-CONTROL` write that raises the
+  // bit lands, on either machine, and each board clears once what its own
+  // reset pin clears: the display boards' vertical flag, the disk's command
+  // and errors (the CADR's controller and QUUX's block-disk), and the I/O
+  // board's interrupt enables, Chaosnet interface and serial line.  So the
+  // bit's rise is one tick of init here, the tick after the edge that takes
+  // the write.  `rst` asserts it too, and the top level makes `rst` of the
+  // board's reset, the console's pulse and the debug cable's reset.
+  //
+  // **AND THE INTERRUPT IS THE RESET BOARDS' AT THE WRITE'S OWN EDGE.**
+  // muir takes `SINTR` at the end of the microcycle whose write raised the
+  // bit, after the boards have cleared, where the boards here clear a tick
+  // after the edge that ends it.  So in the microcycle that writes the bit
+  // (`prog_unibus_reset_rising`) the terms those boards make are held off:
+  // the Xbus line's whole, the display's flag and the disk's done, and on
+  // QUUX the network's term of the register page.  This is `quux_clocks.sv`'s
+  // shape for a write that takes its own flag down.  In the one tick between
+  // that edge and the boards' clearing the terms are up again, and nothing
+  // takes them there: `SINTR` is taken at the processor's edge alone, a
+  // microcycle on.  The Unibus line is left as it is; nothing here compares
+  // it across a reset.
+  logic prog_unibus_reset, prog_unibus_reset_rising, prog_unibus_reset_q;
+  logic bus_init;
+  always_ff @(posedge clk)
+    prog_unibus_reset_q <= rst ? 1'b0 : prog_unibus_reset;
+  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q);
+
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
 
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX),
@@ -755,6 +788,8 @@ module cadr_machine #(
       .sintr       (sintr_o),
       .tick_irq    (tick_irq),
       .clock_pending(clock_pending),
+      .prog_unibus_reset_o(prog_unibus_reset),
+      .prog_unibus_reset_rising(prog_unibus_reset_rising),
       .n_memack    (n_memack),
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
@@ -838,9 +873,9 @@ module cadr_machine #(
   ) memory (
       .clk        (clk),
       .rst        (rst),
-      // `-XBUS INIT`, as the disk takes it below: the power-on reset is the
-      // one thing that asserts it here.
-      .xbus_init  (rst),
+      // `-XBUS INIT`, as the disk takes it below: the power-on reset and
+      // `PROG.UNIBUS.RESET`'s rise (`bus_init` above).
+      .xbus_init  (bus_init),
       .mclk       (mclk),
       .n_memrq    (n_memrq),
       .wrcyc      (wrcyc),
@@ -1074,11 +1109,11 @@ module cadr_machine #(
   quux_block_disk disk (
       .clk      (clk),
       .rst      (rst),
-      // `-XBUS INIT` on the backplane. The power-on reset is the one thing
-      // that asserts it here --- there is no console to pull it --- and `rst`
-      // is the harder of the two: it clears the disk address counters and the
-      // command list pointer, which `-XINIT` leaves standing.
-      .xbus_init(rst),
+      // `-XBUS INIT` on the backplane: the power-on reset and
+      // `PROG.UNIBUS.RESET`'s rise (`bus_init` above).  `rst` is the harder
+      // of the two: it clears the disk address counters and the command list
+      // pointer, which `-XINIT` leaves standing.
+      .xbus_init(bus_init),
       .drive_present  (drive_present),
       .drive_read_only(drive_read_only),
       .drive_timed    (drive_timed),
@@ -1132,11 +1167,11 @@ module cadr_machine #(
   cadr_disk_controller disk (
       .clk      (clk),
       .rst      (rst),
-      // `-XBUS INIT` on the backplane. The power-on reset is the one thing
-      // that asserts it here --- there is no console to pull it --- and `rst`
-      // is the harder of the two: it clears the disk address counters and the
-      // command list pointer, which `-XINIT` leaves standing.
-      .xbus_init(rst),
+      // `-XBUS INIT` on the backplane: the power-on reset and
+      // `PROG.UNIBUS.RESET`'s rise (`bus_init` above).  `rst` is the harder
+      // of the two: it clears the disk address counters and the command list
+      // pointer, which `-XINIT` leaves standing.
+      .xbus_init(bus_init),
       .drive_present  (drive_present),
       .drive_read_only(drive_read_only),
       .drive_timed    (drive_timed),
@@ -1211,6 +1246,7 @@ module cadr_machine #(
         // Block-disk's done (`quux_block_disk.sv`).
         .disk_irq     (disk_intr),
         .chaos_ireq   (chaos_ireq),
+        .prog_unibus_reset_rising(prog_unibus_reset_rising),
         .err          (page_err),
         .err_clear    (page_err_clear),
         .errstop      (errstop),

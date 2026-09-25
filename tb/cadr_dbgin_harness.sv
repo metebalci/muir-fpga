@@ -402,6 +402,10 @@ module cadr_dbgin_harness #(
       // `-PROMENABLE` goes to a lamp on a board and there is no lamp here.
       /* verilator lint_off PINCONNECTEMPTY */
       .machrun_o (), .errhalt_o (), .stathalt_o (), .promenable (),
+      // `PROG.UNIBUS.RESET`, which reaches the backplane's boards in
+      // `cadr_machine.sv` and there are none here.
+      .prog_unibus_reset_o (),
+      .prog_unibus_reset_rising (),
       /* verilator lint_on PINCONNECTEMPTY */
       .run         (run_o),
       // The board's no-auto-boot switch, which this harness has none of: the

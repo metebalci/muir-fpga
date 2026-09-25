@@ -22,9 +22,12 @@
 // zeros would let a program that wrote the same field twice, or skipped one,
 // or crossed two, agree with muir at every byte.
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "cadr_image.h"
 #include "chk.h"
@@ -404,14 +407,20 @@ int main(int argc, char **argv)
 	// that has moved --- needs somewhere to put three small files, and a
 	// check that quietly does less when an argument is missing is the
 	// failure this repository keeps meeting.  So it is demanded.
-	if (argc < 2) {
-		fprintf(stderr, "usage: checkpoint_test <scratch directory> "
-			"[<CADR checkpoint to write> [<QUUX checkpoint to write>]]\n");
+	//
+	// **AND NEITHER ARE QUUX'S DISKS.**  A QUUX disk is bound by its footers,
+	// and the files that hold that to something are muir's `data/quux-disk*`,
+	// made by qemu and never by this program; the directory holding them is
+	// the second argument, and the Makefile checks their digests first.
+	if (argc < 3) {
+		fprintf(stderr, "usage: checkpoint_test <scratch directory> <QUUX's disks, "
+			"muir's data/> [<CADR checkpoint to write> [<QUUX checkpoint to write>]]\n");
 		return 2;
 	}
 	const char *work = argv[1];
-	const char *out = argc > 2 ? argv[2] : NULL;
-	const char *quux_out = argc > 3 ? argv[3] : NULL;
+	const char *q8 = argv[2];
+	const char *out = argc > 3 ? argv[3] : NULL;
+	const char *quux_out = argc > 4 ? argv[4] : NULL;
 
 	if (chk_rtl_mutation())
 		printf("checkpoint: THIS IS A MUTANT --- %s\n", chk_rtl_mutation());
@@ -594,6 +603,141 @@ int main(int argc, char **argv)
 		    bind_read(&rd, side, err, sizeof err) != 0 || rd.quux)
 			fail("a CADR sidecar read back as QUUX's", 1, 0);
 		remove(side);
+	}
+
+	// ---- a QUUX disk, bound by its footers and never by its size -------
+	//
+	// QUUX's disk is block-disk's one pack, unit 0, of any size, raw, a
+	// fixed VHD or a dynamic VHD (contract Q8).  So under `--machine quux`
+	// the drive bay's `disk-pack-0.img` is a pack when `cadr-disk-packs`'s own
+	// test says it is a QUUX disk --- the footers, the dynamic header, the
+	// block count --- and the CADR's rule, a T-300's or a T-80's size, would
+	// find none of them.  Each of muir's three is put in a bay of its own
+	// under the same name, as the card holds it.
+	{
+		char bay[256], pack0[320], err[512];
+		snprintf(bay, sizeof bay, "%s/q8-bay", work);
+		snprintf(pack0, sizeof pack0, "%s/disk-pack-0.img", bay);
+		mkdir(bay, 0755);
+		static const struct { const char *file, *format; } disks[] = {
+			{ "quux-disk.img", "raw" },
+			{ "quux-disk-fixed.vhd", "fixed-vhd" },
+			{ "quux-disk-dynamic.vhd", "dynamic-vhd" },
+		};
+		for (unsigned i = 0; i < sizeof disks / sizeof disks[0]; ++i) {
+			char src[512];
+			snprintf(src, sizeof src, "%s/%s", q8, disks[i].file);
+			struct stat st;
+			if (stat(src, &st) != 0) {
+				fprintf(stderr, "no %s: QUUX's disks are muir's data/quux-disk*\n", src);
+				++bad;
+				continue;
+			}
+			remove(pack0);
+			if (symlink(src, pack0) != 0) {
+				fprintf(stderr, "%s: %s\n", pack0, strerror(errno));
+				++bad;
+				continue;
+			}
+			struct binding q;
+			bind_init(&q);
+			q.quux = 1;
+			err[0] = '\0';
+			const int n = bind_scan(&q, bay, err, sizeof err);
+			if (n != 1 || !q.u[0].present || q.present != 1) {
+				fprintf(stderr, "QUUX's %s was not bound as unit 0: %d found, %s\n",
+					disks[i].file, n, err);
+				++bad;
+				continue;
+			}
+			if (strcmp(q.u[0].format, disks[i].format) != 0) {
+				fprintf(stderr, "QUUX's %s was bound as \"%s\", and it is %s\n",
+					disks[i].file, q.u[0].format, disks[i].format);
+				++bad;
+			}
+			// Every one of the three holds the same disk of 8 MiB.
+			if (q.u[0].blocks != 8192)
+				fail("a QUUX disk's blocks", q.u[0].blocks, 8192);
+			if (q.u[0].bytes != (uint64_t)st.st_size)
+				fail("a QUUX disk's bytes, the file's", q.u[0].bytes, (uint64_t)st.st_size);
+			if (bind_digest(&q, err, sizeof err) != 0) {
+				fprintf(stderr, "QUUX's %s could not be digested: %s\n", disks[i].file, err);
+				++bad;
+			}
+			// The sidecar carries what the file is, and its resume is QUUX's
+			// with the disk as unit 0.
+			char side[400], cmd[4096];
+			snprintf(side, sizeof side, "%s/q8.chk%s", work, BIND_SUFFIX);
+			snprintf(q.checkpoint, sizeof q.checkpoint, "%s/q8.chk", work);
+			struct binding rd;
+			if (bind_write(&q, side, err, sizeof err) != 0 ||
+			    bind_read(&rd, side, err, sizeof err) != 0) {
+				fprintf(stderr, "a QUUX sidecar: %s\n", err);
+				++bad;
+			} else if (!rd.quux || !rd.u[0].present ||
+				   strcmp(rd.u[0].format, disks[i].format) != 0 ||
+				   rd.u[0].blocks != 8192 ||
+				   strcmp(rd.u[0].sha256, q.u[0].sha256) != 0) {
+				fprintf(stderr, "a QUUX sidecar lost the disk's format, blocks or "
+					"digest: \"%s\", %llu\n", rd.u[0].format,
+					(unsigned long long)rd.u[0].blocks);
+				++bad;
+			}
+			remove(side);
+			bind_resume_command(&q, "q8.chk", cmd, sizeof cmd);
+			char want[400];
+			snprintf(want, sizeof want, " --disk-pack %s,0 ", pack0);
+			if (!strstr(cmd, "--machine quux") || !strstr(cmd, want)) {
+				fprintf(stderr, "QUUX's resume command: %s\n", cmd);
+				++bad;
+			}
+			// Named by hand, the same.
+			struct binding h;
+			bind_init(&h);
+			h.quux = 1;
+			char spec[400];
+			snprintf(spec, sizeof spec, "%s,0", pack0);
+			if (bind_add(&h, spec, err, sizeof err) != 0 ||
+			    strcmp(h.u[0].format, disks[i].format) != 0) {
+				fprintf(stderr, "QUUX's %s named by hand: %s\n", disks[i].file, err);
+				++bad;
+			}
+			// And the CADR's rule finds no pack in it: 8 MiB is no drive's.
+			struct binding c;
+			bind_init(&c);
+			err[0] = '\0';
+			if (bind_scan(&c, bay, err, sizeof err) != 0 || c.present != 0)
+				fail("the CADR bound a QUUX disk", c.present, 0);
+		}
+		// A VHD whose footer does not check is no disk: the fixed one copied,
+		// one byte of its footer changed.
+		remove(pack0);
+		{
+			char src[512];
+			snprintf(src, sizeof src, "%s/quux-disk-fixed.vhd", q8);
+			FILE *in = fopen(src, "rb"), *o = fopen(pack0, "wb");
+			int c;
+			while (in && o && (c = fgetc(in)) != EOF)
+				fputc(c, o);
+			if (in)
+				fclose(in);
+			if (o) {
+				fseek(o, -512 + 20, SEEK_END);
+				fputc(0x5a, o);
+				fclose(o);
+			}
+			struct binding q;
+			bind_init(&q);
+			q.quux = 1;
+			err[0] = '\0';
+			if (bind_scan(&q, bay, err, sizeof err) != 0 || q.present != 0)
+				fail("a VHD whose footer does not check was bound", q.present, 0);
+			else if (!strstr(err, "checksum"))
+				fprintf(stderr, "a VHD whose footer does not check was refused "
+					"without saying why: \"%s\"\n", err), ++bad;
+		}
+		remove(pack0);
+		rmdir(bay);
 	}
 
 	// ---- the packer ----------------------------------------------------

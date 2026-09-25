@@ -647,6 +647,18 @@ CHECKS = {
         "prom": "quux_page_prom.quux.hex",
         "machine": "quux",
     }),
+    # `PROG.UNIBUS.RESET` and what each board clears on it, both machines.
+    "quux_busreset": dict(MACHINE_CHECK, **{
+        "golden": "quux_busreset.golden",
+        "prom": "quux_busreset_prom.hex",
+    }),
+    "quux_busreset_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_busreset.quux.golden",
+        "prom": "quux_busreset_prom.quux.hex",
+        "machine": "quux",
+    }),
     "quux_divmd": dict(MACHINE_CHECK, **{
         "golden": "quux_divmd.golden",
         "prom": "quux_divmd_prom.hex",
@@ -2316,7 +2328,7 @@ PENDING = {}
 
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
     ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
-                                  "imemsync", "page", "clockwait", "memedge")]
+                                  "imemsync", "page", "clockwait", "memedge", "busreset")]
 CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
 CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)
 CHECKS["quux_clockwait_quux_l1"] = _timed("quux_clockwait_quux", 4, 1)

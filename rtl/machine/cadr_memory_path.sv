@@ -145,8 +145,9 @@ module cadr_memory_path #(
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
     // `-XBUS INIT` on the backplane, which is not a bus cycle: the display's
-    // vertical flag clears on it.  `cadr_machine.sv` ties it to the power-on
-    // reset, the one thing that asserts it there.
+    // vertical flag clears on it, and the I/O board takes it as `-UB INIT`.
+    // `cadr_machine.sv` makes it of the power-on reset and the rise of
+    // `PROG.UNIBUS.RESET`.
     input  var logic        xbus_init,
 
     // The processor's side of the cables.
@@ -1248,16 +1249,13 @@ module cadr_memory_path #(
   // arbitration.  So the address is settled tens of ticks before the strobe
   // and the held match is never the thing that is late.
   //
-  // **`-UB INIT` IS TIED TO THE POWER-ON RESET.**  It clears the 74LS175's
-  // four interrupt enables and the 74LS74's serial enable and reaches nothing
-  // else.  Nothing in this fabric pulls it: MIT's own source is
-  // `-LM UNIBUS RESET`, which is the console's reset and the debug cable's
-  // `-DEBUGEE RESET`, and neither is built --- the bus interface's own
-  // registers below answer `0o766040`-`0o766076` but none of their bits
-  // reaches this line.  So the one thing that asserts it here is `rst`, which
-  // is `xbus_init`'s argument one bus along.  It is tied rather than made a
-  // port because a port carrying nothing but `rst` at every level up to the
-  // top level says less than this comment.
+  // **`-UB INIT` IS `-XBUS INIT`'s TWIN**: the bus interface's one `RESET`
+  // drives both, so it is `xbus_init` here, which `cadr_machine.sv` makes of
+  // the power-on reset and `PROG.UNIBUS.RESET`'s rise.  It clears the
+  // 74LS175's four interrupt enables, the Chaosnet interface and the serial
+  // line, which is what muir's `IoBoard::unibus_init` clears in
+  // `Machine::bus_reset`.  The bus interface's own registers below answer
+  // `0o766040`-`0o766076` and none of their bits reaches this line.
   cadr_io_board iob (
       .clk        (clk),
       .rst        (rst),
@@ -1267,7 +1265,7 @@ module cadr_memory_path #(
       .ub_wdata   (sr_wdata),
       .ub_ssyn    (iob_ssyn),
       .ub_rdata   (iob_rdata),
-      .ub_init    (rst),
+      .ub_init    (xbus_init),
       .kbd_strobe (kbd_strobe),
       .kbd_code   (kbd_code),
       .n_boot_star(n_boot_star),

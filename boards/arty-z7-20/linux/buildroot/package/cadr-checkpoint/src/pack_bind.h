@@ -24,7 +24,10 @@
 //   the GEOMETRY of each, which muir ALSO enforces --- `Unit::load` refuses
 //     "a pack of Geometry { .. }, and the drive holds one of .." --- and
 //     which is taken from the pack file's own SIZE, exactly as
-//     `cadr-disk-packs` takes it, so it cannot be declared wrong either.
+//     `cadr-disk-packs` takes it, so it cannot be declared wrong either.  A
+//     QUUX disk has none: block-disk's one pack is any size, and what the
+//     file is --- raw, a fixed VHD or a dynamic VHD --- is told by its
+//     footers with `cadr-disk-packs`'s own `quux_disk_probe`.
 //   the CONTENT of each, which muir does not enforce and cannot: a SHA-256
 //     of every byte, recorded in a sidecar beside the checkpoint.
 //
@@ -70,6 +73,12 @@ struct bind_pack {
 	uint64_t bytes;
 	char sha256[SHA256_HEX];
 	uint32_t cylinders, heads, blocks_per_track;
+	// A QUUX disk's instead of a geometry: what the file is, told by its
+	// footers as `cadr-disk-packs` tells it (`quux_disk.h`), "raw",
+	// "fixed-vhd" or "dynamic-vhd", and its whole blocks of 1,024 bytes.
+	// Empty and zero for a CADR pack.
+	char format[16];
+	uint64_t blocks;
 	int read_only;
 	// Set by `bind_verify` when the pack on disk is not the one recorded.
 	int moved;
@@ -107,13 +116,17 @@ int bind_geometry_of_size(uint64_t bytes, uint32_t *cylinders, uint32_t *heads,
 			  uint32_t *blocks_per_track);
 
 // The drive bay: whichever of `disk-pack-0.img` .. `disk-pack-7.img` exist in
-// `dir` and are a geometry's size.  Returns how many were found; a name that
-// is there and is NOT a pack is reported through `err` and counts as absent.
+// `dir` and are a pack of the binding's machine --- on the CADR a geometry's
+// size, on QUUX (`quux` set before the scan) a QUUX disk by its footers, raw,
+// a fixed VHD or a dynamic VHD of any size, as `cadr-disk-packs --machine
+// quux` takes it.  Returns how many were found; a name that is there and is
+// NOT a pack is reported through `err` and counts as absent.
 int bind_scan(struct binding *b, const char *dir, char *err, size_t errlen);
 
 // One pack named by hand: `<file>[,<unit>]`, muir's own `--disk-pack` syntax
-// bar the `ro` it has no use for here.  The unit defaults to 0.  Returns 0,
-// or -1 with `err`.
+// bar the `ro` it has no use for here.  The unit defaults to 0, and the file
+// is held to the binding's machine's rule as `bind_scan` holds it.  Returns
+// 0, or -1 with `err`.
 int bind_add(struct binding *b, const char *spec, char *err, size_t errlen);
 
 // Read every present pack through and digest it.  Returns 0, or -1 with
