@@ -387,6 +387,11 @@
 # are names of an earlier build, matching nothing now); and QUUX's control
 # store's write, `iwe_q`, `iwa_q` and `iwd_q`, taken a tick after the edge
 # and written on the next.  The divider's held decode stays in the set.
+# And QUUX's memory port, `quux_mem_port.sv` with its cache, out whole: its
+# grant, its countdowns and the cache's order and valid bits move on every
+# tick, the port being answered at instants of its own.  What the cache holds
+# of the microcycle --- its RAMs and the address they were read at --- is
+# given back its time in `quux_machine.xdc`.
 # What QUUX alone relaxes beyond this is in `quux_machine.xdc`, read only for a
 # QUUX build.
 
@@ -428,6 +433,7 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *processor/iwa_q_reg*  && \
                                   NAME !~ *processor/iwd_q_reg*  && \
                                   NAME !~ *muldiv/dv_*       && \
+                                  NAME !~ *memory/g_quux_port.port/* && \
                                   (NAME !~ *mono_tv/* || NAME =~ *mono_tv/ctl_reg* || \
                                                          NAME =~ *mono_tv/fb_reg* || \
                                                          NAME =~ *mono_tv/which_reg*) && \

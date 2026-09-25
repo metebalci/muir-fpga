@@ -256,6 +256,18 @@ int main(int argc, char **argv) {
   // memory sizing's NXM cycles, the disk's polls and `0x2321` in MD, and every
   // guard below holds it as it holds MIT's.  This names the run in messages.
   bool quux_prom = false;
+  // **A MACHINE BUILT AS QUUX HAS ITS MEMORY PORT** (contract Q6): main
+  // memory is not on the Xbus but behind the port's cache, which asks this
+  // program for a line of four words on a miss and writes one word through
+  // its buffer after the cycle has ended.  So main memory's words are not
+  // placed from the trace here: this program IS main memory, a memory that
+  // starts as muir's does, all zeros, and holds what the port writes.  A
+  // word from the wrong line or a write that never went out reads back
+  // wrong, and MD is compared every microcycle.  It answers in one to five
+  // ticks, sooner than the nominal 380 and 290 ns, so every acknowledgment
+  // is the port's floor and must land on muir's instant.  The frame buffer
+  // is still an Xbus device's, placed from the trace as before.
+  bool quux_machine = false;
   // Key words for the keyboard's cable, by the microcycle they go in before,
   // and the ones not yet on it: one a tick, from the tick that microcycle
   // starts on.
@@ -285,6 +297,7 @@ int main(int argc, char **argv) {
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
         if (std::strstr(line, "golden/src/quux.rs")) script_trace = true;
         if (std::strstr(line, "QUUX's boot PROM")) quux_prom = true;
+        if (std::strstr(line, "machine: quux")) quux_machine = true;
         continue;
       }
       if (line[0] == '\n') continue;
@@ -550,6 +563,19 @@ int main(int argc, char **argv) {
   std::map<uint32_t,long> dev_words;
   long ack_at_tick = 0;
   long armed_row = -1;
+  // QUUX's main memory: its words, when the operation standing is due, and
+  // the writes the processor's cycles owe it, in order.
+  constexpr uint32_t kMainBase = 0x18000000u;
+  std::map<uint32_t, uint32_t> q_mem;
+  std::vector<std::pair<uint32_t, uint32_t>> q_owed;
+  long q_due = -1;
+  bool q_answered = false;
+  long q_fills = 0, q_writes = 0;
+  uint64_t q_seed = 0x5155u;
+  auto q_rng = [&]() {
+    q_seed = q_seed * 6364136223846793005ull + 1442695040888963407ull;
+    return static_cast<uint32_t>(q_seed >> 33);
+  };
   long early_grants = 0;
   size_t unanswerable = 0;
   std::set<uint64_t> a_values, m_values, ob_values;
@@ -581,6 +607,57 @@ int main(int argc, char **argv) {
     // used for; taking it from the bridge's own `mem_write` times the answer
     // and never chooses the data.
     dut->mem_done = 0;
+    // QUUX's main memory, answering the port (see `quux_machine`).
+    const bool q_main = quux_machine && dut->mem_req && dut->mem_addr >= kMainBase &&
+                        dut->mem_addr < kMainBase + (4u << 22);
+    if (q_main) {
+      if (q_due < 0) q_due = t + 1 + static_cast<long>(q_rng() % 5);
+      if (t >= q_due) {
+        const uint32_t w = (dut->mem_addr - kMainBase) >> 2;
+        if (!q_answered) {
+          q_answered = true;
+          if (dut->mem_line) {
+            ++q_fills;
+            if ((w & 3) || dut->mem_write) {
+              std::fprintf(stderr, "microcycle %zu: a line fill at %08x, not a line's address\n", k,
+                           dut->mem_addr);
+              ++bad;
+            } else if (!bus_outstanding || dut->wrcyc || (dut->phys & ~3u) != w) {
+              std::fprintf(stderr, "microcycle %zu: a line fill of word %o where the cycle is at %o%s\n",
+                           k, w, dut->phys, dut->wrcyc ? ", a write" : "");
+              ++bad;
+            }
+            for (int x = 0; x < 4; ++x) {
+              const auto it = q_mem.find((w & ~3u) + x);
+              dut->mem_rline[x] = (it == q_mem.end()) ? 0u : it->second;
+            }
+          } else if (dut->mem_write) {
+            ++q_writes;
+            if (q_owed.empty()) {
+              std::fprintf(stderr, "microcycle %zu: main memory written at word %o, which no cycle wrote\n",
+                           k, w);
+              ++bad;
+            } else {
+              const auto want = q_owed.front();
+              q_owed.erase(q_owed.begin());
+              if (want.first != w || want.second != dut->mem_wdata) {
+                std::fprintf(stderr, "microcycle %zu: main memory written %08x at word %o, the cycle "
+                             "wrote %08x at %o\n", k, dut->mem_wdata, w, want.second, want.first);
+                ++bad;
+              }
+            }
+            q_mem[w] = dut->mem_wdata;
+          } else {
+            const auto it = q_mem.find(w);
+            dut->mem_rdata = (it == q_mem.end()) ? 0u : it->second;
+          }
+        }
+        dut->mem_done = 1;
+      }
+    } else if (quux_machine && !dut->mem_req) {
+      q_due = -1;
+      q_answered = false;
+    }
     // **WHERE IN DDR THE BRIDGE PUT THE WORD**, once a cycle, against the
     // map transcribed from `rtl/plumbing/cadr_ddr_map.sv` for the Zynq
     // boards, which is the map this model is built with: main memory at
@@ -589,7 +666,7 @@ int main(int argc, char **argv) {
     // QUUX's MONO TV's 40,960.  Nothing else here looks at the address, so a
     // display window folded onto the wrong words would read back whatever the
     // trace hands it and pass.
-    if (dut->mem_req && !saw_mem_req) {
+    if (dut->mem_req && !saw_mem_req && !q_main) {
       const uint32_t p = dut->phys;
       const uint32_t fb = 017000000u;
       const uint32_t want = (p >= fb && p - fb < 0200000u) ? 0x1C000000u + ((p - fb) << 2)
@@ -602,7 +679,7 @@ int main(int argc, char **argv) {
         ++bad;
       }
     }
-    if (dut->mem_req) saw_mem_req = true;
+    if (dut->mem_req && !q_main) saw_mem_req = true;
     if (dut->dev_rq && dut->device) saw_device = true;
     if (dut->ub_msyn) saw_ub = true;
     // THE GRANT INSTANT, CHECKED DIRECTLY.  A grant a whole microcycle early
@@ -624,7 +701,7 @@ int main(int argc, char **argv) {
     if (bus_outstanding && dut->nxm) was_nxm = true;
     const long answer_tick =
         ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
-    if (dut->mem_req && bus_outstanding && t >= answer_tick) dut->mem_done = 1;
+    if (dut->mem_req && !q_main && bus_outstanding && t >= answer_tick) dut->mem_done = 1;
     // **THE XBUS DEVICES WERE ANSWERED FROM THE TRACE HERE, AND THAT LINE IS
     // GONE.**  It raised `device_ack` whenever the decode said the cycle was
     // a device's, at the instant muir's own responder answered, with
@@ -759,6 +836,10 @@ int main(int argc, char **argv) {
       }
       dev_cycle = dut->device;
       dev_acked = false;
+      // A write of QUUX's main memory is owed to main memory, the word the
+      // trace's MD column says the cycle carries.
+      if (quux_machine && dut->wrcyc && !dut->device && !dut->nxm && !dut->unibus)
+        q_owed.emplace_back(dut->phys, static_cast<uint32_t>(md_at_row[k]));
       cur_nxm = dut->nxm;
       if (dut->device) ++device_cycles;
       else if (!dut->nxm && !dut->unibus) ++mem_cycles;
@@ -1001,6 +1082,10 @@ int main(int argc, char **argv) {
     prev_n_memgrant = dut->n_memgrant_o;
   }
 
+  if (quux_machine) {
+    std::printf("    QUUX's main memory: %ld line fills and %ld writes answered here, %zu writes "
+                "still owed\n", q_fills, q_writes, q_owed.size());
+  }
   std::printf("    -MEMACK against muir, in nanoseconds (muir minus fabric):\n");
   long ack_slipped = 0;
   for (const auto &e : ack_error) {

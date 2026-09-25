@@ -145,7 +145,8 @@ MACHINE_CHECK = {
 QUUX_SOURCES = ["rtl/machine/quux_feature_page.sv", "rtl/machine/quux_mono_tv.sv",
                 "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_phase_gen.sv",
                 "rtl/machine/quux_clocks.sv", "rtl/machine/quux_input.sv",
-                "rtl/machine/quux_block_disk.sv"]
+                "rtl/machine/quux_block_disk.sv", "rtl/machine/quux_cache.sv",
+                "rtl/machine/quux_mem_port.sv"]
 
 CHECKS = {
     "phase_gen": {
@@ -630,6 +631,14 @@ CHECKS = {
         "prom": "quux_clockwait_prom.quux.hex",
         "machine": "quux",
     }),
+    # QUUX's write buffer back to back, and the reads after it (contract Q6).
+    "quux_memedge_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_memedge.quux.golden",
+        "prom": "quux_memedge_prom.quux.hex",
+        "machine": "quux",
+    }),
     # QUUX's register page, keyboard, network and no Unibus (Q2 to Q5).
     "quux_page_quux": dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
@@ -660,6 +669,28 @@ CHECKS = {
         "tb": "tb/quux_input_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": "quux_input.quux.golden",
+        "machine": "quux",
+    },
+    # QUUX's memory port and its cache on their own, against muir's
+    # `MemoryPort` tick for tick, and then held to coherence with a
+    # transfer beside the processor (`tb/quux_mem_port_tb.cpp`).
+    "quux_port_quux": {
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux_cache.sv",
+                    "rtl/machine/quux_mem_port.sv"],
+        "top": "quux_mem_port",
+        "tb": "tb/quux_mem_port_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "quux_port.quux.k4.golden",
+        "machine": "quux",
+    },
+    # QUUX's 64-bit AXI master with its line fills, against AXI3 and a
+    # memory (`tb/quux_axi_master_tb.cpp`).
+    "quux_axi_master_quux": {
+        "sources": ["rtl/plumbing/quux_axi_master.sv"],
+        "top": "quux_axi_master",
+        "tb": "tb/quux_axi_master_tb.cpp",
+        "flags": ["-O2"],
+        "golden": None,
         "machine": "quux",
     },
     # QUUX's block-disk on its own, against `BlockDisk`.
@@ -1254,10 +1285,12 @@ CHECKS = {
     # (`build/quux_readout_window.quux.k4.pass`); and the CADR, where none
     # of it answers (`build/quux_readout_window.pass`).
     "quux_readout_window_quux": {
-        "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/machine/cadr_memory_path.sv",
+        # The board's map first: QUUX's memory port imports it.
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv",
+                    "rtl/machine/cadr_microcycle.sv", "rtl/machine/cadr_memory_path.sv",
                     "rtl/machine/cadr_machine.sv"] + QUUX_SOURCES,
         "extra": [
-            "rtl/machine/cadr_phase_gen.sv", "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_phase_gen.sv",
             "rtl/machine/cadr_xbus_decode.sv",
             "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
             "rtl/machine/cadr_spy_registers.sv",
@@ -1645,6 +1678,8 @@ CHECKS = {
                     "boards/de25-nano/quartus/cadr_de25.sdc",
                     "rtl/plumbing/xilinx7/quux_machine.xdc",
                     "boards/de25-nano/quartus/quux_de25.sdc",
+                    "rtl/plumbing/xilinx7/quux_ddr.xdc",
+                    "boards/de25-nano/quartus/cadr_ddr.sdc",
                     "boards/arty-z7-20/cadr_arty.sv"],
         "cmd": ["tools/grid_check.py", "."],
         "top": None,
@@ -2240,6 +2275,25 @@ CHECKS = {
         "sources": ["golden/src/busint_xbus.rs"],
         "golden": None,
     },
+    # QUUX's derived acknowledgment (`golden/src/trace.rs`'s `QuuxPort`), at
+    # muir's pin, where muir brings out no acknowledgment of QUUX's port.
+    # The generator refuses a derivation muir's own processor contradicts;
+    # one it cannot contradict --- a device's read a tick early, both instants
+    # rounding to one edge --- only the fabric sees, so this builds the
+    # generator and the machine from the copy and runs a program of QUUX's
+    # through the machine's testbench (`tools/quux_derivation_check.py`).
+    "quux_derivation": {
+        "kind": "script",
+        "golden_tree": True,
+        "broken_rc": 3,
+        "sources": ["golden/src/trace.rs"],
+        "cmd": ["tools/quux_derivation_check.py", "."],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+        "machine": "quux",
+    },
 }
 
 # The same programs, and muir's own of QUUX, on the machine built as QUUX:
@@ -2272,9 +2326,22 @@ def _timed(key, k, l):
         "golden": golden,
     })
 
+# **CHECKS PENDING A RULING**, the Makefile's `QUUX_PENDING` in this file's
+# names: left out of `make check MACHINE=quux` until muir rules on a `DIV` of
+# MD under contract Q6's cached release.  Their records are kept and are
+# not run: a baseline that fails for a ruling not yet made would stop every
+# record.  Each run says how many it left and why.
+PENDING = {
+    "quux_divmd_quux": "DIV of MD under the cached release: muir ruling pending",
+    "quux_divmd_quux_l1": "DIV of MD under the cached release: muir ruling pending",
+    # Its one record breaks the divider's reload from `md_held`, the
+    # mechanism the ruling replaces.
+    "quux_divmdsync_quux_l1": "DIV of MD under the cached release: muir ruling pending",
+}
+
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
     ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
-                                  "imemsync", "page", "clockwait")]
+                                  "imemsync", "page", "clockwait", "memedge")]
 CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
 CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)
 CHECKS["quux_clockwait_quux_l1"] = _timed("quux_clockwait_quux", 4, 1)
@@ -2902,6 +2969,11 @@ def script_check(args, work, spec):
     if not os.path.exists(script):
         return BROKEN, "%s is not in this copy" % spec["cmd"][0]
     rc, out = run([sys.executable, script] + list(spec["cmd"][1:]), work)
+    # A script that builds what it runs says a build that failed with an
+    # exit code of its own, `broken_rc`: a mutant that did not build is
+    # BROKEN and never caught.
+    if spec.get("broken_rc") is not None and rc == spec["broken_rc"]:
+        return BROKEN, first_problem(out)
     if rc != 0:
         return CAUGHT, first_problem(out)
     return SURVIVED, "the script read the tree and agreed with it"
@@ -3568,6 +3640,17 @@ def main():
         if not mutations:
             die("--only %s matches nothing" % args.only)
 
+    # The records on checks pending a ruling are named and left (`PENDING`).
+    pending = [m for m in mutations if m.check in PENDING]
+    if pending:
+        mutations = [m for m in mutations if m.check not in PENDING]
+        for check in sorted(set(m.check for m in pending)):
+            n = sum(1 for m in pending if m.check == check)
+            sys.stdout.write("PENDING, not run: %d records on %s --- %s\n"
+                             % (n, check, PENDING[check]))
+        if not mutations:
+            die("every record selected is on a check pending a ruling")
+
     if args.rev:
         sys.stdout.write("sources: %s\n" % args.rev)
     else:
@@ -3600,8 +3683,10 @@ def main():
     # mutation caught, so nothing runs until the unmutated copy is clean.
     sys.stdout.write("baseline, on an unmutated copy:\n")
     base = os.path.join(args.work, "baseline")
-    generators = any(CHECKS[c].get("kind") == "generator" for c in wanted)
-    if generators:
+    # A generator builds muir, and so does a script that builds a generator
+    # (`quux_derivation`); a script that only reads `golden/` is given the
+    # link as well, which costs it nothing.
+    if any(needs_golden(c) for c in wanted):
         muir_beside(args.work)
     copy_tree(base, with_golden=any(needs_golden(c) for c in wanted), rev=args.rev)
     baseline_bad = False

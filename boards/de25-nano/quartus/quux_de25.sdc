@@ -100,3 +100,34 @@ set_multicycle_path -hold  1 -from $split_every_tick -to $quux_divider
 # grid: 0 ns + 1 tick
 set_multicycle_path -setup 1 -from $split_md_held -to $quux_divider
 set_multicycle_path -hold  0 -from $split_md_held -to $quux_divider
+
+# **QUUX'S MEMORY PORT** (contract Q6), out of the relaxed set whole
+# (`cadr_de25.sdc`) but for what the cache holds of the microcycle: its M20K
+# blocks, read at every edge the port is idle, and the address they were
+# read at, `idx_q`, `tag_q` and `off_q`.  The map's output into them has the
+# whole microcycle; everything out of them is timed at the tick.
+# `rtl/plumbing/xilinx7/quux_machine.xdc` has the argument.
+set quux_cache_held [add_to_collection \
+    [get_keepers -nowarn {u_machine|memory|g_quux_port.port|cache|*ram_rtl_*}] \
+    [get_registers -nowarn [cadr_leaves {u_machine|memory|g_quux_port.port|cache|} {idx_q tag_q off_q}]]]
+# Each source the time it has, as for the divider above.
+# sync: K
+set_multicycle_path -setup 4 -from $slow -to $quux_cache_held
+set_multicycle_path -hold  3 -from $slow -to $quux_cache_held
+# sync: K
+set_multicycle_path -setup 4 -from $split_cstore -to $quux_cache_held
+set_multicycle_path -hold  3 -from $split_cstore -to $quux_cache_held
+# sync: K - 1
+set_multicycle_path -setup 3 -from $split_latch -to $quux_cache_held
+set_multicycle_path -hold  2 -from $split_latch -to $quux_cache_held
+# sync: K - 2
+set_multicycle_path -setup 2 -from $split_every_tick -to $quux_cache_held
+set_multicycle_path -hold  1 -from $split_every_tick -to $quux_cache_held
+# grid: 0 ns + 1 tick
+set_multicycle_path -setup 1 -from $split_md_held -to $quux_cache_held
+set_multicycle_path -hold  0 -from $split_md_held -to $quux_cache_held
+# And what a microcycle reads of QUUX's clocks, through OB into the address's
+# low byte: K - 1, as into the relaxed set.
+# sync: K - 1
+set_multicycle_path -setup 3 -from $quux_status_s -to $quux_cache_held
+set_multicycle_path -hold  2 -from $quux_status_s -to $quux_cache_held

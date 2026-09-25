@@ -512,6 +512,53 @@ static void emit_busint(struct chk *w, const struct cadr_image *img)
 	chk_u64(w, 0);			/* IDLE memory_free_at */
 }
 
+// `rtl.rs`'s `Bus`, version 40: which of the two the processor's cycles go
+// through, written before it --- `Bus::Cadr`, the bus interface above, or
+// `Bus::Quux`, QUUX's memory port below (contract Q6).
+#define MUIR_BUS_CADR 0u
+#define MUIR_BUS_QUUX 1u
+
+// `CacheConfig::QUUX`, src/cache.rs: 4,096 words in lines of 4, 2-way, a hit
+// in 20 ns and the write buffer; `MemoryTiming::NOMINAL`: a line fill in
+// 380 ns, a write in 290.  The fabric's cache is this shape
+// (`rtl/machine/quux_cache.sv`).
+#define MUIR_QUUX_CACHE_WORDS 4096u
+#define MUIR_QUUX_CACHE_LINE  4u
+#define MUIR_QUUX_CACHE_WAYS  2u
+#define MUIR_QUUX_CACHE_HIT_NS 20u
+#define MUIR_QUUX_READ_NS  380u
+#define MUIR_QUUX_WRITE_NS 290u
+
+// `memory_port.rs`'s `MemoryPort::save`, at `MemoryPort::new()`: no cycle in
+// flight, and the cache as a fresh port holds it --- EMPTY, with no hits and
+// no misses.  muir restores a cache warm; this file restores it cold, so a
+// resumed machine misses where muir's saved one would have hit.  That moves
+// when a read is answered and never which word it reads, because the cache
+// is write-through and every line it holds equals main memory.  Main memory
+// is free: a halt drains the write buffer before this program reads the
+// machine, so `memory_free_at` and `buffer_free_at` are in the past, and 0
+// is a past as good as any.
+static void emit_memory_port(struct chk *w)
+{
+	chk_u8(w, 0);			/* IDLE State::Idle */
+	chk_bool(w, 0);			/* IDLE write */
+	chk_u32(w, 0);			/* IDLE addr */
+	chk_bool(w, 0);			/* IDLE memory */
+	chk_u32(w, MUIR_QUUX_CACHE_WORDS);	/* Cache::save: config.words */
+	chk_u32(w, MUIR_QUUX_CACHE_LINE);	/* config.line_words */
+	chk_u32(w, MUIR_QUUX_CACHE_WAYS);	/* config.ways */
+	chk_u64(w, MUIR_QUUX_CACHE_HIT_NS);	/* config.hit_ns */
+	chk_bool(w, 1);				/* config.write_buffer */
+	chk_u64(w, 0);				/* NONE hits */
+	chk_u64(w, 0);				/* NONE misses */
+	for (unsigned s = 0; s < MUIR_QUUX_CACHE_WORDS / (MUIR_QUUX_CACHE_LINE * MUIR_QUUX_CACHE_WAYS); ++s)
+		chk_u32(w, 0);			/* NONE the set's lines: cold */
+	chk_u64(w, MUIR_QUUX_READ_NS);		/* timing.read_ns */
+	chk_u64(w, MUIR_QUUX_WRITE_NS);		/* timing.write_ns */
+	chk_u64(w, 0);				/* IDLE memory_free_at */
+	chk_u64(w, 0);				/* IDLE buffer_free_at */
+}
+
 // --- QUUX ------------------------------------------------------------------
 //
 // **WHAT A QUUX CHECKPOINT HOLDS THAT A CADR'S DOES NOT**, each written below
@@ -952,7 +999,13 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, img_flag(img, IMG_F_MBUSY));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_RDCYC));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_WRCYC));	/* READ */
-	emit_busint(w, img);
+	if (quux) {
+		chk_u8(w, MUIR_BUS_QUUX);
+		emit_memory_port(w);
+	} else {
+		chk_u8(w, MUIR_BUS_CADR);
+		emit_busint(w, img);
+	}
 	chk_bool(w, img_flag(img, IMG_F_MBUSY_SYNC));	/* READ */
 	// The bus cycle in the air.  IDLE, all of it: see the header.  The
 	// physical address the fabric holds is in `phys_r` and is READ, but it
@@ -1111,8 +1164,13 @@ static const char *const kMissingQuux[] = {
 	"the instant IR was loaded, which only the divider reads: written as a",
 	"    fresh machine's, long ago, which a machine halted for more than the",
 	"    divider's 33 ticks is.",
-	"the bus cycle in flight, the memory boards' refresh model, the two",
-	"    totals muir keeps and Rtl's trace and flag columns: as on the CADR.",
+	"the bus cycle in flight, the two totals muir keeps and Rtl's trace and",
+	"    flag columns: as on the CADR.",
+	"the memory cache's lines and counts: written EMPTY, where muir keeps",
+	"    them and restores the cache warm.  The cache is write-through, so",
+	"    every line it holds is main memory's word; a resumed machine misses",
+	"    where muir's would hit, which moves when a read is answered and",
+	"    never what it reads.",
 	"and the DISK PACK, which muir's format never carries: bound to the file",
 	"    by the sidecar beside it, as on the CADR.",
 	NULL

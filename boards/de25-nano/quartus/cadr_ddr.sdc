@@ -27,12 +27,44 @@
 # request, so the path into those three registers has eight ticks and the
 # request itself keeps one.  The `|d` pins and not the registers, so that the
 # clock enables keep their tick.
-# grid: 80 ns
 set ddr_contract [get_pins -nowarn {u_memory|u_axi|m_axi_awaddr[*]|d
                                 u_memory|u_axi|m_axi_araddr[*]|d
                                 u_memory|u_axi|m_axi_wdata[*]|d}]
-set_multicycle_path -setup 8 -to $ddr_contract
-set_multicycle_path -hold  7 -to $ddr_contract
+# Only where it names something: QUUX's build removes the CADR's adapter.
+if {[get_collection_size $ddr_contract] > 0} {
+    # grid: 80 ns
+    set_multicycle_path -setup 8 -to $ddr_contract
+    set_multicycle_path -hold  7 -to $ddr_contract
+}
+
+# **AND QUUX'S ADAPTER**, `quux_axi_master.sv`, written FROM the processor's
+# registers rather than to the adapter, because only the processor's device
+# cycle has the bus's 80 ns.  Its address and word are loaded at the grant
+# and `memstart`, which selects the map's live address, falls there; the
+# adapter takes them `SETUP_T` ticks later, eight, measured.  So every
+# register of the processor has eight, with the console registers that
+# drive it and MONO TV's held decode `fb`, which is the bridge's select.
+# What else reaches the adapter keeps the tick it has, the default: the
+# port's cache operations, registers of the port loaded a tick before the
+# adapter takes them, and a block-disk transfer word, which the channel
+# loads three ticks, `ch_own` two and the arbiter's idle tick one before the
+# adapter takes it.  An exception written to the adapter gave those eight.
+# `rtl/plumbing/xilinx7/quux_ddr.xdc` is the same clause.  Nothing on the
+# CADR, which has not got the adapter.
+set qddr_contract [get_pins -nowarn {u_memory|u_qaxi|m_awaddr[*]|d
+                                     u_memory|u_qaxi|m_araddr[*]|d
+                                     u_memory|u_qaxi|m_wdata[*]|d
+                                     u_memory|u_qaxi|m_wstrb[*]|d
+                                     u_memory|u_qaxi|half|d}]
+set qddr_cycle [get_registers -nowarn {u_machine|processor|*
+                                       u_machine|memory|spy_registers|*
+                                       u_machine|memory|g_quux_mono_tv.mono_tv|fb}]
+set qddr_port [get_registers -nowarn {u_machine|memory|g_quux_port.port|*}]
+if {[get_collection_size $qddr_contract] > 0} {
+    # grid: 80 ns
+    set_multicycle_path -setup 8 -from $qddr_cycle -to $qddr_contract
+    set_multicycle_path -hold  7 -from $qddr_cycle -to $qddr_contract
+}
 
 # ------------------------------------------ the debug cable's carrier latch
 #

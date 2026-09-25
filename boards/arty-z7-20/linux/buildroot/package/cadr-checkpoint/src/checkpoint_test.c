@@ -313,8 +313,10 @@ static void fill_quux(struct model *m)
 	m->regs[IMG_RG_LVMO] = 0x00C03FFFu;
 	m->regs[IMG_RG_MDHELD] = poison(IMG_SEL_REGS, IMG_RG_MDHELD, 32);
 	m->regs[IMG_RG_PHYS] = poison(IMG_SEL_REGS, IMG_RG_PHYS, 22);
+	// A halted QUUX's memory port idle, its write buffer drained.
 	m->regs[IMG_RG_FLAGS] = (1ull << IMG_F_VMAOK) | (1ull << IMG_F_RUN) |
-				(1ull << IMG_F_ERRSTOP) | (1ull << IMG_F_STATHENB);
+				(1ull << IMG_F_ERRSTOP) | (1ull << IMG_F_STATHENB) |
+				(1ull << IMG_F_MEM_DRAINED);
 	m->cycles = Q_CYCLES;
 	m->qm = Q_M0;
 	m->ticks = Q_M0 + 2u;
@@ -784,6 +786,7 @@ int main(int argc, char **argv)
 	//   ir..lc       8+8+2+1+1+4+2+2+4 = 32
 	//   19 bools                       = 19
 	//   halted_ns + ir_loaded_ns + pulsed + 4 bools = 21
+	//   bus        1 + busint: which bus, `Bus::Cadr` (version 40), then
 	//   busint     (1+1+8) + 42*1 + (1+8+1+1+8+1+1+1+1+8+8+1+2+2+8+8+8+1+1+1+8+8)
 	//              + (1+4+1+8+1+8) = 163  (the cache and QUUX's memory
 	//                                      timing, both absent, and the
@@ -802,7 +805,7 @@ int main(int argc, char **argv)
 			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 22 + 1 + 8200 + 4 +
 			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 253 + 13 + 16;
 		const size_t rtl_part =
-			208 + 32 + 19 + 21 + 163 + 1 + 32 + 25 + 26 + 24 + 28;
+			208 + 32 + 19 + 21 + 1 + 163 + 1 + 32 + 25 + 26 + 24 + 28;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven
 		// keep the body's length and one does not, and the point of
 		// building them is what the ROUND TRIP does with them, so this
@@ -893,8 +896,12 @@ int main(int argc, char **argv)
 		// CADR's, and what QUUX has that it has not --- block-disk's
 		// forty-four bytes after its flag, MONO TV's 8,192 words past the
 		// CADR display's 32,768, the five key words waiting, and K and L
-		// after the timing model's tag.
-		const size_t quux_len = cadr_body_len + 44 + 8192 * 4 + 5 * 4 + 2;
+		// after the timing model's tag; and in place of the bus interface's
+		// 163 bytes, the memory port's (version 40): its state, direction,
+		// address and flag, the cache's shape, counts and 512 empty sets,
+		// and the two timings and two instants.
+		const size_t quux_len = cadr_body_len + 44 + 8192 * 4 + 5 * 4 + 2 -
+			163 + (1 + 1 + 4 + 1) + (4 * 3 + 8 + 1 + 8 + 8 + 512 * 4) + 8 * 4;
 		if (!chk_rtl_mutation() && qb.len != quux_len)
 			fail("QUUX's body's length", qb.len, quux_len);
 		if (quux_out && chk_write_file(quux_out, "rtl", 1, &qb) != 0) {

@@ -373,6 +373,11 @@ module cadr_arty #(
   // driven from `g_ddr` where the `PS7` is and tied low where there is none.
   logic port_read_ack, port_write_ack;
   logic [31:0] mem_rdata;
+  // QUUX's line fill (contract Q6): the machine asks four words and the port
+  // hands the line back; and QUUX's memory port idle, which nothing on this
+  // board reads yet.  The CADR never asks a line.
+  logic         mem_line, mem_drained;
+  logic [127:0] mem_rline;
   // The disk's two seams, likewise driven from one arm or the other: the
   // drive --- which units have a pack, the read-only switch, whether the
   // drive's time is charged --- and the block store's fill port. With `DDR`
@@ -911,6 +916,7 @@ module cadr_arty #(
       .disp_map_a(disp_map_a), .disp_color_map_q(con_disp_color_map_q),
       // The memory, or the absence of one: see the `DDR` generate below.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
+      .mem_line(mem_line), .mem_rline(mem_rline), .mem_drained(mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -1143,6 +1149,8 @@ module cadr_arty #(
     logic [31:0] port_addr, port_wdata;
     logic        port_done, port_error;
     logic [31:0] port_rdata;
+    logic         port_line;
+    logic [127:0] port_rline;
 
     // The adapter's AXI4 side, 32 bits wide.
     logic [31:0] awaddr, araddr, wdata;
@@ -1174,8 +1182,10 @@ module cadr_arty #(
       assign port_write = mem_write;
       assign port_addr  = mem_addr;
       assign port_wdata = mem_wdata;
+      assign port_line  = mem_line;
       assign mem_done   = port_done;
       assign mem_rdata  = port_rdata;
+      assign mem_rline  = port_rline;
 
     end else begin : g_prove
 
@@ -1227,6 +1237,11 @@ module cadr_arty #(
       // one lamp that changes is LD4.
       assign mem_done  = 1'b0;
       assign mem_rdata = 32'd0;
+      // The witness asks no line, and the machine is given none.
+      assign port_line = 1'b0;
+      assign mem_rline = 128'd0;
+      logic unused_rline;
+      assign unused_rline = ^port_rline;
 
       // LD4 IS A LAMP HERE AND NO LONGER THE OBSERVER. Red until something
       // has completed, and it BLINKS while the port is still dead, because
@@ -1250,22 +1265,107 @@ module cadr_arty #(
 
     end
 
+    // **ON QUUX ONE 64-BIT MASTER DRIVES THE PORT**, `rtl/plumbing/
+    // quux_axi_master.sv`: the CADR's adapter and widening in one, and the
+    // line fill QUUX's memory port asks on a cache miss (contract Q6), two
+    // full-width beats.  The CADR's is built on every board and keeps its
+    // instance names, which its constraints and their assertions name; on
+    // QUUX it is asked nothing, stands in IDLE and the tools remove it.
+    // QUUX's is built on QUUX alone (`g_qaxi`, below).
+    localparam bit QUUX_PORT = MACHINE == "quux";
+    logic        c_done, c_error, q_done, q_error;
+    logic [31:0] c_rdata, q_rdata;
+    logic [31:0] c_hp0_awaddr, c_hp0_araddr, q_hp0_awaddr, q_hp0_araddr;
+    logic [3:0]  c_hp0_awlen, c_hp0_arlen, q_hp0_awlen, q_hp0_arlen;
+    logic [1:0]  c_hp0_awsize, c_hp0_arsize, q_hp0_awsize, q_hp0_arsize;
+    logic [63:0] c_hp0_wdata, q_hp0_wdata;
+    logic [7:0]  c_hp0_wstrb, q_hp0_wstrb;
+    logic [1:0]  c_awburst, c_arburst, q_awburst, q_arburst;
+    logic        c_awvalid, c_wlast, c_wvalid, c_bready, c_arvalid, c_rready;
+    logic        q_awvalid, q_wlast, q_wvalid, q_bready, q_arvalid, q_rready;
+
+    assign port_done    = QUUX_PORT ? q_done  : c_done;
+    assign port_rdata   = QUUX_PORT ? q_rdata : c_rdata;
+    assign port_error   = QUUX_PORT ? q_error : c_error;
+    assign hp0_awaddr   = QUUX_PORT ? q_hp0_awaddr : c_hp0_awaddr;
+    assign hp0_awlen    = QUUX_PORT ? q_hp0_awlen  : c_hp0_awlen;
+    assign hp0_awsize   = QUUX_PORT ? q_hp0_awsize : c_hp0_awsize;
+    assign hp0_wdata    = QUUX_PORT ? q_hp0_wdata  : c_hp0_wdata;
+    assign hp0_wstrb    = QUUX_PORT ? q_hp0_wstrb  : c_hp0_wstrb;
+    assign hp0_araddr   = QUUX_PORT ? q_hp0_araddr : c_hp0_araddr;
+    assign hp0_arlen    = QUUX_PORT ? q_hp0_arlen  : c_hp0_arlen;
+    assign hp0_arsize   = QUUX_PORT ? q_hp0_arsize : c_hp0_arsize;
+    assign awburst      = QUUX_PORT ? q_awburst : c_awburst;
+    assign awvalid      = QUUX_PORT ? q_awvalid : c_awvalid;
+    assign wlast        = QUUX_PORT ? q_wlast   : c_wlast;
+    assign wvalid       = QUUX_PORT ? q_wvalid  : c_wvalid;
+    assign bready       = QUUX_PORT ? q_bready  : c_bready;
+    assign arburst      = QUUX_PORT ? q_arburst : c_arburst;
+    assign arvalid      = QUUX_PORT ? q_arvalid : c_arvalid;
+    assign rready       = QUUX_PORT ? q_rready  : c_rready;
+
+    // QUUX's master is built on QUUX alone, so that on the CADR the widening
+    // is the read beat's one reader and a read path crossed onto anything
+    // else leaves the beat unread, which the lint of the `DDR=1` board
+    // reports (`the-beat-that-came-back-is-the-one-that-went-out`).
+    if (QUUX_PORT) begin : g_qaxi
+      quux_axi_master u_qaxi (
+          .clk(clk), .rst(axi_rst),
+          .mem_req(port_req), .mem_write(port_write), .mem_line(port_line),
+          .mem_addr(port_addr), .mem_wdata(port_wdata),
+          .mem_done(q_done), .mem_rdata(q_rdata), .mem_rline(port_rline),
+          .mem_error(q_error),
+          .m_awaddr(q_hp0_awaddr), .m_awlen(q_hp0_awlen), .m_awsize(q_hp0_awsize),
+          .m_awburst(q_awburst), .m_awvalid(q_awvalid), .m_awready(awready),
+          .m_wdata(q_hp0_wdata), .m_wstrb(q_hp0_wstrb), .m_wlast(q_wlast),
+          .m_wvalid(q_wvalid), .m_wready(wready),
+          .m_bresp(bresp), .m_bvalid(bvalid), .m_bready(q_bready),
+          .m_araddr(q_hp0_araddr), .m_arlen(q_hp0_arlen), .m_arsize(q_hp0_arsize),
+          .m_arburst(q_arburst), .m_arvalid(q_arvalid), .m_arready(arready),
+          .m_rdata(hp0_rdata), .m_rresp(rresp), .m_rlast(rlast),
+          .m_rvalid(rvalid), .m_rready(q_rready)
+      );
+    end else begin : g_no_qaxi
+      assign q_done = 1'b0;
+      assign q_rdata = 32'd0;
+      assign q_error = 1'b0;
+      assign port_rline = 128'd0;
+      assign q_hp0_awaddr = 32'd0;
+      assign q_hp0_awlen = 4'd0;
+      assign q_hp0_awsize = 2'd0;
+      assign q_awburst = 2'd0;
+      assign q_awvalid = 1'b0;
+      assign q_hp0_wdata = 64'd0;
+      assign q_hp0_wstrb = 8'd0;
+      assign q_wlast = 1'b0;
+      assign q_wvalid = 1'b0;
+      assign q_bready = 1'b0;
+      assign q_hp0_araddr = 32'd0;
+      assign q_hp0_arlen = 4'd0;
+      assign q_hp0_arsize = 2'd0;
+      assign q_arburst = 2'd0;
+      assign q_arvalid = 1'b0;
+      assign q_rready = 1'b0;
+      logic unused_q;
+      assign unused_q = ^{port_line, QUUX_PORT};
+    end
+
     cadr_axi_master u_axi (
         .clk(clk), .rst(axi_rst),
-        .mem_req(port_req), .mem_write(port_write),
+        .mem_req(!QUUX_PORT && port_req), .mem_write(port_write),
         .mem_addr(port_addr), .mem_wdata(port_wdata),
-        .mem_done(port_done), .mem_rdata(port_rdata), .mem_error(port_error),
+        .mem_done(c_done), .mem_rdata(c_rdata), .mem_error(c_error),
         .m_axi_awaddr(awaddr), .m_axi_awlen(awlen), .m_axi_awsize(awsize),
-        .m_axi_awburst(awburst), .m_axi_awvalid(awvalid),
+        .m_axi_awburst(c_awburst), .m_axi_awvalid(c_awvalid),
         .m_axi_awready(awready),
-        .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(wlast),
-        .m_axi_wvalid(wvalid), .m_axi_wready(wready),
-        .m_axi_bresp(bresp), .m_axi_bvalid(bvalid), .m_axi_bready(bready),
+        .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(c_wlast),
+        .m_axi_wvalid(c_wvalid), .m_axi_wready(wready),
+        .m_axi_bresp(bresp), .m_axi_bvalid(bvalid), .m_axi_bready(c_bready),
         .m_axi_araddr(araddr), .m_axi_arlen(arlen), .m_axi_arsize(arsize),
-        .m_axi_arburst(arburst), .m_axi_arvalid(arvalid),
+        .m_axi_arburst(c_arburst), .m_axi_arvalid(c_arvalid),
         .m_axi_arready(arready),
         .m_axi_rdata(rdata), .m_axi_rresp(rresp), .m_axi_rlast(rlast),
-        .m_axi_rvalid(rvalid), .m_axi_rready(rready)
+        .m_axi_rvalid(rvalid), .m_axi_rready(c_rready)
     );
 
     // The widening: `rtl/plumbing/cadr_axi_widen.sv`, and it is a module rather than
@@ -1278,9 +1378,9 @@ module cadr_arty #(
         .s_wdata(wdata), .s_wstrb(wstrb),
         .s_araddr(araddr), .s_arlen(arlen), .s_arsize(arsize),
         .s_rdata(rdata),
-        .m_awaddr(hp0_awaddr), .m_awlen(hp0_awlen), .m_awsize(hp0_awsize),
-        .m_wdata(hp0_wdata), .m_wstrb(hp0_wstrb),
-        .m_araddr(hp0_araddr), .m_arlen(hp0_arlen), .m_arsize(hp0_arsize),
+        .m_awaddr(c_hp0_awaddr), .m_awlen(c_hp0_awlen), .m_awsize(c_hp0_awsize),
+        .m_wdata(c_hp0_wdata), .m_wstrb(c_hp0_wstrb),
+        .m_araddr(c_hp0_araddr), .m_arlen(c_hp0_arlen), .m_arsize(c_hp0_arsize),
         .m_rdata(hp0_rdata)
     );
 
@@ -2333,6 +2433,7 @@ module cadr_arty #(
     // whatever computes them, out of the bin.
     assign mem_done  = 1'b0;
     assign mem_rdata = 32'd0;
+    assign mem_rline = 128'd0;
     assign ddr_error = 1'b0;
     // And no port to answer anything, so the audit's port clause is silent by
     // construction. Its word 8 reads zero, which on this board is the truth.
@@ -2554,7 +2655,7 @@ module cadr_arty #(
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
-                   mem_req, mem_write, store_miss, ch_active,
+                   mem_req, mem_write, mem_line, mem_drained, store_miss, ch_active,
                    machrun, errhalt, stathalt, n_boot, ddr_error,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,

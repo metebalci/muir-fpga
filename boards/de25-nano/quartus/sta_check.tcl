@@ -635,6 +635,11 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
         set n [get_collection_size [set ::$sta_var]]
         # QUUX has no debug interface, so the machine drives no word to latch.
         if {$sta_quux && $sta_var eq "cable_word"} { set sta_want 0 }
+        # And QUUX's port drives the bridge through its own adapter, whose
+        # requests are its memory port's, registered a tick before the
+        # adapter takes them and not the Xbus's with 80 ns of setup: the
+        # CADR's adapter the clause names is removed on a QUUX build.
+        if {$sta_quux && $sta_var eq "ddr_contract"} { set sta_want 0 }
         if {$n != $sta_want} {
             puts "sta: FAIL: $sta_what: $n, wanting $sta_want"
             incr failures
@@ -642,8 +647,44 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
             puts "sta: $sta_what: $n"
         }
     }
-    # grid: 80 ns
-    assert_instance_timing $tick 8 u_memory|u_axi {m_axi_awaddr m_axi_araddr m_axi_wdata}
+    if {!$sta_quux} {
+        # grid: 80 ns
+        assert_instance_timing $tick 8 u_memory|u_axi {m_axi_awaddr m_axi_araddr m_axi_wdata}
+    } else {
+        # QUUX's adapter, `cadr_ddr.sdc`'s second clause: its address and
+        # data at the bus's 80 ns from the processor's registers, and at the
+        # tick from everything else; no other register of it at eight.
+        set q_all [get_registers -nowarn {u_memory|u_qaxi|*}]
+        set q_named [get_registers -nowarn [concat \
+            [cadr_leaves {u_memory|u_qaxi|} {m_awaddr m_araddr m_wdata m_wstrb half}]]]
+        set q_rest [remove_from_collection $q_all $q_named]
+        set q_req [requirements [data_pins $q_rest]]
+        set q_want [format %.3f [expr {$tick * 8}]]
+        if {[get_collection_size $q_all] == 0} {
+            puts "sta: FAIL: QUUX's adapter, u_memory|u_qaxi, has no registers"
+            incr failures
+        } elseif {[dict exists $q_req $q_want]} {
+            puts "sta: FAIL: [dict get $q_req $q_want] other registers of QUUX's adapter ask for $q_want ns"
+            incr failures
+        } else {
+            puts "sta: QUUX's adapter: [get_collection_size $q_rest] registers besides its address and data, none at $q_want ns"
+        }
+        # grid: 80 ns
+        assert_clause_timing $tick 8 "the processor's device cycle into QUUX's adapter" \
+            $::qddr_cycle $q_named
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "QUUX's port's operations into its adapter" \
+            $::qddr_port $q_named
+        # And the block-disk's transfer words and the arbiter that hands
+        # them the bus: one tick, which a clause written to the adapter
+        # would have made eight.
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "block-disk's words into QUUX's adapter" \
+            [get_registers -nowarn {u_machine|g_quux_disk.disk|*}] $q_named
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the Xbus arbiter into QUUX's adapter" \
+            [get_registers -nowarn {u_machine|memory|ch_own u_machine|memory|owner_d[*]}] $q_named
+    }
     # And the debug cable's carrier: `sts_dbd` at the cable's six ticks and no
     # other register of the window, which is `cadr_ddr.sdc`'s split for it and
     # the reason that clause names the `|d` pins.
@@ -791,6 +832,15 @@ if {$sta_quux} {
         # grid: 0 ns + 1 tick
         assert_clause_timing $tick 1 "L into the clocks' status" \
             [get_registers -nowarn [cadr_leaves {u_machine|processor|} {l}]] $::quux_status_s
+        # QUUX's memory port: none of its tick registers relaxed, the address
+        # the cache holds at the microcycle, and nothing out of the cache
+        # relaxed: its word reaches MD in the tick after the lookup's.
+        # sync: K
+        assert_instance_timing $tick 4 u_machine|memory|g_quux_port.port \
+            {cache|idx_q cache|tag_q cache|off_q}
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the cache's word into MD" $::quux_cache_held \
+            [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md md_held}]]
     }
 }
 # The transaction audit has no register on a board with no console to read

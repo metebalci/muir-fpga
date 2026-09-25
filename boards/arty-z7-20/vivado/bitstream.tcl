@@ -340,6 +340,7 @@ if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # `rtl/plumbing/xilinx7/cadr_ddr.xdc` names is inside `g_ddr`, so reading it against the
 # default board would be four critical warnings about absent objects.
 if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_ddr.xdc }
+if {$port > 0 && $machine eq "quux"} { read_xdc rtl/plumbing/xilinx7/quux_ddr.xdc }
 
 # The display output's clocks, and the one crossing between them and the
 # machine's.  Read only when the display is built, on `cadr_ddr.xdc`'s own
@@ -594,9 +595,41 @@ if {$port > 0 && $machine ne "quux"} {
 # halves are this clause's alone: the address and data registers must carry
 # the requirement and no other register of the adapter may.
 # grid: 80 ns
-if {$port > 0} {
+if {$port > 0 && $machine ne "quux"} {
     assert_instance_timing $tick 8 *g_ddr.u_axi/* \
         {*m_axi_awaddr_reg* *m_axi_araddr_reg* *m_axi_wdata_reg*}
+}
+# **QUUX'S ADAPTER**, `quux_ddr.xdc`: the bus's 80 ns into its address and
+# data registers from the processor's registers, whose device cycle is the
+# only word that has them, and no other register of it; and one tick from
+# everything else that reaches them: QUUX's memory port's own registers,
+# which are its cache's operations, and the block-disk's channel.
+if {$port > 0 && $machine eq "quux"} {
+    set q_addr {*g_ddr.g_qaxi.u_qaxi/m_awaddr_reg* *g_ddr.g_qaxi.u_qaxi/m_araddr_reg* *g_ddr.g_qaxi.u_qaxi/m_wdata_reg*
+                *g_ddr.g_qaxi.u_qaxi/m_wstrb_reg* *g_ddr.g_qaxi.u_qaxi/half_reg*}
+    # No other register of the adapter at eight: the three are the clause's
+    # and are left out of this question (`elsewhere`), each reached from two
+    # sources at two requirements, which the two clauses below ask apart.
+    # grid: 80 ns
+    assert_instance_timing $tick 8 *g_ddr.g_qaxi.u_qaxi/* {} \
+        {*m_awaddr_reg* *m_araddr_reg* *m_wdata_reg* *m_wstrb_reg* *half_reg*}
+    # grid: 80 ns
+    assert_clause_timing $tick 8 "the processor's device cycle into QUUX's adapter" \
+        {*u_machine/processor/*} $q_addr
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "QUUX's port's operations into its adapter" \
+        {*memory/g_quux_port.port/*} $q_addr
+    # And the block-disk's transfer words, which pass through the same bridge
+    # three ticks after the channel loads them, and the arbiter's registers,
+    # which hand it the bus one and two ticks before: one tick each, which
+    # an exception written to the adapter rather than from the processor
+    # would have made eight.
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "block-disk's words into QUUX's adapter" \
+        {*g_quux_disk.disk/*} $q_addr
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the Xbus arbiter into QUUX's adapter" \
+        {*memory/ch_own_reg* *memory/owner_d_reg*} $q_addr
 }
 # And the debug cable's six ticks, the same way and for the same reason. The
 # instance assertion is the narrow half --- `sts_dbd_reg` may carry it and no
@@ -771,6 +804,16 @@ if {$machine eq "quux"} {
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "L into the clocks' status" {*processor/l_reg*} \
         {*processor/g_quux_tick.clocks/flag_s_reg* *processor/g_quux_tick.clocks/en_s_reg*}
+    # QUUX's memory port: none of its tick registers relaxed, and the address
+    # the cache holds at the microcycle.
+    # sync: K
+    assert_instance_timing $tick 4 *memory/g_quux_port.port/* \
+        {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
+    # And nothing out of the cache relaxed at all: its word reaches MD in the
+    # tick after the lookup's.
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the cache's word into MD" \
+        {*memory/g_quux_port.port/cache/*} {*processor/md_reg* *processor/md_held_reg*}
     puts "BIT: QUUX: [llength $quux_tick_cells] tick countdown cells"
 }
 

@@ -509,6 +509,16 @@ module cadr_machine #(
     output var logic [31:0] mem_wdata,
     input  var logic        mem_done,
     input  var logic [31:0] mem_rdata,
+    // QUUX's line fill (contract Q6): four words at a 16-byte boundary, two
+    // 64-bit beats, back on `mem_rline` with the lowest address in bits
+    // 31:0.  The CADR never raises `mem_line`, and a board that builds only
+    // the CADR ties `mem_rline` to zero.
+    output var logic        mem_line,
+    input  var logic [127:0] mem_rline,
+    // QUUX's memory port is idle and its write buffer empty: what the host
+    // waits for, after a halt, before it reads main memory (the contract's
+    // "a halt drains the write buffer").  Always up on the CADR.
+    output var logic        mem_drained,
 
     // --- AND WHAT THE PROCESSING SYSTEM ITSELF ANSWERED, which is for the
     // transaction audit below and reaches nothing else in this module.
@@ -560,9 +570,10 @@ module cadr_machine #(
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (6 << 4) | 4`: the signature, hardware revision 6 and
-  // processor type 4, `Geometry::QUUX.machine_id`.
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0064;
+  // `(0x5155 << 16) | (7 << 4) | 4`: the signature, hardware revision 7 ---
+  // the memory port of contract Q6 --- and processor type 4,
+  // `Geometry::QUUX.machine_id`.
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
   // MONO TV at the size every QUUX bitstream builds: 1280 by 1024, one bit
   // a pixel, 40 words a line at `17000000`.
   localparam int unsigned MONO_TV_WIDTH  = 1280;
@@ -748,6 +759,8 @@ module cadr_machine #(
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
       .rdata       (rdata),
+      .cached      (cached),
+      .mem_drained (mem_drained),
       .ub_md_req   (ub_md_req),
       .ub_md_data  (ub_md_data),
       .ub_md_ack   (ub_md_ack),
@@ -804,6 +817,15 @@ module cadr_machine #(
       .con_q   (con_q),
       .con_md  (con_md)
   );
+
+  // QUUX's memory port (contract Q6): the cycle is main memory's; block-disk
+  // answered a write of one of its registers, which is muir's
+  // `dma_written` and invalidates the cache at the next grant; the cache's
+  // counts; and the Xbus bridge's own seam, for the audit.
+  logic        cached, bd_written;
+  logic [31:0] cache_hits, cache_misses;
+  logic        br_req, br_write, br_done;
+  logic [31:0] br_addr, br_wdata;
 
   cadr_memory_path #(
       // QUUX has no color board: the color TV is a LISPM TV strapped
@@ -972,6 +994,18 @@ module cadr_machine #(
       .mem_wdata  (mem_wdata),
       .mem_done   (mem_done),
       .mem_rdata  (mem_rdata),
+      .mem_line   (mem_line),
+      .mem_rline  (mem_rline),
+      .quux_invalidate(bd_written),
+      .cached     (cached),
+      .port_drained(mem_drained),
+      .cache_hits (cache_hits),
+      .cache_misses(cache_misses),
+      .br_req_o   (br_req),
+      .br_write_o (br_write),
+      .br_addr_o  (br_addr),
+      .br_wdata_o (br_wdata),
+      .br_done_o  (br_done),
       .page_err       (page_err),
       .page_err_clear (page_err_clear),
       .page_errstop_we(page_errstop_we),
@@ -1015,6 +1049,7 @@ module cadr_machine #(
   // MEM<31:0> without a slave; with the poison it is caught on all 5,650
   // device writes as well.
   logic        disk_ack, disk_drives;
+  assign bd_written = QUUX && disk_ack && dev_write;
   logic [31:0] disk_rdata;
   logic        dev_ack_joined;
   logic [31:0] dev_rdata_joined;
@@ -1375,6 +1410,38 @@ module cadr_machine #(
                      : (con_ro_echo[17:14] == RO_QUUX_PAGE) ? quux_ro_word
                                                             : proc_ro_data;
 
+  // **ON QUUX THE AUDIT WATCHES THE XBUS BRIDGE'S SEAM, NOT MAIN
+  // MEMORY'S** (contract Q6).  Main memory's cycles are the memory port's,
+  // through the cache: a read that hits makes no transaction, a miss makes a
+  // line fill, and a write reaches main memory from the buffer after the
+  // cycle has ended, so "one transaction per bus cycle" is not a property of
+  // that seam at all.  It is still a property of the bridge's, which carries
+  // MONO TV's frame buffer and block-disk's transfers one word a cycle, and
+  // the port's answers to the bridge stand in for the PS7's handshakes.
+  // What holds the port's own traffic is `build/quux_port.quux.*.pass`.
+  //
+  // The port's answers are taken a tick after the bridge sees them, as the
+  // PS7's handshakes always come after the request they answer: the bridge
+  // may be answered in the very tick it asks, where the audit counts the
+  // request owed only from the next.
+  logic aud_req, aud_mwrite, aud_done, br_done_q, br_rack_q, br_wack_q;
+  logic [31:0] aud_addr, aud_wdata;
+  logic aud_read_ack, aud_write_ack;
+  always_ff @(posedge clk) begin
+    br_done_q <= rst ? 1'b0 : br_done;
+    br_rack_q <= !rst && br_done && !br_done_q && !br_write;
+    br_wack_q <= !rst && br_done && !br_done_q &&  br_write;
+  end
+  assign aud_req       = QUUX ? br_req   : mem_req;
+  assign aud_mwrite    = QUUX ? br_write : mem_write;
+  assign aud_done      = QUUX ? br_done  : mem_done;
+  assign aud_addr      = QUUX ? br_addr  : mem_addr;
+  assign aud_wdata     = QUUX ? br_wdata : mem_wdata;
+  assign aud_read_ack  = QUUX ? br_rack_q : port_read_ack;
+  assign aud_write_ack = QUUX ? br_wack_q : port_write_ack;
+  logic unused_port_acks;
+  assign unused_port_acks = QUUX && ^{port_read_ack, port_write_ack, cache_hits, cache_misses};
+
   cadr_bus_audit audit (
       .clk         (clk),
       .rst         (rst),
@@ -1382,13 +1449,13 @@ module cadr_machine #(
       .cycle_write (aud_write),
       .cycle_memory(aud_memory),
       .cycle_phys  (aud_phys),
-      .mem_req     (mem_req),
-      .mem_write   (mem_write),
-      .mem_done    (mem_done),
-      .mem_addr    (mem_addr),
-      .mem_wdata   (mem_wdata),
-      .port_read_ack (port_read_ack),
-      .port_write_ack(port_write_ack),
+      .mem_req     (aud_req),
+      .mem_write   (aud_mwrite),
+      .mem_done    (aud_done),
+      .mem_addr    (aud_addr),
+      .mem_wdata   (aud_wdata),
+      .port_read_ack (aud_read_ack),
+      .port_write_ack(aud_write_ack),
       .boundary    (clock_edge),
       .vma         (vma),
       .md          (md),

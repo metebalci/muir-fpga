@@ -847,9 +847,14 @@ fn clockwait_program() -> Prog {
     p.to(0o700, fdest(DEST_CLOCKS));
     let mut k = 0u64;
     for g in CLOCKWAIT_GAPS {
+        // **A LINE OF ITS OWN FOR EACH READ**, so each misses the cache and
+        // waits a line fill's 380 ns (contract Q6): the same word again would
+        // hit in 20 ns, and a wait that short holds the microcycle over no
+        // rise of a 1 us timer at any gap.
+        p.konst(0o306, (7 << 13) | ((4 * (k as u32) + 4) & 0o377));
         p.to(0o704, fdest(DEST_PERIOD));
         p.fill(g);
-        p.to(0o305, START_READ);
+        p.to(0o306, START_READ);
         p.fill(1);
         p.i(ALU | SETM | src(0o17) | MD);
         p.i(ALU | SETM | SRC_MD | a_dest(RESULT + k));
@@ -1532,6 +1537,102 @@ fn check_tickwait(which: Which, m: &muir::machine::Machine) {
 
 /// How many microcycles each program's trace runs: to its end and some way
 /// round the loop it parks in.
+
+// ------------------------------------------------ QUUX's memory port, Q6
+
+/// **THE WRITE BUFFER, BACK TO BACK, AND WHAT A READ AFTER IT FINDS**, QUUX's
+/// alone (contract Q6).  A write is answered after the hit time by a buffer
+/// of one word, or when the buffer's last write is done, 290 ns after it
+/// began; a read that misses waits for main memory and fills its line in
+/// 380.  So writes two instructions apart each wait for the one before, and
+/// their answers fall 290 ns apart: at a K of four, a quarter of a
+/// microcycle on from each other, one of every four on a master clock edge,
+/// where the next write's start is waiting for MBUSY.SYNC to fall.  (Three
+/// instructions apart at the closest: the one after a start must leave MD
+/// alone, the word going out at the edge that ends it.)  Then
+/// every word is read back, the first of each line a miss behind the last
+/// write and the second read of it a hit, and the words are held to what was
+/// written.
+/// Four rounds, with none to three fillers between the writes to turn the
+/// phase.
+///
+/// **AND THEN READS NOTHING ANSWERS**, of the page below the feature page,
+/// each ended by the CADR's timeout, whose instant follows the free-running
+/// oscillator and so falls at every phase of the microcycle, each word read
+/// by the instruction after the start.  Main memory's cycles release on
+/// their acknowledgment, so these are what hold the wait for `MD` to READ
+/// IN PROGRESS's fall 140 ns after an Xbus acknowledgment: a wait that
+/// ended at an edge in the two ticks before the fall ends a microcycle
+/// early.  None to seven fillers before each, to turn the phase.
+const MEMEDGE_WRITES: u64 = 6;
+const MEMEDGE_ROUNDS: u64 = 4;
+const MEMEDGE_NXM_READS: u64 = 8;
+
+fn memedge_word(k: u64) -> u32 {
+    0x5A00_0000u32.wrapping_add((k as u32).wrapping_mul(0x0101_0101))
+}
+
+fn memedge_program() -> Prog {
+    let mut p = Prog::new();
+    wait_setup(&mut p, 0o777);
+    let va = |w: u64| ((7u32 << 13) | (w as u32 & 0o377)) as u32;
+    for r in 0..MEMEDGE_ROUNDS {
+        // The words and their addresses first, so the writes stand two
+        // instructions apart.
+        for j in 0..MEMEDGE_WRITES {
+            let k = r * MEMEDGE_WRITES + j;
+            p.konst(0o310 + 2 * j, memedge_word(k));
+            p.konst(0o311 + 2 * j, va(0o20 + 4 * k));
+        }
+        for j in 0..MEMEDGE_WRITES {
+            p.to(0o310 + 2 * j, MD);
+            p.to(0o311 + 2 * j, START_WRITE);
+            // The word goes out at the edge that ends the instruction after
+            // the start, so that one must leave MD alone.
+            p.fill(1 + r as usize);
+        }
+        for j in 0..MEMEDGE_WRITES {
+            let k = r * MEMEDGE_WRITES + j;
+            p.read(0o311 + 2 * j, RESULT + k);
+            // And again, from the line the first read filled: a hit.
+            p.read(0o311 + 2 * j, RESULT + 0o40 + k);
+            p.fill(r as usize);
+        }
+    }
+    // Level-2 slot 1 of the region onto the page nothing answers.
+    p.konst(0o302, ((7u32 << 13) | (1 << 8)) as u32);
+    p.konst(0o303, level_2_store(BELOW_FEATURE_PAGE));
+    p.to(0o302, MD);
+    p.to(0o303, fdest(0o23));
+    p.fill(2);
+    p.konst(0o304, ((7u32 << 13) | (1 << 8) | 0o17) as u32);
+    for n in 0..MEMEDGE_NXM_READS {
+        p.konst(RESULT + 0o70 + n, 0xDEAD_0000 + n as u32);
+    }
+    for n in 0..MEMEDGE_NXM_READS {
+        p.fill(n as usize);
+        p.read(0o304, RESULT + 0o70 + n);
+    }
+    p.park();
+    p
+}
+
+fn check_memedge(which: Which, m: &muir::machine::Machine) {
+    if which != Which::Quux {
+        return;
+    }
+    for k in 0..MEMEDGE_ROUNDS * MEMEDGE_WRITES {
+        assert_eq!(m.amem[(RESULT + k) as usize], memedge_word(k), "QUUX: word {k} read back");
+        assert_eq!(m.amem[(RESULT + 0o40 + k) as usize], memedge_word(k), "QUUX: word {k} hit");
+    }
+    assert_ne!(m.bus_error & bus_error::XBUS_NXM, 0, "QUUX: the reads of the empty page time out");
+    // Each timed-out read took a word into A over the marker set before it.
+    for n in 0..MEMEDGE_NXM_READS {
+        assert_ne!(m.amem[(RESULT + 0o70 + n) as usize], 0xDEAD_0000 + n as u32,
+                   "QUUX: timed-out read {n} reached A");
+    }
+}
+
 fn cycles(name: &str, which: Which) -> u64 {
     match name {
         "clocks" if which == Which::Cadr => 1600,
@@ -1549,6 +1650,7 @@ fn cycles(name: &str, which: Which) -> u64 {
         "page" => 1800,
         "clockwait" => 1400,
         "tickwin" => 2000,
+        "memedge" => 2800,
         _ => unreachable!(),
     }
 }
@@ -1573,8 +1675,9 @@ fn program(name: &str) -> Prog {
         "page" => page_program(),
         "clockwait" => clockwait_program(),
         "tickwin" => tickwin_program(),
+        "memedge" => memedge_program(),
         _ => {
-            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait");
+            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait, memedge");
             std::process::exit(2);
         }
     }
@@ -1693,6 +1796,7 @@ fn main() {
         "page" => check_page(which, e.machine()),
         "clockwait" => check_clockwait(which, e.machine()),
         "tickwin" => check_tickwin(which, e.machine()),
+        "memedge" => check_memedge(which, e.machine()),
         _ => unreachable!(),
     }
     eprintln!(

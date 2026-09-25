@@ -763,6 +763,9 @@ module cadr_machine #(
     output var logic [31:0]  mem_wdata,
     input  var logic         mem_done,
     input  var logic [31:0]  mem_rdata,
+    output var logic         mem_line,
+    input  var logic [127:0] mem_rline,
+    output var logic         mem_drained,
     input  var logic         port_read_ack,
     input  var logic         port_write_ack
 );
@@ -1096,6 +1099,12 @@ module cadr_machine #(
   assign mem_addr = tbo_mem_addr;
   logic [31:0]  tbo_mem_wdata /*verilator public_flat_rw*/;
   assign mem_wdata = tbo_mem_wdata;
+  logic         tbo_mem_line /*verilator public_flat_rw*/;
+  assign mem_line = tbo_mem_line;
+  logic         tbo_mem_drained /*verilator public_flat_rw*/;
+  assign mem_drained = tbo_mem_drained;
+  logic [127:0] tbi_mem_rline /*verilator public_flat_rd*/;
+  assign tbi_mem_rline = mem_rline;
   logic         tbi_mem_done /*verilator public_flat_rd*/;
   assign tbi_mem_done = mem_done;
   logic [31:0]  tbi_mem_rdata /*verilator public_flat_rd*/;

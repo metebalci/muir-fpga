@@ -86,6 +86,14 @@ int ro_is_halted(struct readout *r)
 	return a == b;
 }
 
+int ro_mem_drained(struct readout *r)
+{
+	uint64_t w = 0;
+	if (ro_word(r, IMG_SEL_REGS, IMG_RG_FLAGS, &w) != 0)
+		return -1;
+	return (int)((w >> IMG_F_MEM_DRAINED) & 1u);
+}
+
 uint64_t ro_cycles(struct readout *r)
 {
 	const uint32_t lo = r->read(r, RO_CYCLES);

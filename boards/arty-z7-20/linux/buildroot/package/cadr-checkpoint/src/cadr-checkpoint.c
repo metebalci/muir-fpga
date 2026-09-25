@@ -513,6 +513,30 @@ int main(int argc, char **argv)
 		img_free(&img);
 		return 1;
 	}
+	// **QUUX: THE WRITE BUFFER IS DRAINED BEFORE MAIN MEMORY IS READ**
+	// (contract Q6).  QUUX's memory port acknowledges a write when its buffer
+	// takes it and writes main memory behind the processor, so a machine
+	// halted just after a write can still owe DDR that word.  It drains
+	// itself within one write, a few hundred nanoseconds, and a halted
+	// machine starts no other: this waits for the port to say so, and a
+	// port that never does is a fault this program names rather than a
+	// checkpoint it writes with a word missing.
+	if (quux && !img_flag(&img, IMG_F_MEM_DRAINED)) {
+		int drained = 0;
+		for (int i = 0; i < 100000 && drained == 0; ++i)
+			drained = ro_mem_drained(&r);
+		if (drained != 1) {
+			say("QUUX's memory port %s: its write buffer may still owe main "
+			    "memory a word, and no checkpoint is written without it",
+			    drained < 0 ? "could not be asked whether it is idle"
+					: "never went idle after the halt");
+			img_free(&img);
+			if (was_running && !leave_halted)
+				ro_start(&r);
+			return 1;
+		}
+		img.flags |= 1ull << IMG_F_MEM_DRAINED;
+	}
 	// **QUUX: THE FABRIC'S DISK AND THE BAY MUST AGREE, AND NO TRANSFER MAY
 	// BE IN FLIGHT.**  Block-disk says whether a pack is on unit 0, and muir
 	// refuses a checkpoint with a pack onto a machine without one; a walk in

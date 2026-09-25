@@ -112,6 +112,10 @@ int ro_block32(struct readout *r, unsigned sel, unsigned n, uint32_t *into);
 void ro_halt(struct readout *r);
 void ro_start(struct readout *r);
 int ro_is_halted(struct readout *r);
+// QUUX's memory port idle and its write buffer empty (the flag word's
+// `IMG_F_MEM_DRAINED`), asked of the machine as it stands: 1, 0, or -1 when
+// the window answered for another address.  Always 0 on the CADR.
+int ro_mem_drained(struct readout *r);
 
 // The machine's own counters, low half then high: the high word is latched by
 // the low word's read, which is the rule for the whole of page 0.
