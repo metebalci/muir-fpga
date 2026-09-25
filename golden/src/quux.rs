@@ -1647,8 +1647,25 @@ const DISK_STATUS: u32 = 0o374;
 const DISK_CLP: u32 = 0o375;
 const DISK_DA: u32 = 0o376;
 const DISK_START: u32 = 0o377;
-/// The reads the program makes on each side of the reset.
-const BUSRESET_READS: u64 = 7;
+/// The reads the program makes on each side of the reset: seven, and on the
+/// CADR an eighth, the interface's interrupt status.
+fn busreset_reads(quux: bool) -> u64 {
+    if quux { 7 } else { 8 }
+}
+/// The I/O board's KBD CSR and the Chaosnet interface's CSR, as words of
+/// [`UNIBUS_PAGE`], and the interface's interrupt status as a word of
+/// [`INTERFACE_PAGE`].
+const KBD_CSR_WORD: u32 = 0o45;
+const CHAOS_CSR_WORD: u32 = 0o60;
+const INTERRUPT_STATUS_WORD: u32 = 0o20;
+/// The KBD CSR's clock interrupt enable, and the interface's
+/// `ENABLE UB INTS` (`busint::interrupt_status`).
+const CLOCK_INT_ENABLE: u32 = 1 << 3;
+const ENABLE_UB_INTS: u32 = 0o2000;
+/// The interface's second interrupt register, `766042`, and a `UB INT`
+/// written there by hand with a vector no board on this machine asks with.
+const INTERRUPT_CONTROL_2_WORD: u32 = 0o21;
+const UB_INT_BY_HAND: u32 = 0o100000 | 0o300;
 
 /// **`PROG.UNIBUS.RESET`, `INTERRUPT-CONTROL<28>`, AND WHAT IT CLEARS**
 /// (muir's `Machine::bus_reset`): the interface puts it on the backplane as
@@ -1663,19 +1680,29 @@ const BUSRESET_READS: u64 = 7;
 /// Each device is left with something the reset clears: the disk's command
 /// with its done interrupt enabled --- on QUUX a command block-disk does not
 /// have, STARTed, so that the transfer stops by error with `<13>` --- the
-/// display's vertical flag with its interrupt enabled, and on QUUX the
-/// Chaosnet interface's Clear Transmitter and transmit interrupt enable,
-/// through the register page's word 140.  Then the bit is raised and
-/// lowered, and everything is read again.  In order, each read into
-/// `A[200 + k]` and again into `A[200 + 7 + k]` after the reset:
+/// display's vertical flag with its interrupt enabled, and the Chaosnet
+/// interface's Clear Transmitter and transmit interrupt enable, through the
+/// register page's word 140 on QUUX and at Unibus `764140` on the CADR.  On
+/// the CADR the I/O board's clock interrupt is enabled too, at the KBD CSR,
+/// `764112` --- `CLOCK READY` is up from power-on, no interval having been
+/// loaded --- and the bus interface's `ENABLE UB INTS` at `766040`, so that
+/// the Unibus interrupt, `UB INT`, is up with the Xbus line when the reset
+/// comes and the microcycle that raises the bit takes both down.  Then the
+/// bit is raised and lowered, and everything is read again.  In order, each
+/// read into `A[200 + k]` and again into `A[200 + n + k]` after the reset,
+/// `n` being [`busreset_reads`]:
 ///
 ///   0-2   the disk's status, its last memory address and its disk address
 ///   3     the display's register 0
-///   4     QUUX: the Chaosnet interface's CSR; the CADR: the disk's last
-///         memory address again
+///   4     the Chaosnet interface's CSR
 ///   5     QUUX: the register page's word 100, who is interrupting; the
-///         CADR: the display's register 0 again
+///         CADR: the KBD CSR
 ///   6     the disk's status again, after the others
+///   7     the CADR alone: the interface's interrupt status, `766040`
+///
+/// And on the CADR a second reset with `UB INT` written by hand at `766042`,
+/// which the reset does not reach: `766040` read after it, into
+/// `A[200 + 2n]`, and again after the bit is written clear.
 ///
 /// Every read is followed by a jump on condition 5, which tests the
 /// interrupt all the way, so that `SINTR` moves on rows the testbench
@@ -1685,14 +1712,21 @@ fn busreset_program() -> Prog {
     let mut p = Prog::new();
     let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
     let mut k = 0u64;
+    let reads = busreset_reads(quux);
     // The map: level 1 entry 3 at region 7; level 2 slot 0 the devices,
-    // slot 1 the register page, slot 2 the Unibus.
+    // slot 1 the register page, slot 2 the Unibus, and on the CADR slot 3
+    // the interface's own registers.
     p.konst(0o300, va(0, 0));
     p.konst(0o301, level_1_store(3));
     p.to(0o300, MD);
     p.to(0o301, fdest(0o23));
     p.fill(2);
-    for (slot, page) in [(0u32, DEVICE_PAGE), (1, FEATURE_PAGE), (2, UNIBUS_PAGE)] {
+    let slots: &[(u32, u32)] = if quux {
+        &[(0, DEVICE_PAGE), (1, FEATURE_PAGE), (2, UNIBUS_PAGE)]
+    } else {
+        &[(0, DEVICE_PAGE), (1, FEATURE_PAGE), (2, UNIBUS_PAGE), (3, INTERFACE_PAGE)]
+    };
+    for &(slot, page) in slots {
         p.konst(0o302, va(slot, 0));
         p.konst(0o303, level_2_store(page));
         p.to(0o302, MD);
@@ -1714,14 +1748,11 @@ fn busreset_program() -> Prog {
         p.to(0o304, START_WRITE);
         p.fill(2);
     };
-    // The CADR's Chaosnet interface and I/O board are on the Unibus, whose
-    // acknowledgments the fabric does not yet give at muir's instants (a
-    // write 10 ns early, a read of the KBD CSR 1,000 ns late, measured), so
-    // on the CADR the two are not reached here and the disk's and the
-    // display's registers are read in their place.  QUUX's network is on the
-    // register page and is reached; the wire is the same one.
-    let chaos = if quux { va(1, 0o140) } else { va(0, DISK_CLP) };
-    let fifth = if quux { va(1, 0o100) } else { va(0, TV_CONTROL) };
+    // The Chaosnet interface is on the register page on QUUX and on the
+    // Unibus on the CADR, with the I/O board; the wire it resets is the same
+    // one.
+    let chaos = if quux { va(1, 0o140) } else { va(2, CHAOS_CSR_WORD) };
+    let fifth = if quux { va(1, 0o100) } else { va(2, KBD_CSR_WORD) };
     // The disk: the done interrupt enabled, and on QUUX a transfer started
     // with a command block-disk does not have.
     wr(&mut p, va(0, DISK_STATUS), (1 << 11) | if quux { 0o17 } else { 0 });
@@ -1734,33 +1765,58 @@ fn busreset_program() -> Prog {
     wr(&mut p, va(0, TV_CONTROL), 0o30);
     // The Chaosnet interface: Clear Transmitter, `<8>`, and the transmit
     // interrupt enable, `<5>`.
-    if quux {
-        wr(&mut p, chaos, (1 << 8) | (1 << 5));
+    wr(&mut p, chaos, (1 << 8) | (1 << 5));
+    // On the CADR the I/O board's clock interrupt, and the interface's
+    // enable, which takes the board's request as `UB INT`.
+    if !quux {
+        wr(&mut p, va(2, KBD_CSR_WORD), CLOCK_INT_ENABLE);
+        wr(&mut p, va(3, INTERRUPT_STATUS_WORD), ENABLE_UB_INTS);
     }
+    let mut order = vec![va(0, DISK_STATUS), va(0, DISK_CLP), va(0, DISK_DA), va(0, TV_CONTROL), chaos, fifth,
+                         va(0, DISK_STATUS)];
+    if !quux {
+        order.push(va(3, INTERRUPT_STATUS_WORD));
+    }
+    assert_eq!(order.len() as u64, reads, "busreset: the reads a side");
+    // The reset: `INTERRUPT-CONTROL<28>` raised, then lowered, the other
+    // three bits held at zero.
+    let reset = |p: &mut Prog| {
+        p.konst(0o306, 1 << 28);
+        p.konst(0o307, 0);
+        p.to(0o306, fdest(DEST_INTCTL));
+        p.fill(4);
+        p.to(0o307, fdest(DEST_INTCTL));
+        p.fill(2);
+    };
     for _ in 0..2 {
-        for addr in [va(0, DISK_STATUS), va(0, DISK_CLP), va(0, DISK_DA), va(0, TV_CONTROL), chaos, fifth,
-                     va(0, DISK_STATUS)] {
+        for &addr in &order {
             rd(&mut p, &mut k, addr);
         }
-        if k == BUSRESET_READS {
-            // The reset: `INTERRUPT-CONTROL<28>` raised, then lowered, the
-            // other three bits held at zero.
-            p.konst(0o306, 1 << 28);
-            p.konst(0o307, 0);
-            p.to(0o306, fdest(DEST_INTCTL));
-            p.fill(4);
-            p.to(0o307, fdest(DEST_INTCTL));
-            p.fill(2);
+        if k == reads {
+            reset(&mut p);
         }
     }
-    assert_eq!(k, 2 * BUSRESET_READS, "busreset: the reads counted");
+    // **AND ON THE CADR A SECOND RESET, WITH `UB INT` WRITTEN BY HAND**, at
+    // `766042` with a vector of its own: a bus reset reaches the I/O board and
+    // not the interface, so that bit stands through it, and `SINTR` with it,
+    // until it is written clear.  Read after the reset, `A[200 + 2n]`, and
+    // after the clear, `A[200 + 2n + 1]`.
+    if !quux {
+        wr(&mut p, va(3, INTERRUPT_CONTROL_2_WORD), UB_INT_BY_HAND);
+        reset(&mut p);
+        rd(&mut p, &mut k, va(3, INTERRUPT_STATUS_WORD));
+        wr(&mut p, va(3, INTERRUPT_CONTROL_2_WORD), 0);
+        rd(&mut p, &mut k, va(3, INTERRUPT_STATUS_WORD));
+    }
+    assert_eq!(k, 2 * reads + if quux { 0 } else { 2 }, "busreset: the reads counted");
     p.park();
     p
 }
 
 fn check_busreset(which: Which, m: &muir::machine::Machine) {
     let r = |k: u64| m.amem[(RESULT + k) as usize];
-    let after = |k: u64| r(BUSRESET_READS + k);
+    let n = busreset_reads(which == Which::Quux);
+    let after = |k: u64| r(n + k);
     // Before: the disk's done interrupt requested, the Chaosnet
     // interface's transmit interrupt enabled.
     assert_ne!(r(0) & (1 << 3), 0, "{which:?}: the disk's done interrupt, before the reset");
@@ -1780,8 +1836,149 @@ fn check_busreset(which: Which, m: &muir::machine::Machine) {
         assert_eq!(after(0), r(0) & !(1 << 3), "CADR: the controller's status loses the request alone");
         assert_ne!(r(3) & 0o20, 0, "CADR: the display's vertical flag, before the reset");
         assert_eq!(after(3), r(3) & !0o20, "CADR: the display's vertical flag, after the reset");
-        assert_eq!(after(5), after(3), "CADR: the display's register 0, read twice after the reset");
+        // The Chaosnet interface: its transmit interrupt enable and Transmit
+        // Done before, the enable gone after and Transmit Done set again by
+        // `-UB INIT`.
+        assert_eq!(r(4) & 0o240, 0o240, "CADR: the Chaosnet CSR's enable and Transmit Done, before");
+        assert_eq!(after(4) & 0o240, 0o200, "CADR: the Chaosnet CSR, after the reset");
+        // The KBD CSR: the clock's enable and `CLOCK READY` before; the
+        // enable cleared by `-UB INIT` and `CLOCK READY`, which has no pin on
+        // it, standing.
+        assert_eq!(r(5) & 0o117, 0o110, "CADR: the KBD CSR's clock enable and CLOCK READY, before");
+        assert_eq!(after(5) & 0o117, 0o100, "CADR: the KBD CSR, after the reset");
+        // The interface: `UB INT` with the clock's vector before, and after
+        // the reset `ENABLE UB INTS` standing --- the bus reset is not the
+        // interface's --- and nothing taken.
+        assert_eq!(r(7) & 0o103774, 0o102274, "CADR: UB INT, the clock's vector and the enable, before");
+        assert_eq!(after(7) & 0o103774, 0o2000, "CADR: the enable alone, after the reset");
+        // The second reset: `UB INT` by hand stands through it, and goes when
+        // it is written clear.
+        assert_eq!(r(2 * n) & 0o103774, 0o102300, "CADR: UB INT by hand, after the second reset");
+        assert_eq!(r(2 * n + 1) & 0o103774, 0o2000, "CADR: UB INT written clear");
     }
+}
+
+// ------------------------------------------------------------ the Unibus
+
+/// The bus interface's own registers, `17773000`: Unibus `766000` on, the
+/// interrupt status at word 20 and the error status at 22.
+const INTERFACE_PAGE: u32 = 0o37766;
+
+/// A Unibus access of [`unibus_program`]: the Unibus address, and the word
+/// written, or `None` for a read.
+const UNIBUS_ACCESSES: [(u32, Option<u32>); 30] = [
+    (0o764112, None),         // KBD CSR
+    (0o764112, Some(0)),      // ...written, every enable off
+    (0o764100, None),         // KBD LOW
+    (0o764102, None),         // KBD HIGH
+    (0o764104, None),         // MOUSE Y
+    (0o764106, None),         // MOUSE X
+    (0o764110, None),         // BEEP, which a read clicks
+    (0o764110, Some(0)),      // ...and a write
+    (0o764114, None),         // answered, nothing behind it
+    (0o764120, None),         // USEC LOW, which latches the count
+    (0o764122, None),         // USEC HIGH, the latch
+    (0o764120, Some(0)),      // no write is taken: the NXM timer ends it
+    (0o764124, None),         // the sixty-cycle clock
+    (0o764124, Some(0o100)),  // ...written, the interval timer loaded
+    (0o764126, None),         // GPIO
+    (0o764126, Some(0)),
+    (0o764140, None),         // CHAOS CSR
+    (0o764140, Some(0)),      // ...written, every enable off
+    (0o764142, None),         // MY ADDRESS
+    (0o764142, Some(0o1234)), // a word into the transmit buffer
+    (0o764144, None),         // READ BUFFER, on `FCLK^`
+    (0o764146, None),         // BIT COUNT
+    (0o764154, None),         // answers neither way
+    (0o764160, None),         // the 2651's received data
+    (0o764162, None),         // its status
+    (0o764164, None),         // its mode registers
+    (0o764166, None),         // its command register, the pointers back
+    (0o764166, Some(0)),      // ...written
+    (0o766040, None),         // the interface's interrupt status
+    (0o766044, None),         // and its error status
+];
+
+/// The passes [`unibus_program`] makes over [`UNIBUS_ACCESSES`], each
+/// with its own fillers between the accesses.
+const UNIBUS_PASSES: usize = 4;
+
+/// The fillers after access `i` of pass `pass`: zero to four, so that the
+/// accesses fall at many phases of the I/O board's clocks.
+fn unibus_gap(i: usize, pass: usize) -> usize {
+    (i * 3 + pass * 2 + pass * pass) % 5
+}
+
+/// The words written: the index into this of each write's.
+const UNIBUS_WORDS: [u32; 3] = [0, 0o100, 0o1234];
+
+/// **EVERY REGISTER OF THE I/O BOARD, AND THE INTERFACE'S TWO, OVER THE
+/// UNIBUS**, read and written at many phases of the board's clocks: the
+/// keyboard and mouse group, which waits two edges of the microsecond clock,
+/// the clocks, the Chaosnet interface's registers and buffers, the serial
+/// port on its half-microsecond clock, a write nothing takes, and the bus
+/// interface's own registers.  The CADR's; QUUX has no Unibus.  Each read's
+/// word lands in `A[200 + k]`, in order, the writes taking no slot.
+fn unibus_program() -> Prog {
+    let mut p = Prog::new();
+    let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
+    p.konst(0o300, va(0, 0));
+    p.konst(0o301, level_1_store(3));
+    p.to(0o300, MD);
+    p.to(0o301, fdest(0o23));
+    p.fill(2);
+    for (slot, page) in [(2u32, UNIBUS_PAGE), (3, INTERFACE_PAGE)] {
+        p.konst(0o302, va(slot, 0));
+        p.konst(0o303, level_2_store(page));
+        p.to(0o302, MD);
+        p.to(0o303, fdest(0o23));
+        p.fill(2);
+    }
+    // Each access's virtual address in `A[400 + i]`, and the words written
+    // in `A[500 + j]`.
+    for (i, &(uaddr, _)) in UNIBUS_ACCESSES.iter().enumerate() {
+        let word = (uaddr >> 1) & 0o377;
+        let slot = if uaddr >= 0o766000 { 3 } else { 2 };
+        p.konst(0o400 + i as u64, va(slot, word));
+    }
+    for (j, &w) in UNIBUS_WORDS.iter().enumerate() {
+        p.konst(0o500 + j as u64, w);
+    }
+    let mut k = 0u64;
+    for pass in 0..UNIBUS_PASSES {
+        for (i, &(_, w)) in UNIBUS_ACCESSES.iter().enumerate() {
+            let a = 0o400 + i as u64;
+            if let Some(w) = w {
+                let j = UNIBUS_WORDS.iter().position(|&x| x == w).expect("unibus: a word not in UNIBUS_WORDS");
+                p.to(0o500 + j as u64, MD);
+                p.to(a, START_WRITE);
+                p.fill(2);
+            } else {
+                p.read(a, RESULT + k);
+                k += 1;
+            }
+            p.fill(unibus_gap(i, pass));
+        }
+    }
+    p.park();
+    p
+}
+
+fn check_unibus(which: Which, m: &muir::machine::Machine) {
+    assert_eq!(which, Which::Cadr, "unibus: the CADR's alone");
+    let reads = UNIBUS_ACCESSES.iter().filter(|a| a.1.is_none()).count();
+    let r = |pass: usize, i: usize| m.amem[(RESULT + (pass * reads + i) as u64) as usize];
+    for pass in 0..UNIBUS_PASSES {
+        // The KBD CSR reads its floating byte, and the serial port's
+        // received data the same, the chip having nothing.
+        assert_eq!(r(pass, 0) & 0o177400, 0o177400, "CADR: the KBD CSR's floating byte, pass {pass}");
+        assert_eq!(r(pass, 16), 0o177400, "CADR: the 2651's received data, pass {pass}");
+    }
+    // The Chaosnet CSR's Transmit Done, up from power-on and down after the
+    // first word written into the transmit buffer.
+    assert_eq!((r(0, 11), r(1, 11)), (0o200, 0), "CADR: the Chaosnet CSR's Transmit Done");
+    // The microsecond counter's low half, latched, moving between passes.
+    assert!(r(0, 7) < r(1, 7) && r(1, 7) < r(2, 7), "CADR: the microsecond counter's low half moved");
 }
 
 fn cycles(name: &str, which: Which) -> u64 {
@@ -1803,6 +2000,7 @@ fn cycles(name: &str, which: Which) -> u64 {
         "tickwin" => 2000,
         "memedge" => 2800,
         "busreset" => 700,
+        "unibus" => 3000,
         _ => unreachable!(),
     }
 }
@@ -1829,8 +2027,9 @@ fn program(name: &str) -> Prog {
         "tickwin" => tickwin_program(),
         "memedge" => memedge_program(),
         "busreset" => busreset_program(),
+        "unibus" => unibus_program(),
         _ => {
-            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait, memedge, busreset");
+            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait, memedge, busreset, unibus");
             std::process::exit(2);
         }
     }
@@ -1951,6 +2150,7 @@ fn main() {
         "tickwin" => check_tickwin(which, e.machine()),
         "memedge" => check_memedge(which, e.machine()),
         "busreset" => check_busreset(which, e.machine()),
+        "unibus" => check_unibus(which, e.machine()),
         _ => unreachable!(),
     }
     eprintln!(

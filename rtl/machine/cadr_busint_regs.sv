@@ -440,6 +440,12 @@ module cadr_busint_regs (
     // --- `UB INT`: a Unibus interrupt taken, or simulated by writing the bit.
     // `cadr_machine.sv` ORs it with the Xbus line into `SINTR`.
     output var logic        ub_int,
+    // --- and its first term alone, the bit written by hand, which no bus
+    // reset reaches: the rest of `UB INT` is the I/O board's request, which
+    // `-UB INIT` takes down with the card's enables.  `cadr_machine.sv` holds
+    // the card's term off in the microcycle whose write raises the reset, as
+    // it holds the Xbus line, and keeps this one.
+    output var logic        ub_int_hand,
 
     // --- THE ERROR STATUS REGISTER'S EIGHT LINES, SEVEN OF THEM THIS
     // --- MODULE'S, for the debug cable.
@@ -565,6 +571,7 @@ module cadr_busint_regs (
   assign taken_hand   = (int_status & UB_INT) != 16'd0;
   assign taken_card   = ((int_status & ENABLE_UB_INTS) != 16'd0) && iob_intr;
   assign ub_int       = taken_hand || taken_card;
+  assign ub_int_hand  = taken_hand;
   assign taken_vector = taken_hand ? (int_status & VECTOR_MASK)
                                    : ({8'd0, iob_vector} & VECTOR_MASK);
 
@@ -747,11 +754,21 @@ module cadr_busint_regs (
   // sixty-three mutations passed over what that did to `-XBUS.RQ`.
   localparam logic [6:0] T_MAX = 7'd127;
 
-  assign answer_reg = sel && (t_msyn >= 7'(SSYN_T));
+  // **ONE TICK SHORT OF `SSYN_T` AND `STROBE_T`, AND THOSE ARE THE
+  // INSTANTS, NOT EARLY ONES**, as in `cadr_spy_registers.sv`, which answers
+  // the same register cycle off the same select: `t_msyn` reads one at the
+  // tick after `-UB MSYN`'s edge, so the edge `N` ticks after the strobe
+  // ends the tick it reads `N - 1`, and `ub_ssyn` and the registers a write
+  // loads are registers that must move on the edge before their instant to
+  // be seen at it (`docs/timing.md`, "A change on an edge counts as before
+  // it").  Compared against `N`, a read of `766040` or `766044` by the
+  // processor was acknowledged 10 ns after muir's, measured on the whole
+  // machine with `quux_unibus`.
+  assign answer_reg = sel && (t_msyn >= 7'(SSYN_T) - 7'd1);
   // `-UB READ BUFFER` and `-UB WRITE BUFFER` answer as a register cycle:
   // `Busint::debug_set_master` gives `Responder::MapBuffer` the same
   // `DIAGNOSTIC_NS` the interface's own registers get.
-  assign answer_buf = buf_half && (t_msyn >= 7'(SSYN_T));
+  assign answer_buf = buf_half && (t_msyn >= 7'(SSYN_T) - 7'd1);
   // The Xbus half.  A write is acknowledged WITH the Xbus acknowledgment and
   // a read `UB_XBUS_READ_ACK_NS` after it, which is `Busint::debug_xbus_edge`
   // --- `ack = if write { xack } else { xack + UB_XBUS_READ_ACK_NS }`.
@@ -768,11 +785,11 @@ module cadr_busint_regs (
 
   // The tick the write lands, which muir puts at `REGISTER_STROBE_NS` and
   // not at the answer: `Busint`'s `answered` for a write of this block.
-  assign land = ub_msyn && sel && wr && (t_msyn == 7'(STROBE_T));
+  assign land = ub_msyn && sel && wr && (t_msyn == 7'(STROBE_T) - 7'd1);
   // And the write buffer's own landing.  `Machine::mapped_write` writes it
   // for EVERY write of the even word, write-through or not: "if !access.high
   // { self.write_buffer[k] = v; ... }" comes before the map is looked at.
-  assign land_wbuf = ub_msyn && in_win && wr && !mp_high && (t_msyn == 7'(STROBE_T));
+  assign land_wbuf = ub_msyn && in_win && wr && !mp_high && (t_msyn == 7'(STROBE_T) - 7'd1);
 
   // **A TIMEOUT IS AN EDGE AND `timed_out` IS A LEVEL.**  It stands for the
   // whole of the cycle it belongs to, so the bit is set on its rise and the

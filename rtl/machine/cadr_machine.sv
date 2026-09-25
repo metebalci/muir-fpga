@@ -694,11 +694,15 @@ module cadr_machine #(
   // `ub_int` is zero throughout both traces and `sintr_o` is what it was.
   // That is the same shape as the AND equivalence above and is recorded with
   // it rather than filed as a hole: `build/busint_regs.pass` is what holds
-  // `ub_int` itself, over a program written to move it.
+  // `ub_int` itself, over a program written to move it.  **On the whole
+  // machine `quux_busreset` moves it**: its CADR side enables the I/O board's
+  // clock interrupt and `ENABLE UB INTS`, so `SINTR` is compared with the
+  // Unibus term up, across a bus reset that takes it down, and across a
+  // second one with `UB INT` written by hand, which the reset does not reach.
   logic tv_intr;
   logic disk_intr;
   logic xbus_intr;
-  logic ub_int;
+  logic ub_int, ub_int_hand;
   assign xbus_intr = disk_intr || tv_intr;
   // And on QUUX its tick, `Machine::interrupt`'s third term, which is the
   // processor's own and so reaches neither the Xbus nor the bus interface's
@@ -749,15 +753,27 @@ module cadr_machine #(
   // shape for a write that takes its own flag down.  In the one tick between
   // that edge and the boards' clearing the terms are up again, and nothing
   // takes them there: `SINTR` is taken at the processor's edge alone, a
-  // microcycle on.  The Unibus line is left as it is; nothing here compares
-  // it across a reset.
+  // microcycle on.
+  //
+  // **THE UNIBUS LINE IS HELD OFF THE SAME WAY, LESS ITS HAND-WRITTEN TERM.**
+  // `UB INT` is the I/O board's request taken under `ENABLE UB INTS`, or the
+  // bit written by hand through `766042` (`Machine::unibus_interrupt`); `-UB
+  // INIT` clears the card's enables, and with them its request, and reaches
+  // neither the interface's register nor its hand-written bit.  So in the
+  // microcycle that writes the reset the card's term is held off and the
+  // hand-written one kept.  Left as it was, `SINTR` read the card's request
+  // at the end of that microcycle where muir reads it gone: `quux_busreset`,
+  // which enables the board's clock interrupt and `ENABLE UB INTS` before the
+  // reset, failed on the one row.
   logic prog_unibus_reset, prog_unibus_reset_rising, prog_unibus_reset_q;
   logic bus_init;
   always_ff @(posedge clk)
     prog_unibus_reset_q <= rst ? 1'b0 : prog_unibus_reset;
   assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q);
 
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
+  logic ub_int_line;
+  assign ub_int_line = ub_int_hand || (ub_int && !prog_unibus_reset_rising);
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX),
@@ -920,6 +936,7 @@ module cadr_machine #(
       .ub_ssyn_by (ub_ssyn_by),
       .xbus_intr  (xbus_intr),
       .ub_int     (ub_int),
+      .ub_int_hand(ub_int_hand),
       // On QUUX the keyboard's cable reaches the register page and not the
       // I/O board (`quux_input.sv`), as muir's terminal delivers to the page
       // on QUUX; the board's `-BOOT*` is then idle and the page makes it.

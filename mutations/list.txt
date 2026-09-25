@@ -501,12 +501,12 @@
 @old
             write <= wrcyc;
             if (mclk) begin
-              elapsed     <= 10'd0;
+              elapsed     <= 11'd0;
               answered    <= 1'b0;
-              answered_at <= 10'd0;
+              answered_at <= 11'd0;
               ssyn_seen   <= 1'b0;
-              ub_ack_at   <= 10'd0;
-              ub_md_at    <= 10'd0;
+              ub_ack_at   <= 11'd0;
+              ub_md_at    <= 11'd0;
               tmr_fell    <= 1'b0;
               tmr_rises   <= 4'd0;
               nxm         <= 1'b0;
@@ -586,9 +586,9 @@
 @note the cycle was acknowledged would break every slave that obeys the
 @note specification.
 @old
-  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1) || ack_standing;
+  assign dev_rq    = (state == GRANTED && elapsed >= 11'(SETUP_T) - 11'd1) || ack_standing;
 @new
-  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1);
+  assign dev_rq    = (state == GRANTED && elapsed >= 11'(SETUP_T) - 11'd1);
 @end
 @mutation xbus-rq-goes-out-a-tick-after-its-instant
 @check machine
@@ -600,9 +600,9 @@
 @note 16,951 of the boot PROM's disk-controller cycles read -10 ns on the
 @note machine's instrument, which then called that tick its own.
 @old
-  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1) || ack_standing;
+  assign dev_rq    = (state == GRANTED && elapsed >= 11'(SETUP_T) - 11'd1) || ack_standing;
 @new
-  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T)) || ack_standing;
+  assign dev_rq    = (state == GRANTED && elapsed >= 11'(SETUP_T)) || ack_standing;
 @end
 @mutation ub-msyn-goes-out-a-tick-after-its-instant
 @check dispatch_write_order
@@ -613,9 +613,9 @@
 @note `mode-speed-written-*` hold their six mode-register writes to muir's
 @note instant.
 @old
-  assign ub_msyn  = (state == UB && elapsed >= 10'(UB_ADDRESS_T) - 10'd1);
+  assign ub_msyn  = (state == UB && elapsed >= 11'(UB_ADDRESS_T) - 11'd1);
 @new
-  assign ub_msyn  = (state == UB && elapsed >= 10'(UB_ADDRESS_T));
+  assign ub_msyn  = (state == UB && elapsed >= 11'(UB_ADDRESS_T));
 @end
 @mutation memack-outlives-memrq-by-a-tick
 @check busint_xbus
@@ -704,7 +704,7 @@
 @old
             answered_at <= elapsed;
 @new
-            answered_at <= elapsed + 10'd1;
+            answered_at <= elapsed + 11'd1;
 @end
 
 @mutation the-timeout-oscillator-runs-fast
@@ -850,7 +850,7 @@
 @note goes when the cpu lifts -MEMRQ. What outlives the cycle is the NXM bit
 @note in the bus error register at REQERR, which is not this slice.
 @old
-  assign timed_out  = ack_standing && nxm;
+  assign timed_out  = acked && nxm;
 @new
   assign timed_out  = nxm;
 @end
@@ -1692,13 +1692,17 @@
 @note the same false finding as one that silently fails to apply, pointing
 @note the other way. Anchored on code rather than on the comment above it,
 @note so the prose can be rewritten without breaking this.
+@note
+@note The counter is eleven bits now, because a debug cycle's timeout and the
+@note Unibus acknowledgment after it are counted in it past 1,023 ticks; the
+@note mutation keeps the nine bits that were measured.
 @old
-          if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
+          if (elapsed != 11'h7FF) elapsed <= elapsed + 11'd1;
           if (acked) begin
             state <= ACKED;
           end else if (answering && !answered) begin
 @new
-          elapsed <= {1'b0, elapsed[8:0] + 9'd1};
+          elapsed <= {2'b0, elapsed[8:0] + 9'd1};
           if (acked) begin
             state <= ACKED;
           end else if (answering && !answered) begin
@@ -2509,11 +2513,11 @@
 @note on the acknowledgment's path. Exchanging them is unchanged by that ---
 @note the `- 1` is on both.
 @old
-            ub_ack_at   <= elapsed + 10'(UB_ACK_T) - 10'd1;
-            ub_md_at    <= elapsed + 10'(UB_STROBE_T) - 10'd1;
+            ub_ack_at   <= elapsed + 11'(UB_ACK_T) - 11'd1;
+            ub_md_at    <= elapsed + 11'(UB_STROBE_T) - 11'd1;
 @new
-            ub_ack_at   <= elapsed + 10'(UB_STROBE_T) - 10'd1;
-            ub_md_at    <= elapsed + 10'(UB_ACK_T) - 10'd1;
+            ub_ack_at   <= elapsed + 11'(UB_STROBE_T) - 11'd1;
+            ub_md_at    <= elapsed + 11'(UB_ACK_T) - 11'd1;
 @end
 
 @mutation the-word-at-the-xbus-seam-is-rotated
@@ -7546,9 +7550,9 @@ if {0 && $held ne $want} {
 @note one tick either side of the end of each, so an interval that started
 @note twenty ticks early is over twenty ticks early.
 @old
-  assign land = ub_msyn && answer_now && !ub_ssyn;
+  assign land = ub_msyn && answer_now && !landed;
 @new
-  assign land = ub_msyn && (wr ? (t_msyn == 7'd30) : answer_now) && !ub_ssyn;
+  assign land = ub_msyn && (wr ? (t_msyn == 7'd30) : answer_now) && !landed;
 @end
 
 @mutation iob-init-leaves-the-serial-port-alone
@@ -7636,9 +7640,9 @@ if {0 && $held ne $want} {
 @note waits two edges, one that waits one and one that waits none, so a stage
 @note dropped is caught at every phase and not only at the lucky ones.
 @old
-      answer_now = (edges >= 2'd2) && (t_edge >= 7'(STRAIGHT_T));
+      return (edges >= 2'd2) && ({1'b0, t_edge} >= 8'(STRAIGHT_T) - l);
 @new
-      answer_now = (edges >= 2'd1) && (t_edge >= 7'(STRAIGHT_T));
+      return (edges >= 2'd1) && ({1'b0, t_edge} >= 8'(STRAIGHT_T) - l);
 @end
 
 @mutation iob-the-microsecond-clock-starts-a-tick-late
@@ -8474,9 +8478,9 @@ if {0 && $held ne $want} {
 @note write run with the strobe dropped a tick before the strobe instant must
 @note not take, and run to that instant must.  `STROBE_T` stays read.
 @old
-  assign land = ub_msyn && sel && wr && (t_msyn == 7'(STROBE_T));
+  assign land = ub_msyn && sel && wr && (t_msyn == 7'(STROBE_T) - 7'd1);
 @new
-  assign land = ub_msyn && sel && wr && (t_msyn == 7'(SSYN_T)) && (STROBE_T != 0);
+  assign land = ub_msyn && sel && wr && (t_msyn == 7'(SSYN_T) - 7'd1) && (STROBE_T != 0);
 @end
 
 @mutation busint-regs-the-bus-reads-free
@@ -9098,9 +9102,9 @@ if {0 && $held ne $want} {
 @note this one is written as an inversion: a zero that is always zero cannot
 @note tell an AND from an OR, but it can tell a zero from a one.
 @old
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (!ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (!ub_int_line && !QUUX) || tick_irq || page_irq;
 @end
 
 @mutation dbgin-request-arrives-with-its-levels
@@ -10476,10 +10480,10 @@ if {0 && $held ne $want} {
 @old
     end else if (ch_rbuf) begin
       // The first `FCLK^` edge at or after `-MSYN` plus 33 ns, then a TD250.
-      answer_now = fc_edge1 && (t_fclk >= 7'(STRAIGHT_T));
+      return fc_edge1 && ({1'b0, t_fclk} >= 8'(STRAIGHT_T) - l);
 @new
     end else if (ch_rbuf) begin
-      answer_now = (t_msyn >= 7'(STRAIGHT_T));
+      return {1'b0, t_msyn} >= 8'(STRAIGHT_T) - l;
 @end
 
 @mutation iob-the-serial-ports-select-has-no-phase
@@ -10734,9 +10738,9 @@ if {0 && $held ne $want} {
 @note mode pointer and the data-set-change latch.  A card driving the lines
 @note from its own state through the cycle hands the machine the NEXT word.
 @old
-      word = ub_ssyn ? new_held : new_now;
+      word = landed ? new_held : new_now;
 @new
-      word = ub_ssyn ? new_now : new_held;
+      word = landed ? new_now : new_held;
 @end
 
 @mutation iob-the-overrun-is-not-set
@@ -20748,9 +20752,9 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note The clocks' interrupt does not reach `SINTR`, so jump condition 5
 @note never sees it.
 @old
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || (tick_irq && 1'b0) || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || (tick_irq && 1'b0) || page_irq;
 @end
 
 @mutation quux-the-prom-is-at-zero
@@ -21725,9 +21729,9 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @note edge that ends the write's microcycle is the boards' from before it,
 @note where muir's is the reset boards'.
 @old
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = (xbus_intr && !(prog_unibus_reset_rising && 1'b0)) || (ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !(prog_unibus_reset_rising && 1'b0)) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 @end
 
 @mutation quux-bus-reset-interrupt-not-held-off
@@ -21735,9 +21739,9 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @file rtl/machine/cadr_machine.sv
 @note The same on QUUX, where the Xbus line is block-disk's done.
 @old
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = (xbus_intr && !(prog_unibus_reset_rising && 1'b0)) || (ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !(prog_unibus_reset_rising && 1'b0)) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 @end
 
 @mutation quux-bus-reset-network-not-held-off
@@ -21826,4 +21830,193 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
       .ub_init    (xbus_init),
 @new
       .ub_init    (rst),
+@end
+
+@mutation bus-reset-misses-the-io-board
+@check quux_busreset
+@file rtl/machine/cadr_memory_path.sv
+@note The same on the CADR, where the I/O board is on the Unibus: its
+@note `-UB INIT` is the power-on reset alone, so the KBD CSR keeps the
+@note clock's interrupt enable, the Chaosnet interface its transmit
+@note interrupt enable, and `UB INT` stands after the reset.
+@old
+      .ub_init    (xbus_init),
+@new
+      .ub_init    (rst),
+@end
+
+@mutation bus-reset-unibus-interrupt-not-held-off
+@check quux_busreset
+@file rtl/machine/cadr_machine.sv
+@note **The I/O board's term of `UB INT` is not held off while the reset
+@note lands**, so `SINTR` at the edge that ends the write's microcycle is
+@note the board's request from before it, where muir's has the board's
+@note enables cleared by `-UB INIT`.  The CADR side of `busreset` enables
+@note the board's clock interrupt and `ENABLE UB INTS` before the reset.
+@old
+  assign ub_int_line = ub_int_hand || (ub_int && !prog_unibus_reset_rising);
+@new
+  assign ub_int_line = ub_int_hand || ub_int;
+@end
+
+@mutation bus-reset-holds-off-ub-int-by-hand
+@check quux_busreset
+@file rtl/machine/cadr_machine.sv
+@note **`UB INT` written by hand held off with the board's term**, which a
+@note bus reset does not reach: it is the interface's own bit, at `766042`,
+@note and stands until it is written clear.  The CADR side of `busreset`
+@note resets a second time with it written, so `SINTR` must stay up through
+@note the write's microcycle.
+@old
+  assign ub_int_line = ub_int_hand || (ub_int && !prog_unibus_reset_rising);
+@new
+  assign ub_int_line = (ub_int_hand && 1'b0) || (ub_int && !prog_unibus_reset_rising);
+@end
+
+@mutation iob-ssyn-rises-with-the-landing
+@check quux_unibus
+@file rtl/machine/cadr_io_board.sv
+@note **`-UB SSYN` raised on the edge the word lands on**, as it was: a
+@note register standing for the line moves on the edge before its instant,
+@note or the bus interface sees it a tick late and every `-MEMACK` and MD
+@note strobe of this card is 10 ns after muir's.  Measured on the whole
+@note machine at every register of the card before the fix.
+@old
+  assign ssyn_now = answer_at(1'b1);
+@new
+  assign ssyn_now = answer_at(1'b0);
+@end
+
+@mutation iob-ssyn-rises-with-the-landing-at-the-seam
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The same, at the card's own seam: `-UB SSYN` is compared there on the
+@note edge before the trace's instant.
+@old
+  assign ssyn_now = answer_at(1'b1);
+@new
+  assign ssyn_now = answer_at(1'b0);
+@end
+
+@mutation iob-the-word-lands-with-ssyn
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **The word landed on the edge `-UB SSYN` rises on**, a tick before the
+@note instant, where the card's own state --- the interval timer, the
+@note counters, the ready bits --- moves on the edge its instant is.  The
+@note interval timer is loaded a tick early and `CLOCK READY` rises a tick
+@note early, which the trace looks at one tick either side of.
+@old
+  assign answer_now = answer_at(1'b0);
+@new
+  assign answer_now = answer_at(1'b1);
+@end
+
+@mutation busint-regs-ssyn-a-tick-late
+@check quux_unibus
+@file rtl/machine/cadr_busint_regs.sv
+@note **The interface's registers answering on the edge AT `DIAGNOSTIC_NS`**,
+@note as they did, where `cadr_spy_registers.sv` on the same select answers
+@note on the edge before: a read of `766040` or `766044` acknowledged 10 ns
+@note after muir's.
+@old
+  assign answer_reg = sel && (t_msyn >= 7'(SSYN_T) - 7'd1);
+@new
+  assign answer_reg = sel && (t_msyn >= 7'(SSYN_T));
+@end
+
+@mutation busint-regs-ssyn-a-tick-late-at-the-seam
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note The same, at the block's own seam.
+@old
+  assign answer_reg = sel && (t_msyn >= 7'(SSYN_T) - 7'd1);
+@new
+  assign answer_reg = sel && (t_msyn >= 7'(SSYN_T));
+@end
+
+@mutation busint-regs-the-write-lands-a-tick-late
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **A write of the interface's registers taken on the edge AT
+@note `REGISTER_STROBE_NS`**, as it was, where `cadr_spy_registers.sv` takes
+@note its own on the edge before.  Caught by the section written for the
+@note strobe: the write run through the edge before the instant must take.
+@old
+  assign land = ub_msyn && sel && wr && (t_msyn == 7'(STROBE_T) - 7'd1);
+@new
+  assign land = ub_msyn && sel && wr && (t_msyn == 7'(STROBE_T));
+@end
+
+@mutation the-unibus-timeout-is-the-acknowledgment
+@check quux_unibus
+@file rtl/machine/cadr_busint_xbus.sv
+@note **A Unibus cycle nothing answers acknowledged at the timeout**, as an
+@note Xbus one is and as this one was: `SSYN T0` is `SSYN IN OR NXM TIMEOUT`,
+@note so `-LMACK` is `UNIBUS_ACK_NS` after it.  150 ns early at the write of
+@note the microsecond counter and the read of `764154`, measured.
+@old
+        if (nxm_due && state == GRANTED) begin
+@new
+        if (nxm_due && (state == GRANTED || state == UB)) begin
+@end
+
+@mutation the-unibus-timeout-acks-a-tick-early
+@check quux_unibus
+@file rtl/machine/cadr_busint_xbus.sv
+@note The Unibus timeout's `-LMACK` counted as a slave's `-UB SSYN` is,
+@note from the edge that sees it: but the timeout is taken a tick ahead, so
+@note the sum is one short and the acknowledgment 10 ns early.
+@old
+            nxm         <= 1'b1;
+            ub_ack_at   <= elapsed + 11'(UB_ACK_T);
+@new
+            nxm         <= 1'b1;
+            ub_ack_at   <= elapsed + 11'(UB_ACK_T) - 11'd1;
+@end
+
+@mutation the-unibus-timeout-sets-no-nxm
+@check quux_unibus
+@file rtl/machine/cadr_busint_xbus.sv
+@note The Unibus timeout acknowledged without `NXM TIMEOUT`, so the error
+@note status register's `UNIBUS NXM` is never set: the read of `766044`
+@note after the read of `764154` says so.
+@old
+            nxm         <= 1'b1;
+            ub_ack_at   <= elapsed + 11'(UB_ACK_T);
+@new
+            ub_ack_at   <= elapsed + 11'(UB_ACK_T);
+@end
+
+@mutation the-unibus-timeout-flag-waits-for-acked
+@check unibus
+@file rtl/machine/cadr_busint_xbus.sv
+@note `NXM TIMEOUT` raised only once the interface is in `ACKED`, as it was
+@note when a timeout went straight there: a Unibus timeout is acknowledged
+@note `UB_ACK_T` after it through the Unibus state, so the flag came a tick
+@note after `-MEMACK` and a master reading the two together saw a cycle
+@note nothing answered acknowledged without it.
+@old
+  assign timed_out  = acked && nxm;
+@new
+  assign timed_out  = ack_standing && nxm;
+@end
+
+@mutation the-unibus-cycle-timer-stops-at-ten-bits
+@check unibus
+@file rtl/machine/cadr_busint_xbus.sv
+@note `elapsed` held at 1,023 in the Unibus state, as ten bits held it: a
+@note debug cycle's timeout falls past that, and the acknowledgment
+@note `UB_ACK_T` after it is counted in `elapsed`, so a cycle the far end
+@note never answers is not acknowledged where muir's is.
+@old
+          if (elapsed != 11'h7FF) elapsed <= elapsed + 11'd1;
+          if (acked) begin
+            state <= ACKED;
+          end else if (ub_msyn && ub_ssyn && !ssyn_seen) begin
+@new
+          if (elapsed != 11'h3FF) elapsed <= elapsed + 11'd1;
+          if (acked) begin
+            state <= ACKED;
+          end else if (ub_msyn && ub_ssyn && !ssyn_seen) begin
 @end

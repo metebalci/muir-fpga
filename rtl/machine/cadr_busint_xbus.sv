@@ -288,12 +288,19 @@ module cadr_busint_xbus (
   // **AND THEY ARE HELD ONE TICK EARLY**, which is the rest of that move and
   // arrived later: the comparisons that read them are registers now, not
   // gates on the acknowledgment's path.  See the note at `ub_ack_due`.
-  logic [9:0] ub_ack_at;      // when -LMACK is due
-  logic [9:0] ub_md_at;       // when the MD strobe is due
+  logic [10:0] ub_ack_at;     // when -LMACK is due
+  logic [10:0] ub_md_at;      // when the MD strobe is due
   logic       write;            // WRCYC latched for the cycle being run
-  logic [9:0] elapsed;          // ticks since the grant
+  // **ELEVEN BITS, BECAUSE A DEBUG CYCLE OUTLASTS TEN.**  The REQTIM PROM's
+  // second table gives the other machine up to 1,105 ticks after the grant's
+  // first oscillator fall, and a Unibus cycle nothing answers is acknowledged
+  // `UB_ACK_T` after its timeout, counted in `elapsed`.  Ten bits saturated at
+  // 1,023 and the sum `ub_ack_at` wrapped past it, so such a cycle was
+  // acknowledged a tick after its timeout instead of fifteen, measured on
+  // `build/unibus.pass`'s debug cycle the far end never answers.
+  logic [10:0] elapsed;         // ticks since the grant
   logic       answered;         // the slave has answered; the deskew is running
-  logic [9:0] answered_at;      // `elapsed` when it did
+  logic [10:0] answered_at;     // `elapsed` when it did
 
   // **"MEMRQ DROPS WHEN MEMACK RISES, WHICH CAUSES MEMACK TO DROP."**  The
   // acknowledgment, -XBUS.RQ and NXM TIMEOUT go the instant the cpu lifts
@@ -314,14 +321,14 @@ module cadr_busint_xbus (
   // tick that ends at the grant plus 80 ns.  At `SETUP_T` every device the
   // fabric answers itself (the disk controller, the display, the feature
   // page), which answers off this line, acknowledged a tick after muir.
-  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T) - 10'd1) || ack_standing;
+  assign dev_rq    = (state == GRANTED && elapsed >= 11'(SETUP_T) - 11'd1) || ack_standing;
   assign dev_write = write;
 
   // The Unibus master's own strobe, UNIBUS_ADDRESS_NS after the grant: one
   // tick short in `elapsed`, for the reason `dev_rq` gives.  Every Unibus
   // slave counts from it, so at `UB_ADDRESS_T` the whole Unibus cycle, its
   // register strobe and its acknowledgment ran a tick after muir's.
-  assign ub_msyn  = (state == UB && elapsed >= 10'(UB_ADDRESS_T) - 10'd1);
+  assign ub_msyn  = (state == UB && elapsed >= 11'(UB_ADDRESS_T) - 11'd1);
   assign ub_write = write;
 
   // "MSYN OUT drops at SSYN T100 and -LOADMD rises with it, so the word lands
@@ -388,7 +395,7 @@ module cadr_busint_xbus (
   // exists to shorten would stop being timed at all.
   logic deskewed, deskew_due;
   assign deskew_due = answered && (state == GRANTED)
-                   && (elapsed >= answered_at + 10'(DESKEW_T) - 10'd1);
+                   && (elapsed >= answered_at + 11'(DESKEW_T) - 11'd1);
 
   logic acked;
   assign acked = ack_standing
@@ -405,7 +412,9 @@ module cadr_busint_xbus (
   // The flag belongs to the cycle standing, as `Ack::timed_out` does: it goes
   // when the cpu lifts -MEMRQ and the cycle is over. What outlives the cycle is
   // the NXM bit in the bus error register at REQERR, which is not this slice.
-  assign timed_out  = ack_standing && nxm;
+  // It is up with the acknowledgment, which on the Unibus comes `UB_ACK_T`
+  // after the timeout and a tick before `ACKED`.
+  assign timed_out  = acked && nxm;
   // `Busint::busy`, verbatim: a cycle is in flight from the tick -MEMRQ is
   // taken to the tick the processor lifts it.
   assign busy       = (state != IDLE);
@@ -445,12 +454,12 @@ module cadr_busint_xbus (
       arb_t       <= 9'd0;
       ub_master   <= 1'b0;
       ssyn_seen   <= 1'b0;
-      ub_ack_at   <= 10'd0;
-      ub_md_at    <= 10'd0;
+      ub_ack_at   <= 11'd0;
+      ub_md_at    <= 11'd0;
       write       <= 1'b0;
-      elapsed     <= 10'd0;
+      elapsed     <= 11'd0;
       answered    <= 1'b0;
-      answered_at <= 10'd0;
+      answered_at <= 11'd0;
       deskewed    <= 1'b0;
       ub_acked    <= 1'b0;
       ub_loadmd   <= 1'b0;
@@ -487,7 +496,9 @@ module cadr_busint_xbus (
             tmr_rises <= tmr_rises + 4'd1;
           end
         end
-        if (nxm_due) begin
+        // On the Xbus the timeout is the acknowledgment.  On the Unibus it
+        // is `SSYN T0` instead, below.
+        if (nxm_due && state == GRANTED) begin
           state <= ACKED;
           nxm   <= 1'b1;
         end
@@ -505,12 +516,12 @@ module cadr_busint_xbus (
           if (!n_memrq) begin
             write <= wrcyc;
             if (mclk) begin
-              elapsed     <= 10'd0;
+              elapsed     <= 11'd0;
               answered    <= 1'b0;
-              answered_at <= 10'd0;
+              answered_at <= 11'd0;
               ssyn_seen   <= 1'b0;
-              ub_ack_at   <= 10'd0;
-              ub_md_at    <= 10'd0;
+              ub_ack_at   <= 11'd0;
+              ub_md_at    <= 11'd0;
               tmr_fell    <= 1'b0;
               tmr_rises   <= 4'd0;
               nxm         <= 1'b0;
@@ -566,12 +577,12 @@ module cadr_busint_xbus (
           if (mclk && n_memrq) begin
             state <= IDLE;
           end else if (mclk) begin
-            elapsed     <= 10'd0;
+            elapsed     <= 11'd0;
             answered    <= 1'b0;
-            answered_at <= 10'd0;
+            answered_at <= 11'd0;
             ssyn_seen   <= 1'b0;
-            ub_ack_at   <= 10'd0;
-            ub_md_at    <= 10'd0;
+            ub_ack_at   <= 11'd0;
+            ub_md_at    <= 11'd0;
             tmr_fell    <= 1'b0;
             tmr_rises   <= 4'd0;
             nxm         <= 1'b0;
@@ -617,7 +628,7 @@ module cadr_busint_xbus (
               3'd4: stage <= 3'd5;
               default: begin
                 state   <= UB;
-                elapsed <= 10'd0;
+                elapsed <= 11'd0;
               end
             endcase
           end
@@ -626,7 +637,7 @@ module cadr_busint_xbus (
         // -UB MSYN is out and a slave will answer with -UB SSYN, or nothing
         // will and the timer above ends it.
         UB: begin
-          if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
+          if (elapsed != 11'h7FF) elapsed <= elapsed + 11'd1;
           if (acked) begin
             state <= ACKED;
           end else if (ub_msyn && ub_ssyn && !ssyn_seen) begin
@@ -634,8 +645,26 @@ module cadr_busint_xbus (
             // The sums are made here, where they have a whole tick and are
             // off the comparator's path. `elapsed` saturates rather than
             // wraps, so these cannot run away behind it.
-            ub_ack_at   <= elapsed + 10'(UB_ACK_T) - 10'd1;
-            ub_md_at    <= elapsed + 10'(UB_STROBE_T) - 10'd1;
+            ub_ack_at   <= elapsed + 11'(UB_ACK_T) - 11'd1;
+            ub_md_at    <= elapsed + 11'(UB_STROBE_T) - 11'd1;
+          end else if (nxm_due && !ssyn_seen) begin
+            // **A UNIBUS CYCLE NOTHING ANSWERS IS ACKNOWLEDGED AS ONE A SLAVE
+            // ANSWERS**: `SSYN T0` is `SSYN IN OR NXM TIMEOUT` at REQU 0A09,
+            // so `-LMACK` comes `UB_ACK_T` after the timeout and the MD
+            // strobe `UB_STROBE_T` after it, as they do after `-UB SSYN` ---
+            // `busint::UNIBUS_ACK_NS`'s note, and `Busint::mclk_edge`'s
+            // `ssyn.saturating_add(UNIBUS_ACK_NS)` over `self.timeout(now)`.
+            // Taken as the Xbus's is, a tick ahead, so the sums are one more
+            // than the slave's above: that edge sees `-UB SSYN` a tick after
+            // the one it moves on, and this one is the edge before the
+            // timeout.  Acknowledged at the timeout itself, as it was, every
+            // such cycle ended 150 ns before muir's, measured with
+            // `quux_unibus` at a write of the microsecond counter and a read
+            // of `0o764154`; the debug cable's timeout is the same line.
+            ssyn_seen   <= 1'b1;
+            nxm         <= 1'b1;
+            ub_ack_at   <= elapsed + 11'(UB_ACK_T);
+            ub_md_at    <= elapsed + 11'(UB_STROBE_T);
           end
         end
 
@@ -651,7 +680,7 @@ module cadr_busint_xbus (
           // happened, which is why every output agreed and nothing caught it.
           // At the 10 ns grid the timer ends one at about 470 ticks plus the
           // phase.
-          if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
+          if (elapsed != 11'h7FF) elapsed <= elapsed + 11'd1;
           if (acked) begin
             state <= ACKED;
           end else if (answering && !answered) begin
