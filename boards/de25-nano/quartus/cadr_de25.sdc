@@ -183,10 +183,15 @@ if {[get_collection_size $quux_fast] > 0} {
 # The disk is `disk` in `cadr_machine.sv`'s generate block for either
 # machine: the CADR's controller in `g_cadr_disk`, QUUX's block-disk in
 # `g_quux_disk`.  Each pattern matches the one that is built.
+# And QUUX's memory port, `quux_mem_port.sv` with its cache, out whole: its
+# grant, its countdowns and the cache's order and valid bits move on every
+# tick.  What the cache holds of the microcycle is given back its time in
+# `quux_de25.sdc`.
 set out_whole [get_registers -nowarn {u_machine|g_cadr_disk.disk|* u_machine|g_quux_disk.disk|* u_machine|audit|*
                                       u_machine|memory|tv|* u_machine|memory|iob|*
                                       u_machine|memory|busint_regs|*
-                                      u_machine|memory|g_quux_mono_tv.mono_tv|*}]
+                                      u_machine|memory|g_quux_mono_tv.mono_tv|*
+                                      u_machine|memory|g_quux_port.port|*}]
 set held [get_registers -nowarn [concat \
     [cadr_leaves {u_machine|g_cadr_disk.disk|} {mine which}] \
     [cadr_leaves {u_machine|g_quux_disk.disk|} {mine which}] \

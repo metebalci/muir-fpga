@@ -173,8 +173,9 @@ fn main() {
     }
 
     // The engine on the fabric's grid, as every trace takes it.
+    // QUUX's memory port as a fresh engine holds it, its cache always fitted
+    // and empty (contract Q6): what `chk_rtl.c` writes for a halted board.
     let mut e = trace::engine_on(m, timing);
-    e.set_cache(None);
     e.set_clock(M0 * 10);
     e.m.cycles = CYCLES;
 

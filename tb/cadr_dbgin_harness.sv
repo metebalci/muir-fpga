@@ -423,6 +423,10 @@ module cadr_dbgin_harness #(
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
       .rdata       (rdata),
+      // The CADR's cycles are released through MFINISHD and RDFINISH, and
+      // it has no memory port to drain (contract Q6 is QUUX's).
+      .cached      (1'b0),
+      .mem_drained (1'b0),
       // `UB MD LOAD`, MD's third writer: a foreign master's mapped write
       // through the Unibus map, which this harness has no register block to
       // make.  Tied off, and the acknowledgment is then never asked for.

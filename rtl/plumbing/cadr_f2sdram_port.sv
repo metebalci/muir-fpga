@@ -56,7 +56,12 @@
 
 `default_nettype none
 
-module cadr_f2sdram_port (
+module cadr_f2sdram_port #(
+    // "cadr" or "quux": which machine's memory port is on the bridge.  QUUX's
+    // asks line fills (contract Q6) and has its own 64-bit master for them,
+    // `quux_axi_master.sv`; see the instances below.
+    parameter string MACHINE = "cadr"
+) (
     input  var logic clk,
     // The fabric's reset.  It resets the tally at once and the port only
     // through the gate's drain.
@@ -70,6 +75,10 @@ module cadr_f2sdram_port (
     output var logic        mem_done,
     output var logic [31:0] mem_rdata,
     output var logic        mem_error,
+    // QUUX's line fill: four words at a 16-byte boundary, two 64-bit beats.
+    // The CADR never asks one.
+    input  var logic         mem_line,
+    output var logic [127:0] mem_rline,
 
     // --- the processor, asynchronous to this clock ------------------------
     input  var logic        h2f_reset,
@@ -199,23 +208,79 @@ module cadr_f2sdram_port (
   logic        awvalid, awready, wlast, wvalid, wready;
   logic        bvalid, bready, arvalid, arready, rlast, rvalid, rready;
 
+  // **ON QUUX ONE 64-BIT MASTER DRIVES THE SHARE'S PORT 0**,
+  // `quux_axi_master.sv`: the CADR's adapter and widening in one, and the
+  // line fill QUUX's memory port asks on a cache miss (contract Q6), a burst
+  // of two full-width beats, which the share already grants by the burst.
+  // Both are built and the machine picks one: the other is asked nothing,
+  // so it stands in IDLE and the fitter removes it, and the CADR's keep
+  // their instance names, which `cadr_ddr.sdc` and `sta_check.tcl` name.
+  localparam bit QUUX_PORT = MACHINE == "quux";
+  logic        c_done, c_error, q_done, q_error;
+  logic [31:0] c_rdata, q_rdata;
+  logic [31:0] c_b_awaddr, c_b_araddr, q_b_awaddr, q_b_araddr;
+  logic [3:0]  c_b_awlen, c_b_arlen, q_b_awlen, q_b_arlen;
+  logic [1:0]  c_b_awsize, c_b_arsize, q_b_awsize, q_b_arsize;
+  logic [63:0] c_b_wdata, q_b_wdata;
+  logic [7:0]  c_b_wstrb, q_b_wstrb;
+  logic [1:0]  c_awburst, c_arburst, q_awburst, q_arburst;
+  logic        c_awvalid, c_wlast, c_wvalid, c_bready, c_arvalid, c_rready;
+  logic        q_awvalid, q_wlast, q_wvalid, q_bready, q_arvalid, q_rready;
+
   cadr_axi_master u_axi (
       .clk(clk), .rst(port_rst),
-      .mem_req(mem_req), .mem_write(mem_write),
+      .mem_req(!QUUX_PORT && mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata),
-      .mem_done(mem_done), .mem_rdata(mem_rdata), .mem_error(mem_error),
+      .mem_done(c_done), .mem_rdata(c_rdata), .mem_error(c_error),
       .m_axi_awaddr(awaddr), .m_axi_awlen(awlen), .m_axi_awsize(awsize),
-      .m_axi_awburst(awburst), .m_axi_awvalid(awvalid),
+      .m_axi_awburst(c_awburst), .m_axi_awvalid(c_awvalid),
       .m_axi_awready(awready),
-      .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(wlast),
-      .m_axi_wvalid(wvalid), .m_axi_wready(wready),
-      .m_axi_bresp(bresp), .m_axi_bvalid(bvalid), .m_axi_bready(bready),
+      .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(c_wlast),
+      .m_axi_wvalid(c_wvalid), .m_axi_wready(wready),
+      .m_axi_bresp(bresp), .m_axi_bvalid(bvalid), .m_axi_bready(c_bready),
       .m_axi_araddr(araddr), .m_axi_arlen(arlen), .m_axi_arsize(arsize),
-      .m_axi_arburst(arburst), .m_axi_arvalid(arvalid),
+      .m_axi_arburst(c_arburst), .m_axi_arvalid(c_arvalid),
       .m_axi_arready(arready),
       .m_axi_rdata(rdata), .m_axi_rresp(rresp), .m_axi_rlast(rlast),
-      .m_axi_rvalid(rvalid), .m_axi_rready(rready)
+      .m_axi_rvalid(rvalid), .m_axi_rready(c_rready)
   );
+
+  quux_axi_master u_qaxi (
+      .clk(clk), .rst(port_rst),
+      .mem_req(QUUX_PORT && mem_req), .mem_write(mem_write), .mem_line(mem_line),
+      .mem_addr(mem_addr), .mem_wdata(mem_wdata),
+      .mem_done(q_done), .mem_rdata(q_rdata), .mem_rline(mem_rline),
+      .mem_error(q_error),
+      .m_awaddr(q_b_awaddr), .m_awlen(q_b_awlen), .m_awsize(q_b_awsize),
+      .m_awburst(q_awburst), .m_awvalid(q_awvalid), .m_awready(awready),
+      .m_wdata(q_b_wdata), .m_wstrb(q_b_wstrb), .m_wlast(q_wlast),
+      .m_wvalid(q_wvalid), .m_wready(wready),
+      .m_bresp(bresp), .m_bvalid(bvalid), .m_bready(q_bready),
+      .m_araddr(q_b_araddr), .m_arlen(q_b_arlen), .m_arsize(q_b_arsize),
+      .m_arburst(q_arburst), .m_arvalid(q_arvalid), .m_arready(arready),
+      .m_rdata(b_rdata), .m_rresp(rresp), .m_rlast(rlast),
+      .m_rvalid(rvalid), .m_rready(q_rready)
+  );
+
+  assign mem_done  = QUUX_PORT ? q_done  : c_done;
+  assign mem_rdata = QUUX_PORT ? q_rdata : c_rdata;
+  assign mem_error = QUUX_PORT ? q_error : c_error;
+  assign b_awaddr  = QUUX_PORT ? q_b_awaddr : c_b_awaddr;
+  assign b_awlen   = QUUX_PORT ? q_b_awlen  : c_b_awlen;
+  assign b_awsize  = QUUX_PORT ? q_b_awsize : c_b_awsize;
+  assign b_wdata   = QUUX_PORT ? q_b_wdata  : c_b_wdata;
+  assign b_wstrb   = QUUX_PORT ? q_b_wstrb  : c_b_wstrb;
+  assign b_araddr  = QUUX_PORT ? q_b_araddr : c_b_araddr;
+  assign b_arlen   = QUUX_PORT ? q_b_arlen  : c_b_arlen;
+  assign b_arsize  = QUUX_PORT ? q_b_arsize : c_b_arsize;
+  assign awburst   = QUUX_PORT ? q_awburst : c_awburst;
+  assign awvalid   = QUUX_PORT ? q_awvalid : c_awvalid;
+  assign wlast     = QUUX_PORT ? q_wlast   : c_wlast;
+  assign wvalid    = QUUX_PORT ? q_wvalid  : c_wvalid;
+  assign bready    = QUUX_PORT ? q_bready  : c_bready;
+  assign arburst   = QUUX_PORT ? q_arburst : c_arburst;
+  assign arvalid   = QUUX_PORT ? q_arvalid : c_arvalid;
+  assign rready    = QUUX_PORT ? q_rready  : c_rready;
 
   logic [31:0] b_awaddr, b_araddr;
   logic [3:0]  b_awlen, b_arlen;
@@ -228,9 +293,9 @@ module cadr_f2sdram_port (
       .s_wdata(wdata), .s_wstrb(wstrb),
       .s_araddr(araddr), .s_arlen(arlen), .s_arsize(arsize),
       .s_rdata(rdata),
-      .m_awaddr(b_awaddr), .m_awlen(b_awlen), .m_awsize(b_awsize),
-      .m_wdata(b_wdata), .m_wstrb(b_wstrb),
-      .m_araddr(b_araddr), .m_arlen(b_arlen), .m_arsize(b_arsize),
+      .m_awaddr(c_b_awaddr), .m_awlen(c_b_awlen), .m_awsize(c_b_awsize),
+      .m_wdata(c_b_wdata), .m_wstrb(c_b_wstrb),
+      .m_araddr(c_b_araddr), .m_arlen(c_b_arlen), .m_arsize(c_b_arsize),
       .m_rdata(b_rdata)
   );
 

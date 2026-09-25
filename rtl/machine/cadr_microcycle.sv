@@ -125,7 +125,7 @@ module cadr_microcycle #(
     // boot PROM clearing all 16K words of the PDL buffer and 64 blocks of
     // level 2; and the records aimed at each in `mutations/list.txt`.
     parameter string MACHINE = "cadr",
-    parameter logic [31:0] MACHINE_ID = 32'h5155_0064,
+    parameter logic [31:0] MACHINE_ID = 32'h5155_0074,
     // **QUUX'S MICROCYCLE IN TICKS** (H1a, muir's `TimingModel::Sync`): K,
     // and L more for an `ILONG` instruction.  A board's, from its top level
     // through `cadr_machine.sv`; nothing on the CADR reads either.  See
@@ -227,6 +227,16 @@ module cadr_microcycle #(
                                           //   this line is high!"
     input  var logic        n_loadmd,     // -LOADMD, which strobes MD
     input  var logic [31:0] rdata,        // MEM<31:0> into the cpu
+    // QUUX's memory port says the cycle is main memory's (contract Q6,
+    // muir's `Ack::cached`): no Xbus cycle, so nothing is left to release
+    // after -MEMACK, and MBUSY and READ IN PROGRESS fall on it.  Zero on the
+    // CADR.
+    input  var logic        cached,
+    // QUUX's memory port is idle and its write buffer empty, for the
+    // readout's flag word (`cadr-checkpoint` waits for it after a halt,
+    // before it reads main memory).  Read nowhere else; zero in the word on
+    // the CADR.
+    input  var logic        mem_drained,
     input  var logic        sintr,        // SINTR, the interrupt off the cables
     // QUUX's tick as `Machine::interrupt` takes it: the flag, while enabled,
     // ORed into the interrupt that jump conditions 5 and 6 test.
@@ -2328,6 +2338,20 @@ module cadr_microcycle #(
   assign memack_edge      = !n_memack && n_memack_q;
   assign mfinish_clearing = (mfinish_t == 6'd1) && !memack_edge;
 
+  // **A CYCLE OF QUUX'S MEMORY PORT RELEASES ON ITS ACKNOWLEDGMENT** (muir's
+  // `Rtl::bus_cycle`: "a read the memory cache answered ran no bus cycle: its
+  // word is at the data paths with the acknowledgement, and nothing is left
+  // to release", `(finish, release) = (0, 0)` for every cycle `Ack::cached`
+  // marks, which on QUUX is every cycle of main memory, read or write).  In
+  // the frame above, a change at A is on the D inputs of the registers
+  // clocked at A: so MBUSY and READ IN PROGRESS fall at A's edge, and what
+  // that edge itself takes of MBUSY --- `MBUSY.SYNC` at a master clock edge
+  // on A --- is `mbusy_now`, already down.  Zero on the CADR, whose every
+  // cycle is released through the two countdowns.
+  logic released_now, mbusy_now;
+  assign released_now = QUUX && memack_edge && cached;
+  assign mbusy_now    = mbusy && !released_now;
+
   // QUUX's wait for MD, whose account is at `-HANG` above.
   if (QUUX) begin : g_quux_hold
     logic       hold_mclk_q, hold_rip;
@@ -2647,7 +2671,12 @@ module cadr_microcycle #(
       // "A `DIV` OF `MD`").  Nothing else reads it but the readout.
       if (QUUX && loadmd_edge) md_held <= rdata;
       memgo_q <= memgo;
-      if (memack_edge) begin
+      if (released_now) begin
+        mfinish_t      <= 6'd0;
+        rdfinish_t     <= 6'd0;
+        mbusy          <= 1'b0;
+        rd_in_progress <= 1'b0;
+      end else if (memack_edge) begin
         mfinish_t  <= 6'(MFINISHD_T);
         rdfinish_t <= 6'(RD_FINISH_T);
       end else begin
@@ -2668,7 +2697,7 @@ module cadr_microcycle #(
         // half of a clock cycle, the busy condition (MEMRQ) must be
         // synchronized."  It is on the *master* clock, so it goes on
         // following MEMRQ through a WAIT --- which is what ends the wait.
-        mbusy_sync <= (memstart && vmaok) || mbusy;
+        mbusy_sync <= (memstart && vmaok) || mbusy_now;
         promdisabled <= promdisable;
         // OLORD1 1A10 takes RUN into SRUN on MCLK5A, and STEP twice over
         // into SSTEP and then SSDONE.  The order matters and is muir's:
@@ -3074,7 +3103,7 @@ module cadr_microcycle #(
   // `PROMDISABLE` in FLAG-1 and not one of the other five bits, the registers
   // being write-only on the board.
   logic [47:0] ro_flags;
-  assign ro_flags = {15'd0,
+  assign ro_flags = {14'd0, QUUX && mem_drained,
                      stathenb, errstop, run,
                      md_pending, vmaok, imodd, destspcd, spushd, wmapd,
                      rd_in_progress, mbusy_sync, wrcyc, rdcyc, mbusy,

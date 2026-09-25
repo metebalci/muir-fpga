@@ -90,6 +90,243 @@ pub struct Trace {
     last_halted: u64,
     last_bus: u64,
     line: String,
+    /// QUUX's memory port, whose `ack` and `gnt` are derived: [`QuuxPort`].
+    quux: Option<QuuxPort>,
+}
+
+/// **THE COMMIT OF muir THE DERIVATION BELOW IS CORRECT FOR, AND ONLY FOR.**
+/// See [`QuuxPort`].  A later muir (its Q7) changes QUUX's device timing, so
+/// the generator refuses to run against any other commit rather than derive
+/// the wrong instants silently.
+pub const QUUX_PORT_DERIVED_FOR: &str = "0ba4e233a3e211e7a25eba952f4b6d97b03f757e";
+
+/// **`ack` AND `gnt` ON QUUX ARE A DERIVATION, PENDING muir's ACCESSORS.**
+///
+/// At muir `0ba4e23` (contract Q6) QUUX has no bus interface, so
+/// `Rtl::busint()` is `None` and the memory port's own `ack_at()` and
+/// `granted()` are not public; `Rtl::bus_answered_at()` is.  The port
+/// (`src/memory_port.rs`) sets them so:
+///
+/// - `granted()` is `Granted | Acked`, exactly the states that carry an
+///   answer, so it is `bus_answered_at().is_some()` --- an identity, not a
+///   derivation;
+/// - `ack_at()` is the answer, except for a DEVICE's READ, which is
+///   acknowledged `busint::XBUS_ACK_NS` after it: main memory's cycles (the
+///   cache's hit, a line fill, a buffered or unbuffered write) and a
+///   timeout have `ack == answered`.
+///
+/// So the only thing derived is whether the cycle is a device's read.  It is
+/// taken from what muir says, never from the fabric:
+///
+/// - the direction is `MEMWR` of the microcycle that started the cycle ---
+///   the row before the one whose step requests it, decoded from its `IR` as
+///   `Rtl::read_phase` decodes it (`destmem`, `IR<20:19>`), and a read where
+///   that row starts nothing explicitly, which is the macroinstruction fetch;
+/// - a main memory read is exactly a cycle the cache looked up: muir's
+///   `hits + misses` moves by one at the grant, and by nothing otherwise;
+/// - the grant is the edge the request is taken at, the engine's time after
+///   the step that counted the cycle.
+///
+/// **And every piece of it is checked against muir, loudly**: a lookup on a
+/// cycle derived as a write, a hit not answered `hit_ns` after the grant, a
+/// miss answered sooner than a line fill, and a read the cache did not look
+/// up that is neither answered `SETUP_NS + IDEAL_DEVICE_NS` after the grant
+/// (a device) nor at muir's own `nxm_timeout_at` (nothing answers) each stop
+/// the generator.  When muir adds `Rtl::bus_ack_at()` and `bus_granted()`
+/// this goes, and the pin with it.
+///
+/// **AND THE ACKNOWLEDGMENT ITSELF IS HELD TO WHAT THE PROCESSOR DID WITH
+/// IT.**  A read's acknowledgment is when `READ IN PROGRESS` starts to
+/// fall: at once for main memory's (`Ack::cached`), 140 ns later for any
+/// other (`Rtl`'s `RD_FINISH_NS`, `rtl.rs`, private there and so written
+/// here).  QUUX has no hung microcycle: one that reads `MD` with the read
+/// in flight holds until then and runs at the next master clock edge.  So
+/// a microcycle that reads `MD`, held, and held for nothing else --- it
+/// starts no memory cycle, it is no `DIV` or `MUL`, and nothing it does
+/// fetches a macroinstruction --- must start at the first edge at or after
+/// that fall: at or after it, and less than a microcycle after it.  A
+/// derived acknowledgment off by a tick either way is off that interval on
+/// every such microcycle whose edge falls where the tick is, which on the
+/// boot PROM's thousands of device reads is many of them.  Checked on every
+/// one, and the count said on stderr.
+struct QuuxPort {
+    bus_cycles: u64,
+    lookups: u64,
+    hits: u64,
+    /// The last read's acknowledgment and whether it was main memory's.
+    read_ack: Option<(u64, bool)>,
+    /// Microcycles whose start was held to a read's fall, and those whose
+    /// hold was checked exactly.
+    fall_checks: [u64; 2],
+    /// The previous row's explicit start: `Some(true)` a write, `Some(false)`
+    /// a read, `None` none.
+    started: Option<bool>,
+    ack: Option<u64>,
+    /// What was derived, said on stderr when the trace ends: `[reads the
+    /// cache looked up, writes, device reads, other reads timed out]`.
+    counts: [u64; 4],
+}
+
+impl Drop for QuuxPort {
+    fn drop(&mut self) {
+        let [looked, writes, device, timeouts] = self.counts;
+        eprintln!(
+            "trace: QUUX's ack derived for {} cycles: {looked} reads the cache looked up, \
+             {writes} writes, {device} device reads, {timeouts} reads timed out; \
+             {} microcycles reading MD held to a read's fall, {} of them exactly",
+            looked + writes + device + timeouts,
+            self.fall_checks[0],
+            self.fall_checks[1]
+        );
+    }
+}
+
+/// Refuses a muir other than [`QUUX_PORT_DERIVED_FOR`].
+fn refuse_other_muir() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../muir");
+    let head = std::process::Command::new("git")
+        .args(["-C", dir, "rev-parse", "HEAD"])
+        .output()
+        .expect("git, to read muir's commit");
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    assert_eq!(
+        head, QUUX_PORT_DERIVED_FOR,
+        "QUUX's ack and gnt are derived for muir {QUUX_PORT_DERIVED_FOR} only (golden/src/trace.rs, \
+         QuuxPort); {dir} is at {head}: take them from muir's own accessors instead"
+    );
+    let clean = std::process::Command::new("git")
+        .args(["-C", dir, "diff", "--quiet", "HEAD", "--", "src"])
+        .status()
+        .expect("git, to read muir's tree");
+    assert!(clean.success(), "muir's src/ differs from {QUUX_PORT_DERIVED_FOR}: the derivation is for that tree");
+}
+
+/// `MEMWR` and `MEMRD` of a row, as `Rtl::read_phase` decodes them from `IR`
+/// (`destmem`, then `IR<20:19>`: 1 a read, 2 a write), `None` when the row
+/// starts nothing explicitly.  A nopped row has no destination.
+fn explicit_start(ir: u64, nop: bool) -> Option<bool> {
+    let bit = |n: u32| (ir >> n) & 1 != 0;
+    let dest = !nop && matches!((ir >> 43) & 3, 0 | 3);
+    let destmem = dest && !bit(25) && bit(23);
+    match (destmem, (ir >> 19) & 3) {
+        (true, 1) => Some(false),
+        (true, 2) => Some(true),
+        _ => None,
+    }
+}
+
+impl QuuxPort {
+    fn new(e: &Rtl) -> QuuxPort {
+        refuse_other_muir();
+        let c = e.cache().expect("QUUX always has its cache (contract Q6)");
+        QuuxPort {
+            bus_cycles: e.bus_cycles(),
+            lookups: c.hits + c.misses,
+            hits: c.hits,
+            started: None,
+            ack: None,
+            counts: [0; 4],
+            read_ack: None,
+            fall_checks: [0; 2],
+        }
+    }
+
+    /// After every step: a cycle counted since the last is derived here.
+    fn observe(&mut self, e: &Rtl) {
+        let c = e.cache().expect("QUUX's cache");
+        let lookups = c.hits + c.misses;
+        let cycles = e.bus_cycles() - self.bus_cycles;
+        assert!(cycles <= 1, "two bus cycles inside one step at {} ns", e.ns());
+        let looked = lookups - self.lookups;
+        let hit = c.hits - self.hits;
+        self.lookups = lookups;
+        self.hits = c.hits;
+        if cycles == 0 {
+            assert_eq!(looked, 0, "a cache lookup with no bus cycle at {} ns", e.ns());
+            return;
+        }
+        self.bus_cycles = e.bus_cycles();
+        let grant = e.ns();
+        let answered = e.bus_answered_at().expect("a cycle counted is granted at its edge");
+        let write = self.started == Some(true);
+        let gap = answered.checked_sub(grant).unwrap_or_else(|| {
+            panic!("QUUX's cycle answered at {answered} ns, before its grant at {grant} ns")
+        });
+        let hit_ns = c.config.hit_ns;
+        let fill_ns = e.memory_timing().expect("QUUX's memory timing").read_ns;
+        let device_ns = muir::busint::SETUP_NS + muir::busint::IDEAL_DEVICE_NS;
+        let device_read = if looked == 1 {
+            assert!(!write, "the cache looked up a cycle derived as a write, at {grant} ns");
+            if hit == 1 {
+                assert_eq!(gap, hit_ns, "a hit answered {gap} ns after its grant at {grant} ns");
+            } else {
+                assert!(gap >= fill_ns, "a miss answered {gap} ns after its grant at {grant} ns");
+            }
+            false
+        } else if write {
+            false
+        } else {
+            let timeout = e.timing_model().free_running(muir::busint::nxm_timeout_at(grant));
+            assert!(
+                gap == device_ns || answered == timeout,
+                "a read the cache did not look up, answered {gap} ns after its grant at {grant} ns, \
+                 is neither a device's ({device_ns}) nor a timeout (at {timeout})"
+            );
+            gap == device_ns
+        };
+        self.counts[if looked == 1 {
+            0
+        } else if write {
+            1
+        } else if device_read {
+            2
+        } else {
+            3
+        }] += 1;
+        let ack = answered + if device_read { muir::busint::XBUS_ACK_NS } else { 0 };
+        self.ack = Some(ack);
+        self.read_ack = (!write).then_some((ack, looked == 1));
+    }
+
+    /// After a row: what it starts, for the cycle the next row requests; and
+    /// if it read `MD`, its start against the last read's fall.
+    fn row_done(&mut self, e: &Rtl, ir: u64, nop: bool, stall: u64, srcmd: bool) {
+        self.started = explicit_start(ir, nop);
+        let Some((ack, cached)) = self.read_ack else { return };
+        if !srcmd || nop {
+            return;
+        }
+        // `RD_FINISH_NS` (`rtl.rs`), and none for a cycle of main memory's.
+        let fall = ack + if cached { 0 } else { 140 };
+        let ilong = (ir >> 45) & 1 != 0;
+        let cycle = u64::from(e.timing_model().cycle_ns(muir::clock::Speed::Normal, ilong));
+        let start = e.ns() - cycle;
+        if start >= ack {
+            // The read had been answered before this microcycle was asked
+            // about; it constrains the next read's microcycles, not this one's.
+            assert!(
+                start >= fall,
+                "a microcycle reading MD started at {start} ns, before the fall at {fall} ns of \
+                 the read acknowledged at {ack} ns (derived: golden/src/trace.rs, QuuxPort)"
+            );
+            self.fall_checks[0] += 1;
+        }
+        // Held for this read alone: it waited, and starts nothing, and is no
+        // multiply or divide (a `-WAIT` of its own), and no fetch.
+        let dest = !nop && matches!((ir >> 43) & 3, 0 | 3);
+        let destmem = dest && (ir >> 25) & 1 == 0 && (ir >> 23) & 1 != 0;
+        let muldiv = !nop && matches!((ir >> 43) & 3, 0) && muir::muldiv::decode(ir).is_some();
+        if stall > 0 && !destmem && !muldiv && start >= ack {
+            assert!(
+                start < fall + cycle,
+                "a microcycle reading MD, held for the read acknowledged at {ack} ns, started at \
+                 {start} ns, a microcycle or more after its fall at {fall} ns (derived: \
+                 golden/src/trace.rs, QuuxPort)"
+            );
+            self.fall_checks[1] += 1;
+        }
+        self.read_ack = None;
+    }
 }
 
 impl Trace {
@@ -99,6 +336,23 @@ impl Trace {
             last_halted: e.halted_ns(),
             last_bus: e.bus_cycles(),
             line: String::with_capacity(256),
+            quux: e.busint().is_none().then(|| QuuxPort::new(e)),
+        }
+    }
+
+    /// `-MEMACK`'s instant for the cycle in flight: the bus interface's on the
+    /// CADR, [`QuuxPort`]'s derivation on QUUX.
+    fn ack_at(&self, e: &Rtl) -> Option<u64> {
+        match &self.quux {
+            None => e.busint().expect("the CADR's bus interface").ack_at(),
+            Some(q) => e.bus_answered_at().and(q.ack),
+        }
+    }
+
+    fn granted(&self, e: &Rtl) -> bool {
+        match &self.quux {
+            None => e.busint().expect("the CADR's bus interface").granted(),
+            Some(_) => e.bus_answered_at().is_some(),
         }
     }
 
@@ -112,12 +366,15 @@ impl Trace {
         // is granted, acknowledged and finished entirely inside the stall of
         // a later microcycle, and a sample taken only after the step never
         // sees it.
-        let mut ack = e.busint().ack_at().unwrap_or(0);
+        let mut ack = self.ack_at(e).unwrap_or(0);
 
         let mut drained = 0u32;
         loop {
             let before = e.machine().cycles;
             e.step_until(e.ns() + TICK_NS)?;
+            if let Some(q) = self.quux.as_mut() {
+                q.observe(e);
+            }
             if e.machine().cycles != before {
                 break;
             }
@@ -130,12 +387,12 @@ impl Trace {
             lpc = e.lpc();
             md = e.machine().md as u64;
             vma = e.machine().vma;
-            if let Some(at) = e.busint().ack_at() {
+            if let Some(at) = self.ack_at(e) {
                 ack = at;
             }
         }
         if ack == 0 {
-            ack = e.busint().ack_at().unwrap_or(0);
+            ack = self.ack_at(e).unwrap_or(0);
         }
         // `MD` INSIDE A MICROCYCLE, AND WHY NO AMOUNT OF DRAINING FINDS IT.
         //
@@ -204,7 +461,11 @@ impl Trace {
         self.last_halted = e.halted_ns();
         let bus = e.bus_cycles() - self.last_bus;
         self.last_bus = e.bus_cycles();
-        let gnt = u8::from(e.busint().granted());
+        let gnt = u8::from(self.granted(e));
+        if let Some(q) = self.quux.as_mut() {
+            let nop = e.spy().iter().any(|&(n, v)| n == "NOP" && v != 0);
+            q.row_done(e, row_ir, nop, stall, srcmd);
+        }
         // `SINTR` is `INT` off the cables, registered by the 74S175 at LCC
         // 3E12 on CLK3C --- so this is sampled *after* the step, at the edge
         // muir registers it on, and is the value the *next* microcycle's read

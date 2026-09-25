@@ -270,6 +270,19 @@ int Run(const Program &p, Totals &tot) {
   bool memack_q_was = true, mbusy_was = false;
   long ack_at_tick = 0;
   uint64_t ack_want = 0;
+  // QUUX's main memory, answering the port: when the operation standing is
+  // due, whether it has been answered, and the word of a single read.
+  long q_due = -1;
+  bool q_answered = false;
+  uint32_t q_word = 0;
+  uint64_t q_seed = 0x5155u;
+  auto q_rng = [&]() {
+    q_seed = q_seed * 6364136223846793005ull + 1442695040888963407ull;
+    return static_cast<uint32_t>(q_seed >> 33);
+  };
+  // Whether the cycle acknowledged was QUUX's main memory's, whose release
+  // is the acknowledgment itself (muir's `Ack::cached`).
+  bool fin_cached = false;
   const long kMaxTicks = static_cast<long>(p.rows) * 200 + 1024;
   auto fail = [&](const Row &r, const char *what, uint64_t got, uint64_t want) {
     if (bad < 8)
@@ -300,7 +313,40 @@ int Run(const Program &p, Totals &tot) {
     // edge in the processor's own `n_memack_q`, is held to zero below.
     const long answer_tick =
         ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
-    if (dut->mem_req && bus_outstanding && t >= answer_tick) {
+    // **ON QUUX MAIN MEMORY IS BEHIND THE MEMORY PORT** (contract Q6): the
+    // port's cache asks a line of four words on a miss and writes a word
+    // through its buffer after the cycle, so the model answers each
+    // operation as a memory does, one to five ticks after it is asked ---
+    // sooner than the nominal 380 and 290 ns, so every acknowledgment is the
+    // port's floor and lands on muir's instant --- with the words at the
+    // address asked, and holds the answer until the port lets go.
+    if (quux && dut->mem_req) {
+      if (q_due < 0) q_due = t + 1 + static_cast<long>(q_rng() % 5);
+      if (t >= q_due) {
+        const uint32_t w = (dut->mem_addr - kMainBase) / 4;
+        if (!q_answered) {
+          q_answered = true;
+          if (dut->mem_line) {
+            for (int x = 0; x < 4; ++x) {
+              const auto it = mem.find((w & ~3u) + x);
+              dut->mem_rline[x] = it == mem.end() ? 0 : it->second;
+            }
+            ++tot.reads;
+          } else if (dut->mem_write) {
+            mem[w] = dut->mem_wdata;
+            ++tot.writes;
+          } else {
+            const auto it = mem.find(w);
+            q_word = it == mem.end() ? 0 : it->second;
+          }
+        }
+        dut->mem_rdata = q_word;
+        dut->mem_done = 1;
+      }
+    } else if (quux) {
+      q_due = -1;
+      q_answered = false;
+    } else if (dut->mem_req && bus_outstanding && t >= answer_tick) {
       const long w = (static_cast<long>(dut->mem_addr) - static_cast<long>(kMainBase)) / 4;
       if (dut->mem_write) {
         mem[static_cast<uint32_t>(w)] = dut->mem_wdata;
@@ -328,16 +374,21 @@ int Run(const Program &p, Totals &tot) {
       if (ack_armed && memack_q_was && !memack_q) {
         ack_armed = false;
         fin_armed = true;
+        fin_cached = root->cadr_machine__DOT__cached;
         tot.ack_slip[static_cast<long>(ack_want) - ns_now]++;
         if (static_cast<long>(ack_want) != ns_now)
           std::fprintf(stderr, "  %s: -MEMACK %+ld ns from muir, at %ld ns\n", p.name.c_str(),
                        static_cast<long>(ack_want) - ns_now, ns_now);
       }
       // `mbusy` falls on the edge before MFINISHD's instant, so the edge
-      // after this one is the first whose registers see it down.
+      // after this one is the first whose registers see it down.  A cycle
+      // of QUUX's main memory is released on the acknowledgment itself: its
+      // `mbusy` falls on that edge, which already takes it down through
+      // `mbusy_now` (`cadr_microcycle.sv`), so that edge is the instant.
       if (fin_armed && mbusy_was && !mbusy) {
         fin_armed = false;
-        tot.fin_slip[static_cast<long>(ack_want) + 30 - (ns_now + kTickNs)]++;
+        tot.fin_slip[fin_cached ? static_cast<long>(ack_want) - ns_now
+                                : static_cast<long>(ack_want) + 30 - (ns_now + kTickNs)]++;
       }
       memack_q_was = memack_q;
       mbusy_was = mbusy;

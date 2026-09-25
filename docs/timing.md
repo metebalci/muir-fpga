@@ -597,6 +597,76 @@ the I/O board's clocks and the disk's spans. They are on the grid as they
 are for the CADR. Only the master clock that samples them comes every K
 ticks.
 
+## QUUX's memory port
+
+QUUX has no bus interface. Its main memory is not on the Xbus: the
+processor reaches it through its own memory port, `rtl/machine/
+quux_mem_port.sv`, and a cache in front of it, `rtl/machine/quux_cache.sv`.
+The cache holds 4,096 words in lines of four, two ways to a set. It is
+write-through, allocates a line on a read miss and never on a write, and
+holds main memory only. Nothing past main memory's end and nothing on the
+Xbus is cached. This is muir's `memory_port::MemoryPort`, and
+`build/quux_port.quux.k4.pass` holds the module to it tick for tick.
+
+- A read that hits is answered two ticks, 20 ns, after its grant. The RAMs
+  are read at the grant's edge from the map's output, which has had the
+  whole microcycle, and the tags are compared over the tick after it.
+- A read that misses is a line fill of 380 ns, and a write takes 290 ns.
+  Main memory does one operation at a time. A write is answered after the
+  hit time by a write buffer of one word, or when the buffer's last write is
+  done. A miss behind a write waits for it.
+- These figures are a floor. Main memory answers when it answers: the Arty's
+  port in about 21 ticks, the DE25's bridge in about 35 with a tail to
+  about 230. The port answers the processor at the nominal instant or, when
+  main memory is slower, as soon as the words are there. Two countdowns
+  carry the arithmetic: when main memory is next free, and when the write
+  buffer is. In simulation a memory faster than the figures makes every
+  acknowledgment muir's own. On a board QUUX is never faster than muir.
+- A cycle of main memory is released on its acknowledgment: `MBUSY` and
+  `READ IN PROGRESS` fall with it, where an Xbus cycle keeps the 30 ns and
+  140 ns delays.
+- An Xbus device is answered as on the CADR, 80 ns after the grant, and a
+  read is deskewed 60 ns more. An address nothing answers times out at the
+  CADR's instant, the free-running oscillator's first rise after the grant
+  plus 4,250 ns.
+- A line fill is two 64-bit beats at a 16-byte boundary,
+  `rtl/plumbing/quux_axi_master.sv`, on the Arty's `S_AXI_HP0` and on the
+  DE25-Nano's FPGA-to-SDRAM bridge.
+
+**A `DIV` of MD after a read of main memory is not settled.** Under the
+cached release the microcycle that divides the word read runs as soon as
+the word lands, and the divider needs the word 17 ticks before that
+microcycle ends, which it cannot have. muir divides at once. Until the
+ruling on which of the two moves, `quux_divmd` at an L of zero and one is
+left out of `make check MACHINE=quux` by name (`QUUX_PENDING` in the
+Makefile, which prints what it skips and why), and its mutation records are
+kept and not run (`PENDING` in `mutations/run.py`).
+
+MONO TV's frame buffer stays an uncached Xbus device, and block-disk's
+transfers reach main memory word by word through the same port, as its
+uncached requester. The port serves one operation at a time, in order: a
+buffered write first, then a line fill, then the uncached requester. That
+order is the first coherence rule, so a transfer reads every word the
+processor wrote before START. The whole cache is invalidated at the grant
+after any write of a block-disk register, which is muir's rule. A transfer's
+word written to main memory also clears its set in the cache, so that no
+processor read hits a word from before the transfer after DONE, which is the
+second rule. The coherence run of `build/quux_port.quux.k4.pass` holds both
+rules with the processor and a transfer running together.
+
+Only the processor's device cycle has the bus's 80 ns into QUUX's memory
+adapter. Its address and word are loaded at the grant, and the adapter takes
+them at the first edge -XBUS.RQ stands, eight ticks later. So the constraint
+(`quux_ddr.xdc` on the Arty, `cadr_ddr.sdc` on the DE25-Nano) gives eight
+ticks to paths from the processor's registers and names no others. The port's
+own cache operations are registers of the port, loaded a tick before the
+adapter takes them. A block-disk transfer word passes through the same bridge
+three ticks after the channel loads it, and the arbiter hands it the bus one
+and two ticks before that. Both keep one tick, and the flows assert that no
+path from the channel or the arbiter into the adapter asks for more.
+`quux-the-port-s-setup-time-is-short` is the mutation one tick outside the
+eight.
+
 The traces QUUX is held to are taken at a K and an L named in their files:
 `rtl.quux.k4.golden`, `quux_divmd.quux.k4l1.golden` and so on. `make check
 MACHINE=quux` runs them at `SYNC_K` and `SYNC_L`, which are 4 and 0 unless

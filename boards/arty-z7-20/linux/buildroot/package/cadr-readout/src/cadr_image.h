@@ -175,7 +175,11 @@ enum img_flag {
 	IMG_F_MEMSTART, IMG_F_MBUSY, IMG_F_RDCYC, IMG_F_WRCYC,
 	IMG_F_MBUSY_SYNC, IMG_F_RD_IN_PROGRESS, IMG_F_WMAPD, IMG_F_SPUSHD,
 	IMG_F_DESTSPCD, IMG_F_IMODD, IMG_F_VMAOK, IMG_F_MD_PENDING,
-	IMG_F_RUN, IMG_F_ERRSTOP, IMG_F_STATHENB
+	IMG_F_RUN, IMG_F_ERRSTOP, IMG_F_STATHENB,
+	// QUUX's memory port idle and its write buffer empty (contract Q6: a
+	// halt drains the buffer before anything outside the machine reads
+	// main memory).  Zero on the CADR, which has no buffer.
+	IMG_F_MEM_DRAINED
 };
 
 struct cadr_image {

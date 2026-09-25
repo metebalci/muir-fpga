@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 39.** It is
+version is refused by name rather than read wrong. **The version is 40.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
@@ -93,6 +93,24 @@ enable, period and deadline follow the tick's. Version 39 adds QUUX's keyboard
 and mouse after the I/O board: the FIFO's words, the overflow, the two
 enables, the counts, the buttons and the changed bit. A CADR holds all of
 them off and empty, and the program writes them so.
+
+Version 40 writes which bus the processor's cycles go through, one byte
+before it: the CADR's bus interface, written as before, or QUUX's memory
+port, which has no bus interface at all. The memory port is written as a
+fresh port holds it: no cycle in flight, the cache at QUUX's shape with no
+hits, no misses and no lines, the nominal timing of 380 ns a line fill and
+290 ns a write, and main memory free. muir restores a cache warm, so a
+machine resumed from this file misses where the one saved would have hit.
+That moves when a read is answered and never what it reads, because the
+cache is write-through and every line it holds is main memory's word. The
+cache's lines are not read from the fabric.
+
+On QUUX the program also waits, after the halt and before it reads main
+memory, for the memory port to say its write buffer is empty (bit 33 of the
+readout's flag word). A write is acknowledged when the buffer takes it and
+reaches main memory behind the processor, so a machine halted just after one
+can still owe DDR that word for a few hundred nanoseconds. A port that never
+empties is refused by name.
 
 Version 27 adds one byte to the engine: whose nanoseconds its clock counts,
 muir's `TimingModel`. This program declares it. Version 26 added the two sync

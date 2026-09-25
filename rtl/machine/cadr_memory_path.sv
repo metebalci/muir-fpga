@@ -511,6 +511,28 @@ module cadr_memory_path #(
     output var logic [31:0] mem_wdata,
     input  var logic        mem_done,
     input  var logic [31:0] mem_rdata,
+    // **QUUX'S LINE FILL**: `mem_line` asks four words at a 16-byte
+    // boundary, two 64-bit beats, and they come back on `mem_rline`, the
+    // lowest address in bits 31:0.  The CADR never asks one.
+    output var logic        mem_line,
+    input  var logic [127:0] mem_rline,
+
+    // --- QUUX'S MEMORY PORT (contract Q6), `quux_mem_port.sv`: block-disk
+    // wrote a register, so the cache goes at the next grant; the cycle is
+    // main memory's, for the processor's release; and the port's state for
+    // the host.  Tied off, and unread, on the CADR.
+    input  var logic        quux_invalidate,
+    output var logic        cached,
+    output var logic        port_drained,
+    output var logic [31:0] cache_hits,
+    output var logic [31:0] cache_misses,
+    // The Xbus bridge's own seam, which on QUUX is the uncached requester
+    // and not main memory's: what the transaction audit watches there.
+    output var logic        br_req_o,
+    output var logic        br_write_o,
+    output var logic [31:0] br_addr_o,
+    output var logic [31:0] br_wdata_o,
+    output var logic        br_done_o,
 
     // --- QUUX'S REGISTER PAGE (contract Q2 and Q4), which is
     // `quux_feature_page.sv` in `cadr_machine.sv`, reaching three things that
@@ -911,8 +933,13 @@ module cadr_memory_path #(
   // registers.  The two windows are disjoint by construction --- the boards
   // are strapped to two 32,768-word slots --- so `bus_display_color` picks
   // between them and never both.
-  assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
-                                                : (is_memory || tv_fb || tvc_fb || mono_fb);
+  //
+  // **ON QUUX MAIN MEMORY IS NOT ON THE XBUS** (contract Q6): the processor's
+  // main-memory cycles are the port's and never reach the bridge, which
+  // answers the processor for MONO TV's frame buffer alone.
+  logic cpu_bridged;
+  assign cpu_bridged       = QUUX ? mono_fb : (is_memory || tv_fb || tvc_fb || mono_fb);
+  assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory : cpu_bridged;
   assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb || mono_fb);
   assign bus_display_color = !ch_own && !mp_own && tvc_fb;
 
@@ -935,7 +962,7 @@ module cadr_memory_path #(
   // gate, read by an instrument a level up and by nothing else.
   assign ch_own_o       = ch_own;
   assign bus_changing_o = changing;
-  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb || mono_fb;
+  assign cpu_memory_o   = cpu_bridged;
   assign ch_memory_o    = ch_memory;
 
   always_ff @(posedge clk) begin
@@ -1009,27 +1036,107 @@ module cadr_memory_path #(
     end
   end
 
-  cadr_busint_xbus busint (
-      .clk        (clk),
-      .rst        (rst),
-      .mclk       (mclk),
-      .n_memrq    (n_memrq),
-      .wrcyc      (wrcyc),
-      .n_memgrant (n_memgrant),
-      .n_memack   (n_memack),
-      .n_loadmd   (n_loadmd),
-      .timed_out  (timed_out),
-      .dev_rq     (cpu_rq),
-      .dev_write  (cpu_write),
-      .dev_ack    (dev_ack),
-      .unibus     (unibus),
-      .select_debug(select_debug),
-      .ub_msyn    (ub_msyn),
-      .ub_write   (ub_write),
-      .ub_ssyn    (ub_ssyn),
-      .arb_stage  (arb_stage),
-      .busy       (busint_busy)
-  );
+  // **ON QUUX THE PROCESSOR'S CYCLE IS THE MEMORY PORT'S, AND THERE IS NO
+  // BUS INTERFACE** (contract Q6, muir's `memory_port::MemoryPort` in place
+  // of `busint::Busint`): main memory through the cache on its own port, the
+  // Xbus for devices alone, the CADR's timeout for an address nothing
+  // answers.  `quux_mem_port.sv` says the rest.  The bridge below is then
+  // the Xbus's own, for MONO TV's frame buffer and block-disk's transfers,
+  // and asks main memory through the port as its uncached requester.  The
+  // CADR keeps its bus interface, untouched.
+  logic        br_req, br_write, br_done;
+  logic [31:0] br_addr, br_wdata, br_rdata;
+  logic [31:0] port_word;
+  assign br_req_o   = br_req;
+  assign br_write_o = br_write;
+  assign br_addr_o  = br_addr;
+  assign br_wdata_o = br_wdata;
+  assign br_done_o  = br_done;
+
+  if (QUUX) begin : g_quux_port
+    quux_mem_port port (
+        .clk        (clk),
+        .rst        (rst),
+        .mclk       (mclk),
+        .n_memrq    (n_memrq),
+        .wrcyc      (wrcyc),
+        .phys       (phys),
+        .wdata      (wdata),
+        .is_memory  (is_memory),
+        .n_memgrant (n_memgrant),
+        .n_memack   (n_memack),
+        .n_loadmd   (n_loadmd),
+        .timed_out  (timed_out),
+        .cached     (cached),
+        .word       (port_word),
+        .busy       (busint_busy),
+        .dev_rq     (cpu_rq),
+        .dev_write  (cpu_write),
+        .dev_ack    (dev_ack),
+        .invalidate (quux_invalidate),
+        .u_req      (br_req),
+        .u_write    (br_write),
+        .u_addr     (br_addr),
+        .u_wdata    (br_wdata),
+        .u_main     (ch_own && ch_memory),
+        .u_phys     (ch_addr),
+        .u_done     (br_done),
+        .u_rdata    (br_rdata),
+        .mem_req    (mem_req),
+        .mem_write  (mem_write),
+        .mem_line   (mem_line),
+        .mem_addr   (mem_addr),
+        .mem_wdata  (mem_wdata),
+        .mem_done   (mem_done),
+        .mem_rdata  (mem_rdata),
+        .mem_rline  (mem_rline),
+        .drained    (port_drained),
+        .hits       (cache_hits),
+        .misses     (cache_misses)
+    );
+    // No Unibus, no arbitration for it, no debug block (contract Q5).
+    assign ub_msyn   = 1'b0;
+    assign ub_write  = 1'b0;
+    assign arb_stage = 3'd0;
+    logic unused_quux_port;
+    assign unused_quux_port = ^{unibus, select_debug, ub_ssyn};
+  end else begin : g_cadr_busint
+    cadr_busint_xbus busint (
+        .clk        (clk),
+        .rst        (rst),
+        .mclk       (mclk),
+        .n_memrq    (n_memrq),
+        .wrcyc      (wrcyc),
+        .n_memgrant (n_memgrant),
+        .n_memack   (n_memack),
+        .n_loadmd   (n_loadmd),
+        .timed_out  (timed_out),
+        .dev_rq     (cpu_rq),
+        .dev_write  (cpu_write),
+        .dev_ack    (dev_ack),
+        .unibus     (unibus),
+        .select_debug(select_debug),
+        .ub_msyn    (ub_msyn),
+        .ub_write   (ub_write),
+        .ub_ssyn    (ub_ssyn),
+        .arb_stage  (arb_stage),
+        .busy       (busint_busy)
+    );
+    assign mem_req      = br_req;
+    assign mem_write    = br_write;
+    assign mem_addr     = br_addr;
+    assign mem_wdata    = br_wdata;
+    assign br_done      = mem_done;
+    assign br_rdata     = mem_rdata;
+    assign mem_line     = 1'b0;
+    assign cached       = 1'b0;
+    assign port_word    = 32'd0;
+    assign port_drained = 1'b1;
+    assign cache_hits   = 32'd0;
+    assign cache_misses = 32'd0;
+    logic unused_cadr_port;
+    assign unused_cadr_port = ^{mem_rline, quux_invalidate};
+  end
 
   // `SELECT DEBUG`, which never leaves this module: the DBGOUT page makes it
   // out of the held match and the REQTIM counter takes the PROM's second
@@ -1273,12 +1380,12 @@ module cadr_memory_path #(
       .wdata    (bus_wdata),
       .dev_ack  (memory_ack),
       .rdata    (memory_rdata),
-      .mem_req  (mem_req),
-      .mem_write(mem_write),
-      .mem_addr (mem_addr),
-      .mem_wdata(mem_wdata),
-      .mem_done (mem_done),
-      .mem_rdata(mem_rdata)
+      .mem_req  (br_req),
+      .mem_write(br_write),
+      .mem_addr (br_addr),
+      .mem_wdata(br_wdata),
+      .mem_done (br_done),
+      .mem_rdata(br_rdata)
   );
 
   // What the other slaves see: the processor's cycle and never the channel's.
@@ -1476,7 +1583,10 @@ module cadr_memory_path #(
   // zero.  **Which of the two is right is a question about the real Xbus and
   // is not this file's to decide**, so nothing is changed here: it is written
   // down where somebody meeting the line will meet it.
-  assign rdata   = ub_ssyn      ? {16'h0000, ub_rdata}
+  // On QUUX a cycle of main memory's takes the port's word, which the cache
+  // or the line brought (`quux_mem_port.sv`); nothing else answers it.
+  assign rdata   = cached       ? port_word
+                 : ub_ssyn      ? {16'h0000, ub_rdata}
                  : tv_drives    ? tv_rdata
                  : tvc_drives   ? tvc_rdata
                  : mono_drives  ? mono_rdata

@@ -160,3 +160,53 @@ set quux_status_s [filter [all_registers] {NAME =~ *processor/g_quux_tick.clocks
 # sync: K - 1
 set_multicycle_path -setup 3 -from $quux_status_s -to $slow
 set_multicycle_path -hold  2 -from $quux_status_s -to $slow
+
+# **QUUX'S MEMORY PORT** (contract Q6, `quux_mem_port.sv`, `quux_cache.sv`),
+# out of the relaxed set whole (`cadr_machine.xdc`) but for what the cache
+# holds of the microcycle.  Its RAMs are read at every edge the port is idle
+# and `idx_q`, `tag_q` and `off_q` take the address with them, so what the
+# grant's edge reads is the map's output, which had the whole microcycle:
+# K ticks from the edge's registers and from the maps.  Out of them nothing
+# is relaxed: the lookup's answer is read a tick after the grant by the
+# port's tick registers, and a hit's word, out of the RAMs and through the
+# data mux, reaches MD within the tick after that, which is timed at the
+# tick as every path out of this set is.
+set quux_cache_held [filter [all_registers] {(REF_NAME =~ RAMB* && NAME =~ *memory/g_quux_port.port/cache/*) || \
+                                             NAME =~ *memory/g_quux_port.port/cache/idx_q_reg* || \
+                                             NAME =~ *memory/g_quux_port.port/cache/tag_q_reg* || \
+                                             NAME =~ *memory/g_quux_port.port/cache/off_q_reg*}]
+# Each source the time it has, as for the divider above: the edge's
+# registers, the control store and the maps K ticks, the latches K - 1, the
+# every-tick registers their second hop.
+# sync: K
+set_multicycle_path -setup 4 -from $slow -to $quux_cache_held
+set_multicycle_path -hold  3 -from $slow -to $quux_cache_held
+# sync: K
+set_multicycle_path -setup 4 -from $split_cstore -to $quux_cache_held
+set_multicycle_path -hold  3 -from $split_cstore -to $quux_cache_held
+# sync: K
+set_multicycle_path -setup 4 -from $split_maps -to $quux_cache_held
+set_multicycle_path -hold  3 -from $split_maps -to $quux_cache_held
+# sync: K
+set_multicycle_path -setup 4 -from $split_dmem -to $quux_cache_held
+set_multicycle_path -hold  3 -from $split_dmem -to $quux_cache_held
+# sync: K - 1
+set_multicycle_path -setup 3 -from $split_latch -to $quux_cache_held
+set_multicycle_path -hold  2 -from $split_latch -to $quux_cache_held
+# sync: K - 2
+set_multicycle_path -setup 2 -from $split_every_tick -to $quux_cache_held
+set_multicycle_path -hold  1 -from $split_every_tick -to $quux_cache_held
+# grid: 0 ns + 1 tick
+set_multicycle_path -setup 1 -from $split_md_held -to $quux_cache_held
+set_multicycle_path -hold  0 -from $split_md_held -to $quux_cache_held
+# And what a microcycle reads of QUUX's clocks reaches the address too: read
+# as an M source it goes through the ALU into OB, and at the edge a cycle
+# starts on the address's low byte is the VMA that edge loads from OB
+# (`vma_bus`, `cadr_microcycle.sv`).  The status is loaded a tick after the
+# edge and stands to the next: K - 1, as into the relaxed set above.
+# Measured with a testbench that times every look: the address had stood
+# four ticks at all 14,379 of the boot trace's, each taken at a
+# microcycle's edge.
+# sync: K - 1
+set_multicycle_path -setup 3 -from $quux_status_s -to $quux_cache_held
+set_multicycle_path -hold  2 -from $quux_status_s -to $quux_cache_held

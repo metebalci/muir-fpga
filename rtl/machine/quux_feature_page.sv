@@ -87,7 +87,7 @@
 `default_nettype none
 
 module quux_feature_page #(
-    parameter logic [31:0] MACHINE_ID     = 32'h5155_0064,
+    parameter logic [31:0] MACHINE_ID     = 32'h5155_0074,
     parameter int unsigned L1_BITS        = 6,
     parameter int unsigned PDL_BITS       = 14,
     parameter int unsigned IMEM_WORDS     = 16384,

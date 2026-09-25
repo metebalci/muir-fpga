@@ -82,14 +82,15 @@ static const char *const kRegNames[21] = {
 	"MD-HELD", "PHYS", "SPEED", "FLAGS"
 };
 
-// The flag word, bit by bit, in `ro_flags`'s own order.
-static const char *const kFlagNames[33] = {
+// The flag word, bit by bit, in `ro_flags`'s own order.  The last is
+// QUUX's memory port drained (contract Q6), always clear on the CADR.
+static const char *const kFlagNames[34] = {
 	"DESTD", "DESTMD", "PWIDX", "PDLWRITED", "INOP", "IWRITED", "NEWLC",
 	"SINTR", "NEXT-INSTRD", "LC-BYTE-MODE", "INT-ENABLE", "SEQUENCE-BREAK",
 	"PROG-UNIBUS-RESET", "TRAP", "PROMDISABLE", "SRUN", "STATSTOP",
 	"HALTED", "MEMSTART", "MBUSY", "RDCYC", "WRCYC", "MBUSY-SYNC",
 	"RD-IN-PROGRESS", "WMAPD", "SPUSHD", "DESTSPCD", "IMODD", "VMAOK",
-	"MD-PENDING", "RUN", "ERRSTOP", "STATHENB"
+	"MD-PENDING", "RUN", "ERRSTOP", "STATHENB", "MEM-DRAINED"
 };
 
 struct mem_face {
@@ -232,12 +233,12 @@ static int print_registers(struct readout *r)
 		say("  %-12s 0x%012llx  0o%llo", kRegNames[i],
 		    (unsigned long long)v[i], (unsigned long long)v[i]);
 	}
-	// The flags, named, and only the ones that are up: thirty-three names
+	// The flags, named, and only the ones that are up: thirty-four names
 	// with thirty of them clear is a wall nobody reads.
 	char line[512];
 	size_t at = 0;
 	line[0] = '\0';
-	for (unsigned b = 0; b < 33; ++b) {
+	for (unsigned b = 0; b < 34; ++b) {
 		if (!((v[IMG_RG_FLAGS] >> b) & 1u))
 			continue;
 		const int n = snprintf(line + at, sizeof line - at, "%s%s",
