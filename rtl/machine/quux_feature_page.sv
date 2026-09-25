@@ -124,6 +124,9 @@ module quux_feature_page #(
     input  var logic [1:0]  clock_pending,   // <0> the tick, <1> the interval timer
     input  var logic        disk_irq,        // <2> the disk's done
     input  var logic        chaos_ireq,      // <5> the network
+    // A bus reset landing at this microcycle's edge: the network's term is
+    // held off `irq` (`cadr_machine.sv`, at `bus_init`).
+    input  var logic        prog_unibus_reset_rising,
     // --- word 101: the bus errors, and their clear
     input  var logic [2:0]  err,             // {map, Unibus NXM, Xbus NXM}
     output var logic        err_clear,
@@ -265,7 +268,7 @@ module quux_feature_page #(
   assign ch_which   = which[2:0];
   assign ch_wdata   = wdata[15:0];
 
-  assign irq = (|in_irq) || chaos_ireq;
+  assign irq = (|in_irq) || (chaos_ireq && !prog_unibus_reset_rising);
 
   // The bus interface ANDs the acknowledgment with `-XBUS.RQ` itself
   // (`cadr_disk_controller.sv` has why the slave must not), and the lines are

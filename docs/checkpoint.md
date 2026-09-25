@@ -168,6 +168,16 @@ T-300 at 815/19/17 and 70,937,600 is a T-80 at 815/5/17, and a file of any
 other size is not a pack at all — which is also what makes a pack still being
 copied in simply not a drive yet.
 
+A QUUX disk has no geometry. Under `--machine quux` block-disk's one pack,
+unit 0, is any size, and the file is a disk when `cadr-disk-packs`'s own test
+says so: raw, a fixed VHD or a dynamic VHD, told by its footers and a dynamic
+VHD's header, never by its size. The program links that test from
+`cadr-disk-packs` rather than keeping a copy of it. A QUUX disk's `pack:` line
+says what the file is and how many blocks of 1,024 bytes it holds in place of
+the geometry:
+
+    pack: unit=0 bytes=4197888 format=dynamic-vhd blocks=8192 read-only=no sha256=... file=/mnt/card/packs/disk-pack-0.img
+
 **The content of each.** Nothing in muir can check this and nothing in the
 fabric can either, so it is recorded: a SHA-256 of every byte of every pack,
 taken while the machine was halted, in a sidecar beside the checkpoint.

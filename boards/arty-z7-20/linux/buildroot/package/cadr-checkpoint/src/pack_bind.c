@@ -4,14 +4,17 @@
 // The pack binding, made and read back.  `pack_bind.h` says what it is for.
 
 #include "pack_bind.h"
+#include "quux_disk.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 // `pack_file.c`'s two, which are muir's `Geometry::T80` and `Geometry::T300`.
 static const uint32_t kT80[3] = { 815, 5, 17 };
@@ -58,8 +61,34 @@ static void note(char *err, size_t errlen, const char *fmt, ...)
 	va_end(ap);
 }
 
-// One name, looked at.  `unit` is only for the message.
-static int look(struct bind_pack *p, unsigned unit, char *err, size_t errlen)
+// Whether the file is QUUX's disk, and what it is: `cadr-disk-packs`'s own
+// test (`quux_disk_probe`), the footers and a dynamic VHD's header, never the
+// size, which on QUUX says nothing.  0, or -2 with `err`.
+static int look_quux(struct bind_pack *p, unsigned unit, char *err, size_t errlen)
+{
+	const int fd = open(p->path, O_RDONLY);
+	if (fd < 0) {
+		note(err, errlen, "unit %u: %s: %s", unit, p->path, strerror(errno));
+		return -2;
+	}
+	struct quux_disk d;
+	char why[256] = "";
+	const int r = quux_disk_probe(fd, &d, why, sizeof why);
+	close(fd);
+	if (r != 0) {
+		note(err, errlen, "unit %u: %s is not QUUX's disk: %s", unit, p->path, why);
+		return -2;
+	}
+	snprintf(p->format, sizeof p->format, "%s",
+		 d.format == QUUX_RAW ? "raw" :
+		 d.format == QUUX_FIXED_VHD ? "fixed-vhd" : "dynamic-vhd");
+	p->blocks = d.blocks;
+	return 0;
+}
+
+// One name, looked at, by the rule of the binding's machine.  `unit` is only
+// for the message.
+static int look(struct bind_pack *p, int quux, unsigned unit, char *err, size_t errlen)
 {
 	struct stat st;
 	if (stat(p->path, &st) != 0)
@@ -68,7 +97,11 @@ static int look(struct bind_pack *p, unsigned unit, char *err, size_t errlen)
 		note(err, errlen, "unit %u: %s is not a regular file", unit, p->path);
 		return -2;
 	}
-	if (bind_geometry_of_size((uint64_t)st.st_size, &p->cylinders, &p->heads,
+	if (quux) {
+		const int r = look_quux(p, unit, err, errlen);
+		if (r != 0)
+			return r;
+	} else if (bind_geometry_of_size((uint64_t)st.st_size, &p->cylinders, &p->heads,
 				  &p->blocks_per_track) != 0) {
 		// The same rule `pack_bay.h` states: a file is a pack only when
 		// its size is a geometry's, which is also what makes a pack
@@ -98,7 +131,7 @@ int bind_scan(struct binding *b, const char *dir, char *err, size_t errlen)
 		struct bind_pack p;
 		memset(&p, 0, sizeof p);
 		snprintf(p.path, sizeof p.path, "%s/" BIND_NAME_FMT, dir, u);
-		if (look(&p, u, err, errlen) != 0)
+		if (look(&p, b->quux, u, err, errlen) != 0)
 			continue;
 		b->u[u] = p;
 		++found;
@@ -133,7 +166,7 @@ int bind_add(struct binding *b, const char *spec, char *err, size_t errlen)
 	}
 	memcpy(p.path, spec, n);
 	p.path[n] = '\0';
-	const int r = look(&p, unit, err, errlen);
+	const int r = look(&p, b->quux, unit, err, errlen);
 	if (r == -1) {
 		note(err, errlen, "--pack %s: %s: %s", spec, p.path, strerror(errno));
 		return -1;
@@ -244,13 +277,23 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 	for (unsigned u = 0; u < BIND_UNITS; ++u) {
 		if (!b->u[u].present)
 			continue;
-		fprintf(f,
-			"pack: unit=%u bytes=%llu geometry=%u,%u,%u read-only=%s "
-			"sha256=%s file=%s\n",
-			u, (unsigned long long)b->u[u].bytes, b->u[u].cylinders,
-			b->u[u].heads, b->u[u].blocks_per_track,
-			b->u[u].read_only ? "yes" : "no", b->u[u].sha256,
-			b->u[u].path);
+		// A QUUX disk has no geometry: what the file is and its blocks.
+		if (b->u[u].format[0])
+			fprintf(f,
+				"pack: unit=%u bytes=%llu format=%s blocks=%llu read-only=%s "
+				"sha256=%s file=%s\n",
+				u, (unsigned long long)b->u[u].bytes, b->u[u].format,
+				(unsigned long long)b->u[u].blocks,
+				b->u[u].read_only ? "yes" : "no", b->u[u].sha256,
+				b->u[u].path);
+		else
+			fprintf(f,
+				"pack: unit=%u bytes=%llu geometry=%u,%u,%u read-only=%s "
+				"sha256=%s file=%s\n",
+				u, (unsigned long long)b->u[u].bytes, b->u[u].cylinders,
+				b->u[u].heads, b->u[u].blocks_per_track,
+				b->u[u].read_only ? "yes" : "no", b->u[u].sha256,
+				b->u[u].path);
 	}
 	char cmd[4096];
 	bind_resume_command(b, b->checkpoint, cmd, sizeof cmd);
@@ -374,6 +417,10 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 			if (subfield(v, "geometry", buf, sizeof buf) == 0)
 				sscanf(buf, "%u,%u,%u", &p->cylinders, &p->heads,
 				       &p->blocks_per_track);
+			if (subfield(v, "format", buf, sizeof buf) == 0)
+				snprintf(p->format, sizeof p->format, "%.15s", buf);
+			if (subfield(v, "blocks", buf, sizeof buf) == 0)
+				p->blocks = strtoull(buf, NULL, 10);
 			if (subfield(v, "read-only", buf, sizeof buf) == 0)
 				p->read_only = strcmp(buf, "yes") == 0;
 			++b->present;

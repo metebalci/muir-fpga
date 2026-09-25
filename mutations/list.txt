@@ -9098,9 +9098,9 @@ if {0 && $held ne $want} {
 @note this one is written as an inversion: a zero that is always zero cannot
 @note tell an AND from an OR, but it can tell a zero from a one.
 @old
-  assign sintr_o   = xbus_intr || (ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = xbus_intr || (!ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (!ub_int && !QUUX) || tick_irq || page_irq;
 @end
 
 @mutation dbgin-request-arrives-with-its-levels
@@ -20748,9 +20748,9 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note The clocks' interrupt does not reach `SINTR`, so jump condition 5
 @note never sees it.
 @old
-  assign sintr_o   = xbus_intr || (ub_int && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = xbus_intr || (ub_int && !QUUX) || (tick_irq && 1'b0) || page_irq;
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || (tick_irq && 1'b0) || page_irq;
 @end
 
 @mutation quux-the-prom-is-at-zero
@@ -20844,9 +20844,9 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note The network's request reaches word 100 and not the processor, as it
 @note did before muir's `3ceb4f7`.
 @old
-  assign irq = (|in_irq) || chaos_ireq;
+  assign irq = (|in_irq) || (chaos_ireq && !prog_unibus_reset_rising);
 @new
-  assign irq = (|in_irq) || (chaos_ireq && 1'b0);
+  assign irq = (|in_irq) || (chaos_ireq && 1'b0 && !prog_unibus_reset_rising);
 @end
 
 @mutation quux-the-fifo-is-sixty-three
@@ -21693,4 +21693,137 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
     set_multicycle_path -setup 8 -from $ddr_cycle -to $ddr_contract
 @new
     set_multicycle_path -setup 9 -from $ddr_cycle -to $ddr_contract
+@end
+
+@mutation bus-reset-reaches-no-board
+@check quux_busreset
+@file rtl/machine/cadr_machine.sv
+@note `-XBUS INIT` and `-UB INIT` are the power-on reset alone, so a rise of
+@note `PROG.UNIBUS.RESET` clears nothing: the controller keeps its command
+@note and its interrupt, the display its vertical flag.
+@old
+  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q);
+@new
+  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q && 1'b0);
+@end
+
+@mutation quux-bus-reset-reaches-no-board
+@check quux_busreset_quux
+@file rtl/machine/cadr_machine.sv
+@note The same on QUUX: block-disk keeps its command and its error, the
+@note network its enable.
+@old
+  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q);
+@new
+  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q && 1'b0);
+@end
+
+@mutation bus-reset-interrupt-not-held-off
+@check quux_busreset
+@file rtl/machine/cadr_machine.sv
+@note The Xbus line is not held off while the reset lands, so `SINTR` at the
+@note edge that ends the write's microcycle is the boards' from before it,
+@note where muir's is the reset boards'.
+@old
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
+@new
+  assign sintr_o   = (xbus_intr && !(prog_unibus_reset_rising && 1'b0)) || (ub_int && !QUUX) || tick_irq || page_irq;
+@end
+
+@mutation quux-bus-reset-interrupt-not-held-off
+@check quux_busreset_quux
+@file rtl/machine/cadr_machine.sv
+@note The same on QUUX, where the Xbus line is block-disk's done.
+@old
+  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int && !QUUX) || tick_irq || page_irq;
+@new
+  assign sintr_o   = (xbus_intr && !(prog_unibus_reset_rising && 1'b0)) || (ub_int && !QUUX) || tick_irq || page_irq;
+@end
+
+@mutation quux-bus-reset-network-not-held-off
+@check quux_busreset_quux
+@file rtl/machine/quux_feature_page.sv
+@note The network's term of the register page is not held off while the
+@note reset lands, so `SINTR` at the write's edge still carries it.
+@old
+  assign irq = (|in_irq) || (chaos_ireq && !prog_unibus_reset_rising);
+@new
+  assign irq = (|in_irq) || (chaos_ireq && !(prog_unibus_reset_rising && 1'b0));
+@end
+
+@mutation bus-reset-held-off-for-the-wrong-bit
+@check quux_busreset
+@file rtl/machine/cadr_microcycle.sv
+@note The landing is taken from `INTERRUPT-CONTROL<27>`, the interrupt
+@note enable, so the reset's own write is not seen landing.
+@old
+  assign prog_unibus_reset_rising = destintctl && ob[28] && !prog_unibus_reset;
+@new
+  assign prog_unibus_reset_rising = destintctl && ob[27] && !prog_unibus_reset;
+@end
+
+@mutation bus-reset-misses-the-display
+@check quux_busreset
+@file rtl/machine/cadr_machine.sv
+@note The memory path's `-XBUS INIT` is the power-on reset alone, so the
+@note display's vertical flag stays up through the reset.
+@old
+      // `PROG.UNIBUS.RESET`'s rise (`bus_init` above).
+      .xbus_init  (bus_init),
+@new
+      // `PROG.UNIBUS.RESET`'s rise (`bus_init` above).
+      .xbus_init  (rst),
+@end
+
+@mutation bus-reset-misses-the-disk-controller
+@check quux_busreset
+@file rtl/machine/cadr_machine.sv
+@note The CADR's controller takes the power-on reset alone as `-XBUS INIT`,
+@note so its command and its done interrupt stand through the reset.
+@old
+  cadr_disk_controller disk (
+      .clk      (clk),
+      .rst      (rst),
+      // `-XBUS INIT` on the backplane: the power-on reset and
+      // `PROG.UNIBUS.RESET`'s rise (`bus_init` above).  `rst` is the harder
+      // of the two: it clears the disk address counters and the command list
+      // pointer, which `-XINIT` leaves standing.
+      .xbus_init(bus_init),
+@new
+  cadr_disk_controller disk (
+      .clk      (clk),
+      .rst      (rst),
+      .xbus_init(rst),
+@end
+
+@mutation quux-bus-reset-misses-block-disk
+@check quux_busreset_quux
+@file rtl/machine/cadr_machine.sv
+@note Block-disk takes the power-on reset alone as `-XBUS INIT`, so its
+@note command and its error stand through the reset.
+@old
+  quux_block_disk disk (
+      .clk      (clk),
+      .rst      (rst),
+      // `-XBUS INIT` on the backplane: the power-on reset and
+      // `PROG.UNIBUS.RESET`'s rise (`bus_init` above).  `rst` is the harder
+      // of the two: it clears the disk address counters and the command list
+      // pointer, which `-XINIT` leaves standing.
+      .xbus_init(bus_init),
+@new
+  quux_block_disk disk (
+      .clk      (clk),
+      .rst      (rst),
+      .xbus_init(rst),
+@end
+
+@mutation quux-bus-reset-misses-the-io-board
+@check quux_busreset_quux
+@file rtl/machine/cadr_memory_path.sv
+@note The I/O board's `-UB INIT` is the power-on reset alone, so the
+@note Chaosnet interface keeps its transmit interrupt enable.
+@old
+      .ub_init    (xbus_init),
+@new
+      .ub_init    (rst),
 @end
