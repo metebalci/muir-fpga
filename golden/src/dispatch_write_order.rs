@@ -52,7 +52,9 @@
 //!
 //! ```text
 //! program NAME ROWS          a program and how many microcycles it runs
-//! prom ADDR WORD             the boot PROM, every word the program has
+//! prom ADDR WORD             the boot PROM, every word the program has;
+//!                            on QUUX a jump to 0, the PROM being at 36000
+//! imem ADDR WORD             on QUUX, the program, in the control store's RAM
 //! l2 IDX WORD                the level-2 map before the boot
 //! dmem IDX WORD              the dispatch memory before the boot
 //! main PHYS WORD             main memory before the boot
@@ -641,7 +643,18 @@ fn main() {
     println!("{}", trace::RADIX);
 
     for p in programs(which) {
-        let mut m = which.machine(&p.prom);
+        // **ON QUUX THE PROGRAM RUNS OUT OF THE CONTROL STORE'S RAM**, from
+        // 0, where every address it names was chosen, and the PROM at 36000
+        // (contract Q2) is a jump to it.  So the program is written into the
+        // RAM before the boot, as the memories below are, and the PROM is two
+        // words; the trap cycle, the jump and the word after it it inhibits
+        // are two rows more than the CADR's.
+        let stub = [Insn::new(JUMP | target(0) | ALWAYS | N), filler()];
+        let (prom, ram, rows) = if quux { (&stub[..], &p.prom[..], p.rows + 2) } else { (&p.prom[..], &[][..], p.rows) };
+        let mut m = which.machine(prom);
+        for (k, i) in ram.iter().enumerate() {
+            m.imem[k] = *i;
+        }
         for &(k, w) in &p.l2 {
             m.l2_map[k] = w;
         }
@@ -651,13 +664,16 @@ fn main() {
         for &(a, w) in &p.main {
             m.main[a as usize] = w;
         }
-        println!("program {} {:x}", p.name, p.rows);
+        println!("program {} {:x}", p.name, rows);
         // QUUX has no speed bits: its programs run at its one rate.
         if p.speed != 0 && !quux {
             println!("speed {:x}", p.speed);
         }
-        for (k, i) in p.prom.iter().enumerate() {
+        for (k, i) in prom.iter().enumerate() {
             println!("prom {k:x} {:x}", i.raw());
+        }
+        for (k, i) in ram.iter().enumerate() {
+            println!("imem {k:x} {:x}", i.raw());
         }
         for &(k, w) in &p.l2 {
             println!("l2 {k:x} {w:x}");
@@ -677,7 +693,7 @@ fn main() {
             e.machine_mut().mode.write(p.speed);
         }
         let mut t = trace::Trace::new(&e);
-        for cycle in 0..p.rows {
+        for cycle in 0..rows {
             match t.row(&mut e, cycle) {
                 Ok(line) => println!("r {line}"),
                 Err(h) => {
@@ -705,7 +721,7 @@ fn main() {
         eprintln!(
             "dispatch_write_order: {:<24} {} microcycles, {} ns ({} stalled), PC {:o}, M5 {:o} M13 {:o}",
             p.name,
-            p.rows,
+            rows,
             e.ns(),
             e.stalled_ns(),
             e.pc(),

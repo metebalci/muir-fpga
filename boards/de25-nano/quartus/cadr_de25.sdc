@@ -156,10 +156,14 @@ set fast [add_to_collection [get_registers -nowarn {*u_phase_gen*}] \
                   md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]]
 # And QUUX's registers that run every tick, which match nothing on the CADR:
 # `cadr_machine.xdc` names them and says why.  A generate block's name comes
-# before the leaf's here, so the patterns end at the leaf.
-set quux_fast [get_registers -nowarn {u_machine|processor|*tk_pre u_machine|processor|*tk_pre[*]
-                                      u_machine|processor|*tk_us u_machine|processor|*tk_us[*]
-                                      u_machine|processor|*tk_sticky
+# before the leaf's here, so the patterns end at the leaf.  QUUX's clocks
+# are out whole here, the status a microcycle reads with them, which is a
+# tick tighter than the Zynq boards' clause and no looser.
+set quux_fast [get_registers -nowarn {u_machine|processor|g_quux_tick.clocks|*
+                                      u_machine|g_quux_feature_page.feature_page|taken
+                                      u_machine|g_quux_feature_page.feature_page|held
+                                      u_machine|g_quux_feature_page.feature_page|held[*]
+                                      u_machine|g_quux_feature_page.feature_page|input_regs|*
                                       u_machine|processor|*div_t u_machine|processor|*div_t[*]
                                       u_machine|processor|*div_start u_machine|processor|*div_start[*]
                                       u_machine|processor|*muldiv|dv_*
@@ -175,12 +179,16 @@ set quux_fast [get_registers -nowarn {u_machine|processor|*tk_pre u_machine|proc
 if {[get_collection_size $quux_fast] > 0} {
     set fast [add_to_collection $fast $quux_fast]
 }
-set out_whole [get_registers -nowarn {u_machine|disk|* u_machine|audit|*
+# The disk is `disk` in `cadr_machine.sv`'s generate block for either
+# machine: the CADR's controller in `g_cadr_disk`, QUUX's block-disk in
+# `g_quux_disk`.  Each pattern matches the one that is built.
+set out_whole [get_registers -nowarn {u_machine|g_cadr_disk.disk|* u_machine|g_quux_disk.disk|* u_machine|audit|*
                                       u_machine|memory|tv|* u_machine|memory|iob|*
                                       u_machine|memory|busint_regs|*
                                       u_machine|memory|g_quux_mono_tv.mono_tv|*}]
 set held [get_registers -nowarn [concat \
-    [cadr_leaves {u_machine|disk|} {mine which}] \
+    [cadr_leaves {u_machine|g_cadr_disk.disk|} {mine which}] \
+    [cadr_leaves {u_machine|g_quux_disk.disk|} {mine which}] \
     [list {u_machine|audit|first_*}] \
     [cadr_leaves {u_machine|audit|} {micro word}] \
     [cadr_leaves {u_machine|memory|tv|} {ctl fb which}] \

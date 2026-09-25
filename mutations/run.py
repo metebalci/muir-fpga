@@ -143,7 +143,9 @@ MACHINE_CHECK = {
 # The files only a QUUX build compiles: `cadr_machine` names each under
 # `MACHINE == "quux"`, and a CADR build finds none of them.
 QUUX_SOURCES = ["rtl/machine/quux_feature_page.sv", "rtl/machine/quux_mono_tv.sv",
-                "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_phase_gen.sv"]
+                "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_phase_gen.sv",
+                "rtl/machine/quux_clocks.sv", "rtl/machine/quux_input.sv",
+                "rtl/machine/quux_block_disk.sv"]
 
 CHECKS = {
     "phase_gen": {
@@ -552,7 +554,7 @@ CHECKS = {
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
         "golden": "quux_map.quux.golden",
-        "prom": "quux_map_prom.hex",
+        "prom": "quux_map_prom.quux.hex",
         "machine": "quux",
     }),
     "quux_tv": dict(MACHINE_CHECK, **{
@@ -563,7 +565,7 @@ CHECKS = {
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
         "golden": "quux_tv.quux.golden",
-        "prom": "quux_tv_prom.hex",
+        "prom": "quux_tv_prom.quux.hex",
         "machine": "quux",
     }),
     "quux_muldiv": dict(MACHINE_CHECK, **{
@@ -574,7 +576,7 @@ CHECKS = {
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
         "golden": "quux_muldiv.quux.golden",
-        "prom": "quux_muldiv_prom.hex",
+        "prom": "quux_muldiv_prom.quux.hex",
         "machine": "quux",
     }),
     "quux_tick": dict(MACHINE_CHECK, **{
@@ -587,7 +589,7 @@ CHECKS = {
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
         "golden": "quux_imemsync.quux.golden",
-        "prom": "quux_imemsync_prom.hex",
+        "prom": "quux_imemsync_prom.quux.hex",
         "machine": "quux",
     }),
     # A push and a pop, QUUX's alone (`golden/src/quux.rs --program pdlsync`).
@@ -595,14 +597,45 @@ CHECKS = {
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
         "golden": "quux_pdlsync.quux.golden",
-        "prom": "quux_pdlsync_prom.hex",
+        "prom": "quux_pdlsync_prom.quux.hex",
         "machine": "quux",
     }),
-    "quux_ticksync_quux": dict(MACHINE_CHECK, **{
+    # QUUX's clocks, revision 5 (contract Q1): both timers and the
+    # microsecond clock, and the tick's rise at 16.667 ms; the CADR's side
+    # of the same program.
+    "quux_clocks": dict(MACHINE_CHECK, **{
+        "golden": "quux_clocks.golden",
+        "prom": "quux_clocks_prom.hex",
+    }),
+    "quux_clocks_quux": dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_ticksync.quux.golden",
-        "prom": "quux_ticksync_prom.hex",
+        "golden": "quux_clocks.quux.golden",
+        "prom": "quux_clocks_prom.quux.hex",
+        "machine": "quux",
+    }),
+    # The window between a flag's rise and the edge `SINTR` is taken at.
+    "quux_tickwin_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_tickwin.quux.golden",
+        "prom": "quux_tickwin_prom.quux.hex",
+        "machine": "quux",
+    }),
+    # The clocks read between the edges, and in a held microcycle.
+    "quux_clockwait_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_clockwait.quux.golden",
+        "prom": "quux_clockwait_prom.quux.hex",
+        "machine": "quux",
+    }),
+    # QUUX's register page, keyboard, network and no Unibus (Q2 to Q5).
+    "quux_page_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_page.quux.golden",
+        "prom": "quux_page_prom.quux.hex",
         "machine": "quux",
     }),
     "quux_divmd": dict(MACHINE_CHECK, **{
@@ -613,20 +646,31 @@ CHECKS = {
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
         "golden": "quux_divmd.quux.golden",
-        "prom": "quux_divmd_prom.hex",
+        "prom": "quux_divmd_prom.quux.hex",
         "machine": "quux",
     }),
     "quux_tickwait": dict(MACHINE_CHECK, **{
         "golden": "quux_tickwait.golden",
         "prom": "quux_tickwait_prom.hex",
     }),
-    "quux_tickwait_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_tickwait.quux.golden",
-        "prom": "quux_tickwait_prom.hex",
+    # QUUX's keyboard and mouse on their own, against `QuuxInput`.
+    "quux_input_quux": {
+        "sources": ["rtl/machine/quux_input.sv"],
+        "top": "quux_input",
+        "tb": "tb/quux_input_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "quux_input.quux.golden",
         "machine": "quux",
-    }),
+    },
+    # QUUX's block-disk on its own, against `BlockDisk`.
+    "quux_block_disk_quux": {
+        "sources": ["rtl/machine/quux_block_disk.sv"],
+        "top": "quux_block_disk",
+        "tb": "tb/quux_block_disk_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "quux_block_disk.quux.golden",
+        "machine": "quux",
+    },
     # QUUX's multiply and divide on their own, against `muldiv::run`.
     "muldiv_quux": {
         "sources": ["rtl/machine/quux_muldiv.sv"],
@@ -2179,14 +2223,16 @@ def _timed(key, k, l):
     })
 
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
-    ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "ticksync", "divmd", "tickwait", "pdlsync",
-                                  "imemsync")]
+    ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
+                                  "imemsync", "page", "clockwait")]
 CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
+CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)
+CHECKS["quux_clockwait_quux_l1"] = _timed("quux_clockwait_quux", 4, 1)
 # `divmdsync`, QUUX's alone, at an L of one: its `ILONG` fillers are
 # what moves a read's word into the ticks between a `DIV`'s edge and its load.
 CHECKS["quux_divmdsync_quux"] = dict(CHECKS["quux_divmd_quux"], **{
     "golden": "quux_divmdsync.quux.golden",
-    "prom": "quux_divmdsync_prom.hex",
+    "prom": "quux_divmdsync_prom.quux.hex",
 })
 CHECKS["quux_divmdsync_quux_l1"] = _timed("quux_divmdsync_quux", 4, 1)
 del CHECKS["quux_divmdsync_quux"]

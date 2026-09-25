@@ -900,9 +900,9 @@
 @note The Unibus half: the diagnostic bus's sixteen registers and the I/O
 @note board with its Chaosnet interface.
 @old
-  assign unibus = page >= 14'o37000;
+  assign in_window = page >= 14'o37000;
 @new
-  assign unibus = page >= 14'o37001;
+  assign in_window = page >= 14'o37001;
 @end
 
 @mutation xbus-io-space-starts-a-page-late
@@ -911,9 +911,9 @@
 @note The two slots below the Unibus. A page out either way moves the
 @note boundary between main memory and the devices.
 @old
-  assign xbus_io = !unibus && page >= 14'o36000;
+  assign xbus_io = !in_window && page >= 14'o36000;
 @new
-  assign xbus_io = !unibus && page >= 14'o36001;
+  assign xbus_io = !in_window && page >= 14'o36001;
 @end
 
 @mutation the-frame-buffer-is-at-the-wrong-slot
@@ -7882,13 +7882,13 @@ if {0 && $held ne $want} {
 @note Caught where the check runs a card cycle under a console hold.  The
 @note `sr_*` seam stays read by the register block, so lint does no catching.
 @old
-      .ub_msyn    (sr_msyn),
+      .ub_msyn    (QUUX ? 1'b0 : sr_msyn),
       .ub_write   (sr_write),
       .ub_addr    (sr_addr),
       .ub_wdata   (sr_wdata),
       .ub_ssyn    (iob_ssyn),
 @new
-      .ub_msyn    (ub_msyn),
+      .ub_msyn    (QUUX ? 1'b0 : ub_msyn),
       .ub_write   (ub_write),
       .ub_addr    (ub_addr),
       .ub_wdata   (wdata[15:0]),
@@ -9100,9 +9100,9 @@ if {0 && $held ne $want} {
 @note this one is written as an inversion: a zero that is always zero cannot
 @note tell an AND from an OR, but it can tell a zero from a one.
 @old
-  assign sintr_o   = xbus_intr || ub_int || tick_irq;
+  assign sintr_o   = xbus_intr || (ub_int && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = xbus_intr || !ub_int || tick_irq;
+  assign sintr_o   = xbus_intr || (!ub_int && !QUUX) || tick_irq || page_irq;
 @end
 
 @mutation dbgin-request-arrives-with-its-levels
@@ -10493,9 +10493,9 @@ if {0 && $held ne $want} {
 @note the next packet starts where it should.  A pointer that ran on would
 @note put the following packet's first read somewhere in the middle of it.
 @old
-            end else if (ch_rbuf && ch_rat != ch_rlen) begin
+        end else if (c_rbuf && ch_rat != ch_rlen) begin
 @new
-            end else if (ch_rbuf) begin
+        end else if (c_rbuf) begin
 @end
 
 @mutation iob-a-write-of-the-chaosnet-csr-reaches-every-bit
@@ -10509,9 +10509,9 @@ if {0 && $held ne $want} {
 @note whatever was last written --- which is the driver's own state machine
 @note fed its own last word.
 @old
-                  ch_wbits <= {ub_wdata[5:4], 1'b0, ub_wdata[2:0]};
+              ch_wbits <= {c_wdata[5:4], 1'b0, c_wdata[2:0]};
 @new
-                  ch_wbits <= ub_wdata[5:0];
+              ch_wbits <= c_wdata[5:0];
 @end
 
 @mutation iob-clear-receiver-leaves-the-lost-count
@@ -10523,9 +10523,9 @@ if {0 && $held ne $want} {
 @note emptied, so a count that survived the emptying would grow to fifteen
 @note and stay there.
 @old
-                    ch_lost  <= 4'd0;
+                ch_lost  <= 4'd0;
 @new
-                    ch_lost  <= ch_lost;
+                ch_lost  <= ch_lost;
 @end
 
 @mutation iob-the-lost-count-stops-at-fifteen
@@ -10590,9 +10590,9 @@ if {0 && $held ne $want} {
 @note words, and a word past that has nowhere to go.  The trace writes three
 @note hundred and the card must hand over two hundred and fifty-six.
 @old
-                  if (ch_wn != 9'd256) begin
+              if (ch_wn != 9'd256) begin
 @new
-                  if (ch_wn != 9'd511) begin
+              if (ch_wn != 9'd511) begin
 @end
 
 @mutation iob-start-does-not-take-the-buffer
@@ -10603,9 +10603,9 @@ if {0 && $held ne $want} {
 @note zero.  A card that left the count standing appends the next packet to
 @note the last one and hands the cable both.
 @old
-              ch_taken     <= 1'b1;
+          ch_taken     <= 1'b1;
 @new
-              ch_taken     <= 1'b0;
+          ch_taken     <= 1'b0;
 @end
 
 @mutation iob-the-cable-busy-line-is-not-the-crc-bit
@@ -10632,10 +10632,10 @@ if {0 && $held ne $want} {
 @note a packet is being written tells the driver the frame it has not sent
 @note yet is already away.
 @old
-                  ch_tdone  <= 1'b0;
-                  ch_tabort <= 1'b0;
+              ch_tdone  <= 1'b0;
+              ch_tabort <= 1'b0;
 @new
-                  ch_tabort <= 1'b0;
+              ch_tabort <= 1'b0;
 @end
 
 @mutation iob-the-chaosnet-outranks-the-clock
@@ -10797,10 +10797,10 @@ if {0 && $held ne $want} {
 @note reset with the driver's old enables still up.
 @old
   assign ch_reset_now = ub_init
-      || (land && chgrp && wr && (which[1:0] == 2'd0) && ub_wdata[13]);
+      || (c_land && c_wr && (c_which[1:0] == 2'd0) && c_wdata[13]);
 @new
   assign ch_reset_now =
-      (land && chgrp && wr && (which[1:0] == 2'd0) && ub_wdata[13]);
+      (c_land && c_wr && (c_which[1:0] == 2'd0) && c_wdata[13]);
 @end
 
 @mutation iob-the-chaos-timer-enable-reaches-the-interrupt
@@ -14724,9 +14724,11 @@ if {0 && $held ne $want} {
 @note it is the mode bit: while `PROMDISABLE` is clear the term is true on
 @note every tick, the write cycles included.
 @old
-  assign promenable = bottom_1k && !promdisabled && !iwrited && !idebug;
+  assign promenable = (QUUX ? in_quux_prom : (bottom_1k && !promdisabled))
+                   && !iwrited && !idebug;
 @new
-  assign promenable = !promdisabled || (bottom_1k && !iwrited && !idebug);
+  assign promenable = QUUX ? (in_quux_prom && !iwrited && !idebug)
+                           : (!promdisabled || (bottom_1k && !iwrited && !idebug));
 @end
 
 @mutation the-control-store-write-does-not-put-the-prom-off-the-i-bus
@@ -14742,9 +14744,11 @@ if {0 && $held ne $want} {
 @note pulse and at `POPJ` --- so lint has nothing to say and the check is what
 @note catches this.
 @old
-  assign promenable = bottom_1k && !promdisabled && !iwrited && !idebug;
+  assign promenable = (QUUX ? in_quux_prom : (bottom_1k && !promdisabled))
+                   && !iwrited && !idebug;
 @new
-  assign promenable = bottom_1k && !promdisabled && !idebug;
+  assign promenable = (QUUX ? in_quux_prom : (bottom_1k && !promdisabled))
+                   && !idebug;
 @end
 
 # ------------------------------------------------------ what says a download took
@@ -20056,103 +20060,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     assign dividing = div_held && (div_t < 6'd33) && (div_start == div_start);
 @end
 
-@mutation quux-the-tick-is-late-by-a-tick
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note The first period after a write is one tick longer than muir's: the
-@note count starts at the edge a tick late and does not make up the tick.
-@old
-          tk_pre     <= 7'(TICKS_A_US - 2);
-@new
-          tk_pre     <= 7'(TICKS_A_US - 1);
-@end
-
-@mutation quux-the-tick-flag-is-not-sticky
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note The flag is up only in the tick of its rise, where it stays up until
-@note cleared.
-@old
-            tk_sticky <= 1'b1;
-@new
-            tk_sticky <= tk_sticky;
-@end
-
-@mutation quux-a-clear-does-not-clear
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note A write with `<1>` set leaves the flag up.
-@old
-    assign tk_clear   = tk_w_ctl && l[1] && tk_w_flag;
-@new
-    assign tk_clear   = tk_w_ctl && l[1] && tk_w_flag && 1'b0;
-@end
-
-@mutation quux-a-period-write-does-not-restart
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note A period written while the tick runs takes effect at the next rise
-@note rather than starting a period from now.
-@old
-    assign tk_restart = (tk_w_ctl && l[0] && !tk_w_en) || (tk_w_per && tk_w_en);
-@new
-    assign tk_restart = (tk_w_ctl && l[0] && !tk_w_en) || (tk_w_per && tk_w_en && 1'b0);
-@end
-
-@mutation quux-source-17-swaps-its-bits
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note Source 17 reads the enable in `<0>` and the flag in `<1>`.
-@old
-    assign tick_status = {30'd0, tk_enabled_s, tk_flag_s};
-@new
-    assign tick_status = {30'd0, tk_flag_s, tk_enabled_s};
-@end
-
-@mutation quux-source-17-reads-the-flag-live
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note Source 17 reads the flag as it stands through the microcycle, not as
-@note it stood when the microcycle started, so a rise mid-cycle is seen a
-@note cycle early.
-@old
-    assign tick_status = {30'd0, tk_enabled_s, tk_flag_s};
-@new
-    assign tick_status = {30'd0, tk_enabled_s, tk_flag || (tk_flag_s && !tk_flag_s)};
-@end
-
-@mutation quux-the-tick-does-not-interrupt
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note The flag never reaches the interrupt jump conditions test.
-@old
-    assign tick_irq    = tk_enabled_s && tk_flag_s
-@new
-    assign tick_irq    = tk_enabled_s && tk_flag_s && 1'b0
-@end
-
-@mutation quux-the-tick-interrupts-through-its-own-clear
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note The interrupt taken at the edge of a clear is the flag before the
-@note clear, where muir takes the interrupt after the write.
-@old
-                      && !(desttickctl && (!ob[0] || ob[1])) && !desttickper;
-@new
-                      && !(desttickctl && !ob[0]) && !desttickper && (ob[1] || !ob[1]);
-@end
-
-@mutation quux-the-tick-is-not-on-sintr
-@check quux_ticksync_quux
-@file rtl/machine/cadr_machine.sv
-@note The tick's interrupt does not reach `SINTR`, so jump condition 5
-@note never sees it.
-@old
-  assign sintr_o   = xbus_intr || ub_int || tick_irq;
-@new
-  assign sintr_o   = xbus_intr || ub_int || (tick_irq && 1'b0);
-@end
-
 @mutation quux-the-divider-reads-its-operands-late
 @check quux_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
@@ -20174,17 +20081,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     assign div_load = div_t == 6'(DIV_LOAD_T);
 @new
     assign div_load = div_t == 6'(DIV_LOAD_T) - 6'(DIV_LOAD_T - 1);
-@end
-
-@mutation quux-the-tick-counts-a-microsecond-short
-@check quux_ticksync_quux
-@file rtl/machine/cadr_microcycle.sv
-@note A microsecond is 99 ticks after a rise, so every period after the
-@note first is a tick short a microsecond.
-@old
-            tk_pre <= 7'(TICKS_A_US - 1);
-@new
-            tk_pre <= 7'(TICKS_A_US - 2);
 @end
 
 @mutation the-cadr-dispatch-write-reads-the-old-word
@@ -20340,20 +20236,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     assign mono_control = tv_control;
 @end
 
-@mutation quux-tick-flag-taken-where-the-wait-began
-@check quux_tickwait_quux
-@file rtl/machine/cadr_microcycle.sv
-@note The flag a waiting microcycle passes on is the flag at the master
-@note clock edge it finally runs from; kept from where the wait began, a
-@note rise while it waits is missed.
-@old
-        if (mclk_edge && !cpu_edge) begin
-          tk_flag_s    <= tk_flag;
-@new
-        if (1'b0) begin
-          tk_flag_s    <= tk_flag;
-@end
-
 # ---------------------------------------------------------------- H1a
 #
 # QUUX'S SYNCHRONOUS MICROCYCLE OF K TICKS: its generator, the writes on the
@@ -20443,7 +20325,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note Read at the edge from PC, which that edge is only now moving: the word
 @note is the instruction's own and not the next.
 @old
-  assign cs_ra   = QUUX ? npc : cs_radr;
+  assign cs_ra   = QUUX ? (started ? npc : cs_radr) : cs_radr;
 @new
   assign cs_ra   = cs_radr;
 @end
@@ -20578,9 +20460,9 @@ set_multicycle_path -setup 3 -from $split_every_tick -to $slow
 @note QUUX's control store never written: IR takes every word written from
 @note `IWR`, so only a word run from the store after it is written can see.
 @old
-      if (iwe_q) imem[cs_port] <= iwd_q;
+      if (iwe_q && !quux_prom_wr) imem[cs_port] <= iwd_q;
 @new
-      if (1'b0) imem[cs_port] <= iwd_q;
+      if (1'b0 && !quux_prom_wr) imem[cs_port] <= iwd_q;
 @end
 
 @mutation quux-control-store-written-at-the-moved-pc
@@ -20592,4 +20474,488 @@ set_multicycle_path -setup 3 -from $split_every_tick -to $slow
   assign cs_port = iwe_q ? iwa_q : cs_ra;
 @new
   assign cs_port = iwe_q ? (pc | (iwa_q & 14'd0)) : cs_ra;
+@end
+
+# ------------------------------------------------ QUUX at muir's e12749e
+#
+# The clocks in the processor (contract Q1, `rtl/machine/quux_clocks.sv`),
+# which replaced revision 4's tick and its records; the window between a
+# flag's rise and the edge `SINTR` is taken at (muir's `1775bba`); the
+# boot PROM at 36000 and the register page (Q2); the keyboard and the mouse
+# (Q3, `quux_input.sv`); the network on the page (Q4); block-disk
+# (`quux_block_disk.sv`); and no Unibus (Q5).  Each is aimed at the check
+# whose program reaches it.
+
+@mutation quux-the-tick-is-late-by-a-tick
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note The first period after a write is one tick longer than muir's: the
+@note count starts at the edge a tick late and does not make up the tick.
+@old
+          pre[k]    <= 7'(TICKS_A_US - 2);
+@new
+          pre[k]    <= 7'(TICKS_A_US - 1);
+@end
+
+@mutation quux-the-clocks-count-a-microsecond-short
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A microsecond is 99 ticks after a rise, so every period after the
+@note first is a tick short a microsecond.
+@old
+            pre[k] <= 7'(TICKS_A_US - 1);
+@new
+            pre[k] <= 7'(TICKS_A_US - 2);
+@end
+
+@mutation quux-a-clock-flag-is-not-sticky
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note The flag is up only in the tick of its rise, where it stays up until
+@note cleared.
+@old
+              sticky[k] <= 1'b1;
+@new
+              sticky[k] <= sticky[k];
+@end
+
+@mutation quux-an-interval-clear-does-not-clear
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A write with `<3>` set leaves the interval timer's flag up.
+@old
+  assign clear[1]   = w_ctl && l[3] && w_flag[1];
+@new
+  assign clear[1]   = w_ctl && l[3] && w_flag[1] && 1'b0;
+@end
+
+@mutation quux-a-tick-clear-does-not-clear
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A write with `<1>` set leaves the tick's flag up.
+@old
+  assign clear[0]   = w_ctl && l[1] && w_flag[0];
+@new
+  assign clear[0]   = w_ctl && l[1] && w_flag[0] && 1'b0;
+@end
+
+@mutation quux-a-period-write-does-not-restart
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A period written while the interval timer runs takes effect at the
+@note next rise rather than starting a period from now.
+@old
+  assign restart[1] = (w_ctl && l[2] && !w_en[1]) || (w_per && w_en[1]);
+@new
+  assign restart[1] = (w_ctl && l[2] && !w_en[1]) || (w_per && w_en[1] && 1'b0);
+@end
+
+@mutation quux-a-period-of-zero-runs
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A period of 0 is taken as 1, as revision 4's tick took it, where the
+@note interval timer stops (`Tick::after`): the timer then rises every
+@note microsecond after the program wrote it 0.
+@old
+          live[k]   <= start_us[k] != 24'd0;
+          pre[k]    <= 7'(TICKS_A_US - 2);
+          us[k]     <= start_us[k];
+@new
+          live[k]   <= 1'b1;
+          pre[k]    <= 7'(TICKS_A_US - 2);
+          us[k]     <= (start_us[k] == 24'd0) ? 24'd1 : start_us[k];
+@end
+
+@mutation quux-the-tick-takes-the-interval-period
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note The tick counts the interval timer's period, as revision 4's took its
+@note period from destination 4, and not its fixed 16,667 us.
+@old
+  assign start_us[0] = TICK_US;
+@new
+  assign start_us[0] = interval_us | (TICK_US & 24'd0);
+@end
+
+@mutation quux-source-17-swaps-its-bits
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note Source 17 reads each enable in the flag's place and the flag in the
+@note enable's.
+@old
+  assign status  = {en_s[1], flag_s[1], en_s[0], flag_s[0]};
+@new
+  assign status  = {flag_s[1], en_s[1], flag_s[0], en_s[0]};
+@end
+
+@mutation quux-source-17-reads-the-flags-live
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note Source 17 reads the flags as they stand through the microcycle, not as
+@note they stood when it started, so a rise mid-cycle is seen a cycle early.
+@old
+  assign status  = {en_s[1], flag_s[1], en_s[0], flag_s[0]};
+@new
+  assign status  = {en_s[1], flag[1] | (flag_s[1] & 1'b0), en_s[0], flag[0] | (flag_s[0] & 1'b0)};
+@end
+
+@mutation quux-source-15-misses-the-edge
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note Source 15 is taken at the edge without a microsecond that falls on
+@note it, so a read on a microsecond's boundary reads one less than muir.
+@old
+      if (mclk_edge) usec_s <= usec + 32'(power_on_t == 2'd0 && usec_t == 7'd0);
+@new
+      if (mclk_edge) usec_s <= usec;
+@end
+
+@mutation quux-source-15-counts-from-the-reset
+@check quux_clockwait_quux_l1
+@file rtl/machine/quux_clocks.sv
+@note The microsecond clock starts at the reset edge and not at the
+@note machine's power-on, two edges later, so every read is 20 ns ahead.
+@old
+      power_on_t <= 2'(cadr_tick_pkg::POWER_ON_EDGES);
+@new
+      power_on_t <= 2'd0;
+@end
+
+@mutation quux-the-clocks-do-not-interrupt
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note Neither flag reaches the interrupt the jump conditions test.
+@old
+  assign irq = (flag[0] && !(dest_ctl && (!ob[0] || ob[1])))
+@new
+  assign irq = 1'b0 && (flag[0] && !(dest_ctl && (!ob[0] || ob[1])))
+@end
+
+@mutation quux-the-interval-interrupts-through-its-own-clear
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note The interrupt taken at the edge of a clear is the flag before the
+@note clear, where muir takes it after the write.
+@old
+            || (flag[1] && !(dest_ctl && (!ob[2] || ob[3])) && !dest_per);
+@new
+            || (flag[1] && !(dest_ctl && !ob[2] && (ob[3] || !ob[3])) && !dest_per);
+@end
+
+@mutation quux-sintr-takes-the-flags-the-microcycle-started-with
+@check quux_tickwin_quux_l1
+@file rtl/machine/quux_clocks.sv
+@note **THE RULE BEFORE muir'S `1775bba`**: `SINTR` from the flags as they
+@note stood at the edge that started the microcycle, which misses a rise
+@note inside it, or on the edge that ends it, by one microcycle.  Measured
+@note before the change on this program: eight rows, six of them a rise
+@note strictly inside the microcycle and four in a wait for `MD`.
+@old
+  assign irq = (flag[0] && !(dest_ctl && (!ob[0] || ob[1])))
+            || (flag[1] && !(dest_ctl && (!ob[2] || ob[3])) && !dest_per);
+@new
+  assign irq = (en_s[0] && flag_s[0] && !(dest_ctl && (!ob[0] || ob[1])))
+            || (en_s[1] && flag_s[1] && !(dest_ctl && (!ob[2] || ob[3])) && !dest_per);
+@end
+
+@mutation quux-a-clock-flag-taken-where-the-wait-began
+@check quux_clockwait_quux
+@file rtl/machine/quux_clocks.sv
+@note The status a waiting microcycle reads is the one at the master clock
+@note edge it finally runs from; kept from where the wait began, a rise while
+@note it waits is missed.
+@old
+      if (mclk_edge && !cpu_edge) begin
+        flag_s <= flag;
+@new
+      if (1'b0) begin
+        flag_s <= flag;
+@end
+
+@mutation quux-the-clocks-are-not-on-sintr
+@check quux_clocks_quux
+@file rtl/machine/cadr_machine.sv
+@note The clocks' interrupt does not reach `SINTR`, so jump condition 5
+@note never sees it.
+@old
+  assign sintr_o   = xbus_intr || (ub_int && !QUUX) || tick_irq || page_irq;
+@new
+  assign sintr_o   = xbus_intr || (ub_int && !QUUX) || (tick_irq && 1'b0) || page_irq;
+@end
+
+@mutation quux-the-prom-is-at-zero
+@check quux_imemsync_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The trap starts QUUX at 0, the CADR's reset PC, and not at the PROM's
+@note base, 36000: the program runs out of the RAM there.
+@old
+      npc = QUUX ? QUUX_PROM_BASE : 14'd0;
+@new
+      npc = 14'd0;
+@end
+
+@mutation quux-the-prom-answers-at-the-bottom-too
+@check quux_imemsync_quux
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX's PROM answers at control store 0-1777 as well as at 36000, as
+@note the CADR's overlay does, so the RAM there is hidden.
+@old
+  assign in_quux_prom = pc[13:10] == QUUX_PROM_BASE[13:10];
+@new
+  assign in_quux_prom = (pc[13:10] == QUUX_PROM_BASE[13:10]) || (pc[13:10] == 4'd0);
+@end
+
+@mutation quux-the-trap-fetches-at-npc
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Before the first boundary the control store is read at NPC, which the
+@note standing trap has at 36000, and not at the PC, 0: the trap's nopped IR
+@note is the PROM's first word.
+@old
+  assign cs_ra   = QUUX ? (started ? npc : cs_radr) : cs_radr;
+@new
+  assign cs_ra   = QUUX ? npc : cs_radr;
+@end
+
+@mutation quux-the-feature-page-says-revision-4
+@check quux_map_quux
+@file rtl/machine/cadr_machine.sv
+@note The MACHINE-ID of revision 4, before the clocks and the register page.
+@old
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0064;
+@new
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
+@end
+
+@mutation quux-word-14-is-zero
+@check quux_map_quux
+@file rtl/machine/quux_feature_page.sv
+@note The feature page does not list the interval timer and the microsecond
+@note clock.
+@old
+      8'o14:   word = CLOCKS;
+@new
+      8'o14:   word = CLOCKS & 32'd0;
+@end
+
+@mutation quux-word-100-names-the-keyboard-and-the-network-alike
+@check quux_page_quux
+@file rtl/machine/quux_feature_page.sv
+@note Word 100's `<3>` and `<5>` swapped: the keyboard read as the network.
+@old
+        8'o100:  word = {26'd0, chaos_ireq, in_irq, disk_irq, clock_pending};
+@new
+        8'o100:  word = {26'd0, in_irq[0], in_irq[1], chaos_ireq, disk_irq, clock_pending};
+@end
+
+@mutation quux-word-101-does-not-clear
+@check quux_page_quux
+@file rtl/machine/quux_feature_page.sv
+@note A write of word 101 leaves the bus errors standing.
+@old
+  assign err_clear  = take && dev_write && which == 8'o101;
+@new
+  assign err_clear  = take && dev_write && which == 8'o101 && 1'b0;
+@end
+
+@mutation quux-word-102-is-not-error-stop
+@check quux_page_quux
+@file rtl/machine/quux_feature_page.sv
+@note A write of word 102 reaches no mode register.
+@old
+  assign errstop_we = take && dev_write && which == 8'o102;
+@new
+  assign errstop_we = take && dev_write && which == 8'o102 && 1'b0;
+@end
+
+@mutation quux-the-network-does-not-interrupt-the-processor
+@check quux_page_quux
+@file rtl/machine/quux_feature_page.sv
+@note The network's request reaches word 100 and not the processor, as it
+@note did before muir's `3ceb4f7`.
+@old
+  assign irq = (|in_irq) || chaos_ireq;
+@new
+  assign irq = (|in_irq) || (chaos_ireq && 1'b0);
+@end
+
+@mutation quux-a-page-read-is-taken-twice
+@check quux_page_quux
+@file rtl/machine/quux_feature_page.sv
+@note The page answers every tick of `-XBUS.RQ`, not once a cycle, so a read
+@note of the keyboard's FIFO pops a word each tick the request stands.
+@old
+  assign take = mine && dev_rq && !taken;
+@new
+  assign take = mine && dev_rq && (taken || !taken);
+@end
+
+@mutation quux-the-keyboard-enable-reaches-sintr-a-cycle-late
+@check quux_page_quux
+@file rtl/machine/quux_input.sv
+@note The keyboard's interrupt from the registers and not from what this
+@note tick leaves them, so an enable written on the edge `SINTR` is taken at
+@note reaches it a microcycle late.  Measured before the fix on this program.
+@old
+  assign kbd_enable_n   = (wr && which == KBD_STATUS) ? wdata[8] : kbd_enable;
+@new
+  assign kbd_enable_n   = kbd_enable | (wr & wdata[8] & 1'b0);
+@end
+
+@mutation quux-the-fifo-is-sixty-three
+@check quux_input_quux
+@file rtl/machine/quux_input.sv
+@note The FIFO is full at sixty-three words, one short of muir's.
+@old
+  assign full  = count == CNTW'(FIFO_WORDS);
+@new
+  assign full  = count == CNTW'(FIFO_WORDS - 1);
+@end
+
+@mutation quux-the-overflow-never-rises
+@check quux_input_quux
+@file rtl/machine/quux_input.sv
+@note A word past the sixty-fourth is dropped and `<1>` stays down.
+@old
+          overflowed <= 1'b1;
+@new
+          overflowed <= overflowed;
+@end
+
+@mutation quux-a-read-of-121-leaves-the-word
+@check quux_input_quux
+@file rtl/machine/quux_input.sv
+@note Word 121 reads the oldest word and leaves it there.
+@old
+  assign pop   = rd && which == KBD_DATA && !empty;
+@new
+  assign pop   = rd && which == KBD_DATA && !empty && 1'b0;
+@end
+
+@mutation quux-the-mouse-word-has-no-buttons
+@check quux_input_quux
+@file rtl/machine/quux_input.sv
+@note Word 122's `<14:12>` read zero.
+@old
+      MOUSE:        rdata = {4'd0, mouse_y, 1'b0, mouse_buttons, mouse_x};
+@new
+      MOUSE:        rdata = {4'd0, mouse_y, 1'b0, 3'd0 & mouse_buttons, mouse_x};
+@end
+
+@mutation quux-a-read-of-122-leaves-the-change
+@check quux_input_quux
+@file rtl/machine/quux_input.sv
+@note A read of 122 leaves 123's `<0>` up.
+@old
+      if (rd && which == MOUSE) mouse_changed <= 1'b0;
+@new
+      if (rd && which == MOUSE && 1'b0) mouse_changed <= 1'b0;
+@end
+
+@mutation quux-the-boot-word-does-not-boot
+@check quux_input_quux
+@file rtl/machine/quux_input.sv
+@note The keyboard's boot word goes into the FIFO and boots nothing.
+@old
+      if (kbd_strobe && kbd_code[13:6] == BOOT_MATCH) boot_t <= 10'(BOOT_T);
+@new
+      if (kbd_strobe && kbd_code[13:6] == BOOT_MATCH && 1'b0) boot_t <= 10'(BOOT_T);
+@end
+
+@mutation quux-block-disk-is-not-active-at-once
+@check quux_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note Not-active as soon as the walk ends, not after the blocks' time.
+@old
+  assign not_active = !walking && (!walked || busy_ticks >= due);
+@new
+  assign not_active = !walking && (!walked || busy_ticks >= (due >> 4));
+@end
+
+@mutation quux-block-disk-is-a-tick-late
+@check quux_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The time is counted from the tick after the START, so not-active and
+@note the done interrupt come ten nanoseconds after muir's instant.
+@old
+              busy_ticks <= 32'd1;
+@new
+              busy_ticks <= 32'd0;
+@end
+
+@mutation quux-block-disk-past-the-end-is-no-error
+@check quux_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A block the pack side denies stops the transfer without `<17>`.
+@old
+            req_valid <= 1'b0;
+            past_end  <= 1'b1;
+@new
+            req_valid <= 1'b0;
+            past_end  <= past_end;
+@end
+
+@mutation quux-block-disk-the-pointer-carries
+@check quux_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The command list pointer counts all thirty-two bits, where only the
+@note low sixteen count.
+@old
+              ch_addr  <= {clp[21:16], clp_n};
+@new
+              ch_addr  <= 22'(clp + {16'd0, n});
+@end
+
+@mutation quux-block-disk-the-ccw-page-is-the-word
+@check quux_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The page is taken from the command list word's low bits, not `<21:8>`.
+@old
+              page     <= ch_rdata[21:8];
+@new
+              page     <= ch_rdata[13:0];
+@end
+
+@mutation quux-block-disk-a-write-is-not-dirty
+@check quux_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A block written is never marked written, so the pack side never writes
+@note it back and the pack keeps the old block.
+@old
+                ch_wrote <= 1'b1;
+@new
+                ch_wrote <= 1'b0;
+@end
+
+@mutation quux-block-disk-the-address-is-where-it-started
+@check quux_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The disk address is left where the transfer started, not at the last
+@note block moved.
+@old
+          da      <= {4'd0, lba};
+@new
+          da      <= da;
+@end
+
+@mutation quux-block-disk-no-pack-reads-a-pack
+@check machine_quux
+@file rtl/machine/quux_block_disk.sv
+@note Status `<9>` reads 0 with nothing on unit 0, so the boot PROM's polls
+@note of a disk with no pack read 0x001.
+@old
+                   3'd0, !drive_present[0], 5'd0, intr, 2'd0, not_active};
+@new
+                   3'd0, 1'b0, 5'd0, intr, 2'd0, not_active};
+@end
+
+@mutation quux-the-unibus-window-answers-on-quux
+@check quux_page_quux
+@file rtl/machine/cadr_xbus_decode.sv
+@note QUUX keeps the Unibus: the window is the Unibus's and not an empty Xbus
+@note address, so the program's read of `764140` reaches the I/O board.
+@old
+  assign unibus    = (MACHINE != "quux") && in_window;
+@new
+  assign unibus    = in_window;
 @end

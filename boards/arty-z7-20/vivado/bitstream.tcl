@@ -698,13 +698,15 @@ if {$machine ne "quux"} {
 # QUUX'S CLAUSES, `quux_machine.xdc`, ASKED WHAT THEY REACHED, at K = 4.
 # Every clause of the CADR's file is re-issued there at QUUX's counts, so each
 # is asked here the same two ways: none of its paths may ask for more than
-# its count, and at least one must ask for exactly that.  The tick's
-# countdown must be in the design for its paths to be the tick's.
+# its count, and at least one must ask for exactly that.  The clocks'
+# countdown must be in the design for their paths to be the tick's: they are
+# out of the relaxed set by name (`cadr_machine.xdc`), so a rename would put
+# them back in it in silence.
 if {$machine eq "quux"} {
-    set quux_tick_cells [get_cells -quiet -hier -filter {NAME =~ *processor/g_quux_tick.tk_us_reg* && IS_SEQUENTIAL}]
+    set quux_tick_cells [get_cells -quiet -hier -filter {NAME =~ *processor/g_quux_tick.clocks/us_reg* && IS_SEQUENTIAL}]
     if {[llength $quux_tick_cells] == 0} {
-        puts "BIT: FAILED --- QUUX's tick countdown is not in the design, so its clause"
-        puts "BIT: in rtl/plumbing/xilinx7/quux_machine.xdc is on nothing."
+        puts "BIT: FAILED --- QUUX's clocks' countdown is not in the design, so the"
+        puts "BIT: clause taking it out of the relaxed set is on nothing."
         exit 1
     }
     set q_latch {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*

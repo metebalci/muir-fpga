@@ -78,6 +78,8 @@ struct Program {
   std::string name;
   size_t rows = 0;
   std::vector<uint64_t> prom;
+  // On QUUX, the program in the control store's RAM, its PROM being at 36000.
+  std::vector<std::pair<uint32_t, uint64_t>> imem;
   std::vector<std::pair<uint32_t, uint32_t>> l2, dmem, main;
   uint32_t speed = 0;   // {SPEED1, SPEED0} of the mode register at the boot
   std::vector<Row> trace;
@@ -140,6 +142,8 @@ bool Load(const char *path, std::vector<Program> &all) {
     if (std::sscanf(line, "prom %llx %llx", &a, &b) == 2) {
       if (p->prom.size() <= a) p->prom.resize(a + 1, 0);
       p->prom[a] = b;
+    } else if (std::sscanf(line, "imem %llx %llx", &a, &b) == 2) {
+      p->imem.emplace_back(a, b);
     } else if (std::sscanf(line, "l2 %llx %llx", &a, &b) == 2) {
       p->l2.emplace_back(a, b);
     } else if (std::sscanf(line, "dmem %llx %llx", &a, &b) == 2) {
@@ -223,10 +227,11 @@ int Run(const Program &p, Totals &tot) {
 
   // The program and the memories it starts from, into the fabric's own
   // arrays: `Machine::new` with the program's PROM, as muir's test builds it.
-  // The control store is left as the fabric brings it up; no program runs
-  // out of it.
+  // The control store is left as the fabric brings it up, all ones, but on
+  // QUUX, whose program runs out of it from 0 (the golden's `imem` lines).
 #define PROC(x) root->cadr_machine__DOT__processor__DOT__##x
   for (size_t k = 0; k < 1024; ++k) PROC(prom_mem)[k] = k < p.prom.size() ? p.prom[k] : 0;
+  for (const auto &e : p.imem) PROC(imem)[e.first] = e.second;
   for (size_t k = 0; k < 2048; ++k) PROC(dmem)[k] = 0;
   for (size_t k = 0; k < 2048; ++k) PROC(l1_map)[k] = 0;
   for (size_t k = 0; k < L2Words(); ++k) PROC(l2_map)[k] = 0;

@@ -142,7 +142,8 @@ module cadr_dbg_cable_harness #(
       .dbgout_live(a_dbg_live), .select_debug(a_select_debug),
       .xbus_intr(1'b0), .iob_intr(1'b0), .iob_vector(8'd0),
       .timed_out(1'b0), .unibus(1'b0), .ub_int(a_ub_int_u),
-      .err_status(a_err_status_u)
+      .err_status(a_err_status_u),
+      .page_err_clear(1'b0)
   );
 
   // A's DBGIN arm is not driven from here: this board is the debugger and
@@ -284,7 +285,10 @@ module cadr_dbg_cable_harness #(
       .n_boot(1'b1),
       // No no-auto-boot switch in this harness: RUN comes up preset, as the
       // fabric's reset leaves it with the boot button just let go.
-      .no_auto_boot(1'b0)
+      .no_auto_boot(1'b0),
+      // QUUX's register page's word 102; this is the CADR's register block.
+      .page_errstop_we(1'b0),
+      .page_errstop   (1'b0)
   );
 
   logic unused;

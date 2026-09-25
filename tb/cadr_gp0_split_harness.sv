@@ -467,8 +467,16 @@ module cadr_gp0_split_harness #(
       .chaos_bits(chaos_bits),
       .intr_request(iob_intr), .intr_vector(iob_vector), .audio(iob_audio),
       .csr_face(iob_csr_face), .mouse_x(iob_mouse_x), .mouse_y(iob_mouse_y),
-      .clock_ready(iob_clock_ready), .interval(iob_interval)
+      .clock_ready(iob_clock_ready), .interval(iob_interval),
+      // QUUX's register page reaches the Chaosnet interface off the Unibus;
+      // this is the CADR's card and nothing drives it.
+      .qp_land(1'b0), .qp_wr(1'b0), .qp_which(3'd0), .qp_wdata(16'd0),
+      .qp_rdata(unused_qp_rdata), .chaos_ireq(unused_chaos_ireq),
+      .mouse_buttons(unused_mouse_buttons)
   );
+  logic [15:0] unused_qp_rdata;
+  logic        unused_chaos_ireq;
+  logic [2:0]  unused_mouse_buttons;
 
   // What no part of this check reads: the pack side's idle master and store
   // seam, and the card's clocks, interrupt and observation outputs, each of

@@ -124,7 +124,14 @@ module cadr_spy_registers #(
     // console reports both this level and the value the machine came out of
     // reset with.  muir's own `--no-auto-boot` is the same state by the same
     // argument.
-    input  var logic        no_auto_boot
+    input  var logic        no_auto_boot,
+
+    // --- QUUX's register page, word 102: `<0>` is error stop, the same bit
+    // the mode register's `<2>` is, written by the machine through the page
+    // (contract Q2, `Machine::bus_write`).  One tick, at the instant the
+    // page answers the write.  Tied low on the CADR.
+    input  var logic        page_errstop_we,
+    input  var logic        page_errstop
 );
 
   // busint::DIAGNOSTIC_NS, REGISTER_STROBE_NS and REGISTER_PULSE_NS.
@@ -296,6 +303,7 @@ module cadr_spy_registers #(
         endcase
       end
       if (early) early_taken <= 1'b1;
+      if (page_errstop_we) errstop <= page_errstop;
       if (!ub_msyn) begin
         running <= 1'b0;
         elapsed <= 9'd0;

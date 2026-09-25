@@ -363,8 +363,15 @@
 # record, the microcycle counter and the readout word to.
 #
 # **AND QUUX'S REGISTERS THAT RUN EVERY TICK, WHICH MATCH NOTHING ON THE
-# CADR.**  The tick's `tk_pre` and `tk_us`, the countdown of the period, and
-# `tk_sticky`, the flag it raises; the divider's `div_t` and `div_start`, which count the
+# CADR.**  QUUX's clocks, `quux_clocks.sv`, out whole but for the status a
+# microcycle reads (`flag_s`, `en_s`, `usec_s`), which is sampled at the
+# master clock edge and stands through the microcycle: the countdowns, the
+# flags they raise, the microsecond clock and the write taken a tick after
+# its edge all move on ticks of their own.  The register page's `taken` and
+# `held`, taken at the first tick of -XBUS.RQ, and its keyboard and mouse,
+# `quux_input.sv`, whose FIFO, flags and counts move on the tick a key word
+# arrives or a read is answered, out whole but for the page's held match;
+# block-disk is `disk`, below.  The divider's `div_t` and `div_start`, which count the
 # ticks since `IR` was loaded, and its steps, `dv_*`, a step a tick; and MONO
 # TV but for its three held matches, as
 # the CADR's display board is, its `taken` and `bow` taken at the first tick
@@ -375,9 +382,7 @@
 # the word the divider loads a tick after it (`div_strobed2` and `div_word`
 # are names of an earlier build, matching nothing now); and QUUX's control
 # store's write, `iwe_q`, `iwa_q` and `iwd_q`, taken a tick after the edge
-# and written on the next.  The tick's status as a microcycle reads it (`tk_flag_s`,
-# `tk_enabled_s`) is sampled at the master clock edge and stands through the
-# microcycle, so it stays in the set, as the divider's held decode does.
+# and written on the next.  The divider's held decode stays in the set.
 # What QUUX alone relaxes beyond this is in `quux_machine.xdc`, read only for a
 # QUUX build.
 
@@ -400,9 +405,13 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *processor/mw_early_q*    && \
                                   NAME !~ *processor/mw_k1_q_reg*   && \
                                   NAME !~ *processor/mw_late2_q_reg* && \
-                                  NAME !~ *tk_pre_reg*       && \
-                                  NAME !~ *tk_us_reg*        && \
-                                  NAME !~ *tk_sticky_reg*    && \
+                                  (NAME !~ *g_quux_tick.clocks/* || \
+                                       NAME =~ *g_quux_tick.clocks/flag_s_reg* || \
+                                       NAME =~ *g_quux_tick.clocks/en_s_reg* || \
+                                       NAME =~ *g_quux_tick.clocks/usec_s_reg*) && \
+                                  (NAME !~ *feature_page/* || \
+                                       NAME =~ *feature_page/mine_reg* || \
+                                       NAME =~ *feature_page/which_reg*) && \
                                   NAME !~ *div_t_reg*        && \
                                   NAME !~ *div_start_reg*    && \
                                   NAME !~ *g_quux_hold.hold_mclk_q_reg* && \

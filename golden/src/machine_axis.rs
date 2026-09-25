@@ -8,7 +8,8 @@
 //! **QUUX IS BUILT HERE AS muir'S LIBRARY BUILDS IT, AND AS muir'S OWN
 //! `machine()` IN `src/main.rs` DOES**: the geometry set on the machine before
 //! the engine is made, QUUX's boot PROM (`prom::quux_boot_prom`, muir's
-//! `data/quux-promh.mcr`), and MONO TV fitted as the display.  One thing is
+//! `data/quux-promh.mcr`), MONO TV fitted as the display, and block-disk as
+//! the disk.  One thing is
 //! this project's and not muir's default: **MONO TV IS 1280 BY 1024**, the
 //! size the bitstreams build, set explicitly with `Tv::set_mono_tv_size`
 //! where muir's default is 1920 by 1080.  1280 bits is 40 words a line and
@@ -71,6 +72,23 @@ impl Which {
             m.tv.set_mono_tv_size(MONO_TV_WIDTH, MONO_TV_HEIGHT);
             m.tv.set_board(Board::MonoTv);
             assert_eq!(m.tv.buffer_words(), 40_960, "MONO TV's buffer at 1280 by 1024");
+            // **THE CONTROL STORE COMES UP ALL ONES, AS THE FABRIC'S DOES.**
+            // What a RAM holds at power-on is a convention, and the fabric's
+            // is all ones where muir's is zero (`cadr_microcycle.sv` says why
+            // at the array).  On the CADR no trace ever fetches a word nobody
+            // wrote, the PROM overlaying 0-1777 until the RAM is loaded.  On
+            // QUUX it does, once: the PROM is at 36000 (contract Q2) and the
+            // trap cycle after a boot fetches the RAM at the PC it comes up
+            // with, 0, a word nobody wrote, nopped but compared.  So the
+            // reference takes the fabric's convention, and every word read
+            // before it is written reads the same in both.
+            for w in m.imem.iter_mut() {
+                *w = Insn::new(!0);
+            }
+            // **QUUX'S DISK IS BLOCK-DISK**, as muir's `machine()` fits it on
+            // `--machine quux`, the CADR controller refused there: no pack on
+            // it here, which is how the fabric's traces are taken too.
+            m.block_disk = Some(muir::block_disk::BlockDisk::new(muir::block_disk::BLOCK_NS));
         }
         m
     }

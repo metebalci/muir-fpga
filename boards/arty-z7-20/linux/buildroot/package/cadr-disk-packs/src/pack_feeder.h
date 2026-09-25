@@ -135,6 +135,11 @@ struct feeder {
 	// (`Controller::timed`).  A property of the run, not of a file, so it
 	// stays an option and is written into DRIVE with every seam change.
 	int timed;
+	// Which machine the bitstream is: the CADR's controller asks for a block
+	// by `{unit, cylinder, head, block}`, and QUUX's block-disk by its number
+	// from the start of unit 0's pack (`--machine quux`).  Set before the
+	// first poll.
+	int linear;
 	// Second chance's hand: the slot looked at next.
 	unsigned hand;
 	FILE *log;
@@ -187,6 +192,9 @@ uint32_t feeder_poison(uint32_t addr, unsigned i);
 // Block c/h/b of the pack, on `unit`, into `slot`: its record placed at the
 // slot's fetch address and fetched by the fabric.  0; PS_WALK_SLOT if the
 // slot is the walk's; -1 with `err`.
+// QUUX's block-disk's: block `lba` of unit 0's pack into `slot`, its tag
+// the block number itself.
+int feeder_serve_lba(struct feeder *f, uint32_t lba, unsigned slot, char *err, size_t errlen);
 int feeder_serve(struct feeder *f, unsigned unit, uint32_t c, uint32_t h, uint32_t b, unsigned slot,
 		 char *err, size_t errlen);
 // The slot's 259 words written back by the fabric into the slot's

@@ -62,8 +62,9 @@ fn kind(r: Responder) -> &'static str {
     }
 }
 
-/// **QUUX's decode is muir's own question asked on QUUX**: the feature page
-/// is answered as a device ahead of the bus interface's decode
+/// **QUUX's decode is muir's own question asked on QUUX**: the Unibus window
+/// times out as empty Xbus space, QUUX having no Unibus (contract Q5); the
+/// feature page is answered as a device ahead of the bus interface's decode
 /// (`Geometry::feature_word`, as `Rtl::start_bus_cycle` does it), and the
 /// main display's buffer is MONO TV's at the bitstreams' size,
 /// `busint::decode_for` with `Tv::buffer_words`.  The machine is built by
@@ -71,6 +72,11 @@ fn kind(r: Responder) -> &'static str {
 fn decode(m: &Machine, phys: u32, words: usize, color: bool) -> Responder {
     if m.geometry.feature_word(phys).is_some() {
         return Responder::Device;
+    }
+    // QUUX has no Unibus (contract Q5): the window times out as Xbus, as
+    // `Rtl::start_bus_cycle` answers it with `Responder::NoXbus`.
+    if !m.geometry.unibus && busint::unibus_address(phys).is_some() {
+        return Responder::NoXbus;
     }
     busint::decode_for(phys, words, color, m.tv.buffer_words(), m.tv.control_registers())
 }

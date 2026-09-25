@@ -281,7 +281,17 @@ start() {
 	# `--log` is not here and not the card's: `cadr_daemon` gives every
 	# program the same two destinations, the console and a file under
 	# /var/log that somebody over ssh can follow.
-	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS"
+	#
+	# **`--machine`, THE CARD'S, SHARED WITH THE SCREEN'S PROGRAM**: a card
+	# carrying a QUUX bitstream says `--machine quux`, and QUUX's block-disk
+	# asks for a block by its number where the CADR's controller asks by
+	# cylinder, head and block.  Passed only when the card says it; the
+	# program's default is the CADR.
+	set --
+	if [ -f "$RC" ] && fpgarc_has "$RC" --machine; then
+		eval "set -- $(fpgarc_args "$RC" --machine)"
+	fi
+	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS" "$@"
 }
 
 # **WHAT DAY IT IS, WHICH NOTHING ON THIS BOARD KNOWS.**  There is no
@@ -760,6 +770,16 @@ set_the_debug_cable_wiring() {
 # Nothing is printed when the flag is not there, because a board that is a
 # debuggee has nothing to say about it.
 connect_the_debug_cable() {
+	# **QUUX HAS NO DEBUG CABLE** (contract Q5): the cable is a Unibus
+	# master, and QUUX has no Unibus, as muir refuses the cable's flags on
+	# QUUX.  A card that says `--machine quux` has either line refused here.
+	if fpgarc_is_quux; then
+		if fpgarc_has "$RC" --debug-cable-connect || fpgarc_has "$RC" --debug-cable-wiring; then
+			echo "cadr-debug-cable: --machine quux: QUUX has no Unibus, and so no debug cable;" \
+			     "the card's debug cable lines are refused"
+		fi
+		return 0
+	fi
 	set_the_debug_cable_wiring
 	[ -f "$RC" ] && fpgarc_has "$RC" --debug-cable-connect || return 0
 	if ! command -v cadr-console > /dev/null 2>&1; then

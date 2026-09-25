@@ -47,9 +47,26 @@ use muir::engine::Engine;
 use muir::isa::Insn;
 use muir::isa::asm::*;
 use muir::machine::{PROM_WORDS, bus_error};
+use muir::quux_input::KeyboardMouse;
 
-/// A program being assembled into the PROM, from word 0.
+/// **WHERE THE PROM SITS IN THE CONTROL STORE**, which is where a program is
+/// assembled: MIT's overlay at 0 on the CADR, and on QUUX its own addresses
+/// from 36000 (revision 6, contract Q2; `Machine::reset_pc`).  Every jump a
+/// program makes is to an absolute address, so the same program is two
+/// images, one a machine; `main` sets this before anything is assembled.
+static BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn prom_base(which: Which) -> u64 {
+    match which {
+        Which::Cadr => 0,
+        Which::Quux => muir::machine::QUUX_PROM_BASE as u64,
+    }
+}
+
+/// A program being assembled into the PROM, from its first word, which is
+/// control store [`BASE`].
 struct Prog {
+    base: u64,
     words: Vec<u64>,
 }
 
@@ -61,11 +78,12 @@ fn fdest(d: u64) -> u64 {
 
 impl Prog {
     fn new() -> Self {
-        Prog { words: Vec::new() }
+        Prog { base: BASE.load(std::sync::atomic::Ordering::Relaxed), words: Vec::new() }
     }
 
+    /// The control store address the next word lands at.
     fn at(&self) -> u64 {
-        self.words.len() as u64
+        self.base + self.words.len() as u64
     }
 
     fn i(&mut self, raw: u64) {
@@ -596,6 +614,465 @@ fn check_tick(which: Which, m: &muir::machine::Machine, cleared_reads: u64) {
     }
 }
 
+// ---------------------------------------------------------------- clocks
+
+/// Functional destinations 2, 3 and 4: `INTERRUPT-CONTROL`, the clocks'
+/// control and the interval timer's period.
+const DEST_INTCTL: u64 = 2;
+const DEST_CLOCKS: u64 = 3;
+const DEST_PERIOD: u64 = 4;
+/// Destination 3's bits: the tick's enable and clear, the interval timer's.
+const TICK_ON: u32 = 1;
+const TICK_CLEAR: u32 = 2;
+const INTERVAL_ON: u32 = 4;
+const INTERVAL_CLEAR: u32 = 8;
+
+/// The interval timer's cleared segment's reads, as `ticksync` had them.
+const CLOCKS_CLEARED_READS: u64 = 120;
+/// Where the microsecond clock's reads land, over and over.
+const USEC_AT: u64 = 0o710;
+
+/// **QUUX's clocks in the processor** (revision 5, contract Q1).
+///
+/// Source 17 is read into `A[200 + k]` and source 15 into `A[710]` at every
+/// step, and between the reads a jump on condition 5 to the next word puts
+/// the interrupt either timer raises on `JCOND`: the interval timer's period
+/// written while it is off, the timer enabled, running across rises, a
+/// clear with its flag up, the interrupt enabled, periods written while it
+/// runs --- one of 5, one of 3, and 0, which stops it --- a period of 1
+/// cleared every third microcycle, and the timer turned off.  Then the tick,
+/// fixed at 60 Hz: enabled, waited for with source 17 read in a loop until
+/// its flag is up, 16,667 us later, read, cleared and turned off.  So the
+/// trace runs 16.7 ms of QUUX's time.  On the CADR the same program reads
+/// all ones from both sources and its writes of destinations 3 and 4 write
+/// M alone, so the loop that waits for the tick's flag leaves at once.
+fn clocks_program() -> Prog {
+    let mut p = Prog::new();
+    let mut k = 0u64;
+    let reads = |p: &mut Prog, k: &mut u64, n: u32| {
+        for _ in 0..n {
+            p.source(0o17, RESULT + *k);
+            *k += 1;
+            p.source(0o15, USEC_AT);
+            let here = p.at();
+            p.i(JUMP | target(here + 1) | PGF_OR_INT);
+        }
+    };
+    let control = |p: &mut Prog, a: u64, v: u32| {
+        p.konst(a, v);
+        p.to(a, fdest(DEST_CLOCKS));
+    };
+    reads(&mut p, &mut k, 2);
+    // The period written with the timer off: it starts nothing.
+    p.konst(0o700, TICK_US);
+    p.to(0o700, fdest(DEST_PERIOD));
+    reads(&mut p, &mut k, 2);
+    control(&mut p, 0o701, INTERVAL_ON);
+    reads(&mut p, &mut k, 24);
+    // A clear, the enable kept: the flag is up by now.
+    control(&mut p, 0o702, INTERVAL_ON | INTERVAL_CLEAR);
+    reads(&mut p, &mut k, 6);
+    // The interrupt enabled, `INTERRUPT-CONTROL<27>`.
+    p.konst(0o703, 1 << 27);
+    p.to(0o703, fdest(DEST_INTCTL));
+    reads(&mut p, &mut k, 12);
+    // A period of 5 written while it runs: the next rise from now.
+    p.konst(0o705, 5);
+    p.to(0o705, fdest(DEST_PERIOD));
+    reads(&mut p, &mut k, 24);
+    // A period of 3 written while it runs, then 0, which stops it with its
+    // flag down whatever it was.
+    p.konst(0o704, TICK_ON_A_BOUNDARY_US);
+    p.to(0o704, fdest(DEST_PERIOD));
+    reads(&mut p, &mut k, 30);
+    p.konst(0o711, 0);
+    p.to(0o711, fdest(DEST_PERIOD));
+    reads(&mut p, &mut k, 30);
+    // A period of 1 cleared at every third microcycle and read two after, so
+    // that a read sees a rise only in the ticks after the clear lands.
+    p.konst(0o706, 1);
+    p.to(0o706, fdest(DEST_PERIOD));
+    p.konst(0o707, INTERVAL_ON | INTERVAL_CLEAR);
+    for _ in 0..CLOCKS_CLEARED_READS {
+        p.to(0o707, fdest(DEST_CLOCKS));
+        p.fill(1);
+        p.source(0o17, RESULT + k);
+        k += 1;
+    }
+    // Turned off.
+    control(&mut p, 0o712, 0);
+    reads(&mut p, &mut k, 4);
+    // The tick, at 60 Hz: enabled, and waited for.
+    control(&mut p, 0o713, TICK_ON);
+    reads(&mut p, &mut k, 2);
+    let wait = p.at();
+    p.i(ALU | SETM | src(0o17) | m_dest(2));
+    p.i(JUMP | target(wait + 3) | bit(0) | m_src(2) | N);
+    p.i(JUMP | target(wait) | ALWAYS | N);
+    reads(&mut p, &mut k, 4);
+    control(&mut p, 0o714, TICK_ON | TICK_CLEAR);
+    reads(&mut p, &mut k, 4);
+    control(&mut p, 0o715, 0);
+    reads(&mut p, &mut k, 2);
+    assert_eq!(k, CLOCKS_READS, "clocks: the reads counted");
+    p.park();
+    p
+}
+
+/// How many reads of source 17 the clocks program stores.
+const CLOCKS_READS: u64 = 2 + 2 + 24 + 6 + 12 + 24 + 30 + 30 + CLOCKS_CLEARED_READS + 4 + 2 + 4 + 4 + 2;
+
+fn check_clocks(which: Which, m: &muir::machine::Machine) {
+    let reads: Vec<u32> = (0..CLOCKS_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    if which != Which::Quux {
+        assert!(reads.iter().all(|&w| w == !0), "CADR: source 17 reads all ones");
+        assert_eq!(m.amem[USEC_AT as usize], !0, "CADR: source 15 reads all ones");
+        return;
+    }
+    assert_eq!(&reads[..4], &[0, 0, 0, 0], "QUUX: both off read 0");
+    assert!(reads.contains(&0b1100), "QUUX: the interval timer's flag was seen up");
+    assert!(reads.contains(&0b1000), "QUUX: and down while enabled");
+    let cleared = &reads[134..134 + CLOCKS_CLEARED_READS as usize];
+    let up = cleared.iter().filter(|&&w| w == 0b1100).count();
+    assert!(up >= 3 && up < cleared.len() / 2, "QUUX: the cleared segment saw {up} rises");
+    let n = reads.len();
+    assert_eq!(&reads[n - 16..n - 12], &[0, 0, 0, 0], "QUUX: the interval timer off");
+    assert_eq!(&reads[n - 12..n - 10], &[2, 2], "QUUX: the tick enabled, its flag down");
+    assert_eq!(reads[n - 10] & 3, 3, "QUUX: the tick's flag up after its wait");
+    assert_eq!(reads[n - 6] & 3, 2, "QUUX: the tick's flag cleared");
+    assert_eq!(&reads[n - 2..], &[0, 0], "QUUX: the tick off");
+    assert!(!m.tick.enabled && !m.tick.interval_enabled, "QUUX: both off at the end");
+    let us = m.amem[USEC_AT as usize];
+    assert!(us >= 16_667, "QUUX: the microsecond clock read {us} after the tick");
+}
+
+/// **THE WINDOW BETWEEN A FLAG'S RISE AND THE EDGE `SINTR` IS TAKEN AT**
+/// (muir's `1775bba`, `a_flag_rising_during_a_wait_is_seen_by_the_jump_after`):
+/// `SINTR` is registered at the edge that ends each executed microcycle,
+/// waiting or not, with the flags as they stand at that edge.  At a K of four
+/// and an L of zero every edge and every rise is on a multiple of 40 ns, so a
+/// rise is never strictly inside a microcycle and a fabric that took the
+/// flags a tick or two before the edge could not be told apart.  An `ILONG`
+/// microcycle at an L of one is 50 ns, so a program of `ILONG`s and plain
+/// microcycles moves the edges 10 ns at a time against the rise.
+///
+/// The interval timer runs with the interrupt enabled, and every trial
+/// writes its period, 1 us, which starts it again from that edge; then:
+///
+///   - `TICKWIN_PLAIN`: `f` observations made `ILONG` and then fourteen plain
+///     ones, `f` from 0 to 3, which puts the rise 0, 30, 20 and 10 ns before
+///     an edge at an L of one;
+///   - `TICKWIN_WAITS`: `g` observations, `s` of them `ILONG`, a read's start,
+///     an observation, a read of `MD`, which waits for the word, and three
+///     observations; `g` slides the wait over the rise and `s` the edges.
+///
+/// **AN OBSERVATION IS TWO MICROCYCLES, WHICHEVER WAY IT GOES**: a jump on
+/// condition 5 to two words on, `N` inhibiting the word between, which is a
+/// filler; taken, the filler is nopped, and not taken it runs, so the path
+/// is as long either way and the trial's timing never depends on the flag it
+/// measures.  The filler is never `ILONG`, a nopped `ILONG` being short.  So
+/// `JCOND` on every jump says whether the interrupt was up at the edge before
+/// it, and the testbench compares it and `SINTR` on every row.
+const TICKWIN_PLAIN: std::ops::Range<usize> = 0..4;
+const TICKWIN_PLAIN_JUMPS: usize = 14;
+const TICKWIN_WAIT_GAPS: [usize; 5] = [3, 5, 7, 9, 11];
+const TICKWIN_WAIT_SHIFTS: usize = 4;
+
+fn tickwin_program() -> Prog {
+    let mut p = Prog::new();
+    wait_setup(&mut p, 0o777);
+    p.konst(0o703, 1 << 27);
+    p.to(0o703, fdest(DEST_INTCTL));
+    p.konst(0o704, 1);
+    p.konst(0o700, INTERVAL_ON);
+    p.to(0o700, fdest(DEST_CLOCKS));
+    let cj = |p: &mut Prog, ilong: bool| {
+        let here = p.at();
+        p.i(JUMP | target(here + 2) | PGF_OR_INT | N | if ilong { 1 << 45 } else { 0 });
+        p.fill(1);
+    };
+    for f in TICKWIN_PLAIN {
+        p.to(0o704, fdest(DEST_PERIOD));
+        for _ in 0..f {
+            cj(&mut p, true);
+        }
+        for _ in 0..TICKWIN_PLAIN_JUMPS {
+            cj(&mut p, false);
+        }
+    }
+    for &g in &TICKWIN_WAIT_GAPS {
+        for s in 0..TICKWIN_WAIT_SHIFTS {
+            p.to(0o704, fdest(DEST_PERIOD));
+            for j in 0..g {
+                cj(&mut p, j < s);
+            }
+            p.to(0o305, START_READ);
+            cj(&mut p, false);
+            p.i(ALU | SETM | SRC_MD | a_dest(0o720));
+            for _ in 0..3 {
+                cj(&mut p, false);
+            }
+        }
+    }
+    p.konst(0o705, 0);
+    p.to(0o705, fdest(DEST_CLOCKS));
+    p.park();
+    p
+}
+
+/// **THE CLOCKS READ IN THE TICKS BETWEEN THE EDGES**, QUUX's alone, at an L of
+/// zero and one.  At a K of four and an L of zero every microcycle starts on
+/// a multiple of 40 ns and every microsecond is 25 of them, so a microsecond
+/// clock a tick or two off never crosses a boundary where a read can see it;
+/// with `ILONG`s at an L of one the reads start 10 ns apart against it.
+///
+///   - `CLOCKWAIT_USEC` pairs of an `ILONG` filler and a read of source 15;
+///   - the interval timer at 1 us, restarted each trial, a read's start after
+///     `g` fillers, then source 17 written into `MD` by a microcycle that
+///     `-WAIT` holds until the read is done, and `MD` kept in `A[200 + k]`:
+///     the status a held microcycle reads is the one at the master clock edge
+///     it finally runs from, so a rise during the wait is in it.
+const CLOCKWAIT_USEC: usize = 150;
+const CLOCKWAIT_GAPS: std::ops::RangeInclusive<usize> = 0..=14;
+
+fn clockwait_program() -> Prog {
+    let mut p = Prog::new();
+    wait_setup(&mut p, 0o777);
+    for _ in 0..CLOCKWAIT_USEC {
+        p.i(filler().raw() | 1 << 45);
+        p.source(0o15, USEC_AT);
+    }
+    p.konst(0o704, 1);
+    p.konst(0o700, INTERVAL_ON);
+    p.to(0o700, fdest(DEST_CLOCKS));
+    let mut k = 0u64;
+    for g in CLOCKWAIT_GAPS {
+        p.to(0o704, fdest(DEST_PERIOD));
+        p.fill(g);
+        p.to(0o305, START_READ);
+        p.fill(1);
+        p.i(ALU | SETM | src(0o17) | MD);
+        p.i(ALU | SETM | SRC_MD | a_dest(RESULT + k));
+        k += 1;
+    }
+    p.konst(0o705, 0);
+    p.to(0o705, fdest(DEST_CLOCKS));
+    p.park();
+    p
+}
+
+fn check_clockwait(which: Which, m: &muir::machine::Machine) {
+    if which != Which::Quux {
+        return;
+    }
+    let n = CLOCKWAIT_GAPS.count() as u64;
+    let r: Vec<u32> = (0..n).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    assert!(r.contains(&0b1100) && r.contains(&0b1000), "QUUX: the held status saw the flag both ways: {r:?}");
+    assert!(m.amem[USEC_AT as usize] > 0, "QUUX: the microsecond clock was read");
+}
+
+fn check_tickwin(which: Which, m: &muir::machine::Machine) {
+    if which == Which::Quux {
+        assert!(!m.tick.interval_enabled, "QUUX: the interval timer is off at the end");
+        assert_eq!(m.amem[0o720], 0o777, "QUUX: the word read");
+    }
+}
+
+// ------------------------------------------------------------------ page
+
+/// The key words pressed on the keyboard's cable, and where: the first three
+/// when the program reaches [`PAGE_KEYS_1`]'s mark, and sixty-five more at
+/// the second, one past the FIFO's sixty-four.
+const PAGE_KEYS_1: [u32; 3] = [0o123456, 0o7654321, 0o40];
+const PAGE_KEYS_2: usize = 65;
+fn page_key_2(k: usize) -> u32 {
+    0o10000 + k as u32
+}
+
+/// The page's words the program reads through region 7's slot 0.
+const PAGE_UNIBUS_CHAOS: u32 = 0o17772060;
+
+/// **QUUX's register page** (revision 6, contracts Q2, Q3 and Q4): words
+/// 100-102, the keyboard and the mouse at 120-123, the Chaosnet interface
+/// at 140-147.  Region 7 maps slot 0 onto the page, slot 1 onto the page
+/// below it, where nothing answers, and slot 2 onto the Unibus page with the
+/// Chaosnet interface's registers.  In order, each read into `A[200 + k]`:
+///
+///   - words 100, 101 and 102 as the machine comes up: all zero;
+///   - the keyboard's interrupt enabled, and `INTERRUPT-CONTROL<27>`, three
+///     key words pressed at a mark ([`PAGE_KEYS_1`]); 120, 100, the three
+///     words and a fourth read of 121 on an empty FIFO, 120 and 100 again;
+///   - sixty-five words at a second mark, one past the FIFO: 120 with the
+///     overflow, a write of 120 that clears it and keeps the enable, 120;
+///   - the mouse's interrupt enabled: 122 and 123 with the mouse at rest;
+///   - a read of the page below, which times out: 101 with the Xbus NXM,
+///     a write of 101, 101 again;
+///   - error stop written through 102, read, and cleared;
+///   - the interval timer at 2 us, waited for: 100 with `<1>`;
+///   - the Chaosnet interface: 140 written with Clear Transmitter and the
+///     transmit interrupt enabled, which raises its request, then 140, the
+///     same register on the Unibus at `764140`, 100 with `<5>`, 141, 142,
+///     143, 144 and 146; a word into the transmit buffer through 141, which
+///     takes the request down; 140 and 100 again; 140 written with 0;
+///   - the Unibus window, which QUUX does not have (contract Q5): the same
+///     register read at Unibus `764140` through slot 2, and written there,
+///     each an Xbus NXM in 101, the write reaching nothing.
+///
+/// Jump conditions 5 test the interrupt all the way, which the keyboard, the
+/// interval timer and the network raise here, so `SINTR` moves on the rows
+/// the testbench compares it on.
+fn page_program() -> Prog {
+    page_program_marks().0
+}
+
+/// The program, and the addresses of its two marks.
+fn page_program_marks() -> (Prog, u64, u64) {
+    let mut p = Prog::new();
+    let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
+    let mut k = 0u64;
+    // The map: level 1 entry 3 at region 7; level 2 slots 0, 1 and 2.
+    p.konst(0o300, va(0, 0));
+    p.konst(0o301, level_1_store(3));
+    p.to(0o300, MD);
+    p.to(0o301, fdest(0o23));
+    p.fill(2);
+    for (slot, page) in [(0u32, FEATURE_PAGE), (1, BELOW_FEATURE_PAGE), (2, PAGE_UNIBUS_CHAOS >> 8)] {
+        p.konst(0o302, va(slot, 0));
+        p.konst(0o303, level_2_store(page));
+        p.to(0o302, MD);
+        p.to(0o303, fdest(0o23));
+        p.fill(2);
+    }
+    let rd = |p: &mut Prog, k: &mut u64, w: u32| {
+        p.konst(0o304, va(0, w));
+        p.read(0o304, RESULT + *k);
+        *k += 1;
+        let here = p.at();
+        p.i(JUMP | target(here + 2) | PGF_OR_INT | N);
+        p.fill(1);
+    };
+    let wr = |p: &mut Prog, addr: u32, v: u32| {
+        p.konst(0o305, v);
+        p.konst(0o304, addr);
+        p.to(0o305, MD);
+        p.to(0o304, START_WRITE);
+        p.fill(2);
+    };
+    for w in [0o100, 0o101, 0o102] {
+        rd(&mut p, &mut k, w);
+    }
+    // The keyboard.
+    p.konst(0o703, 1 << 27);
+    p.to(0o703, fdest(DEST_INTCTL));
+    wr(&mut p, va(0, 0o120), 1 << 8);
+    let mark_1 = p.at();
+    p.fill(8);
+    for w in [0o120, 0o100, 0o121, 0o121, 0o121, 0o121, 0o120, 0o100] {
+        rd(&mut p, &mut k, w);
+    }
+    let mark_2 = p.at();
+    p.fill(40);
+    rd(&mut p, &mut k, 0o120);
+    wr(&mut p, va(0, 0o120), 1 << 8);
+    rd(&mut p, &mut k, 0o120);
+    // The mouse, at rest.
+    wr(&mut p, va(0, 0o123), 1 << 8);
+    rd(&mut p, &mut k, 0o122);
+    rd(&mut p, &mut k, 0o123);
+    // A bus error, and its clear.
+    p.konst(0o306, va(1, 0));
+    p.read(0o306, 0o306);
+    rd(&mut p, &mut k, 0o101);
+    wr(&mut p, va(0, 0o101), 0o7777);
+    rd(&mut p, &mut k, 0o101);
+    // Error stop.
+    wr(&mut p, va(0, 0o102), 1);
+    rd(&mut p, &mut k, 0o102);
+    wr(&mut p, va(0, 0o102), 0);
+    rd(&mut p, &mut k, 0o102);
+    // The interval timer.
+    p.konst(0o704, 2);
+    p.to(0o704, fdest(DEST_PERIOD));
+    p.konst(0o700, INTERVAL_ON);
+    p.to(0o700, fdest(DEST_CLOCKS));
+    for _ in 0..30 {
+        let here = p.at();
+        p.i(JUMP | target(here + 2) | PGF_OR_INT | N);
+        p.fill(1);
+    }
+    rd(&mut p, &mut k, 0o100);
+    p.konst(0o701, 0);
+    p.to(0o701, fdest(DEST_CLOCKS));
+    // The keyboard's and the mouse's interrupts off, so that the network's
+    // request is the only thing up on `SINTR` below (muir's `3ceb4f7`).
+    wr(&mut p, va(0, 0o120), 0);
+    wr(&mut p, va(0, 0o123), 0);
+    // The network: Clear Transmitter, `<8>`, and the transmit interrupt
+    // enable, `<5>`.
+    wr(&mut p, va(0, 0o140), (1 << 8) | (1 << 5));
+    rd(&mut p, &mut k, 0o140);
+    for w in [0o100, 0o141, 0o142, 0o143, 0o144, 0o146] {
+        rd(&mut p, &mut k, w);
+    }
+    wr(&mut p, va(0, 0o141), 0o52525);
+    rd(&mut p, &mut k, 0o140);
+    rd(&mut p, &mut k, 0o100);
+    wr(&mut p, va(0, 0o140), 0);
+    // **QUUX HAS NO UNIBUS** (contract Q5): the same register at Unibus
+    // `764140`, through slot 2, times out as empty Xbus space and sets the
+    // Xbus NXM bit, and a write there changes nothing: 101 after the read,
+    // cleared, a write of the CSR's Clear Transmitter and its enable there,
+    // 101 and 100 after it.
+    wr(&mut p, va(0, 0o101), 0);
+    p.konst(0o307, va(2, PAGE_UNIBUS_CHAOS & 0o377));
+    p.read(0o307, RESULT + k);
+    k += 1;
+    rd(&mut p, &mut k, 0o101);
+    wr(&mut p, va(0, 0o101), 0);
+    wr(&mut p, va(2, PAGE_UNIBUS_CHAOS & 0o377), (1 << 8) | (1 << 5));
+    rd(&mut p, &mut k, 0o101);
+    rd(&mut p, &mut k, 0o100);
+    // Reserved words.
+    rd(&mut p, &mut k, 0o103);
+    rd(&mut p, &mut k, 0o150);
+    assert_eq!(k, PAGE_READS, "page: the reads counted");
+    p.park();
+    (p, mark_1, mark_2)
+}
+
+const PAGE_READS: u64 = 3 + 8 + 2 + 2 + 2 + 2 + 1 + 1 + 6 + 2 + 4 + 2;
+
+fn check_page(which: Which, m: &muir::machine::Machine) {
+    if which != Which::Quux {
+        return;
+    }
+    let r: Vec<u32> = (0..PAGE_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    assert_eq!(&r[0..3], &[0, 0, 0], "QUUX: 100, 101 and 102 at the start");
+    assert_eq!(r[3], 0o401, "QUUX: 120, a word waiting and the enable");
+    assert_eq!(r[4], 1 << 3, "QUUX: 100, the keyboard");
+    assert_eq!(&r[5..8], &PAGE_KEYS_1, "QUUX: the three words, oldest first");
+    assert_eq!(r[8], 0, "QUUX: 121 with the FIFO empty");
+    assert_eq!(r[9], 0o400, "QUUX: 120, nothing waiting");
+    assert_eq!(r[10], 0, "QUUX: 100, no keyboard");
+    assert_eq!(r[11], 0o403, "QUUX: 120 after 65 words, the overflow");
+    assert_eq!(r[12], 0o401, "QUUX: 120, the overflow cleared");
+    assert_eq!(&r[13..15], &[0, 0o400], "QUUX: the mouse at rest");
+    assert_eq!(r[15], 1, "QUUX: 101, the Xbus NXM");
+    assert_eq!(r[16], 0, "QUUX: 101 cleared");
+    assert_eq!(&r[17..19], &[1, 0], "QUUX: error stop through 102");
+    assert_eq!(r[19] & 2, 2, "QUUX: 100, the interval timer");
+    assert_eq!(r[20] & 0o240, 0o240, "QUUX: 140, Transmit Done and its interrupt enable");
+    assert_eq!(r[21] & (1 << 5), 1 << 5, "QUUX: 100, the network");
+    assert_eq!(r[22], 0o177001, "QUUX: 141, my address");
+    assert_eq!(r[26], 0, "QUUX: 146 answers nothing");
+    assert_eq!(r[28] & (1 << 5), 0, "QUUX: 100, the request down after a word written");
+    assert_eq!(r[29], 0, "QUUX: the Unibus's 764140 reads nothing");
+    assert_eq!(r[30], 1, "QUUX: 101, the Xbus NXM of a read of the Unibus window");
+    assert_eq!(r[31], 1, "QUUX: 101, the Xbus NXM of a write there");
+    assert_eq!(r[32] & (1 << 5), 0, "QUUX: 100, the write there reached no Chaosnet interface");
+    assert_eq!(&r[33..35], &[0, 0], "QUUX: reserved words");
+}
+
 // ------------------------------------------------------------ the checks
 
 fn check_map(which: Which, m: &muir::machine::Machine) {
@@ -604,10 +1081,11 @@ fn check_map(which: Which, m: &muir::machine::Machine) {
     let id = which.geometry().machine_id;
     let ones = !0u32;
     // Sources 15, 16, 36, 17: the CADR drives nothing on any of them; QUUX
-    // answers its MACHINE-ID on 16 and 36 and its tick on 17, off.
+    // answers its microsecond clock on 15, read in the first microsecond,
+    // its MACHINE-ID on 16 and 36, and its clocks' status on 17, both off.
     let want = if quux {
         let id = id.unwrap();
-        [ones, id, id, 0]
+        [0, id, id, 0]
     } else {
         [ones; 4]
     };
@@ -636,7 +1114,7 @@ fn check_map(which: Which, m: &muir::machine::Machine) {
             screen,
             (1 << 16) | 40,
             0o17000000,
-            0,
+            1,
             0,
             0,
             0,
@@ -842,7 +1320,36 @@ fn check_pdlsync(which: Which, m: &muir::machine::Machine) {
 const IMEMSYNC_TRIALS: u64 = 6;
 const IMEMSYNC_AT: u64 = 0o4000;
 
+/// **AND QUUX'S PROM, WHICH NOTHING WRITES** (revision 6, contract Q2).  Two
+/// trials more, the same three words each: written into the RAM's last
+/// words below the PROM, 35775 to 35777, and run, the RAM answering there
+/// from the first microcycle with no disable bit; and written over three
+/// words of the PROM itself and run, where the PROM's own words run and the
+/// store keeps nothing.  The PROM's three are laid down after the park, a
+/// store of [`IMEMSYNC_PROM_WORD`] and a jump back, where only the jump
+/// reaches them.  Each keeps its marker at `A[200 + IMEMSYNC_TRIALS + j]`.
+const IMEMSYNC_BELOW_PROM: u64 = 0o35775;
+const IMEMSYNC_PROM_WORD: u32 = 0x6200_0001;
+const IMEMSYNC_WRITTEN_WORD: u32 = 0x6300_0002;
+const IMEMSYNC_BELOW_WORD: u32 = 0x6400_0003;
+
 fn imemsync_program() -> Prog {
+    // Where the PROM's three words and the two jumps back land depends on
+    // the program's length and not on those addresses, so it is laid down
+    // once to find them and again with them.
+    let probe = imemsync_program_at(0, 0, 0);
+    let (block, back_prom, back_below) = probe.imemsync_marks;
+    let p = imemsync_program_at(block, back_prom, back_below);
+    assert_eq!(p.imemsync_marks, (block, back_prom, back_below), "imemsync: the addresses held");
+    p.prog
+}
+
+struct ImemsyncProg {
+    prog: Prog,
+    imemsync_marks: (u64, u64, u64),
+}
+
+fn imemsync_program_at(block: u64, back_prom: u64, back_below: u64) -> ImemsyncProg {
     let mut p = Prog::new();
     // `A[a]`'s low sixteen bits and `M[m]` are the word a `WRITE-I-MEM`
     // with those sources writes: `IWR` is `{A<15:0>, M<31:0>}`.
@@ -866,7 +1373,7 @@ fn imemsync_program() -> Prog {
         write(&mut probe, at, 0, k);
         write(&mut probe, at + 1, 0, k);
         write(&mut probe, at + 2, 0, k);
-        let back = here + probe.at() + (k % 2) + 1;
+        let back = here + (probe.at() - probe.base) + (k % 2) + 1;
         write(&mut p, at, store, k);
         write(&mut p, at + 1, JUMP | target(back) | ALWAYS | N, k);
         // And the word after the jump back, which the jump fetches and does
@@ -879,8 +1386,32 @@ fn imemsync_program() -> Prog {
         assert_eq!(p.at(), back, "imemsync: the jump back lands where it was aimed");
         p.fill(1);
     }
+    // Below the PROM, and over it.
+    p.konst(0o353, IMEMSYNC_BELOW_WORD);
+    p.konst(0o354, IMEMSYNC_WRITTEN_WORD);
+    p.konst(0o355, IMEMSYNC_PROM_WORD);
+    write(&mut p, IMEMSYNC_BELOW_PROM, ALU | SETA | a_src(0o353) | a_dest(RESULT + IMEMSYNC_TRIALS), 0);
+    write(&mut p, IMEMSYNC_BELOW_PROM + 1, JUMP | target(back_below) | ALWAYS | N, 0);
+    write(&mut p, IMEMSYNC_BELOW_PROM + 2, filler().raw(), 0);
+    p.i(JUMP | target(IMEMSYNC_BELOW_PROM) | ALWAYS | N);
+    let got_back_below = p.at();
+    p.fill(1);
+    // Over the PROM's own three: a store of the other marker into the same
+    // A word, and a jump to the park, neither of which may land.
+    let wrong = ALU | SETA | a_src(0o354) | a_dest(RESULT + IMEMSYNC_TRIALS + 1);
+    write(&mut p, block, wrong, 1);
+    let start = p.base;
+    write(&mut p, block + 1, JUMP | target(start) | ALWAYS | N, 1);
+    write(&mut p, block + 2, filler().raw(), 1);
+    p.i(JUMP | target(block) | ALWAYS | N);
+    let got_back_prom = p.at();
+    p.fill(1);
     p.park();
-    p
+    let got_block = p.at();
+    p.i(ALU | SETA | a_src(0o355) | a_dest(RESULT + IMEMSYNC_TRIALS + 1));
+    p.i(JUMP | target(back_prom) | ALWAYS | N);
+    p.fill(1);
+    ImemsyncProg { prog: p, imemsync_marks: (got_block, got_back_prom, got_back_below) }
 }
 
 fn check_imemsync(which: Which, m: &muir::machine::Machine) {
@@ -891,6 +1422,10 @@ fn check_imemsync(which: Which, m: &muir::machine::Machine) {
         assert_eq!(m.amem[(RESULT + k) as usize], 0x6100_0000 + k as u32,
                    "QUUX: the word written into the control store ran, trial {k}");
     }
+    assert_eq!(m.amem[(RESULT + IMEMSYNC_TRIALS) as usize], IMEMSYNC_BELOW_WORD,
+               "QUUX: the words written below the PROM ran");
+    assert_eq!(m.amem[(RESULT + IMEMSYNC_TRIALS + 1) as usize], IMEMSYNC_PROM_WORD,
+               "QUUX: the PROM's own words ran over the words written there");
 }
 
 fn divmd_program() -> Prog {
@@ -997,8 +1532,9 @@ fn check_tickwait(which: Which, m: &muir::machine::Machine) {
 
 /// How many microcycles each program's trace runs: to its end and some way
 /// round the loop it parks in.
-fn cycles(name: &str) -> u64 {
+fn cycles(name: &str, which: Which) -> u64 {
     match name {
+        "clocks" if which == Which::Cadr => 1600,
         "map" => 450,
         "tv" => 560,
         "muldiv" => 540,
@@ -1009,9 +1545,17 @@ fn cycles(name: &str) -> u64 {
         "pdlsync" => 300,
         "imemsync" => 800,
         "tickwait" => 2600,
+        "clocks" => CLOCKS_ROWS,
+        "page" => 1800,
+        "clockwait" => 1400,
+        "tickwin" => 2000,
         _ => unreachable!(),
     }
 }
+
+/// The clocks program runs until the tick's first rise, 16,667 us in: at a K
+/// of four that is 416,675 microcycles, and the CADR leaves its loop at once.
+const CLOCKS_ROWS: u64 = 418_200;
 
 fn program(name: &str) -> Prog {
     match name {
@@ -1025,8 +1569,12 @@ fn program(name: &str) -> Prog {
         "pdlsync" => pdlsync_program(),
         "imemsync" => imemsync_program(),
         "tickwait" => tickwait_program(),
+        "clocks" => clocks_program(),
+        "page" => page_program(),
+        "clockwait" => clockwait_program(),
+        "tickwin" => tickwin_program(),
         _ => {
-            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait");
+            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait");
             std::process::exit(2);
         }
     }
@@ -1035,7 +1583,13 @@ fn program(name: &str) -> Prog {
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let which = machine_axis::take(&mut args);
-    let timing = machine_axis::take_timing(which, &mut args);
+    BASE.store(prom_base(which), std::sync::atomic::Ordering::Relaxed);
+    // A PROM image is the same at every timing, so it is asked for without one.
+    let timing = if args.iter().any(|a| a == "--prom") && !args.iter().any(|a| a == "--sync-cycle-ticks") {
+        muir::clock::TimingModel::Fpga
+    } else {
+        machine_axis::take_timing(which, &mut args)
+    };
     let mut name = None;
     let mut prom_only = false;
     let mut it = args.into_iter();
@@ -1077,9 +1631,45 @@ fn main() {
         machine_axis::timing_suffix(which, timing)
     );
     println!("{}", trace::RADIX);
-    let n = cycles(&name);
+    let n = cycles(&name, which);
+    // **KEY WORDS ON THE CABLE**, pressed when the program first reaches
+    // each mark, before the microcycle there: `# key` lines ahead of the
+    // rows say at which microcycle, for the testbench to put the same words
+    // on the fabric's cable (`tb/cadr_machine_tb.cpp`).  The page program
+    // alone presses any.
+    let mut presses: Vec<(u64, Vec<u32>)> = Vec::new();
+    if name == "page" && which == Which::Quux {
+        let (_, m1, m2) = page_program_marks();
+        let mut probe = trace::engine_on(which.machine(&prom), timing);
+        probe.boot();
+        let mut pt = trace::Trace::new(&probe);
+        let mut pending = vec![(m1, PAGE_KEYS_1.to_vec()), (m2, (0..PAGE_KEYS_2).map(page_key_2).collect())];
+        for cycle in 0..n {
+            if let Some(i) = pending.iter().position(|(at, _)| probe.pc() as u64 == *at) {
+                let (_, words) = pending.remove(i);
+                for &w in &words {
+                    probe.machine_mut().quux_input.press(w);
+                }
+                presses.push((cycle, words));
+            }
+            if pt.row(&mut probe, cycle).is_err() {
+                break;
+            }
+        }
+        assert!(pending.is_empty(), "page: the program reached both marks");
+        for (cycle, words) in &presses {
+            for w in words {
+                println!("# key {cycle:x} {w:x}");
+            }
+        }
+    }
     let mut t = trace::Trace::new(&e);
     for cycle in 0..n {
+        if let Some((_, words)) = presses.iter().find(|(c, _)| *c == cycle) {
+            for &w in words {
+                e.machine_mut().quux_input.press(w);
+            }
+        }
         match t.row(&mut e, cycle) {
             Ok(line) => println!("{line}"),
             Err(h) => {
@@ -1099,6 +1689,10 @@ fn main() {
         "pdlsync" => check_pdlsync(which, e.machine()),
         "imemsync" => check_imemsync(which, e.machine()),
         "tickwait" => check_tickwait(which, e.machine()),
+        "clocks" => check_clocks(which, e.machine()),
+        "page" => check_page(which, e.machine()),
+        "clockwait" => check_clockwait(which, e.machine()),
+        "tickwin" => check_tickwin(which, e.machine()),
         _ => unreachable!(),
     }
     eprintln!(

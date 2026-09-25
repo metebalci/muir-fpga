@@ -505,13 +505,17 @@ module cadr_console_harness #(
       .prog_reset (prog_reset_o),
       .prog_boot  (prog_boot_o),
       .n_boot     (n_boot),
-      .no_auto_boot(1'b0)
+      .no_auto_boot(1'b0),
+      // QUUX's register page's word 102; this is the CADR's register block.
+      .page_errstop_we(1'b0),
+      .page_errstop   (1'b0)
   );
 
   logic ub_md_ack_u;
 
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused_tick_irq;
+  logic [1:0] unused_clock_pending;
   /* verilator lint_on UNUSEDSIGNAL */
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
@@ -553,6 +557,7 @@ module cadr_console_harness #(
       .sintr       (sintr),
       // QUUX's tick, which a CADR processor holds at zero and nothing here reads.
       .tick_irq    (unused_tick_irq),
+      .clock_pending(unused_clock_pending),
       .pc          (pc),
       .lpc         (lpc),
       .opc         (opc),

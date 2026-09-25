@@ -444,6 +444,11 @@ if {[llength [info procs cadr_leaves]] == 0} {
     }
 }
 
+# QUUX drops the Unibus adapter, its map and the debug interface (muir's
+# contract Q5), so the collections that name them are empty there, and are
+# required to be.
+set sta_quux [expr {[info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux"}]
+
 # THE THREE COLLECTIONS THEMSELVES, as `cadr_de25.sdc` left them.  An empty
 # one is a clause that reached nothing, whatever the paths below then say.
 # **THE LOOP'S VARIABLES ARE NAMED APART FROM EVERY SHORT WORD**, because the
@@ -461,7 +466,12 @@ foreach {sta_what sta_var} {{the relaxed set} slow {its tick-rate exclusions} fa
     }
     set n [get_collection_size [set ::$sta_var]]
     puts "sta: $sta_what: $n"
-    if {$n == 0 && $sta_var ne "bus_word"} {
+    if {$sta_quux && $sta_var eq "ub_strobe"} {
+        if {$n != 0} {
+            puts "sta: FAIL: $sta_what: $n on QUUX, which has no Unibus map"
+            incr failures
+        }
+    } elseif {$n == 0 && $sta_var ne "bus_word"} {
         puts "sta: FAIL: $sta_what is empty"
         incr failures
     }
@@ -623,6 +633,8 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
             continue
         }
         set n [get_collection_size [set ::$sta_var]]
+        # QUUX has no debug interface, so the machine drives no word to latch.
+        if {$sta_quux && $sta_var eq "cable_word"} { set sta_want 0 }
         if {$n != $sta_want} {
             puts "sta: FAIL: $sta_what: $n, wanting $sta_want"
             incr failures
@@ -635,8 +647,10 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     # And the debug cable's carrier: `sts_dbd` at the cable's six ticks and no
     # other register of the window, which is `cadr_ddr.sdc`'s split for it and
     # the reason that clause names the `|d` pins.
-    # grid: 60 ns
-    assert_instance_timing $tick 6 u_debug_window {sts_dbd}
+    if {!$sta_quux} {
+        # grid: 60 ns
+        assert_instance_timing $tick 6 u_debug_window {sts_dbd}
+    }
     # And a cut that reached its registers leaves no timed path out of them.
     if {[info exists ::ddr_to_hps] && [get_collection_size $::ddr_to_hps] > 0} {
         set timed [get_collection_size [get_timing_paths -setup -from $::ddr_to_hps -npaths 100]]
@@ -676,7 +690,6 @@ assert_constraints_scoped $exempt
 # At a 10 ns grid this count is shared: the bus's setup below is eight ticks
 # too, so a relaxed set that reached nothing would still find the display's
 # eight here.  The instance assertions are the sharp half.
-set sta_quux [expr {[info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux"}]
 if {!$sta_quux} {
     # grid: 75 ns (shared with 80 ns)
     assert_multicycle_applied $tick 8
@@ -696,8 +709,18 @@ if {!([info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux")} {
 }
 # The bus interface's register block: the Unibus map and its write buffer at
 # the register strobe.
-# grid: 150 ns
-assert_instance_timing $tick 15 u_machine|memory|busint_regs {wr_buf ub_map}
+if {!$sta_quux} {
+    # grid: 150 ns
+    assert_instance_timing $tick 15 u_machine|memory|busint_regs {wr_buf ub_map}
+} else {
+    set sta_n [get_collection_size [get_registers -nowarn [cadr_leaves {u_machine|memory|busint_regs|} {wr_buf ub_map}]]]
+    if {$sta_n != 0} {
+        puts "sta: FAIL: QUUX keeps $sta_n registers of the Unibus map and its write buffer"
+        incr failures
+    } else {
+        puts "sta: QUUX has no Unibus map and no write buffer"
+    }
+}
 # And the split paths `cadr_de25.sdc` narrows below the relaxed set, asked of
 # the collections it wrote them against.  The maps' and the dispatch memory's
 # writes have no clause on this board, and that file says why.

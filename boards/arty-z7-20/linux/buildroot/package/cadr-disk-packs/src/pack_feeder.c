@@ -71,6 +71,9 @@ static void say(struct feeder *f, const char *fmt, ...)
 	fflush(f->log);
 }
 
+static int serve_record(struct feeder *f, unsigned unit, struct pack *pk, uint32_t lba, uint32_t tag,
+			unsigned slot, char *err, size_t errlen);
+
 int feeder_serve(struct feeder *f, unsigned unit, uint32_t c, uint32_t h, uint32_t b, unsigned slot,
 		 char *err, size_t errlen)
 {
@@ -91,6 +94,14 @@ int feeder_serve(struct feeder *f, unsigned unit, uint32_t c, uint32_t h, uint32
 		++f->failures;
 		return -1;
 	}
+	return serve_record(f, unit, pk, lba, ps_tag(unit, c, h, b), slot, err, errlen);
+}
+
+// The record of block `lba` of unit `unit`'s pack into `slot`, under `tag`:
+// what `feeder_serve` and `feeder_serve_lba` share once each has its block.
+static int serve_record(struct feeder *f, unsigned unit, struct pack *pk, uint32_t lba, uint32_t tag,
+			unsigned slot, char *err, size_t errlen)
+{
 	uint32_t words[PACK_RECORD_WORDS];
 	if (pack_record(pk, lba, words, err, errlen) < 0) {
 		++f->failures;
@@ -104,13 +115,13 @@ int feeder_serve(struct feeder *f, unsigned unit, uint32_t c, uint32_t h, uint32
 	__sync_synchronize();
 	uint32_t st;
 	char why[160];
-	const int r = ps_fetch(f->ps, addr, ps_tag(unit, c, h, b), slot, &st, why, sizeof why);
+	const int r = ps_fetch(f->ps, addr, tag, slot, &st, why, sizeof why);
 	if (r == PS_WALK_SLOT) {
 		++f->refused_walk;
 		return PS_WALK_SLOT;
 	}
 	if (r < 0) {
-		snprintf(err, errlen, "fetching block %u (%u/%u/%u) into slot %u: %s", lba, c, h, b, slot, why);
+		snprintf(err, errlen, "fetching block %u into slot %u: %s", lba, slot, why);
 		++f->failures;
 		// A refused request moved nothing and the slot holds what it held;
 		// an accepted one that failed had taken the slot's block away first.
@@ -132,6 +143,27 @@ int feeder_serve(struct feeder *f, unsigned unit, uint32_t c, uint32_t h, uint32
 	f->slot_unit[slot] = (int8_t)unit;
 	++f->served;
 	return 0;
+}
+
+int feeder_serve_lba(struct feeder *f, uint32_t lba, unsigned slot, char *err, size_t errlen)
+{
+	if (slot >= PS_SLOTS) {
+		snprintf(err, errlen, "slot %u is past the store's %u", slot, PS_SLOTS);
+		++f->failures;
+		return -1;
+	}
+	struct pack *pk = bay_pack(f->bay, 0);
+	if (!pk) {
+		snprintf(err, errlen, "unit 0 has no pack in the bay");
+		++f->failures;
+		return -1;
+	}
+	if (lba >= pk->blocks) {
+		snprintf(err, errlen, "block %u is past the end of a pack of %u", lba, pk->blocks);
+		++f->failures;
+		return -1;
+	}
+	return serve_record(f, 0, pk, lba, lba, slot, err, errlen);
 }
 
 int feeder_writeback(struct feeder *f, unsigned slot, char *err, size_t errlen)
@@ -310,7 +342,10 @@ static void deny(struct feeder *f, uint32_t tag, const char *why)
 		ps_tag_split(tag, &unit, &c, &h, &b);
 		if (f->n_named_denials < FEEDER_NAMED_DENIALS)
 			f->named_denials[f->n_named_denials++] = tag;
-		say(f, "denied block %u/%u/%u on unit %u: %s", c, h, b, unit, why);
+		if (f->linear)
+			say(f, "denied block %u: %s", tag & 0x0fffffffu, why);
+		else
+			say(f, "denied block %u/%u/%u on unit %u: %s", c, h, b, unit, why);
 	}
 }
 
@@ -322,12 +357,34 @@ static int answer(struct feeder *f, uint32_t tag, char *err, size_t errlen)
 	uint32_t c, h, b, lba;
 	ps_tag_split(tag, &unit, &c, &h, &b);
 	++f->requests;
+	// **QUUX'S BLOCK-DISK ASKS BY BLOCK NUMBER**, `{3'b0, lba<27:0>}`, one
+	// pack on unit 0 (`rtl/machine/quux_block_disk.sv`): a block past the
+	// pack's end is denied, which is how the controller learns it is past
+	// the end.
+	if (f->linear) {
+		lba = tag & 0x0fffffffu;
+		struct pack *pk0 = bay_pack(f->bay, 0);
+		if (tag >> 28) {
+			deny(f, tag, "block-disk's tag names no unit");
+			return 1;
+		}
+		if (!pk0) {
+			deny(f, tag, "no pack on unit 0");
+			return 1;
+		}
+		if (lba >= pk0->blocks) {
+			deny(f, tag, "past the end of the pack");
+			return 1;
+		}
+		c = h = b = 0;
+		unit = 0;
+	}
 	struct pack *pk = bay_pack(f->bay, unit);
 	if (!pk) {
 		deny(f, tag, "no pack on that unit");
 		return 1;
 	}
-	if (pack_lba(&pk->g, c, h, b, &lba) < 0) {
+	if (!f->linear && pack_lba(&pk->g, c, h, b, &lba) < 0) {
 		char why[96];
 		snprintf(why, sizeof why, "off a pack of %u cylinders, %u heads, %u blocks a track",
 			 pk->g.cylinders, pk->g.heads, pk->g.blocks_per_track);
@@ -360,7 +417,8 @@ static int answer(struct feeder *f, uint32_t tag, char *err, size_t errlen)
 			if (w < 0)
 				return -1;
 		}
-		const int r = feeder_serve(f, unit, c, h, b, (unsigned)v, err, errlen);
+		const int r = f->linear ? feeder_serve_lba(f, lba, (unsigned)v, err, errlen)
+					: feeder_serve(f, unit, c, h, b, (unsigned)v, err, errlen);
 		if (r == PS_WALK_SLOT) {
 			skip |= 1u << v;
 			continue;

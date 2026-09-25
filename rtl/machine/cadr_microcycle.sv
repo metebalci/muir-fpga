@@ -125,7 +125,7 @@ module cadr_microcycle #(
     // boot PROM clearing all 16K words of the PDL buffer and 64 blocks of
     // level 2; and the records aimed at each in `mutations/list.txt`.
     parameter string MACHINE = "cadr",
-    parameter logic [31:0] MACHINE_ID = 32'h5155_0044,
+    parameter logic [31:0] MACHINE_ID = 32'h5155_0064,
     // **QUUX'S MICROCYCLE IN TICKS** (H1a, muir's `TimingModel::Sync`): K,
     // and L more for an `ILONG` instruction.  A board's, from its top level
     // through `cadr_machine.sv`; nothing on the CADR reads either.  See
@@ -233,6 +233,9 @@ module cadr_microcycle #(
     // `cadr_machine.sv` ORs it into `SINTR` beside the cables' two; on the
     // CADR it is a constant zero.  The block that makes it says when.
     output var logic        tick_irq,
+    // And each of QUUX's two clock flags as it stands, for the register
+    // page's word 100 (`quux_clocks.sv`'s `pending`); zero on the CADR.
+    output var logic [1:0]  clock_pending,
 
     // --- `UB MD LOAD`, `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17: MD's
     // THIRD writer, and the only one that is not the processor's own.  A
@@ -473,44 +476,59 @@ module cadr_microcycle #(
   // makes is 27 ticks and this is only ever compared against 11.
   localparam int unsigned SPEEDCLK_T = cadr_tick_pkg::ticks(60) - 1;  // phase 11, shifting into 12
 
+  // Declared here, out of the generate blocks below, so that each keeps its
+  // name in both flows' constraint files; on QUUX nothing drives them.
+  logic [1:0] speed_a;
   logic [5:0] phase_t;
   logic       speedclk;
-  assign speedclk = phase_t == 6'(SPEEDCLK_T);
-
-  logic [1:0] speed_a;
-
-  // **QUUX HAS ONE RATE AND NO SPEED BITS** (`Geometry::speed_bits`,
-  // "One rate" in muir's `docs/quux.md`): every microcycle is the CADR's
-  // normal one from the boot on, and a write of the mode register's bits 1
-  // and 0 goes nowhere --- here it reaches neither stage of the synchronizer,
-  // and the readout's copy of the register reads them as zero.  The CADR
-  // boots extra slow and runs at what is written.  What holds it: every QUUX
-  // trace, each of whose microcycles is timed from the boot on.
-  localparam logic [1:0] SPEED_AT_RESET = QUUX ? 2'b10 : 2'b00;
-  logic [1:0] mode_speed_in;
-  assign mode_speed_in = QUUX ? 2'b10 : mode_speed;
 
   always_ff @(posedge clk) begin
     if (rst) begin
       tpclk_q    <= 1'b0;
       started    <= 1'b0;
-      phase_t    <= 6'd0;
       clock_edge <= 1'b0;
-      // ExtraSlow, as `Rtl::new` comes up, on the CADR; normal on QUUX.
-      speed      <= SPEED_AT_RESET;
-      speed_a    <= SPEED_AT_RESET;
     end else begin
       tpclk_q    <= tpclk;
       clock_edge <= cpu_edge;
-      if (boundary) begin
-        started <= 1'b1;
-        phase_t <= 6'd1;
-      end else if (!(&phase_t)) begin
-        phase_t <= phase_t + 6'd1;
-      end
-      if (speedclk) begin
-        speed   <= speed_a;
-        speed_a <= mode_speed_in;
+      if (boundary) started <= 1'b1;
+    end
+  end
+
+  // **QUUX HAS NO DELAY LINES, SO NO SPEED BITS AND NO SYNCHRONIZER**
+  // (`Geometry::speed_bits`, "QUUX drops the delay lines" in muir's
+  // `docs/quux.md`): its microcycle is `quux_phase_gen.sv`'s K ticks from
+  // the boot on, whatever the mode register's bits 1 and 0 say, and a write
+  // of them goes nowhere.  So on QUUX the synchronizer, its SPEEDCLK and the
+  // phase count that times it are not built at all, and `speed` is a
+  // constant the generator does not read; the readout's copy of all three
+  // reads zero.  The CADR boots extra slow and runs at what is written.
+  // What holds it: every QUUX trace, each of whose microcycles is timed from
+  // the boot on against muir's `sync`.
+  if (QUUX) begin : g_quux_no_speed
+    assign speed    = 2'b00;
+    assign speed_a  = 2'b00;
+    assign phase_t  = 6'd0;
+    assign speedclk = 1'b0;
+    logic unused_speed;
+    assign unused_speed = ^{mode_speed, speedclk, phase_t};
+  end else begin : g_cadr_speed
+    assign speedclk = phase_t == 6'(SPEEDCLK_T);
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        phase_t <= 6'd0;
+        // ExtraSlow, as `Rtl::new` comes up.
+        speed   <= 2'b00;
+        speed_a <= 2'b00;
+      end else begin
+        if (boundary) begin
+          phase_t <= 6'd1;
+        end else if (!(&phase_t)) begin
+          phase_t <= phase_t + 6'd1;
+        end
+        if (speedclk) begin
+          speed   <= speed_a;
+          speed_a <= mode_speed;
+        end
       end
     end
   end
@@ -606,7 +624,28 @@ module cadr_microcycle #(
   logic promdisabled;
   logic bottom_1k;
   assign bottom_1k  = pc < 14'(PROM_WORDS);
-  assign promenable = bottom_1k && !promdisabled && !iwrited && !idebug;
+
+  // **ON QUUX THE BOOT PROM HAS ADDRESSES OF ITS OWN**, control store
+  // 36000-37777 (revision 6, contract Q2; muir's `Geometry::prom_base` and
+  // `Rtl::read_phase`): the PROM answers every fetch there, is never
+  // overlaid, and has no disable bit, so `PROMDISABLE` in the mode register
+  // reaches no fetch; the RAM answers 0-35777 from the first microcycle.
+  // The same 1K image is read at the PC's low ten bits on either machine,
+  // 36000 being a multiple of 2000.  The trap below starts the PC there, and
+  // a `WRITE-I-MEM` into the PROM's addresses writes nothing (`quux_prom_wr`).
+  // What holds it: every QUUX trace, the boot PROM's among them, each of
+  // whose microcycles is fetched here; and `build/quux_imemsync.quux.k4.pass`,
+  // whose program writes the control store just below 36000 and over the
+  // PROM's own words, and runs both.  **What nothing holds is
+  // `quux_prom_wr` itself**: the RAM behind the PROM is never fetched, so a
+  // word written there is seen by the readout alone, which no check reads
+  // there; it is built because muir's `write_imem` keeps that RAM as it was.
+  // On the CADR this is MIT's overlay, unchanged.
+  localparam logic [13:0] QUUX_PROM_BASE = 14'o36000;
+  logic in_quux_prom;
+  assign in_quux_prom = pc[13:10] == QUUX_PROM_BASE[13:10];
+  assign promenable = (QUUX ? in_quux_prom : (bottom_1k && !promdisabled))
+                   && !iwrited && !idebug;
 
   // page IWR: `IR<15:0>` of the A bus over the whole of the M bus.  The word
   // a `WRITE-I-MEM` stores, and what the I bus carries while `IWRITED` is up
@@ -682,7 +721,10 @@ module cadr_microcycle #(
   logic        cs_read;
   logic [13:0] cs_ra;
   assign cs_read = !QUUX || cpu_edge || !started;
-  assign cs_ra   = QUUX ? npc : cs_radr;
+  // Before the first boundary the address is the PC, not NPC: on QUUX the
+  // trap standing at reset forces NPC to the PROM's base, and the trap cycle
+  // itself fetches at the PC it comes up with, 0 (`Rtl::read_phase`).
+  assign cs_ra   = QUUX ? (started ? npc : cs_radr) : cs_radr;
 
   // **AND ON QUUX THE STORE IS WRITTEN A TICK AFTER THE EDGE, THROUGH THE
   // PORT THE READ USES.**  Read at NPC and written at PC on the same edge, the
@@ -695,8 +737,9 @@ module cadr_microcycle #(
   // IR takes the word written from the bypass (`i` below), and the next read
   // is an edge away.  The three registers are the tick's own, out of the
   // constraint files' relaxed set by name.
-  logic        iwe_q;
+  logic        iwe_q, quux_prom_wr;
   logic [13:0] iwa_q, cs_port;
+  assign quux_prom_wr = iwa_q[13:10] == QUUX_PROM_BASE[13:10];
   logic [47:0] iwd_q;
   assign cs_port = iwe_q ? iwa_q : cs_ra;
 
@@ -707,7 +750,9 @@ module cadr_microcycle #(
     iwd_q        <= iwr;
     if (cs_read) prom_q <= prom_mem[cs_ra[9:0]];
     if (QUUX) begin
-      if (iwe_q) imem[cs_port] <= iwd_q;
+      // Nothing writes QUUX's PROM (`Machine::write_imem`): a store at its
+      // addresses is dropped, and the bypass still hands IR the word.
+      if (iwe_q && !quux_prom_wr) imem[cs_port] <= iwd_q;
       else if (cs_read) imem_q <= imem[cs_port];
     end else begin
       if (cs_read) imem_q <= imem[cs_ra];
@@ -924,7 +969,9 @@ module cadr_microcycle #(
 
   always_comb begin
     if (trap) begin
-      npc = 14'd0;
+      // The reset PC: 0 on the CADR, the PROM's base on QUUX
+      // (`Machine::reset_pc`).
+      npc = QUUX ? QUUX_PROM_BASE : 14'd0;
     end else begin
       unique case ({pcs1, pcs0})
         2'b00: npc = spc_target;
@@ -1236,9 +1283,10 @@ module cadr_microcycle #(
   assign srcmd     = group_b && (ir[28:26] == 3'd2);
   assign srclc     = group_b && (ir[28:26] == 3'd3);
 
-  // QUUX's tick, as source 17 reads it: `<1>` the enable and `<0>` the
-  // flag, `machine::Tick::status`.  The tick is built below, at page FLAG.
-  logic [31:0] tick_status;
+  // QUUX's clocks, as source 17 reads their status and source 15 the
+  // microsecond clock, `machine::Tick::status` and `Tick::microseconds`.
+  // `quux_clocks.sv` is instantiated below, at page FLAG.
+  logic [31:0] tick_status, usec_status;
 
   logic [31:0] mf;
   always_comb begin
@@ -1266,8 +1314,11 @@ module cadr_microcycle #(
       // QUUX's MACHINE-ID, sources 16 and 36 (`Rtl::read_phase`).
       mf = MACHINE_ID;
     end else if (QUUX && group_b && ir[28:26] == 3'd7) begin
-      // QUUX's tick, source 17: `<1>` the enable and `<0>` the flag.
+      // QUUX's clocks' status, source 17.
       mf = tick_status;
+    end else if (QUUX && group_b && ir[28:26] == 3'd5) begin
+      // QUUX's microsecond clock, source 15.
+      mf = usec_status;
     end else begin
       // "Functional sources 0o15, 0o16 and 0o17: the 74S138 that decodes
       // IR<28:26> ... has those three outputs unconnected, so nothing on page
@@ -2342,152 +2393,39 @@ module cadr_microcycle #(
   // `ddr_boot`, `kbd_boot`, `md_compose`, `disk_boot`, `microcycle`,
   // `microcycle_sys` or `sstep`.
 
-  // ---------------------------------------------- QUUX's tick (revision 4)
+  // ------------------------------------ QUUX's clocks (revisions 4 and 5)
   //
-  // **A PERIODIC FLAG IN THE PROCESSOR, THE MACHINE'S CLOCK IN PLACE OF THE
-  // CADR DISPLAY'S VERTICAL INTERRUPT**: muir's `machine::Tick`, ported.
-  // Destination 3 is its control, `<0>` the enable, and a write with `<1>`
-  // set clears the flag; destination 4 its period in microseconds, `<23:0>`,
-  // 0 taken as 1; source 17 reads `<0>` the flag and `<1>` the enable.  The
-  // flag rises a period after the tick is enabled or its period written, then
-  // every period after, whether or not it was cleared between; a clear takes
-  // it down until the next.  While enabled it is ORed into the interrupt that
-  // jump conditions 5 and 6 test (`tick_irq`).  The period is 16,667 us at
-  // reset, and `-RESET` --- the fabric's reset and every boot --- turns the
-  // tick off and puts the period back.
-  //
-  // **THE INSTANTS ARE muir'S.**  A write lands at the edge that ends its
-  // microcycle, `Rtl::clock_edge`'s `now`, so a period starts from that
-  // edge and the flag rises exactly a period later.  Source 17 is read at the
-  // instant its microcycle's read phase starts, after the edge before it has
-  // landed its write (`Rtl::read_phase` at `self.ns`), so the status a
-  // microcycle reads is the tick as it stood at the master clock edge it
-  // started on, with that edge's own write in it (`tk_*_s`).  And `SINTR` is
-  // `Machine::interrupt()` taken at the end of `Rtl::clock_edge`, after the
-  // writes, at the instant the microcycle started (`Machine::ns`): so it is
-  // the flag this microcycle started with, unless this microcycle's own write
-  // moves the next rise past it or turns the tick off.  The fabric lands the
-  // write a tick after the edge, from `L`, and counts that tick into the
-  // period; the block says why.
-  //
-  // **WHAT THAT INSTANT IS NOT, AND IS UNVERIFIED HERE.**  muir's
-  // `Machine::ns` moves to the instant of a bus event when a microcycle is
-  // held for the bus, so a flag that rises inside a microcycle held for
-  // memory is taken at that event there and at the microcycle's start here.
-  // No program here raises the tick across a memory wait, so no check
-  // compares the two; a program that did would.
-  //
-  // What holds it: `build/quux_tick.quux.pass` against muir's QUUX, a program
-  // that reads source 17 every microcycle across rises, clears, a period
-  // written while running and the tick turned off, and tests condition 5 with
-  // the interrupt enabled; `build/quux_tick.pass` holds the CADR's side of the
-  // same program, source 17 all ones and destinations 3 and 4 writing M alone.
+  // **THE TICK, THE INTERVAL TIMER AND THE MICROSECOND CLOCK, IN THE
+  // PROCESSOR** (contract Q1, muir's `machine::Tick`): `quux_clocks.sv` has
+  // the whole of it, what holds it and where each instant is taken.  Here
+  // are its two destinations and two sources, and its interrupt, which is
+  // `Machine::interrupt`'s third term and so reaches neither the Xbus nor
+  // the bus interface's interrupt status.  On the CADR none of it is built:
+  // destinations 3 and 4 write M alone and sources 15 and 17 read the open
+  // bus, all ones.
   if (QUUX) begin : g_quux_tick
-    localparam logic [23:0] PERIOD_US_AT_RESET = 24'd16667;
-    localparam int unsigned TICKS_A_US = 1000 / cadr_tick_pkg::TICK_NS;
-
-    // **A MICROSECOND PRESCALER AND A COUNT OF MICROSECONDS**, not a count of
-    // ticks: a period is `tk_us` whole microseconds of `TICKS_A_US` ticks
-    // each, so a write loads the count straight from the word written, with
-    // no multiply between `OB` and a register that runs every tick.
-    // `tk_pre` is the ticks left in the current microsecond, less one, and
-    // `tk_us` the microseconds left, counted down to one; a period of 0 is
-    // counted as 1 by the same comparison.  The flag rises in the tick both
-    // run out, and both reload for the next period.
-    logic        tk_enabled, tk_sticky, tk_flag_s, tk_enabled_s;
-    logic [23:0] tk_period_us, tk_us;
-    logic [6:0]  tk_pre;
-    logic        tk_rise;
-    assign tk_rise = tk_enabled && (tk_pre == 7'd0) && (tk_us <= 24'd1);
-
-    logic tk_flag;
-    assign tk_flag = tk_enabled && (tk_sticky || tk_rise);
-
-    // **THE WRITE LANDS A TICK AFTER ITS EDGE, FROM `L`**, which is the word
-    // `OB` gave at that edge, so that nothing of the datapath reaches these
-    // every-tick registers in the tick it moves.  What the write depends on
-    // is taken at the edge itself --- which destination, whether the tick
-    // was on, whether its flag was up --- and the count it starts is one
-    // tick shorter, so the next rise is a period after the edge, muir's
-    // `now`.  A rise in the tick between is the period's own and stands.
-    logic tk_w, tk_w_ctl, tk_w_per, tk_w_en, tk_w_flag;
-    logic tk_restart, tk_clear, tk_off, tk_moves;
-    assign tk_restart = (tk_w_ctl && l[0] && !tk_w_en) || (tk_w_per && tk_w_en);
-    assign tk_clear   = tk_w_ctl && l[1] && tk_w_flag;
-    assign tk_off     = tk_w_ctl && !l[0];
-    assign tk_moves   = tk_restart || tk_clear || tk_off;
-
-    always_ff @(posedge clk) begin
-      if (rst || !n_boot) begin
-        tk_enabled   <= 1'b0;
-        tk_sticky    <= 1'b0;
-        tk_period_us <= PERIOD_US_AT_RESET;
-        tk_us        <= 24'd0;
-        tk_pre       <= 7'd0;
-        tk_flag_s    <= 1'b0;
-        tk_enabled_s <= 1'b0;
-        tk_w         <= 1'b0;
-        tk_w_ctl     <= 1'b0;
-        tk_w_per     <= 1'b0;
-        tk_w_en      <= 1'b0;
-        tk_w_flag    <= 1'b0;
-      end else begin
-        // What the edge knows, for the tick after it.
-        tk_w      <= cpu_edge;
-        tk_w_ctl  <= cpu_edge && desttickctl;
-        tk_w_per  <= cpu_edge && desttickper;
-        tk_w_en   <= tk_enabled;
-        tk_w_flag <= tk_flag;
-
-        // A clear is of the flag as it stood at the edge, before a rise
-        // this tick, which the period below then raises again.
-        if (tk_clear) tk_sticky <= 1'b0;
-        // The period runs on its own: a rise every period while enabled.
-        if (tk_enabled) begin
-          if (tk_pre == 7'd0) begin
-            tk_pre <= 7'(TICKS_A_US - 1);
-            if (tk_us <= 24'd1) begin
-              tk_us     <= tk_period_us;
-              tk_sticky <= 1'b1;
-            end else begin
-              tk_us <= tk_us - 24'd1;
-            end
-          end else begin
-            tk_pre <= tk_pre - 7'd1;
-          end
-        end
-        // The writes, over it.
-        if (tk_w_per) tk_period_us <= l[23:0];
-        if (tk_restart) begin
-          tk_enabled <= 1'b1;
-          tk_sticky  <= 1'b0;
-          tk_pre     <= 7'(TICKS_A_US - 2);
-          tk_us      <= tk_w_per ? l[23:0] : tk_period_us;
-        end
-        if (tk_off) begin
-          tk_enabled <= 1'b0;
-          tk_sticky  <= 1'b0;
-        end
-        // What the microcycle standing reads, as it stood at the master
-        // clock edge the microcycle started on: at a held edge the flag of
-        // that tick, and at an edge that ran a microcycle, the tick after
-        // it, with that edge's write in it.
-        if (mclk_edge && !cpu_edge) begin
-          tk_flag_s    <= tk_flag;
-          tk_enabled_s <= tk_enabled;
-        end else if (tk_w) begin
-          tk_flag_s    <= tk_w_flag && !tk_moves;
-          tk_enabled_s <= tk_off ? 1'b0 : (tk_w_en || tk_restart);
-        end
-      end
-    end
-
-    assign tick_status = {30'd0, tk_enabled_s, tk_flag_s};
-    assign tick_irq    = tk_enabled_s && tk_flag_s
-                      && !(desttickctl && (!ob[0] || ob[1])) && !desttickper;
+    logic [3:0] clk_status;
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .dest_ctl (desttickctl),
+        .dest_per (desttickper),
+        .ob       (ob[3:0]),
+        .l        (l[23:0]),
+        .status   (clk_status),
+        .usec_s   (usec_status),
+        .irq      (tick_irq),
+        .pending  (clock_pending)
+    );
+    assign tick_status = {28'd0, clk_status};
   end else begin : g_cadr_no_tick
     assign tick_status = 32'd0;
+    assign usec_status = 32'd0;
     assign tick_irq    = 1'b0;
+    assign clock_pending = 2'b00;
     // The two destinations decode to zero on the CADR; named so lint sees them read.
     logic unused_tick;
     assign unused_tick = desttickctl ^ desttickper;
@@ -3140,7 +3078,7 @@ module cadr_microcycle #(
       RG_LVMO:   ro_regs = {24'd0, lvmo};
       RG_MDHELD: ro_regs = {16'd0, md_held};
       RG_PHYS:   ro_regs = {26'd0, phys_r};
-      RG_SPEED:  ro_regs = {42'd0, QUUX ? 2'b00 : mode_speed, speed_a, speed};
+      RG_SPEED:  ro_regs = {42'd0, QUUX ? 2'b00 : mode_speed, speed_a, speed};  // all zero on QUUX
       RG_FLAGS:  ro_regs = ro_flags;
       default:   ro_regs = RO_NO_MEMORY;
     endcase

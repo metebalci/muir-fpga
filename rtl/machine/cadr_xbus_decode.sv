@@ -73,11 +73,20 @@ module cadr_xbus_decode #(
 
   // "the diagnostic bus's sixteen registers ... and the I/O board with its
   // Chaosnet interface" --- the Unibus half, which is its own slice.
-  assign unibus = page >= 14'o37000;
+  //
+  // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`): the window,
+  // physical page 37000 and up, answers nothing on QUUX, a read or a write
+  // timing out as an empty Xbus address does and setting the Xbus NXM bit
+  // (`Rtl::start_bus_cycle`'s `Responder::NoXbus`).  So on QUUX the window
+  // is `nxm` and never `unibus`, and no cycle of the processor's reaches the
+  // Unibus side of the bus interface at all.
+  logic in_window;
+  assign in_window = page >= 14'o37000;
+  assign unibus    = (MACHINE != "quux") && in_window;
 
   // Xbus I/O space, the two slots below the Unibus.
   logic xbus_io;
-  assign xbus_io = !unibus && page >= 14'o36000;
+  assign xbus_io = !in_window && page >= 14'o36000;
 
   // What is built in Xbus I/O space.  Every one of these is aligned to its own
   // size, so each is a comparison on a slice of the address rather than a pair
