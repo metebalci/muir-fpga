@@ -977,7 +977,8 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2.  One file, five scripts, and each program gets its own flags.
+# 2.  One file, five scripts, and each program gets its own flags.  The
+# machine it names is the CADR's: a QUUX card starts no serial line (below).
 # ---------------------------------------------------------------------------
 sandbox
 RC="$WORK/card/fpgarc"
@@ -988,7 +989,7 @@ printf '%s\r\n' \
 	'--chaos-udp-peer 3060@a-host.invalid:42043' \
 	'--keyboard-mapping /mnt/card/keys.txt' \
 	'--bow' \
-	'--machine quux' \
+	'--machine cadr' \
 	'--serial 0.0.0.0:7641' \
 	'--poll-us 250' \
 	'--quiet' \
@@ -1025,7 +1026,7 @@ if prepare cadr-terminal S85cadr-terminal; then
 	run_script S85cadr-terminal
 	passes "--keyboard-mapping /mnt/card/keys.txt" "cadr-terminal"
 	passes "--bow" "cadr-terminal"
-	passes "--machine quux" "cadr-terminal"
+	passes "--machine cadr" "cadr-terminal"
 	passes "--terminal 0.0.0.0:5900" "cadr-terminal"
 	passes_not "--port" "cadr-terminal"
 	passes_not "--chaos-address" "cadr-terminal"
@@ -1068,6 +1069,19 @@ if prepare cadr-usb-input S88cadr-usb-input; then
 	passes_not "--machine" "cadr-usb-input"
 	passes_not "--date" "cadr-usb-input"
 	passes_not "--time" "cadr-usb-input"
+fi
+
+# **`--machine` IS SHARED BY THE SCREEN AND THE PACK PROGRAM**, muir's own
+# word for which machine the bitstream is: QUUX's block-disk asks for a block
+# by its number, the CADR's controller by cylinder, head and block.
+case_head "the pack program gets the card's --machine and none of the others' flags"
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	run_script S80cadr-disk-packs
+	passes "--machine cadr" "cadr-disk-packs"
+	passes_not "--bow" "cadr-disk-packs"
+	passes_not "--chaos-address" "cadr-disk-packs"
+	passes_not "--usb-grab" "cadr-disk-packs"
+	passes_not "--serial" "cadr-disk-packs"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1212,6 +1226,26 @@ if prepare cadr-serial S86cadr-serial; then
 		ok "and says how to turn it on"
 	else
 		fail "the console does not say how to turn the line on"
+	fi
+fi
+
+# **QUUX HAS NO SERIAL LINE** (contract Q5): a card that says `--machine
+# quux` starts no serial program, whatever `--serial` says, and says why.
+case_head "a QUUX card starts no serial line, even with --serial on it"
+sandbox
+if prepare cadr-serial S86cadr-serial; then
+	printf '%s\r\n' '--machine quux' '--serial 0.0.0.0:7641' > "$RC"
+	run_script S86cadr-serial
+	if [ -s "$WORK/daemon.calls" ]; then
+		fail "cadr-serial was started on a QUUX card: it was given: $(given)"
+	else
+		ok "cadr-serial was not started"
+	fi
+	if grep -q 'QUUX has no Unibus and so no serial line' "$WORK/out.S86cadr-serial"; then
+		ok "and the console says why"
+	else
+		fail "the console does not say why; it says:"
+		sed 's/^/        /' "$WORK/out.S86cadr-serial"
 	fi
 fi
 
@@ -1774,6 +1808,30 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 		ok "the wiring is asked for with --log /dev/console, so the reply names its program"
 	else
 		fail "the console was told: $(cat "$WORK/console.calls")"
+	fi
+fi
+
+# **AND A QUUX CARD HAS ITS DEBUG CABLE LINES REFUSED** (contract Q5), as muir
+# refuses the cable's flags on QUUX: the console is not asked for the wiring
+# or the role, and the boot log says why.
+case_head "a QUUX card's debug cable lines are refused"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--machine quux' '--debug-cable-wiring auto' '--debug-cable-connect' > "$WORK/card/fpgarc"
+	: > "$WORK/daemon.calls"
+	: > "$WORK/console.calls"
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S80cadr-disk-packs" start > "$WORK/out.cable" 2>&1
+	if grep -q 'debug-cable' "$WORK/console.calls"; then
+		fail "the console was asked for the debug cable on a QUUX card: $(cat "$WORK/console.calls")"
+	else
+		ok "the console was not asked for the debug cable"
+	fi
+	if grep -q 'QUUX has no Unibus, and so no debug cable' "$WORK/out.cable"; then
+		ok "and the boot log says why"
+	else
+		fail "the boot log does not say why; it says:"
+		sed 's/^/        /' "$WORK/out.cable"
 	fi
 fi
 

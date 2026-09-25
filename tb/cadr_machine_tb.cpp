@@ -256,6 +256,12 @@ int main(int argc, char **argv) {
   // memory sizing's NXM cycles, the disk's polls and `0x2321` in MD, and every
   // guard below holds it as it holds MIT's.  This names the run in messages.
   bool quux_prom = false;
+  // Key words for the keyboard's cable, by the microcycle they go in before,
+  // and the ones not yet on it: one a tick, from the tick that microcycle
+  // starts on.
+  std::map<uint64_t, std::vector<uint64_t>> keys;
+  std::vector<uint64_t> keys_due;
+  size_t keys_sent = 0;
   std::vector<uint64_t> ack_for;
   std::vector<uint64_t> rdata_for;
   std::vector<uint64_t> md_at_row;
@@ -272,6 +278,10 @@ int main(int argc, char **argv) {
 
     while (std::fgets(line, sizeof line, f)) {
       if (line[0] == '#') {
+        // A key word pressed on the keyboard's cable before a microcycle
+        // (`golden/src/quux.rs`'s page program): `# key CYCLE WORD`.
+        unsigned long long kc = 0, kw = 0;
+        if (std::sscanf(line, "# key %llx %llx", &kc, &kw) == 2) keys[kc].push_back(kw);
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
         if (std::strstr(line, "golden/src/quux.rs")) script_trace = true;
         if (std::strstr(line, "QUUX's boot PROM")) quux_prom = true;
@@ -395,6 +405,12 @@ int main(int argc, char **argv) {
   // disk controller is inside.
   dut->device_ack = 0;
   dut->device_rdata = 0;
+  // A mouse at rest, its seven lines high, nothing pressed; and the
+  // Chaosnet address muir's machine comes up with, `chaos::Config`'s.
+  dut->mouse_lines = 0x7f;
+  dut->chaos_address = 0177001;
+  dut->kbd_strobe = 0;
+  dut->kbd_code = 0;
   // Verilator records the previous value of a clock at eval time, so the
   // first eval has to happen with clk low or the first posedge is not one.
   dut->eval();
@@ -420,6 +436,9 @@ int main(int argc, char **argv) {
   // became an output kept being driven and both processor checks went green
   // with MD unchecked.  What goes on the seam instead is the complement.
   auto drive = [&](const Row &r, size_t row) {
+    const auto kit = keys.find(static_cast<uint64_t>(row));
+    if (kit != keys.end())
+      keys_due.insert(keys_due.end(), kit->second.begin(), kit->second.end());
     // **`sintr` WAS DRIVEN HERE AND THE LINE IS GONE.**  -XBUS.INTR is the
     // machine's own now: `cadr_disk_controller.sv` puts the disk's request on
     // it, `cadr_tv.sv` the display's vertical interrupt, and `cadr_machine.sv`
@@ -467,6 +486,8 @@ int main(int argc, char **argv) {
   drive(cur, 0);
   Sample prev = take();
 
+  const char *max_env = std::getenv("CADR_TB_MISMATCHES");
+  const int max_bad = max_env ? std::atoi(max_env) : 20;
   size_t k = 0;          // the microcycle now running
   long last_edge = -1;   // -1 until the first, whose length has no start
   int bad = 0;
@@ -539,6 +560,13 @@ int main(int argc, char **argv) {
 
   for (long t = 0; t < kMaxTicks && k < total_rows; ++t) {
     if (t == 4) dut->rst = 0;
+    // The keyboard's cable: a word a tick while any is due.
+    if (keys_sent < keys_due.size()) {
+      dut->kbd_strobe = 1;
+      dut->kbd_code = static_cast<uint32_t>(keys_due[keys_sent++]);
+    } else {
+      dut->kbd_strobe = 0;
+    }
 
     // THE DDR, AND NOTHING NEARER.  The bus interface, the address decode and
     // the bridge are all inside the DUT now: what this drives is the far side
@@ -642,6 +670,9 @@ int main(int argc, char **argv) {
       const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
       const long slip = static_cast<long>(ack_for_cur) - ns_now;
       ack_error[slip]++;
+      if (slip != 0 && ack_error[slip] <= 3)
+        std::fprintf(stderr, "microcycle %zu: -MEMACK %+ld ns from muir's, the cycle started at row %ld\n",
+                     k, slip, armed_row);
       // The yardstick itself: a cycle the disk controller answered, whose
       // grant and length already agree with muir exactly, reads the
       // same zero and nothing else.  If it does not, the zero the NXM
@@ -813,7 +844,10 @@ int main(int argc, char **argv) {
         bad += Fail(r, "-XBUS.INTR", prev.sintr, r.v[kSintr]);
       ++sintr_checked;
       if (prev.sintr) ++sintr_raised;
-      if (r.v[kMd] == 0x2321u) ++status_rows;
+      // The disk's status with nothing on the cable and no command: the
+      // CADR controller's 0x2321, or on QUUX block-disk's 0x201, not-active
+      // and no pack (`quux_block_disk.sv`).
+      if (r.v[kMd] == (quux_prom ? 0x201u : 0x2321u)) ++status_rows;
 
       // The microcycle's own length.  muir charges the stall before the
       // cycle and the cycle after it, so what the generator owes is the
@@ -923,7 +957,11 @@ int main(int argc, char **argv) {
       // -PROMENABLE at PCTL 1C19.  Everything else comes out of the control
       // store RAM, which here is every WRITE-I-MEM reading back the word its
       // own write pulse has just put there.
-      if (r.v[kPc] < 1024 && r.v[kPromdis] == 0 && r.v[kIwrited] == 0)
+      // On QUUX the PROM has addresses of its own, 36000-37777, and no
+      // disable bit (contract Q2).
+      const bool in_prom = quux_prom ? (r.v[kPc] >= 036000u && r.v[kIwrited] == 0)
+                                     : (r.v[kPc] < 1024 && r.v[kPromdis] == 0 && r.v[kIwrited] == 0);
+      if (in_prom)
         ++prom_fetches;
       else
         ++ram_fetches;
@@ -931,7 +969,11 @@ int main(int argc, char **argv) {
       // loaded: this program never gets past the disk wait to `JUMP-TO-6`,
       // so PROMDISABLE is never set and every fetch above the PROM is a
       // write-back.  Said here so the gap is on the check's own output.
-      if (r.v[kIwrited] == 0 && r.v[kPc] >= 1024) ++ram_executes;
+      // On QUUX, a microcycle run from the RAM below the PROM, the trap's
+      // nopped fetch at 0 aside.
+      if (quux_prom ? (r.v[kIwrited] == 0 && r.v[kPc] < 036000u && r.v[kNop] == 0)
+                    : (r.v[kIwrited] == 0 && r.v[kPc] >= 1024))
+        ++ram_executes;
 
       last_edge = t;
       prev_ns = r.v[kNs];
@@ -945,7 +987,9 @@ int main(int argc, char **argv) {
         drive(cur, k);
       }
 
-      if (bad >= 20) {
+      // Twenty mismatches and it stops, unless `CADR_TB_MISMATCHES` asks for
+      // more: a run kept going to list every row a known difference reaches.
+      if (bad >= max_bad) {
         std::fprintf(stderr, "stopping after %d mismatches\n", bad);
         break;
       }
@@ -1099,12 +1143,15 @@ int main(int argc, char **argv) {
   // **AND THE CYCLES THE COMPARISON ABOVE RESTS ON MUST HAVE HAPPENED.**  A
   // program that sent none would pass it by comparing nothing, which is the
   // shape this file guards everywhere else.  This one sends exactly two.
-  if (nxm_ack_wrong || (nxm_acks != 2 && !pack_trace && !script_trace)) {
+  // **QUUX'S BOOT PROM SENDS NONE**, measured on its trace at the pin: the
+  // NXM leg has nothing to compare there and is held on the CADR's.
+  const long want_nxm = quux_prom ? 0 : 2;
+  if (nxm_ack_wrong || (nxm_acks != want_nxm && !pack_trace && !script_trace)) {
     std::fprintf(stderr,
                  "FAIL: %ld cycles ended on the NXM timer and %ld of them "
                  "acknowledged away from muir's instant; this program sends "
-                 "two to empty Xbus space and both must land at %+d ns\n",
-                 nxm_acks, nxm_ack_wrong, kNxmAckSlipNs);
+                 "%ld to empty Xbus space and each must land at %+d ns\n",
+                 nxm_acks, nxm_ack_wrong, want_nxm, kNxmAckSlipNs);
     ++thin;
   }
   // **AND THE YARDSTICK THE NXM LEG IS READ AGAINST MUST HAVE BEEN MEASURED.**
@@ -1141,7 +1188,7 @@ int main(int argc, char **argv) {
   // passing on a controller that has stopped answering.
   if (status_rows == 0 && !script_trace) {
     std::fprintf(stderr,
-                 "FAIL: MD never held the disk's 0x2321, so nothing says the "
+                 "FAIL: MD never held the disk's idle status, so nothing says the "
                  "controller was not-active while -XBUS.INTR was compared "
                  "against zero on %ld microcycles\n",
                  sintr_checked);

@@ -431,9 +431,10 @@ say "the dispatch memory and both levels of the map are MLABs, $copies copies ea
 # refuses to place the design.  The store is dead on a build with nothing to
 # fill it, so this is asked of the memory board alone.
 if [ "$ddr" -eq 1 ]; then
-    n=$(grep -c "^; u_machine|disk|blk_ram_rtl_[0-9]*|[^;]*; M20K " "$rpt" || true)
-    [ "$n" -eq 1 ] || refuse "synthesis made u_machine|disk|blk_ram into $n M20K memories, wanting 1; see $dir/$rpt"
-    if grep -q 'RAM logic "u_machine|disk|blk_ram" is uninferred' 4-syn.log; then
+    # `disk` is in the CADR's generate block or QUUX's (`cadr_machine.sv`).
+    n=$(grep -c "^; u_machine|g_[a-z]*_disk\.disk|blk_ram_rtl_[0-9]*|[^;]*; M20K " "$rpt" || true)
+    [ "$n" -eq 1 ] || refuse "synthesis made u_machine|g_*_disk.disk|blk_ram into $n M20K memories, wanting 1; see $dir/$rpt"
+    if grep -q 'RAM logic "u_machine|g_[a-z]*_disk\.disk|blk_ram" is uninferred' 4-syn.log; then
         refuse "synthesis built the disk controller's block store from logic; see $dir/4-syn.log"
     fi
     say "the disk controller's block store is one true dual-port M20K memory"

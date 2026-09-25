@@ -210,7 +210,14 @@ impl Trace {
         // muir registers it on, and is the value the *next* microcycle's read
         // phase sees. The fabric registers it the same way, so a row's column
         // driven over that row lands where muir's does.
-        let sintr = u8::from(e.machine().interrupt());
+        //
+        // **AT THE ENGINE'S OWN TIME, WHICH IS THE EDGE**: `Rtl::clock_edge`
+        // registers `interrupt_at(self.ns)`, QUUX's clocks read at the edge
+        // that ends the microcycle, waiting or not (muir's `1775bba`), where
+        // `interrupt()` reads them at the machine's time, which a wait leaves
+        // behind.  The CADR's devices keep the machine's time either way, so
+        // its column is what it was.
+        let sintr = u8::from(e.machine().interrupt_at(e.ns()));
 
         self.line.clear();
         self.line.push_str(&format!("{cycle:x}"));

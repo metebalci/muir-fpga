@@ -582,6 +582,14 @@ Inside a microcycle:
   K-tick cycles, with the master clock running and no write. Each is tested
   at the cycle's start.
 - A console write lands at the master clock edge, and nowhere else.
+- There are no speed bits and no speed synchronizer. The mode register's
+  bits 1 and 0 go nowhere.
+- `SINTR` is registered at the edge that ends each microcycle that runs,
+  waiting or not, from the interrupt as it stands on that edge's own tick
+  (muir's `Machine::interrupt_at`). A clock flag that rises inside a
+  microcycle, or on the edge that ends it, is in it.
+  `build/quux_tickwin.quux.k4l1.pass` puts rises at every tick of a
+  microcycle and inside a wait for MD.
 
 What stays in nanoseconds is everything on the bus side: the setup, strobe
 and acknowledgment times, `-MFINISHD` and `-RDFINISH`, the Unibus figures,

@@ -81,11 +81,12 @@
 #define MUIR_L1_BITS 5u
 #define MUIR_PDL_BITS 10u
 #define MUIR_MULDIV 0u
-// QUUX's tick is not the CADR's either: `Geometry::CADR.tick` is false, and
-// `Tick::new` (src/machine.rs) is what a CADR's machine holds --- off, a
-// period of 16,667 us, and no deadline, which is `u64::MAX`.
+// QUUX's clocks are not the CADR's either: `Geometry::CADR.tick` is false,
+// and `Tick::new` (src/machine.rs) is what a CADR's machine holds --- the
+// tick off with no deadline, `u64::MAX`, and the interval timer off, its
+// period 0 and no deadline.  Version 38 took the tick's period out, it being
+// fixed at 60 Hz, and put the interval timer's three fields after it.
 #define MUIR_TICK 0u
-#define MUIR_TICK_PERIOD_US 16667u
 // The size QUUX's MONO TV would have, which `Tv::save` writes for every
 // board: `tv::MONO_TV_WIDTH` by `MONO_TV_HEIGHT`, the default a CADR's
 // display keeps and never uses.  1280 by 1024 since muir's `bc6af67`, the
@@ -563,10 +564,13 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u8(w, MUIR_PDL_BITS);			/* DECLARED pdl_bits */
 	chk_bool(w, MUIR_MULDIV);			/* DECLARED muldiv */
 	chk_bool(w, MUIR_TICK);				/* DECLARED tick */
-	// `Tick::save`: the machine's tick, which a CADR has and never turns on.
+	// `Tick::save`: QUUX's clocks, which a CADR's machine holds and never
+	// turns on --- the tick, then the interval timer (version 38).
 	chk_bool(w, 0);					/* NONE tick.enabled */
-	chk_u32(w, MUIR_TICK_PERIOD_US);		/* NONE tick.period_us */
 	chk_u64(w, ~(uint64_t)0);			/* NONE tick.deadline_ns */
+	chk_bool(w, 0);					/* NONE tick.interval_enabled */
+	chk_u32(w, 0);					/* NONE tick.interval_us */
+	chk_u64(w, ~(uint64_t)0);			/* NONE tick.interval_deadline_ns */
 	// `Machine::dma_written`, version 36: the disk controller wrote since
 	// the engine last looked, which only QUUX's memory cache reads.  A CADR
 	// has no cache, and a halted board's controller has told nothing it has
@@ -624,6 +628,17 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, 0);					/* DECLARED no color TV */
 #endif
 	emit_ioboard(w, d);
+	// `QuuxInput::save`, version 39: QUUX's keyboard and mouse on its
+	// register page, which a CADR's machine holds empty --- no key word
+	// waiting, no overflow, both enables off, the counts and the buttons 0.
+	chk_u32(w, 0);					/* NONE quux_input.fifo.len() */
+	chk_bool(w, 0);					/* NONE quux_input.overflowed */
+	chk_bool(w, 0);					/* NONE quux_input.kbd_enable */
+	chk_u16(w, 0);					/* NONE quux_input.x */
+	chk_u16(w, 0);					/* NONE quux_input.y */
+	chk_u8(w, 0);					/* NONE quux_input.buttons */
+	chk_bool(w, 0);					/* NONE quux_input.mouse_changed */
+	chk_bool(w, 0);					/* NONE quux_input.mouse_enable */
 	chk_u64(w, img->cycles);			/* READ */
 	// **THE CLOCK.**  A fabric tick stands for `CHK_GRID_NS` nanoseconds of
 	// MIT's grid, `cadr_tick_pkg::TICK_NS`, which is muir's own time under

@@ -560,9 +560,9 @@ module cadr_machine #(
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (4 << 4) | 4`: the signature, hardware revision 4 and
+  // `(0x5155 << 16) | (6 << 4) | 4`: the signature, hardware revision 6 and
   // processor type 4, `Geometry::QUUX.machine_id`.
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0064;
   // MONO TV at the size every QUUX bitstream builds: 1280 by 1024, one bit
   // a pixel, 40 words a line at `17000000`.
   localparam int unsigned MONO_TV_WIDTH  = 1280;
@@ -694,7 +694,24 @@ module cadr_machine #(
   // interrupt status; `cadr_microcycle.sv` says when it is up.  Zero on the
   // CADR.
   logic tick_irq;
-  assign sintr_o   = xbus_intr || ub_int || tick_irq;
+  // And QUUX's register page's own three, the keyboard, the mouse and the
+  // network (`quux_feature_page.sv`'s `irq`), each a term of
+  // `Machine::interrupt_at` on QUUX.  Zero on the CADR.
+  logic page_irq;
+  // QUUX's register page's wires into the memory path and the processor
+  // (`cadr_memory_path.sv`'s ports say what each is).
+  logic [1:0]  clock_pending;
+  logic [2:0]  page_err, mouse_buttons;
+  logic        page_err_clear, page_errstop_we, page_errstop;
+  logic        page_ch_land, page_ch_wr, chaos_ireq;
+  logic [2:0]  page_ch_which;
+  logic [15:0] page_ch_wdata, page_ch_rdata;
+  logic        iob_n_boot1;
+  logic [7:0]  iob_csr_face;
+  // **ON QUUX THE UNIBUS INTERRUPT DOES NOT REACH THE PROCESSOR**, QUUX
+  // having no Unibus (contract Q5, `Machine::interrupt_at`'s
+  // `geometry.unibus`): its devices interrupt through the register page.
+  assign sintr_o   = xbus_intr || (ub_int && !QUUX) || tick_irq || page_irq;
 
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX),
@@ -724,6 +741,7 @@ module cadr_machine #(
       .spy_rdata   (spy_rdata),
       .sintr       (sintr_o),
       .tick_irq    (tick_irq),
+      .clock_pending(clock_pending),
       .n_memack    (n_memack),
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
@@ -842,9 +860,12 @@ module cadr_machine #(
       .ub_ssyn_by (ub_ssyn_by),
       .xbus_intr  (xbus_intr),
       .ub_int     (ub_int),
-      .kbd_strobe (kbd_strobe),
+      // On QUUX the keyboard's cable reaches the register page and not the
+      // I/O board (`quux_input.sv`), as muir's terminal delivers to the page
+      // on QUUX; the board's `-BOOT*` is then idle and the page makes it.
+      .kbd_strobe (QUUX ? 1'b0 : kbd_strobe),
       .kbd_code   (kbd_code),
-      .n_boot_star(n_boot1),
+      .n_boot_star(iob_n_boot1),
       .mouse_lines(mouse_lines),
       .ser_reset  (ser_reset),
       .ser_mode1  (ser_mode1),
@@ -883,7 +904,7 @@ module cadr_machine #(
       .iob_intr   (iob_intr),
       .iob_vector (iob_vector),
       .audio      (audio),
-      .csr_face   (csr_face),
+      .csr_face   (iob_csr_face),
       .mouse_x    (mouse_x),
       .mouse_y    (mouse_y),
       .clock_ready(clock_ready),
@@ -948,7 +969,18 @@ module cadr_machine #(
       .mem_addr   (mem_addr),
       .mem_wdata  (mem_wdata),
       .mem_done   (mem_done),
-      .mem_rdata  (mem_rdata)
+      .mem_rdata  (mem_rdata),
+      .page_err       (page_err),
+      .page_err_clear (page_err_clear),
+      .page_errstop_we(page_errstop_we),
+      .page_errstop   (page_errstop),
+      .page_ch_land   (page_ch_land),
+      .page_ch_wr     (page_ch_wr),
+      .page_ch_which  (page_ch_which),
+      .page_ch_wdata  (page_ch_wdata),
+      .page_ch_rdata  (page_ch_rdata),
+      .chaos_ireq     (chaos_ireq),
+      .mouse_buttons  (mouse_buttons)
   );
 
   // --- the disk controller, the first Xbus slave that is not main memory ---
@@ -989,6 +1021,60 @@ module cadr_machine #(
   logic [21:0] ch_addr;
   logic [31:0] ch_wdata, ch_rdata;
 
+  // **ON QUUX THE DISK IS BLOCK-DISK AND NOTHING ELSE** (`quux_block_disk.sv`,
+  // muir's "the CADR's controller is refused on QUUX"): the same four
+  // registers, the same interrupt on the Xbus line and the same two seams,
+  // so everything around the instance is the one wiring.  Its done
+  // interrupt is also the register page's word 100 `<2>`.  The instance is
+  // `disk` in both machines' generate blocks, which the constraint files
+  // name.
+  if (QUUX) begin : g_quux_disk
+  quux_block_disk disk (
+      .clk      (clk),
+      .rst      (rst),
+      // `-XBUS INIT` on the backplane. The power-on reset is the one thing
+      // that asserts it here --- there is no console to pull it --- and `rst`
+      // is the harder of the two: it clears the disk address counters and the
+      // command list pointer, which `-XINIT` leaves standing.
+      .xbus_init(rst),
+      .drive_present  (drive_present),
+      .drive_read_only(drive_read_only),
+      .drive_timed    (drive_timed),
+      .sel      (device),
+      .dev_rq   (dev_rq),
+      .dev_write(dev_write),
+      .phys     (phys),
+      .wdata    (wdata),
+      .dev_ack  (disk_ack),
+      .rdata    (disk_rdata),
+      .drives   (disk_drives),
+      .intr     (disk_intr),
+      .store_we   (store_we),
+      .store_slot (store_slot),
+      .store_addr (store_addr),
+      .store_wdata(store_wdata),
+      .store_rdata(store_rdata),
+      .store_miss (store_miss),
+      .ch_req   (ch_req),
+      .ch_write (ch_write),
+      .ch_addr  (ch_addr),
+      .ch_wdata (ch_wdata),
+      .ch_done  (ch_done),
+      .ch_nxm   (ch_nxm),
+      .ch_rdata (ch_rdata),
+      .ch_active(ch_active),
+      .store_busy(store_busy),
+      .store_busy_slot(store_busy_slot),
+      .req_valid(req_valid),
+      .req_tag  (req_tag),
+      .req_post (req_post),
+      .ch_waiting(ch_waiting),
+      .store_deny(store_deny),
+      .ch_slot_o(ch_slot),
+      .ch_wrote (ch_wrote),
+      .ch_hit   (ch_hit)
+  );
+  end else begin : g_cadr_disk
   cadr_disk_controller disk (
       .clk      (clk),
       .rst      (rst),
@@ -1034,6 +1120,7 @@ module cadr_machine #(
       .ch_wrote (ch_wrote),
       .ch_hit   (ch_hit)
   );
+  end
 
   // **QUUX'S FEATURE PAGE IS A SLAVE ON THE SAME SEAM**, beside the disk and
   // joined the same way: the decode makes page 36776 a device only on QUUX,
@@ -1041,6 +1128,7 @@ module cadr_machine #(
   // cannot both answer one cycle.
   if (QUUX) begin : g_quux_feature_page
     logic        feature_ack, feature_drives;
+    logic        page_n_boot, page_kbd_busy;
     logic [31:0] feature_rdata;
 
     quux_feature_page #(
@@ -1049,15 +1137,47 @@ module cadr_machine #(
         .SCREEN_HEIGHT(MONO_TV_HEIGHT),
         .SCREEN_WPL   (MONO_TV_WIDTH / 32)
     ) feature_page (
-        .clk      (clk),
-        .rst      (rst),
-        .sel      (device),
-        .phys     (phys),
-        .dev_write(dev_write),
-        .dev_ack  (feature_ack),
-        .drives   (feature_drives),
-        .rdata    (feature_rdata)
+        .clk          (clk),
+        .rst          (rst),
+        .sel          (device),
+        .phys         (phys),
+        .dev_write    (dev_write),
+        .dev_rq       (dev_rq),
+        .wdata        (wdata),
+        .dev_ack      (feature_ack),
+        .drives       (feature_drives),
+        .rdata        (feature_rdata),
+        .clock_pending(clock_pending),
+        // Block-disk's done (`quux_block_disk.sv`).
+        .disk_irq     (disk_intr),
+        .chaos_ireq   (chaos_ireq),
+        .err          (page_err),
+        .err_clear    (page_err_clear),
+        .errstop      (errstop),
+        .errstop_we   (page_errstop_we),
+        .errstop_d    (page_errstop),
+        .ch_land      (page_ch_land),
+        .ch_wr        (page_ch_wr),
+        .ch_which     (page_ch_which),
+        .ch_wdata     (page_ch_wdata),
+        .ch_rdata     (page_ch_rdata),
+        .kbd_strobe   (kbd_strobe),
+        .kbd_code     (kbd_code),
+        .mouse_x      (mouse_x),
+        .mouse_y      (mouse_y),
+        .mouse_buttons(mouse_buttons),
+        .irq          (page_irq),
+        .n_boot_kbd   (page_n_boot),
+        .kbd_busy     (page_kbd_busy)
     );
+
+    // The keyboard's boot word boots from the page on QUUX, and the host's
+    // handshake reads the page's FIFO in `KBD READY`'s place.
+    assign n_boot1  = iob_n_boot1 && page_n_boot;
+    // The board's own `KBD READY`, which the cable never raises on QUUX.
+    assign csr_face = {iob_csr_face[7:6], page_kbd_busy, iob_csr_face[4:0]};
+    logic unused_kbd_ready;
+    assign unused_kbd_ready = iob_csr_face[5];
 
     assign dev_ack_joined   = disk_ack || feature_ack || device_ack;
     assign dev_rdata_joined = disk_drives    ? disk_rdata
@@ -1066,6 +1186,19 @@ module cadr_machine #(
   end else begin : g_cadr_seam
   assign dev_ack_joined   = disk_ack || device_ack;
   assign dev_rdata_joined = disk_drives ? disk_rdata : device_rdata;
+  assign page_irq         = 1'b0;
+  assign n_boot1          = iob_n_boot1;
+  assign csr_face         = iob_csr_face;
+  assign page_err_clear   = 1'b0;
+  assign page_errstop_we  = 1'b0;
+  assign page_errstop     = 1'b0;
+  assign page_ch_land     = 1'b0;
+  assign page_ch_wr       = 1'b0;
+  assign page_ch_which    = 3'd0;
+  assign page_ch_wdata    = 16'd0;
+  // The page's wires the CADR does not read.
+  logic unused_page;
+  assign unused_page = ^{clock_pending, page_err, page_ch_rdata, chaos_ireq, mouse_buttons};
   end
 
   // ------------------------------------------------- the transaction audit

@@ -332,9 +332,17 @@ static uint32_t fake_read(struct pack_side *ps, unsigned reg)
 	}
 }
 
+// Whether the modeled controller asks by block number, as QUUX's block-disk
+// does (`--machine quux`): its tag is `{3'b0, lba<27:0>}`, unit 0.
+static int linear_tags;
+
 static uint32_t tag_lba(uint32_t tag, unsigned *unit)
 {
 	uint32_t c, h, b, lba;
+	if (linear_tags) {
+		*unit = 0;
+		return tag;
+	}
 	ps_tag_split(tag, unit, &c, &h, &b);
 	if (pack_lba(geom(*unit), c, h, b, &lba) < 0)
 		return 0xFFFFFFFFu;
@@ -1812,6 +1820,47 @@ int main(int argc, char **argv)
 		if (blocks[i].unit == UNIT2)
 			blocks[i].gone = 1;
 
+	// ---- QUUX's block-disk: a block asked for by its number -----------------
+	// `--machine quux`: the tag is the block number from the start of unit
+	// 0's pack, served into a slot under that same tag, a write left dirty
+	// and written back at the end's flush to the block by number, and a block
+	// past the pack's end denied, which is how block-disk learns it.  So is a
+	// tag with anything in the unit's bits.
+	unsigned long linear_served = 0, linear_denied = 0;
+	{
+		f.linear = 1;
+		linear_tags = 1;
+		const unsigned long served0 = f.served, denied0 = f.denied;
+		const uint32_t L = 0x2345u;
+		lay_synth(0, L, 0xB0u);
+		lay_synth(0, L + 1, 0xB1u);
+		struct xfer *x = enqueue(&k, 0, 0);
+		x->tag[x->n++] = L;
+		x->tag[x->n++] = L + 1;
+		run();
+		x = enqueue(&k, 0, 1);
+		x->tag[x->n++] = L;
+		page_of(0, L, 0xB2u, x->page[0]);
+		run_to_dirty();
+		if (!k.dirty)
+			fail("block-disk: block %x was written and no slot is dirty", L);
+		struct pack *p0 = bay_pack(&bay, 0);
+		x = enqueue(&k, 0, 0);
+		x->tag[x->n++] = p0 ? p0->blocks : 0x0fffffffu;
+		x->expect_deny = 1;
+		run();
+		x = enqueue(&k, 0, 0);
+		x->tag[x->n++] = (1u << 28) | 5u;
+		x->expect_deny = 1;
+		run();
+		linear_served = f.served - served0;
+		linear_denied = f.denied - denied0;
+		if (linear_served < 2 || linear_denied != 2)
+			fail("block-disk: %lu served and %lu denied, wanting at least 2 and 2", linear_served, linear_denied);
+		f.linear = 0;
+		linear_tags = 0;
+	}
+
 	// ---- the end of the run: every dirty slot back, the pack as implied -----
 	{
 		const unsigned still = feeder_flush(&f, 4, err, sizeof err);
@@ -2068,7 +2117,8 @@ int main(int argc, char **argv)
 	       "      mark protected once and unprotected once, the flush first; a\n"
 	       "      pack replaced under its own name served the NEW file's words;\n"
 	       "      %lu look(s) put off for a transfer and nothing applied in one;\n"
-	       "      %lu attention pulse(s), none left standing\n",
+	       "      %lu attention pulse(s), none left standing\n"
+	       "    QUUX's block-disk, by block number: %lu served, %lu denied\n",
 	       k.requests, trace_requests, needs, transfers, k.answered, k.worst_answer, k.denied_ok,
 	       k.hits_compared, k.words_compared,
 	       k.full_circles, k.refusals_walk, k.start_refusals, k.evict_writebacks, k.worst_dirty,
@@ -2076,7 +2126,7 @@ int main(int argc, char **argv)
 	       restart_compared, restart_differ,
 	       refusals, ps.polls, polls_run,
 	       f.scans, f.appeared, f.went_away, bay_two_unit_hits, bay_flushed_out,
-	       f.lost_blocks, bay_scans_deferred, ps.attentions);
+	       f.lost_blocks, bay_scans_deferred, ps.attentions, linear_served, linear_denied);
 	(void)loads;
 	(void)sweep_reads;
 	return 0;

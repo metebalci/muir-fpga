@@ -241,3 +241,37 @@
 @new
 				bay_remove(f, u, 1, why, &attention, err, errlen);
 @end
+
+# QUUX's block-disk asks by block number (`--machine quux`): the three
+# decisions the feeder makes about such a request.
+
+@mutation linear-past-the-end-is-served
+@file pack_feeder.c
+@why a block past the end of unit 0's pack must be denied, which is how block-disk learns it
+@old
+		if (lba >= pk0->blocks) {
+			deny(f, tag, "past the end of the pack");
+			return 1;
+		}
+@new
+@end
+
+@mutation linear-the-tag-is-read-as-a-cylinder
+@file pack_feeder.c
+@why block-disk's tag is the block number, not the CADR's cylinder, head and block
+@old
+		lba = tag & 0x0fffffffu;
+@new
+		lba = (tag >> 16) & 0xfffu;
+@end
+
+@mutation linear-a-unit-in-the-tag-is-served
+@file pack_feeder.c
+@why a tag with anything in the unit's bits names no block of unit 0's pack
+@old
+		if (tag >> 28) {
+			deny(f, tag, "block-disk's tag names no unit");
+			return 1;
+		}
+@new
+@end

@@ -317,6 +317,15 @@ fpgarc_has() {
 	[ -n "$(fpgarc_args "$1" "$2")" ]
 }
 
+# Whether the card says the bitstream is QUUX: its `--machine` line, the
+# last one if there are several, is `--machine quux`.  `RC` is the card's
+# file, as every script names it.  No file, or no line, is the CADR.
+fpgarc_is_quux() {
+	[ -f "${RC:-}" ] || return 1
+	eval "set -- $(fpgarc_args "$RC" --machine)"
+	[ "${2:-}" = quux ]
+}
+
 # The flags in FILE that nobody claimed, one a line.  Nothing when the file is
 # not there, and nothing when no claim has been recorded --- which is a boot
 # where this ran first rather than last, and saying every flag went to nobody

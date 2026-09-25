@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 37.** It is
+version is refused by name rather than read wrong. **The version is 39.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
@@ -61,8 +61,10 @@ the machine has QUUX's multiply and divide, and whether it has QUUX's tick.
 The fabric is a CADR, so the program writes its 1,024 words of each followed
 by zeros, and declares the CADR's geometry: a five-bit level-1 entry, a
 ten-bit PDL pointer, no multiply and divide and no tick. The tick's own state
-follows the geometry, written as a CADR's machine holds it: off, a period of
-16,667 microseconds, and no deadline. The display writes the size QUUX's MONO
+follows the geometry, written as a CADR's machine holds it: off and with no
+deadline, and from version 38 the interval timer after it, off, with a period
+of 0 and no deadline. Before version 38 the tick carried its period, 16,667
+microseconds. The display writes the size QUUX's MONO
 TV would have after its board's tag, which a CADR's display keeps and never
 uses. That size is 1,280 by 1,024 from version 35 on, and was 1,920 by 1,080
 before it. The engine also keeps the instant the instruction in
@@ -85,7 +87,12 @@ empties the cache. A CADR has neither the cache nor that timing, so the
 program writes both options absent, the four fields as a new bus interface
 holds them, and the flag as false. Version 37 adds QUUX's block-disk after the
 disk controller, as an option. The CADR fits none, so the program writes it
-absent.
+absent. Version 38 changes QUUX's clocks after the machine's widths: the
+tick's period goes, the tick being fixed at 60 Hz, and the interval timer's
+enable, period and deadline follow the tick's. Version 39 adds QUUX's keyboard
+and mouse after the I/O board: the FIFO's words, the overflow, the two
+enables, the counts, the buttons and the changed bit. A CADR holds all of
+them off and empty, and the program writes them so.
 
 Version 27 adds one byte to the engine: whose nanoseconds its clock counts,
 muir's `TimingModel`. This program declares it. Version 26 added the two sync

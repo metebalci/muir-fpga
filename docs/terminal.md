@@ -202,9 +202,12 @@ refused. The card carries it as a commented line in `fpgarc`.
 `--color-terminal` is refused with `--machine quux`. QUUX has no color TV, and
 MONO TV's 160 KB run over the window the color board's would have.
 
-**The keyboard and mouse are unchanged.** They go through the same input face
-on both machines today. QUUX's register page will carry them instead, and this
-program's input half moves with it when that page is built.
+**The keyboard and mouse go through the same input face on both machines.**
+On QUUX the fabric hands the keyboard's words to the register page's FIFO
+(words 120 and 121) and not to the I/O board, and its mouse word (122) counts
+the same quadrature lines. The face's handshake reads the FIFO's state in the
+place of the I/O board's `KBD READY`, so this program's input half does not
+change.
 
 ## What a key is, and what the machine is told
 

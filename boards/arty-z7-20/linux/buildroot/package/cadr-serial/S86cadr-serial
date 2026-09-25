@@ -136,6 +136,14 @@ start() {
 		# It happens before the decision below so that the claim is
 		# recorded whether or not the line is served.
 		eval "set -- $(fpgarc_args "$RC" $FLAGS)"
+		# **QUUX HAS NO SERIAL LINE** (contract Q5): the 2651 is on the
+		# I/O board, a Unibus slave, and QUUX has no Unibus.  A card that
+		# says `--machine quux` carries a QUUX bitstream, and the program
+		# is not started, whatever `--serial` says.
+		if fpgarc_is_quux; then
+			echo "cadr-serial: --machine quux: QUUX has no Unibus and so no serial line; not started."
+			return 0
+		fi
 		if ! fpgarc_has "$RC" --serial; then
 			echo "cadr-serial: no --serial in $RC, so the serial line is off."
 			echo "cadr-serial: uncomment the --serial line in that file to offer it."

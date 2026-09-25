@@ -220,6 +220,14 @@ what each one means.
     --usb-no-keyboard     ignore keyboards
     --usb-no-mouse        ignore mice
 
+**The disk**, read by `S80cadr-disk-packs` and passed to the disk pack program.
+
+    --machine             which machine the bitstream is: cadr or quux
+
+It is the screen's flag too, with the same meaning. QUUX's disk is
+block-disk, which asks for a block by its number from the start of unit 0's
+pack; the CADR's controller asks by cylinder, head and block.
+
 **The display boards**, read by `S80cadr-disk-packs` before it starts the disk
 pack program, and written into the console face. `docs/tv.md` has the boards.
 

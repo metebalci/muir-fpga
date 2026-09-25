@@ -45,7 +45,11 @@ int main(int argc, char **argv) {
 
   std::vector<Run> runs;
   char line[256], kind[32];
+  // A reference taken on QUUX, which has no Unibus (contract Q5): its window
+  // is empty Xbus space there, so no address may decode as the Unibus.
+  bool quux = false;
   while (std::fgets(line, sizeof line, f)) {
+    if (line[0] == '#' && std::strstr(line, "on QUUX")) quux = true;
     if (line[0] == '#' || line[0] == '\n') continue;
     Run r;
     if (std::sscanf(line, "%ld %ld %ld %ld %31s", &r.boards, &r.color, &r.first,
@@ -152,11 +156,19 @@ done:
               {"device", n_device},
               {"nxm", n_nxm},
               {"unibus", n_unibus}};
-  for (const auto &w : want)
+  for (const auto &w : want) {
+    if (quux && std::strcmp(w.what, "unibus") == 0) {
+      if (w.n != 0) {
+        std::fprintf(stderr, "FAIL: %ld addresses decoded as the Unibus on QUUX, which has none\n", w.n);
+        ++thin;
+      }
+      continue;
+    }
     if (w.n == 0) {
       std::fprintf(stderr, "FAIL: no address decoded as %s\n", w.what);
       ++thin;
     }
+  }
   // And the second display board has to make a difference, or a decode that
   // dropped `color_tv` altogether would agree with a reference nobody had
   // swept. The color TV answers 32,776 words a backplane, once per board

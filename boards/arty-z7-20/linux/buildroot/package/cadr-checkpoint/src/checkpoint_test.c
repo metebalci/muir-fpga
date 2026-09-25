@@ -539,8 +539,11 @@ int main(int argc, char **argv)
 	//   l1_map     8 + 8192           = 8200
 	//   geometry   1 + 1 + 1 + 1      = 4        (Geometry::CADR: 5, 10, no
 	//                                             multiply and divide, no tick)
-	//   tick       1 + 4 + 8          = 13       (Tick::new: off, 16,667 us,
-	//                                             no deadline)
+	//   tick       1 + 8 + 1 + 4 + 8  = 22       (Tick::new: the tick off
+	//                                             with no deadline, the
+	//                                             interval timer off, its
+	//                                             period 0, no deadline;
+	//                                             version 38)
 	//   dma_written 1
 	//   l2_map     8 + 8192           = 8200     (2048 entries, QUUX's; a
 	//                                             CADR has 1024)
@@ -563,6 +566,8 @@ int main(int argc, char **argv)
 	//   ioboard    57 + 110 + 1 + 85  = 253      (its own, the serial port's
 	//                                             Pci, the chaos flag, and
 	//                                             the Chaosnet interface)
+	//   quux_input 4+1+1+2+2+1+1+1    = 13       (QUUX's keyboard and mouse,
+	//                                             empty: version 39)
 	//   cycles+ns  16
 	// Rtl tail:
 	//   trace+flags  (8+96)*2         = 208
@@ -584,8 +589,8 @@ int main(int argc, char **argv)
 	// reader can check one line instead of one number.
 	{
 		const size_t machine_part =
-			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 13 + 1 + 8200 + 4 +
-			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 253 + 16;
+			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 22 + 1 + 8200 + 4 +
+			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 253 + 13 + 16;
 		const size_t rtl_part =
 			208 + 32 + 19 + 21 + 163 + 1 + 32 + 25 + 26 + 24 + 28;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven

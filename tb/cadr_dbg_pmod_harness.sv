@@ -442,7 +442,10 @@ module cadr_dbg_pmod_harness #(
       .n_boot(1'b1),
       // No no-auto-boot switch here: the machine comes up as the fabric's
       // reset leaves it, with the boot button just let go.
-      .no_auto_boot(1'b0)
+      .no_auto_boot(1'b0),
+      // QUUX's register page's word 102; this is the CADR's register block.
+      .page_errstop_we(1'b0),
+      .page_errstop   (1'b0)
   );
 
   logic unused;

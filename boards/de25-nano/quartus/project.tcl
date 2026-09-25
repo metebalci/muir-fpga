@@ -230,8 +230,12 @@ foreach memory [expr {$fault ? {} : {dmem l1_map l2_map}}] {
 # channel and the band --- still agree with the reference.
 # `build.sh` refuses a synthesis in which the store is anything but M20K.
 if {!$fault} {
-    set_instance_assignment -name RAMSTYLE_ATTRIBUTE M20K -to "u_machine|disk|blk_ram"
-    set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|disk|blk_ram"
+    # The store is `disk`'s in either machine's generate block: the CADR's
+    # controller in `g_cadr_disk`, QUUX's block-disk in `g_quux_disk`.
+    foreach disk {g_cadr_disk.disk g_quux_disk.disk} {
+        set_instance_assignment -name RAMSTYLE_ATTRIBUTE M20K -to "u_machine|$disk|blk_ram"
+        set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|$disk|blk_ram"
+    }
 }
 
 # The two images `cadr_machine` reads at elaboration, by absolute path:

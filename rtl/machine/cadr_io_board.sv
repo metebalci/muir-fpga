@@ -321,7 +321,29 @@ module cadr_io_board (
     output var logic [11:0] mouse_x,
     output var logic [11:0] mouse_y,
     output var logic        clock_ready,
-    output var logic [15:0] interval
+    output var logic [15:0] interval,
+
+    // --- **QUUX'S REGISTER PAGE, WORDS 140-147** (contract Q4): the Chaosnet
+    // interface's registers reached off the Unibus, word 140 + k being
+    // `0o764140` + 2k, from `rtl/machine/quux_feature_page.sv`.  One tick,
+    // `qp_land`, at the instant the page answers its cycle, with `A<3:1>` as
+    // `qp_which`; the page decides which of the eight `ioboard::answers`
+    // takes, so a word it refuses never arrives.  What the access does to the
+    // interface is exactly a Unibus cycle's --- the same case below, reached
+    // by either --- and `qp_rdata` is the word such a cycle would read,
+    // before what the access does.  A page access landing on the very tick a
+    // Unibus cycle of the same group lands waits one tick, so neither is
+    // lost; only a console could make that happen.  The request itself,
+    // `chaos_ireq`, is word 100's `<5>`.  The switches, `mouse_buttons`, are
+    // what QUUX's mouse word shows in `<14:12>` (`quux_input.sv`).  Tied off
+    // and unread on the CADR.
+    input  var logic        qp_land,
+    input  var logic        qp_wr,
+    input  var logic [2:0]  qp_which,
+    input  var logic [15:0] qp_wdata,
+    output var logic [15:0] qp_rdata,
+    output var logic        chaos_ireq,
+    output var logic [2:0]  mouse_buttons
 );
 
   // ---------------------------------------------------------------- constants
@@ -849,6 +871,33 @@ module cadr_io_board (
     endcase
   end
 
+  // **WHO IS ASKING THE CHAOSNET INTERFACE THIS TICK**: a Unibus cycle of
+  // its group at `-UB SSYN`, or QUUX's register page (the port's note).  The
+  // case below is the one either reaches, on these names.
+  logic        qp_pend, qp_go, c_land, c_wr, c_rbuf;
+  logic [2:0]  c_which;
+  logic [15:0] c_wdata;
+  logic        qp_pend_wr;
+  logic [2:0]  qp_pend_which;
+  logic [15:0] qp_pend_wdata;
+  assign qp_go   = (qp_land || qp_pend) && !(land && chgrp);
+  assign c_land  = (land && chgrp) || qp_go;
+  assign c_wr    = qp_go ? (qp_pend ? qp_pend_wr : qp_wr) : wr;
+  assign c_which = qp_go ? (qp_pend ? qp_pend_which : qp_which) : which;
+  assign c_wdata = qp_go ? (qp_pend ? qp_pend_wdata : qp_wdata) : ub_wdata;
+  assign c_rbuf  = (c_which[1:0] == 2'd2) && !c_wr && !c_which[2];
+
+  // The word a page read gives, as `ch_now` gives a Unibus read's.
+  always_comb begin
+    unique case (qp_which[1:0])
+      2'd0:    qp_rdata = chaos_csr;
+      2'd1:    qp_rdata = chaos_address;
+      2'd2:    qp_rdata = (ch_rat < ch_rlen) ? ch_rd : 16'd0;
+      default: qp_rdata = {4'd0, chaos_bits};
+    endcase
+  end
+  assign mouse_buttons = mnew[6:4];
+
   // **THE WORD IS HELD FOR THE WHOLE CYCLE ONCE `-UB SSYN` IS UP.**  Both of
   // these groups have reads that change what the next read of the same
   // address gives --- the buffer's pointer, the mode pointer, the
@@ -860,6 +909,20 @@ module cadr_io_board (
 
   logic ch_req;
   assign ch_req = (ch_rdone && ch_wbits[4]) || (ch_tdone && ch_wbits[5]);
+  // **QUUX'S WORD 100 `<5>` AS THIS TICK LEAVES IT** for the processor's
+  // interrupt: a write of the CSR's enables or clears, or of the transmit
+  // buffer, that lands on the edge `SINTR` is taken at is in it, as muir
+  // counts a change on an edge as before it (`quux_input.sv` says the same
+  // of the keyboard's).  What the cable does on that tick is not in it: no
+  // trace here has a cable.
+  logic csr_w, buf_w, n_rdone, n_tdone;
+  logic [5:4] n_wbits;
+  assign csr_w   = c_land && c_wr && (c_which[1:0] == 2'd0);
+  assign buf_w   = c_land && c_wr && (c_which[1:0] == 2'd1);
+  assign n_wbits = csr_w ? c_wdata[5:4] : ch_wbits[5:4];
+  assign n_rdone = (csr_w && c_wdata[3]) ? 1'b0 : ch_rdone;
+  assign n_tdone = (csr_w && c_wdata[8]) ? 1'b1 : (buf_w ? 1'b0 : ch_tdone);
+  assign chaos_ireq = !ch_reset_now && ((n_rdone && n_wbits[4]) || (n_tdone && n_wbits[5]));
 
   // Whether the receiver would still be on under the word being stored into
   // the command register: `RxRDY` clears "when the receiver is disabled by
@@ -934,7 +997,7 @@ module cadr_io_board (
   // `-UB INIT` already is and the order inside a store costs nothing.
   logic ch_reset_now;
   assign ch_reset_now = ub_init
-      || (land && chgrp && wr && (which[1:0] == 2'd0) && ub_wdata[13]);
+      || (c_land && c_wr && (c_which[1:0] == 2'd0) && c_wdata[13]);
 
   // ------------------------------------------------------------ the read side
 
@@ -1003,6 +1066,10 @@ module cadr_io_board (
       kbm         <= 1'b0;
       clkgrp      <= 1'b0;
       chgrp       <= 1'b0;
+      qp_pend       <= 1'b0;
+      qp_pend_wr    <= 1'b0;
+      qp_pend_which <= 3'd0;
+      qp_pend_wdata <= 16'd0;
       sergrp      <= 1'b0;
       wr          <= 1'b0;
       which       <= 3'd0;
@@ -1444,67 +1511,6 @@ module cadr_io_board (
             iv_t        <= 12'(INTERVAL_T);
             iv_run      <= (ub_wdata != 16'd0);
             clock_ready <= (ub_wdata == 16'd0);
-          end else if (chgrp) begin
-            // --- the Chaosnet interface --------------------------------
-            if (wr) begin
-              unique case (which[1:0])
-                2'd0: begin
-                  // "All read/write bits are initialized to zero on
-                  // power-up", and the three write-only commands above them.
-                  // Reset is handled at the foot of this block, where
-                  // `-UB INIT`'s is: AIM-628 makes them the same thing, and
-                  // a Reset subsumes both clears, so the order costs nothing.
-                  ch_wbits <= {ub_wdata[5:4], 1'b0, ub_wdata[2:0]};
-                  if (ub_wdata[3]) begin   // Clear Receiver
-                    ch_rdone <= 1'b0;
-                    ch_crc   <= 1'b0;
-                    ch_rlen  <= 9'd0;
-                    ch_rat   <= 9'd0;
-                    ch_left  <= 13'd0;
-                    ch_rbits <= 13'd0;
-                    ch_fill  <= 9'd0;
-                    ch_lost  <= 4'd0;
-                  end
-                  if (ub_wdata[8]) begin   // Clear Transmitter
-                    ch_xn          <= 9'd0;
-                    ch_taken       <= 1'b0;
-                    ch_sending     <= 1'b0;
-                    ch_tdone       <= 1'b1;
-                    ch_tabort      <= 1'b0;
-                    chaos_tx_clear <= 1'b1;
-                  end
-                end
-                2'd1: begin
-                  // "A word into the outgoing packet buffer.  The last word
-                  // written is the destination address."  A 257th has
-                  // nowhere to go: the 2147 at LMTBUF 0C10 is 4,096 bits.
-                  if (ch_wn != 9'd256) begin
-                    ch_xmit[ch_wn[7:0]] <= ub_wdata;
-                    ch_xn               <= ch_wn + 9'd1;
-                  end else begin
-                    ch_xn <= ch_wn;
-                  end
-                  ch_taken  <= 1'b0;
-                  ch_tdone  <= 1'b0;
-                  ch_tabort <= 1'b0;
-                end
-                default: ;   // the read buffer and the bit count take none
-              endcase
-            end else if (which[1:0] == 2'd1 && which[2]) begin
-              // START: "initiates transmission of the packet in the outgoing
-              // packet buffer", and the buffer goes with it.
-              chaos_tx_go  <= 1'b1;
-              chaos_tx_len <= ch_xn;
-              ch_send      <= ch_xn;
-              ch_out       <= 9'd0;
-              ch_sending   <= (ch_xn != 9'd0);
-              ch_taken     <= 1'b1;
-            end else if (ch_rbuf && ch_rat != ch_rlen) begin
-              // A word out of the incoming packet buffer, and the bit
-              // counter down by what the read took.
-              ch_rat  <= ch_rat + 9'd1;
-              ch_left <= (ch_left > ch_step) ? (ch_left - ch_step) : 13'd0;
-            end
           end else if (sergrp) begin
             // --- the serial port, `serial::Pci`'s own four registers -----
             if (wr) begin
@@ -1568,6 +1574,80 @@ module cadr_io_board (
               endcase
             end
           end
+        end
+      end
+
+      // --- the Chaosnet interface, from the Unibus or from QUUX's page ------
+      // The page's access waits a tick behind a Unibus cycle of the group
+      // landing on its own tick (`qp_go`), held here meanwhile.
+      if (qp_land && (land && chgrp)) begin
+        qp_pend       <= 1'b1;
+        qp_pend_wr    <= qp_wr;
+        qp_pend_which <= qp_which;
+        qp_pend_wdata <= qp_wdata;
+      end else if (qp_go) begin
+        qp_pend <= 1'b0;
+      end
+      if (c_land) begin
+        // --- the Chaosnet interface --------------------------------
+        if (c_wr) begin
+          unique case (c_which[1:0])
+            2'd0: begin
+              // "All read/write bits are initialized to zero on
+              // power-up", and the three write-only commands above them.
+              // Reset is handled at the foot of this block, where
+              // `-UB INIT`'s is: AIM-628 makes them the same thing, and
+              // a Reset subsumes both clears, so the order costs nothing.
+              ch_wbits <= {c_wdata[5:4], 1'b0, c_wdata[2:0]};
+              if (c_wdata[3]) begin   // Clear Receiver
+                ch_rdone <= 1'b0;
+                ch_crc   <= 1'b0;
+                ch_rlen  <= 9'd0;
+                ch_rat   <= 9'd0;
+                ch_left  <= 13'd0;
+                ch_rbits <= 13'd0;
+                ch_fill  <= 9'd0;
+                ch_lost  <= 4'd0;
+              end
+              if (c_wdata[8]) begin   // Clear Transmitter
+                ch_xn          <= 9'd0;
+                ch_taken       <= 1'b0;
+                ch_sending     <= 1'b0;
+                ch_tdone       <= 1'b1;
+                ch_tabort      <= 1'b0;
+                chaos_tx_clear <= 1'b1;
+              end
+            end
+            2'd1: begin
+              // "A word into the outgoing packet buffer.  The last word
+              // written is the destination address."  A 257th has
+              // nowhere to go: the 2147 at LMTBUF 0C10 is 4,096 bits.
+              if (ch_wn != 9'd256) begin
+                ch_xmit[ch_wn[7:0]] <= c_wdata;
+                ch_xn               <= ch_wn + 9'd1;
+              end else begin
+                ch_xn <= ch_wn;
+              end
+              ch_taken  <= 1'b0;
+              ch_tdone  <= 1'b0;
+              ch_tabort <= 1'b0;
+            end
+            default: ;   // the read buffer and the bit count take none
+          endcase
+        end else if (c_which[1:0] == 2'd1 && c_which[2]) begin
+          // START: "initiates transmission of the packet in the outgoing
+          // packet buffer", and the buffer goes with it.
+          chaos_tx_go  <= 1'b1;
+          chaos_tx_len <= ch_xn;
+          ch_send      <= ch_xn;
+          ch_out       <= 9'd0;
+          ch_sending   <= (ch_xn != 9'd0);
+          ch_taken     <= 1'b1;
+        end else if (c_rbuf && ch_rat != ch_rlen) begin
+          // A word out of the incoming packet buffer, and the bit
+          // counter down by what the read took.
+          ch_rat  <= ch_rat + 9'd1;
+          ch_left <= (ch_left > ch_step) ? (ch_left - ch_step) : 13'd0;
         end
       end
 

@@ -129,7 +129,7 @@
 // line says which block, which slot, which address and what the face
 // answered, and a failure repeating is said once a minute.
 //
-//     cadr-disk-packs [--packs DIR] [--regs ADDR] [--log PATH]... [--timed]
+//     cadr-disk-packs [--packs DIR] [--regs ADDR] [--log PATH]... [--timed] [--machine cadr|quux]
 //                      [--poll-us N] [--scan-ms N] [--irq PATH]
 //                      [--no-guard] [--selftest] [--once]
 
@@ -213,6 +213,9 @@ static void usage(void)
 		"                  A file destination is capped at 1 MiB and rotated to\n"
 		"                  <name>.1, the root filesystem being a RAM disk\n"
 		"  --timed         charge the drives' own seek and rotational times (default: untimed, muir's default)\n"
+		"  --machine M     which machine the bitstream is, muir's own flag: cadr (default), whose\n"
+		"                  disk controller asks for a block by unit, cylinder, head and block,\n"
+		"                  or quux, whose block-disk asks by its number on unit 0's pack\n"
 		"  --poll-us N     how often REQ and DIRTY are polled (default 250)\n"
 		"  --scan-ms N     how often the bay is looked at (default 250)\n"
 		"  --irq PATH      sleep on this UIO device instead of only polling (see the header)\n"
@@ -270,12 +273,13 @@ int main(int argc, char **argv)
 	const char *irq_path = NULL;
 	uint32_t regs_phys = PS_REG_BASE;
 	unsigned poll_us = 250, scan_ms = 250;
-	int do_selftest = 0, once = 0, timed = 0, no_guard = 0;
+	int do_selftest = 0, once = 0, timed = 0, no_guard = 0, quux = 0;
 	static const struct option opts[] = {
 		{ "packs", required_argument, NULL, 'p' },
 		{ "regs", required_argument, NULL, 'r' },
 		{ "log", required_argument, NULL, 'l' },
 		{ "timed", no_argument, NULL, 't' },
+		{ "machine", required_argument, NULL, 'M' },
 		{ "poll-us", required_argument, NULL, 'P' },
 		{ "scan-ms", required_argument, NULL, 'S' },
 		{ "irq", required_argument, NULL, 'i' },
@@ -286,7 +290,7 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:r:l:tP:S:i:Gsoh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:r:l:tM:P:S:i:Gsoh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'p': packs_dir = optarg; break;
 		case 'r':
@@ -295,6 +299,17 @@ int main(int argc, char **argv)
 			break;
 		case 'l': cadr_log_dest(optarg); break;
 		case 't': timed = 1; break;
+		case 'M':
+			// muir's own two words and nothing else.
+			if (strcmp(optarg, "cadr") == 0) {
+				quux = 0;
+			} else if (strcmp(optarg, "quux") == 0) {
+				quux = 1;
+			} else {
+				fprintf(stderr, "cadr-disk-packs: --machine %s: wants cadr or quux\n", optarg);
+				return 2;
+			}
+			break;
 		case 'P': poll_us = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'S': scan_ms = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'i': irq_path = optarg; break;
@@ -361,6 +376,10 @@ int main(int argc, char **argv)
 	say("the bay is %s: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives "
 	    "that are present, and a file whose read-only mark is set is a write-protected drive", packs_dir);
 	say("headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are");
+	// QUUX's block-disk asks by block number on unit 0 (`--machine quux`).
+	f.linear = quux;
+	if (quux)
+		say("the machine is QUUX (--machine quux): its block-disk asks for a block by its number on unit 0's pack");
 
 	// 4. The store is emptied and the bay looked at: the drives that are
 	// already in it come present here, and one copied in later comes

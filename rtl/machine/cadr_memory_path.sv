@@ -506,8 +506,39 @@ module cadr_memory_path #(
     output var logic [31:0] mem_addr,
     output var logic [31:0] mem_wdata,
     input  var logic        mem_done,
-    input  var logic [31:0] mem_rdata
+    input  var logic [31:0] mem_rdata,
+
+    // --- QUUX'S REGISTER PAGE (contract Q2 and Q4), which is
+    // `quux_feature_page.sv` in `cadr_machine.sv`, reaching three things that
+    // live here: the bus errors (word 101, `cadr_busint_regs.sv`), error stop
+    // (word 102, `cadr_spy_registers.sv`) and the Chaosnet interface (words
+    // 140-147, `cadr_io_board.sv`, whose port says what each wire is).  And
+    // the I/O board's switches for QUUX's mouse word.  Tied off, and unread,
+    // on the CADR.
+    output var logic [2:0]  page_err,
+    input  var logic        page_err_clear,
+    input  var logic        page_errstop_we,
+    input  var logic        page_errstop,
+    input  var logic        page_ch_land,
+    input  var logic        page_ch_wr,
+    input  var logic [2:0]  page_ch_which,
+    input  var logic [15:0] page_ch_wdata,
+    output var logic [15:0] page_ch_rdata,
+    output var logic        chaos_ireq,
+    output var logic [2:0]  mouse_buttons
 );
+
+  // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`).  The decode
+  // never sends a cycle of the processor's there (`cadr_xbus_decode.sv`), and
+  // on QUUX the slaves the Unibus reached are cut off it here: the I/O board,
+  // whose Chaosnet interface and mouse QUUX reaches through its register page
+  // instead, its serial line tied off, and the bus interface's registers,
+  // whose error flops alone QUUX keeps for the page's word 101; and the debug
+  // cable, a Unibus master, which QUUX has no connector for.  What stays is
+  // the diagnostic registers and the console's path to them, the host's
+  // view: the spy is the host's port on QUUX (`rtl/plumbing/cadr_console.sv`).
+  // The CADR keeps all of it.
+  localparam bit QUUX = MACHINE == "quux";
 
   logic is_memory;
   logic dev_ack, memory_ack;
@@ -610,6 +641,8 @@ module cadr_memory_path #(
   localparam logic [7:0] NOT_FREE = 8'o100;
 
   logic [7:0]  regs_err_status;   // the seven this board holds
+  // QUUX's word 101: `UB MAP ERROR`, `UB NXM ERROR`, `XB NXM ERROR`.
+  assign page_err = {regs_err_status[5], regs_err_status[3], regs_err_status[0]};
   logic        busint_busy;       // `-FREE`, inverted
   logic [7:0]  dbg_err_status;
   assign dbg_err_status = regs_err_status | (busint_busy ? NOT_FREE : 8'd0);
@@ -625,7 +658,7 @@ module cadr_memory_path #(
   cadr_dbgin dbgin (
       .clk             (clk),
       .rst             (dbg_rst),
-      .dbg_in_req      (dbg_in_req),
+      .dbg_in_req      (QUUX ? 1'b0 : dbg_in_req),
       .dbg_in_wr       (dbg_in_wr),
       .dbg_in_a        (dbg_in_a),
       .dbd_in          (dbd_in),
@@ -1036,7 +1069,9 @@ module cadr_memory_path #(
       .prog_reset (prog_reset),
       .prog_boot  (prog_boot),
       .n_boot     (n_boot),
-      .no_auto_boot(no_auto_boot)
+      .no_auto_boot(no_auto_boot),
+      .page_errstop_we(page_errstop_we),
+      .page_errstop   (page_errstop)
   );
 
   // --- the I/O board, the second Unibus slave -----------------------------
@@ -1085,7 +1120,7 @@ module cadr_memory_path #(
   cadr_io_board iob (
       .clk        (clk),
       .rst        (rst),
-      .ub_msyn    (sr_msyn),
+      .ub_msyn    (QUUX ? 1'b0 : sr_msyn),
       .ub_write   (sr_write),
       .ub_addr    (sr_addr),
       .ub_wdata   (sr_wdata),
@@ -1102,14 +1137,14 @@ module cadr_memory_path #(
       .ser_cmd    (ser_cmd),
       .ser_tx_strobe(ser_tx_strobe),
       .ser_tx_data(ser_tx_data),
-      .ser_tx_take(ser_tx_take),
-      .ser_tx_done(ser_tx_done),
-      .ser_rx_strobe(ser_rx_strobe),
+      .ser_tx_take(QUUX ? 1'b0 : ser_tx_take),
+      .ser_tx_done(QUUX ? 1'b0 : ser_tx_done),
+      .ser_rx_strobe(QUUX ? 1'b0 : ser_rx_strobe),
       .ser_rx_data(ser_rx_data),
-      .ser_rx_end (ser_rx_end),
-      .ser_rx_parity(ser_rx_parity),
-      .ser_rx_framing(ser_rx_framing),
-      .ser_plugged(ser_plugged),
+      .ser_rx_end (QUUX ? 1'b0 : ser_rx_end),
+      .ser_rx_parity(QUUX ? 1'b0 : ser_rx_parity),
+      .ser_rx_framing(QUUX ? 1'b0 : ser_rx_framing),
+      .ser_plugged(QUUX ? 1'b0 : ser_plugged),
       .ser_status (ser_status),
       .ser_syn_face(ser_syn_face),
       .chaos_address(chaos_address),
@@ -1147,7 +1182,14 @@ module cadr_memory_path #(
       .mouse_x    (mouse_x),
       .mouse_y    (mouse_y),
       .clock_ready(clock_ready),
-      .interval   (interval)
+      .interval   (interval),
+      .qp_land    (page_ch_land),
+      .qp_wr      (page_ch_wr),
+      .qp_which   (page_ch_which),
+      .qp_wdata   (page_ch_wdata),
+      .qp_rdata   (page_ch_rdata),
+      .chaos_ireq (chaos_ireq),
+      .mouse_buttons(mouse_buttons)
   );
 
   // --- the bus interface's own registers, the third Unibus slave ----------
@@ -1173,7 +1215,7 @@ module cadr_memory_path #(
   cadr_busint_regs busint_regs (
       .clk       (clk),
       .rst       (rst),
-      .ub_msyn   (sr_msyn),
+      .ub_msyn   (QUUX ? 1'b0 : sr_msyn),
       .ub_write  (sr_write),
       .ub_addr   (sr_addr),
       .ub_wdata  (sr_wdata),
@@ -1196,6 +1238,7 @@ module cadr_memory_path #(
       .unibus    (unibus),
       .ub_int    (ub_int),
       .err_status(regs_err_status),
+      .page_err_clear(page_err_clear),
       // The DBGOUT end of MIT's debug cable, this machine as the debugger.
       // It leaves the machine to `rtl/plumbing/cadr_dbg_cable.sv`, which is
       // the connector and the role; `select_debug` does not leave at all and

@@ -146,21 +146,27 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
 # QUUX's checks: the whole machine built as QUUX on QUUX's own boot PROM, and
 # each of the programs in `golden/src/quux.rs` that reach what that PROM does
 # not.  The CADR runs the same programs in `CHECK_CADR` above.
-QUUX_PROGRAMS := map tv muldiv tick divmd tickwait
-# QUUX's own, at its synchronous microcycle: the same but `tick`, whose
-# cleared segment was made for the CADR's 15-tick microcycle and sees at most
-# one rise at K ticks; `ticksync` is it with three times the reads
-# (`golden/src/quux.rs`).  The CADR's side of `tick` is unchanged.  And
-# `pdlsync`, QUUX's alone: a push into the PDL buffer and a pop after it;
-# and `imemsync`, words written into the control store and run.
-QUUX_SYNC_PROGRAMS := map tv muldiv ticksync divmd tickwait pdlsync imemsync
-# And the two taken at an L of one as well: `divmd`, whose `DIV`s are half
-# `ILONG`, and `divmdsync`, whose one `ILONG` filler at an L of one moves the
-# word read a tick against the microcycles (`golden/src/quux.rs`).
-QUUX_L1_PROGRAMS := divmd divmdsync
+QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks
+# QUUX's own, at its synchronous microcycle: the same but `tick` and
+# `tickwait`, which were revision 4's tick, whose period destination 4 set;
+# revision 5 fixes the tick at 60 Hz and gives destination 4 to the interval
+# timer (contract Q1), and `clocks` holds both timers and the microsecond
+# clock, `tickwin` the window between a flag's rise and the edge `SINTR` is
+# taken at (`golden/src/quux.rs`).  The CADR's sides of `tick` and
+# `tickwait` are unchanged.  And `pdlsync`, QUUX's alone: a push into the PDL
+# buffer and a pop after it; and `imemsync`, words written into the control
+# store and run, below QUUX's PROM and over it.
+QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page clockwait
+# And those taken at an L of one as well: `divmd`, whose `DIV`s are half
+# `ILONG`, `divmdsync`, whose one `ILONG` filler at an L of one moves the
+# word read a tick against the microcycles, and `tickwin`, whose `ILONG`s put
+# a flag's rise strictly inside a microcycle, and `clockwait`, whose `ILONG`s
+# put its reads of the clocks between the edges (`golden/src/quux.rs`).
+QUUX_L1_PROGRAMS := divmd divmdsync tickwin clockwait
 CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
        $(BUILD)/dispatch_write_order.quux.$(QK).pass \
-       $(BUILD)/display_out.quux.pass $(BUILD)/muldiv.quux.pass \
+       $(BUILD)/display_out.quux.pass $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
+       $(BUILD)/quux_block_disk.quux.pass \
        $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QK).pass) \
        $(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QKL1).pass) $(BUILD)/phase_gen.quux.$(QKL1).pass \
        $(BUILD)/machine_param.pass muir-pin
@@ -718,7 +724,7 @@ MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/quux_phase_g
                rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
                rtl/machine/cadr_dbgin.sv \
                rtl/plumbing/cadr_bus_audit.sv rtl/machine/quux_feature_page.sv rtl/machine/quux_mono_tv.sv \
-               rtl/machine/quux_muldiv.sv \
+               rtl/machine/quux_muldiv.sv rtl/machine/quux_clocks.sv rtl/machine/quux_input.sv rtl/machine/quux_block_disk.sv \
                rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
 
 # `M_AXI_GP0` split five ways: the decode, the AXI3 register face the three
@@ -907,6 +913,40 @@ $(BUILD)/muldiv.quux.pass: $(BUILD)/obj_muldiv/Vquux_muldiv $(BUILD)/muldiv.quux
 	$(BUILD)/obj_muldiv/Vquux_muldiv $(BUILD)/muldiv.quux.golden
 	@touch $@
 
+# ------------------------------------------- QUUX's keyboard and mouse
+#
+# `rtl/machine/quux_input.sv` on its own, against muir's `QuuxInput` over a
+# script of presses, the mouse's counts and buttons, reads and writes and the
+# boot word (`golden/src/quux_input.rs`).  The same module on the whole
+# machine, through the register page, is `quux_page.quux.*.pass`.
+$(BUILD)/quux_input.quux.golden: golden/src/quux_input.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin quux_input > $@
+
+$(BUILD)/obj_quux_input/Vquux_input: $(TICKPKG) rtl/machine/quux_input.sv tb/quux_input_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux_input \
+	    --top-module quux_input $(TICKPKG) rtl/machine/quux_input.sv $(abspath tb/quux_input_tb.cpp)
+
+$(BUILD)/quux_input.quux.pass: $(BUILD)/obj_quux_input/Vquux_input $(BUILD)/quux_input.quux.golden
+	$(BUILD)/obj_quux_input/Vquux_input $(BUILD)/quux_input.quux.golden
+	@touch $@
+
+# ------------------------------------------------------ QUUX's block-disk
+#
+# `rtl/machine/quux_block_disk.sv` on its own, against muir's `BlockDisk`
+# over a script of register reads and writes at muir's instants, with main
+# memory and the pack side answered by the testbench and every page and
+# block compared at the end (`golden/src/quux_block_disk.rs`).
+$(BUILD)/quux_block_disk.quux.golden: golden/src/quux_block_disk.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin quux_block_disk > $@
+
+$(BUILD)/obj_quux_block_disk/Vquux_block_disk: $(TICKPKG) rtl/machine/quux_block_disk.sv tb/quux_block_disk_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux_block_disk \
+	    --top-module quux_block_disk $(TICKPKG) rtl/machine/quux_block_disk.sv $(abspath tb/quux_block_disk_tb.cpp)
+
+$(BUILD)/quux_block_disk.quux.pass: $(BUILD)/obj_quux_block_disk/Vquux_block_disk $(BUILD)/quux_block_disk.quux.golden
+	$(BUILD)/obj_quux_block_disk/Vquux_block_disk $(BUILD)/quux_block_disk.quux.golden
+	@touch $@
+
 # ------------------------------------ where QUUX differs, on both machines
 #
 # **MIT'S BOOT PROM REACHES QUUX'S MAP AND PDL BUFFER AND NOTHING ELSE OF
@@ -929,6 +969,13 @@ QUUX_GOLDEN := golden/src/quux.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Carg
 
 $(BUILD)/quux_%_prom.hex: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --prom > $@
+
+# **AND QUUX'S IMAGE OF THE SAME PROGRAM, ASSEMBLED AT 36000**, where QUUX's
+# PROM sits in the control store (revision 6, contract Q2): every jump is to
+# an absolute address, so the two machines run two images of one program.
+.PRECIOUS: $(BUILD)/quux_%_prom.quux.hex
+$(BUILD)/quux_%_prom.quux.hex: $(QUUX_GOLDEN) | $(BUILD)
+	$(GOLDEN) --release --bin quux -- --program $* --machine quux --prom > $@
 
 $(BUILD)/quux_%.golden: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine cadr > $@
@@ -1015,12 +1062,12 @@ $$(BUILD)/quux_%.quux.$(1).golden: $$(QUUX_GOLDEN) | $$(BUILD)
 $$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
 	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_quux_$$*_quux_$(1) \
 	    -GMACHINE='"quux"' -GSYNC_K=$(2) -GSYNC_L=$(3) \
-	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux_$$*_prom.hex"' \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux_$$*_prom.quux.hex"' \
 	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
 
 $$(BUILD)/quux_%.quux.$(1).pass: $$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine $$(BUILD)/quux_%.quux.$(1).golden \
-                                $$(BUILD)/quux_%_prom.hex $$(BUILD)/sync_prom.hex
+                                $$(BUILD)/quux_%_prom.quux.hex $$(BUILD)/sync_prom.hex
 	$$(BUILD)/obj_quux_$$*_quux_$(1)/Vcadr_machine $$(BUILD)/quux_$$*.quux.$(1).golden
 	@touch $$@
 
@@ -2607,8 +2654,10 @@ mutants-anchors:
 # QUUX's programs included, and `make mutants MACHINE=quux` those aimed at
 # QUUX's.  `mutations/run.py` without `--machine` runs both.
 MUTANT_QUUX = $(BUILD)/boot_prom.quux.hex $(BUILD)/xbus_decode.quux.golden \
-              $(BUILD)/muldiv.quux.golden \
-              $(patsubst %,$(BUILD)/quux_%_prom.hex,$(sort $(QUUX_PROGRAMS) $(QUUX_SYNC_PROGRAMS) $(QUUX_L1_PROGRAMS))) \
+              $(BUILD)/muldiv.quux.golden $(BUILD)/quux_input.quux.golden \
+              $(BUILD)/quux_block_disk.quux.golden \
+              $(patsubst %,$(BUILD)/quux_%_prom.hex,$(QUUX_PROGRAMS)) \
+              $(patsubst %,$(BUILD)/quux_%_prom.quux.hex,$(sort $(QUUX_SYNC_PROGRAMS) $(QUUX_L1_PROGRAMS))) \
               $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.golden) \
               $(foreach q,k4,$(BUILD)/rtl.quux.$(q).golden \
                   $(BUILD)/dispatch_write_order.quux.$(q).golden \
@@ -3631,7 +3680,15 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # block-disk after the disk controller, an option written absent.  The
 # twenty-five bytes added pack to one, 561,545 to 561,546, and muir loads the
 # file, saves it back byte for byte and resumes at the same microcycle.
-CHECKPOINT_SHA  := 8188770bde8cb0b60c553d42451c44082f84d7c254445693602f44d415c0b1be
+#
+# **AND WHEN IT WENT 37 TO 39.**  Version 38 is QUUX's clocks: the tick's
+# period goes, fixed at 60 Hz, and the interval timer's enable, period and
+# deadline follow the tick's, all written as a CADR's machine holds them, off
+# with no deadline.  Version 39 adds QUUX's keyboard and mouse after the I/O
+# board, written empty.  The twenty-two bytes added pack to six, 561,546 to
+# 561,552, and muir loads the file, saves it back byte for byte and resumes
+# at the same microcycle.
+CHECKPOINT_SHA  := 25c0abae27266187ba807ba615429390f43b4bba2a9c10699adcb36dde743c92
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed

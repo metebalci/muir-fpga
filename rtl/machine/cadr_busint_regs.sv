@@ -467,7 +467,13 @@ module cadr_busint_regs (
     // keeps: a read of `0o766044` by the processor IS a cycle of this
     // interface's, so it can never find the bus free.
     //
-    output var logic [7:0]  err_status
+    output var logic [7:0]  err_status,
+
+    // --- QUUX's register page, word 101: a write clears the bus errors as a
+    // write of `766044` does, all but `WRITE THROUGH ENB`, which is not a
+    // bus error (contract Q2, `Machine::bus_write`: `bus_error = 0`).  One
+    // tick, at the instant the page answers the write.  Tied low on the CADR.
+    input  var logic        page_err_clear
 );
 
   // busint::DIAGNOSTIC_NS and REGISTER_STROBE_NS, the same two instants
@@ -844,6 +850,11 @@ module cadr_busint_regs (
       if (timed_out && !timed_out_q) begin
         if (unibus) err_unibus <= 1'b1;
         else err_xbus <= 1'b1;
+      end
+      if (page_err_clear) begin
+        err_xbus   <= 1'b0;
+        err_unibus <= 1'b0;
+        err_map    <= 1'b0;
       end
 
       // The request and the levels under it, at the one instant: `-DEBUG OUT
