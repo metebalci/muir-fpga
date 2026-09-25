@@ -260,11 +260,15 @@ module cadr_memory_path #(
     // is why `mbusy` and `wrcyc` are not here: the processor's are the
     // processor's and `cadr_machine.sv` reads them where they are made.
     //
-    // `cpu_memory_o` is `is_memory || tv_fb` and NOT `is_memory` alone,
-    // because the display's frame buffer is this bridge at a second base: a
-    // frame-buffer cycle decodes as `device` and issues a transaction anyway,
-    // and an audit that did not know that would fault on the first pixel the
-    // machine ever painted.
+    // `cpu_memory_o` is `is_memory` with every frame buffer the bridge
+    // answers, `tv_fb`, `tvc_fb` and QUUX's `mono_fb`, and NOT `is_memory`
+    // alone, because a display's frame buffer is this bridge at a second base:
+    // a frame-buffer cycle decodes as `device` and issues a transaction
+    // anyway, and an audit that did not know that would fault on the first
+    // pixel the machine ever painted.  **It is `bus_sel`'s processor arm, term
+    // for term**, and a window added to one and not the other is the defect:
+    // `mono_fb` was, and the audit counted every MONO TV cycle of `quux_tv`
+    // as a fault while every check stayed green.
     //
     // `bus_changing_o` is the idle tick this module already inserts at every
     // change of owner.  The audit uses it to close one cycle and open the
@@ -928,7 +932,7 @@ module cadr_memory_path #(
   // gate, read by an instrument a level up and by nothing else.
   assign ch_own_o       = ch_own;
   assign bus_changing_o = changing;
-  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb;
+  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb || mono_fb;
   assign ch_memory_o    = ch_memory;
 
   always_ff @(posedge clk) begin

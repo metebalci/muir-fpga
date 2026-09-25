@@ -141,7 +141,8 @@
 // display's frame buffer is main memory's own bridge at a second base, so a
 // frame-buffer cycle decodes as `device` and issues a transaction anyway.
 // What this input wants is "the bridge answers this cycle", which in
-// `rtl/machine/cadr_memory_path.sv` is `is_memory || tv_fb` for the processor
+// `rtl/machine/cadr_memory_path.sv` is `is_memory` with every frame buffer
+// `bus_sel` takes (`tv_fb`, `tvc_fb` and QUUX's `mono_fb`) for the processor
 // and `ch_memory` for the channel.  An audit given the decode alone would
 // fault on the first pixel the machine ever painted --- and would have been
 // green in simulation, MIT's boot PROM never touching the display.
@@ -301,7 +302,15 @@ module cadr_bus_audit (
     else if (req_rise && (mem_write != cyc_write)) fault_clause = C_DIRECTION;
     else if (req_rise && (reqs != 2'd0))          fault_clause = C_TWO_REQS;
     else if (done_rise && in_req && (answers != 2'd0)) fault_clause = C_TWICE;
-    else if (done_rise && !in_req)                fault_clause = C_LOOSE_ANS;
+    // **AN ANSWER ON THE REQUEST'S OWN FIRST TICK IS AN ANSWER TO A STANDING
+    // REQUEST**: `mem_req` is up on that tick and only `in_req`, a register,
+    // has not caught up.  The bridge is thin by contract and `mem_*` is a
+    // plain request and answer, so a memory that answers at once is a legal
+    // one; the AXI adapter never does, its `mem_done` being a state, but the
+    // machine check's memory answers a display's buffer at muir's instant and
+    // that is the request's own tick.  An answer one tick BEFORE a request is
+    // still loose, and `tb/cadr_bus_audit_unit_tb.cpp` holds both.
+    else if (done_rise && !in_req && !req_rise)   fault_clause = C_LOOSE_ANS;
     fault = fault_clause != C_NONE;
   end
 
@@ -414,7 +423,8 @@ module cadr_bus_audit (
       // The request now open at the memory port.
       if (req_rise) begin
         in_req         <= 1'b1;
-        answers        <= 2'd0;
+        // An answer on this same tick is this request's (see the clause).
+        answers        <= {1'b0, done_rise};
         if (reqs != 2'd3) reqs <= reqs + 2'd1;
       end else if (in_req && !mem_req) begin
         in_req <= 1'b0;

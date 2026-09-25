@@ -1012,6 +1012,53 @@ int main(int argc, char **argv) {
     ++bad;
   }
 
+  // **THE TRANSACTION AUDIT, READ AT THE END OF EVERY RUN, THROUGH THE WINDOW
+  // A HALTED BOARD IS READ THROUGH.**  `rtl/plumbing/cadr_bus_audit.sv` sits
+  // inside `cadr_machine` in every check this testbench runs, and before this
+  // nothing here looked at it: `build/bus_audit.pass` runs MIT's boot PROM,
+  // which never touches a display's frame buffer, so a cycle the bridge
+  // answers at a display's base reached the audit in no check at all.  QUUX's
+  // MONO TV buffer is one, and `quux_tv` writes and reads it, so a memory
+  // flag that forgot it faulted on every such cycle and every check stayed
+  // green.  Any fault here is the finding; the port's own answers are not
+  // driven, so the seventh clause is silent by construction and is not what
+  // this holds.  Word 0 is the fault count, word 1 the first clause and the
+  // address it was taken at (`cadr_bus_audit.sv`'s readout).
+  {
+    auto window = [&](unsigned word) -> uint64_t {
+      const unsigned asked = (11u << 14) | word;
+      dut->con_ro_addr = asked;
+      for (int i = 0; i < 4; ++i) {
+        dut->clk = 0;
+        dut->eval();
+        dut->clk = 1;
+        dut->eval();
+      }
+      if (dut->con_ro_echo != asked || (dut->con_ro_data >> 32) != 0xB05Au) {
+        std::fprintf(stderr,
+                     "FAIL: the audit's word %u came back echo %05x, %012" PRIx64
+                     ", which is not the audit's\n",
+                     word, static_cast<unsigned>(dut->con_ro_echo),
+                     static_cast<uint64_t>(dut->con_ro_data));
+        return ~0ull;
+      }
+      return dut->con_ro_data;
+    };
+    const uint64_t w0 = window(0), w1 = window(1);
+    const unsigned faults = static_cast<unsigned>(w0 & 0x7FFFu);
+    if (w0 == ~0ull || w1 == ~0ull || faults != 0) {
+      std::fprintf(stderr,
+                   "FAIL: the transaction audit counted %u faults, the first "
+                   "clause %u at word %o (clauses seen %02x)\n",
+                   faults, static_cast<unsigned>((w1 >> 22) & 7u),
+                   static_cast<unsigned>(w1 & 0x3FFFFFu),
+                   static_cast<unsigned>((w1 >> 25) & 0x7Fu));
+      ++bad;
+    } else {
+      std::printf("    the transaction audit counted no fault\n");
+    }
+  }
+
   dut->final();
   delete dut;
 
