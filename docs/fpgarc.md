@@ -226,7 +226,11 @@ what each one means.
 
 It is the screen's flag too, with the same meaning. QUUX's disk is
 block-disk, which asks for a block by its number from the start of unit 0's
-pack; the CADR's controller asks by cylinder, head and block.
+disk; the CADR's controller asks by cylinder, head and block. On QUUX the file
+`disk-pack-0.img` is a raw image, a fixed VHD or a dynamic VHD, of any size up
+to 2^28 blocks, told apart by its footer and not by its name. A dynamic VHD is
+read and written in place through its block allocation table and grows as
+qemu grows it. Nothing reads a CADR label on QUUX's disk.
 
 **The display boards**, read by `S80cadr-disk-packs` before it starts the disk
 pack program, and written into the console face. `docs/tv.md` has the boards.

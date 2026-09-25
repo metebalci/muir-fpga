@@ -682,9 +682,13 @@ static void bay_add(struct feeder *f, unsigned unit, const struct bay_look *l,
 	const struct pack *pk = bay_pack(f->bay, unit);
 	*attention |= (uint8_t)(1u << unit);
 	++f->appeared;
-	say(f, "unit %u: %s is a drive: %u cylinders, %u heads, %u blocks a track, %u blocks, %s",
-	    unit, path, pk->g.cylinders, pk->g.heads, pk->g.blocks_per_track, pk->blocks,
-	    l->read_only ? "write-protected (its read-only mark is set)" : "writable");
+	if (pk->quux)
+		say(f, "unit %u: %s is QUUX's disk: %s of %u blocks, %s", unit, path, quux_format_name(pk->q.format),
+		    pk->blocks, l->read_only ? "write-protected (its read-only mark is set)" : "writable");
+	else
+		say(f, "unit %u: %s is a drive: %u cylinders, %u heads, %u blocks a track, %u blocks, %s",
+		    unit, path, pk->g.cylinders, pk->g.heads, pk->g.blocks_per_track, pk->blocks,
+		    l->read_only ? "write-protected (its read-only mark is set)" : "writable");
 }
 
 int feeder_bay_scan(struct feeder *f, char *err, size_t errlen)

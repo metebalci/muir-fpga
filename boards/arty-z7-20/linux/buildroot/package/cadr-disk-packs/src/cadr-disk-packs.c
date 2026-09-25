@@ -215,7 +215,8 @@ static void usage(void)
 		"  --timed         charge the drives' own seek and rotational times (default: untimed, muir's default)\n"
 		"  --machine M     which machine the bitstream is, muir's own flag: cadr (default), whose\n"
 		"                  disk controller asks for a block by unit, cylinder, head and block,\n"
-		"                  or quux, whose block-disk asks by its number on unit 0's pack\n"
+		"                  or quux, whose block-disk asks by its number on unit 0's disk: raw,\n"
+		"                  a fixed VHD or a dynamic VHD, of any size up to 2^28 blocks\n"
 		"  --poll-us N     how often REQ and DIRTY are polled (default 250)\n"
 		"  --scan-ms N     how often the bay is looked at (default 250)\n"
 		"  --irq PATH      sleep on this UIO device instead of only polling (see the header)\n"
@@ -361,6 +362,9 @@ int main(int argc, char **argv)
 	char err[512];
 	struct bay bay;
 	bay_init(&bay, packs_dir);
+	// QUUX's disk is raw, a fixed VHD or a dynamic VHD of any size, and the
+	// bay tells it by its footers where the CADR's tells a pack by its size.
+	bay.quux = quux;
 	struct feeder f;
 	// **THE FAN-OUT STREAM AND NOT `cadr_log_file()`.**  The feeder writes
 	// whole lines of its own through a `FILE *` --- the denied block among
@@ -375,11 +379,13 @@ int main(int argc, char **argv)
 	    feeder_fetch_addr(0), feeder_wb_addr(0), PS_SLOTS, FEEDER_RECORD_STRIDE);
 	say("the bay is %s: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives "
 	    "that are present, and a file whose read-only mark is set is a write-protected drive", packs_dir);
-	say("headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are");
 	// QUUX's block-disk asks by block number on unit 0 (`--machine quux`).
 	f.linear = quux;
 	if (quux)
-		say("the machine is QUUX (--machine quux): its block-disk asks for a block by its number on unit 0's pack");
+		say("the machine is QUUX (--machine quux): its block-disk asks for a block by its number on unit 0's disk, "
+		    "which is raw, a fixed VHD or a dynamic VHD, told by its footer, and has no header or checkwords");
+	else
+		say("headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are");
 
 	// 4. The store is emptied and the bay looked at: the drives that are
 	// already in it come present here, and one copied in later comes
@@ -397,7 +403,17 @@ int main(int argc, char **argv)
 			for (unsigned u = 0; u < BAY_UNITS; ++u)
 				if (present & (1u << u)) {
 					uint32_t rec[PACK_RECORD_WORDS];
-					if (pack_record(bay_pack(&bay, u), 0, rec, err, sizeof err) == 0)
+					if (pack_record(bay_pack(&bay, u), 0, rec, err, sizeof err) != 0)
+						continue;
+					// QUUX's disk carries a GPT and no LABL: UEFI's header
+					// signature "EFI PART" opens sector 1, block 0's second
+					// half.  Said, never required: block-disk serves blocks
+					// and the machine reads its own table.
+					if (quux)
+						say("unit %u: block 0's second half %s", u,
+						    rec[128] == 0x20494645u && rec[129] == 0x54524150u
+						    ? "opens with \"EFI PART\": a GPT" : "holds no GPT header");
+					else
 						say("unit %u: block 0 word 0 is 0x%08x%s; header 0x%08x", u, rec[0],
 						    rec[0] == 0x4C42414Cu ? " (LABL: a labeled pack)" : "", rec[256]);
 				}

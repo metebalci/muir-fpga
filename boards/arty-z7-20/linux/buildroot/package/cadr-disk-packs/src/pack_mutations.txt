@@ -42,13 +42,9 @@
 @note short file is taken for a T-300 and opened, `pack_open` refuses it on
 @note its size, and a failure in the bay is a failure.
 @old
-	if (pack_geometry_of_size((uint64_t)st.st_size, &l->g) < 0)
-		return;
-	l->is_pack = 1;
+	} else if (pack_geometry_of_size((uint64_t)st.st_size, &l->g) < 0) {
 @new
-	if (pack_geometry_of_size((uint64_t)st.st_size, &l->g) < 0)
-		l->g = PACK_T300;
-	l->is_pack = 1;
+	} else if (pack_geometry_of_size((uint64_t)st.st_size, &l->g) < 0 && 0) {
 @end
 
 @mutation bay-the-read-only-mark-is-not-the-write-protect-switch
@@ -274,4 +270,192 @@
 			return 1;
 		}
 @new
+@end
+
+# QUUX'S DISK, CONTRACT Q8.  One record for each thing the disk layer decides
+# that a reader would otherwise take on trust: which footer says what the file
+# is, what a damaged file is, how far block-disk reaches, where a dynamic
+# VHD's sector lies, what a block allocated on a write looks like and in what
+# order it lands, and that the drive bay tells the file's own growth from a
+# replacement.  Each is held to qemu's files, never to this program's own
+# reading of the format.
+
+@mutation quux-a-footer-whose-checksum-does-not-check-is-read
+@file quux_disk.c
+@why a VHD footer with a byte changed must be refused: its checksum does not check
+@old
+	if (want != got) {
+		snprintf(err, errlen, "a VHD footer whose checksum does not check: %08x, the bytes sum to %08x", want, got);
+		return -1;
+	}
+@new
+@end
+
+@mutation quux-a-dynamic-header-whose-checksum-does-not-check-is-read
+@file quux_disk.c
+@why a dynamic header with a byte changed must be refused: its checksum does not check
+@old
+	if (want != got) {
+		snprintf(err, errlen, "a dynamic header whose checksum does not check: %08x, the bytes sum to %08x", want, got);
+		return -1;
+	}
+@new
+@end
+
+@mutation quux-the-copy-of-the-footer-at-0-is-ignored
+@file quux_disk.c
+@why a dynamic VHD whose end footer a power cut lost opens by its copy at 0, and does not read as raw
+@old
+			if (r0 > 0 && t0 == 3) {
+@new
+			if (r0 > 0 && t0 == 99) {
+@end
+
+@mutation quux-a-fixed-vhd-larger-than-its-file-is-read
+@file quux_disk.c
+@why a fixed VHD whose footer says more disk than the file holds is a damaged footer
+@old
+		if (size > d->end) {
+@new
+		if (size > d->end + (64ull << 20)) {
+@end
+
+@mutation quux-a-differencing-vhd-is-read-as-dynamic
+@file quux_disk.c
+@why a differencing VHD needs its parent and is refused, not read as a dynamic one
+@old
+	} else if (type == 3) {
+@new
+	} else if (type == 3 || type == 4) {
+@end
+
+@mutation quux-a-vhdx-is-read-as-raw
+@file quux_disk.c
+@why a VHDX is not a VHD, has no footer a VHD reader finds, and must not be served as a raw disk
+@old
+	if (len >= 8 && memcmp(first, "vhdxfile", 8) == 0) {
+@new
+	if (len >= 8 && memcmp(first, "vhdxfilX", 8) == 0) {
+@end
+
+@mutation quux-a-disk-of-exactly-2-to-the-28-blocks-is-refused
+@file quux_disk.c
+@why block-disk's address is 28 bits, so a disk of exactly 2^28 blocks is all reachable
+@old
+	if (blocks > QUUX_MAX_BLOCKS) {
+@new
+	if (blocks >= QUUX_MAX_BLOCKS) {
+@end
+
+@mutation quux-a-disk-past-2-to-the-28-blocks-is-read
+@file quux_disk.c
+@why a disk of 2^28 + 1 blocks has a block no number reaches, and is refused as muir refuses it
+@old
+	if (blocks > QUUX_MAX_BLOCKS) {
+@new
+	if (blocks > QUUX_MAX_BLOCKS + 1u) {
+@end
+
+@mutation quux-a-table-too-short-for-the-disk-is-read
+@file quux_disk.c
+@why a dynamic VHD whose table covers less than its disk is refused
+@old
+	if ((uint64_t)d->entries * d->block_bytes < d->size) {
+@new
+	if ((uint64_t)d->entries * d->block_bytes < d->size / 4) {
+@end
+
+@mutation quux-a-table-naming-a-block-past-the-data-is-read
+@file quux_disk.c
+@why a table entry naming a block past the end, or one running into the footer, is a corrupt table
+@old
+		if (at > d->end || d->end - at < d->bitmap_bytes + d->block_bytes) {
+@new
+		if (at > d->end + (1ull << 40)) {
+@end
+
+@mutation quux-the-sector-bitmap-is-read-as-data
+@file quux_disk.c
+@why a dynamic VHD's block begins with its sector bitmap, and its data follows it
+@old
+	return (uint64_t)entry * QUUX_SECTOR + d->bitmap_bytes + at % d->block_bytes;
+@new
+	return (uint64_t)entry * QUUX_SECTOR + at % d->block_bytes;
+@end
+
+@mutation quux-a-new-block-has-its-bitmap-clear
+@file quux_disk.c
+@why qemu writes a new block's bitmap all ones, and the grown file must be qemu-io's byte for byte
+@old
+	memset(block, 0xFF, (size_t)d->bitmap_bytes);
+@new
+@end
+
+@mutation quux-a-new-block-leaves-no-footer-after-it
+@file quux_disk.c
+@why the footer moves to the file's new end when a block is allocated, or the file is no VHD any more
+@old
+	if (r == 0)
+		r = write_at(fd, end, d->footer, QUUX_SECTOR);
+@new
+@end
+
+@mutation quux-a-new-block-is-never-named-in-the-file
+@file quux_disk.c
+@why the table entry of a new block is written to the file, or the block is lost at the next open
+@old
+	if (r == 0)
+		r = write_at(fd, d->table_offset + 4ull * k, e, sizeof e);
+@new
+@end
+
+@mutation quux-a-new-block-goes-after-the-footer
+@file quux_disk.c
+@why a new block goes where the footer was, as qemu puts it, not after the footer
+@old
+			d->end = len - QUUX_SECTOR;
+@new
+			d->end = len;
+@end
+
+@mutation quux-a-record-carries-something-after-the-block
+@file pack_file.c
+@why QUUX's disk has no header and no checkwords, so the three words after the block are zeros
+@old
+		words[256] = words[257] = words[258] = 0;
+		return 0;
+@new
+		words[256] = lba;
+		words[257] = words[258] = 0;
+		return 0;
+@end
+
+@mutation quux-the-file-growing-is-not-seen
+@file pack_file.c
+@why a dynamic VHD grows under the machine's writes, and the bay must not take that for a replacement
+@old
+		p->size = st.st_size;
+		if (fdatasync(p->fd) < 0 && errno != EINVAL) {
+			snprintf(err, errlen, "syncing the disk: %s", strerror(errno));
+@new
+		if (fdatasync(p->fd) < 0 && errno != EINVAL) {
+			snprintf(err, errlen, "syncing the disk: %s", strerror(errno));
+@end
+
+@mutation bay-quux-any-file-is-a-disk
+@file pack_bay.c
+@why in QUUX's bay a file is a drive when its footers say it is QUUX's disk, and a VHD whose footer does not check is not
+@old
+		if (!quux_is_disk(path))
+			return;
+@new
+@end
+
+@mutation bay-quux-a-disk-is-opened-as-a-cadr-pack
+@file pack_bay.c
+@why in QUUX's bay the drive is opened as QUUX's disk, through its format, not as a Trident pack
+@old
+	if ((b->quux ? pack_open_quux : pack_open)(&d->pack, path, !l->read_only, err, errlen) < 0)
+@new
+	if (pack_open(&d->pack, path, !l->read_only, err, errlen) < 0)
 @end

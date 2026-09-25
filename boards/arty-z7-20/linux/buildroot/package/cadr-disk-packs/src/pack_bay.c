@@ -6,9 +6,11 @@
 
 #include "pack_bay.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 void bay_init(struct bay *b, const char *dir)
 {
@@ -25,6 +27,19 @@ void bay_path(const struct bay *b, unsigned unit, char *out, size_t n)
 	snprintf(out, n, "%s/%s", b->dir, name);
 }
 
+// Whether the file at `path` is QUUX's disk, by its footers.
+static int quux_is_disk(const char *path)
+{
+	const int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return 0;
+	struct quux_disk q;
+	char why[224];
+	const int r = quux_disk_probe(fd, &q, why, sizeof why);
+	close(fd);
+	return r == 0;
+}
+
 void bay_look(const struct bay *b, unsigned unit, struct bay_look *l)
 {
 	char path[4096];
@@ -39,11 +54,19 @@ void bay_look(const struct bay *b, unsigned unit, struct bay_look *l)
 	l->size = st.st_size;
 	if (!S_ISREG(st.st_mode))
 		return;
-	// The size is the whole of the test: a T-300's or a T-80's, and every
-	// other size --- an empty file, a copy still arriving, something that is
-	// not a pack at all --- is not a drive.
-	if (pack_geometry_of_size((uint64_t)st.st_size, &l->g) < 0)
+	if (b->quux) {
+		// QUUX's disk is any size, so the size says nothing and the file's
+		// own footers are the test: raw, a fixed VHD or a dynamic VHD whose
+		// footer and header check, of no more blocks than block-disk
+		// reaches.  The table is read at the open, not four times a second.
+		if (!quux_is_disk(path))
+			return;
+	} else if (pack_geometry_of_size((uint64_t)st.st_size, &l->g) < 0) {
+		// The size is the whole of the test: a T-300's or a T-80's, and
+		// every other size --- an empty file, a copy still arriving,
+		// something that is not a pack at all --- is not a drive.
 		return;
+	}
 	l->is_pack = 1;
 	// FAT's read-only attribute, as `vfat` shows it: the write bits down.
 	// Read from the mode and not from an open, because root's open for
@@ -56,7 +79,7 @@ int bay_open(struct bay *b, unsigned unit, const struct bay_look *l, char *err, 
 	char path[4096];
 	struct bay_drive *d = &b->d[unit];
 	bay_path(b, unit, path, sizeof path);
-	if (pack_open(&d->pack, path, !l->read_only, err, errlen) < 0)
+	if ((b->quux ? pack_open_quux : pack_open)(&d->pack, path, !l->read_only, err, errlen) < 0)
 		return -1;
 	// The file that was stat'ed and the file that was opened must be one
 	// file, or the pack was replaced between the two and this drive is

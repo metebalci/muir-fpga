@@ -65,6 +65,11 @@ struct bay_drive {
 
 struct bay {
 	char dir[3072];
+	// **QUUX'S BAY** (`--machine quux`): a file is a drive when it is QUUX's
+	// disk, raw, a fixed VHD or a dynamic VHD whose footers check, of any
+	// size up to block-disk's reach: its footers are the test, where a CADR
+	// pack's is its size.  Set after `bay_init` and before the first look.
+	int quux;
 	struct bay_drive d[BAY_UNITS];
 };
 
