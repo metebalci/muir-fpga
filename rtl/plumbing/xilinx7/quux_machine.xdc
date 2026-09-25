@@ -146,3 +146,17 @@ set_multicycle_path -hold  1 -from $split_every_tick -to $quux_divider
 # grid: 0 ns + 1 tick
 set_multicycle_path -setup 1 -from $split_md_held -to $quux_divider
 set_multicycle_path -hold  0 -from $split_md_held -to $quux_divider
+
+# **WHAT A MICROCYCLE READS OF QUUX'S CLOCKS** (`quux_clocks.sv`).  Source
+# 15, `usec_s`, is loaded at the master clock edge, the edge the processor's
+# registers move on, and read at the next, so it is in the relaxed set and
+# has K ticks there.  Source 17's `flag_s` and `en_s` are loaded at a held
+# edge too, but at an edge that runs a microcycle they are loaded a tick
+# AFTER it, with that edge's write in them (`w`, from `L`), and stand from
+# there to the next edge: K - 1.  They are out of the relaxed set by name
+# (`cadr_machine.xdc`), so `L` into them keeps its tick.
+set quux_status_s [filter [all_registers] {NAME =~ *processor/g_quux_tick.clocks/flag_s_reg* || \
+                                           NAME =~ *processor/g_quux_tick.clocks/en_s_reg*}]
+# sync: K - 1
+set_multicycle_path -setup 3 -from $quux_status_s -to $slow
+set_multicycle_path -hold  2 -from $quux_status_s -to $slow

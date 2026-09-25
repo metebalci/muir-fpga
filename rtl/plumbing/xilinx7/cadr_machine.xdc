@@ -363,11 +363,15 @@
 # record, the microcycle counter and the readout word to.
 #
 # **AND QUUX'S REGISTERS THAT RUN EVERY TICK, WHICH MATCH NOTHING ON THE
-# CADR.**  QUUX's clocks, `quux_clocks.sv`, out whole but for the status a
-# microcycle reads (`flag_s`, `en_s`, `usec_s`), which is sampled at the
+# CADR.**  QUUX's clocks, `quux_clocks.sv`, out whole but for the
+# microsecond clock a microcycle reads (`usec_s`), which is loaded at the
 # master clock edge and stands through the microcycle: the countdowns, the
 # flags they raise, the microsecond clock and the write taken a tick after
-# its edge all move on ticks of their own.  The register page's `taken` and
+# its edge all move on ticks of their own.  The status a microcycle reads
+# (`flag_s`, `en_s`) is out as well, because at an edge that runs a
+# microcycle it is loaded a tick after it, from `L`: in the set it gave `L`
+# the microcycle into it where the design gives a tick, and itself a tick
+# more than it has.  `quux_machine.xdc` gives it its own clause.  The register page's `taken` and
 # `held`, taken at the first tick of -XBUS.RQ, and its keyboard and mouse,
 # `quux_input.sv`, whose FIFO, flags and counts move on the tick a key word
 # arrives or a read is answered, out whole but for the page's held match;
@@ -406,8 +410,6 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *processor/mw_k1_q_reg*   && \
                                   NAME !~ *processor/mw_late2_q_reg* && \
                                   (NAME !~ *g_quux_tick.clocks/* || \
-                                       NAME =~ *g_quux_tick.clocks/flag_s_reg* || \
-                                       NAME =~ *g_quux_tick.clocks/en_s_reg* || \
                                        NAME =~ *g_quux_tick.clocks/usec_s_reg*) && \
                                   (NAME !~ *feature_page/* || \
                                        NAME =~ *feature_page/mine_reg* || \

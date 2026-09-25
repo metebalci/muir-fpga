@@ -781,6 +781,16 @@ if {$sta_quux} {
         assert_clause_timing $tick 3 "the latches into QUUX's divider" $::split_latch $::quux_divider
         # grid: 0 ns + 1 tick
         assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" $::split_md_held $::quux_divider
+        # And what a microcycle reads of QUUX's clocks: the microsecond clock
+        # the whole microcycle, the status a tick less, and `L` into the
+        # status, which is loaded from it a tick after the edge, at the tick.
+        # sync: K
+        assert_clause_timing $tick 4 "the microsecond clock a microcycle reads" $::quux_usec_s $::slow
+        # sync: K - 1
+        assert_clause_timing $tick 3 "the clocks' status a microcycle reads" $::quux_status_s $::slow
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "L into the clocks' status" \
+            [get_registers -nowarn [cadr_leaves {u_machine|processor|} {l}]] $::quux_status_s
     }
 }
 # The transaction audit has no register on a board with no console to read
