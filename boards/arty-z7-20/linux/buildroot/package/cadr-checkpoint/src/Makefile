@@ -89,9 +89,10 @@ install: all
 # name a home directory that no longer exists.
 #
 # `CHK` names a file for it to write, which is how `build/checkpoint.pass`
-# gets something for muir to open.
+# gets something for muir to open, and `QCHK` the QUUX machine's, which
+# `build/checkpoint.quux.pass` compares with muir's own.
 check: $(WORK)/checkpoint_test
-	$(WORK)/checkpoint_test $(WORK) $(CHK)
+	$(WORK)/checkpoint_test $(WORK) $(CHK) $(QCHK)
 
 $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                          $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
@@ -105,10 +106,12 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 # .pass` requires muir to refuse or to disagree with every one of them.
 # `CHK_MUTATE` is never defined in the program installed on the board.
 #
-# The list and the loop in the repository's own Makefile are two statements of
-# one number, and `build/checkpoint.pass` runs whatever that loop names: a
-# mutant added here and not there is built and never judged.
-MUTANTS := 1 2 3 4 5 6 7 8
+# The list and the two loops in the repository's own Makefile are two
+# statements of one set, and each check runs whatever its loop names: 1 to 8
+# are the CADR's, judged by `build/checkpoint.pass`, and 9 to 16 QUUX's,
+# judged by `build/checkpoint.quux.pass`.  A mutant added here and not there
+# is built and never judged.
+MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \

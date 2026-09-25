@@ -126,8 +126,25 @@ int ro_color_map(struct readout *r, int board,
 		 uint8_t map[RO_MAP_COLORS][RO_MAP_CHANNELS]);
 
 // Everything the window can say, into `img`.  Main memory and the display are
-// not here --- they are DDR and come through /dev/mem.  Returns 0, or -1.
+// not here --- they are DDR and come through /dev/mem.  Returns 0, or -1.  On
+// an image allocated as QUUX's this reads QUUX's sizes and `ro_read_quux`.
 int ro_read_machine(struct readout *r, struct cadr_image *img);
+
+// **WHICH MACHINE THE BITSTREAM IS**, asked of the fabric: the register
+// table's entry 21 carries QUUX's signature, `0x5155`, over K and L, and the
+// CADR answers `RO_NO_MEMORY` there.  Returns 1 for QUUX with `*k` and `*l`
+// set, 0 for the CADR, and -1 for a stale echo or a word that is neither.
+int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l);
+
+// QUUX's own state, into `img->qx`: the clocks, the keyboard and mouse,
+// block-disk and the page.  **THE CLOCKS RUN WHILE THEY ARE READ**, so each
+// timer's word carries the microsecond clock's low bits of its own tick; the
+// clock is read whole before and after them and the two must be within
+// `RO_QUUX_SPAN` ticks, so that those bits name one tick.  A read that took
+// longer is tried again, `RO_QUUX_TRIES` times.  Returns 0, or -1.
+#define RO_QUUX_SPAN  6400u	/* 64 us: half of the 128 the low bits span */
+#define RO_QUUX_TRIES 8
+int ro_read_quux(struct readout *r, struct cadr_image *img);
 
 // The transaction audit at selector 11, unpacked.  **Every one of its nine
 // words must carry `B05A` in its top sixteen bits or this returns -1 with

@@ -133,7 +133,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass $(BUILD)/dbg_cable.pass \
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
-       $(BUILD)/checkpoint.pass \
+       $(BUILD)/checkpoint.pass $(BUILD)/quux_readout_window.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
@@ -167,6 +167,7 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
        $(BUILD)/dispatch_write_order.quux.$(QK).pass \
        $(BUILD)/display_out.quux.pass $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
        $(BUILD)/quux_block_disk.quux.pass \
+       $(BUILD)/quux_readout_window.quux.$(QK).pass $(BUILD)/checkpoint.quux.pass \
        $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QK).pass) \
        $(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QKL1).pass) $(BUILD)/phase_gen.quux.$(QKL1).pass \
        $(BUILD)/machine_param.pass muir-pin
@@ -1984,6 +1985,48 @@ $(BUILD)/audit_window.pass: $(BUILD)/obj_audit_window/Vcadr_machine \
 	$(BUILD)/obj_audit_window/Vcadr_machine
 	@touch $@
 
+# ------------------------------------------- QUUX's state through the window
+#
+# What a checkpoint of a QUUX board reads, held word by word against the
+# registers and arrays that hold it: the processor's clocks (the register
+# table's entries 21 to 25), the register page's keyboard and mouse,
+# block-disk, the bus errors and MONO TV's black-on-white (selector 12), and
+# the PDL buffer, both map levels and the boot PROM at QUUX's sizes.  The DUT
+# is `cadr_machine` and the reference is the storage, reached by name ---
+# `--public-flat-rw` for `readout.pass`'s reason --- and poisoned there.  The
+# clocks and block-disk's time move while they are read, so a word is held to
+# the ticks it could have been taken at, and the one arithmetic a reader does
+# on them, when a timer's flag next rises, is held against the flag itself.
+# Built again as the CADR, the same addresses must read `RO_NO_MEMORY`, which
+# is how `cadr-checkpoint` tells the machines apart.  The tb's header has the
+# rest.
+QUUX_RO_TB := tb/quux_readout_window_tb.cpp
+
+$(BUILD)/obj_quux_readout_window_quux_$(QK)/Vcadr_machine: $(MACHINE_SRC) $(QUUX_RO_TB) | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $(BUILD)/obj_quux_readout_window_quux_$(QK) \
+	    -GMACHINE='"quux"' -GSYNC_K=$(SYNC_K) -GSYNC_L=$(SYNC_L) \
+	    -CFLAGS '-DQUUX_TB=1 -DSYNC_K_TB=$(SYNC_K) -DSYNC_L_TB=$(SYNC_L)' \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.quux.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath $(QUUX_RO_TB))
+
+$(BUILD)/quux_readout_window.quux.$(QK).pass: $(BUILD)/obj_quux_readout_window_quux_$(QK)/Vcadr_machine \
+                                             $(BUILD)/boot_prom.quux.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_quux_readout_window_quux_$(QK)/Vcadr_machine
+	@touch $@
+
+$(BUILD)/obj_quux_readout_window/Vcadr_machine: $(MACHINE_SRC) $(QUUX_RO_TB) | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $(BUILD)/obj_quux_readout_window \
+	    -CFLAGS -DQUUX_TB=0 \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE_SRC) $(abspath $(QUUX_RO_TB))
+
+$(BUILD)/quux_readout_window.pass: $(BUILD)/obj_quux_readout_window/Vcadr_machine \
+                                   $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_quux_readout_window/Vcadr_machine
+	@touch $@
+
 # ------------------------------------------------- the machine with no memory
 
 # Not a check: it asserts nothing and cannot fail. `tb/cadr_nomem_tb.cpp` runs
@@ -3584,7 +3627,8 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 # **THE EIGHT ARE STATED TWICE AND BOTH MOVE TOGETHER**: `MUTANTS` in the
 # package's own Makefile builds them and the loop below judges them, so one
 # added in the first place alone is built and never run, and in the second
-# alone is run and never built.
+# alone is run and never built.  QUUX's eight, 9 to 16, are judged by
+# `build/checkpoint.quux.pass` below.
 #
 # **SO THIS DIGEST IS A GOLDEN VALUE AND MOVES LIKE ONE.**  It is of the file
 # the host check writes from its own fixed synthetic machine, which is
@@ -3713,7 +3757,8 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
                           $(READOUT_SRC)/cadr_image.h \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
-	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk
+	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk \
+	    QCHK=$(CHECKPOINT_WORK)/quux.chk
 	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
@@ -3752,6 +3797,65 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     echo "checkpoint: mutant $$m caught by the digest alone --- $$what"; \
 	   else \
 	     echo "checkpoint: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
+	   fi; \
+	 done
+	@touch $@
+
+# ------------------------------------------------ and a QUUX checkpoint
+#
+# **QUUX'S FILE IS HELD TO muir'S OWN, BYTE FOR BYTE**, which is a stronger
+# judge than the CADR's digest: `golden/src/quux_checkpoint.rs` builds a QUUX
+# machine through muir's own calls --- the clocks enabled and a period
+# written, keys pressed and read, the mouse moved, block-disk started --- and
+# saves it, and the package's check builds the same machine as the fabric's
+# counters and registers would hold it after that history, through a modeled
+# window, and writes it with `cadr-checkpoint`'s code (`checkpoint_test.c`'s
+# `fill_quux`).  A field in the wrong place, crossed, of the wrong value or
+# converted wrongly from a counter to muir's instant makes the two differ.
+# Then muir loads the program's file and saves it back byte for byte, and its
+# report names the microcycles and the nanoseconds the model was given.
+#
+# What the reference cannot hold: the `Rtl` engine's own registers, which
+# muir keeps private, so both sides have them as a fresh engine does.  They
+# are the CADR's code, which `build/checkpoint.pass` holds.
+#
+# **THE MUTANTS ARE 9 TO 16** (`chk_rtl.c`'s `chk_rtl_mutation` names each),
+# and each is caught when muir refuses the file, saves other bytes, or the
+# file is not muir's own.  It rides on `build/checkpoint.pass`, which builds
+# the program, the test's binaries in the one work directory and muir.
+CHECKPOINT_QUUX_RESUMED := at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
+
+$(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoint.rs $(GOLDEN_AXIS) golden/src/trace.rs \
+                               golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin quux_checkpoint -- $(CHECKPOINT_WORK)/quux-muir.chk \
+	    --machine quux --sync-cycle-ticks 4 --sync-ilong-ticks 0
+	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(MUIR_BIN); \
+	 cmp $$W/quux.chk $$W/quux-muir.chk \
+	   || { echo "checkpoint.quux: the program's file is not muir's own for the same machine"; exit 1; }; \
+	 $$M --rtl --machine quux --stop-after 0 --resume $$W/quux.chk --checkpoint $$W/quux-back.chk \
+	     > $$W/quux-muir.log 2>&1 \
+	   || { echo "checkpoint.quux: muir REFUSED the file"; sed -n '$$p' $$W/quux-muir.log; exit 1; }; \
+	 cmp $$W/quux.chk $$W/quux-back.chk \
+	   || { echo "checkpoint.quux: muir loaded the file and saved DIFFERENT bytes"; exit 1; }; \
+	 grep -q "$(CHECKPOINT_QUUX_RESUMED)" $$W/quux-muir.log \
+	   || { echo "checkpoint.quux: muir did not resume the machine the model wrote:"; \
+	        grep '^resumed' $$W/quux-muir.log; exit 1; }; \
+	 echo "checkpoint.quux: $$(stat -c%s $$W/quux.chk) bytes, the same as muir's own for the same machine,"; \
+	 echo "checkpoint.quux: loaded and saved back identically, resumed $$(grep '^resumed' $$W/quux-muir.log | sed 's/^resumed: [^ ]* //')"; \
+	 for m in 9 10 11 12 13 14 15 16; do \
+	   $$W/checkpoint_test-$$m $$W $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
+	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
+	          cat $$W/qmut-$$m.out; exit 1; }; \
+	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-$$m.out); \
+	   if ! $$M --rtl --machine quux --stop-after 0 --resume $$W/qmut-$$m.chk \
+	            --checkpoint $$W/qmut-$$m-back.chk > $$W/qmut-$$m.log 2>&1; then \
+	     echo "checkpoint.quux: mutant $$m caught, muir refused it --- $$what"; \
+	   elif ! cmp -s $$W/qmut-$$m.chk $$W/qmut-$$m-back.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught, muir saved other bytes --- $$what"; \
+	   elif ! cmp -s $$W/qmut-$$m.chk $$W/quux-muir.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught, not muir's own file --- $$what"; \
+	   else \
+	     echo "checkpoint.quux: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
 	   fi; \
 	 done
 	@touch $@

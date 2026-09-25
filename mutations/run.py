@@ -1249,6 +1249,56 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # QUUX's state through the readout window: what a checkpoint of a QUUX
+    # board reads, each field against the register that holds it, at K = 4
+    # (`build/quux_readout_window.quux.k4.pass`); and the CADR, where none
+    # of it answers (`build/quux_readout_window.pass`).
+    "quux_readout_window_quux": {
+        "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/machine/cadr_memory_path.sv",
+                    "rtl/machine/cadr_machine.sv"] + QUUX_SOURCES,
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv",
+            "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+            "rtl/plumbing/cadr_bus_audit.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/quux_readout_window_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-Iboards/arty-z7-20", '-GMACHINE="quux"', "-GSYNC_K=4", "-GSYNC_L=0",
+                  "-CFLAGS", "-DQUUX_TB=1 -DSYNC_K_TB=4 -DSYNC_L_TB=0"],
+        "golden": None,
+        "prom": "boot_prom.quux.hex",
+        "machine": "quux",
+    },
+    "quux_readout_window": {
+        "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/machine/cadr_machine.sv"],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv",
+            "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+            "rtl/machine/cadr_memory_path.sv",
+            "rtl/plumbing/cadr_bus_audit.sv",
+        ] + QUUX_SOURCES,
+        "top": "cadr_machine",
+        "tb": "tb/quux_readout_window_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-Iboards/arty-z7-20", "-CFLAGS", "-DQUUX_TB=0"],
+        "golden": None,
+        "gprom": True,
+    },
     # The probe the board will be read through. `tb/cadr_probe_harness.sv`
     # wires it to `cadr_machine` exactly as `boards/arty-z7-20/cadr_arty.sv` does and the
     # testbench shifts all 1,024 samples out through the probe's own JTAG shift
@@ -3129,8 +3179,11 @@ def check_makefile():
     # `board_reset` is one `.pass` and three builds, one a board, and each
     # build is its own entry above, `board_reset_arty` and the other two.
     # `fault` is the same shape: `fault_arty`, `fault_cora` and `fault_de25`.
+    # `checkpoint_quux` is `checkpoint`'s QUUX half and closed its way: its
+    # mutants, 9 to 16, are `chk_rtl.c`'s own behind `CHK_MUTATE`, judged by
+    # muir and by muir's own file for the same machine in its own rule.
     known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
-                           "chaosnet", "serial", "terminal", "console_face",
+                           "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora",
                            "de25_pins", "de25_linux"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was

@@ -86,7 +86,24 @@ module quux_clocks (
     // Each flag as it stands, under its enable: the register page's word
     // 100, `<0>` the tick and `<1>` the interval timer
     // (`Machine::interrupt_sources`).
-    output var logic [1:0]  pending
+    output var logic [1:0]  pending,
+
+    // **THE READOUT'S VIEW, FOR A CHECKPOINT** (`cadr_microcycle.sv`'s
+    // register table, entries 22 to 25; `docs/checkpoint.md`).  Raw
+    // registers, each word taken in one tick, and each timer's word carrying
+    // the microsecond clock's low bits of the SAME tick: a timer's next rise
+    // is `pre + (us - 1) * TICKS_A_US` ticks after the tick its word was
+    // taken at, and the reader must know which tick that was, the timers
+    // running while the machine is halted and the reader's accesses being
+    // microseconds apart.  `build/quux_readout_window.quux.k4.pass` holds every field.
+    //   ro_time      <38:32> usec_t, <31:0> usec
+    //   ro_timer[k]  <47:41> usec<6:0>, <40:34> usec_t, <33> en, <32> sticky,
+    //                <31> live, <30:24> pre, <23:0> us
+    //   ro_period    the interval timer's period in microseconds
+    output var logic [47:0] ro_time,
+    output var logic [47:0] ro_tick,
+    output var logic [47:0] ro_interval,
+    output var logic [23:0] ro_period
 );
 
   localparam int unsigned TICKS_A_US = 1000 / cadr_tick_pkg::TICK_NS;
@@ -234,6 +251,11 @@ module quux_clocks (
 
   assign status  = {en_s[1], flag_s[1], en_s[0], flag_s[0]};
   assign pending = flag;
+
+  assign ro_time     = {9'd0, usec_t, usec};
+  assign ro_tick     = {usec[6:0], usec_t, en[0], sticky[0], live[0], pre[0], us[0]};
+  assign ro_interval = {usec[6:0], usec_t, en[1], sticky[1], live[1], pre[1], us[1]};
+  assign ro_period   = interval_us;
 
   // **`SINTR` AT THE EDGE THAT ENDS THE MICROCYCLE, WAITING OR NOT** (muir's
   // `1775bba`, `Machine::interrupt_at(now)` at the end of `Rtl::clock_edge`):

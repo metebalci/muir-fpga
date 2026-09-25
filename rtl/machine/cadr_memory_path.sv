@@ -529,7 +529,10 @@ module cadr_memory_path #(
     input  var logic [15:0] page_ch_wdata,
     output var logic [15:0] page_ch_rdata,
     output var logic        chaos_ireq,
-    output var logic [2:0]  mouse_buttons
+    output var logic [2:0]  mouse_buttons,
+    // MONO TV's black-on-white, the one bit of its mode register, for the
+    // readout (a checkpoint's `Tv::mode`); zero on the CADR.
+    output var logic        mono_bow_o
 );
 
   // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`).  The decode
@@ -1364,11 +1367,11 @@ module cadr_memory_path #(
         .fb_sel   (mono_fb),
         .bow      (mono_bow)
     );
-    // Black-on-white reaches nothing yet: the display output's polarity is a
-    // setting of the board's (`BOW` in `cadr_display_out.sv`).
-    logic unused_mono;
-    assign unused_mono = mono_bow;
+    // Black-on-white reaches nothing but the readout: the display output's
+    // polarity is a setting of the board's (`BOW` in `cadr_display_out.sv`).
+    assign mono_bow_o = mono_bow;
   end else begin : g_cadr_no_mono_tv
+    assign mono_bow_o  = 1'b0;
     assign mono_ack    = 1'b0;
     assign mono_drives = 1'b0;
     assign mono_fb     = 1'b0;

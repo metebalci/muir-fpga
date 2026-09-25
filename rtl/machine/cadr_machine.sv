@@ -708,6 +708,8 @@ module cadr_machine #(
   logic [15:0] page_ch_wdata, page_ch_rdata;
   logic        iob_n_boot1;
   logic [7:0]  iob_csr_face;
+  // MONO TV's black-on-white, for the register page's readout below.
+  logic        mono_bow;
   // **ON QUUX THE UNIBUS INTERRUPT DOES NOT REACH THE PROCESSOR**, QUUX
   // having no Unibus (contract Q5, `Machine::interrupt_at`'s
   // `geometry.unibus`): its devices interrupt through the register page.
@@ -980,7 +982,8 @@ module cadr_machine #(
       .page_ch_wdata  (page_ch_wdata),
       .page_ch_rdata  (page_ch_rdata),
       .chaos_ireq     (chaos_ireq),
-      .mouse_buttons  (mouse_buttons)
+      .mouse_buttons  (mouse_buttons),
+      .mono_bow_o     (mono_bow)
   );
 
   // --- the disk controller, the first Xbus slave that is not main memory ---
@@ -1028,6 +1031,9 @@ module cadr_machine #(
   // interrupt is also the register page's word 100 `<2>`.  The instance is
   // `disk` in both machines' generate blocks, which the constraint files
   // name.
+  // Block-disk's registers for the register page's readout below.
+  logic [31:0] bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_since_done;
+  logic [6:0]  bd_ro_flags;
   if (QUUX) begin : g_quux_disk
   quux_block_disk disk (
       .clk      (clk),
@@ -1072,9 +1078,21 @@ module cadr_machine #(
       .store_deny(store_deny),
       .ch_slot_o(ch_slot),
       .ch_wrote (ch_wrote),
-      .ch_hit   (ch_hit)
+      .ch_hit   (ch_hit),
+      .ro_cmd   (bd_ro_cmd),
+      .ro_clp   (bd_ro_clp),
+      .ro_da    (bd_ro_da),
+      .ro_lma   (bd_ro_lma),
+      .ro_flags (bd_ro_flags),
+      .ro_since_done(bd_ro_since_done)
   );
   end else begin : g_cadr_disk
+  assign bd_ro_cmd        = 32'd0;
+  assign bd_ro_clp        = 32'd0;
+  assign bd_ro_da         = 32'd0;
+  assign bd_ro_lma        = 32'd0;
+  assign bd_ro_since_done = 32'd0;
+  assign bd_ro_flags      = 7'd0;
   cadr_disk_controller disk (
       .clk      (clk),
       .rst      (rst),
@@ -1126,6 +1144,12 @@ module cadr_machine #(
   // joined the same way: the decode makes page 36776 a device only on QUUX,
   // and the page and the disk's four registers are disjoint, so the two
   // cannot both answer one cycle.
+  // The register page's readout, selector 12 (below, in the QUUX block).
+  logic [47:0] quux_ro_word;
+  logic [17:0] quux_ro_a1, quux_ro_a2;
+  logic [13:0] in_ro_state;
+  logic [6:0]  in_ro_count;
+  logic [23:0] in_ro_fifo_q;
   if (QUUX) begin : g_quux_feature_page
     logic        feature_ack, feature_drives;
     logic        page_n_boot, page_kbd_busy;
@@ -1168,8 +1192,63 @@ module cadr_machine #(
         .mouse_buttons(mouse_buttons),
         .irq          (page_irq),
         .n_boot_kbd   (page_n_boot),
-        .kbd_busy     (page_kbd_busy)
+        .kbd_busy     (page_kbd_busy),
+        .ro_in_state  (in_ro_state),
+        .ro_in_count  (in_ro_count),
+        .ro_fifo_a    (quux_ro_a2[5:0]),
+        .ro_fifo_q    (in_ro_fifo_q)
     );
+
+    // **THE REGISTER PAGE'S DEVICES ON THE READOUT, AT SELECTOR 12**: what a
+    // checkpoint carries of them as muir's `QuuxInput`, `BlockDisk`,
+    // `Machine::bus_error` and MONO TV's `Tv::mode`.  On the audit's pipeline
+    // and for its reason: the address delayed by two, the word registered
+    // once, landing on the tick the echo names it (the audit's note below).
+    // Each word is taken whole in one tick.  The words:
+    //
+    //     0   the keyboard and the mouse: <43:38> the FIFO's head, <37:31> its
+    //         count, <30> overflowed, <29> the keyboard's enable, <28> the
+    //         mouse changed, <27> the mouse's enable, <26:24> the buttons,
+    //         <23:12> Y, <11:0> X
+    //     1-4 block-disk's command, command list pointer, disk address and
+    //         last memory address
+    //     5   block-disk's flags, <38:32> (`quux_block_disk.sv`'s `ro_flags`),
+    //         and <31:0> the ticks since its blocks' time ran out
+    //     6   <8> MONO TV's black-on-white, <5:0> the bus errors as word 101
+    //         reads them (`Machine::bus_error`)
+    //     100-177  the keyboard FIFO's sixty-four words, by index
+    //
+    // and anything else `RO_NO_MEMORY`.  What holds it:
+    // `build/quux_readout_window.quux.pass`.
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        quux_ro_a1 <= 18'h3FFFF;
+        quux_ro_a2 <= 18'h3FFFF;
+      end else begin
+        quux_ro_a1 <= con_ro_addr;
+        quux_ro_a2 <= quux_ro_a1;
+      end
+    end
+    always_ff @(posedge clk) begin
+      if (quux_ro_a2[13:6] == 8'd1) begin
+        quux_ro_word <= {24'd0, in_ro_fifo_q};
+      end else begin
+        unique case (quux_ro_a2[13:0])
+          14'd0: quux_ro_word <= {4'd0, in_ro_state[13:8], in_ro_count, in_ro_state[3:0],
+                                  mouse_buttons, mouse_y, mouse_x};
+          14'd1: quux_ro_word <= {16'd0, bd_ro_cmd};
+          14'd2: quux_ro_word <= {16'd0, bd_ro_clp};
+          14'd3: quux_ro_word <= {16'd0, bd_ro_da};
+          14'd4: quux_ro_word <= {16'd0, bd_ro_lma};
+          14'd5: quux_ro_word <= {9'd0, bd_ro_flags, bd_ro_since_done};
+          14'd6: quux_ro_word <= {39'd0, mono_bow, 2'd0, page_err[2], 1'b0, page_err[1],
+                                  2'd0, page_err[0]};
+          default: quux_ro_word <= 48'hA5A5_5A5A_A5A5;
+        endcase
+      end
+    end
+    logic unused_ro;
+    assign unused_ro = ^{quux_ro_a2[17:14], in_ro_state[7:4]};
 
     // The keyboard's boot word boots from the page on QUUX, and the host's
     // handshake reads the page's FIFO in `KBD READY`'s place.
@@ -1196,9 +1275,19 @@ module cadr_machine #(
   assign page_ch_wr       = 1'b0;
   assign page_ch_which    = 3'd0;
   assign page_ch_wdata    = 16'd0;
-  // The page's wires the CADR does not read.
+  // The page's wires the CADR does not read, and its readout: selector 12
+  // reads `RO_NO_MEMORY` on the CADR, as every selector it does not map.
+  assign quux_ro_word = 48'hA5A5_5A5A_A5A5;
+  assign quux_ro_a1   = 18'h3FFFF;
+  assign quux_ro_a2   = 18'h3FFFF;
+  assign in_ro_state  = 14'd0;
+  assign in_ro_count  = 7'd0;
+  assign in_ro_fifo_q = 24'd0;
   logic unused_page;
-  assign unused_page = ^{clock_pending, page_err, page_ch_rdata, chaos_ireq, mouse_buttons};
+  assign unused_page = ^{clock_pending, page_err, page_ch_rdata, chaos_ireq, mouse_buttons,
+                         mono_bow, bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_flags,
+                         bd_ro_since_done, quux_ro_a1, quux_ro_a2, in_ro_state, in_ro_count,
+                         in_ro_fifo_q};
   end
 
   // ------------------------------------------------- the transaction audit
@@ -1246,7 +1335,8 @@ module cadr_machine #(
 
   // **THE READOUT, JOINED INTO THE CONSOLE'S WINDOW AT A SELECTOR OF ITS
   // OWN.**  `cadr_microcycle.sv` maps 0 to 10 and answers `RO_NO_MEMORY` for
-  // anything else; 11 is the audit's and 12 to 15 are still free.  That is
+  // anything else; 11 is the audit's, 12 QUUX's register page's and 13 to 15
+  // are still free.  That is
   // how anything inside this module is read on a HALTED board, over
   // `M_AXI_GP1`, by `cadr-readout`, from anywhere, with nobody at the board
   // --- and the board's own event is hours in the past by the time anybody
@@ -1279,7 +1369,11 @@ module cadr_machine #(
     end
   end
 
-  assign con_ro_data = (con_ro_echo[17:14] == RO_AUDIT) ? aud_word : proc_ro_data;
+  // And selector 12, QUUX's register page (above): `RO_NO_MEMORY` on the CADR.
+  localparam logic [3:0] RO_QUUX_PAGE = 4'd12;
+  assign con_ro_data = (con_ro_echo[17:14] == RO_AUDIT)     ? aud_word
+                     : (con_ro_echo[17:14] == RO_QUUX_PAGE) ? quux_ro_word
+                                                            : proc_ro_data;
 
   cadr_bus_audit audit (
       .clk         (clk),

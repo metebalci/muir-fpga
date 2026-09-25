@@ -149,7 +149,14 @@ module quux_feature_page #(
     output var logic        irq,
     // The keyboard's boot word, and the host's handshake (`quux_input.sv`).
     output var logic        n_boot_kbd,
-    output var logic        kbd_busy
+    output var logic        kbd_busy,
+
+    // The keyboard's and the mouse's registers for the readout, a checkpoint's
+    // `QuuxInput` (`quux_input.sv`'s `ro_*`).
+    output var logic [13:0] ro_in_state,
+    output var logic [6:0]  ro_in_count,
+    input  var logic [5:0]  ro_fifo_a,
+    output var logic [23:0] ro_fifo_q
 );
 
   localparam logic [13:0] FEATURE_PAGE = 14'o36776;
@@ -193,7 +200,11 @@ module quux_feature_page #(
       .mine         (in_mine),
       .irq          (in_irq),
       .n_boot       (n_boot_kbd),
-      .busy         (kbd_busy)
+      .busy         (kbd_busy),
+      .ro_state     (ro_in_state),
+      .ro_count     (ro_in_count),
+      .ro_fifo_a    (ro_fifo_a),
+      .ro_fifo_q    (ro_fifo_q)
   );
 
   logic [31:0] word;

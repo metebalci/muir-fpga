@@ -95,3 +95,7 @@ path = "src/quux_input.rs"
 [[bin]]
 name = "quux_block_disk"
 path = "src/quux_block_disk.rs"
+
+[[bin]]
+name = "quux_checkpoint"
+path = "src/quux_checkpoint.rs"

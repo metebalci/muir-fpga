@@ -562,6 +562,15 @@ diagnostic bus has no register for. A selector this fabric does not map reads
 that reserved selector. Neither is a value a memory can hold or an address a
 program may ask for.
 
+On QUUX the same selectors have QUUX's sizes: the pushdown buffer is 16,384
+words, the level-1 map six bits and the level-2 map 2,048 entries. The table
+at 10 has five more entries, 21 to 25: QUUX's signature with the K and L the
+bitstream was built at, the microsecond clock, the tick, the interval timer and
+its period. Selector 12 is QUUX's register page: the keyboard and mouse,
+block-disk, the bus errors and MONO TV's black-on-white, and the keyboard
+FIFO's words at 64 and up. On the CADR all of those read `0xA5A5_5A5A_A5A5`.
+`docs/checkpoint.md` has the words, since a checkpoint is what reads them.
+
 **It cannot disturb the machine, and that is by construction.** Every memory
 has a second read port of its own. Nothing in the readout drives an address,
 an enable or a word that the machine reads. The alternative was to mux the
