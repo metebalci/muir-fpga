@@ -69,7 +69,10 @@ as a named constant.
    grid that is 6 < 7 < 8 ticks, with nothing to spare.
 4. The NXM timeout is five oscillator periods and fires on the sixth rising
    edge. The acknowledgment follows the oscillator's phase, so anything that
-   changes when the oscillator starts moves every timeout.
+   changes when the oscillator starts moves every timeout. On the Xbus the
+   timeout is the acknowledgment. On the Unibus it is `SSYN T0`, so a cycle
+   nothing answers is acknowledged 150 ns after it and its MD strobe is 100 ns
+   after it, as a slave's are after `-UB SSYN`.
 5. On the Unibus the MD strobe lands 50 ns before the acknowledgment. On the
    Xbus the two coincide.
 6. The register blocks' pulse, strobe and answer are three taps of one delay
@@ -296,6 +299,12 @@ edge before its instant. That is why several constants are one tick short:
 - the register block lands a write at SPEEDCLK two ticks ahead of it, for
   the synchronizer, so a strobe due on either of those ticks is landed
   there from the word on the bus.
+- every Unibus slave raises `-UB SSYN` on the edge before its instant, the
+  I/O board and the interface's register block as the diagnostic registers
+  do, and the register block takes a write on the edge before
+  `REGISTER_STROBE_NS`. The I/O board's own state (its clocks, counters,
+  interval timer and ready bits) is not a line to another board. It moves on
+  the edge its instant is, and so does the word a cycle lands.
 
 Every check that compares an acknowledgment with muir reads it in this frame,
 before the edge and with the tick's inputs driven, and prints the

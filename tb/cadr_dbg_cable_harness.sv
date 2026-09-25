@@ -124,7 +124,7 @@ module cadr_dbg_cable_harness #(
   logic [15:0] a_dbg_in;
 
   logic        a_active_u;
-  logic        a_map_req_u, a_map_write_u, a_map_md_u, a_ub_int_u;
+  logic        a_map_req_u, a_map_write_u, a_map_md_u, a_ub_int_u, a_ub_int_hand_u;
   logic [21:0] a_map_addr_u;
   logic [31:0] a_map_wdata_u, a_map_md_wdata_u;
   logic [7:0]  a_err_status_u;
@@ -141,7 +141,7 @@ module cadr_dbg_cable_harness #(
       .dbgout_dbd(a_dbg_dbd), .dbgout_ack(a_dbg_ack), .dbgout_dbd_in(a_dbg_in),
       .dbgout_live(a_dbg_live), .select_debug(a_select_debug),
       .xbus_intr(1'b0), .iob_intr(1'b0), .iob_vector(8'd0),
-      .timed_out(1'b0), .unibus(1'b0), .ub_int(a_ub_int_u),
+      .timed_out(1'b0), .unibus(1'b0), .ub_int(a_ub_int_u), .ub_int_hand(a_ub_int_hand_u),
       .err_status(a_err_status_u),
       .page_err_clear(1'b0)
   );
@@ -295,7 +295,7 @@ module cadr_dbg_cable_harness #(
   assign unused = ^{a_active_u, b_active_u, b_out_ack_u, b_out_live_u, b_out_dbd_u,
                     b_cpu_ssyn_u,
                     a_map_req_u, a_map_addr_u, a_map_write_u, a_map_wdata_u,
-                    a_map_md_u, a_map_md_wdata_u, a_ub_int_u, a_err_status_u,
+                    a_map_md_u, a_map_md_wdata_u, a_ub_int_u, a_ub_int_hand_u, a_err_status_u,
                     a_in_req_u, a_in_wr_u, a_in_a_u, a_in_dbd_u,
                     b_timeout_inhibit_u, b_con_gnt_u, b_con_ssyn_u, b_con_rdata_u,
                     b_errstop_u, b_stathenb_u, b_prog_reset_u, b_prog_boot_u,

@@ -954,41 +954,68 @@ module cadr_io_board (
   // any cycle that reached 1,024 of them; six checks and sixty-three mutations
   // passed over it.  **Here it is belt and braces and the equivalence is
   // recorded rather than left for somebody to file as a hole**: `ub_ssyn`
-  // latches once `answer_now` has been true, and nothing clears it while
-  // `-UB MSYN` stands, so a counter that wrapped would still cross its
-  // threshold for the first time at the same tick.  Saturating costs nothing
-  // and takes the whole class away.
+  // and `landed` latch once `ssyn_now` and `answer_now` have been true, and
+  // nothing clears them while `-UB MSYN` stands, so a counter that wrapped
+  // would still cross each threshold for the first time at the same tick.
+  // Saturating costs nothing and takes the whole class away.
   localparam logic [6:0] T_MAX = 7'd127;
 
-  logic answer_now;
-  always_comb begin
+  // The instant each register answers, as a count of ticks that reads one
+  // at the tick after the edge it starts on --- `-UB MSYN`'s own, or the
+  // clock edge that lets the register go --- so that the delay has run on
+  // the edge after the tick it reads `N`.  `lead` takes each threshold one
+  // tick short, for `-UB SSYN` below.
+  function automatic logic answer_at(input logic lead);
+    logic [7:0] l;
+    l = {7'd0, lead};
     if (!sel) begin
-      answer_now = 1'b0;
+      return 1'b0;
     end else if (kbm) begin
       // Two stages of the microsecond clock, then the TD250.
-      answer_now = (edges >= 2'd2) && (t_edge >= 7'(STRAIGHT_T));
+      return (edges >= 2'd2) && ({1'b0, t_edge} >= 8'(STRAIGHT_T) - l);
     end else if (clkgrp && which[1:0] == C_USEC_LOW) begin
       // One edge, and 313 ns rounded up to the grid.
-      answer_now = (edges >= 2'd1) && (t_edge >= 7'(USEC_LOW_T));
+      return (edges >= 2'd1) && ({1'b0, t_edge} >= 8'(USEC_LOW_T) - l);
     end else if (sergrp) begin
       // The first half-microsecond edge strictly after `-MSYN`, then 750 ns.
-      answer_now = hu_edge1 && (t_hu >= 8'(SERIAL_T));
+      return hu_edge1 && (t_hu >= 8'(SERIAL_T) - l);
     end else if (ch_rbuf) begin
       // The first `FCLK^` edge at or after `-MSYN` plus 33 ns, then a TD250.
-      answer_now = fc_edge1 && (t_fclk >= 7'(STRAIGHT_T));
+      return fc_edge1 && ({1'b0, t_fclk} >= 8'(STRAIGHT_T) - l);
     end else if (ch_buf) begin
       // Through the transmitter's `-TSR.SSYN`.
-      answer_now = (t_msyn >= 7'(CHAOS_BUF_T));
+      return {1'b0, t_msyn} >= 8'(CHAOS_BUF_T) - l;
     end else begin
-      answer_now = (t_msyn >= 7'(STRAIGHT_T));
+      return {1'b0, t_msyn} >= 8'(STRAIGHT_T) - l;
     end
-  end
+  endfunction
 
-  // The tick the word crosses: `-UB SSYN` rises here and a write lands here,
-  // where muir puts it.  One tick, because `ub_ssyn` stands for the rest of
-  // the cycle.
-  logic land;
-  assign land = ub_msyn && answer_now && !ub_ssyn;
+  // The tick the word crosses: a write lands here and a read's word is held
+  // here, where muir puts both, `Busint`'s `answered` being `-UB SSYN` for
+  // every register of this card.  In the frame this card's own state keeps
+  // --- a register moving on the edge its instant is, as the interval timer,
+  // the counters and the clocks do, and as `build/iob.pass` holds all of
+  // them to muir --- this is that edge.  `landed` says it has happened, for
+  // the rest of the cycle.
+  logic answer_now, landed, land;
+  assign answer_now = answer_at(1'b0);
+  assign land = ub_msyn && answer_now && !landed;
+
+  // **`-UB SSYN` IS A TICK AHEAD OF THE LANDING, AND THAT IS ITS INSTANT, NOT
+  // AN EARLY ONE** (`docs/timing.md`, "A change on an edge counts as before
+  // it").  It is not this card's state but a line to another board, and a
+  // register standing for an asynchronous line moves on the edge BEFORE its
+  // instant so that the edge at the instant is the first to see it --- the
+  // frame the bus interface counts `-LMACK` and the MD strobe from, and the
+  // one `cadr_spy_registers.sv`, on the same bus, has always answered in.
+  // Raised with the landing, as it was, every answer of this card reached
+  // the processor a tick after muir's: measured on the whole machine with
+  // `quux_unibus`, `-MEMACK` 10 ns late at every register the TD250 answers
+  // straight off, and at the rest too once the machine's own drift was taken
+  // out.  The word on the lines is right from this tick: `word` below holds
+  // `new_now` until the landing takes it.
+  logic ssyn_now;
+  assign ssyn_now = answer_at(1'b1);
 
   // Reset: AIM-628's "completely resets the interface, just as at power up
   // and Unibus Initialize", which is the write-only bit 13 of the CSR and
@@ -1025,7 +1052,7 @@ module cadr_io_board (
         default:     word = OPEN_BUS;   // the GPIO: nothing is wired to it
       endcase
     end else begin
-      word = ub_ssyn ? new_held : new_now;
+      word = landed ? new_held : new_now;
     end
   end
 
@@ -1113,6 +1140,7 @@ module cadr_io_board (
       audio       <= 1'b0;
 
       ub_ssyn     <= 1'b0;
+      landed      <= 1'b0;
       busy        <= 1'b0;
       first       <= 1'b0;
       edges       <= 2'd0;
@@ -1422,6 +1450,7 @@ module cadr_io_board (
       // --- the bus cycle ---------------------------------------------------
       if (!ub_msyn) begin
         ub_ssyn  <= 1'b0;
+        landed   <= 1'b0;
         busy     <= 1'b0;
         first    <= 1'b0;
         edges    <= 2'd0;
@@ -1470,7 +1499,8 @@ module cadr_io_board (
           usec_latch <= usec;
         end
 
-        if (answer_now) ub_ssyn <= 1'b1;
+        if (ssyn_now) ub_ssyn <= 1'b1;
+        if (land) landed <= 1'b1;
         // See the note at `new_now`: the two new groups have reads that move
         // what the next read of the same address gives, and the MD strobe is
         // twenty ticks past `-UB SSYN`.

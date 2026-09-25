@@ -288,6 +288,16 @@ But the instant is a choice, and a fabric that loads the interval timer at
 its own write pulse brings `CLOCK READY` up by up to 2,250 ns early against
 this trace. That is written here, not left to be found.
 
+**`-UB SSYN` rises a tick before the word lands.** The line goes to another
+board, so it is a register that moves on the edge before its instant, and the
+bus interface counts `-LMACK` and the MD strobe from the edge that first sees
+it. The word lands on the edge after, with the rest of the card's state, which
+moves on the edge its instant is. Raised on the same edge as the landing, every
+answer of the card reached the processor a tick after muir's. The whole machine
+shows it with `quux_unibus`, a program that reads and writes every register of
+the card and the interface's two at many phases of the card's clocks and
+compares every `-MEMACK` with muir's.
+
 **The counter's low half is read at `-UB MSYN`, not at `-UB SSYN`.** muir's
 `busint.rs` says why: "the board latches it on the way to answering, before
 the edge that answers has counted". The band's first read of it took one less

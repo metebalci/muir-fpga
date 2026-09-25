@@ -218,6 +218,9 @@ module cadr_memory_path #(
     // above into `SINTR`, as `LM INT` is `UB INT OR XBUS INTR IN` at
     // UBINTC 0E04.
     output var logic        ub_int,
+    // Its hand-written term alone, which a bus reset does not reach
+    // (`cadr_busint_regs.sv`).
+    output var logic        ub_int_hand,
 
     // The disk controller's memory channel, the second master on this bus.
     // One word a cycle, the request standing until `ch_done`; `ch_nxm` says
@@ -1376,6 +1379,7 @@ module cadr_memory_path #(
       .timed_out (timed_out),
       .unibus    (unibus),
       .ub_int    (ub_int),
+      .ub_int_hand(ub_int_hand),
       .err_status(regs_err_status),
       .page_err_clear(page_err_clear),
       // The DBGOUT end of MIT's debug cable, this machine as the debugger.

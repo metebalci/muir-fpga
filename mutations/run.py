@@ -659,6 +659,18 @@ CHECKS = {
         "prom": "quux_busreset_prom.quux.hex",
         "machine": "quux",
     }),
+    # Every register of the I/O board and the interface's two over the
+    # Unibus, at many phases of the board's clocks: the CADR's alone.  It is
+    # the whole machine's check, so the card and the interface's register
+    # block are built into it as into every other, and it is the one that
+    # compares their acknowledgments with muir's; records aimed at those two
+    # files may name it.
+    "quux_unibus": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + ["rtl/machine/cadr_io_board.sv",
+                                               "rtl/machine/cadr_busint_regs.sv"],
+        "golden": "quux_unibus.golden",
+        "prom": "quux_unibus_prom.hex",
+    }),
     "quux_divmd": dict(MACHINE_CHECK, **{
         "golden": "quux_divmd.golden",
         "prom": "quux_divmd_prom.hex",

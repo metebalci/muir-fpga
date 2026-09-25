@@ -146,7 +146,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
 # QUUX's checks: the whole machine built as QUUX on QUUX's own boot PROM, and
 # each of the programs in `golden/src/quux.rs` that reach what that PROM does
 # not.  The CADR runs the same programs in `CHECK_CADR` above.
-QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset
+QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset unibus
 # QUUX's own, at its synchronous microcycle: the same but `tick` and
 # `tickwait`, which were revision 4's tick, whose period destination 4 set;
 # revision 5 fixes the tick at 60 Hz and gives destination 4 to the interval
@@ -157,7 +157,11 @@ QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset
 # buffer and a pop after it; and `imemsync`, words written into the control
 # store and run, below QUUX's PROM and over it.  And `busreset`, on both
 # machines: `PROG.UNIBUS.RESET` and what each board clears on `-XBUS INIT` and
-# `-UB INIT`, block-disk's command and errors on QUUX.
+# `-UB INIT`, block-disk's command and errors on QUUX.  And `unibus`, the
+# CADR's alone, QUUX having no Unibus: every register of the I/O board and
+# the interface's own two read and written at many phases of the board's
+# clocks, a write nothing takes among them, so that every `-MEMACK` a
+# Unibus slave or the NXM timer makes is compared against muir's.
 QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page clockwait memedge busreset
 # And those taken at an L of one as well: `divmd`, whose `DIV`s are half
 # `ILONG`, `divmdsync`, whose one `ILONG` filler at an L of one moves the

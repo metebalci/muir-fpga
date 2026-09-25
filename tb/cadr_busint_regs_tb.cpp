@@ -597,6 +597,18 @@ int main(int argc, char **argv) {
 
   const long kSsynT = want_ssyn_ns / kTickNs;
   const long kStrobeT = want_strobe_ns / kTickNs;
+  // **WHERE `-UB SSYN` IS SEEN, AND THE WRITE LANDS: ONE STEP SHORT OF EACH
+  // INSTANT.**  `Run` counts its steps from the edge `-UB MSYN` is first seen
+  // at, and a register that stands for an asynchronous line moves on the
+  // edge BEFORE its instant, so that the edge at the instant is the first to
+  // see it (`docs/timing.md`, "A change on an edge counts as before it").  So
+  // `-UB SSYN` stands from the step `kSsynT - 1` and a register the write
+  // loads has it after the step `kStrobeT - 1`.  This check wanted each a
+  // step later, and the block answered the processor 10 ns after muir,
+  // measured on the whole machine with `quux_unibus`; the diagnostic
+  // registers of `cadr_spy_registers.sv`, which share the select and which
+  // MIT's boot PROM holds to muir, were one step short all along.
+  const long kSsynAt = kSsynT - 1;
   const long kXbusRqT = want_rq_ns / kTickNs;
   const long kReadAckT = want_read_ack_ns / kTickNs;
   const long kMdAckT = want_md_ack_ns / kTickNs;
@@ -756,9 +768,9 @@ int main(int argc, char **argv) {
       return 0;
     }
     ++answered;
-    if (r.ssyn != kSsynT)
+    if (r.ssyn != kSsynAt)
       bad += Fail(row, "-UB SSYN, in ticks after -UB MSYN", (unsigned long)r.ssyn,
-                  (unsigned long)kSsynT);
+                  (unsigned long)kSsynAt);
     return r.word;
   };
 
@@ -788,9 +800,9 @@ int main(int argc, char **argv) {
           break;
         }
         ++answered;
-        if (got.ssyn != kSsynT)
+        if (got.ssyn != kSsynAt)
           bad += Fail(r.n, "-UB SSYN, in ticks after -UB MSYN", (unsigned long)got.ssyn,
-                      (unsigned long)kSsynT);
+                      (unsigned long)kSsynAt);
         if (r.write) {
           ++writes;
         } else {
@@ -880,9 +892,9 @@ int main(int argc, char **argv) {
           // reaches the bus.
           if (got.req_at >= 0)
             bad += Fail(r.n, "an Xbus request where muir makes none", (unsigned long)got.req_at, 0);
-          if (r.resp == kBuffer && got.ssyn != kSsynT)
+          if (r.resp == kBuffer && got.ssyn != kSsynAt)
             bad += Fail(r.n, "-UB SSYN on a buffer cycle, in ticks after -UB MSYN",
-                        (unsigned long)got.ssyn, (unsigned long)kSsynT);
+                        (unsigned long)got.ssyn, (unsigned long)kSsynAt);
         }
         if (want_ack && !r.write && got.word != r.rdata)
           bad += Fail(r.n, "the word the master got", got.word, r.rdata);
@@ -931,19 +943,21 @@ int main(int argc, char **argv) {
   // ---- the write lands at REGISTER_STROBE_NS and not at the answer ---------
   //
   // A mutation cannot reach a testbench, so the instant is tested with a DUT
-  // cycle just either side of it: the same write run with the strobe dropped
-  // one tick before the strobe instant must NOT land, and run to the strobe
-  // instant must. Nothing else in this file can tell `REGISTER_STROBE_NS`
+  // cycle just either side of it.  The write is taken on the edge BEFORE the
+  // strobe instant, so that a register it loads is seen AT the instant (see
+  // `kSsynAt`), which is how `cadr_spy_registers.sv` takes its own: the same
+  // write run with the strobe dropped before that edge must NOT land, and run
+  // through it must. Nothing else in this file can tell `REGISTER_STROBE_NS`
   // from `DIAGNOSTIC_NS`, which is `RD_FINISH_T` all over again.
   {
     // A word in the map, which is the register with the widest write.
     Run(0766140, 1, 0x1234, kSsynT + 40);
     if (ReadReg(0766140, -1, "the map register before the short write") != 0x1234u)
       bad += Fail(-1, "the map register before the short write", 0, 0x1234);
-    Run(0766140, 1, 0x5678, kStrobeT);        // the strobe falls a tick early
+    Run(0766140, 1, 0x5678, kStrobeT - 1);    // the strobe falls a tick early
     if (ReadReg(0766140, -1, "the map register after the short write") != 0x1234u)
       bad += Fail(-1, "a write whose strobe fell a tick before the strobe instant", 0x5678, 0x1234);
-    Run(0766140, 1, 0x5678, kStrobeT + 1);    // and one tick longer
+    Run(0766140, 1, 0x5678, kStrobeT);        // and one tick longer
     if (ReadReg(0766140, -1, "the map register after the strobe") != 0x5678u)
       bad += Fail(-1, "a write held exactly to the strobe instant", 0x1234, 0x5678);
   }
@@ -1048,9 +1062,9 @@ int main(int argc, char **argv) {
       } else if (want) {
         ++swept_answered;
         by_kind[kind]++;
-        if (got.ssyn != kSsynT)
+        if (got.ssyn != kSsynAt)
           bad += Fail((long)u, "-UB SSYN, in ticks after -UB MSYN", (unsigned long)got.ssyn,
-                      (unsigned long)kSsynT);
+                      (unsigned long)kSsynAt);
       } else {
         ++swept_silent;
       }
@@ -1111,9 +1125,9 @@ int main(int argc, char **argv) {
       ++win_reg;
       // The block's own registers answer everybody --- CC reading `0766044`
       // over the cable is exactly that --- and make no Xbus cycle.
-      if (got.ssyn != kSsynT)
+      if (got.ssyn != kSsynAt)
         bad += Fail((long)u, "-UB SSYN on a register read by a foreign master",
-                    (unsigned long)got.ssyn, (unsigned long)kSsynT);
+                    (unsigned long)got.ssyn, (unsigned long)kSsynAt);
       if (got.req_at >= 0) bad += Fail((long)u, "an Xbus request from a register cycle", 1, 0);
       continue;
     }
@@ -1126,9 +1140,9 @@ int main(int argc, char **argv) {
       // back together here.
       ++win_buf;
       if (got.req_at >= 0) bad += Fail((long)u, "an Xbus request on the odd word", 1, 0);
-      if (got.ssyn != kSsynT)
+      if (got.ssyn != kSsynAt)
         bad += Fail((long)u, "-UB SSYN on a buffer read", (unsigned long)got.ssyn,
-                    (unsigned long)kSsynT);
+                    (unsigned long)kSsynAt);
       if (!have_high) {
         bad += Fail((long)u, "an odd word with no even word before it", 0, 1);
       } else if (got.word != last_high) {
@@ -1442,10 +1456,10 @@ int main(int argc, char **argv) {
       "    against muir's word and %ld writes --- and %ld timeouts, each followed by a read of\n"
       "    0766040 and 0766044 off the bus: %ld faces compared, the interrupt status register,\n"
       "    the error status register, UB INT at the port and LM INT made of it.\n"
-      "    -UB SSYN is %ld ticks after -UB MSYN on every one of %ld answered cycles and at no\n"
-      "    earlier tick, and a write lands at %ld: the same write with the strobe dropped one\n"
-      "    tick before that instant does not take, which is the only thing here that can tell\n"
-      "    the two constants apart.\n"
+      "    -UB SSYN is seen %ld ticks after -UB MSYN on every one of %ld answered cycles and at\n"
+      "    no earlier tick, and a write is seen at %ld: the same write with the strobe dropped\n"
+      "    before the edge ahead of that instant does not take, which is the only thing here\n"
+      "    that can tell the two constants apart.\n"
       "    All %ld addresses of the Unibus map were read and written, the odd ones among them:\n"
       "    bit 0 is decoded nowhere in the block, so each is the even address below it, and the\n"
       "    register a word landed in is muir's own Register::Map(n) and not this file's sum.\n"

@@ -129,6 +129,11 @@ constexpr long kRbufSetup = 33;
 constexpr long kHalfUsec = 500;
 constexpr long kHalfUsecPhase = 203;
 constexpr long kSerialNs = 750;
+// `busint::UNIBUS_STROBE_NS`: a master holds `-UB MSYN` this long after it
+// sees `-UB SSYN` --- "MSYN OUT drops at SSYN T100" --- and the card's word
+// crosses on the edge after the one `-UB SSYN` rises on, so a master that
+// let go at once would take nothing.
+constexpr long kMsynHoldT = 100 / kTick;
 
 // The registers this file names, by their own Unibus address.
 constexpr unsigned kKbdLow = 0764100u, kCsr = 0764112u;
@@ -967,11 +972,24 @@ int main(int argc, char **argv) {
       }
     }
 
-    // --- `-UB SSYN`, at the instant the trace names and at no other
+    // --- `-UB SSYN`, at the instant the trace names and at no other.
+    //
+    // **READ AFTER THE EDGE BEFORE THAT INSTANT.**  `ub_ssyn` is a register
+    // standing for an asynchronous line to another board, so it moves on the
+    // edge before its instant and the edge at the instant is the first to
+    // see it, which is the frame the bus interface counts `-LMACK` and the MD
+    // strobe in (`docs/timing.md`, "A change on an edge counts as before
+    // it").  Held a tick later, as this check held it, the card answered the
+    // processor a tick after muir at every register, measured on the whole
+    // machine with `quux_unibus`.  **The card's own state is not a line and
+    // keeps this check's frame**, a register moving on the edge its instant
+    // is --- the clocks, the counters, the interval timer --- so the word
+    // crosses, the write lands and the SYN model moves on the edge AT the
+    // instant, a tick after `-UB SSYN` rises.
     if (in_cycle) {
       const Cyc &c = cycs[ci];
       const Row &r = rows[c.row];
-      const int want = (c.answered && t >= c.ssyn_t) ? 1 : 0;
+      const int want = (c.answered && t >= c.ssyn_t - 1) ? 1 : 0;
       if (b.d->ub_ssyn != want) Fail(t, r, "-UB SSYN", b.d->ub_ssyn, want);
       if (c.answered && t == c.ssyn_t) {
         ++answered;
@@ -1147,7 +1165,7 @@ int main(int argc, char **argv) {
       s.d->ub_wdata = 0x5A5A;
       for (long t = msyn_t; t <= last_t && bad < 25; ++t) {
         s.Rise();
-        const int want = (ours && t >= ssyn_t) ? 1 : 0;
+        const int want = (ours && t >= ssyn_t - 1) ? 1 : 0;
         if (s.d->ub_ssyn != want) {
           if (bad < 25) {
             std::fprintf(stderr,
@@ -1196,6 +1214,10 @@ int main(int argc, char **argv) {
         p.Fall();
         ++waited;
       } while (!p.d->ub_ssyn && waited < 600);
+      for (long h = 0; h < kMsynHoldT; ++h) {
+        p.Rise();
+        p.Fall();
+      }
       p.d->ub_msyn = 0;
       p.Idle(2);
       return waited;
@@ -1275,6 +1297,10 @@ int main(int argc, char **argv) {
         q.Fall();
         ++waited;
       } while (!q.d->ub_ssyn && waited < 600);
+      for (long h = 0; h < kMsynHoldT; ++h) {
+        q.Rise();
+        q.Fall();
+      }
       const unsigned got = q.d->ub_rdata;
       q.d->ub_msyn = 0;
       q.Idle(2);
