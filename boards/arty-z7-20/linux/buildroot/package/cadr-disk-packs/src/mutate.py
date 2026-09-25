@@ -26,7 +26,7 @@
 # not exist.  `@file` must be one of the core sources or headers below, and a
 # record naming anything else is BROKEN.
 #
-#     mutate.py --list pack_mutations.txt --work DIR --golden build/disk.golden [--only NAME]
+#     mutate.py --list pack_mutations.txt --work DIR --golden build/disk.golden --q8-disks DIR [--only NAME]
 
 import argparse
 import os
@@ -34,8 +34,8 @@ import shutil
 import subprocess
 import sys
 
-CORE = ["pack_file.c", "pack_bay.c", "pack_side.c", "pack_feeder.c"]
-HEADERS = ["pack_ecc.h", "pack_file.h", "pack_bay.h", "pack_side.h", "pack_feeder.h"]
+CORE = ["pack_file.c", "pack_bay.c", "pack_side.c", "pack_feeder.c", "quux_disk.c"]
+HEADERS = ["pack_ecc.h", "pack_file.h", "pack_bay.h", "pack_side.h", "pack_feeder.h", "quux_disk.h"]
 MUTABLE = set(CORE) | set(HEADERS)
 
 
@@ -120,7 +120,7 @@ def apply(record, work, src):
     return here, None
 
 
-def build_and_run(here, cc, cflags, golden):
+def build_and_run(here, cc, cflags, golden, q8_disks):
     src = os.path.join(here, "src")
     binary = os.path.join(here, "feeder_test")
     cmd = ([cc] + cflags.split() + ["-I" + os.path.join(here, "include"),
@@ -132,7 +132,7 @@ def build_and_run(here, cc, cflags, golden):
     work = os.path.join(here, "run")
     os.makedirs(work, exist_ok=True)
     try:
-        run = subprocess.run([binary, golden, work], capture_output=True, text=True, timeout=900)
+        run = subprocess.run([binary, golden, work, q8_disks], capture_output=True, text=True, timeout=900)
     except subprocess.TimeoutExpired:
         return "timeout", None
     return run, None
@@ -143,6 +143,7 @@ def main():
     ap.add_argument("--list", required=True)
     ap.add_argument("--work", required=True)
     ap.add_argument("--golden", required=True)
+    ap.add_argument("--q8-disks", required=True)
     ap.add_argument("--only")
     ap.add_argument("--cc", default="cc")
     ap.add_argument("--cflags", default="-O2 -Wall -Wextra -std=gnu11")
@@ -166,7 +167,8 @@ def main():
             print(f"  BROKEN    {r['mutation']}\n              {why}")
             broken += 1
             continue
-        run, build_error = build_and_run(here, args.cc, args.cflags, os.path.abspath(args.golden))
+        run, build_error = build_and_run(here, args.cc, args.cflags, os.path.abspath(args.golden),
+                                         os.path.abspath(args.q8_disks))
         if build_error:
             print(f"  BROKEN    {r['mutation']}: it does not compile")
             for line in build_error:

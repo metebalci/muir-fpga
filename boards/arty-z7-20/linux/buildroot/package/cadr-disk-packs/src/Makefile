@@ -37,8 +37,8 @@
 # runs the whole check once per record.
 
 PROGRAMS := cadr-disk-packs
-CORE     := pack_file.c pack_bay.c pack_side.c pack_feeder.c
-HEADERS  := pack_ecc.h pack_file.h pack_bay.h pack_side.h pack_feeder.h
+CORE     := pack_file.c pack_bay.c pack_side.c pack_feeder.c quux_disk.c
+HEADERS  := pack_ecc.h pack_file.h pack_bay.h pack_side.h pack_feeder.h quux_disk.h
 
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src
@@ -54,6 +54,19 @@ endif
 HOSTCC ?= cc
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 GOLDEN ?= $(abspath ../../../../../../../build/disk.golden)
+# QUUX's disks (contract Q8): one small GPT disk raw, as a fixed and a dynamic
+# VHD, and the dynamic one grown by three writes with its raw twin, made by
+# qemu-img, qemu-io and sgdisk and never by muir or this program.  They are
+# muir's `data/quux-disk*`, from the muir beside this repository as
+# `golden/Cargo.toml` finds it, and held to the digests in `q8_disks.sha256`
+# before the check reads them: a different muir's regenerated disks are a
+# different witness and must not pass for this one.  `Q8_DISKS=<dir>` names
+# another directory holding the same five files.
+Q8_DISKS ?= $(abspath ../../../../../../../../muir/data)
+Q8_VERIFY = @for f in $$(awk '{print $$2}' q8_disks.sha256); do \
+	    test -f $(Q8_DISKS)/$$f || { echo "no $(Q8_DISKS)/$$f: QUUX's disks are muir's data/quux-disk*, from muir fdaa423 on; or pass Q8_DISKS=<dir>"; exit 1; }; done; \
+	sed 's|  |  $(Q8_DISKS)/|' q8_disks.sha256 | sha256sum -c --quiet - \
+	    || { echo "the disks in $(Q8_DISKS) are not the ones this check is held to (q8_disks.sha256)"; exit 1; }
 # The work directory is this directory's own, by its path hashed, as
 # `cadr-console`'s and `cadr-terminal`'s are: one fixed path for every tree at
 # once let one worktree's newer binaries run in place of another's sources.
@@ -75,7 +88,8 @@ install: all
 # never share a binary.
 check: $(WORK)/feeder_test
 	@test -f $(GOLDEN) || { echo "no $(GOLDEN): run 'make disk-golden' at the repository root"; exit 1; }
-	$(WORK)/feeder_test $(GOLDEN) $(WORK)
+	$(Q8_VERIFY)
+	$(WORK)/feeder_test $(GOLDEN) $(WORK) $(Q8_DISKS)
 
 $(WORK)/feeder_test: feeder_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h)
 	@mkdir -p $(WORK)
@@ -83,7 +97,8 @@ $(WORK)/feeder_test: feeder_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/c
 
 mutants:
 	@test -f $(GOLDEN) || { echo "no $(GOLDEN): run 'make disk-golden' at the repository root"; exit 1; }
-	python3 mutate.py --list pack_mutations.txt --work $(WORK)/mutants --golden $(GOLDEN) $(MUTANT_ARGS)
+	$(Q8_VERIFY)
+	python3 mutate.py --list pack_mutations.txt --work $(WORK)/mutants --golden $(GOLDEN) --q8-disks $(Q8_DISKS) $(MUTANT_ARGS)
 
 clean:
 	rm -f $(PROGRAMS)

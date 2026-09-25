@@ -527,7 +527,10 @@ on its command line. Neither the tree nor the kernel is touched here.
 
 **The check.** It is `make -C
 boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src check`, on the
-build host, and it needs a C compiler and `build/disk.golden`. Its scratch is
+build host, and it needs a C compiler, `build/disk.golden` and QUUX's disks.
+Those are muir's `data/quux-disk*`, made by qemu-img, qemu-io and sgdisk, and
+held to the digests in `q8_disks.sha256` before the check reads them;
+`Q8_DISKS=<dir>` names another directory holding the same five files. Its scratch is
 under `~/.cache/muir-fpga-disk-packs-` and the package directory's path hashed,
 so two copies of the tree never share one. The disk pack program's core runs
 against a model of the register face at `a899799` --- the tag with the unit,

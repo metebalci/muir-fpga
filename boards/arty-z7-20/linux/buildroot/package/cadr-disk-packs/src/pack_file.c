@@ -68,6 +68,32 @@ int pack_open(struct pack *p, const char *path, int writable, char *err, size_t 
 	return 0;
 }
 
+int pack_open_quux(struct pack *p, const char *path, int writable, char *err, size_t errlen)
+{
+	memset(p, 0, sizeof *p);
+	p->fd = open(path, writable ? O_RDWR : O_RDONLY);
+	if (p->fd < 0) {
+		snprintf(err, errlen, "%s: %s", path, strerror(errno));
+		return -1;
+	}
+	struct stat st;
+	char why[224];
+	if (fstat(p->fd, &st) < 0 || quux_disk_open(p->fd, &p->q, why, sizeof why) < 0) {
+		snprintf(err, errlen, "%s: %s", path, why);
+		close(p->fd);
+		p->fd = -1;
+		return -1;
+	}
+	// No geometry: `g` stays zeros, and nothing on QUUX's side asks for one.
+	p->quux = 1;
+	p->writable = writable;
+	p->blocks = p->q.blocks;
+	p->dev = st.st_dev;
+	p->ino = st.st_ino;
+	p->size = st.st_size;
+	return 0;
+}
+
 int pack_alive(const struct pack *p)
 {
 	struct stat st;
@@ -110,6 +136,8 @@ void pack_close(struct pack *p)
 {
 	if (p->fd >= 0)
 		close(p->fd);
+	if (p->quux)
+		quux_disk_close(&p->q);
 	free(p->headers);
 	free(p->dcks);
 	memset(p, 0, sizeof *p);
@@ -222,6 +250,19 @@ int pack_record(struct pack *p, uint32_t lba, uint32_t words[PACK_RECORD_WORDS],
 		snprintf(err, errlen, "block %u is off a pack of %u", lba, p->blocks);
 		return -1;
 	}
+	if (p->quux) {
+		// QUUX's disk: the block through its format, each word low byte
+		// first as the CADR's pack has it (muir's `disk_image::Disk`), and
+		// nothing after it, block-disk checking none of the three words.
+		uint8_t bytes[PACK_BLOCK_BYTES];
+		if (quux_disk_read(p->fd, &p->q, lba, bytes, err, errlen) < 0)
+			return -1;
+		for (int i = 0; i < PACK_BLOCK_WORDS; ++i)
+			words[i] = (uint32_t)bytes[4 * i] | (uint32_t)bytes[4 * i + 1] << 8
+				 | (uint32_t)bytes[4 * i + 2] << 16 | (uint32_t)bytes[4 * i + 3] << 24;
+		words[256] = words[257] = words[258] = 0;
+		return 0;
+	}
 	// `Unit::file_block`: 1,024 bytes at lba * 1024, each word low byte
 	// first.
 	uint8_t bytes[PACK_BLOCK_BYTES];
@@ -262,6 +303,29 @@ int pack_writeback(struct pack *p, uint32_t lba, const uint32_t words[PACK_RECOR
 	if (!p->writable) {
 		snprintf(err, errlen, "the pack is open read-only");
 		return -1;
+	}
+	if (p->quux) {
+		// QUUX's disk: the 256 words through its format, and the three after
+		// them kept nowhere.  A dynamic VHD may grow, and the file's size is
+		// what the drive bay tells this file from a replacement by, so it is
+		// read again.
+		uint8_t qb[PACK_BLOCK_BYTES];
+		for (int i = 0; i < PACK_BLOCK_WORDS; ++i)
+			for (int j = 0; j < 4; ++j)
+				qb[4 * i + j] = (uint8_t)(words[i] >> (8 * j));
+		if (quux_disk_write(p->fd, &p->q, lba, qb, err, errlen) < 0)
+			return -1;
+		struct stat st;
+		if (fstat(p->fd, &st) < 0) {
+			snprintf(err, errlen, "the disk after block %u: %s", lba, strerror(errno));
+			return -1;
+		}
+		p->size = st.st_size;
+		if (fdatasync(p->fd) < 0 && errno != EINVAL) {
+			snprintf(err, errlen, "syncing the disk: %s", strerror(errno));
+			return -1;
+		}
+		return 0;
 	}
 	// `Unit::write_sector_at`: the data into the file ...
 	uint8_t bytes[PACK_BLOCK_BYTES];

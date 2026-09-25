@@ -31,6 +31,8 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include "quux_disk.h"
+
 // "Each disk block contains one Lisp Machine page worth of data, i.e. 256.
 // words or 1024. bytes."
 #define PACK_BLOCK_WORDS 256
@@ -73,11 +75,24 @@ struct pack {
 	// `data_checkwords`: sectors whose data checkword does not check.
 	struct pack_dck_entry *dcks;
 	size_t n_dcks, cap_dcks;
+	// **QUUX'S DISK IS NOT A PACK** (contract Q8): a raw file, a fixed VHD or
+	// a dynamic VHD of any size up to block-disk's reach, with no geometry,
+	// no header and no checkwords.  Set by `pack_open_quux`; `g` is then all
+	// zeros, `blocks` is the disk's, `size` is still the FILE's, which a
+	// dynamic VHD's allocation grows and this keeps current, so that the
+	// drive bay does not take the growth for a replacement.
+	int quux;
+	struct quux_disk q;
 };
 
 // Opens the file and tells its geometry from its size.  Returns 0, or -1
 // with `err` saying why.
 int pack_open(struct pack *p, const char *path, int writable, char *err, size_t errlen);
+// QUUX's disk (`--machine quux`): the file's format told by its footer,
+// whatever its size.  Its record is the block's 256 words and three zeros,
+// block-disk checking none of the three, and a write-back puts the 256 words
+// on the disk and keeps nothing of the three.  Returns 0, or -1 with `err`.
+int pack_open_quux(struct pack *p, const char *path, int writable, char *err, size_t errlen);
 void pack_close(struct pack *p);
 
 // How many bytes a pack of this geometry is, and the geometry a file of

@@ -6,7 +6,7 @@
 // disk controller behind the model posting the requests the CADR's
 // transfers would.
 //
-//     feeder_test <disk.golden> <work dir>
+//     feeder_test <disk.golden> <work dir> <QUUX's disks>
 //
 // WHAT THE TRACE SUPPLIES.  `golden/src/disk.rs` writes three kinds of row
 // this test reads.  `BLK load|lay` is a block as the pack carries it before
@@ -62,6 +62,16 @@
 // imply; and after a restart the tables are the format's again --- a laid
 // header or checkword is forgotten, as muir's `Unit` forgets it, and the
 // data stands.
+//
+// AND QUUX'S DISK, contract Q8, after the CADR's run is over: a raw image, a
+// fixed VHD and a dynamic VHD made by qemu-img, qemu-io and sgdisk (muir's
+// `data/quux-disk*`, their digests held by the Makefile), each read through
+// the program block for block as its raw twin; qemu-io's three writes made
+// here, and the dynamic VHD they grow compared with qemu-io's own file byte
+// for byte; damaged and oversized files refused for the right reason; and
+// the same writes made again by a modeled block-disk through the feeder, the
+// file in the bay growing under them without the bay taking the growth for a
+// replacement.
 //
 // THE MODEL OF THE REGISTER FACE follows `rtl/plumbing/cadr_disk_pack.sv` at
 // a899799: the tag with the unit in bits 30:28; the refusal terms at its
@@ -145,6 +155,7 @@ struct blk {
 	int hdr_laid, dck_laid;
 	int touched;		// ever read or written by the script
 	int gone;		// its drive left the bay: not compared at the end
+	int quux;		// a block of QUUX's disk: no header, no checkwords
 };
 static struct blk blocks[256];
 static size_t n_blocks;
@@ -170,6 +181,12 @@ static void shadow_expect(const struct blk *s, uint32_t w[PACK_RECORD_WORDS])
 {
 	const struct pack_geometry *g = geom(s->unit);
 	memcpy(w, s->data, sizeof s->data);
+	if (s->quux) {
+		// QUUX's disk has 256 words a block and nothing else; block-disk
+		// checks none of the three words after them.
+		w[256] = w[257] = w[258] = 0;
+		return;
+	}
 	uint32_t c, h, b;
 	pack_chb(g, s->lba, &c, &h, &b);
 	if (s->hdr_laid) {
@@ -186,6 +203,8 @@ static void shadow_writeback(struct blk *s, const uint32_t w[PACK_RECORD_WORDS])
 {
 	const struct pack_geometry *g = geom(s->unit);
 	memcpy(s->data, w, sizeof s->data);
+	if (s->quux)
+		return;
 	uint32_t c, h, b;
 	pack_chb(g, s->lba, &c, &h, &b);
 	const uint32_t own = pack_header_of(g, c, h, b);
@@ -586,7 +605,11 @@ static void hit(struct fake *k, struct xfer *x, int s)
 			// The CADR's page into the block, the fresh data checkword
 			// after it; a Write All lays what the script says.
 			memcpy(k->store[s], x->page[k->t_idx], PACK_BLOCK_BYTES);
-			k->store[s][258] = ecc_over_words(k->store[s], PACK_BLOCK_WORDS);
+			// Block-disk keeps the three words after the block and hands
+			// them back as they came; the CADR's controller writes a fresh
+			// data checkword.
+			if (!linear_tags)
+				k->store[s][258] = ecc_over_words(k->store[s], PACK_BLOCK_WORDS);
 			if (x->laid) {
 				k->store[s][256] = x->laid_hdr;
 				k->store[s][257] = x->laid_hck;
@@ -751,6 +774,21 @@ static void verify_pending_writebacks(void)
 		uint8_t file_bytes[PACK_BLOCK_BYTES], want_bytes[PACK_BLOCK_BYTES];
 		if (!pkp) {
 			fail("block %x was written back on unit %u, which has no pack in the bay", lba, unit);
+			continue;
+		}
+		if (pkp->quux) {
+			// QUUX's disk is not read by offset here: a dynamic VHD's block
+			// is wherever its table says.  The file as a whole is held to
+			// qemu's at the end of the QUUX phase.
+			uint32_t again[PACK_RECORD_WORDS];
+			char err[256];
+			if (pack_record(pkp, lba, again, err, sizeof err) < 0)
+				fail("%s", err);
+			else if (memcmp(again, w, PACK_BLOCK_BYTES) != 0)
+				fail("block %x of QUUX's disk after its write-back is not the 256 words written back", lba);
+			else if (again[256] || again[257] || again[258])
+				fail("block %x of QUUX's disk reads 0x%08x 0x%08x 0x%08x after its block, wanting zeros",
+				     lba, again[256], again[257], again[258]);
 			continue;
 		}
 		if (pread(pkp->fd, file_bytes, sizeof file_bytes, (off_t)lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof file_bytes) {
@@ -1017,12 +1055,734 @@ static void every_fetch_address_checked(void)
 }
 
 
+// ---- QUUX's disk, contract Q8 ----------------------------------------------
+// QUUX's disk is a raw file, a fixed VHD or a dynamic VHD, of any size up to
+// block-disk's 2^28 blocks, partitioned by a GPT that nothing here reads.
+// The witnesses are muir's `data/quux-disk*`, made by qemu-img, qemu-io and
+// sgdisk and never by muir or this program, their digests held by the
+// Makefile before this runs: an 8 MiB disk raw, as a fixed and as a dynamic
+// VHD (its 2 MiB blocks 0 and 3 allocated), and the dynamic one after three
+// qemu-io writes that allocated blocks 1 and 2, with its raw twin.  Every
+// comparison below is against those files, so nothing here is this program's
+// own reading of the format checked against itself.
+#define Q8_BLOCKS 8192u
+#define Q8_DYNAMIC_BYTES 4197888u
+// One 2 MiB block of a dynamic VHD in the file: its bitmap, a sector, and
+// its data.
+#define Q8_VHD_BLOCK_IN_FILE (512u + 2097152u)
+static const char *q8_dir;
+// qemu-io's three writes, from muir's data/README.md: 1,024 bytes of 0x4c at
+// 2621440, 4,096 of 0x50 at 3670016 and 8,192 of 0x46 at 4718592.  In
+// block-disk's blocks of 1,024 bytes.
+static const struct { uint32_t block, count; uint8_t byte; } Q8_WRITES[3] = {
+	{ 2621440u / 1024u, 1024u / 1024u, 0x4c },
+	{ 3670016u / 1024u, 4096u / 1024u, 0x50 },
+	{ 4718592u / 1024u, 8192u / 1024u, 0x46 },
+};
+static unsigned long q8_blocks_compared, q8_refusals, q8_files_equal, q8_feeder_served, q8_feeder_denied;
+static unsigned long q8_feeder_written;
+
+static void q8_path(char *out, size_t n, const char *name)
+{
+	snprintf(out, n, "%s/%s", q8_dir, name);
+}
+
+static uint8_t *slurp(const char *path, size_t *len)
+{
+	*len = 0;
+	const int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return NULL;
+	struct stat st;
+	if (fstat(fd, &st) < 0) {
+		close(fd);
+		return NULL;
+	}
+	uint8_t *b = malloc((size_t)st.st_size + 1);
+	if (b && pread(fd, b, (size_t)st.st_size, 0) != (ssize_t)st.st_size) {
+		free(b);
+		b = NULL;
+	}
+	close(fd);
+	if (b)
+		*len = (size_t)st.st_size;
+	return b;
+}
+
+static int spit(const char *path, const uint8_t *b, size_t len)
+{
+	unlink(path);
+	const int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0)
+		return -1;
+	const int ok = pwrite(fd, b, len, 0) == (ssize_t)len;
+	close(fd);
+	return ok ? 0 : -1;
+}
+
+static uint64_t q8_get_be(const uint8_t *b, int n)
+{
+	uint64_t v = 0;
+	for (int i = 0; i < n; ++i)
+		v = v << 8 | b[i];
+	return v;
+}
+static void q8_put_be(uint8_t *b, int n, uint64_t v)
+{
+	for (int i = n - 1; i >= 0; --i, v >>= 8)
+		b[i] = (uint8_t)v;
+}
+// The VHD checksum, this test's own and not the program's: the one's
+// complement of the byte sum, the field at `at` taken as zero.  Used only to
+// make a damaged file whose damage is NOT a checksum mismatch.
+static void q8_fix_checksum(uint8_t *b, size_t n, size_t at)
+{
+	uint32_t sum = 0;
+	for (size_t i = 0; i < n; ++i)
+		if (i < at || i >= at + 4)
+			sum += b[i];
+	q8_put_be(b + at, 4, ~sum);
+}
+
+// Every block of `file`, read through the program as QUUX's disk, is block
+// `n` of `twin` byte for byte, and the three words after it are zeros.
+static void q8_reads_as(const char *file, const char *twin, enum quux_format want_fmt, uint32_t want_blocks)
+{
+	char err[256];
+	size_t tl;
+	uint8_t *t = slurp(twin, &tl);
+	if (!t || tl < (size_t)want_blocks * PACK_BLOCK_BYTES) {
+		fail("QUUX: %s: cannot read the raw twin", twin);
+		free(t);
+		return;
+	}
+	struct pack p;
+	if (pack_open_quux(&p, file, 0, err, sizeof err) < 0) {
+		fail("QUUX: %s was refused: %s", file, err);
+		free(t);
+		return;
+	}
+	if (!p.quux)
+		fail("QUUX: %s was opened as a CADR pack", file);
+	if (p.q.format != want_fmt)
+		fail("QUUX: %s was read as %s, wanting %s", file, quux_format_name(p.q.format), quux_format_name(want_fmt));
+	if (p.blocks != want_blocks)
+		fail("QUUX: %s has %u blocks, wanting %u", file, p.blocks, want_blocks);
+	if (p.g.cylinders || p.g.heads || p.g.blocks_per_track)
+		fail("QUUX: %s was given a geometry, %u/%u/%u", file, p.g.cylinders, p.g.heads, p.g.blocks_per_track);
+	unsigned long wrong = 0;
+	for (uint32_t n = 0; n < p.blocks && n < want_blocks; ++n) {
+		uint32_t w[PACK_RECORD_WORDS];
+		if (pack_record(&p, n, w, err, sizeof err) < 0) {
+			if (!wrong++)
+				fail("QUUX: %s block %u: %s", file, n, err);
+			continue;
+		}
+		uint8_t got[PACK_BLOCK_BYTES];
+		for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
+			for (int q = 0; q < 4; ++q)
+				got[4 * j + q] = (uint8_t)(w[j] >> (8 * q));
+		if (memcmp(got, t + (size_t)n * PACK_BLOCK_BYTES, PACK_BLOCK_BYTES) != 0) {
+			if (!wrong++)
+				fail("QUUX: %s block %u is not block %u of %s", file, n, n, twin);
+			continue;
+		}
+		if (w[256] || w[257] || w[258]) {
+			if (!wrong++)
+				fail("QUUX: %s block %u's record has 0x%08x 0x%08x 0x%08x after the block, wanting zeros",
+				     file, n, w[256], w[257], w[258]);
+			continue;
+		}
+		++q8_blocks_compared;
+	}
+	if (wrong > 1)
+		fail("QUUX: %s: %lu blocks in all read wrong", file, wrong);
+	uint32_t w[PACK_RECORD_WORDS];
+	if (pack_record(&p, p.blocks, w, err, sizeof err) == 0)
+		fail("QUUX: %s: block %u, past the end, was read", file, p.blocks);
+	pack_close(&p);
+	free(t);
+}
+
+// Two files byte for byte.
+static void q8_files_are(const char *got, const char *want, const char *what)
+{
+	size_t gl, wl;
+	uint8_t *g = slurp(got, &gl), *w = slurp(want, &wl);
+	if (!g || !w)
+		fail("QUUX: %s: cannot read %s or %s", what, got, want);
+	else if (gl != wl)
+		fail("QUUX: %s: %zu bytes, and qemu's file is %zu", what, gl, wl);
+	else {
+		size_t i = 0;
+		while (i < gl && g[i] == w[i])
+			++i;
+		if (i < gl)
+			fail("QUUX: %s: differs from qemu's file first at byte %zu (0x%02x, qemu 0x%02x)", what, i, g[i], w[i]);
+		else
+			++q8_files_equal;
+	}
+	free(g);
+	free(w);
+}
+
+// A file refused as QUUX's disk, with `needle` in the reason.
+static void q8_refused(const char *what, const char *path, const char *needle)
+{
+	char err[256];
+	struct pack p;
+	if (pack_open_quux(&p, path, 0, err, sizeof err) == 0) {
+		fail("QUUX: %s was opened as a disk of %u blocks", what, p.blocks);
+		pack_close(&p);
+	} else if (!strstr(err, needle)) {
+		fail("QUUX: %s was refused with '%s', wanting a reason that says '%s'", what, err, needle);
+	} else {
+		++q8_refusals;
+	}
+}
+
+// A copy of a fixture with bytes changed, as a damaged file to be refused.
+static int q8_damaged(const char *work, const char *fixture, const char *name, char *out, size_t outlen,
+		      uint8_t **bytes, size_t *len)
+{
+	char src[4096];
+	q8_path(src, sizeof src, fixture);
+	*bytes = slurp(src, len);
+	snprintf(out, outlen, "%s/%s", work, name);
+	if (!*bytes) {
+		fail("QUUX: cannot read %s", src);
+		return -1;
+	}
+	return 0;
+}
+
+// A sparse file of `bytes`, with `tail` written at its end if given.
+static int q8_sparse(const char *path, uint64_t bytes, const uint8_t *tail, size_t tail_len)
+{
+	unlink(path);
+	const int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0)
+		return -1;
+	int ok = ftruncate(fd, (off_t)bytes) == 0;
+	if (ok && tail)
+		ok = pwrite(fd, tail, tail_len, (off_t)(bytes - tail_len)) == (ssize_t)tail_len;
+	close(fd);
+	return ok ? 0 : -1;
+}
+
+static void q8_block_of(uint8_t byte, uint32_t w[PACK_RECORD_WORDS], uint32_t junk)
+{
+	for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
+		w[j] = byte * 0x01010101u;
+	// Not QUUX's: whatever the store hands back after the block is kept
+	// nowhere, so it may be anything.
+	w[256] = 0xDEAD0000u | junk;
+	w[257] = 0xBEEF0000u | junk;
+	w[258] = 0xF00D0000u | junk;
+}
+
+static off_t q8_file_size(const char *path)
+{
+	struct stat st;
+	return stat(path, &st) == 0 ? st.st_size : -1;
+}
+
+// The disk layer alone: reads, writes and refusals, through `pack_open_quux`,
+// `pack_record` and `pack_writeback`, which are the calls the feeder makes.
+static void q8_layer(const char *work)
+{
+	char img[4096], fixed[4096], dyn[4096], dyn_grown[4096], grown[4096], path[4096], err[256];
+	q8_path(img, sizeof img, "quux-disk.img");
+	q8_path(fixed, sizeof fixed, "quux-disk-fixed.vhd");
+	q8_path(dyn, sizeof dyn, "quux-disk-dynamic.vhd");
+	q8_path(dyn_grown, sizeof dyn_grown, "quux-disk-dynamic-grown.vhd");
+	q8_path(grown, sizeof grown, "quux-disk-grown.img");
+
+	// ---- every VHD reads as its raw twin ---------------------------------
+	q8_reads_as(img, img, QUUX_RAW, Q8_BLOCKS);
+	q8_reads_as(fixed, img, QUUX_FIXED_VHD, Q8_BLOCKS);
+	q8_reads_as(dyn, img, QUUX_DYNAMIC_VHD, Q8_BLOCKS);
+	q8_reads_as(dyn_grown, grown, QUUX_DYNAMIC_VHD, Q8_BLOCKS);
+
+	// ---- writes through a dynamic VHD land where qemu puts them ------------
+	// The three writes, in qemu-io's order, block by block through
+	// `pack_writeback`: the file grows by one of its blocks at the first
+	// write into each block not allocated, the growth is what the drive bay
+	// sees as the file's size, and at the end the file IS qemu-io's.
+	{
+		snprintf(path, sizeof path, "%s/q8-grow.vhd", work);
+		size_t len;
+		uint8_t *b = slurp(dyn, &len);
+		if (!b || spit(path, b, len) < 0)
+			fail("QUUX: copying %s", dyn);
+		free(b);
+		struct pack p;
+		if (pack_open_quux(&p, path, 1, err, sizeof err) < 0) {
+			fail("QUUX: %s: %s", path, err);
+		} else {
+			if (p.size != (off_t)Q8_DYNAMIC_BYTES)
+				fail("QUUX: the dynamic VHD is %lld bytes to the pack, wanting %u", (long long)p.size, Q8_DYNAMIC_BYTES);
+			for (int g = 0; g < 3; ++g) {
+				for (uint32_t i = 0; i < Q8_WRITES[g].count; ++i) {
+					uint32_t w[PACK_RECORD_WORDS];
+					q8_block_of(Q8_WRITES[g].byte, w, (uint32_t)(g * 16 + i));
+					if (pack_writeback(&p, Q8_WRITES[g].block + i, w, err, sizeof err) < 0)
+						fail("QUUX: writing block %u: %s", Q8_WRITES[g].block + i, err);
+				}
+				// Writes 1 and 2 are in the VHD's block 1, write 3 in its block 2.
+				const off_t want = (off_t)Q8_DYNAMIC_BYTES + (g < 2 ? 1 : 2) * (off_t)Q8_VHD_BLOCK_IN_FILE;
+				if (q8_file_size(path) != want)
+					fail("QUUX: after qemu-io's write %d the file is %lld bytes, wanting %lld", g + 1,
+					     (long long)q8_file_size(path), (long long)want);
+				if (p.size != q8_file_size(path))
+					fail("QUUX: after write %d the pack says the file is %lld bytes, and it is %lld", g + 1,
+					     (long long)p.size, (long long)q8_file_size(path));
+			}
+			pack_close(&p);
+		}
+		q8_files_are(path, dyn_grown, "the dynamic VHD after qemu-io's three writes made here");
+		q8_reads_as(path, grown, QUUX_DYNAMIC_VHD, Q8_BLOCKS);
+		unlink(path);
+	}
+	// A write into an allocated block of a dynamic VHD, and into a fixed
+	// VHD: the file keeps its size, the block reads back, the footer stays.
+	{
+		const char *which[2] = { dyn, fixed };
+		for (int v = 0; v < 2; ++v) {
+			snprintf(path, sizeof path, "%s/q8-in-place.vhd", work);
+			size_t len;
+			uint8_t *b = slurp(which[v], &len);
+			if (!b || spit(path, b, len) < 0)
+				fail("QUUX: copying %s", which[v]);
+			struct pack p;
+			const uint32_t n = 5;
+			if (pack_open_quux(&p, path, 1, err, sizeof err) < 0) {
+				fail("QUUX: %s: %s", path, err);
+				free(b);
+				continue;
+			}
+			uint32_t w[PACK_RECORD_WORDS], got[PACK_RECORD_WORDS];
+			for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
+				w[j] = synth(n, j, 0x51u + (uint32_t)v);
+			w[256] = w[257] = w[258] = 0;
+			if (pack_writeback(&p, n, w, err, sizeof err) < 0)
+				fail("QUUX: writing block %u of %s: %s", n, which[v], err);
+			else if (pack_record(&p, n, got, err, sizeof err) < 0 || memcmp(got, w, sizeof got) != 0)
+				fail("QUUX: block %u of %s did not read back as written", n, which[v]);
+			if (pack_writeback(&p, Q8_BLOCKS, w, err, sizeof err) == 0)
+				fail("QUUX: block %u, past the end of %s, was written", Q8_BLOCKS, which[v]);
+			pack_close(&p);
+			size_t nl;
+			uint8_t *after = slurp(path, &nl);
+			if (!after || nl != len)
+				fail("QUUX: %s changed size with a write into an allocated block, %zu to %zu", which[v], len, nl);
+			else if (memcmp(after + len - 512, b + len - 512, 512) != 0)
+				fail("QUUX: the footer of %s changed with a write into its data", which[v]);
+			else {
+				// Only the block's 1,024 bytes changed in the whole file.
+				size_t first = len, last = 0;
+				for (size_t i = 0; i < len; ++i)
+					if (after[i] != b[i]) {
+						if (first == len)
+							first = i;
+						last = i;
+					}
+				if (first == len || last - first >= PACK_BLOCK_BYTES)
+					fail("QUUX: a write of one block into %s changed bytes %zu to %zu", which[v], first, last);
+			}
+			free(after);
+			free(b);
+			unlink(path);
+		}
+	}
+
+	// ---- a raw disk of any size, up to block-disk's reach -------------------
+	{
+		struct pack p;
+		snprintf(path, sizeof path, "%s/q8-raw.img", work);
+		// 3 MiB and a sector: 3,072 whole blocks, the last half block
+		// out of reach of a block number.
+		if (q8_sparse(path, 3u * 1048576u + 512u, NULL, 0) < 0)
+			fail("QUUX: making %s", path);
+		if (pack_open_quux(&p, path, 0, err, sizeof err) < 0)
+			fail("QUUX: a raw file of 3 MiB and a sector was refused: %s", err);
+		else {
+			if (p.blocks != 3072u || p.q.format != QUUX_RAW)
+				fail("QUUX: a raw file of 3 MiB and a sector is %s of %u blocks, wanting raw of 3072",
+				     quux_format_name(p.q.format), p.blocks);
+			pack_close(&p);
+		}
+		// Exactly block-disk's reach, and one block past it.
+		if (q8_sparse(path, QUUX_MAX_BLOCKS * PACK_BLOCK_BYTES, NULL, 0) < 0)
+			fail("QUUX: making %s", path);
+		if (pack_open_quux(&p, path, 0, err, sizeof err) < 0)
+			fail("QUUX: a raw disk of exactly 2^28 blocks was refused: %s", err);
+		else {
+			if (p.blocks != (uint32_t)QUUX_MAX_BLOCKS)
+				fail("QUUX: a raw disk of 2^28 blocks has %u", p.blocks);
+			pack_close(&p);
+		}
+		if (q8_sparse(path, (QUUX_MAX_BLOCKS + 1u) * PACK_BLOCK_BYTES, NULL, 0) < 0)
+			fail("QUUX: making %s", path);
+		q8_refused("a raw disk of 2^28 + 1 blocks", path, "blocks");
+		unlink(path);
+	}
+
+	// ---- refusals -------------------------------------------------------------
+	{
+		uint8_t *b;
+		size_t len;
+		// A fixed VHD's footer with a byte changed: its checksum does not
+		// check.
+		if (q8_damaged(work, "quux-disk-fixed.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			b[len - 512 + 200] ^= 0x01;
+			spit(path, b, len);
+			q8_refused("a fixed VHD whose footer's checksum does not check", path, "checksum");
+			free(b);
+		}
+		// A fixed VHD whose footer, checksum and all, says more disk than
+		// the file holds.
+		if (q8_damaged(work, "quux-disk-fixed.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			q8_put_be(b + len - 512 + 48, 8, 16u * 1048576u);
+			q8_fix_checksum(b + len - 512, 512, 64);
+			spit(path, b, len);
+			q8_refused("a fixed VHD whose footer says 16 MiB in a file of 8 MiB", path, "fixed VHD of");
+			free(b);
+		}
+		// A dynamic VHD's footer at the end with a byte changed.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			b[len - 512 + 200] ^= 0x01;
+			spit(path, b, len);
+			q8_refused("a dynamic VHD whose footer's checksum does not check", path, "checksum");
+			free(b);
+		}
+		// Its dynamic header with a byte changed.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			const size_t h = (size_t)q8_get_be(b + len - 512 + 16, 8);
+			b[h + 100] ^= 0x01;
+			spit(path, b, len);
+			q8_refused("a dynamic VHD whose header's checksum does not check", path, "checksum");
+			free(b);
+		}
+		// No dynamic header where the footer says.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			const size_t h = (size_t)q8_get_be(b + len - 512 + 16, 8);
+			memset(b + h, 0, 8);
+			spit(path, b, len);
+			q8_refused("a dynamic VHD with no dynamic header", path, "dynamic header");
+			free(b);
+		}
+		// A table entry naming a block past the end of the file.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			const size_t h = (size_t)q8_get_be(b + len - 512 + 16, 8);
+			const size_t t = (size_t)q8_get_be(b + h + 16, 8);
+			if (q8_get_be(b + t + 4, 4) != 0xFFFFFFFFu)
+				fail("QUUX: the dynamic VHD's block 1 is allocated; this case needs it not to be");
+			q8_put_be(b + t + 4, 4, 0x00200000u);
+			spit(path, b, len);
+			q8_refused("a dynamic VHD whose table names a block past the end of the file", path, "table");
+			free(b);
+		}
+		// A table entry naming a block that overlaps the footer.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			const size_t h = (size_t)q8_get_be(b + len - 512 + 16, 8);
+			const size_t t = (size_t)q8_get_be(b + h + 16, 8);
+			q8_put_be(b + t + 4, 4, (len - 512 - Q8_VHD_BLOCK_IN_FILE) / 512 + 1);
+			spit(path, b, len);
+			q8_refused("a dynamic VHD whose table names a block running into the footer", path, "table");
+			free(b);
+		}
+		// A table too short for the disk.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			const size_t h = (size_t)q8_get_be(b + len - 512 + 16, 8);
+			q8_put_be(b + h + 28, 4, 2);
+			q8_fix_checksum(b + h, 1024, 36);
+			spit(path, b, len);
+			q8_refused("a dynamic VHD whose table has 2 entries for 4 blocks", path, "short");
+			free(b);
+		}
+		// A table past the end of the file.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			const size_t h = (size_t)q8_get_be(b + len - 512 + 16, 8);
+			q8_put_be(b + h + 16, 8, 1ull << 40);
+			q8_fix_checksum(b + h, 1024, 36);
+			spit(path, b, len);
+			q8_refused("a dynamic VHD whose table is past the end of the file", path, "table");
+			free(b);
+		}
+		// A block size that is not whole sectors.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			const size_t h = (size_t)q8_get_be(b + len - 512 + 16, 8);
+			q8_put_be(b + h + 32, 4, 2097152u + 100u);
+			q8_fix_checksum(b + h, 1024, 36);
+			spit(path, b, len);
+			q8_refused("a dynamic VHD whose blocks are not whole sectors", path, "sectors");
+			free(b);
+		}
+		// A differencing VHD and a disk type that is none, each footer's
+		// checksum good.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			q8_put_be(b + len - 512 + 60, 4, 4);
+			q8_fix_checksum(b + len - 512, 512, 64);
+			spit(path, b, len);
+			q8_refused("a differencing VHD", path, "differencing");
+			q8_put_be(b + len - 512 + 60, 4, 5);
+			q8_fix_checksum(b + len - 512, 512, 64);
+			spit(path, b, len);
+			q8_refused("a VHD of disk type 5", path, "disk type");
+			free(b);
+		}
+		// A VHDX.
+		if (q8_damaged(work, "quux-disk.img", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			memcpy(b, "vhdxfile", 8);
+			spit(path, b, len);
+			q8_refused("a VHDX", path, "VHDX");
+			free(b);
+		}
+		// A dynamic VHD of more than 2^28 blocks, both footers saying so
+		// with good checksums.
+		if (q8_damaged(work, "quux-disk-dynamic.vhd", "q8-bad.vhd", path, sizeof path, &b, &len) == 0) {
+			const uint64_t big = (QUUX_MAX_BLOCKS + 1u) * PACK_BLOCK_BYTES;
+			q8_put_be(b + 48, 8, big);
+			q8_fix_checksum(b, 512, 64);
+			q8_put_be(b + len - 512 + 48, 8, big);
+			q8_fix_checksum(b + len - 512, 512, 64);
+			spit(path, b, len);
+			q8_refused("a dynamic VHD of 2^28 + 1 blocks", path, "blocks");
+			free(b);
+		}
+		// A fixed VHD of more than 2^28 blocks: sparse, the footer at its
+		// end.
+		{
+			char src[4096];
+			q8_path(src, sizeof src, "quux-disk-fixed.vhd");
+			b = slurp(src, &len);
+			if (b) {
+				uint8_t foot[512];
+				memcpy(foot, b + len - 512, 512);
+				const uint64_t big = (QUUX_MAX_BLOCKS + 1u) * PACK_BLOCK_BYTES;
+				q8_put_be(foot + 48, 8, big);
+				q8_put_be(foot + 40, 8, big);
+				q8_fix_checksum(foot, 512, 64);
+				snprintf(path, sizeof path, "%s/q8-bad.vhd", work);
+				if (q8_sparse(path, big + 512, foot, 512) < 0)
+					fail("QUUX: making %s", path);
+				q8_refused("a fixed VHD of 2^28 + 1 blocks", path, "blocks");
+				free(b);
+			}
+		}
+		unlink(path);
+	}
+
+	// ---- a dynamic VHD whose footer at the end is lost opens by its copy at 0
+	{
+		snprintf(path, sizeof path, "%s/q8-no-footer.vhd", work);
+		size_t len;
+		uint8_t *b = slurp(dyn, &len);
+		if (!b || spit(path, b, len - 512) < 0)
+			fail("QUUX: copying %s without its footer", dyn);
+		free(b);
+		q8_reads_as(path, img, QUUX_DYNAMIC_VHD, Q8_BLOCKS);
+		unlink(path);
+	}
+
+	// ---- the drive bay: in QUUX's bay a QUUX disk is a drive, whatever its size
+	{
+		char dir[4096], unit0[4096];
+		snprintf(dir, sizeof dir, "%s/q8-bay", work);
+		mkdir(dir, 0755);
+		struct bay b;
+		bay_init(&b, dir);
+		bay_path(&b, 0, unit0, sizeof unit0);
+		struct bay_look l;
+		size_t len;
+		uint8_t *bytes = slurp(fixed, &len);
+		if (!bytes || spit(unit0, bytes, len) < 0)
+			fail("QUUX: copying %s into the bay", fixed);
+		bay_look(&b, 0, &l);
+		if (l.is_pack)
+			fail("QUUX: in the CADR's bay a file of 8 MiB and a sector was taken for a pack");
+		b.quux = 1;
+		bay_look(&b, 0, &l);
+		if (!l.is_pack)
+			fail("QUUX: in QUUX's bay a fixed VHD was not taken for a drive");
+		bytes[len - 512 + 200] ^= 0x01;
+		spit(unit0, bytes, len);
+		bay_look(&b, 0, &l);
+		if (l.is_pack)
+			fail("QUUX: in QUUX's bay a VHD whose footer does not check was taken for a drive");
+		free(bytes);
+		if (make_pack(unit0, &PACK_T300) < 0)
+			fail("QUUX: making a T-300's file");
+		bay_look(&b, 0, &l);
+		if (!l.is_pack)
+			fail("QUUX: in QUUX's bay a raw file of a T-300's size was not taken for a disk");
+		unlink(unit0);
+		rmdir(dir);
+	}
+}
+
+// Through the feeder: QUUX's block-disk asks for blocks by number on unit
+// 0, whose file is the dynamic VHD.  Read blocks come to the store as the
+// raw twin has them, a block past the end and a tag with a unit are denied,
+// qemu-io's writes made by the machine grow the file, the bay does not take
+// the growth for a replacement, and at the end the file is qemu-io's.
+static void q8_feeder(const char *work)
+{
+	char err[256], dir[4096], unit0[4096], dyn[4096], dyn_grown[4096], img[4096], grown[4096];
+	q8_path(img, sizeof img, "quux-disk.img");
+	q8_path(dyn, sizeof dyn, "quux-disk-dynamic.vhd");
+	q8_path(dyn_grown, sizeof dyn_grown, "quux-disk-dynamic-grown.vhd");
+	q8_path(grown, sizeof grown, "quux-disk-grown.img");
+	snprintf(dir, sizeof dir, "%s/q8-packs", work);
+	{
+		char cmd[4200];
+		snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir);
+		if (system(cmd) != 0)
+			fail("clearing %s", dir);
+	}
+	mkdir(dir, 0755);
+
+	// A fresh face, store and feeder: this is a board with a QUUX bitstream.
+	free(k.ddr);
+	memset(&k, 0, sizeof k);
+	k.busy_polls = 5;
+	k.ddr_phys = FEEDER_SPARE_BASE;
+	k.ddr_bytes = FEEDER_MAP_BYTES;
+	k.ddr = calloc(k.ddr_bytes / 4, 4);
+	for (uint32_t i = 0; i < k.ddr_bytes / 4; ++i)
+		k.ddr[i] = (i * 0x9E3779B1u) | 1u;
+	k.last_move_was_writeback_of = -1;
+	ps_init(&ps);
+	ps.read = fake_read;
+	ps.write = fake_write;
+	ps.pause = fake_pause;
+	ps.ctx = &k;
+	n_blocks = 0;
+	bay_init(&bay, dir);
+	bay.quux = 1;
+	bay_path(&bay, 0, unit0, sizeof unit0);
+	size_t len;
+	uint8_t *b = slurp(dyn, &len);
+	if (!b || spit(unit0, b, len) < 0)
+		fail("QUUX: copying %s into the bay", dyn);
+	free(b);
+	if (feeder_init(&f, &bay, &ps, k.ddr, k.ddr_phys, k.ddr_bytes, console) < 0) {
+		fail("QUUX: feeder_init");
+		return;
+	}
+	f.linear = 1;
+	linear_tags = 1;
+	k.starting = 1;
+	if (feeder_start(&f, 0, err, sizeof err) < 0)
+		fail("QUUX: feeder_start: %s", err);
+	k.starting = 0;
+	k.hand_expect = f.hand;
+	struct pack *pk0 = bay_pack(&bay, 0);
+	if (!pk0) {
+		fail("QUUX: the dynamic VHD in the bay did not come present on unit 0");
+		linear_tags = 0;
+		return;
+	}
+	if (!pk0->quux || pk0->q.format != QUUX_DYNAMIC_VHD || pk0->blocks != Q8_BLOCKS)
+		fail("QUUX: unit 0 is %s of %u blocks, wanting a dynamic VHD of %u",
+		     pk0->quux ? quux_format_name(pk0->q.format) : "a CADR pack", pk0->blocks, Q8_BLOCKS);
+	if (f.appeared != 1 || k.regs[PS_DRIVE] != 1u)
+		fail("QUUX: %lu drives appeared and DRIVE is 0x%x, wanting 1 and unit 0 present", f.appeared, k.regs[PS_DRIVE]);
+
+	// The blocks the script touches, as the raw twin has them.
+	static const uint32_t reads[] = { 0, 1, 1024, 1025, 1043, 1536, 1599, 2560, 8191 };
+	uint8_t *raw = slurp(img, &len);
+	if (!raw || len != (size_t)Q8_BLOCKS * PACK_BLOCK_BYTES) {
+		fail("QUUX: cannot read %s", img);
+		free(raw);
+		linear_tags = 0;
+		return;
+	}
+	for (size_t i = 0; i < sizeof reads / sizeof reads[0]; ++i) {
+		struct blk *s = shadow(0, reads[i], 1);
+		s->quux = 1;
+		memcpy(s->data, raw + (size_t)reads[i] * PACK_BLOCK_BYTES, PACK_BLOCK_BYTES);
+	}
+	for (int g = 0; g < 3; ++g)
+		for (uint32_t i = 0; i < Q8_WRITES[g].count; ++i) {
+			const uint32_t n = Q8_WRITES[g].block + i;
+			struct blk *s = shadow(0, n, 1);
+			s->quux = 1;
+			memcpy(s->data, raw + (size_t)n * PACK_BLOCK_BYTES, PACK_BLOCK_BYTES);
+		}
+	free(raw);
+
+	const unsigned long served0 = f.served, denied0 = f.denied;
+	// The reads, as one transfer: the hit compares every word with the twin.
+	struct xfer *x = enqueue(&k, 0, 0);
+	for (size_t i = 0; i < sizeof reads / sizeof reads[0]; ++i)
+		x->tag[x->n++] = reads[i];
+	run();
+	// qemu-io's writes, made by the machine in qemu-io's order, each put on
+	// the disk before the next, since the order the blocks are allocated in
+	// is where they lie in the file.
+	for (int g = 0; g < 3; ++g) {
+		x = enqueue(&k, 0, 1);
+		for (uint32_t i = 0; i < Q8_WRITES[g].count; ++i) {
+			x->tag[x->n] = Q8_WRITES[g].block + i;
+			memset(x->page[x->n], Q8_WRITES[g].byte, PACK_BLOCK_BYTES);
+			++x->n;
+		}
+		const unsigned long wb0 = f.written_back;
+		run();
+		const unsigned still = feeder_flush(&f, 4, err, sizeof err);
+		if (still)
+			fail("QUUX: %u slots still dirty after qemu-io's write %d: %s", still, g + 1, err);
+		verify_pending_writebacks();
+		q8_feeder_written += f.written_back - wb0;
+		// The file grew; the bay looks again and must see the same drive.
+		const unsigned long away0 = f.went_away, replaced0 = f.replaced;
+		scan();
+		if (f.went_away != away0 || f.replaced != replaced0 || bay_pack(&bay, 0) != pk0)
+			fail("QUUX: the bay took the dynamic VHD's growth by write %d for the drive going away", g + 1);
+	}
+	// Past the end, and a tag with a unit.
+	x = enqueue(&k, 0, 0);
+	x->tag[x->n++] = Q8_BLOCKS;
+	x->expect_deny = 1;
+	run();
+	x = enqueue(&k, 0, 0);
+	x->tag[x->n++] = (1u << 28) | 5u;
+	x->expect_deny = 1;
+	run();
+	q8_feeder_served = f.served - served0;
+	q8_feeder_denied = f.denied - denied0;
+	if (q8_feeder_denied != 2)
+		fail("QUUX: %lu requests denied, wanting 2 (past the end, and a unit in the tag)", q8_feeder_denied);
+	if (q8_feeder_written != 1u + 4u + 8u)
+		fail("QUUX: %lu blocks written back, wanting 13", q8_feeder_written);
+	if (k.denied_wrong)
+		fail("QUUX: %lu requests denied that the script expected served", k.denied_wrong);
+	if (f.failures)
+		fail("QUUX: %lu failures in the feeder: %s", f.failures, f.last_failure);
+
+	// The file the machine wrote is qemu-io's, and reads as the grown twin.
+	for (unsigned u = 0; u < BAY_UNITS; ++u)
+		bay_close(&bay, u);
+	q8_files_are(unit0, dyn_grown, "the dynamic VHD in the bay after the machine made qemu-io's writes");
+	q8_reads_as(unit0, grown, QUUX_DYNAMIC_VHD, Q8_BLOCKS);
+	linear_tags = 0;
+	{
+		char cmd[4200];
+		snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir);
+		if (system(cmd) != 0)
+			fail("clearing %s at the end", dir);
+	}
+}
+
 int main(int argc, char **argv)
 {
-	if (argc != 3) {
-		fprintf(stderr, "usage: feeder_test <disk.golden> <work dir>\n");
+	if (argc != 4) {
+		fprintf(stderr, "usage: feeder_test <disk.golden> <work dir> <QUUX's disks>\n");
 		return 2;
 	}
+	q8_dir = argv[3];
 	FILE *trace = fopen(argv[1], "r");
 	if (!trace) {
 		fprintf(stderr, "feeder_test: %s: %s\n", argv[1], strerror(errno));
@@ -1820,47 +2580,6 @@ int main(int argc, char **argv)
 		if (blocks[i].unit == UNIT2)
 			blocks[i].gone = 1;
 
-	// ---- QUUX's block-disk: a block asked for by its number -----------------
-	// `--machine quux`: the tag is the block number from the start of unit
-	// 0's pack, served into a slot under that same tag, a write left dirty
-	// and written back at the end's flush to the block by number, and a block
-	// past the pack's end denied, which is how block-disk learns it.  So is a
-	// tag with anything in the unit's bits.
-	unsigned long linear_served = 0, linear_denied = 0;
-	{
-		f.linear = 1;
-		linear_tags = 1;
-		const unsigned long served0 = f.served, denied0 = f.denied;
-		const uint32_t L = 0x2345u;
-		lay_synth(0, L, 0xB0u);
-		lay_synth(0, L + 1, 0xB1u);
-		struct xfer *x = enqueue(&k, 0, 0);
-		x->tag[x->n++] = L;
-		x->tag[x->n++] = L + 1;
-		run();
-		x = enqueue(&k, 0, 1);
-		x->tag[x->n++] = L;
-		page_of(0, L, 0xB2u, x->page[0]);
-		run_to_dirty();
-		if (!k.dirty)
-			fail("block-disk: block %x was written and no slot is dirty", L);
-		struct pack *p0 = bay_pack(&bay, 0);
-		x = enqueue(&k, 0, 0);
-		x->tag[x->n++] = p0 ? p0->blocks : 0x0fffffffu;
-		x->expect_deny = 1;
-		run();
-		x = enqueue(&k, 0, 0);
-		x->tag[x->n++] = (1u << 28) | 5u;
-		x->expect_deny = 1;
-		run();
-		linear_served = f.served - served0;
-		linear_denied = f.denied - denied0;
-		if (linear_served < 2 || linear_denied != 2)
-			fail("block-disk: %lu served and %lu denied, wanting at least 2 and 2", linear_served, linear_denied);
-		f.linear = 0;
-		linear_tags = 0;
-	}
-
 	// ---- the end of the run: every dirty slot back, the pack as implied -----
 	{
 		const unsigned still = feeder_flush(&f, 4, err, sizeof err);
@@ -2044,9 +2763,6 @@ int main(int argc, char **argv)
 		if (system(cmd) != 0)
 			fail("clearing %s at the end", bay_dir);
 	}
-	fclose(console);
-	unlink(logpath);
-	free(k.ddr);
 
 	// ---- the totals -------------------------------------------------------------
 	if (needs != want_needs)
@@ -2084,11 +2800,16 @@ int main(int argc, char **argv)
 	if (ps.attentions == 0)
 		fail("no attention was ever raised: a drive coming ready raises one");
 
-	if (bad) {
-		fprintf(stderr, "FAIL: %d mismatches\n", bad);
-		return 1;
+	// The CADR's run is over and its summary is written now, from its own
+	// tallies, before QUUX's phase starts the feeder and the face afresh.
+	char *ok_text = NULL;
+	size_t ok_len = 0;
+	FILE *ok = open_memstream(&ok_text, &ok_len);
+	if (!ok) {
+		fprintf(stderr, "feeder_test: open_memstream: %s\n", strerror(errno));
+		return 2;
 	}
-	printf("ok: the disk pack program serves the disk controller on demand and keeps\n"
+	fprintf(ok, "ok: the disk pack program serves the disk controller on demand and keeps\n"
 	       "    the pack as muir's Unit keeps it\n"
 	       "    %lu requests posted by the modeled controller --- %lu from the\n"
 	       "      trace's %lu NEED rows in %lu transfers --- %lu answered within\n"
@@ -2117,8 +2838,7 @@ int main(int argc, char **argv)
 	       "      mark protected once and unprotected once, the flush first; a\n"
 	       "      pack replaced under its own name served the NEW file's words;\n"
 	       "      %lu look(s) put off for a transfer and nothing applied in one;\n"
-	       "      %lu attention pulse(s), none left standing\n"
-	       "    QUUX's block-disk, by block number: %lu served, %lu denied\n",
+	       "      %lu attention pulse(s), none left standing\n",
 	       k.requests, trace_requests, needs, transfers, k.answered, k.worst_answer, k.denied_ok,
 	       k.hits_compared, k.words_compared,
 	       k.full_circles, k.refusals_walk, k.start_refusals, k.evict_writebacks, k.worst_dirty,
@@ -2126,8 +2846,34 @@ int main(int argc, char **argv)
 	       restart_compared, restart_differ,
 	       refusals, ps.polls, polls_run,
 	       f.scans, f.appeared, f.went_away, bay_two_unit_hits, bay_flushed_out,
-	       f.lost_blocks, bay_scans_deferred, ps.attentions, linear_served, linear_denied);
+	       f.lost_blocks, bay_scans_deferred, ps.attentions);
+	fclose(ok);
 	(void)loads;
 	(void)sweep_reads;
+
+	// ---- QUUX's disk, contract Q8 ------------------------------------------------
+	q8_layer(argv[2]);
+	q8_feeder(argv[2]);
+	fclose(console);
+	unlink(logpath);
+	free(k.ddr);
+
+	if (bad) {
+		fprintf(stderr, "FAIL: %d mismatches\n", bad);
+		free(ok_text);
+		return 1;
+	}
+	fputs(ok_text, stdout);
+	free(ok_text);
+	printf("    QUUX's disk (contract Q8), against qemu's files: %lu blocks read equal\n"
+	       "      to their raw twins, through a raw image, a fixed VHD, a dynamic VHD,\n"
+	       "      a dynamic VHD grown here and one with its end footer lost; %lu\n"
+	       "      file(s) grown here equal to qemu-io's byte for byte; %lu damaged\n"
+	       "      or oversized files refused for the right reason\n"
+	       "    QUUX's block-disk, by block number, on a dynamic VHD in the bay: %lu\n"
+	       "      served, %lu denied, %lu written back growing the file, the bay\n"
+	       "      seeing the same drive after every growth\n",
+	       q8_blocks_compared, q8_files_equal, q8_refusals,
+	       q8_feeder_served, q8_feeder_denied, q8_feeder_written);
 	return 0;
 }
