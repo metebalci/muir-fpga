@@ -239,6 +239,85 @@ The two that change what a resumed machine *does* are the disk controller and
 the microsecond clock. Everything else in the table either has no reader or is
 written at the value the fabric behaves as.
 
+## A QUUX checkpoint
+
+`cadr-checkpoint --machine quux` takes a checkpoint of a QUUX bitstream,
+`--machine` being muir's own flag and the one `cadr-terminal` and
+`cadr-disk-packs` take. The program asks the fabric which machine it is before
+it reads anything. The readout's register table has QUUX's signature,
+`0x5155`, at entry 21, with the K and L the bitstream was built at, and the
+CADR answers `RO_NO_MEMORY` there. A checkpoint of the other machine is
+refused, because it would be one machine's fields filled from the other's.
+
+What a QUUX checkpoint holds beyond the CADR's, in muir's order:
+
+| what | where the fabric has it | how it is read |
+|---|---|---|
+| `Geometry::QUUX`: a six-bit level-1 entry, a 14-bit PDL pointer, `MUL` and `DIV`, the tick | the bitstream | entry 21 names the machine |
+| the PDL buffer's 16,384 words and its 14-bit pointer and index; the level-1 map at six bits; the level-2 map's 2,048 entries | `cadr_microcycle.sv` | the window's own selectors, at QUUX's sizes |
+| the boot PROM | `cadr_microcycle.sv` | selector 1; the control store under it, at 36000 and up, is written zero, as muir's machine holds it, since nothing fetches or writes that RAM |
+| the clocks, `Machine::tick`: each timer's enable and deadline, and the interval timer's period | `quux_clocks.sv` | entries 22 to 25 |
+| the keyboard and mouse, `QuuxInput`: the FIFO's waiting words, the overflow, both enables, the counts, the buttons and whether the mouse changed | `quux_input.sv` and the I/O board's counters | selector 12, word 0 and the FIFO at words 64 to 127 |
+| block-disk, `BlockDisk`: its four registers, its three errors and when its transfer is done | `quux_block_disk.sv` | selector 12, words 1 to 5 |
+| the bus errors, word 101 of the register page | `cadr_busint_regs.sv` | selector 12, word 6 |
+| MONO TV: its size, its 40,960-word buffer and black-on-white, its one bit of mode | `quux_mono_tv.sv` and DDR | selector 12, word 6, and DDR |
+| `TimingModel::Sync` with K and L | the bitstream | entry 21 |
+
+**The clocks run while they are read**, halted machine or not, and a reader's
+accesses are microseconds apart. So each timer's word carries the low bits of
+the microsecond clock from the same tick, and the program reads the whole
+clock before and after the two timers. It refuses the reading if those two are
+more than 64 microseconds apart, and tries again. muir's instant is ticks since
+power-on, `usec * 100 + 99 - usec_t`, and the thirty-two bits of microseconds
+are unwrapped against the console's tick count. A timer's next rise is
+`pre + (us - 1) * 100` ticks after its word was taken.
+
+What a QUUX checkpoint does not carry exactly, besides what it shares with the
+CADR's list above:
+
+- **A flag raised more than a period ago and not cleared.** The fabric counts
+  to the next rise and cannot say how many rises ago the flag went up. The file
+  carries the latest rise where muir keeps the first. The flag is up either
+  way, and a clear moves both to the same next boundary, so the resumed machine
+  is the same machine; the file is not the same bytes.
+- **When block-disk's transfer finished** is read a few microseconds after the
+  checkpoint's own instant. For a finished transfer it lies in the past either
+  way, which is all the machine reads of it. A disk whose command list is still
+  being walked is refused, as a transfer in flight cannot be carried.
+- **The Chaosnet interface's registers**, the register page's words 140 to 147,
+  which are the I/O board's and which the readout does not reach.
+- **When `IR` was loaded**, which only the divider reads. It is written as a
+  fresh machine's, long ago, which a machine halted for more than the divider's
+  33 ticks is.
+
+The Unibus's registers, the CADR's disk controller and the display's sync
+program and color map are written as muir's QUUX holds them, at their power-on
+values, which QUUX never changes. That is exact rather than idle.
+
+The proof is `make build/checkpoint.quux.pass`, and **its judge is muir's own
+file for the same machine**. `golden/src/quux_checkpoint.rs` builds a QUUX
+machine through muir's own calls: the clocks enabled and a period written, keys
+pressed and read, the mouse moved, block-disk started. The package's check
+builds the same machine as the fabric's counters and registers would hold it
+after that history, through a modeled window, and the two files are compared
+byte for byte. muir then loads the program's file and saves it back
+identically. Eight mutants of `chk_rtl.c`, 9 to 16, are each caught by muir's
+refusal, by a re-save that differs, or by a file that is not muir's own. The
+`Rtl` engine's own registers are a fresh engine's on both sides, because muir
+keeps them private. They are the CADR's code, which `build/checkpoint.pass`
+holds.
+
+`make build/quux_readout_window.quux.k4.pass` holds the fabric's half. Each
+new field is poisoned in the register that holds it and read back through the
+window. Each moving word is held to the ticks it could have been taken at, and
+a timer's predicted rise is held against the flag itself. Built as the CADR,
+the same addresses must read `RO_NO_MEMORY`.
+
+**Neither machine's checkpoint can be restored to the fabric.** The readout
+window only reads, so a checkpoint is resumed in muir and not on
+the board. Restoring one would need a write path into every memory and
+register named here, which neither machine has.
+
 ## `--chaos-address` is octal, as muir's is
 
 muir's flag "wants one address in octal or subnet:host", and

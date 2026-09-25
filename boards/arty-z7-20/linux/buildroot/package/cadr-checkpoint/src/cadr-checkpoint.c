@@ -7,10 +7,19 @@
 //     cadr-checkpoint [-o FILE] [--boards N] [--pack FILE[,UNIT]] [--no-packs]
 //                     [--pack-dir DIR] [--chaos-address OCTAL] [--no-display]
 //                     [--already-halted] [--leave-halted] [--packs-stopped]
-//                     [--no-guard]
+//                     [--no-guard] [--machine cadr|quux]
 //     cadr-checkpoint --halt | --start
 //     cadr-checkpoint --verify FILE.packs [--pack FILE[,UNIT]]
-//     cadr-checkpoint --what-it-cannot-read
+//     cadr-checkpoint --what-it-cannot-read [--machine cadr|quux]
+//
+// **WHICH MACHINE, `--machine cadr|quux`**, muir's own flag and the one
+// `cadr-terminal` and `cadr-disk-packs` take: the CADR by default, or QUUX,
+// whose checkpoint carries its clocks, its register page's keyboard and
+// mouse, block-disk, MONO TV and its K and L (`chk_rtl.c`).  **THE FABRIC IS
+// ASKED AND THE FLAG MUST AGREE**: the readout's register table says which
+// machine the bitstream is, and a checkpoint of the other machine is refused
+// before anything is read, since it would be a file of one machine's fields
+// filled from the other's.
 //
 // **WHAT IT IS FOR.**  When the board goes wrong there are sixteen diagnostic
 // registers and three words beside them, and that is a keyhole.  A checkpoint
@@ -105,16 +114,16 @@ static void usage(void)
 		"usage: cadr-checkpoint [-o FILE] [--boards N] [--pack FILE[,UNIT]]\n"
 		"                       [--no-packs] [--pack-dir DIR] [--chaos-address OCTAL]\n"
 		"                       [--no-display] [--already-halted] [--leave-halted]\n"
-		"                       [--packs-stopped] [--no-guard]\n"
+		"                       [--packs-stopped] [--no-guard] [--machine cadr|quux]\n"
 		"       cadr-checkpoint --halt | --start\n"
 		"       cadr-checkpoint --verify FILE" BIND_SUFFIX " [--pack FILE[,UNIT]]\n"
-		"       cadr-checkpoint --what-it-cannot-read\n");
+		"       cadr-checkpoint --what-it-cannot-read [--machine cadr|quux]\n");
 	exit(2);
 }
 
-static void print_missing(void)
+static void print_missing(int quux)
 {
-	const char *const *m = chk_rtl_missing();
+	const char *const *m = quux ? chk_rtl_missing_quux() : chk_rtl_missing();
 	say("what a checkpoint off this board cannot carry, and what is written");
 	say("instead.  Every one of these is a field muir's own format has and");
 	say("this fabric has no reading for:");
@@ -274,14 +283,25 @@ int main(int argc, char **argv)
 	int want_display = 1, leave_halted = 0, guard = 1;
 	int already_halted = 0, no_packs = 0, halt_only = 0, start_only = 0;
 	int packs_stopped = 0;
+	int quux = 0, want_missing = 0;
 	char *packs[BIND_UNITS];
 	unsigned npacks = 0;
 
 	for (int i = 1; i < argc; ++i) {
 		const char *a = argv[i];
 		if (!strcmp(a, "--what-it-cannot-read")) {
-			print_missing();
-			return 0;
+			want_missing = 1;
+		} else if (!strcmp(a, "--machine") && i + 1 < argc) {
+			// muir's own two words, as `cadr-terminal` takes them.
+			const char *v = argv[++i];
+			if (!strcmp(v, "quux")) {
+				quux = 1;
+			} else if (!strcmp(v, "cadr")) {
+				quux = 0;
+			} else {
+				say("--machine %s: wants cadr or quux", v);
+				return 2;
+			}
 		} else if (!strcmp(a, "-o") && i + 1 < argc) {
 			out = argv[++i];
 		} else if (!strcmp(a, "--verify") && i + 1 < argc) {
@@ -326,6 +346,10 @@ int main(int argc, char **argv)
 		} else {
 			usage();
 		}
+	}
+	if (want_missing) {
+		print_missing(quux);
+		return 0;
 	}
 	if (verify)
 		return do_verify(verify, packs, npacks);
@@ -391,6 +415,17 @@ int main(int argc, char **argv)
 		if (err[0])
 			say("looking at the drive bay: %s", err);
 	}
+	// QUUX's disk is block-disk, whose one pack is unit 0 (muir's
+	// `attach`: "block-disk has one pack, unit 0").
+	if (quux) {
+		for (unsigned u = 1; u < BIND_UNITS; ++u) {
+			if (bind.u[u].present) {
+				say("unit %u %s: QUUX's disk is block-disk, which has one "
+				    "pack, unit 0", u, bind.u[u].path);
+				return 1;
+			}
+		}
+	}
 	if (!bind.present && !no_packs) {
 		say("no pack in %s and none named with --pack.  A checkpoint of a "
 		    "machine with a disk and no binding to that disk is the thing "
@@ -405,8 +440,29 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	// **WHICH MACHINE THE BITSTREAM IS, ASKED BEFORE ANYTHING IS READ.**
+	{
+		unsigned k = 0, l = 0;
+		const int is = ro_machine_is_quux(&r, &k, &l);
+		if (is < 0) {
+			say("the readout's register table entry %u is neither QUUX's "
+			    "signature nor the CADR's RO_NO_MEMORY, or its echo is "
+			    "stale: the window is not answering", IMG_RG_QUUX_ID);
+			return 1;
+		}
+		if (is != quux) {
+			say("this bitstream is %s and --machine says %s: a checkpoint "
+			    "of one machine filled from the other's fields is refused",
+			    is ? "QUUX" : "the CADR", quux ? "quux" : "cadr");
+			return 1;
+		}
+		if (quux)
+			say("the bitstream is QUUX, its microcycle %u ticks and %u more "
+			    "for ILONG", k, l);
+	}
+
 	struct cadr_image img;
-	if (img_alloc(&img, boards) != 0) {
+	if (img_alloc_machine(&img, boards, quux) != 0) {
 		say("out of memory for a machine of %u boards", boards);
 		return 1;
 	}
@@ -451,10 +507,35 @@ int main(int argc, char **argv)
 
 	if (ro_read_machine(&r, &img) != 0) {
 		say("the readout gave back a word for an address that was not "
-		    "the one asked for, %lu times: the window is not answering",
-		    r.stale);
+		    "the one asked for, %lu times: the window is not answering%s",
+		    r.stale, quux ? ", or QUUX's clocks could not be read within "
+		    "64 us of each other" : "");
 		img_free(&img);
 		return 1;
+	}
+	// **QUUX: THE FABRIC'S DISK AND THE BAY MUST AGREE, AND NO TRANSFER MAY
+	// BE IN FLIGHT.**  Block-disk says whether a pack is on unit 0, and muir
+	// refuses a checkpoint with a pack onto a machine without one; a walk in
+	// progress is a transfer half done, which no file can carry.
+	if (quux) {
+		const int bay = (decl.present & 1u) != 0;
+		if (img.qx.present != bay) {
+			say("block-disk %s a pack on unit 0 and the drive bay %s one",
+			    img.qx.present ? "has" : "has not", bay ? "holds" : "holds no");
+			img_free(&img);
+			if (was_running && !leave_halted)
+				ro_start(&r);
+			return 1;
+		}
+		if (img.qx.walking) {
+			say("block-disk is walking a command list: a transfer is in "
+			    "flight and no checkpoint can carry it.  Start the machine "
+			    "and halt it between transfers.");
+			img_free(&img);
+			if (was_running && !leave_halted)
+				ro_start(&r);
+			return 1;
+		}
 	}
 
 	// **THE FIRST DISPLAY BOARD'S COLOR MAP**, off the console face's page
@@ -466,7 +547,7 @@ int main(int argc, char **argv)
 	// are not zero --- so a map is taken only when the read looks like one,
 	// and a machine that has written none leaves the power-on map of zeros
 	// muir comes up with.
-	if (ro_color_map(&r, 0, img.tv_map)) {
+	if (!quux && ro_color_map(&r, 0, img.tv_map)) {
 		unsigned n = 0;
 		for (unsigned c = 0; c < IMG_MAP_COLORS; ++c)
 			for (unsigned k = 0; k < IMG_MAP_CHANNELS; ++k)
@@ -490,14 +571,15 @@ int main(int argc, char **argv)
 		img.main[i] = main_mem[i];
 
 	if (want_display) {
+		// The CADR display's 32,768 words, or MONO TV's 40,960.
 		volatile uint32_t *tv =
-			cadr_map(fd, DDR_DISPLAY_BASE, IMG_TV_WORDS * 4u,
+			cadr_map(fd, DDR_DISPLAY_BASE, (size_t)img.tv_words * 4u,
 				 "the display's window");
 		if (!tv) {
 			img_free(&img);
 			return 1;
 		}
-		for (size_t i = 0; i < IMG_TV_WORDS; ++i)
+		for (size_t i = 0; i < img.tv_words; ++i)
 			img.tv[i] = tv[i];
 	}
 
@@ -536,8 +618,9 @@ int main(int argc, char **argv)
 	// The sidecar, named for the checkpoint and carrying its digest too, so
 	// that a sidecar beside the wrong file is found out as well.
 	bind.boards = boards;
+	bind.quux = quux;
 	bind.microcycles = img.cycles;
-	bind.ns = img.ticks * CHK_GRID_NS;
+	bind.ns = (quux ? img.qx.m : img.ticks) * CHK_GRID_NS;
 	when(bind.taken, sizeof bind.taken);
 	snprintf(bind.checkpoint, sizeof bind.checkpoint, "%s", out);
 	if (sha256_file(out, bind.checkpoint_sha, &bind.checkpoint_bytes) != 0) {
@@ -578,7 +661,7 @@ int main(int argc, char **argv)
 	    "in the fabric can see that: the controller recomputes a block's "
 	    "header and checkwords as it moves it, so a block from another "
 	    "moment passes every check the machine makes.");
-	print_missing();
+	print_missing(quux);
 
 	img_free(&img);
 	if (was_running && !leave_halted) {

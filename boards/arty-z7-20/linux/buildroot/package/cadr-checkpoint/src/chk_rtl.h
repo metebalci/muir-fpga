@@ -41,7 +41,9 @@ struct chk_declared {
 	uint32_t chaos_address;
 };
 
-// The whole body, `Machine::save` then the `Rtl` tail, in muir's order.
+// The whole body, `Machine::save` then the `Rtl` tail, in muir's order: the
+// CADR's, or QUUX's for an image `img_alloc_machine` made as QUUX's, whose
+// drive bay's one pack, unit 0, is block-disk's.
 void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		  const struct chk_declared *d);
 
@@ -51,8 +53,10 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 // this is not `strtoul(.., 0)`.  0 and `*out` set, or -1.
 int chk_chaos_address(const char *s, unsigned *out);
 
-// Every field the fabric has no reading for, one line each, NULL-terminated.
+// Every field the fabric has no reading for, one line each, NULL-terminated:
+// the CADR's, and QUUX's.
 const char *const *chk_rtl_missing(void);
+const char *const *chk_rtl_missing_quux(void);
 
 // What a mutant of this file was built to do, or NULL for the real thing.
 // `CHK_MUTATE` is never defined in the program that goes on the board; the

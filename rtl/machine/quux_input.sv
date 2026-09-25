@@ -76,7 +76,19 @@ module quux_input #(
     // The keyboard's boot word, as the I/O board's `-BOOT*`: active low.
     output var logic        n_boot,
     // `KBD READY` for the host's handshake (see the header).
-    output var logic        busy
+    output var logic        busy,
+
+    // **THE READOUT'S VIEW, FOR A CHECKPOINT** (`cadr_machine.sv`'s selector
+    // 12): the FIFO's head and count and the four flags in one word, taken in
+    // one tick, and any one of the FIFO's words by its index.  The words a
+    // checkpoint wants are `count` of them from `head`, and a key word
+    // arriving while they are read lands at the tail, past them.
+    //   ro_state   <13:8> head, <7:4> nothing, <3> overflowed, <2> kbd_enable,
+    //              <1> mouse_changed, <0> mouse_enable; ro_count the count
+    output var logic [13:0] ro_state,
+    output var logic [$clog2(FIFO_WORDS + 1)-1:0] ro_count,
+    input  var logic [$clog2(FIFO_WORDS)-1:0]     ro_fifo_a,
+    output var logic [23:0] ro_fifo_q
 );
 
   localparam logic [7:0] KBD_STATUS   = 8'o120;
@@ -84,13 +96,14 @@ module quux_input #(
   localparam logic [7:0] MOUSE        = 8'o122;
   localparam logic [7:0] MOUSE_STATUS = 8'o123;
 
-  localparam int unsigned PTRW = $clog2(FIFO_WORDS);
-  localparam int unsigned CNTW = $clog2(FIFO_WORDS + 1);
 
   // `ioboard::boot_word`, `(word >> 6) & 0o377 == 0o360`, and the board's
   // 4 us pulse (`cadr_io_board.sv`'s `BOOT_T`).
   localparam logic [7:0]  BOOT_MATCH = 8'o360;
   localparam int unsigned BOOT_T     = cadr_tick_pkg::ticks(4_000);
+
+  localparam int unsigned PTRW = $clog2(FIFO_WORDS);
+  localparam int unsigned CNTW = $clog2(FIFO_WORDS + 1);
 
   logic [23:0]     fifo [FIFO_WORDS];
   logic [PTRW-1:0] head, tail;
@@ -193,6 +206,10 @@ module quux_input #(
       end
     end
   end
+
+  assign ro_state  = {6'(head), 4'd0, overflowed, kbd_enable, mouse_changed, mouse_enable};
+  assign ro_count  = count;
+  assign ro_fifo_q = fifo[ro_fifo_a];
 
   // Bits of the word written that no register takes.
   logic unused;

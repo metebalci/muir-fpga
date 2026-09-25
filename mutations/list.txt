@@ -10203,18 +10203,18 @@ if {0 && $held ne $want} {
 @check audit_window
 @file rtl/machine/cadr_machine.sv
 @note A MUX WRITTEN AS "11 OR ABOVE" RATHER THAN "11".  Selectors 12 to 15 are
-@note free and must go on reading the window's own `A5A5_5A5A_A5A5`: that is
-@note what tells a bitstream WITHOUT an instrument at a selector from one with
-@note a clean instrument there, and the next thing joined to this window will
-@note take one of them.
+@note the CADR's free ones --- 12 is QUUX's register page, which the CADR
+@note does not build --- and must go on reading the window's own
+@note `A5A5_5A5A_A5A5`: that is what tells a bitstream WITHOUT an instrument at
+@note a selector from one with a clean instrument there.
 @note
 @note The obvious way to write a range comparison, and it is wrong in the
 @note direction that makes a value which means nothing into a value the
 @note instrument can mean.
 @old
-  assign con_ro_data = (con_ro_echo[17:14] == RO_AUDIT) ? aud_word : proc_ro_data;
+  assign con_ro_data = (con_ro_echo[17:14] == RO_AUDIT)     ? aud_word
 @new
-  assign con_ro_data = (con_ro_echo[17:14] >= RO_AUDIT) ? aud_word : proc_ro_data;
+  assign con_ro_data = (con_ro_echo[17:14] >= RO_AUDIT)     ? aud_word
 @end
 
 @mutation the-window-reads-the-audit-at-the-wrong-index
@@ -21053,4 +21053,200 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
   assign unibus    = (MACHINE != "quux") && in_window;
 @new
   assign unibus    = in_window;
+@end
+
+# ------------------------------------------------ QUUX's state on the readout
+#
+# What a checkpoint of a QUUX board reads: the processor's clocks in the
+# register table's entries 21 to 25, and the register page's keyboard, mouse,
+# block-disk, bus errors and MONO TV's black-on-white at selector 12.
+# `quux_readout_window_quux` holds each field against the register that holds
+# it; `quux_readout_window` holds that a CADR answers none of it, which is how
+# `cadr-checkpoint` tells the two bitstreams apart.
+
+@mutation quux-ro-tick-carries-the-interval-timers-count
+@check quux_readout_window_quux
+@file rtl/machine/quux_clocks.sv
+@note The tick's word carries the interval timer's prescaler, so a
+@note checkpoint's tick deadline is the other timer's.
+@old
+  assign ro_tick     = {usec[6:0], usec_t, en[0], sticky[0], live[0], pre[0], us[0]};
+@new
+  assign ro_tick     = {usec[6:0], usec_t, en[0], sticky[0], live[0], pre[1], us[0]};
+@end
+
+@mutation quux-ro-time-a-microsecond-ahead
+@check quux_readout_window_quux
+@file rtl/machine/quux_clocks.sv
+@note The microsecond clock reads one ahead of itself, so every instant a
+@note checkpoint takes from it is a microsecond late.
+@old
+  assign ro_time     = {9'd0, usec_t, usec};
+@new
+  assign ro_time     = {9'd0, usec_t, usec + 32'd1};
+@end
+
+@mutation quux-ro-interval-sticky-and-live-crossed
+@check quux_readout_window_quux
+@file rtl/machine/quux_clocks.sv
+@note The interval timer's raised flag and its running period trade places,
+@note so a stopped timer reads as raised.
+@old
+  assign ro_interval = {usec[6:0], usec_t, en[1], sticky[1], live[1], pre[1], us[1]};
+@new
+  assign ro_interval = {usec[6:0], usec_t, en[1], live[1], sticky[1], pre[1], us[1]};
+@end
+
+@mutation quux-ro-id-k-and-l-crossed
+@check quux_readout_window_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Entry 21 gives L where K belongs, so a checkpoint declares the wrong
+@note microcycle for `TimingModel::Sync`.
+@old
+      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
+@new
+      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_L), 8'(SYNC_K), 16'd0} : RO_NO_MEMORY;
+@end
+
+@mutation quux-ro-tick-and-interval-entries-crossed
+@check quux_readout_window_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Entries 23 and 24 swap, so the tick is read as the interval timer.
+@old
+  localparam logic [13:0] RG_QUUX_TICK     = 14'd23;
+  localparam logic [13:0] RG_QUUX_INTERVAL = 14'd24;
+@new
+  localparam logic [13:0] RG_QUUX_TICK     = 14'd24;
+  localparam logic [13:0] RG_QUUX_INTERVAL = 14'd23;
+@end
+
+@mutation quux-ro-id-answers-on-the-cadr
+@check quux_readout_window
+@file rtl/machine/cadr_microcycle.sv
+@note The CADR answers QUUX's signature at entry 21, so `cadr-checkpoint
+@note --machine quux` takes a CADR's bitstream for QUUX's.
+@old
+      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
+@new
+      RG_QUUX_ID:       ro_regs = 1'b1 ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
+@end
+
+@mutation quux-ro-input-overflow-and-enable-crossed
+@check quux_readout_window_quux
+@file rtl/machine/quux_input.sv
+@note The keyboard's overflow and its interrupt enable trade places in the
+@note word a checkpoint takes `QuuxInput` from.
+@old
+  assign ro_state  = {6'(head), 4'd0, overflowed, kbd_enable, mouse_changed, mouse_enable};
+@new
+  assign ro_state  = {6'(head), 4'd0, kbd_enable, overflowed, mouse_changed, mouse_enable};
+@end
+
+@mutation quux-ro-fifo-one-slot-on
+@check quux_readout_window_quux
+@file rtl/machine/quux_input.sv
+@note The FIFO's words are read one slot past the index asked for, so a
+@note checkpoint's key words are each the next one's.
+@old
+  assign ro_fifo_q = fifo[ro_fifo_a];
+@new
+  assign ro_fifo_q = fifo[ro_fifo_a + 6'd1];
+@end
+
+@mutation quux-ro-block-disk-time-counted-backwards
+@check quux_readout_window_quux
+@file rtl/machine/quux_block_disk.sv
+@note The ticks since the blocks' time ran out are negated, so a finished
+@note transfer reads as one still owed.
+@old
+  assign ro_since_done = busy_ticks - due;
+@new
+  assign ro_since_done = due - busy_ticks;
+@end
+
+@mutation quux-ro-block-disk-walking-and-walked-crossed
+@check quux_readout_window_quux
+@file rtl/machine/quux_block_disk.sv
+@note A disk that has walked reads as walking, so `cadr-checkpoint` refuses
+@note an idle disk, and one walking now reads as merely having walked.
+@old
+  assign ro_flags      = {walking, walked, not_active, past_end, nxm, bad_command, drive_present[0]};
+@new
+  assign ro_flags      = {walked, walking, not_active, past_end, nxm, bad_command, drive_present[0]};
+@end
+
+@mutation quux-ro-mouse-x-and-y-crossed
+@check quux_readout_window_quux
+@file rtl/machine/cadr_machine.sv
+@note Selector 12's word 0 carries the mouse's X where its Y belongs.
+@old
+                                  mouse_buttons, mouse_y, mouse_x};
+@new
+                                  mouse_buttons, mouse_x, mouse_y};
+@end
+
+@mutation quux-ro-fifo-index-off-by-one-bit
+@check quux_readout_window_quux
+@file rtl/machine/cadr_machine.sv
+@note The FIFO's index reaches the page with its low bit inverted.
+@old
+        .ro_fifo_a    (quux_ro_a2[5:0]),
+@new
+        .ro_fifo_a    (quux_ro_a2[5:0] ^ 6'd1),
+@end
+
+@mutation quux-ro-bus-errors-crossed
+@check quux_readout_window_quux
+@file rtl/machine/cadr_machine.sv
+@note The Unibus NXM and the Xbus NXM trade bits in word 6, so a checkpoint
+@note records an Xbus error as the Unibus's.
+@old
+          14'd6: quux_ro_word <= {39'd0, mono_bow, 2'd0, page_err[2], 1'b0, page_err[1],
+                                  2'd0, page_err[0]};
+@new
+          14'd6: quux_ro_word <= {39'd0, mono_bow, 2'd0, page_err[2], 1'b0, page_err[0],
+                                  2'd0, page_err[1]};
+@end
+
+@mutation quux-ro-disk-flags-rotated
+@check quux_readout_window_quux
+@file rtl/machine/cadr_machine.sv
+@note Block-disk's seven flags land a bit up, so the pack's presence reads
+@note as the bad command.
+@old
+          14'd5: quux_ro_word <= {9'd0, bd_ro_flags, bd_ro_since_done};
+@new
+          14'd5: quux_ro_word <= {9'd0, bd_ro_flags[5:0], bd_ro_flags[6], bd_ro_since_done};
+@end
+
+@mutation quux-ro-page-at-selector-13
+@check quux_readout_window_quux
+@file rtl/machine/cadr_machine.sv
+@note The register page's readout is joined at selector 13, so selector 12,
+@note where `cadr-checkpoint` reads it, answers RO_NO_MEMORY.
+@old
+  localparam logic [3:0] RO_QUUX_PAGE = 4'd12;
+@new
+  localparam logic [3:0] RO_QUUX_PAGE = 4'd13;
+@end
+
+@mutation quux-ro-page-answers-zero-on-the-cadr
+@check quux_readout_window
+@file rtl/machine/cadr_machine.sv
+@note The CADR answers zero at selector 12 where it answers RO_NO_MEMORY at
+@note every selector it does not map, so zero reads as a register page.
+@old
+  assign quux_ro_word = 48'hA5A5_5A5A_A5A5;
+@new
+  assign quux_ro_word = 48'h0;
+@end
+
+@mutation quux-ro-black-on-white-inverted
+@check quux_readout_window_quux
+@file rtl/machine/cadr_memory_path.sv
+@note MONO TV's black-on-white reaches the readout inverted.
+@old
+    assign mono_bow_o = mono_bow;
+@new
+    assign mono_bow_o = !mono_bow;
 @end

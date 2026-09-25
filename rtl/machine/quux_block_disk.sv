@@ -117,7 +117,21 @@ module quux_block_disk #(
     input  var logic [31:0] ch_rdata,
     output var logic        ch_active,
     input  var logic        store_busy,
-    input  var logic [4:0]  store_busy_slot
+    input  var logic [4:0]  store_busy_slot,
+
+    // **THE READOUT'S VIEW, FOR A CHECKPOINT** (`cadr_machine.sv`'s selector
+    // 12): muir's `BlockDisk` is the four registers, the three errors and
+    // the instant the transfer is done, and these are the fabric's.  The
+    // instant is `ro_since_done`, ticks since the blocks moved owed their
+    // time --- negative while they still owe it --- taken in one tick with the
+    // flags beside it: <6> walking, <5> walked, <4> not active, <3> past the
+    // end, <2> NXM, <1> bad command, <0> a pack on unit 0.
+    output var logic [31:0] ro_cmd,
+    output var logic [31:0] ro_clp,
+    output var logic [31:0] ro_da,
+    output var logic [31:0] ro_lma,
+    output var logic [6:0]  ro_flags,
+    output var logic [31:0] ro_since_done
 );
 
   localparam logic [19:0] REGS_PAGE   = 20'd1015807;   // 0o17377774 >> 2
@@ -492,6 +506,13 @@ module quux_block_disk #(
       end
     end
   end
+
+  assign ro_cmd        = cmd;
+  assign ro_clp        = clp;
+  assign ro_da         = da;
+  assign ro_lma        = lma;
+  assign ro_flags      = {walking, walked, not_active, past_end, nxm, bad_command, drive_present[0]};
+  assign ro_since_done = busy_ticks - due;
 
   logic unused;
   assign unused = ^{cmd[31:12], cmd[10:4]};

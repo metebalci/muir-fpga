@@ -179,9 +179,13 @@ int bind_digest(struct binding *b, char *err, size_t errlen)
 void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n)
 {
 	size_t at = 0;
-	// The fabric keeps muir-fpga's grid and the checkpoint says so, and muir
-	// refuses a checkpoint resumed under another timing model.
-	at += (size_t)snprintf(out + at, at < n ? n - at : 0, "muir --rtl --timing-model fpga");
+	// The CADR's fabric keeps muir-fpga's grid and the checkpoint says so,
+	// and muir refuses a checkpoint resumed under another timing model.
+	// QUUX's timing is `sync`, of the K and L in the checkpoint itself, which
+	// muir takes from the file; `--machine quux` is what it must be told.
+	at += (size_t)snprintf(out + at, at < n ? n - at : 0, "%s",
+			       b->quux ? "muir --rtl --machine quux"
+				       : "muir --rtl --timing-model fpga");
 	for (unsigned u = 0; u < BIND_UNITS; ++u) {
 		if (!b->u[u].present)
 			continue;
@@ -230,6 +234,7 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 	fprintf(f, "checkpoint-sha256: %s\n", b->checkpoint_sha);
 	fprintf(f, "taken: %s\n", b->taken);
 	fprintf(f, "engine: rtl\n");
+	fprintf(f, "machine: %s\n", b->quux ? "quux" : "cadr");
 	fprintf(f, "boards: %u\n", b->boards);
 	fprintf(f, "microcycles: %llu\n", (unsigned long long)b->microcycles);
 	fprintf(f, "ns: %llu\n", (unsigned long long)b->ns);
@@ -326,6 +331,14 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 			b->checkpoint_bytes = strtoull(v, NULL, 10);
 		} else if ((v = field(line, "taken")) != NULL) {
 			snprintf(b->taken, sizeof b->taken, "%s", v);
+		} else if ((v = field(line, "machine")) != NULL) {
+			if (strcmp(v, "quux") != 0 && strcmp(v, "cadr") != 0) {
+				note(err, errlen, "%s: machine \"%s\", which is "
+				     "neither cadr nor quux", path, v);
+				fclose(f);
+				return -1;
+			}
+			b->quux = strcmp(v, "quux") == 0;
 		} else if ((v = field(line, "boards")) != NULL) {
 			b->boards = (unsigned)strtoul(v, NULL, 10);
 		} else if ((v = field(line, "microcycles")) != NULL) {

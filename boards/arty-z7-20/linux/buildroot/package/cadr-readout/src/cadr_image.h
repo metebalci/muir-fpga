@@ -44,14 +44,76 @@
 // `boards/arty-z7-20/cadr_arty.sv` gives the machine.
 #define IMG_BOARD_WORDS 65536u
 
+// **QUUX'S SIZES**, muir's `Geometry::QUUX`: a PDL buffer of 16K words with a
+// fourteen-bit pointer, a level-1 map entry of six bits and so 2,048 level-2
+// entries, the boot PROM at control store 36000 and never written there, and
+// MONO TV's buffer, 1280 by 1024 at one bit a pixel.  `img_alloc_machine`
+// sizes the arrays by these on QUUX.
+#define IMG_QUUX_PDL_WORDS  16384u
+#define IMG_QUUX_L2_WORDS   2048u
+#define IMG_QUUX_TV_WORDS   40960u
+#define IMG_QUUX_PROM_BASE  036000u
+#define IMG_QUUX_FIFO_WORDS 64u
+
 // The readout's selectors, `cadr_microcycle.sv`'s `RO_*`, and the one
 // `cadr_machine.sv` joins into the same window beside them.
 enum img_sel {
 	IMG_SEL_IMEM = 0, IMG_SEL_PROM = 1, IMG_SEL_AMEM = 2, IMG_SEL_MMEM = 3,
 	IMG_SEL_PDL = 4, IMG_SEL_SPC = 5, IMG_SEL_DMEM = 6, IMG_SEL_MAP1 = 7,
 	IMG_SEL_MAP2 = 8, IMG_SEL_OPCS = 9, IMG_SEL_REGS = 10,
-	IMG_SEL_AUDIT = 11
+	IMG_SEL_AUDIT = 11, IMG_SEL_QUUX_PAGE = 12
 };
+
+// --- QUUX'S OWN, which the CADR's bitstream answers `RO_NO_MEMORY` at.
+//
+// The register table's entries 21 to 25, `cadr_microcycle.sv`'s `RG_QUUX_*`:
+// which machine this is, and the processor's clocks.  Entry 21 is QUUX's
+// signature over K and L, the microcycle the bitstream was built at.
+enum img_quux_reg {
+	IMG_RG_QUUX_ID = 21, IMG_RG_QUUX_TIME = 22, IMG_RG_QUUX_TICK = 23,
+	IMG_RG_QUUX_INTERVAL = 24, IMG_RG_QUUX_PERIOD = 25
+};
+#define IMG_QUUX_MARK 0x5155u
+// Selector 12, `cadr_machine.sv`'s register page readout: the keyboard and
+// mouse, block-disk, the page's bus errors and MONO TV's black-on-white, and
+// the keyboard FIFO's words at 64 + their index.
+enum img_quux_page {
+	IMG_QP_INPUT = 0, IMG_QP_CMD = 1, IMG_QP_CLP = 2, IMG_QP_DA = 3,
+	IMG_QP_LMA = 4, IMG_QP_DISK = 5, IMG_QP_PAGE = 6, IMG_QP_FIFO = 64
+};
+
+// One of QUUX's two timers as its word reads, and the tick of muir's clock
+// (ticks since power-on) the word was taken at.
+struct quux_timer {
+	int en, sticky, live;
+	unsigned pre;		/* ticks left in the microsecond, less one */
+	uint32_t us;		/* microseconds left, counted down to one */
+	uint64_t m;		/* the tick the word was taken at */
+};
+
+// What a QUUX bitstream says of itself that a CADR's does not.
+struct quux_state {
+	unsigned k, l;		/* the microcycle: K ticks, and L more for ILONG */
+	// The checkpoint's instant: muir's clock, ticks of MIT's grid since
+	// power-on, off the microsecond clock and its prescaler, unwrapped
+	// against the console's TICKS.
+	uint64_t m;
+	struct quux_timer timer[2];	/* [0] the tick, [1] the interval timer */
+	uint32_t interval_us;
+	// The keyboard and mouse, `QuuxInput`.
+	unsigned head, count;
+	int overflowed, kbd_enable, mouse_changed, mouse_enable;
+	unsigned buttons, x, y;
+	uint32_t fifo[IMG_QUUX_FIFO_WORDS];	/* by index; `count` from `head` */
+	// Block-disk.
+	uint32_t cmd, clp, da, lma;
+	int walking, walked, not_active, past_end, nxm, bad_command, present;
+	int32_t since_done;	/* ticks since the blocks' time ran out */
+	// The page's bus errors, as word 101 reads them, and MONO TV's mode.
+	unsigned bus_error;
+	int bow;
+};
+
 
 // --- THE TRANSACTION AUDIT, `rtl/plumbing/cadr_bus_audit.sv`.
 //
@@ -154,9 +216,18 @@ struct cadr_image {
 	// --- RAMs being off the board.  A checkpoint carries it because
 	// --- muir's `tv::Tv::color_map` is part of the machine.
 	uint8_t tv_map[IMG_MAP_COLORS][IMG_MAP_CHANNELS];
+
+	// --- which machine, and the arrays' sizes on it: the CADR's, or on
+	// --- QUUX the PDL buffer's 16K, level 2's 2,048 and MONO TV's buffer.
+	int quux;
+	unsigned pdl_words, l2_words, tv_words;
+	struct quux_state qx;	/* QUUX's alone; zero on the CADR */
 };
 
+// The CADR's machine.
 int img_alloc(struct cadr_image *img, unsigned boards);
+// Either machine's: `quux` non-zero sizes the arrays as QUUX's.
+int img_alloc_machine(struct cadr_image *img, unsigned boards, int quux);
 void img_free(struct cadr_image *img);
 
 static inline int img_flag(const struct cadr_image *img, enum img_flag b)
