@@ -258,6 +258,29 @@ void RunClean(Dut &d) {
       d.tick();
     }
   }
+  // AND A REQUEST ANSWERED ON ITS OWN FIRST TICK, both directions: the
+  // bridge is thin and `mem_*` a plain request and answer, so a memory that
+  // answers at once is legal, and the machine check's does for a display's
+  // buffer.  `in_req` has not caught up on that tick; the answer is still this
+  // request's, and the request must not fall as a stalled one.
+  for (int i = 0; i < 2; ++i) {
+    d.boundary();
+    d.m->cycle = 1;
+    d.m->cycle_write = i;
+    d.m->cycle_memory = 1;
+    d.m->cycle_phys = 017000000 + i;
+    d.tick();
+    d.m->mem_req = 1;
+    d.m->mem_write = i;
+    d.m->mem_addr = 0x1C000000 + 4 * i;
+    d.m->mem_done = 1;
+    d.tick();
+    d.m->mem_req = 0;
+    d.m->mem_done = 0;
+    d.tick();
+    d.m->cycle = 0;
+    d.tick();
+  }
   Check(d.faults() == 0, "clean traffic produced %ld faults", d.faults());
   Check(d.stalled() == 0, "clean traffic produced %ld stalled requests",
         d.stalled());
@@ -403,6 +426,28 @@ int main(int argc, char **argv) {
     d.m->mem_done = 1;
     d.tick();
     d.m->mem_done = 0;
+    d.tick();
+  });
+
+  // AND THE BOUND OF THE CASE ABOVE: an answer that rises one tick BEFORE the
+  // request is loose, the request that follows it notwithstanding.  Only the
+  // request's own first tick is excused.
+  RunClause("an answer a tick before its request", kLooseAns, [](Dut &d) {
+    d.boundary();
+    d.m->cycle = 1;
+    d.m->cycle_write = 0;
+    d.m->cycle_memory = 1;
+    d.m->cycle_phys = 0x7C;
+    d.tick();
+    d.m->mem_done = 1;
+    d.tick();
+    d.m->mem_req = 1;
+    d.m->mem_addr = 0x180001F0;
+    d.tick();
+    d.m->mem_req = 0;
+    d.m->mem_done = 0;
+    d.tick();
+    d.m->cycle = 0;
     d.tick();
   });
 

@@ -9783,9 +9783,41 @@ if {0 && $held ne $want} {
 @note `mutations/list.txt`'s `the-read-is-issued-a-second-time` is the fault it
 @note is aimed at, one level out and on a board rather than in simulation.
 @old
-    else if (done_rise && !in_req)                fault_clause = C_LOOSE_ANS;
+    else if (done_rise && !in_req && !req_rise)   fault_clause = C_LOOSE_ANS;
 @new
     else if (done_rise && !in_req && in_req)      fault_clause = C_LOOSE_ANS;
+@end
+
+@mutation an-answer-on-the-request-s-own-tick-is-called-loose
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE CLAUSE WITHOUT ITS GUARD, WHICH IS HOW IT SHIPPED.  `in_req` is a
+@note register, so on the tick a request rises it still reads low, and a
+@note memory that answers on that tick --- the machine check's does, for a
+@note display's buffer, at muir's instant --- was an answer "with no request
+@note standing".  Measured once `mono_fb` was put back in the audit's memory
+@note flag: `quux_tv` at K = 4 counted five faults of clause 6 at 17000000,
+@note and the CADR's `quux_tv` two, on the TV board's buffer.  The unit check
+@note answers a request on its own first tick in clean traffic and holds that
+@note no fault and no stall comes of it.  Written as a term that is never
+@note true, so that `req_rise` stays read and lint does not do the catching.
+@old
+    else if (done_rise && !in_req && !req_rise)   fault_clause = C_LOOSE_ANS;
+@new
+    else if (done_rise && !in_req && !(req_rise && 1'b0)) fault_clause = C_LOOSE_ANS;
+@end
+
+@mutation an-answer-on-the-request-s-own-tick-is-not-counted
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE OTHER HALF OF THE SAME CASE.  A request answered on its own first
+@note tick must carry that answer, or it falls with none and is counted in
+@note `stalled` as a request the port never answered.  Caught by the unit
+@note check's clean traffic, which holds `stalled` at zero.
+@old
+        answers        <= {1'b0, done_rise};
+@new
+        answers        <= {1'b0, done_rise && 1'b0};
 @end
 
 # ============================================================================
@@ -10011,17 +10043,48 @@ if {0 && $held ne $want} {
 @note check.  With it false for every cycle, all 512 main-memory cycles are
 @note reported as cycles that should have been silent.
 @note
-@note **AND THE OTHER DIRECTION IS A MEASURED HOLE RATHER THAN A RECORD**:
-@note dropping `tv_fb` alone survives everything, because MIT's boot PROM ---
-@note the only program `cadr_machine` runs in simulation --- never writes a
-@note pixel.  On the board it would fault on the first one.  That is the same
-@note family as `a-device-write-is-also-written-to-main-memory` above and is
-@note written down here rather than filed as a hole against a check doing its
-@note job.
+@note **AND THE OTHER DIRECTION WAS A MEASURED HOLE AND IS NOW A RECORD**:
+@note dropping `tv_fb` alone survived everything while MIT's boot PROM was the
+@note only program that reached the audit, and it never writes a pixel.  The
+@note machine check's testbench now reads the audit at the end of every run,
+@note and `quux_tv` writes and reads each machine's first display buffer, so
+@note `the-audit-forgets-the-tv-board-s-buffer` and
+@note `the-audit-forgets-mono-tv-s-buffer` below hold each term.
 @old
-  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb;
+  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb || mono_fb;
 @new
-  assign cpu_memory_o   = is_memory && (tv_fb || tvc_fb);
+  assign cpu_memory_o   = is_memory && (tv_fb || tvc_fb || mono_fb);
+@end
+
+@mutation the-audit-forgets-the-tv-board-s-buffer
+@check quux_tv
+@file rtl/machine/cadr_memory_path.sv
+@note The CADR's side of the record below: `quux_tv` on the CADR writes and
+@note reads the TV board's buffer at 17000000, which the bridge answers, so
+@note the audit's flag without `tv_fb` calls those cycles not memory's.
+@old
+  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb || mono_fb;
+@new
+  assign cpu_memory_o   = is_memory || (tv_fb && 1'b0) || tvc_fb || mono_fb;
+@end
+
+@mutation the-audit-forgets-mono-tv-s-buffer
+@check quux_tv_quux
+@file rtl/machine/cadr_memory_path.sv
+@note THE SAME FLAG WITH QUUX'S FIRST DISPLAY LEFT OUT, WHICH IS HOW IT SHIPPED.
+@note `bus_sel` took `mono_fb` when MONO TV landed and the audit's flag did
+@note not, so every processor cycle to MONO TV's buffer was a cycle the bridge
+@note answered and the audit called not memory's: `quux_tv` at K = 4 counted
+@note five faults, the first clause 5 at word 17000000, measured, and nothing
+@note read the audit on any program but MIT's boot PROM.  The machine check's
+@note testbench now reads the audit through the readout window at the end of
+@note every run, and this is what it holds on QUUX.  Written as a term that is
+@note never true rather than by deleting it, so `mono_fb` stays read and lint
+@note does not do the catching.
+@old
+  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb || mono_fb;
+@new
+  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb || (mono_fb && 1'b0);
 @end
 
 @mutation the-audit-stops-watching-the-port
