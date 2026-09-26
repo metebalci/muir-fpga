@@ -120,7 +120,7 @@
 // either of the CADR's boards but MONO TV: a one-bit frame buffer and a mode
 // register, with no sync program, no color map and no interrupt.  Its
 // numbers, read out of muir's `docs/quux.md` "MONO TV, the display" and
-// `src/tv.rs` at the commit `muir.commit` pins, bc6af67:
+// `src/tv.rs` at the commit `muir.commit` pins, 22c8a52:
 //
 //   1280 pixels across            docs/quux.md: "1280 by 1024 unless
 //   1024 lines                      `--mono-tv-size` gives another size";

@@ -353,7 +353,7 @@ same agreement, its 8 us clock's rate and its phase.
 `interrupt_request` with `UB_INT` into what the processor reads. Nothing in
 `rtl/` has a Unibus interrupt path yet, so the card's output is a port with
 nothing on the other end until somebody builds one. That is honest, and it is
-the same shape the display's `tv_intr` had before `f8c6d25`. Slice four built
+the same shape the display's `tv_intr` had before `370511d`. Slice four built
 that path, the bus interface's own interrupt block.
 
 ## What the trace is
@@ -824,7 +824,7 @@ and two records are aimed at it.
 ### What the card costs the board
 
 Measured through `boards/arty-z7-20/vivado/bitstream.tcl` on both boards, and
-against the same two fits run from a worktree at `74fa921` on the same machine
+against the same two fits run from a worktree at `5986d1c` on the same machine
 and the same tool, so the comparison is an A and a B and not two readings.
 
 | | memory-off | `DDR=1` |

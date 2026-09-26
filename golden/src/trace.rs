@@ -224,7 +224,7 @@ impl Trace {
         //
         // **AT THE ENGINE'S OWN TIME, WHICH IS THE EDGE**: `Rtl::clock_edge`
         // registers `interrupt_at(self.ns)`, QUUX's clocks read at the edge
-        // that ends the microcycle, waiting or not (muir's `1775bba`), where
+        // that ends the microcycle, waiting or not (muir's `fdc0319`), where
         // `interrupt()` reads them at the machine's time, which a wait leaves
         // behind.  The CADR's devices keep the machine's time either way, so
         // its column is what it was.

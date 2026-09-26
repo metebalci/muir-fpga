@@ -14,7 +14,7 @@
 // **ALL 620 PINS ARE NAMED BELOW**, and that is the only reason this file is
 // generated rather than written.  An unconnected PS7 input produces no
 // warning of any kind --- 101 messages came back from a bare instantiation
-// at 1d3a9bc and all 100 distinct names were outputs, while some 300 silent
+// at 499d7f2 and all 100 distinct names were outputs, while some 300 silent
 // inputs floated and the design still wrote a bitstream.  So every input is
 // either driven from a port here or tied to a stated value, every unused
 // output is explicitly open, and the 21 inouts --- the fixed-I/O set, DDR*

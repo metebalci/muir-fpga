@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The disk pack program, held on the build host to a fabric that ASKS: no board,
-// a model of the register face at a899799 in its place, and a scripted
+// a model of the register face at 13bbaf4 in its place, and a scripted
 // disk controller behind the model posting the requests the CADR's
 // transfers would.
 //
@@ -74,7 +74,7 @@
 // replacement.
 //
 // THE MODEL OF THE REGISTER FACE follows `rtl/plumbing/cadr_disk_pack.sv` at
-// a899799: the tag with the unit in bits 30:28; the refusal terms at its
+// 13bbaf4: the tag with the unit in bits 30:28; the refusal terms at its
 // `bad_align`, `bad_slot`, `bad_busy` and `bad_ch` --- the last PER SLOT,
 // the channel active and not waiting on the slot named; `refused`
 // rewritten on every move; busy for a number of status reads, then done;
@@ -2106,7 +2106,7 @@ int main(int argc, char **argv)
 				fail("block C landed in slot %d, not A's slot %d", find_slot(&k, x->tag[0]), vA);
 		}
 	}
-	// The board's fault of 13:48:13 (a899799 bitstream): a Write of block A
+	// The board's fault of 13:48:13 (13bbaf4 bitstream): a Write of block A
 	// ends and the CADR STARTs a Read of an absent block at once.  The
 	// feeder's write-back of A's slot lands in the command-list fetch,
 	// where the channel is active, not waiting, and `ch_slot` still names

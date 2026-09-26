@@ -26,7 +26,7 @@
 #   reversal is visible IN THE VALUE.
 #
 #   **`SAXIHP0ARESETN` FOLLOWS `LVL_SHFTR_EN` AT 0xF8000900**, measured at
-#   700b98a, so writing that register 0x0 and then 0xF drops the port and
+#   7fdfdde, so writing that register 0x0 and then 0xF drops the port and
 #   raises it, and the witness --- whose `go` is tied high --- runs the whole
 #   sequence again.  That is the re-arm, and it needs no reprogramming, so all
 #   three cases fit in one session with one bitstream download.
@@ -303,7 +303,7 @@ if {$probe != 0x5A5AA5A5} {
 # and a `.bit` download, so a second run in one power-on finds LVL_SHFTR_EN
 # already 0xF, the port already live, and the witness firing THE INSTANT THE
 # PART CONFIGURES --- before the block below is laid out, so the layout would
-# erase the write-back it was meant to reveal.  It cost one run at 700b98a.
+# erase the write-back it was meant to reveal.  It cost one run at 7fdfdde.
 
 set shft [rd32 0xF8000900]
 say "LVL_SHFTR_EN at 0xF8000900 reads [hex $shft] before programming"

@@ -56,7 +56,7 @@ module cadr_phase_gen (
     // THAT LIVES DOWNSTREAM OF IT.  -TPWP leaves here on one flop and ends at
     // the dispatch memory's write enables --- 136 RAM256X1S primitives, whose
     // bank decode is two LUT levels past this register and inside
-    // `cadr_microcycle.sv`.  Placed and routed on the board at 8a5d8dc the
+    // `cadr_microcycle.sv`.  Placed and routed on the board at e4d3baa the
     // arc `n_tpwp_reg/C -> dmem_reg_*/RAMS64E_*/WE` is 3 logic levels, 0.828
     // ns of logic and 3.132 ns of route.
     //
@@ -68,7 +68,7 @@ module cadr_phase_gen (
     // no-op moving the number in the opposite direction.  A value that binds
     // replicates: 3 gives three flops of four, four and three loads, and
     // phys_opt then merges the bank decode into one LUT5, so the arc loses a
-    // logic level as well.  Measured at 8a5d8dc, board flow, one sample each:
+    // logic level as well.  Measured at e4d3baa, board flow, one sample each:
     //
     //     attribute   copies   this arc   WNS      failing   registers
     //     none        1        +0.136     -0.384   10        746

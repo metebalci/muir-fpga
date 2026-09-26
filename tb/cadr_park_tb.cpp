@@ -60,7 +60,7 @@
 // **AND A HALTED MACHINE TAKES A PREPARED CYCLE OUT.**  `MEMSTART`, `MBUSY`
 // and `READ IN PROGRESS` are on the master clock (ACTL 1E20 and 1D21), so a
 // cycle the last microcycle prepared goes out at the halted machine's first
-// master clock, which is muir's `Rtl::start_bus_cycle` since its `dc2a474`.
+// master clock, which is muir's `Rtl::start_bus_cycle` since its `c0bd5a6`.
 // Every halt that found a cycle prepared must have let the bus go, and one
 // that found a read of main memory prepared --- sought first, while the
 // parity loop is still reading page 0 --- must have asked memory for the word
@@ -714,7 +714,7 @@ int main(int argc, char **argv) {
   // flight, and `(MD)` standing in IR: the trap cycle after a boot is nopped
   // by the trap and not by `-NOPA`, so `USE.MD` is up in it and it must hang
   // until READ IN PROGRESS falls --- muir's `-HANG`, `NAND(RD.IN.PROGRESS,
-  // USE.MD, ...)`, with `USE.MD` gated by `-NOPA` since its `dc2a474`.  The
+  // USE.MD, ...)`, with `USE.MD` gated by `-NOPA` since its `c0bd5a6`.  The
   // memory is made slow for that read, so the read is still in flight when
   // the button is let go, and the button is pressed at two points of it.
   // READ IN PROGRESS is read off the DUT, which is a property check and not

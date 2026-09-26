@@ -48,7 +48,7 @@
 // room, and the board is on the end of a JTAG cable.  Now `go` is tied high
 // on both boards, the sequence starts when `SAXIHP0ARESETN` says the port is
 // live, and `SAXIHP0ARESETN` follows `LVL_SHFTR_EN` at `0xF8000900` ---
-// measured at 700b98a --- so writing that register 0x0 then 0xF RE-ARMS the
+// measured at 7fdfdde --- so writing that register 0x0 then 0xF RE-ARMS the
 // witness without reprogramming.  Three cases in one debugger session.
 //
 // THE LAMP IS STILL THERE and it is no longer the observer.  `has_run` and

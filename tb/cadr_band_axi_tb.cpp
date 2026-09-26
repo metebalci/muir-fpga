@@ -297,7 +297,7 @@ int main(int argc, char **argv) {
   uint64_t observe = 0;
   int timed = 0;
   long tolerate = 0;
-  // THE FLOOR, AND WHY IT IS A `>=` AND NOT AN `==`.  Measured at `822535c`:
+  // THE FLOOR, AND WHY IT IS A `>=` AND NOT AN `==`.  Measured at `76f73e1`:
   // the whole machine agrees with muir for this many microcycles of the band
   // with a real memory and a real pack under it, and stops at the machine's
   // first disk transfer for the reason the header gives.  A change that makes

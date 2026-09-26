@@ -287,7 +287,7 @@ puts "PROBE: the scan reads, from the TDO end: [join $names {, }]"
 # and the padding below would be computed from whichever it was.
 #
 # AND THIS IS ALSO THE BIT-ORDER DETECTOR, which was not why it was written.
-# Measured at `4e4fccb` against `tb/cadr_jtag_chain.tcl`: a scan returned most
+# Measured at `bbe54c6` against `tb/cadr_jtag_chain.tcl`: a scan returned most
 # significant bit first puts the all-ones tail at the bottom, so the parser
 # terminates immediately and reports zero devices, and it dies here. The IR
 # capture below names a reversed scan as one of its suspects and will never
@@ -363,7 +363,7 @@ if {($ircap & $cap_mask) != $cap_expect} {
         "PROBE: bottom of each device's field, so the chain is not the" \
         "PROBE: $ir_total bits the BSDLs say it is. A reversed bit order would" \
         "PROBE: have died at the device-count check above and cannot reach" \
-        "PROBE: here --- measured, at 4e4fccb, so do not go looking for one." \
+        "PROBE: here --- measured, at bbe54c6, so do not go looking for one." \
         "PROBE: Nothing below this line would mean anything, so it stops here."
 }
 # Bit 5 of the PL TAP's capture is DONE --- "1 when DONE is released", says

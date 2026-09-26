@@ -323,7 +323,7 @@ the origin. Nothing between there and the sync RAM section at the very end
 restarts the program, which is why that section moved to the end: every
 write in it moves the origin.
 
-**`-XBUS.INTR` is whole in the fabric, since `f8c6d25`.** The display's
+**`-XBUS.INTR` is whole in the fabric, since `370511d`.** The display's
 `SEND INTR` leaves `cadr_memory_path` as `tv_intr`, and the disk's request
 leaves `cadr_disk_controller` as `intr`. `cadr_machine.sv` ORs the two
 into the processor as muir does, in one expression, one gate before the
@@ -471,7 +471,7 @@ memory that takes time, but the instant the answer lands is then the memory's
 and not the reference's. It cannot hold the gate between `tv_intr` and the processor's
 `sintr_o`, for want of a program that enables the DISPLAY's interrupt. The
 disk's half of the same gate is held by `disk.pass` and `machine.pass` since
-`f8c6d25`. And it cannot say what the boot PROM and the band would show.
+`370511d`. And it cannot say what the boot PROM and the band would show.
 `build/machine.pass` is unchanged, the PROM never addressing the display, and
 `microcycle_sys` drives the processor alone from its trace and is unaffected by
 the band's run-light writes.
@@ -567,7 +567,7 @@ re-aimed with a note saying so: `bridge-writes-the-address-instead-of-the-data`,
 
 This is the board flow, `boards/arty-z7-20/vivado/bitstream.tcl`, under Vivado 2026.1, in
 both configurations and in isolated copies of two trees. The trees are HEAD at
-`15975ae` and this slice on top of it. That HEAD's RTL is `a899799`'s, and its
+`0749e92` and this slice on top of it. That HEAD's RTL is `13bbaf4`'s, and its
 figures reproduce that commit message's exactly, so the flow is deterministic.
 
 **Every figure in this section was measured at a 5 ns tick**, which is what
@@ -577,7 +577,7 @@ analysis is kept as it was taken, because a path's logic levels and its share
 of routing do not move when the clock does.
 
                             memory off (DDR=0)          memory on (DDR=1)
-                            15975ae     +display        15975ae     +display
+                            0749e92     +display        0749e92     +display
     worst negative slack    -0.019      -0.006          -0.133      -0.462 ns
     failing endpoints       2 / 16,186  1 / 16,311      42 / 26,124 278 / 26,209
     total negative slack    -0.020      -0.006          -3.466      -35.278 ns
@@ -646,7 +646,7 @@ than 5 --- one parameter in
 `boards/arty-z7-20/cadr_arty.sv`, nothing under `rtl/`. It went to 6.25 first
 and to 10 the same afternoon, when a one-character change to a multiplexer
 cost a third of a nanosecond and the memory-on board stopped closing again.
-Measured at `822535c`, the whole design reads **+1.537 ns** with memory off
+Measured at `76f73e1`, the whole design reads **+1.537 ns** with memory off
 and **+0.657 ns** with `DDR=1`, **zero failing endpoints on either**, which is
 the largest margin any build of this design has had. The display's paths were
 never the question and they are further from it now; the adder that took three
@@ -779,7 +779,7 @@ top-level `LMTV` of their own and default it to 1, and
 `cadr_machine`'s own default, which is 1 as well. The Cora Z7-07S is
 the one where the question is live: with the board fitted it routes and closes
 at +0.203 ns and 93.6% of its lookup tables, built from a clean tree at
-`fe859fb`, which fits and leaves almost nothing. Those lookup tables sit in
+`d5e353d`, which fits and leaves almost nothing. Those lookup tables sit in
 97.4% of the part's slices.
 
 **What silicon has shown.** On a Zynq board the console fits and unfits the
@@ -814,7 +814,7 @@ over unwritten memory, so nothing has drawn a picture on this board yet.
   and advances `TVMA`. There is no `TVMA` here: the picture is in DDR and the
   window is a bridge to it, so the fabric decodes those two bits and acts on
   neither. That is also why register 3's vertical spacing has no register.
-- **The disk's interrupt joined `-XBUS.INTR` at `f8c6d25`**, after the board
+- **The disk's interrupt joined `-XBUS.INTR` at `370511d`**, after the board
   spun for ever in `AWAIT-DISK` waiting for it, and the machine's `sintr`
   became an output rather than something a board outside the fabric
   supplies. See the paragraph above.

@@ -93,7 +93,7 @@
 // processor strobe is masked, so the processor's cycle simply starts late;
 // the console holds the bus for `DIAGNOSTIC_NS`, 25 ticks, and the ticks its
 // engine takes to raise and drop its strobe either side of that: 33 ticks,
-// 330 ns, on every hold of `build/console.pass` at 412dd6f but the one the
+// 330 ns, on every hold of `build/console.pass` at 1259072 but the one the
 // check holds the grant off for, against that same 4,250 ns timer.  About
 // thirteen to one, and it is the argument `cadr_memory_path.sv`'s per-word
 // channel arbiter is held to, one bus along.  At the 5 ns grid this said

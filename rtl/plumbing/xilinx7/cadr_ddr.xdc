@@ -19,7 +19,7 @@
 # endpoints of 14,787, worst path
 # `processor/memstart_reg/C -> u_axi/m_axi_awaddr_reg[18]/D`, 8.802 ns over
 # ten logic levels: `memstart` through the level-1 map, through
-# `main_byte_address`, into the AXI address register. Measured at 1d3a9bc.
+# `main_byte_address`, into the AXI address register. Measured at 499d7f2.
 # The fold was doing its job and could never have timed it.
 #
 # AND THE DEADLINE IS 80 ns, WRITTEN DOWN, NOT CHOSEN. `rtl/plumbing/cadr_xbus_ddr.sv`

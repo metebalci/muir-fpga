@@ -29,7 +29,7 @@
 #      good bitstream of an empty part. `cadr_arty.sv` folds every output into
 #      one register to prevent it; this checks that it worked, against what the
 #      machine is known to cost --- 2,795 Slice LUTs and 28 block RAM tiles
-#      placed and routed out of context at 712909e, which the check sees as
+#      placed and routed out of context at 76e126b, which the check sees as
 #      2,101 LUT cells and 29 BMEM cells for the reason given at the check.
 #
 #   3. THAT THE BITSTREAM IS A BITSTREAM. `write_bitstream` reporting success
@@ -37,7 +37,7 @@
 #
 # TIMING IS MET, AND WHAT MADE IT MET WAS THE TICK AND NOT THE DESIGN. For as
 # long as this file has existed a tick was 5 ns and the board did not close:
-# -0.129 ns at 712909e, -0.384 at b1bcc34, -0.054 at cc6b9ce, -0.233 on 79
+# -0.129 ns at 76e126b, -0.384 at 37c4196, -0.054 at ba2de75, -0.233 on 79
 # endpoints by the time the disk, the display and the console had landed. On
 # 2026-09-11 chasing it stopped, and timing was removed as a threat to the
 # machine's correctness instead. THE TICK MOVED TWICE THAT DAY: to 6.25 ns
@@ -50,11 +50,11 @@
 # tick is 10 ns. **Not one tick COUNT in the design changed then and no check
 # moved**, because the grid stayed 5 ns and the machine's own clock is the only
 # clock it has, so the machine ran at half the original speed.  The grid moved
-# to 10 ns as well at 9d1cf26: every instant rounds up, a normal microcycle is
+# to 10 ns as well at d4cf2ca: every instant rounds up, a normal microcycle is
 # 15 ticks, and the machine runs at about 97% of the original speed.
 # `cadr_arty.sv`'s header and `rtl/machine/cadr_tick_pkg.sv` are the argument.
 #
-# Measured at `822535c` with the tick at 10 ns and the grid still 5, both
+# Measured at `76f73e1` with the tick at 10 ns and the grid still 5, both
 # boards, this flow:
 #
 #     board          WNS        failing   hold      LUTs    registers   BRAM
@@ -324,7 +324,7 @@ if {$prove > 0} {
 # always said it meant.
 #
 # THE COUNT IS NOT THE CHECK, and it has already moved: `cadr_arty.sv` at
-# b1bcc34 declares 55 registers of its own --- `rst_sync` is 4 bits now and
+# 37c4196 declares 55 registers of its own --- `rst_sync` is 4 bits now and
 # not 2, plus `beat` 24, `tick` 26 and `witness` 1 --- so a run that matched
 # on 26 would be matching on nothing in particular. What holds the property is
 # `assert_constraints_scoped` below, which asks the design whether any
@@ -491,7 +491,7 @@ assert_constraints_scoped $inside $tick
 # REPORT NEVER WRITES. The first version of this check looked for that word,
 # found none, and stopped a run whose constraints had applied perfectly ---
 # `cycles=15` setup and `cycles=14` hold, at positions 4 and 5 of the report
-# when that was written and 5 and 6 at b1bcc34, `witness_reg`'s false path
+# when that was written and 5 and 6 at 37c4196, `witness_reg`'s false path
 # having joined the list in between. Position is not the thing to match on. A
 # guard that cries wolf is worse than no guard, and this one was written
 # against a report format nobody had read. The same mistake as the `foreach`
@@ -562,7 +562,7 @@ if {$machine ne "quux"} {
 # instance it exists to catch. The guard is `$port`, as the memory
 # contract's assertion below already is.
 #
-# THE FLOW HAD BEEN BROKEN THERE SINCE `559f749`, when the assertion landed,
+# THE FLOW HAD BEEN BROKEN THERE SINCE `29da7e5`, when the assertion landed,
 # and nobody had run the memory-off board since: the control run at that
 # board's own HEAD fails identically, 18,796 of 26,803 setup paths at
 # 150.000 ns and the same refusal. A flow nobody runs is a flow that says
@@ -847,7 +847,7 @@ puts "BIT: $luts LUTs, $ffs registers, $brams block RAMs"
 # THESE THREE ARE CELL COUNTS AND NOT THE UTILIZATION REPORT'S, and the two do
 # not agree by construction --- so the floors below must be read against these
 # and not against the figures anybody quotes. Measured on the board's routed
-# design at 712909e: `PRIMITIVE_GROUP == LUT` is 2,101 cells where
+# design at 76e126b: `PRIMITIVE_GROUP == LUT` is 2,101 cells where
 # `report_utilization` says 2,876 Slice LUTs, because the report counts sites
 # (1,755 as logic, two LUT5 cells often sharing one) and adds the 1,121 sites
 # holding distributed RAM, which are not in the LUT group at all --- they are
@@ -856,7 +856,7 @@ puts "BIT: $luts LUTs, $ffs registers, $brams block RAMs"
 # the one pair that match, 773 either way. Out of context the report says 2,795
 # Slice LUTs, 769 registers, 28 tiles.
 #
-# At b1bcc34 this line printed `2088 LUTs, 746 registers, 29 block RAMs`
+# At 37c4196 this line printed `2088 LUTs, 746 registers, 29 block RAMs`
 # against 2,871 Slice LUTs and 746 registers in the report, so both counts
 # move a percent or two with the top level and neither is a constant.
 #

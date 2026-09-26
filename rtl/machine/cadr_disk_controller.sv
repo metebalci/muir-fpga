@@ -297,7 +297,7 @@ module cadr_disk_controller #(
     // tick, and one in a register on the way out --- the read is the RAM's
     // output through a mux, 2.6 ns of the tick before it has crossed to the
     // pack side, and it reached that module's registers 19 ps late on the
-    // DDR=1 board at ef9dee9.  It is what the write-back reads, and the only
+    // DDR=1 board at 0f2ce3f.  It is what the write-back reads, and the only
     // way anything outside can see what a Write left on the pack.  The pack
     // side drives the four lines below from registers of its own, so a write
     // lands here the tick after it decides one.
@@ -771,7 +771,7 @@ module cadr_disk_controller #(
   // the AND with -XBUS.RQ is made there whatever a slave puts on the line,
   // and a slave that made it too sent the request out to itself and back:
   // `busint/FSM_sequential_state_reg[1]/C -> processor/mfinish_t_reg[*]/CE`,
-  // six logic levels and 4.98 ns on the DDR=1 board at ef9dee9, of which
+  // six logic levels and 4.98 ns on the DDR=1 board at 0f2ce3f, of which
   // one level and two crossings were -XBUS.RQ arriving here to be ANDed with
   // `mine` and leaving again as the acknowledgment.  Fourteen of the
   // board's failing endpoints, all of them the processor's two countdowns,
@@ -850,7 +850,7 @@ module cadr_disk_controller #(
   // TOO.**  The three come from registers Linux writes in
   // `cadr_disk_pack.sv`; driven straight into the status word as a wire
   // they crossed two modules and eight logic levels to land on MD, -0.129 ns
-  // on the DDR=1 board at ef9dee9.  The counters in the status word are read
+  // on the DDR=1 board at 0f2ce3f.  The counters in the status word are read
   // through registers now, which is what cut that path; a register on the seam as
   // well made the drive appear TWO ticks after Linux said so, and
   // `tb/cadr_disk_pack_tb.cpp` reads the status the tick after the DRIVE
@@ -984,7 +984,7 @@ module cadr_disk_controller #(
   // into the second; the multiply with the settle added on the multiplier's
   // own post-adder into the third.  In one tick they were ten logic levels
   // into the multiplier's input alone, -5.9 ns on the DDR=1 board at
-  // ef9dee9, the first fit to time the disk at all.
+  // 0f2ce3f, the first fit to time the disk at all.
   //
   // **THREE IS THE MOST THE TRACE ALLOWS**, and that is a measurement and
   // not a guess: `tb/cadr_disk_pack_tb.cpp` and the trace both place a store
@@ -1317,7 +1317,7 @@ module cadr_disk_controller #(
   // **`(* fsm_encoding = "one_hot" *)` DOES NOTHING HERE, MEASURED, AND THAT
   // IS WHY IT IS NOT ABOVE THIS LINE.**  Thirty-one states in five bits
   // makes every `ch_state == C_X` a five-input LUT standing in front of
-  // whatever else a clock enable tests, and on the DDR=1 board at 5b03a4e
+  // whatever else a clock enable tests, and on the DDR=1 board at 44747c2
   // `ch_state_reg[2]` carried 169 loads and reached `ps_w_reg[*]/CE` over
   // three LUTs and 3.872 ns of routing --- 4.920 ns of the 5 ns tick that
   // board was clocked at, and 61
@@ -1534,7 +1534,7 @@ module cadr_disk_controller #(
   // DSP48E1, whose clock-to-output is 2.191 ns where a slice flop's is
   // 0.456.  Put a twenty-nine-bit subtraction behind that in the same tick
   // and the tick is gone before the carry chain starts: on the DDR=1 board
-  // at 5b03a4e it was `disk/acc_d20/CLK -> disk/acc_d2_reg[26]/D`, 5.244 ns
+  // at 44747c2 it was `disk/acc_d20/CLK -> disk/acc_d2_reg[26]/D`, 5.244 ns
   // over eight logic levels --- 2.191 out of the DSP, 1.493 of routing to
   // the fabric and 1.440 of carry --- and 17 of that board's 278 failing
   // endpoints.  **The multiply's own tick is not the problem; what a DSP
@@ -1559,7 +1559,7 @@ module cadr_disk_controller #(
   // in the tick that loads `busy_ns`, the compare and the difference were
   // two carry chains in series into the counter's data pins:
   // `disk/elapsed_reg[2]/C -> disk/busy_ns_reg[3]/D`, eight logic levels
-  // and 5.04 ns on the DDR=1 board at ef9dee9.  So `C_ACCDIFF` takes both
+  // and 5.04 ns on the DDR=1 board at 0f2ce3f.  So `C_ACCDIFF` takes both
   // into registers and `C_ACCFIN` loads from them --- less the one tick that
   // `elapsed` has counted in between, which is the same arithmetic the
   // counter does for itself every tick.  Same rule as above: the tick is
@@ -1626,7 +1626,7 @@ module cadr_disk_controller #(
   // the twenty-four comparators are twenty-eight bits each, and the priority
   // encoder behind them is five bits wide: made in the tick that reads it,
   // that was seventeen logic levels from `ch_state` back into `ch_state`,
-  // 20.1 ns, on the DDR=1 board at ef9dee9 --- where it had never been timed,
+  // 20.1 ns, on the DDR=1 board at 0f2ce3f --- where it had never been timed,
   // the whole disk having fallen into `rtl/plumbing/xilinx7/cadr_machine.xdc`'s microcycle
   // set.  So the key is registered and the answer is registered off it.  A
   // Read All's next block has been the next block for a whole sector; the
@@ -2822,7 +2822,7 @@ module cadr_disk_controller #(
       // of every register's enable and the START's whole decode sat behind
       // it, and on the board `xbus_init` is the power-on reset: `rst_sync_
       // reg[3]/C -> disk/u_blk_reg[*]/CE`, six logic levels and 5.05 ns,
-      // 36 of the DDR=1 board's failing endpoints at ef9dee9 --- three
+      // 36 of the DDR=1 board's failing endpoints at 0f2ce3f --- three
       // quarters of it the reset synchronizer's net crossing the disk.  The
       // init block now follows the store, so on the flops it has a pin on it
       // wins by coming last, and on the ones it has no pin on --- the disk

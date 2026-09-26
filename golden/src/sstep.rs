@@ -89,7 +89,7 @@
 //!
 //! **What 10 to 12 hold, and why they are here.**  Three of muir's `rtl`
 //! rules that no reference program reaches, each measured by muir against the
-//! netlist (`dc2a474` and `229ffe3`):
+//! netlist (`c0bd5a6` and `727c4d9`):
 //!
 //! - **A store writing both levels of the map writes level 2 with its top
 //!   five address bits zero**, not at the entry level 1 held before the

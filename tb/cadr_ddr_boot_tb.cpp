@@ -72,7 +72,7 @@
 // simulation.  That witness is gone by decision.  The write path stands
 // instead on step two of the board plan, which put the fabric's own word into
 // real DDR through this same adapter and had the debugger read it back ---
-// PROVE=1, passed on silicon at `51bc74a`, with the observer outside the
+// PROVE=1, passed on silicon at `712f664`, with the observer outside the
 // design.  What this check still holds about writes is the address sequence,
 // the direction, and the word: 256 writes, one to each address, each carrying
 // the word its own read returned.

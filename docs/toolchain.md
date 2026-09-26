@@ -236,7 +236,7 @@ synthesize to almost nothing, route in seconds, and **write a perfectly good
 bitstream of an empty part.** That is not an error but a plausible artifact. So
 the flow refuses a run with fewer than 1,500 LUT cells or 20 block RAMs
 (`boards/arty-z7-20/vivado/bitstream.tcl:612`). The floors were set an order of
-magnitude under what the machine cost at `712909e`:
+magnitude under what the machine cost at `76e126b`:
 
     about 2,800 LUTs of 53,200, 29 block RAMs of 140, no DSPs
 

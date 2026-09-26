@@ -503,7 +503,7 @@ CHECKS = {
     # for a defect that was real: `md_pending` survived the edge and the held
     # word committed a boundary later over the instruction's.  The MD
     # register's first branch, a strobe on the boundary's own tick loading MD
-    # and clearing the flag, fixed it at 9d1cf26, and the check has passed
+    # and clearing the flag, fixed it at d4cf2ca, and the check has passed
     # since and is in `make check`.  `the-destmdr-edge-leaves-a-strobed-word-
     # owed` is the record aimed at it: that branch taken away.
     "md_inject": {
@@ -2582,7 +2582,7 @@ def copy_tree(dest, with_golden=False, rev=None):
     # names, so a copy without it is a copy where that script does not run at
     # all --- every record "caught" for the wrong reason and the baseline
     # BROKEN.
-    # It is 108 KB and `tools/` arrives at 2e54886, well inside the history
+    # It is 108 KB and `tools/` arrives at 6f0669c, well inside the history
     # `--since` reaches, so the filter earns its keep here rather than being
     # tested by it.
     dirs = ["rtl", "tb", "boards",
@@ -2590,7 +2590,7 @@ def copy_tree(dest, with_golden=False, rev=None):
     if rev:
         # A directory that did not exist at `rev` is not an error, and this is
         # not hypothetical: `--since` names EARLIER revisions on purpose, and
-        # `vivado/` only arrives at dd6f659 --- 71 commits into a history of
+        # `vivado/` only arrives at 4cb0662 --- 71 commits into a history of
         # 103. `git archive` refuses a pathspec that matches nothing, so
         # passing all three unconditionally would kill every `--since` run
         # against anything older than that, for every record in the list, with
@@ -2889,7 +2889,7 @@ def arty_check(args, work, build_fails=False):
 
     A CONFIGURATION WHOSE FILES ARE NOT IN THE COPY IS SKIPPED, and that is not
     tidiness either. `--since` names EARLIER revisions on purpose, and
-    `boards/arty-z7-20/cadr_ps7.sv` arrives at b5542c5; a pass that verilated it
+    `boards/arty-z7-20/cadr_ps7.sv` arrives at a27699b; a pass that verilated it
     unconditionally would report BROKEN for every arty record against anything
     older, which is the `git archive` pathspec lesson in a second place.
     """

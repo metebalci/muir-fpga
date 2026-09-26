@@ -46,7 +46,7 @@ PCS0, IWRITED, PROMDISABLE and `-XBUS.INTR`.
 
 **1,062,507 of the band's 2,800,000 microcycles agree exactly**, with no
 exemption of any kind, and with the fabric's clock and muir's the same to the
-nanosecond over the whole of it. Measured at `822535c`.
+nanosecond over the whole of it. Measured at `76f73e1`.
 
 Of those, 524,650 are past microcycle 537,857, which is where this trace and
 the boot PROM's part company. They are a program no other check runs on the

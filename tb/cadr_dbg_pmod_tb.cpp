@@ -93,7 +93,7 @@ constexpr long kDebugTimeoutT = GridTicks(13 * 850);
 // count, so half of it was 1,105: the whole of the real deadline at the 10 ns
 // grid, while the comment claimed a factor of two.  No factor of two is
 // available: half of 1,105 is 552, and a register read over this carrier
-// took 640 ticks at its slowest, measured at 412dd6f, which is about four
+// took 640 ticks at its slowest, measured at 1259072, which is about four
 // frames --- a level waiting up to a frame to be taken and a frame to cross,
 // each way.
 constexpr long kRoundTripBound = kDebugTimeoutT - 2 * kFrameT;

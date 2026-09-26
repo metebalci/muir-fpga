@@ -10,7 +10,7 @@
 # that a top level with real pins exists: `boards/arty-z7-20/cadr_arty.sv` and
 # `boards/arty-z7-20/vivado/bitstream.tcl` ask whether the design builds for a board, and this
 # asks what the machine costs on its own --- no output fold, no MMCM, no
-# package pins. The two give different answers and are meant to: at 712909e
+# package pins. The two give different answers and are meant to: at 76e126b
 # this reported -0.484 ns with 94 failing endpoints of 13,444, where the board
 # flow reported -0.129 ns with 16 of 14,135, and the worst path was not even
 # the same one. Almost nothing here is board I/O anyway; the outside world is
@@ -20,7 +20,7 @@
 # BOTH FIGURES ABOVE WERE MEASURED AT A 5 ns TICK, which is what the board ran
 # at until 2026-09-11; a tick is 10 ns now and this flow reports **+1.447 ns
 # with 0 failing endpoints of 30,596**, hold +0.097, 8,530 Slice LUTs, 4,436
-# registers, 39.5 block RAM tiles --- measured at `822535c` with the tick
+# registers, 39.5 block RAM tiles --- measured at `76f73e1` with the tick
 # change and nothing else. `boards/arty-z7-20/cadr_arty.sv`'s header is the argument
 # for the tick; `bitstream.tcl`'s is the board flow's own pair of figures. The
 # out-of-context flow is still the tighter of the two, which is what it has
@@ -94,7 +94,7 @@ read_xdc rtl/plumbing/xilinx7/cadr_machine.xdc
 # written; this had the blind spot the `foreach` bug lived in --- an XDC that
 # reads cleanly, applies to nothing, and reports a plausible worse number
 # --- -16.405 ns unconstrained, where the constrained design is -0.484 at
-# 712909e. (The constrained figure recorded beside that -16.405 at the time is
+# 76e126b. (The constrained figure recorded beside that -16.405 at the time is
 # -6.602 in `bitstream.tcl` and -6.542 in the notes made at the time; they are
 # two reports of two revisions and both predate the timing holdings, so neither
 # is quoted here as the pair.)

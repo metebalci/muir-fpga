@@ -109,7 +109,7 @@
 // `unibus` over all 13,192,237 of its, with both summaries byte-identical.
 // So no mutation of this is live and `mutations/list.txt` records the
 // equivalence rather than leaving somebody to file it as a hole.  **That
-// measurement was made at `8e9e94e`, before the window, and both tick counts
+// measurement was made at `5009502`, before the window, and both tick counts
 // have moved since** --- `busint_regs` runs 57,139,860 now and `unibus`
 // 13,190,033 --- so it is cited at its commit rather than restated.  The
 // argument has not moved, and the four fields the window added qualify the

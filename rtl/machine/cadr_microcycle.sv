@@ -597,7 +597,7 @@ module cadr_microcycle #(
   // `ir_next`, and both are read only at `cpu_edge`.
   //
   // WHAT IT COST WAS THE CONTROL STORE'S ADDRESS PINS.  On the DDR=1 board
-  // at 5b03a4e, `u_phase_gen/tpclk_reg/C -> imem_reg_3/ADDRBWRADDR[13]` was
+  // at 44747c2, `u_phase_gen/tpclk_reg/C -> imem_reg_3/ADDRBWRADDR[13]` was
   // 4.775 ns of the 5 ns tick that board was clocked at --- 0.952 of logic
   // over four LUTs and 3.823 of
   // routing, `cpu_edge` at fanout 292 and the mux's output at fanout 25
@@ -1202,7 +1202,7 @@ module cadr_microcycle #(
   // so everything stored here belongs to the previous instruction.
   //
   // **TAKEN AS THE PULSE ENDS, AND ONLY IN A GENERATOR CYCLE MACHRUN RUNS.**
-  // Three rules of muir's `rtl` since its `bc6af67`, each held against the
+  // Three rules of muir's `rtl` since its `22c8a52`, each held against the
   // netlist by its `tests/dispatch_write_order.rs` and here by
   // `build/dispatch_write_order.pass`, which runs those programs on the whole
   // machine:
@@ -1611,7 +1611,7 @@ module cadr_microcycle #(
   // 1D08 and VMEM2 1C10 read it high and drive level 2's top five address
   // bits low.  The low five are `MAPI<12:8>` either way, through the same
   // 74S258s at VMAS 1C20 whose select is -MEMSTART: the float forces only the
-  // block number.  That is muir's `Rtl::write_phase` since its `c9fea7d`
+  // block number.  That is muir's `Rtl::write_phase` since its `e11da42`
   // (`adr1 & 0o37`), and `Machine::write_map` has the whole account, with
   // `chip_rtl_and_micro_write_both_map_levels_alike` holding the three
   // engines together.  Microcode 323 writes the levels in separate
@@ -1951,7 +1951,7 @@ module cadr_microcycle #(
   // with MD as the bus has left it then, and in a hung cycle the pulse ends
   // on the park's first tick.  Call that tick K and the cycle's last tick
   // before it L.  Taken there literally, two paths had one tick, measured on
-  // the routed Arty at the merge of muir's `bc6af67`:
+  // the routed Arty at the merge of muir's `22c8a52`:
   //
   //   - MD strobed off the bus in L, into the write's address at K: MD
   //     through the M bus, the rotator and both map levels into the dispatch
@@ -2146,7 +2146,7 @@ module cadr_microcycle #(
   // `cpu_edge` is `mclk_edge && machrun`, and `mclk_edge` is one tick a
   // microcycle.  A held copy is the same value there, because what it holds
   // last changed at the boundary before.  What it buys is the path, and the
-  // path was the DDR board's worst at b5542c5:
+  // path was the DDR board's worst at a27699b:
   //
   //     -0.446 ns   processor/ir_reg[25]_replica/C
   //              -> processor/rdfinish_t_reg[5]/R
@@ -2863,7 +2863,7 @@ module cadr_microcycle #(
       // and a stepped read lands before the next step.  This is muir's
       // `Rtl::start_bus_cycle`, which `Rtl::master_clock_cycle` and the cpu
       // clock's own edge both call, and it is one block here for the same
-      // reason.  Before muir's `dc2a474` the cycle waited for the next cpu
+      // reason.  Before muir's `c0bd5a6` the cycle waited for the next cpu
       // edge, which the board's netlist does not do
       // (`chip_and_rtl_start_a_stepped_read_while_halted_alike`).
       // `build/sstep.pass` steps a refused read and reads the map a halted
@@ -3286,7 +3286,7 @@ module cadr_microcycle #(
   // not.**  Level 1's used to be left alone because a write of both levels
   // took level 2's address from the level-1 read of that same tick.  It does
   // not any more: level 1's 93425As float their outputs while written, and
-  // the level-2 write goes to block 0 (`adr1_w`, muir's `229ffe3`), so no
+  // the level-2 write goes to block 0 (`adr1_w`, muir's `727c4d9`), so no
   // consumer reads level 1 in the tick it is written, and a poison there is
   // one more thing the programs are held to rather than an exception.  The
   // record that used to move the poison onto that tick, to show the check
@@ -3294,7 +3294,7 @@ module cadr_microcycle #(
   //
   // What the structure says, from this file: every write is on the edge that
   // ends the tick `mw` is up.  In a microcycle that runs that is the
-  // boundary's own tick since muir's `bc6af67` (the write pulse is taken as
+  // boundary's own tick since muir's `22c8a52` (the write pulse is taken as
   // it ends; see `wp`), so what the boundary samples is the word before the
   // write and the undefined tick is the first of the next microcycle, where
   // no boundary samples anything.  In a hung one it is two ticks before the

@@ -53,7 +53,7 @@
 #   NOT VIVADO.  `open_hw_manager` and the rest are stubs that return what
 #   this file is told to return. Whether Vivado's own `scan_dr_hw_jtag`
 #   really answers least significant bit first is not settled here --- the
-#   board settled it, at ace4131, and `msb-first` is a case rather than a
+#   board settled it, at 5838507, and `msb-first` is a case rather than a
 #   fact.
 #
 #   NOT A CLAIM THAT THE CHAIN IS THIS CHAIN.  The device table is written by

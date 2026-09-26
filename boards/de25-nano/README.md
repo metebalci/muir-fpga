@@ -664,7 +664,7 @@ that.
 **The board's QSPI flash carries this project's phase-1 bitstream**, so the
 board comes up from power on its own, with no cable and no build host. Before
 that it came up on the image the maker shipped in that flash, which has no CADR
-in it. What is in the flash now was built at commit `f5ca348`, HPS-first, with
+in it. What is in the flash now was built at commit `92c9a3b`, HPS-first, with
 the processor's first-stage loader from the same build as the card's contents.
 `QSPI_OWNERSHIP` is `HPS`, which gives the processor the flash controller; the
 shipped image leaves it with the device manager, and a kernel that finds it

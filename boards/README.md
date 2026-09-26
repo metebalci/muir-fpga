@@ -129,7 +129,7 @@ there.** That was the open question and it is answered.
 ## Does the machine fit
 
 **On the Cora Z7-07S this is measured now and is not a ratio.** Both Zynq
-boards were placed and routed at commit `86d787b` with `DDR=1`, which is the
+boards were placed and routed at commit `adcd038` with `DDR=1`, which is the
 machine with the processing system and DDR3 behind its memory port, so the two
 columns are the same design on two parts.
 
@@ -148,7 +148,7 @@ either part, so what changes between the boards is the denominator.
 figure with its commit.
 
 **What follows is a ratio and not a fit.** Today's
-memory-on design, placed and routed for the Arty Z7-20 at commit `95cbb84`, was
+memory-on design, placed and routed for the Arty Z7-20 at commit `0d4c18d`, was
 **10,909 slice LUTs, 7,390 slice registers, 41.5 block RAM tiles and 4 DSP
 slices**. Vivado's own part database at 2026.1 gives the two parts as
 follows. Those four counts are properties of the die, so the package and the

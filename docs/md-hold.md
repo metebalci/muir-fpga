@@ -73,7 +73,7 @@ next tick if `-HANG` was up --- over the word the instruction put there. Every
 map write from there to the next `DESTMDR` was then made at a different entry.
 The first branch closes that: a strobe on a boundary's own tick commits at
 once and clears the flag, and the `DESTMDR` assignment after it wins. It
-landed with the 10 ns grid, at `9d1cf26`.
+landed with the 10 ns grid, at `d4cf2ca`.
 
 ## The check
 
@@ -224,7 +224,7 @@ first and left red; it joins `check` in the commit that makes it pass, and a
 record may be aimed at it then and not before — a mutation caught by a check
 that was already failing is caught by nothing.
 
-**It passes now, and it has joined `check`.** Run at `0966ffd`, it prints
+**It passes now, and it has joined `check`.** Run at `dc40ab6`, it prints
 that `md_pending` is clear after the edge, that MD is `00000000` eight
 boundaries later, and `ok: a -LOADMD on a DESTMDR boundary is consumed by that
 edge and the instruction's word stands`. The Makefile's and

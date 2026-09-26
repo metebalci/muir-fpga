@@ -64,7 +64,7 @@ GOLDEN ?= $(abspath ../../../../../../../build/disk.golden)
 # another directory holding the same five files.
 Q8_DISKS ?= $(abspath ../../../../../../../../muir/data)
 Q8_VERIFY = @for f in $$(awk '{print $$2}' q8_disks.sha256); do \
-	    test -f $(Q8_DISKS)/$$f || { echo "no $(Q8_DISKS)/$$f: QUUX's disks are muir's data/quux-disk*, from muir fdaa423 on; or pass Q8_DISKS=<dir>"; exit 1; }; done; \
+	    test -f $(Q8_DISKS)/$$f || { echo "no $(Q8_DISKS)/$$f: QUUX's disks are muir's data/quux-disk*, from muir 880204b on; or pass Q8_DISKS=<dir>"; exit 1; }; done; \
 	sed 's|  |  $(Q8_DISKS)/|' q8_disks.sha256 | sha256sum -c --quiet - \
 	    || { echo "the disks in $(Q8_DISKS) are not the ones this check is held to (q8_disks.sha256)"; exit 1; }
 # The work directory is this directory's own, by its path hashed, as

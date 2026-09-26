@@ -258,14 +258,14 @@ module quux_clocks (
   assign ro_period   = interval_us;
 
   // **`SINTR` AT THE EDGE THAT ENDS THE MICROCYCLE, WAITING OR NOT** (muir's
-  // `1775bba`, `Machine::interrupt_at(now)` at the end of `Rtl::clock_edge`):
+  // `fdc0319`, `Machine::interrupt_at(now)` at the end of `Rtl::clock_edge`):
   // the flags as they stand in the edge's own tick, a rise on that tick
   // counting as before the edge, less what this microcycle's own write takes
   // down there --- a timer turned off, a flag cleared, or the interval
   // timer's period written, which starts a period from the edge.  A timer
   // this write enables is off at the edge and so raises nothing.  It used to
   // be the flags the microcycle STARTED with, `flag_s`, which is where muir
-  // took them before `1775bba`, and which missed a rise inside the
+  // took them before `fdc0319`, and which missed a rise inside the
   // microcycle, or on the edge ending it, by one microcycle:
   // `build/quux_tickwin.quux.k4l1.pass` finds it on rows inside a plain
   // microcycle, on its ending edge, and inside a wait for `MD`.
