@@ -1392,7 +1392,7 @@ band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom
 # hash table holding the faulting virtual address instead of a page table
 # word, and the question was whether the fabric does that in simulation.
 #
-# **IT DOES NOT, and that is the result.**  Measured 12 Sep at `efeccac`: the
+# **IT DOES NOT, and that is the result.**  Measured 12 Sep at `b1a3b41`: the
 # machine boots to a painted screen at about 8 million microcycles, runs past
 # 170,000,000 with no halt, `PC 0o23555` with `OPC 0o23560` occurs zero times,
 # and `map2[777]` reads `000000` rather than `0x4FC9F9`.  The watchpoint sees
@@ -2950,7 +2950,7 @@ $(BUILD)/md_hold_sys.pass: $(BUILD)/obj_md_hold/Vcadr_microcycle \
 # edge and the held word committed 44 ticks later, one extra-slow microcycle
 # at the 5 ns grid, over the word the instruction put there. The MD register's
 # first branch --- a strobe on the boundary's own tick loads MD and clears the
-# flag --- fixed it at 9d1cf26, so the test is in `check` now, and
+# flag --- fixed it at d4cf2ca, so the test is in `check` now, and
 # `the-destmdr-edge-leaves-a-strobed-word-owed` takes that branch away. It
 # runs the boot PROM twice and takes about half a minute.
 $(BUILD)/obj_md_inject/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_md_inject_tb.cpp tb/cadr_tick.h | $(BUILD)

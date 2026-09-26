@@ -997,15 +997,15 @@ int main(int argc, char **argv) {
   // a transfer's access time is asked a SECTOR_NS at a time, 193,690 ticks,
   // and a group placed to make its START exact is 50 ticks long.
   //
-  // **THIS IS WHAT WENT WRONG AT 69a2246 AND IT IS A CHECK GETTING WEAKER,
+  // **THIS IS WHAT WENT WRONG AT b9c2f12 AND IT IS A CHECK GETTING WEAKER,
   // NOT A HOLE.** `loads_timer` gained the transfer codes when the channel
   // began charging `access_ns`, so the group at 2,658,399,985 --- sixteen
   // rows ending in a timed Read --- became anchored on its LAST row, and the
   // backward relaxation below then pulled the lone `grid_before` sample at
   // 2,658,399,980 fifty-three ticks off its own instant. That sample is the
   // one and only place the trace can see `SEEK_SETTLE_NS` to a tick:
-  // `disk-seek-settle-a-tick-short` was caught at 3743cf7 on exactly that
-  // row and survived at 69a2246. Measured, by reverting each of the channel
+  // `disk-seek-settle-a-tick-short` was caught at c1b4d61 on exactly that
+  // row and survived at b9c2f12. Measured, by reverting each of the channel
   // slice's four candidate changes in turn: only `loads_timer`'s new cases
   // move it. With the rule below the START gives instead --- it lands as
   // many ticks late as the group is long, and the trace's next question

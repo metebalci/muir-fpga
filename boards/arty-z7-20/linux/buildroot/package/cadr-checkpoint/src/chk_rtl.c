@@ -89,7 +89,7 @@
 #define MUIR_TICK 0u
 // The size QUUX's MONO TV would have, which `Tv::save` writes for every
 // board: `tv::MONO_TV_WIDTH` by `MONO_TV_HEIGHT`, the default a CADR's
-// display keeps and never uses.  1280 by 1024 since muir's `bc6af67`, the
+// display keeps and never uses.  1280 by 1024 since muir's `22c8a52`, the
 // HDMI mode this fabric's boards drive; 1920 by 1080 before it.
 #define MUIR_MONO_TV_WIDTH 1280u
 #define MUIR_MONO_TV_HEIGHT 1024u

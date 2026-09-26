@@ -55,7 +55,7 @@
 // and the held word committed at the next master clock edge --- or at the very
 // next tick if `-HANG` was up, a hang not being a boundary --- over the word
 // the instruction put there.  The MD register's first branch, a strobe on the
-// boundary's own tick loading MD and clearing the flag, fixed it at 9d1cf26.
+// boundary's own tick loading MD and clearing the flag, fixed it at d4cf2ca.
 // The test is in `make check` since, and
 // `the-destmdr-edge-leaves-a-strobed-word-owed` takes that branch away.
 

@@ -1215,7 +1215,7 @@ recorded in `linux.md`. The steps are here so it can be done again.
 **On the build host, once.** The bitstream is the memory-on board. It is
 built with `DDR=1 OUTDIR=build/ddr vivado -mode batch -source
 boards/arty-z7-20/vivado/bitstream.tcl` and copied to `/srv/tftp/cadr.bit`.
-The one served on 10 September was built at `1446bf6`.
+The one served on 10 September was built at `b2bc99b`.
 
     sudo apt install tftpd-hpa                       # serves /srv/tftp on UDP 69
     sudo chown $USER /srv/tftp                       # so the files can be refreshed without root

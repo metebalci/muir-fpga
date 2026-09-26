@@ -31,7 +31,7 @@
 #
 # THE CHAIN THE MODEL PRESENTS is quoted from the same BSDLs `boards/arty-z7-20/vivado/probe.tcl`
 # quotes --- xc7z020_clg400.bsd and zynq7000_arm_dap.bsd --- and confirmed
-# against silicon at ace4131: both IDCODEs exact, the part at the TDO end, IR
+# against silicon at 5838507: both IDCODEs exact, the part at the TDO end, IR
 # total 10, first bit out least significant, DONE high. Both sides quoting one
 # source cannot prove the source right; what this checks is that the script
 # reads correctly whatever the chain does.

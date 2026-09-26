@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Before building the disk controller
 
-This is reconnaissance, measured 2026-09-09 at `871b467`, before a line of it
+This is reconnaissance, measured 2026-09-09 at `aac2501`, before a line of it
 was written. That is 56 commits before the memory path landed, so read that
 date on anything below which says what does or does not exist. None of this is
 derivable from the RTL, because none of it is in the RTL. It is what muir has
@@ -194,7 +194,7 @@ control store up all ones, and the same reason.
 ## A gap in the seam, found while reading
 
 **~~`cadr_machine.sv` brings out `dev_rq`, `dev_write` and `phys`, and not the
-word.~~ Closed at `b562621`.** `cadr_memory_path.sv` had `wdata`, and its own
+word.~~ Closed at `43f332e`.** `cadr_memory_path.sv` had `wdata`, and its own
 comment called `phys` and `wdata` "the address and the word" for a slave that
 is not main memory. The machine's boundary dropped it, so an Xbus device could
 have been written to and never seen what. `dev_wdata` is a port of
@@ -329,11 +329,11 @@ on the card. It is
 `boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src/cadr-disk-packs.c`
 and the files beside it, built into the Buildroot image and started at boot by
 `S80cadr-disk-packs`. This is its second revision, written against the
-register face at `a899799` --- the request path --- and it serves on demand.
-The first revision, at `388d03b`, moved blocks and could not learn which block
+register face at `13bbaf4` --- the request path --- and it serves on demand.
+The first revision, at `fc07c6c`, moved blocks and could not learn which block
 the CADR wanted; its record is in "The request path, built" below, and in the
 history of this section. `feeder_test.c` in the same directory is its check.
-**It has run on the board**, with the `a899799` bitstream. The drive came
+**It has run on the board**, with the `13bbaf4` bitstream. The drive came
 present, the boot PROM asked for blocks 1, 0 and 17, and in the first minute
 the disk pack program served 32,780 blocks and wrote 16,101 back. That is the
 CADR reading and writing its disk on silicon. That run also found the one
@@ -432,7 +432,7 @@ revolution, 16.7 ms, which at the 10 ns grid is real time as well).
 **The refusal read back with WAITING up, found on the board.** Once in
 48,879 moves the disk pack program failed a write-back with `refused while the walk
 waits, which cannot be the channel's doing (status 0x5a)`. `0x5a` is
-WAITING | CH_ACTIVE | REFUSED | DONE. The RTL's refusal terms at `a899799`
+WAITING | CH_ACTIVE | REFUSED | DONE. The RTL's refusal terms at `13bbaf4`
 (`rtl/plumbing/cadr_disk_pack.sv` lines 476--491) are not one bit of three, an
 unaligned address, a slot past the store, busy, and `bad_ch_q <=
 ch_active_q && !ch_waiting_q && (r_slot == ch_slot_q)` (line 484), decided at
@@ -533,7 +533,7 @@ held to the digests in `q8_disks.sha256` before the check reads them;
 `Q8_DISKS=<dir>` names another directory holding the same five files. Its scratch is
 under `~/.cache/muir-fpga-disk-packs-` and the package directory's path hashed,
 so two copies of the tree never share one. The disk pack program's core runs
-against a model of the register face at `a899799` --- the tag with the unit,
+against a model of the register face at `13bbaf4` --- the tag with the unit,
 REQ, DIRTY, REF, IRQ, IRQEN, DENY, the refusal per slot, `waiting` --- with a
 scripted disk controller behind it that **asks**. Each run of the trace's
 `NEED` rows is a transfer that posts the blocks it lacks in REQ and waits.
@@ -632,8 +632,8 @@ revision. The program is 34,148 bytes on the target with the drive bay in it,
 against 30,048 before, and the rest of the growth since 2,802,503 is other
 programs'. On the network path that is one file into the TFTP server's
 directory and a reset. The bitstream, kernel, tree and loader are unchanged,
-and the bitstream must be the one with the request path, `a899799` or later.
-The `997b734` one on the board today has no REQ register, and the feeder would
+and the bitstream must be the one with the request path, `13bbaf4` or later.
+The `ded3738` one on the board today has no REQ register, and the feeder would
 read zeros there and serve nothing.
 `boards/arty-z7-20/linux/mksd-buildroot.sh` puts packs in the bay with
 `PACKS="a.img 5=b.img"` when the card is staged. But a pack is more usually
@@ -704,7 +704,7 @@ the GPIO clock gated --- stop there, as the program did); `no pack side ...
 `served` count moving afterwards; or any `failures` above zero in the
 summary, each of which was named when it happened. `cadr-disk-packs
 --selftest` still runs the round trip of block 0 through the store with the
-drive absent, as at `997b734`, and passes on the board at that bitstream.
+drive absent, as at `ded3738`, and passes on the board at that bitstream.
 
 ## The request path, built
 

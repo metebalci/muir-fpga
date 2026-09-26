@@ -7,7 +7,7 @@
 // **BLINKING, WHICH IS THE DEFAULT.**  Bit 19 of a count of retired
 // microcycles, 524,288 of them a half-period: about 89 ms on the 10 ns grid,
 // where the Arty Z7-20 retired 5.88 million microcycles a second running Lisp
-// at 9d1cf26 --- fast enough to be obviously alive and slow enough to count.
+// at d4cf2ca --- fast enough to be obviously alive and slow enough to count.
 // It FREEZES when the machine stops, lit or dark, which is the thing a level
 // cannot say --- motion cannot be faked, where a frozen fabric would still
 // hold a level high.

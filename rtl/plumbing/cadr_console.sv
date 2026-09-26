@@ -553,7 +553,7 @@
 // is not.**  A CADR bus cycle that is not answered ends on the NXM timer at
 // 4,250 ns from the gated oscillator's first rise.  This module holds the
 // diagnostic bus for `DIAGNOSTIC_NS` and the ticks it takes to raise and drop
-// its strobe, 33 ticks or 330 ns measured at 412dd6f --- so a Unibus cycle
+// its strobe, 33 ticks or 330 ns measured at 1259072 --- so a Unibus cycle
 // that has to wait for the console behind it waits about a thirteenth of its
 // own timeout and cannot become an NXM.  That is the same argument
 // the disk channel's per-word arbiter is held to, one bus along.

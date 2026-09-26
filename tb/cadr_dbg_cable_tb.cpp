@@ -130,7 +130,7 @@ const long kDebugTimeoutT = GridTicks(13 * 850);
 // real deadline is 552 ticks, and the carrier's round trip is about four
 // frames, a level waiting up to a frame to be taken and taking a frame to
 // cross, each way --- 623 ticks at its slowest in this check, measured at
-// 412dd6f.  A 6-tick beat on the 10 ns grid spends more than half of the
+// 1259072.  A 6-tick beat on the 10 ns grid spends more than half of the
 // debugger's deadline, and this bound says so rather than a margin the design
 // does not have.
 const long kRoundTripBound = kDebugTimeoutT - 2 * kFrameT;

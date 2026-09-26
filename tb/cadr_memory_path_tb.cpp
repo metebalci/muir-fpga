@@ -37,10 +37,10 @@
 // arrived.
 //
 // THAT ASSERTION IS HERE BECAUSE IT WAS SOMEWHERE ELSE AND WENT QUIET.
-// `build/ddr_boot.pass` held it from `05d28fa`: the boot PROM's 16,951 disk
+// `build/ddr_boot.pass` held it from `0fe5951`: the boot PROM's 16,951 disk
 // polls went unanswered, read the bridge's stale word, and bit 0 of it steered
 // the program, so configuration B caught a bridge that held its word. At
-// `70169fb` `rtl/machine/cadr_disk_controller.sv`'s registers began answering those
+// `0ee43f6` `rtl/machine/cadr_disk_controller.sv`'s registers began answering those
 // polls and the only unanswered cycles left on that program are two to empty
 // Xbus space whose data the PROM ignores --- so the mutation stopped being
 // caught while every check stayed green. A property held by which program

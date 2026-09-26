@@ -368,7 +368,7 @@ module cadr_busint_xbus (
   // magnitude compare against `answered_at + DESKEW_T` stands between the
   // counter and -MEMACK/-LOADMD; those cross to the processor and land on
   // `md`'s and `md_held`'s clock enables, which were sixty of the eighty-six
-  // failing endpoints of the DDR board at b5542c5:
+  // failing endpoints of the DDR board at a27699b:
   //
   //     -0.263 ns   busint/elapsed_reg[5]/C -> processor/md_reg[23]/CE
   //              4.943 ns (logic 2.006, route 2.937), LUT6 + CARRY4 + CARRY4
@@ -551,7 +551,7 @@ module cadr_busint_xbus (
         // That tick happens on silicon.  `memgo_q` in `cadr_microcycle.sv` is
         // `MEMSTART AND VMAOK` registered every tick, VMAOK is the far end of
         // the map, and `rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes the
-        // path into it to the fast read tap.  Routed at 9d1cf26 the map takes
+        // path into it to the fast read tap.  Routed at d4cf2ca the map takes
         // 18.7 to 19.2 ns to reach it, so the tick after a boundary that
         // raises MEMSTART captures a VMAOK still rippling.  On an access that
         // faults that is a one-tick -MEMRQ, and the grant it bought ran a
@@ -559,7 +559,7 @@ module cadr_busint_xbus (
         // direction and with `wdata` left from the last cycle: a stale word
         // written over that address, or MD loaded from it under the
         // page-fault handler.  Whether the rippling VMAOK reads 1 depends on
-        // the placement: the served placement of 9d1cf26 ran, and its Explore
+        // the placement: the served placement of d4cf2ca ran, and its Explore
         // placement and two of a slice beside it halted in the page-fault
         // code.  Forcing `memgo_q` to 1 on that one tick at every such
         // boundary halts the band there in `band-axi` too, at microcycle

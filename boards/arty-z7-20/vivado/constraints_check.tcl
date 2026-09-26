@@ -108,14 +108,14 @@ proc assert_constraints_scoped {inside period} {
 # an exception was made. That is the `foreach` bug exactly --- the file read
 # cleanly, the report showed the exception, and the design was timed
 # unconstrained at -16.405 ns, against -0.484 ns for the constrained design at
-# 712909e. Counting exception objects cannot tell those two apart. The setup
+# 76e126b. Counting exception objects cannot tell those two apart. The setup
 # REQUIREMENT of the paths can: an exception that reached nothing leaves every
 # path in the design asking for one period.
 #
 # So: `cycles` periods is what a relaxed path must report, and a count of zero
 # at that requirement is the failure. It is a floor and not an equality,
 # because the number of paths in the family moves whenever the datapath does,
-# and moves again between synthesis and routing: at 712909e it is 10,972 out
+# and moves again between synthesis and routing: at 76e126b it is 10,972 out
 # of context and 10,929 on the board where this check runs, and 10,956 on the
 # board's routed design. A check that has to be edited to stay true is a check
 # people edit rather than read.
@@ -372,7 +372,7 @@ proc assert_multicycle_applied {period cycles {limit 100000}} {
     puts "XDC: [format %g $period] ns tick to settle in. That is the"
     puts "XDC: unconstrained design, and every slack figure a run like this"
     puts "XDC: prints is of a machine nobody meant to build --- -16.405 ns the"
-    puts "XDC: last time it happened, against -0.484 constrained (712909e)."
+    puts "XDC: last time it happened, against -0.484 constrained (76e126b)."
     puts "XDC: The exceptions may still EXIST and be listed by"
     puts "XDC: report_exceptions; what they do not do is reach a path. Look"
     puts "XDC: for an XDC-illegal construct in the object query --- `foreach`"

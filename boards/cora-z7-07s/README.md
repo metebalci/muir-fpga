@@ -75,7 +75,7 @@ machine does not know what part it is on.
 
 ## The fit
 
-Measured at commit `86d787b` with `DDR=1`, which is the machine with the
+Measured at commit `adcd038` with `DDR=1`, which is the machine with the
 processing system and DDR3 behind its memory port. The Arty Z7-20's figures
 beside it are from the same commit with the same switch, so the two are the
 same design placed on two parts.

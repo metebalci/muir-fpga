@@ -7,7 +7,7 @@ name a block of source that exists, exactly once?
 **A RECORD WHOSE `@old` MATCHES NOTHING DOES NOT WEAKEN `make mutants`, IT
 KILLS IT.**  `parse()` refuses the whole list, so one rotted anchor takes
 every other record with it and the run ends with no summary line at all.
-That happened at `66570da` and eleven commits were gated and pushed before
+That happened at `6b9dcbf` and eleven commits were gated and pushed before
 anybody noticed, because `make check` does not run the mutation suite.
 The cheap guard that would have caught it is exactly this: a few seconds of
 Python over `mutations/run.py`'s own `parse()`, run at the commit that broke

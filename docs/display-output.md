@@ -922,7 +922,7 @@ same memory, and the three slacks within the noise. Do not read the slack's
 last digits as precision either way — a bit-identical netlist has moved that
 number by a quarter of a nanosecond in this project before.
 
-Against the same board without the display, measured at `95cbb84` —
+Against the same board without the display, measured at `0d4c18d` —
 10,909 LUTs, 7,390 registers, 41.5 block RAM tiles — the display costs about
 2,200 LUTs, 3,800 registers and three and a half block RAM tiles. That pair is
 of an older commit and is kept for the size of the display rather than for the

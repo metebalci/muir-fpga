@@ -15,7 +15,7 @@ fifteen; at the 10 ns tick built since, the same two read 10.000 and 150.000.
 The grid has since moved to 10 ns as well, and the relaxed set is now eight
 ticks, 80.000 ns (`rtl/plumbing/xilinx7/cadr_machine.xdc`). Both boards close
 at that tick --- +1.537 ns with memory off and +0.657 ns with `DDR=1`, zero
-failing endpoints on either, measured at `822535c` --- so where this file says
+failing endpoints on either, measured at `76f73e1` --- so where this file says
 a board does not close it is describing the build it names. `docs/tv.md` has
 the decision and its reasons.
 
@@ -1023,7 +1023,7 @@ Another session is in `cadr_machine.sv`, `cadr_memory_path.sv` and
 
     ~/.cache/muir-fpga-console-attachment.patch
 
-against `d77cdae`, `patch -p1` from the repository root. It touches **eight**
+against `04f9a3a`, `patch -p1` from the repository root. It touches **eight**
 files and no others: `rtl/machine/cadr_memory_path.sv`, `rtl/machine/cadr_machine.sv`,
 `boards/arty-z7-20/cadr_arty.sv`, `Makefile`, `mutations/run.py`, and the three that carry
 `M_AXI_GP1` --- `boards/arty-z7-20/vivado/ps7_config.tcl`, `boards/arty-z7-20/vivado/gen_ps7.py` and the
@@ -1033,7 +1033,7 @@ regenerates it identically.
 
 **It is verified and not merely written.** `tb/cadr_console_harness.sv` is the
 same arbiter and the same mux, so `build/console.pass` holds them; and the
-patch was applied to a clean export of `d77cdae` (with this slice's
+patch was applied to a clean export of `04f9a3a` (with this slice's
 `boards/arty-z7-20/cadr_ps7.sv` and `rtl/plumbing/cadr_console.sv` beside it) and **all five board
 configurations lint clean** --- default, `PROBE_DEPTH=1024`, `DDR=1`,
 `PROVE=1`, `PROVE=2`. Two faults were found that way and fixed before this
@@ -1108,7 +1108,7 @@ than asserted.
 ## The timing, and the -12.837 ns
 
 **The console's first bitstream missed its own clock by two and a half
-ticks**, and the way it did is worth more than the fix. At `37711fe`, `DDR=1`,
+ticks**, and the way it did is worth more than the fix. At `5908aa2`, `DDR=1`,
 board flow, the fabric then at 200 MHz and a tick then 5 ns:
 
     Slack (VIOLATED) : -12.837 ns
@@ -1206,7 +1206,7 @@ its own. Fixed, and the record says why it moved. After it: `arty` 7 of 7,
 
 ### The reset's own fit, and what it is not
 
-**Measured in an isolated copy of the working tree at HEAD `1d3a9bc` plus this
+**Measured in an isolated copy of the working tree at HEAD `499d7f2` plus this
 change --- NOT of a commit**, because the session that made it may not write
 git history. Nothing under `rtl/` or `boards/arty-z7-20/vivado/` in that copy was uncommitted
 except `cadr_arty.sv` and `cadr_console.sv`, both of them this change, so it
@@ -1215,7 +1215,7 @@ is HEAD plus exactly this and nothing else --- checked file by file against
 added to `rtl/` afterwards cannot have reached it. Board
 flow, `boards/arty-z7-20/vivado/bitstream.tcl`, both configurations, zero critical warnings:
 
-                            HEAD 1d3a9bc      + the reset
+                            HEAD 499d7f2      + the reset
     DDR=1  worst slack      -0.049 ns         -0.209 ns
            failing          1 of 27,044       101 of 27,142
            total negative   -0.049 ns         -6.650 ns
@@ -1246,11 +1246,11 @@ no reset net at all is the bottom. **Reported as a number and not as a
 regression**, and the isolation build is the evidence rather than the
 reasoning.
 
-**The numbers, fitted in isolated trees at `3198d8b` plus this slice**, board
+**The numbers, fitted in isolated trees at `12656b7` plus this slice**, board
 flow, `boards/arty-z7-20/vivado/bitstream.tcl`, both configurations, zero critical warnings and
 zero errors:
 
-                            before (37711fe)      after
+                            before (5908aa2)      after
     DDR=1  worst slack      -12.837 ns            -0.159 ns
            failing          5,698 of 27,144       27 of 27,125
            total negative   -8,309.396 ns         -1.175 ns
@@ -1269,7 +1269,7 @@ than as closure. The memory-off board **meets timing**.
 
 Utilization, `DDR=1`: 7,318 LUTs (13.76%), 5,080 registers, 37 block RAM
 tiles, 4 DSPs. `DDR=0`: 3,712 LUTs, 1,567 registers. These are not comparable
-with the 6,887/5,060/38 quoted at `37711fe` --- three commits landed between,
+with the 6,887/5,060/38 quoted at `5908aa2` --- three commits landed between,
 one of them the display --- so they are the shape of this tree and not a
 delta.
 

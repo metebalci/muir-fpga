@@ -165,7 +165,7 @@ firmware that drove the same register faces Linux drives on a Zynq board. It was
 carries a microSD card only as a module bolted onto a Pmod header, its Ethernet
 is 10/100 where the Zynq boards are gigabit, and it has no video connector, so
 the screen had nowhere to go. None of that made it worth carrying beside the
-Zynq boards. `310b9b7` is the last commit that has it, and `boards/README.md`
+Zynq boards. `e18b384` is the last commit that has it, and `boards/README.md`
 still lists what a part with no processing system would have to answer, so the
 question can be re-opened from there.
 

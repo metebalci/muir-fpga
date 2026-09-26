@@ -369,7 +369,7 @@ module cadr_disk_pack #(
   // slot, which word, the tag or a beat --- and land on the enable of every
   // tag and header register in the controller: `FSM_onehot_pst_reg/C ->
   // u_machine/disk/s_tag_reg[*]/CE`, 49 of the DDR=1 board's 128 failing
-  // endpoints at ef9dee9, three quarters of each path spent crossing from
+  // endpoints at 0f2ce3f, three quarters of each path spent crossing from
   // this module to that one.  Registered here, the crossing starts at a
   // register and the controller's own decode is all that is left in the
   // tick.  It costs one tick on every write into the store, and the tick
@@ -418,7 +418,7 @@ module cadr_disk_pack #(
   // 26-bit compare against the window, and made where the beat lands it
   // reached the clock enable of every register a beat can write:
   // `w_at_reg[25]/C -> r_drive_reg[*]/CE`, seven logic levels and 4.98 ns on
-  // the DDR=1 board at ef9dee9, 72% of it routing.  `w_at` changes at two
+  // the DDR=1 board at 0f2ce3f, 72% of it routing.  `w_at` changes at two
   // places only --- taken from AWADDR, and walked up a word a beat --- so the
   // compare is made on the value about to be loaded and lands beside it, and
   // the enable reads one register bit.  This is `cadr_phase_gen.sv`'s trick
@@ -446,7 +446,7 @@ module cadr_disk_pack #(
   // Driven straight off `r_at` --- the window compare, then which of the
   // sixteen, then the mux --- they reached the PS7's own RDATA pins four
   // logic levels late: `r_at_reg[8]/C -> u_ps7/MAXIGP0RDATA[14]`, -0.164 ns
-  // on the DDR=1 board at ef9dee9, and the hard block's setup is most of the
+  // on the DDR=1 board at 0f2ce3f, and the hard block's setup is most of the
   // tick.  So `R_PREP` makes both into registers and `R_DATA` offers them;
   // the address walks up at the handshake and the next beat goes through
   // `R_PREP` again.  One tick a beat, on a register read Linux makes a
@@ -792,7 +792,7 @@ module cadr_disk_pack #(
   // **THE ADDRESS IS A REGISTER, MADE WHERE `p_burst` MOVES.**  As an adder
   // off `p_burst` and `p_base` it reached the PS7's address pins a tick short
   // --- `p_burst_reg[*]/C -> u_ps7/SAXIHP2A[RW]ADDR[*]`, -0.013 ns on the
-  // DDR=1 board at ef9dee9, the hard block's setup being most of the tick.
+  // DDR=1 board at 0f2ce3f, the hard block's setup being most of the tick.
   // `p_burst` changes at four places, each of which knows the next value, so
   // the sum is made there and the address channel offers a register.
   logic [31:0] burst_addr;

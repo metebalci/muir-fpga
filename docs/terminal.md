@@ -775,7 +775,7 @@ channel's, and nothing in the fabric has to know a viewer exists.
 `make -C boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src check`
 runs on the build host, with no board. The server is driven from screens made
 in the check, and a viewer written for the purpose sits on a real loopback
-socket. At `0966ffd` `check-only` reports **1,039 checks, 0 failures**, and
+socket. At `dc40ab6` `check-only` reports **1,039 checks, 0 failures**, and
 `check` then runs the 71 records in `screen_mutations.txt`. The whole thing
 takes a few minutes.
 

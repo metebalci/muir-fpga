@@ -30,7 +30,7 @@
 //
 // **1,062,507 of the band's 2,800,000 microcycles agree exactly**, every
 // column below, no exemption of any kind, and the fabric's clock and muir's
-// the same to the nanosecond over the whole of it.  Measured at `822535c`.
+// the same to the nanosecond over the whole of it.  Measured at `76f73e1`.
 // That is the boot PROM run with a DRIVE ON THE CABLE, which no other check
 // does: `rtl.golden` and `rtl_sys.golden` are byte-identical only to 537,857
 // and part there, so 524,650 of those microcycles are a program nothing else
@@ -388,7 +388,7 @@ int main(int argc, char **argv) {
   uint64_t observe = 0;
   int timed = 0;
   long tolerate = 0;
-  // THE FLOOR, AND WHY IT IS A `>=` AND NOT AN `==`.  Measured at `822535c`:
+  // THE FLOOR, AND WHY IT IS A `>=` AND NOT AN `==`.  Measured at `76f73e1`:
   // the whole machine agrees with muir for this many microcycles of the band
   // with a real memory and a real pack under it, and stops at the machine's
   // first disk transfer for the reason the header gives.  A change that makes

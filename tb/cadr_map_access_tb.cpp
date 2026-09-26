@@ -173,7 +173,7 @@ constexpr uint32_t kEntryIndex[4] = {0u, 1u, 2u, 3u};
 // THE DIRECTED RUN'S ADDRESSES.  On the microcycle that writes the map MD is
 // zero, so the level-1 index is 0 and `MAPI<4:0>`, which is MD's, is 0.  Every one of the four
 // writes names both levels, and muir's rule (`Machine::write_map`, which
-// `Rtl` follows since muir's `229ffe3`) is that such a write addresses level
+// `Rtl` follows since muir's `727c4d9`) is that such a write addresses level
 // 2 with its top five bits ZERO: level 1's 93425As hold their outputs in high
 // impedance while written, `-VMAP<4:0>` floats high and the 74S240s drive
 // the block number low.  So the four words land at 0, 1, 2 and 3 of block 0.

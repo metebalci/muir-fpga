@@ -180,8 +180,8 @@ A record's reasoning ages faster than its text. The text rots loudly, since
 the anchor stops matching. The reasoning rots silently and goes on reading as
 true. Records cite the commit their reasoning was true at.
 
-At `4a585e1` the list holds 557 records. The gate at that commit caught 555,
+At `e387e31` the list holds 557 records. The gate at that commit caught 555,
 with 2 known holes against issue 1 and none surviving. The two holes are
 terms of `-WAIT` that no program the traces run ever makes true, so no check
 can see them removed. They are recorded rather than pretended to be checked.
-At `0966ffd` the list holds 653 records, and the two holes are the same two.
+At `dc40ab6` the list holds 653 records, and the two holes are the same two.

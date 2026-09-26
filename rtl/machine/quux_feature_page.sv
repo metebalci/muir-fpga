@@ -49,7 +49,7 @@
 // status is the flags as they stand at that tick.  The page's own three
 // requests, the keyboard's, the mouse's and the network's, also reach the
 // processor's interrupt as every word 100 bit does (`irq`; muir's
-// `interrupt_at`, `3ceb4f7` for the network's); the tick's and the interval
+// `interrupt_at`, `1f6f5fb` for the network's); the tick's and the interval
 // timer's reach it from `quux_clocks.sv`, and the disk's on the Xbus line.
 //
 // Words 11 to 13 are the display's: MONO TV at the bitstreams' 1280 by 1024,

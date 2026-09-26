@@ -7,7 +7,7 @@
 #     python3 boards/arty-z7-20/vivado/gen_ps7.py            # write both files
 #     python3 boards/arty-z7-20/vivado/gen_ps7.py --check    # are they what this writes today?
 #
-# WHY THIS IS GENERATED AND NOT WRITTEN BY HAND.  Measured at 1d3a9bc: a bare
+# WHY THIS IS GENERATED AND NOT WRITTEN BY HAND.  Measured at 499d7f2: a bare
 # `PS7` instantiation connecting only the pins it used drew 101 "port is
 # unconnected" messages from synthesis, and every one of the 100 distinct
 # names was an OUTPUT.  Roughly 300 unconnected inputs were silent, and the
@@ -42,7 +42,7 @@ RTL = os.path.join(REPO, "boards", "arty-z7-20", "cadr_ps7.sv")
 STUB = os.path.join(REPO, "tb", "cadr_ps7_stub.sv")
 
 # What the header must be, or this is not the part this wrapper was written
-# for.  Measured at 1d3a9bc against Vivado 2026.1.
+# for.  Measured at 499d7f2 against Vivado 2026.1.
 WANT = {"input": 325, "output": 274, "inout": 21}
 
 SPDX = ("// SPDX-FileCopyrightText: 2026 Mete Balci\n"
@@ -55,7 +55,7 @@ SPDX = ("// SPDX-FileCopyrightText: 2026 Mete Balci\n"
 # the console's --- and the EMIO GPIO the memory tally is read on.
 #
 # `S_AXI_HP0` at its NATIVE 64 BITS, which is not an arbitrary choice: diffed
-# at 1d3a9bc, HP0 disabled against HP0 enabled at 64 bits gives a
+# at 499d7f2, HP0 disabled against HP0 enabled at 64 bits gives a
 # byte-identical `ps7_init.tcl`, and 64-bit against 32-bit differs by exactly
 # two register writes per silicon revision --- the AFI0 channel controls, both
 # annotated `n32BitEn = 1`.  So at 64 bits any correct Arty Z7-20 `ps7_init`
@@ -342,7 +342,7 @@ def wrapper(ports):
 // **ALL %d PINS ARE NAMED BELOW**, and that is the only reason this file is
 // generated rather than written.  An unconnected PS7 input produces no
 // warning of any kind --- 101 messages came back from a bare instantiation
-// at 1d3a9bc and all 100 distinct names were outputs, while some 300 silent
+// at 499d7f2 and all 100 distinct names were outputs, while some 300 silent
 // inputs floated and the design still wrote a bitstream.  So every input is
 // either driven from a port here or tied to a stated value, every unused
 // output is explicitly open, and the 21 inouts --- the fixed-I/O set, DDR*

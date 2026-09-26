@@ -1168,7 +1168,7 @@ module cadr_cora #(
       // software says so.
       //
       // AND THE NEXT ONE IS A RESET AND NOT A FINGER. `SAXIHP0ARESETN`
-      // follows `LVL_SHFTR_EN` at 0xF8000900 --- measured at 700b98a --- so
+      // follows `LVL_SHFTR_EN` at 0xF8000900 --- measured at 7fdfdde --- so
       // writing that register 0x0 then 0xF drops `axi_rst` and raises it,
       // the witness returns to IDLE and runs the whole sequence again. Step
       // three's first draft tied this to BTN1 and answered on LD4, which
@@ -1357,7 +1357,7 @@ module cadr_cora #(
     // interlock; what belongs here is only the wiring and the reset.
     //
     // **ONLY WITH `DDR` SET, NOT ON A `PROVE` BOARD.** The two proving boards
-    // were passed on silicon at `51bc74a` and are about the memory port; the
+    // were passed on silicon at `712f664` and are about the memory port; the
     // disk's ports have no place in them, so on those the PS7's HP2 and GP0
     // pins are tied here and the drive seam is tied off as on the default
     // board.
@@ -2437,7 +2437,7 @@ module cadr_cora #(
   //           its own microcode.
   //   green   bit 19 of a count of retired microcycles, the microcycle blink:
   //           524,288 microcycles, about 89 ms at the 5.88 million a second
-  //           the Arty Z7-20 ran Lisp at on the 10 ns grid at 9d1cf26, fast
+  //           the Arty Z7-20 ran Lisp at on the 10 ns grid at d4cf2ca, fast
   //           enough to be obviously alive and slow enough to count.  It
   //           FREEZES when the machine stops, which is the thing a level
   //           cannot say --- motion cannot be faked, where a frozen fabric

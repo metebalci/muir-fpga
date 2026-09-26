@@ -747,7 +747,7 @@ fn check_clocks(which: Which, m: &muir::machine::Machine) {
 }
 
 /// **THE WINDOW BETWEEN A FLAG'S RISE AND THE EDGE `SINTR` IS TAKEN AT**
-/// (muir's `1775bba`, `a_flag_rising_during_a_wait_is_seen_by_the_jump_after`):
+/// (muir's `fdc0319`, `a_flag_rising_during_a_wait_is_seen_by_the_jump_after`):
 /// `SINTR` is registered at the edge that ends each executed microcycle,
 /// waiting or not, with the flags as they stand at that edge.  At a K of four
 /// and an L of zero every edge and every rise is on a multiple of 40 ns, so a
@@ -1009,7 +1009,7 @@ fn page_program_marks() -> (Prog, u64, u64) {
     p.konst(0o701, 0);
     p.to(0o701, fdest(DEST_CLOCKS));
     // The keyboard's and the mouse's interrupts off, so that the network's
-    // request is the only thing up on `SINTR` below (muir's `3ceb4f7`).
+    // request is the only thing up on `SINTR` below (muir's `1f6f5fb`).
     wr(&mut p, va(0, 0o120), 0);
     wr(&mut p, va(0, 0o123), 0);
     // The network: Clear Transmitter, `<8>`, and the transmit interrupt
@@ -1184,7 +1184,7 @@ const DIVMD_Q: u32 = 0x89ab_cdef;
 const DIVMD_GAPS: [usize; 4] = [0, 1, 2, 3];
 
 /// **A `DIV` whose M source is `MD`, with a read in flight** (QUUX's open
-/// point at revision 4, settled by muir's `ffbb76a`).  QUUX has no hung
+/// point at revision 4, settled by muir's `b054c61`).  QUUX has no hung
 /// microcycle: a microcycle reading `MD` with a read in flight waits, and
 /// runs once, whole, with the word read in `MD`, so a `DIV` then divides
 /// the word read.  The divider's own hold counts from the edge that loaded
