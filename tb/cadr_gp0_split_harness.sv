@@ -69,6 +69,13 @@ module cadr_gp0_split_harness #(
     parameter logic [31:0] CHAOS_BASE = 32'h4000_1000,
     parameter logic [31:0] SER_BASE   = 32'h4000_2000,
     parameter logic [31:0] INPUT_BASE = 32'h4000_3000,
+    // **AND QUUX'S FIFTH PAGE**, the clock and the file device
+    // (`rtl/plumbing/quux_fd_face.sv`), on a QUUX build: `HAS_FD` up puts the
+    // face behind the page, with a stand-in for the machine's host side that
+    // answers each index with a word naming it; down, the page is the
+    // default's, as a CADR bitstream has it.
+    parameter logic [31:0] FD_BASE    = 32'h4000_4000,
+    parameter bit          HAS_FD     = 1'b0,
     // **AND THE SAME FIVE SLAVES AT THE AGILEX 5'S SHAPE.**  The DE25-Nano
     // puts them behind its two processor-to-fabric bridges, which are AXI4:
     // four bits of ID where a Zynq `M_AXI_GP` has twelve, eight bits of burst
@@ -163,7 +170,13 @@ module cadr_gp0_split_harness #(
     // that register clears DSCHG and a model that polled it would be
     // clearing the very bit the walk exists to absorb.
     output var logic        intr_request,
-    output var logic [7:0]  intr_vector
+    output var logic [7:0]  intr_vector,
+
+    // --- the fifth page's host side, as the machine would take it: how
+    // many writes reached it, and the last one's index and word
+    output var logic [15:0] fd_host_writes,
+    output var logic [3:0]  fd_host_widx,
+    output var logic [31:0] fd_host_wdata
 );
 
   // ------------------------------------------------------- the four ports
@@ -206,6 +219,16 @@ module cadr_gp0_split_harness #(
   logic        i_rlast, i_rvalid, i_rready;
   logic [1:0]  i_bresp, i_rresp;
 
+  logic [11:0] f_awaddr, f_araddr;
+  logic [31:0] f_wdata, f_rdata;
+  logic [LEN_W-1:0] f_awlen, f_arlen;
+  logic [3:0]  f_wstrb;
+  logic [ID_W-1:0] f_awid, f_arid, f_bid, f_rid;
+  logic        f_awvalid, f_awready, f_wlast, f_wvalid, f_wready;
+  logic        f_bvalid, f_bready, f_arvalid, f_arready;
+  logic        f_rlast, f_rvalid, f_rready;
+  logic [1:0]  f_bresp, f_rresp;
+
   logic [31:0] d_rdata;
   logic [LEN_W-1:0] d_arlen;
   logic [ID_W-1:0] d_awid, d_arid, d_bid, d_rid;
@@ -217,6 +240,7 @@ module cadr_gp0_split_harness #(
   cadr_gp0_split #(
       .PACK_BASE(PACK_BASE), .CHAOS_BASE(CHAOS_BASE),
       .SER_BASE(SER_BASE), .INPUT_BASE(INPUT_BASE),
+      .FD_BASE(FD_BASE), .HAS_FD(HAS_FD),
       .ID_W(ID_W), .LEN_W(LEN_W)
   ) u_split (
       .clk(clk), .rst(rst),
@@ -269,6 +293,15 @@ module cadr_gp0_split_harness #(
       .in_arvalid(i_arvalid), .in_arready(i_arready),
       .in_rdata(i_rdata), .in_rresp(i_rresp), .in_rid(i_rid),
       .in_rlast(i_rlast), .in_rvalid(i_rvalid), .in_rready(i_rready),
+      .fd_awaddr(f_awaddr), .fd_awlen(f_awlen), .fd_awid(f_awid),
+      .fd_awvalid(f_awvalid), .fd_awready(f_awready),
+      .fd_wdata(f_wdata), .fd_wstrb(f_wstrb), .fd_wlast(f_wlast),
+      .fd_wvalid(f_wvalid), .fd_wready(f_wready),
+      .fd_bresp(f_bresp), .fd_bid(f_bid), .fd_bvalid(f_bvalid), .fd_bready(f_bready),
+      .fd_araddr(f_araddr), .fd_arlen(f_arlen), .fd_arid(f_arid),
+      .fd_arvalid(f_arvalid), .fd_arready(f_arready),
+      .fd_rdata(f_rdata), .fd_rresp(f_rresp), .fd_rid(f_rid),
+      .fd_rlast(f_rlast), .fd_rvalid(f_rvalid), .fd_rready(f_rready),
       .dflt_awid(d_awid), .dflt_awvalid(d_awvalid), .dflt_awready(d_awready),
       .dflt_wlast(d_wlast), .dflt_wvalid(d_wvalid), .dflt_wready(d_wready),
       .dflt_bresp(d_bresp), .dflt_bid(d_bid), .dflt_bvalid(d_bvalid),
@@ -415,6 +448,62 @@ module cadr_gp0_split_harness #(
       .mouse_lines(mouse_lines),
       .card_csr(iob_csr_face)
   );
+
+  // ------------------------------------------- QUUX's fifth page, the face
+  //
+  // With a stand-in for the machine's host side behind it: each index read
+  // answers `5A5A5A5` and the index, a tick after it as the machine's does,
+  // so the testbench reads off the reply which register the face asked for;
+  // and each write is counted, with the last index and word kept.
+  if (HAS_FD) begin : g_fd
+    logic        h_we;
+    logic [3:0]  h_widx, h_ridx;
+    logic [31:0] h_wdata, h_rdata;
+    quux_fd_face #(.ID_W(ID_W), .LEN_W(LEN_W)) u_fd (
+        .clk(clk), .rst(rst),
+        .s_awaddr(f_awaddr), .s_awlen(f_awlen), .s_awid(f_awid),
+        .s_awvalid(f_awvalid), .s_awready(f_awready),
+        .s_wdata(f_wdata), .s_wstrb(f_wstrb), .s_wlast(f_wlast),
+        .s_wvalid(f_wvalid), .s_wready(f_wready),
+        .s_bresp(f_bresp), .s_bid(f_bid), .s_bvalid(f_bvalid), .s_bready(f_bready),
+        .s_araddr(f_araddr), .s_arlen(f_arlen), .s_arid(f_arid),
+        .s_arvalid(f_arvalid), .s_arready(f_arready),
+        .s_rdata(f_rdata), .s_rresp(f_rresp), .s_rid(f_rid),
+        .s_rlast(f_rlast), .s_rvalid(f_rvalid), .s_rready(f_rready),
+        .host_we(h_we), .host_widx(h_widx), .host_wdata(h_wdata),
+        .host_ridx(h_ridx), .host_rdata(h_rdata)
+    );
+    always_ff @(posedge clk) begin
+      h_rdata <= {28'h5A5A5A5, h_ridx};
+      if (rst) begin
+        fd_host_writes <= 16'd0;
+        fd_host_widx   <= 4'd0;
+        fd_host_wdata  <= 32'd0;
+      end else if (h_we) begin
+        fd_host_writes <= fd_host_writes + 16'd1;
+        fd_host_widx   <= h_widx;
+        fd_host_wdata  <= h_wdata;
+      end
+    end
+  end else begin : g_no_fd
+    assign f_awready = 1'b0;
+    assign f_wready  = 1'b0;
+    assign f_bresp   = 2'b00;
+    assign f_bid     = '0;
+    assign f_bvalid  = 1'b0;
+    assign f_arready = 1'b0;
+    assign f_rdata   = 32'd0;
+    assign f_rresp   = 2'b00;
+    assign f_rid     = '0;
+    assign f_rlast   = 1'b0;
+    assign f_rvalid  = 1'b0;
+    assign fd_host_writes = 16'd0;
+    assign fd_host_widx   = 4'd0;
+    assign fd_host_wdata  = 32'd0;
+    logic unused_fd;
+    assign unused_fd = ^{f_awaddr, f_awlen, f_awid, f_awvalid, f_wdata, f_wstrb, f_wlast,
+                         f_wvalid, f_bready, f_araddr, f_arlen, f_arid, f_arvalid, f_rready};
+  end
 
   // ------------------------------------------------- the rest of the window
   cadr_gp0_default #(.ID_W(ID_W), .LEN_W(LEN_W)) u_dflt (

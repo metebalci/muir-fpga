@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 41.** It is
+version is refused by name rather than read wrong. **The version is 43.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
@@ -114,6 +114,23 @@ machine's blocks straight through to the card. The engine's instant that
 QUUX's divider counts from is renamed, being now when the `DIV`'s operands
 were ready, and is written as zero as before. The CADR's file changes in its
 version alone.
+
+Versions 42 and 43 add QUUX's revision 9 after the clocks, on both machines:
+the real-time clock's setting and then the file device. A board's clock is
+the host's, kept by Linux, so the program writes the setting as muir writes
+it without `--rtc`, the option absent. The file device is written as muir's
+`FileDevice::save` has it: four flags, the rings' bases and sizes and the
+three indexes, then the head command's due time, which is always absent
+because a checkpoint is refused while a command is queued. On QUUX those come
+from the register page's readout, selector 12 words 7 to 9; on the CADR they
+are a power-on file device's, zero. The CADR's body grows by 28 bytes, every
+one of them zero.
+
+**A QUUX checkpoint is refused while the file device has a handle open or a
+command queued**, as muir refuses one, with muir's sentence. A handle is a
+host file the Linux server holds, and a queued command is a host effect still
+to come; neither is in the machine to be carried. `docs/file-device.md` has
+the device.
 
 On QUUX the program also waits, after the halt and before it reads main
 memory, for the memory port to say its write buffer is empty (bit 33 of the
@@ -298,6 +315,7 @@ What a QUUX checkpoint holds beyond the CADR's, in muir's order:
 | the keyboard and mouse, `QuuxInput`: the FIFO's waiting words, the overflow, both enables, the counts, the buttons and whether the mouse changed | `quux_input.sv` and the I/O board's counters | selector 12, word 0 and the FIFO at words 64 to 127 |
 | block-disk, `BlockDisk`: its four registers, its three errors and when its transfer is done | `quux_block_disk.sv` | selector 12, words 1 to 5 |
 | the bus errors, word 101 of the register page | `cadr_busint_regs.sv` | selector 12, word 6 |
+| the file device, `FileDevice`: its four flags, the rings' bases and sizes, the three indexes, and the handles open the refusal reads | `quux_file_device.sv` | selector 12, words 7 to 9 |
 | MONO TV: its size, its 40,960-word buffer and black-on-white, its one bit of mode | `quux_mono_tv.sv` and DDR | selector 12, word 6, and DDR |
 | `TimingModel::Sync` with K and L | the bitstream | entry 21 |
 

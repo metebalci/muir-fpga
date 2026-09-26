@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_QUUX_FILE_DEVICE
+	bool "quux-file-device"
+	select BR2_PACKAGE_CADR_COMMON
+	help
+	  QUUX's file device, the Linux side: the program that serves
+	  the card's folders to QUUX as the pathname host HOST.  QUUX
+	  writes commands into a ring in its main memory and this reads
+	  them out of DDR, does each on a Linux folder, and writes the
+	  answer back, through the file device's page in the fabric.
+	  It also keeps QUUX's real-time clock.
+
+	  QUUX only: its init script starts it when the card's fpgarc
+	  says --machine quux, and not otherwise.
+

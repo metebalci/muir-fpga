@@ -70,6 +70,12 @@ const MOUSE_BUTTONS: u8 = 5;
 /// which the C side declares as its geometry's product and
 /// `build/checkpoint.quux.pass` makes a file of for muir's resume.
 const DISK_BLOCKS: u32 = 16 * 1 * 16;
+/// The file device's rings (revision 9): the command ring's base and the
+/// log2 of its entries, the response ring's.
+const FD_CMD_BASE: u32 = 0x00_1000;
+const FD_CMD_LOG2: u32 = 2;
+const FD_RESP_BASE: u32 = 0x00_1100;
+const FD_RESP_LOG2: u32 = 1;
 
 fn main() {
     // The machine and its timing as every trace takes them
@@ -94,6 +100,33 @@ fn main() {
     m.tv.set_mono_tv_size(1280, 1024);
     m.tv.set_board(Board::MonoTv);
     m.plug_chaos(0);
+
+    // The file device, through muir's own calls: the rings configured and
+    // enabled with the interrupt enable, one command posted --- an opcode
+    // muir lacks, which reads no buffer and touches no host file --- taken,
+    // answered and its response consumed, and a response consumer written
+    // past the producer, which leaves the index fault standing.  No handle is
+    // open and nothing is queued, so the checkpoint may be taken; main
+    // memory is poisoned below, over the ring's words.  The board's clock is
+    // the host's, `Rtc::Host`, as `Machine::new` has it.
+    {
+        use muir::file_device as fd;
+        let dev = &mut m.file_device;
+        let t0 = 1_000_000;
+        dev.write(fd::CMD_BASE, FD_CMD_BASE, t0, 0, &m.main);
+        dev.write(fd::CMD_SIZE, FD_CMD_LOG2, t0, 0, &m.main);
+        dev.write(fd::RESP_BASE, FD_RESP_BASE, t0, 0, &m.main);
+        dev.write(fd::RESP_SIZE, FD_RESP_LOG2, t0, 0, &m.main);
+        dev.write(fd::CONTROL, 0x101, t0, 0, &m.main);
+        m.main[FD_CMD_BASE as usize] = 0x1234 | 0o77 << 16;
+        dev.write(fd::CMD_PROD, 1, t0, 0, &m.main);
+        dev.advance(t0 + 1_000_000, &mut m.main);
+        dev.write(fd::RESP_CONS, 1, t0 + 1_000_000, 0, &m.main);
+        dev.write(fd::RESP_CONS, 5, t0 + 1_000_000, 0, &m.main);
+        assert_eq!(dev.read(fd::STATUS, t0 + 1_000_000), 1 | 1 << 3, "the file device's status");
+        assert_eq!(dev.read(fd::RESP_PROD, t0 + 1_000_000), 1, "the command answered");
+        assert!(m.checkpoint_refusal().is_none(), "a checkpoint may be taken");
+    }
 
     // The memories the readout window reaches.  The control store under
     // QUUX's PROM is held zero, as `Machine::write_imem` leaves it.

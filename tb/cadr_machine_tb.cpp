@@ -133,8 +133,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "Vcadr_machine.h"
@@ -277,6 +279,25 @@ int main(int argc, char **argv) {
   std::map<uint64_t, std::vector<uint64_t>> keys;
   std::vector<uint64_t> keys_due;
   size_t keys_sent = 0;
+  // **QUUX'S REVISION 9, THE HOST'S SIDE** (`golden/src/quux.rs`): the
+  // real-time clock's start, loaded at reset as Linux sets it at boot; the
+  // seconds the host sets it to before a microcycle; and the file device's
+  // commands as muir's device ran them --- when each was taken, and when each
+  // completed, with the words it wrote into main memory --- which this
+  // program plays as Linux's server does, through the machine's host side.
+  bool have_rtc = false;
+  uint64_t rtc_start = 0;
+  std::map<uint64_t, uint64_t> rtc_sets;
+  struct FdDone {
+    uint64_t due, prod, handles;
+    std::vector<std::pair<uint32_t, uint32_t>> words;
+  };
+  std::vector<FdDone> fd_done;
+  struct FdTake {
+    uint64_t start, index;
+    std::vector<std::pair<uint32_t, uint32_t>> entry;
+  };
+  std::vector<FdTake> fd_takes;
   std::vector<uint64_t> ack_for;
   std::vector<uint64_t> rdata_for;
   std::vector<uint64_t> md_at_row;
@@ -297,6 +318,23 @@ int main(int argc, char **argv) {
         // (`golden/src/quux.rs`'s page program): `# key CYCLE WORD`.
         unsigned long long kc = 0, kw = 0;
         if (std::sscanf(line, "# key %llx %llx", &kc, &kw) == 2) keys[kc].push_back(kw);
+        // Revision 9's lines, by their keyword whole: `# fd` is a prefix of
+        // the others, and a hexadecimal field would take their next letter.
+        char kw9[16] = "";
+        unsigned long long h0 = 0, h1 = 0, h2 = 0;
+        const int n9 = std::sscanf(line, "# %15s %llx %llx %llx", kw9, &h0, &h1, &h2);
+        const std::string k9(kw9);
+        if (k9 == "rtc" && n9 == 2) {
+          have_rtc = true;
+          rtc_start = h0;
+        }
+        if (k9 == "rtcset" && n9 == 3) rtc_sets[h0] = h1;
+        if (k9 == "fdtake" && n9 == 3) fd_takes.push_back(FdTake{h0, h1, {}});
+        if (k9 == "fdc" && n9 == 3 && !fd_takes.empty())
+          fd_takes.back().entry.emplace_back(static_cast<uint32_t>(h0), static_cast<uint32_t>(h1));
+        if (k9 == "fd" && n9 == 4) fd_done.push_back(FdDone{h0, h1, h2, {}});
+        if (k9 == "fdw" && n9 == 3 && !fd_done.empty())
+          fd_done.back().words.emplace_back(static_cast<uint32_t>(h0), static_cast<uint32_t>(h1));
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
         if (std::strstr(line, "golden/src/quux.rs")) script_trace = true;
         if (std::strstr(line, "QUUX's boot PROM")) quux_prom = true;
@@ -427,6 +465,11 @@ int main(int argc, char **argv) {
   dut->chaos_address = 0177001;
   dut->kbd_strobe = 0;
   dut->kbd_code = 0;
+  // The host's side of revision 9, idle: nothing written, STATE read.
+  dut->host_we = 0;
+  dut->host_widx = 0;
+  dut->host_wdata = 0;
+  dut->host_ridx = 2;
   // Verilator records the previous value of a clock at eval time, so the
   // first eval has to happen with clk low or the first posedge is not one.
   dut->eval();
@@ -451,10 +494,15 @@ int main(int argc, char **argv) {
   // that module unchecked: the `md` trap verbatim, where a driven input that
   // became an output kept being driven and both processor checks went green
   // with MD unchecked.  What goes on the seam instead is the complement.
+  // The host's writes, one a tick, in order: {index, word}.
+  std::deque<std::pair<unsigned, uint32_t>> host_ops;
   auto drive = [&](const Row &r, size_t row) {
     const auto kit = keys.find(static_cast<uint64_t>(row));
     if (kit != keys.end())
       keys_due.insert(keys_due.end(), kit->second.begin(), kit->second.end());
+    // The host sets the clock before this microcycle, as muir's did.
+    const auto rit = rtc_sets.find(static_cast<uint64_t>(row));
+    if (rit != rtc_sets.end()) host_ops.emplace_back(0u, static_cast<uint32_t>(rit->second));
     // **`sintr` WAS DRIVEN HERE AND THE LINE IS GONE.**  -XBUS.INTR is the
     // machine's own now: `cadr_disk_controller.sv` puts the disk's request on
     // it, `cadr_tv.sv` the display's vertical interrupt, and `cadr_machine.sv`
@@ -593,8 +641,114 @@ int main(int argc, char **argv) {
   // longest cycle the generator makes is 44 ticks at extra slow.
   const long kMaxTicks = static_cast<long>(total_rows) * 96 + 1024;
 
+  // The file device's host: the next completion to play, what STATE and the
+  // command producer shown to the host last read, and when the producer
+  // shown passed each command muir took.
+  size_t fd_next = 0, fd_played = 0;
+  uint32_t host_state = 0, host_shown = 0;
+  long fd_refused_seen = 0, fd_busy_seen = 0;
+  size_t take_next = 0;
+  long entry_words_checked = 0, mem_words_checked = 0;
   for (long t = 0; t < kMaxTicks && k < total_rows; ++t) {
     if (t == 4) dut->rst = 0;
+    // **THE HOST'S SIDE, AS LINUX DRIVES IT.**  The word read is the index
+    // asked a tick ago; STATE and the command producer shown are read in
+    // turn.  The clock's start is written once the reset is let go, and a
+    // command's completion is played so that its index stands from muir's
+    // due time: the claim, the handles open, the completion and the claim
+    // let go, the completion written at the due time's own tick, and the
+    // words muir's device wrote put in main memory with the claim.
+    {
+      const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
+      const uint32_t rd = dut->host_rdata;
+      if (t > 5) {
+        if (dut->host_ridx == 12) {
+          // MEM_WORDS, once: the memory boards' count times 64K on QUUX,
+          // which the face hands the server for its bounds; nothing on the
+          // CADR, whose host side reads 0.
+          const uint32_t want = quux_machine ? (static_cast<uint32_t>(dut->boards) << 16) : 0u;
+          if (rd != want) {
+            std::fprintf(stderr, "FAIL: the host's MEM_WORDS read %08x, want %08x\n", rd, want);
+            ++bad;
+          }
+          ++mem_words_checked;
+        } else if (dut->host_ridx == 2) {
+          host_state = rd;
+          if (rd & 0x20u) ++fd_refused_seen;
+          if (rd & 0x04u) ++fd_busy_seen;
+        } else {
+          if (rd != host_shown) {
+            // **A PRODUCER SHOWN PAST A COMMAND MUST FIND ITS ENTRY IN MAIN
+            // MEMORY**, every word the device will read of it, as muir's
+            // device found it: the processor's writes before its write of
+            // 164 have drained.  Main memory here is this program's own,
+            // written only when the fabric's port writes it.
+            // Passed: the new value is past the index and the old was not,
+            // the indexes starting again at 0 after a disable.
+            const auto past = [](uint32_t v, uint64_t i) {
+              const uint16_t d = static_cast<uint16_t>(v - i);
+              return d >= 1 && d <= 256;
+            };
+            while (take_next < fd_takes.size() && past(rd, fd_takes[take_next].index) &&
+                   !past(host_shown, fd_takes[take_next].index)) {
+              for (const auto &w : fd_takes[take_next].entry) {
+                ++entry_words_checked;
+                const auto it = q_mem.find(w.first);
+                const uint32_t have = it == q_mem.end() ? 0u : it->second;
+                if (have != w.second) {
+                  std::fprintf(stderr, "FAIL: the host was shown command %" PRIu64 " with word %o of its "
+                               "entry %08x in main memory, not the %08x the processor wrote\n",
+                               fd_takes[take_next].index, w.first, have, w.second);
+                  ++bad;
+                }
+              }
+              ++take_next;
+            }
+          }
+          host_shown = rd;
+        }
+      }
+      if (t == 4 && have_rtc) host_ops.emplace_back(0u, static_cast<uint32_t>(rtc_start));
+      // muir's due time is to the nanosecond and the machine reads at its
+      // own instants, which are on the grid: the first read that sees the
+      // completion is the first at or after it.
+      const auto on_grid = [](uint64_t ns) {
+        return static_cast<long>((ns + kTickNs - 1) / kTickNs * kTickNs);
+      };
+      // The completion is written a tick before the due time's: the
+      // interrupt is up from the next tick and a register read shows it from
+      // the one after, which is the due time's (`quux_file_device.sv`).
+      if (fd_next < fd_done.size() && last_edge >= 0 &&
+          ns_now + 3 * kTickNs >= on_grid(fd_done[fd_next].due)) {
+        const FdDone &d = fd_done[fd_next++];
+        if (!host_ops.empty()) {
+          std::fprintf(stderr, "FAIL: the host is still busy when a completion is due at %" PRIu64 " ns\n",
+                       d.due);
+          ++bad;
+        }
+        if (ns_now + 3 * kTickNs != on_grid(d.due)) {
+          std::fprintf(stderr, "FAIL: a completion due at %" PRIu64 " ns is off the grid at %ld\n",
+                       d.due, ns_now + 3 * kTickNs);
+          ++bad;
+        }
+        const uint32_t epoch = host_state & 0xFFFF0000u;
+        host_ops.emplace_back(3u, epoch | 1u);
+        host_ops.emplace_back(11u, epoch | static_cast<uint32_t>(d.handles));
+        host_ops.emplace_back(9u, epoch | static_cast<uint32_t>(d.prod & 0xFFFFu));
+        host_ops.emplace_back(3u, 0u);
+        for (const auto &w : d.words) q_mem[w.first] = w.second;
+        ++fd_played;
+      }
+      if (!host_ops.empty() && t >= 4) {
+        dut->host_we = 1;
+        dut->host_widx = host_ops.front().first;
+        dut->host_wdata = host_ops.front().second;
+        host_ops.pop_front();
+      } else {
+        dut->host_we = 0;
+      }
+      dut->host_ridx = (t == 6) ? 12u : (t & 1) ? 8u : 2u;
+    }
     // The keyboard's cable: a word a tick while any is due.
     if (keys_sent < keys_due.size()) {
       dut->kbd_strobe = 1;
@@ -622,7 +776,14 @@ int main(int argc, char **argv) {
                         ((dut->mem_addr >= kMainBase && dut->mem_addr < kMainBase + (4u << 22)) ||
                          q_in_fb);
     if (q_main) {
-      if (q_due < 0) q_due = t + 1 + static_cast<long>(q_rng() % 5);
+      // A read in one to five ticks.  **A WRITE IN FOURTEEN TO EIGHTEEN**,
+      // inside the nominal 290 ns the port holds a write to whatever the
+      // memory does, so no instant the processor sees moves; but the write
+      // buffer then really is still draining when a program writes a device
+      // register a few microcycles after its last store, which is what the
+      // file device's host must not be shown a command before.
+      if (q_due < 0)
+        q_due = t + ((dut->mem_write && !dut->mem_line) ? 14 : 1) + static_cast<long>(q_rng() % 5);
       if (t >= q_due) {
         // The word's physical address, main memory's or the frame buffer's.
         const uint32_t w = q_in_fb ? kFb + ((dut->mem_addr - kFbBase) >> 2)
@@ -828,15 +989,24 @@ int main(int argc, char **argv) {
     // held --- QUUX's divider holds a `DIV` over the master clock edges its
     // read goes out on --- so that the answer is placed from the instant the
     // cycle really started.
-    auto arm_bus = [&](const Row &r, uint64_t ns_at_t) {
+    auto arm_bus = [&](const Row &r, uint64_t ns_at_t, bool at_row_edge) {
       ++grants_checked;
       bus_outstanding = true;
+      // **THE WORD A WRITE CARRIES IS `MD` AS IT STANDS AT THE GRANT.**  A
+      // cycle granted at the edge that ends row `k` takes the `MD` that edge
+      // has just loaded, so an `MD` loaded by row `k` itself --- the
+      // microcycle after the start --- is the word written (muir's
+      // `chip_and_rtl_write_the_md_of_the_microcycle_after_the_start`), and
+      // that is the next row's column.  A cycle granted inside a held row
+      // takes that row's own.
+      const uint64_t word =
+          (at_row_edge && k + 1 < total_rows) ? md_at_row[k + 1] : md_at_row[k];
       // THE WORD AT THE XBUS SEAM.  `dev_wdata` is a register of its
       // own --- `wdata <= md` at the edge that starts the cycle --- so MD
       // being compared every microcycle says nothing about it, and a slave
       // hung here would be the first thing to notice it was wrong. The
-      // reference is the trace's own MD column for the row that started
-      // the cycle, which is muir's and not the DUT's.
+      // reference is the trace's own MD column at the grant, `word` above,
+      // which is muir's and not the DUT's.
       //
       // **AND ON THIS PROGRAM IT SAYS ONLY THAT THE WORD IS ZERO.**  All
       // 5,650 device writes the boot PROM makes carry the same word, and
@@ -851,9 +1021,8 @@ int main(int argc, char **argv) {
       if (dut->device && dut->wrcyc) {
         ++dev_writes_checked;
         dev_words[dut->dev_wdata]++;
-        if (dut->dev_wdata != md_at_row[k])
-          bad += Fail(r, "the word at the Xbus seam", dut->dev_wdata,
-                      md_at_row[k]);
+        if (dut->dev_wdata != word)
+          bad += Fail(r, "the word at the Xbus seam", dut->dev_wdata, word);
       }
       dev_cycle = dut->device;
       dev_acked = false;
@@ -861,7 +1030,7 @@ int main(int argc, char **argv) {
       // word the trace's MD column says the cycle carries.
       if (quux_machine && dut->wrcyc &&
           ((!dut->device && !dut->nxm && !dut->unibus) || q_fb(dut->phys)))
-        q_owed.emplace_back(dut->phys, static_cast<uint32_t>(md_at_row[k]));
+        q_owed.emplace_back(dut->phys, static_cast<uint32_t>(word));
       cur_nxm = dut->nxm;
       if (dut->device) ++device_cycles;
       else if (!dut->nxm && !dut->unibus) ++mem_cycles;
@@ -889,7 +1058,7 @@ int main(int argc, char **argv) {
     if (!dut->clock_edge && prev_n_memgrant && !dut->n_memgrant_o && k < total_rows &&
         cur.v[kBus] && armed_row != static_cast<long>(k)) {
       ++early_grants;
-      arm_bus(cur, prev_ns + static_cast<uint64_t>(t - last_edge) * kTickNs);
+      arm_bus(cur, prev_ns + static_cast<uint64_t>(t - last_edge) * kTickNs, false);
       if (acked_armed && ack_low_pre) measure_ack(ns_pre);
     }
 
@@ -1017,7 +1186,7 @@ int main(int argc, char **argv) {
                        r.v[kCycle]);
           ++bad;
         }
-        arm_bus(r, r.v[kNs]);
+        arm_bus(r, r.v[kNs], true);
         if (acked_armed && ack_low_pre) measure_ack(ns_pre);
       }
       if (r.v[kLc]) ++lc_moved;
@@ -1106,6 +1275,29 @@ int main(int argc, char **argv) {
     prev_n_memgrant = dut->n_memgrant_o;
   }
 
+  if (mem_words_checked != 1) {
+    std::fprintf(stderr, "FAIL: the host's MEM_WORDS was read %ld times, not once\n", mem_words_checked);
+    ++bad;
+  }
+  if (!fd_done.empty() || !rtc_sets.empty() || have_rtc) {
+    std::printf("    revision 9's host: the clock %s, %zu set at a microcycle; %zu of %zu completions "
+                "played at muir's instants, %zu of %zu commands shown to it, %ld words of their "
+                "entries found in main memory as the processor wrote them\n",
+                have_rtc ? "loaded at reset" : "not loaded", rtc_sets.size(), fd_played, fd_done.size(),
+                take_next, fd_takes.size(), entry_words_checked);
+    if (fd_played != fd_done.size() || take_next != fd_takes.size()) {
+      std::fprintf(stderr, "FAIL: the file device's host did not see every command muir's did\n");
+      ++bad;
+    }
+    if (fd_refused_seen) {
+      std::fprintf(stderr, "FAIL: a completion the host wrote was refused (STATE <5>)\n");
+      ++bad;
+    }
+    if (!fd_done.empty() && !fd_busy_seen) {
+      std::fprintf(stderr, "FAIL: the host's claim never read back busy\n");
+      ++bad;
+    }
+  }
   if (quux_machine) {
     std::printf("    QUUX's main memory: %ld line fills and %ld writes answered here, %ld and %ld "
                 "of them the frame buffer's, %zu writes still owed\n", q_fills, q_writes,

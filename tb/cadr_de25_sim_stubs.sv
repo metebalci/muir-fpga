@@ -767,8 +767,18 @@ module cadr_machine #(
     input  var logic [127:0] mem_rline,
     output var logic         mem_drained,
     input  var logic         port_read_ack,
-    input  var logic         port_write_ack
+    input  var logic         port_write_ack,
+    // QUUX's host side of revision 9, which this shell reads nothing of: the
+    // DE25-Nano's top level is simulated as the CADR.
+    /* verilator lint_off UNUSEDSIGNAL */
+    input  var logic         host_we,
+    input  var logic [3:0]   host_widx,
+    input  var logic [31:0]  host_wdata,
+    input  var logic [3:0]   host_ridx,
+    /* verilator lint_on UNUSEDSIGNAL */
+    output var logic [31:0]  host_rdata
 );
+  assign host_rdata = 32'd0;
   logic         tbi_rst /*verilator public_flat_rd*/;
   assign tbi_rst = rst;
   logic         tbo_sintr_o /*verilator public_flat_rw*/;

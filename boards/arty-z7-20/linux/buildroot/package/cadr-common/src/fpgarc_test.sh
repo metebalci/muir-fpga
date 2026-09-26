@@ -207,7 +207,7 @@ for a; do
 done
 exec sleep 8
 EOF
-	for _p in cadr-terminal cadr-serial cadr-usb-input cadr-chaosnet cadr-disk-packs; do
+	for _p in cadr-terminal cadr-serial cadr-usb-input cadr-chaosnet cadr-disk-packs quux-file-device; do
 		cat > "$WORK/bin/$_p" <<EOF
 #!/bin/sh
 for a; do
@@ -5046,6 +5046,76 @@ if prepare cadr-terminal S85cadr-terminal; then
 		ok "a fault.sh that names no board reads nothing and stops nothing"
 	else
 		fail "a fault.sh that names no board: devmem was asked [$(cat "$WORK/devmem.calls")], the program was given [$(given)]"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# **QUUX's FILE DEVICE STARTS ON A QUUX CARD AND ON NO OTHER**, and serves the
+# card's `sys`, `site` and `home` as three named mounts unless the card names
+# its own `--file-root` lines, every one of which then reaches it and nothing
+# of this script's does.
+# ---------------------------------------------------------------------------
+case_head "the file device is not started on a card that does not say --machine quux"
+sandbox
+printf '%s\r\n' '--machine cadr' '--file-root sys=/mnt/card/sys' '--bow' > "$RC"
+if prepare quux-file-device S81quux-file-device; then
+	run_script S81quux-file-device
+	if [ ! -s "$WORK/daemon.calls" ] && grep -q "not started" "$WORK/out.S81quux-file-device"; then
+		ok "a CADR card starts no file device, and says so"
+	else
+		fail "a CADR card: the program was given [$(given)], and the script said: $(cat "$WORK/out.S81quux-file-device")"
+	fi
+fi
+
+case_head "on a QUUX card the file device serves the card's sys, site and home, and makes home"
+sandbox
+printf '%s\r\n' '--machine quux' '--bow' '--chaos-address 3050' > "$RC"
+mkdir -p "$WORK/card/sys" "$WORK/card/site"
+if prepare quux-file-device S81quux-file-device; then
+	run_script S81quux-file-device
+	passes "--file-root sys=$WORK/card/sys" "quux-file-device"
+	passes "--file-root site=$WORK/card/site" "quux-file-device"
+	passes "--file-root home=$WORK/card/home" "quux-file-device"
+	passes_not "--machine" "quux-file-device"
+	passes_not "--bow" "quux-file-device"
+	passes_not "--chaos-address" "quux-file-device"
+	if [ -d "$WORK/card/home" ]; then
+		ok "the card's home/ was made"
+	else
+		fail "the card has no home/ after the file device started"
+	fi
+	logs_to quux-file-device
+fi
+
+case_head "a card with no site/ is served without it, and says so"
+sandbox
+printf '%s\r\n' '--machine quux' > "$RC"
+mkdir -p "$WORK/card/sys"
+if prepare quux-file-device S81quux-file-device; then
+	run_script S81quux-file-device
+	passes "--file-root sys=$WORK/card/sys" "quux-file-device"
+	passes_not "site=" "quux-file-device"
+	if grep -q "no site/" "$WORK/out.S81quux-file-device"; then
+		ok "the missing site/ is said"
+	else
+		fail "the missing site/ is not said: $(cat "$WORK/out.S81quux-file-device")"
+	fi
+fi
+
+case_head "a card's own --file-root lines all reach the program, and none of the script's"
+sandbox
+printf '%s\r\n' '--machine quux' '--file-root /mnt/card/tree,ro' '--file-root scratch=/mnt/card/s' > "$RC"
+mkdir -p "$WORK/card/sys" "$WORK/card/site" "$WORK/card/home"
+if prepare quux-file-device S81quux-file-device; then
+	run_script S81quux-file-device
+	passes "--file-root /mnt/card/tree,ro" "quux-file-device"
+	passes "--file-root scratch=/mnt/card/s" "quux-file-device"
+	passes_not "sys=" "quux-file-device"
+	passes_not "home=" "quux-file-device"
+	if grep -q "the others are not" "$WORK/out.S81quux-file-device"; then
+		fail "a repeatable flag was warned about as repeated: $(cat "$WORK/out.S81quux-file-device")"
+	else
+		ok "--file-root on two lines is not a repeated flag"
 	fi
 fi
 

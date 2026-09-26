@@ -562,6 +562,18 @@ int main(int argc, char **argv)
 				ro_start(&r);
 			return 1;
 		}
+		// **THE FILE DEVICE, AS muir REFUSES IT** (revision 9):
+		// `chk_rtl_refusal` has the rule.
+		{
+			char why[160];
+			if (chk_rtl_refusal(&img, why, sizeof why)) {
+				say("%s", why);
+				img_free(&img);
+				if (was_running && !leave_halted)
+					ro_start(&r);
+				return 1;
+			}
+		}
 	}
 
 	// **THE FIRST DISPLAY BOARD'S COLOR MAP**, off the console face's page

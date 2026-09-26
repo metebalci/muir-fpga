@@ -197,6 +197,10 @@ module cadr_bus_audit_harness #(
   // QUUX's line fill and its port's idle (contract Q6): the CADR this
   // harness builds never asks a line, so the line is zeros.
   logic h_mem_line, h_mem_drained;
+  // QUUX's host side's word, read by nobody here.
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [31:0] h9_host_rdata;
+  /* verilator lint_on UNUSEDSIGNAL */
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
@@ -296,7 +300,10 @@ module cadr_bus_audit_harness #(
       // nothing about the others" shape.  Registered on the way in exactly as
       // `boards/arty-z7-20/cadr_arty.sv` registers them, so that what this
       // check exercises is the arrangement the board has.
-      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
+      // QUUX's host side of revision 9: idle, as a board with no Linux leaves it.
+      .host_we(1'b0), .host_widx(4'd0), .host_wdata(32'd0), .host_ridx(4'd0),
+      .host_rdata(h9_host_rdata)
   );
 
   logic port_read_ack, port_write_ack;

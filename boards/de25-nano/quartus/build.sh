@@ -58,7 +58,10 @@
 #   2. The project, by `project.tcl`, with the build stamp in USERCODE, and
 #      on the memory board the processor system, by `hps.tcl`.
 #   3. The two cores' HDL, generated from their variations.
-#   4. Synthesis, and 5. the fitter.  **A BUILD WITHOUT THE AGILEX 5E LICENSE
+#   4. Synthesis, and `rams_check.tcl`'s question of its netlist: every
+#      block RAM whose read and write share an address writes where the RTL
+#      says.  Asked again of the fitter's netlist after step 6.
+#   5. The fitter.  **A BUILD WITHOUT THE AGILEX 5E LICENSE
 #      IS REFUSED**, before synthesis: see "the license" below.
 #   6. The timing analyzer, every corner, and `sta_check.tcl`'s checks: the
 #      clocks, the board's exceptions, the machine's exceptions and the
@@ -528,6 +531,27 @@ if [ "$fault" -eq 0 ]; then
     say "synthesis gave u_machine MACHINE $machine"
 fi
 
+# **EVERY BLOCK RAM WRITES WHERE THE RTL SAYS**, asked of a netlist rather
+# than of a simulation, because a synthesis tool that drops an address mux
+# builds a machine every simulation of the RTL passes: `rams_check.tcl` says
+# which fault that was and why Quartus is asked too.  Asked of synthesis's
+# netlist here, so that such a build stops before the fitter, and of the
+# fitter's after step 6, because that is the netlist the bitstream holds.
+# The fault bitstream has no machine and so no such RAM.
+rams_check() {
+    snapshot=$1; log=$2
+    if ! env MACHINE="$machine" "$bin/quartus_sta" -t "$here/rams_check.tcl" "$snapshot" \
+            > "$log" 2>&1; then
+        grep '^RAMS:' "$log" >&2 || tail -n 20 "$log" >&2
+        refuse "a block RAM writes where the RTL does not say; see $dir/$log"
+    fi
+    grep '^RAMS:' "$log" | sed 's/^RAMS: /de25: /'
+}
+if [ "$fault" -eq 0 ]; then
+    say "4-rams-check"
+    rams_check synthesized 4-rams-check.log
+fi
+
 step 5-fit "$bin/quartus_fit" cadr_de25
 if grep -q '^Info (24849)' 5-fit.log; then
     say "$(grep '^Info (24849)' 5-fit.log | head -n 1)"
@@ -546,6 +570,10 @@ if ! env CADR_PIXEL_MHZ="$([ "$hdmi" -eq 1 ] && echo "$pixel_mhz" || echo 0)" \
     refuse "the timing analyzer's checks failed; see $dir/6-sta-check.log"
 fi
 grep '^sta:' 6-sta-check.log | sed 's/^sta: /de25: /'
+if [ "$fault" -eq 0 ]; then
+    say "6-rams-check"
+    rams_check final 6-rams-check.log
+fi
 
 # ------------------------------------------------------- 7. the size
 #

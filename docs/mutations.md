@@ -165,6 +165,55 @@ A recorded hole is where a regression hides. A survivor with `@hole` keeps
 the run green and says "known", and nothing asks whether it was always known.
 `--since` is the answer: a hole that used to be caught reddens the run.
 
+## Faults only a netlist has
+
+A mutation here changes the RTL, and a check simulates the RTL. A synthesis
+tool that builds something other than what the RTL says is outside both.
+That happened once. QUUX's PDL buffer reads and writes one block RAM through
+one address, chosen by a combinational write enable, and was written
+READ_FIRST. Vivado 2026.1's synthesis dropped the address mux, so all
+sixteen block RAMs of the Arty's QUUX build had only the read address at
+their pins. Every push landed at the read address. The build met timing and
+reported nothing, and on the board the boot PROM halted at
+ERROR-PDL-BUFFER. Every simulation passed, because the RTL was right.
+
+The PDL buffer is now written WRITE_FIRST, which Vivado builds with the mux,
+and `rtl/machine/cadr_microcycle.sv`'s header says why that change is safe.
+Two things stop a build that has the fault:
+
+- `boards/arty-z7-20/vivado/rams_check.tcl` asks the synthesized netlist,
+  straight after synthesis on both Zynq boards, whether every RAM whose read
+  and write share an address writes where the RTL says. For each such RAM,
+  each port whose write enable reaches the RAM's write-enable register must
+  have its write-address register among the address pins' fan-in. A RAM with
+  no such port, or a rule that matches no RAM, fails too.
+- `boards/de25-nano/quartus/rams_check.tcl` asks the same question of
+  Quartus's netlist, once after synthesis and once after the fitter.
+  Quartus keeps the mux, measured, so this half is there because the RTL is
+  one source for two tools.
+
+The runner cannot hold these checks, because it simulates and never
+synthesizes. They are held instead by netlist mutations: a fault written into
+the RTL of a copy, then built through the board's real flow. Three have been:
+
+| fault | Arty, Vivado | DE25-Nano, Quartus |
+|---|---|---|
+| the PDL buffer written READ_FIRST, as it was | stopped after synthesis: the PDL buffer, 16 of 16 block RAMs | not run; Quartus keeps the mux |
+| `pdla = pdla_read`, the tool's fault written in the RTL | stopped after synthesis: the PDL buffer, 16 of 16 block RAMs | refused after synthesis: the PDL buffer, 512 of 512 blocks |
+| `chb_port = ch_word`, the block-disk store's mux dropped | stopped after synthesis: the block store, 8 of 8 block RAMs; the PDL buffer and the control store pass | refused after synthesis: the block store, 96 of 96 blocks; the PDL buffer and the control store pass |
+
+The second is also a record in `mutations/list.txt`,
+`quux-the-pdl-write-lands-at-the-read-address`, written with the select held
+low by a constant so that lint still sees every signal read. In RTL it is a
+behavior, and `quux_map_quux` catches it.
+
+One poison is known to be equivalent. The two forms of the PDL buffer differ
+only in what its output holds for the write's own tick, and nothing samples
+it then. Giving that tick the complement of the written word passes every
+QUUX check, while the complement on any other read fails three
+(`machine`, `quux_map` and `quux_pdlsync`). So that poison is not a record,
+and the reasoning is written down so that nobody files it as a hole.
+
 ## The practice
 
 The gate before any push is `make check` and `make mutants` together, at the

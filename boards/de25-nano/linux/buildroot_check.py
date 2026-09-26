@@ -488,6 +488,7 @@ def programs(tree, bindir):
         "cadr-checkpoint": [want["CADR_BOARD_TALLY"] + " reads"],
         "cadr-chaosnet": ["skip %s guard" % want["CADR_BOARD_TALLY"]],
         "cadr-usb-input": [],
+        "quux-file-device": ["skip %s guard" % want["CADR_BOARD_TALLY"]],
     }
     for prog, texts in sorted(said.items()):
         path = os.path.join(bindir, prog)

@@ -65,6 +65,27 @@
 // would have gone anyway.  One BRAM per original chip would not fit and is
 // not what this asks for.
 //
+// **QUUX'S PDL BUFFER IS WRITTEN WRITE_FIRST, AND THAT IS FOR ONE TOOL.**
+// Its read and its write share one address, chosen by the write enable,
+// and the enable is combinational (`wp && pdlwrited`).  Written READ_FIRST
+// --- the word before the write on the port's output --- Vivado 2026.1's
+// synthesis drops the address mux: all sixteen block RAMs of the Arty's
+// QUUX build had only the read address at their pins, so every push landed
+// at the read address, and on the board the boot PROM halted at
+// ERROR-PDL-BUFFER.  The same shape reduced to ten lines synthesizes the
+// same way, and Quartus keeps the mux in both.  Written WRITE_FIRST --- the
+// word written on the output in the write's tick --- Vivado keeps the mux.
+// The two forms differ only in what `pdl_rd` holds for the write's own
+// tick, and nothing takes it then: the next tick reads the pointer again,
+// and `pdl_q` reaches the M bus, the shifter, the ALU and the divider K
+// ticks after the edge.  Measured: the write's tick given `~l` instead
+// passes every QUUX check, and every other read given its complement fails
+// three (`machine`, `quux_map`, `quux_pdlsync`).  So that poison is an
+// equivalent mutant and is not a record.  The netlist check that stops a
+// build when a RAM like this writes where the RTL does not say is
+// `boards/arty-z7-20/vivado/rams_check.tcl`, and its Quartus half is
+// `boards/de25-nano/quartus/rams_check.tcl`.
+//
 // THE CONTROL STORE COMES UP ALL ONES where `Machine::new` comes up zero, and
 // deliberately; the comment at the array says why.
 //
@@ -1117,9 +1138,13 @@ module cadr_microcycle #(
     logic [31:0]         pdl_rd;
     assign pdl_we = wp && pdlwrited;
     assign pdla   = pdl_we ? pdla_write : pdla_read;
+    // WRITE_FIRST, for the reason the file's header gives: a tool's fault.
     always_ff @(posedge clk) begin
-      if (pdl_we) pdl[pdla] <= l;
-      pdl_rd <= pdl[pdla];
+      if (pdl_we) begin
+        pdl[pdla] <= l;
+        pdl_rd    <= l;
+      end else
+        pdl_rd <= pdl[pdla];
     end
     // **THE BLOCK RAM'S OWN OUTPUT IS THE LATCH**: read every tick, it gives
     // the word at the new pointer from the tick after the edge, with the
@@ -2166,7 +2191,33 @@ module cadr_microcycle #(
   assign wait_ = (destmem_q && mbusy_sync)
               || (use_md_q && mbusy && n_memgrant)
               || (ifetch_q && mbusy_sync)
-              || dividing;
+              || dividing
+              || start_after_start;
+
+  // **QUUX HOLDS A MEMORY START IN THE MICROCYCLE RIGHT AFTER A START**, a
+  // `-WAIT` term of its own, `MEMSTART AND MEMOP` (muir's `Rtl::stall`,
+  // `holds_a_start_after_a_start`).  `MBUSY.SYNC` is `MEMRQ` registered at
+  // the edge that raises `MEMSTART`, so no other term holds the second
+  // start there; on the CADR the cycle that goes out then takes the second
+  // start's direction and `VMA<7:0>`, and the first is lost, as the board
+  // loses it.  Held, the first cycle goes out at the next master clock edge
+  // with the first start's address, direction and word (`MEMSTART` falls
+  // there, see VCTL1 below), `MBUSY.SYNC` then holds the second start by
+  // the `DESTMEM` or the fetch term until that cycle ends, and both land.
+  // `MEMOP` is the IR-derived half, held a tick as the others are;
+  // `MEMSTART` is a register that moves only at a master clock edge.  On the
+  // CADR the term is a constant zero.
+  logic start_after_start;
+  if (QUUX) begin : g_quux_start_hold
+    logic memop_q;
+    always_ff @(posedge clk) begin
+      if (rst) memop_q <= 1'b0;
+      else     memop_q <= memop;
+    end
+    assign start_after_start = memop_q && memstart;
+  end else begin : g_cadr_start_hold
+    assign start_after_start = 1'b0;
+  end
 
   // **QUUX'S DIVIDER IS BUSY**, a `-WAIT` term of QUUX's own (`Rtl::dividing`):
   // a `DIV` stands in `IR`, not nopped, and `muldiv::DIV_CYCLES`, nine

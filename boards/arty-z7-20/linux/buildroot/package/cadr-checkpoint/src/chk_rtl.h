@@ -58,6 +58,12 @@ int chk_chaos_address(const char *s, unsigned *out);
 const char *const *chk_rtl_missing(void);
 const char *const *chk_rtl_missing_quux(void);
 
+// **WHY A CHECKPOINT OF THIS MACHINE CANNOT BE WRITTEN NOW**, as muir's
+// `Machine::checkpoint_refusal` says it: QUUX's file device with a handle
+// open or a command queued, a host file and a host effect being outside the
+// machine.  Non-zero, with the reason in `why`, or 0.
+int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n);
+
 // What a mutant of this file was built to do, or NULL for the real thing.
 // `CHK_MUTATE` is never defined in the program that goes on the board; the
 // host check builds this file again with each value and requires muir to

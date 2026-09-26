@@ -598,6 +598,9 @@ module cadr_cora #(
   // other two, for the same reason --- a cable with nothing on the end of
   // it is a cable nobody has plugged in.
   logic        kbd_strobe;
+  // QUUX's host side of revision 9, which this CADR-only board has no use
+  // for: idle, its word read by nobody but the witness.
+  logic [31:0] host_rdata;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
   logic        ser_tx_take, ser_tx_done, ser_rx_strobe, ser_plugged;
@@ -992,7 +995,9 @@ module cadr_cora #(
       // port's own handshakes, at the same boundary and off the same
       // registered copies `rtl/plumbing/cadr_mem_count.sv` counts, so the two
       // instruments cannot disagree about what the port did.
-      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
+      .host_we(1'b0), .host_widx(4'd0), .host_wdata(32'd0),
+      .host_ridx(4'd0), .host_rdata(host_rdata)
   );
 
   // --------------------------------------- the debug cable, on Pmod JA
@@ -1670,6 +1675,8 @@ module cadr_cora #(
       gp0_rst_s    <= !gp0_rst_sync[2];
     end
 
+    // The fifth page's outputs, left open: see `fd_*` below.
+    /* verilator lint_off PINCONNECTEMPTY */
     cadr_gp0_split u_gp0_split (
         .clk(clk), .rst(gp0_rst_s),
         .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
@@ -1722,6 +1729,14 @@ module cadr_cora #(
         .in_arvalid(gp0i_arvalid), .in_arready(gp0i_arready),
         .in_rdata(gp0i_rdata), .in_rresp(gp0i_rresp), .in_rid(gp0i_rid),
         .in_rlast(gp0i_rlast), .in_rvalid(gp0i_rvalid), .in_rready(gp0i_rready),
+        // QUUX's fifth page is the default's on this board (`HAS_FD` down),
+        // so this port is offered nothing and answers nothing.
+        .fd_awaddr(), .fd_awlen(), .fd_awid(), .fd_awvalid(), .fd_awready(1'b0),
+        .fd_wdata(), .fd_wstrb(), .fd_wlast(), .fd_wvalid(), .fd_wready(1'b0),
+        .fd_bresp(2'b00), .fd_bid('0), .fd_bvalid(1'b0), .fd_bready(),
+        .fd_araddr(), .fd_arlen(), .fd_arid(), .fd_arvalid(), .fd_arready(1'b0),
+        .fd_rdata(32'd0), .fd_rresp(2'b00), .fd_rid('0), .fd_rlast(1'b0),
+        .fd_rvalid(1'b0), .fd_rready(),
         .dflt_awid(gp0d_awid), .dflt_awvalid(gp0d_awvalid),
         .dflt_awready(gp0d_awready),
         .dflt_wlast(gp0d_wlast), .dflt_wvalid(gp0d_wvalid),
@@ -1734,6 +1749,7 @@ module cadr_cora #(
         .dflt_rlast(gp0d_rlast), .dflt_rvalid(gp0d_rvalid),
         .dflt_rready(gp0d_rready)
     );
+    /* verilator lint_on PINCONNECTEMPTY */
 
     cadr_chaos_cable u_chaos (
         .clk(clk), .rst(gp0_rst_s), .fabric_rst(rst),
@@ -2372,7 +2388,7 @@ module cadr_cora #(
                    // console and no machine lamp to give it to, so there it
                    // reaches nobody and is folded here.
                    con_steady_lamps,
-                   dbg_wire_state};
+                   dbg_wire_state, host_rdata};
     end
   end
 

@@ -195,6 +195,10 @@ module cadr_f2sdram_harness #(
   // harness builds never asks a line, so the line is zeros.
   logic h_mem_line, h_mem_drained;
   logic [127:0] h_port_rline;
+  // QUUX's host side's word, read by nobody here.
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [31:0] h9_host_rdata;
+  /* verilator lint_on UNUSEDSIGNAL */
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
@@ -304,7 +308,10 @@ module cadr_f2sdram_harness #(
       // The port's own answers, for the transaction audit inside the
       // machine, as `boards/de25-nano/cadr_de25.sv` wires them: the bridge's
       // own handshakes and nothing the fabric decides for itself.
-      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
+      // QUUX's host side of revision 9: idle, as a board with no Linux leaves it.
+      .host_we(1'b0), .host_widx(4'd0), .host_wdata(32'd0), .host_ridx(4'd0),
+      .host_rdata(h9_host_rdata)
   );
 
   // The path itself, wired as `boards/de25-nano/cadr_de25.sv` wires it.

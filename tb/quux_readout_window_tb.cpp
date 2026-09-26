@@ -119,6 +119,8 @@ uint64_t Window(unsigned sel, unsigned addr) {
 #define IN(x) \
   dut->rootp->cadr_machine__DOT__g_quux_feature_page__DOT__feature_page__DOT__input_regs__DOT__##x
 #define BD(x) dut->rootp->cadr_machine__DOT__g_quux_disk__DOT__disk__DOT__##x
+#define FD(x) \
+  dut->rootp->cadr_machine__DOT__g_quux_feature_page__DOT__feature_page__DOT__file_device__DOT__##x
 #define PROC(x) dut->rootp->cadr_machine__DOT__processor__DOT__##x
 
 uint64_t TimerWord(unsigned k) {
@@ -200,7 +202,7 @@ int main(int argc, char **argv) {
     Check(w == kNoMemory, "the CADR's register table entry %u read 0x%012" PRIx64
           ", not RO_NO_MEMORY", rg, w);
   }
-  for (unsigned a : {0u, 1u, 5u, 6u, 7u, 64u, 127u, 16383u}) {
+  for (unsigned a : {0u, 1u, 5u, 6u, 7u, 8u, 9u, 64u, 127u, 16383u}) {
     const uint64_t w = Window(kSelPage, a);
     Check(w == kNoMemory, "the CADR's selector 12 word %u read 0x%012" PRIx64
           ", not RO_NO_MEMORY", a, w);
@@ -394,8 +396,46 @@ int main(int argc, char **argv) {
     Check(w == want, "word 6 read 0%" PRIo64 ", wanting 0%" PRIo64, w, want);
   }
 
+  // ---- the file device: words 7, 8 and 9 (revision 9) -------------------
+  //
+  // muir's `FileDevice::save`: the four flags, the rings' bases and sizes
+  // and the three indexes; and the handles open and the host's claim, which
+  // `cadr-checkpoint` refuses a checkpoint on.
+  for (int round = 0; round < 2; ++round) {
+    FD(cmd_base) = static_cast<uint32_t>(Poison(60 + round, 0, 24));
+    FD(resp_base) = static_cast<uint32_t>(Poison(60 + round, 1, 24));
+    FD(cmd_log2) = round ? 8 : 3;
+    FD(resp_log2) = round ? 1 : 7;
+    FD(prod) = static_cast<uint16_t>(Poison(60 + round, 2, 16));
+    FD(cons) = static_cast<uint16_t>(Poison(60 + round, 3, 16));
+    FD(resp_cons) = static_cast<uint16_t>(Poison(60 + round, 4, 16));
+    FD(enabled) = round;
+    FD(ie) = !round;
+    FD(refused) = !round;
+    FD(fault) = round;
+    FD(busy) = !round;
+    FD(handles) = round ? 64 : 0xA5;
+    Tick();
+    const uint64_t b = Window(kSelPage, 7);
+    Check(b == ((static_cast<uint64_t>(FD(cmd_base)) << 24) | FD(resp_base)),
+          "word 7 read 0x%012" PRIx64 ", the rings' bases", b);
+    const uint64_t x = Window(kSelPage, 8);
+    Check(x == ((static_cast<uint64_t>(FD(prod)) << 32) | (static_cast<uint64_t>(FD(cons)) << 16) |
+                FD(resp_cons)),
+          "word 8 read 0x%012" PRIx64 ", the indexes", x);
+    const uint64_t f = Window(kSelPage, 9);
+    const uint64_t want = (static_cast<uint64_t>(FD(busy)) << 36) |
+                          (static_cast<uint64_t>(FD(handles)) << 28) |
+                          (static_cast<uint64_t>(FD(cmd_log2)) << 24) |
+                          (static_cast<uint64_t>(FD(resp_log2)) << 20) |
+                          (static_cast<uint64_t>(FD(fault)) << 3) |
+                          (static_cast<uint64_t>(FD(refused)) << 2) |
+                          (static_cast<uint64_t>(FD(ie)) << 1) | FD(enabled);
+    Check(f == want, "word 9 read 0x%012" PRIx64 ", the flags 0x%012" PRIx64, f, want);
+  }
+
   // ---- and nothing else answers there ------------------------------------
-  for (unsigned a : {7u, 8u, 63u, 128u, 1000u, 16383u}) {
+  for (unsigned a : {10u, 11u, 63u, 128u, 1000u, 16383u}) {
     const uint64_t w = Window(kSelPage, a);
     Check(w == kNoMemory, "selector 12 word %u read 0x%012" PRIx64 ", not RO_NO_MEMORY", a, w);
   }

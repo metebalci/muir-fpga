@@ -487,9 +487,11 @@ carrier on the lightweight bridge.
 The HPS-to-FPGA bridge's window is 1 GB at `0x4000_0000` and it hands the
 fabric 30 bits; the lightweight bridge's is 512 MB at `0x2000_0000` and it
 hands the fabric 29. So a face a program reaches at `0x4000_1000` is at
-`0x0000_1000` in the design, and the four faces keep the offsets they have
-from `0x4000_0000` on a Zynq board. That is why `cadr_board.h` names the same
-four addresses for both boards and a different one for the console.
+`0x0000_1000` in the design, and the faces on that bridge keep the offsets
+they have from `0x4000_0000` on a Zynq board. That is why `cadr_board.h` names
+the same addresses for both boards and a different one for the console. The
+fifth, QUUX's clock and file device, is there on a QUUX bitstream only; on the
+CADR's the page is the default slave's.
 
 | face | the program's address | the offset in the design |
 |---|---|---|
@@ -497,6 +499,7 @@ four addresses for both boards and a different one for the console.
 | the Chaosnet cable | `0x4000_1000` | `0x0000_1000` |
 | the serial line | `0x4000_2000` | `0x0000_2000` |
 | the keyboard and the mouse | `0x4000_3000` | `0x0000_3000` |
+| QUUX's clock and file device | `0x4000_4000` | `0x0000_4000` |
 | the console | `0x2000_0000` | `0x0000_0000` |
 | the debug cable's window | `0x2000_1000` | `0x0000_1000` |
 

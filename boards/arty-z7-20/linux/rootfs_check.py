@@ -520,10 +520,11 @@ def cpio_entries(blob):
 
 
 def ours(path):
-    """A path on the target that only our packages would put there."""
+    """A path on the target that only our packages would put there: the
+    CADR's programs, QUUX's (`quux-file-device`), and the two carried."""
     base = os.path.basename(path)
     return (path.startswith("usr/share/cadr/") or "cadr" in base
-            or base in ("muir", "ozd"))
+            or "quux" in base or base in ("muir", "ozd"))
 
 
 # A path an installed script names, as `PROG=/usr/bin/cadr-serial` or

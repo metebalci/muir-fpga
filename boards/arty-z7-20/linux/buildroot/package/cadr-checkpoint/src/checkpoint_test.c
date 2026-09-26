@@ -87,6 +87,7 @@ struct model {
 	uint32_t disk[4];		/* command, pointer, disk address, last address */
 	uint64_t disk_flags;		/* word 5 */
 	uint64_t page;			/* word 6 */
+	uint64_t fd[3];			/* words 7, 8 and 9: the file device */
 };
 
 // A timer's word at muir's tick `m`: the fabric's counts to its next rise,
@@ -151,6 +152,8 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 			return m->disk[a - IMG_QP_CMD];
 		case IMG_QP_DISK: return m->disk_flags;
 		case IMG_QP_PAGE: return m->page;
+		case IMG_QP_FD_BASES: case IMG_QP_FD_INDEXES: case IMG_QP_FD_FLAGS:
+			return m->fd[a - IMG_QP_FD_BASES];
 		default: return RO_NO_MEMORY;
 		}
 	default: return RO_NO_MEMORY;
@@ -282,6 +285,13 @@ static void fill(struct model *m)
 #define Q_DISK_CYLINDERS 16u
 #define Q_DISK_HEADS     1u
 #define Q_DISK_BPT       16u
+// The file device (revision 9): the rings configured and enabled with the
+// interrupt enable, one command answered and its response consumed, and an
+// index fault left standing.
+#define Q_FD_CMD_BASE  0x001000u
+#define Q_FD_CMD_LOG2  2u
+#define Q_FD_RESP_BASE 0x001100u
+#define Q_FD_RESP_LOG2 1u
 
 static void fill_quux(struct model *m)
 {
@@ -355,6 +365,12 @@ static void fill_quux(struct model *m)
 			0x5A5A5Au;	/* the ticks since, which a disk that never walked has no use for */
 	// The page: Xbus NXM and the map error, and black-on-white.
 	m->page = (1u << 8) | 041u;
+	// The file device: words 7 to 9 as `cadr_machine.sv` packs them, no
+	// handle open and nothing queued, so a checkpoint may be taken.
+	m->fd[0] = ((uint64_t)Q_FD_CMD_BASE << 24) | Q_FD_RESP_BASE;
+	m->fd[1] = (1ull << 32) | (1ull << 16) | 1u;
+	m->fd[2] = ((uint64_t)Q_FD_CMD_LOG2 << 24) | ((uint64_t)Q_FD_RESP_LOG2 << 20) |
+		   (1u << 3) /* index fault */ | (1u << 1) /* interrupt enable */ | 1u;
 }
 
 // --- the packer, against its own inverse -----------------------------------
@@ -905,6 +921,12 @@ int main(int argc, char **argv)
 	//                                             interval timer off, its
 	//                                             period 0, no deadline;
 	//                                             version 38)
+	//   rtc        1                  = 1        (Rtc::Host, the option
+	//                                             absent: version 42)
+	//   file_device 4 + 4*4 + 3*2 + 1 = 27      (FileDevice::new: four
+	//                                             flags, the rings, the
+	//                                             indexes, no due time:
+	//                                             version 43)
 	//   dma_written 1
 	//   l2_map     8 + 8192           = 8200     (2048 entries, QUUX's; a
 	//                                             CADR has 1024)
@@ -951,7 +973,7 @@ int main(int argc, char **argv)
 	// reader can check one line instead of one number.
 	{
 		const size_t machine_part =
-			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 22 + 1 + 8200 + 4 +
+			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 22 + 1 + 27 + 1 + 8200 + 4 +
 			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 253 + 13 + 16;
 		const size_t rtl_part =
 			208 + 32 + 19 + 21 + 1 + 163 + 1 + 32 + 25 + 26 + 24 + 28;
@@ -1033,6 +1055,42 @@ int main(int argc, char **argv)
 			fail("block-disk", qi.qx.da, Q_DISK_DA & 0x0FFFFFFFu);
 		if (qi.qx.bus_error != 041u || !qi.qx.bow)
 			fail("the page", qi.qx.bus_error, 041u);
+		if (qi.qx.fd_cmd_base != Q_FD_CMD_BASE || qi.qx.fd_resp_base != Q_FD_RESP_BASE ||
+		    qi.qx.fd_cmd_log2 != Q_FD_CMD_LOG2 || qi.qx.fd_resp_log2 != Q_FD_RESP_LOG2)
+			fail("the file device's rings", qi.qx.fd_cmd_base, Q_FD_CMD_BASE);
+		if (qi.qx.fd_cmd_prod != 1 || qi.qx.fd_cmd_cons != 1 || qi.qx.fd_resp_cons != 1)
+			fail("the file device's indexes", qi.qx.fd_cmd_prod, 1);
+		if (!qi.qx.fd_enabled || !qi.qx.fd_ie || qi.qx.fd_refused || !qi.qx.fd_fault ||
+		    qi.qx.fd_busy || qi.qx.fd_handles != 0)
+			fail("the file device's flags", qi.qx.fd_enabled, 1);
+		// **THE REFUSAL, muir's**: none for this machine; one for a handle
+		// open, one for a command queued, and one for both.
+		{
+			char why[160];
+			if (chk_rtl_refusal(&qi, why, sizeof why))
+				fail("a checkpoint refused with no handle open and nothing queued", 1, 0);
+			struct cadr_image t = qi;
+			t.qx.fd_handles = 1;
+			if (!chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint taken with a handle open", 0, 1);
+			t.qx.fd_handles = 0;
+			t.qx.fd_cmd_prod = 2;
+			if (!chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint taken with a command queued", 0, 1);
+			t.qx.fd_cmd_prod = 0;
+			t.qx.fd_cmd_cons = 0xFFFFu;
+			if (!chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint taken with a command queued across the wrap", 0, 1);
+			t.qx.fd_cmd_prod = 0x1234;
+			t.qx.fd_cmd_cons = 0x1234;
+			if (chk_rtl_refusal(&t, why, sizeof why))
+				fail("a checkpoint refused with the indexes equal", 1, 0);
+			struct cadr_image c = t;
+			c.quux = 0;
+			c.qx.fd_handles = 3;
+			if (chk_rtl_refusal(&c, why, sizeof why))
+				fail("a CADR's checkpoint refused on a file device it has not", 1, 0);
+		}
 		for (size_t i = 0; i < IMG_BOARD_WORDS; ++i)
 			qi.main[i] = (uint32_t)poison(12, (unsigned)i, 32);
 		for (size_t i = 0; i < IMG_QUUX_TV_WORDS; ++i)
@@ -1056,6 +1114,8 @@ int main(int argc, char **argv)
 		// address and flag, the cache's shape, counts and 512 empty sets,
 		// and the two timings and two instants; and block-disk's disk
 		// (version 41), its size in blocks and a count of none written.
+		// The file device's fields are the CADR's too (version 43), at
+		// the same widths, so they add nothing here.
 		const size_t quux_len = cadr_body_len + 44 + 8192 * 4 + 5 * 4 + 2 -
 			163 + (1 + 1 + 4 + 1) + (4 * 3 + 8 + 1 + 8 + 8 + 512 * 4) + 8 * 4 +
 			(4 + 8);

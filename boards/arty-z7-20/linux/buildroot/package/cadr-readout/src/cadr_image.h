@@ -75,11 +75,14 @@ enum img_quux_reg {
 };
 #define IMG_QUUX_MARK 0x5155u
 // Selector 12, `cadr_machine.sv`'s register page readout: the keyboard and
-// mouse, block-disk, the page's bus errors and MONO TV's black-on-white, and
-// the keyboard FIFO's words at 64 + their index.
+// mouse, block-disk, the page's bus errors and MONO TV's black-on-white, the
+// file device's rings, indexes and flags (revision 9), and the keyboard
+// FIFO's words at 64 + their index.
 enum img_quux_page {
 	IMG_QP_INPUT = 0, IMG_QP_CMD = 1, IMG_QP_CLP = 2, IMG_QP_DA = 3,
-	IMG_QP_LMA = 4, IMG_QP_DISK = 5, IMG_QP_PAGE = 6, IMG_QP_FIFO = 64
+	IMG_QP_LMA = 4, IMG_QP_DISK = 5, IMG_QP_PAGE = 6,
+	IMG_QP_FD_BASES = 7, IMG_QP_FD_INDEXES = 8, IMG_QP_FD_FLAGS = 9,
+	IMG_QP_FIFO = 64
 };
 
 // One of QUUX's two timers as its word reads, and the tick of muir's clock
@@ -112,6 +115,13 @@ struct quux_state {
 	// The page's bus errors, as word 101 reads them, and MONO TV's mode.
 	unsigned bus_error;
 	int bow;
+	// The file device (revision 9), muir's `FileDevice::save`: its four
+	// flags, the rings' bases and sizes and the three indexes; and the
+	// handles open and the host's claim, which a checkpoint is refused on.
+	int fd_enabled, fd_ie, fd_refused, fd_fault, fd_busy;
+	unsigned fd_handles;
+	uint32_t fd_cmd_base, fd_cmd_log2, fd_resp_base, fd_resp_log2;
+	uint16_t fd_cmd_prod, fd_cmd_cons, fd_resp_cons;
 };
 
 

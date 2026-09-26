@@ -313,6 +313,30 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 		return -1;
 	q->bus_error = (unsigned)(w & 077u);
 	q->bow = (int)((w >> 8) & 1u);
+
+	// The file device (revision 9): the rings' bases, the indexes and the
+	// flags, three words.  A host completing a command between two of them
+	// would tear them, which is why a checkpoint is refused with a command
+	// queued: with none, nothing here moves.
+	if (ro_word(r, IMG_SEL_QUUX_PAGE, IMG_QP_FD_BASES, &w) != 0)
+		return -1;
+	q->fd_cmd_base = (uint32_t)((w >> 24) & 0xFFFFFFu);
+	q->fd_resp_base = (uint32_t)(w & 0xFFFFFFu);
+	if (ro_word(r, IMG_SEL_QUUX_PAGE, IMG_QP_FD_INDEXES, &w) != 0)
+		return -1;
+	q->fd_cmd_prod = (uint16_t)(w >> 32);
+	q->fd_cmd_cons = (uint16_t)(w >> 16);
+	q->fd_resp_cons = (uint16_t)w;
+	if (ro_word(r, IMG_SEL_QUUX_PAGE, IMG_QP_FD_FLAGS, &w) != 0)
+		return -1;
+	q->fd_busy = (int)((w >> 36) & 1u);
+	q->fd_handles = (unsigned)((w >> 28) & 0xFFu);
+	q->fd_cmd_log2 = (uint32_t)((w >> 24) & 0xFu);
+	q->fd_resp_log2 = (uint32_t)((w >> 20) & 0xFu);
+	q->fd_fault = (int)((w >> 3) & 1u);
+	q->fd_refused = (int)((w >> 2) & 1u);
+	q->fd_ie = (int)((w >> 1) & 1u);
+	q->fd_enabled = (int)(w & 1u);
 	return 0;
 }
 

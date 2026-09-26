@@ -1,0 +1,87 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# QUUX's file device at boot: quux-file-device serving the card's folders to
+# the machine as the pathname host HOST, and keeping QUUX's real-time clock.
+#
+# **QUUX ONLY.**  The file device is QUUX's (revision 9), and a CADR's
+# bitstream has no page for it.  A card carrying a QUUX bitstream says
+# `--machine quux` in `fpgarc`, the word the disk pack program and the screen
+# already read, and this script starts the program then and only then.  On
+# any other card it says so and starts nothing.
+#
+# S81, after S80cadr-disk-packs, which mounts the card this serves.
+#
+# **WHAT HOST SERVES, BY DEFAULT: THE CARD'S `sys`, `site` AND `home`**, as
+# three named mounts, muir's `--file-root <name>=<folder>`.  They are the
+# three top-level directories HOST must have: `sys/` and `site/` the band's
+# Lisp files, `home/<user>/` the users' own.  The card's root is not served
+# whole, because it also holds the boot files and `packs/`, the disk the
+# machine is running on, and nothing the machine does through its files
+# should be able to reach either.  With named mounts and no default folder,
+# HOST's `/` holds the three alone and is read-only.  `home` is made when the
+# card has none, as a place the machine may write has to exist; `sys` and
+# `site` are served when they are there and said to be missing when not.
+#
+# **A CARD THAT NAMES `--file-root` ITSELF GETS ITS OWN LINES AND NONE OF
+# THESE**, the rule every script here follows for its defaults.  The flag is
+# repeatable, one line a mount.
+#
+# The log goes where every daemon's goes, the console and a file under
+# /var/log (`cadr_daemon`), and it is "the server's log" of the contract:
+# LOG's lines from the machine are written there.
+
+PROG=/usr/bin/quux-file-device
+PIDFILE=/var/run/quux-file-device.pid
+CARD=/mnt/card
+
+RC="$CARD/fpgarc"
+FPGARC_SH=/usr/share/cadr/fpgarc.sh
+. "$FPGARC_SH"
+DAEMON_SH=/usr/share/cadr/daemon.sh
+. "$DAEMON_SH"
+STOP_SH=/usr/share/cadr/stop.sh
+. "$STOP_SH"
+FAULT_SH=/usr/share/cadr/fault.sh
+. "$FAULT_SH"
+
+# The flags this program owns, read off its own argument list
+# (src/quux-file-device.c).  `--log` is `cadr_daemon`'s and `--no-guard` a
+# person's at a prompt.  `--file-root` is taken once for each mount.
+FLAGS="--file-root"
+FPGARC_REPEATABLE="--file-root"
+
+start() {
+	cadr_fault_stop && return 0
+	set --
+	[ -f "$RC" ] && eval "set -- $(fpgarc_args "$RC" $FLAGS)"
+	if ! fpgarc_is_quux; then
+		echo "quux-file-device: the card does not say --machine quux; the file device is QUUX's; not started."
+		return 0
+	fi
+	if [ $# -eq 0 ]; then
+		[ -d "$CARD/home" ] || mkdir -p "$CARD/home"
+		for m in sys site home; do
+			if [ -d "$CARD/$m" ]; then
+				set -- "$@" --file-root "$m=$CARD/$m"
+			else
+				echo "quux-file-device: the card has no $m/, so HOST has no /$m/."
+			fi
+		done
+	fi
+	cadr_daemon "$PROG" "$PIDFILE" "$@"
+}
+
+stop() {
+	cadr_stop quux-file-device "$PIDFILE"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?

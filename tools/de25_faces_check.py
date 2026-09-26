@@ -188,6 +188,7 @@ FACES = [
     ("u_h2f_split", "CHAOS_BASE", "h2f", "CHAOS"),
     ("u_h2f_split", "SER_BASE", "h2f", "SERIAL"),
     ("u_h2f_split", "INPUT_BASE", "h2f", "INPUT"),
+    ("u_h2f_split", "FD_BASE", "h2f", "FD"),
     ("u_pack", "REG_BASE", "h2f", "PACK"),
     ("u_lw_split", "CON_BASE", "lw", "CONSOLE"),
     ("u_lw_split", "DBG_BASE", "lw", "CONSOLE+0x1000"),
@@ -197,14 +198,14 @@ FACES = [
 
 # Every instance on either bridge takes the bridges' AXI4 widths.
 SHAPED = ["u_h2f_split", "u_pack", "u_chaos", "u_serial", "u_input",
-          "u_h2f_rest", "u_lw_split", "u_console", "u_debug_window",
+          "u_fd_face", "u_h2f_rest", "u_lw_split", "u_console", "u_debug_window",
           "u_lw_rest"]
 
 # Which bridge each of them is on, and which instance is that bridge's
 # splitter -- the one whose reset the rest are held to.  The splitter is on
 # the list too: it owns the window before anything behind it does.
 ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_chaos": "h2f",
-             "u_serial": "h2f", "u_input": "h2f", "u_h2f_rest": "h2f",
+             "u_serial": "h2f", "u_input": "h2f", "u_fd_face": "h2f", "u_h2f_rest": "h2f",
              "u_lw_split": "lw", "u_console": "lw", "u_debug_window": "lw",
              "u_lw_rest": "lw"}
 SPLITTER = {"h2f": "u_h2f_split", "lw": "u_lw_split"}

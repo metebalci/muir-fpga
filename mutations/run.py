@@ -142,7 +142,8 @@ MACHINE_CHECK = {
 
 # The files only a QUUX build compiles: `cadr_machine` names each under
 # `MACHINE == "quux"`, and a CADR build finds none of them.
-QUUX_SOURCES = ["rtl/machine/quux_feature_page.sv", "rtl/machine/quux_mono_tv.sv",
+QUUX_SOURCES = ["rtl/machine/quux_rtc.sv", "rtl/machine/quux_file_device.sv",
+                "rtl/machine/quux_feature_page.sv", "rtl/machine/quux_mono_tv.sv",
                 "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_phase_gen.sv",
                 "rtl/machine/quux_clocks.sv", "rtl/machine/quux_input.sv",
                 "rtl/machine/quux_block_disk.sv", "rtl/machine/quux_cache.sv",
@@ -647,6 +648,23 @@ CHECKS = {
         "prom": "quux_page_prom.quux.hex",
         "machine": "quux",
     }),
+    # Revision 9 (contract Q9), QUUX's alone: the real-time clock at word
+    # 103 with the host setting it, and the file device, the testbench
+    # playing the host's server at muir's instants through the host side.
+    "quux_rtc_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_rtc.quux.golden",
+        "prom": "quux_rtc_prom.quux.hex",
+        "machine": "quux",
+    }),
+    "quux_files_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_files.quux.golden",
+        "prom": "quux_files_prom.quux.hex",
+        "machine": "quux",
+    }),
     # `PROG.UNIBUS.RESET` and what each board clears on it, both machines.
     "quux_busreset": dict(MACHINE_CHECK, **{
         "golden": "quux_busreset.golden",
@@ -657,6 +675,19 @@ CHECKS = {
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
         "golden": "quux_busreset.quux.golden",
         "prom": "quux_busreset_prom.quux.hex",
+        "machine": "quux",
+    }),
+    # Memory starts in consecutive microcycles, which QUUX holds, and on both
+    # machines a write's `MD` loaded in the microcycle after its start.
+    "quux_startstart": dict(MACHINE_CHECK, **{
+        "golden": "quux_startstart.golden",
+        "prom": "quux_startstart_prom.hex",
+    }),
+    "quux_startstart_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_startstart.quux.golden",
+        "prom": "quux_startstart_prom.quux.hex",
         "machine": "quux",
     }),
     # Every register of the I/O board and the interface's two over the
@@ -1978,7 +2009,8 @@ CHECKS = {
         ],
         "extra": ["tb/cadr_gp0_split_harness.sv",
                   "rtl/plumbing/cadr_gp0_default.sv",
-                  "rtl/plumbing/cadr_disk_pack.sv"],
+                  "rtl/plumbing/cadr_disk_pack.sv",
+                  "rtl/plumbing/quux_fd_face.sv"],
         "top": "cadr_gp0_split_harness",
         "tb": "tb/cadr_gp0_split_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
@@ -2003,7 +2035,8 @@ CHECKS = {
                   "rtl/plumbing/cadr_serial_line.sv",
                   "rtl/plumbing/cadr_input_cables.sv",
                   "rtl/machine/cadr_io_board.sv",
-                  "rtl/plumbing/cadr_gp0_default.sv"],
+                  "rtl/plumbing/cadr_gp0_default.sv",
+                  "rtl/plumbing/quux_fd_face.sv"],
         "top": "cadr_gp0_split_harness",
         "tb": "tb/cadr_gp0_split_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
@@ -2014,6 +2047,64 @@ CHECKS = {
                   "-CFLAGS", "-DGP_ID_W=4", "-CFLAGS", "-DGP_LEN_W=8",
                   "-CFLAGS", "-DGP_PORT_BASE=0x00000000u"],
         "golden": None,
+    },
+    # **THE SAME SWEEP AS QUUX BUILDS THE PORT**, the fifth page its clock and
+    # file device (`HAS_FD`), at both shapes: records aimed at the split's
+    # fifth page and at the face's map name these.
+    "gp0_split_quux": {
+        "sources": ["rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/quux_fd_face.sv"],
+        "extra": ["tb/cadr_gp0_split_harness.sv",
+                  "rtl/plumbing/cadr_gp_regs.sv",
+                  "rtl/plumbing/cadr_chaos_cable.sv",
+                  "rtl/plumbing/cadr_serial_line.sv",
+                  "rtl/plumbing/cadr_input_cables.sv",
+                  "rtl/machine/cadr_io_board.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv",
+                  "rtl/plumbing/cadr_disk_pack.sv"],
+        "top": "cadr_gp0_split_harness",
+        "tb": "tb/cadr_gp0_split_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7",
+                  "-GHAS_FD=1'b1", "-CFLAGS", "-DGP_HAS_FD=1"],
+        "golden": None,
+        "machine": "quux",
+    },
+    "gp0_split_axi4_quux": {
+        "sources": ["rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/quux_fd_face.sv"],
+        "extra": ["tb/cadr_gp0_split_harness.sv",
+                  "rtl/plumbing/cadr_gp_regs.sv",
+                  "rtl/plumbing/cadr_chaos_cable.sv",
+                  "rtl/plumbing/cadr_serial_line.sv",
+                  "rtl/plumbing/cadr_input_cables.sv",
+                  "rtl/machine/cadr_io_board.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv",
+                  "rtl/plumbing/cadr_disk_pack.sv"],
+        "top": "cadr_gp0_split_harness",
+        "tb": "tb/cadr_gp0_split_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7",
+                  "-GID_W=4", "-GLEN_W=8",
+                  "-GPACK_BASE=32'h0000_0000", "-GCHAOS_BASE=32'h0000_1000",
+                  "-GSER_BASE=32'h0000_2000", "-GINPUT_BASE=32'h0000_3000",
+                  "-GFD_BASE=32'h0000_4000", "-GHAS_FD=1'b1", "-CFLAGS", "-DGP_HAS_FD=1",
+                  "-CFLAGS", "-DGP_ID_W=4", "-CFLAGS", "-DGP_LEN_W=8",
+                  "-CFLAGS", "-DGP_PORT_BASE=0x00000000u"],
+        "golden": None,
+        "machine": "quux",
+    },
+    # QUUX's revision 9 from Linux's side: the face with the machine's
+    # register page behind it, every rule of the host's side held by name
+    # (`tb/quux_fd_face_tb.cpp`).
+    "quux_fd_face_quux": {
+        "sources": ["rtl/plumbing/quux_fd_face.sv", "rtl/machine/quux_file_device.sv",
+                    "rtl/machine/quux_rtc.sv", "rtl/machine/quux_feature_page.sv"],
+        "extra": ["tb/quux_fd_face_harness.sv", "rtl/machine/quux_input.sv",
+                  "rtl/plumbing/cadr_gp_regs.sv"],
+        "top": "quux_fd_face_harness",
+        "tb": "tb/quux_fd_face_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing"],
+        "golden": None,
+        "machine": "quux",
     },
     # `M_AXI_GP1` split three ways: the decode that lets the console and the
     # debug cable's carrier share the port, with the property `gp0_split`
@@ -2359,7 +2450,8 @@ PENDING = {}
 
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
     ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
-                                  "imemsync", "page", "clockwait", "memedge", "busreset")]
+                                  "imemsync", "page", "clockwait", "memedge", "busreset",
+                                  "startstart", "rtc", "files")]
 CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
 CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)
 CHECKS["quux_clockwait_quux_l1"] = _timed("quux_clockwait_quux", 4, 1)

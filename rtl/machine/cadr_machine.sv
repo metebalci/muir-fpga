@@ -537,7 +537,19 @@ module cadr_machine #(
     // the audit's word 8 is what tells that silence from a port answering
     // correctly.
     input  var logic        port_read_ack,
-    input  var logic        port_write_ack
+    input  var logic        port_write_ack,
+
+    // --- QUUX's host side of revision 9 (contract Q9): the real-time clock
+    // and the file device as Linux's server reaches them, by index
+    // (`quux_file_device.sv` has the table): one write and one read a tick,
+    // the word a tick after its index.  `rtl/plumbing/quux_fd_face.sv` puts
+    // them on a page of the processor's port.  The CADR reads 0 and takes no
+    // write.
+    input  var logic        host_we,
+    input  var logic [3:0]  host_widx,
+    input  var logic [31:0] host_wdata,
+    input  var logic [3:0]  host_ridx,
+    output var logic [31:0] host_rdata
 );
 
   // A machine this file does not know stops elaboration, in every tool,
@@ -570,10 +582,11 @@ module cadr_machine #(
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (8 << 4) | 4`: the signature, hardware revision 8 ---
-  // the device registers of contract Q7, after contract Q6's memory port ---
-  // and processor type 4, `Geometry::QUUX.machine_id`.
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
+  // `(0x5155 << 16) | (9 << 4) | 4`: the signature, hardware revision 9 ---
+  // the real-time clock and the file device of contract Q9, after contract
+  // Q7's device registers --- and processor type 4,
+  // `Geometry::QUUX.machine_id`.
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
   // MONO TV at the size every QUUX bitstream builds: 1280 by 1024, one bit
   // a pixel, 40 words a line at `17000000`.
   localparam int unsigned MONO_TV_WIDTH  = 1280;
@@ -1049,7 +1062,7 @@ module cadr_machine #(
       .mem_rdata  (mem_rdata),
       .mem_line   (mem_line),
       .mem_rline  (mem_rline),
-      .quux_invalidate(bd_written),
+      .quux_invalidate(bd_written || fd_invalidate),
       .cached     (cached),
       .port_drained(mem_drained),
       .cache_hits (cache_hits),
@@ -1103,6 +1116,9 @@ module cadr_machine #(
   // device writes as well.
   logic        disk_ack, disk_drives;
   assign bd_written = QUUX && disk_ack && dev_write;
+  // And the file device's host completed a command, having written main
+  // memory behind the processor (`quux_file_device.sv`).
+  logic        fd_invalidate;
   logic [31:0] disk_rdata;
   logic        dev_ack_joined;
   logic [31:0] dev_rdata_joined;
@@ -1235,6 +1251,7 @@ module cadr_machine #(
   // The register page's readout, selector 12 (below, in the QUUX block).
   logic [47:0] quux_ro_word;
   logic [17:0] quux_ro_a1, quux_ro_a2;
+  logic [47:0] fd_ro_bases, fd_ro_indexes, fd_ro_flags;
   logic [13:0] in_ro_state;
   logic [6:0]  in_ro_count;
   logic [23:0] in_ro_fifo_q;
@@ -1285,7 +1302,22 @@ module cadr_machine #(
         .ro_in_state  (in_ro_state),
         .ro_in_count  (in_ro_count),
         .ro_fifo_a    (quux_ro_a2[5:0]),
-        .ro_fifo_q    (in_ro_fifo_q)
+        .ro_fifo_q    (in_ro_fifo_q),
+        .xbus_init    (bus_init),
+        // Main memory's words, the boards' count times 64K, as the file
+        // device's enable checks a ring against and the host's MEM_WORDS
+        // reads.
+        .mem_words    ({boards, 16'd0}),
+        .drained      (mem_drained),
+        .fd_invalidate(fd_invalidate),
+        .host_we      (host_we),
+        .host_widx    (host_widx),
+        .host_wdata   (host_wdata),
+        .host_ridx    (host_ridx),
+        .host_rdata   (host_rdata),
+        .ro_fd_bases  (fd_ro_bases),
+        .ro_fd_indexes(fd_ro_indexes),
+        .ro_fd_flags  (fd_ro_flags)
     );
 
     // **THE REGISTER PAGE'S DEVICES ON THE READOUT, AT SELECTOR 12**: what a
@@ -1305,6 +1337,12 @@ module cadr_machine #(
     //         and <31:0> the ticks since its blocks' time ran out
     //     6   <8> MONO TV's black-on-white, <5:0> the bus errors as word 101
     //         reads them (`Machine::bus_error`)
+    //     7   the file device's rings: <47:24> the command ring's base,
+    //         <23:0> the response ring's
+    //     8   its indexes: <47:32> 164, <31:16> 165 and 170, <15:0> 171
+    //     9   <36> the host's busy, <35:28> handles open, <27:24> 163,
+    //         <23:20> 167, <3> index fault, <2> configuration refused,
+    //         <1> the interrupt enable, <0> enabled (muir's `FileDevice::save`)
     //     100-177  the keyboard FIFO's sixty-four words, by index
     //
     // and anything else `RO_NO_MEMORY`.  What holds it:
@@ -1332,6 +1370,9 @@ module cadr_machine #(
           14'd5: quux_ro_word <= {9'd0, bd_ro_flags, bd_ro_since_done};
           14'd6: quux_ro_word <= {39'd0, mono_bow, 2'd0, page_err[2], 1'b0, page_err[1],
                                   2'd0, page_err[0]};
+          14'd7: quux_ro_word <= fd_ro_bases;
+          14'd8: quux_ro_word <= fd_ro_indexes;
+          14'd9: quux_ro_word <= fd_ro_flags;
           default: quux_ro_word <= 48'hA5A5_5A5A_A5A5;
         endcase
       end
@@ -1372,6 +1413,15 @@ module cadr_machine #(
   assign in_ro_state  = 14'd0;
   assign in_ro_count  = 7'd0;
   assign in_ro_fifo_q = 24'd0;
+  // Nothing of revision 9: the host reads 0 and nothing is invalidated.
+  assign host_rdata    = 32'd0;
+  assign fd_invalidate = 1'b0;
+  assign fd_ro_bases   = 48'd0;
+  assign fd_ro_indexes = 48'd0;
+  assign fd_ro_flags   = 48'd0;
+  logic unused_host;
+  assign unused_host = ^{host_we, host_widx, host_wdata, host_ridx, fd_ro_bases, fd_ro_indexes,
+                         fd_ro_flags};
   logic unused_page;
   assign unused_page = ^{clock_pending, page_err, page_ch_rdata, chaos_ireq, mouse_buttons,
                          mono_bow, bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_flags,

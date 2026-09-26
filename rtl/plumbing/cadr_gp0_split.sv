@@ -26,7 +26,14 @@
 //     0x4000_1000   the Chaosnet cable     `cadr_chaos_cable.sv`
 //     0x4000_2000   the serial line        `cadr_serial_line.sv`
 //     0x4000_3000   the keyboard and mouse `cadr_input_cables.sv`
+//     0x4000_4000   QUUX's clock and file device `quux_fd_face.sv`
 //     everything else                      `cadr_gp0_default.sv`
+//
+// **THE FIFTH PAGE IS QUUX'S ALONE** (revision 9): `HAS_FD` is up on a QUUX
+// build and the page goes to its port; on the CADR it is down, the page is
+// the default's like any other address nothing claims, and the port is
+// offered nothing, so a CADR bitstream answers `0x4000_4000` with the
+// default's word and a program looking for the file device finds none.
 //
 // Three of the bases are the ones `chaos_face.h` and `serial_face.h` already
 // assume and the one the pack side already has, so no program moves; the
@@ -129,6 +136,9 @@ module cadr_gp0_split #(
     parameter logic [31:0] CHAOS_BASE = 32'h4000_1000,
     parameter logic [31:0] SER_BASE   = 32'h4000_2000,
     parameter logic [31:0] INPUT_BASE = 32'h4000_3000,
+    // QUUX's real-time clock and file device (revision 9), on a QUUX build.
+    parameter logic [31:0] FD_BASE    = 32'h4000_4000,
+    parameter bit          HAS_FD     = 1'b0,
     // The transaction ID's width and the burst length's: twelve and four on a
     // Zynq board's `M_AXI_GP`, which is AXI3, and four and eight on the
     // Agilex 5's two processor-to-fabric bridges, which are AXI4 and so may
@@ -280,6 +290,33 @@ module cadr_gp0_split #(
     input  var logic        in_rvalid,
     output var logic        in_rready,
 
+    // --- QUUX's clock and file device, the offset in their page -----------
+    output var logic [11:0] fd_awaddr,
+    output var logic [LEN_W-1:0]  fd_awlen,
+    output var logic [ID_W-1:0] fd_awid,
+    output var logic        fd_awvalid,
+    input  var logic        fd_awready,
+    output var logic [31:0] fd_wdata,
+    output var logic [3:0]  fd_wstrb,
+    output var logic        fd_wlast,
+    output var logic        fd_wvalid,
+    input  var logic        fd_wready,
+    input  var logic [1:0]  fd_bresp,
+    input  var logic [ID_W-1:0] fd_bid,
+    input  var logic        fd_bvalid,
+    output var logic        fd_bready,
+    output var logic [11:0] fd_araddr,
+    output var logic [LEN_W-1:0]  fd_arlen,
+    output var logic [ID_W-1:0] fd_arid,
+    output var logic        fd_arvalid,
+    input  var logic        fd_arready,
+    input  var logic [31:0] fd_rdata,
+    input  var logic [1:0]  fd_rresp,
+    input  var logic [ID_W-1:0] fd_rid,
+    input  var logic        fd_rlast,
+    input  var logic        fd_rvalid,
+    output var logic        fd_rready,
+
     // --- everything else, which answers without looking at an address -----
     output var logic [ID_W-1:0] dflt_awid,
     output var logic        dflt_awvalid,
@@ -303,7 +340,7 @@ module cadr_gp0_split #(
     output var logic        dflt_rready
 );
 
-  // The five, one hot.  One hot because the selection then muxes in one LUT
+  // The six, one hot.  One hot because the selection then muxes in one LUT
   // level a bit, and because "exactly one" is a property a reader can see:
   // `target()` returns exactly one bit on every input, including the inputs
   // nothing names.
@@ -312,20 +349,23 @@ module cadr_gp0_split #(
   localparam int unsigned T_SER   = 2;
   localparam int unsigned T_INPUT = 3;
   localparam int unsigned T_DFLT  = 4;
-  localparam logic [4:0] SEL_PACK  = 5'b00001;
-  localparam logic [4:0] SEL_CHAOS = 5'b00010;
-  localparam logic [4:0] SEL_SER   = 5'b00100;
-  localparam logic [4:0] SEL_INPUT = 5'b01000;
-  localparam logic [4:0] SEL_DFLT  = 5'b10000;
+  localparam int unsigned T_FD    = 5;
+  localparam logic [5:0] SEL_PACK  = 6'b000001;
+  localparam logic [5:0] SEL_CHAOS = 6'b000010;
+  localparam logic [5:0] SEL_SER   = 6'b000100;
+  localparam logic [5:0] SEL_INPUT = 6'b001000;
+  localparam logic [5:0] SEL_DFLT  = 6'b010000;
+  localparam logic [5:0] SEL_FD    = 6'b100000;
 
   // Which slave a page belongs to.  Used at two places below --- once on the
   // write address and once on the read --- which is two instances in fabric
   // and is the point: see the header.
-  function automatic logic [4:0] target(input logic [31:12] page);
+  function automatic logic [5:0] target(input logic [31:12] page);
     if (page == PACK_BASE[31:12]) return SEL_PACK;
     else if (page == CHAOS_BASE[31:12]) return SEL_CHAOS;
     else if (page == SER_BASE[31:12]) return SEL_SER;
     else if (page == INPUT_BASE[31:12]) return SEL_INPUT;
+    else if (HAS_FD && page == FD_BASE[31:12]) return SEL_FD;
     else return SEL_DFLT;
   endfunction
 
@@ -339,7 +379,7 @@ module cadr_gp0_split #(
   logic [31:0] w_at, r_at;
   logic [LEN_W-1:0] w_len, r_len;
   logic [ID_W-1:0]  w_id, r_id;
-  logic [4:0]  w_sel, r_sel;
+  logic [5:0]  w_sel, r_sel;
 
   // ------------------------------------------------------------------------
   // What the four see.  The payload is broadcast and only the valid is
@@ -406,6 +446,21 @@ module cadr_gp0_split #(
   assign in_arvalid = (rst_r == R_ISSUE) && r_sel[T_INPUT];
   assign in_rready  = (rst_r == R_DATA) && r_sel[T_INPUT] && s_rready;
 
+  assign fd_awaddr  = w_at[11:0];
+  assign fd_awlen   = w_len;
+  assign fd_awid    = w_id;
+  assign fd_awvalid = (wst == W_ISSUE) && w_sel[T_FD];
+  assign fd_wdata   = s_wdata;
+  assign fd_wstrb   = s_wstrb;
+  assign fd_wlast   = s_wlast;
+  assign fd_wvalid  = (wst == W_DATA) && w_sel[T_FD] && s_wvalid;
+  assign fd_bready  = (wst == W_RESP) && w_sel[T_FD] && s_bready;
+  assign fd_araddr  = r_at[11:0];
+  assign fd_arlen   = r_len;
+  assign fd_arid    = r_id;
+  assign fd_arvalid = (rst_r == R_ISSUE) && r_sel[T_FD];
+  assign fd_rready  = (rst_r == R_DATA) && r_sel[T_FD] && s_rready;
+
   assign dflt_awid    = w_id;
   assign dflt_awvalid = (wst == W_ISSUE) && w_sel[T_DFLT];
   assign dflt_wlast   = s_wlast;
@@ -455,6 +510,13 @@ module cadr_gp0_split #(
         sel_bresp   = in_bresp;
         sel_bid     = in_bid;
       end
+      SEL_FD: begin
+        sel_awready = fd_awready;
+        sel_wready  = fd_wready;
+        sel_bvalid  = fd_bvalid;
+        sel_bresp   = fd_bresp;
+        sel_bid     = fd_bid;
+      end
       default: begin
         sel_awready = dflt_awready;
         sel_wready  = dflt_wready;
@@ -495,6 +557,14 @@ module cadr_gp0_split #(
         sel_rresp   = in_rresp;
         sel_rid     = in_rid;
         sel_rlast   = in_rlast;
+      end
+      SEL_FD: begin
+        sel_arready = fd_arready;
+        sel_rvalid  = fd_rvalid;
+        sel_rdata   = fd_rdata;
+        sel_rresp   = fd_rresp;
+        sel_rid     = fd_rid;
+        sel_rlast   = fd_rlast;
       end
       default: begin
         sel_arready = dflt_arready;

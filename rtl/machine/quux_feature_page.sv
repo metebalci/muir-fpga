@@ -25,20 +25,26 @@
 //     12   the main screen's bits a pixel in 31:16 and words a line in 15:0
 //     13   the main screen's buffer, its first physical address, `17000000`
 //     14   the interval timer and the microsecond clock, 1
-//     15-77  0
+//     15   the devices of revision 9, a bit each: 3, <0> the real-time clock
+//          and <1> the file device
+//     16-77  0
 //
 // And the registers (`Machine::bus_read` and `bus_write`):
 //
 //     100  interrupt status, read only: <0> the tick, <1> the interval timer,
 //          <2> the disk's done, <3> the keyboard, <4> the mouse, <5> the
-//          network, each under its own enable
+//          network, <6> the file device, each under its own enable
 //     101  the bus errors, as `766044` gives them: <0> Xbus NXM, <3> Unibus
 //          NXM, <5> Unibus map error; a write clears them
 //     102  mode: <0> error stop, which the mode register's <2> is too
+//     103  the real-time clock, read only: Unix seconds (`quux_rtc.sv`,
+//          contract Q9); a write goes nowhere
 //     120-123  the keyboard and the mouse, `quux_input.sv` (contract Q3)
 //     140-147  the Chaosnet interface's registers, word 140 + k being Unibus
 //          `764140` + 2k, sixteen bits in the bottom of the word (contract
 //          Q4); what the Unibus does not answer reads 0 and takes no write
+//     160-171  the file device's registers, `quux_file_device.sv` (contract
+//          Q9)
 //     the rest reserved: read 0, writes ignored
 //
 // **A REGISTER IS READ AND WRITTEN AT THE INSTANT THE PAGE ANSWERS**, the
@@ -96,6 +102,9 @@ module quux_feature_page #(
     parameter logic [31:0] MULDIV         = 32'd3,
     parameter logic [31:0] TICK           = 32'd1,
     parameter logic [31:0] CLOCKS         = 32'd1,
+    // Word 15: the devices of revision 9, <0> the real-time clock and <1>
+    // the file device.
+    parameter logic [31:0] REV9_DEVICES   = 32'd3,
     parameter int unsigned SCREEN_WIDTH   = 1280,
     parameter int unsigned SCREEN_HEIGHT  = 1024,
     parameter int unsigned SCREEN_WPL     = 40,
@@ -103,6 +112,9 @@ module quux_feature_page #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
+    // `-XBUS INIT`: the power-on reset and `PROG.UNIBUS.RESET`'s rise, which
+    // disables the file device.
+    input  var logic        xbus_init,
 
     // The held decode's `device`, the cycle's address, its direction,
     // `-XBUS.RQ` and the word written.
@@ -159,7 +171,25 @@ module quux_feature_page #(
     output var logic [13:0] ro_in_state,
     output var logic [6:0]  ro_in_count,
     input  var logic [5:0]  ro_fifo_a,
-    output var logic [23:0] ro_fifo_q
+    output var logic [23:0] ro_fifo_q,
+
+    // --- revision 9: main memory's words and the write buffer empty, for
+    // the file device; the whole cache dropped at the next grant
+    input  var logic [22:0] mem_words,
+    input  var logic        drained,
+    output var logic        fd_invalidate,
+    // The host's side of the real-time clock (indexes 0 and 1) and of the
+    // file device (2-12): one write and one read a tick, the word read a tick
+    // after its index (`quux_file_device.sv`).
+    input  var logic        host_we,
+    input  var logic [3:0]  host_widx,
+    input  var logic [31:0] host_wdata,
+    input  var logic [3:0]  host_ridx,
+    output var logic [31:0] host_rdata,
+    // The file device for the readout (`quux_file_device.sv`'s `ro_*`).
+    output var logic [47:0] ro_fd_bases,
+    output var logic [47:0] ro_fd_indexes,
+    output var logic [47:0] ro_fd_flags
 );
 
   localparam logic [13:0] FEATURE_PAGE = 14'o36776;
@@ -210,11 +240,60 @@ module quux_feature_page #(
       .ro_fifo_q    (ro_fifo_q)
   );
 
+  // The real-time clock, and the file device (revision 9).
+  logic [31:0] rtc_seconds, fd_rdata, fd_host_rdata;
+  logic [29:0] rtc_fraction;
+  logic        fd_mine, fd_irq;
+
+  quux_rtc rtc (
+      .clk        (clk),
+      .we_seconds (host_we && host_widx == 4'd0),
+      .we_fraction(host_we && host_widx == 4'd1),
+      .wdata      (host_wdata),
+      .seconds    (rtc_seconds),
+      .fraction   (rtc_fraction)
+  );
+
+  quux_file_device file_device (
+      .clk        (clk),
+      .rst        (rst),
+      .xbus_init  (xbus_init),
+      .wr         (take && dev_write),
+      .which      (which),
+      .wdata      (wdata),
+      .mine       (fd_mine),
+      .rdata      (fd_rdata),
+      .irq        (fd_irq),
+      .mem_words  (mem_words),
+      .drained    (drained),
+      .invalidate (fd_invalidate),
+      .host_we    (host_we),
+      .host_widx  (host_widx),
+      .host_wdata (host_wdata),
+      .host_ridx  (host_ridx),
+      .host_rdata (fd_host_rdata),
+      .ro_bases   (ro_fd_bases),
+      .ro_indexes (ro_fd_indexes),
+      .ro_flags   (ro_fd_flags)
+  );
+
+  // The host's read: the clock's two words taken a tick after their index,
+  // as the file device's are.
+  logic [31:0] rtc_host_q;
+  logic        rtc_host_sel;
+  always_ff @(posedge clk) begin
+    rtc_host_q   <= host_ridx[0] ? {2'd0, rtc_fraction} : rtc_seconds;
+    rtc_host_sel <= host_ridx[3:1] == 3'd0;
+  end
+  assign host_rdata = rtc_host_sel ? rtc_host_q : fd_host_rdata;
+
   logic [31:0] word;
   always_comb begin
     word = 32'd0;
     if (in_mine) begin
       word = in_rdata;
+    end else if (fd_mine) begin
+      word = fd_rdata;
     end else if (in_chaos) begin
       word = chaos_answers ? {16'd0, ch_rdata} : 32'd0;
     end else begin
@@ -232,9 +311,11 @@ module quux_feature_page #(
         8'o12:   word = {16'd1, 16'(SCREEN_WPL)};
         8'o13:   word = {10'd0, SCREEN_BUFFER};
         8'o14:   word = CLOCKS;
-        8'o100:  word = {26'd0, chaos_ireq, in_irq, disk_irq, clock_pending};
+        8'o15:   word = REV9_DEVICES;
+        8'o100:  word = {25'd0, fd_irq, chaos_ireq, in_irq, disk_irq, clock_pending};
         8'o101:  word = {26'd0, err[2], 1'b0, err[1], 2'b00, err[0]};
         8'o102:  word = {31'd0, errstop};
+        8'o103:  word = rtc_seconds;
         default: word = 32'd0;
       endcase
     end
@@ -268,7 +349,7 @@ module quux_feature_page #(
   assign ch_which   = which[2:0];
   assign ch_wdata   = wdata[15:0];
 
-  assign irq = (|in_irq) || (chaos_ireq && !prog_unibus_reset_rising);
+  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
 
   // The bus interface ANDs the acknowledgment with `-XBUS.RQ` itself
   // (`cadr_disk_controller.sv` has why the slave must not), and the lines are

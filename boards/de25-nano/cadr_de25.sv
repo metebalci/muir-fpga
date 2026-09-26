@@ -483,6 +483,13 @@ module cadr_de25 #(
   logic        kbd_strobe;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
+  // **AND ON QUUX, THE REAL-TIME CLOCK AND THE FILE DEVICE** (revision 9):
+  // the machine's host side, which `rtl/plumbing/quux_fd_face.sv` puts on the
+  // HPS-to-FPGA bridge at `0x4000` for Linux's server and the clock's
+  // setter.  Idle on the CADR and on the board without a processor.
+  logic        host_we;
+  logic [3:0]  host_widx, host_ridx;
+  logic [31:0] host_wdata, host_rdata;
   logic        ser_tx_take, ser_tx_done, ser_rx_strobe;
   logic [7:0]  ser_rx_data;
   logic        ser_rx_end, ser_rx_parity, ser_rx_framing, ser_plugged;
@@ -671,7 +678,9 @@ module cadr_de25 #(
       // one.  `rtl/plumbing/cadr_f2sdram_port.sv` makes the pair off the same
       // registered copies the tally counts; on the board without memory
       // nothing answers and nothing is counted.
-      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
+      .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
+      .host_ridx(host_ridx), .host_rdata(host_rdata)
   );
 
   // ---------------------------------------------------------- the fold
@@ -725,7 +734,10 @@ module cadr_de25 #(
                    // count where a connector should be.  `dbg_holder` is the
                    // join's, and is here for the same reason.
                    dbg_engaged, dbg_foreign, dbg_peer_far, dbg_live,
-                   dbg_active, dbg_wire_state, dbg_frames, dbg_holder};
+                   dbg_active, dbg_wire_state, dbg_frames, dbg_holder,
+                   // QUUX's host side, which the face reads on a QUUX memory
+                   // board and nobody on any other.
+                   host_rdata};
     end
   end
 
@@ -1202,6 +1214,14 @@ module cadr_de25 #(
   logic        h2fi_bvalid, h2fi_bready, h2fi_arvalid, h2fi_arready;
   logic        h2fi_rlast, h2fi_rvalid, h2fi_rready;
   logic [1:0]  h2fi_bresp, h2fi_rresp;
+  logic [11:0] h2ff_awaddr, h2ff_araddr;
+  logic [31:0] h2ff_wdata, h2ff_rdata;
+  logic [7:0]  h2ff_awlen, h2ff_arlen;
+  logic [3:0]  h2ff_wstrb, h2ff_awid, h2ff_arid, h2ff_bid, h2ff_rid;
+  logic        h2ff_awvalid, h2ff_awready, h2ff_wlast, h2ff_wvalid, h2ff_wready;
+  logic        h2ff_bvalid, h2ff_bready, h2ff_arvalid, h2ff_arready;
+  logic        h2ff_rlast, h2ff_rvalid, h2ff_rready;
+  logic [1:0]  h2ff_bresp, h2ff_rresp;
   logic [31:0] h2fd_rdata;
   logic [7:0]  h2fd_arlen;
   logic [3:0]  h2fd_awid, h2fd_arid, h2fd_bid, h2fd_rid;
@@ -1215,6 +1235,10 @@ module cadr_de25 #(
       .CHAOS_BASE(32'h0000_1000),
       .SER_BASE  (32'h0000_2000),
       .INPUT_BASE(32'h0000_3000),
+      // QUUX's fifth page, the clock and the file device (revision 9), which
+      // is the default's on the CADR.
+      .FD_BASE   (32'h0000_4000),
+      .HAS_FD    (MACHINE == "quux"),
       .ID_W(4), .LEN_W(8)
   ) u_h2f_split (
       .clk(clk), .rst(h2f_rst),
@@ -1273,6 +1297,16 @@ module cadr_de25 #(
       .in_arvalid(h2fi_arvalid), .in_arready(h2fi_arready),
       .in_rdata(h2fi_rdata), .in_rresp(h2fi_rresp), .in_rid(h2fi_rid),
       .in_rlast(h2fi_rlast), .in_rvalid(h2fi_rvalid), .in_rready(h2fi_rready),
+      .fd_awaddr(h2ff_awaddr), .fd_awlen(h2ff_awlen), .fd_awid(h2ff_awid),
+      .fd_awvalid(h2ff_awvalid), .fd_awready(h2ff_awready),
+      .fd_wdata(h2ff_wdata), .fd_wstrb(h2ff_wstrb), .fd_wlast(h2ff_wlast),
+      .fd_wvalid(h2ff_wvalid), .fd_wready(h2ff_wready),
+      .fd_bresp(h2ff_bresp), .fd_bid(h2ff_bid), .fd_bvalid(h2ff_bvalid),
+      .fd_bready(h2ff_bready),
+      .fd_araddr(h2ff_araddr), .fd_arlen(h2ff_arlen), .fd_arid(h2ff_arid),
+      .fd_arvalid(h2ff_arvalid), .fd_arready(h2ff_arready),
+      .fd_rdata(h2ff_rdata), .fd_rresp(h2ff_rresp), .fd_rid(h2ff_rid),
+      .fd_rlast(h2ff_rlast), .fd_rvalid(h2ff_rvalid), .fd_rready(h2ff_rready),
       .dflt_awid(h2fd_awid), .dflt_awvalid(h2fd_awvalid),
       .dflt_awready(h2fd_awready),
       .dflt_wlast(h2fd_wlast), .dflt_wvalid(h2fd_wvalid),
@@ -1423,6 +1457,48 @@ module cadr_de25 #(
       .mouse_lines(mouse_lines),
       .card_csr(csr_face)
   );
+
+  // QUUX's clock and file device, for Linux's server and the clock's
+  // setter.  The machine's side keeps every rule; this is the page.
+  if (MACHINE == "quux") begin : g_fd_face
+    quux_fd_face #(.ID_W(4), .LEN_W(8)) u_fd_face (
+        .clk(clk), .rst(h2f_rst),
+        .s_awaddr(h2ff_awaddr), .s_awlen(h2ff_awlen), .s_awid(h2ff_awid),
+        .s_awvalid(h2ff_awvalid), .s_awready(h2ff_awready),
+        .s_wdata(h2ff_wdata), .s_wstrb(h2ff_wstrb), .s_wlast(h2ff_wlast),
+        .s_wvalid(h2ff_wvalid), .s_wready(h2ff_wready),
+        .s_bresp(h2ff_bresp), .s_bid(h2ff_bid), .s_bvalid(h2ff_bvalid),
+        .s_bready(h2ff_bready),
+        .s_araddr(h2ff_araddr), .s_arlen(h2ff_arlen), .s_arid(h2ff_arid),
+        .s_arvalid(h2ff_arvalid), .s_arready(h2ff_arready),
+        .s_rdata(h2ff_rdata), .s_rresp(h2ff_rresp), .s_rid(h2ff_rid),
+        .s_rlast(h2ff_rlast), .s_rvalid(h2ff_rvalid), .s_rready(h2ff_rready),
+        .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
+        .host_ridx(host_ridx), .host_rdata(host_rdata)
+    );
+  end else begin : g_no_fd_face
+    // The split never offers this port a transaction on the CADR (`HAS_FD`),
+    // so what it would answer is never asked.
+    assign h2ff_awready = 1'b0;
+    assign h2ff_wready  = 1'b0;
+    assign h2ff_bresp   = 2'b00;
+    assign h2ff_bid     = '0;
+    assign h2ff_bvalid  = 1'b0;
+    assign h2ff_arready = 1'b0;
+    assign h2ff_rdata   = 32'd0;
+    assign h2ff_rresp   = 2'b00;
+    assign h2ff_rid     = '0;
+    assign h2ff_rlast   = 1'b0;
+    assign h2ff_rvalid  = 1'b0;
+    assign host_we      = 1'b0;
+    assign host_widx    = 4'd0;
+    assign host_wdata   = 32'd0;
+    assign host_ridx    = 4'd0;
+    logic unused_fd_port;
+    assign unused_fd_port = ^{h2ff_awaddr, h2ff_awlen, h2ff_awid, h2ff_awvalid, h2ff_wdata,
+                              h2ff_wstrb, h2ff_wlast, h2ff_wvalid, h2ff_bready, h2ff_araddr,
+                              h2ff_arlen, h2ff_arid, h2ff_arvalid, h2ff_rready};
+  end
 
   cadr_gp0_default #(.ID_W(4), .LEN_W(8)) u_h2f_rest (
       .clk(clk), .rst(h2f_rst),
@@ -1941,6 +2017,12 @@ module cadr_de25 #(
   assign kbd_strobe     = 1'b0;
   assign kbd_code       = 24'd0;
   assign mouse_lines    = 7'h7F;
+  // And QUUX's host side, idle: a clock nobody sets and a file device
+  // nobody serves.
+  assign host_we        = 1'b0;
+  assign host_widx      = 4'd0;
+  assign host_wdata     = 32'd0;
+  assign host_ridx      = 4'd0;
   assign ser_tx_take    = 1'b0;
   assign ser_tx_done    = 1'b0;
   assign ser_rx_strobe  = 1'b0;

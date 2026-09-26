@@ -1037,8 +1037,9 @@ fn page_program_marks() -> (Prog, u64, u64) {
     wr(&mut p, va(2, PAGE_UNIBUS_CHAOS & 0o377), (1 << 8) | (1 << 5));
     rd(&mut p, &mut k, 0o101);
     rd(&mut p, &mut k, 0o100);
-    // Reserved words.
-    rd(&mut p, &mut k, 0o103);
+    // Reserved words: 103 was one until revision 9 made it the real-time
+    // clock, which `rtc` reads, so the next word up stands in for it.
+    rd(&mut p, &mut k, 0o104);
     rd(&mut p, &mut k, 0o150);
     assert_eq!(k, PAGE_READS, "page: the reads counted");
     p.park();
@@ -1858,6 +1859,611 @@ fn check_busreset(which: Which, m: &muir::machine::Machine) {
     }
 }
 
+// ------------------------------------------------- a start after a start
+
+/// The words `startstart` seeds and writes, each its own.
+fn startstart_word(k: u32) -> u32 {
+    0x5C00_0000u32.wrapping_add(k.wrapping_mul(0x0101_0101))
+}
+
+/// The mode register's one bit that reads back, black-on-white.
+const STARTSTART_MODE: u32 = 4;
+
+/// **A MEMORY START IN THE MICROCYCLE RIGHT AFTER A START** (muir's
+/// `b1e710c`).  `MBUSY.SYNC` is `MEMRQ` registered at the edge that ends the
+/// first start, so nothing holds the second on the CADR: the cycle that
+/// goes out takes the second start's direction and `VMA<7:0>`, and the first
+/// is lost, as the board does (`on_the_board_a_start_right_after_a_start_
+/// loses_the_first` in muir's `tests/chip.rs`).  QUUX holds the second start
+/// with a `-WAIT` term of its own, `MEMSTART AND MEMOP`, until the first
+/// cycle has gone out and ended, and both land
+/// (`a_start_right_after_a_start_waits_for_it`).  And **a write carries the
+/// `MD` of the microcycle after its start**, on both machines
+/// (`chip_and_rtl_write_the_md_of_the_microcycle_after_the_start`).
+///
+/// Region 7's slot 0 is main memory's page `WAIT_PAGE`, on QUUX slot 1 the
+/// display's registers and slot 2 the feature page.  Every word a read
+/// takes was written before on its own, and a line is cached only when a
+/// read has filled it, since a write allocates nothing.
+///
+/// On QUUX, each pair in consecutive microcycles, into `A[200 + k]`:
+///
+///   0      a write then a read, both lines missing: the word read
+///   1      the same, both lines cached
+///   2      a read then a write, missing: `MD` after them
+///   3      the same, cached
+///   4      a read then a read, missing: `MD` after them
+///   5      the same, cached
+///   6      a write of the mode register, then a read of main memory
+///   7      a write of main memory, then a read of the mode register
+///   10     a write of MACHINE-ID, which goes nowhere, then a read
+///   20-    every word written and every word read, read back in turn
+///
+/// A write then a write, with `MD` loaded in the microcycle after the
+/// second start, and the two single writes with `MD` loaded one and two
+/// microcycles after the start, are among the words read back.
+///
+/// On the CADR, only the two single writes with `MD` after the start, read
+/// back into `A[200]` and `A[201]`: the back-to-back pair is not traced
+/// there (see the CADR's branch below).
+fn startstart_program() -> Prog {
+    let quux = BASE.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    let mut p = Prog::new();
+    wait_setup(&mut p, 0o777);
+    // `A[300]` is `va(0, 0)`, so `A[a]` = `va(0, w)` is two instructions.
+    let addr = |p: &mut Prog, a: u64, w: u64| {
+        p.i(DISPATCH | DMEM_WRITE | a_src(w));
+        p.i(ALU | ADD | src(0) | a_src(0o300) | a_dest(a));
+    };
+    let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
+    // A write on its own: the word in `A[d]` at the address in `A[a]`.
+    let write = |p: &mut Prog, d: u64, a: u64| {
+        p.to(d, MD);
+        p.to(a, START_WRITE);
+        p.fill(2);
+    };
+    // Scratch: the address, and the data words.
+    const X: u64 = 0o360;
+    const D: u64 = 0o370;
+    let mut back: Vec<u64> = Vec::new();
+    let mut k = 0u64;
+    let result = |k: &mut u64| {
+        let r = RESULT + *k;
+        *k += 1;
+        r
+    };
+    let read_md = |p: &mut Prog, r: u64| {
+        p.fill(1);
+        p.i(ALU | SETM | SRC_MD | a_dest(r));
+    };
+    if quux {
+        // Level-2 slots 1 and 2: the display's registers and the feature page.
+        for (slot, page) in [(1u32, DEVICE_PAGE), (2, FEATURE_PAGE)] {
+            p.konst(0o302, va(slot, 0));
+            p.konst(0o303, level_2_store(page));
+            p.to(0o302, MD);
+            p.to(0o303, fdest(0o23));
+            p.fill(2);
+        }
+        // Addresses: A[320 + n] is word 20 + 4n, a line each.
+        for n in 0..16u64 {
+            addr(&mut p, 0o320 + n, 0o20 + 4 * n);
+        }
+        let line = |n: u64| 0o320 + n;
+        // Seeds: the word at line n is `startstart_word(n)`.
+        let seeded = [1u64, 3, 4, 6, 8, 9, 10, 11, 14, 15];
+        for &n in &seeded {
+            p.konst(D, startstart_word(n as u32));
+            write(&mut p, D, line(n));
+            back.push(line(n));
+        }
+        // Data words, D + j = `startstart_word(40 + j)`.
+        for j in 0..6u32 {
+            p.konst(D + j as u64, startstart_word(0o40 + j));
+        }
+        // Lines 2, 3, 6, 7, 10, 11 cached, by a read of each.
+        for n in [2u64, 3, 6, 7, 10, 11] {
+            p.read(line(n), 0o377);
+        }
+        // A write then a read: missing, then cached.
+        for (a, b) in [(0u64, 1u64), (2, 3)] {
+            p.to(D, MD);
+            p.to(line(a), START_WRITE);
+            p.to(line(b), START_READ);
+            let r = result(&mut k);
+            read_md(&mut p, r);
+            back.push(line(a));
+            p.fill(2);
+        }
+        // A read then a write: the write takes `MD` as the read left it.
+        for (a, b) in [(4u64, 5u64), (6, 7)] {
+            p.to(D + 1, MD);
+            p.to(line(a), START_READ);
+            p.to(line(b), START_WRITE);
+            let r = result(&mut k);
+            read_md(&mut p, r);
+            back.push(line(b));
+            p.fill(2);
+        }
+        // A read then a read.
+        for (a, b) in [(8u64, 9u64), (10, 11)] {
+            p.to(D + 1, MD);
+            p.to(line(a), START_READ);
+            p.to(line(b), START_READ);
+            let r = result(&mut k);
+            read_md(&mut p, r);
+            p.fill(2);
+        }
+        // The display's mode register, then main memory; main memory, then
+        // the mode register.
+        p.konst(D + 6, STARTSTART_MODE);
+        p.konst(X, va(1, TV_CONTROL));
+        p.to(D + 6, MD);
+        p.to(X, START_WRITE);
+        p.to(line(14), START_READ);
+        let r = result(&mut k);
+        read_md(&mut p, r);
+        p.fill(2);
+        p.to(D + 2, MD);
+        p.to(line(12), START_WRITE);
+        p.to(X, START_READ);
+        let r = result(&mut k);
+        read_md(&mut p, r);
+        back.push(line(12));
+        p.fill(2);
+        // MACHINE-ID, word 0 of the feature page, written, then a read.
+        p.konst(X, va(2, 0));
+        p.to(D + 3, MD);
+        p.to(X, START_WRITE);
+        p.to(line(15), START_READ);
+        let r = result(&mut k);
+        read_md(&mut p, r);
+        p.fill(2);
+        // A write then a write, `MD` loaded in the microcycle after the
+        // second start, at words 120 and 124.
+        addr(&mut p, X, 0o120);
+        addr(&mut p, X + 1, 0o124);
+        p.to(D + 4, MD);
+        p.to(X, START_WRITE);
+        p.to(X + 1, START_WRITE);
+        p.to(D + 5, MD);
+        p.fill(2);
+        back.push(X);
+        back.push(X + 1);
+    } else {
+        // **NOT THE BOARD'S PROGRAM**, a write and a read back to back: the
+        // board loses the write, and muir's `rtl` gets the board's words only
+        // by asking its bus interface for a second cycle while the first
+        // runs, which its own debug assertion refuses.  The fabric's CADR
+        // does not follow it there (its bus audit finds a request at the
+        // second's address in the direction the cycle does not name, and
+        // the read brings 0), and the reference is not one muir defines, so
+        // the CADR runs only the writes below.
+        p.konst(D + 4, startstart_word(0o44));
+        p.konst(D + 5, startstart_word(0o45));
+    }
+    // The two single writes, `MD` loaded one microcycle after the start and
+    // two: the first writes the new word, the second the old.
+    addr(&mut p, X + 2, 0o130);
+    addr(&mut p, X + 3, 0o134);
+    p.to(D + 4, MD);
+    p.to(X + 2, START_WRITE);
+    p.to(D + 5, MD);
+    p.fill(2);
+    p.to(D + 4, MD);
+    p.to(X + 3, START_WRITE);
+    p.fill(1);
+    p.to(D + 5, MD);
+    p.fill(2);
+    back.push(X + 2);
+    back.push(X + 3);
+    // Everything read back, into `A[220 + n]` on QUUX and on after the
+    // read on the CADR.
+    let mut at = if quux { RESULT + 0o20 } else { RESULT + k };
+    for a in back {
+        p.read(a, at);
+        at += 1;
+    }
+    p.park();
+    p
+}
+
+fn check_startstart(which: Which, m: &muir::machine::Machine) {
+    let r = |k: u64| m.amem[(RESULT + k) as usize];
+    let w = startstart_word;
+    if which == Which::Cadr {
+        assert_eq!([r(0), r(1)], [w(0o45), w(0o44)], "CADR: MD a microcycle after the start, and two");
+        return;
+    }
+    assert_eq!(r(0), w(1), "QUUX: a write then a read, missing: the word read");
+    assert_eq!(r(1), w(3), "QUUX: a write then a read, cached");
+    assert_eq!(r(2), w(4), "QUUX: a read then a write, missing: MD");
+    assert_eq!(r(3), w(6), "QUUX: a read then a write, cached");
+    assert_eq!(r(4), w(9), "QUUX: a read then a read, missing");
+    assert_eq!(r(5), w(11), "QUUX: a read then a read, cached");
+    assert_eq!(r(6), w(14), "QUUX: the mode register, then main memory");
+    assert_eq!(r(7), STARTSTART_MODE, "QUUX: main memory, then the mode register");
+    assert_eq!(r(8), w(15), "QUUX: MACHINE-ID, then main memory");
+    let back = |n: u64| r(0o20 + n);
+    // The seeds, in `seeded`'s order: lines 1, 3, 4, 6, 8, 9, 10, 11, 14, 15.
+    for (n, line) in [1u32, 3, 4, 6, 8, 9, 10, 11, 14, 15].iter().enumerate() {
+        assert_eq!(back(n as u64), w(*line), "QUUX: line {line} as seeded");
+    }
+    assert_eq!([back(10), back(11)], [w(0o40), w(0o40)], "QUUX: each write before a read landed");
+    assert_eq!([back(12), back(13)], [w(4), w(6)], "QUUX: each write after a read wrote the word read");
+    assert_eq!(back(14), w(0o42), "QUUX: the write before the mode register's read landed");
+    assert_eq!([back(15), back(16)], [w(0o44), w(0o45)],
+               "QUUX: a write then a write, the second with MD of the microcycle after its start");
+    assert_eq!([back(17), back(18)], [w(0o45), w(0o44)], "QUUX: MD a microcycle after the start, and two");
+    assert_eq!(m.bus_error & bus_error::XBUS_NXM, 0, "QUUX: every cycle answered");
+}
+
+// ----------------------------------- revision 9: the clock and the file device
+
+/// **CONSTANTS IN A MEMORY, EACH MADE ONCE**, from `A[400]` up: the two
+/// programs below name some fifty words, and made where each is used, as the
+/// other programs make theirs, they would not fit the PROM's 1,024.  A value
+/// takes as many ten-bit pieces of the dispatch constant as it has, where
+/// `Prog::konst` always takes four.
+struct Pool {
+    at: std::collections::HashMap<u32, u64>,
+    next: u64,
+}
+
+impl Pool {
+    const FIRST: u64 = 0o400;
+    const LAST: u64 = 0o677;
+
+    fn new() -> Pool {
+        Pool { at: std::collections::HashMap::new(), next: Self::FIRST }
+    }
+
+    /// The A address holding `v`, made here the first time it is asked.
+    fn c(&mut self, p: &mut Prog, v: u32) -> u64 {
+        if let Some(&a) = self.at.get(&v) {
+            return a;
+        }
+        let a = self.next;
+        assert!(a <= Self::LAST, "the constant pool is full");
+        self.next += 1;
+        let parts = [(0u64, 10u64), (10, 10), (20, 10), (30, 2)];
+        let n = parts.iter().rposition(|&(pos, _)| (v as u64) >> pos != 0).map_or(1, |i| i + 1);
+        for (k, &(pos, w)) in parts[..n].iter().enumerate() {
+            let piece = ((v as u64) >> pos) & ((1 << w) - 1);
+            p.i(DISPATCH | DMEM_WRITE | a_src(piece));
+            if k == 0 {
+                p.i(ALU | SETM | src(0) | a_dest(a));
+            } else {
+                p.i(BYTE | DPB | src(0) | a_src(a) | width(w) | rot(pos) | a_dest(a));
+            }
+        }
+        self.at.insert(v, a);
+        a
+    }
+
+    /// A read of `va` into `A[RESULT + *k]`, then a jump on condition 5, so
+    /// that `SINTR` moves on rows the testbench compares it on.
+    fn rd(&mut self, p: &mut Prog, k: &mut u64, va: u32) {
+        let a = self.c(p, va);
+        p.read(a, RESULT + *k);
+        *k += 1;
+        let here = p.at();
+        p.i(JUMP | target(here + 2) | PGF_OR_INT | N);
+        p.fill(1);
+    }
+
+    /// A write of `v` at `va`.
+    fn wr(&mut self, p: &mut Prog, va: u32, v: u32) {
+        let (av, aa) = (self.c(p, v), self.c(p, va));
+        p.to(av, MD);
+        p.to(aa, START_WRITE);
+        p.fill(2);
+    }
+
+    /// A write of `v1` at `va1` and, two microcycles after its start, one of
+    /// `v2` at `va2`: as close as a write may follow a write without its
+    /// `MD` being the second's.
+    fn wr_wr(&mut self, p: &mut Prog, va1: u32, v1: u32, va2: u32, v2: u32) {
+        let (a1v, a1a, a2v, a2a) = (self.c(p, v1), self.c(p, va1), self.c(p, v2), self.c(p, va2));
+        p.to(a1v, MD);
+        p.to(a1a, START_WRITE);
+        p.fill(1);
+        p.to(a2v, MD);
+        p.to(a2a, START_WRITE);
+        p.fill(2);
+    }
+
+    /// Reads `va` until it reads `want`.
+    fn poll(&mut self, p: &mut Prog, va: u32, want: u32) {
+        let (aa, aw) = (self.c(p, va), self.c(p, want));
+        let top = p.at();
+        p.to(aa, START_READ);
+        p.fill(1);
+        p.i(JUMP | target(top) | AEQM | INVERT | a_src(aw) | SRC_MD | N);
+        p.fill(1);
+    }
+}
+
+/// Region 7's virtual address of word `w` of slot `slot`.
+fn r7(slot: u32, w: u32) -> u32 {
+    (7 << 13) | (slot << 8) | w
+}
+
+/// Maps region 7: level 1 entry 3; level 2 slot k onto `pages[k]`.
+fn map_region_7(p: &mut Prog, c: &mut Pool, pages: &[u32]) {
+    let (a0, a1) = (c.c(p, r7(0, 0)), c.c(p, level_1_store(3)));
+    p.to(a0, MD);
+    p.to(a1, fdest(0o23));
+    p.fill(2);
+    for (slot, &page) in pages.iter().enumerate() {
+        let (a, v) = (c.c(p, r7(slot as u32, 0)), c.c(p, level_2_store(page)));
+        p.to(a, MD);
+        p.to(v, fdest(0o23));
+        p.fill(2);
+    }
+}
+
+/// The seconds the host sets the clock to at each of the `rtc` program's
+/// marks: an ordinary second, and the last one, which the clock holds.
+const RTC_SET: [u32; 2] = [0x7b5c_2e19, 0xffff_ffff];
+/// What the program writes at word 103, which goes nowhere.
+const RTC_WRITTEN: u32 = 0x1234_5678;
+const RTC_READS: u64 = 9;
+
+/// **QUUX's real-time clock and the revision it came with** (revision 9,
+/// contract Q9): word 103 of the register page, unsigned Unix seconds, read
+/// only to the machine and kept by the host.  Region 7's slot 0 is the
+/// register page.  Into `A[200 + k]`:
+///
+///   0  word 0, MACHINE-ID, revision 9
+///   1  word 15, the devices of revision 9: 3
+///   2  word 103, the clock at the start: `RTC_START`
+///   3  word 103 after the host set it, at the first mark, to `RTC_SET[0]`
+///   4  word 103 after the machine wrote `RTC_WRITTEN` there: unchanged
+///   5  word 104, reserved
+///   6  word 103 after the host set it, at the second mark, to 2^32 - 1
+///   7  word 102, error stop, after the write of 103 changed nothing there
+///   8  word 101, the bus errors: none
+///
+/// The host's setting is the fabric's host side on a board, which Linux
+/// writes; here it is muir's `Rtc::Counted` restarted at the mark, and the
+/// testbench writes the same seconds at the same microcycle.  A second of
+/// the machine's time does not pass inside a trace, so the count across a
+/// second is `build/quux_rtc_unit.pass`'s, against the same arithmetic.
+fn rtc_program() -> Prog {
+    rtc_program_marks().0
+}
+
+fn rtc_program_marks() -> (Prog, [u64; 2]) {
+    let mut p = Prog::new();
+    let mut c = Pool::new();
+    let mut k = 0u64;
+    map_region_7(&mut p, &mut c, &[FEATURE_PAGE]);
+    let reg = |w| r7(0, w);
+    c.rd(&mut p, &mut k, reg(0));
+    c.rd(&mut p, &mut k, reg(0o15));
+    c.rd(&mut p, &mut k, reg(0o103));
+    let mark_1 = p.at();
+    p.fill(4);
+    c.rd(&mut p, &mut k, reg(0o103));
+    c.wr(&mut p, reg(0o103), RTC_WRITTEN);
+    c.rd(&mut p, &mut k, reg(0o103));
+    c.rd(&mut p, &mut k, reg(0o104));
+    let mark_2 = p.at();
+    p.fill(4);
+    c.rd(&mut p, &mut k, reg(0o103));
+    c.rd(&mut p, &mut k, reg(0o102));
+    c.rd(&mut p, &mut k, reg(0o101));
+    assert_eq!(k, RTC_READS, "rtc: the reads counted");
+    p.park();
+    (p, [mark_1, mark_2])
+}
+
+fn check_rtc(which: Which, m: &muir::machine::Machine) {
+    if which != Which::Quux {
+        return;
+    }
+    let r: Vec<u32> = (0..RTC_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    let id = which.geometry().machine_id.unwrap();
+    assert_eq!((id >> 4) & 0xfff, 9, "QUUX: revision 9");
+    assert_eq!(r[0], id, "QUUX: MACHINE-ID on the page");
+    assert_eq!(r[1], 3, "QUUX: word 15, the clock and the file device");
+    assert_eq!(r[2], machine_axis::RTC_START, "QUUX: the clock at the start");
+    assert_eq!(r[3], RTC_SET[0], "QUUX: the clock the host set");
+    assert_eq!(r[4], RTC_SET[0], "QUUX: a write of 103 goes nowhere");
+    assert_eq!(r[5], 0, "QUUX: word 104 is reserved");
+    assert_eq!(r[6], RTC_SET[1], "QUUX: the last second");
+    assert_eq!((r[7], r[8]), (0, 0), "QUUX: nothing else moved");
+}
+
+/// The file device's pages: the rings in one, the buffers in the next.
+const FD_RING_PAGE: u32 = 0o102;
+const FD_BUF_PAGE: u32 = 0o103;
+/// The command ring, two entries; the response ring, one, at the next line
+/// pair but one.
+const FD_CMD: u32 = FD_RING_PAGE << 8;
+const FD_RESP: u32 = (FD_RING_PAGE << 8) + 0o40;
+/// Buffer A's name, READ's buffer B, and LOG's line.
+const FD_NAME: u32 = FD_BUF_PAGE << 8;
+const FD_B: u32 = (FD_BUF_PAGE << 8) + 0o20;
+const FD_LOG: u32 = (FD_BUF_PAGE << 8) + 0o40;
+/// The one file in the scratch folder, `/f`, and its modification time.
+const FD_FILE: &[u8] = b"QUUX file device";
+const FD_MTIME: u32 = 1_700_000_000;
+const FD_READS: u64 = 55;
+
+/// A command's first word: its tag, opcode and flags.
+fn fd_word0(tag: u32, opcode: u32, flags: u32) -> u32 {
+    tag | opcode << 16 | flags << 24
+}
+
+/// Writes a command into slot `slot` of the command ring, words 1 to 6 and
+/// then word 0, and with `then_prod` the command producer right behind word
+/// 0.  Word 0 is last because it is never zero --- the tag and the opcode ---
+/// and differs from whatever the slot held before, so a host shown the
+/// producer before that word has left the write buffer finds the slot's old
+/// word 0 in main memory, which the testbench compares.
+fn fd_command(p: &mut Prog, c: &mut Pool, slot: u32, words: [u32; 7], then_prod: Option<u32>) {
+    for i in (1..7).chain(0..1) {
+        let va = r7(1, 8 * slot + i as u32);
+        match then_prod {
+            Some(n) if i == 0 => c.wr_wr(p, va, words[i], r7(0, 0o164), n),
+            _ => c.wr(p, va, words[i]),
+        }
+    }
+}
+
+/// **QUUX's file device** (revision 9, contract Q9): registers 160-171 of
+/// the register page, word 100 `<6>`, and commands and responses in two
+/// rings in main memory.  The host's side --- the commands run against a
+/// folder and their answers written into main memory --- is muir's device
+/// here and, on a board, Linux's server; the testbench plays it from the
+/// `# fd` lines this generator writes, each a command's completion with the
+/// words it wrote.  What the fabric builds is the rest: the registers and
+/// their refusals, the indexes, the interrupt, the disable and the reset,
+/// the command producer shown to the host only once the write buffer has
+/// drained, and the cache invalidated before a response index moves.
+///
+/// Region 7: slot 0 the register page, slot 1 the rings' page, slot 2 the
+/// buffers'.  Into `A[200 + k]`:
+///
+///   0-1    160 and 161 at the start: disabled and quiet
+///   2-3    161 and 160 after an enable with a base off a line: refused
+///   4-13   160-171 after an enable with the interrupt enable
+///   14     162 after a write while enabled: unchanged
+///   15-17  161 after a producer claiming three of two, after a write of
+///          160 clears it, and after a consumer past the producer
+///   18     the response slot's word 0, read to cache its line
+///   19     165 at once after the producer: nothing within the write
+///   20-21  100 and 161 when OPEN of `/f` is answered: `<6>`, a handle
+///   22-26  the response's words 0-4, through the line cached before it
+///   27-28  100 and 161 after 171 is written up to 170
+///   29     READ's buffer B's first word, read to cache its line
+///   30-35  READ's response words 0 and 1, and B's four words
+///   36-37  165 and 161 with two commands posted and the one response slot
+///          full: nothing taken
+///   38-39  the LOG's response, and an opcode muir lacks: UOP
+///   40     161 before the disable, a handle open
+///   41-46  160, 161, 164, 165, 170 and 171 after it
+///   47-48  100 and 161 after a command answered with the interrupt enable
+///          off: `<8>` without `<6>`
+///   49     100 with the interrupt enable turned on and the response waiting
+///   50-53  160, 161, 165 and 100 after a machine reset with a command
+///          queued and the interrupt up
+///   54     161 again, long after that command's time
+fn files_program() -> Prog {
+    use muir::file_device::op;
+    let mut p = Prog::new();
+    let mut c = Pool::new();
+    let mut k = 0u64;
+    map_region_7(&mut p, &mut c, &[FEATURE_PAGE, FD_RING_PAGE, FD_BUF_PAGE]);
+    let reg = |w| r7(0, w);
+    let resp = |w| r7(1, (FD_RESP & 0o377) + w);
+    let buf = |w| r7(2, w);
+    c.rd(&mut p, &mut k, reg(0o160));
+    c.rd(&mut p, &mut k, reg(0o161));
+    // An enable refused: the command ring's base off a line.
+    c.wr(&mut p, reg(0o162), FD_CMD + 1);
+    c.wr(&mut p, reg(0o163), 1);
+    c.wr(&mut p, reg(0o166), FD_RESP);
+    c.wr(&mut p, reg(0o167), 0);
+    c.wr(&mut p, reg(0o160), 1);
+    c.rd(&mut p, &mut k, reg(0o161));
+    c.rd(&mut p, &mut k, reg(0o160));
+    // Enabled, with the interrupt enable.
+    c.wr(&mut p, reg(0o162), FD_CMD);
+    c.wr(&mut p, reg(0o160), 0x101);
+    for w in [0o160, 0o161, 0o162, 0o163, 0o164, 0o165, 0o166, 0o167, 0o170, 0o171] {
+        c.rd(&mut p, &mut k, reg(w));
+    }
+    c.wr(&mut p, reg(0o162), 0o77);
+    c.rd(&mut p, &mut k, reg(0o162));
+    // The index faults.
+    c.wr(&mut p, reg(0o164), 3);
+    c.rd(&mut p, &mut k, reg(0o161));
+    c.wr(&mut p, reg(0o160), 0x101);
+    c.rd(&mut p, &mut k, reg(0o161));
+    c.wr(&mut p, reg(0o171), 1);
+    c.rd(&mut p, &mut k, reg(0o161));
+    c.wr(&mut p, reg(0o160), 0x101);
+    // OPEN `/f` for reading.
+    c.wr(&mut p, buf(0), u32::from_le_bytes([b'/', b'f', 0, 0]));
+    c.rd(&mut p, &mut k, resp(0));
+    fd_command(&mut p, &mut c, 0, [fd_word0(0x1234, op::OPEN, 0), 0, FD_NAME, 2, 0, 0, 0], Some(1));
+    c.rd(&mut p, &mut k, reg(0o165));
+    c.poll(&mut p, reg(0o170), 1);
+    c.rd(&mut p, &mut k, reg(0o100));
+    c.rd(&mut p, &mut k, reg(0o161));
+    for w in 0..5 {
+        c.rd(&mut p, &mut k, resp(w));
+    }
+    c.wr(&mut p, reg(0o171), 1);
+    c.rd(&mut p, &mut k, reg(0o100));
+    c.rd(&mut p, &mut k, reg(0o161));
+    // READ sixteen bytes of it into B, whose line is cached first.
+    c.rd(&mut p, &mut k, buf(FD_B & 0o377));
+    fd_command(&mut p, &mut c, 1, [fd_word0(0x2345, op::READ, 0), 1, 0, 0, FD_B, 16, 0], Some(2));
+    c.poll(&mut p, reg(0o170), 2);
+    c.rd(&mut p, &mut k, resp(0));
+    c.rd(&mut p, &mut k, resp(1));
+    for w in 0..4 {
+        c.rd(&mut p, &mut k, buf((FD_B & 0o377) + w));
+    }
+    // Two commands with the one response slot still holding READ's answer:
+    // neither is taken until 171 frees it, and then one at a time.
+    c.wr(&mut p, buf(FD_LOG & 0o377), u32::from_le_bytes([b'h', b'i', 0, 0]));
+    fd_command(&mut p, &mut c, 0, [fd_word0(0x3456, op::LOG, 0), 0, FD_LOG, 2, 0, 0, 0], None);
+    fd_command(&mut p, &mut c, 1, [fd_word0(0x4567, 0o77, 0), 0, 0, 0, 0, 0, 0], Some(4));
+    p.fill(8);
+    c.rd(&mut p, &mut k, reg(0o165));
+    c.rd(&mut p, &mut k, reg(0o161));
+    c.wr(&mut p, reg(0o171), 2);
+    c.poll(&mut p, reg(0o170), 3);
+    c.rd(&mut p, &mut k, resp(0));
+    c.wr(&mut p, reg(0o171), 3);
+    c.poll(&mut p, reg(0o170), 4);
+    c.rd(&mut p, &mut k, resp(0));
+    c.wr(&mut p, reg(0o171), 4);
+    // The disable, with the handle open.
+    c.rd(&mut p, &mut k, reg(0o161));
+    c.wr(&mut p, reg(0o160), 0);
+    for w in [0o160, 0o161, 0o164, 0o165, 0o170, 0o171] {
+        c.rd(&mut p, &mut k, reg(w));
+    }
+    // Enabled again, the bases kept and the interrupt enable off.
+    c.wr(&mut p, reg(0o160), 1);
+    fd_command(&mut p, &mut c, 0, [fd_word0(0x5678, op::OPEN, 0), 0, FD_NAME, 2, 0, 0, 0], Some(1));
+    c.poll(&mut p, reg(0o170), 1);
+    c.rd(&mut p, &mut k, reg(0o100));
+    c.rd(&mut p, &mut k, reg(0o161));
+    c.wr(&mut p, reg(0o160), 0x101);
+    c.rd(&mut p, &mut k, reg(0o100));
+    // A machine reset with a command queued, a handle open and the
+    // interrupt up:
+    // `PROG.UNIBUS.RESET`, `INTERRUPT-CONTROL<28>` raised and lowered.
+    fd_command(&mut p, &mut c, 1, [fd_word0(0x6789, op::OPEN, 0), 0, FD_NAME, 2, 0, 0, 0], Some(2));
+    let (on, off) = (c.c(&mut p, 1 << 28), c.c(&mut p, 0));
+    p.to(on, fdest(DEST_INTCTL));
+    p.fill(4);
+    p.to(off, fdest(DEST_INTCTL));
+    p.fill(2);
+    for w in [0o160, 0o161, 0o165, 0o100] {
+        c.rd(&mut p, &mut k, reg(w));
+    }
+    // Past the dropped command's time: `M[5]` counted down from 400, three
+    // microcycles a turn, some 30 us at a K of four.
+    let (count, one, zero) = (c.c(&mut p, 0o400), c.c(&mut p, 1), c.c(&mut p, 0));
+    p.i(ALU | SETA | a_src(count) | m_dest(5));
+    let top = p.at();
+    p.i(ALU | SUB | CARRY_IN | m_src(5) | a_src(one) | m_dest(5));
+    p.i(JUMP | target(top) | AEQM | INVERT | a_src(zero) | m_src(5) | N);
+    p.fill(1);
+    c.rd(&mut p, &mut k, reg(0o161));
+    assert_eq!(k, FD_READS, "files: the reads counted");
+    p.park();
+    p
+}
+
 // ------------------------------------------------------------ the Unibus
 
 /// The bus interface's own registers, `17773000`: Unibus `766000` on, the
@@ -1964,6 +2570,49 @@ fn unibus_program() -> Prog {
     p
 }
 
+fn check_files(which: Which, m: &muir::machine::Machine) {
+    if which != Which::Quux {
+        return;
+    }
+    use muir::file_device::{op, status};
+    let r: Vec<u32> = (0..FD_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    let file: Vec<u32> =
+        FD_FILE.chunks(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    let resp0 = |tag: u32, st: u32, opcode: u32| tag | st << 16 | opcode << 24;
+    assert_eq!(&r[0..2], &[0, 2], "QUUX: 160 and 161 at power-on: disabled, quiet");
+    assert_eq!(&r[2..4], &[2 | 4, 0], "QUUX: an enable refused, a base off a line");
+    assert_eq!(
+        &r[4..14],
+        &[0x101, 1, FD_CMD, 1, 0, 0, FD_RESP, 0, 0, 0],
+        "QUUX: 160-171 enabled"
+    );
+    assert_eq!(r[14], FD_CMD, "QUUX: a base written while enabled is ignored");
+    assert_eq!(&r[15..18], &[1 | 8, 1, 1 | 8], "QUUX: the index faults and their clear");
+    assert_eq!(r[18], 0, "QUUX: the response slot before any response");
+    assert_eq!(r[19], 0, "QUUX: nothing answered within the producer write");
+    assert_eq!(&r[20..22], &[1 << 6, 1 | 0x100 | 1 << 16], "QUUX: OPEN answered, a handle open");
+    assert_eq!(
+        &r[22..27],
+        &[resp0(0x1234, status::OK, op::OPEN), 0, 1, FD_FILE.len() as u32, FD_MTIME],
+        "QUUX: OPEN's response, through a line cached before it"
+    );
+    assert_eq!(&r[27..29], &[0, 1 | 1 << 16], "QUUX: the response consumed");
+    assert_eq!(r[29], 0, "QUUX: B before the READ");
+    assert_eq!(&r[30..32], &[resp0(0x2345, status::OK, op::READ), 16], "QUUX: READ's response");
+    assert_eq!(&r[32..36], &file[..], "QUUX: READ's bytes, through B's line cached before");
+    assert_eq!(&r[36..38], &[2, 1 | 0x100 | 1 << 16], "QUUX: the response ring full: nothing taken");
+    assert_eq!(r[38], resp0(0x3456, status::OK, op::LOG), "QUUX: LOG");
+    assert_eq!(r[39], resp0(0x4567, status::UOP, 0o77), "QUUX: an opcode muir lacks");
+    assert_eq!(r[40], 1 | 1 << 16, "QUUX: before the disable, a handle open");
+    assert_eq!(&r[41..47], &[0, 2, 0, 0, 0, 0], "QUUX: the disable is the reset");
+    assert_eq!(&r[47..49], &[0, 1 | 0x100 | 1 << 16], "QUUX: a response with the interrupt enable off");
+    assert_eq!(r[49], 1 << 6, "QUUX: the interrupt enable turned on with a response waiting");
+    assert_eq!(&r[50..54], &[0, 2, 0, 0], "QUUX: a machine reset disables it");
+    assert_eq!(r[54], 2, "QUUX: the command the reset dropped never answers");
+    assert_eq!(m.file_device.handles_open(), 0, "QUUX: every handle closed");
+    assert_eq!(m.file_device.queued(), 0, "QUUX: nothing queued");
+}
+
 fn check_unibus(which: Which, m: &muir::machine::Machine) {
     assert_eq!(which, Which::Cadr, "unibus: the CADR's alone");
     let reads = UNIBUS_ACCESSES.iter().filter(|a| a.1.is_none()).count();
@@ -2000,10 +2649,17 @@ fn cycles(name: &str, which: Which) -> u64 {
         "tickwin" => 2000,
         "memedge" => 2800,
         "busreset" => 700,
+        "startstart" => 600,
+        "rtc" => RTC_ROWS,
+        "files" => FILES_ROWS,
         "unibus" => 3000,
         _ => unreachable!(),
     }
 }
+
+/// The two programs of revision 9, run to their park and a little past it.
+const RTC_ROWS: u64 = 400;
+const FILES_ROWS: u64 = 2800;
 
 /// The clocks program runs until the tick's first rise, 16,667 us in: at a K
 /// of four that is 416,675 microcycles, and the CADR leaves its loop at once.
@@ -2027,12 +2683,91 @@ fn program(name: &str) -> Prog {
         "tickwin" => tickwin_program(),
         "memedge" => memedge_program(),
         "busreset" => busreset_program(),
+        "startstart" => startstart_program(),
+        "rtc" => rtc_program(),
+        "files" => files_program(),
         "unibus" => unibus_program(),
         _ => {
-            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait, memedge, busreset, unibus");
+            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait, memedge, busreset, startstart, unibus, rtc, files");
             std::process::exit(2);
         }
     }
+}
+
+/// The `files` program's folder: `/f`, sixteen bytes, with a fixed
+/// modification time, under the generator's own build tree so that nothing
+/// of it lands in `/tmp`.  One a process, removed at the end.
+fn files_scratch() -> std::io::Result<std::path::PathBuf> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join(format!("quux-files-scratch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)?;
+    let f = dir.join("f");
+    std::fs::write(&f, FD_FILE)?;
+    let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(FD_MTIME as u64);
+    std::fs::File::options().write(true).open(&f)?.set_modified(when)?;
+    Ok(dir)
+}
+
+/// What the host did in the microcycle just run, for the testbench:
+///
+///   `# fdtake START INDEX`  the device took command INDEX, from START ns ---
+///                           the later of its producer write landing with
+///                           the write buffer empty, the previous
+///                           command's completion, and a response slot free
+///   `# fdc PHYS WORD`       and the command's entry as main memory held it,
+///                           which the host reads once it sees the producer
+///   `# fd DUE PROD HANDLES` a command completed at DUE ns: the response
+///                           producer is PROD and HANDLES are open
+///   `# fdw PHYS WORD`       and each word it wrote: the response entry, and
+///                           buffer B's words for READ, DIRECTORY and COMPLETE
+///
+/// All hexadecimal.  muir runs a command at its due time and the fabric's
+/// host runs it when it can; the testbench does it at the due time, so the
+/// two agree to the tick.
+fn fd_events(e: &muir::rtl::Rtl, prod_before: u16, due_before: Option<u64>, last_due: &mut Option<u64>) {
+    use muir::file_device::{self as fd, op};
+    let m = e.machine();
+    let dev = &m.file_device;
+    let ns = e.ns();
+    let (cmd_base, cmd_n) = (dev.read(fd::CMD_BASE, ns), 1u32 << dev.read(fd::CMD_SIZE, ns));
+    let (resp_base, resp_n) = (dev.read(fd::RESP_BASE, ns), 1u32 << dev.read(fd::RESP_SIZE, ns));
+    let prod = dev.response_producer();
+    // A disable or a machine reset puts the indexes back to 0, which is no
+    // completion.
+    if prod != prod_before && prod == 0 {
+        assert_eq!(dev.read(fd::CONTROL, ns) & 1, 0, "files: the indexes went back to 0 only by a disable");
+    } else if prod != prod_before {
+        assert_eq!(prod, prod_before.wrapping_add(1), "files: one command completes a microcycle");
+        let due = due_before.expect("files: a completion with no command taken");
+        println!("# fd {due:x} {prod:x} {:x}", dev.handles_open());
+        let i = prod.wrapping_sub(1) as u32;
+        let r = resp_base + 8 * (i % resp_n);
+        let c = cmd_base + 8 * (i % cmd_n);
+        let entry = |a: u32| m.main[a as usize];
+        for w in 0..8 {
+            println!("# fdw {:x} {:x}", r + w, entry(r + w));
+        }
+        let (opcode, st) = ((entry(c) >> 16) & 0xff, (entry(r) >> 16) & 0xff);
+        if st == 0 && matches!(opcode, op::READ | op::DIRECTORY | op::COMPLETE) {
+            let b = entry(c + 4);
+            for w in 0..entry(r + 1).div_ceil(4) {
+                println!("# fdw {:x} {:x}", b + w, entry(b + w));
+            }
+        }
+    }
+    let due = dev.head_due();
+    if due.is_some() && due != *last_due {
+        let d = due.unwrap();
+        let c = cmd_base + 8 * (prod as u32 % cmd_n);
+        let start = d - (fd::due(0, m.main[c as usize + 3], m.main[c as usize + 5]));
+        println!("# fdtake {start:x} {prod:x}");
+        for w in 0..8 {
+            println!("# fdc {:x} {:x}", c + w, m.main[(c + w) as usize]);
+        }
+    }
+    *last_due = due;
 }
 
 fn main() {
@@ -2118,6 +2853,26 @@ fn main() {
             }
         }
     }
+    // **THE REAL-TIME CLOCK'S START**, `machine_axis::RTC_START`, which the
+    // testbench loads into the fabric's counter at reset as Linux sets it at
+    // boot on a board.
+    if which == Which::Quux {
+        println!("# rtc {:x}", machine_axis::RTC_START);
+    }
+    // **THE HOST SETS THE CLOCK AT THE `rtc` PROGRAM'S MARKS**, before the
+    // microcycle there: `# rtcset CYCLE SECONDS` for the testbench, which
+    // writes the same seconds through the host side at the same microcycle.
+    let rtc_marks = if name == "rtc" && which == Which::Quux { rtc_program_marks().1.to_vec() } else { vec![] };
+    let mut rtc_sets = rtc_marks.iter().copied().zip(RTC_SET).collect::<Vec<_>>();
+    // **THE FILE DEVICE'S HOST SIDE**, muir's device here: a folder with one
+    // file in it, `/f`, and every command's completion written out for the
+    // testbench, which plays Linux's server from it (`# fd` and `# fdw`).
+    let files = name == "files" && which == Which::Quux;
+    let scratch = files.then(|| files_scratch().expect("files: the scratch folder"));
+    if let Some(dir) = &scratch {
+        e.machine_mut().file_device.mounts.add(dir.to_str().unwrap()).expect("files: the mount");
+    }
+    let mut last_due: Option<u64> = None;
     let mut t = trace::Trace::new(&e);
     for cycle in 0..n {
         if let Some((_, words)) = presses.iter().find(|(c, _)| *c == cycle) {
@@ -2125,6 +2880,13 @@ fn main() {
                 e.machine_mut().quux_input.press(w);
             }
         }
+        if let Some(i) = rtc_sets.iter().position(|&(at, _)| e.pc() as u64 == at) {
+            let (_, secs) = rtc_sets.remove(i);
+            let ns = e.ns();
+            e.machine_mut().rtc = muir::machine::Rtc::Counted { start: secs, base_ns: ns };
+            println!("# rtcset {cycle:x} {secs:x}");
+        }
+        let (prod_before, due_before) = (e.machine().file_device.response_producer(), e.machine().file_device.head_due());
         match t.row(&mut e, cycle) {
             Ok(line) => println!("{line}"),
             Err(h) => {
@@ -2132,6 +2894,13 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        if files {
+            fd_events(&e, prod_before, due_before, &mut last_due);
+        }
+    }
+    assert!(rtc_sets.is_empty(), "rtc: the program reached both marks");
+    if let Some(dir) = scratch {
+        let _ = std::fs::remove_dir_all(dir);
     }
     match name.as_str() {
         "map" => check_map(which, e.machine()),
@@ -2150,6 +2919,9 @@ fn main() {
         "tickwin" => check_tickwin(which, e.machine()),
         "memedge" => check_memedge(which, e.machine()),
         "busreset" => check_busreset(which, e.machine()),
+        "startstart" => check_startstart(which, e.machine()),
+        "rtc" => check_rtc(which, e.machine()),
+        "files" => check_files(which, e.machine()),
         "unibus" => check_unibus(which, e.machine()),
         _ => unreachable!(),
     }

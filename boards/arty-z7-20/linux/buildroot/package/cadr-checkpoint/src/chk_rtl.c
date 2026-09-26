@@ -37,6 +37,7 @@
 
 #include "chk_rtl.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -730,6 +731,36 @@ static void emit_mono_tv(struct chk *w, const struct cadr_image *img)
 
 // `QuuxInput::save`: the key words waiting, oldest first, then the flags,
 // the counts and the buttons.
+// `FileDevice::save` (version 43): four flags, the rings' bases and sizes,
+// the three indexes and the head's due time.  On QUUX they are the register
+// page's readout, words 7 to 9; the due time is absent, because a checkpoint
+// is refused while a command is queued and a device with none has taken
+// none.  On the CADR every field is a power-on file device's, which muir's
+// CADR holds and never touches.
+static void emit_file_device(struct chk *w, const struct cadr_image *img)
+{
+	const struct quux_state *q = &img->qx;
+	const int on = img->quux;
+	chk_bool(w, on && q->fd_enabled);		/* READ */
+	chk_bool(w, on && q->fd_ie);			/* READ */
+	chk_bool(w, on && q->fd_refused);		/* READ */
+	chk_bool(w, on && q->fd_fault);			/* READ */
+#if CHK_MUTATE == 18
+	chk_u32(w, on ? q->fd_resp_base : 0);
+	chk_u32(w, on ? q->fd_cmd_log2 : 0);
+	chk_u32(w, on ? q->fd_cmd_base : 0);
+#else
+	chk_u32(w, on ? q->fd_cmd_base : 0);		/* READ */
+	chk_u32(w, on ? q->fd_cmd_log2 : 0);		/* READ */
+	chk_u32(w, on ? q->fd_resp_base : 0);		/* READ */
+#endif
+	chk_u32(w, on ? q->fd_resp_log2 : 0);		/* READ */
+	chk_u16(w, on ? q->fd_cmd_prod : 0);		/* READ */
+	chk_u16(w, on ? q->fd_cmd_cons : 0);		/* READ */
+	chk_u16(w, on ? q->fd_resp_cons : 0);		/* READ */
+	chk_opt_u64(w, 0, 0);				/* IDLE head_due: none queued */
+}
+
 static void emit_quux_input(struct chk *w, const struct cadr_image *img)
 {
 	const struct quux_state *q = &img->qx;
@@ -857,6 +888,20 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		chk_u32(w, 0);				/* NONE tick.interval_us */
 		chk_u64(w, ~(uint64_t)0);		/* NONE tick.interval_deadline_ns */
 	}
+	// **REVISION 9, ON BOTH MACHINES** (versions 42 and 43).  `Rtc::save`:
+	// the real-time clock's setting, and a board's is always the host's
+	// clock, Linux keeping the fabric's count; so the option is absent, as
+	// muir writes it without `--rtc`.  A CADR's machine holds the same.
+#if CHK_MUTATE == 19
+	chk_bool(w, 1);					/* a counted clock */
+	chk_u32(w, 0);
+	chk_u64(w, 0);
+#else
+	chk_bool(w, 0);					/* DECLARED Rtc::Host */
+#endif
+	// `FileDevice::save`: QUUX's as the register page's readout gives it,
+	// the CADR's as a machine that has none holds it.
+	emit_file_device(w, img);
 	// `Machine::dma_written`, version 36: the disk controller wrote since
 	// the engine last looked, which only QUUX's memory cache reads.  A CADR
 	// has no cache, and a halted board's controller has told nothing it has
@@ -1203,6 +1248,20 @@ const char *const *chk_rtl_missing_quux(void)
 	return kMissingQuux;
 }
 
+int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n)
+{
+	if (!img->quux)
+		return 0;
+	const struct quux_state *q = &img->qx;
+	const unsigned queued = (uint16_t)(q->fd_cmd_prod - q->fd_cmd_cons);
+	if (q->fd_handles == 0 && queued == 0)
+		return 0;
+	snprintf(why, n, "the file device has %u handle%s open and %u command%s queued; "
+		 "a checkpoint waits until every handle is closed and every command answered",
+		 q->fd_handles, q->fd_handles == 1 ? "" : "s", queued, queued == 1 ? "" : "s");
+	return 1;
+}
+
 // --- what a mutant of this file was built to do ----------------------------
 //
 // **`CHK_MUTATE` IS NEVER DEFINED IN THE PROGRAM THAT GOES ON THE BOARD.**
@@ -1259,6 +1318,10 @@ const char *chk_rtl_mutation(void)
 	return "the register page's bus errors written 0";
 #elif CHK_MUTATE == 17
 	return "block-disk's disk written a block smaller than the pack file";
+#elif CHK_MUTATE == 18
+	return "the file device's two ring bases written crossed";
+#elif CHK_MUTATE == 19
+	return "the real-time clock written counted from 0 where a board's is the host's";
 #else
 	return NULL;
 #endif

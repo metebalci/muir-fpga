@@ -106,6 +106,7 @@
 #define CADR_BOARD_CHAOS_HEX     40001000
 #define CADR_BOARD_SERIAL_HEX    40002000
 #define CADR_BOARD_INPUT_HEX     40003000
+#define CADR_BOARD_FD_HEX        40004000
 #define CADR_BOARD_CONSOLE_HEX   20000000
 #define CADR_BOARD_RESERVED_HEX  B0000000
 #define CADR_BOARD_MAIN_HEX      B0000000
@@ -133,6 +134,7 @@
 #define CADR_BOARD_CHAOS_HEX     40001000
 #define CADR_BOARD_SERIAL_HEX    40002000
 #define CADR_BOARD_INPUT_HEX     40003000
+#define CADR_BOARD_FD_HEX        40004000
 #define CADR_BOARD_CONSOLE_HEX   80000000
 #define CADR_BOARD_RESERVED_HEX  18000000
 #define CADR_BOARD_MAIN_HEX      18000000
@@ -162,6 +164,11 @@
 #define CADR_BOARD_SERIAL_BASE_STR   CADR_BOARD_STR(CADR_BOARD_SERIAL_HEX)
 #define CADR_BOARD_INPUT_BASE        CADR_BOARD_NUM(CADR_BOARD_INPUT_HEX)
 #define CADR_BOARD_INPUT_BASE_STR    CADR_BOARD_STR(CADR_BOARD_INPUT_HEX)
+// QUUX's real-time clock and file device (revision 9), on a QUUX
+// bitstream; a CADR's answers the default's "NONE" there
+// (`docs/file-device.md`).
+#define CADR_BOARD_FD_BASE           CADR_BOARD_NUM(CADR_BOARD_FD_HEX)
+#define CADR_BOARD_FD_BASE_STR       CADR_BOARD_STR(CADR_BOARD_FD_HEX)
 #define CADR_BOARD_CONSOLE_BASE      CADR_BOARD_NUM(CADR_BOARD_CONSOLE_HEX)
 #define CADR_BOARD_CONSOLE_BASE_STR  CADR_BOARD_STR(CADR_BOARD_CONSOLE_HEX)
 #define CADR_BOARD_RESERVED_BASE     CADR_BOARD_NUM(CADR_BOARD_RESERVED_HEX)
@@ -189,7 +196,7 @@ _Static_assert(CADR_BOARD_RESERVED_BASE % 0x08000000u == 0u,
 	       "the reservation is aligned to its own 128 MB");
 _Static_assert(CADR_BOARD_RESERVED_BASE <= 0xFFFFFFFFu - 0x07FFFFFFu,
 	       "the reservation is below 4 GB, because every address here is 32 bits");
-// And the faces: four 4 KB pages from the port's first, in the order the
+// And the faces: five 4 KB pages from the port's first, in the order the
 // fabric's split decodes them (`rtl/plumbing/cadr_gp0_split.sv`).
 _Static_assert(CADR_BOARD_CHAOS_BASE == CADR_BOARD_PACK_BASE + 0x1000u,
 	       "the Chaosnet is one page above the pack side");
@@ -197,5 +204,7 @@ _Static_assert(CADR_BOARD_SERIAL_BASE == CADR_BOARD_PACK_BASE + 0x2000u,
 	       "the serial line is two pages above the pack side");
 _Static_assert(CADR_BOARD_INPUT_BASE == CADR_BOARD_PACK_BASE + 0x3000u,
 	       "the keyboard and mouse are three pages above the pack side");
+_Static_assert(CADR_BOARD_FD_BASE == CADR_BOARD_PACK_BASE + 0x4000u,
+	       "QUUX's clock and file device are four pages above the pack side");
 
 #endif

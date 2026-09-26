@@ -135,7 +135,8 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
        $(BUILD)/checkpoint.pass $(BUILD)/quux_readout_window.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
-       $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
+       $(BUILD)/usb_input.pass $(BUILD)/quux_file_device.pass \
+       $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
        $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass \
        $(BUILD)/de25_linux.pass $(BUILD)/rootfs_packages.pass \
@@ -146,7 +147,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
 # QUUX's checks: the whole machine built as QUUX on QUUX's own boot PROM, and
 # each of the programs in `golden/src/quux.rs` that reach what that PROM does
 # not.  The CADR runs the same programs in `CHECK_CADR` above.
-QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset unibus
+QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart unibus
 # QUUX's own, at its synchronous microcycle: the same but `tick` and
 # `tickwait`, which were revision 4's tick, whose period destination 4 set;
 # revision 5 fixes the tick at 60 Hz and gives destination 4 to the interval
@@ -157,12 +158,19 @@ QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset unibus
 # buffer and a pop after it; and `imemsync`, words written into the control
 # store and run, below QUUX's PROM and over it.  And `busreset`, on both
 # machines: `PROG.UNIBUS.RESET` and what each board clears on `-XBUS INIT` and
-# `-UB INIT`, block-disk's command and errors on QUUX.  And `unibus`, the
-# CADR's alone, QUUX having no Unibus: every register of the I/O board and
-# the interface's own two read and written at many phases of the board's
+# `-UB INIT`, block-disk's command and errors on QUUX.  And `startstart`: on
+# QUUX, memory starts in consecutive microcycles, which QUUX holds until the
+# first cycle has gone out; on both machines, a write whose `MD` is loaded in
+# the microcycle after its start, which is the word written.  And `unibus`,
+# the CADR's alone, QUUX having no Unibus: every register of the I/O board
+# and the interface's own two read and written at many phases of the board's
 # clocks, a write nothing takes among them, so that every `-MEMACK` a
-# Unibus slave or the NXM timer makes is compared against muir's.
-QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page clockwait memedge busreset
+# Unibus slave or the NXM timer makes is compared against muir's.  And
+# QUUX's revision 9 (contract Q9): `rtc`, the real-time clock at word 103
+# with the host setting it, and `files`, the file device's registers, rings,
+# interrupt, disable and reset, the testbench playing the host's server from
+# the completions muir's device made.
+QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page clockwait memedge busreset startstart rtc files
 # And those taken at an L of one as well: `divmd`, whose `DIV`s are half
 # `ILONG`, `divmdsync`, whose one `ILONG` filler at an L of one moves the
 # word read a tick against the microcycles, and `tickwin`, whose `ILONG`s put
@@ -173,14 +181,15 @@ QUUX_L1_PROGRAMS := divmd divmdsync tickwin clockwait
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
 # records stay, and `mutations/run.py`'s `PENDING` names them in the same
-# words.  None is pending: the `DIV` of MD that was is ruled (a `DIV` is held
-# nine microcycles after its operands are ready, `cadr_microcycle.sv`).
+# words.  None is pending: revision 9's real-time clock and file device
+# (contract Q9), which held `map` and `page`, are built.
 QUUX_PENDING :=
 QUUX_PENDING_WHY :=
 CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
        $(BUILD)/dispatch_write_order.quux.$(QK).pass \
        $(BUILD)/display_out.quux.pass $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
        $(BUILD)/quux_block_disk.quux.pass $(BUILD)/quux_port.quux.$(QK).pass \
+       $(BUILD)/quux_fd_face.pass \
        $(BUILD)/quux_axi_master.quux.pass \
        $(BUILD)/quux_readout_window.quux.$(QK).pass $(BUILD)/checkpoint.quux.pass \
        $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QK).pass) \
@@ -745,7 +754,8 @@ MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/quux_phase_g
                rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
                rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
                rtl/machine/cadr_dbgin.sv \
-               rtl/plumbing/cadr_bus_audit.sv rtl/machine/quux_feature_page.sv rtl/machine/quux_mono_tv.sv \
+               rtl/plumbing/cadr_bus_audit.sv rtl/machine/quux_rtc.sv rtl/machine/quux_file_device.sv \
+               rtl/machine/quux_feature_page.sv rtl/machine/quux_mono_tv.sv \
                rtl/machine/quux_muldiv.sv rtl/machine/quux_clocks.sv rtl/machine/quux_input.sv rtl/machine/quux_block_disk.sv \
                rtl/machine/quux_cache.sv rtl/machine/quux_mem_port.sv \
                rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
@@ -757,7 +767,7 @@ MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/quux_phase_g
 # list that drifts.
 GP0 := rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_gp_regs.sv \
        rtl/plumbing/cadr_chaos_cable.sv rtl/plumbing/cadr_serial_line.sv \
-       rtl/plumbing/cadr_input_cables.sv
+       rtl/plumbing/cadr_input_cables.sv rtl/plumbing/quux_fd_face.sv
 
 # `M_AXI_GP1` split three ways: the decode, and the console and the debug
 # cable's carrier behind it.  Named here beside GP0's for the same reason ---
@@ -938,6 +948,26 @@ $(BUILD)/muldiv.quux.pass: $(BUILD)/obj_muldiv/Vquux_muldiv $(BUILD)/muldiv.quux
 
 # ------------------------------------------- QUUX's keyboard and mouse
 #
+# **QUUX'S REVISION 9 FROM LINUX'S SIDE** (contract Q9): the page Linux's
+# server and the clock's setter reach, `rtl/plumbing/quux_fd_face.sv`, with
+# the machine's register page behind it, driven over AXI as the server
+# drives it and on the page as the processor does
+# (`tb/quux_fd_face_harness.sv`).  muir has no host side, so every rule of it
+# is held here by name, each with the case just outside it; the machine's
+# side is held against muir by `quux_files` and `quux_rtc`.
+QUUX_FD_FACE_SRC := $(TICKPKG) rtl/machine/quux_rtc.sv rtl/machine/quux_file_device.sv \
+                    rtl/machine/quux_input.sv rtl/machine/quux_feature_page.sv \
+                    rtl/plumbing/cadr_gp_regs.sv rtl/plumbing/quux_fd_face.sv \
+                    tb/quux_fd_face_harness.sv
+
+$(BUILD)/obj_quux_fd_face/Vquux_fd_face_harness: $(QUUX_FD_FACE_SRC) tb/quux_fd_face_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Mdir $(BUILD)/obj_quux_fd_face \
+	    --top-module quux_fd_face_harness $(QUUX_FD_FACE_SRC) $(abspath tb/quux_fd_face_tb.cpp)
+
+$(BUILD)/quux_fd_face.pass: $(BUILD)/obj_quux_fd_face/Vquux_fd_face_harness
+	$(BUILD)/obj_quux_fd_face/Vquux_fd_face_harness
+	@touch $@
+
 # `rtl/machine/quux_input.sv` on its own, against muir's `QuuxInput` over a
 # script of presses, the mouse's counts and buttons, reads and writes and the
 # boot word (`golden/src/quux_input.rs`).  The same module on the whole
@@ -3322,10 +3352,38 @@ $(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness: $(GP0_SPLIT_SRC) \
 	    -Mdir $(BUILD)/obj_gp0_split_axi4 --top-module cadr_gp0_split_harness \
 	    $(GP0_SPLIT_SRC) $(abspath tb/cadr_gp0_split_tb.cpp)
 
+# **AND BOTH AGAIN AS QUUX BUILDS THEM**, with the fifth page, QUUX's clock
+# and file device (`rtl/plumbing/quux_fd_face.sv`), behind the split: the
+# two above are the CADR's, where that page is the default's, and these hold
+# that on QUUX the face answers it, every mapped word by its index and
+# nothing else, and that the rest of the window is unchanged.
+$(BUILD)/obj_gp0_split_quux/Vcadr_gp0_split_harness: $(GP0_SPLIT_SRC) \
+                                                     tb/cadr_gp0_split_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
+	    -GHAS_FD=1\'b1 -CFLAGS -DGP_HAS_FD=1 \
+	    -Mdir $(BUILD)/obj_gp0_split_quux --top-module cadr_gp0_split_harness \
+	    $(GP0_SPLIT_SRC) $(abspath tb/cadr_gp0_split_tb.cpp)
+
+$(BUILD)/obj_gp0_split_quux_axi4/Vcadr_gp0_split_harness: $(GP0_SPLIT_SRC) \
+                                                          tb/cadr_gp0_split_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
+	    -GID_W=4 -GLEN_W=8 \
+	    -GPACK_BASE=32\'h0000_0000 -GCHAOS_BASE=32\'h0000_1000 \
+	    -GSER_BASE=32\'h0000_2000 -GINPUT_BASE=32\'h0000_3000 -GFD_BASE=32\'h0000_4000 \
+	    -GHAS_FD=1\'b1 -CFLAGS -DGP_HAS_FD=1 \
+	    -CFLAGS -DGP_ID_W=4 -CFLAGS -DGP_LEN_W=8 \
+	    -CFLAGS -DGP_PORT_BASE=0x00000000u \
+	    -Mdir $(BUILD)/obj_gp0_split_quux_axi4 --top-module cadr_gp0_split_harness \
+	    $(GP0_SPLIT_SRC) $(abspath tb/cadr_gp0_split_tb.cpp)
+
 $(BUILD)/gp0_split.pass: $(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness \
-                         $(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness
+                         $(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness \
+                         $(BUILD)/obj_gp0_split_quux/Vcadr_gp0_split_harness \
+                         $(BUILD)/obj_gp0_split_quux_axi4/Vcadr_gp0_split_harness
 	$(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness
 	$(BUILD)/obj_gp0_split_axi4/Vcadr_gp0_split_harness
+	$(BUILD)/obj_gp0_split_quux/Vcadr_gp0_split_harness
+	$(BUILD)/obj_gp0_split_quux_axi4/Vcadr_gp0_split_harness
 	@touch $@
 
 # The Chaosnet cable's face alone, against the program's calls overlapping
@@ -3807,7 +3865,15 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # T-300's drive (contract Q8a), and renames the instant QUUX's divider counts
 # from.  The CADR's file changes in its version alone: set back to 40, the
 # new file hashes to the digest version 40 had, 18bbdbe2...5493.
-CHECKPOINT_SHA  := f5316240beb319d69f1e1a988cc383ddb846f4f1a1c3087cf25419a4b3fae896
+#
+# **AND WHEN IT WENT 41 TO 43.**  Version 42 writes QUUX's real-time clock's
+# setting after the clocks, and version 43 QUUX's file device after it
+# (contract Q9), on both machines: one byte for the clock, the host's, and
+# twenty-seven for a file device as a machine that has none holds it.  The
+# body grows by those twenty-eight bytes, 632,358 to 632,386, every one
+# of them zero, so the packed file stays 561,553 bytes; muir
+# loads it, saves it back byte for byte and resumes at the same microcycle.
+CHECKPOINT_SHA  := ee0edc8d31dcda680c512b4340c6433d807b8523d6ede2049cd183dd3eeb07b1
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
@@ -3896,7 +3962,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # muir keeps private, so both sides have them as a fresh engine does.  They
 # are the CADR's code, which `build/checkpoint.pass` holds.
 #
-# **THE MUTANTS ARE 9 TO 17** (`chk_rtl.c`'s `chk_rtl_mutation` names each),
+# **THE MUTANTS ARE 9 TO 19** (`chk_rtl.c`'s `chk_rtl_mutation` names each),
 # and each is caught when muir refuses the file, saves other bytes, or the
 # file is not muir's own.  It rides on `build/checkpoint.pass`, which builds
 # the program, the test's binaries in the one work directory and muir.
@@ -3921,7 +3987,7 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	        grep '^resumed' $$W/quux-muir.log; exit 1; }; \
 	 echo "checkpoint.quux: $$(stat -c%s $$W/quux.chk) bytes, the same as muir's own for the same machine,"; \
 	 echo "checkpoint.quux: loaded and saved back identically, resumed $$(grep '^resumed' $$W/quux-muir.log | sed 's/^resumed: [^ ]* //')"; \
-	 for m in 9 10 11 12 13 14 15 16 17; do \
+	 for m in 9 10 11 12 13 14 15 16 17 18 19; do \
 	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/qmut-$$m.out; exit 1; }; \
@@ -4068,6 +4134,7 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(SERIAL_PKG)/S86cadr-serial \
                       $(USB_INPUT_PKG)/S88cadr-usb-input \
                       $(DISK_PACKS_PKG)/S80cadr-disk-packs \
+                      boards/arty-z7-20/linux/buildroot/package/quux-file-device/S81quux-file-device \
                       boards/arty-z7-20/linux/mksd-buildroot.sh \
                       boards/arty-z7-20/linux/mksd-release.sh | $(BUILD)
 	$(MAKE) -C $(COMMON_SRC) check
@@ -4127,6 +4194,35 @@ $(BUILD)/usb_input.pass: $(wildcard $(USB_INPUT_SRC)/*.c) $(wildcard $(USB_INPUT
 	$(MAKE) -C $(USB_INPUT_SRC) clean
 	@echo "usb_input: the program builds, a USB key becomes MIT's own key position with the"
 	@echo "usb_input: shift level applied here, and a burst obeys the machine's own pacing"
+	@touch $@
+
+# **QUUX's FILE DEVICE, THE LINUX SIDE, HELD TO muir's OWN DEVICE.**
+# `quux-file-device` answers the machine's command ring out of DDR, and
+# muir's `file_device::FileDevice` is what it must answer like.  So
+# `golden/src/quux_file_device.rs` runs muir's device over each of the
+# package's scripts of rings (`qfd_scenarios.py`) against one copy of a
+# folder, the package's `qfd_test` runs its own core, service step and face
+# over the same script against another copy, and `qfd_compare.py` holds the
+# two transcripts and the two folders after to each other byte for byte;
+# then the status of every errno, then the unit checks, then the package's
+# own mutation list, which prints "N caught, 0 survived, 0 broken".  muir's
+# pin is a prerequisite, because the judge is muir itself: a new pin reruns
+# it.  The top-level mutation runner does not reach these sources.
+QFD_PKG  := boards/arty-z7-20/linux/buildroot/package/quux-file-device
+QFD_SRC  := $(QFD_PKG)/src
+QFD_WORK := $(abspath $(BUILD))/quux-file-device-work
+QFD_GOLDEN := $(abspath golden/target/release/quux_file_device)
+$(BUILD)/quux_file_device.pass: $(wildcard $(QFD_SRC)/*.c) $(wildcard $(QFD_SRC)/*.h) \
+                                $(wildcard $(QFD_SRC)/*.py) $(QFD_SRC)/Makefile \
+                                $(QFD_SRC)/qfd_mutations.txt \
+                                $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
+                                golden/src/quux_file_device.rs golden/Cargo.toml muir.commit | $(BUILD)
+	$(CARGO) build --quiet --release --manifest-path golden/Cargo.toml --bin quux_file_device
+	$(MAKE) -C $(QFD_SRC) check WORK=$(QFD_WORK) QFD_GOLDEN=$(QFD_GOLDEN)
+	$(MAKE) -C $(QFD_SRC) all COMMON=host
+	$(MAKE) -C $(QFD_SRC) clean
+	@echo "quux_file_device: the program builds, and its answers and the folders it leaves are"
+	@echo "quux_file_device: muir's own device's, byte for byte, over every script"
 	@touch $@
 
 $(BUILD):
@@ -4438,7 +4534,8 @@ BR_DE25_CHECK := boards/de25-nano/linux/buildroot_check.py
 # fails the gate and not the board.  The packages are compiled in a copy, so
 # that this never shares a source directory with the checks that build there.
 DE25_LINUX_PROGRAMS := cadr-console cadr-readout cadr-checkpoint cadr-disk-packs \
-                       cadr-serial cadr-chaosnet cadr-terminal cadr-usb-input
+                       cadr-serial cadr-chaosnet cadr-terminal cadr-usb-input \
+                       quux-file-device
 DE25_LINUX_WORK := $(HOME)/.cache/muir-fpga-de25-linux-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 $(BUILD)/de25_linux.pass: $(BR_DE25_CHECK) \
                           boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig \

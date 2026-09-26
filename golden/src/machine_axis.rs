@@ -27,6 +27,10 @@ use muir::isa::Insn;
 use muir::machine::{Geometry, Machine};
 use muir::tv::{Board, check_mono_tv_size};
 
+/// The second QUUX's real-time clock reads at power-on in every trace:
+/// 2026-09-22 23:17:37 UTC, chosen for bits in every nibble.
+pub const RTC_START: u32 = 1_790_119_057;
+
 /// MONO TV's size in every QUUX bitstream: 1280 by 1024, one bit a pixel.
 pub const MONO_TV_WIDTH: usize = 1280;
 pub const MONO_TV_HEIGHT: usize = 1024;
@@ -89,6 +93,15 @@ impl Which {
             // `--machine quux`, the CADR controller refused there: no pack on
             // it here, which is how the fabric's traces are taken too.
             m.block_disk = Some(muir::block_disk::BlockDisk::new(muir::block_disk::BLOCK_NS));
+            // **THE REAL-TIME CLOCK IS COUNTED, NEVER LIVE, IN A TRACE**
+            // (revision 9): muir's `--rtc <s>`, word 103 reading `RTC_START`
+            // at power-on and a second more for each 10^9 ns of the
+            // machine's own time.  Live, it would read the host's clock and
+            // no two runs of a generator would agree.  A trace that reads the
+            // word says so in a `# rtc` line, and the testbench loads the
+            // same start into the fabric's counter through the machine's
+            // host side, as Linux does on a board.
+            m.rtc = muir::machine::Rtc::Counted { start: RTC_START, base_ns: 0 };
         }
         m
     }

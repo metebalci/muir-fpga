@@ -287,6 +287,11 @@ foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv] {
     }
     lappend sources $f
 }
+# **AND WHETHER THIS VIVADO STILL BUILDS ONE SHAPE OF BLOCK RAM WRONG**, asked
+# of a ten-line design before the board is read; a warning, never a stop.
+# `rams_check.tcl` has the fault, and asks the board itself after synthesis.
+source boards/arty-z7-20/vivado/rams_check.tcl
+rams_canary $part
 read_verilog -sv $sources
 synth_design -top cadr_arty -part $part \
     -generic PROM_HEX=[file normalize $prom] \
@@ -297,6 +302,9 @@ synth_design -top cadr_arty -part $part \
     -generic HDMI=$hdmi \
     -generic LMTV=$lmtv \
     {*}[expr {$machine eq "quux" ? [list -generic MACHINE=quux] : {}}]
+# That every block RAM writes where the RTL says, which synthesis once did
+# not and nothing downstream noticed.  Stops the build if not.
+assert_rams_write_where_the_rtl_says $machine
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilization and timing prose below describes."

@@ -1,0 +1,578 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for quux-file-device: bugs the check has to catch.
+#
+# `mutate.py` applies each record to a copy of this package's sources, builds
+# `qfd_test` against it, and runs the whole check: every script against
+# muir's own answers, the errno table, and the unit checks.  A mutation the
+# check FAILS on is caught; one it passes SURVIVED, and the run is red.  A
+# record whose `@old` no longer matches its file exactly once, or that does
+# not compile, is BROKEN and also fails the run.
+#
+# THE FORMAT is `mutations/list.txt`'s:
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @file      which of this package's sources to mutate
+#   @why       what the check is supposed to notice, printed when it does not
+#   @note      prose, repeatable
+#   @old       the source to replace, exactly as it stands
+#   @new       what to put there; empty deletes
+#   @end
+#
+# WHERE THE LIST CAME FROM.  One record for each decision the program makes
+# that a reader would otherwise take on trust: the order of the statuses, the
+# names' rules, the mounts, the directory records and their continuation,
+# COMPLETE, the buffers and the words a READ writes, writes landing whole,
+# the handles, LOG's text, the sweep; and in the service step and the face,
+# the claim, the epoch, the barrier, the handles on the page and the clock.
+# The first record is the empty server, which every script must refuse.
+#
+# NOT HERE: clearing a failed command's reply words.  No command fills a word
+# of its reply before it fails, here or in muir's `execute`, so a record that
+# removes the clearing changes nothing either can produce: measured, it
+# survived, and it is equivalent rather than a hole.
+
+@mutation the-server-answers-nothing
+@file qfd.c
+@why every script: an empty server answers nothing and muir answers everything
+@old
+	const uint32_t s = command(d, m, opcode, flags, c, &r);
+	if (s)
+		memset(&r, 0, sizeof r);
+	wr(m, resp_at, tag | s << 16 | opcode << 24);
+	for (int k = 0; k < 7; ++k)
+		wr(m, resp_at + 1 + (size_t)k, r.w[k]);
+@new
+	(void)command;
+	(void)tag;
+	(void)flags;
+	(void)resp_at;
+@end
+
+@mutation component-takes-delete
+@file qfd.c
+@why names: /\x7f is IPS
+@old
+		if (c[i] < 040 || c[i] > 0176 || c[i] == '/')
+@new
+		if (c[i] < 040 || c[i] > 0177 || c[i] == '/')
+@end
+
+@mutation component-takes-dot-dot
+@file qfd.c
+@why names: /a/.. and /.. are IPS, so nothing climbs past a mount
+@old
+	if (n == 2 && c[0] == '.' && c[1] == '.')
+		return 0;
+@new
+@end
+
+@mutation no-trailing-slash
+@file qfd.c
+@why names: /sub/ is /sub
+@old
+	if (bl > 0 && body[bl - 1] == '/')
+		--bl;
+@new
+@end
+
+@mutation inside-by-prefix-not-component
+@file qfd.c
+@why symlinks: ../rootx/f is outside root although its name begins with root's
+@old
+	return !strncmp(path, root, n) && (path[n] == '/' || path[n] == '\0');
+@new
+	return !strncmp(path, root, n);
+@end
+
+@mutation case-is-folded
+@file qfd.c
+@why the folding folder of the unit check: README.TXT is not Readme.TXT
+@old
+	return spelled;
+}
+@new
+	(void)spelled;
+	return 1;
+}
+@end
+
+@mutation einval-is-dat
+@file qfd.c
+@why the errno table, and the unit check's EINVAL from a FAT folder: IPS, not DAT
+@old
+	case EINVAL:
+@new
+@end
+
+@mutation eloop-is-dat
+@file qfd.c
+@why the errno table and the symlink loop: ACC
+@old
+	case ELOOP: return QFD_ACC;
+@new
+@end
+
+@mutation enotempty-is-dat
+@file qfd.c
+@why DELETE of a folder not empty: DNE
+@old
+	case ENOTEMPTY: return QFD_DNE;
+@new
+@end
+
+@mutation directory-shows-temporary-files
+@file qfd.c
+@why DIRECTORY and COMPLETE never show .quux-write- names
+@old
+		if (!valid_component((const uint8_t *)name, strlen(name))
+		    || !strncmp(name, QFD_TEMP_PREFIX, strlen(QFD_TEMP_PREFIX)))
+@new
+		if (!valid_component((const uint8_t *)name, strlen(name)))
+@end
+
+@mutation directory-unsorted
+@file qfd.c
+@why DIRECTORY's records are sorted bytewise
+@old
+	closedir(d);
+	if (e2) {
+		entries_free(es);
+		return qfd_errno_status(e2);
+	}
+	entries_sort(es);
+@new
+	closedir(d);
+	if (e2) {
+		entries_free(es);
+		return qfd_errno_status(e2);
+	}
+@end
+
+@mutation directory-lists-symlinks-that-leave
+@file qfd.c
+@why DIRECTORY omits a symlink that leaves its mount
+@old
+			ok = realpath(p, real) && inside(real, root) && stat(real, &m) == 0;
+@new
+			ok = realpath(p, real) && stat(real, &m) == 0;
+@end
+
+@mutation no-too-large-bit
+@file qfd.c
+@why huge.bin's record carries <18>
+@old
+		 | (uint32_t)too_large << 18;
+@new
+		 ;
+@end
+
+@mutation cookie-never-continues
+@file qfd.c
+@why DIRECTORY of /many at 272 bytes gives the next cookie
+@old
+	r->w[R_W6] = next < (size_t)es.n ? (uint32_t)next : 0;
+@new
+	r->w[R_W6] = 0;
+@end
+
+@mutation directory-room-a-byte-short
+@file qfd.c
+@why a DIRECTORY buffer of 271 bytes is bad argument, of 272 it is not
+@old
+	if (b.len < QFD_MIN_DIRECTORY)
+@new
+	if (b.len <= QFD_MIN_DIRECTORY)
+@end
+
+@mutation complete-forgets-a-directory
+@file qfd.c
+@why COMPLETE /c/ape: the exact entry apex is a directory, <3>
+@old
+					r->w[R_FLAGS] = 4u | (uint32_t)es.e[k].dir << 3;
+@new
+					r->w[R_FLAGS] = 4u;
+@end
+
+@mutation complete-overruns-b
+@file qfd.c
+@why COMPLETE /c/b into two bytes: bad argument, and nothing written past B
+@old
+		if (ln > b.len)
+			s = QFD_BAD_ARGUMENT;
+		else {
+@new
+		{
+@end
+
+@mutation a-read-writes-a-word-past
+@file qfd.c
+@why a READ of n bytes writes ceil(n/4) words and no other: the poison after it stays
+@old
+	for (size_t w = 0; w < (n + 3) / 4; ++w) {
+@new
+	for (size_t w = 0; w <= (n + 3) / 4; ++w) {
+@end
+
+@mutation buffer-off-a-line
+@file qfd.c
+@why a buffer off a 4-word line is bad buffer
+@old
+	if ((at & 3) || len > QFD_MAX_BUFFER || at + (len + 3u) / 4u > m->words)
+@new
+	if (len > QFD_MAX_BUFFER || at + (len + 3u) / 4u > m->words)
+@end
+
+@mutation buffer-one-word-past-memory
+@file qfd.c
+@why a buffer ending one word past main memory is bad buffer, one ending at it is not
+@old
+at + (len + 3u) / 4u > m->words)
+@new
+at + (len + 3u) / 4u > m->words + 1)
+@end
+
+@mutation buffer-address-not-masked
+@file qfd.c
+@why an address's bits above <23:0> are not the address
+@old
+	const size_t at = addr & 0xFFFFFFu;
+@new
+	const size_t at = addr;
+@end
+
+@mutation write-leaves-a-hole
+@file qfd.c
+@why a WRITE past what the file holds is FOR
+@old
+		if (offset > h->held || offset + a.len > 0xFFFFFFFFull)
+@new
+		if (offset + a.len > 0xFFFFFFFFull)
+@end
+
+@mutation read-at-the-end-is-for
+@file qfd.c
+@why a READ at the end is 0 bytes, past it FOR
+@old
+		if (offset > len)
+			return QFD_FOR;
+@new
+		if (offset >= len && b.len)
+			return QFD_FOR;
+@end
+
+@mutation append-starts-empty
+@file qfd.c
+@why an append's reply is the old file's length, and the write goes on from there
+@old
+			held = copied;
+@new
+			held = 0;
+			(void)copied;
+@end
+
+@mutation close-forgets-the-date
+@file qfd.c
+@why CLOSE <1> sets the file's time from word 7
+@old
+		if (futimens(h->fd, t) != 0)
+			bad = errno;
+@new
+		(void)t;
+@end
+
+@mutation if-exists-error-overwrites-at-close
+@file qfd.c
+@why a name that appeared meanwhile is FAE at CLOSE, and the host's file stays
+@old
+	if (!bad && (h->noreplace ? rename_noreplace(h->temp, h->target) : h_rename(h->temp, h->target)) != 0)
+@new
+	if (!bad && h_rename(h->temp, h->target) != 0)
+@end
+
+@mutation abort-leaves-the-temporary-file
+@file qfd.c
+@why an abort removes the temporary file: the folder after has none
+@old
+	if (abort_) {
+		handle_close(h, 1);
+@new
+	if (abort_) {
+		handle_close(h, 0);
+@end
+
+@mutation if-exists-error-ignored-at-open
+@file qfd.c
+@why OPEN write, if it exists error, of a name that exists: FAE
+@old
+	else if (f.has && if_exists == 1)
+		s = QFD_FAE;
+@new
+@end
+
+@mutation handles-numbered-from-zero
+@file qfd.c
+@why handles are 1 to 64
+@old
+	r->w[R_HANDLE] = (uint32_t)k + 1;
+	r_len(r, held);
+@new
+	r->w[R_HANDLE] = (uint32_t)k;
+	r_len(r, held);
+@end
+
+@mutation permissions-lost
+@file qfd.c
+@why a superseded file keeps its permissions (mode640.txt)
+@old
+		(void)chmod(temp, f.meta.st_mode & 07777);
+@new
+@end
+
+@mutation rename-across-mounts
+@file qfd.c
+@why RENAME into another mount is RAD
+@old
+	else if (!same_key(&fp, &tp))
+		s = QFD_RAD;
+@new
+@end
+
+@mutation create-directory-dae-is-fae
+@file qfd.c
+@why CREATE-DIRECTORY of a directory is DAE, of a file FAE
+@old
+			s = QFD_DAE;
+@new
+			s = QFD_FAE;
+@end
+
+@mutation delete-a-mount-root
+@file qfd.c
+@why DELETE of a mount's own root is ACC
+@old
+	else if (p.nrel == 0)
+		s = QFD_ACC;
+	else if (!(s = lookup(&p, 0, &f))) {
+@new
+	else if (!(s = lookup(&p, 0, &f))) {
+@end
+
+@mutation read-only-mount-writes
+@file qfd.c
+@why OPEN write under a read-only mount is ATF
+@old
+	if (p->ro)
+		return QFD_ATF;
+	if (p->nrel == 0)
+		return QFD_IOD;
+@new
+	if (p->nrel == 0)
+		return QFD_IOD;
+@end
+
+@mutation ro-flag-not-parsed
+@file qfd.c
+@why a mount given with ,ro is read-only
+@old
+	if (sl >= 3 && !strcmp(spec + sl - 3, ",ro")) {
+		spec[sl - 3] = '\0';
+		ro = 1;
+	}
+@new
+	(void)sl;
+@end
+
+@mutation named-mounts-unsorted
+@file qfd.c
+@why the start lists the named mounts by name, as muir's BTreeMap does
+@old
+		while (at < m->n && strcmp(m->named[at].name, mt.name) < 0)
+@new
+		while (at < m->n)
+@end
+
+@mutation bare-root-not-a-directory
+@file qfd.c
+@why OPEN probe of / with nothing mounted there answers a directory
+@old
+		r->w[R_FLAGS] = 1 | ro_bit;
+@new
+		r->w[R_FLAGS] = ro_bit;
+@end
+
+@mutation kept-symlink-may-leave
+@file qfd.c
+@why DELETE /outfile: a symlink kept as itself must still resolve inside, or ACC
+@old
+				if (!realpath(here, real) || !inside(real, p->root)) {
+@new
+				if (!realpath(here, real)) {
+@end
+
+@mutation log-in-hex
+@file qfd.c
+@why LOG writes a byte outside 040-176 as three octal digits
+@old
+			o += sprintf(o, "\\%03o", bytes[i]);
+@new
+			o += sprintf(o, "\\x%02x", bytes[i]);
+@end
+
+@mutation log-a-byte-longer
+@file qfd.c
+@why a LOG line of 1,025 bytes is bad argument
+@old
+		if (a.len > QFD_MAX_LOG)
+@new
+		if (a.len > QFD_MAX_LOG + 1)
+@end
+
+@mutation refusal-always-plural
+@file qfd.c
+@why the refusal says 1 handle open, as muir's does
+@old
+		 handles, handles == 1 ? "handle open" : "handles open",
+@new
+		 handles, "handles open",
+@end
+
+@mutation sweep-reaches-read-only
+@file qfd.c
+@why the sweep leaves a read-only mount as it is
+@old
+		if (!m->named[k].ro)
+@new
+@end
+
+@mutation sweep-stops-at-the-top
+@file qfd.c
+@why the sweep finds a stale file two folders down
+@old
+			if (S_ISDIR(st.st_mode))
+				n += sweep_dir(p, emit, ctx);
+@new
+			if (0)
+				;
+@end
+
+@mutation epoch-change-keeps-handles
+@file qfd_ring.c
+@why after a disable, a handle from before is a bad handle
+@old
+	if (!g->seen || s.epoch != g->epoch) {
+		qfd_reset(g->d);
+@new
+	if (!g->seen || s.epoch != g->epoch) {
+@end
+
+@mutation no-claim
+@file qfd_ring.c
+@why every word of memory is touched under the claim
+@old
+	if (!f->claim(f->ctx, s.epoch))
+		return 0;
+@new
+@end
+
+@mutation claim-never-dropped
+@file qfd_ring.c
+@why a step returns with the claim dropped
+@old
+	f->complete(f->ctx, s.epoch, (uint16_t)(i + 1));
+	f->state(f->ctx, &u);
+	f->release(f->ctx);
+@new
+	f->complete(f->ctx, s.epoch, (uint16_t)(i + 1));
+	f->state(f->ctx, &u);
+@end
+
+@mutation overtaken-command-published
+@file qfd_ring.c
+@why a command overtaken by a disable is not published, and its handles close
+@old
+	if (u.epoch != s.epoch) {
+		qfd_reset(g->d);
+		g->epoch = u.epoch;
+		f->release(f->ctx);
+		return 1;
+	}
+@new
+@end
+
+@mutation handles-never-told
+@file qfd_ring.c
+@why the page carries the handles open, which a checkpoint is refused on
+@old
+	f->handles(f->ctx, s.epoch, qfd_handles_open(g->d));
+@new
+@end
+
+@mutation response-slot-by-the-command-ring
+@file qfd_ring.c
+@why a response ring of another size than the command ring
+@old
+	const size_t resp_at = u.resp_base + 8u * (i % (1u << u.resp_log2));
+@new
+	const size_t resp_at = u.resp_base + 8u * (i % (1u << u.cmd_log2));
+@end
+
+@mutation no-barrier-before-the-completion
+@file qfd_face_fabric.c
+@why the completion comes after a barrier that follows the last word written
+@old
+	barrier(fb);
+@new
+	(void)barrier;
+@end
+
+@mutation completion-without-its-epoch
+@file qfd_face_fabric.c
+@why the page refuses a completion under another epoch
+@old
+	reg_wr(fb, OFF_RESP_PROD, (uint32_t)epoch << 16 | index);
+@new
+	reg_wr(fb, OFF_RESP_PROD, index);
+@end
+
+@mutation clock-seconds-first
+@file qfd_face_fabric.c
+@why the fraction is staged before the seconds that take it
+@old
+	reg_wr(ctx, OFF_RTC_FRACTION, ns);
+	reg_wr(ctx, OFF_RTC_SECONDS, seconds);
+@new
+	reg_wr(ctx, OFF_RTC_SECONDS, seconds);
+	reg_wr(ctx, OFF_RTC_FRACTION, ns);
+@end
+
+@mutation any-page-is-the-file-device
+@file qfd_face_fabric.c
+@why a page reading NONE is not the file device's
+@old
+	if (id != QFD_IDENT) {
+@new
+	if (0) {
+@end
+
+@mutation claim-without-its-epoch
+@file qfd_face_fabric.c
+@why the page takes a claim only under the current epoch
+@old
+	reg_wr(fb, OFF_CLAIM, (uint32_t)epoch << 16 | 1u);
+@new
+	reg_wr(fb, OFF_CLAIM, 1u);
+@end
+
+@mutation the-start-leaves-a-dead-claim
+@file qfd_face_fabric.c
+@why face: a claim left by a program that died is let go at the start
+@note Busy outlasts a machine reset, so only the program clears it; a start
+@note that did not would leave quiet low for as long as it runs idle.
+@old
+	reg_wr(fb, OFF_CLAIM, 0);
+	return 0;
+@new
+	return 0;
+@end

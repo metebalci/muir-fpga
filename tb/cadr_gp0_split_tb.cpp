@@ -97,6 +97,23 @@ const uint32_t PACK_PAGE = GP_PORT_BASE + 0x0000u;
 const uint32_t CHAOS_PAGE = GP_PORT_BASE + 0x1000u;
 const uint32_t SER_PAGE = GP_PORT_BASE + 0x2000u;
 const uint32_t INPUT_PAGE = GP_PORT_BASE + 0x3000u;
+// QUUX's fifth page, the clock and the file device: its face behind it when
+// the model is built with `GP_HAS_FD` (the harness's `HAS_FD`), and the
+// default's page when it is not, as on a CADR bitstream.
+#ifndef GP_HAS_FD
+#define GP_HAS_FD 0
+#endif
+const uint32_t FD_PAGE = GP_PORT_BASE + 0x4000u;
+const uint32_t W_QFD9 = 0x51464439u;   // "QFD9"
+// The words of the fifth page the face maps onto the machine's host side,
+// and the index each is: 0x010 and 0x014 the clock's, 0x100 to 0x128 the
+// file device's.  Anything else reads zero.
+int FdIndex(uint32_t word) {
+  if (word == 4) return 0;
+  if (word == 5) return 1;
+  if (word >= 0x40 && word <= 0x4A) return static_cast<int>(word - 0x40 + 2);
+  return -1;
+}
 
 const uint32_t W_PACK = 0x5041434Bu;   // "PACK"
 const uint32_t W_CHAO = 0x4348414Fu;   // "CHAO"
@@ -573,7 +590,7 @@ struct Bus {
 
 // Which slave the map says answers `addr`, and what that slave's reply looks
 // like.  This is the map, written once, and the sweep compares against it.
-enum Slave { kPack, kChaos, kSer, kInput, kDflt };
+enum Slave { kPack, kChaos, kSer, kInput, kDflt, kFd };
 
 Slave Owner(uint32_t addr) {
   const uint32_t page = addr & 0xFFFFF000u;
@@ -581,6 +598,7 @@ Slave Owner(uint32_t addr) {
   if (page == CHAOS_PAGE) return kChaos;
   if (page == SER_PAGE) return kSer;
   if (page == INPUT_PAGE) return kInput;
+  if (GP_HAS_FD && page == FD_PAGE) return kFd;
   return kDflt;
 }
 
@@ -590,6 +608,7 @@ const char *Name(Slave s) {
     case kChaos: return "the Chaosnet cable";
     case kSer: return "the serial line";
     case kInput: return "the keyboard and mouse";
+    case kFd: return "QUUX's clock and file device";
     default: return "the default slave";
   }
 }
@@ -701,7 +720,10 @@ int main(int argc, char **argv) {
   // fabric can stand in for this leg.
   long pages = 0, shut_pages = 0;
   long reads = 0, writes = 0;
-  long by[5] = {0, 0, 0, 0, 0};
+  long by[6] = {0, 0, 0, 0, 0, 0};
+  // Writes the sweep made to a word of the fifth page the face maps, which
+  // must each have reached the machine's host side, and no other.
+  long fd_writes_owed = 0;
 
   // What each slave's reply must look like at an address with nothing
   // behind it.  The three faces answer zero and OKAY; the pack side answers
@@ -713,6 +735,7 @@ int main(int argc, char **argv) {
     sweep.push_back(CHAOS_PAGE + 4 * k);
     sweep.push_back(SER_PAGE + 4 * k);
     sweep.push_back(INPUT_PAGE + 4 * k);
+    if (GP_HAS_FD) sweep.push_back(FD_PAGE + 4 * k);
   }
   for (uint32_t p = 4; p < 16; ++p) sweep.push_back(GP0_BASE + (p << 12));
   for (int s = 12; (1u << s) < GP0_SPAN; ++s) {
@@ -766,6 +789,11 @@ int main(int argc, char **argv) {
           if (got != W_INPT)
             FailAt(addr, (std::string("the word at the input page") + when).c_str(),
                    got, W_INPT);
+          break;
+        case kFd:
+          if (got != W_QFD9)
+            FailAt(addr, (std::string("the word at QUUX's fifth page") + when).c_str(),
+                   got, W_QFD9);
           break;
         case kPack:
           // The pack side's word 0 is its ADDR register, which holds
@@ -824,6 +852,18 @@ int main(int argc, char **argv) {
                           + when).c_str(), got, 0);
           break;
         }
+        case kFd: {
+          // IDENT, a mapped word's index as the stand-in names it, or zero.
+          const uint32_t word = (addr & 0xFFFu) >> 2;
+          if (resp != 0)
+            FailAt(addr, (std::string("RRESP from QUUX's fifth page") + when).c_str(), resp, 0);
+          const int idx = FdIndex(word);
+          const uint32_t want = word == 0 ? W_QFD9
+                                : idx >= 0 ? (0x5A5A5A50u | static_cast<uint32_t>(idx)) : 0u;
+          if (got != want)
+            FailAt(addr, (std::string("a word of QUUX's fifth page") + when).c_str(), got, want);
+          break;
+        }
         case kPack: {
           const uint32_t word = (addr & 0xFFFu) >> 2;
           if (got == W_NONE)
@@ -862,6 +902,7 @@ int main(int argc, char **argv) {
       const int resp = b.Write(addr, 0);
       ++*count;
       const uint32_t word = (addr & 0xFFFu) >> 2;
+      if (s == kFd && FdIndex(word) >= 0) ++fd_writes_owed;
       const int want = (s == kPack && word >= 16) ? 2 : 0;
       if (resp != want)
         FailAt(addr, (std::string("BRESP") + when).c_str(), resp, want);
@@ -887,7 +928,7 @@ int main(int argc, char **argv) {
       FailAt(PACK_PAGE + 28, "RRESP at the pack's IDENT with the memory port shut",
              resp, 0);
 
-    long shut_by[5] = {0, 0, 0, 0, 0};
+    long shut_by[6] = {0, 0, 0, 0, 0, 0};
     walk_every_page(kShut, &shut_pages);
     sweep_reads(kShut, &shut_reads, shut_by);
     sweep_writes(kShut, &shut_writes);
@@ -950,9 +991,17 @@ int main(int argc, char **argv) {
     const uint32_t ident_in = b.Read(INPUT_PAGE, &resp);
     if (ident_in != W_INPT) FailAt(INPUT_PAGE, "the input face's IDENT", ident_in, W_INPT);
     if (resp != 0) FailAt(INPUT_PAGE, "RRESP at the input IDENT", resp, 0);
-    const uint32_t none = b.Read(GP0_BASE + 0x4000, &resp);
-    if (none != W_NONE) FailAt(GP0_BASE + 0x4000, "the default slave's word", none, W_NONE);
+    // The fifth page: QUUX's clock and file device on a QUUX build, the
+    // default's on the CADR's; and the first page past it the default's.
+    const uint32_t fifth = b.Read(GP0_BASE + 0x4000, &resp);
+    const uint32_t want_fifth = GP_HAS_FD ? W_QFD9 : W_NONE;
+    if (fifth != want_fifth)
+      FailAt(GP0_BASE + 0x4000, GP_HAS_FD ? "QUUX's fifth page's IDENT" : "the default slave's word",
+             fifth, want_fifth);
     if (resp != 0) FailAt(GP0_BASE + 0x4000, "RRESP at the fifth page", resp, 0);
+    const uint32_t none = b.Read(GP0_BASE + 0x5000, &resp);
+    if (none != W_NONE) FailAt(GP0_BASE + 0x5000, "the default slave's word", none, W_NONE);
+    if (resp != 0) FailAt(GP0_BASE + 0x5000, "RRESP at the sixth page", resp, 0);
   }
 
   // ======================================================================
@@ -3066,6 +3115,30 @@ int main(int argc, char **argv) {
     }
   }
 
+  // **QUUX'S FIFTH PAGE'S WRITES REACHED THE MACHINE'S SIDE, AND ONLY THE
+  // MAPPED ONES**; and a write of fewer than four bytes goes nowhere.
+  if (GP_HAS_FD) {
+    if (dut->fd_host_writes != fd_writes_owed)
+      Fail("writes of QUUX's fifth page that reached the host side", dut->fd_host_writes,
+           fd_writes_owed);
+    const uint16_t before = dut->fd_host_writes;
+    b.Write(FD_PAGE + 0x10, 0x12345678u, 0x1);
+    b.Idle(4);
+    if (dut->fd_host_writes != before)
+      Fail("a byte written to QUUX's fifth page reached the host side", dut->fd_host_writes, before);
+    b.Write(FD_PAGE + 0x11C, 0x0001A5C3u);
+    b.Idle(4);
+    if (dut->fd_host_writes != static_cast<uint16_t>(before + 1) || dut->fd_host_widx != 9 ||
+        dut->fd_host_wdata != 0x0001A5C3u)
+      Fail("a word written at RESP_PROD, as the host side took it",
+           (static_cast<uint64_t>(dut->fd_host_widx) << 32) | dut->fd_host_wdata,
+           (9ull << 32) | 0x0001A5C3u);
+    std::printf("    QUUX's fifth page: its face answered IDENT and every mapped word by its index,\n"
+                "      %ld writes of mapped words reached the machine's host side and a byte did not\n",
+                fd_writes_owed);
+  } else {
+    std::printf("    QUUX's fifth page is the default's on this build, as on a CADR bitstream\n");
+  }
   delete dut;
   if (bad) {
     std::fprintf(stderr, "FAIL: %d mismatches\n", bad);

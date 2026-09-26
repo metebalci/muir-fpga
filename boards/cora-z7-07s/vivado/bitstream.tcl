@@ -201,6 +201,11 @@ foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/cora-z7-07s/*.sv] {
     }
     lappend sources $f
 }
+# The block RAMs' own check, as the Arty Z7-20's flow runs it and from the
+# same file: the canary before the board is read, and after synthesis the
+# assertion that every block RAM writes where the RTL says.
+source boards/arty-z7-20/vivado/rams_check.tcl
+rams_canary $part
 read_verilog -sv $sources
 synth_design -top cadr_cora -part $part \
     -generic PROM_HEX=[file normalize $prom] \
@@ -209,6 +214,7 @@ synth_design -top cadr_cora -part $part \
     -generic DDR=$ddr \
     -generic PROVE=$prove \
     -generic LMTV=$lmtv
+assert_rams_write_where_the_rtl_says cadr
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilization and timing prose below describes."

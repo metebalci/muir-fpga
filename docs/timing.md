@@ -598,6 +598,19 @@ Inside a microcycle:
   word has landed. A `MUL` runs one microcycle after the same wait. This is
   muir's `muldiv::DIV_CYCLES`, and `build/quux_divmd.quux.*` and
   `build/quux_muldiv.quux.*` hold it.
+- A memory start in the microcycle right after a start is held, a `-WAIT`
+  term of QUUX's own, `MEMSTART AND MEMOP`. The first cycle goes out at the
+  next master clock edge with its own address, direction and word, the
+  second start then waits for it to end, and both land. The CADR has no
+  such term: on the board the cycle that goes out takes the second start's
+  direction and `VMA<7:0>`, and the first is lost.
+  `build/quux_startstart.quux.*` holds the hold, with reads and writes to
+  lines missing and cached, and `dispatch-held-by-wait-0` holds it for a
+  fetch.
+- A write carries `MD` as it stands at the edge the cycle goes out on, the
+  edge ending the microcycle after the start, so an `MD` loaded in that
+  microcycle is the word written. This holds on both machines
+  (`build/quux_startstart.pass` and `build/quux_startstart.quux.*`).
 - A console write lands at the master clock edge, and nowhere else.
 - There are no speed bits and no speed synchronizer. The mode register's
   bits 1 and 0 go nowhere.

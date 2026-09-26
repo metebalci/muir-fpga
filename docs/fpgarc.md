@@ -232,6 +232,12 @@ to 2^28 blocks, told apart by its footer and not by its name. A dynamic VHD is
 read and written in place through its block allocation table and grows as
 qemu grows it. Nothing reads a CADR label on QUUX's disk.
 
+**QUUX's file device**, read by `S81quux-file-device`, which starts the program
+only when this file says `--machine quux`. `docs/file-device.md` has the
+program and what it serves when this file says nothing.
+
+    --file-root           a folder served as HOST, muir's flag; once for each mount
+
 **The display boards**, read by `S80cadr-disk-packs` before it starts the disk
 pack program, and written into the console face. `docs/tv.md` has the boards.
 

@@ -2102,12 +2102,14 @@
 @note `ifetch` already means --- `assign ifetch = needfetch && lcinc` --- and
 @note the term is now written with that name and held a tick, so the line
 @note reads `ifetch_q && mbusy_sync`. What the mutation does is unchanged.
+@note And again when QUUX's hold of a start after a start became the last
+@note term: the line after it no longer ends the expression.
 @old
               || (ifetch_q && mbusy_sync)
-              || dividing;
+              || dividing
 @new
               || (ifetch_q && mbusy_sync && 1'b0)
-              || dividing;
+              || dividing
 @end
 
 
@@ -12704,22 +12706,14 @@ if {0 && $held ne $want} {
 @note
 @note The same shape as `dev_wdata`, and caught the same way: UNUSEDSIGNAL at
 @note the declaration, which is the only shape of this bug lint can see.
+@note The anchor is the fold's first line of the four now: QUUX's host side
+@note was added at its end.
 @old
                    dbg_engaged, dbg_foreign, dbg_live, dbg_active, dbg_peer_far, dbg_frames,
                    // The two display boards' color maps, which the console
-                   // reads on pages 4 and 5. On a board with no console they
-                   // reach nobody and are folded here.
-                   con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
-                   con_hdmi_out, con_hdmi_rotate,
-                   dbg_wire_state};
 @new
                    dbg_engaged, dbg_foreign, dbg_live, dbg_peer_far, dbg_frames,
                    // The two display boards' color maps, which the console
-                   // reads on pages 4 and 5. On a board with no console they
-                   // reach nobody and are folded here.
-                   con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
-                   con_hdmi_out, con_hdmi_rotate,
-                   dbg_wire_state};
 @end
 
 # ============================================================================
@@ -16889,10 +16883,11 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note the declaration, which is the only shape of this bug lint can see, and
 @note it is seen on all five configurations rather than only the board with no
 @note processor.
+@note And the fold goes on past it now, to QUUX's host side.
 @old
-                   dbg_active, dbg_wire_state, dbg_frames, dbg_holder};
+                   dbg_active, dbg_wire_state, dbg_frames, dbg_holder,
 @new
-                   dbg_active, dbg_wire_state, dbg_frames};
+                   dbg_active, dbg_wire_state, dbg_frames,
 @end
 
 # ======================================================================
@@ -19765,6 +19760,21 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     assign pdla   = pdl_we ? pdla_read : pdla_write;
 @end
 
+@mutation quux-the-pdl-write-lands-at-the-read-address
+@check quux_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note What Vivado 2026.1's synthesis built of the READ_FIRST PDL buffer:
+@note the address mux dropped, so every write lands at the read address.
+@note In the RTL it is a behavior and the traces catch it; in a netlist it
+@note is `rams_check.tcl`'s to catch, on both boards' flows.  The select is
+@note held low by a constant rather than deleted, so that lint still sees
+@note `pdla_write` read.
+@old
+    assign pdla   = pdl_we ? pdla_write : pdla_read;
+@new
+    assign pdla   = (pdl_we && 1'b0) ? pdla_write : pdla_read;
+@end
+
 @mutation quux-the-feature-page-is-not-decoded
 @check quux_map_quux
 @file rtl/machine/cadr_xbus_decode.sv
@@ -20066,6 +20076,65 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
         if (quux_div) q <= div_q;
 @new
         if (quux_div && qs1 && qs0) q <= div_q;
+@end
+
+@mutation quux-a-start-after-a-start-is-not-held
+@check quux_startstart_quux
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX's own `-WAIT` term, `MEMSTART AND MEMOP` (muir's `Rtl::stall`),
+@note suppressed: a memory start in the microcycle right after a start runs,
+@note as the CADR's does, and the first cycle goes out with the second's
+@note address and direction.
+@old
+    assign start_after_start = memop_q && memstart;
+@new
+    assign start_after_start = memop_q && memstart && 1'b0;
+@end
+
+@mutation quux-a-start-is-held-only-after-a-read
+@check quux_startstart_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The hold only when the first start is a read, so a write followed by
+@note a start in the next microcycle is not held.
+@old
+    assign start_after_start = memop_q && memstart;
+@new
+    assign start_after_start = memop_q && memstart && rdcyc;
+@end
+
+@mutation quux-a-start-is-held-only-after-a-write
+@check quux_startstart_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The hold only when the first start is a write, so a read followed by
+@note a start in the next microcycle is not held.
+@old
+    assign start_after_start = memop_q && memstart;
+@new
+    assign start_after_start = memop_q && memstart && wrcyc;
+@end
+
+@mutation quux-a-fetch-after-a-start-is-not-held
+@check dispatch_write_order_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `MEMOP` includes the macro-instruction fetch, `LCINC AND NEEDFETCH`;
+@note without it a fetch right after a read is not held, which
+@note `dispatch-held-by-wait-0` reaches.
+@old
+    assign start_after_start = memop_q && memstart;
+@new
+    assign start_after_start = memop_q && memstart && !ifetch_q;
+@end
+
+@mutation the-cadr-holds-a-start-after-a-start
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note QUUX's hold on the CADR as well. Nothing on the board holds the second
+@note start; `dispatch-held-by-wait-0` has a fetch right after a read, which
+@note on the CADR goes unheld.
+@old
+    assign start_after_start = 1'b0;
+@new
+    assign start_after_start = memop && memstart;
 @end
 
 @mutation quux-the-divider-holds-eight-cycles
@@ -20797,7 +20866,7 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @file rtl/machine/cadr_machine.sv
 @note The MACHINE-ID of revision 4, before the clocks and the register page.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
 @end
@@ -20818,9 +20887,9 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @file rtl/machine/quux_feature_page.sv
 @note Word 100's `<3>` and `<5>` swapped: the keyboard read as the network.
 @old
-        8'o100:  word = {26'd0, chaos_ireq, in_irq, disk_irq, clock_pending};
+        8'o100:  word = {25'd0, fd_irq, chaos_ireq, in_irq, disk_irq, clock_pending};
 @new
-        8'o100:  word = {26'd0, in_irq[0], in_irq[1], chaos_ireq, disk_irq, clock_pending};
+        8'o100:  word = {25'd0, fd_irq, in_irq[0], in_irq[1], chaos_ireq, disk_irq, clock_pending};
 @end
 
 @mutation quux-word-101-does-not-clear
@@ -20849,9 +20918,9 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note The network's request reaches word 100 and not the processor, as it
 @note did before muir's `1f6f5fb`.
 @old
-  assign irq = (|in_irq) || (chaos_ireq && !prog_unibus_reset_rising);
+  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
 @new
-  assign irq = (|in_irq) || (chaos_ireq && 1'b0 && !prog_unibus_reset_rising);
+  assign irq = (|in_irq) || (((chaos_ireq && 1'b0) || fd_irq) && !prog_unibus_reset_rising);
 @end
 
 @mutation quux-the-fifo-is-sixty-three
@@ -21496,7 +21565,7 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note MACHINE-ID says revision 7, the memory port's, from before the device
 @note registers.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
 @end
@@ -21751,9 +21820,10 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @note The network's term of the register page is not held off while the
 @note reset lands, so `SINTR` at the write's edge still carries it.
 @old
-  assign irq = (|in_irq) || (chaos_ireq && !prog_unibus_reset_rising);
+  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
 @new
-  assign irq = (|in_irq) || (chaos_ireq && !(prog_unibus_reset_rising && 1'b0));
+  assign irq = (|in_irq) || (chaos_ireq && !(prog_unibus_reset_rising && 1'b0))
+               || (fd_irq && !prog_unibus_reset_rising);
 @end
 
 @mutation bus-reset-held-off-for-the-wrong-bit
@@ -22121,4 +22191,687 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 FAULT_SH=/usr/share/cadr/fault.sh
 @new
 FAULT_SH=/usr/share/cadr/faults.sh
+@end
+
+# --------------------------------- QUUX revision 9: the clock and the file device
+#
+# The machine's side is held against muir by `quux_rtc_quux` and
+# `quux_files_quux`, the host's side by `quux_fd_face_quux`, and the page's
+# place on the port by `gp0_split_quux` and `gp0_split_axi4_quux`.
+
+@mutation quux-machine-id-revision-8
+@check quux_rtc_quux
+@file rtl/machine/cadr_machine.sv
+@note MACHINE-ID says revision 8, the device registers', from before the
+@note clock and the file device: the revision just below this one.
+@old
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
+@new
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
+@end
+
+@mutation quux-word-15-names-the-clock-alone
+@check quux_rtc_quux
+@file rtl/machine/quux_feature_page.sv
+@note Feature word 15 says the clock and not the file device, which is
+@note what muir's said between its two commits of revision 9.
+@old
+        8'o15:   word = REV9_DEVICES;
+@new
+        8'o15:   word = REV9_DEVICES & 32'd1;
+@end
+
+@mutation quux-word-103-answers-at-104
+@check quux_rtc_quux
+@file rtl/machine/quux_feature_page.sv
+@note The clock one word up: 103 reads 0 and 104, reserved, the seconds.
+@old
+        8'o103:  word = rtc_seconds;
+@new
+        8'o104:  word = rtc_seconds;
+@end
+
+@mutation quux-the-machine-writes-the-clock
+@check quux_rtc_quux
+@file rtl/machine/quux_feature_page.sv
+@note A write of word 103 sets the seconds, as a write of the host's
+@note RTC_SECONDS does: muir's word 103 is read only, and a write goes nowhere.
+@old
+      .we_seconds (host_we && host_widx == 4'd0),
+      .we_fraction(host_we && host_widx == 4'd1),
+      .wdata      (host_wdata),
+@new
+      .we_seconds ((host_we && host_widx == 4'd0) || (take && dev_write && which == 8'o103)),
+      .we_fraction(host_we && host_widx == 4'd1),
+      .wdata      (host_we ? host_wdata : wdata),
+@end
+
+@mutation quux-the-clock-is-reset-with-the-machine
+@check quux_fd_face_quux
+@file rtl/machine/quux_feature_page.sv
+@note The machine's reset sets the seconds to 0, as a clock inside the
+@note machine would: a band reading word 103 as it boots would read 1970
+@note until Linux set it again.
+@old
+      .we_seconds (host_we && host_widx == 4'd0),
+      .we_fraction(host_we && host_widx == 4'd1),
+      .wdata      (host_wdata),
+@new
+      .we_seconds ((host_we && host_widx == 4'd0) || rst),
+      .we_fraction(host_we && host_widx == 4'd1),
+      .wdata      (rst ? 32'd0 : host_wdata),
+@end
+
+@mutation quux-the-host-reads-the-file-device-at-the-clocks-indexes
+@check quux_fd_face_quux
+@file rtl/machine/quux_feature_page.sv
+@note The host's read of indexes 2 and 3 given the clock's words, and 0 and
+@note 1 the file device's.
+@old
+    rtc_host_sel <= host_ridx[3:1] == 3'd0;
+@new
+    rtc_host_sel <= host_ridx[3:1] == 3'd1;
+@end
+
+@mutation quux-the-host-reads-the-seconds-and-the-fraction-crossed
+@check quux_fd_face_quux
+@file rtl/machine/quux_feature_page.sv
+@old
+    rtc_host_q   <= host_ridx[0] ? {2'd0, rtc_fraction} : rtc_seconds;
+@new
+    rtc_host_q   <= host_ridx[0] ? rtc_seconds : {2'd0, rtc_fraction};
+@end
+
+@mutation quux-word-100-leaves-out-the-file-device
+@check quux_files_quux
+@file rtl/machine/quux_feature_page.sv
+@note Word 100's `<6>` reads 0: the file device interrupts the processor and
+@note the processor cannot find out who did.
+@old
+        8'o100:  word = {25'd0, fd_irq, chaos_ireq, in_irq, disk_irq, clock_pending};
+@new
+        8'o100:  word = {25'd0, fd_irq && 1'b0, chaos_ireq, in_irq, disk_irq, clock_pending};
+@end
+
+@mutation quux-the-file-device-does-not-interrupt-the-processor
+@check quux_files_quux
+@file rtl/machine/quux_feature_page.sv
+@note Word 100's `<6>` is up and `SINTR` is not.
+@old
+  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
+@new
+  assign irq = (|in_irq) || ((chaos_ireq || (fd_irq && 1'b0)) && !prog_unibus_reset_rising);
+@end
+
+@mutation quux-bus-reset-file-device-not-held-off
+@check quux_files_quux
+@file rtl/machine/quux_feature_page.sv
+@note The file device's request is not held off while the reset lands, so
+@note `SINTR` at the reset's edge still carries a response waiting.
+@old
+  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
+@new
+  assign irq = (|in_irq) || (chaos_ireq && !prog_unibus_reset_rising) || fd_irq;
+@end
+
+@mutation quux-the-bus-reset-does-not-reach-the-file-device
+@check quux_files_quux
+@file rtl/machine/cadr_machine.sv
+@note `PROG.UNIBUS.RESET` leaves the file device enabled, its command queued.
+@old
+        .xbus_init    (bus_init),
+@new
+        .xbus_init    (1'b0),
+@end
+
+@mutation quux-the-file-device-sees-main-memory-at-half-its-size
+@check quux_files_quux
+@file rtl/machine/cadr_machine.sv
+@note MEM_WORDS and the enable's bound at half the boards' words: the
+@note testbench reads MEM_WORDS through the host side against the boards it
+@note gives the machine.
+@old
+        .mem_words    ({boards, 16'd0}),
+@new
+        .mem_words    ({1'b0, boards, 15'd0}),
+@end
+
+@mutation quux-the-producer-is-shown-before-the-write-buffer-drains
+@check quux_files_quux
+@file rtl/machine/cadr_machine.sv
+@note The host is shown a command the moment 164 is written, with the
+@note command's last word still in the write buffer: the testbench finds the
+@note entry in main memory short of what the processor wrote.
+@old
+        .drained      (mem_drained),
+@new
+        .drained      (1'b1),
+@end
+
+@mutation quux-a-completion-leaves-the-cache-standing
+@check quux_files_quux
+@file rtl/machine/cadr_machine.sv
+@note The host's completion is not an invalidation: the lines the program
+@note read before a response are read again stale after it.
+@old
+      .quux_invalidate(bd_written || fd_invalidate),
+@new
+      .quux_invalidate(bd_written || (fd_invalidate && 1'b0)),
+@end
+
+@mutation quux-the-readout-gives-the-indexes-at-the-bases-word
+@check quux_readout_window_quux
+@file rtl/machine/cadr_machine.sv
+@old
+          14'd7: quux_ro_word <= fd_ro_bases;
+          14'd8: quux_ro_word <= fd_ro_indexes;
+@new
+          14'd7: quux_ro_word <= fd_ro_indexes;
+          14'd8: quux_ro_word <= fd_ro_bases;
+@end
+
+@mutation quux-the-readout-gives-no-flags
+@check quux_readout_window_quux
+@file rtl/machine/cadr_machine.sv
+@old
+          14'd9: quux_ro_word <= fd_ro_flags;
+@new
+          14'd9: quux_ro_word <= fd_ro_flags & 48'hFFFF_FFFF_FFF0;
+@end
+
+@mutation rtc-never-carries
+@check quux_fd_face_quux
+@file rtl/machine/quux_rtc.sv
+@old
+      if (carry && sec_q != 32'hFFFF_FFFF) sec_q <= sec_q + 32'd1;
+@new
+      if (carry && sec_q != 32'hFFFF_FFFF && 1'b0) sec_q <= sec_q + 32'd1;
+@end
+
+@mutation rtc-carries-a-tick-early
+@check quux_fd_face_quux
+@file rtl/machine/quux_rtc.sv
+@note The second ends 10 ns short.
+@old
+  assign carry         = next_fraction >= SECOND;
+@new
+  assign carry         = next_fraction >= SECOND - STEP;
+@end
+
+@mutation rtc-carries-a-tick-late
+@check quux_fd_face_quux
+@file rtl/machine/quux_rtc.sv
+@note The second ends 10 ns long, the fraction reaching 10^9 before it
+@note carries.
+@old
+  assign carry         = next_fraction >= SECOND;
+@new
+  assign carry         = next_fraction > SECOND;
+@end
+
+@mutation rtc-wraps-at-the-last-second
+@check quux_fd_face_quux
+@file rtl/machine/quux_rtc.sv
+@note Past 2^32 - 1 the seconds go to 0, which reads as no clock at all.
+@old
+      if (carry && sec_q != 32'hFFFF_FFFF) sec_q <= sec_q + 32'd1;
+@new
+      if (carry) sec_q <= sec_q + 32'd1;
+@end
+
+@mutation rtc-the-seconds-start-at-no-fraction
+@check quux_fd_face_quux
+@file rtl/machine/quux_rtc.sv
+@note A write of the seconds ignores the staged fraction.
+@old
+      frac_q <= stage;
+@new
+      frac_q <= stage & 30'd0;
+@end
+
+@mutation rtc-the-stage-is-kept
+@check quux_fd_face_quux
+@file rtl/machine/quux_rtc.sv
+@note The staged fraction is used again by the next write of the seconds.
+@old
+      frac_q <= stage;
+      stage  <= 30'd0;
+@new
+      frac_q <= stage;
+@end
+
+@mutation rtc-a-whole-second-is-staged
+@check quux_fd_face_quux
+@file rtl/machine/quux_rtc.sv
+@note A fraction of exactly a second is taken: the bound just outside the
+@note largest one there is, 999,999,999 ns.
+@old
+      if (we_fraction && wdata < 32'd1_000_000_000) stage <= wdata[29:0];
+@new
+      if (we_fraction && wdata <= 32'd1_000_000_000) stage <= wdata[29:0];
+@end
+
+@mutation rtc-counts-twenty-a-tick
+@check quux_fd_face_quux
+@file rtl/machine/quux_rtc.sv
+@old
+  localparam logic [29:0] STEP   = 30'(TICK_NS);
+@new
+  localparam logic [29:0] STEP   = 30'(2 * TICK_NS);
+@end
+
+@mutation fd-quiet-while-busy
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note Quiet reads 1 as soon as the device is disabled, with the host still
+@note copying under its claim: muir's quiet, which the boards cannot keep.
+@old
+      8'o161: rdata = {8'd0, handles, 7'd0, cons != resp_cons,
+                       4'd0, fault, refused, !enabled && !busy, enabled};
+@new
+      8'o161: rdata = {8'd0, handles, 7'd0, cons != resp_cons,
+                       4'd0, fault, refused, !enabled || !busy, enabled};
+@end
+
+@mutation fd-a-response-waiting-under-the-interrupt-enable
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@note Status `<8>` gated by the interrupt enable, as word 100's `<6>` is: a
+@note polling driver with the enable off never sees a response.
+@old
+      8'o161: rdata = {8'd0, handles, 7'd0, cons != resp_cons,
+@new
+      8'o161: rdata = {8'd0, handles, 7'd0, ie && (cons != resp_cons),
+@end
+
+@mutation fd-the-interrupt-ignores-its-enable
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@old
+  assign irq = ie && (cons != resp_cons || pub);
+@new
+  assign irq = (cons != resp_cons || pub);
+@end
+
+@mutation fd-the-interrupt-comes-with-the-index
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@note The interrupt rises in the tick 170 does rather than the tick before:
+@note `SINTR` is taken at the edge from the tick before it, so a completion
+@note due at an edge reaches the processor a microcycle after muir's.
+@old
+  assign irq = ie && (cons != resp_cons || pub);
+@new
+  assign irq = ie && (cons != resp_cons);
+@end
+
+@mutation fd-the-index-lands-with-the-interrupt
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note 165 and 170 move in the tick the interrupt rises, a tick early: a read
+@note asked in that tick answers for an instant before the due time.
+@old
+      if (h_complete) begin
+        cons_refused <= !complete_ok;
+        if (complete_ok) begin
+          pub    <= 1'b1;
+          pub_to <= host_wdata[15:0];
+        end
+      end
+@new
+      if (h_complete) begin
+        cons_refused <= !complete_ok;
+        if (complete_ok) begin
+          pub    <= 1'b1;
+          pub_to <= host_wdata[15:0];
+          cons   <= host_wdata[15:0];
+        end
+      end
+@end
+
+@mutation fd-a-completion-invalidates-nothing
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@old
+  assign invalidate = pub;
+@new
+  assign invalidate = pub && 1'b0;
+@end
+
+@mutation fd-a-completion-invalidates-a-tick-later
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note The invalidation a tick later, in the tick 165 and 170 show the new
+@note index rather than the tick before.  The machine cannot see this one:
+@note the port drops the cache at its next grant after the pulse, and no
+@note grant can follow a read of 170 within a tick.  The face's check holds
+@note the order by the tick, which is where it is caught.
+@old
+  assign invalidate = pub;
+@new
+  logic inv_d1;
+  always_ff @(posedge clk) inv_d1 <= pub;
+  assign invalidate = inv_d1;
+@end
+
+@mutation fd-the-index-shows-before-the-cache-is-invalidated
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note The invalidation two ticks late, a tick after 165 and 170 show the
+@note new index: the order the device promises, broken by one tick.  Held by
+@note the tick in the face's check.
+@old
+  assign invalidate = pub;
+@new
+  logic inv_d1, inv_d2;
+  always_ff @(posedge clk) begin
+    inv_d1 <= pub;
+    inv_d2 <= inv_d1;
+  end
+  assign invalidate = inv_d2;
+@end
+
+@mutation fd-the-producer-is-shown-undrained
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@old
+      else if (drained) shown <= prod;
+@new
+      else if (drained || 1'b1) shown <= prod;
+@end
+
+@mutation fd-a-completion-in-another-epoch-lands
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note The epoch not compared: a completion the host wrote for the device
+@note before a disable lands after it.
+@old
+  assign in_epoch = enabled && host_wdata[31:16] == epoch;
+@new
+  assign in_epoch = enabled && (host_wdata[31:16] == epoch || 1'b1);
+@end
+
+@mutation fd-a-completion-past-the-commands-shown-lands
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note One past the commands shown to the host: the bound just outside.
+@old
+  assign complete_ok = in_epoch && c_step != 16'd0 && c_step <= (shown - cons_host)
+@new
+  assign complete_ok = in_epoch && c_step != 16'd0 && c_step <= (shown - cons_host) + 16'd1
+@end
+
+@mutation fd-a-completion-of-nothing-lands
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@old
+  assign complete_ok = in_epoch && c_step != 16'd0 && c_step <= (shown - cons_host)
+@new
+  assign complete_ok = in_epoch && c_step <= (shown - cons_host)
+@end
+
+@mutation fd-a-completion-overfills-the-response-ring
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note One past the response ring's size: the bound just outside.
+@old
+                    && c_room <= {7'd0, resp_n};
+@new
+                    && c_room <= {7'd0, resp_n} + 16'd1;
+@end
+
+@mutation fd-work-with-the-response-ring-full
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@old
+  assign work = enabled && shown != cons_host && (cons_host - resp_cons) < {7'd0, resp_n};
+@new
+  assign work = enabled && shown != cons_host && (cons_host - resp_cons) <= {7'd0, resp_n};
+@end
+
+@mutation fd-the-handles-are-not-closed-by-a-disable
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@note A disable leaves 161's handles open where muir's closes every one.
+@old
+        resp_cons <= 16'd0;
+        handles   <= 8'd0;
+        handles_next <= 8'd0;
+        shown     <= 16'd0;
+@new
+        resp_cons <= 16'd0;
+        handles_next <= 8'd0;
+        shown     <= 16'd0;
+@end
+
+@mutation fd-the-handles-land-before-their-completion
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note The count the host writes shows at once, a completion early.
+@old
+      if (host_we && host_widx == H_HANDLES && in_epoch) handles_next <= host_wdata[7:0];
+@new
+      if (host_we && host_widx == H_HANDLES && in_epoch) begin
+        handles_next <= host_wdata[7:0];
+        handles      <= host_wdata[7:0];
+      end
+@end
+
+@mutation fd-a-handle-count-from-another-epoch-lands
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@old
+      if (host_we && host_widx == H_HANDLES && in_epoch) handles_next <= host_wdata[7:0];
+@new
+      if (host_we && host_widx == H_HANDLES && enabled) handles_next <= host_wdata[7:0];
+@end
+
+@mutation fd-a-claim-from-another-epoch-is-taken
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@old
+      else if (in_epoch && !rst) busy <= 1'b1;
+@new
+      else if (enabled && !rst) busy <= 1'b1;
+@end
+
+@mutation fd-a-disable-lets-the-claim-go
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note Busy cleared by the machine's disable: quiet rises with the host still
+@note copying.
+@old
+    if ((m_disable || rst) && enabled) epoch <= epoch + 16'd1;
+@new
+    if ((m_disable || rst) && enabled) epoch <= epoch + 16'd1;
+    if (m_disable) busy <= 1'b0;
+@end
+
+@mutation fd-a-machine-reset-is-not-counted
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note A reset of the whole machine disables the device without moving the
+@note epoch, so a completion from before it lands after it.
+@old
+    if ((m_disable || rst) && enabled) epoch <= epoch + 16'd1;
+@new
+    if (m_disable && enabled) epoch <= epoch + 16'd1;
+@end
+
+@mutation fd-a-disabled-device-counts-a-reset
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@old
+    if ((m_disable || rst) && enabled) epoch <= epoch + 16'd1;
+@new
+    if (m_disable || rst) epoch <= epoch + 16'd1;
+@end
+
+@mutation fd-a-ring-to-a-word-past-main-memory-is-taken
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note The bound just outside: a ring ending a word past main memory.
+@old
+        && ({1'b0, base} + (25'd8 << log2)) <= {2'b00, words};
+@new
+        && ({1'b0, base} + (25'd8 << log2)) <= {2'b00, words} + 25'd1;
+@end
+
+@mutation fd-a-ring-to-main-memorys-end-is-refused
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note And just inside: a ring ending at main memory's last word.
+@old
+        && ({1'b0, base} + (25'd8 << log2)) <= {2'b00, words};
+@new
+        && ({1'b0, base} + (25'd8 << log2)) < {2'b00, words};
+@end
+
+@mutation fd-a-ring-off-a-line-is-taken
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@old
+    return base[1:0] == 2'b00 && log2 <= 4'd8
+@new
+    return log2 <= 4'd8
+@end
+
+@mutation fd-a-ring-of-512-is-taken
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@note The bound just outside: log2 9.
+@old
+    return base[1:0] == 2'b00 && log2 <= 4'd8
+@new
+    return base[1:0] == 2'b00 && log2 <= 4'd9
+@end
+
+@mutation fd-a-producer-past-the-ring-is-taken
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@note One command more than the ring holds: the bound just outside.
+@old
+            if (claimed > {7'd0, cmd_n} || claimed < queued) fault <= 1'b1;
+@new
+            if (claimed > {7'd0, cmd_n} + 16'd1 || claimed < queued) fault <= 1'b1;
+@end
+
+@mutation fd-a-producer-short-of-the-waiting-is-taken
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@old
+            if (claimed > {7'd0, cmd_n} || claimed < queued) fault <= 1'b1;
+@new
+            if (claimed > {7'd0, cmd_n} || (claimed < queued && 1'b0)) fault <= 1'b1;
+@end
+
+@mutation fd-a-consumer-past-the-producer-is-taken
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@note One response past the producer: the bound just outside.
+@old
+            if (past > waiting_resp) fault <= 1'b1;
+@new
+            if (past > waiting_resp + 16'd1) fault <= 1'b1;
+@end
+
+@mutation fd-a-base-is-written-while-enabled
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@old
+          8'o162: if (!enabled) cmd_base  <= wdata[23:0];
+@new
+          8'o162: cmd_base  <= wdata[23:0];
+@end
+
+@mutation fd-a-write-of-160-keeps-the-refusal
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@old
+          8'o160: begin
+            refused <= 1'b0;
+            fault   <= 1'b0;
+@new
+          8'o160: begin
+            fault   <= 1'b0;
+@end
+
+@mutation fd-a-machine-reset-keeps-the-fault
+@check quux_fd_face_quux
+@file rtl/machine/quux_file_device.sv
+@old
+      if (xbus_init) begin
+        refused <= 1'b0;
+        fault   <= 1'b0;
+      end
+@new
+      if (xbus_init) begin
+        refused <= 1'b0;
+      end
+@end
+
+@mutation fd-the-bus-reset-does-not-disable
+@check quux_files_quux
+@file rtl/machine/quux_file_device.sv
+@old
+  assign m_disable = (m_wr_control && enabled && !wdata[0]) || (xbus_init && enabled);
+@new
+  assign m_disable = (m_wr_control && enabled && !wdata[0]);
+@end
+
+@mutation face-the-file-devices-indexes-one-up
+@check quux_fd_face_quux
+@file rtl/plumbing/quux_fd_face.sv
+@old
+    if (word >= 10'h040 && word <= 10'h04A) return 5'h10 | 5'(word - 10'h040 + 10'd2);
+@new
+    if (word >= 10'h040 && word <= 10'h04A) return 5'h10 | 5'(word - 10'h040 + 10'd3);
+@end
+
+@mutation face-mem-words-is-not-mapped
+@check gp0_split_quux
+@file rtl/plumbing/quux_fd_face.sv
+@note The page's last register, 0x128, answering 0: the bound of the map.
+@old
+    if (word >= 10'h040 && word <= 10'h04A) return 5'h10 | 5'(word - 10'h040 + 10'd2);
+@new
+    if (word >= 10'h040 && word <= 10'h049) return 5'h10 | 5'(word - 10'h040 + 10'd2);
+@end
+
+@mutation face-a-byte-is-written-whole
+@check quux_fd_face_quux
+@file rtl/plumbing/quux_fd_face.sv
+@old
+      host_we <= wr && w_idx[4] && wr_mask == 32'hFFFF_FFFF;
+@new
+      host_we <= wr && w_idx[4] && wr_mask != 32'd0;
+@end
+
+@mutation face-says-it-is-something-else
+@check gp0_split_axi4_quux
+@file rtl/plumbing/quux_fd_face.sv
+@old
+    parameter logic [31:0] IDENT = 32'h5146_4439,
+@new
+    parameter logic [31:0] IDENT = 32'h5146_4438,
+@end
+
+@mutation split-the-fifth-page-on-the-cadr
+@check gp0_split
+@file rtl/plumbing/cadr_gp0_split.sv
+@note The page given to the file device's port on a build without it,
+@note whose port answers nothing: the sweep hangs there.
+@old
+    else if (HAS_FD && page == FD_BASE[31:12]) return SEL_FD;
+@new
+    else if ((HAS_FD || 1'b1) && page == FD_BASE[31:12]) return SEL_FD;
+@end
+
+@mutation split-the-fifth-page-a-page-up
+@check gp0_split_quux
+@file rtl/plumbing/cadr_gp0_split.sv
+@old
+    else if (HAS_FD && page == FD_BASE[31:12]) return SEL_FD;
+@new
+    else if (HAS_FD && page == FD_BASE[31:12] + 20'd1) return SEL_FD;
 @end

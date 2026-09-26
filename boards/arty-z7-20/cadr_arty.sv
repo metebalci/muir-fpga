@@ -567,6 +567,14 @@ module cadr_arty #(
   logic        kbd_strobe;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
+  // **AND ON QUUX, THE REAL-TIME CLOCK AND THE FILE DEVICE** (revision 9):
+  // the machine's host side, which `rtl/plumbing/quux_fd_face.sv` puts on the
+  // fifth page of `M_AXI_GP0`, `0x4000_4000`, for Linux's server and the
+  // clock's setter.  Idle on the CADR and on a board with no processing
+  // system, which is a clock nobody sets and a file device nobody serves.
+  logic        host_we;
+  logic [3:0]  host_widx, host_ridx;
+  logic [31:0] host_wdata, host_rdata;
   logic        ser_tx_take, ser_tx_done, ser_rx_strobe, ser_plugged;
   logic [7:0]  ser_rx_data;
   logic        ser_rx_end, ser_rx_parity, ser_rx_framing;
@@ -1003,7 +1011,9 @@ module cadr_arty #(
       // port's own handshakes, at the same boundary and off the same
       // registered copies `rtl/plumbing/cadr_mem_count.sv` counts, so the two
       // instruments cannot disagree about what the port did.
-      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
+      .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
+      .host_ridx(host_ridx), .host_rdata(host_rdata)
   );
 
   // --------------------------------------- the debug cable, on Pmod JA
@@ -1611,6 +1621,14 @@ module cadr_arty #(
     logic        gp0i_bvalid, gp0i_bready, gp0i_arvalid, gp0i_arready;
     logic        gp0i_rlast, gp0i_rvalid, gp0i_rready;
     logic [1:0]  gp0i_bresp, gp0i_rresp;
+    logic [11:0] gp0f_awaddr, gp0f_araddr;
+    logic [31:0] gp0f_wdata, gp0f_rdata;
+    logic [3:0]  gp0f_awlen, gp0f_arlen, gp0f_wstrb;
+    logic [11:0] gp0f_awid, gp0f_arid, gp0f_bid, gp0f_rid;
+    logic        gp0f_awvalid, gp0f_awready, gp0f_wlast, gp0f_wvalid, gp0f_wready;
+    logic        gp0f_bvalid, gp0f_bready, gp0f_arvalid, gp0f_arready;
+    logic        gp0f_rlast, gp0f_rvalid, gp0f_rready;
+    logic [1:0]  gp0f_bresp, gp0f_rresp;
     logic [31:0] gp0d_rdata;
     logic [3:0]  gp0d_arlen;
     logic [11:0] gp0d_awid, gp0d_arid, gp0d_bid, gp0d_rid;
@@ -1790,7 +1808,9 @@ module cadr_arty #(
       gp0_rst_s    <= !gp0_rst_sync[2];
     end
 
-    cadr_gp0_split u_gp0_split (
+    // QUUX's fifth page, the clock and the file device (revision 9); on the
+    // CADR it is the default's.
+    cadr_gp0_split #(.HAS_FD(MACHINE == "quux")) u_gp0_split (
         .clk(clk), .rst(gp0_rst_s),
         .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
         .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
@@ -1842,6 +1862,16 @@ module cadr_arty #(
         .in_arvalid(gp0i_arvalid), .in_arready(gp0i_arready),
         .in_rdata(gp0i_rdata), .in_rresp(gp0i_rresp), .in_rid(gp0i_rid),
         .in_rlast(gp0i_rlast), .in_rvalid(gp0i_rvalid), .in_rready(gp0i_rready),
+        .fd_awaddr(gp0f_awaddr), .fd_awlen(gp0f_awlen), .fd_awid(gp0f_awid),
+        .fd_awvalid(gp0f_awvalid), .fd_awready(gp0f_awready),
+        .fd_wdata(gp0f_wdata), .fd_wstrb(gp0f_wstrb), .fd_wlast(gp0f_wlast),
+        .fd_wvalid(gp0f_wvalid), .fd_wready(gp0f_wready),
+        .fd_bresp(gp0f_bresp), .fd_bid(gp0f_bid), .fd_bvalid(gp0f_bvalid),
+        .fd_bready(gp0f_bready),
+        .fd_araddr(gp0f_araddr), .fd_arlen(gp0f_arlen), .fd_arid(gp0f_arid),
+        .fd_arvalid(gp0f_arvalid), .fd_arready(gp0f_arready),
+        .fd_rdata(gp0f_rdata), .fd_rresp(gp0f_rresp), .fd_rid(gp0f_rid),
+        .fd_rlast(gp0f_rlast), .fd_rvalid(gp0f_rvalid), .fd_rready(gp0f_rready),
         .dflt_awid(gp0d_awid), .dflt_awvalid(gp0d_awvalid),
         .dflt_awready(gp0d_awready),
         .dflt_wlast(gp0d_wlast), .dflt_wvalid(gp0d_wvalid),
@@ -1930,6 +1960,48 @@ module cadr_arty #(
         .mouse_lines(mouse_lines),
         .card_csr(csr_face)
     );
+
+    // QUUX's clock and file device, for Linux's server and the clock's
+    // setter.  The machine's side keeps every rule; this is the page.
+    if (MACHINE == "quux") begin : g_fd_face
+      quux_fd_face u_fd_face (
+          .clk(clk), .rst(gp0_rst_s),
+          .s_awaddr(gp0f_awaddr), .s_awlen(gp0f_awlen), .s_awid(gp0f_awid),
+          .s_awvalid(gp0f_awvalid), .s_awready(gp0f_awready),
+          .s_wdata(gp0f_wdata), .s_wstrb(gp0f_wstrb), .s_wlast(gp0f_wlast),
+          .s_wvalid(gp0f_wvalid), .s_wready(gp0f_wready),
+          .s_bresp(gp0f_bresp), .s_bid(gp0f_bid), .s_bvalid(gp0f_bvalid),
+          .s_bready(gp0f_bready),
+          .s_araddr(gp0f_araddr), .s_arlen(gp0f_arlen), .s_arid(gp0f_arid),
+          .s_arvalid(gp0f_arvalid), .s_arready(gp0f_arready),
+          .s_rdata(gp0f_rdata), .s_rresp(gp0f_rresp), .s_rid(gp0f_rid),
+          .s_rlast(gp0f_rlast), .s_rvalid(gp0f_rvalid), .s_rready(gp0f_rready),
+          .host_we(host_we), .host_widx(host_widx), .host_wdata(host_wdata),
+          .host_ridx(host_ridx), .host_rdata(host_rdata)
+      );
+    end else begin : g_no_fd_face
+      // The split never offers this port a transaction on the CADR
+      // (`HAS_FD`), so what it would answer is never asked.
+      assign gp0f_awready = 1'b0;
+      assign gp0f_wready  = 1'b0;
+      assign gp0f_bresp   = 2'b00;
+      assign gp0f_bid     = '0;
+      assign gp0f_bvalid  = 1'b0;
+      assign gp0f_arready = 1'b0;
+      assign gp0f_rdata   = 32'd0;
+      assign gp0f_rresp   = 2'b00;
+      assign gp0f_rid     = '0;
+      assign gp0f_rlast   = 1'b0;
+      assign gp0f_rvalid  = 1'b0;
+      assign host_we      = 1'b0;
+      assign host_widx    = 4'd0;
+      assign host_wdata   = 32'd0;
+      assign host_ridx    = 4'd0;
+      logic unused_fd_port;
+      assign unused_fd_port = ^{gp0f_awaddr, gp0f_awlen, gp0f_awid, gp0f_awvalid, gp0f_wdata,
+                                gp0f_wstrb, gp0f_wlast, gp0f_wvalid, gp0f_bready, gp0f_araddr,
+                                gp0f_arlen, gp0f_arid, gp0f_arvalid, gp0f_rready};
+    end
 
     cadr_gp0_default u_gp0_rest (
         .clk(clk), .rst(gp0_rst_s),
@@ -2535,6 +2607,12 @@ module cadr_arty #(
     assign kbd_strobe     = 1'b0;
     assign kbd_code       = 24'd0;
     assign mouse_lines    = 7'h7F;
+    // And QUUX's host side, idle: a clock nobody sets and a file device
+    // nobody serves.
+    assign host_we        = 1'b0;
+    assign host_widx      = 4'd0;
+    assign host_wdata     = 32'd0;
+    assign host_ridx      = 4'd0;
 
   end
 
@@ -2681,7 +2759,10 @@ module cadr_arty #(
                    // reach nobody and are folded here.
                    con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
                    con_hdmi_out, con_hdmi_rotate,
-                   dbg_wire_state};
+                   dbg_wire_state,
+                   // QUUX's host side, which the face reads on a QUUX board
+                   // with a processing system, and nobody on any other.
+                   host_rdata};
     end
   end
 
