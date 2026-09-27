@@ -40,7 +40,7 @@
 //     102  mode: <0> error stop, which the mode register's <2> is too
 //     103  the real-time clock, read only: Unix seconds (`quux_rtc.sv`,
 //          contract Q9); a write goes nowhere
-//     104  reset devices, write only: a write with <0> set resets every
+//     104  <0> `RESET-DEVICES`, write only: a write with <0> set resets every
 //          device --- block-disk, the network, the file device and the
 //          interval timers, not the keyboard and mouse --- and reads 0
 //          (revision 10, contract Q11; `reset_devices` below)
@@ -67,7 +67,7 @@
 // `interrupt_at`, `1f6f5fb` for the network's); the timers' reach it from
 // `quux_clocks.sv`, and the disk's on the Xbus line.
 //
-// **RESET DEVICES IS REGISTERED ONCE**: `reset_devices` is up in the tick
+// **`RESET-DEVICES` IS REGISTERED ONCE**: `reset_devices` is up in the tick
 // after the page takes the write, and the devices clear at the end of it,
 // two ticks after the edge that took the cycle.  muir resets them at that
 // edge, after its `SINTR`; the next `SINTR` is taken at the acknowledging
@@ -130,7 +130,7 @@ module quux_feature_page #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
-    // `-XBUS INIT`: the power-on reset and reset devices (`reset_devices`
+    // `-XBUS INIT`: the power-on reset and `RESET-DEVICES` (`reset_devices`
     // below, through `cadr_machine.sv`'s `bus_init`), which disables the
     // file device.
     input  var logic        xbus_init,
@@ -161,7 +161,7 @@ module quux_feature_page #(
     output var logic [2:0]  tm_idx,
     output var logic [23:0] tm_wdata,
     input  var logic [23:0] tm_rdata,
-    // --- word 104: reset devices, the tick after the page takes a write of
+    // --- word 104: `RESET-DEVICES`, the tick after the page takes a write of
     // it with <0> set
     output var logic        reset_devices,
     // --- word 101: the bus errors, and their clear
@@ -383,7 +383,7 @@ module quux_feature_page #(
   assign tm_wdata   = wdata[23:0];
 
   // No term is held off at `INTERRUPT-CONTROL<28>`'s edge: on QUUX it
-  // resets nothing (contract Q11), and reset devices needs no hold-off.
+  // resets nothing (contract Q11), and `RESET-DEVICES` needs no hold-off.
   assign irq = (|in_irq) || chaos_ireq || fd_irq;
 
   // The bus interface ANDs the acknowledgment with `-XBUS.RQ` itself

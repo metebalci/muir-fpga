@@ -616,14 +616,15 @@ fn check_tick(which: Which, m: &muir::machine::Machine, cleared_reads: u64) {
 
 // ---------------------------------------------------------------- clocks
 
-/// Functional destinations 2, 3 and 4: `INTERRUPT-CONTROL`, the destination
-/// 3 alias (timer 0's control, contract Q11) and destination 4, which on
-/// QUUX since revision 10, as on the CADR, writes only M.
+/// Functional destinations 2, 3 and 4: `INTERRUPT-CONTROL`, and 3 and 4,
+/// which on QUUX since revision 10, as on the CADR, write only M (contract
+/// Q11): Q1's tick control and interval timer are gone.
 const DEST_INTCTL: u64 = 2;
 const DEST_CLOCKS: u64 = 3;
 const DEST_PERIOD: u64 = 4;
-/// Destination 3's bits: timer 0's on and clear.  `<3:2>` were Q1's interval
-/// timer's and are ignored since revision 10.
+/// Destination 3's bits as Q1's tick control had them, its on and its clear,
+/// and `<3:2>` its interval timer's: since revision 10 destination 3 writes
+/// only M, and these are the words written to it to show that.
 const TICK_ON: u32 = 1;
 const TICK_CLEAR: u32 = 2;
 /// The PDL buffer's push and its pointer, functional destinations 11 and
@@ -637,7 +638,7 @@ const USEC_AT: u64 = 0o710;
 
 /// **QUUX's interval timers on the register page** (revision 10, contract
 /// Q11): words 110 + 2k and 111 + 2k, timer k's control and status and its
-/// period; word 104, reset devices; word 100 `<0>`, `<1>` and `<7>`.
+/// period; word 104, `<0>` `RESET-DEVICES`; word 100 `<0>`, `<1>` and `<7>`.
 const RESET_DEVICES_WORD: u32 = 0o104;
 const fn tctl(k: u32) -> u32 {
     0o110 + 2 * k
@@ -760,7 +761,7 @@ impl Tp {
         p.fill(2);
     }
 
-    /// Destination 3, the alias, written with `v`.
+    /// Destination 3, which writes only M, written with `v`.
     fn dest3(&mut self, p: &mut Prog, v: u32) {
         let a = self.c.c(p, v);
         p.to(a, fdest(DEST_CLOCKS));
@@ -800,9 +801,10 @@ fn pdl_log(m: &muir::machine::Machine, n: u64) -> Vec<u32> {
 /// one of 0, which stops it; a period of 1 cleared at every read; turned off;
 /// then one-shot: one rise, left up across a wait, cleared, no rise after;
 /// restarted by a period written; turned off and on again without the mode
-/// bit, periodic.  Then the three at once, [`independence`], with reset
-/// devices written with 0, which does nothing; the alias, [`alias`]; the
-/// reserved words; and the shared edge, [`shared_edge`].
+/// bit, periodic.  Then the three at once, [`independence`], with
+/// `RESET-DEVICES` written with 0, which does nothing; destination 3
+/// writing only M, [`destination_3`]; the reserved words; and the shared
+/// edge, [`shared_edge`].
 fn clocks_program() -> Prog {
     clocks_program_layout().0
 }
@@ -836,8 +838,8 @@ fn clocks_program_layout() -> (Prog, Vec<(&'static str, u64, u64)>) {
     independence(&mut p, &mut t);
     mark(&t, "independence", from);
     let from = t.pushes;
-    alias(&mut p, &mut t);
-    mark(&t, "alias", from);
+    destination_3(&mut p, &mut t);
+    mark(&t, "destination 3", from);
     let from = t.pushes;
     for w in [RESET_DEVICES_WORD, 0o105, 0o106, 0o107, 0o116, 0o117] {
         t.rd(&mut p, w);
@@ -995,7 +997,7 @@ fn check_timer_section(k: usize, r: &[u32]) {
 
 /// **The three at once**: timer 0 periodic at 2 us with its interrupt
 /// enable, timer 1 one-shot at 3 us with its, and timer 2 periodic at 5 us
-/// without; then writes of timer 1's words alone --- reset devices written
+/// without; then writes of timer 1's words alone --- `RESET-DEVICES` written
 /// with 0 first, which does nothing --- with every word and word 100 read
 /// between.
 fn independence(p: &mut Prog, t: &mut Tp) {
@@ -1030,7 +1032,7 @@ fn independence(p: &mut Prog, t: &mut Tp) {
 fn check_independence(r: &[u32]) {
     assert_eq!(r.len(), 8 + 5 * 7 + 8 + 7, "independence: the reads counted");
     let all = |i: usize| &r[i..i + 7];
-    for (i, what) in [(8, "at the start"), (15, "after reset devices written with 0"), (22, "after timer 1 cleared"),
+    for (i, what) in [(8, "at the start"), (15, "after RESET-DEVICES written with 0"), (22, "after timer 1 cleared"),
                       (29, "after timer 1's period"), (44, "after timer 1 off")] {
         let w = all(i);
         assert_eq!(w[0] & !T_FLAG, T_ON | T_IE, "independence: timer 0 {what}");
@@ -1048,19 +1050,34 @@ fn check_independence(r: &[u32]) {
     assert_eq!(all(51), &[0, 2, T_ONE_SHOT, 7, 0, 5, 0], "independence: all off");
 }
 
-/// **The destination 3 alias**: timer 0 at 2 us through the page's period,
-/// then turned on by destination 3 --- periodic, its interrupt enable set
-/// --- and read; cleared by destination 3 at twelve phases, each followed at
-/// once by an observation, which takes `SINTR` at the clear's own edge; a
-/// write with the mode and Q1's interval bits, which changes nothing; and
-/// turned off, the interrupt enable kept, the other timers untouched.
-fn alias(p: &mut Prog, t: &mut Tp) {
+/// **Destination 3 writes only M** (revision 10, contract Q11 as amended):
+/// Q1's tick control is gone, and every timer is reached through the page
+/// alone.  Timer 0 at 2 us through the page's period, left off one-shot
+/// with its interrupt enable clear; destination 3 written with 1, Q1's
+/// turn-on, and with 1 and `<3:2>` set, each followed by timer 0's word
+/// read four times and `M[37]` read back: off, one-shot, no enable, and M
+/// the word written.  Then timer 0 turned on through the page, periodic
+/// with its interrupt enable, and read until its flag is up; destination 3
+/// written with 3, Q1's clear, at twelve phases, each followed at once by
+/// an observation, which takes `SINTR` at the write's own edge, and a read:
+/// the flag stays up; then with 0, Q1's turn-off, and with 1, each read:
+/// on, its flag up; word 100 read; and turned off through the page.
+fn destination_3(p: &mut Prog, t: &mut Tp) {
+    let m37 = |p: &mut Prog, t: &mut Tp| {
+        p.fill(1);
+        p.i(ALU | SETM | m_src(0o37) | fdest(DEST_PDL_PUSH));
+        t.pushes += 1;
+    };
     t.wr(p, tper(0), 2);
-    // Left off one-shot, so that the alias's turn-on is seen to make it
-    // periodic.
     t.wr(p, tctl(0), T_ON | T_ONE_SHOT);
     t.wr(p, tctl(0), 0);
     t.dest3(p, TICK_ON);
+    m37(p, t);
+    t.rdn(p, tctl(0), 4);
+    t.dest3(p, TICK_ON | T_ONE_SHOT | 8);
+    m37(p, t);
+    t.rdn(p, tctl(0), 4);
+    t.wr(p, tctl(0), T_ON | T_IE);
     t.rdn(p, tctl(0), 12);
     let (clear, count, one, zero) = (t.c.c(p, TICK_ON | TICK_CLEAR), t.c.c(p, 12), t.c.c(p, 1), t.c.c(p, 0));
     let va = t.c.c(p, t.va(tctl(0)));
@@ -1077,42 +1094,54 @@ fn alias(p: &mut Prog, t: &mut Tp) {
     p.i(JUMP | target(top) | AEQM | INVERT | a_src(zero) | m_src(6) | N);
     p.fill(1);
     t.pushes += 12;
-    t.dest3(p, TICK_ON | T_ONE_SHOT | 8);
-    t.rd(p, tctl(0));
     t.dest3(p, 0);
     t.rd(p, tctl(0));
+    t.dest3(p, TICK_ON);
+    t.rd(p, tctl(0));
+    t.rd(p, 0o100);
     t.rd(p, tctl(1));
     t.rd(p, tctl(2));
     t.wr(p, tctl(0), 0);
 }
 
-fn check_alias(r: &[u32]) {
-    assert_eq!(r.len(), 12 + 12 + 4, "alias: the reads counted");
+fn check_destination_3(r: &[u32]) {
+    assert_eq!(r.len(), 1 + 4 + 1 + 4 + 12 + 12 + 5, "destination 3: the reads counted");
+    assert_eq!(r[0], TICK_ON, "destination 3: its 1 written to M");
+    assert_eq!(&r[1..5], &[T_ONE_SHOT; 4], "destination 3: its 1 leaves timer 0 off: {r:?}");
+    assert_eq!(r[5], TICK_ON | T_ONE_SHOT | 8, "destination 3: its 15 written to M");
+    assert_eq!(&r[6..10], &[T_ONE_SHOT; 4], "destination 3: its 15 leaves timer 0 off: {r:?}");
     let on = T_ON | T_IE;
-    assert!(r[..12].iter().all(|&v| v & !T_FLAG == on), "alias: on, periodic, its enable: {r:?}");
-    assert!(r[..12].contains(&(on | T_FLAG)), "alias: its flag rose: {r:?}");
-    assert!(r[12..24].iter().all(|&v| v & !T_FLAG == on), "alias: cleared, left on: {r:?}");
-    assert_eq!(r[24] & !T_FLAG, on, "alias: the mode and Q1's bits ignored");
-    assert_eq!(&r[25..28], &[T_IE, T_ONE_SHOT, 0], "alias: off, its enable kept; timers 1 and 2 untouched");
+    let (before, cleared) = (&r[10..22], &r[22..34]);
+    assert!(before.iter().all(|&v| v & !T_FLAG == on), "destination 3: on through the page: {r:?}");
+    assert!(before.contains(&(on | T_FLAG)), "destination 3: its flag rose: {r:?}");
+    assert_eq!(cleared, &[on | T_FLAG; 12], "destination 3: its 3 leaves the flag up: {r:?}");
+    assert_eq!(&r[34..36], &[on | T_FLAG; 2], "destination 3: its 0 and its 1 leave timer 0 on, its flag up: {r:?}");
+    assert_eq!(r[36] & T_BIT[0], T_BIT[0], "destination 3: timer 0's bit in word 100");
+    assert_eq!(&r[37..39], &[T_ONE_SHOT, 0], "destination 3: timers 1 and 2 untouched, off");
 }
 
 /// **THE SHARED EDGE** (the contract's M13): a write or a read of the page
 /// whose cycle is taken at the edge ending a destination 3 write, the one
-/// microinstruction after the start.  Timer 0 at 100 us:
+/// microinstruction after the start.  Destination 3 writes only M since
+/// revision 10, so at that edge the page's cycle alone moves timer 0.
+/// Timer 0 at 100 us:
 ///
-///   - destination 3 with 0 at the edge that takes a write of word 110 with
-///     `401`: on after it, the register write taken second;
-///   - destination 3 with 1 against a write of 0: off after it.
+///   - destination 3 with 0, Q1's turn-off, at the edge that takes a write
+///     of word 110 with `401`: on after it;
+///   - destination 3 with 1, Q1's turn-on, against a write of 0: off after
+///     it;
+///   - a read of word 110 at the edge of destination 3 with 1, timer 0 off
+///     one-shot with its interrupt enable clear: as it was.
 ///
 /// Then at 1 us, its flag up, and into `A[203]` and `A[204]` a mark the
 /// observation right after skips when `SINTR` at the shared edge is up:
 ///
-///   - destination 3 with 3 at the edge that takes a write of `401`: the
-///     clear first, so the flag is out of that edge's `SINTR`;
-///   - destination 3 with 1: the flag stays in it.
+///   - destination 3 with 3, Q1's clear, at the edge that takes a write of
+///     `401`: the flag stays in that edge's `SINTR`;
+///   - destination 3 with 1: the same.
 ///
 /// And reads, of word 100 and of word 110, whose cycle is taken at the edge
-/// of a destination 3 write: with 3, a clear, the flag down; with 1, up.
+/// of a destination 3 write, with 3 and with 1: the flag up in both.
 fn shared_edge(p: &mut Prog, t: &mut Tp) {
     let ctl = t.c.c(p, t.va(tctl(0)));
     let w100 = t.c.c(p, t.va(0o100));
@@ -1125,16 +1154,16 @@ fn shared_edge(p: &mut Prog, t: &mut Tp) {
         p.to(d3, fdest(DEST_CLOCKS));
         p.fill(2);
     };
-    // On first, so that the page's write meets the alias's off and not the
-    // timer as it stood before the edge.
+    // On first, so that a destination 3 turn-off, were it one, would meet
+    // the page's write.
     t.wr(p, tctl(0), T_ON | T_IE);
     pair(p, v401, zero);
     t.rd(p, tctl(0));
     pair(p, zero, one);
     t.rd(p, tctl(0));
-    // A read of word 110 whose cycle is taken at the edge of the alias's
-    // turn-on, timer 0 off one-shot with its interrupt enable clear: on,
-    // periodic, its enable set.
+    // A read of word 110 whose cycle is taken at the edge of destination 3
+    // with 1, Q1's turn-on, timer 0 off one-shot with its interrupt enable
+    // clear: as it was.
     t.wr(p, tctl(0), T_ON | T_ONE_SHOT);
     t.wr(p, tctl(0), 0);
     p.to(ctl, START_READ);
@@ -1194,14 +1223,14 @@ fn shared_edge(p: &mut Prog, t: &mut Tp) {
 
 fn check_shared_edge(m: &muir::machine::Machine, r: &[u32]) {
     assert_eq!(r.len(), 7 + 25, "shared edge: the reads counted");
-    assert_eq!(r[0] & !T_FLAG, T_ON | T_IE, "shared edge: word 110's write taken after destination 3's 0");
-    assert_eq!(r[1], 0, "shared edge: word 110's 0 taken after destination 3's 1");
-    assert_eq!(r[2], T_ON | T_IE, "shared edge: word 110 read at the alias's turn-on");
+    assert_eq!(r[0] & !T_FLAG, T_ON | T_IE, "shared edge: word 110's 401 against destination 3's 0, on");
+    assert_eq!(r[1], 0, "shared edge: word 110's 0 against destination 3's 1, off");
+    assert_eq!(r[2], T_ONE_SHOT, "shared edge: word 110 read at destination 3's 1, as it was");
     let r = &r[1..];
-    assert_eq!(m.amem[(RESULT + 3) as usize], 1, "shared edge: destination 3's clear out of that edge's SINTR");
-    assert_eq!(m.amem[(RESULT + 4) as usize], 0, "shared edge: the flag in that edge's SINTR");
-    assert_eq!(&[r[2] & 1, r[3] & 1], &[0, 1], "shared edge: word 100, cleared and not");
-    assert_eq!(&[r[4] & T_FLAG, r[5] & T_FLAG], &[0, T_FLAG], "shared edge: word 110, cleared and not");
+    assert_eq!(m.amem[(RESULT + 3) as usize], 0, "shared edge: the flag in SINTR at destination 3's 3");
+    assert_eq!(m.amem[(RESULT + 4) as usize], 0, "shared edge: the flag in SINTR at destination 3's 1");
+    assert_eq!(&[r[2] & 1, r[3] & 1], &[1, 1], "shared edge: word 100 at destination 3's 3 and 1, up");
+    assert_eq!(&[r[4] & T_FLAG, r[5] & T_FLAG], &[T_FLAG, T_FLAG], "shared edge: word 110 at destination 3's 3 and 1, up");
     let held = &r[6..];
     assert!(held.iter().all(|&v| v & !T_FLAG == T_ON | T_IE), "shared edge: reads at a held edge: {held:?}");
     assert!(held.contains(&(T_ON | T_IE)) && held.contains(&(T_ON | T_FLAG | T_IE)),
@@ -1226,7 +1255,7 @@ fn check_clocks(which: Which, m: &muir::machine::Machine) {
             "timer 1" => check_timer_section(1, r),
             "timer 2" => check_timer_section(2, r),
             "independence" => check_independence(r),
-            "alias" => check_alias(r),
+            "destination 3" => check_destination_3(r),
             "reserved" => assert_eq!(r, &[0; 6], "QUUX: word 104 and the reserved words read 0"),
             "shared edge" => check_shared_edge(m, r),
             _ => unreachable!(),
@@ -1455,7 +1484,7 @@ const PAGE_UNIBUS_CHAOS: u32 = 0o17772060;
 ///   - error stop written through 102, read, and cleared;
 ///   - timers 1 and 2 at 2 us with their interrupt enables, each waited
 ///     for: 100 with `<1>` and `<7>`, and their two words; then 110, 111,
-///     104 (reset devices, which reads 0), feature word 16 and the
+///     104 (`RESET-DEVICES`, which reads 0), feature word 16 and the
 ///     MACHINE-ID (revision 10, contract Q11);
 ///   - the Chaosnet interface: 140 written with Clear Transmitter and the
 ///     transmit interrupt enabled, which raises its request, then 140, the
@@ -1539,7 +1568,7 @@ fn page_program_marks() -> (Prog, u64, u64) {
     // The interval timers (revision 10, contract Q11): timer 1 at 2 us with
     // its interrupt enable, waited for: 100 with `<1>`, 112 and 113; then
     // timer 2 the same: 100 with `<7>`, 114 and 115.  Then 110 and 111, word
-    // 104, reset devices, which reads 0, feature word 16 and the MACHINE-ID.
+    // 104, `RESET-DEVICES`, which reads 0, feature word 16 and the MACHINE-ID.
     for tk in [1, 2] {
         wr(&mut p, &mut c, va(0, tper(tk)), 2);
         wr(&mut p, &mut c, va(0, tctl(tk)), T_ON | T_IE);
@@ -1584,8 +1613,8 @@ fn page_program_marks() -> (Prog, u64, u64) {
     rd(&mut p, &mut c, &mut k, 0o101);
     rd(&mut p, &mut c, &mut k, 0o100);
     // Reserved words: 103 was one until revision 9 made it the real-time
-    // clock, which `rtc` reads, and 104 until revision 10 made it reset
-    // devices, so the next word up stands in for them.
+    // clock, which `rtc` reads, and 104 until revision 10 made it
+    // `RESET-DEVICES`, so the next word up stands in for them.
     rd(&mut p, &mut c, &mut k, 0o105);
     rd(&mut p, &mut c, &mut k, 0o150);
     assert_eq!(k, PAGE_READS, "page: the reads counted");
@@ -2263,11 +2292,11 @@ const UB_INT_BY_HAND: u32 = 0o100000 | 0o300;
 ///
 /// **ON QUUX SINCE REVISION 10 `<28>` RESETS NOTHING AND WORD 104 DOES**
 /// (contract Q11 and the Q9 amendment).  The same devices, and the three
-/// interval timers --- timer 0 turned on by the destination 3 alias, timer 1
-/// through its word, timer 2 one-shot without its interrupt enable --- and
+/// interval timers --- timers 0 and 1 turned on through their words, timer 2
+/// one-shot without its interrupt enable --- and
 /// the file device enabled with an index fault standing; read before, and
 /// again, as `A[200 + n + k]`, after `<28>` raised and lowered, which leaves
-/// every one as it was and holds nothing off `SINTR`; then reset devices
+/// every one as it was and holds nothing off `SINTR`; then `RESET-DEVICES`
 /// written with 0, which does nothing, and with 1, observed at the edges
 /// around its write, and everything read a third time into `A[200 + 2n + k]`:
 /// the disk, the network, the file device and the timers reset, the
@@ -2355,18 +2384,24 @@ fn busreset_program() -> Prog {
         wr(&mut p, va(2, KBD_CSR_WORD), CLOCK_INT_ENABLE);
         wr(&mut p, va(3, INTERRUPT_STATUS_WORD), ENABLE_UB_INTS);
     }
-    // On QUUX the interval timers (revision 10, contract Q11): timer 0 at
-    // 1 us, turned on by the destination 3 alias, periodic with its
-    // interrupt enable; timer 1 at 1 us through its word, the same; timer 2
-    // one-shot at 2 us without it.  And the file device (revision 9)
+    // On QUUX the interval timers (revision 10, contract Q11), each through
+    // its words: timers 0 and 1 at 1 us, periodic with their interrupt
+    // enables; timer 2 one-shot at 2 us without it.  The second of each
+    // pair of equal words is written from the word the first left in
+    // `A[305]`, which keeps the program inside the PROM.  And the file device (revision 9)
     // enabled with its interrupt enable on the rings' reset bases, and an
     // index fault made: a command producer past the ring's one entry.
     if quux {
+        let again = |p: &mut Prog, addr: u32| {
+            p.konst(0o304, addr);
+            p.to(0o305, MD);
+            p.to(0o304, START_WRITE);
+            p.fill(2);
+        };
         wr(&mut p, va(1, tper(0)), 1);
-        p.konst(0o310, TICK_ON);
-        p.to(0o310, fdest(DEST_CLOCKS));
-        wr(&mut p, va(1, tper(1)), 1);
+        again(&mut p, va(1, tper(1)));
         wr(&mut p, va(1, tctl(1)), T_ON | T_IE);
+        again(&mut p, va(1, tctl(0)));
         wr(&mut p, va(1, tper(2)), 2);
         wr(&mut p, va(1, tctl(2)), T_ON | T_ONE_SHOT);
         wr(&mut p, va(1, 0o160), 0x101);
@@ -2396,7 +2431,7 @@ fn busreset_program() -> Prog {
     };
     // **ON QUUX, `<28>` DRIVES NOTHING AND WORD 104 RESETS THE DEVICES**
     // (revision 10, contract Q11): the bit raised and lowered, the devices
-    // read again, then reset devices written with 0, which does nothing, and
+    // read again, then `RESET-DEVICES` written with 0, which does nothing, and
     // with 1, observed at the edges around the write --- the edge that takes
     // it, whose `SINTR` still has the terms the reset takes down, and the
     // next --- and everything read a third time.
@@ -2461,8 +2496,8 @@ fn check_busreset(which: Which, m: &muir::machine::Machine) {
         // as they were, the timers on.
         let mid = |k: u64| r(n + k);
         assert_eq!((mid(0), mid(4) & (1 << 5), mid(5) & 0o44), (0o21011, 1 << 5, 0o44), "QUUX: <28> reset nothing");
-        // The timers before: timer 0 through the alias, periodic with its
-        // enable; timer 1 the same through its word; timer 2 one-shot.
+        // The timers before: timers 0 and 1 periodic with their enables;
+        // timer 2 one-shot.
         let (on, one) = (T_ON | T_IE, T_ON | T_ONE_SHOT);
         assert_eq!([r(7) & !T_FLAG, r(8), r(9) & !T_FLAG, r(10), r(11) & !T_FLAG, r(12)], [on, 1, on, 1, one, 2],
                    "QUUX: the timers before the reset");
@@ -2860,7 +2895,7 @@ const RTC_READS: u64 = 9;
 ///   2  word 103, the clock at the start: `RTC_START`
 ///   3  word 103 after the host set it, at the first mark, to `RTC_SET[0]`
 ///   4  word 103 after the machine wrote `RTC_WRITTEN` there: unchanged
-///   5  word 104, reserved until revision 10 and reset devices since: 0
+///   5  word 104, reserved until revision 10 and `RESET-DEVICES` since: 0
 ///   6  word 103 after the host set it, at the second mark, to 2^32 - 1
 ///   7  word 102, error stop, after the write of 103 changed nothing there
 ///   8  word 101, the bus errors: none
@@ -2911,7 +2946,7 @@ fn check_rtc(which: Which, m: &muir::machine::Machine) {
     assert_eq!(r[2], machine_axis::RTC_START, "QUUX: the clock at the start");
     assert_eq!(r[3], RTC_SET[0], "QUUX: the clock the host set");
     assert_eq!(r[4], RTC_SET[0], "QUUX: a write of 103 goes nowhere");
-    assert_eq!(r[5], 0, "QUUX: word 104, reserved until revision 10 and reset devices since, reads 0");
+    assert_eq!(r[5], 0, "QUUX: word 104, reserved until revision 10 and RESET-DEVICES since, reads 0");
     assert_eq!(r[6], RTC_SET[1], "QUUX: the last second");
     assert_eq!((r[7], r[8]), (0, 0), "QUUX: nothing else moved");
 }
@@ -2991,7 +3026,7 @@ fn fd_command(p: &mut Prog, c: &mut Pool, slot: u32, words: [u32; 7], then_prod:
 ///   50-51  160 and 161 after `INTERRUPT-CONTROL<28>` raised and lowered
 ///          with a command queued and the interrupt up: nothing on QUUX
 ///          since revision 10 (contract Q11)
-///   52-55  160, 161, 165 and 100 after reset devices, word 104 (the Q9
+///   52-55  160, 161, 165 and 100 after `RESET-DEVICES`, word 104 (the Q9
 ///          amendment)
 ///   56     161 again, long after that command's time
 fn files_program() -> Prog {
@@ -3084,7 +3119,7 @@ fn files_program() -> Prog {
     // With a command queued, a handle open and the interrupt up:
     // `INTERRUPT-CONTROL<28>` raised and lowered, which on QUUX since
     // revision 10 drives nothing (contract Q11): 160 and 161 read, the
-    // device still enabled.  Then reset devices, word 104 (the Q9
+    // device still enabled.  Then `RESET-DEVICES`, word 104 (the Q9
     // amendment), which disables it.
     fd_command(&mut p, &mut c, 1, [fd_word0(0x6789, op::OPEN, 0), 0, FD_NAME, 2, 0, 0, 0], Some(2));
     let (on, off) = (c.c(&mut p, 1 << 28), c.c(&mut p, 0));

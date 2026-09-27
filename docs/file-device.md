@@ -147,7 +147,7 @@ a command and dropped after. A disable does not clear busy; only the program
 does.
 
 **The epoch** counts the disables, modulo 2^16. It goes up by one whenever
-enabled goes from 1 to 0, whether the machine wrote 160, reset devices
+enabled goes from 1 to 0, whether the machine wrote 160, `RESET-DEVICES`
 disabled the device, or the whole machine was reset. The claim, the
 handle count and the completion each carry the epoch the program last read,
 and the fabric ignores one that carries a stale epoch. A program that sees the
@@ -157,8 +157,8 @@ holds quiet low, and is never published. Its host effect stands, which the
 contract allows. Neither busy nor the epoch is reset with the machine, so a
 completion from before a machine reset can never land after it.
 
-**Reset devices** is the register page's word 104 (QUUX revision 10,
-contract Q11): a write with `<0>` set disables the device and clears 161
+**`RESET-DEVICES`** is the register page's word 104 `<0>` (QUUX revision
+10, contract Q11): a write with `<0>` set disables the device and clears 161
 `<2>` and `<3>`, as a write of 160 with 0 disables it, whoever writes it.
 The boot PROM writes it before it reads the disk, and muir-sys's microcode
 may write it too. `INTERRUPT-CONTROL<28>`, `PROG.UNIBUS.RESET`, reaches

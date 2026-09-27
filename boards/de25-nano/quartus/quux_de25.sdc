@@ -69,10 +69,9 @@ set_multicycle_path -hold  0 -from $split_md_held -to $split_md
 # clock edge, the edge the processor's registers move on, and read at the
 # next: K ticks.  Source 17 read Q1's status until revision 10, which has it
 # read all ones (contract Q11): its clauses are gone, and `flag_s`, now what
-# the register page reads at the tick it takes a read, stays at the tick,
-# as `L` into it does.
+# the register page reads at the tick it takes a read, stays at the tick.
+# Since destination 3 writes only M, `L` does not reach it.
 set quux_usec_s [get_registers -nowarn [cadr_leaves {u_machine|processor|g_quux_tick.clocks|} {usec_s}]]
-set quux_flag_s [get_registers -nowarn [cadr_leaves {u_machine|processor|g_quux_tick.clocks|} {flag_s}]]
 # sync: K
 set_multicycle_path -setup 4 -from $quux_usec_s -to $slow
 set_multicycle_path -hold  3 -from $quux_usec_s -to $slow

@@ -77,7 +77,7 @@ const CYCLES: u64 = 600_000;
 /// machines, and the cut is gone.
 ///
 /// **And two microcycles more since revision 10's PROM** (contract Q11),
-/// whose writes of reset devices and timer 0's period move the disk's
+/// whose writes of `RESET-DEVICES` and timer 0's period move the disk's
 /// polling so that the old length ended on the microcycle that starts a
 /// poll, a device cycle the trace then never saw answered, which
 /// `tb/cadr_machine_tb.cpp` rightly counts as one the fabric did not

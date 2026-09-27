@@ -151,8 +151,8 @@ QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart un
 # QUUX's own, at its synchronous microcycle: the same but `tick` and
 # `tickwait`, which were revision 4's tick, whose period destination 4 set.
 # Since revision 10 (contract Q11) `clocks` holds the three interval timers
-# on the register page, the destination 3 alias, destination 4 writing M
-# alone, source 17 reading all ones and the shared edge, `tickwin` the window
+# on the register page, destinations 3 and 4 writing M alone, source 17
+# reading all ones and the shared edge, `tickwin` the window
 # between a flag's rise and the edge `SINTR` is taken at against a page
 # write's edges, and `clockwait` the page's reads with a rise a tick either
 # side of the edge that takes them (`golden/src/quux.rs`).  The CADR's sides
@@ -161,8 +161,8 @@ QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart un
 # buffer and a pop after it; and `imemsync`, words written into the control
 # store and run, below QUUX's PROM and over it.  And `busreset`, on both
 # machines: `PROG.UNIBUS.RESET` and what each board clears on `-XBUS INIT` and
-# `-UB INIT`; on QUUX since revision 10 `<28>` resetting nothing and reset
-# devices, word 104, resetting block-disk, the network, the file device and
+# `-UB INIT`; on QUUX since revision 10 `<28>` resetting nothing and
+# `RESET-DEVICES`, word 104 `<0>`, resetting block-disk, the network, the file device and
 # the timers.  And `startstart`: on
 # QUUX, memory starts in consecutive microcycles, which QUUX holds until the
 # first cycle has gone out; on both machines, a write whose `MD` is loaded in
@@ -922,7 +922,7 @@ $(BUILD)/dispatch_write_order.pass: $(BUILD)/obj_dispatch_write_order/Vcadr_mach
 # ------------------------------------------------ the whole machine, QUUX
 #
 # **THE SAME CHECK ON THE OTHER MACHINE.**  `cadr_machine` built with
-# `MACHINE="quux"` and QUUX's boot PROM, version 1000, against muir's `rtl`
+# `MACHINE="quux"` and QUUX's boot PROM, version 2000, against muir's `rtl`
 # engine running that PROM on QUUX: `golden/src/rtl.rs --machine quux`,
 # which clears the 16K-word PDL buffer and 64 blocks of level 2 before its
 # first memory cycle, 131,073 microcycles later than MIT's does, and ends
@@ -3892,7 +3892,13 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # twenty-three bytes, 632,386 to 632,409, and the packed file by nine,
 # 561,553 to 561,562; muir loads it, saves it back byte for byte and resumes
 # at the same microcycle.
-CHECKPOINT_SHA  := cf5eac10d1f33ae409a520e490024c7e813400e891ad2df32f4ccd89a94c7f48
+#
+# **AND WHEN IT WENT 45 TO 46.**  Version 46 writes what version 45 wrote;
+# muir moved the number because destination 3 stopped being timer 0's
+# control at QUUX's revision 10, and it refuses version 45.  Only the
+# header's version changes, and the file stays 561,562 bytes: with that one
+# byte set back to 45 the file hashes to version 45's digest, cf5eac10...7f48.
+CHECKPOINT_SHA  := 0f9a8e33963edf867c95233ca1fed5d5d36d00169cd5a9fbad67a22c0c7fe67d
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed

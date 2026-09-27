@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 //! MIT's boot PROM as a `$readmemh` image, out of muir's own `prom::boot_prom`;
-//! with `--machine quux`, QUUX's version 1000, `prom::quux_boot_prom`, out of
+//! with `--machine quux`, QUUX's version 2000, `prom::quux_boot_prom`, out of
 //! muir's `data/quux-promh.mcr` (`machine_axis.rs`).
 //!
 //! One 48-bit word a line, twelve hex digits, [`PROM_WORDS`] of them --- the

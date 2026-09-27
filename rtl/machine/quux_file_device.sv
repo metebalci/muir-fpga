@@ -32,7 +32,7 @@
 // **Disable is the reset**: the queue dropped, the handles closed, the
 // indexes and the interrupt enable 0, the bases and sizes kept.  **Every
 // machine reset disables it**, `-XBUS INIT` (`xbus_init`): the power-on
-// reset, and since revision 10 reset devices, the register page's word 104
+// reset, and since revision 10 `RESET-DEVICES`, the register page's word 104 <0>
 // (contract Q11 and its Q9 amendment), and not `PROG.UNIBUS.RESET`, which
 // reaches nothing on QUUX; and clears <2> and <3> besides.  Word 100's <6> is `irq`: the interrupt enable and a
 // response waiting, a level.
@@ -102,7 +102,7 @@
 module quux_file_device (
     input  var logic        clk,
     input  var logic        rst,
-    // `-XBUS INIT`: the power-on reset and reset devices, the register
+    // `-XBUS INIT`: the power-on reset and `RESET-DEVICES`, the register
     // page's word 104 (`cadr_machine.sv`'s `bus_init`).
     input  var logic        xbus_init,
 

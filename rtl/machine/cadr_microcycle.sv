@@ -121,7 +121,7 @@
 module cadr_microcycle #(
     // MIT's boot PROM as `golden/src/prom.rs` writes it: 1024 words of
     // twelve hex digits.  Generated into build/, never committed.  On QUUX
-    // it is QUUX's boot PROM, version 1000, which `cadr_machine.sv` is handed.
+    // it is QUUX's boot PROM, version 2000, which `cadr_machine.sv` is handed.
     parameter string PROM_HEX = "build/boot_prom.hex",
 
     // "cadr" or "quux", from `cadr_machine.sv`, and QUUX's MACHINE-ID, which
@@ -271,7 +271,7 @@ module cadr_microcycle #(
     output var logic [2:0]  timer_pending,
     // The register page's words 110-115 and 104 (`quux_feature_page.sv`):
     // a timer's word written in the tick the page takes it, the word the
-    // page names read back, and reset devices.  Unused on the CADR.
+    // page names read back, and `RESET-DEVICES`.  Unused on the CADR.
     input  var logic        tm_we,
     input  var logic [2:0]  tm_idx,
     input  var logic [23:0] tm_wdata,
@@ -879,11 +879,8 @@ module cadr_microcycle #(
   assign mid_group  = destm && !ir[23] && ir[22];
   assign destlc     = low_group && (ir[21:19] == 3'd1);
   assign destintctl = low_group && (ir[21:19] == 3'd2);
-  // QUUX's destination 3 alias, timer 0's control (`machine::Timers::alias`,
-  // contract Q11); on the CADR the low group decodes no 3, and on neither
-  // machine 4, since revision 10: only M is written.
-  logic desttickctl;
-  assign desttickctl = QUUX && low_group && (ir[21:19] == 3'd3);
+  // The low group decodes no 3 or 4, on the CADR and on QUUX since
+  // revision 10 (contract Q11): only M is written.
   assign destpdltop = mid_group && (ir[21:19] == 3'd0);
   assign destpdl_p  = mid_group && (ir[21:19] == 3'd1);
   assign destpdl_x  = mid_group && (ir[21:19] == 3'd2);
@@ -2501,11 +2498,12 @@ module cadr_microcycle #(
   // **THE INTERVAL TIMERS AND THE MICROSECOND CLOCK, IN THE PROCESSOR**
   // (contracts Q1 and Q11, muir's `machine::Timers`): `quux_clocks.sv` has
   // the whole of it, what holds it and where each instant is taken.  Here
-  // are the destination 3 alias and source 15, the register page's words
-  // for the timers, and the interrupt, which is `Machine::interrupt`'s third
-  // term and so reaches neither the Xbus nor the bus interface's interrupt
-  // status.  On the CADR none of it is built: destination 3 writes M alone
-  // and source 15 reads the open bus, all ones.
+  // are source 15, the register page's words for the timers, and the
+  // interrupt, which is `Machine::interrupt`'s third term and so reaches
+  // neither the Xbus nor the bus interface's interrupt status.  Destination
+  // 3 writes M alone on both machines since revision 10, and reaches no
+  // timer.  On the CADR none of this is built: source 15 reads the open
+  // bus, all ones.
   // The clocks' registers for the readout's table (`RG_QUUX_*` below).
   logic [47:0] qclk_ro_time;
   logic [47:0] qclk_ro_count [0:2];
@@ -2517,9 +2515,6 @@ module cadr_microcycle #(
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
-        .dest_ctl (desttickctl),
-        .ob       (ob[1:0]),
-        .l        (l[1:0]),
         .pg_we    (tm_we),
         .pg_idx   (tm_idx),
         .pg_wdata (tm_wdata),
@@ -2543,10 +2538,10 @@ module cadr_microcycle #(
       assign qclk_ro_count[k] = 48'd0;
       assign qclk_ro_conf[k]  = 26'd0;
     end
-    // The alias decodes to zero on the CADR, and the page's words reach
-    // nothing; named so lint sees them read.
+    // The page's words reach nothing on the CADR; named so lint sees them
+    // read.
     logic unused_tick;
-    assign unused_tick = desttickctl ^ tm_we ^ (^tm_idx) ^ (^tm_wdata) ^ reset_devices;
+    assign unused_tick = tm_we ^ (^tm_idx) ^ (^tm_wdata) ^ reset_devices;
   end
 
   // page Q 2A05-2A11: the 74S194s shift under `QS1`/`QS0`.

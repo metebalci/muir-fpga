@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 45.** It is
+version is refused by name rather than read wrong. **The version is 46.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
@@ -133,6 +133,13 @@ writes. Version 45 is QUUX's revision 10: the clocks are three interval
 timers, each written as muir's `Timers::save` has it: on, its mode, its
 interrupt enable, its period and its deadline. The CADR's body grows by 23
 bytes, 632,386 to 632,409.
+
+Version 46 writes what version 45 wrote. It is a new number because
+destination 3 no longer controls timer 0 at QUUX's revision 10: a version 45
+checkpoint of a band whose microcode ran timer 0 through destination 3 would
+resume with timer 0 on and a microcode that can clear it only through
+destination 3, which no longer reaches it, so muir refuses version 45. Only
+the header's version changes.
 
 **A QUUX checkpoint is refused while the file device has a handle open or a
 command queued**, as muir refuses one, with muir's sentence. A handle is a

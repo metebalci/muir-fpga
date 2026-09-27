@@ -156,7 +156,8 @@ set_multicycle_path -hold  0 -from $split_md_held -to $quux_divider
 # gone with it.  `flag_s` is now the flags at the last master clock edge,
 # which the register page reads in the tick it takes a read, into its every-
 # tick registers, and so at the tick; it stays out of the relaxed set by
-# name (`cadr_machine.xdc`), so `L` into it keeps its tick too.
+# name (`cadr_machine.xdc`).  Nothing of `L` or `OB` reaches it since
+# destination 3 writes only M.
 
 # **QUUX'S MEMORY PORT** (contract Q6, `quux_mem_port.sv`, `quux_cache.sv`),
 # out of the relaxed set whole (`cadr_machine.xdc`) but for what the cache

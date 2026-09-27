@@ -247,7 +247,7 @@ if {$prove != 0 && $prove != 1 && $prove != 2} {
 # Everything below asks this rather than `$ddr`.
 set port [expr {($ddr > 0 || $prove > 0 || $hdmi > 0) ? 1 : 0}]
 
-# QUUX boots from its own PROM, version 1000, which `make
+# QUUX boots from its own PROM, version 2000, which `make
 # build/boot_prom.quux.hex` writes out of muir's `data/quux-promh.mcr`.
 set prom [expr {$machine eq "quux" ? "build/boot_prom.quux.hex" : "build/boot_prom.hex"}]
 if {![file exists $prom]} {
@@ -831,15 +831,13 @@ if {$machine eq "quux"} {
     assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" {*processor/md_held_reg*} \
         {*processor/g_quux_muldiv.muldiv/dv_*}
     # And what a microcycle reads of QUUX's clocks: the microsecond clock
-    # the whole microcycle, and `L` into the flags a page read takes, which
-    # are loaded from it a tick after the edge, at the tick.  Source 17's
-    # status, which had a tick less, is gone at revision 10 (contract Q11).
+    # the whole microcycle.  Source 17's status, which had a tick less, is
+    # gone at revision 10 (contract Q11), and so is `L` into the flags a
+    # page read takes: destination 3 writes only M, and nothing of `OB`
+    # reaches the timers.
     # sync: K
     assert_clause_timing $tick 4 "the microsecond clock a microcycle reads" \
         {*processor/g_quux_tick.clocks/usec_s_reg*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "L into the flags a page read takes" {*processor/l_reg*} \
-        {*processor/g_quux_tick.clocks/flag_s_reg*}
     # QUUX's memory port: none of its tick registers relaxed, and the address
     # the cache holds at the microcycle.
     # sync: K

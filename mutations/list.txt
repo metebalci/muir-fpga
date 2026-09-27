@@ -20607,9 +20607,10 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 #
 # The clocks in the processor (contract Q1, `rtl/machine/quux_clocks.sv`),
 # which replaced revision 4's tick and its records, and since revision 10
-# the three interval timers on the register page, the destination 3 alias
-# and reset devices (contract Q11), which replaced Q1's tick, interval timer
-# and source 17 and theirs; the window between a
+# the three interval timers on the register page and `RESET-DEVICES`
+# (contract Q11), which replaced Q1's tick, interval timer and source 17 and
+# theirs, and destination 3 writing only M, which replaced the destination 3
+# alias and its records; the window between a
 # flag's rise and the edge `SINTR` is taken at (muir's `fdc0319`); the
 # boot PROM at 36000 and the register page (Q2); the keyboard and the mouse
 # (Q3, `quux_input.sv`); the network on the page (Q4); block-disk
@@ -20654,19 +20655,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/quux_clocks.sv
 @note A write of a timer's word with `<1>` set leaves its flag up.
 @old
-    assign clear[k]     = ak_clear || (p_ctl[k] && pg_wdata[0] && pg_wdata[1] && flag_a[k]);
+    assign clear[k]   = p_ctl[k] && pg_wdata[0] && pg_wdata[1] && w_flag[k];
 @new
-    assign clear[k]     = ak_clear || (p_ctl[k] && pg_wdata[0] && pg_wdata[1] && flag_a[k] && 1'b0);
-@end
-
-@mutation quux-an-alias-clear-does-not-clear
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note A destination 3 write with `<1>` set leaves timer 0's flag up.
-@old
-  assign a_clear   = w_ctl && l[1] && w_flag[0];
-@new
-  assign a_clear   = w_ctl && l[1] && w_flag[0] && 1'b0;
+    assign clear[k]   = p_ctl[k] && pg_wdata[0] && pg_wdata[1] && w_flag[k] && 1'b0;
 @end
 
 @mutation quux-a-period-write-does-not-restart
@@ -20675,9 +20666,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note A period written while a timer is on takes effect at the next rise rather
 @note than starting a period from the write.
 @old
-    assign p_restart[k] = (p_ctl[k] && pg_wdata[0] && !en_a[k]) || (p_per[k] && en_a[k]);
+    assign restart[k] = (p_ctl[k] && pg_wdata[0] && !w_en[k]) || (p_per[k] && w_en[k]);
 @new
-    assign p_restart[k] = (p_ctl[k] && pg_wdata[0] && !en_a[k]) || (p_per[k] && en_a[k] && 1'b0);
+    assign restart[k] = (p_ctl[k] && pg_wdata[0] && !w_en[k]) || (p_per[k] && w_en[k] && 1'b0);
 @end
 
 @mutation quux-a-period-of-zero-runs
@@ -20712,11 +20703,11 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/quux_clocks.sv
 @note A timer's control word reads its flag in `<0>` and its on in `<1>`.
 @old
-        rd_word[0] = en_e[pg_ridx[2:1]];
+        rd_word[0] = en[pg_ridx[2:1]];
         rd_word[1] = flag_e[pg_ridx[2:1]];
 @new
         rd_word[0] = flag_e[pg_ridx[2:1]];
-        rd_word[1] = en_e[pg_ridx[2:1]];
+        rd_word[1] = en[pg_ridx[2:1]];
 @end
 
 @mutation quux-a-page-read-takes-the-flags-after-its-edge
@@ -20728,9 +20719,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note after the edge).  Measured: the rise 10 ns after the edge is at gap 5 and
 @note three `ILONG`s of `clockwait` at an L of one.
 @old
-  assign flag_e     = w ? flag_a : flag_s;
+  assign flag_e     = w ? w_flag : flag_s;
 @new
-  assign flag_e     = flag | (flag_a & flag_s & 3'b000);
+  assign flag_e     = flag | (w_flag & flag_s & 3'b000);
 @end
 
 @mutation quux-source-15-misses-the-edge
@@ -20762,20 +20753,11 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/quux_clocks.sv
 @note No timer's flag reaches the interrupt the jump conditions test.
 @old
-  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
+  assign irq = (flag[0] && ie[0])
+            || (flag[1] && ie[1]) || (flag[2] && ie[2]);
 @new
-  assign irq = 1'b0 && (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
-@end
-
-@mutation quux-the-alias-interrupts-through-its-own-clear
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note The interrupt taken at the edge of a destination 3 clear is timer 0's
-@note flag before the clear, where muir takes it after the write.
-@old
-  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
-@new
-  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || (ob[1] && 1'b0))))
+  assign irq = 1'b0 && ((flag[0] && ie[0])
+            || (flag[1] && ie[1]) || (flag[2] && ie[2]));
 @end
 
 @mutation quux-sintr-takes-the-flags-the-microcycle-started-with
@@ -20787,10 +20769,10 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note strictly inside the microcycle and inside a wait for `MD`, against a page
 @note write's edges since revision 10.
 @old
-  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
+  assign irq = (flag[0] && ie[0])
             || (flag[1] && ie[1]) || (flag[2] && ie[2]);
 @new
-  assign irq = (flag_s[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
+  assign irq = (flag_s[0] && ie[0])
             || (flag_s[1] && ie[1]) || (flag_s[2] && ie[2]);
 @end
 
@@ -20886,7 +20868,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note A timer's mode is taken from every write of its control word, and not
 @note only from the write that turns it on.
 @old
-          if (p_restart[k]) one_shot[k] <= pg_wdata[2];
+          if (restart[k]) one_shot[k] <= pg_wdata[2];
 @new
           if (1'b1) one_shot[k] <= pg_wdata[2];
 @end
@@ -20899,88 +20881,6 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
               if (one_shot[k]) live[k] <= 1'b0;
 @new
               if (1'b0) live[k] <= 1'b0;
-@end
-
-@mutation quux-the-alias-turn-on-keeps-the-mode
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note Destination 3's turn-on leaves timer 0's mode as it was, where Q1's tick
-@note it stands for was periodic.
-@old
-          ie[k]       <= 1'b1;
-          one_shot[k] <= 1'b0;
-@new
-          ie[k]       <= 1'b1;
-          one_shot[k] <= one_shot[k];
-@end
-
-@mutation quux-the-alias-turn-on-sets-no-interrupt-enable
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note Destination 3's turn-on leaves timer 0's interrupt enable as it was, so the
-@note current band's tick, which turns it on through the alias, never interrupts.
-@old
-          ie[k]       <= 1'b1;
-          one_shot[k] <= 1'b0;
-@new
-          ie[k]       <= ie[k];
-          one_shot[k] <= 1'b0;
-@end
-
-@mutation quux-a-read-at-the-alias-turn-on-misses-its-enable
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note A page read taken at the edge of a destination 3 turn-on reads timer 0's
-@note interrupt enable as it was before it, where muir takes the alias first.
-@old
-  assign ie_e       = {ie[2:1], ie[0] || a_restart};
-@new
-  assign ie_e       = {ie[2:1], ie[0]};
-@end
-
-@mutation quux-a-read-at-the-alias-turn-on-misses-it
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note A page read taken at the edge of a destination 3 turn-on reads timer 0
-@note off, where muir takes the alias first.
-@old
-  assign en_e       = {en[2:1], w_ctl ? l[0] : en[0]};
-@new
-  assign en_e       = {en[2:1], en[0]};
-@end
-
-@mutation quux-a-page-write-meets-the-timer-before-the-alias
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note A page write taken at the edge of a destination 3 write meets timer 0 as
-@note it stood before that write, where muir takes the alias first (rule 10):
-@note the alias's off and a page write of `401` leave it off, not on.
-@old
-  assign en_a   = {w_en[2:1], w_ctl ? l[0] : w_en[0]};
-@new
-  assign en_a   = {w_en[2:1], w_en[0]};
-@end
-
-@mutation quux-the-alias-off-beats-the-page-turn-on
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note At a shared edge the alias's off wins over the page's turn-on, where muir
-@note takes the page write second.
-@old
-    assign off[k]       = (ak_off && !p_restart[k]) || (p_ctl[k] && !pg_wdata[0]);
-@new
-    assign off[k]       = ak_off || (p_ctl[k] && !pg_wdata[0]);
-@end
-
-@mutation quux-a-page-read-misses-the-alias-clear-at-its-edge
-@check quux_clocks_quux
-@file rtl/machine/quux_clocks.sv
-@note A page read taken at the edge of a destination 3 clear reads the flag up,
-@note where muir takes the clear first (M13).
-@old
-  assign flag_e     = w ? flag_a : flag_s;
-@new
-  assign flag_e     = w ? w_flag : flag_s;
 @end
 
 @mutation quux-timer-2-interrupts-without-its-enable
@@ -20998,7 +20898,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/quux_clocks.sv
 @note Word 100's timer bits are the flags whatever the interrupt enables say.
 @old
-  assign pending = flag_e & ie_e;
+  assign pending = flag_e & ie;
 @new
   assign pending = flag_e;
 @end
@@ -21012,6 +20912,163 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
               else us[k] <= period[k];
 @new
               else us[k] <= period[(k + 1) % 3];
+@end
+
+# ------------------------------------------------ destination 3 writes only M
+#
+# Since the amended contract Q11 destination 3 is no timer's control on
+# QUUX: it writes M alone, as destination 4 does, and every timer is reached
+# through the register page.  Each record below puts back one piece of the
+# destination 3 alias that the fabric had, as the tick after the edge
+# carrying a page write of timer 0's word, which is where the alias landed;
+# `clocks` writes destination 3 with 1, 3 and 0 against timer 0 off and on
+# with its flag up, observes `SINTR` at those edges, and reads and writes
+# the page at them.
+
+@mutation quux-destination-3-still-turns-timer-0-on
+@check quux_clocks_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Destination 3 written with `<0>` set, Q1's turn-on, still turns timer 0 on,
+@note periodic with its interrupt enable, as the alias did.
+@old
+  if (QUUX) begin : g_quux_tick
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .pg_we    (tm_we),
+        .pg_idx   (tm_idx),
+        .pg_wdata (tm_wdata),
+@new
+  if (QUUX) begin : g_quux_tick
+    logic d3;
+    always_ff @(posedge clk) d3 <= !rst && cpu_edge && low_group && (ir[21:19] == 3'd3) && ob[0];
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .pg_we    (tm_we || d3),
+        .pg_idx   (d3 ? 3'd0 : tm_idx),
+        .pg_wdata (d3 ? 24'o401 : tm_wdata),
+@end
+
+@mutation quux-destination-3-still-clears-timer-0s-flag
+@check quux_clocks_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Destination 3 written with `<1>` set, Q1's clear, still clears timer 0's
+@note flag, as the alias did (and turns it on if it was off).
+@old
+  if (QUUX) begin : g_quux_tick
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .pg_we    (tm_we),
+        .pg_idx   (tm_idx),
+        .pg_wdata (tm_wdata),
+@new
+  if (QUUX) begin : g_quux_tick
+    logic d3;
+    always_ff @(posedge clk) d3 <= !rst && cpu_edge && low_group && (ir[21:19] == 3'd3) && ob[1];
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .pg_we    (tm_we || d3),
+        .pg_idx   (d3 ? 3'd0 : tm_idx),
+        .pg_wdata (d3 ? 24'o403 : tm_wdata),
+@end
+
+@mutation quux-destination-3-still-turns-timer-0-off
+@check quux_clocks_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Destination 3 written with `<0>` clear, Q1's turn-off, still turns timer 0
+@note off, as the alias did.
+@old
+  if (QUUX) begin : g_quux_tick
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .pg_we    (tm_we),
+        .pg_idx   (tm_idx),
+        .pg_wdata (tm_wdata),
+@new
+  if (QUUX) begin : g_quux_tick
+    logic d3;
+    always_ff @(posedge clk) d3 <= !rst && cpu_edge && low_group && (ir[21:19] == 3'd3) && !ob[0];
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .pg_we    (tm_we || d3),
+        .pg_idx   (d3 ? 3'd0 : tm_idx),
+        .pg_wdata (d3 ? 24'o0 : tm_wdata),
+@end
+
+@mutation quux-destination-3-still-holds-timer-0-off-sintr
+@check quux_clocks_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `SINTR` at the edge of a destination 3 write that would have cleared or
+@note turned off timer 0 under the alias still leaves the timers' interrupt
+@note out, the hold-off the alias had (the other timers are off in `clocks`
+@note wherever destination 3 is written, so the whole term stands for timer 0's).
+@old
+  if (QUUX) begin : g_quux_tick
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .pg_we    (tm_we),
+        .pg_idx   (tm_idx),
+        .pg_wdata (tm_wdata),
+        .devreset (reset_devices),
+        .pg_ridx  (tm_idx),
+        .rd_word  (tm_rdata),
+        .pending  (timer_pending),
+        .usec_s   (usec_status),
+        .irq      (tick_irq),
+        .ro_time  (qclk_ro_time),
+        .ro_count (qclk_ro_count),
+        .ro_conf  (qclk_ro_conf)
+    );
+@new
+  if (QUUX) begin : g_quux_tick
+    logic irq_c;
+    quux_clocks clocks (
+        .clk      (clk),
+        .rst      (rst),
+        .n_boot   (n_boot),
+        .mclk_edge(mclk_edge),
+        .cpu_edge (cpu_edge),
+        .pg_we    (tm_we),
+        .pg_idx   (tm_idx),
+        .pg_wdata (tm_wdata),
+        .devreset (reset_devices),
+        .pg_ridx  (tm_idx),
+        .rd_word  (tm_rdata),
+        .pending  (timer_pending),
+        .usec_s   (usec_status),
+        .irq      (irq_c),
+        .ro_time  (qclk_ro_time),
+        .ro_count (qclk_ro_count),
+        .ro_conf  (qclk_ro_conf)
+    );
+    assign tick_irq = irq_c && !(low_group && (ir[21:19] == 3'd3) && (!ob[0] || ob[1]));
 @end
 
 @mutation quux-the-prom-is-at-zero

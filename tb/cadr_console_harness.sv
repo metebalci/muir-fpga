@@ -567,7 +567,7 @@ module cadr_console_harness #(
       // QUUX's tick, which a CADR processor holds at zero and nothing here reads.
       .tick_irq    (unused_tick_irq),
       .timer_pending(unused_timer_pending),
-      // QUUX's register page's timer words and reset devices, which a CADR
+      // QUUX's register page's timer words and `RESET-DEVICES`, which a CADR
       // processor takes nothing from.
       .tm_we       (1'b0),
       .tm_idx      (3'd0),

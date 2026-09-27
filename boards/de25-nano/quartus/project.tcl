@@ -244,7 +244,7 @@ if {!$fault} {
 # start without them, and the synthesis report's parameter table is where the
 # two paths can be read back.
 if {!$fault} {
-    # QUUX boots from its own PROM, version 1000.
+    # QUUX boots from its own PROM, version 2000.
     set_parameter -name PROM_HEX      [file join $root build \
         [expr {$machine eq "quux" ? "boot_prom.quux.hex" : "boot_prom.hex"}]]
     set_parameter -name SYNC_PROM_HEX [file join $root build sync_prom.hex]

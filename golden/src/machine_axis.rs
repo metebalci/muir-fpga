@@ -56,7 +56,7 @@ impl Which {
         }
     }
 
-    /// The machine's own boot PROM: MIT's, or QUUX's version 1000.
+    /// The machine's own boot PROM: MIT's, or QUUX's version 2000.
     pub fn boot_prom(self) -> Vec<Insn> {
         match self {
             Which::Cadr => muir::prom::boot_prom(),

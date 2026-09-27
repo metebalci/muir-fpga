@@ -571,14 +571,14 @@ module cadr_machine #(
   //   the feature page at `17377000`                     `quux_feature_page.sv`
   //   the 16K-word PDL buffer, its pointer and index 14 bits
   //                                                  `cadr_microcycle.sv`
-  //   the boot PROM, version 1000, which is the image `PROM_HEX` names: every
+  //   the boot PROM, version 2000, which is the image `PROM_HEX` names: every
   //   QUUX build and check hands it `build/boot_prom.quux.hex`
   //   MONO TV in place of the SIMPLE and LISPM TV, 1280 by 1024, and no
   //   color board                                     `quux_mono_tv.sv`
   //   `MUL` and `DIV` in one instruction each, and the divider's hold
   //                                   `quux_muldiv.sv`, `cadr_microcycle.sv`
-  //   the interval timers and the destination 3 alias, source 15 and the
-  //   interrupt                                        `cadr_microcycle.sv`
+  //   the interval timers, source 15 and the interrupt
+  //                                                  `cadr_microcycle.sv`
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
@@ -728,8 +728,8 @@ module cadr_machine #(
   logic page_irq;
   // QUUX's register page's wires into the memory path and the processor
   // (`cadr_memory_path.sv`'s ports say what each is).
-  // The timers' three bits of word 100, their words 110-115, and reset
-  // devices, word 104, between the page and the processor (contract Q11).
+  // The timers' three bits of word 100, their words 110-115, and
+  // `RESET-DEVICES`, word 104 <0>, between the page and the processor (contract Q11).
   logic [2:0]  timer_pending;
   logic        tm_we, page_reset_devices;
   logic [2:0]  tm_idx;
@@ -784,17 +784,17 @@ module cadr_machine #(
   // which enables the board's clock interrupt and `ENABLE UB INTS` before the
   // reset, failed on the one row.
   //
-  // **ON QUUX, `PROG.UNIBUS.RESET` DRIVES NOTHING, AND RESET DEVICES IS ITS
+  // **ON QUUX, `PROG.UNIBUS.RESET` DRIVES NOTHING, AND `RESET-DEVICES` IS ITS
   // `-XBUS INIT`** (revision 10, contract Q11: QUUX has no
   // `PROG.UNIBUS.RESET`).  There `bus_init` is the power-on reset or the
-  // register page's reset devices, a write of word 104 with <0> set
+  // register page's `RESET-DEVICES`, a write of word 104 with <0> set
   // (`quux_feature_page.sv`'s `reset_devices`, the tick after the page takes
   // it), and it reaches every board it reached before: block-disk, the I/O
   // board's interrupt enables, Chaosnet interface and serial line, the
   // unfitted first display board, the file device (the Q9 amendment), and
   // with the processor's `reset_devices` the interval timers.  The bit is
   // still written and read back through `LC`.  Nothing is held off `SINTR`
-  // on QUUX: at `<28>`'s edge nothing is reset, and reset devices lands
+  // on QUUX: at `<28>`'s edge nothing is reset, and `RESET-DEVICES` lands
   // after the edge that takes it and before the next, where muir's lands
   // too (contract Q11, section 4, at K >= 4).  The CADR's reset is as it
   // was.
@@ -1435,7 +1435,7 @@ module cadr_machine #(
   assign page_ch_wr       = 1'b0;
   assign page_ch_which    = 3'd0;
   assign page_ch_wdata    = 16'd0;
-  // No register page, so no timer's word and no reset devices.
+  // No register page, so no timer's word and no `RESET-DEVICES`.
   assign tm_we              = 1'b0;
   assign tm_idx             = 3'd0;
   assign tm_wdata           = 24'd0;

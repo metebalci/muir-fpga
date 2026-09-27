@@ -48,3 +48,23 @@ committed as `5fe33d6`.
 The DE25-Nano's worst setup path is an HDMI output pin; the machine clock's
 own worst setup slack is +2.769 ns. QUUX's fits from the same tree, on the
 Arty Z7-20 and the DE25-Nano, give the same figures as the clean fits above.
+
+These fits were built from the working tree on `bccc2fb` with the change in
+which destination 3 no longer controls timer 0 (QUUX revision 10, contract
+Q11 as amended) and muir pinned at `bbc47f3`.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX | -0.013 ns | +0.020 ns | 15,560 of 53,200 LUTs, 29.25% | 62 of 140 BRAM tiles | 5,297 of 13,300 | working tree on `bccc2fb` | modified | 2026-09-27 |
+| Arty Z7-20 | CADR | +0.193 ns | +0.038 ns | 15,049 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,521 of 13,300 | working tree on `bccc2fb` | modified | 2026-09-27 |
+| Cora Z7-07S | CADR | +0.282 ns | +0.053 ns | 14,037 of 14,400 LUTs, 97.48% | 43 of 50 BRAM tiles | 4,328 of 4,400 | working tree on `bccc2fb` | modified | 2026-09-27 |
+| DE25-Nano | QUUX | +2.049 ns | 0.000 ns | 17,531 of 46,800 ALMs, 37% | 191 of 358 M20K | --- | working tree on `bccc2fb` | modified | 2026-09-27 |
+| DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `bccc2fb` | modified | 2026-09-27 |
+
+**The Arty Z7-20's QUUX fit does not meet timing.** Two paths fail, by 13 ps
+and 8 ps: from the processor's memory start (`memstart`) into the memory
+interface's `nxm` and `device` registers, which have two ticks, 20 ns, and
+took 20.013 ns. The same path is the worst in the clean QUUX fit above, with
++0.176 ns. On the DE25-Nano the worst setup path of both fits is an HDMI
+output pin; the machine clock's own worst setup slack is +2.768 ns for QUUX
+and +2.769 ns for the CADR.

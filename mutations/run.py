@@ -603,7 +603,7 @@ CHECKS = {
         "machine": "quux",
     }),
     # QUUX's clocks: the three interval timers of revision 10 on the register
-    # page, the destination 3 alias and the shared edge (contract Q11), and
+    # page, destination 3 writing only M and the shared edge (contract Q11), and
     # the microsecond clock (Q1); the CADR's side of the same program.
     "quux_clocks": dict(MACHINE_CHECK, **{
         "golden": "quux_clocks.golden",

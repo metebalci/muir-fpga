@@ -865,14 +865,12 @@ if {$sta_quux} {
         # grid: 0 ns + 1 tick
         assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" $::split_md_held $::quux_divider
         # And what a microcycle reads of QUUX's clocks: the microsecond clock
-        # the whole microcycle, and `L` into the flags a page read takes,
-        # which are loaded from it a tick after the edge, at the tick.
-        # Source 17's status, which had a tick less, is gone at revision 10.
+        # the whole microcycle.  Source 17's status, which had a tick less,
+        # is gone at revision 10, and so is `L` into the flags a page read
+        # takes: destination 3 writes only M (contract Q11), and nothing of
+        # `OB` reaches the timers.
         # sync: K
         assert_clause_timing $tick 4 "the microsecond clock a microcycle reads" $::quux_usec_s $::slow
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "L into the flags a page read takes" \
-            [get_registers -nowarn [cadr_leaves {u_machine|processor|} {l}]] $::quux_flag_s
         # QUUX's memory port: none of its tick registers relaxed, the address
         # the cache holds at the microcycle, and nothing out of the cache
         # relaxed: its word reaches MD in the tick after the lookup's.
