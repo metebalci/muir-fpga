@@ -585,6 +585,18 @@ passes_not_word() {
 	fi
 }
 
+# No word of the command line is the port $1, alone or as an endpoint's port
+# (host:$1), under whatever flag it came.  Like passes_not_word, this does not
+# look inside paths, which may hold the port's digits in this shell's PID.
+passes_not_port() {
+	_n=$(tr ' ' '\n' < "$WORK/daemon.calls" | grep -cE -- "^([^:]*:)?$1\$" || true)
+	if [ "$_n" = 0 ]; then
+		ok "$2 was not given port $1"
+	else
+		fail "$2 was given port $1 and it should not have been; it was given: $(given)"
+	fi
+}
+
 # The flag stands exactly once, and the word after it is $3 when $3 is given.
 passes_once() {
 	_n=$(given_count "$1")
@@ -1323,7 +1335,7 @@ if prepare cadr-chaosnet S87cadr-chaosnet; then
 	run_script S87cadr-chaosnet
 	passes_once "--chaos-address" "cadr-chaosnet" "177101"
 	passes_not "--chaos-udp" "cadr-chaosnet"
-	passes_not "42042" "cadr-chaosnet"
+	passes_not_port "42042" "cadr-chaosnet"
 	if grep -q 'the cable is not plugged in' "$WORK/out.S87cadr-chaosnet"; then
 		ok "and the console says the cable is not plugged in"
 	else
