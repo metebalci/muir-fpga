@@ -569,6 +569,16 @@ kernel's tree at boot (`fdt_fixup_ethernet`, on the `ethernet0` alias), and
 Linux asks DHCP with the same address. Like `SERVERIP` it lives in the
 board's own `linux/local.conf` and in no committed file.
 
+The DE25-Nano has no MAC of its own anywhere, so without `ETHADDR` its
+address changes at every boot. With it, U-Boot still prints the random one
+at probe, before `uEnv.txt` is imported, and then uses the card's for its own
+`dhcp` and TFTP. The kernel's tree there carries no MAC property after the
+boot. Linux takes the address U-Boot wrote into the Ethernet controller, and
+it holds across reboots. The script refuses an `ETHADDR` that U-Boot would
+not take as a board's own before it stages anything: anything but six
+two-digit hexadecimal octets joined by colons, a multicast address, or all
+zeros.
+
 ### Another board's card, from the same script
 
 **One script stages every board's card, and the board enters it as two

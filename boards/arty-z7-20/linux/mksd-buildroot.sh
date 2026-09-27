@@ -414,6 +414,29 @@ elif [ -z "${ETHADDR:-}" ]; then
   echo "mksd-buildroot: WARNING: no ETHADDR in $BOARD_DIR/linux/local.conf; the board will use a random MAC and U-Boot will say so" >&2
 fi
 
+# **ETHADDR IS A MAC OR NOTHING.**  It goes into uEnv.txt as `ethaddr`, which
+# U-Boot imports before its first network command and writes into the
+# Ethernet controller, where Linux finds it; a board with no MAC of its own
+# (the DE25-Nano) keeps one address across boots only this way.  So it is
+# checked here, before anything is staged, for what U-Boot will take as a
+# board's own: six two-digit hexadecimal octets joined by colons (the `mac`
+# type in U-Boot's env/flags.c), not multicast and not all zeros
+# (is_valid_ethaddr, include/net-common.h).  A value U-Boot refuses is a card
+# that boots with a random address, which is the fault the setting exists to
+# remove, and a `/` or `&` in it would reach the sed below as an expression.
+if [ -n "${ETHADDR:-}" ]; then
+  _x='[0123456789ABCDEFabcdef]'
+  case $ETHADDR in
+    $_x$_x:$_x$_x:$_x$_x:$_x$_x:$_x$_x:$_x$_x) ;;
+    *) die "ETHADDR=$ETHADDR in $BOARD_DIR/linux/local.conf is not a MAC: six two-digit hexadecimal octets joined by colons, e.g. 02:00:00:00:00:01" ;;
+  esac
+  case $ETHADDR in
+    ?[13579BbDdFf]:*) die "ETHADDR=$ETHADDR in $BOARD_DIR/linux/local.conf is a multicast address (the low bit of its first octet is set), which U-Boot refuses as a board's own" ;;
+    00:00:00:00:00:00) die "ETHADDR=$ETHADDR in $BOARD_DIR/linux/local.conf is all zeros, which U-Boot refuses as a board's own" ;;
+  esac
+  echo "mksd-buildroot: uEnv.txt sets the board's MAC, ethaddr=$ETHADDR"
+fi  # ETHADDR is a MAC or nothing
+
 # The drive bay, resolved before anything is written: which file goes on
 # which unit, and whether they fit.  A pack is only a pack at exactly a
 # T-300's or a T-80's size (boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src/

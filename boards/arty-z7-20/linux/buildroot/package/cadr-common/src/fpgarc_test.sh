@@ -3446,6 +3446,82 @@ if lift 'sed -e "s/@SERVERIP@/${SERVERIP:-}/"' \
 	fi
 fi
 
+# **THE BOARD'S MAC: ON THE CARD AS local.conf GIVES IT, OR NOT AT ALL.**  A
+# board whose Ethernet has no address of its own (the DE25-Nano) is given a
+# random one at every boot unless the card's uEnv.txt sets `ethaddr`, and a
+# DHCP reservation made for it never matches.  Three things are held: a MAC is
+# written into uEnv.txt as one live line, on every board's template; no MAC
+# writes no line; and anything that is not a MAC U-Boot would take for a
+# board's own --- the wrong shape, multicast, all zeros --- is refused by name
+# before uEnv.txt is written, rather than staged onto a card whose loader
+# refuses it at boot and falls back to a random address.  The shape check and
+# the uEnv.txt block are lifted out of the card script on their own anchors and
+# run in the order the script runs them.
+mac_out() {
+	rm -rf "$WORK/uenv/out" "$WORK/uenv/died"; mkdir -p "$WORK/uenv/out/card"
+	( set -eu
+	  OUT="$WORK/uenv/out"
+	  BOARD="$TREE/boards/$1/linux/buildroot/board/$1"
+	  BOARD_DIR="$TREE/boards/$1"
+	  BOARD_NAME=$1
+	  FABRIC=$2
+	  SERVERIP=; ETHADDR=$3; FABRIC_LOADED=
+	  die() { echo "$*" > "$WORK/uenv/died"; exit 1; }
+	  . "$WORK/uenv/mac.sh"
+	  . "$WORK/uenv/uenv.sh" ) > "$WORK/uenv/said" 2>&1
+}
+case_head "the card carries the board's MAC as local.conf gives it, and refuses what is not one"
+sandbox
+mkdir -p "$WORK/uenv"
+if lift '# **ETHADDR IS A MAC OR NOTHING.**' 'fi  # ETHADDR is a MAC or nothing' "$WORK/uenv/mac.sh" \
+   && lift 'sed -e "s/@SERVERIP@/${SERVERIP:-}/"' \
+        '# whether the card says the fabric was configured before U-Boot ran' \
+        "$WORK/uenv/uenv.sh"; then
+	for spec in de25-nano:cadr.core.rbf arty-z7-20:cadr.bit cora-z7-07s:cadr.bit; do
+		b=${spec%%:*}; fab=${spec#*:}
+		for mac in 02:00:00:00:00:01 02:00:5E:AB:cd:EF; do
+			if ! mac_out "$b" "$fab" "$mac"; then
+				fail "$b: ETHADDR=$mac was refused: $(cat "$WORK/uenv/died" "$WORK/uenv/said" 2>/dev/null)"
+			elif [ "$(grep -c '^ethaddr=' "$WORK/uenv/out/card/uEnv.txt")" != 1 ] \
+			     || ! grep -qx "ethaddr=$mac" "$WORK/uenv/out/card/uEnv.txt"; then
+				fail "$b: ETHADDR=$mac did not become exactly one live 'ethaddr=$mac' line: $(grep '^ethaddr' "$WORK/uenv/out/card/uEnv.txt")"
+			else
+				ok "$b: ETHADDR=$mac is the card's one live ethaddr line"
+			fi
+		done
+		# The control: no MAC, no line, and no refusal.
+		if ! mac_out "$b" "$fab" ""; then
+			fail "$b: no ETHADDR was refused: $(cat "$WORK/uenv/died" "$WORK/uenv/said" 2>/dev/null)"
+		elif grep -q '^ethaddr' "$WORK/uenv/out/card/uEnv.txt"; then
+			fail "$b: no ETHADDR still wrote a live ethaddr line: $(grep '^ethaddr' "$WORK/uenv/out/card/uEnv.txt")"
+		else
+			ok "$b: and no ETHADDR writes no ethaddr line"
+		fi
+	done
+	# Each is refused, by name, and before uEnv.txt exists.  The first six are
+	# the wrong shape (U-Boot's env/flags.c refuses them as a MAC), the next
+	# four are multicast or zero (is_valid_ethaddr in include/net-common.h),
+	# and the last two would reach sed as an expression.
+	refused=0; nbad=0
+	for mac in 02-00-00-00-00-01 02:00:00:00:00 02:00:00:00:00:01:02 2:0:0:0:0:1 \
+	           0g:00:00:00:00:01 '02:00:00:00:00:01 ' \
+	           01:00:5e:00:00:01 03:00:00:00:00:01 ff:ff:ff:ff:ff:ff 00:00:00:00:00:00 \
+	           '02:00:00:00:00:01/x' '02:00:00:00:00:0&'; do
+		nbad=$((nbad + 1))
+		if mac_out de25-nano cadr.core.rbf "$mac"; then
+			fail "ETHADDR='$mac' was accepted: $(grep '^ethaddr' "$WORK/uenv/out/card/uEnv.txt" 2>/dev/null)"
+		elif ! grep -qF "ETHADDR=$mac" "$WORK/uenv/died" 2>/dev/null; then
+			fail "ETHADDR='$mac' was refused without naming it: $(cat "$WORK/uenv/died" "$WORK/uenv/said" 2>/dev/null)"
+		elif [ -e "$WORK/uenv/out/card/uEnv.txt" ]; then
+			fail "ETHADDR='$mac' was refused only after uEnv.txt was written"
+		else
+			refused=$((refused + 1))
+		fi
+	done
+	[ "$refused" = "$nbad" ] \
+		&& ok "and all $nbad values that are not a board's MAC are refused by name before uEnv.txt is written: $(cat "$WORK/uenv/died")"
+fi
+
 case_head "a U-Boot that loads from the root of the partition is refused by name"
 sandbox
 mkdir -p "$WORK/ub/card"
