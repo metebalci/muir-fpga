@@ -115,8 +115,11 @@ memory board. Twelve of the connector's wires are used and the rest are not.
 Every internal memory in the machine is parity checked, and the panel is where
 the checks show.
 
-The button is one wire grounded by a push button, and it is one of five ways a
-CADR can be told to boot.
+The button is one wire grounded by a push button, `-BOOT2`, and it is one of the
+three ways a CADR can be told to boot: `-BOOT1` from the keyboard by way of the
+Unibus, `-BOOT2` from this button, and `PROG.BOOT` from another machine through
+the debug cable. muir-sim traces the three from MIT's MBCPIN drawing and wire
+list `mit/cadrwd/icmem3.wlr` in its `docs/keyboard-boot.md:143-146`.
 
 ## The debug cable
 
@@ -136,13 +139,13 @@ leading `0o` are octal, which is how MIT writes an address.
 
 | Figure | Read from |
 |---|---|
-| the machine, whole | `busint.erface`, muir's `data/cables.txt`, `xspec.text.3`, the three wire lists |
-| the data paths | AI Memo 528, and the CLOCK1 delay-line taps as muir's `clock.rs` has them |
-| the microinstruction | `cadr/ir.bits`, and muir's `isa.rs` for the bit ranges |
+| the machine, whole | `busint.erface`, muir-sim's `data/cables.txt`, `xspec.text.3`, the three wire lists |
+| the data paths | AI Memo 528, and the CLOCK1 delay-line taps as muir-sim's `clock.rs` has them |
+| the microinstruction | `cadr/ir.bits`, and muir-sim's `isa.rs` for the bit ranges |
 | the macroinstruction | `sys/ucadr/uc-parameters.lisp` and `uc-macrocode.lisp`, `sys/sys2/disass.lisp`, `sys/man/code.text` |
 | the map | AI Memo 528, `docs/map.md`, the VMEM drawings |
-| the address space | `sys/doc/unaddr.text`, muir's `busint.rs`, `cadr_xbus_decode.sv` |
-| the disk | `sys/doc/disk.text`, and muir's `dm.rs` for the multiplexor |
+| the address space | `sys/doc/unaddr.text`, muir-sim's `busint.rs`, `cadr_xbus_decode.sv` |
+| the disk | `sys/doc/disk.text`, and muir-sim's `dm.rs` for the multiplexor |
 | the display | `cadrtv/lmtv.order`, `docs/tv.md`, `shwarm.lisp` |
 | the I/O board | `docs/io-board.md`, `sys/io1/ukbd.lisp`, the `cadrio` drawings |
 | the light panel | `cadrwd/icmem3.wlr`, connector 1AJ2 pin by pin; AI Memo 528 |
@@ -193,13 +196,13 @@ leading `0o` are octal, which is how MIT writes an address.
   position of every field the microcode dispatches on were read back out of the
   words it leaves in the control store.
 
-### This project, and muir
+### This project, and muir-sim
 
-- muir's `mit/README.md` is the inventory of MIT's recovered files: what each
-  one is, and how it reached us.
-- muir's `src/` and `data/cables.txt` are the simulator's module headers, which
-  cite MIT's drawings by page and part reference for each behavior they model,
-  and the 92 wires of the five cables pin by pin.
+- muir-sim's `mit/README.md` is the inventory of MIT's recovered files: what
+  each one is, and how it reached us.
+- muir-sim's `src/` and `data/cables.txt` are the simulator's module headers,
+  which cite MIT's drawings by page and part reference for each behavior they
+  model, and the 92 wires of the five cables pin by pin.
 - `docs/` holds this repository's notes on the map, the display, the I/O board,
   the disk controller and the debug cable. Each was written by reading MIT's
   files and naming the line every claim came from.

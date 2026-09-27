@@ -32,30 +32,30 @@ DC is associated with a DM board", and they ground those lines so that the
 single drive is unit 0.
 
 Here there is nothing for such a board to do. A drive is a file in the card's
-`packs/` folder, handed to the controller through a register face, so there
-are no cables to fan out and no sector pulses to count. The fabric's
-controller is held to muir's behavioral controller, which has addressed eight
-units all along and wants no such board either. It selects among them by the
-disk address's own `DA<30:28>`, as MIT's controller does. Nothing in these
-files describes several machines sharing a drive through it. What they
-describe is one controller reaching eight.
+`packs/` folder, handed to the controller through a register face, so there are
+no cables to fan out and no sector pulses to count. The fabric's controller is
+held to muir-sim's behavioral controller, which has addressed eight units all
+along and wants no such board either. It selects among them by the disk
+address's own `DA<30:28>`, as MIT's controller does. Nothing in these files
+describes several machines sharing a drive through it. What they describe is one
+controller reaching eight.
 
 Source: MIT's `mit/cadrdc/dm.txt`, `dm.wls`, `dm.eco` and `disk.hand`, and
-muir's `src/cable.rs` and `src/disk_controller.rs`;
+muir-sim's `src/cable.rs` and `src/disk_controller.rs`;
 [`docs/disk-controller.md`](disk-controller.md).
 
-### Why is muir the reference, and what does "held tick for tick" mean?
+### Why is muir-sim the reference, and what does "held tick for tick" mean?
 
-A machine with no reference is a machine nobody can check. muir simulates the
-CADR at three fidelities, and `rtl` is the middle one. It is the machine's own
-two-phase clock, every datapath signal on it, and everything that is a matter
-of *when*.
+A machine with no reference is a machine nobody can check. muir-sim simulates
+the CADR at three fidelities, and `rtl` is the middle one. It is the machine's
+own two-phase clock, every datapath signal on it, and everything that is a
+matter of *when*.
 
-Each file in `rtl/machine/` has a muir type it is compared against over a
+Each file in `rtl/machine/` has a muir-sim type it is compared against over a
 recorded trace, cycle for cycle. Every file in `rtl/plumbing/` says in its own
-header that no muir reference exists for it, being held to a bus protocol or to
-a property instead. `muir.commit` names the commit the traces were taken from,
-so a trace and the muir that made it travel together.
+header that no muir-sim reference exists for it, being held to a bus protocol or
+to a property instead. `muir.commit` names the commit the traces were taken
+from, so a trace and the muir-sim that made it travel together.
 
 Source: [`README.md`](../README.md); the header of `mutations/list.txt`.
 
@@ -80,7 +80,7 @@ The timing of the clock edges is close to the CADR's but not identical. The
 CADR placed its clock edges with tapped delay lines, while the FPGA clocks
 everything from one 10 ns clock. Eleven instants move later, eight of them by
 five nanoseconds and three by seven, and none moves earlier. Every instant
-keeps its order, so what the machine computes does not change. muir's
+keeps its order, so what the machine computes does not change. muir-sim's
 `--timing-model fpga` rounds the same way, so the references are generated
 under the same grid.
 
@@ -116,7 +116,7 @@ MIT's own software settles it. `COLOR:MAKE-SCREEN` declares the screen
 on anything else. And `lmtv.order` says of the map that "we only use a 16x8
 subset of it". The board has one mode here and it is that one.
 
-Source: [`docs/tv.md`](tv.md); muir's `src/tv.rs`, its
+Source: [`docs/tv.md`](tv.md); muir-sim's `src/tv.rs`, its
 `COLOR_BITS_PER_PIXEL`, `COLORS` and `CHANNELS`; MIT's
 `sys/window/color.lisp`, `sys/ucadr/uc-hacks.lisp` and `cadrtv/lmtv.order`.
 
@@ -148,8 +148,8 @@ the whole link in both directions at once.
 
 A second connector would have bought exactly one thing: a chain of three
 machines, where a board is one machine's debuggee and another's debugger at
-once. Nobody needs that. On the two Zynq boards muir reaches the debuggee end
-through a window of registers anyway.
+once. Nobody needs that. On the two Zynq boards muir-sim reaches the debuggee
+end through a window of registers anyway.
 
 Source: [`docs/debug-cable.md`](debug-cable.md).
 
@@ -163,7 +163,7 @@ pack program's init script applies at boot through the console. It also
 becomes the debugger by `cadr-console debug-cable-connect`, at any time.
 `cadr-console debug-cable-disconnect` gives the role back, and
 `cadr-console debug-cable` says which role a board holds. There is no listen
-flag, here or in muir, because listening is what a CADR always does.
+flag, here or in muir-sim, because listening is what a CADR always does.
 
 Source: [`docs/debug-cable.md`](debug-cable.md) again.
 
