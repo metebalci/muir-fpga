@@ -7,7 +7,7 @@
 // serial line --- and muir says where each of its own is with one flag and one
 // word: `--terminal <endpoint>` and `--serial <endpoint>`.  Our programs take
 // the same two flags, so somebody who knows muir's prompt knows these, and a
-// card's `fpgarc` says the same thing `muirrc` beside it says.
+// card's `fpgarc` says the same thing `cadrrc` beside it says.
 //
 // **THE GRAMMAR IS muir'S `endpoint_at`, READ OFF ITS OWN SOURCE**, and it is
 // four forms:

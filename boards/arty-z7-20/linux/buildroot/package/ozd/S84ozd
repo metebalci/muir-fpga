@@ -128,7 +128,7 @@ DEFAULT_ADDRESS=177200
 DEFAULT_NAME=OZ,system=UNIX
 # THE PORT.  CHUDP's own port is 42042 and the CADR in the fabric takes it, so
 # this host cannot have it --- two programs on one board cannot bind one port
-# --- and the CADR inside muir already took 42043 in muirrc.  42142 is this
+# --- and the CADR inside muir already took 42043 in cadrrc.  42142 is this
 # project's own number for this service and has been since the copy that runs
 # beside the boards took it, which is one number for one thing.  On the
 # loopback it can never meet that copy.

@@ -367,11 +367,12 @@
 # microsecond clock a microcycle reads (`usec_s`), which is loaded at the
 # master clock edge and stands through the microcycle: the countdowns, the
 # flags they raise, the microsecond clock and the write taken a tick after
-# its edge all move on ticks of their own.  The status a microcycle reads
-# (`flag_s`, `en_s`) is out as well, because at an edge that runs a
-# microcycle it is loaded a tick after it, from `L`: in the set it gave `L`
-# the microcycle into it where the design gives a tick, and itself a tick
-# more than it has.  `quux_machine.xdc` gives it its own clause.  The register page's `taken` and
+# its edge all move on ticks of their own.  The flags a register page read
+# takes (`flag_s`) are out as well, because at an edge that runs a
+# microcycle they are loaded a tick after it, from `L`, and read by the page
+# at the tick: in the set they would give `L` the microcycle into them where
+# the design gives a tick.  (Until revision 10 they were source 17's status,
+# with `en_s`, and `quux_machine.xdc` gave them K - 1.)  The register page's `taken` and
 # `held`, taken at the first tick of -XBUS.RQ, and its keyboard and mouse,
 # `quux_input.sv`, whose FIFO, flags and counts move on the tick a key word
 # arrives or a read is answered, out whole but for the page's held match;

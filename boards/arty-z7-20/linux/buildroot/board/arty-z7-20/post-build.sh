@@ -68,11 +68,12 @@
 # own side of that: the new name is expected and missing.  Say so rather than
 # claim more.
 #
-# **And a program's settings file is not covered at all.**  /root/.muirrc is a
-# symlink the muir package installs, and nothing here asserts it: the
-# derivation reads install paths under usr/bin and S-numbered init scripts, and
-# a symlink into /mnt/card is neither.  It is named here so that its absence
-# from the checks is a known absence rather than an assumed presence.
+# **A program's settings file is covered only where it is a symlink the .mk
+# names.**  /root/.cadrrc and /root/.quuxrc are symlinks the muir package
+# installs, onto files on the card, and the derivation reads them from its
+# `ln -sf` lines: check 2 asks that each is there as a link, since what it
+# points at is on the card and not in the image, and check 1 names one that
+# no package makes, `.cadrrc` being in the `cadr` family below.
 
 set -eu
 
@@ -104,6 +105,9 @@ die()  { echo "the image and the packages: $*" >&2; exit 1; }
 #                       $(TARGET_DIR)/usr/bin/<p> its own .mk names --- which
 #                       is how muir, built from upstream source, states what it
 #                       installs
+#   root/<rc>           and every symlink such a .mk makes into root's home,
+#                       `ln -sf <card path> $(TARGET_DIR)/root/<rc>`: muir's
+#                       `.cadrrc` and `.quuxrc`
 #   etc/init.d/<S..>    for every S-numbered file beside <pkg>/<pkg>.mk, which
 #                       is what its INSTALL_INIT_SYSV copies there
 #
@@ -143,6 +147,11 @@ for pkg in "$PKGDIR"/*/; do
 		for p in $(sed -n 's|.*$(TARGET_DIR)/usr/bin/\([A-Za-z0-9._-]*\).*|\1|p' "$pkg/$name.mk"); do
 			expected="$expected usr/bin/$p"
 		done
+		# And the settings files it links into root's home: muir's
+		# `.cadrrc` and `.quuxrc`, each a symlink onto the card.
+		for p in $(sed -n 's|^[[:space:]]*ln -sf [^ ]* $(TARGET_DIR)/root/\([A-Za-z0-9._-]*\)$|\1|p' "$pkg/$name.mk"); do
+			expected="$expected root/$p"
+		done
 	fi
 	for s in "$pkg"S[0-9][0-9]*; do
 		[ -f "$s" ] || continue
@@ -160,7 +169,8 @@ done
 # source is not reachable from here --- so the namespaces are enumerated:
 # BR2_PACKAGE_CADR_* for our own programs, and BR2_PACKAGE_MUIR and
 # BR2_PACKAGE_OZD, which are outside that namespace because neither is one of
-# our programs: they are muir and ozd, carried rather than written here.
+# our programs: they are muir (its `cadr` and `quux`) and ozd, carried rather
+# than written here.
 # Anything added in a further namespace wants a further expression.
 for dc in "$EXT"/configs/*_defconfig; do
 	[ -f "$dc" ] || continue
@@ -181,7 +191,7 @@ done
 
 # check 2: everything the packages install is there
 for path in $expected; do
-	[ -f "$TARGET/$path" ] \
+	[ -f "$TARGET/$path" ] || [ -L "$TARGET/$path" ] \
 		|| die "a package installs $path and the image has no such file:
     the package built and did not install, or the name this check derived from
     the tree is not the name the package uses.  Either way the image is not
@@ -192,12 +202,14 @@ done
 #
 # The names it looks at are the same namespaces check 3b enumerates, and for
 # the same reason: a find over every file in the target would flag every
-# BusyBox applet.  `muir` and `ozd` are matched exactly --- each is one
-# program, not a family --- and they are here so that the day either package
-# is renamed or dropped, the /usr/bin/muir or /usr/bin/ozd it leaves behind is
-# caught rather than shipped.
+# BusyBox applet.  `quux`, `muir` and `ozd` are matched exactly --- each is
+# one program, not a family, and `cadr` is in the family above --- so that the
+# day a package is renamed or dropped, the program it leaves behind is caught
+# rather than shipped.  `muir` stays although no package installs it since
+# muir became `cadr` and `quux`: an image built over an old target would carry
+# the old /usr/bin/muir, and this names it.
 stale=
-for path in $(cd "$TARGET" && find . \( -type f -o -type l \) \( -name '*cadr*' -o -name 'muir' -o -name 'ozd' \) | sed 's|^\./||' | LC_ALL=C sort); do
+for path in $(cd "$TARGET" && find . \( -type f -o -type l \) \( -name '*cadr*' -o -name 'quux' -o -name 'muir' -o -name 'ozd' \) | sed 's|^\./||' | LC_ALL=C sort); do
 	case " $expected " in
 		*" $path "*) ;;
 		*) stale="$stale $path" ;;

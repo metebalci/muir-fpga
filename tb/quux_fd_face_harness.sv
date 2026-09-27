@@ -108,6 +108,9 @@ module quux_fd_face_harness (
   logic [6:0]  ro_in_count;
   logic [23:0] ro_fifo_q;
   logic [47:0] ro_fd_bases, ro_fd_indexes, ro_fd_flags;
+  logic        tm_we, reset_devices;
+  logic [2:0]  tm_idx;
+  logic [23:0] tm_wdata;
   /* verilator lint_on UNUSEDSIGNAL */
 
   quux_feature_page page (
@@ -122,10 +125,14 @@ module quux_fd_face_harness (
       .dev_ack      (dev_ack),
       .drives       (drives),
       .rdata        (rdata),
-      .clock_pending(2'b00),
+      .timer_pending(3'b000),
       .disk_irq     (1'b0),
       .chaos_ireq   (1'b0),
-      .prog_unibus_reset_rising(1'b0),
+      .tm_we        (tm_we),
+      .tm_idx       (tm_idx),
+      .tm_wdata     (tm_wdata),
+      .tm_rdata     (24'd0),
+      .reset_devices(reset_devices),
       .err          (3'b000),
       .err_clear    (err_clear),
       .errstop      (1'b0),

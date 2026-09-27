@@ -8,7 +8,7 @@
 //!
 //! **THE MACHINE IS DESCRIBED TWICE, HERE IN muir'S TERMS AND IN
 //! `checkpoint_test.c` IN THE FABRIC'S, AND THE FILE IS WHAT SAYS THE TWO
-//! AGREE.**  Here the clocks are enabled at an instant and a period written,
+//! AGREE.**  Here the timers are turned on at an instant and periods written,
 //! the keyboard is pressed and read, the mouse moved, block-disk written and
 //! started, through muir's own calls; there the same history is what the
 //! fabric's counters and registers would hold after it, read through a
@@ -31,7 +31,7 @@ use muir::block_disk::{self, BlockDisk};
 use muir::disk_image::Disk;
 use muir::engine::Engine;
 use muir::isa::Insn;
-use muir::machine::{Geometry, Machine, QUUX_PROM_BASE, Tick};
+use muir::machine::{Geometry, IntervalTimer, Machine, QUUX_PROM_BASE, Timers};
 use muir::quux_input::{KeyboardMouse, QuuxInput};
 use muir::tv::Board;
 
@@ -49,11 +49,19 @@ fn poison(sel: u64, addr: u64, bits: u32) -> u64 {
 /// microseconds, so the microsecond clock has wrapped and the C side's
 /// unwrapping is in the path.
 const M0: u64 = 0x98_7654_3210;
-/// When destination 3 enabled both timers, in ticks.
+/// When timers 0 and 1 were turned on, in ticks.
 const ENABLED: u64 = M0 - 1_000_037;
-/// The interval timer's period, written before the enable, in microseconds:
+/// Timer 1's period, written before the turn-on, in microseconds: periodic,
 /// its flag has risen once by `M0` and not twice.
 const PERIOD_US: u32 = 6000;
+/// Timer 0's, one-shot: not risen by `M0`.
+const ONE_SHOT_US: u32 = 16_667;
+/// Timer 2's, one-shot with its interrupt enable clear, turned on this long
+/// before `M0` less a tick so that it rises a tick before `M0`: a one-shot's
+/// count stops at its rise, so the fabric cannot say how long ago a one-shot
+/// rose, and the checkpoint writes such a rise at the latest tick it can
+/// have been, the one before the timer's word was read (`chk_rtl.c`).
+const SHOT_AT_M0_US: u32 = 3000;
 const CYCLES: u64 = 0x12_3456_7890;
 /// Block-disk's registers as written: a command it does not do, with the
 /// done interrupt enabled, so START stops by error and moves nothing.
@@ -180,11 +188,21 @@ fn main() {
     }
     m.tv.write_control(0, 0xFFFF_FFFF, 0);
 
-    // The clocks: the interval timer's period written, then both enabled.
-    let mut t = Tick::new();
-    t.period((ENABLED - 5) * 10, PERIOD_US);
-    t.control(ENABLED * 10, 0b0101);
-    m.tick = t;
+    // The interval timers (revision 10, contract Q11), through the register
+    // page's calls: each period written, then each turned on --- timer 0
+    // one-shot with its interrupt enable, not yet risen; timer 1 periodic
+    // with its, risen once; timer 2 one-shot without it, risen a tick before `M0`.
+    let mut t = Timers::new();
+    let (on, one_shot, ie) = (IntervalTimer::ON, IntervalTimer::ONE_SHOT, IntervalTimer::INTERRUPT_ENABLE);
+    t.write(0o111, ONE_SHOT_US, (ENABLED - 5) * 10);
+    t.write(0o113, PERIOD_US, (ENABLED - 5) * 10);
+    t.write(0o110, on | one_shot | ie, ENABLED * 10);
+    t.write(0o112, on | ie, ENABLED * 10);
+    let shot = (M0 - 1) * 10 - SHOT_AT_M0_US as u64 * 1000;
+    t.write(0o115, SHOT_AT_M0_US, shot - 50);
+    t.write(0o114, on | one_shot, shot);
+    assert!(!t.timer[0].flag(M0 * 10) && t.timer[1].flag(M0 * 10) && t.timer[2].flag(M0 * 10));
+    m.timers = t;
 
     // The keyboard and mouse, through the calls muir's terminal and the
     // register page make.

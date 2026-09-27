@@ -83,11 +83,12 @@
 #define MUIR_PDL_BITS 10u
 #define MUIR_MULDIV 0u
 // QUUX's clocks are not the CADR's either: `Geometry::CADR.tick` is false,
-// and `Tick::new` (src/machine.rs) is what a CADR's machine holds --- the
-// tick off with no deadline, `u64::MAX`, and the interval timer off, its
-// period 0 and no deadline.  Version 38 took the tick's period out, it being
-// fixed at 60 Hz, and put the interval timer's three fields after it.
+// and `Timers::new` (src/machine.rs) is what a CADR's machine holds --- three
+// interval timers in their reset state, each off, periodic, its interrupt
+// enable 0, its period 0 and no deadline, `u64::MAX` (version 45, contract
+// Q11; before it, Q1's tick and interval timer).
 #define MUIR_TICK 0u
+#define MUIR_TIMERS 3u
 // The size QUUX's MONO TV would have, which `Tv::save` writes for every
 // board: `tv::MONO_TV_WIDTH` by `MONO_TV_HEIGHT`, the default a CADR's
 // display keeps and never uses.  1280 by 1024 since muir's `22c8a52`, the
@@ -582,8 +583,6 @@ static void emit_memory_port(struct chk *w)
 // pointer and index of fourteen, multiply and divide, and the tick.
 #define MUIR_QUUX_L1_BITS  6u
 #define MUIR_QUUX_PDL_BITS 14u
-// `Tick::PERIOD_US`, the tick fixed at 60 Hz.
-#define MUIR_TICK_PERIOD_US 16667u
 // Ticks of MIT's grid in a microsecond, `quux_clocks.sv`'s `TICKS_A_US`.
 #define CHK_TICKS_A_US (1000u / CHK_GRID_NS)
 // `block_disk::BLOCK_NS`, a block's time, which `BlockDisk::save` writes.
@@ -601,44 +600,64 @@ static uint64_t chk_ns(const struct cadr_image *img)
 	return (img->quux ? img->qx.m : img->ticks) * CHK_GRID_NS;
 }
 
-// A timer's `deadline_ns` in muir's terms, from its word.  **muir's deadline
-// is when the flag rose, or will next rise; the fabric's counts say when it
-// next rises**, `pre + (us - 1) * 100` ticks after the tick the word was
-// taken at.  A flag up and not cleared rose a period before that.  Off, or
-// enabled with no period, is `u64::MAX`, no deadline (`Tick::after`).
+// A timer's `deadline_ns` in muir's terms, from its words.  **muir's
+// deadline is when the flag rose, or will next rise; the fabric's counts say
+// when it next rises**, `pre + (us - 1) * 100` ticks after the tick the word
+// was taken at.  A periodic flag up and not cleared rose a period before
+// that.  Off, or on with no period, or a one-shot risen and cleared, is
+// `u64::MAX`, no deadline (`IntervalTimer::after`, `write_control`).
 //
-// **ONE THING THE COUNTS CANNOT SAY**: how many periods ago an uncleared flag
-// first rose.  muir keeps the first rise; this writes the latest.  The two
-// are one machine --- the flag is up either way, and a clear moves muir's
-// deadline to the next period boundary, which both give alike
-// (`Tick::next`) --- but they are not one file, so a checkpoint taken more
-// than a period after a flag rose and was left up differs from muir's own in
-// that one field.
-static uint64_t quux_deadline(const struct quux_timer *t, uint32_t period_us)
+// **TWO THINGS THE COUNTS CANNOT SAY.**  How many periods ago an uncleared
+// periodic flag first rose: muir keeps the first rise and this writes the
+// latest.  And when a one-shot rose, its count stopping at the rise (`live`
+// down, `quux_clocks.sv`): this writes the latest tick it can have risen
+// at, the one before its word was taken.  In both the resumed machine is the
+// same machine --- the flag is up either way, a clear moves a periodic
+// timer's deadline to the next period boundary of its grid, which both give
+// alike, and a one-shot's to none --- but not one file, so a checkpoint
+// taken more than a period after a periodic flag rose, or more than a tick
+// after a one-shot rose, differs from muir's own in that one field.
+static uint64_t quux_deadline(const struct quux_timer *t)
 {
-	if (!t->en || !t->live)
+	if (!t->en)
 		return ~(uint64_t)0;
+	if (!t->live)
+#if CHK_MUTATE == 20
+		// A one-shot that has risen written as one that never will.
+		return ~(uint64_t)0;
+#else
+		return t->one_shot && t->sticky ? (t->m - 1u) * CHK_GRID_NS : ~(uint64_t)0;
+#endif
 	uint64_t next = t->m + t->pre + (uint64_t)(t->us ? t->us - 1u : 0u) * CHK_TICKS_A_US;
 #if CHK_MUTATE == 10
 	// The rise the counts name, the next one, even for a flag that is up:
 	// a deadline in the future for a flag muir must see as raised.
-	(void)period_us;
 #else
 	if (t->sticky)
-		next -= (uint64_t)period_us * CHK_TICKS_A_US;
+		next -= (uint64_t)t->period_us * CHK_TICKS_A_US;
 #endif
 	return next * CHK_GRID_NS;
 }
 
-// `Tick::save`: the tick, then the interval timer (version 38).
-static void emit_tick(struct chk *w, const struct cadr_image *img)
+// `Timers::save`: each timer in turn, on, its mode, its interrupt enable,
+// its period and its deadline (version 45).
+static void emit_timers(struct chk *w, const struct cadr_image *img)
 {
 	const struct quux_state *q = &img->qx;
-	chk_bool(w, q->timer[0].en);					/* READ */
-	chk_u64(w, quux_deadline(&q->timer[0], MUIR_TICK_PERIOD_US));	/* READ */
-	chk_bool(w, q->timer[1].en);					/* READ */
-	chk_u32(w, q->interval_us);					/* READ */
-	chk_u64(w, quux_deadline(&q->timer[1], q->interval_us));	/* READ */
+	for (unsigned k = 0; k < MUIR_TIMERS; ++k) {
+		const struct quux_timer *t = &q->timer[k];
+		chk_bool(w, t->en);			/* READ */
+#if CHK_MUTATE == 21
+		// The mode and the interrupt enable crossed.
+		chk_bool(w, t->ie);
+		chk_bool(w, t->one_shot);
+#else
+		chk_bool(w, t->one_shot);		/* READ */
+		chk_bool(w, t->ie);			/* READ */
+#endif
+		chk_u32(w, t->period_us);		/* READ */
+		chk_u64(w, quux_deadline(t));		/* READ */
+	}
 }
 
 // `disk_image.rs`'s `Disk::save`, block-disk's disk (version 41, contract
@@ -872,21 +891,22 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 #endif
 		chk_bool(w, 1);				/* muldiv */
 		chk_bool(w, 1);				/* tick */
-		emit_tick(w, img);
+		emit_timers(w, img);
 	} else {
 		// `Machine::geometry`: the fabric is a CADR, `Geometry::CADR`.
 		chk_u8(w, MUIR_L1_BITS);		/* DECLARED l1_bits */
 		chk_u8(w, MUIR_PDL_BITS);		/* DECLARED pdl_bits */
 		chk_bool(w, MUIR_MULDIV);		/* DECLARED muldiv */
 		chk_bool(w, MUIR_TICK);			/* DECLARED tick */
-		// `Tick::save`: QUUX's clocks, which a CADR's machine holds and
-		// never turns on --- the tick, then the interval timer (version
-		// 38).
-		chk_bool(w, 0);				/* NONE tick.enabled */
-		chk_u64(w, ~(uint64_t)0);		/* NONE tick.deadline_ns */
-		chk_bool(w, 0);				/* NONE tick.interval_enabled */
-		chk_u32(w, 0);				/* NONE tick.interval_us */
-		chk_u64(w, ~(uint64_t)0);		/* NONE tick.interval_deadline_ns */
+		// `Timers::save`: QUUX's interval timers, which a CADR's machine
+		// holds in their reset state and never turns on (version 45).
+		for (unsigned k = 0; k < MUIR_TIMERS; ++k) {
+			chk_bool(w, 0);			/* NONE timer.on */
+			chk_bool(w, 0);			/* NONE timer.one_shot */
+			chk_bool(w, 0);			/* NONE timer.interrupt_enable */
+			chk_u32(w, 0);			/* NONE timer.period_us */
+			chk_u64(w, ~(uint64_t)0);	/* NONE timer.deadline_ns */
+		}
 	}
 	// **REVISION 9, ON BOTH MACHINES** (versions 42 and 43).  `Rtc::save`:
 	// the real-time clock's setting, and a board's is always the host's
@@ -1214,11 +1234,15 @@ static const char *const kMissingQuux[] = {
 	"the Chaosnet interface's registers, the register page's words 140 to",
 	"    147: they are the I/O board's, which the readout does not reach.",
 	"    The switches are written at the address --chaos-address names.",
-	"a timer's flag raised and not cleared for MORE than a period: the",
-	"    fabric counts to the next rise and cannot say how many rises ago the",
-	"    flag went up, so the file has the latest rise where muir keeps the",
-	"    first.  The flag is up either way and a clear moves both to the same",
-	"    next boundary, so the resumed machine is the same machine.",
+	"a periodic timer's flag raised and not cleared for MORE than a period:",
+	"    the fabric counts to the next rise and cannot say how many rises ago",
+	"    the flag went up, so the file has the latest rise where muir keeps",
+	"    the first.  The flag is up either way and a clear moves both to the",
+	"    same next boundary, so the resumed machine is the same machine.",
+	"a one-shot timer's rise, once it has risen: its count stops there, so",
+	"    the file has the latest tick it can have risen at, the one before its",
+	"    word was read.  The flag is up either way and a clear leaves both",
+	"    with no deadline, so the resumed machine is the same machine.",
 	"block-disk's instant of completion is taken a few microseconds off the",
 	"    checkpoint's own instant, the two being separate reads; it is in the",
 	"    past for a disk that is done and the machine sees it so.  A disk",
@@ -1322,6 +1346,10 @@ const char *chk_rtl_mutation(void)
 	return "the file device's two ring bases written crossed";
 #elif CHK_MUTATE == 19
 	return "the real-time clock written counted from 0 where a board's is the host's";
+#elif CHK_MUTATE == 20
+	return "a one-shot timer that has risen written with no deadline, as one that never will";
+#elif CHK_MUTATE == 21
+	return "a timer's mode and interrupt enable written crossed";
 #else
 	return NULL;
 #endif

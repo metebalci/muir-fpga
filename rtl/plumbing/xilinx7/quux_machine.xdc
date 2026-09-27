@@ -150,16 +150,13 @@ set_multicycle_path -hold  0 -from $split_md_held -to $quux_divider
 # **WHAT A MICROCYCLE READS OF QUUX'S CLOCKS** (`quux_clocks.sv`).  Source
 # 15, `usec_s`, is loaded at the master clock edge, the edge the processor's
 # registers move on, and read at the next, so it is in the relaxed set and
-# has K ticks there.  Source 17's `flag_s` and `en_s` are loaded at a held
-# edge too, but at an edge that runs a microcycle they are loaded a tick
-# AFTER it, with that edge's write in them (`w`, from `L`), and stand from
-# there to the next edge: K - 1.  They are out of the relaxed set by name
-# (`cadr_machine.xdc`), so `L` into them keeps its tick.
-set quux_status_s [filter [all_registers] {NAME =~ *processor/g_quux_tick.clocks/flag_s_reg* || \
-                                           NAME =~ *processor/g_quux_tick.clocks/en_s_reg*}]
-# sync: K - 1
-set_multicycle_path -setup 3 -from $quux_status_s -to $slow
-set_multicycle_path -hold  2 -from $quux_status_s -to $slow
+# has K ticks there.  Source 17 read Q1's status, `flag_s` and `en_s`, until
+# revision 10, which has it read all ones (contract Q11), so the clause that
+# gave the status K - 1 into the relaxed set and into the cache's address is
+# gone with it.  `flag_s` is now the flags at the last master clock edge,
+# which the register page reads in the tick it takes a read, into its every-
+# tick registers, and so at the tick; it stays out of the relaxed set by
+# name (`cadr_machine.xdc`), so `L` into it keeps its tick too.
 
 # **QUUX'S MEMORY PORT** (contract Q6, `quux_mem_port.sv`, `quux_cache.sv`),
 # out of the relaxed set whole (`cadr_machine.xdc`) but for what the cache
@@ -199,14 +196,3 @@ set_multicycle_path -hold  1 -from $split_every_tick -to $quux_cache_held
 # grid: 0 ns + 1 tick
 set_multicycle_path -setup 1 -from $split_md_held -to $quux_cache_held
 set_multicycle_path -hold  0 -from $split_md_held -to $quux_cache_held
-# And what a microcycle reads of QUUX's clocks reaches the address too: read
-# as an M source it goes through the ALU into OB, and at the edge a cycle
-# starts on the address's low byte is the VMA that edge loads from OB
-# (`vma_bus`, `cadr_microcycle.sv`).  The status is loaded a tick after the
-# edge and stands to the next: K - 1, as into the relaxed set above.
-# Measured with a testbench that times every look: the address had stood
-# four ticks at all 14,379 of the boot trace's, each taken at a
-# microcycle's edge.
-# sync: K - 1
-set_multicycle_path -setup 3 -from $quux_status_s -to $quux_cache_held
-set_multicycle_path -hold  2 -from $quux_status_s -to $quux_cache_held

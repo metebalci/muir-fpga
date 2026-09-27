@@ -11,7 +11,7 @@
 #
 #   /dev/mmcblk0p1 -> /mnt/card   READ-WRITE.
 #       BOOT.BIN, u-boot.img (or u-boot.itb) and uEnv.txt at the root, whose
-#       names the loader fixes; README.TXT, `fpgarc` and `muirrc` beside them,
+#       names the loader fixes; README.TXT, `fpgarc` and `cadrrc` beside them,
 #       which are the files a person edits; `clock` beside those, which THIS
 #       script writes at a clean shutdown because the board has no clock of
 #       its own; the fabric, the tree, the kernel and the root filesystem in a
@@ -134,7 +134,7 @@ CARD_OPTS_ROOT=rw,uid=0,gid=0,umask=0022
 CARD_OPTS=$CARD_OPTS_ROOT
 
 # The card's one file of flags, and cadr-common's reader.  `fpgarc` configures
-# the CADR in the fabric the way `muirrc` beside it configures the CADR inside
+# the CADR in the fabric the way `cadrrc` beside it configures the CADR inside
 # muir, and several programs take their own flags out of it, so the file goes
 # through a filter and each program is handed the lines of the flags it owns.
 # docs/fpgarc.md has every program's list; the reader's header is the

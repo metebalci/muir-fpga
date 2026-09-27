@@ -8,7 +8,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 The board runs two CADRs. One is in the fabric. The other is inside muir, which
 is the debugger. Each is configured by one file at the root of the card, in the
 same format, with the same flag names. `fpgarc` is the fabric machine's and
-`muirrc` is muir's. Somebody who has read one can read the other.
+`cadrrc` is the debugger's, muir's `cadr`. Somebody who has read one can read
+the other. muir's `quux`, QUUX inside muir, has `quuxrc` beside them, in the
+same format; each of muir's two executables reads only its own file and takes
+only its own machine's flags.
 
 The card is FAT32, so a laptop with a card reader can edit either file. That is
 the point of putting them there, and the root is where a person looks.
@@ -42,7 +45,7 @@ are listed below, and they keep every line without a warning.
 
 ## One file, several programs
 
-muir is one program, so `muirrc` goes to it whole. The fabric machine is served
+`cadr` is one program, so `cadrrc` goes to it whole, as `quuxrc` goes to `quux`. The fabric machine is served
 by several programs. The screen, the serial line, the network and the USB input
 each have their own, and the boot button has a step of its own in the disk pack
 program's init script.
@@ -698,9 +701,10 @@ and `cadr-console debug-cable` says which wiring the board found.
 changes hands. A board debugging somebody else is still debuggable through its
 own register window, which is what a real CADR's two live connectors give it.
 
-**`muirrc` beside this file has a flag of the same name and it is a different
-end of the same cable.** There it is muir's own, and it takes the address of
-the register window muir reaches the fabric machine through, so that muir on
+**`cadrrc` beside this file has a flag of the same name and it is a different
+end of the same cable.** There it is muir's `cadr`'s own, and it takes the
+address of the register window `cadr` reaches the fabric machine through, so
+that `cadr` on
 this board's Arm cores debugs the CADR in this board's fabric. Here it is the
 Pmod connector and takes no argument. The two can both be live on one card, and
 a board with both is a machine being debugged by the muir beside it while it

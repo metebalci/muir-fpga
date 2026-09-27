@@ -380,11 +380,11 @@ muir is in this board's image, built from the commit `muir.commit` pins, and
 that is the same commit `src/input_keymap.h` is generated from. So what it
 prints is the mapping this program already carries:
 
-    muir --keyboard-mapping-dump > /mnt/card/terminal.keyboard.mapping.txt
+    cadr --keyboard-mapping-dump > /mnt/card/terminal.keyboard.mapping.txt
 
 **Where the file lives on the board.** `/mnt/card/terminal.keyboard.mapping.txt`,
-at the root of the card that `S80cadr-disk-packs` mounts, beside the two files
-of flags a person edits. The name ends in `.txt` because the card is FAT32, so
+at the root of the card that `S80cadr-disk-packs` mounts, beside the files of
+flags a person edits. The name ends in `.txt` because the card is FAT32, so
 a laptop with a card reader can edit what is on it, and a suffixless file asks
 a laptop what should open it.
 `S85cadr-terminal` passes `--keyboard-mapping` only when the file is there.
@@ -1073,7 +1073,7 @@ of the pixels lit.
 
 **The keyboard mapping file is the one thing here that lives on the card**, and
 no package installs it. It is written by hand at the root of the card, beside
-`fpgarc` and `muirrc`, and it is optional. The generated `fpgarc` carries a
+`fpgarc` and `cadrrc`, and it is optional. The generated `fpgarc` carries a
 commented `--keyboard-mapping` line for it
 (`mksd-buildroot.sh:996-1001`). Two things the card's own tooling does not know
 about it yet: the staging script asserts the root of the card against the list

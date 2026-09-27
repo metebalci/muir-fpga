@@ -50,7 +50,7 @@
 // writing `key_of` backwards as well as forwards.  The way to a starting
 // file on the board is therefore:
 //
-//     muir --keyboard-mapping-dump > /mnt/card/terminal.keyboard.mapping.txt
+//     cadr --keyboard-mapping-dump > /mnt/card/terminal.keyboard.mapping.txt
 //
 // ## Where this parts from muir, and why
 //

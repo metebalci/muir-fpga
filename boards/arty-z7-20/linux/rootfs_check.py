@@ -32,8 +32,8 @@
 # expected set is read from the packages themselves:
 #
 #   * from `<pkg>/<pkg>.mk`, every `$(TARGET_DIR)/<path>` an install command
-#     names: `usr/bin/muir` and the `root/.muirrc` symlink from muir's own
-#     rules, `usr/bin/ozd` from ozd's, and `etc/init.d/S8x...` from each
+#     names: `usr/bin/cadr`, `usr/bin/quux` and the `root/.cadrrc` and
+#     `root/.quuxrc` symlinks from muir's own rules, `usr/bin/ozd` from ozd's, and `etc/init.d/S8x...` from each
 #     INSTALL_INIT_SYSV;
 #   * and where that .mk delegates the target install to the program's own
 #     `src/Makefile` --- `$(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install`,

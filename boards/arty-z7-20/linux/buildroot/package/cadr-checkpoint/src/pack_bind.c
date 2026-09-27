@@ -215,10 +215,11 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 	// The CADR's fabric keeps muir-fpga's grid and the checkpoint says so,
 	// and muir refuses a checkpoint resumed under another timing model.
 	// QUUX's timing is `sync`, of the K and L in the checkpoint itself, which
-	// muir takes from the file; `--machine quux` is what it must be told.
+	// muir takes from the file.  muir is two executables, and the machine
+	// is the one named: `quux` for QUUX, `cadr` for the CADR.
 	at += (size_t)snprintf(out + at, at < n ? n - at : 0, "%s",
-			       b->quux ? "muir --rtl --machine quux"
-				       : "muir --rtl --timing-model fpga");
+			       b->quux ? "quux --rtl"
+				       : "cadr --rtl --timing-model fpga");
 	for (unsigned u = 0; u < BIND_UNITS; ++u) {
 		if (!b->u[u].present)
 			continue;

@@ -66,13 +66,16 @@ enum img_sel {
 
 // --- QUUX'S OWN, which the CADR's bitstream answers `RO_NO_MEMORY` at.
 //
-// The register table's entries 21 to 25, `cadr_microcycle.sv`'s `RG_QUUX_*`:
+// The register table's entries 21 to 28, `cadr_microcycle.sv`'s `RG_QUUX_*`:
 // which machine this is, and the processor's clocks.  Entry 21 is QUUX's
-// signature over K and L, the microcycle the bitstream was built at.
+// signature over K and L, the microcycle the bitstream was built at; 22 the
+// microsecond clock; 23 + k interval timer k's count and 26 + k its
+// interrupt enable, mode and period (revision 10, contract Q11).
 enum img_quux_reg {
-	IMG_RG_QUUX_ID = 21, IMG_RG_QUUX_TIME = 22, IMG_RG_QUUX_TICK = 23,
-	IMG_RG_QUUX_INTERVAL = 24, IMG_RG_QUUX_PERIOD = 25
+	IMG_RG_QUUX_ID = 21, IMG_RG_QUUX_TIME = 22, IMG_RG_QUUX_COUNT = 23,
+	IMG_RG_QUUX_CONF = 26
 };
+#define IMG_QUUX_TIMERS 3
 #define IMG_QUUX_MARK 0x5155u
 // Selector 12, `cadr_machine.sv`'s register page readout: the keyboard and
 // mouse, block-disk, the page's bus errors and MONO TV's black-on-white, the
@@ -85,13 +88,15 @@ enum img_quux_page {
 	IMG_QP_FIFO = 64
 };
 
-// One of QUUX's two timers as its word reads, and the tick of muir's clock
-// (ticks since power-on) the word was taken at.
+// One of QUUX's three interval timers as its two words read, and the tick
+// of muir's clock (ticks since power-on) its count was taken at.
 struct quux_timer {
 	int en, sticky, live;
 	unsigned pre;		/* ticks left in the microsecond, less one */
 	uint32_t us;		/* microseconds left, counted down to one */
-	uint64_t m;		/* the tick the word was taken at */
+	uint64_t m;		/* the tick the count was taken at */
+	int one_shot, ie;	/* its mode and its interrupt enable */
+	uint32_t period_us;	/* its period, as last written */
 };
 
 // What a QUUX bitstream says of itself that a CADR's does not.
@@ -101,8 +106,7 @@ struct quux_state {
 	// power-on, off the microsecond clock and its prescaler, unwrapped
 	// against the console's TICKS.
 	uint64_t m;
-	struct quux_timer timer[2];	/* [0] the tick, [1] the interval timer */
-	uint32_t interval_us;
+	struct quux_timer timer[IMG_QUUX_TIMERS];	/* timers 0, 1 and 2 */
 	// The keyboard and mouse, `QuuxInput`.
 	unsigned head, count;
 	int overflowed, kbd_enable, mouse_changed, mouse_enable;

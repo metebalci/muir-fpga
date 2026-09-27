@@ -45,11 +45,14 @@ static void fail(const char *what, unsigned long long got, unsigned long long wa
 
 // --- the model -------------------------------------------------------------
 
-// One of QUUX's timers as the fabric runs it: when its flag first rose (or
-// will), and its period, in ticks of muir's clock since power-on.
+// One of QUUX's interval timers as the fabric runs it: when its flag first
+// rose (or will), and its period, in ticks of muir's clock since power-on;
+// its mode and interrupt enable, and its period as the word holds it.
 struct qtimer {
 	int en, live;
 	uint64_t first_rise, period;
+	int one_shot, ie;
+	uint32_t period_us;
 };
 
 struct model {
@@ -80,8 +83,7 @@ struct model {
 	int quux;
 	unsigned k, l;
 	uint64_t qm, step;
-	struct qtimer timer[2];
-	uint32_t interval_us;
+	struct qtimer timer[IMG_QUUX_TIMERS];
 	uint64_t input;			/* selector 12 word 0, as the fabric packs it */
 	uint32_t fifo[IMG_QUUX_FIFO_WORDS];
 	uint32_t disk[4];		/* command, pointer, disk address, last address */
@@ -90,13 +92,20 @@ struct model {
 	uint64_t fd[3];			/* words 7, 8 and 9: the file device */
 };
 
-// A timer's word at muir's tick `m`: the fabric's counts to its next rise,
-// and the microsecond clock's low bits of the same tick.
+// A timer's count word at muir's tick `m`: the fabric's counts to its next
+// rise, and the microsecond clock's low bits of the same tick.  A one-shot
+// that has risen has stopped there, `live` down, its prescaler reloaded and
+// its count at one (`quux_clocks.sv`).
 static uint64_t qtimer_word(const struct qtimer *t, uint64_t m)
 {
-	int sticky = 0;
+	int sticky = 0, live = t->live;
 	uint64_t pre = 0x55u, us = 0x5A5A5Au;	/* stopped: whatever it held */
-	if (t->en && t->live) {
+	if (t->en && t->live && t->one_shot && m > t->first_rise) {
+		sticky = 1;
+		live = 0;
+		pre = 99u;
+		us = 1u;
+	} else if (t->en && t->live) {
 		uint64_t next = t->first_rise;
 		if (m > t->first_rise) {
 			sticky = 1;
@@ -108,7 +117,13 @@ static uint64_t qtimer_word(const struct qtimer *t, uint64_t m)
 	}
 	const uint64_t usec = m / 100u, usec_t = 99u - m % 100u;
 	return ((usec & 0x7Fu) << 41) | (usec_t << 34) | ((uint64_t)t->en << 33) |
-	       ((uint64_t)sticky << 32) | ((uint64_t)t->live << 31) | (pre << 24) | us;
+	       ((uint64_t)sticky << 32) | ((uint64_t)live << 31) | (pre << 24) | us;
+}
+
+// A timer's other word: its interrupt enable, its mode and its period.
+static uint64_t qtimer_conf(const struct qtimer *t)
+{
+	return ((uint64_t)t->ie << 25) | ((uint64_t)t->one_shot << 24) | t->period_us;
 }
 
 static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
@@ -136,10 +151,12 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 		case IMG_RG_QUUX_TIME:
 			return ((uint64_t)(99u - m->qm % 100u) << 32) |
 			       ((m->qm / 100u) & 0xFFFFFFFFull);
-		case IMG_RG_QUUX_TICK: return qtimer_word(&m->timer[0], m->qm);
-		case IMG_RG_QUUX_INTERVAL: return qtimer_word(&m->timer[1], m->qm);
-		case IMG_RG_QUUX_PERIOD: return m->interval_us;
-		default: return RO_NO_MEMORY;
+		default:
+			if (a >= IMG_RG_QUUX_COUNT && a < IMG_RG_QUUX_COUNT + IMG_QUUX_TIMERS)
+				return qtimer_word(&m->timer[a - IMG_RG_QUUX_COUNT], m->qm);
+			if (a >= IMG_RG_QUUX_CONF && a < IMG_RG_QUUX_CONF + IMG_QUUX_TIMERS)
+				return qtimer_conf(&m->timer[a - IMG_RG_QUUX_CONF]);
+			return RO_NO_MEMORY;
 		}
 	case IMG_SEL_QUUX_PAGE:
 		if (!m->quux)
@@ -260,7 +277,7 @@ static void fill(struct model *m)
 //
 // **THE SAME MACHINE `golden/src/quux_checkpoint.rs` BUILDS IN muir'S TERMS,
 // HERE IN THE FABRIC'S**, and `build/checkpoint.quux.pass` compares the two
-// files byte for byte.  There the clocks are enabled and a period written,
+// files byte for byte.  There the timers are turned on and periods written,
 // keys pressed and read, the mouse moved and block-disk started through
 // muir's own calls; here is what the fabric's counters and registers hold
 // after the same history.  Every constant is the generator's, by the same
@@ -270,6 +287,8 @@ static void fill(struct model *m)
 #define Q_M0        0x9876543210ull
 #define Q_ENABLED   (Q_M0 - 1000037u)
 #define Q_PERIOD_US 6000u
+#define Q_ONE_SHOT_US 16667u
+#define Q_SHOT_AT_M0_US 3000u
 #define Q_CYCLES    0x1234567890ull
 #define Q_DISK_CMD  0x12345805u
 #define Q_DISK_CLP  0x00ABCDEFu
@@ -279,7 +298,6 @@ static void fill(struct model *m)
 #define Q_MOUSE_X   0x5a3u
 #define Q_MOUSE_Y   0x2c7u
 #define Q_BUTTONS   5u
-#define Q_TICK_TICKS (16667u * 100u)
 // Block-disk's disk, declared as a pack of this geometry on unit 0: 256
 // blocks, `DISK_BLOCKS` in `golden/src/quux_checkpoint.rs`.
 #define Q_DISK_CYLINDERS 16u
@@ -339,12 +357,17 @@ static void fill_quux(struct model *m)
 	m->qm = Q_M0;
 	m->ticks = Q_M0 + 2u;
 
-	// The clocks: both enabled at `Q_ENABLED`, a write landing a tick after
-	// its edge and the count one tick shorter, so each flag first rises a
-	// period after the edge (`quux_clocks.sv`).
-	m->timer[0] = (struct qtimer){ 1, 1, Q_ENABLED + Q_TICK_TICKS, Q_TICK_TICKS };
-	m->timer[1] = (struct qtimer){ 1, 1, Q_ENABLED + Q_PERIOD_US * 100u, Q_PERIOD_US * 100u };
-	m->interval_us = Q_PERIOD_US;
+	// The interval timers: timers 0 and 1 turned on at `Q_ENABLED`, a write
+	// landing a tick after its edge and the count one tick shorter, so each
+	// flag first rises a period after the edge (`quux_clocks.sv`); timer 0
+	// one-shot with its interrupt enable, not yet risen, timer 1 periodic
+	// with its, risen once; and timer 2 one-shot without it, turned on so
+	// that it rose at the tick before `Q_M0`.
+	m->timer[0] = (struct qtimer){ 1, 1, Q_ENABLED + Q_ONE_SHOT_US * 100u, Q_ONE_SHOT_US * 100u,
+				       1, 1, Q_ONE_SHOT_US };
+	m->timer[1] = (struct qtimer){ 1, 1, Q_ENABLED + Q_PERIOD_US * 100u, Q_PERIOD_US * 100u,
+				       0, 1, Q_PERIOD_US };
+	m->timer[2] = (struct qtimer){ 1, 1, Q_M0 - 1u, Q_SHOT_AT_M0_US * 100u, 1, 0, Q_SHOT_AT_M0_US };
 
 	// Seventy key words pressed into sixty-four slots, the last six dropped
 	// and the overflow set, and fifty-nine read: five waiting from slot 59.
@@ -597,8 +620,9 @@ int main(int argc, char **argv)
 		}
 
 		// **A QUUX BINDING SAYS SO, AND ITS RESUME IS QUUX'S.**  The line
-		// survives the file, and the command it prints names the machine
-		// and not the CADR's timing model, which muir refuses on QUUX.
+		// survives the file, and the command it prints is muir's `quux`
+		// and not the CADR's timing model, which `quux` refuses; the
+		// CADR's is `cadr` with it.
 		struct binding qb;
 		bind_init(&qb);
 		qb.quux = 1;
@@ -606,14 +630,16 @@ int main(int argc, char **argv)
 		snprintf(qb.checkpoint, sizeof qb.checkpoint, "%s", stand);
 		char cmd[4096];
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
-		if (!strstr(cmd, "--machine quux") || strstr(cmd, "--timing-model"))
+		if (strncmp(cmd, "quux --rtl ", 11) != 0 || strstr(cmd, "--timing-model") ||
+		    strstr(cmd, "--machine"))
 			fail("QUUX's resume command", 1, 0);
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || !rd.quux)
 			fail("the sidecar lost the machine", 0, 1);
 		qb.quux = 0;
 		bind_resume_command(&qb, "c.chk", cmd, sizeof cmd);
-		if (strstr(cmd, "--machine") || !strstr(cmd, "--timing-model fpga"))
+		if (strncmp(cmd, "cadr --rtl ", 11) != 0 || strstr(cmd, "--machine") ||
+		    !strstr(cmd, "--timing-model fpga"))
 			fail("the CADR's resume command", 1, 0);
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || rd.quux)
@@ -703,7 +729,7 @@ int main(int argc, char **argv)
 			bind_resume_command(&q, "q8.chk", cmd, sizeof cmd);
 			char want[400];
 			snprintf(want, sizeof want, " --disk-pack %s,0 ", pack0);
-			if (!strstr(cmd, "--machine quux") || !strstr(cmd, want)) {
+			if (strncmp(cmd, "quux --rtl ", 11) != 0 || !strstr(cmd, want)) {
 				fprintf(stderr, "QUUX's resume command: %s\n", cmd);
 				++bad;
 			}
@@ -916,11 +942,11 @@ int main(int argc, char **argv)
 	//   l1_map     8 + 8192           = 8200
 	//   geometry   1 + 1 + 1 + 1      = 4        (Geometry::CADR: 5, 10, no
 	//                                             multiply and divide, no tick)
-	//   tick       1 + 8 + 1 + 4 + 8  = 22       (Tick::new: the tick off
-	//                                             with no deadline, the
-	//                                             interval timer off, its
-	//                                             period 0, no deadline;
-	//                                             version 38)
+	//   timers     3 * (1+1+1+4+8)    = 45       (Timers::new: three
+	//                                             interval timers off,
+	//                                             periodic, interrupt
+	//                                             enable 0, period 0, no
+	//                                             deadline; version 45)
 	//   rtc        1                  = 1        (Rtc::Host, the option
 	//                                             absent: version 42)
 	//   file_device 4 + 4*4 + 3*2 + 1 = 27      (FileDevice::new: four
@@ -973,7 +999,7 @@ int main(int argc, char **argv)
 	// reader can check one line instead of one number.
 	{
 		const size_t machine_part =
-			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 22 + 1 + 27 + 1 + 8200 + 4 +
+			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 45 + 1 + 27 + 1 + 8200 + 4 +
 			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 253 + 13 + 16;
 		const size_t rtl_part =
 			208 + 32 + 19 + 21 + 1 + 163 + 1 + 32 + 25 + 26 + 24 + 28;
@@ -1144,7 +1170,7 @@ int main(int argc, char **argv)
 			} else {
 				if (mv.qx.m <= Q_M0)
 					fail("the checkpoint's instant did not move", mv.qx.m, Q_M0);
-				for (unsigned t = 0; t < 2; ++t) {
+				for (unsigned t = 0; t < IMG_QUUX_TIMERS; ++t) {
 					const struct quux_timer *b = &mv.qx.timer[t];
 					const struct qtimer *s = &q->timer[t];
 					const uint64_t got = b->m + b->pre + (uint64_t)(b->us - 1u) * 100u;
@@ -1152,8 +1178,17 @@ int main(int argc, char **argv)
 					const uint64_t want = up ? s->first_rise +
 						((b->m - s->first_rise) / s->period + 1u) * s->period
 						: s->first_rise;
-					if (got != want || b->sticky != up)
+					// A one-shot that has risen has stopped: the flag up,
+					// nothing counting.
+					if (s->one_shot && up) {
+						if (!b->sticky || b->live)
+							fail("a risen one-shot, read on a moving clock", b->live, 0);
+					} else if (got != want || b->sticky != up) {
 						fail("a timer's next rise, read on a moving clock", got, want);
+					}
+					if (b->one_shot != s->one_shot || b->ie != s->ie || b->period_us != s->period_us)
+						fail("a timer's mode, enable or period, read on a moving clock",
+						     b->period_us, s->period_us);
 					if (b->m < mv.qx.m || b->m - mv.qx.m > RO_QUUX_SPAN)
 						fail("a timer's word placed outside the read", b->m, mv.qx.m);
 				}

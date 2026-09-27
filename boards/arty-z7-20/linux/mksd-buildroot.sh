@@ -45,7 +45,7 @@
 # (CONFIG_SPL_FS_LOAD_PAYLOAD_NAME).  On the DE25-Nano the first-stage loader
 # is in the QSPI flash and asks for u-boot.itb the same way, and there is no
 # BOOT.BIN at all.  Both shapes read uEnv.txt at the root, which the loader
-# imports before it does anything else.  README.TXT, fpgarc and muirrc are at
+# imports before it does anything else.  README.TXT, fpgarc, cadrrc and quuxrc are at
 # the root beside them because they are the files a person edits with the card
 # in a reader, and the root is where a person looks.
 #
@@ -124,7 +124,7 @@ OUT=${OUT:-build/sd/buildroot}
 # WHICH BOARD, AND WHY IT IS TWO VARIABLES RATHER THAN A NAME.  This script
 # stages a card for a board, and a second Zynq board is a second device tree
 # and a second directory under `boards/` with everything else the same --- the
-# layout, the packs, the `fpgarc`, the `muirrc`, the U-Boot environment and
+# layout, the packs, the `fpgarc`, the `cadrrc` and `quuxrc`, the U-Boot environment and
 # every warning below are the machine's and not the part's.  So the board
 # enters as the two things that differ: where its `linux/` directory is, and
 # what its compiled device tree is called.  Both default to the Arty Z7-20's,
@@ -360,8 +360,8 @@ fi
 # **STANDALONE MEANS THE CARD CARRIES NOTHING FROM local.conf**, and that is
 # wider than it used to be on purpose.  It cleared SERVERIP alone, which was
 # right while the only private value on a card was the TFTP server's address.
-# It is not any more: uEnv.txt carries ETHADDR, and both files of flags ---
-# fpgarc for the CADR in the fabric and muirrc for the CADR inside muir ---
+# It is not any more: uEnv.txt carries ETHADDR, and every file of flags ---
+# fpgarc for the CADR in the fabric and cadrrc and quuxrc for the machines inside muir ---
 # carry CHAOS_PEER and CHAOS_DEFAULT_PEER, and a release card is built by
 # setting exactly this flag.  Clearing one of the four and shipping the others
 # is the failure this flag exists to prevent, so it clears all four and
@@ -372,7 +372,7 @@ fi
 # nothing private would ship.  It is cleared because a release carries no band
 # at all: mksd-release.sh refuses PACKS on the argument that a band is the
 # user's own to supply, and the debugger's band is a band.  Left in, a
-# released card would ship 257 MiB of somebody else's Lisp world and a muirrc
+# released card would ship 257 MiB of somebody else's Lisp world and a cadrrc
 # naming a pack the user is free to delete.
 #
 # **AND IT CLEARS NO_AUTO_BOOT, which is not private and is cleared anyway.**
@@ -467,10 +467,10 @@ done
 # CC already loaded in it, and that band rides in `packs/` beside the
 # bay.  Its name must NOT be disk-pack-0.img to disk-pack-7.img, because those
 # eight are the fabric machine's drive bay and this pack is muir's own; the
-# card carries it as muir-cc.img and muirrc names it at that path
+# card carries it as muir-cc.img and cadrrc names it at that path
 # (docs/cc-pack.md).
 #
-# Unset, muirrc keeps the two commented lines and their explanation, which is
+# Unset, cadrrc keeps the two commented lines and their explanation, which is
 # what every card built before the pack existed got.
 #
 # **EXACTLY A T-300, WHERE THE BAY ALSO TAKES A T-80.**  The bay takes both
@@ -692,14 +692,15 @@ stage_tree() {
   printf '  %-22s the disk packs.  See below.\r\n' 'packs/'
   printf "  %-22s the band's Lisp sources, read-only, and its\r\n" 'sys/  site/'
   printf '  %-22s site configuration, which it may write.\r\n' ''
-  printf '  %-22s the settings.  Edit these here, on the card,\r\n' 'fpgarc  muirrc'
+  printf '  %-22s the settings.  Edit these here, on the card,\r\n' 'fpgarc  cadrrc  quuxrc'
   printf '  %-22s where they survive a reboot: everything else\r\n' ''
   printf '  %-22s on the board runs from a RAM disk unpacked at\r\n' ''
   printf '  %-22s every boot, so a file edited there is lost.\r\n' ''
   printf '  %-22s fpgarc configures the machine in the fabric\r\n' ''
-  printf '  %-22s and muirrc the machine inside muir, which is\r\n' ''
-  printf '  %-22s the debugger.  Both are lists of flags, one a\r\n' ''
-  printf '  %-22s line, and each says at its top what it is for.\r\n' ''
+  printf '  %-22s cadrrc the CADR inside muir, `cadr`, which is\r\n' ''
+  printf '  %-22s the debugger, and quuxrc muir'"'"'s `quux`.  All are\r\n' ''
+  printf '  %-22s lists of flags, one a line, and each says at\r\n' ''
+  printf '  %-22s its top what it is for.\r\n' ''
   printf '\r\n'
   if [ -z "$NO_FAULT" ]; then
     printf 'IF EVERY LIGHT ON THE BOARD BLINKS TOGETHER, twice a second and red\r\n'
@@ -720,7 +721,7 @@ stage_tree() {
   printf 'packs/muir-cc.img, if this card carries it, is not one of the eight\r\n'
   printf 'and is not a drive.  It is the debugger pack: a band with CC already\r\n'
   printf 'loaded in it, which muir reads and the machine in the fabric never\r\n'
-  printf 'sees.  muirrc is what names it, and the two are deleted or kept\r\n'
+  printf 'sees.  cadrrc is what names it, and the two are deleted or kept\r\n'
   printf 'together.\r\n\r\n'
   printf 'While the board is running you need not take the card out at all:\r\n'
   printf '  copy a pack in            that drive comes ready\r\n'
@@ -739,7 +740,7 @@ stage_tree() {
 # ------------------------------------------------- the fabric CADR's flags
 #
 # **ONE FILE A STATION, IN muir'S OWN rc FORMAT.**  `fpgarc` configures the
-# CADR in the fabric and `muirrc` beside it configures the CADR inside muir,
+# CADR in the fabric and `cadrrc` beside it configures the CADR inside muir,
 # so the two machines on this board are configured the same way with the same
 # flag names.  One flag a line, the flag then a space then the rest of the
 # line as its argument, `#` a comment, CRLF because the reader is Notepad.
@@ -907,7 +908,7 @@ fi
   printf "# The flags for the CADR in the fabric, so that its programs are\r\n"
   printf "# configured the way muir is: one flag a line, the flag then a space\r\n"
   printf "# then the rest of the line as its argument, and a line that is blank\r\n"
-  printf "# or starts with # is a comment.  muirrc beside this file is the same\r\n"
+  printf "# or starts with # is a comment.  cadrrc beside this file is the same\r\n"
   printf "# format for the CADR inside muir.\r\n"
   printf "#\r\n"
   printf "# Several programs serve this machine and each takes the flags that\r\n"
@@ -939,7 +940,7 @@ fi
   printf "# no cable is a machine on no network, which is what a board out of\r\n"
   printf "# the box is until somebody says otherwise.  42042 is the protocol's\r\n"
   printf "# own port and the CADR in fabric takes it; the CADR inside muir\r\n"
-  printf "# takes another in muirrc, two stations on one port being a collision\r\n"
+  printf "# takes another in cadrrc, two stations on one port being a collision\r\n"
   printf "# rather than a network.\r\n"
   printf "# A released card names the loopback, because the host this machine\r\n"
   printf "# calls for its files and its time is on this board: the cable is\r\n"
@@ -1066,7 +1067,7 @@ fi
   printf "\r\n"
   printf "# What a viewer's keysyms mean on the Lisp Machine keyboard: muir's\r\n"
   printf "# own \`key\` and \`prefix\` lines, over the built-in mapping rather than\r\n"
-  printf "# replacing it.  \`muir --keyboard-mapping-dump\` writes a file to edit.\r\n"
+  printf "# replacing it.  \`cadr --keyboard-mapping-dump\` writes a file to edit.\r\n"
   printf "# terminal.keyboard.mapping.txt beside this file is taken with no\r\n"
   printf "# line here at all; this names another.\r\n"
   printf -- "#--keyboard-mapping /mnt/card/terminal.keyboard.mapping.txt\r\n"
@@ -1335,24 +1336,27 @@ echo "mksd-buildroot: the boot button: $([ -z "$NO_AUTO_BOOT_PREFIX" ] && echo "
 echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, the cable at $CABLE_ENDPOINT$([ -n "${CHAOS_PEER:-}" ] && echo ", $(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo ", no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
 echo "mksd-buildroot: the serial line: $([ -z "$MENU_SERIAL" ] && echo "offered at $SERIAL_ENDPOINT" || echo "OFF --- --serial is written commented out, and the program that serves it is not started")"
 
-# --------------------------------------------------------- muir's file of flags
+# --------------------------------------------------------- muir's files of flags
 #
-# The debugger is the word `muir` and nothing else.  muir reads
-# --config if it is given, else `.muirrc` in the directory it was run from,
-# else `.muirrc` in the home directory --- the FIRST of those and not all of
-# them --- and a flag typed on the command line still wins over the file.  So
-# this is a default and never a cage.
+# **muir IS TWO EXECUTABLES, `cadr` AND `quux`**, each with only its own
+# machine's flags and its own file of them.  The debugger is the word `cadr`
+# and nothing else, the debug cable being the CADR's.  `cadr` reads --config
+# if it is given, else `.cadrrc` in the directory it was run from, else
+# `.cadrrc` in the home directory --- the FIRST of those and not all of them
+# --- and a flag typed on the command line still wins over the file.  So this
+# is a default and never a cage.  `quux` reads `.quuxrc` the same way, and
+# never `.cadrrc`: it gets a file of its own below.
 #
 # **IT IS HERE AND NOT IN THE ROOT FILESYSTEM**, which is a RAM disk unpacked
 # at every boot: an edit made to a file in there is lost at the next reset.
-# The muir package installs /root/.muirrc as a symlink to this file, so a `muir`
+# The muir package installs /root/.cadrrc as a symlink to this file, so a `cadr`
 # typed anywhere on the board finds it and somebody who changes a port changes
-# it once.
+# it once, and /root/.quuxrc as one to `quuxrc`.
 #
-# The format, out of muir's own main.rs: one flag a line, the flag then a space
+# The format, out of muir's own cli.rs: one flag a line, the flag then a space
 # then the rest of the line as its argument --- so a path with a space in it
 # needs no quoting --- and a line that is blank or starts with `#` is a comment.
-# The file is called `muirrc` and not `.muirrc` because this card is what
+# The file is called `cadrrc` and not `.cadrrc` because this card is what
 # a laptop shows somebody who puts the card in, and a dotfile is hidden there.
 #
 # **THE PORTS ARE muir'S OWN AND NOT THE FABRIC CADR'S.**  5900 is
@@ -1368,12 +1372,12 @@ CHAOS_ADDR_M=${CHAOS_ADDR_MUIR:-177102}
 CHAOS_PORT_M=${CHAOS_UDP_PORT_MUIR:-42043}
 VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
 {
-  printf "# muir's flags on this board: the debugger, so that it is the word\r\n"
-  printf "# \`muir\` and nothing else.  One flag a line, the flag then a space\r\n"
+  printf "# muir's cadr's flags on this board: the debugger, so that it is the\r\n"
+  printf "# word \`cadr\` and nothing else.  One flag a line, the flag then a space\r\n"
   printf "# then the rest of the line as its argument; # is a comment.  A flag\r\n"
   printf "# typed on the command line wins over this file.\r\n"
   printf "#\r\n"
-  printf "# /root/.muirrc on the board is a symlink to this file.  Edit it here,\r\n"
+  printf "# /root/.cadrrc on the board is a symlink to this file.  Edit it here,\r\n"
   printf "# on the card, where it survives a reboot.\r\n"
   printf "\r\n"
   printf "# The engine.  The debug cable is rtl's; micro has no timing model and\r\n"
@@ -1461,7 +1465,42 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
   printf "# port is one machine's and a lashup runs two --- so the line above\r\n"
   printf "# and a --serial line cannot both be in this file.  The cable is what\r\n"
   printf "# this muir is for.\r\n"
-} > "$OUT/card/muirrc"
+} > "$OUT/card/cadrrc"
+
+# **AND `quux`'S OWN.**  muir's `quux` is QUUX, the evolved machine, and takes
+# only QUUX's flags and both machines' own; it has no debug cable, which is the
+# CADR's, and no pack of CC.  Started here it is a QUUX on the board's Arm
+# cores beside the machine in the fabric, a second station, so it takes the
+# same ports `cadr` would, one along from the fabric machine's: a board runs
+# one of the two at a time.  Its file carries the engine, the screen and the
+# Chaosnet, and no disk: a QUUX's disk is the user's to name.
+{
+  printf "# muir's quux's flags on this board: QUUX, the evolved machine, run\r\n"
+  printf "# by the word \`quux\`.  One flag a line, the flag then a space then\r\n"
+  printf "# the rest of the line as its argument; # is a comment.  A flag typed\r\n"
+  printf "# on the command line wins over this file.  \`quux\` reads only this\r\n"
+  printf "# file and \`cadr\` only cadrrc: each takes only its own machine's\r\n"
+  printf "# flags.\r\n"
+  printf "#\r\n"
+  printf "# /root/.quuxrc on the board is a symlink to this file.  Edit it here,\r\n"
+  printf "# on the card, where it survives a reboot.\r\n"
+  printf "\r\n"
+  printf -- "--rtl\r\n"
+  printf "\r\n"
+  printf "# The screen and the Chaosnet, on the ports cadrrc gives cadr: the two\r\n"
+  printf "# are not run at once.\r\n"
+  printf -- "--terminal 0.0.0.0:%s\r\n" "$VNC_PORT_M"
+  printf -- "--chaos-address %s\r\n" "$CHAOS_ADDR_M"
+  printf -- "--chaos-udp 0.0.0.0:%s\r\n" "$CHAOS_PORT_M"
+  for peer in ${CHAOS_PEER:-}; do printf -- "--chaos-udp-peer %s\r\n" "$peer"; done
+  if [ -n "${CHAOS_DEFAULT_PEER:-}" ]; then
+    printf -- "--chaos-udp-default-peer %s\r\n" "$CHAOS_DEFAULT_PEER"
+  fi
+  printf "\r\n"
+  printf "# The disk.  A QUUX disk is a VHD with a GPT (docs/boot.md); name one\r\n"
+  printf "# and uncomment the line.\r\n"
+  printf "#--disk-pack /mnt/card/packs/<disk>.vhd\r\n"
+} > "$OUT/card/quuxrc"
 echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at $DEBUG_WINDOW and $([ -n "${CC_PACK:-}" ] && echo "is live, with the debugger's pack at /mnt/card/packs/$CC_PACK_NAME" || echo "waits on the CC pack")"
 
 # The server: the same five files and the command that fetches them, in the
@@ -1650,16 +1689,16 @@ for e in "$OUT"/card/* "$OUT"/card/.*; do
       *) die "the root of the card carries the folder '$n/', which is none of $BOARD_NAME/, packs/, sys/ or site/" ;;
     esac
   fi
-  case " $ROOT_NAMES uEnv.txt README.TXT fpgarc muirrc " in
+  case " $ROOT_NAMES uEnv.txt README.TXT fpgarc cadrrc quuxrc " in
     *" $n "*) ;;
-    *) die "the root of the card carries '$n', which is none of the loader's fixed names ($ROOT_NAMES), uEnv.txt, README.TXT, fpgarc or muirrc" ;;
+    *) die "the root of the card carries '$n', which is none of the loader's fixed names ($ROOT_NAMES), uEnv.txt, README.TXT, fpgarc, cadrrc or quuxrc" ;;
   esac
 done
 # **AND packs/ HOLDS PACKS AND NOTHING ELSE.**  The program builds the eight
 # names by format (pack_bay.h's BAY_NAME_FMT), so a file here under any other
 # name is simply not a drive; the debugger's band is the one such file this
 # script puts here on purpose, and it is named by the variable rather than
-# spelled a second time, because muirrc names it too and two spellings of one
+# spelled a second time, because cadrrc names it too and two spellings of one
 # name part company on the first change.
 for e in "$OUT"/card/packs/*; do
   [ -e "$e" ] || continue
@@ -1755,7 +1794,7 @@ echo "  $MODE"
   done )
 (cd "$OUT/server/$BOARD_NAME" && for f in *; do printf "  server/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 echo "  the card mirrors the server: card/$BOARD_NAME/ holds the same four files as"
-echo "  server/$BOARD_NAME/, and only $(echo "$ROOT_NAMES" | sed 's/ /, /g'), uEnv.txt, README.TXT, fpgarc and muirrc are at the root"
+echo "  server/$BOARD_NAME/, and only $(echo "$ROOT_NAMES" | sed 's/ /, /g'), uEnv.txt, README.TXT, fpgarc, cadrrc and quuxrc are at the root"
 [ -z "$NO_FABRIC" ] || echo "  (and the fabric's slot, $BOARD_NAME/$FABRIC, is EMPTY on both: NO_FABRIC=1)"
 [ -n "$NO_FAULT" ] || echo "  and $BOARD_NAME/$FAULT, the fault bitstream the loader takes when $FABRIC will not load, on both"
 [ -z "$NO_FAULT" ] || echo "  (and no fault bitstream, NO_FAULT=1: a fabric that will not load leaves the loader looping)"

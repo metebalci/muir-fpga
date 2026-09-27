@@ -67,18 +67,15 @@ set_multicycle_path -hold  0 -from $split_md_held -to $split_md
 # rest of `quux_clocks.sv` and given its own time here, which
 # `quux_machine.xdc` argues.  Source 15, `usec_s`, is loaded at the master
 # clock edge, the edge the processor's registers move on, and read at the
-# next: K ticks.  Source 17's `flag_s` and `en_s` are loaded at a held edge
-# too, but at an edge that runs a microcycle they are loaded a tick AFTER it,
-# with that edge's write in them (`w`, from `L`), so they have K - 1.  Paths
-# into all three stay at the tick, `L` into the status among them.
+# next: K ticks.  Source 17 read Q1's status until revision 10, which has it
+# read all ones (contract Q11): its clauses are gone, and `flag_s`, now what
+# the register page reads at the tick it takes a read, stays at the tick,
+# as `L` into it does.
 set quux_usec_s [get_registers -nowarn [cadr_leaves {u_machine|processor|g_quux_tick.clocks|} {usec_s}]]
-set quux_status_s [get_registers -nowarn [cadr_leaves {u_machine|processor|g_quux_tick.clocks|} {flag_s en_s}]]
+set quux_flag_s [get_registers -nowarn [cadr_leaves {u_machine|processor|g_quux_tick.clocks|} {flag_s}]]
 # sync: K
 set_multicycle_path -setup 4 -from $quux_usec_s -to $slow
 set_multicycle_path -hold  3 -from $quux_usec_s -to $slow
-# sync: K - 1
-set_multicycle_path -setup 3 -from $quux_status_s -to $slow
-set_multicycle_path -hold  2 -from $quux_status_s -to $slow
 
 # The divider's operands, taken K ticks into the microcycle, from the edge's
 # registers, the control store and the latches, and from the every-tick
@@ -126,8 +123,3 @@ set_multicycle_path -hold  1 -from $split_every_tick -to $quux_cache_held
 # grid: 0 ns + 1 tick
 set_multicycle_path -setup 1 -from $split_md_held -to $quux_cache_held
 set_multicycle_path -hold  0 -from $split_md_held -to $quux_cache_held
-# And what a microcycle reads of QUUX's clocks, through OB into the address's
-# low byte: K - 1, as into the relaxed set.
-# sync: K - 1
-set_multicycle_path -setup 3 -from $quux_status_s -to $quux_cache_held
-set_multicycle_path -hold  2 -from $quux_status_s -to $quux_cache_held

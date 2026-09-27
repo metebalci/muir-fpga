@@ -136,10 +136,10 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 #
 # The list and the two loops in the repository's own Makefile are two
 # statements of one set, and each check runs whatever its loop names: 1 to 8
-# are the CADR's, judged by `build/checkpoint.pass`, and 9 to 16 QUUX's,
+# are the CADR's, judged by `build/checkpoint.pass`, and 9 to 21 QUUX's,
 # judged by `build/checkpoint.quux.pass`.  A mutant added here and not there
 # is built and never judged.
-MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \

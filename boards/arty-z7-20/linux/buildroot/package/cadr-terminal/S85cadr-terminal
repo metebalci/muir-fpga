@@ -46,7 +46,7 @@
 # the built-in mapping.
 #
 # What goes in the file is `key` and `prefix` lines, muir's own format, and
-# muir is in this image: `muir --keyboard-mapping-dump` writes the mapping
+# muir is in this image: `cadr --keyboard-mapping-dump` writes the mapping
 # this program already has, to edit.  docs/terminal.md has the whole of it.
 
 PROG=/usr/bin/cadr-terminal
@@ -65,7 +65,7 @@ CARD=/mnt/card
 KEYS_FILE="$CARD/terminal.keyboard.mapping.txt"
 
 # **THE CARD'S ONE FILE OF FLAGS, FILTERED TO THIS PROGRAM'S.**  `fpgarc`
-# configures the CADR in the fabric the way `muirrc` beside it configures the
+# configures the CADR in the fabric the way `cadrrc` beside it configures the
 # CADR inside muir: one flag a line, the flag then a space then the rest of
 # the line as its argument, `#` a comment, carriage returns stripped.  Several
 # programs serve this machine and each refuses a flag it does not know, so the

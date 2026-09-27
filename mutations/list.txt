@@ -9104,9 +9104,9 @@ if {0 && $held ne $want} {
 @note this one is written as an inversion: a zero that is always zero cannot
 @note tell an AND from an OR, but it can tell a zero from a one.
 @old
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !holdoff) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (!ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !holdoff) || (!ub_int_line && !QUUX) || tick_irq || page_irq;
 @end
 
 @mutation dbgin-request-arrives-with-its-levels
@@ -19729,14 +19729,18 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     end else if (QUUX && group_b && ir[28:26] == 3'd6 && !ir[30]) begin
 @end
 
-@mutation quux-source-17-reads-the-open-bus
+@mutation quux-source-17-reads-zero
 @check quux_map_quux
 @file rtl/machine/cadr_microcycle.sv
-@note Source 17 reads ones where QUUX's tick, off, reads zero.
+@note Source 17 reads 0 on QUUX, as revision 9's clocks' status read with both
+@note timers off, where since revision 10 it reads all ones, as every source
+@note nothing drives (contract Q11).
 @old
-      mf = tick_status;
+    end else if (QUUX && group_b && ir[28:26] == 3'd5) begin
 @new
-      mf = ~tick_status;
+    end else if (QUUX && group_b && ir[28:26] == 3'd7) begin
+      mf = 32'd0;
+    end else if (QUUX && group_b && ir[28:26] == 3'd5) begin
 @end
 
 @mutation quux-the-pdl-pointer-is-twelve-bits
@@ -20566,27 +20570,6 @@ set_multicycle_path -setup 4 -from $quux_usec_s -to $slow
 set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @end
 
-@mutation grid-quux-de25-status-at-k
-@check grid
-@file boards/de25-nano/quartus/quux_de25.sdc
-@note The clocks' status at K on the DE25-Nano, where it is loaded a tick
-@note after an edge that runs a microcycle.
-@old
-set_multicycle_path -setup 3 -from $quux_status_s -to $slow
-@new
-set_multicycle_path -setup 4 -from $quux_status_s -to $slow
-@end
-
-@mutation grid-quux-arty-status-at-k
-@check grid
-@file rtl/plumbing/xilinx7/quux_machine.xdc
-@note The same on the Arty, which is what its relaxed set gave the status.
-@old
-set_multicycle_path -setup 3 -from $quux_status_s -to $slow
-@new
-set_multicycle_path -setup 4 -from $quux_status_s -to $slow
-@end
-
 @mutation grid-quux-arty-k-moved-alone
 @check grid
 @file boards/arty-z7-20/cadr_arty.sv
@@ -20623,7 +20606,10 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 # ------------------------------------------------ QUUX at muir's 8598fbd
 #
 # The clocks in the processor (contract Q1, `rtl/machine/quux_clocks.sv`),
-# which replaced revision 4's tick and its records; the window between a
+# which replaced revision 4's tick and its records, and since revision 10
+# the three interval timers on the register page, the destination 3 alias
+# and reset devices (contract Q11), which replaced Q1's tick, interval timer
+# and source 17 and theirs; the window between a
 # flag's rise and the edge `SINTR` is taken at (muir's `fdc0319`); the
 # boot PROM at 36000 and the register page (Q2); the keyboard and the mouse
 # (Q3, `quux_input.sv`); the network on the page (Q4); block-disk
@@ -20663,35 +20649,35 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
               sticky[k] <= sticky[k];
 @end
 
-@mutation quux-an-interval-clear-does-not-clear
+@mutation quux-a-page-clear-does-not-clear
 @check quux_clocks_quux
 @file rtl/machine/quux_clocks.sv
-@note A write with `<3>` set leaves the interval timer's flag up.
+@note A write of a timer's word with `<1>` set leaves its flag up.
 @old
-  assign clear[1]   = w_ctl && l[3] && w_flag[1];
+    assign clear[k]     = ak_clear || (p_ctl[k] && pg_wdata[0] && pg_wdata[1] && flag_a[k]);
 @new
-  assign clear[1]   = w_ctl && l[3] && w_flag[1] && 1'b0;
+    assign clear[k]     = ak_clear || (p_ctl[k] && pg_wdata[0] && pg_wdata[1] && flag_a[k] && 1'b0);
 @end
 
-@mutation quux-a-tick-clear-does-not-clear
+@mutation quux-an-alias-clear-does-not-clear
 @check quux_clocks_quux
 @file rtl/machine/quux_clocks.sv
-@note A write with `<1>` set leaves the tick's flag up.
+@note A destination 3 write with `<1>` set leaves timer 0's flag up.
 @old
-  assign clear[0]   = w_ctl && l[1] && w_flag[0];
+  assign a_clear   = w_ctl && l[1] && w_flag[0];
 @new
-  assign clear[0]   = w_ctl && l[1] && w_flag[0] && 1'b0;
+  assign a_clear   = w_ctl && l[1] && w_flag[0] && 1'b0;
 @end
 
 @mutation quux-a-period-write-does-not-restart
 @check quux_clocks_quux
 @file rtl/machine/quux_clocks.sv
-@note A period written while the interval timer runs takes effect at the
-@note next rise rather than starting a period from now.
+@note A period written while a timer is on takes effect at the next rise rather
+@note than starting a period from the write.
 @old
-  assign restart[1] = (w_ctl && l[2] && !w_en[1]) || (w_per && w_en[1]);
+    assign p_restart[k] = (p_ctl[k] && pg_wdata[0] && !en_a[k]) || (p_per[k] && en_a[k]);
 @new
-  assign restart[1] = (w_ctl && l[2] && !w_en[1]) || (w_per && w_en[1] && 1'b0);
+    assign p_restart[k] = (p_ctl[k] && pg_wdata[0] && !en_a[k]) || (p_per[k] && en_a[k] && 1'b0);
 @end
 
 @mutation quux-a-period-of-zero-runs
@@ -20710,44 +20696,50 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
           us[k]     <= (start_us[k] == 24'd0) ? 24'd1 : start_us[k];
 @end
 
-@mutation quux-the-tick-takes-the-interval-period
+@mutation quux-every-timer-counts-timer-1s-period
 @check quux_clocks_quux
 @file rtl/machine/quux_clocks.sv
-@note The tick counts the interval timer's period, as revision 4's took its
-@note period from destination 4, and not its fixed 16,667 us.
+@note Every timer's turn-on counts timer 1's period, as if the three shared one
+@note register, and not its own.
 @old
-  assign start_us[0] = TICK_US;
+    assign start_us[k] = p_per[k] ? pg_wdata : period[k];
 @new
-  assign start_us[0] = interval_us | (TICK_US & 24'd0);
+    assign start_us[k] = p_per[k] ? pg_wdata : period[1];
 @end
 
-@mutation quux-source-17-swaps-its-bits
+@mutation quux-a-timer-word-swaps-on-and-flag
 @check quux_clocks_quux
 @file rtl/machine/quux_clocks.sv
-@note Source 17 reads each enable in the flag's place and the flag in the
-@note enable's.
+@note A timer's control word reads its flag in `<0>` and its on in `<1>`.
 @old
-  assign status  = {en_s[1], flag_s[1], en_s[0], flag_s[0]};
+        rd_word[0] = en_e[pg_ridx[2:1]];
+        rd_word[1] = flag_e[pg_ridx[2:1]];
 @new
-  assign status  = {flag_s[1], en_s[1], flag_s[0], en_s[0]};
+        rd_word[0] = flag_e[pg_ridx[2:1]];
+        rd_word[1] = en_e[pg_ridx[2:1]];
 @end
 
-@mutation quux-source-17-reads-the-flags-live
-@check quux_clocks_quux
+@mutation quux-a-page-read-takes-the-flags-after-its-edge
+@check quux_clockwait_quux_l1
 @file rtl/machine/quux_clocks.sv
-@note Source 17 reads the flags as they stand through the microcycle, not as
-@note they stood when it started, so a rise mid-cycle is seen a cycle early.
+@note A page read takes the flags as they stand in the tick the page takes it,
+@note the tick after the edge that takes its cycle, so a rise in that tick is
+@note read up where muir reads it down (contract Q11, rule 10; M13's rise a tick
+@note after the edge).  Measured: the rise 10 ns after the edge is at gap 5 and
+@note three `ILONG`s of `clockwait` at an L of one.
 @old
-  assign status  = {en_s[1], flag_s[1], en_s[0], flag_s[0]};
+  assign flag_e     = w ? flag_a : flag_s;
 @new
-  assign status  = {en_s[1], flag[1] | (flag_s[1] & 1'b0), en_s[0], flag[0] | (flag_s[0] & 1'b0)};
+  assign flag_e     = flag | (flag_a & flag_s & 3'b000);
 @end
 
 @mutation quux-source-15-misses-the-edge
-@check quux_clocks_quux
+@check quux_clockwait_quux_l1
 @file rtl/machine/quux_clocks.sv
 @note Source 15 is taken at the edge without a microsecond that falls on
 @note it, so a read on a microsecond's boundary reads one less than muir.
+@note `clockwait` at an L of one reads it 10 ns apart against the
+@note boundaries; `clocks` reads it once since revision 10.
 @old
       if (mclk_edge) usec_s <= usec + 32'(power_on_t == 2'd0 && usec_t == 7'd0);
 @new
@@ -20768,63 +20760,258 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @mutation quux-the-clocks-do-not-interrupt
 @check quux_clocks_quux
 @file rtl/machine/quux_clocks.sv
-@note Neither flag reaches the interrupt the jump conditions test.
+@note No timer's flag reaches the interrupt the jump conditions test.
 @old
-  assign irq = (flag[0] && !(dest_ctl && (!ob[0] || ob[1])))
+  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
 @new
-  assign irq = 1'b0 && (flag[0] && !(dest_ctl && (!ob[0] || ob[1])))
+  assign irq = 1'b0 && (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
 @end
 
-@mutation quux-the-interval-interrupts-through-its-own-clear
+@mutation quux-the-alias-interrupts-through-its-own-clear
 @check quux_clocks_quux
 @file rtl/machine/quux_clocks.sv
-@note The interrupt taken at the edge of a clear is the flag before the
-@note clear, where muir takes it after the write.
+@note The interrupt taken at the edge of a destination 3 clear is timer 0's
+@note flag before the clear, where muir takes it after the write.
 @old
-            || (flag[1] && !(dest_ctl && (!ob[2] || ob[3])) && !dest_per);
+  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
 @new
-            || (flag[1] && !(dest_ctl && !ob[2] && (ob[3] || !ob[3])) && !dest_per);
+  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || (ob[1] && 1'b0))))
 @end
 
 @mutation quux-sintr-takes-the-flags-the-microcycle-started-with
 @check quux_tickwin_quux_l1
 @file rtl/machine/quux_clocks.sv
-@note **THE RULE BEFORE muir'S `fdc0319`**: `SINTR` from the flags as they
-@note stood at the edge that started the microcycle, which misses a rise
-@note inside it, or on the edge that ends it, by one microcycle.  Measured
-@note before the change on this program: eight rows, six of them a rise
-@note strictly inside the microcycle and four in a wait for `MD`.
+@note **THE RULE BEFORE muir'S `fdc0319`**: `SINTR` from the flags as they stood
+@note at the last master clock edge, which misses a rise inside the microcycle,
+@note or on the edge that ends it, by one microcycle.  `tickwin` puts the rise
+@note strictly inside the microcycle and inside a wait for `MD`, against a page
+@note write's edges since revision 10.
 @old
-  assign irq = (flag[0] && !(dest_ctl && (!ob[0] || ob[1])))
-            || (flag[1] && !(dest_ctl && (!ob[2] || ob[3])) && !dest_per);
+  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
+            || (flag[1] && ie[1]) || (flag[2] && ie[2]);
 @new
-  assign irq = (en_s[0] && flag_s[0] && !(dest_ctl && (!ob[0] || ob[1])))
-            || (en_s[1] && flag_s[1] && !(dest_ctl && (!ob[2] || ob[3])) && !dest_per);
+  assign irq = (flag_s[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
+            || (flag_s[1] && ie[1]) || (flag_s[2] && ie[2]);
 @end
 
-@mutation quux-a-clock-flag-taken-where-the-wait-began
-@check quux_clockwait_quux
+@mutation quux-a-page-read-at-a-held-edge-takes-the-flags-before-it
+@check quux_clocks_quux
 @file rtl/machine/quux_clocks.sv
-@note The status a waiting microcycle reads is the one at the master clock
-@note edge it finally runs from; kept from where the wait began, a rise while
-@note it waits is missed.
+@note A page read whose cycle is taken at a held edge --- a start right behind
+@note it, which QUUX holds until the first has gone out --- takes the flags as
+@note they stood at the last edge that ran a microcycle, so a rise on the held
+@note edge is missed.  `clocks` walks the rise across the held edges.
 @old
-      if (mclk_edge && !cpu_edge) begin
-        flag_s <= flag;
+      if (mclk_edge && !cpu_edge) flag_s <= flag;
 @new
-      if (1'b0) begin
-        flag_s <= flag;
+      if (1'b0) flag_s <= flag;
 @end
 
 @mutation quux-the-clocks-are-not-on-sintr
 @check quux_clocks_quux
 @file rtl/machine/cadr_machine.sv
-@note The clocks' interrupt does not reach `SINTR`, so jump condition 5
+@note The timers' interrupt does not reach `SINTR`, so jump condition 5
 @note never sees it.
 @old
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign sintr_o   = (xbus_intr && !holdoff) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 @new
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || (tick_irq && 1'b0) || page_irq;
+  assign sintr_o   = (xbus_intr && !holdoff) || (ub_int_line && !QUUX) || (tick_irq && 1'b0) || page_irq;
+@end
+
+@mutation quux-reset-devices-resets-no-timer
+@check quux_busreset_quux
+@file rtl/machine/quux_clocks.sv
+@note Reset devices leaves the interval timers as they were (contract Q11).
+@old
+    if (rst || !n_boot || devreset) begin
+@new
+    if (rst || !n_boot || (devreset && 1'b0)) begin
+@end
+
+@mutation quux-reset-devices-on-a-write-of-0
+@check quux_clocks_quux
+@file rtl/machine/quux_feature_page.sv
+@note A write of word 104 resets the devices whatever its `<0>`: `clocks` writes
+@note it with 0 while the three timers run.
+@old
+      reset_devices <= take && dev_write && which == 8'o104 && wdata[0];
+@new
+      reset_devices <= take && dev_write && which == 8'o104;
+@end
+
+@mutation quux-the-timers-answer-words-100-to-117
+@check quux_clocks_quux
+@file rtl/machine/quux_feature_page.sv
+@note The timers' decode takes words 100 to 117 for 110 to 117, so a write of
+@note word 104 is a write of timer 2's control word.
+@old
+  assign tm_we      = take && dev_write && which[7:3] == 5'o11 && which[2:1] != 2'b11;
+@new
+  assign tm_we      = take && dev_write && which[7:4] == 4'o4 && which[2:1] != 2'b11;
+@end
+
+@mutation quux-word-115-reads-0
+@check quux_clocks_quux
+@file rtl/machine/quux_feature_page.sv
+@note Timer 2's period does not read back.
+@old
+        8'o110, 8'o111, 8'o112, 8'o113, 8'o114, 8'o115: word = {8'd0, tm_rdata};
+@new
+        8'o110, 8'o111, 8'o112, 8'o113, 8'o114: word = {8'd0, tm_rdata};
+@end
+
+@mutation quux-feature-word-16-reads-0
+@check quux_page_quux
+@file rtl/machine/quux_feature_page.sv
+@note Feature word 16 reads 0, as below revision 10, where it counts the timers.
+@old
+        8'o16:   word = TIMERS;
+@new
+        8'o16:   word = TIMERS & 32'd0;
+@end
+
+@mutation quux-word-100-timer-2-at-bit-6
+@check quux_page_quux
+@file rtl/machine/quux_feature_page.sv
+@note Word 100's `<7>` and `<6>` swapped: timer 2 read as the file device.
+@old
+        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
+@new
+        8'o100:  word = {24'd0, fd_irq, timer_pending[2], chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
+@end
+
+@mutation quux-the-mode-is-taken-at-every-write
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A timer's mode is taken from every write of its control word, and not
+@note only from the write that turns it on.
+@old
+          if (p_restart[k]) one_shot[k] <= pg_wdata[2];
+@new
+          if (1'b1) one_shot[k] <= pg_wdata[2];
+@end
+
+@mutation quux-a-one-shot-runs-on
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A one-shot's count does not stop at its rise, and it rises again a period on.
+@old
+              if (one_shot[k]) live[k] <= 1'b0;
+@new
+              if (1'b0) live[k] <= 1'b0;
+@end
+
+@mutation quux-the-alias-turn-on-keeps-the-mode
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note Destination 3's turn-on leaves timer 0's mode as it was, where Q1's tick
+@note it stands for was periodic.
+@old
+          ie[k]       <= 1'b1;
+          one_shot[k] <= 1'b0;
+@new
+          ie[k]       <= 1'b1;
+          one_shot[k] <= one_shot[k];
+@end
+
+@mutation quux-the-alias-turn-on-sets-no-interrupt-enable
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note Destination 3's turn-on leaves timer 0's interrupt enable as it was, so the
+@note current band's tick, which turns it on through the alias, never interrupts.
+@old
+          ie[k]       <= 1'b1;
+          one_shot[k] <= 1'b0;
+@new
+          ie[k]       <= ie[k];
+          one_shot[k] <= 1'b0;
+@end
+
+@mutation quux-a-read-at-the-alias-turn-on-misses-its-enable
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A page read taken at the edge of a destination 3 turn-on reads timer 0's
+@note interrupt enable as it was before it, where muir takes the alias first.
+@old
+  assign ie_e       = {ie[2:1], ie[0] || a_restart};
+@new
+  assign ie_e       = {ie[2:1], ie[0]};
+@end
+
+@mutation quux-a-read-at-the-alias-turn-on-misses-it
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A page read taken at the edge of a destination 3 turn-on reads timer 0
+@note off, where muir takes the alias first.
+@old
+  assign en_e       = {en[2:1], w_ctl ? l[0] : en[0]};
+@new
+  assign en_e       = {en[2:1], en[0]};
+@end
+
+@mutation quux-a-page-write-meets-the-timer-before-the-alias
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A page write taken at the edge of a destination 3 write meets timer 0 as
+@note it stood before that write, where muir takes the alias first (rule 10):
+@note the alias's off and a page write of `401` leave it off, not on.
+@old
+  assign en_a   = {w_en[2:1], w_ctl ? l[0] : w_en[0]};
+@new
+  assign en_a   = {w_en[2:1], w_en[0]};
+@end
+
+@mutation quux-the-alias-off-beats-the-page-turn-on
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note At a shared edge the alias's off wins over the page's turn-on, where muir
+@note takes the page write second.
+@old
+    assign off[k]       = (ak_off && !p_restart[k]) || (p_ctl[k] && !pg_wdata[0]);
+@new
+    assign off[k]       = ak_off || (p_ctl[k] && !pg_wdata[0]);
+@end
+
+@mutation quux-a-page-read-misses-the-alias-clear-at-its-edge
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A page read taken at the edge of a destination 3 clear reads the flag up,
+@note where muir takes the clear first (M13).
+@old
+  assign flag_e     = w ? flag_a : flag_s;
+@new
+  assign flag_e     = w ? w_flag : flag_s;
+@end
+
+@mutation quux-timer-2-interrupts-without-its-enable
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note Timer 2's flag interrupts whatever its interrupt enable says.
+@old
+            || (flag[1] && ie[1]) || (flag[2] && ie[2]);
+@new
+            || (flag[1] && ie[1]) || flag[2];
+@end
+
+@mutation quux-word-100-ignores-the-interrupt-enables
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note Word 100's timer bits are the flags whatever the interrupt enables say.
+@old
+  assign pending = flag_e & ie_e;
+@new
+  assign pending = flag_e;
+@end
+
+@mutation quux-a-periodic-rise-reloads-another-timers-period
+@check quux_clocks_quux
+@file rtl/machine/quux_clocks.sv
+@note A periodic timer's rise reloads the next timer's period, so a second
+@note period is another timer's while the first was its own.
+@old
+              else us[k] <= period[k];
+@new
+              else us[k] <= period[(k + 1) % 3];
 @end
 
 @mutation quux-the-prom-is-at-zero
@@ -20866,7 +21053,7 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @file rtl/machine/cadr_machine.sv
 @note The MACHINE-ID of revision 4, before the clocks and the register page.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
 @end
@@ -20887,9 +21074,9 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @file rtl/machine/quux_feature_page.sv
 @note Word 100's `<3>` and `<5>` swapped: the keyboard read as the network.
 @old
-        8'o100:  word = {25'd0, fd_irq, chaos_ireq, in_irq, disk_irq, clock_pending};
+        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
 @new
-        8'o100:  word = {25'd0, fd_irq, in_irq[0], in_irq[1], chaos_ireq, disk_irq, clock_pending};
+        8'o100:  word = {24'd0, timer_pending[2], fd_irq, in_irq[0], in_irq[1], chaos_ireq, disk_irq, timer_pending[1:0]};
 @end
 
 @mutation quux-word-101-does-not-clear
@@ -20918,9 +21105,9 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note The network's request reaches word 100 and not the processor, as it
 @note did before muir's `1f6f5fb`.
 @old
-  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
+  assign irq = (|in_irq) || chaos_ireq || fd_irq;
 @new
-  assign irq = (|in_irq) || (((chaos_ireq && 1'b0) || fd_irq) && !prog_unibus_reset_rising);
+  assign irq = (|in_irq) || (chaos_ireq && 1'b0) || fd_irq;
 @end
 
 @mutation quux-the-fifo-is-sixty-three
@@ -21090,15 +21277,15 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 # it; `quux_readout_window` holds that a CADR answers none of it, which is how
 # `cadr-checkpoint` tells the two bitstreams apart.
 
-@mutation quux-ro-tick-carries-the-interval-timers-count
+@mutation quux-ro-count-carries-the-next-timers-prescaler
 @check quux_readout_window_quux
 @file rtl/machine/quux_clocks.sv
-@note The tick's word carries the interval timer's prescaler, so a
-@note checkpoint's tick deadline is the other timer's.
+@note Each timer's count word carries the next timer's prescaler, so a
+@note checkpoint's deadline is another timer's.
 @old
-  assign ro_tick     = {usec[6:0], usec_t, en[0], sticky[0], live[0], pre[0], us[0]};
+    assign ro_count[k] = {usec[6:0], usec_t, en[k], sticky[k], live[k], pre[k], us[k]};
 @new
-  assign ro_tick     = {usec[6:0], usec_t, en[0], sticky[0], live[0], pre[1], us[0]};
+    assign ro_count[k] = {usec[6:0], usec_t, en[k], sticky[k], live[k], pre[(k + 1) % 3], us[k]};
 @end
 
 @mutation quux-ro-time-a-microsecond-ahead
@@ -21107,20 +21294,20 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note The microsecond clock reads one ahead of itself, so every instant a
 @note checkpoint takes from it is a microsecond late.
 @old
-  assign ro_time     = {9'd0, usec_t, usec};
+  assign ro_time = {9'd0, usec_t, usec};
 @new
-  assign ro_time     = {9'd0, usec_t, usec + 32'd1};
+  assign ro_time = {9'd0, usec_t, usec + 32'd1};
 @end
 
-@mutation quux-ro-interval-sticky-and-live-crossed
+@mutation quux-ro-count-sticky-and-live-crossed
 @check quux_readout_window_quux
 @file rtl/machine/quux_clocks.sv
-@note The interval timer's raised flag and its running period trade places,
-@note so a stopped timer reads as raised.
+@note A timer's raised flag and its running period trade places in its count
+@note word, so a stopped timer reads as raised.
 @old
-  assign ro_interval = {usec[6:0], usec_t, en[1], sticky[1], live[1], pre[1], us[1]};
+    assign ro_count[k] = {usec[6:0], usec_t, en[k], sticky[k], live[k], pre[k], us[k]};
 @new
-  assign ro_interval = {usec[6:0], usec_t, en[1], live[1], sticky[1], pre[1], us[1]};
+    assign ro_count[k] = {usec[6:0], usec_t, en[k], live[k], sticky[k], pre[k], us[k]};
 @end
 
 @mutation quux-ro-id-k-and-l-crossed
@@ -21134,16 +21321,38 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
       RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_L), 8'(SYNC_K), 16'd0} : RO_NO_MEMORY;
 @end
 
-@mutation quux-ro-tick-and-interval-entries-crossed
+@mutation quux-ro-count-entries-crossed
 @check quux_readout_window_quux
 @file rtl/machine/cadr_microcycle.sv
-@note Entries 23 and 24 swap, so the tick is read as the interval timer.
+@note Entries 23 and 24 swap, so timer 0's count is read as timer 1's.
 @old
-  localparam logic [13:0] RG_QUUX_TICK     = 14'd23;
-  localparam logic [13:0] RG_QUUX_INTERVAL = 14'd24;
+  localparam logic [13:0] RG_QUUX_COUNT0   = 14'd23;
+  localparam logic [13:0] RG_QUUX_COUNT1   = 14'd24;
 @new
-  localparam logic [13:0] RG_QUUX_TICK     = 14'd24;
-  localparam logic [13:0] RG_QUUX_INTERVAL = 14'd23;
+  localparam logic [13:0] RG_QUUX_COUNT0   = 14'd24;
+  localparam logic [13:0] RG_QUUX_COUNT1   = 14'd23;
+@end
+
+@mutation quux-ro-conf-entries-crossed
+@check quux_readout_window_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Entries 27 and 28 swap, so timer 1's mode, enable and period are timer 2's.
+@old
+  localparam logic [13:0] RG_QUUX_CONF1    = 14'd27;
+  localparam logic [13:0] RG_QUUX_CONF2    = 14'd28;
+@new
+  localparam logic [13:0] RG_QUUX_CONF1    = 14'd28;
+  localparam logic [13:0] RG_QUUX_CONF2    = 14'd27;
+@end
+
+@mutation quux-ro-conf-mode-and-enable-crossed
+@check quux_readout_window_quux
+@file rtl/machine/quux_clocks.sv
+@note A timer's mode and interrupt enable trade places in its readout word.
+@old
+    assign ro_conf[k]  = {ie[k], one_shot[k], period[k]};
+@new
+    assign ro_conf[k]  = {one_shot[k], ie[k], period[k]};
 @end
 
 @mutation quux-ro-id-answers-on-the-cadr
@@ -21565,7 +21774,7 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $slow
 @note MACHINE-ID says revision 7, the memory port's, from before the device
 @note registers.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
 @end
@@ -21644,17 +21853,6 @@ set_multicycle_path -setup 4 -from $slow -to $quux_cache_held
 set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @end
 
-@mutation grid-quux-arty-cache-status-at-k
-@check grid
-@file rtl/plumbing/xilinx7/quux_machine.xdc
-@note The clocks' status into the cache's held address at K, where it is
-@note loaded a tick after the edge.
-@old
-set_multicycle_path -setup 3 -from $quux_status_s -to $quux_cache_held
-@new
-set_multicycle_path -setup 4 -from $quux_status_s -to $quux_cache_held
-@end
-
 @mutation grid-quux-de25-cache-address-a-tick-wide
 @check grid
 @file boards/de25-nano/quartus/quux_de25.sdc
@@ -21663,16 +21861,6 @@ set_multicycle_path -setup 4 -from $quux_status_s -to $quux_cache_held
 set_multicycle_path -setup 4 -from $slow -to $quux_cache_held
 @new
 set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
-@end
-
-@mutation grid-quux-de25-cache-status-at-k
-@check grid
-@file boards/de25-nano/quartus/quux_de25.sdc
-@note The same on the DE25-Nano.
-@old
-set_multicycle_path -setup 3 -from $quux_status_s -to $quux_cache_held
-@new
-set_multicycle_path -setup 4 -from $quux_status_s -to $quux_cache_held
 @end
 
 # ----------------------------------- QUUX's device registers, Q7, and Q8a
@@ -21776,20 +21964,22 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @note `PROG.UNIBUS.RESET` clears nothing: the controller keeps its command
 @note and its interrupt, the display its vertical flag.
 @old
-  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q);
+  assign bus_init = rst || (QUUX ? page_reset_devices : (prog_unibus_reset && !prog_unibus_reset_q));
 @new
-  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q && 1'b0);
+  assign bus_init = rst || (QUUX ? page_reset_devices : (prog_unibus_reset && !prog_unibus_reset_q && 1'b0));
 @end
 
-@mutation quux-bus-reset-reaches-no-board
+@mutation quux-reset-devices-reaches-no-board
 @check quux_busreset_quux
+@check quux_files_quux
 @file rtl/machine/cadr_machine.sv
-@note The same on QUUX: block-disk keeps its command and its error, the
-@note network its enable.
+@note On QUUX a write of word 104 with `<0>` set resets no board: block-disk
+@note keeps its command and its error, the network its enable, the file device
+@note its enable and its queue (contract Q11 and the Q9 amendment).
 @old
-  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q);
+  assign bus_init = rst || (QUUX ? page_reset_devices : (prog_unibus_reset && !prog_unibus_reset_q));
 @new
-  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q && 1'b0);
+  assign bus_init = rst || (QUUX ? (page_reset_devices && 1'b0) : (prog_unibus_reset && !prog_unibus_reset_q));
 @end
 
 @mutation bus-reset-interrupt-not-held-off
@@ -21799,31 +21989,34 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @note edge that ends the write's microcycle is the boards' from before it,
 @note where muir's is the reset boards'.
 @old
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign holdoff  = prog_unibus_reset_rising && !QUUX;
 @new
-  assign sintr_o   = (xbus_intr && !(prog_unibus_reset_rising && 1'b0)) || (ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign holdoff  = prog_unibus_reset_rising && !QUUX && 1'b0;
 @end
 
-@mutation quux-bus-reset-interrupt-not-held-off
+@mutation quux-28-is-held-off-on-quux
 @check quux_busreset_quux
 @file rtl/machine/cadr_machine.sv
-@note The same on QUUX, where the Xbus line is block-disk's done.
+@note The CADR's hold-off kept on QUUX: `SINTR` at the edge of an
+@note `INTERRUPT-CONTROL` write raising `<28>` drops block-disk's done, where
+@note muir, `<28>` resetting nothing on QUUX since revision 10, keeps it.
 @old
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign holdoff  = prog_unibus_reset_rising && !QUUX;
 @new
-  assign sintr_o   = (xbus_intr && !(prog_unibus_reset_rising && 1'b0)) || (ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign holdoff  = prog_unibus_reset_rising;
 @end
 
-@mutation quux-bus-reset-network-not-held-off
+@mutation quux-28-still-resets-quux
 @check quux_busreset_quux
-@file rtl/machine/quux_feature_page.sv
-@note The network's term of the register page is not held off while the
-@note reset lands, so `SINTR` at the write's edge still carries it.
+@check quux_files_quux
+@file rtl/machine/cadr_machine.sv
+@note `<28>`'s rise still resets QUUX's boards beside reset devices, as it did
+@note up to revision 9: block-disk, the network and the file device are reset
+@note where muir, since revision 10, leaves them (contract Q11).
 @old
-  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
+  assign bus_init = rst || (QUUX ? page_reset_devices : (prog_unibus_reset && !prog_unibus_reset_q));
 @new
-  assign irq = (|in_irq) || (chaos_ireq && !(prog_unibus_reset_rising && 1'b0))
-               || (fd_irq && !prog_unibus_reset_rising);
+  assign bus_init = rst || (QUUX ? (page_reset_devices || (prog_unibus_reset && !prog_unibus_reset_q)) : (prog_unibus_reset && !prog_unibus_reset_q));
 @end
 
 @mutation bus-reset-held-off-for-the-wrong-bit
@@ -21925,7 +22118,7 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @note enables cleared by `-UB INIT`.  The CADR side of `busreset` enables
 @note the board's clock interrupt and `ENABLE UB INTS` before the reset.
 @old
-  assign ub_int_line = ub_int_hand || (ub_int && !prog_unibus_reset_rising);
+  assign ub_int_line = ub_int_hand || (ub_int && !holdoff);
 @new
   assign ub_int_line = ub_int_hand || ub_int;
 @end
@@ -21939,9 +22132,9 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @note resets a second time with it written, so `SINTR` must stay up through
 @note the write's microcycle.
 @old
-  assign ub_int_line = ub_int_hand || (ub_int && !prog_unibus_reset_rising);
+  assign ub_int_line = ub_int_hand || (ub_int && !holdoff);
 @new
-  assign ub_int_line = (ub_int_hand && 1'b0) || (ub_int && !prog_unibus_reset_rising);
+  assign ub_int_line = (ub_int_hand && 1'b0) || (ub_int && !holdoff);
 @end
 
 @mutation iob-ssyn-rises-with-the-landing
@@ -22205,9 +22398,21 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note MACHINE-ID says revision 8, the device registers', from before the
 @note clock and the file device: the revision just below this one.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
+@end
+
+@mutation quux-machine-id-revision-9
+@check quux_page_quux
+@file rtl/machine/cadr_machine.sv
+@note MACHINE-ID says revision 9, the real-time clock's and the file device's,
+@note from before the interval timers and reset devices: the revision just below
+@note this one.
+@old
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
+@new
+  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
 @end
 
 @mutation quux-word-15-names-the-clock-alone
@@ -22288,9 +22493,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note Word 100's `<6>` reads 0: the file device interrupts the processor and
 @note the processor cannot find out who did.
 @old
-        8'o100:  word = {25'd0, fd_irq, chaos_ireq, in_irq, disk_irq, clock_pending};
+        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
 @new
-        8'o100:  word = {25'd0, fd_irq && 1'b0, chaos_ireq, in_irq, disk_irq, clock_pending};
+        8'o100:  word = {24'd0, timer_pending[2], fd_irq && 1'b0, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
 @end
 
 @mutation quux-the-file-device-does-not-interrupt-the-processor
@@ -22298,20 +22503,20 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_feature_page.sv
 @note Word 100's `<6>` is up and `SINTR` is not.
 @old
-  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
+  assign irq = (|in_irq) || chaos_ireq || fd_irq;
 @new
-  assign irq = (|in_irq) || ((chaos_ireq || (fd_irq && 1'b0)) && !prog_unibus_reset_rising);
+  assign irq = (|in_irq) || chaos_ireq || (fd_irq && 1'b0);
 @end
 
-@mutation quux-bus-reset-file-device-not-held-off
+@mutation quux-reset-devices-leaves-the-file-device
 @check quux_files_quux
 @file rtl/machine/quux_feature_page.sv
-@note The file device's request is not held off while the reset lands, so
-@note `SINTR` at the reset's edge still carries a response waiting.
+@note The file device takes the power-on reset alone and not reset devices, so a
+@note write of word 104 leaves it enabled with its queue (the Q9 amendment).
 @old
-  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
+      .xbus_init  (xbus_init),
 @new
-  assign irq = (|in_irq) || (chaos_ireq && !prog_unibus_reset_rising) || fd_irq;
+      .xbus_init  (xbus_init && rst),
 @end
 
 @mutation quux-the-bus-reset-does-not-reach-the-file-device

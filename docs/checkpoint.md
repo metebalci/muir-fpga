@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 43.** It is
+version is refused by name rather than read wrong. **The version is 45.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
@@ -60,11 +60,13 @@ the level-1 map: the level-1 entry's width, the PDL pointer's width, whether
 the machine has QUUX's multiply and divide, and whether it has QUUX's tick.
 The fabric is a CADR, so the program writes its 1,024 words of each followed
 by zeros, and declares the CADR's geometry: a five-bit level-1 entry, a
-ten-bit PDL pointer, no multiply and divide and no tick. The tick's own state
-follows the geometry, written as a CADR's machine holds it: off and with no
-deadline, and from version 38 the interval timer after it, off, with a period
-of 0 and no deadline. Before version 38 the tick carried its period, 16,667
-microseconds. The display writes the size QUUX's MONO
+ten-bit PDL pointer, no multiply and divide and no tick. The clocks' state
+follows the geometry, written as a CADR's machine holds it. From version 45
+that is QUUX's three interval timers (contract Q11), each off, periodic, its
+interrupt enable 0, its period 0 and no deadline. From version 38 to 44 it
+was Q1's tick, off and with no deadline, and the interval timer after it,
+off, with a period of 0 and no deadline, and before version 38 the tick
+carried its period, 16,667 microseconds. The display writes the size QUUX's MONO
 TV would have after its board's tag, which a CADR's display keeps and never
 uses. That size is 1,280 by 1,024 from version 35 on, and was 1,920 by 1,080
 before it. The engine also keeps the instant the instruction in
@@ -125,6 +127,12 @@ because a checkpoint is refused while a command is queued. On QUUX those come
 from the register page's readout, selector 12 words 7 to 9; on the CADR they
 are a power-on file device's, zero. The CADR's body grows by 28 bytes, every
 one of them zero.
+
+Version 44 is muir's `micro` engine's alone and changes nothing this program
+writes. Version 45 is QUUX's revision 10: the clocks are three interval
+timers, each written as muir's `Timers::save` has it: on, its mode, its
+interrupt enable, its period and its deadline. The CADR's body grows by 23
+bytes, 632,386 to 632,409.
 
 **A QUUX checkpoint is refused while the file device has a handle open or a
 command queued**, as muir refuses one, with muir's sentence. A handle is a
@@ -229,7 +237,7 @@ anywhere in that stream would break it.
     packs-program-stopped: unknown
     packs: 1
     pack: unit=0 bytes=269562880 geometry=815,19,17 read-only=no sha256=... file=/mnt/card/packs/disk-pack-0.img
-    resume: muir --rtl --timing-model fpga --disk-pack /mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume muir-20260911-193000.chk
+    resume: cadr --rtl --timing-model fpga --disk-pack /mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume muir-20260911-193000.chk
 
 The checkpoint's own digest is in there too, so a sidecar that has drifted
 away from the file it was written for is found out as well as a pack that has.
@@ -308,10 +316,10 @@ What a QUUX checkpoint holds beyond the CADR's, in muir's order:
 
 | what | where the fabric has it | how it is read |
 |---|---|---|
-| `Geometry::QUUX`: a six-bit level-1 entry, a 14-bit PDL pointer, `MUL` and `DIV`, the tick | the bitstream | entry 21 names the machine |
+| `Geometry::QUUX`: a six-bit level-1 entry, a 14-bit PDL pointer, `MUL` and `DIV`, the timers | the bitstream | entry 21 names the machine |
 | the PDL buffer's 16,384 words and its 14-bit pointer and index; the level-1 map at six bits; the level-2 map's 2,048 entries | `cadr_microcycle.sv` | the window's own selectors, at QUUX's sizes |
 | the boot PROM | `cadr_microcycle.sv` | selector 1; the control store under it, at 36000 and up, is written zero, as muir's machine holds it, since nothing fetches or writes that RAM |
-| the clocks, `Machine::tick`: each timer's enable and deadline, and the interval timer's period | `quux_clocks.sv` | entries 22 to 25 |
+| the interval timers, `Machine::timers`: each timer's on, mode, interrupt enable, period and deadline | `quux_clocks.sv` | entries 22 to 28: the microsecond clock, each timer's count at 23 to 25, and its interrupt enable, mode and period at 26 to 28 |
 | the keyboard and mouse, `QuuxInput`: the FIFO's waiting words, the overflow, both enables, the counts, the buttons and whether the mouse changed | `quux_input.sv` and the I/O board's counters | selector 12, word 0 and the FIFO at words 64 to 127 |
 | block-disk, `BlockDisk`: its four registers, its three errors and when its transfer is done | `quux_block_disk.sv` | selector 12, words 1 to 5 |
 | the bus errors, word 101 of the register page | `cadr_busint_regs.sv` | selector 12, word 6 |
@@ -322,7 +330,7 @@ What a QUUX checkpoint holds beyond the CADR's, in muir's order:
 **The clocks run while they are read**, halted machine or not, and a reader's
 accesses are microseconds apart. So each timer's word carries the low bits of
 the microsecond clock from the same tick, and the program reads the whole
-clock before and after the two timers. It refuses the reading if those two are
+clock before and after the three timers' counts. It refuses the reading if those two are
 more than 64 microseconds apart, and tries again. muir's instant is ticks since
 power-on, `usec * 100 + 99 - usec_t`, and the thirty-two bits of microseconds
 are unwrapped against the console's tick count. A timer's next rise is
@@ -331,11 +339,17 @@ are unwrapped against the console's tick count. A timer's next rise is
 What a QUUX checkpoint does not carry exactly, besides what it shares with the
 CADR's list above:
 
-- **A flag raised more than a period ago and not cleared.** The fabric counts
-  to the next rise and cannot say how many rises ago the flag went up. The file
-  carries the latest rise where muir keeps the first. The flag is up either
-  way, and a clear moves both to the same next boundary, so the resumed machine
-  is the same machine; the file is not the same bytes.
+- **A periodic timer's flag raised more than a period ago and not cleared.**
+  The fabric counts to the next rise and cannot say how many rises ago the
+  flag went up. The file carries the latest rise where muir keeps the first.
+  The flag is up either way, and a clear moves both to the same next
+  boundary, so the resumed machine is the same machine; the file is not the
+  same bytes.
+- **When a one-shot timer rose**, once it has. Its count stops at the rise,
+  so the file carries the latest tick it can have risen at, the one before
+  its word was read. The flag is up either way and a clear leaves both with
+  no deadline, so the resumed machine is the same machine; the file is the
+  same bytes only when the rise was that tick.
 - **When block-disk's transfer finished** is read a few microseconds after the
   checkpoint's own instant. For a finished transfer it lies in the past either
   way, which is all the machine reads of it. A disk whose command list is still
@@ -352,12 +366,13 @@ values, which QUUX never changes. That is exact rather than idle.
 
 The proof is `make build/checkpoint.quux.pass`, and **its judge is muir's own
 file for the same machine**. `golden/src/quux_checkpoint.rs` builds a QUUX
-machine through muir's own calls: the clocks enabled and a period written, keys
+machine through muir's own calls: the three timers' periods written and each
+turned on, one-shot or periodic, one risen and one not, keys
 pressed and read, the mouse moved, block-disk started. The package's check
 builds the same machine as the fabric's counters and registers would hold it
 after that history, through a modeled window, and the two files are compared
 byte for byte. muir then loads the program's file and saves it back
-identically. Eight mutants of `chk_rtl.c`, 9 to 16, are each caught by muir's
+identically. Thirteen mutants of `chk_rtl.c`, 9 to 21, are each caught by muir's
 refusal, by a re-save that differs, or by a file that is not muir's own. The
 `Rtl` engine's own registers are a fresh engine's on both sides, because muir
 keeps them private. They are the CADR's code, which `build/checkpoint.pass`

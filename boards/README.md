@@ -76,7 +76,7 @@ so that a person who has learned one card has learned all of them. The user
 formats the card and unpacks the board's zip onto it. There is no disk image.
 
     /            BOOT.BIN, u-boot.img and uEnv.txt, whose names the loader
-                 fixes, and README.TXT, fpgarc and muirrc, which are the files
+                 fixes, and README.TXT, fpgarc, cadrrc and quuxrc, which are the files
                  a person edits
     <board>/     a folder named as the board's directory here is ---
                  `arty-z7-20/`, `cora-z7-07s/`, `de25-nano/` --- holding that

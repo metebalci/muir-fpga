@@ -5,29 +5,30 @@ config BR2_PACKAGE_MUIR
 	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
 	select BR2_PACKAGE_HOST_RUSTC
 	help
-	  muir itself, on the board's own Arm cores, beside the CADR in
-	  the fabric.  It is built from muir's own source at the commit
+	  muir itself, on the board's own Arm cores, beside the machine
+	  in the fabric: its two executables, `cadr` and `quux`, each
+	  with only its own machine's flags.  It is built from muir's own source at the commit
 	  muir.commit pins, so the board runs the muir this repository is
 	  held to.  No binary is carried in this repository.
 
 	  It is here to be the debugger.  MIT debugged a CADR with a
 	  second CADR over the debug cable, running CC.  This fabric has
-	  the debuggee end of that cable, and muir on the Arm cores is
-	  the machine at the other end of it.  It reaches the fabric
+	  the debuggee end of that cable, and `cadr` on the Arm cores
+	  is the machine at the other end of it.  It reaches the fabric
 	  through a register window over /dev/mem rather than over a
 	  wire.
 
 	  Every other program in this tree has an init script and this
-	  one has none.  muir is started by hand when it is wanted.  The
+	  one has none.  `cadr` is started by hand when it is wanted.  The
 	  reason is the cable and not the cost: a debugger that dies
 	  mid-request leaves the debuggee's own bus cycle waiting.
 	  Running muir costs the fabric CADR nothing, measured with both
 	  cores saturated and the machine's rate read off the fabric's
 	  own tick counter.
 
-	  /root/.muirrc is a symlink to muirrc at the root of the card, so
-	  that the debugger is the word `muir` and its settings survive a
-	  reboot.  The root filesystem is a RAM disk unpacked at every
+	  /root/.cadrrc is a symlink to cadrrc at the root of the card,
+	  and /root/.quuxrc to quuxrc, so that the debugger is the word
+	  `cadr` and the settings of each survive a reboot.  The root filesystem is a RAM disk unpacked at every
 	  boot, so an edit made to a file in it is lost.
 
 comment "muir needs a toolchain the Rust compiler supports"

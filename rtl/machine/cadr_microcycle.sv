@@ -259,14 +259,24 @@ module cadr_microcycle #(
     // the CADR.
     input  var logic        mem_drained,
     input  var logic        sintr,        // SINTR, the interrupt off the cables
-    // QUUX's tick as `Machine::interrupt` takes it: the flag, while enabled,
-    // ORed into the interrupt that jump conditions 5 and 6 test.
-    // `cadr_machine.sv` ORs it into `SINTR` beside the cables' two; on the
-    // CADR it is a constant zero.  The block that makes it says when.
+    // QUUX's interval timers as `Machine::interrupt` takes them: each flag
+    // under its interrupt enable, ORed into the interrupt that jump
+    // conditions 5 and 6 test.  `cadr_machine.sv` ORs it into `SINTR` beside
+    // the cables' two; on the CADR it is a constant zero.  The block that
+    // makes it says when.
     output var logic        tick_irq,
-    // And each of QUUX's two clock flags as it stands, for the register
-    // page's word 100 (`quux_clocks.sv`'s `pending`); zero on the CADR.
-    output var logic [1:0]  clock_pending,
+    // And the timers' three bits of the register page's word 100, as they
+    // stood at the edge that took the page's cycle (`quux_clocks.sv`'s
+    // `pending`); zero on the CADR.
+    output var logic [2:0]  timer_pending,
+    // The register page's words 110-115 and 104 (`quux_feature_page.sv`):
+    // a timer's word written in the tick the page takes it, the word the
+    // page names read back, and reset devices.  Unused on the CADR.
+    input  var logic        tm_we,
+    input  var logic [2:0]  tm_idx,
+    input  var logic [23:0] tm_wdata,
+    output var logic [23:0] tm_rdata,
+    input  var logic        reset_devices,
     // `PROG.UNIBUS.RESET`, `INTERRUPT-CONTROL<28>` at FLAG 3E08 as it
     // stands.  On the board it crosses the cable as `-BUS.RESET` to the bus
     // interface, whose `RESET` puts `-XBUS INIT` and `-UB INIT` on the
@@ -869,11 +879,11 @@ module cadr_microcycle #(
   assign mid_group  = destm && !ir[23] && ir[22];
   assign destlc     = low_group && (ir[21:19] == 3'd1);
   assign destintctl = low_group && (ir[21:19] == 3'd2);
-  // QUUX's tick, functional destinations 3 and 4 (`machine::Tick`); on the
-  // CADR the low group decodes neither, and only M is written.
-  logic desttickctl, desttickper;
+  // QUUX's destination 3 alias, timer 0's control (`machine::Timers::alias`,
+  // contract Q11); on the CADR the low group decodes no 3, and on neither
+  // machine 4, since revision 10: only M is written.
+  logic desttickctl;
   assign desttickctl = QUUX && low_group && (ir[21:19] == 3'd3);
-  assign desttickper = QUUX && low_group && (ir[21:19] == 3'd4);
   assign destpdltop = mid_group && (ir[21:19] == 3'd0);
   assign destpdl_p  = mid_group && (ir[21:19] == 3'd1);
   assign destpdl_x  = mid_group && (ir[21:19] == 3'd2);
@@ -1331,10 +1341,11 @@ module cadr_microcycle #(
   assign srcmd     = group_b && (ir[28:26] == 3'd2);
   assign srclc     = group_b && (ir[28:26] == 3'd3);
 
-  // QUUX's clocks, as source 17 reads their status and source 15 the
-  // microsecond clock, `machine::Tick::status` and `Tick::microseconds`.
-  // `quux_clocks.sv` is instantiated below, at page FLAG.
-  logic [31:0] tick_status, usec_status;
+  // QUUX's microsecond clock, as source 15 reads it,
+  // `machine::Timers::microseconds`.  `quux_clocks.sv` is instantiated
+  // below, at page FLAG.  Source 17, Q1's clocks' status until revision 10,
+  // reads all ones as on the CADR (contract Q11).
+  logic [31:0] usec_status;
 
   logic [31:0] mf;
   always_comb begin
@@ -1361,9 +1372,6 @@ module cadr_microcycle #(
     end else if (QUUX && group_b && ir[28:26] == 3'd6) begin
       // QUUX's MACHINE-ID, sources 16 and 36 (`Rtl::read_phase`).
       mf = MACHINE_ID;
-    end else if (QUUX && group_b && ir[28:26] == 3'd7) begin
-      // QUUX's clocks' status, source 17.
-      mf = tick_status;
     end else if (QUUX && group_b && ir[28:26] == 3'd5) begin
       // QUUX's microsecond clock, source 15.
       mf = usec_status;
@@ -2488,21 +2496,21 @@ module cadr_microcycle #(
   // `ddr_boot`, `kbd_boot`, `md_compose`, `disk_boot`, `microcycle`,
   // `microcycle_sys` or `sstep`.
 
-  // ------------------------------------ QUUX's clocks (revisions 4 and 5)
+  // ------------------------------------ QUUX's clocks (revisions 5 and 10)
   //
-  // **THE TICK, THE INTERVAL TIMER AND THE MICROSECOND CLOCK, IN THE
-  // PROCESSOR** (contract Q1, muir's `machine::Tick`): `quux_clocks.sv` has
+  // **THE INTERVAL TIMERS AND THE MICROSECOND CLOCK, IN THE PROCESSOR**
+  // (contracts Q1 and Q11, muir's `machine::Timers`): `quux_clocks.sv` has
   // the whole of it, what holds it and where each instant is taken.  Here
-  // are its two destinations and two sources, and its interrupt, which is
-  // `Machine::interrupt`'s third term and so reaches neither the Xbus nor
-  // the bus interface's interrupt status.  On the CADR none of it is built:
-  // destinations 3 and 4 write M alone and sources 15 and 17 read the open
-  // bus, all ones.
+  // are the destination 3 alias and source 15, the register page's words
+  // for the timers, and the interrupt, which is `Machine::interrupt`'s third
+  // term and so reaches neither the Xbus nor the bus interface's interrupt
+  // status.  On the CADR none of it is built: destination 3 writes M alone
+  // and source 15 reads the open bus, all ones.
   // The clocks' registers for the readout's table (`RG_QUUX_*` below).
-  logic [47:0] qclk_ro_time, qclk_ro_tick, qclk_ro_interval;
-  logic [23:0] qclk_ro_period;
+  logic [47:0] qclk_ro_time;
+  logic [47:0] qclk_ro_count [0:2];
+  logic [25:0] qclk_ro_conf [0:2];
   if (QUUX) begin : g_quux_tick
-    logic [3:0] clk_status;
     quux_clocks clocks (
         .clk      (clk),
         .rst      (rst),
@@ -2510,31 +2518,35 @@ module cadr_microcycle #(
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
         .dest_ctl (desttickctl),
-        .dest_per (desttickper),
-        .ob       (ob[3:0]),
-        .l        (l[23:0]),
-        .status   (clk_status),
+        .ob       (ob[1:0]),
+        .l        (l[1:0]),
+        .pg_we    (tm_we),
+        .pg_idx   (tm_idx),
+        .pg_wdata (tm_wdata),
+        .devreset (reset_devices),
+        .pg_ridx  (tm_idx),
+        .rd_word  (tm_rdata),
+        .pending  (timer_pending),
         .usec_s   (usec_status),
         .irq      (tick_irq),
-        .pending  (clock_pending),
-        .ro_time    (qclk_ro_time),
-        .ro_tick    (qclk_ro_tick),
-        .ro_interval(qclk_ro_interval),
-        .ro_period  (qclk_ro_period)
+        .ro_time  (qclk_ro_time),
+        .ro_count (qclk_ro_count),
+        .ro_conf  (qclk_ro_conf)
     );
-    assign tick_status = {28'd0, clk_status};
   end else begin : g_cadr_no_tick
-    assign tick_status = 32'd0;
-    assign usec_status = 32'd0;
-    assign tick_irq    = 1'b0;
-    assign clock_pending = 2'b00;
-    assign qclk_ro_time     = 48'd0;
-    assign qclk_ro_tick     = 48'd0;
-    assign qclk_ro_interval = 48'd0;
-    assign qclk_ro_period   = 24'd0;
-    // The two destinations decode to zero on the CADR; named so lint sees them read.
+    assign usec_status   = 32'd0;
+    assign tick_irq      = 1'b0;
+    assign timer_pending = 3'b000;
+    assign tm_rdata      = 24'd0;
+    assign qclk_ro_time  = 48'd0;
+    for (genvar k = 0; k < 3; k++) begin : g_ro
+      assign qclk_ro_count[k] = 48'd0;
+      assign qclk_ro_conf[k]  = 26'd0;
+    end
+    // The alias decodes to zero on the CADR, and the page's words reach
+    // nothing; named so lint sees them read.
     logic unused_tick;
-    assign unused_tick = desttickctl ^ desttickper;
+    assign unused_tick = desttickctl ^ tm_we ^ (^tm_idx) ^ (^tm_wdata) ^ reset_devices;
   end
 
   // page Q 2A05-2A11: the 74S194s shift under `QS1`/`QS0`.
@@ -3157,22 +3169,27 @@ module cadr_microcycle #(
   localparam logic [13:0] RG_PHYS   = 14'd18;
   localparam logic [13:0] RG_SPEED  = 14'd19;
   localparam logic [13:0] RG_FLAGS  = 14'd20;
-  // **QUUX'S OWN ENTRIES, 21 TO 25, AND ON THE CADR THEY ARE ABSENT**: the
-  // processor's clocks (contract Q1, `quux_clocks.sv`), which a checkpoint
-  // carries as muir's `Machine::tick`, and which of the two machines this
-  // is.  Entry 21 is QUUX's signature `0x5155` over K and L, the microcycle
+  // **QUUX'S OWN ENTRIES, 21 TO 28, AND ON THE CADR THEY ARE ABSENT**: the
+  // processor's clocks (contracts Q1 and Q11, `quux_clocks.sv`), which a
+  // checkpoint carries as muir's `Machine::timers`, and which of the two
+  // machines this is.  Entry 21 is QUUX's signature `0x5155` over K and L, the microcycle
   // this bitstream was built at (muir's `TimingModel::Sync`), so a reader
   // asks the fabric which machine it is rather than being told; the CADR
   // answers `RO_NO_MEMORY` there, which can never carry the signature.
-  // 22 is the microsecond clock and its prescaler, 23 and 24 the two
-  // timers, each with the clock's low bits of the tick it was taken at, 25
-  // the interval timer's period (`quux_clocks.sv`'s `ro_*` has the fields).
+  // 22 is the microsecond clock and its prescaler, 23 to 25 the three
+  // interval timers' counts, each with the clock's low bits of the tick it
+  // was taken at, 26 to 28 their interrupt enables, modes and periods
+  // (`quux_clocks.sv`'s `ro_*` has the fields; revision 10 moved 25, the
+  // interval timer's period, into 26 to 28).
   // What holds them: `build/quux_readout_window.quux.pass`.
   localparam logic [13:0] RG_QUUX_ID       = 14'd21;
   localparam logic [13:0] RG_QUUX_TIME     = 14'd22;
-  localparam logic [13:0] RG_QUUX_TICK     = 14'd23;
-  localparam logic [13:0] RG_QUUX_INTERVAL = 14'd24;
-  localparam logic [13:0] RG_QUUX_PERIOD   = 14'd25;
+  localparam logic [13:0] RG_QUUX_COUNT0   = 14'd23;
+  localparam logic [13:0] RG_QUUX_COUNT1   = 14'd24;
+  localparam logic [13:0] RG_QUUX_COUNT2   = 14'd25;
+  localparam logic [13:0] RG_QUUX_CONF0    = 14'd26;
+  localparam logic [13:0] RG_QUUX_CONF1    = 14'd27;
+  localparam logic [13:0] RG_QUUX_CONF2    = 14'd28;
 
   // The flags, one bit each, in the order `Rtl` and `Machine` declare them
   // as nearly as the fabric's own names allow.  **Every one of these is a
@@ -3222,9 +3239,12 @@ module cadr_microcycle #(
       RG_FLAGS:  ro_regs = ro_flags;
       RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
       RG_QUUX_TIME:     ro_regs = QUUX ? qclk_ro_time : RO_NO_MEMORY;
-      RG_QUUX_TICK:     ro_regs = QUUX ? qclk_ro_tick : RO_NO_MEMORY;
-      RG_QUUX_INTERVAL: ro_regs = QUUX ? qclk_ro_interval : RO_NO_MEMORY;
-      RG_QUUX_PERIOD:   ro_regs = QUUX ? {24'd0, qclk_ro_period} : RO_NO_MEMORY;
+      RG_QUUX_COUNT0:   ro_regs = QUUX ? qclk_ro_count[0] : RO_NO_MEMORY;
+      RG_QUUX_COUNT1:   ro_regs = QUUX ? qclk_ro_count[1] : RO_NO_MEMORY;
+      RG_QUUX_COUNT2:   ro_regs = QUUX ? qclk_ro_count[2] : RO_NO_MEMORY;
+      RG_QUUX_CONF0:    ro_regs = QUUX ? {22'd0, qclk_ro_conf[0]} : RO_NO_MEMORY;
+      RG_QUUX_CONF1:    ro_regs = QUUX ? {22'd0, qclk_ro_conf[1]} : RO_NO_MEMORY;
+      RG_QUUX_CONF2:    ro_regs = QUUX ? {22'd0, qclk_ro_conf[2]} : RO_NO_MEMORY;
       default:   ro_regs = RO_NO_MEMORY;
     endcase
   end

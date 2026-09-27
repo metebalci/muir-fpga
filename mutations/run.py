@@ -602,9 +602,9 @@ CHECKS = {
         "prom": "quux_pdlsync_prom.quux.hex",
         "machine": "quux",
     }),
-    # QUUX's clocks, revision 5 (contract Q1): both timers and the
-    # microsecond clock, and the tick's rise at 16.667 ms; the CADR's side
-    # of the same program.
+    # QUUX's clocks: the three interval timers of revision 10 on the register
+    # page, the destination 3 alias and the shared edge (contract Q11), and
+    # the microsecond clock (Q1); the CADR's side of the same program.
     "quux_clocks": dict(MACHINE_CHECK, **{
         "golden": "quux_clocks.golden",
         "prom": "quux_clocks_prom.hex",
@@ -624,7 +624,8 @@ CHECKS = {
         "prom": "quux_tickwin_prom.quux.hex",
         "machine": "quux",
     }),
-    # The clocks read between the edges, and in a held microcycle.
+    # The clocks read between the edges, and the page's reads of the timers
+    # with a rise a tick either side of the edge that takes them.
     "quux_clockwait_quux": dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],

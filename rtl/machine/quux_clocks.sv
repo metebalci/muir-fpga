@@ -1,158 +1,214 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// QUUX's clocks in the processor (revision 5, contract Q1): the tick, fixed
-// at 60 Hz; an interval timer; and the microsecond clock.  muir's
-// `machine::Tick`, ported.
+// QUUX's clocks in the processor: the three interval timers of revision 10
+// (contract Q11) and the microsecond clock of revision 5 (contract Q1).
+// muir's `machine::Timers`, ported.
 //
-//     destination 3   control: <0> the tick's enable, and a write with <1>
-//                     set clears its flag; <2> the interval timer's enable,
-//                     and a write with <3> set clears its flag
-//     destination 4   the interval timer's period in microseconds, <23:0>;
-//                     a write starts a period from then; 0 stops it
-//     source 17       <0> the tick's flag, <1> its enable, <2> the interval
-//                     timer's flag, <3> its enable
-//     source 15       the microseconds since power-on, 32 bits, wrapping
+//     register page 110 + 2k  timer k's control and status: <0> on, <1> its
+//                             flag (a write with it set clears it), <2> its
+//                             mode (1 one-shot), taken only by a write that
+//                             turns it on, <8> its interrupt enable, taken
+//                             by every write
+//     register page 111 + 2k  timer k's period in microseconds, <23:0>
+//     register page 104 <0>   reset devices: every timer to its reset state
+//     destination 3           the destination 3 alias, timer 0's control as
+//                             Q1's tick control: <0> on, a write with <1>
+//                             set clears its flag; a turn-on is periodic and
+//                             sets the interrupt enable
+//     source 15               the microseconds since power-on, 32 bits
 //
-// A flag rises a period after its timer is enabled (the interval timer's
-// also after its period is written), then every period after, whether or not
-// it was cleared between; a clear takes it down until the next.  While
-// enabled each flag is ORed into the interrupt that jump conditions 5 and 6
-// test.  `-RESET` --- the fabric's reset and every boot --- turns both off and
-// leaves the interval timer's period at 0; the microsecond clock counts from
-// power-on and no boot moves it.  None of this is the CADR's, and
-// `cadr_microcycle.sv` builds this module on QUUX alone.
+// Destination 4 writes only M and source 17 reads all ones since revision
+// 10, as on the CADR (`cadr_microcycle.sv`).  A timer's flag rises a period
+// after the write that starts it, then, periodic, every period after on the
+// start's grid whether or not it was cleared between; one-shot, once, the
+// count stopping at the rise (`live` down) until a period written while it
+// is on or an off-then-on starts it again.  A write that turns it off, or a
+// period written while it is on, takes its flag down.  A period of 0 never
+// rises.  The flag rises whatever the interrupt enable says; under it, the
+// flag is the timer's bit of word 100 (<0>, <1>, <7>) and a term of the
+// interrupt that jump conditions 5 and 6 test.  `-RESET` --- the fabric's
+// reset and every boot --- and reset devices put every timer off, flag
+// down, periodic, interrupt enable 0, period 0; the microsecond clock
+// counts from power-on and nothing moves it.  None of this is the CADR's,
+// and `cadr_microcycle.sv` builds this module on QUUX alone.
 //
-// **THE INSTANTS ARE muir'S.**  A write lands at the edge that ends its
-// microcycle, `Rtl::clock_edge`'s `now`, so a period starts from that edge
-// and its flag rises exactly a period later.  Source 17 and source 15 are
-// read at the instant their microcycle's read phase starts, the master clock
-// edge it runs from (`Rtl::read_phase` at `self.ns`), with that edge's own
-// write in it: `status` and `usec_s`.  And `SINTR` is registered at the edge
-// that ends each executed microcycle, waiting or not, with the flags as they
-// stand at that edge and that edge's own write in them
-// (`Machine::interrupt_at(now)` at the end of `Rtl::clock_edge`): `irq`.
+// **THE INSTANTS ARE muir'S** (contract Q11, rule 10).  A destination 3
+// write lands at the edge that ends its microcycle, `Rtl::clock_edge`'s
+// `now`, so a period it starts runs from that edge.  A register page write
+// is taken at the edge where the register decode takes its cycle and lands
+// with that edge's time in the next microcycle; here the page takes it in
+// the tick after that edge (`quux_feature_page.sv`'s `take`), which is the
+// tick a destination 3 write of the same edge lands in, and the two are
+// applied in muir's order, the destination 3 write first.  `SINTR` is
+// registered at the edge that ends each executed microcycle, waiting or
+// not, with the flags as they stand at that edge and that edge's own
+// destination 3 write in them (`Machine::interrupt_at(now)` at the end of
+// `Rtl::clock_edge`): `irq`.  A page write is in no `SINTR` before the next
+// edge, since it lands after the one that takes it (section 4 of the
+// contract: nothing is held off for it, at K >= 4).  And a page read gives
+// the timers as they stood at the edge that takes its cycle, with that
+// edge's destination 3 write in them and a rise after that edge not:
+// `rd_word` and `pending`.
 //
-// **THE WRITE LANDS A TICK AFTER ITS EDGE, FROM `L`**, which is the word `OB`
-// gave at that edge, so that nothing of the datapath reaches these
-// every-tick registers in the tick it moves.  What the write depends on is
-// taken at the edge itself --- which destination, whether each timer was on,
-// whether its flag was up --- and the count it starts is one tick shorter, so
-// the next rise is a period after the edge, muir's `now`.  A rise in the
+// **A WRITE LANDS A TICK AFTER ITS EDGE**: a destination 3 write from `L`,
+// which is the word `OB` gave at that edge, and a page write from the
+// page's registered `wdata`, so that nothing of the datapath reaches these
+// every-tick registers in the tick it moves.  What a write depends on is
+// taken at the edge itself --- whether each timer was on, whether its flag
+// was up (`w_en`, `w_flag`) --- and the count it starts is one tick shorter,
+// so the next rise is a period after the edge, muir's `now`.  A rise in the
 // tick between is the period's own and stands.
 //
 // **A MICROSECOND PRESCALER AND A COUNT OF MICROSECONDS** for each timer, not
 // a count of ticks: a period is whole microseconds of `TICKS_A_US` ticks each,
 // so a write loads the count straight from the word written, with no
-// multiply between `OB` and a register that runs every tick.  `pre` is the
+// multiply between a word and a register that runs every tick.  `pre` is the
 // ticks left in the current microsecond, less one, and `us` the microseconds
-// left, counted down to one; the flag rises in the tick both run out, and
-// both reload for the next period.  An interval timer enabled at a period of
-// 0 is enabled and never rises (`live` down), as muir's `Tick::after`.
+// left, counted down to one; the flag rises in the tick both run out, and a
+// periodic timer's both reload for the next period.
 //
-// What holds it: `build/quux_clocks.quux.k4.pass` against muir's QUUX, a
-// program that reads sources 15 and 17 across both timers' rises, clears,
-// periods written while running and each turned off, and tests condition 5
-// with the interrupt enabled; `build/quux_tickwin.quux.k4l1.pass`, the
-// window between a rise and the edge `SINTR` is taken at, with rises
-// strictly inside the microcycle and inside a wait for `MD`; and the CADR's
-// side of the same programs, sources 15 and 17 all ones and destinations 3
-// and 4 writing M alone.
+// What holds it, each against muir's QUUX at the pin: `build/quux_clocks.quux.k4.pass`,
+// a program that reads every timer's two words through the page across
+// rises, clears, periods written while running, each turned off, one-shot
+// and periodic, the three at once, the alias and the shared edge;
+// `build/quux_tickwin.quux.k4l1.pass`, the window between a rise and the
+// edge `SINTR` is taken at, against a page write's edges;
+// `build/quux_clockwait.quux.k4l1.pass`, the page's reads of word 100 and of
+// a timer's word with the rise a tick either side of the edge that takes
+// them; `build/quux_busreset.quux.k4.pass`, reset devices; the CADR's side
+// of `clocks`, sources 15 and 17 all ones and destinations 3 and 4 writing M
+// alone; and the records aimed here in `mutations/list.txt`.
 
 `default_nettype none
 
 module quux_clocks (
     input  var logic        clk,
     input  var logic        rst,
-    // `-BOOT`, active low: a boot is a `-RESET` and turns both timers off.
+    // `-BOOT`, active low: a boot is a `-RESET` and resets every timer.
     input  var logic        n_boot,
 
     // The master clock edge, and the edge that runs a microcycle.
     input  var logic        mclk_edge,
     input  var logic        cpu_edge,
-    // The microcycle ending writes destination 3 or 4 (decoded, not yet
-    // gated by the edge), and its `OB`: what the edge is about to land.
+    // The microcycle ending writes destination 3 (decoded, not yet gated by
+    // the edge), and its `OB`: what the edge is about to land.
     input  var logic        dest_ctl,
-    input  var logic        dest_per,
-    input  var logic [3:0]  ob,
+    input  var logic [1:0]  ob,
     // `L`, the word `OB` gave at the last edge, standing from the tick after it.
-    input  var logic [23:0] l,
+    input  var logic [1:0]  l,
 
-    // Source 17 and source 15, as the microcycle standing reads them.
-    output var logic [3:0]  status,
+    // The register page (`quux_feature_page.sv`): a write of word 110 + `pg_idx`
+    // in the tick the page takes it, and its word; reset devices, the tick
+    // after the page takes a write of word 104 with <0> set.
+    input  var logic        pg_we,
+    input  var logic [2:0]  pg_idx,
+    input  var logic [23:0] pg_wdata,
+    input  var logic        devreset,
+    // A read of word 110 + `pg_ridx`, as the timers stood at the last master
+    // clock edge.
+    input  var logic [2:0]  pg_ridx,
+    output var logic [23:0] rd_word,
+    // Word 100's three bits, as they stood at the last master clock edge:
+    // [0] timer 0, [1] timer 1, [2] timer 2, each its flag under its
+    // interrupt enable (`Timers::interrupt_sources`).
+    output var logic [2:0]  pending,
+
+    // Source 15, as the microcycle standing reads it.
     output var logic [31:0] usec_s,
     // The interrupt `SINTR` takes at this edge.
     output var logic        irq,
-    // Each flag as it stands, under its enable: the register page's word
-    // 100, `<0>` the tick and `<1>` the interval timer
-    // (`Machine::interrupt_sources`).
-    output var logic [1:0]  pending,
 
     // **THE READOUT'S VIEW, FOR A CHECKPOINT** (`cadr_microcycle.sv`'s
-    // register table, entries 22 to 25; `docs/checkpoint.md`).  Raw
-    // registers, each word taken in one tick, and each timer's word carrying
-    // the microsecond clock's low bits of the SAME tick: a timer's next rise
-    // is `pre + (us - 1) * TICKS_A_US` ticks after the tick its word was
-    // taken at, and the reader must know which tick that was, the timers
-    // running while the machine is halted and the reader's accesses being
-    // microseconds apart.  `build/quux_readout_window.quux.k4.pass` holds every field.
+    // register table, entries 22 to 28; `docs/checkpoint.md`).  Raw
+    // registers, each word taken in one tick, and each timer's count word
+    // carrying the microsecond clock's low bits of the SAME tick: a timer's
+    // next rise is `pre + (us - 1) * TICKS_A_US` ticks after the tick its
+    // word was taken at, and the reader must know which tick that was, the
+    // timers running while the machine is halted and the reader's accesses
+    // being microseconds apart.  `build/quux_readout_window.quux.k4.pass`
+    // holds every field.
     //   ro_time      <38:32> usec_t, <31:0> usec
-    //   ro_timer[k]  <47:41> usec<6:0>, <40:34> usec_t, <33> en, <32> sticky,
+    //   ro_count[k]  <47:41> usec<6:0>, <40:34> usec_t, <33> on, <32> sticky,
     //                <31> live, <30:24> pre, <23:0> us
-    //   ro_period    the interval timer's period in microseconds
+    //   ro_conf[k]   <25> interrupt enable, <24> one-shot, <23:0> period
     output var logic [47:0] ro_time,
-    output var logic [47:0] ro_tick,
-    output var logic [47:0] ro_interval,
-    output var logic [23:0] ro_period
+    output var logic [47:0] ro_count [0:2],
+    output var logic [25:0] ro_conf [0:2]
 );
 
   localparam int unsigned TICKS_A_US = 1000 / cadr_tick_pkg::TICK_NS;
-  // The tick's period, fixed: 16,667 us, 60 Hz (`Tick::PERIOD_US`).
-  localparam logic [23:0] TICK_US = 24'd16667;
 
-  // ------------------------------------------------ the two timers' counts
+  // ------------------------------------------------ the three timers
 
-  // [0] the tick, [1] the interval timer.
-  logic [1:0]  en, sticky, live;
-  logic [23:0] us [0:1];
-  logic [6:0]  pre [0:1];
-  logic [23:0] interval_us;
-  logic [1:0]  rise, flag;
-  for (genvar k = 0; k < 2; k++) begin : g_rise
+  logic [2:0]  en, sticky, live, one_shot, ie;
+  logic [23:0] period [0:2];
+  logic [23:0] us [0:2];
+  logic [6:0]  pre [0:2];
+  logic [2:0]  rise, flag;
+  for (genvar k = 0; k < 3; k++) begin : g_rise
     assign rise[k] = en[k] && live[k] && (pre[k] == 7'd0) && (us[k] == 24'd1);
     assign flag[k] = en[k] && (sticky[k] || rise[k]);
   end
 
-  // What the edge knows, for the tick after it.
-  logic       w, w_ctl, w_per;
-  logic [1:0] w_en, w_flag;
+  // What the edge knows, for the tick after it: a microcycle ran, it wrote
+  // destination 3, and each timer's on and flag at the edge.
+  logic       w, w_ctl;
+  logic [2:0] w_en, w_flag;
 
-  // The write, landing: each timer's restart, clear and off.
-  logic [1:0] restart, clear, off;
-  assign restart[0] = w_ctl && l[0] && !w_en[0];
-  assign clear[0]   = w_ctl && l[1] && w_flag[0];
-  assign off[0]     = w_ctl && !l[0];
-  assign restart[1] = (w_ctl && l[2] && !w_en[1]) || (w_per && w_en[1]);
-  assign clear[1]   = w_ctl && l[3] && w_flag[1];
-  assign off[1]     = w_ctl && !l[2];
+  // **THE DESTINATION 3 ALIAS, LANDING**, on timer 0 alone: a turn-on, a
+  // clear of a flag up at the edge, an off.
+  logic a_restart, a_clear, a_off;
+  assign a_restart = w_ctl && l[0] && !w_en[0];
+  assign a_clear   = w_ctl && l[1] && w_flag[0];
+  assign a_off     = w_ctl && !l[0];
 
-  // The period a restart counts: the tick's own, or the interval timer's,
-  // the word being written if this is the write of it.
-  logic [23:0] start_us [0:1];
-  assign start_us[0] = TICK_US;
-  assign start_us[1] = w_per ? l[23:0] : interval_us;
+  // Each timer as the alias left it at the edge, which a page write taken
+  // there then meets (rule 10: the destination 3 write first): on, and its
+  // flag up.
+  logic [2:0] en_a, flag_a;
+  assign en_a   = {w_en[2:1], w_ctl ? l[0] : w_en[0]};
+  assign flag_a = {w_flag[2:1], w_flag[0] && !(a_restart || a_clear || a_off)};
+
+  // **A PAGE WRITE, LANDING**: of timer k's control word, or of its period.
+  logic [2:0] p_ctl, p_per;
+  for (genvar k = 0; k < 3; k++) begin : g_page
+    assign p_ctl[k] = pg_we && pg_idx == 3'(2 * k);
+    assign p_per[k] = pg_we && pg_idx == 3'(2 * k + 1);
+  end
+
+  // Each timer's restart, clear and off this tick, the alias's and the
+  // page's together in muir's order.  A control word written with <0>
+  // turns the timer off whatever the alias did, or on if the alias left it
+  // off; one that leaves it on keeps what the alias did and clears a flag
+  // the alias left up.  A period written while it is on, after the alias,
+  // starts a period from the edge.
+  logic [2:0] restart, clear, off, p_restart;
+  for (genvar k = 0; k < 3; k++) begin : g_land
+    logic ak_restart, ak_clear, ak_off;
+    assign ak_restart   = (k == 0) && a_restart;
+    assign ak_clear     = (k == 0) && a_clear;
+    assign ak_off       = (k == 0) && a_off;
+    assign p_restart[k] = (p_ctl[k] && pg_wdata[0] && !en_a[k]) || (p_per[k] && en_a[k]);
+    assign restart[k]   = (ak_restart && !(p_ctl[k] && !pg_wdata[0])) || p_restart[k];
+    assign clear[k]     = ak_clear || (p_ctl[k] && pg_wdata[0] && pg_wdata[1] && flag_a[k]);
+    assign off[k]       = (ak_off && !p_restart[k]) || (p_ctl[k] && !pg_wdata[0]);
+  end
+
+  // The period a restart counts: the one written, if this is the write of it.
+  logic [23:0] start_us [0:2];
+  for (genvar k = 0; k < 3; k++) begin : g_start
+    assign start_us[k] = p_per[k] ? pg_wdata : period[k];
+  end
 
   // ------------------------------------------------ the microsecond clock
   //
-  // `Tick::microseconds`: `ns / 1000` of muir's time, whose t = 0 is the
+  // `Timers::microseconds`: `ns / 1000` of muir's time, whose t = 0 is the
   // composed machine's power-on, `cadr_tick_pkg::POWER_ON_EDGES` edges after
   // the reset edge, as `cadr_io_board.sv` counts its clocks from.
   logic [1:0]  power_on_t;
   logic [31:0] usec;
   logic [6:0]  usec_t;
-
-  // The status as the standing microcycle reads it (`status`'s note above).
-  logic [1:0] flag_s, en_s;
 
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -173,41 +229,68 @@ module quux_clocks (
     end
   end
 
+  // The flags as they stood at the last master clock edge, for a page read
+  // taken after it (`flag_e` below).
+  logic [2:0] flag_s;
+
   always_ff @(posedge clk) begin
     if (rst || !n_boot) begin
-      en          <= 2'b00;
-      sticky      <= 2'b00;
-      live        <= 2'b00;
-      interval_us <= 24'd0;
-      us[0] <= 24'd0; us[1] <= 24'd0;
-      pre[0] <= 7'd0; pre[1] <= 7'd0;
-      flag_s      <= 2'b00;
-      en_s        <= 2'b00;
-      w           <= 1'b0;
-      w_ctl       <= 1'b0;
-      w_per       <= 1'b0;
-      w_en        <= 2'b00;
-      w_flag      <= 2'b00;
+      w      <= 1'b0;
+      w_ctl  <= 1'b0;
+      w_en   <= 3'b000;
+      w_flag <= 3'b000;
+      flag_s <= 3'b000;
     end else begin
       w      <= cpu_edge;
       w_ctl  <= cpu_edge && dest_ctl;
-      w_per  <= cpu_edge && dest_per;
       w_en   <= en;
       w_flag <= flag;
+      // At a held edge the flags of that tick, and at an edge that ran a
+      // microcycle, in the tick after it, with that edge's destination 3
+      // write in them.
+      if (mclk_edge && !cpu_edge) flag_s <= flag;
+      else if (w) flag_s <= flag_a;
+    end
+  end
 
-      if (w_per) interval_us <= l[23:0];
-
-      for (int k = 0; k < 2; k++) begin
+  always_ff @(posedge clk) begin
+    if (rst || !n_boot || devreset) begin
+      en       <= 3'b000;
+      sticky   <= 3'b000;
+      live     <= 3'b000;
+      one_shot <= 3'b000;
+      ie       <= 3'b000;
+      for (int k = 0; k < 3; k++) begin
+        period[k] <= 24'd0;
+        us[k]     <= 24'd0;
+        pre[k]    <= 7'd0;
+      end
+    end else begin
+      for (int k = 0; k < 3; k++) begin
+        if (p_per[k]) period[k] <= pg_wdata;
+        // The mode, from the write that turns it on; the alias's turn-on is
+        // periodic.  The interrupt enable, from every write of the word, and
+        // set by the alias's turn-on.
+        if (p_ctl[k]) begin
+          ie[k] <= pg_wdata[8];
+          if (p_restart[k]) one_shot[k] <= pg_wdata[2];
+          else if (k == 0 && a_restart) one_shot[k] <= 1'b0;
+        end else if (k == 0 && a_restart) begin
+          ie[k]       <= 1'b1;
+          one_shot[k] <= 1'b0;
+        end
         // A clear is of the flag as it stood at the edge, before a rise
-        // this tick, which the period below then raises again.
+        // this tick, which the count below then raises again.
         if (clear[k]) sticky[k] <= 1'b0;
-        // The period runs on its own: a rise every period while enabled.
+        // The count runs on its own: a rise every period while on, or one
+        // rise and a stop for a one-shot.
         if (en[k] && live[k]) begin
           if (pre[k] == 7'd0) begin
             pre[k] <= 7'(TICKS_A_US - 1);
             if (us[k] == 24'd1) begin
-              us[k]     <= (k == 0) ? TICK_US : interval_us;
               sticky[k] <= 1'b1;
+              if (one_shot[k]) live[k] <= 1'b0;
+              else us[k] <= period[k];
             end else begin
               us[k] <= us[k] - 24'd1;
             end
@@ -228,49 +311,55 @@ module quux_clocks (
           live[k]   <= 1'b0;
         end
       end
-
-      // What the microcycle standing reads, as it stood at the master clock
-      // edge the microcycle started on: at a held edge the flags of that
-      // tick, and at an edge that ran a microcycle, the tick after it, with
-      // that edge's write in it.
-      if (mclk_edge && !cpu_edge) begin
-        flag_s <= flag;
-        en_s   <= en;
-      end else if (w) begin
-        for (int k = 0; k < 2; k++) begin
-          flag_s[k] <= w_flag[k] && !(restart[k] || clear[k] || off[k]);
-          en_s[k]   <= off[k] ? 1'b0 : (w_en[k] || restart[k]);
-        end
-      end
     end
   end
 
-  // The period reloads from `interval_us` at a rise, which is the word last
-  // written; a write of it restarts the count from the word itself.  A
-  // period of 0 written while running stops the timer through `live`.
+  // **A PAGE READ SEES THE TIMERS AS THEY STOOD AT THE EDGE THAT TAKES ITS
+  // CYCLE** (rule 10): in the tick after an edge that ran a microcycle, the
+  // flags at that edge with its destination 3 write in them; after a held
+  // edge, or later, `flag_s`.  The page takes a read in the tick after the
+  // edge, where a destination 3 write of that edge is only landing and a
+  // rise of that tick already shows in `flag`, which is after the edge.  On,
+  // the mode and the interrupt enable change only by a write, and a page
+  // write never lands in the tick a read is taken; the alias's lands there,
+  // so it is put in.
+  logic [2:0] flag_e, en_e, one_shot_e, ie_e;
+  assign flag_e     = w ? flag_a : flag_s;
+  assign en_e       = {en[2:1], w_ctl ? l[0] : en[0]};
+  assign one_shot_e = {one_shot[2:1], one_shot[0] && !a_restart};
+  assign ie_e       = {ie[2:1], ie[0] || a_restart};
 
-  assign status  = {en_s[1], flag_s[1], en_s[0], flag_s[0]};
-  assign pending = flag;
+  always_comb begin
+    rd_word = 24'd0;
+    unique case (pg_ridx)
+      3'd0, 3'd2, 3'd4: begin
+        rd_word[0] = en_e[pg_ridx[2:1]];
+        rd_word[1] = flag_e[pg_ridx[2:1]];
+        rd_word[2] = one_shot_e[pg_ridx[2:1]];
+        rd_word[8] = ie_e[pg_ridx[2:1]];
+      end
+      3'd1, 3'd3, 3'd5: rd_word = period[pg_ridx[2:1]];
+      default: rd_word = 24'd0;
+    endcase
+  end
+  assign pending = flag_e & ie_e;
 
-  assign ro_time     = {9'd0, usec_t, usec};
-  assign ro_tick     = {usec[6:0], usec_t, en[0], sticky[0], live[0], pre[0], us[0]};
-  assign ro_interval = {usec[6:0], usec_t, en[1], sticky[1], live[1], pre[1], us[1]};
-  assign ro_period   = interval_us;
+  assign ro_time = {9'd0, usec_t, usec};
+  for (genvar k = 0; k < 3; k++) begin : g_ro
+    assign ro_count[k] = {usec[6:0], usec_t, en[k], sticky[k], live[k], pre[k], us[k]};
+    assign ro_conf[k]  = {ie[k], one_shot[k], period[k]};
+  end
 
   // **`SINTR` AT THE EDGE THAT ENDS THE MICROCYCLE, WAITING OR NOT** (muir's
   // `fdc0319`, `Machine::interrupt_at(now)` at the end of `Rtl::clock_edge`):
-  // the flags as they stand in the edge's own tick, a rise on that tick
-  // counting as before the edge, less what this microcycle's own write takes
-  // down there --- a timer turned off, a flag cleared, or the interval
-  // timer's period written, which starts a period from the edge.  A timer
-  // this write enables is off at the edge and so raises nothing.  It used to
-  // be the flags the microcycle STARTED with, `flag_s`, which is where muir
-  // took them before `fdc0319`, and which missed a rise inside the
-  // microcycle, or on the edge ending it, by one microcycle:
-  // `build/quux_tickwin.quux.k4l1.pass` finds it on rows inside a plain
-  // microcycle, on its ending edge, and inside a wait for `MD`.
-  assign irq = (flag[0] && !(dest_ctl && (!ob[0] || ob[1])))
-            || (flag[1] && !(dest_ctl && (!ob[2] || ob[3])) && !dest_per);
+  // each flag under its interrupt enable as it stands in the edge's own tick,
+  // a rise on that tick counting as before the edge, less what this
+  // microcycle's own destination 3 write takes down there --- timer 0 turned
+  // off or its flag cleared.  A turn-on is off at the edge and so raises
+  // nothing.  A page write taken at this edge lands after it, in muir as
+  // here, and is in the next edge's `SINTR`, not this one's.
+  assign irq = (flag[0] && ie[0] && !(dest_ctl && (!ob[0] || ob[1])))
+            || (flag[1] && ie[1]) || (flag[2] && ie[2]);
 
 endmodule
 

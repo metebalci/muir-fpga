@@ -40,24 +40,29 @@
 # prints one line about it and carries on; BR2_DOWNLOAD_FORCE_CHECK_HASHES only
 # governs the case where a hash file exists and has no line for the file.
 #
-# **WHAT `muir --version` SAYS, AND WHY IT NEEDS HELP.**  muir's build.rs asks
+# **WHAT `cadr --version` SAYS, AND WHY IT NEEDS HELP.**  muir's build.rs asks
 # git for the commit it was built from and stamps it in for --version and for
 # the first line of every run.  Buildroot builds from an extracted tarball with
 # no .git in it, so build.rs finds nothing and says nothing, and the board's
 # muir would call itself `muir 0.1.0-release` --- true, and useless for saying
 # which muir is running.  build.rs emits no MUIR_GIT in that case and
-# src/main.rs reads it with option_env!, which takes the value from the
+# src/cli.rs reads it with option_env!, which takes the value from the
 # compile-time environment, so handing cargo the abbreviated pin puts it back.
 # The board then says `muir 0.1.0-<pin>-release`, which is the pin.
 #
-# **ONLY THE muir BINARY IS INSTALLED.**  The crate also builds src/bin/
-# diskpack.rs, and cargo-package's own install step is `cargo install --bins`,
-# which would put both in /usr/bin.  A second program nobody asked for is a
-# second program on the board, so the install is written out here instead: it
-# names the one binary, and naming it is also what lets board/arty-z7-20/
-# post-build.sh derive from this file that /usr/bin/muir must be in the image.
+# **muir IS TWO EXECUTABLES, `cadr` AND `quux`, AND ONLY THOSE ARE
+# INSTALLED.**  `muir` as an executable is gone: `cadr` is MIT's CADR and
+# `quux` the evolved machine, each taking only its own machine's flags and
+# reading only its own file of them, `.cadrrc` or `.quuxrc`.  The crate also
+# builds src/bin/diskpack.rs, and cargo-package's own install step is `cargo
+# install --bins`, which would put all three in /usr/bin.  A program nobody
+# asked for is a program on the board, so the install is written out here
+# instead: it names the two, and naming them is also what lets
+# board/arty-z7-20/post-build.sh derive from this file that /usr/bin/cadr and
+# /usr/bin/quux must be in the image.  The debugger is `cadr`: the debug cable
+# is the CADR's.
 #
-# **NO INIT SCRIPT.**  This is decided: muir is started by hand when it is
+# **NO INIT SCRIPT.**  This is decided: `cadr` is started by hand when it is
 # wanted.  Config.in has the argument.
 #
 # **THE COMPILER IS NOT THE ONE muir PINS, AND THAT IS A DECISION SOMEBODY
@@ -123,10 +128,13 @@ endif
 endif
 
 define MUIR_INSTALL_TARGET_CMDS
-	$(INSTALL) -D -m 0755 $(@D)/target/$(RUSTC_TARGET_NAME)/release/muir \
-		$(TARGET_DIR)/usr/bin/muir
+	$(INSTALL) -D -m 0755 $(@D)/target/$(RUSTC_TARGET_NAME)/release/cadr \
+		$(TARGET_DIR)/usr/bin/cadr
+	$(INSTALL) -D -m 0755 $(@D)/target/$(RUSTC_TARGET_NAME)/release/quux \
+		$(TARGET_DIR)/usr/bin/quux
 	$(INSTALL) -d -m 0755 $(TARGET_DIR)/root
-	ln -sf /mnt/card/muirrc $(TARGET_DIR)/root/.muirrc
+	ln -sf /mnt/card/cadrrc $(TARGET_DIR)/root/.cadrrc
+	ln -sf /mnt/card/quuxrc $(TARGET_DIR)/root/.quuxrc
 endef
 
 $(eval $(cargo-package))

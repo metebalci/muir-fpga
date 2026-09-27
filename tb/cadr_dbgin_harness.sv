@@ -390,7 +390,8 @@ module cadr_dbgin_harness #(
 
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused_tick_irq;
-  logic [1:0] unused_clock_pending;
+  logic [2:0] unused_timer_pending;
+  logic [23:0] unused_tm_rdata;
   /* verilator lint_on UNUSEDSIGNAL */
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
@@ -440,7 +441,14 @@ module cadr_dbgin_harness #(
       .sintr       (sintr),
       // QUUX's tick, which a CADR processor holds at zero and nothing here reads.
       .tick_irq    (unused_tick_irq),
-      .clock_pending(unused_clock_pending),
+      .timer_pending(unused_timer_pending),
+      // QUUX's register page's timer words and reset devices, which a CADR
+      // processor takes nothing from.
+      .tm_we       (1'b0),
+      .tm_idx      (3'd0),
+      .tm_wdata    (24'd0),
+      .tm_rdata    (unused_tm_rdata),
+      .reset_devices(1'b0),
       .pc          (pc),
       .lpc         (lpc),
       .opc         (opc),

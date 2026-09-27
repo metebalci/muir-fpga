@@ -5,7 +5,7 @@
 # THROUGH.
 #
 # The card carries one file of flags for each of the two CADRs this
-# board runs.  `fpgarc` configures the machine in the fabric and `muirrc` the
+# board runs.  `fpgarc` configures the machine in the fabric and `cadrrc` the
 # machine inside muir, both in muir's own rc format, so somebody who has read
 # one can read the other.
 #

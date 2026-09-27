@@ -39,7 +39,7 @@ PROG=/usr/bin/cadr-chaosnet
 PIDFILE=/var/run/cadr-chaosnet.pid
 
 # **ONE FILE, IN muir'S OWN rc FORMAT, AND THIS PROGRAM TAKES ITS OWN FLAGS
-# OUT OF IT.**  `fpgarc` configures the CADR in the fabric and `muirrc` beside
+# OUT OF IT.**  `fpgarc` configures the CADR in the fabric and `cadrrc` beside
 # it configures the CADR inside muir, so the two stations on this board are
 # configured the same way with the same flag names and somebody who has read
 # one can read the other.

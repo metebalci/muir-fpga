@@ -577,16 +577,16 @@ module cadr_machine #(
   //   color board                                     `quux_mono_tv.sv`
   //   `MUL` and `DIV` in one instruction each, and the divider's hold
   //                                   `quux_muldiv.sv`, `cadr_microcycle.sv`
-  //   the processor's tick: destinations 3 and 4, source 17 and the
+  //   the interval timers and the destination 3 alias, source 15 and the
   //   interrupt                                        `cadr_microcycle.sv`
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (9 << 4) | 4`: the signature, hardware revision 9 ---
-  // the real-time clock and the file device of contract Q9, after contract
-  // Q7's device registers --- and processor type 4,
+  // `(0x5155 << 16) | (10 << 4) | 4`: the signature, hardware revision 10
+  // --- the interval timers and reset devices of contract Q11, after
+  // contract Q9's real-time clock and file device --- and processor type 4,
   // `Geometry::QUUX.machine_id`.
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
   // MONO TV at the size every QUUX bitstream builds: 1280 by 1024, one bit
   // a pixel, 40 words a line at `17000000`.
   localparam int unsigned MONO_TV_WIDTH  = 1280;
@@ -717,10 +717,10 @@ module cadr_machine #(
   logic xbus_intr;
   logic ub_int, ub_int_hand;
   assign xbus_intr = disk_intr || tv_intr;
-  // And on QUUX its tick, `Machine::interrupt`'s third term, which is the
-  // processor's own and so reaches neither the Xbus nor the bus interface's
-  // interrupt status; `cadr_microcycle.sv` says when it is up.  Zero on the
-  // CADR.
+  // And on QUUX its interval timers, `Machine::interrupt`'s third term,
+  // which are the processor's own and so reach neither the Xbus nor the bus
+  // interface's interrupt status; `cadr_microcycle.sv` says when it is up.
+  // Zero on the CADR.
   logic tick_irq;
   // And QUUX's register page's own three, the keyboard, the mouse and the
   // network (`quux_feature_page.sv`'s `irq`), each a term of
@@ -728,7 +728,12 @@ module cadr_machine #(
   logic page_irq;
   // QUUX's register page's wires into the memory path and the processor
   // (`cadr_memory_path.sv`'s ports say what each is).
-  logic [1:0]  clock_pending;
+  // The timers' three bits of word 100, their words 110-115, and reset
+  // devices, word 104, between the page and the processor (contract Q11).
+  logic [2:0]  timer_pending;
+  logic        tm_we, page_reset_devices;
+  logic [2:0]  tm_idx;
+  logic [23:0] tm_wdata, tm_rdata;
   logic [2:0]  page_err, mouse_buttons;
   logic        page_err_clear, page_errstop_we, page_errstop;
   logic        page_ch_land, page_ch_wr, chaos_ireq;
@@ -778,15 +783,31 @@ module cadr_machine #(
   // at the end of that microcycle where muir reads it gone: `quux_busreset`,
   // which enables the board's clock interrupt and `ENABLE UB INTS` before the
   // reset, failed on the one row.
+  //
+  // **ON QUUX, `PROG.UNIBUS.RESET` DRIVES NOTHING, AND RESET DEVICES IS ITS
+  // `-XBUS INIT`** (revision 10, contract Q11: QUUX has no
+  // `PROG.UNIBUS.RESET`).  There `bus_init` is the power-on reset or the
+  // register page's reset devices, a write of word 104 with <0> set
+  // (`quux_feature_page.sv`'s `reset_devices`, the tick after the page takes
+  // it), and it reaches every board it reached before: block-disk, the I/O
+  // board's interrupt enables, Chaosnet interface and serial line, the
+  // unfitted first display board, the file device (the Q9 amendment), and
+  // with the processor's `reset_devices` the interval timers.  The bit is
+  // still written and read back through `LC`.  Nothing is held off `SINTR`
+  // on QUUX: at `<28>`'s edge nothing is reset, and reset devices lands
+  // after the edge that takes it and before the next, where muir's lands
+  // too (contract Q11, section 4, at K >= 4).  The CADR's reset is as it
+  // was.
   logic prog_unibus_reset, prog_unibus_reset_rising, prog_unibus_reset_q;
-  logic bus_init;
+  logic bus_init, holdoff;
   always_ff @(posedge clk)
     prog_unibus_reset_q <= rst ? 1'b0 : prog_unibus_reset;
-  assign bus_init = rst || (prog_unibus_reset && !prog_unibus_reset_q);
+  assign bus_init = rst || (QUUX ? page_reset_devices : (prog_unibus_reset && !prog_unibus_reset_q));
+  assign holdoff  = prog_unibus_reset_rising && !QUUX;
 
   logic ub_int_line;
-  assign ub_int_line = ub_int_hand || (ub_int && !prog_unibus_reset_rising);
-  assign sintr_o   = (xbus_intr && !prog_unibus_reset_rising) || (ub_int_line && !QUUX) || tick_irq || page_irq;
+  assign ub_int_line = ub_int_hand || (ub_int && !holdoff);
+  assign sintr_o   = (xbus_intr && !holdoff) || (ub_int_line && !QUUX) || tick_irq || page_irq;
 
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX),
@@ -816,7 +837,12 @@ module cadr_machine #(
       .spy_rdata   (spy_rdata),
       .sintr       (sintr_o),
       .tick_irq    (tick_irq),
-      .clock_pending(clock_pending),
+      .timer_pending(timer_pending),
+      .tm_we       (tm_we),
+      .tm_idx      (tm_idx),
+      .tm_wdata    (tm_wdata),
+      .tm_rdata    (tm_rdata),
+      .reset_devices(page_reset_devices),
       .prog_unibus_reset_o(prog_unibus_reset),
       .prog_unibus_reset_rising(prog_unibus_reset_rising),
       .n_memack    (n_memack),
@@ -1276,11 +1302,15 @@ module cadr_machine #(
         .dev_ack      (feature_ack),
         .drives       (feature_drives),
         .rdata        (feature_rdata),
-        .clock_pending(clock_pending),
+        .timer_pending(timer_pending),
         // Block-disk's done (`quux_block_disk.sv`).
         .disk_irq     (disk_intr),
         .chaos_ireq   (chaos_ireq),
-        .prog_unibus_reset_rising(prog_unibus_reset_rising),
+        .tm_we        (tm_we),
+        .tm_idx       (tm_idx),
+        .tm_wdata     (tm_wdata),
+        .tm_rdata     (tm_rdata),
+        .reset_devices(page_reset_devices),
         .err          (page_err),
         .err_clear    (page_err_clear),
         .errstop      (errstop),
@@ -1405,6 +1435,11 @@ module cadr_machine #(
   assign page_ch_wr       = 1'b0;
   assign page_ch_which    = 3'd0;
   assign page_ch_wdata    = 16'd0;
+  // No register page, so no timer's word and no reset devices.
+  assign tm_we              = 1'b0;
+  assign tm_idx             = 3'd0;
+  assign tm_wdata           = 24'd0;
+  assign page_reset_devices = 1'b0;
   // The page's wires the CADR does not read, and its readout: selector 12
   // reads `RO_NO_MEMORY` on the CADR, as every selector it does not map.
   assign quux_ro_word = 48'hA5A5_5A5A_A5A5;
@@ -1423,7 +1458,7 @@ module cadr_machine #(
   assign unused_host = ^{host_we, host_widx, host_wdata, host_ridx, fd_ro_bases, fd_ro_indexes,
                          fd_ro_flags};
   logic unused_page;
-  assign unused_page = ^{clock_pending, page_err, page_ch_rdata, chaos_ireq, mouse_buttons,
+  assign unused_page = ^{timer_pending, tm_rdata, page_err, page_ch_rdata, chaos_ireq, mouse_buttons,
                          mono_bow, bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_flags,
                          bd_ro_since_done, quux_ro_a1, quux_ro_a2, in_ro_state, in_ro_count,
                          in_ro_fifo_q};

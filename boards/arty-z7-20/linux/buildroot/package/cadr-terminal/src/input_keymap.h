@@ -7,7 +7,7 @@
 // disagree about what a key means, and a table typed out by hand is a
 // table that drifts.
 //
-// muir ff5de42dafed65c1b39a33a1834802c47079d197
+// muir 947926e91cc824fc5358d11c88427935eaaf66be
 //
 // `KEY_TABLE` is MIT's own key table by position in octal,
 // `keyboard.rs`'s `TABLE`, itself transcribed there from
@@ -358,11 +358,11 @@ static const char KEY_DEFAULT_MAPPING[] =
 	"# the Lisp Machine keyboard.  This file is compiled into muir and is the\n"
 	"# whole of the default; a file of the same form replaces any line of it.\n"
 	"#\n"
-	"#   muir --keyboard-mapping <file>\n"
+	"#   cadr --keyboard-mapping <file>, or quux's\n"
 	"#   .muirkeys in the directory muir was run from, or in the home one\n"
 	"#\n"
 	"# `keys` at muir's prompt prints the mapping a run is using, and\n"
-	"# `muir --keyboard-mapping-dump` writes it in this form, to edit.\n"
+	"# `cadr --keyboard-mapping-dump`, or quux's, writes it in this form, to edit.\n"
 	"#\n"
 	"# Two kinds of line:\n"
 	"#\n"

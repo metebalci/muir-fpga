@@ -56,7 +56,7 @@ PIDFILE=/var/run/cadr-serial.pid
 CARD=/mnt/card
 
 # **THE CARD'S ONE FILE OF FLAGS, FILTERED TO THIS PROGRAM'S.**  `fpgarc`
-# configures the CADR in the fabric the way `muirrc` beside it configures the
+# configures the CADR in the fabric the way `cadrrc` beside it configures the
 # CADR inside muir: one flag a line, the flag then a space then the rest of
 # the line as its argument, `#` a comment, carriage returns stripped.  Several
 # programs serve this machine and each refuses a flag it does not know, so the

@@ -564,9 +564,9 @@ program may ask for.
 
 On QUUX the same selectors have QUUX's sizes: the pushdown buffer is 16,384
 words, the level-1 map six bits and the level-2 map 2,048 entries. The table
-at 10 has five more entries, 21 to 25: QUUX's signature with the K and L the
-bitstream was built at, the microsecond clock, the tick, the interval timer and
-its period. Selector 12 is QUUX's register page: the keyboard and mouse,
+at 10 has eight more entries, 21 to 28: QUUX's signature with the K and L the
+bitstream was built at, the microsecond clock, the three interval timers'
+counts, and each timer's interrupt enable, mode and period. Selector 12 is QUUX's register page: the keyboard and mouse,
 block-disk, the bus errors and MONO TV's black-on-white, and the keyboard
 FIFO's words at 64 and up. On the CADR all of those read `0xA5A5_5A5A_A5A5`.
 `docs/checkpoint.md` has the words, since a checkpoint is what reads them.

@@ -193,7 +193,7 @@ say that. This paragraph is where it is said instead.
 **The card is one FAT32 partition in an MBR, and everything is on it.**
 
     /           BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional),
-                README.TXT, fpgarc, muirrc, and `clock` once the board has
+                README.TXT, fpgarc, cadrrc, quuxrc, and `clock` once the board has
                 shut down cleanly once
     arty-z7-20/ cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
     packs/      disk-pack-0.img .. disk-pack-7.img, whichever exist, and
@@ -310,7 +310,7 @@ shapes, and it is the file that decides which of the two paths the board
 takes, so it cannot be behind a name that path has not chosen yet.
 
 **Three more are at the root because that is where a person looks.**
-`README.TXT`, `fpgarc` and `muirrc` are the files somebody edits with the card
+`README.TXT`, `fpgarc`, `cadrrc` and `quuxrc` are the files somebody edits with the card
 in a reader, so they are beside the loader's rather than buried. What differs
 between two boards' cards in the two files of flags is the Chaosnet address
 and, on the DE25-Nano, the window addresses; the staging writes those from
@@ -396,7 +396,7 @@ is CC running on a CADR that muir simulates. So muir needs a band with CC
 already loaded in it, which `docs/cc-pack.md` says how to build. Name that
 file with `CC_PACK` in `local.conf` and the card carries it as
 `/mnt/card/packs/muir-cc.img`, in the bay's folder but not one of the eight,
-and `muirrc` gets its `--disk-pack` and `--debug-cable-connect` lines live.
+and `cadrrc` gets its `--disk-pack` and `--debug-cable-connect` lines live.
 Leave `CC_PACK` unset and those two lines stay commented, with the explanation
 of what is missing. The variable is in `local.conf` because the file is 257
 MiB and is a path on whoever's build host. It must be exactly a T-300, where
@@ -508,7 +508,7 @@ large one because its kernel is an uncompressed arm64 `Image` of 41.9 MB.
 
 **A card made from the wrong board's zip does not boot, and says which file it
 wanted.** Two files are shared and no others: the Arty's and the Cora's
-`fpgarc` and `muirrc` are byte-identical to each other, and the DE25-Nano's
+`fpgarc` and `cadrrc` are byte-identical to each other, and the DE25-Nano's
 are not, because they name different window addresses. Everything else ---
 the loader, the kernel, the device tree, the fabric image, `uEnv.txt` and
 `README.TXT` --- differs between all three. So the zips are near enough alike
@@ -586,7 +586,7 @@ Cora Z7-07S is
     cp build/sd/buildroot/server/cora-z7-07s/* /srv/tftp/cora-z7-07s/
 
 Everything else about the card is the machine's rather than the part's: the
-layout, the bay, the `fpgarc` and the `muirrc`, the U-Boot environment and
+layout, the bay, the `fpgarc` and the `cadrrc`, the U-Boot environment and
 every warning above. `local.conf` is read out of `$BOARD_DIR/linux/`, so each
 board carries its own server address, its own MAC and its own Chaosnet
 addresses. Two boards on one network must differ in all three, and the
@@ -656,8 +656,9 @@ band at all.** The loader's files and the board's own folder are complete,
 with a `uEnv.txt` that names no server and carries no MAC. `packs/`, `sys/`
 and `site/` are on the card empty, which is what says where a band goes.
 `README.TXT` at the root says which board the zip is for and how to name a
-pack, and beside it are the two files of flags: `fpgarc` for the CADR in the
-fabric and `muirrc` for the CADR inside muir. Each is the same full menu the
+pack, and beside it are the three files of flags: `fpgarc` for the CADR in the
+fabric, `cadrrc` for the CADR inside muir, and `quuxrc` for muir's QUUX. Each
+of the first two is the same full menu the
 development card gets, every flag the board's programs take written out under
 a sentence or two saying what it does.
 
@@ -691,7 +692,7 @@ with no pack loaded. A band is the user's own to supply. It goes in `packs/`
 either from a PC with the card in a reader, since the card is plain FAT32, or
 over the network to the running board. Either way the drive comes ready within
 a quarter second and nothing restarts. **The debugger's band is a band too**,
-so a release carries no `muir-cc.img` either, and the `muirrc` that would name
+so a release carries no `muir-cc.img` either, and the `cadrrc` that would name
 it ships with its last two lines commented and the explanation beside them.
 `sys/` and `site/` are empty for the same reason: those are the band's Lisp
 files.
@@ -703,7 +704,7 @@ greps the whole staged card afterwards for anything address-shaped --- an IP
 or a MAC --- and stops if it finds any, because a flag can be wrong and a
 private address on a public artifact cannot be taken back. **Reading the whole
 card is what one partition made simple and what the two files of flags made
-necessary**: `fpgarc` and `muirrc` can each name a host on somebody's network,
+necessary**: `fpgarc` and `cadrrc` can each name a host on somebody's network,
 and with two partitions they were on the half this guard did not read. It then
 checks that `packs/`, `sys/` and `site/` are empty, and that the four files a
 card cannot boot without are there.

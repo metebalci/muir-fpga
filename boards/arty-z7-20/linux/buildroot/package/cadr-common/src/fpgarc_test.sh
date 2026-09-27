@@ -4242,12 +4242,12 @@ make_root() {
 	rm -rf "$WORK/root"
 	mkdir -p "$WORK/root/card/arty-z7-20" "$WORK/root/card/packs" \
 	         "$WORK/root/card/sys" "$WORK/root/card/site"
-	for f in BOOT.BIN u-boot.img uEnv.txt README.TXT fpgarc muirrc; do
+	for f in BOOT.BIN u-boot.img uEnv.txt README.TXT fpgarc cadrrc quuxrc; do
 		echo x > "$WORK/root/card/$f"
 	done
 }
 
-case_head "the card's root holds the loader's fixed names, the three a person edits, and the four folders"
+case_head "the card's root holds the loader's fixed names, the four a person edits, and the four folders"
 sandbox
 if lift_root_guard "$WORK/rootguard.sh"; then
 	make_root

@@ -221,8 +221,8 @@ static uint64_t quux_m(uint64_t time_word, uint64_t ticks)
 	return low + n * RO_USEC_WRAP;
 }
 
-// A timer's word, and the tick it was taken at: the word's own seven low
-// bits of the microsecond count and its prescaler, unwrapped against the
+// A timer's count word, and the tick it was taken at: the word's own seven
+// low bits of the microsecond count and its prescaler, unwrapped against the
 // whole count `m0` read just before it.
 static void quux_timer(uint64_t w, uint64_t m0, struct quux_timer *t)
 {
@@ -241,7 +241,8 @@ static void quux_timer(uint64_t w, uint64_t m0, struct quux_timer *t)
 int ro_read_quux(struct readout *r, struct cadr_image *img)
 {
 	struct quux_state *q = &img->qx;
-	uint64_t t0 = 0, t1 = 0, wt = 0, wi = 0, w = 0;
+	uint64_t t0 = 0, t1 = 0, w = 0;
+	uint64_t wt[IMG_QUUX_TIMERS] = { 0 };
 	int held = 0;
 	// Which machine, and its K and L: a CADR's bitstream answers none of
 	// what follows, and its absence is not a machine of zeros.
@@ -249,10 +250,12 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 		return -1;
 	for (int i = 0; i < RO_QUUX_TRIES && !held; ++i) {
 		const uint64_t ticks = ro_ticks(r);
-		if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_TIME, &t0) != 0 ||
-		    ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_TICK, &wt) != 0 ||
-		    ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_INTERVAL, &wi) != 0 ||
-		    ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_TIME, &t1) != 0)
+		if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_TIME, &t0) != 0)
+			return -1;
+		for (unsigned k = 0; k < IMG_QUUX_TIMERS; ++k)
+			if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_COUNT + k, &wt[k]) != 0)
+				return -1;
+		if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_TIME, &t1) != 0)
 			return -1;
 		const uint64_t m0 = quux_m(t0, ticks), m1 = quux_m(t1, ticks);
 		if (m1 >= m0 && m1 - m0 <= RO_QUUX_SPAN) {
@@ -262,11 +265,17 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 	}
 	if (!held)
 		return -1;
-	quux_timer(wt, q->m, &q->timer[0]);
-	quux_timer(wi, q->m, &q->timer[1]);
-	if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_PERIOD, &w) != 0)
-		return -1;
-	q->interval_us = (uint32_t)(w & 0xFFFFFFu);
+	// Each timer's count, then its interrupt enable, mode and period,
+	// which change only by a write and so may be read at any tick.
+	for (unsigned k = 0; k < IMG_QUUX_TIMERS; ++k) {
+		struct quux_timer *t = &q->timer[k];
+		quux_timer(wt[k], q->m, t);
+		if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_CONF + k, &w) != 0)
+			return -1;
+		t->ie = (int)((w >> 25) & 1u);
+		t->one_shot = (int)((w >> 24) & 1u);
+		t->period_us = (uint32_t)(w & 0xFFFFFFu);
+	}
 
 	if (ro_word(r, IMG_SEL_QUUX_PAGE, IMG_QP_INPUT, &w) != 0)
 		return -1;

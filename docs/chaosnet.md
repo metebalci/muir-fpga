@@ -408,7 +408,7 @@ nothing plugged in says that there is no name to wait for and starts at once.
 ## How the board tells the program its address
 
 The card carries one file of flags for each of the two CADRs this board runs,
-both at its root. `fpgarc` configures the machine in the fabric and `muirrc`
+both at its root. `fpgarc` configures the machine in the fabric and `cadrrc`
 configures the machine inside muir, which is the debugger. Both are in muir's
 own rc format, so the two stations are configured the same way with the same
 flag names. `docs/fpgarc.md` is that file, its format and every program's

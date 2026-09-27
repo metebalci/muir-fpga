@@ -41,12 +41,12 @@
 #      is empty, the program says so on the console, and the CADR waits for a
 #      drive as the real machine did with no pack loaded.  **THE DEBUGGER'S
 #      BAND IS A BAND TOO.**  CC compiled into a world is 257 MiB of somebody
-#      else's Lisp on a public artifact, and the muirrc that names it would
+#      else's Lisp on a public artifact, and the cadrrc that names it would
 #      name a file the user is free to delete, so a release carries neither.
 #      The mechanism is STANDALONE=1: mksd-buildroot.sh clears CC_PACK with the
 #      private values, and because it clears them BEFORE reading local.conf as
 #      well, a CC_PACK in the environment cannot reach a release either.  What
-#      ships instead is the muirrc that says how to make one, with both of its
+#      ships instead is the cadrrc that says how to make one, with both of its
 #      last two lines commented.  **AND NO sys/ OR site/ EITHER**, for the same
 #      reason: those are the band's Lisp files, and a release ships no band.
 #      The two folders are on the card empty, which is what says where they go.
@@ -123,9 +123,9 @@ OUT="$OUT" BIT="$BIT" FAULT_BIT="$FAULT_BIT" NO_FAULT= STANDALONE=1 RELEASE=1 \
 #
 # **IT READS THE WHOLE CARD, AND IT USED TO READ ONE PARTITION OF TWO.**  When
 # the only private value a card could hold was the TFTP server's address,
-# uEnv.txt was the only place it could land.  It is not any more: the two files
-# of flags, fpgarc for the CADR in the fabric and muirrc for the CADR inside
-# muir, both name a host on somebody's network, and they used to live on the
+# uEnv.txt was the only place it could land.  It is not any more: the files of
+# flags, fpgarc for the CADR in the fabric and cadrrc and quuxrc for the machines
+# inside muir, each name a host on somebody's network, and they used to live on the
 # other partition, which this guard did not read.  There is one partition now,
 # so `grep -r` over the staged card is the whole of it and cannot be aimed at
 # the wrong half.
@@ -195,8 +195,8 @@ echo "mksd-release: no address of any kind anywhere on the card --- no IP, no MA
 # **THE BRIDGE IS A PEER FOR THIS PURPOSE.**  --chaos-udp-default-peer names
 # no Chaosnet address, so it does not look like a peer line; it names a host
 # on somebody's network all the same, which is the only thing this guard is
-# about.  Both flags are looked for in both files.
-for rc in "$OUT/card/fpgarc" "$OUT/card/muirrc"; do
+# about.  Both flags are looked for in every file.
+for rc in "$OUT/card/fpgarc" "$OUT/card/cadrrc" "$OUT/card/quuxrc"; do
 	[ -f "$rc" ] || continue
 	if grep -qE '^[[:space:]]*--chaos-udp-(default-)?peer' "$rc"; then
 		echo "mksd-release: STOP --- $(basename "$rc") names a station off this board:" >&2
@@ -204,7 +204,7 @@ for rc in "$OUT/card/fpgarc" "$OUT/card/muirrc"; do
 		exit 1
 	fi
 done
-echo "mksd-release: and no Chaosnet peer or bridge in either file of flags --- the network is the user's"
+echo "mksd-release: and no Chaosnet peer or bridge in any file of flags --- the network is the user's"
 
 # **AND THE CARD SHIPS WITH NO BAND ON IT, WHICH IS A THIRD THING A FLAG
 # CANNOT BE TRUSTED FOR.**  PACKS is refused above, SYS and SITE are refused
@@ -214,13 +214,13 @@ echo "mksd-release: and no Chaosnet peer or bridge in either file of flags --- t
 # like a card that works.
 #
 # **IT IS A WHOLE-CARD LIST NOW AND IT USED TO BE THE PACK PARTITION'S.**  With
-# two partitions this could say "README.TXT, fpgarc, muirrc and nothing else",
+# two partitions this could say "README.TXT, fpgarc, cadrrc and nothing else",
 # because the loader's files were on the other one.  With one partition the
 # same sentence has to name the loader's files too, so the list is built from
 # what the staging script itself says the root may hold --- read out of it on
 # its own anchor rather than written here a second time, because two lists of
 # one thing part company on the first change.
-ROOT_ALLOWED=$(sed -n 's/^.*case " \$ROOT_NAMES uEnv.txt README.TXT fpgarc muirrc " in$/ROOT/p' \
+ROOT_ALLOWED=$(sed -n 's/^.*case " \$ROOT_NAMES uEnv.txt README.TXT fpgarc cadrrc quuxrc " in$/ROOT/p' \
 	boards/arty-z7-20/linux/mksd-buildroot.sh)
 [ "$ROOT_ALLOWED" = ROOT ] || {
 	echo "mksd-release: the staging script no longer says which names the root may hold: this guard has rotted" >&2
@@ -251,11 +251,11 @@ for f in "$OUT"/card/*; do
 	# would be a second list of one thing, which is a second place to be
 	# wrong.  What is left for a RELEASE to say is the part that is about a
 	# release and not about a card: that the three folders a band would go
-	# in are empty, which is the loop above, and that the four files a card
+	# in are empty, which is the loop above, and that the five files a card
 	# cannot boot without are there, which is the loop below.
 	:
 done
-for n in README.TXT fpgarc muirrc uEnv.txt; do
+for n in README.TXT fpgarc cadrrc quuxrc uEnv.txt; do
 	[ -s "$OUT/card/$n" ] || { echo "mksd-release: STOP --- the card has no $n" >&2; exit 1; }
 done
 echo "mksd-release: the bay is empty and so are sys/ and site/ --- the band is the user's"

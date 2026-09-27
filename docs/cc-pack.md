@@ -74,7 +74,7 @@ eight is 2,056.6 MiB, and with the debugger's pack beside them 2,313.7 MiB. A
 card of 4 GB takes that with room to spare; one drive and this pack take about
 515 MiB. **A release carries no debugger's pack**, because a band with CC
 compiled into it is somebody else's Lisp and the user's own to supply, so the
-`muirrc` that would name it ships with its last two lines commented.
+`cadrrc` that would name it ships with its last two lines commented.
 
 ## Using it
 
@@ -83,7 +83,9 @@ the pack is special.
 
     muir --rtl --disk-pack /mnt/card/packs/muir-cc-304.img --chaos-address 4401
 
-Measured with that command on the build host: muir reports `pack: ... in unit
+muir has since become two executables, and the same command is now `cadr`
+with the same flags; the debug cable and the CC pack are the CADR's.
+Measured with the command above on the build host: muir reports `pack: ... in unit
 0, written as the machine writes it`, runs at about five million microcycles
 a second, and has the band up and asking for the date well inside sixty
 million microcycles. `(cadr:cc)` at the listener is the debugger.
@@ -91,7 +93,7 @@ million microcycles. `(cadr:cc)` at the listener is the debugger.
 **The address is the band's, not muir's, so it changes with the base pack.**
 A band saved from the release calls itself `AMS-LISPM-1` at 4401 and its file
 and time host `OZ` at 4403. A band saved from a base carrying another
-network's site files takes that network's numbers, and the board's `.muirrc`
+network's site files takes that network's numbers, and the board's `.cadrrc`
 gives muir the address the table holds for it, the peers it can reach and a
 default peer. At any other numbers the machine boots and reaches no server at
 all.
@@ -152,7 +154,7 @@ at all. That word is set afterwards with `diskpack`, off the machine, because
 save left behind belongs to the new band.
 
 Everything the save writes reaches the file because muir opens a pack
-read-write. `Unit::open_rw` is what `muir --disk-pack` does; `Unit::open` is
+read-write. `Unit::open_rw` is what `cadr --disk-pack` does; `Unit::open` is
 what muir's own tests do, so that fetched packs stay as fetched. The pack
 this script writes is always a copy.
 

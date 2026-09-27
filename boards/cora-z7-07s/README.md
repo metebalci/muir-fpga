@@ -309,7 +309,7 @@ names and a flat server root would hand this board the other's bitstream.
 `cora-z7-07s`, the same name the server's directory has, and `cadr_cora.env`
 loads them from there. `BOOT.BIN`, `u-boot.img` and `uEnv.txt` are at the root
 of the card, because those three names are fixed: the boot ROM, the SPL and
-U-Boot's own import look for them there. `README.TXT`, `fpgarc` and `muirrc`
+U-Boot's own import look for them there. `README.TXT`, `fpgarc`, `cadrrc` and `quuxrc`
 are at the root beside them because they are the files a person edits, and
 `packs/`, `sys/` and `site/` are the folders a band goes in. That layout is the
 same on every board.

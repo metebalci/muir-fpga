@@ -5,7 +5,8 @@
 // THAT HOLD IT: what a checkpoint of a QUUX board reads, word by word.
 //
 // **WHAT THIS HOLDS.**  A checkpoint carries muir's `Machine`, and on QUUX
-// that is more than the CADR's: the processor's clocks (`Machine::tick`),
+// that is more than the CADR's: the processor's clocks, the three interval
+// timers of revision 10 (`Machine::timers`),
 // the register page's keyboard and mouse (`QuuxInput`), block-disk
 // (`BlockDisk`), the bus errors word 101 reads and MONO TV's black-on-white;
 // and the CADR's arrays at QUUX's sizes, a PDL buffer of 16K words, a
@@ -54,8 +55,9 @@ namespace {
 constexpr uint64_t kNoMemory = 0xA5A5'5A5A'A5A5ull;
 constexpr unsigned kSelPdl = 4, kSelMap1 = 7, kSelMap2 = 8, kSelProm = 1;
 constexpr unsigned kSelRegs = 10, kSelAudit = 11, kSelPage = 12;
-constexpr unsigned kRgQuuxId = 21, kRgTime = 22, kRgTick = 23, kRgInterval = 24,
-                   kRgPeriod = 25;
+// Entries 21 to 28: which machine, the microsecond clock, timer k's count at
+// 23 + k and its interrupt enable, mode and period at 26 + k.
+constexpr unsigned kRgQuuxId = 21, kRgTime = 22, kRgCount = 23, kRgConf = 26, kRgLast = 28;
 
 int fails = 0;
 long checks = 0;
@@ -86,7 +88,7 @@ long ticks = 0;
 #if QUUX_TB
 // What each moving word should read, from the registers, after every tick.
 struct Expect {
-  uint64_t time, tick, interval, since;
+  uint64_t time, count[3], since;
 };
 std::deque<Expect> history;
 Expect Now();
@@ -135,8 +137,7 @@ uint64_t TimerWord(unsigned k) {
 Expect Now() {
   Expect e;
   e.time = (static_cast<uint64_t>(CLK(usec_t) & 0x7Fu) << 32) | CLK(usec);
-  e.tick = TimerWord(0);
-  e.interval = TimerWord(1);
+  for (unsigned k = 0; k < 3; ++k) e.count[k] = TimerWord(k);
   const uint32_t since = BD(busy_ticks) - BD(due);
   e.since = since;
   return e;
@@ -197,7 +198,7 @@ int main(int argc, char **argv) {
 
 #if !QUUX_TB
   // ---- THE CADR: nothing of QUUX's answers -------------------------------
-  for (unsigned rg = kRgQuuxId; rg <= kRgPeriod; ++rg) {
+  for (unsigned rg = kRgQuuxId; rg <= kRgLast; ++rg) {
     const uint64_t w = Window(kSelRegs, rg);
     Check(w == kNoMemory, "the CADR's register table entry %u read 0x%012" PRIx64
           ", not RO_NO_MEMORY", rg, w);
@@ -214,7 +215,7 @@ int main(int argc, char **argv) {
     const uint64_t want = (0x5155ull << 32) | (static_cast<uint64_t>(SYNC_K_TB) << 24) |
                           (static_cast<uint64_t>(SYNC_L_TB) << 16);
     Check(w == want, "entry 21 read 0x%012" PRIx64 ", wanting QUUX's 0x%012" PRIx64, w, want);
-    Check(Window(kSelRegs, 26) == kNoMemory, "entry 26 is not RO_NO_MEMORY");
+    Check(Window(kSelRegs, kRgLast + 1) == kNoMemory, "entry 29 is not RO_NO_MEMORY");
   }
 
   // ---- the CADR's arrays at QUUX's sizes ---------------------------------
@@ -251,43 +252,61 @@ int main(int argc, char **argv) {
     Check(Window(kSelRegs, 12) == 0x2DEF, "the PDL index's fourteen bits");
   }
 
-  // ---- the clocks: entries 22 to 25 --------------------------------------
-  for (int round = 0; round < 2; ++round) {
-    // Two poisons, each bit of the flags taken both ways, and in each timer
-    // each flag unlike the one beside it, so two flags crossed are seen.
+  // ---- the clocks: entries 22 to 28 --------------------------------------
+  //
+  // Three rounds.  In each every flag of the three timers is a bit pattern
+  // unlike its neighbours' --- on, sticky, live, the mode and the interrupt
+  // enable each rotated a different way through the three timers --- so a
+  // field crossed with another, or a timer's word with another's, is seen,
+  // and over the three rounds each bit is taken both ways in each timer.
+  for (int round = 0; round < 3; ++round) {
+    const auto rot = [round](unsigned v) { return ((v << round) | (v >> (3 - round))) & 7u; };
     CLK(usec) = static_cast<uint32_t>(Poison(30 + round, 0, 32));
     CLK(usec_t) = static_cast<uint8_t>(Poison(30 + round, 1, 32) % 100u);
-    CLK(en) = round ? 0b10 : 0b01;
-    CLK(sticky) = round ? 0b01 : 0b10;
-    CLK(live) = round ? 0b10 : 0b01;
-    for (unsigned k = 0; k < 2; ++k) {
+    CLK(en) = rot(0b001);
+    CLK(sticky) = rot(0b010);
+    CLK(live) = rot(0b011);
+    CLK(one_shot) = rot(0b101);
+    CLK(ie) = rot(0b110);
+    for (unsigned k = 0; k < 3; ++k) {
       CLK(pre)[k] = static_cast<uint8_t>(Poison(32 + round, k, 32) % 100u);
       CLK(us)[k] = static_cast<uint32_t>(Poison(34 + round, k, 24)) | 0x800000u;
+      CLK(period)[k] = static_cast<uint32_t>(Poison(36 + round, k, 24));
     }
-    CLK(interval_us) = static_cast<uint32_t>(Poison(36 + round, 0, 24));
     Tick();
     Moving("entry 22, the microsecond clock", Window(kSelRegs, kRgTime), &Expect::time);
-    Moving("entry 23, the tick", Window(kSelRegs, kRgTick), &Expect::tick);
-    Moving("entry 24, the interval timer", Window(kSelRegs, kRgInterval), &Expect::interval);
-    const uint64_t p = Window(kSelRegs, kRgPeriod);
-    Check(p == CLK(interval_us), "entry 25 read 0x%012" PRIx64 ", the period being 0x%06x", p,
-          static_cast<unsigned>(CLK(interval_us)));
+    for (unsigned k = 0; k < 3; ++k) {
+      const uint64_t w = Window(kSelRegs, kRgCount + k);
+      bool found = false;
+      for (const Expect &e : history) found = found || (e.count[k] == w);
+      Check(found, "entry %u, timer %u's count, read 0x%012" PRIx64 ", which the registers held at "
+            "none of the last %zu ticks (the newest 0x%012" PRIx64 ")", kRgCount + k, k, w,
+            history.size(), history.back().count[k]);
+      const uint64_t c = Window(kSelRegs, kRgConf + k);
+      const uint64_t want = (static_cast<uint64_t>((CLK(ie) >> k) & 1u) << 25) |
+                            (static_cast<uint64_t>((CLK(one_shot) >> k) & 1u) << 24) |
+                            (CLK(period)[k] & 0xFFFFFFu);
+      Check(c == want, "entry %u, timer %u's enable, mode and period, read 0x%012" PRIx64
+            ", holding 0x%012" PRIx64, kRgConf + k, k, c, want);
+    }
   }
 
   // ---- the arithmetic a reader does: when the flag next rises ------------
   //
-  // The tick set going with a rise a few hundred ticks off, the interval
-  // timer off.  From the word alone, with the microsecond clock's full count
-  // from entry 22, the tick of the rise is predicted and then watched for.
-  {
-    CLK(en) = 0b01;
-    CLK(live) = 0b01;
+  // Each timer in turn set going with a rise a few hundred ticks off, the
+  // others off.  From its word alone, with the microsecond clock's full
+  // count from entry 22, the tick of the rise is predicted and then watched
+  // for.
+  for (unsigned k = 0; k < 3; ++k) {
+    CLK(en) = 1u << k;
+    CLK(live) = 1u << k;
     CLK(sticky) = 0;
-    CLK(pre)[0] = 37;
-    CLK(us)[0] = 4;
+    CLK(one_shot) = 0;
+    CLK(pre)[k] = 37;
+    CLK(us)[k] = 4;
     Tick();
     const uint64_t t = Window(kSelRegs, kRgTime);
-    const uint64_t w = Window(kSelRegs, kRgTick);
+    const uint64_t w = Window(kSelRegs, kRgCount + k);
     const uint64_t usec_full = t & 0xFFFFFFFFull;
     // The word's own microsecond bits, unwrapped against the full count
     // taken just before it.
@@ -301,16 +320,16 @@ int main(int argc, char **argv) {
     while (waited < 2000) {
       Tick();
       ++waited;
-      if ((CLK(sticky) & 1u) != 0) {
+      if (((CLK(sticky) >> k) & 1u) != 0) {
         // The flag is up in the tick after the one it rose in, and the
         // microsecond clock has moved on one with it.
         m_seen = static_cast<uint64_t>(CLK(usec)) * 100 + 99 - CLK(usec_t) - 1;
         break;
       }
     }
-    Check(m_seen != 0, "the tick's flag never rose");
-    Check(m_seen == m_rise, "the tick's flag rose at tick %" PRIu64 " of the microsecond "
-          "clock and its word said %" PRIu64, m_seen, m_rise);
+    Check(m_seen != 0, "timer %u's flag never rose", k);
+    Check(m_seen == m_rise, "timer %u's flag rose at tick %" PRIu64 " of the microsecond "
+          "clock and its word said %" PRIu64, k, m_seen, m_rise);
   }
 
   // ---- the keyboard and the mouse: selector 12 word 0 and the FIFO -------

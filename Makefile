@@ -149,16 +149,21 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
 # not.  The CADR runs the same programs in `CHECK_CADR` above.
 QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart unibus
 # QUUX's own, at its synchronous microcycle: the same but `tick` and
-# `tickwait`, which were revision 4's tick, whose period destination 4 set;
-# revision 5 fixes the tick at 60 Hz and gives destination 4 to the interval
-# timer (contract Q1), and `clocks` holds both timers and the microsecond
-# clock, `tickwin` the window between a flag's rise and the edge `SINTR` is
-# taken at (`golden/src/quux.rs`).  The CADR's sides of `tick` and
-# `tickwait` are unchanged.  And `pdlsync`, QUUX's alone: a push into the PDL
+# `tickwait`, which were revision 4's tick, whose period destination 4 set.
+# Since revision 10 (contract Q11) `clocks` holds the three interval timers
+# on the register page, the destination 3 alias, destination 4 writing M
+# alone, source 17 reading all ones and the shared edge, `tickwin` the window
+# between a flag's rise and the edge `SINTR` is taken at against a page
+# write's edges, and `clockwait` the page's reads with a rise a tick either
+# side of the edge that takes them (`golden/src/quux.rs`).  The CADR's sides
+# of `tick`, `tickwait` and `clocks` hold destinations 3 and 4 writing M
+# alone and sources 15 and 17 reading all ones.  And `pdlsync`, QUUX's alone: a push into the PDL
 # buffer and a pop after it; and `imemsync`, words written into the control
 # store and run, below QUUX's PROM and over it.  And `busreset`, on both
 # machines: `PROG.UNIBUS.RESET` and what each board clears on `-XBUS INIT` and
-# `-UB INIT`, block-disk's command and errors on QUUX.  And `startstart`: on
+# `-UB INIT`; on QUUX since revision 10 `<28>` resetting nothing and reset
+# devices, word 104, resetting block-disk, the network, the file device and
+# the timers.  And `startstart`: on
 # QUUX, memory starts in consecutive microcycles, which QUUX holds until the
 # first cycle has gone out; on both machines, a write whose `MD` is loaded in
 # the microcycle after its start, which is the word written.  And `unibus`,
@@ -3873,21 +3878,34 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # body grows by those twenty-eight bytes, 632,358 to 632,386, every one
 # of them zero, so the packed file stays 561,553 bytes; muir
 # loads it, saves it back byte for byte and resumes at the same microcycle.
-CHECKPOINT_SHA  := ee0edc8d31dcda680c512b4340c6433d807b8523d6ede2049cd183dd3eeb07b1
+#
+# **AND WHEN IT WENT 43 TO 45.**  Version 44 is muir's `micro` engine's
+# alone, the write a start holds for the microcycle after it, and changes
+# nothing `Rtl::save` writes.  Version 45 is contract Q11: QUUX's clocks are
+# three interval timers, each on, its mode, its interrupt enable, its period
+# and its deadline, in place of Q1's tick and interval timer, written as a
+# CADR's machine holds them, off with no deadline.  The body grows by
+# twenty-three bytes, 632,386 to 632,409, and the packed file by nine,
+# 561,553 to 561,562; muir loads it, saves it back byte for byte and resumes
+# at the same microcycle.
+CHECKPOINT_SHA  := cf5eac10d1f33ae409a520e490024c7e813400e891ad2df32f4ccd89a94c7f48
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
 # under `--timing-model fpga` and muir refuses it under any other.
 CHECKPOINT_RESUMED := at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
-# muir's binary, built into golden's own target directory because muir is
-# already golden's path dependency there and the library half is compiled
-# once for both.
-MUIR_BIN := golden/target/release/muir
-# **AND RUN WITH NO FILE OF FLAGS.**  muir reads `.muirrc` in the directory it
-# runs from or in the home directory, and a home file that says `--machine
-# quux` makes it refuse the CADR's checkpoint by its geometry.  `MUIR_RC`
-# names the file in place of the two looked for, and one that is empty gives
-# the run no flags but the ones written here, so the recipe exports it.
+# muir's two executables, `cadr` and `quux`, each with only its own flags:
+# `muir` as an executable is gone.  Built in a target directory of their
+# own under golden's, because golden has a program named `quux` too and two
+# binaries of one name in one target directory overwrite each other.
+MUIR_TARGET := golden/target/muir-bins
+CADR_BIN := $(MUIR_TARGET)/release/cadr
+QUUX_BIN := $(MUIR_TARGET)/release/quux
+# **AND RUN WITH NO FILE OF FLAGS.**  Each reads its own file, `.cadrrc` or
+# `.quuxrc`, in the directory it runs from or in the home directory, and a
+# home file of flags would reach the run.  `MUIR_RC` names the file in place
+# of the two looked for, and one that is empty gives the run no flags but
+# the ones written here, so the recipe exports it.
 
 $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(CHECKPOINT_SRC)/checkpoint_test.c \
@@ -3906,8 +3924,8 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
 	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir/Cargo.toml \
-	    --bin muir --target-dir golden/target
-	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(MUIR_BIN); \
+	    --bin cadr --bin quux --target-dir $(MUIR_TARGET)
+	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(CADR_BIN); \
 	 $$M --rtl --timing-model fpga --stop-after 0 --resume $$W/out.chk --checkpoint $$W/back.chk \
 	     > $$W/muir.log 2>&1 \
 	   || { echo "checkpoint: muir REFUSED the file cadr-checkpoint wrote"; \
@@ -3962,7 +3980,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # muir keeps private, so both sides have them as a fresh engine does.  They
 # are the CADR's code, which `build/checkpoint.pass` holds.
 #
-# **THE MUTANTS ARE 9 TO 19** (`chk_rtl.c`'s `chk_rtl_mutation` names each),
+# **THE MUTANTS ARE 9 TO 21** (`chk_rtl.c`'s `chk_rtl_mutation` names each),
 # and each is caught when muir refuses the file, saves other bytes, or the
 # file is not muir's own.  It rides on `build/checkpoint.pass`, which builds
 # the program, the test's binaries in the one work directory and muir.
@@ -3972,12 +3990,12 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
                                golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin quux_checkpoint -- $(CHECKPOINT_WORK)/quux-muir.chk \
 	    --machine quux --sync-cycle-ticks 4 --sync-ilong-ticks 0
-	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(MUIR_BIN); \
+	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(QUUX_BIN); \
 	 rm -f $$W/quux-disk.img; truncate -s $$((256 * 1024)) $$W/quux-disk.img; \
 	 D="--disk-pack $$W/quux-disk.img"; \
 	 cmp $$W/quux.chk $$W/quux-muir.chk \
 	   || { echo "checkpoint.quux: the program's file is not muir's own for the same machine"; exit 1; }; \
-	 $$M --rtl --machine quux $$D --stop-after 0 --resume $$W/quux.chk --checkpoint $$W/quux-back.chk \
+	 $$M --rtl $$D --stop-after 0 --resume $$W/quux.chk --checkpoint $$W/quux-back.chk \
 	     > $$W/quux-muir.log 2>&1 \
 	   || { echo "checkpoint.quux: muir REFUSED the file"; sed -n '$$p' $$W/quux-muir.log; exit 1; }; \
 	 cmp $$W/quux.chk $$W/quux-back.chk \
@@ -3987,12 +4005,12 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	        grep '^resumed' $$W/quux-muir.log; exit 1; }; \
 	 echo "checkpoint.quux: $$(stat -c%s $$W/quux.chk) bytes, the same as muir's own for the same machine,"; \
 	 echo "checkpoint.quux: loaded and saved back identically, resumed $$(grep '^resumed' $$W/quux-muir.log | sed 's/^resumed: [^ ]* //')"; \
-	 for m in 9 10 11 12 13 14 15 16 17 18 19; do \
+	 for m in 9 10 11 12 13 14 15 16 17 18 19 20 21; do \
 	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/qmut-$$m-cadr.chk $$W/qmut-$$m.chk > $$W/qmut-$$m.out 2>&1 \
 	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/qmut-$$m.out; exit 1; }; \
 	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/qmut-$$m.out); \
-	   if ! $$M --rtl --machine quux $$D --stop-after 0 --resume $$W/qmut-$$m.chk \
+	   if ! $$M --rtl $$D --stop-after 0 --resume $$W/qmut-$$m.chk \
 	            --checkpoint $$W/qmut-$$m-back.chk > $$W/qmut-$$m.log 2>&1; then \
 	     echo "checkpoint.quux: mutant $$m caught, muir refused it --- $$what"; \
 	   elif ! cmp -s $$W/qmut-$$m.chk $$W/qmut-$$m-back.chk; then \

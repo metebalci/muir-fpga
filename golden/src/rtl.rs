@@ -75,7 +75,15 @@ const CYCLES: u64 = 600_000;
 /// space, whose `MBUSY` clear fell on a master clock edge that the fabric then
 /// took a tick late; a change on an edge counts as before it now, on both
 /// machines, and the cut is gone.
-const QUUX_CYCLES: u64 = CYCLES + 0x20001;
+///
+/// **And two microcycles more since revision 10's PROM** (contract Q11),
+/// whose writes of reset devices and timer 0's period move the disk's
+/// polling so that the old length ended on the microcycle that starts a
+/// poll, a device cycle the trace then never saw answered, which
+/// `tb/cadr_machine_tb.cpp` rightly counts as one the fabric did not
+/// answer.  The poll is five microcycles; two more end the trace past its
+/// acknowledgment.
+const QUUX_CYCLES: u64 = CYCLES + 0x20001 + 2;
 
 fn main() {
     // `--machine quux` takes the trace on QUUX, from QUUX's own boot PROM,

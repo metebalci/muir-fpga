@@ -36,7 +36,7 @@
 //
 // The debug window is the fourth: 0x8000_1000 and 0x2000_1000, one page above
 // the console behind the same split.  No program here maps it --- muir is given
-// it on its command line (`--debug-cable-connect`), by the card's muirrc ---
+// it on its command line (`--debug-cable-connect`), by the card's cadrrc ---
 // so it is the card script's to know and not this header's.
 //
 // WHERE THE DE25-Nano's NUMBERS COME FROM.  The two bridges' windows are the

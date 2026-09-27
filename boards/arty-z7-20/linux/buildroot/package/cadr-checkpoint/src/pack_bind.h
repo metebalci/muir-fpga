@@ -101,7 +101,7 @@ struct binding {
 	int machine_halted_first;
 	int packs_program_stopped;
 	// Which machine the checkpoint is of: the CADR, or QUUX, whose resume
-	// is `--machine quux` and whose one pack is block-disk's, unit 0.  A
+	// is muir's `quux` and whose one pack is block-disk's, unit 0.  A
 	// sidecar without the line is the CADR's, which is all there was.
 	int quux;
 };

@@ -20,25 +20,32 @@
 //     5    A memory's words, 1,024
 //     6    the dispatch memory's words, 2,048
 //     7    the multiply and divide, 3: bit 0 MUL, bit 1 DIV
-//     10   the processor tick, 1
+//     10   the processor tick, timer 0, 1
 //     11   the main screen's width in 31:16 and height in 15:0
 //     12   the main screen's bits a pixel in 31:16 and words a line in 15:0
 //     13   the main screen's buffer, its first physical address, `17000000`
-//     14   the interval timer and the microsecond clock, 1
+//     14   the microsecond clock, 1
 //     15   the devices of revision 9, a bit each: 3, <0> the real-time clock
 //          and <1> the file device
-//     16-77  0
+//     16   the number of interval timers, 3 (revision 10, contract Q11)
+//     17-77  0
 //
 // And the registers (`Machine::bus_read` and `bus_write`):
 //
-//     100  interrupt status, read only: <0> the tick, <1> the interval timer,
-//          <2> the disk's done, <3> the keyboard, <4> the mouse, <5> the
-//          network, <6> the file device, each under its own enable
+//     100  interrupt status, read only: <0> timer 0, <1> timer 1, <2> the
+//          disk's done, <3> the keyboard, <4> the mouse, <5> the network,
+//          <6> the file device, <7> timer 2, each under its own enable
 //     101  the bus errors, as `766044` gives them: <0> Xbus NXM, <3> Unibus
 //          NXM, <5> Unibus map error; a write clears them
 //     102  mode: <0> error stop, which the mode register's <2> is too
 //     103  the real-time clock, read only: Unix seconds (`quux_rtc.sv`,
 //          contract Q9); a write goes nowhere
+//     104  reset devices, write only: a write with <0> set resets every
+//          device --- block-disk, the network, the file device and the
+//          interval timers, not the keyboard and mouse --- and reads 0
+//          (revision 10, contract Q11; `reset_devices` below)
+//     110-115  the interval timers, `quux_clocks.sv` (contract Q11): timer
+//          k's control and status at 110 + 2k, its period at 111 + 2k
 //     120-123  the keyboard and the mouse, `quux_input.sv` (contract Q3)
 //     140-147  the Chaosnet interface's registers, word 140 + k being Unibus
 //          `764140` + 2k, sixteen bits in the bottom of the word (contract
@@ -52,11 +59,20 @@
 // `answered_at`: a read's word is taken there and held for the strobe, and a
 // read that moves something --- the keyboard's FIFO, the mouse's changed bit,
 // the Chaosnet's receive pointer --- moves it there, once.  The interrupt
-// status is the flags as they stand at that tick.  The page's own three
+// status is the flags as they stand at that tick, but the timers' bits,
+// which are as they stood at the edge that took the cycle
+// (`quux_clocks.sv`'s `pending`), as their words are.  The page's own three
 // requests, the keyboard's, the mouse's and the network's, also reach the
 // processor's interrupt as every word 100 bit does (`irq`; muir's
-// `interrupt_at`, `1f6f5fb` for the network's); the tick's and the interval
-// timer's reach it from `quux_clocks.sv`, and the disk's on the Xbus line.
+// `interrupt_at`, `1f6f5fb` for the network's); the timers' reach it from
+// `quux_clocks.sv`, and the disk's on the Xbus line.
+//
+// **RESET DEVICES IS REGISTERED ONCE**: `reset_devices` is up in the tick
+// after the page takes the write, and the devices clear at the end of it,
+// two ticks after the edge that took the cycle.  muir resets them at that
+// edge, after its `SINTR`; the next `SINTR` is taken at the acknowledging
+// edge, K ticks after it, so at K >= 4 they are cleared a tick before it
+// and nothing is held off `SINTR` for them (contract Q11, section 4).
 //
 // Words 11 to 13 are the display's: MONO TV at the bitstreams' 1280 by 1024,
 // 40 words a line.  The values are parameters that `cadr_machine.sv` sets
@@ -105,6 +121,8 @@ module quux_feature_page #(
     // Word 15: the devices of revision 9, <0> the real-time clock and <1>
     // the file device.
     parameter logic [31:0] REV9_DEVICES   = 32'd3,
+    // Word 16: the number of interval timers (revision 10).
+    parameter logic [31:0] TIMERS         = 32'd3,
     parameter int unsigned SCREEN_WIDTH   = 1280,
     parameter int unsigned SCREEN_HEIGHT  = 1024,
     parameter int unsigned SCREEN_WPL     = 40,
@@ -112,8 +130,9 @@ module quux_feature_page #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
-    // `-XBUS INIT`: the power-on reset and `PROG.UNIBUS.RESET`'s rise, which
-    // disables the file device.
+    // `-XBUS INIT`: the power-on reset and reset devices (`reset_devices`
+    // below, through `cadr_machine.sv`'s `bus_init`), which disables the
+    // file device.
     input  var logic        xbus_init,
 
     // The held decode's `device`, the cycle's address, its direction,
@@ -133,12 +152,18 @@ module quux_feature_page #(
     output var logic [31:0] rdata,
 
     // --- word 100's sources that are not this page's own
-    input  var logic [1:0]  clock_pending,   // <0> the tick, <1> the interval timer
+    input  var logic [2:0]  timer_pending,   // <0>, <1> and <7>: timers 0, 1 and 2
     input  var logic        disk_irq,        // <2> the disk's done
     input  var logic        chaos_ireq,      // <5> the network
-    // A bus reset landing at this microcycle's edge: the network's term is
-    // held off `irq` (`cadr_machine.sv`, at `bus_init`).
-    input  var logic        prog_unibus_reset_rising,
+    // --- words 110-115: the interval timers (`quux_clocks.sv`), a write in
+    // the tick the page takes it and a read of the word the page names
+    output var logic        tm_we,
+    output var logic [2:0]  tm_idx,
+    output var logic [23:0] tm_wdata,
+    input  var logic [23:0] tm_rdata,
+    // --- word 104: reset devices, the tick after the page takes a write of
+    // it with <0> set
+    output var logic        reset_devices,
     // --- word 101: the bus errors, and their clear
     input  var logic [2:0]  err,             // {map, Unibus NXM, Xbus NXM}
     output var logic        err_clear,
@@ -312,10 +337,12 @@ module quux_feature_page #(
         8'o13:   word = {10'd0, SCREEN_BUFFER};
         8'o14:   word = CLOCKS;
         8'o15:   word = REV9_DEVICES;
-        8'o100:  word = {25'd0, fd_irq, chaos_ireq, in_irq, disk_irq, clock_pending};
+        8'o16:   word = TIMERS;
+        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
         8'o101:  word = {26'd0, err[2], 1'b0, err[1], 2'b00, err[0]};
         8'o102:  word = {31'd0, errstop};
         8'o103:  word = rtc_seconds;
+        8'o110, 8'o111, 8'o112, 8'o113, 8'o114, 8'o115: word = {8'd0, tm_rdata};
         default: word = 32'd0;
       endcase
     end
@@ -329,7 +356,9 @@ module quux_feature_page #(
       which <= 8'd0;
       taken <= 1'b0;
       held  <= 32'd0;
+      reset_devices <= 1'b0;
     end else begin
+      reset_devices <= take && dev_write && which == 8'o104 && wdata[0];
       mine  <= sel && (phys[21:8] == FEATURE_PAGE);
       which <= phys[7:0];
       if (take) begin
@@ -348,8 +377,14 @@ module quux_feature_page #(
   assign ch_wr      = dev_write;
   assign ch_which   = which[2:0];
   assign ch_wdata   = wdata[15:0];
+  // The timers' words, 110 to 115: `which<2:0>` is the word less 110.
+  assign tm_we      = take && dev_write && which[7:3] == 5'o11 && which[2:1] != 2'b11;
+  assign tm_idx     = which[2:0];
+  assign tm_wdata   = wdata[23:0];
 
-  assign irq = (|in_irq) || ((chaos_ireq || fd_irq) && !prog_unibus_reset_rising);
+  // No term is held off at `INTERRUPT-CONTROL<28>`'s edge: on QUUX it
+  // resets nothing (contract Q11), and reset devices needs no hold-off.
+  assign irq = (|in_irq) || chaos_ireq || fd_irq;
 
   // The bus interface ANDs the acknowledgment with `-XBUS.RQ` itself
   // (`cadr_disk_controller.sv` has why the slave must not), and the lines are
