@@ -162,6 +162,15 @@ and the serial line and is deliberate: a board with no network had no file
 host and no time host at all, and one on the board costs almost nothing. The
 section below is about the flag that turns it off.
 
+**A QUUX card does not start it.** ozd is the CADR's file and time host; no
+QUUX band calls it, because QUUX has the file device. So on a card that says
+`--machine quux`, `S84ozd` starts nothing and leaves no peer for the Chaosnet
+program, prints `Starting ozd: not needed (QUUX)`, and succeeds: it is not an
+error. The `--ozd-` lines on such a card are taken and ignored without a word,
+as beside `--no-ozd`, and nothing about them is checked. A card with no
+`--machine` line is the CADR's and starts it. `--no-ozd` on a QUUX card says
+what it says on a CADR card.
+
 **The `site` tree is served read-write, and so the host can write the whole
 card.** A band saves the host table it generates into `site/`, and the host
 refuses a writable tree it cannot write. So `S80cadr-disk-packs` mounts the
@@ -251,7 +260,8 @@ what each one means.
 
     --machine             which machine the bitstream is: cadr or quux
 
-It is the screen's flag too, with the same meaning. QUUX's disk is
+It is the screen's flag too, with the same meaning, and `S84ozd` reads it to
+start no ozd on a QUUX card. QUUX's disk is
 block-disk, which asks for a block by its number from the start of unit 0's
 disk; the CADR's controller asks by cylinder, head and block. On QUUX the file
 `disk-pack-0.img` is a raw image, a fixed VHD or a dynamic VHD, of any size up
@@ -564,7 +574,8 @@ card that script is the one thing that mounts.
 
 ## `--no-ozd`
 
-The board runs the band's file and time host itself unless this line is there.
+A CADR board runs the band's file and time host itself unless this line is
+there; a QUUX board never runs it.
 `docs/chaosnet.md` says what it serves, what it costs and why it listens on
 the loopback; this section is about the flag.
 
@@ -917,6 +928,16 @@ report them as nobody's. The card script writes both commented by default,
 live from `OZD_FILE_DATES` and `OZD_TIMEZONE`, commented on a release whatever
 those say, and refuses a zone without `mit` or out of range when the card is
 made.
+
+**And it holds that a QUUX card starts no host.** A card that says `--machine
+quux`, alone, with `--ozd-` settings, with a zone a CADR card would have
+refused, or after a `--machine cadr` line, runs neither the dry run nor the
+start, leaves no peer file (a stale one is laid down first), prints `Starting
+ozd: not needed (QUUX)` once and returns 0. The controls start the host: a
+card that says `--machine cadr`, with and without settings, one whose last
+`--machine` line is `cadr`, and one with no `--machine` line. `--no-ozd` on a
+QUUX card keeps its own words, and the QUUX card's `--ozd-` lines are not
+reported as nobody's, with a misspelling still reported on the same run.
 
 **And it holds the wait for the network to being a wait for a name.** A board
 whose peers are all addresses must not wait, on a stubbed board with nothing

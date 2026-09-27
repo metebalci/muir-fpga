@@ -3903,6 +3903,144 @@ if prepare ozd S84ozd && prepare cadr-usb-input S88cadr-usb-input; then
 	fi
 fi
 
+# **ozd IS THE CADR'S, AND A QUUX CARD DOES NOT START IT.**  Every CADR band
+# calls ozd for its files and its time; no QUUX band does, because QUUX has the
+# file device (S81quux-file-device).  So on a card that says `--machine quux`
+# the script starts nothing, runs no dry run, leaves no peer file for the
+# Chaosnet to find, says so in one line and succeeds: it is not an error.  Its
+# `--ozd-` lines are claimed all the same, as under --no-ozd, and nothing about
+# them is checked, because nothing reads them.  The machine is the card's last
+# `--machine` line, read by cadr-common's `fpgarc_is_quux` as every other
+# script reads it; no line is the CADR.
+#
+# Each of these holds: nothing started, no dry run, no peer file (a stale one
+# is laid down first, so a script that skipped its own removal would show),
+# the line on the console, and a status of 0.  $1 the case, then the card's
+# lines.
+ozd_not_for_quux() {
+	_what=$1; shift
+	sandbox
+	prepare ozd S84ozd || return 0
+	printf -- '%s\r\n' "$@" > "$WORK/card/fpgarc"
+	echo "177200@127.0.0.1:42142" > "$WORK/run/cadr-ozd.peer"
+	run_script S84ozd
+	if [ -s "$WORK/daemon.calls" ]; then
+		fail "$_what: ozd was started: $(ozd_given)"
+	else
+		ok "$_what: nothing was started"
+	fi
+	if [ -s "$WORK/ozd.check.calls" ] || [ -s "$WORK/ssd.fg.calls" ]; then
+		fail "$_what: ozd's dry run was run: $(cat "$WORK/ssd.fg.calls")"
+	else
+		ok "$_what: and no dry run"
+	fi
+	if [ -e "$WORK/run/cadr-ozd.peer" ]; then
+		fail "$_what: a peer file was left behind by a host that is not running"
+	else
+		ok "$_what: and no peer file"
+	fi
+	if [ "$(grep -c '^Starting ozd: not needed (QUUX)$' "$WORK/out.S84ozd")" = 1 ]; then
+		ok "$_what: and the console says: Starting ozd: not needed (QUUX)"
+	else
+		fail "$_what: the console does not say 'Starting ozd: not needed (QUUX)' once: $(cat "$WORK/out.S84ozd")"
+	fi
+	if [ "$(cat "$WORK/status.S84ozd")" = 0 ]; then
+		ok "$_what: and the script succeeded"
+	else
+		fail "$_what: the script returned $(cat "$WORK/status.S84ozd"): $(cat "$WORK/out.S84ozd")"
+	fi
+}
+
+# The control for the case above, on the same sandbox and the same card
+# shape: a card whose machine is the CADR still starts the host.
+ozd_for_cadr() {
+	_what=$1; shift
+	sandbox
+	prepare ozd S84ozd || return 0
+	printf -- '%s\r\n' "$@" > "$WORK/card/fpgarc"
+	run_script S84ozd
+	if grep -q '^Starting ozd: OK$' "$WORK/out.S84ozd" &&
+	   [ -s "$WORK/daemon.calls" ] && [ -s "$WORK/ozd.check.calls" ] &&
+	   [ -s "$WORK/run/cadr-ozd.peer" ]; then
+		ok "$_what: the host was checked, started, and named in the peer file"
+	else
+		fail "$_what: the host did not start: $(cat "$WORK/out.S84ozd")"
+	fi
+	if grep -q 'not needed' "$WORK/out.S84ozd"; then
+		fail "$_what: the console says ozd is not needed on a CADR: $(cat "$WORK/out.S84ozd")"
+	else
+		ok "$_what: and the console does not say it is not needed"
+	fi
+}
+
+case_head "a QUUX card starts no ozd, says why, and succeeds"
+ozd_not_for_quux "--machine quux" '--machine quux'
+
+case_head "a QUUX card with --ozd- lines starts none either, and does not check them"
+ozd_not_for_quux "--machine quux with settings" '--machine quux' \
+	'--ozd-port 42242' '--ozd-root sys=/mnt/card/sys,ro' \
+	'--ozd-file-dates mit' '--ozd-timezone 5'
+# A line the CADR's card would have refused (a zone with no `mit`) is not
+# refused here: nothing reads it, so there is nothing to refuse.
+ozd_not_for_quux "--machine quux with a zone and no mit" '--machine quux' \
+	'--ozd-timezone -1'
+
+case_head "the last --machine line decides, as for every other script"
+ozd_not_for_quux "--machine cadr, then --machine quux" '--machine cadr' '--machine quux'
+ozd_for_cadr "--machine quux, then --machine cadr" '--machine quux' '--machine cadr'
+
+case_head "a CADR card still starts ozd, with --machine cadr and with no --machine line"
+ozd_for_cadr "--machine cadr" '--machine cadr'
+ozd_for_cadr "--machine cadr with settings" '--machine cadr' '--ozd-port 42242' \
+	'--ozd-file-dates mit' '--ozd-timezone 5'
+ozd_for_cadr "no --machine line" '--ozd-port 42242'
+
+# **--no-ozd IS UNCHANGED ON A QUUX CARD**: it is answered first, in its own
+# words, as on the CADR's.
+case_head "--no-ozd on a QUUX card says what it says on a CADR card"
+sandbox
+if prepare ozd S84ozd; then
+	printf -- '--machine quux\r\n--no-ozd\r\n' > "$WORK/card/fpgarc"
+	run_script S84ozd
+	if [ ! -s "$WORK/daemon.calls" ] && [ ! -e "$WORK/run/cadr-ozd.peer" ] &&
+	   grep -q -- '--no-ozd on the card' "$WORK/out.S84ozd" &&
+	   [ "$(cat "$WORK/status.S84ozd")" = 0 ]; then
+		ok "nothing started, and the console gives --no-ozd's own words"
+	else
+		fail "--no-ozd on a QUUX card did not behave as on a CADR card: $(cat "$WORK/out.S84ozd")"
+	fi
+fi
+
+# **AND ITS LINES ARE CLAIMED**, or S88 would report them at boot as lines no
+# program takes, which is false: they reached this program, on a machine that
+# does not need it.  The control is a misspelling, which is still reported.
+case_head "a QUUX card's --ozd- lines are not reported as nobody's"
+sandbox
+if prepare ozd S84ozd && prepare cadr-usb-input S88cadr-usb-input; then
+	printf -- '--machine quux\r\n--ozd-port 42142\r\n--ozd-file-dates mit\r\n--ozd-timezone -1\r\n' > "$WORK/card/fpgarc"
+	: > "$WORK/run/claimed"
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S84ozd" start > "$WORK/out.S84ozd" 2>&1
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S88cadr-usb-input" start > "$WORK/out.S88cadr-usb-input" 2>&1
+	if grep -q 'no program on this board takes' "$WORK/out.S88cadr-usb-input"; then
+		fail "a line was reported as taken by nobody: $(grep 'no program' "$WORK/out.S88cadr-usb-input")"
+	else
+		ok "every --ozd- line and --machine went to a program"
+	fi
+	printf -- '--machine quux\r\n--ozd-prt 42142\r\n' > "$WORK/card/fpgarc"
+	: > "$WORK/run/claimed"
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S84ozd" start > /dev/null 2>&1
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S88cadr-usb-input" start > "$WORK/out.S88cadr-usb-input" 2>&1
+	if grep -q -- '--ozd-prt' "$WORK/out.S88cadr-usb-input"; then
+		ok "and a misspelling of one still is reported"
+	else
+		fail "a misspelled --ozd-prt was not reported, so the case above tests nothing"
+	fi
+fi
+
 case_head "the card's own settings reach ozd, each under ozd's own name"
 sandbox
 if prepare ozd S84ozd; then

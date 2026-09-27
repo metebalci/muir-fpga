@@ -19,6 +19,10 @@
 # `--port` is a word another program could want, and the card's one file of
 # flags cannot carry a word two programs answer to.
 #
+# **AND IT IS THE CADR'S ONLY.**  A card that says `--machine quux` gets no
+# ozd: QUUX has the file device, and no QUUX band calls ozd.  The script says
+# so in one line and succeeds.
+#
 # S84: after S80cadr-disk-packs, which is the one thing that mounts the
 # partition this file of flags is on, and before S87cadr-chaosnet, so that the
 # machine's first request for the time finds a host already listening.  Not
@@ -295,6 +299,21 @@ start() {
 		# S88 as a line no program takes.  It did reach a program: this
 		# one, which was told not to run.
 		fpgarc_args "$RC" $FLAGS > /dev/null
+		return 0
+	fi
+
+	# **A QUUX CARD DOES NOT START ozd, AND THAT IS NOT AN ERROR.**  ozd is
+	# the CADR's: every CADR band calls it for its files and its time, and
+	# no QUUX band does, because QUUX has the file device
+	# (S81quux-file-device).  The machine is the card's last `--machine`
+	# line, read by cadr-common's `fpgarc_is_quux` as every other script
+	# reads it; no line is the CADR.  After `--no-ozd`, so that line keeps
+	# its own words on either machine.  The `--ozd-` lines are claimed and
+	# nothing about them is checked or said, as under `--no-ozd`: nothing
+	# reads them.  No peer file, since no host is running.
+	if fpgarc_is_quux; then
+		fpgarc_args "$RC" $FLAGS > /dev/null
+		echo "Starting ozd: not needed (QUUX)"
 		return 0
 	fi
 

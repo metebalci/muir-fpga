@@ -251,7 +251,11 @@ card's one file of flags cannot carry a word two programs answer to.
 
 **It is the CADR's file host, for every CADR band.** A QUUX band reaches its
 files through the Q9 file device instead (`docs/file-device.md`) and asks
-nothing of this host.
+nothing of this host, so a QUUX card does not start it. On a card that says
+`--machine quux`, `S84ozd` prints `Starting ozd: not needed (QUUX)`, starts
+nothing, leaves no peer for the Chaosnet program, and succeeds; the card's
+`--ozd-` lines are taken and ignored. A card with no `--machine` line is the
+CADR's.
 
 **Its FILE dates follow the band.** ozd shows a file's dates in plain UTC
 unless told otherwise, which is what System 1002 and later write. A card that
