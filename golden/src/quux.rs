@@ -1169,16 +1169,13 @@ fn shared_edge(p: &mut Prog, t: &mut Tp) {
         }
     }
     // **A READ TAKEN AT A HELD EDGE**: a read of word 110 with a second
-    // start right behind it, a write of main memory, which QUUX holds until
-    // the first cycle has gone out, so that the read is taken at an edge
-    // that runs no microcycle.  Timer 0 at 1 us, cleared after each read; the
-    // loop is 640 ns, sixteen microcycles, which is prime to the period's
-    // twenty-five, so over twenty-five turns the rise falls on each edge of
-    // the period once, the held edge included.  (A write of the page itself
-    // behind the read is not used: there the port parts from muir, the MD
-    // read after it 80 ns long where muir's is 240 --- a question of Q7's
-    // port, not of the timers, reported and not settled here.)
-    let (behind, count, v403) = (t.c.c(p, r7(1, WAIT_WORD)), t.c.c(p, 25), t.c.c(p, T_ON | T_FLAG | T_IE));
+    // start right behind it, a write of the page's word 105, which QUUX
+    // holds until the first cycle has gone out, so that the read is taken at
+    // an edge that runs no microcycle.  Timer 0 at 1 us, cleared after each
+    // read; the loop is 640 ns, sixteen microcycles, which is prime to the
+    // period's twenty-five, so over twenty-five turns the rise falls on each
+    // edge of the period once, the held edge included.
+    let (behind, count, v403) = (t.c.c(p, t.va(0o105)), t.c.c(p, 25), t.c.c(p, T_ON | T_FLAG | T_IE));
     p.i(ALU | SETA | a_src(count) | m_dest(6));
     let top = p.at();
     p.to(ctl, START_READ);
