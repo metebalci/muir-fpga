@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # The card's optional file.  THIS IS A TEMPLATE: boards/arty-z7-20/linux/mksd-buildroot.sh
-# writes uEnv.txt from it, filling @SERVERIP@ and @ETHADDR@ from
-# boards/arty-z7-20/linux/local.conf --- gitignored, because this repository is public and a
+# writes uEnv.txt from it, filling the serverip and ethaddr lines below from
+# SERVERIP and ETHADDR in boards/arty-z7-20/linux/local.conf --- gitignored, because this repository is public and a
 # machine's address on a private network, or a board's MAC, is not part of
 # the project --- and dropping the line for anything local.conf does not set.
 #

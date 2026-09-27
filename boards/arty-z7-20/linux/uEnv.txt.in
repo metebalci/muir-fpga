@@ -4,7 +4,7 @@
 # The card is written once; everything after it arrives over Ethernet.
 #
 # THIS IS A TEMPLATE.  `boards/arty-z7-20/linux/mksd.sh` writes `uEnv.txt` from it with
-# @SERVERIP@ replaced by the TFTP server's address, read from `boards/arty-z7-20/linux/local.conf`
+# the serverip line's value set to the TFTP server's address, read from `boards/arty-z7-20/linux/local.conf`
 # --- which is gitignored, because this repository is public and the address
 # of a machine on a private network is not part of the project.
 #

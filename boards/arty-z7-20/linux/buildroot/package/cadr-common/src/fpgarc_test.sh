@@ -3522,6 +3522,67 @@ if lift '# **ETHADDR IS A MAC OR NOTHING.**' 'fi  # ETHADDR is a MAC or nothing'
 		&& ok "and all $nbad values that are not a board's MAC are refused by name before uEnv.txt is written: $(cat "$WORK/uenv/died")"
 fi
 
+# **THE ADDRESSES GO ON THE SETTING LINES AND NOWHERE ELSE.**  The generator
+# fills @SERVERIP@ and @ETHADDR@ wherever they stand in a board's template, so
+# a comment that named the tokens carried a development card's server address
+# and MAC into its prose, and read "filling  and  from" on a release card.
+# Held for every board's real template: with documentation values, the two
+# setting lines carry them and no comment line does; with none, as on a
+# release card, the setting lines are gone and every comment line is the
+# template's own, word for word, so an emptied fill cannot hide in one.
+fill_out() {
+	rm -rf "$WORK/uenv/out" "$WORK/uenv/died"; mkdir -p "$WORK/uenv/out/card"
+	( set -eu
+	  OUT="$WORK/uenv/out"
+	  BOARD="$TREE/boards/$1/linux/buildroot/board/$1"
+	  BOARD_NAME=$1
+	  FABRIC=$2
+	  SERVERIP=$3; ETHADDR=$4; FABRIC_LOADED=
+	  die() { echo "$*" > "$WORK/uenv/died"; exit 1; }
+	  . "$WORK/uenv/uenv.sh" ) > "$WORK/uenv/said" 2>&1
+}
+case_head "the card's server address and MAC fill the setting lines and never a comment"
+sandbox
+mkdir -p "$WORK/uenv"
+if lift 'sed -e "s/@SERVERIP@/${SERVERIP:-}/"' \
+        '# whether the card says the fabric was configured before U-Boot ran' \
+        "$WORK/uenv/uenv.sh"; then
+	for spec in arty-z7-20:cadr.bit cora-z7-07s:cadr.bit de25-nano:cadr.core.rbf; do
+		b=${spec%%:*}; fab=${spec#*:}
+		tmpl="$TREE/boards/$b/linux/buildroot/board/$b/uEnv.txt.in"
+		card="$WORK/uenv/out/card/uEnv.txt"
+		grep '^#' "$tmpl" > "$WORK/uenv/tmpl.comments"
+		if ! fill_out "$b" "$fab" 192.0.2.1 02:00:00:00:00:01; then
+			fail "$b: a development card was not written: $(cat "$WORK/uenv/died" "$WORK/uenv/said" 2>/dev/null)"
+		else
+			leak=$(grep '^#' "$card" | grep -F -e 192.0.2.1 -e 02:00:00:00:00:01 || true)
+			if [ -n "$leak" ]; then
+				fail "$b: a development card's comment carries the address or MAC: $leak"
+			elif [ "$(grep -c '^serverip=' "$card")" != 1 ] || ! grep -qx 'serverip=192.0.2.1' "$card" \
+			     || [ "$(grep -c '^ethaddr=' "$card")" != 1 ] || ! grep -qx 'ethaddr=02:00:00:00:00:01' "$card"; then
+				fail "$b: the setting lines are not 'serverip=192.0.2.1' and 'ethaddr=02:00:00:00:00:01' once each: $(grep -e '^serverip' -e '^ethaddr' "$card")"
+			else
+				ok "$b: a development card's address and MAC are on their setting lines and in no comment"
+			fi
+		fi
+		if ! fill_out "$b" "$fab" "" ""; then
+			fail "$b: a release card was not written: $(cat "$WORK/uenv/died" "$WORK/uenv/said" 2>/dev/null)"
+		else
+			grep '^#' "$card" > "$WORK/uenv/card.comments"
+			gap=$(grep '^#' "$card" | grep -F '  and  ' || true)
+			if [ -n "$gap" ]; then
+				fail "$b: a release card's comment reads with an emptied fill: $gap"
+			elif ! cmp -s "$WORK/uenv/tmpl.comments" "$WORK/uenv/card.comments"; then
+				fail "$b: a release card's comments differ from the template's: $(diff "$WORK/uenv/tmpl.comments" "$WORK/uenv/card.comments" | grep '^[<>]' | head -4)"
+			elif grep -q -e '^serverip' -e '^ethaddr' "$card"; then
+				fail "$b: a release card still carries a setting line: $(grep -e '^serverip' -e '^ethaddr' "$card")"
+			else
+				ok "$b: a release card's comments are the template's own and it sets neither"
+			fi
+		fi
+	done
+fi
+
 case_head "a U-Boot that loads from the root of the partition is refused by name"
 sandbox
 mkdir -p "$WORK/ub/card"
