@@ -2801,6 +2801,10 @@ generate_fpgarc() {
 	  # two flags because a card may carry one and not the other.
 	  SYS=${6:-}
 	  SITE=${7:-}
+	  # $8 is OZD_FILE_DATES and $9 OZD_TIMEZONE, which local.conf sets
+	  # on a card whose band is one of Systems 100 to 1001.
+	  OZD_FILE_DATES=${8:-}
+	  OZD_TIMEZONE=${9:-}
 	  CHAOS_DEFAULT_PEER=""
 	  . "$WORK/gen/gen.sh" ) || return 1
 	return 0
@@ -3930,6 +3934,151 @@ if prepare ozd S84ozd; then
 	fi
 fi
 
+# **FILE'S DATES: `--ozd-file-dates mit|utc` AND `--ozd-timezone N`.**  ozd
+# prints and reads FILE's dates in plain UTC unless told otherwise, which is
+# what System 1002 and later write; a band of Systems 100 to 1001 wants
+# `--file-dates mit` and its site's zone, -1 for System 1001 and 5 for System
+# 100.  The card's two lines are those two flags and mean the same.  What is
+# held: both reach ozd, in the dry run and in the start, under ozd's own
+# names; a card that says neither passes neither, so ozd's own default stands;
+# and what ozd would refuse is refused here first, in the card's own spelling,
+# with nothing started and no peer file left behind.  The stand-in ozd accepts
+# everything, so a refusal seen here is the script's own and not the stand-in's.
+ozd_dates_given() { cat "$WORK/daemon.calls" "$WORK/ozd.check.calls"; }
+
+for zone in -1 5 12 -12 +5 08; do
+	case_head "--ozd-file-dates mit with --ozd-timezone $zone reaches ozd as --file-dates mit --timezone $zone"
+	sandbox
+	if prepare ozd S84ozd; then
+		printf -- '--ozd-file-dates mit\r\n--ozd-timezone %s\r\n' "$zone" > "$WORK/card/fpgarc"
+		run_script S84ozd
+		for want in "--file-dates mit" "--timezone $zone"; do
+			if grep -q -- "$want\\( \\|\$\\)" "$WORK/daemon.calls" &&
+			   grep -q -- "$want\\( \\|\$\\)" "$WORK/ozd.check.calls"; then
+				ok "ozd was given $want, in the dry run and in the start"
+			else
+				fail "ozd was not given $want in both; start: $(ozd_given); dry run: $(cat "$WORK/ozd.check.calls")"
+			fi
+		done
+		if ozd_dates_given | grep -q -- '--ozd-'; then
+			fail "a --ozd- spelling reached ozd itself: $(ozd_dates_given)"
+		else
+			ok "and neither --ozd- spelling reached it"
+		fi
+		if grep -q '^Starting ozd: OK$' "$WORK/out.S84ozd" && [ -s "$WORK/run/cadr-ozd.peer" ]; then
+			ok "and the host started"
+		else
+			fail "the host did not start: $(cat "$WORK/out.S84ozd")"
+		fi
+	fi
+done
+
+case_head "--ozd-file-dates utc alone reaches ozd, and --ozd-file-dates mit alone does"
+for dates in utc mit; do
+	sandbox
+	if prepare ozd S84ozd; then
+		printf -- '--ozd-file-dates %s\r\n' "$dates" > "$WORK/card/fpgarc"
+		run_script S84ozd
+		if grep -q -- "--file-dates $dates" "$WORK/ozd.check.calls" &&
+		   ozd_given | grep -q -- "--file-dates $dates"; then
+			ok "ozd was given --file-dates $dates"
+		else
+			fail "ozd was not given --file-dates $dates: $(ozd_dates_given)"
+		fi
+		if ozd_dates_given | grep -q -- '--timezone'; then
+			fail "ozd was given a --timezone nobody wrote: $(ozd_dates_given)"
+		else
+			ok "and no --timezone"
+		fi
+	fi
+done
+
+case_head "a card that says nothing about FILE's dates passes nothing, so ozd's default stands"
+sandbox
+if prepare ozd S84ozd; then
+	: > "$WORK/card/fpgarc"
+	run_script S84ozd
+	if ozd_dates_given | grep -q -- '--file-dates\|--timezone'; then
+		fail "ozd was given a dates flag nobody wrote: $(ozd_dates_given)"
+	else
+		ok "ozd was given neither --file-dates nor --timezone"
+	fi
+	if grep -q '^Starting ozd: OK$' "$WORK/out.S84ozd"; then
+		ok "and the host started"
+	else
+		fail "the host did not start: $(cat "$WORK/out.S84ozd")"
+	fi
+fi
+
+# A refusal: nothing started, not even the dry run, no peer file, the console
+# says FAIL and names the card's line.  $1 the case, $2 what the console must
+# say, then the card's lines.
+dates_refused() {
+	_what=$1; _say=$2; shift 2
+	sandbox
+	prepare ozd S84ozd || return 0
+	printf -- '%s\r\n' "$@" > "$WORK/card/fpgarc"
+	run_script S84ozd
+	if [ -s "$WORK/daemon.calls" ] || [ -s "$WORK/ozd.check.calls" ]; then
+		fail "$_what: ozd was run: $(ozd_dates_given)"
+		return 0
+	fi
+	if [ -e "$WORK/run/cadr-ozd.peer" ]; then
+		fail "$_what: a peer file was left behind by a host that never started"
+		return 0
+	fi
+	if [ "$(cat "$WORK/status.S84ozd")" = 0 ]; then
+		fail "$_what: the script said it succeeded"
+		return 0
+	fi
+	if grep -q '^Starting ozd: FAIL$' "$WORK/out.S84ozd" &&
+	   grep -qF -- "$_say" "$WORK/out.S84ozd"; then
+		ok "$_what: refused, and the console says: $(grep -F -- "$_say" "$WORK/out.S84ozd" | head -1)"
+	else
+		fail "$_what: the console does not say FAIL and '$_say': $(cat "$WORK/out.S84ozd")"
+	fi
+}
+
+case_head "a zone without --ozd-file-dates mit is refused, as ozd refuses it"
+dates_refused "a zone alone" "--ozd-timezone -1 needs --ozd-file-dates mit" \
+	'--ozd-timezone -1'
+dates_refused "a zone under utc" "--ozd-timezone 5 needs --ozd-file-dates mit" \
+	'--ozd-file-dates utc' '--ozd-timezone 5'
+dates_refused "a zone under utc, written first" "--ozd-timezone 5 needs --ozd-file-dates mit" \
+	'--ozd-timezone 5' '--ozd-file-dates utc'
+
+case_head "a value ozd would refuse is refused by the card first"
+dates_refused "--ozd-file-dates MIT" "--ozd-file-dates MIT: not mit or utc" \
+	'--ozd-file-dates MIT'
+dates_refused "--ozd-file-dates local" "--ozd-file-dates local: not mit or utc" \
+	'--ozd-file-dates local'
+dates_refused "--ozd-file-dates with nothing after it" "--ozd-file-dates with no value: not mit or utc" \
+	'--ozd-file-dates'
+dates_refused "--ozd-timezone with nothing after it" "--ozd-timezone with no value: not a zone" \
+	'--ozd-file-dates mit' '--ozd-timezone'
+for zone in 13 -13 1.5 5/2 x +-5 - 100 012x; do
+	dates_refused "--ozd-timezone '$zone'" "--ozd-timezone $zone: not a zone" \
+		'--ozd-file-dates mit' "--ozd-timezone $zone"
+done
+
+# **AND THE TWO LINES ARE CLAIMED**, or the last script to read the file would
+# report them at boot as lines no program takes.
+case_head "--ozd-file-dates and --ozd-timezone are claimed, and so not reported as nobody's"
+sandbox
+if prepare ozd S84ozd && prepare cadr-usb-input S88cadr-usb-input; then
+	printf -- '--ozd-file-dates mit\r\n--ozd-timezone -1\r\n' > "$WORK/card/fpgarc"
+	: > "$WORK/run/claimed"
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S84ozd" start > "$WORK/out.S84ozd" 2>&1
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S88cadr-usb-input" start > "$WORK/out.S88cadr-usb-input" 2>&1
+	if grep -q 'no program on this board takes' "$WORK/out.S88cadr-usb-input"; then
+		fail "a line was reported as taken by nobody: $(grep 'no program' "$WORK/out.S88cadr-usb-input")"
+	else
+		ok "both lines went to a program"
+	fi
+fi
+
 # **THE DRY RUN IS ozd TOO, AND ozd WILL NOT RUN AS ROOT.**  The script ran
 # `--check` itself, as root, before it dropped to the ozd user for the start,
 # and ozd refused it with "refusing to run as root".  So on a board the host
@@ -4136,6 +4285,67 @@ if generate_fpgarc "" ""; then
 		fail "a card with no peer does not write --no-ozd commented out"
 	fi
 fi
+
+# **FILE'S DATES ON THE MENU.**  The two lines are commented unless local.conf
+# names them, since the zone is the band's and the card script does not know
+# the band; OZD_FILE_DATES and OZD_TIMEZONE there make them live with those
+# values; a release writes them commented whatever the variables say, because
+# a release ships no band; and a zone without mit is refused when the card is
+# staged, as the board would refuse it at boot.
+case_head "FILE's dates are commented on the menu unless local.conf names them"
+sandbox
+if generate_fpgarc ""; then
+	GEN="$WORK/gen/card/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-file-dates mit' &&
+	   tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-timezone -1'; then
+		ok "both lines are there and commented out"
+	else
+		fail "the menu does not carry #--ozd-file-dates mit and #--ozd-timezone -1"
+	fi
+fi
+sandbox
+if generate_fpgarc "" "" "" arty-z7-20 "" "" "" mit -1; then
+	GEN="$WORK/gen/card/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-file-dates mit' &&
+	   tr -d '\r' < "$GEN" | grep -qx -- '--ozd-timezone -1'; then
+		ok "OZD_FILE_DATES=mit and OZD_TIMEZONE=-1 make both lines live"
+	else
+		fail "OZD_FILE_DATES=mit OZD_TIMEZONE=-1 did not make both lines live"
+	fi
+	if [ "$HAVE_READER" = yes ] && fpgarc_has "$GEN" --ozd-timezone &&
+	   fpgarc_has "$GEN" --ozd-file-dates; then
+		ok "and the reader finds them"
+	else
+		fail "the reader does not find the live lines"
+	fi
+fi
+sandbox
+if generate_fpgarc "" "" "" arty-z7-20 "" "" "" mit 5; then
+	if tr -d '\r' < "$WORK/gen/card/fpgarc" | grep -qx -- '--ozd-timezone 5'; then
+		ok "and OZD_TIMEZONE=5 writes zone 5, System 100's"
+	else
+		fail "OZD_TIMEZONE=5 did not write --ozd-timezone 5"
+	fi
+fi
+sandbox
+if generate_fpgarc "" "1" "" arty-z7-20 "" "" "" mit -1; then
+	GEN="$WORK/gen/card/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -q -- '^--ozd-'; then
+		fail "a release carries a live --ozd- line: $(tr -d '\r' < "$GEN" | grep -- '^--ozd-')"
+	else
+		ok "a release writes both commented whatever the variables say"
+	fi
+fi
+for bad in "utc -1" " -1" "local " "mit 13"; do
+	sandbox
+	if generate_fpgarc "" "" "" arty-z7-20 "" "" "" "${bad% *}" "${bad#* }" 2> "$WORK/gen.err"; then
+		fail "OZD_FILE_DATES='${bad% *}' OZD_TIMEZONE='${bad#* }' was staged"
+	elif grep -q 'OZD_' "$WORK/gen.err"; then
+		ok "OZD_FILE_DATES='${bad% *}' OZD_TIMEZONE='${bad#* }' is refused: $(head -1 "$WORK/gen.err")"
+	else
+		fail "OZD_FILE_DATES='${bad% *}' OZD_TIMEZONE='${bad#* }' failed without saying why: $(cat "$WORK/gen.err")"
+	fi
+done
 
 # ---------------------------------------------------------------------------
 # 9.  THE CARD'S LAYOUT, THE ZIP, AND THE TWO CARD SHAPES THE BOARD MAY MEET.

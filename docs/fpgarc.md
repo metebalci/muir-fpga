@@ -153,6 +153,9 @@ and each maps to one of that program's own flags.
     --ozd-hosts-text      a band's own host table, whose hosts it also answers
                           for
     --ozd-trace           say every packet
+    --ozd-file-dates      how FILE prints and reads its dates: mit or utc
+    --ozd-timezone        under mit, the band's zone in whole hours west of
+                          Greenwich, as its site's :TIMEZONE gives it
 
 **It is on when this file says nothing**, which is the opposite of the cable
 and the serial line and is deliberate: a board with no network had no file
@@ -170,6 +173,27 @@ The cost is accepted: FAT has no owner per directory, so the host can write
 every file on the card, the packs, the boot files and this file included, and
 not only `site/`. `sys` stays `,ro`, so the host itself refuses to write the
 sources.
+
+**FILE's dates are the band's, and a card with neither line gets plain UTC.**
+The two lines are ozd's `--file-dates` and `--timezone` and mean the same.
+With neither, ozd prints and reads FILE's dates in plain UTC, which is what
+System 1002 and later write. A band of Systems 100 to 1001 wants both lines:
+`--ozd-file-dates mit`, and `--ozd-timezone` with the zone its site's
+`:TIMEZONE` gives. System 1001's is -1 and System 100's is 5, so a card that
+boots System 1001 carries these two lines:
+
+    --ozd-file-dates mit
+    --ozd-timezone -1
+
+Without them, every date such a band shows for a file on the card is off by
+its zone. `S84ozd` refuses, before ozd is started, what ozd would refuse: a
+zone without `--ozd-file-dates mit`, a word that is not `mit` or `utc`, and a
+zone that is not a whole number of hours from -12 to 12. The console says
+`Starting ozd: FAIL` and names the card's line, and the host does not start.
+The card script writes both lines commented out, since it does not know the
+band. `OZD_FILE_DATES` and `OZD_TIMEZONE` in `local.conf` make them live, and
+a released card writes them commented whatever those say, because a release
+ships no band.
 
 **There is no flag for the address it listens on, only for the port.** It
 authenticates nobody, so an endpoint flag would let a card put it on a network
@@ -484,6 +508,8 @@ Two lines on the card tell it.
 
 There is no am and no pm, and `1438` and `143800` name the same instant. The
 clock is UTC, which is what the board's is, and there is no timezone flag.
+`--ozd-timezone` is not about this clock: it is the band's zone for the dates
+the file host shows.
 
 **Either line may stand alone and sets only the field it names.** A card with
 `--date` alone sets the date and leaves the time of day exactly as it stands,
@@ -876,6 +902,21 @@ that address itself keeps its own host and its cable; and the card script
 writes `--no-ozd` live for a card with a peer and commented for a card
 without, both halves, because a script that wrote it live always would pass
 the first alone.
+
+**And it holds FILE's dates on the way to that host.** `--ozd-file-dates mit`
+with a zone reaches ozd as `--file-dates mit --timezone <zone>`, in the dry
+run and in the start, for -1, 5, both ends of the range and the spellings ozd
+also takes (`+5`, `08`). `mit` or `utc` alone passes that line and no zone,
+and a card with neither passes neither, so ozd's own default stands. A zone
+without `mit`, under `utc` in either order, a word that is not `mit` or `utc`,
+a line with no value, and a zone outside -12 to 12 or not a whole number are
+each refused with nothing run, no peer file left behind and the card's line
+named on the console. The stand-in ozd accepts all of them, so each refusal
+is the script's own. The two lines are claimed, so the last script does not
+report them as nobody's. The card script writes both commented by default,
+live from `OZD_FILE_DATES` and `OZD_TIMEZONE`, commented on a release whatever
+those say, and refuses a zone without `mit` or out of range when the card is
+made.
 
 **And it holds the wait for the network to being a wait for a name.** A board
 whose peers are all addresses must not wait, on a stubbed board with nothing

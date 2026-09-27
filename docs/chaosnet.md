@@ -249,6 +249,17 @@ Every other setting is spelled `--ozd-`, because a word like `--root`,
 card's one file of flags cannot carry a word two programs answer to.
 `docs/fpgarc.md` has the whole list.
 
+**It is the CADR's file host, for every CADR band.** A QUUX band reaches its
+files through the Q9 file device instead (`docs/file-device.md`) and asks
+nothing of this host.
+
+**Its FILE dates follow the band.** ozd shows a file's dates in plain UTC
+unless told otherwise, which is what System 1002 and later write. A card that
+boots a band of Systems 100 to 1001 carries `--ozd-file-dates mit` and
+`--ozd-timezone` with the band's zone, -1 for System 1001 and 5 for System
+100. Without them every date such a band shows for a file is off by its zone.
+`docs/fpgarc.md` has the two lines.
+
 ### What it costs, measured
 
 The program is 811,640 bytes for the 64-bit boards and 789,548 for the 32-bit

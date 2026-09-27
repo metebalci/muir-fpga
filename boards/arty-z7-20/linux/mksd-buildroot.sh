@@ -353,7 +353,7 @@ fi
 # reading the file cannot go wrong that way, and it makes a release image
 # depend on this script and on nothing on whoever's build host.
 SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
-NO_BLINKING_LEDS=; FABRIC_LOADED=
+NO_BLINKING_LEDS=; FABRIC_LOADED=; OZD_FILE_DATES=; OZD_TIMEZONE=
 if [ -z "$STANDALONE" ] && [ -r "$BOARD_DIR/linux/local.conf" ]; then
   . "$BOARD_DIR/linux/local.conf"
 fi
@@ -385,6 +385,9 @@ fi
 # left running on a desk overnight wants, and a released card keeps the blink,
 # which is what a stranger switching a board on for the first time can read.
 #
+# **AND OZD_FILE_DATES AND OZD_TIMEZONE**, because FILE's dates are the band's
+# and a release ships no band.
+#
 # **AND IT CLEARS THE CHAOSNET STATION NUMBERS, WHICH IT USED NOT TO.**  Those
 # two are not private in the way an address on somebody's network is --- the
 # subnet is private in the way 192.168 is --- but they are this BOARD'S
@@ -396,7 +399,7 @@ fi
 # environment, and an exported value has to be stopped the same way.
 if [ -n "$STANDALONE" ]; then
   SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
-  NO_BLINKING_LEDS=
+  NO_BLINKING_LEDS=; OZD_FILE_DATES=; OZD_TIMEZONE=
   CHAOS_ADDR_FPGA=; CHAOS_ADDR_MUIR=; CHAOS_UDP_PORT=; CHAOS_UDP_PORT_MUIR=
   TERMINAL_ENDPOINT=; SERIAL_ENDPOINT=; KEYBOARD_BOOT=; MUIR_TERMINAL_PORT=
 fi
@@ -853,6 +856,36 @@ if [ -n "${SITE:-}" ]; then
 else
   MENU_OZD_SITE="#"
 fi
+# **FILE'S DATES ARE THE BAND'S, SO THEY ARE LIVE ONLY WHEN local.conf SAYS.**
+# ozd prints and reads FILE's dates in plain UTC unless told otherwise, as
+# System 1002 and later write them; a band of Systems 100 to 1001 wants
+# `--ozd-file-dates mit` and its site's zone as `--ozd-timezone`, -1 for
+# System 1001 and 5 for System 100.  This script does not know the band, so
+# it infers nothing: OZD_FILE_DATES and OZD_TIMEZONE in local.conf make the
+# two lines live with those values, and every other card writes them
+# commented under the sentence that explains them.  A release writes them
+# commented whatever the variables say, because a release ships no band.
+# What the board would refuse at boot is refused here, when the card is made.
+MENU_OZD_DATES="#"; OZD_DATES_VALUE=mit
+MENU_OZD_ZONE="#";  OZD_ZONE_VALUE=-1
+if [ -z "${RELEASE:-}" ]; then
+  case "${OZD_FILE_DATES:-}" in
+  "") ;;
+  mit|utc) MENU_OZD_DATES=""; OZD_DATES_VALUE=$OZD_FILE_DATES ;;
+  *) echo "mksd-buildroot: OZD_FILE_DATES=$OZD_FILE_DATES is not mit or utc" >&2; exit 1 ;;
+  esac
+  if [ -n "${OZD_TIMEZONE:-}" ]; then
+    if [ "${OZD_FILE_DATES:-}" != mit ]; then
+      echo "mksd-buildroot: OZD_TIMEZONE=$OZD_TIMEZONE needs OZD_FILE_DATES=mit; the board refuses --ozd-timezone without --ozd-file-dates mit" >&2
+      exit 1
+    fi
+    case "$OZD_TIMEZONE" in
+    -1[0-2]|-[0-9]|1[0-2]|[0-9]) ;;
+    *) echo "mksd-buildroot: OZD_TIMEZONE=$OZD_TIMEZONE is not a zone: whole hours west of Greenwich, -12 to 12" >&2; exit 1 ;;
+    esac
+    MENU_OZD_ZONE=""; OZD_ZONE_VALUE=$OZD_TIMEZONE
+  fi
+fi
 CABLE_ENDPOINT=0.0.0.0:$CHAOS_PORT
 if [ -n "${RELEASE:-}" ]; then
   CABLE_ENDPOINT=127.0.0.1:$CHAOS_PORT
@@ -1051,6 +1084,14 @@ fi
   printf "# Every packet it sees, to its log.  Off by default: the log is in\r\n"
   printf "# memory and this is a great deal of output.\r\n"
   printf -- "#--ozd-trace\r\n"
+  printf "\r\n"
+  printf "# How it prints and reads FILE's dates.  With neither line it uses\r\n"
+  printf "# plain UTC, as System 1002 and later write them.  A band of Systems\r\n"
+  printf "# 100 to 1001 wants both lines: mit, and the zone its site's\r\n"
+  printf "# :TIMEZONE gives, in whole hours west of Greenwich.  System 1001's\r\n"
+  printf "# is -1 and System 100's is 5.  A zone without mit is refused.\r\n"
+  printf -- "%s--ozd-file-dates %s\r\n" "$MENU_OZD_DATES" "$OZD_DATES_VALUE"
+  printf -- "%s--ozd-timezone %s\r\n" "$MENU_OZD_ZONE" "$OZD_ZONE_VALUE"
 
   printf "\r\n"
   printf "# ======================================================== the screen\r\n"

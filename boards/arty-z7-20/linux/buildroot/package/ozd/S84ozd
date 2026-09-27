@@ -86,6 +86,8 @@ STOP_SH=/usr/share/cadr/stop.sh
 #     --ozd-host          ozd's --host, repeatable
 #     --ozd-hosts-text    ozd's --hosts-text
 #     --ozd-trace         ozd's --trace
+#     --ozd-file-dates    ozd's --file-dates, mit or utc
+#     --ozd-timezone      ozd's --timezone, under --ozd-file-dates mit only
 #
 # **AND ozd'S `--listen` IS NOT OFFERED WHOLE, ONLY ITS PORT.**  An endpoint
 # flag would let a card put this host on a network, where it would serve every
@@ -106,7 +108,9 @@ FLAGS="--no-ozd
        --ozd-root
        --ozd-host
        --ozd-hosts-text
-       --ozd-trace"
+       --ozd-trace
+       --ozd-file-dates
+       --ozd-timezone"
 
 # A flag on two lines of the card is taken from the last one, with a warning;
 # the reader's header has the rule.  A root names one tree and a host line one
@@ -208,10 +212,76 @@ to_ozd() {
 			fpgarc_quote --hosts-text; fpgarc_quote "$2"; shift 2 ;;
 		--ozd-trace)
 			fpgarc_quote --trace; shift ;;
+		--ozd-file-dates)
+			fpgarc_quote --file-dates; fpgarc_quote "$2"; shift 2 ;;
+		--ozd-timezone)
+			fpgarc_quote --timezone; fpgarc_quote "$2"; shift 2 ;;
 		*)
 			shift ;;
 		esac
 	done
+}
+
+# **FILE'S DATES, CHECKED HERE IN THE CARD'S OWN WORDS.**  ozd prints and
+# reads FILE's dates in plain UTC unless told otherwise, as System 1002 and
+# later write them.  A band of Systems 100 to 1001 wants `--file-dates mit`
+# and its site's `:TIMEZONE` as `--timezone`: -1 for System 1001, 5 for System
+# 100.  A card says so with `--ozd-file-dates mit` and `--ozd-timezone <zone>`;
+# saying neither passes neither, and ozd's own default stands.
+#
+# ozd refuses a zone without `mit`, a word that is not `mit` or `utc`, and a
+# zone that is not whole hours from -12 to 12, and its `--check` below would
+# say so --- in ITS spelling, `--timezone` and `--file-dates`, which are not
+# the lines the card carries.  So the same rules are asked here first and the
+# refusal names the card's own line.  ozd's `--check` still runs after this
+# and stays the authority: a rule of ozd's this does not know is refused
+# there, in ozd's words.
+#
+# The zone as ozd reads it: an optional sign, then decimal digits, and the
+# number from -12 to 12.  Leading zeros are taken, as ozd takes them.
+ozd_zone_ok() {
+	_z=${1#[+-]}
+	case "$_z" in
+	""|*[!0-9]*) return 1 ;;
+	esac
+	while [ "${_z#0}" != "$_z" ] && [ -n "${_z#0}" ]; do _z=${_z#0}; done
+	[ ${#_z} -le 2 ] && [ "$_z" -le 12 ]
+}
+
+# Prints the refusal and returns 1, or returns 0 with nothing to say.
+file_dates_refusal() {
+	why="utc for System 1002 and later, mit for Systems 100 to 1001"
+	if fpgarc_has "$RC" --ozd-file-dates; then
+		dates=$(value_of --ozd-file-dates)
+		case "$dates" in
+		mit|utc) ;;
+		"") echo "--ozd-file-dates with no value: not mit or utc: $why"; return 1 ;;
+		*) echo "--ozd-file-dates $dates: not mit or utc: $why"; return 1 ;;
+		esac
+	else
+		dates=
+	fi
+	fpgarc_has "$RC" --ozd-timezone || return 0
+	zone=$(value_of --ozd-timezone)
+	if [ -z "$zone" ]; then
+		echo "--ozd-timezone with no value: not a zone: whole hours west of" \
+		     "Greenwich, -12 to 12, as the band's :TIMEZONE is"
+		return 1
+	fi
+	if ! ozd_zone_ok "$zone"; then
+		echo "--ozd-timezone $zone: not a zone: whole hours west of Greenwich," \
+		     "-12 to 12, as the band's :TIMEZONE is"
+		return 1
+	fi
+	if [ "$dates" != mit ]; then
+		echo "--ozd-timezone $zone needs --ozd-file-dates mit:" \
+		     "${dates:+under --ozd-file-dates $dates, }FILE's dates are plain UTC," \
+		     "as System 1002 and later write them, and UTC has no zone;" \
+		     "a band of Systems 100 to 1001 wants --ozd-file-dates mit," \
+		     "with --ozd-timezone its site's :TIMEZONE"
+		return 1
+	fi
+	return 0
 }
 
 start() {
@@ -226,6 +296,18 @@ start() {
 		# one, which was told not to run.
 		fpgarc_args "$RC" $FLAGS > /dev/null
 		return 0
+	fi
+
+	# Before anything is made or run, so that a refusal names the card's
+	# line rather than ozd's flag.  Nothing is started and no peer file is
+	# written; every flag of this script's is claimed all the same, as
+	# under --no-ozd, so the lines are not reported again at S88 as lines
+	# no program takes.
+	if ! refusal=$(file_dates_refusal); then
+		fpgarc_args "$RC" $FLAGS > /dev/null
+		echo "Starting ozd: FAIL"
+		printf '%s\n' "$refusal" | sed 's/^/ozd: /'
+		return 1
 	fi
 
 	address=$(value_of --ozd-chaos-address)

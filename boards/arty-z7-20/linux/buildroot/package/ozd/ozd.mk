@@ -23,10 +23,12 @@
 # binary rather than a rustup shim, so the pin is ignored here --- which is
 # also why nothing tries to fetch a toolchain during the build.  ozd's own
 # suite was then run under Buildroot's own 1.88.0 on the build host: 230 tests,
-# all passing, none ignored.  ozd carries no crate dependencies, no build
-# script and no C, so there is nothing else in the build for a compiler to
-# differ about.  Re-run that suite whenever either version moves; it is a few
-# seconds, because ozd has nothing to compile but itself.
+# all passing, none ignored.  At the pin cb20ebc, which has `--file-dates`,
+# it is 273 tests, all passing under 1.88.0, none ignored.  ozd carries no
+# crate dependencies, no build script and no C, so there is nothing else in
+# the build for a compiler to differ about.  Re-run that suite whenever
+# either version moves; it is a few seconds, because ozd has nothing to
+# compile but itself.
 #
 # **AND THERE IS NO SEPARATE STATIC BUILD, WHICH WAS THE OTHER ROUTE.**
 # Building ozd outside Buildroot against a musl target and installing the
