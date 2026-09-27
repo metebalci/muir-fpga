@@ -572,6 +572,19 @@ given_count() {
 	tr ' ' '\n' < "$WORK/daemon.calls" | grep -cx -- "$1" || true
 }
 
+# A value stands nowhere as a whole word of the command line.  passes_not
+# matches anywhere in the line, which a bare number cannot use: the work
+# directory carries this shell's PID, so the pid file's and the program's
+# paths hold any digits the PID holds.
+passes_not_word() {
+	_n=$(given_count "$1")
+	if [ "$_n" = 0 ]; then
+		ok "$2 was not given $1"
+	else
+		fail "$2 was given $1 and it is not its flag; it was given: $(given)"
+	fi
+}
+
 # The flag stands exactly once, and the word after it is $3 when $3 is given.
 passes_once() {
 	_n=$(given_count "$1")
@@ -1275,7 +1288,7 @@ if prepare cadr-chaosnet S87cadr-chaosnet; then
 	printf '%s\r\n' '--chaos-address 4401' '--chaos-udp 0.0.0.0:42042' > "$RC"
 	run_script S87cadr-chaosnet
 	passes_once "--chaos-address" "cadr-chaosnet" "4401"
-	passes_not "3050" "cadr-chaosnet"
+	passes_not_word "3050" "cadr-chaosnet"
 	passes_once "--chaos-udp" "cadr-chaosnet" "0.0.0.0:42042"
 fi
 

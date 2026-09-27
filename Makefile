@@ -4151,7 +4151,9 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
 # `mksd-release.sh`, each on its own anchors, and runs them alone.  Without
 # these a change to either would leave the check stamped and unrun --- this
 # repository's stale-artifact scar in a Makefile --- and the release guard is
-# exactly the thing that sat broken because nobody ran it.
+# exactly the thing that sat broken because nobody ran it.  The three boards'
+# `uEnv.txt.in` templates are prerequisites for the same reason: the check
+# fills each one and reads what comes out.
 $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(COMMON_SRC)/daemon.sh $(COMMON_SRC)/stop.sh \
                       $(COMMON_SRC)/clock.sh $(COMMON_SRC)/fault.sh \
@@ -4164,7 +4166,10 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(DISK_PACKS_PKG)/S80cadr-disk-packs \
                       boards/arty-z7-20/linux/buildroot/package/quux-file-device/S81quux-file-device \
                       boards/arty-z7-20/linux/mksd-buildroot.sh \
-                      boards/arty-z7-20/linux/mksd-release.sh | $(BUILD)
+                      boards/arty-z7-20/linux/mksd-release.sh \
+                      boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uEnv.txt.in \
+                      boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uEnv.txt.in \
+                      boards/de25-nano/linux/buildroot/board/de25-nano/uEnv.txt.in | $(BUILD)
 	$(MAKE) -C $(COMMON_SRC) check
 	@echo "fpgarc: one file of flags on the card reaches six programs, each gets the flags it"
 	@echo "fpgarc: owns and no others, --no-auto-boot holds the machine before the drive,"
