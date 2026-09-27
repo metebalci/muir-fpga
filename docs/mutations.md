@@ -169,12 +169,12 @@ the run green and says "known", and nothing asks whether it was always known.
 
 A mutation here changes the RTL, and a check simulates the RTL. A synthesis
 tool that builds something other than what the RTL says is outside both.
-That happened once. QUUX's PDL buffer reads and writes one block RAM through
-one address, chosen by a combinational write enable, and was written
-READ_FIRST. Vivado 2026.1's synthesis dropped the address mux, so all
-sixteen block RAMs of the Arty's QUUX build had only the read address at
-their pins. Every push landed at the read address. The build met timing and
-reported nothing, and on the board the boot PROM halted at
+That has happened twice. The first was QUUX's PDL buffer, which reads and
+writes one block RAM through one address, chosen by a combinational write
+enable, and was written READ_FIRST. Vivado 2026.1's synthesis dropped the
+address mux, so all sixteen block RAMs of the Arty's QUUX build had only the
+read address at their pins. Every push landed at the read address. The build
+met timing and reported nothing, and on the board the boot PROM halted at
 ERROR-PDL-BUFFER. Every simulation passed, because the RTL was right.
 
 The PDL buffer is now written WRITE_FIRST, which Vivado builds with the mux,
@@ -206,6 +206,28 @@ The second is also a record in `mutations/list.txt`,
 `quux-the-pdl-write-lands-at-the-read-address`, written with the select held
 low by a constant so that lint still sees every signal read. In RTL it is a
 behavior, and `quux_map_quux` catches it.
+
+The second fault was a block RAM enabled while its address was still
+moving. QUUX's control store is read at the edge, at NPC, whose cone the
+constraint files give the whole microcycle. Vivado built the read enable in
+fabric registers and tied the RAM's own enable high, so the RAM was enabled
+on every tick while its address rippled. The 7-series user guide says that
+an address that misses setup while the RAM is enabled can corrupt the RAM's
+contents, even with write enable low. The build met timing, every simulation
+passed, and on the board the control store lost bits of its words until the
+band ran one of them and halted. The cache's RAMs had the same shape.
+
+Both enables are now spelled out in the RTL, and
+`boards/arty-z7-20/vivado/rams_enable_check.tcl` asks the routed design on
+both Zynq boards: every block RAM port whose enable is not made from the
+machine's edge must have every path into its address, write enable and
+enable within one tick, with every exception dropped. Two faulty netlists
+have been asked, and the fixed tree passes:
+
+| netlist | Arty, Vivado |
+|---|---|
+| the build that failed on the board, its routed checkpoint | 41 ports fail: the control store's 24, the cache's 10, and 7 of the readout's |
+| the fixed tree with the cache's lookup at every idle tick again, through the flow | the cache's 10 ports fail and the bitstream is deleted |
 
 One poison is known to be equivalent. The two forms of the PDL buffer differ
 only in what its output holds for the write's own tick, and nothing samples

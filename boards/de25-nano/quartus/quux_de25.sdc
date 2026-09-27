@@ -99,7 +99,7 @@ set_multicycle_path -hold  0 -from $split_md_held -to $quux_divider
 
 # **QUUX'S MEMORY PORT** (contract Q6), out of the relaxed set whole
 # (`cadr_de25.sdc`) but for what the cache holds of the microcycle: its M20K
-# blocks, read at every edge the port is idle, and the address they were
+# blocks, read at every master clock edge the port is idle, and the address they were
 # read at, `idx_q`, `tag_q` and `off_q`.  The map's output into them has the
 # whole microcycle; everything out of them is timed at the tick.
 # `rtl/plumbing/xilinx7/quux_machine.xdc` has the argument.

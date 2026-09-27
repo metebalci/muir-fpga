@@ -199,10 +199,17 @@ module quux_mem_port
   logic [21:0] snoop_phys;
   logic inval_owed;
 
-  // The cache reads at every edge the port is idle, so the grant's edge
-  // reads the grant's address; `line_phys` is it, held for the cycle, and
-  // every address this port uses after the grant is taken from there and
-  // not from `phys`, which is the map's ripple while `MEMSTART` is up.
+  // The cache reads at every master clock edge the port is idle, so the
+  // grant's edge reads the grant's address; `line_phys` is it, held for the
+  // cycle, and every address this port uses after the grant is taken from
+  // there and not from `phys`, which is the map's ripple while `MEMSTART` is
+  // up.  **AT THE MASTER CLOCK EDGES ALONE, AND NOT AT EVERY IDLE TICK**:
+  // `phys` is given the microcycle to settle, so on the ticks between edges
+  // the RAMs' address is still moving, and a 7-series block RAM whose
+  // address misses setup while it is enabled can have its contents corrupted
+  // (UG473; `cadr_microcycle.sv` has the control store's account of the
+  // same fault).  Only the grant's edge's read is used, so reading at the
+  // edges alone is the same cache.
   logic [21:0] line_phys;
   logic idle;
   assign idle = (state == IDLE || state == REQUESTED);
@@ -210,7 +217,7 @@ module quux_mem_port
   quux_cache cache (
       .clk        (clk),
       .rst        (rst),
-      .look       (idle),
+      .look       (idle && mclk),
       .look_phys  (phys),
       .line_phys  (line_phys),
       .hit        (c_hit),

@@ -58,9 +58,10 @@ module quux_cache (
     input  var logic         rst,
 
     // The lookup: the RAMs are read at every edge `look` is up --- every
-    // edge the port is idle --- so the one at the grant takes the grant's
-    // address, and the answer is out over the tick after it.  `line_phys` is
-    // that address held for the cycle.
+    // master clock edge the port is idle, and at no tick between, whose
+    // address is still settling (`quux_mem_port.sv`) --- so the one at the
+    // grant takes the grant's address, and the answer is out over the tick
+    // after it.  `line_phys` is that address held for the cycle.
     input  var logic         look,
     input  var logic [21:0]  look_phys,
     output var logic [21:0]  line_phys,
@@ -102,8 +103,8 @@ module quux_cache (
 
   // **THE ADDRESS HELD, AND THE RAMS' READ, ARE THE MICROCYCLE'S; EVERY
   // OTHER REGISTER HERE IS THE TICK'S.**  `look_phys` is the far end of the
-  // map and arrives late in the microcycle; it is read at every idle edge,
-  // so what the grant's edge reads had the whole microcycle, which is what
+  // map and arrives late in the microcycle; it is read at every idle master
+  // clock edge, so what the grant's edge reads had the whole microcycle, which is what
   // the constraint files give these (the RAMs, `idx_q`, `tag_q` and
   // `off_q`) and nothing else here.  The lookup's answer, read a tick after
   // the grant, is what makes the two-tick hit.

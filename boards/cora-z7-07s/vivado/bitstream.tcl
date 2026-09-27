@@ -654,3 +654,12 @@ if {$size < 1500000} {
 if {![build_stamp_stamped "BIT:" $bit $stamp]} { exit 1 }
 puts "BIT: wrote $bit, $size bytes"
 puts "BIT: part $part, reports in $outdir"
+
+# --- 4. is every block RAM still whenever it is enabled?
+#
+# Asked last, because it drops the design's timing constraints to ask:
+# `rams_enable_check.tcl` has the rule (UG473: an address that misses setup
+# while the RAM is enabled can corrupt its contents) and the fault it was
+# written for. A build that fails it loses the bitstream written above.
+source boards/arty-z7-20/vivado/rams_enable_check.tcl
+assert_rams_enabled_only_while_addressed $tick $bit

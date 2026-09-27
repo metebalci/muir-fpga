@@ -45,6 +45,14 @@
 set_multicycle_path -setup 4 -from $slow -to $slow
 set_multicycle_path -hold  3 -from $slow -to $slow
 
+# **AND THE READOUT'S ADDRESS INTO THE BLOCK RAMS' PINS AT THE TICK, AGAIN**,
+# the `cadr_machine.xdc` clause re-issued after the relaxed set's, which
+# names the same paths (`ro_a0` and the RAMs are both in the set) and would
+# otherwise take them: that file says why they are the tick's.
+# grid: 0 ns + 1 tick
+set_multicycle_path -setup 1 -from $ro_address -to $ro_ram_pins
+set_multicycle_path -hold  0 -from $ro_address -to $ro_ram_pins
+
 # ------------------------------------------------ THE SPLIT PATHS
 #
 # **THE EVERY-TICK REGISTERS, SPLIT TO SUM TO K**: `memgo_q`, the held halves
@@ -161,7 +169,8 @@ set_multicycle_path -hold  0 -from $split_md_held -to $quux_divider
 
 # **QUUX'S MEMORY PORT** (contract Q6, `quux_mem_port.sv`, `quux_cache.sv`),
 # out of the relaxed set whole (`cadr_machine.xdc`) but for what the cache
-# holds of the microcycle.  Its RAMs are read at every edge the port is idle
+# holds of the microcycle.  Its RAMs are read at every master clock edge the
+# port is idle, and enabled at no other tick (`quux_mem_port.sv` says why),
 # and `idx_q`, `tag_q` and `off_q` take the address with them, so what the
 # grant's edge reads is the map's output, which had the whole microcycle:
 # K ticks from the edge's registers and from the maps.  Out of them nothing

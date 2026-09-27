@@ -674,6 +674,42 @@ set_multicycle_path -hold  0 -from $split_spcm -to $split_spc_q
 set_multicycle_path -setup 6 -from $split_every_tick -to $slow
 set_multicycle_path -hold  5 -from $split_every_tick -to $slow
 
+# **THE READOUT'S ADDRESS INTO THE BLOCK RAMS' PINS: ONE TICK.**  The
+# memories' second ports are enabled on every tick (`cadr_microcycle.sv`,
+# "THE SECOND PORTS"), and `ro_a0` and `ro_a1` move on the tick after the
+# console writes a readout address, so a block RAM's address or enable
+# reached from them in more than a tick is an address moving under an
+# enabled port, which UG473 says can corrupt the RAM's contents whatever
+# is read.  The relaxed set gave them the microcycle: at 7f44547 the
+# pushdown buffer's port was 13.4 ns from `ro_a0` and the control store's
+# enable 9.7.  `boards/arty-z7-20/vivado/rams_enable_check.tcl` asks every
+# block RAM port the same question after routing, and is what shows this
+# clause took.  The rest of the readout keeps the relaxed set's count.
+set ro_address [filter [all_registers] {NAME =~ *processor/ro_a0_reg* || \
+                                        NAME =~ *processor/ro_a1_reg*}]
+set ro_ram_pins [get_pins -quiet -of [filter [all_registers] {REF_NAME =~ RAMB*}] \
+                     -filter {REF_PIN_NAME =~ ADDR* || REF_PIN_NAME =~ EN*}]
+# grid: 0 ns + 1 tick
+set_multicycle_path -setup 1 -from $ro_address -to $ro_ram_pins
+set_multicycle_path -hold  0 -from $ro_address -to $ro_ram_pins
+
+# **AND THE CONTROL STORE'S PINS ON THE CADR, AT THE TICK FROM EVERY
+# REGISTER.**  The CADR reads its control store on every tick (`cs_read` is
+# a constant one, `cadr_microcycle.sv`), so its port is enabled always, and
+# a write enable or an address that arrives late at any edge is the UG473
+# fault the readout clause above names.  The relaxed set gave the write
+# enable the microcycle: on the Cora's routed CADR it came from the bus
+# interface's state through MACHRUN in 9.4 ns, 0.05 ns over a tick with
+# the exceptions dropped.  `quux_machine.xdc` does NOT re-issue this clause,
+# on purpose: QUUX's control store is enabled at the edge alone, and that
+# file's later clauses give its address back the microcycle.
+set cstore_ram_pins [get_pins -quiet -of [filter [all_registers] {REF_NAME =~ RAMB* && \
+                                                 NAME =~ *processor/imem_reg*}] \
+                         -filter {REF_PIN_NAME =~ ADDR* || REF_PIN_NAME =~ WE* || REF_PIN_NAME =~ EN*}]
+# grid: 0 ns + 1 tick
+set_multicycle_path -setup 1 -from [all_registers] -to $cstore_ram_pins
+set_multicycle_path -hold  0 -from [all_registers] -to $cstore_ram_pins
+
 # THE BUS'S OWN EIGHTY NANOSECONDS, FOR THE SLAVES THAT ARE INSIDE THIS FILE.
 #
 # `rtl/plumbing/cadr_xbus_ddr.sv` quotes the bus rule that a master must

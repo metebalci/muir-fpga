@@ -795,6 +795,23 @@ module cadr_microcycle #(
   logic [47:0] iwd_q;
   assign cs_port = iwe_q ? iwa_q : cs_ra;
 
+  // **AND ON QUUX THE PORT IS ENABLED ONLY ON THE TWO TICKS IT IS USED,**
+  // the edge's read and the write a tick after it, because between them its
+  // address is NPC's cone rippling towards the next edge, which the
+  // constraint files give the whole microcycle.  A 7-series block RAM whose
+  // address misses setup while its enable is up can have its CONTENTS
+  // corrupted, write enable low or not (UG473, "Block RAM usage rules" and
+  // note 1 of "Block RAM Timing Parameters").  Written as `if (iwe_q ...)
+  // write; else if (cs_read) read;`, Vivado tied the port's enable high and
+  // held the word in fabric registers instead, and on the Arty the store
+  // lost words it had been loaded with, a few bits at a time, until the band
+  // ran one and stopped at ILLOP.  With the enable spelled out it is the
+  // block RAM's own EN, and `boards/arty-z7-20/vivado/rams_enable_check.tcl`
+  // stops a build in which it is not.  The two forms are the same machine:
+  // the read happens only when `cs_read` is up in both.
+  logic        cs_en;
+  assign cs_en = (iwe_q && !quux_prom_wr) || cs_read;
+
   always_ff @(posedge clk) begin
     n_tpwpiram_q <= n_tpwpiram;
     iwe_q        <= QUUX && iwe && !rst;
@@ -804,8 +821,10 @@ module cadr_microcycle #(
     if (QUUX) begin
       // Nothing writes QUUX's PROM (`Machine::write_imem`): a store at its
       // addresses is dropped, and the bypass still hands IR the word.
-      if (iwe_q && !quux_prom_wr) imem[cs_port] <= iwd_q;
-      else if (cs_read) imem_q <= imem[cs_port];
+      if (cs_en) begin
+        if (iwe_q && !quux_prom_wr) imem[cs_port] <= iwd_q;
+        else imem_q <= imem[cs_port];
+      end
     end else begin
       if (cs_read) imem_q <= imem[cs_ra];
       if (iwe) imem[pc] <= iwr;

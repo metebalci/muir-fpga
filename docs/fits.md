@@ -61,10 +61,34 @@ Q11 as amended) and muir pinned at `bbc47f3`.
 | DE25-Nano | QUUX | +2.049 ns | 0.000 ns | 17,531 of 46,800 ALMs, 37% | 191 of 358 M20K | --- | working tree on `bccc2fb` | modified | 2026-09-27 |
 | DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `bccc2fb` | modified | 2026-09-27 |
 
-**The Arty Z7-20's QUUX fit does not meet timing.** Two paths fail, by 13 ps
-and 8 ps: from the processor's memory start (`memstart`) into the memory
-interface's `nxm` and `device` registers, which have two ticks, 20 ns, and
-took 20.013 ns. The same path is the worst in the clean QUUX fit above, with
-+0.176 ns. On the DE25-Nano the worst setup path of both fits is an HDMI
-output pin; the machine clock's own worst setup slack is +2.768 ns for QUUX
-and +2.769 ns for the CADR.
+**The Arty Z7-20's QUUX fit missed timing** by 13 ps and 8 ps, on two paths
+from the processor's memory start (`memstart`) into the memory interface's
+`nxm` and `device` registers, which have two ticks, 20 ns, and took
+20.013 ns. The same path is the worst in the clean QUUX fit above, with
++0.176 ns. The change that followed gives QUUX's control store an explicit
+block RAM enable and has the cache read only at master clock edges
+(`docs/mutations.md`); it was fitted on this tree, and its fits below meet
+timing. On the DE25-Nano the worst setup path of both fits is an HDMI output
+pin; the machine clock's own worst setup slack is +2.768 ns for QUUX and
++2.769 ns for the CADR.
+
+These fits were built from the working tree on `681a08a` with that change
+and muir pinned at `92dc864`. Each Zynq fit also passed
+`boards/arty-z7-20/vivado/rams_enable_check.tcl`, which asked 105 block RAM
+ports of the Arty Z7-20's QUUX build, 98 of its CADR build and 92 of the Cora
+Z7-07S's, and found every path into their address, write enable and enable
+within one tick.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX | +0.117 ns | +0.035 ns | 15,584 of 53,200 LUTs, 29.29% | 62 of 140 BRAM tiles | 5,330 of 13,300 | working tree on `681a08a` | modified | 2026-09-27 |
+| Arty Z7-20 | CADR | +0.222 ns | +0.042 ns | 15,050 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,529 of 13,300 | working tree on `681a08a` | modified | 2026-09-27 |
+| Cora Z7-07S | CADR | +0.210 ns | +0.041 ns | 14,024 of 14,400 LUTs, 97.39% | 43 of 50 BRAM tiles | 4,325 of 4,400 | working tree on `681a08a` | modified | 2026-09-27 |
+| DE25-Nano | QUUX | +2.294 ns | 0.000 ns | 17,499 of 46,800 ALMs, 37% | 191 of 358 M20K | --- | working tree on `681a08a` | modified | 2026-09-27 |
+| DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `681a08a` | modified | 2026-09-27 |
+
+The Arty Z7-20's QUUX fit meets timing by 0.117 ns; its worst setup path is
+now the disk controller's request into the transaction audit's first
+physical address, which has one tick. On the DE25-Nano the worst setup path
+of both fits is an HDMI output pin; the machine clock's own worst setup slack
+is +2.734 ns for QUUX and +2.769 ns for the CADR.
