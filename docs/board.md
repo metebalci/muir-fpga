@@ -2034,11 +2034,11 @@ reports the incoming timing as; it should say 1280x1024 at about 60 Hz.
 
 ## LMZ System 1001 on both boards, 18 September 2026
 
-The Arty Z7-20 and Cora Z7-07S both booted
-[LMZ System 1001](https://github.com/metebalci/lmz/releases/tag/lmz-1001),
+The Arty Z7-20 and Cora Z7-07S both booted LMZ System 1001,
 tag `lmz-1001` at `1c5494d8891d73627a5a3307e3c83649ba627630`.
 That release no longer exists under this name. The system is now System 1001
-in [muir-sys](https://github.com/metebalci/muir-sys), tag `release-1001`,
+in [muir-sys](https://github.com/metebalci/muir-sys), tag
+[`release-1001`](https://github.com/metebalci/muir-sys/releases/tag/release-1001),
 which differs from what ran here: its site is MIT and its herald says
 "MIT System". The names and digests below are of the files that ran.
 Neither needed a new bitstream: the Arty still runs fabric build `44eff450`

@@ -19,13 +19,13 @@
 // `-PFW` off the 74S00 at VCTL1 1D17, which is where `WRCYC` joins.  muir says
 // it twice, once in each engine, and both are quoted rather than paraphrased:
 //
-//     ../muir/src/machine.rs  Machine::translate
+//     ../muir-sim/src/machine.rs  Machine::translate
 //         write_permitted:  l2_data & (1 << 22) != 0,
 //         access_permitted: l2_data & (1 << 23) != 0,
-//     ../muir/src/machine.rs  Machine::vm_read / vm_write
+//     ../muir-sim/src/machine.rs  Machine::vm_read / vm_write
 //         self.vmaok = t.access_permitted;
 //         self.vmaok = t.access_permitted && t.write_permitted;
-//     ../muir/src/rtl.rs      Rtl::step
+//     ../muir-sim/src/rtl.rs      Rtl::step
 //         let pfr = bit(lvmo as u64, 23);
 //         let pfw = !(!bit(lvmo as u64, 22) && self.wrcyc);
 //         let vmaok = pfr && pfw;
@@ -61,7 +61,7 @@
 // built by the byte masker out of nothing but that instruction's own mask
 // field:
 //
-//     ../muir/src/rtl.rs   mskr = ir[4:0];  mskl = (mskr + ir[9:5]) & 0o37
+//     ../muir-sim/src/rtl.rs   mskr = ir[4:0];  mskl = (mskr + ir[9:5]) & 0o37
 //                          msk  = (~0 >> (31 - mskl)) & (~0 << mskr)
 //                          mo   = (msk & rotate_left(m, shift)) | (!msk & a)
 //
@@ -222,7 +222,7 @@ bool ParseRow(const char *line, Row &r) {
 
 // ------------------------------------------------------------ muir's rule
 //
-// `../muir/src/rtl.rs`, three lines, transcribed and not restated.
+// `../muir-sim/src/rtl.rs`, three lines, transcribed and not restated.
 bool Permits(uint32_t l2word, bool write) {
   const bool pfr = (l2word >> 23) & 1u;
   const bool pfw = !(!((l2word >> 22) & 1u) && write);

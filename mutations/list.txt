@@ -6271,7 +6271,7 @@ if {0 && $held ne $want} {
 @check console
 @file rtl/plumbing/cadr_console.sv
 @note A halt is a write of zero to the clock control register --- CC's first
-@note act on a debuggee, muir/tests/lashup.rs:152.  A cycle that goes out as a
+@note act on a debuggee, muir-sim/tests/lashup.rs:152.  A cycle that goes out as a
 @note read strobes nothing, `RUN` stays up and the machine never stops, which
 @note is a console that answers every read and does nothing.  Caught at "a
 @note halted machine ran a microcycle".
@@ -6510,7 +6510,7 @@ if {0 && $held ne $want} {
 
 # THE VIRTUAL ADDRESS REGISTER, `Q` AND `MD`, page 0's words 7, 8 and 9.  None
 # of the three is
-# on the diagnostic bus --- `../muir/src/spy.rs` names the sixteen and none
+# on the diagnostic bus --- `../muir-sim/src/spy.rs` names the sixteen and none
 # is among them --- and the first two are here because the board's halt inside
 # `PDL-BUFFER-REFILL` is decided by their DIFFERENCE: three faults injected
 # into muir give the same PC, the same OPC, the same two flag words and the

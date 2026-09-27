@@ -12,7 +12,7 @@ gives each answer in a sentence or two and links here for the whole of it.
 Every answer rests on a file, and the line under it names that file. Where
 the material does not settle something, the answer says so rather than
 filling the gap. A question with no source does not go in this file. MIT's
-own files are cited at the path [muir](https://github.com/metebalci/muir)
+own files are cited at the path [muir-sim](https://github.com/metebalci/muir-sim)
 gives them. The rest are files in this repository.
 
 ## The machine

@@ -92,7 +92,7 @@ WORK   ?= $(HOME)/.cache/muir-fpga-checkpoint-$(shell printf '%s' '$(CURDIR)' | 
 # this repository as `golden/Cargo.toml` finds it, and held to the digests
 # `cadr-disk-packs` records for the same five files before the check reads
 # them.  `Q8_DISKS=<dir>` names another directory holding them.
-Q8_DISKS ?= $(abspath ../../../../../../../../muir/data)
+Q8_DISKS ?= $(abspath ../../../../../../../../muir-sim/data)
 Q8_SUMS  := ../../cadr-disk-packs/src/q8_disks.sha256
 Q8_VERIFY = @for f in $$(awk '{print $$2}' $(Q8_SUMS)); do \
 	    test -f $(Q8_DISKS)/$$f || { echo "no $(Q8_DISKS)/$$f: QUUX's disks are muir's data/quux-disk*; or pass Q8_DISKS=<dir>"; exit 1; }; done; \

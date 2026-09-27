@@ -20,7 +20,7 @@
 # The output is committed, and its header names the muir commit it was
 # written from.  To move it: pull muir, run
 #
-#     python3 keymap_from_muir.py --muir ../../../../../../../../muir
+#     python3 keymap_from_muir.py --muir ../../../../../../../../muir-sim
 #
 # from this directory, and commit `input_keymap.h` with the new commit in
 # its header, saying what moved.  `muir.commit` at the top of this
@@ -181,7 +181,7 @@ KINDS = {"NONE": "KEY_NONE", "CHAR": "KEY_CHAR", "NAMED": "KEY_NAMED", "SHIFT": 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--muir", default="../../../../../../../../muir")
+    ap.add_argument("--muir", default="../../../../../../../../muir-sim")
     ap.add_argument("--out", default="input_keymap.h")
     a = ap.parse_args()
 

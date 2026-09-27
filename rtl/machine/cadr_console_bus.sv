@@ -57,7 +57,7 @@
 //     boundary is where a CADR's state is defined.  A tick in the middle of
 //     a microcycle is not a thing muir can be asked about.
 //   - **On a halted machine it is exact**, and that is the only way a
-//     console is used: CC halts first (`../muir/tests/lashup.rs:152`), and
+//     console is used: CC halts first (`../muir-sim/tests/lashup.rs:152`), and
 //     `MCLK` runs whether or not `MACHRUN` does --- "the mode register and
 //     the trap follow the console even with the machine halted" --- so this
 //     register goes on refreshing from a machine that has stopped moving.

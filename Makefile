@@ -222,9 +222,9 @@ quux-pending:
 MUIR ?= ..
 muir-pin:
 	@pin=$$(grep -v '^#' muir.commit | tr -d '[:space:]'); \
-	 have=$$(git -C $(MUIR)/muir rev-parse HEAD 2>/dev/null); \
+	 have=$$(git -C $(MUIR)/muir-sim rev-parse HEAD 2>/dev/null); \
 	 if [ -z "$$have" ]; then \
-	   echo "muir-pin: no git repository at $(MUIR)/muir; the pin says $$pin"; \
+	   echo "muir-pin: no git repository at $(MUIR)/muir-sim; the pin says $$pin"; \
 	 elif [ "$$have" != "$$pin" ]; then \
 	   echo "muir-pin: WARNING --- muir is at $$have"; \
 	   echo "muir-pin:           the pin says   $$pin"; \
@@ -3773,11 +3773,11 @@ CHECKPOINT_SRC  := boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src
 CHECKPOINT_WORK := $(abspath $(BUILD))/checkpoint-work
 # **QUUX'S DISKS (contract Q8)**: muir's `data/quux-disk*`, made by qemu, from
 # the pinned muir beside this repository, the one `golden/Cargo.toml` resolves
-# as `../../muir`.  `cadr-disk-packs` holds its QUUX disk layer to them and
+# as `../../muir-sim`.  `cadr-disk-packs` holds its QUUX disk layer to them and
 # `cadr-checkpoint` its binding of a QUUX disk, each checking the five files'
 # digests (`q8_disks.sha256`) before it reads them.
 DISK_PACKS_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src
-Q8_DISKS ?= $(abspath $(MUIR)/muir/data)
+Q8_DISKS ?= $(abspath $(MUIR)/muir-sim/data)
 
 $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
                          $(wildcard boards/arty-z7-20/linux/buildroot/package/*/src/Makefile) | $(BUILD)
@@ -3933,7 +3933,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
-	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir/Cargo.toml \
+	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir-sim/Cargo.toml \
 	    --bin cadr --bin quux --target-dir $(MUIR_TARGET)
 	@set -e; export MUIR_RC=/dev/null; W=$(CHECKPOINT_WORK); M=$(CADR_BIN); \
 	 $$M --rtl --timing-model fpga --stop-after 0 --resume $$W/out.chk --checkpoint $$W/back.chk \

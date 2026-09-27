@@ -1666,7 +1666,7 @@ static void check_held(void)
 	// be an error: `boot` calls this on every press.
 	CHECK(cons_release_held(path) == 0, "removing a marker that is not there failed");
 
-	// The sentence is muir's own, `say_halted` in ../muir/src/main.rs, so
+	// The sentence is muir-sim's own, `say_halted` in ../muir-sim/src/main.rs, so
 	// that somebody who knows one knows the other.  Held as a WORD and not
 	// as a flag, which is the rule this program's printing already follows.
 	CHECK(strcmp(CONS_HELD_SAYING,

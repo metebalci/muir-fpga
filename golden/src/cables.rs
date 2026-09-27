@@ -24,7 +24,7 @@ use std::fmt::Write as _;
 use muir::netlist::{self, NetId, Netlist};
 use muir::part::{self, Drive};
 
-const MUIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../muir/data");
+const MUIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../muir-sim/data");
 
 /// Which side of a cable wire can pull it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

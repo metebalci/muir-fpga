@@ -54,7 +54,7 @@ name = "disk_boot"
 path = "src/disk_boot.rs"
 
 [dependencies]
-muir = { path = "../../muir" }
+muir = { path = "../../muir-sim" }
 
 [[bin]]
 name = "tv"

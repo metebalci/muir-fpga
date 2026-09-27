@@ -83,7 +83,7 @@
 // muir's prompt is the reference: its answers carry no program name at all,
 // and even the `muir: ` it writes while the machine is held goes only to a
 // terminal, "a pipe or a file gets muir's answers alone"
-// (`../muir/src/prompt.rs`).
+// (`../muir-sim/src/prompt.rs`).
 //
 // **THE TEST IS THE ONE THE RULE IS ABOUT: IS ANYBODY THERE.**  Standard
 // output a terminal means a person is reading it as it comes; a pipe or a

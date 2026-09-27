@@ -55,7 +55,7 @@
 // reads, so a value that means nothing is not a value the instrument can
 // mean.
 //
-// **THE REGISTERS ARE muir's, ../muir/src/spy.rs, WHICH IS THE AUTHORITY.**
+// **THE REGISTERS ARE muir-sim's, ../muir-sim/src/spy.rs, WHICH IS THE AUTHORITY.**
 // Reads and writes at one `EADR` are uncorrelated --- `cadr/busint.erface`
 // says so --- and `spy::write_strobe(eadr) = eadr & 7`, the write decoder's
 // `G1` being `HI1` and not `EADR3`, so 0..7 name the write strobes and 8..15
@@ -558,7 +558,7 @@ uint64_t cons_ticks(struct console *c);
 
 // --- the virtual address register, Q and MD, page 0's words 7, 8 and 9 ---
 //
-// **NONE OF THE THREE IS ON THE DIAGNOSTIC BUS.**  ../muir/src/spy.rs is the
+// **NONE OF THE THREE IS ON THE DIAGNOSTIC BUS.**  ../muir-sim/src/spy.rs is the
 // whole vocabulary of MIT's sixteen --- IR in three halves, OPC, PC, OB, the
 // two flag words, M, A and ST, and the open bus at 3 --- and neither the
 // virtual address register nor Q nor MD is among them, so `cons_read_regs`
@@ -644,13 +644,13 @@ void cons_spy_write(struct console *c, unsigned eadr, uint16_t v);
 // --- the vocabulary ------------------------------------------------------
 
 // `halt`: 0 into the clock control register.  CC's first act on a debuggee,
-// ../muir/tests/lashup.rs:152-157.
+// ../muir-sim/tests/lashup.rs:152-157.
 void cons_halt(struct console *c);
-// `start`: RUN.  ../muir/tests/lashup.rs:311-315.
+// `start`: RUN.  ../muir-sim/tests/lashup.rs:311-315.
 void cons_start(struct console *c);
 
 // `boot`: the light panel's button, page 0's word 13 with `CONS_BOOT_KEY` on
-// it.  ../muir/src/prompt.rs's `Command::Boot` --- "the boot button, which is
+// it.  ../muir-sim/src/prompt.rs's `Command::Boot` --- "the boot button, which is
 // what starts a machine: it presets RUN, and the machine runs from the PROM
 // at 0".
 //
@@ -713,7 +713,7 @@ void cons_say_boot(const struct cons_boot_report *r);
 // there is the ordinary case and costs one `access` per command.
 #define CONS_HELD_PATH    "/var/run/cadr-held"
 
-// muir's own sentence for a machine whose RUN is clear, ../muir/src/main.rs's
+// muir-sim's own sentence for a machine whose RUN is clear, ../muir-sim/src/main.rs's
 // `say_halted`, which is what its `continue` and `step` print.
 #define CONS_HELD_SAYING  \
 	"the machine is halted, its RUN clear: boot presses the button that starts it"
@@ -874,8 +874,8 @@ int cons_set_hdmi_sleep(struct console *c, unsigned seconds);
 // no more than `CONS_HDMI_SLEEP_MAX`.  0, or -1 with `*seconds` untouched.
 int cons_parse_hdmi_sleep(const char *text, unsigned *seconds);
 
-// `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
-// ClockControl and ../muir/tests/spy.rs:743-761).
+// `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir-sim/src/spy.rs's
+// ClockControl and ../muir-sim/tests/spy.rs:743-761).
 //
 // **ONE MICROCYCLE A STEP, AND THE COUNT IS THE WITNESS.**  `SSTEP` and
 // `SSDONE` are two flip flops of the 74S174 at OLORD1 1A10 and `MACHRUN`'s
@@ -913,11 +913,11 @@ const char *cons_reg_name(unsigned eadr);
 //
 // **RUNNING IS MEASURED AND NOT INFERRED.**  CYCLES is sampled twice
 // `settle_us` apart and `running` is whether it moved.  `Machine::cycles`
-// (../muir/src/rtl.rs:2404) does not advance on a halted master clock cycle,
+// (../muir-sim/src/rtl.rs:2404) does not advance on a halted master clock cycle,
 // so a machine that is not running cannot move it; and `Engine::step` goes on
 // returning Ok on a stopped machine, which is why nothing but the counter can
 // answer this.  The reason a stopped machine gives is FLAG-1's, decoded as
-// ../muir/src/main.rs:3048-3074 (`machrun_low`) decodes it.
+// ../muir-sim/src/main.rs:3048-3074 (`machrun_low`) decodes it.
 struct cons_status {
 	int lost;			/* a diagnostic cycle was not answered: nothing below is data */
 	uint16_t flag1_word, flag2_word;
@@ -959,8 +959,8 @@ void cons_say_flag2(uint16_t w);
 // HAS HALF OF ONE.**  muir's route is `DBG-SETUP-UNIBUS-MAP`: a map register
 // at `0o766140`-`0o766176` loaded with the Xbus page, then the word read or
 // written half at a time through the mapped window at `0o140000`-`0o177777`,
-// low half then high (../muir/src/lashup.rs:262-284,
-// ../muir/src/machine.rs:518-580, ../muir/tests/lashup.rs:712-769).
+// low half then high (../muir-sim/src/lashup.rs:262-284,
+// ../muir-sim/src/machine.rs:518-580, ../muir-sim/tests/lashup.rs:712-769).
 //
 // **The registers are there now** --- `rtl/machine/cadr_busint_regs.sv`
 // answers `0o766140`-`0o766176` and the sixteen store and read back --- and

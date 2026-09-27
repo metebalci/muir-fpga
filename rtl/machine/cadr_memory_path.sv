@@ -1592,7 +1592,7 @@ module cadr_memory_path #(
   // display drives the lines only while answering a READ of a control word
   // --- a write, and every frame-buffer cycle, leaves them to the others.
   //
-  // **THE TOP HALF IS ZERO BECAUSE muir'S IS, AND IT WAS ONES UNTIL 11 Sep.**  `Machine::bus_read` (`../muir/src/machine.rs:710`)
+  // **THE TOP HALF IS ZERO BECAUSE muir-sim'S IS, AND IT WAS ONES UNTIL 11 Sep.**  `Machine::bus_read` (`../muir-sim/src/machine.rs:710`)
   // answers a Unibus register with `self.ioboard.read(r, self.ns) as u32` ---
   // a `u16` widened, so `MEM<31:16>` is ZERO --- under a comment saying "the
   // Unibus carries 16 bits, in the bottom of one Lisp machine word".  This

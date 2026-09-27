@@ -23,7 +23,7 @@
 # new pin is a new $(BUILD_DIR)/muir-<sha>/ and Buildroot rebuilds of its own
 # accord.
 #
-# **THE SOURCE COMES FROM muir'S OWN GIT** rather than from ../../muir beside
+# **THE SOURCE COMES FROM muir-sim'S OWN GIT** rather than from ../../muir-sim beside
 # this repository.  A local path would rsync whatever is checked out there,
 # which is a working tree somebody may be mid-slice in, and which must not be
 # moved for exactly that reason, and the image would then hold a muir that is
@@ -102,7 +102,7 @@ MUIR_COMMIT_FILE = $(BR2_EXTERNAL_CADR_PATH)/../../../../muir.commit
 # `:=` and not `=`: Buildroot expands a package's VERSION dozens of times, and
 # a recursive assignment would run the sed at every one of them.
 MUIR_VERSION := $(shell sed -n 's/^\([0-9a-f]\{40\}\)$$/\1/p' $(MUIR_COMMIT_FILE))
-MUIR_SITE = https://github.com/metebalci/muir.git
+MUIR_SITE = https://github.com/metebalci/muir-sim.git
 MUIR_SITE_METHOD = git
 MUIR_LICENSE = AGPL-3.0-or-later
 MUIR_LICENSE_FILES = LICENSE

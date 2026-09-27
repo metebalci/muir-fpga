@@ -28,7 +28,7 @@
 //! has the bits and the three writes named together.
 //!
 //! **What a step is.** `STEP` is registered once into `SSTEP` and again into
-//! `SSDONE`, both on `MCLK5A` at OLORD1 1A10 (`../muir/src/rtl.rs`, the
+//! `SSDONE`, both on `MCLK5A` at OLORD1 1A10 (`../muir-sim/src/rtl.rs`, the
 //! master clock edge), and `MACHRUN`'s first term is `SSTEP AND -SSDONE`
 //! (the 9S42 at OLORD1 1A15). So `MACHRUN` is up for exactly the one master
 //! clock in which `SSTEP` is set and `SSDONE` is not: raising `STEP` runs one

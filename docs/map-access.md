@@ -86,10 +86,10 @@ field positions were wrong the check fails naming the word it found.
 
 muir states the rule twice, once in each engine.
 
-    ../muir/src/machine.rs  Machine::translate
+    ../muir-sim/src/machine.rs  Machine::translate
         write_permitted:  l2_data & (1 << 22) != 0,
         access_permitted: l2_data & (1 << 23) != 0,
-    ../muir/src/rtl.rs      Rtl::step
+    ../muir-sim/src/rtl.rs      Rtl::step
         let pfr = bit(lvmo as u64, 23);
         let pfw = !(!bit(lvmo as u64, 22) && self.wrcyc);
         let vmaok = pfr && pfw;

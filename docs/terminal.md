@@ -923,7 +923,7 @@ like the rest of `vendor/`. So a fresh clone runs the anchors and the check's
 own patterns, and says the real ones are absent. That is the same shape as
 `rtl_sys` skipping when the release archive is not there. To make them:
 
-    cd ../muir && mkdir -p vendor/run
+    cd ../muir-sim && mkdir -p vendor/run
     gunzip -c ../muir-fpga/vendor/system-100-0/disk-sys-100-0.img.gz > vendor/run/disk-sys-100-0.img
     cargo run --release --example screen -- 400000000 25000000
     cp vendor/run/screen-rtl-200000000.png vendor/run/screen-rtl-225000000.png \

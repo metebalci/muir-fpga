@@ -6,7 +6,7 @@
 // can read them.
 //
 // **WHY THERE ARE ANY.**  MIT's diagnostic bus is sixteen registers and
-// `../muir/src/spy.rs` is the whole of its vocabulary: `IR` in three halves,
+// `../muir-sim/src/spy.rs` is the whole of its vocabulary: `IR` in three halves,
 // `OPC`, `PC`, `OB`, `FLAG-1`, `FLAG-2`, `M`, `A` and `ST`, with the open bus
 // at register 3.  **`VMA`, `Q` and `MD` are on none of them**, so MIT's own
 // console cannot see any of the three and neither can

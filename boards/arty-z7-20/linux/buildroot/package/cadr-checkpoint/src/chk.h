@@ -3,7 +3,7 @@
 //
 // muir's checkpoint format, written from C.
 //
-// `../muir/src/checkpoint.rs` is the authority and this is a transcription of
+// `../muir-sim/src/checkpoint.rs` is the authority and this is a transcription of
 // it, not an interpretation.  A checkpoint is a header --- the magic, the
 // format's version, the engine's name and how many memory boards the machine
 // had --- and a body packed as runs.  The body is a stream of fixed-width

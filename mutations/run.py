@@ -2713,26 +2713,26 @@ def copy_tree(dest, with_golden=False, rev=None):
 
 
 def muir_beside(work):
-    """Put muir where a mutant copy's Cargo.toml will look for it.
+    """Put muir-sim where a mutant copy's Cargo.toml will look for it.
 
-    golden/Cargo.toml says `muir = { path = "../../muir" }`, which from
-    <work>/<name>/golden resolves to <work>/muir.  So one link at the root of
+    golden/Cargo.toml says `muir = { path = "../../muir-sim" }`, which from
+    <work>/<name>/golden resolves to <work>/muir-sim.  So one link at the root of
     the work directory serves every mutation --- and, because it is the same
-    resolved path for all of them, muir is built once and cached rather than
+    resolved path for all of them, muir-sim is built once and cached rather than
     once per mutation.
     """
     manifest = os.path.join(REPO, "golden", "Cargo.toml")
     with open(manifest) as f:
         text = f.read()
     match = re.search(r'muir\s*=\s*\{[^}]*path\s*=\s*"([^"]+)"', text)
-    if not match or match.group(1) != "../../muir":
-        die("golden/Cargo.toml's muir path is %r, not '../../muir'; the link "
+    if not match or match.group(1) != "../../muir-sim":
+        die("golden/Cargo.toml's muir path is %r, not '../../muir-sim'; the link "
             "the generator mutations rely on no longer resolves"
             % (match.group(1) if match else None))
-    real = os.path.abspath(os.path.join(REPO, "golden", "../../muir"))
+    real = os.path.abspath(os.path.join(REPO, "golden", "../../muir-sim"))
     if not os.path.isdir(real):
-        die("%s: muir is not beside this repository" % real)
-    link = os.path.join(work, "muir")
+        die("%s: muir-sim is not beside this repository" % real)
+    link = os.path.join(work, "muir-sim")
     if not os.path.islink(link):
         os.symlink(real, link)
 

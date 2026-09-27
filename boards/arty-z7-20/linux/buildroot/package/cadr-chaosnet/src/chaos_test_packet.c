@@ -11,7 +11,7 @@
 // low byte would survive any number of round trips.  So every field is
 // checked against a literal word first, the round trip second.  The literals
 // are muir's own, from `a_packet_goes_to_words_and_back` in
-// `muir/tests/chaos.rs`, and they are AIM-628 §3.5 and §3.6 written out: the
+// `muir-sim/tests/chaos.rs`, and they are AIM-628 §3.5 and §3.6 written out: the
 // opcode in the high byte of word 0, the forwarding count in the top four
 // bits of word 1 and the byte count in the bottom twelve, then destination,
 // destination index, source, source index, packet number, acknowledgment,

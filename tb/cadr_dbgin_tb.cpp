@@ -40,7 +40,7 @@
 //   master                answers is never acknowledged, there being no
 //                         timeout for this master"
 //
-//   what a halt means     `spy_write(CLK, 0)`, muir/tests/lashup.rs:152-157,
+//   what a halt means     `spy_write(CLK, 0)`, muir-sim/tests/lashup.rs:152-157,
 //                         which is CC's first act on a debuggee --- and the
 //                         program counter read back afterwards is compared
 //                         against `build/rtl.golden`'s own column for the
@@ -212,7 +212,7 @@ void Say(const char *what) {
 }
 
 // What `Engine::spy_read` answers for this microcycle, off the reference's own
-// columns: `tb/cadr_console_tb.cpp`'s reconstruction, muir/src/spy.rs bit for
+// columns: `tb/cadr_console_tb.cpp`'s reconstruction, muir-sim/src/spy.rs bit for
 // bit.  The cable reads the same sixteen registers the console does, through
 // MIT's own path instead of ours, so the reference is the same.
 uint16_t SpyWord(const Row &r, int eadr, bool halted) {
@@ -922,7 +922,7 @@ int main(int argc, char **argv) {
 
   // ------------------------------------------ phase 2: the halt, over the cable
   //
-  // CC's first act on a debuggee: `spy_write(CLK, 0)`, muir/tests/lashup.rs
+  // CC's first act on a debuggee: `spy_write(CLK, 0)`, muir-sim/tests/lashup.rs
   // :152-157.  Three cycles --- the modifier, the address, then the cycle
   // register --- which is `lashup::DebugProgram::dbg_write` exactly.
   auto CableCycle = [&](uint32_t uaddr, bool write, uint16_t word,
@@ -996,7 +996,7 @@ int main(int argc, char **argv) {
     if (f1 != kFlag1Halted) Fail("FLAG-1 read over the debug cable", f1, kFlag1Halted);
 
     // And the register with no read select: the floating bus, all ones.
-    // muir/src/spy.rs:488.  It is the one value a dead cable and a live one
+    // muir-sim/src/spy.rs:488.  It is the one value a dead cable and a live one
     // agree on, so it is checked WITH the two above and never alone.
     const uint32_t s3 = CableCycle(SpyAddr(3), false, 0, true, 4000);
     if (static_cast<uint16_t>(s3 >> kDbdShift) != 0xffffu)

@@ -13,7 +13,7 @@
 // pressed sits still.
 //
 // **WHAT IT HOLDS TO, AND IT IS muir'S OWN WORDS.**  `--no-auto-boot` in
-// `../muir/src/main.rs` says: "leave the boot button unpressed, as a CADR is
+// `../muir-sim/src/main.rs` says: "leave the boot button unpressed, as a CADR is
 // when the power comes on: RUN clear and nothing running.  The run starts held
 // at the prompt, and boot there presses the button; nothing else starts it".
 // So there are three claims and each is a case below.

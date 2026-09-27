@@ -4,7 +4,7 @@
 // The far end of the RS-232 cable at J9, as a TCP socket: muir's
 // `serial::Endpoint` in C.
 //
-// This is a port of `../muir/src/serial.rs`, `pub struct Endpoint` and its
+// This is a port of `../muir-sim/src/serial.rs`, `pub struct Endpoint` and its
 // `service` and `poll_cable`, and deliberately so --- two programs offering
 // one machine's serial line must not disagree about what plugging in means.
 // Every decision below is muir's, with muir's reason:

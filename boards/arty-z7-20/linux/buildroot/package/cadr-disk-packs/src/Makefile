@@ -62,7 +62,7 @@ GOLDEN ?= $(abspath ../../../../../../../build/disk.golden)
 # before the check reads them: a different muir's regenerated disks are a
 # different witness and must not pass for this one.  `Q8_DISKS=<dir>` names
 # another directory holding the same five files.
-Q8_DISKS ?= $(abspath ../../../../../../../../muir/data)
+Q8_DISKS ?= $(abspath ../../../../../../../../muir-sim/data)
 Q8_VERIFY = @for f in $$(awk '{print $$2}' q8_disks.sha256); do \
 	    test -f $(Q8_DISKS)/$$f || { echo "no $(Q8_DISKS)/$$f: QUUX's disks are muir's data/quux-disk*, from muir 880204b on; or pass Q8_DISKS=<dir>"; exit 1; }; done; \
 	sed 's|  |  $(Q8_DISKS)/|' q8_disks.sha256 | sha256sum -c --quiet - \

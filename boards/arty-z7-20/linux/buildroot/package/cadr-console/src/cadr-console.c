@@ -284,7 +284,7 @@ static void do_regs(struct console *c)
 {
 	struct cons_regs r;
 	cons_read_regs(c, &r);
-	say("the sixteen diagnostic registers, muir's names (../muir/src/spy.rs); "
+	say("the sixteen diagnostic registers, muir-sim's names (../muir-sim/src/spy.rs); "
 	    "reads and writes at one EADR are uncorrelated");
 	cons_say_regs(&r);
 }

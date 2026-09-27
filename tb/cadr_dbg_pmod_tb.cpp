@@ -120,7 +120,7 @@ constexpr uint32_t kMark = 1u << 14;
 constexpr unsigned kACycle = 0, kAStatus = 1, kAModifier = 2, kAAddress = 3;
 
 // spy::BASE and the registers CC uses: `spy::CLK` is 3 and a store of zero
-// there is a halt, muir/tests/lashup.rs.
+// there is a halt, muir-sim/tests/lashup.rs.
 constexpr uint32_t kSpyBase = 0766000u;
 constexpr unsigned kSpyClk = 3;
 uint32_t SpyAddr(unsigned e) { return kSpyBase + 2u * e; }

@@ -3928,7 +3928,7 @@ static void check_keyboard_trace(void)
 
 	// --- (5) WITH NO SOURCE NAMED THE LINE IS muir'S EXACTLY, which is
 	// the property that makes somebody who has read one machine's trace
-	// able to read the other's.  `../muir/src/terminal/keyboard.rs`'s
+	// able to read the other's.  `../muir-sim/src/terminal/keyboard.rs`'s
 	// `key_traced`: `keysym {:#x} {name} {down|up}, {went}`.
 	key_state_init(&k);
 	key_traced(&k, 1);

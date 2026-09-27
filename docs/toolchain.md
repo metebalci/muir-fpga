@@ -23,16 +23,16 @@ every check that matters. Nothing in `make check` synthesizes anything.
 
 ## For the checks
 
-**muir must sit beside this repository**, not inside it. `golden/Cargo.toml`
-says `muir = { path = "../../muir" }`, and that is resolved from `golden/`. So
+**muir-sim must sit beside this repository**, not inside it. `golden/Cargo.toml`
+says `muir = { path = "../../muir-sim" }`, and that is resolved from `golden/`. So
 the layout is
 
     somewhere/
-      muir/
+      muir-sim/
       muir-fpga/
 
-Nothing is vendored and nothing is fetched from crates.io. muir has no
-dependencies, and `golden`'s only one is muir, by path.
+Nothing is vendored and nothing is fetched from crates.io. muir-sim has no
+dependencies, and `golden`'s only one is muir-sim, by path.
 
 **Rust** is pinned at the repository root by `rust-toolchain.toml`, currently
 `1.99.0-beta.4`. The pin must track muir's. It exists because 1.98.0 and

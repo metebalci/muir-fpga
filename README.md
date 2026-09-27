@@ -4,7 +4,7 @@ This is the MIT CADR on an FPGA, at **rtl level**. Its processor's microcycles
 and the machine's clocks run at the original machine's speed to within about
 5%.
 
-[muir](https://github.com/metebalci/muir) simulates the CADR at three
+[muir-sim](https://github.com/metebalci/muir-sim) simulates the CADR at three
 fidelities. `rtl` is the middle one. It has the machine's own two-phase clock,
 every datapath signal on it, and everything that is a matter of *when*. That
 means bus waits and hangs, arbitration, and timeouts. This repository is that

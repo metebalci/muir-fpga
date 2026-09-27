@@ -64,7 +64,7 @@
 #
 # The environment says where things are:
 #
-#   MUIR        the muir checkout to build from. Default ../muir.
+#   MUIR        the muir-sim checkout to build from. Default ../muir-sim.
 #   WORK        where the build tree, the pack and the file service's root go.
 #               Default $HOME/.cache/muir-fpga-cc-pack. It needs about 1 GB.
 #   BASE        the pack to start from, copied and never written to itself.
@@ -93,7 +93,7 @@ set -eu
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 out=${1:-$here/build/muir-cc-304.img}
-muir=${MUIR:-$(cd "$here/../muir" 2>/dev/null && pwd || echo "")}
+muir=${MUIR:-$(cd "$here/../muir-sim" 2>/dev/null && pwd || echo "")}
 work=${WORK:-$HOME/.cache/muir-fpga-cc-pack}
 band=${BAND:-LOD3}
 site=${SITE:-}
@@ -102,7 +102,7 @@ server=${CC_PACK_SERVER:-4403}
 server_name=${CC_PACK_SERVER_NAME:-OZ}
 
 if [ -z "$muir" ] || [ ! -f "$muir/Cargo.toml" ]; then
-    echo "make-cc-pack: no muir checkout; set MUIR to one" >&2
+    echo "make-cc-pack: no muir-sim checkout; set MUIR to one" >&2
     exit 2
 fi
 

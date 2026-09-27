@@ -8,7 +8,7 @@
 //
 // **WHAT IS HELD TO muir, AND WHERE THE REFERENCE IS.**
 //
-//   the sixteen reads  `Engine::spy_read`, muir/src/rtl.rs:2711-2753, whose
+//   the sixteen reads  `Engine::spy_read`, muir-sim/src/rtl.rs:2711-2753, whose
 //                      sixteen answers are `IR` in three halves, `OPC`, `PC`,
 //                      `OB` in two, `FLAG-1`, `FLAG-2`, `M`, `A` and `ST` in
 //                      two each, and the open bus at register 3.  Every one
@@ -21,16 +21,16 @@
 //                      `Flag2::OPEN = 0xc0c0`, the four floating buffer
 //                      inputs that read as ones.
 //
-//   halt               `spy_write(CLK, 0)`, muir/tests/lashup.rs:152-157 ---
+//   halt               `spy_write(CLK, 0)`, muir-sim/tests/lashup.rs:152-157 ---
 //                      CC's first act on a debuggee --- and
-//                      muir/tests/spy.rs:729-741, which pins what it means:
+//                      muir-sim/tests/spy.rs:729-741, which pins what it means:
 //                      "the microcycle in flight completes", `SRUN` being one
 //                      master clock behind `RUN`, and then nothing moves
 //                      while the master clock runs on.  Both halves are
 //                      asserted here: the machine stops, and it stops at a
 //                      microcycle boundary and not inside one.
 //
-//   start              `spy_write(CLK, 1)`, muir/tests/lashup.rs:311-315 ---
+//   start              `spy_write(CLK, 1)`, muir-sim/tests/lashup.rs:311-315 ---
 //                      and the claim this check exists to make is stronger
 //                      than that: after sixteen halts and starts, **all
 //                      600,000 microcycles still agree with muir, column for
@@ -38,13 +38,13 @@
 //                      start that lost or repeated a microcycle, is a
 //                      mismatch on the next row.
 //
-//   `FLAG-1` halted    0xe800 exactly, which is muir/tests/spy.rs:706's own
+//   `FLAG-1` halted    0xe800 exactly, which is muir-sim/tests/spy.rs:706's own
 //                      `HALTED` constant; running, 0xe900, its `RUNNING`.
 //                      That is the question the console exists to answer ---
 //                      is the machine running --- and it is a constant muir
 //                      wrote down.
 //
-//   CYCLES             `Machine::cycles`, incremented at muir/src/rtl.rs:2404
+//   CYCLES             `Machine::cycles`, incremented at muir-sim/src/rtl.rs:2404
 //                      and **only there**: a halted master clock cycle
 //                      returns at rtl.rs:2323 and a stall at 2343 without
 //                      reaching it.  The fabric's `clock_edge` is registered
@@ -264,7 +264,7 @@ void Fail(const char *what, unsigned long long got, unsigned long long want) {
 }
 
 // What `Engine::spy_read` answers for this microcycle, off the reference's own
-// columns.  muir/src/rtl.rs:2711-2753 for the sixteen, muir/src/spy.rs for the
+// columns.  muir-sim/src/rtl.rs:2711-2753 for the sixteen, muir-sim/src/spy.rs for the
 // two flag words' bit order and polarities.
 //
 // `wait` is `FLAG-1` bit 15 and the trace has no column for it; every visit is
@@ -279,7 +279,7 @@ uint16_t SpyWord(const Row &r, int eadr, bool halted) {
     case 2: return static_cast<uint16_t>(ir >> 32);
     // Register 3 has no read select --- Y3 of SPY0 1F01 is not connected ---
     // so the bus interface's 8304s read the floating bus as all ones.
-    // muir/src/spy.rs:488, `OPEN_READ`.
+    // muir-sim/src/spy.rs:488, `OPEN_READ`.
     case 3: return 0xffffu;
     case 4: return static_cast<uint16_t>(r.v[kOpc] & 0x3fffu);
     case 5: return static_cast<uint16_t>(r.v[kPc] & 0x3fffu);
@@ -870,7 +870,7 @@ int main(int argc, char **argv) {
   // same instant and it is what the faulting read RETURNED: at the board's
   // halt it holds either the map word the microcode wrote back or the word
   // that came through the entry it had just hacked.  It is not on the
-  // diagnostic bus either --- `../muir/src/spy.rs` names the sixteen and MD
+  // diagnostic bus either --- `../muir-sim/src/spy.rs` names the sixteen and MD
   // is not among them --- and it joins the pair's latch rather than standing
   // beside it, so the three name ONE microcycle.  `md_off_vma` and `md_off_q`
   // are what make the crossing records evidence: a halt where MD reads alike
@@ -1007,7 +1007,7 @@ int main(int argc, char **argv) {
     if (!quiet) continue;
     ++next_target;
 
-    // ---- HALT.  `spy_write(CLK, 0)`, CC's first act: muir/tests/lashup.rs
+    // ---- HALT.  `spy_write(CLK, 0)`, CC's first act: muir-sim/tests/lashup.rs
     // ---- :152, and tests/spy.rs:729-741 for what it means.
     const size_t before = k;
     SpyWrite(3, 0);
@@ -1019,13 +1019,13 @@ int main(int argc, char **argv) {
     const size_t at = k;
     if (at < before) Fail("the machine went backwards over a halt", at, before);
 
-    // It is halted, and it stays halted.  muir/tests/halt.rs:100-105 makes
+    // It is halted, and it stays halted.  muir-sim/tests/halt.rs:100-105 makes
     // the same claim of a machine stopped another way: stepped on and never
     // moved.
     Run(2000);
     if (k != at) Fail("a halted machine ran a microcycle", k, at);
 
-    // ---- CYCLES.  `Machine::cycles`, muir/src/rtl.rs:2404.  The console's
+    // ---- CYCLES.  `Machine::cycles`, muir-sim/src/rtl.rs:2404.  The console's
     // ---- own count of retired microcycles is what names the row every
     // ---- register below is compared against, so if it is wrong every one of
     // ---- them says so.
@@ -1041,7 +1041,7 @@ int main(int argc, char **argv) {
     // re-opens it, and said on this check's own output.
     if (c.at(1) != 0) Fail("CYCLESH before the counter has a high half", c.at(1), 0);
 
-    // ---- the sixteen.  `Engine::spy_read`, muir/src/rtl.rs:2711.
+    // ---- the sixteen.  `Engine::spy_read`, muir-sim/src/rtl.rs:2711.
     for (int e = 0; e < 16; ++e) {
       const uint32_t w = SpyRead(e);
       if (w >> 16) Fail("a diagnostic read said it was not answered", w >> 16, 0);
@@ -1183,7 +1183,7 @@ int main(int argc, char **argv) {
            f1s, f1s & ~0x100u);
     ++step_moved;
 
-    // ---- START.  muir/tests/lashup.rs:311-315.
+    // ---- START.  muir-sim/tests/lashup.rs:311-315.
     //
     // The microcycle that straddles the halt is as long as the halt, so its
     // length is not the reference's and is not compared: `last_edge` is
@@ -1195,7 +1195,7 @@ int main(int argc, char **argv) {
     Run(4 * 44);
     machine_halted = false;
     if (k <= at) Fail("the machine did not start again", k, at);
-    // Running, `FLAG-1` bit 8 is up: muir/tests/spy.rs:705, and `cc.rs`'s own
+    // Running, `FLAG-1` bit 8 is up: muir-sim/tests/spy.rs:705, and `cc.rs`'s own
     // "running"/"halted" line reads exactly this bit.
     const uint16_t f1r = SpyRead(8) & 0xffffu;
     if ((f1r & 0x100u) == 0)
@@ -1795,7 +1795,7 @@ int main(int argc, char **argv) {
   }
 
   // The mode register: a write of PROMDISABLE shows in `FLAG-1` bit 12 ---
-  // muir/src/spy.rs:207-212 for the bit in the register, spy.rs:353-356 for
+  // muir-sim/src/spy.rs:207-212 for the bit in the register, spy.rs:353-356 for
   // the bit in the flag word --- and the harness sees the same bit leave the
   // register block.  This is the console's WRITE path, and the only one of
   // the three written registers whose effect a read can see.
@@ -1812,7 +1812,7 @@ int main(int argc, char **argv) {
 
   // The two pulses, bits 6 and 7: `-PROG.RESET` and `PROG.BOOT`, gated with
   // the strobe on OLORD2 and asserted `REGISTER_PULSE_NS` before the register
-  // loads --- muir/src/spy.rs:229-234 and busint.rs:255-264.  They leave the
+  // loads --- muir-sim/src/spy.rs:229-234 and busint.rs:255-264.  They leave the
   // register block here and are folded into `unused` in `cadr_machine.sv`;
   // what they reach is the machine's business, that they are made is this
   // module's.

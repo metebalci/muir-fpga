@@ -47,7 +47,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
 version is refused by name rather than read wrong. **The version is 46.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
-`../muir/src/checkpoint.rs` and not an interpretation of it.
+`../muir-sim/src/checkpoint.rs` and not an interpretation of it.
 
 So the program is tied to the commit of muir that `muir.commit` pins, and a
 muir that moves the format stops the board's checkpoints loading. That failure

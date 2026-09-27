@@ -297,7 +297,7 @@
 // can say which.
 //
 //   - **They are not on page 1 because they are not on the diagnostic bus.**
-//     `../muir/src/spy.rs` is the whole vocabulary of MIT's sixteen and none
+//     `../muir-sim/src/spy.rs` is the whole vocabulary of MIT's sixteen and none
 //     of the three is in it; `EADR<3:0>` names sixteen things and all
 //     sixteen are MIT's.  A seventeenth would mean renumbering MIT's own
 //     register block, which is not this module's to do and would put

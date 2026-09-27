@@ -3157,7 +3157,7 @@ module cadr_microcycle #(
 
   // **THE REGISTER TABLE.**  The processor's own registers that MIT's
   // sixteen have no register for.  The entries are named by
-  // `../muir/src/machine.rs`'s `Machine` and `../muir/src/rtl.rs`'s `Rtl`,
+  // `../muir-sim/src/machine.rs`'s `Machine` and `../muir-sim/src/rtl.rs`'s `Rtl`,
   // which is the vocabulary both engines share, and the Linux side prints
   // them under those names; an entry this fabric does not have is absent
   // rather than zero, because a zero somebody has to be told to disbelieve is
