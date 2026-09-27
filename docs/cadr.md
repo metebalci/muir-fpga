@@ -5,10 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # The CADR
 
-This file is the text of the site's
-[page on the real machine](https://muir-fpga.metebalci.com/cadr.html),
-which carries the eleven drawings with a one-sentence caption each. What each
-drawing shows is said here, in the order the page draws them, and the sources
+The project's [site](https://muir.metebalci.com/fpga/) draws the real
+machine in eleven drawings with a one-sentence caption each. What each
+drawing shows is said here, in the order the site draws them, and the sources
 the drawings were read from are listed at the end.
 
 ## The machine this project reproduces

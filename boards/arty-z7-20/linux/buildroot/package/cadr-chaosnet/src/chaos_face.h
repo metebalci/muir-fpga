@@ -108,9 +108,9 @@
 // ## Where it is
 //
 // **ASSUMED**: the low end of `M_AXI_GP0`'s window one 4 KB page above the
-// pack side, which owns `0x40000000` today.  `pages/index.html` already says
-// GP0 is the port "over which the PS reaches the disk controller and the
-// Chaosnet buffers", so the port is the drawing's and only the offset is
+// pack side, which owns `0x40000000` today.  `README.md` already says
+// `M_AXI_GP0` carries "the disk's registers, the Chaosnet buffers and the
+// block's address", so the port is the README's and only the offset is
 // this file's guess.  Putting a second slave on GP0 needs a decode in front
 // of `cadr_disk_pack.sv`, which is the fabric half's work and is named in
 // the report.  If the interface lands on `M_AXI_GP1` beside the console

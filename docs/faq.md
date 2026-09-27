@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # Questions
 
 These are the questions this project is asked, each answered from the file
-that settles it. The site's [FAQ page](https://muir-fpga.metebalci.com/faq.html)
+that settles it. The project's [site](https://muir.metebalci.com/fpga/)
 gives each answer in a sentence or two and links here for the whole of it.
 
 Every answer rests on a file, and the line under it names that file. Where
@@ -199,7 +199,7 @@ Source: the header of `rtl/plumbing/cadr_probe.sv`;
 ### What license is this under, and what in it is not this project's work?
 
 The fabric, the checks and their reference traces, the programs beside the
-machine, the documents and the site are free software under the GNU Affero
+machine and the documents are free software under the GNU Affero
 General Public License, version 3 or later. Nearly every file repeats that in
 its own SPDX header.
 
@@ -207,8 +207,7 @@ Eight files are under the GNU General Public License, version 2 or later, four
 for each Zynq board, because each is compiled into U-Boot.
 
 What is not this project's work is listed in [`docs/license.md`](license.md)
-and on the site's front page. Each entry names whose it is and under what
+and on the project's site. Each entry names whose it is and under what
 terms, and says where no terms are recorded rather than guessing.
 
-Source: [`docs/license.md`](license.md), and the front page's license and
-third-party material.
+Source: [`docs/license.md`](license.md).

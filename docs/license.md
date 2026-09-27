@@ -5,8 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # License, and what is not this project's work
 
-This file is the long form of the license table on the site's
-[front page](https://muir-fpga.metebalci.com/#license). It says what
+This file is the long form of the license table on the project's
+[site](https://muir.metebalci.com/fpga/). It says what
 license this repository's work is under, which files are under another, and
 whose the third-party material is. Each entry says whose it is, under what
 terms, and where in the repository those terms are recorded. Where nothing
@@ -16,8 +16,8 @@ records them, it says that instead of guessing.
 
 The work in this repository is free software under the **GNU Affero General
 Public License, version 3 or later**. That is the fabric, the checks and their
-reference traces, the programs that run beside the machine, the documents and
-the site alike. The full text is [`LICENSE`](../LICENSE) at the root of the
+reference traces, the programs that run beside the machine and the documents
+alike. The full text is [`LICENSE`](../LICENSE) at the root of the
 repository. Almost every file in it repeats that in its own header as the SPDX
 identifier `AGPL-3.0-or-later`, so a file taken out of the repository still
 says what it is.
@@ -64,22 +64,9 @@ under its own license, which for the loader and the kernel is the GPL, version
 2. Nothing of theirs is in this repository. The only files of this project's
 that are compiled into them are the four per board named above.
 
-### The fonts
-
-The site is set in three families: Dela Gothic One, Zen Maru Gothic and IBM
-Plex Mono. Dela Gothic One is by The Dela Gothic Project Authors, Zen Maru
-Gothic by The Zen Maru Gothic Authors, and IBM Plex Mono by IBM. All three are
-under the **SIL Open Font License, Version 1.1**.
-
-All three are in `pages/fonts/`, so that reading a page asks nothing of a third
-party. The IBM Plex Mono files are the unmodified Latin subsets Google Fonts
-serves. The other two are cut down from the upstream files to the characters
-the pages draw. `pages/fonts/README.md` says where each came from and how it
-was cut.
-
 ### MIT's own files
 
-The drawings on the page about the real machine, and the behavior every check
+The drawings [`docs/cadr.md`](cadr.md) describes, and the behavior every check
 in this project is held to, are read from MIT's engineering files. Those are
 the drawings, wire lists, print sets and PROM images the AI Laboratory wrote
 between 1977 and 1981, and MIT's system software beside them.

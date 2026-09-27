@@ -428,6 +428,9 @@ Synthesis, place and route, and bitstream generation all run on this, and the
 most recent build of this repository's own design finished with no critical
 warnings.
 
+`docs/fits.md` gives each board's fits: their setup and hold slack, the logic
+and block memory they take, and the commit each was built from.
+
 ## Layout
 
     rtl/machine/           the CADR, held to muir tick for tick
@@ -439,6 +442,9 @@ warnings.
     mutations/             the mutation list, and the runner that applies it;
                            docs/mutations.md says what it is and why
     docs/                  one document a block, and the board bring-up
-    pages/                 the project page: a drawing a board, and the
-                           hardware the drawings are of
     build/                 generated, not committed
+
+## How it was written
+
+This project is written with [Claude Code](https://claude.com/claude-code),
+using Anthropic's Claude Opus, Claude Fable and Claude Sonnet.
