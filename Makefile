@@ -254,7 +254,11 @@ $(BUILD)/obj_phase_gen/Vcadr_phase_gen: $(TICKPKG) rtl/machine/cadr_phase_gen.sv
 # differs between them still builds, so this is what says they agree.  See
 # `tools/grid_check.py` and `docs/timing.md`.  The two files named beside the
 # wildcards are the ones `mutations/run.py`'s `grid` records are aimed at.
+# And every register name the constraints write, against the registers
+# Verilator elaborates out of `rtl/machine/` for each machine, so the machine's
+# sources are prerequisites too.
 $(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard golden/src/*.rs) \
+                    $(wildcard rtl/machine/*.sv rtl/machine/*.svh) rtl/plumbing/cadr_ddr_map.sv \
                     $(wildcard rtl/*/*.xdc rtl/*/*/*.xdc boards/*/*.xdc boards/*/vivado/*.tcl) \
                     $(wildcard boards/*/quartus/*.sdc boards/*/quartus/*.tcl) \
                     rtl/plumbing/xilinx7/cadr_machine.xdc boards/de25-nano/quartus/cadr_de25.sdc \
@@ -264,7 +268,7 @@ $(BUILD)/grid.pass: tools/grid_check.py $(TICKPKG) tb/cadr_tick.h $(wildcard gol
                     boards/arty-z7-20/cadr_arty.sv boards/de25-nano/cadr_de25.sv \
                     boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk.h \
                     boards/arty-z7-20/linux/buildroot/package/cadr-console/src/console_test.c | $(BUILD)
-	python3 tools/grid_check.py .
+	VERILATOR=$(VERILATOR) TCLSH=$(TCLSH) python3 tools/grid_check.py .
 	@touch $@
 
 # The DE25-Nano's pins, transcribed from Terasic's user manual into our own

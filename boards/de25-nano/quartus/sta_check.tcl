@@ -779,6 +779,9 @@ if {!$sta_quux} {
 # and the CADR's board is not fitted there, so the clause has nothing to reach.
 if {!([info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux")} {
     assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb which}
+    # The color TV is the same module a second time, held the same two ways.
+    # grid: 80 ns
+    assert_instance_timing $tick 8 u_machine|memory|g_color_tv.tv_color {color_map pointer} {ctl fb which}
 }
 # The bus interface's register block: the Unibus map and its write buffer at
 # the register strobe.
@@ -826,6 +829,13 @@ if {!$sta_quux} {
     set sta_mw [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "the placement of the maps' and dispatch memory's write" $sta_mw $::slow
+    # REQTIM's oscillator, `vco_acc`, out of the relaxed set by name: it decides
+    # every tick whether the output flips on the next, and the NXM timer counts
+    # the flip and takes the timeout from it that tick.  A rename puts it back
+    # in the set, at eight.
+    set sta_vco [get_registers -nowarn [cadr_leaves {u_machine|memory|g_cadr_busint.busint|} {vco_acc}]]
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "REQTIM's oscillator" $sta_vco $::slow
 }
 # QUUX's clauses, `quux_de25.sdc`, at K = 4: every one the CADR's file has,
 # re-issued at QUUX's counts, each asked the same two ways.

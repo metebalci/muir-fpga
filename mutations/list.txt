@@ -21957,6 +21957,77 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
     set_multicycle_path -setup 9 -from $ddr_cycle -to $ddr_contract
 @end
 
+@mutation grid-zynq-the-oscillator-by-its-old-name
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note REQTIM's oscillator is kept out of the relaxed set by the name it had
+@note before it became an accumulator, `vco_count`, which matches no register:
+@note `vco_acc` falls back into the set, and its paths into itself, the
+@note oscillator's output and the NXM timer get eight ticks where they have one.
+@old
+                                  NAME !~ *vco_acc_reg*      && \
+@new
+                                  NAME !~ *vco_count_reg*    && \
+@end
+
+@mutation grid-de25-the-oscillator-by-its-old-name
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The same on the DE25-Nano: `vco_count` in the list of registers kept at
+@note the tick matches nothing, and `vco_acc` is relaxed to eight ticks.
+@old
+                  vco_acc arb_t phase_t n_memack_q n_loadmd_q n_tpwpiram_q n_tpwp_q
+@new
+                  vco_count arb_t phase_t n_memack_q n_loadmd_q n_tpwpiram_q n_tpwp_q
+@end
+
+@mutation grid-zynq-the-color-tv-left-in-the-relaxed-set
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note Only the first display board, `memory/tv`, is taken out of the relaxed
+@note set: the color TV, the same module a second time, keeps its frame
+@note counters and its cycle's latch at eight ticks.
+@old
+                                  (NAME !~ *memory/g_color_tv.tv_color/* || \
+                                       NAME =~ *memory/g_color_tv.tv_color/ctl_reg* || \
+                                       NAME =~ *memory/g_color_tv.tv_color/fb_reg* || \
+                                       NAME =~ *memory/g_color_tv.tv_color/which_reg*) && \
+@new
+@end
+
+@mutation grid-de25-the-color-tv-left-in-the-relaxed-set
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The same on the DE25-Nano: the color TV is not among the modules out of
+@note the relaxed set whole.
+@old
+                                      u_machine|memory|tv|* u_machine|memory|g_color_tv.tv_color|*
+@new
+                                      u_machine|memory|tv|*
+@end
+
+@mutation grid-de25-the-color-tvs-held-decodes-at-the-tick
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The color TV's three held decodes are not put back into the relaxed set,
+@note where the first display's are: the two instances of one module are timed
+@note differently.
+@old
+    [cadr_leaves {u_machine|memory|g_color_tv.tv_color|} {ctl fb which}] \
+@new
+@end
+
+@mutation grid-zynq-the-color-tvs-mode-register-at-the-tick
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The color TV's held `ctl` decode is not put back into the relaxed set,
+@note where the first display's is: the two instances of one module are timed
+@note differently.
+@old
+                                       NAME =~ *memory/g_color_tv.tv_color/ctl_reg* || \
+@new
+@end
+
 @mutation bus-reset-reaches-no-board
 @check quux_busreset
 @file rtl/machine/cadr_machine.sv

@@ -489,6 +489,13 @@ assert_multicycle_applied $tick 6
 # grid: 80 ns
 assert_instance_timing $tick 8 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*} \
     {*memory/tv/ctl_reg* *memory/tv/fb_reg* *memory/tv/which_reg*}
+# The color TV is the same module a second time, held the same two ways.
+# grid: 80 ns
+if {$lmtv} {
+    assert_instance_timing $tick 8 *u_machine/memory/g_color_tv.tv_color/* \
+        {*color_map_reg* *pointer_reg*} \
+        {*g_color_tv.tv_color/ctl_reg* *g_color_tv.tv_color/fb_reg* *g_color_tv.tv_color/which_reg*}
+}
 # grid: 150 ns
 assert_instance_timing $tick 15 *u_machine/memory/busint_regs/* \
     {*wr_buf_reg* *ub_map_reg*}
@@ -533,6 +540,12 @@ assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*proce
 # grid: 0 ns + 1 tick
 assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
     {*processor/spc_q_reg*}
+# REQTIM's oscillator, `vco_acc`, out of the relaxed set by name: it decides
+# every tick whether the output flips on the next, and the NXM timer counts
+# the flip and takes the timeout from it that tick.  Every path out of it is
+# the tick's; a rename puts it back in the set, at eight.
+# grid: 0 ns + 1 tick
+assert_clause_timing $tick 1 "REQTIM's oscillator" {*g_cadr_busint.busint/vco_acc_reg*}
 # grid: 60 ns
 assert_clause_timing $tick 6 "the second hop of the every-tick registers" \
     {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*

@@ -46,8 +46,11 @@
 #     value every tick and only the last is read. `imem_q` and `prom_q` too.
 #   - A free-running counter does not: it is its own input, and the relaxed
 #     set's multicycle says its increment may take eight ticks, at which point
-#     it does not count. `mfinish_t`, `rdfinish_t`, `elapsed`, `vco_count`, `arb_t`,
-#     `phase_t`.
+#     it does not count. `mfinish_t`, `rdfinish_t`, `elapsed`, `vco_acc`, `arb_t`,
+#     `phase_t`.  `vco_acc` is REQTIM's oscillator, an accumulator that
+#     decides every tick whether the oscillator's output flips on the next,
+#     and the NXM timer's count of that output's edges and the timeout
+#     itself are taken from it the tick it decides.
 #   - An edge detector does not: it exists to spot a transition and is read
 #     the next tick. `n_memack_q`, `n_loadmd_q`, `n_tpwpiram_q`, `n_tpwp_q`,
 #     `tpclk_q`. Note these are named, not matched on `_q`, because the
@@ -139,7 +142,11 @@
 # adds one a tick and presets the flag as it wraps, `taken` is the cycle's
 # latch, and the mode register's clock enable is -XBUS.RQ through the held
 # match --- read at the tick, so its D from the cpu's word is timed at the
-# tick too, as the disk's registers are.
+# tick too, as the disk's registers are.  Both instances of the module are
+# out: the first display, `memory/tv`, and the color TV,
+# `memory/g_color_tv.tv_color`.  A pattern that names one instance by its
+# path leaves the other in the set, and `tools/grid_check.py` refuses a set
+# that treats two instances of one module differently.
 #
 # **AND THE I/O BOARD IS OUT OF THE SET THE SAME WAY, BUT FOR ITS SEVEN HELD
 # DECODES**, `sel`, `kbm`, `clkgrp`, `chgrp`, `sergrp`, `wr` and `which` in
@@ -384,8 +391,7 @@
 # tick on, `rip_tail`, a countdown, and `hold_rip`, which takes READ IN
 # PROGRESS on one tick and must see that tick's value; and the divider's
 # `div_md`, `div_strobed` and `div_have`, which say a strobe has brought
-# the word the divider loads a tick after it (`div_strobed2` and `div_word`
-# are names of an earlier build, matching nothing now); and QUUX's control
+# the word the divider loads a tick after it; and QUUX's control
 # store's write, `iwe_q`, `iwa_q` and `iwd_q`, taken a tick after the edge
 # and written on the next.  The divider's held decode stays in the set.
 # And QUUX's memory port, `quux_mem_port.sv` with its cache, out whole: its
@@ -400,7 +406,7 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *mfinish_t_reg*    && \
                                   NAME !~ *rdfinish_t_reg*   && \
                                   NAME !~ *elapsed_reg*      && \
-                                  NAME !~ *vco_count_reg*    && \
+                                  NAME !~ *vco_acc_reg*      && \
                                   NAME !~ *arb_t_reg*        && \
                                   NAME !~ *phase_t_reg*      && \
                                   NAME !~ *n_memack_q_reg*   && \
@@ -427,9 +433,7 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *g_quux_hold.rip_tail_reg* && \
                                   NAME !~ *div_md_reg*       && \
                                   NAME !~ *div_strobed_reg*  && \
-                                  NAME !~ *div_strobed2_reg* && \
                                   NAME !~ *div_have_reg*     && \
-                                  NAME !~ *div_word_reg*     && \
                                   NAME !~ *processor/iwe_q_reg*  && \
                                   NAME !~ *processor/iwa_q_reg*  && \
                                   NAME !~ *processor/iwd_q_reg*  && \
@@ -446,6 +450,10 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   (NAME !~ *memory/tv/* || NAME =~ *memory/tv/ctl_reg* || \
                                                            NAME =~ *memory/tv/fb_reg* || \
                                                            NAME =~ *memory/tv/which_reg*) && \
+                                  (NAME !~ *memory/g_color_tv.tv_color/* || \
+                                       NAME =~ *memory/g_color_tv.tv_color/ctl_reg* || \
+                                       NAME =~ *memory/g_color_tv.tv_color/fb_reg* || \
+                                       NAME =~ *memory/g_color_tv.tv_color/which_reg*) && \
                                   (NAME !~ *memory/iob/* || NAME =~ *memory/iob/sel_reg* || \
                                                             NAME =~ *memory/iob/kbm_reg* || \
                                                             NAME =~ *memory/iob/clkgrp_reg* || \

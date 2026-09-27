@@ -133,8 +133,9 @@ set_multicycle_path -hold  5 -to $cable_frame
 # Every register of the machine but the ones that must stay at the tick: the
 # phase generator, the free-running counters, the edge detectors and the bus
 # interface's three acknowledgments.  And four modules out whole but for
-# their held decodes: the disk controller, the transaction audit, the display
-# board and the I/O board, and the bus interface's own register block.
+# their held decodes: the disk controller, the transaction audit, both
+# display boards (the first and the color TV, two instances of one module)
+# and the I/O board, and the bus interface's own register block.
 # `cadr_machine.xdc` gives each name its reason.
 set machine [get_registers -nowarn {u_machine|*}]
 
@@ -151,7 +152,7 @@ proc cadr_leaves {prefix names} {
 }
 set fast [add_to_collection [get_registers -nowarn {*u_phase_gen*}] \
               [get_registers -nowarn [cadr_leaves {*|} {mfinish_t rdfinish_t elapsed
-                  vco_count arb_t phase_t n_memack_q n_loadmd_q n_tpwpiram_q n_tpwp_q
+                  vco_acc arb_t phase_t n_memack_q n_loadmd_q n_tpwpiram_q n_tpwp_q
                   deskewed ub_acked ub_loadmd tpclk_q
                   md_we_q mw_early_q mw_early_q2 mw_k1_q mw_late2_q}]]]
 # And QUUX's registers that run every tick, which match nothing on the CADR:
@@ -172,8 +173,7 @@ set quux_fast [get_registers -nowarn {u_machine|processor|g_quux_tick.clocks|*
                                       u_machine|processor|*g_quux_hold.hold_rip
                                       u_machine|processor|*g_quux_hold.rip_tail u_machine|processor|*g_quux_hold.rip_tail[*]
                                       u_machine|processor|*div_md u_machine|processor|*div_strobed
-                                      u_machine|processor|*div_strobed2 u_machine|processor|*div_have
-                                      u_machine|processor|*div_word u_machine|processor|*div_word[*]
+                                      u_machine|processor|*div_have
                                       u_machine|processor|iwe_q
                                       u_machine|processor|iwa_q u_machine|processor|iwa_q[*]
                                       u_machine|processor|iwd_q u_machine|processor|iwd_q[*]}]
@@ -188,7 +188,8 @@ if {[get_collection_size $quux_fast] > 0} {
 # tick.  What the cache holds of the microcycle is given back its time in
 # `quux_de25.sdc`.
 set out_whole [get_registers -nowarn {u_machine|g_cadr_disk.disk|* u_machine|g_quux_disk.disk|* u_machine|audit|*
-                                      u_machine|memory|tv|* u_machine|memory|iob|*
+                                      u_machine|memory|tv|* u_machine|memory|g_color_tv.tv_color|*
+                                      u_machine|memory|iob|*
                                       u_machine|memory|busint_regs|*
                                       u_machine|memory|g_quux_mono_tv.mono_tv|*
                                       u_machine|memory|g_quux_port.port|*}]
@@ -198,6 +199,7 @@ set held [get_registers -nowarn [concat \
     [list {u_machine|audit|first_*}] \
     [cadr_leaves {u_machine|audit|} {micro word}] \
     [cadr_leaves {u_machine|memory|tv|} {ctl fb which}] \
+    [cadr_leaves {u_machine|memory|g_color_tv.tv_color|} {ctl fb which}] \
     [cadr_leaves {u_machine|memory|g_quux_mono_tv.mono_tv|} {ctl fb which}] \
     [cadr_leaves {u_machine|memory|iob|} {sel kbm clkgrp chgrp sergrp wr which}] \
     [cadr_leaves {u_machine|memory|busint_regs|} {sel in_int in_map wr which mapk}]]]

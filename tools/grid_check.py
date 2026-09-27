@@ -51,12 +51,43 @@ must say so in its tag, `# grid: 75 ns (shared with 80 ns)`, naming every
 instant it shares with; the flows' own comments say what holds each clause
 instead.
 
+**AND THE NAMES THE CONSTRAINTS WRITE, AGAINST THE REGISTERS THE MACHINE
+HAS.**  The relaxed set is every register of the machine less a list of
+names, and neither tool warns when a name in that list matches nothing: a
+register that is renamed falls back into the set in silence, and its paths
+get the fast read tap's eight ticks where the machine gives them one.  That
+happened to REQTIM's oscillator, `vco_count` renamed `vco_acc`, and to the
+color TV, a second instance of the display board that `*memory/tv/*` does not
+reach.  So Verilator elaborates `cadr_machine` for each machine and this
+reads the registers out of its tree --- every variable a nonblocking
+assignment writes, named as Vivado and Quartus name it --- and holds the
+constraints to them two ways:
+
+  - every register pattern in `cadr_machine.xdc`'s and `quux_machine.xdc`'s
+    `filter [all_registers]` sets and `get_pins -quiet` lists, and every
+    `get_registers` and `get_pins` pattern of `cadr_de25.sdc` and
+    `quux_de25.sdc`, must match a register of one machine or the other (a
+    leaf written as `X` and `X[*]` is one name, matched by either);
+  - and two instances of one module must be in the relaxed set or out of it
+    register by register alike, since what decides it is the register's part
+    in the module and not where the module is instantiated.  The Vivado set is
+    evaluated from the filter's own text and the Quartus set by running the
+    SDC files in `tclsh` with the collection commands stubbed.
+
+It does not see the names synthesis gives the block memories (`REF_NAME`,
+`get_keepers`), which the flows' own assertions ask of the fitted design.
+
 Usage: grid_check.py [ROOT]    (ROOT defaults to the current directory)
 """
 
+import collections
+import json
+import os
 import pathlib
 import re
+import subprocess
 import sys
+import tempfile
 
 
 def fail(msg):
@@ -105,9 +136,13 @@ def main():
     count = sum(len(v) for v in generators.values())
     check_timing_model(root)
     constraints = check_constraints(root, fabric)
+    names, regs = check_names(root)
     print(f"ok: the grid is {fabric} ns in the fabric, the testbenches and "
           f"{count} generator constants in {len(generators)} files, and "
-          f"{constraints} constraint counts agree with it")
+          f"{constraints} constraint counts agree with it; {names} register "
+          f"names in the constraints each match some of the machines' "
+          f"{regs} registers, and no module's instances are split by the "
+          f"relaxed set")
 
 
 # The machine's power-on, in edges after the reset edge: one number in the
@@ -339,6 +374,346 @@ def check_constraints(root, grid):
                  f"the constraints for {others or 'no other instant'} ns share; its tag must "
                  f"say `(shared with ...)` for exactly those, and says {shared or 'nothing'}")
     return len(found)
+
+
+# ------------------------------------------------ the names the constraints write
+
+VERILATOR = os.environ.get("VERILATOR", "verilator")
+TCLSH = os.environ.get("TCLSH", "tclsh")
+MACHINES = ("cadr", "quux")
+XDC_NAMED = ["rtl/plumbing/xilinx7/cadr_machine.xdc", "rtl/plumbing/xilinx7/quux_machine.xdc"]
+# The SDC files each machine's build reads, in the order `project.tcl` reads them.
+SDC_NAMED = {"cadr": ["boards/de25-nano/quartus/cadr_de25.sdc"],
+             "quux": ["boards/de25-nano/quartus/cadr_de25.sdc",
+                      "boards/de25-nano/quartus/quux_de25.sdc"]}
+
+# One register of one instance: the module it is in, its name inside the
+# module (a generate block's name before it, as both tools write it), and its
+# full name as Vivado and as Quartus give it, a vector's bit 0 standing for
+# the rest.
+Reg = collections.namedtuple("Reg", "module local vivado quartus")
+
+
+def walk(node, fn):
+    if isinstance(node, dict):
+        fn(node)
+        for v in node.values():
+            walk(v, fn)
+    elif isinstance(node, list):
+        for v in node:
+            walk(v, fn)
+
+
+def elaborate(root, machine, scratch):
+    """The registers of `cadr_machine` built as `machine`, out of Verilator's
+    elaborated tree: parameters applied and generate blocks chosen, so each
+    machine has exactly the instances its bitstream has."""
+    mdir = os.path.join(scratch, machine)
+    cmd = [VERILATOR, "--json-only", "-Irtl/machine", "-Irtl/plumbing", "-Mdir", mdir,
+           f'-GMACHINE="{machine}"', "--top-module", "cadr_machine",
+           "rtl/machine/cadr_tick_pkg.sv", "rtl/plumbing/cadr_ddr_map.sv",
+           "rtl/machine/cadr_machine.sv"]
+    p = subprocess.run(cmd, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if p.returncode != 0:
+        fail(f"Verilator could not elaborate cadr_machine as {machine}:\n"
+             + p.stdout.decode("utf-8", "replace")[-2000:])
+    with open(os.path.join(mdir, "Vcadr_machine.tree.json")) as f:
+        tree = json.load(f)
+    by = {}
+    walk(tree, lambda n: by.__setitem__(n["addr"], n) if "addr" in n else None)
+    written = set()
+
+    def lhs(n):
+        if n.get("type") == "VARREF" and n.get("access") == "WR":
+            written.add(n.get("varp"))
+    walk(tree, lambda n: walk(n.get("lhsp", []), lhs) if n.get("type") == "ASSIGNDLY" else None)
+
+    def dims(dt):
+        # `[0]` for each unpacked dimension and one for a packed vector.
+        out = ""
+        for _ in range(16):
+            if dt is None:
+                return out
+            t = dt.get("type")
+            if t == "UNPACKARRAYDTYPE":
+                out += "[0]"
+                dt = by.get(dt.get("refDTypep"))
+            elif t == "BASICDTYPE":
+                r = dt.get("range", "")
+                return out + ("[0]" if r and len(set(r.split(":"))) > 1 else "")
+            elif t in ("ENUMDTYPE", "REFDTYPE"):
+                nxt = by.get(dt.get("refDTypep"))
+                if nxt is None or nxt is dt:
+                    return out + "[0]"
+                dt = nxt
+            else:
+                return out + "[0]"
+        return out
+
+    tops = [n for n in by.values()
+            if n.get("type") == "MODULE" and n.get("origName") == "cadr_machine"]
+    if len(tops) != 1:
+        fail(f"{len(tops)} cadr_machine modules in Verilator's tree for {machine}")
+    regs = []
+
+    def visit(mod, path):
+        def rec(n, gen):
+            if isinstance(n, list):
+                for v in n:
+                    rec(v, gen)
+                return
+            if not isinstance(n, dict):
+                return
+            t = n.get("type")
+            if t == "CELL":
+                visit(by[n["modp"]], path + [gen + n["name"]])
+                return
+            if t == "VAR":
+                if n["addr"] in written:
+                    d = dims(by.get(n.get("dtypep")))
+                    local = gen + n["name"]
+                    regs.append(Reg(mod.get("origName"), local,
+                                    "/".join(path + [local + "_reg" + d]),
+                                    "|".join(["u_machine"] + path + [local + d])))
+                return
+            if t == "BEGIN" and n.get("generate") and n.get("name") \
+                    and not n.get("implied") and not n.get("unnamed"):
+                gen = gen + n["name"] + "."
+            for v in n.values():
+                if isinstance(v, (list, dict)):
+                    rec(v, gen)
+        for v in mod.values():
+            if isinstance(v, (list, dict)):
+                rec(v, "")
+
+    visit(tops[0], [])
+    if not regs:
+        fail(f"no register in Verilator's tree of cadr_machine as {machine}")
+    return regs
+
+
+def glob(pat):
+    """Both tools' wildcards: `*` any run, `?` one character, brackets literal."""
+    return re.compile("".join(".*" if c == "*" else "." if c == "?" else re.escape(c)
+                              for c in pat) + r"\Z")
+
+
+def filter_sets(rel, text):
+    """Each `set X [filter [all_registers] {...}]` of an XDC, as its name, and
+    its expression's tokens: ("pat", op, pattern, line) for `NAME =~ p` or
+    `NAME !~ p`, ("ref", ...) for a `REF_NAME` term, else ("op", tok, None,
+    line).  A token this does not know fails, so a new construct cannot
+    arrive unread."""
+    sets = []
+    for m in re.finditer(r"^set\s+(\w+)\s+\[filter\s+\[all_registers\]\s+\{", text, re.M):
+        start = m.end()
+        depth, i = 1, start
+        while depth:
+            if i >= len(text):
+                fail(f"{rel}: `set {m.group(1)} [filter ...` has no closing brace")
+            depth += {"{": 1, "}": -1}.get(text[i], 0)
+            i += 1
+        expr = text[start:i - 1]
+        line0 = text.count("\n", 0, start) + 1
+        toks = []
+        for t in re.finditer(r"\\\n|&&|\|\||[()]|(REF_NAME|NAME)\s*(=~|!~)\s*([^\s()]+)|(\S+)",
+                             expr):
+            ln = line0 + expr.count("\n", 0, t.start())
+            if t.group(0) == "\\\n":
+                continue
+            if t.group(4):
+                fail(f"{rel}:{ln}: `{t.group(4)}` in the filter of `{m.group(1)}` is "
+                     f"nothing this check reads")
+            if t.group(1) == "NAME":
+                toks.append(("pat", t.group(2), t.group(3), ln))
+            elif t.group(1):
+                toks.append(("ref", t.group(2), t.group(3), ln))
+            else:
+                toks.append(("op", t.group(0), None, ln))
+        sets.append((m.group(1), toks))
+    return sets
+
+
+def in_filter(toks, name):
+    """Whether `name` passes a filter made only of NAME terms."""
+    pos = 0
+
+    def atom():
+        nonlocal pos
+        t = toks[pos]
+        pos += 1
+        if t[0] == "pat":
+            hit = bool(glob(t[2]).match(name))
+            return hit if t[1] == "=~" else not hit
+        if t[1] != "(":
+            fail(f"line {t[3]}: `{t[1]}` where a term belongs in the relaxed set's filter")
+        v = either()
+        if pos >= len(toks) or toks[pos][1] != ")":
+            fail(f"line {t[3]}: an unclosed `(` in the relaxed set's filter")
+        pos += 1
+        return v
+
+    def both():
+        nonlocal pos
+        v = atom()
+        while pos < len(toks) and toks[pos][1] == "&&":
+            pos += 1
+            v = atom() and v
+        return v
+
+    def either():
+        nonlocal pos
+        v = both()
+        while pos < len(toks) and toks[pos][1] == "||":
+            pos += 1
+            v = both() or v
+        return v
+
+    v = either()
+    if pos != len(toks):
+        fail(f"line {toks[pos][3]}: the relaxed set's filter does not parse past here")
+    return v
+
+
+# The SDC files run in `tclsh`, every command a timing analyzer has stubbed:
+# a query returns the names of the registers its patterns match and logs each
+# pattern with the line of the statement it is in and its count; the
+# collection commands are list operations; anything else returns nothing.
+SDC_HARNESS = r"""
+set names {}
+set fh [open [lindex $argv 0]]
+foreach l [split [read $fh] \n] { if {$l ne ""} { lappend names $l } }
+close $fh
+proc unknown args { return {} }
+proc query {kind strip args} {
+    set f [info frame -2]
+    set line [expr {[dict exists $f line] ? [dict get $f line] : 0}]
+    set file [expr {[dict exists $f file] ? [dict get $f file] : "?"}]
+    set out {}
+    foreach p [lindex $args end] {
+        set q [string map {\\ \\\\ [ \\[ ] \\]} [regsub $strip $p {}]]
+        set n 0
+        foreach nm $::names { if {[string match $q $nm]} { lappend out $nm; incr n } }
+        puts "PAT\t$kind\t$file\t$line\t$n\t$p"
+    }
+    return [lsort -unique $out]
+}
+proc get_registers args { return [query registers {^$} {*}$args] }
+proc get_pins args { return [query pins {\|d$} {*}$args] }
+proc get_keepers args { return {} }
+proc add_to_collection {a b} { return [lsort -unique [concat $a $b]] }
+proc remove_from_collection {a b} {
+    set d [dict create]
+    foreach x $b { dict set d $x 1 }
+    set out {}
+    foreach x $a { if {![dict exists $d $x]} { lappend out $x } }
+    return $out
+}
+proc get_collection_size {c} { return [llength $c] }
+foreach f [lrange $argv 1 end] { source $f }
+foreach x $slow { puts "SLOW\t$x" }
+puts "END"
+"""
+
+
+def stem(pat):
+    """A leaf written as `X` and `X[*]` is one name."""
+    return pat[:-3] if pat.endswith("[*]") else pat
+
+
+def check_names(root):
+    """Every name the constraints give a register matches one, and the relaxed
+    set treats every instance of a module alike."""
+    with tempfile.TemporaryDirectory(prefix="grid_names_") as scratch:
+        regs = {m: elaborate(root, m, scratch) for m in MACHINES}
+
+        # The Zynq boards'.  Each pattern of each filter, and each pin of each
+        # `get_pins -quiet` list, against both machines' registers.
+        hits = collections.Counter()
+        where = {}
+        slow = None
+        for rel in XDC_NAMED:
+            text = (root / rel).read_text()
+            for name, toks in filter_sets(rel, text):
+                if rel.endswith("cadr_machine.xdc") and name == "slow":
+                    if any(t[0] == "ref" for t in toks):
+                        fail(f"{rel}: the relaxed set's filter names a REF_NAME, which "
+                             f"this check cannot evaluate")
+                    slow = toks
+                for t in toks:
+                    if t[0] == "pat":
+                        key = (rel, "filter", t[2])
+                        where.setdefault(key, t[3])
+                        r = glob(t[2])
+                        hits[key] += sum(1 for m in MACHINES for x in regs[m] if r.match(x.vivado))
+            for m in re.finditer(r"\[get_pins\s+-quiet\s+\{([^}]*)\}", text):
+                line0 = text.count("\n", 0, m.start()) + 1
+                for p in m.group(1).split():
+                    key = (rel, "get_pins", p)
+                    where.setdefault(key, line0)
+                    r = glob(re.sub(r"/[A-Z]+$", "", p))
+                    hits[key] += sum(1 for mm in MACHINES for x in regs[mm] if r.match(x.vivado))
+        if slow is None:
+            fail(f"{XDC_NAMED[0]}: no `set slow [filter [all_registers] {{...}}]`, so "
+                 f"there is no relaxed set to hold to the registers")
+        xdc_slow = {m: {x.vivado for x in regs[m] if in_filter(slow, x.vivado)}
+                    for m in MACHINES}
+
+        # The DE25-Nano's, run.
+        sdc_slow = {}
+        harness = os.path.join(scratch, "sdc_harness.tcl")
+        with open(harness, "w") as f:
+            f.write(SDC_HARNESS)
+        for m in MACHINES:
+            names = os.path.join(scratch, m + ".names")
+            with open(names, "w") as f:
+                f.write("\n".join(x.quartus for x in regs[m]) + "\n")
+            p = subprocess.run([TCLSH, harness, names] + [str(root / s) for s in SDC_NAMED[m]],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            out = p.stdout.decode("utf-8", "replace").splitlines()
+            if p.returncode != 0 or not out or out[-1] != "END":
+                fail(f"the DE25-Nano's SDC files for {m} did not run through to the end "
+                     f"in tclsh:\n" + "\n".join(out[-20:]))
+            sdc_slow[m] = set()
+            for line in out:
+                fields = line.split("\t")
+                if fields[0] == "PAT":
+                    kind, path, ln, n, pat = fields[1:]
+                    # A name under the board's own top level, the debug
+                    # cable's, is no register of the machine's; the flow's
+                    # own assertion holds it.
+                    if not pat.startswith(("u_machine|", "*")):
+                        continue
+                    rel = os.path.relpath(path, root) if path != "?" else path
+                    key = (rel, kind, stem(pat))
+                    where.setdefault(key, int(ln))
+                    hits[key] += int(n)
+                elif fields[0] == "SLOW":
+                    sdc_slow[m].add(fields[1])
+
+    dead = sorted((where[k], k) for k, n in hits.items() if n == 0)
+    if dead:
+        fail("register names in the timing constraints that match no register of "
+             "either machine, so what they meant to keep out of (or put into) a set is "
+             "not there, in silence:\n" +
+             "\n".join(f"  {rel}:{ln}: {kind} `{pat}`" for ln, (rel, kind, pat) in dead))
+
+    for tool, attr, sets in (("cadr_machine.xdc", "vivado", xdc_slow),
+                             ("cadr_de25.sdc", "quartus", sdc_slow)):
+        for m in MACHINES:
+            groups = collections.defaultdict(lambda: {True: [], False: []})
+            for x in regs[m]:
+                name = getattr(x, attr)
+                groups[(x.module, x.local)][name in sets[m]].append(name)
+            split = [(k, v) for k, v in sorted(groups.items()) if v[True] and v[False]]
+            if split:
+                fail(f"{tool}'s relaxed set splits the instances of a module ({m}): "
+                     f"the same register is relaxed in one and kept at the tick in "
+                     f"another, which is a pattern that names one instance by its path:\n" +
+                     "\n".join(f"  {mod} `{loc}`: relaxed in {v[True][0]}, at the tick in "
+                               f"{v[False][0]}" for (mod, loc), v in split[:12]) +
+                     (f"\n  ... and {len(split) - 12} more" if len(split) > 12 else ""))
+    return len(hits), sum(len(regs[m]) for m in MACHINES)
 
 
 if __name__ == "__main__":
