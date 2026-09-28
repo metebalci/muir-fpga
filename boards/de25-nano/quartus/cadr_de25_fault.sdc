@@ -9,7 +9,9 @@
 # 10 ns output, and `fault_sta.tcl` refuses a build whose two clocks are not
 # those.  What is here is the CADR build's own treatment of the pins and of
 # the processor's asynchronous signals, for the registers the fault top level
-# keeps, under the same names.
+# keeps, under the same names.  The processor system's own reset
+# synchronizers are cut by `hps_reset.sdc`, which `project.tcl` reads beside
+# this file as it does beside `cadr_ddr.sdc`.
 
 derive_clock_uncertainty
 

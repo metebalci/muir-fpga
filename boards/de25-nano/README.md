@@ -603,12 +603,14 @@ its release against the machine's clock, which is unrelated to it, so six
 clears failed removal by up to 0.672 ns on both fits of `3dad80b`.
 `quartus/sta_check.tcl` then asked setup and hold only, and called those fits
 met. A reset synchronizer is built to take exactly that release, and Altera
-constrains its own the same way, so `quartus/cadr_ddr.sdc` cuts the path
+constrains its own the same way, so `quartus/hps_reset.sdc` cuts the path
 from the processor's reset output to those six clear pins and nothing else,
 and gives the reason with its sources. `quartus/sta_check.tcl` now checks
 recovery and removal at every corner as well as setup and hold, counts the
 pins the cut reached, and refuses any asynchronous clear that is timed from
-one clock into another, whatever its slack.
+one clock into another, whatever its slack. The fault bitstream carries the
+same processor system, so it reads the same cut, and `quartus/fault_sta.tcl`
+asks the same three questions through `quartus/sta_common.tcl`.
 
 ### How the processor boots
 

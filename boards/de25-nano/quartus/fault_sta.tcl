@@ -5,9 +5,14 @@
 # `build.sh` in place of `sta_check.tcl` when `FAULT=1`.  That file asks its
 # questions of the machine's exceptions, and this design has no machine, so
 # what is left is its first and last parts: the two clocks are the board's
-# 20 ns and the 10 ns tick, and every corner's worst setup and hold slack,
-# written to `timing.txt` in the same words, which `build.sh` and
-# `program.sh` read.
+# 20 ns and the 10 ns tick; the processor system's three reset synchronizers
+# are cut by `hps_reset.sdc` and nothing recovery or removal times ends at
+# them; no asynchronous clear is timed from one clock into another; and every
+# corner's worst setup, hold, recovery and removal slack, written to
+# `timing.txt` in the same words, which `build.sh` and `program.sh` read.
+# The last three are `sta_common.tcl`'s, the same procedures `sta_check.tcl`
+# calls, because the fault bitstream carries the memory board's processor
+# system and so its synchronizers.
 
 package require ::quartus::sta
 
@@ -21,6 +26,8 @@ update_timing_netlist
 
 set failures 0
 set out [open timing.txt w]
+
+source [file join [file dirname [file normalize [info script]]] sta_common.tcl]
 
 set machine_clocks {}
 set board_clocks {}
@@ -53,24 +60,12 @@ if {[llength $board_clocks] != 2
     puts "sta: the board's clock is [lindex $board_clocks 0] on clock50_0, $board_ns ns"
 }
 
-set worst_setup ""
-set worst_hold ""
-foreach cond [get_available_operating_conditions] {
-    set_operating_conditions $cond
-    update_timing_netlist
-    set s [report_timing -setup -npaths 1 -detail full_path -file timing_setup_$cond.txt]
-    set h [report_timing -hold  -npaths 1 -detail full_path -file timing_hold_$cond.txt]
-    set s_slack [lindex $s 1]
-    set h_slack [lindex $h 1]
-    puts "sta: $cond: setup [format %+.3f $s_slack] ns, hold [format %+.3f $h_slack] ns"
-    puts $out "corner $cond setup $s_slack hold $h_slack"
-    if {$worst_setup eq "" || $s_slack < $worst_setup} { set worst_setup $s_slack }
-    if {$worst_hold  eq "" || $h_slack < $worst_hold}  { set worst_hold  $h_slack }
-}
-puts "sta: worst setup [format %+.3f $worst_setup] ns, worst hold [format %+.3f $worst_hold] ns, over every corner"
-puts $out "worst setup $worst_setup hold $worst_hold"
+# The processor system's reset synchronizers, asynchronous clears across two
+# clocks, and the corners, as the CADR's builds ask them.
+sta_hps_reset_sync
+sta_async_across_clocks
+set met [sta_corners $out]
 
-set met [expr {$worst_setup >= 0 && $worst_hold >= 0}]
 if {!$met} {
     puts "sta: TIMING IS NOT MET.  The bitstream will still be written, and"
     puts "sta: program.sh will refuse it."

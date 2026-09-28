@@ -152,6 +152,13 @@ if {$ddr && !$fault} {
     set_global_assignment -name VERILOG_MACRO "CADR_DE25_DDR=1"
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus cadr_ddr.sdc]
 }
+# **AND THE PROCESSOR SYSTEM'S OWN RESET SYNCHRONIZERS, ON EVERY BUILD THAT HAS
+# IT**: the memory board and the fault bitstream carry the same generated
+# processor system, so they carry the same three synchronizers and the same
+# cut, from one file.  `hps_reset.sdc` says why the cut is there.
+if {$ddr} {
+    set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus hps_reset.sdc]
+}
 
 # **THE DISPLAY OUTPUT, ITS PIXEL CLOCK AND ITS OWN CONSTRAINTS**, only when
 # it is built, for the reason the probe's files below are read only behind
