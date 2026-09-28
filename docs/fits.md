@@ -22,6 +22,26 @@ reports none.
 
 ## From a clean tree
 
+These fits were built from `3dad80b`, QUUX's revision 11 with the register
+page at `17777400` (contract Q13), with muir pinned at `7bc901f`.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX | +0.113 ns | +0.029 ns | 15,529 of 53,200 LUTs, 29.19% | 62 of 140 BRAM tiles | 5,178 of 13,300 | `3dad80b` | clean | 2026-09-28 |
+| Arty Z7-20 | CADR | +0.222 ns | +0.042 ns | 15,050 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,529 of 13,300 | `3dad80b` | clean | 2026-09-28 |
+| Cora Z7-07S | CADR | +0.210 ns | +0.041 ns | 14,024 of 14,400 LUTs, 97.39% | 43 of 50 BRAM tiles | 4,325 of 4,400 | `3dad80b` | clean | 2026-09-28 |
+| DE25-Nano | QUUX | +2.288 ns | 0.000 ns | 17,557 of 46,800 ALMs, 38% | 191 of 358 M20K | --- | `3dad80b` | clean | 2026-09-28 |
+| DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `3dad80b` | clean | 2026-09-28 |
+
+The CADR fits are the same, figure for figure, as those of the working tree
+on `681a08a` below, since revision 11 changes nothing of the CADR's. The Arty
+Z7-20's QUUX fit meets timing by 0.113 ns; its worst setup path is the
+machine's reset into the readout's word, which has one tick. Each Zynq fit
+also passed `boards/arty-z7-20/vivado/rams_enable_check.tcl`, over 105, 98
+and 92 block RAM ports.
+
+These fits were built from `7f44547`.
+
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
 | Arty Z7-20 | QUUX | +0.176 ns | +0.028 ns | 15,568 of 53,200 LUTs, 29.26% | 62 of 140 BRAM tiles | 5,339 of 13,300 | `7f44547` | clean | 2026-09-27 |

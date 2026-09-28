@@ -84,6 +84,7 @@ fn kind(r: Responder) -> &'static str {
 /// whole machine by `quux_tv` and `quux_port`.
 fn decode(m: &Machine, phys: u32, words: usize) -> Responder {
     match busint::decode_quux(phys, words, m.tv.buffer_words()) {
+        // The fabric's decode names the buffer a device and its port takes it as memory by `video_fb`; every boundary is still muir's.
         Responder::Memory(_) if phys >= muir::tv::BUFFER => Responder::Device,
         r => r,
     }
