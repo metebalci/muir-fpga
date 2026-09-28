@@ -5,7 +5,7 @@
  * the CADR beside it.
  *
  * ONE FILE FOR BOTH, as the Zynq boards' trees are, and a thin one: it is
- * Altera's own DE25-Nano tree with five things added.  The kernel compiles it
+ * Altera's own DE25-Nano tree with six things added.  The kernel compiles it
  * from arch/arm64/boot/dts/intel/ and U-Boot from arch/arm/dts/, and in each
  * `#include "socfpga_agilex5_de25_nano.dts"` finds THAT tree's own file ---
  * Altera ships one in its kernel (linux-socfpga, arch/arm64/boot/dts/intel/)
@@ -61,6 +61,27 @@
  *     the receive one.  This was found while looking at something else and has
  *     not been investigated: whoever returns to it should try to reproduce the
  *     stall before believing it is gone.
+ *   the ETHERNET CONTROLLER'S DMA NOT COHERENT.  Altera's `socfpga_agilex5.dtsi`
+ *     gives `gmac0` the `dma-coherent` property, which tells the kernel that
+ *     the controller's reads see what the processor's caches hold, so the
+ *     kernel does no cache maintenance for it.  Measured on this board, with
+ *     the property, the controller sometimes TRANSMITS STALE MEMORY: in the
+ *     first minutes after a boot a 64-byte line of an outgoing stream,
+ *     aligned to 64 in it, carried older contents of that memory (kernel
+ *     pointers, zeros, bytes of a file written before) instead of what the
+ *     processor had just written there.  With the transmit checksum offload
+ *     on, the controller computed the TCP checksum over those stale bytes, so
+ *     the receiving host accepted them and the damage surfaced in ssh as
+ *     "message authentication code incorrect" and in the RFB stream as
+ *     stray marks on the picture; with the offload off the host counted the
+ *     same segments as bad checksums (42 and 132 in two boots).  Without the
+ *     property the kernel cleans the caches before each transmit, and over
+ *     15 boots that fault did not appear once.  WHY the controller is not
+ *     coherent although Altera's tree says it is has not been established.
+ *     Altera added the property to cure a kernel panic in `dcache_inval_poc`
+ *     (linux-socfpga commit 85ff6f6b6394), and that panic was not seen here.
+ *     This line reaches U-Boot's tree too, whose `gmac0` does not carry the
+ *     property, so it changes nothing there.
  *   the QSPI FLASH CONTROLLER TURNED OFF.  The controller is shared between
  *     the processor and the Secure Device Manager, and the manager owns it at
  *     every power-up.  The processor gets it only by asking over the
@@ -114,6 +135,16 @@
  */
 &gmac0 {
 	phy-mode = "rgmii-id";
+};
+
+/*
+ * The Ethernet controller's DMA, which Altera's tree calls coherent and which
+ * this board showed is not: see the header.  Without the property the kernel
+ * cleans the processor's caches before the controller reads a buffer and
+ * invalidates them after it writes one.
+ */
+&gmac0 {
+	/delete-property/ dma-coherent;
 };
 
 /*

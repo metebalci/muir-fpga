@@ -740,8 +740,8 @@ and U-Boot from `arch/arm/dts/`, and in each the `#include` finds that source's
 own file, which are not the same file. What is added is the model restated in
 Altera's words, so that the card staging can read which board's tree this is;
 the machine's reservation; the USB port as a host; the Ethernet PHY's receive
-delay; and the flash controller turned off. The last three were each measured on
-the board.
+delay; the Ethernet controller's DMA marked not coherent; and the flash
+controller turned off. The last four were each measured on the board.
 
 **The USB port is a host.** The board's one port is the processor's DWC2
 controller behind a ULPI PHY at a Type-C connector, and the board's manual
@@ -758,6 +758,22 @@ rather than one that breaks the frames it starts. The part carries a built-in
 skews that cancel it (`drivers/net/phy/micrel.c`), leaving the receive path with
 no delay at all. With `rgmii-id` the same board received frames immediately and
 cleanly, every receive error counter still at zero.
+
+**The Ethernet controller's DMA is not treated as coherent**, although Altera's
+tree marks it `dma-coherent`. With that property the kernel does no cache
+maintenance for the controller, and on this board the controller then sometimes
+transmitted stale memory: in the first minutes after a boot, a 64-byte line of
+an outgoing stream carried older contents of that memory instead of what the
+processor had just written. With the transmit checksum offload on, the
+controller computed the checksum over the stale bytes, so the receiving host
+accepted them. The damage showed in ssh as "message authentication code
+incorrect" and in the RFB stream as stray marks on the picture. With the offload
+off, the host counted the same segments as bad checksums. The tree deletes the
+property, so the kernel cleans and invalidates the caches around each transfer.
+Over 15 boots since, no bad segment and no damaged transfer was seen, and a
+64 MiB copy over ssh took as long as before. Why the controller is not coherent
+is not established; Altera added the property to cure a kernel panic, not after
+a measurement of coherency.
 
 **The flash controller is turned off, and leaving it on can kill the kernel.**
 The controller is shared between the processor and the Secure Device Manager,
