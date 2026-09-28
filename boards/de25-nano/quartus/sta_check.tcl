@@ -57,11 +57,20 @@
 #      timed between it and the machine's clock, and of the probe's
 #      registers `stable_q` carries the microcycle and no other does.
 #
-#   4. EVERY CORNER, SETUP AND HOLD.  Each operating condition the part has is
-#      analyzed and its worst slack printed.  A negative one is reported as a
-#      failure and written to `timing.txt`, and the bitstream is still
-#      written, because a flow that works and a design that closes are two
-#      questions.
+#   And when the memory board is built, THE PROCESSOR SYSTEM'S THREE RESET
+#      SYNCHRONIZERS, from `cadr_ddr.sdc`: its cut reached their six clear
+#      pins and the processor's one reset output, and no recovery or removal
+#      path ends at those pins.
+#
+#   And of every build, NO ASYNCHRONOUS CLEAR IS TIMED FROM ONE CLOCK INTO
+#      ANOTHER, whatever its slack, because such a slack says where the
+#      fitter put the two ends and nothing about whether the release is safe.
+#
+#   4. EVERY CORNER, SETUP, HOLD, RECOVERY AND REMOVAL.  Each operating
+#      condition the part has is analyzed and its worst slack of each kind
+#      printed.  A negative one is reported as a failure and written to
+#      `timing.txt`, and the bitstream is still written, because a flow that
+#      works and a design that closes are two questions.
 
 package require ::quartus::sta
 
@@ -744,6 +753,35 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
             puts "sta: no timed path ends at the processor's bits' first registers"
         }
     }
+    # **THE PROCESSOR SYSTEM'S THREE RESET SYNCHRONIZERS**, `cadr_ddr.sdc`'s
+    # cut from `s2f_rst` to their six `clrn` pins, which that file gives
+    # Altera's reason for.  Six and one: a renamed register or a renamed
+    # pin leaves the cut reaching nothing, and a pattern grown wider takes
+    # in a clear that is not a synchronizer's.  And a cut that reached its
+    # pins leaves no recovery or removal path ending at them; the corners
+    # below then ask every other asynchronous clear in the design.
+    foreach {sta_what sta_var sta_want} {{the reset synchronizers' clears} hps_rst_clrn 6
+                                         {the processor's reset output} hps_s2f_rst 1} {
+        if {![info exists ::$sta_var]} {
+            puts "sta: FAIL: cadr_ddr.sdc left no collection named $sta_var"
+            incr failures
+        } elseif {[get_collection_size [set ::$sta_var]] != $sta_want} {
+            puts "sta: FAIL: $sta_what: [get_collection_size [set ::$sta_var]], wanting $sta_want"
+            incr failures
+        } else {
+            puts "sta: $sta_what: $sta_want"
+        }
+    }
+    if {[info exists ::hps_rst_clrn] && [get_collection_size $::hps_rst_clrn] > 0} {
+        set sta_rec [get_collection_size [get_timing_paths -recovery -to $::hps_rst_clrn -npaths 100]]
+        set sta_rem [get_collection_size [get_timing_paths -removal  -to $::hps_rst_clrn -npaths 100]]
+        if {$sta_rec + $sta_rem > 0} {
+            puts "sta: FAIL: $sta_rec recovery and $sta_rem removal paths end at the reset synchronizers' clears"
+            incr failures
+        } else {
+            puts "sta: no recovery or removal path ends at the processor system's reset synchronizers"
+        }
+    }
 }
 # The three exemptions, each named where its own clause is asserted above:
 # the connector's sender, which is in every build of this board because a
@@ -889,25 +927,99 @@ if {[get_collection_size [get_registers -nowarn {u_machine|audit|*}]] == 0} {
     puts "sta: the audit has no registers on a board with no console to read it, so its split is not asked about"
 }
 
+# ------------------------------------ asynchronous clears across two clocks
+#
+# **AN ASYNCHRONOUS CLEAR TIMED FROM ONE CLOCK INTO ANOTHER IS REFUSED,
+# WHATEVER ITS SLACK.**  A clear released by one clock and checked against
+# another's edge is a clock crossing, and a recovery or removal slack between
+# two clocks with no fixed relation measures only where the fitter happened
+# to put the two ends: the processor system's synchronizers failed removal
+# by 0.67 ns, and the same crossing placed further from the processor would
+# have passed and been no safer.  The answer to one is a reset synchronizer
+# whose clear is cut, as `cadr_ddr.sdc` cuts the processor system's.  So
+# every recovery and removal path is asked for its two clocks, and one whose
+# launching clock is not its latching clock stops the flow.
+foreach sta_kind {recovery removal} {
+    set sta_n 0
+    set sta_first ""
+    foreach_in_collection p [get_timing_paths -$sta_kind -npaths 100000 -nworst 1] {
+        set sta_from ""
+        set sta_to ""
+        catch {set sta_from [get_clock_info -name [get_path_info $p -from_clock]]}
+        catch {set sta_to   [get_clock_info -name [get_path_info $p -to_clock]]}
+        if {$sta_from ne $sta_to} {
+            incr sta_n
+            if {$sta_first eq ""} {
+                set sta_first "[get_node_info -name [get_path_info $p -from]] ($sta_from) ->\
+                               [get_node_info -name [get_path_info $p -to]] ($sta_to)"
+            }
+        }
+    }
+    if {$sta_n > 0} {
+        puts "sta: FAIL: $sta_n $sta_kind paths are timed from one clock into another; first: $sta_first"
+        incr failures
+    } else {
+        puts "sta: no $sta_kind path is timed from one clock into another"
+    }
+}
+
 # ------------------------------------------------------------ the corners
-set worst_setup ""
-set worst_hold ""
+#
+# **SETUP, HOLD, RECOVERY AND REMOVAL, AT EVERY CORNER.**  Recovery and
+# removal are setup and hold for an asynchronous clear or preset: how long
+# before and after the capturing clock's edge a register's clear may be
+# released.  They were not asked here until a fit whose summary said "met"
+# had six endpoints failing removal by 0.67 ns, which the timing analyzer's
+# own report showed and this file never read.  A design with no
+# asynchronous-clear path at all has no recovery or removal path, and
+# `report_timing` then gives "0 0.000"; that is written as "none" rather than
+# as a slack nobody measured.
+set sta_kinds {setup hold recovery removal}
+foreach sta_kind $sta_kinds { set sta_worst($sta_kind) "" }
 foreach cond [get_available_operating_conditions] {
     set_operating_conditions $cond
     update_timing_netlist
-    set s [report_timing -setup -npaths 1 -detail full_path -file timing_setup_$cond.txt]
-    set h [report_timing -hold  -npaths 1 -detail full_path -file timing_hold_$cond.txt]
-    set s_slack [lindex $s 1]
-    set h_slack [lindex $h 1]
-    puts "sta: $cond: setup [format %+.3f $s_slack] ns, hold [format %+.3f $h_slack] ns"
-    puts $out "corner $cond setup $s_slack hold $h_slack"
-    if {$worst_setup eq "" || $s_slack < $worst_setup} { set worst_setup $s_slack }
-    if {$worst_hold  eq "" || $h_slack < $worst_hold}  { set worst_hold  $h_slack }
+    set sta_said {}
+    set sta_line "corner $cond"
+    foreach sta_kind $sta_kinds {
+        set r [report_timing -$sta_kind -npaths 1 -detail full_path -file timing_${sta_kind}_$cond.txt]
+        if {[lindex $r 0] == 0} {
+            lappend sta_said "$sta_kind none"
+            append sta_line " $sta_kind none"
+            continue
+        }
+        set slack [lindex $r 1]
+        lappend sta_said "$sta_kind [format %+.3f $slack] ns"
+        append sta_line " $sta_kind $slack"
+        if {$sta_worst($sta_kind) eq "" || $slack < $sta_worst($sta_kind)} { set sta_worst($sta_kind) $slack }
+    }
+    puts "sta: $cond: [join $sta_said {, }]"
+    puts $out $sta_line
 }
-puts "sta: worst setup [format %+.3f $worst_setup] ns, worst hold [format %+.3f $worst_hold] ns, over every corner"
-puts $out "worst setup $worst_setup hold $worst_hold"
+set sta_said {}
+set sta_line "worst"
+set met 1
+foreach sta_kind $sta_kinds {
+    if {$sta_worst($sta_kind) eq ""} {
+        lappend sta_said "no $sta_kind path"
+        append sta_line " $sta_kind none"
+        continue
+    }
+    lappend sta_said "worst $sta_kind [format %+.3f $sta_worst($sta_kind)] ns"
+    append sta_line " $sta_kind $sta_worst($sta_kind)"
+    if {$sta_worst($sta_kind) < 0} { set met 0 }
+}
+# Setup and hold always have paths in a design with a machine in it, and a
+# build that reports none of either has lost its clocks.
+foreach sta_kind {setup hold} {
+    if {$sta_worst($sta_kind) eq ""} {
+        puts "sta: FAIL: no $sta_kind path at any corner"
+        incr failures
+    }
+}
+puts "sta: [join $sta_said {, }], over every corner"
+puts $out $sta_line
 
-set met [expr {$worst_setup >= 0 && $worst_hold >= 0}]
 if {!$met} {
     puts "sta: TIMING IS NOT MET.  The bitstream will still be written, and"
     puts "sta: program.sh will refuse it."

@@ -594,6 +594,22 @@ why each may be cut. With them cut the board closes at +3.343 ns, and
 `quartus/sta_check.tcl` counts what the cut reached so that it cannot
 quietly reach more.
 
+**AND THE PROCESSOR SYSTEM'S OWN RESET SYNCHRONIZERS FAILED REMOVAL, WHICH
+NOTHING READ.** The generated processor system puts a two-register reset
+synchronizer in front of each bridge's ready-latency adapter, three in all,
+and each register is cleared asynchronously by the processor's reset output.
+The timing analyzer launches that output from `hps_internal_osc` and checks
+its release against the machine's clock, which is unrelated to it, so six
+clears failed removal by up to 0.672 ns on both fits of `3dad80b`.
+`quartus/sta_check.tcl` then asked setup and hold only, and called those fits
+met. A reset synchronizer is built to take exactly that release, and Altera
+constrains its own the same way, so `quartus/cadr_ddr.sdc` cuts the path
+from the processor's reset output to those six clear pins and nothing else,
+and gives the reason with its sources. `quartus/sta_check.tcl` now checks
+recovery and removal at every corner as well as setup and hold, counts the
+pins the cut reached, and refuses any asynchronous clear that is timed from
+one clock into another, whatever its slack.
+
 ### How the processor boots
 
 `DE25_HPS_BOOT` chooses, and `DE25_SPL_HEX` names the first-stage loader the

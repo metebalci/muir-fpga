@@ -56,6 +56,24 @@ the CADR.
 
 ## From a modified tree
 
+These fits were built from `7f49c09` with the change that cuts the processor
+system's three reset synchronizers' clears
+(`boards/de25-nano/quartus/cadr_ddr.sdc`) and has
+`boards/de25-nano/quartus/sta_check.tcl` check recovery and removal, with muir
+pinned at `7bc901f`.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| DE25-Nano | QUUX | +2.288 ns | 0.000 ns | 17,557 of 46,800 ALMs, 38% | 191 of 358 M20K | --- | `7f49c09` | modified | 2026-09-28 |
+| DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `7f49c09` | modified | 2026-09-28 |
+
+Both fits have no recovery or removal path at any of the four corners: the
+only asynchronous clears in either design were those six, and they are now
+cut. The setup, hold and size figures are the same as those of the clean fits
+of `3dad80b` above. Those two fits, analyzed again with the new check, fail
+removal at all four corners, worst -0.668 ns for QUUX and -0.672 ns for the
+CADR, while recovery passes by +3.812 ns and +3.802 ns.
+
 These fits were built from `4dcae2e` with the constraint change that was then
 committed as `5fe33d6`.
 
