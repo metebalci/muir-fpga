@@ -89,12 +89,12 @@
 // Q11; before it, Q1's tick and interval timer).
 #define MUIR_TICK 0u
 #define MUIR_TIMERS 3u
-// The size QUUX's MONO TV would have, which `Tv::save` writes for every
-// board: `tv::MONO_TV_WIDTH` by `MONO_TV_HEIGHT`, the default a CADR's
+// The size QUUX's video controller would have, which `Tv::save` writes for
+// every board: `tv::VIDEO_WIDTH` by `VIDEO_HEIGHT`, the default a CADR's
 // display keeps and never uses.  1280 by 1024 since muir's `22c8a52`, the
 // HDMI mode this fabric's boards drive; 1920 by 1080 before it.
-#define MUIR_MONO_TV_WIDTH 1280u
-#define MUIR_MONO_TV_HEIGHT 1024u
+#define MUIR_VIDEO_WIDTH 1280u
+#define MUIR_VIDEO_HEIGHT 1024u
 // **THE ARRAYS ARE muir's LARGEST MACHINE'S, NOT THE CADR's.**  `PDL_WORDS`
 // and `L2_MAP_WORDS` in src/machine.rs are QUUX's sixteen thousand PDL words
 // and two thousand level-2 entries, so that one `Machine` holds either
@@ -276,8 +276,8 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 #else
 	chk_u8(w, MUIR_TV_BOARD_SIMPLE);	/* DECLARED board */
 #endif
-	chk_u16(w, MUIR_MONO_TV_WIDTH);		/* NONE mono_tv_size */
-	chk_u16(w, MUIR_MONO_TV_HEIGHT);
+	chk_u16(w, MUIR_VIDEO_WIDTH);		/* NONE video_size */
+	chk_u16(w, MUIR_VIDEO_HEIGHT);
 	chk_u32s(w, img->tv, IMG_TV_WORDS);	/* READ, out of DDR */
 	chk_u32(w, 0);				/* NONE mode */
 	static const uint8_t zero_sync[IMG_TV_SYNC] = { 0 };
@@ -566,14 +566,14 @@ static void emit_memory_port(struct chk *w)
 // **WHAT A QUUX CHECKPOINT HOLDS THAT A CADR'S DOES NOT**, each written below
 // where muir's own order puts it: `Geometry::QUUX` after the level-1 map; the
 // processor's clocks, `Tick`; block-disk in the CADR controller's place,
-// whose own slot is then an idle controller with no drive; MONO TV, the
-// display board with the tag 2, its size, its 40,960-word buffer and one bit
+// whose own slot is then an idle controller with no drive; the video
+// controller, the display board with the tag 2, its size, its 40,960-word buffer and one bit
 // of mode; the keyboard and mouse, `QuuxInput`; the page's bus errors in
 // `Machine::bus_error`; and `TimingModel::Sync` with K and L.  All of it is
 // READ, off the register table's entries 21 to 25 and selector 12, but for
 // what a QUUX machine of muir's holds and never changes --- the Unibus's
 // registers at their power-on values, the display's sync program and color
-// map, which MONO TV has neither of --- and those are written as muir's own
+// map, which the video controller has neither of --- and those are written as muir's own
 // machine holds them, which is exact rather than idle.
 //
 // Held to muir's own file for the same machine, byte for byte, by
@@ -587,8 +587,9 @@ static void emit_memory_port(struct chk *w)
 #define CHK_TICKS_A_US (1000u / CHK_GRID_NS)
 // `block_disk::BLOCK_NS`, a block's time, which `BlockDisk::save` writes.
 #define MUIR_BLOCK_NS 100000u
-// `Tv::save`'s tag for MONO TV, and `tv::mode::BOW`.
-#define MUIR_TV_BOARD_MONO 2u
+// `Tv::save`'s tag for the video controller, `Board::Video`, and
+// `tv::mode::BOW`.
+#define MUIR_TV_BOARD_VIDEO 2u
 #define MUIR_TV_MODE_BOW 04u
 // `Rtl::save`'s tag for `TimingModel::Sync`, followed by K and L.
 #define MUIR_TIMING_SYNC 2u
@@ -719,28 +720,28 @@ static void emit_block_disk(struct chk *w, const struct cadr_image *img,
 	}
 }
 
-// `Tv::save` for MONO TV (src/tv.rs): the tag, its size, the buffer, and a
-// mode register that keeps black-on-white alone.  MONO TV has no sync
+// `Tv::save` for the video controller (src/tv.rs): the tag, its size, the
+// buffer, and a mode that keeps black-on-white alone.  It has no sync
 // program and no color map --- `Tv::write_control` keeps nothing else --- so
 // the rest is `Tv::default`'s and stays so on a machine of muir's.
-static void emit_mono_tv(struct chk *w, const struct cadr_image *img)
+static void emit_video(struct chk *w, const struct cadr_image *img)
 {
-	chk_u8(w, MUIR_TV_BOARD_MONO);			/* READ, the machine */
-	chk_u16(w, MUIR_MONO_TV_WIDTH);			/* DECLARED, the bitstreams' */
-	chk_u16(w, MUIR_MONO_TV_HEIGHT);
+	chk_u8(w, MUIR_TV_BOARD_VIDEO);			/* READ, the machine */
+	chk_u16(w, MUIR_VIDEO_WIDTH);			/* DECLARED, the bitstreams' */
+	chk_u16(w, MUIR_VIDEO_HEIGHT);
 #if CHK_MUTATE == 14
-	// The CADR's buffer, 32,768 words, where MONO TV's is 40,960.
+	// The CADR's buffer, 32,768 words, where the video controller's is 40,960.
 	chk_u32s(w, img->tv, IMG_TV_WORDS);
 #else
 	chk_u32s(w, img->tv, img->tv_words);		/* READ, out of DDR */
 #endif
 	chk_u32(w, img->qx.bow ? MUIR_TV_MODE_BOW : 0u);	/* READ */
 	static const uint8_t zero_sync[IMG_TV_SYNC] = { 0 };
-	chk_bytes(w, zero_sync, IMG_TV_SYNC);		/* NONE on MONO TV */
+	chk_bytes(w, zero_sync, IMG_TV_SYNC);		/* NONE on the video controller */
 	chk_u16(w, 0);
 	chk_u8(w, MUIR_TV_SYNC_ENABLE);
 	for (unsigned i = 0; i < MUIR_TV_COLOR_MAP_BYTES; ++i)
-		chk_u8(w, 0);				/* NONE on MONO TV */
+		chk_u8(w, 0);				/* NONE on the video controller */
 	chk_bool(w, 0);					/* flag_written */
 	chk_u64(w, 0);					/* written_at */
 	chk_u64(w, 0);					/* origin */
@@ -963,7 +964,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		emit_disk(w, &no_drives);
 		chk_bool(w, 1);				/* block_disk is there */
 		emit_block_disk(w, img, d);
-		emit_mono_tv(w, img);
+		emit_video(w, img);
 	} else {
 		emit_disk(w, d);
 		// `Machine::block_disk`, version 37: QUUX's block-disk when it
@@ -1335,7 +1336,7 @@ const char *chk_rtl_mutation(void)
 #elif CHK_MUTATE == 13
 	return "the sync timing model's K and L written crossed";
 #elif CHK_MUTATE == 14
-	return "MONO TV's buffer written at the CADR display's 32,768 words";
+	return "the video controller's buffer written at the CADR display's 32,768 words";
 #elif CHK_MUTATE == 15
 	return "the control store under QUUX's PROM written as the fabric's RAM holds it";
 #elif CHK_MUTATE == 16

@@ -191,7 +191,7 @@ set out_whole [get_registers -nowarn {u_machine|g_cadr_disk.disk|* u_machine|g_q
                                       u_machine|memory|tv|* u_machine|memory|g_color_tv.tv_color|*
                                       u_machine|memory|iob|*
                                       u_machine|memory|busint_regs|*
-                                      u_machine|memory|g_quux_mono_tv.mono_tv|*
+                                      u_machine|memory|g_quux_video.video|*
                                       u_machine|memory|g_quux_port.port|*}]
 set held [get_registers -nowarn [concat \
     [cadr_leaves {u_machine|g_cadr_disk.disk|} {mine which}] \
@@ -200,7 +200,7 @@ set held [get_registers -nowarn [concat \
     [cadr_leaves {u_machine|audit|} {micro word}] \
     [cadr_leaves {u_machine|memory|tv|} {ctl fb which}] \
     [cadr_leaves {u_machine|memory|g_color_tv.tv_color|} {ctl fb which}] \
-    [cadr_leaves {u_machine|memory|g_quux_mono_tv.mono_tv|} {ctl fb which}] \
+    [cadr_leaves {u_machine|memory|g_quux_video.video|} {ctl fb}] \
     [cadr_leaves {u_machine|memory|iob|} {sel kbm clkgrp chgrp sergrp wr which}] \
     [cadr_leaves {u_machine|memory|busint_regs|} {sel in_int in_map wr which mapk}]]]
 set slow [remove_from_collection $machine $fast]

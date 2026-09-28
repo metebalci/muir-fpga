@@ -102,7 +102,7 @@ FAULT_SH=/usr/share/cadr/fault.sh
 # destinations, and the other two are a person's at a prompt.
 #
 # **`--machine cadr|quux` SAYS WHICH MACHINE THE BITSTREAM IS**, and so which
-# screen: the CADR's 768 by 963 or QUUX's MONO TV, 1280 by 1024.  The program
+# screen: the CADR's 768 by 963 or QUUX's video controller, 1280 by 1024.  The program
 # cannot ask the fabric, so a card carrying a QUUX bitstream says
 # `--machine quux` here.  It is this program's today because it is the only one
 # that differs; the word is muir's, and a program that comes to need it too

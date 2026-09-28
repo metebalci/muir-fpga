@@ -6,8 +6,8 @@
 //! own `memory_port::MemoryPort`, tick by tick.
 //!
 //! The port is the processor's cycle on QUUX, where there is no bus
-//! interface and no device bus.  The memory bus: main memory and MONO TV's
-//! frame buffer, through the cache --- 4K words in lines of 4, 2-way, a hit
+//! interface and no device bus.  The memory bus: main memory and the video
+//! controller's frame buffer, through the cache --- 4K words in lines of 4, 2-way, a hit
 //! in 20 ns --- to main memory at its nominal timing, a line fill in 380 ns
 //! and a write in 290, one operation at a time, a write acknowledged after
 //! the hit time by the write buffer.  A device register, taken at the edge
@@ -65,7 +65,7 @@ const TICKS: u64 = 400_000;
 /// Main memory's end, QUUX's 2M words (`Machine::new`).
 const MAIN_WORDS: u32 = 32 << 16;
 
-/// MONO TV's frame buffer, on the memory bus (contract Q7): `tv::BUFFER`,
+/// The video controller's frame buffer, on the memory bus (contract Q7): `tv::BUFFER`,
 /// 40,960 words at the bitstreams' 1280 by 1024.
 const FB: u32 = muir::tv::BUFFER;
 const FB_WORDS: u32 = 1280 * 1024 / 32;
@@ -261,19 +261,22 @@ fn main() {
                 }
                 // The addresses are the stimulus's; the decode is the held
                 // one, which this check is given and `xbus_decode.quux`
-                // holds over every address.  Block-disk's, the register
-                // page's and MONO TV's mode register.
+                // holds over every address.  The register page's words,
+                // block-disk's among them at 200-203 and the video
+                // controller's mode at 210 (contract Q13).
                 Kind::Device => match rng.below(3) {
-                    0 => 0o17377774 + rng.below(4),
-                    1 => 0o17377000 + rng.below(0o400),
-                    _ => 0o17377760,
+                    0 => 0o17777600 + rng.below(4),
+                    1 => 0o17777400 + rng.below(0o400),
+                    _ => 0o17777610,
                 },
                 // Past main memory's end, past the frame buffer's, and the
-                // old Unibus window.
+                // rest of the space below the register page: the old page
+                // and the old device registers after it, and the old Unibus
+                // window (contract Q13).
                 Kind::Nothing => match rng.below(3) {
                     0 => MAIN_WORDS + rng.below(0o1000000),
                     1 => FB + FB_WORDS + rng.below(0o1000),
-                    _ => 0o17400000 + rng.below(0o100000),
+                    _ => 0o17377000 + rng.below(0o400400),
                 },
             };
             wdata = rng.next();

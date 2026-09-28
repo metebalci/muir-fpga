@@ -34,8 +34,9 @@
 // machine reset disables it**, `-XBUS INIT` (`xbus_init`): the power-on
 // reset, and since revision 10 `RESET-DEVICES`, the register page's word 104 <0>
 // (contract Q11 and its Q9 amendment), and not `PROG.UNIBUS.RESET`, which
-// reaches nothing on QUUX; and clears <2> and <3> besides.  Word 100's <6> is `irq`: the interrupt enable and a
-// response waiting, a level.
+// reaches nothing on QUUX; and clears <2> and <3> besides.  Word 100's <7>
+// (contract Q13) is `irq`: the interrupt enable and a response waiting, a
+// level.
 //
 // **THE HOST'S SIDE** (`docs/file-device.md` has it for the server's author,
 // and `rtl/plumbing/quux_fd_face.sv` puts it on a page of the processor's
@@ -70,7 +71,7 @@
 //    instant (`Machine::write_buffer_empty_at`).
 //
 // 2. A completion the host writes invalidates the machine's whole cache
-//    first: `invalidate` and word 100's <6> go up in the tick after the
+//    first: `invalidate` and word 100's <7> go up in the tick after the
 //    write lands, and 165, 170 and 161's <8> and <23:16> show it in the tick
 //    after that.  The port drops the cache at the
 //    next grant after the pulse (`quux_mem_port.sv`'s `inval_owed`), and any
@@ -228,7 +229,7 @@ module quux_file_device (
   // bits are a thousand registers.
   assign invalidate = pub;
 
-  // Word 100's <6>: a response waiting under the interrupt enable.  It is
+  // Word 100's <7>: a response waiting under the interrupt enable.  It is
   // up a tick before a register read shows the new index: the processor
   // takes its interrupt at a master clock edge from the tick before it, and
   // a register a tick after the grant, so a completion at one instant is

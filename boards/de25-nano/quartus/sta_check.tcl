@@ -775,7 +775,7 @@ if {!$sta_quux} {
 # decodes are in the relaxed set, at the same eight ticks, and are left out of
 # both halves.
 # grid: 80 ns
-# QUUX's first display is MONO TV, which keeps no word relaxed at its pins,
+# QUUX's display is the video controller, which keeps no word relaxed at its pins,
 # and the CADR's board is not fitted there, so the clause has nothing to reach.
 if {!([info exists ::env(MACHINE)] && $::env(MACHINE) eq "quux")} {
     assert_instance_timing $tick 8 u_machine|memory|tv {color_map pointer} {ctl fb which}

@@ -9797,7 +9797,7 @@ if {0 && $held ne $want} {
 @note register, so on the tick a request rises it still reads low, and a
 @note memory that answers on that tick --- the machine check's does, for a
 @note display's buffer, at muir's instant --- was an answer "with no request
-@note standing".  Measured once `mono_fb` was put back in the audit's memory
+@note standing".  Measured once `video_fb` was put back in the audit's memory
 @note flag: `quux_tv` at K = 4 counted five faults of clause 6 at 17000000,
 @note and the CADR's `quux_tv` two, on the TV board's buffer.  The unit check
 @note answers a request on its own first tick in clean traffic and holds that
@@ -10051,11 +10051,11 @@ if {0 && $held ne $want} {
 @note machine check's testbench now reads the audit at the end of every run,
 @note and `quux_tv` writes and reads each machine's first display buffer, so
 @note `the-audit-forgets-the-tv-board-s-buffer` and
-@note `the-audit-forgets-mono-tv-s-buffer` below hold each term.
+@note `the-audit-forgets-the-video-buffer` below hold each term.
 @old
   assign cpu_memory_o   = cpu_bridged;
 @new
-  assign cpu_memory_o   = QUUX ? mono_fb : (is_memory && (tv_fb || tvc_fb || mono_fb));
+  assign cpu_memory_o   = QUUX ? video_fb : (is_memory && (tv_fb || tvc_fb || video_fb));
 @end
 
 @mutation the-audit-forgets-the-tv-board-s-buffer
@@ -10067,7 +10067,7 @@ if {0 && $held ne $want} {
 @old
   assign cpu_memory_o   = cpu_bridged;
 @new
-  assign cpu_memory_o   = QUUX ? mono_fb : (is_memory || (tv_fb && 1'b0) || tvc_fb || mono_fb);
+  assign cpu_memory_o   = QUUX ? video_fb : (is_memory || (tv_fb && 1'b0) || tvc_fb || video_fb);
 @end
 
 @mutation the-audit-stops-watching-the-port
@@ -15890,10 +15890,10 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note it stays read and can never add anything: a mutation that leaves a
 @note signal unread is caught by lint and not by the check.
 @old
-  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || mono_ack || device_ack);
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || video_ack || device_ack);
 @new
   assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || (tvc_ack && tv_ack)
-                                          || mono_ack || device_ack);
+                                          || video_ack || device_ack);
 @end
 
 @mutation the-color-boards-word-comes-from-the-other-board
@@ -16175,7 +16175,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .LMTV(QUUX ? 0 : LMTV),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
-      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT),
+      .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
       .SYNC_K(SYNC_K)
   ) memory (
       .clk        (clk),
@@ -16189,7 +16189,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .LMTV(QUUX ? 0 : LMTV),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
-      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT),
+      .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
       .SYNC_K(SYNC_K)
   ) memory (
       .clk        (clk),
@@ -19782,18 +19782,21 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @mutation quux-the-feature-page-is-not-decoded
 @check quux_map_quux
 @file rtl/machine/cadr_xbus_decode.sv
-@note The decode puts the feature page on page 36777, which the display
-@note and the disk already answer, so a read of the page times out.
+@note The decode puts the register page on page 37776, the page below it,
+@note where nothing answers, so a read of the page fails with NXM.
 @old
-    assign feature_page = page == 14'o36776;
+    assign feature_page = page == 14'o37777;
 @new
-    assign feature_page = page == 14'o36777;
+    assign feature_page = page == 14'o37776;
 @end
 
 @mutation quux-the-feature-page-is-128-words
-@check quux_map_quux
+@check quux_registers_quux
 @file rtl/machine/quux_feature_page.sv
-@note The word is chosen by seven bits, so word 200 reads word 0.
+@note The word is chosen by seven bits, so the reserved words from 204 up
+@note read the words 200 below them: 204 reads word 4, 16,384.  (The map
+@note program's word 377 reads as 177 there, both 0, since word 200 became
+@note block-disk's in revision 11; `registers` reads every word.)
 @old
       which <= phys[7:0];
 @new
@@ -19833,6 +19836,103 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
   assign take = mine && dev_rq && !taken && !dev_write;
 @end
 
+@mutation quux-the-page-matches-its-old-page
+@check quux_map_quux
+@file rtl/machine/quux_feature_page.sv
+@note The page's own match is the old page, `17377000`, where the decode
+@note no longer selects anything, so the page never answers and the cycle
+@note is left to nothing (contract Q13).
+@old
+  localparam logic [13:0] FEATURE_PAGE = 14'o37777;
+@new
+  localparam logic [13:0] FEATURE_PAGE = 14'o36776;
+@end
+
+@mutation quux-the-page-answers-block-disks-words
+@check quux_fd_face_quux
+@file rtl/machine/quux_feature_page.sv
+@note The page answers words 200-203 as well as block-disk does, two
+@note slaves on one word (contract Q13).  No trace sees it, the page's word
+@note being 0 and the disk's winning the join; the page's own check does.
+@old
+      mine  <= sel && (phys[21:8] == FEATURE_PAGE) && (phys[7:2] != 6'o40) && (phys[7:0] != 8'o210);
+@new
+      mine  <= sel && (phys[21:8] == FEATURE_PAGE) && (phys[7:0] != 8'o210);
+@end
+
+@mutation quux-the-page-answers-the-video-mode
+@check quux_fd_face_quux
+@file rtl/machine/quux_feature_page.sv
+@note The page answers word 210 as well as the video controller does, two
+@note slaves on one word (contract Q13).
+@old
+      mine  <= sel && (phys[21:8] == FEATURE_PAGE) && (phys[7:2] != 6'o40) && (phys[7:0] != 8'o210);
+@new
+      mine  <= sel && (phys[21:8] == FEATURE_PAGE) && (phys[7:2] != 6'o40);
+@end
+
+@mutation quux-the-page-leaves-out-a-block
+@check quux_fd_face_quux
+@file rtl/machine/quux_feature_page.sv
+@note The page leaves out 200-207, where block-disk has 200-203 alone and
+@note 204-207 are the page's reserved words.  A bound with a mutation just
+@note outside it.
+@old
+      mine  <= sel && (phys[21:8] == FEATURE_PAGE) && (phys[7:2] != 6'o40) && (phys[7:0] != 8'o210);
+@new
+      mine  <= sel && (phys[21:8] == FEATURE_PAGE) && (phys[7:3] != 5'o20) && (phys[7:0] != 8'o210);
+@end
+
+@mutation quux-the-network-answers-its-old-aliases
+@check quux_registers_quux
+@file rtl/machine/quux_feature_page.sv
+@note Words 140-147 as the CADR's board answers them at `764140` on: 144
+@note the CSR again, 146 and 147 read, and a write of 144 or 145 taken, 145
+@note as the write buffer's, where only the five real registers are
+@note decoded (contract Q13, #33).
+@old
+  assign chaos_answers = in_chaos && (dev_write ? (which[2:1] == 2'b00)
+                                                : (which[2:0] <= 3'd3 || which[2:0] == 3'd5));
+@new
+  assign chaos_answers = in_chaos && (dev_write ? (which[1] == 1'b0)
+                                                : (which[2:0] != 3'd6));
+@end
+
+@mutation quux-the-network-takes-a-write-of-start
+@check quux_registers_quux
+@file rtl/machine/quux_feature_page.sv
+@note A write of 145, START, reaches the board, which takes it at `764152`
+@note as a write of its write buffer, where a write of 145 goes nowhere
+@note (contract Q13).
+@old
+  assign chaos_answers = in_chaos && (dev_write ? (which[2:1] == 2'b00)
+@new
+  assign chaos_answers = in_chaos && (dev_write ? (which[2:1] == 2'b00 || which[2:0] == 3'd5)
+@end
+
+@mutation quux-the-network-reads-144
+@check quux_registers_quux
+@file rtl/machine/quux_feature_page.sv
+@note A read of 144 reaches the board, which answers the CSR at `764150`,
+@note where 144 is reserved and reads 0 (contract Q13).
+@old
+                                                : (which[2:0] <= 3'd3 || which[2:0] == 3'd5));
+@new
+                                                : (which[2:0] <= 3'd4 || which[2:0] == 3'd5));
+@end
+
+@mutation quux-block-disk-at-the-old-address
+@check quux_busreset_quux
+@file rtl/machine/quux_block_disk.sv
+@note Block-disk matches its registers where the CADR controller has them,
+@note `17377774`, where nothing reaches it since revision 11, so words
+@note 200-203 of the register page read 0 and take no write (contract Q13).
+@old
+  localparam logic [19:0] REGS_PAGE   = 20'd1048544;   // 0o17777600 >> 2
+@new
+  localparam logic [19:0] REGS_PAGE   = 20'd1015807;   // 0o17777600 >> 2
+@end
+
 @mutation quux-the-feature-page-is-not-on-the-seam
 @check quux_map_quux
 @file rtl/machine/cadr_machine.sv
@@ -19846,40 +19946,53 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
                             : (feature_drives && 1'b0) ? feature_rdata
 @end
 
-@mutation quux-mono-tv-keeps-the-wrong-mode-bit
+@mutation quux-video-keeps-the-wrong-mode-bit
 @check quux_tv_quux
-@file rtl/machine/quux_mono_tv.sv
-@note Register 0 keeps bit 3, the CADR board's interrupt enable, where MONO
-@note TV keeps black-on-white alone.
+@file rtl/machine/quux_video.sv
+@note The mode keeps bit 3, the CADR board's interrupt enable, where the
+@note video controller keeps black-on-white alone.
 @old
-      if (store_now && which == 3'd0) bow <= wdata[2];
+      if (store_now) bow <= wdata[2];
 @new
-      if (store_now && which == 3'd0) bow <= wdata[3];
+      if (store_now) bow <= wdata[3];
 @end
 
-@mutation quux-mono-tv-reads-black-on-white-in-bit-3
+@mutation quux-video-reads-black-on-white-in-bit-3
 @check quux_tv_quux
-@file rtl/machine/quux_mono_tv.sv
-@note The mode register reads black-on-white back one bit up.
+@file rtl/machine/quux_video.sv
+@note The mode reads black-on-white back one bit up.
 @old
-  assign rdata = drives ? ((which == 3'd0) ? {29'd0, bow, 2'd0} : 32'd0) : 32'd0;
+  assign rdata = drives ? {29'd0, bow, 2'd0} : 32'd0;
 @new
-  assign rdata = drives ? ((which == 3'd0) ? {28'd0, bow, 3'd0} : 32'd0) : 32'd0;
+  assign rdata = drives ? {28'd0, bow, 3'd0} : 32'd0;
 @end
 
-@mutation quux-mono-tv-register-4-is-register-0
+@mutation quux-video-mode-is-eight-words
 @check quux_tv_quux
-@file rtl/machine/quux_mono_tv.sv
-@note The register is chosen by two bits, so register 4 reads the mode.
+@file rtl/machine/quux_video.sv
+@note The mode is matched on eight words, as the CADR board's registers are,
+@note so the register page's reserved words 211-217 read and take the mode
+@note (contract Q13).
 @old
-  assign rdata = drives ? ((which == 3'd0) ? {29'd0, bow, 2'd0} : 32'd0) : 32'd0;
+  assign ctl_c = sel && (phys == MODE);
 @new
-  assign rdata = drives ? ((which[1:0] == 2'd0 && which[2] == which[2]) ? {29'd0, bow, 2'd0} : 32'd0) : 32'd0;
+  assign ctl_c = sel && (phys[21:3] == MODE[21:3]);
 @end
 
-@mutation quux-mono-tv-buffer-is-a-word-short
+@mutation quux-video-mode-at-the-old-address
 @check quux_tv_quux
-@file rtl/machine/quux_mono_tv.sv
+@file rtl/machine/quux_video.sv
+@note The mode is where it was before revision 11, `17377760`, so word 210
+@note of the register page reads 0 and takes no write (contract Q13).
+@old
+  localparam logic [21:0] MODE   = 22'o17777610;
+@new
+  localparam logic [21:0] MODE   = 22'o17377760;
+@end
+
+@mutation quux-video-buffer-is-a-word-short
+@check quux_tv_quux
+@file rtl/machine/quux_video.sv
 @note The buffer's last word, `17117777`, is not claimed, so its cycle
 @note times out.  A bound with a mutation just inside it.
 @old
@@ -19888,10 +20001,10 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
   assign fb_c  = sel && ((phys - BUFFER) < 22'(BUFFER_WORDS - 1));
 @end
 
-@mutation quux-mono-tv-registers-refuse-writes
+@mutation quux-video-mode-refuses-writes
 @check quux_tv_quux
-@file rtl/machine/quux_mono_tv.sv
-@note The mode register takes no write, so black-on-white never changes and
+@file rtl/machine/quux_video.sv
+@note The mode takes no write, so black-on-white never changes and
 @note `quux_tv` reads its own write back wrong.  (Its acknowledgment no
 @note longer carries anything: contract Q7.)
 @old
@@ -19900,33 +20013,21 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
   assign store_now = ctl && dev_rq && dev_write && !taken && 1'b0;
 @end
 
-@mutation quux-the-cadrs-board-is-fitted-on-quux
-@check quux_tv_quux
-@file rtl/machine/cadr_memory_path.sv
-@note The CADR's first display board is fitted on QUUX beside MONO TV, so it
-@note answers the registers too, reads its own mode and raises its vertical
-@note interrupt.
-@old
-      .fitted     (MACHINE != "quux"),
-@new
-      .fitted     (1'b1),
-@end
-
-@mutation quux-the-decode-answers-one-past-mono-tv
+@mutation quux-the-decode-answers-one-past-the-video-buffer
 @check xbus_decode_quux
 @file rtl/machine/cadr_xbus_decode.sv
-@note The decode takes one word past MONO TV's buffer.  A bound with a
-@note mutation just outside it.
+@note The decode takes one word past the video controller's buffer.  A
+@note bound with a mutation just outside it.
 @old
-    assign mono_buffer  = (phys - 22'o17000000) < 22'(MONO_TV_WORDS);
+    assign video_buffer = (phys - 22'o17000000) < 22'(VIDEO_WORDS);
 @new
-    assign mono_buffer  = (phys - 22'o17000000) <= 22'(MONO_TV_WORDS);
+    assign video_buffer = (phys - 22'o17000000) <= 22'(VIDEO_WORDS);
 @end
 
-@mutation quux-the-port-folds-mono-tv-onto-32k
+@mutation quux-the-port-folds-the-video-buffer-onto-32k
 @check quux_tv_quux
 @file rtl/plumbing/cadr_ddr_map.sv
-@note The memory bus addresses MONO TV with the CADR boards' fifteen bits,
+@note The memory bus addresses the video controller with the CADR boards' fifteen bits,
 @note so the buffer's top 8K words land on its bottom 8K and its last word,
 @note which `quux_tv` writes and reads, reads back the word below.
 @old
@@ -19935,7 +20036,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     return (phys >= 22'o17000000) ? mono_display_byte_address({1'b0, phys[14:0]})
 @end
 
-@mutation quux-mono-tv-is-turned-when-asked
+@mutation quux-video-is-turned-when-asked
 @check display_out_quux
 @file rtl/plumbing/cadr_display_out.sv
 @note A picture that does not fit the raster on its side is turned when a
@@ -19946,7 +20047,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
       rot_s1 <= rotate;  rot_s2 <= rot_s1;
 @end
 
-@mutation quux-mono-tv-fetches-its-first-line-twice
+@mutation quux-video-fetches-its-first-line-twice
 @check display_out_quux
 @file rtl/plumbing/cadr_display_out.sv
 @note With no top margin the reload asks for the first line where the line
@@ -20358,14 +20459,50 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
       dv_k <= dv_k + 6'd1;
 @end
 
-@mutation mono-tv-answers-all-eight-registers
+@mutation quux-the-register-page-is-gated-on-xbus-io
 @check xbus_decode_quux
 @file rtl/machine/cadr_xbus_decode.sv
-@note MONO TV answers registers 0 and 4 only; 1 to 3 and 5 to 7 time out.
+@note The register page is still gated on the old Xbus I/O pages, as it was
+@note at `17377000` before revision 11, so at `17777400` it is never a
+@note device (contract Q13).
 @old
-    assign mono_control = tv_control && (phys[1:0] == 2'd0);
+    assign device = feature_page || (xbus_io && video_buffer);
 @new
-    assign mono_control = tv_control;
+    assign device = xbus_io && (feature_page || video_buffer);
+@end
+
+@mutation quux-the-old-register-page-still-answers
+@check xbus_decode_quux
+@file rtl/machine/cadr_xbus_decode.sv
+@note The old register page, `17377000`-`17377377`, is still a device, where
+@note since revision 11 nothing answers it (contract Q13).
+@old
+    assign device = feature_page || (xbus_io && video_buffer);
+@new
+    assign device = feature_page || (xbus_io && video_buffer) || page == 14'o36776;
+@end
+
+@mutation quux-the-old-device-registers-still-answer
+@check xbus_decode_quux
+@file rtl/machine/cadr_xbus_decode.sv
+@note The CADR's display and disk registers after the old page are still
+@note devices on QUUX, as the video controller's and block-disk's were before revision
+@note 11 (contract Q13).
+@old
+    assign device = feature_page || (xbus_io && video_buffer);
+@new
+    assign device = feature_page || (xbus_io && (video_buffer || tv_control || disk_regs));
+@end
+
+@mutation quux-the-color-ranges-answer-on-quux
+@check xbus_decode_quux
+@file rtl/machine/cadr_xbus_decode.sv
+@note The color TV's ranges answer on QUUX with the color input up, where
+@note QUUX has no color board and muir's `decode_quux` no color term.
+@old
+    assign device = feature_page || (xbus_io && video_buffer);
+@new
+    assign device = feature_page || (xbus_io && (video_buffer || (color_tv && (color_buffer || color_control))));
 @end
 
 # ---------------------------------------------------------------- H1a
@@ -20852,14 +20989,16 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
         8'o16:   word = TIMERS & 32'd0;
 @end
 
-@mutation quux-word-100-timer-2-at-bit-6
+@mutation quux-word-100-in-revision-10s-order
 @check quux_page_quux
 @file rtl/machine/quux_feature_page.sv
-@note Word 100's `<7>` and `<6>` swapped: timer 2 read as the file device.
+@note Word 100 in revision 10's order, before contract Q13's: timer 2 at
+@note `<7>`, block-disk at `<2>`, the keyboard and the mouse at `<3>` and
+@note `<4>`, the network at `<5>` and the file device at `<6>`.
 @old
-        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
+        8'o100:  word = {24'd0, fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending};
 @new
-        8'o100:  word = {24'd0, fd_irq, timer_pending[2], chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
+        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
 @end
 
 @mutation quux-the-mode-is-taken-at-every-write
@@ -21110,7 +21249,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/cadr_machine.sv
 @note The MACHINE-ID of revision 4, before the clocks and the register page.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
 @end
@@ -21129,11 +21268,11 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @mutation quux-word-100-names-the-keyboard-and-the-network-alike
 @check quux_page_quux
 @file rtl/machine/quux_feature_page.sv
-@note Word 100's `<3>` and `<5>` swapped: the keyboard read as the network.
+@note Word 100's `<4>` and `<6>` swapped: the keyboard read as the network.
 @old
-        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
+        8'o100:  word = {24'd0, fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending};
 @new
-        8'o100:  word = {24'd0, timer_pending[2], fd_irq, in_irq[0], in_irq[1], chaos_ireq, disk_irq, timer_pending[1:0]};
+        8'o100:  word = {24'd0, fd_irq, in_irq[0], in_irq[1], chaos_ireq, disk_irq, timer_pending};
 @end
 
 @mutation quux-word-101-does-not-clear
@@ -21329,7 +21468,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 #
 # What a checkpoint of a QUUX board reads: the processor's clocks in the
 # register table's entries 21 to 25, and the register page's keyboard, mouse,
-# block-disk, bus errors and MONO TV's black-on-white at selector 12.
+# block-disk, bus errors and the video controller's black-on-white at selector 12.
 # `quux_readout_window_quux` holds each field against the register that holds
 # it; `quux_readout_window` holds that a CADR answers none of it, which is how
 # `cadr-checkpoint` tells the two bitstreams apart.
@@ -21493,10 +21632,10 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note The Unibus NXM and the Xbus NXM trade bits in word 6, so a checkpoint
 @note records an Xbus error as the Unibus's.
 @old
-          14'd6: quux_ro_word <= {39'd0, mono_bow, 2'd0, page_err[2], 1'b0, page_err[1],
+          14'd6: quux_ro_word <= {39'd0, video_bow, 2'd0, page_err[2], 1'b0, page_err[1],
                                   2'd0, page_err[0]};
 @new
-          14'd6: quux_ro_word <= {39'd0, mono_bow, 2'd0, page_err[2], 1'b0, page_err[0],
+          14'd6: quux_ro_word <= {39'd0, video_bow, 2'd0, page_err[2], 1'b0, page_err[0],
                                   2'd0, page_err[1]};
 @end
 
@@ -21536,11 +21675,11 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @mutation quux-ro-black-on-white-inverted
 @check quux_readout_window_quux
 @file rtl/machine/cadr_memory_path.sv
-@note MONO TV's black-on-white reaches the readout inverted.
+@note The video controller's black-on-white reaches the readout inverted.
 @old
-    assign mono_bow_o = mono_bow;
+    assign video_bow_o = video_bow;
 @new
-    assign mono_bow_o = !mono_bow;
+    assign video_bow_o = !video_bow;
 @end
 
 # ------------------------------------------------ QUUX's memory port, Q6
@@ -21831,7 +21970,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note MACHINE-ID says revision 7, the memory port's, from before the device
 @note registers.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
 @end
@@ -21934,15 +22073,15 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @mutation quux-the-frame-buffer-is-a-register
 @check quux_tv_quux
 @file rtl/machine/cadr_memory_path.sv
-@note MONO TV's frame buffer is taken as a device register and not as the
-@note memory bus's: no cache and no DDR, the register decode answering it
-@note with whatever the seam holds.
+@note The video controller's frame buffer is taken as a device register and
+@note not as the memory bus's: no cache and no DDR, the register decode
+@note answering it with whatever the seam holds.
 @old
-        .is_memory  (is_memory || (device && mono_fb)),
-        .is_device  (device && !mono_fb),
+        .is_memory  (is_memory || (device && video_fb)),
+        .is_device  (device && !video_fb),
 @new
-        .is_memory  (is_memory || (device && mono_fb && 1'b0)),
-        .is_device  (device && !(mono_fb && 1'b0)),
+        .is_memory  (is_memory || (device && video_fb && 1'b0)),
+        .is_device  (device && !(video_fb && 1'b0)),
 @end
 
 @mutation quux-the-frame-buffer-at-main-memory-s-base
@@ -22526,7 +22665,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note MACHINE-ID says revision 8, the device registers', from before the
 @note clock and the file device: the revision just below this one.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
 @end
@@ -22535,12 +22674,23 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @check quux_page_quux
 @file rtl/machine/cadr_machine.sv
 @note MACHINE-ID says revision 9, the real-time clock's and the file device's,
-@note from before the interval timers and reset devices: the revision just below
-@note this one.
+@note from before the interval timers and reset devices.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
+@end
+
+@mutation quux-machine-id-revision-10
+@check quux_page_quux
+@file rtl/machine/cadr_machine.sv
+@note MACHINE-ID says revision 10, the interval timers' and reset devices',
+@note from before the register page moved to `17777400` (contract Q13): the
+@note revision just below this one.
+@old
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+@new
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
 @end
 
 @mutation quux-word-15-names-the-clock-alone
@@ -22549,9 +22699,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note Feature word 15 says the clock and not the file device, which is
 @note what muir's said between its two commits of revision 9.
 @old
-        8'o15:   word = REV9_DEVICES;
+        8'o15:   word = OPTIONAL_DEVICES;
 @new
-        8'o15:   word = REV9_DEVICES & 32'd1;
+        8'o15:   word = OPTIONAL_DEVICES & 32'd1;
 @end
 
 @mutation quux-word-103-answers-at-104
@@ -22618,12 +22768,12 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @mutation quux-word-100-leaves-out-the-file-device
 @check quux_files_quux
 @file rtl/machine/quux_feature_page.sv
-@note Word 100's `<6>` reads 0: the file device interrupts the processor and
+@note Word 100's `<7>` reads 0: the file device interrupts the processor and
 @note the processor cannot find out who did.
 @old
-        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
+        8'o100:  word = {24'd0, fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending};
 @new
-        8'o100:  word = {24'd0, timer_pending[2], fd_irq && 1'b0, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
+        8'o100:  word = {24'd0, fd_irq && 1'b0, chaos_ireq, in_irq, disk_irq, timer_pending};
 @end
 
 @mutation quux-the-file-device-does-not-interrupt-the-processor

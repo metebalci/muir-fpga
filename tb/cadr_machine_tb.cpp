@@ -267,9 +267,10 @@ int main(int argc, char **argv) {
   // word from the wrong line or a write that never went out reads back
   // wrong, and MD is compared every microcycle.  It answers in one to five
   // ticks, sooner than the nominal 380 and 290 ns, so every acknowledgment
-  // is the port's floor and must land on muir's instant.  MONO TV's frame
-  // buffer is memory too (contract Q7), at the display's base: the port
-  // fills its lines and writes it through as it does main memory's, and
+  // is the port's floor and must land on muir's instant.  The video
+  // controller's frame buffer is memory too (contract Q7), at the display's
+  // base: the port fills its lines and writes it through as it does main
+  // memory's, and
   // every write it owes lands here, in order, which is what the scanout
   // reading these words is owed.
   bool quux_machine = false;
@@ -617,8 +618,8 @@ int main(int argc, char **argv) {
   // QUUX's main memory: its words, when the operation standing is due, and
   // the writes the processor's cycles owe it, in order.
   constexpr uint32_t kMainBase = 0x18000000u;
-  // MONO TV's frame buffer: `tv::BUFFER`, 40,960 words, at the display's
-  // base, `cadr_ddr_map::DISPLAY_BASE` on the Zynq boards.
+  // The video controller's frame buffer: `tv::BUFFER`, 40,960 words, at the
+  // display's base, `cadr_ddr_map::DISPLAY_BASE` on the Zynq boards.
   constexpr uint32_t kFbBase = 0x1C000000u;
   constexpr uint32_t kFb = 017000000u, kFbWords = 40960u;
   auto q_fb = [&](uint32_t p) { return p >= kFb && p - kFb < kFbWords; };
@@ -839,9 +840,9 @@ int main(int argc, char **argv) {
     // boards, which is the map this model is built with: main memory at
     // 0x18000000 a word a four bytes, and the first display's buffer at
     // 0x1C000000 from `17000000`, the same rule for the CADR's 32K words and
-    // QUUX's MONO TV's 40,960.  Nothing else here looks at the address, so a
-    // display window folded onto the wrong words would read back whatever the
-    // trace hands it and pass.
+    // the video controller's 40,960.  Nothing else here looks at the
+    // address, so a display window folded onto the wrong words would read
+    // back whatever the trace hands it and pass.
     if (dut->mem_req && !saw_mem_req && !q_main) {
       const uint32_t p = dut->phys;
       const uint32_t fb = 017000000u;
@@ -1326,9 +1327,9 @@ int main(int argc, char **argv) {
   // inside `cadr_machine` in every check this testbench runs, and before this
   // nothing here looked at it: `build/bus_audit.pass` runs MIT's boot PROM,
   // which never touches a display's frame buffer, so a cycle the bridge
-  // answers at a display's base reached the audit in no check at all.  QUUX's
-  // MONO TV buffer is one, and `quux_tv` writes and reads it, so a memory
-  // flag that forgot it faulted on every such cycle and every check stayed
+  // answers at a display's base reached the audit in no check at all.  The
+  // video controller's buffer is one, and `quux_tv` writes and reads it, so
+  // a memory flag that forgot it faulted on every such cycle and every check stayed
   // green.  Any fault here is the finding; the port's own answers are not
   // driven, so the seventh clause is silent by construction and is not what
   // this holds.  Word 0 is the fault count, word 1 the first clause and the

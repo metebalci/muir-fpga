@@ -77,7 +77,7 @@ void screen_frame_init(struct screen_frame *f, int black_on_white);
 // `screen_frame_map` is how the real one arrives.
 void screen_frame_init_color(struct screen_frame *f);
 
-// **QUUX's MONO TV**: 1280 x 1024 at one bit a pixel, 40 words a line, with
+// **QUUX's video controller**: 1280 x 1024 at one bit a pixel, 40 words a line, with
 // `MODE BOW` as on the CADR.  `screen_geom.h` has every number's source.
 void screen_frame_init_mono(struct screen_frame *f, int black_on_white);
 
@@ -97,15 +97,15 @@ int screen_machine_parse(const char *word, enum screen_machine *out);
 const char *screen_machine_name(enum screen_machine m);
 
 // The main screen of machine `m`: the CADR's first display board, or QUUX's
-// MONO TV.
+// video controller.
 void screen_frame_init_for(struct screen_frame *f, enum screen_machine m, int black_on_white);
 
 // How many bytes of the display's window to map: the CADR board's 32,768
-// words, all of which it answers, or MONO TV's 40,960, which is its buffer.
+// words, all of which it answers, or the video controller's 40,960, which is its buffer.
 unsigned screen_window_bytes(enum screen_machine m);
 
 // Whether the machine can have the color TV: the CADR can, and QUUX has no
-// color board, its MONO TV's buffer running over the color window.
+// color board, its video controller's buffer running over the color window.
 int screen_machine_has_color(enum screen_machine m);
 
 // The sixteen colors, `[color][channel]` with red first.

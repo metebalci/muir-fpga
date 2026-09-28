@@ -4,19 +4,22 @@
 // QUUX's block-disk: the CADR disk controller's programming interface with
 // the drive's geometry taken out, `--disk-controller block-disk`.  muir's
 // `block_disk::BlockDisk`, ported, and QUUX's only disk: `cadr_machine.sv`
-// builds this in the CADR controller's place on QUUX, at the same four
-// registers and on the same two seams.
+// builds this in the CADR controller's place on QUUX, with the same four
+// registers and on the same two seams.  The registers are words 200-203 of
+// the register page, `17777600`-`17777603` (revision 11, contract Q13), in
+// the order the CADR's controller has them at `17377774`; their bits are the
+// CADR's:
 //
-//     17377774  <0> not active, <3> interrupt request, <9> no pack, <13>
+//     17777600  <0> not active, <3> interrupt request, <9> no pack, <13>
 //               stopped by error, <17> past the end of the pack, <20> NXM;
 //               written, the command: 0 read, 11 write, <11> the done
 //               interrupt's enable; a write clears the errors
-//     17377775  read, the last memory address the command list made the disk
+//     17777601  read, the last memory address the command list made the disk
 //               touch; written, the command list pointer
-//     17377776  the disk address: a block number from the start of the pack,
+//     17777602  the disk address: a block number from the start of the pack,
 //               <27:0>; after a transfer, the last block moved or the one
 //               that failed
-//     17377777  START, written; reads 0
+//     17777603  START, written; reads 0
 //
 // The command list is the CADR's: one word a block, `<23:8>` the page's
 // physical address and `<0>` More, "only bits <15:0> of the CLP can count".
@@ -88,7 +91,7 @@ module quux_block_disk #(
     output var logic [31:0] rdata,
     output var logic        drives,
     // The done interrupt, on the Xbus line as the CADR controller's is, and
-    // word 100's `<2>`.
+    // word 100's `<3>` (contract Q13).
     output var logic        intr,
 
     // The block store's seam, as `cadr_disk_controller.sv`'s.
@@ -134,7 +137,7 @@ module quux_block_disk #(
     output var logic [31:0] ro_since_done
 );
 
-  localparam logic [19:0] REGS_PAGE   = 20'd1015807;   // 0o17377774 >> 2
+  localparam logic [19:0] REGS_PAGE   = 20'd1048544;   // 0o17777600 >> 2
   localparam int unsigned BLOCK_WORDS = 256;
 
   // ------------------------------------------------------- the block store

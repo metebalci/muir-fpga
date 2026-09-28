@@ -19,25 +19,39 @@
 // 64K words, and the top four are taken by the display, the disk controller
 // and the Unibus.
 //
-// **QUUX DECODES ITS OWN XBUS I/O SPACE.**  With `MACHINE` "quux" the
-// feature page, physical `17377000`-`17377377` (page 36776), is a device:
-// muir's `Geometry::feature_word` answers it as `Responder::Device` ahead of
-// `busint::decode_for`, and `Rtl::start_bus_cycle` does the same.  And the
-// main display's buffer is MONO TV's, `MONO_TV_WORDS` from `17000000`
-// (`busint::decode_for` with `Tv::buffer_words`), 40,960 words at the
-// bitstreams' 1280 by 1024, where the CADR's two boards have 32,768.  The
-// CADR's decode is the text below `g_cadr`, unchanged, and nothing on the
-// CADR answers that page.  What holds each: `build/xbus_decode.pass` the
-// CADR's over all 4,194,304 addresses, and `build/xbus_decode.quux.pass`
-// QUUX's, against a golden that asks muir the same question on QUUX.
+// **QUUX DECODES ITS OWN SPACE FROM `17000000` UP**, muir's
+// `busint::decode_quux` (contracts Q5, Q7 and Q13), which `Rtl::start_bus_cycle`
+// and `Machine::bus_read` both take on QUUX.  With `MACHINE` "quux":
+//
+//   the register page, physical `17777400`-`17777777` (page 37777), the
+//   last page of the physical space, is a device, whatever else the address
+//   is: it sits where the CADR's Unibus window ends, and it is decided
+//   first.  Block-disk's four words at 200-203 and the video controller's
+//   mode at 210 are among its words, each answered by its own slave;
+//   the video controller's buffer, `VIDEO_WORDS` from `17000000`
+//   (`Tv::buffer_words`), 40,960 words at the bitstreams' 1280 by 1024, where
+//   the CADR's two boards have 32,768, is on the memory bus with main memory
+//   and is a device here only as the memory path's seam takes it;
+//   main memory is below `17000000`, as on the CADR;
+//   and nothing else answers: not the old register page at `17377000`, not
+//   the CADR's display and disk registers after it, not the rest of the old
+//   Unibus window below the page, and not the color TV's ranges, QUUX having
+//   no color board.  An access there fails at once with the Xbus NXM bit.
+//
+// The CADR's decode is the text below `g_cadr`, unchanged; on the CADR the
+// register page's addresses are the Unibus window's last page, where
+// nothing answers.  What holds each: `build/xbus_decode.pass` the CADR's
+// over all 4,194,304 addresses, and `build/xbus_decode.quux.pass` QUUX's,
+// against a golden that asks muir the same question on QUUX.
 
 `default_nettype none
 
 module cadr_xbus_decode #(
     // "cadr" or "quux"; `cadr_machine.sv` refuses anything else.
     parameter string MACHINE = "cadr",
-    // MONO TV's buffer, in words, on QUUX: `cadr_machine.sv` decides it.
-    parameter int unsigned MONO_TV_WORDS = 40960
+    // The video controller's buffer, in words, on QUUX: `cadr_machine.sv`
+    // decides it.
+    parameter int unsigned VIDEO_WORDS = 40960
 ) (
     // The bottom two bits pick a register *inside* a device rather than which
     // device: every region in Xbus I/O space is aligned to at least four
@@ -75,11 +89,12 @@ module cadr_xbus_decode #(
   // Chaosnet interface" --- the Unibus half, which is its own slice.
   //
   // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`): the window,
-  // physical page 37000 and up, answers nothing on QUUX, a read or a write
-  // timing out as an empty Xbus address does and setting the Xbus NXM bit
-  // (`Rtl::start_bus_cycle`'s `Responder::NoXbus`).  So on QUUX the window
-  // is `nxm` and never `unibus`, and no cycle of the processor's reaches the
-  // Unibus side of the bus interface at all.
+  // physical page 37000 and up, answers nothing on QUUX but its last page,
+  // the register page (contract Q13), a read or a write failing at once
+  // and setting the Xbus NXM bit (`busint::decode_quux`'s
+  // `Responder::NoXbus`).  So on QUUX the window is `nxm` and never
+  // `unibus`, and no cycle of the processor's reaches the Unibus side of the
+  // bus interface at all.
   logic in_window;
   assign in_window = page >= 14'o37000;
   assign unibus    = (MACHINE != "quux") && in_window;
@@ -114,23 +129,19 @@ module cadr_xbus_decode #(
   assign color_control = phys[21:3]  == 19'd507901;  // 0o17377750, 8 words
 
   if (MACHINE == "quux") begin : g_quux
-    // The feature page, `Geometry::FEATURE_PAGE`, 256 words, and MONO TV's
-    // buffer in place of the CADR boards' 32K words.
-    logic feature_page, mono_buffer;
-    assign feature_page = page == 14'o36776;
-    assign mono_buffer  = (phys - 22'o17000000) < 22'(MONO_TV_WORDS);
-    logic color;
-    assign color  = color_tv && (color_buffer || color_control);
-    // MONO TV answers two of the eight registers the CADR's boards do: 0,
-    // the mode register, and 4, the color map's write kept for a color
-    // display to come.  1 to 3 and 5 to 7 are not there, and time out with
-    // the Xbus NXM bit (`Tv::control_registers`, `busint::decode_for`).
-    logic mono_control;
-    assign mono_control = tv_control && (phys[1:0] == 2'd0);
-    assign device = xbus_io && (mono_buffer || mono_control || disk_regs || feature_page || color);
-    // `tv_buffer` is the CADR boards' window and has no reader here.
-    logic unused_tv_buffer;
-    assign unused_tv_buffer = tv_buffer;
+    // The register page, `Geometry::FEATURE_PAGE`, 256 words at the last
+    // page of the space, not gated by `xbus_io` (contract Q13); and the
+    // video controller's buffer in place of the CADR boards' 32K words,
+    // which stays inside Xbus I/O space at the bitstreams' size (contract
+    // Q13's O7: the DDR map gives it a 16-bit offset).
+    logic feature_page, video_buffer;
+    assign feature_page = page == 14'o37777;
+    assign video_buffer = (phys - 22'o17000000) < 22'(VIDEO_WORDS);
+    assign device = feature_page || (xbus_io && video_buffer);
+    // The CADR's display and disk registers, the CADR boards' window and the
+    // color TV's ranges have no reader here: nothing answers them on QUUX.
+    logic unused_cadr;
+    assign unused_cadr = ^{tv_buffer, tv_control, disk_regs, color_buffer, color_control, color_tv};
   end else begin : g_cadr
   assign device = xbus_io && (tv_buffer || tv_control || disk_regs
                               || (color_tv && (color_buffer || color_control)));

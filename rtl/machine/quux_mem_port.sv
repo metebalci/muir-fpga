@@ -8,7 +8,7 @@
 // (`golden/src/quux_port.rs`).  The cycle goes one of three ways, by the
 // held decode of its physical address:
 //
-//   THE MEMORY BUS, main memory and MONO TV's frame buffer, through the
+//   THE MEMORY BUS, main memory and the video controller's frame buffer, through the
 //   cache (`quux_cache.sv`) to the memory controller below.  A read that
 //   hits is answered two ticks after the grant; a miss fills its line and a
 //   write goes through, one operation of main memory at a time, at the
@@ -20,7 +20,7 @@
 //   where the scanout reads it on its own port; the cache writes through,
 //   so every word written reaches it once the write buffer has drained.
 //
-//   A DEVICE REGISTER, MONO TV's, block-disk's or the register page's:
+//   A DEVICE REGISTER, the video controller's, block-disk's or the register page's:
 //   taken at the grant and acknowledged a microcycle on, `K` ticks, with no
 //   setup and no deskew, never cached.  The register is asked in the one
 //   tick after the grant (`dev_rq`), which is the first tick its own held

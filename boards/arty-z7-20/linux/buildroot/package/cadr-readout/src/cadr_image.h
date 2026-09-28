@@ -47,8 +47,8 @@
 // **QUUX'S SIZES**, muir's `Geometry::QUUX`: a PDL buffer of 16K words with a
 // fourteen-bit pointer, a level-1 map entry of six bits and so 2,048 level-2
 // entries, the boot PROM at control store 36000 and never written there, and
-// MONO TV's buffer, 1280 by 1024 at one bit a pixel.  `img_alloc_machine`
-// sizes the arrays by these on QUUX.
+// the video controller's buffer, 1280 by 1024 at one bit a pixel.
+// `img_alloc_machine` sizes the arrays by these on QUUX.
 #define IMG_QUUX_PDL_WORDS  16384u
 #define IMG_QUUX_L2_WORDS   2048u
 #define IMG_QUUX_TV_WORDS   40960u
@@ -78,7 +78,7 @@ enum img_quux_reg {
 #define IMG_QUUX_TIMERS 3
 #define IMG_QUUX_MARK 0x5155u
 // Selector 12, `cadr_machine.sv`'s register page readout: the keyboard and
-// mouse, block-disk, the page's bus errors and MONO TV's black-on-white, the
+// mouse, block-disk, the page's bus errors and the video controller's black-on-white, the
 // file device's rings, indexes and flags (revision 9), and the keyboard
 // FIFO's words at 64 + their index.
 enum img_quux_page {
@@ -116,7 +116,7 @@ struct quux_state {
 	uint32_t cmd, clp, da, lma;
 	int walking, walked, not_active, past_end, nxm, bad_command, present;
 	int32_t since_done;	/* ticks since the blocks' time ran out */
-	// The page's bus errors, as word 101 reads them, and MONO TV's mode.
+	// The page's bus errors, as word 101 reads them, and the video controller's mode.
 	unsigned bus_error;
 	int bow;
 	// The file device (revision 9), muir's `FileDevice::save`: its four
@@ -236,7 +236,7 @@ struct cadr_image {
 	uint8_t tv_map[IMG_MAP_COLORS][IMG_MAP_CHANNELS];
 
 	// --- which machine, and the arrays' sizes on it: the CADR's, or on
-	// --- QUUX the PDL buffer's 16K, level 2's 2,048 and MONO TV's buffer.
+	// --- QUUX the PDL buffer's 16K, level 2's 2,048 and the video controller's buffer.
 	int quux;
 	unsigned pdl_words, l2_words, tv_words;
 	struct quux_state qx;	/* QUUX's alone; zero on the CADR */

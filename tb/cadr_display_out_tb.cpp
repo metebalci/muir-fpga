@@ -112,7 +112,7 @@ constexpr const char *kModeName = "VESA DMT 1280x1024 at 60 Hz";
 // The two screens: muir's `WIDTH`/`HEIGHT`/`WORDS_PER_LINE` and its
 // `COLOR_*` counterparts.
 //
-// **QUUX'S BUILD, `CADR_DISPLAY_QUUX`, SHOWS MONO TV INSTEAD**: 1280 by 1024
+// **QUUX'S BUILD, `CADR_DISPLAY_QUUX`, SHOWS THE VIDEO CONTROLLER INSTEAD**: 1280 by 1024
 // at 40 words a line, which fills the raster upright and does not fit it on
 // its side, so the module keeps it upright whatever `rotate` says; and QUUX
 // has no color board.  Its configurations are A and B below and Q, which
@@ -128,7 +128,7 @@ constexpr int kCLineBytes = kCWords * 4;  // 288
 
 constexpr uint32_t kBase = 0x1C000000u;
 #ifdef CADR_DISPLAY_QUUX
-// QUUX has no color board, and its window is put past MONO TV's 40,960 words.
+// QUUX has no color board, and its window is put past the video controller's 40,960 words.
 constexpr uint32_t kCBase = 0x1C040000u;
 #else
 constexpr uint32_t kCBase = 0x1C020000u;
@@ -491,12 +491,12 @@ int main(int argc, char **argv) {
     if (got != want) Fail("%s is %d, want %d", what, got, want);
   };
 #ifdef CADR_DISPLAY_QUUX
-  figure(MX0, 0, "MONO TV's first column");
-  figure(MX0 + kPicW - 1, 1279, "MONO TV's last column");
-  figure(MY0, 0, "MONO TV's first row");
-  figure(MY0 + kPicH - 1, 1023, "MONO TV's last row");
+  figure(MX0, 0, "the video controller's first column");
+  figure(MX0 + kPicW - 1, 1279, "the video controller's last column");
+  figure(MY0, 0, "the video controller's first row");
+  figure(MY0 + kPicH - 1, 1023, "the video controller's last row");
   if (MX0 + kPicW > HA || MY0 + kPicH > VA)
-    Fail("the raster does not hold MONO TV at 1:1");
+    Fail("the raster does not hold the video controller at 1:1");
 #else
   figure(MX0, 0, "the first display's first column, upright");
   figure(MX0 + kPicW - 1, 767, "the first display's last column, upright");
@@ -1019,9 +1019,9 @@ int main(int argc, char **argv) {
     gDriveRotate = turn;
     (void)run(1, 0, 0, 0, 4, true, &qr, turn == 1 ? "Q asked clockwise" : "Q asked anticlockwise");
     gDriveRotate = -1;
-    if (qr.underruns) Fail("MONO TV asked to turn reported an underrun");
+    if (qr.underruns) Fail("the video controller asked to turn reported an underrun");
     if (qr.mono_beats != static_cast<long>(kPicH) * (kWords / 2))
-      Fail("%ld beats a frame for MONO TV asked to turn, want %ld, read upright",
+      Fail("%ld beats a frame for the video controller asked to turn, want %ld, read upright",
            qr.mono_beats, static_cast<long>(kPicH) * (kWords / 2));
     placed(qr, 1, 0, turn == 1 ? "Q asked clockwise" : "Q asked anticlockwise");
   }
@@ -1030,7 +1030,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf(
-      "ok: %s, QUUX's MONO TV\n"
+      "ok: %s, QUUX's video controller\n"
       "    %ld pixels compared against a DDR window poisoned injectively in the\n"
       "    address, 1280 by 1024 at 40 words a line, filling the raster from\n"
       "    column %d to %d and row %d to %d; the underrun reported with the port\n"

@@ -1305,9 +1305,9 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	return 1;
 @end
 
-# ---- QUUX's screen, MONO TV ----------------------------------------------
+# ---- QUUX's screen, the video controller ----------------------------------------------
 #
-# One record for each number MONO TV's frame is given and one for each way the
+# One record for each number the video controller's frame is given and one for each way the
 # machine could be chosen wrong.  `check_quux_screen` holds all of them on
 # literals.
 #
@@ -1318,7 +1318,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 # themselves is an overrun that no assertion here would see.  The
 # `_Static_assert`s in `screen_geom.h` hold their sizes instead, at build.
 
-@mutation mono-tv-has-the-cadrs-line-length
+@mutation video-has-the-cadrs-line-length
 @file screen_frame.c
 @why QUUX's word 40 bit 0 is the first pixel of line 1; at the CADR's 24 words a line it is pixel 512 of line 1
 @old
@@ -1327,7 +1327,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	f->words_per_line = SCREEN_WORDS_PER_LINE;
 @end
 
-@mutation mono-tv-is-cut-at-the-cadrs-last-line
+@mutation video-is-cut-at-the-cadrs-last-line
 @file screen_frame.c
 @why a viewer of QUUX's screen is told 1280x1024, and a screen of 963 lines is told something else
 @old
@@ -1336,7 +1336,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	f->height = SCREEN_HEIGHT;
 @end
 
-@mutation mono-tv-is-the-cadrs-width
+@mutation video-is-the-cadrs-width
 @file screen_frame.c
 @why a viewer of QUUX's screen is told 1280 pixels across, and 768 is the CADR's
 @old
@@ -1345,7 +1345,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	f->width = SCREEN_WIDTH;
 @end
 
-@mutation mono-tv-reads-only-the-cadrs-words
+@mutation video-reads-only-the-cadrs-words
 @file screen_frame.c
 @why the frame takes all 40,960 words: a screen lit only in its last word is not blank
 @old
@@ -1356,7 +1356,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 
 @mutation quux-is-served-the-cadrs-screen
 @file screen_frame.c
-@why --machine quux must give MONO TV's frame, 1280x1024 at 40 words a line
+@why --machine quux must give the video controller's frame, 1280x1024 at 40 words a line
 @old
 	if (m == SCREEN_MACHINE_QUUX)
 		screen_frame_init_mono(f, black_on_white);
@@ -1403,7 +1403,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 
 @mutation quux-maps-the-cadrs-window
 @file screen_frame.c
-@why QUUX's window is MONO TV's 40,960 words, 163,840 bytes; the CADR's 128 KB stops 8,192 words short
+@why QUUX's window is the video controller's 40,960 words, 163,840 bytes; the CADR's 128 KB stops 8,192 words short
 @old
 	return m == SCREEN_MACHINE_QUUX ? SCREEN_MONO_WINDOW_BYTES : SCREEN_WINDOW_BYTES;
 @new
@@ -1412,7 +1412,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 
 @mutation quux-is-given-a-color-tv
 @file screen_frame.c
-@why QUUX has no color board, and its MONO TV's buffer runs over the color window
+@why QUUX has no color board, and its video controller's buffer runs over the color window
 @old
 	return m == SCREEN_MACHINE_CADR;
 @new
@@ -1421,7 +1421,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 
 @mutation the-pixel-rule-takes-the-cadrs-stride
 @file screen_frame.h
-@why the MONO TV anchors: the rule a rectangle's ends and RRE ask must use the fitted screen's words a line
+@why the video controller's anchors: the rule a rectangle's ends and RRE ask must use the fitted screen's words a line
 @old
 	return (unsigned)screen_shows_white(f->words, f->words_per_line, x, y, f->black_on_white);
 @new

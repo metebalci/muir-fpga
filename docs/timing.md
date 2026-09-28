@@ -632,13 +632,13 @@ ticks.
 QUUX has no bus interface and no device bus. The processor's cycle goes one
 of three ways, by its address, through `rtl/machine/quux_mem_port.sv`:
 
-- **The memory bus**: main memory and MONO TV's frame buffer, through a
-  cache, `rtl/machine/quux_cache.sv`. The cache holds 4,096 words in lines
-  of four, two ways to a set. It is write-through, allocates a line on a
+- **The memory bus**: main memory and the video controller's frame buffer,
+  through a cache, `rtl/machine/quux_cache.sv`. The cache holds 4,096 words
+  in lines of four, two ways to a set. It is write-through, allocates a line on a
   read miss and never on a write, and holds the memory bus's words only.
-- **A device register**: MONO TV's, block-disk's, and the feature and
-  register page's, reached by the processor's register decode and never
-  cached. A register access takes two microcycles: the register is taken at
+- **A device register**: a word of the register page at `17777400`, the
+  video controller's and block-disk's among them, reached by the processor's
+  register decode and never cached. A register access takes two microcycles: the register is taken at
   the grant and the cycle is acknowledged a microcycle, K ticks, later.
 - **Nothing**: past main memory's end, past the frame buffer's, between the
   registers, and in the old Unibus window. The cycle fails at once, in the
@@ -680,7 +680,7 @@ holds the module to it tick for tick.
   `rtl/plumbing/quux_axi_master.sv`, on the Arty's `S_AXI_HP0` and on the
   DE25-Nano's FPGA-to-SDRAM bridge.
 
-MONO TV's frame buffer is in DDR at the display's base, where the scanout
+The video controller's frame buffer is in DDR at the display's base, where the scanout
 reads it on its own port. The cache writes it through, so the scanout sees
 each word once the write buffer has drained, one write at the most behind
 the processor. `tb/cadr_machine_tb.cpp` holds that every write a cycle

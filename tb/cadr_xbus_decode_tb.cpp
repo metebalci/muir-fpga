@@ -172,9 +172,11 @@ done:
   // And the second display board has to make a difference, or a decode that
   // dropped `color_tv` altogether would agree with a reference nobody had
   // swept. The color TV answers 32,776 words a backplane, once per board
-  // count.
+  // count.  **QUUX HAS NO COLOR BOARD** (contract Q13, muir's
+  // `busint::decode_quux`): there the input must make no difference at all,
+  // and a decode that still answered the color ranges fails here.
   const long boards_swept = board_counts;
-  const long want_extra = 32776 * boards_swept;
+  const long want_extra = quux ? 0 : 32776 * boards_swept;
   if (n_device_color - n_device_mono != want_extra) {
     std::fprintf(stderr,
                  "FAIL: the color board adds %ld device addresses, wanting %ld\n",
@@ -184,7 +186,7 @@ done:
   if (thin) return 1;
 
   std::printf(
-      "ok: %ld addresses agree with muir's busint::decode_with\n"
+      "ok: %ld addresses agree with muir's busint decode\n"
       "    %ld board counts x 2 backplanes, every address of the 22-bit space"
       " in each\n"
       "    the color board adds %ld device addresses a backplane\n",

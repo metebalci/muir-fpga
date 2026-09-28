@@ -6,8 +6,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 QUUX's hardware revision 9 adds two devices to the register page: a real-time
 clock at word 103 and a file device at words 160 to 171, with its interrupt
-at word 100 `<6>`. QUUX reads and writes files on its host through the file
-device. muir's `docs/quux.md` ("The file device" and "The real-time clock")
+at word 100 `<7>` since revision 11. QUUX reads and writes files on its host
+through the file device. muir's `docs/quux.md` ("The file device" and "The real-time clock")
 defines the machine's side of both: what each register reads, what each write
 does, the two rings of commands and responses in the machine's main memory,
 the ten commands, and the folders of the host served as one pathname host,
@@ -131,7 +131,7 @@ once the buffer has drained behind the write of 164, so every command up to
 it.** The program writes buffer B and the response entry into main memory
 itself, and the machine's cache cannot see those writes. So an accepted write
 of `RESP_PROD` drops the whole cache in the tick after it reaches the machine,
-the tick the interrupt, word 100 `<6>`, rises; 165, 170, 161 `<8>` and 161
+the tick the interrupt, word 100 `<7>`, rises; 165, 170, 161 `<8>` and 161
 `<23:16>` show the new values in the tick after that. The page hands every
 write to the machine a tick after the port takes it.
 

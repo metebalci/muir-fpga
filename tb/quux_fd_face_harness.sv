@@ -113,7 +113,9 @@ module quux_fd_face_harness (
   logic [23:0] tm_wdata;
   /* verilator lint_on UNUSEDSIGNAL */
 
-  quux_feature_page page (
+  // The MACHINE-ID is `cadr_machine.sv`'s, revision 11; nothing here reads
+  // word 0, but the page takes no default.
+  quux_feature_page #(.MACHINE_ID(32'h5155_00B4)) page (
       .clk          (clk),
       .rst          (mach_rst),
       .xbus_init    (xbus_init),

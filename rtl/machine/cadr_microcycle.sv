@@ -146,7 +146,12 @@ module cadr_microcycle #(
     // boot PROM clearing all 16K words of the PDL buffer and 64 blocks of
     // level 2; and the records aimed at each in `mutations/list.txt`.
     parameter string MACHINE = "cadr",
-    parameter logic [31:0] MACHINE_ID = 32'h5155_0084,
+    // The MACHINE-ID, functional sources 16 and 36 on QUUX: `cadr_machine.sv`
+    // gives it, from the one place it is decided.  The default is revision
+    // 11's, the same value, because the CADR's own checks build this module
+    // as their top and a top's parameter needs one; nothing on the CADR
+    // reads it.
+    parameter logic [31:0] MACHINE_ID = 32'h5155_00B4,
     // **QUUX'S MICROCYCLE IN TICKS** (H1a, muir's `TimingModel::Sync`): K,
     // and L more for an `ILONG` instruction.  A board's, from its top level
     // through `cadr_machine.sv`; nothing on the CADR reads either.  See

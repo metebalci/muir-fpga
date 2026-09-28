@@ -568,13 +568,14 @@ module cadr_machine #(
   //   from `VMA<31:27>` and `VMA<24>`, and the 2,048-entry level 2
   //                                                  `cadr_microcycle.sv`
   //   the MACHINE-ID in functional sources 16 and 36     `cadr_microcycle.sv`
-  //   the feature page at `17377000`                     `quux_feature_page.sv`
+  //   the register page at `17777400`, with block-disk and the video
+  //   controller's mode on it                           `quux_feature_page.sv`
   //   the 16K-word PDL buffer, its pointer and index 14 bits
   //                                                  `cadr_microcycle.sv`
   //   the boot PROM, version 2000, which is the image `PROM_HEX` names: every
   //   QUUX build and check hands it `build/boot_prom.quux.hex`
-  //   MONO TV in place of the SIMPLE and LISPM TV, 1280 by 1024, and no
-  //   color board                                     `quux_mono_tv.sv`
+  //   the video controller in place of the SIMPLE and LISPM TV, 1280 by
+  //   1024, and no color board                           `quux_video.sv`
   //   `MUL` and `DIV` in one instruction each, and the divider's hold
   //                                   `quux_muldiv.sv`, `cadr_microcycle.sv`
   //   the interval timers, source 15 and the interrupt
@@ -582,15 +583,16 @@ module cadr_machine #(
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (10 << 4) | 4`: the signature, hardware revision 10
-  // --- the interval timers and reset devices of contract Q11, after
-  // contract Q9's real-time clock and file device --- and processor type 4,
-  // `Geometry::QUUX.machine_id`.
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
-  // MONO TV at the size every QUUX bitstream builds: 1280 by 1024, one bit
-  // a pixel, 40 words a line at `17000000`.
-  localparam int unsigned MONO_TV_WIDTH  = 1280;
-  localparam int unsigned MONO_TV_HEIGHT = 1024;
+  // `(0x5155 << 16) | (11 << 4) | 4`: the signature, hardware revision 11
+  // --- the register page at `17777400` with block-disk and the video
+  // controller on it and word 100 in its final order (contract Q13), after
+  // contract Q11's interval timers and reset devices --- and processor type
+  // 4, `Geometry::QUUX.machine_id`.
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+  // The video controller at the size every QUUX bitstream builds: 1280 by
+  // 1024, one bit a pixel, 40 words a line at `17000000`.
+  localparam int unsigned VIDEO_WIDTH  = 1280;
+  localparam int unsigned VIDEO_HEIGHT = 1024;
 
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;
@@ -741,8 +743,9 @@ module cadr_machine #(
   logic [15:0] page_ch_wdata, page_ch_rdata;
   logic        iob_n_boot1;
   logic [7:0]  iob_csr_face;
-  // MONO TV's black-on-white, for the register page's readout below.
-  logic        mono_bow;
+  // The video controller's black-on-white, for the register page's readout
+  // below.
+  logic        video_bow;
   // **ON QUUX THE UNIBUS INTERRUPT DOES NOT REACH THE PROCESSOR**, QUUX
   // having no Unibus (contract Q5, `Machine::interrupt_at`'s
   // `geometry.unibus`): its devices interrupt through the register page.
@@ -923,7 +926,7 @@ module cadr_machine #(
       .LMTV(QUUX ? 0 : LMTV),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
-      .MONO_TV_WORDS(MONO_TV_WIDTH / 32 * MONO_TV_HEIGHT),
+      .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
       .SYNC_K(SYNC_K)
   ) memory (
       .clk        (clk),
@@ -1109,7 +1112,7 @@ module cadr_machine #(
       .page_ch_rdata  (page_ch_rdata),
       .chaos_ireq     (chaos_ireq),
       .mouse_buttons  (mouse_buttons),
-      .mono_bow_o     (mono_bow)
+      .video_bow_o    (video_bow)
   );
 
   // --- the disk controller, the first Xbus slave that is not main memory ---
@@ -1123,9 +1126,11 @@ module cadr_machine #(
   // A CYCLE CANNOT BE ANSWERED TWICE, and the decode is what says so:
   // `cadr_xbus_decode.sv` makes `memory` and `device` mutually exclusive by
   // construction --- Xbus I/O space or not --- and inside `device` this module
-  // claims only 0o17377774..7, four of the four million addresses the decode
-  // is checked against.  Anything hung on the external port owes the same
-  // discipline, and nothing here can enforce it for a slave it cannot see.
+  // claims only 0o17377774..7 on the CADR, and block-disk 0o17777600..3 on
+  // QUUX, four of the four million addresses the decode is checked against;
+  // on QUUX the register page leaves those four to it (contract Q13).
+  // Anything hung on the external port owes the same discipline, and
+  // nothing here can enforce it for a slave it cannot see.
   //
   // THE DATA LINES ARE SEPARATE FROM THE ACKNOWLEDGMENT, which is the bus
   // and not a convenience: a slave drives MEM<31:0> only while it is
@@ -1157,8 +1162,9 @@ module cadr_machine #(
   // **ON QUUX THE DISK IS BLOCK-DISK AND NOTHING ELSE** (`quux_block_disk.sv`,
   // muir's "the CADR's controller is refused on QUUX"): the same four
   // registers, the same interrupt on the Xbus line and the same two seams,
-  // so everything around the instance is the one wiring.  Its done
-  // interrupt is also the register page's word 100 `<2>`.  The instance is
+  // so everything around the instance is the one wiring.  Its registers are
+  // words 200-203 of the register page and its done interrupt is word 100
+  // `<3>` (contract Q13).  The instance is
   // `disk` in both machines' generate blocks, which the constraint files
   // name.
   // Block-disk's registers for the register page's readout below.
@@ -1270,10 +1276,11 @@ module cadr_machine #(
   );
   end
 
-  // **QUUX'S FEATURE PAGE IS A SLAVE ON THE SAME SEAM**, beside the disk and
-  // joined the same way: the decode makes page 36776 a device only on QUUX,
-  // and the page and the disk's four registers are disjoint, so the two
-  // cannot both answer one cycle.
+  // **QUUX'S REGISTER PAGE IS A SLAVE ON THE SAME SEAM**, beside the disk
+  // and joined the same way: the decode makes page 37777 a device on QUUX,
+  // and block-disk's four words, 200-203, and the video controller's mode,
+  // 210, are left out of the page's own match, so exactly one slave answers
+  // each word (contract Q13).
   // The register page's readout, selector 12 (below, in the QUUX block).
   logic [47:0] quux_ro_word;
   logic [17:0] quux_ro_a1, quux_ro_a2;
@@ -1288,9 +1295,9 @@ module cadr_machine #(
 
     quux_feature_page #(
         .MACHINE_ID   (MACHINE_ID),
-        .SCREEN_WIDTH (MONO_TV_WIDTH),
-        .SCREEN_HEIGHT(MONO_TV_HEIGHT),
-        .SCREEN_WPL   (MONO_TV_WIDTH / 32)
+        .SCREEN_WIDTH (VIDEO_WIDTH),
+        .SCREEN_HEIGHT(VIDEO_HEIGHT),
+        .SCREEN_WPL   (VIDEO_WIDTH / 32)
     ) feature_page (
         .clk          (clk),
         .rst          (rst),
@@ -1352,7 +1359,7 @@ module cadr_machine #(
 
     // **THE REGISTER PAGE'S DEVICES ON THE READOUT, AT SELECTOR 12**: what a
     // checkpoint carries of them as muir's `QuuxInput`, `BlockDisk`,
-    // `Machine::bus_error` and MONO TV's `Tv::mode`.  On the audit's pipeline
+    // `Machine::bus_error` and the video controller's `Tv::mode`.  On the audit's pipeline
     // and for its reason: the address delayed by two, the word registered
     // once, landing on the tick the echo names it (the audit's note below).
     // Each word is taken whole in one tick.  The words:
@@ -1365,7 +1372,8 @@ module cadr_machine #(
     //         last memory address
     //     5   block-disk's flags, <38:32> (`quux_block_disk.sv`'s `ro_flags`),
     //         and <31:0> the ticks since its blocks' time ran out
-    //     6   <8> MONO TV's black-on-white, <5:0> the bus errors as word 101
+    //     6   <8> the video controller's black-on-white, <5:0> the bus
+    //         errors as word 101
     //         reads them (`Machine::bus_error`)
     //     7   the file device's rings: <47:24> the command ring's base,
     //         <23:0> the response ring's
@@ -1398,7 +1406,7 @@ module cadr_machine #(
           14'd3: quux_ro_word <= {16'd0, bd_ro_da};
           14'd4: quux_ro_word <= {16'd0, bd_ro_lma};
           14'd5: quux_ro_word <= {9'd0, bd_ro_flags, bd_ro_since_done};
-          14'd6: quux_ro_word <= {39'd0, mono_bow, 2'd0, page_err[2], 1'b0, page_err[1],
+          14'd6: quux_ro_word <= {39'd0, video_bow, 2'd0, page_err[2], 1'b0, page_err[1],
                                   2'd0, page_err[0]};
           14'd7: quux_ro_word <= fd_ro_bases;
           14'd8: quux_ro_word <= fd_ro_indexes;
@@ -1459,7 +1467,7 @@ module cadr_machine #(
                          fd_ro_flags};
   logic unused_page;
   assign unused_page = ^{timer_pending, tm_rdata, page_err, page_ch_rdata, chaos_ireq, mouse_buttons,
-                         mono_bow, bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_flags,
+                         video_bow, bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_flags,
                          bd_ro_since_done, quux_ro_a1, quux_ro_a2, in_ro_state, in_ro_count,
                          in_ro_fifo_q};
   end
@@ -1555,7 +1563,8 @@ module cadr_machine #(
   // line fill, and a write reaches main memory from the buffer after the
   // cycle has ended, so "one transaction per bus cycle" is not a property of
   // that seam at all.  It is still a property of the bridge's, which carries
-  // MONO TV's frame buffer and block-disk's transfers one word a cycle, and
+  // the video controller's frame buffer and block-disk's transfers one word
+  // a cycle, and
   // the port's answers to the bridge stand in for the PS7's handshakes.
   // What holds the port's own traffic is `build/quux_port.quux.*.pass`.
   //

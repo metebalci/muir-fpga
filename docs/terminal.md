@@ -168,12 +168,13 @@ the screen**.
 
 ## QUUX's screen: `--machine quux`
 
-QUUX, the evolved CADR, is a bitstream of its own. Its display is MONO TV
-rather than either of the CADR's boards: a one-bit frame buffer and a mode
-register, with no sync program, no color map and no interrupt. muir's
+QUUX, the evolved CADR, is a bitstream of its own. Its display is the video
+controller rather than either of the CADR's boards: a one-bit frame buffer
+and a mode, word 210 of the register page, with no sync program, no color
+map and no interrupt. muir's
 `docs/quux.md` is the contract, and `screen_geom.h` cites it beside each number.
 
-| | CADR | QUUX, MONO TV |
+| | CADR | QUUX, the video controller |
 |---|---|---|
 | pixels across | 768 | 1280 |
 | lines | 963 | 1024 |
@@ -188,10 +189,10 @@ On QUUX the buffer is on the memory bus with main memory, and the machine's
 cache writes it through to DDR, so what this program reads is at most one
 write behind the processor. Pixel `x` of line `y` is bit `x mod 32` of word
 `40y + x/32` on QUUX, the CADR's rule with its own line length. `MODE BOW` is
-the same bit 2 of the mode register, and `--bow` still says it.
+the same bit 2 of the mode, and `--bow` still says it.
 
-**The program is told the machine and does not ask.** QUUX's feature page at
-physical `17377000` gives the screen at words 11 to 13, and a CADR answers
+**The program is told the machine and does not ask.** QUUX's register page at
+physical `17777400` gives the screen at words 11 to 13, and a CADR answers
 nothing there. But that page is a device register inside the machine. The
 processing system reaches the display's buffer as memory, the faces on their
 port and the console on its own, and none of them carries a read of the
@@ -201,7 +202,8 @@ flag with muir's own two words, and the default is `cadr`. Any other word is
 refused. The card carries it as a commented line in `fpgarc`.
 
 `--color-terminal` is refused with `--machine quux`. QUUX has no color TV, and
-MONO TV's 160 KB run over the window the color board's would have.
+the video controller's 160 KB run over the window the color board's would
+have.
 
 **The keyboard and mouse go through the same input face on both machines.**
 On QUUX the fabric hands the keyboard's words to the register page's FIFO

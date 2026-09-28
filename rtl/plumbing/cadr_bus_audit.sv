@@ -142,7 +142,7 @@
 // frame-buffer cycle decodes as `device` and issues a transaction anyway.
 // What this input wants is "the bridge answers this cycle", which in
 // `rtl/machine/cadr_memory_path.sv` is `is_memory` with every frame buffer
-// `bus_sel` takes (`tv_fb`, `tvc_fb` and QUUX's `mono_fb`) for the processor
+// `bus_sel` takes (`tv_fb`, `tvc_fb` and QUUX's `video_fb`) for the processor
 // and `ch_memory` for the channel.  An audit given the decode alone would
 // fault on the first pixel the machine ever painted --- and would have been
 // green in simulation, MIT's boot PROM never touching the display.

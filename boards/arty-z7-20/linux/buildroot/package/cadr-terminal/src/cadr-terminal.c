@@ -77,7 +77,7 @@
 // take.
 //
 // **WHICH MACHINE, AND SO WHICH SCREEN.**  QUUX, the evolved CADR, is a
-// bitstream of its own whose display is MONO TV: 1280 x 1024 at one bit a
+// bitstream of its own whose display is the video controller: 1280 x 1024 at one bit a
 // pixel, 40 words a line, its buffer where the CADR's is and 160 KB of it,
 // and no color board.  QUUX's feature page says so at words 11 to 13, but
 // that page is an Xbus device inside the machine and nothing this program
@@ -195,7 +195,7 @@ static void usage(void)
 		"  --bow             the display's MODE BOW: one bits are black (default: white)\n"
 		"  --machine cadr|quux       which machine the bitstream is, muir's own flag: the\n"
 		"                            CADR's screen, 768x963 at 24 words a line, or QUUX's\n"
-		"                            MONO TV, 1280x1024 at 40, which has no color TV\n"
+		"                            video controller, 1280x1024 at 40, which has no color TV\n"
 		"                            (default cadr)\n"
 		"  --color-terminal [<endpoint>]\n"
 		"                            the SECOND screen, the color TV's, served as the\n"
@@ -404,7 +404,7 @@ int main(int argc, char **argv)
 			argv[optind]);
 		return 2;
 	}
-	// **QUUX HAS NO COLOR TV**, and MONO TV's 160 KB run over the window
+	// **QUUX HAS NO COLOR TV**, and the video controller's 160 KB run over the window
 	// the color board's would have: a second screen served there would be
 	// the bottom of the first one.
 	if (want_color && !screen_machine_has_color(machine)) {
@@ -435,7 +435,7 @@ int main(int argc, char **argv)
 	say("the machine is %s (--machine): its display's window is %u KB at 0x%08x; the "
 	    "screen is %ux%u, %u words a line, %u of the window's %u words, one bit a pixel, "
 	    "a one bit %s",
-	    machine == SCREEN_MACHINE_QUUX ? "QUUX, whose screen is MONO TV" : "the CADR",
+	    machine == SCREEN_MACHINE_QUUX ? "QUUX, whose screen is the video controller's" : "the CADR",
 	    window_bytes / 1024u, window_phys, frame.width, frame.height,
 	    frame.words_per_line, frame.visible_words, window_bytes / 4u,
 	    bow ? "BLACK (MODE BOW, --bow)" : "WHITE (MODE BOW clear, the fabric's power-on state)");

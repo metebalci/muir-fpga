@@ -143,7 +143,7 @@ MACHINE_CHECK = {
 # The files only a QUUX build compiles: `cadr_machine` names each under
 # `MACHINE == "quux"`, and a CADR build finds none of them.
 QUUX_SOURCES = ["rtl/machine/quux_rtc.sv", "rtl/machine/quux_file_device.sv",
-                "rtl/machine/quux_feature_page.sv", "rtl/machine/quux_mono_tv.sv",
+                "rtl/machine/quux_feature_page.sv", "rtl/machine/quux_video.sv",
                 "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_phase_gen.sv",
                 "rtl/machine/quux_clocks.sv", "rtl/machine/quux_input.sv",
                 "rtl/machine/quux_block_disk.sv", "rtl/machine/quux_cache.sv",
@@ -532,7 +532,8 @@ CHECKS = {
     # on the CADR, where it holds the CADR's side of the difference.  `prom`
     # names the PROM image among the goldens, and `machine` says which
     # machine a check holds, which is what `--machine` selects by.
-    # QUUX's decode over every address: the feature page and MONO TV's buffer.
+    # QUUX's decode over every address: the register page and the video
+    # controller's buffer.
     "xbus_decode_quux": {
         "sources": ["rtl/machine/cadr_xbus_decode.sv"],
         "top": "cadr_xbus_decode",
@@ -647,6 +648,15 @@ CHECKS = {
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
         "golden": "quux_page.quux.golden",
         "prom": "quux_page_prom.quux.hex",
+        "machine": "quux",
+    }),
+    # Every word of the register page, and every address that was one
+    # (contract Q13, #34).
+    "quux_registers_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_registers.quux.golden",
+        "prom": "quux_registers_prom.quux.hex",
         "machine": "quux",
     }),
     # Revision 9 (contract Q9), QUUX's alone: the real-time clock at word
@@ -1911,7 +1921,8 @@ CHECKS = {
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": None,
     },
-    # QUUX's picture, MONO TV at 1280 by 1024, as the Makefile builds it.
+    # QUUX's picture, the video controller's at 1280 by 1024, as the Makefile
+    # builds it.
     "display_out_quux": {
         "sources": ["rtl/plumbing/cadr_display_out.sv"],
         "top": "cadr_display_out",
@@ -2451,7 +2462,7 @@ PENDING = {}
 
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
     ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
-                                  "imemsync", "page", "clockwait", "memedge", "busreset",
+                                  "imemsync", "page", "registers", "clockwait", "memedge", "busreset",
                                   "startstart", "rtc", "files")]
 CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
 CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)

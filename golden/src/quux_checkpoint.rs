@@ -97,16 +97,17 @@ fn main() {
     }
     let path = args[0].clone();
 
-    // `main.rs`'s `machine` for `--machine quux`: block-disk and MONO TV at
-    // the bitstreams' 1280 by 1024, one memory board, and a disk of
-    // `DISK_BLOCKS` blocks with none written (contract Q8a, format 41).
+    // `main.rs`'s `machine` for `--machine quux`: block-disk and the video
+    // controller at the bitstreams' 1280 by 1024, one memory board, and a
+    // disk of `DISK_BLOCKS` blocks with none written (contract Q8a, format
+    // 41).
     let mut m = Machine::with_memory_boards(1);
     m.geometry = Geometry::QUUX;
     let mut bd = BlockDisk::new(block_disk::BLOCK_NS);
     bd.attach(Disk::blank(DISK_BLOCKS));
     m.block_disk = Some(bd);
-    m.tv.set_mono_tv_size(1280, 1024);
-    m.tv.set_board(Board::MonoTv);
+    m.tv.set_video_size(1280, 1024);
+    m.tv.set_board(Board::Video);
     m.plug_chaos(0);
 
     // The file device, through muir's own calls: the rings configured and
@@ -182,7 +183,7 @@ fn main() {
     m.clock_control.run = true;
     m.bus_error = 0o41;
 
-    // MONO TV: the picture, and black-on-white written with every other bit.
+    // The video controller: the picture, and black-on-white written with every other bit.
     for i in 0..m.tv.buffer_words() {
         m.tv.write_buffer(i, poison(13, i as u64, 32) as u32);
     }

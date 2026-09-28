@@ -963,7 +963,7 @@ int main(int argc, char **argv)
 	//   disk       61 + 8             = 69       (no drives: 8 flag bytes)
 	//   block_disk 1                  = 1        (none: the flag alone)
 	//   tv         1+2+2+(8+131072)+4+(8+4096)+2+1+48+1+8+8+1+1 = 135263
-	//                                            (the board's tag, MONO TV's size, the
+	//                                            (the board's tag, the video size, the
 	//                                             buffer, the mode, the
 	//                                             sync RAM, the color map
 	//                                             as 48 bare bytes, the
@@ -1133,10 +1133,11 @@ int main(int argc, char **argv)
 		chk_rtl_body(&qb, &qi, &qdecl);
 		// **THE BODY'S LENGTH, AGAIN AN ARITHMETIC EXPRESSION**: the
 		// CADR's, and what QUUX has that it has not --- block-disk's
-		// forty-four bytes after its flag, MONO TV's 8,192 words past the
-		// CADR display's 32,768, the five key words waiting, and K and L
-		// after the timing model's tag; and in place of the bus interface's
-		// 163 bytes, the memory port's (version 40): its state, direction,
+		// forty-four bytes after its flag, the video controller's 8,192
+		// words past the CADR display's 32,768, the five key words
+		// waiting, and K and L after the timing model's tag; and in place
+		// of the bus interface's 163 bytes, the memory port's (version
+		// 40): its state, direction,
 		// address and flag, the cache's shape, counts and 512 empty sets,
 		// and the two timings and two instants; and block-disk's disk
 		// (version 41), its size in blocks and a count of none written.

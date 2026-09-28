@@ -39,7 +39,8 @@ namespace {
 
 constexpr int kSlots = 24;
 constexpr int kBlockWords = 256;
-constexpr uint32_t kRegs = 017377774u;
+// Block-disk's registers, words 200-203 of the register page (contract Q13).
+constexpr uint32_t kRegs = 017777600u;
 constexpr int kMemLatency = 3;     // ticks from a channel request to its answer
 constexpr int kPackLatency = 40;   // ticks from a request to the pack side's move
 

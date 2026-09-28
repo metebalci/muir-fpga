@@ -114,17 +114,17 @@
 // `MODE<2>`, `MODE BOW`, for whoever quotes the number: muir tv.rs:260.
 #define SCREEN_MODE_BOW         0004u
 
-// ---- QUUX's SCREEN, MONO TV ----------------------------------------------
+// ---- QUUX's SCREEN, THE VIDEO CONTROLLER ----------------------------------------------
 //
 // QUUX, the evolved CADR, is a bitstream of its own, and its display is not
-// either of the CADR's boards but MONO TV: a one-bit frame buffer and a mode
+// either of the CADR's boards but the video controller: a one-bit frame buffer and a mode
 // register, with no sync program, no color map and no interrupt.  Its
-// numbers, read out of muir's `docs/quux.md` "MONO TV, the display" and
+// numbers, read out of muir's `docs/quux.md` "The video controller" and
 // `src/tv.rs` at the commit `muir.commit` pins, 22c8a52:
 //
 //   1280 pixels across            docs/quux.md: "1280 by 1024 unless
-//   1024 lines                      `--mono-tv-size` gives another size";
-//                                   `Tv::set_mono_tv_size(1280, 1024)` is
+//   1024 lines                      `--video-size` gives another size";
+//                                   `Tv::set_video_size(1280, 1024)` is
 //                                   what this project's bitstreams carry
 //   40 words to a line            `Tv::screen`, `w / 32`: 1280 bits is 40
 //                                   whole words
@@ -135,7 +135,7 @@
 //                                   CADR's does", so the display's window at
 //                                   <cadr/cadr_board.h>'s base, 160 KB of it
 //                                   where the CADR's is 128 KB.  **The
-//                                   fabric's MONO TV is not built yet**:
+//                                   fabric's video controller is not built yet**:
 //                                   `rtl/plumbing/cadr_ddr_map.sv` decodes
 //                                   fifteen bits of offset, 32,768 words,
 //                                   and QUUX's needs sixteen
@@ -152,7 +152,7 @@
 // **AND THE 160 KB RUN OVER THE COLOR TV'S WINDOW**, which is 128 KB above
 // the display's.  QUUX has no color board, so nothing else is there; that is
 // why `--color-terminal` is refused on QUUX rather than served out of the
-// top of MONO TV's buffer.
+// top of the video controller's buffer.
 #define SCREEN_MONO_WIDTH           1280u
 #define SCREEN_MONO_HEIGHT          1024u
 #define SCREEN_MONO_WORDS_PER_LINE  40u
@@ -215,7 +215,7 @@ enum screen_machine {
 #define SCREEN_COLOR_BASE           CADR_BOARD_COLOR_BASE
 
 // The largest of the three screens, in frame-buffer words: 963 x 24 =
-// 23,112, 454 x 72 = 32,688, and MONO TV's 1024 x 40 = 40,960.  **MONO TV is
+// 23,112, 454 x 72 = 32,688, and the video controller's 1024 x 40 = 40,960.  **The video controller is
 // the biggest in words and in lines**, which is worth knowing before sizing
 // anything by the first board's figure; the asserts below say so rather than
 // choosing, so that a screen made bigger later stops the build instead of
@@ -227,13 +227,13 @@ _Static_assert(SCREEN_MAX_VISIBLE_WORDS >= SCREEN_VISIBLE_WORDS
 	       "a frame holds the largest screen's words");
 _Static_assert(SCREEN_MAX_HEIGHT >= SCREEN_HEIGHT && SCREEN_MAX_HEIGHT >= SCREEN_COLOR_HEIGHT,
 	       "a frame holds the largest screen's lines");
-// And MONO TV's window stays inside the display's share of the reservation,
+// And the video controller's window stays inside the display's share of the reservation,
 // below the spare 8 MB up.
 _Static_assert(SCREEN_BASE + SCREEN_MONO_WINDOW_BYTES <= CADR_BOARD_SPARE_BASE,
-	       "MONO TV's buffer fits below the spare");
+	       "the video controller's buffer fits below the spare");
 
 // Whether the bit at `x`, `y` is set --- muir's `Tv::pixel`, whose stride is
-// the fitted screen's words a line: 24 on the CADR's board, 40 on MONO TV.
+// the fitted screen's words a line: 24 on the CADR's board, 40 on the video controller.
 static inline int screen_lit(const uint32_t *words, unsigned words_per_line, unsigned x,
 			     unsigned y)
 {

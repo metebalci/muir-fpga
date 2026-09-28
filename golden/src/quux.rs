@@ -46,7 +46,7 @@ use machine_axis::Which;
 use muir::engine::Engine;
 use muir::isa::Insn;
 use muir::isa::asm::*;
-use muir::machine::{PROM_WORDS, bus_error};
+use muir::machine::{Geometry, PROM_WORDS, bus_error};
 use muir::quux_input::KeyboardMouse;
 
 /// **WHERE THE PROM SITS IN THE CONTROL STORE**, which is where a program is
@@ -156,7 +156,8 @@ const RESULT: u64 = 0o200;
 /// The virtual address the map program reads through: level-1 index 7,
 /// level-2 slot 2, word 0.
 const VADDR: u32 = (7 << 13) | (2 << 8);
-/// And slot 3 of the same region, which is mapped past the feature page.
+/// And slot 3 of the same region, which is mapped onto the page below the
+/// register page.
 const VADDR_PAST: u32 = (7 << 13) | (3 << 8);
 
 /// A store of level-1 entry `entry` as QUUX takes it: bits 4:0 in
@@ -171,12 +172,17 @@ fn level_2_store(page: u32) -> u32 {
     (1 << 25) | (1 << 23) | (1 << 22) | page
 }
 
-/// The feature page, and the page below it where nothing answers.
-const FEATURE_PAGE: u32 = 0o36776;
-const BELOW_FEATURE_PAGE: u32 = 0o36775;
+/// The register page, the feature page with it, at the last page of the
+/// physical space, `17777400` (contract Q13); and the page below it,
+/// `17777000`, where nothing answers on QUUX.  On the CADR both are in the
+/// Unibus window, Unibus `776000` and `777000`, where nothing answers either
+/// and a read times out with the Unibus NXM bit.
+const FEATURE_PAGE: u32 = 0o37777;
+const BELOW_FEATURE_PAGE: u32 = 0o37776;
 
-/// The words of the feature page the map program reads.
-const FEATURE_WORDS: [u32; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 0o10, 0o11, 0o12, 0o13, 0o14, 0o100, 0o377, 0o200];
+/// The words of the feature page the map program reads: 220 is the first of
+/// the words kept free for later devices (contract Q13), reserved.
+const FEATURE_WORDS: [u32; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 0o10, 0o11, 0o12, 0o13, 0o14, 0o100, 0o377, 0o220];
 
 /// **The six-bit map, MACHINE-ID, the feature page and the 16K PDL buffer**
 /// --- QUUX revisions 1 and 2, and the three sources the CADR leaves open.
@@ -194,9 +200,13 @@ const FEATURE_WORDS: [u32; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 0o10, 0o11, 0o12, 0o13
 ///   13     the PDL pointer after a pop from 0
 ///   14     `MAP(MD)` after a store of both levels, entry 0 then entry 45
 ///   20-37  the feature page's words, `FEATURE_WORDS`, in order
-///   40     the word below the feature page
+///   40     the word below the register page, `17777000`
 ///   41     word 0 of the feature page after a write of it
-///   42     the word at `17377770`, which nothing answers
+///   42     the word at `17377770`, which nothing answers on either machine
+///
+/// On the CADR the register page and the page below it are the Unibus
+/// window's last two pages, where nothing answers: each read times out with
+/// the Unibus NXM bit, and the read at `17377770` with the Xbus one.
 fn map_program() -> Prog {
     let mut p = Prog::new();
 
@@ -221,7 +231,7 @@ fn map_program() -> Prog {
     // 29 zero on the CADR.
     p.source(0o11, RESULT + 4);
 
-    // Slot 3 of the same region onto the page below the feature page.
+    // Slot 3 of the same region onto the page below the register page.
     p.konst(0o303, VADDR_PAST);
     p.konst(0o304, level_2_store(BELOW_FEATURE_PAGE));
     p.to(0o303, MD);
@@ -239,10 +249,11 @@ fn map_program() -> Prog {
         p.konst(0o306, VADDR | w);
         p.read(0o306, RESULT + 0o20 + k as u64);
     }
-    // And the page below it, which times out on both machines.
+    // And the page below it, which nothing answers on either machine.
     p.read(0o303, RESULT + 0o40);
-    // And the words of page 36777 between the display's registers and the
-    // disk's, `17377770`, which are nothing's on either machine.
+    // And the words of page 36777 between the CADR display's registers and
+    // its disk's, `17377770`, which are nothing's on either machine: QUUX
+    // has neither there (contract Q13).
     p.konst(0o323, (7 << 13) | (4 << 8) | 0o370);
     p.konst(0o324, level_2_store(0o36777));
     p.to(0o323, MD);
@@ -250,7 +261,8 @@ fn map_program() -> Prog {
     p.fill(2);
     p.read(0o323, RESULT + 0o42);
     // A write of word 0: QUUX's page takes it and keeps nothing, so word 0
-    // reads the MACHINE-ID after it; on the CADR the write times out.
+    // reads the MACHINE-ID after it; on the CADR the write times out on the
+    // Unibus.
     p.konst(0o307, 0o7654321);
     p.to(0o307, MD);
     p.to(0o300, START_WRITE);
@@ -309,30 +321,42 @@ fn map_program() -> Prog {
 
 // -------------------------------------------------------------------- tv
 
-/// The display's registers, as a word address in page 36777.
+/// The CADR display's registers, as a word address in page 36777.
 const TV_CONTROL: u32 = 0o360;
+/// The video controller's mode, word 210 of QUUX's register page, and the
+/// seven reserved words after it (contract Q13).
+const VIDEO_MODE: u32 = 0o210;
 
 /// The first program constant written to the buffer, and the second.
 const TV_FIRST: u32 = 0o12345670;
 const TV_LAST: u32 = 0o76543210;
 
-/// **MONO TV** --- QUUX's display in place of the SIMPLE and LISPM TV.
+/// **THE DISPLAY** --- on QUUX the video controller, in place of the SIMPLE
+/// and LISPM TV.
 ///
 /// A region of level 1, entry 2, carries five pages of level 2: the
 /// buffer's first page, the page of its last word (`17117777`), the page
 /// one past its end (`17120000`), the page past the CADR boards' 32K words
-/// (`17100000`), and the page of the display's registers.  Results,
-/// `A[200 + k]`:
+/// (`17100000`), and the page of the display's registers: on the CADR page
+/// 36777, the eight at `17377760`; on QUUX the register page, the video
+/// controller's mode at word 210 and the seven reserved words after it,
+/// `17777610`-`17777617`.  Results, `A[200 + k]`:
 ///
 ///   0      word 0 of the buffer after a write of it
 ///   1      the buffer's last word after a write of it
 ///   2      the word past the CADR's 32K
 ///   3      the word one past the buffer
 ///   4      register 0 after a write of all ones in its low eight bits
-///   5-13   registers 0 to 7 after a write of ones to 1 to 7: on QUUX 1 to 3
-///          and 5 to 7 time out, and 4 answers and reads 0
-///   14     register 0 after a write of the vertical flag and its interrupt
+///   5-14   registers 0 to 7 after a write of ones to 1 to 7: on QUUX 211
+///          to 217 are reserved and read 0
+///   15     register 0 after a write of the vertical flag and its interrupt
+///
+/// QUUX's program differs from the CADR's only in the page and the word the
+/// registers are at, so the CADR's trace is the one it always was; the old
+/// addresses on QUUX, which answer nothing, are the `registers` program's.
 fn tv_program() -> Prog {
+    let quux = BASE.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    let (reg_page, control) = if quux { (FEATURE_PAGE, VIDEO_MODE) } else { (0o36777, TV_CONTROL) };
     let mut p = Prog::new();
     let va = |slot: u32, word: u32| (7 << 13) | (slot << 8) | word;
     p.konst(0o300, va(0, 0));
@@ -340,7 +364,7 @@ fn tv_program() -> Prog {
     p.to(0o300, MD);
     p.to(0o301, fdest(0o23));
     p.fill(2);
-    for (slot, page) in [(0u32, 0o36000u32), (1, 0o36237), (2, 0o36240), (3, 0o36200), (4, 0o36777)] {
+    for (slot, page) in [(0u32, 0o36000u32), (1, 0o36237), (2, 0o36240), (3, 0o36200), (4, reg_page)] {
         p.konst(0o302, va(slot, 0));
         p.konst(0o303, level_2_store(page));
         p.to(0o302, MD);
@@ -366,18 +390,18 @@ fn tv_program() -> Prog {
     read(&mut p, va(3, 0), RESULT + 2);
     read(&mut p, va(2, 0), RESULT + 3);
     // The registers.
-    write(&mut p, va(4, TV_CONTROL), 0o377);
-    read(&mut p, va(4, TV_CONTROL), RESULT + 4);
+    write(&mut p, va(4, control), 0o377);
+    read(&mut p, va(4, control), RESULT + 4);
     for r in 1..8u32 {
-        write(&mut p, va(4, TV_CONTROL + r), 0o177777);
+        write(&mut p, va(4, control + r), 0o177777);
     }
     for r in 0..8u32 {
-        read(&mut p, va(4, TV_CONTROL + r), RESULT + 5 + r as u64);
+        read(&mut p, va(4, control + r), RESULT + 5 + r as u64);
     }
     // The vertical flag with its interrupt enable: the CADR's board raises
-    // `-XBUS.INTR` and MONO TV has neither.
-    write(&mut p, va(4, TV_CONTROL), 0o30);
-    read(&mut p, va(4, TV_CONTROL), RESULT + 0o15);
+    // `-XBUS.INTR` and the video controller has neither.
+    write(&mut p, va(4, control), 0o30);
+    read(&mut p, va(4, control), RESULT + 0o15);
     p.park();
     p
 }
@@ -390,14 +414,15 @@ fn check_tv(which: Which, m: &muir::machine::Machine) {
     if which == Which::Quux {
         assert_eq!(m.tv.read_buffer(40_959), TV_LAST, "QUUX: the buffer's last word");
         assert_eq!(r(1), TV_LAST, "QUUX: the last word, read back");
-        assert_eq!(r(4), 4, "QUUX: register 0 keeps black-on-white alone");
-        // Registers 0 and 4 answer, 0 with black-on-white and 4 with zero;
-        // 1 to 3 and 5 to 7 are not there, and time out (`tests/mono_tv.rs`).
-        assert_eq!(r(5), 4, "QUUX: register 0 reads");
-        assert_eq!(r(9), 0, "QUUX: register 4 reads 0 and took no write");
-        assert_eq!(m.tv.control_registers(), 0b0001_0001, "QUUX: MONO TV's registers");
-        assert_eq!(r(0o15), 0, "QUUX: register 0 after the flag and its enable");
-        assert!(!m.interrupt(), "QUUX: MONO TV has no interrupt");
+        assert_eq!(r(4), 4, "QUUX: the mode keeps black-on-white alone");
+        // Word 210 answers with black-on-white; 211 to 217 are the register
+        // page's reserved words, read 0 and take no write
+        // (`tests/video.rs`).
+        assert_eq!(r(5), 4, "QUUX: word 210 reads");
+        assert_eq!((6..0o15).map(r).collect::<Vec<_>>(), vec![0; 7], "QUUX: 211 to 217 reserved");
+        assert_eq!(m.tv.control_registers(), 0, "QUUX: the video controller has no control registers of its own");
+        assert_eq!(r(0o15), 0, "QUUX: the mode after the flag and its enable");
+        assert!(!m.interrupt(), "QUUX: the video controller has no interrupt");
     } else {
         assert!(m.interrupt(), "CADR: the board's vertical flag, enabled, interrupts");
     }
@@ -638,7 +663,8 @@ const USEC_AT: u64 = 0o710;
 
 /// **QUUX's interval timers on the register page** (revision 10, contract
 /// Q11): words 110 + 2k and 111 + 2k, timer k's control and status and its
-/// period; word 104, `<0>` `RESET-DEVICES`; word 100 `<0>`, `<1>` and `<7>`.
+/// period; word 104, `<0>` `RESET-DEVICES`; word 100 `<0>`, `<1>` and `<2>`
+/// (contract Q13; `<7>` for timer 2 until revision 11).
 const RESET_DEVICES_WORD: u32 = 0o104;
 const fn tctl(k: u32) -> u32 {
     0o110 + 2 * k
@@ -652,8 +678,8 @@ const T_ON: u32 = 1;
 const T_FLAG: u32 = 2;
 const T_ONE_SHOT: u32 = 4;
 const T_IE: u32 = 1 << 8;
-/// Word 100's bit for each timer.
-const T_BIT: [u32; 3] = [1, 2, 1 << 7];
+/// Word 100's bit for each timer (contract Q13).
+const T_BIT: [u32; 3] = [1, 2, 1 << 2];
 
 /// A jump on condition 5 to two words on, the word between inhibited when
 /// taken: an observation of the interrupt `SINTR` took at the edge before
@@ -1466,11 +1492,13 @@ fn page_key_2(k: usize) -> u32 {
 /// The page's words the program reads through region 7's slot 0.
 const PAGE_UNIBUS_CHAOS: u32 = 0o17772060;
 
-/// **QUUX's register page** (revision 6, contracts Q2, Q3 and Q4): words
-/// 100-102, the keyboard and the mouse at 120-123, the Chaosnet interface
-/// at 140-147.  Region 7 maps slot 0 onto the page, slot 1 onto the page
-/// below it, where nothing answers, and slot 2 onto the Unibus page with the
-/// Chaosnet interface's registers.  In order, each read into `A[200 + k]`:
+/// **QUUX's register page** (revision 6, contracts Q2, Q3 and Q4; at
+/// `17777400` with word 100 in its final order since revision 11, contract
+/// Q13): words 100-102, the keyboard and the mouse at 120-123, the Chaosnet
+/// interface's five registers at 140-145.  Region 7 maps slot 0 onto the
+/// page, slot 1 onto the page below it, where nothing answers, and slot 2
+/// onto the old Unibus page with the Chaosnet interface's registers.  In
+/// order, each read into `A[200 + k]`:
 ///
 ///   - words 100, 101 and 102 as the machine comes up: all zero;
 ///   - the keyboard's interrupt enabled, and `INTERRUPT-CONTROL<27>`, three
@@ -1483,14 +1511,15 @@ const PAGE_UNIBUS_CHAOS: u32 = 0o17772060;
 ///     a write of 101, 101 again;
 ///   - error stop written through 102, read, and cleared;
 ///   - timers 1 and 2 at 2 us with their interrupt enables, each waited
-///     for: 100 with `<1>` and `<7>`, and their two words; then 110, 111,
+///     for: 100 with `<1>` and `<2>`, and their two words; then 110, 111,
 ///     104 (`RESET-DEVICES`, which reads 0), feature word 16 and the
 ///     MACHINE-ID (revision 10, contract Q11);
 ///   - the Chaosnet interface: 140 written with Clear Transmitter and the
 ///     transmit interrupt enabled, which raises its request, then 140, the
-///     same register on the Unibus at `764140`, 100 with `<5>`, 141, 142,
-///     143, 144 and 146; a word into the transmit buffer through 141, which
-///     takes the request down; 140 and 100 again; 140 written with 0;
+///     same register on the Unibus at `764140`, 100 with `<6>`, 141, 142,
+///     143, and the reserved 144 and 146, which read 0 (contract Q13); a
+///     word into the transmit buffer through 141, which takes the request
+///     down; 140 and 100 again; 140 written with 0;
 ///   - the Unibus window, which QUUX does not have (contract Q5): the same
 ///     register read at Unibus `764140` through slot 2, and written there,
 ///     each an Xbus NXM in 101, the write reaching nothing.
@@ -1567,7 +1596,7 @@ fn page_program_marks() -> (Prog, u64, u64) {
     rd(&mut p, &mut c, &mut k, 0o102);
     // The interval timers (revision 10, contract Q11): timer 1 at 2 us with
     // its interrupt enable, waited for: 100 with `<1>`, 112 and 113; then
-    // timer 2 the same: 100 with `<7>`, 114 and 115.  Then 110 and 111, word
+    // timer 2 the same: 100 with `<2>`, 114 and 115.  Then 110 and 111, word
     // 104, `RESET-DEVICES`, which reads 0, feature word 16 and the MACHINE-ID.
     for tk in [1, 2] {
         wr(&mut p, &mut c, va(0, tper(tk)), 2);
@@ -1631,7 +1660,7 @@ fn check_page(which: Which, m: &muir::machine::Machine) {
     let r: Vec<u32> = (0..PAGE_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
     assert_eq!(&r[0..3], &[0, 0, 0], "QUUX: 100, 101 and 102 at the start");
     assert_eq!(r[3], 0o401, "QUUX: 120, a word waiting and the enable");
-    assert_eq!(r[4], 1 << 3, "QUUX: 100, the keyboard");
+    assert_eq!(r[4], 1 << 4, "QUUX: 100, the keyboard");
     assert_eq!(&r[5..8], &PAGE_KEYS_1, "QUUX: the three words, oldest first");
     assert_eq!(r[8], 0, "QUUX: 121 with the FIFO empty");
     assert_eq!(r[9], 0o400, "QUUX: 120, nothing waiting");
@@ -1642,24 +1671,205 @@ fn check_page(which: Which, m: &muir::machine::Machine) {
     assert_eq!(r[15], 1, "QUUX: 101, the Xbus NXM");
     assert_eq!(r[16], 0, "QUUX: 101 cleared");
     assert_eq!(&r[17..19], &[1, 0], "QUUX: error stop through 102");
-    assert_eq!(r[19] & 0o202, 2, "QUUX: 100, timer 1");
+    assert_eq!(r[19] & 0o6, 2, "QUUX: 100, timer 1");
     assert_eq!(&r[20..22], &[T_ON | T_FLAG | T_IE, 2], "QUUX: 112 and 113, timer 1 risen");
-    assert_eq!(r[22] & 0o202, 0o200, "QUUX: 100, timer 2");
+    assert_eq!(r[22] & 0o6, 0o4, "QUUX: 100, timer 2");
     assert_eq!(&r[23..25], &[T_ON | T_FLAG | T_IE, 2], "QUUX: 114 and 115, timer 2 risen");
     let id = which.geometry().machine_id.unwrap();
     assert_eq!(&r[25..30], &[0, 0, 0, 3, id], "QUUX: 110, 111, 104, feature word 16 and the MACHINE-ID");
-    assert_eq!(id >> 4 & 0o7777, 10, "QUUX: revision 10");
+    assert_eq!(id >> 4 & 0o7777, 11, "QUUX: revision 11");
     let r = &r[10..];
     assert_eq!(r[20] & 0o240, 0o240, "QUUX: 140, Transmit Done and its interrupt enable");
-    assert_eq!(r[21] & (1 << 5), 1 << 5, "QUUX: 100, the network");
+    assert_eq!(r[21] & (1 << 6), 1 << 6, "QUUX: 100, the network");
     assert_eq!(r[22], 0o177001, "QUUX: 141, my address");
-    assert_eq!(r[26], 0, "QUUX: 146 answers nothing");
-    assert_eq!(r[28] & (1 << 5), 0, "QUUX: 100, the request down after a word written");
+    assert_eq!((r[25], r[26]), (0, 0), "QUUX: 144 and 146, reserved (contract Q13)");
+    assert_eq!(r[28] & (1 << 6), 0, "QUUX: 100, the request down after a word written");
     assert_eq!(r[29], 0, "QUUX: the Unibus's 764140 reads nothing");
     assert_eq!(r[30], 1, "QUUX: 101, the Xbus NXM of a read of the Unibus window");
     assert_eq!(r[31], 1, "QUUX: 101, the Xbus NXM of a write there");
-    assert_eq!(r[32] & (1 << 5), 0, "QUUX: 100, the write there reached no Chaosnet interface");
+    assert_eq!(r[32] & (1 << 6), 0, "QUUX: 100, the write there reached no Chaosnet interface");
     assert_eq!(&r[33..35], &[0, 0], "QUUX: reserved words");
+}
+
+// ------------------------------------------------------------- registers
+
+/// The old register page and the CADR's device registers after it,
+/// `17377000`-`17377777`, the first page of the old Unibus window,
+/// `17400000`, and the page below the register page (contract Q13): on
+/// QUUX nothing answers at any of them.
+const OLD_PAGE: u32 = 0o36776;
+const OLD_DEVICE_PAGE: u32 = 0o36777;
+const OLD_WINDOW_PAGE: u32 = 0o37000;
+
+/// **THE REGISTER PAGE'S READ-ONLY AND RESERVED WORDS**, as runs of `(first,
+/// count)`: every word a write of all ones must change nothing at, being
+/// read only or reserved, and none of the words that are written (contract
+/// Q13 §1; muir's `tests/quux_registers.rs`, `table`).
+const REGISTERS_UNWRITTEN: [(u32, u32); 13] = [
+    (0, 0o101),
+    (0o103, 1),
+    (0o105, 3),
+    (0o116, 2),
+    (0o121, 2),
+    (0o124, 0o14),
+    (0o142, 0o16),
+    (0o161, 1),
+    (0o165, 1),
+    (0o170, 1),
+    (0o172, 6),
+    (0o204, 4),
+    (0o211, 0o167),
+];
+
+/// **What each word of the page reads at power-on on the trace's machine**
+/// (contract Q13 §1, muir's `table`), `None` for word 103, the real-time
+/// clock, which reads the counted clock.
+fn register_at_power_on(w: u32) -> Option<u32> {
+    let id = Geometry::QUUX.machine_id.unwrap();
+    let screen = ((machine_axis::VIDEO_WIDTH as u32) << 16) | machine_axis::VIDEO_HEIGHT as u32;
+    Some(match w {
+        0 => id,
+        1 => 6,
+        2 => 2048,
+        3 | 4 => 16384,
+        5 => 1024,
+        6 => 2048,
+        7 => 3,
+        0o10 => 1,
+        0o11 => screen,
+        0o12 => 1 << 16 | 40,
+        0o13 => 0o17000000,
+        0o14 => 1,
+        0o15 | 0o16 => 3,
+        0o103 => return None,
+        // The network's CSR, Transmit Done; my address at 141 and at 145,
+        // START, as the CADR's board reads it at `764152`.
+        0o140 => 0o200,
+        0o141 | 0o145 => 0o177001,
+        // The file device quiet; block-disk not active, and with no pack
+        // on it, as every trace here has it (`machine_axis.rs`), `<9>`.
+        0o161 => 2,
+        0o200 => 0o1001,
+        _ => 0,
+    })
+}
+
+/// **Every word of QUUX's register page, and every address that was one**
+/// (contract Q13, #34): muir's `tests/quux_registers.rs` table as a program,
+/// traced, so that the fabric reads the same 256 words muir's own test
+/// reads, in the same order, through the map.  QUUX's alone.
+///
+/// Region 7 maps slot 0 onto the register page, slots 1 and 2 onto the old
+/// page and the old device registers after it, `17377000`-`17377777`, slot
+/// 3 onto the old Unibus window's first page and slot 4 onto the page below
+/// the register page.  Each access is followed by a read of word 101 and a
+/// write of it, which clears it; every word read goes onto the PDL buffer
+/// from its word 1, in order:
+///
+///   1. every word, 0 to 377, and 101 after it: at power-on, each the
+///      table's value and none setting 101;
+///   2. a write of all ones to every read-only and reserved word
+///      ([`REGISTERS_UNWRITTEN`]), and 101 after each: answered, none
+///      setting 101;
+///   3. every word again, and 101 after it: the writes changed nothing a read
+///      can see, save what the first sweep's own reads moved (the network's
+///      START at 145);
+///   4. every word of `17377000`-`17377777`, `17400000` and `17777377`, read
+///      and then written with all ones, 101 after each: nothing answers,
+///      each read 0 and each access setting the Xbus NXM bit, `<0>`, at once.
+///
+/// Each sweep is a loop over the addresses, the address kept in `M[12]` and
+/// the count in `M[13]`, so the program is small and its rows many.
+fn registers_program() -> Prog {
+    let mut p = Prog::new();
+    let mut t = Tp::new(0);
+    map_region_7(&mut p, &mut t.c, &[FEATURE_PAGE, OLD_PAGE, OLD_DEVICE_PAGE, OLD_WINDOW_PAGE, BELOW_FEATURE_PAGE]);
+    let zero = t.c.c(&mut p, 0);
+    p.to(zero, fdest(DEST_PDL_POINTER));
+    registers_sweep(&mut p, &mut t, r7(0, 0), 0o400, None);
+    for &(first, n) in &REGISTERS_UNWRITTEN {
+        registers_sweep(&mut p, &mut t, r7(0, first), n, Some(!0));
+    }
+    registers_sweep(&mut p, &mut t, r7(0, 0), 0o400, None);
+    for (va, n) in [(r7(1, 0), 0o1000u32), (r7(3, 0), 1), (r7(4, 0o377), 1)] {
+        registers_sweep(&mut p, &mut t, va, n, None);
+        registers_sweep(&mut p, &mut t, va, n, Some(!0));
+    }
+    p.park();
+    p
+}
+
+/// `n` accesses from the virtual address `va` up, each a read pushed, or a
+/// write of `write`; each followed by word 101 read and pushed, and written
+/// with 0.
+fn registers_sweep(p: &mut Prog, t: &mut Tp, va: u32, n: u32, write: Option<u32>) {
+    const AT: u64 = 12;
+    const LEFT: u64 = 13;
+    let (start, count, one, zero) = (t.c.c(p, va), t.c.c(p, n), t.c.c(p, 1), t.c.c(p, 0));
+    let errors = t.c.c(p, r7(0, 0o101));
+    let value = write.map(|v| t.c.c(p, v));
+    p.i(ALU | SETA | a_src(start) | m_dest(AT));
+    p.i(ALU | SETA | a_src(count) | m_dest(LEFT));
+    let top = p.at();
+    match value {
+        Some(v) => {
+            p.to(v, MD);
+            p.i(ALU | SETM | m_src(AT) | START_WRITE);
+            p.fill(2);
+        }
+        None => {
+            p.i(ALU | SETM | m_src(AT) | START_READ);
+            p.fill(1);
+            p.i(ALU | SETM | SRC_MD | fdest(DEST_PDL_PUSH));
+            t.pushes += n as u64;
+        }
+    }
+    p.to(errors, START_READ);
+    p.fill(1);
+    p.i(ALU | SETM | SRC_MD | fdest(DEST_PDL_PUSH));
+    t.pushes += n as u64;
+    p.to(zero, MD);
+    p.to(errors, START_WRITE);
+    p.fill(2);
+    p.i(ALU | ADD | m_src(AT) | a_src(one) | m_dest(AT));
+    p.i(ALU | SUB | CARRY_IN | m_src(LEFT) | a_src(one) | m_dest(LEFT));
+    p.i(JUMP | target(top) | AEQM | INVERT | a_src(zero) | m_src(LEFT) | N);
+    p.fill(1);
+}
+
+fn check_registers(which: Which, m: &muir::machine::Machine) {
+    if which != Which::Quux {
+        return;
+    }
+    let unwritten: u64 = REGISTERS_UNWRITTEN.iter().map(|r| r.1 as u64).sum();
+    let old: u64 = 0o1000 + 2;
+    let log = pdl_log(m, 2 * 0o400 + unwritten + 2 * 0o400 + 3 * old);
+    let (first, rest) = log.split_at(2 * 0o400);
+    let (writes, rest) = rest.split_at(unwritten as usize);
+    let (second, old_log) = rest.split_at(2 * 0o400);
+    for w in 0..0o400u32 {
+        let (got, errors) = (first[2 * w as usize], first[2 * w as usize + 1]);
+        match register_at_power_on(w) {
+            Some(want) => assert_eq!(got, want, "QUUX: word {w:o} at power-on"),
+            None => assert_eq!(got, machine_axis::RTC_START, "QUUX: word 103, the counted clock"),
+        }
+        assert_eq!(errors, 0, "QUUX: word {w:o} answered");
+        let (again, errors) = (second[2 * w as usize], second[2 * w as usize + 1]);
+        assert_eq!(errors, 0, "QUUX: word {w:o} answered again");
+        if !(w == 0o103 || (0o140..=0o147).contains(&w)) {
+            assert_eq!(again, got, "QUUX: word {w:o} after the writes of all ones");
+        }
+    }
+    assert!(writes.iter().all(|&e| e == 0), "QUUX: every write of all ones answered: {writes:?}");
+    assert_eq!(unwritten, 0o400 - 25, "QUUX: every word but the 25 written");
+    // The old addresses: a read and a write of each, nothing answering.
+    let nxm = bus_error::XBUS_NXM as u32;
+    let reads = |log: &[u32]| log.chunks(2).all(|c| c == [0, nxm]);
+    let (a, b) = old_log.split_at(3 * 0o1000);
+    let (old_reads, old_writes) = a.split_at(2 * 0o1000);
+    assert!(reads(old_reads), "QUUX: 17377000-17377777 read: 0 and the Xbus NXM");
+    assert!(old_writes.iter().all(|&e| e == nxm), "QUUX: 17377000-17377777 written: the Xbus NXM");
+    assert_eq!(b, &[0, nxm, nxm, 0, nxm, nxm], "QUUX: 17400000 and 17777377, read and written");
 }
 
 // ------------------------------------------------------------ the checks
@@ -1690,7 +1900,7 @@ fn check_map(which: Which, m: &muir::machine::Machine) {
     // The feature page: its words on QUUX, a timeout on the CADR.
     if quux {
         let words: Vec<u32> = (0..FEATURE_WORDS.len()).map(|k| r(0o20 + k as u64)).collect();
-        let screen = ((machine_axis::MONO_TV_WIDTH as u32) << 16) | machine_axis::MONO_TV_HEIGHT as u32;
+        let screen = ((machine_axis::VIDEO_WIDTH as u32) << 16) | machine_axis::VIDEO_HEIGHT as u32;
         let want = [
             id.unwrap(),
             6,
@@ -1712,7 +1922,12 @@ fn check_map(which: Which, m: &muir::machine::Machine) {
         assert_eq!(words, want, "QUUX: the feature page");
         assert_eq!(r(0o41), id.unwrap(), "QUUX: word 0 after a write of it");
     }
-    assert_ne!(m.bus_error & bus_error::XBUS_NXM, 0, "{which:?}: the NXM below the feature page");
+    // The Xbus NXM: on QUUX of the page below the register page and of
+    // `17377770`; on the CADR of `17377770`.  And on the CADR the Unibus NXM
+    // of the page's own reads, which QUUX, having no Unibus, never sets.
+    assert_ne!(m.bus_error & bus_error::XBUS_NXM, 0, "{which:?}: the Xbus NXM");
+    let unibus_nxm = m.bus_error & bus_error::UNIBUS_NXM != 0;
+    assert_eq!(unibus_nxm, !quux, "{which:?}: the Unibus NXM of the register page's addresses");
     // The PDL buffer.
     let (after_1777, index, wrap, pop) =
         if quux { (0o2000, 0o37777, 0, 0o37777) } else { (0, 0o1777, 0, 0o1777) };
@@ -2220,18 +2435,23 @@ fn check_memedge(which: Which, m: &muir::machine::Machine) {
 
 // ------------------------------------------------------- the bus reset
 
-/// The page of the display's registers and the disk's, `17377400`: the
-/// display's at word 360, the disk's four at 374-377.
+/// The CADR's page of the display's registers and the disk's, `17377400`:
+/// the display's at word 360, the disk's four at 374-377.  On QUUX nothing
+/// answers there, and block-disk and the video controller are words 200-203
+/// and 210 of the register page (contract Q13).
 const DEVICE_PAGE: u32 = 0o36777;
 /// The Unibus as the Xbus sees it, `17772000`: the I/O board's KBD CSR,
 /// Unibus `764112`, at word 45, and the Chaosnet interface's CSR, `764140`,
 /// at word 60.
 const UNIBUS_PAGE: u32 = 0o37764;
-/// The disk's registers, as words of [`DEVICE_PAGE`].
+/// The disk's registers, as words of [`DEVICE_PAGE`] on the CADR; on QUUX
+/// block-disk's are these less 174, words 200-203 of the register page.
 const DISK_STATUS: u32 = 0o374;
 const DISK_CLP: u32 = 0o375;
 const DISK_DA: u32 = 0o376;
 const DISK_START: u32 = 0o377;
+/// Block-disk's first word on QUUX's register page (contract Q13).
+const BLOCK_DISK_WORD: u32 = 0o200;
 /// The reads the program makes on each side of the reset: seven, and on the
 /// CADR an eighth, the interface's interrupt status; on QUUX eight more,
 /// the timers' six words and the file device's 160 and 161.
@@ -2312,16 +2532,17 @@ fn busreset_program() -> Prog {
     let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
     let mut k = 0u64;
     let reads = busreset_reads(quux);
-    // The map: level 1 entry 3 at region 7; level 2 slot 0 the devices,
-    // slot 1 the register page, slot 2 the Unibus, and on the CADR slot 3
-    // the interface's own registers.
+    // The map: level 1 entry 3 at region 7; level 2 slot 1 the register
+    // page, whose words on QUUX are every device this program touches
+    // (contract Q13); and on the CADR slot 0 the devices, slot 2 the Unibus
+    // and slot 3 the interface's own registers.
     p.konst(0o300, va(0, 0));
     p.konst(0o301, level_1_store(3));
     p.to(0o300, MD);
     p.to(0o301, fdest(0o23));
     p.fill(2);
     let slots: &[(u32, u32)] = if quux {
-        &[(0, DEVICE_PAGE), (1, FEATURE_PAGE), (2, UNIBUS_PAGE)]
+        &[(1, FEATURE_PAGE)]
     } else {
         &[(0, DEVICE_PAGE), (1, FEATURE_PAGE), (2, UNIBUS_PAGE), (3, INTERFACE_PAGE)]
     };
@@ -2352,13 +2573,17 @@ fn busreset_program() -> Prog {
     // one.
     let chaos = if quux { va(1, 0o140) } else { va(2, CHAOS_CSR_WORD) };
     let fifth = if quux { va(1, 0o100) } else { va(2, KBD_CSR_WORD) };
+    // The disk's registers and the display's register 0: on QUUX words
+    // 200-203 and 210 of the register page (contract Q13).
+    let disk = |w: u32| if quux { va(1, BLOCK_DISK_WORD + w - DISK_STATUS) } else { va(0, w) };
+    let display = if quux { va(1, VIDEO_MODE) } else { va(0, TV_CONTROL) };
     // The disk: the done interrupt enabled, and on QUUX a transfer started
     // with a command block-disk does not have.
-    wr(&mut p, va(0, DISK_STATUS), (1 << 11) | if quux { 0o17 } else { 0 });
+    wr(&mut p, disk(DISK_STATUS), (1 << 11) | if quux { 0o17 } else { 0 });
     if quux {
-        wr(&mut p, va(0, DISK_CLP), 0o1234);
-        wr(&mut p, va(0, DISK_DA), 0o5670);
-        wr(&mut p, va(0, DISK_START), 0);
+        wr(&mut p, disk(DISK_CLP), 0o1234);
+        wr(&mut p, disk(DISK_DA), 0o5670);
+        wr(&mut p, disk(DISK_START), 0);
         // **`<28>` WITH THE DISK'S REQUEST ALONE UP**, before the network's
         // and the timers' are: on QUUX since revision 10 it resets nothing
         // and holds nothing off `SINTR`, so the line stays up through the
@@ -2374,7 +2599,7 @@ fn busreset_program() -> Prog {
         p.fill(2);
     }
     // The display's vertical flag and its interrupt enable.
-    wr(&mut p, va(0, TV_CONTROL), 0o30);
+    wr(&mut p, display, 0o30);
     // The Chaosnet interface: Clear Transmitter, `<8>`, and the transmit
     // interrupt enable, `<5>`.
     wr(&mut p, chaos, (1 << 8) | (1 << 5));
@@ -2407,8 +2632,8 @@ fn busreset_program() -> Prog {
         wr(&mut p, va(1, 0o160), 0x101);
         wr(&mut p, va(1, 0o164), 5);
     }
-    let mut order = vec![va(0, DISK_STATUS), va(0, DISK_CLP), va(0, DISK_DA), va(0, TV_CONTROL), chaos, fifth,
-                         va(0, DISK_STATUS)];
+    let mut order = vec![disk(DISK_STATUS), disk(DISK_CLP), disk(DISK_DA), display, chaos, fifth,
+                         disk(DISK_STATUS)];
     if !quux {
         order.push(va(3, INTERRUPT_STATUS_WORD));
     } else {
@@ -2488,14 +2713,14 @@ fn check_busreset(which: Which, m: &muir::machine::Machine) {
         assert_eq!(r(0), 0o21011, "QUUX: block-disk stopped by error, its interrupt requested, no pack");
         assert_eq!(after(0), 0o1001, "QUUX: block-disk not active, no pack, the error cleared");
         assert_eq!((r(2), after(2)), (0o5670, 0o5670), "QUUX: the disk address has no pin on -XBUS INIT");
-        assert_eq!((r(5) & !0o3, after(5)), (0o44, 0), "QUUX: word 100, the disk, the network and timers 0 and 1, then nothing");
+        assert_eq!((r(5) & !0o3, after(5)), (0o110, 0), "QUUX: word 100, the disk, the network and timers 0 and 1, then nothing");
         assert_eq!(r(5) & 0o3, 0o3, "QUUX: word 100, timers 0 and 1 before the reset");
         assert_ne!(r(4) & (1 << 5), 0, "QUUX: the network's enable, before the reset");
         assert_eq!(after(4) & (1 << 5), 0, "QUUX: the network's enable, after the reset");
         // `<28>` reset nothing: the disk, the network and the file device
         // as they were, the timers on.
         let mid = |k: u64| r(n + k);
-        assert_eq!((mid(0), mid(4) & (1 << 5), mid(5) & 0o44), (0o21011, 1 << 5, 0o44), "QUUX: <28> reset nothing");
+        assert_eq!((mid(0), mid(4) & (1 << 5), mid(5) & 0o110), (0o21011, 1 << 5, 0o110), "QUUX: <28> reset nothing");
         // The timers before: timers 0 and 1 periodic with their enables;
         // timer 2 one-shot.
         let (on, one) = (T_ON | T_IE, T_ON | T_ONE_SHOT);
@@ -2556,8 +2781,9 @@ const STARTSTART_MODE: u32 = 4;
 /// `MD` of the microcycle after its start**, on both machines
 /// (`chip_and_rtl_write_the_md_of_the_microcycle_after_the_start`).
 ///
-/// Region 7's slot 0 is main memory's page `WAIT_PAGE`, on QUUX slot 1 the
-/// display's registers and slot 2 the feature page.  Every word a read
+/// Region 7's slot 0 is main memory's page `WAIT_PAGE`, and on QUUX slot 2
+/// the register page, with the video controller's mode at word 210
+/// (contract Q13).  Every word a read
 /// takes was written before on its own, and a line is cached only when a
 /// read has filled it, since a write allocates nothing.
 ///
@@ -2569,8 +2795,9 @@ const STARTSTART_MODE: u32 = 4;
 ///   3      the same, cached
 ///   4      a read then a read, missing: `MD` after them
 ///   5      the same, cached
-///   6      a write of the mode register, then a read of main memory
-///   7      a write of main memory, then a read of the mode register
+///   6      a write of the video controller's mode, then a read of main
+///          memory
+///   7      a write of main memory, then a read of the mode
 ///   10     a write of MACHINE-ID, which goes nowhere, then a read
 ///   20-    every word written and every word read, read back in turn
 ///
@@ -2612,8 +2839,9 @@ fn startstart_program() -> Prog {
         p.i(ALU | SETM | SRC_MD | a_dest(r));
     };
     if quux {
-        // Level-2 slots 1 and 2: the display's registers and the feature page.
-        for (slot, page) in [(1u32, DEVICE_PAGE), (2, FEATURE_PAGE)] {
+        // Level-2 slot 2: the register page, the video controller's mode
+        // among its words.
+        for (slot, page) in [(2u32, FEATURE_PAGE)] {
             p.konst(0o302, va(slot, 0));
             p.konst(0o303, level_2_store(page));
             p.to(0o302, MD);
@@ -2669,10 +2897,10 @@ fn startstart_program() -> Prog {
             read_md(&mut p, r);
             p.fill(2);
         }
-        // The display's mode register, then main memory; main memory, then
-        // the mode register.
+        // The video controller's mode, then main memory; main memory, then
+        // the mode.
         p.konst(D + 6, STARTSTART_MODE);
-        p.konst(X, va(1, TV_CONTROL));
+        p.konst(X, va(2, VIDEO_MODE));
         p.to(D + 6, MD);
         p.to(X, START_WRITE);
         p.to(line(14), START_READ);
@@ -2756,8 +2984,8 @@ fn check_startstart(which: Which, m: &muir::machine::Machine) {
     assert_eq!(r(3), w(6), "QUUX: a read then a write, cached");
     assert_eq!(r(4), w(9), "QUUX: a read then a read, missing");
     assert_eq!(r(5), w(11), "QUUX: a read then a read, cached");
-    assert_eq!(r(6), w(14), "QUUX: the mode register, then main memory");
-    assert_eq!(r(7), STARTSTART_MODE, "QUUX: main memory, then the mode register");
+    assert_eq!(r(6), w(14), "QUUX: the video controller's mode, then main memory");
+    assert_eq!(r(7), STARTSTART_MODE, "QUUX: main memory, then the video controller's mode");
     assert_eq!(r(8), w(15), "QUUX: MACHINE-ID, then main memory");
     let back = |n: u64| r(0o20 + n);
     // The seeds, in `seeded`'s order: lines 1, 3, 4, 6, 8, 9, 10, 11, 14, 15.
@@ -2989,8 +3217,8 @@ fn fd_command(p: &mut Prog, c: &mut Pool, slot: u32, words: [u32; 7], then_prod:
 }
 
 /// **QUUX's file device** (revision 9, contract Q9): registers 160-171 of
-/// the register page, word 100 `<6>`, and commands and responses in two
-/// rings in main memory.  The host's side --- the commands run against a
+/// the register page, word 100 `<7>` (contract Q13), and commands and
+/// responses in two rings in main memory.  The host's side --- the commands run against a
 /// folder and their answers written into main memory --- is muir's device
 /// here and, on a board, Linux's server; the testbench plays it from the
 /// `# fd` lines this generator writes, each a command's completion with the
@@ -3010,7 +3238,7 @@ fn fd_command(p: &mut Prog, c: &mut Pool, slot: u32, words: [u32; 7], then_prod:
 ///          160 clears it, and after a consumer past the producer
 ///   18     the response slot's word 0, read to cache its line
 ///   19     165 at once after the producer: nothing within the write
-///   20-21  100 and 161 when OPEN of `/f` is answered: `<6>`, a handle
+///   20-21  100 and 161 when OPEN of `/f` is answered: `<7>`, a handle
 ///   22-26  the response's words 0-4, through the line cached before it
 ///   27-28  100 and 161 after 171 is written up to 170
 ///   29     READ's buffer B's first word, read to cache its line
@@ -3021,7 +3249,7 @@ fn fd_command(p: &mut Prog, c: &mut Pool, slot: u32, words: [u32; 7], then_prod:
 ///   40     161 before the disable, a handle open
 ///   41-46  160, 161, 164, 165, 170 and 171 after it
 ///   47-48  100 and 161 after a command answered with the interrupt enable
-///          off: `<8>` without `<6>`
+///          off: `<8>` without `<7>`
 ///   49     100 with the interrupt enable turned on and the response waiting
 ///   50-51  160 and 161 after `INTERRUPT-CONTROL<28>` raised and lowered
 ///          with a command queued and the interrupt up: nothing on QUUX
@@ -3273,7 +3501,7 @@ fn check_files(which: Which, m: &muir::machine::Machine) {
     assert_eq!(&r[15..18], &[1 | 8, 1, 1 | 8], "QUUX: the index faults and their clear");
     assert_eq!(r[18], 0, "QUUX: the response slot before any response");
     assert_eq!(r[19], 0, "QUUX: nothing answered within the producer write");
-    assert_eq!(&r[20..22], &[1 << 6, 1 | 0x100 | 1 << 16], "QUUX: OPEN answered, a handle open");
+    assert_eq!(&r[20..22], &[1 << 7, 1 | 0x100 | 1 << 16], "QUUX: OPEN answered, a handle open");
     assert_eq!(
         &r[22..27],
         &[resp0(0x1234, status::OK, op::OPEN), 0, 1, FD_FILE.len() as u32, FD_MTIME],
@@ -3289,7 +3517,7 @@ fn check_files(which: Which, m: &muir::machine::Machine) {
     assert_eq!(r[40], 1 | 1 << 16, "QUUX: before the disable, a handle open");
     assert_eq!(&r[41..47], &[0, 2, 0, 0, 0, 0], "QUUX: the disable is the reset");
     assert_eq!(&r[47..49], &[0, 1 | 0x100 | 1 << 16], "QUUX: a response with the interrupt enable off");
-    assert_eq!(r[49], 1 << 6, "QUUX: the interrupt enable turned on with a response waiting");
+    assert_eq!(r[49], 1 << 7, "QUUX: the interrupt enable turned on with a response waiting");
     assert_eq!(r[50], 0x101, "QUUX: <28> leaves it enabled");
     assert_ne!(r[51] >> 16 & 0xff, 0, "QUUX: <28> leaves its handle open");
     assert_eq!(&r[52..56], &[0, 2, 0, 0], "QUUX: reset devices disables it");
@@ -3331,6 +3559,7 @@ fn cycles(name: &str, which: Which) -> u64 {
         "tickwait" => 2600,
         "clocks" => CLOCKS_ROWS,
         "page" => 1800,
+        "registers" => REGISTERS_ROWS,
         "clockwait" => 1400,
         "tickwin" => 2000,
         "memedge" => 2800,
@@ -3342,6 +3571,10 @@ fn cycles(name: &str, which: Which) -> u64 {
         _ => unreachable!(),
     }
 }
+
+/// The `registers` program on QUUX, run to its park and a little past it
+/// (`check_registers` holds that it parked).
+const REGISTERS_ROWS: u64 = 26_500;
 
 /// The two programs of revision 9, run to their park and a little past it.
 const RTC_ROWS: u64 = 400;
@@ -3365,6 +3598,7 @@ fn program(name: &str) -> Prog {
         "tickwait" => tickwait_program(),
         "clocks" => clocks_program(),
         "page" => page_program(),
+        "registers" => registers_program(),
         "clockwait" => clockwait_program(),
         "tickwin" => tickwin_program(),
         "memedge" => memedge_program(),
@@ -3374,7 +3608,7 @@ fn program(name: &str) -> Prog {
         "files" => files_program(),
         "unibus" => unibus_program(),
         _ => {
-            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, clockwait, memedge, busreset, startstart, unibus, rtc, files");
+            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, registers, clockwait, memedge, busreset, startstart, unibus, rtc, files");
             std::process::exit(2);
         }
     }
@@ -3601,6 +3835,7 @@ fn main() {
         "tickwait" => check_tickwait(which, e.machine()),
         "clocks" => check_clocks(which, e.machine()),
         "page" => check_page(which, e.machine()),
+        "registers" => check_registers(which, e.machine()),
         "clockwait" => check_clockwait(which, e.machine()),
         "tickwin" => check_tickwin(which, e.machine()),
         "memedge" => check_memedge(which, e.machine()),

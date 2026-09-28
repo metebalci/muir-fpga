@@ -695,7 +695,7 @@ assert_multicycle_applied $tick 6
 # gives the same eight ticks the bus's setup does, so they are named as
 # relaxed ELSEWHERE: left out of both halves rather than read as swallowed.
 # grid: 80 ns
-# QUUX's first display is MONO TV, which keeps no word relaxed at its pins,
+# QUUX's display is the video controller, which keeps no word relaxed at its pins,
 # and the CADR's board is not fitted there, so the clause has nothing to reach.
 if {$machine ne "quux"} {
     assert_instance_timing $tick 8 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*} \

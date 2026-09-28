@@ -334,7 +334,7 @@ module cadr_io_board (
     // before what the access does.  A page access landing on the very tick a
     // Unibus cycle of the same group lands waits one tick, so neither is
     // lost; only a console could make that happen.  The request itself,
-    // `chaos_ireq`, is word 100's `<5>`.  The switches, `mouse_buttons`, are
+    // `chaos_ireq`, is word 100's `<6>` (contract Q13).  The switches, `mouse_buttons`, are
     // what QUUX's mouse word shows in `<14:12>` (`quux_input.sv`).  Tied off
     // and unread on the CADR.
     input  var logic        qp_land,
@@ -909,7 +909,7 @@ module cadr_io_board (
 
   logic ch_req;
   assign ch_req = (ch_rdone && ch_wbits[4]) || (ch_tdone && ch_wbits[5]);
-  // **QUUX'S WORD 100 `<5>` AS THIS TICK LEAVES IT** for the processor's
+  // **QUUX'S WORD 100 `<6>` AS THIS TICK LEAVES IT** for the processor's
   // interrupt: a write of the CSR's enables or clears, or of the transmit
   // buffer, that lands on the edge `SINTR` is taken at is in it, as muir
   // counts a change on an edge as before it (`quux_input.sv` says the same

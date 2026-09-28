@@ -16,6 +16,9 @@
 //
 //   - the page's map: IDENT, every register at its offset, a word nothing
 //     names reading 0, a write of fewer than four bytes going nowhere
+//   - the register page leaving block-disk's words, 200-203, and the video
+//     controller's, 210, to their own slaves, and answering the reserved
+//     words beside them (contract Q13)
 //   - MEM_WORDS, from the machine's main memory, and a ring reaching exactly
 //     to its end accepted where one a word past it is refused
 //   - the clock: the seconds with a staged fraction, the carry into the next
@@ -156,8 +159,9 @@ uint32_t Read(uint32_t addr) {
   return 0;
 }
 
-// The page's words, as the processor addresses them: physical 17377000 on.
-constexpr uint32_t kPage = 017377000u;
+// The page's words, as the processor addresses them: physical 17777400 on
+// (contract Q13).
+constexpr uint32_t kPage = 017777400u;
 
 // The processor's cycle at the page, as `cadr_machine.sv` presents it: the
 // held decode a tick before `-XBUS.RQ`, the register taken in the first tick
@@ -183,6 +187,25 @@ uint32_t Proc(unsigned which, bool write, uint32_t wdata, long at = -1) {
 }
 uint32_t PRead(unsigned which, long at = -1) { return Proc(which, false, 0, at); }
 void PWrite(unsigned which, uint32_t v) { (void)Proc(which, true, v); }
+
+// Whether the page acknowledges a read of word `which`, at the tick it takes
+// the cycle.
+bool PAcks(unsigned which) {
+  d->sel = 1;
+  d->phys = kPage | which;
+  d->dev_write = 0;
+  d->wdata = 0xDEADBEEFu;
+  d->dev_rq = 0;
+  Step();
+  d->dev_rq = 1;
+  Step();
+  d->eval();
+  const bool ack = d->dev_ack;
+  d->dev_rq = 0;
+  d->sel = 0;
+  Step();
+  return ack;
+}
 
 // The face's registers.
 constexpr uint32_t IDENT = 0x000, RTC_SECONDS = 0x010, RTC_FRACTION = 0x014, STATE = 0x100,
@@ -235,6 +258,20 @@ int main(int argc, char **argv) {
   Want("MEM_WORDS, 7 boards", Read(MEM_WORDS), 7u << 16);
   d->mem_words = 0x200000;
   Want("STATE out of reset: quiet, epoch 0", Read(STATE), 0x8u);
+
+  // ------------------------------------- the words that are other slaves'
+  // Block-disk's 200-203 and the video controller's 210 are answered by
+  // their own slaves on the same seam, and never by the page (contract
+  // Q13: exactly one slave answers each word).  No trace can see a second
+  // answer there, the page's word being 0 and the device's winning the
+  // join, so it is held here, each with the reserved word beside it, which
+  // the page does answer.
+  for (unsigned w : {0177u, 0200u, 0201u, 0202u, 0203u, 0204u, 0207u, 0210u, 0211u, 0377u}) {
+    const bool theirs = (w >= 0200u && w <= 0203u) || w == 0210u;
+    Want("the page's acknowledgment of word " + std::to_string(w >> 6) + std::to_string((w >> 3) & 7) +
+             std::to_string(w & 7),
+         PAcks(w), !theirs);
+  }
 
   // ---------------------------------------------------------- the clock
   const uint32_t S = 0x6AB30C91u;
@@ -430,9 +467,10 @@ int main(int argc, char **argv) {
   Write(RESP_PROD, e1 | 1u);
   Want("161's handles after a completion, the old epoch's count ignored",
        (PRead(0161) >> 16) & 0xFFu, 0);
-  Want("100 with the interrupt enable off", PRead(0100) & 0x40u, 0);
+  // Word 100's <7>, the file device's since revision 11 (contract Q13).
+  Want("100 with the interrupt enable off", PRead(0100) & 0x80u, 0);
   PWrite(0160, 0x101);
-  Want("100 with the interrupt enable on and a response waiting", PRead(0100) & 0x40u, 0x40u);
+  Want("100 with the interrupt enable on and a response waiting", PRead(0100) & 0x80u, 0x80u);
 
   // The machine's reset disables it, and counts; a reset of a device
   // already disabled does not.  It clears the faults too.

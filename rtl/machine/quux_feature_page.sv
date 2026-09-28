@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// QUUX's feature page: one page of Xbus I/O space in which the machine lists
-// its sizes, physical `17377000`-`17377377` (page 36776), and which since
-// revision 6 carries its registers too (contract Q2: "the QUUX register page
-// is the feature page").  Words 0-77 are the feature page proper and read
-// only; the registers are below.
+// QUUX's register page: the last page of the physical space, physical
+// `17777400`-`17777777` (page 37777), fixed there (revision 11, contract
+// Q13), in which the machine lists its sizes and which carries its
+// registers (contract Q2: "the QUUX register page is the feature page").
+// Words 0-77 are the feature page proper and read only; the registers are
+// below.
 //
 // muir's `Geometry::feature_word` and `Machine::bus_read`, ported.  A read is
-// answered as an Xbus device answers, `Responder::Device` in muir's `rtl`
-// engine, and a write is acknowledged and goes nowhere.  The words, at muir's
-// pin:
+// answered as a device register answers, `Responder::Device` in muir's `rtl`
+// engine, and a write to a word that takes none is acknowledged and goes
+// nowhere.  The words, at muir's pin:
 //
 //     0    the MACHINE-ID, as functional source 16 gives it
 //     1    the level-1 map entry's bits, 6
@@ -25,18 +26,19 @@
 //     12   the main screen's bits a pixel in 31:16 and words a line in 15:0
 //     13   the main screen's buffer, its first physical address, `17000000`
 //     14   the microsecond clock, 1
-//     15   the devices of revision 9, a bit each: 3, <0> the real-time clock
-//          and <1> the file device
+//     15   the optional devices, a bit each: 3, <0> the real-time clock and
+//          <1> the file device, a later optional device taking the next bit
 //     16   the number of interval timers, 3 (revision 10, contract Q11)
 //     17-77  0
 //
 // And the registers (`Machine::bus_read` and `bus_write`):
 //
-//     100  interrupt status, read only: <0> timer 0, <1> timer 1, <2> the
-//          disk's done, <3> the keyboard, <4> the mouse, <5> the network,
-//          <6> the file device, <7> timer 2, each under its own enable
-//     101  the bus errors, as `766044` gives them: <0> Xbus NXM, <3> Unibus
-//          NXM, <5> Unibus map error; a write clears them
+//     100  interrupt status, read only, in contract Q13's order: <0> timer
+//          0, <1> timer 1, <2> timer 2, <3> block-disk's done, <4> the
+//          keyboard, <5> the mouse, <6> the network, <7> the file device,
+//          each under its own enable
+//     101  the error status: <0> NXM, the only bit QUUX sets; <3> and <5>,
+//          the CADR's Unibus bits, read 0; a write of any value clears it
 //     102  mode: <0> error stop, which the mode register's <2> is too
 //     103  the real-time clock, read only: Unix seconds (`quux_rtc.sv`,
 //          contract Q9); a write goes nowhere
@@ -47,11 +49,19 @@
 //     110-115  the interval timers, `quux_clocks.sv` (contract Q11): timer
 //          k's control and status at 110 + 2k, its period at 111 + 2k
 //     120-123  the keyboard and the mouse, `quux_input.sv` (contract Q3)
-//     140-147  the Chaosnet interface's registers, word 140 + k being Unibus
-//          `764140` + 2k, sixteen bits in the bottom of the word (contract
-//          Q4); what the Unibus does not answer reads 0 and takes no write
+//     140-145  the Chaosnet interface's five registers, sixteen bits in the
+//          bottom of the word (contract Q4; contract Q13, #33): 140 the
+//          CSR, read and written; 141 my address when read, the write
+//          buffer when written; 142 the read buffer, read only, a read
+//          advancing it; 143 the bit count, read only; 145 START, read
+//          only, a read starting a transmission.  144, 146 and 147 are
+//          reserved, and writes of 142, 143 and 145 go nowhere
 //     160-171  the file device's registers, `quux_file_device.sv` (contract
 //          Q9)
+//     200-203  block-disk's four registers: its own slave,
+//          `quux_block_disk.sv`, answers them, and this page does not
+//     210  the video controller's mode: its own slave, `quux_video.sv`,
+//          answers it, and this page does not
 //     the rest reserved: read 0, writes ignored
 //
 // **A REGISTER IS READ AND WRITTEN AT THE INSTANT THE PAGE ANSWERS**, the
@@ -65,7 +75,8 @@
 // requests, the keyboard's, the mouse's and the network's, also reach the
 // processor's interrupt as every word 100 bit does (`irq`; muir's
 // `interrupt_at`, `1f6f5fb` for the network's); the timers' reach it from
-// `quux_clocks.sv`, and the disk's on the Xbus line.
+// `quux_clocks.sv`, and block-disk's on the interrupt line it shares with
+// the CADR's controller (`cadr_machine.sv`'s `xbus_intr`).
 //
 // **`RESET-DEVICES` IS REGISTERED ONCE**: `reset_devices` is up in the tick
 // after the page takes the write, and the devices clear at the end of it,
@@ -74,14 +85,16 @@
 // edge, K ticks after it, so at K >= 4 they are cleared a tick before it
 // and nothing is held off `SINTR` for them (contract Q11, section 4).
 //
-// Words 11 to 13 are the display's: MONO TV at the bitstreams' 1280 by 1024,
-// 40 words a line.  The values are parameters that `cadr_machine.sv` sets
+// Words 11 to 13 are the display's: the video controller at the bitstreams'
+// 1280 by 1024, 40 words a line.  The values are parameters that `cadr_machine.sv` sets
 // from the one place each is decided, so this page and the thing it
 // describes cannot disagree by an edit to one of them.
 //
 // **ONLY QUUX HAS IT.**  `cadr_machine.sv` builds this module under
-// `MACHINE == "quux"` and nowhere else, and on the CADR the page times out
-// with the Xbus NXM bit, which `build/quux_map.pass` holds against muir's CADR.
+// `MACHINE == "quux"` and nowhere else, and on the CADR the page is the
+// Unibus window's last page, where nothing answers and an access times out
+// with the Unibus NXM bit, which `build/quux_map.pass` holds against muir's
+// CADR.
 //
 // **THE MATCH IS HELD ONE TICK, AS THE DISK CONTROLLER'S IS, AND FOR ITS
 // REASON.**  `phys` is the far end of the map, and `dev_ack` must stay a gate
@@ -89,27 +102,33 @@
 // `-XBUS.RQ` goes out sixteen ticks after the grant, so a match a tick behind
 // the address is settled long before anything reads it.
 //
-// **ITS OWN PAGE MATCH IS NOT WHAT BOUNDS IT, AND NO CHECK CAN SAY IT IS.**
-// The page sees a cycle only when the held decode has already called it a
-// device's, and the only other device words anywhere near it are the
-// display's registers and the disk's in page 36777, which answer for
-// themselves and whose words win on the seam: a match here widened to that
-// page is unobservable, measured, and a match widened below it never sees a
-// cycle.  What bounds the page is `cadr_xbus_decode.sv`, which
-// `build/xbus_decode.quux.pass` holds over every address.
+// **EXACTLY ONE SLAVE ANSWERS EACH WORD** (contract Q13): the page's match
+// leaves out words 200-203 and 210, which block-disk and the video
+// controller answer on the same seam, each matching its own words.  The
+// page's own match is not what bounds it: it sees a cycle only when the
+// held decode has already called it a device's, and the only other device
+// cycles, the video controller's buffer, are far below it.  What bounds the
+// page is `cadr_xbus_decode.sv`, which `build/xbus_decode.quux.pass` holds
+// over every address.
 //
-// What holds it: `build/quux_map.quux.k4.pass`, whose program reads words 0
-// to 14, 100, 200 and 377 through the map; `build/quux_page.quux.k4.pass`,
-// whose program reads and writes every register word with key words pressed
-// on the cable, the flags risen, a bus error made and the Chaosnet interface
-// written and read both through the page and on the Unibus; each comparing
-// `MD`, `SINTR` and every microcycle's length on every row against muir's
-// QUUX; and the records aimed here in `mutations/list.txt`.
+// What holds it: `build/quux_registers.quux.k4.pass`, whose program reads
+// all 256 words at power-on, writes all ones to every read-only and reserved
+// word and reads them all again, 101 after each, against muir's own table
+// (`tests/quux_registers.rs`), and finds nothing at the old page, the old
+// device registers and the old Unibus window; `build/quux_map.quux.k4.pass`,
+// whose program reads words 0 to 14, 100, 220 and 377 through the map;
+// `build/quux_page.quux.k4.pass`, whose program reads and writes every
+// register word with key words pressed on the cable, the flags risen, a bus
+// error made and the Chaosnet interface written and read through the page;
+// each comparing `MD`, `SINTR` and every microcycle's length on every row
+// against muir's QUUX; and the records aimed here in `mutations/list.txt`.
 
 `default_nettype none
 
 module quux_feature_page #(
-    parameter logic [31:0] MACHINE_ID     = 32'h5155_0084,
+    // Word 0, the MACHINE-ID: `cadr_machine.sv` gives it, from the one
+    // place it is decided; no default, so no instance can carry a stale one.
+    parameter logic [31:0] MACHINE_ID,
     parameter int unsigned L1_BITS        = 6,
     parameter int unsigned PDL_BITS       = 14,
     parameter int unsigned IMEM_WORDS     = 16384,
@@ -118,9 +137,9 @@ module quux_feature_page #(
     parameter logic [31:0] MULDIV         = 32'd3,
     parameter logic [31:0] TICK           = 32'd1,
     parameter logic [31:0] CLOCKS         = 32'd1,
-    // Word 15: the devices of revision 9, <0> the real-time clock and <1>
-    // the file device.
-    parameter logic [31:0] REV9_DEVICES   = 32'd3,
+    // Word 15: the optional devices, a bit each, <0> the real-time clock and
+    // <1> the file device.
+    parameter logic [31:0] OPTIONAL_DEVICES = 32'd3,
     // Word 16: the number of interval timers (revision 10).
     parameter logic [31:0] TIMERS         = 32'd3,
     parameter int unsigned SCREEN_WIDTH   = 1280,
@@ -145,16 +164,16 @@ module quux_feature_page #(
     input  var logic        dev_rq,
     input  var logic [31:0] wdata,
 
-    // `-XBUS.ACK` and the word, which this page drives only while answering
-    // a READ: `cadr_machine.sv` joins both beside the disk controller's.
+    // The acknowledgment and the word, which this page drives only while
+    // answering a READ: `cadr_machine.sv` joins both beside block-disk's.
     output var logic        dev_ack,
     output var logic        drives,
     output var logic [31:0] rdata,
 
     // --- word 100's sources that are not this page's own
-    input  var logic [2:0]  timer_pending,   // <0>, <1> and <7>: timers 0, 1 and 2
-    input  var logic        disk_irq,        // <2> the disk's done
-    input  var logic        chaos_ireq,      // <5> the network
+    input  var logic [2:0]  timer_pending,   // <0>, <1> and <2>: timers 0, 1 and 2
+    input  var logic        disk_irq,        // <3> block-disk's done
+    input  var logic        chaos_ireq,      // <6> the network
     // --- words 110-115: the interval timers (`quux_clocks.sv`), a write in
     // the tick the page takes it and a read of the word the page names
     output var logic        tm_we,
@@ -165,13 +184,13 @@ module quux_feature_page #(
     // it with <0> set
     output var logic        reset_devices,
     // --- word 101: the bus errors, and their clear
-    input  var logic [2:0]  err,             // {map, Unibus NXM, Xbus NXM}
+    input  var logic [2:0]  err,             // 101's <5>, <3> and <0>: {map, Unibus NXM, NXM}
     output var logic        err_clear,
     // --- word 102: error stop, and its write
     input  var logic        errstop,
     output var logic        errstop_we,
     output var logic        errstop_d,
-    // --- words 140-147: the Chaosnet interface (`cadr_io_board.sv`'s `qp_`)
+    // --- words 140-145: the Chaosnet interface (`cadr_io_board.sv`'s `qp_`)
     output var logic        ch_land,
     output var logic        ch_wr,
     output var logic [2:0]  ch_which,
@@ -217,7 +236,7 @@ module quux_feature_page #(
     output var logic [47:0] ro_fd_flags
 );
 
-  localparam logic [13:0] FEATURE_PAGE = 14'o36776;
+  localparam logic [13:0] FEATURE_PAGE = 14'o37777;
 
   logic       mine, taken;
   logic [7:0] which;
@@ -227,16 +246,17 @@ module quux_feature_page #(
   logic take;
   assign take = mine && dev_rq && !taken;
 
-  // Words 140-147 as `ioboard::answers` takes them: a read of all but 146,
-  // and a write of 140, 141, 144 and 145.  **Unchecked, and said so**: a
-  // write the Unibus refuses would reach registers that take no write
-  // anyway, and a read of 146 would be the receive buffer, which is empty
-  // with no cable --- and no trace here has one --- so the refusal is built
-  // on muir's word and not measured.
+  // Words 140-147 as muir's `network_register` takes them (contract Q13,
+  // #33): a read of 140, 141, 142, 143 and 145, and a write of 140 and 141.
+  // 144, 146 and 147 are reserved, and a write of 142, 143 or 145 goes
+  // nowhere, where the CADR's board takes a write of `764152`, 145, as its
+  // write buffer's and answers `764150` and `764156` as aliases.
+  // `build/quux_registers.quux.k4.pass` holds each: all ones written to
+  // every one of them and every word read again after.
   logic in_chaos, chaos_answers;
   assign in_chaos = which[7:3] == 5'o14;
-  assign chaos_answers = in_chaos && (dev_write ? (which[1] == 1'b0)
-                                                : (which[2:0] != 3'd6));
+  assign chaos_answers = in_chaos && (dev_write ? (which[2:1] == 2'b00)
+                                                : (which[2:0] <= 3'd3 || which[2:0] == 3'd5));
 
   logic [31:0] in_rdata;
   logic [1:0]  in_irq;
@@ -336,9 +356,9 @@ module quux_feature_page #(
         8'o12:   word = {16'd1, 16'(SCREEN_WPL)};
         8'o13:   word = {10'd0, SCREEN_BUFFER};
         8'o14:   word = CLOCKS;
-        8'o15:   word = REV9_DEVICES;
+        8'o15:   word = OPTIONAL_DEVICES;
         8'o16:   word = TIMERS;
-        8'o100:  word = {24'd0, timer_pending[2], fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending[1:0]};
+        8'o100:  word = {24'd0, fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending};
         8'o101:  word = {26'd0, err[2], 1'b0, err[1], 2'b00, err[0]};
         8'o102:  word = {31'd0, errstop};
         8'o103:  word = rtc_seconds;
@@ -359,7 +379,8 @@ module quux_feature_page #(
       reset_devices <= 1'b0;
     end else begin
       reset_devices <= take && dev_write && which == 8'o104 && wdata[0];
-      mine  <= sel && (phys[21:8] == FEATURE_PAGE);
+      // Block-disk's 200-203 and the video controller's 210 are theirs.
+      mine  <= sel && (phys[21:8] == FEATURE_PAGE) && (phys[7:2] != 6'o40) && (phys[7:0] != 8'o210);
       which <= phys[7:0];
       if (take) begin
         taken <= 1'b1;

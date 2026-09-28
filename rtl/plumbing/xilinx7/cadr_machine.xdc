@@ -383,8 +383,8 @@
 # `quux_input.sv`, whose FIFO, flags and counts move on the tick a key word
 # arrives or a read is answered, out whole but for the page's held match;
 # block-disk is `disk`, below.  The divider's `div_t` and `div_start`, which count the
-# ticks since `IR` was loaded, and its steps, `dv_*`, a step a tick; and MONO
-# TV but for its three held matches, as
+# ticks since `IR` was loaded, and its steps, `dv_*`, a step a tick; and the
+# video controller but for its two held matches, as
 # the CADR's display board is, its `taken` and `bow` taken at the first tick
 # of -XBUS.RQ.  And QUUX's wait for MD: `hold_mclk_q`, the master clock edge a
 # tick on, `rip_tail`, a countdown, and `hold_rip`, which takes READ IN
@@ -438,9 +438,9 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *processor/iwd_q_reg*  && \
                                   NAME !~ *muldiv/dv_*       && \
                                   NAME !~ *memory/g_quux_port.port/* && \
-                                  (NAME !~ *mono_tv/* || NAME =~ *mono_tv/ctl_reg* || \
-                                                         NAME =~ *mono_tv/fb_reg* || \
-                                                         NAME =~ *mono_tv/which_reg*) && \
+                                  (NAME !~ *g_quux_video.video/* || \
+                                       NAME =~ *g_quux_video.video/ctl_reg* || \
+                                       NAME =~ *g_quux_video.video/fb_reg*) && \
                                   (NAME !~ *disk/* || NAME =~ *disk/mine_reg* || \
                                                       NAME =~ *disk/which_reg*) && \
                                   (NAME !~ *audit/* || NAME =~ *audit/first_* || \

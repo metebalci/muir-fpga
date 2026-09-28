@@ -8,13 +8,14 @@
 //! **QUUX IS BUILT HERE AS muir'S LIBRARY BUILDS IT, AND AS muir'S OWN
 //! `machine()` IN `src/main.rs` DOES**: the geometry set on the machine before
 //! the engine is made, QUUX's boot PROM (`prom::quux_boot_prom`, muir's
-//! `data/quux-promh.mcr`), MONO TV fitted as the display, and block-disk as
-//! the disk.  One thing is
-//! this project's and not muir's default: **MONO TV IS 1280 BY 1024**, the
-//! size the bitstreams build, set explicitly with `Tv::set_mono_tv_size`
-//! where muir's default is 1920 by 1080.  1280 bits is 40 words a line and
-//! the buffer is 40,960 words, `17000000` to `17117777`; muir's own
-//! `check_mono_tv_size` is asked whether the size is one it accepts.
+//! `data/quux-promh.mcr`), the video controller fitted as the display, and
+//! block-disk as the disk.  One thing is
+//! this project's and not muir's default: **THE VIDEO CONTROLLER IS 1280 BY
+//! 1024**, the size the bitstreams build, set explicitly with
+//! `Tv::set_video_size` where muir's default is 1920 by 1080.  1280 bits is
+//! 40 words a line and the buffer is 40,960 words, `17000000` to
+//! `17117777`; muir's own `check_video_size` is asked whether the size is
+//! one it accepts.
 //!
 //! The CADR is `Machine::new` untouched, so a generator given no flag writes
 //! exactly the trace it wrote before this module existed.
@@ -25,15 +26,16 @@
 use muir::clock::TimingModel;
 use muir::isa::Insn;
 use muir::machine::{Geometry, Machine};
-use muir::tv::{Board, check_mono_tv_size};
+use muir::tv::{Board, check_video_size};
 
 /// The second QUUX's real-time clock reads at power-on in every trace:
 /// 2026-09-22 23:17:37 UTC, chosen for bits in every nibble.
 pub const RTC_START: u32 = 1_790_119_057;
 
-/// MONO TV's size in every QUUX bitstream: 1280 by 1024, one bit a pixel.
-pub const MONO_TV_WIDTH: usize = 1280;
-pub const MONO_TV_HEIGHT: usize = 1024;
+/// The video controller's size in every QUUX bitstream: 1280 by 1024, one
+/// bit a pixel.
+pub const VIDEO_WIDTH: usize = 1280;
+pub const VIDEO_HEIGHT: usize = 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Which {
@@ -70,12 +72,12 @@ impl Which {
         m.load_prom(prom);
         if self == Which::Quux {
             m.geometry = Geometry::QUUX;
-            if let Err(e) = check_mono_tv_size(MONO_TV_WIDTH, MONO_TV_HEIGHT, false) {
-                panic!("MONO TV at {MONO_TV_WIDTH} by {MONO_TV_HEIGHT}: {e}");
+            if let Err(e) = check_video_size(VIDEO_WIDTH, VIDEO_HEIGHT, false) {
+                panic!("the video controller at {VIDEO_WIDTH} by {VIDEO_HEIGHT}: {e}");
             }
-            m.tv.set_mono_tv_size(MONO_TV_WIDTH, MONO_TV_HEIGHT);
-            m.tv.set_board(Board::MonoTv);
-            assert_eq!(m.tv.buffer_words(), 40_960, "MONO TV's buffer at 1280 by 1024");
+            m.tv.set_video_size(VIDEO_WIDTH, VIDEO_HEIGHT);
+            m.tv.set_board(Board::Video);
+            assert_eq!(m.tv.buffer_words(), 40_960, "the video controller's buffer at 1280 by 1024");
             // **THE CONTROL STORE COMES UP ALL ONES, AS THE FABRIC'S DOES.**
             // What a RAM holds at power-on is a convention, and the fabric's
             // is all ones where muir's is zero (`cadr_microcycle.sv` says why

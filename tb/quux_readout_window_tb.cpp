@@ -8,7 +8,8 @@
 // that is more than the CADR's: the processor's clocks, the three interval
 // timers of revision 10 (`Machine::timers`),
 // the register page's keyboard and mouse (`QuuxInput`), block-disk
-// (`BlockDisk`), the bus errors word 101 reads and MONO TV's black-on-white;
+// (`BlockDisk`), the bus errors word 101 reads and the video controller's
+// black-on-white;
 // and the CADR's arrays at QUUX's sizes, a PDL buffer of 16K words, a
 // level-1 map of six bits and a level-2 map of 2,048 entries.  Each is
 // poisoned HERE, by name, in the register or array that holds it, and read
@@ -402,13 +403,13 @@ int main(int argc, char **argv) {
     Check((w >> 39) == 0, "word 5's top nine bits");
   }
 
-  // ---- the page: the bus errors and MONO TV's black-on-white -------------
+  // ---- the page: the bus errors and the video controller's black-on-white
   for (int round = 0; round < 2; ++round) {
 #define ERR(x) dut->rootp->cadr_machine__DOT__memory__DOT__busint_regs__DOT__##x
     ERR(err_xbus) = !round;
     ERR(err_unibus) = round;
     ERR(err_map) = !round;
-    dut->rootp->cadr_machine__DOT__memory__DOT__g_quux_mono_tv__DOT__mono_tv__DOT__bow = !round;
+    dut->rootp->cadr_machine__DOT__memory__DOT__g_quux_video__DOT__video__DOT__bow = !round;
     Tick();
     const uint64_t w = Window(kSelPage, 6);
     const uint64_t want = (round ? 0ull : 0x100ull) | (round ? 010ull : 041ull);

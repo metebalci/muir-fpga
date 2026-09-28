@@ -26,7 +26,7 @@
 // is on or an off-then-on starts it again.  A write that turns it off, or a
 // period written while it is on, takes its flag down.  A period of 0 never
 // rises.  The flag rises whatever the interrupt enable says; under it, the
-// flag is the timer's bit of word 100 (<0>, <1>, <7>) and a term of the
+// flag is the timer's bit of word 100 (<0>, <1>, <2>) and a term of the
 // interrupt that jump conditions 5 and 6 test.  `-RESET` --- the fabric's
 // reset and every boot --- and `RESET-DEVICES` put every timer off, flag
 // down, periodic, interrupt enable 0, period 0; the microsecond clock

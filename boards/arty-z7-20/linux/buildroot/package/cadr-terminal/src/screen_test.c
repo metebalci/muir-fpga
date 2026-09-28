@@ -3981,7 +3981,7 @@ static void check_keyboard_trace(void)
 	}
 }
 
-// ---- QUUX's SCREEN, MONO TV ----------------------------------------------
+// ---- QUUX's SCREEN, THE VIDEO CONTROLLER ----------------------------------------------
 //
 // 1280 x 1024 at one bit a pixel, 40 words a line (muir docs/quux.md, "MONO
 // TV, the display").  **EVERY NUMBER BELOW IS A LITERAL**, worked out by hand
@@ -4024,7 +4024,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 	if (client_need(c, 4) < 0)
 		return -1;
 	if (c->in[0] != 0) {
-		fail(__LINE__, "MONO TV: message type %u where an update was due", c->in[0]);
+		fail(__LINE__, "the video controller: message type %u where an update was due", c->in[0]);
 		return -1;
 	}
 	const unsigned rects = be16at(c->in + 2);
@@ -4041,7 +4041,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 			*rh0 = h;
 		}
 		if (x + w > 1280u || y + h > 1024u) {
-			fail(__LINE__, "MONO TV: a rectangle at %u,%u of %ux%u leaves the screen",
+			fail(__LINE__, "the video controller: a rectangle at %u,%u of %ux%u leaves the screen",
 			     x, y, w, h);
 			return -1;
 		}
@@ -4053,7 +4053,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 				for (unsigned dx = 0; dx < w; ++dx) {
 					const int v = client_pixel(c, c->in + ((size_t)dy * w + dx) * c->n);
 					if (v < 0) {
-						fail(__LINE__, "MONO TV: pixel %u,%u is neither black "
+						fail(__LINE__, "the video controller: pixel %u,%u is neither black "
 						     "nor white", x + dx, y + dy);
 						return -1;
 					}
@@ -4066,7 +4066,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 			const uint32_t count = be32at(c->in);
 			const int background = client_pixel(c, c->in + 4);
 			if (background < 0) {
-				fail(__LINE__, "MONO TV: the RRE background is neither color");
+				fail(__LINE__, "the video controller: the RRE background is neither color");
 				return -1;
 			}
 			client_take(c, 4 + c->n);
@@ -4082,7 +4082,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 				const unsigned sx = be16at(p + c->n), sy = be16at(p + c->n + 2);
 				const unsigned sw = be16at(p + c->n + 4), sh = be16at(p + c->n + 6);
 				if (v < 0 || sx + sw > w || sy + sh > h) {
-					fail(__LINE__, "MONO TV: a bad RRE subrectangle");
+					fail(__LINE__, "the video controller: a bad RRE subrectangle");
 					return -1;
 				}
 				for (unsigned q = 0; q < sh; ++q)
@@ -4092,7 +4092,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 			}
 			client_take(c, each * count);
 		} else {
-			fail(__LINE__, "MONO TV: encoding %d, which this server does not offer", enc);
+			fail(__LINE__, "the video controller: encoding %d, which this server does not offer", enc);
 			return -1;
 		}
 	}
@@ -4143,8 +4143,8 @@ static void check_quux_screen(void)
 	}
 
 	// 2.  **EACH MACHINE'S SCREEN**, as literals.  The CADR's is the
-	//     first board's and QUUX's is MONO TV's, and the window mapped is
-	//     the board's 32,768 words or MONO TV's 40,960.
+	//     first board's and QUUX's is the video controller's, and the window mapped is
+	//     the board's 32,768 words or the video controller's 40,960.
 	screen_frame_init_for(&frame, SCREEN_MACHINE_CADR, 0);
 	CHECK(frame.width == 768 && frame.height == 963 && frame.words_per_line == 24
 	      && frame.visible_words == 23112 && frame.bpp == 1,
@@ -4160,7 +4160,7 @@ static void check_quux_screen(void)
 	screen_frame_init_mono(&frame, 0);
 	CHECK(frame.width == 1280 && frame.height == 1024 && frame.words_per_line == 40
 	      && frame.visible_words == 40960 && frame.black_on_white == 0,
-	      "MONO TV's frame is %ux%u, %u words a line, %u words, BOW %d",
+	      "the video controller's frame is %ux%u, %u words a line, %u words, BOW %d",
 	      frame.width, frame.height, frame.words_per_line, frame.visible_words,
 	      frame.black_on_white);
 	CHECK(screen_window_bytes(SCREEN_MACHINE_CADR) == 131072u,
@@ -4198,7 +4198,7 @@ static void check_quux_screen(void)
 						++n;
 					}
 			CHECK(n == 1 && fx == a->x && fy == a->y,
-			      "MONO TV, %s (BOW %s): word %u bit %u lit %u pixels, the first at "
+			      "the video controller, %s (BOW %s): word %u bit %u lit %u pixels, the first at "
 			      "%u,%u; wanting exactly one at %u,%u", a->what, bow ? "set" : "clear",
 			      a->word, a->bit, n, fx, fy, a->x, a->y);
 		}
@@ -4217,7 +4217,7 @@ static void check_quux_screen(void)
 	for (int bow = 0; bow <= 1; ++bow)
 		for (int rre = 0; rre <= 1; ++rre) {
 			char what[96];
-			snprintf(what, sizeof what, "MONO TV's whole screen, %s, BOW %s",
+			snprintf(what, sizeof what, "the video controller's whole screen, %s, BOW %s",
 				 rre ? "RRE" : "Raw", bow ? "set" : "clear");
 			for (unsigned y = 0; y < 1024u; ++y)
 				for (unsigned x = 0; x < 1280u; ++x) {
@@ -4259,14 +4259,14 @@ static void check_quux_screen(void)
 		screen_frame_read(&frame, mono_window);
 		struct client c;
 		if (open_viewer(&c, "RFB 003.008\n", &rgb888, NULL, 0) < 0) {
-			fail(__LINE__, "MONO TV incremental: no viewer");
+			fail(__LINE__, "the video controller incremental: no viewer");
 			return;
 		}
 		memset(mono_canvas, 0xFF, sizeof mono_canvas);
 		tick();
 		client_request(&c, 0, 0, 0, 1280, 1024);
 		if (mono_update(&c, NULL, NULL) < 0) {
-			fail(__LINE__, "MONO TV incremental: no first update");
+			fail(__LINE__, "the video controller incremental: no first update");
 			client_close(&c);
 			settle();
 			return;
@@ -4278,9 +4278,9 @@ static void check_quux_screen(void)
 		unsigned ry = 0, rh = 0;
 		const int rects = mono_update(&c, &ry, &rh);
 		CHECK(rects == 1 && ry == 1020 && rh == 1,
-		      "MONO TV incremental: %d rectangles, the first at row %u for %u rows; "
+		      "the video controller incremental: %d rectangles, the first at row %u for %u rows; "
 		      "wanting one, row 1020, one row", rects, ry, rh);
-		mono_compare("MONO TV after a change on line 1020");
+		mono_compare("the video controller after a change on line 1020");
 		client_close(&c);
 		settle();
 	}
@@ -4293,15 +4293,15 @@ static void check_quux_screen(void)
 		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0);
 		screen_frame_read(&frame, mono_window);
 		CHECK(frame.words[40959] == 0x80000000u,
-		      "MONO TV's last word was read as 0x%08x", frame.words[40959]);
+		      "the video controller's last word was read as 0x%08x", frame.words[40959]);
 		CHECK(screen_frame_blank(&frame) == SCREEN_BLANK_NO,
-		      "a MONO TV screen lit only in its last word was called blank (%d)",
+		      "a video controller screen lit only in its last word was called blank (%d)",
 		      screen_frame_blank(&frame));
-		CHECK(screen_frame_lit(&frame) == 1, "MONO TV: %lu pixels lit, wanting 1",
+		CHECK(screen_frame_lit(&frame) == 1, "the video controller: %lu pixels lit, wanting 1",
 		      screen_frame_lit(&frame));
 		// The frame's own last pixel, which step 2 held to 1279,1023.
 		CHECK(screen_value(&frame, frame.width - 1u, frame.height - 1u) == 1,
-		      "MONO TV's bottom-right pixel is not the last word's bit 31");
+		      "the video controller's bottom-right pixel is not the last word's bit 31");
 	}
 	screen_frame_init(&frame, 0);
 }
@@ -4398,7 +4398,7 @@ int main(int argc, char **argv)
 	printf("--- the second screen, the color TV's: 576x454 at four bits a pixel\n");
 	check_color_screen();
 
-	printf("--- QUUX's screen, MONO TV: 1280x1024 at one bit a pixel, 40 words a line\n");
+	printf("--- QUUX's screen, the video controller: 1280x1024 at one bit a pixel, 40 words a line\n");
 	check_quux_screen();
 
 	printf("--- the keyboard: muir's mapping onto MIT's own key table\n");

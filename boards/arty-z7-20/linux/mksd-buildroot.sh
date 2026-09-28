@@ -1153,7 +1153,7 @@ fi
   printf "\r\n"
   printf "# Which machine the bitstream is, muir's own flag: cadr, MIT's, whose\r\n"
   printf "# screen is 768 by 963, or quux, the evolved CADR, whose screen is\r\n"
-  printf "# MONO TV, 1280 by 1024, with no color TV.  The fabric cannot be asked,\r\n"
+  printf "# the video controller, 1280 by 1024, with no color TV.  The fabric cannot be asked,\r\n"
   printf "# so a card carrying a QUUX bitstream says quux here.\r\n"
   printf -- "#--machine cadr\r\n"
   printf "\r\n"

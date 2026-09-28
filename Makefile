@@ -174,8 +174,12 @@ QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart un
 # QUUX's revision 9 (contract Q9): `rtc`, the real-time clock at word 103
 # with the host setting it, and `files`, the file device's registers, rings,
 # interrupt, disable and reset, the testbench playing the host's server from
-# the completions muir's device made.
-QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page clockwait memedge busreset startstart rtc files
+# the completions muir's device made.  And `registers`, QUUX's alone (contract
+# Q13, #34): muir's own table of the register page as a program, every one of
+# its 256 words read at power-on, written with all ones where it is read only
+# or reserved, and read again, and every address that was a register before
+# revision 11 finding nothing there.
+QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page registers clockwait memedge busreset startstart rtc files
 # And those taken at an L of one as well: `divmd`, whose `DIV`s are half
 # `ILONG`, `divmdsync`, whose one `ILONG` filler at an L of one moves the
 # word read a tick against the microcycles, and `tickwin`, whose `ILONG`s put
@@ -652,9 +656,10 @@ $(BUILD)/xbus_decode.pass: $(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/x
 	$(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/xbus_decode.golden
 	@touch $@
 
-# QUUX's decode, over the same 4,194,304 addresses: the feature page, and
-# MONO TV's 40,960-word buffer in place of the CADR boards' 32,768.  The
-# golden asks muir the question as its `rtl` engine asks it on QUUX.
+# QUUX's decode, over the same 4,194,304 addresses: the register page at
+# `17777400`, and the video controller's 40,960-word buffer in place of the
+# CADR boards' 32,768, and nothing else from `17000000` up (contract Q13).
+# The golden asks muir the question as its `rtl` engine asks it on QUUX.
 $(BUILD)/xbus_decode.quux.golden: golden/src/xbus_decode.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin xbus_decode -- --machine quux > $@
 
@@ -764,7 +769,7 @@ MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/quux_phase_g
                rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
                rtl/machine/cadr_dbgin.sv \
                rtl/plumbing/cadr_bus_audit.sv rtl/machine/quux_rtc.sv rtl/machine/quux_file_device.sv \
-               rtl/machine/quux_feature_page.sv rtl/machine/quux_mono_tv.sv \
+               rtl/machine/quux_feature_page.sv rtl/machine/quux_video.sv \
                rtl/machine/quux_muldiv.sv rtl/machine/quux_clocks.sv rtl/machine/quux_input.sv rtl/machine/quux_block_disk.sv \
                rtl/machine/quux_cache.sv rtl/machine/quux_mem_port.sv \
                rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
@@ -928,8 +933,8 @@ $(BUILD)/dispatch_write_order.pass: $(BUILD)/obj_dispatch_write_order/Vcadr_mach
 # first memory cycle, 131,073 microcycles later than MIT's does, and ends
 # 1,536 microcycles after that, short of a timing corner of the fabric's own
 # that `golden/src/rtl.rs` describes.  `golden/src/machine_axis.rs` is
-# how the generators build QUUX, MONO TV at the bitstreams' 1280 by 1024
-# included.  The testbench is the CADR's own; nothing in it knows which
+# how the generators build QUUX, the video controller at the bitstreams'
+# 1280 by 1024 included.  The testbench is the CADR's own; nothing in it knows which
 # machine it is holding.
 $(BUILD)/boot_prom.quux.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin prom -- --machine quux > $@
@@ -2085,8 +2090,8 @@ $(BUILD)/audit_window.pass: $(BUILD)/obj_audit_window/Vcadr_machine \
 # What a checkpoint of a QUUX board reads, held word by word against the
 # registers and arrays that hold it: the processor's clocks (the register
 # table's entries 21 to 25), the register page's keyboard and mouse,
-# block-disk, the bus errors and MONO TV's black-on-white (selector 12), and
-# the PDL buffer, both map levels and the boot PROM at QUUX's sizes.  The DUT
+# block-disk, the bus errors and the video controller's black-on-white
+# (selector 12), and the PDL buffer, both map levels and the boot PROM at QUUX's sizes.  The DUT
 # is `cadr_machine` and the reference is the storage, reached by name ---
 # `--public-flat-rw` for `readout.pass`'s reason --- and poisoned there.  The
 # clocks and block-disk's time move while they are read, so a word is held to
@@ -3189,8 +3194,8 @@ $(BUILD)/display_out.pass: $(BUILD)/obj_display_out/Vcadr_display_out
 	$(BUILD)/obj_display_out/Vcadr_display_out
 	@touch $@
 
-# QUUX's picture, MONO TV at the bitstreams' 1280 by 1024: the same module and
-# the same testbench, built at the picture the QUUX boards pass it.  It fills
+# QUUX's picture, the video controller's at the bitstreams' 1280 by 1024: the
+# same module and the same testbench, built at the picture the QUUX boards pass it.  It fills
 # the raster, so it cannot turn a quarter, and the check holds it upright when
 # a turn is asked for; QUUX has no color board.
 $(BUILD)/obj_display_out_quux/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
@@ -3898,7 +3903,13 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # control at QUUX's revision 10, and it refuses version 45.  Only the
 # header's version changes, and the file stays 561,562 bytes: with that one
 # byte set back to 45 the file hashes to version 45's digest, cf5eac10...7f48.
-CHECKPOINT_SHA  := 0f9a8e33963edf867c95233ca1fed5d5d36d00169cd5a9fbad67a22c0c7fe67d
+#
+# **AND WHEN IT WENT 46 TO 47.**  Version 47 writes what version 46 wrote;
+# muir moved the number with QUUX's revision 11, the register page at
+# `17777400` (contract Q13), and it refuses version 46.  Only the header's
+# version changes, and the file stays 561,562 bytes: with that one byte set
+# back to 46 the file hashes to version 46's digest, 0f9a8e33...e67d.
+CHECKPOINT_SHA  := bb17c871e07d1b47b46a8c6902594dc1a98bee5fc06dfe78cf4dafbb57142d6f
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed

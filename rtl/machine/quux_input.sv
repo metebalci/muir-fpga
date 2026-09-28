@@ -7,15 +7,16 @@
 //     120   keyboard status: <0> a key word is waiting, <1> the FIFO
 //           overflowed (a write clears it), <8> the keyboard's interrupt
 //           enable (written)
-//     121   a read takes the oldest key word; 0 when none is waiting
+//     121   a read takes the oldest key word, in <23:0>, <31:24> reading 0;
+//           0 when none is waiting
 //     122   the mouse: <11:0> the X count, <27:16> the Y count, <14:12> the
 //           buttons as the CADR's Y register has them; a read clears 123's <0>
 //     123   mouse status: <0> the mouse moved or a button changed since 122
 //           was read, <8> the mouse's interrupt enable (written)
 //
-// The interrupt status's bits, word 100's <3> and <4>, are `irq`: each
-// under its enable, and ORed into the interrupt the processor's jump
-// conditions test (`Machine::interrupt_at`).  There is no beeper.
+// The interrupt status's bits, word 100's <4> and <5> (contract Q13), are
+// `irq`: each under its enable, and ORed into the interrupt the processor's
+// jump conditions test (`Machine::interrupt_at`).  There is no beeper.
 //
 // **THE KEYBOARD IS A FIFO OF `FIFO_WORDS` OF THE CADR'S OWN KEY WORDS**,
 // the twenty-four bits the keyboard's cable carries, which is what the
@@ -71,7 +72,7 @@ module quux_input #(
     output var logic [31:0] rdata,
     output var logic        mine,
 
-    // Word 100's <3> and <4>.
+    // Word 100's <4> and <5>.
     output var logic [1:0]  irq,
     // The keyboard's boot word, as the I/O board's `-BOOT*`: active low.
     output var logic        n_boot,

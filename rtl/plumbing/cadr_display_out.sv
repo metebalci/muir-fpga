@@ -508,7 +508,7 @@ module cadr_display_out #(
   localparam int unsigned CY0  = (V_ACTIVE - CPIC_H) / 2;
   localparam int unsigned RMX0 = 0;
   // **A PICTURE WIDER THAN THE RASTER IS HIGH IS NOT TURNED A QUARTER TURN.**
-  // QUUX's MONO TV is 1280 by 1024 and fills the raster upright, so on its
+  // QUUX's video controller is 1280 by 1024 and fills the raster upright, so on its
   // side it would not fit; `ROTATABLE` is what says so, and `rotate` is taken
   // as upright for such a picture (`rot_s1` below).  The CADR's 768 by 963
   // fits either way and is exactly what it was.
@@ -755,7 +755,7 @@ module cadr_display_out #(
   // margin: one line against the first display's 30 and the color board's 285
   // upright, 32 against 128 and 8 against 224 turned.
   //
-  // **QUUX'S MONO TV HAS NO TOP MARGIN**: 1024 lines on a raster of 1024, so
+  // **QUUX'S VIDEO CONTROLLER HAS NO TOP MARGIN**: 1024 lines on a raster of 1024, so
   // upright its line `LOOK` is its SECOND line, and the reload gives that
   // line's address, one stride on (`MONO_LEAD`).  It is never turned
   // (`ROTATABLE`), so the rotated leads are not met.  The CADR's pictures

@@ -15,8 +15,8 @@
 // **WHICH MACHINE, `--machine cadr|quux`**, muir's own flag and the one
 // `cadr-terminal` and `cadr-disk-packs` take: the CADR by default, or QUUX,
 // whose checkpoint carries its clocks, its register page's keyboard and
-// mouse, block-disk, MONO TV and its K and L (`chk_rtl.c`).  **THE FABRIC IS
-// ASKED AND THE FLAG MUST AGREE**: the readout's register table says which
+// mouse, block-disk, the video controller and its K and L (`chk_rtl.c`).
+// **THE FABRIC IS ASKED AND THE FLAG MUST AGREE**: the readout's register table says which
 // machine the bitstream is, and a checkpoint of the other machine is refused
 // before anything is read, since it would be a file of one machine's fields
 // filled from the other's.
@@ -609,7 +609,7 @@ int main(int argc, char **argv)
 		img.main[i] = main_mem[i];
 
 	if (want_display) {
-		// The CADR display's 32,768 words, or MONO TV's 40,960.
+		// The CADR display's 32,768 words, or the video controller's 40,960.
 		volatile uint32_t *tv =
 			cadr_map(fd, DDR_DISPLAY_BASE, (size_t)img.tv_words * 4u,
 				 "the display's window");

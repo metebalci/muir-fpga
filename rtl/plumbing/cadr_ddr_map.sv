@@ -141,7 +141,7 @@ package cadr_ddr_map;
   // base.  `rtl/machine/cadr_tv.sv` decodes the window --- the second
   // instance, strapped to `tv::COLOR_TV` --- and
   // `rtl/plumbing/cadr_xbus_ddr.sv` answers it here.
-  // QUUX's MONO TV: one buffer of up to 64K words from the same base, 40,960
+  // QUUX's video controller: one buffer of up to 64K words from the same base, 40,960
   // at the bitstreams' 1280 by 1024.  QUUX has no color board, so nothing
   // is placed after it.
   function automatic logic [31:0] mono_display_byte_address(input logic [15:0] offset);
@@ -152,7 +152,7 @@ package cadr_ddr_map;
     return COLOR_DISPLAY_BASE + (32'(offset) << 2);
   endfunction
 
-  // QUUX's memory bus (contract Q7): main memory, and MONO TV's frame
+  // QUUX's memory bus (contract Q7): main memory, and the video controller's frame
   // buffer from `17000000`, which is past main memory's reach
   // (`MAIN_WORDS_REACHABLE` is exactly `17000000`) and 64K-word aligned, so
   // its offset is the low sixteen bits.  The cache fills and writes through

@@ -45,7 +45,7 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 46.** It is
+version is refused by name rather than read wrong. **The version is 47.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir-sim/src/checkpoint.rs` and not an interpretation of it.
 
@@ -140,6 +140,11 @@ checkpoint of a band whose microcode ran timer 0 through destination 3 would
 resume with timer 0 on and a microcode that can clear it only through
 destination 3, which no longer reaches it, so muir refuses version 45. Only
 the header's version changes.
+
+Version 47 writes what version 46 wrote. It is a new number because QUUX's
+revision 11 moved the register page to `17777400`, with block-disk and the
+video controller on it, so muir refuses version 46. Only the header's
+version changes.
 
 **A QUUX checkpoint is refused while the file device has a handle open or a
 command queued**, as muir refuses one, with muir's sentence. A handle is a
@@ -331,7 +336,7 @@ What a QUUX checkpoint holds beyond the CADR's, in muir's order:
 | block-disk, `BlockDisk`: its four registers, its three errors and when its transfer is done | `quux_block_disk.sv` | selector 12, words 1 to 5 |
 | the bus errors, word 101 of the register page | `cadr_busint_regs.sv` | selector 12, word 6 |
 | the file device, `FileDevice`: its four flags, the rings' bases and sizes, the three indexes, and the handles open the refusal reads | `quux_file_device.sv` | selector 12, words 7 to 9 |
-| MONO TV: its size, its 40,960-word buffer and black-on-white, its one bit of mode | `quux_mono_tv.sv` and DDR | selector 12, word 6, and DDR |
+| the video controller: its size, its 40,960-word buffer and black-on-white, its one bit of mode | `quux_video.sv` and DDR | selector 12, word 6, and DDR |
 | `TimingModel::Sync` with K and L | the bitstream | entry 21 |
 
 **The clocks run while they are read**, halted machine or not, and a reader's

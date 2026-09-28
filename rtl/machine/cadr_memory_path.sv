@@ -133,10 +133,10 @@ module cadr_memory_path #(
 
     // "cadr" or "quux", from `cadr_machine.sv`: which machine's Xbus I/O
     // space the three decodes below describe, and which display board is
-    // the first: the CADR's SIMPLE or LISPM TV, `cadr_tv.sv`, or QUUX's MONO
-    // TV, `quux_mono_tv.sv`, of `MONO_TV_WORDS` words.
+    // the first: the CADR's SIMPLE or LISPM TV, `cadr_tv.sv`, or QUUX's video
+    // controller, `quux_video.sv`, of `VIDEO_WORDS` words.
     parameter string MACHINE = "cadr",
-    parameter int unsigned MONO_TV_WORDS = 40960,
+    parameter int unsigned VIDEO_WORDS = 40960,
     // QUUX's microcycle in ticks, `cadr_machine.sv`'s `SYNC_K`: a device
     // register's cycle is acknowledged this long after its grant
     // (`quux_mem_port.sv`).  Unread on the CADR.
@@ -269,14 +269,14 @@ module cadr_memory_path #(
     // processor's and `cadr_machine.sv` reads them where they are made.
     //
     // `cpu_memory_o` is `is_memory` with every frame buffer the bridge
-    // answers, `tv_fb`, `tvc_fb` and QUUX's `mono_fb`, and NOT `is_memory`
+    // answers, `tv_fb`, `tvc_fb` and QUUX's `video_fb`, and NOT `is_memory`
     // alone, because a display's frame buffer is this bridge at a second base:
     // a frame-buffer cycle decodes as `device` and issues a transaction
     // anyway, and an audit that did not know that would fault on the first
     // pixel the machine ever painted.  **It is `bus_sel`'s processor arm, term
     // for term**, and a window added to one and not the other is the defect:
-    // `mono_fb` was, and the audit counted every MONO TV cycle of `quux_tv`
-    // as a fault while every check stayed green.
+    // `video_fb` was, and the audit counted every video controller cycle of
+    // `quux_tv` as a fault while every check stayed green.
     //
     // `bus_changing_o` is the idle tick this module already inserts at every
     // change of owner.  The audit uses it to close one cycle and open the
@@ -560,9 +560,9 @@ module cadr_memory_path #(
     output var logic [15:0] page_ch_rdata,
     output var logic        chaos_ireq,
     output var logic [2:0]  mouse_buttons,
-    // MONO TV's black-on-white, the one bit of its mode register, for the
+    // The video controller's black-on-white, the one bit of its mode, for the
     // readout (a checkpoint's `Tv::mode`); zero on the CADR.
-    output var logic        mono_bow_o
+    output var logic        video_bow_o
 );
 
   // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`).  The decode
@@ -813,7 +813,7 @@ module cadr_memory_path #(
   logic color_fitted;
   assign color_fitted = (LMTV != 0) && color_tv;
 
-  cadr_xbus_decode #(.MACHINE(MACHINE), .MONO_TV_WORDS(MONO_TV_WORDS)) decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS)) decode (
       .color_tv(color_fitted),
       .phys  (phys),
       .boards(boards),
@@ -835,7 +835,7 @@ module cadr_memory_path #(
   logic ch_memory_c, ch_memory;
   logic ch_device_c, ch_nxm_c, ch_unibus_c;
 
-  cadr_xbus_decode #(.MACHINE(MACHINE), .MONO_TV_WORDS(MONO_TV_WORDS)) ch_decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS)) ch_decode (
       .color_tv(color_fitted),
       .phys  (ch_addr),
       .boards(boards),
@@ -870,7 +870,7 @@ module cadr_memory_path #(
   logic        mp_own, mp_ack_q, mp_memory, mp_memory_c;
   logic        mp_device_c, mp_nxm_c, mp_unibus_c;
 
-  cadr_xbus_decode #(.MACHINE(MACHINE), .MONO_TV_WORDS(MONO_TV_WORDS)) mp_decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS)) mp_decode (
       .color_tv(color_fitted),
       .phys  (map_addr),
       .boards(boards),
@@ -953,9 +953,9 @@ module cadr_memory_path #(
   // between them and never both.
   //
   // **ON QUUX NOTHING OF THE PROCESSOR'S IS ON THE BRIDGE** (contracts Q6
-  // and Q7): main memory and MONO TV's frame buffer are the memory port's,
-  // through its cache, and the device registers are the register decode's,
-  // so the bridge carries block-disk's transfers alone.
+  // and Q7): main memory and the video controller's frame buffer are the
+  // memory port's, through its cache, and the device registers are the
+  // register decode's, so the bridge carries block-disk's transfers alone.
   logic cpu_bridged;
   assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb);
   assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory : cpu_bridged;
@@ -1058,19 +1058,19 @@ module cadr_memory_path #(
   // **ON QUUX THE PROCESSOR'S CYCLE IS THE MEMORY PORT'S, AND THERE IS NO
   // BUS INTERFACE AND NO DEVICE BUS** (contracts Q6 and Q7, muir's
   // `memory_port::MemoryPort` in place of `busint::Busint`): main memory and
-  // MONO TV's frame buffer through the cache on its own port, the device
-  // registers by the register decode in two microcycles, and an address
-  // nothing answers failing at once.  `quux_mem_port.sv` says the rest.  The
+  // the video controller's frame buffer through the cache on its own port,
+  // the device registers by the register decode in two microcycles, and an
+  // address nothing answers failing at once.  `quux_mem_port.sv` says the rest.  The
   // bridge below then carries block-disk's transfers alone, and asks main
   // memory through the port as its uncached requester.  The CADR keeps its
   // bus interface, untouched.
   //
-  // **THE FRAME BUFFER IS TOLD FROM THE REGISTERS BY MONO TV'S OWN HELD
-  // MATCH**, `mono_fb`, which the decode's `device` contains: it has the
-  // grant's address from the first tick after the grant, which is when the
-  // port reads which of the two a cycle is.  In the tick that takes the
+  // **THE FRAME BUFFER IS TOLD FROM THE REGISTERS BY THE VIDEO CONTROLLER'S
+  // OWN HELD MATCH**, `video_fb`, which the decode's `device` contains: it
+  // has the grant's address from the first tick after the grant, which is
+  // when the port reads which of the two a cycle is.  In the tick that takes the
   // request only their OR is read, to find an address nothing answers, and
-  // the OR is `is_memory || device` whatever `mono_fb` holds then.
+  // the OR is `is_memory || device` whatever `video_fb` holds then.
   logic        br_req, br_write, br_done;
   logic [31:0] br_addr, br_wdata, br_rdata;
   logic [31:0] port_word;
@@ -1089,8 +1089,8 @@ module cadr_memory_path #(
         .wrcyc      (wrcyc),
         .phys       (phys),
         .wdata      (wdata),
-        .is_memory  (is_memory || (device && mono_fb)),
-        .is_device  (device && !mono_fb),
+        .is_memory  (is_memory || (device && video_fb)),
+        .is_device  (device && !video_fb),
         .n_memgrant (n_memgrant),
         .n_memack   (n_memack),
         .n_loadmd   (n_loadmd),
@@ -1100,7 +1100,7 @@ module cadr_memory_path #(
         .busy       (busint_busy),
         .dev_rq     (cpu_rq),
         .dev_write  (cpu_write),
-        .dev_rdata  (mono_drives ? mono_rdata : device_rdata),
+        .dev_rdata  (video_drives ? video_rdata : device_rdata),
         .invalidate (quux_invalidate),
         .u_req      (br_req),
         .u_write    (br_write),
@@ -1165,8 +1165,8 @@ module cadr_memory_path #(
     assign cache_hits   = 32'd0;
     assign cache_misses = 32'd0;
     logic unused_cadr_port;
-    // And MONO TV's buffer match, which only QUUX's port reads.
-    assign unused_cadr_port = ^{mem_rline, quux_invalidate, mono_fb};
+    // And the video controller's buffer match, which only QUUX's port reads.
+    assign unused_cadr_port = ^{mem_rline, quux_invalidate, video_fb};
   end
 
   // `SELECT DEBUG`, which never leaves this module: the DBGOUT page makes it
@@ -1456,8 +1456,8 @@ module cadr_memory_path #(
       .board_lispm(tv_lispm),
       // The first display board is always in the backplane.  A CADR with no
       // display at all is not a machine anything here has a reference for.
-      // **ON QUUX IT IS NOT FITTED**, MONO TV being QUUX's first display
-      // below, so it answers nothing and raises nothing; it stays at this
+      // **ON QUUX IT IS NOT FITTED**, the video controller being QUUX's
+      // display below, so it answers nothing and raises nothing; it stays at this
       // instance, rather than in a branch of its own, so that the CADR's
       // board keeps the name its constraints and checks know it by.
       .fitted     (MACHINE != "quux"),
@@ -1481,17 +1481,18 @@ module cadr_memory_path #(
       .disp_map_q (unused_first_map)
   );
 
-  // **QUUX'S FIRST DISPLAY IS MONO TV**, `quux_mono_tv.sv`, a frame buffer
-  // and one register: no sync program, no color map and no interrupt.  It
-  // answers beside the unfitted board above and the joins below take both;
-  // on the CADR its four lines are zero.
-  logic        mono_ack, mono_drives, mono_fb;
-  logic [31:0] mono_rdata;
-  if (MACHINE == "quux") begin : g_quux_mono_tv
-    logic mono_bow;
-    quux_mono_tv #(
-        .BUFFER_WORDS(MONO_TV_WORDS)
-    ) mono_tv (
+  // **QUUX'S DISPLAY IS THE VIDEO CONTROLLER**, `quux_video.sv`, a frame
+  // buffer and one register, word 210 of the register page: no sync program,
+  // no color map and no interrupt.  It answers beside the unfitted board
+  // above and the joins below take both; on the CADR its four lines are
+  // zero.
+  logic        video_ack, video_drives, video_fb;
+  logic [31:0] video_rdata;
+  if (MACHINE == "quux") begin : g_quux_video
+    logic video_bow;
+    quux_video #(
+        .BUFFER_WORDS(VIDEO_WORDS)
+    ) video (
         .clk      (clk),
         .rst      (rst),
         .sel      (device),
@@ -1499,21 +1500,21 @@ module cadr_memory_path #(
         .dev_write(dev_write),
         .phys     (phys),
         .wdata    (wdata),
-        .dev_ack  (mono_ack),
-        .rdata    (mono_rdata),
-        .drives   (mono_drives),
-        .fb_sel   (mono_fb),
-        .bow      (mono_bow)
+        .dev_ack  (video_ack),
+        .rdata    (video_rdata),
+        .drives   (video_drives),
+        .fb_sel   (video_fb),
+        .bow      (video_bow)
     );
     // Black-on-white reaches nothing but the readout: the display output's
     // polarity is a setting of the board's (`BOW` in `cadr_display_out.sv`).
-    assign mono_bow_o = mono_bow;
-  end else begin : g_cadr_no_mono_tv
-    assign mono_bow_o  = 1'b0;
-    assign mono_ack    = 1'b0;
-    assign mono_drives = 1'b0;
-    assign mono_fb     = 1'b0;
-    assign mono_rdata  = 32'd0;
+    assign video_bow_o = video_bow;
+  end else begin : g_cadr_no_video
+    assign video_bow_o  = 1'b0;
+    assign video_ack    = 1'b0;
+    assign video_drives = 1'b0;
+    assign video_fb     = 1'b0;
+    assign video_rdata  = 32'd0;
   end
 
   // --- and the second display board, the color TV -------------------------
@@ -1586,7 +1587,7 @@ module cadr_memory_path #(
   // them, and the word from whichever slave answered.  Nothing answers the
   // processor while the channel has the bus: its cycle simply waits, which is
   // what the per-word arbitration bounds.
-  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || mono_ack || device_ack);
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || video_ack || device_ack);
   // The word from whichever slave answered. A Unibus register is sixteen bits
   // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.  The
   // display drives the lines only while answering a READ of a control word
@@ -1621,7 +1622,7 @@ module cadr_memory_path #(
                  : ub_ssyn      ? {16'h0000, ub_rdata}
                  : tv_drives    ? tv_rdata
                  : tvc_drives   ? tvc_rdata
-                 : mono_drives  ? mono_rdata
+                 : video_drives ? video_rdata
                  : device_ack   ? device_rdata
                                 : memory_rdata;
 
