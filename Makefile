@@ -119,6 +119,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
        $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/machine_param.pass \
+       $(BUILD)/word_width.pass \
        $(BUILD)/work_dirs.pass \
        $(BUILD)/board_reset.pass $(BUILD)/fault.pass \
        $(BUILD)/probe.pass \
@@ -203,7 +204,7 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
        $(BUILD)/quux_readout_window.quux.$(QK).pass $(BUILD)/checkpoint.quux.pass \
        $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QK).pass) \
        $(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QKL1).pass) $(BUILD)/phase_gen.quux.$(QKL1).pass \
-       $(BUILD)/machine_param.pass muir-pin
+       $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
 check: $(filter-out $(QUUX_PENDING),$(CHECK_QUUX)) quux-pending
@@ -2391,6 +2392,19 @@ $(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) M
 	@! echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx '$(BUILD)/machine.pass' \
 	    || { echo "machine: make check MACHINE=quux holds the CADR's machine check"; exit 1; }
 	@echo "machine: ok      make check MACHINE=quux holds the machine built as QUUX, and not the CADR's"
+	@touch $@
+
+# ------------------------------------------------------ the word's width
+#
+# **`WORD_BITS` REACHES EVERY WORD OF THE PROCESSOR**, 32 on the CADR and on
+# QUUX to revision 12, 40 on revision 13 (contract G2 §2.1).  Every other
+# check builds the machine at 32, where a word that dropped the parameter is
+# the same design, so none of them could say so.  `tools/word_width_check.py`
+# lints `cadr_machine` at each width it takes, reads each word's width back
+# out of Verilator's elaborated tree, and requires the refusal of a width the
+# machine does not have.  Its header says what it cannot see.
+$(BUILD)/word_width.pass: tools/word_width_check.py $(MACHINE_SRC) | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/word_width_check.py .
 	@touch $@
 
 # ------------------------------------------------ the DE25-Nano's top level

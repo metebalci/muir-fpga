@@ -612,9 +612,9 @@ fn programs(which: machine_axis::Which) -> Vec<Program> {
     all
 }
 
-fn nonzero(tag: &str, words: &[u32]) {
+fn nonzero<T: Copy + Default + PartialEq + std::fmt::LowerHex>(tag: &str, words: &[T]) {
     for (k, &w) in words.iter().enumerate() {
-        if w != 0 {
+        if w != T::default() {
             println!("end {tag} {k:x} {w:x}");
         }
     }
@@ -662,7 +662,7 @@ fn main() {
             m.dmem[k] = w;
         }
         for &(a, w) in &p.main {
-            m.main[a as usize] = w;
+            m.main[a as usize] = u64::from(w);
         }
         println!("program {} {:x}", p.name, rows);
         // QUUX has no speed bits: its programs run at its one rate.
@@ -704,10 +704,10 @@ fn main() {
         }
 
         let mm = e.machine();
-        let words = |v: &[u32]| v.iter().map(|w| format!("{w:x}")).collect::<Vec<_>>().join(" ");
+        let words = |v: &[u64]| v.iter().map(|w| format!("{w:x}")).collect::<Vec<_>>().join(" ");
         println!("end mmem {}", words(&mm.mmem));
         let spc: Vec<u32> = mm.spc.iter().map(|&w| w & 0o1777777).collect();
-        println!("end spc {}", words(&spc));
+        println!("end spc {}", words(&spc.iter().map(|&w| u64::from(w)).collect::<Vec<_>>()));
         println!("end spcptr {:x}", mm.spcptr);
         let dmem: Vec<u32> = mm.dmem.iter().map(|&w| w & 0o377777).collect();
         nonzero("dmem", &dmem);

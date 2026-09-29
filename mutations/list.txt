@@ -1757,7 +1757,7 @@
 @note never places one.
 @old
       if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @new
@@ -1778,7 +1778,7 @@
 @note in a minute on the boot PROM.
 @old
       if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @new
@@ -2313,12 +2313,12 @@
 @note microcycle more.
 @old
       if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @new
       if (loadmd_edge && hang && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @end
@@ -2380,9 +2380,9 @@
 @note coverage warning --- which sees files and not signals --- called it
 @note covered. Five more ports are about to make the same crossing.
 @old
-        md_held    <= rdata;
+        md_held    <= WORD_BITS'(rdata);
 @new
-        md_held    <= rdata ^ 32'd1;
+        md_held    <= WORD_BITS'(rdata ^ 32'd1);
 @end
 
 @mutation md-does-not-land-when-the-machine-is-hung
@@ -2401,18 +2401,18 @@
 @note is kept out of MD for the whole hang only when both go.
 @old
       if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
-        md_held    <= rdata;
+        md_held    <= WORD_BITS'(rdata);
         md_pending <= 1'b1;
       end else if (md_pending && (mclk_edge || hang)) begin
 @new
       if (loadmd_edge && mclk_edge && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
-        md_held    <= rdata;
+        md_held    <= WORD_BITS'(rdata);
         md_pending <= 1'b1;
       end else if (md_pending && mclk_edge) begin
 @end
@@ -13679,9 +13679,9 @@ if {0 && $held ne $want} {
 @note Every bit stays read.  Caught by `MD` not holding the word that went out
 @note on `UB MD LOAD` at the tick after the load.
 @old
-      if (ub_md_take) md <= ub_md_data;
+      if (ub_md_take) md <= WORD_BITS'(ub_md_data);
 @new
-      if (ub_md_take) md <= {ub_md_data[15:0], ub_md_data[31:16]};
+      if (ub_md_take) md <= WORD_BITS'({ub_md_data[15:0], ub_md_data[31:16]});
 @end
 
 @mutation park-a-prepared-cycle-waits-for-the-cpu-edge
@@ -13743,10 +13743,10 @@ if {0 && $held ne $want} {
 @note what memory gave.
 @old
           phys_r     <= {vmo[13:0], vma_bus};
-          wdata      <= md_bus;
+          wdata      <= md_bus[31:0];
 @new
           phys_r     <= cpu_edge ? {vmo[13:0], vma_bus} : phys_r;
-          wdata      <= md_bus;
+          wdata      <= md_bus[31:0];
 @end
 
 @mutation park-a-write-taken-out-at-a-master-clock-writes-the-last-word
@@ -13759,10 +13759,10 @@ if {0 && $held ne $want} {
 @note memory through the debug IR on a halted machine and wants memory to
 @note hold MD.
 @old
-          wdata      <= md_bus;
+          wdata      <= md_bus[31:0];
           // READ IN PROGRESS comes up on the same edge for a read, and has no
 @new
-          wdata      <= cpu_edge ? md_bus : wdata;
+          wdata      <= cpu_edge ? md_bus[31:0] : wdata;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
 @end
 
@@ -19239,12 +19239,12 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @note at `MD<2:0>` = 2 where muir's `rtl` writes at 5.
 @old
       if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @new
       if (loadmd_edge && mclk_edge && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @end
@@ -19713,9 +19713,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @file rtl/machine/cadr_microcycle.sv
 @note Source 16 answers processor type 1 rather than 4.
 @old
-      mf = MACHINE_ID;
+      mf = WORD_BITS'(MACHINE_ID);
 @new
-      mf = {MACHINE_ID[31:4], 4'd1};
+      mf = WORD_BITS'({MACHINE_ID[31:4], 4'd1});
 @end
 
 @mutation quux-source-36-is-not-source-16
@@ -20168,9 +20168,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @file rtl/machine/cadr_microcycle.sv
 @note `MUL` drives the output bus only when `IR<13:12>` selects the ALU.
 @old
-    if (quux_mul) ob = mul_ob;
+    if (quux_mul) ob = mtag | WORD_BITS'(mul_ob);
 @new
-    if (quux_mul && osel == 2'b01) ob = mul_ob;
+    if (quux_mul && osel == 2'b01) ob = mtag | WORD_BITS'(mul_ob);
 @end
 
 @mutation quux-div-leaves-q
@@ -20178,9 +20178,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @file rtl/machine/cadr_microcycle.sv
 @note `DIV` does not load `Q`.
 @old
-        if (quux_div) q <= div_q;
+        if (quux_div) q <= qtag | WORD_BITS'(div_q);
 @new
-        if (quux_div && qs1 && qs0) q <= div_q;
+        if (quux_div && qs1 && qs0) q <= qtag | WORD_BITS'(div_q);
 @end
 
 @mutation quux-a-start-after-a-start-is-not-held
@@ -20438,9 +20438,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note `divmd`'s `DIV` two after a read that hits has its edge at the grant
 @note and the word strobed two ticks later, before its load.
 @old
-    assign div_m      = (div_reload || (div_md && div_have)) ? md_held : div_md ? md : m;
+    assign div_m      = (div_reload || (div_md && div_have)) ? md_held[31:0] : div_md ? md[31:0] : m[31:0];
 @new
-    assign div_m      = (div_reload || (div_md && div_have && 1'b0)) ? md_held : div_md ? md : m;
+    assign div_m      = (div_reload || (div_md && div_have && 1'b0)) ? md_held[31:0] : div_md ? md[31:0] : m[31:0];
 @end
 
 @mutation the-divider-takes-a-step-a-tick
@@ -23786,4 +23786,54 @@ FAULT_SH=/usr/share/cadr/faults.sh
   assign next_word = way_q ? data1_out[off_q + 2'd1] : data0_out[off_q + 2'd1];
 @new
   assign next_word = way_q ? data1_out[off_q + 2'd1] : data0_out[off_q];
+@end
+
+# THE WORD'S WIDTH.  `WORD_BITS` is 32 in every build the other checks make,
+# where a word that dropped it is the same design, so none of them can see
+# it.  `tools/word_width_check.py` lints the machine at 40 and reads each
+# word's width back out of Verilator's elaborated tree.
+
+@mutation word-width-l-stays-32
+@check word_width
+@file rtl/machine/cadr_microcycle.sv
+@note `L`, the write pulses' word, left at 32 bits: a 40-bit word loses its
+@note `<39:32>` on the way into A, M and the PDL buffer.  The same design at
+@note 32, so every check against muir passes.
+@old
+  logic [WORD_BITS-1:0] l;
+@new
+  logic [31:0] l;
+@end
+
+@mutation word-width-the-machine-hands-down-32
+@check word_width
+@file rtl/machine/cadr_machine.sv
+@note The machine hands the processor 32 whatever it was asked for, so a
+@note 40-bit machine has a 32-bit processor.
+@old
+      .WORD_BITS(WORD_BITS)
+@new
+      .WORD_BITS(32)
+@end
+
+@mutation word-width-a-machine-port-stays-32
+@check word_width
+@file rtl/machine/cadr_machine.sv
+@note The machine's `MD` port left at 32 bits, so what leaves the machine is
+@note `MD<31:0>` at any width.
+@old
+    output var logic [WORD_BITS-1:0] md,
+@new
+    output var logic [31:0] md,
+@end
+
+@mutation word-width-the-cadr-takes-40
+@check word_width
+@file rtl/machine/cadr_microcycle.sv
+@note The processor refuses a width only when it is neither 32 nor 40, so a
+@note CADR builds at 40 bits, which MIT's machine never had.
+@old
+  if (WORD_BITS != 32 && !(QUUX && WORD_BITS == 40)) begin : g_bad_word
+@new
+  if (WORD_BITS != 32 && WORD_BITS != 40) begin : g_bad_word
 @end

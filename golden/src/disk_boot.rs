@@ -375,7 +375,7 @@ fn from_boot(pack: &str, want: usize, limit: u64) -> Vec<FromBoot> {
     for n in 0..limit {
         let da = e.machine().disk.read(2);
         let ccws: Vec<u32> = (0..16)
-            .map(|k| e.machine().main[COPY_BUFFER_CCW_ORIGIN as usize + k])
+            .map(|k| e.machine().main[COPY_BUFFER_CCW_ORIGIN as usize + k] as u32)
             .collect();
         if e.step().is_err() {
             fail("the boot stopped before it read three pages in one list");

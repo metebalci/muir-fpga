@@ -1815,6 +1815,22 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # THE WORD'S WIDTH, `WORD_BITS`: every other check builds the machine at
+    # 32, where a word that dropped the parameter is the same design.
+    # `tools/word_width_check.py` lints `cadr_machine` at 32 and 40, reads
+    # each word's width back out of Verilator's elaborated tree, and requires
+    # the refusal of a width the machine does not have.  Its header is the
+    # argument.  Refusing is being caught.
+    "word_width": {
+        "kind": "script",
+        "sources": ["rtl/machine/cadr_microcycle.sv",
+                    "rtl/machine/cadr_machine.sv"],
+        "cmd": ["tools/word_width_check.py", "."],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # WHERE EACH BOARD'S MEMORY IS, written in several files no one build
     # reads together: the fabric's package, the DE25-Nano's restatement of it,
     # the programs' header, each board's reserved-memory node, the card

@@ -152,6 +152,33 @@ module cadr_microcycle #(
     // as their top and a top's parameter needs one; nothing on the CADR
     // reads it.
     parameter logic [31:0] MACHINE_ID = 32'h5155_00C4,
+    // **THE WORD'S WIDTH** (contract G2 §2.1, muir's `Geometry::word_bits`):
+    // 32 on the CADR and on QUUX to revision 12, 40 on revision 13.  A, M,
+    // the PDL buffer, `L`, M 31's register, the A and M buses, `OB`, `Q`,
+    // `VMA` and `MD` are words.  Above bit 31 of a wider word, as muir's `Rtl`
+    // has it: a logical ALU function acts on `<39:32>` as on every other bit;
+    // an arithmetic one, the shifts, `MUL` and `DIV` act on `<31:0>` and keep
+    // M's `<39:32>`, and the `Q` steps keep Q's; a byte instruction's
+    // `<39:32>` are A's, which the masker passes; the rotator, the jump
+    // conditions, `LC`, the stack and the map are 32 bits or less, and the
+    // sources narrower than a word put zeros above them, an undriven source
+    // reading all ones in every bit.  The readout's fields are 48 bits and
+    // take the whole word.
+    //
+    // **THE MEMORY PATH IS STILL 32 BITS**, `MEM<31:0>` on both cables: a
+    // word read, and the prefetched word, reach `MD` and M 31 with zeros
+    // above bit 31, and a write takes `MD<31:0>`.  So are the Unibus's word
+    // into `MD` and the control store's write, `M<31:0>`.  muir's main memory
+    // holds the whole word, so at 40 this is the processor alone until the
+    // memory port carries it (G2's F2).
+    //
+    // What holds it: at 32, every check of the CADR and of QUUX, whose traces
+    // this parameter must not move; at 40, `build/word_width.pass`
+    // (`tools/word_width_check.py`), which lints the machine at 40 on QUUX
+    // and reads each word's width back.  No trace of muir's has a 40-bit
+    // word yet, so nothing compares the bits above 31 with muir's until
+    // revision 13's checks.
+    parameter int unsigned WORD_BITS = 32,
     // **QUUX'S MICROCYCLE IN TICKS** (H1a, muir's `TimingModel::Sync`): K,
     // and L more for an `ILONG` instruction.  A board's, from its top level
     // through `cadr_machine.sv`; nothing on the CADR reads either.  See
@@ -334,15 +361,15 @@ module cadr_microcycle #(
     output var logic [13:0] opc,          // OPC<13:0>, eight microcycles back
     output var logic [31:0] st,           // ST<31:0>, the statistics counter
     output var logic [47:0] ir,
-    output var logic [31:0] a,            // the A bus, off ACTL's pass-around
-    output var logic [31:0] m,            // the M bus
+    output var logic [WORD_BITS-1:0] a,     // the A bus, off ACTL's pass-around
+    output var logic [WORD_BITS-1:0] m,     // the M bus
     output var logic [31:0] alu,          // ALU<31:0> of the 33-bit array
     output var logic [31:0] r,            // R, the shifter's output
-    output var logic [31:0] ob,           // OB, what the write pulses store
-    output var logic [31:0] q,            // Q
+    output var logic [WORD_BITS-1:0] ob,    // OB, what the write pulses store
+    output var logic [WORD_BITS-1:0] q,     // Q
     output var logic [9:0]  dc,           // the dispatch constant
     output var logic [25:0] lc,           // LC<25:0>, the location counter
-    output var logic [31:0] vma,          // VMA, the virtual memory address
+    output var logic [WORD_BITS-1:0] vma,   // VMA, the virtual memory address
     output var logic        vmaok,        // VMAOK: the access is permitted
     output var logic        jcond,        // the jump condition
     output var logic        nop,
@@ -363,7 +390,7 @@ module cadr_microcycle #(
     // --- one tick per microcycle, at the boundary: the edge every register
     // --- above takes.  What stands before it is that microcycle's.
     // --- the cables to the bus interface
-    output var logic [31:0] md,           // MD, the memory data register
+    output var logic [WORD_BITS-1:0] md,    // MD, the memory data register
     output var logic [21:0] phys,         // -PMA21..8 and -VMA7..0
     output var logic [31:0] wdata,        // MEM<31:0> out of the cpu
     output var logic        mclk,         // MCLK7, the microcycle boundary
@@ -397,6 +424,11 @@ module cadr_microcycle #(
   localparam int unsigned L2_WORDS  = 32 << L1_BITS;
   localparam int unsigned PDL_BITS  = QUUX ? 14 : 10;
   localparam int unsigned PDL_WORDS = 1 << PDL_BITS;
+
+  // 32 on the CADR, 32 or 40 on QUUX (`Geometry::word_bits`).
+  if (WORD_BITS != 32 && !(QUUX && WORD_BITS == 40)) begin : g_bad_word
+    $error("cadr_microcycle: WORD_BITS is %0d on %s; a word is 32 bits on the CADR and 32 or 40 on QUUX", WORD_BITS, MACHINE);
+  end
 
   // ------------------------------------------------------------ the clock
 
@@ -1120,17 +1152,17 @@ module cadr_microcycle #(
   // 93425As' asynchronous read would have gone anyway; one BRAM per original
   // chip would not fit and is not what this asks for.
 
-  logic [31:0] amem [0:1023];
-  logic [31:0] mmem [0:31];
-  logic [31:0] pdl  [0:PDL_WORDS-1];
+  logic [WORD_BITS-1:0] amem [0:1023];
+  logic [WORD_BITS-1:0] mmem [0:31];
+  logic [WORD_BITS-1:0] pdl  [0:PDL_WORDS-1];
   logic [20:0] spcm [0:31];
 
-  logic [31:0] amem_q, mmem_q, pdl_q;
+  logic [WORD_BITS-1:0] amem_q, mmem_q, pdl_q;
   logic [20:0] spc_q;
 
   // page L 3C26-3C29: the 74S374 that holds OB for the write pulse.  Its
   // input is the datapath's and comes in until slice 3.
-  logic [31:0] l;
+  logic [WORD_BITS-1:0] l;
 
   // page ACTL 3B26/3B28/3B29: the destination of the instruction *before*
   // this one, which is the address the write pulse in this cycle will use.
@@ -1161,14 +1193,14 @@ module cadr_microcycle #(
   // too until an A write at 31 lands in A memory (`a31_from_m31`), as muir
   // writes the prefetched word into both.  "The fused return" below writes
   // both; on the CADR both are constant and this is the latches' word.
-  logic [31:0] m31_r;
+  logic [WORD_BITS-1:0] m31_r;
   logic        a31_from_m31;
   assign a = apass ? l : (QUUX && a31_from_m31 && aadr == 10'o31) ? m31_r : amem_q;
 
   // The M memory's output.  It reaches the M bus through the 74S257s at
   // MLATCH under `MPASSM`, and the M bus is slice 3, so nothing here reads
   // this yet.
-  logic [31:0] mmem_out;
+  logic [WORD_BITS-1:0] mmem_out;
   assign mmem_out = mpass ? l : (QUUX && madr == 5'o31) ? m31_r : mmem_q;
 
   // page PDLCTL: `PDLP` is `(CLK AND IR30) OR (-CLK AND -PWIDX)` off the
@@ -1198,7 +1230,7 @@ module cadr_microcycle #(
   if (QUUX) begin : g_quux_pdl
     logic                pdl_we;
     logic [PDL_BITS-1:0] pdla;
-    logic [31:0]         pdl_rd;
+    logic [WORD_BITS-1:0]  pdl_rd;
     assign pdl_we = wp && pdlwrited;
     assign pdla   = pdl_we ? pdla_write : pdla_read;
     // WRITE_FIRST, for the reason the file's header gives: a tool's fault.
@@ -1403,20 +1435,20 @@ module cadr_microcycle #(
   // reads all ones as on the CADR (contract Q11).
   logic [31:0] usec_status;
 
-  logic [31:0] mf;
+  logic [WORD_BITS-1:0] mf;
   always_comb begin
     if (srclc) begin
       // Bit 30 is not driven.  `LC<25:1>` with the byte-mode bit under it.
-      mf = {needfetch, 1'b0, lc_byte_mode, prog_unibus_reset,
-            int_enable, sequence_break, lc[25:1], lc0b};
+      mf = WORD_BITS'({needfetch, 1'b0, lc_byte_mode, prog_unibus_reset,
+                      int_enable, sequence_break, lc[25:1], lc0b});
     end else if (srcopc) begin
-      mf = {18'd0, opc};
+      mf = WORD_BITS'(opc);
     end else if (srcdc) begin
-      mf = {22'd0, dc};
+      mf = WORD_BITS'(dc);
     end else if (srcpdlptr) begin
-      mf = 32'(pdl_ptr);
+      mf = WORD_BITS'(pdl_ptr);
     end else if (srcpdlidx) begin
-      mf = 32'(pdl_idx);
+      mf = WORD_BITS'(pdl_idx);
     end else if (srcq) begin
       mf = q;
     end else if (srcmd) begin
@@ -1424,18 +1456,18 @@ module cadr_microcycle #(
     end else if (srcvma) begin
       mf = vma;
     end else if (srcmap) begin
-      mf = mf_map;
+      mf = WORD_BITS'(mf_map);
     end else if (QUUX && group_b && ir[28:26] == 3'd6) begin
       // QUUX's MACHINE-ID, sources 16 and 36 (`Rtl::read_phase`).
-      mf = MACHINE_ID;
+      mf = WORD_BITS'(MACHINE_ID);
     end else if (QUUX && group_b && ir[28:26] == 3'd5) begin
       // QUUX's microsecond clock, source 15.
-      mf = usec_status;
+      mf = WORD_BITS'(usec_status);
     end else begin
       // "Functional sources 0o15, 0o16 and 0o17: the 74S138 that decodes
       // IR<28:26> ... has those three outputs unconnected, so nothing on page
       // MF drives the bus, and an undriven TTL bus reads high."
-      mf = {32{1'b1}};
+      mf = {WORD_BITS{1'b1}};
     end
   end
 
@@ -1452,9 +1484,9 @@ module cadr_microcycle #(
     // `SPCPTR<4:0>` on M<28:24> through the 74S241 at 4B10, with the RAM's
     // own `SPCO` under it --- not the push pass-around, which is on the SPC
     // bus and goes to the next-address path instead.
-    else if (spcenb) m = {3'd0, spcptr, 6'd0, spc_q[17:0]};
+    else if (spcenb) m = WORD_BITS'({3'd0, spcptr, 6'd0, spc_q[17:0]});
     else if (mfenb)  m = mf;
-    else             m = 32'd0;
+    else             m = '0;
   end
 
   // page SMCTL: the shift and mask amounts, with the LC byte-mode tweak.
@@ -1474,7 +1506,7 @@ module cadr_microcycle #(
 
   // pages SHIFT0-1: a 32-bit rotate left.  A shift of zero leaves the second
   // term a 32-place shift of a 32-bit word, which is zero.
-  assign r = (m << shift) | (m >> (6'd32 - {1'b0, shift}));
+  assign r = (m[31:0] << shift) | (m[31:0] >> (6'd32 - {1'b0, shift}));
 
   // page MSKG4
   logic [31:0] msk;
@@ -1509,8 +1541,8 @@ module cadr_microcycle #(
 
   logic [32:0] alu_x, alu_y, alu_f, alu_p, alu_q;
   logic        aeqm;
-  assign alu_x = {m[31], m};   // the ninth slice sign-extends both operands
-  assign alu_y = {a[31], a};
+  assign alu_x = {m[31], m[31:0]};   // the ninth slice sign-extends both operands
+  assign alu_y = {a[31], a[31:0]};
 
   always_comb begin
     alu_p = 33'd0;
@@ -1597,10 +1629,10 @@ module cadr_microcycle #(
         .clk   (clk),
         .rst   (rst),
         .load  (div_load || div_reload),
-        .m     (m),
+        .m     (m[31:0]),
         .dm    (div_m),
-        .a     (a),
-        .q     (q),
+        .a     (a[31:0]),
+        .q     (q[31:0]),
         .mul_ob(mul_ob),
         .mul_q (mul_q),
         .div_ob(div_ob),
@@ -1618,23 +1650,64 @@ module cadr_microcycle #(
     assign div_q    = 32'd0;
   end
 
-  // page MO, and the output select on page OB.
-  logic [31:0] mo;
+  // **A WIDER WORD'S `<39:32>`** (see `WORD_BITS`): `mtag` is M's in place
+  // and `alu_tag` the ALU's, a logical function's of M's and A's, the
+  // 74S181's logic table over them, or M's for an arithmetic one; `qtag` is
+  // Q's, which its steps keep. All three are zero on a 32-bit word.
+  logic [WORD_BITS-1:0] mtag, alu_tag, qtag;
+  if (WORD_BITS > 32) begin : g_word_tag
+    localparam int unsigned TB = WORD_BITS - 32;
+    logic [TB-1:0] tx, ty, tf;
+    assign tx = m[WORD_BITS-1:32];
+    assign ty = a[WORD_BITS-1:32];
+    always_comb begin
+      unique case (aluf)
+        4'h0: tf = ~tx;
+        4'h1: tf = ~(tx | ty);
+        4'h2: tf = ~tx & ty;
+        4'h3: tf = '0;
+        4'h4: tf = ~(tx & ty);
+        4'h5: tf = ~ty;
+        4'h6: tf = tx ^ ty;
+        4'h7: tf = tx & ~ty;
+        4'h8: tf = ~tx | ty;
+        4'h9: tf = ~(tx ^ ty);
+        4'ha: tf = ty;
+        4'hb: tf = tx & ty;
+        4'hc: tf = '1;
+        4'hd: tf = tx | ~ty;
+        4'he: tf = tx | ty;
+        4'hf: tf = tx;
+        default: tf = tx;
+      endcase
+    end
+    assign mtag    = {tx, 32'd0};
+    assign alu_tag = {alumode ? tf : tx, 32'd0};
+    assign qtag    = {q[WORD_BITS-1:32], 32'd0};
+  end else begin : g_word_no_tag
+    assign mtag    = '0;
+    assign alu_tag = '0;
+    assign qtag    = '0;
+  end
+
+  // page MO, and the output select on page OB.  The masker's zeros take A,
+  // and A's `<39:32>` with them.
+  logic [WORD_BITS-1:0] mo;
   logic [1:0]  osel;
-  assign mo   = (msk & r) | (~msk & a);
+  assign mo   = WORD_BITS'(msk & r) | (a & ~WORD_BITS'(msk));
   assign osel = {ir[13] && iralu, ir[12] && iralu};
 
   always_comb begin
     unique case (osel)
       2'b00: ob = mo;
-      2'b01: ob = alu_f[31:0];
-      2'b10: ob = alu_f[32:1];
+      2'b01: ob = WORD_BITS'(alu_f[31:0]) | alu_tag;
+      2'b10: ob = mtag | WORD_BITS'(alu_f[32:1]);
       // `(ALU << 1)` with `Q<31>` shifted in at the bottom.
-      default: ob = {alu_f[30:0], q[31]};
+      default: ob = mtag | WORD_BITS'({alu_f[30:0], q[31]});
     endcase
     // QUUX's `MUL` and `DIV` drive the output bus whatever `IR<13:12>` says.
-    if (quux_mul) ob = mul_ob;
-    if (quux_div) ob = div_ob;
+    if (quux_mul) ob = mtag | WORD_BITS'(mul_ob);
+    if (quux_div) ob = mtag | WORD_BITS'(div_ob);
   end
 
   // page FLAG: the jump conditions, off the 74S151 at 3E01.
@@ -1729,7 +1802,7 @@ module cadr_microcycle #(
   logic [5:0]  macro_opr_delta;
   // The prefetched word a fused return on the fetch path armed for M 31.
   logic        macro_m31_v;
-  logic [31:0] macro_m31_w;
+  logic [WORD_BITS-1:0] macro_m31_w;
   // The counts for the readout: fused returns, operand addresses loaded,
   // and prefetched words taken.
   logic [31:0] macro_fused_n, macro_opr_n, macro_pf_n;
@@ -1828,7 +1901,7 @@ module cadr_microcycle #(
     // edge ending this microcycle lands.
     logic [31:0] m31_now;
     assign m31_now = pf_use ? pf_word_now
-                   : (destmd && wadr[4:0] == 5'o31) ? l : m31_r;
+                   : (destmd && wadr[4:0] == 5'o31) ? l[31:0] : m31_r[31:0];
     // The rotate `IR<11:10>` = 3 gives `IR<4:0>` = 26 (the halfword's
     // `<6>` to `<0>`), by LC as `NEXT INSTR` steps it: page SMCTL's gates on
     // the stepped counter's low two bits.
@@ -1893,9 +1966,9 @@ module cadr_microcycle #(
         macro_opr_v     <= 1'b0;
         macro_opr_arg   <= 1'b0;
         macro_opr_delta <= 6'd0;
-        m31_r           <= 32'd0;
+        m31_r           <= '0;
         macro_m31_v     <= 1'b0;
-        macro_m31_w     <= 32'd0;
+        macro_m31_w     <= '0;
         a31_from_m31    <= 1'b0;
         macro_fused_n   <= 32'd0;
         macro_opr_n     <= 32'd0;
@@ -1916,7 +1989,7 @@ module cadr_microcycle #(
             if (macro_reg[28:24] == 5'o31)  macro_ap     <= macro_m31_w[13:0];
           end
           macro_m31_v     <= macro_fused && pf_use;
-          macro_m31_w     <= pf_word_now;
+          macro_m31_w     <= WORD_BITS'(pf_word_now);
           macro_opr_v     <= macro_fused && opr;
           macro_opr_arg   <= hw_rot[2:0] == 3'd6;
           macro_opr_delta <= hw_rot[31:26];
@@ -1948,9 +2021,9 @@ module cadr_microcycle #(
     assign macro_opr_v     = 1'b0;
     assign macro_opr_arg   = 1'b0;
     assign macro_opr_delta = 6'd0;
-    assign m31_r           = 32'd0;
+    assign m31_r           = '0;
     assign macro_m31_v     = 1'b0;
-    assign macro_m31_w     = 32'd0;
+    assign macro_m31_w     = '0;
     assign a31_from_m31    = 1'b0;
     assign macro_fused_n   = 32'd0;
     assign macro_opr_n     = 32'd0;
@@ -2117,7 +2190,7 @@ module cadr_microcycle #(
   // side of the cables, and a write leaves MD alone whatever the bridge has
   // on `rdata`.
   logic n_loadmd_q, loadmd_edge, md_pending;
-  logic [31:0] md_held;
+  logic [WORD_BITS-1:0] md_held;
   assign loadmd_edge = !n_loadmd && n_loadmd_q && rdcyc;
 
   // `UB MD LOAD`, MD's third writer, is built below with `mbusy` and
@@ -2164,12 +2237,12 @@ module cadr_microcycle #(
   // page VMA: the register, and what it takes.  An instruction fetch puts the
   // location counter's word address up instead of OB.
   logic destvma, destmdr, vmaenb, wmap, wmapd;
-  logic [31:0] vmas;
+  logic [WORD_BITS-1:0] vmas;
   assign destvma = destmem && !ir[22];
   assign destmdr = destmem && ir[22];
   assign wmap    = destmem && (ir[20:19] == 2'd3);
   assign vmaenb  = destvma || ifetch;
-  assign vmas    = ifetch ? {8'd0, lc[25:2]} : ob;
+  assign vmas    = ifetch ? WORD_BITS'(lc[25:2]) : ob;
 
   // **`-VMA7..0` ON THE CABLES IS THE VMA THE EDGE HAS JUST LOADED.**  The
   // page, `-PMA21..8`, comes through the latch at VMEMDR off the map that
@@ -2199,8 +2272,13 @@ module cadr_microcycle #(
   // MD is left out: a strobe at the edge a cycle starts on would belong to a
   // cycle still running while another starts, which `Busint::request`
   // asserts muir never does and `build/park.pass` counts here.
-  logic [31:0] md_bus;
+  logic [WORD_BITS-1:0] md_bus;
   assign md_bus = (cpu_edge && destmdr) ? ob : md;
+  // The cables carry `MEM<31:0>` (see `WORD_BITS`).
+  if (WORD_BITS > 32) begin : g_word_md_bus
+    logic unused_md_bus_tag;
+    assign unused_md_bus_tag = ^md_bus[WORD_BITS-1:32];
+  end
 
   // ------------------------------------------------------------- VCTL1
   //
@@ -2480,7 +2558,7 @@ module cadr_microcycle #(
   // MD's moves are taken from MD itself and not from `md_we`, so that the
   // monitor does not share a mistake with what it measures: a word that
   // differs from the last tick's moved at the end of the tick before.
-  logic [31:0] gm_md_was;
+  logic [WORD_BITS-1:0] gm_md_was;
   longint signed gm_md_now;
   assign gm_md_now = (md != gm_md_was) ? gm_t - 1 : gm_md;
   // A write that writes something: `mw` is up in every microcycle, and only
@@ -2675,12 +2753,12 @@ module cadr_microcycle #(
       end
     end
     assign div_reload = div_md && div_strobed;
-    assign div_m      = (div_reload || (div_md && div_have)) ? md_held : div_md ? md : m;
+    assign div_m      = (div_reload || (div_md && div_have)) ? md_held[31:0] : div_md ? md[31:0] : m[31:0];
   end else begin : g_cadr_no_divider_hold
     assign dividing   = 1'b0;
     assign div_load   = 1'b0;
     assign div_reload = 1'b0;
-    assign div_m      = m;
+    assign div_m      = m[31:0];
   end
   // A WAIT comes first, and this is not a tidiness: parking the generator
   // stops the master clock, and the master clock is what MBUSY.SYNC follows
@@ -2984,7 +3062,7 @@ module cadr_microcycle #(
       ir           <= 48'd0;
       iwr          <= 48'd0;
       st           <= 32'd0;
-      l            <= 32'd0;
+      l            <= '0;
       wadr         <= 10'd0;
       destd        <= 1'b0;
       destmd       <= 1'b0;
@@ -3010,16 +3088,16 @@ module cadr_microcycle #(
       rdcyc        <= 1'b0;
       wrcyc        <= 1'b0;
       rd_in_progress <= 1'b0;
-      vma          <= 32'd0;
+      vma          <= '0;
       wmapd        <= 1'b0;
-      md           <= 32'd0;
+      md           <= '0;
       phys_r       <= 22'd0;
       wdata        <= 32'd0;
       n_loadmd_q   <= 1'b1;
       destmem_q    <= 1'b0;
       use_md_q     <= 1'b0;
       ifetch_q     <= 1'b0;
-      md_held      <= 32'd0;
+      md_held      <= '0;
       md_pending   <= 1'b0;
       // What the latch at VMEMDR comes up holding. `Chip::power_on` puts
       // every register's outputs low, and the latch's are the active-low
@@ -3034,7 +3112,7 @@ module cadr_microcycle #(
       rdfinish_t   <= 6'd0;
       memgo_q      <= 1'b0;
       prog_unibus_reset <= 1'b0;
-      q            <= 32'd0;
+      q            <= '0;
       dc           <= 10'd0;
       for (int unsigned k = 0; k < 8; k++) opcs[k] <= 14'd0;
     end else begin
@@ -3089,10 +3167,10 @@ module cadr_microcycle #(
       // master clock edge: `md-acked-on-an-edge-nxm` and
       // `nxm-fall-on-the-grant-edge` in `build/dispatch_write_order.quux.pass`.
       if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
-        md         <= rdata;
+        md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
-        md_held    <= rdata;
+        md_held    <= WORD_BITS'(rdata);
         md_pending <= 1'b1;
       end else if (md_pending && (mclk_edge || hang)) begin
         md         <= md_held;
@@ -3108,11 +3186,11 @@ module cadr_microcycle #(
       // instruction's own store wins, `DESTMDR` being written below.  Both
       // are the way round the board is: the newer word off the bus, and the
       // processor's own drive of `MEM<31:0>` over a foreign master's.
-      if (ub_md_take) md <= ub_md_data;
+      if (ub_md_take) md <= WORD_BITS'(ub_md_data);
       // On QUUX `md_held` takes every strobed word, the one committed at once
       // on a master clock edge as well: QUUX's divider reloads from it (see
       // "A `DIV` OF `MD`").  Nothing else reads it but the readout.
-      if (QUUX && loadmd_edge) md_held <= rdata;
+      if (QUUX && loadmd_edge) md_held <= WORD_BITS'(rdata);
       memgo_q <= memgo;
       if (released_now) begin
         mfinish_t      <= 6'd0;
@@ -3166,7 +3244,7 @@ module cadr_microcycle #(
         inop    <= n;
         iwrited <= iwrite;
         halted  <= halt;
-        iwr     <= {a[15:0], m};
+        iwr     <= {a[15:0], m[31:0]};
 
         // page OPCS 1F06-1F13: dual *eight-bit* shift registers with only the
         // last stage brought out, so what a SRCOPC reads is the PC of eight
@@ -3231,14 +3309,14 @@ module cadr_microcycle #(
         // page Q 2A05-2A11
         if (qs1 || qs0) begin
           unique case ({qs1, qs0})
-            2'b01:   q <= {q[30:0], !alu_f[31]};
-            2'b10:   q <= {alu_f[0], q[31:1]};
-            default: q <= alu_f[31:0];
+            2'b01:   q <= qtag | WORD_BITS'({q[30:0], !alu_f[31]});
+            2'b10:   q <= qtag | WORD_BITS'({alu_f[0], q[31:1]});
+            default: q <= WORD_BITS'(alu_f[31:0]) | alu_tag;
           endcase
         end
         // QUUX's `MUL` and `DIV` load `Q` whatever `IR<1:0>` says.
-        if (quux_mul) q <= mul_q;
-        if (quux_div) q <= div_q;
+        if (quux_mul) q <= qtag | WORD_BITS'(mul_q);
+        if (quux_div) q <= qtag | WORD_BITS'(div_q);
 
         // page VCTL2: the map write is delayed, gated by WMAPD.
         wmapd <= wmap;
@@ -3295,7 +3373,7 @@ module cadr_microcycle #(
           mbusy      <= 1'b1;
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
           phys_r     <= {vmo[13:0], vma_bus};
-          wdata      <= md_bus;
+          wdata      <= md_bus[31:0];
           // READ IN PROGRESS comes up on the same edge for a read, and has no
           // falling time until -MEMACK gives it one.
           if (rdcyc) rd_in_progress <= 1'b1;
@@ -3491,7 +3569,7 @@ module cadr_microcycle #(
   // The words each memory's second port gives, one tick behind `ro_a0`
   // (declared with the fused return, whose memory's second port is here too).
   logic [47:0] ro_imem_q, ro_prom_q;
-  logic [31:0] ro_amem_q, ro_mmem_q, ro_pdl_q;
+  logic [WORD_BITS-1:0] ro_amem_q, ro_mmem_q, ro_pdl_q;
   logic [20:0] ro_spc_q;
   logic [16:0] ro_dmem_q;
   logic [L1_BITS-1:0] ro_map1_q;
@@ -3604,10 +3682,10 @@ module cadr_microcycle #(
       RG_LPC:    ro_regs = {34'd0, lpc};
       RG_IR:     ro_regs = ir;
       RG_IWR:    ro_regs = iwr;
-      RG_L:      ro_regs = {16'd0, l};
-      RG_Q:      ro_regs = {16'd0, q};
-      RG_VMA:    ro_regs = {16'd0, vma};
-      RG_MD:     ro_regs = {16'd0, md};
+      RG_L:      ro_regs = 48'(l);
+      RG_Q:      ro_regs = 48'(q);
+      RG_VMA:    ro_regs = 48'(vma);
+      RG_MD:     ro_regs = 48'(md);
       RG_ST:     ro_regs = {16'd0, st};
       RG_LC:     ro_regs = {22'd0, lc};
       RG_WADR:   ro_regs = {38'd0, wadr};
@@ -3617,7 +3695,7 @@ module cadr_microcycle #(
       RG_RETA:   ro_regs = {34'd0, reta};
       RG_DC:     ro_regs = {38'd0, dc};
       RG_LVMO:   ro_regs = {24'd0, lvmo};
-      RG_MDHELD: ro_regs = {16'd0, md_held};
+      RG_MDHELD: ro_regs = 48'(md_held);
       RG_PHYS:   ro_regs = {26'd0, phys_r};
       RG_SPEED:  ro_regs = {42'd0, QUUX ? 2'b00 : mode_speed, speed_a, speed};  // all zero on QUUX
       RG_FLAGS:  ro_regs = ro_flags;
@@ -3634,7 +3712,7 @@ module cadr_microcycle #(
       RG_QUUX_BASES:    ro_regs = QUUX ? {20'd0, macro_ap, macro_localp} : RO_NO_MEMORY;
       RG_QUUX_ARMED:    ro_regs = QUUX ? {37'd0, a31_from_m31, macro_m31_v, macro_opr_v,
                                           macro_opr_arg, 1'b0, macro_opr_delta} : RO_NO_MEMORY;
-      RG_QUUX_M31_W:    ro_regs = QUUX ? {16'd0, macro_m31_w} : RO_NO_MEMORY;
+      RG_QUUX_M31_W:    ro_regs = QUUX ? 48'(macro_m31_w) : RO_NO_MEMORY;
       RG_QUUX_FUSED_N:  ro_regs = QUUX ? {16'd0, macro_fused_n} : RO_NO_MEMORY;
       RG_QUUX_OPR_N:    ro_regs = QUUX ? {16'd0, macro_opr_n} : RO_NO_MEMORY;
       RG_QUUX_PF_N:     ro_regs = QUUX ? {16'd0, macro_pf_n} : RO_NO_MEMORY;
@@ -3683,9 +3761,9 @@ module cadr_microcycle #(
       RO_PROM: ro_word = ro_prom_q;
       // On QUUX M 31 is its register, and so is A 31 while it reads it
       // (`m31_r` above).
-      RO_AMEM: ro_word = {16'd0, (QUUX && a31_from_m31 && ro_a1[9:0] == 10'o31) ? m31_r : ro_amem_q};
-      RO_MMEM: ro_word = {16'd0, (QUUX && ro_a1[4:0] == 5'o31) ? m31_r : ro_mmem_q};
-      RO_PDL:  ro_word = {16'd0, ro_pdl_q};
+      RO_AMEM: ro_word = 48'((QUUX && a31_from_m31 && ro_a1[9:0] == 10'o31) ? m31_r : ro_amem_q);
+      RO_MMEM: ro_word = 48'((QUUX && ro_a1[4:0] == 5'o31) ? m31_r : ro_mmem_q);
+      RO_PDL:  ro_word = 48'(ro_pdl_q);
       RO_SPC:  ro_word = {27'd0, ro_spc_q};
       RO_DMEM: ro_word = {31'd0, ro_dmem_q};
       RO_MAP1: ro_word = 48'(ro_map1_q);

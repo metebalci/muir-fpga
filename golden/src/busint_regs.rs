@@ -286,7 +286,7 @@ impl Gen {
         let err = self.m.bus_read(Self::phys(0o766044));
         let ub = self.m.unibus_interrupt();
         let int = u32::from(self.m.interrupt());
-        self.xint_seen[usize::from(ctl & interrupt_status::XBUS_INTR as u32 != 0)] = true;
+        self.xint_seen[usize::from(ctl & interrupt_status::XBUS_INTR as u64 != 0)] = true;
         self.ubint_seen[usize::from(ub.is_some())] = true;
         self.err_bits |= (err as u16) & 0o77;
         format!("{ctl:x} {err:x} {:x} {int}", ub.map_or(NONE, u32::from))
@@ -318,10 +318,10 @@ impl Gen {
     fn cyc(&mut self, uaddr: u32, write: bool, wdata: u16) -> u32 {
         let before = self.lines();
         let rdata = if write {
-            self.m.bus_write(Self::phys(uaddr), wdata as u32);
+            self.m.bus_write(Self::phys(uaddr), wdata as u64);
             NONE
         } else {
-            self.m.bus_read(Self::phys(uaddr)) & 0xffff
+            (self.m.bus_read(Self::phys(uaddr)) & 0xffff) as u32
         };
         assert_eq!(before, self.lines(), "the cycle at {uaddr:o} moved a wire; use a LINES row");
         if let Some(r) = busint::register(uaddr) {
@@ -376,12 +376,12 @@ impl Gen {
     /// `OP` row only where it changes nothing, and the assertion in `cyc`
     /// is what holds that.
     fn card_write(&mut self, uaddr: u32, v: u16) {
-        self.m.bus_write(Self::phys(uaddr), v as u32);
+        self.m.bus_write(Self::phys(uaddr), v as u64);
         self.lines_row();
     }
 
     fn card_read(&mut self, uaddr: u32) -> u32 {
-        let v = self.m.bus_read(Self::phys(uaddr)) & 0xffff;
+        let v = (self.m.bus_read(Self::phys(uaddr)) & 0xffff) as u32;
         self.lines_row();
         v
     }
@@ -395,7 +395,7 @@ impl Gen {
         );
         for w in 0..256u32 {
             let phys = (page << 8) | w;
-            self.m.main[phys as usize] = mpoison(phys);
+            self.m.main[phys as usize] = u64::from(mpoison(phys));
         }
     }
 
@@ -422,7 +422,7 @@ impl Gen {
         let md0 = self.m.md;
         let rb0 = self.m.read_buffer;
         let wb0 = self.m.write_buffer;
-        let mem0 = phys.map(|p| self.m.main[p as usize]);
+        let mem0 = phys.map(|p| self.m.main[p as usize] as u32);
 
         let (rdata, took) = if write {
             let ok = self.m.mapped_write(a, v);
@@ -460,7 +460,7 @@ impl Gen {
                 assert!(took, "an Xbus access the map allows is taken");
                 assert_eq!(self.m.bus_error, err0, "an allowed Xbus access set an error bit");
                 assert_eq!(self.m.md, md0, "an Xbus access moved MD");
-                let w = self.m.main[p as usize];
+                let w = self.m.main[p as usize] as u32;
                 if write {
                     assert_eq!(w, whole(a.high), "the word muir wrote at {p:o}");
                     // The even word of a write-through is the only write that
@@ -497,7 +497,7 @@ impl Gen {
             _ => {
                 assert!(took, "a write of MD is taken");
                 assert_eq!(self.m.bus_error, err0, "a write of MD set an error bit");
-                assert_eq!(self.m.md, whole(a.high), "the word muir put in MD");
+                assert_eq!(self.m.md, u64::from(whole(a.high)), "the word muir put in MD");
                 NONE
             }
         };
@@ -549,7 +549,7 @@ impl Gen {
         let took = self.m.mapped_write(a, v);
         assert!(took, "a write of MD is taken");
         assert_eq!(before, self.lines(), "the mapped cycle at {uaddr:o} moved a wire");
-        assert_eq!(self.m.md, md32, "the word muir put in MD");
+        assert_eq!(self.m.md, u64::from(md32), "the word muir put in MD");
         assert_eq!(self.m.bus_error, err0, "a write of MD set an error bit");
         assert_eq!(self.m.read_buffer, rb0, "a write of MD moved the read buffer");
         // The even word is a buffer write as well, write-through sending it
@@ -919,7 +919,7 @@ fn main() {
     // display's vertical flag is the only thing in this process that can
     // raise it, the disk having no drive.
     // ------------------------------------------------------------------
-    g.m.bus_write(TV_MODE, mode::VERT | mode::INTERRUPT_ENABLE);
+    g.m.bus_write(TV_MODE, u64::from(mode::VERT | mode::INTERRUPT_ENABLE));
     g.lines_row();
     assert!(g.m.xbus_interrupt(), "the display's vertical interrupt");
     assert!(g.m.interrupt(), "LM INT is UB INT OR XBUS INTR IN");
@@ -1210,7 +1210,7 @@ fn main() {
     g.mapped(uw(MAP_RW, 0o100, true), true, whi);
     assert_eq!(
         g.m.main[((PAGE_RW << 8) | 0o100) as usize],
-        ((whi as u32) << 16) | wlo as u32,
+        ((whi as u64) << 16) | wlo as u64,
         "the two Unibus words made one Lisp machine word"
     );
     // Read back through the map, which is the property the whole window is
@@ -1364,8 +1364,8 @@ fn main() {
         // And the ODD word is the load, carrying that buffer under it.
         let md32 = g.mapped_md(uw(MAP_MD, w, true), hi);
         assert_eq!(md32, ((hi as u32) << 16) | lo as u32, "the halves, in muir's order");
-        assert_eq!(g.m.md, md32);
-        md_before = md32;
+        assert_eq!(g.m.md, u64::from(md32));
+        md_before = u64::from(md32);
     }
     assert_eq!(g.m.md, 0, "the last pair wrote zero, which a held word would hide");
 
@@ -1403,7 +1403,7 @@ fn main() {
     g.write(0o766140 + 2 * MAP_MD, 0o177000);
     let hi = g.mapped(uw(MAP_MD, 0o7, true), false, 0);
     assert_eq!(hi, mpoison((PAGE_RW << 8) | 0o7) >> 16, "the high half out of the read buffer");
-    assert_ne!(hi, kept >> 16, "the buffer's word is not MD's high half");
+    assert_ne!(hi, (kept >> 16) as u32, "the buffer's word is not MD's high half");
     assert_eq!(g.m.md, kept, "a read through CC's entry moved MD");
     assert_eq!(
         g.read(0o766044) & machine::bus_error::UB_MAP_ERROR as u32,

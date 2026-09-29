@@ -146,13 +146,13 @@ fn main() {
         *w = Insn::new(if i < QUUX_PROM_BASE as usize { poison(0, i as u64, 48) } else { 0 });
     }
     for (i, w) in m.amem.iter_mut().enumerate() {
-        *w = poison(2, i as u64, 32) as u32;
+        *w = poison(2, i as u64, 32);
     }
     for (i, w) in m.mmem.iter_mut().enumerate() {
-        *w = poison(3, i as u64, 32) as u32;
+        *w = poison(3, i as u64, 32);
     }
     for (i, w) in m.pdl.iter_mut().enumerate() {
-        *w = poison(4, i as u64, 32) as u32;
+        *w = poison(4, i as u64, 32);
     }
     for (i, w) in m.spc.iter_mut().enumerate() {
         *w = poison(5, i as u64, 21) as u32;
@@ -167,15 +167,15 @@ fn main() {
         *w = poison(8, i as u64, 24) as u32;
     }
     for (i, w) in m.main.iter_mut().enumerate() {
-        *w = poison(12, i as u64, 32) as u32;
+        *w = poison(12, i as u64, 32);
     }
     // The register table's entries that are `Machine`'s, at their widths.
     m.spcptr = poison(10, 13, 5) as u8;
     m.pdl_pointer = poison(10, 11, 14) as u16;
     m.pdl_index = poison(10, 12, 14) as u16;
-    m.q = poison(10, 5, 32) as u32;
-    m.vma = poison(10, 6, 32) as u32;
-    m.md = poison(10, 7, 32) as u32;
+    m.q = poison(10, 5, 32);
+    m.vma = poison(10, 6, 32);
+    m.md = poison(10, 7, 32);
     m.dispatch_constant = poison(10, 15, 10) as u16;
     // The console's registers the table's flags carry, and the page's.
     m.mode.errstop = true;
@@ -248,7 +248,7 @@ fn main() {
         md.localp = poison(10, 31, 14) as u32;
         md.ap = poison(10, 131, 14) as u32;
         md.operand = Some(muir::machine::Operand { arg: true, delta: poison(10, 32, 6) as u8 });
-        md.m31 = Some(poison(10, 33, 32) as u32);
+        md.m31 = Some(poison(10, 33, 32));
     }
 
     // The engine on the fabric's grid, as every trace takes it.

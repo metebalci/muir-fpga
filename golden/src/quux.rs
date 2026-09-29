@@ -408,7 +408,7 @@ fn tv_program() -> Prog {
 }
 
 fn check_tv(which: Which, m: &muir::machine::Machine) {
-    let r = |k: u64| m.amem[(RESULT + k) as usize];
+    let r = |k: u64| m.amem[(RESULT + k) as usize] as u32;
     assert_eq!(m.tv.read_buffer(0), TV_FIRST, "{which:?}: the buffer's first word");
     assert_eq!(r(0), TV_FIRST, "{which:?}: the buffer's first word, read back");
     assert_ne!(m.bus_error & bus_error::XBUS_NXM, 0, "{which:?}: one past the buffer times out");
@@ -514,7 +514,7 @@ fn check_muldiv(which: Which, m: &muir::machine::Machine) {
     if which != Which::Quux {
         return;
     }
-    let r = |k: u64| m.amem[k as usize];
+    let r = |k: u64| m.amem[k as usize] as u32;
     for (k, o) in MULDIV_OPS.iter().enumerate() {
         let what = if o.code == MUL_CODE { muldiv::Op::Mul } else { muldiv::Op::Div };
         let (ob, q) = muldiv::run(what, o.m, o.a, o.q);
@@ -625,7 +625,7 @@ fn tick_program_with(cleared_reads: u64) -> Prog {
 }
 
 fn check_tick(which: Which, m: &muir::machine::Machine, cleared_reads: u64) {
-    let reads: Vec<u32> = (0..134 + cleared_reads).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    let reads: Vec<u32> = (0..134 + cleared_reads).map(|k| m.amem[(RESULT + k) as usize] as u32).collect();
     if which == Which::Quux {
         assert!(reads.contains(&3), "QUUX: the flag was seen up while enabled");
         assert!(reads.contains(&2), "QUUX: the flag was seen down while enabled");
@@ -807,7 +807,7 @@ impl Tp {
 
 /// The log a timer program left: the PDL buffer from word 1, `n` words.
 fn pdl_log(m: &muir::machine::Machine, n: u64) -> Vec<u32> {
-    (1..=n).map(|i| m.pdl[i as usize]).collect()
+    (1..=n).map(|i| m.pdl[i as usize] as u32).collect()
 }
 
 /// **QUUX's interval timers** (revision 10, contract Q11), and the codes Q1
@@ -1267,11 +1267,11 @@ fn check_shared_edge(m: &muir::machine::Machine, r: &[u32]) {
 fn check_clocks(which: Which, m: &muir::machine::Machine) {
     assert_eq!(m.amem[(RESULT + 2) as usize], 0o52525, "{which:?}: destination 4 writes M");
     if which != Which::Quux {
-        assert_eq!(m.amem[RESULT as usize], !0, "CADR: source 17 reads all ones");
-        assert_eq!(m.amem[(RESULT + 1) as usize], !0, "CADR: source 15 reads all ones");
+        assert_eq!(m.amem[RESULT as usize] as u32, !0, "CADR: source 17 reads all ones");
+        assert_eq!(m.amem[(RESULT + 1) as usize] as u32, !0, "CADR: source 15 reads all ones");
         return;
     }
-    assert_eq!(m.amem[RESULT as usize], !0, "QUUX: source 17 reads all ones since revision 10");
+    assert_eq!(m.amem[RESULT as usize] as u32, !0, "QUUX: source 17 reads all ones since revision 10");
     let (_, marks) = clocks_program_layout();
     let n = marks.iter().map(|&(_, from, len)| from + len).max().unwrap();
     let log = pdl_log(m, n);
@@ -1459,7 +1459,7 @@ fn check_clockwait(which: Which, m: &muir::machine::Machine) {
         .iter()
         .enumerate()
         .map(|(i, &(w100, _, _))| {
-            let (k, w) = (i % 3, m.amem[RESULT as usize + i]);
+            let (k, w) = (i % 3, m.amem[RESULT as usize + i] as u32);
             (w100, if w100 { w & T_BIT[k] != 0 } else { w & T_FLAG != 0 })
         })
         .collect();
@@ -1658,7 +1658,7 @@ fn check_page(which: Which, m: &muir::machine::Machine) {
     if which != Which::Quux {
         return;
     }
-    let r: Vec<u32> = (0..PAGE_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    let r: Vec<u32> = (0..PAGE_READS).map(|k| m.amem[(RESULT + k) as usize] as u32).collect();
     assert_eq!(&r[0..3], &[0, 0, 0], "QUUX: 100, 101 and 102 at the start");
     assert_eq!(r[3], 0o401, "QUUX: 120, a word waiting and the enable");
     assert_eq!(r[4], 1 << 4, "QUUX: 100, the keyboard");
@@ -1878,7 +1878,7 @@ fn check_registers(which: Which, m: &muir::machine::Machine) {
 // ------------------------------------------------------------ the checks
 
 fn check_map(which: Which, m: &muir::machine::Machine) {
-    let r = |k: u64| m.amem[(RESULT + k) as usize];
+    let r = |k: u64| m.amem[(RESULT + k) as usize] as u32;
     let quux = which == Which::Quux;
     let id = which.geometry().machine_id;
     let ones = !0u32;
@@ -2045,7 +2045,7 @@ fn check_divmdsync(which: Which, m: &muir::machine::Machine) {
     let trials = DIVMDSYNC_GAPS.count() * DIVMDSYNC_SHIFTS;
     let (ob, _) = muldiv::run(muldiv::Op::Div, DIVMD_M, DIVMD_A, DIVMD_Q);
     for k in 0..trials as u64 {
-        assert_eq!(m.amem[(RESULT + k) as usize], ob, "QUUX: DIV {k} divides the word read");
+        assert_eq!(m.amem[(RESULT + k) as usize] as u32, ob, "QUUX: DIV {k} divides the word read");
     }
 }
 
@@ -2105,10 +2105,10 @@ fn check_pdlsync(which: Which, m: &muir::machine::Machine) {
     let word = |k: u64| 0o1001 * (k as u32 + 1) + 0x5a00_0000;
     for k in 0..PDLSYNC_TRIALS {
         let want = if k % 4 != 0 { word(k) } else if k == 0 { 0 } else { word(k - 1) };
-        assert_eq!(m.amem[(RESULT + k) as usize], want, "QUUX: pop {k}, {} fillers after its push", k % 4);
+        assert_eq!(m.amem[(RESULT + k) as usize] as u32, want, "QUUX: pop {k}, {} fillers after its push", k % 4);
     }
     for k in 0..PDLSYNC_INDEX_TRIALS {
-        assert_eq!(m.amem[(RESULT + PDLSYNC_TRIALS + k) as usize], PDLSYNC_AT_INDEX,
+        assert_eq!(m.amem[(RESULT + PDLSYNC_TRIALS + k) as usize] as u32, PDLSYNC_AT_INDEX,
                    "QUUX: the index's word, read beside push {k}");
     }
 }
@@ -2227,12 +2227,12 @@ fn check_imemsync(which: Which, m: &muir::machine::Machine) {
         return;
     }
     for k in 0..IMEMSYNC_TRIALS {
-        assert_eq!(m.amem[(RESULT + k) as usize], 0x6100_0000 + k as u32,
+        assert_eq!(m.amem[(RESULT + k) as usize] as u32, 0x6100_0000 + k as u32,
                    "QUUX: the word written into the control store ran, trial {k}");
     }
-    assert_eq!(m.amem[(RESULT + IMEMSYNC_TRIALS) as usize], IMEMSYNC_BELOW_WORD,
+    assert_eq!(m.amem[(RESULT + IMEMSYNC_TRIALS) as usize] as u32, IMEMSYNC_BELOW_WORD,
                "QUUX: the words written below the PROM ran");
-    assert_eq!(m.amem[(RESULT + IMEMSYNC_TRIALS + 1) as usize], IMEMSYNC_PROM_WORD,
+    assert_eq!(m.amem[(RESULT + IMEMSYNC_TRIALS + 1) as usize] as u32, IMEMSYNC_PROM_WORD,
                "QUUX: the PROM's own words ran over the words written there");
 }
 
@@ -2263,7 +2263,7 @@ fn check_divmd(which: Which, m: &muir::machine::Machine) {
     if which != Which::Quux {
         return;
     }
-    let r = |k: u64| m.amem[(RESULT + k) as usize];
+    let r = |k: u64| m.amem[(RESULT + k) as usize] as u32;
     let mut k = 0u64;
     for &gap in &DIVMD_GAPS {
         for _ in 0..2 {
@@ -2425,13 +2425,13 @@ fn check_memedge(which: Which, m: &muir::machine::Machine) {
         return;
     }
     for k in 0..MEMEDGE_ROUNDS * MEMEDGE_WRITES {
-        assert_eq!(m.amem[(RESULT + k) as usize], memedge_word(k), "QUUX: word {k} read back");
-        assert_eq!(m.amem[(RESULT + 0o40 + k) as usize], memedge_word(k), "QUUX: word {k} hit");
+        assert_eq!(m.amem[(RESULT + k) as usize] as u32, memedge_word(k), "QUUX: word {k} read back");
+        assert_eq!(m.amem[(RESULT + 0o40 + k) as usize] as u32, memedge_word(k), "QUUX: word {k} hit");
     }
     assert_ne!(m.bus_error & bus_error::XBUS_NXM, 0, "QUUX: the reads of the empty page time out");
     // Each timed-out read took a word into A over the marker set before it.
     for n in 0..MEMEDGE_NXM_READS {
-        assert_ne!(m.amem[(RESULT + 0o70 + n) as usize], 0xDEAD_0000 + n as u32,
+        assert_ne!(m.amem[(RESULT + 0o70 + n) as usize] as u32, 0xDEAD_0000 + n as u32,
                    "QUUX: timed-out read {n} reached A");
     }
 }
@@ -2699,7 +2699,7 @@ fn busreset_program() -> Prog {
 }
 
 fn check_busreset(which: Which, m: &muir::machine::Machine) {
-    let r = |k: u64| m.amem[(RESULT + k) as usize];
+    let r = |k: u64| m.amem[(RESULT + k) as usize] as u32;
     let n = busreset_reads(which == Which::Quux);
     // On QUUX the reset is reset devices, the third side; `<28>`'s side,
     // the second, is held to the first below.
@@ -2975,7 +2975,7 @@ fn startstart_program() -> Prog {
 }
 
 fn check_startstart(which: Which, m: &muir::machine::Machine) {
-    let r = |k: u64| m.amem[(RESULT + k) as usize];
+    let r = |k: u64| m.amem[(RESULT + k) as usize] as u32;
     let w = startstart_word;
     if which == Which::Cadr {
         assert_eq!([r(0), r(1)], [w(0o45), w(0o44)], "CADR: MD a microcycle after the start, and two");
@@ -3169,7 +3169,7 @@ fn check_rtc(which: Which, m: &muir::machine::Machine) {
     if which != Which::Quux {
         return;
     }
-    let r: Vec<u32> = (0..RTC_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    let r: Vec<u32> = (0..RTC_READS).map(|k| m.amem[(RESULT + k) as usize] as u32).collect();
     let id = which.geometry().machine_id.unwrap();
     assert!((id >> 4) & 0xfff >= 9, "QUUX: revision 9 or later");
     assert_eq!(r[0], id, "QUUX: MACHINE-ID on the page");
@@ -3489,7 +3489,7 @@ fn check_files(which: Which, m: &muir::machine::Machine) {
         return;
     }
     use muir::file_device::{op, status};
-    let r: Vec<u32> = (0..FD_READS).map(|k| m.amem[(RESULT + k) as usize]).collect();
+    let r: Vec<u32> = (0..FD_READS).map(|k| m.amem[(RESULT + k) as usize] as u32).collect();
     let file: Vec<u32> =
         FD_FILE.chunks(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
     let resp0 = |tag: u32, st: u32, opcode: u32| tag | st << 16 | opcode << 24;
@@ -3586,7 +3586,7 @@ fn check_fused(which: Which, e: &muir::rtl::Rtl, phases: Vec<fused::Phase>, timi
     let park = *b.marks.last().unwrap();
     let m = e.machine();
     assert!((park..=park + 1).contains(&(m.opc as u64)), "fused: the trace ends in the park, OPC {:o}", m.opc);
-    let mm = |k: u64| m.mmem[k as usize];
+    let mm = |k: u64| m.mmem[k as usize] as u32;
     let words: std::collections::BTreeMap<&str, u64> = fused::M_WORDS.iter().copied().collect();
     assert_eq!(mm(words["stale entries taken"]), 0, "fused: no stale entry was taken");
     assert_eq!(mm(words["phases ended"]), phases.len() as u32, "fused: every phase ended");
@@ -3642,7 +3642,7 @@ fn check_prefetch(which: Which, e: &muir::rtl::Rtl, timing: muir::clock::TimingM
     assert!((park..=park + 1).contains(&(m.opc as u64)), "prefetch: the trace ends in the park, OPC {:o}", m.opc);
     let words: std::collections::BTreeMap<&str, u64> = fused::M_WORDS.iter().copied().collect();
     assert_eq!(m.mmem[words["stale entries taken"] as usize], 0, "prefetch: no stale entry was taken");
-    assert_eq!(m.mmem[words["phases ended"] as usize], phases.len() as u32, "prefetch: every phase ended");
+    assert_eq!(m.mmem[words["phases ended"] as usize], phases.len() as u64, "prefetch: every phase ended");
     let (on_cycles, on) = fused_run(which, &phases, timing);
     let fused = on.machine().macro_dispatch.fused;
     if which != Which::Quux {
@@ -3676,7 +3676,7 @@ fn check_prefetch(which: Which, e: &muir::rtl::Rtl, timing: muir::clock::TimingM
         let (a, b) = (on.machine().mmem[k], off.machine().mmem[k]);
         match k {
             0o20 | 0o21 | 0o27 => {}
-            k if k == others => assert_eq!(a + specials as u32, b, "QUUX: STORE_NEXT and its specialised entry"),
+            k if k == others => assert_eq!(a + specials, b, "QUUX: STORE_NEXT and its specialised entry"),
             k if k == special => assert_eq!(b, 0, "QUUX: no specialised handler with the enable clear"),
             _ => assert_eq!(a, b, "QUUX: M[{k:o}] with and without the fused return"),
         }
@@ -3699,7 +3699,7 @@ fn check_operand(which: Which, m: &muir::machine::Machine) {
     // The sentinel as PDL-INDEX holds it: ten bits on the CADR.
     let s = if quux { fused::PDL_SENTINEL } else { fused::PDL_SENTINEL & 0o1777 };
     let log = |n: usize, k: usize| -> Vec<u32> {
-        (0..k).map(|i| m.pdl[(fused::pdl_pointer(n) + 1 + i as u32) as usize]).collect()
+        (0..k).map(|i| m.pdl[(fused::pdl_pointer(n) + 1 + i as u32) as usize] as u32).collect()
     };
     let records_off = vec![s; 20];
     let (phase1, phase2): (Vec<u32>, Vec<u32>) = if quux {
@@ -3851,7 +3851,7 @@ fn fd_events(e: &muir::rtl::Rtl, prod_before: u16, due_before: Option<u64>, last
         let i = prod.wrapping_sub(1) as u32;
         let r = resp_base + 8 * (i % resp_n);
         let c = cmd_base + 8 * (i % cmd_n);
-        let entry = |a: u32| m.main[a as usize];
+        let entry = |a: u32| m.main[a as usize] as u32;
         for w in 0..8 {
             println!("# fdw {:x} {:x}", r + w, entry(r + w));
         }
@@ -3867,7 +3867,7 @@ fn fd_events(e: &muir::rtl::Rtl, prod_before: u16, due_before: Option<u64>, last
     if due.is_some() && due != *last_due {
         let d = due.unwrap();
         let c = cmd_base + 8 * (prod as u32 % cmd_n);
-        let start = d - (fd::due(0, m.main[c as usize + 3], m.main[c as usize + 5]));
+        let start = d - (fd::due(0, m.main[c as usize + 3] as u32, m.main[c as usize + 5] as u32));
         println!("# fdtake {start:x} {prod:x}");
         for w in 0..8 {
             println!("# fdc {:x} {:x}", c + w, m.main[(c + w) as usize]);

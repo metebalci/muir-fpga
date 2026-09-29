@@ -22,6 +22,15 @@ reports none.
 
 ## From a clean tree
 
+This fit was built from `9695172`, the CADR as it was before its word's
+width became a parameter, and is what the fit of that change below is
+compared with. Its figures are those of the `aec5f54` fit below, figure for
+figure.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | CADR | +0.264 ns | +0.010 ns | 15,070 of 53,200 LUTs, 28.33% | 46 of 140 BRAM tiles | 5,553 of 13,300 | `9695172` | clean | 2026-09-29 |
+
 These fits were built from `74c2cf9`, QUUX's revision 11 with the register
 page at `17777400` (contract Q13), with muir pinned at `7bc901f`.
 
@@ -55,6 +64,20 @@ machine clock's own worst setup slack is +2.909 ns for QUUX and +2.347 ns for
 the CADR.
 
 ## From a modified tree
+
+This fit was built from the tree committed as this commit, which makes the
+word's width a parameter of the processor, `WORD_BITS`, 32 on the CADR
+(contract G2 §2.1), and moves muir's pin. The boot PROM image the fit reads
+is the same bytes at both pins.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | CADR | +0.193 ns | +0.041 ns | 15,063 of 53,200 LUTs, 28.31% | 46 of 140 BRAM tiles | 5,669 of 13,300 | this commit | see above | 2026-09-29 |
+
+Against the `9695172` fit above it has 7 lookup tables fewer, the same 46
+block RAM tiles, 4 DSPs and 11,278 registers. The worst setup path of each
+is a reset's fan-out outside the processor, and the 0.071 ns between them
+is placement. Both passed `rams_enable_check.tcl` over 98 block RAM ports.
 
 These fits were built from the tree committed as `aec5f54` with QUUX's
 revision 12, the fused return and its cache-only prefetch (contract H8a),

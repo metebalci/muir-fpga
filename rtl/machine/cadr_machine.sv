@@ -80,7 +80,15 @@ module cadr_machine #(
     // path settles in K ticks, and the board's constraint file states K.
     // Nothing on the CADR reads either; `cadr_microcycle.sv` has the rest.
     parameter int unsigned SYNC_K = 4,
-    parameter int unsigned SYNC_L = 0
+    parameter int unsigned SYNC_L = 0,
+
+    // **THE WORD'S WIDTH**, muir's `Geometry::word_bits`: 32 on the CADR and
+    // on QUUX to revision 12, 40 on revision 13 (contract G2 §2.1).
+    // `cadr_microcycle.sv` says which of the processor's registers are words
+    // and what is still 32 bits at 40. The ports below that carry a word
+    // carry the whole of it; the console's registers and the bus audit take
+    // `<31:0>`.
+    parameter int unsigned WORD_BITS = 32
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -294,16 +302,16 @@ module cadr_machine #(
     output var logic [13:0] opc,
     output var logic [31:0] st,
     output var logic [47:0] ir,
-    output var logic [31:0] a,
-    output var logic [31:0] m,
+    output var logic [WORD_BITS-1:0] a,
+    output var logic [WORD_BITS-1:0] m,
     output var logic [31:0] alu,
     output var logic [31:0] r,
-    output var logic [31:0] ob,
-    output var logic [31:0] q,
+    output var logic [WORD_BITS-1:0] ob,
+    output var logic [WORD_BITS-1:0] q,
     output var logic [9:0]  dc,
     output var logic [25:0] lc,
-    output var logic [31:0] vma,
-    output var logic [31:0] md,
+    output var logic [WORD_BITS-1:0] vma,
+    output var logic [WORD_BITS-1:0] md,
     output var logic        vmaok,
     output var logic        jcond,
     output var logic        nop,
@@ -816,7 +824,8 @@ module cadr_machine #(
       .MACHINE(MACHINE),
       .MACHINE_ID(MACHINE_ID),
       .SYNC_K(SYNC_K),
-      .SYNC_L(SYNC_L)
+      .SYNC_L(SYNC_L),
+      .WORD_BITS(WORD_BITS)
   ) processor (
       .clk         (clk),
       .rst         (rst),
@@ -911,9 +920,9 @@ module cadr_machine #(
       .clk     (clk),
       .rst     (rst),
       .mclk    (mclk),
-      .vma     (vma),
-      .q       (q),
-      .md      (md),
+      .vma     (vma[31:0]),
+      .q       (q[31:0]),
+      .md      (md[31:0]),
       .con_vma (con_vma),
       .con_q   (con_q),
       .con_md  (con_md)
@@ -1627,8 +1636,8 @@ module cadr_machine #(
       .port_read_ack (aud_read_ack),
       .port_write_ack(aud_write_ack),
       .boundary    (clock_edge),
-      .vma         (vma),
-      .md          (md),
+      .vma         (vma[31:0]),
+      .md          (md[31:0]),
       .pc          (pc),
       .opc         (opc),
       .sel         (ro_sel_d2),
