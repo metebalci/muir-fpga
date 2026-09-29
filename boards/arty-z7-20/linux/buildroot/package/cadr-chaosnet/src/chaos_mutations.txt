@@ -29,7 +29,7 @@
 # **FORTY-NINE RECORDS WENT WHEN THE SERVICES DID.**  This list held four
 # records for the connection protocol, three for the TIME, UPTIME and STATUS
 # answers and forty-two for the FILE service.  A CADR has no file or time
-# server in it, muir removed its own at `79c7590`, and so this program has
+# server in it, muir removed its own at `b133d92`, and so this program has
 # none: the host is on the network.  A record for code that should not exist
 # is not a record, so they went with the code rather than being kept as a
 # list of bugs in a program nobody runs.
@@ -314,7 +314,7 @@
 # ---- the route of last resort, and the table nobody writes ----
 #
 # muir removed `--chaos-udp-dynamic` and added `--chaos-udp-default-peer` at
-# its own `d6eac6d`, and these records hold this program to the same six
+# its own `e1eeb73`, and these records hold this program to the same six
 # decisions.  Each is one the reader would otherwise have to take on trust:
 # where a frame goes that no peer entry names, where a broadcast does not go,
 # that the default peer does not stand in front of a named one, that a frame
@@ -450,7 +450,7 @@
 @file chaos_udp.c
 @why the switches and the cable are two flags: a peer says who is ON the cable and is refused when there is no cable, rather than bringing one of its own
 @note This is exactly what this program did before muir split the two at
-@note `0851fa7`, and the fault it makes is quiet rather than loud: a run that
+@note `78ebd60`, and the fault it makes is quiet rather than loud: a run that
 @note said who its file and time host was found itself on a network it had
 @note not asked for, bound to a port nobody had named.  The default peer's
 @note leg is left alone, so what this catches is the peer's alone.

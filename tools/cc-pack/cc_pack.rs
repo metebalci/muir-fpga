@@ -6,7 +6,7 @@
 //! muir on the board is the far end of the debug cable, and the debugger
 //! is not muir --- it is CC, running on the CADR muir simulates. So muir
 //! needs a band to boot and that band needs CC on it. muir's own
-//! `tests/cc_304.rs`, until muir removed it at its commit 5328c26, got CC
+//! `tests/cc_304.rs`, until muir removed it at its commit ff54015, got CC
 //! by compiling it over the Chaosnet FILE service from a host on the model
 //! network, which on the board would mean standing a file host up beside
 //! muir before the debugger could exist at all. This compiles CC once, on

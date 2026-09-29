@@ -5,7 +5,7 @@
 //! `tv::Tv` --- driven register by register through muir's own
 //! `busint::Busint`, in the shape `busint_xbus.rs` drives the bus interface.
 //!
-//! **THE SYNC PROGRAM IS RUN, ON BOTH SIDES, SINCE `bfba7f3`.**  Two of this
+//! **THE SYNC PROGRAM IS RUN, ON BOTH SIDES, SINCE `cb39e3e`.**  Two of this
 //! trace's columns are the program's: `rdata` on the mode register, whose
 //! bits 5 and 6 are the program's own `VSYNC` and `HSYNC`, and `intr`, whose
 //! rises are where the program's `-TVMA CLR` falls --- which is 16,000 ns

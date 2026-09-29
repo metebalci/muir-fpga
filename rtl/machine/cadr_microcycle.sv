@@ -1325,7 +1325,7 @@ module cadr_microcycle #(
   // so everything stored here belongs to the previous instruction.
   //
   // **TAKEN AS THE PULSE ENDS, AND ONLY IN A GENERATOR CYCLE MACHRUN RUNS.**
-  // Three rules of muir's `rtl` since its `22c8a52`, each held against the
+  // Three rules of muir's `rtl` since its `200818f`, each held against the
   // netlist by its `tests/dispatch_write_order.rs` and here by
   // `build/dispatch_write_order.pass`, which runs those programs on the whole
   // machine:
@@ -2071,7 +2071,7 @@ module cadr_microcycle #(
   // 1D08 and VMEM2 1C10 read it high and drive level 2's top five address
   // bits low.  The low five are `MAPI<12:8>` either way, through the same
   // 74S258s at VMAS 1C20 whose select is -MEMSTART: the float forces only the
-  // block number.  That is muir's `Rtl::write_phase` since its `e11da42`
+  // block number.  That is muir's `Rtl::write_phase` since its `78bee0c`
   // (`adr1 & 0o37`), and `Machine::write_map` has the whole account, with
   // `chip_rtl_and_micro_write_both_map_levels_alike` holding the three
   // engines together.  Microcode 323 writes the levels in separate
@@ -2416,7 +2416,7 @@ module cadr_microcycle #(
   // with MD as the bus has left it then, and in a hung cycle the pulse ends
   // on the park's first tick.  Call that tick K and the cycle's last tick
   // before it L.  Taken there literally, two paths had one tick, measured on
-  // the routed Arty at the merge of muir's `22c8a52`:
+  // the routed Arty at the merge of muir's `200818f`:
   //
   //   - MD strobed off the bus in L, into the write's address at K: MD
   //     through the M bus, the rotator and both map levels into the dispatch
@@ -3360,7 +3360,7 @@ module cadr_microcycle #(
       // and a stepped read lands before the next step.  This is muir's
       // `Rtl::start_bus_cycle`, which `Rtl::master_clock_cycle` and the cpu
       // clock's own edge both call, and it is one block here for the same
-      // reason.  Before muir's `c0bd5a6` the cycle waited for the next cpu
+      // reason.  Before muir's `4e5349a` the cycle waited for the next cpu
       // edge, which the board's netlist does not do
       // (`chip_and_rtl_start_a_stepped_read_while_halted_alike`).
       // `build/sstep.pass` steps a refused read and reads the map a halted
@@ -3835,7 +3835,7 @@ module cadr_microcycle #(
   // not.**  Level 1's used to be left alone because a write of both levels
   // took level 2's address from the level-1 read of that same tick.  It does
   // not any more: level 1's 93425As float their outputs while written, and
-  // the level-2 write goes to block 0 (`adr1_w`, muir's `727c4d9`), so no
+  // the level-2 write goes to block 0 (`adr1_w`, muir's `e19e5c4`), so no
   // consumer reads level 1 in the tick it is written, and a poison there is
   // one more thing the programs are held to rather than an exception.  The
   // record that used to move the poison onto that tick, to show the check
@@ -3843,7 +3843,7 @@ module cadr_microcycle #(
   //
   // What the structure says, from this file: every write is on the edge that
   // ends the tick `mw` is up.  In a microcycle that runs that is the
-  // boundary's own tick since muir's `22c8a52` (the write pulse is taken as
+  // boundary's own tick since muir's `200818f` (the write pulse is taken as
   // it ends; see `wp`), so what the boundary samples is the word before the
   // write and the undefined tick is the first of the next microcycle, where
   // no boundary samples anything.  In a hung one it is two ticks before the

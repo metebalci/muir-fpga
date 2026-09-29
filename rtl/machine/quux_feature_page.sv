@@ -76,7 +76,7 @@
 // (`quux_clocks.sv`'s `pending`), as their words are.  The page's own three
 // requests, the keyboard's, the mouse's and the network's, also reach the
 // processor's interrupt as every word 100 bit does (`irq`; muir's
-// `interrupt_at`, `1f6f5fb` for the network's); the timers' reach it from
+// `interrupt_at`, `0c10ae9` for the network's); the timers' reach it from
 // `quux_clocks.sv`, and block-disk's on the interrupt line it shares with
 // the CADR's controller (`cadr_machine.sv`'s `xbus_intr`).
 //

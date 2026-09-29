@@ -1906,7 +1906,7 @@
   assign vmap_rd = l1_map[{adr0[9:0], adr0[10]}];
 @end
 
-# RETIRED at muir's `22c8a52`: `the-scratchpad-latches-follow-in-the-wrong-phase`,
+# RETIRED at muir's `200818f`: `the-scratchpad-latches-follow-in-the-wrong-phase`,
 # the 74S373s at ALATCH, MLATCH, PLATCH and SPCLCH following the memories in
 # the write phase instead of the read phase.  What made it visible was a
 # pending write landing inside the write phase while the latch followed: the
@@ -2394,7 +2394,7 @@
 @note hang term is the deadlock the two-stage hold exists to avoid, and it
 @note is a claim of the same kind as -WAIT coming before -HANG.
 @note
-@note **Both hang terms, since muir's `22c8a52`.**  A strobe under -HANG now
+@note **Both hang terms, since muir's `200818f`.**  A strobe under -HANG now
 @note goes into MD at once rather than through `md_held`, so dropping the
 @note term from the held word's commit alone moves nothing: no word is held
 @note when a hang begins, measured --- it survived every check.  The word
@@ -8202,7 +8202,7 @@ if {0 && $held ne $want} {
 @note
 @note Those nets have since been settled: `-VMAP<4:0>` has no other driver and
 @note no pull-up, so the 74S240s read it high and level 2's top five address
-@note bits go LOW, and muir's `Rtl` writes level 2 at block 0 (`727c4d9`).
+@note bits go LOW, and muir's `Rtl` writes level 2 at block 0 (`e19e5c4`).
 @note That is `adr1_w`, and `both-levels-write-level-2-through-level-1` is the
 @note record for the ordering this one used to stand beside.
 @note
@@ -12911,7 +12911,7 @@ if {0 && $held ne $want} {
 @mutation sstep-the-trap-cycle-is-never-long
 @check sstep
 @file rtl/machine/cadr_microcycle.sv
-@note muir's `rtl` before `c0bd5a6`: `ILONG` gated by `NOP`, which includes the
+@note muir's `rtl` before `4e5349a`: `ILONG` gated by `NOP`, which includes the
 @note trap, where the 74S10 at FLAG 3E07 takes `-NOPA`, `AND(-NOP11, -INOP)` at
 @note CONTRL 3E14, which does not.  The trap cycle after a boot is long when
 @note `IR<45>` asks.  The length shows at normal speed only, which is why the
@@ -12937,7 +12937,7 @@ if {0 && $held ne $want} {
 @mutation sstep-both-levels-write-level-2-through-level-1
 @check sstep
 @file rtl/machine/cadr_microcycle.sv
-@note muir's `rtl` before `727c4d9`: a store with both `VMA<26>` and `VMA<25>`
+@note muir's `rtl` before `e19e5c4`: a store with both `VMA<26>` and `VMA<25>`
 @note up writes level 2 at the entry level 1 held before the store.  Level 1's
 @note 93425As hold their outputs in high impedance while written, `-VMAP<4:0>`
 @note floats high, and the 74S240s at VMEM1 1D08 and VMEM2 1C10 drive level
@@ -13687,7 +13687,7 @@ if {0 && $held ne $want} {
 @mutation park-a-prepared-cycle-waits-for-the-cpu-edge
 @check park
 @file rtl/machine/cadr_microcycle.sv
-@note muir's `rtl` before `c0bd5a6`, half of it: the start taken only at a
+@note muir's `rtl` before `4e5349a`, half of it: the start taken only at a
 @note cpu edge.  A master clock with the cpu clock held still drops
 @note MEMSTART, so the cycle a halted machine had prepared is lost rather
 @note than late.  `MEMSTART` is the 74S175 at ACTL 1E20 on `MCLK1A`, so on the
@@ -13770,7 +13770,7 @@ if {0 && $held ne $want} {
 @mutation park-the-trap-cycle-does-not-read-md
 @check park
 @file rtl/machine/cadr_microcycle.sv
-@note muir's `rtl` before `c0bd5a6`: `USE.MD` gated by `NOP`, which includes the
+@note muir's `rtl` before `4e5349a`: `USE.MD` gated by `NOP`, which includes the
 @note trap, where `NOR(-SRCMD, NOPA)` at VCTL2 3F18 takes `-NOPA`, which does
 @note not.  The trap cycle after a boot then ignores a read still in flight,
 @note where the board hangs it until READ IN PROGRESS falls.  The check
@@ -19192,7 +19192,7 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
     *) ;;
 @end
 
-# --- writes against the reads beside them: muir's `22c8a52` -----------------
+# --- writes against the reads beside them: muir's `200818f` -----------------
 #
 # muir's `tests/dispatch_write_order.rs`, run on the whole machine by
 # `build/dispatch_write_order.pass`.  One record for each rule the fabric took
@@ -19217,7 +19217,7 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @mutation a-write-is-taken-at-the-pulse-leading-edge
 @check dispatch_write_order
 @file rtl/machine/cadr_microcycle.sv
-@note Where this stood before muir's `22c8a52`: the scratchpads, the map and
+@note Where this stood before muir's `200818f`: the scratchpads, the map and
 @note the dispatch memory written as the pulse begins, three ticks before the
 @note boundary.  The dispatch word a `POPJ` in a dispatch write reads is then
 @note the new one (`popj-0` to `-2`), and so are `MAP(MD)` and a dispatch on
@@ -19360,7 +19360,7 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @mutation a-late-write-lands-on-time-before-a-strobe
 @check dispatch_write_order
 @file rtl/machine/cadr_microcycle.sv
-@note The placement as it stood before muir's `b054c61`: the late write at
+@note The placement as it stood before muir's `b4efcc8`: the late write at
 @note the pulse's own tick when MD did not move at the end of L.  It takes MD
 @note as it stood before a strobe on that edge, where muir, which counts a
 @note change on an edge as before it, takes the word read: five of the 240
@@ -20277,7 +20277,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @check quux_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A `DIV` of MD counts its nine from the edge that loaded `IR` and not
-@note from the end of the MD interlock, the rule before muir's fd9dd32: the
+@note from the end of the MD interlock, the rule before muir's da3b4f4: the
 @note `DIV` runs as soon as the word has landed, before the divider has
 @note divided it.
 @old
@@ -20740,7 +20740,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
   assign cs_port = iwe_q ? (pc | (iwa_q & 14'd0)) : cs_ra;
 @end
 
-# ------------------------------------------------ QUUX at muir's 8598fbd
+# ------------------------------------------------ QUUX at muir's bcb6242
 #
 # The clocks in the processor (contract Q1, `rtl/machine/quux_clocks.sv`),
 # which replaced revision 4's tick and its records, and since revision 10
@@ -20748,7 +20748,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 # (contract Q11), which replaced Q1's tick, interval timer and source 17 and
 # theirs, and destination 3 writing only M, which replaced the destination 3
 # alias and its records; the window between a
-# flag's rise and the edge `SINTR` is taken at (muir's `fdc0319`); the
+# flag's rise and the edge `SINTR` is taken at (muir's `ef015eb`); the
 # boot PROM at 36000 and the register page (Q2); the keyboard and the mouse
 # (Q3, `quux_input.sv`); the network on the page (Q4); block-disk
 # (`quux_block_disk.sv`); and no Unibus (Q5).  Each is aimed at the check
@@ -20900,7 +20900,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @mutation quux-sintr-takes-the-flags-the-microcycle-started-with
 @check quux_tickwin_quux_l1
 @file rtl/machine/quux_clocks.sv
-@note **THE RULE BEFORE muir'S `fdc0319`**: `SINTR` from the flags as they stood
+@note **THE RULE BEFORE muir'S `ef015eb`**: `SINTR` from the flags as they stood
 @note at the last master clock edge, which misses a rise inside the microcycle,
 @note or on the edge that ends it, by one microcycle.  `tickwin` puts the rise
 @note strictly inside the microcycle and inside a wait for `MD`, against a page
@@ -21299,7 +21299,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @check quux_page_quux
 @file rtl/machine/quux_feature_page.sv
 @note The network's request reaches word 100 and not the processor, as it
-@note did before muir's `1f6f5fb`.
+@note did before muir's `0c10ae9`.
 @old
   assign irq = (|in_irq) || chaos_ireq || fd_irq;
 @new

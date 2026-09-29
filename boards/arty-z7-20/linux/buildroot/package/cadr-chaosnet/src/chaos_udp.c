@@ -58,7 +58,7 @@
 // `cadr-chaosnet.c` is what hands a frame to the machine.
 //
 // **THE WAY OUT IS THE DEFAULT PEER, AND NOTHING IS LEARNED.**  Both are
-// muir's at `d6eac6d` and `chaos_udp.h` has the argument for each.  The one
+// muir's at `e1eeb73` and `chaos_udp.h` has the argument for each.  The one
 // consequence worth repeating at the code: a datagram is judged by what is IN
 // it and never by the socket it came off, so `chudp_poll` does not ask who
 // sent a datagram --- it asks what the frame says.  The guard that is left is

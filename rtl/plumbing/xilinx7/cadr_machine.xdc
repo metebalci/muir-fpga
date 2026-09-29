@@ -562,7 +562,7 @@ set_multicycle_path -hold  7 -from $slow -to $slow
 # **AND THE LEVEL-1 MAP'S WRITE TO THE CONTROL STORE'S ADDRESS 33.5 ns**,
 # through level 2, the M bus and the dispatch memory; level 2's is 27.5 ns.
 # With the writes taken literally at the pulse's end and every clause at one
-# tick, at the merge of muir's `22c8a52`: the level-1 map's write to the PC
+# tick, at the merge of muir's `200818f`: the level-1 map's write to the PC
 # 19.0 ns, level 2's 15.5 ns, MD into the dispatch memory's write address
 # 15.2 ns and into the maps' write 12.1 ns, all against 10.
 #

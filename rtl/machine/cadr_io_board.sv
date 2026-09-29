@@ -1333,7 +1333,7 @@ module cadr_io_board (
         // what the board did.  `tb/cadr_gp0_split_tb.cpp` runs two bursts
         // at 9600 and at 300 baud and fails without this term.
         //
-        // muir agrees, in both of its models, since a55b6c2: `Pci::transmit`
+        // muir agrees, in both of its models, since 247096d: `Pci::transmit`
         // sets the flag on a drain only while the transmitter is on
         // (`self.tx_empty = self.tx_on()`) and its `status()` masks it with
         // `CR0`; the netlist-level 2651 in `src/part.rs` raises it under

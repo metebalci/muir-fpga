@@ -308,7 +308,7 @@ module quux_clocks (
   end
 
   // **`SINTR` AT THE EDGE THAT ENDS THE MICROCYCLE, WAITING OR NOT** (muir's
-  // `fdc0319`, `Machine::interrupt_at(now)` at the end of `Rtl::clock_edge`):
+  // `ef015eb`, `Machine::interrupt_at(now)` at the end of `Rtl::clock_edge`):
   // each flag under its interrupt enable as it stands in the edge's own tick,
   // a rise on that tick counting as before the edge.  Nothing the
   // microcycle writes holds a term off: a page write taken at this edge

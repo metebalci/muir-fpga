@@ -22,7 +22,7 @@
 // files and for the date.  That server was another machine on the network and
 // was never inside the CADR, so it is not inside this program either.  muir
 // carried STATUS, TIME, UPTIME and FILE for a while and removed them at its
-// own `79c7590`, for this reason and in these words: "A CADR has no file or
+// own `b133d92`, for this reason and in these words: "A CADR has no file or
 // time server in it, so muir has none either."  This program was ported from
 // muir before that commit and carried them across; they are gone now, and so
 // are `--chaos-file-root`, `--chaos-file-peers` and `--server-name`, which
@@ -49,7 +49,7 @@
 // a cable can be unplugged; so an address alone sends nothing, and the flags
 // that say who is on the cable --- `--chaos-udp-peer` and
 // `--chaos-udp-default-peer` --- are refused without it rather than quietly
-// bringing a cable of their own.  muir split them at its `0851fa7` and the
+// bringing a cable of their own.  muir split them at its `78ebd60` and the
 // wording of the refusal is muir's.
 //
 // muir's own flags are `--chaos-address`, `--chaos-udp`, `--chaos-udp-peer`,
@@ -372,7 +372,7 @@ static int gone(const char *flag)
 	fprintf(stderr,
 "cadr-chaosnet: %s is gone, and so is the service it configured.\n"
 "cadr-chaosnet: A CADR has no file or time server in it, so this program has\n"
-"cadr-chaosnet: none either --- muir removed its own at 79c7590 for the same\n"
+"cadr-chaosnet: none either --- muir removed its own at b133d92 for the same\n"
 "cadr-chaosnet: reason.  The host is ON THE NETWORK: give it its own Chaosnet\n"
 "cadr-chaosnet: address and reach it with --chaos-udp-peer <address>@<host>.\n"
 "cadr-chaosnet: A band calls the address its own host table names --- 3060 for\n"
@@ -459,7 +459,7 @@ int main(int argc, char **argv)
 	// TO BE THERE.**  They used to ask for the cable themselves, so a run
 	// that said who its file host was found itself on a network it had not
 	// asked for, listening on a port nobody had named.  muir separated the
-	// two at `0851fa7` and this follows: the switches are one flag and the
+	// two at `78ebd60` and this follows: the switches are one flag and the
 	// cable is another.  `chudp_flag_without_cable` is the rule and the
 	// check holds it; this is where it is said out loud.
 	{

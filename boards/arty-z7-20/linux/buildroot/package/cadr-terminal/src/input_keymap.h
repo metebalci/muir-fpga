@@ -7,7 +7,7 @@
 // disagree about what a key means, and a table typed out by hand is a
 // table that drifts.
 //
-// muir 947926e91cc824fc5358d11c88427935eaaf66be
+// muir 6f872e103a4d562df9e2742a52c2819f4bd18e26
 //
 // `KEY_TABLE` is MIT's own key table by position in octal,
 // `keyboard.rs`'s `TABLE`, itself transcribed there from

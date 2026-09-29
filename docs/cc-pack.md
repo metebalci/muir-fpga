@@ -22,7 +22,7 @@ pack you boot.
 it drives.
 
 **At the muir this repository pins, the script does not run.** muir removed
-`tools/fetch-system-304.sh` and `tests/cc_304.rs` at its commit `5328c26`, and
+`tools/fetch-system-304.sh` and `tests/cc_304.rs` at its commit `ff54015`, and
 the script calls the fetch script (`tools/make-cc-pack.sh:127`). Both packs
 below were built against a muir from before that commit.
 
@@ -384,7 +384,7 @@ each run made a pack that boots with CC in it.
 |---|---|
 | Digest | `455e522638ba1658d7d07814bf2dcf2555118e55c80c5ff99d6411bd80bb6628` |
 | Size | 269,562,880 bytes |
-| muir | `0486b0af69706da689004439da6e96a39c7769d7` |
+| muir | `d21e46e2548218f5d58a7a2c2f246eca6c0a8933` |
 | Release | System 304, at the check-in `tools/fetch-system-304.sh` names |
 | Band | `LOD3`, the label's current band |
 | Built | 12 September 2026, in about thirty-five minutes |
@@ -403,7 +403,7 @@ hosts.** This is the one the board runs.
 |---|---|
 | Digest | `149783f78cfa62ebc49410d0dfbadb8f462a669dfa6d679d467ba1ab9ba19d52` |
 | Size | 269,562,880 bytes |
-| muir | `d6eac6d9113ec44c7a5baf2dd54ba2d9d742c11d` |
+| muir | `e1eeb73c29154779635beee9546eeb5f30ca824e` |
 | Release | System 304, at the check-in `tools/fetch-system-304.sh` names |
 | Band | `LOD4`, the label's current band |
 | Built | September 2026, in about thirty-five minutes |

@@ -32,7 +32,7 @@ figure.
 | Arty Z7-20 | CADR | +0.264 ns | +0.010 ns | 15,070 of 53,200 LUTs, 28.33% | 46 of 140 BRAM tiles | 5,553 of 13,300 | `9695172` | clean | 2026-09-29 |
 
 These fits were built from `74c2cf9`, QUUX's revision 11 with the register
-page at `17777400` (contract Q13), with muir pinned at `7bc901f`.
+page at `17777400` (contract Q13), with muir pinned at `a2ae522`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
@@ -65,14 +65,14 @@ the CADR.
 
 ## From a modified tree
 
-This fit was built from the tree committed as this commit, which makes the
+This fit was built from the tree committed as `90a3436`, which makes the
 word's width a parameter of the processor, `WORD_BITS`, 32 on the CADR
 (contract G2 §2.1), and moves muir's pin. The boot PROM image the fit reads
 is the same bytes at both pins.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | CADR | +0.193 ns | +0.041 ns | 15,063 of 53,200 LUTs, 28.31% | 46 of 140 BRAM tiles | 5,669 of 13,300 | this commit | see above | 2026-09-29 |
+| Arty Z7-20 | CADR | +0.193 ns | +0.041 ns | 15,063 of 53,200 LUTs, 28.31% | 46 of 140 BRAM tiles | 5,669 of 13,300 | `90a3436` | see above | 2026-09-29 |
 
 Against the `9695172` fit above it has 7 lookup tables fewer, the same 46
 block RAM tiles, 4 DSPs and 11,278 registers. The worst setup path of each
@@ -81,10 +81,10 @@ is placement. Both passed `rams_enable_check.tcl` over 98 block RAM ports.
 
 These fits were built from the tree committed as `aec5f54` with QUUX's
 revision 12, the fused return and its cache-only prefetch (contract H8a),
-and muir pinned at `8577ffc`, whose sources `5428c9c` keeps unchanged. The
+and muir pinned at `fdc1503`, whose sources `a2f3f81` keeps unchanged. The
 commit adds one width cast in `cadr_microcycle.sv` after these fits; the
 Arty Z7-20's and the DE25-Nano's QUUX refitted with it gave the same
-bitstreams, and the commit pins muir at `5428c9c`.
+bitstreams, and the commit pins muir at `a2f3f81`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
@@ -105,7 +105,7 @@ These fits were built from `8f2e34e` with the change that cuts the processor
 system's three reset synchronizers' clears
 (`boards/de25-nano/quartus/cadr_ddr.sdc`) and has
 `boards/de25-nano/quartus/sta_check.tcl` check recovery and removal, with muir
-pinned at `7bc901f`.
+pinned at `a2ae522`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
@@ -134,7 +134,7 @@ Arty Z7-20 and the DE25-Nano, give the same figures as the clean fits above.
 
 These fits were built from the working tree on `e764825` with the change in
 which destination 3 no longer controls timer 0 (QUUX revision 10, contract
-Q11 as amended) and muir pinned at `bbc47f3`.
+Q11 as amended) and muir pinned at `9f432a6`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
@@ -156,7 +156,7 @@ pin; the machine clock's own worst setup slack is +2.768 ns for QUUX and
 +2.769 ns for the CADR.
 
 These fits were built from the working tree on `ab41da7` with that change
-and muir pinned at `92dc864`. Each Zynq fit also passed
+and muir pinned at `66408f8`. Each Zynq fit also passed
 `boards/arty-z7-20/vivado/rams_enable_check.tcl`, which asked 105 block RAM
 ports of the Arty Z7-20's QUUX build, 98 of its CADR build and 92 of the Cora
 Z7-07S's, and found every path into their address, write enable and enable

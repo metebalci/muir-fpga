@@ -9,7 +9,7 @@
 // colors is this program's classic failure, and it is cheap to get right
 // by reading: muir's `src/tv.rs` is the model the fabric is checked
 // against and `rtl/machine/cadr_tv.sv` and `rtl/plumbing/cadr_ddr_map.sv` are the fabric.
-// The line numbers are muir at the commit `muir.commit` pins, bfba7f3, and
+// The line numbers are muir at the commit `muir.commit` pins, cb39e3e, and
 // this repository at the commit that added this file; a citation is worth
 // what its commit is worth, so both are given rather than neither.
 //
@@ -120,7 +120,7 @@
 // either of the CADR's boards but the video controller: a one-bit frame buffer and a mode
 // register, with no sync program, no color map and no interrupt.  Its
 // numbers, read out of muir's `docs/quux.md` "The video controller" and
-// `src/tv.rs` at the commit `muir.commit` pins, 22c8a52:
+// `src/tv.rs` at the commit `muir.commit` pins, 200818f:
 //
 //   1280 pixels across            docs/quux.md: "1280 by 1024 unless
 //   1024 lines                      `--video-size` gives another size";

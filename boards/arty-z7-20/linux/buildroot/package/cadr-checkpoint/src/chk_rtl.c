@@ -91,7 +91,7 @@
 #define MUIR_TIMERS 3u
 // The size QUUX's video controller would have, which `Tv::save` writes for
 // every board: `tv::VIDEO_WIDTH` by `VIDEO_HEIGHT`, the default a CADR's
-// display keeps and never uses.  1280 by 1024 since muir's `22c8a52`, the
+// display keeps and never uses.  1280 by 1024 since muir's `200818f`, the
 // HDMI mode this fabric's boards drive; 1920 by 1080 before it.
 #define MUIR_VIDEO_WIDTH 1280u
 #define MUIR_VIDEO_HEIGHT 1024u

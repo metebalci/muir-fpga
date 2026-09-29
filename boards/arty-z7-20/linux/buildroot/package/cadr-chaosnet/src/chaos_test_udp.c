@@ -1026,7 +1026,7 @@ static void check_a_stranger_is_heard_and_nothing_is_learned(void)
 }
 
 // **A FLAG THAT SAYS WHO IS ON THE CABLE NEEDS THE CABLE.**  muir's rule at
-// `0851fa7`: `--chaos-address` sets the sixteen address switches and nothing
+// `78ebd60`: `--chaos-address` sets the sixteen address switches and nothing
 // else, `--chaos-udp` is the cable, and without it nothing is sent.  A peer
 // and a route of last resort are each a statement about a link, so each is
 // refused when there is no link --- rather than bringing a cable of its own,

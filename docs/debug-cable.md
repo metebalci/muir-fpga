@@ -16,7 +16,7 @@ is an adapter.
 muir is a debugger too. It runs on a board's own Arm cores and reaches that
 board's debuggee end through a window of memory-mapped registers, with ordinary
 loads and stores, selected by `--debug-cable-connect 0x<address>`. muir's half
-is `src/fabric.rs` on muir's main at `e4d8aeb`, and the specification it was
+is `src/fabric.rs` on muir's main at `8a69eea`, and the specification it was
 built to is muir issue #95.
 
 Both ways in have run on a board. The section on what two boards have shown

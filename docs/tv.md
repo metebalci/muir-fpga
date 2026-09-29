@@ -13,9 +13,9 @@ color TV, which is a LISPM TV strapped elsewhere and driving a color monitor.
 The sections "Which board" and "The second display board" at the end are those
 two facts; everything between them is both boards. This document describes it
 as an Xbus device in the fabric, checked against muir. It was written at the
-slice, with muir at `dad7249`, so read that on anything below which says what
+slice, with muir at `582a801`, so read that on anything below which says what
 does or does not exist. Its citations into muir were renumbered when the pin
-moved to `bfba7f3`, the commit at which muir began running the board's sync
+moved to `cb39e3e`, the commit at which muir began running the board's sync
 program. The fabric runs that program too, and what it took is said where it
 bears. This document has the same shape as `docs/disk-controller.md`:
 what muir says the board is, what the two reference programs actually ask of
@@ -53,7 +53,7 @@ is that file, line by line.
   describes the map as a 64 by 9 RAM for each channel with a
   digital-to-analog converter on it. So a write to word 4 reaches nothing on
   the board itself. **The fabric keeps the sixteen entries**, as muir has
-  since `bfba7f3` (`Tv::color_map`), because a four-bit pixel of the color
+  since `cb39e3e` (`Tv::color_map`), because a four-bit pixel of the color
   screen is an address into them and whatever draws that screen has to know
   what a color is. They are kept on both boards, both netlists strobing the
   map with the same circuit, and they are offered to Linux on the console
@@ -78,7 +78,7 @@ is that file, line by line.
   `VSYNC` on pin 4 and `HSYNC` on pin 6, and the 74LS175 at NSYREG 0D02
   registers both of those from the sync program's own bits 0 and 1. **The
   fabric runs that program and reads the two bits off it**, as muir has since
-  `bfba7f3`; both read zero up to `4ddaeb2`, and both said so as a departure.
+  `cb39e3e`; both read zero up to `f9fe0d0`, and both said so as a departure.
   They change 1,932 times in a frame of MIT's `cpt.prom`.
   The distinction matters to anyone who adds the color board, because MIT's
   `WRITE-COLOR-MAP` spins on bit 5 and its `%XBUS-WRITE-SYNC` waits on bit 6
@@ -92,21 +92,21 @@ is that file, line by line.
   `INTRX0` takes the interrupt by reading the register, testing this bit and
   writing it back with the bit cleared. `vert_flag(ns)` (line 667) is
   what the last write put in, or set if a `-TVMA CLR` has fallen *strictly*
-  since. Up to `4ddaeb2` muir counted frame boundaries from power-on instead;
-  since `bfba7f3` it counts the sync program's `-TVMA CLR`s, and so does the
+  since. Up to `f9fe0d0` muir counted frame boundaries from power-on instead;
+  since `cb39e3e` it counts the sync program's `-TVMA CLR`s, and so does the
   fabric. For `cpt.prom` in clock mode 0 that falls 16,000 ns into the
   program, as the first line's 32nd instruction completes, and once a frame
   of 15,456,000 ns thereafter.
 - **`SEND INTR` is the flag with the enable**, the 74S08 at 0D10, onto
   `-XBUS.INTR` (`interrupt`, line 674). `machine.rs:457` ORs it with the
-  disk's request as `XBUS INTR IN`, and since `bfba7f3` with a color board's
+  disk's request as `XBUS INTR IN`, and since `cb39e3e` with a color board's
   own request when one is fitted. `rtl.rs:1950` registers that as `SINTR` at
   the microcycle edge, which is the `sintr` column of both processor traces.
 - **The frame is `FRAME_NS` = 15,456,000 ns** (line 331). That is 966 lines of
   16.000 us, or 64.7 Hz, "the roughly-60-cycle clock". It was measured on the
   netlist board in `tests/simpletv_netlist.rs` and `tests/monitor.rs`. muir
   kept the flag "on a frame clock rather than a raster", with frames counted
-  from power-on, up to `4ddaeb2`, and said so as a knowing departure from the
+  from power-on, up to `f9fe0d0`, and said so as a knowing departure from the
   machine. Both run the program now. The figure is still what a frame comes
   to, and it is no longer a counter in either place: the flag's instant is
   where `-TVMA CLR` falls, and the program's start moves.
@@ -117,7 +117,7 @@ is that file, line by line.
   spacing in 6--0, write only. With the enable clear the 74S472 PROM is
   selected instead, and a read of register 1 is the PROM's word. **The
   program in the RAM is run as well as stored**, as muir has run it since
-  `bfba7f3`, and MIT's own `cadrtv/cpt.prom` --- 297 words of the 74S472's
+  `cb39e3e`, and MIT's own `cadrtv/cpt.prom` --- 297 words of the 74S472's
   512 --- is what runs from power-on until the software selects the RAM.
   `SI:SETUP-CPT` loads the RAM at every `LISP-REINITIALIZE` and reads it
   back. The image reaches the fabric as `build/sync_prom.hex`, written by

@@ -7,7 +7,7 @@
 # muir on the board is the far end of the debug cable, and the debugger is not
 # muir. The debugger is CC, running on the CADR muir simulates. So muir on the
 # board needs a band to boot, and that band needs CC on it. muir's own test for
-# that band, `tests/cc_304.rs` until muir removed it at its commit 5328c26, got
+# that band, `tests/cc_304.rs` until muir removed it at its commit ff54015, got
 # CC by compiling it over the Chaosnet FILE service from a host on the model
 # network. That is fine on a build host and wrong on the board, where it would
 # mean standing a Chaosnet file host up beside muir before the debugger could
@@ -39,10 +39,10 @@
 # **NOTHING IS FETCHED ANY MORE, SO THE RELEASE IS NAMED.** This script used to
 # run muir's `tools/fetch-system-304.sh`, which brought in the System 304 pack
 # and its sources and checked both. muir removed that script at its commit
-# 5328c26, when it stopped testing System 304, so `BASE` and `SOURCES` must
+# ff54015, when it stopped testing System 304, so `BASE` and `SOURCES` must
 # both be given and the script refuses at its start, saying what they are,
 # when either is missing. The two files are assets of muir's GitHub release
-# `system-304-0`, and the removed script, at 5328c26's parent, has the whole
+# `system-304-0`, and the removed script, at ff54015's parent, has the whole
 # account of where they came from.
 #
 # IT IS NOT BYTE-REPRODUCIBLE, AND THAT IS A PROPERTY OF THE THING. A band is
@@ -111,7 +111,7 @@ if [ -z "${BASE:-}" ] || [ -z "${SOURCES:-}" ]; then
     cat >&2 <<'EOF'
 make-cc-pack: BASE and SOURCES must both be set, and nothing fetches them.
   muir's tools/fetch-system-304.sh brought the System 304 release in and muir
-  removed it at its commit 5328c26.  The two files are assets of muir's
+  removed it at its commit ff54015.  The two files are assets of muir's
   GitHub release system-304-0:
     BASE     the pack: disk-sys-304-0.img.gz, decompressed.  SHA-256 of the .gz
              87f0434b54dd86fa1df5251b04e0c48b86c804fa5c5fc6faba6dafa818e2e584

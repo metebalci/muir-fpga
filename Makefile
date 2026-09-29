@@ -3524,7 +3524,7 @@ $(BUILD)/console.pass: $(BUILD)/obj_console/Vcadr_console_harness \
 # error-status driver and the debug master's place on the Unibus --- and
 # `rtl/plumbing/cadr_debug_window.sv` is the carrier, sixteen registers on a
 # general-purpose AXI port that muir reaches with ordinary loads and stores.
-# muir's half is built: `src/fabric.rs` at `e4d8aeb`, to the specification in
+# muir's half is built: `src/fabric.rs` at `8a69eea`, to the specification in
 # muir issue #95.
 #
 # THE HARNESS AND NOT THE MODULES, and the harness is the attachment, for the
@@ -4082,7 +4082,7 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 # the register face's handshake with the fabric, and CHUDP's frame against a
 # datagram's literal bytes; for the serial line, the TCP endpoint against a
 # real client on the loopback address.  The Chaosnet program answers no
-# services --- a CADR has none in it, and muir removed its own at `79c7590`
+# services --- a CADR has none in it, and muir removed its own at `b133d92`
 # --- so there are none to check.  Neither can hold the SEAM between the
 # two halves, because only one half exists in each check --- which is why the
 # register face is behind one header in each program and why that header says

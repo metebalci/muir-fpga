@@ -14,7 +14,7 @@
 // table.
 //
 // **THERE IS NO TRANSPORT AND THERE ARE NO SERVICES TO CHECK.**  A CADR has
-// no file or time server in it, muir removed its own at `79c7590`, and this
+// no file or time server in it, muir removed its own at `b133d92`, and this
 // program never should have had them.  The suites for the connection
 // protocol and for STATUS, TIME, UPTIME and FILE went with the code they
 // were written for.  Nothing here touches the filesystem any more.

@@ -240,7 +240,7 @@ set_multicycle_path -hold  7 -from $slow -to $slow
 #     `mw` puts every write three edges or more before the boundary that
 #     reads it, so the new word is out of the MLAB two ticks before the PC
 #     takes it.  Measured at the 0 C slow corner at the merge of muir's
-#     `22c8a52`: 14.6 ns from the level-1 map's output to the PC's `d`, and
+#     `200818f`: 14.6 ns from the level-1 map's output to the PC's `d`, and
 #     12.5 from the dispatch memory's.  Taken literally at the pulse's end, a
 #     write in a hung microcycle had the boundary on the next edge, where the
 #     MLAB is still in the tick it does not define.

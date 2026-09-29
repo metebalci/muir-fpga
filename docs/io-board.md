@@ -15,7 +15,7 @@ that merges `I` with `OB` into the instruction register, and it stays that.
 muir's `src/ioboard.rs` makes the same distinction in its own header, and this
 follows it.
 
-This was written at slice one, with muir at `dad7249`, so read that on anything
+This was written at slice one, with muir at `582a801`, so read that on anything
 below which says what does or does not exist. It has the same shape as
 `docs/tv.md`: what muir says the card is, what the two reference programs
 actually ask of it, the decisions, what the check will hold to and cannot, and

@@ -205,7 +205,7 @@ network.** It is not `cadr-chaosnet` and it never should have been. A CADR has
 no file or time server inside it, and the Lisp Machine's own word for the
 machine that holds those is the **associated machine**, which the boot banner
 names. muir carried such a server for a while and removed it at its own
-`79c7590`, in these words: "A CADR has no file or time server in it, so muir
+`b133d92`, in these words: "A CADR has no file or time server in it, so muir
 has none either." This program was ported from muir before that commit and
 carried the same services across. They are gone.
 
@@ -491,7 +491,7 @@ else, and `--chaos-udp` is the cable. A file with peer lines and no
 `--chaos-udp` line is refused rather than quietly given a cable of its own,
 because a run that only said who its file host was would otherwise find itself
 on a network it had not asked for, listening on a port nobody had named. muir
-separated the two at `0851fa7` and the refusal here is in muir's own words:
+separated the two at `78ebd60` and the refusal here is in muir's own words:
 `--chaos-udp-peer is part of the CHUDP link: it needs --chaos-udp, which is
 the cable`.
 
@@ -591,7 +591,7 @@ broadcast on a network it was never meant to reach.
 statement about where a host is. A table filled in from what arrives is state
 nobody wrote down, and it puts the naming in the hands of whoever can reach
 the port. muir removed its own `--chaos-udp-dynamic` for those two reasons at
-`d6eac6d`, and this program has none either.
+`e1eeb73`, and this program has none either.
 
 So a datagram is judged by what is in the frame and never by the socket it
 came off. A host no flag named is heard exactly as a named peer is, which is

@@ -8,10 +8,10 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 `cadr-terminal` is the program on the processing system that shows the CADR's
 display to a VNC viewer and carries the viewer's keys and pointer back to the
 machine. The screen was written at the first slice, against muir at
-`dad7249` and the fabric at the commit that added this file. The keyboard and
-the mouse came at a second slice, against muir at `ff5de42`, once the I/O
+`582a801` and the fabric at the commit that added this file. The keyboard and
+the mouse came at a second slice, against muir at `ac7c2f7`, once the I/O
 board was in the fabric. The citations into muir below were renumbered when
-the pin moved to `bfba7f3`, which renamed the display model from `simpletv`
+the pin moved to `cb39e3e`, which renamed the display model from `simpletv`
 to `tv`.
 
 The display block is built and checked (`docs/tv.md`), and nothing could look
