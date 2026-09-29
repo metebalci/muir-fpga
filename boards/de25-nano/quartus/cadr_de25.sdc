@@ -229,7 +229,7 @@ set_multicycle_path -hold  7 -from $slow -to $slow
 #   - **THE MAPS' AND THE DISPATCH MEMORY'S WRITES HAVE NO CLAUSE HERE,
 #     BECAUSE QUARTUS TIMES NO PATH FROM THEM.**  All three are MLABs read
 #     without a clock, and a word written into an MLAB reaches its output
-#     through no arc the timing analyzer reports: asked at b6cd9ce, nothing
+#     through no arc the timing analyzer reports: asked at a420d7d, nothing
 #     starts at either map but the readout copy's own read address.  A clause
 #     written `-from` them would be a clause that reaches nothing.  What
 #     bounds that path on this board is the MLAB itself, which gives the new

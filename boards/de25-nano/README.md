@@ -600,7 +600,7 @@ synchronizer in front of each bridge's ready-latency adapter, three in all,
 and each register is cleared asynchronously by the processor's reset output.
 The timing analyzer launches that output from `hps_internal_osc` and checks
 its release against the machine's clock, which is unrelated to it, so six
-clears failed removal by up to 0.672 ns on both fits of `3dad80b`.
+clears failed removal by up to 0.672 ns on both fits of `74c2cf9`.
 `quartus/sta_check.tcl` then asked setup and hold only, and called those fits
 met. A reset synchronizer is built to take exactly that release, and Altera
 constrains its own the same way, so `quartus/hps_reset.sdc` cuts the path
@@ -685,7 +685,7 @@ that.
 **The board's QSPI flash carries this project's phase-1 bitstream**, so the
 board comes up from power on its own, with no cable and no build host. Before
 that it came up on the image the maker shipped in that flash, which has no CADR
-in it. What is in the flash now was built at commit `92c9a3b`, HPS-first, with
+in it. What is in the flash now was built at commit `1d58842`, HPS-first, with
 the processor's first-stage loader from the same build as the card's contents.
 `QSPI_OWNERSHIP` is `HPS`, which gives the processor the flash controller; the
 shipped image leaves it with the device manager, and a kernel that finds it

@@ -29,7 +29,7 @@
 # current figures are in `boards/arty-z7-20/vivado/bitstream.tcl`'s header. Hold all 1,821 registers to the tick and the routed report says
 # WNS -17.265 ns on the map lookup rippling into the control store's address,
 # 21.615 ns over 26 logic levels --- a path that has a phase to happen in.
-# (That register count is of the design as it then was. At 76e126b the machine
+# (That register count is of the design as it then was. At 8d86964 the machine
 # is 769 registers placed and routed out of context, and the experiment has
 # not been repeated at that size.)
 # That is the pessimistic version, which is not to be spread, and it distorts
@@ -75,7 +75,7 @@
 # TICKS AFTER ITS INPUT MOVES, AND A READER THAT DECIDES ON ANY OF THOSE TICKS
 # IS WRONG ON SILICON AND RIGHT IN EVERY TRACE.**  `memgo_q` is `MEMSTART AND
 # VMAOK`, loaded every tick, with the map between the boundary and its `D`:
-# 18.7 to 19.2 ns routed at d4cf2ca, legal under this file's eight ticks.
+# 18.7 to 19.2 ns routed at fc3dc21, legal under this file's eight ticks.
 # `cadr_busint_xbus.sv`'s IDLE state read it every tick and, until the fix
 # beside it, granted a bus cycle on one tick of it --- which three placements
 # of the board met as a halt in the page-fault code and zero-delay simulation
@@ -121,7 +121,7 @@
 # The one register the name list happened to catch was `elapsed` --- the bus
 # interface's pattern matched the disk's too --- and everything else was
 # relaxed to seventy-five nanoseconds.  Asked of the routed DDR=1 board at
-# 0f2ce3f: 3,904 of the disk's 4,000 internal paths carried the exception,
+# ab956df: 3,904 of the disk's 4,000 internal paths carried the exception,
 # and the longest of them was 20.1 ns, seventeen logic levels from
 # `ch_state_reg[1]` back into `ch_state_reg[2]`.  Every timing figure that
 # board reported with the drive in it was of a design a quarter of which was
@@ -507,7 +507,7 @@ set_multicycle_path -hold  7 -from $slow -to $slow
 # to reach both bounds, and over 739 programs moving the acknowledgment
 # through every tick of the hung cycle: a write is never less than two ticks
 # after MD moved, and a boundary is never less than three after a write.  At
-# `b6cd9ce`, where the writes were taken three ticks before the boundary, the
+# `a420d7d`, where the writes were taken three ticks before the boundary, the
 # first was already one tick, measured the same way.
 #
 #   - THE SCRATCHPAD LATCHES are a register loaded every tick of the read
@@ -555,7 +555,7 @@ set_multicycle_path -hold  7 -from $slow -to $slow
 # instant is the write, and the ticks are the fabric's.
 #
 # MEASURED BEFORE THE CLAUSES EXISTED, on the routed DDR=1 HDMI=1 Arty at
-# b6cd9ce and the 10 ns tick, as requirement less slack: into the latches
+# a420d7d and the 10 ns tick, as requirement less slack: into the latches
 # 5.8 ns, out of them 27.4 ns, latch to the dispatch memory's write 20.2 ns;
 # the control store's address 6.7 ns and its word 8.2 ns; `memgo_q` 15.4 ns in
 # and 6.7 out, the -WAIT halves 7.8 and 8.3, the held decode 19.0 and 11.6.
@@ -680,7 +680,7 @@ set_multicycle_path -hold  5 -from $split_every_tick -to $slow
 # console writes a readout address, so a block RAM's address or enable
 # reached from them in more than a tick is an address moving under an
 # enabled port, which UG473 says can corrupt the RAM's contents whatever
-# is read.  The relaxed set gave them the microcycle: at 7f44547 the
+# is read.  The relaxed set gave them the microcycle: at 10cf117 the
 # pushdown buffer's port was 13.4 ns from `ro_a0` and the control store's
 # enable 9.7.  `boards/arty-z7-20/vivado/rams_enable_check.tcl` asks every
 # block RAM port the same question after routing, and is what shows this
@@ -857,7 +857,7 @@ set_multicycle_path -hold  14 -to $ub_strobe
 #     object(s) found for '-through [get_ports -quiet {...}]'
 #
 # twice, and `report_exceptions` then counted two exceptions where there
-# should have been four.  Measured on the board flow at 499d7f2 plus this
+# should have been four.  Measured on the board flow at 5f8198a plus this
 # work.  It is the `foreach` failure again in a new costume --- a constraint
 # that reads cleanly and reaches nothing --- and the only thing that caught it
 # was the critical warning being read.
@@ -879,7 +879,7 @@ set_multicycle_path -hold  14 -to $ub_strobe
 #
 # `memstart` reaching the synchronous reset of the -RDFINISH counter, 72% of
 # it routing. Everything else met. Utilization was not the problem then and is
-# not now: 2,795 LUTs of 53,200 and 28 block RAM tiles of 140 at 76e126b.
+# not now: 2,795 LUTs of 53,200 and 28 block RAM tiles of 140 at 8d86964.
 #
 # A later report named a second endpoint of the same family:
 #
@@ -935,7 +935,7 @@ set_multicycle_path -hold  14 -to $ub_strobe
 # arcs different ways for the third and fourth time. `DDR=1` puts the
 # processing system behind the memory port, which is the first build that
 # times `mem_addr` and `mem_wdata` at all --- `rtl/plumbing/xilinx7/cadr_ddr.xdc` has that
-# story. At 543cfff that board reported WNS -0.446 ns on 86 endpoints, where
+# story. At cbb35ef that board reported WNS -0.446 ns on 86 endpoints, where
 # the same commit with the memory off reported -0.054 on one. Every one of the
 # 86 was inside the machine and none in the new logic, and they were two arcs
 # rather than eighty-six:
@@ -982,7 +982,7 @@ set_multicycle_path -hold  14 -to $ub_strobe
 # by mistake and one that should have been and was not look identical in a
 # slack figure; they do not look identical to `get_property REQUIREMENT`.
 #
-# MEASURED AT 543cfff PLUS THIS WORK, board flow, both configurations:
+# MEASURED AT cbb35ef PLUS THIS WORK, board flow, both configurations:
 #
 #                            DDR=1                    DDR=0
 #     worst negative slack   -0.446 -> -0.012 ns      -0.054 -> +0.077 ns
@@ -1014,7 +1014,7 @@ set_multicycle_path -hold  14 -to $ub_strobe
 # tick late on every write. Holding is refused by the rule and registering is
 # refused by the machine.
 #
-# MEASURED AT 76e126b, and the holdings did what they were for. Placed and
+# MEASURED AT 8d86964, and the holdings did what they were for. Placed and
 # routed out of context by `boards/arty-z7-20/vivado/fit.tcl`: WNS -0.484 ns, 94 failing
 # endpoints of 13,444, hold met at +0.061 ns. On the board through
 # `boards/arty-z7-20/vivado/bitstream.tcl`, where this file is read scoped: WNS -0.129 ns, 16
@@ -1035,7 +1035,7 @@ set_multicycle_path -hold  14 -to $ub_strobe
 # `-from $slow -to $slow` multicycle does not match it and must not, and it
 # has one tick to arrive in. It is within half a nanosecond of doing so, and
 # on the board the same family is worst at -0.384 ns from `ir_reg[25]` at
-# 37c4196 --- where at 76e126b the board's worst was somewhere else entirely,
+# 2906166 --- where at 8d86964 the board's worst was somewhere else entirely,
 # the phase generator's write pulse into the dispatch memory's LUTRAM write
 # enables, 3 logic levels and 80% route delay. Two revisions, two worst nets:
 # the family is stable and the net is placement, so a net quoted from a timing
@@ -1043,7 +1043,7 @@ set_multicycle_path -hold  14 -to $ub_strobe
 #
 # MEASURED AT THIS SLICE, the I/O board's composition, both boards through
 # `boards/arty-z7-20/vivado/bitstream.tcl` and against the same two fits run
-# from a worktree at 5986d1c on the same machine and the same tool:
+# from a worktree at 3f57ac1 on the same machine and the same tool:
 #
 #                            memory-off               DDR=1
 #     worst negative slack   +0.375 -> +0.393 ns      +0.362 -> +0.153 ns

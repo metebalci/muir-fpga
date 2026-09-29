@@ -303,7 +303,7 @@
 @note the wrong entry is written as arithmetic that keeps every constant used:
 @note naming `READ_FAST_ILONG_T` alone leaves `READ_NORMAL_ILONG_T` unread and
 @note lint refuses the mutant before the check sees it, which is how this
-@note record went BROKEN at 9786560. The normal ILONG tap less the gap
+@note record went BROKEN at b23a0c1. The normal ILONG tap less the gap
 @note between the normal and fast taps is the fast ILONG tap at the 5 ns and
 @note 10 ns grids alike (25 - 2 = 23, and 13 - 1 = 12).
 @old
@@ -343,7 +343,7 @@
 @check phase_gen
 @file rtl/machine/cadr_phase_gen.sv
 @note -TPW30, measured from the end of the read phase. The instant lives in
-@note a register of its own since 89d40bd, so that the counter drives a
+@note a register of its own since 84aad95, so that the counter drives a
 @note comparator and nothing else; a tick out is a tick out either way.
 @old
       if (phase == wp_on_at) n_tpwp <= 1'b0;
@@ -393,7 +393,7 @@
 @note `wrap` has two terms because the park is one tick past the last tick
 @note of the cycle: without the second, a generator that -HANG parked would
 @note count on past the end when -HANG lifted rather than starting a new
-@note cycle. Since 89d40bd the two are separate registers, `wrap_at` and
+@note cycle. Since 84aad95 the two are separate registers, `wrap_at` and
 @note `park_at`, which is a new way to get this wrong --- they can now drift
 @note apart, where `cycle_t - 1` and `cycle_t` could not.
 @old
@@ -532,14 +532,14 @@
 @note sample from the tick that entered REQUESTED instead grants one tick of
 @note -MEMRQ, and on silicon that tick exists: `memgo_q` is relaxed to the
 @note fast read tap, the map reaches it in about nineteen nanoseconds at
-@note d4cf2ca, and the tick after a boundary that raises MEMSTART on an access
+@note fc3dc21, and the tick after a boundary that raises MEMSTART on an access
 @note that faults can capture a VMAOK still rippling.  The grant then runs a
 @note cycle at the last address with the last cycle's word, which halted the
 @note machine in the page-fault code on the board: three of the four routed
-@note placements of d4cf2ca and a slice beside it, the served one being the
+@note placements of fc3dc21 and a slice beside it, the served one being the
 @note fourth.
 @note
-@note NO TRACE SEES IT, measured at 315706d plus the fix: in zero delay
+@note NO TRACE SEES IT, measured at 23c63dc plus the fix: in zero delay
 @note -MEMRQ never falls between REQUESTED and the edge, so this survives
 @note memory_path, machine, md_compose, park, ddr_boot, probe, tv, color_tv,
 @note unibus and power_on.  The directed leg at the end of
@@ -998,10 +998,10 @@
 # `bridge-drops-an-address-bit` are here to prove.
 #
 # THE THIRD ARRIVED FROM ANOTHER CHECK. `the-bridge-holds-the-word-past-its-
-# cycle` was a `ddr_boot` record until the full mutation run at `c1b4d61`
+# cycle` was a `ddr_boot` record until the full mutation run at `c5532a2`
 # found it surviving: the property it holds was being exercised by the boot
 # PROM's unanswered disk polls, and those stopped being unanswered at
-# `0ee43f6`. It is here because this check's stimulus carries 29 cycles that
+# `12dc631`. It is here because this check's stimulus carries 29 cycles that
 # nothing answers whatever any program does, and the testbench now fails if it
 # ever stops carrying them.
 #
@@ -1010,7 +1010,7 @@
 # word it had just READ is invisible there --- in that program the two words
 # are the same. Here the word on the memory port is compared against the
 # STIMULUS at the instant of the write and not through a read-back, so any
-# wrong word is wrong whatever it is equal to. Measured at `c1b4d61` with a
+# wrong word is wrong whatever it is equal to. Measured at `c5532a2` with a
 # two-hunk bridge that keeps its read word across cycles and writes it back:
 # `ddr_boot` PASSES it outright --- 512 transactions, A and B differing only in
 # word 255's bit 0, PC 544 still running --- and `memory_path` fails on the
@@ -1036,7 +1036,7 @@
 @note machine went.
 @note
 @note **THIS RECORD IS WHY `--since` EXISTS, met live.**  It was aimed at
-@note `ddr_boot` and caught by configuration B from `0fe5951`; at `0ee43f6`
+@note `ddr_boot` and caught by configuration B from `2408c28`; at `12dc631`
 @note the disk controller's registers began answering the boot PROM's 16,951
 @note polls, which were the unanswered cycles the mutation needed, and it
 @note SURVIVED from there.  `make mutants` was red at HEAD for three commits
@@ -1060,10 +1060,10 @@
 @note cycle ended.
 @note
 @note MEASURED WHERE IT IS NOT CAUGHT, so that nobody re-aims it hopefully:
-@note it survives `machine`, `probe` and, since `0ee43f6`, `ddr_boot`.  None
+@note it survives `machine`, `probe` and, since `12dc631`, `ddr_boot`.  None
 @note of those leaves a word in this register and then runs a cycle nothing
-@note answers whose data anything looks at.  Measured at `0fe5951` for
-@note `machine` and `probe`, and at `c1b4d61` for `ddr_boot`.
+@note answers whose data anything looks at.  Measured at `2408c28` for
+@note `machine` and `probe`, and at `c5532a2` for `ddr_boot`.
 @old
       done  <= 1'b0;
       rdata <= 32'd0;
@@ -1118,9 +1118,9 @@
 @note rather than quietly passing --- which is the runner earning
 @note its keep on a record that had rotted under a peer's change.
 @note
-@note Re-aimed a second time after b9c2f12, where the channel slice put
+@note Re-aimed a second time after 140b538, where the channel slice put
 @note the arbiter's mux in front of the bridge's `sel`: the anchor
-@note `.sel (is_memory)` matched 0 times from then until d1a1f54 and the
+@note `.sel (is_memory)` matched 0 times from then until f4ad7d0 and the
 @note record did not apply --- no run had asked for memory_path's records
 @note in between. The mutation is the same: the processor's own cycles to
 @note empty space reach the bridge. The channel's arm is left alone so
@@ -1772,7 +1772,7 @@
 @note instruction writes MD.  Without the branch the strobe takes the one that
 @note holds the word, the `else if` that clears `md_pending` never runs, and
 @note the held poison commits a boundary later over the instruction's word:
-@note what the check measured at the 5 ns grid before d4cf2ca, and what it
+@note what the check measured at the 5 ns grid before fc3dc21, and what it
 @note must fail on again.  `a-strobe-on-the-boundary-waits-a-microcycle` is
 @note the band's view of the same line; this is the directed one, which runs
 @note in a minute on the boot PROM.
@@ -2230,7 +2230,7 @@
 @note found a tick invisible and a microcycle caught, and the tick turned
 @note out to be correct behavior rather than a hole.
 @note
-@note THE SWEEP WAS TAKEN BEFORE 919dc69 AND CANNOT BE REPRODUCED AFTER IT.
+@note THE SWEEP WAS TAKEN BEFORE e49ec5b AND CANNOT BE REPRODUCED AFTER IT.
 @note With MCLK registered, inverting it moved the grant one tick; with MCLK
 @note combinational it moves it a microcycle, and the inverted mutation is
 @note caught. The reading that survives is the one about magnitudes --- a
@@ -2344,7 +2344,7 @@
 @mutation a-tap-lands-at-the-wrap
 @check phase_gen
 @file rtl/machine/cadr_phase_gen.sv
-@note 89d40bd rewrote every tap from `phase_next == X` to `phase == X - 1`,
+@note 84aad95 rewrote every tap from `phase_next == X` to `phase == X - 1`,
 @note and its comment says why that is safe: "`phase_next` is only not
 @note `phase + 1` at the wrap, and no tap lands there."
 @note
@@ -2660,12 +2660,12 @@
 @note 0o545. A no-drive controller that never answered at all fails the same
 @note rows the same way, MD reading zero instead of 0x2320, which is what
 @note the board did before this module existed.
-@note **THE ANCHOR MOVED AT b9c2f12**, which added `&& !ch_busy` to this
+@note **THE ANCHOR MOVED AT 140b538**, which added `&& !ch_busy` to this
 @note line: the channel is busy while it walks and `not_active` is the
 @note board's own BUSY as well as muir's `done_at`.  The mutation is the
 @note same one --- the sense of the counter's test --- and the added term is
 @note carried through unchanged so that only the direction is mutated.
-@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER 0f2ce3f**: the busy
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ab956df**: the busy
 @note counter's zero test is a register, `busy_zero_q`, a tick ahead of the
 @note word that reads it.  The mutation is unchanged --- the sense of the test
 @note turned round.
@@ -2711,7 +2711,7 @@
 @note tolerance. A write's does not: this same check passed for months with
 @note all 5,650 device writes acknowledged a tick late by the testbench that
 @note answered them.
-@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER 0f2ce3f**: the slave
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ab956df**: the slave
 @note drives the held match alone and the AND with -XBUS.RQ is the bus
 @note interface's.  So "a register between `dev_rq` and `dev_ack`" is now a
 @note slave that acknowledges the request a tick after it arrives, which is
@@ -2792,7 +2792,7 @@
 #
 # AND THE RECORD THAT HELD THAT DECISION IS NO LONGER HERE.  `the-bridge-
 # holds-the-word-past-its-cycle` was aimed at this check and caught by
-# configuration B from `0fe5951`; at `0ee43f6` `rtl/machine/cadr_disk_controller.sv`
+# configuration B from `2408c28`; at `12dc631` `rtl/machine/cadr_disk_controller.sv`
 # began answering the boot PROM's 16,951 polls, which were the unanswered
 # cycles it needed, and it survived from there.  It is a `memory_path` record
 # now, where the stimulus carries unanswered cycles by construction rather
@@ -3359,7 +3359,7 @@
 # almost nothing and still write a perfectly good bitstream of an empty part.
 # Forty-nine outputs, forty-nine connected, forty-nine folded.
 #
-# WHAT THIS CHECK CANNOT SEE, MEASURED AT 5b429e5 AND NOT FILED AS A HOLE.
+# WHAT THIS CHECK CANNOT SEE, MEASURED AT 95791f4 AND NOT FILED AS A HOLE.
 # Only a signal the fold is the *sole* reader of can be dropped visibly:
 # then it is unread and `-Wall` gives UNUSEDSIGNAL. Four of the forty-nine
 # are read somewhere else as well --- `clock_edge` counts microcycles into
@@ -3396,7 +3396,7 @@
 @mutation the-word-at-the-xbus-seam-reaches-no-pin
 @check arty
 @file boards/arty-z7-20/cadr_arty.sv
-@note The bug 5b429e5 found, put back. `dev_wdata` is MEM<31:0> on its way to
+@note The bug 95791f4 found, put back. `dev_wdata` is MEM<31:0> on its way to
 @note an Xbus slave; no slave exists, so nothing in the top level reads it and
 @note it was connected to nothing at all --- the one output of `cadr_machine`
 @note that reached neither the instantiation nor the fold. Left that way,
@@ -3804,7 +3804,7 @@
 # behavior and every property of `rtl/plumbing/cadr_probe.sv` are outside it. Those
 # belong to the `probe` mutations above.
 #
-# THE REASONING BELOW WAS TRUE AT 5838507, which is where `boards/arty-z7-20/vivado/probe.tcl`
+# THE REASONING BELOW WAS TRUE AT 78d71ae, which is where `boards/arty-z7-20/vivado/probe.tcl`
 # reached its present shape and where the chain was measured on silicon: both
 # IDCODEs exact, the part at the TDO end, IR total 10, first bit out least
 # significant, DONE high. `docs/mutations.md`'s rule is that a record's text
@@ -3874,7 +3874,7 @@ set before $mine
 @mutation the-instruction-register-is-measured-and-ignored
 @check probe_jtag
 @file boards/arty-z7-20/vivado/probe.tcl
-@note THE SWEEP'S SIN, WRITTEN AS ONE LINE. 5838507 replaced a search over IR
+@note THE SWEEP'S SIN, WRITTEN AS ONE LINE. 78d71ae replaced a search over IR
 @note paddings with a single scan that MEASURES the chain's instruction
 @note register length, the device order and Vivado's bit order at once, before
 @note anything depends on any of them. This takes that scan, prints it, and
@@ -3920,7 +3920,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `reversed` is the only case with a device in front of the part --- which
 @note is exactly why that case exists.
 @note
-@note Reasoning true at 5838507, where the DAP-before-part order was
+@note Reasoning true at 78d71ae, where the DAP-before-part order was
 @note confirmed on silicon and the BSDL's DESIGN_WARNING was read.
 @old
  [bits $ircap [expr {$our_ir_lsb + 5}] 1]"
@@ -4254,7 +4254,7 @@ if {0 && $held ne $want} {
 @note a read of register 2 which must still hold what the program put there,
 @note and then a transfer started with NO store into register 1 that walks
 @note the command list it was given before.
-@note **THE ANCHOR MOVED AT b9c2f12**: `-XBUS INIT` gained the channel's
+@note **THE ANCHOR MOVED AT 140b538**: `-XBUS INIT` gained the channel's
 @note stop and the eight error flops, and the block re-aligned its `<=`.
 @note The mutation is unchanged --- the disk address register given a pin on
 @note `-XINIT` it does not have.
@@ -4322,7 +4322,7 @@ if {0 && $held ne $want} {
 @note which clears BUSY on purpose.  This is the live mutation that tests the
 @note same property, which is `docs/mutations.md`'s rule --- where a sweep of
 @note the magnitude shows an equivalence, the record keeps the smallest
-@note magnitude that is caught.  **THE ANCHOR MOVED AT b9c2f12**: the store
+@note magnitude that is caught.  **THE ANCHOR MOVED AT 140b538**: the store
 @note into register 0 gained the seven other transfer error flops and the
 @note Reset-0o16 arm, and the block re-aligned its `<=`.  **And again with
 @note the pack side**, when the store was held two ticks and the word became
@@ -4436,7 +4436,7 @@ if {0 && $held ne $want} {
 @note compare error and the transfer stops with nothing moved.  Written as a
 @note wider compare rather than as a narrower one so that every bit of the
 @note header stays read and lint has nothing to say.
-@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER 0f2ce3f**: the slot's
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ab956df**: the slot's
 @note header is read into `hdr_q` a tick ahead of the compare, and the
 @note compare is a register a tick ahead of the decision.  The mutation is
 @note unchanged.
@@ -4461,7 +4461,7 @@ if {0 && $held ne $want} {
 @note control-store lesson read the other way round: a block that was never
 @note checked reads back exactly like one that was, unless the checkword is
 @note over exactly the bytes the board writes it over.  **THE ANCHOR MOVED
-@note WITH THE TIMING WORK AFTER 0f2ce3f**: the last-word test is a
+@note WITH THE TIMING WORK AFTER ab956df**: the last-word test is a
 @note register, `ch_i_last`, made every tick and read by every state that
 @note walks a page --- so this now stops every move a word short as well as
 @note the code.  The Read's data field is still checked before anything
@@ -4602,7 +4602,7 @@ if {0 && $held ne $want} {
 @note same failure would be the stale-artifact trap the runner's own
 @note self-test plants against --- two generator mutations must report two
 @note different failures --- so they are written to report different ones.
-@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER 0f2ce3f**: the header is
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ab956df**: the header is
 @note read into `hdr_q` by `ch_slot` a tick ahead of the compare, so the slot
 @note is rotated at that read.  Still caught at the header compare, before a
 @note word has moved.
@@ -4703,7 +4703,7 @@ if {0 && $held ne $want} {
 @note off.  What sees it is the sync, which arrives at track byte 60 instead
 @note of 61 --- inside the trace's own first `PAGE` row, word 15 --- and then
 @note every field of every sector after it.
-@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER 0f2ce3f**: the START's arms
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ab956df**: the START's arms
 @note became one `if` a flag and lost two levels of nesting.  The mutation
 @note is unchanged.
 @old
@@ -4730,7 +4730,7 @@ if {0 && $held ne $want} {
 @note `BLK write` rows are compared against muir's own pack, and the property
 @note check's round trip then finds seventeen blocks holding their
 @note neighbors' sectors.
-@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER 0f2ce3f**: the START's arms
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ab956df**: the START's arms
 @note became one `if` a flag and lost two levels of nesting, and the code is
 @note read from `st_code`, the copy taken at the request.  The mutation is
 @note unchanged.
@@ -5143,7 +5143,7 @@ if {0 && $held ne $want} {
 @note widened to three bits when the bus interface's registers became the
 @note third Unibus slave, which does not touch the anchor's text.
 @note
-@note **AND A SEVENTH TIME, ALSO FOUND UNAPPLIED AT HEAD**, at `6b9dcbf`:
+@note **AND A SEVENTH TIME, ALSO FOUND UNAPPLIED AT HEAD**, at `35ad4dd`:
 @note the I/O board's two chips brought fourteen more outputs into the fold
 @note --- the 2651's four registers, its strobe and its character, and the
 @note Chaosnet interface's eight --- and this record was not re-run, so `make
@@ -6762,7 +6762,7 @@ if {0 && $held ne $want} {
 #       09000006, muir says 09000007; row 390, not-active or an attention
 #       --- FAIL: 2 mismatches
 #
-# Run in an isolated tree at c786b3b plus the slice's two files, with
+# Run in an isolated tree at 597ebde plus the slice's two files, with
 # `--list` pointing at a copy of list.txt with these appended.  Runner
 # summary lines:
 #
@@ -6778,7 +6778,7 @@ if {0 && $held ne $want} {
 @note The control store's read address WAS `cpu_edge ? npc : pc`, a mux on
 @note the boundary that put TPCLK four logic levels from twenty-six block
 @note RAMs' address pins --- 4.775 ns of a 5 ns tick and 116 of the DDR=1
-@note board's 278 failing endpoints at 44747c2.  It is `pc` now, which is
+@note board's 278 failing endpoints at 8064411.  It is `pc` now, which is
 @note the same register the mux's output would have been, and the word is
 @note read at the boundary twenty-eight ticks later.
 @note
@@ -6826,7 +6826,7 @@ if {0 && $held ne $want} {
 @note `REVOLUTION_NS - acc_spin + acc_at`, two twenty-nine-bit adds in series
 @note off a DSP48E1 whose clock-to-output is 2.191 ns.  That was 5.244 ns of
 @note a 5 ns tick, `disk/acc_d20/CLK -> disk/acc_d2_reg[26]/D`, and 17 of the
-@note DDR=1 board's 278 failing endpoints at 44747c2.
+@note DDR=1 board's 278 failing endpoints at 8064411.
 @note
 @note In twenty-nine-bit arithmetic `(acc_at - acc_spin) + REVOLUTION_NS` is
 @note the SAME BITS as `REVOLUTION_NS - acc_spin + acc_at`, so the revolution
@@ -8246,7 +8246,7 @@ if {0 && $held ne $want} {
 #     ticks then and `unibus` over all 13,192,237 of its, with both summaries
 #     byte-identical to the held design's.  So it is an equivalence and is
 #     recorded here rather than filed as a hole.  **That measurement was made
-#     at `5009502`, both tick counts have moved since --- `busint_regs` runs
+#     at `28424be`, both tick counts have moved since --- `busint_regs` runs
 #     57,139,860 now --- and the four fields the window added have not been
 #     measured the same way**, which is the citation a record's reasoning owes
 #     rather than a claim that they were.
@@ -11661,7 +11661,7 @@ if {0 && $held ne $want} {
 @note for a character whose software has since turned the whole chip off, and
 @note that is the case the sheet's sentence about a disable is about.
 @note
-@note Measured at bbe7b26 before the leg that catches it was written: with
+@note Measured at 629961f before the leg that catches it was written: with
 @note this term dropped, `gp0_split`, `iob` and `unibus` all passed.  Every
 @note stimulus in the tree left the receiver on, so `s_rx_on` clocked the
 @note character out and the missing term could not be seen from anywhere.
@@ -11877,7 +11877,7 @@ if {0 && $held ne $want} {
 @note Only `TxEMT` is under `s_tx_on` at this statement, and it is the line
 @note below.
 @note
-@note **`iob` AND `unibus` BOTH SURVIVE IT, MEASURED at bbe7b26**, though both
+@note **`iob` AND `unibus` BOTH SURVIVE IT, MEASURED at 629961f**, though both
 @note carry this file: the trace's serial seam is stimulus, and nothing in it
 @note writes the command register with `TxEN` cleared while `SDN` is still
 @note owed.  So a record on this statement has to be aimed here, at the check
@@ -15573,7 +15573,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note that, 781, so that a refused frame each way still lands inside it.  The
 @note far machine waiting 2,100 ns rather than 100 before its own `-DB MSYN`
 @note puts the slowest cycle at 785 ticks: inside the deadline, and without
-@note the room.  Measured at 1259072 with the bound as it stood then, half of
+@note the room.  Measured at 50248a0 with the bound as it stood then, half of
 @note 2,210 --- the 5 ns grid's count --- the check passed this mutant.
 @note `dbgin` catches the same constant against muir; this record is about
 @note the bound, not the constant.
@@ -15588,7 +15588,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @file rtl/machine/cadr_dbgin.sv
 @note The same mutant against the carrier's own check, whose round trip is
 @note measured from the window's request to its acknowledgment: 804 ticks
-@note against the bound of 781, where the bound as it stood at 1259072, 1,105,
+@note against the bound of 781, where the bound as it stood at 50248a0, 1,105,
 @note passed it.  See `a-debuggee-leaves-no-room-for-a-refused-frame`.
 @old
     parameter int unsigned MSYN_T    = cadr_tick_pkg::ticks(100),
@@ -15684,7 +15684,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note **EIGHT HEX DIGITS ARE A TCL FLOAT WHENEVER THE FIFTH IS `e`**, and
 @note `expr` converts.  This is the line the mutation restores, and it is how
 @note the defect was found rather than how it was imagined: a bitstream built
-@note from a dirty tree at `8108e23` (`1c74ce3` after the history rewrite)
+@note from a dirty tree at `8108e23` (`c8c0a39` after the history rewrite)
 @note carries the build `8108e233`, the ternary handed back `8.108e+236`, and
 @note `program.tcl` refused a perfectly good file
 @note saying "the bitstream names build 8108e233 and its sidecar names

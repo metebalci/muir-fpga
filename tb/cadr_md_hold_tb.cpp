@@ -347,7 +347,7 @@ int main(int argc, char **argv) {
       }
       // THE COINCIDENCE ITSELF.  `-LOADMD` rising on the very tick DESTMDR
       // writes MD was the one case where the branch that holds the word ran
-      // and the `else if` that clears `md_pending` did not.  Since d4cf2ca a
+      // and the `else if` that clears `md_pending` did not.  Since fc3dc21 a
       // strobe on the boundary's own tick has a branch of its own, which
       // loads MD and clears the flag; `tb/cadr_md_inject_tb.cpp` drives it.
       if (pre_cpu_edge && pre_destmdr) ++coincidences;

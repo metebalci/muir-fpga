@@ -238,7 +238,7 @@ included.
 `ps7_post_config` is the thing that brings `S_AXI_HP0` up. It writes
 `LVL_SHFTR_EN` at `0xF8000900` and clears `FPGA_RST_CTRL` at `0xF8000240`.
 **`SAXIHP0ARESETN` follows the level shifters and not `FPGA_RST_CTRL`.** That
-was measured at `7fdfdde` with the port live and a block poisoned. Toggling
+was measured at `e1b4d5f` with the port live and a block poisoned. Toggling
 `FPGA_RST_CTRL` produced no write. Writing `LVL_SHFTR_EN` `0x0` then `0xF`
 produced the word.
 
@@ -256,7 +256,7 @@ out:
 Without the clear, a second run inside one power-on finds `LVL_SHFTR_EN`
 already `0xF`. The witness then fires the instant the part configures, before
 the poison lands. The block reads thirty-two words of filler, which looks
-exactly like a fabric that cannot write. It cost one run at `7fdfdde`.
+exactly like a fabric that cannot write. It cost one run at `e1b4d5f`.
 
 The machine, `DDR=1`, has no such trigger. `boards/arty-z7-20/cadr_arty.sv`
 resets it on the MMCM's lock or BTN1. It therefore starts the instant the part
@@ -272,7 +272,7 @@ So the port must be **live before the bitstream loads**:
 That order works only because of the same SLCR fact.
 `boards/arty-z7-20/vivado/ddr_run.tcl` reads `0xF8000900` again after
 programming and stops if it is not `0x0000000F`. It was measured on four runs
-at `e19bab0`. No RTL change was needed for the start problem.
+at `a676335`. No RTL change was needed for the start problem.
 
 **And the toggle re-arms a witness without reprogramming.** Writing
 `LVL_SHFTR_EN` `0x0` then `0xF` is `SAXIHP0ARESETN`, so a `PROVE` board runs
@@ -302,7 +302,7 @@ whole part is known to have enumerated.
     DDR:   through 0x1FFFFFFF, with no bitstream and no
     DDR:   ps7_post_config.
 
-It passed twice at `3ef70c8`, and that is recorded in `7fdfdde`. A mismatch
+It passed twice at `2f775e0`, and that is recorded in `e1b4d5f`. A mismatch
 names the address:
 
     DDR: FAILED at 0x18A72EE4 --- wrote the word
@@ -331,7 +331,7 @@ zeros, a widening that opened both halves would be invisible.
     PROVE:   included, still holds the filler.  The low half of the beat is
     PROVE:   untouched, so the strobes opened one half and not two.
 
-It passed three times at `7fdfdde`, and that is recorded in `712f664`. Two
+It passed three times at `e1b4d5f`, and that is recorded in `21459a1`. Two
 failures are worth knowing before they happen:
 
 - **thirty-two words of filler and nothing else.** Either the port was already
@@ -384,7 +384,7 @@ hold that third filler afterwards.
     PROVE: case right PASSED
     PROVE: PASSED --- all three cases, in one session and one bitstream download.
 
-It passed four times at `712f664`, and that is recorded in `1714f99`. One
+It passed four times at `21459a1`, and that is recorded in `6b16ffb`. One
 failure is worth checking before any other, because it is not a fault at all:
 
     PROVE: FAILED   AND THIS IS WHAT A `PROVE=1` BITSTREAM LOOKS LIKE, which
@@ -460,7 +460,7 @@ clear:
 
     RUN: PASSED --- the machine ran out of DDR.
 
-It passed four times at `e19bab0`. The script separates three failures, because
+It passed four times at `a676335`. The script separates three failures, because
 they are three different faults that would otherwise look alike:
 
     RUN: FAILED   ALL ONES IS WHAT NOTHING-DRIVING READS.  With the level
@@ -861,8 +861,8 @@ So the microcycle blink's period is a little over a quarter of a second. That
 is close to the 0.23 s it would be at full speed, because the disk polls are
 answered now and no longer each cost a timeout.
 
-`tb/cadr_nomem_tb.cpp` printed that line as `beat[23]` until `77aea60`. The
-lamp has been `beat[19]` since `be6c6a5`, and both now agree. What the
+`tb/cadr_nomem_tb.cpp` printed that line as `beat[23]` until `c7e26d5`. The
+lamp has been `beat[19]` since `f3a53eb`, and both now agree. What the
 testbench measures is the microcycle rate. Which bit of the count reaches the
 pin is `rtl/plumbing/cadr_lamp_microcycle.sv`'s to say, as `BLINK_BIT`, and this
 table takes it from there.
@@ -1489,7 +1489,7 @@ board which has been running for hours still names the build in it.
 
 ## The build stamp, the sync program and a checkpoint, 15 September
 
-Both Zynq boards were served the set built at commit `261547d` (`9d6beaa`
+Both Zynq boards were served the set built at commit `261547d` (`5455389`
 after the history rewrite) and left running on it. The measurements below
 were taken on the two boards over half an hour.
 
@@ -1598,7 +1598,7 @@ written.
 
 ## The Chaosnet framing on the wire, 15 September
 
-Both Zynq boards were served the root filesystem built at commit `7e0a5cb`,
+Both Zynq boards were served the root filesystem built at commit `85edde8`,
 which carries the CHUDP framing `docs/chaosnet.md` describes: every 16-bit
 word most significant byte first, and the Internet checksum in the trailer.
 The OZ host at `0o177002` speaks that framing, and every datagram between it
@@ -1686,8 +1686,8 @@ names a sender, so which datagrams make up the 28 is not established. What the
 pair of readings says is that nothing either board sent afterwards was
 refused.
 
-**Where the two boards were left.** Both run the image built at `7e0a5cb` over
-the fabric built at `9d6beaa`, which is the image having moved while the
+**Where the two boards were left.** Both run the image built at `85edde8` over
+the fabric built at `5455389`, which is the image having moved while the
 fabric did not. On each board `chaos:host-up-p` answers T for the OZ host, the
 herald names it as the associated machine, `time:print-current-time` gives the
 date and the time of day, and the who-line is dated. Both machines were
@@ -1700,7 +1700,7 @@ microseconds. The program's own traffic line is the same on both:
 
 ## The second display board, fitted at run time, 15 September
 
-Both Zynq boards were served the set built at commit `52b7b3a` (`a53e2f0`
+Both Zynq boards were served the set built at commit `52b7b3a` (`48bd02e`
 after the history rewrite) and left running on it. The measurements below
 were taken on the two boards over half an hour. No card was written and
 nothing on either card was changed.
@@ -1836,7 +1836,7 @@ commented out.
 ## The 10 ns grid on the board, 17 September
 
 The Arty Z7-20 was served a set built from a clean tree at `9d1cf26`
-(`d4cf2ca` after the history rewrite), the commit that moves MIT's grid from
+(`fc3dc21` after the history rewrite), the commit that moves MIT's grid from
 5 ns to 10 ns. The part's USERCODE reads `9d1cf260`, and
 `cadr-console status` says `commit 9d1cf26, tree clean`. The Cora Z7-07S was
 not reset.
@@ -1913,7 +1913,7 @@ program, and not by the machine.
 ## A placement fault fixed, and the serial store, 17 September
 
 **Builds of the 10 ns grid's fabric halted depending on their placement.**
-The served build of `d4cf2ca` ran Lisp. The same RTL placed with
+The served build of `fc3dc21` ran Lisp. The same RTL placed with
 `-directive Explore` halted at 1.07 G microcycles, and two placements of a
 slice beside it halted on every boot. The halts landed in the page-fault code
 with stray pixels in the frame buffer, and every build met timing.
@@ -1923,18 +1923,18 @@ MEMSTART AND VMAOK registered every tick, with the map before it. Its path is
 allowed eight ticks and routes at about 19 ns, so on an access that faults the
 tick after the boundary can hold a VMAOK that has not settled. The bus
 interface granted on that tick. The grant ran a cycle at the last address used
-with stale write data. At `b29bd84` the interface samples -MEMRQ again at the
+with stale write data. At `1bb465c` the interface samples -MEMRQ again at the
 master clock, as MIT's priority logic does. The unfixed Explore placement
 halted again at 331,783,208 microcycles. Four placements with the fix ran
 4.08 G microcycles each with forms typed and a clean screen.
 
-**Main's fabric at `b29bd84` on the Arty Z7-20.** Two placements were built
+**Main's fabric at `1bb465c` on the Arty Z7-20.** Two placements were built
 with `DDR=1 HDMI=1 LMTV=1`: the default at +0.253 ns and Explore at +0.239 ns,
 both with 5,366 slices and 46 block RAM tiles. Explore ran 4.11 G microcycles
 and the default 4.78 G, and then 8.08 G after the serial test, with no halt.
 
 **Serial at 9600 baud now loses nothing.** The line keeps a store of 1,024
-characters behind RDATA (`125c414`). Measured on the default build:
+characters behind RDATA (`e88d799`). Measured on the default build:
 
 | Test | Result |
 |---|---|
@@ -2709,7 +2709,7 @@ shipped in that flash, which has no CADR in it, and every power-on needed a
 cable and a download.
 
 **What the flash holds.** The phase-1 bitstream in it was built at commit
-`92c9a3b`, HPS-first, with the processor's first-stage loader from the same
+`1d58842`, HPS-first, with the processor's first-stage loader from the same
 build as the card's contents. `QSPI_OWNERSHIP` is `HPS`, which gives the flash
 controller to the processor; the other value is what the shipped image sets,
 and a kernel that finds the controller owned by the device manager dies on the
@@ -3142,13 +3142,13 @@ fabric no way to read its own stamp, so `cadr-console status` reports no build
 stamp whatever is configured, which the flash session above already recorded.
 What identifies the fabric here is the file: `quartus_pfg -i` on the
 `cadr.core.rbf` that both paths loaded reports `JTAG user code: 0xF5CA3480`,
-which is this project's stamp for commit `f5ca348` (`92c9a3b` after the
+which is this project's stamp for commit `f5ca348` (`1d58842` after the
 history rewrite) with a clean tree. That is a reading of a file on the build
 host and not of the part, and nothing in this session corroborates it from
 the board.
 
 **So the bitstream and the tree are not the same commit, and the reason that
-is tolerable here is narrow.** The fabric is `f5ca348` (`92c9a3b` after the
+is tolerable here is narrow.** The fabric is `f5ca348` (`1d58842` after the
 history rewrite) and the tree is thirty commits later. What this session tests
 is the loader, and the
 three files that define the boot path --- the board's U-Boot environment, the

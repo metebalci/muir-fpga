@@ -19,7 +19,7 @@
 # from `hps_internal_osc`, and is clocked by the machine's clock out of the
 # I/O PLL.  The two clocks are unrelated, so the analyzer's recovery and
 # removal checks on those six clears compare edges that have no fixed
-# relation: measured on both fits at `3dad80b`, six endpoints failed removal
+# relation: measured on both fits at `74c2cf9`, six endpoints failed removal
 # by up to 0.672 ns with 3.98 ns of skew between the two clocks.
 #
 # **WHAT ALTERA SAYS.**  The synchronizer's own source, generated from the

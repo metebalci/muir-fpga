@@ -1208,7 +1208,7 @@ module cadr_arty #(
       // software says so.
       //
       // AND THE NEXT ONE IS A RESET AND NOT A FINGER. `SAXIHP0ARESETN`
-      // follows `LVL_SHFTR_EN` at 0xF8000900 --- measured at 7fdfdde --- so
+      // follows `LVL_SHFTR_EN` at 0xF8000900 --- measured at e1b4d5f --- so
       // writing that register 0x0 then 0xF drops `axi_rst` and raises it,
       // the witness returns to IDLE and runs the whole sequence again. Step
       // three's first draft tied this to BTN1 and answered on LD4, which
@@ -1487,7 +1487,7 @@ module cadr_arty #(
     // interlock; what belongs here is only the wiring and the reset.
     //
     // **ONLY WITH `DDR` SET, NOT ON A `PROVE` BOARD.** The two proving boards
-    // were passed on silicon at `712f664` and are about the memory port; the
+    // were passed on silicon at `21459a1` and are about the memory port; the
     // disk's ports have no place in them, so on those the PS7's HP2 and GP0
     // pins are tied here and the drive seam is tied off as on the default
     // board.

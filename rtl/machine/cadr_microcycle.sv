@@ -646,7 +646,7 @@ module cadr_microcycle #(
   // `ir_next`, and both are read only at `cpu_edge`.
   //
   // WHAT IT COST WAS THE CONTROL STORE'S ADDRESS PINS.  On the DDR=1 board
-  // at 44747c2, `u_phase_gen/tpclk_reg/C -> imem_reg_3/ADDRBWRADDR[13]` was
+  // at 8064411, `u_phase_gen/tpclk_reg/C -> imem_reg_3/ADDRBWRADDR[13]` was
   // 4.775 ns of the 5 ns tick that board was clocked at --- 0.952 of logic
   // over four LUTs and 3.823 of
   // routing, `cpu_edge` at fanout 292 and the mux's output at fanout 25
@@ -2533,7 +2533,7 @@ module cadr_microcycle #(
   // `cpu_edge` is `mclk_edge && machrun`, and `mclk_edge` is one tick a
   // microcycle.  A held copy is the same value there, because what it holds
   // last changed at the boundary before.  What it buys is the path, and the
-  // path was the DDR board's worst at a27699b:
+  // path was the DDR board's worst at 37616d3:
   //
   //     -0.446 ns   processor/ir_reg[25]_replica/C
   //              -> processor/rdfinish_t_reg[5]/R
