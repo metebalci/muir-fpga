@@ -158,7 +158,14 @@ module cadr_arty #(
     // constraint file `quux_machine.xdc` states for them.  The CADR reads
     // neither.
     parameter int unsigned SYNC_K = 4,
-    parameter int unsigned SYNC_L = 0
+    parameter int unsigned SYNC_L = 0,
+
+    // **THE WORD'S WIDTH**, handed to `cadr_machine` as it stands: 32, or 40
+    // for QUUX revision 13 (contract G2), whose processor comes with the
+    // word (`rtl/machine/cadr_microcycle.sv`).  The flow's `WORD_BITS` sets
+    // it, 32 unless asked, and `build/machine_param.pass` holds that it
+    // arrives.  The probe takes each word's `<31:0>`.
+    parameter int unsigned WORD_BITS = 32
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -348,7 +355,8 @@ module cadr_arty #(
   // ---------------------------------------------------------- the machine
 
   logic [13:0] pc, lpc, opc;
-  logic [31:0] st, a, m, alu, r, ob, q, vma, md;
+  logic [31:0] st, alu;
+  logic [WORD_BITS-1:0] a, m, r, ob, q, vma, md;
   logic [47:0] ir;
   logic [9:0]  dc;
   logic [25:0] lc;
@@ -877,7 +885,8 @@ module cadr_arty #(
       .LMTV(LMTV),
       .MACHINE(MACHINE),
       .SYNC_K(SYNC_K),
-      .SYNC_L(SYNC_L)
+      .SYNC_L(SYNC_L),
+      .WORD_BITS(WORD_BITS)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO
@@ -2667,11 +2676,11 @@ module cadr_arty #(
         // free-running probe at 100 MHz would mostly record a machine
         // standing still and would line up with no row of anything.
         .qualify(clock_edge),
-        .pc(pc), .ir(ir), .q(q), .a(a), .m(m), .alu(alu), .r(r), .ob(ob),
+        .pc(pc), .ir(ir), .q(q[31:0]), .a(a[31:0]), .m(m[31:0]), .alu(alu), .r(r[31:0]), .ob(ob[31:0]),
         .dc(dc), .opc(opc), .st(st), .lc(lc),
         .iwrited(iwrited), .nop(nop), .n_vmaok(!vmaok), .jcond(jcond),
         .pcs1(pcs1), .pcs0(pcs0),
-        .lpc(lpc), .md(md), .vma(vma), .promdis(promdisable),
+        .lpc(lpc), .md(md[31:0]), .vma(vma[31:0]), .promdis(promdisable),
         .jtag_drck(bscan_drck), .jtag_sel(bscan_sel),
         .jtag_shift(bscan_shift), .jtag_capture(bscan_capture),
         .jtag_tdi(bscan_tdi), .jtag_tdo(bscan_tdo)

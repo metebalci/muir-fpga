@@ -65,6 +65,36 @@ the CADR.
 
 ## From a modified tree
 
+This fit was built from the working tree on `a8f08b4` with QUUX revision
+13's processor (contract G2 and its appendix A1), `WORD_BITS=40`, and muir
+pinned at `ffc5ba5`. The memory port is still revision 12's, and the boot
+PROM image is QUUX's version 2000, which does not run on revision 13: the
+fit measures the processor, not a machine that boots.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 13 | -1.092 ns | +0.014 ns | 22,539 of 53,200 LUTs, 42.37% | 68 of 140 BRAM tiles | 7,027 of 13,300 | working tree on `a8f08b4` | modified | 2026-09-29 |
+
+The Arty Z7-20 misses timing on 165 endpoints, in three groups:
+
+- Four are the map chain into the memory path's decode, which has two
+  ticks: from `MEMSTART`, `VMA` or `MD` through both map levels into
+  `device`, the Unibus address and `nxm`. The worst is -1.092 ns, into
+  `device`, over 23 logic levels with 16.0 ns of routing.
+- 160 are the maps' write enables, which have one tick: from the divider's
+  hold through the write pulse into the level-2 map's LUT RAM, 7 logic
+  levels, the worst -0.322 ns. Level 2 is 4,096 entries of 28 bits, so one
+  enable drives many more cells than before.
+- One is the cache's tag RAM address from the divider's hold, -0.024 ns.
+
+The divider's own path, one tick, has +0.970 ns, so the divider keeps its
+two steps a tick. The dispatch memory's path into the next address has
++6.668 ns of its 40. The fit also passed `rams_check.tcl` (the PDL buffer is
+20 block RAMs) and `rams_enable_check.tcl` over 117 block RAM ports.
+
+The constraints check's path queries were raised from 100,000 to 400,000
+paths for this build, which has more than 100,000 timing endpoints.
+
 This fit was built from the tree committed as `90a3436`, which makes the
 word's width a parameter of the processor, `WORD_BITS`, 32 on the CADR
 (contract G2 §2.1), and moves muir's pin. The boot PROM image the fit reads

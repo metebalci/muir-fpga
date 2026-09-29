@@ -272,6 +272,17 @@ if {!$fault} {
 if {!$fault && $machine eq "quux"} {
     set_parameter -name MACHINE quux
 }
+# **AND QUUX REVISION 13, A 40-BIT WORD** (contract G2), set only at 40, so
+# that every earlier build's project is unchanged.  `build.sh` refuses 40 on
+# any machine but QUUX and reads the value back from the synthesis report.
+set word_bits [expr {[info exists ::env(WORD_BITS)] ? $::env(WORD_BITS) : "32"}]
+if {$word_bits ne "32" && $word_bits ne "40"} {
+    puts "project: WORD_BITS is '$word_bits', which is neither 32 nor 40"
+    exit 1
+}
+if {!$fault && $word_bits eq "40"} {
+    set_parameter -name WORD_BITS 40
+}
 
 # ------------------------------------------------------ the configuration
 #

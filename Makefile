@@ -60,6 +60,24 @@ ifeq ($(filter cadr quux,$(MACHINE)),)
 $(error MACHINE is '$(MACHINE)'; it is cadr, MIT's machine, or quux, the evolved CADR)
 endif
 
+# **QUUX REVISION 13 IS A 40-BIT WORD** (contract G2): `WORD_BITS=40` beside
+# `MACHINE=quux` builds a board's bitstream as revision 13, whose processor
+# comes with the word (`rtl/machine/cadr_microcycle.sv`), into a directory
+# named `quux13`; 32, the default, is the CADR and QUUX to revision 12.  It
+# reaches `cadr_machine` as its `WORD_BITS` parameter through each board's
+# top level, as `MACHINE` does, and `machine_param.pass` holds that it does.
+# It is the parameter's name, muir's `Geometry::word_bits`, which keys
+# revision 13 in muir as well; it goes when revision 12 is retired.  **CHECK
+# TAKES NO WORD_BITS**: `make check MACHINE=quux` runs revision 13's
+# programs beside revision 12's, each built at its own width (`QUUX13_PROGRAMS`).
+WORD_BITS ?= 32
+ifeq ($(filter 32 40,$(WORD_BITS)),)
+$(error WORD_BITS is '$(WORD_BITS)'; it is 32, or 40 for QUUX revision 13)
+endif
+ifeq ($(WORD_BITS)$(MACHINE),40cadr)
+$(error WORD_BITS=40 is QUUX revision 13; the CADR's word is 32 bits)
+endif
+
 # **QUUX'S MICROCYCLE, IN TICKS**: K, and L more for an `ILONG` instruction
 # (`QUUX_TIMED` below says what they are and which checks take them).  The
 # CADR's microcycle is its delay line's, so neither means anything there.
@@ -187,6 +205,15 @@ QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page r
 # a flag's rise strictly inside a microcycle, and `clockwait`, whose `ILONG`s
 # put its reads of the clocks between the edges (`golden/src/quux.rs`).
 QUUX_L1_PROGRAMS := divmd divmdsync tickwin clockwait
+# **REVISION 13'S PROCESSOR** (contract G2, appendix A1): the programs of
+# `golden/src/quux13.rs`, each traced on muir's `Geometry::QUUX_13` and held
+# against the whole machine built at `WORD_BITS` 40, QUUX's alone.  `alu` the
+# ALU on tags, the conditions, the overflow flag, the sources and the word
+# registers; `byte` the ring of 40, the masker, LC byte mode, a BYTE word's
+# length bits and the bit test; `dispatch` the dispatch memory at 4,096;
+# `map` the map at 8,192 x 7 and 4,096 x 28 through `MAP(MD)`.  None touches
+# main memory, whose port is still revision 12's.
+QUUX13_PROGRAMS := alu byte dispatch map
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
@@ -204,6 +231,7 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
        $(BUILD)/quux_readout_window.quux.$(QK).pass $(BUILD)/checkpoint.quux.pass \
        $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QK).pass) \
        $(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QKL1).pass) $(BUILD)/phase_gen.quux.$(QKL1).pass \
+       $(QUUX13_PROGRAMS:%=$(BUILD)/quux13_%.quux.$(QK).pass) $(BUILD)/rdw_poison_quux13.quux.$(QK).pass \
        $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1072,6 +1100,13 @@ $(BUILD)/quux_%_prom.hex: $(QUUX_GOLDEN) | $(BUILD)
 $(BUILD)/quux_%_prom.quux.hex: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine quux --prom > $@
 
+# **AND REVISION 13'S PROGRAMS** (`QUUX13_PROGRAMS`), assembled at 36000 with
+# revision 13's fields; their traces and machines are in `QUUX_TIMED`.
+QUUX13_GOLDEN := golden/src/quux13.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Cargo.toml
+.PRECIOUS: $(BUILD)/quux13_%_prom.hex
+$(BUILD)/quux13_%_prom.hex: $(QUUX13_GOLDEN) | $(BUILD)
+	$(GOLDEN) --release --bin quux13 -- --program $* --prom > $@
+
 $(BUILD)/quux_%.golden: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine cadr > $@
 
@@ -1164,6 +1199,41 @@ $$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb
 $$(BUILD)/quux_%.quux.$(1).pass: $$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine $$(BUILD)/quux_%.quux.$(1).golden \
                                 $$(BUILD)/quux_%_prom.quux.hex $$(BUILD)/sync_prom.hex
 	$$(BUILD)/obj_quux_$$*_quux_$(1)/Vcadr_machine $$(BUILD)/quux_$$*.quux.$(1).golden
+	@touch $$@
+
+# Revision 13's programs, the machine at `WORD_BITS` 40.
+.PRECIOUS: $$(BUILD)/quux13_%.quux.$(1).golden $$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machine
+
+$$(BUILD)/quux13_%.quux.$(1).golden: $$(QUUX13_GOLDEN) | $$(BUILD)
+	$$(GOLDEN) --release --bin quux13 -- --program $$* --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_quux13_$$*_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux13_$$*_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+$$(BUILD)/quux13_%.quux.$(1).pass: $$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machine $$(BUILD)/quux13_%.quux.$(1).golden \
+                                  $$(BUILD)/quux13_%_prom.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_quux13_$$*_quux_$(1)/Vcadr_machine $$(BUILD)/quux13_$$*.quux.$(1).golden
+	@touch $$@
+
+# **AND REVISION 13'S READ-DURING-WRITE WINDOW** (see "the read-during-write
+# window" below): the same machine under `CADR_RDW_POISON` on the `map`
+# program, which writes the dispatch memory and both levels of the map at
+# revision 13's sizes, the DE25-Nano's MLABs.
+$$(BUILD)/obj_rdw_poison_quux13_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR +define+CADR_RDW_POISON -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_rdw_poison_quux13_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux13_map_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+$$(BUILD)/rdw_poison_quux13.quux.$(1).pass: $$(BUILD)/obj_rdw_poison_quux13_quux_$(1)/Vcadr_machine \
+                                           $$(BUILD)/quux13_map.quux.$(1).golden \
+                                           $$(BUILD)/quux13_map_prom.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_rdw_poison_quux13_quux_$(1)/Vcadr_machine $$(BUILD)/quux13_map.quux.$(1).golden
 	@touch $$@
 
 $$(BUILD)/quux_port.quux.$(1).golden: golden/src/quux_port.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
@@ -2387,6 +2457,13 @@ $(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) M
 	    | grep -q 'MACHINE=quux .*boards/de25-nano/quartus/build.sh' \
 	    || { echo "machine: make de25 MACHINE=quux does not hand the machine to build.sh"; exit 1; }
 	@echo "machine: ok      make de25 MACHINE=quux hands the machine to build.sh"
+	$(MAKE) -s -n de25 MACHINE=quux WORD_BITS=40 | tr -d '\\\n' \
+	    | grep -q 'WORD_BITS=40 .*boards/de25-nano/quartus/build.sh' \
+	    || { echo "machine: make de25 WORD_BITS=40 does not hand the word to build.sh"; exit 1; }
+	@echo "machine: ok      make de25 MACHINE=quux WORD_BITS=40 hands the word to build.sh"
+	@! $(MAKE) -s -n de25 MACHINE=cadr WORD_BITS=40 > /dev/null 2>&1 \
+	    || { echo "machine: make takes WORD_BITS=40 on the CADR"; exit 1; }
+	@echo "machine: ok      make refuses WORD_BITS=40 on the CADR"
 	@echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx '$(BUILD)/machine.quux.$(QK).pass' \
 	    || { echo "machine: make check MACHINE=quux does not hold the machine built as QUUX"; exit 1; }
 	@! echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx '$(BUILD)/machine.pass' \
@@ -2502,7 +2579,7 @@ DE25_SPL_HEX ?=
 de25: $(MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
       $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux.hex)
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
-	    HDMI=$(HDMI) MACHINE=$(MACHINE) \
+	    HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
 	    boards/de25-nano/quartus/build.sh $(MACHINE_SRC) $(DE25_TOP) \
 	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
@@ -2525,7 +2602,7 @@ de25-fault: rtl/plumbing/cadr_fault_lamp.sv rtl/plumbing/cadr_gp0_default.sv $(F
 # the board's flash.  `boards/de25-nano/quartus/program.sh` finds the board's
 # cable by the serial in `boards/de25-nano/local.conf`.
 de25-program:
-	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) HDMI=$(HDMI) MACHINE=$(MACHINE) \
+	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) \
 	    boards/de25-nano/quartus/program.sh
 
 # And the probe's capture read off that board and compared with muir: the

@@ -2513,10 +2513,30 @@ def _timed(key, k, l):
 # None is pending now.
 PENDING = {}
 
+# **REVISION 13'S PROCESSOR** (contract G2, appendix A1): the whole machine
+# at `WORD_BITS` 40 on the programs of `golden/src/quux13.rs`, the
+# Makefile's `QUUX13_PROGRAMS`, each traced on muir's `Geometry::QUUX_13`.
+# And the read-during-write window on revision 13's dispatch memory and map,
+# 4,096, 8,192 and 4,096 entries: the same machine under `CADR_RDW_POISON`
+# on the `map` program, which writes all three.
+QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map")
+for _p in QUUX13_PROGRAMS:
+    CHECKS["quux13_%s_quux" % _p] = dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"', "-GWORD_BITS=40"],
+        "golden": "quux13_%s.quux.golden" % _p,
+        "prom": "quux13_%s_prom.hex" % _p,
+        "machine": "quux",
+    })
+CHECKS["rdw_poison_quux13_quux"] = dict(CHECKS["quux13_map_quux"], **{
+    "flags": CHECKS["quux13_map_quux"]["flags"] + ["+define+CADR_RDW_POISON"],
+})
+
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
     ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
                                   "imemsync", "page", "registers", "clockwait", "memedge", "busreset",
-                                  "startstart", "rtc", "files", "fused", "operand", "prefetch")]
+                                  "startstart", "rtc", "files", "fused", "operand", "prefetch")] + \
+    ["quux13_%s_quux" % p for p in QUUX13_PROGRAMS] + ["rdw_poison_quux13_quux"]
 CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
 CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)
 CHECKS["quux_clockwait_quux_l1"] = _timed("quux_clockwait_quux", 4, 1)
@@ -3459,6 +3479,10 @@ def check_makefile():
     programs = re.search(r"^QUUX_L1_PROGRAMS := (.*)$", text, re.M)
     for prog in (programs.group(1).split() if programs else []):
         names |= {"quux_" + prog + "_quux_l1"}
+    # And revision 13's, `golden/src/quux13.rs`, QUUX's alone.
+    programs = re.search(r"^QUUX13_PROGRAMS := (.*)$", text, re.M)
+    for prog in (programs.group(1).split() if programs else []):
+        names |= {"quux13_" + prog + "_quux"}
     for found in sorted(names):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

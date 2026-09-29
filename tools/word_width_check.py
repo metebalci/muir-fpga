@@ -22,16 +22,23 @@ the three, Verilator writes its elaborated tree as JSON and this reads the
 width of every word in the module `cadr_machine`'s `processor` cell was
 elaborated into, and of `cadr_machine`'s own word ports: each must be
 `WORD_BITS`.  And the processor's parts that stay 32 bits at 40 (the ALU's
-output `ALU<31:0>`, the rotator's `R`, the cables' `MEM<31:0>` both ways and
-the statistics counter) must be 32, so that the list of what is still 32 bits
-in `cadr_microcycle.sv`'s header is held as well as the list of words.
+output `ALU<31:0>`, the cables' `MEM<31:0>` both ways and the statistics
+counter) must be 32, so that the list of what is still 32 bits in
+`cadr_microcycle.sv`'s header is held as well as the list of words.
+
+**AND REVISION 13'S SIZES COME WITH THE WORD** (contract G2, appendix A1):
+at 40 the location counter is 30 bits, the level-2 entry and its latch 28,
+the level-1 entry 7 and `MAP(MD)` 40; the dispatch memory has 4,096 entries,
+level 1 8,192 and level 2 4,096, with their addresses 12, 13 and 12 bits
+wide; and at 32 each is revision 12's or the CADR's.  Read back as the
+words are, element widths and array depths both.
 
 **A WIDTH THE MACHINE DOES NOT HAVE MUST STOP ELABORATION** with the
 processor's own message: 40 on the CADR, and 36 on QUUX.
 
-WHAT THIS DOES NOT SAY.  It says nothing about what a 40-bit word does: no
-trace of muir's has one yet, so nothing here compares the bits above 31
-with muir's.  At 32 that is every other check's, against muir's traces.
+WHAT THIS DOES NOT SAY.  It says nothing about what a 40-bit word does:
+that is revision 13's programs' (`build/quux13_*.quux.k4.pass`), against
+muir's traces on `Geometry::QUUX_13`, and at 32 every other check's.
 
 Exit status 0 when every case agrees, 1 otherwise, with each case's line
 printed either way.
@@ -50,12 +57,22 @@ DIRS = ["rtl/machine", "rtl/plumbing", "rtl/plumbing/xilinx7", "boards/arty-z7-2
 TOP = "rtl/machine/cadr_machine.sv"
 
 # The processor's words, `cadr_microcycle.sv`'s `WORD_BITS`.
-WORDS = ["a", "m", "ob", "q", "vma", "md", "l", "mf", "mo", "md_held",
+WORDS = ["a", "m", "r", "ob", "q", "vma", "md", "l", "mf", "mo", "md_held",
          "md_bus", "vmas", "m31_r", "macro_m31_w", "mmem_out",
          "amem", "mmem", "pdl", "amem_q", "mmem_q", "pdl_q",
          "ro_amem_q", "ro_mmem_q", "ro_pdl_q", "mtag", "alu_tag", "qtag"]
 # What stays 32 bits at 40.
-NARROW = ["alu", "r", "rdata", "wdata", "st"]
+NARROW = ["alu", "rdata", "wdata", "st"]
+# Revision 13's sizes and revision 12's and the CADR's (A1.4, A1.6, A1.7):
+# name -> (CADR, QUUX at 32, QUUX at 40), an element's width.
+SIZED = {
+    "lc_q": (26, 26, 30), "vmo": (24, 24, 28), "lvmo": (24, 24, 28),
+    "vmap": (5, 6, 7), "l1_map": (5, 6, 7), "l2_map": (24, 24, 28),
+    "mf_map": (32, 32, 40), "msk": (32, 32, 40),
+    "dadr": (11, 11, 12), "adr0": (11, 11, 13), "adr1": (10, 11, 12),
+}
+# And the arrays' depths.
+DEEP = {"dmem": (2048, 2048, 4096), "l1_map": (2048, 2048, 8192), "l2_map": (1024, 2048, 4096)}
 # The machine's own ports that carry a word.
 MACHINE_WORDS = ["a", "m", "ob", "q", "vma", "md"]
 
@@ -110,8 +127,18 @@ def width(dtype, by_addr):
     return abs(hi - lo) + 1
 
 
-def widths(tree):
-    """{module name: {variable: width}} for the module-level variables."""
+def depth(dtype, by_addr):
+    """An unpacked array's number of elements, or None."""
+    rng = dtype.get("declRange", "").strip("[]")
+    if dtype.get("type") != "UNPACKARRAYDTYPE" or ":" not in rng:
+        return None
+    hi, lo = (int(x) for x in rng.split(":"))
+    return abs(hi - lo) + 1
+
+
+def widths(tree, depths=None):
+    """{module name: {variable: width}} for the module-level variables, and
+    their depths into `depths` the same way."""
     by_addr = {}
 
     def index(n):
@@ -130,9 +157,11 @@ def widths(tree):
         if mod.get("type") != "MODULE":
             continue
         vs = out.setdefault(mod["name"], {})
+        ds = depths.setdefault(mod["name"], {}) if depths is not None else {}
         for st in mod.get("stmtsp", []):
             if st.get("type") == "VAR":
                 vs[st["name"]] = width(by_addr[st["dtypep"]], by_addr)
+                ds[st["name"]] = depth(by_addr[st["dtypep"]], by_addr)
     return out
 
 
@@ -142,8 +171,9 @@ def read_back(machine, bits, scratch):
     if rc != 0:
         say(False, "%s at %d: Verilator did not write its tree\n%s" % (machine, bits, quoted(out)))
         return
+    deep = {}
     with open(os.path.join(mdir, "Vcadr_machine.tree.json")) as f:
-        mods = widths(json.load(f))
+        mods = widths(json.load(f), deep)
     procs = [name for name in mods if name.startswith("cadr_microcycle")]
     if len(procs) != 1:
         say(False, "%s at %d: %d processors elaborated, want one: %s" % (machine, bits, len(procs), procs))
@@ -160,8 +190,17 @@ def read_back(machine, bits, scratch):
     for name in MACHINE_WORDS:
         if top.get(name) != bits:
             wrong.append("cadr_machine %s is %s bits" % (name, top.get(name)))
-    say(not wrong, "%s at %d: %d words of %d bits, %d parts of 32, %d ports of the machine%s"
-        % (machine, bits, len(WORDS), bits, len(NARROW), len(MACHINE_WORDS),
+    which = CASES.index((machine, bits))
+    for name, want in sorted(SIZED.items()):
+        if proc.get(name) != want[which]:
+            wrong.append("processor %s is %s bits, want %d" % (name, proc.get(name), want[which]))
+    pdeep = deep[procs[0]]
+    for name, want in sorted(DEEP.items()):
+        if pdeep.get(name) != want[which]:
+            wrong.append("processor %s has %s entries, want %d" % (name, pdeep.get(name), want[which]))
+    say(not wrong, "%s at %d: %d words of %d bits, %d parts of 32, %d ports of the machine, "
+        "%d sizes and %d depths of the revision%s"
+        % (machine, bits, len(WORDS), bits, len(NARROW), len(MACHINE_WORDS), len(SIZED), len(DEEP),
            "" if not wrong else "\n" + "\n".join(wrong)))
 
 

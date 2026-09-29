@@ -135,8 +135,11 @@ proc assert_constraints_scoped {inside period} {
 # `cadr_machine.xdc` had "applied to NO PATH" on a design where it had applied
 # perfectly.  That is a false accusation of the `foreach` bug this check exists
 # to catch, which is the one failure a check must never make.  The limit is
-# 100,000 now, and the truncated case is a failure of its own with its own
-# words rather than a note above somebody else's.
+# 100,000 then, and the truncated case is a failure of its own with its own
+# words rather than a note above somebody else's.  It is 400,000 since QUUX
+# revision 13: its map of 8,192 and 4,096 entries in LUT RAM took the
+# `DDR=1 HDMI=1` board past 100,000 endpoints, and the query truncated again
+# (`assert_multicycle_applied $tick 6`, 100,000 paths and none of 60 ns).
 proc relaxed_path_histogram {limit} {
     set hist {}
     foreach req [get_property -quiet REQUIREMENT \
@@ -225,7 +228,7 @@ proc assert_instance_timing {period cycles instance relaxed {elsewhere {}}} {
         set pins [get_pins -quiet -of_objects $fast -filter {REF_PIN_NAME == D}]
         foreach req [get_property -quiet REQUIREMENT \
                          [get_timing_paths -quiet -setup -to $pins \
-                              -max_paths 100000 -nworst 1]] {
+                              -max_paths 400000 -nworst 1]] {
             if {[format %.3f $req] eq $want} { incr swallowed }
         }
     }
@@ -247,7 +250,7 @@ proc assert_instance_timing {period cycles instance relaxed {elsewhere {}}} {
         set pins [get_pins -quiet -of_objects $slow -filter {REF_PIN_NAME == D}]
         foreach req [get_property -quiet REQUIREMENT \
                          [get_timing_paths -quiet -setup -to $pins \
-                              -max_paths 100000 -nworst 1]] {
+                              -max_paths 400000 -nworst 1]] {
             if {[format %.3f $req] eq $want} { incr kept }
         }
         if {$kept == 0} {
@@ -332,7 +335,7 @@ proc assert_cable_beat {rtl xdc} {
 }
 
 # Fails the run when no path carries the relaxed requirement.
-proc assert_multicycle_applied {period cycles {limit 100000}} {
+proc assert_multicycle_applied {period cycles {limit 400000}} {
     set want [format %.3f [expr {$period * $cycles}]]
     set hist [relaxed_path_histogram $limit]
     set total 0
@@ -430,7 +433,7 @@ proc assert_clause_timing {period cycles what from {to {}}} {
     set hist {}
     set over 0
     set worst ""
-    foreach p [get_timing_paths -quiet -setup -from $fc -to $tc -max_paths 100000 -nworst 1] {
+    foreach p [get_timing_paths -quiet -setup -from $fc -to $tc -max_paths 400000 -nworst 1] {
         set req [get_property REQUIREMENT $p]
         dict incr hist [format %.3f $req]
         if {$req > $want + 0.001} {

@@ -261,7 +261,7 @@ fn main() {
     let mut w = muir::checkpoint::Writer::new();
     e.save(&mut w);
     let body = w.finish();
-    let n = muir::checkpoint::write(std::path::Path::new(&path), "rtl", 1, &body)
+    let n = muir::checkpoint::write(std::path::Path::new(&path), "rtl", 1, e.m.geometry.word_bits, &body)
         .expect("the checkpoint");
     println!(
         "quux_checkpoint: {} bytes of body, {n} bytes of file, timing {}, at {} ns",

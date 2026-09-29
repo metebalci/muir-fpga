@@ -83,11 +83,11 @@ module cadr_machine #(
     parameter int unsigned SYNC_L = 0,
 
     // **THE WORD'S WIDTH**, muir's `Geometry::word_bits`: 32 on the CADR and
-    // on QUUX to revision 12, 40 on revision 13 (contract G2 §2.1).
-    // `cadr_microcycle.sv` says which of the processor's registers are words
-    // and what is still 32 bits at 40. The ports below that carry a word
-    // carry the whole of it; the console's registers and the bus audit take
-    // `<31:0>`.
+    // on QUUX to revision 12, 40 on revision 13 (contract G2 §2.1), whose
+    // processor comes with the word: `cadr_microcycle.sv` says what that is,
+    // and what of the machine around it is still revision 12's. The ports
+    // below that carry a word carry the whole of it, `R` among them; the
+    // console's registers and the bus audit take `<31:0>`.
     parameter int unsigned WORD_BITS = 32
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
@@ -305,7 +305,7 @@ module cadr_machine #(
     output var logic [WORD_BITS-1:0] a,
     output var logic [WORD_BITS-1:0] m,
     output var logic [31:0] alu,
-    output var logic [31:0] r,
+    output var logic [WORD_BITS-1:0] r,
     output var logic [WORD_BITS-1:0] ob,
     output var logic [WORD_BITS-1:0] q,
     output var logic [9:0]  dc,
@@ -594,8 +594,10 @@ module cadr_machine #(
   // `(0x5155 << 16) | (12 << 4) | 4`: the signature, hardware revision 12
   // --- the fused return, the MACRO-DISPATCH register and the MACRO
   // DISPATCH MEMORY (contract H8a), after contract Q13's register page at
-  // `17777400` --- and processor type 4, `Geometry::QUUX.machine_id`.
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
+  // `17777400` --- and processor type 4, `Geometry::QUUX.machine_id`.  A
+  // 40-bit word is revision 13, `(13 << 4) | 4`, `Geometry::QUUX_13`
+  // (contract G2 §2.8).
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
   // The video controller at the size every QUUX bitstream builds: 1280 by
   // 1024, one bit a pixel, 40 words a line at `17000000`.
   localparam int unsigned VIDEO_WIDTH  = 1280;

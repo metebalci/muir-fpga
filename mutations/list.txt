@@ -1901,9 +1901,9 @@
 @note signal to mutate: eleven bits of `MAPI` pick the level-1 entry, and
 @note `adr0` addresses that RAM's write too.
 @old
-  assign vmap_rd = l1_map[adr0];
+  assign l1_ram  = l1_map[adr0];
 @new
-  assign vmap_rd = l1_map[{adr0[9:0], adr0[10]}];
+  assign l1_ram  = l1_map[{adr0[L1_INDEX-2:0], adr0[L1_INDEX-1]}];
 @end
 
 # RETIRED at muir's `200818f`: `the-scratchpad-latches-follow-in-the-wrong-phase`,
@@ -1972,14 +1972,14 @@
 @note block RAM, THIS CHECK WOULD NOT OBJECT. That has to be decided from
 @note the timing, not from here.
 @old
-  assign vmap_rd = l1_map[adr0];
+  assign l1_ram  = l1_map[adr0];
 @new
-  logic [4:0] vmap_d [0:27];
+  logic [L1_BITS-1:0] vmap_d [0:27];
   always_ff @(posedge clk) begin
     vmap_d[0] <= l1_map[adr0];
     for (int d = 1; d < 28; d++) vmap_d[d] <= vmap_d[d-1];
   end
-  assign vmap_rd = vmap_d[27];
+  assign l1_ram  = vmap_d[27];
 @end
 
 @mutation the-map-is-written-with-the-wrong-frame
@@ -1990,9 +1990,9 @@
 @note stored asks the plainest possible question about the map: is anything
 @note the check compares downstream of what the map holds?
 @old
-        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
+        if (map_l2_en) l2_map[adr1_w] <= l2_store;
 @new
-        if (vma[25]) l2_map[adr1_w] <= vma[23:0] ^ 24'd1;
+        if (map_l2_en) l2_map[adr1_w] <= l2_store ^ {{(L2_BITS-1){1'b0}}, 1'b1};
 @end
 
 @mutation the-read-finish-delay-is-charged-in-full
@@ -2433,7 +2433,7 @@
 @note a register, and a register on a signal is an invitation to move its
 @note source back one more step.
 @old
-  assign phys    = memstart ? {vmo[13:0], vma_bus} : phys_r;
+  assign phys    = memstart ? {vmo[21-OFFSET_BITS:0], vma_bus} : phys_r;
 @new
   assign phys    = phys_r;
 @end
@@ -7986,9 +7986,9 @@ if {0 && $held ne $want} {
 @note this is the check the property belongs to, and because here it fails on
 @note the ADDRESS as well as on the permission.
 @old
-        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
+        if (map_l2_en) l2_map[adr1_w] <= l2_store;
 @new
-        if (vma[25]) l2_map[adr1_w ^ 10'd1] <= vma[23:0];
+        if (map_l2_en) l2_map[adr1_w ^ {{(L1_BITS+4){1'b0}}, 1'b1}] <= l2_store;
 @end
 
 @mutation a-read-translates-through-a-stale-map-entry
@@ -8024,10 +8024,10 @@ if {0 && $held ne $want} {
 @note here, which is what this record moves.
 @old
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[13:0], vma_bus};
+          phys_r     <= {vmo[21-OFFSET_BITS:0], vma_bus};
 @new
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {lvmo[13:0], vma_bus};
+          phys_r     <= {lvmo[21-OFFSET_BITS:0], vma_bus};
 @end
 
 @mutation the-access-bit-comes-from-the-page-half-of-the-map-word
@@ -8058,9 +8058,9 @@ if {0 && $held ne $want} {
 @note would close it is a machine-level reference whose program holds an
 @note asymmetric map word, which means the band on `cadr_machine` and a pack.
 @old
-  assign pfr   = lvmo_eff[23];
+  assign pfr   = lvmo_eff[L2_BITS-1];
 @new
-  assign pfr   = lvmo_eff[23] && lvmo_eff[13];
+  assign pfr   = lvmo_eff[L2_BITS-1] && lvmo_eff[13];
 @end
 
 @mutation the-physical-page-is-one-too-high
@@ -8082,10 +8082,10 @@ if {0 && $held ne $want} {
 @note SURVIVES this and `map_boot` catches it.
 @old
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[13:0], vma_bus};
+          phys_r     <= {vmo[21-OFFSET_BITS:0], vma_bus};
 @new
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[13:0] + 14'd1, vma_bus};
+          phys_r     <= {vmo[21-OFFSET_BITS:0] + {{(21-OFFSET_BITS){1'b0}}, 1'b1}, vma_bus};
 @end
 
 @mutation the-memory-address-loses-its-page-bit
@@ -8131,9 +8131,9 @@ if {0 && $held ne $want} {
 @note Both bits stay read, so lint cannot do the catching instead.  Caught by
 @note the read-only configuration's permitted read, at microcycle 536,302.
 @old
-  assign pfr   = lvmo_eff[23];
+  assign pfr   = lvmo_eff[L2_BITS-1];
 @new
-  assign pfr   = lvmo_eff[23] && lvmo_eff[22];
+  assign pfr   = lvmo_eff[L2_BITS-1] && lvmo_eff[L2_BITS-2];
 @end
 
 @mutation map-access-bits-swapped
@@ -8144,11 +8144,11 @@ if {0 && $held ne $want} {
 @note case lint is blind to.  Caught on the same line as the record above:
 @note the read-only entry's permitted read becomes a refusal.
 @old
-  assign pfr   = lvmo_eff[23];
-  assign pfw   = !(!lvmo_eff[22] && wrcyc);
+  assign pfr   = lvmo_eff[L2_BITS-1];
+  assign pfw   = !(!lvmo_eff[L2_BITS-2] && wrcyc);
 @new
-  assign pfr   = lvmo_eff[22];
-  assign pfw   = !(!lvmo_eff[23] && wrcyc);
+  assign pfr   = lvmo_eff[L2_BITS-2];
+  assign pfw   = !(!lvmo_eff[L2_BITS-1] && wrcyc);
 @end
 
 @mutation map-write-bit-refuses-a-read-too
@@ -8158,9 +8158,9 @@ if {0 && $held ne $want} {
 @note refuses a read as well.  That is the third way to confuse the two bits
 @note and the third caught on the read-only entry's permitted read.
 @old
-  assign pfw   = !(!lvmo_eff[22] && wrcyc);
+  assign pfw   = !(!lvmo_eff[L2_BITS-2] && wrcyc);
 @new
-  assign pfw   = !(!lvmo_eff[22] && (wrcyc || rdcyc));
+  assign pfw   = !(!lvmo_eff[L2_BITS-2] && (wrcyc || rdcyc));
 @end
 
 @mutation map-refusal-still-starts-a-cycle
@@ -8208,9 +8208,9 @@ if {0 && $held ne $want} {
 @note
 @note Caught by the check's fourth configuration alone.
 @old
-        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
+        if (map_l2_en) l2_map[adr1_w] <= l2_store;
 @new
-        if (vma[25]) l2_map[vma[26] ? {vma[31:27], mapi[4:0]} : adr1_w] <= vma[23:0];
+        if (map_l2_en) l2_map[vma[26] ? {vma[31:27], mapi_l2} : adr1_w] <= l2_store;
 @end
 
 # ---------------------------------------------------------------------------
@@ -13742,10 +13742,10 @@ if {0 && $held ne $want} {
 @note address the machine held when the microcycle retired, and MD to hold
 @note what memory gave.
 @old
-          phys_r     <= {vmo[13:0], vma_bus};
+          phys_r     <= {vmo[21-OFFSET_BITS:0], vma_bus};
           wdata      <= md_bus[31:0];
 @new
-          phys_r     <= cpu_edge ? {vmo[13:0], vma_bus} : phys_r;
+          phys_r     <= cpu_edge ? {vmo[21-OFFSET_BITS:0], vma_bus} : phys_r;
           wdata      <= md_bus[31:0];
 @end
 
@@ -19259,9 +19259,9 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @note edge, `map-write-into-hang` and `dispatch-held-by-wait-0` read the word
 @note at the old address, where muir's `rtl` reads 0.
 @old
-  assign vma_bus = (cpu_edge && vmaenb) ? vmas[7:0] : vma[7:0];
+  assign vma_bus = (cpu_edge && vmaenb) ? vmas[OFFSET_BITS-1:0] : vma[OFFSET_BITS-1:0];
 @new
-  assign vma_bus = vma[7:0];
+  assign vma_bus = vma[OFFSET_BITS-1:0];
 @end
 
 @mutation the-write-word-takes-the-md-from-before-the-edge
@@ -19703,9 +19703,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note block 41 lands in block 01 and a translation through block 41 finds
 @note nothing there.
 @old
-        if (vma[25]) l2_map[adr1_w] <= vma[23:0];
+        if (map_l2_en) l2_map[adr1_w] <= l2_store;
 @new
-        if (vma[25]) l2_map[adr1_w ^ {adr1_w[L1_BITS+4], {(L1_BITS+4){1'b0}}}] <= vma[23:0];
+        if (map_l2_en) l2_map[adr1_w ^ {adr1_w[L1_BITS+4], {(L1_BITS+4){1'b0}}}] <= l2_store;
 @end
 
 @mutation quux-machine-id-says-another-processor
@@ -20339,7 +20339,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note `MAP(MD)` in the microcycle a level-1 store's write lands reads the
 @note entry stored, on the CADR: `map-level-1-source-after-write`.
 @old
-  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store  : vmap_rd;
+  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store : vmap_rd;
 @new
   assign vmap = vmap_rd;
 @end
@@ -20351,7 +20351,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note store's write lands read the word stored, on the CADR:
 @note `map-source-after-write` and `map-dispatch-after-write`.
 @old
-  assign vmo  = (!QUUX && wmapd && vma[25]) ? vma[23:0] : vmo_rd;
+  assign vmo  = (!QUUX && wmapd && vma[25]) ? l2_store : vmo_rd;
 @new
   assign vmo  = vmo_rd;
 @end
@@ -20361,9 +20361,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @file rtl/machine/cadr_microcycle.sv
 @note QUUX reads the old word in the microcycle a map store's write lands.
 @old
-  assign vmo  = (!QUUX && wmapd && vma[25]) ? vma[23:0] : vmo_rd;
+  assign vmo  = (!QUUX && wmapd && vma[25]) ? l2_store : vmo_rd;
 @new
-  assign vmo  = (wmapd && vma[25]) ? vma[23:0] : vmo_rd;
+  assign vmo  = (wmapd && vma[25]) ? l2_store : vmo_rd;
 @end
 
 @mutation quux-level-1-map-reads-the-new-word-after-a-store
@@ -20371,9 +20371,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @file rtl/machine/cadr_microcycle.sv
 @note The same for level 1: `map-level-1-source-after-write` on QUUX.
 @old
-  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store  : vmap_rd;
+  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store : vmap_rd;
 @new
-  assign vmap = (wmapd && vma[26]) ? l1_store  : vmap_rd;
+  assign vmap = (wmapd && vma[26]) ? l1_store : vmap_rd;
 @end
 
 @mutation quux-has-no-wait-for-md
@@ -21249,9 +21249,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/cadr_machine.sv
 @note The MACHINE-ID of revision 4, before the clocks and the register page.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
 @new
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_0044;
 @end
 
 @mutation quux-word-14-is-zero
@@ -21970,9 +21970,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note MACHINE-ID says revision 7, the memory port's, from before the device
 @note registers.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
 @new
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_0074;
 @end
 
 @mutation quux-line-read-is-one-beat
@@ -22292,9 +22292,9 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @note The landing is taken from `INTERRUPT-CONTROL<27>`, the interrupt
 @note enable, so the reset's own write is not seen landing.
 @old
-  assign prog_unibus_reset_rising = destintctl && ob[28] && !prog_unibus_reset;
+  assign prog_unibus_reset_rising = destintctl && ob_x[INTCTL_AT+2] && !prog_unibus_reset;
 @new
-  assign prog_unibus_reset_rising = destintctl && ob[27] && !prog_unibus_reset;
+  assign prog_unibus_reset_rising = destintctl && ob_x[INTCTL_AT+1] && !prog_unibus_reset;
 @end
 
 @mutation bus-reset-misses-the-display
@@ -22665,9 +22665,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note MACHINE-ID says revision 8, the device registers', from before the
 @note clock and the file device: the revision just below this one.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
 @new
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_0084;
 @end
 
 @mutation quux-machine-id-revision-9
@@ -22676,9 +22676,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note MACHINE-ID says revision 9, the real-time clock's and the file device's,
 @note from before the interval timers and reset devices.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
 @new
-  localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_0094;
 @end
 
 @mutation quux-machine-id-revision-11
@@ -22688,9 +22688,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note before the fused return (contract H8a): the revision just below this
 @note one.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
 @new
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00B4;
 @end
 
 @mutation quux-machine-id-revision-10
@@ -22700,9 +22700,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note from before the register page moved to `17777400` (contract Q13): the
 @note revision just below this one.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
 @new
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00A4;
 @end
 
 @mutation quux-word-17-reads-zero
@@ -23537,9 +23537,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/cadr_microcycle.sv
 @note The halfword chosen by LC before `NEXT INSTR` steps it: the other half.
 @old
-    assign lcs    = lc[1:0] + (lc_byte_mode ? 2'd1 : 2'd2);
+    assign lcs    = lc_q[1:0] + (lc_byte_mode ? 2'd1 : 2'd2);
 @new
-    assign lcs    = lc[1:0] + (lc_byte_mode ? 2'd0 : 2'd0);
+    assign lcs    = lc_q[1:0] + (lc_byte_mode ? 2'd0 : 2'd0);
 @end
 
 @mutation fused-return-index-drops-a-register-bit
@@ -23836,4 +23836,427 @@ FAULT_SH=/usr/share/cadr/faults.sh
   if (WORD_BITS != 32 && !(QUUX && WORD_BITS == 40)) begin : g_bad_word
 @new
   if (WORD_BITS != 32 && WORD_BITS != 40) begin : g_bad_word
+@end
+
+# ----------------------------------------------- revision 13's processor
+#
+# QUUX revision 13 (contract G2, appendix A1), the processor at `WORD_BITS`
+# 40, against `golden/src/quux13.rs`'s programs on muir's `Geometry::QUUX_13`:
+# the misc decode, the ring of 40 and its masker, LC byte mode's add, the
+# conditions and the overflow flag, the dispatch memory at 4,096, the
+# location counter at 30 bits, and the map at 8,192 x 7 and 4,096 x 28 with
+# its `<31:28>` gate; and the read-during-write window at those sizes.  The
+# fused return's index at 40 bits, a fetch's `VMA` at `LC<29:2>` and the
+# 1024-word page on the cables have no record: each needs a cycle to main
+# memory, and none of the programs makes one until revision 13's port.
+
+@mutation rev13-a-byte-word-decodes-misc
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A BYTE word's `IR<11:10>` decoded as misc again (A1.1), except under
+@note `IR<47>`, which no program here sets: an LDB of length 17 has misc 1,
+@note `HALT-CONS`, and under ERRSTOP the machine stops where muir runs on.
+@old
+  assign funct = (nop || (WIDE && irbyte)) ? 4'd0 : (4'd1 << ir[11:10]);
+@new
+  assign funct = (nop || (WIDE && irbyte && ir[47])) ? 4'd0 : (4'd1 << ir[11:10]);
+@end
+
+@mutation rev13-the-dispatch-address-loses-ir-23
+@check quux13_dispatch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The dispatch memory addressed by `IR<22:12>` at 40 bits, revision 12's
+@note (A1.4): every entry above 3777 is read at the one 2,048 below it.
+@old
+  assign dadr   = {ir[DADR_BITS+11:13], daddr0} | DADR_BITS'({dmask[6:1] & r[6:1], 1'b0});
+@new
+  assign dadr   = {ir[DADR_BITS+11:13] & {1'b0, {(DADR_BITS-2){1'b1}}}, daddr0} | DADR_BITS'({dmask[6:1] & r[6:1], 1'b0});
+@end
+
+@mutation rev13-the-dispatch-map-bits-are-revision-12s
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A dispatch's map bits taken from the level-2 entry's `<18>` and `<19>`,
+@note revision 12's meta bits, where revision 13's are `<22>` and `<23>` (A1.7).
+@old
+  localparam int unsigned DMAP_BIT = WIDE ? 22 : 18;
+@new
+  localparam int unsigned DMAP_BIT = WIDE ? 18 : 18;
+@end
+
+@mutation rev13-the-location-counter-is-26-bits
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A write of the location counter keeping `OB<25:0>`, revision 12's
+@note counter, where revision 13's is `LC<29:0>` (A1.6): the counter read back
+@note loses `<29:26>`.
+@old
+        if (destlc) lc_q <= ob[LC_BITS-1:0];
+@new
+        if (destlc) lc_q <= LC_BITS'(ob[25:0]);
+@end
+
+@mutation rev13-interrupt-control-takes-revision-12s-bits
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note INTERRUPT-CONTROL's flags taken from `OB<29:26>` at 40 bits, where
+@note revision 13's are `<37:34>` (A1.6): the write of `1 << 37` sets no byte
+@note mode, and the bytes come out as halfwords.
+@old
+  localparam int unsigned INTCTL_AT = WIDE ? 34 : 26;
+@new
+  localparam int unsigned INTCTL_AT = WIDE ? 26 : 26;
+@end
+
+@mutation rev13-the-ring-is-32-around
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The ring's wrap taken at 32 where it is 40 (G2 §2.3): a rotate brings
+@note bits 32 to 39 back in the wrong place, and every rotate that wraps a
+@note byte through the tag, or the tag through the field, is wrong.
+@old
+    return (v << s) | (v >> (6'd40 - s));
+@new
+    return (v << s) | (v >> (6'd32 - s));
+@end
+
+@mutation rev13-halfword-1-adds-16
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note LC byte mode's addend for halfword 1 left at revision 12's 16 in a ring
+@note of 40, where A1.2's table says 24: an LDB in LC byte mode takes the
+@note wrong bits of halfword 1.
+@old
+    if (!bytes) return lcl[1] ? 6'd0 : 6'd24;
+@new
+    if (!bytes) return lcl[1] ? 6'd0 : 6'd16;
+@end
+
+@mutation rev13-byte-1-adds-8
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note LC byte mode's addend for byte 1 (`LC<1:0>` = 2) at 8, the ring of 32's
+@note gates, where A1.2's table says 32.
+@old
+      2'b10:   return 6'd32;
+@new
+      2'b10:   return 6'd8;
+@end
+
+@mutation rev13-a-jump-rotate-drops-ir-47
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A JUMP's and a DISPATCH's rotate without `IR<47>` as its bit 5 (A1.1):
+@note a test of bit 5 is rotate 35, which becomes rotate 3, bit 37.
+@old
+        2'd1, 2'd2:  begin rot13 = {ir[47], ir[4:0]}; n13 = {2'd0, ir[9:6]};  lcm13 = ir[11:10] == 2'd3;          end
+@new
+        2'd1, 2'd2:  begin rot13 = {1'b0, ir[4:0]}; n13 = {2'd0, ir[9:6]};  lcm13 = ir[11:10] == 2'd3;          end
+@end
+
+@mutation rev13-a-byte-length-is-5-bits
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A BYTE word's length - 1 taken from `IR<10:6>`, five bits, where
+@note revision 13's is `IR<11:6>` (A1.1): lengths 33 to 40 lose 32.
+@old
+        2'd3:        begin rot13 = ir[5:0];           n13 = ir[11:6];         lcm13 = ir[13:12] == 2'd1 && ir[24]; end
+@new
+        2'd3:        begin rot13 = ir[5:0];           n13 = {1'b0, ir[10:6]};         lcm13 = ir[13:12] == 2'd1 && ir[24]; end
+@end
+
+@mutation rev13-lc-byte-mode-on-every-byte-function
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note LC byte mode taken by any BYTE word with `IR<24>`, a DPB's too, where
+@note A1.2 gives it to LDB alone: the DPB with `IR<24>` deposits at LC's
+@note rotation.
+@old
+        2'd3:        begin rot13 = ir[5:0];           n13 = ir[11:6];         lcm13 = ir[13:12] == 2'd1 && ir[24]; end
+@new
+        2'd3:        begin rot13 = ir[5:0];           n13 = ir[11:6];         lcm13 = ir[13:12] != 2'd0 && ir[24]; end
+@end
+
+@mutation rev13-output-select-0-takes-lc-byte-mode
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note An ALU word's output select 0 in LC byte mode under `IR<11:10>` = 3,
+@note revision 12's rule, where A1.2 says an ALU word's `IR<11:10>` is misc and
+@note never LC byte mode.
+@old
+        default:     begin rot13 = ir[5:0];           n13 = {2'd0, ir[9:6]};  lcm13 = 1'b0;                        end
+@new
+        default:     begin rot13 = ir[5:0];           n13 = {2'd0, ir[9:6]};  lcm13 = ir[11:10] == 2'd3;                        end
+@end
+
+@mutation rev13-the-mask-fits-at-bit-40
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A byte whose left end is bit 40 given a mask, one past the rule (A1.2,
+@note Q-A1d): a deposit at rotate 1 of length 40 writes bits 1 to 39 instead
+@note of giving A.
+@old
+    assign msk     = (top13 > 7'd39) ? '0
+@new
+    assign msk     = (top13 > 7'd40) ? '0
+@end
+
+@mutation rev13-conditions-10-and-11-move-to-12-and-13
+@check quux13_alu_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Conditions 10 and 11 decoded at 12 and 13 (A1.3): 10 and 11 read as
+@note their `IR<2:0>`, bit test and M < A, and the overflow flag and the
+@note unsigned compare are nowhere.
+@old
+               : (WIDE && ir[4:1] == 4'b0100) ? ir[4:0]
+@new
+               : (WIDE && ir[4:1] == 4'b0101) ? ir[4:0]
+@end
+
+@mutation rev13-equality-ignores-the-tag
+@check quux13_alu_quux
+@file rtl/machine/cadr_microcycle.sv
+@note M = A comparing the fields alone (G2 §2.2): equal fields with
+@note different tags compare equal.
+@old
+    assign tags_equal = m[WORD_BITS-1:32] == a[WORD_BITS-1:32];
+@new
+    assign tags_equal = (m[WORD_BITS-1:32] == a[WORD_BITS-1:32]) || 1'b1;
+@end
+
+@mutation rev13-m-less-than-a-sees-the-tag
+@check quux13_alu_quux
+@file rtl/machine/cadr_microcycle.sv
+@note M < A built as today's `NOT AEQM AND` bit 32 with an `AEQM` that sees
+@note the tags, which A1.3 corrects: equal fields with different tags are
+@note less.
+@old
+  assign aluneg           = !aeqm && alu_f[32];
+@new
+  assign aluneg           = !(aeqm && tags_equal) && alu_f[32];
+@end
+
+@mutation rev13-condition-11-is-signed
+@check quux13_alu_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Condition 11 comparing signed, as condition 1 does, where A1.3 says
+@note unsigned: 0 against 37777777777 is not below it.
+@old
+      5'o11: jcond = m[31:0] < a[31:0];
+@new
+      5'o11: jcond = $signed(m[31:0]) < $signed(a[31:0]);
+@end
+
+@mutation rev13-the-overflow-flag-takes-the-steps
+@check quux13_alu_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The overflow flag loaded from the ALU by the special functions too,
+@note 40 to 77, where A1.3 gives them 0: the multiply step after an ADD at
+@note 2^31 - 1 sets it.
+@old
+      else if (cpu_edge && iralu) overflow_q <= ir[8:7] == 2'b01 && alu_f[32] != alu_f[31];
+@new
+      else if (cpu_edge && iralu) overflow_q <= ir[8:7] != 2'b00 && alu_f[32] != alu_f[31];
+@end
+
+@mutation rev13-the-overflow-flag-is-bit-32
+@check quux13_alu_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The overflow flag as bit 32 of the 33-bit result alone, the sign,
+@note where A1.3 says bit 32 unlike bit 31: 2^31 - 1 + 1 does not set it.
+@old
+      else if (cpu_edge && iralu) overflow_q <= ir[8:7] == 2'b01 && alu_f[32] != alu_f[31];
+@new
+      else if (cpu_edge && iralu) overflow_q <= ir[8:7] == 2'b01 && alu_f[32] && (alu_f[31] || 1'b1);
+@end
+
+@mutation rev13-an-inhibited-word-loads-the-flag
+@check quux13_alu_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The overflow flag loaded by an ALU-class word under `NOP` too, where
+@note A1.3 says an inhibited word does not load it.
+@old
+      else if (cpu_edge && iralu) overflow_q <= ir[8:7] == 2'b01 && alu_f[32] != alu_f[31];
+@new
+      else if (cpu_edge && ir[44:43] == 2'd0) overflow_q <= ir[8:7] == 2'b01 && alu_f[32] != alu_f[31];
+@end
+
+@mutation rev13-a-byte-word-loads-the-flag
+@check quux13_alu_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The overflow flag loaded by BYTE words as by ALU words, where A1.3 says
+@note JUMP, DISPATCH and BYTE leave it: the LDBs that record a jump clear it.
+@old
+      else if (cpu_edge && iralu) overflow_q <= ir[8:7] == 2'b01 && alu_f[32] != alu_f[31];
+@new
+      else if (cpu_edge && (iralu || irbyte)) overflow_q <= ir[8:7] == 2'b01 && alu_f[32] != alu_f[31];
+@end
+
+@mutation rev13-the-gate-is-on-bit-28-alone
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The `<31:28>` gate (A1.7) on `<28>` alone: an address with `<31:29>`
+@note set and `<28>` clear reads level 1 instead of block 177.
+@old
+    assign map_gate  = mapi[31:28] != 4'd0;
+@new
+    assign map_gate  = mapi[31:28] != 4'd0 && mapi[28];
+@end
+
+@mutation rev13-a-gated-address-writes-level-1
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A level-1 write at an address with `<31:28>` set, which A1.7 forbids:
+@note the write lands at `<27:15>`, over the entry that address aliases.
+@old
+    assign map_l1_en = vma[29] && !map_gate;
+@new
+    assign map_l1_en = vma[29];
+@end
+
+@mutation rev13-both-enables-write-level-2-too
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A store with both enables writing level 2 as well, where A1.7 writes
+@note level 1 alone.
+@old
+    assign map_l2_en = vma[28] && !vma[29] && !map_gate;
+@new
+    assign map_l2_en = vma[28] && !map_gate;
+@end
+
+@mutation rev13-level-1-takes-vma-24
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The level-1 entry written with revision 12's sixth bit, `VMA<24>`, in
+@note place of `VMA<32>` (A1.7).
+@old
+    assign l1_store  = vma[38:32];
+@new
+    assign l1_store  = {vma[38:33], vma[24]};
+@end
+
+@mutation rev13-level-2-index-sees-the-offset
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Level 2 indexed with `VA<9:8>` in it, the offset's high bits at
+@note 1024-word pages (A1.7): a word at `<9:8>` clear finds another entry.
+@old
+    assign mapi_l2   = mapi[14:10];
+@new
+    assign mapi_l2   = mapi[14:10] ^ {3'd0, mapi[9:8]};
+@end
+
+@mutation rev13-level-1-index-drops-bit-27
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Level 1 indexed by `VA<26:15>`, twelve bits, where revision 13's is
+@note `VA<27:15>` (A1.7).
+@old
+    assign adr0      = mapi[27:15];
+@new
+    assign adr0      = mapi[27:15] & 13'o7777;
+@end
+
+@mutation rev13-map-md-puts-level-1-below-the-faults
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `MAP(MD)` with the level-1 entry under the fault bits, in the place
+@note revision 12's `<29:24>` had it, where A1.7 puts it at `<38:32>`.
+@old
+    assign mf_map = {1'b0, vmap, !pfw, !pfr, 2'b00, vmo};
+@new
+    assign mf_map = {1'b0, !pfw, !pfr, vmap, 2'b00, vmo};
+@end
+
+@mutation rev13-the-read-bit-is-23
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The read access bit taken from the level-2 entry's `<23>` at 40 bits,
+@note revision 12's, where A1.7 says `<27>`: a read of a page with `<23>` set
+@note and `<27>` clear goes to memory.
+@old
+  assign pfr   = lvmo_eff[L2_BITS-1];
+@new
+  assign pfr   = WIDE ? lvmo_eff[L2_BITS-5] ^ (lvmo_eff[L2_BITS-1] & 1'b0) : lvmo_eff[L2_BITS-1];
+@end
+
+@mutation rev13-the-latch-comes-up-as-revision-12s
+@check quux13_map_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The latch at VMEMDR coming up with revision 12's word, the access bits
+@note at `<23:22>`, where revision 13's are at `<27:26>`
+@note (`Geometry::lvmo_at_power_on`): `MAP(MD)`'s fault bits before the first
+@note memory cycle read 1.
+@old
+      lvmo         <= WIDE ? L2_BITS'({2'b11, 8'd0, 18'o777777})
+@new
+      lvmo         <= WIDE ? L2_BITS'({2'b11, 8'd0, 14'h3fff})
+@end
+
+@mutation rev13-the-counter-reads-26-bits
+@check quux13_byte_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The location counter source at 40 bits reading `LC<26:0>` and zeros
+@note above, where A1.6 has the counter's 30 bits at `<29:0>`.
+@old
+                      int_enable, sequence_break, 4'd0, lc_q[LC_BITS-1:1], lc0b});
+@new
+                      int_enable, sequence_break, 4'd0, lc_q[LC_BITS-1:1] & {3'd0, {(LC_BITS-4){1'b1}}}, lc0b});
+@end
+
+@mutation rev13-the-dispatch-memory-is-read-in-its-undefined-tick
+@check rdw_poison_quux13_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The poison held to every tick instead of the tick after a write, at
+@note revision 13's sizes: what the check would see if a reader of the
+@note memory DID sample it in the tick the DE25-Nano's MLABs leave
+@note undefined.  It must be caught, or a poison nothing samples and a
+@note poison that never fires look alike (`rdw_poison_disk`'s record says
+@note the same of the block store).
+@old
+  assign dmem_rdw = dmem_w_q && dadr == dmem_wa_q;
+@new
+  assign dmem_rdw = dmem_w_q && dadr == dmem_wa_q || 1'b1;
+@end
+
+@mutation rev13-the-level-1-map-is-read-in-its-undefined-tick
+@check rdw_poison_quux13_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The poison held to every tick instead of the tick after a write, at
+@note revision 13's sizes: what the check would see if a reader of the
+@note memory DID sample it in the tick the DE25-Nano's MLABs leave
+@note undefined.  It must be caught, or a poison nothing samples and a
+@note poison that never fires look alike (`rdw_poison_disk`'s record says
+@note the same of the block store).
+@old
+  assign l1_rdw = (mw && wmapd && map_l1_en) || (l1_w_q && adr0 == l1_wa_q);
+@new
+  assign l1_rdw = (mw && wmapd && map_l1_en) || (l1_w_q && adr0 == l1_wa_q) || 1'b1;
+@end
+
+@mutation rev13-the-level-2-map-is-read-in-its-undefined-tick
+@check rdw_poison_quux13_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The poison held to every tick instead of the tick after a write, at
+@note revision 13's sizes: what the check would see if a reader of the
+@note memory DID sample it in the tick the DE25-Nano's MLABs leave
+@note undefined.  It must be caught, or a poison nothing samples and a
+@note poison that never fires look alike (`rdw_poison_disk`'s record says
+@note the same of the block store).
+@old
+  assign l2_rdw = l2_w_q && adr1 == l2_wa_q;
+@new
+  assign l2_rdw = l2_w_q && adr1 == l2_wa_q || 1'b1;
+@end
+
+@mutation rev13-machine-id-says-revision-12
+@check quux13_alu_quux
+@file rtl/machine/cadr_machine.sv
+@note MACHINE-ID at 40 bits saying revision 12, `0x5155_00C4`, where G2 §2.8
+@note says 13.
+@old
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
+@new
+  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00C4 : 32'h5155_00C4;
 @end

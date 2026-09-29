@@ -96,6 +96,17 @@ esac
 if [ "${FAULT:-0}" = 1 ] && [ "$machine" != cadr ]; then
     refuse "FAULT=1 takes no MACHINE=$machine: the fault bitstream carries no machine"
 fi
+# **`WORD_BITS=40` IS QUUX REVISION 13** (contract G2), whose processor comes
+# with its 40-bit word, into a directory of its own, `build/de25-quux13/`
+# with the same suffixes.  32, the default, is everything before it.
+word_bits=${WORD_BITS:-32}
+case $word_bits in
+    32|40) ;;
+    *) refuse "WORD_BITS is '$word_bits'; it is 32, or 40 for QUUX revision 13" ;;
+esac
+if [ "$word_bits" = 40 ] && [ "$machine" != quux ]; then
+    refuse "WORD_BITS=40 is QUUX revision 13, and MACHINE=$machine: the CADR's word is 32 bits"
+fi
 
 conf=boards/de25-nano/local.conf
 conf_value() {
@@ -156,7 +167,9 @@ case $mhz in
     *) refuse "DE25_DDR_MHZ is '$mhz'; the LPDDR4 runs at 1066.667 (either revision) or 1333.333 (rev B)" ;;
 esac
 out=build/de25
-if [ "$machine" = quux ]; then
+if [ "$machine" = quux ] && [ "$word_bits" = 40 ]; then
+    out=$out-quux13
+elif [ "$machine" = quux ]; then
     out=$out-quux
 fi
 if [ "$ddr" -eq 1 ]; then
@@ -358,7 +371,7 @@ fi
 
 # ------------------------------------------------------- 2. the project
 step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" FAULT="$fault" MACHINE="$machine" \
-    DE25_HPS_BOOT="$hps_boot" \
+    WORD_BITS="$word_bits" DE25_HPS_BOOT="$hps_boot" \
     "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
 # **AND THE PROCESSOR SYSTEM, ON THE MEMORY BOARD.**  `qsys-script` builds it
@@ -536,6 +549,21 @@ if [ "$fault" -eq 0 ]; then
     [ "$got_machine" = "$machine" ] \
         || refuse "synthesis gave u_machine MACHINE '${got_machine:-nothing}', wanting $machine; see $dir/$rpt"
     say "synthesis gave u_machine MACHINE $machine"
+    # And the word, the same way: `WORD_BITS` 40 is revision 13.
+    got_bits=$(awk '
+        /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
+        inside && /^; Parameter Settings/ { exit }
+        inside && /^; WORD_BITS *;/ { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
+    ' "$rpt")
+    # Quartus writes an integer parameter's value in binary, 32 digits.
+    case $got_bits in
+        *[!01]*|'') ;;
+        *) got_bits=$(printf '%s\n' "$got_bits" \
+               | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }') ;;
+    esac
+    [ "$got_bits" = "$word_bits" ] \
+        || refuse "synthesis gave u_machine WORD_BITS '${got_bits:-nothing}', wanting $word_bits; see $dir/$rpt"
+    say "synthesis gave u_machine WORD_BITS $word_bits"
 fi
 
 # **EVERY BLOCK RAM WRITES WHERE THE RTL SAYS**, asked of a netlist rather

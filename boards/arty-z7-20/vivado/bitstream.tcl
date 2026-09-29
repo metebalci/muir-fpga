@@ -148,7 +148,33 @@ if {$machine eq "quux" && [string first quux [file tail $outdir]] < 0} {
     puts "BIT: quux. Name the directory for the machine, as build/arty-quux-ddr."
     exit 1
 }
-puts "BIT: the machine is $machine"
+# **AND WHICH REVISION OF QUUX**: `WORD_BITS=40` is QUUX revision 13, whose
+# processor comes with its 40-bit word (contract G2), 32 the default and
+# everything before it.  The top level's `WORD_BITS` generic, passed only at
+# 40, and a directory that says `quux13`, for the reason above; a revision 12
+# build into a `quux13` directory is refused the same way.
+set word_bits [expr {[info exists ::env(WORD_BITS)] ? $::env(WORD_BITS) : "32"}]
+if {$word_bits ne "32" && $word_bits ne "40"} {
+    puts "BIT: FAILED --- WORD_BITS=$word_bits is not a word. It is 32, or 40 for"
+    puts "BIT: QUUX revision 13."
+    exit 1
+}
+if {$word_bits eq "40" && $machine ne "quux"} {
+    puts "BIT: FAILED --- WORD_BITS=40 is QUUX revision 13, and MACHINE=$machine;"
+    puts "BIT: the CADR's word is 32 bits."
+    exit 1
+}
+set says_13 [expr {[string first quux13 [file tail $outdir]] >= 0}]
+if {$machine eq "quux" && $says_13 != ($word_bits eq "40")} {
+    puts "BIT: FAILED --- WORD_BITS=$word_bits into OUTDIR=$outdir: a revision 13"
+    puts "BIT: build, and only one, goes to a directory that says quux13."
+    exit 1
+}
+if {$word_bits eq "40"} {
+    puts "BIT: the machine is $machine, revision 13 (WORD_BITS=40)"
+} else {
+    puts "BIT: the machine is $machine"
+}
 file mkdir $outdir
 
 # HOW LONG A TICK IS, ASKED OF THE FABRIC THAT DECIDES IT.  The board's own
@@ -301,7 +327,8 @@ synth_design -top cadr_arty -part $part \
     -generic PROVE=$prove \
     -generic HDMI=$hdmi \
     -generic LMTV=$lmtv \
-    {*}[expr {$machine eq "quux" ? [list -generic MACHINE=quux] : {}}]
+    {*}[expr {$machine eq "quux" ? [list -generic MACHINE=quux] : {}}] \
+    {*}[expr {$word_bits eq "40" ? [list -generic WORD_BITS=40] : {}}]
 # That every block RAM writes where the RTL says, which synthesis once did
 # not and nothing downstream noticed.  Stops the build if not.
 assert_rams_write_where_the_rtl_says $machine

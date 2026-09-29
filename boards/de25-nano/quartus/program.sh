@@ -76,6 +76,15 @@ case $machine in
     cadr|quux) ;;
     *) refuse "MACHINE is '$machine'; it is cadr, MIT's machine, or quux, the evolved CADR" ;;
 esac
+# QUUX revision 13, `WORD_BITS=40`, is its own build, as `build.sh` names it.
+word_bits=${WORD_BITS:-32}
+case $word_bits in
+    32|40) ;;
+    *) refuse "WORD_BITS is '$word_bits'; it is 32, or 40 for QUUX revision 13" ;;
+esac
+if [ "$word_bits" = 40 ] && [ "$machine" != quux ]; then
+    refuse "WORD_BITS=40 is QUUX revision 13, and MACHINE=$machine: the CADR's word is 32 bits"
+fi
 
 conf=boards/de25-nano/local.conf
 conf_value() {
@@ -93,7 +102,9 @@ serial=${DE25_SERIAL:-$(conf_value DE25_SERIAL)}
 [ -n "$serial" ] || refuse "set DE25_SERIAL, or add a DE25_SERIAL= line to $conf"
 
 out=build/de25
-if [ "$machine" = quux ]; then
+if [ "$machine" = quux ] && [ "$word_bits" = 40 ]; then
+    out=$out-quux13
+elif [ "$machine" = quux ]; then
     out=$out-quux
 fi
 case ${DDR:-0} in

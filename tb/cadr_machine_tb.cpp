@@ -344,6 +344,13 @@ int main(int argc, char **argv) {
           fd_done.back().words.emplace_back(static_cast<uint32_t>(h0), static_cast<uint32_t>(h1));
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
         if (std::strstr(line, "golden/src/quux.rs")) script_trace = true;
+        // Revision 13's programs (`golden/src/quux13.rs`) are scripts too,
+        // and their dispatches and location counter are compared row for
+        // row like the fused return's.
+        if (std::strstr(line, "golden/src/quux13.rs")) {
+          script_trace = true;
+          dispatch_trace = true;
+        }
         if (std::strstr(line, "golden/src/quux.rs") &&
             (std::strstr(line, "program fused,") || std::strstr(line, "program operand,") ||
              std::strstr(line, "program prefetch,")))

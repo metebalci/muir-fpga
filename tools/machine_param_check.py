@@ -39,6 +39,15 @@ build and program scripts refuse a name that is not a machine and accept
 both, and the build script refuses QUUX beside `FAULT=1`, because the fault
 bitstream carries no machine.
 
+**AND THE WORD, `WORD_BITS`, THE SAME WAY** (contract G2): 40 is QUUX
+revision 13.  On the Arty's and the DE25-Nano's memory board with its
+display, `MACHINE=quux WORD_BITS=40` lints clean and `u_machine` elaborates
+`WORD_BITS` 40, and no `WORD_BITS` elaborates 32.  The Arty's flow refuses a
+width that is not a word, 40 on the CADR, and a directory that says `quux13`
+for any build but revision 13's or does not for revision 13's, and takes
+revision 13 into one that does; the DE25-Nano's two scripts refuse a width
+that is not a word and 40 on the CADR, and take revision 13.
+
 WHAT THIS DOES NOT SAY.  It says nothing about what QUUX is: that is
 `make check MACHINE=quux`, against muir's own QUUX.  It does not run Vivado or Quartus, so it does not see
 the generic reach synthesis there; `boards/de25-nano/quartus/build.sh` reads
@@ -132,7 +141,7 @@ def run(cmd, env=None):
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
-def verilator(board, config, value, mode, mdir=None):
+def verilator(board, config, value, mode, mdir=None, word_bits=None):
     spec = BOARDS[board]
     gens, extra = spec["configs"][config]
     cmd = [VERILATOR, mode]
@@ -143,6 +152,8 @@ def verilator(board, config, value, mode, mdir=None):
     cmd += spec["defines"] + gens
     if value is not None:
         cmd.append('-GMACHINE="%s"' % value)
+    if word_bits is not None:
+        cmd.append("-GWORD_BITS=%d" % word_bits)
     if mdir is not None:
         cmd += ["-Mdir", mdir]
     cmd += ["--top-module", spec["top"]]
@@ -190,6 +201,60 @@ def machine_at_instance(tree, top):
     if len(values) != 1 or values[0] is None:
         return None, "no constant MACHINE parameter in %s" % mod.get("name")
     return values[0], None
+
+
+def word_bits_at_instance(tree, top):
+    """The WORD_BITS parameter of the module `<top>.u_machine` became."""
+    modules = {}
+    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
+         if n.get("type") == "MODULE" else None)
+    tops = [m for m in modules.values() if m.get("origName") == top]
+    cells = []
+    if len(tops) == 1:
+        walk(tops[0], lambda n: cells.append(n)
+             if n.get("type") == "CELL" and n.get("name") == "u_machine" else None)
+    if len(cells) != 1:
+        return None, "no one u_machine in %s" % top
+    mod = modules.get(cells[0].get("modp"))
+    values = []
+
+    def param(n):
+        if n.get("type") == "VAR" and n.get("name") == "WORD_BITS" and n.get("isParam"):
+            v = n.get("valuep") or []
+            values.append(v[0]["name"] if len(v) == 1 and v[0].get("type") == "CONST" else None)
+    walk(mod, param)
+    if len(values) != 1 or values[0] is None:
+        return None, "no constant WORD_BITS in %s" % mod.get("name")
+    # Verilator writes a constant as 32'h28 or 32'sh28.
+    return int(values[0].split("h")[-1], 16), None
+
+
+def word_reaches(board, config, bits, scratch):
+    """QUUX at `bits` (None: not given, so 32) lints clean and is the width
+    at u_machine."""
+    top = BOARDS[board]["top"]
+    want = bits if bits is not None else 32
+    asked = "WORD_BITS=%d" % bits if bits is not None else "no WORD_BITS"
+    what = "%s, %s, MACHINE=quux, %s: u_machine elaborates WORD_BITS %d" % (top, config, asked, want)
+    rc, out = verilator(board, config, "quux", "--lint-only", word_bits=bits)
+    if rc != 0:
+        say(False, "%s --- the lint failed:\n%s" % (what, out.strip()))
+        return
+    mdir = tempfile.mkdtemp(dir=scratch)
+    rc, out = verilator(board, config, "quux", "--json-only", mdir, word_bits=bits)
+    if rc != 0:
+        say(False, "%s --- the JSON dump failed:\n%s" % (what, out.strip()))
+        return
+    with open(os.path.join(mdir, "V%s.tree.json" % top)) as f:
+        tree = json.load(f)
+    shutil.rmtree(mdir, True)
+    got, why = word_bits_at_instance(tree, top)
+    if got is None:
+        say(False, "%s --- %s" % (what, why))
+    elif got != want:
+        say(False, "%s --- it elaborates %d" % (what, got))
+    else:
+        say(True, what)
 
 
 def sync_k_at_generator(tree):
@@ -277,6 +342,7 @@ def refused_at(board, config, value, message, instance):
 def flow(what, cmd, env_add, rc_want, has, lacks):
     env = dict(os.environ)
     env.pop("MACHINE", None)
+    env.pop("WORD_BITS", None)
     env.update(env_add)
     rc, out = run(cmd, env)
     wrong = []
@@ -309,6 +375,10 @@ def main():
         for config in BOARDS["cora"]["configs"]:
             refused_at("cora", config, "quux",
                        "the Cora Z7-07S builds the CADR only", "cadr_cora")
+        # The word, on the two boards that build QUUX.
+        for board in ("arty", "de25"):
+            for bits in (None, 40):
+                word_reaches(board, "DDR=1 HDMI=1", bits, scratch)
 
         # The flows.  Every OUTDIR is under the scratch directory, so a flow
         # that failed to refuse writes nothing anywhere else.
@@ -330,6 +400,22 @@ def main():
         flow("the Arty's Vivado flow takes no MACHINE as cadr", arty,
              {"OUTDIR": out("b")}, None,
              ["BIT: the machine is cadr"], ["FAILED --- MACHINE"])
+        flow("the Arty's Vivado flow refuses WORD_BITS=36", arty,
+             {"MACHINE": "quux", "WORD_BITS": "36", "OUTDIR": out("arty-quux13-ddr")}, 1,
+             ["BIT: FAILED --- WORD_BITS=36 is not a word"], ["BIT: the machine is"])
+        flow("the Arty's Vivado flow refuses WORD_BITS=40 on the CADR", arty,
+             {"MACHINE": "cadr", "WORD_BITS": "40", "OUTDIR": out("e")}, 1,
+             ["BIT: FAILED --- WORD_BITS=40 is QUUX revision 13, and MACHINE=cadr"],
+             ["BIT: the machine is"])
+        flow("the Arty's Vivado flow refuses revision 13 into a directory not named for it",
+             arty, {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux-ddr")}, 1,
+             ["BIT: FAILED --- WORD_BITS=40 into OUTDIR="], ["BIT: the machine is"])
+        flow("the Arty's Vivado flow refuses revision 12 into a directory named for 13",
+             arty, {"MACHINE": "quux", "OUTDIR": out("arty-quux13-ddr")}, 1,
+             ["BIT: FAILED --- WORD_BITS=32 into OUTDIR="], ["BIT: the machine is"])
+        flow("the Arty's Vivado flow takes WORD_BITS=40 on QUUX", arty,
+             {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux13-ddr")}, None,
+             ["BIT: the machine is quux, revision 13 (WORD_BITS=40)"], ["FAILED --- WORD_BITS"])
         flow("the Cora's Vivado flow refuses MACHINE=quux", cora,
              {"MACHINE": "quux", "OUTDIR": out("c")}, 1,
              ["BIT: FAILED --- MACHINE=quux, and the Cora Z7-07S builds the"], [])
@@ -349,6 +435,17 @@ def main():
                 flow("the DE25-Nano's %s takes MACHINE=%s" % (script, value),
                      cmd, dict(nowhere, MACHINE=value), 1,
                      ["%s: REFUSED:" % who], ["REFUSED: MACHINE is"])
+        for script, who in (("build.sh", "de25"), ("program.sh", "de25-program")):
+            cmd = ["sh", "boards/de25-nano/quartus/" + script, "x"]
+            flow("the DE25-Nano's %s refuses WORD_BITS=36" % script, cmd,
+                 dict(nowhere, MACHINE="quux", WORD_BITS="36"), 1,
+                 ["%s: REFUSED: WORD_BITS is '36'" % who], [])
+            flow("the DE25-Nano's %s refuses WORD_BITS=40 on the CADR" % script, cmd,
+                 dict(nowhere, MACHINE="cadr", WORD_BITS="40"), 1,
+                 ["%s: REFUSED: WORD_BITS=40 is QUUX revision 13, and MACHINE=cadr" % who], [])
+            flow("the DE25-Nano's %s takes WORD_BITS=40 on QUUX" % script, cmd,
+                 dict(nowhere, MACHINE="quux", WORD_BITS="40"), 1,
+                 ["%s: REFUSED:" % who], ["REFUSED: WORD_BITS"])
         # A fault build carries no machine, so QUUX beside it is refused, and
         # the CADR, the default, is taken as far as the missing Quartus.
         cmd = ["sh", "boards/de25-nano/quartus/build.sh", "x"]
@@ -368,7 +465,7 @@ def main():
     if failures:
         print("machine: FAILED, %d of the cases above" % len(failures))
         return 1
-    print("machine: every board's top level hands MACHINE to u_machine, "
+    print("machine: every board's top level hands MACHINE and WORD_BITS to u_machine, "
           "and the Cora and the flows refuse what they must")
     return 0
 

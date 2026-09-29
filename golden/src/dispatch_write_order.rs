@@ -711,7 +711,8 @@ fn main() {
         println!("end spcptr {:x}", mm.spcptr);
         let dmem: Vec<u32> = mm.dmem.iter().map(|&w| w & 0o377777).collect();
         nonzero("dmem", &dmem);
-        nonzero("l1", &mm.l1_map);
+        // Level 1's 2,048 entries, the CADR's and revision 12's.
+        nonzero("l1", &mm.l1_map[..2048]);
         // The machine's own sizes: the CADR's 1024 each, QUUX's 2048 entries
         // of level 2 and 16K words of PDL.
         let (l2_words, pdl_words) = if quux { (2048, 16384) } else { (1024, 1024) };
