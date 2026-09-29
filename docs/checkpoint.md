@@ -45,13 +45,20 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 47.** It is
+version is refused by name rather than read wrong. **The version is 49.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir-sim/src/checkpoint.rs` and not an interpretation of it.
 
 So the program is tied to the commit of muir that `muir.commit` pins, and a
 muir that moves the format stops the board's checkpoints loading. That failure
 is loud, which is the right way round: the refusal names both versions.
+
+Version 49 is QUUX's revision 12, the fused return (muir's first commit of
+it was version 48, and its second, with the operand address, 49): every
+machine's body carries the
+geometry's `macro_dispatch` and `MacroDispatch`, which a CADR writes as
+zeros, the memory port carries the prefetch's word and a fetch still to be
+answered, and the engine its `memstart_fetch`.
 
 Versions 28 to 33 are what muir's second machine left. muir's `Machine`
 holds either the CADR or QUUX, so its PDL buffer and level-2 map are sized for
@@ -338,6 +345,8 @@ What a QUUX checkpoint holds beyond the CADR's, in muir's order:
 | the file device, `FileDevice`: its four flags, the rings' bases and sizes, the three indexes, and the handles open the refusal reads | `quux_file_device.sv` | selector 12, words 7 to 9 |
 | the video controller: its size, its 40,960-word buffer and black-on-white, its one bit of mode | `quux_video.sv` and DDR | selector 12, word 6, and DDR |
 | `TimingModel::Sync` with K and L | the bitstream | entry 21 |
+| the fused return, `MacroDispatch` (revision 12): the register, the index, the 1,024 entries, the two base copies, and an operand address and an M 31 word a fused return armed | `cadr_microcycle.sv` | entries 29 to 33 and selector 13 |
+| the cache-only prefetch, `MemoryPort`'s buffered word with its addresses and a fetch still to be answered, and the engine's `memstart_fetch` | `quux_mem_port.sv` as the processor sees it at each master clock edge | entries 37 to 40, and the flags' bit 34 |
 
 **The clocks run while they are read**, halted machine or not, and a reader's
 accesses are microseconds apart. So each timer's word carries the low bits of

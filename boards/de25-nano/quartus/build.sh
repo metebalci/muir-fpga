@@ -427,6 +427,13 @@ if grep -q 'RAM logic "u_machine|processor|\(dmem\|l1_map\|l2_map\)" is uninferr
     refuse "synthesis built one of the three asynchronous memories from registers; see $dir/4-syn.log"
 fi
 say "the dispatch memory and both levels of the map are MLABs, $copies copies each"
+# QUUX's MACRO DISPATCH MEMORY the same (revision 12): the machine's reader
+# and, with the console, the readout's.
+if [ "$machine" = quux ]; then
+    n=$(grep -c "^; u_machine|processor|g_quux_fused.macro_mem_rtl_[0-9]*|[^;]*; MLAB " "$rpt" || true)
+    [ "$n" -eq "$copies" ] || refuse "synthesis made QUUX's MACRO DISPATCH MEMORY into $n MLABs, wanting $copies; see $dir/$rpt"
+    say "QUUX's MACRO DISPATCH MEMORY is MLABs, $copies copies"
+fi
 
 # **AND THE DISK CONTROLLER'S BLOCK STORE IS M20K BLOCKS**, for the reason
 # `project.tcl` gives: left to itself synthesis builds its 196,608 bits out of

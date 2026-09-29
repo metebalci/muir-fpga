@@ -701,6 +701,43 @@ CHECKS = {
         "prom": "quux_startstart_prom.quux.hex",
         "machine": "quux",
     }),
+    # Revision 12's fused return (contract H8a, `golden/src/fused.rs`): the
+    # returns and their fallbacks, the operand address, and the cache-only
+    # prefetch; on the CADR the same programs, whose destinations 5 to 7 write
+    # only M and whose main loop runs throughout.
+    "quux_fused": dict(MACHINE_CHECK, **{
+        "golden": "quux_fused.golden",
+        "prom": "quux_fused_prom.hex",
+    }),
+    "quux_fused_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_fused.quux.golden",
+        "prom": "quux_fused_prom.quux.hex",
+        "machine": "quux",
+    }),
+    "quux_operand": dict(MACHINE_CHECK, **{
+        "golden": "quux_operand.golden",
+        "prom": "quux_operand_prom.hex",
+    }),
+    "quux_operand_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_operand.quux.golden",
+        "prom": "quux_operand_prom.quux.hex",
+        "machine": "quux",
+    }),
+    "quux_prefetch": dict(MACHINE_CHECK, **{
+        "golden": "quux_prefetch.golden",
+        "prom": "quux_prefetch_prom.hex",
+    }),
+    "quux_prefetch_quux": dict(MACHINE_CHECK, **{
+        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
+        "golden": "quux_prefetch.quux.golden",
+        "prom": "quux_prefetch_prom.quux.hex",
+        "machine": "quux",
+    }),
     # Every register of the I/O board and the interface's two over the
     # Unibus, at many phases of the board's clocks: the CADR's alone.  It is
     # the whole machine's check, so the card and the interface's register
@@ -2463,7 +2500,7 @@ PENDING = {}
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
     ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
                                   "imemsync", "page", "registers", "clockwait", "memedge", "busreset",
-                                  "startstart", "rtc", "files")]
+                                  "startstart", "rtc", "files", "fused", "operand", "prefetch")]
 CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
 CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)
 CHECKS["quux_clockwait_quux_l1"] = _timed("quux_clockwait_quux", 4, 1)

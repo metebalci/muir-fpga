@@ -583,12 +583,11 @@ module cadr_machine #(
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (11 << 4) | 4`: the signature, hardware revision 11
-  // --- the register page at `17777400` with block-disk and the video
-  // controller on it and word 100 in its final order (contract Q13), after
-  // contract Q11's interval timers and reset devices --- and processor type
-  // 4, `Geometry::QUUX.machine_id`.
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+  // `(0x5155 << 16) | (12 << 4) | 4`: the signature, hardware revision 12
+  // --- the fused return, the MACRO-DISPATCH register and the MACRO
+  // DISPATCH MEMORY (contract H8a), after contract Q13's register page at
+  // `17777400` --- and processor type 4, `Geometry::QUUX.machine_id`.
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
   // The video controller at the size every QUUX bitstream builds: 1280 by
   // 1024, one bit a pixel, 40 words a line at `17000000`.
   localparam int unsigned VIDEO_WIDTH  = 1280;
@@ -853,6 +852,15 @@ module cadr_machine #(
       .n_loadmd    (n_loadmd),
       .rdata       (rdata),
       .cached      (cached),
+      .pf_fetch    (pf_fetch),
+      .pf_vaddr    (pf_vaddr),
+      .pf_drop     (pf_drop),
+      .pf_nx_v     (pf_nx_v),
+      .pf_nx_vaddr (pf_nx_vaddr),
+      .pf_nx_phys  (pf_nx_phys),
+      .pf_nx_word  (pf_nx_word),
+      .pf_nx_fetch_v    (pf_nx_fetch_v),
+      .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr),
       .mem_drained (mem_drained),
       .ub_md_req   (ub_md_req),
       .ub_md_data  (ub_md_data),
@@ -916,6 +924,11 @@ module cadr_machine #(
   // `dma_written` and invalidates the cache at the next grant; the cache's
   // counts; and the Xbus bridge's own seam, for the audit.
   logic        cached, bd_written;
+  // Revision 12's cache-only prefetch, between the processor and the port.
+  logic        pf_fetch, pf_drop, pf_nx_v, pf_nx_fetch_v;
+  logic [23:0] pf_vaddr, pf_nx_vaddr, pf_nx_fetch_vaddr;
+  logic [21:0] pf_nx_phys;
+  logic [31:0] pf_nx_word;
   logic [31:0] cache_hits, cache_misses;
   logic        br_req, br_write, br_done;
   logic [31:0] br_addr, br_wdata;
@@ -1096,6 +1109,15 @@ module cadr_machine #(
       .port_drained(mem_drained),
       .cache_hits (cache_hits),
       .cache_misses(cache_misses),
+      .pf_fetch   (pf_fetch),
+      .pf_vaddr   (pf_vaddr),
+      .pf_drop    (pf_drop),
+      .pf_nx_v    (pf_nx_v),
+      .pf_nx_vaddr(pf_nx_vaddr),
+      .pf_nx_phys (pf_nx_phys),
+      .pf_nx_word (pf_nx_word),
+      .pf_nx_fetch_v    (pf_nx_fetch_v),
+      .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr),
       .br_req_o   (br_req),
       .br_write_o (br_write),
       .br_addr_o  (br_addr),

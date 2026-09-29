@@ -1795,9 +1795,9 @@
 @note the wrong way round it reads the stale word exactly when it must not,
 @note and the fresh one only when the memory already had it.
 @old
-  assign a = apass ? l : amem_q;
+  assign a = apass ? l : (QUUX && a31_from_m31 && aadr == 10'o31) ? m31_r : amem_q;
 @new
-  assign a = apass ? amem_q : l;
+  assign a = apass ? amem_q : (QUUX && a31_from_m31 && aadr == 10'o31) ? m31_r : l;
 @end
 
 @mutation the-a-memory-pass-around-never-fires
@@ -21249,7 +21249,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/cadr_machine.sv
 @note The MACHINE-ID of revision 4, before the clocks and the register page.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0044;
 @end
@@ -21970,7 +21970,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note MACHINE-ID says revision 7, the memory port's, from before the device
 @note registers.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0074;
 @end
@@ -22665,7 +22665,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note MACHINE-ID says revision 8, the device registers', from before the
 @note clock and the file device: the revision just below this one.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0084;
 @end
@@ -22676,9 +22676,21 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note MACHINE-ID says revision 9, the real-time clock's and the file device's,
 @note from before the interval timers and reset devices.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_0094;
+@end
+
+@mutation quux-machine-id-revision-11
+@check quux_page_quux
+@file rtl/machine/cadr_machine.sv
+@note MACHINE-ID says revision 11, the register page at `17777400`, from
+@note before the fused return (contract H8a): the revision just below this
+@note one.
+@old
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
+@new
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
 @end
 
 @mutation quux-machine-id-revision-10
@@ -22688,9 +22700,19 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note from before the register page moved to `17777400` (contract Q13): the
 @note revision just below this one.
 @old
-  localparam logic [31:0] MACHINE_ID = 32'h5155_00B4;
+  localparam logic [31:0] MACHINE_ID = 32'h5155_00C4;
 @new
   localparam logic [31:0] MACHINE_ID = 32'h5155_00A4;
+@end
+
+@mutation quux-word-17-reads-zero
+@check quux_registers_quux
+@file rtl/machine/quux_feature_page.sv
+@note Feature word 17 reads 0, as below revision 12: no MACRO DISPATCH MEMORY.
+@old
+        8'o17:   word = MACRO_ENTRIES;
+@new
+        8'o17:   word = MACRO_ENTRIES & 32'd0;
 @end
 
 @mutation quux-word-15-names-the-clock-alone
@@ -23357,4 +23379,411 @@ FAULT_SH=/usr/share/cadr/faults.sh
     else if (HAS_FD && page == FD_BASE[31:12]) return SEL_FD;
 @new
     else if (HAS_FD && page == FD_BASE[31:12] + 20'd1) return SEL_FD;
+@end
+
+# ----------------------------------------------- revision 12: the fused return
+#
+# QUUX's MACRO-DISPATCH register, its MACRO DISPATCH MEMORY, the fused
+# return, the operand address and the cache-only prefetch (contract H8a),
+# held by `golden/src/fused.rs`'s three programs.
+
+@mutation fused-return-not-taken-to-the-handler
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note NPC takes the stack's word on a fused return: every one runs the main
+@note loop's dispatch, two microcycles more each, the popped word kept.
+@old
+        2'b00: npc = macro_sel ? macro_handler : spc_target;
+@new
+        2'b00: npc = macro_sel ? (spc_target | (macro_handler & 14'd0)) : spc_target;
+@end
+
+@mutation fused-return-pops-the-word
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The popped word counted off the stack even where the entry's N is clear:
+@note the main loop's push is skipped and nothing puts the word back.
+@old
+  assign spcnt = spush || (spop && !(macro_fused && macro_keep));
+@new
+  assign spcnt = spush || (spop && !(macro_fused && macro_keep && 1'b0));
+@end
+
+@mutation fused-return-ignores-n
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note An entry with N keeps the popped word as well, and the handler's own
+@note push leaves two.
+@old
+    assign macro_keep    = !entry[14];
+@new
+    assign macro_keep    = !entry[14] || 1'b1;
+@end
+
+@mutation fused-return-takes-an-r-entry
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note An entry with R and not P fuses to its address, 0, where the main loop's
+@note dispatch returns through it.
+@old
+               && !entry[16] && !entry[15];
+@new
+               && !entry[15] && (entry[16] || !entry[16]);
+@end
+
+@mutation fused-return-takes-a-p-entry
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note An entry with P fuses to its address and never pushes.
+@old
+               && !entry[16] && !entry[15];
+@new
+               && !entry[16] && (entry[15] || !entry[15]);
+@end
+
+@mutation fused-return-call-with-popj-condition-inverted
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A call with POPJ fuses when its condition pushes and not when it does not.
+@old
+               && !(irjump && ir[8] && (jcond ^ ir[6]))
+@new
+               && !(irjump && ir[8] && (!jcond ^ ir[6]))
+@end
+
+@mutation fused-return-ignores-a-push
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A POPJ that pushes too fuses, and the pushed word is not the handler's.
+@old
+               && !destspc && !(dispenb && dp && !dr)
+@new
+               && (destspc || !destspc) && !(dispenb && dp && !dr)
+@end
+
+@mutation fused-return-ignores-lcinc
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A return in a microcycle whose counter steps by `NEXT INSTR` or a
+@note dispatch's `IR<24>` fuses on the halfword before the step.
+@old
+               && !trap && !iwrited && !lcinc
+@new
+               && !trap && !iwrited && (lcinc || !lcinc)
+@end
+
+@mutation fused-return-without-the-word
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A return that needs a fetch fuses on M 31, the word before.
+@old
+               && (!needfetch || pf_use) && !pf_refused
+@new
+               && (needfetch || !needfetch) && !pf_refused
+@end
+
+@mutation fused-return-any-main-loop
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The popped word's address is not compared: another word with <14> fuses.
+@old
+               && spcv[14] && spcv[13:0] == macro_reg[13:0]
+@new
+               && spcv[14] && spcv[13:0] == spcv[13:0]
+@end
+
+@mutation fused-return-writing-m31
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A POPJ that writes M 31 fuses on the word before the write.
+@old
+               && !(destm && wadr_in[4:0] == 5'o31) && !destintctl
+@new
+               && !(destm && wadr_in[4:0] == 5'o31 && 1'b0) && !destintctl
+@end
+
+@mutation fused-return-writing-interrupt-control
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A POPJ that writes INTERRUPT-CONTROL fuses.
+@old
+               && !(destm && wadr_in[4:0] == 5'o31) && !destintctl
+@new
+               && !(destm && wadr_in[4:0] == 5'o31) && (destintctl || !destintctl)
+@end
+
+@mutation fused-return-enable-ignored
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The enable not read: a stale memory after a control-store write runs.
+@old
+    assign fuse = macro_reg[31]
+@new
+    assign fuse = (macro_reg[31] || !macro_reg[31])
+@end
+
+@mutation control-store-write-keeps-the-enable
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A `WRITE-I-MEM` leaves the enable up, and the stale entries run.
+@old
+          else if (iwrited) macro_reg[31] <= 1'b0;
+@new
+          else if (iwrited) macro_reg[31] <= macro_reg[31];
+@end
+
+@mutation fused-return-halfword-by-lc-unstepped
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The halfword chosen by LC before `NEXT INSTR` steps it: the other half.
+@old
+    assign lcs    = lc[1:0] + (lc_byte_mode ? 2'd1 : 2'd2);
+@new
+    assign lcs    = lc[1:0] + (lc_byte_mode ? 2'd0 : 2'd0);
+@end
+
+@mutation fused-return-index-drops-a-register-bit
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The index without the register's low bit: the specialised entry at an
+@note odd index is never taken.
+@old
+    assign entry = macro_mem[hw_rot[9:0]];
+@new
+    assign entry = macro_mem[{hw_rot[9:1], 1'b0}];
+@end
+
+@mutation macro-dispatch-memory-written-at-the-next-index
+@check quux_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Destination 7 writes the entry after the index.
+@old
+      if (cpu_edge && macro_dest == 3'd7) macro_mem[macro_index] <= ob[17:0];
+@new
+      if (cpu_edge && macro_dest == 3'd7) macro_mem[macro_index + 10'd1] <= ob[17:0];
+@end
+
+@mutation operand-arg-without-the-one
+@check quux_operand_quux
+@file rtl/machine/cadr_microcycle.sv
+@note ARG's address without `QADARG1`'s + 1.
+@old
+    assign macro_load_addr = PDL_BITS'(macro_opr_arg ? macro_ap_nx + 14'd1 + 14'(macro_opr_delta)
+@new
+    assign macro_load_addr = PDL_BITS'(macro_opr_arg ? macro_ap_nx + 14'd0 + 14'(macro_opr_delta)
+@end
+
+@mutation operand-local-and-arg-swapped
+@check quux_operand_quux
+@file rtl/machine/cadr_microcycle.sv
+@note LOCAL taken for ARG and ARG for LOCAL.
+@old
+          macro_opr_arg   <= hw_rot[2:0] == 3'd6;
+@new
+          macro_opr_arg   <= hw_rot[2:0] == 3'd5;
+@end
+
+@mutation operand-any-register
+@check quux_operand_quux
+@file rtl/machine/cadr_microcycle.sv
+@note An address armed for every register, not LOCAL and ARG alone.
+@old
+    assign opr = entry[17] && (hw_rot[2:0] == 3'd5 || hw_rot[2:0] == 3'd6);
+@new
+    assign opr = entry[17] || 1'b0 && (hw_rot[2:0] == 3'd5 || hw_rot[2:0] == 3'd6);
+@end
+
+@mutation operand-loaded-a-microcycle-early
+@check quux_operand_quux
+@file rtl/machine/cadr_microcycle.sv
+@note PDL-INDEX loaded at the fused return's own edge, before the microcycle
+@note after it, which then reads the address.
+@old
+    assign macro_load_idx  = cpu_edge && macro_opr_v;
+@new
+    assign macro_load_idx  = cpu_edge && (macro_opr_v || (macro_fused && opr));
+@end
+
+@mutation operand-base-before-the-returns-own-write
+@check quux_operand_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `M-AP` as it stood before the return's own write lands with the pulse.
+@old
+                           : (wp && destmd && wadr[4:0] == macro_reg[28:24]) ? l[13:0] : macro_ap;
+@new
+                           : (1'b0 && wp && destmd && wadr[4:0] == macro_reg[28:24]) ? l[13:0] : macro_ap;
+@end
+
+@mutation operand-localp-copy-not-following-a-writes
+@check quux_operand_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The copy of `A-LOCALP` not written by an A write at its address.
+@old
+        if (wp && destd && wadr == macro_reg[23:14]) macro_localp <= l[13:0];
+@new
+        if (1'b0 && wp && destd && wadr == macro_reg[23:14]) macro_localp <= l[13:0];
+@end
+
+@mutation prefetch-m31-not-armed
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A fused return on the prefetched word leaves M 31 the word before.
+@old
+          macro_m31_v     <= macro_fused && pf_use;
+@new
+          macro_m31_v     <= 1'b0 && pf_use && macro_fused;
+@end
+
+@mutation prefetch-a31-keeps-a-memory
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A 31 reads A memory after M 31 took the prefetched word.
+@old
+            a31_from_m31 <= 1'b1;
+@new
+            a31_from_m31 <= 1'b0;
+@end
+
+@mutation prefetch-a31-not-released-by-an-a-write
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note An A write at 31 leaves A 31 reading M 31's register.
+@old
+        if (wp && destd && wadr == 10'o31) a31_from_m31 <= 1'b0;
+@new
+        if (wp && destd && wadr == 10'o31) a31_from_m31 <= a31_from_m31;
+@end
+
+@mutation prefetch-m31-read-from-m-memory
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note M 31 read from M memory, which the prefetched word never reached.
+@old
+  assign mmem_out = mpass ? l : (QUUX && madr == 5'o31) ? m31_r : mmem_q;
+@new
+  assign mmem_out = mpass ? l : (1'b0 && QUUX && madr == 5'o31) ? m31_r : mmem_q;
+@end
+
+@mutation prefetch-condition-6-not-tested
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A return on the fetch path fuses on the buffered word with condition 6
+@note true.
+@old
+    assign pf_refused  = pf_use && (pgf_or_int_or_sb || (memstart && wrcyc));
+@new
+    assign pf_refused  = pf_use && (1'b0 && pgf_or_int_or_sb || (memstart && wrcyc));
+@end
+
+@mutation prefetch-store-started-not-refused
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A return in the microcycle after a store's start fuses on the word the
+@note store is about to replace.
+@old
+    assign pf_refused  = pf_use && (pgf_or_int_or_sb || (memstart && wrcyc));
+@new
+    assign pf_refused  = pf_use && (pgf_or_int_or_sb || (memstart && wrcyc && 1'b0));
+@end
+
+@mutation prefetch-map-write-keeps-the-word
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A map write leaves the buffered word.
+@old
+    assign pf_drop  = (cpu_edge && (destlc || (destmem && ir[20:19] == 2'd3))) || !n_boot;
+@new
+    assign pf_drop  = (cpu_edge && (destlc || (destmem && ir[20:19] == 2'd3 && 1'b0))) || !n_boot;
+@end
+
+@mutation prefetch-not-a-fetch
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note No grant is the stream's fetch, so nothing is ever buffered.
+@old
+        if (cpu_edge) memstart_fetch <= ifetch;
+@new
+        if (cpu_edge) memstart_fetch <= ifetch && 1'b0;
+@end
+
+@mutation prefetch-store-keeps-the-word
+@check quux_prefetch_quux
+@file rtl/machine/quux_mem_port.sv
+@note A store to the buffered word leaves it in the port, and the processor's
+@note view takes it back at the next master clock edge.
+@old
+    if (state == GRANTED && first && write && line_phys == pf_nx_phys) pf_nx_v = 1'b0;
+@new
+    if (state == GRANTED && first && write && line_phys == pf_nx_phys && 1'b0) pf_nx_v = 1'b0;
+@end
+
+@mutation prefetch-store-drop-a-tick-late
+@check quux_prefetch_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The processor's view keeps the buffered word over the grant of a store
+@note to it, and the microcycle that grant begins fuses on it.
+@old
+          pf_view_v           <= pf_nx_v && !pf_store_to_word;
+@new
+          pf_view_v           <= pf_nx_v && !(pf_store_to_word && 1'b0);
+@end
+
+@mutation prefetch-transfer-keeps-the-word
+@check quux_prefetch_quux
+@file rtl/machine/quux_mem_port.sv
+@note A transfer by block-disk leaves the buffered word.
+@old
+    if (pf_drop || invalidate || inval_owed) pf_nx_v = 1'b0;
+@new
+    if (pf_drop) pf_nx_v = 1'b0;
+@end
+
+@mutation prefetch-past-the-line
+@check quux_prefetch_quux
+@file rtl/machine/quux_mem_port.sv
+@note The line's last word takes the line's first as the next.
+@old
+        pf_nx_v     = line_phys[1:0] != 2'd3;
+@new
+        pf_nx_v     = 1'b1;
+@end
+
+@mutation prefetch-takes-the-fetched-word
+@check quux_prefetch_quux
+@file rtl/machine/quux_mem_port.sv
+@note The word fetched taken again, not the one after it.
+@old
+        pf_nx_word  = from_line ? line_word[line_phys[1:0] + 2'd1] : c_next_word;
+@new
+        pf_nx_word  = from_line ? line_word[line_phys[1:0] + 2'd1] : c_word ^ (c_next_word & 32'd0);
+@end
+
+@mutation prefetch-miss-takes-the-fetched-word
+@check quux_prefetch_quux
+@file rtl/machine/quux_mem_port.sv
+@note On a miss, the word fetched from the line taken, not the one after it.
+@old
+        pf_nx_word  = from_line ? line_word[line_phys[1:0] + 2'd1] : c_next_word;
+@new
+        pf_nx_word  = from_line ? line_word[line_phys[1:0]] : c_next_word;
+@end
+
+@mutation prefetch-vaddr-not-stepped
+@check quux_prefetch_quux
+@file rtl/machine/quux_mem_port.sv
+@note The buffered word's virtual address the fetch's own.
+@old
+        pf_nx_vaddr = pf_fetch_vaddr_q + 24'd1;
+@new
+        pf_nx_vaddr = pf_fetch_vaddr_q + 24'd0;
+@end
+
+@mutation cache-next-word-is-the-word
+@check quux_prefetch_quux
+@file rtl/machine/quux_cache.sv
+@note The line's next word the word itself.
+@old
+  assign next_word = way_q ? data1_out[off_q + 2'd1] : data0_out[off_q + 2'd1];
+@new
+  assign next_word = way_q ? data1_out[off_q + 2'd1] : data0_out[off_q];
 @end

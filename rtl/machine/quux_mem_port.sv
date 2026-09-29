@@ -62,6 +62,26 @@
 // takes it, with `mem_line` asking four words, two 64-bit beats, and the
 // whole line back on `mem_rline`.
 //
+// **REVISION 12'S CACHE-ONLY PREFETCH** (contract H8a §3.5, muir's
+// `MemoryPort` with `Reach::Line`).  When a macroinstruction fetch's read is
+// answered from the memory bus at physical word p, the word at p + 1 is
+// taken into a one-word buffer with its virtual and physical addresses, if
+// it is in the line the fetch has just read or filled: the cache's RAMs put
+// the hit line's four words out together (`quux_cache.sv`'s `next_word`),
+// and a miss has its whole line in `line_word`.  No memory cycle, no map
+// lookup, no second read of the cache.  The buffer is dropped by a store
+// to its word (a tick after the store's grant), a transfer by block-disk or the file
+// device (`invalidate` and the invalidation owed), and the processor's
+// `pf_drop`: a write of the location counter or a map write at its edge,
+// and -RESET.  The processor says at each grant whether the cycle is the
+// stream's fetch and its `VMA<23:0>` (`pf_fetch`, `pf_vaddr`), as muir's
+// `mark_fetch` does.  Every event is applied in muir's order within a
+// tick --- an answer, then the processor's drops, then a grant --- and
+// `pf_nx_*` is the buffer as the tick leaves it, which the processor takes
+// at each master clock edge for the microcycle that edge begins
+// (`cadr_microcycle.sv`, "the prefetch").  What the fused return does with
+// it is the processor's.
+//
 // `drained` is up when no write waits in the buffer and main memory is
 // idle: what the host waits for, after a halt, before it reads main memory
 // from outside the machine (the contract: "a halt drains the write buffer").
@@ -139,7 +159,20 @@ module quux_mem_port
     // The cache's counts of reads, for the host: muir's `hits` and
     // `misses`.
     output var logic [31:0]  hits,
-    output var logic [31:0]  misses
+    output var logic [31:0]  misses,
+
+    // Revision 12's prefetch: the cycle a grant takes is the stream's fetch
+    // of `pf_vaddr`; the processor drops the word; and the buffer and a
+    // fetch yet to be answered, as this tick leaves them.
+    input  var logic         pf_fetch,
+    input  var logic [23:0]  pf_vaddr,
+    input  var logic         pf_drop,
+    output var logic         pf_nx_v,
+    output var logic [23:0]  pf_nx_vaddr,
+    output var logic [21:0]  pf_nx_phys,
+    output var logic [31:0]  pf_nx_word,
+    output var logic         pf_nx_fetch_v,
+    output var logic [23:0]  pf_nx_fetch_vaddr
 );
 
   localparam int unsigned HIT_T = cadr_tick_pkg::ticks(20);
@@ -194,7 +227,7 @@ module quux_mem_port
 
   // ------------------------------------------------------- the cache
   logic c_hit, c_hit_way, c_victim;
-  logic [31:0] c_word;
+  logic [31:0] c_word, c_next_word;
   logic c_touch, c_miss, c_update, c_fill, c_inval, c_snoop;
   logic [21:0] snoop_phys;
   logic inval_owed;
@@ -228,6 +261,7 @@ module quux_mem_port
       .update     (c_update),
       .update_word(wdata),
       .word       (c_word),
+      .next_word  (c_next_word),
       .fill       (c_fill),
       .fill_line  (mem_rline),
       .invalidate (c_inval),
@@ -284,6 +318,67 @@ module quux_mem_port
   // has really gone: the count alone is muir's, the flag is the board's.
   logic ready;
   assign ready = !mem_cycle || !write || !wb_valid;
+
+  // ------------------------------------------------------ the prefetch
+  logic        pf_v, pf_fetch_v;
+  logic [23:0] pf_vaddr_q, pf_fetch_vaddr_q;
+  logic [21:0] pf_phys;
+  logic [31:0] pf_word;
+  always_comb begin
+    pf_nx_v           = pf_v;
+    pf_nx_vaddr       = pf_vaddr_q;
+    pf_nx_phys        = pf_phys;
+    pf_nx_word        = pf_word;
+    pf_nx_fetch_v     = pf_fetch_v;
+    pf_nx_fetch_vaddr = pf_fetch_vaddr_q;
+    // A read answered, muir's `read_answered`: past a fetch of the memory
+    // bus, the next word of its line, or nothing.
+    if (state == GRANTED && acked && !write && pf_fetch_v) begin
+      pf_nx_fetch_v = 1'b0;
+      if (mem_cycle) begin
+        pf_nx_v     = line_phys[1:0] != 2'd3;
+        pf_nx_vaddr = pf_fetch_vaddr_q + 24'd1;
+        pf_nx_phys  = line_phys + 22'd1;
+        pf_nx_word  = from_line ? line_word[line_phys[1:0] + 2'd1] : c_next_word;
+      end
+    end
+    // Dropped by the processor, and by a transfer.
+    if (pf_drop || invalidate || inval_owed) pf_nx_v = 1'b0;
+    // A store to the word drops it, muir's `request_at` at the grant.
+    // **HERE A TICK AFTER THE GRANT**, against the address the cache holds
+    // for the cycle (`line_phys`): the grant's own `phys` is the far end of
+    // the map, which has the microcycle to settle and not a tick.  The
+    // processor drops its view of the word at the grant itself, where it
+    // has the microcycle (`cadr_microcycle.sv`, "the prefetch"), and
+    // nothing reads the buffer in the tick between: a fill is two ticks
+    // after a grant at the soonest.
+    if (state == GRANTED && first && write && line_phys == pf_nx_phys) pf_nx_v = 1'b0;
+    // A grant, muir's `request_at` and `mark_fetch`: the cycle is a fetch or
+    // not.  A read nothing answers is answered in the same tick, which takes
+    // the mark again.
+    if (take) begin
+      pf_nx_fetch_v     = pf_fetch && !empty;
+      pf_nx_fetch_vaddr = pf_vaddr;
+    end
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      pf_v             <= 1'b0;
+      pf_fetch_v       <= 1'b0;
+      pf_vaddr_q       <= 24'd0;
+      pf_fetch_vaddr_q <= 24'd0;
+      pf_phys          <= 22'd0;
+      pf_word          <= 32'd0;
+    end else begin
+      pf_v             <= pf_nx_v;
+      pf_fetch_v       <= pf_nx_fetch_v;
+      pf_vaddr_q       <= pf_nx_vaddr;
+      pf_fetch_vaddr_q <= pf_nx_fetch_vaddr;
+      pf_phys          <= pf_nx_phys;
+      pf_word          <= pf_nx_word;
+    end
+  end
 
   // ---------------------------------------------- the memory controller
   //

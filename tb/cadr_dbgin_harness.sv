@@ -393,6 +393,13 @@ module cadr_dbgin_harness #(
   logic [2:0] unused_timer_pending;
   logic [23:0] unused_tm_rdata;
   /* verilator lint_on UNUSEDSIGNAL */
+  // The processor's side of revision 12's prefetch, which no port here
+  // takes; named so that lint sees them read.
+  logic        h_pf_fetch, h_pf_drop;
+  logic [23:0] h_pf_vaddr;
+  logic        unused_h_pf;
+  assign unused_h_pf = h_pf_fetch ^ h_pf_drop ^ (^h_pf_vaddr);
+
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
   ) processor (
@@ -432,6 +439,16 @@ module cadr_dbgin_harness #(
       // it has no memory port to drain (contract Q6 is QUUX's).
       .cached      (1'b0),
       .mem_drained (1'b0),
+      // Revision 12's prefetch is QUUX's memory port's: none here.
+      .pf_fetch    (h_pf_fetch),
+      .pf_vaddr    (h_pf_vaddr),
+      .pf_drop     (h_pf_drop),
+      .pf_nx_v     (1'b0),
+      .pf_nx_vaddr (24'd0),
+      .pf_nx_phys  (22'd0),
+      .pf_nx_word  (32'd0),
+      .pf_nx_fetch_v    (1'b0),
+      .pf_nx_fetch_vaddr(24'd0),
       // `UB MD LOAD`, MD's third writer: a foreign master's mapped write
       // through the Unibus map, which this harness has no register block to
       // make.  Tied off, and the acknowledgment is then never asked for.

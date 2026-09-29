@@ -147,7 +147,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
 # QUUX's checks: the whole machine built as QUUX on QUUX's own boot PROM, and
 # each of the programs in `golden/src/quux.rs` that reach what that PROM does
 # not.  The CADR runs the same programs in `CHECK_CADR` above.
-QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart unibus
+QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart unibus fused operand prefetch
 # QUUX's own, at its synchronous microcycle: the same but `tick` and
 # `tickwait`, which were revision 4's tick, whose period destination 4 set.
 # Since revision 10 (contract Q11) `clocks` holds the three interval timers
@@ -179,7 +179,7 @@ QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart un
 # its 256 words read at power-on, written with all ones where it is read only
 # or reserved, and read again, and every address that was a register before
 # revision 11 finding nothing there.
-QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page registers clockwait memedge busreset startstart rtc files
+QUUX_SYNC_PROGRAMS := map tv muldiv clocks divmd tickwin pdlsync imemsync page registers clockwait memedge busreset startstart rtc files fused operand prefetch
 # And those taken at an L of one as well: `divmd`, whose `DIV`s are half
 # `ILONG`, `divmdsync`, whose one `ILONG` filler at an L of one moves the
 # word read a tick against the microcycles, and `tickwin`, whose `ILONG`s put
@@ -1054,7 +1054,7 @@ $(BUILD)/quux_axi_master.quux.pass: $(BUILD)/obj_quux_axi_master/Vquux_axi_maste
 # QUUX is part of `make check MACHINE=quux`.  The generator asserts, at the
 # end of each run, the values muir's own `tests/quux.rs` holds, so a program
 # that stopped reaching its feature fails there and writes no trace.
-QUUX_GOLDEN := golden/src/quux.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Cargo.toml
+QUUX_GOLDEN := golden/src/quux.rs golden/src/fused.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Cargo.toml
 
 # Kept: pattern rules make these intermediate, and make deletes an
 # intermediate file after the run, which would rebuild every model each time.
@@ -3909,7 +3909,16 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # `17777400` (contract Q13), and it refuses version 46.  Only the header's
 # version changes, and the file stays 561,562 bytes: with that one byte set
 # back to 46 the file hashes to version 46's digest, 0f9a8e33...e67d.
-CHECKPOINT_SHA  := bb17c871e07d1b47b46a8c6902594dc1a98bee5fc06dfe78cf4dafbb57142d6f
+#
+# **AND WHEN IT WENT 47 TO 49.**  muir moved the number twice for QUUX's
+# revision 12, the fused return (contract H8a): every machine's body carries
+# the geometry's `macro_dispatch` and `MacroDispatch`, the register, the
+# index, 1,024 entries, the base copies and nothing armed, and the engine's
+# `memstart_fetch` after the rest; a CADR writes the default, zeros.  The
+# body grows by 4,122 bytes, 632,409 to 636,531, and the packed file to
+# 561567 bytes; muir loads it, saves it back byte for byte and resumes at the
+# same microcycle.
+CHECKPOINT_SHA  := 8a1894f21fae8711f53e1323f073c6a4dddb5e603937eb9f41b063110587c763
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed

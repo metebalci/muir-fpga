@@ -716,6 +716,25 @@ MACHINE=quux` runs them at `SYNC_K` and `SYNC_L`, which are 4 and 0 unless
 the command line sets them. It also runs the programs with `ILONG`
 instructions at an L of one.
 
+## QUUX's fused return and its prefetch
+
+Revision 12 (contract H8a) adds no instant of its own; everything it does is
+at the processor's edges. A fused return's choice of the handler is made in
+its microcycle and taken at the edge that ends it, where the MACRO-DISPATCH
+register and the MACRO DISPATCH MEMORY's index and entry are written too. The
+operand address and the prefetched M 31 word it arms are loaded at the edge
+that ends the microcycle after it, after that microcycle's write pulse, whose
+write of `A-LOCALP` or `M-AP` the address already takes. The base copies are
+written with the write pulse. The cache-only prefetch's buffer is the memory
+port's and changes on the port's own ticks: a fetch answered fills it, and a
+transfer or the processor's write of LC or of the map drops it. The processor
+takes it at every master clock edge, a store granted at that edge to the
+buffered word dropping it there, and a microcycle fuses on the buffer as that
+edge left it, which is muir's rule that a change on an edge counts as before
+it. The port drops its own copy a tick after the store's grant, against the
+address the cache holds for the cycle, because the grant's address is the far
+end of the map and has the microcycle and not a tick.
+
 ## What is not MIT's timing at all
 
 Some tick counts in the tree name no nanosecond figure and must not be given

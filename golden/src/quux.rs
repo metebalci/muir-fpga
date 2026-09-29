@@ -39,6 +39,7 @@
 //! that stopped reaching what it is for fails here, before it can make a
 //! trace that compares nothing.
 
+mod fused;
 mod machine_axis;
 mod trace;
 
@@ -1677,7 +1678,7 @@ fn check_page(which: Which, m: &muir::machine::Machine) {
     assert_eq!(&r[23..25], &[T_ON | T_FLAG | T_IE, 2], "QUUX: 114 and 115, timer 2 risen");
     let id = which.geometry().machine_id.unwrap();
     assert_eq!(&r[25..30], &[0, 0, 0, 3, id], "QUUX: 110, 111, 104, feature word 16 and the MACHINE-ID");
-    assert_eq!(id >> 4 & 0o7777, 11, "QUUX: revision 11");
+    assert_eq!(id >> 4 & 0o7777, 12, "QUUX: revision 12");
     let r = &r[10..];
     assert_eq!(r[20] & 0o240, 0o240, "QUUX: 140, Transmit Done and its interrupt enable");
     assert_eq!(r[21] & (1 << 6), 1 << 6, "QUUX: 100, the network");
@@ -1741,6 +1742,8 @@ fn register_at_power_on(w: u32) -> Option<u32> {
         0o13 => 0o17000000,
         0o14 => 1,
         0o15 | 0o16 => 3,
+        // The MACRO DISPATCH MEMORY's entries (revision 12, contract H8a).
+        0o17 => 1024,
         0o103 => return None,
         // The network's CSR, Transmit Done; my address at 141 and at 145,
         // START, as the CADR's board reads it at `764152`.
@@ -3543,6 +3546,183 @@ fn check_unibus(which: Which, m: &muir::machine::Machine) {
     assert!(r(0, 7) < r(1, 7) && r(1, 7) < r(2, 7), "CADR: the microsecond counter's low half moved");
 }
 
+// ------------------------------------------------- the fused return
+
+/// The `fused` and `operand` programs on QUUX at a K of four park well
+/// inside these; the CADR's main loop is longer and its memory slower.
+const FUSED_ROWS: u64 = 1_350;
+const OPERAND_ROWS: u64 = 1_000;
+const PREFETCH_ROWS: u64 = 1_250;
+
+/// The microcycles `phases` takes on `which` from reset to its park, and
+/// the machine there.
+fn fused_run(which: Which, phases: &[fused::Phase], timing: muir::clock::TimingModel) -> (u64, muir::rtl::Rtl) {
+    let b = fused::program(phases);
+    let park = *b.marks.last().unwrap();
+    let mut e = trace::engine_on(which.machine(&b.prog.prom()), timing);
+    e.boot();
+    for _ in 0..200_000u64 {
+        if e.machine().opc as u64 == park {
+            // Microcycles, not steps: a step can end inside a wait.
+            let n = e.machine().cycles;
+            return (n, e);
+        }
+        e.step().expect("fused: the program runs");
+    }
+    panic!("fused: the program never reached its park at {park:o}");
+}
+
+/// **What the `fused` and `operand` programs reached** (contract H8a §6
+/// items 2 to 5).  The trace's own run parked, no stale entry was taken and
+/// every phase ended.  On QUUX, returns fused, and the same program with the
+/// register's enable clear in every phase --- revision 11's machine, as far
+/// as these programs go --- ran every opcode as often and took exactly two
+/// microcycles more for each fused return, none of them on the fetch path
+/// (sequence break is up throughout); the specialised entry's runs are
+/// opcode 2's there.  On the CADR, whose destinations 5 to 7 write only M,
+/// nothing fused.
+fn check_fused(which: Which, e: &muir::rtl::Rtl, phases: Vec<fused::Phase>, timing: muir::clock::TimingModel) {
+    let b = fused::program(&phases);
+    let park = *b.marks.last().unwrap();
+    let m = e.machine();
+    assert!((park..=park + 1).contains(&(m.opc as u64)), "fused: the trace ends in the park, OPC {:o}", m.opc);
+    let mm = |k: u64| m.mmem[k as usize];
+    let words: std::collections::BTreeMap<&str, u64> = fused::M_WORDS.iter().copied().collect();
+    assert_eq!(mm(words["stale entries taken"]), 0, "fused: no stale entry was taken");
+    assert_eq!(mm(words["phases ended"]), phases.len() as u32, "fused: every phase ended");
+    let (on_cycles, on) = fused_run(which, &phases, timing);
+    let fused = on.machine().macro_dispatch.fused;
+    if which != Which::Quux {
+        assert_eq!(fused, 0, "CADR: nothing fused");
+        eprintln!("quux: nothing fused on the CADR, {on_cycles} microcycles to the park");
+        return;
+    }
+    assert!(fused > 0, "QUUX: returns fused");
+    let off_phases: Vec<fused::Phase> = phases
+        .into_iter()
+        .map(|mut p| {
+            p.enable = false;
+            p
+        })
+        .collect();
+    let (off_cycles, off) = fused_run(which, &off_phases, timing);
+    assert_eq!(off.machine().macro_dispatch.fused, 0, "QUUX: nothing fused with the enable clear");
+    // The specialised handler is opcode 2's in one microinstruction where
+    // opcode 2's takes two: one microcycle more for each of its runs.
+    let special = words["the specialised handler"] as usize;
+    let specials = on.machine().mmem[special] as u64;
+    assert_eq!(
+        off_cycles - on_cycles,
+        2 * fused + specials,
+        "QUUX: two microcycles fewer for each of {fused} fused returns, and one for each of {specials} specialised runs"
+    );
+    for k in 1..0o31usize {
+        let (a, b) = (on.machine().mmem[k], off.machine().mmem[k]);
+        match k {
+            2 => assert_eq!(a + on.machine().mmem[special], b, "QUUX: opcode 2 and its specialised entry"),
+            k if k == special => assert_eq!(b, 0, "QUUX: no specialised handler with the enable clear"),
+            0o20 | 0o21 | 0o27 => {}
+            _ => assert_eq!(a, b, "QUUX: M[{k:o}] with and without the fused return"),
+        }
+    }
+    eprintln!("quux: {fused} returns fused, {specials} specialised runs, {on_cycles} microcycles to the park against {off_cycles}");
+}
+
+/// **What the `prefetch` program reached** (contract H8a §3.5, §6 item 10):
+/// parked, every phase ended; on QUUX returns fused on the buffered word,
+/// and with the enable clear none did and the run took two microcycles more
+/// for each return fused with no fetch and four for each on the buffered
+/// word (`QMLP` to `QMLP+3`); READ31, which runs where POPJ's handler would,
+/// is as long.  Every count but POPJ's agrees.
+fn check_prefetch(which: Which, e: &muir::rtl::Rtl, timing: muir::clock::TimingModel) {
+    let phases = fused::prefetch_phases();
+    let b = fused::program(&phases);
+    let park = *b.marks.last().unwrap();
+    let m = e.machine();
+    assert!((park..=park + 1).contains(&(m.opc as u64)), "prefetch: the trace ends in the park, OPC {:o}", m.opc);
+    let words: std::collections::BTreeMap<&str, u64> = fused::M_WORDS.iter().copied().collect();
+    assert_eq!(m.mmem[words["stale entries taken"] as usize], 0, "prefetch: no stale entry was taken");
+    assert_eq!(m.mmem[words["phases ended"] as usize], phases.len() as u32, "prefetch: every phase ended");
+    let (on_cycles, on) = fused_run(which, &phases, timing);
+    let fused = on.machine().macro_dispatch.fused;
+    if which != Which::Quux {
+        assert_eq!(fused, 0, "CADR: nothing fused");
+        eprintln!("quux: nothing fused on the CADR, {on_cycles} microcycles to the park");
+        return;
+    }
+    let used = on.prefetch_counts().expect("QUUX's prefetch").used;
+    assert!(used > 0 && fused > used, "QUUX: {fused} returns fused, {used} on the buffered word");
+    let off_phases: Vec<fused::Phase> = phases
+        .into_iter()
+        .map(|mut p| {
+            p.enable = false;
+            p
+        })
+        .collect();
+    let (off_cycles, off) = fused_run(which, &off_phases, timing);
+    assert_eq!(off.machine().macro_dispatch.fused, 0, "QUUX: nothing fused with the enable clear");
+    // STORE_EARLY, the specialised entry of STORE_NEXT with register 1,
+    // runs where the return into it fuses and is one microcycle shorter; it
+    // counts in the specialised handler's word and STORE_NEXT in `M[30]`.
+    let special = words["the specialised handler"] as usize;
+    let others = words["other opcodes"] as usize;
+    let specials = on.machine().mmem[special] as u64;
+    assert_eq!(
+        off_cycles - on_cycles,
+        2 * (fused - used) + 4 * used + specials,
+        "QUUX: {fused} fused returns, {used} of them on the buffered word, {specials} STORE_EARLY runs"
+    );
+    for k in 2..0o31usize {
+        let (a, b) = (on.machine().mmem[k], off.machine().mmem[k]);
+        match k {
+            0o20 | 0o21 | 0o27 => {}
+            k if k == others => assert_eq!(a + specials as u32, b, "QUUX: STORE_NEXT and its specialised entry"),
+            k if k == special => assert_eq!(b, 0, "QUUX: no specialised handler with the enable clear"),
+            _ => assert_eq!(a, b, "QUUX: M[{k:o}] with and without the fused return"),
+        }
+    }
+    let c = on.prefetch_counts().unwrap();
+    eprintln!(
+        "quux: {fused} returns fused, {used} on the buffered word, refused {:?}, dropped {:?}; {on_cycles} microcycles to the park against {off_cycles}",
+        c.refused, c.dropped
+    );
+}
+
+/// **The operand program's pushes** (contract H8a §3.4): PDL-INDEX as each
+/// RECORD's first microinstruction and the microcycle after its return find
+/// it, and the word at PDL-INDEX that LOAD and TOP push, from the phase's
+/// pointer on.  With the operand bit only a fused return into LOCAL or ARG
+/// finds its address; every other push finds the sentinel.
+fn check_operand(which: Which, m: &muir::machine::Machine) {
+    use fused::{PDL_AP as AP, PDL_LOCALP as LP, PDL_LOCALP_2 as LP2, PDL_WORD as W};
+    let quux = which == Which::Quux;
+    // The sentinel as PDL-INDEX holds it: ten bits on the CADR.
+    let s = if quux { fused::PDL_SENTINEL } else { fused::PDL_SENTINEL & 0o1777 };
+    let log = |n: usize, k: usize| -> Vec<u32> {
+        (0..k).map(|i| m.pdl[(fused::pdl_pointer(n) + 1 + i as u32) as usize]).collect()
+    };
+    let records_off = vec![s; 20];
+    let (phase1, phase2): (Vec<u32>, Vec<u32>) = if quux {
+        let mut a = vec![s, s, (LP + 7) & 0o37777, s, s, s, AP + 1 + 5, s, AP + 1 + 1 + 2, s];
+        a.extend([s, s, s, s, s, s, (LP + 0o77) & 0o37777, s, LP2 + 1, s]);
+        // LOAD with the sentinel, LOAD of ARG 4 after SETAP, INDEX_WRITE's
+        // first push; LOAD of LOCAL 6, which reads the word from before
+        // the write the microcycle after INDEX_WRITE's return made there;
+        // RECORD; LOAD of LOCAL 6 again, the word written; PUSHES_AFTER's
+        // first push and the one after its return; TOP's push of the top it
+        // read first, from before that push.
+        a.extend([0, 0x2222_0006, s, 0x1111_0006, s, s, W, s, W, 0]);
+        let mut b = records_off.clone();
+        b.extend([0, 0, s, 0, s, s, W, s, W, 0]);
+        (a, b)
+    } else {
+        // The CADR fuses nothing, so every RECORD finds the sentinel.
+        (records_off.clone(), records_off)
+    };
+    assert_eq!(log(0, phase1.len()), phase1, "{}: the operand bit's pushes", which.name());
+    assert_eq!(log(1, phase2.len()), phase2, "{}: the pushes with the operand bit clear", which.name());
+}
+
 fn cycles(name: &str, which: Which) -> u64 {
     match name {
         "clocks" if which == Which::Cadr => 1600,
@@ -3568,6 +3748,9 @@ fn cycles(name: &str, which: Which) -> u64 {
         "rtc" => RTC_ROWS,
         "files" => FILES_ROWS,
         "unibus" => 3000,
+        "fused" => FUSED_ROWS,
+        "operand" => OPERAND_ROWS,
+        "prefetch" => PREFETCH_ROWS,
         _ => unreachable!(),
     }
 }
@@ -3607,8 +3790,11 @@ fn program(name: &str) -> Prog {
         "rtc" => rtc_program(),
         "files" => files_program(),
         "unibus" => unibus_program(),
+        "fused" => fused::program(&fused::fused_phases()).prog,
+        "operand" => fused::program(&fused::operand_phases()).prog,
+        "prefetch" => fused::program(&fused::prefetch_phases()).prog,
         _ => {
-            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, registers, clockwait, memedge, busreset, startstart, unibus, rtc, files");
+            eprintln!("quux: no program `{name}`; the programs are: map, tv, muldiv, tick, ticksync, divmd, divmdsync, pdlsync, imemsync, tickwait, clocks, tickwin, page, registers, clockwait, memedge, busreset, startstart, unibus, rtc, files, fused, operand, prefetch");
             std::process::exit(2);
         }
     }
@@ -3844,6 +4030,12 @@ fn main() {
         "rtc" => check_rtc(which, e.machine()),
         "files" => check_files(which, e.machine()),
         "unibus" => check_unibus(which, e.machine()),
+        "fused" => check_fused(which, &e, fused::fused_phases(), timing),
+        "operand" => {
+            check_fused(which, &e, fused::operand_phases(), timing);
+            check_operand(which, e.machine());
+        }
+        "prefetch" => check_prefetch(which, &e, timing),
         _ => unreachable!(),
     }
     eprintln!(

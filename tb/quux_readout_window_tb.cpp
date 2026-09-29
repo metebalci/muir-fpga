@@ -55,10 +55,14 @@ namespace {
 
 constexpr uint64_t kNoMemory = 0xA5A5'5A5A'A5A5ull;
 constexpr unsigned kSelPdl = 4, kSelMap1 = 7, kSelMap2 = 8, kSelProm = 1;
-constexpr unsigned kSelRegs = 10, kSelAudit = 11, kSelPage = 12;
+constexpr unsigned kSelRegs = 10, kSelAudit = 11, kSelPage = 12, kSelMacro = 13;
+constexpr unsigned kSelAmem = 2, kSelMmem = 3;
 // Entries 21 to 28: which machine, the microsecond clock, timer k's count at
-// 23 + k and its interrupt enable, mode and period at 26 + k.
-constexpr unsigned kRgQuuxId = 21, kRgTime = 22, kRgCount = 23, kRgConf = 26, kRgLast = 28;
+// 23 + k and its interrupt enable, mode and period at 26 + k; and 29 to 40,
+// revision 12's fused return and its prefetch (`cadr_microcycle.sv`'s
+// `RG_QUUX_MACRO` and on).
+constexpr unsigned kRgQuuxId = 21, kRgTime = 22, kRgCount = 23, kRgConf = 26, kRgMacro = 29,
+                   kRgLast = 40;
 
 int fails = 0;
 long checks = 0;
@@ -125,6 +129,7 @@ uint64_t Window(unsigned sel, unsigned addr) {
 #define FD(x) \
   dut->rootp->cadr_machine__DOT__g_quux_feature_page__DOT__feature_page__DOT__file_device__DOT__##x
 #define PROC(x) dut->rootp->cadr_machine__DOT__processor__DOT__##x
+#define PORT(x) dut->rootp->cadr_machine__DOT__memory__DOT__g_quux_port__DOT__port__DOT__##x
 
 uint64_t TimerWord(unsigned k) {
   const uint64_t usec = CLK(usec), usec_t = CLK(usec_t);
@@ -209,6 +214,11 @@ int main(int argc, char **argv) {
     Check(w == kNoMemory, "the CADR's selector 12 word %u read 0x%012" PRIx64
           ", not RO_NO_MEMORY", a, w);
   }
+  for (unsigned a : {0u, 1u, 1023u}) {
+    const uint64_t w = Window(kSelMacro, a);
+    Check(w == kNoMemory, "the CADR's selector 13 word %u read 0x%012" PRIx64
+          ", not RO_NO_MEMORY", a, w);
+  }
 #else
   // ---- which machine, and its K and L ------------------------------------
   {
@@ -216,7 +226,7 @@ int main(int argc, char **argv) {
     const uint64_t want = (0x5155ull << 32) | (static_cast<uint64_t>(SYNC_K_TB) << 24) |
                           (static_cast<uint64_t>(SYNC_L_TB) << 16);
     Check(w == want, "entry 21 read 0x%012" PRIx64 ", wanting QUUX's 0x%012" PRIx64, w, want);
-    Check(Window(kSelRegs, kRgLast + 1) == kNoMemory, "entry 29 is not RO_NO_MEMORY");
+    Check(Window(kSelRegs, kRgLast + 1) == kNoMemory, "entry 41 is not RO_NO_MEMORY");
   }
 
   // ---- the CADR's arrays at QUUX's sizes ---------------------------------
@@ -452,6 +462,77 @@ int main(int argc, char **argv) {
                           (static_cast<uint64_t>(FD(refused)) << 2) |
                           (static_cast<uint64_t>(FD(ie)) << 1) | FD(enabled);
     Check(f == want, "word 9 read 0x%012" PRIx64 ", the flags 0x%012" PRIx64, f, want);
+  }
+
+  // ---- revision 12: the fused return and the prefetch, entries 29 to 40 --
+  //
+  // Each register poisoned at its width and read back through its entry,
+  // every field where `cadr-readout` takes it; the MACRO DISPATCH MEMORY at
+  // its first, last and a middle entry, eighteen bits; and M 31, which is
+  // its register, and A 31, which reads it only while `a31_from_m31` says.
+  {
+    const uint32_t reg = static_cast<uint32_t>(Poison(29, 0, 32)) & ~(3u << 29);
+    PROC(macro_reg) = reg;
+    PROC(macro_index) = static_cast<uint16_t>(Poison(29, 1, 10));
+    PROC(macro_localp) = static_cast<uint16_t>(Poison(29, 2, 14));
+    PROC(macro_ap) = static_cast<uint16_t>(Poison(29, 3, 14));
+    PROC(macro_opr_v) = 1;
+    PROC(macro_opr_arg) = 1;
+    PROC(macro_opr_delta) = static_cast<uint8_t>(Poison(29, 4, 6));
+    PROC(macro_m31_v) = 1;
+    PROC(macro_m31_w) = static_cast<uint32_t>(Poison(29, 5, 32));
+    PROC(a31_from_m31) = 1;
+    PROC(macro_fused_n) = static_cast<uint32_t>(Poison(29, 6, 32));
+    PROC(macro_opr_n) = static_cast<uint32_t>(Poison(29, 7, 32));
+    PROC(macro_pf_n) = static_cast<uint32_t>(Poison(29, 8, 32));
+    // The prefetch's view is taken from the memory port's buffer at every
+    // master clock edge, so the buffer is what is set.
+    PORT(pf_v) = 1;
+    PORT(pf_vaddr_q) = static_cast<uint32_t>(Poison(29, 9, 24));
+    PORT(pf_phys) = static_cast<uint32_t>(Poison(29, 10, 22));
+    PORT(pf_word) = static_cast<uint32_t>(Poison(29, 11, 32));
+    PORT(pf_fetch_v) = 1;
+    PORT(pf_fetch_vaddr_q) = static_cast<uint32_t>(Poison(29, 12, 24));
+    for (int i = 0; i < 16; ++i) Tick();
+    const uint64_t want[12] = {
+        reg,
+        PROC(macro_index),
+        (static_cast<uint64_t>(PROC(macro_ap)) << 14) | PROC(macro_localp),
+        (1u << 10) | (1u << 9) | (1u << 8) | (1u << 7) | PROC(macro_opr_delta),
+        PROC(macro_m31_w),
+        PROC(macro_fused_n),
+        PROC(macro_opr_n),
+        PROC(macro_pf_n),
+        (1ull << 24) | PORT(pf_vaddr_q),
+        PORT(pf_phys),
+        PORT(pf_word),
+        (1ull << 24) | PORT(pf_fetch_vaddr_q),
+    };
+    for (unsigned i = 0; i < 12; ++i) {
+      const uint64_t w = Window(kSelRegs, kRgMacro + i);
+      Check(w == want[i], "entry %u read 0x%012" PRIx64 ", wanting 0x%012" PRIx64, kRgMacro + i,
+            w, want[i]);
+    }
+    for (unsigned a : {0u, 1u, 511u, 1022u, 1023u}) {
+      const uint32_t v = static_cast<uint32_t>(Poison(kSelMacro, a, 18)) | (1u << 17);
+      PROC(g_quux_fused__DOT__macro_mem)[a] = v;
+      const uint64_t w = Window(kSelMacro, a);
+      Check(w == v, "the MACRO DISPATCH MEMORY's entry %u read 0x%012" PRIx64 ", holding 0x%05x", a,
+            w, v);
+    }
+    const uint32_t m31 = static_cast<uint32_t>(Poison(29, 13, 32));
+    PROC(m31_r) = m31;
+    // M 31 is octal, `M-INST-BUFFER`: word 25.
+    PROC(mmem)[031] = ~m31;
+    PROC(amem)[031] = ~m31 ^ 1u;
+    uint64_t r = Window(kSelMmem, 031);
+    Check(r == m31, "M 31 read 0x%012" PRIx64 ", its register holding 0x%08x", r, m31);
+    r = Window(kSelAmem, 031);
+    Check(r == m31, "A 31 read 0x%012" PRIx64 ", M 31's register 0x%08x", r, m31);
+    PROC(a31_from_m31) = 0;
+    r = Window(kSelAmem, 031);
+    Check(r == (~m31 ^ 1u), "A 31 read 0x%012" PRIx64 ", A memory's 0x%08x", r, ~m31 ^ 1u);
+    Check(Window(kSelMmem, 030) == PROC(mmem)[030], "M 30 is M memory's");
   }
 
   // ---- and nothing else answers there ------------------------------------

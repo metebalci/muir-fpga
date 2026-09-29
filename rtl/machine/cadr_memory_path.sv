@@ -534,6 +534,17 @@ module cadr_memory_path #(
     output var logic        port_drained,
     output var logic [31:0] cache_hits,
     output var logic [31:0] cache_misses,
+    // Revision 12's cache-only prefetch, `quux_mem_port.sv`'s, between the
+    // processor and the port.  Tied off, and unread, on the CADR.
+    input  var logic        pf_fetch,
+    input  var logic [23:0] pf_vaddr,
+    input  var logic        pf_drop,
+    output var logic        pf_nx_v,
+    output var logic [23:0] pf_nx_vaddr,
+    output var logic [21:0] pf_nx_phys,
+    output var logic [31:0] pf_nx_word,
+    output var logic        pf_nx_fetch_v,
+    output var logic [23:0] pf_nx_fetch_vaddr,
     // The Xbus bridge's own seam, which on QUUX is the uncached requester
     // and not main memory's: what the transaction audit watches there.
     output var logic        br_req_o,
@@ -1120,7 +1131,16 @@ module cadr_memory_path #(
         .mem_rline  (mem_rline),
         .drained    (port_drained),
         .hits       (cache_hits),
-        .misses     (cache_misses)
+        .misses     (cache_misses),
+        .pf_fetch   (pf_fetch),
+        .pf_vaddr   (pf_vaddr),
+        .pf_drop    (pf_drop),
+        .pf_nx_v    (pf_nx_v),
+        .pf_nx_vaddr(pf_nx_vaddr),
+        .pf_nx_phys (pf_nx_phys),
+        .pf_nx_word (pf_nx_word),
+        .pf_nx_fetch_v    (pf_nx_fetch_v),
+        .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr)
     );
     // No Unibus, no arbitration for it, no debug block (contract Q5).
     assign ub_msyn   = 1'b0;
@@ -1164,9 +1184,16 @@ module cadr_memory_path #(
     assign port_drained = 1'b1;
     assign cache_hits   = 32'd0;
     assign cache_misses = 32'd0;
+    assign pf_nx_v           = 1'b0;
+    assign pf_nx_vaddr       = 24'd0;
+    assign pf_nx_phys        = 22'd0;
+    assign pf_nx_word        = 32'd0;
+    assign pf_nx_fetch_v     = 1'b0;
+    assign pf_nx_fetch_vaddr = 24'd0;
     logic unused_cadr_port;
-    // And the video controller's buffer match, which only QUUX's port reads.
-    assign unused_cadr_port = ^{mem_rline, quux_invalidate, video_fb};
+    // And the video controller's buffer match, which only QUUX's port reads,
+    // and the prefetch's inputs.
+    assign unused_cadr_port = ^{mem_rline, quux_invalidate, video_fb, pf_fetch, pf_vaddr, pf_drop};
   end
 
   // `SELECT DEBUG`, which never leaves this module: the DBGOUT page makes it

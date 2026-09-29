@@ -232,6 +232,25 @@ fn main() {
         m.main = main;
     }
 
+    // **Revision 12's fused return** (contract H8a): the register, the
+    // index and every entry poisoned at their widths, the base copies, and
+    // an operand address and an M 31 word armed, as `checkpoint_test.c`
+    // models the register table's entries 29 to 33 and selector 13.  The
+    // prefetch's word and a fetch in flight are the engine's own, which a
+    // fresh engine holds none of, and neither does the model.
+    {
+        let md = &mut m.macro_dispatch;
+        md.register = poison(10, 29, 32) as u32 & !(3 << 29);
+        md.index = poison(10, 30, 10) as u16;
+        for (i, e) in md.entries.iter_mut().enumerate() {
+            *e = poison(13, i as u64, 18) as u32;
+        }
+        md.localp = poison(10, 31, 14) as u32;
+        md.ap = poison(10, 131, 14) as u32;
+        md.operand = Some(muir::machine::Operand { arg: true, delta: poison(10, 32, 6) as u8 });
+        md.m31 = Some(poison(10, 33, 32) as u32);
+    }
+
     // The engine on the fabric's grid, as every trace takes it.
     // QUUX's memory port as a fresh engine holds it, its cache always fitted
     // and empty (contract Q6): what `chk_rtl.c` writes for a halted board.

@@ -346,6 +346,33 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 	q->fd_refused = (int)((w >> 2) & 1u);
 	q->fd_ie = (int)((w >> 1) & 1u);
 	q->fd_enabled = (int)(w & 1u);
+	// Revision 12's fused return and its prefetch.
+	uint64_t v[IMG_RG_QUUX_PF_FETCH - IMG_RG_QUUX_MACRO + 1];
+	for (unsigned i = 0; i < sizeof v / sizeof v[0]; ++i)
+		if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_MACRO + i, &v[i]) != 0)
+			return -1;
+#define QV(n) v[(n) - IMG_RG_QUUX_MACRO]
+	q->macro_reg = (uint32_t)QV(IMG_RG_QUUX_MACRO);
+	q->macro_index = (uint32_t)QV(IMG_RG_QUUX_MACRO_IX) & 0x3FFu;
+	q->localp = (uint32_t)QV(IMG_RG_QUUX_BASES) & 0x3FFFu;
+	q->ap = (uint32_t)(QV(IMG_RG_QUUX_BASES) >> 14) & 0x3FFFu;
+	q->opr_delta = (unsigned)QV(IMG_RG_QUUX_ARMED) & 0x3Fu;
+	q->opr_arg = (int)((QV(IMG_RG_QUUX_ARMED) >> 7) & 1u);
+	q->opr_v = (int)((QV(IMG_RG_QUUX_ARMED) >> 8) & 1u);
+	q->m31_v = (int)((QV(IMG_RG_QUUX_ARMED) >> 9) & 1u);
+	q->m31_w = (uint32_t)QV(IMG_RG_QUUX_M31_W);
+	q->fused_n = (uint32_t)QV(IMG_RG_QUUX_FUSED_N);
+	q->opr_n = (uint32_t)QV(IMG_RG_QUUX_OPR_N);
+	q->pf_n = (uint32_t)QV(IMG_RG_QUUX_PF_N);
+	q->pf_v = (int)((QV(IMG_RG_QUUX_PF) >> 24) & 1u);
+	q->pf_vaddr = (uint32_t)QV(IMG_RG_QUUX_PF) & 0xFFFFFFu;
+	q->pf_phys = (uint32_t)QV(IMG_RG_QUUX_PF_PHYS) & 0x3FFFFFu;
+	q->pf_word = (uint32_t)QV(IMG_RG_QUUX_PF_WORD);
+	q->fetch_v = (int)((QV(IMG_RG_QUUX_PF_FETCH) >> 24) & 1u);
+	q->fetch_vaddr = (uint32_t)QV(IMG_RG_QUUX_PF_FETCH) & 0xFFFFFFu;
+#undef QV
+	if (ro_block32(r, IMG_SEL_MACRO, IMG_QUUX_MACRO_ENTRIES, q->macro_entries) != 0)
+		return -1;
 	return 0;
 }
 

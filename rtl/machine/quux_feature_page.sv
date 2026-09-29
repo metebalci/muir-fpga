@@ -29,7 +29,9 @@
 //     15   the optional devices, a bit each: 3, <0> the real-time clock and
 //          <1> the file device, a later optional device taking the next bit
 //     16   the number of interval timers, 3 (revision 10, contract Q11)
-//     17-77  0
+//     17   the MACRO DISPATCH MEMORY's entries, 1,024 (revision 12,
+//          contract H8a; `cadr_microcycle.sv`)
+//     20-77  0
 //
 // And the registers (`Machine::bus_read` and `bus_write`):
 //
@@ -142,6 +144,8 @@ module quux_feature_page #(
     parameter logic [31:0] OPTIONAL_DEVICES = 32'd3,
     // Word 16: the number of interval timers (revision 10).
     parameter logic [31:0] TIMERS         = 32'd3,
+    // Word 17: the MACRO DISPATCH MEMORY's entries (revision 12).
+    parameter logic [31:0] MACRO_ENTRIES  = 32'd1024,
     parameter int unsigned SCREEN_WIDTH   = 1280,
     parameter int unsigned SCREEN_HEIGHT  = 1024,
     parameter int unsigned SCREEN_WPL     = 40,
@@ -358,6 +362,7 @@ module quux_feature_page #(
         8'o14:   word = CLOCKS;
         8'o15:   word = OPTIONAL_DEVICES;
         8'o16:   word = TIMERS;
+        8'o17:   word = MACRO_ENTRIES;
         8'o100:  word = {24'd0, fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending};
         8'o101:  word = {26'd0, err[2], 1'b0, err[1], 2'b00, err[0]};
         8'o102:  word = {31'd0, errstop};

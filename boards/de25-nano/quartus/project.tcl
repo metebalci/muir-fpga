@@ -210,6 +210,15 @@ foreach memory [expr {$fault ? {} : {dmem l1_map l2_map}}] {
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE MLAB -to "u_machine|processor|$memory"
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|processor|$memory"
 }
+# **AND QUUX'S MACRO DISPATCH MEMORY** (revision 12, contract H8a), read
+# without a clock beside the dispatch memory on the fused return's path to
+# NPC, and the same way for the same reason.  Written at the edge and read
+# at the next, K ticks on; the readout's copy is read every tick and is the
+# readout's torn sample while the machine runs.
+if {!$fault && $machine eq "quux"} {
+    set_instance_assignment -name RAMSTYLE_ATTRIBUTE MLAB -to "u_machine|processor|g_quux_fused.macro_mem"
+    set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|processor|g_quux_fused.macro_mem"
+}
 
 # ----------------------------------------- the disk controller's block store
 #

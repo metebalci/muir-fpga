@@ -82,6 +82,10 @@ module quux_cache (
     // The word a read hit, over the tick after the decision.  A miss's word
     // is the fill's and the port has it.
     output var logic [31:0]  word,
+    // And the word after it in the same line, which the RAMs put out with
+    // it: revision 12's cache-only prefetch (`quux_mem_port.sv`).  Its
+    // value past the line's last word means nothing.
+    output var logic [31:0]  next_word,
 
     // The line a miss asked for: written into the victim, its tag with it,
     // and made valid.
@@ -136,6 +140,7 @@ module quux_cache (
   logic [31:0] upd_word_q;
 
   assign word = way_q ? data1_out[off_q] : data0_out[off_q];
+  assign next_word = way_q ? data1_out[off_q + 2'd1] : data0_out[off_q + 2'd1];
 
   // ------------------------------------------------------------ the RAMs
   //

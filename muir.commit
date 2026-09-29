@@ -30,4 +30,4 @@
 # and every check then runs the old PROM against the new traces without
 # saying so.  Removing the images is the remedy until a recipe makes them
 # depend on this file, which is the better fix and is not built.
-7bc901ff0bd45ad4ae8f07bebd5a36731abdf39b
+5428c9cb3a064d915b8123fc603a00a3f4d673b7

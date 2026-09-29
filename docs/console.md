@@ -566,7 +566,15 @@ On QUUX the same selectors have QUUX's sizes: the pushdown buffer is 16,384
 words, the level-1 map six bits and the level-2 map 2,048 entries. The table
 at 10 has eight more entries, 21 to 28: QUUX's signature with the K and L the
 bitstream was built at, the microsecond clock, the three interval timers'
-counts, and each timer's interrupt enable, mode and period. Selector 12 is QUUX's register page: the keyboard and mouse,
+counts, and each timer's interrupt enable, mode and period. Entries 29 to 40
+are revision 12's fused return: the MACRO-DISPATCH register, the MACRO
+DISPATCH MEMORY's index, the operand address's base copies, what a fused
+return armed, M 31's armed word, three counts (fused returns, operand
+addresses loaded, and fused returns that took the prefetched word), and the
+cache-only prefetch's word and addresses and a fetch still to be answered.
+Selector 13 is the MACRO DISPATCH MEMORY, 1,024 entries of 18 bits. On QUUX,
+M 31 and A 31 read through selectors 3 and 2 give the register M 31 is kept in
+(`cadr_microcycle.sv`, the fused return). Selector 12 is QUUX's register page: the keyboard and mouse,
 block-disk, the bus errors and the video controller's black-on-white, and
 the keyboard FIFO's words at 64 and up. On the CADR all of those read `0xA5A5_5A5A_A5A5`.
 `docs/checkpoint.md` has the words, since a checkpoint is what reads them.

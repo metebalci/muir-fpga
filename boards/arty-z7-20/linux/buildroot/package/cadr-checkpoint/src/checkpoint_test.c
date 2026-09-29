@@ -90,6 +90,10 @@ struct model {
 	uint64_t disk_flags;		/* word 5 */
 	uint64_t page;			/* word 6 */
 	uint64_t fd[3];			/* words 7, 8 and 9: the file device */
+	// Revision 12's fused return: the register table's entries 29 to 40 and
+	// selector 13, the MACRO DISPATCH MEMORY.
+	uint64_t macro[12];
+	uint32_t entries[IMG_QUUX_MACRO_ENTRIES];
 };
 
 // A timer's count word at muir's tick `m`: the fabric's counts to its next
@@ -156,8 +160,14 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 				return qtimer_word(&m->timer[a - IMG_RG_QUUX_COUNT], m->qm);
 			if (a >= IMG_RG_QUUX_CONF && a < IMG_RG_QUUX_CONF + IMG_QUUX_TIMERS)
 				return qtimer_conf(&m->timer[a - IMG_RG_QUUX_CONF]);
+			if (a >= IMG_RG_QUUX_MACRO && a <= IMG_RG_QUUX_PF_FETCH)
+				return m->macro[a - IMG_RG_QUUX_MACRO];
 			return RO_NO_MEMORY;
 		}
+	case IMG_SEL_MACRO:
+		if (!m->quux)
+			return RO_NO_MEMORY;
+		return a < IMG_QUUX_MACRO_ENTRIES ? m->entries[a] : RO_NO_MEMORY;
 	case IMG_SEL_QUUX_PAGE:
 		if (!m->quux)
 			return RO_NO_MEMORY;
@@ -394,6 +404,22 @@ static void fill_quux(struct model *m)
 	m->fd[1] = (1ull << 32) | (1ull << 16) | 1u;
 	m->fd[2] = ((uint64_t)Q_FD_CMD_LOG2 << 24) | ((uint64_t)Q_FD_RESP_LOG2 << 20) |
 		   (1u << 3) /* index fault */ | (1u << 1) /* interrupt enable */ | 1u;
+	// Revision 12's fused return, as `golden/src/quux_checkpoint.rs` sets
+	// it: the register (its <30:29> 0), the index, the base copies, an
+	// operand address armed for ARG and M 31's word armed; the counts,
+	// which no checkpoint carries; and no prefetched word and no fetch.
+	m->macro[IMG_RG_QUUX_MACRO - IMG_RG_QUUX_MACRO] = poison(10, 29, 32) & ~(3ull << 29);
+	m->macro[IMG_RG_QUUX_MACRO_IX - IMG_RG_QUUX_MACRO] = poison(10, 30, 10);
+	m->macro[IMG_RG_QUUX_BASES - IMG_RG_QUUX_MACRO] =
+		(poison(10, 131, 14) << 14) | poison(10, 31, 14);
+	m->macro[IMG_RG_QUUX_ARMED - IMG_RG_QUUX_MACRO] =
+		(1u << 9) | (1u << 8) | (1u << 7) | poison(10, 32, 6);
+	m->macro[IMG_RG_QUUX_M31_W - IMG_RG_QUUX_MACRO] = poison(10, 33, 32);
+	m->macro[IMG_RG_QUUX_FUSED_N - IMG_RG_QUUX_MACRO] = 0x12345u;
+	m->macro[IMG_RG_QUUX_OPR_N - IMG_RG_QUUX_MACRO] = 0x2345u;
+	m->macro[IMG_RG_QUUX_PF_N - IMG_RG_QUUX_MACRO] = 0x345u;
+	for (unsigned i = 0; i < IMG_QUUX_MACRO_ENTRIES; ++i)
+		m->entries[i] = (uint32_t)poison(13, i, 18);
 }
 
 // --- the packer, against its own inverse -----------------------------------
@@ -940,13 +966,20 @@ int main(int argc, char **argv)
 	//                                             which a CADR has 1K)
 	//   spcptr..dispatch_constant     = 1+2+2+4+2+4+4+4+4+2 = 29
 	//   l1_map     8 + 8192           = 8200
-	//   geometry   1 + 1 + 1 + 1      = 4        (Geometry::CADR: 5, 10, no
-	//                                             multiply and divide, no tick)
+	//   geometry   1 + 1 + 1 + 1 + 1  = 5        (Geometry::CADR: 5, 10, no
+	//                                             multiply and divide, no tick,
+	//                                             no fused return: version 49)
 	//   timers     3 * (1+1+1+4+8)    = 45       (Timers::new: three
 	//                                             interval timers off,
 	//                                             periodic, interrupt
 	//                                             enable 0, period 0, no
 	//                                             deadline; version 45)
+	//   macro_dispatch 4 + 2 + (8+4096) + 4 + 4 + 1 + 1 = 4120
+	//                                            (MacroDispatch::default:
+	//                                             the register, the index,
+	//                                             1,024 entries, the base
+	//                                             copies, nothing armed:
+	//                                             version 49)
 	//   rtc        1                  = 1        (Rtc::Host, the option
 	//                                             absent: version 42)
 	//   file_device 4 + 4*4 + 3*2 + 1 = 27      (FileDevice::new: four
@@ -994,15 +1027,16 @@ int main(int argc, char **argv)
 	//   wmapd..imodd                   = 1+4+8+8+1+1+2+1 = 26
 	//   opc        8 + 16              = 24
 	//   stat..executed                 = 4+1+1+1+8+4+8+1 = 28
+	//   memstart_fetch                 = 1        (version 49)
 	//
 	// The arithmetic is written out rather than summed by hand so that a
 	// reader can check one line instead of one number.
 	{
 		const size_t machine_part =
-			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 4 + 45 + 1 + 27 + 1 + 8200 + 4 +
+			8200 + 131080 + 14 + 10 + 78120 + 29 + 8200 + 5 + 45 + 4120 + 1 + 27 + 1 + 8200 + 4 +
 			262152 + 125 + 1 + 69 + 1 + 135263 + 1 + 253 + 13 + 16;
 		const size_t rtl_part =
-			208 + 32 + 19 + 21 + 1 + 163 + 1 + 32 + 25 + 26 + 24 + 28;
+			208 + 32 + 19 + 21 + 1 + 163 + 1 + 32 + 25 + 26 + 24 + 28 + 1;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven
 		// keep the body's length and one does not, and the point of
 		// building them is what the ROUND TRIP does with them, so this
@@ -1142,10 +1176,13 @@ int main(int argc, char **argv)
 		// and the two timings and two instants; and block-disk's disk
 		// (version 41), its size in blocks and a count of none written.
 		// The file device's fields are the CADR's too (version 43), at
-		// the same widths, so they add nothing here.
+		// the same widths, so they add nothing here.  And revision 12's
+		// (version 49): the operand address armed, its ARG and delta, and
+		// M 31's word armed; and the prefetch's two options after the
+		// memory port's instants, both absent.
 		const size_t quux_len = cadr_body_len + 44 + 8192 * 4 + 5 * 4 + 2 -
 			163 + (1 + 1 + 4 + 1) + (4 * 3 + 8 + 1 + 8 + 8 + 512 * 4) + 8 * 4 +
-			(4 + 8);
+			(4 + 8) + (1 + 1) + 4 + (1 + 1);
 		if (!chk_rtl_mutation() && qb.len != quux_len)
 			fail("QUUX's body's length", qb.len, quux_len);
 		if (quux_out && chk_write_file(quux_out, "rtl", 1, &qb) != 0) {

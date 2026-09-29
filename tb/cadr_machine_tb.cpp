@@ -253,6 +253,12 @@ int main(int argc, char **argv) {
   // not asserted.  Every row is compared exactly as on the boot PROM, and the
   // generator itself asserts what the program reached.
   bool script_trace = false;
+  // **A PROGRAM OF QUUX'S FUSED RETURN** (`golden/src/fused.rs`): a main
+  // loop that dispatches on the halfword and a location counter that
+  // walks the code, which every other script leaves alone.  Its dispatches
+  // and its counter are compared row for row like the rest, so the two
+  // guards below that call them unreached are not asked of it.
+  bool dispatch_trace = false;
   // **QUUX'S BOOT PROM TRACE RUNS AS FAR AS MIT'S**, 131,073 microcycles
   // longer for its larger clearing (`golden/src/rtl.rs`), so it carries the
   // memory sizing's NXM cycles, the disk's polls and `0x2321` in MD, and every
@@ -338,6 +344,10 @@ int main(int argc, char **argv) {
           fd_done.back().words.emplace_back(static_cast<uint32_t>(h0), static_cast<uint32_t>(h1));
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
         if (std::strstr(line, "golden/src/quux.rs")) script_trace = true;
+        if (std::strstr(line, "golden/src/quux.rs") &&
+            (std::strstr(line, "program fused,") || std::strstr(line, "program operand,") ||
+             std::strstr(line, "program prefetch,")))
+          dispatch_trace = true;
         if (std::strstr(line, "QUUX's boot PROM")) quux_prom = true;
         if (std::strstr(line, "machine: quux")) quux_machine = true;
         continue;
@@ -1404,7 +1414,7 @@ int main(int argc, char **argv) {
   // nothing.  These are what it has to have reached, and what it has to have
   // left alone for the holes above to be the size they are claimed to be.
   int thin = 0;
-  if (disp_reads && !pack_trace) {
+  if (disp_reads && !pack_trace && !dispatch_trace) {
     std::fprintf(stderr,
                  "FAIL: %ld dispatches are not DISPWR, so the dispatch memory "
                  "is read and the NPC mux has an answer this slice cannot give\n",
@@ -1425,7 +1435,7 @@ int main(int argc, char **argv) {
                  stat_counts);
     ++thin;
   }
-  if (lc_moved && !pack_trace) {
+  if (lc_moved && !pack_trace && !dispatch_trace) {
     std::fprintf(stderr,
                  "FAIL: LC is nonzero on %ld microcycles; it is claimed "
                  "constant zero, which is what makes its check vacuous\n",

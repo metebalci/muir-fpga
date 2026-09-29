@@ -56,6 +56,25 @@ the CADR.
 
 ## From a modified tree
 
+These fits were built from the working tree on `feb8ecb` with QUUX's
+revision 12, the fused return and its cache-only prefetch (contract H8a),
+and muir pinned at `8577ffc`, whose sources `5428c9c` keeps unchanged.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX | +0.776 ns | +0.022 ns | 17,105 of 53,200 LUTs, 32.15% | 62 of 140 BRAM tiles | 5,685 of 13,300 | working tree on `feb8ecb` | modified | 2026-09-28 |
+| Arty Z7-20 | CADR | +0.264 ns | +0.010 ns | 15,070 of 53,200 LUTs, 28.33% | 46 of 140 BRAM tiles | 5,553 of 13,300 | working tree on `feb8ecb` | modified | 2026-09-28 |
+| Cora Z7-07S | CADR | +0.494 ns | +0.024 ns | 13,894 of 14,400 LUTs, 96.49% | 43 of 50 BRAM tiles | 4,350 of 4,400 | working tree on `feb8ecb` | modified | 2026-09-28 |
+| DE25-Nano | QUUX | +2.112 ns | 0.000 ns | 18,912 of 46,800 ALMs, 40% | 191 of 358 M20K | --- | working tree on `feb8ecb` | modified | 2026-09-28 |
+| DE25-Nano | CADR | +2.443 ns | 0.000 ns | 16,466 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `feb8ecb` | modified | 2026-09-28 |
+
+The MACRO DISPATCH MEMORY is LUT RAM on the Zynq boards and MLABs on the
+DE25-Nano, so the block memory is what it was: the Arty Z7-20's QUUX fit
+still asks 105 block RAM ports of `rams_enable_check.tcl` and uses 62 tiles.
+Its worst setup path is in the divider; the fused return's own paths into
+the control store's address, from the MACRO DISPATCH MEMORY, M 31's register
+and the prefetch's word, have 15.8, 15.5 and 17.2 ns of their 40 ns.
+
 These fits were built from `7f49c09` with the change that cuts the processor
 system's three reset synchronizers' clears
 (`boards/de25-nano/quartus/cadr_ddr.sdc`) and has

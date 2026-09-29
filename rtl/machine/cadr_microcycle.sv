@@ -148,10 +148,10 @@ module cadr_microcycle #(
     parameter string MACHINE = "cadr",
     // The MACHINE-ID, functional sources 16 and 36 on QUUX: `cadr_machine.sv`
     // gives it, from the one place it is decided.  The default is revision
-    // 11's, the same value, because the CADR's own checks build this module
+    // 12's, the same value, because the CADR's own checks build this module
     // as their top and a top's parameter needs one; nothing on the CADR
     // reads it.
-    parameter logic [31:0] MACHINE_ID = 32'h5155_00B4,
+    parameter logic [31:0] MACHINE_ID = 32'h5155_00C4,
     // **QUUX'S MICROCYCLE IN TICKS** (H1a, muir's `TimingModel::Sync`): K,
     // and L more for an `ILONG` instruction.  A board's, from its top level
     // through `cadr_machine.sv`; nothing on the CADR reads either.  See
@@ -263,6 +263,19 @@ module cadr_microcycle #(
     // before it reads main memory).  Read nowhere else; zero in the word on
     // the CADR.
     input  var logic        mem_drained,
+    // Revision 12's cache-only prefetch (`quux_mem_port.sv`): the processor
+    // tells the port which grant is the stream's fetch and when its word is
+    // dropped, and takes the buffer as each tick leaves it.  Unread, and
+    // driven 0, on the CADR.
+    output var logic        pf_fetch,
+    output var logic [23:0] pf_vaddr,
+    output var logic        pf_drop,
+    input  var logic        pf_nx_v,
+    input  var logic [23:0] pf_nx_vaddr,
+    input  var logic [21:0] pf_nx_phys,
+    input  var logic [31:0] pf_nx_word,
+    input  var logic        pf_nx_fetch_v,
+    input  var logic [23:0] pf_nx_fetch_vaddr,
     input  var logic        sintr,        // SINTR, the interrupt off the cables
     // QUUX's interval timers as `Machine::interrupt` takes them: each flag
     // under its interrupt enable, ORed into the interrupt that jump
@@ -1040,6 +1053,15 @@ module cadr_microcycle #(
   logic [13:0] ipc;
   assign ipc = pc + 14'd1;
 
+  // QUUX's fused return (revision 12, contract H8a), built below at "the
+  // fused return": the MACRO DISPATCH MEMORY's handler goes in place of the
+  // stack's word on NPC's return input (`macro_sel`), so that the choice
+  // waits on no jump's condition; the return's other effects are registered
+  // at the edge.  All zero on the CADR.
+  logic        macro_sel, macro_fused, macro_keep, macro_load_idx;
+  logic [13:0] macro_handler;
+  logic [PDL_BITS-1:0] macro_load_addr;
+
   always_comb begin
     if (trap) begin
       // The reset PC: 0 on the CADR, the PROM's base on QUUX
@@ -1047,7 +1069,7 @@ module cadr_microcycle #(
       npc = QUUX ? QUUX_PROM_BASE : 14'd0;
     end else begin
       unique case ({pcs1, pcs0})
-        2'b00: npc = spc_target;
+        2'b00: npc = macro_sel ? macro_handler : spc_target;
         2'b01: npc = ir[25:12];
         2'b10: npc = dpc;
         2'b11: npc = ipc;
@@ -1131,13 +1153,23 @@ module cadr_microcycle #(
   assign apass = destd && (wadr == aadr);
   assign mpass = destmd && (wadr[4:0] == madr);
 
-  assign a = apass ? l : amem_q;
+  // **M 31 IS A REGISTER BESIDE M MEMORY ON QUUX** (revision 12, contract
+  // H8a §3.5): written with every M write at 31, and with the word a fused
+  // return on the fetch path took from the prefetch, which lands at the
+  // edge ending the microcycle after the return where no memory port is
+  // free.  So reads of M 31 take the register, and reads of A 31 take it
+  // too until an A write at 31 lands in A memory (`a31_from_m31`), as muir
+  // writes the prefetched word into both.  "The fused return" below writes
+  // both; on the CADR both are constant and this is the latches' word.
+  logic [31:0] m31_r;
+  logic        a31_from_m31;
+  assign a = apass ? l : (QUUX && a31_from_m31 && aadr == 10'o31) ? m31_r : amem_q;
 
   // The M memory's output.  It reaches the M bus through the 74S257s at
   // MLATCH under `MPASSM`, and the M bus is slice 3, so nothing here reads
   // this yet.
   logic [31:0] mmem_out;
-  assign mmem_out = mpass ? l : mmem_q;
+  assign mmem_out = mpass ? l : (QUUX && madr == 5'o31) ? m31_r : mmem_q;
 
   // page PDLCTL: `PDLP` is `(CLK AND IR30) OR (-CLK AND -PWIDX)` off the
   // 74S51 at 4D07, so the PDL is addressed by IR<30> in the read phase and by
@@ -1216,7 +1248,10 @@ module cadr_microcycle #(
               || (jfalse && ir[8] && !jcond)
               || (dispenb && dp && !dr)
               || (irjump && !ir[6] && ir[8] && jcond);
-  assign spcnt = spush || spop;
+  // A fused return whose entry has N clear keeps the popped word on the
+  // stack, as the main loop's push would have put it back: its pop does
+  // not count (`macro_keep` below).  `NEXT.INSTR` still takes the pop.
+  assign spcnt = spush || (spop && !(macro_fused && macro_keep));
 
   // page LCC and LC.  `NEXT.INSTR` and the byte-mode flags decide whether the
   // stack's word is munged on the way to the PC.
@@ -1625,6 +1660,304 @@ module cadr_microcycle #(
       3'd6: jcond = pgf_or_int_or_sb;
       default: jcond = 1'b1;
     endcase
+  end
+
+  // ------------------------------------------------------ the fused return
+  //
+  // **QUUX'S MACRO-DISPATCH REGISTER, ITS MACRO DISPATCH MEMORY AND THE
+  // FUSED RETURN** (revision 12, contract H8a; muir's `machine::macro_
+  // dispatch`, `Rtl::read_phase` and `Rtl::clock_edge`).  Functional
+  // destinations 5, 6 and 7, which the CADR's low group leaves without a
+  // decoder output (so there, and in the CADR's build, they write M alone):
+  //
+  //   5  the register: `<13:0>` the main loop's address, `<23:14>` the A
+  //      address of `A-LOCALP`, `<28:24>` the M address of `M-AP`, `<31>`
+  //      the enable; `<30:29>` kept 0
+  //   6  the memory's index, `<9:0>`
+  //   7  the entry at the index, `<17:0>`: D-MEM's word (`<13:0>` the
+  //      handler, `<14>` N, `<15>` P, `<16>` R) and `<17>` the operand bit
+  //
+  // each written at the edge, as the dispatch memory's write is, so that the
+  // instruction writing one reads them as they stood.
+  //
+  // **A FUSED RETURN** is a return --- a POPJ, a dispatch whose entry has R,
+  // or a jump with R --- that pops a word with `<14>` up and `<13:0>` the
+  // register's, the register enabled, where no fetch is needed (or, below,
+  // the prefetch holds the word), and whose microinstruction pushes
+  // nothing, pops nothing by the functional source, writes neither M 31
+  // nor INTERRUPT-CONTROL and steps the location counter nowhere itself
+  // (`LCINC`: `NEXT INSTR` from the microcycle before, or a dispatch's
+  // `IR<24>`); and not the trap's microcycle, nor a `WRITE-I-MEM`'s pop.
+  // When the entry for the next halfword has R and P clear, NPC is the
+  // entry's handler instead of `QMLP+2`, and the popped word stays on the
+  // stack unless the entry's N is set.  The next halfword is M 31 rotated as
+  // the main loop's dispatch rotates it, by the location counter as `NEXT
+  // INSTR` steps it at the next edge: its low two bits are all that choose.
+  //
+  // **THE CHOICE IS ON NPC'S RETURN INPUT, NOT AFTER THE SELECT**, so that
+  // it does not wait on a jump's condition (contract H8a §7): NPC takes
+  // the return input exactly when the microinstruction returns, and every
+  // condition above is IR's decode and registers but one, a call with POPJ,
+  // whose push is its condition's (`jcond ^ IR<6>`).  The index is M 31 (a
+  // register beside M memory, with L's pass-around) through a rotate by
+  // two bits of LC, and the memory is LUT RAM read without a clock, as the
+  // dispatch memory is (contract H8a §7), so the path is registers, a
+  // rotate, the memory and one select.
+  //
+  // **THE OPERAND ADDRESS** (contract H8a §3.4): when the entry has the
+  // operand bit and the halfword's register, `<8:6>`, is LOCAL (5) or ARG
+  // (6), the return arms `A-LOCALP` + delta or `M-AP` + 1 + delta, and
+  // the edge ending the microcycle after it loads it into PDL-INDEX, over
+  // that microcycle's own write there.  The bases are copies, fourteen
+  // bits each, written only by an A write at the register's `<23:14>` and
+  // an M write at its `<28:24>`, with the write pulse; the address is made
+  // from them as that edge's pulse leaves them (`macro_localp_nx`).
+  //
+  // -RESET (`-BOOT`) clears the enable and drops an armed operand address
+  // and M 31 word; every control-store write clears the enable, wherever it
+  // lands (the edge ending a `WRITE-I-MEM`'s `IWRITED` microcycle, whose
+  // pulse writes the store); RESET-DEVICES does neither.
+  //
+  // What holds it: `build/quux_fused.quux.k4.pass` and
+  // `build/quux_operand.quux.k4.pass` (`golden/src/fused.rs`), and the
+  // CADR's side, the same programs, `build/quux_fused.pass` and
+  // `build/quux_operand.pass`.
+  logic [31:0] macro_reg;
+  logic [9:0]  macro_index;
+  logic [13:0] macro_localp, macro_ap;
+  logic        macro_opr_v, macro_opr_arg;
+  logic [5:0]  macro_opr_delta;
+  // The prefetched word a fused return on the fetch path armed for M 31.
+  logic        macro_m31_v;
+  logic [31:0] macro_m31_w;
+  // The counts for the readout: fused returns, operand addresses loaded,
+  // and prefetched words taken.
+  logic [31:0] macro_fused_n, macro_opr_n, macro_pf_n;
+  // The prefetch's view of its word for this microcycle, and whether this
+  // return fuses on it (`pf_use`) or is refused it (`pf_refused`).
+  logic        pf_use, pf_refused;
+  logic [31:0] pf_word_now;
+  // The MACRO DISPATCH MEMORY's entry for the readout's address.
+  logic [17:0] ro_macro_q;
+  // The readout's address, two ticks of it (see "the readout" below).
+  logic [17:0] ro_a0, ro_a1;
+
+  // **REVISION 12'S CACHE-ONLY PREFETCH** (contract H8a §3.5): the buffer is
+  // `quux_mem_port.sv`'s, which fills it when a fetch is answered and drops
+  // it on a store to its word or a transfer; the processor tells it which
+  // grant is the stream's fetch (`MEMSTART`'s cycle was started by `LCINC`
+  // with `NEEDFETCH`, registered with it) and drops it with a write of LC
+  // or a map write at the edge, and at -RESET.  muir's read phase sees the
+  // buffer as the last master clock edge left it, answers on that edge
+  // included, so it is taken at each master clock edge, `pf_view_*`, and
+  // stands for the microcycle that edge begins.  A return that needs the
+  // next word in sequence (`LC<25:2>`) fuses on it, unless condition 6 is
+  // true (the main loop's test on the fetch path) or a store started in the
+  // microcycle before, whose compare with the word goes out at this edge;
+  // its word is M 31's, armed at the edge and landed at the next ("the
+  // fused return").  The view is also the readout's.
+  logic        memstart_fetch;
+  logic        pf_view_v, pf_view_fetch_v;
+  logic [23:0] pf_view_vaddr, pf_view_fetch_vaddr;
+  logic [21:0] pf_view_phys;
+  logic [31:0] pf_view_word;
+  if (QUUX) begin : g_quux_prefetch
+    // A store granted at this edge to the buffered word drops it, muir's
+    // `request_at`: from the grant's own address, which is the far end of
+    // the map and has had the microcycle, into a register that has the
+    // microcycle too.  The port drops its own copy a tick later.
+    logic pf_store_to_word;
+    assign pf_store_to_word = memstart && vmaok && wrcyc && phys == pf_nx_phys;
+    assign pf_fetch = memstart_fetch;
+    assign pf_vaddr = vma[23:0];
+    // `WMAP`, a map write, is `destmem && IR<20:19> = 3` (page VMA below).
+    assign pf_drop  = (cpu_edge && (destlc || (destmem && ir[20:19] == 2'd3))) || !n_boot;
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        memstart_fetch      <= 1'b0;
+        pf_view_v           <= 1'b0;
+        pf_view_fetch_v     <= 1'b0;
+        pf_view_vaddr       <= 24'd0;
+        pf_view_fetch_vaddr <= 24'd0;
+        pf_view_phys        <= 22'd0;
+        pf_view_word        <= 32'd0;
+      end else begin
+        if (cpu_edge) memstart_fetch <= ifetch;
+        if (mclk_edge) begin
+          pf_view_v           <= pf_nx_v && !pf_store_to_word;
+          pf_view_fetch_v     <= pf_nx_fetch_v;
+          pf_view_vaddr       <= pf_nx_vaddr;
+          pf_view_fetch_vaddr <= pf_nx_fetch_vaddr;
+          pf_view_phys        <= pf_nx_phys;
+          pf_view_word        <= pf_nx_word;
+        end
+      end
+    end
+    assign pf_use      = needfetch && !have_wrong_word && pf_view_v && pf_view_vaddr == lc[25:2];
+    assign pf_refused  = pf_use && (pgf_or_int_or_sb || (memstart && wrcyc));
+    assign pf_word_now = pf_view_word;
+  end else begin : g_cadr_no_prefetch
+    assign pf_fetch = 1'b0;
+    assign pf_vaddr = 24'd0;
+    assign pf_drop  = 1'b0;
+    assign memstart_fetch      = 1'b0;
+    assign pf_view_v           = 1'b0;
+    assign pf_view_fetch_v     = 1'b0;
+    assign pf_view_vaddr       = 24'd0;
+    assign pf_view_fetch_vaddr = 24'd0;
+    assign pf_view_phys        = 22'd0;
+    assign pf_view_word        = 32'd0;
+    assign pf_use      = 1'b0;
+    assign pf_refused  = 1'b0;
+    assign pf_word_now = 32'd0;
+    logic unused_prefetch;
+    assign unused_prefetch = pf_nx_v ^ pf_nx_fetch_v ^ (^pf_nx_vaddr) ^ (^pf_nx_fetch_vaddr)
+                           ^ (^pf_nx_phys) ^ (^pf_nx_word) ^ memstart_fetch;
+  end
+
+  if (QUUX) begin : g_quux_fused
+    (* ram_style = "distributed" *) logic [17:0] macro_mem [0:1023];
+    initial for (int unsigned k = 0; k < 1024; k++) macro_mem[k] = 18'd0;
+
+    // Destinations 5 to 7, from the low group.
+    logic [2:0] macro_dest;
+    assign macro_dest = (low_group && ir[21:19] >= 3'd5) ? ir[21:19] : 3'd0;
+
+    // M 31 as the main loop's dispatch would take it: the prefetched word
+    // on the fetch path; else with the pass-around from L, the write the
+    // edge ending this microcycle lands.
+    logic [31:0] m31_now;
+    assign m31_now = pf_use ? pf_word_now
+                   : (destmd && wadr[4:0] == 5'o31) ? l : m31_r;
+    // The rotate `IR<11:10>` = 3 gives `IR<4:0>` = 26 (the halfword's
+    // `<6>` to `<0>`), by LC as `NEXT INSTR` steps it: page SMCTL's gates on
+    // the stepped counter's low two bits.
+    logic [1:0] lcs;
+    logic       lcs0b;
+    logic [4:0] ishift;
+    assign lcs    = lc[1:0] + (lc_byte_mode ? 2'd1 : 2'd2);
+    assign lcs0b  = lcs[0] && lc_byte_mode;
+    assign ishift = {lcs[1] ^ lcs0b, !(!lcs[0] && lc_byte_mode), 3'b010};
+    logic [31:0] hw_rot;
+    assign hw_rot = (m31_now << ishift) | (m31_now >> (6'd32 - {1'b0, ishift}));
+    logic [17:0] entry;
+    assign entry = macro_mem[hw_rot[9:0]];
+    // Only the index and the operand's register and delta are taken.
+    logic unused_rot;
+    assign unused_rot = ^hw_rot[25:10];
+
+    logic fuse;
+    assign fuse = macro_reg[31]
+               && !(srcspcpop && !nop)
+               && !destspc && !(dispenb && dp && !dr)
+               && !(irjump && ir[8] && (jcond ^ ir[6]))
+               && !trap && !iwrited && !lcinc
+               && (!needfetch || pf_use) && !pf_refused
+               && spcv[14] && spcv[13:0] == macro_reg[13:0]
+               && !(destm && wadr_in[4:0] == 5'o31) && !destintctl
+               && !entry[16] && !entry[15];
+    assign macro_sel     = fuse;
+    assign macro_handler = entry[13:0];
+    assign macro_keep    = !entry[14];
+    // NPC takes the return input exactly when the microinstruction pops the
+    // stack as a return: `PCS` 0.
+    assign macro_fused   = fuse && !pcs1 && !pcs0;
+
+    logic opr;
+    assign opr = entry[17] && (hw_rot[2:0] == 3'd5 || hw_rot[2:0] == 3'd6);
+
+    // The bases as the write pulse ending this microcycle leaves them, and
+    // M 31's armed word after it.
+    logic [13:0] macro_localp_nx, macro_ap_nx;
+    assign macro_localp_nx = (macro_m31_v && macro_reg[23:14] == 10'o31) ? macro_m31_w[13:0]
+                           : (wp && destd && wadr == macro_reg[23:14]) ? l[13:0] : macro_localp;
+    assign macro_ap_nx     = (macro_m31_v && macro_reg[28:24] == 5'o31) ? macro_m31_w[13:0]
+                           : (wp && destmd && wadr[4:0] == macro_reg[28:24]) ? l[13:0] : macro_ap;
+    assign macro_load_idx  = cpu_edge && macro_opr_v;
+    // PDL-INDEX's width, which is QUUX's fourteen bits (the sum masked to
+    // them, contract H8a §3.4); cast so that a narrower PDL still lints.
+    assign macro_load_addr = PDL_BITS'(macro_opr_arg ? macro_ap_nx + 14'd1 + 14'(macro_opr_delta)
+                                                     : macro_localp_nx + 14'(macro_opr_delta));
+
+    always_ff @(posedge clk) begin
+      if (cpu_edge && macro_dest == 3'd7) macro_mem[macro_index] <= ob[17:0];
+      ro_macro_q <= macro_mem[ro_a0[9:0]];
+    end
+
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        macro_reg       <= 32'd0;
+        macro_index     <= 10'd0;
+        macro_localp    <= 14'd0;
+        macro_ap        <= 14'd0;
+        macro_opr_v     <= 1'b0;
+        macro_opr_arg   <= 1'b0;
+        macro_opr_delta <= 6'd0;
+        m31_r           <= 32'd0;
+        macro_m31_v     <= 1'b0;
+        macro_m31_w     <= 32'd0;
+        a31_from_m31    <= 1'b0;
+        macro_fused_n   <= 32'd0;
+        macro_opr_n     <= 32'd0;
+        macro_pf_n      <= 32'd0;
+      end else begin
+        // The write pulse: the instruction before's write.
+        if (wp && destd && wadr == macro_reg[23:14]) macro_localp <= l[13:0];
+        if (wp && destmd && wadr[4:0] == macro_reg[28:24]) macro_ap <= l[13:0];
+        if (wp && destmd && wadr[4:0] == 5'o31) m31_r <= l;
+        if (wp && destd && wadr == 10'o31) a31_from_m31 <= 1'b0;
+        if (cpu_edge) begin
+          // M 31's armed word lands after the pulse, as muir's
+          // `clock_edge` lands it after `write_phase`.
+          if (macro_m31_v) begin
+            m31_r        <= macro_m31_w;
+            a31_from_m31 <= 1'b1;
+            if (macro_reg[23:14] == 10'o31) macro_localp <= macro_m31_w[13:0];
+            if (macro_reg[28:24] == 5'o31)  macro_ap     <= macro_m31_w[13:0];
+          end
+          macro_m31_v     <= macro_fused && pf_use;
+          macro_m31_w     <= pf_word_now;
+          macro_opr_v     <= macro_fused && opr;
+          macro_opr_arg   <= hw_rot[2:0] == 3'd6;
+          macro_opr_delta <= hw_rot[31:26];
+          if (macro_fused) macro_fused_n <= macro_fused_n + 32'd1;
+          if (macro_fused && pf_use) macro_pf_n <= macro_pf_n + 32'd1;
+          if (macro_opr_v) macro_opr_n <= macro_opr_n + 32'd1;
+          if (macro_dest == 3'd5) macro_reg <= {ob[31], 2'b00, ob[28:0]};
+          else if (iwrited) macro_reg[31] <= 1'b0;
+          if (macro_dest == 3'd6) macro_index <= ob[9:0];
+        end
+        if (!n_boot) begin
+          macro_reg[31] <= 1'b0;
+          macro_opr_v   <= 1'b0;
+          macro_m31_v   <= 1'b0;
+        end
+      end
+    end
+  end else begin : g_cadr_no_fused
+    assign macro_sel       = 1'b0;
+    assign macro_handler   = 14'd0;
+    assign macro_keep      = 1'b0;
+    assign macro_fused     = 1'b0;
+    assign macro_load_idx  = 1'b0;
+    assign macro_load_addr = '0;
+    assign macro_reg       = 32'd0;
+    assign macro_index     = 10'd0;
+    assign macro_localp    = 14'd0;
+    assign macro_ap        = 14'd0;
+    assign macro_opr_v     = 1'b0;
+    assign macro_opr_arg   = 1'b0;
+    assign macro_opr_delta = 6'd0;
+    assign m31_r           = 32'd0;
+    assign macro_m31_v     = 1'b0;
+    assign macro_m31_w     = 32'd0;
+    assign a31_from_m31    = 1'b0;
+    assign macro_fused_n   = 32'd0;
+    assign macro_opr_n     = 32'd0;
+    assign macro_pf_n      = 32'd0;
+    assign ro_macro_q      = 18'd0;
+    logic unused_fused;
+    assign unused_fused = pf_use ^ pf_refused ^ (^pf_word_now);
   end
 
   // -------------------------------------------------- pages VMEM0, VMEM1
@@ -2871,6 +3204,10 @@ module cadr_microcycle #(
 
         // page PDLPTR
         if (destpdlx) pdl_idx <= ob[PDL_BITS-1:0];
+        // QUUX's operand address, armed by a fused return and loaded at the
+        // edge ending the microcycle after it, over that microcycle's own
+        // write of PDL-INDEX (`macro_load_idx`, "the fused return").
+        if (macro_load_idx) pdl_idx <= macro_load_addr;
         if (destpdlp) pdl_ptr <= ob[PDL_BITS-1:0];
         else if (pdlcnt)
           pdl_ptr <= (!nop && srcpdlpop) ? pdl_ptr - PDL_BITS'(1) : pdl_ptr + PDL_BITS'(1);
@@ -3146,11 +3483,13 @@ module cadr_microcycle #(
   localparam logic [3:0] RO_MAP1 = 4'd7;   // the level-1 map, 2048 x 5
   localparam logic [3:0] RO_MAP2 = 4'd8;   // the level-2 map, 1024 x 24
   localparam logic [3:0] RO_OPCS = 4'd9;   // the OPC shift register, 8 x 14
-  localparam logic [3:0] RO_REGS = 4'd10;  // the register table below, 21 x 48, 26 on QUUX
+  localparam logic [3:0] RO_REGS = 4'd10;  // the register table below, 21 x 48, 41 on QUUX
+  // 11 and 12 are `cadr_machine.sv`'s, the audit's and QUUX's register
+  // page's, and are never this module's.
+  localparam logic [3:0] RO_MACRO = 4'd13; // QUUX's MACRO DISPATCH MEMORY, 1024 x 18
 
-  logic [17:0] ro_a0, ro_a1;
-
-  // The words each memory's second port gives, one tick behind `ro_a0`.
+  // The words each memory's second port gives, one tick behind `ro_a0`
+  // (declared with the fused return, whose memory's second port is here too).
   logic [47:0] ro_imem_q, ro_prom_q;
   logic [31:0] ro_amem_q, ro_mmem_q, ro_pdl_q;
   logic [20:0] ro_spc_q;
@@ -3209,6 +3548,32 @@ module cadr_microcycle #(
   localparam logic [13:0] RG_QUUX_CONF0    = 14'd26;
   localparam logic [13:0] RG_QUUX_CONF1    = 14'd27;
   localparam logic [13:0] RG_QUUX_CONF2    = 14'd28;
+  // **AND 29 TO 36, THE FUSED RETURN'S** (revision 12, contract H8a; muir's
+  // `MacroDispatch`, which a checkpoint carries): 29 the MACRO-DISPATCH
+  // register; 30 the MACRO DISPATCH MEMORY's index; 31 the base copies,
+  // `M-AP`'s in 27:14 and `A-LOCALP`'s in 13:0; 32 what a fused return
+  // armed, the operand address (`<8>` armed, `<7>` ARG, `<5:0>` delta) and
+  // M 31's word (`<9>` armed), and `<10>` whether A 31 reads M 31's
+  // register; 33 M 31's armed word; and three counts for the board, which
+  // no checkpoint carries: 34 the fused returns, 35 the operand addresses
+  // loaded, 36 the fused returns that took the prefetched word.  The
+  // entries themselves are selector 13, `RO_MACRO`.
+  localparam logic [13:0] RG_QUUX_MACRO    = 14'd29;
+  localparam logic [13:0] RG_QUUX_MACRO_IX = 14'd30;
+  localparam logic [13:0] RG_QUUX_BASES    = 14'd31;
+  localparam logic [13:0] RG_QUUX_ARMED    = 14'd32;
+  localparam logic [13:0] RG_QUUX_M31_W    = 14'd33;
+  localparam logic [13:0] RG_QUUX_FUSED_N  = 14'd34;
+  localparam logic [13:0] RG_QUUX_OPR_N    = 14'd35;
+  localparam logic [13:0] RG_QUUX_PF_N     = 14'd36;
+  // 37 to 39, the prefetch's word as the processor sees it (`pf_view_*`):
+  // 37 `<24>` held and `<23:0>` its virtual word address, 38 its physical
+  // word address, 39 the word; and 40 a fetch the port is yet to answer,
+  // `<24>` and its virtual word address.  A checkpoint carries all four.
+  localparam logic [13:0] RG_QUUX_PF       = 14'd37;
+  localparam logic [13:0] RG_QUUX_PF_PHYS  = 14'd38;
+  localparam logic [13:0] RG_QUUX_PF_WORD  = 14'd39;
+  localparam logic [13:0] RG_QUUX_PF_FETCH = 14'd40;
 
   // The flags, one bit each, in the order `Rtl` and `Machine` declare them
   // as nearly as the fabric's own names allow.  **Every one of these is a
@@ -3223,7 +3588,7 @@ module cadr_microcycle #(
   // `PROMDISABLE` in FLAG-1 and not one of the other five bits, the registers
   // being write-only on the board.
   logic [47:0] ro_flags;
-  assign ro_flags = {14'd0, QUUX && mem_drained,
+  assign ro_flags = {13'd0, memstart_fetch, QUUX && mem_drained,
                      stathenb, errstop, run,
                      md_pending, vmaok, imodd, destspcd, spushd, wmapd,
                      rd_in_progress, mbusy_sync, wrcyc, rdcyc, mbusy,
@@ -3264,6 +3629,19 @@ module cadr_microcycle #(
       RG_QUUX_CONF0:    ro_regs = QUUX ? {22'd0, qclk_ro_conf[0]} : RO_NO_MEMORY;
       RG_QUUX_CONF1:    ro_regs = QUUX ? {22'd0, qclk_ro_conf[1]} : RO_NO_MEMORY;
       RG_QUUX_CONF2:    ro_regs = QUUX ? {22'd0, qclk_ro_conf[2]} : RO_NO_MEMORY;
+      RG_QUUX_MACRO:    ro_regs = QUUX ? {16'd0, macro_reg} : RO_NO_MEMORY;
+      RG_QUUX_MACRO_IX: ro_regs = QUUX ? {38'd0, macro_index} : RO_NO_MEMORY;
+      RG_QUUX_BASES:    ro_regs = QUUX ? {20'd0, macro_ap, macro_localp} : RO_NO_MEMORY;
+      RG_QUUX_ARMED:    ro_regs = QUUX ? {37'd0, a31_from_m31, macro_m31_v, macro_opr_v,
+                                          macro_opr_arg, 1'b0, macro_opr_delta} : RO_NO_MEMORY;
+      RG_QUUX_M31_W:    ro_regs = QUUX ? {16'd0, macro_m31_w} : RO_NO_MEMORY;
+      RG_QUUX_FUSED_N:  ro_regs = QUUX ? {16'd0, macro_fused_n} : RO_NO_MEMORY;
+      RG_QUUX_OPR_N:    ro_regs = QUUX ? {16'd0, macro_opr_n} : RO_NO_MEMORY;
+      RG_QUUX_PF_N:     ro_regs = QUUX ? {16'd0, macro_pf_n} : RO_NO_MEMORY;
+      RG_QUUX_PF:       ro_regs = QUUX ? {23'd0, pf_view_v, pf_view_vaddr} : RO_NO_MEMORY;
+      RG_QUUX_PF_PHYS:  ro_regs = QUUX ? {26'd0, pf_view_phys} : RO_NO_MEMORY;
+      RG_QUUX_PF_WORD:  ro_regs = QUUX ? {16'd0, pf_view_word} : RO_NO_MEMORY;
+      RG_QUUX_PF_FETCH: ro_regs = QUUX ? {23'd0, pf_view_fetch_v, pf_view_fetch_vaddr} : RO_NO_MEMORY;
       default:   ro_regs = RO_NO_MEMORY;
     endcase
   end
@@ -3303,8 +3681,10 @@ module cadr_microcycle #(
     unique case (ro_a1[17:14])
       RO_IMEM: ro_word = ro_imem_q;
       RO_PROM: ro_word = ro_prom_q;
-      RO_AMEM: ro_word = {16'd0, ro_amem_q};
-      RO_MMEM: ro_word = {16'd0, ro_mmem_q};
+      // On QUUX M 31 is its register, and so is A 31 while it reads it
+      // (`m31_r` above).
+      RO_AMEM: ro_word = {16'd0, (QUUX && a31_from_m31 && ro_a1[9:0] == 10'o31) ? m31_r : ro_amem_q};
+      RO_MMEM: ro_word = {16'd0, (QUUX && ro_a1[4:0] == 5'o31) ? m31_r : ro_mmem_q};
       RO_PDL:  ro_word = {16'd0, ro_pdl_q};
       RO_SPC:  ro_word = {27'd0, ro_spc_q};
       RO_DMEM: ro_word = {31'd0, ro_dmem_q};
@@ -3312,6 +3692,7 @@ module cadr_microcycle #(
       RO_MAP2: ro_word = {24'd0, ro_map2_q};
       RO_OPCS: ro_word = {34'd0, ro_opcs_q};
       RO_REGS: ro_word = ro_regs_q;
+      RO_MACRO: ro_word = QUUX ? {30'd0, ro_macro_q} : RO_NO_MEMORY;
       default: ro_word = RO_NO_MEMORY;
     endcase
   end

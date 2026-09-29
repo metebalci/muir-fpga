@@ -61,8 +61,11 @@ enum img_sel {
 	IMG_SEL_IMEM = 0, IMG_SEL_PROM = 1, IMG_SEL_AMEM = 2, IMG_SEL_MMEM = 3,
 	IMG_SEL_PDL = 4, IMG_SEL_SPC = 5, IMG_SEL_DMEM = 6, IMG_SEL_MAP1 = 7,
 	IMG_SEL_MAP2 = 8, IMG_SEL_OPCS = 9, IMG_SEL_REGS = 10,
-	IMG_SEL_AUDIT = 11, IMG_SEL_QUUX_PAGE = 12
+	IMG_SEL_AUDIT = 11, IMG_SEL_QUUX_PAGE = 12,
+	// QUUX's MACRO DISPATCH MEMORY, 1,024 entries of 18 bits (revision 12).
+	IMG_SEL_MACRO = 13
 };
+#define IMG_QUUX_MACRO_ENTRIES 1024u
 
 // --- QUUX'S OWN, which the CADR's bitstream answers `RO_NO_MEMORY` at.
 //
@@ -73,7 +76,20 @@ enum img_sel {
 // interrupt enable, mode and period (revision 10, contract Q11).
 enum img_quux_reg {
 	IMG_RG_QUUX_ID = 21, IMG_RG_QUUX_TIME = 22, IMG_RG_QUUX_COUNT = 23,
-	IMG_RG_QUUX_CONF = 26
+	IMG_RG_QUUX_CONF = 26,
+	// Revision 12's fused return (contract H8a), `RG_QUUX_MACRO` and on:
+	// the MACRO-DISPATCH register; the memory's index; the base copies,
+	// `M-AP`'s in 27:14 and `A-LOCALP`'s in 13:0; what a fused return armed
+	// (`<8>` the operand address, `<7>` ARG, `<5:0>` delta, `<9>` M 31's
+	// word, `<10>` A 31 reading M 31's register); M 31's armed word; the
+	// fused returns, the operand addresses loaded and the prefetched words
+	// taken, counted; and the cache-only prefetch as the processor sees it:
+	// `<24>` held and its virtual word address, its physical word address,
+	// the word, and a fetch yet to be answered, `<24>` and its address.
+	IMG_RG_QUUX_MACRO = 29, IMG_RG_QUUX_MACRO_IX = 30, IMG_RG_QUUX_BASES = 31,
+	IMG_RG_QUUX_ARMED = 32, IMG_RG_QUUX_M31_W = 33, IMG_RG_QUUX_FUSED_N = 34,
+	IMG_RG_QUUX_OPR_N = 35, IMG_RG_QUUX_PF_N = 36, IMG_RG_QUUX_PF = 37,
+	IMG_RG_QUUX_PF_PHYS = 38, IMG_RG_QUUX_PF_WORD = 39, IMG_RG_QUUX_PF_FETCH = 40
 };
 #define IMG_QUUX_TIMERS 3
 #define IMG_QUUX_MARK 0x5155u
@@ -126,6 +142,17 @@ struct quux_state {
 	unsigned fd_handles;
 	uint32_t fd_cmd_base, fd_cmd_log2, fd_resp_base, fd_resp_log2;
 	uint16_t fd_cmd_prod, fd_cmd_cons, fd_resp_cons;
+	// Revision 12's fused return, muir's `MacroDispatch`, and the prefetch,
+	// `MemoryPort`'s `prefetched` and `fetch_vaddr`; and three counts no
+	// checkpoint carries.
+	uint32_t macro_reg, macro_index, localp, ap;
+	uint32_t macro_entries[IMG_QUUX_MACRO_ENTRIES];
+	int opr_v, opr_arg, m31_v;
+	unsigned opr_delta;
+	uint32_t m31_w;
+	int pf_v, fetch_v;
+	uint32_t pf_vaddr, pf_phys, pf_word, fetch_vaddr;
+	uint32_t fused_n, opr_n, pf_n;
 };
 
 
@@ -193,7 +220,10 @@ enum img_flag {
 	// QUUX's memory port idle and its write buffer empty (contract Q6: a
 	// halt drains the buffer before anything outside the machine reads
 	// main memory).  Zero on the CADR, which has no buffer.
-	IMG_F_MEM_DRAINED
+	IMG_F_MEM_DRAINED,
+	// QUUX's `MEMSTART` cycle is the stream's instruction fetch (revision
+	// 12's prefetch, muir's `Rtl::memstart_fetch`).  Zero on the CADR.
+	IMG_F_MEMSTART_FETCH
 };
 
 struct cadr_image {

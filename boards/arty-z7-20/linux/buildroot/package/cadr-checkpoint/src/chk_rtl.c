@@ -540,7 +540,7 @@ static void emit_busint(struct chk *w, const struct cadr_image *img)
 // is free: a halt drains the write buffer before this program reads the
 // machine, so `memory_free_at` and `buffer_free_at` are in the past, and 0
 // is a past as good as any.
-static void emit_memory_port(struct chk *w)
+static void emit_memory_port(struct chk *w, const struct cadr_image *img)
 {
 	chk_u8(w, 0);			/* IDLE State::Idle */
 	chk_bool(w, 0);			/* IDLE write */
@@ -559,6 +559,46 @@ static void emit_memory_port(struct chk *w)
 	chk_u64(w, MUIR_QUUX_WRITE_NS);		/* timing.write_ns */
 	chk_u64(w, 0);				/* IDLE memory_free_at */
 	chk_u64(w, 0);				/* IDLE buffer_free_at */
+	// Version 49: revision 12's cache-only prefetch, its word with the
+	// word's virtual and physical addresses, and a fetch the port is yet to
+	// answer, each an option (`MemoryPort::save`).  READ, off the register
+	// table's entries 37 to 40, which are the buffer as the last master
+	// clock edge left it: a halted machine's master clock runs, so that is
+	// the buffer.
+	chk_bool(w, img->qx.pf_v);			/* READ prefetched */
+	if (img->qx.pf_v) {
+		chk_u32(w, img->qx.pf_vaddr);
+		chk_u32(w, img->qx.pf_phys);
+		chk_u32(w, img->qx.pf_word);
+	}
+	chk_bool(w, img->qx.fetch_v);			/* READ fetch_vaddr */
+	if (img->qx.fetch_v)
+		chk_u32(w, img->qx.fetch_vaddr);
+}
+
+// `MacroDispatch::save`, version 49 (revision 12, contract H8a): the
+// MACRO-DISPATCH register, the MACRO DISPATCH MEMORY's index and its 1,024
+// entries, the base copies, and the operand address and M 31's word a fused
+// return armed, each an option.  QUUX's READ off the register table's
+// entries 29 to 33 and selector 13; the CADR's as `MacroDispatch::default`
+// holds them, which a CADR never writes.
+static void emit_macro_dispatch(struct chk *w, const struct cadr_image *img, int quux)
+{
+	const struct quux_state *q = &img->qx;
+	static const uint32_t none[IMG_QUUX_MACRO_ENTRIES] = { 0 };
+	chk_u32(w, quux ? q->macro_reg : 0u);		/* READ register */
+	chk_u16(w, quux ? (uint16_t)q->macro_index : 0u);	/* READ index */
+	chk_u32s(w, quux ? q->macro_entries : none, IMG_QUUX_MACRO_ENTRIES);	/* READ */
+	chk_u32(w, quux ? q->localp : 0u);		/* READ localp */
+	chk_u32(w, quux ? q->ap : 0u);			/* READ ap */
+	chk_bool(w, quux && q->opr_v);			/* READ operand */
+	if (quux && q->opr_v) {
+		chk_bool(w, q->opr_arg);
+		chk_u8(w, (uint8_t)q->opr_delta);
+	}
+	chk_bool(w, quux && q->m31_v);			/* READ m31 */
+	if (quux && q->m31_v)
+		chk_u32(w, q->m31_w);
 }
 
 // --- QUUX ------------------------------------------------------------------
@@ -892,6 +932,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 #endif
 		chk_bool(w, 1);				/* muldiv */
 		chk_bool(w, 1);				/* tick */
+		chk_bool(w, 1);				/* macro_dispatch: revision 12 */
 		emit_timers(w, img);
 	} else {
 		// `Machine::geometry`: the fabric is a CADR, `Geometry::CADR`.
@@ -899,6 +940,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		chk_u8(w, MUIR_PDL_BITS);		/* DECLARED pdl_bits */
 		chk_bool(w, MUIR_MULDIV);		/* DECLARED muldiv */
 		chk_bool(w, MUIR_TICK);			/* DECLARED tick */
+		chk_bool(w, 0);				/* DECLARED macro_dispatch */
 		// `Timers::save`: QUUX's interval timers, which a CADR's machine
 		// holds in their reset state and never turns on (version 45).
 		for (unsigned k = 0; k < MUIR_TIMERS; ++k) {
@@ -909,6 +951,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 			chk_u64(w, ~(uint64_t)0);	/* NONE timer.deadline_ns */
 		}
 	}
+	emit_macro_dispatch(w, img, quux);
 	// **REVISION 9, ON BOTH MACHINES** (versions 42 and 43).  `Rtc::save`:
 	// the real-time clock's setting, and a board's is always the host's
 	// clock, Linux keeping the fabric's count; so the option is absent, as
@@ -1084,7 +1127,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, img_flag(img, IMG_F_WRCYC));	/* READ */
 	if (quux) {
 		chk_u8(w, MUIR_BUS_QUUX);
-		emit_memory_port(w);
+		emit_memory_port(w, img);
 	} else {
 		chk_u8(w, MUIR_BUS_CADR);
 		emit_busint(w, img);
@@ -1154,6 +1197,9 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u32(w, 0);					/* IDLE busint_bus */
 	chk_u64(w, ~(uint64_t)0);			/* IDLE loadmd_at */
 	chk_opt_u16(w, 0, 0);				/* IDLE executed */
+	// Version 49: `MEMSTART`'s cycle is the stream's fetch, for QUUX's
+	// prefetch; READ on QUUX, and false on the CADR, which never sets it.
+	chk_bool(w, img_flag(img, IMG_F_MEMSTART_FETCH));	/* READ */
 }
 
 // --- what it could not read ------------------------------------------------
