@@ -1623,7 +1623,7 @@ $(BUILD)/obj_band/Vcadr_machine: $(MACHINE_SRC) tb/cadr_band_tb.cpp tb/cadr_tick
 .PHONY: band
 band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	@if [ ! -f $(SYS100_GZ) ]; then \
-	    echo "band: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	    echo "band: skipped --- no System 100 release; muir-sim's tools/fetch-system-100-for-cadr.sh fetches it"; \
 	else \
 	    set -e; \
 	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
@@ -1675,7 +1675,7 @@ $(BUILD)/obj_hash_watch/Vcadr_machine: $(MACHINE_SRC) tb/cadr_hash_watch_tb.cpp 
 .PHONY: hash-watch
 hash-watch: $(BUILD)/obj_hash_watch/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	@if [ ! -f $(SYS100_GZ) ]; then \
-	    echo "hash-watch: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	    echo "hash-watch: skipped --- no System 100 release; muir-sim's tools/fetch-system-100-for-cadr.sh fetches it"; \
 	else \
 	    set -e; \
 	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
@@ -1795,7 +1795,7 @@ $(BUILD)/obj_band_axi/Vcadr_band_axi_harness: $(BAND_AXI_SRC) \
 band-axi: $(BUILD)/obj_band_axi/Vcadr_band_axi_harness $(BUILD)/rtl_sys.golden \
           $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	@if [ ! -f $(SYS100_GZ) ]; then \
-	    echo "band-axi: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	    echo "band-axi: skipped --- no System 100 release; muir-sim's tools/fetch-system-100-for-cadr.sh fetches it"; \
 	else \
 	    set -e; \
 	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
@@ -1935,7 +1935,7 @@ $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness: $(PACK_BAND_SRC) \
 pack-band: $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness $(BUILD)/rtl_sys.golden \
            $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	@if [ ! -f $(SYS100_GZ) ]; then \
-	    echo "pack-band: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	    echo "pack-band: skipped --- no System 100 release; muir-sim's tools/fetch-system-100-for-cadr.sh fetches it"; \
 	else \
 	    set -e; \
 	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
@@ -3072,7 +3072,8 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 #
 # Skipped, and says so, when the release archive is not here. It is fetched
 # material and gitignored, as muir's own vendor/ is; CI does not have it and
-# is not meant to. muir's tools/fetch-system-100.sh is what fetches it.
+# is not meant to. muir-sim's tools/fetch-system-100-for-cadr.sh is what
+# fetches it.
 #
 # The archive is kept here rather than read out of muir's vendor/ because a
 # drive writes its pack: any working image drifts under a run that opens it,
@@ -3098,7 +3099,7 @@ $(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/src/trace.rs \
                         golden/Cargo.toml | $(BUILD)
 	@if [ ! -f $(SYS100_GZ) ]; then \
 	    echo "# skipped: the System 100 release is not here" > $@; \
-	    echo "rtl_sys: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	    echo "rtl_sys: skipped --- no System 100 release; muir-sim's tools/fetch-system-100-for-cadr.sh fetches it"; \
 	else \
 	    set -e; \
 	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
@@ -3321,7 +3322,7 @@ disk-boot-golden: $(BUILD)/disk_boot.golden
 $(BUILD)/disk_boot.golden: golden/src/disk_boot.rs golden/Cargo.toml | $(BUILD)
 	@if [ ! -f $(SYS100_GZ) ]; then \
 	    echo "# skipped: the System 100 release is not here" > $@; \
-	    echo "disk_boot: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	    echo "disk_boot: skipped --- no System 100 release; muir-sim's tools/fetch-system-100-for-cadr.sh fetches it"; \
 	else \
 	    set -e; \
 	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \

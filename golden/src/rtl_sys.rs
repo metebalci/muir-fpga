@@ -142,8 +142,8 @@ fn main() {
         fail(&format!(
             "{pack}: no such pack.\n\
              It is made by decompressing vendor/system-100-0/disk-sys-100-0.img.gz;\n\
-             `make` does that, and muir's tools/fetch-system-100.sh is what fetches\n\
-             the release the archive is copied from."
+             `make` does that, and muir-sim's tools/fetch-system-100-for-cadr.sh\n\
+             is what fetches the release the archive is copied from."
         ));
     }
 
