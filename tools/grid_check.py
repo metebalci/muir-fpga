@@ -248,10 +248,14 @@ def check_timing_model(root):
 
 # A statement that writes a count of ticks: a multicycle's setup or hold, or
 # one of the flows' two assertions, possibly inside a one-line `if`.
+# A count is a number, or, in the Arty's files, K written from the flow's
+# `sync_k`: `$sync_k` or `[expr {$sync_k - n}]` (`SYNC_EXPR`).
+COUNT = r"(\d+|\$sync_k|\[expr\s*\{\s*\$sync_k\s*[+-]\s*\d+\s*\}\])"
 STATEMENT = re.compile(
     r"^\s*(?:if\s*\{[^}]*\}\s*\{\s*)?"
-    r"(?:set_multicycle_path\s+-(setup|hold)\s+(\d+)"
-    r"|(assert_multicycle_applied|assert_instance_timing|assert_clause_timing)\s+\$tick\s+(\d+))")
+    r"(?:set_multicycle_path\s+-(setup|hold)\s+" + COUNT +
+    r"|(assert_multicycle_applied|assert_instance_timing|assert_clause_timing)\s+\$tick\s+" + COUNT + ")")
+SYNC_EXPR = re.compile(r"^\[expr\s*\{\s*\$sync_k\s*([+-])\s*(\d+)\s*\}\]$")
 TAG = re.compile(
     r"^\s*#\s*(?:grid:\s*(\d+)\s*ns(?:\s*([+-])\s*(\d+)\s*ticks?)?"
     r"(?:\s*\(shared with\s+([\d\s,and]+?)\s*ns\))?"
@@ -259,13 +263,18 @@ TAG = re.compile(
     r"|sync:\s*K(?:\s*([+-])\s*(\d+))?)\s*$")
 
 # **QUUX'S MICROCYCLE, K TICKS, IS A BOARD'S AND NOT THE GRID'S** (H1a).  A
-# count of QUUX's is tagged `# sync: K`, or `# sync: K - 1` and the like, and
-# held to the SYNC_K of the board whose constraints the file is: the default
-# of that parameter in the board's top level, which is what its bitstream is
-# built at.  A file that is no board's may not use the tag.
+# count of QUUX's is tagged `# sync: K`, or `# sync: K - 1` and the like.  On
+# the DE25-Nano it is a number, held to the SYNC_K of the board whose
+# constraints the file is: the default of that parameter in the board's top
+# level, which is what its bitstream is built at.  **ON THE ARTY Z7-20 THE K
+# IS THE REVISION'S**, four to revision 12 and five at revision 13
+# (`SYNC_K` and `SYNC_K13`), so there a count of K is never a number: it is
+# written from the flow's `sync_k` (`vivado/tick.tcl`), `$sync_k` or
+# `[expr {$sync_k - n}]`, and held here to its tag, a hold one tick less;
+# `build/machine_param.pass` holds the flow's `sync_k` to each revision's
+# machine.  A file that is no board's may not use the tag.
+SYNC_BY_REVISION = ("rtl/plumbing/xilinx7/", "boards/arty-z7-20/")
 SYNC_BOARDS = [
-    ("rtl/plumbing/xilinx7/", "boards/arty-z7-20/cadr_arty.sv"),
-    ("boards/arty-z7-20/", "boards/arty-z7-20/cadr_arty.sv"),
     ("boards/de25-nano/", "boards/de25-nano/cadr_de25.sv"),
 ]
 
@@ -321,9 +330,34 @@ def check_constraints(root, grid):
                      f"`# board ticks` tag in the comment block above it, and has {len(tags)}")
             t = tags[0]
             kind = m.group(1) or m.group(3)
-            count = int(m.group(2) or m.group(4))
-            if t.group(0).split("#", 1)[1].strip().startswith("sync:"):
-                rel = str(path.relative_to(root))
+            text = m.group(2) or m.group(4)
+            is_sync = t.group(0).split("#", 1)[1].strip().startswith("sync:")
+            rel = str(path.relative_to(root))
+            if not text.isdigit():
+                # K written from `sync_k`: only under a `# sync:` tag, only in
+                # the Arty's files, and saying the tag's offset.
+                if not is_sync:
+                    fail(f"{where}: `{text}` is a count of K under a tag that is not `# sync:`")
+                if not rel.startswith(SYNC_BY_REVISION):
+                    fail(f"{where}: `{text}` in a file that is not the Arty's, whose K the "
+                         f"flow does not set")
+                e = SYNC_EXPR.match(text)
+                got = 0 if text == "$sync_k" else (int(e.group(2)) if e.group(1) == "+"
+                                                   else -int(e.group(2)))
+                off = int(t.group(7)) if t.group(6) else 0
+                tag_off = off if t.group(6) == "+" else -off
+                said = "K" + (f" {t.group(6)} {off}" if t.group(6) else "")
+                want = tag_off - 1 if kind == "hold" else tag_off
+                if got != want:
+                    fail(f"{where}: `{text}` beside {said}: it is K {got:+d}, and wants K "
+                         f"{want:+d}" + (", the hold one less" if kind == "hold" else ""))
+                found.append((where, kind, None, text, []))
+                continue
+            count = int(text)
+            if is_sync and rel.startswith(SYNC_BY_REVISION):
+                fail(f"{where}: {count} ticks for a count of K in the Arty's files, where K is "
+                     f"the revision's: write it from `$sync_k`")
+            if is_sync:
                 k, top = board_sync_k(root, rel)
                 if k is None:
                     fail(f"{where}: a `# sync:` count in a file that is no board's, so there "

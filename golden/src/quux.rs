@@ -1387,35 +1387,51 @@ fn tickwin_program() -> Prog {
     p
 }
 
-/// **THE PAGE READ IN THE TICKS AROUND ITS EDGE**, QUUX's alone, at an L of
-/// zero and one; and the microsecond clock read between the edges.
+/// **THE PAGE READ IN THE TICKS AROUND ITS EDGE**, QUUX's alone, at a K of
+/// four and of five, each at an L of zero and one; and the microsecond clock
+/// read between the edges.
 ///
 ///   - `CLOCKWAIT_USEC` pairs of an `ILONG` filler and a read of source 15:
-///     at a K of four and an L of zero every microcycle starts on a multiple
-///     of 40 ns and every microsecond is 25 of them, so a microsecond clock a
-///     tick or two off never crosses a boundary where a read can see it; with
-///     `ILONG`s at an L of one the reads start 10 ns apart against it;
+///     at an L of zero every microcycle starts on a multiple of 40 ns at a K
+///     of four and of 50 ns at five, and every microsecond is 25 or 20 of
+///     them, so a microsecond clock a tick or two off never crosses a
+///     boundary where a read can see it; with `ILONG`s at an L of one the
+///     reads start 10 ns apart against it;
 ///   - [`clockwait_trials`]: trial `t` on timer `t mod 3`, turned on at 1 us
 ///     with its interrupt enable, which starts it at the write's edge; a
-///     wait of `CLOCKWAIT_DELAY` turns; `g` fillers, `s` of them `ILONG`; and
-///     a read of word 100, or in the second sweep of the timer's word
+///     wait of `d` turns; `g` fillers, `s` of them `ILONG`; and a read of
+///     word 100, or in the second half of the trials the timer's word
 ///     110 + 2k, into `A[200 + t]`, whose cycle is taken near the rise.  A
 ///     read gives the flags as they stood at the edge that takes its cycle
 ///     (contract Q11, rule 10): a rise on that edge is in it, one a tick
-///     after it is not.  Measured at an L of one: gap 5 with 3 `ILONG`s
-///     takes the read 10 ns before the rise and reads the flag down, with 4
-///     on the rise and reads it up.
+///     after it is not.
+///   - Two sweeps, [`CLOCKWAIT_SWEEPS`], one around the rise at each board's
+///     K: the DE25-Nano's and the Arty Z7-20's revision 12 at four, the
+///     Arty's revision 13 at five.  The program is one PROM for every K, so
+///     each K runs both sweeps and the other K's reads all fall on one side
+///     of the rise.  Measured at K = 4 and an L of one: gap 5 with 3
+///     `ILONG`s takes the read 10 ns before the rise and reads the flag
+///     down, with 4 on the rise and reads it up; at an L of zero gap 5 reads
+///     it down and gap 6 up.  At K = 5, wait 4: gap 3 reads it down with 3
+///     `ILONG`s at an L of one, and gap 4 up with none; no gap of 3 takes a
+///     fourth `ILONG`, so the rise is pinned to two ticks there and not one.
+///     The PROM's 1,024 words hold the two sweeps only near their rises.
 const CLOCKWAIT_USEC: usize = 150;
-const CLOCKWAIT_DELAY: u32 = 5;
-const CLOCKWAIT_GAPS: std::ops::RangeInclusive<usize> = 4..=6;
 const CLOCKWAIT_SHIFTS: usize = 5;
+/// Each sweep: the wait's turns, and the gaps with the most shifts each
+/// takes, `(g, shifts)`, a shift being one more `ILONG` among the `g`.
+const CLOCKWAIT_SWEEPS: [(u32, [(usize, usize); 2]); 2] = [(5, [(5, CLOCKWAIT_SHIFTS), (6, 1)]), (4, [(3, 4), (4, 1)])];
 
-/// Each trial's word, 100 or the timer's own, and its gap and shift: the
-/// whole sweep once for each word.
-fn clockwait_trials() -> Vec<(bool, usize, usize)> {
+/// Each trial's word, 100 or the timer's own, and its wait, gap and shift:
+/// both sweeps once for each word.
+fn clockwait_trials() -> Vec<(bool, u32, usize, usize)> {
     [true, false]
         .into_iter()
-        .flat_map(|w100| CLOCKWAIT_GAPS.flat_map(move |g| (0..CLOCKWAIT_SHIFTS.min(g + 1)).map(move |s| (w100, g, s))))
+        .flat_map(|w100| {
+            CLOCKWAIT_SWEEPS.into_iter().flat_map(move |(d, gaps)| {
+                gaps.into_iter().flat_map(move |(g, n)| (0..n.min(g + 1)).map(move |s| (w100, d, g, s)))
+            })
+        })
         .collect()
 }
 
@@ -1432,12 +1448,12 @@ fn clockwait_program() -> Prog {
     for k in 0..3 {
         t.wr(&mut p, tper(k), 1);
     }
-    for (i, (w100, g, s)) in clockwait_trials().into_iter().enumerate() {
+    for (i, (w100, d, g, s)) in clockwait_trials().into_iter().enumerate() {
         let k = (i % 3) as u32;
         let word = if w100 { 0o100 } else { tctl(k) };
         let va = t.c.c(&mut p, t.va(word));
         t.wr(&mut p, tctl(k), T_ON | T_IE);
-        t.delay(&mut p, CLOCKWAIT_DELAY);
+        t.delay(&mut p, d);
         for j in 0..g {
             p.i(filler().raw() | if j < s { 1 << 45 } else { 0 });
         }
@@ -1458,7 +1474,7 @@ fn check_clockwait(which: Which, m: &muir::machine::Machine) {
     let flags: Vec<(bool, bool)> = trials
         .iter()
         .enumerate()
-        .map(|(i, &(w100, _, _))| {
+        .map(|(i, &(w100, _, _, _))| {
             let (k, w) = (i % 3, m.amem[RESULT as usize + i] as u32);
             (w100, if w100 { w & T_BIT[k] != 0 } else { w & T_FLAG != 0 })
         })

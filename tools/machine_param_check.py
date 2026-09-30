@@ -88,7 +88,10 @@ BOARDS = {
             "DDR=1 HDMI=1": (["-GDDR=1", "-GHDMI=1"], ["tb/cadr_ps7_stub.sv"]),
         },
         "machines": ["cadr", "quux"],
-        "sync_k": 4,
+        # QUUX's K by the word: revision 12's four, and revision 13's five,
+        # the machine's clock left at 100 MHz so that its timers count true
+        # time (`cadr_arty.sv`, `SYNC_K13`).
+        "sync_k": {32: 4, 40: 5},
     },
     "de25": {
         "top": "cadr_de25",
@@ -102,7 +105,7 @@ BOARDS = {
             "DDR=1 HDMI=1": (["-DCADR_DE25_DDR", "-DCADR_DE25_HDMI"], []),
         },
         "machines": ["cadr", "quux"],
-        "sync_k": 4,
+        "sync_k": {32: 4, 40: 4},
     },
     "cora": {
         "top": "cadr_cora",
@@ -283,6 +286,8 @@ def word_reaches(board, config, bits, scratch):
         say(False, "%s --- it elaborates %d" % (what, got))
     else:
         say(True, what)
+    # **AND THE REVISION'S K**: on the Arty revision 13's is not revision 12's.
+    k_at_generator(board, config, "MACHINE=quux, %s" % asked, want, tree)
     # And the file device's page names the revision: "QF13" at 40 bits,
     # "QFD9" below (`rtl/plumbing/quux_fd_face.sv`).
     ident_want = 0x51463133 if want > 32 else 0x51464439
@@ -346,16 +351,22 @@ def reaches(board, config, value, scratch):
     # A top level that dropped it would build the machine at the default K
     # and every trace at that K would still pass.
     if want == "quux":
-        k_want = BOARDS[board]["sync_k"]
-        kwhat = "%s, %s, MACHINE=quux: the microcycle is SYNC_K=%d ticks at the generator" % (
-            top, config, k_want)
-        k, why = sync_k_at_generator(tree)
-        if k is None:
-            say(False, "%s --- %s" % (kwhat, why))
-        elif k != k_want:
-            say(False, "%s --- it counts %d" % (kwhat, k))
-        else:
-            say(True, kwhat)
+        k_at_generator(board, config, "MACHINE=quux", 32, tree)
+
+
+def k_at_generator(board, config, asked, bits, tree):
+    """The K `quux_phase_gen` counts is the board's own for the word."""
+    top = BOARDS[board]["top"]
+    k_want = BOARDS[board]["sync_k"][bits]
+    kwhat = "%s, %s, %s: the microcycle is SYNC_K=%d ticks at the generator" % (
+        top, config, asked, k_want)
+    k, why = sync_k_at_generator(tree)
+    if k is None:
+        say(False, "%s --- %s" % (kwhat, why))
+    elif k != k_want:
+        say(False, "%s --- it counts %d" % (kwhat, k))
+    else:
+        say(True, kwhat)
 
 
 def refused_at(board, config, value, message, instance):
@@ -418,6 +429,33 @@ def main():
         for board in ("arty", "de25"):
             for bits in (None, 40):
                 word_reaches(board, "DDR=1 HDMI=1", bits, scratch)
+
+        # **THE ARTY'S FLOW STATES THE K ITS MACHINE COUNTS**: `tick.tcl`'s
+        # `cadr_sync_k` for each word is the table's, and the flow sets the
+        # `sync_k` that `quux_machine.xdc` writes its counts from with it,
+        # for the word it builds, before it reads that file.
+        for bits in (32, 40):
+            k_want = BOARDS["arty"]["sync_k"][bits]
+            what = "the Arty's flow states K=%d at WORD_BITS=%d (tick.tcl, cadr_sync_k)" % (k_want, bits)
+            script = os.path.join(scratch, "sync_k.tcl")
+            with open(script, "w") as f:
+                f.write("source boards/arty-z7-20/vivado/tick.tcl\nputs \"K=[cadr_sync_k %d]\"\n" % bits)
+            rc, out = run([TCLSH, script])
+            if rc != 0 or ("K=%d" % k_want) not in out.split("\n"):
+                say(False, "%s --- it says:\n%s" % (what, out.strip()))
+            else:
+                say(True, what)
+        with open("boards/arty-z7-20/vivado/bitstream.tcl") as f:
+            text = f.read()
+        sets = [i for i, line in enumerate(text.split("\n"))
+                if line.strip() == "set sync_k [cadr_sync_k $word_bits]"]
+        reads = [i for i, line in enumerate(text.split("\n"))
+                 if "read_xdc" in line and "quux_machine.xdc" in line and not line.lstrip().startswith("#")]
+        what = "the Arty's flow sets sync_k from the word it builds, once, before quux_machine.xdc"
+        if len(sets) != 1 or len(reads) != 1 or sets[0] > reads[0]:
+            say(False, "%s --- %d such line(s), %d read(s) of the file" % (what, len(sets), len(reads)))
+        else:
+            say(True, what)
 
         # The flows.  Every OUTDIR is under the scratch directory, so a flow
         # that failed to refuse writes nothing anywhere else.
@@ -504,7 +542,7 @@ def main():
     if failures:
         print("machine: FAILED, %d of the cases above" % len(failures))
         return 1
-    print("machine: every board's top level hands MACHINE and WORD_BITS to u_machine, "
+    print("machine: every board's top level hands MACHINE, WORD_BITS and its K to u_machine, "
           "and the Cora and the flows refuse what they must")
     return 0
 

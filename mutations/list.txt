@@ -20892,9 +20892,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note The Arty's top level hands the machine a K other than its own, so the
 @note bitstream runs at a K no constraint states.
 @old
-      .SYNC_K(SYNC_K),
+      .SYNC_K(WORD_BITS > 32 ? SYNC_K13 : SYNC_K),
 @new
-      .SYNC_K(SYNC_K + 1),
+      .SYNC_K((WORD_BITS > 32 ? SYNC_K13 : SYNC_K) + 1),
 @end
 
 @mutation machine-param-the-de25-drops-its-k
@@ -20912,9 +20912,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @file rtl/plumbing/xilinx7/quux_machine.xdc
 @note QUUX's relaxed set at K + 1 on the Arty.
 @old
-set_multicycle_path -setup 4 -from $slow -to $slow
+set_multicycle_path -setup $sync_k -from $slow -to $slow
 @new
-set_multicycle_path -setup 5 -from $slow -to $slow
+set_multicycle_path -setup [expr {$sync_k + 1}] -from $slow -to $slow
 @end
 
 @mutation grid-quux-arty-out-of-the-latches-at-k
@@ -20923,9 +20923,9 @@ set_multicycle_path -setup 5 -from $slow -to $slow
 @note Out of the latches at K, where the latch holds its word from the tick
 @note after the edge.
 @old
-set_multicycle_path -setup 3 -from $split_latch -to $slow
+set_multicycle_path -setup [expr {$sync_k - 1}] -from $split_latch -to $slow
 @new
-set_multicycle_path -setup 4 -from $split_latch -to $slow
+set_multicycle_path -setup $sync_k -from $split_latch -to $slow
 @end
 
 @mutation grid-quux-de25-relaxed-set-a-tick-wide
@@ -20961,14 +20961,77 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @end
 
 @mutation grid-quux-arty-k-moved-alone
-@check grid
+@check machine_param
 @file boards/arty-z7-20/cadr_arty.sv
-@note The Arty's K moved and its constraints not: every `# sync:` count is
-@note then a tick short.
+@note The Arty's revision 12 moved to five ticks: its constraints follow it,
+@note and its checks and its fit are for four.
 @old
     parameter int unsigned SYNC_K = 4,
 @new
     parameter int unsigned SYNC_K = 5,
+@end
+
+@mutation machine-param-the-arty-revision-13-back-at-four
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's revision 13 set back to four ticks, where its map chain does
+@note not meet the fit.
+@old
+    parameter int unsigned SYNC_K13 = 5,
+@new
+    parameter int unsigned SYNC_K13 = 4,
+@end
+
+@mutation machine-param-the-arty-drops-revision-13s-k
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's top level hands revision 13 revision 12's K.
+@old
+      .SYNC_K(WORD_BITS > 32 ? SYNC_K13 : SYNC_K),
+@new
+      .SYNC_K(SYNC_K),
+@end
+
+@mutation machine-param-the-arty-flow-takes-revision-12s-k
+@check machine_param
+@file boards/arty-z7-20/vivado/bitstream.tcl
+@note The flow writes QUUX's constraints at revision 12's K whatever it
+@note builds.
+@old
+    set sync_k [cadr_sync_k $word_bits]
+@new
+    set sync_k [cadr_sync_k 32]
+@end
+
+@mutation machine-param-the-arty-flow-reads-the-other-revisions-k
+@check machine_param
+@file boards/arty-z7-20/vivado/tick.tcl
+@note `cadr_sync_k` answers each revision with the other's K.
+@old
+    set name [expr {$word_bits eq "40" ? "SYNC_K13" : "SYNC_K"}]
+@new
+    set name [expr {$word_bits eq "40" ? "SYNC_K" : "SYNC_K13"}]
+@end
+
+@mutation grid-quux-arty-every-tick-first-hop-at-k-minus-1
+@check grid
+@file rtl/plumbing/xilinx7/quux_machine.xdc
+@note The every-tick registers' first hop a tick wider than the split, so the
+@note two hops sum to more than K.
+@old
+set_multicycle_path -setup [expr {$sync_k - 2}] -from $slow -to $split_every_tick
+@new
+set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tick
+@end
+
+@mutation grid-quux-arty-flow-asks-the-latches-at-k
+@check grid
+@file boards/arty-z7-20/vivado/bitstream.tcl
+@note The flow asks the latches' clause at K, a tick more than it states.
+@old
+    assert_clause_timing $tick [expr {$sync_k - 1}] "out of the scratchpad latches" $q_latch
+@new
+    assert_clause_timing $tick $sync_k "out of the scratchpad latches" $q_latch
 @end
 
 @mutation quux-control-store-written-nowhere
@@ -22295,9 +22358,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/plumbing/xilinx7/quux_machine.xdc
 @note The edge's registers into the cache's held address at K + 1.
 @old
-set_multicycle_path -setup 4 -from $slow -to $quux_cache_held
+set_multicycle_path -setup $sync_k -from $slow -to $quux_cache_held
 @new
-set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
+set_multicycle_path -setup [expr {$sync_k + 1}] -from $slow -to $quux_cache_held
 @end
 
 @mutation grid-quux-de25-cache-address-a-tick-wide

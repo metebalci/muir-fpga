@@ -65,6 +65,27 @@ the CADR.
 
 ## From a modified tree
 
+These fits were built from the working tree on `f00f376` with QUUX revision
+13 at a microcycle of five ticks on the Arty Z7-20 (`SYNC_K13`), revision 12
+still at four, and muir pinned at `fc654c1`. The machine's clock stays at
+100 MHz, so its timers count true time; `docs/timing.md` says why the
+microcycle is longer and not the tick.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 13, K = 5 | +0.153 ns | +0.060 ns | 22,836 of 53,200 LUTs, 42.92% | 83 of 140 BRAM tiles | 7,195 of 13,300 | working tree on `f00f376` | modified | 2026-09-30 |
+| Arty Z7-20 | CADR | +0.375 ns | +0.019 ns | 15,042 of 53,200 LUTs, 28.27% | 46 of 140 BRAM tiles | 5,620 of 13,300 | working tree on `f00f376` | modified | 2026-09-30 |
+
+A fit of revision 13 at four ticks, from `15e14fd`, misses by 1.140 ns on 37
+endpoints. Six of them are the map through both levels into the memory
+path's decode, which has two ticks at K = 4 and three at K = 5, where it
+meets by 1.206 ns. The other 31 have one tick at either K and meet at five
+by placement: the cache's RAM address has +0.676 ns. The worst path at five
+is the reset of the debug window from the processor's general-purpose port,
++0.153 ns. The block RAM enable check passes over 129 ports, where at four
+it failed one PDL buffer port by 0.063 ns. The CADR's figures are the same, figure for
+figure, as a fit of `15e14fd` made the same day.
+
 These fits were built from the working tree on `0ecbeed` with QUUX revision
 13's devices (contract G2 §4): block-disk's pages, its packed and 4-byte
 transfers and its channel's 28-bit addresses and 40-bit words, packed by the

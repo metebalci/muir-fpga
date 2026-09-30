@@ -6,8 +6,9 @@
 # machine it is reading, and a clause whose `-to` matches nothing is a clause
 # on every path, so the CADR must never read this file.
 #
-# **QUUX'S MICROCYCLE IS K TICKS, FOUR ON THE ARTY Z7-20** (H1a, the top
-# level's `SYNC_K`, muir's `--timing-model sync --sync-cycle-ticks 4`).  The
+# **QUUX'S MICROCYCLE IS K TICKS ON THE ARTY Z7-20, FOUR TO REVISION 12 AND
+# FIVE AT REVISION 13** (H1a, the top level's `SYNC_K` and `SYNC_K13`,
+# muir's `--timing-model sync --sync-cycle-ticks K`).  The
 # CADR's file counts from a microcycle of fourteen ticks at the least, with a
 # read phase and a write pulse inside it; QUUX's has neither.  Every register
 # of the processor moves on the edge that ends the boundary's tick, every
@@ -18,10 +19,13 @@
 # ALL of them are re-issued, the unchanged ones too: a clause is ranked by
 # its place among clauses of equal specificity, and the relaxed set's own
 # clause below would otherwise take every path the CADR's narrower clauses
-# had.  The counts are literal, K being the board's, and `tools/grid_check.py`
-# holds each `# sync:` count to `boards/arty-z7-20/cadr_arty.sv`'s SYNC_K.
-# The flow asserts each clause applied and none wider
-# (`boards/arty-z7-20/vivado/bitstream.tcl`).
+# had.  **EVERY COUNT OF K IS WRITTEN FROM `sync_k`**, which the flow sets
+# before it reads this file, from the top level's own parameter for the
+# revision it builds (`vivado/tick.tcl`, `cadr_sync_k`): one file for both
+# revisions, and no K written twice.  `tools/grid_check.py` holds each
+# `# sync:` tag to its expression, and `build/machine_param.pass` holds the
+# flow's K to the machine's.  The flow asserts each clause applied and none
+# wider (`boards/arty-z7-20/vivado/bitstream.tcl`).
 #
 # MEASURED FOR THE PLAN, on the routed QUUX Arty placed against eight ticks,
 # as delay against what K = 4 leaves (the requirement less about 0.66 ns of
@@ -42,8 +46,8 @@
 #
 # A register loaded at the edge and read at the next: the whole microcycle.
 # sync: K
-set_multicycle_path -setup 4 -from $slow -to $slow
-set_multicycle_path -hold  3 -from $slow -to $slow
+set_multicycle_path -setup $sync_k -from $slow -to $slow
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $slow -to $slow
 
 # **AND THE READOUT'S ADDRESS INTO THE BLOCK RAMS' PINS AT THE TICK, AGAIN**,
 # the `cadr_machine.xdc` clause re-issued after the relaxed set's, which
@@ -58,12 +62,15 @@ set_multicycle_path -hold  0 -from $ro_address -to $ro_ram_pins
 # **THE EVERY-TICK REGISTERS, SPLIT TO SUM TO K**: `memgo_q`, the held halves
 # of -WAIT and the memory path's held decode are loaded every tick from the
 # edge's registers and read at the next edge, so a path through one is two
-# hops.  Two ticks in and two out: measured 19.0 ns in (the held decode) and
-# 11.6 ns out, neither of which fits one tick.
-# grid: 0 ns + 2 ticks
-set_multicycle_path -setup 2 -from $slow -to $split_every_tick
-set_multicycle_path -hold  1 -from $slow -to $split_every_tick
+# hops.  K - 2 ticks in and two out: measured 19.0 ns in (the held decode)
+# and 11.6 ns out at revision 12, neither of which fits one tick.  What K
+# adds goes to the first hop, where revision 13's map chain is: through both
+# of its levels into the held decode it missed two ticks by 1.140 ns and
+# meets three by 1.206 ns, while the hop out keeps its two.
 # sync: K - 2
+set_multicycle_path -setup [expr {$sync_k - 2}] -from $slow -to $split_every_tick
+set_multicycle_path -hold  [expr {$sync_k - 3}] -from $slow -to $split_every_tick
+# grid: 0 ns + 2 ticks
 set_multicycle_path -setup 2 -from $split_every_tick -to $slow
 set_multicycle_path -hold  1 -from $split_every_tick -to $slow
 
@@ -76,8 +83,8 @@ set_multicycle_path -hold  0 -from $split_latch_addr -to $split_latch
 
 # Out of the latches: the tick after the edge to the next edge.
 # sync: K - 1
-set_multicycle_path -setup 3 -from $split_latch -to $slow
-set_multicycle_path -hold  2 -from $split_latch -to $slow
+set_multicycle_path -setup [expr {$sync_k - 1}] -from $split_latch -to $slow
+set_multicycle_path -hold  [expr {$sync_k - 2}] -from $split_latch -to $slow
 
 # The scratchpads' writes, on the edge, into the latches that follow them on
 # the next tick.  After the clause above, which names both.
@@ -87,23 +94,23 @@ set_multicycle_path -hold  0 -from $split_latch -to $split_latch
 
 # Out of the latches into the dispatch memory's write, on the next edge.
 # sync: K - 1
-set_multicycle_path -setup 3 -from $split_latch -to $split_dmem
-set_multicycle_path -hold  2 -from $split_latch -to $split_dmem
+set_multicycle_path -setup [expr {$sync_k - 1}] -from $split_latch -to $split_dmem
+set_multicycle_path -hold  [expr {$sync_k - 2}] -from $split_latch -to $split_dmem
 
 # The control store's word, read at the edge from NPC and standing until the
 # next: the whole microcycle.
 # sync: K
-set_multicycle_path -setup 4 -from $split_cstore -to $slow
-set_multicycle_path -hold  3 -from $split_cstore -to $slow
+set_multicycle_path -setup $sync_k -from $split_cstore -to $slow
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_cstore -to $slow
 
 # The maps' write and the dispatch memory's, on the edge, to the next edge
 # that reads them.
 # sync: K
-set_multicycle_path -setup 4 -from $split_maps -to $slow
-set_multicycle_path -hold  3 -from $split_maps -to $slow
+set_multicycle_path -setup $sync_k -from $split_maps -to $slow
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_maps -to $slow
 # sync: K
-set_multicycle_path -setup 4 -from $split_dmem -to $slow
-set_multicycle_path -hold  3 -from $split_dmem -to $slow
+set_multicycle_path -setup $sync_k -from $split_dmem -to $slow
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_dmem -to $slow
 
 # The three memories' writes into the readout's copies, loaded every tick.
 # After the two clauses above, which name them too.
@@ -115,8 +122,8 @@ set_multicycle_path -hold  0 -from $split_md_writes -to $split_readout
 # edges alone on QUUX (a foreign master's word is taken on the boundary's
 # tick), and the write is at the next edge that runs a microcycle.
 # sync: K
-set_multicycle_path -setup 4 -from $split_md -to $split_md_writes
-set_multicycle_path -hold  3 -from $split_md -to $split_md_writes
+set_multicycle_path -setup $sync_k -from $split_md -to $split_md_writes
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_md -to $split_md_writes
 
 # MD_HELD into MD, and the stack's write into its latch: a tick, as on the
 # CADR, re-issued because the relaxed set's clause above names them.
@@ -137,18 +144,18 @@ set_multicycle_path -hold  0 -from $split_spcm -to $split_spc_q
 # words go out to the output bus a tick at a time and need no clause.
 set quux_divider [filter [all_registers] {NAME =~ *processor/g_quux_muldiv.muldiv/dv_*}]
 # sync: K
-set_multicycle_path -setup 4 -from $slow -to $quux_divider
-set_multicycle_path -hold  3 -from $slow -to $quux_divider
+set_multicycle_path -setup $sync_k -from $slow -to $quux_divider
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $slow -to $quux_divider
 # sync: K
-set_multicycle_path -setup 4 -from $split_cstore -to $quux_divider
-set_multicycle_path -hold  3 -from $split_cstore -to $quux_divider
+set_multicycle_path -setup $sync_k -from $split_cstore -to $quux_divider
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_cstore -to $quux_divider
 # sync: K
-set_multicycle_path -setup 4 -from $split_maps -to $quux_divider
-set_multicycle_path -hold  3 -from $split_maps -to $quux_divider
+set_multicycle_path -setup $sync_k -from $split_maps -to $quux_divider
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_maps -to $quux_divider
 # sync: K - 1
-set_multicycle_path -setup 3 -from $split_latch -to $quux_divider
-set_multicycle_path -hold  2 -from $split_latch -to $quux_divider
-# sync: K - 2
+set_multicycle_path -setup [expr {$sync_k - 1}] -from $split_latch -to $quux_divider
+set_multicycle_path -hold  [expr {$sync_k - 2}] -from $split_latch -to $quux_divider
+# grid: 0 ns + 2 ticks
 set_multicycle_path -setup 2 -from $split_every_tick -to $quux_divider
 set_multicycle_path -hold  1 -from $split_every_tick -to $quux_divider
 # grid: 0 ns + 1 tick
@@ -186,21 +193,21 @@ set quux_cache_held [filter [all_registers] {(REF_NAME =~ RAMB* && NAME =~ *memo
 # registers, the control store and the maps K ticks, the latches K - 1, the
 # every-tick registers their second hop.
 # sync: K
-set_multicycle_path -setup 4 -from $slow -to $quux_cache_held
-set_multicycle_path -hold  3 -from $slow -to $quux_cache_held
+set_multicycle_path -setup $sync_k -from $slow -to $quux_cache_held
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $slow -to $quux_cache_held
 # sync: K
-set_multicycle_path -setup 4 -from $split_cstore -to $quux_cache_held
-set_multicycle_path -hold  3 -from $split_cstore -to $quux_cache_held
+set_multicycle_path -setup $sync_k -from $split_cstore -to $quux_cache_held
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_cstore -to $quux_cache_held
 # sync: K
-set_multicycle_path -setup 4 -from $split_maps -to $quux_cache_held
-set_multicycle_path -hold  3 -from $split_maps -to $quux_cache_held
+set_multicycle_path -setup $sync_k -from $split_maps -to $quux_cache_held
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_maps -to $quux_cache_held
 # sync: K
-set_multicycle_path -setup 4 -from $split_dmem -to $quux_cache_held
-set_multicycle_path -hold  3 -from $split_dmem -to $quux_cache_held
+set_multicycle_path -setup $sync_k -from $split_dmem -to $quux_cache_held
+set_multicycle_path -hold  [expr {$sync_k - 1}] -from $split_dmem -to $quux_cache_held
 # sync: K - 1
-set_multicycle_path -setup 3 -from $split_latch -to $quux_cache_held
-set_multicycle_path -hold  2 -from $split_latch -to $quux_cache_held
-# sync: K - 2
+set_multicycle_path -setup [expr {$sync_k - 1}] -from $split_latch -to $quux_cache_held
+set_multicycle_path -hold  [expr {$sync_k - 2}] -from $split_latch -to $quux_cache_held
+# grid: 0 ns + 2 ticks
 set_multicycle_path -setup 2 -from $split_every_tick -to $quux_cache_held
 set_multicycle_path -hold  1 -from $split_every_tick -to $quux_cache_held
 # grid: 0 ns + 1 tick

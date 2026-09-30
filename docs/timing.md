@@ -562,17 +562,35 @@ number dangerous, and they are the reason this document exists.
 QUUX does not replay the CADR's delay line. Its microcycle is a fixed number
 of ticks, K, and an `ILONG` instruction takes L ticks more. This is muir's
 `TimingModel::Sync { cycle_ticks, ilong_ticks }`, run as `--timing-model sync
---sync-cycle-ticks K`. K and L belong to a board: the Arty Z7-20 and the
-DE25-Nano both run at K = 4 and L = 0, which is 40 ns a microcycle. Four is
-the least K QUUX takes. It was set when a `DIV` whose M source is MD could
+--sync-cycle-ticks K`. K and L belong to a board, and L is 0 on both. The
+DE25-Nano runs at K = 4, which is 40 ns a microcycle. The Arty Z7-20 runs
+revision 12 at K = 4 and revision 13 at K = 5, 50 ns a microcycle.
+
+**The Arty's revision 13 takes a longer microcycle, not a slower clock.** Its
+map, two levels through the memory path's decode, misses four ticks on that
+part by about a nanosecond and meets five. The tick stays at 10 ns, so the
+microsecond clock, the timers, the sixty-cycle clock and the real-time
+clock, which all count ticks, keep true time. A slower clock would have kept
+K at four and made each of them run slow by the same ratio. The fabric stays
+tick for tick with muir run at `--sync-cycle-ticks 5`. On muir's profile of
+revision 12 with the Arty's memory timings, the twelve workloads take 23%
+longer at five than at four.
+
+Four is the least K QUUX takes. It was set when a `DIV` whose M source is MD could
 run in the microcycle after its word landed, 14 ticks after the strobe,
 with the divider needing the word 17 ticks before that microcycle's end.
 Since the `DIV` rule below, a `DIV` is held nine microcycles after its
 operands are ready, so that argument no longer sets the floor. The floor is
 unchanged until a fit at a smaller K says otherwise. Each board's top level states
-K as `SYNC_K`, and its QUUX constraint file states the same K
-(`quux_machine.xdc`, `quux_de25.sdc`). `tools/grid_check.py` holds every
-`# sync:` count to that board's `SYNC_K`.
+K as `SYNC_K`, and the Arty's states revision 13's as `SYNC_K13`. The
+DE25-Nano's QUUX constraint file, `quux_de25.sdc`, writes its counts as
+numbers, and `tools/grid_check.py` holds every `# sync:` count there to that
+board's `SYNC_K`. The Arty's, `quux_machine.xdc`, serves both revisions, so it
+writes every count of K from the variable `sync_k`, which the flow reads from
+the top level for the revision it builds (`boards/arty-z7-20/vivado/tick.tcl`).
+`tools/grid_check.py` holds each such count to its tag, and
+`build/machine_param.pass` holds each revision's K at the processor and in
+the flow.
 
 Inside a microcycle:
 
@@ -712,9 +730,10 @@ tick.
 
 The traces QUUX is held to are taken at a K and an L named in their files:
 `rtl.quux.k4.golden`, `quux_divmd.quux.k4l1.golden` and so on. `make check
-MACHINE=quux` runs them at `SYNC_K` and `SYNC_L`, which are 4 and 0 unless
-the command line sets them. It also runs the programs with `ILONG`
-instructions at an L of one.
+MACHINE=quux` runs them at every board's K, 4 and 5 (the Makefile's
+`QUUX_KS`), at an L of 0. It also runs the programs with `ILONG`
+instructions at an L of one. The memory port is built at each K, since it
+answers a device register K - 1 ticks after the grant.
 
 ## QUUX's fused return and its prefetch
 

@@ -81,11 +81,14 @@ endif
 # **QUUX'S MICROCYCLE, IN TICKS**: K, and L more for an `ILONG` instruction
 # (`QUUX_TIMED` below says what they are and which checks take them).  The
 # CADR's microcycle is its delay line's, so neither means anything there.
-SYNC_K ?= 4
-SYNC_L ?= 0
+# `QUUX_KS` are the Ks `make check MACHINE=quux` holds QUUX at, every board's:
+# four, the DE25-Nano's and the Arty Z7-20's to revision 12, and five, the
+# Arty's at revision 13.  Each K's checks are taken at an L of zero, and the
+# `ILONG` programs' at an L of one as well.
+QUUX_KS ?= 4 5
 qtag = k$(1)$(if $(filter-out 0,$(2)),l$(2))
-QK   := $(call qtag,$(SYNC_K),$(SYNC_L))
-QKL1 := $(call qtag,$(SYNC_K),1)
+QKS   := $(foreach k,$(QUUX_KS),$(call qtag,$(k),0))
+QKL1S := $(foreach k,$(QUUX_KS),$(call qtag,$(k),1))
 
 # **A RECIPE THAT FAILS LEAVES NO TARGET BEHIND.**  Without this, a rule whose
 # command redirects into `$@` leaves whatever the command managed to write ---
@@ -232,18 +235,19 @@ QUUX13_PROGRAMS := alu byte dispatch map space lines fused devices disk
 # (contract Q9), which held `map` and `page`, are built.
 QUUX_PENDING :=
 QUUX_PENDING_WHY :=
-CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
-       $(BUILD)/dispatch_write_order.quux.$(QK).pass \
+# The checks QUUX is held to at a K, each at every K of `QUUX_KS`.
+CHECK_QUUX_AT = machine dispatch_write_order quux_port quux_readout_window \
+       $(QUUX_SYNC_PROGRAMS:%=quux_%) $(QUUX13_PROGRAMS:%=quux13_%) rdw_poison_quux13 \
+       rdw_poison_quux13_mem rdw_poison_quux13_pf quux13_port
+CHECK_QUUX_AT_L1 = $(QUUX_L1_PROGRAMS:%=quux_%) phase_gen
+CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass \
+       $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
+       $(foreach q,$(QKL1S),$(CHECK_QUUX_AT_L1:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/display_out.quux.pass $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
-       $(BUILD)/quux_block_disk.quux.pass $(BUILD)/quux13_block_disk.quux.pass $(BUILD)/quux_port.quux.$(QK).pass \
+       $(BUILD)/quux_block_disk.quux.pass $(BUILD)/quux13_block_disk.quux.pass \
        $(BUILD)/quux_fd_face.pass \
        $(BUILD)/quux_axi_master.quux.pass \
-       $(BUILD)/quux_readout_window.quux.$(QK).pass $(BUILD)/checkpoint.quux.pass \
-       $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QK).pass) \
-       $(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QKL1).pass) $(BUILD)/phase_gen.quux.$(QKL1).pass \
-       $(QUUX13_PROGRAMS:%=$(BUILD)/quux13_%.quux.$(QK).pass) $(BUILD)/rdw_poison_quux13.quux.$(QK).pass \
-       $(BUILD)/rdw_poison_quux13_mem.quux.$(QK).pass $(BUILD)/rdw_poison_quux13_pf.quux.$(QK).pass \
-       $(BUILD)/quux13_port.quux.$(QK).pass \
+       $(BUILD)/checkpoint.quux.pass \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
 
@@ -1148,23 +1152,19 @@ $(BUILD)/quux13_block_disk.quux.pass: $(BUILD)/obj_quux13_block_disk/Vquux_block
 # timing, the Xbus's devices, the timeout, and muir's invalidation; the
 # testbench is main memory, answering sooner than the nominal figures, and
 # an uncached requester beside the processor.  The trace is taken at K,
-# whose edges are where the port takes a request; the module has no K.
+# whose edges are where the port takes a request, and the port is built at
+# the same K, which is when it answers a device register: each K's build is
+# in `QUUX_TIMED`, and a port built at another K than its trace's misses the
+# register's acknowledgment by the difference.
 QUUX_PORT_SRC := $(TICKPKG) rtl/plumbing/cadr_ddr_map.sv rtl/machine/quux_cache.sv rtl/machine/quux_mem_port.sv
-
-$(BUILD)/obj_quux_port/Vquux_mem_port: $(QUUX_PORT_SRC) tb/quux_mem_port_tb.cpp tb/cadr_tick.h | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux_port \
-	    --top-module quux_mem_port $(QUUX_PORT_SRC) $(abspath tb/quux_mem_port_tb.cpp)
 
 # **AND AT REVISION 13** (contract G2 §3), `WORD_BITS` 40, against muir's
 # `MemoryPort` on `Geometry::QUUX_13` (`golden/src/quux13_port.rs`): 40-bit
 # words and 28-bit addresses, the cache's 8-word lines, the prefetch's
 # page reach, and main memory in packed storage, which the testbench holds
 # byte by byte as G1 §4.1 lays it out.  Built with a base for main memory
-# no other check uses, 0x06123000, which the testbench transcribes.
-$(BUILD)/obj_quux13_port/Vquux_mem_port: $(QUUX_PORT_SRC) tb/quux13_mem_port_tb.cpp tb/cadr_tick.h | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux13_port \
-	    -GWORD_BITS=40 -GMAIN13_BASE=101855232 \
-	    --top-module quux_mem_port $(QUUX_PORT_SRC) $(abspath tb/quux13_mem_port_tb.cpp)
+# no other check uses, 0x06123000, which the testbench transcribes.  Built
+# at each K in `QUUX_TIMED`.
 
 # QUUX's main memory on a 64-bit AXI port, line fills and all:
 # `rtl/plumbing/quux_axi_master.sv` against AXI3's rules and a memory, with
@@ -1251,14 +1251,16 @@ $(BUILD)/quux_%.pass: $(BUILD)/obj_quux_%/Vcadr_machine $(BUILD)/quux_%.golden \
 # the CADR's is its delay line's (muir's `TimingModel::Sync`, `--timing-model
 # sync --sync-cycle-ticks K`).  K and L are a board's: the fit is what says
 # its longest path settles in K ticks, so `SYNC_K` and `SYNC_L` are
-# parameters of each board's top level, the Arty's K being 4, and every
-# trace QUUX is held to is taken at a K and an L named in its file name,
-# `<check>.quux.k4.golden`, or `.k4l1` with an L.  `make check MACHINE=quux`
-# runs the checks at `SYNC_K` and `SYNC_L`, 4 and 0 unless the command line
-# says otherwise.  **K IS FOUR AT THE LEAST**: at three a `DIV` of MD would
-# need the word read in the divider on its strobe's own tick, off a bus whose
-# cone is two ticks deep (`rtl/machine/quux_phase_gen.sv` refuses it), so both
-# boards run at four and the rules are made for four alone.
+# parameters of each board's top level, and every trace QUUX is held to is
+# taken at a K and an L named in its file name, `<check>.quux.k4.golden`, or
+# `.k4l1` with an L.  `make check MACHINE=quux` runs the checks at each K of
+# `QUUX_KS`, four and five.  **K IS FOUR AT THE LEAST**: at three a `DIV` of
+# MD would need the word read in the divider on its strobe's own tick, off a
+# bus whose cone is two ticks deep (`rtl/machine/quux_phase_gen.sv` refuses
+# it).  The DE25-Nano runs at four; the Arty Z7-20 at four to revision 12 and
+# at five at revision 13, whose map chain into the memory path's decode does
+# not fit four on that part, with the tick left at 10 ns so that the timers
+# count true time (`boards/arty-z7-20/cadr_arty.sv`, `SYNC_K13`).
 # Each K also runs `quux_divmd`, whose program has `ILONG` instructions, at
 # an L of one, and the phase generator alone at K and K + 1, since muir's
 # command line always gives an L of zero and a nonzero L is reachable only
@@ -1266,10 +1268,10 @@ $(BUILD)/quux_%.pass: $(BUILD)/obj_quux_%/Vcadr_machine $(BUILD)/quux_%.golden \
 #
 # The rules for one timing are `QUUX_TIMED`, instantiated for each of
 # `QUUX_TIMINGS` as `K:L`; a timing named nowhere here has no rules, so a
-# `SYNC_K` of five stops with no rule to make the target.  A K is added here
-# when a board is fitted at it.
-QUUX_TIMINGS := 4:0 4:1
-# `SYNC_K`, `SYNC_L`, `QK` and `QKL1` are set at the top, beside `MACHINE`,
+# K in `QUUX_KS` and not here stops with no rule to make the target.  A K is
+# added here when a board is fitted at it.
+QUUX_TIMINGS := 4:0 4:1 5:0 5:1
+# `QUUX_KS`, `QKS` and `QKL1S` are set at the top, beside `MACHINE`,
 # because `check`'s prerequisites are expanded where the rule is read.
 
 # $(1) the timing's tag, $(2) K, $(3) L.
@@ -1399,15 +1401,37 @@ $$(BUILD)/rdw_poison_quux13_pf.quux.$(1).pass: $$(BUILD)/obj_rdw_poison_quux13_p
 $$(BUILD)/quux_port.quux.$(1).golden: golden/src/quux_port.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
 	$$(GOLDEN) --release --bin quux_port -- --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
 
-$$(BUILD)/quux_port.quux.$(1).pass: $$(BUILD)/obj_quux_port/Vquux_mem_port $$(BUILD)/quux_port.quux.$(1).golden
-	$$(BUILD)/obj_quux_port/Vquux_mem_port $$(BUILD)/quux_port.quux.$(1).golden
+$$(BUILD)/obj_quux_port_$(1)/Vquux_mem_port: $$(QUUX_PORT_SRC) tb/quux_mem_port_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) -O2 -CFLAGS -O2 -Mdir $$(BUILD)/obj_quux_port_$(1) -GK=$(2) \
+	    --top-module quux_mem_port $$(QUUX_PORT_SRC) $$(abspath tb/quux_mem_port_tb.cpp)
+
+$$(BUILD)/quux_port.quux.$(1).pass: $$(BUILD)/obj_quux_port_$(1)/Vquux_mem_port $$(BUILD)/quux_port.quux.$(1).golden
+	$$(BUILD)/obj_quux_port_$(1)/Vquux_mem_port $$(BUILD)/quux_port.quux.$(1).golden
 	@touch $$@
 
 $$(BUILD)/quux13_port.quux.$(1).golden: golden/src/quux13_port.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
 	$$(GOLDEN) --release --bin quux13_port -- --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
 
-$$(BUILD)/quux13_port.quux.$(1).pass: $$(BUILD)/obj_quux13_port/Vquux_mem_port $$(BUILD)/quux13_port.quux.$(1).golden
-	$$(BUILD)/obj_quux13_port/Vquux_mem_port $$(BUILD)/quux13_port.quux.$(1).golden
+$$(BUILD)/obj_quux13_port_$(1)/Vquux_mem_port: $$(QUUX_PORT_SRC) tb/quux13_mem_port_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) -O2 -CFLAGS -O2 -Mdir $$(BUILD)/obj_quux13_port_$(1) -GK=$(2) \
+	    -GWORD_BITS=40 -GMAIN13_BASE=101855232 \
+	    --top-module quux_mem_port $$(QUUX_PORT_SRC) $$(abspath tb/quux13_mem_port_tb.cpp)
+
+$$(BUILD)/quux13_port.quux.$(1).pass: $$(BUILD)/obj_quux13_port_$(1)/Vquux_mem_port $$(BUILD)/quux13_port.quux.$(1).golden
+	$$(BUILD)/obj_quux13_port_$(1)/Vquux_mem_port $$(BUILD)/quux13_port.quux.$(1).golden
+	@touch $$@
+
+$$(BUILD)/obj_quux_readout_window_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/quux_readout_window_tb.cpp | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $$(BUILD)/obj_quux_readout_window_quux_$(1) \
+	    -GMACHINE='"quux"' -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -CFLAGS '-DQUUX_TB=1 -DSYNC_K_TB=$(2) -DSYNC_L_TB=$(3)' \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/boot_prom.quux.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/quux_readout_window_tb.cpp)
+
+$$(BUILD)/quux_readout_window.quux.$(1).pass: $$(BUILD)/obj_quux_readout_window_quux_$(1)/Vcadr_machine \
+                                             $$(BUILD)/boot_prom.quux.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_quux_readout_window_quux_$(1)/Vcadr_machine
 	@touch $$@
 
 $$(BUILD)/phase_gen.quux.$(1).golden: golden/src/phase_gen.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
@@ -2340,18 +2364,7 @@ $(BUILD)/audit_window.pass: $(BUILD)/obj_audit_window/Vcadr_machine \
 # rest.
 QUUX_RO_TB := tb/quux_readout_window_tb.cpp
 
-$(BUILD)/obj_quux_readout_window_quux_$(QK)/Vcadr_machine: $(MACHINE_SRC) $(QUUX_RO_TB) | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $(BUILD)/obj_quux_readout_window_quux_$(QK) \
-	    -GMACHINE='"quux"' -GSYNC_K=$(SYNC_K) -GSYNC_L=$(SYNC_L) \
-	    -CFLAGS '-DQUUX_TB=1 -DSYNC_K_TB=$(SYNC_K) -DSYNC_L_TB=$(SYNC_L)' \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.quux.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_machine $(MACHINE_SRC) $(abspath $(QUUX_RO_TB))
-
-$(BUILD)/quux_readout_window.quux.$(QK).pass: $(BUILD)/obj_quux_readout_window_quux_$(QK)/Vcadr_machine \
-                                             $(BUILD)/boot_prom.quux.hex $(BUILD)/sync_prom.hex
-	$(BUILD)/obj_quux_readout_window_quux_$(QK)/Vcadr_machine
-	@touch $@
+# QUUX's is built at each K, in `QUUX_TIMED`.
 
 $(BUILD)/obj_quux_readout_window/Vcadr_machine: $(MACHINE_SRC) $(QUUX_RO_TB) | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $(BUILD)/obj_quux_readout_window \
@@ -2614,6 +2627,7 @@ MACHINE_PARAM_SRC := $(wildcard rtl/*/*.sv rtl/*/*/*.sv boards/*/*.sv) \
                      tb/cadr_arty_stubs.sv tb/cadr_usr_access_stub.sv \
                      tb/cadr_ps7_stub.sv tb/cadr_de25_stubs.sv \
                      boards/arty-z7-20/vivado/bitstream.tcl \
+                     boards/arty-z7-20/vivado/tick.tcl \
                      boards/cora-z7-07s/vivado/bitstream.tcl \
                      boards/de25-nano/quartus/build.sh \
                      boards/de25-nano/quartus/program.sh
@@ -2631,11 +2645,11 @@ $(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) M
 	@! $(MAKE) -s -n de25 MACHINE=cadr WORD_BITS=40 > /dev/null 2>&1 \
 	    || { echo "machine: make takes WORD_BITS=40 on the CADR"; exit 1; }
 	@echo "machine: ok      make refuses WORD_BITS=40 on the CADR"
-	@echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx '$(BUILD)/machine.quux.$(QK).pass' \
-	    || { echo "machine: make check MACHINE=quux does not hold the machine built as QUUX"; exit 1; }
+	@for q in k4 k5; do echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx "$(BUILD)/machine.quux.$$q.pass" \
+	    || { echo "machine: make check MACHINE=quux does not hold the machine built as QUUX at $$q"; exit 1; }; done
 	@! echo "$(CHECK_QUUX)" | tr ' ' '\n' | grep -qx '$(BUILD)/machine.pass' \
 	    || { echo "machine: make check MACHINE=quux holds the CADR's machine check"; exit 1; }
-	@echo "machine: ok      make check MACHINE=quux holds the machine built as QUUX, and not the CADR's"
+	@echo "machine: ok      make check MACHINE=quux holds the machine built as QUUX at K = 4 and 5, and not the CADR's"
 	@touch $@
 
 # ------------------------------------------------------ the word's width

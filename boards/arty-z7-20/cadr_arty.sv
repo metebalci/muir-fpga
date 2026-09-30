@@ -151,14 +151,20 @@ module cadr_arty #(
     // sets it, and `build/machine_param.pass` holds that it arrives.
     parameter string MACHINE = "cadr",
 
-    // **QUUX'S MICROCYCLE ON THIS BOARD**: four ticks, 40 ns, and no more for
-    // an `ILONG` instruction (H1a, muir's `--timing-model sync
-    // --sync-cycle-ticks 4`).  The fit at this K is what entitles it: its
-    // longest path, the map into the next address, and the multiplier out of
-    // the A memory, settle inside the four ticks and the three that the
-    // constraint file `quux_machine.xdc` states for them.  The CADR reads
-    // neither.
+    // **QUUX'S MICROCYCLE ON THIS BOARD**: four ticks, 40 ns, to revision
+    // 12, and five, 50 ns, at revision 13, and no more for an `ILONG`
+    // instruction (H1a, muir's `--timing-model sync --sync-cycle-ticks K`).
+    // The fit at each K is what entitles it: revision 12's longest paths,
+    // the map into the next address and the multiplier out of the A memory,
+    // settle inside four ticks, and revision 13's map through both levels
+    // into the memory path's decode misses four by a nanosecond and meets
+    // five.  **THE MICROCYCLE IS LONGER AND THE TICK IS NOT**: the machine's
+    // clock stays at 100 MHz, so the microsecond clock, the timers and the
+    // sixty-cycle clock, which count ticks, still count true time.  The
+    // flow reads the K a build takes from here (`vivado/tick.tcl`) and
+    // states it in `quux_machine.xdc`'s counts.  The CADR reads none.
     parameter int unsigned SYNC_K = 4,
+    parameter int unsigned SYNC_K13 = 5,
     parameter int unsigned SYNC_L = 0,
 
     // **THE WORD'S WIDTH**, handed to `cadr_machine` as it stands: 32, or 40
@@ -888,7 +894,7 @@ module cadr_arty #(
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),
       .MACHINE(MACHINE),
-      .SYNC_K(SYNC_K),
+      .SYNC_K(WORD_BITS > 32 ? SYNC_K13 : SYNC_K),
       .SYNC_L(SYNC_L),
       .WORD_BITS(WORD_BITS)
   ) u_machine (

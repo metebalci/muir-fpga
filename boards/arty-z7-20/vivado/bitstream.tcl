@@ -367,8 +367,13 @@ if {$prove > 0} {
 # care how many there are.
 read_xdc boards/arty-z7-20/cadr_arty.xdc
 read_xdc -ref cadr_machine rtl/plumbing/xilinx7/cadr_machine.xdc
-# QUUX's own clauses, which would reach every path on the CADR.
-if {$machine eq "quux"} { read_xdc -ref cadr_machine rtl/plumbing/xilinx7/quux_machine.xdc }
+# QUUX's own clauses, which would reach every path on the CADR, each count of
+# K written from `sync_k`: the top level's own K for the revision this build
+# is, four to revision 12 and five at revision 13 (`tick.tcl`).
+if {$machine eq "quux"} {
+    set sync_k [cadr_sync_k $word_bits]
+    read_xdc -ref cadr_machine rtl/plumbing/xilinx7/quux_machine.xdc
+}
 # Only when the BSCANE2 it names is in the design. See the switch above.
 if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # And the same rule for the memory port's own deadline: every object
@@ -565,13 +570,15 @@ if {$clocks < 2} {
 # eight here. The audit's own assertion just below is this clause's sharp
 # half, being registers only `slow` relaxes.
 # On QUUX the relaxed set is K ticks (`quux_machine.xdc`), and the count is
-# asked at K; K = 4 is no other clause's count on this board.
+# asked at the build's K, with the audit's assertion below as its sharp half
+# here too: `cadr_machine.xdc` has clauses of five ticks, which QUUX's file
+# re-issues at its own counts.
 if {$machine ne "quux"} {
     # grid: 75 ns (shared with 80 ns)
     assert_multicycle_applied $tick 8
 } else {
     # sync: K
-    assert_multicycle_applied $tick 4
+    assert_multicycle_applied $tick $sync_k
 }
 # **AND WHICH SET THE TRANSACTION AUDIT'S REGISTERS FELL INTO, ASKED DIRECTLY
 # RATHER THAN INFERRED FROM A COUNT.** `rtl/plumbing/cadr_bus_audit.sv` is 347
@@ -609,7 +616,7 @@ if {$port > 0 && $machine ne "quux"} {
 } elseif {$port > 0} {
     # QUUX's relaxed set is K ticks.
     # sync: K
-    assert_instance_timing $tick 4 *u_machine/audit/* \
+    assert_instance_timing $tick $sync_k *u_machine/audit/* \
         {*audit/first_* *audit/micro_reg* *audit/word_reg*}
 } else {
     puts "XDC: the audit has no registers on a board with no console to read\
@@ -795,7 +802,7 @@ if {$machine ne "quux"} {
          *memory/unibus_reg* *memory/ub_addr_reg*}
 }
 
-# QUUX'S CLAUSES, `quux_machine.xdc`, ASKED WHAT THEY REACHED, at K = 4.
+# QUUX'S CLAUSES, `quux_machine.xdc`, ASKED WHAT THEY REACHED, at the build's K.
 # Every clause of the CADR's file is re-issued there at QUUX's counts, so each
 # is asked here the same two ways: none of its paths may ask for more than
 # its count, and at least one must ask for exactly that.  The clocks'
@@ -816,45 +823,45 @@ if {$machine eq "quux"} {
         {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
         $q_latch
     # sync: K - 1
-    assert_clause_timing $tick 3 "out of the scratchpad latches" $q_latch
+    assert_clause_timing $tick [expr {$sync_k - 1}] "out of the scratchpad latches" $q_latch
     # sync: K - 1
-    assert_clause_timing $tick 3 "the latches into the dispatch memory's write" $q_latch \
+    assert_clause_timing $tick [expr {$sync_k - 1}] "the latches into the dispatch memory's write" $q_latch \
         {*processor/dmem_reg*}
     # sync: K
-    assert_clause_timing $tick 4 "the control store's word" \
+    assert_clause_timing $tick $sync_k "the control store's word" \
         {*processor/imem_reg* *processor/imem_q_reg* *processor/prom_q_reg*}
     # sync: K
-    assert_clause_timing $tick 4 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
+    assert_clause_timing $tick $sync_k "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
     # sync: K
-    assert_clause_timing $tick 4 "the dispatch memory's write" {*processor/dmem_reg*}
+    assert_clause_timing $tick $sync_k "the dispatch memory's write" {*processor/dmem_reg*}
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "the three memories' writes into the readout" \
         {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
         {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
     # sync: K
-    assert_clause_timing $tick 4 "MD into the writes' address" {*processor/md_reg*} \
+    assert_clause_timing $tick $sync_k "MD into the writes' address" {*processor/md_reg*} \
         {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "the stack's write into its latch" {*processor/spcm_reg*} \
         {*processor/spc_q_reg*}
-    # grid: 0 ns + 2 ticks
-    assert_clause_timing $tick 2 "into the every-tick registers" \
+    # sync: K - 2
+    assert_clause_timing $tick [expr {$sync_k - 2}] "into the every-tick registers" \
         {*processor/ir_reg* *processor/vma_reg* *processor/memstart_reg* *processor/md_reg*} \
         {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
          *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
          *memory/unibus_reg* *memory/ub_addr_reg*}
-    # sync: K - 2
+    # grid: 0 ns + 2 ticks
     assert_clause_timing $tick 2 "the second hop of the every-tick registers" \
         {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
          *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
          *memory/unibus_reg* *memory/ub_addr_reg*}
     # sync: K
-    assert_clause_timing $tick 4 "the edge's registers into QUUX's divider" \
+    assert_clause_timing $tick $sync_k "the edge's registers into QUUX's divider" \
         {*processor/q_reg* *processor/ir_reg*} {*processor/g_quux_muldiv.muldiv/dv_*}
     # sync: K - 1
-    assert_clause_timing $tick 3 "the latches into QUUX's divider" $q_latch \
+    assert_clause_timing $tick [expr {$sync_k - 1}] "the latches into QUUX's divider" $q_latch \
         {*processor/g_quux_muldiv.muldiv/dv_*}
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "MD_HELD into QUUX's divider" {*processor/md_held_reg*} \
@@ -865,12 +872,12 @@ if {$machine eq "quux"} {
     # page read takes: destination 3 writes only M, and nothing of `OB`
     # reaches the timers.
     # sync: K
-    assert_clause_timing $tick 4 "the microsecond clock a microcycle reads" \
+    assert_clause_timing $tick $sync_k "the microsecond clock a microcycle reads" \
         {*processor/g_quux_tick.clocks/usec_s_reg*}
     # QUUX's memory port: none of its tick registers relaxed, and the address
     # the cache holds at the microcycle.
     # sync: K
-    assert_instance_timing $tick 4 *memory/g_quux_port.port/* \
+    assert_instance_timing $tick $sync_k *memory/g_quux_port.port/* \
         {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
     # And nothing out of the cache relaxed at all: its word reaches MD in the
     # tick after the lookup's.
