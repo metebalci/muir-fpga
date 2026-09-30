@@ -6,7 +6,7 @@
 //     quux-file-device [--file-root <folder>[,ro]] [--file-root <name>=<folder>[,ro]]...
 //                      [--no-guard] [--log <file>]...
 //
-// QUUX (revision 9) reads and writes files on its host through a file
+// QUUX (revision 9 and on) reads and writes files on its host through a file
 // device: commands and responses in two rings in its main memory, served
 // here from Linux folders as the pathname host HOST.  The machine's
 // registers are in the fabric; this program is the device's other half, and
@@ -146,13 +146,24 @@ int main(int argc, char **argv)
 		say("%s; not started", why);
 		return 1;
 	}
-	volatile uint32_t *main_mem = cadr_map(fd, CADR_BOARD_MAIN_BASE, (size_t)fb.mem_words * 4u,
-					       "the machine's main memory");
+	// Main memory: 32-bit words at the CADR's base to revision 12, and on
+	// revision 13 packed storage, 5 bytes a word, at its own base below the
+	// display (`cadr_board.h`), in a room the board keeps for so many words.
+	const uint32_t base = fb.revision_13 ? CADR_BOARD_QUUX13_MAIN_BASE : CADR_BOARD_MAIN_BASE;
+	if (fb.revision_13 && fb.mem_words > CADR_BOARD_QUUX13_MAIN_WORDS_MAX) {
+		say("the file device's page says main memory is %u words, and this board keeps room for "
+		    "%u; not started", fb.mem_words, CADR_BOARD_QUUX13_MAIN_WORDS_MAX);
+		return 1;
+	}
+	volatile void *main_mem = cadr_map(fd, base, (size_t)fb.mem_words * (fb.revision_13 ? 5u : 4u),
+					   "the machine's main memory");
 	if (!main_mem)
 		return 1;
 	struct qfd_face face;
 	qfd_fabric_face(&fb, main_mem, &face);
-	say("serving the file device: main memory %u words at 0x%08x", fb.mem_words, CADR_BOARD_MAIN_BASE);
+	say("serving the file device: revision %s, main memory %u words at 0x%08x%s",
+	    fb.revision_13 ? "13" : "9 to 12", fb.mem_words, base,
+	    fb.revision_13 ? ", packed storage" : "");
 
 	struct qfd_ring g;
 	qfd_ring_init(&g, &d);

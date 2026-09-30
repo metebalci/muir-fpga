@@ -693,7 +693,7 @@ int main(int argc, char **argv) {
   std::map<uint32_t, uint32_t> q_mem;
   std::vector<std::pair<uint32_t, uint64_t>> q_owed;
 #ifndef QUUX13_TB_BASE
-#define QUUX13_TB_BASE 0x18000000u
+#define QUUX13_TB_BASE 0x12000000u
 #endif
   constexpr uint32_t kMain13Base = QUUX13_TB_BASE;
   constexpr uint32_t kWindow13 = 01760000000u;

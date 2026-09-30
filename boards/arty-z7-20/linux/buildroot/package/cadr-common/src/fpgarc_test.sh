@@ -3343,12 +3343,15 @@ case_head "the card script puts the board's four files in the board's own folder
 sandbox
 mkdir -p "$WORK/lay/images" "$WORK/lay/out"
 for f in boot.bin u-boot.img zImage rootfs.cpio.uboot zynq-arty-z7-20.dtb \
-         u-boot.itb Image socfpga_agilex5_de25_nano_cadr.dtb; do
+         u-boot.itb Image socfpga_agilex5_de25_nano_cadr.dtb \
+         u-boot-quux13.img zynq-arty-z7-20-quux13.dtb \
+         u-boot-quux13.itb socfpga_agilex5_de25_nano_quux13.dtb; do
 	echo "$f" > "$WORK/lay/images/$f"
 done
 echo bitstream > "$WORK/lay/the.bit"
 # One board's copy, run the way the script runs it: the board's facts, then the
-# copy block, each lifted on its own anchors.  $1 the board, $2 its tree.
+# copy block, each lifted on its own anchors.  $1 the board, $2 its tree, $3
+# the revision (REVISION), empty for the CADR and revision 12.
 lay_out() {
 	rm -rf "$WORK/lay/out"; mkdir -p "$WORK/lay/out"
 	( set -eu
@@ -3358,13 +3361,14 @@ lay_out() {
 	  NO_FABRIC=
 	  BOARD_NAME=$1
 	  BOARD_DTB=$2
+	  REVISION=${3:-}
 	  . "$WORK/lay/board.sh"
 	  mkdir -p "$OUT/card/$BOARD_NAME"
 	  . "$WORK/lay/copy.sh" ) 2>"$WORK/lay/err"
 }
 if lift_board_facts "$WORK/lay/board.sh" \
    && lift 'for spec in $ROOT_FILES; do' \
-        'cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot"' \
+        'cp "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/$BOARD_NAME/"' \
         "$WORK/lay/copy.sh"; then
 	if ! lay_out arty-z7-20 zynq-arty-z7-20.dtb; then
 		fail "the card script's copy block did not run: $(cat "$WORK/lay/err")"
@@ -3406,6 +3410,37 @@ if lift_board_facts "$WORK/lay/board.sh" \
 		[ "$n" = 2 ] || { fail "the DE25-Nano's card root holds $n entries, wanting u-boot.itb and de25-nano/"; de25_ok=no; }
 		[ "$de25_ok" = yes ] \
 			&& ok "and the DE25-Nano's: u-boot.itb alone at the root, cadr.core.rbf, its tree, Image and the root filesystem in de25-nano/"
+	fi
+	# **A REVISION 13 CARD CARRIES REVISION 13'S TREES UNDER THE BOARD'S
+	# NAMES.**  U-Boot fetches the kernel's tree from the bitstream's folder by
+	# the board tree's name, and the first-stage loader reads the loader by its
+	# fixed name, so REVISION=13 changes what is staged and not where: the
+	# CADR's tree or loader under those names would reserve the CADR's region
+	# while revision 13's bitstream uses its own.
+	for spec in arty-z7-20:zynq-arty-z7-20:u-boot.img:zynq-arty-z7-20-quux13.dtb:u-boot-quux13.img \
+	            de25-nano:socfpga_agilex5_de25_nano_cadr:u-boot.itb:socfpga_agilex5_de25_nano_quux13.dtb:u-boot-quux13.itb; do
+		IFS=: read -r b tree loader q13tree q13loader <<-EOF2
+		$spec
+		EOF2
+		if ! lay_out "$b" "$tree.dtb" 13; then
+			fail "the card script's copy block did not run for revision 13 on the $b: $(cat "$WORK/lay/err")"
+			continue
+		fi
+		r13_ok=yes
+		[ "$(cat "$WORK/lay/out/card/$b/$tree.dtb" 2>/dev/null)" = "$q13tree" ] \
+			|| { fail "the $b's revision 13 card holds '$(cat "$WORK/lay/out/card/$b/$tree.dtb" 2>/dev/null)' as $b/$tree.dtb, wanting $q13tree"; r13_ok=no; }
+		[ "$(cat "$WORK/lay/out/card/$loader" 2>/dev/null)" = "$q13loader" ] \
+			|| { fail "the $b's revision 13 card holds '$(cat "$WORK/lay/out/card/$loader" 2>/dev/null)' as $loader, wanting $q13loader"; r13_ok=no; }
+		[ -e "$WORK/lay/out/card/$b/$q13tree" ] && { fail "the $b's revision 13 card also has $b/$q13tree, which nothing reads"; r13_ok=no; }
+		[ "$r13_ok" = yes ] \
+			&& ok "REVISION=13 on the $b stages $q13tree as $b/$tree.dtb and $q13loader as $loader"
+	done
+	if lay_out cora-z7-07s zynq-cora-z7-07s.dtb 13 2>/dev/null; then
+		fail "REVISION=13 on the Cora Z7-07S made a card, which carries no revision 13"
+	elif grep -q "REVISION=13 on cora-z7-07s" "$WORK/lay/err"; then
+		ok "and REVISION=13 on the Cora Z7-07S is refused by name"
+	else
+		fail "REVISION=13 on the Cora Z7-07S failed, but not by name: $(cat "$WORK/lay/err")"
 	fi
 fi
 

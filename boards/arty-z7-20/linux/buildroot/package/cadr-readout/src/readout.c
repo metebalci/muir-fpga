@@ -47,6 +47,18 @@ int ro_block(struct readout *r, unsigned sel, unsigned n, uint64_t *into)
 	return 0;
 }
 
+// A run of words at `bits`, the rest of the window's 48 dropped: 32 on the
+// CADR and QUUX to revision 12, and 40 on revision 13.
+static int ro_block_words(struct readout *r, unsigned sel, unsigned n, unsigned bits,
+			  uint64_t *into)
+{
+	if (ro_block(r, sel, n, into) != 0)
+		return -1;
+	for (unsigned i = 0; i < n; ++i)
+		into[i] &= ((uint64_t)1 << bits) - 1u;
+	return 0;
+}
+
 int ro_block32(struct readout *r, unsigned sel, unsigned n, uint32_t *into)
 {
 	for (unsigned i = 0; i < n; ++i) {
@@ -151,17 +163,19 @@ int ro_read_machine(struct readout *r, struct cadr_image *img)
 		return -1;
 	if (ro_block(r, IMG_SEL_IMEM, IMG_IMEM_WORDS, img->imem) != 0)
 		return -1;
-	if (ro_block32(r, IMG_SEL_AMEM, IMG_AMEM_WORDS, img->amem) != 0)
+	const unsigned wb = img->word_bits;
+	const uint64_t word = ((uint64_t)1 << wb) - 1u;
+	if (ro_block_words(r, IMG_SEL_AMEM, IMG_AMEM_WORDS, wb, img->amem) != 0)
 		return -1;
-	if (ro_block32(r, IMG_SEL_MMEM, IMG_MMEM_WORDS, img->mmem) != 0)
+	if (ro_block_words(r, IMG_SEL_MMEM, IMG_MMEM_WORDS, wb, img->mmem) != 0)
 		return -1;
-	if (ro_block32(r, IMG_SEL_PDL, img->pdl_words, img->pdl) != 0)
+	if (ro_block_words(r, IMG_SEL_PDL, img->pdl_words, wb, img->pdl) != 0)
 		return -1;
 	if (ro_block32(r, IMG_SEL_SPC, IMG_SPC_WORDS, img->spc) != 0)
 		return -1;
-	if (ro_block32(r, IMG_SEL_DMEM, IMG_DMEM_WORDS, img->dmem) != 0)
+	if (ro_block32(r, IMG_SEL_DMEM, img->dmem_words, img->dmem) != 0)
 		return -1;
-	if (ro_block32(r, IMG_SEL_MAP1, IMG_L1_WORDS, img->l1_map) != 0)
+	if (ro_block32(r, IMG_SEL_MAP1, img->l1_words, img->l1_map) != 0)
 		return -1;
 	if (ro_block32(r, IMG_SEL_MAP2, img->l2_words, img->l2_map) != 0)
 		return -1;
@@ -180,10 +194,10 @@ int ro_read_machine(struct readout *r, struct cadr_image *img)
 	img->lpc = (uint16_t)v[IMG_RG_LPC];
 	img->ir = v[IMG_RG_IR];
 	img->iwr = v[IMG_RG_IWR];
-	img->l = (uint32_t)v[IMG_RG_L];
-	img->q = (uint32_t)v[IMG_RG_Q];
-	img->vma = (uint32_t)v[IMG_RG_VMA];
-	img->md = (uint32_t)v[IMG_RG_MD];
+	img->l = v[IMG_RG_L] & word;
+	img->q = v[IMG_RG_Q] & word;
+	img->vma = v[IMG_RG_VMA] & word;
+	img->md = v[IMG_RG_MD] & word;
 	img->st = (uint32_t)v[IMG_RG_ST];
 	img->lc = (uint32_t)v[IMG_RG_LC];
 	img->wadr = (uint16_t)v[IMG_RG_WADR];
@@ -193,7 +207,7 @@ int ro_read_machine(struct readout *r, struct cadr_image *img)
 	img->reta = (uint16_t)v[IMG_RG_RETA];
 	img->dc = (uint16_t)v[IMG_RG_DC];
 	img->lvmo = (uint32_t)v[IMG_RG_LVMO];
-	img->md_held = (uint32_t)v[IMG_RG_MDHELD];
+	img->md_held = v[IMG_RG_MDHELD] & word;
 	img->phys_r = (uint32_t)v[IMG_RG_PHYS];
 	img->speed = (uint8_t)(v[IMG_RG_SPEED] & 3u);
 	img->speed_a = (uint8_t)((v[IMG_RG_SPEED] >> 2) & 3u);
@@ -214,13 +228,25 @@ int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l)
 		return -1;
 	if (w == RO_NO_MEMORY)
 		return 0;
-	if (((w >> 32) & 0xFFFFu) != IMG_QUUX_MARK || (w & 0xFFFFu) != 0)
+	if (((w >> 32) & 0xFFFFu) != IMG_QUUX_MARK ||
+	    ((w & 0xFFFFu) != 0 && (w & 0xFFFFu) != IMG_QUUX_ID_13))
 		return -1;
 	if (k)
 		*k = (unsigned)((w >> 24) & 0xFFu);
 	if (l)
 		*l = (unsigned)((w >> 16) & 0xFFu);
 	return 1;
+}
+
+int ro_quux_revision(struct readout *r)
+{
+	uint64_t w = 0;
+	const int is = ro_machine_is_quux(r, NULL, NULL);
+	if (is != 1)
+		return is;
+	if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_ID, &w) != 0)
+		return -1;
+	return (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
 }
 
 // muir's clock at a word of the microsecond clock: ticks since power-on,
@@ -349,8 +375,22 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 	// queued: with none, nothing here moves.
 	if (ro_word(r, IMG_SEL_QUUX_PAGE, IMG_QP_FD_BASES, &w) != 0)
 		return -1;
-	q->fd_cmd_base = (uint32_t)((w >> 24) & 0xFFFFFFu);
-	q->fd_resp_base = (uint32_t)(w & 0xFFFFFFu);
+	if (img->rev13) {
+		// Two 28-bit bases, a word each.
+		q->fd_cmd_base = (uint32_t)(w & 0x0FFFFFFFu);
+		if (ro_word(r, IMG_SEL_QUUX_PAGE, IMG_QP_FD_RESP_BASE_13, &w) != 0)
+			return -1;
+#if CHK_MUTATE == 28
+		// A checkpoint mutant (cadr-checkpoint's `chk_rtl_mutation`):
+		// the command ring's base where the response ring's belongs.
+		q->fd_resp_base = q->fd_cmd_base;
+#else
+		q->fd_resp_base = (uint32_t)(w & 0x0FFFFFFFu);
+#endif
+	} else {
+		q->fd_cmd_base = (uint32_t)((w >> 24) & 0xFFFFFFu);
+		q->fd_resp_base = (uint32_t)(w & 0xFFFFFFu);
+	}
 	if (ro_word(r, IMG_SEL_QUUX_PAGE, IMG_QP_FD_INDEXES, &w) != 0)
 		return -1;
 	q->fd_cmd_prod = (uint16_t)(w >> 32);
@@ -380,16 +420,23 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 	q->opr_arg = (int)((QV(IMG_RG_QUUX_ARMED) >> 7) & 1u);
 	q->opr_v = (int)((QV(IMG_RG_QUUX_ARMED) >> 8) & 1u);
 	q->m31_v = (int)((QV(IMG_RG_QUUX_ARMED) >> 9) & 1u);
-	q->m31_w = (uint32_t)QV(IMG_RG_QUUX_M31_W);
+	// **REVISION 13 WIDENS THE PREFETCH'S WORDS** (G2 §3, A1.7): a virtual
+	// word address of 28 bits with the held bit above it at <28> where
+	// revision 12's is at <24>, a physical one of 28 bits where revision
+	// 12's is 22, and the word 40 bits, as M 31's is.  The fabric's
+	// side is not built yet.
+	const unsigned va = img->rev13 ? 28u : 24u, pa = img->rev13 ? 28u : 22u;
+	const uint64_t word = ((uint64_t)1 << img->word_bits) - 1u;
+	q->m31_w = QV(IMG_RG_QUUX_M31_W) & word;
 	q->fused_n = (uint32_t)QV(IMG_RG_QUUX_FUSED_N);
 	q->opr_n = (uint32_t)QV(IMG_RG_QUUX_OPR_N);
 	q->pf_n = (uint32_t)QV(IMG_RG_QUUX_PF_N);
-	q->pf_v = (int)((QV(IMG_RG_QUUX_PF) >> 24) & 1u);
-	q->pf_vaddr = (uint32_t)QV(IMG_RG_QUUX_PF) & 0xFFFFFFu;
-	q->pf_phys = (uint32_t)QV(IMG_RG_QUUX_PF_PHYS) & 0x3FFFFFu;
-	q->pf_word = (uint32_t)QV(IMG_RG_QUUX_PF_WORD);
-	q->fetch_v = (int)((QV(IMG_RG_QUUX_PF_FETCH) >> 24) & 1u);
-	q->fetch_vaddr = (uint32_t)QV(IMG_RG_QUUX_PF_FETCH) & 0xFFFFFFu;
+	q->pf_v = (int)((QV(IMG_RG_QUUX_PF) >> va) & 1u);
+	q->pf_vaddr = (uint32_t)(QV(IMG_RG_QUUX_PF) & ((1ull << va) - 1u));
+	q->pf_phys = (uint32_t)(QV(IMG_RG_QUUX_PF_PHYS) & ((1ull << pa) - 1u));
+	q->pf_word = QV(IMG_RG_QUUX_PF_WORD) & word;
+	q->fetch_v = (int)((QV(IMG_RG_QUUX_PF_FETCH) >> va) & 1u);
+	q->fetch_vaddr = (uint32_t)(QV(IMG_RG_QUUX_PF_FETCH) & ((1ull << va) - 1u));
 #undef QV
 	if (ro_block32(r, IMG_SEL_MACRO, IMG_QUUX_MACRO_ENTRIES, q->macro_entries) != 0)
 		return -1;
@@ -439,26 +486,42 @@ int img_alloc(struct cadr_image *img, unsigned boards)
 
 int img_alloc_machine(struct cadr_image *img, unsigned boards, int quux)
 {
+	return img_alloc_revision(img, boards, quux, 12);
+}
+
+int img_alloc_revision(struct cadr_image *img, unsigned boards, int quux, int revision)
+{
 	memset(img, 0, sizeof *img);
 	img->boards = boards;
 	img->quux = quux != 0;
+	img->rev13 = quux && revision == 13;
 	img->pdl_words = quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS;
-	img->l2_words = quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS;
+	img->l2_words = img->rev13 ? IMG_L2_WORDS_13 : quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS;
 	img->tv_words = quux ? IMG_QUUX_TV_WORDS : IMG_TV_WORDS;
+	img->dmem_words = img->rev13 ? IMG_DMEM_WORDS_13 : IMG_DMEM_WORDS;
+	img->l1_words = img->rev13 ? IMG_L1_WORDS_13 : IMG_L1_WORDS;
+#if CHK_MUTATE == 29
+	// A checkpoint mutant: revision 13's words read out at 32 bits.
+	img->word_bits = 32u;
+#else
+	img->word_bits = img->rev13 ? IMG_WORD_BITS_13 : 32u;
+#endif
 	img->prom = calloc(IMG_PROM_WORDS, sizeof *img->prom);
 	img->imem = calloc(IMG_IMEM_WORDS, sizeof *img->imem);
 	img->amem = calloc(IMG_AMEM_WORDS, sizeof *img->amem);
 	img->mmem = calloc(IMG_MMEM_WORDS, sizeof *img->mmem);
 	img->pdl = calloc(img->pdl_words, sizeof *img->pdl);
 	img->spc = calloc(IMG_SPC_WORDS, sizeof *img->spc);
-	img->dmem = calloc(IMG_DMEM_WORDS, sizeof *img->dmem);
-	img->l1_map = calloc(IMG_L1_WORDS, sizeof *img->l1_map);
+	img->dmem = calloc(img->dmem_words, sizeof *img->dmem);
+	img->l1_map = calloc(img->l1_words, sizeof *img->l1_map);
 	img->l2_map = calloc(img->l2_words, sizeof *img->l2_map);
-	img->main = calloc((size_t)boards * IMG_BOARD_WORDS, sizeof *img->main);
+	// Revision 13's main memory is packed storage and is not copied
+	// (`main13`).
+	img->main = img->rev13 ? NULL : calloc((size_t)boards * IMG_BOARD_WORDS, sizeof *img->main);
 	img->tv = calloc(img->tv_words, sizeof *img->tv);
 	if (!img->prom || !img->imem || !img->amem || !img->mmem || !img->pdl ||
 	    !img->spc || !img->dmem || !img->l1_map || !img->l2_map ||
-	    !img->main || !img->tv) {
+	    (!img->main && !img->rev13) || !img->tv) {
 		img_free(img);
 		return -1;
 	}

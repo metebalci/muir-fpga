@@ -92,11 +92,9 @@ module cadr_machine #(
 
     // **WHERE REVISION 13'S MAIN MEMORY IS IN DDR** (contract G1 §4.1): word
     // w in packed storage at byte `QUUX13_MAIN_BASE + 5w`
-    // (`quux_mem_port.sv`).  The board's layout decides it, and the Linux
-    // side reserves it; until that layout is settled a board builds with
-    // the CADR's main memory base, `cadr_ddr_map::MAIN_BASE`, where revision
-    // 12's 2M words of QUUX lie today, which 0 here names
-    // (`quux_mem_port.sv`), and a board's top level may give another.
+    // (`quux_mem_port.sv`).  The board's layout decides it,
+    // `cadr_ddr_map::QUUX13_MAIN_BASE`, which 0 here names and revision
+    // 13's device tree reserves; a testbench gives its own.
     // Unread below revision 13.
     parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,
 

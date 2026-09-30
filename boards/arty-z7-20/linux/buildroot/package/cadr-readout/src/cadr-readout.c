@@ -49,29 +49,44 @@
 #include "cadr_image.h"
 #include "readout.h"
 
-// The memories, by the name a person types and the selector the fabric takes.
+// The memories, by the name a person types and the selector the fabric takes,
+// with their depth and width on each machine the window can be on: the CADR,
+// QUUX to revision 12, and QUUX revision 13, whose words are 40 bits, whose
+// dispatch memory is 4,096 entries and whose map is 8,192 seven-bit level-1
+// entries over 4,096 28-bit level-2 ones (contract G2 §2, appendix A1).
+enum { M_CADR, M_QUUX, M_QUUX13, M_MACHINES };
+static const char *const kMachineNames[M_MACHINES] = {
+	"the CADR", "QUUX to revision 12", "QUUX revision 13"
+};
 struct mem {
 	const char *name;
 	unsigned sel;
-	unsigned depth;
-	unsigned bits;
+	unsigned depth[M_MACHINES];
+	unsigned bits[M_MACHINES];
 	const char *what;
 };
+#define SAME(v) { v, v, v }
 static const struct mem kMems[] = {
-	{ "imem",  IMG_SEL_IMEM, IMG_IMEM_WORDS, 48, "the control store" },
-	{ "prom",  IMG_SEL_PROM, IMG_PROM_WORDS, 48, "the boot PROM" },
-	{ "amem",  IMG_SEL_AMEM, IMG_AMEM_WORDS, 32, "the A memory" },
-	{ "mmem",  IMG_SEL_MMEM, IMG_MMEM_WORDS, 32, "the M memory" },
-	{ "pdl",   IMG_SEL_PDL,  IMG_PDL_WORDS,  32, "the pushdown buffer" },
-	{ "spc",   IMG_SEL_SPC,  IMG_SPC_WORDS,  21, "the micro-stack" },
-	{ "dmem",  IMG_SEL_DMEM, IMG_DMEM_WORDS, 17, "the dispatch memory" },
-	{ "map1",  IMG_SEL_MAP1, IMG_L1_WORDS,    5, "the level-1 map" },
-	{ "map2",  IMG_SEL_MAP2, IMG_L2_WORDS,   24, "the level-2 map" },
-	{ "opcs",  IMG_SEL_OPCS, IMG_OPCS,       14, "the OPC shift register" },
-	{ "regs",  IMG_SEL_REGS, 21,             48, "the register table below" },
-	{ "audit", IMG_SEL_AUDIT, IMG_AUDIT_WORDS, 48,
+	{ "imem",  IMG_SEL_IMEM, SAME(IMG_IMEM_WORDS), SAME(48), "the control store" },
+	{ "prom",  IMG_SEL_PROM, SAME(IMG_PROM_WORDS), SAME(48), "the boot PROM" },
+	{ "amem",  IMG_SEL_AMEM, SAME(IMG_AMEM_WORDS), { 32, 32, 40 }, "the A memory" },
+	{ "mmem",  IMG_SEL_MMEM, SAME(IMG_MMEM_WORDS), { 32, 32, 40 }, "the M memory" },
+	{ "pdl",   IMG_SEL_PDL,
+	  { IMG_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS }, { 32, 32, 40 },
+	  "the pushdown buffer" },
+	{ "spc",   IMG_SEL_SPC,  SAME(IMG_SPC_WORDS), SAME(21), "the micro-stack" },
+	{ "dmem",  IMG_SEL_DMEM, { IMG_DMEM_WORDS, IMG_DMEM_WORDS, IMG_DMEM_WORDS_13 }, SAME(17),
+	  "the dispatch memory" },
+	{ "map1",  IMG_SEL_MAP1, { IMG_L1_WORDS, IMG_L1_WORDS, IMG_L1_WORDS_13 }, { 5, 6, 7 },
+	  "the level-1 map" },
+	{ "map2",  IMG_SEL_MAP2, { IMG_L2_WORDS, IMG_QUUX_L2_WORDS, IMG_L2_WORDS_13 },
+	  { 24, 24, 28 }, "the level-2 map" },
+	{ "opcs",  IMG_SEL_OPCS, SAME(IMG_OPCS), SAME(14), "the OPC shift register" },
+	{ "regs",  IMG_SEL_REGS, SAME(21), SAME(48), "the register table below" },
+	{ "audit", IMG_SEL_AUDIT, SAME(IMG_AUDIT_WORDS), SAME(48),
 	  "the transaction audit; --audit decodes it" },
 };
+#undef SAME
 static const unsigned kMemCount = sizeof(kMems) / sizeof(kMems[0]);
 
 // The register table's entries, in the order `cadr_microcycle.sv` numbers
@@ -82,16 +97,21 @@ static const char *const kRegNames[21] = {
 	"MD-HELD", "PHYS", "SPEED", "FLAGS"
 };
 
-// The flag word, bit by bit, in `ro_flags`'s own order.  The last is
-// QUUX's memory port drained (contract Q6), always clear on the CADR.
-static const char *const kFlagNames[34] = {
+// The flag word, bit by bit, in `ro_flags`'s own order.  The last three are
+// QUUX's: its memory port drained (contract Q6), a `MEMSTART` that is the
+// stream's fetch (revision 12), and revision 13's fixnum overflow flag; all
+// clear on the CADR.
+#define FLAG_NAMES 36
+static const char *const kFlagNames[FLAG_NAMES] = {
 	"DESTD", "DESTMD", "PWIDX", "PDLWRITED", "INOP", "IWRITED", "NEWLC",
 	"SINTR", "NEXT-INSTRD", "LC-BYTE-MODE", "INT-ENABLE", "SEQUENCE-BREAK",
 	"PROG-UNIBUS-RESET", "TRAP", "PROMDISABLE", "SRUN", "STATSTOP",
 	"HALTED", "MEMSTART", "MBUSY", "RDCYC", "WRCYC", "MBUSY-SYNC",
 	"RD-IN-PROGRESS", "WMAPD", "SPUSHD", "DESTSPCD", "IMODD", "VMAOK",
-	"MD-PENDING", "RUN", "ERRSTOP", "STATHENB", "MEM-DRAINED"
+	"MD-PENDING", "RUN", "ERRSTOP", "STATHENB", "MEM-DRAINED",
+	"MEMSTART-FETCH", "OVERFLOW"
 };
+_Static_assert(IMG_F_OVERFLOW + 1 == FLAG_NAMES, "a name for every flag");
 
 struct mem_face {
 	volatile uint32_t *reg;
@@ -119,10 +139,14 @@ static const struct mem *by_name(const char *name)
 
 static void list(void)
 {
-	say("the window reaches these, `--dump NAME` or `--word NAME:ADDR`:");
+	say("the window reaches these, `--dump NAME` or `--word NAME:ADDR`, words by bits");
+	say("  on %s, %s, and %s:", kMachineNames[M_CADR], kMachineNames[M_QUUX],
+	    kMachineNames[M_QUUX13]);
 	for (unsigned i = 0; i < kMemCount; ++i)
-		say("  %-6s %5u words of %2u bits   %s", kMems[i].name,
-		    kMems[i].depth, kMems[i].bits, kMems[i].what);
+		say("  %-6s %5u x %2u  %5u x %2u  %5u x %2u   %s", kMems[i].name,
+		    kMems[i].depth[M_CADR], kMems[i].bits[M_CADR],
+		    kMems[i].depth[M_QUUX], kMems[i].bits[M_QUUX],
+		    kMems[i].depth[M_QUUX13], kMems[i].bits[M_QUUX13], kMems[i].what);
 	say("a word is read by writing the address to page 0's word 10 and");
 	say("reading words 10, 11 and 12; word 10 comes back as the address the");
 	say("word beside it was read at, and this program refuses any word whose");
@@ -238,7 +262,7 @@ static int print_registers(struct readout *r)
 	char line[512];
 	size_t at = 0;
 	line[0] = '\0';
-	for (unsigned b = 0; b < 34; ++b) {
+	for (unsigned b = 0; b < FLAG_NAMES; ++b) {
 		if (!((v[IMG_RG_FLAGS] >> b) & 1u))
 			continue;
 		const int n = snprintf(line + at, sizeof line - at, "%s%s",
@@ -338,6 +362,17 @@ int main(int argc, char **argv)
 	say("halted at %llu microcycles, %llu ticks",
 	    (unsigned long long)ro_cycles(&r), (unsigned long long)ro_ticks(&r));
 
+	// **WHICH MACHINE, FOR THE MEMORIES' DEPTHS AND WIDTHS**: the register
+	// table's entry 21, QUUX's signature and on revision 13 its MACHINE-ID.
+	const int rev = ro_quux_revision(&r);
+	if (rev < 0) {
+		say("the register table's entry %u is neither QUUX's signature nor the "
+		    "CADR's NONE: the window is not answering", IMG_RG_QUUX_ID);
+		return 1;
+	}
+	const int machine = rev == 13 ? M_QUUX13 : rev == 12 ? M_QUUX : M_CADR;
+	say("the bitstream is %s", kMachineNames[machine]);
+
 	int rc = 0;
 	if (audit) {
 		rc = print_audit(&r) == 0 ? 0 : 1;
@@ -350,9 +385,9 @@ int main(int argc, char **argv)
 		if (!m) {
 			say("no memory called %s; --list says what there is", name);
 			rc = 1;
-		} else if (addr >= m->depth) {
-			say("%s has %u words and you asked for %u", m->name,
-			    m->depth, addr);
+		} else if (addr >= m->depth[machine]) {
+			say("%s has %u words on %s and you asked for %u", m->name,
+			    m->depth[machine], kMachineNames[machine], addr);
 			rc = 1;
 		} else {
 			uint64_t w = 0;
@@ -382,7 +417,7 @@ int main(int argc, char **argv)
 			// format `diff` can take against another dump, which is
 			// what a person with two boards or a board and muir
 			// actually does with this.
-			for (unsigned a = 0; a < m->depth && rc == 0; ++a) {
+			for (unsigned a = 0; a < m->depth[machine] && rc == 0; ++a) {
 				uint64_t w = 0;
 				if (ro_word(&r, m->sel, a, &w) != 0) {
 					say("%s[%u]: the echo was not the address "
@@ -397,7 +432,8 @@ int main(int argc, char **argv)
 			if (out != stdout)
 				fclose(out);
 			if (rc == 0)
-				say("%s: %u words of %s", m->name, m->depth, m->what);
+				say("%s: %u words of %u bits, %s", m->name, m->depth[machine],
+				    m->bits[machine], m->what);
 		}
 	} else {
 		say("the machine's own registers, which the diagnostic bus has "

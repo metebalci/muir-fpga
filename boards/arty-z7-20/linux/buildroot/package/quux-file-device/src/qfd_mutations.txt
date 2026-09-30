@@ -40,9 +40,9 @@
 	const uint32_t s = command(d, m, opcode, flags, c, &r);
 	if (s)
 		memset(&r, 0, sizeof r);
-	wr(m, resp_at, tag | s << 16 | opcode << 24);
-	for (int k = 0; k < 7; ++k)
-		wr(m, resp_at + 1 + (size_t)k, r.w[k]);
+	uint32_t out[8] = { tag | s << 16 | opcode << 24 };
+	memcpy(out + 1, r.w, sizeof r.w);
+	wr_run(m, resp_at, 8, out);
 @new
 	(void)command;
 	(void)tag;
@@ -210,16 +210,16 @@
 @file qfd.c
 @why a READ of n bytes writes ceil(n/4) words and no other: the poison after it stays
 @old
-	for (size_t w = 0; w < (n + 3) / 4; ++w) {
+	wr_run(m, at, words, v);
 @new
-	for (size_t w = 0; w <= (n + 3) / 4; ++w) {
+	wr_run(m, at, words + 1, v);
 @end
 
 @mutation buffer-off-a-line
 @file qfd.c
-@why a buffer off a 4-word line is bad buffer
+@why a buffer off a 4-word line is bad buffer, and on revision 13 off an 8-word one
 @old
-	if ((at & 3) || len > QFD_MAX_BUFFER || at + (len + 3u) / 4u > m->words)
+	if ((at & qfd_mem_line(m)) || len > QFD_MAX_BUFFER || at + (len + 3u) / 4u > m->words)
 @new
 	if (len > QFD_MAX_BUFFER || at + (len + 3u) / 4u > m->words)
 @end
@@ -235,9 +235,9 @@ at + (len + 3u) / 4u > m->words + 1)
 
 @mutation buffer-address-not-masked
 @file qfd.c
-@why an address's bits above <23:0> are not the address
+@why an address's bits above <23:0> are not the address, nor above <27:0> on revision 13
 @old
-	const size_t at = addr & 0xFFFFFFu;
+	const size_t at = qfd_mem_address(m, addr);
 @new
 	const size_t at = addr;
 @end
@@ -551,7 +551,7 @@ at + (len + 3u) / 4u > m->words + 1)
 @file qfd_face_fabric.c
 @why a page reading NONE is not the file device's
 @old
-	if (id != QFD_IDENT) {
+	if (id != QFD_IDENT && id != QFD_IDENT_13) {
 @new
 	if (0) {
 @end
@@ -575,4 +575,160 @@ at + (len + 3u) / 4u > m->words + 1)
 	return 0;
 @new
 	return 0;
+@end
+
+# --- revision 13: packed storage, fixnums, 28-bit addresses on an 8-word line
+#
+# Held by the scripts run again at revision 13 (`qfd_scenarios.py`'s `-13`
+# names, `rings13`, `tags13`), whose transcripts print every word with its
+# tag and whose digest is over main memory as packed storage holds it; by
+# `unit_revision_13`, which puts the rings and a buffer above 16M words; and
+# by the check's count of accesses that are misaligned or reach outside their
+# run, which the host's own memory would never fault on.
+
+@mutation packed-words-written-untagged
+@file qfd.c
+@why every word the device writes on revision 13 is a fixnum, tag 005
+@old
+				img[5 * i + 4] = QFD_TAG_FIXNUM;
+@new
+				img[5 * i + 4] = 0;
+@end
+
+@mutation packed-words-written-four-bytes-apart
+@file qfd.c
+@why a packed word is five bytes: a run written at 4k lands on other words
+@old
+			packed_store(m->b, 5 * k, 5 * (k + c), img);
+@new
+			packed_store(m->b, 4 * k, 4 * k + 5 * c, img);
+@end
+
+@mutation packed-read-takes-the-tag
+@file qfd.c
+@why the device reads <31:0> of a word, bytes 0 to 3, and never the tag
+@old
+				out[i] = (uint32_t)img[5 * i] | (uint32_t)img[5 * i + 1] << 8 |
+					 (uint32_t)img[5 * i + 2] << 16 | (uint32_t)img[5 * i + 3] << 24;
+@new
+				out[i] = (uint32_t)img[5 * i + 1] | (uint32_t)img[5 * i + 2] << 8 |
+					 (uint32_t)img[5 * i + 3] << 16 | (uint32_t)img[5 * i + 4] << 24;
+@end
+
+@mutation packed-store-without-its-leading-bytes
+@file qfd.c
+@why a run that does not start on a 32-bit word is written by bytes up to one; a 32-bit store there is misaligned, which the host takes and a board's device memory faults on
+@old
+	for (; o < hi && (o & 3u); ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		b[o] = *img++;
+	}
+@new
+@end
+
+@mutation packed-store-runs-past-its-end
+@file qfd.c
+@why the last 32-bit word of a run is stored only if all four of its bytes are the run's
+@old
+	for (; o + 4u <= hi; o += 4u, img += 4) {
+		ACCESS(b, o, 4u, lo, hi);
+		*(volatile uint32_t *)(void *)(b + o) = (uint32_t)img[0] | (uint32_t)img[1] << 8 |
+@new
+	for (; o < hi; o += 4u, img += 4) {
+		ACCESS(b, o, 4u, lo, hi);
+		*(volatile uint32_t *)(void *)(b + o) = (uint32_t)img[0] | (uint32_t)img[1] << 8 |
+@end
+
+@mutation packed-load-reads-past-its-end
+@file qfd.c
+@why a read past the run changes no byte, and past the last word it is past the mapping: only the count of accesses outside their run sees it
+@old
+	for (; o + 4u <= hi; o += 4u, img += 4) {
+		ACCESS(b, o, 4u, lo, hi);
+		const uint32_t v = *(volatile uint32_t *)(void *)(b + o);
+@new
+	for (; o < hi; o += 4u, img += 4) {
+		ACCESS(b, o, 4u, lo, hi);
+		const uint32_t v = *(volatile uint32_t *)(void *)(b + o);
+@end
+
+@mutation packed-run-does-not-move-on
+@file qfd.c
+@why a run longer than one chunk writes each chunk's words from where the last left off
+@old
+		k += c, n -= c, in += c;
+@new
+		k += c, n -= c;
+@end
+
+@mutation entry-read-seven-words
+@file qfd.c
+@why a command entry is eight words: its word 7, the date, is CLOSE's
+@old
+	rd_run(m, cmd_at, 8, c);
+@new
+	rd_run(m, cmd_at, 7, c);
+@end
+
+@mutation revision-13-addresses-24-bits
+@file qfd.h
+@why revision 13's addresses are <27:0>: a buffer above 16M words, or one whose <27:24> put it past memory
+@old
+	return addr & (m->revision_13 ? 0x0FFFFFFFu : 0x00FFFFFFu);
+@new
+	return addr & 0x00FFFFFFu;
+@end
+
+@mutation revision-13-line-of-4
+@file qfd.h
+@why revision 13's buffers are on an 8-word line: one on a 4-word line is bad buffer
+@old
+	return m->revision_13 ? 7u : 3u;
+@new
+	return 3u;
+@end
+
+@mutation revision-13-page-bases-24-bits
+@file qfd_face_fabric.c
+@why the page's ring bases are 28 bits on revision 13: rings above 16M words
+@old
+	const uint32_t bases = fb->revision_13 ? 0x0FFFFFFFu : 0x00FFFFFFu;
+@new
+	const uint32_t bases = 0x00FFFFFFu;
+@end
+
+@mutation revision-13-page-not-known
+@file qfd_face_fabric.c
+@why "QF13" is revision 13's page
+@old
+	if (id != QFD_IDENT && id != QFD_IDENT_13) {
+@new
+	if (id != QFD_IDENT) {
+@end
+
+@mutation revision-13-page-taken-as-revision-12
+@file qfd_face_fabric.c
+@why a "QF13" page's main memory is packed storage
+@old
+	const int r13 = id == QFD_IDENT_13;
+@new
+	const int r13 = 0;
+@end
+
+@mutation revision-13-memory-held-to-16m-words
+@file qfd_face_fabric.c
+@why revision 13's page may say up to 64M words, revision 12's 16M
+@old
+	const uint32_t most = r13 ? QFD_MAX_MEM_WORDS_13 : QFD_MAX_MEM_WORDS;
+@new
+	const uint32_t most = QFD_MAX_MEM_WORDS;
+@end
+
+@mutation revision-12-memory-up-to-64m-words
+@file qfd_face_fabric.c
+@why revision 12's page may say up to 16M words
+@old
+	const uint32_t most = r13 ? QFD_MAX_MEM_WORDS_13 : QFD_MAX_MEM_WORDS;
+@new
+	const uint32_t most = QFD_MAX_MEM_WORDS_13;
 @end

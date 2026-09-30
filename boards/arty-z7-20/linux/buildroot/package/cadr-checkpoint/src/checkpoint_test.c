@@ -57,10 +57,13 @@ struct qtimer {
 
 struct model {
 	uint64_t imem[IMG_IMEM_WORDS], prom[IMG_PROM_WORDS];
-	uint32_t amem[IMG_AMEM_WORDS], mmem[IMG_MMEM_WORDS];
-	// QUUX's sizes, of which the CADR uses the first 1,024 of each.
-	uint32_t pdl[IMG_QUUX_PDL_WORDS], spc[IMG_SPC_WORDS];
-	uint32_t dmem[IMG_DMEM_WORDS], l1[IMG_L1_WORDS], l2[IMG_QUUX_L2_WORDS];
+	// Words: 32 bits, and 40 on revision 13.
+	uint64_t amem[IMG_AMEM_WORDS], mmem[IMG_MMEM_WORDS];
+	// The largest machine's sizes, QUUX's PDL buffer and revision 13's
+	// dispatch memory and maps, of which the others use the first part.
+	uint64_t pdl[IMG_QUUX_PDL_WORDS];
+	uint32_t spc[IMG_SPC_WORDS];
+	uint32_t dmem[IMG_DMEM_WORDS_13], l1[IMG_L1_WORDS_13], l2[IMG_L2_WORDS_13];
 	uint16_t opcs[IMG_OPCS];
 	uint64_t regs[21];
 	uint32_t ro_addr;
@@ -80,7 +83,7 @@ struct model {
 	// --- to the window advances it by `step`, as the board's does between
 	// --- a reader's accesses.  TICKS is two ahead of it, the reset being
 	// --- two edges before power-on.
-	int quux;
+	int quux, rev13;
 	unsigned k, l;
 	uint64_t qm, step;
 	struct qtimer timer[IMG_QUUX_TIMERS];
@@ -90,6 +93,7 @@ struct model {
 	uint64_t disk_flags;		/* word 5 */
 	uint64_t page;			/* word 6 */
 	uint64_t fd[3];			/* words 7, 8 and 9: the file device */
+	uint64_t fd_resp_13;		/* word 10, revision 13's response ring's base */
 	// Revision 12's fused return: the register table's entries 29 to 40 and
 	// selector 13, the MACRO DISPATCH MEMORY.
 	uint64_t macro[12];
@@ -139,9 +143,11 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 	case IMG_SEL_MMEM: return a < IMG_MMEM_WORDS ? m->mmem[a] : 0;
 	case IMG_SEL_PDL:  return a < (m->quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS) ? m->pdl[a] : 0;
 	case IMG_SEL_SPC:  return a < IMG_SPC_WORDS ? m->spc[a] : 0;
-	case IMG_SEL_DMEM: return a < IMG_DMEM_WORDS ? m->dmem[a] : 0;
-	case IMG_SEL_MAP1: return a < IMG_L1_WORDS ? m->l1[a] : 0;
-	case IMG_SEL_MAP2: return a < (m->quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS) ? m->l2[a] : 0;
+	case IMG_SEL_DMEM: return a < (m->rev13 ? IMG_DMEM_WORDS_13 : IMG_DMEM_WORDS) ? m->dmem[a] : 0;
+	case IMG_SEL_MAP1: return a < (m->rev13 ? IMG_L1_WORDS_13 : IMG_L1_WORDS) ? m->l1[a] : 0;
+	case IMG_SEL_MAP2:
+		return a < (m->rev13 ? IMG_L2_WORDS_13 : m->quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS)
+			       ? m->l2[a] : 0;
 	case IMG_SEL_OPCS: return a < IMG_OPCS ? m->opcs[a] : 0;
 	case IMG_SEL_REGS:
 		if (a < 21)
@@ -151,7 +157,7 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 		switch (a) {
 		case IMG_RG_QUUX_ID:
 			return ((uint64_t)IMG_QUUX_MARK << 32) | ((uint64_t)m->k << 24) |
-			       ((uint64_t)m->l << 16);
+			       ((uint64_t)m->l << 16) | (m->rev13 ? IMG_QUUX_ID_13 : 0u);
 		case IMG_RG_QUUX_TIME:
 			return ((uint64_t)(99u - m->qm % 100u) << 32) |
 			       ((m->qm / 100u) & 0xFFFFFFFFull);
@@ -181,6 +187,8 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 		case IMG_QP_PAGE: return m->page;
 		case IMG_QP_FD_BASES: case IMG_QP_FD_INDEXES: case IMG_QP_FD_FLAGS:
 			return m->fd[a - IMG_QP_FD_BASES];
+		case IMG_QP_FD_RESP_BASE_13:
+			return m->rev13 ? m->fd_resp_13 : RO_NO_MEMORY;
 		default: return RO_NO_MEMORY;
 		}
 	default: return RO_NO_MEMORY;
@@ -422,6 +430,52 @@ static void fill_quux(struct model *m)
 		m->entries[i] = (uint32_t)poison(13, i, 18);
 }
 
+// --- QUUX revision 13's machine ------------------------------------------------
+//
+// **THE MACHINE `golden/src/quux_checkpoint.rs --revision 13` BUILDS**, the
+// same history as revision 12's above at revision 13's widths and sizes
+// (contract G2 appendix A1.13): words of 40 bits whose tags are not zero, a
+// dispatch memory of 4,096 entries, a level-1 map of 8,192 seven-bit entries
+// and a level-2 map of 4,096 28-bit ones, the overflow flag set, block-disk's
+// pointer and the file device's response ring at revision 13's addresses,
+// and a fresh engine's LVMO, revision 13's. `build/checkpoint.quux.pass`
+// compares the file with muir's byte for byte and has muir load it and save
+// it again.  Main memory is packed storage, `main13` below.
+#define Q_DISK_CLP_13      0x0ABCDEF0u
+#define Q_FD_RESP_BASE_13  0x001108u
+// `Geometry::lvmo_at_power_on` on revision 13: the access bits at <27:26>
+// and the page's 18 bits all ones.
+#define Q_LVMO_13          ((1u << 27) | (1u << 26) | 0777777u)
+
+static void fill_quux13(struct model *m)
+{
+	fill_quux(m);
+	m->rev13 = 1;
+	for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
+		m->amem[i] = poison(IMG_SEL_AMEM, i, 40);
+	for (unsigned i = 0; i < IMG_MMEM_WORDS; ++i)
+		m->mmem[i] = poison(IMG_SEL_MMEM, i, 40);
+	for (unsigned i = 0; i < IMG_QUUX_PDL_WORDS; ++i)
+		m->pdl[i] = poison(IMG_SEL_PDL, i, 40);
+	for (unsigned i = 0; i < IMG_DMEM_WORDS_13; ++i)
+		m->dmem[i] = (uint32_t)poison(IMG_SEL_DMEM, i, 17);
+	for (unsigned i = 0; i < IMG_L1_WORDS_13; ++i)
+		m->l1[i] = (uint32_t)poison(IMG_SEL_MAP1, i, 7);
+	for (unsigned i = 0; i < IMG_L2_WORDS_13; ++i)
+		m->l2[i] = (uint32_t)poison(IMG_SEL_MAP2, i, 28);
+	m->regs[IMG_RG_Q] = poison(IMG_SEL_REGS, IMG_RG_Q, 40);
+	m->regs[IMG_RG_VMA] = poison(IMG_SEL_REGS, IMG_RG_VMA, 40);
+	m->regs[IMG_RG_MD] = poison(IMG_SEL_REGS, IMG_RG_MD, 40);
+	m->regs[IMG_RG_MDHELD] = poison(IMG_SEL_REGS, IMG_RG_MDHELD, 40);
+	m->regs[IMG_RG_LVMO] = Q_LVMO_13;
+	m->regs[IMG_RG_FLAGS] |= 1ull << IMG_F_OVERFLOW;
+	m->disk[1] = Q_DISK_CLP_13;
+	// Words 7 and 10: the rings' bases, 28 bits each.
+	m->fd[0] = Q_FD_CMD_BASE;
+	m->fd_resp_13 = Q_FD_RESP_BASE_13;
+	m->macro[IMG_RG_QUUX_M31_W - IMG_RG_QUUX_MACRO] = poison(10, 33, 40);
+}
+
 // --- the packer, against its own inverse -----------------------------------
 
 static int unpack_equals(const uint8_t *raw, size_t len)
@@ -479,13 +533,15 @@ int main(int argc, char **argv)
 	// the second argument, and the Makefile checks their digests first.
 	if (argc < 3) {
 		fprintf(stderr, "usage: checkpoint_test <scratch directory> <QUUX's disks, "
-			"muir's data/> [<CADR checkpoint to write> [<QUUX checkpoint to write>]]\n");
+			"muir's data/> [<CADR checkpoint to write> [<QUUX checkpoint to write> "
+			"[<QUUX revision 13's to write>]]]\n");
 		return 2;
 	}
 	const char *work = argv[1];
 	const char *q8 = argv[2];
 	const char *out = argc > 3 ? argv[3] : NULL;
 	const char *quux_out = argc > 4 ? argv[4] : NULL;
+	const char *quux13_out = argc > 5 ? argv[5] : NULL;
 
 	if (chk_rtl_mutation())
 		printf("checkpoint: THIS IS A MUTANT --- %s\n", chk_rtl_mutation());
@@ -1240,6 +1296,127 @@ int main(int argc, char **argv)
 				fail("a read of the clocks spread over milliseconds was taken", 1, 0);
 			img_free(&mv);
 		}
+
+		// ---- QUUX revision 13 ------------------------------------------
+		//
+		// The same window at revision 13, entry 21 saying so; the file goes
+		// where the fifth argument says and `build/checkpoint.quux.pass`
+		// holds it to muir's own and has muir load it and save it again.
+		fill_quux13(q);
+		if (ro_quux_revision(&qr) != 13)
+			fail("revision 13's window read as another revision", ro_quux_revision(&qr), 13);
+		struct cadr_image q13;
+		if (img_alloc_revision(&q13, 1, 1, 13) != 0) {
+			fprintf(stderr, "out of memory\n");
+			return 1;
+		}
+		if (ro_read_machine(&qr, &q13) != 0) {
+			fail("the window would not give revision 13 up", qr.stale, 0);
+			return 1;
+		}
+		// The transport, at revision 13's sizes and in its 40-bit words.
+		// **Not under a mutant**, three of which are of the transport and
+		// are held by muir's own file instead (`chk_rtl.c`'s mutants 28,
+		// 29): asserting here what the mutant took out would call it
+		// broken, not caught.
+		if (!chk_rtl_mutation() && (q13.amem[IMG_AMEM_WORDS - 1] != q->amem[IMG_AMEM_WORDS - 1] ||
+		    q13.pdl[IMG_QUUX_PDL_WORDS - 1] != q->pdl[IMG_QUUX_PDL_WORDS - 1] ||
+		    q13.q != q->regs[IMG_RG_Q] || q13.qx.m31_w != q->macro[IMG_RG_QUUX_M31_W - IMG_RG_QUUX_MACRO]))
+			fail("a revision 13 word", q13.amem[IMG_AMEM_WORDS - 1], q->amem[IMG_AMEM_WORDS - 1]);
+		if (q13.dmem[IMG_DMEM_WORDS_13 - 1] != q->dmem[IMG_DMEM_WORDS_13 - 1] ||
+		    q13.l1_map[IMG_L1_WORDS_13 - 1] != q->l1[IMG_L1_WORDS_13 - 1] ||
+		    q13.l2_map[IMG_L2_WORDS_13 - 1] != q->l2[IMG_L2_WORDS_13 - 1])
+			fail("revision 13's dispatch memory and maps' last entries",
+			     q13.l1_map[IMG_L1_WORDS_13 - 1], q->l1[IMG_L1_WORDS_13 - 1]);
+		if (!chk_rtl_mutation() &&
+		    (q13.qx.fd_cmd_base != Q_FD_CMD_BASE || q13.qx.fd_resp_base != Q_FD_RESP_BASE_13))
+			fail("revision 13's ring bases", q13.qx.fd_resp_base, Q_FD_RESP_BASE_13);
+		if (!img_flag(&q13, IMG_F_OVERFLOW))
+			fail("the overflow flag", 0, 1);
+		// Main memory, packed storage: word i at bytes 5i to 5i + 4.
+		uint8_t *packed = malloc((size_t)IMG_BOARD_WORDS * 5u);
+		if (!packed) {
+			fprintf(stderr, "out of memory\n");
+			return 1;
+		}
+		for (size_t i = 0; i < IMG_BOARD_WORDS; ++i) {
+			const uint64_t v = poison(12, (unsigned)i, 40);
+			for (unsigned b = 0; b < 5; ++b)
+				packed[5 * i + b] = (uint8_t)(v >> (8 * b));
+		}
+		q13.main13 = packed;
+		for (size_t i = 0; i < IMG_QUUX_TV_WORDS; ++i)
+			q13.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
+		struct chk_declared q13decl = decl;
+		q13decl.present = 1u;
+		q13decl.cylinders[0] = Q_DISK_CYLINDERS;
+		q13decl.heads[0] = Q_DISK_HEADS;
+		q13decl.blocks_per_track[0] = Q_DISK_BPT;
+		struct chk qb13;
+		chk_init(&qb13);
+		chk_rtl_body(&qb13, &q13, &q13decl);
+		// **THE BODY'S LENGTH**: revision 12's, and a byte more for each
+		// word --- A, M, the PDL buffer, Q, VMA, MD, M 31's armed word, L
+		// and the two idle bus words, and main memory, which is the hole
+		// --- the dispatch memory's and both maps' further entries, the
+		// width and the overflow flag after the geometry, and the cache's
+		// 256 sets in place of 512.  muir's own for the same machine is
+		// 794,267 bytes.
+		const size_t quux13_len = quux_len + IMG_AMEM_WORDS + IMG_MMEM_WORDS +
+			(IMG_DMEM_WORDS_13 - IMG_DMEM_WORDS) * 4 + IMG_QUUX_PDL_WORDS + 3 +
+			(IMG_L1_WORDS_13 - IMG_L1_WORDS) * 4 + 2 + 1 +
+			(IMG_L2_WORDS_13 - IMG_QUUX_L2_WORDS) * 4 + IMG_BOARD_WORDS + 3 - 256 * 4;
+		if (!chk_rtl_mutation() && (qb13.len + qb13.hole_len != quux13_len ||
+					    qb13.hole_len != (size_t)IMG_BOARD_WORDS * 5u))
+			fail("revision 13's body's length", qb13.len + qb13.hole_len, quux13_len);
+		if (quux13_out && chk_write_file(quux13_out, "rtl", 1, &qb13) != 0) {
+			perror(quux13_out);
+			return 1;
+		}
+		// **AND THE HOLE IS READ WHERE IT STANDS**: the file written from
+		// a body with main memory in its hole is the file written from the
+		// same body with main memory copied in, byte for byte.
+		{
+			struct chk flat;
+			chk_init(&flat);
+			flat.word_bytes = qb13.word_bytes;
+			for (size_t i = 0; i < qb13.hole_at; ++i)
+				chk_u8(&flat, qb13.p[i]);
+			for (size_t i = 0; i < qb13.hole_len; ++i)
+				chk_u8(&flat, packed[i]);
+			for (size_t i = qb13.hole_at; i < qb13.len; ++i)
+				chk_u8(&flat, qb13.p[i]);
+			char a[320], b[320];
+			snprintf(a, sizeof a, "%s/hole.chk", work);
+			snprintf(b, sizeof b, "%s/flat.chk", work);
+			if (chk_write_file(a, "rtl", 1, &qb13) != 0 || chk_write_file(b, "rtl", 1, &flat) != 0)
+				fail("the two revision 13 files could not be written", 1, 0);
+			else {
+				FILE *fa = fopen(a, "rb"), *fb = fopen(b, "rb");
+				int same = fa && fb;
+				for (int ca = 0, cb = 0; same && (ca != EOF || cb != EOF);) {
+					ca = fgetc(fa);
+					cb = fgetc(fb);
+					same = ca == cb;
+				}
+				if (fa)
+					fclose(fa);
+				if (fb)
+					fclose(fb);
+				if (!same)
+					fail("the file with main memory in place and the one with it copied", 1, 0);
+				remove(a);
+				remove(b);
+			}
+			chk_free(&flat);
+		}
+		printf("checkpoint: QUUX revision 13, %zu bytes of body and %zu of main memory "
+		       "where it stands, %lu reads over a modeled window%s%s\n", qb13.len,
+		       qb13.hole_len, qr.reads, quux13_out ? ", wrote " : "",
+		       quux13_out ? quux13_out : "");
+		free(packed);
+		chk_free(&qb13);
+		img_free(&q13);
 		chk_free(&qb);
 		img_free(&qi);
 		free(q);

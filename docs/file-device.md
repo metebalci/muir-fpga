@@ -190,6 +190,37 @@ program has used the same order on every board: words into DDR, a barrier,
 then a face register that makes the fabric read them. **For this page it is
 not yet measured on a board.**
 
+## Revision 13: packed memory, fixnums, 28-bit addresses
+
+On QUUX revision 13 (muir's `Geometry::QUUX_13`) the protocol is the same,
+and the memory under it is not:
+
+- **Main memory is packed storage**: word `w` is the five bytes at
+  `5w` of `CADR_BOARD_QUUX13_MAIN_BASE`, `<7:0>` first and the tag last. So a
+  word is never an aligned 32-bit word of the mapping. The program moves a run
+  of words as aligned 32-bit words where all four bytes are the run's, and as
+  single bytes at its two ends. It never touches a byte outside the run, since
+  the word beside a buffer may be the machine's.
+- **The program reads `<31:0>` of every word, whatever its tag.** Every word
+  it writes, a buffer's, a directory record's or a response's, is a fixnum:
+  the field and the tag `005`.
+- **Rings and buffers are at 28-bit addresses on an 8-word line.** A buffer
+  on a 4-word line is a bad buffer, and a ring on one is refused at the
+  enable. Revision 12's are 24-bit, on a 4-word line.
+- **The page says which.** It reads `QF13` (0x51463133) where revision 12's
+  reads `QFD9`, its ring bases are 28 bits, and its `MEM_WORDS` may say up to
+  64M words. A program of either revision refuses the other's page rather
+  than reading its memory wrong. **The fabric's side of this page is not
+  built yet.**
+
+The check runs every script again at revision 13, against muir's own device
+at revision 13. Each transcript prints every word with its tag, and the
+digest covers main memory as packed storage holds it. A script of its own
+puts command entries and buffers under tags other than `005`. A unit check
+puts the rings and a buffer above 16M words, and the check counts every
+access that is misaligned or reaches outside its run, which the build host
+would not fault on and a board's device memory would.
+
 ## Writes, and what the start sweeps
 
 A write goes to a temporary file beside its target, named `.quux-write-` and

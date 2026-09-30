@@ -37,7 +37,8 @@ static void fail(const char *what, unsigned long long got, unsigned long long wa
 
 struct model {
 	uint64_t imem[IMG_IMEM_WORDS], prom[IMG_PROM_WORDS];
-	uint32_t amem[IMG_AMEM_WORDS], mmem[IMG_MMEM_WORDS];
+	uint64_t amem[IMG_AMEM_WORDS];
+	uint32_t mmem[IMG_MMEM_WORDS];
 	uint32_t pdl[IMG_PDL_WORDS], spc[IMG_SPC_WORDS];
 	uint32_t dmem[IMG_DMEM_WORDS], l1[IMG_L1_WORDS], l2[IMG_L2_WORDS];
 	uint16_t opcs[IMG_OPCS];
@@ -82,6 +83,9 @@ struct model {
 	// for 2 ms is running, and one that does, however late in the 10 ms, is
 	// halted.
 	uint64_t trickle_every, trickle_next, trickle_until;
+	// The register table's entry 21, QUUX's signature, when it is set: a
+	// CADR answers `RO_NO_MEMORY` there.
+	uint64_t quux_id;
 };
 
 // **THE FABRIC'S TIME RUNS WHILE THE PROGRAM READS**, 16 ticks a read, the
@@ -102,7 +106,10 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 	case IMG_SEL_MAP1: return a < IMG_L1_WORDS ? m->l1[a] : 0;
 	case IMG_SEL_MAP2: return a < IMG_L2_WORDS ? m->l2[a] : 0;
 	case IMG_SEL_OPCS: return a < IMG_OPCS ? m->opcs[a] : 0;
-	case IMG_SEL_REGS: return a < 21 ? m->regs[a] : RO_NO_MEMORY;
+	case IMG_SEL_REGS:
+		if (a == IMG_RG_QUUX_ID && m->quux_id)
+			return m->quux_id;
+		return a < 21 ? m->regs[a] : RO_NO_MEMORY;
 	case IMG_SEL_AUDIT:
 		if (m->audit_unmarked)
 			return RO_NO_MEMORY;
@@ -395,6 +402,66 @@ int main(void)
 			fail("the port's answered reads", a.port_reads, 1234u);
 		if (a.port_writes != 77u)
 			fail("the port's answered writes", a.port_writes, 77u);
+	}
+
+	// ---- which revision of QUUX ---------------------------------------------
+	//
+	// Entry 21 carries MACHINE-ID's <15:0> on revision 13 and 0 on revision
+	// 12; anything else under QUUX's signature is neither, and the CADR's
+	// `RO_NO_MEMORY` is the CADR.
+	{
+		const uint64_t sig = ((uint64_t)IMG_QUUX_MARK << 32) | (4ull << 24) | (1ull << 16);
+		const struct { uint64_t id; int rev; } cases[] = {
+			{ 0, 0 }, { sig, 12 }, { sig | IMG_QUUX_ID_13, 13 },
+			{ sig | 0x00C4u, -1 }, { sig | 0x00D5u, -1 },
+		};
+		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+			m->quux_id = cases[i].id;
+			const int rev = ro_quux_revision(&r);
+			if (rev != cases[i].rev)
+				fail("the revision entry 21 says", (unsigned long long)rev,
+				     (unsigned long long)cases[i].rev);
+		}
+		m->quux_id = 0;
+	}
+
+	// ---- revision 13's words, 40 bits of the window's 48 ---------------------
+	//
+	// The same window read as revision 13's machine: A, M and the PDL buffer
+	// whole at 40 bits and nothing above, the dispatch memory and both map
+	// levels at revision 13's depths, and the registers that are words.
+	{
+		for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
+			m->amem[i] = poison(IMG_SEL_AMEM, i, 48);
+		struct cadr_image w;
+		if (img_alloc_revision(&w, 1, 1, 13) != 0) {
+			fprintf(stderr, "out of memory\n");
+			return 1;
+		}
+		if (w.dmem_words != 4096 || w.l1_words != 8192 || w.l2_words != 4096 ||
+		    w.word_bits != 40 || w.main)
+			fail("revision 13's arrays", w.dmem_words, 4096);
+		// The model is the CADR's arrays, and what is past them reads 0.
+		// Through the machine's own reader, whose QUUX half needs the
+		// clocks this model has not: the words, and not QUUX's own.
+		w.quux = 0;
+		if (ro_read_machine(&r, &w) != 0)
+			fail("revision 13's window would not give its words up", r.stale, 0);
+		for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
+			if (w.amem[i] != poison(IMG_SEL_AMEM, i, 40)) {
+				fail("an A memory word at 40 bits", w.amem[i],
+				     poison(IMG_SEL_AMEM, i, 40));
+				break;
+			}
+		if (w.q != (m->regs[IMG_RG_Q] & 0xFFFFFFFFFFull) ||
+		    w.md_held != (m->regs[IMG_RG_MDHELD] & 0xFFFFFFFFFFull))
+			fail("Q at 40 bits", w.q, m->regs[IMG_RG_Q] & 0xFFFFFFFFFFull);
+		if (w.dmem[IMG_DMEM_WORDS - 1] != m->dmem[IMG_DMEM_WORDS - 1] ||
+		    w.dmem[IMG_DMEM_WORDS] != 0 || w.l1_map[IMG_L1_WORDS] != 0)
+			fail("the dispatch memory past 2,048", w.dmem[IMG_DMEM_WORDS], 0);
+		img_free(&w);
+		for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
+			m->amem[i] = (uint32_t)poison(IMG_SEL_AMEM, i, 32);
 	}
 
 	// ---- and the machine is started again ---------------------------------

@@ -163,5 +163,5 @@ BR2_TARGET_UBOOT_FORMAT_CUSTOM=y
 BR2_TARGET_UBOOT_FORMAT_CUSTOM_NAME="u-boot.itb"
 BR2_TARGET_UBOOT_SPL=y
 BR2_TARGET_UBOOT_SPL_NAME="spl/u-boot-spl-dtb.hex"
-BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_cadr.dts $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/uboot/socfpga_agilex5_de25_nano_cadr-u-boot.dtsi $(BR2_EXTERNAL_CADR_DE25_PATH)/../cadr-reserved.dtsi"
+BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_cadr.dts $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/uboot/socfpga_agilex5_de25_nano_cadr-u-boot.dtsi $(BR2_EXTERNAL_CADR_DE25_PATH)/../cadr-reserved.dtsi $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_quux13.dts $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/uboot/socfpga_agilex5_de25_nano_quux13-u-boot.dtsi $(BR2_EXTERNAL_CADR_DE25_PATH)/../quux13-reserved.dtsi"
 

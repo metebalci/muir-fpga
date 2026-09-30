@@ -17411,6 +17411,94 @@ cadr_gpo=0x10d120e4
 cadr_gpo=0x10d120e8
 @end
 
+@mutation mem-map-the-programs-put-revision-13-elsewhere
+@check mem_map
+@file boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h
+@note The file device and the checkpoint would read revision 13's main
+@note memory 56 MB above where the fabric keeps it, over the CADR's region.
+@note The header's assertions refuse it when compiled; this record holds that
+@note the check reads the number without a compiler.
+@note
+@note Caught at "revision 13's main memory: ... cadr_board.h QUUX13_MAIN says
+@note 0x15800000".
+@old
+#define CADR_BOARD_QUUX13_MAIN_HEX 12000000
+@new
+#define CADR_BOARD_QUUX13_MAIN_HEX 15800000
+@end
+
+@mutation mem-map-the-de25s-room-is-56m-words
+@check mem_map
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The fabric's room on the DE25-Nano says 56M words while the programs
+@note keep 64M: a program would accept a main memory the fabric has no room
+@note for, and packed memory would stop short of the display.
+@note
+@note Caught at "revision 13's room, words: ... says 0x03800000 and
+@note cadr_board.h QUUX13_MAIN_WORDS_MAX says 0x04000000".
+@old
+  localparam int unsigned QUUX13_MAIN_WORDS_MAX = 64 * 1024 * 1024;
+@new
+  localparam int unsigned QUUX13_MAIN_WORDS_MAX = 56 * 1024 * 1024;
+@end
+
+@mutation mem-map-the-zynq-revision-13-tree-stops-at-the-display
+@check mem_map
+@file boards/arty-z7-20/linux/quux13-reserved.dtsi
+@note Revision 13's tree reserves main memory and the display and not the
+@note records: the disk pack program's records at 0x1C80_0000 are Linux's
+@note memory, which the kernel hands out while the fabric reads and writes
+@note them.
+@note
+@note Caught at "revision 13's reservation's end: ... reg says 0x1C800000".
+@old
+			reg = <0x12000000 0x0a820000>;
+@new
+			reg = <0x12000000 0x0a800000>;
+@end
+
+@mutation mem-map-the-de25-revision-13-node-is-named-for-the-cadr
+@check mem_map
+@file boards/de25-nano/linux/quux13-reserved.dtsi
+@note Revision 13's node named for another address: the card script, which
+@note looks for it by name, would refuse a good tree.
+@note
+@note Caught at "revision 13's reservation: ... unit address says 0xB0000000".
+@old
+		quux13@a0000000 {
+@new
+		quux13@b0000000 {
+@end
+
+@mutation mem-map-the-card-names-the-cadrs-node-for-revision-13
+@check mem_map
+@file boards/arty-z7-20/linux/mksd-buildroot.sh
+@note The card script checks a revision 13 card's trees for the CADR's
+@note node, which revision 13's tree has taken out: every revision 13 card
+@note is refused, or one carrying the CADR's trees passes.
+@note
+@note Caught at "REVISION=13 on arty-z7-20 names ... RESERVED" or at
+@note "revision 13's reservation: ... REVISION=13 RESERVED".
+@old
+        RESERVED=quux13@12000000
+@new
+        RESERVED=quux13@18000000
+@end
+
+@mutation mem-map-the-records-outgrow-their-area
+@check mem_map
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The package's records area half what the disk pack program maps.
+@note The header's assertion holds the program to the header, not to the
+@note package: this record holds that the check reads all three.
+@note
+@note Caught at "the records' size: ... RECORDS_BYTES says 0x00010000".
+@old
+  localparam int unsigned RECORDS_BYTES = 32'h0002_0000;
+@new
+  localparam int unsigned RECORDS_BYTES = 32'h0001_0000;
+@end
+
 @mutation mem-map-the-jtag-memory-check-probes-the-display
 @check mem_map
 @file boards/arty-z7-20/vivado/ddr_check.tcl
@@ -17434,6 +17522,166 @@ set MAIN_BASE   0x1C000000
 set MAIN_BASE   0x18000000
 @new
 set MAIN_BASE   0x1C000000
+@end
+
+# ======================================================================
+# EACH MACHINE'S RESERVED REGION, COMPILED, AND WHERE U-BOOT PUTS THINGS
+# ======================================================================
+#
+# `tools/reserved_check.py` compiles the CADR's and QUUX revision 13's nodes
+# in a skeleton of each board's root and reads them back, requires each
+# machine's trees to reach its kernel, its U-Boot and its card, and holds
+# U-Boot's fixed loads and its relocation clear of each machine's region.
+# `mem_map` reads the same files as text and passes every record here.
+
+@mutation reserved-revision-13-keeps-the-cadrs-node-too
+@check reserved
+@file boards/arty-z7-20/linux/quux13-reserved.dtsi
+@note Revision 13's tree adds its node and leaves the CADR's beside it: two
+@note overlapping reservations, and the CADR's spare above the records
+@note reserved for nothing.  The text of revision 13's node is right, so
+@note mem_map passes.
+@note
+@note Caught at "the Zynq boards, quux13's tree: the compiled tree has 2
+@note machine nodes".
+@old
+		/delete-node/ cadr@18000000;
+@new
+@end
+
+@mutation reserved-the-de25-revision-13-region-is-mapped
+@check reserved
+@file boards/de25-nano/linux/quux13-reserved.dtsi
+@note Revision 13's node loses `no-map`: the kernel maps the region
+@note cacheable, and a no-map region is also what lets /dev/mem map it on
+@note arm64.
+@note
+@note Caught at "the DE25-Nano, quux13's tree: quux13@a0000000 is not no-map".
+@old
+			no-map;
+@new
+			reusable;
+@end
+
+@mutation reserved-the-zynq-cadr-region-is-mapped
+@check reserved
+@file boards/arty-z7-20/linux/cadr-reserved.dtsi
+@note The CADR's node loses `no-map`, which the text check does not read.
+@note
+@note Caught at "the Zynq boards, cadr's tree: cadr@18000000 is not no-map".
+@old
+			no-map;
+@new
+			reusable;
+@end
+
+@mutation reserved-the-bitstream-lands-in-revision-13s-region
+@check reserved
+@file boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env
+@note The Arty Z7-20's bitstream loaded at 0x11E0_0000: clear of the CADR's
+@note region, and 2 MB into revision 13's main memory.
+@note
+@note Caught at "the Zynq boards, quux13: cadr.bit (cadr_bit_addr) ... is in
+@note the region".
+@old
+cadr_bit_addr=0x0f800000
+@new
+cadr_bit_addr=0x11e00000
+@end
+
+@mutation reserved-the-ramdisk-is-where-uboot-relocates-for-the-cadr
+@check reserved
+@file boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env
+@note The ramdisk loaded at 0x1200_0000: clear of every region, and its room
+@note runs into where U-Boot, relocated below the CADR's node, keeps itself.
+@note
+@note Caught at "the Zynq boards, cadr: rootfs.cpio.uboot ... is where U-Boot
+@note relocates".
+@old
+cadr_ramdisk_addr=0x04000000
+@new
+cadr_ramdisk_addr=0x12000000
+@end
+
+@mutation reserved-the-de25-ramdisk-reaches-revision-13s-region
+@check reserved
+@file boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env
+@note The DE25-Nano's ramdisk at 0x9E00_0000, its 64 MB of room running into
+@note revision 13's main memory at 0xA000_0000; the CADR's region is clear.
+@note
+@note Caught at "the DE25-Nano, quux13: rootfs.cpio.uboot ... is in the
+@note region".
+@old
+cadr_ramdisk_addr=0x90000000
+@new
+cadr_ramdisk_addr=0x9e000000
+@end
+
+@mutation reserved-the-arty-kernel-is-not-given-revision-13s-node
+@check reserved
+@file boards/arty-z7-20/linux/buildroot/external.mk
+@note The hook copies the CADR's dtsi beside the kernel's trees and not
+@note revision 13's: revision 13's tree fails to build, or builds against a
+@note stale copy of the node.
+@note
+@note Caught at "the kernel's tree is not given quux13-reserved.dtsi".
+@old
+	cp -f $(CADR_RESERVED_DTSI) $(CADR_QUUX13_RESERVED_DTSI) $(LINUX_ARCH_PATH)/boot/dts/xilinx/
+@new
+	cp -f $(CADR_RESERVED_DTSI) $(LINUX_ARCH_PATH)/boot/dts/xilinx/
+@end
+
+@mutation reserved-the-arty-uboot-is-not-given-revision-13s-tree
+@check reserved
+@file boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig
+@note U-Boot's build is not given revision 13's tree, and revision 13's
+@note loader has nothing to be made from.
+@note
+@note Caught at "U-Boot is not given zynq-arty-z7-20-quux13.dts".
+@old
+BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/dts/xilinx/zynq-arty-z7-20.dts $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/uboot/zynq-arty-z7-20-u-boot.dtsi $(BR2_EXTERNAL_CADR_PATH)/../cadr-reserved.dtsi $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/dts/xilinx/zynq-arty-z7-20-quux13.dts $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/uboot/zynq-arty-z7-20-quux13-u-boot.dtsi $(BR2_EXTERNAL_CADR_PATH)/../quux13-reserved.dtsi"
+@new
+BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/dts/xilinx/zynq-arty-z7-20.dts $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/uboot/zynq-arty-z7-20-u-boot.dtsi $(BR2_EXTERNAL_CADR_PATH)/../cadr-reserved.dtsi $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/uboot/zynq-arty-z7-20-quux13-u-boot.dtsi $(BR2_EXTERNAL_CADR_PATH)/../quux13-reserved.dtsi"
+@end
+
+@mutation reserved-the-de25-loader-is-not-made
+@check reserved
+@file boards/de25-nano/linux/buildroot/external.mk
+@note Revision 13's u-boot.itb is never made, so a revision 13 card would
+@note carry the CADR's, whose U-Boot tree reserves the CADR's region.
+@note
+@note Caught at "no U-Boot hook makes revision 13's loader for de25-nano".
+@old
+UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
+@new
+@end
+
+@mutation reserved-the-card-pairs-revision-13-with-the-cadrs-tree
+@check reserved
+@file boards/arty-z7-20/linux/mksd-buildroot.sh
+@note A revision 13 card staged with the board's own tree: revision 13's
+@note bitstream under the CADR's tree hands Linux revision 13's main memory,
+@note and the two corrupt each other silently.
+@note
+@note Caught at "REVISION=13 on arty-z7-20 does not stage
+@note zynq-arty-z7-20-quux13.dtb".
+@old
+        TREE_IMAGE=zynq-arty-z7-20-quux13.dtb
+@new
+        TREE_IMAGE=zynq-arty-z7-20.dtb
+@end
+
+@mutation reserved-revision-13s-tree-is-the-boards-alone
+@check reserved
+@file boards/de25-nano/linux/buildroot/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_quux13.dts
+@note Revision 13's tree without its reservation: the board's tree under
+@note another name.
+@note
+@note Caught at "... includes [...], wanting socfpga_agilex5_de25_nano_cadr.dts
+@note then quux13-reserved.dtsi".
+@old
+#include "quux13-reserved.dtsi"
+@new
 @end
 
 # ======================================================================

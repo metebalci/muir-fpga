@@ -115,6 +115,22 @@ static void emit_u32s_padded(struct chk *w, const uint32_t *v, size_t have,
 		chk_u32(w, i < have ? v[i] : 0u);
 }
 
+// And `w.words` over one: words at the machine's width.
+static void emit_words_padded(struct chk *w, const uint64_t *v, size_t have, size_t total)
+{
+	chk_u64(w, (uint64_t)total);
+	for (size_t i = 0; i < total; ++i)
+		chk_word(w, i < have ? v[i] : 0u);
+}
+
+// **REVISION 13** (contract G2 appendix A1.13; muir's `Geometry::QUUX_13`):
+// a level-1 entry of seven bits; level 2 in 4,096 entries, `L2_MAP_WORDS`,
+// every one of which the machine has; and the cache's 8-word lines, the lines
+// of packed storage (`memory_port::Layout::REVISION_13`).
+#define MUIR_QUUX13_L1_BITS    7u
+#define MUIR_QUUX13_L2_WORDS   4096u
+#define MUIR_QUUX13_CACHE_LINE 8u
+
 // --- Machine ---------------------------------------------------------------
 
 static void emit_mode(struct chk *w, const struct cadr_image *img)
@@ -542,18 +558,23 @@ static void emit_busint(struct chk *w, const struct cadr_image *img)
 // is a past as good as any.
 static void emit_memory_port(struct chk *w, const struct cadr_image *img)
 {
+#if CHK_MUTATE == 27
+	const unsigned line = MUIR_QUUX_CACHE_LINE;
+#else
+	const unsigned line = img->rev13 ? MUIR_QUUX13_CACHE_LINE : MUIR_QUUX_CACHE_LINE;
+#endif
 	chk_u8(w, 0);			/* IDLE State::Idle */
 	chk_bool(w, 0);			/* IDLE write */
 	chk_u32(w, 0);			/* IDLE addr */
 	chk_bool(w, 0);			/* IDLE memory */
 	chk_u32(w, MUIR_QUUX_CACHE_WORDS);	/* Cache::save: config.words */
-	chk_u32(w, MUIR_QUUX_CACHE_LINE);	/* config.line_words */
+	chk_u32(w, line);			/* config.line_words */
 	chk_u32(w, MUIR_QUUX_CACHE_WAYS);	/* config.ways */
 	chk_u64(w, MUIR_QUUX_CACHE_HIT_NS);	/* config.hit_ns */
 	chk_bool(w, 1);				/* config.write_buffer */
 	chk_u64(w, 0);				/* NONE hits */
 	chk_u64(w, 0);				/* NONE misses */
-	for (unsigned s = 0; s < MUIR_QUUX_CACHE_WORDS / (MUIR_QUUX_CACHE_LINE * MUIR_QUUX_CACHE_WAYS); ++s)
+	for (unsigned s = 0; s < MUIR_QUUX_CACHE_WORDS / (line * MUIR_QUUX_CACHE_WAYS); ++s)
 		chk_u32(w, 0);			/* NONE the set's lines: cold */
 	chk_u64(w, MUIR_QUUX_READ_NS);		/* timing.read_ns */
 	chk_u64(w, MUIR_QUUX_WRITE_NS);		/* timing.write_ns */
@@ -569,7 +590,7 @@ static void emit_memory_port(struct chk *w, const struct cadr_image *img)
 	if (img->qx.pf_v) {
 		chk_u32(w, img->qx.pf_vaddr);
 		chk_u32(w, img->qx.pf_phys);
-		chk_u32(w, img->qx.pf_word);
+		chk_word(w, img->qx.pf_word);
 	}
 	chk_bool(w, img->qx.fetch_v);			/* READ fetch_vaddr */
 	if (img->qx.fetch_v)
@@ -598,7 +619,7 @@ static void emit_macro_dispatch(struct chk *w, const struct cadr_image *img, int
 	}
 	chk_bool(w, quux && q->m31_v);			/* READ m31 */
 	if (quux && q->m31_v)
-		chk_u32(w, q->m31_w);
+		chk_word(w, q->m31_w);
 }
 
 // --- QUUX ------------------------------------------------------------------
@@ -853,6 +874,13 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	no_drives.chaos_address = d->chaos_address;
 
 	// --- Machine::save -------------------------------------------------
+	// Words from here on, the engine's after the machine's, at the
+	// machine's width: 4 bytes, and 5 on revision 13 (`Writer::set_word_bits`).
+#if CHK_MUTATE == 22
+	w->word_bytes = 4u;
+#else
+	w->word_bytes = img->rev13 ? 5u : 4u;
+#endif
 	chk_u64s(w, img->prom, IMG_PROM_WORDS);		/* READ */
 	if (quux) {
 		// **THE CONTROL STORE UNDER QUUX'S PROM IS WRITTEN ZERO**: the
@@ -883,15 +911,15 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 #endif
 	/* CHK_MUTATE == 3 drops the line above: one byte, and every field
 	   after it is read at the wrong offset.  muir must REFUSE. */
-	chk_u32s(w, img->amem, IMG_AMEM_WORDS);		/* READ */
-	chk_u32s(w, img->mmem, IMG_MMEM_WORDS);		/* READ */
-	chk_u32s(w, img->dmem, IMG_DMEM_WORDS);		/* READ */
-	emit_u32s_padded(w, img->pdl, img->pdl_words, MUIR_PDL_WORDS);	/* READ */
+	chk_words(w, img->amem, IMG_AMEM_WORDS);		/* READ */
+	chk_words(w, img->mmem, IMG_MMEM_WORDS);		/* READ */
+	chk_u32s(w, img->dmem, img->dmem_words);	/* READ */
+	emit_words_padded(w, img->pdl, img->pdl_words, MUIR_PDL_WORDS);	/* READ */
 	chk_u32s(w, img->spc, IMG_SPC_WORDS);		/* READ */
 	chk_u8(w, img->spcptr);				/* READ */
 	chk_u16(w, img->pdl_ptr);			/* READ */
 	chk_u16(w, img->pdl_idx);			/* READ */
-	chk_u32(w, img->q);				/* READ */
+	chk_word(w, img->q);				/* READ */
 	// `Machine::opc` is "the PC of the instruction that just executed",
 	// which `rtl.rs:1794` sets to the PC the boundary retired --- the same
 	// word `LPC` takes while LPC-HOLD is clear, and it is clear here
@@ -910,29 +938,44 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// never writes this one; a checkpoint muir itself took would carry
 	// zero here too.
 	chk_u32(w, 0);					/* IDLE lc */
-	chk_u32(w, img->vma);				/* READ */
-	chk_u32(w, img->md);				/* READ */
+	chk_word(w, img->vma);				/* READ */
+	chk_word(w, img->md);				/* READ */
 	// The same argument: `Machine::interrupt_control` is `micro`'s, written
 	// at `destintctl` there and never by `rtl`, which keeps the four bits
 	// as its own flags.  Zero is what muir would write.
 	chk_u32(w, 0);					/* IDLE interrupt_control */
 	chk_u16(w, img->dc);				/* READ dispatch_constant */
-	chk_u32s(w, img->l1_map, IMG_L1_WORDS);		/* READ */
+#if CHK_MUTATE == 25
+	chk_u32s(w, img->l1_map, IMG_L1_WORDS);
+#else
+	chk_u32s(w, img->l1_map, img->l1_words);	/* READ */
+#endif
 	if (quux) {
-		// `Machine::geometry`: `Geometry::QUUX`, which the register
-		// table's entry 21 said the bitstream is.
+		// `Machine::geometry`: `Geometry::QUUX`, or `QUUX_13`, which the
+		// register table's entry 21 said the bitstream is.
+		const unsigned l1_bits = img->rev13 ? MUIR_QUUX13_L1_BITS : MUIR_QUUX_L1_BITS;
 #if CHK_MUTATE == 9
 		// The CADR's PDL width on QUUX: a machine whose pointer is too
 		// wide for its own buffer.
-		chk_u8(w, MUIR_QUUX_L1_BITS);
+		chk_u8(w, (uint8_t)l1_bits);
 		chk_u8(w, MUIR_PDL_BITS);
 #else
-		chk_u8(w, MUIR_QUUX_L1_BITS);		/* READ, the machine */
+		chk_u8(w, (uint8_t)l1_bits);		/* READ, the machine */
 		chk_u8(w, MUIR_QUUX_PDL_BITS);
 #endif
 		chk_bool(w, 1);				/* muldiv */
 		chk_bool(w, 1);				/* tick */
-		chk_bool(w, 1);				/* macro_dispatch: revision 12 */
+		chk_bool(w, 1);				/* macro_dispatch: revision 12 and on */
+		if (img->rev13) {
+			// A wider word says so, and then the fixnum overflow
+			// flag (A1.3), the flag word's <35>.
+			chk_u8(w, IMG_WORD_BITS_13);	/* READ, the machine */
+#if CHK_MUTATE == 24
+			chk_bool(w, img_flag(img, IMG_F_MEMSTART_FETCH));
+#elif CHK_MUTATE != 23
+			chk_bool(w, img_flag(img, IMG_F_OVERFLOW));	/* READ */
+#endif
+		}
 		emit_timers(w, img);
 	} else {
 		// `Machine::geometry`: the fabric is a CADR, `Geometry::CADR`.
@@ -971,9 +1014,28 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// has no cache, and a halted board's controller has told nothing it has
 	// not already been asked for, so it is false.
 	chk_bool(w, 0);					/* IDLE dma_written */
-	emit_u32s_padded(w, img->l2_map, img->l2_words, MUIR_L2_MAP_WORDS);	/* READ */
+#if CHK_MUTATE == 30
+	emit_u32s_padded(w, img->l2_map, img->l2_words, MUIR_L2_MAP_WORDS);
+#else
+	emit_u32s_padded(w, img->l2_map, img->l2_words,
+			 img->rev13 ? MUIR_QUUX13_L2_WORDS : MUIR_L2_MAP_WORDS);	/* READ */
+#endif
 	chk_u32(w, img->boards);			/* the count, again */
-	chk_u32s(w, img->main, (size_t)img->boards * IMG_BOARD_WORDS);	/* READ */
+	if (img->rev13) {
+		// **MAIN MEMORY AS IT STANDS IN DDR.**  A 40-bit word is 5 bytes
+		// in the file, `<7:0>` first and the tag last, which is packed
+		// storage byte for byte (G1 4.1), so the bytes are taken where
+		// they are rather than copied (`chk_hole`).
+		const size_t words = (size_t)img->boards * IMG_BOARD_WORDS;
+		chk_u64(w, (uint64_t)words);
+#if CHK_MUTATE == 26
+		chk_hole(w, img->main13, 4u * words);
+#else
+		chk_hole(w, img->main13, 5u * words);	/* READ */
+#endif
+	} else {
+		chk_u32s(w, img->main, (size_t)img->boards * IMG_BOARD_WORDS);	/* READ */
+	}
 	// The bus interface's own registers.  **THE READOUT WINDOW DOES NOT
 	// REACH THEM**, which is not the same as their not existing and used
 	// to be: `rtl/machine/cadr_busint_regs.sv` holds the interrupt status
@@ -1079,7 +1141,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u16(w, img->wadr);				/* READ */
 	chk_bool(w, img_flag(img, IMG_F_DESTD));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_DESTMD));	/* READ */
-	chk_u32(w, img->l);				/* READ */
+	chk_word(w, img->l);				/* READ */
 	chk_u16(w, img->pc);				/* READ */
 	chk_u16(w, img->lpc);				/* READ */
 	chk_u32(w, img->lc);				/* READ */
@@ -1139,7 +1201,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// means one in flight --- so writing it would be putting a fact in a
 	// field that means something else.
 	chk_u32(w, 0);					/* IDLE bus_addr */
-	chk_u32(w, 0);					/* IDLE bus_data */
+	chk_word(w, 0);					/* IDLE bus_data */
 	chk_bool(w, 0);					/* IDLE bus_written */
 	chk_opt_u8(w, 0, 0);				/* IDLE bus_spy */
 	chk_bool(w, 0);					/* IDLE bus_sampled */
@@ -1194,7 +1256,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		chk_u8(w, CHK_TIMING_FPGA);		/* DECLARED timing */
 	}
 	chk_u64(w, chk_ns(img));			/* READ ns, as above */
-	chk_u32(w, 0);					/* IDLE busint_bus */
+	chk_word(w, 0);					/* IDLE busint_bus */
 	chk_u64(w, ~(uint64_t)0);			/* IDLE loadmd_at */
 	chk_opt_u16(w, 0, 0);				/* IDLE executed */
 	// Version 49: `MEMSTART`'s cycle is the stream's fetch, for QUUX's
@@ -1397,6 +1459,26 @@ const char *chk_rtl_mutation(void)
 	return "a one-shot timer that has risen written with no deadline, as one that never will";
 #elif CHK_MUTATE == 21
 	return "a timer's mode and interrupt enable written crossed";
+#elif CHK_MUTATE == 22
+	return "revision 13's words written in 4 bytes, a 32-bit machine's";
+#elif CHK_MUTATE == 23
+	return "revision 13's overflow flag left out after the word's width";
+#elif CHK_MUTATE == 24
+	return "revision 13's overflow flag taken from the flag word's <34>, MEMSTART-FETCH";
+#elif CHK_MUTATE == 25
+	return "revision 13's level-1 map written at revision 12's 2,048 entries";
+#elif CHK_MUTATE == 26
+	return "revision 13's main memory written 4 bytes a word";
+#elif CHK_MUTATE == 27
+	return "revision 13's cache written with revision 12's 4-word lines";
+#elif CHK_MUTATE == 28
+	return "revision 13's response ring's base read from word 7, the command ring's";
+#elif CHK_MUTATE == 29
+	return "revision 13's words read out at 32 bits, their tags dropped";
+#elif CHK_MUTATE == 30
+	return "revision 13's level-2 map written at revision 12's 2,048 entries";
+#elif CHK_MUTATE == 31
+	return "a 40-bit body written under version 49, a 32-bit machine's";
 #else
 	return NULL;
 #endif

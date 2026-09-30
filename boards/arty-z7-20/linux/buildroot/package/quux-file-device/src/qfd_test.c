@@ -52,10 +52,16 @@ static void fail(const char *fmt, ...)
 
 // --- the model of the page ----------------------------------------------------------
 
-#define PAGE_IDENT 0x51464439u
+#define PAGE_IDENT    0x51464439u
+#define PAGE_IDENT_13 0x51463133u
 
+// Main memory is 32-bit words to revision 12 (`mem`) and packed storage on
+// revision 13 (`pk`, 5 bytes a word, the tag last), as the program's own
+// `qfd_mem` has it; `sim_get` and `sim_put` read and write a word of either.
 struct sim {
 	uint32_t *mem;
+	uint8_t *pk;
+	int r13;
 	size_t words;
 	int enabled, ie, busy, refused;
 	uint16_t epoch;
@@ -71,6 +77,47 @@ struct sim {
 	unsigned wlog[64];         // the offsets written, in order
 	int nwlog;
 };
+
+static uint64_t sim_get(const struct sim *s, size_t k)
+{
+	if (!s->r13)
+		return s->mem[k];
+	uint64_t v = 0;
+	for (int i = 4; i >= 0; --i)
+		v = v << 8 | s->pk[5 * k + (size_t)i];
+	return v;
+}
+
+// A 40-bit word on revision 13; `<31:0>` to revision 12.
+static void sim_put(struct sim *s, size_t k, uint64_t v)
+{
+	if (!s->r13) {
+		s->mem[k] = (uint32_t)v;
+		return;
+	}
+	for (int i = 0; i < 5; ++i)
+		s->pk[5 * k + (size_t)i] = (uint8_t)(v >> (8 * i));
+}
+
+static void sim_alloc(struct sim *s, size_t words)
+{
+	free(s->mem);
+	free(s->pk);
+	s->mem = NULL, s->pk = NULL;
+	s->words = words;
+	if (s->r13)
+		s->pk = calloc(words ? words : 1, 5);
+	else
+		s->mem = calloc(words ? words : 1, 4);
+}
+
+// The fabric's rule at the enable, muir's: each ring on a line (4 words, 8 on
+// revision 13), of at most 256 entries, inside main memory.  A ring that
+// breaks it leaves the device disabled.
+static int sim_fits(const struct sim *s, uint32_t base, uint32_t log2)
+{
+	return (base & (s->r13 ? 7u : 3u)) == 0 && log2 <= 8 && base + ((size_t)8 << log2) <= s->words;
+}
 
 static void sim_disable(struct sim *s)
 {
@@ -93,7 +140,7 @@ static uint32_t sim_rd(void *ctx, unsigned off)
 {
 	struct sim *s = ctx;
 	switch (off) {
-	case 0x000: return PAGE_IDENT;
+	case 0x000: return s->r13 ? PAGE_IDENT_13 : PAGE_IDENT;
 	case 0x010: return s->rtc_sec;
 	case 0x014: return s->rtc_frac;
 	case 0x100:
@@ -185,7 +232,9 @@ static void sim_face(struct sim *s, struct qfd_fabric *fb, struct qfd_face *f)
 	char why[200];
 	if (qfd_fabric_attach(fb, why, sizeof why) != 0)
 		fail("attach: %s", why);
-	qfd_fabric_face(fb, s->mem, f);
+	if (fb->revision_13 != s->r13)
+		fail("attach: the program took the page for revision %s", fb->revision_13 ? "13" : "12");
+	qfd_fabric_face(fb, s->r13 ? (volatile void *)s->pk : (volatile void *)s->mem, f);
 	f->mem.touch = sim_touch;
 	f->mem.ctx = s;
 }
@@ -212,14 +261,19 @@ static size_t hex_bytes(const char *s, uint8_t *out)
 	return n;
 }
 
-static uint64_t fnv(const uint32_t *w, size_t n)
+// FNV-1a over main memory as it is stored: 4 bytes a word to revision 12,
+// and on revision 13 the 5 of packed storage.
+static uint64_t fnv(const struct sim *s)
 {
 	uint64_t h = 0xcbf29ce484222325ull;
-	for (size_t i = 0; i < n; ++i)
-		for (int k = 0; k < 4; ++k) {
-			h ^= (uint8_t)(w[i] >> (8 * k));
+	const int n = s->r13 ? 5 : 4;
+	for (size_t i = 0; i < s->words; ++i) {
+		const uint64_t w = sim_get(s, i);
+		for (int k = 0; k < n; ++k) {
+			h ^= (uint8_t)(w >> (8 * k));
 			h *= 0x100000001b3ull;
 		}
+	}
 	return h;
 }
 
@@ -324,10 +378,11 @@ static int run_script(const char *script, const char *tree, const char *outpath)
 		if (n == 0 || w[0][0] == '#')
 			continue;
 		char path[4096];
-		if (!strcmp(w[0], "memory")) {
-			free(s.mem);
-			s.words = (size_t)num(w[1]);
-			s.mem = calloc(s.words, 4);
+		if (!strcmp(w[0], "revision")) {
+			// Before `memory`: the layout main memory takes.
+			s.r13 = num(w[1]) == 13;
+		} else if (!strcmp(w[0], "memory")) {
+			sim_alloc(&s, (size_t)num(w[1]));
 			sim_face(&s, &fb, &face);
 		} else if (!strcmp(w[0], "root")) {
 			char spec[4096], why[512];
@@ -341,13 +396,14 @@ static int run_script(const char *script, const char *tree, const char *outpath)
 			// Registers 162-167 are taken only while the device is
 			// disabled, as muir's are.
 			if (!s.enabled) {
-				s.cb = (uint32_t)num(w[1]) & 0xFFFFFF;
+				const uint32_t mask = s.r13 ? 0x0FFFFFFF : 0xFFFFFF;
+				s.cb = (uint32_t)num(w[1]) & mask;
 				s.cl = (uint32_t)num(w[2]) & 017;
-				s.rb = (uint32_t)num(w[3]) & 0xFFFFFF;
+				s.rb = (uint32_t)num(w[3]) & mask;
 				s.rl = (uint32_t)num(w[4]) & 017;
 			}
 		} else if (!strcmp(w[0], "enable")) {
-			if (!s.enabled) {
+			if (!s.enabled && sim_fits(&s, s.cb, s.cl) && sim_fits(&s, s.rb, s.rl)) {
 				s.enabled = 1;
 				s.cmd_prod = s.resp_prod = s.resp_cons = 0;
 			}
@@ -359,19 +415,22 @@ static int run_script(const char *script, const char *tree, const char *outpath)
 		} else if (!strcmp(w[0], "fill")) {
 			const size_t a = (size_t)num(w[1]), k = (size_t)num(w[2]);
 			for (size_t i = 0; i < k; ++i)
-				s.mem[a + i] = (uint32_t)num(w[3]);
+				sim_put(&s, a + i, num(w[3]));
 		} else if (!strcmp(w[0], "bytes")) {
+			// On revision 13 each word takes the tag the script gives, 0
+			// when it gives none.
 			const size_t a = (size_t)num(w[1]), k = hex_bytes(w[2], bytes);
+			const uint64_t tag = n > 3 ? num(w[3]) & 0xFF : 0;
 			for (size_t i = 0; i < (k + 3) / 4; ++i) {
 				uint32_t v = 0;
 				for (size_t j = 0; j < 4 && 4 * i + j < k; ++j)
 					v |= (uint32_t)bytes[4 * i + j] << (8 * j);
-				s.mem[a + i] = v;
+				sim_put(&s, a + i, tag << 32 | v);
 			}
 		} else if (!strcmp(w[0], "cmd")) {
 			const size_t slot = s.cb + 8u * (prod % (1u << s.cl));
 			for (int k = 0; k < 8; ++k)
-				s.mem[slot + (size_t)k] = (uint32_t)num(w[1 + k]);
+				sim_put(&s, slot + (size_t)k, num(w[1 + k]));
 			prod++;
 		} else if (!strcmp(w[0], "post")) {
 			// A producer that claims more than the ring holds, or
@@ -404,27 +463,30 @@ static int run_script(const char *script, const char *tree, const char *outpath)
 			while (seen != upto) {
 				const size_t r = s.rb + 8u * (seen % (1u << s.rl));
 				fprintf(out, "resp %u", seen);
+				const int digits = s.r13 ? 10 : 8;
 				for (int k = 0; k < 8; ++k) {
-					const uint32_t v = s.mem[r + (size_t)k];
+					const uint64_t v = sim_get(&s, r + (size_t)k);
+					const uint32_t low = (uint32_t)v;
 					int masked = 0;
 					for (int j = 0; j < nnow && j < 256; ++j)
 						if (k == 4 && nowat[j] == seen
-						    && (v > clock ? v - clock : clock - v) <= 10)
+						    && (low > clock ? low - clock : clock - low) <= 10)
 							masked = 1;
 					if (masked) {
 						fprintf(out, " NOW");
-						s.mem[r + (size_t)k] = 0;
+						sim_put(&s, r + (size_t)k, 0);
 					}
 					else
-						fprintf(out, " %08x", v);
+						fprintf(out, " %0*llx", digits, (unsigned long long)v);
 				}
 				fprintf(out, "\n");
 				const size_t c = s.cb + 8u * (seen % (1u << s.cl));
-				const size_t at = s.mem[c + 4] & 0xFFFFFF, len = s.mem[c + 5];
-				if (!(at & 3) && len <= 65536 && at + (len + 3) / 4 <= s.words) {
+				const size_t at = (uint32_t)sim_get(&s, c + 4) & (s.r13 ? 0x0FFFFFFF : 0xFFFFFF);
+				const size_t len = (uint32_t)sim_get(&s, c + 5);
+				if (!(at & (s.r13 ? 7 : 3)) && len <= 65536 && at + (len + 3) / 4 <= s.words) {
 					fprintf(out, "b %u", seen);
 					for (size_t k = 0; k < (len + 3) / 4; ++k)
-						fprintf(out, " %08x", s.mem[at + k]);
+						fprintf(out, " %0*llx", digits, (unsigned long long)sim_get(&s, at + k));
 					fprintf(out, "\n");
 				}
 				seen++;
@@ -439,7 +501,7 @@ static int run_script(const char *script, const char *tree, const char *outpath)
 			char why[256];
 			const char *ref = qfd_checkpoint_refusal(s.handles, queued, why, sizeof why);
 			fprintf(out, "refusal %s\n", ref ? ref : "none");
-			fprintf(out, "mem %016llx\n", (unsigned long long)fnv(s.mem, s.words));
+			fprintf(out, "mem %016llx\n", (unsigned long long)fnv(&s));
 			settle_dirs(tree);
 		} else if (!strcmp(w[0], "hostwrite")) {
 			snprintf(path, sizeof path, "%s/%s", tree, w[1]);
@@ -469,9 +531,13 @@ static int run_script(const char *script, const char *tree, const char *outpath)
 	// The run is over: what the program does when it stops.
 	qfd_reset(&d);
 	settle_dirs(tree);
+	if (qfd_hook_bad_access)
+		fail("%lu accesses to packed main memory were misaligned or outside their run",
+		     qfd_hook_bad_access);
 	fclose(in);
 	fclose(out);
 	free(s.mem);
+	free(s.pk);
 	return failures != 0;
 }
 
@@ -806,6 +872,81 @@ static void unit_fat(const char *work)
 	free(s.mem);
 }
 
+// Revision 13's page and memory, where no script of a quarter of a million
+// words reaches: rings and buffers above 16M words, where a base's <27:24>
+// are set, and the page's own rules for which main memory it may say.
+static void unit_revision_13(const char *work)
+{
+	char root[4096], spec[4200], p[4400], why[200];
+	snprintf(root, sizeof root, "%s/r13", work);
+	mkdir(root, 0755);
+	snprintf(p, sizeof p, "%s/hi.txt", root);
+	write_file(p, "high");
+	snprintf(spec, sizeof spec, "%s", root);
+	static struct qfd d;
+	qfd_init(&d);
+	if (qfd_mount_add(&d.mounts, spec, why, sizeof why) != 0)
+		fail("r13: %s", why);
+	struct sim s;
+	memset(&s, 0, sizeof s);
+	s.r13 = 1;
+	// 16M + 4,096 words: 80 MB of packed storage, which calloc leaves
+	// untouched but for the pages the command uses.
+	sim_alloc(&s, 0x1001000);
+	struct qfd_fabric fb;
+	struct qfd_face face;
+	sim_face(&s, &fb, &face);
+	if (!fb.revision_13 || fb.mem_words != 0x1001000)
+		fail("r13: \"QF13\" with %zu words was not taken as revision 13's page", s.words);
+	struct qfd_ring g;
+	qfd_ring_init(&g, &d);
+	// Both rings and the buffer above 16M words: <24> of each address set.
+	s.cb = 0x1000000, s.cl = 1, s.rb = 0x1000800, s.rl = 1, s.enabled = 1;
+	const char *name = "/hi.txt";
+	for (size_t i = 0; i < 2; ++i) {
+		uint32_t v = 0;
+		for (size_t j = 0; j < 4 && 4 * i + j < strlen(name); ++j)
+			v |= (uint32_t)(uint8_t)name[4 * i + j] << (8 * j);
+		sim_put(&s, 0x1000400 + i, (uint64_t)0x42 << 32 | v);
+	}
+	const uint32_t e[8] = { 0x10u | QFD_OPEN << 16 | 2u << 24, 0, 0x1000400,
+				(uint32_t)strlen(name), 0, 0, 0, 0 };
+	for (int k = 0; k < 8; ++k)
+		sim_put(&s, s.cb + (size_t)k, (uint64_t)QFD_TAG_FIXNUM << 32 | e[k]);
+	s.cmd_prod = 1;
+	while (qfd_ring_step(&g, &face) > 0)
+		;
+	const uint64_t r0 = sim_get(&s, s.rb);
+	if (s.resp_prod != 1 || r0 != ((uint64_t)QFD_TAG_FIXNUM << 32 | QFD_OPEN << 24 | 0x10u))
+		fail("r13: a probe with its rings and buffer above 16M words answered %010llx, not "
+		     "OK as a fixnum", (unsigned long long)r0);
+	if (sim_get(&s, 0) || sim_get(&s, 0x400) || sim_get(&s, 0x800))
+		fail("r13: a word below 16M words was touched: the addresses lost <24>");
+	if (qfd_hook_bad_access)
+		fail("r13: %lu accesses were misaligned or outside their run", qfd_hook_bad_access);
+	qfd_reset(&d);
+	free(s.pk);
+	// What main memory each page may say: revision 13's up to 64M words and
+	// revision 12's up to 16M.
+	struct { uint32_t ident, words; int ok, r13; } pages[] = {
+		{ PAGE_IDENT_13, 64u << 20, 1, 1 }, { PAGE_IDENT_13, (64u << 20) + 1, 0, 1 },
+		{ PAGE_IDENT, 16u << 20, 1, 0 }, { PAGE_IDENT, (16u << 20) + 1, 0, 0 },
+		{ 0x51464438u, 1u << 20, 0, 0 },
+	};
+	for (unsigned k = 0; k < sizeof pages / sizeof pages[0]; ++k) {
+		static uint32_t page[1024];
+		memset(page, 0, sizeof page);
+		page[0] = pages[k].ident;
+		page[0x128 / 4] = pages[k].words;
+		struct qfd_fabric f = { 0 };
+		f.page = page;
+		const int ok = qfd_fabric_attach(&f, why, sizeof why) == 0;
+		if (ok != pages[k].ok || (ok && f.revision_13 != pages[k].r13))
+			fail("r13: a page reading 0x%08x with %u words was %s", pages[k].ident, pages[k].words,
+			     ok ? "taken" : "refused");
+	}
+}
+
 static void unit_refusal(void)
 {
 	char buf[256];
@@ -835,6 +976,7 @@ int main(int argc, char **argv)
 		unit_sweep(work);
 		unit_fat(work);
 		unit_refusal();
+		unit_revision_13(work);
 		printf("qfd_test: unit: %s\n", failures ? "FAILED" : "ok");
 		return failures != 0;
 	}

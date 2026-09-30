@@ -20,7 +20,11 @@ build reads together:
     GPO register, which sits one word below the GPI tally `cadr_board.h`
     names (TF-A's plat/intel/soc/agilex5/include/agilex5_system_manager.h,
     GPO at 0xE4 and GPI at 0xE8);
-  - on the Zynq boards, the JTAG memory proofs' `MAIN_BASE`.
+  - on the Zynq boards, the JTAG memory proofs' `MAIN_BASE`;
+  - for QUUX revision 13, which has a device tree of its own on the Arty
+    Z7-20 and the DE25-Nano: `quux13-reserved.dtsi`, the node the card
+    script names for REVISION=13, and the records' size the disk pack
+    program maps.
 
 Each is right today.  A change to one of them builds, and each build is
 self-consistent, so the first thing to notice would be a board: a device tree
@@ -30,7 +34,10 @@ ordinary memory, and the machine then writes over whatever Linux put there.
 WHAT IT HOLDS.  For each board family, every copy against the fabric's
 package: the reservation's base and size, main memory, the display and the
 color display, the spare above the display, and on the DE25-Nano the GPO
-register's page and offset against the tally's.  The package is the reference
+register's page and offset against the tally's.  And for QUUX revision 13, on
+the boards that run it: its main memory and room, the records' size, its own
+reservation from its main memory to the end of the records, and that its
+packed main memory (5 bytes a word) ends at the display.  The package is the reference
 only because it is the one the fabric is built from; any disagreement fails,
 whichever side moved.
 
@@ -54,6 +61,13 @@ UBOOT_ENV = "boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.en
 ZYNQ_TCL = ("boards/arty-z7-20/vivado/ddr_check.tcl",
             "boards/arty-z7-20/vivado/ddr_run.tcl")
 NAMES = {"zynq": "the Zynq boards", "de25": "the DE25-Nano"}
+# QUUX revision 13's own reservation, in its own tree, on the boards that run
+# it (the Cora Z7-07S cannot build QUUX, and has no revision 13 tree).
+QUUX13_DTSI = {
+    "zynq": "boards/arty-z7-20/linux/quux13-reserved.dtsi",
+    "de25": "boards/de25-nano/linux/quux13-reserved.dtsi",
+}
+FEEDER_H = "boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src/pack_feeder.h"
 # The system manager's GPO is the word below its GPI.  TF-A's
 # agilex5_system_manager.h:53-54, SOCFPGA_SYSMGR_GPO 0xE4 and GPI 0xE8.
 GPO_BELOW_GPI = 4
@@ -148,7 +162,9 @@ def ddr_map(text, defined):
             v = sv_expr(expr, {k: out[k] for k in out})
         out[name] = v
     for want in ("RESERVED_BASE", "RESERVED_MB", "MAIN_BASE", "MAIN_WORDS",
-                 "DISPLAY_BASE", "DISPLAY_WORDS", "COLOR_DISPLAY_BASE"):
+                 "DISPLAY_BASE", "DISPLAY_WORDS", "COLOR_DISPLAY_BASE",
+                 "QUUX13_MAIN_BASE", "QUUX13_MAIN_WORDS_MAX", "RECORDS_BYTES",
+                 "QUUX13_RESERVED_END"):
         if want not in out:
             fail("%s has no %s for %s" % (DDR_MAP, want, NAMES["de25" if defined else "zynq"]))
     return out
@@ -160,6 +176,7 @@ def board_h(text):
     if not m:
         fail("%s has no CADR_BOARD_DE25_NANO half followed by an #else" % BOARD_H)
     halves = {}
+    records = re.findall(r"^#define CADR_BOARD_RECORDS_BYTES\s+0x([0-9A-Fa-f]+)u\s*$", text, re.M)
     for fam, body in (("de25", m.group(1)), ("zynq", m.group(2))):
         d = {}
         for name, value in re.findall(r"^#define CADR_BOARD_(\w+)_HEX\s+([0-9A-Fa-f]+)\s*$",
@@ -168,6 +185,12 @@ def board_h(text):
         for name, value in re.findall(r"^#define CADR_BOARD_(TALLY_\w+)\s+0x([0-9A-Fa-f]+)u\s*$",
                                       body, re.M):
             d[name] = int(value, 16)
+        m = re.findall(r"^#define CADR_BOARD_QUUX13_MAIN_WORDS_MAX\s+\((\d+)u \* 1024u \* 1024u\)\s*$",
+                       body, re.M)
+        if len(m) == 1:
+            d["QUUX13_WORDS"] = int(m[0]) << 20
+        if len(records) == 1:
+            d["RECORDS"] = int(records[0], 16)
         halves[fam] = d
     return halves
 
@@ -175,9 +198,9 @@ def board_h(text):
 def dtsi(text, path):
     """The reserved-memory node's unit address, and its reg as (base, size)
     at one or two cells each."""
-    nodes = re.findall(r"cadr@([0-9A-Fa-f]+)\s*\{(.*?)\};", text, re.S)
+    nodes = re.findall(r"(?:cadr|quux13)@([0-9A-Fa-f]+)\s*\{(.*?)\};", text, re.S)
     if len(nodes) != 1:
-        fail("%s has %d cadr@ nodes, wanting one" % (path, len(nodes)))
+        fail("%s has %d cadr@ or quux13@ nodes, wanting one" % (path, len(nodes)))
     unit, body = nodes[0]
     m = re.search(r"\breg\s*=\s*<([^>]*)>", body)
     if not m:
@@ -211,6 +234,16 @@ def mksd(text):
     for fam in ("de25", "zynq"):
         if fam not in out:
             fail("%s has no arm for %s" % (MKSD, NAMES[fam]))
+    # REVISION=13's own arms, one a board that runs it.
+    m = re.search(r'^case "\$REVISION" in\n(.*?)^esac', text, re.S | re.M)
+    if not m:
+        fail("%s: the REVISION case is not where this check looks" % MKSD)
+    for label, fam in (("arty-z7-20", "zynq"), ("de25-nano", "de25")):
+        r = re.search(r"^\s*%s\)\s*$(.*?);;" % re.escape(label), m.group(1), re.S | re.M)
+        v = re.findall(r"^\s*RESERVED=(\S+)", r.group(1), re.M) if r else []
+        if len(v) != 1:
+            fail("%s: REVISION=13 on %s names %d RESERVED, wanting one" % (MKSD, label, len(v)))
+        out[fam]["RESERVED13"] = v[0]
     return out
 
 
@@ -310,6 +343,47 @@ def main():
                 disagree("%s, %s: 0x%08X for %d MB is not inside the reservation "
                          "0x%08X-0x%08X" % (NAMES[fam], what, lo, n // MB,
                                             pm["RESERVED_BASE"], end - 1))
+
+    # QUUX revision 13's own reservation, from its main memory to the end of
+    # the records, and nothing in its main memory but main memory.
+    feeder = re.findall(r"^#define FEEDER_MAP_BYTES\s+0x([0-9A-Fa-f]+)u\s*$", read(root, FEEDER_H), re.M)
+    if len(feeder) != 1:
+        fail("%s states FEEDER_MAP_BYTES %d times, wanting once" % (FEEDER_H, len(feeder)))
+    for fam in ("zynq", "de25"):
+        pm, h, c = maps[fam], header[fam], card[fam]
+        if "QUUX13_MAIN" not in h or "QUUX13_WORDS" not in h or "RECORDS" not in h:
+            fail("%s names no revision 13 main memory, room or records for %s" % (BOARD_H, NAMES[fam]))
+        same("revision 13's main memory", fam, [
+            (DDR_MAP + " QUUX13_MAIN_BASE", pm["QUUX13_MAIN_BASE"]),
+            ("cadr_board.h QUUX13_MAIN", h["QUUX13_MAIN"])])
+        same("revision 13's room, words", fam, [
+            (DDR_MAP + " QUUX13_MAIN_WORDS_MAX", pm["QUUX13_MAIN_WORDS_MAX"]),
+            ("cadr_board.h QUUX13_MAIN_WORDS_MAX", h["QUUX13_WORDS"])])
+        same("the records' size", fam, [
+            (DDR_MAP + " RECORDS_BYTES", pm["RECORDS_BYTES"]),
+            ("cadr_board.h RECORDS_BYTES", h["RECORDS"]),
+            (FEEDER_H + " FEEDER_MAP_BYTES", int(feeder[0], 16))])
+        unit, base, size = dtsi(read(root, QUUX13_DTSI[fam]), QUUX13_DTSI[fam])
+        m = re.fullmatch(r"quux13@([0-9a-fA-F]+)", c.get("RESERVED13", ""))
+        if not m:
+            fail("%s names no REVISION=13 RESERVED=quux13@... node for %s" % (MKSD, NAMES[fam]))
+        same("revision 13's reservation", fam, [
+            (DDR_MAP + " QUUX13_MAIN_BASE", pm["QUUX13_MAIN_BASE"]),
+            (QUUX13_DTSI[fam] + " reg", base),
+            (QUUX13_DTSI[fam] + " unit address", unit),
+            (MKSD + " REVISION=13 RESERVED", int(m.group(1), 16))])
+        same("revision 13's reservation's end", fam, [
+            (DDR_MAP + " QUUX13_RESERVED_END", pm["QUUX13_RESERVED_END"]),
+            ("the spare's base + RECORDS_BYTES", pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4
+             + pm["RECORDS_BYTES"]),
+            (QUUX13_DTSI[fam] + " reg", base + size)])
+        end13 = pm["QUUX13_MAIN_BASE"] + 5 * pm["QUUX13_MAIN_WORDS_MAX"]
+        if end13 != pm["DISPLAY_BASE"]:
+            disagree("%s: revision 13's main memory, 5 bytes a word, ends at 0x%08X and the "
+                     "display begins at 0x%08X" % (NAMES[fam], end13, pm["DISPLAY_BASE"]))
+        if pm["QUUX13_MAIN_BASE"] % 4096:
+            disagree("%s: revision 13's main memory at 0x%08X is not on a 4 KB boundary "
+                     "(G1 4.1)" % (NAMES[fam], pm["QUUX13_MAIN_BASE"]))
 
     gpo = env_value(read(root, UBOOT_ENV), "cadr_gpo")
     h = header["de25"]

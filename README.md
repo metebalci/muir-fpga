@@ -343,6 +343,11 @@ day want**. That is a quarter of the board's 512 MB, and Linux keeps 384.
 | `0x1C02_0000` | in the 8 MB above | 128 KB, 32,768 words | second display |
 | `0x1C80_0000` | 56 MB | --- | spare |
 
+QUUX revision 13 has its own device trees and loader, and its own region:
+main memory as 32M words of packed storage from `0x1200_0000`, then the display
+and the spare's first 128 KB, the disk pack program's records. Linux keeps
+343.9 MB beside it (`docs/linux.md`).
+
 DDR was never the limit. The CADR's physical address is 22 bits, a 14-bit page
 frame out of the map with `VMA<7:0>` as the offset, so 3,932,160 words is the
 ceiling. The top four of the 64 slots are taken by the display, the disk

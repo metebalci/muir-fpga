@@ -11,11 +11,11 @@
 // in that order; there is no framing inside it and no checksum over it, so a
 // field of the wrong width silently shifts everything after it.
 //
-// **THE VERSION IS 49 AND A FILE OF ANY OTHER VERSION IS REFUSED BY NAME**,
-// which is the one thing that stops a format change here from being read
-// wrong somewhere else.  When muir's `checkpoint::VERSION` moves, this file
-// moves with it or the board's checkpoints stop loading --- loudly, which is
-// the right way round.
+// **THE VERSION IS 49, OR 50 FOR REVISION 13's WORDS, AND A FILE OF ANY
+// OTHER VERSION IS REFUSED BY NAME**, which is the one thing that stops a
+// format change here from being read wrong somewhere else.  When muir's
+// `checkpoint::VERSION` or `VERSION_40` moves, this file moves with it or the
+// board's checkpoints stop loading --- loudly, which is the right way round.
 //
 // **THE PACKING MUST MATCH muir's OWN, NOT MERELY DECODE TO THE SAME BYTES.**
 // `unpack` accepts any valid packing, so a lazier writer would still load;
@@ -30,8 +30,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// muir's `checkpoint::VERSION`.
+// muir's `checkpoint::VERSION`, a 32-bit machine's, and `VERSION_40`, QUUX
+// revision 13's (contract G2 appendix A1.13): every word 5 bytes, `<7:0>`
+// first, so that main memory in it is packed storage byte for byte.  The
+// file's version says which, and `chk_write_file` takes it from the body.
 #define CHK_VERSION 49u
+#define CHK_VERSION_40 50u
 
 // **MIT'S GRID, `cadr_tick_pkg::TICK_NS`: what a fabric tick stands for in
 // muir's nanoseconds**, and so what the machine's elapsed time is multiplied
@@ -57,6 +61,13 @@ struct chk {
 	// unreadable, and a truncated file is refused by muir at the first
 	// short read.
 	int broken;
+	// The bytes a word takes, muir's `Writer::set_word_bits`: 4, or 5 on
+	// revision 13.  `chk_init` makes it 4.
+	unsigned word_bytes;
+	// Where `len` stood when `chk_hole` was called, and the bytes that go
+	// there: revision 13's main memory, which is not copied into `p`.
+	const volatile uint8_t *hole;
+	size_t hole_at, hole_len;
 };
 
 void chk_init(struct chk *w);
@@ -67,6 +78,13 @@ void chk_u16(struct chk *w, uint16_t v);
 void chk_u32(struct chk *w, uint32_t v);
 void chk_u64(struct chk *w, uint64_t v);
 void chk_bool(struct chk *w, int v);
+// A word (muir's `Writer::word`), in `word_bytes` bytes; and a count, then the
+// words (`Writer::words`).
+void chk_word(struct chk *w, uint64_t v);
+void chk_words(struct chk *w, const uint64_t *v, size_t n);
+// `n` bytes that belong here in the body and are not copied into it: read
+// from `bytes` when the file is written, as they stand then.  One a body.
+void chk_hole(struct chk *w, const volatile uint8_t *bytes, size_t n);
 // A count, then the items.  The count is a `u64` and is ALWAYS written, even
 // in front of an array whose length the reader already knows --- muir's
 // `count_for` then refuses any other count, which is what turns a wrong
@@ -87,8 +105,9 @@ void chk_opt_u64(struct chk *w, int present, uint64_t v);
 // an LEB128 varint, and the literal bytes.  The caller owns the result.
 uint8_t *chk_pack(const uint8_t *raw, size_t len, size_t *out_len);
 
-// The whole file: the header naming `engine` and `boards`, then the packed
-// body.  Returns 0, or -1 with errno set.
+// The whole file: the header naming the version the body's words say,
+// `engine` and `boards`, then the packed body, its hole's bytes read in
+// place.  Returns 0, or -1 with errno set.
 int chk_write_file(const char *path, const char *engine, uint32_t boards,
 		   const struct chk *body);
 

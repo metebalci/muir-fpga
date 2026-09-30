@@ -35,9 +35,12 @@ void qfd_ring_init(struct qfd_ring *g, struct qfd *d)
 	g->rtc_second = -1;
 }
 
+// A ring the fabric would have refused at the enable: more than 256
+// entries, off a line (4 words, 8 on revision 13), or past main memory.
 static int fits(const struct qfd_face *f, uint32_t base, uint32_t log2)
 {
-	return log2 <= 8 && (base & 3) == 0 && (size_t)base + ((size_t)8 << log2) <= f->mem.words;
+	return log2 <= 8 && (base & qfd_mem_line(&f->mem)) == 0
+	       && (size_t)base + ((size_t)8 << log2) <= f->mem.words;
 }
 
 int qfd_ring_step(struct qfd_ring *g, struct qfd_face *f)

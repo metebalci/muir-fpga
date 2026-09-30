@@ -49,12 +49,27 @@
 
 CADR_DE25_BOARD_DIR = $(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano
 CADR_DE25_RESERVED_DTSI = $(BR2_EXTERNAL_CADR_DE25_PATH)/../cadr-reserved.dtsi
+CADR_DE25_QUUX13_RESERVED_DTSI = $(BR2_EXTERNAL_CADR_DE25_PATH)/../quux13-reserved.dtsi
 
+# The CADR's reservation, and QUUX revision 13's beside it for revision 13's
+# own tree, socfpga_agilex5_de25_nano_quux13.dts (docs/linux.md).
 define CADR_DE25_LINUX_COPY_RESERVED_DTSI
 	mkdir -p $(LINUX_ARCH_PATH)/boot/dts/intel
-	cp -f $(CADR_DE25_RESERVED_DTSI) $(LINUX_ARCH_PATH)/boot/dts/intel/
+	cp -f $(CADR_DE25_RESERVED_DTSI) $(CADR_DE25_QUUX13_RESERVED_DTSI) $(LINUX_ARCH_PATH)/boot/dts/intel/
 endef
 LINUX_PRE_BUILD_HOOKS += CADR_DE25_LINUX_COPY_RESERVED_DTSI
+
+# **REVISION 13's u-boot.itb, beside the board's**, for a revision 13 card:
+# the build's U-Boot and firmware with revision 13's tree
+# (`boards/arty-z7-20/linux/quux13-loader.sh` says how).
+define CADR_DE25_UBOOT_QUUX13_LOADER
+	$(TARGET_MAKE_ENV) $(BR2_EXTERNAL_CADR_PATH)/../quux13-loader.sh $(@D) de25-nano
+endef
+UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
+define CADR_DE25_UBOOT_INSTALL_QUUX13_LOADER
+	cp -f $(@D)/u-boot-quux13.itb $(BINARIES_DIR)/
+endef
+UBOOT_POST_INSTALL_IMAGES_HOOKS += CADR_DE25_UBOOT_INSTALL_QUUX13_LOADER
 
 define CADR_DE25_UBOOT_COPY_ENV
 	cp -f $(CADR_DE25_BOARD_DIR)/uboot/cadr_de25.env $(@D)/board/intel/agilex5-socdk/

@@ -448,6 +448,64 @@ display and the spare. `0x1800_0000` and 128 MB are exactly `RESERVED_BASE` and
 `RESERVED_MB` in `cadr_ddr_map.sv`. Sub-dividing is a change to make when
 something claims a sub-region by phandle, and not before.
 
+## Each machine's reservation, and how a card pairs it with its bitstream
+
+**Each machine has its own device trees.** The CADR's and QUUX revision 12's
+reserve the CADR's 128 MB, as above, and Linux keeps 384 MB on the Arty Z7-20
+and 864 MB on the DE25-Nano. QUUX revision 13's reserve its own region
+(`quux13-reserved.dtsi`). Its main memory is 32M words of packed storage, 5
+bytes a word, directly below the display. The display and the disk pack
+program's records stay where the CADR's are. The region runs from main memory
+to the end of the records, and the rest of the CADR's spare is Linux's on that
+machine.
+
+    board        revision 13's region         main memory     Linux
+    Arty Z7-20   0x1200_0000-0x1C81_FFFF      160 MB          343.9 MB, two ranges
+    DE25-Nano    0xA000_0000-0xB481_FFFF      room for 320 MB about 664 MB
+
+**Revision 13's tree is the board's tree with its reservation after the
+CADR's**, which it takes out: `zynq-arty-z7-20-quux13.dts` and
+`socfpga_agilex5_de25_nano_quux13.dts`. The kernel builds both trees, since
+it builds every tree in the board's `dts/`.
+
+**U-Boot's own tree is the machine's too, so each machine has its own
+loader.** U-Boot runs with the tree in its FIT: `u-boot.img` on the Zynq
+boards and `u-boot.itb` on the DE25-Nano, both on the card. It keeps its
+relocation, and the kernel's tree and the ramdisk it places, clear of that
+tree's reservation, while the bitstream it loaded is already running. So a
+revision 13 card carries a loader whose tree is revision 13's. The build makes
+it beside the board's (`quux13-loader.sh`, from a U-Boot build hook in
+`external.mk`): the same U-Boot and firmware, made by the command U-Boot
+recorded for its own loader with revision 13's tree in place of the board's.
+The script refuses to run if that recorded command does not reproduce the
+build's own loader byte for byte.
+
+- On the Arty Z7-20, U-Boot relocates to the highest free range that holds
+  it. With the CADR's tree that is below `0x1800_0000`. With revision 13's
+  it is the 55.9 MB above the records. The loads at fixed addresses
+  (`uboot/cadr.env`) are below `0x1000_0000`, clear of both.
+- On the DE25-Nano, U-Boot relocates to the top 128 MB whatever its tree
+  says, and places the kernel's tree and the ramdisk just under itself. Both
+  machines' regions end below `0xB800_0000`, and the fixed loads end below
+  `0xA000_0000`.
+
+**The pairing is the card's, and the served set's.** The loader fetches the
+kernel's tree from the folder it fetches the bitstream from, under the board
+tree's own name (`cadr.env`'s `cadr_card`, the served `uEnv.net`). So
+`mksd-buildroot.sh` with `REVISION=13` stages revision 13's tree under that
+name beside revision 13's bitstream, and revision 13's loader under the
+loader's name. It then reads both trees back, the one in the board's folder
+and the one inside the loader, and requires revision 13's node in each. A card
+normally carries one machine. The fabric cannot be asked which machine it is,
+so nothing on the board can check the pairing. A revision 13 bitstream under
+the CADR's tree hands Linux revision 13's main memory; the opposite pairing is
+safe.
+
+`tools/mem_map_check.py` holds every copy of each region to the fabric's
+package. `tools/reserved_check.py` compiles each machine's node, checks that
+its trees reach the kernel, U-Boot and the card, and models U-Boot's fixed
+loads and relocation against each machine's region.
+
 ## What is in `boards/arty-z7-20/linux/`
 
     cadr-reserved.dtsi   the reserved-memory node, appended to the BSP's tree
@@ -456,7 +514,9 @@ something claims a sub-region by phandle, and not before.
 
 That was the directory for the stepping stone. It now holds the Buildroot tree
 and the card scripts beside those, and `uEnv.txt` has become `uEnv.txt.in`,
-which the staging fills in.
+which the staging fills in. Beside `cadr-reserved.dtsi` are QUUX revision 13's
+reservation, `quux13-reserved.dtsi`, and `quux13-loader.sh`, which makes its
+loader (the section before this one).
 
 `mksd.sh` sums the BSP before use, for the same reason the band's archive is
 summed. The BSP itself is gitignored and belongs in `vendor/`.
@@ -801,7 +861,8 @@ the processor.
 
 ## What is in `boards/de25-nano/linux/`
 
-    cadr-reserved.dtsi   the machine's 128 MB at 0xB000_0000, for both trees
+    cadr-reserved.dtsi   the CADR's 128 MB at 0xB000_0000, for both trees
+    quux13-reserved.dtsi QUUX revision 13's region, for revision 13's trees
     buildroot_check.py   the pins, the boot's own arrangement, the
                          configurations after a build, and the programs
     buildroot/           the BR2_EXTERNAL tree, which holds no package
@@ -810,6 +871,7 @@ and inside that tree:
 
     configs/de25_nano_defconfig             what the image is, and why
     board/de25-nano/dts/intel/*_cadr.dts    the device tree, for both
+    board/de25-nano/dts/intel/*_quux13.dts  revision 13's, for both
     board/de25-nano/uboot/cadr_de25.env     the default environment
     board/de25-nano/uboot/uboot.fragment    over Altera's DE25 configuration
     board/de25-nano/linux/linux.fragment    over Altera's arm64 defconfig
@@ -817,7 +879,7 @@ and inside that tree:
     board/de25-nano/uEnv.net                the served file, for the network
     board/de25-nano/patches/                a hash file for each pinned commit
     board/de25-nano/post-build.sh           takes the modules back out
-    external.mk                             two hooks, and no package
+    external.mk                             four hooks, and no package
 
 **The packages live in the Arty Z7-20's tree**, so this build is given both
 trees at once, and `make buildroot-de25` builds it into an output directory of

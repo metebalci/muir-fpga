@@ -59,17 +59,45 @@ enum {
 // show such a name, and the start sweeps any left behind.
 #define QFD_TEMP_PREFIX      ".quux-write-"
 
-// Main memory, as the device sees it: `words` words from `w`, word k at
-// `w[k]`.  On a board `w` is an uncached mapping of DDR (`cadr_mem.h` says
-// why every access is one aligned 32-bit word); in the check it is an array.
-// `touch`, when set, is called before every access, which is how the check
-// holds that no word is touched outside the claim.
+// Main memory, as the device sees it: `words` words.  On a board it is an
+// uncached mapping of DDR (`cadr_mem.h` says why every access is naturally
+// aligned); in the check it is an array.  `touch`, when set, is called before
+// every word the device reads or writes, which is how the check holds that no
+// word is touched outside the claim.
+//
+// **TWO LAYOUTS, ONE A REVISION.**  To revision 12, word k is `w[k]`, 32
+// bits.  On revision 13 (contract G1 §4.1, G2 §4.3, appendix A1.10) main
+// memory is packed storage: word k is the five bytes `b[5k]` to `b[5k + 4]`,
+// `<7:0>` first and the tag `<39:32>` last, so that a word is never an aligned
+// 32-bit word of the mapping.  The device reads `<31:0>` of what it reads,
+// whatever the tag, and writes every word it fills, a buffer's or a
+// response's, as a fixnum: the field and the tag 005.  Its rings and buffers
+// are at 28-bit addresses on an 8-word line, where revision 12's are 24-bit on
+// a 4-word one.
 struct qfd_mem {
-	volatile uint32_t *w;
+	volatile uint32_t *w;   // revision 12
+	volatile uint8_t *b;    // revision 13, packed storage
 	size_t words;
+	int revision_13;
 	void (*touch)(void *ctx);
 	void *ctx;
 };
+
+// Revision 13's tag on every word the device writes: a fixnum's (G1 §2.6).
+#define QFD_TAG_FIXNUM 005u
+
+// A ring's or a buffer's address as the device takes it, and the line it
+// must be on: `<23:0>` on a 4-word line to revision 12, `<27:0>` on an
+// 8-word line on revision 13.  muir's `Layout`.
+static inline uint32_t qfd_mem_address(const struct qfd_mem *m, uint32_t addr)
+{
+	return addr & (m->revision_13 ? 0x0FFFFFFFu : 0x00FFFFFFu);
+}
+
+static inline uint32_t qfd_mem_line(const struct qfd_mem *m)
+{
+	return m->revision_13 ? 7u : 3u;
+}
 
 // A host folder served to the machine.
 struct qfd_mount {
@@ -158,6 +186,9 @@ unsigned qfd_sweep(const struct qfd_mounts *m, void (*emit)(void *ctx, const cha
 // folder that finds a name whatever its case, as FAT does.
 extern int qfd_hook_errno;
 extern const char *qfd_hook_folding;
+// Revision 13's accesses to main memory that were not naturally aligned or
+// reached a byte outside their run (`qfd.c`, packed storage).
+extern unsigned long qfd_hook_bad_access;
 #endif
 
 #endif

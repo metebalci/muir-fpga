@@ -28,6 +28,12 @@
 //     the display           + 64 MB                  + 64 MB
 //     the color display     the display + 128 KB     the display + 128 KB
 //     the spare             + 72 MB                  + 72 MB
+//   QUUX revision 13's      its own reservation      its own reservation
+//     memory                0x1200_0000 to           0xA000_0000 to
+//                           0x1C81_FFFF              0xB481_FFFF
+//     main memory, packed   0x1200_0000, 160 MB      0xA000_0000, 320 MB
+//     the display, and      the CADR's               the CADR's
+//     the records           the spare's first 128 KB the spare's first 128 KB
 //   the memory's port       S_AXI_HP0 (the machine)  F2SDRAM, the
 //                           and HP2 (the pack side)  FPGA-to-SDRAM bridge,
 //                                                    for both
@@ -113,6 +119,8 @@
 #define CADR_BOARD_DISPLAY_HEX   B4000000
 #define CADR_BOARD_COLOR_HEX     B4020000
 #define CADR_BOARD_SPARE_HEX     B4800000
+#define CADR_BOARD_QUUX13_MAIN_HEX A0000000
+#define CADR_BOARD_QUUX13_MAIN_WORDS_MAX (64u * 1024u * 1024u)
 
 // The tally: the system manager's GPI, one word.
 #define CADR_BOARD_TALLY_PAGE    0x10D12000u
@@ -141,6 +149,8 @@
 #define CADR_BOARD_DISPLAY_HEX   1C000000
 #define CADR_BOARD_COLOR_HEX     1C020000
 #define CADR_BOARD_SPARE_HEX     1C800000
+#define CADR_BOARD_QUUX13_MAIN_HEX 12000000
+#define CADR_BOARD_QUUX13_MAIN_WORDS_MAX (32u * 1024u * 1024u)
 
 // The tally: the GPIO block's DATA_2_RO and DATA_3_RO, two words.
 #define CADR_BOARD_TALLY_PAGE    0xE000A000u
@@ -178,6 +188,18 @@
 #define CADR_BOARD_COLOR_BASE        CADR_BOARD_NUM(CADR_BOARD_COLOR_HEX)
 #define CADR_BOARD_COLOR_BASE_STR    CADR_BOARD_STR(CADR_BOARD_COLOR_HEX)
 #define CADR_BOARD_SPARE_BASE        CADR_BOARD_NUM(CADR_BOARD_SPARE_HEX)
+// **QUUX REVISION 13's MEMORY, AND ITS OWN RESERVATION** (contract G2 §3):
+// main memory in packed storage, word w at byte `CADR_BOARD_QUUX13_MAIN_BASE +
+// 5w` (G1 §4.1), with room for `CADR_BOARD_QUUX13_MAIN_WORDS_MAX` words
+// directly below the display; the display and the disk pack program's records
+// where the CADR's are.  Revision 13's device tree reserves from its main
+// memory to the records' end, `CADR_BOARD_RECORDS_BYTES` into the spare, and
+// no further: the rest of the spare is Linux's on that machine.  The CADR's
+// and revision 12's trees reserve the 128 MB above, as ever.
+#define CADR_BOARD_QUUX13_MAIN_BASE      CADR_BOARD_NUM(CADR_BOARD_QUUX13_MAIN_HEX)
+#define CADR_BOARD_QUUX13_MAIN_BASE_STR  CADR_BOARD_STR(CADR_BOARD_QUUX13_MAIN_HEX)
+#define CADR_BOARD_RECORDS_BYTES         0x00020000u
+#define CADR_BOARD_QUUX13_RESERVED_END   (CADR_BOARD_SPARE_BASE + CADR_BOARD_RECORDS_BYTES)
 
 // The layout inside the reservation, which is `rtl/plumbing/cadr_ddr_map.sv`'s
 // and the same on every board: main memory at the base, the display 64 MB up,
@@ -196,6 +218,13 @@ _Static_assert(CADR_BOARD_RESERVED_BASE % 0x08000000u == 0u,
 	       "the reservation is aligned to its own 128 MB");
 _Static_assert(CADR_BOARD_RESERVED_BASE <= 0xFFFFFFFFu - 0x07FFFFFFu,
 	       "the reservation is below 4 GB, because every address here is 32 bits");
+// And revision 13's: its main memory fills the room below the display, on a
+// 1 MB boundary (so a 4 KB one, G1 4.1).
+_Static_assert((unsigned long long)CADR_BOARD_QUUX13_MAIN_BASE
+		       + 5ull * CADR_BOARD_QUUX13_MAIN_WORDS_MAX == CADR_BOARD_DISPLAY_BASE,
+	       "revision 13's main memory fills the room below the display, 5 bytes a word");
+_Static_assert(CADR_BOARD_QUUX13_MAIN_BASE % 0x00100000u == 0u,
+	       "revision 13's main memory is on a 1 MB boundary");
 // And the faces: five 4 KB pages from the port's first, in the order the
 // fabric's split decodes them (`rtl/plumbing/cadr_gp0_split.sv`).
 _Static_assert(CADR_BOARD_CHAOS_BASE == CADR_BOARD_PACK_BASE + 0x1000u,

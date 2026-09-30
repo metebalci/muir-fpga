@@ -8,7 +8,8 @@
 // CADR's the address is the default slave's and reads "NONE".  Every access
 // is one aligned 32-bit word.  Byte offsets:
 //
-//   0x000 IDENT        RO  "QFD9", 0x51464439
+//   0x000 IDENT        RO  "QFD9", 0x51464439, to revision 12; "QF13",
+//                          0x51463133, on revision 13
 //   0x010 RTC_SECONDS  RW  word 103 as the machine reads it; a write sets the
 //                          seconds, with the fraction staged at 0x014
 //   0x014 RTC_FRACTION RW  ns into the second; a write stages it
@@ -19,6 +20,7 @@
 //                          epoch matches; <0> 0 drops it; reads <0> busy
 //   0x108 CMD_BASE     RO  162      0x10C CMD_LOG2   RO  163
 //   0x110 RESP_BASE    RO  166      0x114 RESP_LOG2  RO  167
+//                          (the bases' <23:0>, and <27:0> on revision 13)
 //   0x118 CMD_PROD     RO  164, once the processor's write buffer has drained
 //   0x11C RESP_PROD    RW  165 = 170; {epoch, index} completes up to index
 //   0x120 RESP_CONS    RO  171
@@ -27,6 +29,14 @@
 //                          the same tick; reads the count the machine sees;
 //                          zeroed at a disable
 //   0x128 MEM_WORDS    RO  main memory, in words: the boards << 16
+//
+// **REVISION 13 IS A PAGE OF ITS OWN NAME** (contract G2 §4.3, appendix
+// A1.10): the same offsets and rules, IDENT "QF13", the rings' bases 28 bits,
+// and main memory packed storage, 5 bytes a word at the board's
+// `CADR_BOARD_QUUX13_MAIN_BASE`, up to 64M words.  The name is what tells
+// this program which layout main memory has, and a program of either
+// revision refuses the other's page rather than reading its memory wrong.
+// **The fabric's side is not built yet**: this is what it owes.
 //
 // The fabric's side of it is the fabric's to hold; this file is the only
 // place the offsets are written on this side, and `qfd_test.c` drives it
@@ -48,6 +58,7 @@
 #include <stdio.h>
 
 #define QFD_IDENT        0x51464439u
+#define QFD_IDENT_13     0x51463133u	/* "QF13" */
 #define OFF_IDENT        0x000u
 #define OFF_RTC_SECONDS  0x010u
 #define OFF_RTC_FRACTION 0x014u
@@ -62,10 +73,6 @@
 #define OFF_RESP_CONS    0x120u
 #define OFF_HANDLES      0x124u
 #define OFF_MEM_WORDS    0x128u
-
-// The machine's reservation holds main memory below the display, 64 MB up:
-// no more than 16M words.
-#define QFD_MAX_MEM_WORDS (16u * 1024u * 1024u)
 
 static uint32_t reg_rd(struct qfd_fabric *fb, unsigned off)
 {
@@ -104,19 +111,23 @@ static void barrier(struct qfd_fabric *fb)
 int qfd_fabric_attach(struct qfd_fabric *fb, char *why, size_t whylen)
 {
 	const uint32_t id = reg_rd(fb, OFF_IDENT);
-	if (id != QFD_IDENT) {
+	if (id != QFD_IDENT && id != QFD_IDENT_13) {
 		snprintf(why, whylen,
-			 "the file device's page reads 0x%08x where QUUX's reads 0x%08x (\"QFD9\")%s", id,
-			 QFD_IDENT, id == 0x4E4F4E45u ? ": \"NONE\", a bitstream without it, the CADR's" : "");
+			 "the file device's page reads 0x%08x where QUUX's reads 0x%08x (\"QFD9\") or, "
+			 "on revision 13, 0x%08x (\"QF13\")%s", id, QFD_IDENT, QFD_IDENT_13,
+			 id == 0x4E4F4E45u ? ": \"NONE\", a bitstream without it, the CADR's" : "");
 		return -1;
 	}
+	const int r13 = id == QFD_IDENT_13;
+	const uint32_t most = r13 ? QFD_MAX_MEM_WORDS_13 : QFD_MAX_MEM_WORDS;
 	const uint32_t words = reg_rd(fb, OFF_MEM_WORDS);
-	if (words == 0 || words > QFD_MAX_MEM_WORDS) {
+	if (words == 0 || words > most) {
 		snprintf(why, whylen, "the file device's page says main memory is %u words, which is not "
-			 "1 to %u", words, QFD_MAX_MEM_WORDS);
+			 "1 to %u", words, most);
 		return -1;
 	}
 	fb->mem_words = words;
+	fb->revision_13 = r13;
 	// **THE CLAIM A PROGRAM BEFORE THIS ONE MAY HAVE LEFT.**  Busy outlasts a
 	// reset of the machine, so that a completion from before the reset can
 	// never land after it, and nothing but this program clears it.  One that
@@ -136,9 +147,10 @@ static void f_state(void *ctx, struct qfd_state *s)
 	s->work = (st >> 4) & 1;
 	s->refused = (st >> 5) & 1;
 	s->epoch = (uint16_t)(st >> 16);
-	s->cmd_base = reg_rd(fb, OFF_CMD_BASE) & 0xFFFFFFu;
+	const uint32_t bases = fb->revision_13 ? 0x0FFFFFFFu : 0x00FFFFFFu;
+	s->cmd_base = reg_rd(fb, OFF_CMD_BASE) & bases;
 	s->cmd_log2 = reg_rd(fb, OFF_CMD_LOG2) & 0xFu;
-	s->resp_base = reg_rd(fb, OFF_RESP_BASE) & 0xFFFFFFu;
+	s->resp_base = reg_rd(fb, OFF_RESP_BASE) & bases;
 	s->resp_log2 = reg_rd(fb, OFF_RESP_LOG2) & 0xFu;
 	s->cmd_prod = (uint16_t)reg_rd(fb, OFF_CMD_PROD);
 	s->resp_prod = (uint16_t)reg_rd(fb, OFF_RESP_PROD);
@@ -175,11 +187,13 @@ static void f_rtc(void *ctx, uint32_t seconds, uint32_t ns)
 	reg_wr(ctx, OFF_RTC_SECONDS, seconds);
 }
 
-void qfd_fabric_face(struct qfd_fabric *fb, volatile uint32_t *main, struct qfd_face *out)
+void qfd_fabric_face(struct qfd_fabric *fb, volatile void *main, struct qfd_face *out)
 {
 	*out = (struct qfd_face){
 		.ctx = fb,
-		.mem = { main, fb->mem_words, NULL, NULL },
+		.mem = { fb->revision_13 ? NULL : (volatile uint32_t *)main,
+			 fb->revision_13 ? (volatile uint8_t *)main : NULL, fb->mem_words,
+			 fb->revision_13, NULL, NULL },
 		.state = f_state,
 		.claim = f_claim,
 		.release = f_release,

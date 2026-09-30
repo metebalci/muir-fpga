@@ -123,6 +123,35 @@ package cadr_ddr_map;
   localparam logic [31:0] COLOR_DISPLAY_BASE =
       DISPLAY_BASE + 32'(DISPLAY_WORDS_REACHABLE << 2);
 
+  // **QUUX REVISION 13's MEMORY, AND ITS OWN RESERVATION** (contract G2 §3,
+  // G1 §4.1).  Main memory is packed storage, word w at byte
+  // `QUUX13_MAIN_BASE + 5w`, directly below the display; the display and the
+  // disk pack program's records stay where the CADR's are, so they are at the
+  // same addresses on every machine and only main memory moves.
+  //
+  //   board        main memory                 room               display
+  //   Arty, Cora   0x1200_0000-0x1BFF_FFFF     160 MB, 32M words  0x1C00_0000
+  //   DE25-Nano    0xA000_0000-0xB3FF_FFFF     320 MB, 64M words  0xB400_0000
+  //
+  // **EACH MACHINE HAS ITS OWN DEVICE TREE**, beside its bitstream: the
+  // CADR's and revision 12's reserve `RESERVED_BASE` for `RESERVED_MB`, as
+  // above, and revision 13's from `QUUX13_MAIN_BASE` to `QUUX13_RESERVED_END`,
+  // the end of the records, `RECORDS_BYTES` into the spare, and no further.
+  // The CADR's main memory at `MAIN_BASE` is inside revision 13's; the two are
+  // two bitstreams, never one.  `quux_mem_port.sv` takes `QUUX13_MAIN_BASE`.
+`ifdef CADR_DDR_MAP_DE25_NANO
+  localparam logic [31:0] QUUX13_MAIN_BASE      = 32'hA000_0000;
+  localparam int unsigned QUUX13_MAIN_WORDS_MAX = 64 * 1024 * 1024;
+`else
+  localparam logic [31:0] QUUX13_MAIN_BASE      = 32'h1200_0000;
+  localparam int unsigned QUUX13_MAIN_WORDS_MAX = 32 * 1024 * 1024;
+`endif
+  // The disk pack program's records at the spare's base: both areas for all
+  // 24 slots (`pack_feeder.h`, `FEEDER_MAP_BYTES`).
+  localparam int unsigned RECORDS_BYTES = 32'h0002_0000;
+  localparam logic [31:0] QUUX13_RESERVED_END =
+      DISPLAY_BASE + 32'(DISPLAY_WORDS << 2) + 32'(RECORDS_BYTES);
+
   // A CADR word address into a byte address in the region.
   function automatic logic [31:0] main_byte_address(input logic [21:0] phys);
     return MAIN_BASE + (32'(phys) << 2);

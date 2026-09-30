@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * The DE25-Nano's tree for QUUX revision 13: the board's own tree, and
+ * revision 13's reservation in place of the CADR's (`quux13-reserved.dtsi`,
+ * copied beside it by the build as `cadr-reserved.dtsi` is).
+ *
+ * A card or a served set pairs it with revision 13's core image by staging it
+ * under the board tree's own name, socfpga_agilex5_de25_nano_cadr.dtb, in the
+ * folder the core image is fetched from (`mksd-buildroot.sh`, REVISION=13).
+ * U-Boot compiles it too, with socfpga_agilex5_de25_nano_quux13-u-boot.dtsi,
+ * into revision 13's u-boot.itb.
+ */
+
+#include "socfpga_agilex5_de25_nano_cadr.dts"
+#include "quux13-reserved.dtsi"

@@ -104,6 +104,12 @@
 #define FEEDER_WB_OFF       0x10000u
 // What the feeder maps of the spare: both areas for all 24 slots.
 #define FEEDER_MAP_BYTES    0x20000u
+// **AND ALL OF IT IS RESERVED ON EVERY MACHINE.**  QUUX revision 13's device
+// tree reserves only the records' area of the spare, `CADR_BOARD_RECORDS_BYTES`,
+// and gives Linux the rest; a feeder that mapped past it would write into
+// Linux's memory there.
+_Static_assert(FEEDER_MAP_BYTES <= CADR_BOARD_RECORDS_BYTES,
+	       "the records fit the area revision 13's tree reserves of the spare");
 
 // How many requests are named on the console one by one before they are
 // only counted, and how many distinct denied blocks are named.

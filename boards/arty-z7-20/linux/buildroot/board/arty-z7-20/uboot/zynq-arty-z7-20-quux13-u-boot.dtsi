@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * What U-Boot adds to revision 13's tree: the board's own additions.  U-Boot
+ * includes <tree>-u-boot.dtsi by the name of the tree it compiles, so revision
+ * 13's tree gets this file and not zynq-arty-z7-20-u-boot.dtsi, which it
+ * includes.
+ */
+
+#include "zynq-arty-z7-20-u-boot.dtsi"

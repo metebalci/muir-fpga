@@ -18,6 +18,7 @@
 # them), which is only a convenience: a prediction that went wrong would
 # still be compared, and would show as a status nobody meant.
 
+import functools
 import os
 import stat
 
@@ -28,6 +29,12 @@ T0 = 1600000000
 MEMORY = 0x40000
 CMD_BASE, RESP_BASE = 0x1000, 0x2000
 HEAP = 0x4000
+# Revision 13 (contract G2 §4.3, appendix A1.10): the machine writes its
+# command entries and its byte buffers as fixnums, tag 005, and the device
+# must read `<31:0>` of them whatever the tag; a buffer B is filled here with
+# a tag the device must overwrite with 005.
+FIXNUM = 0o005
+POISON_TAG = 0x3A
 
 
 def oflags(mode=MODE_READ, if_exists=SUPERSEDE, if_none_error=0):
@@ -35,9 +42,17 @@ def oflags(mode=MODE_READ, if_exists=SUPERSEDE, if_none_error=0):
 
 
 class Scenario:
-    def __init__(self, name):
-        self.name = name
-        self.lines = []
+    def __init__(self, name, rev=12):
+        self.rev = rev
+        self.name = name if rev == 12 else "%s-%d" % (name, rev)
+        # Revision 13's addresses are 28 bits on an 8-word line.
+        self.address = 0xFFFFFF if rev == 12 else 0xFFFFFFF
+        self.line = 3 if rev == 12 else 7
+        # The tags the machine's words carry: a command entry's and buffer
+        # A's (revision 13 only).
+        self.cmd_tag = FIXNUM
+        self.data_tag = FIXNUM
+        self.lines = [] if rev == 12 else ["revision %d" % rev]
         self.seed = []          # (kind, rel, arg...)
         self.tag = 1
         self.heap = HEAP
@@ -115,7 +130,7 @@ class Scenario:
 
     def alloc(self, nbytes):
         words = max(1, (nbytes + 3) // 4)
-        words = (words + 3) & ~3
+        words = (words + self.line) & ~self.line
         if self.heap + words > MEMORY - 0x100:
             self.heap = HEAP
         at = self.heap
@@ -133,28 +148,40 @@ class Scenario:
             b = b.encode("latin-1")
         if a is not None:
             at = self.alloc(len(a)) if a_addr is None else a_addr
-            if a and (at & 0xFFFFFF) + (len(a) + 3) // 4 <= MEMORY:
-                self.op("bytes", hex(at & 0xFFFFFF), a.hex())
+            if a and (at & self.address) + (len(a) + 3) // 4 <= MEMORY:
+                self.bytes(at & self.address, a)
             a_addr = at
             a_len = len(a) if a_len is None else a_len
         if isinstance(b, bytes):
             at = self.alloc(len(b)) if b_addr is None else b_addr
             if b:
-                self.op("bytes", hex(at), b.hex())
+                self.bytes(at, b)
             b_addr = at
             b_len = len(b) if b_len is None else b_len
         elif b or b_len:
             n = b if b_len is None else b_len
             at = self.alloc(min(n, 65536)) if b_addr is None else b_addr
-            if at + (min(n, 65536) + 3) // 4 <= MEMORY and not at & 3:
-                self.op("fill", hex(at), (min(n, 65536) + 3) // 4, hex(0xA5000000 | self.tag))
+            if at + (min(n, 65536) + 3) // 4 <= MEMORY and not at & self.line:
+                poison = 0xA5000000 | self.tag | (POISON_TAG << 32 if self.rev == 13 else 0)
+                self.op("fill", hex(at), (min(n, 65536) + 3) // 4, hex(poison))
             b_addr, b_len = at, n
         self.index += 1
         tag = self.tag
         self.tag = (self.tag + 1) & 0xFFFF
         w0 = tag | (op & 0xFF) << 16 | (flags & 0xFF) << 24
-        self.op("cmd", hex(w0), handle, hex(a_addr or 0), a_len or 0, hex(b_addr or 0), b_len or 0,
-                off, date)
+        words = [w0, handle, a_addr or 0, a_len or 0, b_addr or 0, b_len or 0, off, date]
+        if self.rev == 13:
+            words = [(w & 0xFFFFFFFF) | self.cmd_tag << 32 for w in words]
+        self.op("cmd", *[hex(w) if k in (0, 2, 4) or self.rev == 13 else w
+                         for k, w in enumerate(words)])
+
+    def bytes(self, at, data):
+        """Bytes into memory from word `at`, 4 a word; on revision 13 each
+        word tagged as buffer A's are."""
+        if self.rev == 13:
+            self.op("bytes", hex(at), data.hex() or "-", hex(self.data_tag))
+        else:
+            self.op("bytes", hex(at), data.hex())
 
     def go(self, n=1):
         """Post the last n commands, let the device run, and consume what it answered."""
@@ -190,8 +217,8 @@ class Scenario:
         return "\n".join(self.lines) + "\n"
 
 
-def basic():
-    s = Scenario("basic")
+def basic(rev=12):
+    s = Scenario("basic", rev)
     s.file("root/hello.txt", "Hello, world!\n")
     s.file("root/big.bin", bytes((i * 7 + 3) & 0xFF for i in range(100000)), mtime=T0 + 5)
     s.file("root/empty.txt", b"")
@@ -284,8 +311,8 @@ def basic():
     return s
 
 
-def directory():
-    s = Scenario("directory")
+def directory(rev=12):
+    s = Scenario("directory", rev)
     for n in ("b.txt", "a.txt", ".hidden", "C.txt", "sp ace.txt", "~tilde"):
         s.file("root/" + n, n * 3)
     s.file("root/.quux-write-99-1", "stale")
@@ -321,8 +348,8 @@ def directory():
     return s
 
 
-def complete():
-    s = Scenario("complete")
+def complete(rev=12):
+    s = Scenario("complete", rev)
     for n in ("apple", "apricot", "app", "banana", ".dot"):
         s.file("root/c/" + n, n)
     s.dir("root/c/apex")
@@ -336,8 +363,8 @@ def complete():
     return s
 
 
-def ops():
-    s = Scenario("ops")
+def ops(rev=12):
+    s = Scenario("ops", rev)
     s.file("root/f.txt", "f")
     s.file("root/a.txt", "a")
     s.file("root/exists.txt", "e")
@@ -368,8 +395,8 @@ def ops():
     return s
 
 
-def names():
-    s = Scenario("names")
+def names(rev=12):
+    s = Scenario("names", rev)
     s.file("root/hello.txt", "hi")
     s.file("root/sp ace", "space")
     s.file("root/sub/x", "x")
@@ -382,8 +409,8 @@ def names():
     return s
 
 
-def mounts_override():
-    s = Scenario("mounts_override")
+def mounts_override(rev=12):
+    s = Scenario("mounts_override", rev)
     s.file("base/sys/base-only", "hidden by the named sys")
     s.file("base/site/site.lisp", "site")
     s.file("base/home/lispm/init.lisp", "init")
@@ -403,8 +430,8 @@ def mounts_override():
     return s
 
 
-def mounts_named_only():
-    s = Scenario("mounts_named_only")
+def mounts_named_only(rev=12):
+    s = Scenario("mounts_named_only", rev)
     s.file("s/a", "a")
     s.file("t/b", "b")
     s.start("sys=@/s,ro", "site=@/t")
@@ -428,8 +455,8 @@ def mounts_named_only():
     return s
 
 
-def mounts_none():
-    s = Scenario("mounts_none")
+def mounts_none(rev=12):
+    s = Scenario("mounts_none", rev)
     s.start()
     s.one(DIRECTORY, a="/", b=512)
     s.probe("/")
@@ -440,8 +467,8 @@ def mounts_none():
     return s
 
 
-def mounts_bad():
-    s = Scenario("mounts_bad")
+def mounts_bad(rev=12):
+    s = Scenario("mounts_bad", rev)
     s.file("afile", "not a folder")
     for d in ("a", "b", "c", "d", "x"):
         s.dir(d)
@@ -456,8 +483,8 @@ def mounts_bad():
     return s
 
 
-def handles():
-    s = Scenario("handles")
+def handles(rev=12):
+    s = Scenario("handles", rev)
     s.file("root/h.txt", "handle")
     s.start("@/root")
     hs = [s.open_read("/h.txt") for _ in range(64)]
@@ -491,8 +518,8 @@ def handles():
     return s
 
 
-def rings():
-    s = Scenario("rings")
+def rings(rev=12):
+    s = Scenario("rings", rev)
     s.file("root/r.txt", "ring")
     s.start("@/root", cmd_log2=0, resp_log2=0)
     for _ in range(5):
@@ -544,10 +571,16 @@ def rings():
     return s
 
 
-def buffers():
-    s = Scenario("buffers")
+def buffers(rev=12):
+    s = Scenario("buffers", rev)
     s.file("root/f.txt", "0123456789")
+    # A file with no period a buffer's words could hide a misplaced run in.
+    s.file("root/long.bin", bytes((i * i * 31 + i * 7 + (i >> 9)) >> 3 & 0xFF for i in range(20000)))
     s.start("@/root")
+    h = s.open_read("/long.bin")
+    for n, off in ((16384, 0), (4099, 1), (65536, 0), (257, 19997)):
+        s.one(READ, handle=h, b=n, off=off)
+    s.close(h)
     good = s.alloc(8)
     s.op("bytes", hex(good), b"/f.txt".hex())
     s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=good + 1)
@@ -572,11 +605,76 @@ def buffers():
         s.one(op, a="/f.txt", b=16)
     for op in (DIRECTORY, COMPLETE, DELETE, RENAME, CREATE_DIRECTORY, LOG, WRITE, READ):
         s.one(op, 0x40, a="/f.txt", b=16)
+    if s.rev == 13:
+        # Revision 13's line is 8 words, and its addresses 28 bits: a buffer
+        # on a 4-word line is bad, and one whose <27:24> are set is past
+        # memory where revision 12 would drop them; <31:28> are dropped.
+        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=good + 4)
+        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=0x01000000 | good)
+        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=0xF0000000 | good)
+        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=MEMORY - 8, a_len=33)
+        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=MEMORY - 8, a_len=32)
+        h = s.open_read("/f.txt")
+        s.one(READ, handle=h, b=4, b_addr=good + 4)
+        # The last line of main memory, written whole: nothing past it.
+        s.one(READ, handle=h, b=32, b_addr=MEMORY - 8)
+        # Every length a last word can be left at, in words that straddle
+        # the mapping's 32-bit words in each of the ways a packed word can.
+        for n in (1, 2, 3, 5, 6, 7, 9, 10, 11, 13):
+            s.one(READ, handle=h, b=n, off=0)
+        s.close(h)
     return s
 
 
-def logs():
-    s = Scenario("logs")
+def rings13(rev=13):
+    """Revision 13's rings: on an 8-word line, 28-bit bases."""
+    s = Scenario("rings", rev)
+    s.file("root/r.txt", "ring")
+    s.start("@/root", cmd_log2=0, resp_log2=0)
+    s.probe("/r.txt")
+    # A command ring on a 4-word line is refused at the enable, and so is a
+    # response ring: nothing is answered.
+    for cmd_base, resp_base in ((0x3004, 0x3800), (0x3000, 0x3804)):
+        s.disable()
+        s.rings(0, 0, cmd_base=cmd_base, resp_base=resp_base)
+        s.enable()
+        s.cmd(OPEN, oflags(MODE_PROBE), a="/r.txt")
+        s.op("post")
+        s.op("run")
+    # <31:28> of a base are not the base.
+    s.disable()
+    s.rings(1, 1, cmd_base=0xF0003000, resp_base=0xF0003800)
+    s.enable()
+    for _ in range(3):
+        s.probe("/r.txt")
+    return s
+
+
+def tags13(rev=13):
+    """The tags of revision 13's words: the device reads <31:0> of a command
+    entry and of buffer A whatever their tags, and every word it writes, a
+    response's, a READ's and a DIRECTORY's, is a fixnum."""
+    s = Scenario("tags", rev)
+    s.file("root/in.txt", "tagged words in, fixnums out\n")
+    s.dir("root/sub")
+    s.start("@/root")
+    for cmd_tag, data_tag in ((0xFF, 0x42), (0x00, 0x07), (0x80, 0xFF)):
+        s.cmd_tag, s.data_tag = cmd_tag, data_tag
+        h = s.open_read("/in.txt")
+        s.one(READ, handle=h, b=29, off=0)
+        s.one(READ, handle=h, b=7, off=3)
+        s.close(h)
+        s.one(DIRECTORY, a="/", b=512)
+        s.one(COMPLETE, a="/i", b=64)
+        w = s.open_write("/out-%02x.txt" % cmd_tag)
+        s.one(WRITE, handle=w, a="written under tag %02x" % data_tag, off=0)
+        s.close(w, flags=2, date=T0 + cmd_tag)
+        s.one(LOG, a="tag %02x" % data_tag)
+    return s
+
+
+def logs(rev=12):
+    s = Scenario("logs", rev)
     s.start("@/root")
     s.file("root/keep", "k")
     s.one(LOG, a="report: script-ends")
@@ -589,8 +687,8 @@ def logs():
     return s
 
 
-def symlinks():
-    s = Scenario("symlinks")
+def symlinks(rev=12):
+    s = Scenario("symlinks", rev)
     s.file("root/real/file.txt", "real file")
     s.file("root/real/f2.txt", "second")
     s.symlink("root/inlink", "real")
@@ -630,8 +728,8 @@ def symlinks():
     return s
 
 
-def perms():
-    s = Scenario("perms")
+def perms(rev=12):
+    s = Scenario("perms", rev)
     s.file("root/secret.txt", "secret")
     s.file("root/locked/x.txt", "x")
     s.file("root/readonly/y.txt", "y")
@@ -659,5 +757,12 @@ def perms():
     return s
 
 
-ALL = [basic, directory, complete, ops, names, mounts_override, mounts_named_only, mounts_none,
-       mounts_bad, handles, rings, buffers, logs, symlinks, perms]
+REVISION_12 = [basic, directory, complete, ops, names, mounts_override, mounts_named_only,
+               mounts_none, mounts_bad, handles, rings, buffers, logs, symlinks, perms]
+
+# Every script again on revision 13 (contract G2 §4.3): main memory packed,
+# the machine's words fixnums, a buffer B's poisoned with another tag; and
+# what only revision 13 has.  `rings` at revision 13 is `rings13`'s name, so
+# the 2^16 indexes are run once, at revision 12.
+ALL = REVISION_12 + [functools.partial(f, rev=13) for f in REVISION_12 if f is not rings] \
+    + [rings13, tags13]

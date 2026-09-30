@@ -144,7 +144,7 @@ module cadr_memory_path #(
     // 32; or 40 on QUUX, revision 13: its 28-bit space and its memory port
     // with packed storage at `QUUX13_MAIN_BASE` (`quux_mem_port.sv`).
     parameter int unsigned WORD_BITS = 32,
-    parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,  // 0: `cadr_ddr_map::MAIN_BASE`
+    parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,  // 0: `cadr_ddr_map::QUUX13_MAIN_BASE`
     localparam bit          REV13      = MACHINE == "quux" && WORD_BITS > 32,
     localparam int unsigned PHYS_BITS  = REV13 ? 28 : 22,
     localparam int unsigned VADDR_BITS = REV13 ? 28 : 24,

@@ -410,6 +410,33 @@ window only reads, so a checkpoint is resumed in muir and not on
 the board. Restoring one would need a write path into every memory and
 register named here, which neither machine has.
 
+## A revision 13 checkpoint
+
+QUUX revision 13's checkpoint is muir's version 50. Every word is 5 bytes,
+`<7:0>` first and the tag last. The dispatch memory has 4,096 entries, level 1
+of the map 8,192 and level 2 4,096. After the geometry come the word's width
+and the fixnum overflow flag, and the cache has 8-word lines. The program
+knows the revision from the register table's entry 21, which carries
+MACHINE-ID's `<15:0>` on revision 13. **The fabric's side of that word is not
+built yet.**
+
+**Main memory is not copied.** A 40-bit word in the file is packed storage
+byte for byte, so the program hands the file the DDR mapping where it stands
+(`chk_hole`). The packer reads it twice, once to find where a literal run
+ends and once to copy it, and writes the file as it goes. At 32M words main
+memory is 160 MB. A copy of it beside a body of the same size would not fit
+in the memory Linux has beside the machine.
+
+`--boards` counts 64K-word units on revision 13 as muir's header does. The
+default is 512, 32M words, and the most is the room the board keeps.
+
+`build/checkpoint.quux.pass` holds it the way it holds revision 12's.
+`golden/src/quux_checkpoint.rs --revision 13` builds the same machine at
+revision 13 through muir's own calls. The program's file must be muir's
+byte for byte. No executable of muir's runs revision 13 yet, so muir's own
+load and save come from the same generator (`--resume-and-save`). Mutants 22
+to 31 are revision 13's.
+
 ## `--chaos-address` is octal, as muir's is
 
 muir's flag "wants one address in octal or subnet:host", and

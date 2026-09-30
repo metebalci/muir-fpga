@@ -44,6 +44,24 @@
 // `boards/arty-z7-20/cadr_arty.sv` gives the machine.
 #define IMG_BOARD_WORDS 65536u
 
+// **REVISION 13'S** (contract G2 §2, appendix A1; muir's `Geometry::QUUX_13`):
+// words of 40 bits --- A, M, the PDL buffer, Q, VMA, MD, L and main memory
+// --- read out whole, the tag in <39:32>; a dispatch memory of 4,096
+// entries; a level-1 map of 8,192 seven-bit entries and a level-2 map of
+// 4,096 28-bit ones; the location counter 30 bits; and the fixnum overflow
+// flag, the flag word's <35>.  `img_alloc_revision` sizes the arrays by
+// these, and the largest of each is what the arrays are declared for.
+#define IMG_DMEM_WORDS_13 4096u
+#define IMG_L1_WORDS_13   8192u
+#define IMG_L2_WORDS_13   4096u
+#define IMG_WORD_BITS_13  40u
+// **WHICH REVISION**: the register table's entry 21, QUUX's signature over K
+// and L, carries MACHINE-ID's <15:0> in its own <15:0> on revision 13, 0x00D4
+// (`cadr_machine.sv`'s MACHINE_ID, revision 13 in <11:4>, the processor type
+// 4 in <3:0>); revision 12's bitstreams answer 0 there.  **The fabric's side
+// of this is not built yet**: it is what this program asks of it.
+#define IMG_QUUX_ID_13    0x00D4u
+
 // **QUUX'S SIZES**, muir's `Geometry::QUUX`: a PDL buffer of 16K words with a
 // fourteen-bit pointer, a level-1 map entry of six bits and so 2,048 level-2
 // entries, the boot PROM at control store 36000 and never written there, and
@@ -101,6 +119,11 @@ enum img_quux_page {
 	IMG_QP_INPUT = 0, IMG_QP_CMD = 1, IMG_QP_CLP = 2, IMG_QP_DA = 3,
 	IMG_QP_LMA = 4, IMG_QP_DISK = 5, IMG_QP_PAGE = 6,
 	IMG_QP_FD_BASES = 7, IMG_QP_FD_INDEXES = 8, IMG_QP_FD_FLAGS = 9,
+	// Revision 13's ring bases are 28 bits and two no longer fit one
+	// word: word 7 holds the command ring's in <27:0>, and word 10 the
+	// response ring's (contract G2 §4.3, appendix A1.10).  The fabric's
+	// side is not built yet.
+	IMG_QP_FD_RESP_BASE_13 = 10,
 	IMG_QP_FIFO = 64
 };
 
@@ -149,9 +172,10 @@ struct quux_state {
 	uint32_t macro_entries[IMG_QUUX_MACRO_ENTRIES];
 	int opr_v, opr_arg, m31_v;
 	unsigned opr_delta;
-	uint32_t m31_w;
+	uint64_t m31_w;
 	int pf_v, fetch_v;
-	uint32_t pf_vaddr, pf_phys, pf_word, fetch_vaddr;
+	uint32_t pf_vaddr, pf_phys, fetch_vaddr;
+	uint64_t pf_word;
 	uint32_t fused_n, opr_n, pf_n;
 };
 
@@ -223,24 +247,28 @@ enum img_flag {
 	IMG_F_MEM_DRAINED,
 	// QUUX's `MEMSTART` cycle is the stream's instruction fetch (revision
 	// 12's prefetch, muir's `Rtl::memstart_fetch`).  Zero on the CADR.
-	IMG_F_MEMSTART_FETCH
+	IMG_F_MEMSTART_FETCH,
+	// Revision 13's fixnum overflow flag, muir's `Machine::overflow`
+	// (appendix A1.3).  Zero on every other machine.
+	IMG_F_OVERFLOW
 };
 
 struct cadr_image {
 	// --- what the readout window gives
 	uint64_t *prom;			/* IMG_PROM_WORDS, 48 bits each */
 	uint64_t *imem;			/* IMG_IMEM_WORDS, 48 bits each */
-	uint32_t *amem, *mmem, *pdl;
+	uint64_t *amem, *mmem, *pdl;	/* words: 32 bits, 40 on revision 13 */
 	uint32_t *spc;			/* 21 bits */
-	uint32_t *dmem;			/* 17 bits */
-	uint32_t *l1_map;		/* 5 bits */
-	uint32_t *l2_map;		/* 24 bits */
+	uint32_t *dmem;			/* 17 bits, `dmem_words` of them */
+	uint32_t *l1_map;		/* 5 bits, 6 on QUUX, 7 on revision 13 */
+	uint32_t *l2_map;		/* 24 bits, 28 on revision 13 */
 	uint16_t opcs[IMG_OPCS];	/* 14 bits, newest first */
 
 	// --- the register table
 	uint16_t pc, lpc, wadr, pdl_ptr, pdl_idx, reta, dc;
 	uint64_t ir, iwr;
-	uint32_t l, q, vma, md, st, lc, lvmo, md_held, phys_r;
+	uint64_t l, q, vma, md, md_held;	/* words */
+	uint32_t st, lc, lvmo, phys_r;
 	uint8_t spcptr;
 	uint8_t speed, speed_a, mode_speed;
 	uint64_t flags;
@@ -253,8 +281,14 @@ struct cadr_image {
 	// --- Linux maps them at `cadr_ddr_map.sv`'s bases.  They are here so
 	// --- that a reader of this struct is not left wondering where they
 	// --- went, and `cadr-readout` does not fill them.
-	uint32_t *main;		/* boards * IMG_BOARD_WORDS */
+	uint32_t *main;		/* boards * IMG_BOARD_WORDS; NULL on revision 13 */
 	unsigned boards;
+	// --- revision 13's main memory is packed storage, 5 bytes a word
+	// --- (G1 4.1), and is NOT copied: `main13` is the bytes where they
+	// --- are --- on a board the DDR mapping itself, 160 MB at 32M words,
+	// --- which a copy beside a body of the same size would not leave room
+	// --- for --- and `chk_rtl_body` hands them to the file as they stand.
+	const volatile uint8_t *main13;	/* boards * IMG_BOARD_WORDS * 5 bytes */
 	uint32_t *tv;		/* IMG_TV_WORDS */
 
 	// --- the first display board's color map, `[color][channel]` with
@@ -266,9 +300,11 @@ struct cadr_image {
 	uint8_t tv_map[IMG_MAP_COLORS][IMG_MAP_CHANNELS];
 
 	// --- which machine, and the arrays' sizes on it: the CADR's, or on
-	// --- QUUX the PDL buffer's 16K, level 2's 2,048 and the video controller's buffer.
-	int quux;
-	unsigned pdl_words, l2_words, tv_words;
+	// --- QUUX the PDL buffer's 16K, level 2's 2,048 and the video controller's buffer;
+	// --- on revision 13 (`rev13`) the dispatch memory's 4,096, level 1's
+	// --- 8,192 and level 2's 4,096, and words of 40 bits.
+	int quux, rev13;
+	unsigned pdl_words, l2_words, tv_words, dmem_words, l1_words, word_bits;
 	struct quux_state qx;	/* QUUX's alone; zero on the CADR */
 };
 
@@ -276,6 +312,9 @@ struct cadr_image {
 int img_alloc(struct cadr_image *img, unsigned boards);
 // Either machine's: `quux` non-zero sizes the arrays as QUUX's.
 int img_alloc_machine(struct cadr_image *img, unsigned boards, int quux);
+// And a QUUX of either revision, 12 or 13: revision 13's arrays at its sizes
+// and no main memory, which is `main13`'s to point at.
+int img_alloc_revision(struct cadr_image *img, unsigned boards, int quux, int revision);
 void img_free(struct cadr_image *img);
 
 static inline int img_flag(const struct cadr_image *img, enum img_flag b)

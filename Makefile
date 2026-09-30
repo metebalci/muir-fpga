@@ -157,7 +157,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/usb_input.pass $(BUILD)/quux_file_device.pass \
        $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
-       $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass \
+       $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass $(BUILD)/reserved.pass \
        $(BUILD)/de25_linux.pass $(BUILD)/rootfs_packages.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.pass) \
@@ -364,11 +364,42 @@ $(BUILD)/mem_map.pass: tools/mem_map_check.py \
                        boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h \
                        boards/arty-z7-20/linux/cadr-reserved.dtsi \
                        boards/de25-nano/linux/cadr-reserved.dtsi \
+                       boards/arty-z7-20/linux/quux13-reserved.dtsi \
+                       boards/de25-nano/linux/quux13-reserved.dtsi \
+                       boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src/pack_feeder.h \
                        boards/arty-z7-20/linux/mksd-buildroot.sh \
                        boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env \
                        boards/arty-z7-20/vivado/ddr_check.tcl \
                        boards/arty-z7-20/vivado/ddr_run.tcl | $(BUILD)
 	python3 tools/mem_map_check.py . --stamp $@
+
+# AND EACH MACHINE'S NODE COMPILED, which the text cannot say: the CADR's and
+# QUUX revision 13's reservations, each through cpp and dtc in a skeleton of
+# the board's root and read back out of the blob, against the package; each
+# machine's trees reaching its kernel, its U-Boot and its card; and U-Boot's
+# fixed loads and its relocation clear of each machine's region.  Needs `dtc`
+# (DTC=).  See `tools/reserved_check.py`.
+$(BUILD)/reserved.pass: tools/reserved_check.py tools/mem_map_check.py \
+                        rtl/plumbing/cadr_ddr_map.sv \
+                        boards/arty-z7-20/linux/cadr-reserved.dtsi \
+                        boards/de25-nano/linux/cadr-reserved.dtsi \
+                        boards/arty-z7-20/linux/quux13-reserved.dtsi \
+                        boards/de25-nano/linux/quux13-reserved.dtsi \
+                        boards/arty-z7-20/linux/quux13-loader.sh \
+                        boards/arty-z7-20/linux/mksd-buildroot.sh \
+                        boards/arty-z7-20/linux/buildroot/board/arty-z7-20/dts/xilinx/zynq-arty-z7-20-quux13.dts \
+                        boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/zynq-arty-z7-20-quux13-u-boot.dtsi \
+                        boards/de25-nano/linux/buildroot/board/de25-nano/dts/intel/socfpga_agilex5_de25_nano_quux13.dts \
+                        boards/de25-nano/linux/buildroot/board/de25-nano/uboot/socfpga_agilex5_de25_nano_quux13-u-boot.dtsi \
+                        boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig \
+                        boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig \
+                        boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig \
+                        boards/arty-z7-20/linux/buildroot/external.mk \
+                        boards/cora-z7-07s/linux/buildroot/external.mk \
+                        boards/de25-nano/linux/buildroot/external.mk \
+                        boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env \
+                        boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env | $(BUILD)
+	python3 tools/reserved_check.py . --stamp $@
 
 $(BUILD)/phase_gen.pass: $(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
 	$(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
@@ -4177,7 +4208,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(DISK_PACKS_SRC)/q8_disks.sha256 \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
 	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk \
-	    QCHK=$(CHECKPOINT_WORK)/quux.chk Q8_DISKS=$(Q8_DISKS)
+	    QCHK=$(CHECKPOINT_WORK)/quux.chk Q13CHK=$(CHECKPOINT_WORK)/quux13.chk Q8_DISKS=$(Q8_DISKS)
 	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
@@ -4243,6 +4274,17 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # file is not muir's own.  It rides on `build/checkpoint.pass`, which builds
 # the program, the test's binaries in the one work directory and muir.
 CHECKPOINT_QUUX_RESUMED := at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
+#
+# **AND REVISION 13's, VERSION 50** (contract G2 appendix A1.13): the same
+# machine at revision 13's widths and sizes, `quux_checkpoint --revision 13`,
+# held to the program's file byte for byte; and, since no executable of
+# muir's runs revision 13 yet, muir's own load and save through the same
+# generator, `--resume-and-save`, in place of `quux --resume`.  Its mutants
+# are 22 to 31, each caught when muir refuses the file, saves other bytes, or
+# the file is not muir's own.
+CHECKPOINT_QUUX13_RESUMED := resumed: version 50 at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
+CHECKPOINT_QUUX13_MUTANTS := 22 23 24 25 26 27 28 29 30 31
+QUUX_CHECKPOINT_BIN := golden/target/release/quux_checkpoint
 
 $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoint.rs $(GOLDEN_AXIS) golden/src/trace.rs \
                                golden/Cargo.toml | $(BUILD)
@@ -4274,6 +4316,38 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	   elif ! cmp -s $$W/qmut-$$m.chk $$W/qmut-$$m-back.chk; then \
 	     echo "checkpoint.quux: mutant $$m caught, muir saved other bytes --- $$what"; \
 	   elif ! cmp -s $$W/qmut-$$m.chk $$W/quux-muir.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught, not muir's own file --- $$what"; \
+	   else \
+	     echo "checkpoint.quux: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
+	   fi; \
+	 done
+	$(GOLDEN) --release --bin quux_checkpoint -- $(CHECKPOINT_WORK)/quux13-muir.chk \
+	    --machine quux --sync-cycle-ticks 4 --sync-ilong-ticks 0 --revision 13
+	@set -e; W=$(CHECKPOINT_WORK); G=$(QUUX_CHECKPOINT_BIN); \
+	 T="--revision 13 --machine quux --sync-cycle-ticks 4 --sync-ilong-ticks 0"; \
+	 cmp $$W/quux13.chk $$W/quux13-muir.chk \
+	   || { echo "checkpoint.quux: revision 13's file is not muir's own for the same machine"; exit 1; }; \
+	 $$G --resume-and-save $$W/quux13.chk $$W/quux13-back.chk $$T > $$W/quux13-muir.log 2>&1 \
+	   || { echo "checkpoint.quux: muir REFUSED revision 13's file"; sed -n '$$p' $$W/quux13-muir.log; exit 1; }; \
+	 cmp $$W/quux13.chk $$W/quux13-back.chk \
+	   || { echo "checkpoint.quux: muir loaded revision 13's file and saved DIFFERENT bytes"; exit 1; }; \
+	 grep -q "$(CHECKPOINT_QUUX13_RESUMED)" $$W/quux13-muir.log \
+	   || { echo "checkpoint.quux: muir did not resume revision 13's machine as written:"; \
+	        cat $$W/quux13-muir.log; exit 1; }; \
+	 echo "checkpoint.quux: revision 13, $$(stat -c%s $$W/quux13.chk) bytes, muir's own for the same machine,"; \
+	 echo "checkpoint.quux: loaded and saved back identically, $$(sed 's/^resumed: //' $$W/quux13-muir.log)"; \
+	 for m in $(CHECKPOINT_QUUX13_MUTANTS); do \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/q13mut-$$m-cadr.chk $$W/q13mut-$$m-q12.chk \
+	       $$W/q13mut-$$m.chk > $$W/q13mut-$$m.out 2>&1 \
+	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
+	          cat $$W/q13mut-$$m.out; exit 1; }; \
+	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/q13mut-$$m.out); \
+	   if ! $$G --resume-and-save $$W/q13mut-$$m.chk $$W/q13mut-$$m-back.chk $$T \
+	            > $$W/q13mut-$$m.log 2>&1; then \
+	     echo "checkpoint.quux: mutant $$m caught, muir refused it --- $$what"; \
+	   elif ! cmp -s $$W/q13mut-$$m.chk $$W/q13mut-$$m-back.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught, muir saved other bytes --- $$what"; \
+	   elif ! cmp -s $$W/q13mut-$$m.chk $$W/quux13-muir.chk; then \
 	     echo "checkpoint.quux: mutant $$m caught, not muir's own file --- $$what"; \
 	   else \
 	     echo "checkpoint.quux: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \

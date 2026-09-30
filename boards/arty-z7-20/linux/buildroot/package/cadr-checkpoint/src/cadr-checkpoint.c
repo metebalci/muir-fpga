@@ -80,6 +80,8 @@
 // <cadr/cadr_board.h>, which has the region's base for every board.
 #define DDR_MAIN_BASE    CADR_BOARD_MAIN_BASE
 #define DDR_DISPLAY_BASE CADR_BOARD_DISPLAY_BASE
+// QUUX revision 13's main memory, packed storage below the display.
+#define DDR_MAIN13_BASE  CADR_BOARD_QUUX13_MAIN_BASE
 
 // muir's own default Chaosnet address, `chaos::Config::default()`.
 #define DEFAULT_CHAOS_ADDRESS 0177001u
@@ -87,6 +89,12 @@
 // 32 cannot cold-boot System 100** --- measured --- so this is the machine's
 // number and not a default anybody should move here.
 #define DEFAULT_BOARDS 32u
+// **REVISION 13's MAIN MEMORY IS 32M WORDS ON THE BOARDS** (contract G2 §3),
+// 512 of muir's 64K-word units, which is what a revision 13 checkpoint's
+// `memory_boards` counts; and the most is the room the board keeps for it
+// (`cadr_board.h`).
+#define DEFAULT_BOARDS_13 512u
+#define MAX_BOARDS_13 (CADR_BOARD_QUUX13_MAIN_WORDS_MAX >> 16)
 
 // --- the face over /dev/mem ------------------------------------------------
 
@@ -278,7 +286,7 @@ int main(int argc, char **argv)
 	const char *out = NULL;
 	const char *verify = NULL;
 	const char *pack_dir = BIND_DIR;
-	unsigned boards = DEFAULT_BOARDS;
+	unsigned boards = 0;	/* the machine's own unless --boards says */
 	unsigned long chaos = DEFAULT_CHAOS_ADDRESS;
 	int want_display = 1, leave_halted = 0, guard = 1;
 	int already_halted = 0, no_packs = 0, halt_only = 0, start_only = 0;
@@ -355,8 +363,9 @@ int main(int argc, char **argv)
 		return do_verify(verify, packs, npacks);
 	if (halt_only && start_only)
 		usage();
-	if (boards < 1 || boards > 60) {
-		say("--boards %u: the backplane holds 1 to 60", boards);
+	if (boards && (boards < 1 || boards > MAX_BOARDS_13)) {
+		say("--boards %u: 1 to 60 of the CADR's backplane, or to %u for QUUX revision 13",
+		    boards, MAX_BOARDS_13);
 		return 2;
 	}
 
@@ -462,9 +471,29 @@ int main(int argc, char **argv)
 			say("the bitstream is QUUX, its microcycle %u ticks and %u more "
 			    "for ILONG", k, l);
 	}
+	// **AND WHICH REVISION OF QUUX**, entry 21's <15:0>: revision 13's
+	// words, sizes and main memory are its own (contract G2 appendix A1.13).
+	int revision = 0;
+	if (quux) {
+		revision = ro_quux_revision(&r);
+		if (revision != 12 && revision != 13) {
+			say("the readout's register table entry %u names no revision of QUUX "
+			    "this program knows", IMG_RG_QUUX_ID);
+			return 1;
+		}
+		if (revision == 13)
+			say("the bitstream is QUUX revision 13: 40-bit words and packed "
+			    "main memory, checkpoint version %u", CHK_VERSION_40);
+	}
+	if (!boards)
+		boards = revision == 13 ? DEFAULT_BOARDS_13 : DEFAULT_BOARDS;
+	if (revision != 13 && boards > 60) {
+		say("--boards %u: the backplane holds 1 to 60", boards);
+		return 2;
+	}
 
 	struct cadr_image img;
-	if (img_alloc_machine(&img, boards, quux) != 0) {
+	if (img_alloc_revision(&img, boards, quux, revision) != 0) {
 		say("out of memory for a machine of %u boards", boards);
 		return 1;
 	}
@@ -601,15 +630,29 @@ int main(int argc, char **argv)
 	// machine**: the fabric's own memory port is the machine's, and Linux
 	// reads the same cells from the other side of the controller, which is
 	// what the proving boards established on silicon.
-	volatile uint32_t *main_mem =
-		cadr_map(fd, DDR_MAIN_BASE, (size_t)boards * IMG_BOARD_WORDS * 4u,
-			 "main memory");
-	if (!main_mem) {
-		img_free(&img);
-		return 1;
+	if (img.rev13) {
+		// **REVISION 13's IS NOT COPIED.**  Packed storage is the file's
+		// own layout for 40-bit words, and 32M words are 160 MB, which a
+		// copy beside a body of the same size would leave Linux no room
+		// for: the mapping is handed to the file as it stands, and read
+		// while the machine is halted (`chk_hole`).
+		img.main13 = cadr_map(fd, DDR_MAIN13_BASE, (size_t)boards * IMG_BOARD_WORDS * 5u,
+				      "revision 13's main memory");
+		if (!img.main13) {
+			img_free(&img);
+			return 1;
+		}
+	} else {
+		volatile uint32_t *main_mem =
+			cadr_map(fd, DDR_MAIN_BASE, (size_t)boards * IMG_BOARD_WORDS * 4u,
+				 "main memory");
+		if (!main_mem) {
+			img_free(&img);
+			return 1;
+		}
+		for (size_t i = 0; i < (size_t)boards * IMG_BOARD_WORDS; ++i)
+			img.main[i] = main_mem[i];
 	}
-	for (size_t i = 0; i < (size_t)boards * IMG_BOARD_WORDS; ++i)
-		img.main[i] = main_mem[i];
 
 	if (want_display) {
 		// The CADR display's 32,768 words, or the video controller's 40,960.
@@ -693,6 +736,9 @@ int main(int argc, char **argv)
 	char cmd[4096];
 	bind_resume_command(&bind, out, cmd, sizeof cmd);
 	say("  to open it: %s", cmd);
+	if (img.rev13)
+		say("  (a revision 13 checkpoint, version %u: muir reads it, and its "
+		    "executables run revision 13 once muir-sim's revision 13 lands)", CHK_VERSION_40);
 	// **SAID EVERY TIME, BECAUSE IT IS THE ONE THING NOTHING CHECKS.**
 	say("BEFORE RESUMING, check the packs against the digests above ---");
 	say("  cadr-checkpoint --verify %s", sidecar);

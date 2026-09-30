@@ -6,6 +6,7 @@
 #include "chk.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,10 @@ void chk_init(struct chk *w)
 	w->len = 0;
 	w->cap = 0;
 	w->broken = 0;
+	w->word_bytes = 4;
+	w->hole = NULL;
+	w->hole_at = 0;
+	w->hole_len = 0;
 }
 
 void chk_free(struct chk *w)
@@ -79,6 +84,30 @@ void chk_u64(struct chk *w, uint64_t v)
 	put(w, b, 8);
 }
 
+void chk_word(struct chk *w, uint64_t v)
+{
+	uint8_t b[8];
+	for (unsigned i = 0; i < w->word_bytes; ++i)
+		b[i] = (uint8_t)(v >> (8 * i));
+	put(w, b, w->word_bytes);
+}
+
+void chk_words(struct chk *w, const uint64_t *v, size_t n)
+{
+	chk_u64(w, (uint64_t)n);
+	for (size_t i = 0; i < n; ++i)
+		chk_word(w, v[i]);
+}
+
+void chk_hole(struct chk *w, const volatile uint8_t *bytes, size_t n)
+{
+	if (w->hole)
+		w->broken = 1;	/* one hole a body */
+	w->hole = bytes;
+	w->hole_at = w->len;
+	w->hole_len = n;
+}
+
 void chk_bool(struct chk *w, int v)
 {
 	// muir refuses any byte but 0 and 1 for a flag, by name.
@@ -134,6 +163,16 @@ void chk_opt_u64(struct chk *w, int present, uint64_t v)
 }
 
 // --- packing ---------------------------------------------------------------
+//
+// **THE BODY IS READ THROUGH A SOURCE, AND THE FILE WRITTEN THROUGH A SINK.**
+// A 32-bit machine's body is one buffer.  Revision 13's is a buffer with a
+// hole in it where main memory goes (`chk_hole`), filled by main memory's
+// bytes where they stand --- on a board the DDR mapping, 160 MB at 32M words
+// --- so that neither a copy of it nor a packed copy of the whole body is
+// ever held: the packer reads the hole twice, once to find where a literal
+// run ends and once to copy it, and writes the file as it goes.  The runs are
+// muir's `pack`'s whatever the source, so the file is the same bytes either
+// way.
 
 struct buf {
 	uint8_t *p;
@@ -161,24 +200,111 @@ static void bput(struct buf *b, const void *d, size_t n)
 	b->len += n;
 }
 
-static void varint(struct buf *b, uint64_t v)
+// Where the packed bytes go: a buffer, or a file.
+struct sink {
+	struct buf *b;
+	FILE *f;
+	int broken;
+};
+
+static void sput(struct sink *k, const void *d, size_t n)
+{
+	if (k->b)
+		bput(k->b, d, n);
+	else if (!k->broken && n && fwrite(d, 1, n, k->f) != n)
+		k->broken = 1;
+}
+
+static void varint(struct sink *k, uint64_t v)
 {
 	for (;;) {
 		uint8_t byte = (uint8_t)(v & 0x7f);
 		v >>= 7;
 		if (v == 0) {
-			bput(b, &byte, 1);
+			sput(k, &byte, 1);
 			return;
 		}
 		byte |= 0x80;
-		bput(b, &byte, 1);
+		sput(k, &byte, 1);
 	}
 }
 
-static size_t zeros_at(const uint8_t *raw, size_t len, size_t i)
+// The body as one run of bytes: `a` then the hole then `b`.  The hole is read
+// a block at a time, aligned 32-bit words where the whole word is the hole's
+// (`cadr_mem.h`: device memory takes naturally aligned accesses), into
+// `block`; a block's base is a multiple of `SRC_BLOCK` from the hole's start,
+// which is page-aligned on a board.
+#define SRC_BLOCK 4096u
+struct src {
+	const uint8_t *a;
+	size_t alen;
+	const volatile uint8_t *h;
+	size_t hlen;
+	const uint8_t *b;
+	size_t blen;
+	size_t len;
+	uint8_t block[SRC_BLOCK];
+	size_t block_at;	/* the hole's offset of `block`, or SIZE_MAX */
+};
+
+static void src_load(struct src *s, size_t at)
+{
+	const size_t n = s->hlen - at < SRC_BLOCK ? s->hlen - at : SRC_BLOCK;
+	size_t o = 0;
+	for (; o < n && ((uintptr_t)(s->h + at + o) & 3u); ++o)
+		s->block[o] = s->h[at + o];
+	for (; o + 4u <= n; o += 4u) {
+		const uint32_t v = *(const volatile uint32_t *)(const volatile void *)(s->h + at + o);
+		s->block[o] = (uint8_t)v, s->block[o + 1] = (uint8_t)(v >> 8);
+		s->block[o + 2] = (uint8_t)(v >> 16), s->block[o + 3] = (uint8_t)(v >> 24);
+	}
+	for (; o < n; ++o)
+		s->block[o] = s->h[at + o];
+	s->block_at = at;
+}
+
+static uint8_t src_at(struct src *s, size_t i)
+{
+	if (i < s->alen)
+		return s->a[i];
+	i -= s->alen;
+	if (i < s->hlen) {
+		const size_t at = i - i % SRC_BLOCK;
+		if (s->block_at != at)
+			src_load(s, at);
+		return s->block[i - at];
+	}
+	return s->b[i - s->hlen];
+}
+
+// Bytes `from` to `from + n` of the source into the sink.
+static void src_copy(struct src *s, size_t from, size_t n, struct sink *k)
+{
+	while (n) {
+		size_t take;
+		if (from < s->alen) {
+			take = s->alen - from < n ? s->alen - from : n;
+			sput(k, s->a + from, take);
+		} else if (from - s->alen < s->hlen) {
+			const size_t i = from - s->alen, at = i - i % SRC_BLOCK;
+			if (s->block_at != at)
+				src_load(s, at);
+			const size_t in = SRC_BLOCK - (i - at) < s->hlen - i ? SRC_BLOCK - (i - at) : s->hlen - i;
+			take = in < n ? in : n;
+			sput(k, s->block + (i - at), take);
+		} else {
+			take = n;
+			sput(k, s->b + (from - s->alen - s->hlen), take);
+		}
+		from += take;
+		n -= take;
+	}
+}
+
+static size_t zeros_at(struct src *s, size_t i)
 {
 	size_t n = 0;
-	while (i + n < len && raw[i + n] == 0)
+	while (i + n < s->len && src_at(s, i + n) == 0)
 		++n;
 	return n;
 }
@@ -186,28 +312,56 @@ static size_t zeros_at(const uint8_t *raw, size_t len, size_t i)
 // muir's `pack`, run for run.  A zero run shorter than `MIN_ZERO_RUN` stays
 // inside the literal block it falls in; a longer one ends it.  A body that
 // ends in zeros emits a final pair with no literals.
-uint8_t *chk_pack(const uint8_t *raw, size_t len, size_t *out_len)
+static void pack(struct src *s, struct sink *k)
 {
-	struct buf out = { NULL, 0, 0, 0 };
 	size_t i = 0;
-	while (i < len) {
-		size_t zeros = zeros_at(raw, len, i);
+	while (i < s->len) {
+		size_t zeros = zeros_at(s, i);
 		i += zeros;
 		size_t start = i;
-		while (i < len) {
-			if (raw[i] != 0) {
+		while (i < s->len) {
+			if (src_at(s, i) != 0) {
 				++i;
 				continue;
 			}
-			size_t run = zeros_at(raw, len, i);
+			size_t run = zeros_at(s, i);
 			if (run >= CHK_MIN_ZERO_RUN)
 				break;
 			i += run;
 		}
-		varint(&out, (uint64_t)zeros);
-		varint(&out, (uint64_t)(i - start));
-		bput(&out, raw + start, i - start);
+		varint(k, (uint64_t)zeros);
+		varint(k, (uint64_t)(i - start));
+		src_copy(s, start, i - start, k);
 	}
+}
+
+static struct src *src_of(const struct chk *w)
+{
+	struct src *s = malloc(sizeof *s);
+	if (!s)
+		return NULL;
+	const size_t at = w->hole ? w->hole_at : w->len;
+	*s = (struct src){ .a = w->p, .alen = at, .h = w->hole, .hlen = w->hole ? w->hole_len : 0,
+			   .b = w->p + at, .blen = w->len - at, .block_at = SIZE_MAX };
+	s->len = s->alen + s->hlen + s->blen;
+	return s;
+}
+
+uint8_t *chk_pack(const uint8_t *raw, size_t len, size_t *out_len)
+{
+	struct buf out = { NULL, 0, 0, 0 };
+	struct sink k = { &out, NULL, 0 };
+	struct chk w;
+	chk_init(&w);
+	w.p = (uint8_t *)raw;
+	w.len = len;
+	struct src *s = src_of(&w);
+	if (!s) {
+		*out_len = 0;
+		return NULL;
+	}
+	pack(s, &k);
+	free(s);
 	if (out.broken) {
 		free(out.p);
 		*out_len = 0;
@@ -233,23 +387,23 @@ int chk_write_file(const char *path, const char *engine, uint32_t boards,
 		errno = ENOMEM;
 		return -1;
 	}
-	size_t packed_len = 0;
-	uint8_t *packed = chk_pack(body->p, body->len, &packed_len);
-	if (!packed) {
-		errno = ENOMEM;
-		return -1;
-	}
-
 	struct chk head;
 	chk_init(&head);
 	put(&head, kMagic, sizeof kMagic - 1);
+	// The version says the width (muir's `checkpoint::write`): 49 for a
+	// machine of 32-bit words, 50 for revision 13's 40.
+#if CHK_MUTATE == 31
 	chk_u32(&head, CHK_VERSION);
+#else
+	chk_u32(&head, body->word_bytes == 5 ? CHK_VERSION_40 : CHK_VERSION);
+#endif
 	size_t n = strlen(engine);
 	chk_u8(&head, (uint8_t)n);
 	put(&head, engine, n);
 	chk_u32(&head, boards);
-	if (head.broken) {
-		free(packed);
+	struct src *s = src_of(body);
+	if (head.broken || !s) {
+		free(s);
 		chk_free(&head);
 		errno = ENOMEM;
 		return -1;
@@ -257,15 +411,17 @@ int chk_write_file(const char *path, const char *engine, uint32_t boards,
 
 	FILE *f = fopen(path, "wb");
 	if (!f) {
-		free(packed);
+		free(s);
 		chk_free(&head);
 		return -1;
 	}
-	int ok = fwrite(head.p, 1, head.len, f) == head.len &&
-		 (packed_len == 0 || fwrite(packed, 1, packed_len, f) == packed_len);
+	struct sink k = { NULL, f, 0 };
+	sput(&k, head.p, head.len);
+	pack(s, &k);
+	int ok = !k.broken;
 	if (fclose(f) != 0)
 		ok = 0;
-	free(packed);
+	free(s);
 	chk_free(&head);
 	if (!ok) {
 		if (errno == 0)

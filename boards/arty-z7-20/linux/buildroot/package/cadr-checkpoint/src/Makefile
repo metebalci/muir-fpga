@@ -120,7 +120,7 @@ install: all
 # `build/checkpoint.quux.pass` compares with muir's own.
 check: $(WORK)/checkpoint_test
 	$(Q8_VERIFY)
-	$(WORK)/checkpoint_test $(WORK) $(Q8_DISKS) $(CHK) $(QCHK)
+	$(WORK)/checkpoint_test $(WORK) $(Q8_DISKS) $(CHK) $(QCHK) $(Q13CHK)
 
 $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                          $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
@@ -139,7 +139,7 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 # are the CADR's, judged by `build/checkpoint.pass`, and 9 to 21 QUUX's,
 # judged by `build/checkpoint.quux.pass`.  A mutant added here and not there
 # is built and never judged.
-MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21
+MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \

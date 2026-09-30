@@ -124,6 +124,6 @@ BR2_TARGET_UBOOT_SPL=y
 BR2_TARGET_UBOOT_SPL_NAME="spl/boot.bin"
 BR2_TARGET_UBOOT_ZYNQ=y
 BR2_TARGET_UBOOT_ZYNQ_PS7_INIT_FILE="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/uboot/ps7_init_gpl.c"
-BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/dts/xilinx/zynq-arty-z7-20.dts $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/uboot/zynq-arty-z7-20-u-boot.dtsi $(BR2_EXTERNAL_CADR_PATH)/../cadr-reserved.dtsi"
+BR2_TARGET_UBOOT_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/dts/xilinx/zynq-arty-z7-20.dts $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/uboot/zynq-arty-z7-20-u-boot.dtsi $(BR2_EXTERNAL_CADR_PATH)/../cadr-reserved.dtsi $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/dts/xilinx/zynq-arty-z7-20-quux13.dts $(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/uboot/zynq-arty-z7-20-quux13-u-boot.dtsi $(BR2_EXTERNAL_CADR_PATH)/../quux13-reserved.dtsi"
 BR2_TARGET_UBOOT_CUSTOM_MAKEOPTS="DEVICE_TREE=zynq-arty-z7-20"
 

@@ -361,6 +361,7 @@ the marker that says the fabric and not an undriven register wrote it.
 | what | where |
 |---|---|
 | main memory | `0xB000_0000`, 128 MB reserved, 15 MB reachable |
+| QUUX revision 13's main memory | `0xA000_0000`, room for 64M words packed; its own tree reserves `0xA000_0000`-`0xB481_FFFF` |
 | the display's buffer | `0xB400_0000` |
 | the gate | `h2f_gp_out[0]`, the system manager's GPO at `0x10D1_20E4` |
 | the tally's half | `h2f_gp_out[1]` |

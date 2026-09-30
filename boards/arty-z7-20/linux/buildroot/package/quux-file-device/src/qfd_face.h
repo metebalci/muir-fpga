@@ -77,6 +77,9 @@ struct qfd_face {
 struct qfd_fabric {
 	volatile uint32_t *page;
 	uint32_t mem_words;
+	// The page's IDENT said revision 13 ("QF13"), whose main memory is
+	// packed storage and whose rings are at 28-bit addresses.
+	int revision_13;
 #ifdef QFD_TEST_HOOKS
 	// The check's model of the page: every register access through it
 	// instead, and a barrier reported as an access to offset
@@ -93,7 +96,16 @@ struct qfd_fabric {
 // keyboard and mouse, the fifth of the faces.
 #define QFD_FACE_OFFSET 0x4000u
 
+// The most main memory each page may say, in words: revision 12's 16M,
+// which is the CADR's 64 MB of words, and revision 13's 64M, the largest room
+// a board keeps for it (`cadr_board.h`'s CADR_BOARD_QUUX13_MAIN_WORDS_MAX,
+// which the program holds the page to as well).
+#define QFD_MAX_MEM_WORDS    (16u * 1024u * 1024u)
+#define QFD_MAX_MEM_WORDS_13 (64u * 1024u * 1024u)
+
 int qfd_fabric_attach(struct qfd_fabric *fb, char *why, size_t whylen);
-void qfd_fabric_face(struct qfd_fabric *fb, volatile uint32_t *main, struct qfd_face *out);
+// `main` is main memory's mapping: 32-bit words to revision 12, and bytes of
+// packed storage on revision 13.
+void qfd_fabric_face(struct qfd_fabric *fb, volatile void *main, struct qfd_face *out);
 
 #endif

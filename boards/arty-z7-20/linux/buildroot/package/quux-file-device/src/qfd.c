@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -687,18 +688,117 @@ static uint32_t list(const struct qfd *d, const struct comps *cs, struct entries
 
 // --- main memory ------------------------------------------------------------------
 
-static uint32_t rd(struct qfd_mem *m, size_t k)
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error "packed storage is read and written as little-endian 32-bit words"
+#endif
+
+// **REVISION 13's PACKED STORAGE, A RUN OF WORDS AT A TIME.**  Word k is the
+// five bytes at 5k, so four words in five straddle a 32-bit boundary of the
+// mapping.  Every access to DDR is still naturally aligned (`cadr_mem.h`):
+// the run's bytes are moved as aligned 32-bit words where all four of them
+// are the run's, and as single bytes at its two ends, and never a byte
+// outside it --- a word beside a buffer may be the machine's, and the
+// machine may be writing it.  A run is taken `PACK_RUN` words at a time, 320
+// bytes, which keeps the stack small and costs at most six more byte
+// accesses a run than one pass would.
+#define PACK_RUN 64u
+
+// The check counts every access that is not naturally aligned, or that
+// reaches a byte outside the run: on a board the first faults on device
+// memory and the second may be past the mapping or the machine's.
+#ifdef QFD_TEST_HOOKS
+unsigned long qfd_hook_bad_access;
+#define ACCESS(b, o, width, lo, hi)                                                                \
+	do {                                                                                       \
+		if (((uintptr_t)((b) + (o)) & ((width) - 1u)) || (o) < (lo) || (o) + (width) > (hi))  \
+			++qfd_hook_bad_access;                                                     \
+	} while (0)
+#else
+#define ACCESS(b, o, width, lo, hi) ((void)0)
+#endif
+
+static void packed_load(volatile uint8_t *b, size_t lo, size_t hi, uint8_t *img)
 {
-	if (m->touch)
-		m->touch(m->ctx);
-	return m->w[k];
+	size_t o = lo;
+	for (; o < hi && (o & 3u); ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		*img++ = b[o];
+	}
+	for (; o + 4u <= hi; o += 4u, img += 4) {
+		ACCESS(b, o, 4u, lo, hi);
+		const uint32_t v = *(volatile uint32_t *)(void *)(b + o);
+		img[0] = (uint8_t)v, img[1] = (uint8_t)(v >> 8), img[2] = (uint8_t)(v >> 16),
+		img[3] = (uint8_t)(v >> 24);
+	}
+	for (; o < hi; ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		*img++ = b[o];
+	}
 }
 
-static void wr(struct qfd_mem *m, size_t k, uint32_t v)
+static void packed_store(volatile uint8_t *b, size_t lo, size_t hi, const uint8_t *img)
 {
-	if (m->touch)
-		m->touch(m->ctx);
-	m->w[k] = v;
+	size_t o = lo;
+	for (; o < hi && (o & 3u); ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		b[o] = *img++;
+	}
+	for (; o + 4u <= hi; o += 4u, img += 4) {
+		ACCESS(b, o, 4u, lo, hi);
+		*(volatile uint32_t *)(void *)(b + o) = (uint32_t)img[0] | (uint32_t)img[1] << 8 |
+							 (uint32_t)img[2] << 16 | (uint32_t)img[3] << 24;
+	}
+	for (; o < hi; ++o) {
+		ACCESS(b, o, 1u, lo, hi);
+		b[o] = *img++;
+	}
+}
+
+// `n` words from word `k`, `<31:0>` of each.
+static void rd_run(struct qfd_mem *m, size_t k, size_t n, uint32_t *out)
+{
+	while (n) {
+		const size_t c = n < PACK_RUN ? n : PACK_RUN;
+		if (m->touch)
+			for (size_t i = 0; i < c; ++i)
+				m->touch(m->ctx);
+		if (m->revision_13) {
+			uint8_t img[5 * PACK_RUN];
+			packed_load(m->b, 5 * k, 5 * (k + c), img);
+			for (size_t i = 0; i < c; ++i)
+				out[i] = (uint32_t)img[5 * i] | (uint32_t)img[5 * i + 1] << 8 |
+					 (uint32_t)img[5 * i + 2] << 16 | (uint32_t)img[5 * i + 3] << 24;
+		} else {
+			for (size_t i = 0; i < c; ++i)
+				out[i] = m->w[k + i];
+		}
+		k += c, n -= c, out += c;
+	}
+}
+
+// `n` words from word `k`, each `<31:0>` from `in` and, on revision 13, the
+// tag a fixnum's.
+static void wr_run(struct qfd_mem *m, size_t k, size_t n, const uint32_t *in)
+{
+	while (n) {
+		const size_t c = n < PACK_RUN ? n : PACK_RUN;
+		if (m->touch)
+			for (size_t i = 0; i < c; ++i)
+				m->touch(m->ctx);
+		if (m->revision_13) {
+			uint8_t img[5 * PACK_RUN];
+			for (size_t i = 0; i < c; ++i) {
+				img[5 * i] = (uint8_t)in[i], img[5 * i + 1] = (uint8_t)(in[i] >> 8);
+				img[5 * i + 2] = (uint8_t)(in[i] >> 16), img[5 * i + 3] = (uint8_t)(in[i] >> 24);
+				img[5 * i + 4] = QFD_TAG_FIXNUM;
+			}
+			packed_store(m->b, 5 * k, 5 * (k + c), img);
+		} else {
+			for (size_t i = 0; i < c; ++i)
+				m->w[k + i] = in[i];
+		}
+		k += c, n -= c, in += c;
+	}
 }
 
 struct buf {
@@ -706,11 +806,12 @@ struct buf {
 	uint32_t len;
 };
 
-// muir's `buffer`: on a 4-word line, at most 65,536 bytes, inside main memory.
+// muir's `buffer`: on a line (4 words, and 8 on revision 13), at most 65,536
+// bytes, inside main memory.
 static uint32_t buffer(struct qfd_mem *m, uint32_t addr, uint32_t len, struct buf *b)
 {
-	const size_t at = addr & 0xFFFFFFu;
-	if ((at & 3) || len > QFD_MAX_BUFFER || at + (len + 3u) / 4u > m->words)
+	const size_t at = qfd_mem_address(m, addr);
+	if ((at & qfd_mem_line(m)) || len > QFD_MAX_BUFFER || at + (len + 3u) / 4u > m->words)
 		return QFD_BAD_BUFFER;
 	b->at = at;
 	b->len = len;
@@ -720,15 +821,17 @@ static uint32_t buffer(struct qfd_mem *m, uint32_t addr, uint32_t len, struct bu
 // Byte k of a buffer is <8(k mod 4)+7 : 8(k mod 4)> of word k/4.
 static uint8_t *bytes_of(struct qfd_mem *m, struct buf b)
 {
+	const size_t words = (b.len + 3u) / 4u;
 	uint8_t *out = malloc(b.len + 1);
-	if (!out)
+	uint32_t *v = malloc((words ? words : 1) * sizeof *v);
+	if (!out || !v)
 		abort();
-	for (uint32_t w = 0; w < (b.len + 3u) / 4u; ++w) {
-		const uint32_t v = rd(m, b.at + w);
+	rd_run(m, b.at, words, v);
+	for (uint32_t w = 0; w < words; ++w)
 		for (uint32_t k = 0; k < 4 && 4 * w + k < b.len; ++k)
-			out[4 * w + k] = (uint8_t)(v >> (8 * k));
-	}
+			out[4 * w + k] = (uint8_t)(v[w] >> (8 * k));
 	out[b.len] = 0;
+	free(v);
 	return out;
 }
 
@@ -736,12 +839,17 @@ static uint8_t *bytes_of(struct qfd_mem *m, struct buf b)
 // last one 0, and no other word.
 static void put_bytes(struct qfd_mem *m, size_t at, const uint8_t *data, size_t n)
 {
-	for (size_t w = 0; w < (n + 3) / 4; ++w) {
-		uint32_t v = 0;
+	const size_t words = (n + 3) / 4;
+	uint32_t *v = calloc(words + 1, sizeof *v);
+	if (!v)
+		abort();
+	for (size_t w = 0; w < words; ++w) {
+		v[w] = 0;
 		for (size_t k = 0; k < 4 && 4 * w + k < n; ++k)
-			v |= (uint32_t)data[4 * w + k] << (8 * k);
-		wr(m, at + w, v);
+			v[w] |= (uint32_t)data[4 * w + k] << (8 * k);
 	}
+	wr_run(m, at, words, v);
+	free(v);
 }
 
 // --- the commands -------------------------------------------------------------------
@@ -1178,8 +1286,7 @@ static uint32_t cmd_directory(struct qfd *d, struct qfd_mem *m, const uint32_t *
 		const size_t words = record(&es.e[next], rec);
 		if ((used + words) * 4 > b.len)
 			break;
-		for (size_t w = 0; w < words; ++w)
-			wr(m, b.at + used + w, rec[w]);
+		wr_run(m, b.at + used, words, rec);
 		used += words;
 		++next;
 	}
@@ -1402,17 +1509,16 @@ static uint32_t command(struct qfd *d, struct qfd_mem *m, uint32_t opcode, uint3
 void qfd_execute(struct qfd *d, struct qfd_mem *m, size_t cmd_at, size_t resp_at)
 {
 	uint32_t c[8];
-	for (int k = 0; k < 8; ++k)
-		c[k] = rd(m, cmd_at + (size_t)k);
+	rd_run(m, cmd_at, 8, c);
 	const uint32_t tag = c[0] & 0xFFFF, opcode = (c[0] >> 16) & 0xFF, flags = c[0] >> 24;
 	struct reply r;
 	memset(&r, 0, sizeof r);
 	const uint32_t s = command(d, m, opcode, flags, c, &r);
 	if (s)
 		memset(&r, 0, sizeof r);
-	wr(m, resp_at, tag | s << 16 | opcode << 24);
-	for (int k = 0; k < 7; ++k)
-		wr(m, resp_at + 1 + (size_t)k, r.w[k]);
+	uint32_t out[8] = { tag | s << 16 | opcode << 24 };
+	memcpy(out + 1, r.w, sizeof r.w);
+	wr_run(m, resp_at, 8, out);
 }
 
 // --- the start's sweep ---------------------------------------------------------------

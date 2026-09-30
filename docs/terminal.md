@@ -212,6 +212,13 @@ the same quadrature lines. The face's handshake reads the FIFO's state in the
 place of the I/O board's `KBD READY`, so this program's input half does not
 change.
 
+**On revision 13 the window's base in DDR is the same.** The machine reaches
+its frame buffer at `1760000000` rather than `17000000`. It still stores it 4
+bytes a word, the field alone, so this program reads the same bytes at the
+same place and `--window` keeps its default. Main memory moved, into packed
+storage below the display, and a static assertion in `screen_geom.h` holds
+the window clear of it.
+
 ## What a key is, and what the machine is told
 
 **There are no modifier bits in a key event.** The CADR's keyboard --- source

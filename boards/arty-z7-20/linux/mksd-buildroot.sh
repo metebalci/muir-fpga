@@ -9,6 +9,7 @@
 #     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-de25/images \
 #     BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
 #     BIT=<the fabric's core.rbf> boards/arty-z7-20/linux/mksd-buildroot.sh
+#     REVISION=13 BIT=<QUUX revision 13's bitstream> ... boards/arty-z7-20/linux/mksd-buildroot.sh
 #
 # The sibling of boards/arty-z7-20/linux/mksd.sh, which stages the stepping stone from
 # Digilent's BSP and is left as it is.  This one takes what `make buildroot`
@@ -236,6 +237,37 @@ esac
 # The FIT the first-stage loader reads, which carries U-Boot and its
 # environment: the last of the root's files.
 LOADER=${ROOT_FILES##*:}
+# **A CARD CARRIES ONE MACHINE, AND ITS TREES GO WITH ITS BITSTREAM.**  The
+# CADR's and QUUX revision 12's device tree reserves the CADR's 128 MB;
+# revision 13's reserves its own region (docs/linux.md, "Each machine's
+# reservation").  The kernel's tree is fetched from the folder the bitstream is
+# fetched from, under the board tree's own name, so REVISION=13 stages
+# revision 13's tree under that name beside revision 13's bitstream, and
+# revision 13's loader, whose own tree is revision 13's too, under the loader's
+# name.  Nothing can ask the fabric which machine it is, so the pairing is this
+# script's: BIT is revision 13's when REVISION=13 says so.
+die() { echo "mksd-buildroot: $*" >&2; exit 1; }
+REVISION=${REVISION:-}
+TREE_IMAGE=$BOARD_DTB
+case "$REVISION" in
+  "") ;;
+  13)
+    case "$BOARD_NAME" in
+      arty-z7-20)
+        TREE_IMAGE=zynq-arty-z7-20-quux13.dtb
+        ROOT_FILES="boot.bin:BOOT.BIN u-boot-quux13.img:u-boot.img"
+        RESERVED=quux13@12000000
+        ;;
+      de25-nano)
+        TREE_IMAGE=socfpga_agilex5_de25_nano_quux13.dtb
+        ROOT_FILES="u-boot-quux13.itb:u-boot.itb"
+        RESERVED=quux13@a0000000
+        ;;
+      *) die "REVISION=13 on $BOARD_NAME: QUUX revision 13 runs on the Arty Z7-20 and the DE25-Nano" ;;
+    esac
+    ;;
+  *) die "REVISION=$REVISION: it is 13, QUUX revision 13, or unset for the CADR and revision 12" ;;
+esac
 # The board's four files, which the card's folder and the server's directory
 # for the board both hold and the loader's environment names.
 BOARD_FILES="$FABRIC $BOARD_DTB $KERNEL rootfs.cpio.uboot"
@@ -286,7 +318,7 @@ ROOT_IMAGES=; ROOT_NAMES=
 for rf in $ROOT_FILES; do
   ROOT_IMAGES="$ROOT_IMAGES ${rf%%:*}"; ROOT_NAMES="${ROOT_NAMES:+$ROOT_NAMES }${rf#*:}"
 done
-for f in $ROOT_IMAGES "$KERNEL" "$BOARD_DTB" rootfs.cpio.uboot; do
+for f in $ROOT_IMAGES "$KERNEL" "$TREE_IMAGE" rootfs.cpio.uboot; do
   [ -f "$IMAGES/$f" ] || die "no $f in $IMAGES: run 'make buildroot' first"
 done
 # **THE FABRIC MAY BE LEFT OUT, AND ONLY BY NAME.**  NO_FABRIC=1 stages a card
@@ -610,7 +642,8 @@ for spec in $ROOT_FILES; do
   cp "$IMAGES/${spec%%:*}" "$OUT/card/${spec#*:}"
 done
 [ -n "$NO_FABRIC" ] || cp "$BIT" "$OUT/card/$BOARD_NAME/$FABRIC"
-cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/$BOARD_NAME/"
+cp "$IMAGES/$TREE_IMAGE" "$OUT/card/$BOARD_NAME/$BOARD_DTB"
+cp "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/$BOARD_NAME/"
 [ -n "$NO_FAULT" ] || cp "$FAULT_BIT" "$OUT/card/$BOARD_NAME/$FAULT"
 sed -e "s/@SERVERIP@/${SERVERIP:-}/" -e "s/@ETHADDR@/${ETHADDR:-}/" \
     -e '/^serverip=$/d' -e '/^ethaddr=$/d' "$BOARD/uEnv.txt.in" > "$OUT/card/uEnv.txt"
@@ -1571,7 +1604,8 @@ echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M
 # directory named for this board.
 [ -n "$NO_FABRIC" ] || cp "$BIT" "$OUT/server/$BOARD_NAME/$FABRIC"
 [ -n "$NO_FAULT" ] || cp "$FAULT_BIT" "$OUT/server/$BOARD_NAME/$FAULT"
-cp "$IMAGES/$BOARD_DTB" "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/$BOARD_NAME/"
+cp "$IMAGES/$TREE_IMAGE" "$OUT/server/$BOARD_NAME/$BOARD_DTB"
+cp "$IMAGES/$KERNEL" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/$BOARD_NAME/"
 cp "$BOARD/uEnv.net" "$OUT/server/$BOARD_NAME/uEnv.net"
 
 # What makes the staging believable rather than merely done.
@@ -1692,30 +1726,29 @@ if command -v "$DTC" >/dev/null 2>&1; then
   MODEL=$(sed -n 's/^[[:space:]]*model = "\(.*\)";.*/\1/p' "$DTS" | head -1)
   [ -n "$MODEL" ] || die "no model string in $DTS"
   grep -q "\"$MODEL\"" "$OUT/tree.dts" || die "the tree's model is not \"$MODEL\": it is not this board's"
-  # **AND ON THE DE25-Nano, U-BOOT'S OWN TREE TOO.**  There U-Boot proper runs
-  # with the tree binman packs into u-boot.itb, and that tree is the one whose
-  # `lmb` keeps the kernel's tree and the ramdisk out of the CADR's region.
-  # Altera's DE25 configuration packs ITS tree there; ours is packed only
-  # because socfpga_agilex5_de25_nano_cadr-u-boot.dtsi says so, and nothing
-  # else would notice if it stopped.  So the tree is taken back out of the FIT
-  # and looked at.  A Zynq board's u-boot.img carries its tree the same way,
-  # and there the kernel's reservation and U-Boot's come from one file listed
-  # for both, so this is the DE25-Nano's alone.
-  if [ "$LOADER" = u-boot.itb ]; then
+  # **AND U-BOOT'S OWN TREE TOO.**  U-Boot proper runs with the tree its FIT
+  # carries (u-boot.itb binman's, u-boot.img `mkimage -f auto`'s), and that
+  # tree is the one whose reservation keeps U-Boot's relocation and the
+  # kernel's tree and the ramdisk it places out of the machine's region --- the
+  # machine being live by then.  Each machine's loader carries its own tree, so
+  # the tree is taken back out of the FIT and looked at for the machine's node.
+  # On the DE25-Nano Altera's configuration packs ITS tree there, and ours is
+  # packed only because our -u-boot.dtsi says so.
+  if [ "$LOADER" = u-boot.itb ] || [ "$LOADER" = u-boot.img ]; then
     [ -x "$HOSTBIN/dumpimage" ] && [ -x "$HOSTBIN/fdtget" ] \
-      || die "no dumpimage or fdtget in $HOSTBIN to read U-Boot's tree out of u-boot.itb"
+      || die "no dumpimage or fdtget in $HOSTBIN to read U-Boot's tree out of $LOADER"
     at=0; pos=
-    for img in $("$HOSTBIN/fdtget" -l "$OUT/card/u-boot.itb" /images); do
-      [ "$("$HOSTBIN/fdtget" "$OUT/card/u-boot.itb" "/images/$img" type)" = flat_dt ] && pos=$at
+    for img in $("$HOSTBIN/fdtget" -l "$OUT/card/$LOADER" /images); do
+      [ "$("$HOSTBIN/fdtget" "$OUT/card/$LOADER" "/images/$img" type)" = flat_dt ] && pos=$at
       at=$((at + 1))
     done
-    [ -n "$pos" ] || die "u-boot.itb carries no tree"
-    "$HOSTBIN/dumpimage" -T flat_dt -p "$pos" -o "$OUT/uboot-tree.dtb" "$OUT/card/u-boot.itb" >/dev/null \
-      || die "dumpimage could not take the tree out of u-boot.itb"
+    [ -n "$pos" ] || die "$LOADER carries no tree"
+    "$HOSTBIN/dumpimage" -T flat_dt -p "$pos" -o "$OUT/uboot-tree.dtb" "$OUT/card/$LOADER" >/dev/null \
+      || die "dumpimage could not take the tree out of $LOADER"
     "$DTC" -I dtb -O dts -o "$OUT/uboot-tree.dts" "$OUT/uboot-tree.dtb" 2>/dev/null
     grep -A4 "$RESERVED" "$OUT/uboot-tree.dts" | grep -q 'no-map' \
-      || die "the tree U-Boot runs with (in u-boot.itb) has no $RESERVED, no-map: it is not ours, and U-Boot would place the kernel's tree and the ramdisk without knowing where the CADR's memory is"
-    grep -q "\"$MODEL\"" "$OUT/uboot-tree.dts" || die "the tree in u-boot.itb is not \"$MODEL\""
+      || die "the tree U-Boot runs with (in $LOADER) has no $RESERVED, no-map: it is not this machine's, and U-Boot would place itself, the kernel's tree and the ramdisk without knowing where the machine's memory is"
+    grep -q "\"$MODEL\"" "$OUT/uboot-tree.dts" || die "the tree in $LOADER is not \"$MODEL\""
     rm -f "$OUT/uboot-tree.dtb" "$OUT/uboot-tree.dts"
   fi
 else

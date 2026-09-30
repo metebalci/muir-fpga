@@ -142,8 +142,8 @@ module quux_mem_port
     // 32, QUUX to revision 12; 40, revision 13 (`cadr_machine.sv`).
     parameter int unsigned WORD_BITS = 32,
     // Revision 13's main memory in DDR: word w at byte `MAIN13_BASE + 5w`,
-    // and 0 the CADR's main memory base, `MAIN_BASE`, until the board's
-    // layout gives another.  Unread below revision 13.
+    // and 0 the board's layout's, `cadr_ddr_map::QUUX13_MAIN_BASE`, which
+    // revision 13's device tree reserves.  Unread below revision 13.
     parameter logic [31:0] MAIN13_BASE = 32'd0,
     localparam bit          WIDE       = WORD_BITS > 32,
     localparam int unsigned PHYS_BITS  = WIDE ? 28 : 22,
@@ -241,7 +241,7 @@ module quux_mem_port
 
   localparam int unsigned HIT_T = cadr_tick_pkg::ticks(20);
   localparam int unsigned WB = WORD_BITS;
-  localparam logic [31:0] BASE13 = (MAIN13_BASE != 32'd0) ? MAIN13_BASE : MAIN_BASE;
+  localparam logic [31:0] BASE13 = (MAIN13_BASE != 32'd0) ? MAIN13_BASE : QUUX13_MAIN_BASE;
   localparam int unsigned LINE_WORDS = WIDE ? 8 : 4;
   localparam int unsigned OFF_BITS = WIDE ? 3 : 2;
 

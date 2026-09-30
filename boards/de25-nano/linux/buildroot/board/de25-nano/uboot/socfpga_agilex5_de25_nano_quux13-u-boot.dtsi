@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * What U-Boot adds to revision 13's tree: the board's own additions, and the
+ * tree binman packs into revision 13's u-boot.itb pointed at revision 13's.
+ * U-Boot includes <tree>-u-boot.dtsi by the name of the tree it compiles, so
+ * revision 13's tree gets this file, which includes the CADR tree's.
+ */
+
+#include "socfpga_agilex5_de25_nano_cadr-u-boot.dtsi"
+
+#if !defined(CONFIG_SOCFPGA_SECURE_VAB_AUTH)
+&fdt_0_blob {
+	filename = "arch/arm/dts/socfpga_agilex5_de25_nano_quux13.dtb";
+};
+#endif

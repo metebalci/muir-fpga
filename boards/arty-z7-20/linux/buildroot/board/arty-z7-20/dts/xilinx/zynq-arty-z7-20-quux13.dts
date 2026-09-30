@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * The Arty Z7-20's tree for QUUX revision 13: the board's own tree, and
+ * revision 13's reservation in place of the CADR's (`quux13-reserved.dtsi`,
+ * copied beside it by the build as `cadr-reserved.dtsi` is).
+ *
+ * A card or a served set pairs it with revision 13's bitstream by staging it
+ * under the board tree's own name, zynq-arty-z7-20.dtb, in the folder the
+ * bitstream is fetched from (`mksd-buildroot.sh`, REVISION=13).  U-Boot
+ * compiles it too, with zynq-arty-z7-20-quux13-u-boot.dtsi, into revision
+ * 13's u-boot.img.
+ */
+
+#include "zynq-arty-z7-20.dts"
+#include "quux13-reserved.dtsi"

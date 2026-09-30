@@ -1731,6 +1731,13 @@ take against another dump. With `--word NAME:ADDR` it prints one word, and
 with `--list` it says what the window reaches. It compares the echo on every
 word and refuses any word whose echo is not the address it asked for.
 
+**The memories' depths and widths are the machine's.** The program asks the
+register table's entry 21 which machine the bitstream is: the CADR, QUUX to
+revision 12, or QUUX revision 13, whose entry carries MACHINE-ID's `<15:0>`.
+On revision 13 A, M and the pushdown buffer are 40 bits. The dispatch memory
+has 4,096 entries, level 1 of the map 8,192 of 7 bits and level 2 4,096 of 28.
+`--list` gives all three machines' shapes.
+
 **It is not the debugger and is not meant to become one.** The debugger for
 this machine is CC over the debug cable, which reads the scratchpads and the
 pushdown buffer by forcing a microinstruction into the instruction register.
