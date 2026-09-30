@@ -1538,7 +1538,7 @@ hand says the interrupt is arriving from the program. On each board
 saturated at the screen's own limits, and the arrow glyph followed. `MOUSE
 READY` in the input face's status register is clear at rest on both, so the
 machine is reading the card. The screens hold 18,170 lit pixels of 739,584 on
-the Arty Z7-20 and 18,033 on the Cora Z7-07S, which is a System 304 Listener.
+the Arty Z7-20 and 18,033 on the Cora Z7-07S, which was a System 304 Listener.
 
 **A checkpoint written on the board was opened by the muir in the same image on
 the same board.** The Arty Z7-20's machine was halted from its console with the
@@ -1727,12 +1727,12 @@ its display step at a boot and no `cadr-display:` line appears on either
 console. That is what the color board being off by default looks like.
 
 **MIT's own probe had to be made out of the band's primitives.** The System
-304 band carries MIT's `COLOR` package --- `(pkg-find-package "COLOR" :find)`
-answers with it --- but not the `COLOR` system's functions, and
-`color:xbus-location-exists-p` is undefined. So `COLOR-EXISTS-P` is not run at
-this band's cold boot, and the caution about a band walking into
-`COLOR:SETUP`'s sync loops does not apply to this band as it stands, there
-being nothing loaded to walk into. Whether a band with the `COLOR` system
+304 band carried MIT's `COLOR` package --- `(pkg-find-package "COLOR" :find)`
+answered with it --- but not the `COLOR` system's functions, and
+`color:xbus-location-exists-p` was undefined. So `COLOR-EXISTS-P` was not run
+at that band's cold boot, and the caution about a band walking into
+`COLOR:SETUP`'s sync loops did not apply to that band, there being nothing
+loaded to walk into. Whether a band with the `COLOR` system
 loaded would walk into them is untouched by this session.
 
 The four primitives the probe is built from are all there: `%xbus-write`,
@@ -1807,7 +1807,7 @@ this and both machines were running throughout.
 
 **Nothing else about either machine moved.** Both were RUNNING on every
 reading, 6,364 to 6,819 microcycles per 2,000 microseconds, with `FLAG-1`
-`0xf900` every time. Both screens carry a System 304 Lisp Listener two minutes
+`0xf900` every time. Both screens carried a System 304 Lisp Listener two minutes
 after the boot, 18,080 lit pixels on the Arty Z7-20 and 18,048 on the Cora
 Z7-07S, with who-lines dated after this boot began and advancing at 0.509 of
 real time on both. The mouse tracks on both, read off `tv:mouse-x` and

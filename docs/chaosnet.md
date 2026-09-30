@@ -354,8 +354,8 @@ file and time host at the address that table gives. A host answering anywhere
 else is a host the band never calls, and a service that runs and is never
 reached looks exactly like one that works. So the default is the address the
 band this project ships beside names for its own associated machine, and a
-board running another band says so on the card: System 100 calls 3060 and
-System 304 calls 4403.
+board running another band says so on the card: muir-sys's releases, System
+1000 and later, call 177200, and System 100 calls 3060.
 
 That means every board runs a copy at one address. **They do not collide,
 because none of them claims that address on a network.** The host listens on
@@ -463,8 +463,8 @@ clock line reaches the clock and nothing else.
     --chaos-address 3050         this machine's Chaosnet address, in octal.
                                  It is the DIP switches on MIT's card, so it
                                  is not configuration: it is what the hardware
-                                 is. System 100 is 3050 and System 304 is
-                                 4401.
+                                 is. System 100 is 3050, and System 1000
+                                 and later are 177201.
     --chaos-udp 0.0.0.0:42042    the cable, plugged in. Without this line the
                                  program sends nothing, whatever the address
                                  switches read, and no cable is plugged in on

@@ -129,7 +129,8 @@ FPGARC_REPEATABLE="--ozd-root --ozd-host"
 # service that runs and is never reached looks exactly like one that works.  So
 # the default is the address the band this project ships beside names for its
 # own associated machine, and a board running another band says so on the card:
-# System 100's table calls 3060 and System 304's calls 4403.
+# System 100's table calls 3060, and that of muir-sys's releases, System 1000
+# and later, calls 177200.
 DEFAULT_ADDRESS=177200
 # ITS NAMES, as a band's host table writes them: the official name first, then
 # the system type.  STATUS answers with the first of them.

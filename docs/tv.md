@@ -793,7 +793,7 @@ at +0.203 ns and 93.6% of its lookup tables, built from a clean tree at
 
 **What silicon has shown.** On a Zynq board the console fits and unfits the
 color board while the machine runs, and MIT's own `COLOR-EXISTS-P` body, typed
-at a Lisp Listener out of the four primitives the System 304 band has, answers
+at a Lisp Listener out of the four primitives the System 304 band had, answered
 `NIL` before and `T` after --- the console's register face and a bus cycle at
 `0o17200000` agreeing across a backplane they share and nothing else. The map
 reads sixteen black entries for either board and the color screen serves black

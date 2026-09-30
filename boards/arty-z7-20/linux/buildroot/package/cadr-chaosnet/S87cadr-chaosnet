@@ -23,10 +23,10 @@
 # machine then boots, paints the window system and says its file host is not a
 # known host.  That host is somewhere on the network and this program's job is
 # only to reach it.  System 100, which is the band on this board's pack, is
-# MIT-LISPM-1 at 3050 and calls MIT-OZ at 3060; System 304 is AMS-LISPM-1 at
-# 4401 calling 4403.  So the default below is System 100's own address and a
-# board running another band says so in the settings file rather than editing
-# this script.
+# MIT-LISPM-1 at 3050 and calls MIT-OZ at 3060; muir-sys's releases, System
+# 1000 and later, are LISPM-1 at 177201 calling OZ at 177200.  So the default
+# below is System 100's own address and a board running another band says so
+# in the settings file rather than editing this script.
 #
 # The log goes to the console, which is where the board is watched from
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the

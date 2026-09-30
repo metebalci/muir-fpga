@@ -73,10 +73,10 @@
 // table gives.  System 100's band is `MIT-LISPM-1` at 3050 and calls its file
 // and time host `MIT-OZ` at 3060, so a run with that pack is
 // `--chaos-address 3050` with `--chaos-udp-peer 3060@<where the host is>`.
-// System 304's band is `AMS-LISPM-1` at 4401 calling 4403.  The default here
-// is muir's and is deliberately no real host's: 177001, on subnet 376, which
-// no host table in either release names.  `muir::chaos`'s own header has the
-// whole argument.
+// muir-sys's releases, System 1000 and later, are `LISPM-1` at 177201 calling
+// `OZ` at 177200.  The default here is muir's and is deliberately no real
+// host's: 177001, on subnet 376, which none of those host tables names.
+// `muir::chaos`'s own header has the whole argument.
 
 #include <signal.h>
 #include <stdint.h>
@@ -324,9 +324,9 @@ static void usage(void)
 "                     [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]...\n"
 "\n"
 "  --chaos-address <octal>      this machine's Chaosnet address, in octal or\n"
-"                               subnet:host.  System 100's band wants 3050 and\n"
-"                               System 304's 4401.  The default, 177001, is\n"
-"                               deliberately no real host's\n"
+"                               subnet:host.  System 100's band wants 3050,\n"
+"                               and System 1000 and later want 177201.  The\n"
+"                               default, 177001, is deliberately no real host's\n"
 "  --chaos-udp [<endpoint>]     the cable, plugged in: Chaosnet over UDP at\n"
 "                               [<address>:]<port>, 42042 by default.  WITHOUT\n"
 "                               THIS NOTHING IS SENT, whatever the address\n"
@@ -334,7 +334,8 @@ static void usage(void)
 "                               talks to nobody\n"
 "  --chaos-udp-peer <a>@<h>[:<p>]  a station on the cable that is not on this\n"
 "                               board.  The band's file and time host is one:\n"
-"                               System 100 calls 3060, System 304 calls 4403.\n"
+"                               System 100 calls 3060, System 1000 and later\n"
+"                               call 177200.\n"
 "                               It needs the cable, --chaos-udp\n"
 "  --chaos-udp-default-peer <h>[:<p>]  where a frame goes whose destination no\n"
 "                               --chaos-udp-peer named: the route of last\n"
@@ -376,8 +377,8 @@ static int gone(const char *flag)
 "cadr-chaosnet: reason.  The host is ON THE NETWORK: give it its own Chaosnet\n"
 "cadr-chaosnet: address and reach it with --chaos-udp-peer <address>@<host>.\n"
 "cadr-chaosnet: A band calls the address its own host table names --- 3060 for\n"
-"cadr-chaosnet: System 100, 4403 for System 304.  metebalci/ozd is a host that\n"
-"cadr-chaosnet: boots a band.\n", flag);
+"cadr-chaosnet: System 100, 177200 for System 1000 and later.  metebalci/ozd is\n"
+"cadr-chaosnet: a host that boots a band.\n", flag);
 	return 2;
 }
 
