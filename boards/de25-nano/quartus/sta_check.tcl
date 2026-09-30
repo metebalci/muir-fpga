@@ -631,7 +631,9 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     # acknowledgment's register and thirty-one of the tally's thirty-two
     # bits.  Bit 31 is the tally's own marker, a constant zero in both halves,
     # and the fitter keeps no register for it; bit 15, the marker's constant
-    # one, it keeps.  Measured.
+    # one, it keeps, because `project.tcl` forbids merging it with the
+    # bridge's constant address bits, which a build without that did.
+    # Measured.
     #
     # **EIGHTY AND NOT NINETY-SIX.**  The clause names three registers of
     # thirty-two bits, and the top eight bits of both addresses are the

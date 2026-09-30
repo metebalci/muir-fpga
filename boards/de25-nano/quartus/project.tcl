@@ -159,6 +159,27 @@ if {$ddr && !$fault} {
 if {$ddr} {
     set_global_assignment -name SDC_FILE [file join $root boards de25-nano quartus hps_reset.sdc]
 }
+# **AND THE REGISTERS THOSE CUTS NAME ARE NEVER MERGED.**  Synthesis merges
+# two registers that hold the same value, and whether it does changes from
+# one build to the next with no change to the registers themselves: a fit of
+# revision 13's devices merged the processor system's three reset
+# synchronizers into one and the tally's constant bit 15 into a constant
+# address bit of the processor's own bridge, and a fit of the commit before,
+# made the same day, kept all of them apart.  A merged tally bit survives
+# under the bridge's name, which `cadr_ddr.sdc`'s cut does not name.
+# `sta_check.tcl` counts both collections and refuses a build
+# whose count moved; this makes the count the design's and not the
+# compiler's.  A register the compiler removes as constant, the tally's bit
+# 31, is still removed: that is not a merge.
+if {$ddr} {
+    foreach sync {sm_hps|hps2fpga_axi4_rl_adp_inst_reset_sync sm_hps|lwhps2fpga_axi4_rl_adp_inst_reset_sync
+                  sm_mpfe|hps_ready_latency_adp_axi4_reset_sync} {
+        set_instance_assignment -name DONT_MERGE_REGISTER ON -to "u_hps|hps|hps|$sync|sync_reg\[*\]"
+    }
+    if {!$fault} {
+        set_instance_assignment -name DONT_MERGE_REGISTER ON -to "u_memory|gp_in\[*\]"
+    }
+}
 
 # **THE DISPLAY OUTPUT, ITS PIXEL CLOCK AND ITS OWN CONSTRAINTS**, only when
 # it is built, for the reason the probe's files below are read only behind
