@@ -194,7 +194,7 @@ QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart un
 # with the host setting it, and `files`, the file device's registers, rings,
 # interrupt, disable and reset, the testbench playing the host's server from
 # the completions muir's device made.  And `registers`, QUUX's alone (contract
-# Q13, #34): muir's own table of the register page as a program, every one of
+# Q13): muir's own table of the register page as a program, every one of
 # its 256 words read at power-on, written with all ones where it is read only
 # or reserved, and read again, and every address that was a register before
 # revision 11 finding nothing there.

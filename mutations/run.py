@@ -671,7 +671,7 @@ CHECKS = {
         "machine": "quux",
     }),
     # Every word of the register page, and every address that was one
-    # (contract Q13, #34).
+    # (contract Q13).
     "quux_registers_quux": dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],

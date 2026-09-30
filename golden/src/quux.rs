@@ -1758,7 +1758,7 @@ fn register_at_power_on(w: u32) -> Option<u32> {
 }
 
 /// **Every word of QUUX's register page, and every address that was one**
-/// (contract Q13, #34): muir's `tests/quux_registers.rs` table as a program,
+/// (contract Q13): muir's `tests/quux_registers.rs` table as a program,
 /// traced, so that the fabric reads the same 256 words muir's own test
 /// reads, in the same order, through the map.  QUUX's alone.
 ///

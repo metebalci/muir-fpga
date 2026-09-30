@@ -19894,7 +19894,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note Words 140-147 as the CADR's board answers them at `764140` on: 144
 @note the CSR again, 146 and 147 read, and a write of 144 or 145 taken, 145
 @note as the write buffer's, where only the five real registers are
-@note decoded (contract Q13, #33).
+@note decoded (contract Q13).
 @old
   assign chaos_answers = in_chaos && (dev_write ? (which[2:1] == 2'b00)
                                                 : (which[2:0] <= 3'd3 || which[2:0] == 3'd5));

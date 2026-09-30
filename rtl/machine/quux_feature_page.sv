@@ -53,7 +53,7 @@
 //          k's control and status at 110 + 2k, its period at 111 + 2k
 //     120-123  the keyboard and the mouse, `quux_input.sv` (contract Q3)
 //     140-145  the Chaosnet interface's five registers, sixteen bits in the
-//          bottom of the word (contract Q4; contract Q13, #33): 140 the
+//          bottom of the word (contract Q4; contract Q13): 140 the
 //          CSR, read and written; 141 my address when read, the write
 //          buffer when written; 142 the read buffer, read only, a read
 //          advancing it; 143 the bit count, read only; 145 START, read
@@ -258,8 +258,8 @@ module quux_feature_page #(
   logic take;
   assign take = mine && dev_rq && !taken;
 
-  // Words 140-147 as muir's `network_register` takes them (contract Q13,
-  // #33): a read of 140, 141, 142, 143 and 145, and a write of 140 and 141.
+  // Words 140-147 as muir's `network_register` takes them (contract Q13): a
+  // read of 140, 141, 142, 143 and 145, and a write of 140 and 141.
   // 144, 146 and 147 are reserved, and a write of 142, 143 or 145 goes
   // nowhere, where the CADR's board takes a write of `764152`, 145, as its
   // write buffer's and answers `764150` and `764156` as aliases.
