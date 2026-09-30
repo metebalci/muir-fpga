@@ -193,7 +193,8 @@ module cadr_f2sdram_harness #(
   // 32 boards of memory declared.
   // QUUX's line fill and its port's idle (contract Q6): the CADR this
   // harness builds never asks a line, so the line is zeros.
-  logic h_mem_line, h_mem_drained;
+  logic h_mem_line, h_mem_drained, h_mem_wide;
+  logic [2:0] h_mem_beats;
   logic [127:0] h_port_rline;
   // QUUX's host side's word, read by nobody here.
   /* verilator lint_off UNUSEDSIGNAL */
@@ -289,7 +290,7 @@ module cadr_f2sdram_harness #(
       // tied and the word is folded with the rest.
       .disp_map_a(4'd0), .disp_color_map_q(disp_color_map_q),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(h_mem_line), .mem_rline(128'd0), .mem_drained(h_mem_drained),
+      .mem_line(h_mem_line), .mem_beats(h_mem_beats), .mem_wide(h_mem_wide), .mem_rline(128'd0), .mem_drained(h_mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -322,7 +323,7 @@ module cadr_f2sdram_harness #(
       .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata),
       .mem_done(mem_done), .mem_rdata(mem_rdata), .mem_error(mem_error),
-      .mem_line(1'b0), .mem_rline(h_port_rline),
+      .mem_line(1'b0), .mem_beats(3'd0), .mem_wide(1'b0), .mem_rline(h_port_rline),
       .h2f_reset(h2f_reset), .gp_open(gp_open), .gp_half(gp_half),
       .warm_req_n(warm_req_n), .warm_ack_n(warm_ack_n),
       .gp_in(gp_in), .live(live), .may_start(may_start),
@@ -395,7 +396,7 @@ module cadr_f2sdram_harness #(
   logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
 
   logic unused;
-  assign unused = &{1'b0, h_mem_line, h_mem_drained, h_port_rline, tv_map_q, tv_color_map_q, disp_color_map_q, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
+  assign unused = &{1'b0, h_mem_line, h_mem_beats, h_mem_wide, h_mem_drained, h_port_rline, tv_map_q, tv_color_map_q, disp_color_map_q, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
                     store_rdata, store_miss, ch_active,
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,

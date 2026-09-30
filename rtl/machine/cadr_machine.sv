@@ -88,7 +88,23 @@ module cadr_machine #(
     // and what of the machine around it is still revision 12's. The ports
     // below that carry a word carry the whole of it, `R` among them; the
     // console's registers and the bus audit take `<31:0>`.
-    parameter int unsigned WORD_BITS = 32
+    parameter int unsigned WORD_BITS = 32,
+
+    // **WHERE REVISION 13'S MAIN MEMORY IS IN DDR** (contract G1 §4.1): word
+    // w in packed storage at byte `QUUX13_MAIN_BASE + 5w`
+    // (`quux_mem_port.sv`).  The board's layout decides it, and the Linux
+    // side reserves it; until that layout is settled a board builds with
+    // the CADR's main memory base, `cadr_ddr_map::MAIN_BASE`, where revision
+    // 12's 2M words of QUUX lie today, which 0 here names
+    // (`quux_mem_port.sv`), and a board's top level may give another.
+    // Unread below revision 13.
+    parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,
+
+    // The physical word address, 28 bits on revision 13 (G1 §3.2), and the
+    // beats a line fill returns: two of revision 12's four words, and five
+    // of revision 13's packed storage.
+    localparam int unsigned PHYS_BITS  = WORD_BITS > 32 ? 28 : 22,
+    localparam int unsigned RLINE_BITS = WORD_BITS > 32 ? 320 : 128
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -335,7 +351,7 @@ module cadr_machine #(
     output var logic        device,       // the decode put this cycle outside memory
     output var logic        dev_rq,       // -XBUS.RQ
     output var logic        dev_write,
-    output var logic [21:0] phys,         // the address it is asking about
+    output var logic [PHYS_BITS-1:0] phys,  // the address it is asking about
     // **THE WORD, WHICH THIS BOUNDARY USED TO DROP.**  `cadr_memory_path.sv`
     // has it and its own comment calls `phys` and `wdata` "the address and
     // the word"; the machine brought out the address and not the word, so a
@@ -514,15 +530,20 @@ module cadr_machine #(
     output var logic        mem_req,
     output var logic        mem_write,
     output var logic [31:0] mem_addr,
-    output var logic [31:0] mem_wdata,
+    output var logic [WORD_BITS-1:0] mem_wdata,
     input  var logic        mem_done,
     input  var logic [31:0] mem_rdata,
     // QUUX's line fill (contract Q6): four words at a 16-byte boundary, two
     // 64-bit beats, back on `mem_rline` with the lowest address in bits
     // 31:0.  The CADR never raises `mem_line`, and a board that builds only
-    // the CADR ties `mem_rline` to zero.
+    // the CADR ties `mem_rline` to zero.  **REVISION 13'S** (contract G2 §3)
+    // is `mem_beats` beats, five of packed storage or four of the window's,
+    // and its writes of main memory five bytes, `mem_wide`, from any byte
+    // (`quux_mem_port.sv`, `rtl/plumbing/quux_axi_master.sv`).
     output var logic        mem_line,
-    input  var logic [127:0] mem_rline,
+    output var logic [2:0]  mem_beats,
+    output var logic        mem_wide,
+    input  var logic [RLINE_BITS-1:0] mem_rline,
     // QUUX's memory port is idle and its write buffer empty: what the host
     // waits for, after a halt, before it reads main memory (the contract's
     // "a halt drains the write buffer").  Always up on the CADR.
@@ -606,7 +627,7 @@ module cadr_machine #(
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;
   logic        n_memrq, rdcyc;
-  logic [31:0] wdata, rdata;
+  logic [WORD_BITS-1:0] wdata, rdata;
   // The console's registers, which now live on the bus interface where a
   // console can write them, and reach the processor as signals.
   logic [3:0]  spy_eadr;
@@ -937,9 +958,9 @@ module cadr_machine #(
   logic        cached, bd_written;
   // Revision 12's cache-only prefetch, between the processor and the port.
   logic        pf_fetch, pf_drop, pf_nx_v, pf_nx_fetch_v;
-  logic [23:0] pf_vaddr, pf_nx_vaddr, pf_nx_fetch_vaddr;
-  logic [21:0] pf_nx_phys;
-  logic [31:0] pf_nx_word;
+  logic [(WORD_BITS > 32 ? 28 : 24)-1:0] pf_vaddr, pf_nx_vaddr, pf_nx_fetch_vaddr;
+  logic [PHYS_BITS-1:0] pf_nx_phys;
+  logic [WORD_BITS-1:0] pf_nx_word;
   logic [31:0] cache_hits, cache_misses;
   logic        br_req, br_write, br_done;
   logic [31:0] br_addr, br_wdata;
@@ -951,7 +972,9 @@ module cadr_machine #(
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
       .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
-      .SYNC_K(SYNC_K)
+      .SYNC_K(SYNC_K),
+      .WORD_BITS(WORD_BITS),
+      .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE)
   ) memory (
       .clk        (clk),
       .rst        (rst),
@@ -1114,6 +1137,8 @@ module cadr_machine #(
       .mem_done   (mem_done),
       .mem_rdata  (mem_rdata),
       .mem_line   (mem_line),
+      .mem_beats  (mem_beats),
+      .mem_wide   (mem_wide),
       .mem_rline  (mem_rline),
       .quux_invalidate(bd_written || fd_invalidate),
       .cached     (cached),
@@ -1218,8 +1243,8 @@ module cadr_machine #(
       .sel      (device),
       .dev_rq   (dev_rq),
       .dev_write(dev_write),
-      .phys     (phys),
-      .wdata    (wdata),
+      .phys     (phys[21:0]),
+      .wdata    (wdata[31:0]),
       .dev_ack  (disk_ack),
       .rdata    (disk_rdata),
       .drives   (disk_drives),
@@ -1276,8 +1301,8 @@ module cadr_machine #(
       .sel      (device),
       .dev_rq   (dev_rq),
       .dev_write(dev_write),
-      .phys     (phys),
-      .wdata    (wdata),
+      .phys     (phys[21:0]),
+      .wdata    (wdata[31:0]),
       .dev_ack  (disk_ack),
       .rdata    (disk_rdata),
       .drives   (disk_drives),
@@ -1335,10 +1360,10 @@ module cadr_machine #(
         .clk          (clk),
         .rst          (rst),
         .sel          (device),
-        .phys         (phys),
+        .phys         (phys[21:0]),
         .dev_write    (dev_write),
         .dev_rq       (dev_rq),
-        .wdata        (wdata),
+        .wdata        (wdata[31:0]),
         .dev_ack      (feature_ack),
         .drives       (feature_drives),
         .rdata        (feature_rdata),
@@ -1546,7 +1571,7 @@ module cadr_machine #(
   assign aud_cycle  = aud_changing ? 1'b0 : (aud_ch_own ? 1'b1 : mbusy_o);
   assign aud_write  = aud_ch_own ? ch_write      : wrcyc;
   assign aud_memory = aud_ch_own ? aud_ch_memory : aud_cpu_memory;
-  assign aud_phys   = aud_ch_own ? ch_addr       : phys;
+  assign aud_phys   = aud_ch_own ? ch_addr       : phys[21:0];
 
   // **THE READOUT, JOINED INTO THE CONSOLE'S WINDOW AT A SELECTOR OF ITS
   // OWN.**  `cadr_microcycle.sv` maps 0 to 10 and answers `RO_NO_MEMORY` for
@@ -1617,7 +1642,7 @@ module cadr_machine #(
   assign aud_mwrite    = QUUX ? br_write : mem_write;
   assign aud_done      = QUUX ? br_done  : mem_done;
   assign aud_addr      = QUUX ? br_addr  : mem_addr;
-  assign aud_wdata     = QUUX ? br_wdata : mem_wdata;
+  assign aud_wdata     = QUUX ? br_wdata : mem_wdata[31:0];
   assign aud_read_ack  = QUUX ? br_rack_q : port_read_ack;
   assign aud_write_ack = QUUX ? br_wack_q : port_write_ack;
   logic unused_port_acks;
@@ -1692,7 +1717,7 @@ module cadr_machine #(
   assign n_memack_o = n_memack;
   assign n_memgrant_o = n_memgrant;
   assign rdcyc_o    = rdcyc;
-  assign dev_wdata  = wdata;
+  assign dev_wdata  = wdata[31:0];
   assign unused = &{1'b0, prog_reset};
 
 endmodule

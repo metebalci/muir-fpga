@@ -111,3 +111,7 @@ path = "src/quux_file_device.rs"
 [[bin]]
 name = "quux13"
 path = "src/quux13.rs"
+
+[[bin]]
+name = "quux13_port"
+path = "src/quux13_port.rs"

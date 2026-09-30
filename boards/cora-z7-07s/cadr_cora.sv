@@ -415,11 +415,12 @@ module cadr_cora #(
   // QUUX's line fill and its port's idle (contract Q6): the Cora builds only
   // the CADR, which never asks a line, so the line is zeros and the rest is
   // folded below.
-  logic         mem_line, mem_drained;
+  logic         mem_line, mem_drained, mem_wide;
+  logic [2:0]   mem_beats;
   logic [127:0] mem_rline;
   assign mem_rline = 128'd0;
   logic unused_quux_port;
-  assign unused_quux_port = ^{mem_line, mem_drained};
+  assign unused_quux_port = ^{mem_line, mem_beats, mem_wide, mem_drained};
   // The disk's two seams, likewise driven from one arm or the other: the
   // drive --- which units have a pack, the read-only switch, whether the
   // drive's time is charged --- and the block store's fill port. With `DDR`
@@ -906,7 +907,7 @@ module cadr_cora #(
       .disp_map_a(4'd0), .disp_color_map_q(con_disp_color_map_q),
       // The memory, or the absence of one: see the `DDR` generate below.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(mem_line), .mem_rline(mem_rline), .mem_drained(mem_drained),
+      .mem_line(mem_line), .mem_beats(mem_beats), .mem_wide(mem_wide), .mem_rline(mem_rline), .mem_drained(mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),

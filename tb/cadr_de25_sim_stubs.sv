@@ -594,7 +594,9 @@ module cadr_machine #(
     parameter string MACHINE = "cadr",
     parameter int unsigned SYNC_K = 4,
     parameter int unsigned SYNC_L = 0,
-    parameter int unsigned WORD_BITS = 32
+    parameter int unsigned WORD_BITS = 32,
+    localparam int unsigned PHYS_BITS  = WORD_BITS > 32 ? 28 : 22,
+    localparam int unsigned RLINE_BITS = WORD_BITS > 32 ? 320 : 128
 ) (
     input  var logic         clk,
     input  var logic         rst,
@@ -701,7 +703,7 @@ module cadr_machine #(
     output var logic         device,
     output var logic         dev_rq,
     output var logic         dev_write,
-    output var logic [21:0]  phys,
+    output var logic [PHYS_BITS-1:0] phys,
     output var logic [31:0]  dev_wdata,
     input  var logic         device_ack,
     input  var logic [31:0]  device_rdata,
@@ -761,11 +763,13 @@ module cadr_machine #(
     output var logic         mem_req,
     output var logic         mem_write,
     output var logic [31:0]  mem_addr,
-    output var logic [31:0]  mem_wdata,
+    output var logic [WORD_BITS-1:0] mem_wdata,
     input  var logic         mem_done,
     input  var logic [31:0]  mem_rdata,
     output var logic         mem_line,
-    input  var logic [127:0] mem_rline,
+    output var logic [2:0]   mem_beats,
+    output var logic         mem_wide,
+    input  var logic [RLINE_BITS-1:0] mem_rline,
     output var logic         mem_drained,
     input  var logic         port_read_ack,
     input  var logic         port_write_ack,
@@ -988,7 +992,7 @@ module cadr_machine #(
   assign dev_rq = tbo_dev_rq;
   logic         tbo_dev_write /*verilator public_flat_rw*/;
   assign dev_write = tbo_dev_write;
-  logic [21:0]  tbo_phys /*verilator public_flat_rw*/;
+  logic [PHYS_BITS-1:0] tbo_phys /*verilator public_flat_rw*/;
   assign phys = tbo_phys;
   logic [31:0]  tbo_dev_wdata /*verilator public_flat_rw*/;
   assign dev_wdata = tbo_dev_wdata;
@@ -1108,13 +1112,17 @@ module cadr_machine #(
   assign mem_write = tbo_mem_write;
   logic [31:0]  tbo_mem_addr /*verilator public_flat_rw*/;
   assign mem_addr = tbo_mem_addr;
-  logic [31:0]  tbo_mem_wdata /*verilator public_flat_rw*/;
+  logic [WORD_BITS-1:0] tbo_mem_wdata /*verilator public_flat_rw*/;
   assign mem_wdata = tbo_mem_wdata;
   logic         tbo_mem_line /*verilator public_flat_rw*/;
   assign mem_line = tbo_mem_line;
+  logic [2:0]   tbo_mem_beats /*verilator public_flat_rw*/;
+  assign mem_beats = tbo_mem_beats;
+  logic         tbo_mem_wide /*verilator public_flat_rw*/;
+  assign mem_wide = tbo_mem_wide;
   logic         tbo_mem_drained /*verilator public_flat_rw*/;
   assign mem_drained = tbo_mem_drained;
-  logic [127:0] tbi_mem_rline /*verilator public_flat_rd*/;
+  logic [RLINE_BITS-1:0] tbi_mem_rline /*verilator public_flat_rd*/;
   assign tbi_mem_rline = mem_rline;
   logic         tbi_mem_done /*verilator public_flat_rd*/;
   assign tbi_mem_done = mem_done;

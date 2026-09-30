@@ -85,6 +85,39 @@
 // `drained` is up when no write waits in the buffer and main memory is
 // idle: what the host waits for, after a halt, before it reads main memory
 // from outside the machine (the contract: "a halt drains the write buffer").
+//
+// **REVISION 13'S PORT** (contract G2 §3, `WORD_BITS` 40; muir's
+// `MemoryPort::for_geometry` on `Geometry::QUUX_13`, `Layout::REVISION_13`):
+// 40-bit words and 28-bit physical addresses (G1 §3.2), the cache's 8-word
+// lines (`quux_cache.sv`), and main memory in PACKED STORAGE (G1 §4.1): word
+// w at byte `MAIN13_BASE + 5w`, `<7:0>` first and the tag last, a line of 8
+// words 40 bytes at `MAIN13_BASE + 40L`, five 64-bit beats.  So a fill asks
+// five beats (`mem_beats`) and a write five bytes at any byte (`mem_wide`),
+// and the memory's side (`rtl/plumbing/quux_axi_master.sv`) puts them on the
+// port: strobes, a word across two beats, and a burst split at a 4 KiB
+// boundary.  The multiply by five is here on the memory side, from the
+// registered address of the write buffer or the miss, never in the
+// processor's cycle.  THE FRAME BUFFER WINDOW, `1760000000` up (G1 §4.2),
+// keeps 4 bytes a word at the display's base, the field alone: a line of it
+// is four beats, a write stores `<31:0>` and drops the tag, and its words
+// come into the cache, and so to the processor, with the unboxed tag `005`.
+// A fill takes muir's nominal line and a tick for each beat past today's two
+// (`MemoryPort::fill_ns`): three in main memory, two in the window.  A device
+// register's word is 32 bits and reads `<39:32>` as 0 (G2 §2.5).
+//
+// **AND THE PREFETCH REACHES THE PAGE** (muir's `Reach::Page`, revision
+// 13's): past a fetch's word at p, the word at p + 1 when it is in the
+// fetch's 1024-word page and the cache holds it --- in the fetch's line, as
+// revision 12's, or in the next line, which the cache looks up beside the
+// fetch's at the grant (`next_line_hit`, `next_line_word`).  Never out of the
+// window, which is not main memory, and never past a page.  The virtual word
+// address is 28 bits, `VMA<27:0>`.
+//
+// **WHERE MAIN MEMORY IS IN DDR IS A PARAMETER**, `MAIN13_BASE`, which the
+// machine hands down (`cadr_machine.sv`): the Linux side's layout decides it
+// and this port only adds to it.  The 4 KiB rule is taken on the byte
+// address itself, so the port is right at any base; G1 asks one at a
+// multiple of 4 KiB, where a line crosses a boundary 4 times in 512.
 
 `default_nettype none
 
@@ -97,7 +130,19 @@ module quux_mem_port
     // QUUX's microcycle in ticks, the machine's `SYNC_K`: a device
     // register is acknowledged this long after the grant, muir's
     // `cycle_ns(Speed::Normal, false)`, whatever `ILONG` does.
-    parameter int unsigned K = 4
+    parameter int unsigned K = 4,
+    // 32, QUUX to revision 12; 40, revision 13 (`cadr_machine.sv`).
+    parameter int unsigned WORD_BITS = 32,
+    // Revision 13's main memory in DDR: word w at byte `MAIN13_BASE + 5w`,
+    // and 0 the CADR's main memory base, `MAIN_BASE`, until the board's
+    // layout gives another.  Unread below revision 13.
+    parameter logic [31:0] MAIN13_BASE = 32'd0,
+    localparam bit          WIDE       = WORD_BITS > 32,
+    localparam int unsigned PHYS_BITS  = WIDE ? 28 : 22,
+    localparam int unsigned VADDR_BITS = WIDE ? 28 : 24,
+    // A line's beats as the memory's side returns them: two 64-bit beats of
+    // four words, or on revision 13 five of packed storage.
+    localparam int unsigned RLINE_BITS = WIDE ? 320 : 128
 ) (
     input  var logic         clk,
     input  var logic         rst,
@@ -106,8 +151,8 @@ module quux_mem_port
     input  var logic         mclk,
     input  var logic         n_memrq,
     input  var logic         wrcyc,
-    input  var logic [21:0]  phys,       // the map's output at the grant
-    input  var logic [31:0]  wdata,
+    input  var logic [PHYS_BITS-1:0] phys,  // the map's output at the grant
+    input  var logic [WORD_BITS-1:0] wdata,
     // The held decode: the memory bus (main memory or the frame buffer),
     // or a device register.  Neither is an address nothing answers.  Their
     // OR is good in the tick that takes the request, which is all an empty
@@ -121,7 +166,7 @@ module quux_mem_port
     output var logic         n_loadmd,
     output var logic         timed_out,
     output var logic         cached,     // the cycle is the memory bus's
-    output var logic [31:0]  word,       // the word a read brings, any read
+    output var logic [WORD_BITS-1:0] word,  // the word a read brings, any read
     output var logic         busy,
 
     // The register decode: a device register asked, for one tick, and the
@@ -141,19 +186,25 @@ module quux_mem_port
     input  var logic [31:0]  u_addr,
     input  var logic [31:0]  u_wdata,
     input  var logic         u_main,
-    input  var logic [21:0]  u_phys,
+    input  var logic [PHYS_BITS-1:0] u_phys,
     output var logic         u_done,
     output var logic [31:0]  u_rdata,  // main memory's own, while u_done
 
-    // Main memory: the machine's DDR seam.
+    // Main memory: the machine's DDR seam.  A line fill (`mem_line`) asks
+    // `mem_beats` 64-bit beats from `mem_addr` and has them back on
+    // `mem_rline`, the first in bits 63:0; a write is four bytes of
+    // `mem_wdata` at a four-byte address, or on revision 13 with `mem_wide`
+    // five at any byte, `<7:0>` first.
     output var logic         mem_req,
     output var logic         mem_write,
     output var logic         mem_line,
+    output var logic [2:0]   mem_beats,
+    output var logic         mem_wide,
     output var logic [31:0]  mem_addr,
-    output var logic [31:0]  mem_wdata,
+    output var logic [WORD_BITS-1:0] mem_wdata,
     input  var logic         mem_done,
     input  var logic [31:0]  mem_rdata,
-    input  var logic [127:0] mem_rline,
+    input  var logic [RLINE_BITS-1:0] mem_rline,
 
     output var logic         drained,
     // The cache's counts of reads, for the host: muir's `hits` and
@@ -161,21 +212,66 @@ module quux_mem_port
     output var logic [31:0]  hits,
     output var logic [31:0]  misses,
 
-    // Revision 12's prefetch: the cycle a grant takes is the stream's fetch
-    // of `pf_vaddr`; the processor drops the word; and the buffer and a
+    // The prefetch: the cycle a grant takes is the stream's fetch of
+    // `pf_vaddr`; the processor drops the word; and the buffer and a
     // fetch yet to be answered, as this tick leaves them.
     input  var logic         pf_fetch,
-    input  var logic [23:0]  pf_vaddr,
+    input  var logic [VADDR_BITS-1:0] pf_vaddr,
     input  var logic         pf_drop,
     output var logic         pf_nx_v,
-    output var logic [23:0]  pf_nx_vaddr,
-    output var logic [21:0]  pf_nx_phys,
-    output var logic [31:0]  pf_nx_word,
+    output var logic [VADDR_BITS-1:0] pf_nx_vaddr,
+    output var logic [PHYS_BITS-1:0]  pf_nx_phys,
+    output var logic [WORD_BITS-1:0]  pf_nx_word,
     output var logic         pf_nx_fetch_v,
-    output var logic [23:0]  pf_nx_fetch_vaddr
+    output var logic [VADDR_BITS-1:0] pf_nx_fetch_vaddr
 );
 
   localparam int unsigned HIT_T = cadr_tick_pkg::ticks(20);
+  localparam int unsigned WB = WORD_BITS;
+  localparam logic [31:0] BASE13 = (MAIN13_BASE != 32'd0) ? MAIN13_BASE : MAIN_BASE;
+  localparam int unsigned LINE_WORDS = WIDE ? 8 : 4;
+  localparam int unsigned OFF_BITS = WIDE ? 3 : 2;
+
+  // Revision 13's frame buffer window, `1760000000`-`1777775777`: the top
+  // 4M words of the 28-bit space less its last page, the register page,
+  // which a memory cycle never has.  So on the memory bus the window is
+  // `phys<27:22>` all ones.
+  // Its argument's low bits are no part of it.
+  /* verilator lint_off UNUSEDSIGNAL */
+  function automatic logic window(input logic [PHYS_BITS-1:0] p);
+    return WIDE && (&p[PHYS_BITS-1:PHYS_BITS-6]);
+  endfunction
+  /* verilator lint_on UNUSEDSIGNAL */
+
+  // The unboxed tag, `005`, which the window's words read with (G1 §2.6).
+  localparam logic [7:0] UNBOXED_TAG = 8'o005;
+
+  // A word as the cache and the processor have it, from what is stored:
+  // revision 13's window gives the field with the unboxed tag.
+  function automatic logic [WB-1:0] from_window(input logic [31:0] field);
+    logic [WB-1:0] v;
+    v = WB'(field);
+    if (WIDE) v[WB-1:WB-8] = UNBOXED_TAG;
+    return v;
+  endfunction
+
+  // Where a word or a line is in DDR.  Revision 12: `quux_byte_address`.
+  // Revision 13: main memory packed, 5 bytes a word and 40 a line; the
+  // window 4 bytes a word and 32 a line, at the display's base.  The
+  // window's offset is the low sixteen bits, the video controller's buffer
+  // being at most 64K words (`cadr_ddr_map.sv`).
+  function automatic logic [31:0] word_address(input logic [PHYS_BITS-1:0] p);
+    if (!WIDE) return quux_byte_address(22'(p));
+    if (window(p)) return mono_display_byte_address(p[15:0]);
+    return BASE13 + (32'(p) << 2) + 32'(p);
+  endfunction
+  /* verilator lint_off UNUSEDSIGNAL */
+  function automatic logic [31:0] line_address(input logic [PHYS_BITS-1:0] p);
+    logic [PHYS_BITS-1:0] l;
+    l = {p[PHYS_BITS-1:OFF_BITS], OFF_BITS'(0)};
+    return word_address(l);
+  endfunction
+  /* verilator lint_on UNUSEDSIGNAL */
 
   // ------------------------------------------------------- the cycle
   typedef enum logic [1:0] {IDLE, REQUESTED, GRANTED, ACKED} state_e;
@@ -227,9 +323,10 @@ module quux_mem_port
 
   // ------------------------------------------------------- the cache
   logic c_hit, c_hit_way, c_victim;
-  logic [31:0] c_word, c_next_word;
+  logic [WB-1:0] c_word, c_next_word, c_next_line_word;
+  logic c_next_line_hit;
   logic c_touch, c_miss, c_update, c_fill, c_inval, c_snoop;
-  logic [21:0] snoop_phys;
+  logic [PHYS_BITS-1:0] snoop_phys;
   logic inval_owed;
 
   // The cache reads at every master clock edge the port is idle, so the
@@ -243,11 +340,16 @@ module quux_mem_port
   // (UG473; `cadr_microcycle.sv` has the control store's account of the
   // same fault).  Only the grant's edge's read is used, so reading at the
   // edges alone is the same cache.
-  logic [21:0] line_phys;
+  logic [PHYS_BITS-1:0] line_phys;
   logic idle;
   assign idle = (state == IDLE || state == REQUESTED);
 
-  quux_cache cache (
+  // A line as the cache takes it: the words of the fill, revision 13's
+  // unpacked from its beats, main memory's 5 bytes each and the window's 4.
+  logic [LINE_WORDS*WB-1:0] fill_words;
+  logic [WB-1:0] update_word;
+
+  quux_cache #(.WORD_BITS(WORD_BITS)) cache (
       .clk        (clk),
       .rst        (rst),
       .look       (idle && mclk),
@@ -259,11 +361,13 @@ module quux_mem_port
       .touch      (c_touch),
       .touch_miss (c_miss),
       .update     (c_update),
-      .update_word(wdata),
+      .update_word(update_word),
       .word       (c_word),
       .next_word  (c_next_word),
+      .next_line_hit (c_next_line_hit),
+      .next_line_word(c_next_line_word),
       .fill       (c_fill),
-      .fill_line  (mem_rline),
+      .fill_line  (fill_words),
       .invalidate (c_inval),
       .snoop      (c_snoop),
       .snoop_phys (snoop_phys)
@@ -272,7 +376,7 @@ module quux_mem_port
   // The way and the victim are the cache's business: it keeps them for the
   // word and the fill.  A line's address has no word in it.
   logic unused_cache;
-  assign unused_cache = ^{c_hit_way, c_victim, fill_phys[1:0]};
+  assign unused_cache = ^{c_hit_way, c_victim, fill_phys[OFF_BITS-1:0]};
 
   // The whole cache at the grant after a block-disk register was written.
   assign c_inval = take && (inval_owed || invalidate);
@@ -283,6 +387,9 @@ module quux_mem_port
   assign c_touch  = decide && !write;
   assign c_miss   = !c_hit;
   assign c_update = decide && write;
+  // A write into a line the cache holds, as a read of it would bring it
+  // back: in the window the field with the unboxed tag.
+  assign update_word = window(line_phys) ? from_window(wdata[31:0]) : wdata;
 
   // --------------------------------------------- the nominal countdowns
   //
@@ -294,8 +401,13 @@ module quux_mem_port
   localparam int unsigned CW = 8;
   logic [CW-1:0] free_in, buf_in, ack_in;
   logic [CW-1:0] start_in, done_in, ack_e;
+  // A line fill's nominal time, muir's `fill_ns`: revision 13's lines are
+  // a tick longer for each beat past two, three in main memory and two in
+  // the window.
+  logic [CW-1:0] fill_t;
+  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
   assign start_in = free_in;
-  assign done_in  = start_in + CW'(write ? WRITE_T : READ_T);
+  assign done_in  = start_in + (write ? CW'(WRITE_T) : fill_t);
   // A write is answered after the hit time, or when the buffer's last write
   // is done.  A read hit two ticks after the grant, and a miss when its line
   // is done, which the tick after the lookup settles (`settle`).
@@ -306,13 +418,13 @@ module quux_mem_port
   // What is really in flight, which the counts never overtake: a miss's
   // line not yet in, a write not yet taken by main memory.
   logic fill_owed, fill_have, wb_valid, wb_sent;
-  logic [21:0] wb_phys;
-  logic [31:0] wb_word;
-  logic [31:0] line_word [4];
+  logic [PHYS_BITS-1:0] wb_phys;
+  logic [WB-1:0] wb_word;
+  logic [WB-1:0] line_word [LINE_WORDS];
   logic        from_line;
-  assign word = (empty || nxm) ? 32'd0
-              : dev_cycle      ? dev_word
-              : from_line      ? line_word[line_phys[1:0]] : c_word;
+  assign word = (empty || nxm) ? '0
+              : dev_cycle      ? WB'(dev_word)
+              : from_line      ? line_word[line_phys[OFF_BITS-1:0]] : c_word;
 
   // A write enters the buffer at its acknowledgment, when the one before it
   // has really gone: the count alone is muir's, the flag is the board's.
@@ -320,10 +432,26 @@ module quux_mem_port
   assign ready = !mem_cycle || !write || !wb_valid;
 
   // ------------------------------------------------------ the prefetch
+  //
+  // Past a fetch's word, the next: revision 12 in the fetch's line only;
+  // revision 13 in its page, in its line or the next one the cache holds,
+  // and never from the window.
   logic        pf_v, pf_fetch_v;
-  logic [23:0] pf_vaddr_q, pf_fetch_vaddr_q;
-  logic [21:0] pf_phys;
-  logic [31:0] pf_word;
+  logic [VADDR_BITS-1:0] pf_vaddr_q, pf_fetch_vaddr_q;
+  logic [PHYS_BITS-1:0]  pf_phys;
+  logic [WB-1:0]         pf_word;
+  logic        pf_same_line, pf_next_ok;
+  logic [WB-1:0] pf_same_word;
+  assign pf_same_line = line_phys[OFF_BITS-1:0] != '1;
+  assign pf_same_word = from_line ? line_word[line_phys[OFF_BITS-1:0] + OFF_BITS'(1)] : c_next_word;
+  if (WIDE) begin : g_page_reach
+    assign pf_next_ok = !window(line_phys) && (line_phys[9:0] != 10'h3FF)
+                     && (pf_same_line || c_next_line_hit);
+  end else begin : g_line_reach
+    assign pf_next_ok = pf_same_line;
+    logic unused_next_line;
+    assign unused_next_line = c_next_line_hit ^ (^c_next_line_word);
+  end
   always_comb begin
     pf_nx_v           = pf_v;
     pf_nx_vaddr       = pf_vaddr_q;
@@ -332,14 +460,14 @@ module quux_mem_port
     pf_nx_fetch_v     = pf_fetch_v;
     pf_nx_fetch_vaddr = pf_fetch_vaddr_q;
     // A read answered, muir's `read_answered`: past a fetch of the memory
-    // bus, the next word of its line, or nothing.
+    // bus, the next word of its line or page, or nothing.
     if (state == GRANTED && acked && !write && pf_fetch_v) begin
       pf_nx_fetch_v = 1'b0;
       if (mem_cycle) begin
-        pf_nx_v     = line_phys[1:0] != 2'd3;
-        pf_nx_vaddr = pf_fetch_vaddr_q + 24'd1;
-        pf_nx_phys  = line_phys + 22'd1;
-        pf_nx_word  = from_line ? line_word[line_phys[1:0] + 2'd1] : c_next_word;
+        pf_nx_v     = pf_next_ok;
+        pf_nx_vaddr = pf_fetch_vaddr_q + VADDR_BITS'(1);
+        pf_nx_phys  = line_phys + PHYS_BITS'(1);
+        pf_nx_word  = pf_same_line ? pf_same_word : c_next_line_word;
       end
     end
     // Dropped by the processor, and by a transfer.
@@ -366,10 +494,10 @@ module quux_mem_port
     if (rst) begin
       pf_v             <= 1'b0;
       pf_fetch_v       <= 1'b0;
-      pf_vaddr_q       <= 24'd0;
-      pf_fetch_vaddr_q <= 24'd0;
-      pf_phys          <= 22'd0;
-      pf_word          <= 32'd0;
+      pf_vaddr_q       <= '0;
+      pf_fetch_vaddr_q <= '0;
+      pf_phys          <= '0;
+      pf_word          <= '0;
     end else begin
       pf_v             <= pf_nx_v;
       pf_fetch_v       <= pf_nx_fetch_v;
@@ -392,7 +520,7 @@ module quux_mem_port
   mstate_e mstate;
   typedef enum logic {OP_WRITE, OP_FILL} op_e;
   op_e op;
-  logic [21:0] fill_phys;
+  logic [PHYS_BITS-1:0] fill_phys;
 
   logic go_write, go_fill, go_u, through;
   assign go_write = wb_valid && !wb_sent;
@@ -407,13 +535,17 @@ module quux_mem_port
   // is this word's, and may come in the very tick it is asked.
   assign through  = (mstate == M_THROUGH) || ((mstate == M_IDLE) && go_u);
 
-  logic        mreq_q, mwrite_q, mline_q;
-  logic [31:0] maddr_q, mwdata_q;
+  logic        mreq_q, mwrite_q, mline_q, mwide_q;
+  logic [2:0]  mbeats_q;
+  logic [31:0] maddr_q;
+  logic [WB-1:0] mwdata_q;
   assign mem_req   = through ? u_req   : mreq_q;
   assign mem_write = through ? u_write : mwrite_q;
   assign mem_line  = through ? 1'b0    : mline_q;
+  assign mem_beats = through ? 3'd0    : mbeats_q;
+  assign mem_wide  = through ? 1'b0    : mwide_q;
   assign mem_addr  = through ? u_addr  : maddr_q;
-  assign mem_wdata = through ? u_wdata : mwdata_q;
+  assign mem_wdata = through ? WB'(u_wdata) : mwdata_q;
   assign u_done    = through && mem_done;
   assign u_rdata   = mem_rdata;
 
@@ -421,6 +553,16 @@ module quux_mem_port
   assign c_snoop = through && mem_done && u_write && u_main;
   assign snoop_phys = u_phys;
   assign drained = !wb_valid && !fill_owed && (mstate == M_IDLE) && !mem_done;
+
+  // The line's words out of its beats, for the fill standing.
+  if (WIDE) begin : g_unpack_13
+    for (genvar w = 0; w < LINE_WORDS; w++) begin : g_word
+      assign fill_words[WB*w +: WB] = window(fill_phys) ? from_window(mem_rline[32*w +: 32])
+                                                        : mem_rline[40*w +: 40];
+    end
+  end else begin : g_unpack_12
+    assign fill_words = mem_rline;
+  end
 
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -444,20 +586,22 @@ module quux_mem_port
       from_line   <= 1'b0;
       wb_valid    <= 1'b0;
       wb_sent     <= 1'b0;
-      wb_phys     <= 22'd0;
-      wb_word     <= 32'd0;
+      wb_phys     <= '0;
+      wb_word     <= '0;
       inval_owed  <= 1'b0;
       mstate      <= M_IDLE;
       op          <= OP_WRITE;
-      fill_phys   <= 22'd0;
+      fill_phys   <= '0;
       mreq_q      <= 1'b0;
       mwrite_q    <= 1'b0;
       mline_q     <= 1'b0;
+      mwide_q     <= 1'b0;
+      mbeats_q    <= 3'd0;
       maddr_q     <= 32'd0;
-      mwdata_q    <= 32'd0;
+      mwdata_q    <= '0;
       hits        <= 32'd0;
       misses      <= 32'd0;
-      for (int w = 0; w < 4; w++) line_word[w] <= 32'd0;
+      for (int w = 0; w < LINE_WORDS; w++) line_word[w] <= '0;
     end else begin
       // The countdowns run on their own.
       if (free_in != '0) free_in <= free_in - 1'b1;
@@ -561,7 +705,7 @@ module quux_mem_port
       // The line, when it comes: its words for the read that missed.
       if (c_fill) begin
         fill_have <= 1'b1;
-        for (int w = 0; w < 4; w++) line_word[w] <= mem_rline[32*w +: 32];
+        for (int w = 0; w < LINE_WORDS; w++) line_word[w] <= fill_words[WB*w +: WB];
       end
       if (state == ACKED && fill_have) begin
         fill_owed <= 1'b0;
@@ -580,8 +724,12 @@ module quux_mem_port
               mreq_q   <= 1'b1;
               mwrite_q <= 1'b1;
               mline_q  <= 1'b0;
-              maddr_q  <= quux_byte_address(wb_phys);
-              mwdata_q <= wb_word;
+              mbeats_q <= 3'd0;
+              // Revision 13's main memory takes the whole word, 5 bytes;
+              // the window the field, 4.
+              mwide_q  <= WIDE && !window(wb_phys);
+              maddr_q  <= word_address(wb_phys);
+              mwdata_q <= window(wb_phys) ? WB'(wb_word[31:0]) : wb_word;
               wb_sent  <= 1'b1;
               mstate   <= M_BUSY;
             end else if (go_fill) begin
@@ -589,7 +737,11 @@ module quux_mem_port
               mreq_q   <= 1'b1;
               mwrite_q <= 1'b0;
               mline_q  <= 1'b1;
-              maddr_q  <= quux_byte_address({fill_phys[21:2], 2'b00});
+              mwide_q  <= 1'b0;
+              // Two beats, and on revision 13 five of packed storage or
+              // four of the window's.
+              mbeats_q <= !WIDE ? 3'd2 : window(fill_phys) ? 3'd4 : 3'd5;
+              maddr_q  <= line_address(fill_phys);
               mstate   <= M_BUSY;
             end
           end

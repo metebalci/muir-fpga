@@ -12,6 +12,28 @@
 //   512 sets, line = phys[21:2], set = phys[10:2], tag = phys[21:11],
 //   word = phys[1:0].
 //
+// **REVISION 13'S CACHE HAS 8-WORD LINES OF 40-BIT WORDS** (contract G2 §3,
+// `WORD_BITS` 40): the lines of packed storage (G1 §4.1), still 4,096 words
+// in two ways, over the 28-bit physical space (G1 §3.2):
+//
+//   256 sets, line = phys[27:3], set = phys[10:3], tag = phys[27:11],
+//   word = phys[2:0].
+//
+// The tag starts at bit 11 in both, a way being 2,048 words.  Its top bits,
+// `phys<27:26>`, are the window's alone (`1760000000` up): no main memory
+// the boards can hold reaches them.
+//
+// **AND A SECOND LOOKUP, OF THE NEXT LINE, FOR THE PREFETCH'S PAGE REACH**
+// (muir's `Reach::Page`, revision 13's): the tags of the set after the
+// grant's, and word 0 of each way's line there, read at the same edge off
+// copies of those RAMs, so that `next_line_hit` and `next_line_word` say
+// whether the cache holds the line after the grant's and what its first word
+// is.  The next line of a page never wraps the set: a page is 1,024 words,
+// set 255's last word is `phys<10:0>` all ones, and a word whose next is in
+// another page is not looked past.  So the next line's tag is the grant's
+// tag and its set is the grant's plus one.  Revision 12 has neither: its
+// prefetch keeps to the line (`Reach::Line`), and the two outputs are 0.
+//
 // **THE LOOKUP IS TWO TICKS, AND THE FIRST IS THE RAM'S.**  At the edge the
 // port takes a cycle (`look`), the tag and data RAMs take the set's address
 // off `look_phys` --- the map's output, which has had the whole microcycle
@@ -39,7 +61,9 @@
 // register is written, and a sweep of a RAM would move the timing.  1,024
 // valid bits and 512 recency bits are 1,536 registers and three 512-way
 // read multiplexers; the words and the tags are RAM: eight 512 by 32 (a
-// word lane of a way each) and two 512 by 11.
+// word lane of a way each) and two 512 by 11.  Revision 13's are 512 valid
+// bits and 256 recency bits; sixteen 256 by 40 and two 256 by 17, and the
+// next line's copies, two 256 by 40 and two 256 by 17.
 //
 // **A WORD WRITTEN BEHIND THE PROCESSOR'S BACK CLEARS ITS SET**
 // (`snoop`): block-disk's transfers reach main memory through the port's
@@ -50,10 +74,26 @@
 // the same transfer, so the lines lost here are ones muir has lost too
 // unless the processor refilled them while the transfer ran --- a timing
 // difference and never a word.
+//
+// **NO RAM IS READ AT THE EDGE THAT WRITES IT**, and so neither tool's
+// read-during-write behavior is relied on: the RAMs are read at `look`, a
+// master clock edge the port is idle, and written by a fill or a write's
+// update, which happen only inside a cycle.  `CADR_RDW_POISON`, which only
+// the read-during-write checks define, makes a read at an edge that writes
+// the same set take the complement, and the programs still agree with muir:
+// `build/rdw_poison_quux13_mem.quux.k4.pass` on the lines and their fills,
+// `build/rdw_poison_quux13_pf.quux.k4.pass` on the next line's copies.
 
 `default_nettype none
 
-module quux_cache (
+module quux_cache #(
+    // 32, the CADR's word and QUUX's to revision 12; 40, revision 13's
+    // (`cadr_machine.sv`).
+    parameter int unsigned WORD_BITS = 32,
+    localparam bit          WIDE      = WORD_BITS > 32,
+    localparam int unsigned PHYS_BITS = WIDE ? 28 : 22,
+    localparam int unsigned LINE_WORDS = WIDE ? 8 : 4
+) (
     input  var logic         clk,
     input  var logic         rst,
 
@@ -63,8 +103,8 @@ module quux_cache (
     // grant takes the grant's address, and the answer is out over the tick
     // after it.  `line_phys` is that address held for the cycle.
     input  var logic         look,
-    input  var logic [21:0]  look_phys,
-    output var logic [21:0]  line_phys,
+    input  var logic [PHYS_BITS-1:0] look_phys,
+    output var logic [PHYS_BITS-1:0] line_phys,
     output var logic         hit,       // a valid way holds the line
     output var logic         hit_way,   // and which
     output var logic         victim,    // the way a miss would fill
@@ -77,33 +117,43 @@ module quux_cache (
     // A write's word, into the way that holds the line if one does; taken
     // at the same edge, written a tick later.
     input  var logic         update,
-    input  var logic [31:0]  update_word,
+    input  var logic [WORD_BITS-1:0] update_word,
 
     // The word a read hit, over the tick after the decision.  A miss's word
     // is the fill's and the port has it.
-    output var logic [31:0]  word,
+    output var logic [WORD_BITS-1:0] word,
     // And the word after it in the same line, which the RAMs put out with
-    // it: revision 12's cache-only prefetch (`quux_mem_port.sv`).  Its
-    // value past the line's last word means nothing.
-    output var logic [31:0]  next_word,
+    // it: the cache-only prefetch (`quux_mem_port.sv`).  Its value past the
+    // line's last word means nothing.
+    output var logic [WORD_BITS-1:0] next_word,
+    // Revision 13's page reach: whether a valid way holds the line after the
+    // looked-up one, and word 0 of that line.  The valid bits are read as
+    // the tick has them, the tags and the word as the lookup's edge read
+    // them.  0 on revision 12.
+    output var logic         next_line_hit,
+    output var logic [WORD_BITS-1:0] next_line_word,
 
     // The line a miss asked for: written into the victim, its tag with it,
-    // and made valid.
+    // and made valid.  Word w in bits `WORD_BITS * w` up.
     input  var logic         fill,
-    input  var logic [127:0] fill_line,
+    input  var logic [LINE_WORDS*WORD_BITS-1:0] fill_line,
 
     // Everything dropped, at the edge `invalidate` is up: muir's
     // `Cache::invalidate`.  And a word block-disk wrote: its set dropped.
     input  var logic         invalidate,
     input  var logic         snoop,
-    input  var logic [21:0]  snoop_phys
+    input  var logic [PHYS_BITS-1:0] snoop_phys
 );
 
-  localparam int unsigned SETS = 512;
+  localparam int unsigned OFF_BITS = WIDE ? 3 : 2;
+  localparam int unsigned IDX_BITS = WIDE ? 8 : 9;
+  localparam int unsigned SETS     = 1 << IDX_BITS;
+  localparam int unsigned TAG_BITS = PHYS_BITS - 11;
+  localparam int unsigned WB       = WORD_BITS;
 
   // A snooped word clears its set, whatever its tag or its place in the line.
   logic unused_snoop;
-  assign unused_snoop = ^{snoop_phys[21:11], snoop_phys[1:0]};
+  assign unused_snoop = ^{snoop_phys[PHYS_BITS-1:11], snoop_phys[OFF_BITS-1:0]};
 
   // **THE ADDRESS HELD, AND THE RAMS' READ, ARE THE MICROCYCLE'S; EVERY
   // OTHER REGISTER HERE IS THE TICK'S.**  `look_phys` is the far end of the
@@ -112,15 +162,15 @@ module quux_cache (
   // the constraint files give these (the RAMs, `idx_q`, `tag_q` and
   // `off_q`) and nothing else here.  The lookup's answer, read a tick after
   // the grant, is what makes the two-tick hit.
-  logic [8:0]  idx_q;
-  logic [10:0] tag_q;
-  logic [1:0]  off_q;
+  logic [IDX_BITS-1:0] idx_q;
+  logic [TAG_BITS-1:0] tag_q;
+  logic [OFF_BITS-1:0] off_q;
   assign line_phys = {tag_q, idx_q, off_q};
 
   logic [SETS-1:0] valid0, valid1, mru;
-  logic [10:0] tag0_out, tag1_out;
-  logic [31:0] data0_out [4];
-  logic [31:0] data1_out [4];
+  logic [TAG_BITS-1:0] tag0_out, tag1_out;
+  logic [WB-1:0] data0_out [LINE_WORDS];
+  logic [WB-1:0] data1_out [LINE_WORDS];
 
   logic v0, v1;
   assign v0 = valid0[idx_q];
@@ -137,74 +187,170 @@ module quux_cache (
   logic way_q;       // the way hit, or the victim of a miss
   logic touch_q, mru_new_q;
   logic upd_q, upd_way_q;
-  logic [31:0] upd_word_q;
+  logic [WB-1:0] upd_word_q;
 
-  assign word = way_q ? data1_out[off_q] : data0_out[off_q];
-  assign next_word = way_q ? data1_out[off_q + 2'd1] : data0_out[off_q + 2'd1];
+  // **THE WORD AND THE NEXT ARE CHOSEN FROM THE LINE A TICK EARLY**: the
+  // lookup's two lines are out over the tick after the grant, and at the
+  // read's decision (`touch`) the word at the offset and the word after it
+  // are taken from each way, so that over the second tick only the way is
+  // left to choose.  The same words as reading the RAMs' outputs then, and
+  // eight lanes fewer between them and `MD`.
+  logic [WB-1:0] word0_q, word1_q, next0_q, next1_q;
+  always_ff @(posedge clk) begin
+    if (touch) begin
+      word0_q <= data0_out[off_q];
+      word1_q <= data1_out[off_q];
+      next0_q <= data0_out[off_q + OFF_BITS'(1)];
+      next1_q <= data1_out[off_q + OFF_BITS'(1)];
+    end
+  end
+  assign word = way_q ? word1_q : word0_q;
+  assign next_word = way_q ? next1_q : next0_q;
 
   // ------------------------------------------------------------ the RAMs
   //
-  // Ten simple dual-port RAMs, a read port taken at `look` and a write port
-  // for the fill and the write-through update; nothing reads a set in the
-  // tick it is written (the processor waits for its own cycle), so neither
-  // tool's read-during-write behavior is relied on.
-  (* ram_style = "block", ramstyle = "M20K" *) logic [10:0] tag0_ram [SETS];
-  (* ram_style = "block", ramstyle = "M20K" *) logic [10:0] tag1_ram [SETS];
+  // Simple dual-port RAMs, a read port taken at `look` and a write port for
+  // the fill and the write-through update; nothing reads a set in the tick
+  // it is written (the processor waits for its own cycle), so neither tool's
+  // read-during-write behavior is relied on.
+  (* ram_style = "block", ramstyle = "M20K" *) logic [TAG_BITS-1:0] tag0_ram [SETS];
+  (* ram_style = "block", ramstyle = "M20K" *) logic [TAG_BITS-1:0] tag1_ram [SETS];
 
-  logic [8:0] look_idx;
-  assign look_idx = look_phys[10:2];
+  logic [IDX_BITS-1:0] look_idx;
+  assign look_idx = look_phys[10:OFF_BITS];
 
   // Which word lanes of which way are written this edge, and with what.
   logic        wr0, wr1;
-  logic [3:0]  lanes;
-  logic [127:0] wr_line;
+  logic [LINE_WORDS-1:0] lanes;
+  logic [LINE_WORDS*WB-1:0] wr_line;
   always_comb begin
     wr0 = 1'b0;
     wr1 = 1'b0;
-    lanes = 4'b0000;
+    lanes = '0;
     wr_line = fill_line;
     if (fill) begin
       wr0 = !way_q;
       wr1 = way_q;
-      lanes = 4'b1111;
+      lanes = '1;
     end else if (upd_q) begin
       wr0 = !upd_way_q;
       wr1 = upd_way_q;
-      lanes = 4'b0001 << off_q;
-      wr_line = {4{upd_word_q}};
+      lanes = LINE_WORDS'(1) << off_q;
+      wr_line = {LINE_WORDS{upd_word_q}};
     end
   end
 
+  // **THE READ-DURING-WRITE POISON**: under `CADR_RDW_POISON` a RAM read at
+  // an edge that writes the set it reads takes the complement of the word,
+  // the one tick a board's RAM does not define (see the header).  Nothing
+  // else defines it, and a board flow never does.
+  logic rdw0, rdw1;
+`ifdef CADR_RDW_POISON
+  assign rdw0 = look && wr0 && (look_idx == idx_q);
+  assign rdw1 = look && wr1 && (look_idx == idx_q);
+  longint unsigned n_ram_writes = 0, n_rdw = 0;
+  always_ff @(posedge clk) begin
+    if (wr0 || wr1) n_ram_writes <= n_ram_writes + 1;
+    if (rdw0 || rdw1) n_rdw <= n_rdw + 1;
+  end
+  // A poison on RAMs nothing wrote tested nothing, so the check that is
+  // this rule's for the cache, which alone defines `CADR_RDW_POISON_CACHE`,
+  // fails a run that never wrote them.  The other read-during-write checks
+  // run programs that touch no main memory.
+  final begin
+    $display("rdw_poison: the cache's RAMs written at %0d edges, read at one of them %0d times",
+             n_ram_writes, n_rdw);
+`ifdef CADR_RDW_POISON_CACHE
+    if (n_ram_writes == 0)
+      $fatal(1, "rdw_poison: the cache's RAMs were never written, so this run measured nothing about them");
+`endif
+  end
+`else
+  assign rdw0 = 1'b0;
+  assign rdw1 = 1'b0;
+`endif
+
   always_ff @(posedge clk) begin
     if (look) begin
-      tag0_out <= tag0_ram[look_idx];
-      tag1_out <= tag1_ram[look_idx];
+      tag0_out <= rdw0 ? ~tag0_ram[look_idx] : tag0_ram[look_idx];
+      tag1_out <= rdw1 ? ~tag1_ram[look_idx] : tag1_ram[look_idx];
     end
     if (fill && !way_q) tag0_ram[idx_q] <= tag_q;
     if (fill &&  way_q) tag1_ram[idx_q] <= tag_q;
   end
 
   // A word lane of each way, a RAM of its own, so that a write-through
-  // word is a write of one RAM and a fill a write of four.
-  for (genvar w = 0; w < 4; w++) begin : g_lane
-    (* ram_style = "block", ramstyle = "M20K" *) logic [31:0] d0_ram [SETS];
-    (* ram_style = "block", ramstyle = "M20K" *) logic [31:0] d1_ram [SETS];
+  // word is a write of one RAM and a fill a write of all of them.
+  for (genvar w = 0; w < LINE_WORDS; w++) begin : g_lane
+    (* ram_style = "block", ramstyle = "M20K" *) logic [WB-1:0] d0_ram [SETS];
+    (* ram_style = "block", ramstyle = "M20K" *) logic [WB-1:0] d1_ram [SETS];
     always_ff @(posedge clk) begin
       if (look) begin
-        data0_out[w] <= d0_ram[look_idx];
-        data1_out[w] <= d1_ram[look_idx];
+        data0_out[w] <= rdw0 ? ~d0_ram[look_idx] : d0_ram[look_idx];
+        data1_out[w] <= rdw1 ? ~d1_ram[look_idx] : d1_ram[look_idx];
       end
-      if (wr0 && lanes[w]) d0_ram[idx_q] <= wr_line[32*w +: 32];
-      if (wr1 && lanes[w]) d1_ram[idx_q] <= wr_line[32*w +: 32];
+      if (wr0 && lanes[w]) d0_ram[idx_q] <= wr_line[WB*w +: WB];
+      if (wr1 && lanes[w]) d1_ram[idx_q] <= wr_line[WB*w +: WB];
     end
+  end
+
+  // ------------------------------------- the next line, revision 13's
+  //
+  // Copies of the tag RAMs and of lane 0's, each written one set BELOW the
+  // set it copies: copy entry k holds set k + 1.  So the lookup's own
+  // address reads the next set's line, with no adder between the map's late
+  // output and the RAMs, and the write address, `idx_q` less one, is a
+  // register's.  A copy and not a second read port of the same RAM: each
+  // stays a simple dual-port RAM, which both tools build as one.  Set 0's
+  // copy, at entry 255, is never read as a next line: the next line of a
+  // page never wraps the set (the header).
+  if (WIDE) begin : g_next_line
+    (* ram_style = "block", ramstyle = "M20K" *) logic [TAG_BITS-1:0] ntag0_ram [SETS];
+    (* ram_style = "block", ramstyle = "M20K" *) logic [TAG_BITS-1:0] ntag1_ram [SETS];
+    (* ram_style = "block", ramstyle = "M20K" *) logic [WB-1:0] nd0_ram [SETS];
+    (* ram_style = "block", ramstyle = "M20K" *) logic [WB-1:0] nd1_ram [SETS];
+    logic [IDX_BITS-1:0] nwr_idx, nidx;
+    logic [TAG_BITS-1:0] ntag0_out, ntag1_out;
+    logic [WB-1:0]       nd0_out, nd1_out;
+    assign nwr_idx = idx_q - IDX_BITS'(1);
+    assign nidx    = idx_q + IDX_BITS'(1);
+    logic nrdw0, nrdw1;
+`ifdef CADR_RDW_POISON
+    assign nrdw0 = look && wr0 && (look_idx == nwr_idx);
+    assign nrdw1 = look && wr1 && (look_idx == nwr_idx);
+`else
+    assign nrdw0 = 1'b0;
+    assign nrdw1 = 1'b0;
+`endif
+    always_ff @(posedge clk) begin
+      if (look) begin
+        ntag0_out <= nrdw0 ? ~ntag0_ram[look_idx] : ntag0_ram[look_idx];
+        ntag1_out <= nrdw1 ? ~ntag1_ram[look_idx] : ntag1_ram[look_idx];
+        nd0_out   <= nrdw0 ? ~nd0_ram[look_idx] : nd0_ram[look_idx];
+        nd1_out   <= nrdw1 ? ~nd1_ram[look_idx] : nd1_ram[look_idx];
+      end
+      if (fill && !way_q) ntag0_ram[nwr_idx] <= tag_q;
+      if (fill &&  way_q) ntag1_ram[nwr_idx] <= tag_q;
+      if (wr0 && lanes[0]) nd0_ram[nwr_idx] <= wr_line[WB-1:0];
+      if (wr1 && lanes[0]) nd1_ram[nwr_idx] <= wr_line[WB-1:0];
+    end
+    // The valid bits of the next set, from the held set: registers both.
+    logic nh0, nh1;
+    assign nh0 = valid0[nidx] && (ntag0_out == tag_q);
+    assign nh1 = valid1[nidx] && (ntag1_out == tag_q);
+    assign next_line_hit  = nh0 || nh1;
+    assign next_line_word = nh1 ? nd1_out : nd0_out;
+  end else begin : g_line_reach
+    assign next_line_hit  = 1'b0;
+    assign next_line_word = '0;
   end
 
   // ----------------------------------------------- the state in registers
   always_ff @(posedge clk) begin
     if (look) begin
       idx_q <= look_idx;
-      tag_q <= look_phys[21:11];
-      off_q <= look_phys[1:0];
+      tag_q <= look_phys[PHYS_BITS-1:11];
+      off_q <= look_phys[OFF_BITS-1:0];
     end
   end
 
@@ -215,7 +361,7 @@ module quux_cache (
       mru_new_q  <= 1'b0;
       upd_q      <= 1'b0;
       upd_way_q  <= 1'b0;
-      upd_word_q <= 32'd0;
+      upd_word_q <= '0;
       valid0     <= '0;
       valid1     <= '0;
       mru        <= '0;
@@ -237,8 +383,8 @@ module quux_cache (
         else       valid0[idx_q] <= 1'b1;
       end
       if (snoop) begin
-        valid0[snoop_phys[10:2]] <= 1'b0;
-        valid1[snoop_phys[10:2]] <= 1'b0;
+        valid0[snoop_phys[10:OFF_BITS]] <= 1'b0;
+        valid1[snoop_phys[10:OFF_BITS]] <= 1'b0;
       end
       if (invalidate) begin
         valid0 <= '0;

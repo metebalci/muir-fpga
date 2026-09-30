@@ -22,13 +22,16 @@ the three, Verilator writes its elaborated tree as JSON and this reads the
 width of every word in the module `cadr_machine`'s `processor` cell was
 elaborated into, and of `cadr_machine`'s own word ports: each must be
 `WORD_BITS`.  And the processor's parts that stay 32 bits at 40 (the ALU's
-output `ALU<31:0>`, the cables' `MEM<31:0>` both ways and the statistics
-counter) must be 32, so that the list of what is still 32 bits in
-`cadr_microcycle.sv`'s header is held as well as the list of words.
+output `ALU<31:0>` and the statistics counter) must be 32, so that the list
+of what is still 32 bits in `cadr_microcycle.sv`'s header is held as well as
+the list of words.  The cables to the memory port carry the whole word both
+ways at 40 (contract G2 §3), and the machine's seam to main memory with them.
 
 **AND REVISION 13'S SIZES COME WITH THE WORD** (contract G2, appendix A1):
 at 40 the location counter is 30 bits, the level-2 entry and its latch 28,
-the level-1 entry 7 and `MAP(MD)` 40; the dispatch memory has 4,096 entries,
+the level-1 entry 7 and `MAP(MD)` 40, the physical address on the cables
+and its register 28, and the prefetch's virtual and physical word addresses
+28; the dispatch memory has 4,096 entries,
 level 1 8,192 and level 2 4,096, with their addresses 12, 13 and 12 bits
 wide; and at 32 each is revision 12's or the CADR's.  Read back as the
 words are, element widths and array depths both.
@@ -60,9 +63,10 @@ TOP = "rtl/machine/cadr_machine.sv"
 WORDS = ["a", "m", "r", "ob", "q", "vma", "md", "l", "mf", "mo", "md_held",
          "md_bus", "vmas", "m31_r", "macro_m31_w", "mmem_out",
          "amem", "mmem", "pdl", "amem_q", "mmem_q", "pdl_q",
-         "ro_amem_q", "ro_mmem_q", "ro_pdl_q", "mtag", "alu_tag", "qtag"]
+         "ro_amem_q", "ro_mmem_q", "ro_pdl_q", "mtag", "alu_tag", "qtag",
+         "rdata", "wdata", "pf_view_word", "pf_word_now"]
 # What stays 32 bits at 40.
-NARROW = ["alu", "rdata", "wdata", "st"]
+NARROW = ["alu", "st"]
 # Revision 13's sizes and revision 12's and the CADR's (A1.4, A1.6, A1.7):
 # name -> (CADR, QUUX at 32, QUUX at 40), an element's width.
 SIZED = {
@@ -70,11 +74,13 @@ SIZED = {
     "vmap": (5, 6, 7), "l1_map": (5, 6, 7), "l2_map": (24, 24, 28),
     "mf_map": (32, 32, 40), "msk": (32, 32, 40),
     "dadr": (11, 11, 12), "adr0": (11, 11, 13), "adr1": (10, 11, 12),
+    "phys_r": (22, 22, 28), "pf_view_phys": (22, 22, 28),
+    "pf_view_vaddr": (24, 24, 28), "pf_view_fetch_vaddr": (24, 24, 28),
 }
 # And the arrays' depths.
 DEEP = {"dmem": (2048, 2048, 4096), "l1_map": (2048, 2048, 8192), "l2_map": (1024, 2048, 4096)}
 # The machine's own ports that carry a word.
-MACHINE_WORDS = ["a", "m", "ob", "q", "vma", "md"]
+MACHINE_WORDS = ["a", "m", "ob", "q", "vma", "md", "mem_wdata"]
 
 CASES = [("cadr", 32), ("quux", 32), ("quux", 40)]
 REFUSED = [("cadr", 40), ("quux", 36)]

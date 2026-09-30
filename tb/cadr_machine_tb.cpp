@@ -135,6 +135,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <string>
 #include <vector>
@@ -280,6 +281,20 @@ int main(int argc, char **argv) {
   // every write it owes lands here, in order, which is what the scanout
   // reading these words is owed.
   bool quux_machine = false;
+  // **REVISION 13'S MAIN MEMORY IS PACKED STORAGE** (contract G1 §4.1, G2
+  // §3): this program holds it as bytes, laid out as G1 says and not as the
+  // port does, word w in the five bytes from the base the machine was built
+  // with (`QUUX13_TB_BASE`, the Makefile's), `<7:0>` first and the tag last;
+  // and the window as bytes too, four a word at the display's base, the
+  // field alone (G1 §4.2).  Every byte nothing wrote reads as a poison
+  // injective in its address, so a fill that asks the wrong bytes, a line
+  // not of five beats, or a word packed any other way reads wrong in MD;
+  // and every write is checked for where it lands and what it carries
+  // against the cycle that owes it.  The programs read no byte they did not
+  // write.
+  bool rev13 = false;
+  // Main memory's 64K-word boards: QUUX's 32 unless the trace says.
+  unsigned main_boards = 32;
   // Key words for the keyboard's cable, by the microcycle they go in before,
   // and the ones not yet on it: one a tick, from the tick that microcycle
   // starts on.
@@ -357,6 +372,9 @@ int main(int argc, char **argv) {
           dispatch_trace = true;
         if (std::strstr(line, "QUUX's boot PROM")) quux_prom = true;
         if (std::strstr(line, "machine: quux")) quux_machine = true;
+        if (std::strstr(line, "revision 13")) rev13 = true;
+        unsigned boards_line = 0;
+        if (std::sscanf(line, "# boards %u", &boards_line) == 1) main_boards = boards_line;
         continue;
       }
       if (line[0] == '\n') continue;
@@ -468,7 +486,7 @@ int main(int argc, char **argv) {
   dut->n_boot2 = 1;
   dut->clk = 0;
   dut->rst = 1;
-  dut->boards = 32;      // Machine::new: MAIN_WORDS >> 16
+  dut->boards = main_boards;  // Machine::new's MAIN_WORDS >> 16, or the trace's
   dut->mem_done = 0;
   dut->mem_rdata = 0;
   // NOTHING OUTSIDE THE MACHINE ANSWERS AN XBUS DEVICE, and this is the whole
@@ -642,7 +660,21 @@ int main(int argc, char **argv) {
   auto q_fb = [&](uint32_t p) { return p >= kFb && p - kFb < kFbWords; };
   long q_fb_fills = 0, q_fb_writes = 0;
   std::map<uint32_t, uint32_t> q_mem;
-  std::vector<std::pair<uint32_t, uint32_t>> q_owed;
+  std::vector<std::pair<uint32_t, uint64_t>> q_owed;
+#ifndef QUUX13_TB_BASE
+#define QUUX13_TB_BASE 0x18000000u
+#endif
+  constexpr uint32_t kMain13Base = QUUX13_TB_BASE;
+  constexpr uint32_t kWindow13 = 01760000000u;
+  std::unordered_map<uint32_t, uint8_t> q13;
+  auto q13_get = [&](uint32_t a) -> uint8_t {
+    const auto it = q13.find(a);
+    return it != q13.end() ? it->second : static_cast<uint8_t>((a * 0x9E3779B1u) >> 23 ^ 0xA5u);
+  };
+  auto q13_main = [&](uint32_t a) {
+    return a >= kMain13Base && a - kMain13Base < 5u * (static_cast<uint32_t>(main_boards) << 16);
+  };
+  long q13_spanning = 0;
   long q_due = -1;
   bool q_answered = false;
   long q_fills = 0, q_writes = 0;
@@ -790,9 +822,10 @@ int main(int argc, char **argv) {
     dut->mem_done = 0;
     // QUUX's main memory, answering the port (see `quux_machine`).
     const bool q_in_fb = dut->mem_addr >= kFbBase && dut->mem_addr < kFbBase + 4u * kFbWords;
-    const bool q_main = quux_machine && dut->mem_req &&
-                        ((dut->mem_addr >= kMainBase && dut->mem_addr < kMainBase + (4u << 22)) ||
-                         q_in_fb);
+    const bool q_main_words =
+        rev13 ? q13_main(dut->mem_addr)
+              : (dut->mem_addr >= kMainBase && dut->mem_addr < kMainBase + (4u << 22));
+    const bool q_main = quux_machine && dut->mem_req && (q_main_words || q_in_fb);
     if (q_main) {
       // A read in one to five ticks.  **A WRITE IN FOURTEEN TO EIGHTEEN**,
       // inside the nominal 290 ns the port holds a write to whatever the
@@ -806,6 +839,56 @@ int main(int argc, char **argv) {
         // The word's physical address, main memory's or the frame buffer's.
         const uint32_t w = q_in_fb ? kFb + ((dut->mem_addr - kFbBase) >> 2)
                                    : (dut->mem_addr - kMainBase) >> 2;
+        if (!q_answered && rev13) {
+          // Revision 13: bytes, packed storage and the window's four a word.
+          q_answered = true;
+          const uint32_t a = dut->mem_addr;
+          const uint32_t ph = dut->phys;
+          constexpr int kRlineWords = static_cast<int>(sizeof(dut->mem_rline) / 4);
+          if (dut->mem_line) {
+            ++q_fills;
+            if (q_in_fb) ++q_fb_fills;
+            const uint32_t want = q_in_fb ? kFbBase + 32u * ((ph - kWindow13) >> 3)
+                                          : kMain13Base + 40u * (ph >> 3);
+            const int beats = q_in_fb ? 4 : 5;
+            if (dut->mem_write || a != want || dut->mem_beats != beats || !bus_outstanding || dut->wrcyc) {
+              std::fprintf(stderr, "microcycle %zu: a line fill of %d beats at %08x for word %o%s, want %d at "
+                           "%08x\n", k, dut->mem_beats, a, ph, dut->wrcyc ? ", a write" : "", beats, want);
+              ++bad;
+            }
+            for (int x = 0; x < kRlineWords; ++x) dut->mem_rline[x] = 0;
+            for (int b = 0; b < 8 * beats && b / 4 < kRlineWords; ++b)
+              dut->mem_rline[b / 4] |= static_cast<uint32_t>(q13_get(a + b)) << (8 * (b % 4));
+          } else if (dut->mem_write) {
+            ++q_writes;
+            if (q_in_fb) ++q_fb_writes;
+            const int bytes = q_in_fb ? 4 : 5;
+            if (q_owed.empty()) {
+              std::fprintf(stderr, "microcycle %zu: DDR written at %08x, which no cycle wrote\n", k, a);
+              ++bad;
+            } else {
+              const auto want = q_owed.front();
+              q_owed.erase(q_owed.begin());
+              const bool fb = want.first >= kWindow13;
+              const uint32_t want_a = fb ? kFbBase + 4u * (want.first - kWindow13)
+                                         : kMain13Base + 5u * want.first;
+              const uint64_t want_w = want.second & (fb ? 0xFFFFFFFFull : 0xFFFFFFFFFFull);
+              if (a != want_a || dut->mem_wdata != want_w || dut->mem_wide != (fb ? 0 : 1)) {
+                std::fprintf(stderr, "microcycle %zu: DDR written %" PRIx64 " at %08x, %s, the cycle wrote %"
+                             PRIx64 " at %o, want %08x\n", k, static_cast<uint64_t>(dut->mem_wdata), a,
+                             dut->mem_wide ? "five bytes" : "four", want.second, want.first, want_a);
+                ++bad;
+              }
+            }
+            if (!q_in_fb && (a & 7u) > 3u) ++q13_spanning;
+            for (int b = 0; b < bytes; ++b)
+              q13[a + b] = static_cast<uint8_t>(static_cast<uint64_t>(dut->mem_wdata) >> (8 * b));
+          } else {
+            std::fprintf(stderr, "microcycle %zu: a single read of main memory at %08x, which revision "
+                         "13's port never makes\n", k, a);
+            ++bad;
+          }
+        }
         if (!q_answered) {
           q_answered = true;
           if (dut->mem_line) {
@@ -1039,8 +1122,8 @@ int main(int argc, char **argv) {
       if (dut->device && dut->wrcyc) {
         ++dev_writes_checked;
         dev_words[dut->dev_wdata]++;
-        if (dut->dev_wdata != word)
-          bad += Fail(r, "the word at the Xbus seam", dut->dev_wdata, word);
+        if (dut->dev_wdata != (word & 0xFFFFFFFFull))
+          bad += Fail(r, "the word at the Xbus seam", dut->dev_wdata, word & 0xFFFFFFFFull);
       }
       dev_cycle = dut->device;
       dev_acked = false;
@@ -1048,7 +1131,7 @@ int main(int argc, char **argv) {
       // word the trace's MD column says the cycle carries.
       if (quux_machine && dut->wrcyc &&
           ((!dut->device && !dut->nxm && !dut->unibus) || q_fb(dut->phys)))
-        q_owed.emplace_back(dut->phys, static_cast<uint32_t>(word));
+        q_owed.emplace_back(dut->phys, rev13 ? word : static_cast<uint32_t>(word));
       cur_nxm = dut->nxm;
       if (dut->device) ++device_cycles;
       else if (!dut->nxm && !dut->unibus) ++mem_cycles;
@@ -1320,6 +1403,9 @@ int main(int argc, char **argv) {
     std::printf("    QUUX's main memory: %ld line fills and %ld writes answered here, %ld and %ld "
                 "of them the frame buffer's, %zu writes still owed\n", q_fills, q_writes,
                 q_fb_fills, q_fb_writes, q_owed.size());
+    if (rev13)
+      std::printf("    revision 13: packed storage at %08x, %ld writes of words across two beats\n",
+                  kMain13Base, q13_spanning);
     // The write buffer holds one write; every other write a cycle made has
     // reached DDR, where the scanout reads the frame buffer's.
     if (q_owed.size() > 1) {

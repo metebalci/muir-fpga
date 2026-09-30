@@ -120,6 +120,9 @@ int main(int argc, char **argv) {
     m->mem_req = asking || hold_after > 0;
     m->mem_write = write;
     m->mem_line = line;
+    // Revision 12's line is two beats, and its writes are four bytes.
+    m->mem_beats = line ? 2 : 0;
+    m->mem_wide = 0;
     m->mem_addr = addr;
     m->mem_wdata = word;
 

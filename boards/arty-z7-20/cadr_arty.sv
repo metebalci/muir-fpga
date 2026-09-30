@@ -360,11 +360,12 @@ module cadr_arty #(
   logic [47:0] ir;
   logic [9:0]  dc;
   logic [25:0] lc;
-  logic [21:0] phys;
+  logic [(WORD_BITS > 32 ? 28 : 22)-1:0] phys;
   logic [17:0] ub_addr;
   logic [15:0] ub_rdata;
   logic [2:0]  arb_stage;
-  logic [31:0] mem_addr, mem_wdata;
+  logic [31:0] mem_addr;
+  logic [WORD_BITS-1:0] mem_wdata;
   // MEM<31:0> on its way to an Xbus slave. No slave exists, so nothing
   // reads it --- but it is an output of `cadr_machine` and the fold below
   // is what keeps it from being deleted along with whatever computes it.
@@ -384,8 +385,10 @@ module cadr_arty #(
   // QUUX's line fill (contract Q6): the machine asks four words and the port
   // hands the line back; and QUUX's memory port idle, which nothing on this
   // board reads yet.  The CADR never asks a line.
-  logic         mem_line, mem_drained;
-  logic [127:0] mem_rline;
+  logic         mem_line, mem_drained, mem_wide;
+  logic [2:0]   mem_beats;
+  // Two 64-bit beats of a line, and revision 13's five (`quux_axi_master.sv`).
+  logic [(WORD_BITS > 32 ? 320 : 128)-1:0] mem_rline;
   // The disk's two seams, likewise driven from one arm or the other: the
   // drive --- which units have a pack, the read-only switch, whether the
   // drive's time is charged --- and the block store's fill port. With `DDR`
@@ -933,7 +936,8 @@ module cadr_arty #(
       .disp_map_a(disp_map_a), .disp_color_map_q(con_disp_color_map_q),
       // The memory, or the absence of one: see the `DDR` generate below.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(mem_line), .mem_rline(mem_rline), .mem_drained(mem_drained),
+      .mem_line(mem_line), .mem_beats(mem_beats), .mem_wide(mem_wide),
+      .mem_rline(mem_rline), .mem_drained(mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -1169,7 +1173,12 @@ module cadr_arty #(
     logic        port_done, port_error;
     logic [31:0] port_rdata;
     logic         port_line;
-    logic [127:0] port_rline;
+    logic [(WORD_BITS > 32 ? 320 : 128)-1:0] port_rline;
+    // What QUUX's master alone takes: a line's beats, a write's five bytes,
+    // and the whole word (revision 13's, `quux_axi_master.sv`).
+    logic [2:0]   port_beats;
+    logic         port_wide;
+    logic [WORD_BITS-1:0] port_word;
 
     // The adapter's AXI4 side, 32 bits wide.
     logic [31:0] awaddr, araddr, wdata;
@@ -1200,8 +1209,11 @@ module cadr_arty #(
       assign port_req   = mem_req;
       assign port_write = mem_write;
       assign port_addr  = mem_addr;
-      assign port_wdata = mem_wdata;
+      assign port_wdata = mem_wdata[31:0];
       assign port_line  = mem_line;
+      assign port_beats = mem_beats;
+      assign port_wide  = mem_wide;
+      assign port_word  = mem_wdata;
       assign mem_done   = port_done;
       assign mem_rdata  = port_rdata;
       assign mem_rline  = port_rline;
@@ -1256,9 +1268,13 @@ module cadr_arty #(
       // one lamp that changes is LD4.
       assign mem_done  = 1'b0;
       assign mem_rdata = 32'd0;
-      // The witness asks no line, and the machine is given none.
+      // The witness asks no line, and the machine is given none; its words
+      // are four bytes.
       assign port_line = 1'b0;
-      assign mem_rline = 128'd0;
+      assign port_beats = 3'd0;
+      assign port_wide = 1'b0;
+      assign port_word = WORD_BITS'(port_wdata);
+      assign mem_rline = '0;
       logic unused_rline;
       assign unused_rline = ^port_rline;
 
@@ -1328,10 +1344,11 @@ module cadr_arty #(
     // else leaves the beat unread, which the lint of the `DDR=1` board
     // reports (`the-beat-that-came-back-is-the-one-that-went-out`).
     if (QUUX_PORT) begin : g_qaxi
-      quux_axi_master u_qaxi (
+      quux_axi_master #(.WORD_BITS(WORD_BITS)) u_qaxi (
           .clk(clk), .rst(axi_rst),
           .mem_req(port_req), .mem_write(port_write), .mem_line(port_line),
-          .mem_addr(port_addr), .mem_wdata(port_wdata),
+          .mem_beats(port_beats), .mem_wide(port_wide),
+          .mem_addr(port_addr), .mem_wdata(port_word),
           .mem_done(q_done), .mem_rdata(q_rdata), .mem_rline(port_rline),
           .mem_error(q_error),
           .m_awaddr(q_hp0_awaddr), .m_awlen(q_hp0_awlen), .m_awsize(q_hp0_awsize),
@@ -1348,7 +1365,7 @@ module cadr_arty #(
       assign q_done = 1'b0;
       assign q_rdata = 32'd0;
       assign q_error = 1'b0;
-      assign port_rline = 128'd0;
+      assign port_rline = '0;
       assign q_hp0_awaddr = 32'd0;
       assign q_hp0_awlen = 4'd0;
       assign q_hp0_awsize = 2'd0;
@@ -1366,7 +1383,7 @@ module cadr_arty #(
       assign q_arvalid = 1'b0;
       assign q_rready = 1'b0;
       logic unused_q;
-      assign unused_q = ^{port_line, QUUX_PORT};
+      assign unused_q = ^{port_line, port_beats, port_wide, port_word, QUUX_PORT};
     end
 
     cadr_axi_master u_axi (
@@ -2514,7 +2531,7 @@ module cadr_arty #(
     // whatever computes them, out of the bin.
     assign mem_done  = 1'b0;
     assign mem_rdata = 32'd0;
-    assign mem_rline = 128'd0;
+    assign mem_rline = '0;
     assign ddr_error = 1'b0;
     // And no port to answer anything, so the audit's port clause is silent by
     // construction. Its word 8 reads zero, which on this board is the truth.
@@ -2742,7 +2759,7 @@ module cadr_arty #(
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
-                   mem_req, mem_write, mem_line, mem_drained, store_miss, ch_active,
+                   mem_req, mem_write, mem_line, mem_beats, mem_wide, mem_drained, store_miss, ch_active,
                    machrun, errhalt, stathalt, n_boot, ddr_error,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,

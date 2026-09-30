@@ -61,9 +61,9 @@ use muir::isa::Insn;
 use muir::isa::asm::{
     ADD, ALU, ALWAYS, AND, BYTE, CARRY_IN, DEP, DISPATCH, DMEM_WRITE, DPB, INVERT, IOR, JUMP, LDB,
     M_PLUS_C, MD, N, OB_RIGHT, Q_LOAD, SETA, SETCM, SETM, SETO, SRC_MD, SRC_Q, START_READ,
-    START_WRITE, SUB, VMA, XOR, a_dest, a_src, filler, m_dest, m_src, src, target,
+    POPJ, START_WRITE, SUB, VMA, XOR, a_dest, a_src, filler, m_dest, m_src, src, target,
 };
-use muir::machine::{Geometry, Machine, PROM_WORDS, QUUX_PROM_BASE, Word};
+use muir::machine::{Geometry, Machine, PROM_WORDS, QUUX_PROM_BASE, Word, macro_dispatch};
 
 /// Revision 13.
 const REV13: Geometry = Geometry::QUUX_13;
@@ -706,6 +706,354 @@ fn map_program() -> (Prog, Vec<(u64, Word, Word)>) {
     (p, maps)
 }
 
+// ---------------------------------------------------------------- memory
+//
+// Revision 13's memory port and cache (contract G2 §3), through the whole
+// machine: packed storage, the window and the 28-bit space.  These run with
+// main memory 65 boards, `20200000` words, so that it reaches past 22 bits
+// and over revision 12's frame buffer and register page.
+
+/// Main memory's boards for the memory programs, and its end.
+const BOARDS_13: u32 = 65;
+const MAIN_END: u64 = (BOARDS_13 as u64) << 16;
+/// The physical space (G1 §3.2): the register page, the window, revision
+/// 12's register page and a word its decode took for the diagnostic
+/// registers, main memory past 22 bits.
+const WINDOW_13: u64 = 0o1760000000;
+const OLD_REGISTER_PAGE: u64 = 0o17777400;
+const SPY_13: u64 = 0o17773000;
+const HIGH_13: u64 = 0o20000000;
+/// The window's buffer, the video controller's 40,960 words.
+const FB_WORDS_13: u64 = 40960;
+
+/// M memory the memory programs keep a rolling word and an address in.
+const M_W: u64 = 0o10;
+const M_VA: u64 = 0o11;
+/// A memory: the rolling word's step, and the programs' own words.
+const A_STEP: u64 = 0o102;
+
+impl Prog {
+    /// The virtual address through virtual page `vpage`, below 32 and so
+    /// in level-1 block 0, onto physical `phys`: a level-2 entry, readable
+    /// and writable, with the page `phys<27:10>` (A1.7).
+    fn through(&mut self, vpage: u64, phys: u64) -> u64 {
+        self.map_store((vpage << 10) as Word, (1 << 28 | 1 << 27 | 1 << 26 | phys >> 10) as Word);
+        vpage << 10 | (phys & 0o1777)
+    }
+
+    /// A result: the word read at the virtual address in A `a`, taken from
+    /// `MD` two microcycles after the start, which waits for it: in the
+    /// microcycle after the start the cycle has not gone out, and `MD` is
+    /// the last one's.
+    fn read_a(&mut self, a: u64, want: Word, what: &str) -> &mut Self {
+        self.op(ALU | SETA | a_src(a) | START_READ);
+        self.fill(1);
+        self.put(ALU | SETM | SRC_MD, want, what)
+    }
+
+    /// The word in A `word` stored at the virtual address in A `addr`.  The
+    /// cycle takes `MD` as the edge after the start leaves it, so the two
+    /// words after the start leave `MD` alone.
+    fn write_a(&mut self, word: u64, addr: u64) -> &mut Self {
+        self.op(ALU | SETA | a_src(word) | MD);
+        self.op(ALU | SETA | a_src(addr) | START_WRITE);
+        self.fill(2)
+    }
+
+    /// `n` words stored from the virtual address `va` up: the rolling word
+    /// in M `M_W`, from `first`, stepped after each store by a rotate of 8
+    /// in the ring of 40 and an XOR with `step` (A `A_STEP`); the address
+    /// in M `M_VA`.  The words, in order.
+    fn store_run(&mut self, va: u64, first: Word, step: Word, n: usize) -> Vec<Word> {
+        self.m(M_W, first).m(M_VA, va as Word).a(A_STEP, step);
+        let mut w = first;
+        let mut out = Vec::new();
+        for _ in 0..n {
+            out.push(w);
+            self.op(ALU | SETM | m_src(M_W) | MD);
+            self.op(ALU | SETM | m_src(M_VA) | START_WRITE);
+            self.op(byte(LDB, 8, 40) | m_src(M_W) | a_src(ZERO) | m_dest(M_W));
+            self.op(ALU | XOR | m_src(M_W) | a_src(A_STEP) | m_dest(M_W));
+            self.op(ALU | ADD | m_src(M_VA) | a_src(ONE) | m_dest(M_VA));
+            w = ring(w, 8) ^ step;
+        }
+        out
+    }
+
+    /// The words `want` read back from the virtual address `va` up, in the
+    /// order `order` of their offsets, each a result.
+    fn read_run(&mut self, va: u64, want: &[Word], order: &[usize], what: &str) -> &mut Self {
+        for &k in order {
+            self.m(M_VA, (va + k as u64) as Word);
+            self.op(ALU | SETM | m_src(M_VA) | START_READ);
+            self.fill(1);
+            self.put(ALU | SETM | SRC_MD, want[k], &format!("{what}, word {k}"));
+        }
+        self
+    }
+}
+
+/// **The 28-bit space** (G1 §3.2, G2 §4.1; muir's
+/// `the_physical_space_is_28_bits`, `the_frame_buffer_window_holds_the_field`,
+/// `revision_12s_addresses_are_nothing_on_revision_13`): the register page
+/// at `1777777400`, its MACHINE-ID and its word 101; revision 12's page, `17777400`,
+/// and `17773000`, main memory here; main memory past 22 bits whole, and
+/// nothing past its end, which sets word 101's NXM bit, a write of 101
+/// clearing it; the window at `1760000000`, which stores the field and reads
+/// it with tag `005`, and nothing past its buffer; and nothing between main
+/// memory and the window, or between the window and the page.
+fn space_program() -> Prog {
+    let mut p = Prog::new();
+    p.start();
+    let reg = p.through(1, REGISTER_PAGE_13);
+    let old = p.through(2, OLD_REGISTER_PAGE);
+    let window = p.through(3, WINDOW_13);
+    let high = p.through(4, HIGH_13);
+    let past = p.through(5, MAIN_END);
+    let spy = p.through(6, SPY_13);
+    let window_2 = p.through(7, WINDOW_13 + 0o2000);
+    let past_window = p.through(8, WINDOW_13 + FB_WORDS_13);
+    let gap = p.through(9, 0o400000000);
+    let below_page = p.through(10, 0o1777776000);
+
+    // The register page at its revision 13 address: MACHINE-ID, word 0.
+    // What its other words say of revision 13 is the devices' (A1.10); here
+    // the page answers where the space puts it.
+    p.a(0o103, reg as Word);
+    p.read_a(0o103, (0x5155 << 16) | (13 << 4) | 4, "word 0, MACHINE-ID");
+    // Revision 12's page: main memory, a whole word, and word 101 has no NXM.
+    let r101 = 0o104;
+    p.a(r101, (reg + 0o101) as Word);
+    p.a(0o105, old as Word).a(0o106, w(0o031, 0o400));
+    p.write_a(0o106, 0o105).read_a(0o105, w(0o031, 0o400), "17777400: main memory");
+    p.read_a(r101, 0, "word 101: no NXM");
+    // Main memory past 22 bits, a whole word; past its end nothing.
+    p.a(0o107, (high + 5) as Word).a(0o110, w(0o025, 0x1357_9bdf)).a(0o111, past as Word);
+    p.write_a(0o110, 0o107).read_a(0o107, w(0o025, 0x1357_9bdf), "main memory at 20000005");
+    p.read_a(0o111, 0, "past main memory: nothing");
+    p.read_a(r101, 1, "word 101: NXM");
+    // A write of word 101 clears it.
+    p.write_a(ZERO, r101).read_a(r101, 0, "word 101 cleared by its write");
+    // The old Unibus window's diagnostic registers are main memory here.
+    p.a(0o112, (spy + 5) as Word).a(0o113, w(0o031, 0xab_cdef));
+    p.write_a(0o113, 0o112).read_a(0o112, w(0o031, 0xab_cdef), "main memory at 17773005");
+    // The window: a write stores the field and drops the tag, a read gives
+    // the field with tag 005; its word 1777, and the page after it.
+    p.a(0o114, (window + 7) as Word).a(0o115, w(0o025, 0x1234_5678)).a(0o116, (window + 0o1777) as Word);
+    p.a(0o117, (window_2 + 3) as Word);
+    p.write_a(0o115, 0o114).read_a(0o114, w(0o005, 0x1234_5678), "the window: the field, tag 005");
+    p.write_a(0o115, 0o116).read_a(0o116, w(0o005, 0x1234_5678), "the window's word 1777");
+    p.write_a(0o115, 0o117).read_a(0o117, w(0o005, 0x1234_5678), "the window's second page");
+    // Read again, each from the line the cache now holds (G2 §3: the window
+    // and main memory past 22 bits are cached).
+    p.read_a(0o114, w(0o005, 0x1234_5678), "the window's word 7 again, a hit");
+    p.read_a(0o107, w(0o025, 0x1357_9bdf), "main memory at 20000005 again, a hit");
+    // Nothing past the window's buffer, between main memory and the window,
+    // and between the window and the register page; each sets the NXM bit,
+    // cleared between.
+    for (va, what) in [
+        (past_window, "past the window's buffer"),
+        (gap, "between main memory and the window"),
+        (below_page, "between the window and the register page"),
+    ] {
+        p.a(0o120, va as Word);
+        p.read_a(0o120, 0, what);
+        p.read_a(r101, 1, &format!("{what}: NXM"));
+        p.write_a(ZERO, r101);
+    }
+    p.park();
+    p
+}
+
+/// The first rolling words and steps of [`lines_program`]: every byte of
+/// each word different, the tag included.
+const LINE_FIRST: [Word; 5] = [
+    w(0o211, 0x1b2c_3d4e),
+    w(0o057, 0x9a8b_7c6d),
+    w(0o315, 0x2468_ace1),
+    w(0o142, 0xf1e2_d3c4),
+    w(0o377, 0x5a69_7887),
+];
+const LINE_STEP: Word = w(0o133, 0x6b5a_4938);
+
+/// **Packed storage through the cache** (G1 §4.1, G2 §3; muir's
+/// `a_store_to_a_word_spanning_two_beats_is_whole`,
+/// `a_40_bit_checkpoint_is_packed_and_round_trips`'s lines,
+/// `on_rtl_high_memory_and_the_window_are_cached`, and
+/// `revision_13s_port_has_8_word_lines_and_page_reach`'s fills): whole
+/// 40-bit words stored at every offset of a line --- 1, 3, 4 and 6 each
+/// across two of its five beats --- in line 0; in line 307, whose 40 bytes
+/// cross a 4 KiB boundary (`40L mod 4096` = 4088); at word 819, whose five
+/// bytes do; in a line past 22 bits; and in a line of the window, 4 bytes a
+/// word.  Each read back, a line's first read filling its 8 words and the
+/// rest hitting; a word written into a line the cache holds, read back from
+/// it, then the line evicted by two others of its set and read back from
+/// main memory.
+fn lines_program() -> Prog {
+    let mut p = Prog::new();
+    p.start();
+    let low = p.through(2, 0);
+    let l307 = p.through(3, 307 * 8 & !0o1777) + (307 * 8 & 0o1777);
+    let high = p.through(4, HIGH_13 + 0o1230);
+    let window = p.through(5, WINDOW_13 + 0o1000);
+    let set0_a = p.through(6, 0o4000);
+    let set0_b = p.through(7, 0o10000);
+
+    let line0 = p.store_run(low, LINE_FIRST[0], LINE_STEP, 8);
+    // A word in each of two other lines of line 0's set, 2K and 4K words on.
+    let other_a = p.store_run(set0_a, w(0o066, 0x7777_1111), LINE_STEP, 1);
+    let other_b = p.store_run(set0_b, w(0o077, 0x8888_2222), LINE_STEP, 1);
+    let line307 = p.store_run(l307, LINE_FIRST[1], LINE_STEP, 8);
+    let w819 = p.store_run(low + 819, LINE_FIRST[2], LINE_STEP, 1);
+    let high_line = p.store_run(high, LINE_FIRST[3], LINE_STEP, 8);
+    let window_line = p.store_run(window, LINE_FIRST[4], LINE_STEP, 8);
+
+    p.read_run(low, &line0, &[0, 1, 2, 3, 4, 5, 6, 7], "line 0");
+    p.read_run(l307, &line307, &[7, 0, 6, 1, 5, 2, 4, 3], "line 307, across 4 KiB");
+    p.read_run(low + 819, &w819, &[0], "word 819, across 4 KiB");
+    p.read_run(high, &high_line, &[3, 0, 1, 2, 4, 5, 6, 7], "a line past 22 bits");
+    let fields: Vec<Word> = window_line.iter().map(|&x| w(0o005, x)).collect();
+    p.read_run(window, &fields, &[5, 0, 1, 2, 3, 4, 6, 7], "the window's line, the fields with tag 005");
+
+    // Word 3 of line 0 written while the line is held, read back from the
+    // line; then two other lines of set 0 read, and word 3 read again from
+    // main memory.
+    let new3 = w(0o044, 0x3141_5926);
+    p.a(0o103, new3).a(0o104, (low + 3) as Word);
+    p.write_a(0o103, 0o104).read_a(0o104, new3, "line 0's word 3 written through the held line");
+    p.a(0o105, set0_a as Word).a(0o106, set0_b as Word);
+    p.read_a(0o105, other_a[0], "set 0's second line");
+    p.read_a(0o106, other_b[0], "set 0's third line, which evicts line 0");
+    p.read_a(0o104, new3, "line 0's word 3 again, from main memory");
+    p.park();
+    p
+}
+
+// ----------------------------------------------------------------- fused
+
+/// A 28-bit virtual address whose every level-1 and level-2 bit matters, as
+/// [`VA`] is, with its word the last of its line: `VA<27:15>` 12345,
+/// `VA<14:10>` 26, `VA<9:0>` 1227.  Its page is physical 10000, at
+/// `20000000`, past 22 bits.
+const VA_F: u64 = 0o12345 << 15 | 0o26 << 10 | 0o1227;
+const PAGE_F: u64 = HIGH_13 >> 10;
+/// The fused return's main loop, handlers and `A-LOCALP`, as muir's
+/// `the_fused_return_takes_the_halfword_in_the_ring_of_40` has them, in the
+/// PROM: offsets from its base.
+const QMLP_F: u64 = 0o1500;
+const HANDLER_F: u64 = 0o1600;
+const HANDLER_NEXT: u64 = 0o1700;
+const LOCALP_AT_F: u64 = 0o732;
+const LOCALP_F: u64 = 0o1000;
+
+/// A halfword: `<13:9>` the opcode, `<8:6>` the register, `<5:0>` delta.
+const fn half(op: u64, reg: u64, delta: u64) -> u64 {
+    op << 9 | reg << 6 | delta
+}
+
+/// **Translation to a word, and the fused return through main memory** (G2
+/// §2.6-§2.7, §3, A1.2, A1.7; muir's
+/// `the_map_translates_28_bits_at_1024_word_pages` and
+/// `the_fused_return_takes_the_halfword_in_the_ring_of_40`, with the
+/// prefetch's page reach, `Reach::Page`): the map written for a 28-bit
+/// virtual address, level 1 at `VA<27:15>` and level 2 at `{L1, VA<14:10>}`,
+/// onto a page past 22 bits; a read through it, with `<39:32>` set, and with
+/// `<9:8>` clear, which is another word of the page; one with `<31:28>` set,
+/// refused.  Then the code at that address, the last word of its line, and
+/// the next line read, so the cache holds it: the location counter set to
+/// the code, `LC<29:2>` past 24 bits; a return that fetches, into the main
+/// loop, which takes the word into M 31; a return that fuses on its halfword
+/// 1 into a LOCAL handler, which records PDL-INDEX; and a return that needs
+/// the next word, which the fetch left in the prefetch's buffer from the
+/// next line, and fuses on it.
+fn fused_program() -> Prog {
+    let base = QUUX_PROM_BASE as u64;
+    let mut p = Prog::new();
+    p.start();
+    // The map for VA_F: level 1 at 12345 <- block 123; level 2 at {123, 26}
+    // <- page 20000, readable and writable.
+    p.map_store(VA_F as Word, 0o123u64 << 32 | 1 << 29);
+    p.map_store(VA_F as Word, (1 << 28 | 1 << 27 | 1 << 26 | PAGE_F) as Word);
+    // The code: halfword 1 opcode 13, register 5 (LOCAL), delta 27; halfword
+    // 0 another opcode with register 6; the word with a tag, which the index
+    // never sees.  And the next word's two halfwords, and the word at VA_F
+    // with <9:8> clear.
+    let hw1 = half(0o13, 5, 0o27);
+    let hw0 = half(0o21, 6, 0o11);
+    let code = w(0o025, hw1 << 16 | hw0);
+    let next_hw1 = half(0o15, 5, 0o3);
+    let next_hw0 = half(0o17, 5, 0o5);
+    let next = w(0o031, next_hw1 << 16 | next_hw0);
+    let other = w(0o005, 0xbad);
+    p.a(0o103, VA_F as Word).a(0o104, code);
+    p.a(0o105, (VA_F + 1) as Word).a(0o106, next);
+    p.a(0o107, (VA_F & !0o1400) as Word).a(0o110, other);
+    p.write_a(0o104, 0o103).write_a(0o106, 0o105).write_a(0o110, 0o107);
+    // Through the map: VA_F, VA_F with <39:32> set, VA_F with <9:8> clear.
+    p.a(0o111, w(0o245, VA_F));
+    p.read_a(0o103, code, "VA");
+    p.read_a(0o111, code, "VA with <39:32> set");
+    p.read_a(0o107, other, "VA with <9:8> clear");
+    // <31:28> set: the read is refused, and condition 4, page fault, holds.
+    p.a(0o112, (1 << 28 | VA_F) as Word);
+    p.op(ALU | SETA | a_src(0o112) | START_READ);
+    p.taken(jcond(4), 1, "<31:28> set: a page fault");
+    // The next line, read, so the cache holds it; and the code's own line
+    // read too, a hit when the fetch comes.
+    p.read_a(0o105, next, "the next word, its line now held");
+
+    // The fused return (A1.2, G2 §2.7).
+    let main = 1 << 14 | (base + QMLP_F);
+    p.a(0o113, macro_dispatch::word((base + QMLP_F) as u16, LOCALP_AT_F as u16, 0o21) as Word);
+    p.a(0o114, hw1 >> 6).a(0o115, (macro_dispatch::OPERAND as u64 | (base + HANDLER_F)) as Word);
+    p.a(0o116, LOCALP_F).a(0o117, (4 * VA_F) as Word).a(0o120, main as Word);
+    // The next word's two halfwords, to the second handler.
+    p.a(0o121, next_hw1 >> 6).a(0o122, next_hw0 >> 6);
+    p.a(0o123, (macro_dispatch::OPERAND as u64 | (base + HANDLER_NEXT)) as Word);
+    p.op(ALU | SETA | a_src(ZERO) | INTCTL);
+    p.op(ALU | SETA | a_src(0o113) | fd(5));
+    p.op(ALU | SETA | a_src(0o114) | fd(6));
+    p.op(ALU | SETA | a_src(0o115) | fd(7));
+    p.op(ALU | SETA | a_src(0o121) | fd(6));
+    p.op(ALU | SETA | a_src(0o123) | fd(7));
+    p.op(ALU | SETA | a_src(0o122) | fd(6));
+    p.op(ALU | SETA | a_src(0o123) | fd(7));
+    p.op(ALU | SETA | a_src(0o116) | a_dest(LOCALP_AT_F));
+    p.op(ALU | SETA | a_src(0o117) | LC);
+    p.op(ALU | SETA | a_src(0o120) | fd(0o15));
+    // The first return: LC was written, so it fetches.
+    p.op(filler().raw() | POPJ);
+    assert!(p.at() <= base + QMLP_F, "fused: the setup runs into the main loop");
+    while p.at() < base + QMLP_F {
+        p.op(filler().raw());
+    }
+    // The main loop: M 31 <- the fetched word, the return pushed back, and
+    // the return, which fuses.
+    p.op(filler().raw()).op(filler().raw());
+    p.op(ALU | SETM | SRC_MD | m_dest(0o31));
+    p.op(ALU | SETA | a_src(0o120) | fd(0o15));
+    p.op(filler().raw() | POPJ);
+    assert!(p.at() <= base + HANDLER_F, "fused: the main loop runs into the handler");
+    while p.at() < base + HANDLER_F {
+        p.op(filler().raw());
+    }
+    // The handler: PDL-INDEX is A-LOCALP + delta, and M 31 the code; then
+    // the return, which needs the next word.
+    p.put(ALU | SETM | src(3), LOCALP_F + 0o27, "PDL-INDEX: A-LOCALP + delta");
+    p.put(ALU | SETM | m_src(0o31), code, "M 31, the fetched word");
+    p.op(ALU | SETA | a_src(0o120) | fd(0o15));
+    p.op(filler().raw() | POPJ);
+    assert!(p.at() <= base + HANDLER_NEXT, "fused: the handler runs into the next");
+    while p.at() < base + HANDLER_NEXT {
+        p.op(filler().raw());
+    }
+    // The next word's handler: M 31 is the next word, which the return took
+    // from the prefetch's buffer.
+    p.put(ALU | SETM | m_src(0o31), next, "M 31, the next word");
+    p.park();
+    p
+}
+
 // ------------------------------------------------------------------ main
 
 fn program(name: &str) -> Prog {
@@ -714,8 +1062,11 @@ fn program(name: &str) -> Prog {
         "byte" => byte_program(),
         "dispatch" => dispatch_program(),
         "map" => map_program().0,
+        "space" => space_program(),
+        "lines" => lines_program(),
+        "fused" => fused_program(),
         _ => {
-            eprintln!("quux13: no program `{name}`; they are alu, byte, dispatch and map");
+            eprintln!("quux13: no program `{name}`; they are alu, byte, dispatch, map, space, lines and fused");
             std::process::exit(2);
         }
     }
@@ -723,10 +1074,17 @@ fn program(name: &str) -> Prog {
 
 /// Revision 13's machine with `prom` in QUUX's PROM, as `machine_axis`
 /// builds QUUX, at the 40-bit geometry.
-fn machine(prom: &[Insn]) -> Machine {
+fn machine(prom: &[Insn], boards: u32) -> Machine {
     let mut m = Which::Quux.machine(prom);
     m.geometry = REV13;
+    m.main = vec![0; (boards as usize) << 16];
     m
+}
+
+/// Main memory's 64K-word boards for program `name`: the memory programs'
+/// 65, past 22 bits, and QUUX's 32 for the rest.
+fn boards(name: &str) -> u32 {
+    if matches!(name, "space" | "lines" | "fused") { BOARDS_13 } else { 32 }
 }
 
 /// Every result the program was to leave, from the machine's A memory.
@@ -787,7 +1145,7 @@ fn main() {
     // The run's length: to the park, and sixteen microcycles on.
     let park = QUUX_PROM_BASE as u64 + prog.words.len() as u64 - 2;
     let n = {
-        let mut probe = trace::engine_on(machine(&prom), timing);
+        let mut probe = trace::engine_on(machine(&prom, boards(&name)), timing);
         probe.boot();
         let mut t = trace::Trace::new(&probe);
         let mut cycle = 0u64;
@@ -801,7 +1159,7 @@ fn main() {
         cycle + 16
     };
 
-    let mut e = trace::engine_on(machine(&prom), timing);
+    let mut e = trace::engine_on(machine(&prom, boards(&name)), timing);
     e.boot();
     println!("{}", trace::COLUMNS);
     println!(
@@ -810,6 +1168,11 @@ fn main() {
     );
     println!("{}", trace::RADIX);
     println!("# rtc {:x}", machine_axis::RTC_START);
+    // Main memory's boards where they are not QUUX's 32, which
+    // `tb/cadr_machine_tb.cpp` gives the machine.
+    if boards(&name) != 32 {
+        println!("# boards {}", boards(&name));
+    }
     let mut t = trace::Trace::new(&e);
     for cycle in 0..n {
         match t.row(&mut e, cycle) {
@@ -821,12 +1184,32 @@ fn main() {
         }
     }
     check(&name, &prog, e.machine());
+    let c = e.cache().expect("revision 13 has its cache");
+    let pf = e.prefetch_counts().expect("revision 13 has its prefetch");
     eprintln!(
-        "quux13: {name}: {n} microcycles, {} ns ({} stalled), {} bus cycles, {} results, PC {:o}",
+        "quux13: {name}: {n} microcycles, {} ns ({} stalled), {} bus cycles, {} results, PC {:o}; \
+         the cache {} hits and {} misses; {} fused returns, the prefetch's words taken {} in the line \
+         and {} in the next, {} used",
         e.ns(),
         e.stalled_ns(),
         e.bus_cycles(),
         prog.results.len(),
-        e.pc()
+        e.pc(),
+        c.hits,
+        c.misses,
+        e.machine().macro_dispatch.fused,
+        pf.same_line,
+        pf.next_line,
+        pf.used,
     );
+    // What each memory program is for, reached: the cache's hits and misses,
+    // and the fused returns on a word the page's reach took from the next
+    // line.
+    if matches!(name.as_str(), "space" | "lines" | "fused") {
+        assert!(c.hits > 0 && c.misses > 0, "quux13: {name}: the cache neither hit nor missed");
+    }
+    if name == "fused" {
+        assert!(e.machine().macro_dispatch.fused >= 2, "quux13: fused: fewer than two fused returns");
+        assert!(pf.next_line >= 1 && pf.used >= 1, "quux13: fused: no fused return on the next line's word");
+    }
 }

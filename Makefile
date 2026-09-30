@@ -211,9 +211,16 @@ QUUX_L1_PROGRAMS := divmd divmdsync tickwin clockwait
 # ALU on tags, the conditions, the overflow flag, the sources and the word
 # registers; `byte` the ring of 40, the masker, LC byte mode, a BYTE word's
 # length bits and the bit test; `dispatch` the dispatch memory at 4,096;
-# `map` the map at 8,192 x 7 and 4,096 x 28 through `MAP(MD)`.  None touches
-# main memory, whose port is still revision 12's.
-QUUX13_PROGRAMS := alu byte dispatch map
+# `map` the map at 8,192 x 7 and 4,096 x 28 through `MAP(MD)`; and its
+# memory port (contract G2 §3): `space` the 28-bit space, the register page,
+# the window and nothing elsewhere; `lines` packed storage through the cache,
+# every offset of a line, a line and a word across 4 KiB, 8-word fills and
+# the window's; `fused` a translation to a word past 22 bits and the fused
+# return through main memory, on a word the prefetch's page reach took from
+# the next line.  The machine is built with revision 13's main memory at
+# `QUUX13_TB_BASE`, a base no board uses, which the testbench lays packed
+# storage out from.
+QUUX13_PROGRAMS := alu byte dispatch map space lines fused
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
@@ -232,6 +239,9 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
        $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QK).pass) \
        $(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(QKL1).pass) $(BUILD)/phase_gen.quux.$(QKL1).pass \
        $(QUUX13_PROGRAMS:%=$(BUILD)/quux13_%.quux.$(QK).pass) $(BUILD)/rdw_poison_quux13.quux.$(QK).pass \
+       $(BUILD)/rdw_poison_quux13_mem.quux.$(QK).pass $(BUILD)/rdw_poison_quux13_pf.quux.$(QK).pass \
+       $(BUILD)/quux13_port.quux.$(QK).pass \
+       $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/xbus_decode.quux13.pass \
        $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -700,6 +710,21 @@ $(BUILD)/xbus_decode.quux.pass: $(BUILD)/obj_xbus_decode_quux/Vcadr_xbus_decode 
 	$(BUILD)/obj_xbus_decode_quux/Vcadr_xbus_decode $(BUILD)/xbus_decode.quux.golden
 	@touch $@
 
+# And revision 13's (contract G1 §3.2, G2 §4.1), the machine at `WORD_BITS`
+# 40: its 28-bit space, every one of 268,435,456 addresses, the register page
+# at `1777777400`, the window at `1760000000`, main memory below it, and
+# nothing else, against muir's `busint::decode_quux_13`.
+$(BUILD)/xbus_decode.quux13.golden: golden/src/xbus_decode.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin xbus_decode -- --machine quux --revision-13 > $@
+
+$(BUILD)/obj_xbus_decode_quux13/Vcadr_xbus_decode: rtl/machine/cadr_xbus_decode.sv tb/cadr_xbus_decode_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_xbus_decode_quux13 -GMACHINE='"quux"' -GWORD_BITS=40 \
+	    --top-module cadr_xbus_decode rtl/machine/cadr_xbus_decode.sv $(abspath tb/cadr_xbus_decode_tb.cpp)
+
+$(BUILD)/xbus_decode.quux13.pass: $(BUILD)/obj_xbus_decode_quux13/Vcadr_xbus_decode $(BUILD)/xbus_decode.quux13.golden
+	$(BUILD)/obj_xbus_decode_quux13/Vcadr_xbus_decode $(BUILD)/xbus_decode.quux13.golden
+	@touch $@
+
 # ------------------------------------------------------------- the microcycle
 
 # The processor, slice by slice, against muir's `rtl` engine running MIT's own
@@ -1058,6 +1083,17 @@ $(BUILD)/obj_quux_port/Vquux_mem_port: $(QUUX_PORT_SRC) tb/quux_mem_port_tb.cpp 
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux_port \
 	    --top-module quux_mem_port $(QUUX_PORT_SRC) $(abspath tb/quux_mem_port_tb.cpp)
 
+# **AND AT REVISION 13** (contract G2 §3), `WORD_BITS` 40, against muir's
+# `MemoryPort` on `Geometry::QUUX_13` (`golden/src/quux13_port.rs`): 40-bit
+# words and 28-bit addresses, the cache's 8-word lines, the prefetch's
+# page reach, and main memory in packed storage, which the testbench holds
+# byte by byte as G1 §4.1 lays it out.  Built with a base for main memory
+# no other check uses, 0x06123000, which the testbench transcribes.
+$(BUILD)/obj_quux13_port/Vquux_mem_port: $(QUUX_PORT_SRC) tb/quux13_mem_port_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux13_port \
+	    -GWORD_BITS=40 -GMAIN13_BASE=101855232 \
+	    --top-module quux_mem_port $(QUUX_PORT_SRC) $(abspath tb/quux13_mem_port_tb.cpp)
+
 # QUUX's main memory on a 64-bit AXI port, line fills and all:
 # `rtl/plumbing/quux_axi_master.sv` against AXI3's rules and a memory, with
 # a slave that varies every handshake, refuses one transaction in eight and
@@ -1068,6 +1104,18 @@ $(BUILD)/obj_quux_axi_master/Vquux_axi_master: rtl/plumbing/quux_axi_master.sv t
 
 $(BUILD)/quux_axi_master.quux.pass: $(BUILD)/obj_quux_axi_master/Vquux_axi_master
 	$(BUILD)/obj_quux_axi_master/Vquux_axi_master
+	@touch $@
+
+# And at revision 13 (contract G2 §3, G1 §4.1): five-beat lines of packed
+# storage and four-beat ones of the window, five-byte writes from any byte,
+# and no burst across a 4 KiB boundary, a line's two addresses back to back
+# (`tb/quux13_axi_master_tb.cpp`).
+$(BUILD)/obj_quux13_axi_master/Vquux_axi_master: rtl/plumbing/quux_axi_master.sv tb/quux13_axi_master_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -Mdir $(BUILD)/obj_quux13_axi_master -GWORD_BITS=40 \
+	    --top-module quux_axi_master rtl/plumbing/quux_axi_master.sv $(abspath tb/quux13_axi_master_tb.cpp)
+
+$(BUILD)/quux13_axi_master.quux.pass: $(BUILD)/obj_quux13_axi_master/Vquux_axi_master
+	$(BUILD)/obj_quux13_axi_master/Vquux_axi_master
 	@touch $@
 
 # ------------------------------------ where QUUX differs, on both machines
@@ -1103,6 +1151,9 @@ $(BUILD)/quux_%_prom.quux.hex: $(QUUX_GOLDEN) | $(BUILD)
 # **AND REVISION 13'S PROGRAMS** (`QUUX13_PROGRAMS`), assembled at 36000 with
 # revision 13's fields; their traces and machines are in `QUUX_TIMED`.
 QUUX13_GOLDEN := golden/src/quux13.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Cargo.toml
+# Revision 13's main memory in the machine the programs are held against,
+# and in the testbench's DDR: 0x0A246000, 4 KiB aligned as G1 asks.
+QUUX13_TB_BASE := 170156032
 .PRECIOUS: $(BUILD)/quux13_%_prom.hex
 $(BUILD)/quux13_%_prom.hex: $(QUUX13_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux13 -- --program $* --prom > $@
@@ -1210,6 +1261,7 @@ $$(BUILD)/quux13_%.quux.$(1).golden: $$(QUUX13_GOLDEN) | $$(BUILD)
 $$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
 	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_quux13_$$*_quux_$(1) \
 	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
 	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux13_$$*_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
@@ -1226,6 +1278,7 @@ $$(BUILD)/quux13_%.quux.$(1).pass: $$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machin
 $$(BUILD)/obj_rdw_poison_quux13_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
 	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR +define+CADR_RDW_POISON -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_rdw_poison_quux13_quux_$(1) \
 	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
 	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux13_map_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
@@ -1236,11 +1289,53 @@ $$(BUILD)/rdw_poison_quux13.quux.$(1).pass: $$(BUILD)/obj_rdw_poison_quux13_quux
 	$$(BUILD)/obj_rdw_poison_quux13_quux_$(1)/Vcadr_machine $$(BUILD)/quux13_map.quux.$(1).golden
 	@touch $$@
 
+# **AND THE CACHE'S BLOCK RAMS** (`quux_cache.sv`, revision 13's): the
+# machine under `CADR_RDW_POISON` and `CADR_RDW_POISON_CACHE` on the `lines`
+# program, which fills lines and writes words into lines the cache holds, so
+# that a read of a set at the edge that writes it takes the complement, and
+# the run fails if the RAMs were never written.
+$$(BUILD)/obj_rdw_poison_quux13_mem_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR +define+CADR_RDW_POISON +define+CADR_RDW_POISON_CACHE -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_rdw_poison_quux13_mem_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux13_lines_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+$$(BUILD)/rdw_poison_quux13_mem.quux.$(1).pass: $$(BUILD)/obj_rdw_poison_quux13_mem_quux_$(1)/Vcadr_machine \
+                                               $$(BUILD)/quux13_lines.quux.$(1).golden \
+                                               $$(BUILD)/quux13_lines_prom.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_rdw_poison_quux13_mem_quux_$(1)/Vcadr_machine $$(BUILD)/quux13_lines.quux.$(1).golden
+	@touch $$@
+
+# And the next line's copies, which only the prefetch's page reach reads: the
+# same on the `fused` program, whose return fuses on a word taken from them.
+$$(BUILD)/obj_rdw_poison_quux13_pf_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR +define+CADR_RDW_POISON +define+CADR_RDW_POISON_CACHE -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_rdw_poison_quux13_pf_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux13_fused_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+$$(BUILD)/rdw_poison_quux13_pf.quux.$(1).pass: $$(BUILD)/obj_rdw_poison_quux13_pf_quux_$(1)/Vcadr_machine \
+                                              $$(BUILD)/quux13_fused.quux.$(1).golden \
+                                              $$(BUILD)/quux13_fused_prom.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_rdw_poison_quux13_pf_quux_$(1)/Vcadr_machine $$(BUILD)/quux13_fused.quux.$(1).golden
+	@touch $$@
+
 $$(BUILD)/quux_port.quux.$(1).golden: golden/src/quux_port.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
 	$$(GOLDEN) --release --bin quux_port -- --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
 
 $$(BUILD)/quux_port.quux.$(1).pass: $$(BUILD)/obj_quux_port/Vquux_mem_port $$(BUILD)/quux_port.quux.$(1).golden
 	$$(BUILD)/obj_quux_port/Vquux_mem_port $$(BUILD)/quux_port.quux.$(1).golden
+	@touch $$@
+
+$$(BUILD)/quux13_port.quux.$(1).golden: golden/src/quux13_port.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
+	$$(GOLDEN) --release --bin quux13_port -- --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/quux13_port.quux.$(1).pass: $$(BUILD)/obj_quux13_port/Vquux_mem_port $$(BUILD)/quux13_port.quux.$(1).golden
+	$$(BUILD)/obj_quux13_port/Vquux_mem_port $$(BUILD)/quux13_port.quux.$(1).golden
 	@touch $$@
 
 $$(BUILD)/phase_gen.quux.$(1).golden: golden/src/phase_gen.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)

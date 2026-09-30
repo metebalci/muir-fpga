@@ -187,7 +187,7 @@ done:
 
   std::printf(
       "ok: %ld addresses agree with muir's busint decode\n"
-      "    %ld board counts x 2 backplanes, every address of the 22-bit space"
+      "    %ld board counts x 2 backplanes, every address of the space"
       " in each\n"
       "    the color board adds %ld device addresses a backplane\n",
       checked, board_counts, want_extra / boards_swept);

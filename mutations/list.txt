@@ -2433,7 +2433,7 @@
 @note a register, and a register on a signal is an invitation to move its
 @note source back one more step.
 @old
-  assign phys    = memstart ? {vmo[21-OFFSET_BITS:0], vma_bus} : phys_r;
+  assign phys    = memstart ? {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus} : phys_r;
 @new
   assign phys    = phys_r;
 @end
@@ -2546,9 +2546,9 @@
 @note when it rises above one, because that is when the rotation becomes
 @note live and this note becomes wrong.
 @old
-  assign dev_wdata  = wdata;
+  assign dev_wdata  = wdata[31:0];
 @new
-  assign dev_wdata  = ~wdata;
+  assign dev_wdata  = ~wdata[31:0];
 @end
 
 # ======================================================= the disk controller ===
@@ -6005,11 +6005,11 @@ if {0 && $held ne $want} {
 @note 0o5.  `tv_drives` is `ctl && !dev_write`, so ANDing `dev_write` in is
 @note a select that can never be true while every signal stays read.
 @old
-                 : tv_drives    ? tv_rdata
-                 : tvc_drives   ? tvc_rdata
+                 : tv_drives    ? WORD_BITS'(tv_rdata)
+                 : tvc_drives   ? WORD_BITS'(tvc_rdata)
 @new
-                 : (tv_drives && dev_write) ? tv_rdata
-                 : tvc_drives   ? tvc_rdata
+                 : (tv_drives && dev_write) ? WORD_BITS'(tv_rdata)
+                 : tvc_drives   ? WORD_BITS'(tvc_rdata)
 @end
 
 # THE WINDOW READ BACK, which is the half of the display nothing outside this
@@ -8024,10 +8024,10 @@ if {0 && $held ne $want} {
 @note here, which is what this record moves.
 @old
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[21-OFFSET_BITS:0], vma_bus};
+          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
 @new
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {lvmo[21-OFFSET_BITS:0], vma_bus};
+          phys_r     <= {lvmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
 @end
 
 @mutation the-access-bit-comes-from-the-page-half-of-the-map-word
@@ -8082,10 +8082,10 @@ if {0 && $held ne $want} {
 @note SURVIVES this and `map_boot` catches it.
 @old
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[21-OFFSET_BITS:0], vma_bus};
+          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
 @new
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[21-OFFSET_BITS:0] + {{(21-OFFSET_BITS){1'b0}}, 1'b1}, vma_bus};
+          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0] + {{(PHYS_BITS-1-OFFSET_BITS){1'b0}}, 1'b1}, vma_bus};
 @end
 
 @mutation the-memory-address-loses-its-page-bit
@@ -13742,11 +13742,11 @@ if {0 && $held ne $want} {
 @note address the machine held when the microcycle retired, and MD to hold
 @note what memory gave.
 @old
-          phys_r     <= {vmo[21-OFFSET_BITS:0], vma_bus};
-          wdata      <= md_bus[31:0];
+          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
+          wdata      <= md_bus;
 @new
-          phys_r     <= cpu_edge ? {vmo[21-OFFSET_BITS:0], vma_bus} : phys_r;
-          wdata      <= md_bus[31:0];
+          phys_r     <= cpu_edge ? {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus} : phys_r;
+          wdata      <= md_bus;
 @end
 
 @mutation park-a-write-taken-out-at-a-master-clock-writes-the-last-word
@@ -13759,10 +13759,10 @@ if {0 && $held ne $want} {
 @note memory through the debug IR on a halted machine and wants memory to
 @note hold MD.
 @old
-          wdata      <= md_bus[31:0];
+          wdata      <= md_bus;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
 @new
-          wdata      <= cpu_edge ? md_bus[31:0] : wdata;
+          wdata      <= cpu_edge ? md_bus : wdata;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
 @end
 
@@ -15907,11 +15907,11 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note `unibus-the-word-comes-from-the-other-slave`'s own shape one slave
 @note along and keeps both words read.
 @old
-                 : tv_drives    ? tv_rdata
-                 : tvc_drives   ? tvc_rdata
+                 : tv_drives    ? WORD_BITS'(tv_rdata)
+                 : tvc_drives   ? WORD_BITS'(tvc_rdata)
 @new
-                 : tv_drives    ? tvc_rdata
-                 : tvc_drives   ? tv_rdata
+                 : tv_drives    ? WORD_BITS'(tvc_rdata)
+                 : tvc_drives   ? WORD_BITS'(tv_rdata)
 @end
 
 @mutation the-interrupt-is-the-first-boards-alone
@@ -16176,7 +16176,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
       .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
-      .SYNC_K(SYNC_K)
+      .SYNC_K(SYNC_K),
+      .WORD_BITS(WORD_BITS),
+      .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE)
   ) memory (
       .clk        (clk),
       .rst        (rst),
@@ -16190,7 +16192,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
       .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
-      .SYNC_K(SYNC_K)
+      .SYNC_K(SYNC_K),
+      .WORD_BITS(WORD_BITS),
+      .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE)
   ) memory (
       .clk        (clk),
       .rst        (rst_late),
@@ -17969,10 +17973,10 @@ set MAIN_BASE   0x1C000000
 @note term of: the machine waits for the port and the port for the machine, for
 @note ever.  Caught at "the memory port is not live after software opened it".
 @old
-  cadr_f2sdram_port #(.MACHINE(MACHINE)) u_memory (
+  cadr_f2sdram_port #(.MACHINE(MACHINE), .WORD_BITS(WORD_BITS)) u_memory (
       .clk(clk), .rst(rst),
 @new
-  cadr_f2sdram_port #(.MACHINE(MACHINE)) u_memory (
+  cadr_f2sdram_port #(.MACHINE(MACHINE), .WORD_BITS(WORD_BITS)) u_memory (
       .clk(clk), .rst(mach_rst),
 @end
 
@@ -18526,10 +18530,10 @@ set MAIN_BASE   0x1C000000
 @note has been live, which the port's own reset prevents: the machine and its
 @note memory wait for each other for ever.
 @old
-  cadr_f2sdram_port #(.MACHINE(MACHINE)) u_memory (
+  cadr_f2sdram_port #(.MACHINE(MACHINE), .WORD_BITS(WORD_BITS)) u_memory (
       .clk(clk), .rst(rst),
 @new
-  cadr_f2sdram_port #(.MACHINE(MACHINE)) u_memory (
+  cadr_f2sdram_port #(.MACHINE(MACHINE), .WORD_BITS(WORD_BITS)) u_memory (
       .clk(clk), .rst(mach_rst),
 @end
 
@@ -21823,9 +21827,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/quux_mem_port.sv
 @note The floor is 370 ns where muir's nominal line fill is 380.
 @old
-  assign done_in  = start_in + CW'(write ? WRITE_T : READ_T);
+  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
 @new
-  assign done_in  = start_in + CW'(write ? WRITE_T : READ_T - 1);
+  assign fill_t   = CW'(READ_T - 1) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
 @end
 
 @mutation quux-a-miss-does-not-wait-for-main-memory
@@ -21878,9 +21882,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note The line fill asks at the word's own address, so the line is four
 @note words from the wrong boundary.
 @old
-              maddr_q  <= quux_byte_address({fill_phys[21:2], 2'b00});
+              maddr_q  <= line_address(fill_phys);
 @new
-              maddr_q  <= quux_byte_address(fill_phys);
+              maddr_q  <= word_address(fill_phys);
 @end
 
 @mutation quux-the-miss-word-is-the-line-s-first
@@ -21888,7 +21892,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/machine/quux_mem_port.sv
 @note A read that missed is handed the line's first word, not its own.
 @old
-              : from_line      ? line_word[line_phys[1:0]] : c_word;
+              : from_line      ? line_word[line_phys[OFF_BITS-1:0]] : c_word;
 @new
               : from_line      ? line_word[0] : c_word;
 @end
@@ -21980,9 +21984,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/plumbing/quux_axi_master.sv
 @note A line fill asks one 64-bit beat, two of the line's four words.
 @old
-  assign m_arlen   = line ? 4'd1 : 4'd0;
+        len0  = 4'(beats_q) - 4'd1;
 @new
-  assign m_arlen   = 4'd0;
+        len0  = 4'd0;
 @end
 
 @mutation quux-line-beats-crossed
@@ -21990,11 +21994,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/plumbing/quux_axi_master.sv
 @note The line's two beats land in each other's halves.
 @old
-              if (beat) mem_rline[127:64] <= m_rdata;
-              else      mem_rline[63:0]   <= m_rdata;
+          mem_rline[64*beat +: 64] <= m_rdata;
 @new
-              if (!beat) mem_rline[127:64] <= m_rdata;
-              else       mem_rline[63:0]   <= m_rdata;
+          mem_rline[64*{beat[2:1], ~beat[0]} +: 64] <= m_rdata;
 @end
 
 @mutation quux-word-write-strobes-the-other-half
@@ -22002,9 +22004,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/plumbing/quux_axi_master.sv
 @note A word write's strobes select the half its address does not.
 @old
-              m_wstrb  <= mem_addr[2] ? 8'hF0 : 8'h0F;
+  assign wstrb0 = wide ? wide_strb[7:0] : a_q[2] ? 8'hF0 : 8'h0F;
 @new
-              m_wstrb  <= mem_addr[2] ? 8'h0F : 8'hF0;
+  assign wstrb0 = wide ? wide_strb[7:0] : a_q[2] ? 8'h0F : 8'hF0;
 @end
 
 @mutation quux-abandoned-read-is-answered
@@ -22013,9 +22015,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note A read whose request fell before its answer is answered anyway, and
 @note the next request takes that answer as its own.
 @old
-            if (m_rlast) state <= still_asked ? DONE : IDLE;
+          else if (state == RDATA) state <= still_asked ? DONE : IDLE;
 @new
-            if (m_rlast) state <= DONE;
+          else if (state == RDATA) state <= DONE;
 @end
 
 @mutation quux-line-read-at-the-word
@@ -22023,9 +22025,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file rtl/plumbing/quux_axi_master.sv
 @note A line fill asks at the word's own beat, not the line's first.
 @old
-              m_araddr <= mem_line ? {mem_addr[31:4], 4'b0000} : {mem_addr[31:3], 3'b000};
+      if (!WIDE) addr0 = {a_q[31:4], 4'b0000};
 @new
-              m_araddr <= {mem_addr[31:3], 3'b000};
+      if (!WIDE) addr0 = {a_q[31:3], 3'b000};
 @end
 
 @mutation quux-the-register-s-word-taken-a-tick-late
@@ -22077,11 +22079,11 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note not as the memory bus's: no cache and no DDR, the register decode
 @note answering it with whatever the seam holds.
 @old
-        .is_memory  (is_memory || (device && video_fb)),
-        .is_device  (device && !video_fb),
+        .is_memory  (REV13 ? is_memory : (is_memory || (device && video_fb))),
+        .is_device  (REV13 ? device : (device && !video_fb)),
 @new
-        .is_memory  (is_memory || (device && video_fb && 1'b0)),
-        .is_device  (device && !(video_fb && 1'b0)),
+        .is_memory  (REV13 ? is_memory : (is_memory || (device && video_fb && 1'b0))),
+        .is_device  (REV13 ? device : (device && !(video_fb && 1'b0))),
 @end
 
 @mutation quux-the-frame-buffer-at-main-memory-s-base
@@ -23743,9 +23745,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_mem_port.sv
 @note The line's last word takes the line's first as the next.
 @old
-        pf_nx_v     = line_phys[1:0] != 2'd3;
+    assign pf_next_ok = pf_same_line;
 @new
-        pf_nx_v     = 1'b1;
+    assign pf_next_ok = 1'b1;
 @end
 
 @mutation prefetch-takes-the-fetched-word
@@ -23753,9 +23755,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_mem_port.sv
 @note The word fetched taken again, not the one after it.
 @old
-        pf_nx_word  = from_line ? line_word[line_phys[1:0] + 2'd1] : c_next_word;
+  assign pf_same_word = from_line ? line_word[line_phys[OFF_BITS-1:0] + OFF_BITS'(1)] : c_next_word;
 @new
-        pf_nx_word  = from_line ? line_word[line_phys[1:0] + 2'd1] : c_word ^ (c_next_word & 32'd0);
+  assign pf_same_word = from_line ? line_word[line_phys[OFF_BITS-1:0] + OFF_BITS'(1)] : c_word ^ (c_next_word & '0);
 @end
 
 @mutation prefetch-miss-takes-the-fetched-word
@@ -23763,9 +23765,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_mem_port.sv
 @note On a miss, the word fetched from the line taken, not the one after it.
 @old
-        pf_nx_word  = from_line ? line_word[line_phys[1:0] + 2'd1] : c_next_word;
+  assign pf_same_word = from_line ? line_word[line_phys[OFF_BITS-1:0] + OFF_BITS'(1)] : c_next_word;
 @new
-        pf_nx_word  = from_line ? line_word[line_phys[1:0]] : c_next_word;
+  assign pf_same_word = from_line ? line_word[line_phys[OFF_BITS-1:0]] : c_next_word;
 @end
 
 @mutation prefetch-vaddr-not-stepped
@@ -23773,9 +23775,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_mem_port.sv
 @note The buffered word's virtual address the fetch's own.
 @old
-        pf_nx_vaddr = pf_fetch_vaddr_q + 24'd1;
+        pf_nx_vaddr = pf_fetch_vaddr_q + VADDR_BITS'(1);
 @new
-        pf_nx_vaddr = pf_fetch_vaddr_q + 24'd0;
+        pf_nx_vaddr = pf_fetch_vaddr_q + VADDR_BITS'(0);
 @end
 
 @mutation cache-next-word-is-the-word
@@ -23783,9 +23785,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_cache.sv
 @note The line's next word the word itself.
 @old
-  assign next_word = way_q ? data1_out[off_q + 2'd1] : data0_out[off_q + 2'd1];
+      next0_q <= data0_out[off_q + OFF_BITS'(1)];
 @new
-  assign next_word = way_q ? data1_out[off_q + 2'd1] : data0_out[off_q];
+      next0_q <= data0_out[off_q];
 @end
 
 # THE WORD'S WIDTH.  `WORD_BITS` is 32 in every build the other checks make,
@@ -23847,8 +23849,8 @@ FAULT_SH=/usr/share/cadr/faults.sh
 # location counter at 30 bits, and the map at 8,192 x 7 and 4,096 x 28 with
 # its `<31:28>` gate; and the read-during-write window at those sizes.  The
 # fused return's index at 40 bits, a fetch's `VMA` at `LC<29:2>` and the
-# 1024-word page on the cables have no record: each needs a cycle to main
-# memory, and none of the programs makes one until revision 13's port.
+# 1024-word page on the cables need a cycle to main memory, and their
+# records are with revision 13's memory port's, below.
 
 @mutation rev13-a-byte-word-decodes-misc
 @check quux13_byte_quux
@@ -24259,4 +24261,529 @@ FAULT_SH=/usr/share/cadr/faults.sh
   localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
 @new
   localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00C4 : 32'h5155_00C4;
+@end
+
+# ------------------------------------------- revision 13's memory port
+#
+# QUUX revision 13's memory port and cache (contract G2 §3, G1 §3.2-§4.2):
+# `quux13_port_quux` holds `quux_mem_port.sv` and `quux_cache.sv` at
+# `WORD_BITS` 40 to muir's `MemoryPort` on `Geometry::QUUX_13` tick for tick,
+# the testbench's main memory packed storage in bytes; `quux13_axi_master_quux`
+# holds the five-beat lines, the five-byte writes and the split at 4 KiB;
+# `xbus_decode_quux13` the 28-bit space at every address; the programs of
+# `golden/src/quux13.rs` the port in the whole machine; and
+# `rdw_poison_quux13_mem_quux` and `rdw_poison_quux13_pf_quux` the cache's
+# block RAMs' read-during-write tick.
+
+@mutation rev13-cache-tag-drops-phys-25
+@check quux13_port_quux
+@file rtl/machine/quux_cache.sv
+@note Way 1's tag stored without `phys<25>`, its bit 14, so two lines 32M
+@note words apart are one line to the cache.  The trace's tags reach bit 14
+@note (`0o40000`, `0o77777`); the top two, `phys<27:26>`, only the window
+@note has, and no main memory a board holds shares a set with it there.
+@old
+    if (fill &&  way_q) tag1_ram[idx_q] <= tag_q;
+@new
+    if (fill &&  way_q) tag1_ram[idx_q] <= tag_q & ~(TAG_BITS'(1) << 14);
+@end
+
+@mutation rev13-cache-fill-misses-word-7
+@check quux13_port_quux
+@file rtl/machine/quux_cache.sv
+@note A fill writes seven of the line's eight lanes, so a later hit on the
+@note line's last word takes whatever the lane held before.
+@old
+      lanes = '1;
+@new
+      lanes = LINE_WORDS'({LINE_WORDS{1'b1}} >> 1);
+@end
+
+@mutation rev13-next-line-looks-up-the-same-set
+@check quux13_port_quux
+@file rtl/machine/quux_cache.sv
+@note The page reach's second lookup reads the grant's own set, not the next
+@note one: a fetch at a line's end takes word 0 of whatever line of its own
+@note set the tag matches, never the next line's.
+@old
+    assign nwr_idx = idx_q - IDX_BITS'(1);
+@new
+    assign nwr_idx = idx_q - IDX_BITS'(0);
+@end
+
+@mutation rev13-next-line-hit-ignores-valid
+@check quux13_port_quux
+@file rtl/machine/quux_cache.sv
+@note The next line counts as held in way 0 whether or not the way is
+@note valid, so an invalidated or never-filled line is prefetched from.
+@old
+    assign nh0 = valid0[nidx] && (ntag0_out == tag_q);
+@new
+    assign nh0 = (ntag0_out == tag_q);
+@end
+
+@mutation rev13-next-line-word-from-the-other-way
+@check quux13_port_quux
+@file rtl/machine/quux_cache.sv
+@note The next line's word 0 taken from the way that did not hit.
+@old
+    assign next_line_word = nh1 ? nd1_out : nd0_out;
+@new
+    assign next_line_word = nh1 ? nd0_out : nd1_out;
+@end
+
+@mutation rev13-next-line-tag-copy-not-filled
+@check quux13_port_quux
+@file rtl/machine/quux_cache.sv
+@note The next line's copy of way 1's tags is never written, so a line
+@note filled into way 1 is never found by the page reach.
+@old
+      if (fill &&  way_q) ntag1_ram[nwr_idx] <= tag_q;
+@new
+      if (fill &&  way_q && 1'b0) ntag1_ram[nwr_idx] <= tag_q;
+@end
+
+@mutation rev13-next-line-word-copy-misses-a-store
+@check quux13_port_quux
+@file rtl/machine/quux_cache.sv
+@note The copy of way 0's word 0 takes a fill but not a store into a held
+@note line, so the page reach prefetches the word from before the store.
+@old
+      if (wr0 && lanes[0]) nd0_ram[nwr_idx] <= wr_line[WB-1:0];
+@new
+      if (wr0 && lanes[0] && fill) nd0_ram[nwr_idx] <= wr_line[WB-1:0];
+@end
+
+@mutation rev13-cache-ram-read-in-its-undefined-tick
+@check rdw_poison_quux13_mem_quux
+@file rtl/machine/quux_cache.sv
+@note The poison held to every lookup instead of a lookup at an edge that
+@note writes the set: what the check would see if a read of the cache's
+@note RAMs DID land at a write's edge.  It must be caught, or a poison that
+@note never fires and one nothing samples look alike (the block-RAM rule).
+@old
+  assign rdw0 = look && wr0 && (look_idx == idx_q);
+@new
+  assign rdw0 = look;
+@end
+
+@mutation rev13-next-line-ram-read-in-its-undefined-tick
+@check rdw_poison_quux13_pf_quux
+@file rtl/machine/quux_cache.sv
+@note The same for the next line's copies, which only the page reach reads:
+@note the poison on every lookup, and the fused return then takes the
+@note complement of the next line's word.
+@old
+    assign nrdw0 = look && wr0 && (look_idx == nwr_idx);
+@new
+    assign nrdw0 = look;
+@end
+
+@mutation rev13-packed-word-at-4w
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note Main memory four bytes a word, revision 12's layout, where G1 §4.1
+@note packs five: every write lands on the wrong bytes.
+@old
+    return BASE13 + (32'(p) << 2) + 32'(p);
+@new
+    return BASE13 + (32'(p) << 2);
+@end
+
+@mutation rev13-packed-base-off-by-a-mebibyte
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note Main memory a MiB above the base the machine is built with: the
+@note parameter reaches the port but not the address.
+@old
+    return BASE13 + (32'(p) << 2) + 32'(p);
+@new
+    return (BASE13 ^ 32'h0010_0000) + (32'(p) << 2) + 32'(p);
+@end
+
+@mutation rev13-window-write-five-bytes
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A write of the window five bytes wide, as main memory's are, so its
+@note tag lands on the next word's first byte (G1 §4.2: four bytes a word).
+@old
+              mwide_q  <= WIDE && !window(wb_phys);
+@new
+              mwide_q  <= WIDE;
+@end
+
+@mutation rev13-window-write-keeps-the-tag
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note The window's word written with its tag above the field, where the
+@note window stores the field and drops the tag.
+@old
+              mwdata_q <= window(wb_phys) ? WB'(wb_word[31:0]) : wb_word;
+@new
+              mwdata_q <= wb_word;
+@end
+
+@mutation rev13-window-reads-tag-004
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A word of the window read with tag `004` instead of the unboxed
+@note `005` (G1 §2.6).
+@old
+    if (WIDE) v[WB-1:WB-8] = UNBOXED_TAG;
+@new
+    if (WIDE) v[WB-1:WB-8] = UNBOXED_TAG ^ 8'o001;
+@end
+
+@mutation rev13-window-store-into-a-held-line-keeps-the-tag
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A store into a line of the window that the cache holds updates the
+@note line with the whole word, tag and all, so the next read of it hits a
+@note tag the window never keeps.
+@old
+  assign update_word = window(line_phys) ? from_window(wdata[31:0]) : wdata;
+@new
+  assign update_word = wdata;
+@end
+
+@mutation rev13-main-fill-two-beats-longer-not-three
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A main memory line's fill nominally 400 ns, the window's, where
+@note muir's `fill_ns` gives five beats 410.
+@old
+  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
+@new
+  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(2));
+@end
+
+@mutation rev13-window-fill-three-beats-longer
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A window line's fill nominally 410 ns, main memory's, where its four
+@note beats give 400.
+@old
+  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(2) : CW'(3));
+@new
+  assign fill_t   = CW'(READ_T) + (!WIDE ? CW'(0) : window(line_phys) ? CW'(3) : CW'(3));
+@end
+
+@mutation rev13-main-line-four-beats
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A line of main memory asked in four beats, the window's, so its last
+@note 8 bytes, words 6 and 7, never come.
+@old
+              mbeats_q <= !WIDE ? 3'd2 : window(fill_phys) ? 3'd4 : 3'd5;
+@new
+              mbeats_q <= !WIDE ? 3'd2 : window(fill_phys) ? 3'd4 : 3'd4;
+@end
+
+@mutation rev13-window-address-a-word-on
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note The window's words a word further into the display's buffer than
+@note their address.
+@old
+    if (window(p)) return mono_display_byte_address(p[15:0]);
+@new
+    if (window(p)) return mono_display_byte_address(p[15:0] + 16'd1);
+@end
+
+@mutation rev13-fill-unpacks-four-bytes-a-word
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A line of main memory unpacked at 32 bits a word, so every word after
+@note the first takes bytes of its neighbours.
+@old
+                                                        : mem_rline[40*w +: 40];
+@new
+                                                        : mem_rline[32*w +: 40] ^ (mem_rline[40*w +: 40] & '0);
+@end
+
+@mutation rev13-prefetch-past-the-page
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note The page reach looks past a 1024-word page's end.
+@old
+    assign pf_next_ok = !window(line_phys) && (line_phys[9:0] != 10'h3FF)
+@new
+    assign pf_next_ok = !window(line_phys) && (line_phys[9:0] != 10'h3FF || 1'b1)
+@end
+
+@mutation rev13-prefetch-stops-at-256-word-pages
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note The page reach stops at revision 12's 256-word pages, just inside the
+@note bound: a fetch of a 256-word page's last word takes nothing, where
+@note muir's 1024-word page goes on.
+@old
+    assign pf_next_ok = !window(line_phys) && (line_phys[9:0] != 10'h3FF)
+@new
+    assign pf_next_ok = !window(line_phys) && (line_phys[7:0] != 8'hFF)
+@end
+
+@mutation rev13-prefetch-line-reach
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note Revision 12's line reach on revision 13: nothing taken from the next
+@note line, which muir's page reach takes when the cache holds it.
+@old
+                     && (pf_same_line || c_next_line_hit);
+@new
+                     && (pf_same_line || (c_next_line_hit && 1'b0));
+@end
+
+@mutation rev13-prefetch-from-the-window
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A fetch from the window leaves the next word in the buffer, where
+@note muir's page reach looks only in main memory.
+@old
+    assign pf_next_ok = !window(line_phys) && (line_phys[9:0] != 10'h3FF)
+@new
+    assign pf_next_ok = (!window(line_phys) || 1'b1) && (line_phys[9:0] != 10'h3FF)
+@end
+
+@mutation rev13-prefetch-next-line-takes-this-line-s-word
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note Past a line's last word, the word taken is the fetched line's own
+@note next-word output, not the next line's word 0.
+@old
+        pf_nx_word  = pf_same_line ? pf_same_word : c_next_line_word;
+@new
+        pf_nx_word  = pf_same_line ? pf_same_word : c_next_word ^ (c_next_line_word & '0);
+@end
+
+@mutation rev13-prefetch-vaddr-loses-bit-27
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note The buffer's virtual word address kept at 27 bits, `VMA<26:0>`.
+@old
+      pf_vaddr_q       <= pf_nx_vaddr;
+@new
+      pf_vaddr_q       <= pf_nx_vaddr & ~(VADDR_BITS'(1) << (VADDR_BITS - 1));
+@end
+
+@mutation rev13-axi-line-across-4k-is-one-burst
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note A line that runs over a 4 KiB boundary asked as one burst, which AXI
+@note forbids.
+@old
+      if (WIDE && line_end > 13'h1000) begin
+@new
+      if (WIDE && line_end > 13'h1000 && 1'b0) begin
+@end
+
+@mutation rev13-axi-line-ending-at-4k-is-split
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note The split just outside its bound: a line that ends exactly at a 4 KiB
+@note boundary taken for one that runs over it, its second burst of no beats
+@note asked as sixteen.
+@old
+      if (WIDE && line_end > 13'h1000) begin
+@new
+      if (WIDE && line_end >= 13'h1000) begin
+@end
+
+@mutation rev13-axi-split-line-second-address-waits
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note A split line's second address put out only after the first burst's
+@note last beat, serially, which the boards' ports charge 22 and 38 ticks
+@note for (contract G2's D5) where back to back costs nothing.
+@old
+  assign m_arvalid = (state == READ) && !a_out;
+@new
+  assign m_arvalid = (state == READ) && !a_out && !(ai && !bi);
+@end
+
+@mutation rev13-axi-word-across-4k-is-one-burst
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note A five-byte word whose second beat starts a 4 KiB page written as one
+@note two-beat burst across the boundary.
+@old
+      split = wide_cross;
+@new
+      split = wide_cross && 1'b0;
+@end
+
+@mutation rev13-axi-word-across-4k-misplaced
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note The crossing taken a beat early: the word whose second beat starts
+@note a 4 KiB page goes as one burst over it, and one a beat before is split
+@note for nothing.
+@old
+  assign wide_cross  = wide_two && (a_q[11:3] == 9'h1FF);
+@new
+  assign wide_cross  = wide_two && (a_q[11:3] == 9'h1FE);
+@end
+
+@mutation rev13-axi-four-strobes
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note A five-byte word written with four strobes: its tag never lands.
+@old
+  assign wide_strb   = 16'h001F << wide_off;
+@new
+  assign wide_strb   = 16'h000F << wide_off;
+@end
+
+@mutation rev13-axi-word-at-byte-4-in-one-beat
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note Just outside the bound: a word from byte 4 of its beat written in one
+@note beat, so its fifth byte, the tag, is dropped.
+@old
+  assign wide_two    = a_q[2:0] > 3'd3;
+@new
+  assign wide_two    = a_q[2:0] > 3'd4;
+@end
+
+@mutation rev13-axi-first-burst-beats-halved
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note A split line's first burst counted in 16-byte units, so it stops
+@note short of the boundary and the second starts at it.
+@old
+  assign first_beats = 4'((13'h1000 - {1'b0, a_q[11:0]}) >> 3);
+@new
+  assign first_beats = 4'((13'h1000 - {1'b0, a_q[11:0]}) >> 4);
+@end
+
+@mutation rev13-axi-line-beats-crossed
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note Revision 13's lines with their beats in each other's places, two by
+@note two.
+@old
+          mem_rline[64*beat +: 64] <= m_rdata;
+@new
+          mem_rline[64*{beat[2:1], ~beat[0]} +: 64] <= m_rdata;
+@end
+
+@mutation rev13-decode-register-page-512-words
+@check xbus_decode_quux13
+@file rtl/machine/cadr_xbus_decode.sv
+@note The register page taken as 512 words, `1777777000` up, into the
+@note nothing below it.
+@old
+    assign register_page = &phys[27:8];
+@new
+    assign register_page = &phys[27:9];
+@end
+
+@mutation rev13-decode-window-a-word-long
+@check xbus_decode_quux13
+@file rtl/machine/cadr_xbus_decode.sv
+@note The window one word past the video controller's buffer, a bound with
+@note a mutation just outside it.
+@old
+    assign window        = (&phys[27:22]) && (phys[21:0] < 22'(VIDEO_WORDS));
+@new
+    assign window        = (&phys[27:22]) && (phys[21:0] <= 22'(VIDEO_WORDS));
+@end
+
+@mutation rev13-decode-main-memory-a-board-long
+@check xbus_decode_quux13
+@file rtl/machine/cadr_xbus_decode.sv
+@note Main memory a board past the boards fitted.
+@old
+    assign main          = phys[27:16] < 12'(boards);
+@new
+    assign main          = phys[27:16] <= 12'(boards);
+@end
+
+@mutation rev13-the-prefetch-compares-lc-25-2
+@check quux13_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The buffer's word compared with `LC<25:2>`, revision 12's, where the
+@note fetch's address is `LC<29:2>`: the fused return at a virtual address
+@note past 24 bits never takes the buffered word.
+@old
+    assign pf_use      = needfetch && !have_wrong_word && pf_view_v && pf_view_vaddr == lc_q[LC_BITS-1:2];
+@new
+    assign pf_use      = needfetch && !have_wrong_word && pf_view_v && pf_view_vaddr == VADDR_BITS'(lc_q[25:2]);
+@end
+
+@mutation rev13-a-fetch-takes-lc-25-2
+@check quux13_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A fetch's `VMA` from `LC<25:2>`, so the code at a virtual address past
+@note 24 bits is fetched from another page.
+@old
+  assign vmas    = ifetch ? WORD_BITS'(lc_q[LC_BITS-1:2]) : ob;
+@new
+  assign vmas    = ifetch ? WORD_BITS'(lc_q[25:2]) : ob;
+@end
+
+@mutation rev13-the-fused-return-rotates-33
+@check quux13_fused_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The MACRO DISPATCH MEMORY's index taken at rotate 33, a bit off, so
+@note the return dispatches to another entry than the halfword names.
+@old
+      assign hw_rot   = ring40(m31_now, mod40(7'd34 + {1'b0, lc_addend_13(lcs, lc_byte_mode)}));
+@new
+      assign hw_rot   = ring40(m31_now, mod40(7'd33 + {1'b0, lc_addend_13(lcs, lc_byte_mode)}));
+@end
+
+@mutation rev13-the-cables-carry-256-word-pages
+@check quux13_lines_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Revision 12's 256-word page on the cables at 40 bits: the word within
+@note the page `VMA<7:0>`, so every word past 255 of a page goes elsewhere.
+@old
+  localparam int unsigned OFFSET_BITS = WIDE ? 10 : 8;
+@new
+  localparam int unsigned OFFSET_BITS = WIDE ? 8 : 8;
+@end
+
+@mutation rev13-the-cables-drop-phys-27-22
+@check quux13_space_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The physical address on the cables revision 12's 22 bits: main memory
+@note past 4M words, the window and the register page all fold onto the
+@note bottom of main memory.
+@old
+  assign phys    = memstart ? {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus} : phys_r;
+@new
+  assign phys    = memstart ? {vmo[PHYS_BITS-1-OFFSET_BITS:12] & 6'd0, vmo[11:0], vma_bus} : phys_r;
+@end
+
+@mutation rev13-a-store-drops-the-tag
+@check quux13_lines_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A store carries `MD<31:0>` and not the whole word, revision 12's
+@note cables: every word reaches main memory with tag 0.
+@old
+          wdata      <= md_bus;
+@new
+          wdata      <= md_bus & ~(WORD_BITS'(8'hFF) << 32);
+@end
+
+@mutation rev13-a-read-drops-the-tag
+@check quux13_lines_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A word read reaches `MD` without its tag, revision 12's cables.
+@old
+        md         <= WORD_BITS'(rdata);
+@new
+        md         <= WORD_BITS'(rdata[31:0]);
+@end
+
+@mutation rev13-the-machine-s-base-does-not-reach-the-port
+@check quux13_lines_quux
+@file rtl/machine/cadr_machine.sv
+@note The memory path given another base than the machine's, a MiB off:
+@note packed storage is laid out somewhere the board did not reserve.
+@old
+      .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE)
+@new
+      .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE ^ 32'h0010_0000)
 @end

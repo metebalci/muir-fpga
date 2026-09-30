@@ -173,12 +173,12 @@ module cadr_microcycle #(
     // at 8,192 x 7 and 4,096 x 28 with 1024-word pages and the `<31:28>` gate
     // (A1.7), and the fused return's index in the ring of 40 (G2 §2.7).
     //
-    // **THE MEMORY PATH IS STILL REVISION 12'S**, `MEM<31:0>` on both cables
-    // and a 22-bit physical address: a word read, and the prefetched word,
-    // reach `MD` and M 31 with zeros above bit 31, and a write takes
-    // `MD<31:0>`.  So are the Unibus's word into `MD` and the control store's
-    // write, `M<31:0>`, which A1.1 keeps.  Revision 13's port, packed storage
-    // and 8-word lines (G2 §3) are not this module's (G2's F2b).
+    // **AND ITS MEMORY PATH IS THE WORD'S TOO** (contract G2 §3): the
+    // cables to the memory port carry the whole word both ways and a 28-bit
+    // physical address, `{L2<17:0>, VMA<9:0>}`, and the prefetch's buffer a
+    // 28-bit virtual word address, `LC<29:2>`, and a 40-bit word
+    // (`quux_mem_port.sv`).  The Unibus's word into `MD` and the control
+    // store's write, `M<31:0>`, which A1.1 keeps, stay 32 bits.
     //
     // What holds it: at 32, every check of the CADR and of QUUX, whose traces
     // this parameter must not move; at 40, `build/word_width.pass`
@@ -192,7 +192,11 @@ module cadr_microcycle #(
     // through `cadr_machine.sv`; nothing on the CADR reads either.  See
     // "QUUX'S SYNCHRONOUS MICROCYCLE" below the clock.
     parameter int unsigned SYNC_K = 4,
-    parameter int unsigned SYNC_L = 0
+    parameter int unsigned SYNC_L = 0,
+    // The physical word address on the cables, and the prefetch's virtual
+    // word address: 22 and 24 bits, and revision 13's 28 and 28.
+    localparam int unsigned PHYS_BITS  = WORD_BITS > 32 ? 28 : 22,
+    localparam int unsigned VADDR_BITS = WORD_BITS > 32 ? 28 : 24
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,          // RESET, synchronous, active high
@@ -287,7 +291,7 @@ module cadr_microcycle #(
                                           //   has the bus.  Do not hang when
                                           //   this line is high!"
     input  var logic        n_loadmd,     // -LOADMD, which strobes MD
-    input  var logic [31:0] rdata,        // MEM<31:0> into the cpu
+    input  var logic [WORD_BITS-1:0] rdata,  // MEM into the cpu, the whole word
     // QUUX's memory port says the cycle is main memory's (contract Q6,
     // muir's `Ack::cached`): no Xbus cycle, so nothing is left to release
     // after -MEMACK, and MBUSY and READ IN PROGRESS fall on it.  Zero on the
@@ -303,14 +307,14 @@ module cadr_microcycle #(
     // dropped, and takes the buffer as each tick leaves it.  Unread, and
     // driven 0, on the CADR.
     output var logic        pf_fetch,
-    output var logic [23:0] pf_vaddr,
+    output var logic [VADDR_BITS-1:0] pf_vaddr,
     output var logic        pf_drop,
     input  var logic        pf_nx_v,
-    input  var logic [23:0] pf_nx_vaddr,
-    input  var logic [21:0] pf_nx_phys,
-    input  var logic [31:0] pf_nx_word,
+    input  var logic [VADDR_BITS-1:0] pf_nx_vaddr,
+    input  var logic [PHYS_BITS-1:0]  pf_nx_phys,
+    input  var logic [WORD_BITS-1:0]  pf_nx_word,
     input  var logic        pf_nx_fetch_v,
-    input  var logic [23:0] pf_nx_fetch_vaddr,
+    input  var logic [VADDR_BITS-1:0] pf_nx_fetch_vaddr,
     input  var logic        sintr,        // SINTR, the interrupt off the cables
     // QUUX's interval timers as `Machine::interrupt` takes them: each flag
     // under its interrupt enable, ORed into the interrupt that jump
@@ -399,8 +403,8 @@ module cadr_microcycle #(
     // --- above takes.  What stands before it is that microcycle's.
     // --- the cables to the bus interface
     output var logic [WORD_BITS-1:0] md,    // MD, the memory data register
-    output var logic [21:0] phys,         // -PMA21..8 and -VMA7..0
-    output var logic [31:0] wdata,        // MEM<31:0> out of the cpu
+    output var logic [PHYS_BITS-1:0] phys,  // -PMA21..8 and -VMA7..0; 28 bits on revision 13
+    output var logic [WORD_BITS-1:0] wdata, // MEM out of the cpu, the whole word
     output var logic        mclk,         // MCLK7, the microcycle boundary
     output var logic        mbusy_o,
     output var logic        mbusy_sync_o,
@@ -1956,7 +1960,7 @@ module cadr_microcycle #(
   // The prefetch's view of its word for this microcycle, and whether this
   // return fuses on it (`pf_use`) or is refused it (`pf_refused`).
   logic        pf_use, pf_refused;
-  logic [31:0] pf_word_now;
+  logic [WORD_BITS-1:0] pf_word_now;
   // The MACRO DISPATCH MEMORY's entry for the readout's address.
   logic [17:0] ro_macro_q;
   // The readout's address, two ticks of it (see "the readout" below).
@@ -1978,9 +1982,9 @@ module cadr_microcycle #(
   // fused return").  The view is also the readout's.
   logic        memstart_fetch;
   logic        pf_view_v, pf_view_fetch_v;
-  logic [23:0] pf_view_vaddr, pf_view_fetch_vaddr;
-  logic [21:0] pf_view_phys;
-  logic [31:0] pf_view_word;
+  logic [VADDR_BITS-1:0] pf_view_vaddr, pf_view_fetch_vaddr;
+  logic [PHYS_BITS-1:0]  pf_view_phys;
+  logic [WORD_BITS-1:0]  pf_view_word;
   if (QUUX) begin : g_quux_prefetch
     // A store granted at this edge to the buffered word drops it, muir's
     // `request_at`: from the grant's own address, which is the far end of
@@ -1989,7 +1993,7 @@ module cadr_microcycle #(
     logic pf_store_to_word;
     assign pf_store_to_word = memstart && vmaok && wrcyc && phys == pf_nx_phys;
     assign pf_fetch = memstart_fetch;
-    assign pf_vaddr = vma[23:0];
+    assign pf_vaddr = vma[VADDR_BITS-1:0];
     // `WMAP`, a map write, is `destmem && IR<20:19> = 3` (page VMA below).
     assign pf_drop  = (cpu_edge && (destlc || (destmem && ir[20:19] == 2'd3))) || !n_boot;
     always_ff @(posedge clk) begin
@@ -1997,10 +2001,10 @@ module cadr_microcycle #(
         memstart_fetch      <= 1'b0;
         pf_view_v           <= 1'b0;
         pf_view_fetch_v     <= 1'b0;
-        pf_view_vaddr       <= 24'd0;
-        pf_view_fetch_vaddr <= 24'd0;
-        pf_view_phys        <= 22'd0;
-        pf_view_word        <= 32'd0;
+        pf_view_vaddr       <= '0;
+        pf_view_fetch_vaddr <= '0;
+        pf_view_phys        <= '0;
+        pf_view_word        <= '0;
       end else begin
         if (cpu_edge) memstart_fetch <= ifetch;
         if (mclk_edge) begin
@@ -2013,27 +2017,25 @@ module cadr_microcycle #(
         end
       end
     end
-    // The buffer's virtual word address is revision 12's 24 bits: revision
-    // 13's port, with its 28-bit addresses and page reach, is not this one
-    // (muir's `MemoryPort::for_geometry`), and a 40-bit build compares the
-    // counter's `<25:2>` as revision 12 does until it has that port.
-    assign pf_use      = needfetch && !have_wrong_word && pf_view_v && pf_view_vaddr == lc_q[25:2];
+    // The buffer's virtual word address is the fetch's, `LC<25:2>`, and on
+    // revision 13 `LC<29:2>` (muir's `Prefetched::vaddr`).
+    assign pf_use      = needfetch && !have_wrong_word && pf_view_v && pf_view_vaddr == lc_q[LC_BITS-1:2];
     assign pf_refused  = pf_use && (pgf_or_int_or_sb || (memstart && wrcyc));
     assign pf_word_now = pf_view_word;
   end else begin : g_cadr_no_prefetch
     assign pf_fetch = 1'b0;
-    assign pf_vaddr = 24'd0;
+    assign pf_vaddr = '0;
     assign pf_drop  = 1'b0;
     assign memstart_fetch      = 1'b0;
     assign pf_view_v           = 1'b0;
     assign pf_view_fetch_v     = 1'b0;
-    assign pf_view_vaddr       = 24'd0;
-    assign pf_view_fetch_vaddr = 24'd0;
-    assign pf_view_phys        = 22'd0;
-    assign pf_view_word        = 32'd0;
+    assign pf_view_vaddr       = '0;
+    assign pf_view_fetch_vaddr = '0;
+    assign pf_view_phys        = '0;
+    assign pf_view_word        = '0;
     assign pf_use      = 1'b0;
     assign pf_refused  = 1'b0;
-    assign pf_word_now = 32'd0;
+    assign pf_word_now = '0;
     logic unused_prefetch;
     assign unused_prefetch = pf_nx_v ^ pf_nx_fetch_v ^ (^pf_nx_vaddr) ^ (^pf_nx_fetch_vaddr)
                            ^ (^pf_nx_phys) ^ (^pf_nx_word) ^ memstart_fetch;
@@ -2442,7 +2444,7 @@ module cadr_microcycle #(
   // continuously and only looks at `-XBUS.RQ`, 80 ns later; the Unibus
   // noticed at once, because arbitration starts at the grant and has to know
   // then which bus it is arbitrating for.
-  logic [21:0] phys_r;
+  logic [PHYS_BITS-1:0] phys_r;
   // `phys` itself is assigned below `vmas`, whose low byte it takes at the
   // edge a cycle starts on; see `vma_bus` there.
 
@@ -2473,14 +2475,12 @@ module cadr_microcycle #(
   // (`map-write-into-hang`, `dispatch-held-by-wait-0`).
   //
   // **REVISION 13'S PAGE IS 1024 WORDS** (A1.7): the word within it is
-  // `VMA<9:0>` and the page `L2<17:0>`, a 28-bit physical address.  The
-  // cables here carry 22 bits, `{L2<11:0>, VMA<9:0>}`, which is the whole
-  // address below 4M words; the memory port's 28-bit address is revision
-  // 13's port (G2 §3), which this processor does not have yet.
+  // `VMA<9:0>` and the page `L2<17:0>`, a 28-bit physical address, which the
+  // cables to its memory port carry whole (G2 §3).
   localparam int unsigned OFFSET_BITS = WIDE ? 10 : 8;
   logic [OFFSET_BITS-1:0] vma_bus;
   assign vma_bus = (cpu_edge && vmaenb) ? vmas[OFFSET_BITS-1:0] : vma[OFFSET_BITS-1:0];
-  assign phys    = memstart ? {vmo[21-OFFSET_BITS:0], vma_bus} : phys_r;
+  assign phys    = memstart ? {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus} : phys_r;
 
   // **AND THE WORD A WRITE CARRIES IS THE MD THAT EDGE HAS JUST LOADED**,
   // for the same reason: `MEM<31:0>` is driven from MD's own outputs, and
@@ -2494,11 +2494,7 @@ module cadr_microcycle #(
   // asserts muir never does and `build/park.pass` counts here.
   logic [WORD_BITS-1:0] md_bus;
   assign md_bus = (cpu_edge && destmdr) ? ob : md;
-  // The cables carry `MEM<31:0>` (see `WORD_BITS`).
-  if (WORD_BITS > 32) begin : g_word_md_bus
-    logic unused_md_bus_tag;
-    assign unused_md_bus_tag = ^md_bus[WORD_BITS-1:32];
-  end
+  // The cables carry the whole word (see `WORD_BITS`).
 
   // ------------------------------------------------------------- VCTL1
   //
@@ -3311,8 +3307,8 @@ module cadr_microcycle #(
       vma          <= '0;
       wmapd        <= 1'b0;
       md           <= '0;
-      phys_r       <= 22'd0;
-      wdata        <= 32'd0;
+      phys_r       <= '0;
+      wdata        <= '0;
       n_loadmd_q   <= 1'b1;
       destmem_q    <= 1'b0;
       use_md_q     <= 1'b0;
@@ -3597,8 +3593,8 @@ module cadr_microcycle #(
         if (memgo) begin
           mbusy      <= 1'b1;
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[21-OFFSET_BITS:0], vma_bus};
-          wdata      <= md_bus[31:0];
+          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
+          wdata      <= md_bus;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
           // falling time until -MEMACK gives it one.
           if (rdcyc) rd_in_progress <= 1'b1;
@@ -3922,7 +3918,7 @@ module cadr_microcycle #(
       RG_DC:     ro_regs = {38'd0, dc};
       RG_LVMO:   ro_regs = 48'(lvmo);
       RG_MDHELD: ro_regs = 48'(md_held);
-      RG_PHYS:   ro_regs = {26'd0, phys_r};
+      RG_PHYS:   ro_regs = 48'(phys_r);
       RG_SPEED:  ro_regs = {42'd0, QUUX ? 2'b00 : mode_speed, speed_a, speed};  // all zero on QUUX
       RG_FLAGS:  ro_regs = ro_flags;
       RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
@@ -3942,10 +3938,10 @@ module cadr_microcycle #(
       RG_QUUX_FUSED_N:  ro_regs = QUUX ? {16'd0, macro_fused_n} : RO_NO_MEMORY;
       RG_QUUX_OPR_N:    ro_regs = QUUX ? {16'd0, macro_opr_n} : RO_NO_MEMORY;
       RG_QUUX_PF_N:     ro_regs = QUUX ? {16'd0, macro_pf_n} : RO_NO_MEMORY;
-      RG_QUUX_PF:       ro_regs = QUUX ? {23'd0, pf_view_v, pf_view_vaddr} : RO_NO_MEMORY;
-      RG_QUUX_PF_PHYS:  ro_regs = QUUX ? {26'd0, pf_view_phys} : RO_NO_MEMORY;
-      RG_QUUX_PF_WORD:  ro_regs = QUUX ? {16'd0, pf_view_word} : RO_NO_MEMORY;
-      RG_QUUX_PF_FETCH: ro_regs = QUUX ? {23'd0, pf_view_fetch_v, pf_view_fetch_vaddr} : RO_NO_MEMORY;
+      RG_QUUX_PF:       ro_regs = QUUX ? 48'({pf_view_v, pf_view_vaddr}) : RO_NO_MEMORY;
+      RG_QUUX_PF_PHYS:  ro_regs = QUUX ? 48'(pf_view_phys) : RO_NO_MEMORY;
+      RG_QUUX_PF_WORD:  ro_regs = QUUX ? 48'(pf_view_word) : RO_NO_MEMORY;
+      RG_QUUX_PF_FETCH: ro_regs = QUUX ? 48'({pf_view_fetch_v, pf_view_fetch_vaddr}) : RO_NO_MEMORY;
       default:   ro_regs = RO_NO_MEMORY;
     endcase
   end
@@ -4096,12 +4092,16 @@ module cadr_microcycle #(
       $fatal(1, "rdw_poison: a map level written while MEMSTART is up");
   end
   // A poison that never fired tested nothing, so a program that never wrote
-  // one of the three memories fails the check rather than passing it.
+  // one of the three memories fails the check rather than passing it.  The
+  // cache's check (`CADR_RDW_POISON_CACHE`, `quux_cache.sv`) is held to the
+  // cache's RAMs instead, on a program written for them.
   final begin
     $display("rdw_poison: poisoned ticks: dispatch %0d, level-1 map %0d, level-2 map %0d",
              n_dmem_rdw, n_l1_rdw, n_l2_rdw);
+`ifndef CADR_RDW_POISON_CACHE
     if (n_dmem_rdw == 0 || n_l1_rdw == 0 || n_l2_rdw == 0)
       $fatal(1, "rdw_poison: a memory was never poisoned, so this run measured nothing about it");
+`endif
     $display("rdw_poison: poisoned reads on a boundary %0d, map reads under MEMSTART %0d, map writes under MEMSTART %0d",
              n_on_boundary, n_under_memstart, n_write_under_memstart);
   end

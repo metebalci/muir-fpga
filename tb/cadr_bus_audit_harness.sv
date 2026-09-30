@@ -196,7 +196,8 @@ module cadr_bus_audit_harness #(
   // outside, no drive on the disk's cable, 32 boards of memory declared.
   // QUUX's line fill and its port's idle (contract Q6): the CADR this
   // harness builds never asks a line, so the line is zeros.
-  logic h_mem_line, h_mem_drained;
+  logic h_mem_line, h_mem_drained, h_mem_wide;
+  logic [2:0] h_mem_beats;
   // QUUX's host side's word, read by nobody here.
   /* verilator lint_off UNUSEDSIGNAL */
   logic [31:0] h9_host_rdata;
@@ -276,7 +277,7 @@ module cadr_bus_audit_harness #(
       // tied and the word is folded with the rest.
       .disp_map_a(4'd0), .disp_color_map_q(disp_color_map_q),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(h_mem_line), .mem_rline(128'd0), .mem_drained(h_mem_drained),
+      .mem_line(h_mem_line), .mem_beats(h_mem_beats), .mem_wide(h_mem_wide), .mem_rline(128'd0), .mem_drained(h_mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -367,7 +368,7 @@ module cadr_bus_audit_harness #(
   logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
 
   logic unused;
-  assign unused = &{1'b0, h_mem_line, h_mem_drained, tv_map_q, tv_color_map_q, disp_color_map_q, lpc, st, a, m, alu, r, ob, q, ir, dc, lc,
+  assign unused = &{1'b0, h_mem_line, h_mem_beats, h_mem_wide, h_mem_drained, tv_map_q, tv_color_map_q, disp_color_map_q, lpc, st, a, m, alu, r, ob, q, ir, dc, lc,
                     store_rdata, store_miss,
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,

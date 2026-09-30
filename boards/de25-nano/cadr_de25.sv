@@ -436,7 +436,7 @@ module cadr_de25 #(
   logic [25:0] lc;
   logic        vmaok, jcond, nop, pcs1, pcs0, iwrited, promenable, clock_edge;
   logic        wrcyc, device, dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn;
-  logic [21:0] phys;
+  logic [(WORD_BITS > 32 ? 28 : 22)-1:0] phys;
   logic [31:0] dev_wdata;
   logic [2:0]  arb_stage, ub_ssyn_by;
   logic        n_memrq, n_memack, n_memgrant, mbusy, mbusy_sync;
@@ -466,14 +466,17 @@ module cadr_de25 #(
   logic [47:0] con_ro_data;
   logic [17:0] con_ro_echo;
   logic        mem_req, mem_write;
-  logic [31:0] mem_addr, mem_wdata;
+  logic [31:0] mem_addr;
+  logic [WORD_BITS-1:0] mem_wdata;
   logic        mem_done;
   logic [31:0] mem_rdata;
   logic        port_read_ack, port_write_ack;
   // QUUX's line fill (contract Q6), and its port idle, which nothing on this
   // board reads yet.  The CADR never asks a line.
-  logic         mem_line, mem_drained;
-  logic [127:0] mem_rline;
+  logic         mem_line, mem_drained, mem_wide;
+  logic [2:0]   mem_beats;
+  // Two 64-bit beats of a line, and revision 13's five (`quux_axi_master.sv`).
+  logic [(WORD_BITS > 32 ? 320 : 128)-1:0] mem_rline;
 
   // And the seams the register faces drive, which are `cadr_machine`'s inputs:
   // the disk's cable and its block store, the I/O board's four cables, the
@@ -680,7 +683,8 @@ module cadr_de25 #(
       .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(mem_line), .mem_rline(mem_rline), .mem_drained(mem_drained),
+      .mem_line(mem_line), .mem_beats(mem_beats), .mem_wide(mem_wide),
+      .mem_rline(mem_rline), .mem_drained(mem_drained),
       // **THE PORT'S OWN ANSWERS, FOR THE TRANSACTION AUDIT.**  The bridge's
       // handshakes and nothing the fabric decides for itself, which is what
       // makes the audit's word 8 able to tell a silent port from an answering
@@ -1086,12 +1090,12 @@ module cadr_de25 #(
   assign mach_hold = !may_start;
 
   /* verilator lint_off PINCONNECTEMPTY */
-  cadr_f2sdram_port #(.MACHINE(MACHINE)) u_memory (
+  cadr_f2sdram_port #(.MACHINE(MACHINE), .WORD_BITS(WORD_BITS)) u_memory (
       .clk(clk), .rst(rst),
       .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata),
       .mem_done(mem_done), .mem_rdata(mem_rdata), .mem_error(),
-      .mem_line(mem_line), .mem_rline(mem_rline),
+      .mem_line(mem_line), .mem_beats(mem_beats), .mem_wide(mem_wide), .mem_rline(mem_rline),
       .h2f_reset(h2f_reset), .gp_open(gp_out[0]), .gp_half(gp_out[1]),
       .warm_req_n(warm_req_n), .warm_ack_n(warm_ack_n),
       .gp_in(gp_in), .live(port_live), .may_start(may_start),
@@ -1995,7 +1999,7 @@ module cadr_de25 #(
   // machine is not held, because there is no port for it to wait for.
   assign mem_done  = 1'b0;
   assign mem_rdata = 32'd0;
-  assign mem_rline = 128'd0;
+  assign mem_rline = '0;
   assign port_live = 1'b0;
   assign mach_hold = 1'b0;
   assign port_read_ack  = 1'b0;
@@ -2226,7 +2230,7 @@ module cadr_de25 #(
   // SW1 to SW3 are pins this board has and this design gives no meaning.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = &{1'b0, sw[3:1], mem_drained, mem_line};
+  assign unused = &{1'b0, sw[3:1], mem_drained, mem_line, mem_beats, mem_wide};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

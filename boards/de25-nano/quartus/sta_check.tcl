@@ -706,7 +706,7 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
         # the tick from the port's registers and from block-disk's.
         set q_all [get_registers -nowarn {u_memory|u_qaxi|*}]
         set q_named [get_registers -nowarn [concat \
-            [cadr_leaves {u_memory|u_qaxi|} {m_awaddr m_araddr m_wdata m_wstrb half}]]]
+            [cadr_leaves {u_memory|u_qaxi|} {a_q wd_q beats_q wide_q line}]]]
         set q_req [requirements [data_pins $q_all]]
         set q_want [format %.3f [expr {$tick * 8}]]
         if {[get_collection_size $q_all] == 0} {

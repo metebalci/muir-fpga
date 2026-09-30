@@ -140,7 +140,15 @@ module cadr_memory_path #(
     // QUUX's microcycle in ticks, `cadr_machine.sv`'s `SYNC_K`: a device
     // register's cycle is acknowledged this long after its grant
     // (`quux_mem_port.sv`).  Unread on the CADR.
-    parameter int unsigned SYNC_K = 4
+    parameter int unsigned SYNC_K = 4,
+    // 32; or 40 on QUUX, revision 13: its 28-bit space and its memory port
+    // with packed storage at `QUUX13_MAIN_BASE` (`quux_mem_port.sv`).
+    parameter int unsigned WORD_BITS = 32,
+    parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,  // 0: `cadr_ddr_map::MAIN_BASE`
+    localparam bit          REV13      = MACHINE == "quux" && WORD_BITS > 32,
+    localparam int unsigned PHYS_BITS  = REV13 ? 28 : 22,
+    localparam int unsigned VADDR_BITS = REV13 ? 28 : 24,
+    localparam int unsigned RLINE_BITS = REV13 ? 320 : 128
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -154,12 +162,12 @@ module cadr_memory_path #(
     input  var logic        mclk,         // MCLK7, the microcycle boundary
     input  var logic        n_memrq,      // -MEMRQ
     input  var logic        wrcyc,        // WRCYC
-    input  var logic [21:0] phys,         // -PMA21..8 and -VMA7..0
-    input  var logic [31:0] wdata,        // MEM<31:0> out of the cpu
+    input  var logic [PHYS_BITS-1:0] phys,  // -PMA21..8 and -VMA7..0; 28 bits on revision 13
+    input  var logic [WORD_BITS-1:0] wdata, // MEM out of the cpu, the whole word
     output var logic        n_memgrant,   // -MEMGRANT
     output var logic        n_memack,     // -MEMACK
     output var logic        n_loadmd,     // -LOADMD
-    output var logic [31:0] rdata,        // MEM<31:0> into the cpu
+    output var logic [WORD_BITS-1:0] rdata, // MEM into the cpu, the whole word
     output var logic        timed_out,    // NXM TIMEOUT
 
     // How many 64K-word memory boards are fitted, 1 to 60.
@@ -516,14 +524,16 @@ module cadr_memory_path #(
     output var logic        mem_req,
     output var logic        mem_write,
     output var logic [31:0] mem_addr,
-    output var logic [31:0] mem_wdata,
+    output var logic [WORD_BITS-1:0] mem_wdata,
     input  var logic        mem_done,
     input  var logic [31:0] mem_rdata,
     // **QUUX'S LINE FILL**: `mem_line` asks four words at a 16-byte
     // boundary, two 64-bit beats, and they come back on `mem_rline`, the
     // lowest address in bits 31:0.  The CADR never asks one.
     output var logic        mem_line,
-    input  var logic [127:0] mem_rline,
+    output var logic [2:0]  mem_beats,
+    output var logic        mem_wide,
+    input  var logic [RLINE_BITS-1:0] mem_rline,
 
     // --- QUUX'S MEMORY PORT (contract Q6), `quux_mem_port.sv`: block-disk
     // wrote a register, so the cache goes at the next grant; the cycle is
@@ -537,14 +547,14 @@ module cadr_memory_path #(
     // Revision 12's cache-only prefetch, `quux_mem_port.sv`'s, between the
     // processor and the port.  Tied off, and unread, on the CADR.
     input  var logic        pf_fetch,
-    input  var logic [23:0] pf_vaddr,
+    input  var logic [VADDR_BITS-1:0] pf_vaddr,
     input  var logic        pf_drop,
     output var logic        pf_nx_v,
-    output var logic [23:0] pf_nx_vaddr,
-    output var logic [21:0] pf_nx_phys,
-    output var logic [31:0] pf_nx_word,
+    output var logic [VADDR_BITS-1:0] pf_nx_vaddr,
+    output var logic [PHYS_BITS-1:0]  pf_nx_phys,
+    output var logic [WORD_BITS-1:0]  pf_nx_word,
     output var logic        pf_nx_fetch_v,
-    output var logic [23:0] pf_nx_fetch_vaddr,
+    output var logic [VADDR_BITS-1:0] pf_nx_fetch_vaddr,
     // The Xbus bridge's own seam, which on QUUX is the uncached requester
     // and not main memory's: what the transaction audit watches there.
     output var logic        br_req_o,
@@ -824,7 +834,7 @@ module cadr_memory_path #(
   logic color_fitted;
   assign color_fitted = (LMTV != 0) && color_tv;
 
-  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS)) decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS), .WORD_BITS(WORD_BITS)) decode (
       .color_tv(color_fitted),
       .phys  (phys),
       .boards(boards),
@@ -948,8 +958,8 @@ module cadr_memory_path #(
   logic [21:0] br_cpu_phys;
   logic [31:0] br_cpu_wdata;
   logic        br_cpu_write, br_cpu_rq;
-  assign br_cpu_phys  = QUUX ? 22'd0 : phys;
-  assign br_cpu_wdata = QUUX ? 32'd0 : wdata;
+  assign br_cpu_phys  = QUUX ? 22'd0 : phys[21:0];
+  assign br_cpu_wdata = QUUX ? 32'd0 : wdata[31:0];
   assign br_cpu_write = QUUX ? 1'b0  : cpu_write;
   assign br_cpu_rq    = QUUX ? 1'b0  : cpu_rq;
   assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : br_cpu_phys;
@@ -1084,7 +1094,7 @@ module cadr_memory_path #(
   // the OR is `is_memory || device` whatever `video_fb` holds then.
   logic        br_req, br_write, br_done;
   logic [31:0] br_addr, br_wdata, br_rdata;
-  logic [31:0] port_word;
+  logic [WORD_BITS-1:0] port_word;
   assign br_req_o   = br_req;
   assign br_write_o = br_write;
   assign br_addr_o  = br_addr;
@@ -1092,7 +1102,7 @@ module cadr_memory_path #(
   assign br_done_o  = br_done;
 
   if (QUUX) begin : g_quux_port
-    quux_mem_port #(.K(SYNC_K)) port (
+    quux_mem_port #(.K(SYNC_K), .WORD_BITS(WORD_BITS), .MAIN13_BASE(QUUX13_MAIN_BASE)) port (
         .clk        (clk),
         .rst        (rst),
         .mclk       (mclk),
@@ -1100,8 +1110,9 @@ module cadr_memory_path #(
         .wrcyc      (wrcyc),
         .phys       (phys),
         .wdata      (wdata),
-        .is_memory  (is_memory || (device && video_fb)),
-        .is_device  (device && !video_fb),
+        // Revision 13's decode puts the window on the memory bus itself.
+        .is_memory  (REV13 ? is_memory : (is_memory || (device && video_fb))),
+        .is_device  (REV13 ? device : (device && !video_fb)),
         .n_memgrant (n_memgrant),
         .n_memack   (n_memack),
         .n_loadmd   (n_loadmd),
@@ -1118,12 +1129,14 @@ module cadr_memory_path #(
         .u_addr     (br_addr),
         .u_wdata    (br_wdata),
         .u_main     (ch_own && ch_memory),
-        .u_phys     (ch_addr),
+        .u_phys     (PHYS_BITS'(ch_addr)),
         .u_done     (br_done),
         .u_rdata    (br_rdata),
         .mem_req    (mem_req),
         .mem_write  (mem_write),
         .mem_line   (mem_line),
+        .mem_beats  (mem_beats),
+        .mem_wide   (mem_wide),
         .mem_addr   (mem_addr),
         .mem_wdata  (mem_wdata),
         .mem_done   (mem_done),
@@ -1175,21 +1188,23 @@ module cadr_memory_path #(
     assign mem_req      = br_req;
     assign mem_write    = br_write;
     assign mem_addr     = br_addr;
-    assign mem_wdata    = br_wdata;
+    assign mem_wdata    = WORD_BITS'(br_wdata);
     assign br_done      = mem_done;
     assign br_rdata     = mem_rdata;
     assign mem_line     = 1'b0;
+    assign mem_beats    = 3'd0;
+    assign mem_wide     = 1'b0;
     assign cached       = 1'b0;
-    assign port_word    = 32'd0;
+    assign port_word    = '0;
     assign port_drained = 1'b1;
     assign cache_hits   = 32'd0;
     assign cache_misses = 32'd0;
     assign pf_nx_v           = 1'b0;
-    assign pf_nx_vaddr       = 24'd0;
-    assign pf_nx_phys        = 22'd0;
-    assign pf_nx_word        = 32'd0;
+    assign pf_nx_vaddr       = '0;
+    assign pf_nx_phys        = '0;
+    assign pf_nx_word        = '0;
     assign pf_nx_fetch_v     = 1'b0;
-    assign pf_nx_fetch_vaddr = 24'd0;
+    assign pf_nx_fetch_vaddr = '0;
     logic unused_cadr_port;
     // And the video controller's buffer match, which only QUUX's port reads,
     // and the prefetch's inputs.
@@ -1491,8 +1506,8 @@ module cadr_memory_path #(
       .sel        (device),
       .dev_rq     (dev_rq),
       .dev_write  (dev_write),
-      .phys       (phys),
-      .wdata      (wdata),
+      .phys       (phys[21:0]),
+      .wdata      (wdata[31:0]),
       .dev_ack    (tv_ack),
       .rdata      (tv_rdata),
       .drives     (tv_drives),
@@ -1525,8 +1540,8 @@ module cadr_memory_path #(
         .sel      (device),
         .dev_rq   (dev_rq),
         .dev_write(dev_write),
-        .phys     (phys),
-        .wdata    (wdata),
+        .phys     (phys[21:0]),
+        .wdata    (wdata[31:0]),
         .dev_ack  (video_ack),
         .rdata    (video_rdata),
         .drives   (video_drives),
@@ -1575,8 +1590,8 @@ module cadr_memory_path #(
         .sel        (device),
         .dev_rq     (dev_rq),
         .dev_write  (dev_write),
-        .phys       (phys),
-        .wdata      (wdata),
+        .phys       (phys[21:0]),
+        .wdata      (wdata[31:0]),
         .dev_ack    (tvc_ack),
         .rdata      (tvc_rdata),
         .drives     (tvc_drives),
@@ -1646,12 +1661,12 @@ module cadr_memory_path #(
   // for the memory bus, the register's as it was when asked, and zero for
   // an address nothing answers (`quux_mem_port.sv`).
   assign rdata   = QUUX         ? port_word
-                 : ub_ssyn      ? {16'h0000, ub_rdata}
-                 : tv_drives    ? tv_rdata
-                 : tvc_drives   ? tvc_rdata
-                 : video_drives ? video_rdata
-                 : device_ack   ? device_rdata
-                                : memory_rdata;
+                 : ub_ssyn      ? WORD_BITS'({16'h0000, ub_rdata})
+                 : tv_drives    ? WORD_BITS'(tv_rdata)
+                 : tvc_drives   ? WORD_BITS'(tvc_rdata)
+                 : video_drives ? WORD_BITS'(video_rdata)
+                 : device_ack   ? WORD_BITS'(device_rdata)
+                                : WORD_BITS'(memory_rdata);
 
 endmodule
 

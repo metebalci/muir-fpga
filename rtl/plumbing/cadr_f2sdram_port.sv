@@ -60,7 +60,10 @@ module cadr_f2sdram_port #(
     // "cadr" or "quux": which machine's memory port is on the bridge.  QUUX's
     // asks line fills (contract Q6) and has its own 64-bit master for them,
     // `quux_axi_master.sv`; see the instances below.
-    parameter string MACHINE = "cadr"
+    parameter string MACHINE = "cadr",
+    // 32; or 40, QUUX revision 13's packed storage: five-beat lines and
+    // five-byte writes (`quux_axi_master.sv`).
+    parameter int unsigned WORD_BITS = 32
 ) (
     input  var logic clk,
     // The fabric's reset.  It resets the tally at once and the port only
@@ -71,14 +74,17 @@ module cadr_f2sdram_port #(
     input  var logic        mem_req,
     input  var logic        mem_write,
     input  var logic [31:0] mem_addr,
-    input  var logic [31:0] mem_wdata,
+    input  var logic [WORD_BITS-1:0] mem_wdata,
     output var logic        mem_done,
     output var logic [31:0] mem_rdata,
     output var logic        mem_error,
-    // QUUX's line fill: four words at a 16-byte boundary, two 64-bit beats.
-    // The CADR never asks one.
+    // QUUX's line fill: four words at a 16-byte boundary, two 64-bit beats;
+    // on revision 13 `mem_beats` of them, and its writes of five bytes,
+    // `mem_wide`.  The CADR never asks one.
     input  var logic         mem_line,
-    output var logic [127:0] mem_rline,
+    input  var logic [2:0]   mem_beats,
+    input  var logic         mem_wide,
+    output var logic [(WORD_BITS > 32 ? 320 : 128)-1:0] mem_rline,
 
     // --- the processor, asynchronous to this clock ------------------------
     input  var logic        h2f_reset,
@@ -230,7 +236,7 @@ module cadr_f2sdram_port #(
   cadr_axi_master u_axi (
       .clk(clk), .rst(port_rst),
       .mem_req(!QUUX_PORT && mem_req), .mem_write(mem_write),
-      .mem_addr(mem_addr), .mem_wdata(mem_wdata),
+      .mem_addr(mem_addr), .mem_wdata(mem_wdata[31:0]),
       .mem_done(c_done), .mem_rdata(c_rdata), .mem_error(c_error),
       .m_axi_awaddr(awaddr), .m_axi_awlen(awlen), .m_axi_awsize(awsize),
       .m_axi_awburst(c_awburst), .m_axi_awvalid(c_awvalid),
@@ -245,9 +251,10 @@ module cadr_f2sdram_port #(
       .m_axi_rvalid(rvalid), .m_axi_rready(c_rready)
   );
 
-  quux_axi_master u_qaxi (
+  quux_axi_master #(.WORD_BITS(WORD_BITS)) u_qaxi (
       .clk(clk), .rst(port_rst),
       .mem_req(QUUX_PORT && mem_req), .mem_write(mem_write), .mem_line(mem_line),
+      .mem_beats(mem_beats), .mem_wide(mem_wide),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata),
       .mem_done(q_done), .mem_rdata(q_rdata), .mem_rline(mem_rline),
       .mem_error(q_error),

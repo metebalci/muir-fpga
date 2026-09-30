@@ -65,6 +65,36 @@ the CADR.
 
 ## From a modified tree
 
+These fits were built from the working tree on `90603c1` with QUUX revision
+13's memory port and cache (contract G2 §3): the 28-bit physical space,
+40-bit words on the cables, 8-word lines of packed storage at five bytes a
+word, the frame buffer window at four, the prefetch's page reach, and the
+adapter's five-beat lines and five-byte writes with the split at a 4 KiB
+boundary; muir pinned at `ffc5ba5`. The boot PROM image is still QUUX's
+version 2000, which does not run on revision 13, and revision 13's main
+memory is at the CADR's main memory base, since the DDR layout for it is
+not settled: the fits measure the machine, not one that boots.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 13 | -0.727 ns | +0.034 ns | 22,672 of 53,200 LUTs, 42.62% | 83 of 140 BRAM tiles | 7,466 of 13,300 | working tree on `90603c1` | modified | 2026-09-30 |
+| DE25-Nano | QUUX revision 13 | +2.181 ns | +0.001 ns | 29,790 of 46,800 ALMs, 64% | 203 of 358 M20K | --- | working tree on `90603c1` | modified | 2026-09-30 |
+
+The Arty Z7-20 misses timing on 3 endpoints:
+
+- Two are the map chain into the memory path's decode, which has two ticks:
+  from `MEMSTART` through both map levels into `device` and `nxm`, -0.727
+  and -0.703 ns over 21 and 23 logic levels.
+- One is the divider's step, which has one tick: -0.146 ns over 19 levels.
+
+The cache's paths meet: its RAMs' address from the divider's hold has
++0.312 ns, a hit's word into `MD` +0.574 ns, and a write into the port's
+cache +0.170 ns. The fit also ran `rams_enable_check.tcl` over 89 block
+RAMs, and two of the PDL buffer's ports, enabled always, miss it by 0.021
+and 0.177 ns from the PDL write index; none of the cache's does. On the
+DE25-Nano every corner meets, and the adapter's clauses reach 88 endpoints
+at one tick.
+
 This fit was built from the working tree on `a8f08b4` with QUUX revision
 13's processor (contract G2 and its appendix A1), `WORD_BITS=40`, and muir
 pinned at `ffc5ba5`. The memory port is still revision 12's, and the boot

@@ -542,6 +542,16 @@ CHECKS = {
         "golden": "xbus_decode.quux.golden",
         "machine": "quux",
     },
+    # Revision 13's 28-bit space, every address (`golden/src/xbus_decode.rs`
+    # `--revision-13`).
+    "xbus_decode_quux13": {
+        "sources": ["rtl/machine/cadr_xbus_decode.sv"],
+        "top": "cadr_xbus_decode",
+        "tb": "tb/cadr_xbus_decode_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", '-GMACHINE="quux"', "-GWORD_BITS=40"],
+        "golden": "xbus_decode.quux13.golden",
+        "machine": "quux",
+    },
     "machine_quux": dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
@@ -784,6 +794,28 @@ CHECKS = {
         "tb": "tb/quux_mem_port_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": "quux_port.quux.k4.golden",
+        "machine": "quux",
+    },
+    # And at revision 13 (`WORD_BITS` 40), against muir's `MemoryPort` on
+    # `Geometry::QUUX_13`: packed storage, 8-word lines and the prefetch's
+    # page reach (`tb/quux13_mem_port_tb.cpp`), at the Makefile's base.
+    "quux13_port_quux": {
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux_cache.sv",
+                    "rtl/machine/quux_mem_port.sv"],
+        "top": "quux_mem_port",
+        "tb": "tb/quux13_mem_port_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-GWORD_BITS=40", "-GMAIN13_BASE=101855232"],
+        "golden": "quux13_port.quux.k4.golden",
+        "machine": "quux",
+    },
+    # And revision 13's five-beat lines, five-byte writes and 4 KiB split
+    # (`tb/quux13_axi_master_tb.cpp`).
+    "quux13_axi_master_quux": {
+        "sources": ["rtl/plumbing/quux_axi_master.sv"],
+        "top": "quux_axi_master",
+        "tb": "tb/quux13_axi_master_tb.cpp",
+        "flags": ["-O2", "-GWORD_BITS=40"],
+        "golden": None,
         "machine": "quux",
     },
     # QUUX's 64-bit AXI master with its line fills, against AXI3 and a
@@ -1414,9 +1446,12 @@ CHECKS = {
         "machine": "quux",
     },
     "quux_readout_window": {
-        "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/machine/cadr_machine.sv"],
+        # The DDR map's package first: `cadr_machine.sv` names it in a
+        # parameter's default.
+        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_microcycle.sv",
+                    "rtl/machine/cadr_machine.sv"],
         "extra": [
-            "rtl/machine/cadr_phase_gen.sv", "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_phase_gen.sv",
             "rtl/machine/cadr_xbus_decode.sv",
             "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
             "rtl/machine/cadr_spy_registers.sv",
@@ -2515,15 +2550,20 @@ PENDING = {}
 
 # **REVISION 13'S PROCESSOR** (contract G2, appendix A1): the whole machine
 # at `WORD_BITS` 40 on the programs of `golden/src/quux13.rs`, the
-# Makefile's `QUUX13_PROGRAMS`, each traced on muir's `Geometry::QUUX_13`.
+# Makefile's `QUUX13_PROGRAMS`, each traced on muir's `Geometry::QUUX_13`,
+# with its main memory at the Makefile's `QUUX13_TB_BASE`.
 # And the read-during-write window on revision 13's dispatch memory and map,
 # 4,096, 8,192 and 4,096 entries: the same machine under `CADR_RDW_POISON`
-# on the `map` program, which writes all three.
-QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map")
+# on the `map` program, which writes all three; and on the cache's RAMs,
+# under `CADR_RDW_POISON_CACHE` as well, on the `lines` program.
+QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map", "space", "lines", "fused")
+QUUX13_TB_BASE = "170156032"
 for _p in QUUX13_PROGRAMS:
     CHECKS["quux13_%s_quux" % _p] = dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"', "-GWORD_BITS=40"],
+        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"', "-GWORD_BITS=40",
+                                           "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE,
+                                           "-CFLAGS", "-DQUUX13_TB_BASE=%su" % QUUX13_TB_BASE],
         "golden": "quux13_%s.quux.golden" % _p,
         "prom": "quux13_%s_prom.hex" % _p,
         "machine": "quux",
@@ -2531,12 +2571,21 @@ for _p in QUUX13_PROGRAMS:
 CHECKS["rdw_poison_quux13_quux"] = dict(CHECKS["quux13_map_quux"], **{
     "flags": CHECKS["quux13_map_quux"]["flags"] + ["+define+CADR_RDW_POISON"],
 })
+CHECKS["rdw_poison_quux13_mem_quux"] = dict(CHECKS["quux13_lines_quux"], **{
+    "flags": CHECKS["quux13_lines_quux"]["flags"] + ["+define+CADR_RDW_POISON",
+                                                     "+define+CADR_RDW_POISON_CACHE"],
+})
+CHECKS["rdw_poison_quux13_pf_quux"] = dict(CHECKS["quux13_fused_quux"], **{
+    "flags": CHECKS["quux13_fused_quux"]["flags"] + ["+define+CADR_RDW_POISON",
+                                                     "+define+CADR_RDW_POISON_CACHE"],
+})
 
 QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux"] + \
     ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
                                   "imemsync", "page", "registers", "clockwait", "memedge", "busreset",
                                   "startstart", "rtc", "files", "fused", "operand", "prefetch")] + \
-    ["quux13_%s_quux" % p for p in QUUX13_PROGRAMS] + ["rdw_poison_quux13_quux"]
+    ["quux13_%s_quux" % p for p in QUUX13_PROGRAMS] + ["rdw_poison_quux13_quux", "rdw_poison_quux13_mem_quux",
+                                                           "rdw_poison_quux13_pf_quux"]
 CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
 CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)
 CHECKS["quux_clockwait_quux_l1"] = _timed("quux_clockwait_quux", 4, 1)

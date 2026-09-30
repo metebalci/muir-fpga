@@ -666,8 +666,10 @@ if {$port > 0 && $machine ne "quux"} {
 # three ticks before.  No register of it at the bus's 80 ns, and a tick from
 # each of the two.
 if {$port > 0 && $machine eq "quux"} {
-    set q_addr {*g_ddr.g_qaxi.u_qaxi/m_awaddr_reg* *g_ddr.g_qaxi.u_qaxi/m_araddr_reg* *g_ddr.g_qaxi.u_qaxi/m_wdata_reg*
-                *g_ddr.g_qaxi.u_qaxi/m_wstrb_reg* *g_ddr.g_qaxi.u_qaxi/half_reg*}
+    # The request the adapter holds, which its transaction is worked out
+    # from (`quux_axi_master.sv`).
+    set q_addr {*g_ddr.g_qaxi.u_qaxi/a_q_reg* *g_ddr.g_qaxi.u_qaxi/wd_q_reg* *g_ddr.g_qaxi.u_qaxi/beats_q_reg*
+                *g_ddr.g_qaxi.u_qaxi/wide_q_reg* *g_ddr.g_qaxi.u_qaxi/line_reg*}
     # grid: 80 ns
     assert_instance_timing $tick 8 *g_ddr.g_qaxi.u_qaxi/* {}
     # grid: 0 ns + 1 tick

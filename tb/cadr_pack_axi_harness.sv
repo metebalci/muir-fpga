@@ -289,7 +289,8 @@ module cadr_pack_axi_harness #(
 
   // QUUX's line fill and its port's idle (contract Q6): the CADR this
   // harness builds never asks a line, so the line is zeros.
-  logic h_mem_line, h_mem_drained;
+  logic h_mem_line, h_mem_drained, h_mem_wide;
+  logic [2:0] h_mem_beats;
   // QUUX's host side's word, read by nobody here.
   /* verilator lint_off UNUSEDSIGNAL */
   logic [31:0] h9_host_rdata;
@@ -387,7 +388,7 @@ module cadr_pack_axi_harness #(
       // registered as `boards/arty-z7-20/cadr_arty.sv` registers them.
       .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
-      .mem_line(h_mem_line), .mem_rline(128'd0), .mem_drained(h_mem_drained),
+      .mem_line(h_mem_line), .mem_beats(h_mem_beats), .mem_wide(h_mem_wide), .mem_rline(128'd0), .mem_drained(h_mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r_bus), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -497,7 +498,7 @@ module cadr_pack_axi_harness #(
   logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
 
   logic unused;
-  assign unused = &{1'b0, h_mem_line, h_mem_drained, tv_map_q, tv_color_map_q, disp_color_map_q,
+  assign unused = &{1'b0, h_mem_line, h_mem_beats, h_mem_wide, h_mem_drained, tv_map_q, tv_color_map_q, disp_color_map_q,
                     ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
                     ser_status, ser_syn_face,
                     chaos_tx_go, chaos_tx_len, chaos_tx_valid,
