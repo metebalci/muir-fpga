@@ -27,6 +27,15 @@
 //             still pass if it did.
 //   NO CYCLE  a request with no bus cycle open --- the transaction the fabric
 //             invented, which is the board's own suspect.
+//   OPENS ITS OWN CYCLE  a request that rises on the very tick its cycle
+//             opens is a request IN that cycle, judged against that cycle's
+//             direction and decode and counted as its first --- the channel's
+//             every word has this shape.  Clean, over a previous cycle whose
+//             registered state would say otherwise on each count; and its
+//             bounds are faults: a request one tick BEFORE its cycle, and one
+//             on the tick its cycle closes, are both clause 4, and a request
+//             that opens a cycle of the wrong decode or direction, or a second
+//             one inside it, is still that clause.
 //   NOT MEMORY  a request on a cycle the decode did not call main memory.
 //   DIRECTION a request whose direction is not the one the cycle holds.  THE
 //             CAPTURED WORD IS ASSERTED HERE and not merely the clause,
@@ -214,6 +223,39 @@ struct Dut {
     tick();
   }
 
+  // A request that OPENS its own cycle: `cycle` and `mem_req` rise on the
+  // same tick, as the channel's do after the arbiter's idle tick.  Answered
+  // once, then the request falls and the cycle closes.  `second` raises a
+  // second request inside the same cycle, which is a fault.
+  void open_with_request(bool write, bool memory, bool req_write, uint32_t phys,
+                         uint32_t addr, uint32_t wdata, bool second = false) {
+    m->cycle = 1;
+    m->cycle_write = write;
+    m->cycle_memory = memory;
+    m->cycle_phys = phys;
+    m->mem_req = 1;
+    m->mem_write = req_write;
+    m->mem_addr = addr;
+    m->mem_wdata = wdata;
+    tick();
+    m->mem_done = 1;
+    tick();
+    m->mem_done = 0;
+    m->mem_req = 0;
+    tick();
+    if (second) {
+      m->mem_req = 1;
+      tick();
+      m->mem_done = 1;
+      tick();
+      m->mem_done = 0;
+      m->mem_req = 0;
+      tick();
+    }
+    m->cycle = 0;
+    tick();
+  }
+
   uint64_t word(int s) {
     m->sel = s;
     tick();
@@ -353,6 +395,40 @@ void RunCleanWithPort(Dut &d) {
         d.port_reads());
 }
 
+// A REQUEST THAT OPENS ITS OWN CYCLE IS CLEAN.  Each one follows a cycle
+// whose REGISTERED state would fault it on a different clause, so the check
+// holds every count the request is judged by, not only clause 4: after a
+// memory read with its one request, a write that opens its own cycle must not
+// be read as a second request (clause 2) or as a read's cycle (clause 3);
+// after a cycle the decode did not call memory, a read that opens a memory
+// cycle must not be read as that one (clause 5).  And between them the
+// channel's own shape, back to back, with the idle tick the arbiter leaves.
+void RunOpensItsOwnCycle(Dut &d) {
+  d.reset();
+  d.boundary();
+  d.cycle(false, true, 0x400, 0x18002000, Poison(20));
+  d.open_with_request(true, true, true, 0x401, 0x18002004, Poison(21));
+  d.boundary();
+  d.m->cycle = 1;
+  d.m->cycle_write = true;
+  d.m->cycle_memory = 0;
+  d.m->cycle_phys = 017377774;
+  d.tick();
+  d.tick();
+  d.m->cycle = 0;
+  d.tick();
+  d.open_with_request(false, true, false, 0x402, 0x18002008, Poison(22));
+  for (int i = 0; i < 6; ++i)
+    d.open_with_request(i & 1, true, i & 1, 0x410 + i, 0x18002040 + 4 * i,
+                        Poison(23 + i));
+  Check(d.faults() == 0,
+        "a request that opens its own cycle produced %ld faults, the first "
+        "clause %d (clauses seen %#x)", d.faults(), d.clause(), d.seen());
+  Check(d.stalled() == 0,
+        "a request that opens its own cycle counted %ld stalls", d.stalled());
+  Check(!d.valid(), "a request that opens its own cycle latched a fault");
+}
+
 void RunClause(const char *name, int want, void (*drive)(Dut &)) {
   Dut d;
   d.reset();
@@ -384,11 +460,89 @@ int main(int argc, char **argv) {
     delete d.m;
   }
 
+  {
+    Dut d;
+    RunOpensItsOwnCycle(d);
+    delete d.m;
+  }
+
   RunClause("a request with no cycle open", kNoCycle, [](Dut &d) {
     d.boundary();
     d.cycle(false, true, 0x40, 0x18000100, Poison(1));
     d.loose_request(true, 0x18000100, Poison(2));
   });
+
+  // THE BOUNDS OF A REQUEST THAT OPENS ITS OWN CYCLE, which are real
+  // clause-4 faults and must stay so: only the tick the cycle opens is
+  // excused.  One tick early is a request on the arbiter's idle tick, where
+  // the bus belongs to nobody; and a request on the tick `cycle` falls is
+  // one with no cycle open, the registered state notwithstanding.
+  RunClause("a request one tick before its cycle opens", kNoCycle,
+            [](Dut &d) {
+              d.boundary();
+              d.m->mem_req = 1;
+              d.m->mem_write = 0;
+              d.m->mem_addr = 0x18000110;
+              d.tick();
+              d.m->cycle = 1;
+              d.m->cycle_write = 0;
+              d.m->cycle_memory = 1;
+              d.m->cycle_phys = 0x44;
+              d.tick();
+              d.m->mem_done = 1;
+              d.tick();
+              d.m->mem_done = 0;
+              d.m->mem_req = 0;
+              d.tick();
+              d.m->cycle = 0;
+              d.tick();
+            });
+
+  RunClause("a request on the tick its cycle closes", kNoCycle, [](Dut &d) {
+    d.boundary();
+    d.m->cycle = 1;
+    d.m->cycle_write = 0;
+    d.m->cycle_memory = 1;
+    d.m->cycle_phys = 0x48;
+    d.tick();
+    d.tick();
+    d.m->cycle = 0;
+    d.m->mem_req = 1;
+    d.m->mem_write = 0;
+    d.m->mem_addr = 0x18000120;
+    d.tick();
+    d.m->mem_done = 1;
+    d.tick();
+    d.m->mem_done = 0;
+    d.m->mem_req = 0;
+    d.tick();
+  });
+
+  // AND A REQUEST THAT OPENS ITS OWN CYCLE IS STILL JUDGED BY THE OTHER
+  // CLAUSES, against the cycle it opens and not the one before: each follows
+  // a cycle whose registered state would have let it pass.
+  RunClause("a request that opens a cycle memory does not answer", kNotMemory,
+            [](Dut &d) {
+              d.boundary();
+              d.cycle(false, true, 0x4C, 0x18000130, Poison(30));
+              d.open_with_request(false, false, false, 017377776, 0x1F000000,
+                                  Poison(31));
+            });
+
+  RunClause("a request that opens a cycle of the other direction", kDirection,
+            [](Dut &d) {
+              d.boundary();
+              d.cycle(true, true, 0x50, 0x18000140, Poison(32));
+              d.open_with_request(false, true, true, 0x51, 0x18000144,
+                                  Poison(33));
+            });
+
+  RunClause("a request that opens a cycle, and a second in it", kTwoReqs,
+            [](Dut &d) {
+              d.boundary();
+              d.open_with_request(false, true, false, 0x54, 0x18000150,
+                                  Poison(34), true);
+            });
 
   RunClause("a request on a cycle that is not memory's", kNotMemory,
             [](Dut &d) {

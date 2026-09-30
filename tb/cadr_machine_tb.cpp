@@ -1626,23 +1626,17 @@ int main(int argc, char **argv) {
     };
     const uint64_t w0 = window(0), w1 = window(1);
     const unsigned faults = static_cast<unsigned>(w0 & 0x7FFFu);
-    // **A CHANNEL'S WORD IS A FAULT TO THE AUDIT, EVERY ONE, AND THAT IS THE
-    // AUDIT'S OWN KNOWN FAULT**, not the transfer's: the arbiter's idle tick
-    // at a change of owner is where the audit closes one cycle, and the
-    // channel's request rises in the very tick after it, when its cycle
-    // opens --- so clause 4, a request with no cycle open, the registered
-    // `cyc_open` a tick behind (`cadr_bus_audit.sv`).  It is what a board
-    // counts from its first disk transfer on, and the only machine trace with
-    // transfers is revision 13's `disk`.  Held exactly: clause 4 at the
-    // channel's first word, and one fault for each word the channel moved,
-    // no more and no fewer.
+    // **A CHANNEL'S WORD IS NOT A FAULT, AND THIS IS WHERE THAT IS HELD.**
+    // The arbiter's idle tick at a change of owner closes one cycle, and the
+    // channel's request rises in the very tick after it, the tick its cycle
+    // opens: an Xbus cycle is opened BY its request.  The audit used to judge
+    // that request against the cycle state it had registered, a tick behind,
+    // and counted clause 4 on every channel word --- 5,130 of them on
+    // revision 13's `disk`, the only machine trace with transfers.  Zero
+    // faults here, with the channel's word count printed beside it, is what
+    // says the audit judges a request against the cycle it opens.
     const unsigned channel_words = static_cast<unsigned>(ch13_reads + ch13_writes);
-    const bool channel_faults = have_disk && faults == channel_words &&
-                                ((w1 >> 22) & 7u) == 4u && ((w1 >> 25) & 0x7Fu) == 0x08u;
-    if (channel_faults) {
-      std::printf("    the transaction audit counted clause 4 on each of the channel's %u words, "
-                  "and nothing else\n", channel_words);
-    } else if (w0 == ~0ull || w1 == ~0ull || faults != 0) {
+    if (w0 == ~0ull || w1 == ~0ull || faults != 0) {
       std::fprintf(stderr,
                    "FAIL: the transaction audit counted %u faults, the first "
                    "clause %u at word %o (clauses seen %02x)\n",
@@ -1650,6 +1644,9 @@ int main(int argc, char **argv) {
                    static_cast<unsigned>(w1 & 0x3FFFFFu),
                    static_cast<unsigned>((w1 >> 25) & 0x7Fu));
       ++bad;
+    } else if (channel_words != 0) {
+      std::printf("    the transaction audit counted no fault, over the channel's %u words\n",
+                  channel_words);
     } else {
       std::printf("    the transaction audit counted no fault\n");
     }

@@ -9667,11 +9667,11 @@ if {0 && $held ne $want} {
 @note would go on reading zero faults for ever and be believed.
 @note
 @note Written as a term that is never true rather than by deleting the arm, so
-@note that `cyc_open` stays read and lint does not do the catching.
+@note that `open_now` stays read and lint does not do the catching.
 @old
-    else if (req_rise && !cyc_open)               fault_clause = C_NO_CYCLE;
+    else if (req_rise && !open_now)               fault_clause = C_NO_CYCLE;
 @new
-    else if (req_rise && !cyc_open && !req_rise)  fault_clause = C_NO_CYCLE;
+    else if (req_rise && !open_now && !req_rise)  fault_clause = C_NO_CYCLE;
 @end
 
 @mutation the-audit-does-not-mind-the-direction
@@ -9681,9 +9681,9 @@ if {0 && $held ne $want} {
 @note in the same direction is silent to memory; one in the WRONG direction
 @note replaces a word with MD, and this is the only thing watching for it.
 @old
-    else if (req_rise && (mem_write != cyc_write)) fault_clause = C_DIRECTION;
+    else if (req_rise && (mem_write != write_now)) fault_clause = C_DIRECTION;
 @new
-    else if (req_rise && (mem_write && cyc_write)) fault_clause = C_DIRECTION;
+    else if (req_rise && (mem_write && write_now)) fault_clause = C_DIRECTION;
 @end
 
 @mutation the-fault-count-wraps-instead-of-saturating
@@ -9743,9 +9743,9 @@ if {0 && $held ne $want} {
 @note request rather than the second means every memory cycle the machine ever
 @note makes is reported as a duplicate.
 @old
-    else if (req_rise && (reqs != 2'd0))          fault_clause = C_TWO_REQS;
+    else if (req_rise && (reqs_now != 2'd0))      fault_clause = C_TWO_REQS;
 @new
-    else if (req_rise && (reqs == 2'd0))          fault_clause = C_TWO_REQS;
+    else if (req_rise && (reqs_now == 2'd0))      fault_clause = C_TWO_REQS;
 @end
 
 @mutation a-dead-port-erases-the-record
@@ -9820,6 +9820,95 @@ if {0 && $held ne $want} {
         answers        <= {1'b0, done_rise};
 @new
         answers        <= {1'b0, done_rise && 1'b0};
+@end
+
+# A REQUEST THAT OPENS ITS OWN CYCLE.  The channel's every word has that shape:
+# the arbiter's idle tick closes the cycle before it and the request rises in
+# the tick the channel's cycle opens.  The audit judged it against registers a
+# tick behind and counted clause 4 on every channel word, 5,130 on revision
+# 13's `disk` and 771 on `axi_channel`.  The acceptance is exactly one tick
+# wide, and these hold it from both sides: widened, and the real clause-4
+# faults beside it go silent; judged against the cycle before, and correct
+# traffic faults again.
+
+@mutation any-request-is-taken-to-open-its-own-cycle
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE OVER-CORRECTION, AND THE ONE A FIX FOR THE CHANNEL'S FALSE POSITIVE
+@note WOULD MOST LIKELY BE.  A request is excused when it opens its own cycle,
+@note which is `cycle` rising on the request's own tick; excusing every request
+@note as the opener of a cycle makes clause 4 unable to fire at all, and it is
+@note the clause a transaction the fabric invented falls under.  The unit
+@note check's request with no cycle open, and its request one tick before its
+@note cycle, are what catch it.
+@old
+  assign open_now   = cycle;
+@new
+  assign open_now   = cycle || req_rise;
+@end
+
+@mutation a-request-on-the-tick-its-cycle-closes-is-excused
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE ACCEPTANCE AS IT WAS BEFORE IT WAS MADE EXACT.  The open flag used to
+@note be a register, the same as `cycle_q`, so a request rising on the tick
+@note `cycle` fell passed as one inside the cycle just closed.  That is a
+@note request with no cycle open, and the unit check drives one.
+@old
+  assign open_now   = cycle;
+@new
+  assign open_now   = cycle || cycle_q;
+@end
+
+@mutation a-request-that-opens-a-cycle-is-judged-by-the-decode-before
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note On the tick a cycle opens, the register still holds the PREVIOUS cycle's
+@note decode.  A request judged against it faults when the cycle before was not
+@note main memory's, and passes when a cycle that is not memory's is opened by
+@note a request right after one that was.  Both are driven in the unit check.
+@old
+  assign memory_now = cycle_rise ? cycle_memory : cyc_memory;
+@new
+  assign memory_now = cyc_memory;
+@end
+
+@mutation a-request-that-opens-a-cycle-is-judged-by-the-direction-before
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note The same for the direction: a write that opens its own cycle after a
+@note read would be reported as the board's own suspect, a transaction in the
+@note wrong direction, on traffic that is correct.
+@old
+  assign write_now  = cycle_rise ? cycle_write  : cyc_write;
+@new
+  assign write_now  = cyc_write;
+@end
+
+@mutation a-request-that-opens-a-cycle-is-counted-into-the-cycle-before
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note And the count: after a cycle with its one request, the request that
+@note opens the next cycle would be that cycle's second, clause 2, on every
+@note channel word that follows a memory cycle.
+@old
+  assign reqs_now   = cycle_rise ? 2'd0         : reqs;
+@new
+  assign reqs_now   = reqs;
+@end
+
+@mutation a-request-that-opens-a-cycle-is-not-counted-in-it
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note The other half of the count.  On the tick a cycle opens, the reset of
+@note the count and the request's own increment land on the same edge, and the
+@note increment has to win: if the reset wins, the cycle starts at zero with
+@note its first request already in it, and a second request inside it is not
+@note seen.  The unit check opens a cycle with a request and raises another.
+@old
+        if (reqs_now != 2'd3) reqs <= reqs_now + 2'd1;
+@new
+        if (reqs_now != 2'd3 && !cycle_rise) reqs <= reqs_now + 2'd1;
 @end
 
 # ============================================================================
@@ -10223,6 +10312,42 @@ if {0 && $held ne $want} {
       .sel         (ro_sel_d2),
 @new
       .sel         (ro_sel_d2 ^ 4'd1),
+@end
+
+@mutation the-channel-asks-on-the-idle-tick
+@check axi_channel
+@file rtl/machine/cadr_memory_path.sv
+@note A REAL CLAUSE-4 FAULT, PLANTED THROUGH THE WHOLE MACHINE, AND THE AUDIT
+@note IS THE ONLY THING THAT SEES IT.  The arbiter leaves the bus idle for a
+@note tick at every change of owner, and the audit's anchor closes the old
+@note cycle on it; a channel whose request goes out on that tick instead of
+@note the next asks with no cycle open, one tick before its own.  Every word
+@note still lands and every other clause of this check stays green; the
+@note fabric's audit counts clause 4 once per channel word, 771 here.
+@note
+@note It is the bound of the acceptance for a request that opens its own
+@note cycle: the tick the cycle opens is excused, the tick before is not.
+@note Before that acceptance was made exact, the audit counted clause 4 on
+@note every channel word anyway, so this fault read exactly like correct
+@note traffic.
+@old
+  assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : br_cpu_rq);
+@new
+  assign bus_rq    = (changing && !ch_own) ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : br_cpu_rq);
+@end
+
+@mutation the-channel-asks-on-the-idle-tick-quux
+@check quux13_disk_quux
+@file rtl/machine/cadr_memory_path.sv
+@note The same fault on revision 13's `disk`, the one machine trace with
+@note channel transfers: the trace still agrees with muir-sim on every
+@note microcycle, and the audit read at the end counts clause 4 on each of the
+@note channel's 5,130 words.  That count and clause are exactly what the
+@note machine check used to accept as the audit's own known fault.
+@old
+  assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : br_cpu_rq);
+@new
+  assign bus_rq    = (changing && !ch_own) ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : br_cpu_rq);
 @end
 
 # ============================================================================

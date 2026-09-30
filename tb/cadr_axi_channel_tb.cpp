@@ -858,6 +858,31 @@ int main(int argc, char **argv) {
 
   const unsigned final_pc = dut->pc;
   const int promdis = dut->promdisable;
+
+  // **AND WHAT THE FABRIC'S OWN AUDIT MADE OF THE SAME RUN**, read through
+  // the console's window at selector 11 as a halted board is read.  Every
+  // word the channel moved is a request that opens its own bus cycle --- the
+  // arbiter's idle tick closes the cycle before it and the request rises in
+  // the tick the channel's opens --- and the audit must count none of them.
+  // It used to count each one as clause 4, and this run was the CADR's only
+  // channel traffic that reached the audit, with nothing here reading it.
+  // The slave is left idle for these few ticks, which is at worst a stalled
+  // request and never a fault.
+  auto audit_word = [&](unsigned word) -> uint64_t {
+    dut->con_ro_addr = (11u << 14) | word;
+    for (int i = 0; i < 4; ++i) {
+      dut->clk = 1;
+      dut->eval();
+      dut->clk = 0;
+      dut->eval();
+    }
+    return dut->con_ro_data;
+  };
+  const uint64_t audit_w0 = audit_word(0), audit_w1 = audit_word(1);
+  const long audit_faults = static_cast<long>(audit_w0 & 0x7FFFu);
+  const long audit_clause = static_cast<long>((audit_w1 >> 22) & 7u);
+  const bool audit_marked = ((audit_w0 >> 32) & 0xFFFFu) == 0xB05Au &&
+                            ((audit_w1 >> 32) & 0xFFFFu) == 0xB05Au;
   dut->final();
   delete dut;
 
@@ -884,7 +909,8 @@ int main(int argc, char **argv) {
       "  clauses 6 and 7        applied to %ld requests, skipped on %ld with a "
       "transfer in flight\n"
       "  clause 8               %ld main-memory bus cycles, %ld of which asked "
-      "the port for nothing\n",
+      "the port for nothing\n"
+      "  the fabric's own audit %ld faults, the first clause %ld\n",
       micro, t, final_pc, promdis, stopped,
       cycles, mem_cycles, dev_cycles, ub_cycles, nxm_cycles,
       static_cast<long>(fills), served_lbas.size(), fills, evictions, denials,
@@ -893,7 +919,7 @@ int main(int argc, char **argv) {
       ar_handshakes, aw_handshakes, r_handshakes, b_handshakes, w_handshakes,
       pages_checked, pages_wrong, pages_partial, words_read_back,
       decode_applied, decode_skipped, memory_cycles_checked,
-      memory_cycles_unasked);
+      memory_cycles_unasked, audit_faults, audit_clause);
   std::fflush(stdout);
 
   // ------------------------------------------------------- what is asserted
@@ -989,6 +1015,15 @@ int main(int argc, char **argv) {
         "%ld of %ld main-memory bus cycles finished without asking the port "
         "for their own address, so something answered them that was not the "
         "memory", memory_cycles_unasked, memory_cycles_checked);
+
+  // THE FABRIC'S AUDIT, over a run with the channel in it.
+  Check(audit_marked,
+        "the audit's words read %012" PRIx64 " and %012" PRIx64 ", which are "
+        "not the audit's", audit_w0, audit_w1);
+  Check(audit_faults == 0,
+        "the fabric's own audit counted %ld faults, the first clause %ld, "
+        "over %ld transfers of the channel", audit_faults, audit_clause,
+        transfers);
 
   if (fails) {
     std::fprintf(stderr, "axi channel: %d failure%s\n", fails,

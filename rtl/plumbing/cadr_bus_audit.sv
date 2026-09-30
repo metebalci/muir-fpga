@@ -264,11 +264,10 @@ module cadr_bus_audit (
   // written once and read once, by a console, on a halted machine, so the
   // relaxed set is where it belongs.
   logic req_q, done_q, cycle_q;
-  logic req_rise, done_rise, cycle_rise, cycle_fall;
+  logic req_rise, done_rise, cycle_rise;
   assign req_rise   = mem_req && !req_q;
   assign done_rise  = mem_done && !done_q;
   assign cycle_rise = cycle && !cycle_q;
-  assign cycle_fall = !cycle && cycle_q;
 
   // The state of the request now open and of the cycle now open.  Two bits
   // each and saturating: what matters is "more than one", and a counter that
@@ -281,7 +280,33 @@ module cadr_bus_audit (
   // instead and the long arc lands where it is relaxed.
   logic       in_req;
   logic [1:0] answers, reqs;
-  logic       cyc_open, cyc_write, cyc_memory;
+  logic       cyc_write, cyc_memory;
+
+  // **THE CYCLE A REQUEST IS JUDGED AGAINST IS THE ONE STANDING ON ITS OWN
+  // TICK, AND A REQUEST MAY OPEN IT.**  An Xbus cycle is opened by its
+  // request: the master puts the address, the direction and the word up and
+  // drops `-XBUS RQ`, and that is the cycle (muir-sim's
+  // `XbusMaster::request`, `src/xbus.rs`).  The channel's is that shape: the
+  // arbiter's idle tick closes the cycle before it, and the channel's request
+  // rises in the very tick after, the tick its cycle opens.  The registers
+  // above are a tick behind that --- the open flag they had still low,
+  // `cyc_write`, `cyc_memory` and `reqs` still the PREVIOUS cycle's --- and
+  // judging the request against them counted clause 4 on every word the
+  // channel moved.
+  //
+  // So a cycle is open when `cycle` is up ON THIS TICK, and on the tick it
+  // rises its attributes are taken live, as the registers are about to take
+  // them, with no request yet counted in it.  That is tighter than before as
+  // well as wider: a request rising on the tick `cycle` falls used to pass on
+  // the registered open flag and is now what it is, a request with no cycle
+  // open.  A request one tick BEFORE its cycle is still clause 4, and
+  // `tb/cadr_bus_audit_unit_tb.cpp` holds all three.
+  logic       open_now, write_now, memory_now;
+  logic [1:0] reqs_now;
+  assign open_now   = cycle;
+  assign write_now  = cycle_rise ? cycle_write  : cyc_write;
+  assign memory_now = cycle_rise ? cycle_memory : cyc_memory;
+  assign reqs_now   = cycle_rise ? 2'd0         : reqs;
 
   // --------------------------------------------------------- what is faulted
   logic [2:0] fault_clause;
@@ -297,10 +322,10 @@ module cadr_bus_audit (
     // exonerated and the defect therefore is.
     if (port_write_ack && owed_writes == 4'd0)    fault_clause = C_PORT_EXTRA;
     else if (port_read_ack && owed_reads == 4'd0) fault_clause = C_PORT_EXTRA;
-    else if (req_rise && !cyc_open)               fault_clause = C_NO_CYCLE;
-    else if (req_rise && !cyc_memory)             fault_clause = C_NOT_MEMORY;
-    else if (req_rise && (mem_write != cyc_write)) fault_clause = C_DIRECTION;
-    else if (req_rise && (reqs != 2'd0))          fault_clause = C_TWO_REQS;
+    else if (req_rise && !open_now)               fault_clause = C_NO_CYCLE;
+    else if (req_rise && !memory_now)             fault_clause = C_NOT_MEMORY;
+    else if (req_rise && (mem_write != write_now)) fault_clause = C_DIRECTION;
+    else if (req_rise && (reqs_now != 2'd0))      fault_clause = C_TWO_REQS;
     else if (done_rise && in_req && (answers != 2'd0)) fault_clause = C_TWICE;
     // **AN ANSWER ON THE REQUEST'S OWN FIRST TICK IS AN ANSWER TO A STANDING
     // REQUEST**: `mem_req` is up on that tick and only `in_req`, a register,
@@ -376,7 +401,6 @@ module cadr_bus_audit (
       in_req         <= 1'b0;
       answers        <= 2'd0;
       reqs           <= 2'd0;
-      cyc_open       <= 1'b0;
       cyc_write      <= 1'b0;
       cyc_memory     <= 1'b0;
       faults         <= 15'd0;
@@ -410,14 +434,12 @@ module cadr_bus_audit (
       if (boundary) micro <= micro + 32'd1;
 
       // The bus cycle the master has opened, taken from the master's own
-      // signals at the instant it opens.
+      // signals at the instant it opens.  Whether one is open is `cycle`
+      // itself, read live (`open_now`), so no register holds that.
       if (cycle_rise) begin
-        cyc_open   <= 1'b1;
         cyc_write  <= cycle_write;
         cyc_memory <= cycle_memory;
         reqs       <= 2'd0;
-      end else if (cycle_fall) begin
-        cyc_open <= 1'b0;
       end
 
       // The request now open at the memory port.
@@ -425,7 +447,9 @@ module cadr_bus_audit (
         in_req         <= 1'b1;
         // An answer on this same tick is this request's (see the clause).
         answers        <= {1'b0, done_rise};
-        if (reqs != 2'd3) reqs <= reqs + 2'd1;
+        // Counted into the cycle it is judged against, which on the tick a
+        // cycle opens is the new one: this overrides the reset above.
+        if (reqs_now != 2'd3) reqs <= reqs_now + 2'd1;
       end else if (in_req && !mem_req) begin
         in_req <= 1'b0;
         // A REQUEST THAT FELL WITH NO ANSWER IS A DIFFERENT FAULT AND GETS A
