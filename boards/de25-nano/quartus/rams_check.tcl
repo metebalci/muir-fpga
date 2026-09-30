@@ -111,10 +111,12 @@ proc rams_rule {what mems we wa} {
 }
 
 # {what} {memories} {write-enable register} {write-address register}
+# Block-disk's write port registers are its walk's, in a generate block of
+# each revision's own (`g_walk12`, `g_walk13`): the patterns take either.
 set quux_rules {
     {QUUX's PDL buffer}        {*|processor|pdl_rtl_*}           {*|processor|pdlwrited*}          {*|processor|pwidx*}
     {QUUX's control store}     {*|processor|imem_rtl_*}          {*|processor|iwe_q*}              {*|processor|iwa_q\[*}
-    {block-disk's block store} {*g_quux_disk.disk|blk_ram_rtl_*} {*g_quux_disk.disk|chb_we*}       {*g_quux_disk.disk|chb_a\[*}
+    {block-disk's block store} {*g_quux_disk.disk|blk_ram_rtl_*} {*g_quux_disk.disk|*chb_we*}      {*g_quux_disk.disk|*chb_a\[*}
 }
 # The CADR's PDL is known by the write pulse's edge register, as on the Zynq
 # boards; its control store by the same, with the PC as its address.

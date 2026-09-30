@@ -14,17 +14,18 @@
 // nowhere.  The words, at muir's pin:
 //
 //     0    the MACHINE-ID, as functional source 16 gives it
-//     1    the level-1 map entry's bits, 6
-//     2    the level-2 map's entries, 32 << 6 = 2,048
+//     1    the level-1 map entry's bits, 6; 7 on revision 13
+//     2    the level-2 map's entries, 32 << 6 = 2,048; 4,096 on revision 13
 //     3    the PDL buffer's words, 1 << 14 = 16,384
 //     4    the control store's words, 16,384
 //     5    A memory's words, 1,024
-//     6    the dispatch memory's words, 2,048
+//     6    the dispatch memory's words, 2,048; 4,096 on revision 13
 //     7    the multiply and divide, 3: bit 0 MUL, bit 1 DIV
 //     10   the processor tick, timer 0, 1
 //     11   the main screen's width in 31:16 and height in 15:0
 //     12   the main screen's bits a pixel in 31:16 and words a line in 15:0
-//     13   the main screen's buffer, its first physical address, `17000000`
+//     13   the main screen's buffer, its first physical address, `17000000`;
+//          on revision 13 the frame buffer window's, `1760000000`
 //     14   the microsecond clock, 1
 //     15   the optional devices, a bit each: 3, <0> the real-time clock and
 //          <1> the file device, a later optional device taking the next bit
@@ -149,7 +150,13 @@ module quux_feature_page #(
     parameter int unsigned SCREEN_WIDTH   = 1280,
     parameter int unsigned SCREEN_HEIGHT  = 1024,
     parameter int unsigned SCREEN_WPL     = 40,
-    parameter logic [21:0] SCREEN_BUFFER  = 22'o17000000
+    parameter logic [31:0] SCREEN_BUFFER  = 32'o17000000,
+    // 32, QUUX to revision 12; 40, revision 13, whose file device takes
+    // 28-bit addresses and main memory's size in 28 bits
+    // (`quux_file_device.sv`).  The words above that change with it are
+    // `cadr_machine.sv`'s to give.
+    parameter int unsigned WORD_BITS      = 32,
+    localparam int unsigned MEM_BITS      = WORD_BITS > 32 ? 28 : 23
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -223,7 +230,7 @@ module quux_feature_page #(
 
     // --- revision 9: main memory's words and the write buffer empty, for
     // the file device; the whole cache dropped at the next grant
-    input  var logic [22:0] mem_words,
+    input  var logic [MEM_BITS-1:0] mem_words,
     input  var logic        drained,
     output var logic        fd_invalidate,
     // The host's side of the real-time clock (indexes 0 and 1) and of the
@@ -236,6 +243,7 @@ module quux_feature_page #(
     output var logic [31:0] host_rdata,
     // The file device for the readout (`quux_file_device.sv`'s `ro_*`).
     output var logic [47:0] ro_fd_bases,
+    output var logic [47:0] ro_fd_resp_base,
     output var logic [47:0] ro_fd_indexes,
     output var logic [47:0] ro_fd_flags
 );
@@ -303,7 +311,7 @@ module quux_feature_page #(
       .fraction   (rtc_fraction)
   );
 
-  quux_file_device file_device (
+  quux_file_device #(.WORD_BITS(WORD_BITS)) file_device (
       .clk        (clk),
       .rst        (rst),
       .xbus_init  (xbus_init),
@@ -322,6 +330,7 @@ module quux_feature_page #(
       .host_ridx  (host_ridx),
       .host_rdata (fd_host_rdata),
       .ro_bases   (ro_fd_bases),
+      .ro_resp_base(ro_fd_resp_base),
       .ro_indexes (ro_fd_indexes),
       .ro_flags   (ro_fd_flags)
   );
@@ -358,7 +367,7 @@ module quux_feature_page #(
         8'o10:   word = TICK;
         8'o11:   word = {16'(SCREEN_WIDTH), 16'(SCREEN_HEIGHT)};
         8'o12:   word = {16'd1, 16'(SCREEN_WPL)};
-        8'o13:   word = {10'd0, SCREEN_BUFFER};
+        8'o13:   word = SCREEN_BUFFER;
         8'o14:   word = CLOCKS;
         8'o15:   word = OPTIONAL_DEVICES;
         8'o16:   word = TIMERS;

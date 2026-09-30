@@ -27,16 +27,23 @@
 // It answers each operation after a latency drawn from a seeded generator,
 // sooner than the nominal figures, so every acknowledgment must still land
 // on muir's instant, as `tb/quux_mem_port_tb.cpp` says for revision 12; and
-// a second, uncached requester reads and writes words of DDR past main
-// memory, which the port serves between its own operations.
+// a second, uncached requester --- block-disk's channel on the machine ---
+// reads and writes whole words of main memory the trace never touches,
+// which the port serves between its own operations: a write of five bytes
+// at the word's packed address, a read of the one or two beats its bytes
+// are in, the word taken from them.  Its words are this program's to check,
+// and here it snoops nothing (`u_main` low): a snooped set would move
+// muir's hits.
 //
 // **THE PREFETCH'S BUFFER IS COMPARED AS THE PROCESSOR SEES IT**, at every
 // master clock edge: the port's `pf_nx_*` less a store granted at that edge
 // to the word it holds, which the processor drops at the grant itself and
 // the port a tick later (`cadr_microcycle.sv`, "the prefetch").
 //
-// Not held here: coherence with a transfer beside the processor, which on
-// revision 13 is block-disk's two transfers and their seam, not built yet.
+// **AND THE PORT'S COHERENCE WITH A TRANSFER AT REVISION 13**, which muir
+// does not model (`tb/quux_mem_port_tb.cpp` says why for revision 12):
+// `RunCoherence13` below, whole 40-bit words in packed storage and the
+// cache's 8-word lines.
 
 #include <cerrno>
 #include <cinttypes>
@@ -60,8 +67,9 @@ constexpr uint64_t kMainWords = 64ull << 20;
 constexpr uint32_t kFbBase = 0x1C000000u;   // cadr_ddr_map::DISPLAY_BASE, Zynq
 constexpr uint32_t kWindow = 01760000000u;
 constexpr uint32_t kFbWords = 40960u;
-// The uncached requester's words: DDR past main memory's bytes.
-constexpr uint32_t kOtherBase = 0x1B000000u;
+// The uncached requester's words: 64 of main memory, from this word up and
+// in lines the trace never touches (`Untouched`).
+constexpr uint32_t kOtherPhys = 0x3E00000u;
 constexpr int kMaxLatency = 6;
 constexpr uint64_t kMask40 = (1ull << 40) - 1;
 
@@ -118,12 +126,241 @@ struct Row {
   uint64_t pf_word;
 };
 
+// The trace's lines of main memory, `phys >> 3`, from a pass over it before
+// the run: the uncached requester's words are in none of them.
+std::vector<uint32_t> Untouched(const char *path) {
+  std::FILE *f = std::fopen(path, "r");
+  std::vector<uint32_t> words;
+  if (!f) return words;
+  std::vector<bool> touched(kMainWords / 8);
+  char line[512];
+  while (std::fgets(line, sizeof line, f)) {
+    if (line[0] == '#' || line[0] == '\n') continue;
+    long tick;
+    int mclk, n_memrq, wrcyc, kind;
+    uint32_t phys;
+    if (std::sscanf(line, "%ld %d %d %d %d %u", &tick, &mclk, &n_memrq, &wrcyc, &kind, &phys) == 6 &&
+        kind == 0 && phys < kMainWords)
+      touched[phys >> 3] = true;
+  }
+  std::fclose(f);
+  // Words at every byte offset of a beat, 0 to 7: 5w mod 8 runs through
+  // them all over eight consecutive words.
+  for (uint32_t w = kOtherPhys; words.size() < 64 && w < kMainWords; w += (words.size() % 8 == 7) ? 57 : 1)
+    if (!touched[w >> 3]) words.push_back(w);
+  return words;
+}
+
 int Fail(const Row &r, const char *what, uint64_t got, uint64_t want) {
   std::fprintf(stderr,
                "tick %ld: %s is %" PRIx64 ", reference says %" PRIx64 "\n"
                "  inputs: n_memrq=%d wrcyc=%d kind=%d phys=%o mclk=%d\n",
                r.tick, what, got, want, r.n_memrq, r.wrcyc, r.kind, r.phys, r.mclk);
   return 1;
+}
+
+// **THE PORT'S COHERENCE WITH A TRANSFER, AT REVISION 13.**  The contract's
+// two rules as `tb/quux_mem_port_tb.cpp` holds them for revision 12, with
+// revision 13's words and lines: a transfer's read sees every word the
+// processor wrote before it (the write buffer is drained first), and no
+// processor read hits a word from before a transfer's write (the cache's
+// `snoop` drops the word's set as it lands).  The processor and a transfer
+// run at random over a few sets of the cache, whole 40-bit words with their
+// tags, the processor's in words 0-3 of a line and the transfer's in 4-7 so
+// that each drops the other's lines as well as its own; main memory is
+// packed storage, bytes, answering in one to sixty ticks and now and then
+// far past the timeout; and every word read must be one the word held at
+// some instant between the read's start and its answer.
+int RunCoherence13(Vquux_mem_port *dut) {
+  Rng rng{0xc0e4e2e713ull};
+  dut->rst = 1;
+  for (int e = 0; e < 4; ++e) {
+    dut->clk = 1;
+    dut->eval();
+    dut->clk = 0;
+    dut->eval();
+  }
+  dut->rst = 0;
+  dut->n_memrq = 1;
+  dut->mclk = 0;
+  dut->u_req = 0;
+  dut->mem_done = 0;
+  dut->invalidate = 0;
+  dut->is_device = 0;
+  dut->dev_rdata = 0;
+  dut->pf_fetch = 0;
+  dut->pf_drop = 0;
+
+  // Sets 3, 4, 200 and 255 of the 256, each with three tags, one past 22
+  // bits and one with every bit of the 64M words.
+  const uint32_t kSets[4] = {3, 4, 200, 255};
+  const uint32_t kTags[3] = {0, 1, 077777};
+  auto pick = [&](bool transfer) {
+    const uint32_t set = kSets[rng.Below(4)], tag = kTags[rng.Below(3)];
+    return (tag << 11) | (set << 3) | (transfer ? 4 : 0) | rng.Below(4);
+  };
+  auto word40 = [&]() { return ((static_cast<uint64_t>(rng.Next()) << 8) ^ rng.Next()) & kMask40; };
+  std::map<uint32_t, std::vector<std::pair<long, uint64_t>>> history;
+  auto value_at_or_after = [&](uint32_t a, long from, long to, uint64_t got) {
+    const auto it = history.find(a);
+    uint64_t current = Initial(a);
+    if (it == history.end()) return got == current;
+    for (const auto &e : it->second) {
+      if (e.first <= from) current = e.second;
+    }
+    if (got == current) return true;
+    for (const auto &e : it->second) {
+      if (e.first > from && e.first <= to && e.second == got) return true;
+    }
+    return false;
+  };
+  Ddr ddr;
+
+  long answer_at = -1;
+  bool p_asking = false, p_write = false;
+  uint32_t p_phys = 0;
+  uint64_t p_word = 0;
+  long p_grant = -1, p_next = 20, p_release = -1;
+  bool t_asking = false, t_write = false;
+  uint32_t t_phys = 0;
+  uint64_t t_word = 0;
+  long t_start = 0, t_next = 30;
+  long p_reads = 0, p_writes = 0, t_reads = 0, t_writes = 0, slow = 0, very_slow = 0, pulses = 0;
+  int bad = 0;
+
+  for (long t = 0; t < 2000000; ++t) {
+    const bool mclk = (t % 4) == 0;
+    if (dut->mem_req && !dut->mem_done && answer_at < 0) {
+      const uint32_t lat = rng.Below(3000) == 0 ? 500 + rng.Below(200)
+                         : rng.Below(8) == 0   ? 40 + rng.Below(20)
+                                               : 1 + rng.Below(12);
+      if (lat > 29) ++slow;
+      if (lat >= 500) ++very_slow;
+      answer_at = t + lat;
+    }
+    if (dut->mem_req && !dut->mem_done && answer_at >= 0 && t >= answer_at) {
+      const uint32_t a = dut->mem_addr;
+      if (!Ddr::InMain(a)) {
+        if (bad < 10) std::fprintf(stderr, "coherence: tick %ld: main memory asked at %08x\n", t, a);
+        ++bad;
+      }
+      if (dut->mem_line) {
+        for (int w = 0; w < 10; ++w) dut->mem_rline[w] = 0xDEADBEEFu ^ static_cast<uint32_t>(w);
+        for (int b = 0; b < 8 * dut->mem_beats; ++b) {
+          const uint32_t shift = 8 * (b % 4);
+          uint32_t &x = dut->mem_rline[b / 4];
+          x = (x & ~(0xFFu << shift)) | (static_cast<uint32_t>(ddr.Get(a + b)) << shift);
+        }
+      } else if (dut->mem_write) {
+        if (!dut->mem_wide) {
+          if (bad < 10) std::fprintf(stderr, "coherence: tick %ld: a write of main memory of four bytes\n", t);
+          ++bad;
+        }
+        for (int b = 0; b < 5; ++b) ddr.Put(a + b, static_cast<uint8_t>(dut->mem_wdata >> (8 * b)));
+      } else {
+        if (bad < 10) std::fprintf(stderr, "coherence: tick %ld: a single read at %08x\n", t, a);
+        ++bad;
+      }
+      dut->mem_done = 1;
+      answer_at = -1;
+    }
+    if (!dut->mem_req && dut->mem_done) dut->mem_done = 0;
+
+    if (p_release == t) {
+      p_asking = false;
+      p_release = -1;
+      p_next = t + 1 + rng.Below(12);
+    }
+    if (!p_asking && t >= p_next && mclk) {
+      p_asking = true;
+      p_write = rng.Below(3) == 0;
+      p_phys = pick(false);
+      if (!p_write && rng.Below(3) == 0) p_phys = pick(true);
+      p_word = word40();
+      p_grant = -1;
+    }
+    dut->n_memrq = !p_asking;
+    dut->mclk = mclk;
+    dut->wrcyc = p_write;
+    dut->phys = p_phys;
+    dut->wdata = p_word;
+    dut->is_memory = 1;
+    dut->invalidate = !p_asking && rng.Below(400) == 0;
+    if (dut->invalidate) ++pulses;
+
+    if (!t_asking && t >= t_next && !dut->u_done) {
+      t_asking = true;
+      t_write = rng.Below(2) == 0;
+      t_phys = pick(t_write);
+      if (!t_write && rng.Below(2) == 0) t_phys = pick(false);
+      t_word = word40();
+      t_start = t;
+    }
+    dut->u_req = t_asking;
+    dut->u_write = t_write;
+    dut->u_addr = ~0u;
+    dut->u_wdata = t_word;
+    dut->u_main = 1;
+    dut->u_phys = t_phys;
+
+    dut->eval();
+    if (dut->timed_out || dut->dev_rq) {
+      if (bad < 10)
+        std::fprintf(stderr, "coherence: tick %ld: a cycle of main memory's %s\n", t,
+                     dut->timed_out ? "timed out" : "raised -XBUS.RQ");
+      ++bad;
+    }
+    if (p_asking && p_grant < 0 && !dut->n_memgrant) p_grant = t;
+    if (p_asking && !dut->n_memack && p_release < 0) {
+      const long from = p_grant < 0 ? t : p_grant;
+      if (p_write) {
+        history[p_phys].emplace_back(t, p_word);
+        ++p_writes;
+      } else {
+        ++p_reads;
+        if (!value_at_or_after(p_phys, from - 1, t, dut->word)) {
+          if (bad < 10)
+            std::fprintf(stderr, "coherence: tick %ld: the processor read %010" PRIx64 " at %o, a "
+                         "word it did not hold between %ld and %ld\n", t,
+                         static_cast<uint64_t>(dut->word), p_phys, from, t);
+          ++bad;
+        }
+      }
+      p_release = t + 1;
+    }
+    if (t_asking && dut->u_done) {
+      if (t_write) {
+        history[t_phys].emplace_back(t, t_word);
+        ++t_writes;
+      } else {
+        ++t_reads;
+        if (!value_at_or_after(t_phys, t_start - 1, t, dut->u_rdata)) {
+          if (bad < 10)
+            std::fprintf(stderr, "coherence: tick %ld: the transfer read %010" PRIx64 " at %o, a "
+                         "word it did not hold between %ld and %ld\n", t,
+                         static_cast<uint64_t>(dut->u_rdata), t_phys, t_start, t);
+          ++bad;
+        }
+      }
+      t_asking = false;
+      t_next = t + 1 + rng.Below(20);
+    }
+    dut->clk = 1;
+    dut->eval();
+    dut->clk = 0;
+    dut->eval();
+    if (bad >= 10) break;
+  }
+  std::printf("quux13_mem_port: coherence: %ld processor reads and %ld writes, %ld transfer reads "
+              "and %ld writes, %ld of main memory's answers past the nominal figures and %ld past "
+              "the timeout, %ld invalidations; hits %u, misses %u\n",
+              p_reads, p_writes, t_reads, t_writes, slow, very_slow, pulses, dut->hits, dut->misses);
+  if (!bad && (p_reads < 20000 || t_reads < 20000 || t_writes < 20000 || dut->hits < 5000 ||
+               very_slow < 20)) {
+    std::fprintf(stderr, "FAIL: the coherence run reached too little\n");
+    ++bad;
+  }
+  return bad;
 }
 
 }  // namespace
@@ -135,6 +372,12 @@ int main(int argc, char **argv) {
   if (!f) {
     std::fprintf(stderr, "cannot read %s: %s\n", path, std::strerror(errno));
     return 2;
+  }
+
+  const std::vector<uint32_t> u_words = Untouched(path);
+  if (u_words.size() != 64) {
+    std::fprintf(stderr, "FAIL: no room for the uncached requester's words\n");
+    return 1;
   }
 
   auto *dut = new Vquux_mem_port;
@@ -165,9 +408,11 @@ int main(int argc, char **argv) {
 
   long answer_at = -1;
   bool u_asking = false, u_write = false;
-  uint32_t u_addr = 0, u_word = 0;
+  uint32_t u_phys = 0;
+  uint64_t u_word = 0;
   long u_next = 50;
-  std::map<uint32_t, uint32_t> other;
+  std::map<uint32_t, uint64_t> other;
+  long u_spanning = 0, u_two_beats = 0;
 
   // The writes the trace's cycles owe main memory and the window, in
   // order: the physical address and the word, taken at the acknowledgment.
@@ -220,7 +465,16 @@ int main(int argc, char **argv) {
       if (dut->mem_line) {
         if (dut->mem_write) bad += Fail(r, "a line fill that writes", 1, 0);
         int beats = 0;
-        if (Ddr::InMain(a)) {
+        if (u_asking && !u_write && a == ((kMainBase + 5u * u_phys) & ~7u)) {
+          // The uncached requester's word: the beats its five bytes are in,
+          // which are in a line no fill of the trace's asks.
+          const uint32_t at = kMainBase + 5u * u_phys;
+          const int want_beats = (at & 7u) > 3u ? 2 : 1;
+          if (a != (at & ~7u)) bad += Fail(r, "the uncached read's address", a, at & ~7u);
+          if (dut->mem_beats != want_beats) bad += Fail(r, "the uncached read's beats", dut->mem_beats, want_beats);
+          beats = dut->mem_beats;
+          if (beats == 2) ++u_two_beats;
+        } else if (Ddr::InMain(a)) {
           const uint32_t off = a - kMainBase;
           // The line of the cycle standing, 40 bytes at its eight words.
           const uint32_t want = kMainBase + 40u * (r.phys >> 3);
@@ -244,6 +498,15 @@ int main(int argc, char **argv) {
           uint32_t &x = dut->mem_rline[b / 4];
           x = (x & ~(0xFFu << shift)) | (static_cast<uint32_t>(ddr.Get(a + b)) << shift);
         }
+      } else if (dut->mem_write && u_asking && u_write && a == kMainBase + 5u * u_phys) {
+        // The uncached requester's word: its five bytes at its packed address.
+        const uint32_t at = kMainBase + 5u * u_phys;
+        if (a != at) bad += Fail(r, "where the uncached write went", a, at);
+        if (!dut->mem_wide) bad += Fail(r, "the uncached write's five bytes", 0, 1);
+        if (dut->mem_wdata != u_word) bad += Fail(r, "the uncached word written", dut->mem_wdata, u_word);
+        for (int b = 0; b < 5; ++b) ddr.Put(a + b, static_cast<uint8_t>(dut->mem_wdata >> (8 * b)));
+        other[u_phys] = u_word;
+        if ((a & 7u) > 3u) ++u_spanning;
       } else if (dut->mem_write) {
         if (Ddr::InMain(a) || Ddr::InFb(a)) {
           const bool main = Ddr::InMain(a);
@@ -267,18 +530,11 @@ int main(int argc, char **argv) {
           } else {
             ++fb_writes;
           }
-        } else if (a >= kOtherBase && a < kOtherBase + 0x10000u) {
-          if (dut->mem_wide) bad += Fail(r, "an uncached write of five bytes", 1, 0);
-          other[a] = static_cast<uint32_t>(dut->mem_wdata);
         } else {
           bad += Fail(r, "a write DDR has not got", a, 0);
         }
       } else {
-        if (a >= kOtherBase && a < kOtherBase + 0x10000u) {
-          dut->mem_rdata = other.count(a) ? other[a] : ~a;
-        } else {
-          bad += Fail(r, "a single read, which only the uncached requester makes", a, 0);
-        }
+        bad += Fail(r, "a single read, which revision 13's port never makes", a, 0);
       }
       dut->mem_done = 1;
       answer_at = -1;
@@ -289,15 +545,15 @@ int main(int argc, char **argv) {
     if (!u_asking && r.tick >= u_next && !dut->u_done) {
       u_asking = true;
       u_write = rng.Below(2);
-      u_addr = kOtherBase + 4 * rng.Below(64);
-      u_word = rng.Next();
+      u_phys = u_words[rng.Below(64)];
+      u_word = ((static_cast<uint64_t>(rng.Next()) << 8) ^ rng.Next()) & kMask40;
     }
     dut->u_req = u_asking;
     dut->u_write = u_write;
-    dut->u_addr = u_addr;
+    dut->u_addr = ~0u;   // not read on revision 13
     dut->u_wdata = u_word;
     dut->u_main = 0;
-    dut->u_phys = 0;
+    dut->u_phys = u_phys;
 
     dut->eval();
     dut->dev_rdata = dut->dev_rq ? r.dev_word : ~r.dev_word;
@@ -353,7 +609,7 @@ int main(int argc, char **argv) {
         ++writes_u;
       } else {
         ++reads_u;
-        const uint32_t want = other.count(u_addr) ? other[u_addr] : ~u_addr;
+        const uint64_t want = other.count(u_phys) ? other[u_phys] : Initial(u_phys);
         if (dut->u_rdata != want) bad += Fail(r, "the uncached requester's word", dut->u_rdata, want);
       }
       u_asking = false;
@@ -384,14 +640,15 @@ int main(int argc, char **argv) {
               "memory, %ld of them across 4 KiB, and %ld of the window; %ld writes of main memory, "
               "%ld of them across two beats, and %ld of the window; %ld registers asked; %ld "
               "addresses nothing answers; the prefetch compared at %ld edges, holding a word at %ld, "
-              "a store's grant dropping it at %ld; the uncached requester made %ld reads and %ld "
-              "writes; hits %u, misses %u\n",
+              "a store's grant dropping it at %ld; the uncached requester made %ld reads, %ld of "
+              "them of two beats, and %ld writes, %ld of them across two; hits %u, misses %u\n",
               checked, acks, words, dev_words, fills, crossing_lines, fb_fills, writes_main,
               spanning_writes, fb_writes, dev_asked, timeouts, pf_compared, pf_held,
-              pf_view_dropped, reads_u, writes_u, dut->hits, dut->misses);
+              pf_view_dropped, reads_u, u_two_beats, writes_u, u_spanning, dut->hits, dut->misses);
   if (!bad && (fills < 1000 || writes_main < 1000 || spanning_writes < 300 || fb_fills < 100 ||
                fb_writes < 100 || words < 3000 || timeouts < 20 || dev_words < 500 ||
-               pf_held < 1000 || pf_view_dropped < 10 || reads_u < 100 || writes_u < 100)) {
+               pf_held < 1000 || pf_view_dropped < 10 || reads_u < 100 || writes_u < 100 ||
+               u_two_beats < 20 || u_spanning < 20)) {
     std::fprintf(stderr, "FAIL: the run reached too little of the port to say anything\n");
     ++bad;
   }
@@ -402,6 +659,10 @@ int main(int argc, char **argv) {
   }
   if (bad) {
     std::fprintf(stderr, "FAIL: %d mismatches\n", bad);
+    return 1;
+  }
+  if (RunCoherence13(dut)) {
+    std::fprintf(stderr, "FAIL: the port is not coherent with the uncached requester\n");
     return 1;
   }
   std::printf("PASS\n");

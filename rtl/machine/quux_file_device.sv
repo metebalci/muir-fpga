@@ -91,6 +91,15 @@
 // tick are taken in either order muir could have them in: the machine's
 // write sees the index as it stood.
 //
+// **REVISION 13** (contract G1 §4.4, G2 §4.3, appendix A1.10; `WORD_BITS`
+// 40; muir's `FileDevice` with `revision_13`): 162 and 166 hold 28-bit
+// physical word addresses, `<27:0>`, and a ring must start on an 8-word line,
+// `<2:0>` 0, so that it is whole lines of packed storage; main memory's size
+// is 28 bits.  The rest is revision 12's: the entries' words 2 and 4 and the
+// tag `005` on every word the device writes are the server's, which writes
+// main memory itself (`docs/file-device.md`).  The readout gives each base
+// a word of its own there (`ro_bases`, `ro_resp_base`).
+//
 // What holds it: `build/quux_files.quux.k4.pass`, a program driving every
 // register on the whole machine against muir's device, with the testbench
 // playing the server at muir's instants through this side; and
@@ -100,7 +109,16 @@
 
 `default_nettype none
 
-module quux_file_device (
+module quux_file_device #(
+    // 32, QUUX to revision 12; 40, revision 13 (above).
+    parameter int unsigned WORD_BITS = 32,
+    localparam bit          WIDE      = WORD_BITS > 32,
+    // A ring's base, its line and main memory's size, in bits.
+    localparam int unsigned BASE_BITS = WIDE ? 28 : 24,
+    localparam int unsigned LINE_BITS = WIDE ? 3 : 2,
+    localparam int unsigned MEM_BITS  = WIDE ? 28 : 23,
+    localparam int unsigned SUM_BITS  = BASE_BITS + 1
+) (
     input  var logic        clk,
     input  var logic        rst,
     // `-XBUS INIT`: the power-on reset and `RESET-DEVICES`, the register
@@ -120,7 +138,7 @@ module quux_file_device (
     output var logic        irq,
 
     // Main memory's words, and the port's write buffer empty.
-    input  var logic [22:0] mem_words,
+    input  var logic [MEM_BITS-1:0] mem_words,
     input  var logic        drained,
     // The whole cache dropped at the next grant.
     output var logic        invalidate,
@@ -133,7 +151,11 @@ module quux_file_device (
     output var logic [31:0] host_rdata,
 
     // The readout's view, for a checkpoint: muir's `FileDevice::save`.
+    // Revision 12's two bases in one word, `<47:24>` the command ring's; on
+    // revision 13 the command ring's alone, and the response ring's in
+    // `ro_resp_base`, which revision 12 does not read.
     output var logic [47:0] ro_bases,
+    output var logic [47:0] ro_resp_base,
     output var logic [47:0] ro_indexes,
     output var logic [47:0] ro_flags
 );
@@ -151,7 +173,7 @@ module quux_file_device (
   localparam logic [3:0] H_MEM_WORDS = 4'd12;
 
   logic        enabled, ie, refused, fault;
-  logic [23:0] cmd_base, resp_base;
+  logic [BASE_BITS-1:0] cmd_base, resp_base;
   logic [3:0]  cmd_log2, resp_log2;
   logic [15:0] prod, cons, resp_cons;
   // The host's.
@@ -183,10 +205,10 @@ module quux_file_device (
   assign past         = wdata[15:0] - resp_cons;
 
   // A ring fits: on a line, 256 entries at most, inside main memory.
-  function automatic logic fits(input logic [23:0] base, input logic [3:0] log2,
-                                input logic [22:0] words);
-    return base[1:0] == 2'b00 && log2 <= 4'd8
-        && ({1'b0, base} + (25'd8 << log2)) <= {2'b00, words};
+  function automatic logic fits(input logic [BASE_BITS-1:0] base, input logic [3:0] log2,
+                                input logic [MEM_BITS-1:0] words);
+    return base[LINE_BITS-1:0] == '0 && log2 <= 4'd8
+        && ({1'b0, base} + (SUM_BITS'(8) << log2)) <= SUM_BITS'(words);
   endfunction
 
   always_comb begin
@@ -195,11 +217,11 @@ module quux_file_device (
       8'o160: rdata = {23'd0, ie, 7'd0, enabled};
       8'o161: rdata = {8'd0, handles, 7'd0, cons != resp_cons,
                        4'd0, fault, refused, !enabled && !busy, enabled};
-      8'o162: rdata = {8'd0, cmd_base};
+      8'o162: rdata = 32'(cmd_base);
       8'o163: rdata = {28'd0, cmd_log2};
       8'o164: rdata = enabled ? {16'd0, prod} : 32'd0;
       8'o165, 8'o170: rdata = enabled ? {16'd0, cons} : 32'd0;
-      8'o166: rdata = {8'd0, resp_base};
+      8'o166: rdata = 32'(resp_base);
       8'o167: rdata = {28'd0, resp_log2};
       8'o171: rdata = enabled ? {16'd0, resp_cons} : 32'd0;
       default: rdata = 32'd0;
@@ -250,9 +272,9 @@ module quux_file_device (
       ie        <= 1'b0;
       refused   <= 1'b0;
       fault     <= 1'b0;
-      cmd_base  <= 24'd0;
+      cmd_base  <= '0;
       cmd_log2  <= 4'd0;
-      resp_base <= 24'd0;
+      resp_base <= '0;
       resp_log2 <= 4'd0;
       prod      <= 16'd0;
       cons      <= 16'd0;
@@ -307,9 +329,9 @@ module quux_file_device (
               ie <= wdata[8];
             end
           end
-          8'o162: if (!enabled) cmd_base  <= wdata[23:0];
+          8'o162: if (!enabled) cmd_base  <= wdata[BASE_BITS-1:0];
           8'o163: if (!enabled) cmd_log2  <= wdata[3:0];
-          8'o166: if (!enabled) resp_base <= wdata[23:0];
+          8'o166: if (!enabled) resp_base <= wdata[BASE_BITS-1:0];
           8'o167: if (!enabled) resp_log2 <= wdata[3:0];
           8'o164: if (enabled) begin
             if (claimed > {7'd0, cmd_n} || claimed < queued) fault <= 1'b1;
@@ -363,21 +385,26 @@ module quux_file_device (
       H_STATE:     host_rdata <= {epoch, 10'd0, cons_refused, work, !enabled && !busy,
                                   busy, ie, enabled};
       H_CLAIM:     host_rdata <= {31'd0, busy};
-      H_CMD_BASE:  host_rdata <= {8'd0, cmd_base};
+      H_CMD_BASE:  host_rdata <= 32'(cmd_base);
       H_CMD_LOG2:  host_rdata <= {28'd0, cmd_log2};
-      H_RESP_BASE: host_rdata <= {8'd0, resp_base};
+      H_RESP_BASE: host_rdata <= 32'(resp_base);
       H_RESP_LOG2: host_rdata <= {28'd0, resp_log2};
       H_CMD_PROD:  host_rdata <= {16'd0, shown};
       H_RESP_PROD: host_rdata <= {16'd0, cons_host};
       H_RESP_CONS: host_rdata <= {16'd0, resp_cons};
       H_HANDLES:   host_rdata <= {24'd0, handles};
-      H_MEM_WORDS: host_rdata <= {9'd0, mem_words};
+      H_MEM_WORDS: host_rdata <= 32'(mem_words);
       default:     host_rdata <= 32'd0;
     endcase
   end
 
   // --- the readout ----------------------------------------------------------
-  assign ro_bases   = {cmd_base, resp_base};
+  if (WIDE) begin : g_ro13
+    assign ro_bases = 48'(cmd_base);
+  end else begin : g_ro12
+    assign ro_bases = {cmd_base, resp_base};
+  end
+  assign ro_resp_base = 48'(resp_base);
   assign ro_indexes = {prod, cons, resp_cons};
   assign ro_flags   = {11'd0, busy, handles, cmd_log2, resp_log2, 16'd0,
                        fault, refused, ie, enabled};

@@ -65,6 +65,40 @@ the CADR.
 
 ## From a modified tree
 
+These fits were built from the working tree on `0ecbeed` with QUUX revision
+13's devices (contract G2 §4): block-disk's pages, its packed and 4-byte
+transfers and its channel's 28-bit addresses and 40-bit words, packed by the
+memory port; the file device's rings at 28 bits; revision 13's feature
+words; and the file device's page named "QF13". muir is pinned at
+`ffc5ba5`. Main memory is still at the CADR's main memory base, and the
+boot PROM image is still QUUX's version 2000.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 13 | -1.181 ns | +0.024 ns | 23,055 of 53,200 LUTs, 43.34% | 83 of 140 BRAM tiles | 7,415 of 13,300 | working tree on `0ecbeed` | modified | 2026-09-30 |
+| DE25-Nano | QUUX revision 13 | +1.873 ns | +0.006 ns | 30,043 of 46,800 ALMs, 64% | 203 of 358 M20K | --- | working tree on `0ecbeed` | modified | 2026-09-30 |
+
+The Arty Z7-20 misses timing on 812 endpoints:
+
+- Three are the map chain into the memory path's decode, which has two
+  ticks: -1.181 ns into `nxm` and -0.981 ns into `device`, over 20 logic
+  levels.
+- 809 have one tick. Most start at the memory port's cycle state and end
+  at the dispatch memory's and the two map levels' write enables, -0.353 ns
+  at worst, and at the cache's RAM addresses, -0.558 ns. The file device's
+  enable check, now 28 bits wide, reaches the response ring's index at
+  -0.090 ns.
+
+The block-disk's own paths meet: its walk into the adapter's address has
++0.954 ns. The block RAM enable check fails on one PDL buffer port by
+0.098 ns. On the DE25-Nano every corner meets, but the timing checks refuse
+the build on two register counts: 31 of the 32 registers the processor
+samples on its own clock, and 2 of the 6 reset synchronizer clears. In this
+build Quartus merged equal registers that a fit of `0ecbeed` itself, made
+the same day, keeps apart: the tally's constant bit 15 into the memory
+bridge's constant address bits, and the processor system's three reset
+synchronizers into one.
+
 These fits were built from the working tree on `90603c1` with QUUX revision
 13's memory port and cache (contract G2 §3): the 28-bit physical space,
 40-bit words on the cables, 8-word lines of packed storage at five bytes a

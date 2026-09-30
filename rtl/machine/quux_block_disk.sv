@@ -55,19 +55,39 @@
 // The header and the checkwords are kept and handed back as they came: this
 // controller checks none of them.
 //
+// **REVISION 13** (`WORD_BITS` 40; contract G2 §4.2, appendix A1.10 and
+// A1.11; muir's `BlockDisk::write_40`) moves 1024-word pages of 40-bit
+// words, one an entry, `<27:10>` the page, and command `<12>` chooses the
+// transfer: packed, 5 blocks a page, the page's bytes as main memory holds
+// them; or 4-byte, 4 blocks, `<31:0>` of each word, a read writing tag `005`.
+// The command list pointer, word 201 and the channel's address are 28 bits.
+// Its walk, `g_walk13` below, says the rest; the store, the seam and the face
+// are revision 12's.
+//
 // What holds it: `build/quux_block_disk.quux.pass`, the module against
 // muir's `BlockDisk` over a script of register reads and writes at muir's
 // instants, the pack side and main memory answered by the testbench from
 // images of their own, and every page and block compared at the end
 // (`golden/src/quux_block_disk.rs`); and QUUX's boot PROM trace, which reads
-// the registers with no pack (`build/machine.quux.k4.pass`).
+// the registers with no pack (`build/machine.quux.k4.pass`).  At revision
+// 13, `build/quux13_block_disk.quux.pass`, the same against
+// `BlockDisk::write_40` (`golden/src/quux13_block_disk.rs`), the GPT fixture
+// and a pack of all 2^28 blocks among its scripts; and
+// `build/quux13_disk.quux.k4.pass`, both transfers on the whole machine
+// through the memory port into packed storage, the testbench the pack side.
 
 `default_nettype none
 
 module quux_block_disk #(
     parameter int unsigned SLOTS = 24,
     // muir's `block_disk::BLOCK_NS`, 100 us, on the grid.
-    parameter int unsigned BLOCK_T = cadr_tick_pkg::ticks(100_000)
+    parameter int unsigned BLOCK_T = cadr_tick_pkg::ticks(100_000),
+    // 32, QUUX to revision 12; 40, revision 13's pages of 40-bit words (the
+    // header's last section), which widens the channel: a 28-bit address
+    // and a whole word.
+    parameter int unsigned WORD_BITS = 32,
+    localparam bit          WIDE      = WORD_BITS > 32,
+    localparam int unsigned PHYS_BITS = WIDE ? 28 : 22
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -113,11 +133,11 @@ module quux_block_disk #(
     // The memory channel, a master on the Xbus, as the CADR controller's.
     output var logic        ch_req,
     output var logic        ch_write,
-    output var logic [21:0] ch_addr,
-    output var logic [31:0] ch_wdata,
+    output var logic [PHYS_BITS-1:0] ch_addr,
+    output var logic [WORD_BITS-1:0] ch_wdata,
     input  var logic        ch_done,
     input  var logic        ch_nxm,
-    input  var logic [31:0] ch_rdata,
+    input  var logic [WORD_BITS-1:0] ch_rdata,
     output var logic        ch_active,
     input  var logic        store_busy,
     input  var logic [4:0]  store_busy_slot,
@@ -221,6 +241,18 @@ module quux_block_disk #(
   logic       store_now;
   assign dev_ack   = mine;
   assign store_now = mine && dev_rq && dev_write && !taken;
+  // The match and the word, here and not in either revision's walk below,
+  // so that each keeps its name at the instance, which the boards'
+  // constraints name (`cadr_machine.xdc`, `cadr_de25.sdc`).
+  always_ff @(posedge clk) begin
+    if (rst || xbus_init) begin
+      mine  <= 1'b0;
+      which <= 2'd0;
+    end else begin
+      mine  <= sel && (phys[21:2] == REGS_PAGE);
+      which <= phys[1:0];
+    end
+  end
 
   logic [31:0] cmd, clp, da, lma;
   logic        past_end, nxm, bad_command;
@@ -249,14 +281,9 @@ module quux_block_disk #(
 
   // ------------------------------------------------------------- the walk
 
-  typedef enum logic [2:0] {
-    W_IDLE, W_CCW, W_LOOK, W_WAIT, W_READ, W_WRITE, W_END
-  } walk_e;
-  walk_e       state;
   logic        writing;      // the command is a write
   logic [15:0] n;            // command list words taken
-  logic [27:0] lba;
-  logic [13:0] page;
+  logic [27:0] lba;          // the block looked up
   logic        more;
   logic        rd_valid;     // `chb_q` holds word `ch_w` of the slot
 
@@ -281,18 +308,24 @@ module quux_block_disk #(
   // A lookup is good two ticks after `lba` last moved.
   logic [1:0] look_age;
 
-  assign ch_active  = state != W_IDLE && state != W_END;
-  assign ch_waiting = state == W_WAIT;
   assign ch_slot_o  = ch_slot;
   assign req_tag    = {3'b0, lba};
 
   logic [15:0] clp_n;
   assign clp_n = clp[15:0] + n;
 
+  // **REVISION 12'S WALK**, a block an entry.
+  if (!WIDE) begin : g_walk12
+  typedef enum logic [2:0] {
+    W_IDLE, W_CCW, W_LOOK, W_WAIT, W_READ, W_WRITE, W_END
+  } walk_e;
+  walk_e       state;
+  logic [13:0] page;
+  assign ch_active  = state != W_IDLE && state != W_END;
+  assign ch_waiting = state == W_WAIT;
+
   always_ff @(posedge clk) begin
     if (rst || xbus_init) begin
-      mine        <= 1'b0;
-      which       <= 2'd0;
       taken       <= 1'b0;
       cmd         <= 32'd0;
       past_end    <= 1'b0;
@@ -332,8 +365,6 @@ module quux_block_disk #(
         lma <= 32'd0;
       end
     end else begin
-      mine     <= sel && (phys[21:2] == REGS_PAGE);
-      which    <= phys[1:0];
       req_post <= 1'b0;
       ch_wrote <= 1'b0;
       ch_hit   <= 1'b0;
@@ -509,6 +540,351 @@ module quux_block_disk #(
       end
     end
   end
+  end else begin : g_walk13
+  // **REVISION 13'S WALK** (contract G2 §4.2, appendix A1.11; muir's
+  // `BlockDisk::write_40`): an entry moves a 1024-word page, `<27:10>`, and
+  // command `<12>` chooses how its words lie on the disk.  Packed, 5 blocks
+  // a page, word w at the page's bytes 5w to 5w + 4, `<7:0>` first and the
+  // tag last; 4-byte, 4 blocks, `<31:0>` at bytes 4w to 4w + 3, a read
+  // writing tag `005` and a write dropping the tag.  The block store is
+  // revision 12's, 256 32-bit words a block, so the page goes through a
+  // byte queue of eight: a store word in is four bytes, a memory word out
+  // four or five, and the queue carries the bytes a block ends with into
+  // the next.
+  //
+  // An entry's page is first read at its word 0, so that a page outside
+  // main memory stops with NXM before any block is asked for, as muir's
+  // `page + PAGE > main.len()` does.  **A READ ASKS FOR ALL ITS PAGE'S
+  // BLOCKS BEFORE IT WRITES A WORD OF MEMORY**, muir's "a page is read whole
+  // before memory is written": a block past the end then stops it with the
+  // page as it was, the blocks found before it charged their time.  A write
+  // moves block by block, and the blocks before one past the end are
+  // written, as muir's are.  A block past the 28 bits of the disk address,
+  // 2^28 and up, is past the end of every pack, and is never asked for: the
+  // tag the pack side reads carries 28 bits.  The disk address is left at
+  // the last block moved or the one that failed, 29 bits.
+  typedef enum logic [3:0] {
+    V_IDLE, V_CCW, V_PROBE, V_GLOOK, V_GWAIT, V_LOOK, V_WAIT, V_READ, V_WRITE, V_END
+  } walk13_e;
+  walk13_e     v;
+  logic        four;         // the 4-byte transfer, command <12> at START
+  logic [17:0] page13;       // the page, <27:10> of its entry
+  logic [28:0] base;         // the page's first block
+  logic [2:0]  k;            // the block of the page
+  logic [28:0] cur;          // base + k
+  logic [9:0]  mw;           // the page's next word
+  logic [63:0] sb;           // the byte queue, its first byte in <7:0>
+  logic [3:0]  sn;           // the bytes in it
+  logic        drained_blk;  // every word of the block in the slot taken
+  logic [2:0]  per_page, wb;
+  assign per_page = four ? 3'd4 : 3'd5;
+  assign wb       = four ? 3'd4 : 3'd5;
+  assign cur      = base + 29'(k);
+  assign ch_active  = v != V_IDLE && v != V_END;
+  assign ch_waiting = v == V_WAIT || v == V_GWAIT;
+
+  always_ff @(posedge clk) begin
+    if (rst || xbus_init) begin
+      taken       <= 1'b0;
+      cmd         <= 32'd0;
+      past_end    <= 1'b0;
+      nxm         <= 1'b0;
+      bad_command <= 1'b0;
+      walking     <= 1'b0;
+      walked      <= 1'b0;
+      busy_ticks  <= 32'd0;
+      due         <= 32'd0;
+      v           <= V_IDLE;
+      ch_req      <= 1'b0;
+      ch_write    <= 1'b0;
+      ch_addr     <= '0;
+      ch_wdata    <= '0;
+      chb_we      <= 1'b0;
+      chb_d       <= 32'd0;
+      chb_a       <= 13'd0;
+      ch_slot     <= 5'd0;
+      ch_w        <= 8'd0;
+      req_valid   <= 1'b0;
+      req_post    <= 1'b0;
+      ch_wrote    <= 1'b0;
+      ch_hit      <= 1'b0;
+      store_miss  <= 1'b0;
+      writing     <= 1'b0;
+      four        <= 1'b0;
+      n           <= 16'd0;
+      lba         <= 28'd0;
+      page13      <= 18'd0;
+      base        <= 29'd0;
+      k           <= 3'd0;
+      mw          <= 10'd0;
+      sb          <= 64'd0;
+      sn          <= 4'd0;
+      drained_blk <= 1'b0;
+      more        <= 1'b0;
+      rd_valid    <= 1'b0;
+      look_age    <= 2'd0;
+      if (rst) begin
+        clp <= 32'd0;
+        da  <= 32'd0;
+        lma <= 32'd0;
+      end
+    end else begin
+      req_post <= 1'b0;
+      ch_wrote <= 1'b0;
+      ch_hit   <= 1'b0;
+      chb_we   <= 1'b0;
+      if (busy_ticks != 32'hFFFF_FFFF) busy_ticks <= busy_ticks + 32'd1;
+      if (look_age != 2'd2) look_age <= look_age + 2'd1;
+
+      if (store_now) taken <= 1'b1;
+      else if (!(mine && dev_rq)) taken <= 1'b0;
+
+      // --- a register written: the pointer and the disk address 28 bits
+      if (store_now) begin
+        if (which == 2'd0) begin
+          cmd         <= wdata;
+          past_end    <= 1'b0;
+          nxm         <= 1'b0;
+          bad_command <= 1'b0;
+        end else if (which == 2'd1) begin
+          clp <= 32'(wdata[27:0]);
+        end else if (which == 2'd2) begin
+          da <= 32'(wdata[27:0]);
+        end else begin
+          past_end    <= 1'b0;
+          nxm         <= 1'b0;
+          bad_command <= 1'b0;
+          if (cmd[3:0] != 4'o00 && cmd[3:0] != 4'o11) begin
+            bad_command <= 1'b1;
+          end else if (drive_present[0] && v == V_IDLE) begin
+            writing    <= cmd[3:0] == 4'o11;
+            four       <= cmd[12];
+            walking    <= 1'b1;
+            walked     <= 1'b1;
+            busy_ticks <= 32'h1;
+            due        <= 32'd0;
+            n          <= 16'd0;
+            base       <= {1'b0, da[27:0]};
+            k          <= 3'd0;
+            look_age   <= 2'd0;
+            v          <= V_CCW;
+          end
+        end
+      end
+
+      unique case (v)
+        V_IDLE: ;
+        // --- the entry, at the pointer counted in its low sixteen bits
+        V_CCW: begin
+          if (!ch_req) begin
+            lma      <= 32'({clp[27:16], clp_n});
+            ch_req   <= 1'b1;
+            ch_write <= 1'b0;
+            ch_addr  <= {clp[27:16], clp_n};
+          end else if (ch_done) begin
+            ch_req <= 1'b0;
+            if (ch_nxm) begin
+              nxm <= 1'b1;
+              v   <= V_END;
+            end else begin
+              page13 <= ch_rdata[27:10];
+              more   <= ch_rdata[0];
+              v      <= V_PROBE;
+            end
+          end
+        end
+        // --- the page's word 0, whether main memory has the page
+        V_PROBE: begin
+          if (!ch_req) begin
+            ch_req   <= 1'b1;
+            ch_write <= 1'b0;
+            ch_addr  <= {page13, 10'd0};
+          end else if (ch_done) begin
+            ch_req      <= 1'b0;
+            k           <= 3'd0;
+            mw          <= 10'd0;
+            sb          <= 64'd0;
+            sn          <= 4'd0;
+            look_age    <= 2'd0;
+            if (ch_nxm) begin
+              nxm <= 1'b1;
+              v   <= V_END;
+            end else begin
+              v <= writing ? V_LOOK : V_GLOOK;
+            end
+          end
+        end
+        // --- a read: every block of the page there, or the one past the end
+        V_GLOOK: begin
+          if (cur[28]) begin
+            past_end <= 1'b1;
+            v        <= V_END;
+          end else if (look_age == 2'd2 && lba == cur[27:0]) begin
+            if (any_hit) begin
+              // Found, and its time owed: muir charges a block read.
+              due      <= due + 32'(BLOCK_T);
+              look_age <= 2'd0;
+              if (k == per_page - 3'd1) begin
+                k <= 3'd0;
+                v <= V_LOOK;
+              end else begin
+                k <= k + 3'd1;
+              end
+            end else begin
+              req_valid <= 1'b1;
+              req_post  <= 1'b1;
+              v         <= V_GWAIT;
+            end
+          end
+        end
+        V_GWAIT: begin
+          if (store_deny) begin
+            past_end  <= 1'b1;
+            req_valid <= 1'b0;
+            v         <= V_END;
+          end else if (store_we && store_addr == 9'd259 && !store_wdata[31]
+                       && store_wdata[30:0] == {3'b0, lba}) begin
+            req_valid <= 1'b0;
+            look_age  <= 2'd0;
+            v         <= V_GLOOK;
+          end
+        end
+        // --- the block into a slot, to move its words
+        V_LOOK: begin
+          if (cur[28]) begin
+            past_end <= 1'b1;
+            v        <= V_END;
+          end else if (look_age == 2'd2 && lba == cur[27:0]) begin
+            if (any_hit && !(store_busy && store_busy_slot == hit_slot)) begin
+              ch_slot     <= hit_slot;
+              ch_hit      <= 1'b1;
+              ch_w        <= 8'd0;
+              rd_valid    <= 1'b0;
+              drained_blk <= 1'b0;
+              v           <= writing ? V_WRITE : V_READ;
+            end else if (!any_hit) begin
+              req_valid <= 1'b1;
+              req_post  <= 1'b1;
+              v         <= V_WAIT;
+            end
+          end
+        end
+        V_WAIT: begin
+          if (store_deny) begin
+            past_end  <= 1'b1;
+            req_valid <= 1'b0;
+            v         <= V_END;
+          end else if (store_we && store_addr == 9'd259 && !store_wdata[31]
+                       && store_wdata[30:0] == {3'b0, lba}) begin
+            req_valid <= 1'b0;
+            look_age  <= 2'd0;
+            v         <= V_LOOK;
+          end
+        end
+        // --- a read: the slot's words through the queue into memory
+        V_READ: begin
+          if (!ch_req) begin
+            if (sn >= 4'(wb)) begin
+              ch_req   <= 1'b1;
+              ch_write <= 1'b1;
+              ch_addr  <= {page13, mw};
+              ch_wdata <= four ? {8'o005, sb[31:0]} : sb[39:0];
+              sb       <= four ? sb >> 32 : sb >> 40;
+              sn       <= sn - 4'(wb);
+            end else if (drained_blk) begin
+              // The block's words all taken: the next block of the page.
+              k        <= k + 3'd1;
+              look_age <= 2'd0;
+              v        <= V_LOOK;
+            end else if (rd_valid) begin
+              sb       <= sb | (64'(chb_q) << {sn, 3'b000});
+              sn       <= sn + 4'd4;
+              rd_valid <= 1'b0;
+              if (ch_w == 8'd255) drained_blk <= 1'b1;
+              else ch_w <= ch_w + 8'd1;
+            end else begin
+              rd_valid <= 1'b1;   // `chb_q` takes word `ch_w` this tick
+            end
+          end else if (ch_done) begin
+            ch_req <= 1'b0;
+            mw     <= mw + 10'd1;
+            if (ch_nxm) begin
+              nxm <= 1'b1;
+              v   <= V_END;
+            end else if (mw == 10'd1023) begin
+              v <= V_END;   // replaced below, the page done
+            end
+          end
+        end
+        // --- a write: memory's words through the queue into the slot
+        V_WRITE: begin
+          if (sn >= 4'd4 && !ch_req) begin
+            chb_we <= 1'b1;
+            chb_d  <= sb[31:0];
+            chb_a  <= ch_word;
+            sb     <= sb >> 32;
+            sn     <= sn - 4'd4;
+            if (ch_w == 8'd255) begin
+              // The block written: dirty, and its time owed.
+              ch_wrote <= 1;
+              due      <= due + 32'(BLOCK_T);
+              if (k == per_page - 3'd1) begin
+                v <= V_END;   // replaced below, the page done
+              end else begin
+                k        <= k + 3'd1;
+                look_age <= 2'd0;
+                v        <= V_LOOK;
+              end
+            end else begin
+              ch_w <= ch_w + 8'd1;
+            end
+          end else if (!ch_req) begin
+            ch_req   <= 1'b1;
+            ch_write <= 1'b0;
+            ch_addr  <= {page13, mw};
+          end else if (ch_done) begin
+            ch_req <= 1'b0;
+            if (ch_nxm) begin
+              nxm <= 1'b1;
+              v   <= V_END;
+            end else begin
+              sb <= sb | ((four ? 64'(ch_rdata[31:0]) : 64'(ch_rdata)) << {sn, 3'b000});
+              sn <= sn + 4'(wb);
+              mw <= mw + 10'd1;
+            end
+          end
+        end
+        default: begin
+          // V_END: the disk address at the last block moved or the one
+          // that failed, 29 bits, and the time.
+          da      <= 32'(cur);
+          walking <= 1'b0;
+          v       <= V_IDLE;
+        end
+      endcase
+
+      // --- a page moved whole: word 201 at its last word, and the next --
+      if ((v == V_READ && ch_req && ch_done && !ch_nxm && mw == 10'd1023)
+          || (v == V_WRITE && sn >= 4'd4 && !ch_req && ch_w == 8'd255 && k == per_page - 3'd1)) begin
+        lma <= 32'({page13, 10'h3FF});
+        if (more) begin
+          n        <= n + 16'd1;
+          base     <= base + 29'(per_page);
+          k        <= 3'd0;
+          look_age <= 2'd0;
+          v        <= V_CCW;
+        end
+      end
+
+      // The lookup follows the block: `lba` is `cur` a tick later, and a
+      // lookup of it good two ticks after that.
+      if (lba != cur[27:0]) begin
+        lba      <= cur[27:0];
+        look_age <= 2'd0;
+      end
+    end
+  end
+  end
 
   assign ro_cmd        = cmd;
   assign ro_clp        = clp;
@@ -518,7 +894,7 @@ module quux_block_disk #(
   assign ro_since_done = busy_ticks - due;
 
   logic unused;
-  assign unused = ^{cmd[31:12], cmd[10:4]};
+  assign unused = ^{cmd[31:13], cmd[10:4], WIDE ? 1'b0 : cmd[12]};
 
 endmodule
 

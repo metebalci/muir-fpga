@@ -113,6 +113,14 @@
 // window, which is not main memory, and never past a page.  The virtual word
 // address is 28 bits, `VMA<27:0>`.
 //
+// **AND THE UNCACHED REQUESTER'S WORDS ARE PACKED TOO** (revision 13):
+// block-disk's channel reaches main memory alone, a word five bytes at
+// `MAIN13_BASE + 5w`, read as the one or two beats it lies in and written
+// as five bytes, and the cache's `snoop` drops the word's set as it lands.
+// `build/quux13_port.quux.k4.pass` holds both, the snoop by a coherence run
+// of 40-bit words beside the processor; `build/quux13_disk.quux.k4.pass`
+// the transfers on the whole machine.
+//
 // **WHERE MAIN MEMORY IS IN DDR IS A PARAMETER**, `MAIN13_BASE`, which the
 // machine hands down (`cadr_machine.sv`): the Linux side's layout decides it
 // and this port only adds to it.  The 4 KiB rule is taken on the byte
@@ -180,15 +188,20 @@ module quux_mem_port
     input  var logic         invalidate,
 
     // The uncached requester, `cadr_xbus_ddr.sv`'s seam.  `u_main` says the
-    // word is main memory's, and `u_phys` which, for the cache's snoop.
+    // word is main memory's, and `u_phys` which, for the cache's snoop.  On
+    // revision 13 the requester is block-disk's channel and reaches main
+    // memory alone: `u_phys` is where, `u_addr` is not read, and the word is
+    // the whole word, packed here (below).
     input  var logic         u_req,
     input  var logic         u_write,
+    /* verilator lint_off UNUSEDSIGNAL */
     input  var logic [31:0]  u_addr,
-    input  var logic [31:0]  u_wdata,
+    /* verilator lint_on UNUSEDSIGNAL */
+    input  var logic [WORD_BITS-1:0] u_wdata,
     input  var logic         u_main,
     input  var logic [PHYS_BITS-1:0] u_phys,
     output var logic         u_done,
-    output var logic [31:0]  u_rdata,  // main memory's own, while u_done
+    output var logic [WORD_BITS-1:0] u_rdata,  // main memory's own, while u_done
 
     // Main memory: the machine's DDR seam.  A line fill (`mem_line`) asks
     // `mem_beats` 64-bit beats from `mem_addr` and has them back on
@@ -539,15 +552,42 @@ module quux_mem_port
   logic [2:0]  mbeats_q;
   logic [31:0] maddr_q;
   logic [WB-1:0] mwdata_q;
+
+  // **REVISION 13'S UNCACHED WORD IS PACKED STORAGE** (G1 §4.1): block-disk's
+  // channel reaches main memory alone (`cadr_xbus_decode.sv`'s `CHANNEL`),
+  // word w at byte `BASE13 + 5w`.  A write is the word's five bytes, as the
+  // write buffer's are (`mem_wide`); a read is the one or two beats the
+  // word's bytes are in, asked as a line from the first beat's address, and
+  // the word taken from them at its byte.  Revision 12's is the bridge's
+  // word, four bytes at `u_addr`.
+  logic [31:0] u_addr13;
+  logic [2:0]  u_off13;
+  logic        u_line13;
+  logic [2:0]  u_beats13;
+  logic [WB-1:0] u_word13;
+  assign u_addr13  = BASE13 + (32'(u_phys) << 2) + 32'(u_phys);
+  assign u_off13   = u_addr13[2:0];
+  assign u_line13  = WIDE && !u_write;
+  assign u_beats13 = !u_line13 ? 3'd0 : (u_off13 > 3'd3) ? 3'd2 : 3'd1;
+  if (WIDE) begin : g_u13
+    assign u_word13 = WB'(mem_rline[127:0] >> {u_off13, 3'b000});
+    // Every read of revision 13's is a line's.
+    logic unused_rdata;
+    assign unused_rdata = ^mem_rdata;
+  end else begin : g_u12
+    assign u_word13 = WB'(mem_rdata);
+  end
+
   assign mem_req   = through ? u_req   : mreq_q;
   assign mem_write = through ? u_write : mwrite_q;
-  assign mem_line  = through ? 1'b0    : mline_q;
-  assign mem_beats = through ? 3'd0    : mbeats_q;
-  assign mem_wide  = through ? 1'b0    : mwide_q;
-  assign mem_addr  = through ? u_addr  : maddr_q;
+  assign mem_line  = through ? u_line13  : mline_q;
+  assign mem_beats = through ? u_beats13 : mbeats_q;
+  assign mem_wide  = through ? (WIDE && u_write) : mwide_q;
+  assign mem_addr  = through ? (!WIDE ? u_addr : u_write ? u_addr13 : {u_addr13[31:3], 3'b000})
+                             : maddr_q;
   assign mem_wdata = through ? WB'(u_wdata) : mwdata_q;
   assign u_done    = through && mem_done;
-  assign u_rdata   = mem_rdata;
+  assign u_rdata   = u_word13;
 
   assign c_fill  = (mstate == M_BUSY) && mem_done && (op == OP_FILL);
   assign c_snoop = through && mem_done && u_write && u_main;

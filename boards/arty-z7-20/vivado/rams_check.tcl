@@ -147,10 +147,13 @@ proc rams_rule {what cells we wa} {
 # The assertion.  `machine` is `cadr` or `quux`.
 proc assert_rams_write_where_the_rtl_says {machine} {
     # {what} {cells} {write-enable register} {write-address register}
+    # Block-disk's write port registers are its walk's, which each revision
+    # has in a generate block of its own, `g_walk12` or `g_walk13`: the
+    # patterns take either.
     set quux_rules {
         {QUUX's PDL buffer}        {*processor/g_quux_pdl.pdl_reg*}    {*processor/pdlwrited_reg*}     {*processor/pwidx_reg*}
         {QUUX's control store}     {*processor/imem_reg*}              {*processor/iwe_q_reg*}         {*processor/iwa_q_reg*}
-        {block-disk's block store} {*g_quux_disk.disk/blk_ram_reg*}    {*g_quux_disk.disk/chb_we_reg*} {*g_quux_disk.disk/chb_a_reg*}
+        {block-disk's block store} {*g_quux_disk.disk/blk_ram_reg*}    {*g_quux_disk.disk/*chb_we_reg*} {*g_quux_disk.disk/*chb_a_reg*}
     }
     # The CADR's two RAMs with a register only the write address reads.  Its
     # disk controller's block store has none: one address serves both, made

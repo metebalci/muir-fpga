@@ -1473,8 +1473,9 @@ module cadr_de25 #(
 
   // QUUX's clock and file device, for Linux's server and the clock's
   // setter.  The machine's side keeps every rule; this is the page.
+  // Revision 13's page says so by its IDENT, "QF13" (`cadr_arty.sv`).
   if (MACHINE == "quux") begin : g_fd_face
-    quux_fd_face #(.ID_W(4), .LEN_W(8)) u_fd_face (
+    quux_fd_face #(.ID_W(4), .LEN_W(8), .IDENT(WORD_BITS > 32 ? 32'h5146_3133 : 32'h5146_4439)) u_fd_face (
         .clk(clk), .rst(h2f_rst),
         .s_awaddr(h2ff_awaddr), .s_awlen(h2ff_awlen), .s_awid(h2ff_awid),
         .s_awvalid(h2ff_awvalid), .s_awready(h2ff_awready),

@@ -552,6 +552,16 @@ CHECKS = {
         "golden": "xbus_decode.quux13.golden",
         "machine": "quux",
     },
+    # And the decode block-disk's channel takes there, main memory alone
+    # (`CHANNEL`).
+    "xbus_decode_quux13ch": {
+        "sources": ["rtl/machine/cadr_xbus_decode.sv"],
+        "top": "cadr_xbus_decode",
+        "tb": "tb/cadr_xbus_decode_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", '-GMACHINE="quux"', "-GWORD_BITS=40", "-GCHANNEL=1"],
+        "golden": "xbus_decode.quux13ch.golden",
+        "machine": "quux",
+    },
     "machine_quux": dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
@@ -835,6 +845,19 @@ CHECKS = {
         "tb": "tb/quux_block_disk_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": "quux_block_disk.quux.golden",
+        "machine": "quux",
+    },
+    # And at revision 13 (`WORD_BITS` 40), against `BlockDisk::write_40`:
+    # pages, the packed and the 4-byte transfers, the GPT fixture's 8-bit
+    # view, NXM, a page past the pack's end, and on a pack of all 2^28
+    # blocks a block past the disk address's 28 bits
+    # (`tb/quux13_block_disk_tb.cpp`).
+    "quux13_block_disk_quux": {
+        "sources": ["rtl/machine/quux_block_disk.sv"],
+        "top": "quux_block_disk",
+        "tb": "tb/quux13_block_disk_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-GWORD_BITS=40"],
+        "golden": ["quux13_block_disk.quux.golden", "quux13_block_disk_whole.quux.golden"],
         "machine": "quux",
     },
     # QUUX's multiply and divide on their own, against `muldiv::run`.
@@ -2556,7 +2579,7 @@ PENDING = {}
 # 4,096, 8,192 and 4,096 entries: the same machine under `CADR_RDW_POISON`
 # on the `map` program, which writes all three; and on the cache's RAMs,
 # under `CADR_RDW_POISON_CACHE` as well, on the `lines` program.
-QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map", "space", "lines", "fused")
+QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map", "space", "lines", "fused", "devices", "disk")
 QUUX13_TB_BASE = "170156032"
 for _p in QUUX13_PROGRAMS:
     CHECKS["quux13_%s_quux" % _p] = dict(MACHINE_CHECK, **{

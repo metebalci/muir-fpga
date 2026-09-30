@@ -9962,9 +9962,10 @@ if {0 && $held ne $want} {
 @note
 @note Re-aimed when the Unibus map's window landed: the address mux gained a
 @note third arm, `mp_own`, which is the mapped cycle's translated address and
-@note is untouched here.
+@note is untouched here.  The anchor follows the line again when the channel's
+@note address became 28 bits wide on revision 13: the Xbus's are its low 22.
 @old
-  assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : br_cpu_phys;
+  assign bus_phys  = ch_own ? ch_addr[21:0] : mp_own ? map_addr  : br_cpu_phys;
 @new
   assign bus_phys  = ch_own ? {ch_addr[21:1], ~ch_addr[0]} : mp_own ? map_addr : br_cpu_phys;
 @end
@@ -21516,9 +21517,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note Entry 21 gives L where K belongs, so a checkpoint declares the wrong
 @note microcycle for `TimingModel::Sync`.
 @old
-      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
+      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), QUUX_REV} : RO_NO_MEMORY;
 @new
-      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_L), 8'(SYNC_K), 16'd0} : RO_NO_MEMORY;
+      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_L), 8'(SYNC_K), QUUX_REV} : RO_NO_MEMORY;
 @end
 
 @mutation quux-ro-count-entries-crossed
@@ -21561,9 +21562,9 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note The CADR answers QUUX's signature at entry 21, so `cadr-checkpoint
 @note --machine quux` takes a CADR's bitstream for QUUX's.
 @old
-      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
+      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), QUUX_REV} : RO_NO_MEMORY;
 @new
-      RG_QUUX_ID:       ro_regs = 1'b1 ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
+      RG_QUUX_ID:       ro_regs = 1'b1 ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), QUUX_REV} : RO_NO_MEMORY;
 @end
 
 @mutation quux-ro-input-overflow-and-enable-crossed
@@ -22135,6 +22136,467 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
           2'd2: da  <= {8'd0, wdata[23:0]};
 @end
 
+@mutation rev13-block-disk-a-read-wraps-past-2-28
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note Revision 13's read takes block 2^28 for block 0: the disk address's
+@note 28 bits wrap, and a page that runs past the last block a 28-bit
+@note address names reads the start of the pack instead of stopping past
+@note the end.
+@old
+        V_GLOOK: begin
+          if (cur[28]) begin
+@new
+        V_GLOOK: begin
+          if (1'b0 && cur[28]) begin
+@end
+
+@mutation rev13-block-disk-a-write-wraps-past-2-28
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note Revision 13's write puts block 2^28 at block 0, over the start of
+@note the pack.
+@old
+        V_LOOK: begin
+          if (cur[28]) begin
+@new
+        V_LOOK: begin
+          if (1'b0 && cur[28]) begin
+@end
+
+@mutation rev13-block-disk-a-4-byte-read-is-untagged
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The 4-byte transfer's read writes each word with tag 000, where A1.11
+@note gives it the unboxed tag 005.
+@old
+              ch_wdata <= four ? {8'o005, sb[31:0]} : sb[39:0];
+@new
+              ch_wdata <= four ? {8'o000, sb[31:0]} : sb[39:0];
+@end
+
+@mutation rev13-block-disk-a-4-byte-write-keeps-the-tag
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The 4-byte transfer's write queues the word's tag with its field, so
+@note the tag lands in the next word's first byte.
+@old
+              sb <= sb | ((four ? 64'(ch_rdata[31:0]) : 64'(ch_rdata)) << {sn, 3'b000});
+@new
+              sb <= sb | (64'(ch_rdata) << {sn, 3'b000});
+@end
+
+@mutation rev13-block-disk-a-packed-word-is-four-bytes
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The packed transfer takes four bytes a word, 4,096 bytes a page, and
+@note drops every tag; its page still counts five blocks.
+@old
+  assign wb       = four ? 3'd4 : 3'd5;
+@new
+  assign wb       = four ? 3'd4 : 3'd4;
+@end
+
+@mutation rev13-block-disk-a-packed-page-is-four-blocks
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The packed transfer's page takes four blocks where its 5,120 bytes
+@note fill five: a list's next page starts a block early.
+@old
+  assign per_page = four ? 3'd4 : 3'd5;
+@new
+  assign per_page = four ? 3'd4 : 3'd4;
+@end
+
+@mutation rev13-block-disk-a-read-writes-its-page-block-by-block
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A read asks for its page's first block alone before it writes
+@note memory, so a page that runs past the end of the pack is left half
+@note written, where muir reads the page whole before it writes a word.
+@old
+              if (k == per_page - 3'd1) begin
+                k <= 3'd0;
+                v <= V_LOOK;
+@new
+              if (1'b1) begin
+                k <= 3'd0;
+                v <= V_LOOK;
+@end
+
+@mutation rev13-block-disk-a-read-charges-no-time
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A read's blocks owe no time, so it goes not-active at the walk's end
+@note rather than muir's 100 us a block.
+@old
+              // Found, and its time owed: muir charges a block read.
+              due      <= due + 32'(BLOCK_T);
+@new
+              // Found, and its time owed: muir charges a block read.
+              due      <= due;
+@end
+
+@mutation rev13-block-disk-a-write-charges-no-time
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A write's blocks owe no time.
+@old
+              ch_wrote <= 1;
+              due      <= due + 32'(BLOCK_T);
+@new
+              ch_wrote <= 1;
+              due      <= due;
+@end
+
+@mutation rev13-block-disk-a-written-block-is-not-dirty
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A block the write filled is not marked for the pack side to write
+@note back, so the disk never has it.
+@old
+              ch_wrote <= 1;
+@new
+              ch_wrote <= 0;
+@end
+
+@mutation rev13-block-disk-a-page-outside-main-memory-moves
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The probe of a page's word 0 is not taken for NXM, so the walk asks
+@note for the page's blocks, where muir stops before any.
+@old
+            look_age    <= 2'd0;
+            if (ch_nxm) begin
+              nxm <= 1'b1;
+              v   <= V_END;
+            end else begin
+              v <= writing ? V_LOOK : V_GLOOK;
+@new
+            look_age    <= 2'd0;
+            if (1'b0 && ch_nxm) begin
+              nxm <= 1'b1;
+              v   <= V_END;
+            end else begin
+              v <= writing ? V_LOOK : V_GLOOK;
+@end
+
+@mutation rev13-block-disk-the-page-is-the-entrys-low-bits
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note An entry's page taken from `<26:9>`, a bit low.
+@old
+              page13 <= ch_rdata[27:10];
+@new
+              page13 <= {ch_rdata[26:10], ch_rdata[27]};
+@end
+
+@mutation rev13-block-disk-the-pointer-carries
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The command list pointer counts all 28 bits, where only the low
+@note sixteen count: a list across a 64K boundary reads the next 64K.
+@old
+            ch_addr  <= {clp[27:16], clp_n};
+@new
+            ch_addr  <= clp[27:0] + 28'(n);
+@end
+
+@mutation rev13-block-disk-the-disk-address-keeps-32-bits
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The disk address register keeps what was written above its 28 bits.
+@old
+          da <= 32'(wdata[27:0]);
+@new
+          da <= wdata;
+@end
+
+@mutation rev13-block-disk-the-address-is-where-the-page-started
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note The disk address is left at the page's first block, not at the last
+@note block moved or the one that failed.
+@old
+          da      <= 32'(cur);
+@new
+          da      <= 32'(base);
+@end
+
+@mutation rev13-block-disk-word-201-a-word-short
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note Word 201 is left a word short of the page's last.
+@old
+        lma <= 32'({page13, 10'h3FF});
+@new
+        lma <= 32'({page13, 10'h3FE});
+@end
+
+@mutation rev13-block-disk-the-next-page-starts-four-blocks-on
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A list's next page starts four blocks on whatever the transfer, so a
+@note packed list overlaps its pages' fifth blocks.
+@old
+          base     <= base + 29'(per_page);
+@new
+          base     <= base + 29'(3'd4);
+@end
+
+@mutation rev13-block-disk-a-block-starts-the-queue-afresh
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A read drops the bytes a block ends with when it takes the next
+@note block, the words that span two blocks losing their first bytes.
+@old
+              // The block's words all taken: the next block of the page.
+              k        <= k + 3'd1;
+@new
+              // The block's words all taken: the next block of the page.
+              k        <= k + 3'd1;
+              sn       <= 4'd0;
+@end
+
+@mutation rev13-block-disk-past-the-end-of-a-read-is-no-error
+@check quux13_block_disk_quux
+@file rtl/machine/quux_block_disk.sv
+@note A block the pack side denies while a read gathers its page stops the
+@note transfer without `<17>`.
+@old
+        V_GWAIT: begin
+          if (store_deny) begin
+            past_end  <= 1'b1;
+@new
+        V_GWAIT: begin
+          if (store_deny) begin
+            past_end  <= past_end;
+@end
+
+# ------------------------------------------------ revision 13's devices, F2c
+#
+# Block-disk's channel through the memory path and the port into packed
+# storage, the snoop at revision 13, the file device's rings at 28 bits, the
+# feature page's words, the readout's words for them, and the file device
+# page's IDENT.
+
+@mutation rev13-transfer-words-do-not-drop-their-set
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note Revision 13's transfer writes main memory and leaves the cache's
+@note line of the word in place, so a processor read after it hits the word
+@note from before it (`tb/quux13_mem_port_tb.cpp`'s coherence run).
+@old
+  assign c_snoop = through && mem_done && u_write && u_main;
+@new
+  assign c_snoop = through && mem_done && u_write && u_main && !WIDE;
+@end
+
+@mutation rev13-an-uncached-word-is-four-bytes-apart
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note The channel's word taken 4 bytes a word, not packed storage's 5.
+@old
+  assign u_addr13  = BASE13 + (32'(u_phys) << 2) + 32'(u_phys);
+@new
+  assign u_addr13  = BASE13 + (32'(u_phys) << 2);
+@end
+
+@mutation rev13-an-uncached-read-takes-one-beat
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A channel's read asks one beat where the word's five bytes run into
+@note a second, so the word's high bytes are the beat's next word.
+@old
+  assign u_beats13 = !u_line13 ? 3'd0 : (u_off13 > 3'd3) ? 3'd2 : 3'd1;
+@new
+  assign u_beats13 = !u_line13 ? 3'd0 : (u_off13 > 3'd3) ? 3'd1 : 3'd1;
+@end
+
+@mutation rev13-an-uncached-write-is-four-bytes
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note A channel's write stores four bytes, the tag never reaching memory.
+@old
+  assign mem_wide  = through ? (WIDE && u_write) : mwide_q;
+@new
+  assign mem_wide  = through ? 1'b0 : mwide_q;
+@end
+
+@mutation rev13-an-uncached-word-is-taken-at-its-beats-half
+@check quux13_port_quux
+@file rtl/machine/quux_mem_port.sv
+@note The channel's word taken from its beat at the byte mod 4, so a word
+@note from byte 4 on reads the beat's first bytes.
+@old
+    assign u_word13 = WB'(mem_rline[127:0] >> {u_off13, 3'b000});
+@new
+    assign u_word13 = WB'(mem_rline[127:0] >> {1'b0, u_off13[1:0], 3'b000});
+@end
+
+@mutation rev13-an-uncached-word-is-taken-at-its-beats-half-on-the-machine
+@check quux13_disk_quux
+@file rtl/machine/quux_mem_port.sv
+@note The same, on the whole machine: every packed page a disk write reads
+@note carries the wrong bytes.
+@old
+    assign u_word13 = WB'(mem_rline[127:0] >> {u_off13, 3'b000});
+@new
+    assign u_word13 = WB'(mem_rline[127:0] >> {1'b0, u_off13[1:0], 3'b000});
+@end
+
+@mutation rev13-the-channels-word-loses-its-tag
+@check quux13_disk_quux
+@file rtl/machine/cadr_memory_path.sv
+@note Revision 13's channel takes a word read at 32 bits, so a disk write
+@note drops every tag and the packed page is not the page.
+@old
+  assign ch_rdata = REV13 ? ch_word13 : WORD_BITS'(memory_rdata);
+@new
+  assign ch_rdata = REV13 ? (ch_word13 & WORD_BITS'(32'hFFFF_FFFF)) : WORD_BITS'(memory_rdata);
+@end
+
+@mutation rev13-the-channel-writes-32-bits
+@check quux13_disk_quux
+@file rtl/machine/cadr_memory_path.sv
+@note Revision 13's channel hands the port 32 bits of its word, so every
+@note word a disk read writes loses its tag.
+@old
+        .u_wdata    (REV13 ? ch_wdata : WORD_BITS'(br_wdata)),
+@new
+        .u_wdata    (REV13 ? (ch_wdata & WORD_BITS'(32'hFFFF_FFFF)) : WORD_BITS'(br_wdata)),
+@end
+
+@mutation rev13-the-channels-word-is-taken-a-tick-late
+@check quux13_disk_quux
+@file rtl/machine/cadr_memory_path.sv
+@note The channel's word taken only while the port's answer stands for a
+@note write, so every read hands block-disk the word before.
+@old
+      else if (br_done && !br_write) ch_word13 <= br_word;
+@new
+      else if (br_done && br_write) ch_word13 <= br_word;
+@end
+
+@mutation rev13-fd-a-ring-on-a-4-word-line-is-taken
+@check quux13_devices_quux
+@file rtl/machine/quux_file_device.sv
+@note Revision 13's rings on a 4-word line, where A1.10 asks an 8-word one.
+@old
+    localparam int unsigned LINE_BITS = WIDE ? 3 : 2,
+@new
+    localparam int unsigned LINE_BITS = WIDE ? 2 : 2,
+@end
+
+@mutation rev13-fd-a-base-keeps-24-bits
+@check quux13_devices_quux
+@file rtl/machine/quux_file_device.sv
+@note Revision 13's command ring's base keeps 24 bits, revision 12's,
+@note where it is 28.
+@old
+          8'o162: if (!enabled) cmd_base  <= wdata[BASE_BITS-1:0];
+@new
+          8'o162: if (!enabled) cmd_base  <= wdata[BASE_BITS-1:0] & BASE_BITS'(24'hFF_FFFF);
+@end
+
+@mutation rev13-feature-word-1-says-six-bits
+@check quux13_devices_quux
+@file rtl/machine/cadr_machine.sv
+@note Revision 13's feature word 1 says revision 12's 6-bit level-1 entry,
+@note and word 2 its 2,048 level-2 entries.
+@old
+  localparam int unsigned FEATURE_L1_BITS = WORD_BITS > 32 ? 7 : 6;
+@new
+  localparam int unsigned FEATURE_L1_BITS = WORD_BITS > 32 ? 6 : 6;
+@end
+
+@mutation rev13-feature-word-6-says-2048
+@check quux13_devices_quux
+@file rtl/machine/cadr_machine.sv
+@note Revision 13's feature word 6 says revision 12's 2,048 dispatch
+@note memory entries.
+@old
+  localparam int unsigned FEATURE_DMEM    = WORD_BITS > 32 ? 4096 : 2048;
+@new
+  localparam int unsigned FEATURE_DMEM    = WORD_BITS > 32 ? 2048 : 2048;
+@end
+
+@mutation rev13-feature-word-13-is-revision-12s-buffer
+@check quux13_devices_quux
+@file rtl/machine/cadr_machine.sv
+@note Revision 13's feature word 13 says revision 12's frame buffer at
+@note `17000000`, where the window is at `1760000000`.
+@old
+  localparam logic [31:0] VIDEO_BUFFER    = WORD_BITS > 32 ? 32'o1760000000 : 32'o17000000;
+@new
+  localparam logic [31:0] VIDEO_BUFFER    = WORD_BITS > 32 ? 32'o17000000 : 32'o17000000;
+@end
+
+@mutation rev13-readout-word-10-its-low-bit-wrong
+@check quux13_devices_quux
+@file rtl/machine/cadr_machine.sv
+@note The register page's readout word 10 gives the response ring's base
+@note with its low bit wrong.
+@old
+          14'd10: quux_ro_word <= (WORD_BITS > 32) ? fd_ro_resp_base : 48'hA5A5_5A5A_A5A5;
+@new
+          14'd10: quux_ro_word <= (WORD_BITS > 32) ? (fd_ro_resp_base ^ 48'd1) : 48'hA5A5_5A5A_A5A5;
+@end
+
+@mutation rev13-readout-word-7-is-both-bases
+@check quux13_devices_quux
+@file rtl/machine/quux_file_device.sv
+@note Revision 13's readout word 7 packs both bases in revision 12's two
+@note 24-bit halves.
+@old
+    assign ro_bases = 48'(cmd_base);
+@new
+    assign ro_bases = {cmd_base[23:0], resp_base[23:0]};
+@end
+
+@mutation rev13-readout-entry-21-says-revision-12
+@check quux13_devices_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The register table's entry 21 reads 0 below K and L on revision 13,
+@note so a reader takes it for revision 12 and its 32-bit words.
+@old
+  localparam logic [15:0] QUUX_REV         = WIDE ? MACHINE_ID[15:0] : 16'd0;
+@new
+  localparam logic [15:0] QUUX_REV         = WIDE ? 16'd0 : 16'd0;
+@end
+
+@mutation rev13-readout-entry-21-names-revision-13-on-revision-12
+@check machine_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Entry 21 carries MACHINE-ID's low half on revision 12 too, where a
+@note reader takes the 0 there for revision 12.
+@old
+  localparam logic [15:0] QUUX_REV         = WIDE ? MACHINE_ID[15:0] : 16'd0;
+@new
+  localparam logic [15:0] QUUX_REV         = MACHINE_ID[15:0];
+@end
+
+@mutation rev13-the-file-device-page-says-qfd9
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's revision-13 bitstream says "QFD9", so the server takes its
+@note main memory for 32-bit words.
+@old
+      quux_fd_face #(.IDENT(WORD_BITS > 32 ? 32'h5146_3133 : 32'h5146_4439)) u_fd_face (
+@new
+      quux_fd_face #(.IDENT(WORD_BITS > 32 ? 32'h5146_4439 : 32'h5146_4439)) u_fd_face (
+@end
+
+@mutation rev13-the-de25s-file-device-page-says-qfd9
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note The DE25-Nano's revision-13 bitstream says "QFD9".
+@old
+    quux_fd_face #(.ID_W(4), .LEN_W(8), .IDENT(WORD_BITS > 32 ? 32'h5146_3133 : 32'h5146_4439)) u_fd_face (
+@new
+    quux_fd_face #(.ID_W(4), .LEN_W(8), .IDENT(WORD_BITS > 32 ? 32'h5146_4439 : 32'h5146_4439)) u_fd_face (
+@end
+
 @mutation grid-cadr-arty-adapter-a-tick-wide
 @check grid
 @file rtl/plumbing/xilinx7/cadr_ddr.xdc
@@ -22337,9 +22799,10 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @check quux_busreset_quux
 @file rtl/machine/cadr_machine.sv
 @note Block-disk takes the power-on reset alone as `-XBUS INIT`, so its
-@note command and its error stand through the reset.
+@note command and its error stand through the reset.  The anchor follows the
+@note instance's revision parameter.
 @old
-  quux_block_disk disk (
+  quux_block_disk #(.WORD_BITS(WORD_BITS)) disk (
       .clk      (clk),
       .rst      (rst),
       // `-XBUS INIT` on the backplane: the power-on reset and
@@ -22348,7 +22811,7 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
       // pointer, which `-XINIT` leaves standing.
       .xbus_init(bus_init),
 @new
-  quux_block_disk disk (
+  quux_block_disk #(.WORD_BITS(WORD_BITS)) disk (
       .clk      (clk),
       .rst      (rst),
       .xbus_init(rst),
@@ -22838,9 +23301,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note testbench reads MEM_WORDS through the host side against the boards it
 @note gives the machine.
 @old
-        .mem_words    ({boards, 16'd0}),
+        .mem_words    (FD_MEM_BITS'({boards, 16'd0})),
 @new
-        .mem_words    ({1'b0, boards, 15'd0}),
+        .mem_words    (FD_MEM_BITS'({1'b0, boards, 15'd0})),
 @end
 
 @mutation quux-the-producer-is-shown-before-the-write-buffer-drains
@@ -23219,9 +23682,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_file_device.sv
 @note The bound just outside: a ring ending a word past main memory.
 @old
-        && ({1'b0, base} + (25'd8 << log2)) <= {2'b00, words};
+        && ({1'b0, base} + (SUM_BITS'(8) << log2)) <= SUM_BITS'(words);
 @new
-        && ({1'b0, base} + (25'd8 << log2)) <= {2'b00, words} + 25'd1;
+        && ({1'b0, base} + (SUM_BITS'(8) << log2)) <= SUM_BITS'(words) + SUM_BITS'(1);
 @end
 
 @mutation fd-a-ring-to-main-memorys-end-is-refused
@@ -23229,18 +23692,18 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_file_device.sv
 @note And just inside: a ring ending at main memory's last word.
 @old
-        && ({1'b0, base} + (25'd8 << log2)) <= {2'b00, words};
+        && ({1'b0, base} + (SUM_BITS'(8) << log2)) <= SUM_BITS'(words);
 @new
-        && ({1'b0, base} + (25'd8 << log2)) < {2'b00, words};
+        && ({1'b0, base} + (SUM_BITS'(8) << log2)) < SUM_BITS'(words);
 @end
 
 @mutation fd-a-ring-off-a-line-is-taken
 @check quux_files_quux
 @file rtl/machine/quux_file_device.sv
 @old
-    return base[1:0] == 2'b00 && log2 <= 4'd8
+    return base[LINE_BITS-1:0] == '0 && log2 <= 4'd8
 @new
-    return log2 <= 4'd8
+    return (base[LINE_BITS-1:0] == '0 || 1'b1) && log2 <= 4'd8
 @end
 
 @mutation fd-a-ring-of-512-is-taken
@@ -23248,9 +23711,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/quux_file_device.sv
 @note The bound just outside: log2 9.
 @old
-    return base[1:0] == 2'b00 && log2 <= 4'd8
+    return base[LINE_BITS-1:0] == '0 && log2 <= 4'd8
 @new
-    return base[1:0] == 2'b00 && log2 <= 4'd9
+    return base[LINE_BITS-1:0] == '0 && log2 <= 4'd9
 @end
 
 @mutation fd-a-producer-past-the-ring-is-taken
@@ -23286,9 +23749,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @check quux_files_quux
 @file rtl/machine/quux_file_device.sv
 @old
-          8'o162: if (!enabled) cmd_base  <= wdata[23:0];
+          8'o162: if (!enabled) cmd_base  <= wdata[BASE_BITS-1:0];
 @new
-          8'o162: cmd_base  <= wdata[23:0];
+          8'o162: cmd_base  <= wdata[BASE_BITS-1:0];
 @end
 
 @mutation fd-a-write-of-160-keeps-the-refusal
@@ -24697,6 +25160,28 @@ FAULT_SH=/usr/share/cadr/faults.sh
     assign main          = phys[27:16] < 12'(boards);
 @new
     assign main          = phys[27:16] <= 12'(boards);
+@end
+
+@mutation rev13-channel-decode-reaches-the-window
+@check xbus_decode_quux13ch
+@file rtl/machine/cadr_xbus_decode.sv
+@note Block-disk's channel on revision 13 takes the frame buffer window for
+@note main memory, so a page there is moved, packed, into the words the
+@note window's buffer lies over, where muir stops it with NXM.
+@old
+    assign memory = (window && !MAIN_ONLY) || main;
+@new
+    assign memory = window || main;
+@end
+
+@mutation rev13-channel-decode-answers-the-register-page
+@check xbus_decode_quux13ch
+@file rtl/machine/cadr_xbus_decode.sv
+@note The register page is a device to the channel as to the processor.
+@old
+    assign device = register_page && !MAIN_ONLY;
+@new
+    assign device = register_page;
 @end
 
 @mutation rev13-the-prefetch-compares-lc-25-2

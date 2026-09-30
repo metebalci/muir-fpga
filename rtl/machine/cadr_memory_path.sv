@@ -232,14 +232,16 @@ module cadr_memory_path #(
 
     // The disk controller's memory channel, the second master on this bus.
     // One word a cycle, the request standing until `ch_done`; `ch_nxm` says
-    // main memory does not answer for that address.
+    // main memory does not answer for that address.  On revision 13 the
+    // address is 28 bits and the word 40, block-disk's pages of packed
+    // storage (`quux_block_disk.sv`), which the memory port packs.
     input  var logic        ch_req,
     input  var logic        ch_write,
-    input  var logic [21:0] ch_addr,
-    input  var logic [31:0] ch_wdata,
+    input  var logic [PHYS_BITS-1:0] ch_addr,
+    input  var logic [WORD_BITS-1:0] ch_wdata,
     output var logic        ch_done,
     output var logic        ch_nxm,
-    output var logic [31:0] ch_rdata,
+    output var logic [WORD_BITS-1:0] ch_rdata,
 
     // What else the decode made of the address, so that a cycle nothing
     // answers can say why rather than merely time out.
@@ -856,7 +858,9 @@ module cadr_memory_path #(
   logic ch_memory_c, ch_memory;
   logic ch_device_c, ch_nxm_c, ch_unibus_c;
 
-  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS)) ch_decode (
+  // On revision 13 it is the 28-bit space's, and the channel's view of it,
+  // main memory alone (`cadr_xbus_decode.sv`'s `CHANNEL`).
+  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS), .WORD_BITS(WORD_BITS), .CHANNEL(1)) ch_decode (
       .color_tv(color_fitted),
       .phys  (ch_addr),
       .boards(boards),
@@ -962,8 +966,10 @@ module cadr_memory_path #(
   assign br_cpu_wdata = QUUX ? 32'd0 : wdata[31:0];
   assign br_cpu_write = QUUX ? 1'b0  : cpu_write;
   assign br_cpu_rq    = QUUX ? 1'b0  : cpu_rq;
-  assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : br_cpu_phys;
-  assign bus_wdata = ch_own ? ch_wdata : mp_own ? map_wdata : br_cpu_wdata;
+  // Revision 13's channel reaches the port past the bridge's address and
+  // word (below): these are the Xbus's 22 bits and 32.
+  assign bus_phys  = ch_own ? ch_addr[21:0] : mp_own ? map_addr  : br_cpu_phys;
+  assign bus_wdata = ch_own ? ch_wdata[31:0] : mp_own ? map_wdata : br_cpu_wdata;
   assign bus_write = ch_own ? ch_write : mp_own ? map_write : br_cpu_write;
   assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : br_cpu_rq);
   // The bridge answers main memory and the display boards' frame buffers, at
@@ -990,7 +996,10 @@ module cadr_memory_path #(
   // this is the channel's equivalent, and it costs a tick a word.
   assign ch_done  = ch_own && ch_ack_q;
   assign ch_nxm   = ch_own && !ch_memory;
-  assign ch_rdata = memory_rdata;
+  // Revision 13's word is the whole word from the port, held as the bridge
+  // holds its own (below, `g_quux_port`).
+  logic [WORD_BITS-1:0] ch_word13;
+  assign ch_rdata = REV13 ? ch_word13 : WORD_BITS'(memory_rdata);
 
   // The map's window, the same shape and for the same reason: its word is a
   // tick behind main memory's acknowledgment because the bridge's `rdata` is
@@ -1094,6 +1103,7 @@ module cadr_memory_path #(
   // the OR is `is_memory || device` whatever `video_fb` holds then.
   logic        br_req, br_write, br_done;
   logic [31:0] br_addr, br_wdata, br_rdata;
+  logic [WORD_BITS-1:0] br_word;   // the port's word for the uncached requester
   logic [WORD_BITS-1:0] port_word;
   assign br_req_o   = br_req;
   assign br_write_o = br_write;
@@ -1127,11 +1137,15 @@ module cadr_memory_path #(
         .u_req      (br_req),
         .u_write    (br_write),
         .u_addr     (br_addr),
-        .u_wdata    (br_wdata),
+        // **REVISION 13'S TRANSFER IS WHOLE WORDS OF MAIN MEMORY**, which the
+        // port packs from `u_phys` (`quux_mem_port.sv`): the channel's word
+        // and address reach it past the bridge's 32 bits and 22, and the
+        // bridge carries the handshake.
+        .u_wdata    (REV13 ? ch_wdata : WORD_BITS'(br_wdata)),
         .u_main     (ch_own && ch_memory),
-        .u_phys     (PHYS_BITS'(ch_addr)),
+        .u_phys     (ch_addr),
         .u_done     (br_done),
-        .u_rdata    (br_rdata),
+        .u_rdata    (br_word),
         .mem_req    (mem_req),
         .mem_write  (mem_write),
         .mem_line   (mem_line),
@@ -1155,6 +1169,13 @@ module cadr_memory_path #(
         .pf_nx_fetch_v    (pf_nx_fetch_v),
         .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr)
     );
+    assign br_rdata = br_word[31:0];
+    // The channel's word, taken where the bridge takes its own `rdata`: at
+    // main memory's answer, which is a tick before `ch_done`.
+    always_ff @(posedge clk) begin
+      if (rst) ch_word13 <= '0;
+      else if (br_done && !br_write) ch_word13 <= br_word;
+    end
     // No Unibus, no arbitration for it, no debug block (contract Q5).
     assign ub_msyn   = 1'b0;
     assign ub_write  = 1'b0;
@@ -1191,6 +1212,10 @@ module cadr_memory_path #(
     assign mem_wdata    = WORD_BITS'(br_wdata);
     assign br_done      = mem_done;
     assign br_rdata     = mem_rdata;
+    assign br_word      = '0;
+    assign ch_word13    = '0;
+    logic unused_cadr_word;
+    assign unused_cadr_word = ^br_word;
     assign mem_line     = 1'b0;
     assign mem_beats    = 3'd0;
     assign mem_wide     = 1'b0;

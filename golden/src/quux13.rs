@@ -33,6 +33,10 @@
 //!             at level 1 `177` and level 2 `7777`, a store with both
 //!             enables, a (type, map bit) dispatch above 2,047, and a page
 //!             fault on `<31:28>`
+//!   devices   the feature page's words 0 to 17 at revision 13, and the file
+//!             device's rings at 28-bit addresses on 8-word lines
+//!   disk      block-disk's packed and 4-byte transfers through the channel,
+//!             the memory port and the cache, on a pack the testbench serves
 //!
 //! **NO PROGRAM TOUCHES MAIN MEMORY.**  Revision 13's memory port, with its
 //! 8-word lines, its page reach and its packed storage (G2 §3; muir's
@@ -865,6 +869,211 @@ fn space_program() -> Prog {
     p
 }
 
+// --------------------------------------------------------------- devices
+
+/// The file device's rings in [`devices_program`]: above 22 bits, each on an
+/// 8-word line, and a command ring's base off one by four words.
+const FD_CMD_13: u64 = 0o20100000;
+const FD_RESP_13: u64 = 0o20100100;
+
+/// **The register page's devices at revision 13** (contract G2 §4.1-§4.3,
+/// appendix A1.10; muir's `revision_12s_addresses_are_nothing_on_revision_13`
+/// and `the_file_device_takes_28_bit_addresses_and_writes_fixnums`): the
+/// feature page's words 0 to 17 as muir's revision 13 reads them ---
+/// MACHINE-ID 13, the level-1 entry's 7 bits, 4,096 level-2 and dispatch
+/// memory entries, the frame buffer window at `1760000000` --- each read
+/// through the map; and the file device's rings at 28-bit addresses: a
+/// command ring on a 4-word line refused, on an 8-word line taken, the bases
+/// read back at 28 bits whatever `<31:28>` was written and `<27:24>` kept,
+/// and a ring past main memory's end refused and one to its last word
+/// taken.  The words the
+/// device writes are its server's, on the board Linux's, and are not here.
+fn devices_program() -> Prog {
+    let mut p = Prog::new();
+    p.start();
+    let reg = p.through(1, REGISTER_PAGE_13);
+    // muir's own answers, from a revision-13 machine of the same size.
+    let mut m = machine(&[], BOARDS_13);
+    for k in 0..0o20u64 {
+        let want = m.bus_read((REGISTER_PAGE_13 + k) as u32);
+        p.a(0o103, (reg + k) as Word);
+        p.read_a(0o103, want, &format!("feature word {k:o}"));
+    }
+    assert_eq!(m.bus_read(REGISTER_PAGE_13 as u32), (0x5155 << 16) | (13 << 4) | 4, "MACHINE-ID 13");
+    assert_eq!(m.bus_read((REGISTER_PAGE_13 + 0o13) as u32), 0o1760000000, "word 13: the window");
+
+    // The file device, disabled, its registers written and read as muir's
+    // device takes them.
+    let r = |k: u64| (reg + k) as Word;
+    let (control, status, cmd_base, cmd_size, resp_base, resp_size) = (0o160, 0o161, 0o162, 0o163, 0o166, 0o167);
+    let wr = |p: &mut Prog, m: &mut Machine, k: u64, v: Word| {
+        p.a(0o104, r(k)).a(0o105, v);
+        p.write_a(0o105, 0o104);
+        m.bus_write((REGISTER_PAGE_13 + k) as u32, v);
+    };
+    let rd = |p: &mut Prog, m: &mut Machine, k: u64, what: &str| {
+        let want = m.bus_read((REGISTER_PAGE_13 + k) as u32);
+        p.a(0o106, r(k));
+        p.read_a(0o106, want, what);
+        want
+    };
+    // A base keeps `<27:0>` of what is written, past main memory or not.
+    wr(&mut p, &mut m, cmd_base, 0xff40_8000);
+    let b = rd(&mut p, &mut m, cmd_base, "162: 28 bits of what was written");
+    assert_eq!(b, 0x0f40_8000, "a base keeps 28 bits");
+    // A command ring on a 4-word line: refused.
+    wr(&mut p, &mut m, cmd_base, (FD_CMD_13 + 4) as Word);
+    wr(&mut p, &mut m, cmd_size, 1);
+    wr(&mut p, &mut m, resp_base, FD_RESP_13 as Word);
+    wr(&mut p, &mut m, resp_size, 0);
+    wr(&mut p, &mut m, control, 1);
+    let st = rd(&mut p, &mut m, status, "161: a ring off an 8-word line refused");
+    assert_eq!(st & 0b101, 0b100, "a ring on a 4-word line is refused");
+    rd(&mut p, &mut m, control, "160: not enabled");
+    // On an 8-word line, written with `<31:28>` set: taken, 28 bits.
+    wr(&mut p, &mut m, cmd_base, (0xf000_0000 | FD_CMD_13) as Word);
+    wr(&mut p, &mut m, control, 0x101);
+    let st = rd(&mut p, &mut m, status, "161: enabled");
+    assert_eq!(st & 0b101, 1, "enabled");
+    let b = rd(&mut p, &mut m, cmd_base, "162: the command ring's base, 28 bits");
+    assert_eq!(b, FD_CMD_13, "the base reads back, 28 bits");
+    rd(&mut p, &mut m, resp_base, "166: the response ring's base");
+    rd(&mut p, &mut m, control, "160: enabled, the interrupt enable");
+    // Disabled; a response ring running a word past main memory's end,
+    // refused; ending at its last word, taken.
+    wr(&mut p, &mut m, control, 0);
+    wr(&mut p, &mut m, resp_size, 1);
+    wr(&mut p, &mut m, resp_base, (MAIN_END - 8) as Word);
+    wr(&mut p, &mut m, control, 1);
+    let st = rd(&mut p, &mut m, status, "161: a ring past main memory's end refused");
+    assert_eq!(st & 0b101, 0b100, "a ring past main memory is refused");
+    wr(&mut p, &mut m, resp_base, (MAIN_END - 16) as Word);
+    wr(&mut p, &mut m, control, 1);
+    let st = rd(&mut p, &mut m, status, "161: a ring to main memory's last word taken");
+    assert_eq!(st & 0b101, 1, "a ring to main memory's end is taken");
+    rd(&mut p, &mut m, resp_base, "166: the response ring's base, at main memory's end");
+    rd(&mut p, &mut m, cmd_base, "162: the command ring's base, kept");
+    p.park();
+    p
+}
+
+// ------------------------------------------------------------------ disk
+
+/// The pack of [`disk_program`]: 64 blocks, blocks 20 to 23 holding
+/// `disk_pack_word`, the rest zero.
+const DISK_BLOCKS: u32 = 64;
+const DISK_PRELOADED: std::ops::Range<u32> = 20..24;
+/// Its pages: A and B above 22 bits, C below, D above; and the command
+/// list's page.
+const DISK_A: u64 = 0o20002000;
+const DISK_B: u64 = 0o20004000;
+const DISK_C: u64 = 0o6000;
+const DISK_D: u64 = 0o20006000;
+const DISK_LIST: u64 = 0o20010000;
+
+/// A preloaded block's words, as `tb/cadr_machine_tb.cpp` writes them too.
+fn disk_pack_word(lba: u32, w: u32) -> u32 {
+    (lba << 12) ^ (w << 1) ^ 0x5a00_0001 ^ lba.rotate_left(23)
+}
+
+/// The pack [`disk_program`] runs on, on block-disk's unit 0.
+fn disk_pack(m: &mut Machine) {
+    let mut d = muir::disk_image::Disk::blank(DISK_BLOCKS);
+    for lba in DISK_PRELOADED {
+        let b: [u32; 256] = std::array::from_fn(|w| disk_pack_word(lba, w as u32));
+        assert!(d.write_block(lba, &b));
+    }
+    m.block_disk.as_mut().expect("QUUX's block-disk").attach(d);
+}
+
+/// **Block-disk's two transfers on the whole machine** (contract G2 §3 and
+/// §4.2, appendix A1.11; muir's `the_packed_transfer_moves_a_page_as_5_blocks`
+/// and `the_4_byte_transfer_moves_a_page_as_4_blocks`): the channel's words
+/// through the memory path and the port into packed storage and out of it,
+/// the cache coherent with them, and the processor reading the pages after.
+///
+///   1. page A's words 200-217, across its first two blocks, written, and
+///      page A written to blocks 10-14 by the packed transfer;
+///   2. page B's same words written and one of them read, so that its line
+///      is in the cache, and blocks 10-14 read into page B by the packed
+///      transfer: B's words 200-217 are A's, the cached line dropped;
+///   3. blocks 20-23 read into page C by the 4-byte transfer, each word
+///      the block's word with tag `005`;
+///   4. page A written to blocks 30-33 by the 4-byte transfer, and blocks
+///      30-34 read into page D by the packed transfer: D's words 160-171
+///      are A's words 200-214 taken 4 bytes a word, 5 bytes to a word, the
+///      tags dropped.
+///
+/// Each transfer is started through the register page and polled to
+/// not-active, muir's instant, which the fabric's walk reaches before; its
+/// status, word 201 and disk address are read after.
+fn disk_program() -> Prog {
+    let mut p = Prog::new();
+    p.start();
+    let reg = p.through(1, REGISTER_PAGE_13);
+    let va_a = p.through(2, DISK_A);
+    let va_b = p.through(3, DISK_B);
+    let va_c = p.through(4, DISK_C);
+    let va_d = p.through(5, DISK_D);
+    let va_l = p.through(6, DISK_LIST);
+    // The registers' virtual addresses.
+    let (a_cmd, a_clp, a_da, a_start) = (0o110u64, 0o111u64, 0o112u64, 0o113u64);
+    p.a(a_cmd, (reg + 0o200) as Word).a(a_clp, (reg + 0o201) as Word);
+    p.a(a_da, (reg + 0o202) as Word).a(a_start, (reg + 0o203) as Word);
+    // The list: A, B, C, A, D, each alone.
+    let list = [DISK_A, DISK_B, DISK_C, DISK_A, DISK_D];
+    for (k, &page) in list.iter().enumerate() {
+        p.a(0o114, (va_l + k as u64) as Word).a(0o115, page as Word);
+        p.write_a(0o115, 0o114);
+    }
+    // A transfer: CLP the list's entry `k`, DA, the command, START; then
+    // polled until not-active, and its registers read.
+    let transfer = |p: &mut Prog, k: u64, da: u64, cmd: u64, last: u64, what: &str| {
+        p.a(0o116, (DISK_LIST + k) as Word).write_a(0o116, a_clp);
+        p.a(0o116, da as Word).write_a(0o116, a_da);
+        p.a(0o116, cmd as Word).write_a(0o116, a_cmd);
+        p.write_a(ZERO, a_start);
+        let top = p.at();
+        p.op(ALU | SETA | a_src(a_cmd) | START_READ);
+        p.fill(1);
+        p.op(jbit(0) | SRC_MD | INVERT | target(top) | N);
+        p.fill(1);
+        p.read_a(a_cmd, 1, &format!("{what}: not active, no error"));
+        p.read_a(a_clp, (last + 1023) as Word, &format!("{what}: word 201 at the page's last word"));
+    };
+    const WRITE: u64 = 0o11;
+    const FOUR: u64 = 1 << 12;
+
+    // 1. Page A's words 200-217, and page A to blocks 10-14.
+    let a_words = p.store_run(va_a + 200, w(0o211, 0x1b2c_3d4e), w(0o133, 0x6b5a_4938), 18);
+    transfer(&mut p, 0, 10, WRITE, DISK_A, "the packed write of page A");
+    p.read_a(a_da, 14, "the packed write: the disk address at block 14");
+    // 2. B's same words, one read into the cache; blocks 10-14 into B.
+    let b_bait = p.store_run(va_b + 200, w(0o057, 0x9a8b_7c6d), w(0o315, 0x2468_ace1), 18);
+    p.a(0o117, (va_b + 200) as Word).read_a(0o117, b_bait[0], "page B's word 200, cached");
+    transfer(&mut p, 1, 10, 0, DISK_B, "the packed read into page B");
+    p.read_run(va_b + 200, &a_words, &(0..18).collect::<Vec<_>>(), "page B, A's words");
+    // 3. Blocks 20-23 into C, 4 bytes a word.
+    transfer(&mut p, 2, 20, FOUR, DISK_C, "the 4-byte read into page C");
+    for wd in [0u64, 1, 255, 256, 511, 767, 1023] {
+        let want = w(0o005, disk_pack_word(20 + (wd / 256) as u32, (wd % 256) as u32).into());
+        p.a(0o117, (va_c + wd) as Word).read_a(0o117, want, &format!("page C's word {wd}, tag 005"));
+    }
+    // 4. Page A to blocks 30-33, 4 bytes a word; blocks 30-34 into D,
+    //    packed.  D's words 160-171 were written first, one of them read.
+    transfer(&mut p, 3, 30, WRITE | FOUR, DISK_A, "the 4-byte write of page A");
+    let d_bait = p.store_run(va_d + 160, w(0o377, 0x5a69_7887), w(0o142, 0xf1e2_d3c4), 12);
+    p.a(0o117, (va_d + 160) as Word).read_a(0o117, d_bait[0], "page D's word 160, cached");
+    transfer(&mut p, 4, 30, 0, DISK_D, "the packed read into page D");
+    let four: Vec<u8> = a_words.iter().flat_map(|&x| (x as u32).to_le_bytes()).collect();
+    let d_words: Vec<Word> = (0..12)
+        .map(|j| (0..5).fold(0, |x, b| x | Word::from(four[5 * j + b]) << (8 * b)))
+        .collect();
+    p.read_run(va_d + 160, &d_words, &(0..12).collect::<Vec<_>>(), "page D, A's fields packed");
+    p.park();
+    p
+}
+
 /// The first rolling words and steps of [`lines_program`]: every byte of
 /// each word different, the tag included.
 const LINE_FIRST: [Word; 5] = [
@@ -1065,8 +1274,10 @@ fn program(name: &str) -> Prog {
         "space" => space_program(),
         "lines" => lines_program(),
         "fused" => fused_program(),
+        "devices" => devices_program(),
+        "disk" => disk_program(),
         _ => {
-            eprintln!("quux13: no program `{name}`; they are alu, byte, dispatch, map, space, lines and fused");
+            eprintln!("quux13: no program `{name}`; they are alu, byte, dispatch, map, space, lines, fused, devices and disk");
             std::process::exit(2);
         }
     }
@@ -1082,9 +1293,9 @@ fn machine(prom: &[Insn], boards: u32) -> Machine {
 }
 
 /// Main memory's 64K-word boards for program `name`: the memory programs'
-/// 65, past 22 bits, and QUUX's 32 for the rest.
+/// and the devices' 65, past 22 bits, and QUUX's 32 for the rest.
 fn boards(name: &str) -> u32 {
-    if matches!(name, "space" | "lines" | "fused") { BOARDS_13 } else { 32 }
+    if matches!(name, "space" | "lines" | "fused" | "devices" | "disk") { BOARDS_13 } else { 32 }
 }
 
 /// Every result the program was to leave, from the machine's A memory.
@@ -1144,13 +1355,21 @@ fn main() {
 
     // The run's length: to the park, and sixteen microcycles on.
     let park = QUUX_PROM_BASE as u64 + prog.words.len() as u64 - 2;
+    // The machine, and the disk program's pack on block-disk.
+    let machine_for = |prom: &[Insn]| {
+        let mut m = machine(prom, boards(&name));
+        if name == "disk" {
+            disk_pack(&mut m);
+        }
+        m
+    };
     let n = {
-        let mut probe = trace::engine_on(machine(&prom, boards(&name)), timing);
+        let mut probe = trace::engine_on(machine_for(&prom), timing);
         probe.boot();
         let mut t = trace::Trace::new(&probe);
         let mut cycle = 0u64;
         while probe.pc() as u64 != park {
-            assert!(cycle < 200_000, "quux13: {name} never reached its park");
+            assert!(cycle < 400_000, "quux13: {name} never reached its park");
             if let Err(h) = t.row(&mut probe, cycle) {
                 panic!("quux13: {name} stopped at microcycle {cycle}: {h:?}");
             }
@@ -1159,7 +1378,7 @@ fn main() {
         cycle + 16
     };
 
-    let mut e = trace::engine_on(machine(&prom, boards(&name)), timing);
+    let mut e = trace::engine_on(machine_for(&prom), timing);
     e.boot();
     println!("{}", trace::COLUMNS);
     println!(
@@ -1173,6 +1392,17 @@ fn main() {
     if boards(&name) != 32 {
         println!("# boards {}", boards(&name));
     }
+    // The disk program's pack, which the testbench's pack side serves, and
+    // the pages its transfers reach, whose words the channel moves.
+    if name == "disk" {
+        println!("# disk {DISK_BLOCKS:x}");
+        for lba in DISK_PRELOADED {
+            println!("# pack {lba:x}");
+        }
+        for page in [DISK_A, DISK_B, DISK_C, DISK_D, DISK_LIST] {
+            println!("# dma {page:x}");
+        }
+    }
     let mut t = trace::Trace::new(&e);
     for cycle in 0..n {
         match t.row(&mut e, cycle) {
@@ -1184,6 +1414,14 @@ fn main() {
         }
     }
     check(&name, &prog, e.machine());
+    // The file device's two bases as the run leaves them, which the
+    // testbench reads through the readout's selector 12, words 7 and 10
+    // (`cadr_machine.sv`), with the register table's entry 21.
+    {
+        use muir::file_device as fd;
+        let dev = &e.machine().file_device;
+        println!("# fdbases {:x} {:x}", dev.read(fd::CMD_BASE, e.ns()), dev.read(fd::RESP_BASE, e.ns()));
+    }
     let c = e.cache().expect("revision 13 has its cache");
     let pf = e.prefetch_counts().expect("revision 13 has its prefetch");
     eprintln!(

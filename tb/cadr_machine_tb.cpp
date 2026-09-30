@@ -293,6 +293,21 @@ int main(int argc, char **argv) {
   // against the cycle that owes it.  The programs read no byte they did not
   // write.
   bool rev13 = false;
+  // The file device's two bases as muir's device holds them at the end of a
+  // revision-13 program (`# fdbases`), for the readout's selector 12.
+  bool have_fd_bases = false;
+  uint64_t fd_cmd_base_end = 0, fd_resp_base_end = 0;
+  // **BLOCK-DISK'S PACK AND ITS TRANSFERS ON THE WHOLE MACHINE** (revision
+  // 13's `disk` program, `golden/src/quux13.rs`): the pack's blocks
+  // (`# disk`), those holding the rule's words (`# pack`), and the pages the
+  // transfers reach (`# dma`), which the channel reads and writes through the
+  // port beside the processor.  This program is the pack side, as
+  // `tb/quux13_block_disk_tb.cpp`'s is, serving the block store on the
+  // machine's seam.
+  bool have_disk = false;
+  uint32_t disk_blocks = 0;
+  std::set<uint32_t> disk_preloaded;
+  std::vector<uint32_t> dma_pages;
   // Main memory's 64K-word boards: QUUX's 32 unless the trace says.
   unsigned main_boards = 32;
   // Key words for the keyboard's cable, by the microcycle they go in before,
@@ -351,6 +366,11 @@ int main(int argc, char **argv) {
           rtc_start = h0;
         }
         if (k9 == "rtcset" && n9 == 3) rtc_sets[h0] = h1;
+        if (k9 == "fdbases" && n9 == 3) {
+          have_fd_bases = true;
+          fd_cmd_base_end = h0;
+          fd_resp_base_end = h1;
+        }
         if (k9 == "fdtake" && n9 == 3) fd_takes.push_back(FdTake{h0, h1, {}});
         if (k9 == "fdc" && n9 == 3 && !fd_takes.empty())
           fd_takes.back().entry.emplace_back(static_cast<uint32_t>(h0), static_cast<uint32_t>(h1));
@@ -375,6 +395,12 @@ int main(int argc, char **argv) {
         if (std::strstr(line, "revision 13")) rev13 = true;
         unsigned boards_line = 0;
         if (std::sscanf(line, "# boards %u", &boards_line) == 1) main_boards = boards_line;
+        if (k9 == "disk" && n9 == 2) {
+          have_disk = true;
+          disk_blocks = static_cast<uint32_t>(h0);
+        }
+        if (k9 == "pack" && n9 == 2) disk_preloaded.insert(static_cast<uint32_t>(h0));
+        if (k9 == "dma" && n9 == 2) dma_pages.push_back(static_cast<uint32_t>(h0));
         continue;
       }
       if (line[0] == '\n') continue;
@@ -506,6 +532,11 @@ int main(int argc, char **argv) {
   dut->host_widx = 0;
   dut->host_wdata = 0;
   dut->host_ridx = 2;
+  // Block-disk's unit 0: a pack when the trace has one.
+  dut->drive_present = have_disk ? 1 : 0;
+  dut->store_we = 0;
+  dut->store_deny = 0;
+  dut->store_busy = 0;
   // Verilator records the previous value of a clock at eval time, so the
   // first eval has to happen with clk low or the first posedge is not one.
   dut->eval();
@@ -675,6 +706,38 @@ int main(int argc, char **argv) {
     return a >= kMain13Base && a - kMain13Base < 5u * (static_cast<uint32_t>(main_boards) << 16);
   };
   long q13_spanning = 0;
+  // The pack side, when the trace has a pack: one move at a time, a dirty
+  // slot written back before its fill, some ticks after the request, and a
+  // block past the pack's end denied.  The block store's 24 slots of 256
+  // words, as `tb/quux13_block_disk_tb.cpp`'s pack side keeps them.
+  constexpr int kPackSlots = 24, kPackLatency = 40;
+  uint32_t pk_tag[kPackSlots] = {};
+  bool pk_valid[kPackSlots] = {}, pk_dirty[kPackSlots] = {};
+  int pk_rr = 0, pk_t = 0, pk_slot = 0, pk_k = 0;
+  enum { PK_IDLE, PK_WAIT, PK_BACK, PK_FILL } pk_state = PK_IDLE;
+  uint32_t pk_lba = 0;
+  std::map<uint32_t, std::vector<uint32_t>> pk_disk;   // the blocks written back
+  std::vector<uint32_t> pk_words, pk_back(256);
+  long pk_served = 0, pk_written_back = 0, pk_denied = 0;
+  auto pk_block = [&](uint32_t lba) {
+    const auto it = pk_disk.find(lba);
+    if (it != pk_disk.end()) return it->second;
+    std::vector<uint32_t> b(256, 0);
+    if (disk_preloaded.count(lba))
+      for (uint32_t w = 0; w < 256; ++w)
+        b[w] = (lba << 12) ^ (w << 1) ^ 0x5a000001u ^ ((lba << 23) | (lba >> 9));
+    return b;
+  };
+  // **THE CHANNEL'S WORDS IN PACKED STORAGE**: a read of one or two beats,
+  // and a write of five bytes, at a page a transfer reaches.  The
+  // processor's own fills are five beats, and its writes are the ones its
+  // cycles owe, in order.
+  auto dma_at = [&](uint32_t a) {
+    for (uint32_t pg : dma_pages)
+      if (a >= kMain13Base + 5u * pg && a < kMain13Base + 5u * (pg + 1024u)) return true;
+    return false;
+  };
+  long ch13_reads = 0, ch13_two_beats = 0, ch13_writes = 0;
   long q_due = -1;
   bool q_answered = false;
   long q_fills = 0, q_writes = 0;
@@ -799,6 +862,84 @@ int main(int argc, char **argv) {
       }
       dut->host_ridx = (t == 6) ? 12u : (t & 1) ? 8u : 2u;
     }
+    // The pack side.
+    if (have_disk) {
+      dut->store_we = 0;
+      dut->store_deny = 0;
+      dut->store_busy = 0;
+      switch (pk_state) {
+        case PK_IDLE:
+          if (dut->req_valid) {
+            pk_state = PK_WAIT;
+            pk_t = 0;
+            pk_lba = dut->req_tag;
+          }
+          break;
+        case PK_WAIT:
+          if (!dut->req_valid) {
+            pk_state = PK_IDLE;
+            break;
+          }
+          if (++pk_t < kPackLatency) break;
+          if (pk_lba >= disk_blocks) {
+            dut->store_deny = 1;
+            ++pk_denied;
+            pk_state = PK_IDLE;
+            break;
+          }
+          pk_slot = -1;
+          for (int x = 0; x < kPackSlots && pk_slot < 0; ++x)
+            if (!pk_valid[x]) pk_slot = x;
+          while (pk_slot < 0) {
+            const int x = pk_rr++ % kPackSlots;
+            if (!(dut->ch_active && !dut->ch_waiting && dut->ch_slot == x)) pk_slot = x;
+          }
+          pk_k = 0;
+          pk_state = pk_dirty[pk_slot] ? PK_BACK : PK_FILL;
+          pk_words = pk_block(pk_lba);
+          break;
+        case PK_BACK:
+          dut->store_busy = 1;
+          dut->store_busy_slot = pk_slot;
+          dut->store_slot = pk_slot;
+          dut->store_addr = pk_k < 256 ? pk_k : 0;
+          if (pk_k >= 2) pk_back[pk_k - 2] = dut->store_rdata;
+          if (++pk_k == 258) {
+            pk_disk[pk_tag[pk_slot]] = pk_back;
+            pk_dirty[pk_slot] = false;
+            ++pk_written_back;
+            if (pk_lba == pk_tag[pk_slot]) pk_words = pk_back;
+            pk_k = 0;
+            pk_state = PK_FILL;
+          }
+          break;
+        case PK_FILL:
+          dut->store_busy = 1;
+          dut->store_busy_slot = pk_slot;
+          dut->store_we = 1;
+          dut->store_slot = pk_slot;
+          if (pk_k == 0) {
+            dut->store_addr = 259;
+            dut->store_wdata = 0x80000000u;
+            pk_valid[pk_slot] = false;
+          } else if (pk_k <= 256) {
+            dut->store_addr = pk_k - 1;
+            dut->store_wdata = pk_words[pk_k - 1];
+          } else if (pk_k <= 259) {
+            dut->store_addr = 256 + (pk_k - 257);
+            dut->store_wdata = 0;
+          } else {
+            dut->store_addr = 259;
+            dut->store_wdata = pk_lba;
+            pk_valid[pk_slot] = true;
+            pk_tag[pk_slot] = pk_lba;
+            ++pk_served;
+            pk_state = PK_IDLE;
+          }
+          ++pk_k;
+          break;
+      }
+    }
     // The keyboard's cable: a word a tick while any is due.
     if (keys_sent < keys_due.size()) {
       dut->kbd_strobe = 1;
@@ -845,7 +986,21 @@ int main(int argc, char **argv) {
           const uint32_t a = dut->mem_addr;
           const uint32_t ph = dut->phys;
           constexpr int kRlineWords = static_cast<int>(sizeof(dut->mem_rline) / 4);
-          if (dut->mem_line) {
+          if (dut->mem_line && dut->mem_beats <= 2 && !dut->mem_write && dma_at(a) && (a & 7u) == 0) {
+            // The channel's word: the beats its five bytes are in.
+            ++ch13_reads;
+            if (dut->mem_beats == 2) ++ch13_two_beats;
+            for (int x = 0; x < kRlineWords; ++x) dut->mem_rline[x] = 0;
+            for (int b = 0; b < 8 * dut->mem_beats; ++b)
+              dut->mem_rline[b / 4] |= static_cast<uint32_t>(q13_get(a + b)) << (8 * (b % 4));
+          } else if (dut->mem_write && dma_at(a) && dut->mem_wide && (a - kMain13Base) % 5u == 0 &&
+                     (q_owed.empty() || kMain13Base + 5u * q_owed.front().first != a)) {
+            // The channel's word, five bytes: no cycle of the processor's
+            // owes it.
+            ++ch13_writes;
+            for (int b = 0; b < 5; ++b)
+              q13[a + b] = static_cast<uint8_t>(static_cast<uint64_t>(dut->mem_wdata) >> (8 * b));
+          } else if (dut->mem_line) {
             ++q_fills;
             if (q_in_fb) ++q_fb_fills;
             const uint32_t want = q_in_fb ? kFbBase + 32u * ((ph - kWindow13) >> 3)
@@ -1070,6 +1225,7 @@ int main(int argc, char **argv) {
 
     dut->clk = 1;
     dut->eval();
+    if (have_disk && dut->ch_wrote) pk_dirty[dut->ch_slot] = true;
 
     if (dev_cycle && bus_outstanding && !dut->n_memack_o) {
       if (dut->timed_out) {
@@ -1406,6 +1562,17 @@ int main(int argc, char **argv) {
     if (rev13)
       std::printf("    revision 13: packed storage at %08x, %ld writes of words across two beats\n",
                   kMain13Base, q13_spanning);
+    if (have_disk) {
+      std::printf("    block-disk: the pack side served %ld blocks, wrote %ld back and denied %ld; the "
+                  "channel read %ld words, %ld of them of two beats, and wrote %ld\n",
+                  pk_served, pk_written_back, pk_denied, ch13_reads, ch13_two_beats, ch13_writes);
+      // What the disk program is for: pages moved both ways through the
+      // port, and words that span two beats among them.
+      if (pk_served < 10 || ch13_reads < 2048 || ch13_writes < 3072 || ch13_two_beats < 100) {
+        std::fprintf(stderr, "FAIL: the transfers reached too little of the channel\n");
+        ++bad;
+      }
+    }
     // The write buffer holds one write; every other write a cycle made has
     // reached DDR, where the scanout reads the frame buffer's.
     if (q_owed.size() > 1) {
@@ -1459,7 +1626,23 @@ int main(int argc, char **argv) {
     };
     const uint64_t w0 = window(0), w1 = window(1);
     const unsigned faults = static_cast<unsigned>(w0 & 0x7FFFu);
-    if (w0 == ~0ull || w1 == ~0ull || faults != 0) {
+    // **A CHANNEL'S WORD IS A FAULT TO THE AUDIT, EVERY ONE, AND THAT IS THE
+    // AUDIT'S OWN KNOWN FAULT**, not the transfer's: the arbiter's idle tick
+    // at a change of owner is where the audit closes one cycle, and the
+    // channel's request rises in the very tick after it, when its cycle
+    // opens --- so clause 4, a request with no cycle open, the registered
+    // `cyc_open` a tick behind (`cadr_bus_audit.sv`).  It is what a board
+    // counts from its first disk transfer on, and the only machine trace with
+    // transfers is revision 13's `disk`.  Held exactly: clause 4 at the
+    // channel's first word, and one fault for each word the channel moved,
+    // no more and no fewer.
+    const unsigned channel_words = static_cast<unsigned>(ch13_reads + ch13_writes);
+    const bool channel_faults = have_disk && faults == channel_words &&
+                                ((w1 >> 22) & 7u) == 4u && ((w1 >> 25) & 0x7Fu) == 0x08u;
+    if (channel_faults) {
+      std::printf("    the transaction audit counted clause 4 on each of the channel's %u words, "
+                  "and nothing else\n", channel_words);
+    } else if (w0 == ~0ull || w1 == ~0ull || faults != 0) {
       std::fprintf(stderr,
                    "FAIL: the transaction audit counted %u faults, the first "
                    "clause %u at word %o (clauses seen %02x)\n",
@@ -1469,6 +1652,51 @@ int main(int argc, char **argv) {
       ++bad;
     } else {
       std::printf("    the transaction audit counted no fault\n");
+    }
+  }
+
+  // **WHICH REVISION OF QUUX, AND THE FILE DEVICE'S BASES, THROUGH THE SAME
+  // WINDOW** (`cadr-readout`'s reading of a halted board): the register
+  // table's entry 21 is QUUX's signature over K and L, and in `<15:0>`
+  // MACHINE-ID's low half on revision 13, `0x00D4`, and 0 on revision 12;
+  // and on revision 13 the register page's readout gives the command ring's
+  // base at word 7 and the response ring's at word 10, 28 bits each, as muir's
+  // device holds them when the program ends.
+  if (quux_machine) {
+    auto readout = [&](unsigned sel, unsigned word) -> uint64_t {
+      const unsigned asked = (sel << 14) | word;
+      dut->con_ro_addr = asked;
+      for (int i = 0; i < 4; ++i) {
+        dut->clk = 0;
+        dut->eval();
+        dut->clk = 1;
+        dut->eval();
+      }
+      if (dut->con_ro_echo != asked) {
+        std::fprintf(stderr, "FAIL: the readout's echo %05x for %05x\n",
+                     static_cast<unsigned>(dut->con_ro_echo), asked);
+        ++bad;
+      }
+      return dut->con_ro_data;
+    };
+    const uint64_t id = readout(10, 21);
+    const uint64_t want_low = rev13 ? 0x00D4u : 0u;
+    if ((id >> 32) != 0x5155u || (id & 0xFFFFu) != want_low) {
+      std::fprintf(stderr, "FAIL: the register table's entry 21 reads %012" PRIx64 ", want 5155 over "
+                   "K and L and %04" PRIx64 " in <15:0>\n", id, want_low);
+      ++bad;
+    }
+    if (rev13) {
+      const uint64_t w7 = readout(12, 7), w10 = readout(12, 10);
+      if (w7 != fd_cmd_base_end || w10 != fd_resp_base_end || !have_fd_bases) {
+        std::fprintf(stderr, "FAIL: the register page's readout words 7 and 10 read %" PRIx64 " and %"
+                     PRIx64 ", muir's device's bases %" PRIx64 " and %" PRIx64 "%s\n", w7, w10,
+                     fd_cmd_base_end, fd_resp_base_end, have_fd_bases ? "" : " (the trace has none)");
+        ++bad;
+      } else {
+        std::printf("    the readout: entry 21 %012" PRIx64 ", the file device's bases %" PRIx64 " and %"
+                    PRIx64 "\n", id, w7, w10);
+      }
     }
   }
 

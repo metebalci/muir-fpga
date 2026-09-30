@@ -1989,8 +1989,11 @@ module cadr_arty #(
 
     // QUUX's clock and file device, for Linux's server and the clock's
     // setter.  The machine's side keeps every rule; this is the page.
+    // Revision 13's page says so by its IDENT, "QF13", which is how the
+    // server knows main memory is packed storage and the rings' bases 28
+    // bits (`docs/file-device.md`).
     if (MACHINE == "quux") begin : g_fd_face
-      quux_fd_face u_fd_face (
+      quux_fd_face #(.IDENT(WORD_BITS > 32 ? 32'h5146_3133 : 32'h5146_4439)) u_fd_face (
           .clk(clk), .rst(gp0_rst_s),
           .s_awaddr(gp0f_awaddr), .s_awlen(gp0f_awlen), .s_awid(gp0f_awid),
           .s_awvalid(gp0f_awvalid), .s_awready(gp0f_awready),

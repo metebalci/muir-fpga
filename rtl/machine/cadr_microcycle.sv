@@ -3829,8 +3829,10 @@ module cadr_microcycle #(
   // **QUUX'S OWN ENTRIES, 21 TO 28, AND ON THE CADR THEY ARE ABSENT**: the
   // processor's clocks (contracts Q1 and Q11, `quux_clocks.sv`), which a
   // checkpoint carries as muir's `Machine::timers`, and which of the two
-  // machines this is.  Entry 21 is QUUX's signature `0x5155` over K and L, the microcycle
-  // this bitstream was built at (muir's `TimingModel::Sync`), so a reader
+  // machines this is.  Entry 21 is QUUX's signature `0x5155` over K and L,
+  // the microcycle this bitstream was built at (muir's
+  // `TimingModel::Sync`), and on revision 13 MACHINE-ID's low half below
+  // them (`QUUX_REV`), so a reader
   // asks the fabric which machine it is rather than being told; the CADR
   // answers `RO_NO_MEMORY` there, which can never carry the signature.
   // 22 is the microsecond clock and its prescaler, 23 to 25 the three
@@ -3840,6 +3842,9 @@ module cadr_microcycle #(
   // interval timer's period, into 26 to 28).
   // What holds them: `build/quux_readout_window.quux.pass`.
   localparam logic [13:0] RG_QUUX_ID       = 14'd21;
+  // Entry 21's `<15:0>`: MACHINE-ID's low half on revision 13, `0x00D4`,
+  // which says the revision and so the words' width; 0 on revision 12.
+  localparam logic [15:0] QUUX_REV         = WIDE ? MACHINE_ID[15:0] : 16'd0;
   localparam logic [13:0] RG_QUUX_TIME     = 14'd22;
   localparam logic [13:0] RG_QUUX_COUNT0   = 14'd23;
   localparam logic [13:0] RG_QUUX_COUNT1   = 14'd24;
@@ -3921,7 +3926,7 @@ module cadr_microcycle #(
       RG_PHYS:   ro_regs = 48'(phys_r);
       RG_SPEED:  ro_regs = {42'd0, QUUX ? 2'b00 : mode_speed, speed_a, speed};  // all zero on QUUX
       RG_FLAGS:  ro_regs = ro_flags;
-      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), 16'd0} : RO_NO_MEMORY;
+      RG_QUUX_ID:       ro_regs = QUUX ? {16'h5155, 8'(SYNC_K), 8'(SYNC_L), QUUX_REV} : RO_NO_MEMORY;
       RG_QUUX_TIME:     ro_regs = QUUX ? qclk_ro_time : RO_NO_MEMORY;
       RG_QUUX_COUNT0:   ro_regs = QUUX ? qclk_ro_count[0] : RO_NO_MEMORY;
       RG_QUUX_COUNT1:   ro_regs = QUUX ? qclk_ro_count[1] : RO_NO_MEMORY;

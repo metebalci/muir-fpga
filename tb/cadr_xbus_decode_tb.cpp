@@ -48,8 +48,12 @@ int main(int argc, char **argv) {
   // A reference taken on QUUX, which has no Unibus (contract Q5): its window
   // is empty Xbus space there, so no address may decode as the Unibus.
   bool quux = false;
+  // And block-disk's channel on revision 13, which sees main memory alone:
+  // no address may be a device to it.
+  bool channel = false;
   while (std::fgets(line, sizeof line, f)) {
     if (line[0] == '#' && std::strstr(line, "on QUUX")) quux = true;
+    if (line[0] == '#' && std::strstr(line, "the channel's view")) channel = true;
     if (line[0] == '#' || line[0] == '\n') continue;
     Run r;
     if (std::sscanf(line, "%ld %ld %ld %ld %31s", &r.boards, &r.color, &r.first,
@@ -157,9 +161,10 @@ done:
               {"nxm", n_nxm},
               {"unibus", n_unibus}};
   for (const auto &w : want) {
-    if (quux && std::strcmp(w.what, "unibus") == 0) {
+    if ((quux && std::strcmp(w.what, "unibus") == 0) || (channel && std::strcmp(w.what, "device") == 0)) {
       if (w.n != 0) {
-        std::fprintf(stderr, "FAIL: %ld addresses decoded as the Unibus on QUUX, which has none\n", w.n);
+        std::fprintf(stderr, "FAIL: %ld addresses decoded as %s, which %s\n", w.n, w.what,
+                     channel ? "block-disk's channel never reaches" : "QUUX has none of");
         ++thin;
       }
       continue;

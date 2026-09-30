@@ -42,7 +42,9 @@ bitstream carries no machine.
 **AND THE WORD, `WORD_BITS`, THE SAME WAY** (contract G2): 40 is QUUX
 revision 13.  On the Arty's and the DE25-Nano's memory board with its
 display, `MACHINE=quux WORD_BITS=40` lints clean and `u_machine` elaborates
-`WORD_BITS` 40, and no `WORD_BITS` elaborates 32.  The Arty's flow refuses a
+`WORD_BITS` 40, and no `WORD_BITS` elaborates 32; and the file device's
+page, `u_fd_face`, names the revision by its IDENT, "QF13" at 40 and "QFD9"
+below.  The Arty's flow refuses a
 width that is not a word, 40 on the CADR, and a directory that says `quux13`
 for any build but revision 13's or does not for revision 13's, and takes
 revision 13 into one that does; the DE25-Nano's two scripts refuse a width
@@ -229,6 +231,32 @@ def word_bits_at_instance(tree, top):
     return int(values[0].split("h")[-1], 16), None
 
 
+def fd_ident_at_instance(tree, top):
+    """The IDENT parameter of the module the file device's page, the cell
+    `u_fd_face` in `<top>`, became."""
+    modules = {}
+    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
+         if n.get("type") == "MODULE" else None)
+    tops = [m for m in modules.values() if m.get("origName") == top]
+    cells = []
+    if len(tops) == 1:
+        walk(tops[0], lambda n: cells.append(n)
+             if n.get("type") == "CELL" and n.get("name") == "u_fd_face" else None)
+    if len(cells) != 1:
+        return None, "no one u_fd_face in %s" % top
+    mod = modules.get(cells[0].get("modp"))
+    values = []
+
+    def param(n):
+        if n.get("type") == "VAR" and n.get("name") == "IDENT" and n.get("isParam"):
+            v = n.get("valuep") or []
+            values.append(v[0]["name"] if len(v) == 1 and v[0].get("type") == "CONST" else None)
+    walk(mod, param)
+    if len(values) != 1 or values[0] is None:
+        return None, "no constant IDENT in %s" % mod.get("name")
+    return int(values[0].split("h")[-1], 16), None
+
+
 def word_reaches(board, config, bits, scratch):
     """QUUX at `bits` (None: not given, so 32) lints clean and is the width
     at u_machine."""
@@ -253,6 +281,17 @@ def word_reaches(board, config, bits, scratch):
         say(False, "%s --- %s" % (what, why))
     elif got != want:
         say(False, "%s --- it elaborates %d" % (what, got))
+    else:
+        say(True, what)
+    # And the file device's page names the revision: "QF13" at 40 bits,
+    # "QFD9" below (`rtl/plumbing/quux_fd_face.sv`).
+    ident_want = 0x51463133 if want > 32 else 0x51464439
+    what = "%s, %s, MACHINE=quux, %s: u_fd_face's IDENT is %08x" % (top, config, asked, ident_want)
+    got, why = fd_ident_at_instance(tree, top)
+    if got is None:
+        say(False, "%s --- %s" % (what, why))
+    elif got != ident_want:
+        say(False, "%s --- it is %08x" % (what, got))
     else:
         say(True, what)
 

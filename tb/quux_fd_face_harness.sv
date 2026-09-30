@@ -107,7 +107,7 @@ module quux_fd_face_harness (
   logic [13:0] ro_in_state;
   logic [6:0]  ro_in_count;
   logic [23:0] ro_fifo_q;
-  logic [47:0] ro_fd_bases, ro_fd_indexes, ro_fd_flags;
+  logic [47:0] ro_fd_bases, ro_fd_resp_base, ro_fd_indexes, ro_fd_flags;
   logic        tm_we, reset_devices;
   logic [2:0]  tm_idx;
   logic [23:0] tm_wdata;
@@ -166,6 +166,7 @@ module quux_fd_face_harness (
       .host_ridx    (host_ridx),
       .host_rdata   (host_rdata),
       .ro_fd_bases  (ro_fd_bases),
+      .ro_fd_resp_base(ro_fd_resp_base),
       .ro_fd_indexes(ro_fd_indexes),
       .ro_fd_flags  (ro_fd_flags)
   );

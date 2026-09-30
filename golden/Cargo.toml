@@ -115,3 +115,7 @@ path = "src/quux13.rs"
 [[bin]]
 name = "quux13_port"
 path = "src/quux13_port.rs"
+
+[[bin]]
+name = "quux13_block_disk"
+path = "src/quux13_block_disk.rs"

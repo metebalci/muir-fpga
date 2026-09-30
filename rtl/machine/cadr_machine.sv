@@ -623,6 +623,15 @@ module cadr_machine #(
   // 1024, one bit a pixel, 40 words a line at `17000000`.
   localparam int unsigned VIDEO_WIDTH  = 1280;
   localparam int unsigned VIDEO_HEIGHT = 1024;
+  // **REVISION 13'S FEATURE WORDS** (contract G2 §4.3, appendix A1.10;
+  // muir's `Geometry::feature_word` on `QUUX_13`): the level-1 map entry's 7
+  // bits and so 4,096 level-2 entries, 4,096 dispatch memory entries, and the
+  // video controller's buffer at the frame buffer window, `1760000000`; and
+  // the file device's main memory size in 28 bits (`quux_file_device.sv`).
+  localparam int unsigned FEATURE_L1_BITS = WORD_BITS > 32 ? 7 : 6;
+  localparam int unsigned FEATURE_DMEM    = WORD_BITS > 32 ? 4096 : 2048;
+  localparam logic [31:0] VIDEO_BUFFER    = WORD_BITS > 32 ? 32'o1760000000 : 32'o17000000;
+  localparam int unsigned FD_MEM_BITS     = WORD_BITS > 32 ? 28 : 23;
 
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;
@@ -1213,9 +1222,11 @@ module cadr_machine #(
   logic [31:0] dev_rdata_joined;
   // The channel, which makes the disk controller the second master on this
   // bus.  `cadr_memory_path.sv` has the arbiter and says what it holds to.
+  // On revision 13 it moves whole words at 28-bit addresses (block-disk's
+  // pages, `quux_block_disk.sv`).
   logic        ch_req, ch_write, ch_done, ch_nxm;
-  logic [21:0] ch_addr;
-  logic [31:0] ch_wdata, ch_rdata;
+  logic [PHYS_BITS-1:0] ch_addr;
+  logic [WORD_BITS-1:0] ch_wdata, ch_rdata;
 
   // **ON QUUX THE DISK IS BLOCK-DISK AND NOTHING ELSE** (`quux_block_disk.sv`,
   // muir's "the CADR's controller is refused on QUUX"): the same four
@@ -1229,7 +1240,7 @@ module cadr_machine #(
   logic [31:0] bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_since_done;
   logic [6:0]  bd_ro_flags;
   if (QUUX) begin : g_quux_disk
-  quux_block_disk disk (
+  quux_block_disk #(.WORD_BITS(WORD_BITS)) disk (
       .clk      (clk),
       .rst      (rst),
       // `-XBUS INIT` on the backplane: the power-on reset and
@@ -1342,7 +1353,7 @@ module cadr_machine #(
   // The register page's readout, selector 12 (below, in the QUUX block).
   logic [47:0] quux_ro_word;
   logic [17:0] quux_ro_a1, quux_ro_a2;
-  logic [47:0] fd_ro_bases, fd_ro_indexes, fd_ro_flags;
+  logic [47:0] fd_ro_bases, fd_ro_resp_base, fd_ro_indexes, fd_ro_flags;
   logic [13:0] in_ro_state;
   logic [6:0]  in_ro_count;
   logic [23:0] in_ro_fifo_q;
@@ -1353,9 +1364,13 @@ module cadr_machine #(
 
     quux_feature_page #(
         .MACHINE_ID   (MACHINE_ID),
+        .L1_BITS      (FEATURE_L1_BITS),
+        .DMEM_WORDS   (FEATURE_DMEM),
         .SCREEN_WIDTH (VIDEO_WIDTH),
         .SCREEN_HEIGHT(VIDEO_HEIGHT),
-        .SCREEN_WPL   (VIDEO_WIDTH / 32)
+        .SCREEN_WPL   (VIDEO_WIDTH / 32),
+        .SCREEN_BUFFER(VIDEO_BUFFER),
+        .WORD_BITS    (WORD_BITS)
     ) feature_page (
         .clk          (clk),
         .rst          (rst),
@@ -1402,7 +1417,7 @@ module cadr_machine #(
         // Main memory's words, the boards' count times 64K, as the file
         // device's enable checks a ring against and the host's MEM_WORDS
         // reads.
-        .mem_words    ({boards, 16'd0}),
+        .mem_words    (FD_MEM_BITS'({boards, 16'd0})),
         .drained      (mem_drained),
         .fd_invalidate(fd_invalidate),
         .host_we      (host_we),
@@ -1411,6 +1426,7 @@ module cadr_machine #(
         .host_ridx    (host_ridx),
         .host_rdata   (host_rdata),
         .ro_fd_bases  (fd_ro_bases),
+        .ro_fd_resp_base(fd_ro_resp_base),
         .ro_fd_indexes(fd_ro_indexes),
         .ro_fd_flags  (fd_ro_flags)
     );
@@ -1434,11 +1450,13 @@ module cadr_machine #(
     //         errors as word 101
     //         reads them (`Machine::bus_error`)
     //     7   the file device's rings: <47:24> the command ring's base,
-    //         <23:0> the response ring's
+    //         <23:0> the response ring's; on revision 13 the command ring's
+    //         base alone, <27:0>
     //     8   its indexes: <47:32> 164, <31:16> 165 and 170, <15:0> 171
     //     9   <36> the host's busy, <35:28> handles open, <27:24> 163,
     //         <23:20> 167, <3> index fault, <2> configuration refused,
     //         <1> the interrupt enable, <0> enabled (muir's `FileDevice::save`)
+    //     10  on revision 13, the response ring's base, <27:0>
     //     100-177  the keyboard FIFO's sixty-four words, by index
     //
     // and anything else `RO_NO_MEMORY`.  What holds it:
@@ -1469,6 +1487,8 @@ module cadr_machine #(
           14'd7: quux_ro_word <= fd_ro_bases;
           14'd8: quux_ro_word <= fd_ro_indexes;
           14'd9: quux_ro_word <= fd_ro_flags;
+          // Revision 13's response ring's base, a word of its own.
+          14'd10: quux_ro_word <= (WORD_BITS > 32) ? fd_ro_resp_base : 48'hA5A5_5A5A_A5A5;
           default: quux_ro_word <= 48'hA5A5_5A5A_A5A5;
         endcase
       end
@@ -1518,11 +1538,12 @@ module cadr_machine #(
   assign host_rdata    = 32'd0;
   assign fd_invalidate = 1'b0;
   assign fd_ro_bases   = 48'd0;
+  assign fd_ro_resp_base = 48'd0;
   assign fd_ro_indexes = 48'd0;
   assign fd_ro_flags   = 48'd0;
   logic unused_host;
   assign unused_host = ^{host_we, host_widx, host_wdata, host_ridx, fd_ro_bases, fd_ro_indexes,
-                         fd_ro_flags};
+                         fd_ro_flags, fd_ro_resp_base};
   logic unused_page;
   assign unused_page = ^{timer_pending, tm_rdata, page_err, page_ch_rdata, chaos_ireq, mouse_buttons,
                          video_bow, bd_ro_cmd, bd_ro_clp, bd_ro_da, bd_ro_lma, bd_ro_flags,
@@ -1571,7 +1592,7 @@ module cadr_machine #(
   assign aud_cycle  = aud_changing ? 1'b0 : (aud_ch_own ? 1'b1 : mbusy_o);
   assign aud_write  = aud_ch_own ? ch_write      : wrcyc;
   assign aud_memory = aud_ch_own ? aud_ch_memory : aud_cpu_memory;
-  assign aud_phys   = aud_ch_own ? ch_addr       : phys[21:0];
+  assign aud_phys   = aud_ch_own ? ch_addr[21:0] : phys[21:0];
 
   // **THE READOUT, JOINED INTO THE CONSOLE'S WINDOW AT A SELECTOR OF ITS
   // OWN.**  `cadr_microcycle.sv` maps 0 to 10 and answers `RO_NO_MEMORY` for

@@ -56,6 +56,14 @@
 // `build/xbus_decode.quux13.pass` holds it at every one of the 268,435,456
 // addresses, for three board counts.
 //
+// **AND BLOCK-DISK'S CHANNEL SEES MAIN MEMORY ALONE** (`CHANNEL`, revision
+// 13): muir's transfer takes a command list word or a page only from main
+// memory, `main.get` and `page + PAGE > main.len()` (`BlockDisk::write_40`),
+// so for the channel the window and the register page are nothing, and
+// `memory` is main memory.  `build/xbus_decode.quux13ch.pass` holds that
+// decode at every address too.  Below revision 13 `CHANNEL` changes
+// nothing: revision 12's channel has its own decode of the Xbus space.
+//
 // The CADR's decode is the text below `g_cadr`, unchanged; on the CADR the
 // register page's addresses are the Unibus window's last page, where
 // nothing answers.  What holds each: `build/xbus_decode.pass` the CADR's
@@ -72,7 +80,11 @@ module cadr_xbus_decode #(
     parameter int unsigned VIDEO_WORDS = 40960,
     // 32; or 40 on QUUX, revision 13's 28-bit space.
     parameter int unsigned WORD_BITS = 32,
+    // The decode block-disk's channel takes on revision 13: main memory
+    // alone.
+    parameter int unsigned CHANNEL   = 0,
     localparam bit          REV13     = MACHINE == "quux" && WORD_BITS > 32,
+    localparam bit          MAIN_ONLY = CHANNEL != 0,
     localparam int unsigned PHYS_BITS = REV13 ? 28 : 22
 ) (
     // The bottom two bits pick a register *inside* a device rather than which
@@ -162,8 +174,9 @@ module cadr_xbus_decode #(
     assign register_page = &phys[27:8];
     assign window        = (&phys[27:22]) && (phys[21:0] < 22'(VIDEO_WORDS));
     assign main          = phys[27:16] < 12'(boards);
-    assign device = register_page;
-    assign memory = window || main;
+    // Block-disk's channel takes main memory alone (see the header).
+    assign device = register_page && !MAIN_ONLY;
+    assign memory = (window && !MAIN_ONLY) || main;
     assign nxm    = !memory && !device;
     // The CADR's and revision 12's ranges, the Unibus window's and the color
     // board's have no reader on revision 13.

@@ -217,10 +217,13 @@ QUUX_L1_PROGRAMS := divmd divmdsync tickwin clockwait
 # every offset of a line, a line and a word across 4 KiB, 8-word fills and
 # the window's; `fused` a translation to a word past 22 bits and the fused
 # return through main memory, on a word the prefetch's page reach took from
-# the next line.  The machine is built with revision 13's main memory at
+# the next line; and its devices (G2 §4): `devices` the feature page's words
+# at revision 13 and the file device's rings at 28-bit addresses on 8-word
+# lines; `disk` block-disk's packed and 4-byte transfers through the channel,
+# the memory port and the cache, the testbench the pack side.  The machine is built with revision 13's main memory at
 # `QUUX13_TB_BASE`, a base no board uses, which the testbench lays packed
 # storage out from.
-QUUX13_PROGRAMS := alu byte dispatch map space lines fused
+QUUX13_PROGRAMS := alu byte dispatch map space lines fused devices disk
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
@@ -232,7 +235,7 @@ QUUX_PENDING_WHY :=
 CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
        $(BUILD)/dispatch_write_order.quux.$(QK).pass \
        $(BUILD)/display_out.quux.pass $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
-       $(BUILD)/quux_block_disk.quux.pass $(BUILD)/quux_port.quux.$(QK).pass \
+       $(BUILD)/quux_block_disk.quux.pass $(BUILD)/quux13_block_disk.quux.pass $(BUILD)/quux_port.quux.$(QK).pass \
        $(BUILD)/quux_fd_face.pass \
        $(BUILD)/quux_axi_master.quux.pass \
        $(BUILD)/quux_readout_window.quux.$(QK).pass $(BUILD)/checkpoint.quux.pass \
@@ -241,7 +244,7 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass $(BUILD)/machine.quux.$(QK).pass \
        $(QUUX13_PROGRAMS:%=$(BUILD)/quux13_%.quux.$(QK).pass) $(BUILD)/rdw_poison_quux13.quux.$(QK).pass \
        $(BUILD)/rdw_poison_quux13_mem.quux.$(QK).pass $(BUILD)/rdw_poison_quux13_pf.quux.$(QK).pass \
        $(BUILD)/quux13_port.quux.$(QK).pass \
-       $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/xbus_decode.quux13.pass \
+       $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -725,6 +728,21 @@ $(BUILD)/xbus_decode.quux13.pass: $(BUILD)/obj_xbus_decode_quux13/Vcadr_xbus_dec
 	$(BUILD)/obj_xbus_decode_quux13/Vcadr_xbus_decode $(BUILD)/xbus_decode.quux13.golden
 	@touch $@
 
+# And the decode block-disk's channel takes on revision 13 (`CHANNEL`): main
+# memory alone, the window and the register page nothing, as muir's
+# `BlockDisk::write_40` reads a command list word and a page only from main
+# memory.
+$(BUILD)/xbus_decode.quux13ch.golden: golden/src/xbus_decode.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin xbus_decode -- --machine quux --revision-13 --channel > $@
+
+$(BUILD)/obj_xbus_decode_quux13ch/Vcadr_xbus_decode: rtl/machine/cadr_xbus_decode.sv tb/cadr_xbus_decode_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_xbus_decode_quux13ch -GMACHINE='"quux"' -GWORD_BITS=40 \
+	    -GCHANNEL=1 --top-module cadr_xbus_decode rtl/machine/cadr_xbus_decode.sv $(abspath tb/cadr_xbus_decode_tb.cpp)
+
+$(BUILD)/xbus_decode.quux13ch.pass: $(BUILD)/obj_xbus_decode_quux13ch/Vcadr_xbus_decode $(BUILD)/xbus_decode.quux13ch.golden
+	$(BUILD)/obj_xbus_decode_quux13ch/Vcadr_xbus_decode $(BUILD)/xbus_decode.quux13ch.golden
+	@touch $@
+
 # ------------------------------------------------------------- the microcycle
 
 # The processor, slice by slice, against muir's `rtl` engine running MIT's own
@@ -1066,6 +1084,29 @@ $(BUILD)/obj_quux_block_disk/Vquux_block_disk: $(TICKPKG) rtl/machine/quux_block
 
 $(BUILD)/quux_block_disk.quux.pass: $(BUILD)/obj_quux_block_disk/Vquux_block_disk $(BUILD)/quux_block_disk.quux.golden
 	$(BUILD)/obj_quux_block_disk/Vquux_block_disk $(BUILD)/quux_block_disk.quux.golden
+	@touch $@
+
+# And at revision 13 (contract G2 §4.2, appendix A1.11), `WORD_BITS` 40,
+# against muir's `BlockDisk::write_40` (`golden/src/quux13_block_disk.rs`):
+# 1024-word pages, the packed transfer's 5 blocks and the 4-byte transfer's
+# 4, the GPT fixture read 4 bytes a word and taken through an 8-bit view,
+# NXM on a page outside main memory, 28-bit addresses, and a page past the
+# pack's end; and on a pack of all 2^28 blocks (`--whole-space`), a block
+# number past the disk address's 28 bits.
+$(BUILD)/quux13_block_disk.quux.golden: golden/src/quux13_block_disk.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin quux13_block_disk > $@
+
+$(BUILD)/quux13_block_disk_whole.quux.golden: golden/src/quux13_block_disk.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin quux13_block_disk -- --whole-space > $@
+
+$(BUILD)/obj_quux13_block_disk/Vquux_block_disk: $(TICKPKG) rtl/machine/quux_block_disk.sv tb/quux13_block_disk_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux13_block_disk -GWORD_BITS=40 \
+	    --top-module quux_block_disk $(TICKPKG) rtl/machine/quux_block_disk.sv $(abspath tb/quux13_block_disk_tb.cpp)
+
+$(BUILD)/quux13_block_disk.quux.pass: $(BUILD)/obj_quux13_block_disk/Vquux_block_disk \
+                                      $(BUILD)/quux13_block_disk.quux.golden $(BUILD)/quux13_block_disk_whole.quux.golden
+	$(BUILD)/obj_quux13_block_disk/Vquux_block_disk $(BUILD)/quux13_block_disk.quux.golden \
+	    $(BUILD)/quux13_block_disk_whole.quux.golden
 	@touch $@
 
 # ------------------------------------------------ QUUX's memory port, Q6
