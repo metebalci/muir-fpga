@@ -111,7 +111,29 @@ int ro_block32(struct readout *r, unsigned sel, unsigned n, uint32_t *into);
 // console's own documentation says to halt first.
 void ro_halt(struct readout *r);
 void ro_start(struct readout *r);
+// **HALTED IS CYCLES STANDING STILL FOR `RO_HALT_SETTLE_TICKS` OF THE
+// FABRIC'S OWN TIME**, 2 ms of TICKS, the window `cadr-console status` takes
+// by default so that the two programs mean the same thing by it, **AT SOME
+// POINT WITHIN `RO_HALT_WITHIN_TICKS`**, 10 ms.  It was CYCLES read twice
+// around sixteen reads of STAT, about 5 us, and that is shorter than the halt
+// itself: the write of zero lands at the machine's next look, and the
+// microcycles already under way retire after the store has returned --- none
+// to two of them, up to about 0.8 us later, measured on the Arty Z7-20.  The
+// old check read CYCLES inside that tail and called a halted machine running
+// 240 times in 3,000.  So the window starts again each time CYCLES moves, and
+// only a counter that never stands for 2 ms in 10 is a running machine.  1
+// halted, 0 running.  A running machine costs the 10 ms; `RO_HALT_MAX_READS`
+// bounds the loop if TICKS itself stood still, which no fabric does.
+#define RO_HALT_SETTLE_TICKS 200000u	/* 2 ms at 10 ns a tick */
+#define RO_HALT_WITHIN_TICKS 1000000u	/* 10 ms */
+#define RO_HALT_MAX_READS    100000u
 int ro_is_halted(struct readout *r);
+// The halt a program takes before it reads: ask, halt if running, and check
+// that it stood.  0 with `*was_running` set, or -1 if the machine did not
+// stop --- **AND THEN IT IS STARTED AGAIN IF THIS CALL HALTED IT**, so that
+// a refusal leaves the machine as it was found and never halted with nobody
+// to start it.
+int ro_halt_to_read(struct readout *r, int *was_running);
 // QUUX's memory port idle and its write buffer empty (the flag word's
 // `IMG_F_MEM_DRAINED`), asked of the machine as it stands: 1, 0, or -1 when
 // the window answered for another address.  Always 0 on the CADR.

@@ -495,8 +495,11 @@ int main(int argc, char **argv)
 		ro_halt(&r);
 	}
 	if (!ro_is_halted(&r)) {
-		say("the machine did not stop: it is still retiring microcycles "
-		    "after a write of zero to the clock control register");
+		say("the machine did not stop: it was still retiring microcycles "
+		    "2 ms after a write of zero to the clock control register%s",
+		    was_running ? ", and it is started again as it was found" : "");
+		if (was_running)
+			ro_start(&r);
 		img_free(&img);
 		return 1;
 	}

@@ -206,7 +206,9 @@ void screen_server_close(struct screen_server *s);
 // would otherwise have this program encode 739,584 pixels instead of
 // sleeping.  A frame is the right interval because the machine cannot produce
 // a new picture faster than the display board scans one; an incremental
-// update is never held back.
+// update is never held back.  **THE FRAME IS `cpt.prom`'s**, 15.456 ms, the
+// shorter of the two a board runs; `CPT-SYNC2`, which every boot loads, makes
+// 16.528 ms, so the cap never holds back a picture the display has scanned.
 //
 // **IT IS THE REAL FRAME AND NOT THE MACHINE'S**, and the two are the same
 // number only while MIT's grid and the board's tick are.  This is compared

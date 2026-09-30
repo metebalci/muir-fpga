@@ -324,18 +324,17 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	const int was_running = !ro_is_halted(&r);
-	if (was_running) {
-		say("the machine is running; halting it, as the console's own "
-		    "documentation says to.  A read taken while the datapath "
-		    "moves is torn.");
-		ro_halt(&r);
-	}
-	if (!ro_is_halted(&r)) {
-		say("the machine did not stop: it is still retiring microcycles "
-		    "after a write of zero to the clock control register");
+	int was_running = 0;
+	if (ro_halt_to_read(&r, &was_running) != 0) {
+		say("the machine did not stop: it was still retiring microcycles "
+		    "2 ms after a write of zero to the clock control register%s",
+		    was_running ? ", and it is started again as it was found" : "");
 		return 1;
 	}
+	if (was_running)
+		say("the machine was running; it is halted, as the console's own "
+		    "documentation says to.  A read taken while the datapath "
+		    "moves is torn.");
 	say("halted at %llu microcycles, %llu ticks",
 	    (unsigned long long)ro_cycles(&r), (unsigned long long)ro_ticks(&r));
 

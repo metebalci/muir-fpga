@@ -33,9 +33,10 @@
 //                                   the offset being the low fifteen bits of
 //                                   the physical address and nothing
 //                                   subtracted; rtl/plumbing/cadr_xbus_ddr.sv:87
-//   a frame is 15,456,000 ns      muir src/tv.rs:331, `FRAME_NS`, 966
-//                                   lines of 16.000 us measured on the
-//                                   netlist board; rtl/machine/cadr_tv.sv:123
+//   a frame of `cpt.prom` is      muir src/tv.rs:331, `FRAME_NS`, 966
+//     15,456,000 ns                 lines of 16.000 us measured on the
+//                                   netlist board; rtl/machine/cadr_tv.sv:123;
+//                                   the band's `CPT-SYNC2` makes 16,528,000
 //
 // **WHICH BIT IS WHICH PIXEL.**  muir `src/tv.rs:599-602`:
 //
@@ -92,19 +93,28 @@
 // Zynq boards and 0xB4000000 on the DE25-Nano, 64 MB into the reservation on
 // both.
 #define SCREEN_BASE             CADR_BOARD_DISPLAY_BASE
-// The display board's own frame, in the machine's nanoseconds: muir's
-// `FRAME_NS`, 966 lines of 16.000 us, which `rtl/machine/cadr_tv.sv` makes as
-// 1,545,600 ticks of MIT's 10 ns grid.  This one is held to muir and never
-// moves.
+// The frame of MIT's PROM sync program `cpt.prom`, in the machine's
+// nanoseconds: muir's `FRAME_NS`, 966 lines of 16.000 us, which
+// `rtl/machine/cadr_tv.sv` makes as 1,545,600 ticks of MIT's 10 ns grid.  This
+// one is held to muir and never moves.  **IT IS NOT THE RUNNING MACHINE'S
+// FRAME**: `cpt.prom` runs only from power-on until the band loads its own
+// program, and every boot loads `CPT-SYNC2` (`sys/window/cold.lisp`, "the
+// default thing"), 1033 lines, 16,528,000 ns, 60.503 Hz, the rate the
+// running machine's vertical interrupt keeps.
 #define SCREEN_FRAME_NS         15456000u
 
 // AND THE SAME FRAME IN REAL TIME, WHICH IS THE SAME NUMBER AGAIN.  A tick
 // is 10 ns on this board --- `boards/arty-z7-20/cadr_arty.sv`'s MMCM --- and
 // MIT's grid is 10 ns too, so the fabric takes 1,545,600 x 10 = 15,456,000
-// real nanoseconds over a frame and the vertical interrupt arrives at the
-// display board's own 64.70 Hz.  This program compares against
+// real nanoseconds over a frame of `cpt.prom`.  This program compares against
 // `CLOCK_MONOTONIC`, so it is the real frame it needs.  At the 5 ns grid the
 // board ran at half speed and this was 30,912,000.
+//
+// **ITS ONE USE IS THE CAP ON WHOLE-SCREEN UPDATES**, `SCREEN_FULL_UPDATE_NS`
+// in `screen_server.h`, and for that `cpt.prom`'s frame is the right one to
+// keep rather than `CPT-SYNC2`'s: it is the shorter of the two frames a board
+// runs, so a viewer is never given the whole screen less often than the
+// display board scans a new picture, under either program.
 //
 // **THE TWO ARE KEPT APART RATHER THAN MERGED**, because they are different
 // quantities that only coincide while the grid and the board's tick do: a

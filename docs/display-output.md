@@ -437,9 +437,10 @@ region, a copy engine and a rule about when to swap, and would show the
 machine's screen less faithfully than tearing does.
 
 The CADR's own frame rate does not enter. The display board's frame is
-15,456,000 ns of the machine's time, which at the 10 ns grid and this board's
-10 ns tick arrives every 15.456 real milliseconds, or 64.70 Hz. The monitor runs
-at 59.90 Hz.
+whatever its sync program makes: 16.528 ms, or 60.503 Hz, from `CPT-SYNC2`,
+which every boot loads, and 15.456 ms, or 64.70 Hz, from MIT's PROM program
+before that. At the 10 ns grid and this board's 10 ns tick those are real
+milliseconds. The monitor runs at 59.90 Hz.
 Neither number constrains the other, and the vertical flag the machine reads is
 the display block's, not this block's VSYNC.
 

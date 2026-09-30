@@ -759,10 +759,13 @@ every poll would have this program encode 739,584 pixels instead of sleeping.
 So **a whole screen goes to a viewer at most once a frame**, which is
 `SCREEN_FULL_UPDATE_NS`, 15.456 ms. That is a frame for muir's reason --- the
 machine cannot produce a new picture faster than the display board scans one
---- but it is the **real** frame and not the machine's own. `screen_geom.h`
-carries both: `SCREEN_FRAME_NS` is 15.456 ms, muir's figure and the machine's
-own time, and `SCREEN_FRAME_REAL_NS` is 15.456 ms too, which is 1,545,600
-ticks of the 10 ns grid at this board's 10 ns tick. The two are the same number
+--- but it is the **real** frame and not the machine's own. It is the frame of
+MIT's PROM sync program `cpt.prom`, the shorter of the two a board runs:
+`CPT-SYNC2`, which every boot loads, makes 16.528 ms, so the cap never holds
+back a picture the display has scanned. `screen_geom.h` carries both:
+`SCREEN_FRAME_NS` is 15.456 ms, muir's figure and the machine's own time, and
+`SCREEN_FRAME_REAL_NS` is 15.456 ms too, which is 1,545,600 ticks of the 10 ns
+grid at this board's 10 ns tick. The two are the same number
 only while the grid and the tick are, and at the 5 ns grid the real frame was
 30.912 ms. This interval is compared against `CLOCK_MONOTONIC`, so it is the
 real one that belongs here.

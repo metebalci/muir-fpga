@@ -107,8 +107,8 @@ is that file, line by line.
   netlist board in `tests/simpletv_netlist.rs` and `tests/monitor.rs`. muir
   kept the flag "on a frame clock rather than a raster", with frames counted
   from power-on, up to `f9fe0d0`, and said so as a knowing departure from the
-  machine. Both run the program now. The figure is still what a frame comes
-  to, and it is no longer a counter in either place: the flag's instant is
+  machine. Both run the program now. The figure is still what a frame of
+  `cpt.prom` comes to, and it is no longer a counter in either place: the flag's instant is
   where `-TVMA CLR` falls, and the program's start moves.
 - **Registers 1 to 3 are the sync program RAM** (`SyncRam`, line 365). It is
   the eight 2147s at NSYRAM, 4K by 1 each, addressed by a twelve-bit pointer.
@@ -339,14 +339,23 @@ half is still a claim nothing exercises**, since neither reference program
 enables the display's interrupt, and this paragraph is where that is
 written down.
 
-**The frame is 1,545,600 ticks at the 10 ns grid, and that is 15.456 real
-milliseconds.** The board's tick is 10 ns and the grid is 10 ns, so the
-vertical interrupt arrives at the display board's own 64.70 Hz, which MIT's
-microcode uses as its roughly-sixty-cycle clock for mouse tracking and the
-scheduler's sequence break. At the 5 ns grid the frame was 3,091,200 ticks,
-30.912 real milliseconds, and the interrupt arrived at 32.35 Hz. The machine's
-own time is the grid's, so the frame agrees with the wall only while the grid
-and the board's tick are the same number.
+**The frame is whatever the sync program makes, and at the 10 ns grid its
+ticks are real time.** The board's tick is 10 ns and the grid is 10 ns. From
+power-on until the band loads its own program, the board runs MIT's
+`mit/cadrtv/cpt.prom`: 966 lines of 16.000 us, 1,545,600 ticks, 15.456 real
+milliseconds, 64.70 Hz. Every boot then loads `CPT-SYNC2`, which
+`LISP-REINITIALIZE` loads through `SETUP-CPT` and `sys/window/cold.lisp` calls
+"the default thing", at "60Hz": 1033 lines of 32 instructions at 500 ns,
+1,652,800 ticks, 16.528 real milliseconds, 60.503 Hz. That is the rate of the
+running machine's vertical interrupt, which MIT's microcode uses as its
+roughly-sixty-cycle clock for mouse tracking and the scheduler's sequence
+break. It is measured on the Arty Z7-20 with a band running: A-DISK-IDLE-TIME,
+which counts the interrupts, rose 60.5030 a second over 1,296 s of TICKS, and
+TICKS agreed with an NTP-disciplined clock to 8 ppm. At the 5 ns grid a frame
+took twice its ticks, and `cpt.prom`'s was 3,091,200 ticks, 30.912 real
+milliseconds, 32.35 Hz. The machine's own time is the grid's, so the frame
+agrees with the wall only while the grid and the board's tick are the same
+number.
 `boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src/screen_geom.h`
 carries both numbers for that reason, `SCREEN_FRAME_NS` and
 `SCREEN_FRAME_REAL_NS`.

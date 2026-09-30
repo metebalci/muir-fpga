@@ -30,7 +30,7 @@ as a named constant.
 |---|---|
 | The ring, a delay line started by `-TPR0` | TSE at 5 and 25 ns; `-TPR60` from 60 to 100 ns; SELECT at 65 ns; the write pulse from 30 to 45 ns; the restart at 60 ns; the read tap at 75 (fast), 85 (normal), 100 (slow) or 160 ns (extra slow), 40 ns later under ILONG |
 | Triggered delays, started by an event | the master's 80 ns setup; the 60 ns read deskew; on the Unibus the select at 200, the address at 100, the acknowledgment at 150 and the MD strobe at 100 ns; the register strobe at 150 and the answer at 250 ns; the debug request at 100 ns; `-MFINISHD` at 30 and `-RDFINISH` at 140 ns |
-| Free-running oscillators | the timeout oscillator, 850 ns a period; the microsecond clock, 1,000 ns; `KB CLK`, 8,000 ns; `FCLK`, 125 ns; the half-microsecond clock, 500 ns at a phase of 203; the sixty-cycle clock; the sync program, 500 or 625 ns an instruction; the display frame, 15,456,000 ns |
+| Free-running oscillators | the timeout oscillator, 850 ns a period; the microsecond clock, 1,000 ns; `KB CLK`, 8,000 ns; `FCLK`, 125 ns; the half-microsecond clock, 500 ns at a phase of 203; the sixty-cycle clock; the sync program, 500 or 625 ns an instruction; the display frame, made by the sync program: 15,456,000 ns under `cpt.prom` and 16,528,000 ns under `CPT-SYNC2` |
 | The disk | a revolution, a sector, the seek's settle and its time per cylinder, and the 2.56 s hang timer |
 
 ### What is ours

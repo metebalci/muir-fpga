@@ -93,9 +93,12 @@ Source: [`docs/timing.md`](timing.md); the header of
 ### Does the machine's own clock agree with the wall?
 
 Yes, while the grid and the tick are the same number. The I/O board's
-microsecond clock counts 100 ticks, which is one real microsecond, and the
-display's vertical interrupt arrives at the display board's own 64.70 Hz. MIT's
-microcode uses that interrupt as its roughly-sixty-cycle clock.
+microsecond clock counts 100 ticks, which is one real microsecond. The
+display's vertical interrupt arrives at the rate of the sync program the board
+runs: 64.70 Hz from MIT's PROM program until the band loads its own, and
+60.503 Hz from `CPT-SYNC2`, which every boot loads. MIT's microcode uses that
+interrupt as its roughly-sixty-cycle clock, and on the board it was measured
+at 60.5030 a second with a band running.
 
 At the five nanosecond grid the same clocks counted 200 ticks and a frame of
 3,091,200, so a CADR wall clock lost half a day in a day, and on the board the

@@ -31,7 +31,7 @@ on the board or is what the fabric is built to do.
 | Microcycle, extra slow speed | 220 ns [1] | 220 ns, by design [11] |
 | Microcycles a real second, stalls included | not in the recovered material | 5.876 million, measured, 88.1% of what a normal microcycle allows [12] |
 | Microsecond clock | 1,000 ns, from a 32 MHz crystal [2] | 100 ticks; measured at 0.99995 and 1.00001 of real time [12] |
-| Display frame | 15,456,000 ns, 64.7 Hz [3] | the same period from the same sync program, by design; not measured on the board [11] |
+| Display frame | 15,456,000 ns, 64.7 Hz, from the PROM's sync program [3]; 16,528,000 ns, 60.5 Hz, from `CPT-SYNC2`, which every boot loads | the same periods from the same sync programs, by design [11]; 60.503 Hz measured with a band running (`docs/tv.md`) |
 | Xbus setup before `-XBUS.RQ` | 80 ns [4] | 80 ns, by design [11] |
 | Read deskew | 60 ns [4] | 60 ns, by design [11] |
 | Main memory, `-XBUS.RQ` to the acknowledgment | about 460 to 500 ns on the memory board's 24 MHz clock, longer during a refresh [5] | the DDR3 round trip through the processing system's `S_AXI_HP0`; not measured on the board. In simulation the checks answer at muir's memory board instant [13] |

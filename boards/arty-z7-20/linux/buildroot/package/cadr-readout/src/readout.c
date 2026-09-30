@@ -70,20 +70,40 @@ void ro_start(struct readout *r)
 	++r->writes;
 }
 
-// SRUN as the master clock registered it, FLAG-1 bit 8.  A halted machine has
-// it down; a machine `HALT-CONS` stopped under ERRSTOP has it UP with ERR up
-// beside it, which is why this asks the microcycle counter as well.
+// Not SRUN, FLAG-1 bit 8: a machine `HALT-CONS` stopped under ERRSTOP has it
+// UP with ERR up beside it.  The microcycle counter standing still is what
+// halted means: for `RO_HALT_SETTLE_TICKS` together, at some point within
+// `RO_HALT_WITHIN_TICKS` (readout.h says why).
 int ro_is_halted(struct readout *r)
 {
-	const uint64_t a = ro_cycles(r);
-	// Two reads with a little work between them.  Nothing here sleeps ---
-	// the program has no reason to and a board that is running retires
-	// thousands of microcycles in the time an AXI round trip takes.
-	for (int i = 0; i < 16; ++i)
-		(void)r->read(r, RO_STAT);
-	r->reads += 16;
-	const uint64_t b = ro_cycles(r);
-	return a == b;
+	uint64_t c = ro_cycles(r);
+	const uint64_t t0 = ro_ticks(r);
+	uint64_t since = t0;
+	for (unsigned n = 0; n < RO_HALT_MAX_READS; ++n) {
+		const uint64_t now_c = ro_cycles(r);
+		const uint64_t now_t = ro_ticks(r);
+		if (now_c != c) {
+			c = now_c;
+			since = now_t;
+		} else if (now_t - since >= RO_HALT_SETTLE_TICKS) {
+			return 1;
+		}
+		if (now_t - t0 >= RO_HALT_WITHIN_TICKS)
+			return 0;
+	}
+	return 0;
+}
+
+int ro_halt_to_read(struct readout *r, int *was_running)
+{
+	*was_running = !ro_is_halted(r);
+	if (*was_running)
+		ro_halt(r);
+	if (ro_is_halted(r))
+		return 0;
+	if (*was_running)
+		ro_start(r);
+	return -1;
 }
 
 int ro_mem_drained(struct readout *r)

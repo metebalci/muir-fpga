@@ -137,11 +137,12 @@
 //
 //   - `rtl/machine/cadr_io_board.sv`'s microsecond clock is 100 ticks, one
 //     real microsecond, and a CADR wall clock run off it keeps real time.
-//   - `rtl/machine/cadr_tv.sv`'s sync program makes a frame of 15,456,000 ns,
-//     1,545,600 ticks, so the vertical interrupt arrives every 15.456 real ms
-//     --- 64.70 Hz, the rate the display board scanned at.  MIT's microcode
-//     uses that interrupt as its roughly-sixty-cycle clock for mouse tracking
-//     and the scheduler's sequence break.
+//   - `rtl/machine/cadr_tv.sv` runs the sync program it is given, and its
+//     ticks are real time: MIT's PROM program makes a frame of 15,456,000 ns,
+//     64.70 Hz, until the band loads `CPT-SYNC2`, whose frame is 16,528,000
+//     ns, so the running machine's vertical interrupt arrives at 60.503 Hz.
+//     MIT's microcode uses that interrupt as its roughly-sixty-cycle clock for
+//     mouse tracking and the scheduler's sequence break.
 //
 // While the grid was 5 ns under a 10 ns tick both ran at half rate, and that
 // was recorded as a deliberate disagreement with the wall.  A board whose tick

@@ -62,7 +62,32 @@ struct model {
 	// What the last write of the clock control register said, so that the
 	// halt and the start can be asserted rather than assumed.
 	int clk_writes;
+	// **THE MACHINE STOPS A LITTLE AFTER THE WRITE THAT STOPS IT**, as the
+	// board does: the write lands at the machine's next look, and the
+	// microcycles already under way retire after the store has returned.
+	// Measured on the Arty Z7-20 over 3,000 halts: none to two more
+	// microcycles, the last up to five reads (about 0.8 us) after the
+	// store.  `tail_at` is the tick each of them retires at; zero is none.
+	uint64_t tail_at[2];
+	// A machine that ignores the write altogether: nothing here can stop
+	// it, and the program must say so and leave it as it found it.
+	int ignores_halt;
+	// TICKS as the model held it when the program last read it: the clock
+	// runs on, so the value to compare with is the one at the read.
+	uint64_t ticks_read;
+	// A halted machine that still retires one microcycle every
+	// `trickle_every` ticks, the next at `trickle_next`, until the tick
+	// `trickle_until` if that is not zero; zero `trickle_every` is none.  It
+	// puts the settle window's edges under test: a counter that never stands
+	// for 2 ms is running, and one that does, however late in the 10 ms, is
+	// halted.
+	uint64_t trickle_every, trickle_next, trickle_until;
 };
+
+// **THE FABRIC'S TIME RUNS WHILE THE PROGRAM READS**, 16 ticks a read, the
+// board's figure (66 single-word reads took 1,030 ticks).  A model whose
+// clock stood still would let a check that waits on TICKS wait for ever.
+#define MODEL_TICKS_PER_READ 16u
 
 static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 {
@@ -111,6 +136,17 @@ static uint32_t model_read(struct readout *r, unsigned word)
 	struct model *m = r->ctx;
 	const unsigned sel = (m->ro_addr >> 14) & 0xFu;
 	const unsigned a = m->ro_addr & 0x3FFFu;
+	m->ticks += MODEL_TICKS_PER_READ;
+	for (unsigned i = 0; i < 2; ++i)
+		if (m->tail_at[i] && m->ticks >= m->tail_at[i]) {
+			++m->cycles;
+			m->tail_at[i] = 0;
+		}
+	if (m->trickle_every && m->ticks >= m->trickle_next
+	    && (!m->trickle_until || m->ticks < m->trickle_until)) {
+		++m->cycles;
+		m->trickle_next += m->trickle_every;
+	}
 	switch (word) {
 	case RO_IDENT: return RO_IDENT_WORD;
 	case RO_STAT: return 0;
@@ -124,6 +160,7 @@ static uint32_t model_read(struct readout *r, unsigned word)
 	case RO_CYCLESH: return m->hi_latch_cycles;
 	case RO_TICKS:
 		m->hi_latch_ticks = (uint32_t)(m->ticks >> 32);
+		m->ticks_read = m->ticks;
 		return (uint32_t)m->ticks;
 	case RO_TICKSH: return m->hi_latch_ticks;
 	case RO_ADDR:
@@ -145,7 +182,16 @@ static void model_write(struct readout *r, unsigned word, uint32_t v)
 	if (word == RO_ADDR)
 		m->ro_addr = v & 0x3FFFFu;
 	else if (word == RO_SPY(RO_SPY_CLK_W)) {
-		m->running = (v & RO_CLK_RUN) != 0;
+		const int run = (v & RO_CLK_RUN) != 0;
+		// The board's tail: the two microcycles under way retire 40 and
+		// 80 ticks after the store, the first after the program's first
+		// read of CYCLES and the second before its seventeenth.
+		if (m->running && !run && !m->ignores_halt) {
+			m->tail_at[0] = m->ticks + 40;
+			m->tail_at[1] = m->ticks + 80;
+		}
+		if (!m->ignores_halt || run)
+			m->running = run;
 		++m->clk_writes;
 	}
 }
@@ -238,6 +284,9 @@ int main(void)
 	ro_halt(&r);
 	if (!ro_is_halted(&r))
 		fail("a halted machine reported running", 0, 1);
+	if (m->tail_at[0] || m->tail_at[1])
+		fail("the halt was judged before the machine's last microcycles "
+		     "retired", 1, 0);
 	if (m->clk_writes != 1)
 		fail("writes of the clock control register", m->clk_writes, 1);
 
@@ -288,8 +337,8 @@ int main(void)
 		fail("SPCPTR", img.spcptr, m->regs[IMG_RG_SPCPTR]);
 	if (img.cycles != m->cycles)
 		fail("CYCLES", img.cycles, m->cycles);
-	if (img.ticks != m->ticks)
-		fail("TICKS", img.ticks, m->ticks);
+	if (img.ticks != m->ticks_read)
+		fail("TICKS", img.ticks, m->ticks_read);
 	if (img.imem[4095] != m->imem[4095])
 		fail("a control store word", img.imem[4095], m->imem[4095]);
 	if (img.l2_map[1023] != m->l2[1023])
@@ -352,6 +401,81 @@ int main(void)
 	ro_start(&r);
 	if (!m->running)
 		fail("the machine was not started again", 0, 1);
+
+	// ---- the whole halt as the programs take it: `ro_halt_to_read` -------
+	//
+	// Three machines: one running, which is halted and said to have been;
+	// one already halted, which is left alone; and one that ignores the
+	// write, which must be refused AND LEFT RUNNING, as it was found.  The
+	// last is the board's fault of 29 Sep: the program said the machine
+	// had not stopped, exited, and left it halted with nobody to start it.
+	{
+		int was_running = -1;
+		m->clk_writes = 0;
+		if (ro_halt_to_read(&r, &was_running) != 0)
+			fail("a running machine was not halted for reading", 1, 0);
+		if (was_running != 1)
+			fail("was_running for a running machine", was_running, 1);
+		if (m->running || m->clk_writes != 1)
+			fail("writes of the clock control register for one halt",
+			     m->clk_writes, 1);
+
+		m->clk_writes = 0;
+		if (ro_halt_to_read(&r, &was_running) != 0 || was_running != 0)
+			fail("an already halted machine", was_running, 0);
+		if (m->clk_writes != 0)
+			fail("writes to an already halted machine", m->clk_writes, 0);
+
+		ro_start(&r);
+		m->ignores_halt = 1;
+		m->clk_writes = 0;
+		const unsigned long before = r.reads;
+		if (ro_halt_to_read(&r, &was_running) != -1)
+			fail("a machine that would not stop was read", 1, 0);
+		if (!m->running)
+			fail("a machine that would not stop was left halted", 0, 1);
+		if (m->clk_writes != 2)
+			fail("writes of the clock control register: the halt and "
+			     "the start", m->clk_writes, 2);
+		// Bounded: the checks wait on the fabric's time, not for ever.
+		if (r.reads - before > 600000u)
+			fail("reads spent refusing a machine that would not stop",
+			     r.reads - before, 600000u);
+		m->ignores_halt = 0;
+	}
+
+	// ---- the settle window's edges ---------------------------------------
+	//
+	// Written in ticks, not in `RO_HALT_SETTLE_TICKS`, so that the model
+	// does not move with the constant it is holding: 2 ms is 200,000 ticks
+	// and 10 ms is 1,000,000.  A machine that retires one microcycle every
+	// 1.99 ms never stands for 2 ms and is running; one that retires one
+	// every 2.01 ms stands for 2 ms within the 10 ms and is halted; and one
+	// that retires them for 7.5 ms and then stops stands for 2 ms by 9.5 ms
+	// and is halted too.  A window that is not restarted when CYCLES moves
+	// calls the first one halted.
+	{
+		m->running = 0;
+		m->trickle_every = 199000u;
+		m->trickle_next = m->ticks + m->trickle_every;
+		if (ro_is_halted(&r))
+			fail("a machine retiring a microcycle every 1.99 ms reported "
+			     "halted", 1, 0);
+		m->trickle_every = 201000u;
+		m->trickle_next = m->ticks + m->trickle_every;
+		if (!ro_is_halted(&r))
+			fail("a machine retiring a microcycle every 2.01 ms reported "
+			     "running", 0, 1);
+		m->trickle_every = 1000u;
+		m->trickle_next = m->ticks + m->trickle_every;
+		m->trickle_until = m->ticks + 750000u;
+		if (!ro_is_halted(&r))
+			fail("a machine that stood for 2 ms from 7.5 ms on reported "
+			     "running", 0, 1);
+		m->trickle_every = 0;
+		m->trickle_until = 0;
+		ro_start(&r);
+	}
 
 	printf("readout: %ld words compared through a modeled window, %lu reads "
 	       "and %lu writes, %lu refused for a stale echo, and the "
