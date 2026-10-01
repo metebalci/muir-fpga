@@ -2009,7 +2009,7 @@ module cadr_cora #(
         .steady_lamps(con_steady_lamps),
         // Whether a display output sleeps, page 2's word 36.  **THIS BOARD HAS
         // NONE**, so the three answers are tied low and the word reads
-        // `UNMAPPED`: `cadr-console hdmi-sleep` says there is no display output
+        // `UNMAPPED`: `cadr-console display-sleep` says there is no display output
         // rather than reporting a setting nothing holds.  What it would carry is
         // folded below.
         .hdmi_sleep_set(con_hdmi_sleep_set), .hdmi_sleep_secs(con_hdmi_sleep_secs),

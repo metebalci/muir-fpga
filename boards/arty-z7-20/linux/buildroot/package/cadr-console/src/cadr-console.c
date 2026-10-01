@@ -353,14 +353,14 @@ static void help(void)
 	say("color-tv [on|off]       whether the second display board --- the color TV at");
 	say("                0o17200000 --- is in the backplane.  A machine with none gives");
 	say("                the NXM there, which is how the band finds out.  Exits 0 when fitted");
-	say("hdmi-output [tv|color-tv|both]");
+	say("display-output [tv|color-tv|both]");
 	say("                which screens the board's own display output sends to the");
 	say("                monitor.  With no word it reports.  The color screen is drawn");
 	say("                over the first where they overlap");
-	say("hdmi-rotate [0|90|-90]  which way up, for a monitor stood on its side");
-	say("hdmi-sleep [SECONDS]    how long the display output waits with nobody at the");
+	say("display-rotate [0|90|-90]  which way up, for a monitor stood on its side");
+	say("display-sleep [SECONDS] how long the display output waits with nobody at the");
 	say("                board's own keyboard or mouse before it stops the link and the");
-	say("                monitor sleeps; 0 never.  --hdmi-sleep.  A setting starts the");
+	say("                monitor sleeps; 0 never.  --display-sleep.  A setting starts the");
 	say("                wait over and wakes a monitor asleep.  With no word it reports");
 	say("                the setting and whether the monitor is asleep.  Exits 0 when");
 	say("                there is a display output and it holds what was asked");
@@ -421,6 +421,11 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 	const char *cmd = argv[0];
 	if (!strcmp(cmd, "quit") || !strcmp(cmd, "exit"))
 		return 1;
+	// `display-output`, `display-rotate` and `display-sleep`, and the three
+	// words they replaced, which are refused by name.  The commands are the
+	// face's whole, so that the check holds them as typed.
+	if (cons_display_word(c, argc, argv, &exit_status))
+		return 0;
 	if (!strcmp(cmd, "help") || !strcmp(cmd, "?"))
 		help();
 	else if (!strcmp(cmd, "halt")) {
@@ -520,63 +525,6 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		cons_say_display(&d);
 		// The answer, for a script: 0 when a color board is fitted.
 		exit_status = d.color ? 0 : 1;
-	}
-	else if (!strcmp(cmd, "hdmi-output")) {
-		struct cons_hdmi h;
-		if (argc > 1) {
-			int first = 0, color = 0;
-			if (!strcmp(argv[1], "tv")) first = 1;
-			else if (!strcmp(argv[1], "color-tv")) color = 1;
-			else if (!strcmp(argv[1], "both")) { first = 1; color = 1; }
-			else {
-				say("hdmi-output tv|color-tv|both");
-				return 0;
-			}
-			cons_set_hdmi_output(c, first, color);
-		}
-		cons_read_hdmi(c, &h);
-		cons_say_hdmi(&h);
-	}
-	else if (!strcmp(cmd, "hdmi-rotate")) {
-		struct cons_hdmi h;
-		if (argc > 1) {
-			int rot;
-			if (!strcmp(argv[1], "0")) rot = CONS_HDMI_UPRIGHT;
-			else if (!strcmp(argv[1], "90")) rot = CONS_HDMI_CW;
-			else if (!strcmp(argv[1], "-90")) rot = CONS_HDMI_CCW;
-			else {
-				say("hdmi-rotate 0|90|-90");
-				return 0;
-			}
-			cons_set_hdmi_rotate(c, rot);
-		}
-		cons_read_hdmi(c, &h);
-		cons_say_hdmi(&h);
-	}
-	else if (!strcmp(cmd, "hdmi-sleep")) {
-		// **A SETTING, OR A REPORT, AND NEVER A WAKE.**  Only a person at
-		// the board wakes the monitor --- `cadr-terminal` writes that for a
-		// key or the mouse on its input link --- so there is no word here
-		// that does.  A setting does start the wait over, because the one
-		// the monitor was sleeping under is gone.
-		struct cons_hdmi_sleep s;
-		unsigned want = 0;
-		const int asked = argc > 1;
-		if (asked) {
-			if (cons_parse_hdmi_sleep(argv[1], &want) != 0) {
-				say("hdmi-sleep SECONDS: decimal, 0 to %u; 0 never sleeps",
-				    CONS_HDMI_SLEEP_MAX);
-				exit_status = 2;
-				return 0;
-			}
-			cons_set_hdmi_sleep(c, want);
-		}
-		cons_read_hdmi_sleep(c, &s);
-		cons_say_hdmi_sleep(&s);
-		// The answer, for a script: 0 when a display output is there and,
-		// if a setting was asked for, holds it.  A board with none, or a
-		// fabric older than the word, says so and answers 1.
-		exit_status = (s.mark_ok && (!asked || s.seconds == want)) ? 0 : 1;
 	}
 	else if (!strcmp(cmd, "blinking-leds")) {
 		// `on` and `off`, the flag's own sense read the other way round:

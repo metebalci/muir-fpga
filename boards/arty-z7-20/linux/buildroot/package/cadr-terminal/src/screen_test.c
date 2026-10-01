@@ -3529,7 +3529,7 @@ static void dwake_model_write(struct display_wake *w, unsigned word, uint32_t v)
 // ---- WAKING THE BOARD'S OWN DISPLAY OUTPUT -----------------------------
 //
 // **A PERSON AT THE BOARD WAKES THE MONITOR, AND NOBODY ELSE DOES.**  The
-// display output sleeps a monitor after `--hdmi-sleep` seconds, and what wakes
+// display output sleeps a monitor after `--display-sleep` seconds, and what wakes
 // it and starts its timer over is a key or the mouse at the board.  Those arrive
 // on the input link; a viewer's arrive on the RFB socket; and the fabric sees
 // one keyboard register written for both.  So this program decides, and what is

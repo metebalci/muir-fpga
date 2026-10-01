@@ -363,7 +363,7 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 //
 // A digital link has no power management of its own, so the display output puts
 // a monitor to sleep by stopping the link: the four lanes are held at one level
-// and the monitor sees no signal.  It does that after `--hdmi-sleep` seconds with
+// and the monitor sees no signal.  It does that after `--display-sleep` seconds with
 // nobody at the board, and a key or the mouse AT THE BOARD --- which only
 // `cadr-terminal` can tell from a viewer's --- wakes it and starts the timer
 // over.  Zero never sleeps.
@@ -389,7 +389,7 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 #define CONS_HDMI_ASLEEP         (1u << 15)
 #define CONS_HDMI_SLEEP_SECONDS  0x7FFFu
 #define CONS_HDMI_SLEEP_MAX      32767u
-// What the fabric comes up with, `--hdmi-sleep`'s own default.
+// What the fabric comes up with, `--display-sleep`'s own default.
 #define CONS_HDMI_SLEEP_DEFAULT  300u
 
 #define CONS_PAGE4        64u
@@ -873,6 +873,22 @@ int cons_set_hdmi_sleep(struct console *c, unsigned seconds);
 // A setting as a person or a card writes it: decimal digits and nothing else,
 // no more than `CONS_HDMI_SLEEP_MAX`.  0, or -1 with `*seconds` untouched.
 int cons_parse_hdmi_sleep(const char *text, unsigned *seconds);
+// **THE DISPLAY OUTPUT'S THREE COMMANDS, WHOLE, AS TYPED.**  1 when `argv[0]`
+// is one of their words, 0 with nothing done for any other word.
+//
+//   display-output [tv|color-tv|both]   word 34's screens: a setting and then a
+//   display-rotate [0|90|-90]           report, or a report alone, under
+//                                       `display:`; `*status` untouched
+//   display-sleep [SECONDS]             word 36: `*status` 0 when there is a
+//                                       display output and it holds what was
+//                                       asked, 1 when it does not, 2 for a
+//                                       setting that is not one
+//
+// **`hdmi-output`, `hdmi-rotate` AND `hdmi-sleep` WERE THEIR NAMES AND ARE
+// REFUSED, WITH NO ALIAS**: each is taken here so that it can be answered with
+// the word that replaced it, and it writes nothing, reads nothing and answers
+// 2.  The card's flags were renamed with them, `--hdmi-*` to `--display-*`.
+int cons_display_word(struct console *c, int argc, char **argv, int *status);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir-sim/src/spy.rs's
 // ClockControl and ../muir-sim/tests/spy.rs:743-761).

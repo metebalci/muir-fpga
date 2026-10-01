@@ -67,7 +67,8 @@
 #   fpgarc_say_unclaimed FILE
 #       Print one line naming the flags in FILE that no program on this board
 #       claimed, or nothing at all.  For the LAST init script to read the
-#       file, once every other one has had its turn.
+#       file, once every other one has had its turn.  A flag that was renamed
+#       gets a line of its own naming its new name: FPGARC_RENAMED below.
 #
 # **WHY THE UNCLAIMED LINES ARE WORTH A LINE AT BOOT.**  Nothing here refuses
 # anything, which is what lets one file serve several strict programs --- and
@@ -123,6 +124,15 @@ FPGARC_CLAIMED=${FPGARC_CLAIMED:-/var/run/cadr-fpgarc.claimed}
 # If this cannot be written the warning may be said twice, which is the right
 # way round to fail.
 FPGARC_WARNED=${FPGARC_WARNED:-/var/run/cadr-fpgarc.warned}
+#
+# **A FLAG THAT WAS RENAMED IS NAMED WITH ITS NEW NAME, AND IS NOT AN ALIAS.**
+# One line a flag, the old name and then the new one.  Nothing claims an old
+# name, so its line reaches no program and is one of the unclaimed lines above;
+# what this table adds is the sentence, so that a card written before the rename
+# is told what to write instead of only that a line did nothing.
+FPGARC_RENAMED='--hdmi-output --display-output
+--hdmi-rotate --display-rotate
+--hdmi-sleep --display-sleep'
 #
 # HOW A CALLER USES IT.  The words are quoted, so they go back through `eval`
 # and an argument with a space in it survives:
@@ -340,9 +350,33 @@ fpgarc_unclaimed() {
 	done
 }
 
+# The name FLAG was renamed to, or nothing.
+fpgarc_renamed_to() {
+	printf '%s\n' "$FPGARC_RENAMED" | while read -r _fpgarc_old _fpgarc_new; do
+		[ "$_fpgarc_old" = "$1" ] || continue
+		printf '%s' "$_fpgarc_new"
+		break
+	done
+}
+
 fpgarc_say_unclaimed() {
-	_fpgarc_none=$(fpgarc_unclaimed "$1" | sort -u | tr '\n' ' ')
-	# The trailing space from `tr` is why this is not simply -n.
+	_fpgarc_none=
+	_fpgarc_all=$(fpgarc_unclaimed "$1" | sort -u)
+	# A renamed flag first, a line each, and left out of the line after it so
+	# that no flag is named twice.
+	while IFS= read -r _fpgarc_flag; do
+		[ -n "$_fpgarc_flag" ] || continue
+		_fpgarc_new=$(fpgarc_renamed_to "$_fpgarc_flag")
+		if [ -n "$_fpgarc_new" ]; then
+			echo "fpgarc: $_fpgarc_flag is now $_fpgarc_new, so that line did nothing;" \
+			     "write $_fpgarc_new instead"
+		else
+			_fpgarc_none="$_fpgarc_none$_fpgarc_flag "
+		fi
+	done <<-EOF
+	$_fpgarc_all
+	EOF
+	# The trailing space is why this is not simply -n.
 	case "$_fpgarc_none" in
 	""|" ") return 0 ;;
 	esac

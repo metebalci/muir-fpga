@@ -550,7 +550,7 @@ int main(int argc, char **argv)
 			    "its mouse go the same way a viewer's do", link_path);
 			// **AND WHAT COMES OVER IT WAKES THE DISPLAY OUTPUT.**  The
 			// board's own display output sleeps a monitor after
-			// `--hdmi-sleep` seconds, and a key or the mouse at the board
+			// `--display-sleep` seconds, and a key or the mouse at the board
 			// is what wakes it and starts the timer over.  Those come over
 			// this link and a viewer's keys do not, and the fabric cannot
 			// tell the two apart, so it is this program that writes the

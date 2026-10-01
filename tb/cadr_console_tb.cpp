@@ -1605,7 +1605,7 @@ int main(int argc, char **argv) {
 
   // **WHETHER THE DISPLAY OUTPUT SLEEPS, page 2's word 36.**
   //
-  // `--hdmi-sleep` and `cadr-console hdmi-sleep`: a setting in seconds under a
+  // `--display-sleep` and `cadr-console display-sleep`: a setting in seconds under a
   // sixteen-bit key, and a wake under a key of its own, which is what
   // `cadr-terminal` writes when a key or the mouse at the board moves.  The
   // setting and the mute are the display output's and not the console's, so

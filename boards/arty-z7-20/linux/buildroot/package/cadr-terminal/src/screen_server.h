@@ -127,7 +127,7 @@ struct screen_server {
 	uint8_t link_buttons;
 
 	// --- **WAKING THE BOARD'S OWN DISPLAY OUTPUT.**  It sleeps a monitor
-	// after `--hdmi-sleep` seconds, and the one thing that wakes it and starts
+	// after `--display-sleep` seconds, and the one thing that wakes it and starts
 	// the timer over is a person at the board: a key or the mouse on the
 	// input link.  **A VIEWER'S KEY IS NOT ONE**, and the fabric cannot tell
 	// the two apart because this program writes the keyboard's register for

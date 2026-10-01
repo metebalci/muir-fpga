@@ -2416,6 +2416,178 @@ static void check_hdmi_sleep(void)
 	}
 }
 
+// **THE COMMAND'S NAME: `display-sleep`, and `hdmi-sleep` refused.**
+//
+// The word was `hdmi-sleep` and is `display-sleep`, the flag's own new name,
+// with no alias: the old word sets nothing, reads nothing, says the new one and
+// answers 2.  `cadr-console.c` hands every line to `cons_display_word` before
+// its own words, so what is held here is the command as typed.
+static void check_display_sleep_word(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+	int status = -1;
+	{
+		char *argv[] = {"display-sleep", "120"};
+		capture_start();
+		const int took = cons_display_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1, "display-sleep 120 was not taken as the command");
+		CHECK(status == 0, "display-sleep 120 answered %d, wanting 0", status);
+		CHECK(m.sleep_sets == 1 && m.sleep_last == ((0x4853u << 16) | 120u),
+		      "display-sleep 120 wrote %u settings, the last 0x%08x", m.sleep_sets,
+		      m.sleep_last);
+		CHECK(strstr(said, "display-sleep: after 120 seconds") != NULL,
+		      "display-sleep 120 did not report under its own name: %s", said);
+		CHECK(strstr(said, "hdmi-sleep") == NULL,
+		      "display-sleep 120 said the old name: %s", said);
+	}
+	{
+		char *argv[] = {"display-sleep"};
+		status = -1;
+		capture_start();
+		const int took = cons_display_word(&c, 1, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == 0, "display-sleep alone: taken %d, answered %d", took,
+		      status);
+		CHECK(m.sleep_sets == 1, "display-sleep alone wrote a setting");
+		CHECK(strstr(said, "display-sleep: after 120 seconds") != NULL,
+		      "display-sleep alone did not report the setting: %s", said);
+	}
+	{
+		char *argv[] = {"display-sleep", "0x10"};
+		status = -1;
+		capture_start();
+		const int took = cons_display_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == 2, "display-sleep 0x10: taken %d, answered %d", took,
+		      status);
+		CHECK(m.sleep_sets == 1, "display-sleep 0x10 wrote a setting");
+		CHECK(strstr(said, "display-sleep SECONDS") != NULL,
+		      "display-sleep 0x10 was not refused under its own name: %s", said);
+	}
+	{
+		char *argv[] = {"hdmi-sleep", "240"};
+		status = -1;
+		capture_start();
+		const int took = cons_display_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1, "hdmi-sleep was not answered by the command that replaced it");
+		CHECK(status == 2, "hdmi-sleep 240 answered %d, wanting 2", status);
+		CHECK(m.sleep_sets == 1 && (m.sleep_last & 0x7FFFu) == 120u,
+		      "hdmi-sleep 240 wrote a setting: %u settings, the last 0x%08x", m.sleep_sets,
+		      m.sleep_last);
+		CHECK(strstr(said, "seconds with nobody") == NULL,
+		      "hdmi-sleep 240 went on to report the setting: %s", said);
+		CHECK(strstr(said, "hdmi-sleep") != NULL && strstr(said, "display-sleep") != NULL,
+		      "hdmi-sleep 240 was not refused naming display-sleep: %s", said);
+	}
+	{
+		char *argv[] = {"status"};
+		status = -1;
+		const int took = cons_display_word(&c, 1, argv, &status);
+		CHECK(took == 0 && status == -1, "status was taken as display-sleep (%d, %d)", took,
+		      status);
+	}
+}
+
+// **`display-output` AND `display-rotate`, and `hdmi-output` and `hdmi-rotate`
+// refused.**  The same rename as `display-sleep`'s and the same rule: the new
+// word writes word 34 and reports under `display:`, and the old one writes
+// nothing, reports nothing, names the new word and answers 2.
+static void check_display_words(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+	int status = -1;
+	{
+		char *argv[] = {"display-output", "both"};
+		capture_start();
+		const int took = cons_display_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1, "display-output both was not taken as the command");
+		CHECK(status == -1, "display-output both changed the exit status to %d", status);
+		CHECK(m.hdmi_first == 1 && m.hdmi_color == 1,
+		      "display-output both did not set both screens (%d, %d)", m.hdmi_first,
+		      m.hdmi_color);
+		CHECK(strstr(said, "display: both screens") != NULL,
+		      "display-output both did not report under display: %s", said);
+		CHECK(strstr(said, "hdmi") == NULL, "display-output said the old name: %s", said);
+	}
+	{
+		char *argv[] = {"display-rotate", "90"};
+		capture_start();
+		const int took = cons_display_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1, "display-rotate 90 was not taken as the command");
+		CHECK(m.hdmi_rot == CONS_HDMI_CW, "display-rotate 90 did not turn the picture (%d)",
+		      m.hdmi_rot);
+		CHECK(strstr(said, "display: a quarter turn clockwise") != NULL,
+		      "display-rotate 90 did not report under display: %s", said);
+		CHECK(strstr(said, "hdmi") == NULL, "display-rotate said the old name: %s", said);
+	}
+	{
+		char *argv[] = {"display-output"};
+		const unsigned long writes = c.writes;
+		capture_start();
+		const int took = cons_display_word(&c, 1, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && c.writes == writes, "display-output alone: taken %d, %lu writes",
+		      took, c.writes - writes);
+		CHECK(strstr(said, "display: both screens") != NULL &&
+		      strstr(said, "display: a quarter turn clockwise") != NULL,
+		      "display-output alone did not report the word: %s", said);
+	}
+	{
+		char *argv[] = {"display-output", "first"};
+		const unsigned long writes = c.writes;
+		capture_start();
+		const int took = cons_display_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && c.writes == writes, "display-output first: taken %d, %lu writes",
+		      took, c.writes - writes);
+		CHECK(strstr(said, "display-output tv|color-tv|both") != NULL,
+		      "display-output first was not refused under its own name: %s", said);
+	}
+	{
+		char *argv[] = {"display-rotate", "180"};
+		const unsigned long writes = c.writes;
+		capture_start();
+		const int took = cons_display_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && c.writes == writes, "display-rotate 180: taken %d, %lu writes",
+		      took, c.writes - writes);
+		CHECK(strstr(said, "display-rotate 0|90|-90") != NULL,
+		      "display-rotate 180 was not refused under its own name: %s", said);
+	}
+	static const struct { const char *old, *arg, *new_word; } gone[] = {
+		{"hdmi-output", "tv", "display-output"},
+		{"hdmi-rotate", "-90", "display-rotate"},
+	};
+	for (unsigned i = 0; i < sizeof gone / sizeof gone[0]; ++i) {
+		char *argv[] = {(char *)gone[i].old, (char *)gone[i].arg};
+		const unsigned long writes = c.writes;
+		status = -1;
+		capture_start();
+		const int took = cons_display_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1, "%s was not answered by the command that replaced it", gone[i].old);
+		CHECK(status == 2, "%s %s answered %d, wanting 2", gone[i].old, gone[i].arg, status);
+		CHECK(c.writes == writes, "%s %s wrote word 34", gone[i].old, gone[i].arg);
+		CHECK(strstr(said, gone[i].old) != NULL && strstr(said, gone[i].new_word) != NULL,
+		      "%s was not refused naming %s: %s", gone[i].old, gone[i].new_word, said);
+		CHECK(strstr(said, "display: ") == NULL, "%s went on to report the word: %s",
+		      gone[i].old, said);
+	}
+	CHECK(m.hdmi_first == 1 && m.hdmi_color == 1 && m.hdmi_rot == CONS_HDMI_CW,
+	      "a refused word moved the display output (%d, %d, %d)", m.hdmi_first, m.hdmi_color,
+	      m.hdmi_rot);
+}
+
 // One setting and two keys, a key and its complement, and a line that says
 // what the lamps are doing in words a person at the board would recognize.
 static void check_lamps(void)
@@ -2938,6 +3110,8 @@ int main(int argc, char **argv)
 	check_hdmi();
 	check_lamps();
 	check_hdmi_sleep();
+	check_display_sleep_word();
+	check_display_words();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.
 	check_log_prefix();

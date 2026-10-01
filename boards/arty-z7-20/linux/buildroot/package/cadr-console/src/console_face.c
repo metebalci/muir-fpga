@@ -1002,22 +1002,22 @@ int cons_set_hdmi_rotate(struct console *c, int rot)
 void cons_say_hdmi(const struct cons_hdmi *h)
 {
 	if (!h->mark_ok) {
-		say("hdmi: word 34 did not carry its marker (0x%08x);"
+		say("display: word 34 did not carry its marker (0x%08x);"
 		    " this fabric is older than it is", h->word);
 		return;
 	}
 	if (h->first && h->color)
-		say("hdmi: both screens, the color board drawn over the first");
+		say("display: both screens, the color board drawn over the first");
 	else if (h->color)
-		say("hdmi: the color board alone");
+		say("display: the color board alone");
 	else if (h->first)
-		say("hdmi: the first display alone");
+		say("display: the first display alone");
 	else
-		say("hdmi: neither screen --- the monitor is black");
+		say("display: neither screen --- the monitor is black");
 	switch (h->rotate) {
-	case CONS_HDMI_CW:  say("hdmi: a quarter turn clockwise"); break;
-	case CONS_HDMI_CCW: say("hdmi: a quarter turn anticlockwise"); break;
-	default:            say("hdmi: upright"); break;
+	case CONS_HDMI_CW:  say("display: a quarter turn clockwise"); break;
+	case CONS_HDMI_CCW: say("display: a quarter turn anticlockwise"); break;
+	default:            say("display: upright"); break;
 	}
 }
 
@@ -1104,20 +1104,117 @@ void cons_say_hdmi_sleep(const struct cons_hdmi_sleep *s)
 		// **NOT A SETTING OF ZERO**, which reads zero in the bottom half
 		// too: the marker is what tells a display output that never sleeps
 		// from a board that has none.
-		say("hdmi-sleep: word 36 reads 0x%08x and carries no marker: this board has no"
+		say("display-sleep: word 36 reads 0x%08x and carries no marker: this board has no"
 		    " display output, or its fabric is older than the word", s->word);
 		return;
 	}
 	if (s->seconds == 0u)
-		say("hdmi-sleep: never --- the display output does not sleep the monitor");
+		say("display-sleep: never --- the display output does not sleep the monitor");
 	else
-		say("hdmi-sleep: after %u seconds with nobody at the board's own keyboard or"
+		say("display-sleep: after %u seconds with nobody at the board's own keyboard or"
 		    " mouse; a viewer's keys do not count", s->seconds);
 	if (s->asleep)
-		say("hdmi-sleep: the display output is asleep: the link is stopped and a monitor"
+		say("display-sleep: the display output is asleep: the link is stopped and a monitor"
 		    " on it sees no signal.  A key or the mouse at the board wakes it");
 	else
-		say("hdmi-sleep: the display output is awake");
+		say("display-sleep: the display output is awake");
+}
+
+// `display-output [tv|color-tv|both]`: a setting of word 34's screens and then a
+// report, or a report alone.  A spelling nothing names writes nothing and says
+// the three.  The exit status is not touched, as it never was.
+static void display_output_word(struct console *c, int argc, char **argv)
+{
+	struct cons_hdmi h;
+	if (argc > 1) {
+		int first = 0, color = 0;
+		if (!strcmp(argv[1], "tv")) first = 1;
+		else if (!strcmp(argv[1], "color-tv")) color = 1;
+		else if (!strcmp(argv[1], "both")) { first = 1; color = 1; }
+		else {
+			say("display-output tv|color-tv|both");
+			return;
+		}
+		cons_set_hdmi_output(c, first, color);
+	}
+	cons_read_hdmi(c, &h);
+	cons_say_hdmi(&h);
+}
+
+// `display-rotate [0|90|-90]`, word 34's rotation, the same way.
+static void display_rotate_word(struct console *c, int argc, char **argv)
+{
+	struct cons_hdmi h;
+	if (argc > 1) {
+		int rot;
+		if (!strcmp(argv[1], "0")) rot = CONS_HDMI_UPRIGHT;
+		else if (!strcmp(argv[1], "90")) rot = CONS_HDMI_CW;
+		else if (!strcmp(argv[1], "-90")) rot = CONS_HDMI_CCW;
+		else {
+			say("display-rotate 0|90|-90");
+			return;
+		}
+		cons_set_hdmi_rotate(c, rot);
+	}
+	cons_read_hdmi(c, &h);
+	cons_say_hdmi(&h);
+}
+
+// **THE WORDS THE THREE USED TO HAVE**, each refused with the word that
+// replaced it: no alias.  The card's flags were renamed with them.
+static const struct { const char *old, *new_word; } display_renamed[] = {
+	{"hdmi-output", "display-output"},
+	{"hdmi-rotate", "display-rotate"},
+	{"hdmi-sleep", "display-sleep"},
+};
+
+int cons_display_word(struct console *c, int argc, char **argv, int *status)
+{
+	if (argc < 1)
+		return 0;
+	for (unsigned i = 0; i < sizeof display_renamed / sizeof display_renamed[0]; ++i) {
+		if (strcmp(argv[0], display_renamed[i].old))
+			continue;
+		say("%s: no such command; it is %s now, as the card's --%s is --%s",
+		    display_renamed[i].old, display_renamed[i].new_word,
+		    display_renamed[i].old, display_renamed[i].new_word);
+		*status = 2;
+		return 1;
+	}
+	if (!strcmp(argv[0], "display-output")) {
+		display_output_word(c, argc, argv);
+		return 1;
+	}
+	if (!strcmp(argv[0], "display-rotate")) {
+		display_rotate_word(c, argc, argv);
+		return 1;
+	}
+	if (strcmp(argv[0], "display-sleep"))
+		return 0;
+	// **A SETTING, OR A REPORT, AND NEVER A WAKE.**  Only a person at the
+	// board wakes the monitor --- `cadr-terminal` writes that for a key or
+	// the mouse on its input link --- so there is no word here that does.  A
+	// setting does start the wait over, because the one the monitor was
+	// sleeping under is gone.
+	struct cons_hdmi_sleep s;
+	unsigned want = 0;
+	const int asked = argc > 1;
+	if (asked) {
+		if (cons_parse_hdmi_sleep(argv[1], &want) != 0) {
+			say("display-sleep SECONDS: decimal, 0 to %u; 0 never sleeps",
+			    CONS_HDMI_SLEEP_MAX);
+			*status = 2;
+			return 1;
+		}
+		cons_set_hdmi_sleep(c, want);
+	}
+	cons_read_hdmi_sleep(c, &s);
+	cons_say_hdmi_sleep(&s);
+	// The answer, for a script: 0 when a display output is there and, if a
+	// setting was asked for, holds it.  A board with none, or a fabric older
+	// than the word, says so and answers 1.
+	*status = (s.mark_ok && (!asked || s.seconds == want)) ? 0 : 1;
+	return 1;
 }
 
 void cons_read_color_map(struct console *c, int board,

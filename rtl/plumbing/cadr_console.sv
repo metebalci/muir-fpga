@@ -229,7 +229,7 @@
 //                 and after how long.**  A write whose top half is
 //                 `HDMI_SLEEP_KEY` and whose bottom half is a setting in
 //                 seconds, fifteen bits with bit 15 clear, is a new setting,
-//                 `--hdmi-sleep`; a write of `HDMI_WAKE_KEY` is a wake, which
+//                 `--display-sleep`; a write of `HDMI_WAKE_KEY` is a wake, which
 //                 `cadr-terminal` sends for a key or the mouse at the board
 //                 and for nothing else.  **NEITHER IS KEPT HERE**: each is a
 //                 pulse to `rtl/plumbing/cadr_display_out.sv`, which holds the

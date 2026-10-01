@@ -281,7 +281,7 @@
 // why each is the least surprising:
 //
 //   `sleep_set`     a new setting, from the card's `fpgarc` at boot or
-//                   `cadr-console hdmi-sleep` at any time.  THE TIMER STARTS
+//                   `cadr-console display-sleep` at any time.  THE TIMER STARTS
 //                   OVER FROM THE WRITE and a monitor asleep wakes, because the
 //                   setting it went to sleep under is gone: a person who asks
 //                   for ten minutes expects ten minutes from now.  Zero wakes it
@@ -396,7 +396,7 @@ module cadr_display_out #(
     // eighty frames rather than a real five minutes.
     parameter int unsigned SECOND_T = 100_000_000,
     // The setting the fabric comes up with and a fabric reset puts back:
-    // `--hdmi-sleep`'s own default.  At most 32,767, the setting being fifteen
+    // `--display-sleep`'s own default.  At most 32,767, the setting being fifteen
     // bits.
     parameter int unsigned SLEEP_S  = 300
 ) (

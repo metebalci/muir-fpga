@@ -51,7 +51,7 @@ than sixteen lines old, and it is refreshed rather than loaded once because
 Two settings, written at boot by the disk pack program's init step exactly as
 `--tv-board` and `--color-tv` are, and changeable at run time from the console.
 
-`--hdmi-output tv|color-tv|both` names the screens. **The first display is
+`--display-output tv|color-tv|both` names the screens. **The first display is
 drawn at the left of the active area and the color screen at the right**, both
 at 1:1 with the rest black, and where they share a column the color screen is
 drawn over the first.
@@ -74,7 +74,7 @@ Neither is scaled. A one-bit picture scaled by anything other than a whole
 number turns single-pixel strokes into gray, and the CADR's screen is
 single-pixel strokes almost everywhere.
 
-`--hdmi-rotate 0|90|-90` turns the picture a quarter turn, for a monitor stood
+`--display-rotate 0|90|-90` turns the picture a quarter turn, for a monitor stood
 on its side. The CADR's screen is 768 by 963 --- taller than it is wide --- and
 every monitor made since is wider than it is tall, so upright it wastes the
 sides and a turned one holds it with room. Section 2a has how that is done.
@@ -218,7 +218,7 @@ are shown.
 
 ## 2a. Rotation
 
-`--hdmi-rotate 90` turns the picture a quarter turn clockwise and `-90` the
+`--display-rotate 90` turns the picture a quarter turn clockwise and `-90` the
 other way. A quarter turn clockwise puts the source's top-left corner at the
 picture's top-right: source (column, row) is drawn at raster (H-1-row, column).
 
@@ -767,17 +767,23 @@ Three settings, all of them written at boot and changeable at run time.
 
 | | where | what |
 |---|---|---|
-| `--hdmi-output tv\|color-tv\|both` | `fpgarc`, console word 34 | which screens |
-| `--hdmi-rotate 0\|90\|-90` | `fpgarc`, console word 34 | which way up |
-| `--hdmi-sleep SECONDS` | `fpgarc`, console word 36 | how long before the monitor sleeps |
+| `--display-output tv\|color-tv\|both` | `fpgarc`, console word 34 | which screens |
+| `--display-rotate 0\|90\|-90` | `fpgarc`, console word 34 | which way up |
+| `--display-sleep SECONDS` | `fpgarc`, console word 36 | how long before the monitor sleeps |
 
 The sleep setting is described in the next section.
 
 The two settings are written into the console's page 2 word 34 by
 `S80cadr-disk-packs` before the drive is presented, exactly as `--tv-board` and
-`--color-tv` are written into word 33, and `cadr-console hdmi-output` and
-`hdmi-rotate` reach them at run time. `docs/console.md` has the word and
+`--color-tv` are written into word 33, and `cadr-console display-output` and
+`display-rotate` reach them at run time. `docs/console.md` has the word and
 `docs/fpgarc.md` the flags.
+
+The three settings and the console's three commands were called
+`--hdmi-output`, `--hdmi-rotate` and `--hdmi-sleep`, and `hdmi-output`,
+`hdmi-rotate` and `hdmi-sleep`. The old names are not aliases. The console
+refuses an old command and names the new one, and a card's old flag is named at
+boot with its new name.
 
 ## Sleep
 
@@ -802,8 +808,8 @@ timer always runs.** It does not matter whether a keyboard is plugged in or
 whether anybody is watching over the network, which is how a computer's own
 display sleeps. A setting of 0 never sleeps.
 
-The setting is `--hdmi-sleep SECONDS` on the card, 300 by default, and
-`cadr-console hdmi-sleep [SECONDS]` at any time. With no number the console
+The setting is `--display-sleep SECONDS` on the card, 300 by default, and
+`cadr-console display-sleep [SECONDS]` at any time. With no number the console
 reports the setting and whether the monitor is asleep. The setting is fifteen
 bits, so the longest is 32,767 seconds, about nine hours.
 

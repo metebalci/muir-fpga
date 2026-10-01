@@ -297,11 +297,12 @@ served with `--color-terminal` above.
 pack program, and written into the console face. `docs/display-output.md` is the
 design.
 
-    --hdmi-output tv|color-tv|both
+    --display-output tv|color-tv|both
                           which screens go to the monitor
-    --hdmi-rotate 0|90|-90
+    --display-rotate 0|90|-90
                           which way up, for a monitor on its side
-    --hdmi-sleep SECONDS  how long before the monitor sleeps; 0 never
+    --display-sleep SECONDS
+                          how long before the monitor sleeps; 0 never
 
 The first display is drawn at the left of the monitor and the color board at
 the right, at 1:1, with the rest black. The two are wider together than the
@@ -310,11 +311,16 @@ is drawn over the first. Neither is scaled: a one-bit picture scaled by
 anything but a whole number turns single-pixel strokes into gray, and the
 CADR's screen is single-pixel strokes almost everywhere.
 
-**`--hdmi-sleep` is how long the display output waits with nobody at the board's
+**`--display-sleep` is how long the display output waits with nobody at the board's
 own keyboard or mouse.** Then it stops the link, which is how a monitor is put to
 sleep. A key or the mouse at the board wakes it, and that key or movement does
 not reach the machine; a viewer's keys do not wake it. The default is 300 seconds and 0 never sleeps. A board with no display output says so
 when the line is there, and the boot goes on.
+
+The three were called `--hdmi-output`, `--hdmi-rotate` and `--hdmi-sleep`. The
+old names are not taken: a card that still says one gets it named at boot with
+its new name, and the line does nothing (see "A line no program takes is named
+at boot").
 
 **The clock**, read by `S80cadr-disk-packs` before anything else it does. No
 board here has a real-time clock in it, so these two lines are what tell one
@@ -426,6 +432,14 @@ on the console. Every script records the flags it claimed as it reads the file,
 and the last one compares the file against all of them. A flag for a program
 that is not installed on this board is reported too, which is true and worth
 knowing.
+
+**A flag that was renamed is named with its new name.** `--hdmi-output`,
+`--hdmi-rotate` and `--hdmi-sleep` are now `--display-output`,
+`--display-rotate` and `--display-sleep`, and the old names are not aliases.
+A card that still says an old name gets a line of its own for it, such as
+`fpgarc: --hdmi-sleep is now --display-sleep, so that line did nothing; write
+--display-sleep instead`, and the old line reaches no program. The table of
+renamed flags is in `cadr-common`'s `fpgarc.sh`, beside the reader.
 
 The lists are not gathered anywhere to do this. A union written in one place
 would be a second copy of five lists and a second place to be wrong. What the

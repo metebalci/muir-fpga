@@ -4,7 +4,7 @@
 // Waking the board's own display output, through the console face.
 //
 // **THE DISPLAY OUTPUT SLEEPS A MONITOR BY STOPPING THE LINK**, which is the
-// only way a digital link puts one to sleep, after `--hdmi-sleep` seconds with
+// only way a digital link puts one to sleep, after `--display-sleep` seconds with
 // nobody at the board.  `rtl/plumbing/cadr_display_out.sv` holds the setting and
 // runs the timer, and the console's page 2 word 36 carries two things to it: a
 // setting, and a wake.  This file is the wake.

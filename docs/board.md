@@ -1984,7 +1984,7 @@ read the monitor's EDID.
 The machine's own screen, 768 by 963, at the LEFT of a 1280 by 1024 raster:
 columns 0 to 767, rows 30 to 992, with 512 columns of black to the right of it
 and about 30 rows above and below. White on black. With a color board fitted
-and `--hdmi-output both` on the card, the color screen's 576 by 454 sits at the
+and `--display-output both` on the card, the color screen's 576 by 454 sits at the
 right of the same raster, columns 704 to 1279, over the first display in the 64
 columns they share.
 

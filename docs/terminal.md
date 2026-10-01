@@ -718,7 +718,7 @@ letting go.
 
 ### What comes over the link also wakes the display output
 
-The board's own display output sleeps a monitor after `--hdmi-sleep` seconds
+The board's own display output sleeps a monitor after `--display-sleep` seconds
 with nobody at the board, and a key or the mouse at the board wakes it and starts
 the wait over. The fabric cannot tell a key at the board from a viewer's key,
 because this program writes the keyboard's register for both. So this program
@@ -1203,7 +1203,7 @@ fits one, and then binds and serves a black screen anyway.
   rule for its own color terminal.
 - **The color screen on HDMI** is built and is not this program's:
   `cadr_display_out.sv` shows either screen or both by `out_sel`
-  (`--hdmi-output tv|color-tv|both`), and `docs/display-output.md` has it.
+  (`--display-output tv|color-tv|both`), and `docs/display-output.md` has it.
 
 ## The Makefile does not name the packages any more, it derives them
 

@@ -193,7 +193,7 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  stops the link and the monitor sleeps.**  A write whose top
                  half is `HDMI_SLEEP_KEY`, "HS", with a setting in seconds in
                  bits 14 to 0 and bit 15 clear, is a new setting,
-                 `--hdmi-sleep`; it must strobe all four lanes.  A write of
+                 `--display-sleep`; it must strobe all four lanes.  A write of
                  `HDMI_WAKE_KEY`, "WAKE", is a wake, which `cadr-terminal`
                  sends for a key or the mouse at the board and nothing else
                  does.  Neither is kept here: each is a one-tick pulse to the
@@ -204,7 +204,7 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  `cadr-terminal` reads bit 15 before it writes a wake, and
                  a key or movement that finds it set wakes the monitor and
                  does not reach the machine.
-                 `cadr-console hdmi-sleep [SECONDS]` reads and sets it, and has
+                 `cadr-console display-sleep [SECONDS]` reads and sets it, and has
                  no way to wake the monitor.  `docs/display-output.md` has the
                  timer
     37-47        read UNMAPPED; writes dropped
@@ -1377,9 +1377,11 @@ machine's own reset arms read, at the same edges, so the two cannot disagree.
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
 `start`, `boot`, `step N`, `regs`, `status`, `ident`, `switch`, `debug-cable`,
 `debug-cable-connect`, `debug-cable-disconnect`, `debug-cable-wiring`,
-`tv-board`, `color-tv`, `hdmi-output`, `hdmi-rotate`,
-`hdmi-sleep`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
-`read`, `write`, `examine` and `deposit`. Its `help` says what each does.  It
+`tv-board`, `color-tv`, `display-output`, `display-rotate`,
+`display-sleep`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
+`read`, `write`, `examine` and `deposit`. Its `help` says what each does. The
+display output's three were `hdmi-output`, `hdmi-rotate` and `hdmi-sleep`; those
+words are refused with the new name and exit 2.  It
 also takes `--version`, which names which build the PROGRAM is and touches no
 register at all. `status` is the question of the day and answers it the way
 `main.rs`'s `machrun_low` does, plus a positive measurement: CYCLES sampled

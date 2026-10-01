@@ -531,6 +531,138 @@
 		// **NOT A SETTING OF ZERO**, which reads zero in the bottom half
 @end
 
+# **THE DISPLAY OUTPUT'S COMMANDS BY THEIR NAMES.**  `display-output`,
+# `display-rotate` and `display-sleep` are the words, and `hdmi-output`,
+# `hdmi-rotate` and `hdmi-sleep`, their old names, are refused with the new one
+# named and nothing written: no alias.
+
+@mutation an-old-name-is-an-alias
+@file console_face.c
+@why the rename has no alias; a console that still took `hdmi-output` would let a script
+@why written for the old name go on working and never be corrected
+@old
+	for (unsigned i = 0; i < sizeof display_renamed / sizeof display_renamed[0]; ++i) {
+		if (strcmp(argv[0], display_renamed[i].old))
+			continue;
+		say("%s: no such command; it is %s now, as the card's --%s is --%s",
+		    display_renamed[i].old, display_renamed[i].new_word,
+		    display_renamed[i].old, display_renamed[i].new_word);
+		*status = 2;
+		return 1;
+	}
+	if (!strcmp(argv[0], "display-output")) {
+@new
+	if (!strcmp(argv[0], "display-output") || !strcmp(argv[0], "hdmi-output")) {
+@end
+
+@mutation the-old-names-are-not-refused
+@file console_face.c
+@why without the refusal an old word falls through to "no such command" with nothing
+@why naming the word that replaced it
+@old
+		if (strcmp(argv[0], display_renamed[i].old))
+			continue;
+@new
+		continue;
+@end
+
+@mutation an-old-name-answers-success
+@file console_face.c
+@why a script that still says an old word must see it fail, or it reads a refusal as a
+@why setting that took
+@old
+		*status = 2;
+		return 1;
+	}
+	if (!strcmp(argv[0], "display-output")) {
+@new
+		*status = 0;
+		return 1;
+	}
+	if (!strcmp(argv[0], "display-output")) {
+@end
+
+@mutation the-refusal-names-the-wrong-word
+@file console_face.c
+@why the refusal is only worth its line if the word it names is the one to type
+@old
+	{"hdmi-output", "display-output"},
+@new
+	{"hdmi-output", "display-rotate"},
+@end
+
+@mutation hdmi-rotate-is-not-refused
+@file console_face.c
+@why each old word is refused, not only the first; one left out is "no such command"
+@why with no replacement named
+@old
+	{"hdmi-rotate", "display-rotate"},
+@new
+@end
+
+@mutation hdmi-sleep-is-not-refused
+@file console_face.c
+@why the same for the sleep word, which the card's flag was most likely to be written
+@why with
+@old
+	{"hdmi-sleep", "display-sleep"},
+@new
+@end
+
+@mutation display-output-keeps-another-name
+@file console_face.c
+@why the word is `display-output`; a console that answered only to another name has no
+@why such command for the one the documents and S80 use
+@old
+	if (!strcmp(argv[0], "display-output")) {
+		display_output_word(c, argc, argv);
+@new
+	if (!strcmp(argv[0], "display-output-")) {
+		display_output_word(c, argc, argv);
+@end
+
+@mutation display-rotate-keeps-another-name
+@file console_face.c
+@why the same for `display-rotate`
+@old
+	if (!strcmp(argv[0], "display-rotate")) {
+@new
+	if (!strcmp(argv[0], "display-rotate-")) {
+@end
+
+@mutation display-sleep-keeps-another-name
+@file console_face.c
+@why the same for `display-sleep`
+@old
+	if (strcmp(argv[0], "display-sleep"))
+		return 0;
+@new
+	if (strcmp(argv[0], "display-sleep-"))
+		return 0;
+@end
+
+@mutation a-setting-that-is-not-one-answers-success
+@file console_face.c
+@why a setting the word cannot carry writes nothing, and the caller must learn that from
+@why the status as well as from the line
+@old
+			    CONS_HDMI_SLEEP_MAX);
+			*status = 2;
+@new
+			    CONS_HDMI_SLEEP_MAX);
+			*status = 0;
+@end
+
+@mutation the-display-reply-keeps-the-old-prefix
+@file console_face.c
+@why the replies follow the commands' new name; a report under `hdmi:` names a word that
+@why is no longer a command
+@old
+		say("display: both screens, the color board drawn over the first");
+@new
+		say("hdmi: both screens, the color board drawn over the first");
+@end
+
 @mutation a-number-past-32-bits-is-taken
 @file cadr-common/src/cadr_mem.c
 @why 0x100000000 must be refused: on an arm64 board an unsigned long holds it, and the

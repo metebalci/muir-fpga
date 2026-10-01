@@ -238,7 +238,7 @@ switch) [ "\${CONSOLE_SWITCH:-no}" = yes ] ;;
 *)
 	case "\$*" in
 	*"blinking-leds off"*) [ "\${CONSOLE_LAMPS:-yes}" = yes ] ;;
-	*"hdmi-sleep"*) [ "\${CONSOLE_SLEEP:-yes}" = yes ] ;;
+	*"display-sleep"*) [ "\${CONSOLE_SLEEP:-yes}" = yes ] ;;
 	*) : ;;
 	esac
 	;;
@@ -1970,19 +1970,19 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	fi
 fi
 
-# **THE DISPLAY OUTPUT'S SLEEP: --hdmi-sleep HANDS THE CONSOLE ITS SECONDS.**
+# **THE DISPLAY OUTPUT'S SLEEP: --display-sleep HANDS THE CONSOLE ITS SECONDS.**
 # The fabric comes up with three hundred, so a card that says nothing leaves the
 # console alone, and a card with the line has its number carried through the
 # console's own word, with `--log /dev/console` for the boot log's reason.  A
 # console that did not take it --- a board with no display output, or a number
 # the console refuses --- is called out, and the boot goes on either way.
-case_head "--hdmi-sleep hands the console the card's seconds, and nothing else"
+case_head "--display-sleep hands the console the card's seconds, and nothing else"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' '--hdmi-sleep 120' > "$WORK/card/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' '--display-sleep 120' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
-	if grep -qx -- "--log /dev/console hdmi-sleep 120" "$WORK/console.calls"; then
-		ok "the console was told hdmi-sleep 120, with the boot log named"
+	if grep -qx -- "--log /dev/console display-sleep 120" "$WORK/console.calls"; then
+		ok "the console was told display-sleep 120, with the boot log named"
 	else
 		fail "the console was not given the card's seconds; it was told: $(cat "$WORK/console.calls")"
 	fi
@@ -2007,24 +2007,24 @@ fi
 case_head "without the line the fabric's own sleep stands, and a console that refuses says so"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
-	printf '%s\r\n' '--chaos-address 3050' '--hdmi-output tv' > "$WORK/card/fpgarc"
+	printf '%s\r\n' '--chaos-address 3050' '--display-output tv' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
-	if grep -q "hdmi-sleep" "$WORK/console.calls"; then
+	if grep -q "display-sleep" "$WORK/console.calls"; then
 		fail "the console was asked about sleep by a card that says nothing: $(cat "$WORK/console.calls")"
 	else
 		ok "the console was not asked about sleep"
 	fi
-	printf '%s\r\n' '--hdmi-sleep 0' > "$WORK/card/fpgarc"
+	printf '%s\r\n' '--display-sleep 0' > "$WORK/card/fpgarc"
 	: > "$WORK/daemon.calls"
 	: > "$WORK/console.calls"
 	CONSOLE_SLEEP=no FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
 		"$WORK/S80cadr-disk-packs" start > "$WORK/out.sleep" 2>&1
-	if grep -qx -- "--log /dev/console hdmi-sleep 0" "$WORK/console.calls"; then
+	if grep -qx -- "--log /dev/console display-sleep 0" "$WORK/console.calls"; then
 		ok "zero is handed over as zero, which is never"
 	else
 		fail "zero was not handed over; the console was told: $(cat "$WORK/console.calls")"
 	fi
-	if grep -q "cadr-display: --hdmi-sleep 0: not set" "$WORK/out.sleep"; then
+	if grep -q "cadr-display: --display-sleep 0: not set" "$WORK/out.sleep"; then
 		ok "a console that did not take it is said not to have"
 	else
 		fail "a console that did not take the setting is not called out; the script says:"
@@ -2035,6 +2035,82 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	else
 		fail "the boot stopped: the pack program was never started"
 	fi
+fi
+
+# **THE DISPLAY OUTPUT'S THREE FLAGS BY THEIR NAMES, AND THE OLD NAMES
+# REFUSED.**  `--display-output`, `--display-rotate` and `--display-sleep` were
+# `--hdmi-output`, `--hdmi-rotate` and `--hdmi-sleep`, renamed with no alias.
+# Each new name reaches the console's word of the same name, renamed with it;
+# each old name reaches nothing, and the last script names it at boot with the
+# name that replaced it, on the one line that names lines no program took.
+case_head "--display-output, --display-rotate and --display-sleep reach the console"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' '--display-output both' \
+		'--display-rotate 90' '--display-sleep 120' > "$WORK/card/fpgarc"
+	run_script S80cadr-disk-packs
+	for want in "display-output both" "display-rotate 90" "display-sleep 120"; do
+		if grep -qx -- "--log /dev/console $want" "$WORK/console.calls"; then
+			ok "the console was told $want, with the boot log named"
+		else
+			fail "the console was not told $want; it was told: $(cat "$WORK/console.calls")"
+		fi
+	done
+	if grep -q "cadr-display" "$WORK/out.S80cadr-disk-packs"; then
+		fail "a console that took the three was said not to have:"
+		sed 's/^/        /' "$WORK/out.S80cadr-disk-packs"
+	else
+		ok "and a console that took them is not said to have failed"
+	fi
+fi
+
+case_head "--hdmi-output, --hdmi-rotate and --hdmi-sleep are refused, each naming its new name"
+sandbox
+printf '%s\r\n' '--chaos-address 3050' '--hdmi-output both' '--hdmi-rotate 90' \
+	'--hdmi-sleep 120' '--bwo' > "$WORK/card/fpgarc"
+ran=yes
+for pair in "cadr-disk-packs S80cadr-disk-packs" "cadr-terminal S85cadr-terminal" \
+            "cadr-serial S86cadr-serial" "cadr-chaosnet S87cadr-chaosnet" \
+            "cadr-usb-input S88cadr-usb-input"; do
+	set -- $pair
+	prepare "$1" "$2" || ran=no
+done
+if [ "$ran" = yes ]; then
+	for sc in S80cadr-disk-packs S85cadr-terminal S86cadr-serial \
+	          S87cadr-chaosnet S88cadr-usb-input; do
+		run_script "$sc"
+	done
+	if grep -q "output\|rotate\|sleep" "$WORK/console.calls"; then
+		fail "an old name reached the console: $(cat "$WORK/console.calls")"
+	else
+		ok "no old name reached the console"
+	fi
+	last="$WORK/out.S88cadr-usb-input"
+	for pair in "--hdmi-output --display-output" "--hdmi-rotate --display-rotate" \
+	            "--hdmi-sleep --display-sleep"; do
+		set -- $pair
+		if grep -- "$1" "$last" | grep -q -- "$2"; then
+			ok "$1 is named at boot with $2 beside it"
+		else
+			fail "$1 is not named with $2; the last script says:"
+			sed 's/^/        /' "$last"
+		fi
+	done
+	# A misspelling that is not a renamed flag is still named as before, and
+	# without a replacement nobody chose for it.
+	if grep -q "no program on this board takes these lines.*--bwo" "$last" &&
+	   ! grep -- "--bwo" "$last" | grep -q -- "--display-"; then
+		ok "and a line that was never a flag is named as it always was"
+	else
+		fail "the misspelled line is not named as before; the last script says:"
+		sed 's/^/        /' "$last"
+	fi
+	for sc in S80cadr-disk-packs S85cadr-terminal S86cadr-serial S87cadr-chaosnet; do
+		if grep -q -- "--hdmi-" "$WORK/out.$sc"; then
+			fail "$sc was handed an old name:"
+			sed 's/^/        /' "$WORK/out.$sc"
+		fi
+	done
 fi
 
 # **THE SWITCH AND THE FLAG TOGETHER, AND THE FLAG CANNOT TURN THE SWITCH
@@ -5387,18 +5463,18 @@ fi
 case_head "cadr-disk-packs: the clock, the display and the boot button take the last line"
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	echo 19700101000005 > "$WORK/now"
-	printf '%s\r\n' '--date 20260101' '--hdmi-sleep 120' '--no-auto-boot' \
-		'--date 20270202' '--hdmi-sleep 240' '--no-auto-boot' > "$RC"
+	printf '%s\r\n' '--date 20260101' '--display-sleep 120' '--no-auto-boot' \
+		'--date 20270202' '--display-sleep 240' '--no-auto-boot' > "$RC"
 	run_script S80cadr-disk-packs
 	clock_set_once "2027-02-02 00:00:05"
-	if grep -qx -- "--log /dev/console hdmi-sleep 240" "$WORK/console.calls" &&
-	   ! grep -q -- "hdmi-sleep 120" "$WORK/console.calls"; then
-		ok "the console was told hdmi-sleep 240 and not 120"
+	if grep -qx -- "--log /dev/console display-sleep 240" "$WORK/console.calls" &&
+	   ! grep -q -- "display-sleep 120" "$WORK/console.calls"; then
+		ok "the console was told display-sleep 240 and not 120"
 	else
-		fail "the console was not told the last --hdmi-sleep alone: $(cat "$WORK/console.calls")"
+		fail "the console was not told the last --display-sleep alone: $(cat "$WORK/console.calls")"
 	fi
 	warns_once S80cadr-disk-packs --date "1 and 4" 4
-	warns_once S80cadr-disk-packs --hdmi-sleep "2 and 5" 5
+	warns_once S80cadr-disk-packs --display-sleep "2 and 5" 5
 	warns_once S80cadr-disk-packs --no-auto-boot "3 and 6" 6
 fi
 
