@@ -281,6 +281,28 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The Kria KR260's three, at its processing system's 128-bit ports.
+    "axi_widen128": {
+        "sources": ["rtl/plumbing/cadr_axi_widen128.sv"],
+        "top": "cadr_axi_widen128",
+        "tb": "tb/cadr_axi_widen128_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
+    "axi_lanes128": {
+        "sources": ["rtl/plumbing/cadr_axi_lanes128.sv"],
+        "top": "cadr_axi_lanes128",
+        "tb": "tb/cadr_axi_lanes128_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
+    "axi_burst128": {
+        "sources": ["rtl/plumbing/cadr_axi_burst128.sv"],
+        "top": "cadr_axi_burst128",
+        "tb": "tb/cadr_axi_burst128_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
     # The witness that goes on the board ahead of the machine, and the path
     # it drives.  `sources` is the state machine alone, because that is what
     # these mutations are aimed at; the adapter and the widening are in
@@ -1901,6 +1923,8 @@ CHECKS = {
         "kind": "script",
         "sources": ["rtl/plumbing/cadr_ddr_map.sv",
                     "boards/de25-nano/cadr_de25.sv",
+                    "boards/kria-kr260/cadr_kr260.sv",
+                    "boards/kria-kr260/linux/cadr-reserved.dtsi",
                     "boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h",
                     "boards/arty-z7-20/linux/cadr-reserved.dtsi",
                     "boards/de25-nano/linux/cadr-reserved.dtsi",

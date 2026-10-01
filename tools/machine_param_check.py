@@ -120,6 +120,22 @@ BOARDS = {
         },
         "machines": ["cadr"],
     },
+    # The Kria KR260: the CADR alone for now, as the Cora, on its own memory
+    # map, with the `PS8`'s stub for the board with the processing system.
+    "kr260": {
+        "top": "cadr_kr260",
+        "file": "boards/kria-kr260/cadr_kr260.sv",
+        "dirs": ["rtl/machine", "rtl/plumbing", "rtl/plumbing/xilinx7",
+                 "boards/kria-kr260"],
+        "defines": ["-DCADR_DDR_MAP_KR260"],
+        "stubs": ["tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv",
+                  "tb/cadr_kr260_stubs.sv"],
+        "configs": {
+            "plain": ([], []),
+            "DDR=1": (["-GDDR=1"], ["tb/cadr_ps8_stub.sv"]),
+        },
+        "machines": ["cadr"],
+    },
 }
 
 # A name that is not a machine, and close enough to one to be a typing slip.
@@ -425,6 +441,9 @@ def main():
         for config in BOARDS["cora"]["configs"]:
             refused_at("cora", config, "quux",
                        "the Cora Z7-07S builds the CADR only", "cadr_cora")
+        for config in BOARDS["kr260"]["configs"]:
+            refused_at("kr260", config, "quux",
+                       "the Kria KR260 builds the CADR only", "cadr_kr260")
         # The word, on the two boards that build QUUX.
         for board in ("arty", "de25"):
             for bits in (None, 40):
@@ -461,6 +480,7 @@ def main():
         # that failed to refuse writes nothing anywhere else.
         arty = [TCLSH, "boards/arty-z7-20/vivado/bitstream.tcl"]
         cora = [TCLSH, "boards/cora-z7-07s/vivado/bitstream.tcl"]
+        kr260 = [TCLSH, "boards/kria-kr260/vivado/bitstream.tcl"]
         out = lambda name: os.path.join(scratch, name)
         flow("the Arty's Vivado flow refuses MACHINE=%s" % NOT_A_MACHINE, arty,
              {"MACHINE": NOT_A_MACHINE, "OUTDIR": out("a")}, 1,
@@ -498,6 +518,12 @@ def main():
              ["BIT: FAILED --- MACHINE=quux, and the Cora Z7-07S builds the"], [])
         flow("the Cora's Vivado flow takes MACHINE=cadr", cora,
              {"MACHINE": "cadr", "OUTDIR": out("d")}, None,
+             [], ["FAILED --- MACHINE"])
+        flow("the Kria KR260's Vivado flow refuses MACHINE=quux", kr260,
+             {"MACHINE": "quux", "OUTDIR": out("k")}, 1,
+             ["BIT: FAILED --- MACHINE=quux, and the Kria KR260 builds the"], [])
+        flow("the Kria KR260's Vivado flow takes MACHINE=cadr", kr260,
+             {"MACHINE": "cadr", "OUTDIR": out("l")}, None,
              [], ["FAILED --- MACHINE"])
 
         nowhere = {"QUARTUS_ROOTDIR": out("no-quartus")}

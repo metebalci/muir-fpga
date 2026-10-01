@@ -54,17 +54,24 @@
 // without looking at a reserved-memory node, so the top 128 MB is U-Boot's
 // until Linux runs, and the fabric's gate is opened by U-Boot.
 //
+// The Kria KR260's 4 GB start at zero, and its 128 MB are at `0x6000_0000`
+// in the low 2 GB: its factory U-Boot loads below that and relocates itself
+// above `0x7B80_0000` (`bdinfo` on the board), and `boot.scr` loads the
+// bitstream last, so nothing of the loader's is in the region when the
+// machine starts writing it.
+//
 //   board          RESERVED_BASE   main memory    display
 //   Arty, Cora     0x1800_0000     0x1800_0000    0x1C00_0000
 //   DE25-Nano      0xB000_0000     0xB000_0000    0xB400_0000
+//   Kria KR260     0x6000_0000     0x6000_0000    0x6400_0000
 //
-// **ONE DEFINE CHOOSES**, `CADR_DDR_MAP_DE25_NANO`, which the DE25-Nano's
-// flows set and no other flow does.  A package cannot take a parameter, and
+// **ONE DEFINE CHOOSES**, `CADR_DDR_MAP_DE25_NANO` or `CADR_DDR_MAP_KR260`,
+// which that board's flows set and no other flow does.  A package cannot take a parameter, and
 // the base is read deep inside `cadr_machine`, where a parameter would have to
 // be carried through two modules of the machine that are MIT's and not the
 // board's.  The define is not trusted on its own:
-// `boards/de25-nano/cadr_de25.sv` states its own base and stops elaboration
-// when this package disagrees, so a flow that forgot the define builds nothing
+// `boards/de25-nano/cadr_de25.sv` and `boards/kria-kr260/cadr_kr260.sv`
+// each state their own base and stop elaboration when this package disagrees, so a flow that forgot the define builds nothing
 // rather than a board that writes the Zynq's addresses into the processor's
 // address map.
 
@@ -80,8 +87,14 @@ package cadr_ddr_map;
   // The second 128 MB from the top of the DE25-Nano's 1 GB: see the header.
   localparam logic [31:0] RESERVED_BASE = 32'hB000_0000;
 `else
+`ifdef CADR_DDR_MAP_KR260
+  // The Kria KR260's low 2 GB, at 0x6000_0000: clear of every address its
+  // factory U-Boot loads to and below its relocation (see the header).
+  localparam logic [31:0] RESERVED_BASE = 32'h6000_0000;
+`else
   // The top 128 MB of the Arty Z7-20's 512 MB.
   localparam logic [31:0] RESERVED_BASE = 32'h1800_0000;
+`endif
 `endif
   localparam int unsigned RESERVED_MB   = 128;
 
@@ -90,7 +103,11 @@ package cadr_ddr_map;
 `ifdef CADR_DDR_MAP_DE25_NANO
   localparam logic [31:0] MAIN_BASE  = 32'hB000_0000;
 `else
+`ifdef CADR_DDR_MAP_KR260
+  localparam logic [31:0] MAIN_BASE  = 32'h6000_0000;
+`else
   localparam logic [31:0] MAIN_BASE  = 32'h1800_0000;
+`endif
 `endif
   localparam int unsigned MAIN_WORDS = 16 * 1024 * 1024;  // 64 MB reserved
 
@@ -103,7 +120,11 @@ package cadr_ddr_map;
 `ifdef CADR_DDR_MAP_DE25_NANO
   localparam logic [31:0] DISPLAY_BASE  = 32'hB400_0000;
 `else
+`ifdef CADR_DDR_MAP_KR260
+  localparam logic [31:0] DISPLAY_BASE  = 32'h6400_0000;
+`else
   localparam logic [31:0] DISPLAY_BASE  = 32'h1C00_0000;
+`endif
 `endif
   localparam int unsigned DISPLAY_WORDS = 2 * 1024 * 1024;  // 8 MB reserved
 
@@ -132,6 +153,7 @@ package cadr_ddr_map;
   //   board        main memory                 room               display
   //   Arty, Cora   0x1200_0000-0x1BFF_FFFF     160 MB, 32M words  0x1C00_0000
   //   DE25-Nano    0xA000_0000-0xB3FF_FFFF     320 MB, 64M words  0xB400_0000
+  //   Kria KR260   0x5A00_0000-0x63FF_FFFF     160 MB, 32M words  0x6400_0000
   //
   // **EACH MACHINE HAS ITS OWN DEVICE TREE**, beside its bitstream: the
   // CADR's and revision 12's reserve `RESERVED_BASE` for `RESERVED_MB`, as
@@ -143,8 +165,13 @@ package cadr_ddr_map;
   localparam logic [31:0] QUUX13_MAIN_BASE      = 32'hA000_0000;
   localparam int unsigned QUUX13_MAIN_WORDS_MAX = 64 * 1024 * 1024;
 `else
+`ifdef CADR_DDR_MAP_KR260
+  localparam logic [31:0] QUUX13_MAIN_BASE      = 32'h5A00_0000;
+  localparam int unsigned QUUX13_MAIN_WORDS_MAX = 32 * 1024 * 1024;
+`else
   localparam logic [31:0] QUUX13_MAIN_BASE      = 32'h1200_0000;
   localparam int unsigned QUUX13_MAIN_WORDS_MAX = 32 * 1024 * 1024;
+`endif
 `endif
   // The disk pack program's records at the spare's base: both areas for all
   // 24 slots (`pack_feeder.h`, `FEEDER_MAP_BYTES`).

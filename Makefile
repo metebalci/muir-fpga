@@ -115,7 +115,7 @@ QKL1S := $(foreach k,$(QUUX_KS),$(call qtag,$(k),1))
 # directory is not exempted: an exemption is a thing to keep in step.
 .DELETE_ON_ERROR:
 
-.PHONY: check cables ps7 ps7-cora ps7-init ps7-init-cora current mutants \
+.PHONY: check cables ps7 ps7-cora ps8 ps7-init ps7-init-cora current mutants \
         mutants-selftest probe-selftest de25 de25-fault de25-program de25-probe \
         disk-golden disk-boot-golden iob-golden busint-regs-golden muir-pin clean
 
@@ -123,6 +123,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass $(BUILD)/xbus_axi.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
+       $(BUILD)/axi_widen128.pass $(BUILD)/axi_lanes128.pass $(BUILD)/axi_burst128.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/rdw_poison.pass $(BUILD)/rdw_poison_sys.pass \
        $(BUILD)/rdw_poison_map.pass \
@@ -139,7 +140,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass $(BUILD)/rdw_poison_disk.pass \
-       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/machine_param.pass \
+       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/kr260.pass $(BUILD)/machine_param.pass \
        $(BUILD)/word_width.pass \
        $(BUILD)/work_dirs.pass \
        $(BUILD)/board_reset.pass $(BUILD)/fault.pass \
@@ -365,6 +366,8 @@ $(BUILD)/de25_faces.pass: tools/de25_faces_check.py tools/de25_pins_check.py \
 $(BUILD)/mem_map.pass: tools/mem_map_check.py \
                        rtl/plumbing/cadr_ddr_map.sv \
                        boards/de25-nano/cadr_de25.sv \
+                       boards/kria-kr260/cadr_kr260.sv \
+                       boards/kria-kr260/linux/cadr-reserved.dtsi \
                        boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h \
                        boards/arty-z7-20/linux/cadr-reserved.dtsi \
                        boards/de25-nano/linux/cadr-reserved.dtsi \
@@ -470,6 +473,37 @@ $(BUILD)/obj_axi_widen/Vcadr_axi_widen: rtl/plumbing/cadr_axi_widen.sv tb/cadr_a
 
 $(BUILD)/axi_widen.pass: $(BUILD)/obj_axi_widen/Vcadr_axi_widen
 	$(BUILD)/obj_axi_widen/Vcadr_axi_widen
+	@touch $@
+
+# The Kria KR260's three: every port of its processing system is 128 bits
+# wide, as its boot firmware leaves them, and the fabric meets them at that
+# width.  `cadr_axi_widen128.sv` is the widening above at four lanes,
+# `cadr_axi_lanes128.sv` puts the 32-bit faces on a 128-bit master port, and
+# `cadr_axi_burst128.sv` puts the pack side's 64-bit bursts on a 128-bit
+# port as narrow bursts.  Each is held to its property by stimulus that
+# places the words itself; see each testbench's header.
+$(BUILD)/obj_axi_widen128/Vcadr_axi_widen128: rtl/plumbing/cadr_axi_widen128.sv tb/cadr_axi_widen128_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_axi_widen128 \
+	    --top-module cadr_axi_widen128 rtl/plumbing/cadr_axi_widen128.sv $(abspath tb/cadr_axi_widen128_tb.cpp)
+
+$(BUILD)/axi_widen128.pass: $(BUILD)/obj_axi_widen128/Vcadr_axi_widen128
+	$(BUILD)/obj_axi_widen128/Vcadr_axi_widen128
+	@touch $@
+
+$(BUILD)/obj_axi_lanes128/Vcadr_axi_lanes128: rtl/plumbing/cadr_axi_lanes128.sv tb/cadr_axi_lanes128_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_axi_lanes128 \
+	    --top-module cadr_axi_lanes128 rtl/plumbing/cadr_axi_lanes128.sv $(abspath tb/cadr_axi_lanes128_tb.cpp)
+
+$(BUILD)/axi_lanes128.pass: $(BUILD)/obj_axi_lanes128/Vcadr_axi_lanes128
+	$(BUILD)/obj_axi_lanes128/Vcadr_axi_lanes128
+	@touch $@
+
+$(BUILD)/obj_axi_burst128/Vcadr_axi_burst128: rtl/plumbing/cadr_axi_burst128.sv tb/cadr_axi_burst128_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_axi_burst128 \
+	    --top-module cadr_axi_burst128 rtl/plumbing/cadr_axi_burst128.sv $(abspath tb/cadr_axi_burst128_tb.cpp)
+
+$(BUILD)/axi_burst128.pass: $(BUILD)/obj_axi_burst128/Vcadr_axi_burst128
+	$(BUILD)/obj_axi_burst128/Vcadr_axi_burst128
 	@touch $@
 
 # ------------------------------------------------------------- the witness
@@ -2605,6 +2639,35 @@ $(BUILD)/cora.pass: $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/
 	    rtl/plumbing/cadr_lamp_microcycle.sv
 	@touch $@
 
+# ------------------------------------------------ the Kria KR260's top level
+#
+# `boards/kria-kr260/cadr_kr260.sv`, the Cora's top level on a Zynq
+# UltraScale+: lint is what holds its wiring, as for the other two, with
+# `tb/cadr_kr260_stubs.sv` for the `MMCME4_BASE` and `tb/cadr_ps8_stub.sv`,
+# generated with the wrapper, for the `PS8`.  Three configurations: the bare
+# machine, the board with the processing system (the one its flow builds),
+# and that board with the color TV's slot out.  Every one with
+# `CADR_DDR_MAP_KR260`, which the top level refuses to elaborate without.
+KR260_LINT := $(VERILATOR) --lint-only -Wall -DCADR_DDR_MAP_KR260 \
+    -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/kria-kr260 \
+    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+    --top-module cadr_kr260 $(BOARD_STUBS) tb/cadr_kr260_stubs.sv
+KR260_PORT_SRC := tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv \
+    rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen128.sv \
+    rtl/plumbing/cadr_axi_lanes128.sv rtl/plumbing/cadr_axi_burst128.sv \
+    rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
+    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
+    $(GP1) rtl/plumbing/cadr_debug_window.sv
+KR260_LAMP_SRC := rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
+
+$(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) \
+                     $(KR260_LAMP_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv | $(BUILD)
+	$(KR260_LINT) $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_LAMP_SRC)
+	$(KR260_LINT) -GDDR=1 $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) $(KR260_LAMP_SRC)
+	$(KR260_LINT) -GDDR=1 -GLMTV=0 $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) $(KR260_LAMP_SRC)
+	@touch $@
+
 # ------------------------------------------------- which machine is built
 #
 # **`MACHINE` REACHES `cadr_machine` ON EVERY BOARD, FOR BOTH VALUES**, and
@@ -2626,9 +2689,11 @@ $(BUILD)/cora.pass: $(MACHINE_SRC) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/
 MACHINE_PARAM_SRC := $(wildcard rtl/*/*.sv rtl/*/*/*.sv boards/*/*.sv) \
                      tb/cadr_arty_stubs.sv tb/cadr_usr_access_stub.sv \
                      tb/cadr_ps7_stub.sv tb/cadr_de25_stubs.sv \
+                     tb/cadr_kr260_stubs.sv tb/cadr_ps8_stub.sv \
                      boards/arty-z7-20/vivado/bitstream.tcl \
                      boards/arty-z7-20/vivado/tick.tcl \
                      boards/cora-z7-07s/vivado/bitstream.tcl \
+                     boards/kria-kr260/vivado/bitstream.tcl \
                      boards/de25-nano/quartus/build.sh \
                      boards/de25-nano/quartus/program.sh
 
@@ -2952,6 +3017,12 @@ ps7:
 ps7-cora:
 	python3 boards/cora-z7-07s/vivado/gen_ps7.py
 
+# And the Kria KR260's, off Xilinx's own PS8.v: the Zynq UltraScale+'s
+# processing system, 1,015 pins, with the tie table read from Vivado's own
+# PS IP.  `boards/kria-kr260/vivado/gen_ps8.py` says how.
+ps8:
+	python3 boards/kria-kr260/vivado/gen_ps8.py
+
 # -------------------------------------------------------- the PS7 routine
 
 # What `ps7_init` writes, as an ordered list of register operations.
@@ -2999,6 +3070,9 @@ current:
 	@python3 boards/cora-z7-07s/vivado/gen_ps7.py --check
 	@python3 boards/cora-z7-07s/vivado/ps7_ops.py --check
 	@python3 boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/gen_ps7_init_gpl.py --check
+# And the Kria KR260's wrapper and stub, which skip without Vivado as the
+# Zynq-7000's do.
+	@python3 boards/kria-kr260/vivado/gen_ps8.py --check
 
 # ------------------------------------------------------------ the mutations
 #

@@ -269,6 +269,92 @@ def same(what, fam, pairs):
               % (NAMES[fam], what, ref, len(pairs)))
 
 
+KR260_TOP = "boards/kria-kr260/cadr_kr260.sv"
+KR260_DTSI = "boards/kria-kr260/linux/cadr-reserved.dtsi"
+
+
+def kr260(root, pkg):
+    """The Kria KR260's copies: the package under `CADR_DDR_MAP_KR260`, the
+    KR260 half of `cadr_board.h`, the card's reservation, and the top level's
+    own statement of its base and of its faces' windows."""
+    fam = "kr260"
+    NAMES[fam] = "the Kria KR260"
+    pm = ddr_map(pkg, {"CADR_DDR_MAP_KR260"})
+    text = read(root, BOARD_H)
+    m = re.search(r"\n#else  // CADR_BOARD_KR260[^\n]*\n(.*?)\n#endif  // CADR_BOARD_KR260", text, re.S)
+    if not m:
+        fail("%s has no CADR_BOARD_KR260 half" % BOARD_H)
+    h = {}
+    for name, value in re.findall(r"^#define CADR_BOARD_(\w+)_HEX\s+([0-9A-Fa-f]+)\s*$", m.group(1), re.M):
+        h[name] = int(value, 16)
+    w = re.findall(r"^#define CADR_BOARD_QUUX13_MAIN_WORDS_MAX\s+\((\d+)u \* 1024u \* 1024u\)\s*$",
+                   m.group(1), re.M)
+    if len(w) != 1:
+        fail("%s names no revision 13 room for %s" % (BOARD_H, NAMES[fam]))
+    for k in ("RESERVED", "MAIN", "DISPLAY", "COLOR", "SPARE", "CONSOLE", "QUUX13_MAIN",
+              "PACK", "CHAOS", "SERIAL", "INPUT", "FD"):
+        if k not in h:
+            fail("%s names no CADR_BOARD_%s_HEX for %s" % (BOARD_H, k, NAMES[fam]))
+    top = read(root, KR260_TOP)
+
+    def top_value(name):
+        v = re.findall(r"\b%s\s*\(\s*32'h([0-9A-Fa-f_]+)\s*\)" % name, top)
+        if name == "MAIN_BASE":
+            v = re.findall(r"localparam\s+logic\s*\[31:0\]\s+MAIN_BASE\s*=\s*32'h([0-9A-Fa-f_]+)\s*;", top)
+        if len(v) != 1:
+            fail("%s states %s %d times, wanting once" % (KR260_TOP, name, len(v)))
+        return int(v[0].replace("_", ""), 16)
+
+    unit, base, size = dtsi(read(root, KR260_DTSI), KR260_DTSI)
+    same("the reservation's base", fam, [
+        (DDR_MAP + " RESERVED_BASE", pm["RESERVED_BASE"]),
+        ("cadr_board.h RESERVED", h["RESERVED"]),
+        (KR260_DTSI + " reg", base),
+        (KR260_DTSI + " unit address", unit)])
+    same("the reservation's size", fam, [
+        (DDR_MAP + " RESERVED_MB", pm["RESERVED_MB"] * MB),
+        (KR260_DTSI + " reg", size)])
+    same("main memory", fam, [
+        (DDR_MAP + " MAIN_BASE", pm["MAIN_BASE"]),
+        ("cadr_board.h MAIN", h["MAIN"]),
+        (KR260_TOP + " MAIN_BASE", top_value("MAIN_BASE"))])
+    same("the display", fam, [
+        (DDR_MAP + " DISPLAY_BASE", pm["DISPLAY_BASE"]),
+        ("cadr_board.h DISPLAY", h["DISPLAY"])])
+    same("the color display", fam, [
+        (DDR_MAP + " COLOR_DISPLAY_BASE", pm["COLOR_DISPLAY_BASE"]),
+        ("cadr_board.h COLOR", h["COLOR"])])
+    same("the spare", fam, [
+        (DDR_MAP + " DISPLAY_BASE + DISPLAY_WORDS * 4", pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4),
+        ("cadr_board.h SPARE", h["SPARE"])])
+    same("revision 13's main memory", fam, [
+        (DDR_MAP + " QUUX13_MAIN_BASE", pm["QUUX13_MAIN_BASE"]),
+        ("cadr_board.h QUUX13_MAIN", h["QUUX13_MAIN"])])
+    same("revision 13's room, words", fam, [
+        (DDR_MAP + " QUUX13_MAIN_WORDS_MAX", pm["QUUX13_MAIN_WORDS_MAX"]),
+        ("cadr_board.h QUUX13_MAIN_WORDS_MAX", int(w[0]) << 20)])
+    end13 = pm["QUUX13_MAIN_BASE"] + 5 * pm["QUUX13_MAIN_WORDS_MAX"]
+    if end13 != pm["DISPLAY_BASE"]:
+        disagree("%s: revision 13's main memory, 5 bytes a word, ends at 0x%08X and the "
+                 "display begins at 0x%08X" % (NAMES[fam], end13, pm["DISPLAY_BASE"]))
+    end = pm["RESERVED_BASE"] + pm["RESERVED_MB"] * MB
+    for what, lo, n in (("main memory", pm["MAIN_BASE"], pm["MAIN_WORDS"] * 4),
+                        ("the display", pm["DISPLAY_BASE"], pm["DISPLAY_WORDS"] * 4)):
+        if lo < pm["RESERVED_BASE"] or lo + n > end:
+            disagree("%s, %s: 0x%08X for %d MB is not inside the reservation "
+                     "0x%08X-0x%08X" % (NAMES[fam], what, lo, n // MB, pm["RESERVED_BASE"], end - 1))
+    # The faces' windows: where the programs look and where the fabric answers.
+    for k, param in (("PACK", "PACK_BASE"), ("CHAOS", "CHAOS_BASE"), ("SERIAL", "SER_BASE"),
+                     ("INPUT", "INPUT_BASE"), ("FD", "FD_BASE")):
+        same("the %s face" % k.lower(), fam, [
+            ("cadr_board.h " + k, h[k]), (KR260_TOP + " " + param, top_value(param))])
+    same("the console", fam, [
+        ("cadr_board.h CONSOLE", h["CONSOLE"]), (KR260_TOP + " CON_BASE", top_value("CON_BASE"))])
+    same("the debug window", fam, [
+        ("cadr_board.h CONSOLE + 0x1000", h["CONSOLE"] + 0x1000),
+        (KR260_TOP + " DBG_BASE", top_value("DBG_BASE"))])
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -392,9 +478,11 @@ def main():
          h["TALLY_PAGE"] + h["TALLY_OFF0"] - GPO_BELOW_GPI),
         (UBOOT_ENV + " cadr_gpo", gpo)])
 
+    kr260(root, pkg)
+
     if problems:
         fail("the copies of a board's memory map disagree in %d place(s)" % len(problems))
-    print("mem_map: every copy of both board families' memory maps agrees")
+    print("mem_map: every copy of the three board families' memory maps agrees")
     if args.stamp:
         os.makedirs(os.path.dirname(args.stamp) or ".", exist_ok=True)
         open(args.stamp, "w").close()

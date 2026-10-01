@@ -46,15 +46,21 @@
 # *else* may take it. The other way to make this pass would have been to
 # widen the check, and a check widened to admit one thing stops catching the
 # reset synchronizer it was written for.
+#
+# A REGISTER IS `FLOP_LATCH` ON THE 7 SERIES AND `REGISTER` ON ULTRASCALE+,
+# which is what Vivado calls a flip-flop's `PRIMITIVE_GROUP` on the Kria
+# KR260's part.  Every query below asks for either, and on a 7-series part
+# no cell is a `REGISTER`, so the sets these checks see there are the ones
+# they saw before.
 proc relaxed_outside {inside period} {
     if {[llength $inside] == 0} {
-        set outside [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]
+        set outside [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH || PRIMITIVE_GROUP == REGISTER}]
         # Out of context the machine is the top, so nothing is outside it and
         # this can only be empty. Checking anyway is the point: if it ever
         # stops being empty, a top level has appeared that nobody expected.
         set outside [filter $outside {NAME !~ *}]
     } else {
-        set want "PRIMITIVE_GROUP == FLOP_LATCH"
+        set want "(PRIMITIVE_GROUP == FLOP_LATCH || PRIMITIVE_GROUP == REGISTER)"
         foreach path $inside { append want " && NAME !~ ${path}/*" }
         set outside [get_cells -quiet -hier -filter $want]
     }
@@ -192,7 +198,7 @@ proc relaxed_path_histogram {limit} {
 proc assert_instance_timing {period cycles instance relaxed {elsewhere {}}} {
     set want [format %.3f [expr {$period * $cycles}]]
     set all [get_cells -quiet -hier -filter \
-                 "NAME =~ $instance && PRIMITIVE_GROUP == FLOP_LATCH"]
+                 "NAME =~ $instance && (PRIMITIVE_GROUP == FLOP_LATCH || PRIMITIVE_GROUP == REGISTER)"]
     if {[llength $all] == 0} {
         puts "XDC: FAILED --- no registers matched $instance."
         puts "XDC: Either the instance was renamed, in which case the clause"

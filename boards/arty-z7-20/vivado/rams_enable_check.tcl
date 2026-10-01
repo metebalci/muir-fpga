@@ -87,8 +87,11 @@ proc rams_enable_classify {pin} {
 
 # `tick` is the machine's period in ns, as `tick.tcl` computes it.  Returns
 # only when every port passes; otherwise deletes `bit` and exits 1.
+# Block RAM is `BMEM.*` on the 7 series and `BLOCKRAM.BRAM.*` on
+# UltraScale+ (`RAMB36E2`, `RAMB18E2`), with the same enable, address and
+# write-enable pins; UltraRAM is `BLOCKRAM.URAM.*` and is not asked for.
 proc assert_rams_enabled_only_while_addressed {tick bit} {
-    set rams [get_cells -quiet -hier -filter {PRIMITIVE_TYPE =~ BMEM.*.*}]
+    set rams [get_cells -quiet -hier -filter {PRIMITIVE_TYPE =~ BMEM.*.* || PRIMITIVE_TYPE =~ BLOCKRAM.BRAM.*}]
     if {![llength $rams]} {
         puts "RAMEN: FAILED --- no block RAM in the routed design; the query is wrong"
         file delete -force $bit
@@ -121,9 +124,27 @@ proc assert_rams_enabled_only_while_addressed {tick bit} {
         puts "RAMEN: the routed design, constraints and all, is $::env(RAMEN_DCP)"
     }
 
-    # Every path at one tick, no exceptions.
+    # Every path at one tick, no exceptions.  The board's clock is put back
+    # as it was --- the clock on the MMCM's input, its period and its port,
+    # read before the constraints go --- so that the same check serves a
+    # board whose input is 125 MHz on `sysclk` and one whose input is 25 MHz
+    # on `clk25`.
+    set inclk [get_clocks -quiet -of [get_pins -quiet u_mmcm/CLKIN1]]
+    if {[llength $inclk] != 1} {
+        puts "RAMEN: FAILED --- no single clock reaches u_mmcm/CLKIN1"
+        file delete -force $bit
+        exit 1
+    }
+    set inper  [get_property PERIOD $inclk]
+    set inport [get_ports -quiet [get_property SOURCE_PINS $inclk]]
+    if {[llength $inport] != 1} {
+        puts "RAMEN: FAILED --- the MMCM's input clock does not come from one port"
+        file delete -force $bit
+        exit 1
+    }
+    puts "RAMEN: the board's clock is [get_property NAME $inport], $inper ns"
     reset_timing
-    create_clock -name ramen_sys -period 8.000 [get_ports sysclk]
+    create_clock -name ramen_sys -period $inper $inport
     update_timing -full
     set mclk [get_clocks -quiet -of [get_pins -quiet u_mmcm/CLKOUT0]]
     if {[llength $mclk] != 1} {

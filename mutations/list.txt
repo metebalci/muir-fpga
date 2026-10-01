@@ -25848,3 +25848,177 @@ setenv cadr_booti 'setenv bootargs ${cadr_bootargs} && booti ${cadr_kernel_addr}
 @new
 setenv cadr_booti 'setenv bootargs ${cadr_bootargs} && saveenv && booti ${cadr_kernel_addr} ${cadr_ramdisk_addr} ${cadr_fdt_addr}'
 @end
+
+# ------------------------------------------------ the Kria KR260's 128-bit ports
+#
+# `rtl/plumbing/cadr_axi_widen128.sv`, `cadr_axi_lanes128.sv` and
+# `cadr_axi_burst128.sv`, each against its own testbench, whose stimulus
+# places every word itself: a lane taken from the wrong place is a wrong word,
+# never the right one by accident.
+
+@mutation widen128-lanes-one-and-two-exchanged
+@check axi_widen128
+@file rtl/plumbing/cadr_axi_widen128.sv
+@note A write to the second word of a beat opens the third word's strobes:
+@note the word lands one lane over and its neighbor is overwritten.
+@note Caught by the reference beat, which only the stimulus updates.
+@old
+      2'd1: m_wstrb = {8'h00, s_wstrb, 4'h0};
+@new
+      2'd1: m_wstrb = {4'h0, s_wstrb, 8'h00};
+@end
+
+@mutation widen128-the-read-lane-is-selected-by-the-write-address
+@check axi_widen128
+@file rtl/plumbing/cadr_axi_widen128.sv
+@note The read's lane taken partly from the write channel's address, which
+@note `cadr_axi_master` leaves at the last write's.  Written as an XOR so
+@note that both addresses stay read and the mutation lints.
+@old
+    unique case (s_araddr[3:2])
+@new
+    unique case (s_araddr[3:2] ^ s_awaddr[3:2])
+@end
+
+@mutation widen128-the-write-beat-is-not-aligned
+@check axi_widen128
+@file rtl/plumbing/cadr_axi_widen128.sv
+@note The beat's address keeps the word's lane bits, so a full-width beat
+@note goes to an unaligned address.  Caught by the address comparison.
+@old
+  assign m_awaddr = {s_awaddr[31:4], 4'b0000};
+@new
+  assign m_awaddr = {s_awaddr[31:2], 2'b00};
+@end
+
+@mutation widen128-the-word-only-in-lane-zero
+@check axi_widen128
+@file rtl/plumbing/cadr_axi_widen128.sv
+@note The word is put in the low lane only, so a write to any other lane
+@note writes zeros there under the right strobes.
+@old
+  assign m_wdata = {4{s_wdata}};
+@new
+  assign m_wdata = {96'd0, s_wdata};
+@end
+
+@mutation widen128-the-beat-is-sixty-four-bits
+@check axi_widen128
+@file rtl/plumbing/cadr_axi_widen128.sv
+@note The Zynq-7000's size left in: an eight-byte transfer on a sixteen-byte
+@note port with sixteen bytes of strobes is a different transaction.
+@old
+  localparam logic [2:0] SIZE_BEAT = 3'b100;
+@new
+  localparam logic [2:0] SIZE_BEAT = 3'b011;
+@end
+
+@mutation lanes128-a-wider-store-takes-the-wrong-lane
+@check axi_lanes128
+@file rtl/plumbing/cadr_axi_lanes128.sv
+@note Lane 0 is taken only when no other lane is strobed, so a store wider
+@note than a word hands down a higher lane's word instead of the lowest.
+@old
+    if (s_wstrb[3:0] != 4'h0) begin
+@new
+    if (s_wstrb[3:0] != 4'h0 && s_wstrb[15:4] == 12'h000) begin
+@end
+
+@mutation lanes128-the-read-only-in-lane-zero
+@check axi_lanes128
+@file rtl/plumbing/cadr_axi_lanes128.sv
+@note A face's word goes back in the low lane only, so a load of any word
+@note whose address has bits 3:2 set reads zero.
+@old
+  assign s_rdata = {4{m_rdata}};
+@new
+  assign s_rdata = {96'd0, m_rdata};
+@end
+
+@mutation lanes128-a-partial-store-opens-the-whole-word
+@check axi_lanes128
+@file rtl/plumbing/cadr_axi_lanes128.sv
+@note A store in lane 1 goes down with all four strobes open, whatever bytes
+@note the processor wrote.
+@old
+      m_wstrb = s_wstrb[7:4];
+@new
+      m_wstrb = 4'hF;
+@end
+
+@mutation burst128-the-write-count-runs-across-bursts
+@check axi_burst128
+@file rtl/plumbing/cadr_axi_burst128.sv
+@note The beat count is not put back at the burst's last beat, so a burst
+@note after one of odd length starts in the wrong half.
+@old
+      if (s_wvalid && s_wready) w_odd <= s_wlast ? 1'b0 : !w_odd;
+@new
+      if (s_wvalid && s_wready) w_odd <= s_wlast ? !w_odd : !w_odd;
+@end
+
+@mutation burst128-the-write-half-from-the-read-address
+@check axi_burst128
+@file rtl/plumbing/cadr_axi_burst128.sv
+@note The write's half worked out from the read channel's address.
+@old
+  assign w_high = s_awaddr[3] ^ w_odd;
+@new
+  assign w_high = s_araddr[3] ^ w_odd;
+@end
+
+@mutation burst128-the-read-half-ignores-the-burst-address
+@check axi_burst128
+@file rtl/plumbing/cadr_axi_burst128.sv
+@note The read's half from the beat count alone, as if every burst began in
+@note the low half.
+@old
+  assign r_high = s_araddr[3] ^ r_odd;
+@new
+  assign r_high = r_odd;
+@end
+
+@mutation burst128-the-high-beat-strobes-both-halves
+@check axi_burst128
+@file rtl/plumbing/cadr_axi_burst128.sv
+@note A beat in the high half also opens the low half, which then takes the
+@note same doubleword over its neighbor.
+@old
+  assign m_wstrb = w_high ? {s_wstrb, 8'h00} : {8'h00, s_wstrb};
+@new
+  assign m_wstrb = w_high ? {s_wstrb, s_wstrb} : {8'h00, s_wstrb};
+@end
+
+@mutation burst128-the-read-count-takes-a-beat-not-taken
+@check axi_burst128
+@file rtl/plumbing/cadr_axi_burst128.sv
+@note A read beat counted when only one side of the handshake is up.
+@old
+      if (s_rvalid && s_rready) r_odd <= s_rlast ? 1'b0 : !r_odd;
+@new
+      if (s_rvalid || s_rready) r_odd <= s_rlast ? 1'b0 : !r_odd;
+@end
+
+@mutation mem-map-the-kr260-fabric-puts-the-display-elsewhere
+@check mem_map
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The Kria KR260's display moved in the package the fabric is built
+@note from and nowhere else, so `cadr-terminal` would read a frame the
+@note machine never wrote.  Caught at "the Kria KR260, the display".
+@old
+  localparam logic [31:0] DISPLAY_BASE  = 32'h6400_0000;
+@new
+  localparam logic [31:0] DISPLAY_BASE  = 32'h6500_0000;
+@end
+
+@mutation mem-map-the-kr260-debug-window-answers-elsewhere
+@check mem_map
+@file boards/kria-kr260/cadr_kr260.sv
+@note The KR260's debug window decoded at another page of `M_AXI_HPM1_FPD`
+@note than the one the programs and muir are given.  Caught at "the Kria
+@note KR260, the debug window".
+@old
+        .CON_BASE(32'hB000_0000), .DBG_BASE(32'hB000_1000),
+@new
+        .CON_BASE(32'hB000_0000), .DBG_BASE(32'hB000_2000),
+@end

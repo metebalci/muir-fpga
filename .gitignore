@@ -44,9 +44,10 @@ vendor/
 # `ps7_summary.html` when nothing names a project directory; the two text files
 # are timing-report side products. None is an input to anything and none is
 # generated on purpose. Build outputs proper go under build/, which is ignored
-# above.
+# above. `cong/` is the UltraScale+ placer's congestion report directory.
 .Xil/
 NA/
+cong/
 clockInfo.txt
 tight_setup_hold_pins.txt
 
