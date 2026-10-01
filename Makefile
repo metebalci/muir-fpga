@@ -2222,16 +2222,19 @@ $(BUILD)/board_reset.pass: $(BUILD)/obj_board_reset_arty/Vcadr_board_reset_harne
 # THE TOP LEVEL U-BOOT LOADS WHEN THE CADR'S CANNOT BE LOADED: no machine,
 # every lamp blinking together, every window of both ports answered with
 # "FALT", the tally reading "FALT", and nothing mastering memory; on the
-# DE25-Nano the warm-reset handshake answered too.  `tb/cadr_fault_tb.cpp` has
-# what is held.  Each board's fault top level is simulated with the
-# processing system of `board_reset` above, and linted against the real
-# `cadr_ps7.sv` wrapper and the DE25-Nano's processor stub, which are what
-# the fitters build it with.  Seconds.
+# DE25-Nano the warm-reset handshake answered too, and on the Kria KR260 the
+# fan running.  `tb/cadr_fault_tb.cpp` has what is held.  Each Zynq-7000
+# board's fault top level is simulated with the processing system of
+# `board_reset` above, the Kria KR260's with `tb/cadr_ps8_sim.sv`, and each is
+# linted against the real `cadr_ps7.sv` or `cadr_ps8.sv` wrapper or the
+# DE25-Nano's processor stub, which are what the fitters build it with.
+# Seconds.
 FAULT_SIM := tb/cadr_sim_axi.sv rtl/plumbing/cadr_fault_lamp.sv \
              rtl/plumbing/cadr_gp0_default.sv tb/cadr_fault_harness.sv
 FAULT_ARTY_SRC := boards/arty-z7-20/cadr_arty_fault.sv
 FAULT_CORA_SRC := boards/cora-z7-07s/cadr_cora_fault.sv
 FAULT_DE25_SRC := boards/de25-nano/cadr_de25_fault.sv rtl/plumbing/cadr_f2sdram_gate.sv
+FAULT_KR260_SRC := boards/kria-kr260/cadr_kr260_fault.sv
 FAULT_VFLAGS := $(VFLAGS) -O2 -CFLAGS -O2 -Wno-PINCONNECTEMPTY -Irtl/plumbing \
                 --top-module cadr_fault_harness
 
@@ -2247,6 +2250,13 @@ $(BUILD)/obj_fault_cora/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_CORA_SRC) tb/c
 	    -Mdir $(BUILD)/obj_fault_cora $(FAULT_SIM) tb/cadr_arty_stubs.sv \
 	    tb/cadr_ps7_sim.sv $(FAULT_CORA_SRC) $(abspath tb/cadr_fault_tb.cpp)
 
+$(BUILD)/obj_fault_kr260/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_KR260_SRC) tb/cadr_arty_stubs.sv \
+        tb/cadr_kr260_stubs.sv tb/cadr_ps8_sim.sv tb/cadr_fault_tb.cpp | $(BUILD)
+	$(VERILATOR) $(FAULT_VFLAGS) -DCADR_BOARD_KR260 -CFLAGS -DCADR_BOARD_KR260 \
+	    -Mdir $(BUILD)/obj_fault_kr260 $(FAULT_SIM) tb/cadr_arty_stubs.sv \
+	    tb/cadr_kr260_stubs.sv tb/cadr_ps8_sim.sv $(FAULT_KR260_SRC) \
+	    $(abspath tb/cadr_fault_tb.cpp)
+
 $(BUILD)/obj_fault_de25/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_DE25_SRC) tb/cadr_de25_stubs.sv \
         tb/cadr_de25_hps_sim.sv tb/cadr_fault_tb.cpp | $(BUILD)
 	$(VERILATOR) $(FAULT_VFLAGS) -DCADR_BOARD_DE25 -DCADR_DE25_HPS_SIM -CFLAGS -DCADR_BOARD_DE25 \
@@ -2256,8 +2266,9 @@ $(BUILD)/obj_fault_de25/Vcadr_fault_harness: $(FAULT_SIM) $(FAULT_DE25_SRC) tb/c
 $(BUILD)/fault.pass: $(BUILD)/obj_fault_arty/Vcadr_fault_harness \
                      $(BUILD)/obj_fault_cora/Vcadr_fault_harness \
                      $(BUILD)/obj_fault_de25/Vcadr_fault_harness \
+                     $(BUILD)/obj_fault_kr260/Vcadr_fault_harness \
                      boards/arty-z7-20/cadr_ps7.sv boards/cora-z7-07s/cadr_ps7.sv \
-                     tb/cadr_ps7_stub.sv
+                     tb/cadr_ps7_stub.sv boards/kria-kr260/cadr_ps8.sv tb/cadr_ps8_stub.sv
 	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_arty_fault \
 	    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv boards/arty-z7-20/cadr_ps7.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_fault_lamp.sv $(FAULT_ARTY_SRC)
@@ -2267,9 +2278,14 @@ $(BUILD)/fault.pass: $(BUILD)/obj_fault_arty/Vcadr_fault_harness \
 	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_de25_fault \
 	    tb/cadr_de25_stubs.sv rtl/plumbing/cadr_gp0_default.sv \
 	    rtl/plumbing/cadr_fault_lamp.sv $(FAULT_DE25_SRC)
+	$(VERILATOR) --lint-only -Wall -Irtl/plumbing --top-module cadr_kr260_fault \
+	    tb/cadr_arty_stubs.sv tb/cadr_kr260_stubs.sv tb/cadr_ps8_stub.sv \
+	    boards/kria-kr260/cadr_ps8.sv rtl/plumbing/cadr_gp0_default.sv \
+	    rtl/plumbing/cadr_fault_lamp.sv $(FAULT_KR260_SRC)
 	$(BUILD)/obj_fault_arty/Vcadr_fault_harness
 	$(BUILD)/obj_fault_cora/Vcadr_fault_harness
 	$(BUILD)/obj_fault_de25/Vcadr_fault_harness
+	$(BUILD)/obj_fault_kr260/Vcadr_fault_harness
 	@touch $@
 
 # ------------------------------------------- one transaction per bus cycle
@@ -5109,39 +5125,45 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 
 # ------------------------------------------------------------ the release
 #
-# **A RELEASE IS THREE ZIPS, ONE A BOARD, AND THIS IS THE ONE COMMAND THAT
+# **A RELEASE IS FOUR ZIPS, ONE A BOARD, AND THIS IS THE ONE COMMAND THAT
 # MAKES THEM.**  There is no card image any more: a user formats a microSD
 # card themselves, as one FAT32 partition in an MBR, and unpacks their board's
 # zip onto it.  Each zip is self-sufficient, names its board in its own file
 # name and inside it, and is what is published for that board.
 #
 #     make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
-#                  FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>
+#                  BIT_KR260=<a .bit> \
+#                  FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf> \
+#                  FAULT_KR260=<a .bit>
 #
 # **AND EACH ZIP CARRIES ITS BOARD'S FAULT BITSTREAM**, the one the loader
 # takes when the CADR's will not load (`docs/board.md`), named the same way.
 #
-# **THREE ZIPS ARE THREE CHANCES FOR ONE TO BE STALE**, which is why this is
-# one target and not three: a release in which two boards were rebuilt and the
-# third was not is exactly the sort of thing that ships.  So every bitstream is
-# required by name, the target refuses to build a partial release, and it
-# prints the three zips together at the end with their digests, where a missing
-# one is visible.
+# **FOUR ZIPS ARE FOUR CHANCES FOR ONE TO BE STALE**, which is why this is
+# one target and not four: a release in which three boards were rebuilt and
+# the fourth was not is exactly the sort of thing that ships.  So every
+# bitstream is required by name, the target refuses to build a partial
+# release, and it prints the four zips together at the end with their digests,
+# where a missing one is visible.
 #
 # The bitstreams are not in this repository --- they are built by Vivado and by
 # Quartus, which `make check` does not run --- so they are named on the command
 # line.  Each board's Buildroot output must exist: `make buildroot`,
-# `make buildroot-cora` and `make buildroot-de25` build them.
+# `make buildroot-cora`, `make buildroot-de25` and `make buildroot-kr260`
+# build them.  The Kria KR260's fault bitstream is `tools/fault_zynq.tcl`'s
+# with `BOARD=kr260`.
 .PHONY: release
 RELEASE_DIR := build/sd/release
 release:
-	@for v in BIT_ARTY BIT_CORA BIT_DE25 FAULT_ARTY FAULT_CORA FAULT_DE25; do \
+	@for v in BIT_ARTY BIT_CORA BIT_DE25 BIT_KR260 FAULT_ARTY FAULT_CORA FAULT_DE25 FAULT_KR260; do \
 	    eval "b=\$$$$v"; \
 	    [ -n "$$b" ] || { \
-	        echo "release: $$v is not set.  A release is three zips and this target makes"; \
-	        echo "release: all three, so that one board cannot be left at an older build:"; \
+	        echo "release: $$v is not set.  A release is four zips and this target makes"; \
+	        echo "release: all four, so that one board cannot be left at an older build:"; \
 	        echo "release:   make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>"; \
+	        echo "release:                BIT_KR260=<a .bit>"; \
 	        echo "release:                FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>"; \
+	        echo "release:                FAULT_KR260=<a .bit>"; \
 	        exit 1; }; \
 	    [ -f "$$b" ] || { echo "release: $$v=$$b is not a file"; exit 1; }; \
 	done
@@ -5153,9 +5175,12 @@ release:
 	IMAGES=$(BR_OUT_DE25)/images \
 	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
 	    BIT=$(BIT_DE25) FAULT_BIT=$(FAULT_DE25) boards/arty-z7-20/linux/mksd-release.sh
+	IMAGES=$(BR_OUT_KR260)/images \
+	    BOARD_DIR=boards/kria-kr260 BOARD_DTB=zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb \
+	    BIT=$(BIT_KR260) FAULT_BIT=$(FAULT_KR260) boards/arty-z7-20/linux/mksd-release.sh
 	@echo
-	@echo "release: three zips, one a board:"
-	@for b in arty-z7-20 cora-z7-07s de25-nano; do \
+	@echo "release: four zips, one a board:"
+	@for b in arty-z7-20 cora-z7-07s de25-nano kria-kr260; do \
 	    z=$(RELEASE_DIR)/$$b/cadr-$$b.zip; \
 	    [ -f "$$z" ] || { echo "release: $$z was not built"; exit 1; }; \
 	    printf '  %-44s %10d  %s\n' "$$z" "$$(stat -c %s $$z)" "$$(sha256sum $$z | cut -c1-16)"; \

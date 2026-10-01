@@ -626,6 +626,14 @@ whatever the array held three ticks earlier, and the register table comes from
 three boundaries if three reads straddle them. The intended use is a halted
 machine, where every array stands and the readout is exact.
 
+**`FLAG-1` in `cadr-console status` is one of those samples while the machine
+runs, so a watch over a running machine must not judge it.** On the Kria
+KR260, 3 of 60 status reads taken over a running machine showed a `FLAG-1`
+other than `0xf900`, among them `ERR up` and `SRUN down` while `CYCLES`
+advanced between the same status's two reads. A watch that took `ERR up` for an
+error halt stopped on a machine that was running. What says a machine stopped
+is `CYCLES` not advancing, `NOT RUNNING`; `FLAG-1` is read after a halt.
+
 **A halted machine still fires its write pulses, and this was found by the
 check being wrong about it.** `build/readout.pass` was written expecting every
 word to stand while the machine was halted, and three did not. MACHRUN gates

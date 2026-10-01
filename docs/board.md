@@ -887,6 +887,8 @@ always in step, and each lamp shows what it can show of red.
     Arty Z7-20    LD0 to LD3 green, and LD4 and LD5 red; the RGB lamps' green
                   and blue pins stay dark
     Cora Z7-07S   LD0 and LD1 red, with green and blue dark
+    Kria KR260    UF1 and UF2, which are single-color; the SOM's fan keeps
+                  running
     DE25-Nano     LEDR0 to LEDR7, all eight, which are green
 
 Each lamp is dark for the first quarter second after the bitstream loads,
@@ -894,9 +896,10 @@ then lit for a quarter second, then dark, and so on.
 
 **Linux still boots and still runs.** The processing system's side of the
 fabric is the same as under the CADR's bitstream. Every address of both
-general-purpose ports on the Zynq boards, and of both processor-to-fabric
-bridges on the DE25-Nano, is answered by the default slave, because a read
-nothing answers hangs both Arm cores. Each read returns `FALT`, 0x46414C54, and
+general-purpose ports on the Zynq boards, of `M_AXI_HPM0_FPD` and
+`M_AXI_HPM1_FPD` on the Kria KR260 (in every lane of their 128 bits), and of
+both processor-to-fabric bridges on the DE25-Nano, is answered by the default
+slave, because a read nothing answers hangs both Arm cores. Each read returns `FALT`, 0x46414C54, and
 each write is dropped. Nothing in the fabric reads or writes memory. On the
 DE25-Nano the fabric answers the warm-reset handshake as the CADR's build
 does, so U-Boot's `bridge enable` releases the bridges, and U-Boot leaves the
@@ -906,8 +909,8 @@ memory gate shut.
 
 - The tally that every program reads before it touches the fabric reads
   `FALT` in every word: both EMIO words at 0xE000A068 and 0xE000A06C on a
-  Zynq board, and the system manager's GPI word at 0x10D120E8 on the
-  DE25-Nano. That fails the tally's marker test, so every program refuses the
+  Zynq-7000 board and at 0xFF0A006C and 0xFF0A0070 on the Kria KR260, and the
+  system manager's GPI word at 0x10D120E8 on the DE25-Nano. That fails the tally's marker test, so every program refuses the
   fabric.
 - The init scripts read the same words through `devmem`. On `FALT` they start
   nothing that touches the fabric, and the first of them prints one line on
@@ -932,18 +935,20 @@ load` and to land here, but that has not yet been tried on a board. On the
 DE25-Nano the core image must also carry the same HPS I/O hash as the first
 phase in the flash, which the Booting User Guide requires of a pair.
 
-**Building it.** The Zynq boards' two come from `tools/fault_zynq.tcl`:
+**Building it.** The three Zynq boards' come from `tools/fault_zynq.tcl`:
 
-    BOARD=arty OUTDIR=build/fault-arty vivado -mode batch -source tools/fault_zynq.tcl
-    BOARD=cora OUTDIR=build/fault-cora vivado -mode batch -source tools/fault_zynq.tcl
+    BOARD=arty  OUTDIR=build/fault-arty  vivado -mode batch -source tools/fault_zynq.tcl
+    BOARD=cora  OUTDIR=build/fault-cora  vivado -mode batch -source tools/fault_zynq.tcl
+    BOARD=kr260 OUTDIR=build/fault-kr260 vivado -mode batch -source tools/fault_zynq.tcl
 
 The DE25-Nano's is `make de25-fault DE25_SPL_HEX=<the first-stage loader>`,
 which writes `build/de25-fault/output_files/cadr_de25.core.rbf`. The card
 script takes the file as `FAULT_BIT` and stages it as `fault.bit` or
 `fault.core.rbf` beside the fabric, on the card and on the server.
-`build/fault.pass` simulates all three top levels: the lamps in step, at the
+`build/fault.pass` simulates all four top levels: the lamps in step, at the
 polarity and the rate, red alone on a color lamp, every window answered with
-`FALT`, the tally, no memory traffic, and the DE25-Nano's handshake.
+`FALT`, the tally, no memory traffic, the Kria KR260's fan, and the DE25-Nano's
+handshake.
 
 ## Holding the machine at boot
 

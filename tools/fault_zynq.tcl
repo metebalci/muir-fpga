@@ -3,13 +3,20 @@
 #
 # THE FAULT BITSTREAM FOR A ZYNQ BOARD: no machine, every lamp blinking.
 #
-#     BOARD=arty|cora OUTDIR=<dir> vivado -mode batch -source tools/fault_zynq.tcl
+#     BOARD=arty|cora|kr260 OUTDIR=<dir> vivado -mode batch -source tools/fault_zynq.tcl
 #
 # `make fault-arty` and `make fault-cora` run it.  The top level is the
 # board's `cadr_<board>_fault.sv`, whose header says what it is and when
 # U-Boot loads it; the pins and the board's clock are the board's own
 # constraints file, unchanged, because the fault top level has the CADR
 # top level's port list.
+#
+# **THE KRIA KR260 IS A ZYNQ ULTRASCALE+**, so its processing system is a
+# `PS8` behind `cadr_ps8.sv`, and the cells are counted by the names that
+# family gives them, as `boards/kria-kr260/vivado/bitstream.tcl` counts them:
+# a lookup table by `REF_NAME`, because its `PRIMITIVE_GROUP` is `CLB` there,
+# a flip-flop's group `REGISTER`, and block RAM `BLOCKRAM.BRAM.*`.  The two
+# Zynq-7000 boards keep their own filters.
 #
 # **WHAT THIS REFUSES.**  A design much larger than the fault top level is
 # something else: the machine cannot be in it, so a fit of more than a few
@@ -35,16 +42,37 @@ switch -- $board {
         set xdc   boards/cora-z7-07s/cadr_cora.xdc
         set floor 2000000
     }
+    kr260 {
+        set part  xck26-sfvc784-2LV-c
+        set dir   boards/kria-kr260
+        set top   cadr_kr260_fault
+        set xdc   boards/kria-kr260/cadr_kr260.xdc
+        set floor 7000000
+    }
     default {
-        puts "FAULT: BOARD is '$board'; it is arty or cora"
+        puts "FAULT: BOARD is '$board'; it is arty, cora or kr260"
         exit 1
     }
 }
+if {$board eq "kr260"} {
+    set ps       PS8
+    set ps_src   $dir/cadr_ps8.sv
+    set lut_f    {REF_NAME =~ LUT*}
+    set bram_f   {PRIMITIVE_TYPE =~ BLOCKRAM.BRAM.*}
+    set ff_f     {PRIMITIVE_GROUP == REGISTER}
+} else {
+    set ps       PS7
+    set ps_src   $dir/cadr_ps7.sv
+    set lut_f    {PRIMITIVE_GROUP == LUT}
+    set bram_f   {PRIMITIVE_TYPE =~ BMEM.*.*}
+    set ff_f     {PRIMITIVE_GROUP == FLOP_LATCH}
+}
+if {[info exists ::env(VIVADO_THREADS)]} { set_param general.maxThreads $::env(VIVADO_THREADS) }
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/fault-$board"}]
 file mkdir $outdir
 
 set sources [list rtl/plumbing/cadr_fault_lamp.sv rtl/plumbing/cadr_gp0_default.sv \
-                  $dir/cadr_ps7.sv $dir/$top.sv]
+                  $ps_src $dir/$top.sv]
 read_verilog -sv $sources
 synth_design -top $top -part $part
 read_xdc $xdc
@@ -54,16 +82,23 @@ place_design
 phys_opt_design
 route_design
 
-set luts  [llength [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == LUT}]]
-set brams [llength [get_cells -quiet -hier -filter {PRIMITIVE_TYPE =~ BMEM.*.*}]]
-set ffs   [llength [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]]
-set ps7   [llength [get_cells -quiet -hier -filter {REF_NAME == PS7}]]
-puts "FAULT: $luts LUTs, $ffs registers, $brams block RAMs, $ps7 PS7"
+set luts  [llength [get_cells -quiet -hier -filter $lut_f]]
+set brams [llength [get_cells -quiet -hier -filter $bram_f]]
+set ffs   [llength [get_cells -quiet -hier -filter $ff_f]]
+set nps   [llength [get_cells -quiet -hier -filter "REF_NAME == $ps"]]
+puts "FAULT: $luts LUTs, $ffs registers, $brams block RAMs, $nps $ps"
 if {$luts > 500 || $brams > 0} {
     puts "FAULT: FAILED --- that is not the fault top level, which has no machine."
     exit 1
 }
-if {$ps7 != 1} {
+# And a design with no lookup table at all is not it either: the lamp's
+# counter needs some, so a count of zero is a filter that matched nothing.
+if {$luts == 0 || $ffs == 0} {
+    puts "FAULT: FAILED --- no lookup table or no register counted: the filter"
+    puts "FAULT: matched nothing, so the size check above held nothing."
+    exit 1
+}
+if {$nps != 1} {
     puts "FAULT: FAILED --- the processing system is not in the design, so"
     puts "FAULT: nothing answers its general-purpose ports."
     exit 1

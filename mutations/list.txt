@@ -17539,6 +17539,33 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 		cadr@b8000000 {
 @end
 
+@mutation mem-map-the-kr260-tree-reserves-half
+@check mem_map
+@file boards/kria-kr260/linux/cadr-reserved.dtsi
+@note The Kria KR260's tree reserves 64 MB: the kernel takes the display and
+@note the spare at 0x6400_0000 as ordinary memory while the fabric writes
+@note into them.
+@note
+@note Caught at "the reservation's size: ... reg says 0x04000000".
+@old
+		reg = <0x0 0x60000000 0x0 0x08000000>;
+@new
+		reg = <0x0 0x60000000 0x0 0x04000000>;
+@end
+
+@mutation mem-map-the-kr260-node-is-named-for-another-address
+@check mem_map
+@file boards/kria-kr260/linux/cadr-reserved.dtsi
+@note The node's unit address is what the card script looks for, so a node
+@note renamed without its reg makes the card script refuse a good tree.
+@note
+@note Caught at "the reservation's base: ... unit address says 0x68000000".
+@old
+	cadr@60000000 {
+@new
+	cadr@68000000 {
+@end
+
 @mutation mem-map-the-card-names-the-wrong-display
 @check mem_map
 @file boards/arty-z7-20/linux/mksd-buildroot.sh
@@ -19396,6 +19423,132 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
       on    <= !on;
 @new
       on    <= on;
+@end
+
+@mutation fault-kr260-uf2-out-of-phase
+@check fault_kr260
+@file boards/kria-kr260/cadr_kr260_fault.sv
+@note UF2 against UF1.  Caught at "UF2 reads lit while UF1 reads dark".
+@old
+  assign uf2 = lit;
+@new
+  assign uf2 = !lit;
+@end
+
+@mutation fault-kr260-the-fan-stops
+@check fault_kr260
+@file boards/kria-kr260/cadr_kr260_fault.sv
+@note `fan_en_b` driven high, which stops the SOM's fan.  Caught at
+@note "fan_en_b is high".
+@old
+  assign fan_en_b = 1'b0;
+@new
+  assign fan_en_b = 1'b1;
+@end
+
+@mutation fault-kr260-hpm1-answers-in-lane-0-only
+@check fault_kr260
+@file boards/kria-kr260/cadr_kr260_fault.sv
+@note The read word in the 128-bit port's lowest lane alone: a word read at
+@note an address whose bits 3:2 are not zero reads zero, and so does every
+@note beat of a burst after its first.  Caught at "port 1 read b0000000 len
+@note 1: beat 1 read 00000000".
+@old
+  assign hpm1_rdata = {4{hpm1_word}};
+@new
+  assign hpm1_rdata = {96'd0, hpm1_word};
+@end
+
+@mutation fault-kr260-hpm0-swallows-a-read
+@check fault_kr260
+@file boards/kria-kr260/cadr_kr260_fault.sv
+@note `M_AXI_HPM0_FPD`'s default slave never sees a read.  Caught at "port 0
+@note read a0000000 len 0: never answered (address taken)".
+@old
+      .s_arlen(hpm0_arlen), .s_arid(hpm0_arid), .s_arvalid(hpm0_arvalid),
+@new
+      .s_arlen(hpm0_arlen), .s_arid(hpm0_arid), .s_arvalid(hpm0_arvalid && 1'b0),
+@end
+
+@mutation fault-kr260-the-tally-reads-as-a-cadr
+@check fault_kr260
+@file boards/kria-kr260/cadr_kr260_fault.sv
+@note The tally's second word a CADR's.  Caught at "the tally's second word
+@note reads 00018000".
+@old
+  assign gpio_i = {32'd0, FAULT_WORD, FAULT_WORD};
+@new
+  assign gpio_i = {32'd0, 32'h0001_8000, FAULT_WORD};
+@end
+
+@mutation fault-kr260-a-memory-read-goes-out
+@check fault_kr260
+@file boards/kria-kr260/cadr_kr260_fault.sv
+@note `S_AXI_HP2_FPD` asked for a read.  Caught at "memory port 2: the
+@note fabric raised ARVALID".
+@old
+      .hp2_arvalid(1'b0), .hp2_arready(hp2_arready),
+@new
+      .hp2_arvalid(1'b1), .hp2_arready(hp2_arready),
+@end
+
+@mutation fault-kr260-the-ports-never-leave-reset
+@check fault_kr260
+@file boards/kria-kr260/cadr_kr260_fault.sv
+@note Both default slaves held in reset whatever `pl_resetn0` says, so
+@note nothing is ever answered.  Caught at "port 0 read a0000000 len 0:
+@note never answered (address taken)".
+@old
+    port_rst      <= !port_rst_sync[2];
+@new
+    port_rst      <= !(port_rst_sync[2] && 1'b0);
+@end
+
+@mutation fault-kr260-lamp-one-tick-short
+@check fault_kr260
+@file rtl/plumbing/cadr_fault_lamp.sv
+@note The half period one tick short, on this board's top.  Caught at "UF1
+@note changed 63 ticks after its last change, want 64".
+@old
+    if (count == W'(HALF_T - 1)) begin
+@new
+    if (count == W'(HALF_T - 2)) begin
+@end
+
+@mutation kr260-the-tally-loses-a-bit
+@check kr260
+@file boards/kria-kr260/cadr_kr260.sv
+@note EMIO 95's pad dropped from the word on the processing system's GPIO
+@note inputs, so the tally and the clock count land one bit low on banks 3
+@note to 5.  Caught by lint, the 95-bit value on a 96-bit port.
+@old
+    assign gpio_i = {1'b0, clk_gray, tally};
+@new
+    assign gpio_i = {clk_gray, tally};
+@end
+
+@mutation kr260-the-serial-line-interrupts-nobody
+@check kr260
+@file boards/kria-kr260/cadr_kr260.sv
+@note The serial line's interrupt left off the processing system's
+@note interrupt lines, its bit tied low: `cadr-serial` would wait for ever.
+@note Caught by lint, the interrupt read by nothing.
+@old
+        .irq0({5'b0, ser_irq, chaos_irq, pack_irq})
+@new
+        .irq0({6'b0, chaos_irq, pack_irq})
+@end
+
+@mutation kr260-main-memory-writes-zeros
+@check kr260
+@file boards/kria-kr260/cadr_kr260.sv
+@note `S_AXI_HP0_FPD` given zeros for the write data, so every word the
+@note machine stores reaches memory as zero.  Caught by lint, the widened
+@note write data read by nothing.
+@old
+        .hp0_wdata(hp0_wdata), .hp0_wstrb(hp0_wstrb),
+@new
+        .hp0_wdata(128'd0), .hp0_wstrb(hp0_wstrb),
 @end
 
 @mutation fault-de25-the-gate-acknowledges-before-a-request

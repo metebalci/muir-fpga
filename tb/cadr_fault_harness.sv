@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // A board's fault top level, simulated, for `tb/cadr_fault_tb.cpp`.  One of
-// `CADR_BOARD_ARTY`, `CADR_BOARD_CORA` or `CADR_BOARD_DE25` says which.  The
-// processing system is `tb/cadr_ps7_sim.sv` or `tb/cadr_de25_hps_sim.sv`, the
+// `CADR_BOARD_ARTY`, `CADR_BOARD_CORA`, `CADR_BOARD_KR260` or
+// `CADR_BOARD_DE25` says which.  The processing system is
+// `tb/cadr_ps7_sim.sv`, `tb/cadr_ps8_sim.sv` or `tb/cadr_de25_hps_sim.sv`, the
 // clock generators are the lint stubs, which pass the oscillator through, and
 // the top level is the board's own file unchanged.
 //
@@ -30,7 +31,10 @@ module cadr_fault_harness #(
     output var logic [63:0] tally,
     // The DE25-Nano's warm-reset acknowledgment, low when given; high on the
     // Zynq boards, which have none.
-    output var logic        warm_ack_n
+    output var logic        warm_ack_n,
+    // The Kria KR260's `fan_en_b`, high when the SOM's fan is stopped; low on
+    // the boards that have no fan pin.
+    output var logic        fan_stopped
 );
 
   /* verilator lint_off PINCONNECTEMPTY */
@@ -48,6 +52,7 @@ module cadr_fault_harness #(
   assign dark  = {led5_b, led5_g, led4_b, led4_g};
   assign tally = u_top.gpio_i;
   assign warm_ack_n = 1'b1;
+  assign fan_stopped = 1'b0;
 `elsif CADR_BOARD_CORA
   logic led0_r, led0_g, led0_b, led1_r, led1_g, led1_b;
   cadr_cora_fault #(.HALF_T(HALF_T)) u_top (
@@ -60,6 +65,18 @@ module cadr_fault_harness #(
   assign dark  = {led1_b, led1_g, led0_b, led0_g};
   assign tally = u_top.gpio_i;
   assign warm_ack_n = 1'b1;
+  assign fan_stopped = 1'b0;
+`elsif CADR_BOARD_KR260
+  logic uf1, uf2, fan_en_b;
+  cadr_kr260_fault #(.HALF_T(HALF_T)) u_top (
+      .clk25(clk), .uf1(uf1), .uf2(uf2), .fan_en_b(fan_en_b), .pmod1()
+  );
+  assign blink = {6'b000000, uf2, uf1};
+  assign dark  = 4'b0000;
+  // EMIO 31:0 and 63:32, banks 3 and 4, which the programs read.
+  assign tally = u_top.gpio_i[63:0];
+  assign warm_ack_n = 1'b1;
+  assign fan_stopped = fan_en_b;
 `elsif CADR_BOARD_DE25
   logic [7:0] led;
   // KEY1 up: the buttons read high while released.
@@ -82,6 +99,7 @@ module cadr_fault_harness #(
   assign dark  = 4'b0000;
   assign tally = {32'd0, u_top.gp_in};
   assign warm_ack_n = u_top.warm_ack_n;
+  assign fan_stopped = 1'b0;
 `endif
   /* verilator lint_on PINCONNECTEMPTY */
 

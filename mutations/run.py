@@ -1749,6 +1749,18 @@ CHECKS = {
                   "-DCADR_BOARD_DE25", "-DCADR_DE25_HPS_SIM", "-CFLAGS", "-DCADR_BOARD_DE25"],
         "golden": None,
     },
+    "fault_kr260": {
+        "sources": ["boards/kria-kr260/cadr_kr260_fault.sv",
+                    "rtl/plumbing/cadr_fault_lamp.sv"],
+        "extra": ["tb/cadr_sim_axi.sv", "tb/cadr_arty_stubs.sv", "tb/cadr_kr260_stubs.sv",
+                  "tb/cadr_ps8_sim.sv", "rtl/plumbing/cadr_gp0_default.sv",
+                  "tb/cadr_fault_harness.sv"],
+        "top": "cadr_fault_harness",
+        "tb": "tb/cadr_fault_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Wno-PINCONNECTEMPTY", "-Irtl/plumbing",
+                  "-DCADR_BOARD_KR260", "-CFLAGS", "-DCADR_BOARD_KR260"],
+        "golden": None,
+    },
     "arty": {
         "kind": "lint",
         "sources": ["boards/arty-z7-20/cadr_arty.sv"],
@@ -1760,6 +1772,47 @@ CHECKS = {
                   "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_memory_path.sv",
                   "rtl/machine/cadr_machine.sv"],
         "top": "cadr_arty",
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
+    # The Kria KR260's top level, linted in the three configurations
+    # `build/kr260.pass` lints, by `kr260_check`.  It is not the Arty's with
+    # other pins, as the Cora's is: the processing system is a `PS8` whose
+    # ports are 128 bits wide, met by modules of its own, so a record aimed at
+    # its wiring holds something `arty`'s records do not.
+    "kr260": {
+        "kind": "lint",
+        "sources": ["boards/kria-kr260/cadr_kr260.sv"],
+        "stubs": ["tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv",
+                  "tb/cadr_kr260_stubs.sv"],
+        "extra": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/quux_phase_gen.sv",
+                  "rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_ddr_map.sv",
+                  "rtl/machine/cadr_xbus_decode.sv", "rtl/machine/cadr_busint_xbus.sv",
+                  "rtl/plumbing/cadr_xbus_ddr.sv", "rtl/machine/cadr_spy_registers.sv",
+                  "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+                  "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+                  "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+                  "rtl/machine/cadr_dbgin.sv", "rtl/plumbing/cadr_bus_audit.sv",
+                  "rtl/machine/quux_rtc.sv", "rtl/machine/quux_file_device.sv",
+                  "rtl/machine/quux_feature_page.sv", "rtl/machine/quux_video.sv",
+                  "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_clocks.sv",
+                  "rtl/machine/quux_input.sv", "rtl/machine/quux_block_disk.sv",
+                  "rtl/machine/quux_cache.sv", "rtl/machine/quux_mem_port.sv",
+                  "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+                  "rtl/plumbing/cadr_lamp_errhalt.sv", "rtl/plumbing/cadr_lamp_microcycle.sv",
+                  "rtl/plumbing/cadr_dbg_tx.sv", "rtl/plumbing/cadr_dbg_rx.sv",
+                  "rtl/plumbing/cadr_dbg_join.sv", "rtl/plumbing/cadr_dbg_cable.sv"],
+        # The processing system and everything on its ports, which the two
+        # configurations with `DDR=1` elaborate.
+        "ddr": ["tb/cadr_ps8_stub.sv", "boards/kria-kr260/cadr_ps8.sv",
+                "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen128.sv",
+                "rtl/plumbing/cadr_axi_lanes128.sv", "rtl/plumbing/cadr_axi_burst128.sv",
+                "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_disk_pack.sv",
+                "rtl/plumbing/cadr_console.sv", "rtl/plumbing/cadr_gp0_default.sv",
+                "rtl/plumbing/quux_fd_face.sv"] + GP0 + [
+                "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_debug_window.sv"],
+        "top": "cadr_kr260",
         "tb": None,
         "flags": [],
         "golden": None,
@@ -3115,6 +3168,8 @@ def build_and_run(args, work, check, build_fails=False):
         return arty_check(args, work, build_fails)
     if check == "de25":
         return de25_check(args, work, build_fails)
+    if check == "kr260":
+        return kr260_check(args, work, build_fails)
 
     # MIT's TV sync PROM, placed for EVERY check rather than named check by
     # check.  `cadr_tv.sv` reads it at elaboration and its `SYNC_PROM_HEX`
@@ -3295,6 +3350,33 @@ def arty_check(args, work, build_fails=False):
         return BROKEN, "none of the board configurations could be linted"
     return SURVIVED, "lint passes on %d board configuration%s" % (
         ran, "" if ran == 1 else "s")
+
+
+def kr260_check(args, work, build_fails=False):
+    """The Kria KR260's top level, linted three times as `build/kr260.pass`
+    lints it: the bare machine, the board with the processing system, and
+    that board without the color TV's slot.  Lint failing is the mutation
+    being caught, judged by `lint_verdict` as for `arty`.  A copy older than
+    the board has none of its files and is BROKEN, not a survivor.
+    """
+    spec = CHECKS["kr260"]
+    for f in spec["sources"] + spec["stubs"]:
+        if not os.path.exists(os.path.join(work, f)):
+            return BROKEN, "%s is not in this copy" % f
+    base = [args.verilator, "--lint-only", "-Wall", "-DCADR_DDR_MAP_KR260",
+            "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+            "-Iboards/kria-kr260",
+            "-GPROM_HEX=\"%s\"" % os.path.join(args.goldens, "boot_prom.hex"),
+            "-GSYNC_PROM_HEX=\"%s\"" % os.path.join(args.goldens, "sync_prom.hex"),
+            "--top-module", spec["top"]]
+    boards = [([], []), (["-GDDR=1"], spec["ddr"]), (["-GDDR=1", "-GLMTV=0"], spec["ddr"])]
+    for generics, extra_sources in boards:
+        cmd = base + generics + spec["stubs"] + tick_pkg(work) + spec["extra"]
+        cmd += spec["sources"] + extra_sources
+        rc, out = run(cmd, work)
+        if rc != 0:
+            return lint_verdict(out, build_fails)
+    return SURVIVED, "lint passes on 3 board configurations"
 
 
 def script_check(args, work, spec):

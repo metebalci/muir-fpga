@@ -10,17 +10,32 @@ slack, the logic and block memory it takes, the commit it was built from, and
 whether that tree was clean. The commit and the tree's state are the ones the
 build stamp records (`tools/build_stamp.tcl`).
 
-The parts are the Arty Z7-20's `xc7z020clg400-1` and the Cora Z7-07S's
-`xc7z007sclg400-1`, fitted with Vivado 2026.1, and the DE25-Nano's
-`A5EB013BB23BE4SCS`, fitted with Quartus Prime Pro 26.1.1. Every fit has main
-memory in DDR (`DDR=1`). The Arty and DE25-Nano fits carry the display output
-(`HDMI=1`), the Cora's does not.
+The parts are the Arty Z7-20's `xc7z020clg400-1`, the Cora Z7-07S's
+`xc7z007sclg400-1` and the Kria KR260's `xck26-sfvc784-2LV-c`, fitted with
+Vivado 2026.1, and the DE25-Nano's `A5EB013BB23BE4SCS`, fitted with Quartus
+Prime Pro 26.1.1. Every fit has main memory in DDR (`DDR=1`). The Arty and
+DE25-Nano fits carry the display output (`HDMI=1`); the Cora's and the Kria
+KR260's do not.
 
 A Vivado fit's slack is the timing summary's WNS and WHS. A Quartus fit's is
-the worst over its four corners. Slices are what Vivado reports; Quartus
+the worst over its four corners. Slices are what Vivado reports, which on the
+Kria KR260's UltraScale+ part are CLBs of eight lookup tables each; Quartus
 reports none.
 
 ## From a clean tree
+
+This fit was built from `e7aaa18`, the Kria KR260's first top level, with
+muir pinned at `fc654c1`.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Kria KR260 | CADR | +2.848 ns | +0.014 ns | 14,014 of 117,120 LUTs, 11.97% | 38 of 144 BRAM tiles | 2,956 of 14,640 CLBs | `e7aaa18` | clean | 2026-10-01 |
+
+Its worst setup path is the machine's memory busy flag into the enable of
+the memory master's write data, 6.862 ns of the 10 ns tick; no UltraRAM is
+used. It also passed `boards/arty-z7-20/vivado/rams_enable_check.tcl` over
+82 block RAM ports, and the constraint check counted its 38 multicycle
+exceptions on its two clocks.
 
 This fit was built from `9695172`, the CADR as it was before its word's
 width became a parameter, and is what the fit of that change below is

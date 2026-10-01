@@ -489,16 +489,17 @@ empty. `README.TXT` at the root says which board the zip is for and what each
 part is, because a card in a Windows reader otherwise shows a folder named
 after a board and a 270 MB `.img` and explains nothing.
 
-**A release is three zips, one for each board.**
+**A release is four zips, one for each board.**
 
     cadr-arty-z7-20.zip     about 8.1 MB     12,500,992 B on the card
     cadr-cora-z7-07s.zip    about 8.1 MB     10,498,048 B on the card
     cadr-de25-nano.zip     about 21.9 MB     49,434,624 B on the card
+    cadr-kria-kr260.zip    about 21.2 MB     62,492,672 B on the card
 
 Each zip also carries its board's fault bitstream beside the fabric, and
-`make release` requires `FAULT_ARTY`, `FAULT_CORA` and `FAULT_DE25` beside
-the three bitstreams. The sizes above were measured before that file was
-added.
+`make release` requires `FAULT_ARTY`, `FAULT_CORA`, `FAULT_DE25` and
+`FAULT_KR260` beside the four bitstreams. The sizes of the first three were
+measured before that file was added; the Kria KR260's include it.
 
 The download is given to a tenth of a megabyte because it is not the same to
 the byte twice: a zip stores each file's own time, so two builds of the same
@@ -632,23 +633,25 @@ and the section above says what it costs.
 
 ## The release, and the card this project builds for itself
 
-**A release is three zips, one for each board, and one command makes all
-three.**
+**A release is four zips, one for each board, and one command makes all
+four.**
 
     make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
-                 FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>
+                 BIT_KR260=<a .bit> \
+                 FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf> \
+                 FAULT_KR260=<a .bit>
 
-**It is one target rather than three because three zips are three chances for
-one to be stale.** A release in which two boards were rebuilt and the third
-was not is exactly the sort of thing that ships, so every bitstream is
+**It is one target rather than four because four zips are four chances for
+one to be stale.** A release in which three boards were rebuilt and the
+fourth was not is exactly the sort of thing that ships, so every bitstream is
 required by name, a missing one stops the run before anything is built, and
-the three zips are printed together at the end with their sizes and digests,
+the four zips are printed together at the end with their sizes and digests,
 where a missing one is visible. The bitstreams are named on the command line
 because they are not in this repository: they are built by Vivado and by
 Quartus, which `make check` does not run.
 
 Each board's Buildroot output must exist first, which is `make buildroot`,
-`make buildroot-cora` and `make buildroot-de25`. One board on its own is
+`make buildroot-cora`, `make buildroot-de25` and `make buildroot-kr260`. One board on its own is
 
     BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 

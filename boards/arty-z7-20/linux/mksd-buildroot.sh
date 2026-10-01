@@ -186,6 +186,11 @@ BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 #                own that `cadr_fabric` runs only on the path that loads.  The
 #                checks below read the loader for the folder rule, and the
 #                folder rule holds wherever the fetch lives.
+# The README's board-specific sentences, as the Zynq-7000 boards and the
+# DE25-Nano have them; a board whose own differ sets them in its arm below.
+README_UENV_MAC=yes
+README_FAULT_LAMPS="IF EVERY LIGHT ON THE BOARD BLINKS TOGETHER, twice a second and red"
+README_FAULT_LAMPS2="on a color light, "
 case "$BOARD_NAME" in
   de25-nano)
     ROOT_FILES="u-boot.itb:u-boot.itb"
@@ -235,6 +240,11 @@ case "$BOARD_NAME" in
     DEBUG_WINDOW_US=0xB000_1000
     DEBUG_PORT="M_AXI_HPM1_FPD"
     REBUILD=buildroot-kr260-rebuild
+    # The README's two board-specific sentences: the SOM's EEPROM gives the
+    # MAC, so uEnv.txt never carries one, and the two lamps are single-color.
+    README_UENV_MAC=
+    README_FAULT_LAMPS="IF UF1 AND UF2 BLINK TOGETHER, twice a second,"
+    README_FAULT_LAMPS2=""
     ;;
   *)
     ROOT_FILES="boot.bin:BOOT.BIN u-boot.img:u-boot.img"
@@ -426,7 +436,7 @@ fi
 # reading the file cannot go wrong that way, and it makes a release image
 # depend on this script and on nothing on whoever's build host.
 SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
-NO_BLINKING_LEDS=; FABRIC_LOADED=; OZD_FILE_DATES=; OZD_TIMEZONE=
+NO_BLINKING_LEDS=; FABRIC_LOADED=; OZD_FILE_DATES=; OZD_TIMEZONE=; CHAOS_NAME=
 if [ -z "$STANDALONE" ] && [ -r "$BOARD_DIR/linux/local.conf" ]; then
   . "$BOARD_DIR/linux/local.conf"
 fi
@@ -473,7 +483,7 @@ fi
 if [ -n "$STANDALONE" ]; then
   SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
   NO_BLINKING_LEDS=; OZD_FILE_DATES=; OZD_TIMEZONE=
-  CHAOS_ADDR_FPGA=; CHAOS_ADDR_MUIR=; CHAOS_UDP_PORT=; CHAOS_UDP_PORT_MUIR=
+  CHAOS_ADDR_FPGA=; CHAOS_ADDR_MUIR=; CHAOS_UDP_PORT=; CHAOS_UDP_PORT_MUIR=; CHAOS_NAME=
   TERMINAL_ENDPOINT=; SERIAL_ENDPOINT=; KEYBOARD_BOOT=; MUIR_TERMINAL_PORT=
 fi
 if [ -n "${SERVERIP:-}" ]; then
@@ -781,8 +791,13 @@ stage_tree() {
   printf 'What is here\r\n'
   printf '  %-22s the loader, which this board reads by name.\r\n' "$ROOT_NAMES"
   printf "  %-22s read by the loader before anything else: a\r\n" uEnv.txt
-  printf "  %-22s TFTP server to fetch from, and this board's\r\n" ''
-  printf "  %-22s MAC.  A card out of the box has neither.\r\n" ''
+  if [ -n "$README_UENV_MAC" ]; then
+    printf "  %-22s TFTP server to fetch from, and this board's\r\n" ''
+    printf "  %-22s MAC.  A card out of the box has neither.\r\n" ''
+  else
+    printf "  %-22s TFTP server to fetch from.  A card out of the\r\n" ''
+    printf "  %-22s box has none.  The board's MAC is its own.\r\n" ''
+  fi
   printf "  %-22s this board's own files: the fabric, the\r\n" "$BOARD_NAME/"
   printf "  %-22s kernel, its device tree and its root\r\n" ''
   if [ -n "$NO_FAULT" ]; then
@@ -804,8 +819,8 @@ stage_tree() {
   printf '  %-22s its top what it is for.\r\n' ''
   printf '\r\n'
   if [ -z "$NO_FAULT" ]; then
-    printf 'IF EVERY LIGHT ON THE BOARD BLINKS TOGETHER, twice a second and red\r\n'
-    printf "on a color light, the machine's own fabric (%s/%s) could not be\r\n" "$BOARD_NAME" "$FABRIC"
+    printf '%s\r\n' "$README_FAULT_LAMPS"
+    printf "%sthe machine's own fabric (%s/%s) could not be\r\n" "$README_FAULT_LAMPS2" "$BOARD_NAME" "$FABRIC"
     printf 'loaded, and the fault bitstream beside it was loaded instead.  Linux\r\n'
     printf 'still runs and says so on its console.  Check that the file is on the\r\n'
     printf 'card, is whole, and is for this board.\r\n\r\n'
@@ -1171,8 +1186,9 @@ fi
   printf "# A machine in the host table it answers HOSTAB from, so that a band\r\n"
   printf "# whose own table does not know a name can still find it.\r\n"
   printf "# Repeatable, once a machine.  This board's own is the first one to\r\n"
-  printf "# put here, at the address the switches above are set to.\r\n"
-  printf -- "#--ozd-host %s,LISPM-1,system=LISPM\r\n" "$CHAOS_ADDR"
+  printf "# put here, at the address the switches above are set to, under the\r\n"
+  printf "# name the band's host table gives it%s.\r\n" "$([ -n "${CHAOS_NAME:-}" ] || echo " in place of NAME")"
+  printf -- "#--ozd-host %s,%s,system=LISPM\r\n" "$CHAOS_ADDR" "${CHAOS_NAME:-NAME}"
   printf "\r\n"
   printf "# A band's own host table file, whose hosts are answered for as well.\r\n"
   printf "# A site that already keeps that file writes each host once instead\r\n"

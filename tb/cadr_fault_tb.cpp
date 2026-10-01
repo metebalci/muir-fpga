@@ -6,9 +6,10 @@
 // **WHAT IT IS.**  The top level U-Boot loads when the CADR's bitstream could
 // not be loaded: no machine, every lamp blinking together, and the processor's
 // side of the board kept whole so that Linux runs on and can say what
-// happened.  `boards/*/cadr_*_fault.sv` are the three, and
+// happened.  `boards/*/cadr_*_fault.sv` are the four, and
 // `tb/cadr_fault_harness.sv` puts one of them between the processor of
-// `tb/cadr_ps7_sim.sv` or `tb/cadr_de25_hps_sim.sv` and this file.
+// `tb/cadr_ps7_sim.sv`, `tb/cadr_ps8_sim.sv` or `tb/cadr_de25_hps_sim.sv` and
+// this file.
 //
 // **WHAT IT HOLDS.**
 //
@@ -30,13 +31,17 @@
 //   processor.
 //
 //   THE TALLY.  What the programs read before anything else must be "FALT":
-//   both EMIO words on a Zynq board, and `h2f_gp_in` on the DE25-Nano
+//   both EMIO words on a Zynq board and on the Kria KR260, and `h2f_gp_in` on
+//   the DE25-Nano
 //   whichever half `h2f_gp_out[1]` selects.  That is what makes every program
 //   refuse this fabric and what the init scripts recognize.
 //
 //   NOTHING MASTERS MEMORY.  Every valid on every memory port is counted,
 //   and the count must be zero; and the ports must have been looked at, so a
 //   harness that never reached them is not taken for a quiet one.
+//
+//   ON THE KRIA KR260, THE FAN.  `fan_en_b` low on every tick: a fault
+//   bitstream that stopped the SOM's fan would be a fault of its own.
 //
 //   ON THE DE25-Nano, THE WARM-RESET HANDSHAKE.  Never acknowledged while no
 //   request stands, watched on every tick with the gate shut and open;
@@ -94,6 +99,24 @@ const std::vector<uint32_t> PORT0 = {0x0000'0000, 0x0000'1000, 0x0000'2000,
 const std::vector<uint32_t> PORT1 = {0x0000'0000, 0x0000'1000, 0x0000'2000,
                                      0x0076'5430, 0x1FFF'FFFC};
 const int MEM_PORTS[] = {4};
+#elif defined(CADR_BOARD_KR260)
+const char *BOARD = "Kria KR260";
+const bool DE25 = false;
+const int LAMPS = 2;
+const char *LAMP_NAME[8] = {"UF1", "UF2", "", "", "", "", "", ""};
+const char *DARK_NAME[4] = {"", "", "", ""};
+const int DARK = 0;
+const int ID_MASK = 0xFFFF;
+const int MAX_LEN = 255;
+// `M_AXI_HPM0_FPD` from 0xA000_0000 and `M_AXI_HPM1_FPD` from 0xB000_0000,
+// 256 MB each: the four faces' pages and the fifth, the console's and the
+// debug window's, and addresses between and beyond them, in every lane.
+const std::vector<uint32_t> PORT0 = {0xA000'0000, 0xA000'1000, 0xA000'2004,
+                                     0xA000'3008, 0xA000'400C, 0xA123'4560,
+                                     0xAFFF'FFFC};
+const std::vector<uint32_t> PORT1 = {0xB000'0000, 0xB000'1004, 0xB000'2008,
+                                     0xB765'432C, 0xBFFF'FFFC};
+const int MEM_PORTS[] = {0, 2};
 #else
 #if defined(CADR_BOARD_CORA)
 const char *BOARD = "Cora Z7-07S";
@@ -380,6 +403,8 @@ void watch_ack() {
     fail("the warm-reset acknowledgment is given with no request standing");
 }
 
+long fan_stopped = 0;
+
 void tick() {
   top->clk = 0;
   top->eval();
@@ -388,6 +413,7 @@ void tick() {
   ++now;
   watch_lamps();
   watch_ack();
+  if (top->fan_stopped && fan_stopped++ == 0) fail("fan_en_b is high: the SOM's fan is stopped");
 }
 
 void run(long n) {
