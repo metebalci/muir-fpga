@@ -117,9 +117,9 @@
 #error "cadr_board.h: two boards named; a program is built for one"
 #endif
 
-// The KR260's map is the outer #else at the end, so that the two older maps
-// keep the shape the checks that read this file as text look for: the
-// DE25-Nano's half first, ended by the Zynq boards' `#else`.
+// The KR260's map is the outer else branch at the end, so that the two older
+// maps keep the shape the checks that read this file as text look for: the
+// DE25-Nano's half first, ended by the Zynq boards' else branch.
 #if !defined(CADR_BOARD_KR260)
 
 #if defined(CADR_BOARD_DE25_NANO)

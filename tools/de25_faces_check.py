@@ -584,14 +584,47 @@ def board_addresses(text):
     The file holds one block per board, and the DE25-Nano's is the one under
     `#if defined(CADR_BOARD_DE25_NANO)`.  Taking the whole file would read the
     Zynq's numbers as well, and those are a different board's.
+
+    **ONLY PREPROCESSOR LINES COUNT.**  The block opens at the line that is
+    that directive and nothing else, and closes at the first `#else`, `#elif`
+    or `#endif` at its own depth, a nested `#if` counting one deeper.  A
+    directive is a line whose first non-blank character is `#`, so the same
+    words inside a comment, or a guard that merely mentions the board in a
+    longer condition, are not mistaken for the block's edges.
     """
-    start = text.index("#if defined(CADR_BOARD_DE25_NANO)")
-    end = text.index("#else", start)
+    lines = text.split("\n")
+    opener = re.compile(r"^\s*#\s*if\s+defined\s*\(\s*CADR_BOARD_DE25_NANO\s*\)\s*(//.*|/\*.*)?$")
+    start = None
+    for i, line in enumerate(lines):
+        if opener.match(line):
+            start = i
+            break
+    if start is None:
+        fail("%s has no `#if defined(CADR_BOARD_DE25_NANO)` line" % BOARD_H)
+    depth = 0
+    end = None
+    for i in range(start + 1, len(lines)):
+        m = re.match(r"^\s*#\s*(\w+)", lines[i])
+        if not m:
+            continue
+        word = m.group(1)
+        if word in ("if", "ifdef", "ifndef"):
+            depth += 1
+        elif word == "endif":
+            if depth == 0:
+                end = i
+                break
+            depth -= 1
+        elif word in ("else", "elif") and depth == 0:
+            end = i
+            break
+    if end is None:
+        fail("%s: the DE25-Nano's block is never closed" % BOARD_H)
     out = {}
-    for name, hexdigits in re.findall(
-            r"#define\s+CADR_BOARD_(\w+)_HEX\s+([0-9A-Fa-f]+)",
-            text[start:end]):
-        out[name] = int(hexdigits, 16)
+    for line in lines[start + 1:end]:
+        m = re.match(r"^\s*#\s*define\s+CADR_BOARD_(\w+)_HEX\s+([0-9A-Fa-f]+)\b", line)
+        if m:
+            out[m.group(1)] = int(m.group(2), 16)
     return out
 
 
