@@ -25740,3 +25740,111 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @new
       .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE ^ 32'h0010_0000)
 @end
+
+@mutation kr260-boot-the-fabric-before-the-kernel
+@check kr260_boot
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd
+@note The card path loads the fabric first, as the Arty Z7-20's does.  The
+@note machine then runs while U-Boot loads three files, with a loader whose
+@note tree knows nothing of the machine's region.
+@note
+@note Caught at "cadr_card does not end in `run cadr_fabric_card && run
+@note cadr_booti`".
+@old
+setenv cadr_card 'load ${cadr_devtype} ${cadr_devpart} ${cadr_fdt_addr} kria-kr260/zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb && load ${cadr_devtype} ${cadr_devpart} ${cadr_kernel_addr} kria-kr260/Image && load ${cadr_devtype} ${cadr_devpart} ${cadr_ramdisk_addr} kria-kr260/rootfs.cpio.uboot && run cadr_fabric_card && run cadr_booti'
+@new
+setenv cadr_card 'run cadr_fabric_card && load ${cadr_devtype} ${cadr_devpart} ${cadr_fdt_addr} kria-kr260/zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb && load ${cadr_devtype} ${cadr_devpart} ${cadr_kernel_addr} kria-kr260/Image && load ${cadr_devtype} ${cadr_devpart} ${cadr_ramdisk_addr} kria-kr260/rootfs.cpio.uboot && run cadr_booti'
+@end
+
+@mutation kr260-boot-the-served-path-loads-the-fabric-first
+@check kr260_boot
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/uEnv.net
+@note The same order on the network path, in the served file.
+@note
+@note Caught at "uEnv.net's netcmd does not end in `run cadr_fabric_net &&
+@note run cadr_booti`".
+@old
+netcmd=tftpboot ${cadr_fdt_addr} kria-kr260/zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb && tftpboot ${cadr_kernel_addr} kria-kr260/Image && tftpboot ${cadr_ramdisk_addr} kria-kr260/rootfs.cpio.uboot && run cadr_fabric_net && run cadr_booti
+@new
+netcmd=run cadr_fabric_net && tftpboot ${cadr_fdt_addr} kria-kr260/zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb && tftpboot ${cadr_kernel_addr} kria-kr260/Image && tftpboot ${cadr_ramdisk_addr} kria-kr260/rootfs.cpio.uboot && run cadr_booti
+@end
+
+@mutation kr260-boot-the-tree-is-loaded-into-the-machine
+@check kr260_boot
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd
+@note The tree loaded at the CADR's main memory, which the fabric starts
+@note writing about 80 ms after its load.
+@note
+@note Caught at "cadr_fdt_addr=0x60000000 is at or above 0x5a000000".
+@old
+setenv cadr_fdt_addr 0x40000000
+@new
+setenv cadr_fdt_addr 0x60000000
+@end
+
+@mutation kr260-boot-the-ramdisk-on-the-real-time-cores-memory
+@check kr260_boot
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd
+@note The ramdisk loaded over the SOM tree's reservation for the real-time
+@note cores, which Linux then refuses as an initrd overlapping reserved
+@note memory.
+@note
+@note Caught at "cadr_ramdisk_addr=0x3ed00000 is inside".
+@old
+setenv cadr_ramdisk_addr 0x30000000
+@new
+setenv cadr_ramdisk_addr 0x3ED00000
+@end
+
+@mutation kr260-boot-booti-moves-the-tree
+@check kr260_boot
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd
+@note The factory environment's own fdt_high left in force: booti places
+@note the tree where it likes.
+@note
+@note Caught at "fdt_high is '0x10000000'".
+@old
+setenv fdt_high 0xffffffffffffffff
+@new
+setenv fdt_high 0x10000000
+@end
+
+@mutation kr260-boot-one-attempt-then-the-distro-scan
+@check kr260_boot
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd
+@note One attempt and no loop: a failure returns to the factory's distro
+@note scan, whose next targets are PXE and DHCP.
+@note
+@note Caught at "cadr_boot is not the loop".
+@old
+setenv cadr_boot 'while true; do run cadr_try; echo "cadr: the boot did not happen; trying again in 10 s"; sleep 10; done'
+@new
+setenv cadr_boot 'run cadr_try; echo "cadr: the boot did not happen; trying again in 10 s"'
+@end
+
+@mutation kr260-boot-no-fault-bitstream
+@check kr260_boot
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd
+@note A CADR bitstream that will not load is only reported, and the board
+@note boots with an empty fabric instead of the fault bitstream.
+@note
+@note Caught at "cadr_fabric_card does not load kria-kr260/cadr.bit and fall
+@note back to cadr_fault_card".
+@old
+setenv cadr_fabric_card 'if load ${cadr_devtype} ${cadr_devpart} ${cadr_bit_addr} kria-kr260/cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize}; then echo "cadr: the CADR bitstream is loaded"; else run cadr_fault_card; fi'
+@new
+setenv cadr_fabric_card 'if load ${cadr_devtype} ${cadr_devpart} ${cadr_bit_addr} kria-kr260/cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize}; then echo "cadr: the CADR bitstream is loaded"; else echo "cadr: no fabric"; fi'
+@end
+
+@mutation kr260-boot-the-loader-s-environment-is-saved
+@check kr260_boot
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd
+@note A saveenv on the way to the kernel: the factory U-Boot's environment
+@note written with this project's settings in it.
+@note
+@note Caught at "'saveenv' appears in the boot files".
+@old
+setenv cadr_booti 'setenv bootargs ${cadr_bootargs} && booti ${cadr_kernel_addr} ${cadr_ramdisk_addr} ${cadr_fdt_addr}'
+@new
+setenv cadr_booti 'setenv bootargs ${cadr_bootargs} && saveenv && booti ${cadr_kernel_addr} ${cadr_ramdisk_addr} ${cadr_fdt_addr}'
+@end

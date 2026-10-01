@@ -1975,6 +1975,22 @@ CHECKS = {
     # that does not.  The rest of that check compiles C, which is the
     # packages' own mutation lists' to hold; this entry is the step that reads
     # U-Boot's environment.  Refusing is being caught.
+    # The Kria KR260's boot script, as the `boot` step of
+    # `build/kr260_linux.pass` reads it: the loop, the order (the fabric last,
+    # before booti), the fault fallback, the load addresses below the
+    # machines' regions, and nothing that writes the flash or the loader's
+    # environment.  Refusing is being caught.
+    "kr260_boot": {
+        "kind": "script",
+        "sources": ["boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd",
+                    "boards/kria-kr260/linux/buildroot/board/kria-kr260/uEnv.net"],
+        "cmd": ["boards/kria-kr260/linux/buildroot_check.py", "boot",
+                "boards/kria-kr260/linux/buildroot"],
+        "top": None,
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     "de25_boot": {
         "kind": "script",
         "sources": ["boards/de25-nano/linux/buildroot/board/de25-nano/uboot/cadr_de25.env"],
@@ -3562,7 +3578,7 @@ def check_makefile():
     known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora",
-                           "de25_pins", "de25_linux"}
+                           "de25_pins", "de25_linux", "kr260_linux"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four

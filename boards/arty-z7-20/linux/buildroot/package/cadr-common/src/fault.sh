@@ -43,6 +43,7 @@ cadr_fault_tally() {
 	case "$CADR_FAULT_BOARD" in
 	zynq-7000) echo "0xE000A068 0xE000A06C" ;;
 	de25-nano) echo "0x10D120E8" ;;
+	kria-kr260) echo "0xFF0A006C 0xFF0A0070" ;;
 	*) return 1 ;;
 	esac
 }

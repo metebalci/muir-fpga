@@ -100,6 +100,10 @@
 PROG=/usr/bin/cadr-disk-packs
 CARD_DEV=/dev/mmcblk0p1
 OLD_CARD_DEV=/dev/mmcblk0p2
+# A board whose card is not the processor's first SD device says where it is:
+# the Kria KR260's is a USB disk, found by its label (its image's
+# /etc/cadr/card.sh).
+[ -r /etc/cadr/card.sh ] && . /etc/cadr/card.sh
 CARD=/mnt/card
 PIDFILE=/var/run/cadr-disk-packs.pid
 # The drive bay, which is the one thing about the card that is not the same on

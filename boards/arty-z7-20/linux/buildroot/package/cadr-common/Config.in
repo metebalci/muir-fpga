@@ -41,5 +41,8 @@ config BR2_CADR_BOARD_ZYNQ7000
 config BR2_CADR_BOARD_DE25_NANO
 	bool "Agilex 5: the DE25-Nano"
 
+config BR2_CADR_BOARD_KR260
+	bool "Zynq UltraScale+: the Kria KR260"
+
 endchoice
 endif

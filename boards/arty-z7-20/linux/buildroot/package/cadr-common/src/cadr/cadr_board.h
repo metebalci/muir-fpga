@@ -76,15 +76,31 @@
 // of them a read sees, so a program needs no `--no-guard` on this board any
 // more than on a Zynq one.
 //
-// HOW THE CHOICE ARRIVES.  One define, `CADR_BOARD_DE25_NANO`, and no define
-// is a Zynq-7000 board.  Under Buildroot the board's defconfig names its map
-// (`BR2_CADR_BOARD_*`, package/cadr-common/Config.in); cadr-common's own
+// THE KR260's NUMBERS (the AMD Kria KR260, a Zynq UltraScale+ part).  The
+// faces are behind M_AXI_HPM0_FPD, whose window is 0xA000_0000 for 256 MB
+// when the video codec is not mapped, and the console and the debug window
+// behind M_AXI_HPM1_FPD at 0xB000_0000 (UG1085, table 10-1); the faces keep
+// their Zynq offsets in the first.  The machine's 128 MB is at 0x6000_0000 in
+// the low 2 GB, clear of every address the factory U-Boot uses, which loads
+// below it and relocates itself above 0x7B80_0000 (`bdinfo` on the board),
+// and QUUX revision 13's packed 160 MiB sit directly below its display at
+// 0x5A00_0000, as on the Arty.  The tally is two words on EMIO, as on a
+// Zynq-7000 board: banks 3 and 4 of the GPIO block at 0xFF0A_0000, read
+// through DATA_3_RO and DATA_4_RO (UG1087; banks 0 to 2 are the MIO's).
+// The board's top level is to drive the tally there; the card's reservation
+// is `boards/kria-kr260/linux/cadr-reserved.dtsi`.
+//
+// HOW THE CHOICE ARRIVES.  One define, `CADR_BOARD_DE25_NANO` or
+// `CADR_BOARD_KR260`, and no define is a Zynq-7000 board.  Under Buildroot
+// the board's defconfig names its map (`BR2_CADR_BOARD_*`,
+// package/cadr-common/Config.in); cadr-common's own
 // build compiles the library with the define and the copy of this header it
 // stages begins with it, so every program that includes it from the staging
 // tree is built for that board with no flag of its own.  The host checks
 // include this file from the source tree, with no define, and so build the
 // Zynq map their models were written against; `make check` also compiles
-// every program for the DE25-Nano (`de25_linux.pass`).
+// every program for the DE25-Nano (`de25_linux.pass`) and for the KR260
+// (`kr260_linux.pass`).
 //
 // EACH ADDRESS IS WRITTEN ONCE, AS HEX DIGITS, and becomes both the number a
 // program maps and the string its `--help` prints, so the two cannot part
@@ -97,6 +113,14 @@
 #if defined(CADR_BOARD_DE25_NANO) && defined(CADR_BOARD_ZYNQ7000)
 #error "cadr_board.h: two boards named; a program is built for one"
 #endif
+#if defined(CADR_BOARD_KR260) && (defined(CADR_BOARD_DE25_NANO) || defined(CADR_BOARD_ZYNQ7000))
+#error "cadr_board.h: two boards named; a program is built for one"
+#endif
+
+// The KR260's map is the outer #else at the end, so that the two older maps
+// keep the shape the checks that read this file as text look for: the
+// DE25-Nano's half first, ended by the Zynq boards' `#else`.
+#if !defined(CADR_BOARD_KR260)
 
 #if defined(CADR_BOARD_DE25_NANO)
 
@@ -159,6 +183,38 @@
 #define CADR_BOARD_TALLY_OFF1    0x6Cu
 
 #endif
+
+#else  // CADR_BOARD_KR260: the AMD Kria KR260 (Zynq UltraScale+)
+
+#define CADR_BOARD_NAME          "kria-kr260"
+#define CADR_BOARD_FACES_PORT    "M_AXI_HPM0_FPD"
+#define CADR_BOARD_CONSOLE_PORT  "M_AXI_HPM1_FPD"
+#define CADR_BOARD_MEMORY_PORT   "S_AXI_HP0_FPD"
+#define CADR_BOARD_MEMORY_OPENED "one whose load did not release the fabric's isolation"
+#define CADR_BOARD_PACK_PORT     "HP2"
+#define CADR_BOARD_TALLY         "the EMIO tally"
+
+#define CADR_BOARD_PACK_HEX      A0000000
+#define CADR_BOARD_CHAOS_HEX     A0001000
+#define CADR_BOARD_SERIAL_HEX    A0002000
+#define CADR_BOARD_INPUT_HEX     A0003000
+#define CADR_BOARD_FD_HEX        A0004000
+#define CADR_BOARD_CONSOLE_HEX   B0000000
+#define CADR_BOARD_RESERVED_HEX  60000000
+#define CADR_BOARD_MAIN_HEX      60000000
+#define CADR_BOARD_DISPLAY_HEX   64000000
+#define CADR_BOARD_COLOR_HEX     64020000
+#define CADR_BOARD_SPARE_HEX     64800000
+#define CADR_BOARD_QUUX13_MAIN_HEX 5A000000
+#define CADR_BOARD_QUUX13_MAIN_WORDS_MAX (32u * 1024u * 1024u)
+
+// The tally: the GPIO block's DATA_3_RO and DATA_4_RO, EMIO banks 3 and 4.
+#define CADR_BOARD_TALLY_PAGE    0xFF0A0000u
+#define CADR_BOARD_TALLY_WORDS   2u
+#define CADR_BOARD_TALLY_OFF0    0x6Cu
+#define CADR_BOARD_TALLY_OFF1    0x70u
+
+#endif  // CADR_BOARD_KR260
 
 // Hex digits into a number and into a string.  Two levels, so that the
 // argument is expanded before it is pasted or quoted.

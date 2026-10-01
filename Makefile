@@ -161,7 +161,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
        $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass $(BUILD)/reserved.pass \
-       $(BUILD)/de25_linux.pass $(BUILD)/rootfs_packages.pass \
+       $(BUILD)/de25_linux.pass $(BUILD)/kr260_linux.pass $(BUILD)/rootfs_packages.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.pass) \
        muir-pin current
@@ -4956,6 +4956,82 @@ buildroot-de25-rebuild: buildroot-de25-check
 	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_DE25) $(BR_OUT_DE25) $(BR_OUT_DE25)/images/rootfs.cpio.uboot
 	@echo "buildroot-de25: images in $(BR_OUT_DE25)/images:"
 	@ls -l $(BR_OUT_DE25)/images/ | grep -v '^total'
+
+# ------------------------------------------------ the Kria KR260's image
+#
+# The same Buildroot and the same packages, for aarch64, with mainline Linux
+# and mainline's KR260 tree.  `boards/kria-kr260/linux/buildroot/configs/
+# kria_kr260_defconfig` says what it is and why; like the other boards' it is
+# built from both external trees and into an output directory of its own.
+# There is no loader in it: the board boots from the factory U-Boot in its
+# QSPI flash, which runs the image's boot.scr from the card.
+#
+# **CHECKS OF ITS OWN, BEFORE AND AFTER**, the DE25-Nano's shape.  Before: the
+# card's boot script, read as text (`buildroot_check.py boot`).  After: every
+# line of the defconfig and of the kernel's fragment holds in the .config it
+# was built with, and the programs in the image say this board's addresses.
+# Then the image against its target tree, as on every board.  post-image.sh
+# reads the CADR's tree back out of the blob it made.
+BR_EXTERNAL_KR260 := $(BR_EXTERNAL):$(abspath boards/kria-kr260/linux/buildroot)
+BR_OUT_KR260 := $(BR_WORK)/out-kr260
+BR_KR260_CHECK := boards/kria-kr260/linux/buildroot_check.py
+
+.PHONY: buildroot-kr260 buildroot-kr260-check buildroot-kr260-rebuild
+
+# **AND WHAT OF IT `make check` CAN HOLD WITH NO BUILDROOT AT ALL**: the boot
+# script, and every program compiled on the build host with the KR260's
+# address map, warnings as errors, and asked for that board's addresses and
+# ports in its own words, as `de25_linux.pass` does for the DE25-Nano.  This
+# is the only place the KR260's half of `cadr/cadr_board.h` is compiled before
+# a board build.
+KR260_LINUX_WORK := $(HOME)/.cache/muir-fpga-kr260-linux-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
+$(BUILD)/kr260_linux.pass: $(BR_KR260_CHECK) \
+                           boards/kria-kr260/linux/buildroot/configs/kria_kr260_defconfig \
+                           boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd \
+                           boards/kria-kr260/linux/buildroot/board/kria-kr260/uEnv.net \
+                           $(wildcard $(BR_EXTERNAL)/package/*/src/*.c) \
+                           $(wildcard $(BR_EXTERNAL)/package/*/src/*.h) \
+                           $(wildcard $(BR_EXTERNAL)/package/*/src/Makefile) \
+                           $(wildcard $(BR_EXTERNAL)/package/*/src/cadr/*.h) | $(BUILD)
+	@python3 $(BR_KR260_CHECK) boot boards/kria-kr260/linux/buildroot
+	@rm -rf $(KR260_LINUX_WORK) && mkdir -p $(KR260_LINUX_WORK)/bin
+	@cp -a $(BR_EXTERNAL)/package $(KR260_LINUX_WORK)/package
+	@set -e; for p in $(DE25_LINUX_PROGRAMS); do \
+	    MAKEFLAGS= $(BR_MAKE) -s -C $(KR260_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host DISK=host \
+	        CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -DCADR_BOARD_KR260"; \
+	    cp $(KR260_LINUX_WORK)/package/$$p/src/$$p $(KR260_LINUX_WORK)/bin/; \
+	done
+	@python3 $(BR_KR260_CHECK) programs boards/kria-kr260/linux/buildroot $(KR260_LINUX_WORK)/bin
+	@rm -rf $(KR260_LINUX_WORK)
+	@touch $@
+
+buildroot-kr260-check: buildroot-packages-check
+	@python3 $(BR_KR260_CHECK) boot boards/kria-kr260/linux/buildroot
+
+buildroot-kr260: buildroot-kr260-check
+	@test -f $(BR_TARBALL) || { \
+	    echo "no Buildroot at $(BR_TARBALL); fetch it with"; \
+	    echo "  curl -o $(BR_TARBALL) $(BR_URL)"; exit 1; }
+	@echo "$(BR_SHA)  $(BR_TARBALL)" | sha256sum -c --quiet - \
+	    || { echo "$(BR_TARBALL) is not the Buildroot this image was built with"; exit 1; }
+	@mkdir -p $(BR_WORK)/bin vendor/buildroot-dl
+	@for f in /usr/bin/gnu*; do [ -x "$$f" ] && ln -sf "$$f" "$(BR_WORK)/bin/$${f#/usr/bin/gnu}"; done; true
+	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_KR260) BR2_EXTERNAL=$(BR_EXTERNAL_KR260) kria_kr260_defconfig
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_KR260)
+	@python3 $(BR_KR260_CHECK) configs boards/kria-kr260/linux/buildroot $(BR_OUT_KR260)
+	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_KR260) $(BR_OUT_KR260) $(BR_OUT_KR260)/images/rootfs.cpio.uboot
+	@echo "buildroot-kr260: images in $(BR_OUT_KR260)/images:"
+	@ls -l $(BR_OUT_KR260)/images/ | grep -v '^total'
+
+buildroot-kr260-rebuild: buildroot-kr260-check
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_KR260) BR2_EXTERNAL=$(BR_EXTERNAL_KR260) kria_kr260_defconfig
+	$(call BR_FORCE,$(BR_OUT_KR260))
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_KR260)
+	@python3 $(BR_KR260_CHECK) configs boards/kria-kr260/linux/buildroot $(BR_OUT_KR260)
+	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_KR260) $(BR_OUT_KR260) $(BR_OUT_KR260)/images/rootfs.cpio.uboot
+	@echo "buildroot-kr260: images in $(BR_OUT_KR260)/images:"
+	@ls -l $(BR_OUT_KR260)/images/ | grep -v '^total'
 
 # ------------------------------------------------------------ the release
 #

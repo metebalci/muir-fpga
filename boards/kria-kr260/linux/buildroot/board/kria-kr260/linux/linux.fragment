@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The kernel for the Kria KR260's processing system: mainline Linux, the
+# version the Arty Z7-20 runs, with mainline's arm64 `defconfig` and this
+# over it.  Buildroot's own KR260 configuration builds AMD's linux-xlnx and
+# writes the QSPI flash, so it is a reference here and not a base.
+#
+# **EVERY LINE BELOW IS ASSERTED AGAINST THE KERNEL'S OWN .config** by
+# `make buildroot-kr260`, because Kconfig drops a line whose dependencies are
+# not met without a word, and a line here that did not hold would read as a
+# driver the board has.  Many of them only say again what `defconfig` already
+# gives; they are here so that the list of what this board needs is written
+# down in one place and checked.
+#
+# **BUILT IN, EVERY ONE.**  `defconfig` builds several hundred drivers as
+# modules and this image carries none of them (board/kria-kr260/post-build.sh),
+# so a driver the board needs must be `y`.  What the board needs, from
+# mainline's trees for the SOM and the carrier (arch/arm64/boot/dts/xilinx/
+# zynqmp-sm-k26-revA.dts, zynqmp-sck-kr-g-revB.dtso and zynqmp.dtsi):
+#
+#   the platform     the ZynqMP firmware interface to the PMU firmware and
+#                    TF-A, through which every clock, reset, power domain and
+#                    pin of the processing system is asked for; the clock,
+#                    pin and reset drivers that ask
+#   the console      UART 1 on MIO 36 and 37, `cdns,uart-r1p12`, ttyPS1
+#   the card         a USB mass-storage reader on USB0's USB 2.0 hub, so the
+#                    whole USB host path below, SCSI disks and FAT with the
+#                    code pages a FAT volume names
+#   USB              both DWC3 controllers in host mode behind the Xilinx
+#                    glue, the PS-GTR lanes their USB 3.0 side uses, and the
+#                    carrier's Microchip USB5744 hubs, which are held in reset
+#                    by an I2C reset chip (SLG7XL45106, driven by the PCA9570
+#                    driver) behind a PCA9546 I2C switch on I2C 1, and set up
+#                    over I2C by the onboard-USB-device driver; HID over USB
+#                    and evdev, so a keyboard and a mouse are
+#                    /dev/input/event* for cadr-usb-input
+#   the network      GEM1 on the J10C jack, `cdns,zynqmp-gem`, with a TI
+#                    DP83867 PHY whose reset is on the same I2C reset chip
+#
+# /dev/mem IS UNRESTRICTED, for the Zynq boards' reason: it is how every
+# program here reaches the fabric and the CADR's memory.  The fabric's ports
+# (the HPM windows at 0xA000_0000 and 0xB000_0000) and the reserved region are
+# not "System RAM", so arm64 maps them as device memory.
+#
+# NOTHING HERE TOUCHES THE FABRIC.  The FPGA manager stays a module and is
+# not on the image: the card's boot script loads the fabric with U-Boot before
+# the kernel starts, and Linux must not reload it.
+
+CONFIG_LOCALVERSION="-cadr"
+CONFIG_DEBUG_INFO_NONE=y
+CONFIG_DEVMEM=y
+# CONFIG_STRICT_DEVMEM is not set
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_ARCH_ZYNQMP=y
+CONFIG_ZYNQMP_FIRMWARE=y
+CONFIG_COMMON_CLK_ZYNQMP=y
+CONFIG_PINCTRL_ZYNQMP=y
+CONFIG_RESET_ZYNQMP=y
+CONFIG_ZYNQMP_POWER=y
+CONFIG_SERIAL_XILINX_PS_UART=y
+CONFIG_SERIAL_XILINX_PS_UART_CONSOLE=y
+CONFIG_GPIO_ZYNQ=y
+CONFIG_GPIO_PCA9570=y
+CONFIG_I2C=y
+CONFIG_I2C_CADENCE=y
+CONFIG_I2C_MUX=y
+CONFIG_I2C_MUX_PCA954x=y
+CONFIG_PHY_XILINX_ZYNQMP=y
+CONFIG_USB=y
+CONFIG_USB_ANNOUNCE_NEW_DEVICES=y
+CONFIG_USB_XHCI_HCD=y
+CONFIG_USB_XHCI_PLATFORM=y
+CONFIG_USB_DWC3=y
+CONFIG_USB_DWC3_XILINX=y
+CONFIG_USB_ONBOARD_DEV=y
+# **THE HUBS RUN AS THE FACTORY U-BOOT LEAVES THEM**, and that is measured,
+# not assumed.  The two hubs of a pair share one reset line on the I2C reset
+# chip, and Linux reaches a line two devices share through gpiolib's
+# shared-GPIO proxy.  Without the proxy the onboard-USB-device driver defers
+# for ever ("cannot find GPIO chip gpiolib_shared.proxy.10, deferring") and
+# never touches the hubs, which stay out of reset and set up as U-Boot's
+# `usb start` left them: the card, the keyboard and the mouse all enumerate.
+# WITH the proxy built in, measured on the board with this kernel, the proxy
+# drives both hub resets LOW and the driver still defers ("deferred probe
+# pending: (reason unknown)"), so the hubs stay in reset and no USB device
+# appears at all: no card and no keyboard.  So the proxy is left out.  The
+# factory U-Boot always starts USB before it reads the card, because the card
+# is a USB disk to it.
+# CONFIG_GPIO_SHARED_PROXY is not set
+CONFIG_USB_STORAGE=y
+CONFIG_SCSI=y
+CONFIG_BLK_DEV_SD=y
+CONFIG_VFAT_FS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_INPUT=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_HID=y
+CONFIG_HID_GENERIC=y
+CONFIG_USB_HID=y
+CONFIG_NET_VENDOR_CADENCE=y
+CONFIG_MACB=y
+CONFIG_DP83867_PHY=y

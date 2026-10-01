@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The card's optional file.  THIS IS A TEMPLATE, the other boards' in every
+# line but one: boards/arty-z7-20/linux/mksd-buildroot.sh, run with
+# BOARD_DIR=boards/kria-kr260, writes uEnv.txt from it, filling the serverip
+# line below from SERVERIP in boards/kria-kr260/linux/local.conf ---
+# gitignored, because a machine's address on a private network is not part
+# of the project --- and dropping the line when local.conf does not set it.
+#
+# WHAT IT DECIDES.  The card's boot.scr boots from the card by default: the
+# tree, Image, the root filesystem and cadr.bit out of the kria-kr260/ folder
+# on the FAT partition, no network needed.  If this file sets `serverip`, it
+# takes the network path instead: `dhcp`, fetch kria-kr260/uEnv.net from
+# that server, and run the netcmd it defines, which fetches the same four
+# files over TFTP from /srv/tftp/kria-kr260.  This file stays at the root of
+# the partition beside boot.scr.
+#
+# **NO `ethaddr` LINE, WHICH IS THE ONE DIFFERENCE.**  This board's MACs are
+# its own: the factory U-Boot reads them from the module's EEPROM into
+# `ethaddr` and `eth1addr`, and hands `eth1addr` to the J10C port, GEM1, the
+# one this project uses.  A card that set `ethaddr` would move GEM0's address
+# and nothing else.  So ETHADDR in local.conf does nothing on this board.
+serverip=@SERVERIP@
+
+# 1468 rather than the 512-byte default (RFC 2348).  Harmless on the card path.
+tftpblocksize=1468

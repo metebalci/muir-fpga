@@ -40,6 +40,7 @@ CFLAGS += -Wall -Wextra -std=gnu11 -I.
 CADR_BOARD ?= zynq-7000
 BOARD_DEFINE_zynq-7000 := CADR_BOARD_ZYNQ7000
 BOARD_DEFINE_de25-nano := CADR_BOARD_DE25_NANO
+BOARD_DEFINE_kria-kr260 := CADR_BOARD_KR260
 BOARD_DEFINE := $(BOARD_DEFINE_$(CADR_BOARD))
 ifeq ($(BOARD_DEFINE),)
 $(error CADR_BOARD=$(CADR_BOARD) names no board cadr/cadr_board.h has a map for)

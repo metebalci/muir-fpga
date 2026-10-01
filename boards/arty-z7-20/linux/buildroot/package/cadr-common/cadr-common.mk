@@ -62,6 +62,8 @@ CADR_COMMON_INSTALL_TARGET = YES
 # src/Makefile says how the header carries it.
 ifeq ($(BR2_CADR_BOARD_DE25_NANO),y)
 CADR_COMMON_BOARD = de25-nano
+else ifeq ($(BR2_CADR_BOARD_KR260),y)
+CADR_COMMON_BOARD = kria-kr260
 else
 CADR_COMMON_BOARD = zynq-7000
 endif

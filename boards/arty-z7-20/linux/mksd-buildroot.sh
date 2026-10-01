@@ -210,6 +210,32 @@ case "$BOARD_NAME" in
     DEBUG_PORT="the lightweight HPS-to-FPGA bridge"
     REBUILD=buildroot-de25-rebuild
     ;;
+  kria-kr260)
+    # The factory U-Boot in the QSPI flash runs boot.scr from the card, and
+    # boot.scr carries this project's whole environment as setenv lines
+    # (boards/kria-kr260/linux/buildroot/board/kria-kr260/boot.cmd).
+    ROOT_FILES="boot.scr:boot.scr"
+    FABRIC=cadr.bit
+    FABRIC_KIND=bit
+    FABRIC_FETCH=cadr_fabric_card
+    FABRIC_FETCH_FORM='if load ${cadr_devtype} ${cadr_devpart}'
+    FABRIC_FETCH_NET=
+    FAULT=fault.bit
+    FAULT_FETCH=cadr_fault_card
+    FAULT_FETCH_NET=
+    KERNEL=Image
+    LAST_STEP=cadr_booti
+    DTS_DIR=dts/xilinx
+    RESERVED=cadr@60000000
+    PL_NODE=amba_pl
+    DISPLAY_WINDOW=0x64000000
+    COLOR_WINDOW=0x64020000
+    CONSOLE_WINDOW_US=0xB000_0000
+    DEBUG_WINDOW=0xB0001000
+    DEBUG_WINDOW_US=0xB000_1000
+    DEBUG_PORT="M_AXI_HPM1_FPD"
+    REBUILD=buildroot-kr260-rebuild
+    ;;
   *)
     ROOT_FILES="boot.bin:BOOT.BIN u-boot.img:u-boot.img"
     FABRIC=cadr.bit
@@ -235,8 +261,23 @@ case "$BOARD_NAME" in
     ;;
 esac
 # The FIT the first-stage loader reads, which carries U-Boot and its
-# environment: the last of the root's files.
+# environment: the last of the root's files.  On the Kria KR260 it is boot.scr,
+# a script image, and the environment is in it as setenv lines.
 LOADER=${ROOT_FILES##*:}
+# The loader's environment as NAME=VALUE lines, which every check of it below
+# reads: the strings of the FIT, or boot.scr's `setenv NAME 'VALUE'` lines
+# rewritten into that form.  boot.scr's last line, `run cadr_boot`, is what
+# the loader runs when it sources the script, the part `bootcmd` plays in the
+# other loaders, so it is said as that.
+loader_env() {
+  case "$LOADER" in
+    *.scr)
+      strings "$OUT/card/$LOADER" | sed -n "s/^setenv \([A-Za-z0-9_]*\) '\(.*\)'\$/\1=\2/p"
+      [ "$(strings "$OUT/card/$LOADER" | grep -v '^#' | grep . | tail -1)" != "run cadr_boot" ] \
+        || echo "bootcmd=run cadr_boot" ;;
+    *) strings "$OUT/card/$LOADER" ;;
+  esac
+}
 # **A CARD CARRIES ONE MACHINE, AND ITS TREES GO WITH ITS BITSTREAM.**  The
 # CADR's and QUUX revision 12's device tree reserves the CADR's 128 MB;
 # revision 13's reserves its own region (docs/linux.md, "Each machine's
@@ -442,7 +483,8 @@ else
 fi
 if [ -n "$STANDALONE" ]; then
   echo "mksd-buildroot: STANDALONE: no server, no MAC and no Chaosnet peers --- this card carries nothing from local.conf"
-elif [ -z "${ETHADDR:-}" ]; then
+elif [ -z "${ETHADDR:-}" ] && grep -q '^ethaddr=@ETHADDR@$' "$BOARD/uEnv.txt.in"; then
+  # A board whose template has no ethaddr line has MACs of its own.
   echo "mksd-buildroot: WARNING: no ETHADDR in $BOARD_DIR/linux/local.conf; the board will use a random MAC and U-Boot will say so" >&2
 fi
 
@@ -1629,7 +1671,10 @@ fi
 # The DE25-Nano's u-boot.itb is the same shape, and its `firmware` is TF-A's
 # BL31 (arch/arm/dts/socfpga_soc64_fit-u-boot.dtsi); `$LOADER` is whichever
 # the board's loader reads.
-if [ -x "$HOSTBIN/fdtget" ]; then
+if [ "${LOADER%.scr}" != "$LOADER" ]; then
+  [ ! -x "$HOSTBIN/mkimage" ] || "$HOSTBIN/mkimage" -l "$OUT/card/$LOADER" | grep -q Script \
+    || die "$LOADER is not a U-Boot script image"
+elif [ -x "$HOSTBIN/fdtget" ]; then
   found=no
   for img in $("$HOSTBIN/fdtget" -l "$OUT/card/$LOADER" /images 2>/dev/null); do
     [ "$("$HOSTBIN/fdtget" "$OUT/card/$LOADER" "/images/$img" type 2>/dev/null)" = firmware ] && found=yes
@@ -1645,7 +1690,7 @@ fi
 # the fabric's image stopped being fetched on the path that does not load it.
 for var in "bootcmd=run cadr_boot" "cadr_card=" "$FABRIC_FETCH=$FABRIC_FETCH_FORM" \
            "cadr_net=" "$LAST_STEP="; do
-  strings "$OUT/card/$LOADER" | grep -q "^$var" || die "the U-Boot in $LOADER has no '$var' in its environment"
+  loader_env | grep -q "^$var" || die "the U-Boot in $LOADER has no '$var' in its environment"
 done
 # AND IT MUST LOAD THE BOARD'S FOUR FILES FROM THE BOARD'S OWN FOLDER, which
 # is the card half of the mirror and is checked at both ends here.  A U-Boot
@@ -1663,17 +1708,17 @@ done
 # board's, and that is as true of the fabric's image as of the other three.
 # The file ends its own line where the fetch is a variable of one line, so
 # either a space or the end of the line follows it.
-strings "$OUT/card/$LOADER" | grep -q "^$FABRIC_FETCH=.*$BOARD_NAME/$FABRIC\( \|$\)" \
+loader_env | grep -q "^$FABRIC_FETCH=.*$BOARD_NAME/$FABRIC\( \|$\)" \
   || die "the U-Boot in $LOADER does not load $BOARD_NAME/$FABRIC from the card in $FABRIC_FETCH: it predates the card mirroring the server, and 'make $REBUILD' is what rewrites it"
 # **AND THE FAULT BITSTREAM FROM THE SAME FOLDER**, which a loader built
 # before it existed does not know: such a loader would loop at a fabric that
 # will not load with the fault image beside it unread.
 if [ -z "$NO_FAULT" ]; then
-  strings "$OUT/card/$LOADER" | grep -q "^$FAULT_FETCH=.*$BOARD_NAME/$FAULT\( \|$\)" \
+  loader_env | grep -q "^$FAULT_FETCH=.*$BOARD_NAME/$FAULT\( \|$\)" \
     || die "the U-Boot in $LOADER does not load $BOARD_NAME/$FAULT from the card in $FAULT_FETCH: it predates the fault bitstream, and 'make $REBUILD' is what rewrites it"
 fi
 for f in $BOARD_DTB $KERNEL rootfs.cpio.uboot; do
-  strings "$OUT/card/$LOADER" | grep -q "cadr_card=.*$BOARD_NAME/$f " \
+  loader_env | grep -q "cadr_card=.*$BOARD_NAME/$f " \
     || die "the U-Boot in $LOADER does not load $BOARD_NAME/$f from the card: it predates the card mirroring the server, and 'make $REBUILD' is what rewrites it"
 done
 # BOTH ENDS OF THE SERVED-DIRECTORY RULE ARE CHECKED RATHER THAN BELIEVED.
@@ -1682,7 +1727,7 @@ done
 # way.  A U-Boot built before the rule, or a uEnv.net edited back to the flat
 # names, is a board that fetches another board's files --- which on this
 # server is a bitstream for the wrong part, and it is silent.
-strings "$OUT/card/$LOADER" | grep -q "^cadr_net=.*$BOARD_NAME/uEnv.net" \
+loader_env | grep -q "^cadr_net=.*$BOARD_NAME/uEnv.net" \
   || die "the U-Boot in $LOADER does not fetch $BOARD_NAME/uEnv.net: it predates the served-directory rule"
 for f in $BOARD_DTB $KERNEL rootfs.cpio.uboot; do
   grep -q "tftpboot [^ ]* $BOARD_NAME/$f " "$OUT/server/$BOARD_NAME/uEnv.net" \
@@ -1694,7 +1739,7 @@ done
 # environment, so the folder is asked of the loader there.  Either way the
 # question is the same one: the folder, and not which file says it.
 if [ -n "$FABRIC_FETCH_NET" ]; then
-  strings "$OUT/card/$LOADER" | grep -q "^$FABRIC_FETCH_NET=.*$BOARD_NAME/$FABRIC\( \|$\)" \
+  loader_env | grep -q "^$FABRIC_FETCH_NET=.*$BOARD_NAME/$FABRIC\( \|$\)" \
     || die "the U-Boot in $LOADER does not fetch $BOARD_NAME/$FABRIC over TFTP in $FABRIC_FETCH_NET: it predates the served-directory rule, and 'make $REBUILD' is what rewrites it"
 else
   grep -q "tftpboot [^ ]* $BOARD_NAME/$FABRIC\( \|$\)" "$OUT/server/$BOARD_NAME/uEnv.net" \
@@ -1702,7 +1747,7 @@ else
 fi
 # And the fault bitstream on the network path, where that path fetches it.
 if [ -z "$NO_FAULT" ] && [ -n "$FAULT_FETCH_NET" ]; then
-  strings "$OUT/card/$LOADER" | grep -q "^$FAULT_FETCH_NET=.*$BOARD_NAME/$FAULT\( \|$\)" \
+  loader_env | grep -q "^$FAULT_FETCH_NET=.*$BOARD_NAME/$FAULT\( \|$\)" \
     || die "the U-Boot in $LOADER does not fetch $BOARD_NAME/$FAULT over TFTP in $FAULT_FETCH_NET: it predates the fault bitstream, and 'make $REBUILD' is what rewrites it"
 elif [ -z "$NO_FAULT" ]; then
   grep -q "tftpboot [^ ]* $BOARD_NAME/$FAULT\( \|$\)" "$OUT/server/$BOARD_NAME/uEnv.net" \

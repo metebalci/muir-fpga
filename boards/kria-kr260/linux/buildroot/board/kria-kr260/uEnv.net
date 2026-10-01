@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The boot command for this project's own Kria KR260, served by its TFTP
+# server and fetched by boot.scr's cadr_net when the card's uEnv.txt names a
+# server.  Edit here, copy to /srv/tftp/kria-kr260, reset the board; the card
+# is never touched.  A card without a server named on it never reads this
+# file: it boots the same four files from the card (boot.cmd's cadr_card).
+#
+# EVERY PATH HERE IS UNDER kria-kr260/, for the reason every board's served
+# set is in a directory of its own: one server serves more than one board, and
+# the boards' files share names.
+#
+# THE ORDER IS THE CARD PATH'S: the tree, the kernel and the root filesystem,
+# then the fabric, then cadr_booti, so that the machine is started by the
+# last command before the kernel (boot.cmd says why).  The addresses are
+# boot.cmd's.
+cadr_fabric_net=if tftpboot ${cadr_bit_addr} kria-kr260/cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize}; then echo "cadr: the CADR bitstream is loaded"; else echo "cadr: THE CADR BITSTREAM DID NOT LOAD; loading the fault bitstream, whose lamps blink together"; tftpboot ${cadr_bit_addr} kria-kr260/fault.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize}; fi
+netcmd=tftpboot ${cadr_fdt_addr} kria-kr260/zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb && tftpboot ${cadr_kernel_addr} kria-kr260/Image && tftpboot ${cadr_ramdisk_addr} kria-kr260/rootfs.cpio.uboot && run cadr_fabric_net && run cadr_booti
