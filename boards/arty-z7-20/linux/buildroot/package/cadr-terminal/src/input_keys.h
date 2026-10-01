@@ -451,4 +451,9 @@ void key_took(struct key_state *k);
 // Machine means a Control that never comes up.
 void key_all_up(struct key_state *k);
 
+// A prefix standing and the shifting keys latched behind one, let go: what a
+// source that goes in the middle of a prefixed sequence owes the machine.
+// The latched keys come up, oldest first; nothing else that is down moves.
+void key_sequence_let_go(struct key_state *k);
+
 #endif

@@ -108,12 +108,15 @@ when the connection closes. There are no modifier bits in a word on this
 keyboard, so a Control held by a program that died is a Control held for the
 rest of the machine's run.
 
-**And a viewer leaving no longer lifts a USB keyboard's keys.** The terminal
-releases every key that is down when its last viewer goes. That is right when
-the viewer was the only source and wrong when somebody is standing at the board
-with a finger on Shift, so it now runs only when no client is attached to the
-link. A client's own keys are released when the client goes, which is the same
-rule one source along.
+**And a viewer leaving releases only what it held.** The terminal keeps the
+keysyms and the mouse buttons each viewer has down, and releases exactly those
+when the viewer goes, whether or not a client is attached to the link. A key or
+button that another source also holds stays down. So a viewer closing its
+window does not lift the Shift under a finger at the board, and a Shift held in
+that window does not stay down to shift every key typed at the board afterwards.
+A prefix such as `Scroll_Lock` that the viewer left standing goes with it, while
+one the board's keyboard is in the middle of stands. A client's own keys are
+released when the client goes, which is the same rule.
 
 ## Keys
 

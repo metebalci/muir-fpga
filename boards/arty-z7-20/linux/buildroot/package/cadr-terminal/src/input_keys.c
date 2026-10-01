@@ -842,6 +842,15 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 	key_event_from(k, keysym, down, NULL);
 }
 
+void key_sequence_let_go(struct key_state *k)
+{
+	k->prefix = 0;
+	const unsigned n = k->latches;
+	k->latches = 0;
+	for (unsigned i = 0; i < n; ++i)
+		release(k, k->latched[i]);
+}
+
 void key_all_up(struct key_state *k)
 {
 	// **AND A RELEASE HERE IS HELD BACK LIKE ANY OTHER IF A BOOT WORD HAS

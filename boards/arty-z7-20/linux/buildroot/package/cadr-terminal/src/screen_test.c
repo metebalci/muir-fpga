@@ -3621,6 +3621,365 @@ static int open_board(struct cadr_input_link_client *l, const char *path)
 	return l->greeted ? 0 : -1;
 }
 
+// ---- a source that goes owes the releases of what IT held ---------------
+//
+// **THE HELD KEYS ARE KEPT A SOURCE, AND A SOURCE GOING RELEASES ITS OWN.**
+// The board measured the fault this holds: a viewer closed its window with
+// Shift_L and Super_L down while `cadr-usb-input` was attached to the input
+// link, nothing released them, and from then on every key at the board's USB
+// keyboard was shifted and its Ctrl-Alt-Delete never booted --- Rubout went
+// across "tapped with the shift worked around it", which a held key is not.
+
+// Passes until the server has seen `n` viewers left.
+static void viewers_left(unsigned n)
+{
+	for (int k = 0; k < 4000 && srv.viewers != n; ++k)
+		screen_server_poll(&srv, &frame, 0, clock_ns);
+	CHECK(srv.viewers == n, "%u viewers still connected, wanting %u", srv.viewers, n);
+}
+
+#define KS_SCROLL_LOCK 0xff14u
+
+// The last switch word the program wrote, 0 if none was.
+static unsigned last_buttons(void)
+{
+	return model.nbuttons ? model.buttons[model.nbuttons - 1] : 0u;
+}
+
+static void check_a_source_goes(const char *work_dir)
+{
+	if (!work_dir) {
+		printf("--- a source that goes: skipped, no --server-log to put the socket "
+		       "beside\n");
+		return;
+	}
+	char path[128];
+	const char *home = getenv("HOME");
+	// Short, for `check_keyboard_boot`'s reason.
+	snprintf(path, sizeof path, "%.80s/.cache/kgone-%u", home && *home ? home : work_dir,
+		 (unsigned)getpid());
+	if (strlen(path) >= 100) {
+		printf("--- a source that goes: skipped, the socket's path would be %u "
+		       "characters\n", (unsigned)strlen(path));
+		return;
+	}
+	// A link of this check's own, whatever an earlier check left listening,
+	// and nothing waking: every record here reaches the machine.
+	srv.input = &face;
+	if (srv.link_ready) {
+		cadr_input_link_close(&srv.link, NULL);
+		srv.link_ready = 0;
+	}
+	srv.wake = NULL;
+	srv.wake_ctx = NULL;
+	unlink(path);
+	if (screen_server_link(&srv, path) < 0) {
+		fail(__LINE__, "no input link at %s", path);
+		return;
+	}
+	struct client c, d;
+	struct cadr_input_link_client b;
+
+	// (1) A viewer leaves with Shift down while the USB keyboard is attached.
+	// Its Shift comes up, nothing is held, and the next key at the board goes
+	// across as itself and not with the Shift worked around it.
+	// Twenty keys typed and let go first, as many as a source may hold: a
+	// key that came up is not still owed, and must not fill the list so that
+	// the Shift after them is not owed either.
+	if (open_typist(&c) == 0 && open_board(&b, path) == 0) {
+		for (uint32_t ks = 'a'; ks < 'a' + KEY_MAX_DOWN; ++ks) {
+			send_key(&c, ks, 1);
+			send_key(&c, ks, 0);
+			pump(4);
+		}
+		pump(20);
+		model.nkeys = 0;
+		send_key(&c, KS_SHIFT_L, 1);
+		pump(20);
+		client_close(&c);
+		viewers_left(0);
+		pump(20);
+		board_key(&b, 'b', 1);
+		board_key(&b, 'b', 0);
+		pump(40);
+		const uint32_t w[] = {
+			word_of(024, 0), word_of(024, 1),
+			word_of(0114, 0), word_of(0114, 1)
+		};
+		want_keys("a viewer gone with Shift down while the board's keyboard is attached, "
+			  "then b at the board", w, 4);
+		CHECK(srv.keys.downs == 0, "%u keys still held after the viewer went, wanting none",
+		      srv.keys.downs);
+
+		// (2) ...and the board's Ctrl-Alt-Delete after it boots the machine,
+		// Rubout going down as a held key and not tapped inside a Shift.
+		open_typist(&c);
+		pump(8);
+		send_key(&c, KS_SHIFT_L, 1);
+		pump(20);
+		client_close(&c);
+		viewers_left(0);
+		pump(20);
+		board_key(&b, KS_CONTROL_L, 1);
+		pump(8);
+		board_key(&b, KS_ALT_L, 1);
+		pump(8);
+		board_key(&b, KS_DELETE, 1);
+		pump(40);
+		const uint32_t v[] = {
+			word_of(024, 0), word_of(024, 1),
+			word_of(020, 0), word_of(045, 0), word_of(023, 0), BOOT_COLD_WORD
+		};
+		want_keys("a viewer gone with Shift down, then the chord at the board", v, 6);
+		board_key(&b, KS_DELETE, 0);
+		board_key(&b, KS_ALT_L, 0);
+		board_key(&b, KS_CONTROL_L, 0);
+		pump(20);
+		cadr_input_link_shut(&b);
+		pump(20);
+	}
+
+	// (3) A key held at the board stays held when a viewer goes, EVEN ONE THE
+	// VIEWER HELD TOO: the board's Control is down, the viewer presses Shift
+	// and that same Control and leaves, and only its Shift comes up --- the
+	// Alt and Delete at the board then complete the chord on the board's own
+	// Control.
+	if (open_typist(&c) == 0 && open_board(&b, path) == 0) {
+		model.nkeys = 0;
+		board_key(&b, KS_CONTROL_L, 1);
+		pump(8);
+		send_key(&c, KS_SHIFT_L, 1);
+		send_key(&c, KS_CONTROL_L, 1);
+		pump(20);
+		client_close(&c);
+		viewers_left(0);
+		pump(20);
+		board_key(&b, KS_ALT_L, 1);
+		pump(8);
+		board_key(&b, KS_DELETE, 1);
+		pump(40);
+		const uint32_t w[] = {
+			word_of(020, 0), word_of(024, 0), word_of(024, 1),
+			word_of(045, 0), word_of(023, 0), BOOT_COLD_WORD
+		};
+		want_keys("a Control held at the board and in a window that went", w, 6);
+		board_key(&b, KS_DELETE, 0);
+		board_key(&b, KS_ALT_L, 0);
+		board_key(&b, KS_CONTROL_L, 0);
+		pump(20);
+		cadr_input_link_shut(&b);
+		pump(20);
+	}
+
+	// (3a) **THE SWITCHES TOO**, which are held keys of their own.  A viewer
+	// that goes with the left button down while the board's mouse is attached
+	// lets go of it; one the board's mouse holds as well stays down.
+	if (open_typist(&c) == 0 && open_board(&b, path) == 0) {
+		send_pointer(&c, 0, 100, 100);
+		send_pointer(&c, 1, 100, 100);
+		pump(20);
+		CHECK(last_buttons() == 1, "the viewer's left button: last write 0x%x",
+		      last_buttons());
+		client_close(&c);
+		viewers_left(0);
+		pump(20);
+		CHECK(last_buttons() == 0, "a viewer gone with the left button down while the "
+		      "board's mouse is attached: last write 0x%x, wanting 0", last_buttons());
+
+		open_typist(&c);
+		pump(8);
+		board_mouse(&b, 0, 0, 1);
+		pump(8);
+		send_pointer(&c, 0, 100, 100);
+		send_pointer(&c, 1, 100, 100);
+		pump(20);
+		client_close(&c);
+		viewers_left(0);
+		pump(20);
+		CHECK(last_buttons() == 1, "a left button held at the board and in a window that "
+		      "went: last write 0x%x, wanting 0x1", last_buttons());
+		board_mouse(&b, 0, 0, 0);
+		pump(20);
+		CHECK(last_buttons() == 0, "the board's left button let go: last write 0x%x",
+		      last_buttons());
+
+		// (3b) **A PREFIX LEFT STANDING GOES WITH THE VIEWER THAT LEFT IT**,
+		// and the board's b after it is b.
+		open_typist(&c);
+		pump(8);
+		model.nkeys = 0;
+		send_key(&c, KS_SCROLL_LOCK, 1);
+		send_key(&c, KS_SCROLL_LOCK, 0);
+		pump(20);
+		client_close(&c);
+		viewers_left(0);
+		pump(20);
+		board_key(&b, 'b', 1);
+		board_key(&b, 'b', 0);
+		pump(40);
+		const uint32_t w[] = { word_of(0114, 0), word_of(0114, 1) };
+		want_keys("the board's b after a viewer went with Scroll_Lock standing", w, 2);
+
+		// ...and a shifting key latched behind it comes up with it: Scroll_Lock
+		// and l is a Control held for the one key after, and that key is not
+		// the board's.
+		open_typist(&c);
+		pump(8);
+		model.nkeys = 0;
+		send_key(&c, KS_SCROLL_LOCK, 1);
+		send_key(&c, KS_SCROLL_LOCK, 0);
+		send_key(&c, 'l', 1);
+		send_key(&c, 'l', 0);
+		pump(20);
+		client_close(&c);
+		viewers_left(0);
+		pump(20);
+		board_key(&b, 'b', 1);
+		board_key(&b, 'b', 0);
+		pump(40);
+		const uint32_t v[] = {
+			word_of(020, 0), word_of(020, 1), word_of(0114, 0), word_of(0114, 1)
+		};
+		want_keys("the board's b after a viewer went with a Control latched", v, 4);
+
+		// (3c) A prefix the BOARD left standing is the board's, and a viewer
+		// going does not take it away: b behind Scroll_Lock is nothing.  The
+		// viewer begins a sequence first and the board lets it go, so the
+		// one standing when the viewer leaves is the board's own.
+		open_typist(&c);
+		pump(8);
+		model.nkeys = 0;
+		send_key(&c, KS_SCROLL_LOCK, 1);
+		send_key(&c, KS_SCROLL_LOCK, 0);
+		pump(20);
+		board_key(&b, KS_SCROLL_LOCK, 1);   // the prefix again: let go
+		board_key(&b, KS_SCROLL_LOCK, 0);
+		pump(20);
+		board_key(&b, KS_SCROLL_LOCK, 1);
+		board_key(&b, KS_SCROLL_LOCK, 0);
+		pump(20);
+		client_close(&c);
+		viewers_left(0);
+		pump(20);
+		board_key(&b, 'b', 1);
+		board_key(&b, 'b', 0);
+		pump(40);
+		want_keys("the board's b behind its own Scroll_Lock, a viewer gone meanwhile",
+			  NULL, 0);
+		cadr_input_link_shut(&b);
+		pump(20);
+	}
+
+	// (4) A viewer that goes while another watches: its own Shift comes up,
+	// and the one still watching types b as b.
+	if (open_typist(&c) == 0 && open_viewer(&d, "RFB 003.008\n", NULL, NULL, 0) == 0) {
+		pump(8);
+		model.nkeys = 0;
+		send_key(&c, KS_SHIFT_L, 1);
+		pump(20);
+		client_close(&c);
+		viewers_left(1);
+		pump(20);
+		send_key(&d, 'b', 1);
+		send_key(&d, 'b', 0);
+		pump(40);
+		const uint32_t w[] = {
+			word_of(024, 0), word_of(024, 1),
+			word_of(0114, 0), word_of(0114, 1)
+		};
+		want_keys("a viewer gone with Shift down while another watches", w, 4);
+		client_close(&d);
+		settle();
+	}
+	// ...and a Shift both viewers hold stays down for the one still there,
+	// whose B then goes as a held key and not with the Shift worked around it.
+	if (open_typist(&c) == 0 && open_viewer(&d, "RFB 003.008\n", NULL, NULL, 0) == 0) {
+		pump(8);
+		model.nkeys = 0;
+		send_key(&c, KS_SHIFT_L, 1);
+		pump(8);
+		send_key(&d, KS_SHIFT_L, 1);
+		pump(20);
+		client_close(&c);
+		viewers_left(1);
+		pump(20);
+		send_key(&d, 'B', 1);
+		send_key(&d, 'B', 0);
+		send_key(&d, KS_SHIFT_L, 0);
+		pump(40);
+		const uint32_t w[] = {
+			word_of(024, 0), word_of(0114, 0), word_of(0114, 1), word_of(024, 1)
+		};
+		want_keys("a Shift two viewers held, one of them gone", w, 4);
+		client_close(&d);
+		settle();
+	}
+	// ...and the switches of two viewers are ORed, as the board's and a
+	// viewer's are, and the one that goes takes only its own.
+	if (open_typist(&c) == 0 && open_viewer(&d, "RFB 003.008\n", NULL, NULL, 0) == 0) {
+		pump(8);
+		send_pointer(&d, 0, 100, 100);
+		send_pointer(&d, 4, 100, 100);   // the right button, in the window that stays
+		pump(8);
+		send_pointer(&c, 0, 100, 100);
+		send_pointer(&c, 1, 100, 100);   // the left, in the one that goes
+		pump(20);
+		CHECK(last_buttons() == 5, "two viewers holding left and right: last write 0x%x, "
+		      "wanting 0x5", last_buttons());
+		client_close(&c);
+		viewers_left(1);
+		pump(20);
+		CHECK(last_buttons() == 4, "the viewer holding left gone: last write 0x%x, wanting "
+		      "0x4, the right button the other still holds", last_buttons());
+		client_close(&d);
+		settle();
+	}
+
+	// (5) With nothing on the link, a viewer's held keys come up when it goes,
+	// as they always have...
+	if (open_typist(&c) == 0) {
+		send_key(&c, KS_CONTROL_L, 1);
+		pump(20);
+		client_close(&c);
+		settle();
+		pump(20);
+		const uint32_t w[] = { word_of(020, 0), word_of(020, 1) };
+		want_keys("a viewer gone with Control down and nothing on the link", w, 2);
+		CHECK(srv.keys.downs == 0, "%u keys still held after the viewer went, wanting none",
+		      srv.keys.downs);
+	}
+	// ...and a prefix it left standing goes with it: the next viewer's b is
+	// b, not a key looked up behind Scroll_Lock.  And with the last source
+	// gone, the next viewer's first pointer event only says where its pointer
+	// is, wherever the last one's was.
+	if (open_typist(&c) == 0) {
+		send_key(&c, KS_SCROLL_LOCK, 1);
+		send_pointer(&c, 0, 100, 100);
+		pump(20);
+		client_close(&c);
+		settle();
+		pump(20);
+		if (open_viewer(&d, "RFB 003.008\n", NULL, NULL, 0) == 0) {
+			pump(8);
+			const unsigned moves = model.nmoves;
+			send_pointer(&d, 0, 300, 300);
+			pump(20);
+			CHECK(model.nmoves == moves, "the next viewer's first pointer event moved the "
+			      "mouse %u times, wanting none", model.nmoves - moves);
+			send_key(&d, 'b', 1);
+			send_key(&d, 'b', 0);
+			pump(40);
+			const uint32_t w[] = { word_of(0114, 0), word_of(0114, 1) };
+			want_keys("b after a viewer went with Scroll_Lock standing", w, 2);
+			client_close(&d);
+			settle();
+		}
+	}
+	cadr_input_link_close(&srv.link, NULL);
+	srv.link_ready = 0;
+	unlink(path);
+}
+
 static void check_display_wake(const char *work_dir)
 {
 	if (!work_dir) {
@@ -4819,6 +5178,9 @@ int main(int argc, char **argv)
 
 	printf("--- the keyboard's own boot sequence: the chord, the two words, the hold-back\n");
 	check_keyboard_boot(work_dir);
+
+	printf("--- a source that goes: its own held keys come up, and nobody else's\n");
+	check_a_source_goes(work_dir);
 
 	printf("--- waking the display output: somebody at the board, and nobody else\n");
 	check_display_wake(work_dir);

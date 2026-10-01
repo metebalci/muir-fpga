@@ -262,6 +262,16 @@ struct screen_viewer {
 	size_t skip;
 	// Whether the viewer named RRE in its `SetEncodings`.
 	int takes_rre;
+	// **The keysyms THIS viewer has down**, oldest first: what it owes the
+	// machine when it goes.  The key state is one for every source, so this
+	// is the only record of whose a held key is --- the input link keeps the
+	// same list for each of its clients.  A press beyond the list is not
+	// recorded and is released only when the last source goes.
+	uint32_t held[KEY_MAX_DOWN];
+	unsigned helds;
+	// The switches THIS viewer holds, as its last `PointerEvent` said.
+	// `buttons` in the server is the OR over every viewer.
+	uint8_t buttons;
 };
 
 static int set_nonblocking(int fd)
@@ -320,6 +330,7 @@ static void link_key(void *ctx, uint32_t keysym, int down)
 		return;
 	}
 	key_event_from(&s->keys, keysym, down, "the input link");
+	s->sequence_by = s->keys.prefix || s->keys.latches ? (const void *)&s->link : NULL;
 }
 
 static void link_move(void *ctx, int dx, int dy)
@@ -413,6 +424,56 @@ int screen_server_link(struct screen_server *s, const char *path)
 	return 0;
 }
 
+// A keysym a viewer sent, noted against that viewer: down adds it once, up
+// takes it out.
+static void viewer_note(struct screen_viewer *v, uint32_t keysym, int down)
+{
+	unsigned i = 0;
+	while (i < v->helds && v->held[i] != keysym)
+		++i;
+	if (down) {
+		if (i == v->helds && v->helds < KEY_MAX_DOWN)
+			v->held[v->helds++] = keysym;
+		return;
+	}
+	if (i == v->helds)
+		return;
+	memmove(&v->held[i], &v->held[i + 1], (v->helds - i - 1) * sizeof v->held[0]);
+	--v->helds;
+}
+
+// Whether any source other than viewer `k` holds `keysym`: another viewer, or
+// a client of the input link.  A key two sources hold is down once at the
+// machine, and the one that goes must not lift it from under the other.
+static int held_elsewhere(const struct screen_server *s, unsigned k, uint32_t keysym)
+{
+	for (unsigned j = 0; j < s->viewers; ++j) {
+		if (j == k)
+			continue;
+		for (unsigned i = 0; i < s->viewer[j]->helds; ++i)
+			if (s->viewer[j]->held[i] == keysym)
+				return 1;
+	}
+	if (!s->link_ready)
+		return 0;
+	for (unsigned c = 0; c < s->link.clients; ++c)
+		for (unsigned i = 0; i < s->link.client[c].downs; ++i)
+			if (s->link.client[c].down[i] == keysym)
+				return 1;
+	return 0;
+}
+
+// The switches every viewer but `skip` holds, ORed: the viewers' half of
+// the mouse.  `skip` is `SCREEN_MAX_VIEWERS` for none.
+static uint8_t viewers_buttons(const struct screen_server *s, unsigned skip)
+{
+	uint8_t mask = 0;
+	for (unsigned j = 0; j < s->viewers; ++j)
+		if (j != skip)
+			mask |= s->viewer[j]->buttons;
+	return mask;
+}
+
 static void viewer_free(struct screen_viewer *v)
 {
 	if (v->fd >= 0)
@@ -430,21 +491,53 @@ static void drop(struct screen_server *s, unsigned k, const char *why)
 	// positions --- so a Control held when a connection drops is a Control
 	// held for the rest of the run, and every character after it is a
 	// control character.  RFB has no "the viewer has gone" message for a
-	// server to act on, so the only place this can be done is here.  It
-	// runs for the LAST viewer only: with somebody else still watching,
-	// whatever they are holding is theirs and must stand.
+	// server to act on, so the only place this can be done is here.
 	//
-	// **AND NOT WHILE SOMETHING IS ATTACHED TO THE INPUT LINK.**  A USB
-	// keyboard at the board is a source of its own, and a viewer closing a
-	// window must not lift the Shift under somebody's finger.  What a link
-	// client holds is released when that client goes, by
-	// `cadr_input_link_poll`, which is the same rule one source along.
+	// **ITS OWN KEYS, AND WHATEVER ELSE IS ATTACHED.**  The key state is one
+	// for every source, so the viewer's own keysyms are kept against it and
+	// each comes up here as the viewer would have sent it, oldest first ---
+	// with other viewers watching, and with a USB keyboard on the input
+	// link.  A key some other source holds too stands: it is down once at
+	// the machine and is theirs as much as this viewer's.  This was once
+	// all or nothing --- every key up for the last viewer and none while
+	// the link had a client --- and `cadr-usb-input` is always attached on a
+	// board with USB input, so a Shift held in a closed window stayed held
+	// and every key at the board after it was shifted.  What a link client
+	// holds is released when that client goes, by `cadr_input_link_poll`,
+	// which is the same rule.
+	//
+	// **A PREFIXED SEQUENCE IT LEFT STANDING GOES FIRST**: a prefix pressed
+	// and not answered, or a Control latched behind one for the next key,
+	// would otherwise take the next key anybody types --- the board's b
+	// looked up behind a window's Scroll_Lock is nothing at all.  Only the
+	// viewer's own: a sequence the board is in the middle of stands.  First,
+	// so that the releases below are not looked up behind it.
+	if (s->input && s->sequence_by == v) {
+		key_sequence_let_go(&s->keys);
+		s->sequence_by = NULL;
+	}
+	if (s->input)
+		for (unsigned i = 0; i < v->helds; ++i)
+			if (!held_elsewhere(s, k, v->held[i]))
+				key_event_from(&s->keys, v->held[i], 0, "a viewer that went");
+	v->helds = 0;
+	// **AND ITS SWITCHES, THE SAME WAY.**  The viewers' half of the mouse
+	// is the OR of what each holds, so it is taken again without this one:
+	// a button another viewer or the board's mouse holds stays down.
+	const uint8_t still = viewers_buttons(s, k);
+	if (s->input && still != s->buttons) {
+		s->buttons = still;
+		write_buttons(s);
+	}
+	// **AND WITH NOBODY LEFT, EVERYTHING.**  The last source gone leaves
+	// nobody whose key could be lifted, so a press the list had no room for
+	// goes too, and the next viewer's first pointer event only says where
+	// the pointer is.  Not while the link has a client, whose keys are its
+	// own.
 	if (s->input && s->viewers == 1
 	    && !(s->link_ready && cadr_input_link_clients(&s->link))) {
 		key_all_up(&s->keys);
-		s->buttons = 0;
 		s->have_ptr = 0;
-		write_buttons(s);
 	}
 	viewer_free(v);
 	s->viewer[k] = s->viewer[s->viewers - 1];
@@ -603,6 +696,8 @@ static int viewer_step(struct screen_server *s, struct screen_viewer *v, const c
 				// muir's own mapping: `input_keys.h` says what
 				// a keysym becomes and what it could not map.
 				key_event_from(&s->keys, m.keysym, m.down, "a viewer");
+				viewer_note(v, m.keysym, m.down);
+				s->sequence_by = s->keys.prefix || s->keys.latches ? v : NULL;
 				break;
 			case RFB_POINTER:
 				++s->input_events;
@@ -644,8 +739,14 @@ static int viewer_step(struct screen_server *s, struct screen_viewer *v, const c
 				// otherwise leave the fabric's register at
 				// whatever the last viewer left, which is a
 				// button the machine sees held by nobody.
-				if (first_ptr || m.buttons != s->buttons) {
-					s->buttons = m.buttons;
+				//
+				// **THIS VIEWER'S SWITCHES, ORed WITH THE
+				// OTHERS'**: a button one window holds is not
+				// lifted by another window's pointer moving.
+				v->buttons = m.buttons;
+				const uint8_t mask = viewers_buttons(s, SCREEN_MAX_VIEWERS);
+				if (first_ptr || mask != s->buttons) {
+					s->buttons = mask;
 					write_buttons(s);
 				}
 				break;

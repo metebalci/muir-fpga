@@ -408,12 +408,127 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @note There are no modifier bits in a word on this keyboard, so a Control
 @note held when a connection drops is a Control held for the rest of the
 @note machine's run and every character after it is a control character.
-@note The only place this can be done is where the viewer is dropped.  It
-@note runs for the LAST viewer only, so that what somebody still watching is
-@note holding stands --- and not at all while something is attached to the
-@note input link, a keyboard at the board being a source of its own whose keys
-@note are released when IT goes.  Caught at "...and released when the viewer
-@note went".
+@note The only place this can be done is where the viewer is dropped, and
+@note what comes up is the viewer's OWN keys, whatever else is attached.
+@note Caught at "a viewer gone with Shift down while the board's keyboard is
+@note attached".  "...and released when the viewer went" does not catch it:
+@note with nothing else attached the last source's `key_all_up` lifts them.
+@old
+		for (unsigned i = 0; i < v->helds; ++i)
+			if (!held_elsewhere(s, k, v->held[i]))
+				key_event_from(&s->keys, v->held[i], 0, "a viewer that went");
+@new
+		for (unsigned i = 0; i < v->helds; ++i)
+			if (!held_elsewhere(s, k, v->held[i]))
+				(void)0;
+@end
+
+@mutation keys-a-viewers-keys-are-not-noted
+@file screen_server.c
+@why the server keeps each viewer's own held keysyms, which is the only record of whose a held key is
+@note The key state is one for every source, so a viewer's keys have to be
+@note noted against the viewer as they arrive, or there is nothing to release
+@note when it goes but everything.  Caught at "a viewer gone with Shift down
+@note while the board's keyboard is attached".
+@old
+				viewer_note(v, m.keysym, m.down);
+@new
+@end
+
+@mutation keys-a-viewers-released-key-stays-noted
+@file screen_server.c
+@why a key the viewer let go is not owed, and must not fill the list so that a later one is not owed either
+@note Twenty keys typed and let go would fill the list, and the Shift after
+@note them would then go unrecorded and stay held when the viewer went.
+@note Caught at "a viewer gone with Shift down while the board's keyboard is
+@note attached".
+@old
+	if (i == v->helds)
+		return;
+	memmove(&v->held[i], &v->held[i + 1], (v->helds - i - 1) * sizeof v->held[0]);
+	--v->helds;
+@new
+	(void)i;
+@end
+
+@mutation keys-a-viewer-that-goes-releases-them-newest-first
+@file screen_server.c
+@why the releases go oldest first, the order the machine saw the keys go down in
+@note The input link releases a client's keys oldest first too.  Caught at
+@note "...and released when the viewer went", whose Control went down before
+@note its Shift.
+@old
+		for (unsigned i = 0; i < v->helds; ++i)
+			if (!held_elsewhere(s, k, v->held[i]))
+				key_event_from(&s->keys, v->held[i], 0, "a viewer that went");
+@new
+		for (unsigned i = v->helds; i-- > 0;)
+			if (!held_elsewhere(s, k, v->held[i]))
+				key_event_from(&s->keys, v->held[i], 0, "a viewer that went");
+@end
+
+@mutation keys-a-key-another-source-holds-is-lifted-by-a-viewer-going
+@file screen_server.c
+@why a key two sources hold is down once at the machine, and the one that goes must not lift it from the other
+@note Caught at "a Control held at the board and in a window that went" and
+@note "a Shift two viewers held, one of them gone".
+@old
+			if (!held_elsewhere(s, k, v->held[i]))
+				key_event_from(&s->keys, v->held[i], 0, "a viewer that went");
+@new
+			if (1)
+				key_event_from(&s->keys, v->held[i], 0, "a viewer that went");
+@end
+
+@mutation keys-the-link-clients-keys-are-not-asked
+@file screen_server.c
+@why a key held at the board's own keyboard stands when a viewer that held it too goes
+@note Caught at "a Control held at the board and in a window that went": the
+@note board's Control comes up and its Ctrl-Alt-Delete does not boot.
+@old
+	if (!s->link_ready)
+		return 0;
+	for (unsigned c = 0; c < s->link.clients; ++c)
+@new
+	if (1)
+		return 0;
+	for (unsigned c = 0; c < s->link.clients; ++c)
+@end
+
+@mutation keys-the-other-viewers-keys-are-not-asked
+@file screen_server.c
+@why a key another viewer holds stands when one that held it too goes
+@note Caught at "a Shift two viewers held, one of them gone": the Shift comes
+@note up and the B is then tapped with the Shift worked around it.
+@old
+		if (j == k)
+			continue;
+@new
+		if (1)
+			continue;
+@end
+
+@mutation keys-a-viewer-going-finds-its-own-keys-held-elsewhere
+@file screen_server.c
+@why the viewer going is not another source
+@note Without the skip a viewer's own list answers that the key is held
+@note elsewhere and nothing ever comes up.  Caught at "a viewer gone with
+@note Shift down while the board's keyboard is attached".
+@old
+		if (j == k)
+			continue;
+@new
+		if (j == k + 1000u)
+			continue;
+@end
+
+@mutation keys-the-last-source-gone-leaves-the-rest-standing
+@file screen_server.c
+@why with nobody left, the whole state is let go and the next pointer event only says where the pointer is
+@note The viewer's own keys come up through its list and its own sequence
+@note through `sequence_by`, but a press the list had no room for belongs to
+@note nobody, and the last pointer position is the viewers' together.  Caught
+@note at "the next viewer's first pointer event moved the mouse".
 @old
 	if (s->input && s->viewers == 1
 	    && !(s->link_ready && cadr_input_link_clients(&s->link))) {
@@ -421,6 +536,22 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @new
 	if (s->input && s->viewers == 0
 	    && !(s->link_ready && cadr_input_link_clients(&s->link))) {
+		key_all_up(&s->keys);
+@end
+
+@mutation keys-the-last-viewer-gone-lets-go-of-the-boards-keys
+@file screen_server.c
+@why the last viewer going is not the last source while the input link has a client
+@note This is the line that once kept every release from happening while the
+@note link was attached; letting go of everything instead lifts the keys at
+@note the board.  Caught at "a Control held at the board and in a window that
+@note went".
+@old
+	if (s->input && s->viewers == 1
+	    && !(s->link_ready && cadr_input_link_clients(&s->link))) {
+		key_all_up(&s->keys);
+@new
+	if (s->input && s->viewers == 1) {
 		key_all_up(&s->keys);
 @end
 
@@ -1643,4 +1774,102 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	return (unsigned)screen_shows_white(f->words, f->words_per_line, x, y, f->black_on_white);
 @new
 	return (unsigned)screen_shows_white(f->words, SCREEN_WORDS_PER_LINE, x, y, f->black_on_white);
+@end
+
+@mutation mouse-a-viewers-switches-are-not-kept
+@file screen_server.c
+@why the viewers' switches are the OR of what each viewer holds, so each viewer's are kept
+@note Caught at "the viewer's left button".
+@old
+				v->buttons = m.buttons;
+@new
+@end
+
+@mutation mouse-the-viewers-switches-are-not-ored
+@file screen_server.c
+@why two windows each holding a button hold both, as a window and the board's mouse do
+@note One window's pointer moving must not lift the button another holds.
+@note Caught at "two viewers holding left and right".
+@old
+			mask |= s->viewer[j]->buttons;
+@new
+			mask = s->viewer[j]->buttons;
+@end
+
+@mutation mouse-a-viewer-that-goes-is-counted-in-the-switches
+@file screen_server.c
+@why a viewer that goes takes its switches with it
+@note Without the skip the OR taken at the drop still has the departed
+@note viewer in it.  Caught at "a viewer gone with the left button down while
+@note the board's mouse is attached".
+@old
+		if (j != skip)
+			mask |= s->viewer[j]->buttons;
+@new
+		if (1)
+			mask |= s->viewer[j]->buttons;
+@end
+
+@mutation mouse-a-viewer-that-goes-leaves-its-switches-down
+@file screen_server.c
+@why the switch word is a level, so the new OR has to be written when a viewer goes
+@note The issue's own fault, for the mouse: a button held in a window that
+@note closed stays held for the board's mouse.  Caught at "a viewer gone with
+@note the left button down while the board's mouse is attached".
+@old
+		s->buttons = still;
+		write_buttons(s);
+@new
+		s->buttons = still;
+@end
+
+@mutation keys-a-viewers-sequence-is-not-marked-its-own
+@file screen_server.c
+@why a prefix a viewer leaves standing is that viewer's to let go
+@note Caught at "the board's b after a viewer went with Scroll_Lock standing":
+@note behind the window's Scroll_Lock the board's b is nothing.
+@old
+				s->sequence_by = s->keys.prefix || s->keys.latches ? v : NULL;
+@new
+@end
+
+@mutation keys-the-boards-sequence-is-not-marked-its-own
+@file screen_server.c
+@why a prefix the board's keyboard leaves standing is not a viewer's
+@note Without the mark the last viewer to touch a sequence still owns the one
+@note the board began after it, and the viewer going takes it away.  Caught
+@note at "the board's b behind its own Scroll_Lock, a viewer gone meanwhile".
+@old
+	s->sequence_by = s->keys.prefix || s->keys.latches ? (const void *)&s->link : NULL;
+@new
+@end
+
+@mutation keys-a-viewer-going-lets-go-of-anybodys-sequence
+@file screen_server.c
+@why only the viewer's own sequence goes with it; one the board is in the middle of stands
+@note Caught at "the board's b behind its own Scroll_Lock, a viewer gone
+@note meanwhile".
+@old
+	if (s->input && s->sequence_by == v) {
+@new
+	if (s->input && s->sequence_by) {
+@end
+
+@mutation keys-a-latched-key-is-not-let-go-with-its-sequence
+@file input_keys.c
+@why a shifting key latched behind a prefix comes up with the sequence
+@note Otherwise the Control a window latched for its next key takes the
+@note board's next key instead.  Caught at "the board's b after a viewer went
+@note with a Control latched".
+@old
+	k->prefix = 0;
+	const unsigned n = k->latches;
+	k->latches = 0;
+	for (unsigned i = 0; i < n; ++i)
+		release(k, k->latched[i]);
+}
+@new
+	k->prefix = 0;
+	k->latches = 0;
+}
 @end

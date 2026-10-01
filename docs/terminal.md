@@ -247,7 +247,12 @@ then dropped, the terminal having sent it whole already.
 modifier bits in a word, so a Control held when a connection drops is a Control
 held for the rest of the machine's run, and every character after it is a
 control character. RFB has no message for a server to act on here, so the
-releases are sent when the last viewer is dropped.
+releases are sent when the viewer is dropped. The server keeps the keysyms each
+viewer has down and releases those, oldest first, whatever else is attached:
+other viewers, or a keyboard on the input link. A key another source also holds
+stays down. A prefix the viewer left standing, and a shifting key latched
+behind one, go with it; a sequence another source is in the middle of stands.
+When the last source has gone, everything still down is released too.
 
 ### How fast words may go, and why one word at a time is not enough
 
@@ -708,13 +713,15 @@ keymap in miniature. `docs/usb-input.md` has that decision and
 
 Two things about a source going away. A client that dies with keys down has
 them released for it, by keysym, from what the server remembers it was
-holding. And **the last viewer leaving no longer releases every key that is
-down** when something is attached to the link: a viewer closing its window must
-not lift the Shift under a finger at the board.
+holding. And **a viewer leaving releases only its own keys**: a viewer closing
+its window must not lift the Shift under a finger at the board, and must not
+leave its own Shift down either, which would shift every key typed at the board
+afterwards and keep Control-Meta-Rubout from booting the machine.
 
-The three switches are the OR of what the viewers hold and what the link holds.
-There is one mouse, and a button held in one place is not lifted by the other
-letting go.
+The three switches are the OR of what each viewer holds and what the link
+holds. There is one mouse, and a button held in one place is not lifted by the
+other letting go. A viewer that goes takes its own buttons with it, and only
+those.
 
 ### What comes over the link also wakes the display output
 

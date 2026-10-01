@@ -105,6 +105,13 @@ struct screen_server {
 	uint16_t ptr_x, ptr_y;
 	int have_ptr;
 	uint8_t buttons;
+	// **WHOSE KEY LEFT A PREFIXED SEQUENCE STANDING**: a prefix pressed and
+	// not yet answered, or a shifting key latched behind one for the key
+	// after.  A viewer, `&link` for the input link, or NULL when nothing
+	// stands.  The sequence is one for every source, as the keys are, and
+	// a viewer that goes in the middle of its own lets it go; one somebody
+	// else is in the middle of stands.
+	const void *sequence_by;
 	// What went across, for a status line: words into the fabric, words
 	// the fabric would not take yet, and pointer movements.
 	unsigned long keys_sent, keys_stuck, pointer_moves;
@@ -123,7 +130,8 @@ struct screen_server {
 	// The switches each half is holding.  **They are ORed**, because there
 	// is one mouse with three switches and a button held at the board must
 	// not be lifted by a viewer letting go of a different one.  `buttons`
-	// is the viewers' and `link_buttons` the link's.
+	// is the viewers', itself the OR of what each viewer holds, and
+	// `link_buttons` the link's.
 	uint8_t link_buttons;
 
 	// --- **WAKING THE BOARD'S OWN DISPLAY OUTPUT.**  It sleeps a monitor
