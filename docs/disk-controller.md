@@ -481,10 +481,10 @@ for resetting a pack's headers, because there is nothing to reset.
 `pack_ecc.h` is DCECC's code as `disk_unit::Ecc` has it.
 
 **Where the records go, and why.** They go in
-`rtl/plumbing/cadr_ddr_map.sv`'s spare, which is 56 MB from `0x1C80_0000` with
-nothing else in it today. There is one fetch area per slot at
-`0x1C80_0000 + 2 KB * slot` and one write-back area per slot at
-`0x1C81_0000 + 2 KB * slot`. 128-byte alignment is the fabric's rule, so
+`rtl/plumbing/cadr_ddr_map.sv`'s spare, which is the 128 KB from `0x1C10_0000`
+above the display and the last of the CADR's region, with nothing else in it.
+There is one fetch area per slot at `0x1C10_0000 + 2 KB * slot` and one
+write-back area per slot at `0x1C11_0000 + 2 KB * slot`. 128-byte alignment is the fabric's rule, so
 that no sixteen-beat burst crosses 4 KB. At a 2 KB stride from a
 2 KB-aligned base a 1,036-byte record never does, and no two records overlap.
 Fetch and write-back areas are separate so that a write-back which moved
@@ -647,7 +647,7 @@ untimed**, in this order, and nothing else at the same rate:
     Starting cadr-disk-packs: OK
     cadr-disk-packs: the EMIO tally reads 0x01008100 0x01008100: a fabric with the processing system in it; M_AXI_GP0 may be read
     cadr-disk-packs: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
-    cadr-disk-packs: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
+    cadr-disk-packs: records at 0x1c100000 (fetches) and 0x1c110000 (write-backs), 24 slots 0x800 apart
     cadr-disk-packs: the bay is /mnt/card/packs: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives that are present, and a file whose read-only mark is set is a write-protected drive
     cadr-disk-packs: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
     cadr-disk-packs: 24 slots taken away; the bay is /mnt/card/packs and the drives are untimed, which is muir's default
@@ -670,9 +670,9 @@ the line that changes the CADR.** Until then the boot PROM sits in
 `AWAIT-DRIVE-READY` polling a status of `0x2321`. With unit 0 present it goes
 on, and the first requests follow within the PROM's own time:
 
-    cadr-disk-packs: request 1: block B (C/H/B) served into slot 0 from 0x1c800000
-    cadr-disk-packs: request 2: block ... served into slot 1 from 0x1c800800
-    cadr-disk-packs: request 3: block ... served into slot 2 from 0x1c801000; further requests are counted, not named
+    cadr-disk-packs: request 1: block B (C/H/B) served into slot 0 from 0x1c100000
+    cadr-disk-packs: request 2: block ... served into slot 1 from 0x1c100800
+    cadr-disk-packs: request 3: block ... served into slot 2 from 0x1c101000; further requests are counted, not named
 
 On the board the PROM asked for blocks 1, 0 and 17 (unit 0: 0/0/1, 0/0/0,
 0/1/0), in that order. The reference band's opening sequence, earlier in this

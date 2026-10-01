@@ -12,7 +12,7 @@
 # `timeout`; this file is the next one and does not repeat any of it.
 #
 # WHAT IS BEING PROVED.  `rtl/plumbing/cadr_prove.sv` with `PROVE=1` puts
-# `0x8A5C36E1` at `0x18A72EE4` through the machine's own memory port --- the
+# `0x8A5C36E1` at `0x1BA72EE4` through the machine's own memory port --- the
 # same `cadr_axi_master` -> `cadr_axi_widen` -> `cadr_ps7` chain the machine
 # will use --- as soon as `SAXIHP0ARESETN` says `S_AXI_HP0` can answer, and
 # then stops.  Nothing in the design says whether it arrived.  What says so is
@@ -64,8 +64,8 @@
 # transition rather than a write of a value that is already there.
 
 # PASS IS EXACTLY TWO THINGS, AND THE SECOND IS THE ONE THAT CAN FAIL.
-# `0x18A72EE4` holds the word, AND every other word in the block --- with
-# `0x18A72EE0` the one that matters, since it is the low half of the same
+# `0x1BA72EE4` holds the word, AND every other word in the block --- with
+# `0x1BA72EE0` the one that matters, since it is the low half of the same
 # 64-bit beat --- still holds the filler.  `cadr_axi_widen.sv` puts a word
 # with bit 2 set in the high half and opens only the top four byte strobes; a
 # widening that opened both halves would write the low half too, and against a
@@ -99,13 +99,13 @@ set bit  [expr {[info exists ::env(BIT)] ? $::env(BIT) \
 # ------------------------------------------------------------------ the map
 # The same three numbers `boards/arty-z7-20/cadr_arty.sv` gives the witness and
 # `boards/arty-z7-20/vivado/ddr_check.tcl` already carries, and the block around them.
-set PROVE_ADDR   0x18A72EE4
-set PROVE_NEIGH  0x18A72EE0
+set PROVE_ADDR   0x1BA72EE4
+set PROVE_NEIGH  0x1BA72EE0
 set PROVE_WORD   0x8A5C36E1
 set PROVE_POISON 0x75A3C91E
 
-# 0x18A72EC0 through 0x18A72F3C: thirty-two words with the address ninth.
-set BLOCK_BASE   0x18A72EC0
+# 0x1BA72EC0 through 0x1BA72F3C: thirty-two words with the address ninth.
+set BLOCK_BASE   0x1BA72EC0
 set BLOCK_WORDS  32
 
 # ------------------------------------------------------------------ helpers

@@ -3,11 +3,12 @@
 //
 // The CADR's memory on the Kria KR260, told to Linux.
 //
-// The machine's 128 MB, laid out as `rtl/plumbing/cadr_ddr_map.sv` lays it
-// out on every board --- main memory at its base, the display 64 MB up, the
-// spare above that --- at this board's base:
+// The machine's reservation, laid out as `rtl/plumbing/cadr_ddr_map.sv` lays
+// it out on every board --- main memory's 16 MB at its base, the display's
+// 1 MB above it, the disk pack program's 128 KB of records above that --- at
+// this board's base:
 //
-//   RESERVED_BASE = 0x6000_0000, RESERVED_MB = 128
+//   RESERVED_BASE = 0x6300_0000, RESERVED_BYTES = 0x0112_0000
 //
 // IN OVERLAY FORM, which is the one difference from the other boards' files.
 // This board's tree is mainline's own, `zynqmp-smk-k26-revA-sck-kr-g-revB`,
@@ -17,13 +18,13 @@
 // The SOM's tree already has a `reserved-memory` node with two-cell sizes and
 // the PMU firmware's 1 MB at 0x7FF0_0000 in it; this adds a child.
 //
-// WHERE THE 128 MB IS.  The processor's memory is 2 GB at 0 and 2 GB at
+// WHERE THE RESERVATION IS.  The processor's memory is 2 GB at 0 and 2 GB at
 // 0x8_0000_0000, and the fabric reaches it at the same addresses through the
 // HP ports.  Every address in `cadr_board.h` is 32 bits, so the region is in
 // the low 2 GB.  It is not at the top of it: the factory U-Boot in the QSPI
 // flash relocates itself to 0x7F89_F000 and keeps 0x7B80_FC00 upwards for its
 // stack, heap and tree (`bdinfo` on the board), and its tree knows nothing of
-// this node.  So the region is 0x6000_0000-0x67FF_FFFF, below all of that and
+// this node.  So the region is 0x6300_0000-0x6411_FFFF, below all of that and
 // above every load address the card's boot script uses (`boot.cmd`), so that
 // neither the loader nor the files it loads can reach it.  GPL-2.0-or-later
 // because it is compiled into a device tree blob, as the other boards' are.
@@ -40,8 +41,8 @@
 	#address-cells = <2>;
 	#size-cells = <2>;
 
-	cadr@60000000 {
-		reg = <0x0 0x60000000 0x0 0x08000000>;
+	cadr@63000000 {
+		reg = <0x0 0x63000000 0x0 0x01120000>;
 		no-map;
 	};
 };

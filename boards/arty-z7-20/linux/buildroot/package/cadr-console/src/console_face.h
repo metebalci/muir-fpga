@@ -1003,11 +1003,10 @@ void cons_say_flag2(uint16_t w);
 // halted, nothing is synchronized, and a word read while the machine is
 // running is a word from an instant nobody named.  The addresses are
 // `rtl/plumbing/cadr_ddr_map.sv`'s and the arithmetic is its `main_byte_address`,
-// at the board's base (<cadr/cadr_board.h>: 0x18000000 on the Zynq boards).
+// at the board's base (<cadr/cadr_board.h>: 0x1B000000 on the Zynq boards).
 #define CONS_MAIN_BASE CADR_BOARD_MAIN_BASE
-// What the machine can address today: 60 boards of 64K words.  The region
-// reserves 64 MB for a machine whose physical address had been widened, which
-// would be a fork of the machine and not a change here.
+// What the machine can address today: 60 boards of 64K words, inside the
+// region's 16 MB, which is the whole 22-bit space at 4 bytes a word.
 #define CONS_MAIN_WORDS_REACHABLE 3932160u
 // `cadr_ddr_map::main_byte_address`: a word is 32 bits, so the byte address
 // is the CADR's 22-bit physical word address shifted left by two.  Arithmetic

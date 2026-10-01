@@ -277,7 +277,7 @@ The device tree is this board's. It is the Arty Z7-20's with three differences:
 node, because this board's processing system has that peripheral disabled; and
 the model and compatible strings are Digilent's own for this board. The
 reserved-memory node is the other board's file included from here, because the
-CADR's 128 MB at `0x18000000` is a property of the machine and not of the
+CADR's region at `0x1B000000` is a property of the machine and not of the
 board.
 
 The U-Boot environment file is `cadr_cora.env` rather than `cadr.env`. Both

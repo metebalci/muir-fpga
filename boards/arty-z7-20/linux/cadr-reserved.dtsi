@@ -3,16 +3,19 @@
 //
 // The CADR's memory, told to Linux.
 //
-// `rtl/plumbing/cadr_ddr_map.sv` reserves the top 128 MB of the Arty Z7-20's 512 MB for
-// the machine.  Nothing here decides that: this file is the same fact in the
-// device tree's own words, and the two have to move together.
+// `rtl/plumbing/cadr_ddr_map.sv` reserves 17.125 MB of the Zynq boards' 512 MB
+// for the machine: main memory's 16 MB, the display's 1 MB and the disk pack
+// program's 128 KB of records, in that order.  Nothing here decides that: this
+// file is the same fact in the device tree's own words, and the two have to
+// move together.
 //
-//   RESERVED_BASE = 0x1800_0000, RESERVED_MB = 128
+//   RESERVED_BASE = 0x1B00_0000, RESERVED_BYTES = 0x0112_0000
 //
 // One node for the whole reservation rather than three for main memory, the
-// display and the spare.  128 MB at 0x1800_0000 is exactly what the map's
-// RESERVED_BASE and RESERVED_MB say; sub-dividing it is a change to make when
-// something claims a sub-region by phandle, and not before.
+// display and the records.  0x0112_0000 bytes at 0x1B00_0000 is exactly what
+// the map's RESERVED_BASE and RESERVED_BYTES say; sub-dividing it is a change
+// to make when something claims a sub-region by phandle, and not before.
+// Linux keeps 0x0000_0000-0x1AFF_FFFF and 0x1C12_0000-0x1FFF_FFFF.
 //
 // `no-map`, and the reason is coherency rather than tidiness.  S_AXI_HP does
 // not snoop the A9 caches, so a cacheable kernel mapping of memory the fabric
@@ -21,9 +24,8 @@
 // linear map entirely, and makes a later userspace mapping uncached by
 // construction.
 //
-// Reserving is necessary but not sufficient: U-Boot relocates the device tree
-// to the top of RAM, which is this region, unless `fdt_high` says otherwise.
-// See `boards/arty-z7-20/linux/uEnv.txt` and `docs/linux.md`.
+// U-Boot reads this node in its own tree too, and keeps its relocation and
+// what it places clear of it (`tools/reserved_check.py`, `docs/linux.md`).
 //
 // This is appended to the BSP's decompiled device tree --- dtc merges the two
 // root definitions.
@@ -34,8 +36,8 @@
 		#size-cells = <0x01>;
 		ranges;
 
-		cadr@18000000 {
-			reg = <0x18000000 0x08000000>;
+		cadr@1b000000 {
+			reg = <0x1b000000 0x01120000>;
 			no-map;
 		};
 	};

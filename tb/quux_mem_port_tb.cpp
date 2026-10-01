@@ -61,7 +61,7 @@
 namespace {
 
 constexpr uint32_t kMainWords = 32u << 16;
-constexpr uint32_t kMainBase = 0x18000000u;   // cadr_ddr_map::MAIN_BASE, Zynq
+constexpr uint32_t kMainBase = 0x1B000000u;   // cadr_ddr_map::MAIN_BASE, Zynq
 constexpr uint32_t kFbBase = 0x1C000000u;     // cadr_ddr_map::DISPLAY_BASE, Zynq
 constexpr uint32_t kFb = 017000000u;          // tv::BUFFER, the frame buffer's first word
 constexpr uint32_t kFbWords = 40960u;         // the video controller at 1280 by 1024

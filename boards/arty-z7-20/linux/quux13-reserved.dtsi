@@ -11,31 +11,31 @@
 // memory to the end of the records, and no further:
 //
 //   QUUX13_MAIN_BASE = 0x1200_0000, 160 MB, 32M words      main memory
-//   DISPLAY_BASE     = 0x1C00_0000,   8 MB                 the display
-//   SPARE_BASE       = 0x1C80_0000, 128 KB, RECORDS_BYTES  the records
-//   QUUX13_RESERVED_END = 0x1C82_0000
+//   DISPLAY_BASE     = 0x1C00_0000,   1 MB                 the display
+//   SPARE_BASE       = 0x1C10_0000, 128 KB, RECORDS_BYTES  the records
+//   QUUX13_RESERVED_END = 0x1C12_0000, the CADR's end too
 //
 // **THE CADR's NODE IS TAKEN OUT AND THIS ONE PUT IN.**  Revision 13's tree
 // is the board's own tree with this file after `cadr-reserved.dtsi`
 // (`zynq-arty-z7-20-quux13.dts`), so everything else about the board is
-// said once.  Linux has 0x0000_0000-0x11FF_FFFF and 0x1C82_0000-0x1FFF_FFFF,
-// 343.875 MB in two ranges; the CADR's and revision 12's trees keep the
-// 128 MB at 0x1800_0000 and their 384 MB.
+// said once.  Linux has 0x0000_0000-0x11FF_FFFF and 0x1C12_0000-0x1FFF_FFFF,
+// 350.875 MB in two ranges; the CADR's and revision 12's trees reserve
+// 0x1B00_0000-0x1C11_FFFF and keep 494.875 MB.
 //
 // **AND U-BOOT's TREE FOR REVISION 13 IS THE SAME**, so a revision 13 card
 // carries a u-boot.img of its own.  U-Boot relocates to the highest free
 // range that holds it (common/memtop.c, board/xilinx/common/board.c), which
-// here is the 55.9 MB above the records, and places the kernel's tree and the
+// here is the 62.9 MB above the records, and places the kernel's tree and the
 // ramdisk just below itself (lib/lmb.c).  The loads at fixed addresses
 // (`uboot/cadr.env`) are all below 0x1000_0000.  `tools/reserved_check.py`
 // holds all of it.
 
 / {
 	reserved-memory {
-		/delete-node/ cadr@18000000;
+		/delete-node/ cadr@1b000000;
 
 		quux13@12000000 {
-			reg = <0x12000000 0x0a820000>;
+			reg = <0x12000000 0x0a120000>;
 			no-map;
 		};
 	};

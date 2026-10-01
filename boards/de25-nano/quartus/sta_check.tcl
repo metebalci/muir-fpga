@@ -635,11 +635,16 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     # bridge's constant address bits, which a build without that did.
     # Measured.
     #
-    # **EIGHTY AND NOT NINETY-SIX.**  The clause names three registers of
-    # thirty-two bits, and the top eight bits of both addresses are the
-    # region's base, `0xB0`, which is a constant: the fitter keeps no
-    # register for them, so the pins are 24 + 24 + 32.
-    foreach {sta_what sta_var sta_want} {{the adapter's address and data pins} ddr_contract 80
+    # **EIGHTY-TWO AND NOT NINETY-SIX.**  The clause names three registers
+    # of thirty-two bits.  Bits 1 and 0 of both addresses are zero, and the
+    # top eight are main memory's `0xB3` or the display's `0xB4`
+    # (`cadr_ddr_map.sv`), so the fitter keeps three registers of them: bit
+    # 24, with bit 25 merged into it (both one for main memory and zero for
+    # the display), bit 26 (the other way round), and bit 28, with bits 29
+    # and 31 merged into it (one in every address, and zero only at reset).
+    # So the pins are 25 + 25 + 32.  Measured, by name; with the base at
+    # `0xB0`, where bits 24 and 25 were zero in both, they were 24 + 24 + 32.
+    foreach {sta_what sta_var sta_want} {{the adapter's address and data pins} ddr_contract 82
                              {the registers the processor samples on its own clock} ddr_to_hps 32
                              {the processor's asynchronous bits' first registers} ddr_crossing 5
                              {the debug cable's carrier latch} cable_word 16} {

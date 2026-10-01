@@ -20,7 +20,7 @@
  *     DE25-Nano", both of Altera's trees) so that the card staging can read
  *     which board's tree this is out of this file, as it reads the Zynq
  *     boards' out of theirs;
- *   the CADR's 128 MB at 0xB000_0000, no-map, from cadr-reserved.dtsi, which
+ *   the CADR's 17.125 MB at 0xB300_0000, no-map, from cadr-reserved.dtsi, which
  *     says why there and why in both trees;
  *   the USB port as a HOST.  The board's one USB port is the processor's
  *     DWC2 controller behind a USB3320 ULPI PHY at a Type-C connector, and

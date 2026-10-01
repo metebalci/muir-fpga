@@ -163,8 +163,10 @@ reads as "the device tree edit did not take". A `reserved-memory` node is not
 on that path. That is the mechanism to use, and it is also the word
 `cadr_ddr_map.sv` already uses for it.
 
-**The reserved-memory node binds the kernel, and not the loader.** Two things
-are inside the 128 MB before Linux starts. No node in the tree U-Boot is
+**The reserved-memory node binds the kernel, and not the loader.** On the
+first cards, which ran the BSP's own U-Boot, two things were inside the
+128 MB before Linux started; the project's own U-Boot does neither ("The
+CADR's region, and everything in it", below). No node in the tree U-Boot is
 carrying stops either of them.
 
 `loadbootenv_addr` is `0x1EE00000`. Preboot sets it, and it is 115 MiB
@@ -443,25 +445,77 @@ The kernel binary actually being booted supports it. `System.map.linux` exports
 `memblock_mark_nomap`. That was checked against the image, not against a kernel
 version assumed from a release number.
 
-**One node covers the whole 128 MB**, rather than three for main memory, the
-display and the spare. `0x1800_0000` and 128 MB are exactly `RESERVED_BASE` and
-`RESERVED_MB` in `cadr_ddr_map.sv`. Sub-dividing is a change to make when
+**One node covers the whole region**, rather than three for main memory, the
+display and the records. It reserves exactly `RESERVED_BASE` and
+`RESERVED_BYTES` in `cadr_ddr_map.sv`. Sub-dividing is a change to make when
 something claims a sub-region by phandle, and not before.
+
+## The CADR's region, and everything in it
+
+**The region holds what the machine can reach, and nothing else.** It was
+128 MB, reserved at the size the machine might one day want, and the
+110.875 MB of it that nothing used went back to Linux. Every user of the
+region, on every board:
+
+    what                       size     Zynq boards   DE25-Nano     Kria KR260
+    main memory                16 MB    0x1B00_0000   0xB300_0000   0x6300_0000
+    the display                 1 MB    0x1C00_0000   0xB400_0000   0x6400_0000
+      the first TV board      128 KB    0x1C00_0000   0xB400_0000   0x6400_0000
+      the color TV board      128 KB    0x1C02_0000   0xB402_0000   0x6402_0000
+    the disk pack records     128 KB    0x1C10_0000   0xB410_0000   0x6410_0000
+    the end of the region               0x1C12_0000   0xB412_0000   0x6412_0000
+
+- **Main memory** is 4M words at 4 bytes a word, the whole 22-bit physical
+  space. The machine fits at most 60 boards of 64K words, 3,932,160 words
+  (15 MB), since the top four slots of the space are the display, the disk
+  controller and the Unibus. QUUX to revision 12 has the same space and the
+  same ceiling. The fabric writes it, and `cadr-console`, `cadr-checkpoint`
+  and `quux-file-device` map it.
+- **The display** holds both TV boards' buffers, 32,768 words each, 256 KB in
+  use; QUUX's video controller has one buffer of at most 64K words, 256 KB,
+  from the same base (64,800 words at 1920 by 1080). The fabric writes it, the
+  display output reads it, and `cadr-terminal` and `cadr-checkpoint` map it.
+- **The records** are the disk pack program's, one area per slot for a fetch
+  and one for a write-back, all 24 slots (`pack_feeder.h`,
+  `FEEDER_MAP_BYTES`). `cadr-disk-packs` maps them and the pack side moves
+  blocks through them. They are the whole of what the old 56 MB spare above
+  the display was used for.
+- **The loaders write nothing in it.** This project's U-Boot, on the Zynq
+  boards and the DE25-Nano, keeps its environment in itself
+  (`CONFIG_ENV_IS_NOWHERE`) and has no preboot, so it loads only at the fixed
+  addresses of `cadr.env` and `cadr_de25.env`, all below the region; its
+  relocation and the tree and ramdisk it places are clear of the region
+  (`tools/reserved_check.py` models them). The Kria KR260's factory U-Boot
+  runs `boot.cmd`, whose loads are all below `0x5A00_0000`, and relocates
+  itself above `0x7B80_0000`. The write at `0x1EE0_0000` described above was
+  the BSP loader's, on the first cards.
+
+Linux has everything else: 494.875 MB on the Zynq boards in two ranges,
+`0x0000_0000` to `0x1AFF_FFFF` and `0x1C12_0000` to `0x1FFF_FFFF`; on the
+DE25-Nano the 1 GB but the service layer's 32 MB and the region; on the Kria
+KR260 its 4 GB but the firmware's reservations and the region. Measured,
+`MemTotal` went from 381,468 kB to 493,976 kB on the Arty Z7-20 and the Cora
+Z7-07S, from 824,964 kB to 938,276 kB on the DE25-Nano, and from 3,877,244 kB
+to 3,990,556 kB on the Kria KR260. **The display
+stayed where it was and main memory moved to just below it**, so that QUUX
+revision 13's main memory, which fills the room below the display, did not
+move, and so that each board's region is inside its old 128 MB. A card whose
+loader still carries the old reservation in its own tree keeps its relocation
+clear of the new region.
 
 ## Each machine's reservation, and how a card pairs it with its bitstream
 
 **Each machine has its own device trees.** The CADR's and QUUX revision 12's
-reserve the CADR's 128 MB, as above, and Linux keeps 384 MB on the Arty Z7-20
-and 864 MB on the DE25-Nano. QUUX revision 13's reserve its own region
-(`quux13-reserved.dtsi`). Its main memory is 32M words of packed storage, 5
-bytes a word, directly below the display. The display and the disk pack
-program's records stay where the CADR's are. The region runs from main memory
-to the end of the records, and the rest of the CADR's spare is Linux's on that
-machine.
+reserve the CADR's region, as above, since revision 12's main memory and its
+video controller's buffer are inside the CADR's own areas. QUUX revision 13's
+reserve its own region (`quux13-reserved.dtsi`). Its main memory is 32M words
+of packed storage, 5 bytes a word, directly below the display. The display and
+the disk pack program's records stay where the CADR's are. The region runs
+from main memory to the end of the records, which is where the CADR's ends.
 
     board        revision 13's region         main memory     Linux
-    Arty Z7-20   0x1200_0000-0x1C81_FFFF      160 MB          343.9 MB, two ranges
-    DE25-Nano    0xA000_0000-0xB481_FFFF      room for 320 MB about 664 MB
+    Arty Z7-20   0x1200_0000-0x1C11_FFFF      160 MB          350.875 MB, two ranges
+    DE25-Nano    0xA000_0000-0xB411_FFFF      room for 320 MB 670.875 MB
 
 **Revision 13's tree is the board's tree with its reservation after the
 CADR's**, which it takes out: `zynq-arty-z7-20-quux13.dts` and
@@ -481,9 +535,9 @@ The script refuses to run if that recorded command does not reproduce the
 build's own loader byte for byte.
 
 - On the Arty Z7-20, U-Boot relocates to the highest free range that holds
-  it. With the CADR's tree that is below `0x1800_0000`. With revision 13's
-  it is the 55.9 MB above the records. The loads at fixed addresses
-  (`uboot/cadr.env`) are below `0x1000_0000`, clear of both.
+  it, which with either machine's tree is the 62.9 MB above the records. The
+  loads at fixed addresses (`uboot/cadr.env`) are below `0x1000_0000`, clear
+  of both.
 - On the DE25-Nano, U-Boot relocates to the top 128 MB whatever its tree
   says, and places the kernel's tree and the ramdisk just under itself. Both
   machines' regions end below `0xB800_0000`, and the fixed loads end below
@@ -747,7 +801,7 @@ card's `uEnv.txt` decides between them by whether it names a server, and it is
 imported twice around `dhcp` so that a lease cannot take the card's `serverip`
 away. On any failure the loop says so, waits ten seconds and tries again.
 
-## The machine's 128 MB, at `0xB000_0000` and not at the top
+## The machine's region, at `0xB300_0000` and not at the top
 
 **The processor's memory is 1 GB at `0x8000_0000`, and the fabric reaches it at
 the same addresses** through the FPGA-to-SDRAM bridge (814346, Table 323).
@@ -757,9 +811,8 @@ gives about U-Boot.** U-Boot relocates itself to the top of memory, and on this
 part nothing moves that below a reserved-memory node: the one caller of the
 reserved-memory-aware `get_mem_top()` in U-Boot 2026.01 is Xilinx's board code,
 and neither mainline's nor Altera's socfpga code implements the hook. So the
-machine's 128 MB is the second 128 MB from the top, `0xB000_0000` to
-`0xB7FF_FFFF`, and the last 128 MB is U-Boot's to relocate into, with room to
-spare. On the Zynq boards that relocation is a hazard to be lived with; here it
+machine's region ends below the last 128 MB, `0xB300_0000` to `0xB411_FFFF`,
+and the last 128 MB is U-Boot's to relocate into, with room to spare. On the Zynq boards that relocation is a hazard to be lived with; here it
 decides the address.
 
 **U-Boot's tree carries the node as well as the kernel's**, because U-Boot's own
@@ -861,7 +914,7 @@ the processor.
 
 ## What is in `boards/de25-nano/linux/`
 
-    cadr-reserved.dtsi   the CADR's 128 MB at 0xB000_0000, for both trees
+    cadr-reserved.dtsi   the CADR's region at 0xB300_0000, for both trees
     quux13-reserved.dtsi QUUX revision 13's region, for revision 13's trees
     buildroot_check.py   the pins, the boot's own arrangement, the
                          configurations after a build, and the programs

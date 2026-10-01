@@ -332,37 +332,41 @@ Otherwise it would be holding the fabric to a path the hardware never had.
 
 ## Memory in DDR
 
-Memory is shared with the Linux side. It is settled early in
-`rtl/plumbing/cadr_ddr_map.sv` and **reserved at the size the machine could one
-day want**. That is a quarter of the board's 512 MB, and Linux keeps 384.
+Memory is shared with the Linux side. It is settled in
+`rtl/plumbing/cadr_ddr_map.sv` and **reserved at what the machine can reach,
+and no more**: 17.125 MB of a Zynq board's 512 MB, and Linux keeps the rest.
 
-| base | reserved | reachable today | |
+| base | reserved | used | |
 |---|---|---|---|
-| `0x1800_0000` | 64 MB, 16M words | 15 MB, 3,932,160 words | main memory |
-| `0x1C00_0000` | 8 MB, 2M words | 128 KB, 32,768 words | display |
-| `0x1C02_0000` | in the 8 MB above | 128 KB, 32,768 words | second display |
-| `0x1C80_0000` | 56 MB | --- | spare |
+| `0x1B00_0000` | 16 MB, 4M words | 15 MB, 3,932,160 words | main memory |
+| `0x1C00_0000` | 1 MB | 128 KB, 32,768 words | display |
+| `0x1C02_0000` | in the 1 MB above | 128 KB, 32,768 words | second display |
+| `0x1C10_0000` | 128 KB | 128 KB | the disk pack program's records |
+
+The other boards have the same layout at their own base: `0xB300_0000` on the
+DE25-Nano and `0x6300_0000` on the Kria KR260. QUUX to revision 12 uses the
+same region: its main memory has the CADR's ceiling, and its video
+controller's buffer, at most 64K words, is inside the display's 1 MB.
 
 QUUX revision 13 has its own device trees and loader, and its own region:
 main memory as 32M words of packed storage from `0x1200_0000`, then the display
-and the spare's first 128 KB, the disk pack program's records. Linux keeps
-343.9 MB beside it (`docs/linux.md`).
+and the records, ending where the CADR's region ends. Linux keeps 350.9 MB
+beside it (`docs/linux.md`).
 
 DDR was never the limit. The CADR's physical address is 22 bits, a 14-bit page
-frame out of the map with `VMA<7:0>` as the offset, so 3,932,160 words is the
+frame out of the map with `VMA<7:0>` as the offset, so main memory's 16 MB
+holds every address the machine can make, and 3,932,160 words is the
 ceiling. The top four of the 64 slots are taken by the display, the disk
-controller and the Unibus. The CADR's *virtual* address is 24 bits, which is
-what the 64 MB is room for.
+controller and the Unibus.
 
-The display's 8 MB holds both display boards' frame buffers: the first at its
+The display's 1 MB holds both display boards' frame buffers: the first at its
 base and the second, the color TV's, 128 KB above it, which is the first
 board's own size. A machine carries the second board only when the card asks
-for it. The 8 MB is also room for 1920 x 1080 at 32 bits a pixel. The CADR's
-own screen is 768 x 963 at one bit and the color TV's 576 x 454 at four bits
-a pixel --- four is the only depth that board has here, a pixel being an
-address into sixteen colors of three eight-bit channels --- so that room is
-for a display that is not the CADR's. The Linux side serves a 1080p canvas
-over RFB and composites the machine's screen into it.
+for it. The CADR's own screen is 768 x 963 at one bit and the color TV's
+576 x 454 at four bits a pixel --- four is the only depth that board has
+here, a pixel being an address into sixteen colors of three eight-bit
+channels. The Linux side serves a 1080p canvas over RFB and composites the
+machine's screen into it.
 
 ## Building
 

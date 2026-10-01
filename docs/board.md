@@ -292,20 +292,20 @@ is the same shape as the DONE bit above.
 
 The script records uninitialized DDR and re-reads one block to see whether it
 is stable. That reading is recorded and not asserted, because there is nothing
-to assert. It then writes the proving word `0x8A5C36E1` at `0x18A72EE4`, and
+to assert. It then writes the proving word `0x8A5C36E1` at `0x1BA72EE4`, and
 its complement over it, with the low half of that beat asserted untouched. It
-walks a one across every address bit of the 128 MB region, with everything
+walks a one across every address bit of the CADR's region, with everything
 written before anything is read. It writes the top of the 512 MB last, so the
 whole part is known to have enumerated.
 
-    DDR: PASSED --- the memory controller is up and DDR answers at 0x18000000
+    DDR: PASSED --- the memory controller is up and DDR answers at 0x1B000000
     DDR:   through 0x1FFFFFFF, with no bitstream and no
     DDR:   ps7_post_config.
 
 It passed twice at `2f775e0`, and that is recorded in `e1b4d5f`. A mismatch
 names the address:
 
-    DDR: FAILED at 0x18A72EE4 --- wrote the word
+    DDR: FAILED at 0x1BA72EE4 --- wrote the word
     DDR: FAILED   wanted 0x8A5C36E1, read 0x00000000
 
 ### Step two --- the fabric writes, the debugger reads it back
@@ -313,21 +313,21 @@ names the address:
     BIT=build/prove-write/cadr_arty.bit \
         timeout 900 ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/prove_write.tcl
 
-`PROVE=1` puts `0x8A5C36E1` at `0x18A72EE4` through the machine's own memory
+`PROVE=1` puts `0x8A5C36E1` at `0x1BA72EE4` through the machine's own memory
 port, as soon as `SAXIHP0ARESETN` says the port can answer, and then stops.
 That port is the same `cadr_axi_master` -> `cadr_axi_widen` -> `cadr_ps7` chain
 the machine will use. Nothing in the design says whether the word arrived. What
 says so is the script. It reads DDR through the processing system's own path,
 which shares nothing with the fabric's.
 
-**Pass is two things, and the second is the one that can fail.** `0x18A72EE4`
+**Pass is two things, and the second is the one that can fail.** `0x1BA72EE4`
 holds the word. Every other word of the thirty-two still holds the filler, and
-`0x18A72EE0` above all, which is the low half of the same 64-bit beat. The
+`0x1BA72EE0` above all, which is the low half of the same 64-bit beat. The
 address has bit 2 set for exactly that reason. Against a neighborhood of
 zeros, a widening that opened both halves would be invisible.
 
-    PROVE: PASSED --- the fabric wrote 0x8A5C36E1 to 0x18A72EE4
-    PROVE:   through S_AXI_HP0, and every other word in the block, 0x18A72EE0
+    PROVE: PASSED --- the fabric wrote 0x8A5C36E1 to 0x1BA72EE4
+    PROVE:   through S_AXI_HP0, and every other word in the block, 0x1BA72EE0
     PROVE:   included, still holds the filler.  The low half of the beat is
     PROVE:   untouched, so the strobes opened one half and not two.
 
@@ -338,7 +338,7 @@ failures are worth knowing before they happen:
   live when the part configured and the witness fired before the poison landed,
   or `ps7_post_config` never ran. The clear of `LVL_SHFTR_EN` above is what
   prevents the first.
-- **`0x18A72EE0` among the differing words.** The write opened both halves of
+- **`0x1BA72EE0` among the differing words.** The write opened both halves of
   the beat. The script says so and names `cadr_axi_widen.sv`'s strobes.
 
 LD4 carries the witness's own verdict on a `PROVE` board, and only there. On
@@ -355,8 +355,8 @@ lamp is the design marking its own work.
         timeout 900 ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/prove_read.tcl
 
 This step runs three cases, in one session and one download, with **no
-button**. The fabric reads `0x18A72EE4` and writes what it read, raw, to
-`0x18A72F18`. That address is seven beats away with bit 2 clear, so the read
+button**. The fabric reads `0x1BA72EE4` and writes what it read, raw, to
+`0x1BA72F18`. That address is seven beats away with bit 2 clear, so the read
 takes a high half and the write-back opens a low one. It echoes a raw word and
 not a match bit. A match bit would be the fabric comparing against a constant
 the fabric itself holds, and a wrong lane and a wrong constant agree with each
@@ -364,19 +364,19 @@ other. A lane swap, a shift or a byte reversal is visible **in the value**.
 
 The negatives come first and the order is not optional:
 
-    wrong   0x8A5C36E0 put at 0x18A72EE4, the word with bit 0 cleared.
+    wrong   0x8A5C36E0 put at 0x1BA72EE4, the word with bit 0 cleared.
             0x8A5C36E0 must come back; 0x8A5C36E1 would mean the fabric
             echoes a constant it holds and not what the memory gave it.
-    half    0x8A5C36E1 put at 0x18A72EE0, the LOW half of the beat, with the
-            filler left at 0x18A72EE4.  The FILLER must come back, which is
+    half    0x8A5C36E1 put at 0x1BA72EE0, the LOW half of the beat, with the
+            filler left at 0x1BA72EE4.  The FILLER must come back, which is
             what says the widening takes the half the address asks for.
-    right   0x8A5C36E1 at 0x18A72EE4.  The word must come back, and it means
+    right   0x8A5C36E1 at 0x1BA72EE4.  The word must come back, and it means
             something only after the other two have come back wrong in their
             own two ways.
 
 The echo beat gets a third filler of its own, `0x3C7A91D6`. Without it, the
 `half` case's echo of `0x75A3C91E` would be indistinguishable from no
-write-back at all. `0x18A72F1C`, the other half of the echo's beat, must still
+write-back at all. `0x1BA72F1C`, the other half of the echo's beat, must still
 hold that third filler afterwards.
 
     PROVE: case wrong PASSED
@@ -390,7 +390,7 @@ failure is worth checking before any other, because it is not a fault at all:
     PROVE: FAILED   AND THIS IS WHAT A `PROVE=1` BITSTREAM LOOKS LIKE, which
     PROVE: FAILED   would be the wrong file and not a fault: nothing came
 
-A step-two bitstream never reads. It puts `0x8A5C36E1` at `0x18A72EE4` when the
+A step-two bitstream never reads. It puts `0x8A5C36E1` at `0x1BA72EE4` when the
 port comes live. Check `BIT=`.
 
 ### Step four --- the machine runs out of real DDR3

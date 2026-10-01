@@ -173,7 +173,7 @@ subordinate with 256 data bits and 32 address bits. Altera's bridge
 demonstration, named at the end of this README, documents the width as 64, 128
 or 256 bits, and the bridge as reaching only the memory on the processor's own
 memory controller. The Zynq's `S_AXI_HP` ports are AXI3 at 64 bits. The
-machine's reservation sits at `0xB000_0000` in that address space, and "The
+machine's reservation sits at `0xB300_0000` in that address space, and "The
 memory board" below has the map and the reason.
 
 **And there is one such port where the Zynq has four.** On the Zynq boards the
@@ -326,7 +326,7 @@ and every beat must be the full bus width, so the path is the Zynq boards'
 with one piece changed: `cadr_axi_master.sv` and `cadr_axi_widen.sv` are
 unchanged, and `cadr_f2sdram_share.sv` takes their AXI3 shape to the bridge's
 AXI4 one, with the bridge's own attributes on every transaction. The
-machine's 128 MB are at `0xB000_0000`, the second 128 MB from the top of the
+machine's 17.125 MB are at `0xB300_0000`, below the top 128 MB of the
 processor's 1 GB, and `rtl/plumbing/cadr_ddr_map.sv` says why they are not at
 the top.
 
@@ -360,9 +360,10 @@ the marker that says the fabric and not an undriven register wrote it.
 
 | what | where |
 |---|---|
-| main memory | `0xB000_0000`, 128 MB reserved, 15 MB reachable |
-| QUUX revision 13's main memory | `0xA000_0000`, room for 64M words packed; its own tree reserves `0xA000_0000`-`0xB481_FFFF` |
-| the display's buffer | `0xB400_0000` |
+| main memory | `0xB300_0000`, 16 MB reserved, 15 MB reachable |
+| QUUX revision 13's main memory | `0xA000_0000`, room for 64M words packed; its own tree reserves `0xA000_0000`-`0xB411_FFFF` |
+| the display's buffer | `0xB400_0000`, 1 MB reserved |
+| the disk pack records | `0xB410_0000`, 128 KB, the end of the reservation |
 | the gate | `h2f_gp_out[0]`, the system manager's GPO at `0x10D1_20E4` |
 | the tally's half | `h2f_gp_out[1]` |
 | the tally | `h2f_gp_in`, its GPI at `0x10D1_20E8` |

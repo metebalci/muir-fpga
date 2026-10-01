@@ -69,7 +69,7 @@ constexpr long kMicrocycle = GridTicks(85) + GridTicks(60);
 
 // `cadr_ddr_map.sv`'s three bases, transcribed here so that a move of the
 // map is a mismatch and not a silent agreement.
-constexpr uint32_t kMainBase = 0x18000000u;
+constexpr uint32_t kMainBase = 0x1B000000u;
 constexpr uint32_t kDisplayBase = 0x1C000000u;
 constexpr uint32_t kColorBase = 0x1C020000u;
 

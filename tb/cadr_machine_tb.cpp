@@ -683,7 +683,7 @@ int main(int argc, char **argv) {
   long armed_row = -1;
   // QUUX's main memory: its words, when the operation standing is due, and
   // the writes the processor's cycles owe it, in order.
-  constexpr uint32_t kMainBase = 0x18000000u;
+  constexpr uint32_t kMainBase = 0x1B000000u;
   // The video controller's frame buffer: `tv::BUFFER`, 40,960 words, at the
   // display's base, `cadr_ddr_map::DISPLAY_BASE` on the Zynq boards.
   constexpr uint32_t kFbBase = 0x1C000000u;
@@ -1093,7 +1093,7 @@ int main(int argc, char **argv) {
     // **WHERE IN DDR THE BRIDGE PUT THE WORD**, once a cycle, against the
     // map transcribed from `rtl/plumbing/cadr_ddr_map.sv` for the Zynq
     // boards, which is the map this model is built with: main memory at
-    // 0x18000000 a word a four bytes, and the first display's buffer at
+    // 0x1B000000 a word a four bytes, and the first display's buffer at
     // 0x1C000000 from `17000000`, the same rule for the CADR's 32K words and
     // the video controller's 40,960.  Nothing else here looks at the
     // address, so a display window folded onto the wrong words would read
@@ -1102,7 +1102,7 @@ int main(int argc, char **argv) {
       const uint32_t p = dut->phys;
       const uint32_t fb = 017000000u;
       const uint32_t want = (p >= fb && p - fb < 0200000u) ? 0x1C000000u + ((p - fb) << 2)
-                                                           : 0x18000000u + (p << 2);
+                                                           : 0x1B000000u + (p << 2);
       ++ddr_addrs_checked;
       if (dut->mem_addr != want) {
         std::fprintf(stderr,

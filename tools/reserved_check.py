@@ -19,7 +19,7 @@ text cannot say:
     live; the loads at the fixed addresses of its environment it does not move.
 
 **EACH MACHINE HAS ITS OWN TREES** (docs/linux.md): the CADR's and QUUX
-revision 12's reserve the CADR's 128 MB (`cadr-reserved.dtsi`); revision 13's
+revision 12's reserve the CADR's region (`cadr-reserved.dtsi`); revision 13's
 reserve from its main memory to the end of the disk pack program's records
 (`quux13-reserved.dtsi`, after the CADR's, which it takes out), on the Arty
 Z7-20 and the DE25-Nano.  A card carries one machine: its bitstream, its
@@ -201,7 +201,7 @@ def regions_of(root, fam):
     import mem_map_check  # noqa: E402
     m = mem_map_check.ddr_map(read(root, DDR_MAP), FAMILIES[fam]["defines"])
     return {
-        "cadr": (m["RESERVED_BASE"], m["RESERVED_MB"] * MB, "cadr"),
+        "cadr": (m["RESERVED_BASE"], m["RESERVED_BYTES"], "cadr"),
         "quux13": (m["QUUX13_MAIN_BASE"], m["QUUX13_RESERVED_END"] - m["QUUX13_MAIN_BASE"],
                    "quux13"),
     }

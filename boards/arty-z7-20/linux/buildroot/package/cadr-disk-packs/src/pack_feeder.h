@@ -5,9 +5,10 @@
 // controller asks for goes from the pack into a slot of the store, a slot
 // the CADR wrote goes back onto the pack, both through the record in DDR.
 //
-// WHERE THE RECORDS GO.  `rtl/plumbing/cadr_ddr_map.sv` reserves 128 MB at
-// 0x1800_0000 for the machine: 64 MB main memory, 8 MB display, and 56 MB
-// spare from 0x1C80_0000.  The records go in the spare, one area per slot
+// WHERE THE RECORDS GO.  `rtl/plumbing/cadr_ddr_map.sv` reserves 17.125 MB
+// at 0x1B00_0000 for the machine: 16 MB main memory, 1 MB display, and the
+// spare from 0x1C10_0000, which is the records' 128 KB and no more.  The
+// records go in the spare, one area per slot
 // for fetches and a second per slot for write-backs, 2 KB apart: a record is
 // 1,036 bytes and 128-byte alignment is what the fabric demands, so that no
 // sixteen-beat burst crosses 4 KB; at a 2 KB stride from a 2 KB-aligned base
@@ -95,19 +96,21 @@
 #include "pack_side.h"
 
 // The spare's base is the board's (<cadr/cadr_board.h>, through pack_side.h):
-// 0x1C800000 on the Zynq boards, 0xB4800000 on the DE25-Nano, 72 MB into the
-// reservation on both.
+// 0x1C100000 on the Zynq boards, 0xB4100000 on the DE25-Nano, 0x64100000 on
+// the Kria KR260, 17 MB into the reservation on every board.  The spare is
+// the records' area and ends the reservation, so nothing past it is the
+// machine's.
 #define FEEDER_SPARE_BASE   CADR_BOARD_SPARE_BASE
-#define FEEDER_SPARE_BYTES  (56u * 1024u * 1024u)
+#define FEEDER_SPARE_BYTES  CADR_BOARD_RECORDS_BYTES
 #define FEEDER_RECORD_STRIDE 0x800u
 #define FEEDER_FETCH_OFF    0x00000u
 #define FEEDER_WB_OFF       0x10000u
 // What the feeder maps of the spare: both areas for all 24 slots.
 #define FEEDER_MAP_BYTES    0x20000u
-// **AND ALL OF IT IS RESERVED ON EVERY MACHINE.**  QUUX revision 13's device
-// tree reserves only the records' area of the spare, `CADR_BOARD_RECORDS_BYTES`,
-// and gives Linux the rest; a feeder that mapped past it would write into
-// Linux's memory there.
+// **AND ALL OF IT IS RESERVED ON EVERY MACHINE.**  Every machine's device
+// tree reserves the records' area, `CADR_BOARD_RECORDS_BYTES`, and gives Linux
+// what is past it; a feeder that mapped past it would write into Linux's
+// memory there.
 _Static_assert(FEEDER_MAP_BYTES <= CADR_BOARD_RECORDS_BYTES,
 	       "the records fit the area revision 13's tree reserves of the spare");
 

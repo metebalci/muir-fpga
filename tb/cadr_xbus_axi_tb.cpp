@@ -25,7 +25,7 @@
 //   - AXI's own rules at every tick: a valid stays up, with its payload
 //     unmoved, until its ready, even when the cycle that asked has gone.
 //
-// Main memory is at 0x1800_0000 on the Zynq boards (`cadr_ddr_map.sv`), and
+// Main memory is at 0x1B00_0000 on the Zynq boards (`cadr_ddr_map.sv`), and
 // this check builds that map.
 
 #include <cstdio>
@@ -41,7 +41,7 @@ Vcadr_xbus_axi_harness *t;
 long tick = 0;
 int bad = 0;
 
-const unsigned MAIN_BASE = 0x18000000u;
+const unsigned MAIN_BASE = 0x1B000000u;
 const int NXM = 425;  // ticks the bus interface gives a slave, near enough
 
 // The slave.  Latencies are set by the test before each cycle.

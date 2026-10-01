@@ -124,13 +124,13 @@
 #                     Nothing clears DDR between runs, so "uninitialized"
 #                     means uninitialized since power-on and only the first
 #                     run after one says anything.
-#   word and poison   the project's own pair, `0x8A5C36E1` at `0x18A72EE4`
+#   word and poison   the project's own pair, `0x8A5C36E1` at `0x1BA72EE4`
 #                     and its complement `0x75A3C91E` written over it.  A
 #                     read that returns the value the previous write left is
 #                     indistinguishable from a real one until the second
 #                     write disagrees with the first.
-#   the neighbor      `0x18A72EE0`, the low half of the same 64-bit beat,
-#                     asserted unchanged.  `0x18A72EE4` has bit 2 set for
+#   the neighbor      `0x1BA72EE0`, the low half of the same 64-bit beat,
+#                     asserted unchanged.  `0x1BA72EE4` has bit 2 set for
 #                     exactly this reason.
 #   walking one       one address per address bit, each carrying a value only
 #                     it was given, all written before any is read.  A
@@ -140,8 +140,11 @@
 #                     whole part is known to have enumerated rather than just
 #                     the bottom of it.
 #
-# The region is `rtl/plumbing/cadr_ddr_map.sv`'s: 0x1800_0000 for 128 MB, which is what
-# the machine will own.
+# The region is `rtl/plumbing/cadr_ddr_map.sv`'s: 0x1B00_0000 for 17.125 MB, which is
+# what the machine owns: main memory's 16 MB, the display's 1 MB and the
+# records' 128 KB.  The two uninitialized blocks are sampled where they were
+# first measured, at 0x18000000 and 0x19000000, which are Linux's memory now
+# and are only read.
 
 # ---------------------------------------------------------------- the board
 #
@@ -182,14 +185,14 @@ set init [expr {[info exists ::env(PS7_INIT)] ? $::env(PS7_INIT) \
 
 # ------------------------------------------------------------------ the map
 # rtl/plumbing/cadr_ddr_map.sv: RESERVED_BASE, and MAIN_BASE on top of it.
-set MAIN_BASE   0x18000000
-set RESERVED_MB 128
+set MAIN_BASE   0x1B000000
+set RESERVED_BYTES 0x01120000
 
 # The proving address and word, the same pair `boards/arty-z7-20/cadr_arty.sv` gives the
 # witness: main_byte_address(22'o12345671), a word of four distinct bytes
 # whose halves are not rotations of each other, and its complement as poison.
-set PROVE_ADDR  0x18A72EE4
-set PROVE_NEIGH 0x18A72EE0
+set PROVE_ADDR  0x1BA72EE4
+set PROVE_NEIGH 0x1BA72EE0
 set PROVE_WORD  0x8A5C36E1
 set PROVE_POISON 0x75A3C91E
 
@@ -434,7 +437,7 @@ say "  S_AXI_HP0 belong with the bitstream that uses them."
 # ------------------------------------------------- uninitialized, before any write
 
 say "uninitialized DDR, read before anything is written:"
-foreach a [list $MAIN_BASE $PROVE_NEIGH 0x19000000 0x1FFFFFE0] {
+foreach a [list 0x18000000 $PROVE_NEIGH 0x19000000 0x1FFFFFE0] {
     set words [rdn $a 8]
     set out {}
     foreach w $words { lappend out [hex $w] }
@@ -476,7 +479,7 @@ set walk {}
 lappend walk [list $MAIN_BASE 0xE1000000]
 for {set k 2} {$k <= 26} {incr k} {
     set a [expr {$MAIN_BASE + (1 << $k)}]
-    if {$a >= $MAIN_BASE + ($RESERVED_MB * 1024 * 1024)} { continue }
+    if {$a >= $MAIN_BASE + $RESERVED_BYTES} { continue }
     # Distinct per bit, never zero, never all ones, and not the address.
     lappend walk [list $a [expr {0xC0DE0000 | ($k << 8) | (255 - $k)}]]
 }

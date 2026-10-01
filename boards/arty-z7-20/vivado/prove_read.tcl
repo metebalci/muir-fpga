@@ -36,7 +36,7 @@
 # the positive case alone proves nothing.  They are run in this order and the
 # order is not optional:
 #
-#   wrong   0x8A5C36E0 at 0x18A72EE4 --- the word with bit 0 cleared.  The
+#   wrong   0x8A5C36E0 at 0x1BA72EE4 --- the word with bit 0 cleared.  The
 #           witness reads the right address, in the right half, and gets a
 #           word that differs in one bit.  0x8A5C36E0 must come back at
 #           `PROVE_ECHO`.  If 0x8A5C36E1 comes back, the fabric is writing out
@@ -45,15 +45,15 @@
 #           wholly different word because a comparison that dropped a bit
 #           would pass anything coarser.
 #
-#   half    0x8A5C36E1 at 0x18A72EE0 --- the LOW half of the same 64-bit beat
-#           --- with the filler left at 0x18A72EE4.  The word is present in
+#   half    0x8A5C36E1 at 0x1BA72EE0 --- the LOW half of the same 64-bit beat
+#           --- with the filler left at 0x1BA72EE4.  The word is present in
 #           DDR and in the wrong half of the beat, so what the witness reads
 #           is the FILLER, and the filler is what must come back at
 #           `PROVE_ECHO`.  This is the case that says `cadr_axi_widen.sv`
 #           takes the half the address asks for and not whichever half has
 #           something in it.
 #
-#   right   0x8A5C36E1 at 0x18A72EE4.  0x8A5C36E1 must come back, and it means
+#   right   0x8A5C36E1 at 0x1BA72EE4.  0x8A5C36E1 must come back, and it means
 #           something only after the two above have come back wrong in their
 #           own two ways.
 #
@@ -69,7 +69,7 @@
 #
 # WHAT EACH CASE CHECKS, BEYOND THE ONE WORD.
 #
-#   - `PROVE_ECHO`'s NEIGHBOR, 0x18A72F1C, is the other half of its 64-bit
+#   - `PROVE_ECHO`'s NEIGHBOR, 0x1BA72F1C, is the other half of its 64-bit
 #     beat and must still hold 0x3C7A91D6.  The write-back goes through
 #     `cadr_axi_widen.sv` like any other write, so a strobe pattern that
 #     opened both halves would destroy it --- the same check step two makes
@@ -80,7 +80,7 @@
 #
 #   - THE BEAT THE READ CAME OUT OF IS UNCHANGED.  `PROVE_ECHO` is seven beats
 #     from `PROVE_ADDR` so that the write-back cannot reach the word it read;
-#     printing 0x18A72EE0 and 0x18A72EE4 afterwards is what says so.
+#     printing 0x1BA72EE0 and 0x1BA72EE4 afterwards is what says so.
 #
 #   - AND EVERY OTHER WORD OF THE THIRTY-TWO still holds the filler, printed
 #     either way, because an exit code cannot tell two failures apart.
@@ -115,20 +115,20 @@ set bit  [expr {[info exists ::env(BIT)] ? $::env(BIT) \
 # address here is also an array key --- the expectation for each of the
 # thirty-two words is kept per address --- and the keys the block loop makes
 # are `[expr {$BLOCK_BASE + 4 * $i}]`, which Tcl gives in decimal.  A constant
-# left as the string `0x18A72F18` would be a DIFFERENT key from the same
+# left as the string `0x1BA72F18` would be a DIFFERENT key from the same
 # address arrived at by arithmetic, and the expectation set against it would
 # quietly never be read.  `hex` is what puts them back for printing.
-set PROVE_ADDR   [expr {0x18A72EE4}]
-set PROVE_NEIGH  [expr {0x18A72EE0}]
-set PROVE_ECHO   [expr {0x18A72F18}]
-set ECHO_NEIGH   [expr {0x18A72F1C}]
+set PROVE_ADDR   [expr {0x1BA72EE4}]
+set PROVE_NEIGH  [expr {0x1BA72EE0}]
+set PROVE_ECHO   [expr {0x1BA72F18}]
+set ECHO_NEIGH   [expr {0x1BA72F1C}]
 set PROVE_WORD   0x8A5C36E1
 set PROVE_POISON 0x75A3C91E
 set ECHO_POISON  0x3C7A91D6
 
-# 0x18A72EC0 through 0x18A72F3C: thirty-two words, with PROVE_ADDR ninth and
+# 0x1BA72EC0 through 0x1BA72F3C: thirty-two words, with PROVE_ADDR ninth and
 # PROVE_ECHO twenty-third.
-set BLOCK_BASE   [expr {0x18A72EC0}]
+set BLOCK_BASE   [expr {0x1BA72EC0}]
 set BLOCK_WORDS  32
 
 # ------------------------------------------------------------------ helpers

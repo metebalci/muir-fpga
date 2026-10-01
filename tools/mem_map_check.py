@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Every written copy of a board's memory map says the same numbers.
 
-WHY THIS EXISTS.  Where the machine's 128 MB sits in the processor's memory is
-one fact per board, and it is written down in several files that no single
+WHY THIS EXISTS.  Where the machine's reservation sits in the processor's
+memory is one fact per board, and it is written down in several files that no single
 build reads together:
 
   - `rtl/plumbing/cadr_ddr_map.sv`, which the fabric is built from, one branch
@@ -31,9 +31,15 @@ self-consistent, so the first thing to notice would be a board: a device tree
 that reserves less than the fabric writes lets the kernel hand the rest out as
 ordinary memory, and the machine then writes over whatever Linux put there.
 
-WHAT IT HOLDS.  For each board family, every copy against the fabric's
+WHAT IT HOLDS.  First the layout itself, in the package, for each board
+family: main memory 16 MB (4M words at 4 bytes a word, which holds the whole
+22-bit space and so the 60 boards the machine can fit), the display 1 MB
+(both TV boards' buffers, and QUUX's video controller's 64K words), the disk
+pack program's records after it, the three abutting in that order from the
+reservation's base, none meeting another, and the reservation exactly their
+sum.  Then, for each board family, every copy against the fabric's
 package: the reservation's base and size, main memory, the display and the
-color display, the spare above the display, and on the DE25-Nano the GPO
+color display, the records above the display, and on the DE25-Nano the GPO
 register's page and offset against the tally's.  And for QUUX revision 13, on
 the boards that run it: its main memory and room, the records' size, its own
 reservation from its main memory to the end of the records, and that its
@@ -72,6 +78,16 @@ FEEDER_H = "boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src/pack_f
 # agilex5_system_manager.h:53-54, SOCFPGA_SYSMGR_GPO 0xE4 and GPI 0xE8.
 GPO_BELOW_GPI = 4
 MB = 1 << 20
+KB = 1 << 10
+# THE LAYOUT OF THE CADR's RESERVATION, decided once for every board: main
+# memory, the display and the records, in that order from the reservation's
+# base.  The package is held to these numbers, and every copy to the package.
+LAYOUT_MAIN_BYTES = 16 * MB      # 4M words at 4 bytes a word
+LAYOUT_DISPLAY_BYTES = 1 * MB    # both TV boards' buffers, 256 KB in use
+# The CADR's physical address is 22 bits; `main_byte_address` makes any of
+# them.  And the most a QUUX video controller's buffer is, 64K words.
+PHYS_WORDS = 1 << 22
+TV_BUFFER_WORDS = 32768
 
 problems = []
 
@@ -161,13 +177,74 @@ def ddr_map(text, defined):
             # written in dependency order.
             v = sv_expr(expr, {k: out[k] for k in out})
         out[name] = v
-    for want in ("RESERVED_BASE", "RESERVED_MB", "MAIN_BASE", "MAIN_WORDS",
-                 "DISPLAY_BASE", "DISPLAY_WORDS", "COLOR_DISPLAY_BASE",
+    for want in ("RESERVED_BASE", "RESERVED_BYTES", "MAIN_BASE", "MAIN_WORDS",
+                 "MAIN_WORDS_REACHABLE", "DISPLAY_BASE", "DISPLAY_WORDS",
+                 "DISPLAY_WORDS_REACHABLE", "COLOR_DISPLAY_BASE", "VIDEO_WORDS_MAX",
                  "QUUX13_MAIN_BASE", "QUUX13_MAIN_WORDS_MAX", "RECORDS_BYTES",
                  "QUUX13_RESERVED_END"):
         if want not in out:
             fail("%s has no %s for %s" % (DDR_MAP, want, NAMES["de25" if defined else "zynq"]))
     return out
+
+
+def layout(fam, pm):
+    """The package's own layout for one board family, against the decided
+    sizes: main memory, the display and the records abutting from the
+    reservation's base in that order, none meeting another, every address the
+    machine can make inside its area, and the reservation exactly their sum."""
+    base, size = pm["RESERVED_BASE"], pm["RESERVED_BYTES"]
+    main = (pm["MAIN_BASE"], pm["MAIN_WORDS"] * 4)
+    display = (pm["DISPLAY_BASE"], pm["DISPLAY_WORDS"] * 4)
+    records = (display[0] + display[1], pm["RECORDS_BYTES"])
+    areas = (("main memory", main), ("the display", display), ("the records", records))
+    before = len(problems)
+    if main[1] != LAYOUT_MAIN_BYTES:
+        disagree("%s: main memory is %d KB, and the layout's is %d KB"
+                 % (NAMES[fam], main[1] // KB, LAYOUT_MAIN_BYTES // KB))
+    if display[1] != LAYOUT_DISPLAY_BYTES:
+        disagree("%s: the display is %d KB, and the layout's is %d KB"
+                 % (NAMES[fam], display[1] // KB, LAYOUT_DISPLAY_BYTES // KB))
+    if main[0] != base:
+        disagree("%s: main memory at 0x%08X is not at the reservation's base 0x%08X"
+                 % (NAMES[fam], main[0], base))
+    if display[0] != main[0] + main[1]:
+        disagree("%s: the display at 0x%08X does not begin where main memory ends, 0x%08X"
+                 % (NAMES[fam], display[0], main[0] + main[1]))
+    if size != main[1] + display[1] + records[1]:
+        disagree("%s: the reservation is 0x%X bytes, and main memory, the display and the "
+                 "records are 0x%X" % (NAMES[fam], size, main[1] + display[1] + records[1]))
+    for what, (lo, n) in areas:
+        if lo < base or lo + n > base + size:
+            disagree("%s: %s at 0x%08X-0x%08X is not inside the reservation 0x%08X-0x%08X"
+                     % (NAMES[fam], what, lo, lo + n - 1, base, base + size - 1))
+    for i, (w1, (a1, n1)) in enumerate(areas):
+        for w2, (a2, n2) in areas[i + 1:]:
+            if a1 < a2 + n2 and a2 < a1 + n1:
+                disagree("%s: %s at 0x%08X-0x%08X meets %s at 0x%08X-0x%08X"
+                         % (NAMES[fam], w1, a1, a1 + n1 - 1, w2, a2, a2 + n2 - 1))
+    # What the machines make, each inside its own area: any 22-bit address
+    # (the CADR's and QUUX revision 12's main memory, and the 60 boards among
+    # them), the two TV boards' buffers, and QUUX's video controller's.
+    for what, n, room in (("the 22-bit space", PHYS_WORDS * 4, main[1]),
+                          ("60 boards", pm["MAIN_WORDS_REACHABLE"] * 4, main[1]),
+                          ("QUUX's video buffer", pm["VIDEO_WORDS_MAX"] * 4, display[1])):
+        if n > room:
+            disagree("%s: %s is 0x%X bytes and its area 0x%X" % (NAMES[fam], what, n, room))
+    if pm["DISPLAY_WORDS_REACHABLE"] != TV_BUFFER_WORDS:
+        disagree("%s: a TV board's buffer is %d words, not %d"
+                 % (NAMES[fam], pm["DISPLAY_WORDS_REACHABLE"], TV_BUFFER_WORDS))
+    tv_end = pm["COLOR_DISPLAY_BASE"] + TV_BUFFER_WORDS * 4
+    if pm["COLOR_DISPLAY_BASE"] < display[0] + TV_BUFFER_WORDS * 4 or tv_end > display[0] + display[1]:
+        disagree("%s: the color TV's buffer at 0x%08X-0x%08X is not in the display's area "
+                 "above the first board's" % (NAMES[fam], pm["COLOR_DISPLAY_BASE"], tv_end - 1))
+    if pm["QUUX13_RESERVED_END"] != base + size:
+        disagree("%s: revision 13's reservation ends at 0x%08X, the CADR's at 0x%08X; both end "
+                 "with the records" % (NAMES[fam], pm["QUUX13_RESERVED_END"], base + size))
+    if len(problems) == before:
+        print("mem_map: %-16s the layout: main memory 0x%08X, %d MB; the display 0x%08X, "
+              "%d MB; the records 0x%08X, %d KB; 0x%X bytes in all"
+              % (NAMES[fam], main[0], main[1] // MB, display[0], display[1] // MB,
+                 records[0], records[1] // KB, size))
 
 
 def board_h(text):
@@ -312,7 +389,7 @@ def kr260(root, pkg):
         (KR260_DTSI + " reg", base),
         (KR260_DTSI + " unit address", unit)])
     same("the reservation's size", fam, [
-        (DDR_MAP + " RESERVED_MB", pm["RESERVED_MB"] * MB),
+        (DDR_MAP + " RESERVED_BYTES", pm["RESERVED_BYTES"]),
         (KR260_DTSI + " reg", size)])
     same("main memory", fam, [
         (DDR_MAP + " MAIN_BASE", pm["MAIN_BASE"]),
@@ -324,7 +401,7 @@ def kr260(root, pkg):
     same("the color display", fam, [
         (DDR_MAP + " COLOR_DISPLAY_BASE", pm["COLOR_DISPLAY_BASE"]),
         ("cadr_board.h COLOR", h["COLOR"])])
-    same("the spare", fam, [
+    same("the records", fam, [
         (DDR_MAP + " DISPLAY_BASE + DISPLAY_WORDS * 4", pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4),
         ("cadr_board.h SPARE", h["SPARE"])])
     same("revision 13's main memory", fam, [
@@ -337,12 +414,7 @@ def kr260(root, pkg):
     if end13 != pm["DISPLAY_BASE"]:
         disagree("%s: revision 13's main memory, 5 bytes a word, ends at 0x%08X and the "
                  "display begins at 0x%08X" % (NAMES[fam], end13, pm["DISPLAY_BASE"]))
-    end = pm["RESERVED_BASE"] + pm["RESERVED_MB"] * MB
-    for what, lo, n in (("main memory", pm["MAIN_BASE"], pm["MAIN_WORDS"] * 4),
-                        ("the display", pm["DISPLAY_BASE"], pm["DISPLAY_WORDS"] * 4)):
-        if lo < pm["RESERVED_BASE"] or lo + n > end:
-            disagree("%s, %s: 0x%08X for %d MB is not inside the reservation "
-                     "0x%08X-0x%08X" % (NAMES[fam], what, lo, n // MB, pm["RESERVED_BASE"], end - 1))
+    layout(fam, pm)
     # The faces' windows: where the programs look and where the fabric answers.
     for k, param in (("PACK", "PACK_BASE"), ("CHAOS", "CHAOS_BASE"), ("SERIAL", "SER_BASE"),
                      ("INPUT", "INPUT_BASE"), ("FD", "FD_BASE")):
@@ -392,7 +464,7 @@ def main():
             (DTSI[fam] + " unit address", unit),
             (MKSD + " RESERVED", card_unit)])
         same("the reservation's size", fam, [
-            (DDR_MAP + " RESERVED_MB", pm["RESERVED_MB"] * MB),
+            (DDR_MAP + " RESERVED_BYTES", pm["RESERVED_BYTES"]),
             (DTSI[fam] + " reg", size)])
         mains = [(DDR_MAP + " MAIN_BASE", pm["MAIN_BASE"]),
                  ("cadr_board.h MAIN", h["MAIN"])]
@@ -413,22 +485,15 @@ def main():
             (DDR_MAP + " COLOR_DISPLAY_BASE", pm["COLOR_DISPLAY_BASE"]),
             ("cadr_board.h COLOR", h["COLOR"]),
             (MKSD + " COLOR_WINDOW", int(c.get("COLOR_WINDOW", "0"), 16))])
-        same("the spare", fam, [
+        same("the records", fam, [
             (DDR_MAP + " DISPLAY_BASE + DISPLAY_WORDS * 4",
              pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4),
             ("cadr_board.h SPARE", h["SPARE"])])
         same("the debug window", fam, [
             ("cadr_board.h CONSOLE + 0x1000", h["CONSOLE"] + 0x1000),
             (MKSD + " DEBUG_WINDOW", int(c.get("DEBUG_WINDOW", "0"), 16))])
-        # Main memory and the display inside the reservation, and the
-        # reservation where the package says it ends.
-        end = pm["RESERVED_BASE"] + pm["RESERVED_MB"] * MB
-        for what, lo, n in (("main memory", pm["MAIN_BASE"], pm["MAIN_WORDS"] * 4),
-                            ("the display", pm["DISPLAY_BASE"], pm["DISPLAY_WORDS"] * 4)):
-            if lo < pm["RESERVED_BASE"] or lo + n > end:
-                disagree("%s, %s: 0x%08X for %d MB is not inside the reservation "
-                         "0x%08X-0x%08X" % (NAMES[fam], what, lo, n // MB,
-                                            pm["RESERVED_BASE"], end - 1))
+        # The layout inside the reservation.
+        layout(fam, pm)
 
     # QUUX revision 13's own reservation, from its main memory to the end of
     # the records, and nothing in its main memory but main memory.

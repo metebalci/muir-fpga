@@ -493,7 +493,7 @@ int main(int argc, char **argv) {
   // leaves it; `touched` is what says which words the machine itself put
   // there, so that reads of words nothing wrote are counted rather than
   // believed.
-  constexpr uint32_t kMainBase = 0x18000000u;
+  constexpr uint32_t kMainBase = 0x1B000000u;
   constexpr size_t kMainWords = 16u << 20;
   std::vector<uint32_t> main_mem(kMainWords, 0u);
   std::vector<uint8_t> touched(kMainWords, 0u);

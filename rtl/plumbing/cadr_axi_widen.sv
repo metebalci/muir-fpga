@@ -83,7 +83,7 @@ module cadr_axi_widen (
   // The beat's address. The low three bits are not lost --- bit 2 is what the
   // strobes and the lane select below are made of, and bits 1 and 0 are zero
   // on every address this ever sees: `cadr_xbus_ddr` shifts a word address
-  // twice into a base that is 256 MB aligned.
+  // twice into a base that is 16 MB aligned.
   assign m_awaddr = {s_awaddr[31:3], 3'b000};
   assign m_araddr = {s_araddr[31:3], 3'b000};
 

@@ -33,9 +33,9 @@
 // unreachable by construction, which is the mistake this project keeps
 // meeting: a check written so that the thing it is for cannot happen.
 //
-// **THE STAGING RECORDS ARE `pack_feeder.h`'s OWN ADDRESSES**, 0x1C80_0000 and
-// up, which is the spare part of the CADR's 128 MB reservation past main
-// memory's 64 MB and the display's 8 MB.  A record placed there and a record
+// **THE STAGING RECORDS ARE `pack_feeder.h`'s OWN ADDRESSES**, 0x1C10_0000 and
+// up, which is the spare part of the CADR's reservation past main memory's
+// 16 MB and the display's 1 MB.  A record placed there and a record
 // placed anywhere else are different experiments, and this one is the board's.
 //
 
@@ -476,7 +476,7 @@ int main(int argc, char **argv) {
   // leaves it; `touched` is what says which words the machine itself put
   // there, so that reads of words nothing wrote are counted rather than
   // believed.
-  constexpr uint32_t kMainBase = 0x18000000u;
+  constexpr uint32_t kMainBase = 0x1B000000u;
   constexpr size_t kMainWords = 16u << 20;
   std::vector<uint32_t> main_mem(kMainWords, 0u);
   std::vector<uint8_t> touched(kMainWords, 0u);
@@ -546,7 +546,7 @@ int main(int argc, char **argv) {
 
   // THE PACK SIDE'S BEATS LAND IN THE SAME ARRAY THE MACHINE'S DO, and a beat
   // of either master inside the machine's own address range is counted.  The
-  // records are at 0x1C80_0000 and up, so a correct run puts NONE there; a
+  // records are at 0x1C10_0000 and up, so a correct run puts NONE there; a
   // pack side that computed an address wrongly would put a whole block there
   // and the watchpoint would see it.
   long hp2_in_main = 0, hp2_outside_staging = 0;
@@ -1853,8 +1853,8 @@ int main(int argc, char **argv) {
         "responses; one of each a burst, or a duplicate went unseen",
         hp2.write_bursts, hp2.aw_handshakes, hp2.b_responses);
   // THE CLAUSE THIS HARNESS WAS BUILT FOR.  The staging records are at
-  // 0x1C80_0000 and up; the machine's own 22-bit physical space is
-  // 0x1800_0000 to 0x1900_0000.  A pack-side beat inside that range is a
+  // 0x1C10_0000 and up; the machine's own 22-bit physical space is
+  // 0x1B00_0000 to 0x1C00_0000.  A pack-side beat inside that range is a
   // block of somebody else's memory overwritten, which is the exact shape of
   // the board's page-hash-table word.
   Check(hp2_in_main == 0,

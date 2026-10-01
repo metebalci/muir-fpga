@@ -1208,9 +1208,9 @@
 @file rtl/plumbing/cadr_ddr_map.sv
 @note The base of the reserved region, which both sides agree on.
 @old
-  localparam logic [31:0] MAIN_BASE  = 32'h1800_0000;
+  localparam logic [31:0] MAIN_BASE  = 32'h1B00_0000;
 @new
-  localparam logic [31:0] MAIN_BASE  = 32'h1900_0000;
+  localparam logic [31:0] MAIN_BASE  = 32'h1A00_0000;
 @end
 
 
@@ -3322,13 +3322,13 @@
 @check f2sdram
 @file rtl/plumbing/cadr_ddr_map.sv
 @note The DE25-Nano's processor has its memory at `0x8000_0000` and the CADR's
-@note 128 MB are reserved at `0xB000_0000`; the Zynq's `0x1800_0000` is not
+@note reservation is at `0xB300_0000`; the Zynq's `0x1B00_0000` is not
 @note memory on this part at all, and the manual warns against a fabric master
 @note reaching outside the memory's own aperture.
 @old
-  localparam logic [31:0] MAIN_BASE  = 32'hB000_0000;
+  localparam logic [31:0] MAIN_BASE  = 32'hB300_0000;
 @new
-  localparam logic [31:0] MAIN_BASE  = 32'h1800_0000;
+  localparam logic [31:0] MAIN_BASE  = 32'h1B00_0000;
 @end
 
 @mutation gp0-default-counts-four-bits-of-a-bursts-length
@@ -10394,7 +10394,7 @@ if {0 && $held ne $want} {
 @note consistently wrong and the machine is not there to be damaged by it.
 @note
 @note Here the two ports are ONE ARRAY, as they are one DRAM on the board.
-@note `0x1C80_0000 ^ 0x0480_0000` is `0x1800_0000`, which is
+@note `0x1C10_0000 ^ 0x0710_0000` is `0x1B00_0000`, which is
 @note `cadr_ddr_map::MAIN_BASE` --- so every burst of every record lands on
 @note PAGE 0 of the machine's own main memory, which is where the boot PROM's
 @note parity loop has just been.  A fetch reads the machine's words as though
@@ -10408,8 +10408,8 @@ if {0 && $held ne $want} {
     return (burst == 4'(DATA_BURSTS)) ? base + META_OFFSET
                                       : base + {21'd0, burst[2:0], 7'd0};   // + 128 * burst
 @new
-    return (burst == 4'(DATA_BURSTS)) ? (base ^ 32'h0480_0000) + META_OFFSET
-                                      : (base ^ 32'h0480_0000) + {21'd0, burst[2:0], 7'd0};
+    return (burst == 4'(DATA_BURSTS)) ? (base ^ 32'h0710_0000) + META_OFFSET
+                                      : (base ^ 32'h0710_0000) + {21'd0, burst[2:0], 7'd0};
 @end
 
 @mutation pack-numbers-the-blocks-words-by-the-wrong-bit
@@ -16007,7 +16007,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @mutation the-two-display-boards-share-one-window-in-memory
 @check color_tv
 @file rtl/plumbing/cadr_xbus_ddr.sv
-@note The two boards' frame buffers are two regions of the display's 8 MB:
+@note The two boards' frame buffers are two regions of the display's 1 MB:
 @note the first at `DISPLAY_BASE` and the second 128 KB above it, which is
 @note the first board's own 32,768 words.  One base for both is two screens
 @note written over each other, and neither is the picture the machine drew.
@@ -17427,7 +17427,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 # WHERE EACH BOARD'S MEMORY IS, IN EVERY FILE THAT WRITES IT DOWN
 # ======================================================================
 #
-# The machine's 128 MB is one fact per board, written in the fabric's package,
+# The machine's reservation is one fact per board, written in the fabric's package,
 # the DE25-Nano's top level, the programs' header, each board's reserved-memory
 # node, the card script, U-Boot's environment and the Zynq boards' JTAG memory
 # proofs.  No one build reads them together, and each build is self-consistent,
@@ -17438,16 +17438,19 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @mutation mem-map-the-fabric-reserves-half
 @check mem_map
 @file rtl/plumbing/cadr_ddr_map.sv
-@note The package says 64 MB while both device trees still reserve 128.  The
-@note fabric builds, and nothing it writes today leaves the 64 MB, so this is
-@note the quiet kind: the day the display or the spare is used, it is Linux's.
+@note The package's reservation stops at the display's end while the device
+@note trees still reserve the records.  The fabric builds, since nothing in it
+@note reads the size, so this is the quiet kind: the trees made from it would
+@note give Linux the records.
 @note
-@note Caught at "the reservation's size: ... RESERVED_MB says 0x04000000 and
-@note ... cadr-reserved.dtsi reg says 0x08000000".
+@note Caught at "the Zynq boards: the reservation is 0x1100000 bytes, and
+@note main memory, the display and the records are 0x1120000", "the records
+@note at 0x1C100000-0x1C11FFFF is not inside the reservation" and "the
+@note reservation's size: ... RESERVED_BYTES says 0x01100000".
 @old
-  localparam int unsigned RESERVED_MB   = 128;
+  localparam int unsigned RESERVED_BYTES = 32'h0112_0000;
 @new
-  localparam int unsigned RESERVED_MB   = 64;
+  localparam int unsigned RESERVED_BYTES = 32'h0110_0000;
 @end
 
 @mutation mem-map-the-de25-top-restates-another-base
@@ -17457,10 +17460,10 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note moved together with the package it would pass elaboration and put the
 @note machine at an address the device tree does not reserve.
 @note
-@note Caught at "main memory: ... MAIN_BASE says 0xB0000000 and
+@note Caught at "main memory: ... MAIN_BASE says 0xB3000000 and
 @note boards/de25-nano/cadr_de25.sv MAIN_BASE says 0xB8000000".
 @old
-  localparam logic [31:0] MAIN_BASE = 32'hB000_0000;
+  localparam logic [31:0] MAIN_BASE = 32'hB300_0000;
 @new
   localparam logic [31:0] MAIN_BASE = 32'hB800_0000;
 @end
@@ -17477,7 +17480,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note Caught at "the reservation's base: ... cadr_board.h RESERVED says
 @note 0xA8000000".
 @old
-#define CADR_BOARD_RESERVED_HEX  B0000000
+#define CADR_BOARD_RESERVED_HEX  B3000000
 @new
 #define CADR_BOARD_RESERVED_HEX  A8000000
 @end
@@ -17501,28 +17504,29 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @mutation mem-map-the-zynq-tree-reserves-half
 @check mem_map
 @file boards/arty-z7-20/linux/cadr-reserved.dtsi
-@note The Zynq boards' tree reserves 64 MB: the kernel takes the display and
-@note the spare as ordinary memory while the fabric writes into them.
+@note The Zynq boards' tree reserves main memory alone: the kernel takes the
+@note display and the records as ordinary memory while the fabric writes
+@note into them.
 @note
-@note Caught at "the reservation's size: ... reg says 0x04000000".
+@note Caught at "the reservation's size: ... reg says 0x01000000".
 @old
-			reg = <0x18000000 0x08000000>;
+			reg = <0x1b000000 0x01120000>;
 @new
-			reg = <0x18000000 0x04000000>;
+			reg = <0x1b000000 0x01000000>;
 @end
 
 @mutation mem-map-the-de25-tree-reserves-half
 @check mem_map
 @file boards/de25-nano/linux/cadr-reserved.dtsi
-@note The case the review named: the DE25-Nano's tree reserves 64 MB, the
-@note card script finds a node of the right name and the kernel boots, and the
-@note display at 0xB400_0000 is memory Linux may hand out.
+@note The case the review named: the DE25-Nano's tree reserves main memory
+@note alone, the card script finds a node of the right name and the kernel
+@note boots, and the display at 0xB400_0000 is memory Linux may hand out.
 @note
-@note Caught at "the reservation's size: ... reg says 0x04000000".
+@note Caught at "the reservation's size: ... reg says 0x01000000".
 @old
-			reg = <0x0 0xb0000000 0x0 0x08000000>;
+			reg = <0x0 0xb3000000 0x0 0x01120000>;
 @new
-			reg = <0x0 0xb0000000 0x0 0x04000000>;
+			reg = <0x0 0xb3000000 0x0 0x01000000>;
 @end
 
 @mutation mem-map-the-de25-node-is-named-for-another-address
@@ -17534,7 +17538,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note
 @note Caught at "the reservation's base: ... unit address says 0xB8000000".
 @old
-		cadr@b0000000 {
+		cadr@b3000000 {
 @new
 		cadr@b8000000 {
 @end
@@ -17542,15 +17546,15 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @mutation mem-map-the-kr260-tree-reserves-half
 @check mem_map
 @file boards/kria-kr260/linux/cadr-reserved.dtsi
-@note The Kria KR260's tree reserves 64 MB: the kernel takes the display and
-@note the spare at 0x6400_0000 as ordinary memory while the fabric writes
-@note into them.
+@note The Kria KR260's tree reserves main memory alone: the kernel takes the
+@note display and the records at 0x6400_0000 as ordinary memory while the
+@note fabric writes into them.
 @note
-@note Caught at "the reservation's size: ... reg says 0x04000000".
+@note Caught at "the reservation's size: ... reg says 0x01000000".
 @old
-		reg = <0x0 0x60000000 0x0 0x08000000>;
+		reg = <0x0 0x63000000 0x0 0x01120000>;
 @new
-		reg = <0x0 0x60000000 0x0 0x04000000>;
+		reg = <0x0 0x63000000 0x0 0x01000000>;
 @end
 
 @mutation mem-map-the-kr260-node-is-named-for-another-address
@@ -17561,7 +17565,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note
 @note Caught at "the reservation's base: ... unit address says 0x68000000".
 @old
-	cadr@60000000 {
+	cadr@63000000 {
 @new
 	cadr@68000000 {
 @end
@@ -17630,15 +17634,15 @@ cadr_gpo=0x10d120e8
 @check mem_map
 @file boards/arty-z7-20/linux/quux13-reserved.dtsi
 @note Revision 13's tree reserves main memory and the display and not the
-@note records: the disk pack program's records at 0x1C80_0000 are Linux's
+@note records: the disk pack program's records at 0x1C10_0000 are Linux's
 @note memory, which the kernel hands out while the fabric reads and writes
 @note them.
 @note
-@note Caught at "revision 13's reservation's end: ... reg says 0x1C800000".
+@note Caught at "revision 13's reservation's end: ... reg says 0x1C100000".
 @old
-			reg = <0x12000000 0x0a820000>;
+			reg = <0x12000000 0x0a120000>;
 @new
-			reg = <0x12000000 0x0a800000>;
+			reg = <0x12000000 0x0a100000>;
 @end
 
 @mutation mem-map-the-de25-revision-13-node-is-named-for-the-cadr
@@ -17683,6 +17687,81 @@ cadr_gpo=0x10d120e8
   localparam int unsigned RECORDS_BYTES = 32'h0001_0000;
 @end
 
+@mutation mem-map-main-memory-is-64-mb-again
+@check mem_map
+@file rtl/plumbing/cadr_ddr_map.sv
+@note Main memory back at the old 16M words, 64 MB, in a reservation of
+@note 17.125 MB: the package's own layout no longer fits its reservation,
+@note and every copy still agrees with every other.
+@note
+@note Caught at "the Zynq boards: main memory is 65536 KB, and the layout's
+@note is 16384 KB".
+@old
+  localparam int unsigned MAIN_WORDS = 4 * 1024 * 1024;
+@new
+  localparam int unsigned MAIN_WORDS = 16 * 1024 * 1024;
+@end
+
+@mutation mem-map-the-display-is-8-mb-again
+@check mem_map
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The display back at the old 2M words, 8 MB: the records the package
+@note places after it move 7 MB up, out of the reservation and into Linux's
+@note memory.
+@note
+@note Caught at "the Zynq boards: the display is 8192 KB, and the layout's
+@note is 1024 KB" and "the records at 0x1C800000-0x1C81FFFF is not inside the
+@note reservation 0x1B000000-0x1C11FFFF".
+@old
+  localparam int unsigned DISPLAY_WORDS = 256 * 1024;  // 1 MB reserved
+@new
+  localparam int unsigned DISPLAY_WORDS = 2 * 1024 * 1024;  // 1 MB reserved
+@end
+
+@mutation mem-map-the-display-over-main-memory
+@check mem_map
+@file rtl/plumbing/cadr_ddr_map.sv
+@note The Zynq boards' display 8 MB into main memory: the machine's own
+@note words at physical 2M and up are drawn as the picture, and the display
+@note boards' writes land in main memory.
+@note
+@note Caught at "the Zynq boards: the display at 0x1B800000 does not begin
+@note where main memory ends, 0x1C000000" and "main memory at
+@note 0x1B000000-0x1BFFFFFF meets the display at 0x1B800000-0x1B8FFFFF".
+@old
+  localparam logic [31:0] DISPLAY_BASE  = 32'h1C00_0000;
+@new
+  localparam logic [31:0] DISPLAY_BASE  = 32'h1B80_0000;
+@end
+
+@mutation mem-map-the-video-buffer-outgrows-the-display
+@check mem_map
+@file rtl/plumbing/cadr_ddr_map.sv
+@note QUUX's video controller's buffer one word past the display's 1 MB,
+@note just outside the bound: its last word would be the records' first.
+@note
+@note Caught at "the Zynq boards: QUUX's video buffer is 0x100004 bytes and
+@note its area 0x100000".
+@old
+  localparam int unsigned VIDEO_WORDS_MAX = 65536;
+@new
+  localparam int unsigned VIDEO_WORDS_MAX = 262145;
+@end
+
+@mutation mem-map-the-zynq-tree-leaves-out-the-records
+@check mem_map
+@file boards/arty-z7-20/linux/cadr-reserved.dtsi
+@note The Zynq boards' tree reserves main memory and the display and not the
+@note records: the kernel hands out 0x1C10_0000 while the disk pack program
+@note and the fabric move blocks through it.
+@note
+@note Caught at "the reservation's size: ... reg says 0x01100000".
+@old
+			reg = <0x1b000000 0x01120000>;
+@new
+			reg = <0x1b000000 0x01100000>;
+@end
+
 @mutation mem-map-the-jtag-memory-check-probes-the-display
 @check mem_map
 @file boards/arty-z7-20/vivado/ddr_check.tcl
@@ -17691,7 +17770,7 @@ cadr_gpo=0x10d120e8
 @note
 @note Caught at "main memory: ... ddr_check.tcl MAIN_BASE says 0x1C000000".
 @old
-set MAIN_BASE   0x18000000
+set MAIN_BASE   0x1B000000
 @new
 set MAIN_BASE   0x1C000000
 @end
@@ -17703,7 +17782,7 @@ set MAIN_BASE   0x1C000000
 @note
 @note Caught at "main memory: ... ddr_run.tcl MAIN_BASE says 0x1C000000".
 @old
-set MAIN_BASE   0x18000000
+set MAIN_BASE   0x1B000000
 @new
 set MAIN_BASE   0x1C000000
 @end
@@ -17722,14 +17801,13 @@ set MAIN_BASE   0x1C000000
 @check reserved
 @file boards/arty-z7-20/linux/quux13-reserved.dtsi
 @note Revision 13's tree adds its node and leaves the CADR's beside it: two
-@note overlapping reservations, and the CADR's spare above the records
-@note reserved for nothing.  The text of revision 13's node is right, so
+@note overlapping reservations.  The text of revision 13's node is right, so
 @note mem_map passes.
 @note
 @note Caught at "the Zynq boards, quux13's tree: the compiled tree has 2
 @note machine nodes".
 @old
-		/delete-node/ cadr@18000000;
+		/delete-node/ cadr@1b000000;
 @new
 @end
 
@@ -17752,7 +17830,7 @@ set MAIN_BASE   0x1C000000
 @file boards/arty-z7-20/linux/cadr-reserved.dtsi
 @note The CADR's node loses `no-map`, which the text check does not read.
 @note
-@note Caught at "the Zynq boards, cadr's tree: cadr@18000000 is not no-map".
+@note Caught at "the Zynq boards, cadr's tree: cadr@1b000000 is not no-map".
 @old
 			no-map;
 @new

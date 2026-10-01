@@ -68,7 +68,7 @@
 //     the file device's page, and no debug cable (contract Q5) --- come with
 //     it; until then any other `MACHINE` stops elaboration.
 //
-// **THE MEMORY MAP IS `CADR_DDR_MAP_KR260`'s**: main memory at 0x6000_0000,
+// **THE MEMORY MAP IS `CADR_DDR_MAP_KR260`'s**: main memory at 0x6300_0000,
 // the display at 0x6400_0000.  The flow sets the define; this file states the
 // base again and stops elaboration if the package disagrees, as the
 // DE25-Nano's top does, so a flow that forgot the define builds nothing
@@ -110,7 +110,7 @@ module cadr_kr260 #(
 
   // The base this board's region has, stated here and held against the
   // package the flow chose: see the header.
-  localparam logic [31:0] MAIN_BASE = 32'h6000_0000;
+  localparam logic [31:0] MAIN_BASE = 32'h6300_0000;
   if (cadr_ddr_map::MAIN_BASE != MAIN_BASE) begin : g_map
     $error("cadr_ddr_map::MAIN_BASE is %h, and the Kria KR260's is %h: define CADR_DDR_MAP_KR260",
            cadr_ddr_map::MAIN_BASE, MAIN_BASE);

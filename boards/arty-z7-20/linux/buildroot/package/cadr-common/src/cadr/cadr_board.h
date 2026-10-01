@@ -23,17 +23,19 @@
 //   the console's port      M_AXI_GP1                LWH2F, the lightweight
 //                                                    HPS-to-FPGA bridge
 //     the console           0x8000_0000              0x2000_0000
-//   the machine's memory    reserved at 0x1800_0000  reserved at 0xB000_0000
-//     main memory           + 0                      + 0
-//     the display           + 64 MB                  + 64 MB
+//   the machine's memory    reserved at 0x1B00_0000  reserved at 0xB300_0000
+//                           for 17.125 MB            for 17.125 MB
+//     main memory           + 0, 16 MB               + 0, 16 MB
+//     the display           + 16 MB, 1 MB            + 16 MB, 1 MB
 //     the color display     the display + 128 KB     the display + 128 KB
-//     the spare             + 72 MB                  + 72 MB
+//     the spare: the        + 17 MB, 128 KB          + 17 MB, 128 KB
+//     records, and no more
 //   QUUX revision 13's      its own reservation      its own reservation
 //     memory                0x1200_0000 to           0xA000_0000 to
-//                           0x1C81_FFFF              0xB481_FFFF
+//                           0x1C11_FFFF              0xB411_FFFF
 //     main memory, packed   0x1200_0000, 160 MB      0xA000_0000, 320 MB
 //     the display, and      the CADR's               the CADR's
-//     the records           the spare's first 128 KB the spare's first 128 KB
+//     the records           the CADR's               the CADR's
 //   the memory's port       S_AXI_HP0 (the machine)  F2SDRAM, the
 //                           and HP2 (the pack side)  FPGA-to-SDRAM bridge,
 //                                                    for both
@@ -52,9 +54,10 @@
 // faces keep their Zynq offsets from 0x4000_0000 and the console and the
 // debug window move to the lightweight bridge, 0x8000_0000 being memory on
 // this part.  The processor's memory is 1 GB at 0x8000_0000, which the fabric
-// reaches at the same addresses (Table 323), and the machine's 128 MB is at
-// 0xB000_0000 rather than at the top because U-Boot relocates itself to the
-// top on this part (`boards/de25-nano/linux/cadr-reserved.dtsi` says why).
+// reaches at the same addresses (Table 323), and the machine's reservation
+// ends below 0xB800_0000 rather than at the top because U-Boot relocates
+// itself to the top 128 MB on this part (`boards/de25-nano/linux/
+// cadr-reserved.dtsi` says why).
 // The system manager is at 0x10D1_2000 and GPI is its register 0xE8
 // (TF-A's plat/intel/soc/agilex5/include/socfpga_plat_def.h:78 and
 // agilex5_system_manager.h:54).  Those are this project's decisions for the
@@ -80,9 +83,10 @@
 // faces are behind M_AXI_HPM0_FPD, whose window is 0xA000_0000 for 256 MB
 // when the video codec is not mapped, and the console and the debug window
 // behind M_AXI_HPM1_FPD at 0xB000_0000 (UG1085, table 10-1); the faces keep
-// their Zynq offsets in the first.  The machine's 128 MB is at 0x6000_0000 in
-// the low 2 GB, clear of every address the factory U-Boot uses, which loads
-// below it and relocates itself above 0x7B80_0000 (`bdinfo` on the board),
+// their Zynq offsets in the first.  The machine's reservation is at
+// 0x6300_0000 in the low 2 GB, clear of every address the factory U-Boot
+// uses, which loads below it and relocates itself above 0x7B80_0000 (`bdinfo`
+// on the board),
 // and QUUX revision 13's packed 160 MiB sit directly below its display at
 // 0x5A00_0000, as on the Arty.  The tally is two words on EMIO, as on a
 // Zynq-7000 board: banks 3 and 4 of the GPIO block at 0xFF0A_0000, read
@@ -138,11 +142,11 @@
 #define CADR_BOARD_INPUT_HEX     40003000
 #define CADR_BOARD_FD_HEX        40004000
 #define CADR_BOARD_CONSOLE_HEX   20000000
-#define CADR_BOARD_RESERVED_HEX  B0000000
-#define CADR_BOARD_MAIN_HEX      B0000000
+#define CADR_BOARD_RESERVED_HEX  B3000000
+#define CADR_BOARD_MAIN_HEX      B3000000
 #define CADR_BOARD_DISPLAY_HEX   B4000000
 #define CADR_BOARD_COLOR_HEX     B4020000
-#define CADR_BOARD_SPARE_HEX     B4800000
+#define CADR_BOARD_SPARE_HEX     B4100000
 #define CADR_BOARD_QUUX13_MAIN_HEX A0000000
 #define CADR_BOARD_QUUX13_MAIN_WORDS_MAX (64u * 1024u * 1024u)
 
@@ -168,11 +172,11 @@
 #define CADR_BOARD_INPUT_HEX     40003000
 #define CADR_BOARD_FD_HEX        40004000
 #define CADR_BOARD_CONSOLE_HEX   80000000
-#define CADR_BOARD_RESERVED_HEX  18000000
-#define CADR_BOARD_MAIN_HEX      18000000
+#define CADR_BOARD_RESERVED_HEX  1B000000
+#define CADR_BOARD_MAIN_HEX      1B000000
 #define CADR_BOARD_DISPLAY_HEX   1C000000
 #define CADR_BOARD_COLOR_HEX     1C020000
-#define CADR_BOARD_SPARE_HEX     1C800000
+#define CADR_BOARD_SPARE_HEX     1C100000
 #define CADR_BOARD_QUUX13_MAIN_HEX 12000000
 #define CADR_BOARD_QUUX13_MAIN_WORDS_MAX (32u * 1024u * 1024u)
 
@@ -200,11 +204,11 @@
 #define CADR_BOARD_INPUT_HEX     A0003000
 #define CADR_BOARD_FD_HEX        A0004000
 #define CADR_BOARD_CONSOLE_HEX   B0000000
-#define CADR_BOARD_RESERVED_HEX  60000000
-#define CADR_BOARD_MAIN_HEX      60000000
+#define CADR_BOARD_RESERVED_HEX  63000000
+#define CADR_BOARD_MAIN_HEX      63000000
 #define CADR_BOARD_DISPLAY_HEX   64000000
 #define CADR_BOARD_COLOR_HEX     64020000
-#define CADR_BOARD_SPARE_HEX     64800000
+#define CADR_BOARD_SPARE_HEX     64100000
 #define CADR_BOARD_QUUX13_MAIN_HEX 5A000000
 #define CADR_BOARD_QUUX13_MAIN_WORDS_MAX (32u * 1024u * 1024u)
 
@@ -249,30 +253,40 @@
 // 5w` (G1 §4.1), with room for `CADR_BOARD_QUUX13_MAIN_WORDS_MAX` words
 // directly below the display; the display and the disk pack program's records
 // where the CADR's are.  Revision 13's device tree reserves from its main
-// memory to the records' end, `CADR_BOARD_RECORDS_BYTES` into the spare, and
-// no further: the rest of the spare is Linux's on that machine.  The CADR's
-// and revision 12's trees reserve the 128 MB above, as ever.
+// memory to the records' end, which is where the CADR's reservation ends too.
+// The CADR's and revision 12's trees reserve from `CADR_BOARD_RESERVED_BASE`
+// to the same end, `CADR_BOARD_RESERVED_BYTES`.
 #define CADR_BOARD_QUUX13_MAIN_BASE      CADR_BOARD_NUM(CADR_BOARD_QUUX13_MAIN_HEX)
 #define CADR_BOARD_QUUX13_MAIN_BASE_STR  CADR_BOARD_STR(CADR_BOARD_QUUX13_MAIN_HEX)
 #define CADR_BOARD_RECORDS_BYTES         0x00020000u
 #define CADR_BOARD_QUUX13_RESERVED_END   (CADR_BOARD_SPARE_BASE + CADR_BOARD_RECORDS_BYTES)
+// The CADR's reservation: main memory, the display and the records.
+#define CADR_BOARD_RESERVED_BYTES        0x01120000u
 
 // The layout inside the reservation, which is `rtl/plumbing/cadr_ddr_map.sv`'s
-// and the same on every board: main memory at the base, the display 64 MB up,
-// the color TV's window 128 KB above the display's (the first board's own
-// 32,768 words), the spare 8 MB above the display, and all of it inside the
-// 128 MB.  A board whose numbers break it does not compile.
+// and the same on every board: main memory at the base, 16 MB, the whole
+// 22-bit space at 4 bytes a word; the display 16 MB up, 1 MB, with the color
+// TV's window 128 KB above the display's (the first board's own 32,768
+// words); the spare 1 MB above the display, which is the records' 128 KB and
+// no more; and nothing past the records.  A board whose numbers break it does
+// not compile.
 _Static_assert(CADR_BOARD_MAIN_BASE == CADR_BOARD_RESERVED_BASE,
 	       "main memory is at the base of the reservation");
-_Static_assert(CADR_BOARD_DISPLAY_BASE == CADR_BOARD_RESERVED_BASE + 0x04000000u,
-	       "the display is 64 MB above the base of the reservation");
+_Static_assert(CADR_BOARD_DISPLAY_BASE == CADR_BOARD_RESERVED_BASE + 0x01000000u,
+	       "the display is 16 MB above the base of the reservation");
 _Static_assert(CADR_BOARD_COLOR_BASE == CADR_BOARD_DISPLAY_BASE + 0x00020000u,
 	       "the color display is 128 KB above the display");
-_Static_assert(CADR_BOARD_SPARE_BASE == CADR_BOARD_DISPLAY_BASE + 0x00800000u,
-	       "the spare is 8 MB above the display");
-_Static_assert(CADR_BOARD_RESERVED_BASE % 0x08000000u == 0u,
-	       "the reservation is aligned to its own 128 MB");
-_Static_assert(CADR_BOARD_RESERVED_BASE <= 0xFFFFFFFFu - 0x07FFFFFFu,
+_Static_assert(CADR_BOARD_SPARE_BASE == CADR_BOARD_DISPLAY_BASE + 0x00100000u,
+	       "the spare is 1 MB above the display");
+_Static_assert(CADR_BOARD_RESERVED_BYTES
+		       == 0x01000000u + 0x00100000u + CADR_BOARD_RECORDS_BYTES,
+	       "the reservation is main memory, the display and the records");
+_Static_assert(CADR_BOARD_SPARE_BASE + CADR_BOARD_RECORDS_BYTES
+		       == CADR_BOARD_RESERVED_BASE + CADR_BOARD_RESERVED_BYTES,
+	       "the records end the reservation");
+_Static_assert(CADR_BOARD_RESERVED_BASE % 0x00100000u == 0u,
+	       "the reservation is on a 1 MB boundary");
+_Static_assert(CADR_BOARD_RESERVED_BASE <= 0xFFFFFFFFu - (CADR_BOARD_RESERVED_BYTES - 1u),
 	       "the reservation is below 4 GB, because every address here is 32 bits");
 // And revision 13's: its main memory fills the room below the display, on a
 // 1 MB boundary (so a 4 KB one, G1 4.1).

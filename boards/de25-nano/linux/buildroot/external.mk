@@ -9,10 +9,10 @@
 # and this build is given both trees.
 #
 # THE RESERVED-MEMORY NODE IS THIS BOARD'S OWN FILE, boards/de25-nano/linux/
-# cadr-reserved.dtsi, and not the Zynq boards' one.  The machine's 128 MB is
+# cadr-reserved.dtsi, and not the Zynq boards' one.  The machine's region is
 # the same size on every board and laid out the same way inside, but where it
-# starts is the board's: 0x1800_0000 at the top of a Zynq board's 512 MB, and
-# 0xB000_0000 here, below the top of 1 GB, because U-Boot on this part
+# starts is the board's: 0x1B00_0000 on a Zynq board, and 0xB300_0000 here,
+# below the top 128 MB of 1 GB, because U-Boot on this part
 # relocates to the very top of memory without regard to a reserved-memory
 # node.  The file says so at length.  The kernel gets it by the first hook,
 # copied beside our tree in arch/arm64/boot/dts/intel/, for the reason the

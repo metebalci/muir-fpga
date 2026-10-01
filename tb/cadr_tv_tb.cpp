@@ -114,7 +114,7 @@ namespace {
 
 // rtl/plumbing/cadr_ddr_map.sv's two bases, and the display's window as
 // tv::BUFFER / BUFFER_WORDS and CONTROL / CONTROL_WORDS have them.
-constexpr uint32_t kMainBase = 0x1800'0000u;
+constexpr uint32_t kMainBase = 0x1B00'0000u;
 constexpr uint32_t kDisplayBase = 0x1C00'0000u;
 constexpr uint32_t kBuffer = 017000000u;
 constexpr uint32_t kBufferWords = 0100000u;

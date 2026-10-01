@@ -100,12 +100,12 @@
 };
 
 /*
- * The CADR's 128 MB at 0x18000000, `no-map`.  rtl/plumbing/cadr_ddr_map.sv is
+ * The CADR's 17.125 MB at 0x1B000000, `no-map`.  rtl/plumbing/cadr_ddr_map.sv is
  * where the numbers are decided and the dtsi is the same fact in the tree's
  * words --- and it is the ARTY Z7-20's copy of that file, included from this
  * board's tree, because the memory map is a property of the machine and not
  * of the board.  Both boards carry 512 MB of DDR3 and reserve the same
- * 128 MB of it.  external.mk is where the file is put beside each build.
+ * 17.125 MB of it.  external.mk is where the file is put beside each build.
  */
 #include "cadr-reserved.dtsi"
 

@@ -3,20 +3,21 @@
 //
 // The CADR's memory on the DE25-Nano, told to Linux and to U-Boot.
 //
-// The machine's 128 MB, laid out as `rtl/plumbing/cadr_ddr_map.sv` lays it
-// out on every board --- main memory at its base, the display 64 MB up, the
-// spare above that --- at this board's base:
+// The machine's reservation, laid out as `rtl/plumbing/cadr_ddr_map.sv` lays
+// it out on every board --- main memory's 16 MB at its base, the display's
+// 1 MB above it, the disk pack program's 128 KB of records above that --- at
+// this board's base:
 //
-//   RESERVED_BASE = 0xB000_0000, RESERVED_MB = 128
+//   RESERVED_BASE = 0xB300_0000, RESERVED_BYTES = 0x0112_0000
 //
 // The Zynq boards' file, `boards/arty-z7-20/linux/cadr-reserved.dtsi`, is the
-// same fact at 0x1800_0000 in the cell sizes of a 32-bit part.  This one is
+// same fact at 0x1B00_0000 in the cell sizes of a 32-bit part.  This one is
 // in the root's two-cell sizes and adds a child to the `reserved-memory` node
 // Altera's `socfpga_agilex5.dtsi` already has (the service layer's buffer at
 // 0x8000_0000), in both the kernel's tree and U-Boot's.  GPL-2.0-or-later
 // because U-Boot embeds the blob in u-boot.itb.
 //
-// WHERE THE 128 MB IS, AND WHY NOT AT THE TOP.  The hard processor system's
+// WHERE THE RESERVATION IS, AND WHY NOT AT THE TOP.  The hard processor system's
 // memory is 1 GB at 0x8000_0000-0xBFFF_FFFF, and the fabric reaches it at the
 // same addresses through the FPGA-to-SDRAM bridge (Agilex 5 HPS Technical
 // Reference Manual, 814346, Table 323, "Total Address Map for F2H and
@@ -26,8 +27,8 @@
 // caller of the reserved-memory-aware `get_mem_top()` in U-Boot 2026.01 is
 // Xilinx's board code (`board/xilinx/common/board.c`,
 // `board_get_usable_ram_top`), and neither mainline's nor Altera's socfpga
-// code implements that hook.  So the region is the second 128 MB from the
-// top, 0xB000_0000-0xB7FF_FFFF, and 0xB800_0000-0xBFFF_FFFF is U-Boot's to
+// code implements that hook.  So the region ends below the top 128 MB,
+// 0xB300_0000-0xB411_FFFF, and 0xB800_0000-0xBFFF_FFFF is U-Boot's to
 // relocate into, with room to spare.  U-Boot's `lmb` does honor this node in
 // its own control tree when it places the kernel's tree and the ramdisk
 // (`lib/lmb.c`), which is why U-Boot's tree carries it as well as the kernel's.
@@ -43,8 +44,8 @@
 
 / {
 	reserved-memory {
-		cadr@b0000000 {
-			reg = <0x0 0xb0000000 0x0 0x08000000>;
+		cadr@b3000000 {
+			reg = <0x0 0xb3000000 0x0 0x01120000>;
 			no-map;
 		};
 	};

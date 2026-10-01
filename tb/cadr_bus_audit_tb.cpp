@@ -107,7 +107,7 @@
 namespace {
 
 // cadr_ddr_map::MAIN_BASE, and the page the parity loop walks.
-constexpr uint32_t kMainBase = 0x18000000u;
+constexpr uint32_t kMainBase = 0x1B000000u;
 constexpr int kPageWords = 256;
 // Sixteen times wider than page 0, so a transaction that lands off the page
 // still lands somewhere this program can name rather than merely count.

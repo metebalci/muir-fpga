@@ -88,7 +88,7 @@
 };
 
 /*
- * The CADR's 128 MB at 0x18000000, `no-map`.  rtl/plumbing/cadr_ddr_map.sv is where
+ * The CADR's 17.125 MB at 0x1B000000, `no-map`.  rtl/plumbing/cadr_ddr_map.sv is where
  * the numbers are decided; the dtsi is the same fact in the tree's words.
  * In the kernel it keeps the region out of the linear map and out of
  * "System RAM"; in U-Boot it keeps the loader's own relocation

@@ -1543,14 +1543,16 @@ static void check_debug_cable(void)
 
 static void check_main_address(void)
 {
-	CHECK(cons_main_byte_address(0) == 0x18000000u, "word 0 is not at the region's base");
-	CHECK(cons_main_byte_address(1) == 0x18000004u, "a word is not four bytes");
+	CHECK(cons_main_byte_address(0) == 0x1B000000u, "word 0 is not at the region's base");
+	CHECK(cons_main_byte_address(1) == 0x1B000004u, "a word is not four bytes");
 	// The word the proving boards used: 0o12345671.
-	CHECK(cons_main_byte_address(012345671u) == 0x18A72EE4u,
-	      "main_byte_address(22'o12345671) is 0x%08x, wanting 0x18A72EE4 --- the address the proving "
-	      "boards wrote on the board", cons_main_byte_address(012345671u));
-	CHECK(cons_main_byte_address(0x3FFFFFu) == 0x18000000u + (0x3FFFFFu << 2),
+	CHECK(cons_main_byte_address(012345671u) == 0x1BA72EE4u,
+	      "main_byte_address(22'o12345671) is 0x%08x, wanting 0x1BA72EE4 --- the address the proving "
+	      "boards write on the board", cons_main_byte_address(012345671u));
+	CHECK(cons_main_byte_address(0x3FFFFFu) == 0x1B000000u + (0x3FFFFFu << 2),
 	      "the top of the 22-bit physical space is not where the map puts it");
+	CHECK(cons_main_byte_address(0x3FFFFFu) + 4u == CADR_BOARD_DISPLAY_BASE,
+	      "the top of the 22-bit physical space does not end where the display begins");
 	CHECK(CONS_MAIN_WORDS_REACHABLE == 3932160u,
 	      "the reachable words have moved from cadr_ddr_map.sv's 60 boards of 64K");
 }

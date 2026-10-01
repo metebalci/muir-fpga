@@ -136,11 +136,11 @@ int main(int argc, char **argv) {
   // which is where every address the machine makes actually falls, and half
   // scattered over the whole 32-bit space so that bits the real map holds
   // constant are exercised anyway. Eight-aligned, as every address the bridge
-  // produces is: a word address shifted twice into a 256 MB aligned base.
+  // produces is: a word address shifted twice into a 16 MB aligned base.
   uint32_t beat_addr[BEATS];
   for (int b = 0; b < BEATS; ++b) {
     if (b < BEATS / 2)
-      beat_addr[b] = 0x1800'0000u + static_cast<uint32_t>(b) * 8u;
+      beat_addr[b] = 0x1B00'0000u + static_cast<uint32_t>(b) * 8u;
     else
       // Two draws, because the generator returns twenty-four bits: one alone
       // leaves the top byte of every address zero, and the bit-toggle check

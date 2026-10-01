@@ -80,6 +80,28 @@ the CADR.
 
 ## From a modified tree
 
+These fits were built from the working tree on `2df53b7` with the CADR's
+reservation shrunk to 17.125 MB on every board: main memory moved to 16 MB
+below the display, which stayed where it was, and the disk pack program's
+records to just above the display's 1 MB. muir is pinned at `fc654c1`.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX | +0.131 ns | +0.038 ns | 17,296 of 53,200 LUTs, 32.51% | 62 of 140 BRAM tiles | 5,910 of 13,300 | working tree on `2df53b7` | modified | 2026-10-01 |
+| Arty Z7-20 | CADR | +0.536 ns | +0.024 ns | 15,065 of 53,200 LUTs, 28.32% | 46 of 140 BRAM tiles | 5,578 of 13,300 | working tree on `2df53b7` | modified | 2026-10-01 |
+| Cora Z7-07S | CADR | +0.158 ns | +0.036 ns | 13,952 of 14,400 LUTs, 96.89% | 43 of 50 BRAM tiles | 4,335 of 4,400 | working tree on `2df53b7` | modified | 2026-10-02 |
+| Kria KR260 | CADR | +3.528 ns | +0.013 ns | 14,017 of 117,120 LUTs, 11.97% | 38 of 144 BRAM tiles | 3,029 of 14,640 CLBs | working tree on `2df53b7` | modified | 2026-10-02 |
+| DE25-Nano | QUUX | +2.146 ns | 0.000 ns | 18,926 of 46,800 ALMs, 40% | 191 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
+| DE25-Nano | CADR | +2.422 ns | +0.001 ns | 16,480 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
+
+The Arty fits passed `boards/arty-z7-20/vivado/rams_enable_check.tcl` over
+105 and 98 block RAM ports, the Cora's over 92 and the Kria KR260's over 82,
+with its 38 multicycle exceptions on its two clocks. On the DE25-Nano the
+CADR's adapter keeps 82 address and data registers, where it kept 80 with
+the base at `0xB000_0000`: main memory's top byte is now `0xB3` against the
+display's `0xB4`, so one more address bit varies in each of the two
+addresses (`boards/de25-nano/quartus/sta_check.tcl` says which).
+
 These fits were built from the working tree on `f00f376` with QUUX revision
 13 at a microcycle of five ticks on the Arty Z7-20 (`SYNC_K13`), revision 12
 still at four, and muir pinned at `fc654c1`. The machine's clock stays at

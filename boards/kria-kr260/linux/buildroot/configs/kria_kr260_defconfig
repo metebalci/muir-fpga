@@ -90,7 +90,7 @@ BR2_PACKAGE_OZD=y
 BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_CADR_PATH)/package/ozd/users.table"
 # **THE PROGRAMS ARE BUILT WITH THIS BOARD'S ADDRESS MAP.**  The faces behind
 # M_AXI_HPM0_FPD at 0xA000_0000, the console behind M_AXI_HPM1_FPD at
-# 0xB000_0000, the machine's memory reserved at 0x6000_0000 and the tally on
+# 0xB000_0000, the machine's memory reserved at 0x6300_0000 and the tally on
 # EMIO; package/cadr-common/src/cadr/cadr_board.h has the table and its
 # sources.
 BR2_CADR_BOARD_KR260=y

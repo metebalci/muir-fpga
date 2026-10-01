@@ -165,7 +165,7 @@
 // whose header is the argument for the memory path; see the memory section
 // below for what is wired where.
 //
-// **THE BOARD'S MEMORY IS AT `0xB000_0000` AND THIS FILE SAYS SO.**
+// **THE BOARD'S MEMORY IS AT `0xB300_0000` AND THIS FILE SAYS SO.**
 // `rtl/plumbing/cadr_ddr_map.sv` takes its base from a define the DE25-Nano's
 // flows set, and elaboration stops below if the package disagrees with the
 // base written here, with or without the processor: the machine's addresses
@@ -877,14 +877,14 @@ module cadr_de25 #(
 
   // ----------------------------------------------------------- the memory
   //
-  // **WHERE THIS BOARD'S MEMORY IS**, which is the second 128 MB from the top
-  // of the processor's 1 GB at `0x8000_0000`: `rtl/plumbing/cadr_ddr_map.sv`
-  // gives the reason, and the reserved-memory node on the Linux side reserves
-  // the same 128 MB.  Written here as well as there, so that a flow that left
+  // **WHERE THIS BOARD'S MEMORY IS**, which is below the top 128 MB of the
+  // processor's 1 GB at `0x8000_0000`: `rtl/plumbing/cadr_ddr_map.sv` gives
+  // the reason, and the reserved-memory node on the Linux side reserves the
+  // same region.  Written here as well as there, so that a flow that left
   // out the define choosing the board's map stops at elaboration instead of
   // building a machine that puts the Zynq's addresses on this processor's
   // bus, where `0x1800_0000` is not memory at all.
-  localparam logic [31:0] MAIN_BASE = 32'hB000_0000;
+  localparam logic [31:0] MAIN_BASE = 32'hB300_0000;
   if (cadr_ddr_map::MAIN_BASE != MAIN_BASE) begin : g_wrong_map
     $error("cadr_ddr_map::MAIN_BASE is %h, and the DE25-Nano's is %h: define CADR_DDR_MAP_DE25_NANO",
            cadr_ddr_map::MAIN_BASE, MAIN_BASE);

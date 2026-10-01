@@ -57,7 +57,7 @@ namespace {
 
 constexpr int kTickNs = kGridNs;
 constexpr int kXbusAckNs = 60;
-constexpr uint32_t kMainBase = 0x18000000u;
+constexpr uint32_t kMainBase = 0x1B000000u;
 constexpr uint32_t kNotAnswering = 0xDEADBEE5u;
 
 // The trace's columns, in the order `golden/src/trace.rs` prints them.

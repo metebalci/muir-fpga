@@ -33,7 +33,7 @@
 # load whatever a network offers.
 #
 # ADDRESSES.  Everything below 0x5A00_0000, where QUUX revision 13 region
-# begins (the CADR region is 0x6000_0000 to 0x67FF_FFFF), and clear of the
+# begins (the CADR region is 0x6300_0000 to 0x6411_FFFF), and clear of the
 # two 256 KB regions the SOM tree reserves for the real-time cores at
 # 0x3ED0_0000 and 0x3EF0_0000.  fdt_high and initrd_high are set so that
 # booti leaves the tree and the ramdisk where they were loaded instead of

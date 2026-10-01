@@ -115,8 +115,8 @@ BR2_PACKAGE_OZD=y
 BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_CADR_PATH)/package/ozd/users.table"
 # **THE PROGRAMS ARE BUILT WITH THIS BOARD'S ADDRESS MAP.**  The faces keep
 # their Zynq addresses on the HPS-to-FPGA bridge, the console moves to the
-# lightweight bridge, and the machine's memory is the 128 MB reserved at
-# 0xB000_0000; package/cadr-common/src/cadr/cadr_board.h has the table and
+# lightweight bridge, and the machine's memory is the region reserved at
+# 0xB300_0000; package/cadr-common/src/cadr/cadr_board.h has the table and
 # its sources.
 BR2_CADR_BOARD_DE25_NANO=y
 # The other board's post-build script, unchanged, for the reason the Cora

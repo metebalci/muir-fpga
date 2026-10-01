@@ -149,7 +149,7 @@ BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 # Its first-stage loader lives in the QSPI flash and reads u-boot.itb, which is
 # U-Boot and TF-A in one FIT; the fabric is a core.rbf that U-Boot hands to the
 # Secure Device Manager; the kernel is an arm64 Image; the CADR's memory is
-# reserved at 0xB000_0000; and the console and the debug window are on the
+# reserved at 0xB300_0000; and the console and the debug window are on the
 # lightweight bridge at 0x2000_0000.  Everything else below --- the
 # layout, the packs, the files of flags, every warning --- is the
 # machine's and is the same on every board.  So the board enters here as the
@@ -205,7 +205,7 @@ case "$BOARD_NAME" in
     KERNEL=Image
     LAST_STEP=cadr_booti
     DTS_DIR=dts/intel
-    RESERVED=cadr@b0000000
+    RESERVED=cadr@b3000000
     PL_NODE=
     DISPLAY_WINDOW=0xB4000000
     COLOR_WINDOW=0xB4020000
@@ -231,7 +231,7 @@ case "$BOARD_NAME" in
     KERNEL=Image
     LAST_STEP=cadr_booti
     DTS_DIR=dts/xilinx
-    RESERVED=cadr@60000000
+    RESERVED=cadr@63000000
     PL_NODE=amba_pl
     DISPLAY_WINDOW=0x64000000
     COLOR_WINDOW=0x64020000
@@ -259,7 +259,7 @@ case "$BOARD_NAME" in
     KERNEL=zImage
     LAST_STEP=cadr_bootz
     DTS_DIR=dts/xilinx
-    RESERVED=cadr@18000000
+    RESERVED=cadr@1b000000
     PL_NODE=amba_pl
     DISPLAY_WINDOW=0x1C000000
     COLOR_WINDOW=0x1C020000
@@ -289,7 +289,7 @@ loader_env() {
   esac
 }
 # **A CARD CARRIES ONE MACHINE, AND ITS TREES GO WITH ITS BITSTREAM.**  The
-# CADR's and QUUX revision 12's device tree reserves the CADR's 128 MB;
+# CADR's and QUUX revision 12's device tree reserves the CADR's region;
 # revision 13's reserves its own region (docs/linux.md, "Each machine's
 # reservation").  The kernel's tree is fetched from the folder the bitstream is
 # fetched from, under the board tree's own name, so REVISION=13 stages

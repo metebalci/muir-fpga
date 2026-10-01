@@ -123,11 +123,11 @@
 namespace {
 
 // `cadr_ddr_map::MAIN_BASE` with `CADR_DDR_MAP_DE25_NANO` defined, which is
-// how this model is built: the second 128 MB from the top of the processor's
-// 1 GB.  A model built against the Zynq's base would watch an address the
+// how this model is built: the reservation below the top 128 MB of the
+// processor's 1 GB.  A model built against the Zynq's base would watch an address the
 // machine never uses.
-constexpr uint32_t kMainBase = 0xB0000000u;
-constexpr uint32_t kReservedSize = 128u * 1024u * 1024u;
+constexpr uint32_t kMainBase = 0xB3000000u;
+constexpr uint32_t kReservedSize = 0x01120000u;
 constexpr int kPageWords = 256;
 // Sixteen times wider than page 0, so a transaction that lands off the page
 // still lands somewhere this program can name rather than merely count.

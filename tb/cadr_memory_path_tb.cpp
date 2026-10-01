@@ -382,7 +382,7 @@ int RunArbiter() {
   // with it: the processor's own words are from a different family and a
   // different page.
   for (int i = 0; i < kBlockWords; ++i) {
-    const unsigned byte_addr = 0x1800'0000u + ((kBlockPage + (unsigned)i) << 2);
+    const unsigned byte_addr = 0x1B00'0000u + ((kBlockPage + (unsigned)i) << 2);
     auto it = busy_ddr.find(byte_addr);
     if (it == busy_ddr.end() || it->second != BlockWord(i)) {
       std::fprintf(stderr,
@@ -551,7 +551,7 @@ int main(int argc, char **argv) {
     // the memory port is checked against the stimulus here and now, rather than
     // only showing up as a wrong word much later.
     if (done && dut->mem_write) {
-      const unsigned want_addr = 0x1800'0000u + (r.phys << 2);
+      const unsigned want_addr = 0x1B00'0000u + (r.phys << 2);
       if (dut->mem_addr != want_addr)
         bad += Fail(r, "the byte address on the memory port", dut->mem_addr,
                     want_addr);
@@ -571,7 +571,7 @@ int main(int argc, char **argv) {
       // the trace ASKED for where it did not. A read that went somewhere else
       // is answered with that other address's poison and says so.
       const unsigned want =
-          (it == shadow.end()) ? Untouched(0x1800'0000u + (r.phys << 2))
+          (it == shadow.end()) ? Untouched(0x1B00'0000u + (r.phys << 2))
                                : it->second;
       if (it == shadow.end()) ++reads_untouched;
       if (dut->rdata != want) {

@@ -46,16 +46,16 @@ die() { echo "post-image.sh: $*" >&2; exit 1; }
 rm -f "$IMAGES/$TREE.dtbo"
 
 get() { "$HOST/bin/fdtget" "$@" 2>/dev/null; }
-reg=$(get -t x "$IMAGES/$TREE.dtb" /reserved-memory/cadr@60000000 reg) \
-	|| die "$TREE.dtb has no /reserved-memory/cadr@60000000"
-[ "$reg" = "0 60000000 0 8000000" ] || die "$TREE.dtb reserves '$reg', wanting 0 60000000 0 8000000"
+reg=$(get -t x "$IMAGES/$TREE.dtb" /reserved-memory/cadr@63000000 reg) \
+	|| die "$TREE.dtb has no /reserved-memory/cadr@63000000"
+[ "$reg" = "0 63000000 0 1120000" ] || die "$TREE.dtb reserves '$reg', wanting 0 63000000 0 1120000"
 get -l "$IMAGES/$TREE.dtb" /reserved-memory >/dev/null || die "no /reserved-memory"
-get -p "$IMAGES/$TREE.dtb" /reserved-memory/cadr@60000000 | grep -qx no-map \
+get -p "$IMAGES/$TREE.dtb" /reserved-memory/cadr@63000000 | grep -qx no-map \
 	|| die "the CADR's region in $TREE.dtb is not no-map"
 [ "$(get "$IMAGES/$TREE.dtb" / model)" = "ZynqMP KR260 revB" ] || die "$TREE.dtb is not the KR260's tree"
 [ "$(get "$IMAGES/$TREE.dtb" /axi/spi@ff0f0000 status)" = disabled ] \
 	|| die "$TREE.dtb leaves the QSPI flash controller on"
-echo "post-image.sh: $TREE.dtb: $BASE.dtb with the CADR's 128 MB at 0x60000000, no-map, and the QSPI controller off"
+echo "post-image.sh: $TREE.dtb: $BASE.dtb with the CADR's region at 0x63000000, no-map, and the QSPI controller off"
 
 "$HOST/bin/mkimage" -A arm64 -O linux -T script -C none -n "the CADR on the Kria KR260" \
 	-d "$BOARD/boot.cmd" "$IMAGES/boot.scr" >/dev/null || die "mkimage could not make boot.scr"

@@ -213,7 +213,7 @@ const unsigned kOpenBus = 0177777;
 uint16_t Poison(unsigned eadr) { return 0xC300u | (uint16_t)((eadr & 0xF) * 0x11u); }
 
 // And a word injective in the DDR BYTE address, for the mapped window's own
-// section. `cadr_ddr_map::main_byte_address` is `0x1800_0000 + (phys << 2)`,
+// section. `cadr_ddr_map::main_byte_address` is `0x1B00_0000 + (phys << 2)`,
 // so the physical word address is recoverable from what the port asks for and
 // the claim is on the address as much as on the word: a translation one page
 // or one word wide reaches a byte address this testbench put nothing else at.
@@ -224,7 +224,7 @@ uint32_t MainPoison(uint32_t byte_addr) {
 
 // The DDR byte address the machine's memory port names a physical word at,
 // and the physical word address back out of one.
-constexpr uint32_t kMainBase = 0x18000000u;
+constexpr uint32_t kMainBase = 0x1B000000u;
 uint32_t MainByteAddress(uint32_t phys) { return kMainBase + (phys << 2); }
 
 // The seven lines the mouse drives, held still for the whole run: bits 0 to 3

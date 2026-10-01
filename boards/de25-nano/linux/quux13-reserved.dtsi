@@ -11,15 +11,15 @@
 // reserves from main memory to the end of the records, and no further:
 //
 //   QUUX13_MAIN_BASE = 0xA000_0000, 320 MB, 64M words      main memory
-//   DISPLAY_BASE     = 0xB400_0000,   8 MB                 the display
-//   SPARE_BASE       = 0xB480_0000, 128 KB, RECORDS_BYTES  the records
-//   QUUX13_RESERVED_END = 0xB482_0000
+//   DISPLAY_BASE     = 0xB400_0000,   1 MB                 the display
+//   SPARE_BASE       = 0xB410_0000, 128 KB, RECORDS_BYTES  the records
+//   QUUX13_RESERVED_END = 0xB412_0000, the CADR's end too
 //
 // **THE CADR's NODE IS TAKEN OUT AND THIS ONE PUT IN.**  Revision 13's tree
 // is the board's own tree with this file after `cadr-reserved.dtsi`
 // (`socfpga_agilex5_de25_nano_quux13.dts`).  Linux keeps the rest of the
-// 1 GB but the service layer's 32 MB, about 664 MB: measured on the board
-// with the same region less the records (contract G2's D10).
+// 1 GB but the service layer's 32 MB, 670.875 MB (664 MB measured on the
+// board with the region that ended at 0xB482_0000, contract G2's D10).
 //
 // **U-BOOT's TREE FOR REVISION 13 IS THE SAME**, and it is in u-boot.itb on
 // the card, so a revision 13 card carries a u-boot.itb of its own.  U-Boot
@@ -29,10 +29,10 @@
 
 / {
 	reserved-memory {
-		/delete-node/ cadr@b0000000;
+		/delete-node/ cadr@b3000000;
 
 		quux13@a0000000 {
-			reg = <0x0 0xa0000000 0x0 0x14820000>;
+			reg = <0x0 0xa0000000 0x0 0x14120000>;
 			no-map;
 		};
 	};

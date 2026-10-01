@@ -117,9 +117,9 @@ void Check(bool ok, const char *fmt, ...) {
 #define MACH_O(n) (r->cadr_de25__DOT__u_machine__DOT__tbo_##n)
 #define MACH_I(n) (r->cadr_de25__DOT__u_machine__DOT__tbi_##n)
 
-// The board's memory, at the processor's addresses: the machine's reserved
-// 128 MB at `0xB000_0000`, `cadr_ddr_map::MAIN_BASE` with the DE25-Nano's map.
-constexpr uint32_t kMainBase = 0xB0000000u;
+// The board's memory, at the processor's addresses: the machine's
+// reservation at `0xB300_0000`, `cadr_ddr_map::MAIN_BASE` with the DE25-Nano's map.
+constexpr uint32_t kMainBase = 0xB3000000u;
 uint32_t Poison(uint32_t addr) { return 0x5EED0000u ^ (addr * 0x9E3779B1u); }
 
 // What the lamps are, lit LOW, by LED.

@@ -88,12 +88,12 @@ constexpr uint32_t kReqValid = 1u << 31;
 constexpr uint32_t kIdent = 0x5041'434Bu;
 constexpr int kSlots = 24;
 
-// `pack_feeder.h`'s staging area: the spare part of the CADR's own 128 MB
-// reservation, past main memory (64 MB at 0x1800_0000) and past the display's
-// 8 MB at 0x1C00_0000.  The record for a fetch and the record for a write-back
+// `pack_feeder.h`'s staging area: the spare part of the CADR's own
+// reservation, past main memory (16 MB at 0x1B00_0000) and past the display's
+// 1 MB at 0x1C00_0000.  The record for a fetch and the record for a write-back
 // are separate so that one of each can be in flight; the stride is 2 KB, which
 // is 128-byte aligned as the pack side demands.
-constexpr uint32_t kSpareBase = 0x1C80'0000u;
+constexpr uint32_t kSpareBase = 0x1C10'0000u;
 constexpr uint32_t kFetchOff = 0x00000u;
 constexpr uint32_t kWbOff = 0x10000u;
 constexpr uint32_t kRecordStride = 0x800u;

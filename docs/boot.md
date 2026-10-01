@@ -911,7 +911,7 @@ itself, so the remedy for anything lost is to put it back.
 5. **Linux**. The two things the first boot established are in its first
    lines and at its prompt:
 
-       OF: reserved mem: 0x18000000..0x1fffffff (131072 KiB) nomap non-reusable cadr@18000000
+       OF: reserved mem: 0x1b000000..0x1c11ffff (17536 KiB) nomap non-reusable cadr@1b000000
 
    That line is the tree reserving the CADR's memory **with `no-map` and
    without `mem=384M`**. That is the thing the 4.9 kernel died on, and this
@@ -939,6 +939,13 @@ on 10 September under this image:
     cat /proc/cmdline                            console=ttyPS0,115200 earlycon   -- and nothing about memory
     devmem 0xE000A068; devmem 0xE000A06C         0x01008100 twice, WITHOUT the APER_CLK_CTRL line first
 
+Since the CADR's region shrank to 17.125 MB (`docs/linux.md`, "The CADR's
+region, and everything in it"), the same checks on the Arty Z7-20 read:
+
+    ls /proc/device-tree/reserved-memory/        cadr@1b000000
+    grep "System RAM" /proc/iomem                00000000-1affffff and 1c120000-1fffffff
+    grep MemTotal /proc/meminfo                  493976 kB
+
 **The `APER_CLK_CTRL` line is gone because this kernel has no power
 management.** `drivers/gpio/gpio-zynq.c` gates the block's clock through
 runtime PM. `zynq_gpio_runtime_suspend()` is `clk_disable_unprepare()`, and
@@ -956,8 +963,8 @@ to read the lines through the driver, where gpiochip lines 54..117 are EMIO
 `DEVMEM`, `GPIO_ZYNQ`, `INPUT_EVDEV`, `USB_HID`, `USB_CHIPIDEA_HOST`,
 `MACB`, `REALTEK_PHY`, `MMC_SDHCI_OF_ARASAN`,
 `SERIAL_XILINX_PS_UART_CONSOLE` and `FPGA_MGR_ZYNQ_FPGA` on, and no `DRM` or
-`FB`. The tree, decompiled, carries `cadr@18000000 { reg = <0x18000000
-0x8000000>; no-map; }`, five devices enabled (uart0, gem0, sdhci0, qspi, usb0
+`FB`. The tree, decompiled, carries `cadr@1b000000 { reg = <0x1b000000
+0x1120000>; no-map; }`, five devices enabled (uart0, gem0, sdhci0, qspi, usb0
 as host), `serial0` on `serial@e0000000`, `ps-clk-frequency` 50,000,000, the
 PHY at address 1 and no `amba_pl`. U-Boot's own tree carries the same
 reservation. The SPL is 125,216 bytes against its 196,608-byte ceiling, and
@@ -971,7 +978,7 @@ to yes, and with no framebuffer it is a dummy console nobody sees.
 read out of the code. `mmap` works, and opened `O_SYNC` as BusyBox's `devmem`
 does it gives an uncached mapping (`arch/arm/mm/mmu.c`,
 `phys_mem_access_prot`). `read()` and `write()` on `/dev/mem` over
-`0x18000000..0x1fffffff` are expected to fail with `EFAULT`. The kernel
+`0x1b000000..0x1c11ffff` are expected to fail with `EFAULT`. The kernel
 reaches them through the linear map, and a `no-map` region has none.
 `drivers/char/mem.c` copies with `copy_from_kernel_nofault`, so it fails
 rather than oopses. Programs that read the CADR's memory from Linux mmap it.

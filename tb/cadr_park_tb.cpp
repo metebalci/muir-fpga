@@ -81,7 +81,7 @@
 
 namespace {
 
-constexpr uint32_t kMainBase = 0x18000000u;
+constexpr uint32_t kMainBase = 0x1B000000u;
 constexpr int kWindowWords = 4096;
 constexpr uint32_t kNotAnswering = 0xDEADBEE5u;
 

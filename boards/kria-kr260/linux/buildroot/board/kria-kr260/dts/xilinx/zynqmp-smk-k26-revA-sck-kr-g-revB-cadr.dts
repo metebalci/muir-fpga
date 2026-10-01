@@ -18,7 +18,7 @@
  *     carrier's overlay), so that the card staging can read which board's
  *     tree this is out of this file, as it reads the other boards' out of
  *     theirs;
- *   the CADR's 128 MB at 0x6000_0000, no-map, from cadr-reserved.dtsi, which
+ *   the CADR's 17.125 MB at 0x6300_0000, no-map, from cadr-reserved.dtsi, which
  *     says why there;
  *   the QSPI FLASH CONTROLLER TURNED OFF.  The flash holds the board's own
  *     boot firmware, two images of it, and this project never writes it.

@@ -69,7 +69,7 @@ namespace {
 
 // `cadr_ddr_map::MAIN_BASE`, and enough of it for everything 32 memory boards
 // can reach that this program touches.
-constexpr uint32_t kMainBase = 0x18000000u;
+constexpr uint32_t kMainBase = 0x1B000000u;
 constexpr size_t kMainWords = 4u << 20;      // 16 MB
 constexpr int kPageWords = 256;
 
@@ -979,7 +979,7 @@ int main(int argc, char **argv) {
   //     beat inside the machine's own 22-bit physical space is a word of
   //     somebody else's memory overwritten --- which is the exact shape of
   //     the board's page-hash-table word.  The staging records are at
-  //     0x1C80_0000 and up; nothing correct goes anywhere else.
+  //     0x1C10_0000 and up; nothing correct goes anywhere else.
   Check(hp2_in_main == 0,
         "%ld beats of the pack side landed inside the machine's own main "
         "memory", hp2_in_main);

@@ -130,10 +130,10 @@ pins the mapping on hand-computed pixels.
 | 963 lines | `HEIGHT` | muir `src/tv.rs:104`, `(:CADR 963.)`, "was 896. for CPT" |
 | 24 words to a line | `WORDS_PER_LINE` | muir `src/tv.rs:108`, `MAIN-SCREEN-LOCATIONS-PER-LINE` |
 | one bit a pixel | | muir `src/tv.rs:7`; `docs/tv.md` |
-| 32,768 words in the window | `BUFFER_WORDS` | muir `src/tv.rs:78`; `rtl/plumbing/cadr_ddr_map.sv:76` |
+| 32,768 words in the window | `BUFFER_WORDS` | muir `src/tv.rs:78`; `rtl/plumbing/cadr_ddr_map.sv:143` |
 | 23,112 of them are the screen | `visible()` | muir `src/terminal/mod.rs:129`; 963 x 24 |
-| the window is at `0x1C00_0000` | `DISPLAY_BASE` | `rtl/plumbing/cadr_ddr_map.sv:72` |
-| word *n* is at base + 4*n* | `display_byte_address` | `rtl/plumbing/cadr_ddr_map.sv:101`; `rtl/plumbing/cadr_xbus_ddr.sv:92` |
+| the window is at `0x1C00_0000` | `DISPLAY_BASE` | `rtl/plumbing/cadr_ddr_map.sv:137` |
+| word *n* is at base + 4*n* | `display_byte_address` | `rtl/plumbing/cadr_ddr_map.sv:210`; `rtl/plumbing/cadr_xbus_ddr.sv:92` |
 | a frame is 15,456,000 ns | `FRAME_NS` | muir `src/tv.rs:331`; `rtl/machine/cadr_tv.sv:90` |
 
 **Which bit is which pixel.** muir `src/tv.rs:599-602`:
@@ -1152,7 +1152,7 @@ own machine and 5902 would be muir's color screen, so the card's menu names a
 display of its own.
 
 **Two windows in memory.** The color board's frame buffer is a second region
-of the display's reserved 8 MB, 128 KB above the first, which is
+of the display's reserved 1 MB, 128 KB above the first, which is
 `cadr_ddr_map.sv`'s `COLOR_DISPLAY_BASE`. `--color-window` moves it.
 
 **What is shared and what is not.** One server module serves both screens: the

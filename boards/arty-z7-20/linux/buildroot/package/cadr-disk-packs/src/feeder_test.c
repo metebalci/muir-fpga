@@ -2700,8 +2700,10 @@ int main(int argc, char **argv)
 			fail("nothing_moved is %lu", f.nothing_moved);
 		k.store[slot][5] ^= 0xFFFFFFFFu;
 		(void)s;
-		// A port that answers SLVERR: the error bit, reported.
-		if (ps_fetch(&ps, FEEDER_SPARE_BASE + FEEDER_SPARE_BYTES - 0x800u, ps_tag(UNIT, 1, 2, 3), 2, &st, err, sizeof err) == 0)
+		// A port that answers SLVERR: the error bit, reported.  The first
+		// record's place past the records' area, which the model's port
+		// refuses.
+		if (ps_fetch(&ps, FEEDER_SPARE_BASE + FEEDER_SPARE_BYTES, ps_tag(UNIT, 1, 2, 3), 2, &st, err, sizeof err) == 0)
 			fail("a fetch the port answered with an error was reported done");
 		else if (!(st & PS_ST_ERROR))
 			fail("the error bit was not read back after a refused burst");

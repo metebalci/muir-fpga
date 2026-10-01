@@ -127,7 +127,7 @@ set bit  [expr {[info exists ::env(BIT)] ? $::env(BIT) \
 # off it lands somewhere this script prints rather than somewhere nobody
 # looks --- physical 777, where the machine used to put a CCW, is word 511 of
 # it.
-set MAIN_BASE   0x18000000
+set MAIN_BASE   0x1B000000
 set BLOCK_WORDS 1024
 
 # The tally, and the two registers it comes out on.

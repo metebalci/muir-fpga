@@ -23,13 +23,13 @@
 //   one bit a pixel               muir src/tv.rs:7 and docs/tv.md
 //   32,768 words in the window    muir src/tv.rs:78, `BUFFER_WORDS`,
 //                                   `MAIN-SCREEN-BUFFER-LENGTH #o100000`;
-//                                   rtl/plumbing/cadr_ddr_map.sv:71
+//                                   rtl/plumbing/cadr_ddr_map.sv:143
 //   23,112 of them are the screen muir src/terminal/mod.rs:88, `visible()`;
 //                                   963 x 24, and the rest is not drawn
-//   0x1C00_0000 in DDR            rtl/plumbing/cadr_ddr_map.sv:67, `DISPLAY_BASE`;
+//   0x1C00_0000 in DDR            rtl/plumbing/cadr_ddr_map.sv:137, `DISPLAY_BASE`;
 //                                   a Zynq board's, and <cadr/cadr_board.h>
 //                                   has every board's
-//   word n at base + 4n           rtl/plumbing/cadr_ddr_map.sv:83, `display_byte_address`,
+//   word n at base + 4n           rtl/plumbing/cadr_ddr_map.sv:210, `display_byte_address`,
 //                                   the offset being the low fifteen bits of
 //                                   the physical address and nothing
 //                                   subtracted; rtl/plumbing/cadr_xbus_ddr.sv:87
@@ -240,7 +240,7 @@ _Static_assert(SCREEN_MAX_VISIBLE_WORDS >= SCREEN_VISIBLE_WORDS
 _Static_assert(SCREEN_MAX_HEIGHT >= SCREEN_HEIGHT && SCREEN_MAX_HEIGHT >= SCREEN_COLOR_HEIGHT,
 	       "a frame holds the largest screen's lines");
 // And the video controller's window stays inside the display's share of the reservation,
-// below the spare 8 MB up.
+// below the spare 1 MB up.
 _Static_assert(SCREEN_BASE + SCREEN_MONO_WINDOW_BYTES <= CADR_BOARD_SPARE_BASE,
 	       "the video controller's buffer fits below the spare");
 // **ON REVISION 13 THE WINDOW'S BASE IN DDR IS THE SAME.**  The machine

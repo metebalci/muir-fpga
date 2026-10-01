@@ -10,8 +10,8 @@
 # beside this file says why there is one copy of them.
 #
 # THE RESERVED-MEMORY NODE IS THE ARTY Z7-20's FILE, and that is deliberate:
-# `boards/arty-z7-20/linux/cadr-reserved.dtsi` is the CADR's own 128 MB at
-# 0x18000000, which `rtl/plumbing/cadr_ddr_map.sv` decides and which is a
+# `boards/arty-z7-20/linux/cadr-reserved.dtsi` is the CADR's own region at
+# 0x1B000000, which `rtl/plumbing/cadr_ddr_map.sv` decides and which is a
 # property of the MACHINE and not of the board.  Both boards carry 512 MB of
 # DDR3 and reserve the same region of it, so a copy here would be a second
 # description of one fact.  The kernel gets it by the hook below, copied next

@@ -222,9 +222,8 @@ generator asserts exactly that.
 
 
 **The frame buffer is DDR, through main memory's bridge at a second base.**
-`rtl/plumbing/cadr_ddr_map.sv` has reserved 8 MB at `0x1C00_0000` for the display
-since before anything filled it. The machine's 32,768 words are the first
-128 KB of it, and `display_byte_address(offset) = DISPLAY_BASE + 4 * offset`.
+`rtl/plumbing/cadr_ddr_map.sv` reserves 1 MB at `0x1C00_0000` for the display.
+The machine's 32,768 words are the first 128 KB of it, and `display_byte_address(offset) = DISPLAY_BASE + 4 * offset`.
 `rtl/machine/cadr_tv.sv` decodes the window as the board's MAPADR switch does and
 says so on `fb_sel`, held. `cadr_memory_path.sv` selects `cadr_xbus_ddr`
 on it beside `is_memory`, and the bridge takes a `display` input that picks
@@ -763,7 +762,8 @@ through page 5 and `cadr-checkpoint` carries page 4 into the checkpoint.
 **The second frame buffer is a second window of the display's region of DDR**,
 128 KB above the first, which is the first board's own 32,768 words.
 `cadr_ddr_map.sv`'s `COLOR_DISPLAY_BASE` is the constant. Nothing on the Linux
-side grows for it: the reserved-memory node already reserves the whole 128 MB.
+side grows for it: the reserved-memory node already reserves the display's
+whole 1 MB.
 
 **`-XBUS.INTR` is the OR of the two boards**, which is muir's
 `Machine::xbus_interrupt`. Microcode 323's `INTRX0` clears the flag by reading

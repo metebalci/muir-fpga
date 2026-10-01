@@ -120,7 +120,7 @@ namespace {
 
 // `cadr_ddr_map::MAIN_BASE`, and enough of it for everything 32 memory boards
 // can reach that this program touches.
-constexpr uint32_t kMainBase = 0x18000000u;
+constexpr uint32_t kMainBase = 0x1B000000u;
 constexpr size_t kMainWords = 4u << 20;      // 16 MB
 constexpr int kPageWords = 256;
 
