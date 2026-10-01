@@ -463,7 +463,11 @@ can be watched over RFB from another machine at the same time.
 A key or the mouse here also wakes the board's own display output when it has
 put the monitor to sleep, and starts its wait over. The terminal does that for
 everything that comes over the link. Plugging the keyboard in does not wake it:
-a key has to be pressed. `docs/display-output.md` has the timer.
+a key has to be pressed. The key, movement or button that wakes a monitor asleep
+only wakes it and does not reach the machine; the next one does. A shifting key
+such as Control is the exception and is delivered, so the `--keyboard-boot`
+chord still boots the machine from a sleeping screen.
+`docs/display-output.md` has the timer and the rule.
 
 **And a key cannot be pressed from another machine on this image**, which is
 worth saying plainly because the obvious ways look as though they would work.

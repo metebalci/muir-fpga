@@ -201,6 +201,9 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  The word reads back a marker of `ZZ` in the top half, the
                  lanes muted in bit 15 and the setting in bits 14 to 0, and
                  `UNMAPPED` on a board with no display output.
+                 `cadr-terminal` reads bit 15 before it writes a wake, and
+                 a key or movement that finds it set wakes the monitor and
+                 does not reach the machine.
                  `cadr-console hdmi-sleep [SECONDS]` reads and sets it, and has
                  no way to wake the monitor.  `docs/display-output.md` has the
                  timer

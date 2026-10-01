@@ -3498,6 +3498,34 @@ static void check_keyboard_boot(const char *work_dir)
 	key_boot_set(&srv.keys, b);
 }
 
+// The console face's word 36, for the wake: the server's check below drives it
+// through `display_wake_poke`, and `check_display_wake_word` holds the word.
+// **A WAKE CLEARS THE ASLEEP BIT, AS THE FABRIC DOES**, unless `slow` says the
+// fabric has not taken it yet --- which on the board is up to a frame.
+struct dwake_model {
+	uint32_t reg[96];
+	unsigned writes, last_word, reads;
+	uint32_t last_value;
+	int slow;
+};
+
+static uint32_t dwake_model_read(struct display_wake *w, unsigned word)
+{
+	struct dwake_model *m = w->ctx;
+	++m->reads;
+	return m->reg[word % 96u];
+}
+
+static void dwake_model_write(struct display_wake *w, unsigned word, uint32_t v)
+{
+	struct dwake_model *m = w->ctx;
+	++m->writes;
+	m->last_word = word;
+	m->last_value = v;
+	if (word == 36u && v == 0x57414B45u && !m->slow)
+		m->reg[36] &= ~0x8000u;
+}
+
 // ---- WAKING THE BOARD'S OWN DISPLAY OUTPUT -----------------------------
 //
 // **A PERSON AT THE BOARD WAKES THE MONITOR, AND NOBODY ELSE DOES.**  The
@@ -3514,17 +3542,83 @@ static void check_keyboard_boot(const char *work_dir)
 static unsigned long wake_calls;
 static uint64_t wake_now;
 
-static void count_wake(void *ctx, uint64_t now_ns)
+// With a `struct display_wake` behind it, it is the board's hook exactly but for
+// the clock, which is the pass's here so that the check can hold it.
+static int count_wake(void *ctx, uint64_t now_ns)
 {
-	(void)ctx;
 	++wake_calls;
 	wake_now = now_ns;
+	return ctx ? display_wake_hook(ctx, now_ns) : 0;
 }
 
 static void link_record(struct cadr_input_link_client *l, const struct cadr_input_event *e,
 			const char *what)
 {
 	CHECK(cadr_input_link_send(l, e) == 0, "the link would not take %s", what);
+}
+
+// ---- (6)'s pieces: a monitor asleep, and records at the board.
+static struct dwake_model board_face;
+static struct display_wake board_wake;
+
+// The monitor goes to sleep, two seconds on: past the coalescing window, so
+// what the next record finds is what the word says.
+static void board_sleeps(void)
+{
+	board_face.reg[36] = (0x5A5Au << 16) | 0x8000u | 300u;
+	clock_ns += 2000000000ull;
+}
+
+static int board_is_asleep(void)
+{
+	return (board_face.reg[36] & 0x8000u) != 0;
+}
+
+static void board_key(struct cadr_input_link_client *l, uint32_t keysym, int down)
+{
+	struct cadr_input_event e;
+	memset(&e, 0, sizeof e);
+	e.type = CADR_INPUT_KEY;
+	e.down = down;
+	e.keysym = keysym;
+	link_record(l, &e, down ? "a key down" : "a key up");
+}
+
+static void board_mouse(struct cadr_input_link_client *l, int dx, int dy, unsigned buttons)
+{
+	struct cadr_input_event e;
+	memset(&e, 0, sizeof e);
+	e.type = CADR_INPUT_POINTER;
+	e.dx = dx;
+	e.dy = dy;
+	e.buttons = (uint8_t)buttons;
+	link_record(l, &e, "a mouse record");
+}
+
+// Whether any switch word written since `from` had the left switch down.
+static int left_written_since(unsigned from)
+{
+	for (unsigned k = from; k < model.nbuttons; ++k)
+		if (model.buttons[k] & 1u)
+			return 1;
+	return 0;
+}
+
+static int open_board(struct cadr_input_link_client *l, const char *path)
+{
+	const char *why = NULL;
+	l->fd = -1;
+	if (cadr_input_link_open(l, path, &why) < 0) {
+		fail(__LINE__, "a link client could not attach: %s", why ? why : "?");
+		return -1;
+	}
+	for (unsigned k = 0; k < 8 && !l->greeted; ++k) {
+		pump(2);
+		cadr_input_link_greet(l, &why);
+	}
+	CHECK(l->greeted, "the link client was not greeted: %s", why ? why : "?");
+	pump(4);
+	return l->greeted ? 0 : -1;
 }
 
 static void check_display_wake(const char *work_dir)
@@ -3660,6 +3754,293 @@ static void check_display_wake(const char *work_dir)
 	CHECK(wake_calls == w, "a source going away woke the display %lu times; its held key "
 	      "coming up is the link tidying up, not somebody at the board", wake_calls - w);
 
+	// (6) **THE RECORD THAT WAKES A MONITOR ASLEEP WAKES IT AND DOES NOTHING
+	// ELSE.**  `display_wake.h` has the rule; the hook here is the board's,
+	// `display_wake_hook`, over a model of word 36.
+	memset(&board_face, 0, sizeof board_face);
+	memset(&board_wake, 0, sizeof board_wake);
+	board_face.reg[0] = 0x434F4E53u;
+	board_face.reg[36] = (0x5A5Au << 16) | 300u;
+	board_wake.read = dwake_model_read;
+	board_wake.write = dwake_model_write;
+	board_wake.ctx = &board_face;
+	srv.wake = count_wake;
+	srv.wake_ctx = &board_wake;
+	struct cadr_input_link_client b;
+	if (open_board(&b, path) == 0) {
+		// (6a) A key down and up at the board, asleep: the monitor wakes and the
+		// machine hears neither.
+		board_sleeps();
+		unsigned nk = model.nkeys;
+		unsigned wr = board_face.writes;
+		board_key(&b, 0x65u /* e */, 1);
+		pump(8);
+		CHECK(board_face.writes == wr + 1 && !board_is_asleep(),
+		      "a key at the board did not wake a monitor asleep: %u wakes written",
+		      board_face.writes - wr);
+		CHECK(model.nkeys == nk, "the key down that woke the monitor reached the "
+		      "machine: %u words", model.nkeys - nk);
+		board_key(&b, 0x65u, 0);
+		pump(8);
+		CHECK(model.nkeys == nk, "the key up of the key that woke the monitor reached "
+		      "the machine: %u words", model.nkeys - nk);
+
+		// (6b) The next key reaches it, at once and inside the coalescing window...
+		board_key(&b, 0x66u /* f */, 1);
+		board_key(&b, 0x66u, 0);
+		pump(8);
+		CHECK(model.nkeys == nk + 2, "the key after the waking one did not reach the "
+		      "machine: %u words, wanting 2", model.nkeys - nk);
+		// ...and two seconds on, when the word is read again and says awake.
+		clock_ns += 2000000000ull;
+		nk = model.nkeys;
+		wr = board_face.writes;
+		board_key(&b, 0x66u, 1);
+		board_key(&b, 0x66u, 0);
+		pump(8);
+		CHECK(model.nkeys == nk + 2, "a key at the board with the monitor awake did not "
+		      "reach the machine: %u words, wanting 2", model.nkeys - nk);
+		CHECK(board_face.writes == wr + 1, "a key at the board with the monitor awake "
+		      "wrote %u wakes, wanting 1: it starts the timer over", board_face.writes - wr);
+
+		// (6c) A button pressed asleep: it wakes the monitor, and neither the
+		// press nor its release reaches the mouse.  The next press does.
+		board_sleeps();
+		unsigned nb = model.nbuttons;
+		board_mouse(&b, 0, 0, 1);
+		pump(8);
+		CHECK(!board_is_asleep(), "a button at the board did not wake a monitor asleep");
+		CHECK(!left_written_since(nb), "the button press that woke the monitor reached "
+		      "the mouse");
+		board_mouse(&b, 0, 0, 0);
+		pump(8);
+		CHECK(!left_written_since(nb), "the release of the button that woke the monitor "
+		      "pressed it at the mouse");
+		nb = model.nbuttons;
+		board_mouse(&b, 0, 0, 1);
+		pump(8);
+		CHECK(model.nbuttons > nb && (model.buttons[model.nbuttons - 1] & 1u),
+		      "a button pressed after the monitor woke did not reach the mouse");
+		board_mouse(&b, 0, 0, 0);
+		pump(8);
+		CHECK(model.nbuttons > nb && !(model.buttons[model.nbuttons - 1] & 1u),
+		      "its release did not reach the mouse");
+
+		// (6d) A movement asleep wakes it and does not move the mouse; the next
+		// one does.
+		board_sleeps();
+		unsigned nm = model.nmoves;
+		board_mouse(&b, 3, -2, 0);
+		pump(8);
+		CHECK(!board_is_asleep(), "the mouse moving at the board did not wake a monitor "
+		      "asleep");
+		CHECK(model.nmoves == nm, "the movement that woke the monitor moved the mouse");
+		board_mouse(&b, 5, 4, 0);
+		pump(8);
+		CHECK(model.nmoves == nm + 1, "the movement after the waking one did not reach "
+		      "the mouse: %u movements", model.nmoves - nm);
+
+		// (6e) A key held across the sleep: its up reaches the machine, or the
+		// machine would hold it for ever, and wakes the monitor too.
+		nk = model.nkeys;
+		board_key(&b, 0x67u /* g */, 1);
+		pump(8);
+		CHECK(model.nkeys == nk + 1, "a key down at the board awake did not reach the "
+		      "machine");
+		board_sleeps();
+		board_key(&b, 0x67u, 0);
+		pump(8);
+		CHECK(!board_is_asleep(), "a key up at the board did not wake a monitor asleep");
+		CHECK(model.nkeys == nk + 2, "the up of a key held across the sleep did not reach "
+		      "the machine: %u words, wanting 2", model.nkeys - nk);
+		// The same for a button held across it.
+		nb = model.nbuttons;
+		clock_ns += 2000000000ull;
+		board_mouse(&b, 0, 0, 1);
+		pump(8);
+		CHECK(model.nbuttons > nb && (model.buttons[model.nbuttons - 1] & 1u),
+		      "a button pressed at the board awake did not reach the mouse");
+		board_sleeps();
+		board_mouse(&b, 0, 0, 0);
+		pump(8);
+		CHECK(!(model.buttons[model.nbuttons - 1] & 1u), "the release of a button held "
+		      "across the sleep did not reach the mouse");
+		// And a second switch pressed asleep while the first is held: the
+		// second is swallowed and the first stays down at the mouse.
+		clock_ns += 2000000000ull;
+		board_mouse(&b, 0, 0, 1);
+		pump(8);
+		board_sleeps();
+		board_mouse(&b, 0, 0, 3);
+		pump(8);
+		CHECK(!board_is_asleep() && model.nbuttons
+		      && model.buttons[model.nbuttons - 1] == 1u,
+		      "a second switch pressed asleep with the first held: the mouse has 0x%x, "
+		      "wanting the first alone, 0x1",
+		      model.nbuttons ? model.buttons[model.nbuttons - 1] : 0u);
+		board_mouse(&b, 0, 0, 0);
+		pump(8);
+		CHECK(model.buttons[model.nbuttons - 1] == 0u, "both released: the mouse has 0x%x",
+		      model.buttons[model.nbuttons - 1]);
+		board_mouse(&b, 0, 0, 2);
+		pump(8);
+		CHECK(model.buttons[model.nbuttons - 1] == 2u, "the second switch pressed awake: "
+		      "the mouse has 0x%x, wanting 0x2", model.buttons[model.nbuttons - 1]);
+		board_mouse(&b, 0, 0, 0);
+		pump(8);
+
+		// (6f) A second key before the wake takes effect, in the same read: the
+		// fabric still says asleep, and the second key is delivered all the same.
+		board_face.slow = 1;
+		board_sleeps();
+		nk = model.nkeys;
+		wr = board_face.writes;
+		board_key(&b, 0x68u /* h */, 1);
+		board_key(&b, 0x69u /* i */, 1);
+		pump(8);
+		board_key(&b, 0x68u, 0);
+		board_key(&b, 0x69u, 0);
+		pump(8);
+		CHECK(board_face.writes == wr + 1, "two keys inside a tenth of a second wrote %u "
+		      "wakes, wanting 1", board_face.writes - wr);
+		CHECK(model.nkeys == nk + 2, "of two keys that met a monitor asleep, %u words "
+		      "reached the machine, wanting the second key's 2", model.nkeys - nk);
+		board_face.slow = 0;
+
+		// (6g) A repeat of the waking key before its up is swallowed with it.
+		board_sleeps();
+		nk = model.nkeys;
+		board_key(&b, 0x6Au /* j */, 1);
+		pump(8);
+		board_key(&b, 0x6Au, 1);
+		pump(8);
+		clock_ns += 2000000000ull;
+		board_key(&b, 0x6Au, 1);
+		board_key(&b, 0x6Au, 0);
+		pump(8);
+		CHECK(model.nkeys == nk, "the waking key's repeats or its up reached the "
+		      "machine: %u words", model.nkeys - nk);
+
+		// (6h) A viewer's key with the monitor asleep reaches the machine, wakes
+		// nothing, and is not taken for the waking record.
+		board_sleeps();
+		nk = model.nkeys;
+		wr = board_face.writes;
+		const unsigned long wc = wake_calls;
+		send_key(&c, 0x61u /* a */, 1);
+		pump(8);
+		send_key(&c, 0x61u, 0);
+		pump(8);
+		CHECK(model.nkeys == nk + 2, "a viewer's key with the monitor asleep did not reach "
+		      "the machine: %u words, wanting 2", model.nkeys - nk);
+		CHECK(board_face.writes == wr && wake_calls == wc && board_is_asleep(),
+		      "a viewer's key woke a monitor asleep");
+
+		// (6h') The waking key's up lifts nothing at the machine, even where a
+		// viewer holds the same key: the machine never saw the board's go down.
+		board_sleeps();
+		send_key(&c, 0x6Cu /* l */, 1);
+		pump(8);
+		nk = model.nkeys;
+		board_key(&b, 0x6Cu, 1);
+		pump(8);
+		board_key(&b, 0x6Cu, 0);
+		pump(8);
+		CHECK(!board_is_asleep() && model.nkeys == nk, "the up of a key that woke the "
+		      "monitor lifted a viewer's held key at the machine: %u words",
+		      model.nkeys - nk);
+		send_key(&c, 0x6Cu, 0);
+		pump(8);
+		CHECK(model.nkeys == nk + 1, "the viewer's own up did not reach the machine: %u "
+		      "words, wanting 1", model.nkeys - nk);
+
+		// (6i) As many keys as may be held, each waking the monitor in turn; one
+		// more is delivered, down and up, rather than lost.
+		nk = model.nkeys;
+		for (unsigned k = 0; k <= SCREEN_SWALLOW_MAX; ++k) {
+			board_sleeps();
+			board_key(&b, 0x61u + k, 1);
+			pump(4);
+		}
+		CHECK(model.nkeys == nk + 1, "%u held keys each woke the monitor: %u words, "
+		      "wanting the one that did not fit", SCREEN_SWALLOW_MAX + 1,
+		      model.nkeys - nk);
+		for (unsigned k = 0; k <= SCREEN_SWALLOW_MAX; ++k) {
+			board_key(&b, 0x61u + k, 0);
+			pump(4);
+		}
+		CHECK(model.nkeys == nk + 2, "their ups: %u words, wanting the one that did not "
+		      "fit, down and up", model.nkeys - nk);
+
+		// (6k) **THE BOOT CHORD STILL BOOTS WHEN IT ALSO WAKES THE MONITOR.**
+		// `--keyboard-boot` is the keyboard's own firmware, which this program
+		// runs (`input_keys.c`, `check_boot`) over the keys the machine has
+		// been sent; a swallowed Control would leave the chord one key short.
+		// So a modifier that wakes the monitor is delivered: it types nothing
+		// by itself, and the keys after it mean what they were typed to mean.
+		key_state_init(&srv.keys);
+		board_sleeps();
+		nk = model.nkeys;
+		wr = board_face.writes;
+		static const uint32_t boot_chord[] = { KS_CONTROL_L, KS_ALT_L, KS_DELETE };
+		for (unsigned i = 0; i < 3; ++i) {
+			board_key(&b, boot_chord[i], 1);
+			pump(8);
+		}
+		pump(60);
+		int booted = 0;
+		for (unsigned k = nk; k < model.nkeys; ++k)
+			booted |= model.keys[k] == BOOT_COLD_WORD;
+		CHECK(!board_is_asleep() && board_face.writes > wr,
+		      "the boot chord at the board did not wake a monitor asleep");
+		CHECK(booted, "the boot chord at the board, its first key waking the monitor, did "
+		      "not boot the machine: %u words and no boot word", model.nkeys - nk);
+		for (unsigned i = 0; i < 3; ++i) {
+			board_key(&b, boot_chord[i], 0);
+			pump(8);
+		}
+		// And Control held to wake the monitor still controls the key after it.
+		key_state_init(&srv.keys);
+		board_sleeps();
+		nk = model.nkeys;
+		board_key(&b, KS_CONTROL_L, 1);
+		pump(8);
+		board_key(&b, 0x78u /* x */, 1);
+		pump(8);
+		board_key(&b, 0x78u, 0);
+		board_key(&b, KS_CONTROL_L, 0);
+		pump(20);
+		CHECK(!board_is_asleep() && model.nkeys == nk + 4,
+		      "Control held to wake the monitor, then x: %u words, wanting Control and "
+		      "x, down and up", model.nkeys - nk);
+		key_state_init(&srv.keys);
+
+		// (6j) A source going away holding the key that woke the monitor: the
+		// link lifts it, and the machine never saw it go down.
+		board_sleeps();
+		nk = model.nkeys;
+		board_key(&b, 0x6Bu /* k */, 1);
+		pump(8);
+		cadr_input_link_shut(&b);
+		pump(20);
+		CHECK(model.nkeys == nk, "the lift of a swallowed key reached the machine when its "
+		      "source went away: %u words", model.nkeys - nk);
+		// And it is forgotten: the same key, awake, goes through whole.
+		struct cadr_input_link_client b2;
+		if (open_board(&b2, path) == 0) {
+			clock_ns += 2000000000ull;
+			board_key(&b2, 0x6Bu, 1);
+			board_key(&b2, 0x6Bu, 0);
+			pump(8);
+			CHECK(model.nkeys == nk + 2, "a key swallowed and lifted by its source going "
+			      "away is still swallowed: %u words, wanting 2", model.nkeys - nk);
+			cadr_input_link_shut(&b2);
+			pump(8);
+		}
+	}
+	srv.wake = count_wake;
+	srv.wake_ctx = NULL;
+
 	// (5) And no hook is no wake, which is a board with no display output.
 	srv.wake = NULL;
 	struct cadr_input_link_client again;
@@ -3689,27 +4070,6 @@ static void check_display_wake(const char *work_dir)
 	srv.link_ready = 0;
 	unlink(path);
 	srv.wake = NULL;
-}
-
-// And the word the wake is written to, against a model of the console face.
-struct dwake_model {
-	uint32_t reg[96];
-	unsigned writes, last_word;
-	uint32_t last_value;
-};
-
-static uint32_t dwake_model_read(struct display_wake *w, unsigned word)
-{
-	const struct dwake_model *m = w->ctx;
-	return m->reg[word % 96u];
-}
-
-static void dwake_model_write(struct display_wake *w, unsigned word, uint32_t v)
-{
-	struct dwake_model *m = w->ctx;
-	++m->writes;
-	m->last_word = word;
-	m->last_value = v;
 }
 
 static void check_display_wake_word(void)
@@ -3763,6 +4123,47 @@ static void check_display_wake_word(void)
 	      m.writes, m.last_value);
 	CHECK(w.written == 3 && w.coalesced == 2, "the counts say %lu written and %lu "
 	      "coalesced, wanting 3 and 2", w.written, w.coalesced);
+	CHECK(w.woke == 0, "%lu wakes found a monitor asleep that was awake", w.woke);
+
+	// **WHAT THE WAKE FOUND**, which says whether the record that asked is
+	// swallowed.  The bit is read when a wake is to be written and only then.
+	const uint64_t t1 = 20000000000ull;
+	m.slow = 1;                                   /* the fabric has not taken it yet */
+	m.reg[36] = (0x5A5Au << 16) | 0x8000u | 300u;
+	unsigned reads = m.reads;
+	CHECK(display_wake_poke(&w, t1) == DWAKE_WOKE,
+	      "a wake written to a monitor asleep did not say it found it asleep");
+	CHECK(m.reads == reads + 1 && m.writes == 4 && m.last_value == 0x57414B45u,
+	      "%u reads and %u writes for a wake of a monitor asleep", m.reads - reads,
+	      m.writes);
+	// Inside the window it is awake, whatever the bit still says: the wake is
+	// on its way, and the word is not read.
+	reads = m.reads;
+	CHECK(display_wake_poke(&w, t1 + DWAKE_EVERY_NS - 1) == DWAKE_COALESCED,
+	      "a record inside the window after a wake was taken for a monitor asleep");
+	CHECK(m.reads == reads, "a coalesced wake read the word");
+	CHECK(display_wake_hook(&w, t1 + 1) == 0,
+	      "the hook swallowed a record inside the window after a wake");
+	// Past it the word is what it says.
+	CHECK(display_wake_hook(&w, t1 + DWAKE_EVERY_NS) == 1,
+	      "the hook delivered a record that found the monitor asleep");
+	m.slow = 0;
+	m.reg[36] = (0x5A5Au << 16) | 300u;
+	CHECK(display_wake_hook(&w, t1 + 2 * DWAKE_EVERY_NS) == 0,
+	      "the hook swallowed a record with the monitor awake");
+	CHECK(w.woke == 2, "%lu wakes found the monitor asleep, wanting 2", w.woke);
+	// Only the marker with bit 15 is asleep.  A word with no marker is a word
+	// this program cannot read, and a key is never lost on that; `UNMAPPED`
+	// has bit 15 set.
+	m.reg[36] = ~0x434F4E53u;
+	CHECK((m.reg[36] & 0x8000u) && display_wake_poke(&w, t1 + 3 * DWAKE_EVERY_NS)
+	      == DWAKE_WRITTEN, "an UNMAPPED word 36 was taken for a monitor asleep");
+	m.reg[36] = (0x5A5Bu << 16) | 0x8000u;
+	CHECK(display_wake_poke(&w, t1 + 4 * DWAKE_EVERY_NS) == DWAKE_WRITTEN,
+	      "a word with the wrong marker was taken for a monitor asleep");
+	m.reg[36] = (0x5A5Au << 16) | 0x4000u;
+	CHECK(display_wake_poke(&w, t1 + 5 * DWAKE_EVERY_NS) == DWAKE_WRITTEN,
+	      "a setting of 16384 seconds was taken for a monitor asleep");
 }
 
 // **THE TRACE, WHICH IS muir'S OWN LINE.**

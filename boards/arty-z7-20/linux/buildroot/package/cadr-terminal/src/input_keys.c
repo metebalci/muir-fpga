@@ -356,6 +356,11 @@ void key_boot_traced(struct key_state *k, int on)
 	k->boot_trace = on;
 }
 
+int key_is_shifting(const struct key_state *k, uint32_t keysym)
+{
+	return modifier_position(&k->map, keysym) >= 0;
+}
+
 // `Keyboard::queue_down`: a key-down's word onto the queue.  EVERY one clears
 // the firmware's `bootflag` --- `check-boot`'s `not-boot` path does, after
 // every key-down --- and `check_boot` sets it again when the key completes

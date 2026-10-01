@@ -164,18 +164,27 @@ static void on_stop(int sig)
 	stopping = 1;
 }
 
-// The server's wake hook: somebody at the board did something, so the display
-// output's monitor wakes and its sleep timer starts over.  `display_wake.h`.
-static void terminal_wake(void *ctx, uint64_t now_ns)
-{
-	display_wake_poke(ctx, now_ns);
-}
-
 static uint64_t monotonic_ns(void)
 {
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	return (uint64_t)t.tv_sec * 1000000000u + (uint64_t)t.tv_nsec;
+}
+
+// The server's wake hook: somebody at the board did something, so the display
+// output's monitor wakes and its sleep timer starts over, and a record that
+// found it asleep is swallowed.  `display_wake.h`.
+//
+// **ON A CLOCK READ NOW AND NOT THE PASS'S.**  The pass's clock was read before
+// poll(2) waited, up to `--interval-ms` earlier, and whether a wake was written
+// less than `DWAKE_EVERY_NS` ago is what says a monitor whose bit still reads
+// asleep is in fact waking.  A clock that much behind could take a record 5 ms
+// after a wake for one 100 ms after it, read the bit before the fabric had
+// cleared it, and swallow a second key.
+static int terminal_wake(void *ctx, uint64_t now_ns)
+{
+	(void)now_ns;
+	return display_wake_hook(ctx, monotonic_ns());
 }
 
 static void usage(void)
@@ -557,8 +566,9 @@ int main(int argc, char **argv)
 					srv.wake_ctx = &dwake;
 					have_dwake = 1;
 					say("a key or the mouse at the board wakes the display output "
-					    "and starts its sleep timer over, which is %u seconds%s; a "
-					    "viewer's does not, and still reaches the machine",
+					    "and starts its sleep timer over, which is %u seconds%s; the "
+					    "one that wakes a monitor asleep does not reach the machine; a "
+					    "viewer's wakes nothing, and still reaches the machine",
 					    (unsigned)(word & 0x7FFFu),
 					    (word & 0x7FFFu) ? "" : " --- zero, so it never sleeps");
 				} else {
@@ -766,11 +776,13 @@ int main(int argc, char **argv)
 			if (srv.link_ready && (srv.link.connects || srv.link.events))
 				say("the input link: %u attached (%lu came, %lu went, %lu refused, "
 				    "%lu dropped for what they said); %lu events; %lu wakes of the "
-				    "display output written and %lu too soon after one to need it",
+				    "display output written and %lu too soon after one to need it; "
+				    "%lu found the monitor asleep, and %lu calls were swallowed for it",
 				    cadr_input_link_clients(&srv.link), srv.link.connects,
 				    srv.link.drops, srv.link.refused, srv.link.rejected,
 				    srv.link.events, have_dwake ? dwake.written : 0ul,
-				    have_dwake ? dwake.coalesced : 0ul);
+				    have_dwake ? dwake.coalesced : 0ul,
+				    have_dwake ? dwake.woke : 0ul, srv.swallowed);
 			said_connects = srv.connects;
 			said_input = srv.input_events;
 			said_bytes = srv.sent_raw + srv.sent_rre;

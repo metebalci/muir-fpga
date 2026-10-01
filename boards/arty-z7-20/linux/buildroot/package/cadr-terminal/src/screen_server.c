@@ -278,12 +278,47 @@ static int set_nonblocking(int fd)
 // pacer.  `cadr/cadr_input_link.h` says why a second program may not write
 // the face itself.
 
+// **WHETHER A KEY FROM THE LINK IS SWALLOWED**, which `display_wake.h` states as
+// a rule.  A down is swallowed when its record woke the monitor, and so is any
+// repeat of a key already swallowed; its up is swallowed and the key
+// forgotten.  A shifting key is never swallowed, and an up of a key the
+// machine saw go down never is, whatever woke what.  A list that is full delivers the down, and its up then
+// finds nothing to forget and is delivered too.
+static int swallow_key(struct screen_server *s, uint32_t keysym, int down)
+{
+	unsigned i = 0;
+	while (i < s->link_swallowed_n && s->link_swallowed[i] != keysym)
+		++i;
+	const int held = i < s->link_swallowed_n;
+	if (!down) {
+		if (!held)
+			return 0;
+		s->link_swallowed[i] = s->link_swallowed[--s->link_swallowed_n];
+		return 1;
+	}
+	if (held)
+		return 1;
+	// A shifting key that wakes the monitor is delivered: it types nothing by
+	// itself, the key after it means what it was typed to mean, and the boot
+	// chord, which `input_keys.c` finds among the keys sent, is not left one
+	// short.
+	if (!s->link_waking || key_is_shifting(&s->keys, keysym)
+	    || s->link_swallowed_n >= SCREEN_SWALLOW_MAX)
+		return 0;
+	s->link_swallowed[s->link_swallowed_n++] = keysym;
+	return 1;
+}
+
 static void link_key(void *ctx, uint32_t keysym, int down)
 {
 	struct screen_server *s = ctx;
 	++s->input_events;
 	if (!s->input)
 		return;
+	if (swallow_key(s, keysym, down)) {
+		++s->swallowed;
+		return;
+	}
 	key_event_from(&s->keys, keysym, down, "the input link");
 }
 
@@ -293,6 +328,11 @@ static void link_move(void *ctx, int dx, int dy)
 	++s->input_events;
 	if (!s->input)
 		return;
+	// A movement that woke the monitor moves nothing.
+	if (s->link_waking) {
+		++s->swallowed;
+		return;
+	}
 	// **A DELTA AND NOT A DIFFERENCE.**  A viewer's `PointerEvent` carries
 	// an absolute position and this server subtracts the last one; a mouse
 	// on the board reports motion, which is what the cable wants, so it
@@ -303,9 +343,10 @@ static void link_move(void *ctx, int dx, int dy)
 	++s->pointer_moves;
 }
 
-// The three switches: the OR of the viewers' and the link's.  Written every
-// time it is asked for, because the register is a LEVEL and the card's own
-// comparator decides whether anything happened.
+// The three switches: the OR of the viewers' and the link's, less the link's
+// that a waking record pressed.  Written every time it is asked for, because
+// the register is a LEVEL and the card's own comparator decides whether
+// anything happened.
 static void write_buttons(struct screen_server *s)
 {
 	if (!s->input)
@@ -315,23 +356,37 @@ static void write_buttons(struct screen_server *s)
 	// it to; a second mask on the way in would make that record survive
 	// and the check quietly weaker.  A viewer may send five bits --- RFB
 	// puts a wheel at bits 3 and 4 --- and what the link sends is three.
-	input_face_buttons(s->input, (uint32_t)(s->buttons | s->link_buttons));
+	input_face_buttons(s->input, (uint32_t)(s->buttons
+		| (s->link_buttons & ~s->link_swallowed_buttons)));
 }
 
 static void link_buttons(void *ctx, unsigned mask)
 {
 	struct screen_server *s = ctx;
-	s->link_buttons = (uint8_t)(mask & 7u);
+	const uint8_t now = (uint8_t)(mask & 7u);
+	// A switch pressed by the record that woke the monitor is held out until
+	// it is released; a release is never swallowed for itself, and a switch
+	// held across the sleep comes up at the mouse.
+	const uint8_t pressed = (uint8_t)(now & ~s->link_buttons);
+	if (s->link_waking && pressed) {
+		s->link_swallowed_buttons |= pressed;
+		++s->swallowed;
+	}
+	s->link_swallowed_buttons &= now;
+	s->link_buttons = now;
 	write_buttons(s);
 }
 
-// A record from a link client, which is somebody at the board: see
-// `link_touched` in the header.  Only noted here; the wake is called once a pass,
-// after the link is read, where the caller's clock is.
+// A record from a link client, which is somebody at the board: see `wake` in
+// the header.  Asked here, before the record's own call, so that the call knows
+// whether its record woke the monitor --- and asked for every record, so that
+// the second of two in one read is not taken for the first.
 static void link_event(void *ctx)
 {
 	struct screen_server *s = ctx;
-	s->link_touched = 1;
+	if (s->wake)
+		++s->wakes;
+	s->link_waking = s->wake && s->wake(s->wake_ctx, s->pass_ns);
 }
 
 static const struct cadr_input_sink *link_sink(struct screen_server *s,
@@ -883,16 +938,10 @@ void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 		return;
 	if (s->link_ready) {
 		struct cadr_input_sink sink;
+		// **SOMEBODY AT THE BOARD, SO THE DISPLAY OUTPUT WAKES**, once a
+		// record and only for records: see `wake` in the header.
+		s->pass_ns = now_ns;
 		cadr_input_link_poll(&s->link, fds, nfds, link_sink(s, &sink));
-		// **SOMEBODY AT THE BOARD, SO THE DISPLAY OUTPUT WAKES.**  Once a
-		// pass however many records came, and only for records: see
-		// `link_touched` in the header.
-		if (s->link_touched) {
-			s->link_touched = 0;
-			++s->wakes;
-			if (s->wake)
-				s->wake(s->wake_ctx, now_ns);
-		}
 	}
 	if (fds[0].revents & POLLIN)
 		accept_one(s, now_ns);

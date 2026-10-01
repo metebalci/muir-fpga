@@ -1218,7 +1218,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 				key_event_from(&s->keys, m.keysym, m.down, "a viewer");
 @new
 				key_event_from(&s->keys, m.keysym, m.down, "a viewer");
-				s->link_touched = 1;
+				link_event(s);
 @end
 
 @mutation a-source-going-away-wakes-the-display
@@ -1255,14 +1255,23 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 		memmove(c->in, c->in + CADR_INPUT_LINK_HELLO,
 @end
 
-@mutation the-wake-is-called-on-every-pass
+@mutation the-waking-record-stays-waking
 @file screen_server.c
-@why a pass with a record calls the wake once; a flag never cleared calls it on every pass
-@why for ever after, which keeps the monitor awake whoever is at the board
-@note Caught where nothing at the board has done anything since: a source going
-@note away, and a key with no display output to wake.
+@why each record asks for itself whether it woke the monitor; a verdict that only ever
+@why goes up swallows every record after the first that woke it, for ever
+@note Caught by the key after the waking one, which must reach the machine.
 @old
-			s->link_touched = 0;
+	s->link_waking = s->wake && s->wake(s->wake_ctx, s->pass_ns);
+@new
+	s->link_waking |= s->wake && s->wake(s->wake_ctx, s->pass_ns);
+@end
+
+@mutation the-wake-is-handed-no-clock
+@file screen_server.c
+@why the wake is called from inside the link with the pass's own clock; without it the
+@why coalescing window is measured from zero and never closes
+@old
+		s->pass_ns = now_ns;
 @new
 @end
 
@@ -1303,6 +1312,214 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	return DWAKE_MARK_OF(v) == DWAKE_MARK ? 1 : 0;
 @new
 	return 1;
+@end
+
+# **THE RECORD THAT WAKES A MONITOR ASLEEP WAKES IT AND DOES NOTHING ELSE.**
+# `display_wake.h` states the rule: the record that finds word 36's asleep bit set
+# under its marker, with no wake written in the last tenth of a second, is
+# swallowed --- a key down with its repeats and its up, a movement, a switch
+# pressed with its release --- and everything after it flows.  A lift of
+# something the machine saw go down is never swallowed.
+
+@mutation the-wake-never-finds-the-monitor-asleep
+@file display_wake.c
+@why a wake written to a monitor asleep must say so, or the record that woke it reaches the
+@why machine as a keystroke nobody meant
+@old
+	if (!asleep)
+		return DWAKE_WRITTEN;
+@new
+	if (asleep || !asleep)
+		return DWAKE_WRITTEN;
+@end
+
+@mutation a-word-without-its-marker-is-asleep
+@file display_wake.c
+@why only the word's own marker with bit 15 set says asleep; `UNMAPPED` has bit 15 set,
+@why and a key must never be lost on a word this program cannot read
+@old
+	const int asleep = DWAKE_MARK_OF(v) == DWAKE_MARK && (v & DWAKE_ASLEEP);
+@new
+	const int asleep = (v & DWAKE_ASLEEP) != 0;
+@end
+
+@mutation the-setting-is-read-as-asleep
+@file display_wake.c
+@why bit 15 alone is the asleep bit; bits 14 to 0 are the setting, and a setting of 16384
+@why seconds is not a monitor asleep
+@old
+	const int asleep = DWAKE_MARK_OF(v) == DWAKE_MARK && (v & DWAKE_ASLEEP);
+@new
+	const int asleep = DWAKE_MARK_OF(v) == DWAKE_MARK && (v & (DWAKE_ASLEEP | 0x4000u));
+@end
+
+@mutation the-bit-is-believed-inside-the-window
+@file display_wake.c
+@why inside a tenth of a second after a wake the monitor is awake whatever the bit says,
+@why which lags the wake by up to a frame; believing it swallows a second key
+@old
+		++w->coalesced;
+		return DWAKE_COALESCED;
+@new
+		++w->coalesced;
+		return (w->read(w, DWAKE_WORD) & DWAKE_ASLEEP) ? DWAKE_WOKE : DWAKE_COALESCED;
+@end
+
+@mutation the-woken-are-not-counted
+@file display_wake.c
+@why the status line says how many wakes found the monitor asleep
+@old
+	++w->woke;
+@new
+@end
+
+@mutation the-hook-swallows-every-written-wake
+@file display_wake.c
+@why the hook swallows a record that found the monitor asleep, and no other; a wake
+@why written to a monitor awake is somebody typing, and the key is theirs
+@old
+	return display_wake_poke(ctx, now_ns) == DWAKE_WOKE;
+@new
+	return display_wake_poke(ctx, now_ns) != DWAKE_COALESCED;
+@end
+
+@mutation the-key-that-wakes-reaches-the-machine
+@file screen_server.c
+@why the key down that woke the monitor is swallowed; delivered, with its up then swallowed,
+@why it is a key the machine holds down for ever
+@old
+	s->link_swallowed[s->link_swallowed_n++] = keysym;
+	return 1;
+@new
+	s->link_swallowed[s->link_swallowed_n++] = keysym;
+	return 0;
+@end
+
+@mutation the-waking-keys-up-reaches-the-machine
+@file screen_server.c
+@why the up of the key that woke the monitor is swallowed with its down
+@note The terminal's own key state drops an up for a position nobody holds, so
+@note this shows only where somebody does: a viewer holding the same key, which
+@note the swallowed up would lift.
+@old
+		s->link_swallowed[i] = s->link_swallowed[--s->link_swallowed_n];
+		return 1;
+@new
+		s->link_swallowed[i] = s->link_swallowed[--s->link_swallowed_n];
+		return 0;
+@end
+
+@mutation a-swallowed-key-is-never-forgotten
+@file screen_server.c
+@why a swallowed key's up ends it; one still listed after is swallowed again the next
+@why time it is pressed, the monitor long awake
+@old
+		s->link_swallowed[i] = s->link_swallowed[--s->link_swallowed_n];
+		return 1;
+@new
+		return 1;
+@end
+
+@mutation the-waking-keys-repeat-reaches-the-machine
+@file screen_server.c
+@why a repeat of the key that woke the monitor, before its up, is swallowed with it
+@old
+	if (held)
+		return 1;
+	// A shifting key that wakes the monitor is delivered: it types nothing by
+@new
+	// A shifting key that wakes the monitor is delivered: it types nothing by
+@end
+
+@mutation a-key-held-across-the-sleep-stays-down
+@file screen_server.c
+@why the up of a key the machine saw go down reaches it even when it wakes the monitor, or
+@why the machine holds that key down for ever
+@old
+		if (!held)
+			return 0;
+@new
+		if (!held)
+			return s->link_waking;
+@end
+
+@mutation the-swallowed-list-overruns
+@file screen_server.c
+@why the list holds `SCREEN_SWALLOW_MAX` keys; one more is delivered, not written past the end
+@old
+	    || s->link_swallowed_n >= SCREEN_SWALLOW_MAX)
+@new
+	    || s->link_swallowed_n > SCREEN_SWALLOW_MAX)
+@end
+
+@mutation a-waking-shifting-key-is-swallowed
+@file screen_server.c
+@why a shifting key that wakes the monitor is delivered: swallowed, it leaves the boot chord
+@why one key short, and Control-x held to wake reaches the machine as x
+@note The boot chord is the keyboard's own firmware, which `input_keys.c` runs
+@note over the keys the machine has been sent, so a key held out of the machine
+@note is a key the chord never sees.
+@old
+	if (!s->link_waking || key_is_shifting(&s->keys, keysym)
+@new
+	if (!s->link_waking
+@end
+
+@mutation every-key-is-a-shifting-key
+@file input_keys.c
+@why only a keysym bound to a shifting key is one; a letter that wakes the monitor is
+@why swallowed, and taken for a shifting key it reaches the machine
+@old
+	return modifier_position(&k->map, keysym) >= 0;
+@new
+	return modifier_position(&k->map, keysym) >= -1;
+@end
+
+@mutation the-movement-that-wakes-moves-the-mouse
+@file screen_server.c
+@why a movement that woke the monitor moves nothing
+@old
+	if (s->link_waking) {
+		++s->swallowed;
+		return;
+	}
+@new
+@end
+
+@mutation the-switch-that-wakes-is-pressed
+@file screen_server.c
+@why a switch pressed by the record that woke the monitor is held out of the mouse
+@old
+		s->link_swallowed_buttons |= pressed;
+@new
+@end
+
+@mutation a-swallowed-switch-is-never-released
+@file screen_server.c
+@why a swallowed switch ends at its release; one still held out after is pressed at the
+@why board and never at the mouse
+@old
+	s->link_swallowed_buttons &= now;
+@new
+@end
+
+@mutation a-held-switch-is-taken-for-a-pressed-one
+@file screen_server.c
+@why only what the waking record presses is held out; a switch held across the sleep stays
+@why down at the mouse when another is pressed to wake it
+@old
+	const uint8_t pressed = (uint8_t)(now & ~s->link_buttons);
+@new
+	const uint8_t pressed = now;
+@end
+
+@mutation the-swallowed-switch-reaches-the-mouse
+@file screen_server.c
+@why the switches the mouse is given leave out the swallowed ones
+@old
+		| (s->link_buttons & ~s->link_swallowed_buttons)));
+@new
+		| s->link_buttons));
 @end
 
 # ---- QUUX's screen, the video controller ----------------------------------------------

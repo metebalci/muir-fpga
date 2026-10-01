@@ -13698,6 +13698,38 @@ if {0 && $held ne $want} {
                              : (r_hi_q && r_idx_q == 5'd4 && (hdmi_sleep_fitted || 1'b1))
 @end
 
+@mutation the-sleep-word-never-says-asleep
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Bit 15 of word 36 is the lanes muted, as the display output reports it.
+@note `cadr-terminal` reads it to tell the key that wakes a monitor asleep,
+@note which it keeps from the machine, from a key that is typed; a bit that
+@note never rises sends the waking key to the machine.
+@note
+@note Written as an AND with zero, so the input stays read and lint has
+@note nothing to say.
+@old
+                                 ? {HDMI_SLEEP_MARK, hdmi_asleep, hdmi_sleep_q}
+@new
+                                 ? {HDMI_SLEEP_MARK, hdmi_asleep & 1'b0, hdmi_sleep_q}
+@end
+
+@mutation the-de25-console-is-never-told-the-monitor-sleeps
+@check de25
+@file boards/de25-nano/cadr_de25.sv
+@note The board's wire from the display output's `asleep` to the console,
+@note which word 36's bit 15 reads. The console's own check holds the bit to
+@note its input and the display output's holds `asleep` to the mute; only the
+@note board's top level joins them, and a tie here leaves both of those
+@note green while `cadr-terminal` reads a monitor that never sleeps.
+@note
+@note `disp_asleep` stays read by the transmitter's restart edge.
+@old
+      .hdmi_sleep_q(disp_sleep_setting), .hdmi_asleep(disp_asleep),
+@new
+      .hdmi_sleep_q(disp_sleep_setting), .hdmi_asleep(1'b0),
+@end
+
 @mutation a-wake-is-a-level-and-not-a-pulse
 @check console
 @file rtl/plumbing/cadr_console.sv

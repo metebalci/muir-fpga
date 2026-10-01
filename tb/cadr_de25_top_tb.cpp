@@ -242,12 +242,24 @@ struct Memory {
 
 // ------------------------------------------- the lightweight bridge's master
 //
-// Software on the processor, writing one word at a time: the console's
-// settings are how the lamps, the display's output and its sleep are asked
-// for, exactly as `cadr-console` asks for them.
+// Software on the processor, one word at a time: the console's settings are
+// how the lamps, the display's output and its sleep are asked for, exactly as
+// `cadr-console` asks for them, and word 36 is read back as `cadr-terminal`
+// reads it, for whether the monitor is asleep.
 struct LwMaster {
   bool aw = false, w = false, b = false;
   bool aw_hs = false, w_hs = false, b_hs = false;
+  bool ar = false, rd = false, ar_hs = false, r_hs = false;
+  uint32_t rdata = 0, r_sampled = 0;
+  void StartRead(uint32_t addr) {
+    HPS_O(hps_lwhps2fpga_araddr) = addr;
+    HPS_O(hps_lwhps2fpga_arid) = 1;
+    HPS_O(hps_lwhps2fpga_arlen) = 0;
+    HPS_O(hps_lwhps2fpga_arsize) = 2;
+    HPS_O(hps_lwhps2fpga_arburst) = 1;
+    ar = true;
+    rd = false;
+  }
   void Start(uint32_t addr, uint32_t data, uint32_t strb) {
     HPS_O(hps_lwhps2fpga_awaddr) = addr;
     HPS_O(hps_lwhps2fpga_awid) = 1;
@@ -265,17 +277,25 @@ struct LwMaster {
     HPS_O(hps_lwhps2fpga_wvalid) = w ? 1 : 0;
     HPS_O(hps_lwhps2fpga_bready) = 1;
     HPS_O(hps_lwhps2fpga_rready) = 1;
-    HPS_O(hps_lwhps2fpga_arvalid) = 0;
+    HPS_O(hps_lwhps2fpga_arvalid) = ar ? 1 : 0;
   }
   void Sample() {
     aw_hs = aw && HPS_I(hps_lwhps2fpga_awready);
     w_hs = w && HPS_I(hps_lwhps2fpga_wready);
     b_hs = HPS_I(hps_lwhps2fpga_bvalid);
+    ar_hs = ar && HPS_I(hps_lwhps2fpga_arready);
+    r_hs = HPS_I(hps_lwhps2fpga_rvalid);
+    r_sampled = HPS_I(hps_lwhps2fpga_rdata);
   }
   void Commit() {
     if (aw_hs) aw = false;
     if (w_hs) w = false;
     if (b_hs) b = true;
+    if (ar_hs) ar = false;
+    if (r_hs) {
+      rd = true;
+      rdata = r_sampled;
+    }
   }
 };
 
@@ -482,6 +502,14 @@ void LwWrite(uint32_t addr, uint32_t data, uint32_t strb = 0xFu) {
   Check(took >= 0, "the console did not answer a write of %08x at %03x", data,
         addr);
   Run(4);
+}
+
+uint32_t LwRead(uint32_t addr) {
+  lw.StartRead(addr);
+  const long took = Until([] { return lw.rd; }, 2000);
+  Check(took >= 0, "the console did not answer a read at %03x", addr);
+  Run(4);
+  return lw.rdata;
 }
 
 // The console's page 2, on the lightweight bridge at offset 0: word 34 says
@@ -746,8 +774,20 @@ int main(int argc, char **argv) {
   const long moves_before = gate_moves;
   LwWrite(kSleepWord, kSleepKey | 1u);
   const long starts_at_sleep = bus.starts;
+  // **WORD 36 READS WHAT THE DISPLAY OUTPUT HOLDS**: the marker, the lanes
+  // muted in bit 15, and the setting.  `cadr-terminal` reads bit 15 to tell a
+  // key that wakes the monitor from one that is typed, so the board's wire
+  // from the display output to the console is held here, in both directions.
+  uint32_t sleep_word = LwRead(kSleepWord);
+  Check(sleep_word == 0x5A5A0001u,
+        "awake with a setting of one second, word 36 reads %08x, wanting "
+        "5a5a0001", sleep_word);
   // A second of the fabric's clock and two frames.
   Run(100000000L + 2L * 1688L * 1066L);
+  sleep_word = LwRead(kSleepWord);
+  Check(sleep_word == 0x5A5A8001u,
+        "asleep, word 36 reads %08x, wanting 5a5a8001: the lanes muted in bit "
+        "15", sleep_word);
   video.Clear();
   Run(1688L * 1066L);
   Check(video.pclk_pulses == 0,
@@ -759,6 +799,10 @@ int main(int argc, char **argv) {
         bus.starts - starts_at_sleep);
   LwWrite(kSleepWord, kWakeKey);
   Run(2L * 1688L * 1066L);
+  sleep_word = LwRead(kSleepWord);
+  Check(sleep_word == 0x5A5A0001u,
+        "two frames after a wake, word 36 reads %08x, wanting 5a5a0001",
+        sleep_word);
   video.Clear();
   Run(1688L * 1066L);
   Check(video.pclk_pulses == 1688L * 1066L,

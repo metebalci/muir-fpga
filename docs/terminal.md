@@ -732,9 +732,28 @@ has a call of its own for records rather than the wake following the key calls.
 The wake is written at most once every 100 ms, because a mouse reports many times
 a second and the timer only counts seconds.
 
-The program reads word 36 once at start. A board with no display output, or a
-fabric older than the word, reads no marker there, and the program says so and
-never writes the wake. `display_wake.h` has the details and
+**The record that wakes a monitor asleep is swallowed.** Each record on the link
+asks, as it arrives and before the program acts on it, whether the monitor is
+asleep. If no wake was written in the last 100 ms, the program reads word 36,
+and bit 15 under the word's marker says the lanes are muted. A record that finds
+the monitor asleep writes the wake and goes no further: a key down does not reach
+the machine, and neither do its repeats or its up; a movement does not move the
+mouse; a button pressed is held out of the mouse until it is released. A key or
+a button that went down while the monitor was awake comes up at the machine as
+usual, even when its release is what wakes the monitor. A shifting key (Shift,
+Control, Meta and the rest) is never swallowed: it types nothing by itself, the
+key after it keeps its meaning, and the `--keyboard-boot` chord, which this
+program detects among the keys it sends, still boots a machine whose monitor was
+asleep. A source that goes away holding a swallowed key has that key's release
+swallowed too. Everything after the waking record flows as before, a second
+record read in the same pass included. A wake written less than 100 ms earlier counts as awake whatever bit 15
+says, because the bit lags the wake by up to a frame. `display_wake.h` has the
+rule in full, and `docs/display-output.md` says why the window is sound.
+
+The program reads word 36 at start to see whether there is a display output at
+all. A board with no display output, or a fabric older than the word, reads no
+marker there, and the program says so and never writes the wake or swallows a
+record. `display_wake.h` has the details and
 `docs/display-output.md` has the timer.
 
 ## The encodings, and what they cost

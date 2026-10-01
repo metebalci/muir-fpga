@@ -41,6 +41,7 @@ int display_wake_open(struct display_wake *w, int fd, uint32_t base)
 	w->ever = 0;
 	w->written = 0;
 	w->coalesced = 0;
+	w->woke = 0;
 	return 0;
 }
 
@@ -79,13 +80,30 @@ int display_wake_poke(struct display_wake *w, uint64_t now_ns)
 {
 	// The first always goes, whatever the clock reads: a monotonic clock is
 	// allowed to be small, and a board that has just booted is where it is.
+	//
+	// **AND INSIDE THE WINDOW THE MONITOR IS AWAKE, WHATEVER THE BIT SAYS**:
+	// a wake written that recently is on its way to the lanes, and the bit
+	// lags it by up to a frame.  `display_wake.h` says why that is sound.
 	if (w->ever && now_ns - w->last_ns < DWAKE_EVERY_NS) {
 		++w->coalesced;
-		return 0;
+		return DWAKE_COALESCED;
 	}
+	// What the wake finds, read before it is written: the lanes muted, under
+	// the word's own marker.  Without the marker it is a word this program
+	// cannot read, and that is awake, so that no key is lost on it.
+	const uint32_t v = w->read(w, DWAKE_WORD);
+	const int asleep = DWAKE_MARK_OF(v) == DWAKE_MARK && (v & DWAKE_ASLEEP);
 	w->write(w, DWAKE_WORD, DWAKE_KEY);
 	w->last_ns = now_ns;
 	w->ever = 1;
 	++w->written;
-	return 1;
+	if (!asleep)
+		return DWAKE_WRITTEN;
+	++w->woke;
+	return DWAKE_WOKE;
+}
+
+int display_wake_hook(void *ctx, uint64_t now_ns)
+{
+	return display_wake_poke(ctx, now_ns) == DWAKE_WOKE;
 }

@@ -393,6 +393,12 @@ void key_boot_set(struct key_state *k, struct key_boot b);
 // this flag is the way to have that one line without the rest.
 void key_boot_traced(struct key_state *k, int on);
 
+// Whether `keysym` is bound to a shifting key --- a Shift, Control, Meta and
+// the rest --- in this state's mapping.  The server asks, because a shifting
+// key that wakes the display output's monitor is not swallowed:
+// `display_wake.h`.
+int key_is_shifting(const struct key_state *k, uint32_t keysym);
+
 // `Keyboard::traced`: print every keysym as it arrives and what it became.
 // **On the log**, where every line of this program goes, and not on stderr as
 // muir's does: muir runs beside a prompt that owns stdout, and this runs as a

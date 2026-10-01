@@ -828,6 +828,33 @@ event either, and neither are the key releases the terminal makes for a keyboard
 that went away. The terminal writes at most one wake every 100 ms, which loses
 nothing against a timer that counts seconds.
 
+**The key or movement that wakes a monitor asleep only wakes it, and does not
+reach the machine.** Somebody who touches a key to light a dark screen has not
+typed that key. Before it writes a wake, the terminal reads word 36: the monitor
+is asleep when the word carries its marker with bit 15, the lanes muted, set. A
+record that finds it asleep is swallowed. For a key, that is its down, any repeat
+of it and its up. For the mouse, it is the movement, or the button pressed and
+its release. A shifting key, such as Shift, Control or Meta, is the exception: it
+wakes the monitor and still reaches the machine, because it types nothing by
+itself and the key after it must mean what it was typed to mean. That is also
+what keeps `--keyboard-boot`'s chord working on a sleeping screen, since the
+terminal detects the chord among the keys it sends the machine. Only what that
+record starts is swallowed: the release of a key or a button that went down
+while the monitor was awake still reaches the machine, or the machine would
+hold it down for ever.
+
+Only the one record is swallowed, and everything after it reaches the machine,
+including a second key typed before the wake has taken effect. The wake reaches
+the lanes at the next frame boundary and comes back to bit 15 through two flops,
+so the bit still reads asleep for up to a frame after the wake is written. So a
+wake written less than 100 ms ago means awake, whatever the bit says, and the
+word is not read again until that window has passed. That is sound because the
+monitor cannot fall asleep again inside the window: the wake starts the timer
+over, and the shortest setting is a second. A word without its marker, which is
+a board with no display output or a fabric this program cannot read, never
+counts as asleep, so no key is lost on it. `cadr-terminal`'s `display_wake.h`
+states the rule in full.
+
 ### What the board's other controls do
 
 | | the timer | the lanes |

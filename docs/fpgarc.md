@@ -312,8 +312,8 @@ CADR's screen is single-pixel strokes almost everywhere.
 
 **`--hdmi-sleep` is how long the display output waits with nobody at the board's
 own keyboard or mouse.** Then it stops the link, which is how a monitor is put to
-sleep. A key or the mouse at the board wakes it, and a viewer's keys do not. The
-default is 300 seconds and 0 never sleeps. A board with no display output says so
+sleep. A key or the mouse at the board wakes it, and that key or movement does
+not reach the machine; a viewer's keys do not wake it. The default is 300 seconds and 0 never sleeps. A board with no display output says so
 when the line is there, and the boot goes on.
 
 **The clock**, read by `S80cadr-disk-packs` before anything else it does. No

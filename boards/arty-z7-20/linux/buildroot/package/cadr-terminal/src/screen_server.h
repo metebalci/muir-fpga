@@ -50,6 +50,11 @@
 #include "screen_frame.h"
 #include "screen_rfb.h"
 
+// How many keys whose down woke the monitor may be held at once, their ups
+// still to be swallowed: as many as the link lets one source hold.  A key
+// down that finds the list full is delivered, and so then is its up.
+#define SCREEN_SWALLOW_MAX CADR_INPUT_LINK_DOWN_MAX
+
 // How many viewers are served at once; the next connection is closed as it
 // arrives, with a line saying so.  Each viewer holds a copy of the screen,
 // 92 KB, and an outbox of up to a whole update, 2.9 MB at 32 bits a pixel.
@@ -126,16 +131,30 @@ struct screen_server {
 	// the timer over is a person at the board: a key or the mouse on the
 	// input link.  **A VIEWER'S KEY IS NOT ONE**, and the fabric cannot tell
 	// the two apart because this program writes the keyboard's register for
-	// both, so it is decided here.  `link_touched` is set by a RECORD from a
+	// both, so it is decided here.  `wake` is called for each RECORD from a
 	// link client --- the sink's `event`, which a client's releases when it
-	// goes away do not call --- and a pass that set it calls `wake` once, with
-	// the caller's clock, after the link is read.  `display_wake.h` is what
-	// `wake` is on the board; NULL is no display output to wake.  `wakes`
-	// counts the passes that called it.
-	void (*wake)(void *ctx, uint64_t now_ns);
+	// goes away do not call --- as it arrives and before the record's own
+	// call, with the pass's clock.  It answers whether the record found the
+	// monitor asleep, and such a record is SWALLOWED: `display_wake.h` has
+	// the rule.  `display_wake_hook` is what `wake` is on the board; NULL is
+	// no display output to wake.  `wakes` counts the records that called it.
+	int (*wake)(void *ctx, uint64_t now_ns);
 	void *wake_ctx;
-	int link_touched;
 	unsigned long wakes;
+	// The pass's clock, for `wake`, which is called from inside the link.
+	uint64_t pass_ns;
+	// Whether the record being read found the monitor asleep.  Set by every
+	// record's `event` before its own call, so it is never stale for a
+	// record; the link's own releases, which come without an `event`, read
+	// it only to lift something, and a lift is never swallowed for it.
+	int link_waking;
+	// What the waking records started and the machine has not seen: keys
+	// whose down was swallowed, until their up is, and switches whose press
+	// was, until their release.  `swallowed` counts the calls held back.
+	uint32_t link_swallowed[SCREEN_SWALLOW_MAX];
+	unsigned link_swallowed_n;
+	uint8_t link_swallowed_buttons;
+	unsigned long swallowed;
 	// --- how fast key words are handed over.  `input_face.h` has the two
 	// rules and where the number comes from; this is the second of them.
 	// **ZERO MEANS THE DERIVED DEFAULT**, `INPUT_KEY_INTERVAL_NS`, so that

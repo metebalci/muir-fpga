@@ -314,9 +314,11 @@
 @note holding them.  Taking one source's mask over the other's makes whichever
 @note moved last the only one that counts.
 @old
-	input_face_buttons(s->input, (uint32_t)(s->buttons | s->link_buttons));
+	input_face_buttons(s->input, (uint32_t)(s->buttons
+		| (s->link_buttons & ~s->link_swallowed_buttons)));
 @new
-	input_face_buttons(s->input, (uint32_t)(s->link_buttons));
+	input_face_buttons(s->input, (uint32_t)(
+		(s->link_buttons & ~s->link_swallowed_buttons)));
 @end
 
 @mutation a-viewer-leaving-lifts-the-keys-somebody-is-holding-at-the-board
