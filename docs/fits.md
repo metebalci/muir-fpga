@@ -24,6 +24,31 @@ reports none.
 
 ## From a clean tree
 
+These fits were built from `d708429`, the combined tree: the CADR's
+reservation of 16 MB of main memory and 1 MB of display, and QUUX's bitstreams
+with no debug cable (contract Q5), with muir pinned at `fc654c1`. QUUX revision
+13 is at five ticks on the Arty Z7-20. Every bitstream's stamp reads
+`d7084290`: that commit, with the tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX | +0.089 ns | +0.008 ns | 16,888 of 53,200 LUTs, 31.74% | 62 of 140 BRAM tiles | 5,654 of 13,300 | `d708429` | clean | 2026-10-02 |
+| Arty Z7-20 | QUUX revision 13, K = 5 | +0.142 ns | +0.044 ns | 22,453 of 53,200 LUTs, 42.20% | 83 of 140 BRAM tiles | 7,001 of 13,300 | `d708429` | clean | 2026-10-02 |
+| Arty Z7-20 | CADR | +0.126 ns | +0.021 ns | 15,048 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,547 of 13,300 | `d708429` | clean | 2026-10-02 |
+| Cora Z7-07S | CADR | +0.158 ns | +0.036 ns | 13,952 of 14,400 LUTs, 96.89% | 43 of 50 BRAM tiles | 4,335 of 4,400 | `d708429` | clean | 2026-10-02 |
+| Kria KR260 | CADR | +3.528 ns | +0.013 ns | 14,017 of 117,120 LUTs, 11.97% | 38 of 144 BRAM tiles | 3,029 of 14,640 CLBs | `d708429` | clean | 2026-10-02 |
+| DE25-Nano | QUUX | +2.343 ns | 0.000 ns | 18,598 of 46,800 ALMs, 40% | 191 of 358 M20K | --- | `d708429` | clean | 2026-10-02 |
+| DE25-Nano | QUUX revision 13 | +1.910 ns | 0.000 ns | 29,659 of 46,800 ALMs, 63% | 203 of 358 M20K | --- | `d708429` | clean | 2026-10-02 |
+| DE25-Nano | CADR | +2.422 ns | +0.001 ns | 16,480 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `d708429` | clean | 2026-10-02 |
+
+The worst setup path of each Zynq fit but the Kria KR260's is the machine's
+reset into a register of the machine, which has one tick; the Kria KR260's is
+the board's reset into the Chaosnet face. Every Zynq fit passed
+the RAM enable check, over 105, 129, 98, 92 and 82 ports in the order above. The
+QUUX fits have no cell of the debug cable and the CADR fits carry it, with both
+of its six-tick clauses reaching their registers. The DE25-Nano's CADR fit
+counts 82 pins of its memory adapter's address and data.
+
 This fit was built from `e7aaa18`, the Kria KR260's first top level, with
 muir pinned at `fc654c1`.
 
