@@ -893,6 +893,18 @@ stage_tree() {
     printf 'loaded in it, which muir reads and the machine in the fabric never\r\n'
     printf 'sees.  cadrrc is what names it, and the two are deleted or kept\r\n'
     printf 'together.\r\n\r\n'
+    if [ -n "${RELEASE:-}" ]; then
+      printf "The system's files\r\n"
+      printf "Copy the sys and site folders of the system's sources into sys/\r\n"
+      printf 'and site/ here.  The machine reads them from the file and time host\r\n'
+      printf 'on this board, and at every boot it reads its error table from\r\n'
+      printf 'sys/; without them it stops and asks for a file.\r\n\r\n'
+      printf 'The Chaosnet address\r\n'
+      printf "fpgarc's --chaos-address is this machine's address, 177201, which\r\n"
+      printf "is LISPM-1 in muir-sys's systems.  They name LISPM-1 to LISPM-7 at\r\n"
+      printf '177201 to 177207, so a second board on the same network takes\r\n'
+      printf '177202, LISPM-2, and so on.\r\n\r\n'
+    fi
   fi
   printf 'While the board is running you need not take the card out at all:\r\n'
   printf '  copy a pack in            that drive comes ready\r\n'
@@ -932,7 +944,16 @@ stage_tree() {
 # network: they come from `local.conf`, the same rule and the same file as
 # SERVERIP, and a card built without them gets a file that says what to put
 # in it.
-CHAOS_ADDR=${CHAOS_ADDR_FPGA:-177101}
+#
+# **THE ADDRESS IS LISPM-1's, 177201, BECAUSE THE BAND'S HOST TABLE SAYS SO.**
+# muir-sys's site names LISPM-1 to LISPM-7 at 177201 to 177207 and OZ, the
+# file and time host, at 177200.  Measured with System 1002 under muir-sim
+# beside ozd as the board runs it: at 177201 the herald says "Lisp Machine
+# One, with associated machine OZ" and a login defaults to OZ; at 177101,
+# which the table does not name, it says "Unknown, with associated machine
+# ED-FILE", and a login and every pathname without a host default to ED-FILE.
+# Both get the time and reach SYS:.
+CHAOS_ADDR=${CHAOS_ADDR_FPGA:-177201}
 CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
 # The two endpoints written out in full rather than left to the programs'
 # defaults, so that the card SAYS where the screen and the line are.  They are
@@ -1014,12 +1035,20 @@ fi
 # sources are read-only, which is what a tree of sources wants and what keeps
 # anything that reaches the host's socket from writing in them; the site tree
 # is not, because a site configuration is a thing its owner changes.
-if [ -n "${SYS:-}" ]; then
+#
+# **AND A RELEASE NAMES BOTH, ALTHOUGH IT SHIPS THEM EMPTY.**  A CADR band of
+# System 1002 reads SYS: UBIN; UCADR TBL from its file host at every boot,
+# and with no sys/ served it stops there and asks for a pathname (measured
+# under muir-sim with ozd as the board runs it).  The release's empty sys/
+# and site/ are folders that are there, which the host accepts (ozd
+# --check), so the lines are live and a user who copies the system's sys/
+# and site/ onto the card edits nothing.
+if [ -n "${SYS:-}" ] || [ -n "${RELEASE:-}" ]; then
   MENU_OZD_ROOT=""
 else
   MENU_OZD_ROOT="#"
 fi
-if [ -n "${SITE:-}" ]; then
+if [ -n "${SITE:-}" ] || [ -n "${RELEASE:-}" ]; then
   MENU_OZD_SITE=""
 else
   MENU_OZD_SITE="#"

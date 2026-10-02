@@ -696,23 +696,21 @@ of the first two is the same full menu the
 development card gets, every flag the board's programs take written out under
 a sentence or two saying what it does.
 
-**The released `fpgarc` has three live lines and the rest of the menu is
-commented out.** They are `--chaos-address`, `--terminal` and
-`--keyboard-boot`: the Chaosnet address switches, the screen, and the chord
-that cold-boots the machine. Those are what a board out of the box needs.
+**The released `fpgarc` has six live lines and the rest of the menu is
+commented out.** They are `--chaos-address 177201`, LISPM-1 in muir-sys's
+systems; the Chaosnet cable on the loopback, to the file and time host on the
+board; the two `--ozd-root` lines that serve the card's `sys/` and `site/`;
+the screen; and the chord that cold-boots the machine. A QUUX card has
+`--machine quux` live as well. `docs/fpgarc.md` says why each is there.
 
-**The Chaosnet cable and the serial line are commented out with everything
-else.** `--chaos-udp` is the cable, and a release that plugged one in would put
-a station on a network the user has not got, listening on a port nobody named,
-with no peer it could reach. `--serial` offers the far end of the CADR's RS-232
-cable on TCP, and a release that offered it would open an unauthenticated port
-on every interface for a cable hardly anybody wants. Each is one `#` away from
-being on and carries the sentence that says so.
+**The serial line is commented out with everything else.** `--serial` offers
+the far end of the CADR's RS-232 cable on TCP, and a release that offered it
+would open an unauthenticated port on every interface for a cable hardly
+anybody wants. It is one `#` away from being on and carries the sentence that
+says so.
 
-The board reads the file the same way from the other side. The Chaosnet program
-comes up with its switches set and no cable, says so on the console, and does
-not wait for a network it has nothing to reach. The serial program is not
-started at all, and its init script says the line is off and how to turn it on.
+The board reads the file the same way from the other side. The serial program
+is not started at all, and its init script says the line is off and how to turn it on.
 `docs/fpgarc.md` has the rule and `fpgarc.pass` holds both menus and what a
 board does with each.
 

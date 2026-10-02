@@ -3140,7 +3140,7 @@ if generate_fpgarc "" "" 1; then
 	# And nothing else moved: the live lines are the development card's six
 	# and this one, which is the control that the variable reaches one line.
 	got=$(live_flags "$GEN" | tr '\n' '|')
-	want='--chaos-address 177101|--chaos-udp 0.0.0.0:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--serial 0.0.0.0:7641|--no-blinking-leds|--debug-cable-wiring auto|'
+	want='--chaos-address 177201|--chaos-udp 0.0.0.0:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--serial 0.0.0.0:7641|--no-blinking-leds|--debug-cable-wiring auto|'
 	if [ "$got" = "$want" ]; then
 		ok "and it is the only line the variable made live"
 	else
@@ -3231,14 +3231,14 @@ done
 # development menu is asserted as the control, because a release menu with
 # three live lines could otherwise be bought by turning the development card's
 # off as well, and every case above would still pass.
-case_head "a released card's menu has four live lines and they are the four a board needs"
+case_head "a released card's menu has six live lines and they are the six a board needs"
 sandbox
 if generate_fpgarc "" 1; then
 	GEN="$WORK/gen/card/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
-	want='--chaos-address 177101|--chaos-udp 127.0.0.1:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|'
+	want='--chaos-address 177201|--chaos-udp 127.0.0.1:42042|--ozd-root sys=/mnt/card/sys,ro|--ozd-root site=/mnt/card/site|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|'
 	if [ "$got" = "$want" ]; then
-		ok "the switches, the cable on the loopback, the screen and the boot chord, and nothing else"
+		ok "the switches, the cable on the loopback, the two trees, the screen and the boot chord, and nothing else"
 	else
 		fail "the released menu's live lines are [$got], not [$want]"
 	fi
@@ -3249,14 +3249,14 @@ fi
 # a QUUX card that did not say quux would start ozd and leave the file device
 # off.  MACHINE=quux makes the line live and adds it to the four; the CADR's
 # release above keeps four, with the line commented.
-case_head "a QUUX release's menu has the four and --machine quux live, and the reader calls it QUUX"
+case_head "a QUUX release's menu has the six and --machine quux live, and the reader calls it QUUX"
 sandbox
 if generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" quux; then
 	GEN="$WORK/gen/card/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
-	want='--chaos-address 177101|--chaos-udp 127.0.0.1:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--machine quux|'
+	want='--chaos-address 177201|--chaos-udp 127.0.0.1:42042|--ozd-root sys=/mnt/card/sys,ro|--ozd-root site=/mnt/card/site|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--machine quux|'
 	if [ "$got" = "$want" ]; then
-		ok "the four a board needs, and the machine"
+		ok "the six a board needs, and the machine"
 	else
 		fail "the QUUX release's live lines are [$got], not [$want]"
 	fi
@@ -3362,7 +3362,7 @@ if generate_fpgarc "" ""; then
 	# own reset value, so the line changes nothing.  It is live on a card
 	# that is being worked on so that the boot log says which wiring the
 	# board is on, and commented on a release, which keeps its three.
-	want='--chaos-address 177101|--chaos-udp 0.0.0.0:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--serial 0.0.0.0:7641|--debug-cable-wiring auto|'
+	want='--chaos-address 177201|--chaos-udp 0.0.0.0:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--serial 0.0.0.0:7641|--debug-cable-wiring auto|'
 	if [ "$got" = "$want" ]; then
 		ok "the cable is plugged in and the serial line is offered, as they always were"
 	else
@@ -3381,7 +3381,7 @@ sandbox
 if generate_fpgarc "" 1 && prepare cadr-chaosnet S87cadr-chaosnet; then
 	cp "$WORK/gen/card/fpgarc" "$WORK/card/fpgarc"
 	run_script S87cadr-chaosnet
-	passes_once "--chaos-address" "cadr-chaosnet" "177101"
+	passes_once "--chaos-address" "cadr-chaosnet" "177201"
 	# **THE CABLE IS PLUGGED INTO THE BOARD AND INTO NO NETWORK.**  That is
 	# what changed when the board gained a file and time host of its own: a
 	# board out of the box is a whole site, and it cannot be one with its
@@ -4799,8 +4799,10 @@ fi
 sandbox
 if generate_fpgarc "" "1" "" arty-z7-20 "" "" "" mit -1; then
 	GEN="$WORK/gen/card/fpgarc"
-	if tr -d '\r' < "$GEN" | grep -q -- '^--ozd-'; then
-		fail "a release carries a live --ozd- line: $(tr -d '\r' < "$GEN" | grep -- '^--ozd-')"
+	# The dates only: a release names the card's two trees live, which is
+	# its own case above.
+	if tr -d '\r' < "$GEN" | grep -qE -- '^--ozd-(file-dates|timezone)'; then
+		fail "a release carries a live FILE dates line: $(tr -d '\r' < "$GEN" | grep -E -- '^--ozd-(file-dates|timezone)')"
 	else
 		ok "a release writes both commented whatever the variables say"
 	fi

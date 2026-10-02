@@ -786,19 +786,28 @@ commented, so a released board blinks: `STANDALONE` clears the variable, and
 the card script also refuses it under `RELEASE`, so the menu a stranger is given
 never depends on one flag having done its job.
 
-## The released card's menu has four live lines
+## The released card's menu has six live lines
 
-A card a stranger is given carries the same whole menu, with four of its lines
-live.
+A card a stranger is given carries the same whole menu, with six of its lines
+live. A QUUX card has `--machine quux` live as well.
 
-    --chaos-address 177101
+    --chaos-address 177201
     --chaos-udp 127.0.0.1:42042
+    --ozd-root sys=/mnt/card/sys,ro
+    --ozd-root site=/mnt/card/site
     --terminal 0.0.0.0:5900
     --keyboard-boot ctrl,meta
 
 Those are what a board out of the box needs. A Chaosnet interface has an
 address whether or not anything is plugged into it, so the switches are always
-set. The cable is plugged into the board itself, because the band's file and
+set. The address is 177201 because muir-sys's site names LISPM-1 to LISPM-7 at
+177201 to 177207. At an address its host table does not name, System 1002
+boots as an unknown host whose associated machine is not OZ, so a login and a
+pathname with no host go nowhere. A second board on the same network takes
+177202, and so on. The two `--ozd-root` lines serve the card's `sys/` and
+`site/`, which a release ships empty: a CADR band reads its error table from
+`SYS:` at every boot and stops without it, so the user copies the system's
+`sys` and `site` folders there and edits nothing. The cable is plugged into the board itself, because the band's file and
 time host is on the board and the machine reaches it over the cable. The
 screen is the only way to use a board that has no monitor of its own. The
 chord is what cold-boots the machine from a viewer.
