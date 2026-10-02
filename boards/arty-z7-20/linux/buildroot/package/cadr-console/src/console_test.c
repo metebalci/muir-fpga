@@ -172,6 +172,10 @@ struct model {
 	uint32_t boards_last;
 	int boards_unmapped;
 	int boards_deaf;		/* a fabric that takes no count */
+	unsigned boards_default;	/* word 38: the machine's default */
+	unsigned boards_max;		/* word 38: the machine's most */
+	int range_unmapped;		/* a fabric older than word 38 */
+	int range_unmarked;		/* word 38 with a range and no marker */
 	uint8_t map[2][CONS_MAP_COLORS][CONS_MAP_CHANNELS];
 };
 
@@ -304,6 +308,13 @@ static uint32_t model_read(struct console *c, unsigned word)
 		return m->boards_unmapped
 			   ? CONS_UNMAPPED
 			   : ((uint32_t)CONS_BOARDS_MARK << 16) | (m->boards & CONS_BOARDS_COUNT);
+	// Page 2's word 38: what word 37 takes, and `UNMAPPED` on a fabric older
+	// than the word.
+	if (word == CONS_BOARDS_RANGE)
+		return m->range_unmapped
+			   ? CONS_UNMAPPED
+			   : ((m->range_unmarked ? 0u : (uint32_t)CONS_BOARDS_RANGE_MARK << 22)
+			      | (m->boards_default << 11) | m->boards_max);
 	// Page 2's word 35: whether the lamps blink, marked for word 33's reason.
 	if (word == CONS_LAMPS)
 		return m->lamps_unmarked
@@ -460,14 +471,14 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 		return;
 	}
 	// Page 2's word 37, how many memory boards: `cadr_console.sv`'s rule, a
-	// count 1 to 60 under the key with bits 15 to 7 clear, and nothing else
-	// moves it.
+	// count 1 to the machine's most under the key with bits 15 to 11 clear,
+	// and nothing else moves it.
 	if (word == CONS_BOARDS) {
 		++m->boards_writes;
 		m->boards_last = v;
 		const unsigned n = v & 0xFFFFu;
 		if (!m->boards_unmapped && !m->boards_deaf && (v >> 16) == CONS_BOARDS_KEY &&
-		    n >= 1u && n <= 60u)
+		    n >= 1u && n <= m->boards_max)
 			m->boards = n;
 		return;
 	}
@@ -606,6 +617,10 @@ static void model_init(struct model *m)
 	m->boards_last = 0;
 	m->boards_unmapped = 0;
 	m->boards_deaf = 0;
+	m->boards_default = 32;
+	m->boards_max = 60;
+	m->range_unmapped = 0;
+	m->range_unmarked = 0;
 	for (int b = 0; b < 2; ++b)
 		for (int k = 0; k < CONS_MAP_COLORS; ++k)
 			for (int ch = 0; ch < CONS_MAP_CHANNELS; ++ch)
@@ -2535,6 +2550,114 @@ static void check_display_sleep_word(void)
 // fabric that does not hold what was asked, or is older than the word,
 // answers 1.  The init script reads the status, so it is held as well as the
 // words.
+// **REVISION 13'S MEMORY BOARDS**: word 38 says the machine comes up with
+// 512 and takes 1 to 512 (the Arty Z7-20's room), and `main-memory-boards`
+// takes what it says --- 512, and 61 to 511, which the CADR's 60 would refuse
+// --- and refuses 513 and 1024 with that range; and a fabric older than word
+// 38 is held to the CADR's 1 to 60.
+static void check_boards_word_13(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+	m.boards = 512u;
+	m.boards_default = 512u;
+	m.boards_max = 512u;
+	int status = -1;
+	const unsigned counts[] = {61u, 512u, 1u, 511u, 127u, 128u};
+	for (unsigned i = 0; i < sizeof counts / sizeof counts[0]; ++i) {
+		char text[8];
+		snprintf(text, sizeof text, "%u", counts[i]);
+		char *argv[] = {"main-memory-boards", text};
+		const unsigned writes = m.boards_writes;
+		status = -1;
+		capture_start();
+		const int took = cons_boards_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == 0, "revision 13: main-memory-boards %u: taken %d, answered %d",
+		      counts[i], took, status);
+		CHECK(m.boards_writes == writes + 1 && m.boards == counts[i],
+		      "revision 13: main-memory-boards %u left the fabric at %u", counts[i], m.boards);
+		char want[128];
+		snprintf(want, sizeof want, "main-memory-boards: %u boards of 64K words, %u words",
+			 counts[i], counts[i] * 65536u);
+		CHECK(strstr(said, want) != NULL && strstr(said, "takes 1 to 512") != NULL,
+		      "revision 13: main-memory-boards %u reported: %s", counts[i], said);
+		CHECK((counts[i] == 512u) == (strstr(said, "muir's default") != NULL),
+		      "revision 13: main-memory-boards %u named the default wrongly: %s", counts[i], said);
+	}
+	const char *refused[] = {"513", "1024", "1025", "0", "2047"};
+	for (unsigned i = 0; i < sizeof refused / sizeof refused[0]; ++i) {
+		char *argv[] = {"main-memory-boards", (char *)refused[i]};
+		const unsigned writes = m.boards_writes;
+		status = -1;
+		capture_start();
+		const int took = cons_boards_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == 2, "revision 13: main-memory-boards \"%s\": taken %d, answered %d",
+		      refused[i], took, status);
+		CHECK(m.boards_writes == writes, "revision 13: main-memory-boards \"%s\" wrote the word",
+		      refused[i]);
+		CHECK(strstr(said, "main-memory-boards N: decimal, 1 to 512") != NULL &&
+		      strstr(said, "512 is the default") != NULL &&
+		      strstr(said, "revision 13") != NULL,
+		      "revision 13: main-memory-boards \"%s\" was not refused with the range: %s",
+		      refused[i], said);
+	}
+	CHECK(m.boards == 128u, "revision 13: a refused count moved the fabric to %u", m.boards);
+	{
+		const unsigned writes = m.boards_writes;
+		CHECK(cons_set_boards(&c, 513u) == -1 && m.boards_writes == writes,
+		      "revision 13: cons_set_boards took 513");
+		CHECK(cons_set_boards(&c, 512u) == 0 && m.boards == 512u,
+		      "revision 13: cons_set_boards 512 did not write it");
+	}
+	// The DE25-Nano's room, 1,024 boards: 1024 taken.
+	m.boards_max = 1024u;
+	{
+		char *argv[] = {"main-memory-boards", "1024"};
+		status = -1;
+		capture_start();
+		cons_boards_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(status == 0 && m.boards == 1024u, "revision 13 at 1,024: answered %d, fabric %u: %s",
+		      status, m.boards, said);
+	}
+	// **A FABRIC OLDER THAN WORD 38 IS THE CADR'S**: 61 refused with 1 to 60.
+	m.range_unmapped = 1;
+	{
+		char *argv[] = {"main-memory-boards", "61"};
+		const unsigned writes = m.boards_writes;
+		status = -1;
+		capture_start();
+		cons_boards_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(status == 2 && m.boards_writes == writes &&
+		      strstr(said, "1 to 60") != NULL && strstr(said, "older than word 38") != NULL,
+		      "no word 38: main-memory-boards 61 answered %d: %s", status, said);
+	}
+	// **AND A WORD 38 THAT CANNOT BE IS NOT TRUSTED**: its marker over a most
+	// past muir's 1,024, or a default past the most, is the CADR's range.
+	m.range_unmapped = 0;
+	m.boards_max = 2000u;
+	{
+		unsigned d = 0, x = 0;
+		CHECK(cons_read_boards_range(&c, &d, &x) == 0 && d == 32u && x == 60u,
+		      "a most of 2000 was taken as a range: %u to %u", d, x);
+		m.boards_max = 100u;
+		m.boards_default = 200u;
+		CHECK(cons_read_boards_range(&c, &d, &x) == 0 && d == 32u && x == 60u,
+		      "a default past the most was taken as a range: %u, %u", d, x);
+		// And a range that could be, without its marker.
+		m.boards_default = 512u;
+		m.boards_max = 512u;
+		m.range_unmarked = 1;
+		CHECK(cons_read_boards_range(&c, &d, &x) == 0 && d == 32u && x == 60u,
+		      "word 38 without its marker was taken as a range: %u to %u", d, x);
+	}
+}
+
 static void check_boards_word(void)
 {
 	struct model m;
@@ -3280,6 +3403,7 @@ int main(int argc, char **argv)
 	check_hdmi_sleep();
 	check_display_sleep_word();
 	check_boards_word();
+	check_boards_word_13();
 	check_display_words();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.

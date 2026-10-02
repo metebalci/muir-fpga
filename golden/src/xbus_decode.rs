@@ -98,11 +98,13 @@ fn decode(m: &Machine, phys: u32, words: usize) -> Responder {
 /// controller's buffer long, and main memory below the window up to its end,
 /// both the memory bus; nothing else.  The fabric's decode names the window
 /// memory, as muir does, and its port tells the two apart by the address.
-/// Every one of the 268,435,456 addresses is written as runs, for three board
-/// counts: one, 65 --- main memory past 22 bits, over revision 12's frame
-/// buffer and register page --- and 127, the most seven bits count.
+/// Every one of the 268,435,456 addresses is written as runs, for seven board
+/// counts: one; 32 and 60, the CADR's default and most; 65 --- main memory
+/// past 22 bits, over revision 12's frame buffer and register page --- and
+/// 127, the most seven bits counted; 512, revision 13's default, 32M words;
+/// and 1,024, muir's most on revision 13 and the DE25-Nano's.
 const WORDS_13: u32 = 1 << 28;
-const BOARDS_13: &[u32] = &[1, 65, 127];
+const BOARDS_13: &[u32] = &[1, 32, 60, 65, 127, 512, 1024];
 
 fn revision_13(m: &Machine, channel: bool) {
     println!("# boards color first last kind");

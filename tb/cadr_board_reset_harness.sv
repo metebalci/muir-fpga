@@ -26,7 +26,7 @@ module cadr_board_reset_harness #(
     // on the Zynq boards, KEY1 LOW while pressed on the DE25-Nano.
     input  var logic [1:0] btn,
     output var logic       mach_rst,
-    output var logic [6:0] mach_boards,
+    output var logic [10:0] mach_boards,
     output var logic       port_live
 );
 

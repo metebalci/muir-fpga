@@ -761,7 +761,8 @@ install_the_root_keys() {
 }
 
 # **HOW MANY MEMORY BOARDS THE MACHINE HAS**, muir's `--main-memory-boards`: 1
-# to 60 boards of 64K words, 32 unless the card says.  The fabric's address
+# to 60 boards of 64K words, 32 unless the card says; on QUUX revision 13 1 to
+# what the board keeps for its main memory, 512 unless the card says.  The fabric's address
 # decode answers main memory below the count's last board and gives the NXM
 # above it, so the band's cold boot finds exactly the count times 64K words.
 #
@@ -769,7 +770,7 @@ install_the_root_keys() {
 # counted the boards: the PROM ran when the bitstream loaded, and it touches
 # no main memory while it waits for the drive.  A count changed under a running
 # band takes memory away from it, which is why the step is here and nowhere
-# later.  QUUX takes the same count, as muir's QUUX does.  A count the console
+# later.  QUUX takes the count, as muir's QUUX does, in its own range.  A count the console
 # will not take, and a fabric older than the setting, are both refused BY the
 # console, whose line says which; the machine then has the fabric's count.
 #

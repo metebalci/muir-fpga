@@ -197,6 +197,21 @@ package cadr_ddr_map;
   localparam logic [31:0] QUUX13_RESERVED_END =
       DISPLAY_BASE + 32'(DISPLAY_WORDS << 2) + 32'(RECORDS_BYTES);
 
+  // **HOW MANY 64K-WORD MEMORY BOARDS EACH MACHINE TAKES**, the console's
+  // page 2 word 37 (`cadr_console.sv`), muir's `--main-memory-boards`: the
+  // CADR and QUUX to revision 12 come up with 32 and take 1 to 60, below the
+  // Xbus I/O space; revision 13 comes up with muir's 512, 32M words (contract
+  // G2 §3), and takes 1 to what its reservation holds, `QUUX13_MAIN_WORDS_MAX`,
+  // and never more than muir's 1,024: 512 on the Arty Z7-20 and the Kria
+  // KR260, 1,024 on the DE25-Nano.  Each board's top level hands these to its
+  // console, and `machine_param.pass` reads them back there.
+  function automatic int unsigned mem_boards_default(input bit rev13);
+    return rev13 ? 512 : 32;
+  endfunction
+  function automatic int unsigned mem_boards_max(input bit rev13);
+    return !rev13 ? 60 : (QUUX13_MAIN_WORDS_MAX / 65536 > 1024 ? 1024 : QUUX13_MAIN_WORDS_MAX / 65536);
+  endfunction
+
   // A CADR word address into a byte address in the region.
   function automatic logic [31:0] main_byte_address(input logic [21:0] phys);
     return MAIN_BASE + (32'(phys) << 2);

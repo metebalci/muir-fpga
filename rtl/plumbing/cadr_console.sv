@@ -249,12 +249,16 @@
 //     37 BOARDS   **how many 64K-word memory boards the backplane has**,
 //                 muir's `--main-memory-boards`.  A write whose top half is
 //                 `MEM_BOARDS_KEY` and whose bottom half is a count from 1 to
-//                 `MEM_BOARDS_MAX`, 60, with all four lanes strobed, is a new
+//                 `MEM_BOARDS_MAX`, with all four lanes strobed, is a new
 //                 count; any other value is refused and changes nothing, 0
-//                 and 61 among them.  It reads back:
+//                 and one past the most among them.  The most is 60 on the
+//                 CADR and on QUUX to revision 12, and on revision 13 what
+//                 the board's reservation for its main memory holds, at most
+//                 muir's 1,024 (`cadr_ddr_map::mem_boards_max`).  It reads
+//                 back:
 //
 //                   bits 31:16  `MEM_BOARDS_MARK`, a marker
-//                   bits 6:0    the count
+//                   bits 10:0   the count
 //
 //                 The count goes straight to the machine's address decode,
 //                 `rtl/machine/cadr_xbus_decode.sv`, which answers main
@@ -271,7 +275,17 @@
 //                 here stops that, and `cadr-console main-memory-boards`
 //                 says so.  It is on this page because it is what the
 //                 backplane is.
-//     38-47       `UNMAPPED`
+//     38 RANGE    **what word 37 takes on this machine**, read only, so that
+//                 a program says the range the fabric holds rather than one
+//                 it assumed:
+//
+//                   bits 31:22  `MEM_BOARDS_RANGE_MARK`, a marker
+//                   bits 21:11  `MEM_BOARDS_DEFAULT`, the count out of reset
+//                   bits 10:0   `MEM_BOARDS_MAX`, the most it takes
+//
+//                 A fabric older than the word reads `UNMAPPED` here, whose
+//                 top ten bits are not the marker, and holds 1 to 60 from 32.
+//     39-47       `UNMAPPED`
 //
 //   page 3, `REG_BASE + 0xC0`: all sixteen read `UNMAPPED`.
 //
@@ -740,10 +754,15 @@ module cadr_console #(
     // lanes by the strobes.  The marker is "BD", which is not the key's top
     // half, so a program that read the word and wrote it straight back sets
     // nothing.  Neither is any other key's half or marker.  The count runs
-    // from one board to sixty, muir's `busint::MAX_MEMORY_BOARDS`: the Xbus
-    // I/O space begins at the sixty-first board's first word.
+    // from one board to sixty on the CADR and revision 12, muir's
+    // `busint::MAX_MEMORY_BOARDS`: the Xbus I/O space begins at the
+    // sixty-first board's first word.  On revision 13 it runs to what the
+    // board's reservation holds and comes up at muir's 512, 32M words; each
+    // board's top level sets both from `cadr_ddr_map`'s `mem_boards_default`
+    // and `mem_boards_max`, and these defaults are the CADR's.
     parameter logic [15:0] MEM_BOARDS_KEY     = 16'h4D42,
     parameter logic [15:0] MEM_BOARDS_MARK    = 16'h4244,
+    parameter logic [9:0]  MEM_BOARDS_RANGE_MARK = 10'h1A5,
     parameter int unsigned MEM_BOARDS_DEFAULT = 32,
     parameter int unsigned MEM_BOARDS_MAX     = 60,
     // The transaction ID's width and the read burst length's: twelve and four
@@ -945,7 +964,7 @@ module cadr_console #(
     // --- count from 1 to 60 to the machine's `boards`, which the address
     // --- decode and QUUX's file device take.  A board with no console never
     // --- moves it, and its top level ties the machine's `boards` to 32.
-    output var logic [6:0]  mem_boards,
+    output var logic [10:0] mem_boards,
     // --- **WHETHER THE DISPLAY OUTPUT SLEEPS**, page 2's word 36.  Two
     // --- one-tick pulses out to `cadr_display_out`, a setting with its value
     // --- beside it and a wake, and three answers back from it: whether a
@@ -1308,17 +1327,23 @@ module cadr_console #(
 
   // And which beat says how many memory boards the backplane has.  Page 2's
   // word 37: a count under a half-word key, all four lanes strobed for word
-  // 36's reason, bits 15:7 clear, and the count itself 1 to `MEM_BOARDS_MAX`.
+  // 36's reason, bits 15:11 clear, and the count itself 1 to `MEM_BOARDS_MAX`.
   // **A COUNT OUTSIDE THAT IS REFUSED HERE AND NOT CLAMPED**: zero boards is
-  // a machine with no memory, and sixty-one would put main memory over the
-  // Xbus I/O space, so either written is a setting nobody can have, and the
-  // count already held stands.  A register load beside the state machine, as
-  // words 33 to 35 are.
+  // a machine with no memory; sixty-one on the CADR would put main memory
+  // over the Xbus I/O space, and one past the most on revision 13 past the
+  // room the board keeps for it; so either written is a setting nobody can
+  // have, and the count already held stands.  A register load beside the
+  // state machine, as words 33 to 35 are.
+  if (MEM_BOARDS_MAX < 1 || MEM_BOARDS_MAX > 1024 || MEM_BOARDS_DEFAULT < 1 ||
+      MEM_BOARDS_DEFAULT > MEM_BOARDS_MAX) begin : g_bad_boards
+    $error("cadr_console: MEM_BOARDS_DEFAULT %0d and MEM_BOARDS_MAX %0d: the most is 1 to 1,024 and the default 1 to the most",
+           MEM_BOARDS_DEFAULT, MEM_BOARDS_MAX);
+  end
   logic w_is_boards, w_is_boards_set;
   assign w_is_boards     = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd5);
   assign w_is_boards_set = w_is_boards && (w_full[31:16] == MEM_BOARDS_KEY) &&
-                           (w_full[15:7] == 9'd0) && (w_full[6:0] != 7'd0) &&
-                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
+                           (w_full[15:11] == 5'd0) && (w_full[10:0] != 11'd0) &&
+                           (w_full[10:0] <= 11'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
 
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
@@ -1550,7 +1575,10 @@ module cadr_console #(
                              : (r_hi_q && r_idx_q == 5'd4 && hdmi_sleep_fitted)
                                  ? {HDMI_SLEEP_MARK, hdmi_asleep, hdmi_sleep_q}
                              : (r_hi_q && r_idx_q == 5'd5)
-                                 ? {MEM_BOARDS_MARK, 9'd0, mem_boards}
+                                 ? {MEM_BOARDS_MARK, 5'd0, mem_boards}
+                             : (r_hi_q && r_idx_q == 5'd6)
+                                 ? {MEM_BOARDS_RANGE_MARK, 11'(MEM_BOARDS_DEFAULT),
+                                    11'(MEM_BOARDS_MAX)}
                                  : UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
     else begin
@@ -1717,8 +1745,8 @@ module cadr_console #(
           end
           if (w_is_wake) hdmi_wake <= 1'b1;
           // How many memory boards the backplane has, page 2's word 37: a
-          // register load, and a count outside 1 to 60 never reaches it.
-          if (w_is_boards_set) mem_boards <= w_full[6:0];
+          // register load, and a count outside 1 to the most never reaches it.
+          if (w_is_boards_set) mem_boards <= w_full[10:0];
           if (w_in && w_idx[4]) wst <= W_CYCLE;
           else if (w_is_reset) begin
             mach_rst <= 1'b1;
@@ -1866,10 +1894,12 @@ module cadr_console #(
       hdmi_sleep_set  <= 1'b0;
       hdmi_sleep_secs <= 15'd0;
       hdmi_wake       <= 1'b0;
-      // **AND THE BACKPLANE HAS 32 MEMORY BOARDS**, muir's own default and
-      // the two million words every reference trace was taken with.  A card
-      // that wants another count says `--main-memory-boards` in `fpgarc`.
-      mem_boards  <= 7'(MEM_BOARDS_DEFAULT);
+      // **AND THE BACKPLANE HAS `MEM_BOARDS_DEFAULT` MEMORY BOARDS**,
+      // muir's own default: 32 on the CADR and revision 12, the two million
+      // words every reference trace was taken with, and 512 on revision 13,
+      // 32M words.  A card that wants another count says
+      // `--main-memory-boards` in `fpgarc`.
+      mem_boards  <= 11'(MEM_BOARDS_DEFAULT);
       cycles_hi_q <= 32'd0;
       ticks_hi_q  <= 32'd0;
       held_vma    <= 32'd0;

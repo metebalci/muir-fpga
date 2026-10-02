@@ -668,7 +668,7 @@ module cadr_machine #(
     output var logic [11:0]  mouse_y,
     output var logic         clock_ready,
     output var logic [15:0]  interval,
-    input  var logic [6:0]   boards,
+    input  var logic [10:0]  boards,
     input  var logic         tv_lispm,
     input  var logic         color_tv,
     input  var logic [3:0]   tv_map_a,
@@ -922,7 +922,7 @@ module cadr_machine #(
   assign clock_ready = tbo_clock_ready;
   logic [15:0]  tbo_interval /*verilator public_flat_rw*/;
   assign interval = tbo_interval;
-  logic [6:0]   tbi_boards /*verilator public_flat_rd*/;
+  logic [10:0]  tbi_boards /*verilator public_flat_rd*/;
   assign tbi_boards = boards;
   logic         tbi_tv_lispm /*verilator public_flat_rd*/;
   assign tbi_tv_lispm = tv_lispm;

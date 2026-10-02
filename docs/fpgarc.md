@@ -298,7 +298,9 @@ pack program, and written into the console face. One flag, and the section
 below is about it.
 
     --main-memory-boards N
-                          how many 64K-word boards of main memory, 1 to 60
+                          how many 64K-word boards of main memory: 1 to 60
+                          on the CADR, and on QUUX revision 13 1 to what the
+                          board keeps for its main memory
 
 **The display output**, read by `S80cadr-disk-packs` before it starts the disk
 pack program, and written into the console face. `docs/display-output.md` is the
@@ -535,8 +537,12 @@ it.
 ## `--main-memory-boards`
 
 muir's flag, with muir's meaning: how many 64K-word boards of main memory the
-machine has, from 1 to 60. The default is 32, two million words, which is what
-every band was built for and what the fabric comes up with.
+machine has. On the CADR and on QUUX to revision 12 it is from 1 to 60, and
+the default is 32, two million words, which is what every band before System
+2001 was built for and what the fabric comes up with. On QUUX revision 13 it
+is from 1 to what the board keeps for its main memory, 512 boards on the Arty
+Z7-20 and 1,024 on the DE25-Nano, and the default is 512, 32M words, as muir's
+revision 13 has it.
 
     --main-memory-boards 60      3,932,160 words, the most there is room for
 
@@ -558,14 +564,16 @@ counted, as pulling a board out of a running CADR would, so the console's word
 is for before a band boots. The fabric's own reset, BTN1 or KEY1, brings the
 count back to 32 with the rest of the console's settings.
 
-**A count outside 1 to 60 is refused** by the console, which says so on the
-console at boot, and the machine keeps the count it has. A fabric older than
-the setting has 32 boards fixed, and the console says that too.
+**A count outside the machine's range is refused** by the console, which says
+the range on the console at boot, and the machine keeps the count it has. The
+fabric says its own range in the console's word 38. A fabric older than the
+setting has 32 boards fixed, and the console says that too.
 
-**QUUX takes the same count**, as muir's QUUX does: its main memory is the
-count times 64K words, and its file device's `MEM_WORDS` says the same. On
-QUUX revision 13, which no release carries, muir takes more than 60 boards and
-the boards take 1 to 60.
+**QUUX takes the count**, as muir's QUUX does: its main memory is the count
+times 64K words, and its file device's `MEM_WORDS` says the same. Revision
+13's room is its own reservation (`docs/linux.md`): 160 MB of packed storage,
+32M words, on the Arty Z7-20, and 320 MB, 64M words, on the DE25-Nano, where
+muir's own most, 1,024 boards, is the bound.
 
 `cadr-checkpoint` takes a checkpoint at the machine's own count, read from the
 console, and refuses a `--boards` that disagrees with it.

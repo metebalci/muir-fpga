@@ -564,6 +564,12 @@ int main(int argc, char **argv) {
           // `build/console.pass` holds the key and the count.
           if ((got >> 16) != 0x4244u)
             FailAt(addr, "the memory boards word's marker", got >> 16, 0x4244u);
+        } else if (word == 38) {
+          // **AND WHAT WORD 37 TAKES**, page 2's word 38, a ten-bit marker over
+          // the default and the most: the CADR's 32 and 60, as this harness
+          // builds the console.
+          const uint32_t want = (0x1A5u << 22) | (32u << 11) | 60u;
+          if (got != want) FailAt(addr, "the memory boards' range", got, want);
         } else if (word >= 64 && word < 96) {
           // The two color maps, which this harness drives with zeros: what
           // is asserted here is that the console answered and not that the

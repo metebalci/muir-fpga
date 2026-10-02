@@ -805,15 +805,19 @@ impl Prog {
 /// nothing past its end, which sets word 101's NXM bit, a write of 101
 /// clearing it; the window at `1760000000`, which stores the field and reads
 /// it with tag `005`, and nothing past its buffer; and nothing between main
-/// memory and the window, or between the window and the page.
-fn space_program() -> Prog {
+/// memory and the window, or between the window and the page.  `boards` is
+/// main memory's: `space` runs at 65, past 22 bits, and `space512` at
+/// revision 13's default of 512, 32M words, its last word `177777777` and
+/// nothing at `200000000`.
+fn space_program(boards: u32) -> Prog {
+    let main_end = (boards as u64) << 16;
     let mut p = Prog::new();
     p.start();
     let reg = p.through(1, REGISTER_PAGE_13);
     let old = p.through(2, OLD_REGISTER_PAGE);
     let window = p.through(3, WINDOW_13);
     let high = p.through(4, HIGH_13);
-    let past = p.through(5, MAIN_END);
+    let past = p.through(5, main_end);
     let spy = p.through(6, SPY_13);
     let window_2 = p.through(7, WINDOW_13 + 0o2000);
     let past_window = p.through(8, WINDOW_13 + FB_WORDS_13);
@@ -836,6 +840,12 @@ fn space_program() -> Prog {
     p.write_a(0o110, 0o107).read_a(0o107, w(0o025, 0x1357_9bdf), "main memory at 20000005");
     p.read_a(0o111, 0, "past main memory: nothing");
     p.read_a(r101, 1, "word 101: NXM");
+    // Main memory's last word, whole, which a count one board short would
+    // leave as nothing.
+    let last = p.through(11, main_end - 0o2000) + 0o1777;
+    p.a(0o121, last as Word).a(0o122, w(0o035, 0x2468_ace0));
+    p.write_a(0o122, 0o121).read_a(0o121, w(0o035, 0x2468_ace0), "main memory's last word");
+    p.read_a(r101, 1, "word 101: still NXM after a word that answered");
     // A write of word 101 clears it.
     p.write_a(ZERO, r101).read_a(r101, 0, "word 101 cleared by its write");
     // The old Unibus window's diagnostic registers are main memory here.
@@ -1271,13 +1281,14 @@ fn program(name: &str) -> Prog {
         "byte" => byte_program(),
         "dispatch" => dispatch_program(),
         "map" => map_program().0,
-        "space" => space_program(),
+        "space" => space_program(BOARDS_13),
+        "space512" => space_program(512),
         "lines" => lines_program(),
         "fused" => fused_program(),
         "devices" => devices_program(),
         "disk" => disk_program(),
         _ => {
-            eprintln!("quux13: no program `{name}`; they are alu, byte, dispatch, map, space, lines, fused, devices and disk");
+            eprintln!("quux13: no program `{name}`; they are alu, byte, dispatch, map, space, space512, lines, fused, devices and disk");
             std::process::exit(2);
         }
     }
@@ -1293,9 +1304,16 @@ fn machine(prom: &[Insn], boards: u32) -> Machine {
 }
 
 /// Main memory's 64K-word boards for program `name`: the memory programs'
-/// and the devices' 65, past 22 bits, and QUUX's 32 for the rest.
+/// and the devices' 65, past 22 bits; `space512`'s 512, revision 13's
+/// default on the boards; and QUUX's 32 for the rest.
 fn boards(name: &str) -> u32 {
-    if matches!(name, "space" | "lines" | "fused" | "devices" | "disk") { BOARDS_13 } else { 32 }
+    if name == "space512" {
+        512
+    } else if matches!(name, "space" | "lines" | "fused" | "devices" | "disk") {
+        BOARDS_13
+    } else {
+        32
+    }
 }
 
 /// Every result the program was to leave, from the machine's A memory.

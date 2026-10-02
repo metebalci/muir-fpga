@@ -1939,6 +1939,7 @@ CHECKS = {
                     "boards/de25-nano/cadr_de25.sv",
                     "boards/cora-z7-07s/cadr_cora.sv",
                     "rtl/machine/cadr_machine.sv",
+                    "rtl/plumbing/cadr_ddr_map.sv",
                     "boards/arty-z7-20/vivado/bitstream.tcl",
                     "boards/arty-z7-20/vivado/tick.tcl",
                     "boards/cora-z7-07s/vivado/bitstream.tcl",
@@ -2665,6 +2666,16 @@ CHECKS = {
     },
 }
 
+# The console at revision 13's memory boards (`console13.pass`): word 37 from
+# 512 and up to 1,024, word 38 saying so.  The harness takes the two as
+# parameters and the testbench as defines, as the Makefile builds it.
+CHECKS["console13"] = dict(CHECKS["console"], **{
+    "flags": CHECKS["console"]["flags"] + [
+        "-GMEM_BOARDS_DEFAULT=512", "-GMEM_BOARDS_MAX=1024",
+        "-CFLAGS", "-DCONSOLE_BOARDS_DEFAULT=512u", "-CFLAGS", "-DCONSOLE_BOARDS_MAX=1024u"],
+    "machine": "quux",
+})
+
 # The same programs, and muir's own of QUUX, on the machine built as QUUX:
 # `golden/src/dispatch_write_order.rs --machine quux`.  QUUX's wait for MD,
 # its old word in a RAM's own write cycle and its one rate are held here.
@@ -2710,7 +2721,7 @@ PENDING = {}
 # 4,096, 8,192 and 4,096 entries: the same machine under `CADR_RDW_POISON`
 # on the `map` program, which writes all three; and on the cache's RAMs,
 # under `CADR_RDW_POISON_CACHE` as well, on the `lines` program.
-QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map", "space", "lines", "fused", "devices", "disk")
+QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map", "space", "space512", "lines", "fused", "devices", "disk")
 QUUX13_TB_BASE = "170156032"
 for _p in QUUX13_PROGRAMS:
     CHECKS["quux13_%s_quux" % _p] = dict(MACHINE_CHECK, **{

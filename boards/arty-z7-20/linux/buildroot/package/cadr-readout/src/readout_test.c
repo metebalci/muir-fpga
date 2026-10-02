@@ -552,14 +552,16 @@ int main(void)
 	//
 	// A checkpoint is sized by it, so a count read wrong is a checkpoint
 	// that drops memory or invents it.  The ends, the default and one past
-	// it read as themselves; a word with no marker --- a fabric older than
-	// the word --- and a count outside 1 to 60 read 0, which the caller
-	// takes as the old fabric's fixed 32.
+	// it read as themselves, and revision 13's 512 and 1,024 with them; a
+	// word with no marker --- a fabric older than the word --- and a count
+	// outside 1 to 1,024 read 0, which the caller takes as the old fabric's
+	// fixed 32.
 	{
 		const struct { uint32_t word; unsigned want; } cases[] = {
 			{0x42440001u, 1}, {0x42440020u, 32}, {0x42440021u, 33}, {0x4244003Cu, 60},
-			{0x4244003Du, 0}, {0x42440000u, 0}, {0x4244007Fu, 0}, {0x42440121u, 0},
-			{0x4D420021u, 0}, {0x00000021u, 0}, {0, 0}};
+			{0x4244003Du, 61}, {0x4244007Fu, 127}, {0x42440121u, 289}, {0x42440200u, 512},
+			{0x42440400u, 1024}, {0x42440401u, 0}, {0x424407FFu, 0}, {0x42440821u, 0},
+			{0x42440000u, 0}, {0x4D420021u, 0}, {0x00000021u, 0}, {0, 0}};
 		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
 			m->boards_word = cases[i].word;
 			const unsigned got_boards = ro_main_boards(&r);

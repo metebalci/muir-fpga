@@ -91,11 +91,10 @@
 // its top level, and muir's own default.  **A board raised past 32 cannot
 // cold-boot System 100** --- measured --- and System 1003 and later can.
 #define DEFAULT_BOARDS 32u
-// **REVISION 13's MAIN MEMORY IS 32M WORDS ON THE BOARDS** (contract G2 §3),
-// 512 of muir's 64K-word units, which is what a revision 13 checkpoint's
-// `memory_boards` counts; and the most is the room the board keeps for it
-// (`cadr_board.h`).
-#define DEFAULT_BOARDS_13 512u
+// **REVISION 13's MAIN MEMORY IS 32M WORDS ON THE BOARDS BY DEFAULT**
+// (contract G2 §3), 512 of muir's 64K-word units, which the fabric comes up
+// with and word 37 reads, as on every revision; the most is the room the
+// board keeps for it (`cadr_board.h`).
 #define MAX_BOARDS_13 (CADR_BOARD_QUUX13_MAIN_WORDS_MAX >> 16)
 
 // --- the face over /dev/mem ------------------------------------------------
@@ -493,7 +492,7 @@ int main(int argc, char **argv)
 	// word 37.  A fabric older than the word had 32 fixed.  A `--boards`
 	// that disagrees with the fabric is refused, because a checkpoint of
 	// fewer boards drops memory the band has and one of more invents it.
-	if (revision != 13) {
+	{
 		const unsigned fabric = ro_main_boards(&r);
 		if (!fabric)
 			say("the console's word 37 carries no memory boards' count: this "
@@ -507,11 +506,14 @@ int main(int argc, char **argv)
 			return 2;
 		}
 		boards = has;
-	} else if (!boards) {
-		boards = DEFAULT_BOARDS_13;
 	}
 	if (revision != 13 && boards > 60) {
-		say("--boards %u: the backplane holds 1 to 60", boards);
+		say("the machine has %u memory boards: the backplane holds 1 to 60", boards);
+		return 2;
+	}
+	if (revision == 13 && boards > MAX_BOARDS_13) {
+		say("the machine has %u memory boards: revision 13's room on this board holds 1 to %u",
+		    boards, MAX_BOARDS_13);
 		return 2;
 	}
 

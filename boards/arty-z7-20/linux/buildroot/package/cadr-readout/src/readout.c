@@ -255,7 +255,7 @@ unsigned ro_main_boards(struct readout *r)
 	if ((w >> 16) != RO_BOARDS_MARK)
 		return 0;
 	const unsigned n = w & 0xFFFFu;
-	return (n >= 1u && n <= RO_BOARDS_MAX) ? n : 0u;
+	return (n >= 1u && n <= RO_BOARDS_MAX) ? n : 0u;	/* bits 15:11 clear below 1,024 */
 }
 
 // muir's clock at a word of the microsecond clock: ticks since power-on,

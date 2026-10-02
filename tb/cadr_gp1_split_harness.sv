@@ -272,7 +272,7 @@ module cadr_gp1_split_harness #(
   // And no lamps, so whether they would blink is folded below too.
   logic       steady_lamps;
   // And no machine to give a memory boards' count to, folded below too.
-  logic [6:0] mem_boards;
+  logic [10:0] mem_boards;
   // And no display output to sleep, so the word reads `UNMAPPED` here and what
   // the console would carry to one is folded below.
   logic        hdmi_sleep_set, hdmi_wake;

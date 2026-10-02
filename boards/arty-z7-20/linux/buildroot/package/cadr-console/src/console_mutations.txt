@@ -752,42 +752,91 @@
 	h->color = (h->word & CONS_HDMI_FIRST) != 0;
 @end
 
-@mutation main-memory-boards-takes-sixty-one
+@mutation main-memory-boards-takes-one-past-the-most
 @file console_face.c
-@why a count past 60 must be refused before anything is written: the sixty-first
-@why board's first word is the Xbus I/O space, and muir refuses it too
+@why a count past the machine's most must be refused before anything is written: on
+@why the CADR the sixty-first board's first word is the Xbus I/O space, and on QUUX
+@why revision 13 the board keeps no room past its most
 @old
-		if (v > CONS_BOARDS_MAX)
-			return -1;
+	if (count < CONS_BOARDS_MIN || count > max)
+		return -1;
 @new
-		if (v > CONS_BOARDS_MAX + 1u)
-			return -1;
+	if (count < CONS_BOARDS_MIN || count > max + 1u)
+		return -1;
 @end
-
 @mutation main-memory-boards-takes-zero
 @file console_face.c
 @why a count of zero boards is a machine with no memory and must be refused, as muir
 @why refuses it
 @old
-	if (v < CONS_BOARDS_MIN)
+	if (count < CONS_BOARDS_MIN || count > max)
 		return -1;
-	*count = v;
 @new
-	*count = v;
+	if (count > max)
+		return -1;
 @end
-
 @mutation main-memory-boards-setter-writes-any-count
 @file console_face.c
-@why the face's setter must refuse a count outside 1 to 60 for a caller that did not
-@why parse, or a refused count goes out as a write the fabric then drops in silence
+@why the face's setter must refuse a count outside the machine's range for a caller
+@why that did not parse, or a refused count goes out as a write the fabric then drops
+@why in silence
 @old
-	if (count < CONS_BOARDS_MIN || count > CONS_BOARDS_MAX)
+	if (count < CONS_BOARDS_MIN || count > max)
 		return -1;
 	c->write(c, CONS_BOARDS, ((uint32_t)CONS_BOARDS_KEY << 16) | count);
 @new
 	c->write(c, CONS_BOARDS, ((uint32_t)CONS_BOARDS_KEY << 16) | count);
 @end
-
+@mutation main-memory-boards-range-is-the-cadrs-everywhere
+@file console_face.c
+@why the range is the machine's, word 38's: holding revision 13 to the CADR's 60
+@why refuses its own default of 512
+@old
+		*dflt = d;
+		*max = m;
+		return 1;
+@new
+		*dflt = CONS_BOARDS_DEFAULT;
+		*max = CONS_BOARDS_MAX;
+		return 1;
+@end
+@mutation main-memory-boards-range-without-its-marker
+@file console_face.c
+@why word 38 is a range only under its marker: a fabric whose word 38 is something
+@why else must not hand the program a most
+@old
+	if (CONS_BOARDS_RANGE_MARK_OF(w) == CONS_BOARDS_RANGE_MARK && m >= CONS_BOARDS_MIN &&
+@new
+	if (m >= CONS_BOARDS_MIN &&
+@end
+@mutation main-memory-boards-range-past-muirs-most
+@file console_face.c
+@why a most past muir's 1,024 is no machine's, and is not trusted
+@old
+	    m <= CONS_BOARDS_MOST && d >= CONS_BOARDS_MIN && d <= m) {
+@new
+	    d >= CONS_BOARDS_MIN && d <= m) {
+@end
+@mutation main-memory-boards-range-default-past-the-most
+@file console_face.c
+@why a default past the most is no range, and is not trusted
+@old
+	    m <= CONS_BOARDS_MOST && d >= CONS_BOARDS_MIN && d <= m) {
+@new
+	    m <= CONS_BOARDS_MOST && d >= CONS_BOARDS_MIN) {
+@end
+@mutation main-memory-boards-old-fabric-takes-anything
+@file console_face.c
+@why a fabric older than word 38 takes the CADR's 1 to 60, not whatever was asked
+@old
+	*dflt = CONS_BOARDS_DEFAULT;
+	*max = CONS_BOARDS_MAX;
+	return 0;
+@new
+	*dflt = CONS_BOARDS_DEFAULT;
+	*max = CONS_BOARDS_MOST;
+	return 0;
+@end
 @mutation main-memory-boards-written-without-its-key
 @file console_face.c
 @why the count rides under the key's top half, which is what makes the fabric take it

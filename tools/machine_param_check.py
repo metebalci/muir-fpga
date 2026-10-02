@@ -103,6 +103,9 @@ BOARDS = {
         # the machine's clock left at 100 MHz so that its timers count true
         # time (`cadr_arty.sv`, `SYNC_K13`).
         "sync_k": {32: 4, 40: 5},
+        # Revision 13's most memory boards: what the board's reservation holds
+        # (`cadr_ddr_map.sv`, 32M words), written here apart from it.
+        "boards13_max": 512,
     },
     "de25": {
         "top": "cadr_de25",
@@ -119,6 +122,8 @@ BOARDS = {
         # The debug cable's eight pads, JP1 pins 31 to 38.
         "pads": ["jp1_pin3%d" % i for i in range(1, 9)],
         "sync_k": {32: 4, 40: 4},
+        # 64M words of room, and muir's most is 1,024 boards.
+        "boards13_max": 1024,
     },
     "cora": {
         "top": "cadr_cora",
@@ -265,6 +270,56 @@ def word_bits_at_instance(tree, top):
     return int(values[0].split("h")[-1], 16), None
 
 
+def params_at_cell(tree, top, cell, names):
+    """The constant parameters `names` of the module the cell `cell` inside
+    `<top>` became, or None and why.  None, None when there is no such cell."""
+    modules = {}
+    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
+         if n.get("type") == "MODULE" else None)
+    tops = [m for m in modules.values() if m.get("origName") == top]
+    cells = []
+    if len(tops) == 1:
+        walk(tops[0], lambda n: cells.append(n)
+             if n.get("type") == "CELL" and n.get("name") == cell else None)
+    if not cells:
+        return None, None
+    if len(cells) != 1:
+        return None, "%d cells %s in %s" % (len(cells), cell, top)
+    mod = modules.get(cells[0].get("modp"))
+    values = {}
+
+    def param(n):
+        if n.get("type") == "VAR" and n.get("name") in names and n.get("isParam"):
+            v = n.get("valuep") or []
+            if len(v) == 1 and v[0].get("type") == "CONST":
+                values[n["name"]] = int(v[0]["name"].split("h")[-1], 16)
+    walk(mod, param)
+    if set(values) != set(names):
+        return None, "no constant %s in %s" % (", ".join(sorted(set(names) - set(values))), mod.get("name"))
+    return values, None
+
+
+def boards_at_console(board, config, asked, rev13, tree):
+    """The console's memory boards are the machine's: the CADR's and revision
+    12's 32 from 1 to 60, revision 13's 512 from 1 to the board's most."""
+    top = BOARDS[board]["top"]
+    want = {"MEM_BOARDS_DEFAULT": 512 if rev13 else 32,
+            "MEM_BOARDS_MAX": BOARDS[board]["boards13_max"] if rev13 else 60}
+    what = "%s, %s, %s: u_console's memory boards come up at %d and take 1 to %d" % (
+        top, config, asked, want["MEM_BOARDS_DEFAULT"], want["MEM_BOARDS_MAX"])
+    got, why = params_at_cell(tree, top, "u_console", list(want))
+    if got is None and why is None:
+        if config.startswith("DDR"):
+            say(False, "%s --- no u_console in a build with the processing system" % what)
+        return
+    if got is None:
+        say(False, "%s --- %s" % (what, why))
+    elif got != want:
+        say(False, "%s --- it has %s" % (what, got))
+    else:
+        say(True, what)
+
+
 def fd_ident_at_instance(tree, top):
     """The IDENT parameter of the module the file device's page, the cell
     `u_fd_face` in `<top>`, became."""
@@ -406,6 +461,8 @@ def word_reaches(board, config, bits, scratch):
     k_at_generator(board, config, "MACHINE=quux, %s" % asked, want, tree)
     # And no debug cable at revision 13 either.
     cable_at_top(board, config, "MACHINE=quux, %s" % asked, "quux", tree)
+    # And the console's memory boards are the revision's.
+    boards_at_console(board, config, "MACHINE=quux, %s" % asked, want > 32, tree)
     # And the file device's page names the revision: "QF13" at 40 bits,
     # "QFD9" below (`rtl/plumbing/quux_fd_face.sv`).
     ident_want = 0x51463133 if want > 32 else 0x51464439
@@ -466,6 +523,8 @@ def reaches(board, config, value, scratch):
         say(True, what)
     # **AND THE DEBUG CABLE IS THERE ON THE CADR AND NOWHERE ON QUUX.**
     cable_at_top(board, config, asked, want, tree)
+    # **AND THE CONSOLE'S MEMORY BOARDS ARE THE CADR'S AND REVISION 12'S.**
+    boards_at_console(board, config, asked, False, tree)
     # **AND QUUX'S K REACHES ITS GENERATOR**: the board's own SYNC_K, through
     # `cadr_machine` and `cadr_microcycle`, is the K `quux_phase_gen` counts.
     # A top level that dropped it would build the machine at the default K

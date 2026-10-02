@@ -209,18 +209,27 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  timer
     37 BOARDS   **how many 64K-word memory boards the machine has**, muir's
                  `--main-memory-boards`.  A write whose top half is
-                 `MEM_BOARDS_KEY`, "MB", with a count of 1 to 60 in bits 6 to
-                 0 and bits 15 to 7 clear, is a new count; it must strobe all
-                 four lanes, and any other count, 0 and 61 among them, is
-                 refused and the count stands.  It reads back a marker of
-                 `BD` in the top half and the count in bits 6 to 0.  The count
-                 goes to the machine's address decode, which answers main
-                 memory below the count's last board and gives the NXM above
-                 it, and to QUUX's file device, whose MEM_WORDS is the count
-                 times 64K.  The fabric comes up with 32, and the fabric's
-                 reset brings it back.  `cadr-console main-memory-boards [N]`
-                 reads and sets it, before a band boots
-    38-47        read UNMAPPED; writes dropped
+                 `MEM_BOARDS_KEY`, "MB", with a count of 1 to the machine's
+                 most in bits 10 to 0 and bits 15 to 11 clear, is a new count;
+                 it must strobe all four lanes, and any other count, 0 and one
+                 past the most among them, is refused and the count stands.
+                 The most is 60 on the CADR and QUUX to revision 12, and on
+                 QUUX revision 13 what the board keeps for its main memory,
+                 512 boards on the Arty Z7-20 and 1,024 on the DE25-Nano.  It
+                 reads back a marker of `BD` in the top half and the count in
+                 bits 10 to 0.  The count goes to the machine's address
+                 decode, which answers main memory below the count's last
+                 board and gives the NXM above it, and to QUUX's file device,
+                 whose MEM_WORDS is the count times 64K.  The fabric comes up
+                 with 32, or 512 on revision 13, and the fabric's reset brings
+                 it back.  `cadr-console main-memory-boards [N]` reads and sets
+                 it, before a band boots
+    38 RANGE    **what word 37 takes on this machine**, read only: a marker
+                 of 0x1A5 in bits 31 to 22, the default in bits 21 to 11 and
+                 the most in bits 10 to 0.  `cadr-console` refuses a count past
+                 the most by it; a fabric older than the word reads UNMAPPED
+                 here and takes 1 to 60 from 32
+    39-47        read UNMAPPED; writes dropped
 
     page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 

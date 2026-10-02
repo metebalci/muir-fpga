@@ -54,7 +54,7 @@
 //   of the space.
 //
 // `build/xbus_decode.quux13.pass` holds it at every one of the 268,435,456
-// addresses, for three board counts.
+// addresses, for seven board counts.
 //
 // **AND BLOCK-DISK'S CHANNEL SEES MAIN MEMORY ALONE** (`CHANNEL`, revision
 // 13): muir's transfer takes a command list word or a page only from main
@@ -94,7 +94,10 @@ module cadr_xbus_decode #(
     /* verilator lint_off UNUSEDSIGNAL */
     input  var logic [PHYS_BITS-1:0] phys,    // physical word address
     /* verilator lint_on UNUSEDSIGNAL */
-    input  var logic [6:0]  boards,  // 64K-word memory boards fitted, 1 to 60
+    // 64K-word memory boards fitted: 1 to 60 on the CADR and revision 12, and
+    // on revision 13 1 to what the board's reservation holds, at most 1,024
+    // (muir's `--main-memory-boards` on revision 13); the console holds each.
+    input  var logic [10:0] boards,
 
     // Whether the second display board --- the color TV, `tv::COLOR_TV` ---
     // is on the backplane.  muir's `busint::decode_with` takes the same fact
@@ -168,7 +171,7 @@ module cadr_xbus_decode #(
     // is the top 4M words, `phys<27:22>` all ones, so its offset is
     // `phys<21:0>`; the register page is in that range too and is decided
     // first.  Main memory's end is the boards' count on `phys<27:16>`, and
-    // as seven bits count at most 127 boards, 8M words, main memory never
+    // as the count is at most 1,024 boards, 64M words, main memory never
     // reaches the window, which needs no term of its own here.
     logic register_page, window, main;
     assign register_page = &phys[27:8];
@@ -205,7 +208,7 @@ module cadr_xbus_decode #(
   // A board is 64K words and they start at zero, so the whole comparison is on
   // the slot number.
   if (!REV13) begin : g_xbus_memory
-  assign memory = !unibus && !xbus_io && ({1'b0, phys[21:16]} < boards);
+  assign memory = !unibus && !xbus_io && (11'(phys[21:16]) < boards);
 
   assign nxm = !unibus && !memory && !device;
   end

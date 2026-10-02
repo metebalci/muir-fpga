@@ -364,8 +364,9 @@ static void help(void)
 	say("                wait over and wakes a monitor asleep.  With no word it reports");
 	say("                the setting and whether the monitor is asleep.  Exits 0 when");
 	say("                there is a display output and it holds what was asked");
-	say("main-memory-boards [N]  how many 64K-word memory boards the machine has, 1 to 60;");
-	say("                32 by default.  --main-memory-boards.  The band's cold boot");
+	say("main-memory-boards [N]  how many 64K-word memory boards the machine has: 1 to 60,");
+	say("                32 by default; QUUX revision 13 1 to what the board keeps for");
+	say("                its main memory, 512 by default.  --main-memory-boards.  The band's cold boot");
 	say("                counts them, so set it before the band boots: a count changed");
 	say("                under a running band takes memory away from it.  With no word");
 	say("                it reports.  Exits 0 when the fabric holds what was asked");

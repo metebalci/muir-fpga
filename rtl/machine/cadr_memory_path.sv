@@ -170,8 +170,9 @@ module cadr_memory_path #(
     output var logic [WORD_BITS-1:0] rdata, // MEM into the cpu, the whole word
     output var logic        timed_out,    // NXM TIMEOUT
 
-    // How many 64K-word memory boards are fitted, 1 to 60.
-    input  var logic [6:0]  boards,
+    // How many 64K-word memory boards are fitted: 1 to 60, or 1 to 1,024 on
+    // revision 13 (`cadr_xbus_decode.sv`).
+    input  var logic [10:0] boards,
 
     // The Xbus, as a slave that is not main memory sees it. `phys` and
     // `wdata` above are the address and the word; `device` says the decode

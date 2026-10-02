@@ -288,8 +288,9 @@ module cadr_machine #(
     output var logic        clock_ready,
     output var logic [15:0] interval,
 
-    // --- how many 64K-word memory boards are fitted, 1 to 60
-    input  var logic [6:0]  boards,
+    // --- how many 64K-word memory boards are fitted: 1 to 60, or on revision
+    // 13 1 to what the board's reservation holds, at most 1,024
+    input  var logic [10:0] boards,
 
     // --- AND WHICH DISPLAY BOARDS ARE, which is the same kind of fact: what
     // is in the backplane rather than what the machine is doing.  `tv_lispm`

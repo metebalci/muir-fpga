@@ -395,8 +395,10 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 // **AND HOW MANY MEMORY BOARDS THE BACKPLANE HAS, page 2's word 37.**
 //
 // muir's `--main-memory-boards`: how many 64K-word boards of main memory the
-// machine has, 1 to 60, and 32 --- two million words --- unless something
-// says otherwise.  The count goes to the machine's address decode, which
+// machine has: 1 to 60 and 32 --- two million words --- unless something says
+// otherwise, on the CADR and QUUX to revision 12; and on revision 13 1 to what
+// the board keeps for its main memory (512 on the Arty Z7-20, 1,024 on the
+// DE25-Nano) and 512, 32M words.  Word 38 says which, below.  The count goes to the machine's address decode, which
 // answers main memory below the count's last board and gives the NXM above
 // it, so the band's cold-boot probe finds exactly the count times 64K words;
 // and to QUUX's file device, whose MEM_WORDS is the same.  The card's
@@ -404,20 +406,34 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 // before the drive comes present, and the fabric comes up with 32.
 //
 // A write whose top half is `CONS_BOARDS_KEY` carries the count in its bottom
-// seven bits, bits 15 to 7 clear, all four lanes strobed, which a 32-bit store
-// is.  **A COUNT OUTSIDE 1 TO 60 IS REFUSED BY THE FABRIC**, which keeps the
-// count it had; this program refuses it before writing, too.  The word reads
-// back the marker and the count.  A fabric older than the word reads
-// `CONS_UNMAPPED`, which carries no marker, and its count is 32.
+// eleven bits, bits 15 to 11 clear, all four lanes strobed, which a 32-bit
+// store is.  **A COUNT OUTSIDE 1 TO THE MACHINE'S MOST IS REFUSED BY THE
+// FABRIC**, which keeps the count it had; this program refuses it before
+// writing, too, by the most word 38 reads.  The word reads back the marker
+// and the count.  A fabric older than the word reads `CONS_UNMAPPED`, which
+// carries no marker, and its count is 32.
 #define CONS_BOARDS            (CONS_PAGE2 + 5u)
 #define CONS_BOARDS_KEY        0x4D42u	/* "MB", the top half of a count */
 #define CONS_BOARDS_MARK       0x4244u	/* "BD" */
 #define CONS_BOARDS_MARK_OF(w) ((w) >> 16)
-#define CONS_BOARDS_COUNT      0x7Fu
+#define CONS_BOARDS_COUNT      0x7FFu
 #define CONS_BOARDS_MIN        1u
+// The CADR's and revision 12's most and default, and those of a fabric older
+// than word 38.
 #define CONS_BOARDS_MAX        60u
-// What the fabric comes up with, `--main-memory-boards`'s own default.
 #define CONS_BOARDS_DEFAULT    32u
+// muir's most on revision 13, the most word 38 may say; a count above it is
+// not a count on any machine.
+#define CONS_BOARDS_MOST       1024u
+// **WORD 38, WHAT WORD 37 TAKES ON THIS MACHINE**, read only: a ten-bit marker
+// in bits 31 to 22, the default in 21 to 11 and the most in 10 to 0.  A
+// fabric older than the word reads `CONS_UNMAPPED`, whose top ten bits are
+// not the marker, and takes 1 to 60 from 32.
+#define CONS_BOARDS_RANGE              (CONS_PAGE2 + 6u)
+#define CONS_BOARDS_RANGE_MARK         0x1A5u
+#define CONS_BOARDS_RANGE_MARK_OF(w)   ((w) >> 22)
+#define CONS_BOARDS_RANGE_DEFAULT(w)   (((w) >> 11) & 0x7FFu)
+#define CONS_BOARDS_RANGE_MAX(w)       ((w) & 0x7FFu)
 // A board is 64K words.
 #define CONS_BOARD_WORDS       65536u
 
@@ -924,23 +940,33 @@ int cons_display_word(struct console *c, int argc, char **argv, int *status);
 struct cons_boards {
 	uint32_t word;		/* word 37 as it read */
 	int mark_ok;		/* it carried `CONS_BOARDS_MARK` */
-	unsigned count;		/* the boards, 1 to 60 */
+	unsigned count;		/* the boards, 1 to `max` */
+	uint32_t range_word;	/* word 38 as it read */
+	int range_ok;		/* it carried its marker and a range that can be */
+	unsigned dflt;		/* the machine's default: 32, or 512 on revision 13 */
+	unsigned max;		/* the machine's most: 60, or what revision 13's room holds */
 };
+
+// What word 37 takes on this machine, out of word 38: its default and most,
+// or the CADR's 32 and 60 on a fabric older than the word.  1 when the word
+// said so, 0 when the CADR's were taken.
+int cons_read_boards_range(struct console *c, unsigned *dflt, unsigned *max);
 
 void cons_read_boards(struct console *c, struct cons_boards *b);
 void cons_say_boards(const struct cons_boards *b);
 // A new count, a keyed write of word 37.  -1 and nothing written for a count
-// outside 1 to 60.  Write and then READ: a fabric older than the word takes
-// the write and holds nothing.
+// outside 1 to the machine's most (word 38).  Write and then READ: a fabric
+// older than the word takes the write and holds nothing.
 int cons_set_boards(struct console *c, unsigned count);
-// A count as a person or a card writes it: decimal digits and nothing else, 1
-// to 60.  0, or -1 with `*count` untouched.
+// A count as a person or a card writes it: decimal digits and nothing else, 0
+// to `CONS_BOARDS_MOST`.  0, or -1 with `*count` untouched.  Whether this
+// machine takes it is `cons_set_boards`'s, by word 38.
 int cons_parse_boards(const char *text, unsigned *count);
 // **`main-memory-boards [N]`, WHOLE, AS TYPED.**  1 when `argv[0]` is the
 // word, 0 with nothing done for any other.  A count and then a report, or a
 // report alone.  `*status` 0 when the fabric has the word and holds what was
-// asked, 1 when it does not, 2 for a count that is not 1 to 60, which writes
-// nothing.
+// asked, 1 when it does not, 2 for a count that is not 1 to the machine's
+// most, which writes nothing and says the machine's range.
 int cons_boards_word(struct console *c, int argc, char **argv, int *status);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir-sim/src/spy.rs's

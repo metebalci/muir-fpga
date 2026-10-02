@@ -475,7 +475,15 @@ module cadr_cora #(
   // How many 64K-word memory boards the backplane has, page 2's word 37,
   // muir's `--main-memory-boards`: the machine's address decode and QUUX's
   // file device take it.  32 with no console.
-  logic [6:0]  con_mem_boards;
+  // How many 64K-word memory boards the machine has, the console's word 37:
+  // its default and its most are the machine's (`cadr_ddr_map::mem_boards_*`).
+  localparam bit          REV13_BOARDS   = 1'b0;
+  localparam int unsigned BOARDS_DEFAULT = cadr_ddr_map::mem_boards_default(REV13_BOARDS);
+  // Unused where a build has no console (the DE25-Nano without its memory).
+  /* verilator lint_off UNUSEDPARAM */
+  localparam int unsigned BOARDS_MAX     = cadr_ddr_map::mem_boards_max(REV13_BOARDS);
+  /* verilator lint_on UNUSEDPARAM */
+  logic [10:0] con_mem_boards;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the twenty-one wires of the DBGIN connector.
@@ -1987,7 +1995,9 @@ module cadr_cora #(
     assign unused_hdmi_sleep = ^{con_hdmi_sleep_set, con_hdmi_sleep_secs, con_hdmi_wake};
     /* verilator lint_on UNUSEDSIGNAL */
 
-    cadr_console u_console (
+    cadr_console #(
+        .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
+    ) u_console (
         .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
         .s_awaddr(gp1c_awaddr), .s_awlen(gp1c_awlen), .s_awid(gp1c_awid),
         .s_awvalid(gp1c_awvalid), .s_awready(gp1c_awready),
@@ -2179,9 +2189,10 @@ module cadr_cora #(
     // And nobody to ask for a steady lamp, so LD1's green blinks, which is
     // what a board with a console comes up with too.
     assign con_steady_lamps = 1'b0;
-    // And nobody to say how many memory boards there are, so it is 32,
-    // muir's own default and what a board with a console comes up with.
-    assign con_mem_boards = 7'd32;
+    // And nobody to say how many memory boards there are, so it is the
+    // machine's default, muir's own and what a board with a console comes up
+    // with.
+    assign con_mem_boards = 11'(BOARDS_DEFAULT);
     assign con_tv_map_a = 4'd0;
     assign con_write = 1'b0;
     assign con_addr = 18'd0;

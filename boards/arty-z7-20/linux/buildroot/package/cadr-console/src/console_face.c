@@ -1124,19 +1124,39 @@ void cons_say_hdmi_sleep(const struct cons_hdmi_sleep *s)
 //
 // `console_face.h` has what the word is and what takes the count.
 
+int cons_read_boards_range(struct console *c, unsigned *dflt, unsigned *max)
+{
+	const uint32_t w = c->read(c, CONS_BOARDS_RANGE);
+	const unsigned d = CONS_BOARDS_RANGE_DEFAULT(w), m = CONS_BOARDS_RANGE_MAX(w);
+	// A range that cannot be is no range: the marker alone is not trusted.
+	if (CONS_BOARDS_RANGE_MARK_OF(w) == CONS_BOARDS_RANGE_MARK && m >= CONS_BOARDS_MIN &&
+	    m <= CONS_BOARDS_MOST && d >= CONS_BOARDS_MIN && d <= m) {
+		*dflt = d;
+		*max = m;
+		return 1;
+	}
+	*dflt = CONS_BOARDS_DEFAULT;
+	*max = CONS_BOARDS_MAX;
+	return 0;
+}
+
 void cons_read_boards(struct console *c, struct cons_boards *b)
 {
 	b->word = c->read(c, CONS_BOARDS);
 	b->mark_ok = CONS_BOARDS_MARK_OF(b->word) == CONS_BOARDS_MARK;
 	b->count = b->word & CONS_BOARDS_COUNT;
+	b->range_word = c->read(c, CONS_BOARDS_RANGE);
+	b->range_ok = cons_read_boards_range(c, &b->dflt, &b->max);
 }
 
 int cons_set_boards(struct console *c, unsigned count)
 {
-	// The fabric refuses a count outside 1 to 60 and keeps its own, so a
-	// write of one would be a setting asked for and not made, said as if it
-	// were; refused here first, by name.
-	if (count < CONS_BOARDS_MIN || count > CONS_BOARDS_MAX)
+	// The fabric refuses a count outside 1 to its most and keeps its own, so
+	// a write of one would be a setting asked for and not made, said as if
+	// it were; refused here first, by name.
+	unsigned dflt, max;
+	cons_read_boards_range(c, &dflt, &max);
+	if (count < CONS_BOARDS_MIN || count > max)
 		return -1;
 	c->write(c, CONS_BOARDS, ((uint32_t)CONS_BOARDS_KEY << 16) | count);
 	return 0;
@@ -1151,11 +1171,11 @@ int cons_parse_boards(const char *text, unsigned *count)
 		if (*p < '0' || *p > '9')
 			return -1;
 		v = v * 10u + (unsigned)(*p - '0');
-		if (v > CONS_BOARDS_MAX)
+		if (v > CONS_BOARDS_MOST)
 			return -1;
 	}
-	if (v < CONS_BOARDS_MIN)
-		return -1;
+	// Zero is a number, and a count nobody can have: `cons_set_boards`
+	// refuses it with every other count outside the machine's range.
 	*count = v;
 	return 0;
 }
@@ -1167,8 +1187,9 @@ void cons_say_boards(const struct cons_boards *b)
 		    " fabric is older than the word, and its machine has 32 boards fixed", b->word);
 		return;
 	}
-	say("main-memory-boards: %u boards of 64K words, %u words of main memory%s", b->count,
-	    b->count * CONS_BOARD_WORDS, b->count == CONS_BOARDS_DEFAULT ? ", muir's default" : "");
+	say("main-memory-boards: %u boards of 64K words, %u words of main memory%s; this machine"
+	    " takes 1 to %u", b->count, b->count * CONS_BOARD_WORDS,
+	    b->count == b->dflt ? ", muir's default" : "", b->max);
 }
 
 int cons_boards_word(struct console *c, int argc, char **argv, int *status)
@@ -1179,14 +1200,20 @@ int cons_boards_word(struct console *c, int argc, char **argv, int *status)
 	unsigned want = 0;
 	const int asked = argc > 1;
 	if (asked) {
-		if (cons_parse_boards(argv[1], &want) != 0) {
+		unsigned dflt, max;
+		const int ranged = cons_read_boards_range(c, &dflt, &max);
+		if (cons_parse_boards(argv[1], &want) != 0 || cons_set_boards(c, want) != 0) {
+			// The range this machine takes, which word 38 says: the CADR's
+			// and revision 12's 1 to 60, or revision 13's to what the board
+			// keeps for its main memory.
 			say("main-memory-boards N: decimal, %u to %u boards of 64K words, as muir's"
-			    " --main-memory-boards; %u is the default", CONS_BOARDS_MIN, CONS_BOARDS_MAX,
-			    CONS_BOARDS_DEFAULT);
+			    " --main-memory-boards; %u is the default%s", CONS_BOARDS_MIN, max, dflt,
+			    max > CONS_BOARDS_MAX
+				    ? "; QUUX revision 13's most is the main memory this board keeps for it"
+				    : ranged ? "" : " (a fabric older than word 38 takes these)");
 			*status = 2;
 			return 1;
 		}
-		cons_set_boards(c, want);
 	}
 	cons_read_boards(c, &b);
 	cons_say_boards(&b);

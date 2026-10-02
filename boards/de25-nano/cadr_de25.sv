@@ -518,7 +518,15 @@ module cadr_de25 #(
   // How many 64K-word memory boards the backplane has, page 2's word 37,
   // muir's `--main-memory-boards`: the machine's address decode and QUUX's
   // file device take it.  32 with no console.
-  logic [6:0]  con_mem_boards;
+  // How many 64K-word memory boards the machine has, the console's word 37:
+  // its default and its most are the machine's (`cadr_ddr_map::mem_boards_*`).
+  localparam bit          REV13_BOARDS   = MACHINE == "quux" && WORD_BITS > 32;
+  localparam int unsigned BOARDS_DEFAULT = cadr_ddr_map::mem_boards_default(REV13_BOARDS);
+  // Unused where a build has no console (the DE25-Nano without its memory).
+  /* verilator lint_off UNUSEDPARAM */
+  localparam int unsigned BOARDS_MAX     = cadr_ddr_map::mem_boards_max(REV13_BOARDS);
+  /* verilator lint_on UNUSEDPARAM */
+  logic [10:0] con_mem_boards;
   logic [3:0]  con_tv_map_a;
   // **THE DEBUG CABLE'S NEAR END HAS TWO ARMS ON THIS BOARD**, which MIT's
   // board cannot have, there being one DBGIN connector.  `dbg_in_*` and
@@ -1668,7 +1676,8 @@ module cadr_de25 #(
   logic [14:0] con_hdmi_sleep_secs;
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
   cadr_console #(
-      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8),
+      .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
   ) u_console (
       .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
       .s_awaddr(lwc_awaddr), .s_awlen(lwc_awlen), .s_awid(lwc_awid),
@@ -2151,9 +2160,10 @@ module cadr_de25 #(
   assign con_color_tv     = 1'b0;
   assign con_tv_map_a     = 4'd0;
   assign con_steady_lamps = 1'b0;
-  // And nobody to say how many memory boards there are, so it is 32,
-  // muir's own default and what a board with a console comes up with.
-  assign con_mem_boards = 7'd32;
+  // And nobody to say how many memory boards there are, so it is the
+  // machine's default, muir's own and what a board with a console comes up
+  // with.
+  assign con_mem_boards = 11'(BOARDS_DEFAULT);
 
   // NO DISPLAY, because there is no memory for it to read.  The machine's
   // second map port stands at entry zero and the console's word 36 reads

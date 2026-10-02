@@ -959,9 +959,9 @@
 @note on the slot number and the bound is exclusive. Inclusive gives the
 @note machine a board that is not fitted.
 @old
-  assign memory = !unibus && !xbus_io && ({1'b0, phys[21:16]} < boards);
+  assign memory = !unibus && !xbus_io && (11'(phys[21:16]) < boards);
 @new
-  assign memory = !unibus && !xbus_io && ({1'b0, phys[21:16]} <= boards);
+  assign memory = !unibus && !xbus_io && (11'(phys[21:16]) <= boards);
 @end
 
 @mutation the-page-is-taken-from-the-wrong-bits
@@ -14632,9 +14632,9 @@ if {0 && $held ne $want} {
 @note says nothing has the machine it always had.  Caught on "the memory boards
 @note out of reset".
 @old
-      mem_boards  <= 7'(MEM_BOARDS_DEFAULT);
+      mem_boards  <= 11'(MEM_BOARDS_DEFAULT);
 @new
-      mem_boards  <= 7'(MEM_BOARDS_DEFAULT + 28);
+      mem_boards  <= 11'(MEM_BOARDS_DEFAULT + 28);
 @end
 
 @mutation console-the-memory-boards-take-sixty-one
@@ -14645,9 +14645,9 @@ if {0 && $held ne $want} {
 @note that stood kept.  The bound one past is the mutation just outside it.
 @note Caught on "the memory boards after a count outside 1 to 60".
 @old
-                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
+                           (w_full[10:0] <= 11'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
 @new
-                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX + 1)) && (s_wstrb == 4'hF);
+                           (w_full[10:0] <= 11'(MEM_BOARDS_MAX + 1)) && (s_wstrb == 4'hF);
 @end
 
 @mutation console-the-memory-boards-take-zero
@@ -14657,21 +14657,21 @@ if {0 && $held ne $want} {
 @note and so must the fabric.  Caught on "the memory boards after a count
 @note outside 1 to 60".
 @old
-                           (w_full[15:7] == 9'd0) && (w_full[6:0] != 7'd0) &&
+                           (w_full[15:11] == 5'd0) && (w_full[10:0] != 11'd0) &&
 @new
-                           (w_full[15:7] == 9'd0) &&
+                           (w_full[15:11] == 5'd0) &&
 @end
 
 @mutation console-the-memory-boards-ignore-the-high-bits
 @check console
 @file rtl/plumbing/cadr_console.sv
-@note A count with bits past the seventh set is not a count, and a decode that
-@note looked only at the low seven would take 0x80 + 33 as 33.  Caught on "the
-@note memory boards after a count outside 1 to 60".
+@note A count with bits past the eleventh set is not a count, and a decode that
+@note looked only at the low eleven would take 0x800 + 33 as 33.  Caught on "the
+@note memory boards after a count outside 1 to the most".
 @old
-                           (w_full[15:7] == 9'd0) && (w_full[6:0] != 7'd0) &&
+                           (w_full[15:11] == 5'd0) && (w_full[10:0] != 11'd0) &&
 @new
-                           (w_full[6:0] != 7'd0) &&
+                           (w_full[10:0] != 11'd0) &&
 @end
 
 @mutation console-the-memory-boards-take-a-partial-write
@@ -14682,9 +14682,9 @@ if {0 && $held ne $want} {
 @note that asks for all four.  Caught on "the memory boards after writes of
 @note fewer than four lanes".
 @old
-                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
+                           (w_full[10:0] <= 11'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
 @new
-                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX)) && (s_wstrb != 4'h0);
+                           (w_full[10:0] <= 11'(MEM_BOARDS_MAX)) && (s_wstrb != 4'h0);
 @end
 
 @mutation console-the-memory-boards-key-reaches-page-zero
@@ -14708,9 +14708,72 @@ if {0 && $held ne $want} {
 @note and with nothing else.  The count still leaves the module, so lint sees
 @note nothing.  Caught on "the memory boards after a count".
 @old
-                                 ? {MEM_BOARDS_MARK, 9'd0, mem_boards}
+                                 ? {MEM_BOARDS_MARK, 5'd0, mem_boards}
 @new
-                                 ? {MEM_BOARDS_MARK, 9'd0, 7'd32}
+                                 ? {MEM_BOARDS_MARK, 5'd0, 11'd32}
+@end
+
+@mutation console-the-memory-boards-read-seven-bits
+@check console13
+@file rtl/plumbing/cadr_console.sv
+@note **REVISION 13'S COUNTS NEED ELEVEN BITS**: a count held in seven would
+@note read 512 as 0 and 127 as 127, the most the CADR's word carried.  Caught on
+@note "the memory boards after a count" at revision 13's.
+@old
+          if (w_is_boards_set) mem_boards <= w_full[10:0];
+@new
+          if (w_is_boards_set) mem_boards <= 11'(w_full[6:0]);
+@end
+
+@mutation console13-the-memory-boards-take-one-past-the-most
+@check console13
+@file rtl/plumbing/cadr_console.sv
+@note Revision 13's most is the room its board keeps, and one board past it is
+@note main memory nobody reserved.  The bound one past, at revision 13's
+@note parameters.  Caught on "the memory boards after a count outside 1 to the
+@note most".
+@old
+                           (w_full[10:0] <= 11'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
+@new
+                           (w_full[10:0] <= 11'(MEM_BOARDS_MAX + 1)) && (s_wstrb == 4'hF);
+@end
+
+@mutation console13-the-memory-boards-come-up-at-the-cadrs
+@check console13
+@file rtl/plumbing/cadr_console.sv
+@note **REVISION 13 COMES UP WITH 512 BOARDS**, 32M words, muir's default for
+@note it; the CADR's 32 would boot every revision 13 card at 2M words.  Caught
+@note on "the memory boards out of reset".
+@old
+      mem_boards  <= 11'(MEM_BOARDS_DEFAULT);
+@new
+      mem_boards  <= 11'(32);
+@end
+
+@mutation console-the-range-word-says-the-cadrs
+@check console13
+@file rtl/plumbing/cadr_console.sv
+@note **WORD 38 SAYS WHAT THIS MACHINE TAKES**, and a program reads its range
+@note there; one that said the CADR's 32 and 60 everywhere would have the
+@note program refuse revision 13's own default.  Caught on "the memory boards'
+@note range, word 38".
+@old
+                                 ? {MEM_BOARDS_RANGE_MARK, 11'(MEM_BOARDS_DEFAULT),
+                                    11'(MEM_BOARDS_MAX)}
+@new
+                                 ? {MEM_BOARDS_RANGE_MARK, 11'(32), 11'(60)}
+@end
+
+@mutation console-the-range-word-is-unmapped
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Word 38 is the range, not `UNMAPPED`: a fabric that read it as unmapped
+@note would be taken for one older than the word.  Caught on "the memory boards'
+@note range, word 38".
+@old
+                             : (r_hi_q && r_idx_q == 5'd6)
+@new
+                             : (r_hi_q && r_idx_q == 5'd6 && 1'b0)
 @end
 
 @mutation arty-the-machine-keeps-thirty-two-boards
@@ -14725,7 +14788,7 @@ if {0 && $held ne $want} {
 @old
       .boards(con_mem_boards),
 @new
-      .boards(7'd32 | (con_mem_boards & 7'd0)),
+      .boards(11'd32 | (con_mem_boards & 11'd0)),
 @end
 
 @mutation cora-the-machine-keeps-thirty-two-boards
@@ -14736,7 +14799,7 @@ if {0 && $held ne $want} {
 @old
       .boards(con_mem_boards),
 @new
-      .boards(7'd32 | (con_mem_boards & 7'd0)),
+      .boards(11'd32 | (con_mem_boards & 11'd0)),
 @end
 
 @mutation de25-the-machine-keeps-thirty-two-boards
@@ -14747,7 +14810,7 @@ if {0 && $held ne $want} {
 @old
       .boards(con_mem_boards),
 @new
-      .boards(7'd32 | (con_mem_boards & 7'd0)),
+      .boards(11'd32 | (con_mem_boards & 11'd0)),
 @end
 
 # THE DEBUG CABLE ON ONE CONNECTOR: the role, the pads, and the DBGOUT page
@@ -16810,10 +16873,12 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note Caught at "u_console.REG_BASE is 0x20000000, and the programs look at
 @note 0x20000000, which is 0x00000000 into the bridge's window".
 @old
-      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8),
+      .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
   ) u_console (
 @new
-      .REG_BASE(32'h2000_0000), .ID_W(4), .LEN_W(8)
+      .REG_BASE(32'h2000_0000), .ID_W(4), .LEN_W(8),
+      .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
   ) u_console (
 @end
 
@@ -16891,7 +16956,8 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note followed back to the memory port's liveness.
 @old
   cadr_console #(
-      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8),
+      .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
   ) u_console (
       .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
 @new
@@ -16899,7 +16965,8 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   always_ff @(posedge clk) con_rst <= h2f_rst || !port_live;
 
   cadr_console #(
-      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8)
+      .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8),
+      .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
   ) u_console (
       .clk(clk), .rst(con_rst), .fabric_rst(rst),
 @end
@@ -18492,10 +18559,10 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 @note behavior says it does.  Caught at the register the control wrote,
 @note read back after the release.
 @old
-    cadr_console u_console (
+    ) u_console (
         .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
 @new
-    cadr_console u_console (
+    ) u_console (
         .clk(clk), .rst(gp1_rst), .fabric_rst(1'b0),
 @end
 
@@ -26102,6 +26169,71 @@ FAULT_SH=/usr/share/cadr/faults.sh
     assign main          = phys[27:16] < 12'(boards);
 @new
     assign main          = phys[27:16] <= 12'(boards);
+@end
+
+@mutation xbus-decode-13-reads-seven-bits-of-the-boards
+@check xbus_decode_quux13
+@file rtl/machine/cadr_xbus_decode.sv
+@note **REVISION 13'S MAIN MEMORY REACHES 512 AND 1,024 BOARDS**, its default
+@note and muir's most, and a decode that read the count's low seven bits would
+@note give 512 boards no main memory at all.  Caught at the counts 512 and
+@note 1,024 of `xbus_decode.quux13.golden`.
+@old
+    assign main          = phys[27:16] < 12'(boards);
+@new
+    assign main          = phys[27:16] < 12'(boards & 11'h07F);
+@end
+
+@mutation machine-param-revision-13-takes-the-cadrs-most
+@check machine_param
+@file rtl/plumbing/cadr_ddr_map.sv
+@note Revision 13 held to the CADR's 60 boards, 3.75M of its 32M words.
+@old
+    return !rev13 ? 60 : (QUUX13_MAIN_WORDS_MAX / 65536 > 1024 ? 1024 : QUUX13_MAIN_WORDS_MAX / 65536);
+@new
+    return 60;
+@end
+
+@mutation machine-param-revision-13-takes-muirs-most-on-every-board
+@check machine_param
+@file rtl/plumbing/cadr_ddr_map.sv
+@note Revision 13 given muir's 1,024 boards on a board whose reservation holds
+@note 512: main memory past the room Linux keeps clear.
+@old
+    return !rev13 ? 60 : (QUUX13_MAIN_WORDS_MAX / 65536 > 1024 ? 1024 : QUUX13_MAIN_WORDS_MAX / 65536);
+@new
+    return !rev13 ? 60 : 1024;
+@end
+
+@mutation machine-param-revision-13-comes-up-at-the-cadrs-default
+@check machine_param
+@file rtl/plumbing/cadr_ddr_map.sv
+@note Revision 13 coming up with the CADR's 32 boards, 2M words, where muir's
+@note default for it is 512.
+@old
+    return rev13 ? 512 : 32;
+@new
+    return 32;
+@end
+
+@mutation machine-param-the-arty-console-counts-the-cadrs-boards
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's top hands its console the CADR's boards whatever it builds.
+@old
+  localparam bit          REV13_BOARDS   = MACHINE == "quux" && WORD_BITS > 32;
+@new
+  localparam bit          REV13_BOARDS   = 1'b0;
+@end
+
+@mutation machine-param-the-de25-console-counts-the-cadrs-boards
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note The DE25-Nano's top hands its console the CADR's boards whatever it builds.
+@old
+  localparam bit          REV13_BOARDS   = MACHINE == "quux" && WORD_BITS > 32;
+@new
+  localparam bit          REV13_BOARDS   = 1'b0;
 @end
 
 @mutation rev13-channel-decode-reaches-the-window

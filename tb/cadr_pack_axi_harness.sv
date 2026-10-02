@@ -372,7 +372,7 @@ module cadr_pack_axi_harness #(
       .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
       .clock_ready(clock_ready), .interval(interval),
       .ub_ssyn_by(ub_ssyn_by),
-      .boards(7'd32),
+      .boards(11'd32),
       // **THE BACKPLANE THIS CHECK RUNS ON: one SIMPLE TV and no color TV**,
       // which is muir's own default and what `busint::decode` describes.  The
       // second display board has `build/color_tv.pass` of its own.

@@ -57,7 +57,11 @@
 `default_nettype none
 
 module cadr_console_harness #(
-    parameter string PROM_HEX = "build/boot_prom.hex"
+    parameter string PROM_HEX = "build/boot_prom.hex",
+    // The console's memory boards: the CADR's 32 from 1 to 60 unless a build
+    // says otherwise, as `console13.pass` does at revision 13's.
+    parameter int unsigned MEM_BOARDS_DEFAULT = 32,
+    parameter int unsigned MEM_BOARDS_MAX     = 60
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -119,7 +123,7 @@ module cadr_console_harness #(
     // --- **AND HOW MANY MEMORY BOARDS THE BACKPLANE HAS, page 2's word 37.**
     // Out of the harness for word 33's reason: the count the fabric holds and
     // the word it reads back are two facts.
-    output var logic [6:0]  mem_boards,
+    output var logic [10:0] mem_boards,
 
     // --- **AND WHETHER THE DISPLAY OUTPUT SLEEPS, page 2's word 36.**  The
     // setting and the mute are the display output's and not the console's,
@@ -383,7 +387,9 @@ module cadr_console_harness #(
 
   logic [3:0] tv_map_a;
 
-  cadr_console console (
+  cadr_console #(
+      .MEM_BOARDS_DEFAULT(MEM_BOARDS_DEFAULT), .MEM_BOARDS_MAX(MEM_BOARDS_MAX)
+  ) console (
       .clk        (clk),
       .rst        (rst),
       .fabric_rst (1'b0),

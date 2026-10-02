@@ -227,7 +227,7 @@ QUUX_L1_PROGRAMS := divmd divmdsync tickwin clockwait
 # the memory port and the cache, the testbench the pack side.  The machine is built with revision 13's main memory at
 # `QUUX13_TB_BASE`, a base no board uses, which the testbench lays packed
 # storage out from.
-QUUX13_PROGRAMS := alu byte dispatch map space lines fused devices disk
+QUUX13_PROGRAMS := alu byte dispatch map space space512 lines fused devices disk
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
@@ -250,7 +250,7 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass \
        $(BUILD)/quux_axi_master.quux.pass \
        $(BUILD)/checkpoint.quux.pass \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
-       $(BUILD)/prom_revisions.pass \
+       $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -3890,6 +3890,26 @@ $(BUILD)/obj_console/Vcadr_console_harness: $(CONSOLE_SRC) \
 $(BUILD)/console.pass: $(BUILD)/obj_console/Vcadr_console_harness \
                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_console/Vcadr_console_harness $(BUILD)/rtl.golden
+	@touch $@
+
+# **AND THE SAME CONSOLE AT REVISION 13'S MEMORY BOARDS**: word 37 coming up
+# with 512 boards and taking 1 to 1,024, the DE25-Nano's most (its
+# reservation holds 64M words; the Arty Z7-20's and the Kria KR260's 32M, 512
+# boards), and word 38 saying so.  The whole check again, since the count is
+# one register among the face's; `machine_param.pass` holds that each board's
+# top hands its console these numbers.
+CONSOLE13_BOARDS := -GMEM_BOARDS_DEFAULT=512 -GMEM_BOARDS_MAX=1024 \
+                    -CFLAGS -DCONSOLE_BOARDS_DEFAULT=512u -CFLAGS -DCONSOLE_BOARDS_MAX=1024u
+$(BUILD)/obj_console13/Vcadr_console_harness: $(CONSOLE_SRC) \
+                                              tb/cadr_console_tb.cpp tb/cadr_tick.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_console13 \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' $(CONSOLE13_BOARDS) \
+	    --top-module cadr_console_harness $(CONSOLE_SRC) \
+	    $(abspath tb/cadr_console_tb.cpp)
+
+$(BUILD)/console13.pass: $(BUILD)/obj_console13/Vcadr_console_harness \
+                         $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_console13/Vcadr_console_harness $(BUILD)/rtl.golden
 	@touch $@
 
 # --------------------------------------------------- the debug cable's DBGIN
