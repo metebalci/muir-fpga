@@ -925,7 +925,7 @@ stage_tree() {
     printf 'This board keeps no time while it is switched off.  With a network\r\n'
     printf 'it sets its clock by NTP at boot, from pool.ntp.org, before the\r\n'
     printf "machine starts; fpgarc's --ntp-server names another server and\r\n"
-    printf '--no-ntp turns it off.  Without a network, put the date and the\r\n'
+    printf -- '--no-ntp turns it off.  Without a network, put the date and the\r\n'
     printf "time, in UTC, on fpgarc's #--date and #--time lines and take the #\r\n"
     printf 'off each; otherwise the machine starts in 1970.\r\n\r\n'
     printf 'Logging in to Linux\r\n'

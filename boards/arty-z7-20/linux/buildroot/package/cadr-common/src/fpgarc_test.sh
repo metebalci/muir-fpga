@@ -6410,6 +6410,81 @@ else
 	fi
 fi
 
+# ---------------------------------------------------------------------------
+# 12.  THE CARD'S README.TXT IS WRITTEN WHOLE, ON EVERY BOARD AND BOTH CARDS.
+# ---------------------------------------------------------------------------
+#
+# The README block of mksd-buildroot.sh is lifted by its own anchors, with the
+# board's facts before it, and run under this check's shell for each board, a
+# development card and a release card, the CADR and QUUX.  A printf whose format
+# begins with a dash is an option to the shell's own printf, which stops the
+# whole release with "Illegal option"; that is how the release build of this
+# README failed once, so stderr must be empty.  And what a release README says
+# about the date, the login and the Kria's card reader is asserted.
+lift_readme() {
+	awk '/^README_UENV_MAC=yes$/ {on=1}
+	     on {print}
+	     /^STAGED_FILES=\$BOARD_FILES$/ {if (on) exit}' "$MKSD" > "$1/board.sh"
+	awk '/^# \*\*AND A README, WHICH IS NOT DECORATION\.\*\*/ {on=1}
+	     on {print}
+	     /^\} > "\$OUT\/card\/README\.TXT"$/ {if (on) exit}' "$MKSD" > "$1/readme.sh"
+	if [ "$(grep -c '^STAGED_FILES=\$BOARD_FILES$' "$1/board.sh")" != "1" ] ||
+	   [ "$(grep -c '^} > "\$OUT/card/README.TXT"$' "$1/readme.sh")" != "1" ]; then
+		fail "the README block or the board's facts are not where this check looks in mksd-buildroot.sh"
+		return 1
+	fi
+	return 0
+}
+
+case_head "README.TXT is written without a word on stderr, for every board, both cards and both machines"
+sandbox
+mkdir -p "$WORK/rd"
+if lift_readme "$WORK/rd"; then
+	readme_bad=0
+	for b in arty-z7-20 cora-z7-07s de25-nano kria-kr260; do
+		for rel in "" 1; do
+			for m in cadr quux; do
+				rm -rf "$WORK/rd/card"; mkdir -p "$WORK/rd/card"
+				( set -u
+				  OUT="$WORK/rd"; BOARD_NAME=$b; BOARD_DTB=the-board.dtb; MACHINE=$m; NO_FAULT=
+				  RELEASE=$rel; RELEASE_COMMIT=${rel:+abc1234}
+				  . "$WORK/rd/board.sh"
+				  ROOT_NAMES=
+				  for rf in $ROOT_FILES; do ROOT_NAMES="${ROOT_NAMES:+$ROOT_NAMES }${rf#*:}"; done
+				  . "$WORK/rd/readme.sh" ) > "$WORK/rd/out" 2>&1
+				if [ -s "$WORK/rd/out" ] || [ ! -s "$WORK/rd/card/README.TXT" ]; then
+					fail "README.TXT for $b, release [$rel], $m: $(head -2 "$WORK/rd/out" | tr '\n' ' ')"
+					readme_bad=$((readme_bad + 1))
+					continue
+				fi
+				r=$(tr -d '\r' < "$WORK/rd/card/README.TXT")
+				if [ -n "$rel" ]; then
+					for want in 'it sets its clock by NTP at boot, from pool.ntp.org' \
+					            '--no-ntp turns it off' '--root-password sets another' \
+					            'A file named authorized_keys here'; do
+						case "$r" in *"$want"*) ;; *)
+							fail "the release README for $b ($m) does not say [$want]"
+							readme_bad=$((readme_bad + 1)) ;;
+						esac
+					done
+				fi
+				case "$b:$r" in
+				kria-kr260:*"do not plug other USB storage"*) ;;
+				kria-kr260:*) fail "the Kria's README does not say the USB ports are for the keyboard and mouse"
+				              readme_bad=$((readme_bad + 1)) ;;
+				*:*"USB storage"*) fail "the $b README talks about the Kria's card reader"
+				              readme_bad=$((readme_bad + 1)) ;;
+				esac
+				case "$r" in *"NAME THE CARD"*)
+					fail "the $b README still asks for a volume name"
+					readme_bad=$((readme_bad + 1)) ;;
+				esac
+			done
+		done
+	done
+	[ "$readme_bad" = 0 ] && ok "16 READMEs written whole, each saying what its card is for"
+fi
+
 echo
 if [ "$fails" = 0 ]; then
 	echo "fpgarc: $cases cases, one file of flags reaches six programs and each gets its own"
