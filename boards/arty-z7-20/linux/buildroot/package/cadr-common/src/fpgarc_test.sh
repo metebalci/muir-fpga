@@ -2881,6 +2881,10 @@ generate_fpgarc() {
 	  OUT="$WORK/gen"
 	  BOARD_NAME=${4:-arty-z7-20}
 	  BOARD_DTB=the-board.dtb
+	  # ${10} is MACHINE, quux for a card carrying a QUUX bitstream, read
+	  # by the board's facts, which settle it beside REVISION.
+	  MACHINE=${10:-}
+	  REVISION=
 	  . "$WORK/gen/board.sh"
 	  NO_AUTO_BOOT=$1
 	  # $2 is RELEASE: empty for the development card, 1 for the card a
@@ -3238,6 +3242,60 @@ if generate_fpgarc "" 1; then
 	else
 		fail "the released menu's live lines are [$got], not [$want]"
 	fi
+fi
+
+# **AND A QUUX CARD SAYS SO, LIVE.**  Nothing can ask the fabric which
+# machine it is, so every init script believes the card's `--machine` line:
+# a QUUX card that did not say quux would start ozd and leave the file device
+# off.  MACHINE=quux makes the line live and adds it to the four; the CADR's
+# release above keeps four, with the line commented.
+case_head "a QUUX release's menu has the four and --machine quux live, and the reader calls it QUUX"
+sandbox
+if generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" quux; then
+	GEN="$WORK/gen/card/fpgarc"
+	got=$(live_flags "$GEN" | tr '\n' '|')
+	want='--chaos-address 177101|--chaos-udp 127.0.0.1:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--machine quux|'
+	if [ "$got" = "$want" ]; then
+		ok "the four a board needs, and the machine"
+	else
+		fail "the QUUX release's live lines are [$got], not [$want]"
+	fi
+	if [ "$(setting_lines "$GEN" --machine)" = 1 ]; then
+		ok "and --machine is written once"
+	else
+		fail "the QUUX release says --machine $(setting_lines "$GEN" --machine) times; a setting is written once"
+	fi
+	if [ "$HAVE_READER" != yes ]; then
+		fail "there is no reader to agree with the card script"
+	elif (RC="$GEN"; fpgarc_is_quux); then
+		ok "and the reader takes the card for QUUX's"
+	else
+		fail "the reader does not take the QUUX release's card for QUUX's"
+	fi
+fi
+sandbox
+if generate_fpgarc "" 1; then
+	GEN="$WORK/gen/card/fpgarc"
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--machine cadr'; then
+		ok "the CADR's release writes the line commented"
+	else
+		fail "the CADR's release does not write #--machine cadr"
+	fi
+	if [ "$HAVE_READER" != yes ]; then
+		fail "there is no reader to agree with the card script"
+	elif (RC="$GEN"; fpgarc_is_quux); then
+		fail "the reader takes the CADR's release card for QUUX's"
+	else
+		ok "and the reader takes it for the CADR's"
+	fi
+fi
+sandbox
+if (generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" vax) > "$WORK/badmachine" 2>&1; then
+	fail "MACHINE=vax wrote a card"
+elif grep -q "MACHINE=vax: it is cadr or quux" "$WORK/badmachine"; then
+	ok "and MACHINE=vax is refused by name"
+else
+	fail "MACHINE=vax was refused without saying why: $(cat "$WORK/badmachine")"
 fi
 
 case_head "and the serial line is on it, commented out"
@@ -4919,7 +4977,7 @@ lift_zip() {
 	# reason: `lift` stops at the first line that carries the last anchor,
 	# so an anchor inside the block would cut the `fi` off and the lifted
 	# copy would not parse.
-	lift 'ZIP="$(cd "$OUT" && pwd)/cadr-$BOARD_NAME.zip"' \
+	lift 'ZIP="$(cd "$OUT" && pwd)/$MACHINE-$BOARD_NAME.zip"' \
 	     'fi  # the zip, built and read back' "$1" || return 1
 	return 0
 }
@@ -4927,6 +4985,7 @@ run_zip() {
 	( set -eu
 	  OUT="$WORK/root"
 	  BOARD_NAME=arty-z7-20
+	  MACHINE=${2:-cadr}
 	  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
 	  PATH="$1:$PATH"
 	  . "$WORK/zip.sh" ) >"$WORK/zip.out" 2>&1
@@ -4954,6 +5013,17 @@ elif lift_zip "$WORK/zip.sh"; then
 				|| { fail "the zip carries no $d/ entry"; z_ok=no; }
 		done
 		[ "$z_ok" = yes ] && ok "and it carries all four folders, the empty site/ among them"
+	else
+		fail "the CADR's card was not zipped as cadr-arty-z7-20.zip"
+	fi
+	# A QUUX card's zip is named for QUUX, so that the two machines' zips
+	# for one board are told apart without being opened.
+	make_root
+	if run_zip "$WORK/bin" quux && [ -f "$WORK/root/quux-arty-z7-20.zip" ] \
+	   && [ ! -f "$WORK/root/cadr-arty-z7-20.zip" ]; then
+		ok "and a QUUX card is zipped as quux-arty-z7-20.zip"
+	else
+		fail "a QUUX card was not zipped as quux-arty-z7-20.zip: $(ls "$WORK/root")"
 	fi
 	# **THE CONTROL.**  A `zip` that quietly drops a file is what a readback
 	# is for, and it is not a fancy failure: a zip built from a directory

@@ -95,7 +95,22 @@ BOARD_DTB=${BOARD_DTB:-zynq-arty-z7-20.dtb}
 BOARD_NAME=$(basename "$BOARD_DIR")
 [ -d "$BOARD_DIR" ] || { echo "mksd-release: no board directory at $BOARD_DIR" >&2; exit 1; }
 
-OUT=${OUT:-build/sd/release/$BOARD_NAME}
+# WHICH MACHINE, cadr unless MACHINE=quux says otherwise, passed straight
+# through as well.  A QUUX release goes in a directory of its own, so the two
+# machines' zips for one board can be built one after the other.
+MACHINE=${MACHINE:-cadr}
+case "$MACHINE" in
+	cadr) OUT=${OUT:-build/sd/release/$BOARD_NAME} ;;
+	quux) OUT=${OUT:-build/sd/release/quux-$BOARD_NAME} ;;
+	*) echo "mksd-release: MACHINE=$MACHINE: it is cadr or quux" >&2; exit 1 ;;
+esac
+# **AND THE COMMIT THE RELEASE WAS BUILT FROM, NAMED, NEVER GUESSED**, as the
+# bitstream is: the README carries it, and a file somebody downloaded a month
+# ago then says what it is.  A Zynq bitstream's build stamp beside it
+# (`<bit>.stamp`, tools/build_stamp.tcl) must name the same commit and a clean
+# tree, or the release stops.
+RELEASE_COMMIT=${RELEASE_COMMIT:-}
+[ -n "$RELEASE_COMMIT" ] || { echo "mksd-release: RELEASE_COMMIT=<the commit the bitstreams and images were built from> is required" >&2; exit 1; }
 BIT=${BIT:-}
 [ -n "$BIT" ] || { echo "mksd-release: BIT=<the released bitstream> is required" >&2; exit 1; }
 [ -f "$BIT" ] || { echo "mksd-release: no bitstream at $BIT" >&2; exit 1; }
@@ -104,6 +119,21 @@ BIT=${BIT:-}
 FAULT_BIT=${FAULT_BIT:-}
 [ -n "$FAULT_BIT" ] || { echo "mksd-release: FAULT_BIT=<the board's fault bitstream> is required" >&2; exit 1; }
 [ -f "$FAULT_BIT" ] || { echo "mksd-release: no fault bitstream at $FAULT_BIT" >&2; exit 1; }
+for b in "$BIT" "$FAULT_BIT"; do
+	[ -f "$b.stamp" ] || continue
+	sc=$(sed -n 's/^commit //p' "$b.stamp"); st=$(sed -n 's/^tree //p' "$b.stamp")
+	case "$RELEASE_COMMIT" in
+		"$sc"*) ;;
+		*) echo "mksd-release: $b was built from $sc, not RELEASE_COMMIT=$RELEASE_COMMIT" >&2; exit 1 ;;
+	esac
+	# The fault bitstream's stamp says so after the tree's state
+	# (tools/build_stamp.tcl, build_stamp_pack).
+	case "$st" in
+		clean|"clean, the fault bitstream") ;;
+		*) echo "mksd-release: $b was built from a tree that was $st, not clean" >&2; exit 1 ;;
+	esac
+	echo "mksd-release: $(basename "$b"): built from $sc, tree clean"
+done
 [ -z "${PACKS:-}" ] || { echo "mksd-release: a release carries no pack; PACKS is for mksd-dev.sh" >&2; exit 1; }
 [ -z "${SYS:-}" ] && [ -z "${SITE:-}" ] \
   || { echo "mksd-release: a release carries no band, so no sys/ and no site/; SYS and SITE are for mksd-dev.sh" >&2; exit 1; }
@@ -114,6 +144,7 @@ FAULT_BIT=${FAULT_BIT:-}
 [ -z "${IMAGES:-}" ] || export IMAGES
 
 OUT="$OUT" BIT="$BIT" FAULT_BIT="$FAULT_BIT" NO_FAULT= STANDALONE=1 RELEASE=1 \
+    MACHINE="$MACHINE" RELEASE_COMMIT="$RELEASE_COMMIT" \
     BOARD_DIR="$BOARD_DIR" BOARD_DTB="$BOARD_DTB" \
     boards/arty-z7-20/linux/mksd-buildroot.sh
 
@@ -206,6 +237,22 @@ for rc in "$OUT/card/fpgarc" "$OUT/card/cadrrc" "$OUT/card/quuxrc"; do
 done
 echo "mksd-release: and no Chaosnet peer or bridge in any file of flags --- the network is the user's"
 
+# **AND THE CARD SAYS THE MACHINE ITS BITSTREAM IS.**  Nothing can ask the
+# fabric, so every init script believes fpgarc's `--machine` line: a QUUX
+# card that did not say quux would start ozd and refuse the file device, and
+# a CADR card that said it would do the opposite.  So the live lines are read
+# back, not the variable that wrote them.
+machines=$(tr -d '\r' < "$OUT/card/fpgarc" | grep -E '^--machine( |$)' || true)
+case "$MACHINE" in
+	quux) want="--machine quux" ;;
+	*) want="" ;;
+esac
+if [ "$machines" != "$want" ]; then
+	echo "mksd-release: STOP --- fpgarc's live --machine lines are [$machines], and this is the $MACHINE's release" >&2
+	exit 1
+fi
+echo "mksd-release: fpgarc says the machine is the $MACHINE's"
+
 # **AND THE CARD SHIPS WITH NO BAND ON IT, WHICH IS A THIRD THING A FLAG
 # CANNOT BE TRUSTED FOR.**  PACKS is refused above, SYS and SITE are refused
 # above and STANDALONE clears CC_PACK, so three mechanisms already say no band
@@ -271,11 +318,11 @@ echo "mksd-release: the bay is empty and so are sys/ and site/ --- the band is t
 #
 # mksd-buildroot.sh has already unpacked this zip and compared it against the
 # staged directory, so what is left here is to say where it is and how big.
-ZIP="$OUT/cadr-$BOARD_NAME.zip"
+ZIP="$OUT/$MACHINE-$BOARD_NAME.zip"
 [ -f "$ZIP" ] || { echo "mksd-release: no zip at $ZIP; mksd-buildroot.sh did not build one" >&2; exit 1; }
 zs=$(stat -c %s "$ZIP")
 unpacked=$(( $(du -s --block-size=1 "$OUT/card" | cut -f1) ))
-echo "mksd-release: $ZIP  $zs bytes, $unpacked unpacked --- this is what is published for the $BOARD_NAME"
+echo "mksd-release: $ZIP  $zs bytes, $unpacked unpacked --- this is what is published for the $MACHINE on the $BOARD_NAME"
 echo "mksd-release: sha256 $(sha256sum "$ZIP" | cut -d' ' -f1)"
 echo "mksd-release: the user formats a microSD card as ONE FAT32 partition in an"
 echo "mksd-release: MBR and unpacks this onto it.  Not exFAT, which no loader here"

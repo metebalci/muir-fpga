@@ -189,6 +189,7 @@ BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 # The README's board-specific sentences, as the Zynq-7000 boards and the
 # DE25-Nano have them; a board whose own differ sets them in its arm below.
 README_UENV_MAC=yes
+README_CARD_LABEL=
 README_FAULT_LAMPS="IF EVERY LIGHT ON THE BOARD BLINKS TOGETHER, twice a second and red"
 README_FAULT_LAMPS2="on a color light, "
 case "$BOARD_NAME" in
@@ -243,6 +244,9 @@ case "$BOARD_NAME" in
     # The README's two board-specific sentences: the SOM's EEPROM gives the
     # MAC, so uEnv.txt never carries one, and the two lamps are single-color.
     README_UENV_MAC=
+    # And Linux finds the card by its volume name, because the slot is a USB
+    # reader (rootfs-overlay/etc/cadr/card.sh), so the README says to name it.
+    README_CARD_LABEL=CADR
     README_FAULT_LAMPS="IF UF1 AND UF2 BLINK TOGETHER, twice a second,"
     README_FAULT_LAMPS2=""
     ;;
@@ -319,6 +323,21 @@ case "$REVISION" in
     ;;
   *) die "REVISION=$REVISION: it is 13, QUUX revision 13, or unset for the CADR and revision 12" ;;
 esac
+# **AND WHICH MACHINE THE BITSTREAM IS, WHICH THE FABRIC CANNOT BE ASKED
+# EITHER.**  MACHINE=quux is a card for a QUUX bitstream: `fpgarc` carries
+# `--machine quux` live, which every init script reads, the README says QUUX
+# and where its disk goes, and the zip is named quux-<board>.zip.  cadr, the
+# default, writes the line commented and names the zip cadr-<board>.zip.
+# Revision 13 is QUUX's, so REVISION=13 makes quux the default and refuses
+# cadr.
+MACHINE=${MACHINE:-}
+[ -z "$REVISION" ] || MACHINE=${MACHINE:-quux}
+MACHINE=${MACHINE:-cadr}
+case "$MACHINE" in
+  cadr) [ -z "$REVISION" ] || die "REVISION=$REVISION is QUUX's, and MACHINE=cadr" ;;
+  quux) ;;
+  *) die "MACHINE=$MACHINE: it is cadr or quux" ;;
+esac
 # The board's four files, which the card's folder and the server's directory
 # for the board both hold and the loader's environment names.
 BOARD_FILES="$FABRIC $BOARD_DTB $KERNEL rootfs.cpio.uboot"
@@ -361,6 +380,15 @@ STANDALONE=${STANDALONE:-}
 # and commented out.  mksd-release.sh sets both; a card staged here for the
 # card path sets STANDALONE alone and keeps the menu it has always had.
 RELEASE=${RELEASE:-}
+# **AND WHICH COMMIT THE CARD'S FILES WERE BUILT FROM**, written into the
+# README when it is given, so that a zip downloaded a month ago still says
+# what it is.  mksd-release.sh requires it; a commit is hexadecimal, and
+# anything else is refused rather than written onto a public artifact.
+RELEASE_COMMIT=${RELEASE_COMMIT:-}
+if [ -n "$RELEASE_COMMIT" ] && ! printf '%s\n' "$RELEASE_COMMIT" | grep -Eqx '[0-9a-f]{7,40}'; then
+  echo "mksd-buildroot: RELEASE_COMMIT=$RELEASE_COMMIT is not a commit: 7 to 40 hexadecimal digits" >&2
+  exit 1
+fi
 DTC=${DTC:-$HOSTBIN/dtc}
 
 die() { echo "mksd-buildroot: $*" >&2; exit 1; }
@@ -783,11 +811,22 @@ stage_tree() {
 # wrong board's zip looks perfectly ordinary in a reader.  CRLF, because the
 # reader is Notepad.
 {
-  printf 'The CADR on a card --- for the %s and no other board.\r\n\r\n' "$BOARD_NAME"
+  if [ "$MACHINE" = quux ]; then
+    printf 'QUUX on a card --- for the %s and no other board.\r\n\r\n' "$BOARD_NAME"
+  else
+    printf 'The CADR on a card --- for the %s and no other board.\r\n\r\n' "$BOARD_NAME"
+  fi
+  if [ -n "${RELEASE_COMMIT:-}" ]; then
+    printf 'Built from muir-fpga commit %s: the fabric, the loader and Linux.\r\n\r\n' "$RELEASE_COMMIT"
+  fi
   printf 'This is one FAT32 partition and everything the board needs is on\r\n'
   printf 'it.  Unpack the zip onto a card you formatted yourself; there is no\r\n'
   printf 'disk image to write.  A file damaged by a power cut is repaired by\r\n'
   printf 'unpacking the zip again over the top.\r\n\r\n'
+  if [ -n "$README_CARD_LABEL" ]; then
+    printf "NAME THE CARD %s WHEN YOU FORMAT IT.  This board's Linux finds the\r\n" "$README_CARD_LABEL"
+    printf 'card, its disk packs and its settings by that volume name.\r\n\r\n'
+  fi
   printf 'What is here\r\n'
   printf '  %-22s the loader, which this board reads by name.\r\n' "$ROOT_NAMES"
   printf "  %-22s read by the loader before anything else: a\r\n" uEnv.txt
@@ -805,9 +844,17 @@ stage_tree() {
   else
     printf "  %-22s filesystem, and the fault bitstream.\r\n" ''
   fi
-  printf '  %-22s the disk packs.  See below.\r\n' 'packs/'
-  printf "  %-22s the band's Lisp sources, read-only, and its\r\n" 'sys/  site/'
-  printf '  %-22s site configuration, which it may write.\r\n' ''
+  if [ "$MACHINE" = quux ]; then
+    printf '  %-22s the disk.  See below.\r\n' 'packs/'
+    printf "  %-22s the system's Lisp sources and its site\r\n" 'sys/  site/'
+    printf '  %-22s configuration, which the machine reads and\r\n' ''
+    printf '  %-22s writes as HOST through its file device.\r\n' ''
+    printf "  %-22s home/, made at the first boot, is the users'.\r\n" ''
+  else
+    printf '  %-22s the disk packs.  See below.\r\n' 'packs/'
+    printf "  %-22s the band's Lisp sources, read-only, and its\r\n" 'sys/  site/'
+    printf '  %-22s site configuration, which it may write.\r\n' ''
+  fi
   printf '  %-22s the settings.  Edit these here, on the card,\r\n' 'fpgarc  cadrrc  quuxrc'
   printf '  %-22s where they survive a reboot: everything else\r\n' ''
   printf '  %-22s on the board runs from a RAM disk unpacked at\r\n' ''
@@ -828,17 +875,25 @@ stage_tree() {
   printf "A CARD MADE FROM ANOTHER BOARD'S ZIP WILL NOT BOOT.  The board looks\r\n"
   printf 'for its own folder by name, so it stops saying it cannot read a file\r\n'
   printf 'under %s/ and says it every ten seconds.  Unpack the right zip.\r\n\r\n' "$BOARD_NAME"
-  printf 'Name a pack\r\n'
-  printf 'packs/disk-pack-0.img to packs/disk-pack-7.img: the number is the\r\n'
-  printf 'disk unit the machine sees it on, and whichever of the eight files\r\n'
-  printf 'exist are the drives that are present.  A pack must be exactly\r\n'
-  printf '269,562,880 bytes (a T-300) or 70,937,600 (a T-80); any other size\r\n'
-  printf 'is not a pack.\r\n\r\n'
-  printf 'packs/muir-cc.img, if this card carries it, is not one of the eight\r\n'
-  printf 'and is not a drive.  It is the debugger pack: a band with CC already\r\n'
-  printf 'loaded in it, which muir reads and the machine in the fabric never\r\n'
-  printf 'sees.  cadrrc is what names it, and the two are deleted or kept\r\n'
-  printf 'together.\r\n\r\n'
+  if [ "$MACHINE" = quux ]; then
+    printf 'Name the disk\r\n'
+    printf "packs/disk-pack-0.img is QUUX's one disk: a disk with a GPT, as a\r\n"
+    printf 'raw image, a fixed VHD or a dynamic VHD, told apart by its own\r\n'
+    printf 'footer and not by its name.  A QUUX system release is such a disk;\r\n'
+    printf 'uncompress it and copy it here under this name.\r\n\r\n'
+  else
+    printf 'Name a pack\r\n'
+    printf 'packs/disk-pack-0.img to packs/disk-pack-7.img: the number is the\r\n'
+    printf 'disk unit the machine sees it on, and whichever of the eight files\r\n'
+    printf 'exist are the drives that are present.  A pack must be exactly\r\n'
+    printf '269,562,880 bytes (a T-300) or 70,937,600 (a T-80); any other size\r\n'
+    printf 'is not a pack.\r\n\r\n'
+    printf 'packs/muir-cc.img, if this card carries it, is not one of the eight\r\n'
+    printf 'and is not a drive.  It is the debugger pack: a band with CC already\r\n'
+    printf 'loaded in it, which muir reads and the machine in the fabric never\r\n'
+    printf 'sees.  cadrrc is what names it, and the two are deleted or kept\r\n'
+    printf 'together.\r\n\r\n'
+  fi
   printf 'While the board is running you need not take the card out at all:\r\n'
   printf '  copy a pack in            that drive comes ready\r\n'
   printf '  RENAME a pack out         that drive is taken away, and anything\r\n'
@@ -1246,7 +1301,11 @@ fi
   printf "# screen is 768 by 963, or quux, the evolved CADR, whose screen is\r\n"
   printf "# the video controller, 1280 by 1024, with no color TV.  The fabric cannot be asked,\r\n"
   printf "# so a card carrying a QUUX bitstream says quux here.\r\n"
-  printf -- "#--machine cadr\r\n"
+  if [ "$MACHINE" = quux ]; then
+    printf -- "--machine quux\r\n"
+  else
+    printf -- "#--machine cadr\r\n"
+  fi
   printf "\r\n"
   printf "# The display's region in memory, and how often it is read while\r\n"
   printf "# anybody is watching, in milliseconds.  The defaults are where the\r\n"
@@ -1891,7 +1950,7 @@ done
 # that the archive's entries are the card's own paths and not `card/...`.  A
 # relative OUT would otherwise put the archive inside the directory it is
 # archiving, which is where this first went wrong.
-ZIP="$(cd "$OUT" && pwd)/cadr-$BOARD_NAME.zip"
+ZIP="$(cd "$OUT" && pwd)/$MACHINE-$BOARD_NAME.zip"
 if command -v zip >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
   TMP=$(mktemp -d "${TMPDIR:-$HOME/.cache}/mksd-buildroot.XXXXXX")
   trap 'rm -rf "$TMP"' EXIT

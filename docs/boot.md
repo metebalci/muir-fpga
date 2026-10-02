@@ -477,6 +477,11 @@ Then mount it and unpack the board's zip into the root of it:
     sudo unzip -o cadr-arty-z7-20.zip -d $M
     sudo sync && sudo umount $M && rmdir $M
 
+**On the Kria KR260, name the card `CADR` when formatting it**, as the
+`mkfs.vfat -n CADR` line above does. Its microSD slot is a USB reader, so
+Linux finds the card by its volume name (`/etc/cadr/card.sh` in the board's
+image), and `README.TXT` on that board's card says so.
+
 **Unpack into the root of the card, not into a folder on it.** `BOOT.BIN` and
 `uEnv.txt` are read from the root by name, and a card whose files are one
 level down behaves exactly like a card with no files on it.
@@ -489,7 +494,8 @@ empty. `README.TXT` at the root says which board the zip is for and what each
 part is, because a card in a Windows reader otherwise shows a folder named
 after a board and a 270 MB `.img` and explains nothing.
 
-**A release is four zips, one for each board.**
+**A release is six zips: the CADR for each of the four boards, and QUUX for
+the Arty Z7-20 and the DE25-Nano.** The CADR's are these.
 
     cadr-arty-z7-20.zip     about 8.1 MB     12,500,992 B on the card
     cadr-cora-z7-07s.zip    about 8.1 MB     10,498,048 B on the card
@@ -500,6 +506,13 @@ Each zip also carries its board's fault bitstream beside the fabric, and
 `make release` requires `FAULT_ARTY`, `FAULT_CORA`, `FAULT_DE25` and
 `FAULT_KR260` beside the four bitstreams. The sizes of the first three were
 measured before that file was added; the Kria KR260's include it.
+
+A QUUX zip, `quux-arty-z7-20.zip` or `quux-de25-nano.zip`, holds the same
+files as its board's CADR zip, the fault bitstream included, except three.
+The fabric is QUUX's. `fpgarc` has `--machine quux` live, which every init
+script reads, since nothing can ask the fabric which machine it is. And
+`README.TXT` says QUUX, and that `packs/disk-pack-0.img` is QUUX's one disk.
+Every README also names the commit the zip was built from.
 
 The download is given to a tenth of a megabyte because it is not the same to
 the byte twice: a zip stores each file's own time, so two builds of the same
@@ -605,8 +618,9 @@ development allocation reserves a second pair of Chaosnet addresses for
 exactly that.
 
 `build/sd/buildroot/card/` is the card's contents as a directory, and
-`build/sd/buildroot/cadr-<board>.zip` is that directory zipped, which is what
-a user unpacks. The zip is read back afterwards --- unpacked to a scratch
+`build/sd/buildroot/<machine>-<board>.zip` is that directory zipped, which is
+what a user unpacks. The machine is `cadr`, or `quux` when `MACHINE=quux`
+says the bitstream is QUUX's. The zip is read back afterwards --- unpacked to a scratch
 directory and compared against what was staged, every file byte for byte and
 the name sets both ways --- because what is published is the zip and not the
 directory. **What the image's readback could say and this cannot is that the
@@ -633,34 +647,41 @@ and the section above says what it costs.
 
 ## The release, and the card this project builds for itself
 
-**A release is four zips, one for each board, and one command makes all
-four.**
+**A release is six zips, one for each board and machine, and one command
+makes all six.**
 
-    make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
+    make release RELEASE_COMMIT=<the commit they were built from> \
+                 BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
                  BIT_KR260=<a .bit> \
+                 BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf> \
                  FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf> \
                  FAULT_KR260=<a .bit>
 
-**It is one target rather than four because four zips are four chances for
-one to be stale.** A release in which three boards were rebuilt and the
-fourth was not is exactly the sort of thing that ships, so every bitstream is
-required by name, a missing one stops the run before anything is built, and
-the four zips are printed together at the end with their sizes and digests,
-where a missing one is visible. The bitstreams are named on the command line
+**It is one target rather than six because six zips are six chances for one
+to be stale.** A release in which five were rebuilt and the sixth was not is
+exactly the sort of thing that ships, so every bitstream is required by name,
+a missing one stops the run before anything is built, and the six zips are
+printed together at the end with their sizes and digests, where a missing one
+is visible. `RELEASE_COMMIT` is written into every README. A Zynq
+bitstream's build stamp beside it, `<bit>.stamp`, must name that commit and a
+clean tree, or the release stops. The bitstreams are named on the command line
 because they are not in this repository: they are built by Vivado and by
 Quartus, which `make check` does not run.
 
 Each board's Buildroot output must exist first, which is `make buildroot`,
 `make buildroot-cora`, `make buildroot-de25` and `make buildroot-kr260`. One board on its own is
 
+    RELEASE_COMMIT=<the commit> FAULT_BIT=<the fault bitstream> \
     BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
-    IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
+    RELEASE_COMMIT=<the commit> IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+    FAULT_BIT=<the Cora's fault bitstream> \
     BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
-and the zip goes in a directory named for the board and carries the board's
-name in its own name, so two boards' releases can be built one after the other
+and `MACHINE=quux` with a QUUX bitstream makes that board's QUUX zip. The zip
+goes in a directory named for the board, `quux-<board>` for QUUX's, and
+carries the machine's and the board's names in its own name, so two boards' releases can be built one after the other
 without either being overwritten, and a file somebody downloaded a month ago
 still says which board it is for.
 

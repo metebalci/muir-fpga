@@ -69,7 +69,11 @@ OUT="$OUT" BIT="$BIT" PACKS="${PACKS:-}" \
     BOARD_DIR="$BOARD_DIR" BOARD_DTB="$BOARD_DTB" \
     boards/arty-z7-20/linux/mksd-buildroot.sh
 
-zip="$OUT/cadr-$BOARD_NAME.zip"
+# The zip is named for the machine as mksd-buildroot.sh names it: quux when
+# MACHINE says so or REVISION=13 is given, the CADR's otherwise.
+machine=${MACHINE:-}
+[ -z "${REVISION:-}" ] || machine=${machine:-quux}
+zip="$OUT/${machine:-cadr}-$BOARD_NAME.zip"
 echo "mksd-dev: $zip  $(stat -c %s "$zip") bytes"
 echo "mksd-dev: format a microSD card as ONE FAT32 partition in an MBR and unpack"
 echo "mksd-dev: this onto it; $OUT/card/ is the same thing already unpacked"

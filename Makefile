@@ -5128,26 +5128,34 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 
 # ------------------------------------------------------------ the release
 #
-# **A RELEASE IS FOUR ZIPS, ONE A BOARD, AND THIS IS THE ONE COMMAND THAT
-# MAKES THEM.**  There is no card image any more: a user formats a microSD
-# card themselves, as one FAT32 partition in an MBR, and unpacks their board's
-# zip onto it.  Each zip is self-sufficient, names its board in its own file
-# name and inside it, and is what is published for that board.
+# **A RELEASE IS SIX ZIPS, ONE A BOARD AND MACHINE, AND THIS IS THE ONE
+# COMMAND THAT MAKES THEM**: the CADR for the four boards, and QUUX for the
+# Arty Z7-20 and the DE25-Nano.  There is no card image any more: a user
+# formats a microSD card themselves, as one FAT32 partition in an MBR, and
+# unpacks their board's zip onto it.  Each zip is self-sufficient, names its
+# machine and its board in its own file name and inside it, and is what is
+# published for that board and machine.
 #
-#     make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
+#     make release RELEASE_COMMIT=<the commit all of them were built from> \
+#                  BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
 #                  BIT_KR260=<a .bit> \
+#                  BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf> \
 #                  FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf> \
 #                  FAULT_KR260=<a .bit>
+#
+# **AND EACH README NAMES THE COMMIT**, RELEASE_COMMIT, which a Zynq
+# bitstream's build stamp beside it must agree with (mksd-release.sh).  A QUUX
+# zip carries the same fault bitstream as its board's CADR zip.
 #
 # **AND EACH ZIP CARRIES ITS BOARD'S FAULT BITSTREAM**, the one the loader
 # takes when the CADR's will not load (`docs/board.md`), named the same way.
 #
-# **FOUR ZIPS ARE FOUR CHANCES FOR ONE TO BE STALE**, which is why this is
-# one target and not four: a release in which three boards were rebuilt and
-# the fourth was not is exactly the sort of thing that ships.  So every
-# bitstream is required by name, the target refuses to build a partial
-# release, and it prints the four zips together at the end with their digests,
-# where a missing one is visible.
+# **SIX ZIPS ARE SIX CHANCES FOR ONE TO BE STALE**, which is why this is
+# one target and not six: a release in which five were rebuilt and the sixth
+# was not is exactly the sort of thing that ships.  So every bitstream is
+# required by name, the target refuses to build a partial release, and it
+# prints the six zips together at the end with their digests, where a missing
+# one is visible.
 #
 # The bitstreams are not in this repository --- they are built by Vivado and by
 # Quartus, which `make check` does not run --- so they are named on the command
@@ -5158,35 +5166,43 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 .PHONY: release
 RELEASE_DIR := build/sd/release
 release:
-	@for v in BIT_ARTY BIT_CORA BIT_DE25 BIT_KR260 FAULT_ARTY FAULT_CORA FAULT_DE25 FAULT_KR260; do \
+	@for v in RELEASE_COMMIT BIT_ARTY BIT_CORA BIT_DE25 BIT_KR260 BIT_ARTY_QUUX BIT_DE25_QUUX \
+	          FAULT_ARTY FAULT_CORA FAULT_DE25 FAULT_KR260; do \
 	    eval "b=\$$$$v"; \
 	    [ -n "$$b" ] || { \
-	        echo "release: $$v is not set.  A release is four zips and this target makes"; \
-	        echo "release: all four, so that one board cannot be left at an older build:"; \
-	        echo "release:   make release BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>"; \
-	        echo "release:                BIT_KR260=<a .bit>"; \
+	        echo "release: $$v is not set.  A release is six zips and this target makes"; \
+	        echo "release: all six, so that one board cannot be left at an older build:"; \
+	        echo "release:   make release RELEASE_COMMIT=<the commit they were built from>"; \
+	        echo "release:                BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>"; \
+	        echo "release:                BIT_KR260=<a .bit> BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf>"; \
 	        echo "release:                FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>"; \
 	        echo "release:                FAULT_KR260=<a .bit>"; \
 	        exit 1; }; \
-	    [ -f "$$b" ] || { echo "release: $$v=$$b is not a file"; exit 1; }; \
+	    [ $$v = RELEASE_COMMIT ] || [ -f "$$b" ] || { echo "release: $$v=$$b is not a file"; exit 1; }; \
 	done
-	BIT=$(BIT_ARTY) FAULT_BIT=$(FAULT_ARTY) \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) BIT=$(BIT_ARTY) FAULT_BIT=$(FAULT_ARTY) \
 	    boards/arty-z7-20/linux/mksd-release.sh
-	IMAGES=$(BR_OUT_CORA)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT_CORA)/images \
 	    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
 	    BIT=$(BIT_CORA) FAULT_BIT=$(FAULT_CORA) boards/arty-z7-20/linux/mksd-release.sh
-	IMAGES=$(BR_OUT_DE25)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT_DE25)/images \
 	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
 	    BIT=$(BIT_DE25) FAULT_BIT=$(FAULT_DE25) boards/arty-z7-20/linux/mksd-release.sh
-	IMAGES=$(BR_OUT_KR260)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT_KR260)/images \
 	    BOARD_DIR=boards/kria-kr260 BOARD_DTB=zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb \
 	    BIT=$(BIT_KR260) FAULT_BIT=$(FAULT_KR260) boards/arty-z7-20/linux/mksd-release.sh
+	RELEASE_COMMIT=$(RELEASE_COMMIT) MACHINE=quux \
+	    BIT=$(BIT_ARTY_QUUX) FAULT_BIT=$(FAULT_ARTY) boards/arty-z7-20/linux/mksd-release.sh
+	RELEASE_COMMIT=$(RELEASE_COMMIT) MACHINE=quux IMAGES=$(BR_OUT_DE25)/images \
+	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
+	    BIT=$(BIT_DE25_QUUX) FAULT_BIT=$(FAULT_DE25) boards/arty-z7-20/linux/mksd-release.sh
 	@echo
-	@echo "release: four zips, one a board:"
-	@for b in arty-z7-20 cora-z7-07s de25-nano kria-kr260; do \
-	    z=$(RELEASE_DIR)/$$b/cadr-$$b.zip; \
+	@echo "release: six zips, one a board and machine, built from $(RELEASE_COMMIT):"
+	@for z in $(RELEASE_DIR)/arty-z7-20/cadr-arty-z7-20.zip $(RELEASE_DIR)/cora-z7-07s/cadr-cora-z7-07s.zip \
+	          $(RELEASE_DIR)/de25-nano/cadr-de25-nano.zip $(RELEASE_DIR)/kria-kr260/cadr-kria-kr260.zip \
+	          $(RELEASE_DIR)/quux-arty-z7-20/quux-arty-z7-20.zip $(RELEASE_DIR)/quux-de25-nano/quux-de25-nano.zip; do \
 	    [ -f "$$z" ] || { echo "release: $$z was not built"; exit 1; }; \
-	    printf '  %-44s %10d  %s\n' "$$z" "$$(stat -c %s $$z)" "$$(sha256sum $$z | cut -c1-16)"; \
+	    printf '  %-50s %10d  %s\n' "$$z" "$$(stat -c %s $$z)" "$$(sha256sum $$z | cut -c1-16)"; \
 	done
 	@echo "release: each is unpacked onto a microSD card formatted as ONE FAT32"
 	@echo "release: partition in an MBR.  docs/boot.md says how."

@@ -317,11 +317,12 @@ same on every board.
 **A release zip is built for this board the same way it is for the other**,
 with the board in the same two variables:
 
-    IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
+    RELEASE_COMMIT=<the commit> IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+    FAULT_BIT=<the Cora's fault bitstream> \
     BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
-`make release` builds this one together with the other two boards', which is
+`make release` builds this one together with the other boards', which is
 how a release is actually made. It carries everything the board needs to come
 up and no band at all: `packs/`, `sys/` and `site/` are on the card empty, and
 `README.TXT` and the two files of flags are at the root. `cadr-cora-z7-07s.zip`
