@@ -5180,8 +5180,8 @@ release:
 	        exit 1; }; \
 	    [ $$v = RELEASE_COMMIT ] || [ -f "$$b" ] || { echo "release: $$v=$$b is not a file"; exit 1; }; \
 	done
-	RELEASE_COMMIT=$(RELEASE_COMMIT) BIT=$(BIT_ARTY) FAULT_BIT=$(FAULT_ARTY) \
-	    boards/arty-z7-20/linux/mksd-release.sh
+	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT)/images \
+	    BIT=$(BIT_ARTY) FAULT_BIT=$(FAULT_ARTY) boards/arty-z7-20/linux/mksd-release.sh
 	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT_CORA)/images \
 	    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
 	    BIT=$(BIT_CORA) FAULT_BIT=$(FAULT_CORA) boards/arty-z7-20/linux/mksd-release.sh
@@ -5191,7 +5191,7 @@ release:
 	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT_KR260)/images \
 	    BOARD_DIR=boards/kria-kr260 BOARD_DTB=zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb \
 	    BIT=$(BIT_KR260) FAULT_BIT=$(FAULT_KR260) boards/arty-z7-20/linux/mksd-release.sh
-	RELEASE_COMMIT=$(RELEASE_COMMIT) MACHINE=quux \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) MACHINE=quux IMAGES=$(BR_OUT)/images \
 	    BIT=$(BIT_ARTY_QUUX) FAULT_BIT=$(FAULT_ARTY) boards/arty-z7-20/linux/mksd-release.sh
 	RELEASE_COMMIT=$(RELEASE_COMMIT) MACHINE=quux IMAGES=$(BR_OUT_DE25)/images \
 	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \

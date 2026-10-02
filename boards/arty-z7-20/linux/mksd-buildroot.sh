@@ -881,6 +881,13 @@ stage_tree() {
     printf 'raw image, a fixed VHD or a dynamic VHD, told apart by its own\r\n'
     printf 'footer and not by its name.  A QUUX system release is such a disk;\r\n'
     printf 'uncompress it and copy it here under this name.\r\n\r\n'
+    if [ -n "${RELEASE:-}" ]; then
+      printf "The system's files\r\n"
+      printf "Copy the sys and site folders of the system's sources into sys/\r\n"
+      printf 'and site/ here.  The machine reads them through its file device,\r\n'
+      printf 'and at every boot it reads its error table from sys/; without them\r\n'
+      printf 'it stops and asks for a file.\r\n\r\n'
+    fi
   else
     printf 'Name a pack\r\n'
     printf 'packs/disk-pack-0.img to packs/disk-pack-7.img: the number is the\r\n'
@@ -905,6 +912,16 @@ stage_tree() {
       printf '177201 to 177207, so a second board on the same network takes\r\n'
       printf '177202, LISPM-2, and so on.\r\n\r\n'
     fi
+  fi
+  # **THE BOARDS KEEP NO TIME** (cadr-common's clock.sh), so a card out of
+  # the box starts at the epoch unless fpgarc says otherwise; measured on a
+  # release card, System 1002 then shows 01/01/70.
+  if [ -n "${RELEASE:-}" ]; then
+    printf 'The date\r\n'
+    printf 'This board keeps no time while it is switched off.  Before you\r\n'
+    printf "switch it on, put today's date and the time, in UTC, on fpgarc's\r\n"
+    printf '#--date and #--time lines and take the # off each; otherwise the\r\n'
+    printf 'machine starts in 1970.\r\n\r\n'
   fi
   printf 'While the board is running you need not take the card out at all:\r\n'
   printf '  copy a pack in            that drive comes ready\r\n'

@@ -85,4 +85,12 @@ define OZD_INSTALL_INIT_SYSV
 		$(TARGET_DIR)/etc/init.d/S84ozd
 endef
 
+# **ITS BUILD DIRECTORY IS REMAPPED OUT OF THE BINARY.**  rustc writes source
+# paths into a program for its panic messages, and one of ozd's came out
+# absolute, naming the build directory and so the builder's home.  The
+# directory is remapped to `ozd`.  RUSTFLAGS outranks the per-target flags
+# Buildroot sets on 32-bit Arm, so that workaround (pkg-cargo.mk,
+# compiler-builtins issue 420) is repeated here.
+OZD_CARGO_ENV = RUSTFLAGS="--remap-path-prefix=$(OZD_DIR)=ozd$(if $(filter arm,$(NORMALIZED_ARCH)), -Clink-arg=-Wl$(comma)--allow-multiple-definition)"
+
 $(eval $(cargo-package))

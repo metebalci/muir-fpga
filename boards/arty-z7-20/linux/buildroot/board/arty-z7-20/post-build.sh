@@ -239,3 +239,36 @@ if [ -n "$stale" ]; then
 fi
 
 say "$packages package(s), $(echo $expected | wc -w) installed file(s), no leftovers"
+
+# **AND NOTHING IN THE IMAGE NAMES THE MACHINE IT WAS BUILT ON.**  The image
+# is published, and a path under the build directory or the builder's home
+# names the builder.  Two things carried one: the external toolchain's
+# libstdc++ pretty-printer for gdb (usr/lib/libstdc++.so.*-gdb.py), which
+# writes the toolchain's absolute paths into the target and which no program
+# here reads, so it is removed; and a Rust program's own source paths, which
+# ozd.mk now remaps.  Then the whole target is searched for the build
+# directory and the home directory, and the kernel's own record of who built
+# it (include/generated/compile.h, which the version string carries) must say
+# buildroot, which external.mk sets.  A finding stops the build.
+rm -f "$TARGET"/usr/lib/libstdc++.so.*-gdb.py
+# The home directory only when it is a user's under /home: /root is a path the
+# image itself uses, and a builder working as root is named by BASE_DIR.
+case "${HOME:-}" in /home/?*) home=$HOME ;; *) home= ;; esac
+for leak in "${BASE_DIR:-}" "$home"; do
+	[ -n "$leak" ] && [ "$leak" != / ] || continue
+	found=$(grep -rlF -- "$leak" "$TARGET" 2>/dev/null | sed "s|^$TARGET/||" || true)
+	if [ -n "$found" ]; then
+		echo "the image and the packages: THE IMAGE NAMES THE BUILD HOST: $leak is in" >&2
+		echo "$found" | sed 's/^/    /' >&2
+		exit 1
+	fi
+done
+for compile_h in "${BUILD_DIR:-/nonexistent}"/linux-*/include/generated/compile.h; do
+	[ -f "$compile_h" ] || continue
+	by=$(sed -n 's/^#define LINUX_COMPILE_BY[[:space:]]*"\(.*\)"$/\1/p' "$compile_h")
+	host=$(sed -n 's/^#define LINUX_COMPILE_HOST[[:space:]]*"\(.*\)"$/\1/p' "$compile_h")
+	[ "$by@$host" = buildroot@buildroot ] \
+		|| die "the kernel says it was built by $by@$host, not buildroot@buildroot ($compile_h)"
+	say "the kernel was built by $by@$host"
+done
+say "no path of the build host in the image"

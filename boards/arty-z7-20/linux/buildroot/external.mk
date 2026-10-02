@@ -39,6 +39,12 @@ define CADR_LINUX_COPY_RESERVED_DTSI
 endef
 LINUX_PRE_BUILD_HOOKS += CADR_LINUX_COPY_RESERVED_DTSI
 
+# The kernel's version string names who built it and on which machine, and the
+# image is published, so it names neither: the values BR2_REPRODUCIBLE would
+# set, without the rest of that option.  Every board's build includes this
+# file.  board/arty-z7-20/post-build.sh checks the result.
+LINUX_MAKE_ENV += KBUILD_BUILD_USER=buildroot KBUILD_BUILD_HOST=buildroot
+
 # **REVISION 13's u-boot.img, beside the board's**: U-Boot's own tree carries
 # the machine's reservation, so a revision 13 card carries a loader of its
 # own, the build's U-Boot with revision 13's tree (`../quux13-loader.sh`, which
