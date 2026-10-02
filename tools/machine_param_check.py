@@ -50,6 +50,15 @@ for any build but revision 13's or does not for revision 13's, and takes
 revision 13 into one that does; the DE25-Nano's two scripts refuse a width
 that is not a word and 40 on the CADR, and take revision 13.
 
+**AND THE DEBUG CABLE IS THE CADR'S ALONE** (contract Q5).  In the same
+elaborated tree, the CADR has one cell each of the cable's connector,
+`cadr_dbg_cable`, and of the join of its two debuggers, `cadr_dbg_join`, and
+one of the register window, `cadr_debug_window`, on a board with a processing
+system; QUUX has none of the three.  And the connector's eight pads: on the
+CADR no assignment to one is a bare high impedance, the connector driving each
+through its enable, and on QUUX every assignment to one is, over all eight
+bits, so the pads are inputs nothing drives and their pull-downs hold them.
+
 WHAT THIS DOES NOT SAY.  It says nothing about what QUUX is: that is
 `make check MACHINE=quux`, against muir's own QUUX.  It does not run Vivado or Quartus, so it does not see
 the generic reach synthesis there; `boards/de25-nano/quartus/build.sh` reads
@@ -88,6 +97,8 @@ BOARDS = {
             "DDR=1 HDMI=1": (["-GDDR=1", "-GHDMI=1"], ["tb/cadr_ps7_stub.sv"]),
         },
         "machines": ["cadr", "quux"],
+        # The debug cable's eight pads, Pmod JA.
+        "pads": ["ja"],
         # QUUX's K by the word: revision 12's four, and revision 13's five,
         # the machine's clock left at 100 MHz so that its timers count true
         # time (`cadr_arty.sv`, `SYNC_K13`).
@@ -105,6 +116,8 @@ BOARDS = {
             "DDR=1 HDMI=1": (["-DCADR_DE25_DDR", "-DCADR_DE25_HDMI"], []),
         },
         "machines": ["cadr", "quux"],
+        # The debug cable's eight pads, JP1 pins 31 to 38.
+        "pads": ["jp1_pin3%d" % i for i in range(1, 9)],
         "sync_k": {32: 4, 40: 4},
     },
     "cora": {
@@ -119,6 +132,7 @@ BOARDS = {
             "DDR=1": (["-GDDR=1"], ["tb/cadr_ps7_stub.sv"]),
         },
         "machines": ["cadr"],
+        "pads": ["ja"],
     },
     # The Kria KR260: the CADR alone for now, as the Cora, on its own memory
     # map, with the `PS8`'s stub for the board with the processing system.
@@ -135,6 +149,7 @@ BOARDS = {
             "DDR=1": (["-GDDR=1"], ["tb/cadr_ps8_stub.sv"]),
         },
         "machines": ["cadr"],
+        "pads": ["pmod1"],
     },
 }
 
@@ -276,6 +291,91 @@ def fd_ident_at_instance(tree, top):
     return int(values[0].split("h")[-1], 16), None
 
 
+# **THE DEBUG CABLE IS THE CADR'S ALONE** (contract Q5): its connector, the
+# join of its two debuggers and the register window that carries it on the
+# general-purpose port.  The CADR builds the connector and the join on every
+# board and the window on every board with a processing system; QUUX builds
+# none of the three.
+CABLE_MODULES = ("cadr_dbg_cable", "cadr_dbg_join", "cadr_debug_window")
+
+
+def cable_cells(tree):
+    """How many cells of each of the cable's modules the tree elaborates."""
+    modules = {}
+    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
+         if n.get("type") == "MODULE" else None)
+    counts = dict((m, 0) for m in CABLE_MODULES)
+
+    def cell(n):
+        if n.get("type") == "CELL":
+            mod = modules.get(n.get("modp"))
+            name = mod.get("origName") if mod else None
+            if name in counts:
+                counts[name] += 1
+    walk(tree, cell)
+    return counts
+
+
+def pad_writes(tree, pads):
+    """Every continuous assignment to one of the cable's pads, each as the
+    number of bits it writes and whether what it writes is high impedance
+    and nothing else."""
+    writes = []
+
+    def assign(n):
+        if n.get("type") != "ASSIGNW":
+            return
+        lhs = (n.get("lhsp") or [None])[0] or {}
+        ref = lhs
+        if ref.get("type") == "SEL":
+            ref = (ref.get("fromp") or [{}])[0]
+        if ref.get("type") != "VARREF" or ref.get("name") not in pads:
+            return
+        rhs = (n.get("rhsp") or [None])[0] or {}
+        const = rhs.get("name", "") if rhs.get("type") == "CONST" else ""
+        width, _, digits = const.partition("'")
+        z = bool(const) and digits[:1] == "b" and set(digits[1:]) == {"z"}
+        writes.append((int(width) if z else 0, z))
+    walk(tree, assign)
+    return writes
+
+
+def cable_at_top(board, config, asked, machine, tree):
+    """The CADR carries the cable's modules and QUUX none of them."""
+    top = BOARDS[board]["top"]
+    if machine == "cadr":
+        want = {"cadr_dbg_cable": 1, "cadr_dbg_join": 1,
+                "cadr_debug_window": 1 if "DDR" in config else 0}
+    else:
+        want = dict((m, 0) for m in CABLE_MODULES)
+    got = cable_cells(tree)
+    what = "%s, %s, %s: the debug cable's cells are %s" % (
+        top, config, asked,
+        ", ".join("%s %d" % (m, want[m]) for m in CABLE_MODULES))
+    if got != want:
+        say(False, "%s --- the tree has %s" % (
+            what, ", ".join("%s %d" % (m, got[m]) for m in CABLE_MODULES)))
+    else:
+        say(True, what)
+    # **AND THE PADS.**  On the CADR the connector drives them, every one
+    # through its enable, so no assignment to a pad is a bare high impedance;
+    # on QUUX every assignment to one is, and they cover the eight bits, so
+    # the pads are inputs nothing drives and their pull-downs hold them.
+    writes = pad_writes(tree, BOARDS[board]["pads"])
+    floated = sum(bits for bits, z in writes if z)
+    if machine == "cadr":
+        what = "%s, %s, %s: the connector drives the cable's pads" % (top, config, asked)
+        ok = len(writes) > 0 and floated == 0
+    else:
+        what = "%s, %s, %s: the cable's 8 pads are left undriven" % (top, config, asked)
+        ok = len(writes) > 0 and all(z for _, z in writes) and floated == 8
+    if ok:
+        say(True, what)
+    else:
+        say(False, "%s --- %d assignment(s) to them, %d of them high impedance over %d bit(s)"
+            % (what, len(writes), sum(1 for _, z in writes if z), floated))
+
+
 def word_reaches(board, config, bits, scratch):
     """QUUX at `bits` (None: not given, so 32) lints clean and is the width
     at u_machine."""
@@ -304,6 +404,8 @@ def word_reaches(board, config, bits, scratch):
         say(True, what)
     # **AND THE REVISION'S K**: on the Arty revision 13's is not revision 12's.
     k_at_generator(board, config, "MACHINE=quux, %s" % asked, want, tree)
+    # And no debug cable at revision 13 either.
+    cable_at_top(board, config, "MACHINE=quux, %s" % asked, "quux", tree)
     # And the file device's page names the revision: "QF13" at 40 bits,
     # "QFD9" below (`rtl/plumbing/quux_fd_face.sv`).
     ident_want = 0x51463133 if want > 32 else 0x51464439
@@ -362,6 +464,8 @@ def reaches(board, config, value, scratch):
         say(False, "%s --- it elaborates \"%s\"" % (what, got))
     else:
         say(True, what)
+    # **AND THE DEBUG CABLE IS THERE ON THE CADR AND NOWHERE ON QUUX.**
+    cable_at_top(board, config, asked, want, tree)
     # **AND QUUX'S K REACHES ITS GENERATOR**: the board's own SYNC_K, through
     # `cadr_machine` and `cadr_microcycle`, is the K `quux_phase_gen` counts.
     # A top level that dropped it would build the machine at the default K

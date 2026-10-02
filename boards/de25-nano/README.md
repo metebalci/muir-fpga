@@ -416,8 +416,10 @@ the NXM timer, which is the latch.
 
 ## The debug cable
 
-**MIT's whole cable is on JP1 pins 31 to 38, in every build of this board.** A
-board is always a debuggee, so the connector sits outside the arm of the top
+**MIT's whole cable is on JP1 pins 31 to 38, in every CADR build of this
+board.** QUUX has no debug cable, so a QUUX build drives none of the eight and
+reads none, and their weak pull-downs hold them low. A CADR board is always a
+debuggee, so the connector sits outside the arm of the top
 level that holds the processor: it answers a debugger that plugs in with
 nothing set, exactly as MIT's board answers one on its DBGIN, and a board told
 to connect becomes the debugger for a second board. `docs/debug-cable.md` is

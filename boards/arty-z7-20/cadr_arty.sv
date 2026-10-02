@@ -208,7 +208,8 @@ module cadr_arty #(
     // and listened to on a debuggee, and `cadr_dbg_cable.sv` hands out
     // `pin_t` --- high is not driven --- for exactly that.
     // `boards/arty-z7-20/cadr_arty.xdc` has the pins, from Digilent's own
-    // published file.
+    // published file.  On QUUX, which has no debug cable, they are in the
+    // port list and nothing drives or reads them.
     inout  wire  [7:0]     ja,
     // The HDMI transmitter's four differential pairs.  **THEY ARE IN THE
     // PORT LIST AND CONSTRAINED ON EVERY BOARD, NOT ONLY AN `HDMI` ONE**,
@@ -473,9 +474,6 @@ module cadr_arty #(
   // own DBGOUT page going the other way, which is CC on this board debugging
   // a second one. `dbg_connect` is what the console asks for and the four
   // beside it are what the connector says back.
-  logic        cab_req, cab_wr;
-  logic [1:0]  cab_a;
-  logic [15:0] cab_dbd;
   logic        dbg_holder;
   logic        dbgout_req, dbgout_wr;
   logic [1:0]  dbgout_a;
@@ -490,7 +488,6 @@ module cadr_arty #(
   // DEBUGGER applies it; see `rtl/plumbing/cadr_dbg_cable.sv`'s table.
   logic [1:0]  dbg_wiring;
   logic [2:0]  dbg_wire_state;
-  logic [7:0]  ja_o, ja_t;
   logic        mdbg_req, mdbg_wr;
   logic [1:0]  mdbg_a;
   logic [15:0] mdbg_dbd;
@@ -1056,58 +1053,100 @@ module cadr_arty #(
   // this board is a debuggee and nothing else, which is what a CADR with one
   // cable in it is.
   //
+  // **THE CADR'S ALONE** (contract Q5): QUUX has no debug cable, so a QUUX
+  // build instantiates neither the connector nor the join, and JA's eight
+  // pads are left undriven, held low by `cadr_arty.xdc`'s pull-downs, which
+  // is the unplugged connector.  `build/machine_param.pass` counts the cells
+  // on both machines.
+  //
   // **AND IT TAKES THE BOARD'S RESET AND NOT THE MACHINE'S**, for the reason
   // the window and the DBGIN page give about theirs: modifier bit 1 resets
   // this machine over this very cable, and a carrier reset by it would forget
   // the request that asked for it.
-  cadr_dbg_cable u_dbg_cable (
-      .clk(clk), .rst(rst),
-      // The role. `connect` is the console's word 14 and the `fpgarc` line
-      // behind it; `engaged` is whether this board took it, which is not the
-      // same question --- a board that can see a debugger on the forward
-      // group refuses, and `foreign` is how the console says why.
-      .connect(dbg_connect), .engaged(dbg_engaged), .foreign(dbg_foreign),
-      .peer_far(dbg_peer_far), .live(dbg_live), .active(dbg_active),
-      // Which way round the cable was made, and what the board found.
-      .wiring(dbg_wiring), .wire_state(dbg_wire_state),
-      // Frames heard and frames refused: the crosstalk instrument, page 0's
-      // word 15.
-      .frames(dbg_frames),
-      // This machine's own DBGOUT page: CC on this board, writing
-      // `0o766100`-`0o766137`, debugging the board at the far end.
-      .out_req(dbgout_req), .out_wr(dbgout_wr), .out_a(dbgout_a),
-      .out_dbd(dbgout_dbd), .out_ack(dbgout_ack),
-      .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
-      // And a second board's debugger arriving here, which joins the
-      // window's cable at the page below.
-      .in_req(cab_req), .in_wr(cab_wr), .in_a(cab_a), .in_dbd(cab_dbd),
-      .in_ack(dbg_in_ack), .in_dbd_out(dbd_from_machine), .in_dbd_oe(dbd_oe),
-      .pin_o(ja_o), .pin_t(ja_t), .pin_i(ja)
-  );
+  if (MACHINE == "cadr") begin : g_dbg_cable
+    logic        cab_req, cab_wr;
+    logic [1:0]  cab_a;
+    logic [15:0] cab_dbd;
+    logic [7:0]  ja_o, ja_t;
 
-  // The eight pads. `pin_t` is Xilinx's sense --- HIGH is not driven --- so
-  // the group this board does not own is high-impedance and the far end has
-  // it. Written as one continuous assignment a pad rather than eight `IOBUF`
-  // primitives, because a tri-state assignment is what every tool infers a
-  // buffer from and this file is meant to read as SystemVerilog.
-  for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
-    assign ja[i] = ja_t[i] ? 1'bz : ja_o[i];
+    cadr_dbg_cable u_dbg_cable (
+        .clk(clk), .rst(rst),
+        // The role. `connect` is the console's word 14 and the `fpgarc` line
+        // behind it; `engaged` is whether this board took it, which is not the
+        // same question --- a board that can see a debugger on the forward
+        // group refuses, and `foreign` is how the console says why.
+        .connect(dbg_connect), .engaged(dbg_engaged), .foreign(dbg_foreign),
+        .peer_far(dbg_peer_far), .live(dbg_live), .active(dbg_active),
+        // Which way round the cable was made, and what the board found.
+        .wiring(dbg_wiring), .wire_state(dbg_wire_state),
+        // Frames heard and frames refused: the crosstalk instrument, page 0's
+        // word 15.
+        .frames(dbg_frames),
+        // This machine's own DBGOUT page: CC on this board, writing
+        // `0o766100`-`0o766137`, debugging the board at the far end.
+        .out_req(dbgout_req), .out_wr(dbgout_wr), .out_a(dbgout_a),
+        .out_dbd(dbgout_dbd), .out_ack(dbgout_ack),
+        .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
+        // And a second board's debugger arriving here, which joins the
+        // window's cable at the page below.
+        .in_req(cab_req), .in_wr(cab_wr), .in_a(cab_a), .in_dbd(cab_dbd),
+        .in_ack(dbg_in_ack), .in_dbd_out(dbd_from_machine), .in_dbd_oe(dbd_oe),
+        .pin_o(ja_o), .pin_t(ja_t), .pin_i(ja)
+    );
+
+    // The eight pads. `pin_t` is Xilinx's sense --- HIGH is not driven --- so
+    // the group this board does not own is high-impedance and the far end has
+    // it. Written as one continuous assignment a pad rather than eight `IOBUF`
+    // primitives, because a tri-state assignment is what every tool infers a
+    // buffer from and this file is meant to read as SystemVerilog.
+    for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
+      assign ja[i] = ja_t[i] ? 1'bz : ja_o[i];
+    end
+
+    // Two debuggers at one DBGIN page, which MIT's board cannot have and this
+    // one can. The near arm is the window and the far arm the connector, the
+    // first to assert holds until it lifts, and a tie goes to the window ---
+    // `rtl/plumbing/cadr_dbg_join.sv` has the argument. An unplugged connector
+    // presents zeros, so with nothing in JA this is the window's cable
+    // unchanged.
+    cadr_dbg_join u_dbg_join (
+        .clk(clk), .rst(rst),
+        .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
+        .a_dbd(dbd_to_machine),
+        .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
+        .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
+        .holder(dbg_holder)
+    );
+  end else begin : g_no_dbg_cable
+    // No connector and no join.  The machine's two ends of the cable stand
+    // as an unplugged connector leaves them: `-DEBUG IN REQ` up, which is
+    // `mdbg_req` low, and the DBGOUT page answered by the pull-ups, which is
+    // `dbgout_live` low and `dbgout_dbd_in` all ones.  The connector's own
+    // words read zero, which is what the console reports for a connector
+    // with nothing on it.
+    for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
+      assign ja[i] = 1'bz;
+    end
+    assign mdbg_req       = 1'b0;
+    assign mdbg_wr        = 1'b0;
+    assign mdbg_a         = 2'd0;
+    assign mdbg_dbd       = 16'd0;
+    assign dbg_holder     = 1'b0;
+    assign dbgout_ack     = 1'b0;
+    assign dbgout_dbd_in  = 16'hFFFF;
+    assign dbgout_live    = 1'b0;
+    assign dbg_engaged    = 1'b0;
+    assign dbg_foreign    = 1'b0;
+    assign dbg_peer_far   = 1'b0;
+    assign dbg_live       = 1'b0;
+    assign dbg_active     = 1'b0;
+    assign dbg_wire_state = 3'd0;
+    assign dbg_frames     = 24'd0;
+    logic unused_dbg_cable;
+    assign unused_dbg_cable = ^{ja, dbgout_req, dbgout_wr, dbgout_a, dbgout_dbd,
+                                dbg_connect, dbg_wiring, dbg_in_req, dbg_in_wr,
+                                dbg_in_a, dbd_to_machine};
   end
-
-  // Two debuggers at one DBGIN page, which MIT's board cannot have and this
-  // one can. The near arm is the window and the far arm the connector, the
-  // first to assert holds until it lifts, and a tie goes to the window ---
-  // `rtl/plumbing/cadr_dbg_join.sv` has the argument. An unplugged connector
-  // presents zeros, so with nothing in JA this is the window's cable
-  // unchanged.
-  cadr_dbg_join u_dbg_join (
-      .clk(clk), .rst(rst),
-      .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
-      .a_dbd(dbd_to_machine),
-      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
-      .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
-      .holder(dbg_holder)
-  );
 
   // ----------------------------------------------------------- the memory
   //
@@ -2137,24 +2176,49 @@ module cadr_arty #(
     // has the argument --- and what it recovers is a wedged Unibus after
     // muir is killed with a request standing, not the machine, which an NXM
     // has already hit 4.25 us in.
-    cadr_debug_window #(
-        .REG_BASE(32'h8000_1000)
-    ) u_debug_window (
-        .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
-        .s_awaddr(gp1d_awaddr), .s_awlen(gp1d_awlen), .s_awid(gp1d_awid),
-        .s_awvalid(gp1d_awvalid), .s_awready(gp1d_awready),
-        .s_wdata(gp1d_wdata), .s_wstrb(gp1d_wstrb), .s_wlast(gp1d_wlast),
-        .s_wvalid(gp1d_wvalid), .s_wready(gp1d_wready),
-        .s_bresp(gp1d_bresp), .s_bid(gp1d_bid), .s_bvalid(gp1d_bvalid),
-        .s_bready(gp1d_bready),
-        .s_araddr(gp1d_araddr), .s_arlen(gp1d_arlen), .s_arid(gp1d_arid),
-        .s_arvalid(gp1d_arvalid), .s_arready(gp1d_arready),
-        .s_rdata(gp1d_rdata), .s_rresp(gp1d_rresp), .s_rid(gp1d_rid),
-        .s_rlast(gp1d_rlast), .s_rvalid(gp1d_rvalid), .s_rready(gp1d_rready),
-        .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-        .dbd_out(dbd_to_machine),
-        .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_from_machine), .dbd_oe(dbd_oe)
-    );
+    //
+    // **THE CADR'S ALONE** (contract Q5), as the connector is.  On QUUX the
+    // split's debug page goes to a default slave of its own, so that a read
+    // there is answered with an error and never left standing, and the
+    // window's side of the machine's cable stands idle.
+    if (MACHINE == "cadr") begin : g_dbg_window
+      cadr_debug_window #(
+          .REG_BASE(32'h8000_1000)
+      ) u_debug_window (
+          .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
+          .s_awaddr(gp1d_awaddr), .s_awlen(gp1d_awlen), .s_awid(gp1d_awid),
+          .s_awvalid(gp1d_awvalid), .s_awready(gp1d_awready),
+          .s_wdata(gp1d_wdata), .s_wstrb(gp1d_wstrb), .s_wlast(gp1d_wlast),
+          .s_wvalid(gp1d_wvalid), .s_wready(gp1d_wready),
+          .s_bresp(gp1d_bresp), .s_bid(gp1d_bid), .s_bvalid(gp1d_bvalid),
+          .s_bready(gp1d_bready),
+          .s_araddr(gp1d_araddr), .s_arlen(gp1d_arlen), .s_arid(gp1d_arid),
+          .s_arvalid(gp1d_arvalid), .s_arready(gp1d_arready),
+          .s_rdata(gp1d_rdata), .s_rresp(gp1d_rresp), .s_rid(gp1d_rid),
+          .s_rlast(gp1d_rlast), .s_rvalid(gp1d_rvalid), .s_rready(gp1d_rready),
+          .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
+          .dbd_out(dbd_to_machine),
+          .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_from_machine), .dbd_oe(dbd_oe)
+      );
+    end else begin : g_no_dbg_window
+      cadr_gp0_default u_gp1_dbg_rest (
+          .clk(clk), .rst(gp1_rst),
+          .s_awvalid(gp1d_awvalid), .s_awid(gp1d_awid), .s_awready(gp1d_awready),
+          .s_wlast(gp1d_wlast), .s_wvalid(gp1d_wvalid), .s_wready(gp1d_wready),
+          .s_bresp(gp1d_bresp), .s_bid(gp1d_bid), .s_bvalid(gp1d_bvalid),
+          .s_bready(gp1d_bready),
+          .s_arlen(gp1d_arlen), .s_arid(gp1d_arid), .s_arvalid(gp1d_arvalid),
+          .s_arready(gp1d_arready),
+          .s_rdata(gp1d_rdata), .s_rresp(gp1d_rresp), .s_rid(gp1d_rid),
+          .s_rlast(gp1d_rlast), .s_rvalid(gp1d_rvalid), .s_rready(gp1d_rready)
+      );
+      assign dbg_in_req     = 1'b0;
+      assign dbg_in_wr      = 1'b0;
+      assign dbg_in_a       = 2'd0;
+      assign dbd_to_machine = 16'd0;
+      logic unused_dbg_window;
+      assign unused_dbg_window = ^{gp1d_awaddr, gp1d_awlen, gp1d_wdata, gp1d_wstrb, gp1d_araddr};
+    end
 
     cadr_gp0_default u_gp1_rest (
         .clk(clk), .rst(gp1_rst),

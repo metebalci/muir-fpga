@@ -478,7 +478,9 @@ puts "project: $wanted_ports of the pin file's [expr {[llength $locations] / 2}]
 # it, and a debuggee with nothing plugged in would refuse to answer for ever.
 # Either group can be the one this board is listening to, so all eight are
 # pulled and not four.  `boards/arty-z7-20/cadr_arty.xdc` does the same with
-# Vivado's `PULLTYPE PULLDOWN`.
+# Vivado's `PULLTYPE PULLDOWN`.  **On QUUX the pull-downs are all there is**:
+# QUUX has no debug cable (contract Q5), so its top level drives none of the
+# eight and reads none, and these hold them low.
 #
 # **AND THE COUNT IS ASSERTED**, because an assignment that reaches nothing
 # looks exactly like one that works, and this one reaches nothing at all if a

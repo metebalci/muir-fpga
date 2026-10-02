@@ -7,11 +7,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 A CADR is debugged by another CADR. The debugger's `DBGOUT` connector goes to
 the debuggee's `DBGIN` connector over the twenty-one wires of MIT's debug
-cable. This project's fabric carries both ends. Every board is a debuggee, and
-a board told to connect is the debugger for a second board on a ribbon between
-their two connectors. On the Zynq boards that connector is a Pmod header; the
-DE25-Nano has no Pmod, so it is eight of JP1's pins and a cable to a Zynq board
-is an adapter.
+cable. This project's fabric carries both ends. Every CADR board is a
+debuggee, and a board told to connect is the debugger for a second board on a
+ribbon between their two connectors. On the Zynq boards that connector is a
+Pmod header; the DE25-Nano has no Pmod, so it is eight of JP1's pins and a cable
+to a Zynq board is an adapter.
+
+The cable is the CADR's alone. QUUX has none (contract Q5): a QUUX bitstream
+carries neither the connector nor the register window, and its eight connector
+pins are inputs that nothing drives or reads, held low by their pull-downs.
+muir refuses `--debug-cable` on QUUX, and the board's Linux refuses the cable's
+`fpgarc` lines there.
 
 muir is a debugger too. It runs on a board's own Arm cores and reaches that
 board's debuggee end through a window of memory-mapped registers, with ordinary
@@ -1283,7 +1289,7 @@ count and not a constant transcribed into the check.
 
 ### The attachment, which is built
 
-**Every board carries the connector, in every configuration.**
+**Every CADR board carries the connector, in every configuration.**
 `boards/arty-z7-20/cadr_arty.sv` and `boards/cora-z7-07s/cadr_cora.sv` bring JA
 out as eight bidirectional pads and `boards/de25-nano/cadr_de25.sv` brings out
 JP1 pins 31 to 38 as eight more, and each of the three instantiates
@@ -1292,6 +1298,20 @@ block that holds the processing system. That is not tidiness: **a board is
 always a debuggee**, so the connector has to exist on a board with no console
 and no window at all, and a top-level pin nothing drives is a PINMISSING
 besides. Every unassigned header carries nothing and has no constraints.
+
+**A QUUX build carries none of it.** The Arty Z7-20's and the DE25-Nano's top
+levels, the two that build QUUX, put the connector and the join in a generate
+block taken only for the CADR, and the register window in another inside the
+processing system's. On QUUX the eight pads stay in the port list, each driven
+to high impedance, so their pull-downs hold them; the window's page of the
+general-purpose port is answered by a default slave of its own, so a read there
+ends in an error rather than standing; and the machine's two ends of the cable
+are tied as an unplugged connector leaves them. `build/machine_param.pass`
+counts the connector's, the join's and the window's cells at each top level on
+both machines and reads what drives the pads. A QUUX flow reads neither of the
+cable's two timing files, and asks the fitted design instead that no cell of the
+three is in it: `assert_no_debug_cable` on the Arty Z7-20, and the same question
+of the DE25-Nano's registers in `boards/de25-nano/quartus/sta_check.tcl`.
 
 **And what is this board's own is checked by reading it, because nothing runs
 it.** The DE25-Nano's top level instantiates a generated processor system, so

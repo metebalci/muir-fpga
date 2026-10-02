@@ -16835,11 +16835,11 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note Caught at "the connector drives and listens on different pins at indexes
 @note [0, 1, 2, 3, 4, 5, 6, 7]".
 @old
-  assign dbg_pin_i = {jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35,
-                      jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31};
+    assign dbg_pin_i = {jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35,
+                        jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31};
 @new
-  assign dbg_pin_i = {jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31,
-                      jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35};
+    assign dbg_pin_i = {jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31,
+                        jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35};
 @end
 
 @mutation de25-the-debug-connectors-two-groups-are-swapped
@@ -16860,23 +16860,23 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note Caught at "the carrier's index 0 is on JP1 pin 35, and the connector is
 @note JP1 pins 31 to 38 in order, so index 0 is pin 31", four times over.
 @old
-  assign jp1_pin31 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
-  assign jp1_pin32 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
-  assign jp1_pin33 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
-  assign jp1_pin34 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
-  assign jp1_pin35 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
-  assign jp1_pin36 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
-  assign jp1_pin37 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
-  assign jp1_pin38 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+    assign jp1_pin31 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+    assign jp1_pin32 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+    assign jp1_pin33 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+    assign jp1_pin34 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+    assign jp1_pin35 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+    assign jp1_pin36 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+    assign jp1_pin37 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+    assign jp1_pin38 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
 @new
-  assign jp1_pin35 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
-  assign jp1_pin36 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
-  assign jp1_pin37 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
-  assign jp1_pin38 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
-  assign jp1_pin31 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
-  assign jp1_pin32 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
-  assign jp1_pin33 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
-  assign jp1_pin34 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+    assign jp1_pin35 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+    assign jp1_pin36 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+    assign jp1_pin37 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+    assign jp1_pin38 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+    assign jp1_pin31 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+    assign jp1_pin32 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+    assign jp1_pin33 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+    assign jp1_pin34 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
 @end
 
 @mutation de25-a-signal-of-the-debug-cable-lands-on-a-guards-pin
@@ -16900,32 +16900,32 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note Caught at "index 0 is FWD_STB, a signal, and JP1 pin 32 is an even pin,
 @note which is a guard's", eight times over, and by the order rule as well.
 @old
-  assign jp1_pin31 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
-  assign jp1_pin32 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
-  assign jp1_pin33 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
-  assign jp1_pin34 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
-  assign jp1_pin35 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
-  assign jp1_pin36 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
-  assign jp1_pin37 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
-  assign jp1_pin38 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
-  // And what comes back off the header, most significant first: index 7 is
-  // pin 38 and index 0 is pin 31, which is the same map the eight lines above
-  // drive.  Driving one pin and listening on another is a board that hears
-  // its own guard, and nothing that reads only one of the two halves can see
-  // it, so both are written and `tools/de25_faces_check.py` compares them.
-  assign dbg_pin_i = {jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35,
-                      jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31};
+    assign jp1_pin31 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+    assign jp1_pin32 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+    assign jp1_pin33 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+    assign jp1_pin34 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+    assign jp1_pin35 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+    assign jp1_pin36 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+    assign jp1_pin37 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+    assign jp1_pin38 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+    // And what comes back off the header, most significant first: index 7 is
+    // pin 38 and index 0 is pin 31, which is the same map the eight lines above
+    // drive.  Driving one pin and listening on another is a board that hears
+    // its own guard, and nothing that reads only one of the two halves can see
+    // it, so both are written and `tools/de25_faces_check.py` compares them.
+    assign dbg_pin_i = {jp1_pin38, jp1_pin37, jp1_pin36, jp1_pin35,
+                        jp1_pin34, jp1_pin33, jp1_pin32, jp1_pin31};
 @new
-  assign jp1_pin32 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
-  assign jp1_pin33 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
-  assign jp1_pin34 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
-  assign jp1_pin35 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
-  assign jp1_pin36 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
-  assign jp1_pin37 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
-  assign jp1_pin38 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
-  assign jp1_pin39 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
-  assign dbg_pin_i = {jp1_pin39, jp1_pin38, jp1_pin37, jp1_pin36,
-                      jp1_pin35, jp1_pin34, jp1_pin33, jp1_pin32};
+    assign jp1_pin32 = dbg_pin_t[0] ? 1'bz : dbg_pin_o[0];
+    assign jp1_pin33 = dbg_pin_t[1] ? 1'bz : dbg_pin_o[1];
+    assign jp1_pin34 = dbg_pin_t[2] ? 1'bz : dbg_pin_o[2];
+    assign jp1_pin35 = dbg_pin_t[3] ? 1'bz : dbg_pin_o[3];
+    assign jp1_pin36 = dbg_pin_t[4] ? 1'bz : dbg_pin_o[4];
+    assign jp1_pin37 = dbg_pin_t[5] ? 1'bz : dbg_pin_o[5];
+    assign jp1_pin38 = dbg_pin_t[6] ? 1'bz : dbg_pin_o[6];
+    assign jp1_pin39 = dbg_pin_t[7] ? 1'bz : dbg_pin_o[7];
+    assign dbg_pin_i = {jp1_pin39, jp1_pin38, jp1_pin37, jp1_pin36,
+                        jp1_pin35, jp1_pin34, jp1_pin33, jp1_pin32};
 @end
 
 @mutation de25-the-debug-connector-is-reset-by-the-machine-it-debugs
@@ -16948,11 +16948,11 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note Caught at "u_dbg_cable takes `mach_rst` as its reset and the DBGIN page
 @note takes `rst`".
 @old
-  cadr_dbg_cable u_dbg_cable (
-      .clk(clk), .rst(rst),
+    cadr_dbg_cable u_dbg_cable (
+        .clk(clk), .rst(rst),
 @new
-  cadr_dbg_cable u_dbg_cable (
-      .clk(clk), .rst(mach_rst),
+    cadr_dbg_cable u_dbg_cable (
+        .clk(clk), .rst(mach_rst),
 @end
 
 @mutation de25-the-console-reports-a-constant-about-the-connector
@@ -17000,11 +17000,11 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note Caught at "u_debug_window.dbd_out takes `dbd_to_machine` and
 @note u_dbg_join.a_dbd takes `cab_dbd`", and again for the connector's arm.
 @old
-      .a_dbd(dbd_to_machine),
-      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
+        .a_dbd(dbd_to_machine),
+        .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
 @new
-      .a_dbd(cab_dbd),
-      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(dbd_to_machine),
+        .a_dbd(cab_dbd),
+        .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(dbd_to_machine),
 @end
 
 @mutation de25-the-connector-never-answers-this-machines-debugger
@@ -18381,11 +18381,11 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 @note behavior says it does.  Caught at the register the control wrote,
 @note read back after the release.
 @old
-    ) u_debug_window (
-        .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
+      ) u_debug_window (
+          .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
 @new
-    ) u_debug_window (
-        .clk(clk), .rst(gp1_rst), .fabric_rst(1'b0),
+      ) u_debug_window (
+          .clk(clk), .rst(gp1_rst), .fabric_rst(1'b0),
 @end
 
 @mutation arty-the-button-does-not-reach-the-pack-face
@@ -18456,11 +18456,11 @@ UBOOT_POST_BUILD_HOOKS += CADR_DE25_UBOOT_QUUX13_LOADER
 @note The face's fabric reset tied low: KEY1 no longer resets its registers.
 @note Caught at the register the control wrote, read back after the release.
 @old
-  ) u_debug_window (
-      .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
+    ) u_debug_window (
+        .clk(clk), .rst(h2f_rst), .fabric_rst(rst),
 @new
-  ) u_debug_window (
-      .clk(clk), .rst(h2f_rst), .fabric_rst(1'b0),
+    ) u_debug_window (
+        .clk(clk), .rst(h2f_rst), .fabric_rst(1'b0),
 @end
 
 @mutation de25-the-display-is-not-reset-by-the-processor
@@ -19831,6 +19831,97 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
     cadr|quux) ;;
 @new
     *) ;;
+@end
+
+# THE DEBUG CABLE IS THE CADR'S ALONE (contract Q5).  The connector, the join
+# and the register window are built on the CADR and on no QUUX, and QUUX's
+# pads are left undriven.  `tools/machine_param_check.py` counts the cable's
+# cells at each top level on each machine and reads what drives the pads.
+
+@mutation machine-param-the-arty-builds-the-cable-on-quux
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's QUUX build carries the connector and the join again.  Lint
+@note passes: the generate's other arm is simply not built.
+@old
+  if (MACHINE == "cadr") begin : g_dbg_cable
+@new
+  if (MACHINE == "cadr" || MACHINE == "quux") begin : g_dbg_cable
+@end
+
+@mutation machine-param-the-arty-drops-the-cable-on-the-cadr
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's CADR build loses its connector and join, so a CADR board
+@note no longer answers a debugger that plugs into JA.
+@old
+  if (MACHINE == "cadr") begin : g_dbg_cable
+@new
+  if (MACHINE == "quux") begin : g_dbg_cable
+@end
+
+@mutation machine-param-the-arty-builds-the-window-on-quux
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty's QUUX build carries the register window on its
+@note general-purpose port again.
+@old
+    if (MACHINE == "cadr") begin : g_dbg_window
+@new
+    if (MACHINE == "cadr" || MACHINE == "quux") begin : g_dbg_window
+@end
+
+@mutation machine-param-the-arty-drives-a-quux-pad
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note QUUX's Arty drives JA low instead of leaving it to the pull-downs, so
+@note a cable plugged into a QUUX board meets eight drivers.
+@old
+      assign ja[i] = 1'bz;
+@new
+      assign ja[i] = 1'b0;
+@end
+
+@mutation machine-param-the-de25-builds-the-cable-on-quux
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note The DE25-Nano's QUUX build carries the connector and the join again.
+@old
+  if (MACHINE == "cadr") begin : g_dbg_cable
+@new
+  if (MACHINE == "cadr" || MACHINE == "quux") begin : g_dbg_cable
+@end
+
+@mutation machine-param-the-de25-drops-the-cable-on-the-cadr
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note The DE25-Nano's CADR build loses its connector and join.
+@old
+  if (MACHINE == "cadr") begin : g_dbg_cable
+@new
+  if (MACHINE == "quux") begin : g_dbg_cable
+@end
+
+@mutation machine-param-the-de25-builds-the-window-on-quux
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note The DE25-Nano's QUUX build carries the register window on the
+@note lightweight bridge again.
+@old
+  if (MACHINE == "cadr") begin : g_dbg_window
+@new
+  if (MACHINE == "cadr" || MACHINE == "quux") begin : g_dbg_window
+@end
+
+@mutation machine-param-the-de25-drives-a-quux-pad
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note QUUX's DE25-Nano drives one pad of JP1 low instead of leaving it to
+@note its pull-down.
+@old
+    assign jp1_pin35 = 1'bz;
+@new
+    assign jp1_pin35 = 1'b0;
 @end
 
 # --- writes against the reads beside them: muir's `200818f` -----------------

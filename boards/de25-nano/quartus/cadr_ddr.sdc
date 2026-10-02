@@ -104,7 +104,10 @@ set qddr_port [get_registers -nowarn {u_machine|memory|g_quux_port.port|*}]
 # CC halts the debuggee before it does anything else.  A two-tick arrival
 # inside a twenty-five-tick window is invisible to it.
 # grid: 60 ns
-set cable_word [get_pins -nowarn {u_debug_window|sts_dbd[*]|d}]
+# The CADR's alone, in the top level's `g_dbg_window` (contract Q5): on QUUX
+# there is no window and the collection is empty, which `sta_check.tcl`
+# requires.
+set cable_word [get_pins -nowarn {g_dbg_window.u_debug_window|sts_dbd[*]|d}]
 set_multicycle_path -setup 6 -to $cable_word
 set_multicycle_path -hold  5 -to $cable_word
 

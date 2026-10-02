@@ -122,11 +122,17 @@ set_false_path -to   $dbg_pads
 # its tick.  `sta_check.tcl` asserts what it reached --- these two registers of
 # the sender and no other register of the connector --- because a constraint
 # that reaches nothing looks exactly like one that works.
+#
+# **THE CADR'S ALONE** (contract Q5), in the top level's `g_dbg_cable`.  QUUX
+# has no debug cable, so on a QUUX build the collection is empty, the clause
+# is not written, and `sta_check.tcl` requires both of those.
 # grid: 60 ns
-set cable_frame [get_pins -nowarn {u_dbg_cable|u_tx|tx_frame[*]|d
-                                   u_dbg_cable|u_tx|tx_d[*]|d}]
-set_multicycle_path -setup 6 -to $cable_frame
-set_multicycle_path -hold  5 -to $cable_frame
+set cable_frame [get_pins -nowarn {g_dbg_cable.u_dbg_cable|u_tx|tx_frame[*]|d
+                                   g_dbg_cable.u_dbg_cable|u_tx|tx_d[*]|d}]
+if {[get_collection_size $cable_frame] > 0} {
+    set_multicycle_path -setup 6 -to $cable_frame
+    set_multicycle_path -hold  5 -to $cable_frame
+}
 
 # ------------------------------------------------ the machine's relaxed set
 #

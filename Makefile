@@ -2694,7 +2694,10 @@ $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT
 # out of Verilator's elaborated tree; requires a near miss to stop
 # elaboration in `u_machine` and QUUX to stop it in the Cora's top level; and
 # runs the refusals the Vivado flows and the DE25-Nano's two scripts make
-# before any vendor tool is looked for.  Its header says what it cannot see.
+# before any vendor tool is looked for.  In the same tree it counts the debug
+# cable's connector, join and window, which the CADR has and QUUX does not
+# (contract Q5), and reads what drives the connector's pads.  Its header says
+# what it cannot see.
 #
 # Then make's own half, which the script cannot run: `make de25` hands the
 # machine to the Quartus flow, and `check MACHINE=quux` holds the machine

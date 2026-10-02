@@ -102,6 +102,41 @@ the base at `0xB000_0000`: main memory's top byte is now `0xB3` against the
 display's `0xB4`, so one more address bit varies in each of the two
 addresses (`boards/de25-nano/quartus/sta_check.tcl` says which).
 
+These fits were built from the working tree on `2df53b7`, which takes the
+debug cable out of QUUX's builds (contract Q5): neither the connector, nor the
+join of its two debuggers, nor the register window is in a QUUX bitstream, and
+the connector's pads are left undriven with their pull-downs. muir is pinned at
+`fc654c1`; QUUX revision 13 is at five ticks on the Arty Z7-20.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX | +0.219 ns | +0.041 ns | 16,862 of 53,200 LUTs, 31.70% | 62 of 140 BRAM tiles | 5,558 of 13,300 | working tree on `2df53b7` | modified | 2026-10-02 |
+| Arty Z7-20 | QUUX revision 13, K = 5 | +0.241 ns | +0.036 ns | 22,459 of 53,200 LUTs, 42.22% | 83 of 140 BRAM tiles | 7,331 of 13,300 | working tree on `2df53b7` | modified | 2026-10-02 |
+| Arty Z7-20 | CADR | +0.185 ns | +0.019 ns | 15,052 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,593 of 13,300 | working tree on `2df53b7` | modified | 2026-10-02 |
+| Arty Z7-20 | CADR | +0.186 ns | +0.034 ns | 15,046 of 53,200 LUTs, 28.28% | 46 of 140 BRAM tiles | 5,564 of 13,300 | `2df53b7` | clean | 2026-10-02 |
+| Cora Z7-07S | CADR | +0.495 ns | +0.016 ns | 13,942 of 14,400 LUTs, 96.82% | 43 of 50 BRAM tiles | 4,332 of 4,400 | working tree on `2df53b7` | modified | 2026-10-02 |
+| Kria KR260 | CADR | +2.848 ns | +0.014 ns | 14,014 of 117,120 LUTs, 11.97% | 38 of 144 BRAM tiles | 2,956 of 14,640 CLBs | working tree on `2df53b7` | modified | 2026-10-02 |
+| DE25-Nano | QUUX | +2.495 ns | +0.001 ns | 18,601 of 46,800 ALMs, 40% | 191 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
+| DE25-Nano | QUUX revision 13 | +1.540 ns | +0.001 ns | 29,707 of 46,800 ALMs, 63% | 203 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
+| DE25-Nano | CADR | +2.550 ns | 0.000 ns | 16,500 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
+| DE25-Nano | CADR | +2.550 ns | 0.000 ns | 16,500 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `2df53b7` | clean | 2026-10-02 |
+
+The two clean rows are the CADR before the change, for comparison. On the
+DE25-Nano the CADR is the same fit, figure for figure. On the Arty Z7-20 the
+CADR's logic is the same, 14,498 LUT cells and 11,277 registers both times; it
+moved from the top level into a generate block, which renames the cable's cells,
+and the placement differs by 6 lookup tables and 0.001 ns of setup slack. The
+Cora Z7-07S's and the Kria KR260's top levels are unchanged, and their flows'
+Pmod constraint reaches the same 24 pins with the widened name pattern as with
+the old one.
+
+The worst setup path of revision 13 at five ticks is now the virtual address
+into the prefetcher's fetch address, +0.241 ns, where the fit on `f00f376`
+above was limited by the reset of the debug window, +0.153 ns. Both Arty Z7-20
+QUUX fits passed the RAM enable check, over 105 and 129 ports, and found no cell
+of the debug cable; the eight pads of Pmod JA are placed and carry their
+pull-downs, with no net on them.
+
 These fits were built from the working tree on `f00f376` with QUUX revision
 13 at a microcycle of five ticks on the Arty Z7-20 (`SYNC_K13`), revision 12
 still at four, and muir pinned at `fc654c1`. The machine's clock stays at

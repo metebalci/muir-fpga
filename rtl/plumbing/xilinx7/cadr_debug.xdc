@@ -10,7 +10,8 @@
 # `boards/arty-z7-20/cadr_arty.sv` has a `PS7` in it; read against the default
 # board it would be critical warnings about objects that are not there, and a
 # critical warning that means nothing is how a constraint that means nothing
-# goes unnoticed.
+# goes unnoticed.  For the same reason a QUUX build does not read it: QUUX has
+# no debug cable (contract Q5), so there is no window to relax.
 #
 # WHY THERE IS A DEADLINE HERE AT ALL, MEASURED RATHER THAN FORESEEN. The
 # first board with the cable composed came out at **-8.772 ns on the memory-on
@@ -97,9 +98,12 @@
 #     the memory port's contract are, so an exception that reached no path is a
 #     failure and not a plausible number.
 #
-# **THE INSTANCE IS MATCHED BY A WILDCARD AND NOT BY ITS FULL PATH.**  On both
-# boards the window is `g_ddr.u_debug_window`, behind the processing system's
-# port, and the module, the cone and the reason are identical --- the machine's
+# **THE INSTANCE IS MATCHED BY A WILDCARD AND NOT BY ITS FULL PATH.**  On the
+# Cora Z7-07S and the Kria KR260 the window is `g_ddr.u_debug_window`, and on
+# the Arty Z7-20 `g_ddr.g_dbg_window.u_debug_window`, because that board also
+# builds QUUX, which has no debug cable (contract Q5) and whose flow does not
+# read this file.  Behind the processing system's port on all three, the
+# module, the cone and the reason are identical --- the machine's
 # diagnostic multiplexer reaching this latch, twenty-three logic levels of it.
 # Naming the generate hierarchy here would make this file a second thing to
 # keep in step with a top level, and a scoped path that stops matching applies

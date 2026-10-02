@@ -340,6 +340,23 @@ proc assert_cable_beat {rtl xdc} {
           given $beat ($hold on hold): $rtl and $xdc agree"
 }
 
+# **QUUX HAS NO DEBUG CABLE** (contract Q5): no connector, no join of its
+# two debuggers and no register window.  The top level leaves all three out of
+# a QUUX build, and this asks the design for them by name, so that a build
+# which carried any of them stops here rather than reading as QUUX.  A name
+# rather than a module, because synthesis flattens the hierarchy and keeps
+# the instance's name in each cell's.
+proc assert_no_debug_cable {} {
+    set found [get_cells -quiet -hier -filter \
+                   {NAME =~ *u_dbg_cable/* || NAME =~ *u_dbg_join/* || NAME =~ *u_debug_window/*}]
+    if {[llength $found] > 0} {
+        puts "XDC: FAILED --- [llength $found] cell(s) of the debug cable in a QUUX"
+        puts "XDC: build, which has none (contract Q5). First: [lindex $found 0]"
+        exit 1
+    }
+    puts "XDC: no cell of the debug cable's connector, join or window: QUUX has none"
+}
+
 # Fails the run when no path carries the relaxed requirement.
 proc assert_multicycle_applied {period cycles {limit 400000}} {
     set want [format %.3f [expr {$period * $cycles}]]

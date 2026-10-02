@@ -466,7 +466,12 @@ if {$hdmi > 0} {
 # it exists for is measured and is in its own header --- the machine's
 # diagnostic mux reaching the carrier's latch, 23 levels, -8.772 ns on a board
 # that read +0.914 one commit earlier.
-if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
+#
+# **THE DEBUG CABLE IS THE CADR'S ALONE** (contract Q5): a QUUX build has no
+# window, no connector and no join, so it reads neither of these two files and
+# asks neither of their assertions below, and asks instead that none of the
+# three is in its design.
+if {$port > 0 && $machine eq "cadr"} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
 # And the Pmod carrier's, which is the same cone with a second reader on it:
 # `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` names the frame registers of the
 # connector's sender. **NOT GATED, where the window's is.** A board is always
@@ -475,7 +480,7 @@ if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
 # so the machine's diagnostic mux reaches that sender on every board. Gated,
 # the memory-off board came out at -9.600 ns on 596 endpoints with the file
 # read by nothing; that file's own header has the measurement.
-read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
+if {$machine eq "cadr"} { read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc }
 
 # ...and then ask the design whether that worked, rather than trusting it.
 source boards/arty-z7-20/vivado/constraints_check.tcl
@@ -512,12 +517,14 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 # feeds it is the window's own fast registers and not the machine's mux.
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
-if {$port > 0}        { lappend inside g_ddr.u_axi g_ddr.u_debug_window }
+if {$port > 0}        { lappend inside g_ddr.u_axi }
+if {$port > 0 && $machine eq "cadr"} { lappend inside g_ddr.g_dbg_window.u_debug_window }
 # **AND THE CONNECTOR IS IN THE LIST WHATEVER THE SWITCHES SAY**, for the
 # reason its constraint file is read unconditionally: a board is always a
 # debuggee, so the cable's sender is relaxed on every board and the invariant
-# would otherwise fail on the memory-off one.
-lappend inside u_dbg_cable
+# would otherwise fail on the memory-off one.  The CADR's alone, in the
+# top level's `g_dbg_cable`.
+if {$machine eq "cadr"} { lappend inside g_dbg_cable.u_dbg_cable }
 assert_constraints_scoped $inside $tick
 
 # --- 1. did the constraints apply?
@@ -697,8 +704,8 @@ if {$port > 0 && $machine eq "quux"} {
 # other register of the carrier may --- and the count is the `foreach` half,
 # that it reached a path at all.
 # board ticks
-if {$port > 0} {
-    assert_instance_timing $tick 6 *g_ddr.u_debug_window/* {*sts_dbd_reg*}
+if {$port > 0 && $machine eq "cadr"} {
+    assert_instance_timing $tick 6 *g_ddr.g_dbg_window.u_debug_window/* {*sts_dbd_reg*}
 }
 # And the Pmod carrier's, the same two halves, and ASSERTED ON EVERY BOARD
 # because the connector is on every board. The frame registers of the
@@ -706,7 +713,13 @@ if {$port > 0} {
 # the gap counter and the dead man may not, because a counter given six ticks
 # to settle is a counter that no longer counts.
 # board ticks
-assert_instance_timing $tick 6 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
+if {$machine eq "cadr"} {
+    assert_instance_timing $tick 6 *g_dbg_cable.u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
+} else {
+    # **AND ON QUUX, NONE OF IT IS THERE**: not one cell of the connector,
+    # the join or the window, by name, in the synthesized design.
+    assert_no_debug_cable
+}
 
 # And the carrier's deadline against the carrier's own beat, read out of the
 # source rather than remembered here. Pure Tcl and no design, so it runs
@@ -716,7 +729,7 @@ assert_cable_beat rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/xilinx7/cadr_debug_pm
 # registers, `ticks(60)` in `cadr_machine.xdc`, so it no longer says on its own
 # that the carrier's clause reached a path; the instance assertion above does.
 # board ticks
-assert_multicycle_applied $tick 6
+if {$machine eq "cadr"} { assert_multicycle_applied $tick 6 }
 
 # AND THE TWO CLAUSES `cadr_machine.xdc` ADDED FOR THE SLAVES INSIDE THE
 # MACHINE, held the same two ways: the instance half says no OTHER register

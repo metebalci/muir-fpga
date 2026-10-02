@@ -196,10 +196,13 @@ FACES = [
     ("u_debug_window", "REG_BASE", "lw", "CONSOLE+0x1000"),
 ]
 
-# Every instance on either bridge takes the bridges' AXI4 widths.
+# Every instance on either bridge takes the bridges' AXI4 widths.  QUUX has
+# no debug cable (contract Q5), so on QUUX `u_lw_dbg_rest`, a default slave,
+# answers the window's page in place of `u_debug_window`; both are listed,
+# because the source holds both arms of the generate.
 SHAPED = ["u_h2f_split", "u_pack", "u_chaos", "u_serial", "u_input",
           "u_fd_face", "u_h2f_rest", "u_lw_split", "u_console", "u_debug_window",
-          "u_lw_rest"]
+          "u_lw_rest", "u_lw_dbg_rest"]
 
 # Which bridge each of them is on, and which instance is that bridge's
 # splitter -- the one whose reset the rest are held to.  The splitter is on
@@ -207,7 +210,7 @@ SHAPED = ["u_h2f_split", "u_pack", "u_chaos", "u_serial", "u_input",
 ON_BRIDGE = {"u_h2f_split": "h2f", "u_pack": "h2f", "u_chaos": "h2f",
              "u_serial": "h2f", "u_input": "h2f", "u_fd_face": "h2f", "u_h2f_rest": "h2f",
              "u_lw_split": "lw", "u_console": "lw", "u_debug_window": "lw",
-             "u_lw_rest": "lw"}
+             "u_lw_rest": "lw", "u_lw_dbg_rest": "lw"}
 SPLITTER = {"h2f": "u_h2f_split", "lw": "u_lw_split"}
 
 WINDOWS = {"h2f": (H2F_BASE, H2F_SIZE), "lw": (LW_BASE, LW_SIZE)}

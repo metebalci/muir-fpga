@@ -599,7 +599,7 @@ The pin is `M20`, `LVCMOS33`, from Digilent's `Arty-Z7-20-Master.xdc`. SW1 is
 
 The board has two Pmod headers and this design uses one of them.
 
-    JA   MIT's debug cable, both directions
+    JA   MIT's debug cable, both directions, on the CADR
     JB   nothing
 
 MIT's cable joins one CADR's `DBGOUT` connector to another's `DBGIN`. Here the
@@ -608,6 +608,10 @@ are the debugger's and the high four the debuggee's, so a straight Pmod ribbon
 from this board's JA to another board's connector maps every signal to its
 counterpart. The pads are bidirectional, because the role is not fixed at
 synthesis.
+
+**QUUX has no debug cable.** A QUUX bitstream drives none of JA's pads and
+reads none of them; they keep their pull-downs and read low, which is an
+unplugged connector. `docs/debug-cable.md` says what is left out.
 
 **The header's rows are coupled pairs, so each pair carries one signal.** Pins
 1 and 2 are a pair, 3 and 4, 7 and 8, and 9 and 10. The strobe of a group is on

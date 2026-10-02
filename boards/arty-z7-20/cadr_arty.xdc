@@ -178,6 +178,10 @@ set_property -dict { PACKAGE_PIN W19   IOSTANDARD LVCMOS33 } [get_ports { ja[7] 
 ## MIT's own board. A floating input decides that question by noise. All eight
 ## carry a pull-down and not four of them, because either group can be the one
 ## this board is listening to.
+##
+## **AND ON QUUX THE PADS ARE ONLY THAT.** QUUX has no debug cable (contract
+## Q5), so its build drives none of the eight and reads none of them: they stay
+## in the port list and on their pins, and these pull-downs hold them low.
 set_property PULLTYPE PULLDOWN [get_ports { ja[*] }]
 
 ## AND THERE IS NO CLOCK ON THIS CONNECTOR, so there is no instant by which an

@@ -533,8 +533,11 @@ if {[get_collection_size $probe] == 0} {
     assert_instance_timing $tick 8 g_probe.u_probe {stable_q}
 }
 
-# MIT'S DEBUG CABLE ON JP1, which is in EVERY build of this board and not only
-# a memory one: a board is always a debuggee.  Two things are asked of it.
+# MIT'S DEBUG CABLE ON JP1, which is in EVERY CADR build of this board and not
+# only a memory one: a board is always a debuggee.  Two things are asked of it.
+# **QUUX HAS NO DEBUG CABLE** (contract Q5), so on a QUUX build the opposite is
+# asked: the collection is empty, and no register of the connector, the join
+# or the window is in the design at all.
 #
 # **THE COLLECTION IS NOT EMPTY**, because `cadr_de25.sdc`'s clause names two
 # registers of one instance and a renamed register would leave it reaching
@@ -545,22 +548,37 @@ if {[get_collection_size $probe] == 0} {
 # collection's size: the connector's two receivers count ticks --- the strobe's
 # synchronizer, the frame counter, the gap counter and the dead man --- and a
 # counter given six ticks is a counter that no longer counts.  The receivers
-# are under `u_dbg_cable|u_rx_fwd` and `u_dbg_cable|u_rx_ret`, so they are
+# are under `g_dbg_cable.u_dbg_cable|u_rx_fwd` and `...|u_rx_ret`, so they are
 # inside the instance this asks about and are swept up by its `rest`.
 if {![info exists ::cable_frame]} {
     puts "sta: FAIL: cadr_de25.sdc left no collection named cable_frame"
     incr failures
 } else {
     set n [get_collection_size $::cable_frame]
-    if {$n == 0} {
+    if {$sta_quux && $n != 0} {
+        puts "sta: FAIL: the debug cable's frame pins: $n on QUUX, which has no debug cable"
+        incr failures
+    } elseif {$sta_quux} {
+        puts "sta: the debug cable's frame pins: 0, QUUX having no debug cable"
+    } elseif {$n == 0} {
         puts "sta: FAIL: the debug cable's frame pins: 0, so the clause reached nothing"
         incr failures
     } else {
         puts "sta: the debug cable's frame pins: $n"
     }
 }
-# grid: 60 ns
-assert_instance_timing $tick 6 u_dbg_cable {u_tx|tx_frame u_tx|tx_d}
+if {!$sta_quux} {
+    # grid: 60 ns
+    assert_instance_timing $tick 6 g_dbg_cable.u_dbg_cable {u_tx|tx_frame u_tx|tx_d}
+} else {
+    set sta_cable [get_registers -nowarn {*u_dbg_cable|* *u_dbg_join|* *u_debug_window|*}]
+    if {[get_collection_size $sta_cable] > 0} {
+        puts "sta: FAIL: [get_collection_size $sta_cable] registers of the debug cable's connector, join or window on QUUX, which has none"
+        incr failures
+    } else {
+        puts "sta: no register of the debug cable's connector, join or window: QUUX has none"
+    }
+}
 # **AND THOSE REGISTERS ARE THE ONE THING OUTSIDE THE MACHINE THE SCOPED
 # INVARIANT BELOW LETS THROUGH**, on the same footing as the debug window's
 # `sts_dbd` and the memory adapter's address and data registers.  The sender
@@ -580,7 +598,7 @@ assert_instance_timing $tick 6 u_dbg_cable {u_tx|tx_frame u_tx|tx_d}
 # clause's own collection, so it cannot be wider either: `cable_frame` holds
 # one `|d` pin for each register the clause relaxes, and an exemption naming
 # more registers than that has grown past the argument it stands on.
-set cable_exempt [get_registers -nowarn [cadr_leaves {u_dbg_cable|u_tx|} {tx_frame tx_d}]]
+set cable_exempt [get_registers -nowarn [cadr_leaves {g_dbg_cable.u_dbg_cable|u_tx|} {tx_frame tx_d}]]
 if {[info exists ::cable_frame]
     && [get_collection_size $cable_exempt] != [get_collection_size $::cable_frame]} {
     puts "sta: FAIL: the connector's exemption names [get_collection_size $cable_exempt] registers\
@@ -623,7 +641,7 @@ if {![info exists ::dbg_pads]} {
 # default slaves' reset cut at their first register and nowhere else.
 set ddr_exempt [get_registers -nowarn {u_memory|u_axi|m_axi_awaddr[*] u_memory|u_axi|m_axi_araddr[*]
                                        u_memory|u_axi|m_axi_wdata[*]
-                                       u_debug_window|sts_dbd[*]}]
+                                       g_dbg_window.u_debug_window|sts_dbd[*]}]
 if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     puts "sta: the memory port is not in this build"
 } else {
@@ -743,7 +761,7 @@ if {[get_collection_size [get_registers -nowarn {u_memory|*}]] == 0} {
     # the reason that clause names the `|d` pins.
     if {!$sta_quux} {
         # grid: 60 ns
-        assert_instance_timing $tick 6 u_debug_window {sts_dbd}
+        assert_instance_timing $tick 6 g_dbg_window.u_debug_window {sts_dbd}
     }
     # And a cut that reached its registers leaves no timed path out of them.
     if {[info exists ::ddr_to_hps] && [get_collection_size $::ddr_to_hps] > 0} {
