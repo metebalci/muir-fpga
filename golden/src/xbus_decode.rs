@@ -47,9 +47,11 @@ const WORDS: u32 = 1 << 22;
 const WORDS_PER_BOARD: u32 = 1 << 16;
 
 /// Board counts to sweep. One and sixty are the ends of muir's own
-/// `--main-memory-boards`; 32 is its default, the two million words; 2 is
-/// small enough that the boundary sits well inside the space.
-const BOARDS: &[u32] = &[1, 2, 32, 60];
+/// `--main-memory-boards`; 32 is its default, the two million words; 33 is
+/// one board past it, the first count the boards' own `--main-memory-boards`
+/// can give that a bitstream with 32 fixed never could; 2 is small enough
+/// that the boundary sits well inside the space.
+const BOARDS: &[u32] = &[1, 2, 32, 33, 60];
 
 fn kind(r: Responder) -> &'static str {
     if r.on_unibus() {

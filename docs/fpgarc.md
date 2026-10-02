@@ -293,6 +293,13 @@ is how `COLOR-EXISTS-P` in the band finds out whether it has one. So
 `--color-tv` is off unless the card asks for it, and the color screen is
 served with `--color-terminal` above.
 
+**The memory boards**, read by `S80cadr-disk-packs` before it starts the disk
+pack program, and written into the console face. One flag, and the section
+below is about it.
+
+    --main-memory-boards N
+                          how many 64K-word boards of main memory, 1 to 60
+
 **The display output**, read by `S80cadr-disk-packs` before it starts the disk
 pack program, and written into the console face. `docs/display-output.md` is the
 design.
@@ -322,14 +329,23 @@ old names are not taken: a card that still says one gets it named at boot with
 its new name, and the line does nothing (see "A line no program takes is named
 at boot").
 
-**The clock**, read by `S80cadr-disk-packs` before anything else it does. No
-board here has a real-time clock in it, so these two lines are what tell one
-the date. The section below is about them.
+**The clock**, read by `S80cadr-disk-packs` before anything else it does
+except root's login. No board here has a real-time clock in it, so NTP or these
+lines are what tell one the date. The sections below are about them.
 
+    --ntp-server NAME[:PORT]
+                          the NTP server or pool; pool.ntp.org by default
+    --no-ntp              never set the clock by NTP
     --date yyyyMMdd       the date: a four-digit year, a two-digit month and a
                           two-digit day
     --time HHmm           the time of day on a 24-hour clock, with the second
                           after the minute when it is wanted
+
+**Root's login on the board's Linux**, read by `S80cadr-disk-packs` first of
+all, before the clock's wait for the network. One flag, and a file beside this
+one. The section below is about both.
+
+    --root-password PW    root's password, for ssh and the serial console
 
 **The lamps**, read by `S80cadr-disk-packs` and written into the console face.
 One flag, and the section below is about it.
@@ -516,6 +532,44 @@ ten megabytes, however long the board is up. The logs go at a reboot, which is
 right for a log of this kind. `docs/console.md` has the routine and what holds
 it.
 
+## `--main-memory-boards`
+
+muir's flag, with muir's meaning: how many 64K-word boards of main memory the
+machine has, from 1 to 60. The default is 32, two million words, which is what
+every band was built for and what the fabric comes up with.
+
+    --main-memory-boards 60      3,932,160 words, the most there is room for
+
+Sixty is the ceiling because the Xbus I/O space begins at the sixty-first
+board's first word, physical `0o17000000`. The board keeps 16 MB of its memory
+for main memory, room for 64 boards, so every count fits.
+
+**The band counts the boards at its cold boot**, by probing for the first
+address that gives the NXM. The fabric's address decode answers main memory
+below the count's last board and gives the NXM above it, so the probe finds
+exactly the count times 64K words. System 1003 and later use more than 32
+boards; a band older than System 1003 halts at its cold boot with more than 32.
+
+**It is set before the drive comes present.** The disk pack program's init
+script hands the count to `cadr-console main-memory-boards` before it starts
+the program, which is before any band has counted the boards. A count changed
+under a running band takes memory away from it or gives it memory it never
+counted, as pulling a board out of a running CADR would, so the console's word
+is for before a band boots. The fabric's own reset, BTN1 or KEY1, brings the
+count back to 32 with the rest of the console's settings.
+
+**A count outside 1 to 60 is refused** by the console, which says so on the
+console at boot, and the machine keeps the count it has. A fabric older than
+the setting has 32 boards fixed, and the console says that too.
+
+**QUUX takes the same count**, as muir's QUUX does: its main memory is the
+count times 64K words, and its file device's `MEM_WORDS` says the same. On
+QUUX revision 13, which no release carries, muir takes more than 60 boards and
+the boards take 1 to 60.
+
+`cadr-checkpoint` takes a checkpoint at the machine's own count, read from the
+console, and refuses a `--boards` that disagrees with it.
+
 ## `--date` and `--time`
 
 No board here presents a real-time clock to Linux. `date` straight after a boot
@@ -523,7 +577,8 @@ reads the epoch, `/sys/class/rtc` is empty, there is no `/dev/rtc` and the
 kernel names no such device. So a board that boots from its card alone does not
 know the date or the time, and everything it writes is stamped 1970.
 
-Two lines on the card tell it.
+With a network, NTP tells it, before anything else does; the next section is
+about that. Without one, or with `--no-ntp`, two lines on the card tell it.
 
     --date 20260920       a four-digit year, then a two-digit month, then a
                           two-digit day
@@ -585,6 +640,71 @@ agree from the first second, and a band read with the clock still at the epoch
 is a band whose files are stamped 1970. The step is in that script for the boot
 button's reason: it reads this file and the saved clock, and both are on the
 card that script is the one thing that mounts.
+
+## `--ntp-server` and `--no-ntp`
+
+**With a network, the board's clock is set by NTP before the machine
+starts**, by BusyBox's `ntpd -q`, from `pool.ntp.org` unless this line names
+another server or pool.
+
+    --ntp-server time.example.org         a server or a pool, port 123
+    --ntp-server 192.0.2.10:10123         an address and a port
+    --ntp-server [2001:db8::7b]:123       an IPv6 address, in brackets
+    --no-ntp                              never set the clock by NTP
+
+A name or an address, then `:PORT` when the port is not 123. An IPv6 address
+is written in brackets, because ntpd reads a word with several colons and no
+brackets as an address with no port. A value that is not a server, such as a
+port past 65535, is named at boot and NTP is not asked.
+
+**The waits are bounded.** The board's DHCP client goes into the background
+before its lease comes, so the step waits for an address and a default route,
+up to 20 seconds. Then it asks the server, and waits up to 30 seconds for the
+clock to be set; ntpd gives up by itself 10 seconds after a query nobody
+answered. A board with no cable therefore waits 20 seconds once a boot. A
+board that is never on a network says `--no-ntp`, and does not wait at all.
+
+**A clock NTP set is the clock.** The saved clock and `--date` and `--time` are
+not set on top of it: they are what the clock is when NTP does not set it, and
+the console says so when the card has either line. A card that wants its own
+date whatever the network says carries `--no-ntp` with them. When NTP does not
+set the clock, the console says why --- no network, no answer within the
+bound, or what ntpd said --- and the clock is set from the saved clock and the
+two lines as the section above describes.
+
+Both lines are on the card commented out: `--ntp-server pool.ntp.org`, which
+is what the board does with nothing said, and `--no-ntp`.
+
+## `--root-password` and `authorized_keys`
+
+**The board's Linux takes root with the password `root`**, over ssh and on the
+serial console, and that stays the default: a card that says nothing logs in
+as it always did. A board that does so belongs on a network only its owner can
+reach.
+
+    --root-password PW    root's password, for ssh and the serial console
+
+**The line sets root's password at every boot**, for every login. The root
+filesystem is a RAM disk unpacked at every boot, so nothing else keeps a
+password, and the line is the whole of the setting. The rest of the line after
+the flag is the password, spaces included. It is hashed with `mkpasswd` from
+its standard input, never on a command line, and is never printed; it is kept
+in this file in plain text. The line is on the card commented out, as
+`--root-password root`.
+
+**A file named `authorized_keys` at the card's root, beside this one**, one ssh
+public key a line, is installed for root as `/root/.ssh/authorized_keys`, and
+Dropbear is restarted with `-s`: ssh then takes no password at all, only the
+keys. The serial console still takes root's password, which is the way back in
+for somebody with the board in front of them. Carriage returns are taken off,
+so a file written on Windows works. A file with no key in it, only blank lines
+and comments, is not installed, so that it cannot shut ssh out entirely.
+
+**Both are set first, before the clock waits for the network**, by the disk
+pack program's init script, which mounts the card. Dropbear itself starts
+earlier in the boot with the image's settings, and is restarted when the keys
+turn passwords off; until then, in the seconds before the network's lease has
+come, it still takes a password.
 
 ## `--no-ozd`
 

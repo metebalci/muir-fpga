@@ -558,6 +558,12 @@ int main(int argc, char **argv) {
           // `build/console.pass` holds the two keys and the setting.
           if ((got >> 16) != 0x4C44u)
             FailAt(addr, "the lamps word's marker", got >> 16, 0x4C44u);
+        } else if (word == 37) {
+          // **AND HOW MANY MEMORY BOARDS**, page 2's word 37, marker "BD", for
+          // word 34's reason: the marker says the console answered, and
+          // `build/console.pass` holds the key and the count.
+          if ((got >> 16) != 0x4244u)
+            FailAt(addr, "the memory boards word's marker", got >> 16, 0x4244u);
         } else if (word >= 64 && word < 96) {
           // The two color maps, which this harness drives with zeros: what
           // is asserted here is that the console answered and not that the

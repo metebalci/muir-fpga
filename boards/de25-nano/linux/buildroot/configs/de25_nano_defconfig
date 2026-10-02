@@ -92,6 +92,9 @@ BR2_LINUX_KERNEL_CUSTOM_DTS_DIR="$(BR2_EXTERNAL_CADR_DE25_PATH)/board/de25-nano/
 # host on its Type-C port, so the USB input program is in, as on the Arty
 # Z7-20.  An initramfs as a U-Boot ramdisk image, as on both Zynq boards.
 BR2_PACKAGE_DROPBEAR=y
+# BusyBox's ntpd, for the clock by NTP at boot (S80cadr-disk-packs).  The
+# fragment is shared by the four boards and says why each applet is there.
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/busybox.fragment"
 BR2_PACKAGE_EVTEST=y
 BR2_PACKAGE_CADR_CONSOLE=y
 BR2_PACKAGE_CADR_READOUT=y

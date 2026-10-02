@@ -74,6 +74,9 @@ BR2_LINUX_KERNEL_INTREE_DTS_NAME="xilinx/zynqmp-smk-k26-revA-sck-kr-g-revB"
 # USB host ports, so the USB input program is in, as on the Arty Z7-20.  An
 # initramfs as a U-Boot ramdisk image, as on the other boards.
 BR2_PACKAGE_DROPBEAR=y
+# BusyBox's ntpd, for the clock by NTP at boot (S80cadr-disk-packs).  The
+# fragment is shared by the four boards and says why each applet is there.
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/busybox.fragment"
 BR2_PACKAGE_EVTEST=y
 BR2_PACKAGE_CADR_CONSOLE=y
 BR2_PACKAGE_CADR_READOUT=y
@@ -94,9 +97,9 @@ BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_CADR_PATH)/package/ozd/users.table"
 # EMIO; package/cadr-common/src/cadr/cadr_board.h has the table and its
 # sources.
 BR2_CADR_BOARD_KR260=y
-# The card is a USB disk on this board, so it is found by its label, CADR,
-# and not as the processor's first SD device; the overlay's
-# /etc/cadr/card.sh says how, and S80cadr-disk-packs reads it.
+# The card is a USB disk on this board, so it is found by the carrier's own
+# reader, USB 0424:2240, and not as the processor's first SD device; the
+# overlay's /etc/cadr/card.sh says how, and S80cadr-disk-packs reads it.
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_CADR_KR260_PATH)/board/kria-kr260/rootfs-overlay"
 # The Arty Z7-20's post-build script, unchanged, for the reason the Cora
 # Z7-07S's defconfig gives: it asserts that the image holds only the programs

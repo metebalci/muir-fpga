@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# BusyBox applets the boards' init scripts need beyond Buildroot's default
+# configuration, for all four boards.
+#
+# ntpd: the clock by NTP at boot, `ntpd -n -q -p SERVER` from
+# S80cadr-disk-packs's `set_the_clock_by_ntp`.  The server side is not built:
+# the board answers nobody's time but the machine's, through ozd.
+CONFIG_NTPD=y
+# CONFIG_FEATURE_NTPD_SERVER is not set
+# CONFIG_FEATURE_NTPD_CONF is not set

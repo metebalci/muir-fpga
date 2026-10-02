@@ -33,7 +33,12 @@ a daemon and has no init script, because it halts the machine while it reads.
    A read taken while the datapath moves is torn.
 4. Reads the processor's memories and its register table through the
    console's readout window, and main memory and the display straight out of
-   DDR through `/dev/mem`.
+   DDR through `/dev/mem`. Main memory is read at the machine's own count of
+   boards, the console's page 2 word 37, which the card's
+   `--main-memory-boards` sets; a fabric older than that word has 32 boards
+   fixed. A `--boards` that disagrees with the machine's count is refused,
+   because a checkpoint of fewer boards drops memory the band has and one of
+   more invents it.
 5. Reads every disk pack through and digests it, still halted.
 6. Writes the checkpoint, then the sidecar that binds it to those packs.
 7. Starts the machine again, unless told to leave it halted.

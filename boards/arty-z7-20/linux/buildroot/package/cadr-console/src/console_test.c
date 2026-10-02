@@ -164,6 +164,14 @@ struct model {
 	int sleep_asleep;
 	unsigned sleep_sets, sleep_wakes;
 	uint32_t sleep_last;
+	// **AND HOW MANY MEMORY BOARDS**, page 2's word 37: the count the
+	// fabric holds, every store to the word counted, the last one kept, and
+	// a fabric older than the word.
+	unsigned boards;
+	unsigned boards_writes;
+	uint32_t boards_last;
+	int boards_unmapped;
+	int boards_deaf;		/* a fabric that takes no count */
 	uint8_t map[2][CONS_MAP_COLORS][CONS_MAP_CHANNELS];
 };
 
@@ -290,6 +298,12 @@ static uint32_t model_read(struct console *c, unsigned word)
 				 | (m->sleep_asleep ? CONS_HDMI_ASLEEP : 0u)
 				 | (m->sleep_seconds & CONS_HDMI_SLEEP_SECONDS)
 			   : CONS_UNMAPPED;
+	// Page 2's word 37: how many memory boards, and `UNMAPPED` on a fabric
+	// older than the word.
+	if (word == CONS_BOARDS)
+		return m->boards_unmapped
+			   ? CONS_UNMAPPED
+			   : ((uint32_t)CONS_BOARDS_MARK << 16) | (m->boards & CONS_BOARDS_COUNT);
 	// Page 2's word 35: whether the lamps blink, marked for word 33's reason.
 	if (word == CONS_LAMPS)
 		return m->lamps_unmarked
@@ -445,6 +459,18 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 		}
 		return;
 	}
+	// Page 2's word 37, how many memory boards: `cadr_console.sv`'s rule, a
+	// count 1 to 60 under the key with bits 15 to 7 clear, and nothing else
+	// moves it.
+	if (word == CONS_BOARDS) {
+		++m->boards_writes;
+		m->boards_last = v;
+		const unsigned n = v & 0xFFFFu;
+		if (!m->boards_unmapped && !m->boards_deaf && (v >> 16) == CONS_BOARDS_KEY &&
+		    n >= 1u && n <= 60u)
+			m->boards = n;
+		return;
+	}
 	// Page 2's word 35, whether the lamps blink: the key and its complement.
 	if (word == CONS_LAMPS) {
 		if (v == CONS_LAMP_STEADY_KEY)
@@ -574,6 +600,12 @@ static void model_init(struct model *m)
 	m->sleep_sets = 0;
 	m->sleep_wakes = 0;
 	m->sleep_last = 0;
+	// And muir's 32 memory boards.
+	m->boards = 32;
+	m->boards_writes = 0;
+	m->boards_last = 0;
+	m->boards_unmapped = 0;
+	m->boards_deaf = 0;
 	for (int b = 0; b < 2; ++b)
 		for (int k = 0; k < CONS_MAP_COLORS; ++k)
 			for (int ch = 0; ch < CONS_MAP_CHANNELS; ++ch)
@@ -2495,6 +2527,140 @@ static void check_display_sleep_word(void)
 	}
 }
 
+// **`main-memory-boards`, page 2's word 37, as typed.**
+//
+// muir's `--main-memory-boards`: a count 1 to 60 is one keyed write of exactly
+// that count and then a report of what the fabric holds; a count outside that,
+// or not a number, writes nothing and answers 2; the word alone reports; a
+// fabric that does not hold what was asked, or is older than the word,
+// answers 1.  The init script reads the status, so it is held as well as the
+// words.
+static void check_boards_word(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+	int status = -1;
+	// The ends, the default and the board either side of it.
+	const unsigned counts[] = {60u, 1u, 33u, 32u, 31u};
+	for (unsigned i = 0; i < sizeof counts / sizeof counts[0]; ++i) {
+		char text[8];
+		snprintf(text, sizeof text, "%u", counts[i]);
+		char *argv[] = {"main-memory-boards", text};
+		const unsigned writes = m.boards_writes;
+		status = -1;
+		capture_start();
+		const int took = cons_boards_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1, "main-memory-boards %u was not taken as the command", counts[i]);
+		CHECK(status == 0, "main-memory-boards %u answered %d, wanting 0", counts[i], status);
+		CHECK(m.boards_writes == writes + 1 &&
+		      m.boards_last == ((0x4D42u << 16) | counts[i]),
+		      "main-memory-boards %u wrote %u times, the last 0x%08x", counts[i],
+		      m.boards_writes - writes, m.boards_last);
+		CHECK(m.boards == counts[i], "main-memory-boards %u left the fabric at %u", counts[i],
+		      m.boards);
+		char want[96];
+		snprintf(want, sizeof want, "main-memory-boards: %u boards of 64K words, %u words",
+			 counts[i], counts[i] * 65536u);
+		CHECK(strstr(said, want) != NULL, "main-memory-boards %u reported: %s", counts[i], said);
+	}
+	CHECK(m.boards == 31u, "the count at the end of the settings is %u", m.boards);
+	// **A COUNT NOBODY CAN HAVE WRITES NOTHING AND ANSWERS 2**: 61, which
+	// would put main memory over the Xbus I/O space, 0, a count with a sign
+	// or in another base, an empty one, and one with trailing words.
+	const char *refused[] = {"61", "0", "64", "127", "100", "-1", "+5", "0x20", "", "3a",
+				 "32 ", "00"};
+	for (unsigned i = 0; i < sizeof refused / sizeof refused[0]; ++i) {
+		char *argv[] = {"main-memory-boards", (char *)refused[i]};
+		const unsigned writes = m.boards_writes;
+		status = -1;
+		capture_start();
+		const int took = cons_boards_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == 2, "main-memory-boards \"%s\": taken %d, answered %d",
+		      refused[i], took, status);
+		CHECK(m.boards_writes == writes, "main-memory-boards \"%s\" wrote the word",
+		      refused[i]);
+		CHECK(strstr(said, "main-memory-boards N: decimal, 1 to 60") != NULL,
+		      "main-memory-boards \"%s\" was not refused with the range: %s", refused[i],
+		      said);
+	}
+	CHECK(m.boards == 31u, "a refused count moved the fabric to %u", m.boards);
+	// And the face's own setter refuses one too, for a caller that did not
+	// parse: nothing written for 0 or 61, and 60 written.
+	{
+		const unsigned writes = m.boards_writes;
+		CHECK(cons_set_boards(&c, 61u) == -1 && cons_set_boards(&c, 0u) == -1 &&
+		      m.boards_writes == writes, "cons_set_boards took 0 or 61");
+		CHECK(cons_set_boards(&c, 60u) == 0 && m.boards_writes == writes + 1 && m.boards == 60u,
+		      "cons_set_boards 60 did not write it");
+		cons_set_boards(&c, 31u);
+	}
+	// The word alone reports and writes nothing.
+	{
+		char *argv[] = {"main-memory-boards"};
+		const unsigned writes = m.boards_writes;
+		status = -1;
+		capture_start();
+		const int took = cons_boards_word(&c, 1, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == 0, "main-memory-boards alone: taken %d, answered %d",
+		      took, status);
+		CHECK(m.boards_writes == writes, "main-memory-boards alone wrote the word");
+		CHECK(strstr(said, "main-memory-boards: 31 boards") != NULL,
+		      "main-memory-boards alone did not report the count: %s", said);
+	}
+	// **A FABRIC THAT DOES NOT HOLD THE COUNT ANSWERS 1**: one older than
+	// the word reads `UNMAPPED`, and the report says its machine has 32.
+	m.boards_unmapped = 1;
+	{
+		char *argv[] = {"main-memory-boards", "60"};
+		status = -1;
+		capture_start();
+		const int took = cons_boards_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == 1, "main-memory-boards 60 on an old fabric: taken %d,"
+		      " answered %d", took, status);
+		CHECK(strstr(said, "older than the word") != NULL && strstr(said, "32 boards") != NULL,
+		      "main-memory-boards on an old fabric did not say so: %s", said);
+	}
+	{
+		char *argv[] = {"main-memory-boards"};
+		status = -1;
+		capture_start();
+		cons_boards_word(&c, 1, argv, &status);
+		capture_end();
+		CHECK(status == 1, "main-memory-boards alone on an old fabric answered %d", status);
+	}
+	m.boards_unmapped = 0;
+	// **AND ONE THAT TOOK THE WRITE AND HOLDS ANOTHER COUNT ANSWERS 1**, with
+	// the count it holds in the report: the card asked for 60 and the
+	// machine has 31, and the boot must say so.
+	m.boards_deaf = 1;
+	{
+		char *argv[] = {"main-memory-boards", "60"};
+		status = -1;
+		capture_start();
+		const int took = cons_boards_word(&c, 2, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == 1, "main-memory-boards 60 on a fabric that holds 31:"
+		      " taken %d, answered %d", took, status);
+		CHECK(strstr(said, "main-memory-boards: 31 boards") != NULL,
+		      "main-memory-boards 60 on a fabric that holds 31 reported: %s", said);
+	}
+	m.boards_deaf = 0;
+	// And another word is not this one.
+	{
+		char *argv[] = {"status"};
+		status = -1;
+		const int took = cons_boards_word(&c, 1, argv, &status);
+		CHECK(took == 0 && status == -1, "status was taken as main-memory-boards (%d, %d)",
+		      took, status);
+	}
+}
+
 // **`display-output` AND `display-rotate`, and `hdmi-output` and `hdmi-rotate`
 // refused.**  The same rename as `display-sleep`'s and the same rule: the new
 // word writes word 34 and reports under `display:`, and the old one writes
@@ -3113,6 +3279,7 @@ int main(int argc, char **argv)
 	check_lamps();
 	check_hdmi_sleep();
 	check_display_sleep_word();
+	check_boards_word();
 	check_display_words();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.

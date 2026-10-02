@@ -72,6 +72,13 @@ enum ro_p0 { RO_IDENT = 0, RO_STAT = 1, RO_CYCLES = 2, RO_CYCLESH = 3,
 #define RO_MAP_CHANNELS IMG_MAP_CHANNELS
 #define RO_COLOR_MAP_WORD(board, color) \
 	(((board) ? RO_PAGE5 : RO_PAGE4) + (unsigned)(color))
+// **HOW MANY MEMORY BOARDS THE MACHINE HAS, page 2's word 37**, muir's
+// `--main-memory-boards`: the marker "BD" in bits 31 to 16 and the count of
+// 64K-word boards, 1 to 60, in bits 6 to 0.  A fabric older than the word
+// reads `RO_UNMAPPED` there, and its machine has 32 boards fixed.
+#define RO_BOARDS       37u
+#define RO_BOARDS_MARK  0x4244u	/* "BD" */
+#define RO_BOARDS_MAX   60u
 #define RO_LOST_BIT   0x00010000u
 
 // The diagnostic registers this program uses, muir's `spy.rs` names.
@@ -166,6 +173,13 @@ int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l);
 // (`IMG_QUUX_ID_13`) and 0 on revision 12.  13 or 12, 0 for the CADR, and -1
 // for a stale echo or a word that is neither.
 int ro_quux_revision(struct readout *r);
+
+// **HOW MANY MEMORY BOARDS THE MACHINE HAS**, out of `RO_BOARDS`: 1 to 60, or
+// 0 when the word carries no marker --- a fabric older than it, whose machine
+// has 32 boards fixed --- or a count outside 1 to 60, which no fabric holds.
+// A checkpoint of a machine is of ALL its memory, so this is what one is
+// sized by, and a caller does not guess it.
+unsigned ro_main_boards(struct readout *r);
 
 // QUUX's own state, into `img->qx`: the clocks, the keyboard and mouse,
 // block-disk and the page.  **THE CLOCKS RUN WHILE THEY ARE READ**, so each

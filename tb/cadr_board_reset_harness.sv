@@ -9,9 +9,11 @@
 // own file unchanged.  So what this holds is the top level's wiring, which
 // nothing else simulates: which reset reaches which module.
 //
-// Two of the top level's own signals come out by name, because what they
-// say is not on any pin: the machine's reset, and on the DE25-Nano whether
-// the memory port is live.
+// Three of the top level's own signals come out by name, because what they
+// say is not on any pin: the machine's reset, the memory boards' count the
+// machine is given, and on the DE25-Nano whether the memory port is live.
+// The count is read at the machine's own port, so what it holds is the top
+// level's wire from the console's page 2 word 37 to the machine's decode.
 
 `default_nettype none
 
@@ -24,6 +26,7 @@ module cadr_board_reset_harness #(
     // on the Zynq boards, KEY1 LOW while pressed on the DE25-Nano.
     input  var logic [1:0] btn,
     output var logic       mach_rst,
+    output var logic [6:0] mach_boards,
     output var logic       port_live
 );
 
@@ -75,6 +78,7 @@ module cadr_board_reset_harness #(
   /* verilator lint_on PINCONNECTEMPTY */
 
   assign mach_rst = u_top.mach_rst;
+  assign mach_boards = u_top.u_machine.boards;
 
 endmodule
 

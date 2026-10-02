@@ -249,6 +249,15 @@ int ro_quux_revision(struct readout *r)
 	return (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
 }
 
+unsigned ro_main_boards(struct readout *r)
+{
+	const uint32_t w = r->read(r, RO_BOARDS);
+	if ((w >> 16) != RO_BOARDS_MARK)
+		return 0;
+	const unsigned n = w & 0xFFFFu;
+	return (n >= 1u && n <= RO_BOARDS_MAX) ? n : 0u;
+}
+
 // muir's clock at a word of the microsecond clock: ticks since power-on,
 // `usec * 100 + 99 - usec_t` (`quux_clocks.sv`), the thirty-two bits of
 // microseconds unwrapped against `ticks`, the console's count since the

@@ -205,6 +205,10 @@ module cadr_kr260 #(
   logic [23:0] con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q;
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
   logic        con_steady_lamps;
+  // How many 64K-word memory boards the backplane has, page 2's word 37,
+  // muir's `--main-memory-boards`: the machine's address decode and QUUX's
+  // file device take it.  32 with no console.
+  logic [6:0]  con_mem_boards;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   logic        dbg_in_req, dbg_in_wr, dbg_in_ack;
@@ -299,8 +303,10 @@ module cadr_kr260 #(
       .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
       .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
       .ch_hit(ch_hit),
-      // 32 boards of 64K words, muir's own default.
-      .boards(7'd32),
+      // The memory boards' count, page 2's word 37: 32 of 64K words, muir's
+      // own default and what every trace in this repository was taken with,
+      // unless the card says `--main-memory-boards`.
+      .boards(con_mem_boards),
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
       .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
       .tv_color_map_q(con_tv_color_map_q),
@@ -1020,6 +1026,7 @@ module cadr_kr260 #(
         .tv_color_map_q(con_tv_color_map_q),
         .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
         .steady_lamps(con_steady_lamps),
+        .mem_boards(con_mem_boards),
         .hdmi_sleep_set(con_hdmi_sleep_set), .hdmi_sleep_secs(con_hdmi_sleep_secs),
         .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(1'b0),
         .hdmi_sleep_q(15'd0), .hdmi_asleep(1'b0),
@@ -1143,6 +1150,9 @@ module cadr_kr260 #(
     assign con_hdmi_out    = 2'b01;
     assign con_hdmi_rotate = 2'd0;
     assign con_steady_lamps = 1'b0;
+    // And nobody to say how many memory boards there are, so it is 32,
+    // muir's own default and what a board with a console comes up with.
+    assign con_mem_boards = 7'd32;
     assign con_tv_map_a = 4'd0;
     assign con_write = 1'b0;
     assign con_addr = 18'd0;

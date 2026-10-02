@@ -543,6 +543,9 @@ std::vector<Reg> regs() {
       // reads back: seven seconds, and 300 at reset.
       {"display SLEEP", 1, CONS + 0x90, 0x4853'0007, 0x5A5A'0007, 0x5A5A'012C},
 #endif
+      // The memory boards' count, page 2's word 37: 33, one past muir's
+      // default, and 32 at reset.  What the machine is given is held below.
+      {"console BOARDS", 1, CONS + 0x94, 0x4D42'0021, 0x4244'0021, 0x4244'0020},
   };
 }
 
@@ -569,6 +572,8 @@ int main(int argc, char **argv) {
   // well past what it can reach again between the release and the reads.
   run(5000);
   if (top->mach_rst) fail("the machine is in reset before the control, with nothing pressed");
+  if (top->mach_boards != 32)
+    fail("the machine is given %u memory boards out of power-on, want muir's 32", top->mach_boards);
   if (DE25) {
     if (!top->port_live) fail("the memory port is not live after software opened it");
     if (top->mach_rst) fail("the machine is still in reset after the port opened");
@@ -600,6 +605,26 @@ int main(int argc, char **argv) {
   if (!(txns[stat_ctl].first & 4u))
     fail("control: the console's STAT reads %08x, without `answered` after a "
          "diagnostic read", txns[stat_ctl].first);
+
+  // --- **THE MEMORY BOARDS' COUNT REACHES THE MACHINE.**  The console's word
+  // 37 read back 33 above; this holds that the top level carries the count to
+  // the machine's `boards`, which the decode takes, and that a count the
+  // console refuses never gets there.  1, 60 and 32 after it; 61 refused with
+  // 60 standing.  The press below must then bring the machine back to 32.
+  {
+    if (top->mach_boards != 33)
+      fail("control: the machine is given %u memory boards after a count of 33", top->mach_boards);
+    const struct { uint32_t n; unsigned want; } counts[] = {{1, 1}, {60, 60}, {61, 60}, {32, 32}, {33, 33}};
+    for (const auto &c : counts) {
+      add(1, "control console BOARDS count", true, CONS + 0x94, 0, 0x4D42'0000u | c.n, false, 0, now);
+      if (!settle(4000)) fail("control: the memory boards' count was not answered");
+      run(4);
+      if (top->mach_boards != c.want)
+        fail("control: a count of %u gives the machine %u memory boards, want %u", c.n,
+             top->mach_boards, c.want);
+    }
+    std::printf("%s: the machine was given 1, 60, 60 after a refused 61, 32 and 33 boards\n", BOARD);
+  }
 
   // --- the button, under traffic.
   const long press = now + 20;
@@ -652,6 +677,8 @@ int main(int argc, char **argv) {
   if (!settle(4000)) fail("the reads after the button did not finish");
   judge("after");
   (void)win_after;
+  if (top->mach_boards != 32)
+    fail("after: the machine is given %u memory boards after the button, want 32", top->mach_boards);
   if (txns[stat_after].first & 4u)
     fail("after: the console's STAT still reads `answered` (%08x)", txns[stat_after].first);
   std::printf("%s: CYCLES %u before the press, %u %ld ticks after the release\n",

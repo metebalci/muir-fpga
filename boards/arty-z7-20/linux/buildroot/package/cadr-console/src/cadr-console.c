@@ -364,6 +364,11 @@ static void help(void)
 	say("                wait over and wakes a monitor asleep.  With no word it reports");
 	say("                the setting and whether the monitor is asleep.  Exits 0 when");
 	say("                there is a display output and it holds what was asked");
+	say("main-memory-boards [N]  how many 64K-word memory boards the machine has, 1 to 60;");
+	say("                32 by default.  --main-memory-boards.  The band's cold boot");
+	say("                counts them, so set it before the band boots: a count changed");
+	say("                under a running band takes memory away from it.  With no word");
+	say("                it reports.  Exits 0 when the fabric holds what was asked");
 	say("blinking-leds [on|off]  whether the board's activity lamps blink, or hold a level:");
 	say("                off is --no-blinking-leds.  With no word it reports.  Exits 0");
 	say("                when the lamps do what the words say: blinking with no word or");
@@ -425,6 +430,10 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 	// words they replaced, which are refused by name.  The commands are the
 	// face's whole, so that the check holds them as typed.
 	if (cons_display_word(c, argc, argv, &exit_status))
+		return 0;
+	// `main-memory-boards`, page 2's word 37, whole in the face for the
+	// same reason.
+	if (cons_boards_word(c, argc, argv, &exit_status))
 		return 0;
 	if (!strcmp(cmd, "help") || !strcmp(cmd, "?"))
 		help();

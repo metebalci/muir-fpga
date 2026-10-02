@@ -392,6 +392,35 @@ enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 
 // What the fabric comes up with, `--display-sleep`'s own default.
 #define CONS_HDMI_SLEEP_DEFAULT  300u
 
+// **AND HOW MANY MEMORY BOARDS THE BACKPLANE HAS, page 2's word 37.**
+//
+// muir's `--main-memory-boards`: how many 64K-word boards of main memory the
+// machine has, 1 to 60, and 32 --- two million words --- unless something
+// says otherwise.  The count goes to the machine's address decode, which
+// answers main memory below the count's last board and gives the NXM above
+// it, so the band's cold-boot probe finds exactly the count times 64K words;
+// and to QUUX's file device, whose MEM_WORDS is the same.  The card's
+// `--main-memory-boards` is written by the disk pack program's init step
+// before the drive comes present, and the fabric comes up with 32.
+//
+// A write whose top half is `CONS_BOARDS_KEY` carries the count in its bottom
+// seven bits, bits 15 to 7 clear, all four lanes strobed, which a 32-bit store
+// is.  **A COUNT OUTSIDE 1 TO 60 IS REFUSED BY THE FABRIC**, which keeps the
+// count it had; this program refuses it before writing, too.  The word reads
+// back the marker and the count.  A fabric older than the word reads
+// `CONS_UNMAPPED`, which carries no marker, and its count is 32.
+#define CONS_BOARDS            (CONS_PAGE2 + 5u)
+#define CONS_BOARDS_KEY        0x4D42u	/* "MB", the top half of a count */
+#define CONS_BOARDS_MARK       0x4244u	/* "BD" */
+#define CONS_BOARDS_MARK_OF(w) ((w) >> 16)
+#define CONS_BOARDS_COUNT      0x7Fu
+#define CONS_BOARDS_MIN        1u
+#define CONS_BOARDS_MAX        60u
+// What the fabric comes up with, `--main-memory-boards`'s own default.
+#define CONS_BOARDS_DEFAULT    32u
+// A board is 64K words.
+#define CONS_BOARD_WORDS       65536u
+
 #define CONS_PAGE4        64u
 #define CONS_PAGE5        80u
 #define CONS_COLOR_MAP_WORD(board, color) \
@@ -889,6 +918,30 @@ int cons_parse_hdmi_sleep(const char *text, unsigned *seconds);
 // the word that replaced it, and it writes nothing, reads nothing and answers
 // 2.  The card's flags were renamed with them, `--hdmi-*` to `--display-*`.
 int cons_display_word(struct console *c, int argc, char **argv, int *status);
+
+// --- how many memory boards the backplane has, page 2's word 37 ----------
+
+struct cons_boards {
+	uint32_t word;		/* word 37 as it read */
+	int mark_ok;		/* it carried `CONS_BOARDS_MARK` */
+	unsigned count;		/* the boards, 1 to 60 */
+};
+
+void cons_read_boards(struct console *c, struct cons_boards *b);
+void cons_say_boards(const struct cons_boards *b);
+// A new count, a keyed write of word 37.  -1 and nothing written for a count
+// outside 1 to 60.  Write and then READ: a fabric older than the word takes
+// the write and holds nothing.
+int cons_set_boards(struct console *c, unsigned count);
+// A count as a person or a card writes it: decimal digits and nothing else, 1
+// to 60.  0, or -1 with `*count` untouched.
+int cons_parse_boards(const char *text, unsigned *count);
+// **`main-memory-boards [N]`, WHOLE, AS TYPED.**  1 when `argv[0]` is the
+// word, 0 with nothing done for any other.  A count and then a report, or a
+// report alone.  `*status` 0 when the fabric has the word and holds what was
+// asked, 1 when it does not, 2 for a count that is not 1 to 60, which writes
+// nothing.
+int cons_boards_word(struct console *c, int argc, char **argv, int *status);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir-sim/src/spy.rs's
 // ClockControl and ../muir-sim/tests/spy.rs:743-761).

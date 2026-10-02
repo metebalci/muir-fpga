@@ -186,6 +186,11 @@ constexpr unsigned kRegSleep = 36;
 constexpr uint32_t kSleepKey = 0x4853u;           /* "HS", the top half */
 constexpr uint32_t kWakeKey = 0x57414B45u;        /* "WAKE" */
 constexpr uint32_t kSleepMark = 0x5A5Au;          /* "ZZ" */
+// Page 2's word 37, how many memory boards the backplane has: a count under a
+// sixteen-bit key, and a marker.
+constexpr unsigned kRegBoards = 37;
+constexpr uint32_t kBoardsKey = 0x4D42u;          /* "MB", the top half */
+constexpr uint32_t kBoardsMark = 0x4244u;         /* "BD" */
 // `cadr_console.sv`'s own three keys and the word's marker.
 constexpr uint32_t kTvSimpleKey = 0x534D504Cu;  /* "SMPL" */
 constexpr uint32_t kTvLispmKey = 0x4C53504Du;   /* "LSPM" */
@@ -1384,10 +1389,11 @@ int main(int argc, char **argv) {
   // an address outside the face reads too.  The face gained one readable
   // address when the stamp arrived, one more when the backplane's display
   // boards took word 33, a third when the display output took word 34, a
-  // fourth when the lamps took word 35 and a fifth when the display output's
-  // sleep took word 36, and it gained nothing else: the end of page 2 past the
-  // five, and the two ends of page 3.
-  for (unsigned i : {37u, 47u, 48u, 63u}) {
+  // fourth when the lamps took word 35, a fifth when the display output's
+  // sleep took word 36 and a sixth when the memory boards took word 37, and it
+  // gained nothing else: the end of page 2 past the six, and the two ends of
+  // page 3.
+  for (unsigned i : {38u, 47u, 48u, 63u}) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("a word of pages 2 and 3 that is not the build", w, kUnmapped);
     ++unmapped_seen;
@@ -1688,7 +1694,7 @@ int main(int argc, char **argv) {
 
     // **AND ONLY PAGE 2'S OWN COMPARATOR REACHES IT, AT ITS OWN INDEX.**  Word
     // 4 of page 0 is TICKS, the same index in another window; word 35 is the
-    // lamps', one along; word 37 is unmapped, one the other way.
+    // lamps', one along; word 37 is the memory boards', one the other way.
     for (unsigned at : {4u, 35u, 37u}) {
       DoWrite(Con(at), (kSleepKey << 16) | 7u, 0xF);
       DoWrite(Con(at), kWakeKey, 0xF);
@@ -1710,6 +1716,73 @@ int main(int argc, char **argv) {
     }
     face_fitted = 1;
     if (face_both) Fail("ticks on which a setting and a wake were both pulsed", face_both, 0);
+  }
+
+  // **HOW MANY MEMORY BOARDS THE BACKPLANE HAS, page 2's word 37.**
+  //
+  // `--main-memory-boards` and `cadr-console main-memory-boards`: a count of
+  // 64K-word boards under a sixteen-bit key, 1 to 60 as muir's, which goes to
+  // the machine's address decode and QUUX's file device.  Compared as the
+  // word reads AND as the count the fabric holds, for word 33's reason.  What
+  // the decode does with the count is `build/xbus_decode.pass`'s; that the
+  // board's top level carries it to the machine is
+  // `build/board_reset.pass`'s.
+  {
+    auto boards = [&](const char *what, unsigned want) {
+      const uint32_t w = ReadWord(Con(kRegBoards));
+      if ((w >> 16) != kBoardsMark) Fail("the memory boards word's marker", w >> 16, kBoardsMark);
+      if ((w & 0xFFFFu) != want) Fail(what, w & 0xFFFFu, want);
+      if (dut->mem_boards != want) Fail("the count the fabric holds for the memory boards",
+                                        dut->mem_boards, want);
+    };
+    // A machine comes up with muir's own 32.
+    boards("the memory boards out of reset", 32);
+    // The ends and the boards either side of the default: one board, 33, the
+    // sixty the Xbus I/O space leaves room for, and 32 again.
+    for (unsigned n : {1u, 33u, 60u, 32u, 2u, 59u}) {
+      DoWrite(Con(kRegBoards), (kBoardsKey << 16) | n, 0xF);
+      boards("the memory boards after a count", n);
+    }
+    // **A COUNT NOBODY CAN HAVE IS REFUSED, NOT CLAMPED**: sixty-one would put
+    // main memory over the Xbus I/O space and zero is no memory, so either
+    // leaves the count that stood --- tried from 59, where a clamp to 60 or to
+    // 1 would both show.  And 64 and 127, which seven bits still carry, and a
+    // count with bit 7 set, which they do not.
+    for (unsigned n : {61u, 0u, 64u, 127u, 0x80u | 33u, 0x100u | 33u}) {
+      DoWrite(Con(kRegBoards), (kBoardsKey << 16) | n, 0xF);
+      boards("the memory boards after a count outside 1 to 60", 59);
+    }
+    // **AND A VALUE THAT MEANS NOTHING CHANGES NOTHING**: zero, all ones, the
+    // face's own words, the word's own read-back --- which a program that
+    // echoed the word would write --- the key one bit out, and the other
+    // words' keys with a count under them.
+    const uint32_t nothing_boards[] = {
+        0u, 0xFFFFFFFFu, kIdent, kUnmapped,
+        (kBoardsMark << 16) | 33u, ((kBoardsKey ^ 1u) << 16) | 33u,
+        (kBoardsKey << 8) | 33u, (kSleepKey << 16) | 33u,
+        kLampSteadyKey, kHdmiTvKey, kTvSimpleKey,
+        0x424F'4F54u /* BOOT_KEY */, 0x5253'4554u /* RESET_KEY */};
+    for (uint32_t v : nothing_boards) {
+      DoWrite(Con(kRegBoards), v, 0xF);
+      boards("the memory boards after a value that means nothing", 59);
+    }
+    // **AND A WRITE THAT DOES NOT STROBE ALL FOUR LANES IS NOT A COUNT**, for
+    // word 36's reason: a count's value has zero bytes, so it could otherwise
+    // be assembled out of fewer lanes.
+    for (unsigned strobe : {0x7u, 0xBu, 0xDu, 0xEu, 0x3u, 0xCu})
+      DoWrite(Con(kRegBoards), (kBoardsKey << 16) | 33u, strobe);
+    boards("the memory boards after writes of fewer than four lanes", 59);
+    // **AND ONLY PAGE 2'S OWN COMPARATOR REACHES IT, AT ITS OWN INDEX.**  Word
+    // 5 of page 0 is TICKSH, the same index in another window; word 36 is the
+    // display output's sleep, one along; word 38 is unmapped, one the other
+    // way.
+    for (unsigned at : {5u, 36u, 38u})
+      DoWrite(Con(at), (kBoardsKey << 16) | 33u, 0xF);
+    boards("the memory boards after the key written at the neighboring words", 59);
+    // Back to what a board comes up with, so that nothing after this runs on a
+    // backplane it did not expect.
+    DoWrite(Con(kRegBoards), (kBoardsKey << 16) | 32u, 0xF);
+    boards("the memory boards at the end", 32);
   }
 
   // **AND THE TWO DISPLAY BOARDS' COLOR MAPS, pages 4 and 5.**
@@ -2768,6 +2841,11 @@ int main(int argc, char **argv) {
       "      and its complement made them blink, read back and held as a level;\n"
       "      fourteen values that mean nothing, a byte of the key, and the key\n"
       "      at page 0's word 3 and at the display output's word changed nothing\n"
+      "    HOW MANY MEMORY BOARDS, page 2's word 37: 32 out of reset; 1, 33, 60,\n"
+      "      32, 2 and 59 each read back and held; 61, 0, 64, 127 and two counts\n"
+      "      past seven bits refused with 59 standing; thirteen values that mean\n"
+      "      nothing, six partial strobes and the key at the neighboring words\n"
+      "      changed nothing\n"
       "    MEASURED, NOT ASSERTED, because the file is not this slice's:\n"
       "      a mode write at register 13 landed %ld times (muir's\n"
       "      write_strobe is `eadr & 7`, so: once)\n",

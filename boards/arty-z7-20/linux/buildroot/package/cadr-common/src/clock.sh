@@ -81,6 +81,13 @@
 #   cadr_clock_set INSTANT
 #       Set the board's clock to INSTANT, UTC.  True when `date` took it.
 #
+#   cadr_ntp_server_ok SERVER
+#       True when SERVER is what `--ntp-server` takes and BusyBox's ntpd reads
+#       as one peer: a name or an address, then `:PORT` if it is wanted, the
+#       port 1 to 65535 in decimal; an IPv6 address in brackets, `[ADDR]` or
+#       `[ADDR]:PORT`.  Nothing empty, no space anywhere, and no leading `-`,
+#       which ntpd would read as a flag of its own.
+#
 # **THERE IS NO COMPARISON BETWEEN TWO INSTANTS HERE, and that is deliberate.**
 # One stood here while the card's lines were a floor that a later saved clock
 # could overrule.  They are not a floor now, so nothing compares them, and the
@@ -220,4 +227,59 @@ cadr_clock_saved() {
 # the boot log and a person reading either see one setting and not a sequence.
 cadr_clock_set() {
 	date -u -s "$(cadr_clock_human "$1")" > /dev/null 2>&1
+}
+
+# **WHAT `--ntp-server` TAKES, which is what BusyBox's ntpd reads as one peer.**
+# Its `-p` hands the word to libbb's `str2sockaddr`, which takes the port after
+# the LAST colon when there is one colon, takes `[ADDR]:PORT` for IPv6, and
+# reads a word with several colons and no brackets as an IPv6 address with no
+# port at all --- so `fe80::1:123` would be an address and not port 123.  That
+# one is refused here, with brackets as the way to say it.  A port outside 1 to
+# 65535 is refused by ntpd too, but only once the network is up and the wait has
+# been spent, so it is refused here first.
+cadr_ntp_server_ok() {
+	case "$1" in
+	''|-*|*[[:space:]]*) return 1 ;;
+	esac
+	_cadr_ntp_host=$1
+	_cadr_ntp_port=
+	case "$1" in
+	\[*\])
+		_cadr_ntp_host=${1#[}
+		_cadr_ntp_host=${_cadr_ntp_host%]}
+		;;
+	\[*\]:*)
+		_cadr_ntp_port=${1##*]:}
+		_cadr_ntp_host=${1%%]:*}
+		_cadr_ntp_host=${_cadr_ntp_host#[}
+		;;
+	\[*|*\]*) return 1 ;;
+	*:*:*) return 1 ;;
+	*:*)
+		_cadr_ntp_host=${1%:*}
+		_cadr_ntp_port=${1#*:}
+		[ -n "$_cadr_ntp_port" ] || return 1
+		;;
+	esac
+	[ -n "$_cadr_ntp_host" ] || return 1
+	case "$1" in
+	*:) return 1 ;;
+	esac
+	[ -n "$_cadr_ntp_port" ] || return 0
+	case "$_cadr_ntp_port" in
+	*[!0-9]*|'') return 1 ;;
+	esac
+	# Six digits or more is past 65535 whatever they are, and is refused
+	# before the shell's arithmetic is asked about a number it may not hold;
+	# the leading zeros come off first, as the date's year's do.
+	while :; do
+		case "$_cadr_ntp_port" in
+		0?*) _cadr_ntp_port=${_cadr_ntp_port#0} ;;
+		*) break ;;
+		esac
+	done
+	case "$_cadr_ntp_port" in
+	??????*) return 1 ;;
+	esac
+	[ "$_cadr_ntp_port" -ge 1 ] && [ "$_cadr_ntp_port" -le 65535 ]
 }

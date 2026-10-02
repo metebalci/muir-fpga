@@ -189,7 +189,7 @@ BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 # The README's board-specific sentences, as the Zynq-7000 boards and the
 # DE25-Nano have them; a board whose own differ sets them in its arm below.
 README_UENV_MAC=yes
-README_CARD_LABEL=
+README_USB_STORAGE=
 README_FAULT_LAMPS="IF EVERY LIGHT ON THE BOARD BLINKS TOGETHER, twice a second and red"
 README_FAULT_LAMPS2="on a color light, "
 case "$BOARD_NAME" in
@@ -244,9 +244,10 @@ case "$BOARD_NAME" in
     # The README's two board-specific sentences: the SOM's EEPROM gives the
     # MAC, so uEnv.txt never carries one, and the two lamps are single-color.
     README_UENV_MAC=
-    # And Linux finds the card by its volume name, because the slot is a USB
-    # reader (rootfs-overlay/etc/cadr/card.sh), so the README says to name it.
-    README_CARD_LABEL=CADR
+    # And the slot is the carrier's own USB reader, which Linux finds the card
+    # by (rootfs-overlay/etc/cadr/card.sh), so the README says the USB ports
+    # are for the keyboard and the mouse.
+    README_USB_STORAGE=yes
     README_FAULT_LAMPS="IF UF1 AND UF2 BLINK TOGETHER, twice a second,"
     README_FAULT_LAMPS2=""
     ;;
@@ -823,9 +824,11 @@ stage_tree() {
   printf 'it.  Unpack the zip onto a card you formatted yourself; there is no\r\n'
   printf 'disk image to write.  A file damaged by a power cut is repaired by\r\n'
   printf 'unpacking the zip again over the top.\r\n\r\n'
-  if [ -n "$README_CARD_LABEL" ]; then
-    printf "NAME THE CARD %s WHEN YOU FORMAT IT.  This board's Linux finds the\r\n" "$README_CARD_LABEL"
-    printf 'card, its disk packs and its settings by that volume name.\r\n\r\n'
+  if [ -n "$README_USB_STORAGE" ]; then
+    printf "The card's slot is the board's own USB card reader, and Linux finds\r\n"
+    printf 'the card by that reader, whatever the card is named.  The USB ports\r\n'
+    printf 'are for the keyboard and the mouse: do not plug other USB storage\r\n'
+    printf 'in.\r\n\r\n'
   fi
   printf 'What is here\r\n'
   printf '  %-22s the loader, which this board reads by name.\r\n' "$ROOT_NAMES"
@@ -914,14 +917,24 @@ stage_tree() {
     fi
   fi
   # **THE BOARDS KEEP NO TIME** (cadr-common's clock.sh), so a card out of
-  # the box starts at the epoch unless fpgarc says otherwise; measured on a
+  # the box takes the date from NTP when it has a network, and starts at the
+  # epoch with neither a network nor fpgarc's --date and --time; measured on a
   # release card, System 1002 then shows 01/01/70.
   if [ -n "${RELEASE:-}" ]; then
     printf 'The date\r\n'
-    printf 'This board keeps no time while it is switched off.  Before you\r\n'
-    printf "switch it on, put today's date and the time, in UTC, on fpgarc's\r\n"
-    printf '#--date and #--time lines and take the # off each; otherwise the\r\n'
-    printf 'machine starts in 1970.\r\n\r\n'
+    printf 'This board keeps no time while it is switched off.  With a network\r\n'
+    printf 'it sets its clock by NTP at boot, from pool.ntp.org, before the\r\n'
+    printf "machine starts; fpgarc's --ntp-server names another server and\r\n"
+    printf '--no-ntp turns it off.  Without a network, put the date and the\r\n'
+    printf "time, in UTC, on fpgarc's #--date and #--time lines and take the #\r\n"
+    printf 'off each; otherwise the machine starts in 1970.\r\n\r\n'
+    printf 'Logging in to Linux\r\n'
+    printf "The board's Linux takes root with the password root, over ssh and\r\n"
+    printf "on the serial console.  fpgarc's --root-password sets another at\r\n"
+    printf 'every boot.  A file named authorized_keys here, beside fpgarc, one\r\n'
+    printf 'ssh public key a line, is installed for root, and ssh then takes\r\n'
+    printf 'no password at all.  Keep a board that takes root/root on a network\r\n'
+    printf 'only you can reach.\r\n\r\n'
   fi
   printf 'While the board is running you need not take the card out at all:\r\n'
   printf '  copy a pack in            that drive comes ready\r\n'
@@ -1473,6 +1486,22 @@ fi
   printf -- "#--color-tv\r\n"
 
   printf "\r\n"
+  printf "# ================================================= the memory boards\r\n"
+  printf "# Read by the disk pack program's init script, before the drive comes\r\n"
+  printf "# present, and written into the console face. docs/fpgarc.md has the\r\n"
+  printf "# section on it.\r\n"
+  printf "\r\n"
+  printf "# How many 64K-word boards of main memory the machine has, 1 to 60,\r\n"
+  printf "# muir's own --main-memory-boards. The band counts them at its cold\r\n"
+  printf "# boot. The default is 32, two million words, which every band runs\r\n"
+  printf "# on; System 1003 and later use more, and 60 is 3,932,160 words. A\r\n"
+  printf "# band older than System 1003 halts at its cold boot with more than\r\n"
+  printf "# 32. QUUX takes the same count.\r\n"
+  printf "# \`cadr-console main-memory-boards\` reports it, and sets it before a\r\n"
+  printf "# band boots.\r\n"
+  printf -- "#--main-memory-boards 32\r\n"
+
+  printf "\r\n"
   printf "# ================================================= the display output\r\n"
   printf "# Read by the disk pack program's init script, before the drive comes\r\n"
   printf "# present, and written into the console face. The display output scans\r\n"
@@ -1504,9 +1533,21 @@ fi
   printf "# ========================================================= the clock\r\n"
   printf "# Read by the disk pack program's init script, before anything else\r\n"
   printf "# starts. This board has no real-time clock in it, so it comes up at\r\n"
-  printf "# the epoch and does not know the date or the time until these two\r\n"
+  printf "# the epoch and does not know the date or the time until NTP or these\r\n"
   printf "# lines tell it. The clock is UTC. docs/fpgarc.md has the section on\r\n"
   printf "# them.\r\n"
+  printf "\r\n"
+  printf "# With a network, the clock is set by NTP before the machine starts,\r\n"
+  printf "# from pool.ntp.org unless this line names another server or pool: a\r\n"
+  printf "# name or an address, then :PORT if the port is not 123. The board\r\n"
+  printf "# waits up to 20 seconds for the network and 30 for the server. The\r\n"
+  printf "# saved clock and the --date and --time lines below are the clock\r\n"
+  printf "# only when NTP does not set it.\r\n"
+  printf -- "#--ntp-server pool.ntp.org\r\n"
+  printf "\r\n"
+  printf "# With this line the clock is never set by NTP, and the saved clock\r\n"
+  printf "# and the two lines below are the clock whatever the network says.\r\n"
+  printf -- "#--no-ntp\r\n"
   printf "\r\n"
   printf "# The date, as a four-digit year then a two-digit month then a\r\n"
   printf "# two-digit day. Fill it in before uncommenting it: what stands below\r\n"
@@ -1527,6 +1568,21 @@ fi
   printf "# board a date to leave alone, and a line here is set on top of it.\r\n"
   printf "# The two are never compared, so a line naming an instant earlier\r\n"
   printf "# than the saved clock is still the setting the board takes.\r\n"
+
+  printf "\r\n"
+  printf "# ================================================ the login on Linux\r\n"
+  printf "# Read by the disk pack program's init script at every boot, before\r\n"
+  printf "# the network is up. docs/fpgarc.md has the section on it.\r\n"
+  printf "\r\n"
+  printf "# Root's password on the board's Linux, for ssh and the serial\r\n"
+  printf "# console both. Without this line it is root, so set one before the\r\n"
+  printf "# board is on a network anybody else can reach. It is kept in plain\r\n"
+  printf "# text in this file.\r\n"
+  printf -- "#--root-password root\r\n"
+  printf "\r\n"
+  printf "# A file named authorized_keys beside this one, one ssh public key a\r\n"
+  printf "# line, is installed for root at every boot, and ssh then takes no\r\n"
+  printf "# password at all. The serial console still takes root's password.\r\n"
 
   printf "\r\n"
   printf "# ========================================================= the lamps\r\n"

@@ -58,6 +58,9 @@ BR2_LINUX_KERNEL_CUSTOM_DTS_DIR="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/dts"
 # of our own programs.  An initramfs as a U-Boot ramdisk image, fetched over
 # TFTP beside the kernel, so the card holds no filesystem.
 BR2_PACKAGE_DROPBEAR=y
+# BusyBox's ntpd, for the clock by NTP at boot (S80cadr-disk-packs).  The
+# fragment is shared by the four boards and says why each applet is there.
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/busybox.fragment"
 BR2_PACKAGE_EVTEST=y
 # One init script, S15usbvbus, which tells the USB PHY to drive VBUS to the
 # host connector; the script says why the kernel does not.

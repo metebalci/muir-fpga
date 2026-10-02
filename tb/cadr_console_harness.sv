@@ -116,6 +116,11 @@ module cadr_console_harness #(
     // reads back are two facts.
     output var logic        steady_lamps,
 
+    // --- **AND HOW MANY MEMORY BOARDS THE BACKPLANE HAS, page 2's word 37.**
+    // Out of the harness for word 33's reason: the count the fabric holds and
+    // the word it reads back are two facts.
+    output var logic [6:0]  mem_boards,
+
     // --- **AND WHETHER THE DISPLAY OUTPUT SLEEPS, page 2's word 36.**  The
     // setting and the mute are the display output's and not the console's,
     // so the console's two pulses come out of the harness and the display's
@@ -453,6 +458,7 @@ module cadr_console_harness #(
       .tv_color_map_q(map_word(1'b1, tv_map_a)),
       .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate),
       .steady_lamps(steady_lamps),
+      .mem_boards(mem_boards),
       .hdmi_sleep_set(hdmi_sleep_set), .hdmi_sleep_secs(hdmi_sleep_secs),
       .hdmi_wake(hdmi_wake), .hdmi_sleep_fitted(hdmi_sleep_fitted),
       .hdmi_sleep_q(hdmi_sleep_q), .hdmi_asleep(hdmi_asleep),

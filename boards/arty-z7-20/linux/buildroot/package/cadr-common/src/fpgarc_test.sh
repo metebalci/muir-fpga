@@ -49,6 +49,7 @@ STOPPER="$PKG/cadr-common/src/stop.sh"
 CLOCKSH="$PKG/cadr-common/src/clock.sh"
 FAULTSH="$PKG/cadr-common/src/fault.sh"
 MKSD="$TREE/boards/arty-z7-20/linux/mksd-buildroot.sh"
+KRCARD="$TREE/boards/kria-kr260/linux/buildroot/board/kria-kr260/rootfs-overlay/etc/cadr/card.sh"
 MKSDREL="$TREE/boards/arty-z7-20/linux/mksd-release.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-fpgarc-$$}
 
@@ -97,6 +98,10 @@ sandbox() {
 	: > "$WORK/ozd.check.calls"
 	: > "$WORK/ssd.fg.calls"
 	: > "$WORK/devmem.calls"
+	: > "$WORK/ntpd.calls"
+	: > "$WORK/ntpd.order"
+	: > "$WORK/mkpasswd.calls"
+	: > "$WORK/dropbear.calls"
 
 	# **THE TALLY, AS `devmem` READS IT**, which is how `fault.sh` tells the
 	# fault bitstream from the CADR's.  It prints `$WORK/tally` in busybox's
@@ -239,6 +244,11 @@ switch) [ "\${CONSOLE_SWITCH:-no}" = yes ] ;;
 	case "\$*" in
 	*"blinking-leds off"*) [ "\${CONSOLE_LAMPS:-yes}" = yes ] ;;
 	*"display-sleep"*) [ "\${CONSOLE_SLEEP:-yes}" = yes ] ;;
+	*"main-memory-boards"*)
+		_d=after; [ -s "$WORK/daemon.calls" ] || _d=before
+		echo "main-memory-boards was asked \$_d the pack program started" >> "$WORK/boards.order"
+		[ "\${CONSOLE_BOARDS:-yes}" = yes ]
+		;;
 	*) : ;;
 	esac
 	;;
@@ -298,15 +308,70 @@ exec "$_realid" "\$@"
 EOF
 	# The Chaosnet script's network probes: ready at once, every name
 	# resolving, because the wait itself is chaos_test_boot.sh's to hold.
+	#
+	# \$NET=down is a board with no lease: no address but the loopback's and
+	# no route, which is what the clock's wait for NTP waits out.
 	cat > "$WORK/bin/ip" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/ip.calls"
+if [ "\${NET:-up}" = down ]; then
+	case "\$*" in
+	*addr*) echo "1: lo    inet 127.0.0.1/8 scope host lo" ;;
+	esac
+	exit 0
+fi
 case "\$*" in
 *addr*) echo "2: eth0    inet 192.0.2.17/24 brd 192.0.2.255 scope global eth0" ;;
 *route*) echo "default via 192.0.2.1 dev eth0" ;;
 esac
 exit 0
 EOF
+	# **NTP, AS BUSYBOX'S ntpd -q ANSWERS IT.**  It records what it was
+	# asked, and where in the boot, as \`date\` does.  \$NTPD=yes sets the
+	# board's clock to \$NTP_NOW and exits 0, which is a server that
+	# answered; the default, \`no\`, is the real one's SIGALRM ten seconds
+	# after a query nobody answered, said as nothing and status 142; and
+	# \`slow\` never answers and never gives up, which is the bound this
+	# script must keep for itself.
+	cat > "$WORK/bin/ntpd" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/ntpd.calls"
+_d=after; [ -s "$WORK/daemon.calls" ] || _d=before
+_c=after; [ -s "$WORK/console.calls" ] || _c=before
+echo "ntpd was asked \$_d the pack program started and \$_c the console was asked anything" \\
+	>> "$WORK/ntpd.order"
+echo "root's password field was \$(sed -n 's/^root:\\([^:]*\\):.*/\\1/p' "$WORK/shadow")" >> "$WORK/ntpd.shadow"
+case "\${NTPD:-no}" in
+yes)
+	printf '%s' "\${NTP_NOW:-20261002150000}" > "$WORK/now"
+	exit 0
+	;;
+slow) exec sleep 30 ;;
+*) exit 142 ;;
+esac
+EOF
+	# **ROOT'S PASSWORD, HASHED.**  The real one is BusyBox's \`mkpasswd\`; this
+	# one hashes nothing: it prints a \`\$6\$\` word that names in hex what it
+	# read on its standard input, and records its arguments, so that a
+	# password on a command line --- where \`ps\` shows it --- is a failure
+	# here.  \$MKPASSWD=no is a hash that did not come.
+	cat > "$WORK/bin/mkpasswd" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/mkpasswd.calls"
+[ "\${MKPASSWD:-yes}" = yes ] || exit 1
+_pw=\$(cat)
+printf '\$6\$stub\$%s\\n' "\$(printf '%s' "\$_pw" | od -An -tx1 | tr -d ' \\n')"
+EOF
+	# **AND DROPBEAR'S INIT SCRIPT**, which the keys restart: it records what
+	# it was asked and what its settings file said at that moment.
+	cat > "$WORK/bin/S50dropbear" <<EOF
+#!/bin/sh
+echo "\$* with [\$(cat "$WORK/etc-default-dropbear" 2>/dev/null)]" >> "$WORK/dropbear.calls"
+exit 0
+EOF
+	# The image's own password file: root's password is root's hash.
+	printf '%s\n' 'root:$6$image$rootroot:20000:0:99999:7:::' \
+		'daemon:*:20000:0:99999:7:::' 'ozd:!:20000:0:99999:7:::' > "$WORK/shadow"
 	cat > "$WORK/bin/nslookup" <<EOF
 #!/bin/sh
 for a; do case "\$a" in -*) ;; *) echo "\$a" >> "$WORK/nslookup.calls" ;; esac; done
@@ -519,6 +584,19 @@ prepare() {
 		# Three seconds rather than thirty, so the case of a program that
 		# does not stop is three seconds of this check and not thirty.
 		anchor "$dst" "^PACKS_STOP_SECONDS=30\$" "PACKS_STOP_SECONDS=3" || return 1
+		# **NTP's TWO WAITS**, two seconds each rather than twenty and
+		# thirty, and where ntpd's words go.
+		anchor "$dst" "^NTP_NETWORK_SECONDS=20\$" "NTP_NETWORK_SECONDS=2" || return 1
+		anchor "$dst" "^NTP_ANSWER_SECONDS=30\$" "NTP_ANSWER_SECONDS=2" || return 1
+		anchor "$dst" "^NTP_OUT=/var/run/cadr-ntpd.out\$" "NTP_OUT=$WORK/run/ntpd.out" || return 1
+		# **ROOT'S LOGIN**: the password file, root's ssh directory, and
+		# Dropbear's settings and init script, all the board's own.
+		anchor "$dst" "^SHADOW=/etc/shadow\$" "SHADOW=$WORK/shadow" || return 1
+		anchor "$dst" "^ROOT_SSH=/root/.ssh\$" "ROOT_SSH=$WORK/root/.ssh" || return 1
+		anchor "$dst" "^DROPBEAR_DEFAULT=/etc/default/dropbear\$" \
+		              "DROPBEAR_DEFAULT=$WORK/etc-default-dropbear" || return 1
+		anchor "$dst" "^DROPBEAR_INIT=/etc/init.d/S50dropbear\$" \
+		              "DROPBEAR_INIT=$WORK/bin/S50dropbear" || return 1
 		;;
 	esac
 	return 0
@@ -2370,13 +2448,19 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	clock_set_once "2026-09-20 14:38:05"
 fi
 
-case_head "a card that says nothing leaves the clock alone and says nothing"
+# **NTP IS ASKED BY DEFAULT**, so a card that says nothing about the clock
+# still hears NTP's outcome: here the stubbed server does not answer, and that
+# is the one line the clock's step says.  Nothing is set from the card, and
+# nothing else about the clock is said.
+case_head "a card that says nothing leaves the clock alone and says only NTP's outcome"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
 	run_script S80cadr-disk-packs
 	clock_set_never "the clock was not set"
-	says_not "cadr-clock"
+	says "cadr-clock: NTP from pool.ntp.org did not set the clock"
+	says_not "cadr-clock: the clock is"
+	says_not "--date"
 	if [ -s "$WORK/daemon.calls" ]; then
 		ok "and the pack program was started"
 	else
@@ -2839,6 +2923,379 @@ for pair in "ozd S84ozd" "cadr-terminal S85cadr-terminal" "cadr-serial S86cadr-s
 done
 
 # ---------------------------------------------------------------------------
+# 5c. THE CLOCK BY NTP, FIRST, AND THE CARD'S LINES AS ITS FALLBACK.
+# ---------------------------------------------------------------------------
+#
+# With a network, the board's clock is set by NTP before the machine starts:
+# BusyBox's `ntpd -q`, one peer, `pool.ntp.org` unless the card's
+# `--ntp-server` names another, a name or an address with `:PORT` after it.
+# `--no-ntp` turns it off.  The saved clock and `--date`/`--time` are what the
+# clock is when NTP does not set it.  The waits are bounded: the network's, and
+# ntpd's own, which this script keeps for itself.  The stubbed `ntpd` sets the
+# board's clock when the case says it answers, and the stubbed `ip` says
+# whether there is a network.
+
+ntp_asked() { tr '\n' '|' < "$WORK/ntpd.calls"; }
+ntp_asked_once() {
+	if [ "$(cat "$WORK/ntpd.calls")" = "$1" ]; then
+		ok "ntpd was asked once, as ntpd $1"
+	else
+		fail "ntpd was asked [$(ntp_asked)] and not once as [$1]"
+	fi
+}
+ntp_never() {
+	if [ -s "$WORK/ntpd.calls" ]; then
+		fail "ntpd was asked [$(ntp_asked)] and $1"
+	else
+		ok "ntpd was never asked: $1"
+	fi
+}
+# One S80 boot with the environment the case gives, timed in whole seconds.
+ntp_boot() {
+	_t0=$(date +%s)
+	env "$@" FPGARC_CLAIMED="$WORK/run/claimed" FPGARC_WARNED="$WORK/run/warned" \
+		CADR_FAULT_SAID="$WORK/run/fault.said" PATH="$WORK/bin:$PATH" \
+		"$WORK/S80cadr-disk-packs" start > "$WORK/out.S80cadr-disk-packs" 2>&1
+	ntp_took=$(( $(date +%s) - _t0 ))
+}
+
+case_head "with a network, NTP sets the clock first, and the card's --date and --time are not used"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes NTP_NOW=20261002150000
+	ntp_asked_once "-n -q -p pool.ntp.org"
+	clock_set_never "and nothing set the clock but NTP"
+	says "cadr-clock: the clock is 2026-10-02 15:00:00 UTC, by NTP from pool.ntp.org"
+	says "--date and --time in $WORK/card/fpgarc are the clock only when NTP does not set it"
+	says_not "on the clock restored from"
+	if [ "$(cat "$WORK/ntpd.order")" = "ntpd was asked before the pack program started and before the console was asked anything" ]; then
+		ok "and NTP was asked before the console or the pack program"
+	else
+		fail "NTP was asked out of order: [$(cat "$WORK/ntpd.order")]"
+	fi
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the pack program was started"
+	else
+		fail "the pack program was not started"
+	fi
+	passes_not "--ntp" "cadr-disk-packs"
+fi
+
+case_head "--ntp-server NAME:PORT is the one peer ntpd is asked, port and all"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--ntp-server time.example:12345' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes NTP_NOW=20261002150000
+	ntp_asked_once "-n -q -p time.example:12345"
+	says "by NTP from time.example:12345"
+	passes_not "--ntp-server" "cadr-disk-packs"
+fi
+
+case_head "--ntp-server takes an address, and an IPv6 one in brackets"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--ntp-server [2001:db8::7b]:10123' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes
+	ntp_asked_once "-n -q -p [2001:db8::7b]:10123"
+fi
+
+case_head "--no-ntp: ntpd is never asked, no network is waited for, and --date and --time are the clock"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--no-ntp' '--ntp-server time.example' '--date 20260920' '--time 1438' \
+		> "$WORK/card/fpgarc"
+	: > "$WORK/ip.calls"
+	ntp_boot NTPD=yes
+	ntp_never "--no-ntp was on the card"
+	clock_set_once "2026-09-20 14:38:00"
+	says "cadr-clock: --no-ntp in $WORK/card/fpgarc: the clock is not set by NTP, and --ntp-server is not asked"
+	if [ -s "$WORK/ip.calls" ]; then
+		fail "the step looked for a network it was told not to use: [$(tr '\n' '|' < "$WORK/ip.calls")]"
+	else
+		ok "and no network was looked for"
+	fi
+	passes_not "--no-ntp" "cadr-disk-packs"
+fi
+
+case_head "no network: the wait is bounded, ntpd is not asked, and the card's lines are the clock"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	echo 19700101000005 > "$WORK/now"
+	echo 20260920140000 > "$WORK/card/clock"
+	printf '%s\r\n' '--time 1500' > "$WORK/card/fpgarc"
+	ntp_boot NET=down NTPD=yes
+	ntp_never "there was no network to ask it on"
+	clock_set_once "2026-09-20 15:00:00"
+	says "cadr-clock: no network after 2s (no address on anything but the loopback), so NTP was not asked"
+	says "on the clock restored from"
+	if [ "$ntp_took" -ge 2 ] && [ "$ntp_took" -le 6 ]; then
+		ok "and the boot waited $ntp_took s, the bound and no longer"
+	else
+		fail "the boot took $ntp_took s with a 2 s bound on the network's wait"
+	fi
+fi
+
+case_head "a server that does not answer: what ntpd said is named, and the card's lines are the clock"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--date 20260920' '--time 1438' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=no
+	ntp_asked_once "-n -q -p pool.ntp.org"
+	clock_set_once "2026-09-20 14:38:00"
+	says "cadr-clock: NTP from pool.ntp.org did not set the clock (ntpd: it said nothing, status 142)"
+	says "cadr-clock: the clock is 2026-09-20 14:38:00 UTC, --date 20260920 and --time 1438"
+	says_not "were not used"
+fi
+
+case_head "a server that never answers is stopped at the script's own bound"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--date 20260920' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=slow
+	ntp_asked_once "-n -q -p pool.ntp.org"
+	says "cadr-clock: NTP from pool.ntp.org did not set the clock within 2s, so it was stopped"
+	clock_set_once "2026-09-20 00:00:05"
+	if [ "$ntp_took" -le 6 ]; then
+		ok "and the boot went on after $ntp_took s, with a 2 s bound"
+	else
+		fail "the boot took $ntp_took s with a 2 s bound on ntpd"
+	fi
+fi
+
+case_head "an --ntp-server that is not a server is refused, and NTP is not asked"
+for bad in 'time.example:99999' 'fe80::1:123' '-q' 'time.example:'; do
+	sandbox
+	if prepare cadr-disk-packs S80cadr-disk-packs; then
+		printf '%s\r\n' "--ntp-server $bad" '--date 20260920' > "$WORK/card/fpgarc"
+		ntp_boot NTPD=yes
+		ntp_never "--ntp-server $bad is not a server"
+		says "cadr-clock: --ntp-server $bad is not a server, so NTP was not asked"
+		clock_set_once "2026-09-20 00:00:05"
+	fi
+done
+
+# ---------------------------------------------------------------------------
+# 5d. ROOT'S LOGIN FROM THE CARD: --root-password, AND authorized_keys.
+# ---------------------------------------------------------------------------
+#
+# The image's root password is `root` and stays the default.
+# `--root-password PW` sets it at every boot, hashed by `mkpasswd` from its
+# standard input and never on a command line; root's line of the password file
+# changes and no other.  An `authorized_keys` file at the card's root is
+# installed for root and Dropbear is restarted with `-s`, which takes no
+# password; a file with no key in it is not installed.
+
+root_field() { sed -n 's/^root:\([^:]*\):.*/\1/p' "$WORK/shadow"; }
+hex_of() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
+
+case_head "--root-password sets root's password, from the hash's standard input, and only root's"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--root-password a long $pw "word"' > "$WORK/card/fpgarc"
+	cp "$WORK/shadow" "$WORK/shadow.before"
+	ntp_boot NTPD=yes
+	want="\$6\$stub\$$(hex_of 'a long $pw "word"')"
+	if [ "$(root_field)" = "$want" ]; then
+		ok "root's password field is the hash of the whole line after the flag"
+	else
+		fail "root's password field is [$(root_field)], wanting [$want]"
+	fi
+	if [ "$(grep -v '^root:' "$WORK/shadow")" = "$(grep -v '^root:' "$WORK/shadow.before")" ] &&
+	   [ "$(sed -n 's/^root:[^:]*\(:.*\)/\1/p' "$WORK/shadow")" = ":20000:0:99999:7:::" ]; then
+		ok "and every other line and field of the password file is as it was"
+	else
+		fail "the password file changed beyond root's password:"
+		sed 's/^/        /' "$WORK/shadow"
+	fi
+	if [ "$(cat "$WORK/mkpasswd.calls")" = "-s -m sha512" ]; then
+		ok "and mkpasswd was given no password on its command line"
+	else
+		fail "mkpasswd was run as [$(tr '\n' '|' < "$WORK/mkpasswd.calls")]"
+	fi
+	says "cadr-login: root's password is --root-password's in $WORK/card/fpgarc"
+	says_not "long \$pw"
+	if [ "$(cat "$WORK/ntpd.shadow")" = "root's password field was $want" ]; then
+		ok "and it was root's before NTP's wait for the network"
+	else
+		fail "when NTP was asked, root's password field was not yet the card's: [$(cat "$WORK/ntpd.shadow")]"
+	fi
+	passes_not "--root-password" "cadr-disk-packs"
+fi
+
+case_head "without --root-password, root's password is the image's and nothing is said"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
+	cp "$WORK/shadow" "$WORK/shadow.before"
+	ntp_boot NTPD=yes
+	if cmp -s "$WORK/shadow" "$WORK/shadow.before"; then
+		ok "the password file is untouched"
+	else
+		fail "the password file changed with no --root-password on the card"
+	fi
+	if [ -s "$WORK/mkpasswd.calls" ]; then
+		fail "mkpasswd was run with no --root-password on the card"
+	else
+		ok "and mkpasswd was not run"
+	fi
+	says_not "cadr-login"
+fi
+
+case_head "an empty --root-password, or a hash that did not come, changes nothing and says so"
+for how in empty nohash; do
+	sandbox
+	if prepare cadr-disk-packs S80cadr-disk-packs; then
+		cp "$WORK/shadow" "$WORK/shadow.before"
+		if [ "$how" = empty ]; then
+			printf '%s\r\n' '--root-password' > "$WORK/card/fpgarc"
+			ntp_boot NTPD=yes
+			says "cadr-login: --root-password is there with nothing after it, so root's password was not changed"
+		else
+			printf '%s\r\n' '--root-password secret' > "$WORK/card/fpgarc"
+			ntp_boot NTPD=yes MKPASSWD=no
+			says "cadr-login: --root-password: mkpasswd did not hash it, so root's password was not changed"
+		fi
+		if cmp -s "$WORK/shadow" "$WORK/shadow.before"; then
+			ok "and the password file is untouched ($how)"
+		else
+			fail "the password file changed ($how): [$(root_field)]"
+		fi
+	fi
+done
+
+case_head "authorized_keys at the card's root is root's, carriage returns off, and ssh takes no password"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
+	printf '%s\r\n' '# the laptop' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyOne one@example' '' \
+		'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyTwo two@example' > "$WORK/card/authorized_keys"
+	ntp_boot NTPD=yes
+	if [ -f "$WORK/root/.ssh/authorized_keys" ] &&
+	   [ "$(cat "$WORK/root/.ssh/authorized_keys")" = "$(tr -d '\r' < "$WORK/card/authorized_keys")" ]; then
+		ok "the keys are root's, byte for byte but the carriage returns"
+	else
+		fail "root's authorized_keys is not the card's without carriage returns"
+	fi
+	if [ "$(stat -c %a "$WORK/root/.ssh")" = 700 ] &&
+	   [ "$(stat -c %a "$WORK/root/.ssh/authorized_keys")" = 600 ]; then
+		ok "and the directory is 700 and the file 600, which Dropbear asks of them"
+	else
+		fail "the modes are $(stat -c %a "$WORK/root/.ssh") and $(stat -c %a "$WORK/root/.ssh/authorized_keys")"
+	fi
+	if [ "$(cat "$WORK/dropbear.calls")" = 'restart with [DROPBEAR_ARGS="-s"]' ]; then
+		ok "and Dropbear was restarted once, with -s in its settings"
+	else
+		fail "Dropbear was asked [$(tr '\n' '|' < "$WORK/dropbear.calls")]"
+	fi
+	says "cadr-login: 2 key(s) from $WORK/card/authorized_keys are root's, and ssh takes no password now (Dropbear -s)"
+fi
+
+case_head "an authorized_keys with no key in it is not installed, and ssh still takes the password"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
+	printf '%s\r\n' '# put your key here' '   ' '' > "$WORK/card/authorized_keys"
+	ntp_boot NTPD=yes
+	if [ -e "$WORK/root/.ssh/authorized_keys" ]; then
+		fail "a file with no key in it was installed"
+	else
+		ok "nothing was installed"
+	fi
+	if [ -s "$WORK/dropbear.calls" ]; then
+		fail "Dropbear was asked [$(tr '\n' '|' < "$WORK/dropbear.calls")] for a file with no key"
+	else
+		ok "and Dropbear was left alone"
+	fi
+	says "has no key in it, so it was not installed and ssh still takes root's password"
+fi
+
+case_head "no authorized_keys on the card: nothing is installed and Dropbear is left alone"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes
+	if [ -e "$WORK/root/.ssh" ] || [ -s "$WORK/dropbear.calls" ]; then
+		fail "something was installed or restarted with no keys on the card"
+	else
+		ok "nothing was installed and nothing restarted"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5e. THE MEMORY BOARDS: --main-memory-boards REACHES THE CONSOLE BEFORE THE
+#     DRIVE.
+# ---------------------------------------------------------------------------
+#
+# muir's `--main-memory-boards`, 1 to 60, is written into the console face by
+# `cadr-console main-memory-boards` before the drive comes present, so that the
+# band's cold boot counts what the card asked for.  The count's range is the
+# console's to refuse, and its check holds that; what is held here is that the
+# card's count reaches it, before the drive, and that a refusal is said.
+
+case_head "--main-memory-boards 60 is asked of the console before the drive comes present"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--main-memory-boards 60' > "$WORK/card/fpgarc"
+	: > "$WORK/boards.order"
+	ntp_boot NTPD=yes
+	if grep -qx -- "--log /dev/console main-memory-boards 60" "$WORK/console.calls"; then
+		ok "the console was asked main-memory-boards 60"
+	else
+		fail "the console was not asked main-memory-boards 60: [$(tr '\n' '|' < "$WORK/console.calls")]"
+	fi
+	if [ "$(cat "$WORK/boards.order")" = "main-memory-boards was asked before the pack program started" ]; then
+		ok "and before the pack program started"
+	else
+		fail "the count was asked out of order: [$(cat "$WORK/boards.order")]"
+	fi
+	passes_not "--main-memory-boards" "cadr-disk-packs"
+	says_not "cadr-memory"
+fi
+
+case_head "a count the console refuses is said, and the boot goes on"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--main-memory-boards 61' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes CONSOLE_BOARDS=no
+	if grep -qx -- "--log /dev/console main-memory-boards 61" "$WORK/console.calls"; then
+		ok "the console was asked, and its own line says why it refused"
+	else
+		fail "the console was not asked main-memory-boards 61"
+	fi
+	says "cadr-memory: --main-memory-boards 61: not set --- the console's line above says why"
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the pack program was started"
+	else
+		fail "the pack program was not started"
+	fi
+fi
+
+case_head "a card that says nothing about the boards asks the console nothing about them"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes
+	if grep -q "main-memory-boards" "$WORK/console.calls"; then
+		fail "the console was asked about the boards: [$(tr '\n' '|' < "$WORK/console.calls")]"
+	else
+		ok "the console was not asked about the boards"
+	fi
+fi
+
+case_head "QUUX takes the count too"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--machine quux' '--main-memory-boards 33' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes
+	if grep -qx -- "--log /dev/console main-memory-boards 33" "$WORK/console.calls"; then
+		ok "the console was asked main-memory-boards 33 on a QUUX card"
+	else
+		fail "a QUUX card's count did not reach the console"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6.  The card script writes the line, commented out unless asked.
 # ---------------------------------------------------------------------------
 #
@@ -3051,6 +3508,35 @@ if generate_fpgarc ""; then
 	else
 		ok "and the reader does not take it as a flag"
 	fi
+fi
+
+case_head "the card names NTP, root's password and the memory boards, each commented at its default"
+sandbox
+if generate_fpgarc ""; then
+	G="$WORK/gen/card/fpgarc"
+	for line in '#--ntp-server pool.ntp.org' '#--no-ntp' '#--root-password root' \
+	            '#--main-memory-boards 32'; do
+		if tr -d '\r' < "$G" | grep -qx -- "$line"; then
+			ok "the card carries [$line]"
+		else
+			fail "the card does not carry [$line] as a commented line"
+		fi
+	done
+	for flag in --ntp-server --no-ntp --root-password --main-memory-boards; do
+		if [ "$HAVE_READER" = yes ] && fpgarc_has "$G" "$flag"; then
+			fail "$flag is live on a card written with nothing asked"
+		fi
+	done
+	for sentence in 'from pool.ntp.org unless this line names another server or pool' \
+	                'the clock is never set by NTP' 'Without this line it is root' \
+	                'A file named authorized_keys beside this one' \
+	                "muir's own --main-memory-boards"; do
+		if tr -d '\r' < "$G" | grep -qF -- "$sentence"; then
+			ok "and it says: $sentence"
+		else
+			fail "the card's file does not say [$sentence]"
+		fi
+	done
 fi
 
 case_head "NO_AUTO_BOOT=1 makes the same line live"
@@ -5809,6 +6295,118 @@ if prepare quux-file-device S81quux-file-device; then
 		fail "a repeatable flag was warned about as repeated: $(cat "$WORK/out.S81quux-file-device")"
 	else
 		ok "--file-root on two lines is not a repeated flag"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# 11.  THE KRIA KR260'S CARD IS FOUND BY ITS READER, NOT BY ITS LABEL.
+# ---------------------------------------------------------------------------
+#
+# The board's microSD slot is a USB reader on USB0's hub, so the card is a SCSI
+# disk whose letter depends on what else is plugged in.  `/etc/cadr/card.sh`
+# takes the disk that hangs from the carrier's own reader, USB 0424:2240 at
+# port 1-1.1, and its first partition, whatever the card's volume label is.
+# Here it is given a made-up /sys: the reader and a USB stick, in either order,
+# and two readers.  `blkid`, which the old way asked for the label, is a stub
+# that records being asked, and must not be.
+
+# A USB device at $1 (its path under devices/) with id $2, and a disk $3 under
+# it, with a first partition when $4 is yes.
+kr_disk() {
+	_u="$WORK/sys/devices/platform/axi/xhci-hcd.0.auto/$1"
+	mkdir -p "$_u/${1##*/}:1.0/host0/target0:0:0/0:0:0:0"
+	echo "${2%:*}" > "$_u/idVendor"
+	echo "${2#*:}" > "$_u/idProduct"
+	mkdir -p "$WORK/sys/block/$3"
+	ln -s "$_u/${1##*/}:1.0/host0/target0:0:0/0:0:0:0" "$WORK/sys/block/$3/device"
+	[ "$4" = yes ] && mkdir -p "$WORK/sys/block/$3/${3}1"
+	return 0
+}
+kr_hubs() {
+	mkdir -p "$WORK/sys/devices/platform/axi/xhci-hcd.0.auto/usb1/1-1"
+	echo 0424 > "$WORK/sys/devices/platform/axi/xhci-hcd.0.auto/usb1/1-1/idVendor"
+	echo 2743 > "$WORK/sys/devices/platform/axi/xhci-hcd.0.auto/usb1/1-1/idProduct"
+}
+# Source the board's own card.sh as S80 does, with the made-up /sys, and say
+# what it found.
+kr_find() {
+	cat > "$WORK/bin/blkid" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/blkid.calls"
+echo '/dev/sda1: LABEL="CADR" TYPE="vfat"'
+EOF
+	chmod +x "$WORK/bin/blkid"
+	: > "$WORK/blkid.calls"
+	( CADR_SYSFS="$WORK/sys" CADR_CARD_SECONDS=${1:-0} PATH="$WORK/bin:$PATH"
+	  . "$KRCARD"; echo "CARD_DEV=$CARD_DEV" ) > "$WORK/out.krcard" 2>&1
+	kr_dev=$(sed -n 's/^CARD_DEV=//p' "$WORK/out.krcard")
+}
+kr_card_is() {
+	if [ "$kr_dev" = "$1" ]; then
+		ok "the card is $1"
+	else
+		fail "the card was taken to be [$kr_dev], wanting $1; card.sh said:"
+		sed 's/^/        /' "$WORK/out.krcard"
+	fi
+	if [ -s "$WORK/blkid.calls" ]; then
+		fail "blkid was asked [$(tr '\n' '|' < "$WORK/blkid.calls")]: the label is not how the card is found"
+	fi
+}
+
+if [ ! -f "$KRCARD" ]; then
+	fail "there is no card.sh for the Kria KR260 at $KRCARD"
+else
+	case_head "the KR260's card is the disk on the carrier's reader, even when a USB stick is sda"
+	sandbox
+	kr_hubs
+	kr_disk usb3/3-1/3-1.2 0781:5581 sda yes
+	kr_disk usb1/1-1/1-1.1 0424:2240 sdb yes
+	kr_find
+	kr_card_is /dev/sdb1
+	if grep -q "the card is /dev/sdb1, in the board's own reader 0424:2240" "$WORK/out.krcard"; then
+		ok "and the console says which reader"
+	else
+		fail "the console does not name the reader: $(cat "$WORK/out.krcard")"
+	fi
+
+	case_head "and with the reader first, the stick is still not the card"
+	sandbox
+	kr_hubs
+	kr_disk usb1/1-1/1-1.1 0424:2240 sda yes
+	kr_disk usb3/3-1/3-1.2 0781:5581 sdb yes
+	kr_find
+	kr_card_is /dev/sda1
+
+	case_head "a card with no partition table is mounted whole"
+	sandbox
+	kr_hubs
+	kr_disk usb1/1-1/1-1.1 0424:2240 sda no
+	kr_find
+	kr_card_is /dev/sda
+
+	case_head "two readers of the same chip: the carrier's own port is the card, and it is said"
+	sandbox
+	kr_hubs
+	kr_disk usb3/3-1/3-1.4 0424:2240 sda yes
+	kr_disk usb1/1-1/1-1.1 0424:2240 sdb yes
+	kr_find
+	kr_card_is /dev/sdb1
+	if grep -q "2 readers 0424:2240 are plugged in; the card is the one at port 1-1.1, /dev/sdb1" "$WORK/out.krcard"; then
+		ok "and the console says there were two"
+	else
+		fail "two readers were not said: $(cat "$WORK/out.krcard")"
+	fi
+
+	case_head "no reader: no card, after the wait, and another USB disk is never taken for it"
+	sandbox
+	kr_hubs
+	kr_disk usb3/3-1/3-1.2 0781:5581 sda yes
+	kr_find 1
+	kr_card_is /dev/null/no-card-in-the-reader
+	if grep -q "no card in the board's own reader 0424:2240 after 1 s" "$WORK/out.krcard"; then
+		ok "and the console says so"
+	else
+		fail "the missing card was not said: $(cat "$WORK/out.krcard")"
 	fi
 fi
 

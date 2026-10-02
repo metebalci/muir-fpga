@@ -271,6 +271,8 @@ module cadr_gp1_split_harness #(
   logic [1:0] hdmi_out, hdmi_rotate;
   // And no lamps, so whether they would blink is folded below too.
   logic       steady_lamps;
+  // And no machine to give a memory boards' count to, folded below too.
+  logic [6:0] mem_boards;
   // And no display output to sleep, so the word reads `UNMAPPED` here and what
   // the console would carry to one is folded below.
   logic        hdmi_sleep_set, hdmi_wake;
@@ -324,6 +326,7 @@ module cadr_gp1_split_harness #(
       .tv_map_q(24'd0), .tv_color_map_q(24'd0),
       .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate),
       .steady_lamps(steady_lamps),
+      .mem_boards(mem_boards),
       .hdmi_sleep_set(hdmi_sleep_set), .hdmi_sleep_secs(hdmi_sleep_secs),
       .hdmi_wake(hdmi_wake), .hdmi_sleep_fitted(1'b0),
       .hdmi_sleep_q(15'd0), .hdmi_asleep(1'b0)
@@ -465,7 +468,8 @@ module cadr_gp1_split_harness #(
                     // The backplane's display boards, which go to
                     // `cadr_machine` on the board and to nobody here.
                     tv_lispm, color_tv, tv_map_a, hdmi_out, hdmi_rotate,
-                    steady_lamps, hdmi_sleep_set, hdmi_sleep_secs, hdmi_wake};
+                    steady_lamps, hdmi_sleep_set, hdmi_sleep_secs, hdmi_wake,
+                    mem_boards};
 
 endmodule
 

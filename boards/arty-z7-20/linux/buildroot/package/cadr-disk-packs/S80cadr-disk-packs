@@ -67,6 +67,24 @@
 # second.  `set_the_clock` below is the whole of it and `save_the_clock` is its
 # other half, in `stop`.
 #
+# **AND THE CLOCK ASKS THE NETWORK FIRST.**  With a network, the board's clock
+# is set by NTP before anything else here asks the fabric, from `pool.ntp.org`
+# unless the card's `--ntp-server` names another server, and `--no-ntp` turns
+# it off.  The saved clock and `--date`/`--time` are what the clock is when NTP
+# does not answer.  `set_the_clock_by_ntp` below is the whole of it.
+#
+# **AND ROOT'S LOGIN IS SET FROM THE CARD, BEFORE THE CLOCK'S WAIT FOR THE
+# NETWORK.**  `--root-password` sets root's password, which is `root` on the
+# image, and an `authorized_keys` file at the card's root is installed for root
+# and turns password login over ssh off.  Both are on the partition this script
+# mounts, which is the reason the clock's step is here too.
+# `set_the_root_login` below is the whole of it.
+#
+# **AND THE MEMORY BOARDS' COUNT IS SET HERE, BEFORE THE DRIVE.**  The card's
+# `--main-memory-boards` reaches the fabric through `cadr-console` before the
+# drive comes present, which is before any band has counted the boards.
+# `set_the_memory_boards` below is the whole of it.
+#
 # **AND THE BOOT BUTTON'S STEP LIVES HERE, WHICH NEEDS SAYING.**  `fpgarc`'s
 # `--no-auto-boot`, and SW0 on the board, each leave the CADR's boot button
 # unpressed, as a CADR is when the power comes on, and the machine is held with
@@ -208,6 +226,28 @@ CLOCK="$CARD/clock"
 # marker that outlives its hold is a lie about the machine.
 HELD=/var/run/cadr-held
 
+# **ROOT'S LOGIN**, which `set_the_root_login` sets from the card: the password
+# file root's password is written into, where root's keys are installed, the
+# card's own keys file, and Dropbear's settings and its init script, which is
+# restarted with `-s` once the keys are root's.
+SHADOW=/etc/shadow
+ROOT_SSH=/root/.ssh
+ROOT_KEYS="$CARD/authorized_keys"
+DROPBEAR_DEFAULT=/etc/default/dropbear
+DROPBEAR_INIT=/etc/init.d/S50dropbear
+
+# **NTP**, which `set_the_clock_by_ntp` asks: the server when the card names
+# none, how long to wait for the network to come up, and how long to wait for
+# ntpd to set the clock once it has.  BusyBox's `ntpd -q` gives up by itself 10
+# seconds after its first query with no reply, and allows 50 more once one
+# came; the second bound is this script's own, so that a slow server cannot
+# hold the boot for a minute.  What ntpd says goes to NTP_OUT, and its last line
+# is said on the console when it did not set the clock.
+NTP_DEFAULT_SERVER=pool.ntp.org
+NTP_NETWORK_SECONDS=20
+NTP_ANSWER_SECONDS=30
+NTP_OUT=/var/run/cadr-ntpd.out
+
 # **THE MOUNT, AND THE ONE PLACE THAT KNOWS THERE WERE EVER TWO CARD SHAPES.**
 # A card made by `mksd-*.sh` is one FAT32 partition holding everything, and
 # that is the shape to build for.  A card of the OLD shape has two, with
@@ -271,6 +311,7 @@ mount_the_card() {
 
 start() {
 	mount_the_card
+	set_the_root_login
 	set_the_clock
 	# **THE CARD AND THE CLOCK ARE NOT THE FABRIC'S**, so they are done on
 	# the fault bitstream too: the card is where the configuration to be
@@ -278,6 +319,7 @@ start() {
 	# Everything after this asks the fabric something.
 	cadr_fault_stop && return 0
 	set_the_lamps
+	set_the_memory_boards
 	set_the_display_boards
 	set_the_display_output
 	hold_the_machine
@@ -355,6 +397,18 @@ set_the_clock() {
 			clock_time=${2:-}
 		fi
 	fi
+	# **NTP FIRST, AND THE REST IS THE FALLBACK.**  A clock NTP set is the
+	# world's, so the card's two lines and the saved clock are not set on top
+	# of it; they are what the clock is when NTP does not answer, and a card
+	# that wants its own date whatever the network says says `--no-ntp`.
+	if set_the_clock_by_ntp; then
+		if [ "$have_date" = yes ] || [ "$have_time" = yes ]; then
+			echo "cadr-clock: --date and --time in $RC are the clock only when NTP does" \
+			     "not set it, so they were not used; --no-ntp makes them the clock"
+		fi
+		return 0
+	fi
+
 	# Nothing said and nothing saved is a board whose clock nobody has ever
 	# set, and it has nothing to say about it --- which is the rule every
 	# other step in this script follows.
@@ -443,6 +497,111 @@ set_the_clock() {
 	fi
 }
 
+# **THE CLOCK FROM THE NETWORK, BY NTP**, which is the world's and so the first
+# answer this board has.  True when ntpd set the clock; false, having said why,
+# when NTP is off, the card names a server that is not one, there is no
+# network, or no server answered --- and the caller then sets the clock from
+# what was saved and what the card says, as it did before there was NTP.
+#
+# **THE SERVER IS `pool.ntp.org` UNLESS THE CARD NAMES ANOTHER**, a name or an
+# address with `:PORT` after it if it is not 123; `cadr_ntp_server_ok` in
+# clock.sh says what is taken.  `--no-ntp` turns the step off and says so.
+#
+# **THE NETWORK IS WAITED FOR, BOUNDED.**  BusyBox's udhcpc forks into the
+# background when its first DISCOVER is not answered, so S40network prints OK
+# with eth0 bare and the lease comes seconds later (S87cadr-chaosnet's header
+# has the measurement).  An address and a default route are what ntpd needs to
+# send anything, and both arrive with the lease; the name is ntpd's own to
+# resolve, and it asks again while it waits.  A board with no cable waits
+# NTP_NETWORK_SECONDS once a boot and then goes on, which is the price of a
+# clock that is right whenever there is a network.
+set_the_clock_by_ntp() {
+	ntp_server=$NTP_DEFAULT_SERVER
+	if [ -f "$RC" ] && fpgarc_has "$RC" --no-ntp; then
+		if fpgarc_has "$RC" --ntp-server; then
+			echo "cadr-clock: --no-ntp in $RC: the clock is not set by NTP, and" \
+			     "--ntp-server is not asked"
+		else
+			echo "cadr-clock: --no-ntp in $RC: the clock is not set by NTP"
+		fi
+		return 1
+	fi
+	if [ -f "$RC" ] && fpgarc_has "$RC" --ntp-server; then
+		eval "set -- $(fpgarc_args "$RC" --ntp-server)"
+		ntp_server=${2:-}
+		if ! cadr_ntp_server_ok "$ntp_server"; then
+			echo "cadr-clock: --ntp-server ${ntp_server:-with nothing after it} is not a" \
+			     "server, so NTP was not asked: --ntp-server is a name or an address," \
+			     "then :PORT if it is not 123, an IPv6 address in brackets"
+			return 1
+		fi
+	fi
+	if ! command -v ntpd > /dev/null 2>&1; then
+		echo "cadr-clock: there is no ntpd on this image, so NTP was not asked"
+		return 1
+	fi
+	if ! ntp_wait_for_network; then
+		echo "cadr-clock: no network after ${NTP_NETWORK_SECONDS}s ($ntp_why), so NTP" \
+		     "was not asked"
+		return 1
+	fi
+	# **ONE PEER, `-q`, IN THE FOREGROUND AND BOUNDED.**  `-q` sets the clock
+	# once and exits 0; `-n` keeps it out of the background, so that its
+	# status is the answer.  It runs as a job of this script so that the
+	# bound below is this script's and not ntpd's own minute.
+	ntpd -n -q -p "$ntp_server" > "$NTP_OUT" 2>&1 &
+	ntp_pid=$!
+	ntp_waited=0
+	while kill -0 "$ntp_pid" 2> /dev/null && [ "$ntp_waited" -lt "$NTP_ANSWER_SECONDS" ]; do
+		sleep 1
+		ntp_waited=$((ntp_waited + 1))
+	done
+	if kill -0 "$ntp_pid" 2> /dev/null; then
+		kill "$ntp_pid" 2> /dev/null
+		wait "$ntp_pid" 2> /dev/null
+		echo "cadr-clock: NTP from $ntp_server did not set the clock within" \
+		     "${NTP_ANSWER_SECONDS}s, so it was stopped"
+		return 1
+	fi
+	wait "$ntp_pid"
+	ntp_status=$?
+	if [ "$ntp_status" -ne 0 ]; then
+		ntp_said=$(tail -1 "$NTP_OUT" 2>/dev/null)
+		echo "cadr-clock: NTP from $ntp_server did not set the clock" \
+		     "(ntpd: ${ntp_said:-it said nothing}, status $ntp_status)"
+		return 1
+	fi
+	echo "cadr-clock: the clock is $(cadr_clock_human "$(cadr_clock_now)") UTC, by NTP" \
+	     "from $ntp_server"
+	return 0
+}
+
+# Whether the network can carry a query: an address on something other than
+# the loopback, and a default route.  `ntp_why` is the first one missing.
+ntp_network_ready() {
+	if ! ip -o -4 addr show 2> /dev/null | grep -q 'scope global'; then
+		ntp_why="no address on anything but the loopback"
+		return 1
+	fi
+	if ! ip -4 route list 2> /dev/null | grep -q '^default'; then
+		ntp_why="no default route"
+		return 1
+	fi
+	ntp_why=""
+	return 0
+}
+
+# Wait for it, a second a poll, NTP_NETWORK_SECONDS at most.
+ntp_wait_for_network() {
+	ntp_polls=0
+	while ! ntp_network_ready; do
+		[ "$ntp_polls" -lt "$NTP_NETWORK_SECONDS" ] || return 1
+		sleep 1
+		ntp_polls=$((ntp_polls + 1))
+	done
+	return 0
+}
+
 # One line for a line on the card that is not the thing it says it is, with the
 # form beside it: the person who wrote it has the card in a reader, and the
 # form is the whole of what they need to put it right.  The boot goes on, which
@@ -501,6 +660,133 @@ save_the_clock() {
 		return 0
 	fi
 	echo "cadr-clock: $(cadr_clock_human "$clock_stamp") UTC saved to $CLOCK"
+}
+
+# **ROOT'S LOGIN, FROM THE CARD.**  The image's root password is `root`, over
+# ssh and on the serial console alike, and that stays the default: a card that
+# says nothing logs in as it always did.
+#
+# `--root-password PW` sets root's password at every boot, for every login,
+# ssh and the serial console both.  The root filesystem is a RAM disk unpacked
+# at every boot, so nothing of it outlives the boot and the card's line is the
+# whole of the setting.  The password goes to `mkpasswd` on its standard input
+# and never on a command line, where `ps` would show it, and it is never
+# printed.  It is on the card in plain text, which is what a setting a person
+# edits in a card reader is.
+#
+# **AN `authorized_keys` FILE AT THE CARD'S ROOT IS ROOT'S, AND SSH THEN TAKES
+# NO PASSWORD.**  The file is installed as `/root/.ssh/authorized_keys`, with
+# carriage returns taken off because the card is FAT and is edited on laptops,
+# and Dropbear is restarted with `-s`, which refuses every password login.  The
+# serial console still takes the password: it is the way back in for somebody
+# with the board in front of them.  A file with no key in it --- nothing but
+# blank lines and comments --- is not installed, so that it cannot lock ssh
+# out entirely.
+#
+# **WHY HERE, AND BEFORE THE CLOCK.**  Both settings are on the partition this
+# script is the one thing that mounts, and the clock's step may wait for the
+# network; this runs before that wait, so the password the card names is root's
+# before the board has an address.  Dropbear itself starts earlier, at S50,
+# with the image's password, and is restarted here when the keys turn
+# passwords off: before that restart a password still opens ssh, in the
+# seconds between S50 and this step, before the network's lease has come.
+set_the_root_login() {
+	set_the_root_password
+	install_the_root_keys
+}
+
+set_the_root_password() {
+	[ -f "$RC" ] && fpgarc_has "$RC" --root-password || return 0
+	eval "set -- $(fpgarc_args "$RC" --root-password)"
+	root_pw=${2:-}
+	if [ -z "$root_pw" ]; then
+		echo "cadr-login: --root-password is there with nothing after it, so root's" \
+		     "password was not changed"
+		return 0
+	fi
+	root_hash=$(printf '%s' "$root_pw" | mkpasswd -s -m sha512 2> /dev/null)
+	case "$root_hash" in
+	'$6$'*) ;;
+	*)
+		echo "cadr-login: --root-password: mkpasswd did not hash it, so root's" \
+		     "password was not changed"
+		return 0
+		;;
+	esac
+	# Root's line, and only root's, gets the new hash in its second field.
+	# Written back through `cat` so that the file keeps its own mode.
+	if ! awk -F: -v OFS=: -v h="$root_hash" \
+	        '$1 == "root" { $2 = h; n++ } { print } END { exit n != 1 }' \
+	        "$SHADOW" > "$SHADOW.cadr" 2> /dev/null ||
+	   ! cat "$SHADOW.cadr" > "$SHADOW"; then
+		rm -f "$SHADOW.cadr"
+		echo "cadr-login: --root-password: $SHADOW has no one line for root, so" \
+		     "root's password was not changed"
+		return 0
+	fi
+	rm -f "$SHADOW.cadr"
+	echo "cadr-login: root's password is --root-password's in $RC, for ssh and the" \
+	     "serial console"
+}
+
+install_the_root_keys() {
+	[ -f "$ROOT_KEYS" ] || return 0
+	root_keys=$(tr -d '\r' < "$ROOT_KEYS" | grep -c -v -e '^[[:space:]]*$' -e '^[[:space:]]*#')
+	if [ "${root_keys:-0}" -eq 0 ]; then
+		echo "cadr-login: $ROOT_KEYS has no key in it, so it was not installed and ssh" \
+		     "still takes root's password"
+		return 0
+	fi
+	if ! mkdir -p "$ROOT_SSH" || ! chmod 700 "$ROOT_SSH" ||
+	   ! tr -d '\r' < "$ROOT_KEYS" > "$ROOT_SSH/authorized_keys" ||
+	   ! chmod 600 "$ROOT_SSH/authorized_keys"; then
+		echo "cadr-login: $ROOT_KEYS could not be installed as $ROOT_SSH/authorized_keys," \
+		     "so ssh still takes root's password"
+		return 0
+	fi
+	if [ ! -x "$DROPBEAR_INIT" ]; then
+		echo "cadr-login: $root_keys key(s) from $ROOT_KEYS are root's; there is no" \
+		     "Dropbear on this image to stop taking passwords"
+		return 0
+	fi
+	if ! mkdir -p "$(dirname "$DROPBEAR_DEFAULT")" ||
+	   ! printf 'DROPBEAR_ARGS="-s"\n' > "$DROPBEAR_DEFAULT" ||
+	   ! "$DROPBEAR_INIT" restart > /dev/null 2>&1; then
+		echo "cadr-login: $root_keys key(s) from $ROOT_KEYS are root's, and Dropbear" \
+		     "could not be restarted without passwords, so ssh may still take one"
+		return 0
+	fi
+	echo "cadr-login: $root_keys key(s) from $ROOT_KEYS are root's, and ssh takes no" \
+	     "password now (Dropbear -s); the serial console still does"
+}
+
+# **HOW MANY MEMORY BOARDS THE MACHINE HAS**, muir's `--main-memory-boards`: 1
+# to 60 boards of 64K words, 32 unless the card says.  The fabric's address
+# decode answers main memory below the count's last board and gives the NXM
+# above it, so the band's cold boot finds exactly the count times 64K words.
+#
+# **IT IS SET BEFORE THE DRIVE COMES PRESENT**, which is before any band has
+# counted the boards: the PROM ran when the bitstream loaded, and it touches
+# no main memory while it waits for the drive.  A count changed under a running
+# band takes memory away from it, which is why the step is here and nowhere
+# later.  QUUX takes the same count, as muir's QUUX does.  A count the console
+# will not take, and a fabric older than the setting, are both refused BY the
+# console, whose line says which; the machine then has the fabric's count.
+#
+# Nothing is printed when the flag is not there, because a machine with
+# muir's 32 boards has nothing to say about it.
+set_the_memory_boards() {
+	[ -f "$RC" ] && fpgarc_has "$RC" --main-memory-boards || return 0
+	if ! command -v cadr-console > /dev/null 2>&1; then
+		echo "cadr-memory: --main-memory-boards, and no cadr-console to ask with;" \
+		     "the machine has the fabric's own 32 boards"
+		return 0
+	fi
+	eval "set -- $(fpgarc_args "$RC" --main-memory-boards)"
+	if ! cadr-console --log /dev/console main-memory-boards "${2:-}" 2>&1; then
+		echo "cadr-memory: --main-memory-boards ${2:-}: not set --- the console's line" \
+		     "above says why; the machine has the count the fabric holds"
+	fi
 }
 
 # **WHETHER THE BOARD'S ACTIVITY LAMPS BLINK.**  `--no-blinking-leds` makes

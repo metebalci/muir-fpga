@@ -77,6 +77,9 @@ BR2_LINUX_KERNEL_CUSTOM_DTS_DIR="$(BR2_EXTERNAL_CADR_CORA_PATH)/board/cora-z7-07
 # programs.  An initramfs as a U-Boot ramdisk image, so the card holds no
 # filesystem.
 BR2_PACKAGE_DROPBEAR=y
+# BusyBox's ntpd, for the clock by NTP at boot (S80cadr-disk-packs).  The
+# fragment is shared by the four boards and says why each applet is there.
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/busybox.fragment"
 BR2_PACKAGE_CADR_CONSOLE=y
 BR2_PACKAGE_CADR_READOUT=y
 BR2_PACKAGE_CADR_CHECKPOINT=y

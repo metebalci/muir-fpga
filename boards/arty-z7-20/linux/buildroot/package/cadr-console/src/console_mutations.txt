@@ -751,3 +751,68 @@
 @new
 	h->color = (h->word & CONS_HDMI_FIRST) != 0;
 @end
+
+@mutation main-memory-boards-takes-sixty-one
+@file console_face.c
+@why a count past 60 must be refused before anything is written: the sixty-first
+@why board's first word is the Xbus I/O space, and muir refuses it too
+@old
+		if (v > CONS_BOARDS_MAX)
+			return -1;
+@new
+		if (v > CONS_BOARDS_MAX + 1u)
+			return -1;
+@end
+
+@mutation main-memory-boards-takes-zero
+@file console_face.c
+@why a count of zero boards is a machine with no memory and must be refused, as muir
+@why refuses it
+@old
+	if (v < CONS_BOARDS_MIN)
+		return -1;
+	*count = v;
+@new
+	*count = v;
+@end
+
+@mutation main-memory-boards-setter-writes-any-count
+@file console_face.c
+@why the face's setter must refuse a count outside 1 to 60 for a caller that did not
+@why parse, or a refused count goes out as a write the fabric then drops in silence
+@old
+	if (count < CONS_BOARDS_MIN || count > CONS_BOARDS_MAX)
+		return -1;
+	c->write(c, CONS_BOARDS, ((uint32_t)CONS_BOARDS_KEY << 16) | count);
+@new
+	c->write(c, CONS_BOARDS, ((uint32_t)CONS_BOARDS_KEY << 16) | count);
+@end
+
+@mutation main-memory-boards-written-without-its-key
+@file console_face.c
+@why the count rides under the key's top half, which is what makes the fabric take it
+@old
+	c->write(c, CONS_BOARDS, ((uint32_t)CONS_BOARDS_KEY << 16) | count);
+@new
+	c->write(c, CONS_BOARDS, ((uint32_t)CONS_BOARDS_MARK << 16) | count);
+@end
+
+@mutation main-memory-boards-answers-0-whatever-the-fabric-holds
+@file console_face.c
+@why the init script reads the status: a fabric that did not take the count, or is
+@why older than the word, must answer 1 so that the boot says the card was not obeyed
+@old
+	*status = (b.mark_ok && (!asked || b.count == want)) ? 0 : 1;
+@new
+	*status = b.mark_ok ? 0 : 1;
+@end
+
+@mutation main-memory-boards-old-fabric-reported-as-a-count
+@file console_face.c
+@why a word with no marker is a fabric older than the word, and its low bits are not a
+@why count: UNMAPPED's would read as 83 boards
+@old
+	b->mark_ok = CONS_BOARDS_MARK_OF(b->word) == CONS_BOARDS_MARK;
+@new
+	b->mark_ok = 1;
+@end

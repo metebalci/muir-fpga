@@ -154,7 +154,7 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  behind a marker byte of `0x44`
 
     page 2, REG_BASE + 0x80, what the FABRIC is rather than what the machine
-    is doing.  Read-only:
+    is doing.  Words 33 to 37 take a write; the rest are read-only:
 
     32  BUILD    **which build this bitstream is.**  The eight hex digits
                  `tools/build_stamp.tcl` wrote into
@@ -207,7 +207,20 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  `cadr-console display-sleep [SECONDS]` reads and sets it, and has
                  no way to wake the monitor.  `docs/display-output.md` has the
                  timer
-    37-47        read UNMAPPED; writes dropped
+    37 BOARDS   **how many 64K-word memory boards the machine has**, muir's
+                 `--main-memory-boards`.  A write whose top half is
+                 `MEM_BOARDS_KEY`, "MB", with a count of 1 to 60 in bits 6 to
+                 0 and bits 15 to 7 clear, is a new count; it must strobe all
+                 four lanes, and any other count, 0 and 61 among them, is
+                 refused and the count stands.  It reads back a marker of
+                 `BD` in the top half and the count in bits 6 to 0.  The count
+                 goes to the machine's address decode, which answers main
+                 memory below the count's last board and gives the NXM above
+                 it, and to QUUX's file device, whose MEM_WORDS is the count
+                 times 64K.  The fabric comes up with 32, and the fabric's
+                 reset brings it back.  `cadr-console main-memory-boards [N]`
+                 reads and sets it, before a band boots
+    38-47        read UNMAPPED; writes dropped
 
     page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 
@@ -1386,7 +1399,7 @@ machine's own reset arms read, at the same edges, so the two cannot disagree.
 `start`, `boot`, `step N`, `regs`, `status`, `ident`, `switch`, `debug-cable`,
 `debug-cable-connect`, `debug-cable-disconnect`, `debug-cable-wiring`,
 `tv-board`, `color-tv`, `display-output`, `display-rotate`,
-`display-sleep`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
+`display-sleep`, `main-memory-boards`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
 `read`, `write`, `examine` and `deposit`. Its `help` says what each does. The
 display output's three were `hdmi-output`, `hdmi-rotate` and `hdmi-sleep`; those
 words are refused with the new name and exit 2.  It

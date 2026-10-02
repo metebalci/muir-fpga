@@ -477,10 +477,13 @@ Then mount it and unpack the board's zip into the root of it:
     sudo unzip -o cadr-arty-z7-20.zip -d $M
     sudo sync && sudo umount $M && rmdir $M
 
-**On the Kria KR260, name the card `CADR` when formatting it**, as the
-`mkfs.vfat -n CADR` line above does. Its microSD slot is a USB reader, so
-Linux finds the card by its volume name (`/etc/cadr/card.sh` in the board's
-image), and `README.TXT` on that board's card says so.
+**On the Kria KR260, the card's name does not matter.** Its microSD slot is
+the carrier's own USB card reader, a Microchip USB2240 (USB 0424:2240) at port
+1-1.1 behind the carrier's hub, and Linux finds the card as the disk on that
+reader (`/etc/cadr/card.sh` in the board's image). A card still named `CADR`
+from before is found the same way. The board's USB ports are for the keyboard
+and the mouse: do not plug other USB storage in. `README.TXT` on that board's
+card says so.
 
 **Unpack into the root of the card, not into a folder on it.** `BOOT.BIN` and
 `uEnv.txt` are read from the root by name, and a card whose files are one

@@ -73,7 +73,8 @@ connection would be worse than dropping them.
 **It has no authentication.** `None` is the only security type offered (RFC
 6143 section 7.2.1), so anybody who can reach the port sees the screen. That
 is the decision the rest of this image already makes, since root logs in with
-the password `root` over Dropbear. It is stated in the program's own
+the password `root` over Dropbear unless the card's `--root-password` or an
+`authorized_keys` file says otherwise (`docs/fpgarc.md`). It is stated in the program's own
 opening line rather than left to be discovered. `--terminal 127.0.0.1:5900`
 restricts it to the board itself, and a viewer then reaches it over an SSH
 tunnel.

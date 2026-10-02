@@ -1120,6 +1120,82 @@ void cons_say_hdmi_sleep(const struct cons_hdmi_sleep *s)
 		say("display-sleep: the display output is awake");
 }
 
+// --- how many memory boards the backplane has, page 2's word 37 ----------
+//
+// `console_face.h` has what the word is and what takes the count.
+
+void cons_read_boards(struct console *c, struct cons_boards *b)
+{
+	b->word = c->read(c, CONS_BOARDS);
+	b->mark_ok = CONS_BOARDS_MARK_OF(b->word) == CONS_BOARDS_MARK;
+	b->count = b->word & CONS_BOARDS_COUNT;
+}
+
+int cons_set_boards(struct console *c, unsigned count)
+{
+	// The fabric refuses a count outside 1 to 60 and keeps its own, so a
+	// write of one would be a setting asked for and not made, said as if it
+	// were; refused here first, by name.
+	if (count < CONS_BOARDS_MIN || count > CONS_BOARDS_MAX)
+		return -1;
+	c->write(c, CONS_BOARDS, ((uint32_t)CONS_BOARDS_KEY << 16) | count);
+	return 0;
+}
+
+int cons_parse_boards(const char *text, unsigned *count)
+{
+	unsigned v = 0;
+	if (!text || !*text)
+		return -1;
+	for (const char *p = text; *p; ++p) {
+		if (*p < '0' || *p > '9')
+			return -1;
+		v = v * 10u + (unsigned)(*p - '0');
+		if (v > CONS_BOARDS_MAX)
+			return -1;
+	}
+	if (v < CONS_BOARDS_MIN)
+		return -1;
+	*count = v;
+	return 0;
+}
+
+void cons_say_boards(const struct cons_boards *b)
+{
+	if (!b->mark_ok) {
+		say("main-memory-boards: word 37 does not carry its marker (0x%08x): this"
+		    " fabric is older than the word, and its machine has 32 boards fixed", b->word);
+		return;
+	}
+	say("main-memory-boards: %u boards of 64K words, %u words of main memory%s", b->count,
+	    b->count * CONS_BOARD_WORDS, b->count == CONS_BOARDS_DEFAULT ? ", muir's default" : "");
+}
+
+int cons_boards_word(struct console *c, int argc, char **argv, int *status)
+{
+	if (argc < 1 || strcmp(argv[0], "main-memory-boards"))
+		return 0;
+	struct cons_boards b;
+	unsigned want = 0;
+	const int asked = argc > 1;
+	if (asked) {
+		if (cons_parse_boards(argv[1], &want) != 0) {
+			say("main-memory-boards N: decimal, %u to %u boards of 64K words, as muir's"
+			    " --main-memory-boards; %u is the default", CONS_BOARDS_MIN, CONS_BOARDS_MAX,
+			    CONS_BOARDS_DEFAULT);
+			*status = 2;
+			return 1;
+		}
+		cons_set_boards(c, want);
+	}
+	cons_read_boards(c, &b);
+	cons_say_boards(&b);
+	// The answer, for a script: 0 when the fabric has the word and, if a
+	// count was asked for, holds it.
+	*status = (b.mark_ok && (!asked || b.count == want)) ? 0 : 1;
+	return 1;
+}
+
 // `display-output [tv|color-tv|both]`: a setting of word 34's screens and then a
 // report, or a report alone.  A spelling nothing names writes nothing and says
 // the three.  The exit status is not touched, as it never was.

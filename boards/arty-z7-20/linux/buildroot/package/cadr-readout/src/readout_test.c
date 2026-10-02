@@ -52,6 +52,9 @@ struct model {
 	// would report a clean instrument off a board that has none.
 	int audit_unmarked;
 	uint32_t ro_addr;
+	// Page 2's word 37 as the fabric reads it: the memory boards' count
+	// under its marker, or 0 for a fabric older than the word.
+	uint32_t boards_word;
 	uint32_t hi_latch_cycles, hi_latch_ticks;
 	uint64_t cycles, ticks;
 	int running;
@@ -179,6 +182,7 @@ static uint32_t model_read(struct readout *r, unsigned word)
 		return m->ro_addr;
 	case RO_DATA_LO: return (uint32_t)model_word(m, sel, a);
 	case RO_DATA_HI: return (uint32_t)(model_word(m, sel, a) >> 32) & 0xFFFFu;
+	case RO_BOARDS: return m->boards_word ? m->boards_word : RO_UNMAPPED;
 	default: return RO_UNMAPPED;
 	}
 }
@@ -542,6 +546,27 @@ int main(void)
 		m->trickle_every = 0;
 		m->trickle_until = 0;
 		ro_start(&r);
+	}
+
+	// ---- how many memory boards, page 2's word 37 -------------------------
+	//
+	// A checkpoint is sized by it, so a count read wrong is a checkpoint
+	// that drops memory or invents it.  The ends, the default and one past
+	// it read as themselves; a word with no marker --- a fabric older than
+	// the word --- and a count outside 1 to 60 read 0, which the caller
+	// takes as the old fabric's fixed 32.
+	{
+		const struct { uint32_t word; unsigned want; } cases[] = {
+			{0x42440001u, 1}, {0x42440020u, 32}, {0x42440021u, 33}, {0x4244003Cu, 60},
+			{0x4244003Du, 0}, {0x42440000u, 0}, {0x4244007Fu, 0}, {0x42440121u, 0},
+			{0x4D420021u, 0}, {0x00000021u, 0}, {0, 0}};
+		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+			m->boards_word = cases[i].word;
+			const unsigned got_boards = ro_main_boards(&r);
+			if (got_boards != cases[i].want)
+				fail("the memory boards from word 37", got_boards, cases[i].want);
+		}
+		m->boards_word = 0;
 	}
 
 	printf("readout: %ld words compared through a modeled window, %lu reads "

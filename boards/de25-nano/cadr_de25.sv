@@ -515,6 +515,10 @@ module cadr_de25 #(
   logic [17:0] con_addr, con_ro_addr;
   logic [15:0] con_wdata;
   logic        con_tv_lispm, con_color_tv, con_steady_lamps;
+  // How many 64K-word memory boards the backplane has, page 2's word 37,
+  // muir's `--main-memory-boards`: the machine's address decode and QUUX's
+  // file device take it.  32 with no console.
+  logic [6:0]  con_mem_boards;
   logic [3:0]  con_tv_map_a;
   // **THE DEBUG CABLE'S NEAR END HAS TWO ARMS ON THIS BOARD**, which MIT's
   // board cannot have, there being one DBGIN connector.  `dbg_in_*` and
@@ -598,10 +602,11 @@ module cadr_de25 #(
       .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
       .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
       .clock_ready(clock_ready), .interval(interval),
-      // 32 boards of 64K words, muir's default.  **THE BACKPLANE IS THE
-      // CONSOLE'S TO SAY**, page 2's word 33, and with no console it is one
-      // SIMPLE TV and no color board.
-      .boards(7'd32),
+      // The memory boards' count, page 2's word 37, 32 unless the card says
+      // `--main-memory-boards`.  **THE BACKPLANE IS THE CONSOLE'S TO SAY**,
+      // page 2's word 33 too, and with no console it is one SIMPLE TV and no
+      // color board.
+      .boards(con_mem_boards),
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
       .tv_map_a(con_tv_map_a), .tv_map_q(tv_map_q),
       .tv_color_map_q(tv_color_map_q),
@@ -1689,6 +1694,7 @@ module cadr_de25 #(
       // and a console is for saying so.
       .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
       .steady_lamps(con_steady_lamps),
+      .mem_boards(con_mem_boards),
       .hdmi_sleep_set(con_hdmi_sleep_set),
       .hdmi_sleep_secs(con_hdmi_sleep_secs),
       .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(disp_sleep_fitted),
@@ -2145,6 +2151,9 @@ module cadr_de25 #(
   assign con_color_tv     = 1'b0;
   assign con_tv_map_a     = 4'd0;
   assign con_steady_lamps = 1'b0;
+  // And nobody to say how many memory boards there are, so it is 32,
+  // muir's own default and what a board with a console comes up with.
+  assign con_mem_boards = 7'd32;
 
   // NO DISPLAY, because there is no memory for it to read.  The machine's
   // second map port stands at entry zero and the console's word 36 reads

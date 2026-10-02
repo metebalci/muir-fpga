@@ -456,6 +456,10 @@ module cadr_arty #(
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
   // Whether LD1 and LD2 blink or hold a level, page 2's word 35.
   logic        con_steady_lamps;
+  // How many 64K-word memory boards the backplane has, page 2's word 37,
+  // muir's `--main-memory-boards`: the machine's address decode and QUUX's
+  // file device take it.  32 with no console.
+  logic [6:0]  con_mem_boards;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the twenty-one wires of the DBGIN connector.
@@ -930,9 +934,10 @@ module cadr_arty #(
       .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
       .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
       .ch_hit(ch_hit),
-      // 32 boards of 64K words, which is muir's own default and what every
-      // trace in this repository was taken with.
-      .boards(7'd32),
+      // The memory boards' count, page 2's word 37: 32 of 64K words, muir's
+      // own default and what every trace in this repository was taken with,
+      // unless the card says `--main-memory-boards`.
+      .boards(con_mem_boards),
       // And which display boards are in it, from the console face.
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
       .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
@@ -2278,6 +2283,7 @@ module cadr_arty #(
         // Whether LD1 and LD2 blink or hold a level, page 2's word 35:
         // `cadr-console blinking-leds` and `--no-blinking-leds`.
         .steady_lamps(con_steady_lamps),
+        .mem_boards(con_mem_boards),
         // Whether the display output sleeps, page 2's word 36: a setting and a
         // wake out to it, and what it holds back.
         .hdmi_sleep_set(con_hdmi_sleep_set), .hdmi_sleep_secs(con_hdmi_sleep_secs),
@@ -2637,6 +2643,9 @@ module cadr_arty #(
     // And nobody to ask for steady lamps, so they blink, which is what a
     // board with a console comes up with too.
     assign con_steady_lamps = 1'b0;
+    // And nobody to say how many memory boards there are, so it is 32,
+    // muir's own default and what a board with a console comes up with.
+    assign con_mem_boards = 7'd32;
     assign disp_map_a      = 4'd0;
     assign con_tv_map_a = 4'd0;
     assign con_write = 1'b0;

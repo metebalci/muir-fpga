@@ -4598,7 +4598,8 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       boards/arty-z7-20/linux/mksd-release.sh \
                       boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uEnv.txt.in \
                       boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uEnv.txt.in \
-                      boards/de25-nano/linux/buildroot/board/de25-nano/uEnv.txt.in | $(BUILD)
+                      boards/de25-nano/linux/buildroot/board/de25-nano/uEnv.txt.in \
+                      boards/kria-kr260/linux/buildroot/board/kria-kr260/rootfs-overlay/etc/cadr/card.sh | $(BUILD)
 	$(MAKE) -C $(COMMON_SRC) check
 	@echo "fpgarc: one file of flags on the card reaches six programs, each gets the flags it"
 	@echo "fpgarc: owns and no others, --no-auto-boot holds the machine before the drive,"
@@ -4606,8 +4607,11 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
 	@echo "fpgarc: the board's own file and time host is on unless --no-ozd and its address"
 	@echo "fpgarc: is never placed twice, with nothing inferred, the card mirrors the server,"
 	@echo "fpgarc: the card's root holds what a loader demands and nothing else, the zip is"
-	@echo "fpgarc: read back out of itself, and a card of the old two-partition shape still"
-	@echo "fpgarc: mounts and is told it is old"
+	@echo "fpgarc: read back out of itself, a card of the old two-partition shape still"
+	@echo "fpgarc: mounts and is told it is old, the clock is NTP's first and the card's"
+	@echo "fpgarc: when NTP does not answer, root's password and keys come from the card,"
+	@echo "fpgarc: the memory boards' count reaches the console before the drive, and the"
+	@echo "fpgarc: Kria KR260's card is found by its reader and not by its label"
 	@touch $@
 
 # **cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK COMPILES

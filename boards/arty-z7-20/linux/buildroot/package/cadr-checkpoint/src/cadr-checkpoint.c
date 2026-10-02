@@ -85,9 +85,11 @@
 
 // muir's own default Chaosnet address, `chaos::Config::default()`.
 #define DEFAULT_CHAOS_ADDRESS 0177001u
-// `boards(7'd32)` in `boards/arty-z7-20/cadr_arty.sv`.  **A board raised past
-// 32 cannot cold-boot System 100** --- measured --- so this is the machine's
-// number and not a default anybody should move here.
+// **THE MACHINE'S OWN COUNT IS THE CONSOLE'S PAGE 2 WORD 37**, muir's
+// `--main-memory-boards`, which the card sets at boot (`ro_main_boards`); this
+// is the count of a fabric older than that word, which had 32 boards fixed in
+// its top level, and muir's own default.  **A board raised past 32 cannot
+// cold-boot System 100** --- measured --- and System 1003 and later can.
 #define DEFAULT_BOARDS 32u
 // **REVISION 13's MAIN MEMORY IS 32M WORDS ON THE BOARDS** (contract G2 §3),
 // 512 of muir's 64K-word units, which is what a revision 13 checkpoint's
@@ -485,8 +487,29 @@ int main(int argc, char **argv)
 			say("the bitstream is QUUX revision 13: 40-bit words and packed "
 			    "main memory, checkpoint version %u", CHK_VERSION_40);
 	}
-	if (!boards)
-		boards = revision == 13 ? DEFAULT_BOARDS_13 : DEFAULT_BOARDS;
+	// **HOW MANY BOARDS, WHICH IS THE MACHINE'S AND NOT A GUESS.**  A
+	// checkpoint is of all of main memory, and muir refuses to resume one
+	// under another count, so the count is the fabric's own: the console's
+	// word 37.  A fabric older than the word had 32 fixed.  A `--boards`
+	// that disagrees with the fabric is refused, because a checkpoint of
+	// fewer boards drops memory the band has and one of more invents it.
+	if (revision != 13) {
+		const unsigned fabric = ro_main_boards(&r);
+		if (!fabric)
+			say("the console's word 37 carries no memory boards' count: this "
+			    "bitstream is older than the word and has %u boards fixed",
+			    DEFAULT_BOARDS);
+		const unsigned has = fabric ? fabric : DEFAULT_BOARDS;
+		if (boards && boards != has) {
+			say("--boards %u, and the machine has %u memory boards: a checkpoint "
+			    "is of all of main memory, so it is taken at the machine's own count",
+			    boards, has);
+			return 2;
+		}
+		boards = has;
+	} else if (!boards) {
+		boards = DEFAULT_BOARDS_13;
+	}
 	if (revision != 13 && boards > 60) {
 		say("--boards %u: the backplane holds 1 to 60", boards);
 		return 2;

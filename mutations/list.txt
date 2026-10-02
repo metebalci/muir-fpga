@@ -14624,6 +14624,132 @@ if {0 && $held ne $want} {
                                  ? {LAMP_MARK, 15'd0, 1'b0}
 @end
 
+@mutation console-the-memory-boards-come-up-at-sixty
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **A MACHINE COMES UP WITH 32 BOARDS**, muir's own default and the two
+@note million words every reference trace was taken with, so that a card that
+@note says nothing has the machine it always had.  Caught on "the memory boards
+@note out of reset".
+@old
+      mem_boards  <= 7'(MEM_BOARDS_DEFAULT);
+@new
+      mem_boards  <= 7'(MEM_BOARDS_DEFAULT + 28);
+@end
+
+@mutation console-the-memory-boards-take-sixty-one
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **THE SIXTY-FIRST BOARD'S FIRST WORD IS THE XBUS I/O SPACE**, so a count
+@note past 60 is a backplane nobody can have and must be refused, with the count
+@note that stood kept.  The bound one past is the mutation just outside it.
+@note Caught on "the memory boards after a count outside 1 to 60".
+@old
+                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
+@new
+                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX + 1)) && (s_wstrb == 4'hF);
+@end
+
+@mutation console-the-memory-boards-take-zero
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Zero boards is a machine with no main memory at all, which muir refuses
+@note and so must the fabric.  Caught on "the memory boards after a count
+@note outside 1 to 60".
+@old
+                           (w_full[15:7] == 9'd0) && (w_full[6:0] != 7'd0) &&
+@new
+                           (w_full[15:7] == 9'd0) &&
+@end
+
+@mutation console-the-memory-boards-ignore-the-high-bits
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note A count with bits past the seventh set is not a count, and a decode that
+@note looked only at the low seven would take 0x80 + 33 as 33.  Caught on "the
+@note memory boards after a count outside 1 to 60".
+@old
+                           (w_full[15:7] == 9'd0) && (w_full[6:0] != 7'd0) &&
+@new
+                           (w_full[6:0] != 7'd0) &&
+@end
+
+@mutation console-the-memory-boards-take-a-partial-write
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note A count has zero bytes, so a face that merged a beat of fewer lanes against
+@note zero could assemble a count nobody wrote; the strobes are the only thing
+@note that asks for all four.  Caught on "the memory boards after writes of
+@note fewer than four lanes".
+@old
+                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX)) && (s_wstrb == 4'hF);
+@new
+                           (w_full[6:0] <= 7'(MEM_BOARDS_MAX)) && (s_wstrb != 4'h0);
+@end
+
+@mutation console-the-memory-boards-key-reaches-page-zero
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Word 5 of page 0 is `TICKSH`, the same index in the other window, and a
+@note decode that took `w_in` as well as `w_hi` would let a program that echoed
+@note a counter take memory away from the machine.  Caught on "the memory boards
+@note after the key written at the neighboring words".
+@old
+  assign w_is_boards     = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd5);
+@new
+  assign w_is_boards     = (w_hi || w_in) && !w_idx[4] && (w_idx[3:0] == 4'd5);
+@end
+
+@mutation console-the-memory-boards-word-reads-a-constant
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **WHAT THE WORD SAYS AND WHAT THE FABRIC HOLDS ARE TWO FACTS**, and a word
+@note that read 32 whatever the count would agree with a card that said nothing
+@note and with nothing else.  The count still leaves the module, so lint sees
+@note nothing.  Caught on "the memory boards after a count".
+@old
+                                 ? {MEM_BOARDS_MARK, 9'd0, mem_boards}
+@new
+                                 ? {MEM_BOARDS_MARK, 9'd0, 7'd32}
+@end
+
+@mutation arty-the-machine-keeps-thirty-two-boards
+@check board_reset_arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note **THE COUNT IS ONLY A COUNT IF IT REACHES THE DECODE.**  The console can
+@note hold and read back any count and a top level that still gave the machine
+@note the old constant would boot every card at 32 boards, with the word saying
+@note 60.  `con_mem_boards` is still read, ANDed with zero, so lint sees it
+@note used and the check does the catching.  Caught on
+@note "control: the machine is given 32 memory boards after a count of 33".
+@old
+      .boards(con_mem_boards),
+@new
+      .boards(7'd32 | (con_mem_boards & 7'd0)),
+@end
+
+@mutation cora-the-machine-keeps-thirty-two-boards
+@check board_reset_cora
+@file boards/cora-z7-07s/cadr_cora.sv
+@note The Arty's record on the Cora's own top level.  Caught on "control: the
+@note machine is given 32 memory boards after a count of 33".
+@old
+      .boards(con_mem_boards),
+@new
+      .boards(7'd32 | (con_mem_boards & 7'd0)),
+@end
+
+@mutation de25-the-machine-keeps-thirty-two-boards
+@check board_reset_de25
+@file boards/de25-nano/cadr_de25.sv
+@note The Arty's record on the DE25-Nano's own top level.  Caught on "control:
+@note the machine is given 32 memory boards after a count of 33".
+@old
+      .boards(con_mem_boards),
+@new
+      .boards(7'd32 | (con_mem_boards & 7'd0)),
+@end
+
 # THE DEBUG CABLE ON ONE CONNECTOR: the role, the pads, and the DBGOUT page
 #
 # `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` are the carrier and their records are above.

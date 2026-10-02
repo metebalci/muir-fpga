@@ -40,8 +40,8 @@
 // sixteen colors of red, green and blue.
 #define IMG_MAP_COLORS   16
 #define IMG_MAP_CHANNELS 3
-// A memory board is 64K words and `boards(7'd32)` is what
-// `boards/arty-z7-20/cadr_arty.sv` gives the machine.
+// A memory board is 64K words, and how many the machine has is the console's
+// page 2 word 37 (`ro_main_boards`), 32 unless the card says otherwise.
 #define IMG_BOARD_WORDS 65536u
 
 // **REVISION 13'S** (contract G2 §2, appendix A1; muir's `Geometry::QUUX_13`):
