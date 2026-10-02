@@ -21618,6 +21618,32 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
     set name [expr {$word_bits eq "40" ? "SYNC_K" : "SYNC_K13"}]
 @end
 
+@mutation machine-param-the-arty-flow-gives-revision-13-prom-2000
+@check machine_param
+@file boards/arty-z7-20/vivado/bitstream.tcl
+@note Revision 13's bitstream built with revision 12's boot PROM, which stops
+@note at a 40-bit disk.
+@old
+    set prom build/boot_prom.quux13.hex
+@new
+    set prom build/boot_prom.quux.hex
+@end
+
+@mutation machine-param-the-arty-flow-gives-revision-12-prom-2001
+@check machine_param
+@file boards/arty-z7-20/vivado/bitstream.tcl
+@note Revision 12's bitstream built with revision 13's boot PROM, which stops
+@note at a 32-bit disk.
+@old
+} else {
+    set prom build/boot_prom.quux.hex
+}
+@new
+} else {
+    set prom build/boot_prom.quux13.hex
+}
+@end
+
 @mutation grid-quux-arty-every-tick-first-hop-at-k-minus-1
 @check grid
 @file rtl/plumbing/xilinx7/quux_machine.xdc

@@ -250,6 +250,7 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass \
        $(BUILD)/quux_axi_master.quux.pass \
        $(BUILD)/checkpoint.quux.pass \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
+       $(BUILD)/prom_revisions.pass \
        $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1079,6 +1080,28 @@ $(BUILD)/dispatch_write_order.pass: $(BUILD)/obj_dispatch_write_order/Vcadr_mach
 # machine it is holding.
 $(BUILD)/boot_prom.quux.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin prom -- --machine quux > $@
+
+# **EACH REVISION BOOTS FROM ITS OWN PROM** (contract G2 §2.8): revision 12
+# from PROM 2000, `boot_prom.quux.hex`, which every QUUX trace above runs, and
+# revision 13 from PROM 2001, `boot_prom.quux13.hex`, which only a revision 13
+# bitstream carries (`WORD_BITS=40`).  PROM 2000 stops a 40-bit disk and PROM
+# 2001 a 32-bit one, so a board given the other revision's PROM never boots
+# its band.  The two are muir's, `prom::quux_boot_prom_for` of each
+# revision's geometry, and `prom_revisions.pass` holds each image to the
+# digest written here: a pin that moves either PROM changes its digest here
+# in the same commit, and a generator that hands one revision the other's
+# fails the check.
+QUUX_PROM_2000_SHA256 := 940ad939c5a7aa7b0dc7f26c909d31db0b164a25a0dc83546ef151d3499b8a7e
+QUUX_PROM_2001_SHA256 := f7c69350df58be279ce20482b849a4eb8895053bb9855e2710317a902bf0d61d
+$(BUILD)/boot_prom.quux13.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin prom -- --machine quux --word-bits 40 > $@
+
+$(BUILD)/prom_revisions.pass: $(BUILD)/boot_prom.quux.hex $(BUILD)/boot_prom.quux13.hex Makefile
+	echo "$(QUUX_PROM_2000_SHA256)  $(BUILD)/boot_prom.quux.hex" | sha256sum --quiet -c - \
+	    || { echo "prom_revisions: boot_prom.quux.hex is not PROM 2000, revision 12's"; exit 1; }
+	echo "$(QUUX_PROM_2001_SHA256)  $(BUILD)/boot_prom.quux13.hex" | sha256sum --quiet -c - \
+	    || { echo "prom_revisions: boot_prom.quux13.hex is not PROM 2001, revision 13's"; exit 1; }
+	@touch $@
 
 # The trace and the machine built at each of QUUX's timings are in
 # `QUUX_TIMED` below.
@@ -2842,7 +2865,7 @@ DE25_DDR_MHZ ?= 1066.667
 DE25_HPS_BOOT ?= hps-first
 DE25_SPL_HEX ?=
 de25: $(MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
-      $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux.hex)
+      $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux$(if $(filter 40,$(WORD_BITS)),13).hex)
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
 	    HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \

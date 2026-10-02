@@ -617,6 +617,21 @@ def main():
         flow("the Arty's Vivado flow takes WORD_BITS=40 on QUUX", arty,
              {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux13-ddr")}, None,
              ["BIT: the machine is quux, revision 13 (WORD_BITS=40)"], ["FAILED --- WORD_BITS"])
+        # **EACH REVISION'S BOOT PROM IS ITS OWN** (contract G2 §2.8): the
+        # Arty's flow names the image it builds in, and a revision given the
+        # other's never boots its band.
+        proms = {("cadr", None): "build/boot_prom.hex",
+                 ("quux", None): "build/boot_prom.quux.hex",
+                 ("quux", "40"): "build/boot_prom.quux13.hex"}
+        for (value, bits), image in sorted(proms.items(), key=str):
+            env_add = {"MACHINE": value,
+                       "OUTDIR": out("arty-%s%s-ddr" % (value, "13" if bits else ""))}
+            if bits:
+                env_add["WORD_BITS"] = bits
+            flow("the Arty's Vivado flow builds MACHINE=%s%s with %s"
+                 % (value, " WORD_BITS=%s" % bits if bits else "", image), arty, env_add, None,
+                 ["BIT: the boot PROM is %s\n" % image],
+                 ["BIT: the boot PROM is %s\n" % other for other in proms.values() if other != image])
         flow("the Cora's Vivado flow refuses MACHINE=quux", cora,
              {"MACHINE": "quux", "OUTDIR": out("c")}, 1,
              ["BIT: FAILED --- MACHINE=quux, and the Cora Z7-07S builds the"], [])

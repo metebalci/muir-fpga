@@ -124,9 +124,13 @@ for tool in "$bin/quartus_sh" "$bin/quartus_ipgenerate" "$bin/quartus_syn" \
     [ -x "$tool" ] || refuse "$tool is not there"
 done
 
-# QUUX's boot PROM is its own, version 2000.
+# QUUX's boot PROM is its own, and each revision's its own: version 2000 for
+# revision 12 and version 2001 for revision 13 (contract G2 §2.8).
+# `project.tcl` chooses it the same way, and synthesis's parameter table is
+# read back below.
 prom_image=build/boot_prom.hex
 [ "$machine" = quux ] && prom_image=build/boot_prom.quux.hex
+[ "$machine" = quux ] && [ "$word_bits" = 40 ] && prom_image=build/boot_prom.quux13.hex
 for image in "$prom_image" build/sync_prom.hex; do
     [ -s "$image" ] || refuse "$image is missing; \`make de25\` builds it first"
 done
@@ -564,6 +568,16 @@ if [ "$fault" -eq 0 ]; then
     [ "$got_bits" = "$word_bits" ] \
         || refuse "synthesis gave u_machine WORD_BITS '${got_bits:-nothing}', wanting $word_bits; see $dir/$rpt"
     say "synthesis gave u_machine WORD_BITS $word_bits"
+    # And the boot PROM, by its file name: a revision given the other's PROM
+    # never boots its band, and nothing in the fit would say so.
+    got_prom=$(awk '
+        /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
+        inside && /^; Parameter Settings/ { exit }
+        inside && /^; PROM_HEX *;/ { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
+    ' "$rpt")
+    [ "${got_prom##*/}" = "${prom_image##*/}" ] \
+        || refuse "synthesis gave u_machine PROM_HEX '${got_prom:-nothing}', wanting $prom_image; see $dir/$rpt"
+    say "synthesis gave u_machine PROM_HEX ${prom_image##*/}"
 fi
 
 # **EVERY BLOCK RAM WRITES WHERE THE RTL SAYS**, asked of a netlist rather

@@ -273,9 +273,19 @@ if {$prove != 0 && $prove != 1 && $prove != 2} {
 # Everything below asks this rather than `$ddr`.
 set port [expr {($ddr > 0 || $prove > 0 || $hdmi > 0) ? 1 : 0}]
 
-# QUUX boots from its own PROM, version 2000, which `make
-# build/boot_prom.quux.hex` writes out of muir's `data/quux-promh.mcr`.
-set prom [expr {$machine eq "quux" ? "build/boot_prom.quux.hex" : "build/boot_prom.hex"}]
+# QUUX boots from its own PROM, each revision from its own: revision 12 from
+# version 2000, which `make build/boot_prom.quux.hex` writes out of muir's
+# `data/quux-promh-2000.mcr`, and revision 13 from version 2001, which `make
+# build/boot_prom.quux13.hex` writes out of `data/quux-promh.mcr`.  Each
+# stops the other revision's disk (contract G2 §2.8).
+if {$machine ne "quux"} {
+    set prom build/boot_prom.hex
+} elseif {$word_bits eq "40"} {
+    set prom build/boot_prom.quux13.hex
+} else {
+    set prom build/boot_prom.quux.hex
+}
+puts "BIT: the boot PROM is $prom"
 if {![file exists $prom]} {
     puts "BIT: $prom is missing; run `make $prom` first"
     exit 1
