@@ -204,14 +204,28 @@ constexpr int CX0 = HA - kCW - SPU,  CY0 = (VA - kCH) / 2;
 constexpr int RMX0 = SPR,            RMY0 = (VA - kPicW) / 2;
 constexpr int RCX0 = HA - kCH - SPR, RCY0 = (VA - kCW) / 2;
 
+// **AND THERE A SCREEN SHOWN ALONE IS CENTERED ACROSS THE WIDTH**, an odd
+// margin's extra column at the right; elsewhere a screen alone sits where it
+// sits beside the other.  `sel` is the setting: 1 the first display alone, 2
+// the color board alone, 3 both.
+#if defined(CADR_DISPLAY_KR260) && !defined(CADR_DISPLAY_QUUX)
+constexpr bool kCenterAlone = true;
+#else
+constexpr bool kCenterAlone = false;
+#endif
+int Mx0(int sel)  { return (kCenterAlone && sel == 1) ? (HA - kPicW) / 2 : MX0; }
+int Rmx0(int sel) { return (kCenterAlone && sel == 1) ? (HA - kPicH) / 2 : RMX0; }
+int Cx0(int sel)  { return (kCenterAlone && sel == 2) ? (HA - kCW) / 2 : CX0; }
+int Rcx0(int sel) { return (kCenterAlone && sel == 2) ? (HA - kCH) / 2 : RCX0; }
+
 // The rectangle a screen covers for a given rotation: first column, first row,
 // width, height.  Rotated, the picture's width and height change places.
 struct Rect { int x0, y0, w, h; };
-Rect MonoRect(int rot) {
-  return rot == 0 ? Rect{MX0, MY0, kPicW, kPicH} : Rect{RMX0, RMY0, kPicH, kPicW};
+Rect MonoRect(int rot, int sel) {
+  return rot == 0 ? Rect{Mx0(sel), MY0, kPicW, kPicH} : Rect{Rmx0(sel), RMY0, kPicH, kPicW};
 }
-Rect ColorRect(int rot) {
-  return rot == 0 ? Rect{CX0, CY0, kCW, kCH} : Rect{RCX0, RCY0, kCH, kCW};
+Rect ColorRect(int rot, int sel) {
+  return rot == 0 ? Rect{Cx0(sel), CY0, kCW, kCH} : Rect{Rcx0(sel), RCY0, kCH, kCW};
 }
 
 constexpr uint64_t kClkHalf = 5000;   // 100 MHz
@@ -289,26 +303,26 @@ uint32_t MapEntry(int k) {
 //
 // A quarter turn clockwise puts the source's top-left corner at the picture's
 // top-right: source (col, row) is drawn at (H-1-row, col).
-bool MonoSrc(int x, int y, int rot, int *row, int *col) {
+bool MonoSrc(int x, int y, int rot, int sel, int *row, int *col) {
   if (rot == 0) {
-    const int sx = x - MX0, sy = y - MY0;
+    const int sx = x - Mx0(sel), sy = y - MY0;
     if (sx < 0 || sx >= kPicW || sy < 0 || sy >= kPicH) return false;
     *row = sy; *col = sx; return true;
   }
-  const int px = x - RMX0, py = y - RMY0;
+  const int px = x - Rmx0(sel), py = y - RMY0;
   if (px < 0 || px >= kPicH || py < 0 || py >= kPicW) return false;
   if (rot == 1) { *row = kPicH - 1 - px; *col = py; }
   else          { *row = px;             *col = kPicW - 1 - py; }
   return true;
 }
 
-bool ColorSrc(int x, int y, int rot, int *row, int *col) {
+bool ColorSrc(int x, int y, int rot, int sel, int *row, int *col) {
   if (rot == 0) {
-    const int sx = x - CX0, sy = y - CY0;
+    const int sx = x - Cx0(sel), sy = y - CY0;
     if (sx < 0 || sx >= kCW || sy < 0 || sy >= kCH) return false;
     *row = sy; *col = sx; return true;
   }
-  const int px = x - RCX0, py = y - RCY0;
+  const int px = x - Rcx0(sel), py = y - RCY0;
   if (px < 0 || px >= kCH || py < 0 || py >= kCW) return false;
   if (rot == 1) { *row = kCH - 1 - px; *col = py; }
   else          { *row = px;           *col = kCW - 1 - py; }
@@ -319,9 +333,9 @@ bool ColorSrc(int x, int y, int rot, int *row, int *col) {
 // COLOR SCREEN IS DRAWN OVER THE FIRST DISPLAY** where both are shown.
 uint32_t WantRGB(int x, int y, int sel, int rot) {
   int row, col;
-  if ((sel & 2) && ColorSrc(x, y, rot, &row, &col))
+  if ((sel & 2) && ColorSrc(x, y, rot, sel, &row, &col))
     return MapEntry(ColorIndex(row, col));
-  if ((sel & 1) && MonoSrc(x, y, rot, &row, &col))
+  if ((sel & 1) && MonoSrc(x, y, rot, sel, &row, &col))
     return MonoLit(row, col) ? 0xFFFFFFu : 0u;
   return 0u;
 }
@@ -564,6 +578,19 @@ int main(int argc, char **argv) {
   figure(RMY0 + kPicW - 1, 923, "the first display's last row, turned");
   figure(RCY0, 252, "the color board's first row, turned");
   figure(RCY0 + kCW - 1, 827, "the color board's last row, turned");
+  // **AND EACH SCREEN ALONE, CENTERED ACROSS THE WIDTH**, upright and turned;
+  // its rows are its rows beside the other.  1152 = 576 + 576, 1344 =
+  // 672 + 672, 957 = 478 + 479 and 1466 = 733 + 733.
+  figure(Mx0(1), 576, "the first display alone, its first column, upright");
+  figure(HA - (Mx0(1) + kPicW), 576, "the black columns right of the first display alone, upright");
+  figure(Cx0(2), 672, "the color board alone, its first column, upright");
+  figure(HA - (Cx0(2) + kCW), 672, "the black columns right of the color board alone, upright");
+  figure(Rmx0(1), 478, "the first display alone, its first column, turned");
+  figure(HA - (Rmx0(1) + kPicH), 479, "the black columns right of the first display alone, turned");
+  figure(Rcx0(2), 733, "the color board alone, its first column, turned");
+  figure(HA - (Rcx0(2) + kCH), 733, "the black columns right of the color board alone, turned");
+  if (Mx0(3) != MX0 || Cx0(3) != CX0 || Rmx0(3) != RMX0 || Rcx0(3) != RCX0)
+    Fail("the two screens shown together moved");
   if (MX0 < 0 || MY0 < 0 || CX0 < 0 || CY0 < 0 ||
       RMX0 < 0 || RMY0 < 0 || RCX0 < 0 || RCY0 < 0 ||
       MX0 + kPicW > HA || CX0 + kCW > HA || MY0 + kPicH > VA || CY0 + kCH > VA ||
@@ -775,14 +802,14 @@ int main(int argc, char **argv) {
                                   if (mon.since_hs >= 0) mon.hs_to_de.insert(mon.since_hs);
                                   line_black = true; }
         if (de && getenv("DISP_COL") && rot == 1 && mon.frames == 3 &&
-            mon.x == RMX0 + atoi(getenv("DISP_COL")) &&
+            mon.x == Rmx0(sel) + atoi(getenv("DISP_COL")) &&
             mon.y >= RMY0 && mon.y < RMY0 + 32) {
           if (dut->red) col_got |= 1u << (mon.y - RMY0);
           col_have = 1;
         }
         if (de && getenv("DISP_LINE") && rot && mon.frames == 3 &&
             mon.y == atoi(getenv("DISP_LINE"))) {
-          const int px = mon.x - RMX0;
+          const int px = mon.x - Rmx0(sel);
           if (px >= 0 && px < kPicH) line_got[px] = (dut->red != 0);
           line_have = 1;
         }
@@ -797,7 +824,7 @@ int main(int argc, char **argv) {
               if (++mismatches <= 4) {
                 Fail("pixel (%d,%d) is %06x, want %06x", mon.x, mon.y, got, want);
                 int row, col;
-                if (rot && (sel & 1) && MonoSrc(mon.x, mon.y, rot, &row, &col)) {
+                if (rot && (sel & 1) && MonoSrc(mon.x, mon.y, rot, sel, &row, &col)) {
                   std::fprintf(stderr,
                       "       frame %ld: source row %d column %d --- band %d,"
                       " entry %d, half %d, bit %d\n",
@@ -963,7 +990,7 @@ int main(int argc, char **argv) {
            want->y0 + want->h - 1);
   };
   auto placed = [&](const Result &r, int sel, int rot, const char *who) {
-    const Rect m = MonoRect(rot), c = ColorRect(rot);
+    const Rect m = MonoRect(rot, sel), c = ColorRect(rot, sel);
     // **FIRST, THAT THE BITMAP CAN SHOW THESE EDGES AT ALL.**  The first
     // display's pixels are the poison's bits, so an edge column whose every
     // bit is dark --- or one lit only where the color board is drawn over it

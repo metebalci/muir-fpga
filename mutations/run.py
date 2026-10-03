@@ -3742,13 +3742,18 @@ def check_makefile():
     # `displayport` is the Kria KR260's DisplayPort link, `cadr-displayport`:
     # C under `boards/`, closed the way `serial` is, with a mutation list of
     # its own in its package run by its own `mutate.py` from its own check.
+    # `br_force` is Python and the Makefile's own rebuild macro over the four
+    # boards' defconfigs, with nothing verilated; it was shown to catch the
+    # fault it exists for by restoring that fault (U-Boot forced on the Kria
+    # KR260, which selects none).
     # `checkpoint_quux` is `checkpoint`'s QUUX half and closed its way: its
     # mutants, 9 to 16, are `chk_rtl.c`'s own behind `CHK_MUTATE`, judged by
     # muir and by muir's own file for the same machine in its own rule.
     known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora",
-                           "de25_pins", "de25_linux", "kr260_linux", "displayport"}
+                           "de25_pins", "de25_linux", "kr260_linux", "displayport",
+                           "br_force"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four

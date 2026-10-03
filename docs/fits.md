@@ -14,8 +14,9 @@ The parts are the Arty Z7-20's `xc7z020clg400-1`, the Cora Z7-07S's
 `xc7z007sclg400-1` and the Kria KR260's `xck26-sfvc784-2LV-c`, fitted with
 Vivado 2026.1, and the DE25-Nano's `A5EB013BB23BE4SCS`, fitted with Quartus
 Prime Pro 26.1.1. Every fit has main memory in DDR (`DDR=1`). The Arty and
-DE25-Nano fits carry the display output (`HDMI=1`); the Cora's and the Kria
-KR260's do not.
+DE25-Nano fits carry the display output (`HDMI=1`), and the Kria KR260's
+from `c28b67f` on carry it too, to the processing system's DisplayPort
+controller; the Cora's do not.
 
 A Vivado fit's slack is the timing summary's WNS and WHS. A Quartus fit's is
 the worst over its four corners. Slices are what Vivado reports, which on the
@@ -23,6 +24,21 @@ Kria KR260's UltraScale+ part are CLBs of eight lookup tables each; Quartus
 reports none.
 
 ## From a clean tree
+
+These fits were built from `c28b67f`, the Kria KR260's display output: the
+machine's screens on the DisplayPort controller's live video input at
+1920x1080 at 60 Hz, read over `S_AXI_HP3`, with the pixel clock grouped
+apart from the machine's. muir is pinned at `a6fa3b3`. Revision 13 is at four
+ticks. Both stamps read `c28b67f0`, the tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Kria KR260 | CADR | +1.704 ns | +0.011 ns | 15,177 of 117,120 LUTs, 12.96% | 41 of 144 BRAM tiles | 3,183 of 14,640 CLBs | `c28b67f` | clean | 2026-10-03 |
+| Kria KR260 | QUUX revision 13, K = 4 | +1.978 ns | +0.010 ns | 22,658 of 117,120 LUTs, 19.35% | 75 of 144 BRAM tiles | 4,335 of 14,640 CLBs | `c28b67f` | clean | 2026-10-03 |
+
+They passed the RAM enable check over 88 ports (the CADR) and 117 (QUUX).
+The display's crossings were found by name, 524 registers on the CADR and 58
+on QUUX, and all 39 live video pins were connected.
 
 This fit was built from `3261986`, the Kria KR260's first QUUX: revision 13
 at four ticks, QUUX's 64-bit memory master on the 128-bit port through

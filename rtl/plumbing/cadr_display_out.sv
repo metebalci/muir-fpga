@@ -380,9 +380,11 @@ module cadr_display_out #(
     // **WHERE THE RASTER HOLDS BOTH SCREENS SIDE BY SIDE, SPREAD THEM**: the
     // columns neither screen uses shared out equally, so the first display's
     // left margin, the gap between the two and the color board's right margin
-    // are the same.  Off, the two are pushed to the raster's two sides, which
-    // is the only placement a raster too narrow for both has.  The Kria
-    // KR260's CADR sets it; see "Where each picture sits" below.
+    // are the same; and a screen shown alone is centered across the
+    // raster's width.  Off, the two are pushed to the raster's two sides,
+    // which is the only placement a raster too narrow for both has, and a
+    // screen alone stays where it is with both.  The Kria KR260's CADR sets
+    // it; see "Where each picture sits" below.
     parameter int unsigned SPREAD = 0,
 
     // How many 64-bit entries a bank of each buffer has.  Big enough for a band
@@ -517,6 +519,14 @@ module cadr_display_out #(
   // 959, the color board at 1152 to 1727 --- and turned, 503 are 167 at each
   // side and 169 between, the odd columns going to the gap.  A raster too
   // narrow for both keeps the rule above whatever `SPREAD` says.
+  //
+  // **AND A SCREEN SHOWN ALONE IS CENTERED**, under `SPREAD`: the first
+  // display alone (`out_sel` `01`) at columns 576 to 1343 upright and 478 to
+  // 1440 turned, the color board alone (`10`) at 672 to 1247 and 733 to 1186,
+  // an odd margin's extra column going to the right.  Which screens are shown
+  // is a setting, so this is a choice the latched setting makes between two
+  // constants (`mx0` and the rest below), not a constant; without `SPREAD`
+  // the choice is folded away and a screen alone sits where it sits with both.
   localparam bit          FIT_U = PIC_W + CPIC_W <= H_ACTIVE;
   localparam bit          FIT_R = PIC_H + CPIC_H <= H_ACTIVE;
   localparam int unsigned SP_U = (SPREAD != 0 && FIT_U) ? (H_ACTIVE - PIC_W - CPIC_W) / 3 : 0;
@@ -535,6 +545,10 @@ module cadr_display_out #(
   localparam int unsigned RMY0 = ROTATABLE ? (V_ACTIVE - PIC_W)  / 2 : 0;
   localparam int unsigned RCX0 = H_ACTIVE - CPIC_H - SP_R;
   localparam int unsigned RCY0 = (V_ACTIVE - CPIC_W) / 2;
+  localparam int unsigned AMX0  = (SPREAD != 0 && PIC_W  <= H_ACTIVE) ? (H_ACTIVE - PIC_W)  / 2 : MX0;
+  localparam int unsigned ACX0  = (SPREAD != 0 && CPIC_W <= H_ACTIVE) ? (H_ACTIVE - CPIC_W) / 2 : CX0;
+  localparam int unsigned ARMX0 = (SPREAD != 0 && PIC_H  <= H_ACTIVE) ? (H_ACTIVE - PIC_H)  / 2 : RMX0;
+  localparam int unsigned ARCX0 = (SPREAD != 0 && CPIC_H <= H_ACTIVE) ? (H_ACTIVE - CPIC_H) / 2 : RCX0;
 
   localparam int unsigned LINE_BYTES  = WORDS_PER_LINE  * 4;
   localparam int unsigned CLINE_BYTES = CWORDS_PER_LINE * 4;
@@ -595,6 +609,18 @@ module cadr_display_out #(
   assign en_c   = cfg_sel[1];
   assign rot_on = (cfg_rot != 2'd0);
 
+  // Each screen's first column, upright and turned, as the latched setting
+  // places it: centered when it is shown alone under `SPREAD`, else where it
+  // sits beside the other (`AMX0` and the rest above).
+  logic            alone_m, alone_c;
+  logic [HC_W-1:0] mx0, cx0, rmx0, rcx0;
+  assign alone_m = (cfg_sel == 2'b01);
+  assign alone_c = (cfg_sel == 2'b10);
+  assign mx0  = alone_m ? HC_W'(AMX0)  : HC_W'(MX0);
+  assign rmx0 = alone_m ? HC_W'(ARMX0) : HC_W'(RMX0);
+  assign cx0  = alone_c ? HC_W'(ACX0)  : HC_W'(CX0);
+  assign rcx0 = alone_c ? HC_W'(ARCX0) : HC_W'(RCX0);
+
   // ====================================================================
   // THE RASTER'S COUNTERS
   // ====================================================================
@@ -635,15 +661,15 @@ module cadr_display_out #(
   // meaningful where that column is inside the picture, which is what the two
   // `in` terms below decide; elsewhere it wraps and is not looked at.
   function automatic logic [MW_W-1:0] mono_widx(input logic [HC_W-1:0] x);
-    if (cfg_rot == 2'd0)      return MW_W'((x - HC_W'(MX0)) >> 5);
-    else if (cfg_rot == 2'd1) return MW_W'(HC_W'(PIC_H - 1) - (x - HC_W'(RMX0)));
-    else                      return MW_W'(x - HC_W'(RMX0));
+    if (cfg_rot == 2'd0)      return MW_W'((x - mx0) >> 5);
+    else if (cfg_rot == 2'd1) return MW_W'(HC_W'(PIC_H - 1) - (x - rmx0));
+    else                      return MW_W'(x - rmx0);
   endfunction
 
   function automatic logic [CW_W-1:0] color_widx(input logic [HC_W-1:0] x);
-    if (cfg_rot == 2'd0)      return CW_W'((x - HC_W'(CX0)) >> 3);
-    else if (cfg_rot == 2'd1) return CW_W'(HC_W'(CPIC_H - 1) - (x - HC_W'(RCX0)));
-    else                      return CW_W'(x - HC_W'(RCX0));
+    if (cfg_rot == 2'd0)      return CW_W'((x - cx0) >> 3);
+    else if (cfg_rot == 2'd1) return CW_W'(HC_W'(CPIC_H - 1) - (x - rcx0));
+    else                      return CW_W'(x - rcx0);
   endfunction
 
   // The bit of a word, and the nibble of a word.  Five and three bits, because
@@ -652,12 +678,12 @@ module cadr_display_out #(
   logic [4:0] mono_bit;
   logic [2:0] color_nib;
   always_comb begin
-    if (cfg_rot == 2'd0)      mono_bit = hc[4:0] - 5'(MX0);
+    if (cfg_rot == 2'd0)      mono_bit = hc[4:0] - mx0[4:0];
     else if (cfg_rot == 2'd1) mono_bit = vc[4:0] - 5'(RMY0);
     else                      mono_bit = 5'(PIC_W - 1) - (vc[4:0] - 5'(RMY0));
   end
   always_comb begin
-    if (cfg_rot == 2'd0)      color_nib = hc[2:0] - 3'(CX0);
+    if (cfg_rot == 2'd0)      color_nib = hc[2:0] - cx0[2:0];
     else if (cfg_rot == 2'd1) color_nib = vc[2:0] - 3'(RCY0);
     else                      color_nib = 3'(CPIC_W - 1) - (vc[2:0] - 3'(RCY0));
   end
@@ -684,18 +710,18 @@ module cadr_display_out #(
   // indistinguishable from one that works, and the tool says so.
   always_comb begin
     if (cfg_rot == 2'd0)
-      m_in_c = ((hc - HC_W'(MX0))  < HC_W'(PIC_W)) &&
+      m_in_c = ((hc - mx0)  < HC_W'(PIC_W)) &&
                ((vc - VC_W'(MY0))  < VC_W'(PIC_H));
     else
-      m_in_c = ((hc - HC_W'(RMX0)) < HC_W'(PIC_H)) &&
+      m_in_c = ((hc - rmx0) < HC_W'(PIC_H)) &&
                ((vc - VC_W'(RMY0)) < VC_W'(PIC_W));
   end
   always_comb begin
     if (cfg_rot == 2'd0)
-      c_in_c = ((hc - HC_W'(CX0))  < HC_W'(CPIC_W)) &&
+      c_in_c = ((hc - cx0)  < HC_W'(CPIC_W)) &&
                ((vc - VC_W'(CY0))  < VC_W'(CPIC_H));
     else
-      c_in_c = ((hc - HC_W'(RCX0)) < HC_W'(CPIC_H)) &&
+      c_in_c = ((hc - rcx0) < HC_W'(CPIC_H)) &&
                ((vc - VC_W'(RCY0)) < VC_W'(CPIC_W));
   end
 

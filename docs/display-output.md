@@ -212,6 +212,30 @@ An overlap of 64 is right at 704 and wrong at 703, and both are overlaps, so
 `tb/cadr_display_out_tb.cpp` measures the extreme column and row each picture
 actually reached and holds each of those eight numbers to the table above.
 
+**On the Kria KR260's 1920 by 1080 raster the two fit side by side, and
+the columns neither uses are shared out** (`SPREAD` in
+`rtl/plumbing/cadr_display_out.sv`). Upright, 576 columns are left over, so
+the first display's left margin, the gap and the color screen's right margin
+are 192 each. Turned, 503 are left over: 167 at each side and 169 between.
+**A screen shown alone is centered across the width** there, by the same
+setting. Its rows are the ones it has beside the other screen.
+
+| Kria KR260 | first column | last column | first row | last row |
+|---|---|---|---|---|
+| first display, upright, with the color screen | 192 | 959 | 58 | 1020 |
+| color screen, upright, with the first display | 1152 | 1727 | 313 | 766 |
+| first display, rotated, with the color screen | 167 | 1129 | 156 | 923 |
+| color screen, rotated, with the first display | 1299 | 1752 | 252 | 827 |
+| first display alone, upright | 576 | 1343 | 58 | 1020 |
+| color screen alone, upright | 672 | 1247 | 313 | 766 |
+| first display alone, rotated | 478 | 1440 | 156 | 923 |
+| color screen alone, rotated | 733 | 1186 | 252 | 827 |
+
+An odd margin's extra column goes to the right. Which screens are shown is a
+setting, so the lone placement is chosen by the setting latched at the frame's
+top, between two constants. On the Arty Z7-20 and the DE25-Nano a screen
+alone stays where it is with both.
+
 The border is black whatever `MODE BOW` says. The border is not the CADR's
 screen at all, so it does not follow a bit that decides how the CADR's own zeros
 are shown.

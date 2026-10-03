@@ -26979,3 +26979,82 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @new
         .SPREAD(MACHINE == "cadr" ? 0 : 0),
 @end
+
+@mutation display-out-the-first-display-alone-not-centered
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note The first display shown alone left where it sits beside the color
+@note board, upright and turned.
+@old
+  assign alone_m = (cfg_sel == 2'b01);
+@new
+  assign alone_m = 1'b0;
+@end
+
+@mutation display-out-the-color-board-alone-not-centered
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note The color board shown alone left where it sits beside the first
+@note display, upright and turned.
+@old
+  assign alone_c = (cfg_sel == 2'b10);
+@new
+  assign alone_c = 1'b0;
+@end
+
+@mutation display-out-the-first-display-centered-beside-the-color-board
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note The first display centered whenever it is shown, the color board
+@note beside it too: the two then overlap.
+@old
+  assign alone_m = (cfg_sel == 2'b01);
+@new
+  assign alone_m = cfg_sel[0];
+@end
+
+@mutation display-out-the-first-display-alone-turned-not-centered
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note Turned, the first display alone left at its place beside the color
+@note board; upright it is centered.  (The lone figure stays named, only
+@note under an upright setting this placement never draws, so lint passes.)
+@old
+  assign rmx0 = alone_m ? HC_W'(ARMX0) : HC_W'(RMX0);
+@new
+  assign rmx0 = (alone_m && cfg_rot == 2'd0) ? HC_W'(ARMX0) : HC_W'(RMX0);
+@end
+
+@mutation display-out-the-color-board-alone-turned-not-centered
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note Turned, the color board alone left at its place beside the first
+@note display; upright it is centered.  (The lone figure stays named, only
+@note under an upright setting this placement never draws, so lint passes.)
+@old
+  assign rcx0 = alone_c ? HC_W'(ARCX0) : HC_W'(RCX0);
+@new
+  assign rcx0 = (alone_c && cfg_rot == 2'd0) ? HC_W'(ARCX0) : HC_W'(RCX0);
+@end
+
+@mutation display-out-the-lone-first-display-a-column-right
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note The first display alone one column right of center, its left margin
+@note 577 and its right 575.
+@old
+  localparam int unsigned AMX0  = (SPREAD != 0 && PIC_W  <= H_ACTIVE) ? (H_ACTIVE - PIC_W)  / 2 : MX0;
+@new
+  localparam int unsigned AMX0  = (SPREAD != 0 && PIC_W  <= H_ACTIVE) ? (H_ACTIVE - PIC_W)  / 2 + 1 : MX0;
+@end
+
+@mutation display-out-the-lone-turned-first-display-odd-column-left
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note Turned, the first display alone with its odd margin's extra column on
+@note the left: 479 and 478 where the rule says 478 and 479.
+@old
+  localparam int unsigned ARMX0 = (SPREAD != 0 && PIC_H  <= H_ACTIVE) ? (H_ACTIVE - PIC_H)  / 2 : RMX0;
+@new
+  localparam int unsigned ARMX0 = (SPREAD != 0 && PIC_H  <= H_ACTIVE) ? (H_ACTIVE - PIC_H + 1) / 2 : RMX0;
+@end

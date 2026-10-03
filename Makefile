@@ -165,6 +165,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
        $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass $(BUILD)/reserved.pass \
        $(BUILD)/de25_linux.pass $(BUILD)/kr260_linux.pass $(BUILD)/rootfs_packages.pass \
+       $(BUILD)/br_force.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.pass) \
        muir-pin current
@@ -4972,23 +4973,59 @@ BR_FORCE_PKGS = uboot linux cadr-common cadr-readout \
 # boards for the reason a second forcing target was refused before it existed:
 # two lists rot apart.  The filter is what makes one list safe for a board that
 # leaves a package out.
-define BR_FORCE
-	set -e; force=; \
+#
+# **AND BUILDROOT'S OWN TWO ARE ASKED THE SAME QUESTION**: U-Boot by
+# `BR2_TARGET_UBOOT` and the kernel by `BR2_LINUX_KERNEL`, which are the
+# symbols that select them.  Forced unasked, `uboot-reconfigure` stopped the
+# Kria KR260's rebuild with "No rule to make target": that board boots from
+# the factory U-Boot in its flash and builds none, and Buildroot defines no
+# U-Boot target where none is selected.  `br_force.pass` holds the list each
+# board's defconfig gives against one computed apart from this macro
+# (`tools/br_force_check.py`).
+#
+# `BR_FORCE_NAMES` sets `force` to the targets for the `.config` in $(1);
+# `BR_FORCE` runs them.
+define BR_FORCE_NAMES
+	force=; \
 	for name in $(BR_FORCE_PKGS); do \
-	    cfg=$(BR_EXTERNAL)/package/$$name/Config.in; \
-	    if [ -f $$cfg ]; then \
-	        sym=`sed -n 's/^config \(BR2_PACKAGE_[A-Z0-9_]*\)[[:space:]]*$$/\1/p' $$cfg | head -1`; \
-	        [ -n "$$sym" ] || { \
-	            echo "$$cfg declares no BR2_PACKAGE_ symbol, so this cannot tell"; \
-	            echo "whether the package is in this board's image"; exit 1; }; \
-	        grep -qx "$$sym=y" $(1)/.config || { \
-	            echo "buildroot: $$name is not in this board's image, so it is not forced"; \
-	            continue; }; \
-	    fi; \
+	    case $$name in \
+	    uboot) sym=BR2_TARGET_UBOOT ;; \
+	    linux) sym=BR2_LINUX_KERNEL ;; \
+	    *) cfg=$(BR_EXTERNAL)/package/$$name/Config.in; \
+	       [ -f $$cfg ] || { echo "$$name has no $$cfg and is not one of Buildroot's own"; exit 1; }; \
+	       sym=`sed -n 's/^config \(BR2_PACKAGE_[A-Z0-9_]*\)[[:space:]]*$$/\1/p' $$cfg | head -1`; \
+	       [ -n "$$sym" ] || { \
+	           echo "$$cfg declares no BR2_PACKAGE_ symbol, so this cannot tell"; \
+	           echo "whether the package is in this board's image"; exit 1; } ;; \
+	    esac; \
+	    grep -qx "$$sym=y" $(1)/.config || { \
+	        echo "buildroot: $$name is not in this board's image, so it is not forced"; \
+	        continue; }; \
 	    force="$$force $$name-reconfigure"; \
-	done; \
+	done
+endef
+define BR_FORCE
+	set -e; $(call BR_FORCE_NAMES,$(1)); \
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(1) $$force
 endef
+
+# Each board's defconfig standing for its `.config`, the list the macro gives
+# against `tools/br_force_check.py`'s, with no Buildroot.  A defconfig names
+# what it selects, which is the question the macro asks.
+BR_DEFCONFIGS := boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig \
+                 boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig \
+                 boards/de25-nano/linux/buildroot/configs/de25_nano_defconfig \
+                 boards/kria-kr260/linux/buildroot/configs/kria_kr260_defconfig
+$(BUILD)/br_force.pass: tools/br_force_check.py $(BR_DEFCONFIGS) Makefile \
+                        $(wildcard $(BR_EXTERNAL)/package/*/*.mk) \
+                        $(wildcard $(BR_EXTERNAL)/package/*/Config.in) | $(BUILD)
+	@set -e; for d in $(BR_DEFCONFIGS); do \
+	    w=$(BUILD)/br_force/`basename $$d`; rm -rf $$w; mkdir -p $$w; cp $$d $$w/.config; \
+	    ( $(call BR_FORCE_NAMES,$$w); echo "$$force" ) > $$w/forced; \
+	    python3 tools/br_force_check.py $$d $(BR_EXTERNAL)/package $$w/forced; \
+	done
+	@rm -rf $(BUILD)/br_force
+	@touch $@
 
 # The image is opened and compared against the target tree it was made from,
 # after it is written, on every one of the four targets below.  Its header says
