@@ -213,7 +213,8 @@ static void do_deposit(int mem, uint32_t phys, uint32_t v)
 
 // ---- the commands -------------------------------------------------------
 
-// The debug cable's role on Pmod JA.  **ASKING IS NOT HAVING**, so this reads
+// The debug cable's role on the board's connector
+// (`CADR_BOARD_DEBUG_CONNECTOR`).  **ASKING IS NOT HAVING**, so this reads
 // the word back after every write rather than reporting what was asked for:
 // a board that can see a debugger already on the connector refuses, and the
 // line says which happened.
@@ -345,7 +346,7 @@ static void help(void)
 	say("                one");
 	say("switch          SW0, the no-auto-boot switch: what it did at the last reset,");
 	say("                and where it is now.  Exits 0 when it held the machine");
-	say("debug-cable     the role on Pmod JA: debugger, debuggee, or asked and refused");
+	say("debug-cable     the role on " CADR_BOARD_DEBUG_CONNECTOR ": debugger, debuggee, or asked and refused");
 	say("debug-cable-connect     ask to be the debugger on it (muir's --debug-cable-connect)");
 	say("debug-cable-disconnect  give the role back.  A board is a debuggee with nothing set,");
 	say("                        and its own register window is a debugger either way");

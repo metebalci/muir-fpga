@@ -26,7 +26,7 @@
 //     9  MD       the memory data register, all 32 bits, latched when VMA
 //                 was read
 //     10-13       the readout and the light panel's button
-//     14 DEBUG    **THE DEBUG CABLE'S ROLE**, Pmod JA: a write of
+//     14 DEBUG    **THE DEBUG CABLE'S ROLE**, on the board's connector: a write of
 //                 `CONS_DEBUG_CONNECT_KEY` asks this board to be the debugger
 //                 on the connector and `CONS_DEBUG_DISCONNECT_KEY` gives the
 //                 role back.  It reads a marker, a count of connects, and the
@@ -808,7 +808,8 @@ struct cons_switch {
 void cons_read_switch(struct console *c, struct cons_switch *s);
 void cons_say_switch(const struct cons_switch *s);
 
-// `debug-cable-connect` and `debug-cable-disconnect`: the role on Pmod JA.
+// `debug-cable-connect` and `debug-cable-disconnect`: the role on the
+// board's connector, `CADR_BOARD_DEBUG_CONNECTOR`.
 // muir's own flag is `--debug-cable-connect` and takes no argument here,
 // because the connector is fixed in the bitstream; there is no listen flag
 // because listening is what a CADR always does.

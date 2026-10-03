@@ -290,10 +290,18 @@ def programs(tree, bindir):
     """The programs in `bindir` say the KR260's addresses and ports, in their
     own --help and messages, which are compiled from the one map."""
     want = board_map(header_path(tree))
+    # **THE CONNECTOR'S NAME IS HELD HERE AND NOT READ BACK**: the programs are
+    # compared with the map, so a wrong name in the map would pass that
+    # comparison.  It is the carrier's connector that the top level's `pmod1`
+    # port and cadr_kr260.xdc's pins are on.
+    if want.get("CADR_BOARD_DEBUG_CONNECTOR") != "PMOD1":
+        die("the map names the debug cable's connector %r, wanting %r"
+            % (want.get("CADR_BOARD_DEBUG_CONNECTOR"), "PMOD1"))
     said = {
         "cadr-console": ["(default 0x%s, the bottom of %s)"
                          % (want["CADR_BOARD_CONSOLE_HEX"], want["CADR_BOARD_CONSOLE_PORT"]),
-                         want["CADR_BOARD_TALLY"] + " reads"],
+                         want["CADR_BOARD_TALLY"] + " reads",
+                         "a DEBUGGEE on %s," % want["CADR_BOARD_DEBUG_CONNECTOR"]],
         "cadr-terminal": ["(default 0x%s)" % want["CADR_BOARD_DISPLAY_HEX"],
                           "(default 0x%s)" % want["CADR_BOARD_COLOR_HEX"],
                           "(default 0x%s)" % want["CADR_BOARD_INPUT_HEX"]],

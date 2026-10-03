@@ -565,7 +565,7 @@ DE25-Nano says "JP1 pin".
 **One connector a board, and the other headers carry nothing.** A board is a
 debugger or a debuggee on this cable and never both at once, so a second
 header would buy only the case of a board debugging one machine while another
-debugs it. On all three boards the register window already covers that
+debugs it. On every board the register window already covers that
 case: muir on a board's own Arm cores reaches the DBGIN page whatever the
 connector is doing.
 
@@ -576,7 +576,8 @@ headers are not alike would want the question asked again --- this link rests
 on a strobe at the far end of a ribbon, so a high-speed header would be the one
 to take. **The DE25-Nano says JP1 pins 31 to 38**, and its two headers are
 alike as well; the section on that board says how those eight were chosen and
-what a cable to a Pmod has to do.
+what a cable to a Pmod has to do. **The Kria KR260 says PMOD1**, the first of
+its four alike Pmod headers.
 
 ### What actually crosses, counted off the netlist
 
@@ -679,7 +680,7 @@ nobody has published, for the reasons its own section gives.
 eight pads by index and which of them this board drives; which pin each index
 is, is the board's. So the role rules, the wiring detection, the refusal to
 drive a group somebody else is driving and everything the console reports are
-the same on all three boards, and a person who knows one knows the others.
+the same on every board, and a person who knows one knows the others.
 
 **The pads are bidirectional and they have to be**, because the role is not
 fixed at synthesis. `cadr_dbg_cable.sv` hands out a tri-state enable a pad, so
@@ -776,6 +777,56 @@ the design can drive one, and `boards/de25-nano/cadr_de25.sv` names neither.
 What has run on a real ribbon is the two Zynq boards, which the sections below
 report. On the DE25-Nano the connector is built, linted and read by a check,
 and it has crossed nothing.
+
+### The Kria KR260's connector is PMOD1
+
+The KR260 carrier has four twelve-pin Pmod headers, and the cable takes the
+first, PMOD1. Its eight signal pins are bank 45 at 3.3 V, LVCMOS33, each with
+a pull-down as on the Zynq boards, so an unplugged connector reads zero. Index
+`k` of the carrier is AMD's `pmod1_pin(k+1)` in the KR260's board files, and
+those are header pins 1, 2, 3, 4, 7, 8, 9 and 10 in that order, the same order
+the table above gives. So a ribbon between PMOD1 and a Zynq board's JA joins
+each signal to its counterpart, as it does between the two Zynq boards.
+
+| PMOD1 pin | package pin | index | carries | Arty Z7-20 JA pin, straight ribbon | Arty Z7-20 JA pin, mirrored ribbon |
+|---|---|---|---|---|---|
+| 1 | H12 | 0 | debugger strobe | 1 | 7 |
+| 2 | E10 | 1 | guard, driven low | 2 | 8 |
+| 3 | D10 | 2 | debugger data | 3 | 9 |
+| 4 | C11 | 3 | guard, driven low | 4 | 10 |
+| 5 | --- | --- | ground | 5, joined | 11, joined |
+| 6 | --- | --- | 3.3 V | open at both ends | open at both ends |
+| 7 | B10 | 4 | debuggee strobe | 7 | 1 |
+| 8 | E12 | 5 | guard, driven low | 8 | 2 |
+| 9 | D11 | 6 | debuggee data | 9 | 3 |
+| 10 | B11 | 7 | guard, driven low | 10 | 4 |
+| 11 | --- | --- | ground | 11, joined | 5, joined |
+| 12 | --- | --- | 3.3 V | open at both ends | open at both ends |
+
+The Cora Z7-07S's JA has the same pin numbers as the Arty's, so the table holds
+for a cable to it as well. A mirrored ribbon is the one the section below
+describes, and the debugger finds it under `auto` either way.
+
+**The grounds are joined and the supplies are not.** Pins 5 and 11 are ground
+on both connectors and the cable joins them. Pins 6 and 12 carry each board's
+own 3.3 V, and the cable leaves them open at both ends, which is the rule a
+cable between the two Zynq boards follows. Neither supply pin is
+a fabric pin, so nothing in the design can drive one, and
+`boards/kria-kr260/cadr_kr260.xdc` names neither.
+
+**Two things here are AMD's files and not a measurement.** The package pins
+are the board files' own, and the board files name the eight signals in the
+order above. That AMD's `pmod1_pin1` to `pmod1_pin8` are header pins 1 to 4
+and 7 to 10 is the order every Pmod pin file uses, and it is not checked
+against a schematic of the carrier, which is not published. Nor is how the
+carrier routes the header, so the coupled-pair argument below is not known to
+apply here either. The guards are carried across as they are on the
+DE25-Nano: as a decision, not on the strength of a measurement of this board.
+
+**Nothing of this connector has run on silicon.** The connector is built on
+the KR260's CADR, fitted, and read by the board's console, which reports a
+debuggee with nothing on the connector, and it has crossed nothing. A QUUX
+bitstream has no debug cable, and PMOD1's pads are left to their pull-downs.
 
 ### The ribbon can be made the wrong way round, and one was
 
@@ -1692,20 +1743,30 @@ else that asks for it. And two boards have to be running at once, because the
 cheapest statement this link can make --- a Unibus read of `0o766104` from the
 debugger's own Lisp Listener --- needs a machine at each end.
 
+**Nor has the Kria KR260's.** Its connector is built on the CADR, fitted and
+loaded: the fit places the eight pads with their pull-downs and holds the
+sender to its six ticks, and the board's console reads a debuggee with nothing
+on the connector. No ribbon has joined it to another board, so nothing has
+crossed it, and which header pins AMD's pin order names is still the board
+files' word. The cable it needs is in the section on that board: PMOD1's pins
+1 to 4 and 7 to 10 to the far Pmod's, the grounds joined, pins 6 and 12 open
+at both ends.
+
 ## What is not built
 
 **The composition onto the board is done, and so is the connector.**
 `rtl/machine/cadr_dbgin.sv` is instantiated in
 `rtl/machine/cadr_memory_path.sv` beside the three Unibus slaves,
 `cadr_machine.sv` passes both ends of the cable up as ports, the two Zynq
-boards put `cadr_dbg_cable.sv` on Pmod JA and the DE25-Nano puts it on JP1 pins
-31 to 38, with `cadr_dbg_join.sv` between it and the
-page. All three put `cadr_debug_window.sv` behind a general-purpose port or a
+boards put `cadr_dbg_cable.sv` on Pmod JA, the Kria KR260 on PMOD1 and the
+DE25-Nano on JP1 pins 31 to 38, with `cadr_dbg_join.sv` between it and the
+page. Each puts `cadr_debug_window.sv` behind a general-purpose port or a
 processor-to-fabric bridge as well, so
 the join has two arms on each. The window is how a program plays the far end of
 this cable. Two boards and a ribbon are no
 longer what is left for the Zynq boards: the section above says what they have
-shown, and says that the DE25-Nano's connector has shown nothing. The lines are
+shown, and says that the DE25-Nano's and the Kria KR260's connectors have
+shown nothing. The lines are
 the lines `tb/cadr_dbgin_harness.sv` was written with, which is what that
 harness is for: it was the attachment before the attachment landed, and the arbiter it
 instantiates is the module `cadr_memory_path.sv` instantiates rather than a

@@ -469,7 +469,7 @@ void cons_say_debug_cable(const struct cons_debug_cable *d)
 		// DEBUGGER's, which on a mirrored ribbon is where the other
 		// board's requests land.  The fabric will not take one word of
 		// them, and neither will this line call them an answer.
-		say("debug cable: this board is the DEBUGGER on Pmod JA%s",
+		say("debug cable: this board is the DEBUGGER on " CADR_BOARD_DEBUG_CONNECTOR "%s",
 		    d->foreign ? ", and what is on the connector is ANOTHER DEBUGGER, whose "
 				 "frames are not an answer and are not taken for one"
 		    : d->live ? ", and the board at the far end is answering"
@@ -480,13 +480,15 @@ void cons_say_debug_cable(const struct cons_debug_cable *d)
 		// engagement down, and the first board told is the one that
 		// has the role.  Without this line a refused connect would
 		// read as a console that did nothing.
-		say("debug cable: this board ASKED to be the debugger on Pmod JA and does not "
+		say("debug cable: this board ASKED to be the debugger on " CADR_BOARD_DEBUG_CONNECTOR
+		    " and does not "
 		    "have the role%s",
 		    d->foreign ? ": somebody else is driving the connector, and the first "
 				 "board told is the one that has it"
 			       : ", and nothing on the connector says why");
 	else
-		say("debug cable: this board is a DEBUGGEE on Pmod JA, which is what a CADR is "
+		say("debug cable: this board is a DEBUGGEE on " CADR_BOARD_DEBUG_CONNECTOR
+		    ", which is what a CADR is "
 		    "with nothing set%s",
 		    // **AND THE ONE CASE THAT NAMES A CROSSED CABLE FROM THIS
 		    // END.**  A debuggee listens on the low four and answers on

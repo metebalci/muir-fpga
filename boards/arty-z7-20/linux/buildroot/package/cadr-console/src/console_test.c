@@ -120,7 +120,7 @@ struct model {
 	// fabric reads the switch only at the reset, so a switch moved since
 	// then has changed nothing and the pair is what says so.
 	int held_at_reset, switch_now;
-	// Page 0's word 14, the debug cable's role on Pmod JA.  `asked` is what
+	// Page 0's word 14, the debug cable's role on the board's connector.  `asked` is what
 	// the console last told the connector and `engaged` is what the
 	// connector did about it, and the model keeps them APART so that a
 	// check can put them out of step: a board that can see a debugger
@@ -1423,6 +1423,10 @@ static void check_debug_cable(void)
 	{
 		const char *out = capture_end();
 		CHECK(strstr(out, "DEBUGGEE") != NULL, "a debuggee is not called one");
+		// On the board's own connector, by its name: this test is built
+		// with the Zynq-7000 boards' map, whose cable is on Pmod JA.
+		CHECK(strstr(out, "a DEBUGGEE on Pmod JA,") != NULL,
+		      "the debuggee's line does not name the board's connector");
 	}
 
 	// The key asks and is taken, with nothing else on the connector.

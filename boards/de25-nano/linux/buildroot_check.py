@@ -474,10 +474,18 @@ def programs(tree, bindir):
     header = os.path.join(tree, "..", "..", "..", "arty-z7-20", "linux", "buildroot",
                           "package", "cadr-common", "src", "cadr", "cadr_board.h")
     want = board_map(header)
+    # **THE CONNECTOR'S NAME IS HELD HERE AND NOT READ BACK**: the programs are
+    # compared with the map, so a wrong name in the map would pass that
+    # comparison.  It is the eight pins that de25_nano_pins.tcl and
+    # docs/debug-cable.md give the cable.
+    if want.get("CADR_BOARD_DEBUG_CONNECTOR") != "JP1's pins 31 to 38":
+        die("the map names the debug cable's connector %r, wanting %r"
+            % (want.get("CADR_BOARD_DEBUG_CONNECTOR"), "JP1's pins 31 to 38"))
     said = {
         "cadr-console": ["(default 0x%s, the bottom of %s)"
                          % (want["CADR_BOARD_CONSOLE_HEX"], want["CADR_BOARD_CONSOLE_PORT"]),
-                         want["CADR_BOARD_TALLY"] + " reads"],
+                         want["CADR_BOARD_TALLY"] + " reads",
+                         "a DEBUGGEE on %s," % want["CADR_BOARD_DEBUG_CONNECTOR"]],
         "cadr-terminal": ["(default 0x%s)" % want["CADR_BOARD_DISPLAY_HEX"],
                           "(default 0x%s)" % want["CADR_BOARD_COLOR_HEX"],
                           "(default 0x%s)" % want["CADR_BOARD_INPUT_HEX"]],

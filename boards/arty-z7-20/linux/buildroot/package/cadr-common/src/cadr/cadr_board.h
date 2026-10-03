@@ -135,6 +135,9 @@
 #define CADR_BOARD_MEMORY_OPENED "one where U-Boot did not open the bridges"
 #define CADR_BOARD_PACK_PORT     "F2SDRAM"
 #define CADR_BOARD_TALLY         "the GPI tally"
+// MIT's debug cable: no Pmod on this board, so eight of JP1's pins
+// (docs/debug-cable.md).
+#define CADR_BOARD_DEBUG_CONNECTOR "JP1's pins 31 to 38"
 
 #define CADR_BOARD_PACK_HEX      40000000
 #define CADR_BOARD_CHAOS_HEX     40001000
@@ -165,6 +168,8 @@
 #define CADR_BOARD_MEMORY_OPENED "one where ps7_post_config has not run"
 #define CADR_BOARD_PACK_PORT     "HP2"
 #define CADR_BOARD_TALLY         "the EMIO tally"
+// MIT's debug cable, on one Pmod (docs/debug-cable.md).
+#define CADR_BOARD_DEBUG_CONNECTOR "Pmod JA"
 
 #define CADR_BOARD_PACK_HEX      40000000
 #define CADR_BOARD_CHAOS_HEX     40001000
@@ -197,6 +202,8 @@
 #define CADR_BOARD_MEMORY_OPENED "one whose load did not release the fabric's isolation"
 #define CADR_BOARD_PACK_PORT     "HP2"
 #define CADR_BOARD_TALLY         "the EMIO tally"
+// MIT's debug cable, on the carrier's first Pmod (docs/debug-cable.md).
+#define CADR_BOARD_DEBUG_CONNECTOR "PMOD1"
 
 #define CADR_BOARD_PACK_HEX      A0000000
 #define CADR_BOARD_CHAOS_HEX     A0001000
