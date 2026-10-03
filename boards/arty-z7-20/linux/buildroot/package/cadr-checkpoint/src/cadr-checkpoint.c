@@ -529,9 +529,8 @@ int main(int argc, char **argv)
 		if (!bind.u[u].present)
 			continue;
 		decl.present |= 1u << u;
-		decl.cylinders[u] = bind.u[u].cylinders;
-		decl.heads[u] = bind.u[u].heads;
-		decl.blocks_per_track[u] = bind.u[u].blocks_per_track;
+		bind_declared(&bind.u[u], &decl.cylinders[u], &decl.heads[u],
+			      &decl.blocks_per_track[u]);
 		decl.read_only[u] = bind.u[u].read_only;
 	}
 

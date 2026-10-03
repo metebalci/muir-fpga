@@ -26038,6 +26038,38 @@ FAULT_SH=/usr/share/cadr/faults.sh
       pf_vaddr_q       <= pf_nx_vaddr & ~(VADDR_BITS'(1) << (VADDR_BITS - 1));
 @end
 
+@mutation quux13-axi-master-takes-no-b-until-both-addresses-are-in
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note **A SPLIT WRITE'S FIRST B IS TAKEN WHILE ITS SECOND ADDRESS WAITS**: the
+@note DE25-Nano's shared port takes no write address while a write is owed its
+@note response, and a master that took no B until both addresses were in
+@note waits on the port while the port waits on it, as revision 13's PROM did
+@note on the board at its fourth block.  Caught on "a transaction never
+@note finished".
+@old
+  assign m_bready  = (state == WRESP) || (state == WRITE && split && !bi);
+@new
+  assign m_bready  = (state == WRESP);
+@end
+
+@mutation quux13-axi-master-forgets-the-first-b
+@check quux13_axi_master_quux
+@file rtl/plumbing/quux_axi_master.sv
+@note A first B taken in WRITE and not counted: the master then waits in
+@note WRESP for a second B that has already come, or takes the second as the
+@note first.  Caught on "a transaction never finished".
+@old
+          if (m_bvalid && m_bready) begin
+            if (m_bresp[1]) mem_error <= 1'b1;
+            bi <= 1'b1;
+          end
+@new
+          if (m_bvalid && m_bready) begin
+            if (m_bresp[1]) mem_error <= 1'b1;
+          end
+@end
+
 @mutation rev13-axi-line-across-4k-is-one-burst
 @check quux13_axi_master_quux
 @file rtl/plumbing/quux_axi_master.sv

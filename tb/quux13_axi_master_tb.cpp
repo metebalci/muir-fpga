@@ -145,6 +145,13 @@ int main(int argc, char **argv) {
   long first_ar_taken = -1;
   // What a write changed, for the check that it changed only its bytes.
   std::unordered_map<uint32_t, uint8_t> before;
+  // **THE SECOND HALF OF THE RUN KEEPS THE DE25-NANO'S RULE FOR WRITES**
+  // (`rtl/plumbing/cadr_f2sdram_share.sv`): no write address is taken while
+  // another write is owed its response, so a split write's second address
+  // waits for the first burst's B.  A master that took no B until both of
+  // its addresses were in never finishes such a write, and the run says so.
+  const long kOneWriteFrom = 400000;
+  long split_writes_one = 0, asked_at = -1;
 
   for (long t = 0; t < 800000; ++t) {
     // After a request let go, the next waits until the port is quiet: the
@@ -208,7 +215,8 @@ int main(int argc, char **argv) {
     m->mem_wdata = kind == kWord ? (wdata & 0xFFFFFFFFull) : wdata;
 
     // --- the slave's outputs for this tick
-    m->m_awready = aw_q.size() < 2 && rng.Below(3) != 0;
+    const bool one_write = t >= kOneWriteFrom;
+    m->m_awready = (one_write ? aw_q.empty() && b_q.empty() : aw_q.size() < 2) && rng.Below(3) != 0;
     m->m_wready = rng.Below(3) != 0;
     m->m_arready = ar_q.size() < 3 && rng.Below(3) != 0;
     m->m_bvalid = 0;
@@ -331,6 +339,11 @@ int main(int argc, char **argv) {
     if (r_delay > 0) --r_delay;
     if (b_delay > 0) --b_delay;
 
+    // A transaction that never finishes: the port and the master each
+    // waiting on the other.
+    if (asking && asked_at < 0) asked_at = t;
+    if (!asking) asked_at = -1;
+    if (asked_at >= 0 && t - asked_at == 20000) fail(t, "a transaction never finished: the master and the port wait on each other");
     // An answer only to a request standing, or let go in this tick: the
     // one it was abandoned by is finished on the port and thrown away.
     if (m->mem_done && !req_was) fail(t, "an answer with no request standing");
@@ -364,7 +377,10 @@ int main(int argc, char **argv) {
         if (kind == kWide) {
           ++wides;
           if ((addr & 7) > 3) ++spanning;
-          if ((addr & 0xFFFu) > 0xFFBu) ++split_writes;
+          if ((addr & 0xFFFu) > 0xFFBu) {
+            ++split_writes;
+            if (t >= kOneWriteFrom) ++split_writes_one;
+          }
         } else {
           ++words;
         }
@@ -412,12 +428,13 @@ int main(int argc, char **argv) {
   std::printf("quux13_axi_master: %ld answers: %ld five-beat lines and %ld four-beat, %ld of them "
               "split at 4 KiB, the second address up a tick after the first %ld times; %ld five-byte "
               "writes, %ld of them over two beats and %ld split at 4 KiB; %ld four-byte writes, %ld "
-              "word reads; %ld refused; %ld requests let go before their answer\n",
+              "word reads; %ld refused; %ld requests let go before their answer; %ld split writes "
+              "under the one-write rule\n",
               answered, lines5, lines4, split_lines, pipelined, wides, spanning, split_writes, words,
-              reads, errors, abandoned);
+              reads, errors, abandoned, split_writes_one);
   if (!bad && (lines5 < 2000 || lines4 < 500 || split_lines < 300 || pipelined < 200 || wides < 2000 ||
                spanning < 500 || split_writes < 100 || words < 1000 || reads < 500 || errors < 100 ||
-               abandoned < 100)) {
+               abandoned < 100 || split_writes_one < 40)) {
     std::fprintf(stderr, "FAIL: the run reached too little\n");
     ++bad;
   }

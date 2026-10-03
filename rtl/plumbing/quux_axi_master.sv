@@ -41,6 +41,13 @@
 // 22 and 38.  The words come back in order, one ID, and the answer is the
 // last beat of the second burst.  A write's two bursts are one beat each,
 // the second's address after the first's, and the answer the second B.
+// **THE FIRST BURST'S B IS TAKEN AS SOON AS IT COMES**, while the second
+// address still waits: the DE25-Nano's shared port takes no write address
+// while another write is owed its response (`cadr_f2sdram_share.sv`), so a
+// master that took no B until both addresses were in would wait on the port
+// while the port waited on it.  Seen on the board, revision 13's PROM
+// stopped at its fourth block, whose words cross a 4 KiB boundary;
+// `tb/quux13_axi_master_tb.cpp` keeps that port's rule for half its run.
 // The rule is taken on the byte address itself, whatever the base.
 //
 // Every transfer is the port's full width: the bridge refuses a narrow one,
@@ -159,7 +166,7 @@ module quux_axi_master #(
   assign w_last_take  = m_wvalid && m_wready && (!wtwo || wi);
   assign m_awvalid = (state == WRITE) && !a_out;
   assign m_wvalid  = (state == WRITE) && !w_out;
-  assign m_bready  = (state == WRESP);
+  assign m_bready  = (state == WRESP) || (state == WRITE && split && !bi);
   assign m_arvalid = (state == READ) && !a_out;
   // A split line's first beats may come while its second address is still
   // waiting to be taken.
@@ -264,6 +271,11 @@ module quux_axi_master #(
           if (m_wvalid && m_wready) begin
             if (w_last_take) w_out <= 1'b1;
             else wi <= 1'b1;
+          end
+          // A split write's first B, while its second address waits.
+          if (m_bvalid && m_bready) begin
+            if (m_bresp[1]) mem_error <= 1'b1;
+            bi <= 1'b1;
           end
           if ((a_out || aw_last_take) && (w_out || w_last_take)) state <= WRESP;
         end

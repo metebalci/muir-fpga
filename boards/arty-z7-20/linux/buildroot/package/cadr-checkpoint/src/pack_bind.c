@@ -33,6 +33,20 @@ static uint64_t size_of(const uint32_t g[3])
 	return (uint64_t)g[0] * g[1] * g[2] * BLOCK_BYTES;
 }
 
+void bind_declared(const struct bind_pack *p, uint32_t *cylinders, uint32_t *heads,
+		   uint32_t *blocks_per_track)
+{
+	if (p->format[0]) {
+		*cylinders = (uint32_t)p->blocks;
+		*heads = 1;
+		*blocks_per_track = 1;
+	} else {
+		*cylinders = p->cylinders;
+		*heads = p->heads;
+		*blocks_per_track = p->blocks_per_track;
+	}
+}
+
 int bind_geometry_of_size(uint64_t bytes, uint32_t *c, uint32_t *h, uint32_t *b)
 {
 	const uint32_t *g = NULL;

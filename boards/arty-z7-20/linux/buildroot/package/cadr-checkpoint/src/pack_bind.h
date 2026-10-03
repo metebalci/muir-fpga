@@ -108,6 +108,14 @@ struct binding {
 
 void bind_init(struct binding *b);
 
+// **WHAT A UNIT IS DECLARED AS IN THE CHECKPOINT**, which muir holds the
+// resuming disk to: a CADR pack's geometry, and a QUUX disk's blocks as
+// `blocks` by 1 by 1, since `chk_rtl.c` writes block-disk's disk size as the
+// product.  A QUUX disk has no geometry of its own, and declaring its zero
+// one wrote a disk of no blocks, which muir refuses against the real one.
+void bind_declared(const struct bind_pack *p, uint32_t *cylinders, uint32_t *heads,
+		   uint32_t *blocks_per_track);
+
 // The geometry a file of this size is a pack of: `Geometry::T300` or
 // `Geometry::T80`, the two `pack_file.c` knows.  0 if it is one, -1 if the
 // size is no geometry's --- which is also how a pack still being copied in

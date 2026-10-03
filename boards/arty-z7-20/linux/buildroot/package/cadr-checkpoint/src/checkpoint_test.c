@@ -645,6 +645,13 @@ int main(int argc, char **argv)
 		w.u[3].cylinders = 815; w.u[3].heads = 5; w.u[3].blocks_per_track = 17;
 		w.u[3].read_only = 1;
 		w.present = 2;
+		// A CADR pack is declared to the checkpoint as its geometry.
+		{
+			uint32_t dc = 0, dh = 0, db = 0;
+			bind_declared(&w.u[3], &dc, &dh, &db);
+			if (dc != 815 || dh != 5 || db != 17)
+				fail("a CADR pack's declared geometry", (uint64_t)dc * dh * db, 815u * 5u * 17u);
+		}
 		char err[512] = "";
 		if (bind_digest(&w, err, sizeof err) != 0)
 			fail("the stand-in packs could not be digested", 1, 0);
@@ -784,6 +791,14 @@ int main(int argc, char **argv)
 				fail("a QUUX disk's blocks", q.u[0].blocks, 8192);
 			if (q.u[0].bytes != (uint64_t)st.st_size)
 				fail("a QUUX disk's bytes, the file's", q.u[0].bytes, (uint64_t)st.st_size);
+			// And it is declared to the checkpoint as its blocks, which is
+			// the disk size muir holds the resuming disk to.
+			{
+				uint32_t dc = 0, dh = 0, db = 0;
+				bind_declared(&q.u[0], &dc, &dh, &db);
+				if ((uint64_t)dc * dh * db != 8192)
+					fail("a QUUX disk's declared blocks", (uint64_t)dc * dh * db, 8192);
+			}
 			if (bind_digest(&q, err, sizeof err) != 0) {
 				fprintf(stderr, "QUUX's %s could not be digested: %s\n", disks[i].file, err);
 				++bad;
