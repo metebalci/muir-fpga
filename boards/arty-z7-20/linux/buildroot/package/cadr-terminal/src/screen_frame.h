@@ -79,7 +79,7 @@ void screen_frame_init_color(struct screen_frame *f);
 
 // **QUUX's video controller**: 1280 x 1024 at one bit a pixel, 40 words a line, with
 // `MODE BOW` as on the CADR.  `screen_geom.h` has every number's source.
-void screen_frame_init_mono(struct screen_frame *f, int black_on_white);
+void screen_frame_init_mono(struct screen_frame *f, int black_on_white, const struct cadr_video *video);
 
 // **WHICH SCREEN A MACHINE HAS, AND THE PROGRAM IS TOLD WHICH MACHINE.**
 // QUUX's feature page says its screen's size at words 11 to 13, and a CADR
@@ -97,12 +97,25 @@ int screen_machine_parse(const char *word, enum screen_machine *out);
 const char *screen_machine_name(enum screen_machine m);
 
 // The main screen of machine `m`: the CADR's first display board, or QUUX's
-// video controller.
-void screen_frame_init_for(struct screen_frame *f, enum screen_machine m, int black_on_white);
+// video controller at `video`, the size the bitstream says (`video` is not
+// read on the CADR).
+void screen_frame_init_for(struct screen_frame *f, enum screen_machine m, int black_on_white,
+			   const struct cadr_video *video);
 
 // How many bytes of the display's window to map: the CADR board's 32,768
-// words, all of which it answers, or the video controller's 40,960, which is its buffer.
-unsigned screen_window_bytes(enum screen_machine m);
+// words, all of which it answers, or the video controller's buffer at
+// `video`, 40,960 words at 1280 by 1024 and 64,800 at 1920 by 1080.
+unsigned screen_window_bytes(enum screen_machine m, const struct cadr_video *video);
+
+// **WHICH SIZE, AND WHETHER THE MACHINE AND THE BITSTREAM AGREE**: what the
+// console's word 39 (`word`) says, for machine `m`.  0 and the size in
+// `video`: QUUX's from the word, or 1280 by 1024 for a QUUX bitstream older
+// than it (`*old` set), or nothing on the CADR.  -1 with `why` written when
+// they disagree: `--machine cadr` on a fabric whose word says a video
+// controller, which is QUUX's, or a word with the marker over a size no
+// QUUX has.
+int screen_video_for(enum screen_machine m, uint32_t word, struct cadr_video *video, int *old,
+		     char *why, unsigned whylen);
 
 // Whether the machine can have the color TV: the CADR can, and QUUX has no
 // color board, its video controller's buffer running over the color window.

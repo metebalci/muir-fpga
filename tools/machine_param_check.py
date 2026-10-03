@@ -107,6 +107,10 @@ BOARDS = {
         # Revision 13's most memory boards: what the board's reservation holds
         # (`cadr_ddr_map.sv`, 32M words), written here apart from it.
         "boards13_max": 512,
+        # Contract HD: QUUX's video controller and the board name, written
+        # here apart from the top level.
+        "video": (1280, 1024),
+        "name": "Arty Z7-20",
     },
     "de25": {
         "top": "cadr_de25",
@@ -125,6 +129,8 @@ BOARDS = {
         "sync_k": {32: 4, 40: 4},
         # 64M words of room, and muir's most is 1,024 boards.
         "boards13_max": 1024,
+        "video": (1280, 1024),
+        "name": "DE25-Nano",
     },
     "cora": {
         "top": "cadr_cora",
@@ -139,6 +145,7 @@ BOARDS = {
         },
         "machines": ["cadr"],
         "pads": ["ja"],
+        "name": "Cora Z7-07S",
     },
     # The Kria KR260: the CADR, and QUUX at revision 13 alone (contract G2,
     # the KR260 port's K6), on its own memory map, with the `PS8`'s stub for
@@ -162,6 +169,8 @@ BOARDS = {
         "sync_k": {40: 4},
         # Revision 13's room on this board: 32M words.
         "boards13_max": 512,
+        "video": (1920, 1080),
+        "name": "Kria KR260",
     },
 }
 
@@ -293,6 +302,36 @@ def params_at_cell(tree, top, cell, names):
     if len(cells) != 1:
         return None, "%d cells %s in %s" % (len(cells), cell, top)
     mod = modules.get(cells[0].get("modp"))
+    values = {}
+
+    def param(n):
+        if n.get("type") == "VAR" and n.get("name") in names and n.get("isParam"):
+            v = n.get("valuep") or []
+            if len(v) == 1 and v[0].get("type") == "CONST":
+                values[n["name"]] = int(v[0]["name"].split("h")[-1], 16)
+    walk(mod, param)
+    if set(values) != set(names):
+        return None, "no constant %s in %s" % (", ".join(sorted(set(names) - set(values))), mod.get("name"))
+    return values, None
+
+
+def params_at_path(tree, top, path, names):
+    """As `params_at_cell`, for a cell inside a cell: `path` names the cell in
+    `<top>`, then the cell in the module that one became, and so on."""
+    modules = {}
+    walk(tree, lambda n: modules.__setitem__(n["addr"], n)
+         if n.get("type") == "MODULE" else None)
+    mods = [m for m in modules.values() if m.get("origName") == top]
+    if len(mods) != 1:
+        return None, "%d modules named %s" % (len(mods), top)
+    mod = mods[0]
+    for name in path:
+        cells = []
+        walk(mod, lambda n: cells.append(n)
+             if n.get("type") == "CELL" and n.get("name") == name else None)
+        if len(cells) != 1:
+            return None, "%d cells %s in %s" % (len(cells), name, mod.get("name"))
+        mod = modules.get(cells[0].get("modp"))
     values = {}
 
     def param(n):
@@ -472,6 +511,7 @@ def word_reaches(board, config, bits, scratch):
     boards_at_console(board, config, "MACHINE=quux, %s" % asked, want > 32, tree)
     if board == "kr260":
         kr260_raster(config, "MACHINE=quux, %s" % asked, "quux", tree)
+    video_and_name(board, config, "MACHINE=quux, %s" % asked, "quux", want > 32, tree)
     # And the file device's page names the revision: "QF13" at 40 bits,
     # "QFD9" below (`rtl/plumbing/quux_fd_face.sv`).
     ident_want = 0x51463133 if want > 32 else 0x51464439
@@ -542,6 +582,7 @@ def reaches(board, config, value, scratch):
         k_at_generator(board, config, "MACHINE=quux", 32, tree)
     if board == "kr260":
         kr260_raster(config, asked, want, tree)
+    video_and_name(board, config, asked, want, False, tree)
 
 
 def kr260_raster(config, asked, machine, tree):
@@ -566,8 +607,9 @@ def kr260_raster(config, asked, machine, tree):
     if sorted(want) != sorted(raster):
         say(False, "%s --- display_raster.mk names %s" % (what, sorted(want)))
         return
+    vw, vh = BOARDS["kr260"]["video"]
     pic = {"PIC_W": 768, "PIC_H": 963, "WORDS_PER_LINE": 24, "SPREAD": 1} if machine == "cadr" \
-        else {"PIC_W": 1280, "PIC_H": 1024, "WORDS_PER_LINE": 40, "SPREAD": 0}
+        else {"PIC_W": vw, "PIC_H": vh, "WORDS_PER_LINE": vw // 32, "SPREAD": 0}
     want.update(pic)
     got, why = params_at_cell(tree, top, "u_display", list(want))
     if got is None:
@@ -578,6 +620,69 @@ def kr260_raster(config, asked, machine, tree):
             ", ".join("%s=%d" % kv for kv in sorted(want.items()))))
     else:
         say(True, "%s, and %s's picture %dx%d" % (what, machine, pic["PIC_W"], pic["PIC_H"]))
+
+
+def name_of(value):
+    """A board name parameter's characters: the literal is right-justified,
+    so the bytes from the highest that is not zero down to bit 0."""
+    b = value.to_bytes(64, "big").lstrip(b"\0")
+    return b.decode("ascii", "replace")
+
+
+def video_and_name(board, config, asked, machine, rev13, tree):
+    """**THE VIDEO CONTROLLER'S SIZE AND THE BOARD NAME ARE THE BOARD'S, AND
+    ONE OF EACH** (contract HD): the size this table gives the board at
+    u_machine, at its console's word 39 on QUUX (none on the CADR), and at its
+    display's picture on QUUX; the name at u_machine, and on revision 13
+    packed into the feature page's words 20-24 as the page gives them."""
+    top = BOARDS[board]["top"]
+    spec = BOARDS[board]
+    vw, vh = spec.get("video", (1280, 1024))
+    name = spec["name"]
+    what = "%s, %s, %s: u_machine's video controller is %dx%d and its board name %r" % (
+        top, config, asked, vw, vh, name)
+    got, why = params_at_cell(tree, top, "u_machine", ["VIDEO_WIDTH", "VIDEO_HEIGHT", "BOARD_NAME"])
+    if got is None:
+        say(False, "%s --- %s" % (what, why or "no u_machine"))
+    elif (got["VIDEO_WIDTH"], got["VIDEO_HEIGHT"], name_of(got["BOARD_NAME"])) != (vw, vh, name):
+        say(False, "%s --- it has %dx%d and %r" % (what, got["VIDEO_WIDTH"], got["VIDEO_HEIGHT"],
+                                                     name_of(got["BOARD_NAME"])))
+    else:
+        say(True, what)
+    if rev13 and machine == "quux":
+        want = int.from_bytes(name.encode("ascii").ljust(20, b"\0"), "little")
+        what = "%s, %s, %s: the feature page's words 20-24 hold %r" % (top, config, asked, name)
+        got, why = params_at_path(tree, top, ["u_machine", "feature_page"], ["BOARD_NAME_WORDS"])
+        if got is None:
+            say(False, "%s --- %s" % (what, why or "no feature_page"))
+        elif got["BOARD_NAME_WORDS"] != want:
+            say(False, "%s --- they hold %040x, want %040x" % (what, got["BOARD_NAME_WORDS"], want))
+        else:
+            say(True, what)
+    want_con = (vw, vh) if machine == "quux" else (0, 0)
+    what = "%s, %s, %s: u_console's word 39 says %s" % (
+        top, config, asked, "%dx%d" % want_con if machine == "quux" else "no video controller")
+    got, why = params_at_cell(tree, top, "u_console", ["VIDEO_WIDTH", "VIDEO_HEIGHT"])
+    if got is None and why is None:
+        pass
+    elif got is None:
+        say(False, "%s --- %s" % (what, why))
+    elif (got["VIDEO_WIDTH"], got["VIDEO_HEIGHT"]) != want_con:
+        say(False, "%s --- it has %dx%d" % (what, got["VIDEO_WIDTH"], got["VIDEO_HEIGHT"]))
+    else:
+        say(True, what)
+    if machine == "quux":
+        what = "%s, %s, %s: u_display shows the video controller, %dx%d at %d words a line" % (
+            top, config, asked, vw, vh, vw // 32)
+        got, why = params_at_cell(tree, top, "u_display", ["PIC_W", "PIC_H", "WORDS_PER_LINE"])
+        if got is None and why is None:
+            pass
+        elif got is None:
+            say(False, "%s --- %s" % (what, why))
+        elif (got["PIC_W"], got["PIC_H"], got["WORDS_PER_LINE"]) != (vw, vh, vw // 32):
+            say(False, "%s --- it shows %s" % (what, got))
+        else:
+            say(True, what)
 
 
 def k_at_generator(board, config, asked, bits, tree):

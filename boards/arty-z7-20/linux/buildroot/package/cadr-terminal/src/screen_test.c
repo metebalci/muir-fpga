@@ -4765,14 +4765,17 @@ static const struct mono_anchor MONO_ANCHORS[] = {
 	{ 40 * 1023 + 39, 31, 1279, 1023, "word 40,959 bit 31 is the bottom-right pixel" },
 };
 
-static uint8_t mono_canvas[1024 * 1280];
-static uint8_t mono_want[1024 * 1280];
-static uint32_t mono_window[40960];
+// The screen these helpers compare: 1280 by 1024, or the Kria KR260's 1920
+// by 1080 where step 7 sets it.  The buffers are the largest's.
+static unsigned g_mw = 1280u, g_mh = 1024u;
+static uint8_t mono_canvas[1080 * 1920];
+static uint8_t mono_want[1080 * 1920];
+static uint32_t mono_window[64800];
 
 // A lit bit at `x`, `y`, by muir's rule with the stride written out.
 static void mono_set_lit(uint32_t *w, unsigned x, unsigned y)
 {
-	const unsigned bit = y * 40u * 32u + x;
+	const unsigned bit = y * (g_mw / 32u) * 32u + x;
 	w[bit / 32u] |= 1u << (bit % 32u);
 }
 
@@ -4800,7 +4803,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 			*ry0 = y;
 			*rh0 = h;
 		}
-		if (x + w > 1280u || y + h > 1024u) {
+		if (x + w > g_mw || y + h > g_mh) {
 			fail(__LINE__, "the video controller: a rectangle at %u,%u of %ux%u leaves the screen",
 			     x, y, w, h);
 			return -1;
@@ -4817,7 +4820,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 						     "nor white", x + dx, y + dy);
 						return -1;
 					}
-					mono_canvas[(size_t)(y + dy) * 1280u + x + dx] = (uint8_t)v;
+					mono_canvas[(size_t)(y + dy) * g_mw + x + dx] = (uint8_t)v;
 				}
 			client_take(c, n);
 		} else if (enc == RFB_ENCODING_RRE) {
@@ -4832,7 +4835,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 			client_take(c, 4 + c->n);
 			for (unsigned dy = 0; dy < h; ++dy)
 				for (unsigned dx = 0; dx < w; ++dx)
-					mono_canvas[(size_t)(y + dy) * 1280u + x + dx] = (uint8_t)background;
+					mono_canvas[(size_t)(y + dy) * g_mw + x + dx] = (uint8_t)background;
 			const size_t each = c->n + 8;
 			if (client_need(c, each * count) < 0)
 				return -1;
@@ -4847,7 +4850,7 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 				}
 				for (unsigned q = 0; q < sh; ++q)
 					for (unsigned p2 = 0; p2 < sw; ++p2)
-						mono_canvas[(size_t)(y + sy + q) * 1280u + x + sx + p2] =
+						mono_canvas[(size_t)(y + sy + q) * g_mw + x + sx + p2] =
 							(uint8_t)v;
 			}
 			client_take(c, each * count);
@@ -4863,15 +4866,20 @@ static int mono_update(struct client *c, unsigned *ry0, unsigned *rh0)
 static void mono_compare(const char *what)
 {
 	unsigned differ = 0;
-	for (unsigned i = 0; i < 1024u * 1280u; ++i)
+	for (unsigned i = 0; i < g_mh * g_mw; ++i)
 		if (mono_canvas[i] != mono_want[i]) {
 			if (differ < 3)
 				fail(__LINE__, "%s: pixel %u,%u is %u, wanting %u", what,
-				     i % 1280u, i / 1280u, mono_canvas[i], mono_want[i]);
+				     i % g_mw, i / g_mw, mono_canvas[i], mono_want[i]);
 			++differ;
 		}
-	CHECK(differ == 0, "%s: %u of 1,310,720 pixels differ", what, differ);
+	CHECK(differ == 0, "%s: %u of %u pixels differ", what, differ, g_mh * g_mw);
 }
+
+// The two sizes the boards build, as literals: 1280 by 1024 at 40 words a
+// line, 40,960 words; and the Kria KR260's 1920 by 1080 at 60, 64,800.
+static const struct cadr_video V1280 = { 1280u, 1024u, 40u, 40960u };
+static const struct cadr_video V1920 = { 1920u, 1080u, 60u, 64800u };
 
 static void check_quux_screen(void)
 {
@@ -4905,30 +4913,30 @@ static void check_quux_screen(void)
 	// 2.  **EACH MACHINE'S SCREEN**, as literals.  The CADR's is the
 	//     first board's and QUUX's is the video controller's, and the window mapped is
 	//     the board's 32,768 words or the video controller's 40,960.
-	screen_frame_init_for(&frame, SCREEN_MACHINE_CADR, 0);
+	screen_frame_init_for(&frame, SCREEN_MACHINE_CADR, 0, NULL);
 	CHECK(frame.width == 768 && frame.height == 963 && frame.words_per_line == 24
 	      && frame.visible_words == 23112 && frame.bpp == 1,
 	      "the CADR's screen is %ux%u, %u words a line, %u words, %u bpp; wanting "
 	      "768x963, 24, 23,112, 1", frame.width, frame.height, frame.words_per_line,
 	      frame.visible_words, frame.bpp);
-	screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 1);
+	screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 1, &V1280);
 	CHECK(frame.width == 1280 && frame.height == 1024 && frame.words_per_line == 40
 	      && frame.visible_words == 40960 && frame.bpp == 1 && frame.black_on_white == 1,
 	      "QUUX's screen is %ux%u, %u words a line, %u words, %u bpp, BOW %d; wanting "
 	      "1280x1024, 40, 40,960, 1, BOW as asked", frame.width, frame.height,
 	      frame.words_per_line, frame.visible_words, frame.bpp, frame.black_on_white);
-	screen_frame_init_mono(&frame, 0);
+	screen_frame_init_mono(&frame, 0, &V1280);
 	CHECK(frame.width == 1280 && frame.height == 1024 && frame.words_per_line == 40
 	      && frame.visible_words == 40960 && frame.black_on_white == 0,
 	      "the video controller's frame is %ux%u, %u words a line, %u words, BOW %d",
 	      frame.width, frame.height, frame.words_per_line, frame.visible_words,
 	      frame.black_on_white);
-	CHECK(screen_window_bytes(SCREEN_MACHINE_CADR) == 131072u,
+	CHECK(screen_window_bytes(SCREEN_MACHINE_CADR, NULL) == 131072u,
 	      "the CADR's window is %u bytes, wanting 131,072",
-	      screen_window_bytes(SCREEN_MACHINE_CADR));
-	CHECK(screen_window_bytes(SCREEN_MACHINE_QUUX) == 163840u,
+	      screen_window_bytes(SCREEN_MACHINE_CADR, NULL));
+	CHECK(screen_window_bytes(SCREEN_MACHINE_QUUX, &V1280) == 163840u,
 	      "QUUX's window is %u bytes, wanting 163,840",
-	      screen_window_bytes(SCREEN_MACHINE_QUUX));
+	      screen_window_bytes(SCREEN_MACHINE_QUUX, &V1280));
 	CHECK(screen_machine_has_color(SCREEN_MACHINE_CADR) == 1,
 	      "the CADR was said to have no color TV");
 	CHECK(screen_machine_has_color(SCREEN_MACHINE_QUUX) == 0,
@@ -4940,7 +4948,7 @@ static void check_quux_screen(void)
 	for (int bow = 0; bow <= 1; ++bow)
 		for (unsigned k = 0; k < sizeof MONO_ANCHORS / sizeof *MONO_ANCHORS; ++k) {
 			const struct mono_anchor *a = &MONO_ANCHORS[k];
-			screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, bow);
+			screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, bow, &V1280);
 			memset(frame.words, 0, sizeof frame.words);
 			frame.words[a->word] = 1u << a->bit;
 			const unsigned lit_shows = bow ? 0u : 1u;
@@ -4985,7 +4993,7 @@ static void check_quux_screen(void)
 							|| (x >= 1200u && y >= 1000u);
 					mono_want[(size_t)y * 1280u + x] = (uint8_t)(lit != bow);
 				}
-			screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, bow);
+			screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, bow, &V1280);
 			screen_frame_read(&frame, mono_window);
 			struct client c;
 			if (open_viewer(&c, "RFB 003.008\n", &rgb888, rre ? rre_list : NULL,
@@ -5015,7 +5023,7 @@ static void check_quux_screen(void)
 			for (unsigned x = 0; x < 1280u; ++x)
 				mono_want[(size_t)y * 1280u + x] =
 					(uint8_t)((x + 3u * y) % 29u < 5u || (x >= 1200u && y >= 1000u));
-		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0);
+		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0, &V1280);
 		screen_frame_read(&frame, mono_window);
 		struct client c;
 		if (open_viewer(&c, "RFB 003.008\n", &rgb888, NULL, 0) < 0) {
@@ -5050,7 +5058,7 @@ static void check_quux_screen(void)
 	{
 		memset(mono_window, 0, sizeof mono_window);
 		mono_window[40959] = 0x80000000u;
-		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0);
+		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0, &V1280);
 		screen_frame_read(&frame, mono_window);
 		CHECK(frame.words[40959] == 0x80000000u,
 		      "the video controller's last word was read as 0x%08x", frame.words[40959]);
@@ -5063,6 +5071,86 @@ static void check_quux_screen(void)
 		CHECK(screen_value(&frame, frame.width - 1u, frame.height - 1u) == 1,
 		      "the video controller's bottom-right pixel is not the last word's bit 31");
 	}
+
+	// 7.  **THE SIZE IS THE BITSTREAM'S** (contract HD): the console's word
+	//     39 says it, and the Kria KR260's is 1920 by 1080.  The word and
+	//     the machine are held first, then the screen at that size through
+	//     a viewer, pixel for pixel, and its last word.
+	{
+		struct cadr_video v;
+		int old = -1;
+		char why[200];
+		const uint32_t hd = (0x356u << 22) | (1920u << 11) | 1080u;
+		const uint32_t unmapped = 0xBCB0B1ACu;	/* ~"CONS", a word nothing answers */
+		CHECK(screen_video_for(SCREEN_MACHINE_QUUX, hd, &v, &old, why, sizeof why) == 0 &&
+		      v.width == 1920u && v.height == 1080u && v.words_per_line == 60u &&
+		      v.words == 64800u && old == 0,
+		      "QUUX with word 39 saying 1920x1080 took %ux%u, %u words a line, %u words, old %d",
+		      v.width, v.height, v.words_per_line, v.words, old);
+		CHECK(screen_video_for(SCREEN_MACHINE_QUUX, unmapped, &v, &old, why, sizeof why) == 0 &&
+		      v.width == 1280u && v.height == 1024u && v.words == 40960u && old == 1,
+		      "QUUX with no word 39 took %ux%u, %u words, old %d; wanting the old 1280x1024",
+		      v.width, v.height, v.words, old);
+		CHECK(screen_video_for(SCREEN_MACHINE_CADR, hd, &v, &old, why, sizeof why) != 0 &&
+		      strstr(why, "QUUX's") != NULL,
+		      "--machine cadr on a bitstream whose word 39 says a video controller was taken");
+		CHECK(screen_video_for(SCREEN_MACHINE_CADR, unmapped, &v, &old, why, sizeof why) == 0,
+		      "--machine cadr on the CADR's bitstream was refused: %s", why);
+		const uint32_t bad[] = { (0x356u << 22) | (1900u << 11) | 1080u,
+					 (0x356u << 22) | (1952u << 11) | 1080u,
+					 (0x356u << 22) | (1920u << 11) | 1081u,
+					 (0x356u << 22) | (1920u << 11) | 0u };
+		for (unsigned k = 0; k < sizeof bad / sizeof *bad; ++k)
+			CHECK(screen_video_for(SCREEN_MACHINE_QUUX, bad[k], &v, &old, why, sizeof why) != 0,
+			      "word 39 0x%08x, a size no QUUX has, was taken", bad[k]);
+		CHECK(screen_window_bytes(SCREEN_MACHINE_QUUX, &V1920) == 259200u,
+		      "QUUX's window at 1920x1080 is %u bytes, wanting 259,200",
+		      screen_window_bytes(SCREEN_MACHINE_QUUX, &V1920));
+	}
+	g_mw = 1920u;
+	g_mh = 1080u;
+	memset(mono_window, 0, sizeof mono_window);
+	for (unsigned y = 0; y < 1080u; ++y)
+		for (unsigned x = 0; x < 1920u; ++x)
+			if ((x + 3u * y) % 29u < 5u || (x >= 1800u && y >= 1050u))
+				mono_set_lit(mono_window, x, y);
+	for (int rre = 0; rre <= 1; ++rre) {
+		char what[96];
+		snprintf(what, sizeof what, "the video controller's whole screen at 1920x1080, %s",
+			 rre ? "RRE" : "Raw");
+		for (unsigned y = 0; y < 1080u; ++y)
+			for (unsigned x = 0; x < 1920u; ++x)
+				mono_want[(size_t)y * 1920u + x] =
+					(uint8_t)((x + 3u * y) % 29u < 5u || (x >= 1800u && y >= 1050u));
+		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0, &V1920);
+		screen_frame_read(&frame, mono_window);
+		struct client c;
+		if (open_viewer(&c, "RFB 003.008\n", &rgb888, rre ? rre_list : NULL, rre ? 2 : 0) < 0) {
+			fail(__LINE__, "%s: no viewer", what);
+			return;
+		}
+		CHECK(c.told_w == 1920 && c.told_h == 1080,
+		      "%s: a viewer was told %ux%u, wanting 1920x1080", what, c.told_w, c.told_h);
+		memset(mono_canvas, 0xFF, sizeof mono_canvas);
+		tick();
+		client_request(&c, 0, 0, 0, 1920, 1080);
+		if (mono_update(&c, NULL, NULL) < 0)
+			fail(__LINE__, "%s: no update", what);
+		else
+			mono_compare(what);
+		client_close(&c);
+		settle();
+	}
+	{
+		memset(mono_window, 0, sizeof mono_window);
+		mono_window[64799] = 0x80000000u;
+		screen_frame_init_for(&frame, SCREEN_MACHINE_QUUX, 0, &V1920);
+		screen_frame_read(&frame, mono_window);
+		CHECK(screen_frame_lit(&frame) == 1 && screen_value(&frame, 1919u, 1079u) == 1,
+		      "at 1920x1080 the last word's bit 31 is not the bottom-right pixel");
+	}
+	g_mw = 1280u;
+	g_mh = 1024u;
 	screen_frame_init(&frame, 0);
 }
 
@@ -5158,7 +5246,7 @@ int main(int argc, char **argv)
 	printf("--- the second screen, the color TV's: 576x454 at four bits a pixel\n");
 	check_color_screen();
 
-	printf("--- QUUX's screen, the video controller: 1280x1024 at one bit a pixel, 40 words a line\n");
+	printf("--- QUUX's screen, the video controller: 1280x1024 at one bit a pixel, 40 words a line, and 1920x1080 at 60\n");
 	check_quux_screen();
 
 	printf("--- the keyboard: muir's mapping onto MIT's own key table\n");

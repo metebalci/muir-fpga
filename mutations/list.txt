@@ -16956,6 +16956,8 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note followed back to the memory port's liveness.
 @old
   cadr_console #(
+      .VIDEO_WIDTH(MACHINE == "quux" ? VIDEO_W : 0),
+      .VIDEO_HEIGHT(MACHINE == "quux" ? VIDEO_H : 0),
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8),
       .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
   ) u_console (
@@ -16965,6 +16967,8 @@ puts "PROG: build $want, was $ubefore, now $uafter"
   always_ff @(posedge clk) con_rst <= h2f_rst || !port_live;
 
   cadr_console #(
+      .VIDEO_WIDTH(MACHINE == "quux" ? VIDEO_W : 0),
+      .VIDEO_HEIGHT(MACHINE == "quux" ? VIDEO_H : 0),
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8),
       .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
   ) u_console (
@@ -26930,18 +26934,18 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @mutation kr260-the-cadr-shows-quux-picture
 @check machine_param
 @file boards/kria-kr260/cadr_kr260.sv
-@note The CADR's first display read as QUUX's video controller, 1280 by 1024
-@note at 40 words a line.
+@note The CADR's first display read as QUUX's video controller, the board's
+@note 1920 by 1080 at 60 words a line.
 @old
-        .PIC_W         (MACHINE == "quux" ? 1280 : 768),
-        .PIC_H         (MACHINE == "quux" ? 1024 : 963),
-        .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 24)
+        .PIC_W         (MACHINE == "quux" ? VIDEO_W : 768),
+        .PIC_H         (MACHINE == "quux" ? VIDEO_H : 963),
+        .WORDS_PER_LINE(MACHINE == "quux" ? VIDEO_W / 32 : 24)
     ) u_display (
         .clk(clk), .rst(disp_rst), .fabric_rst(rst),
 @new
-        .PIC_W         (1280),
-        .PIC_H         (1024),
-        .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 40)
+        .PIC_W         (VIDEO_W),
+        .PIC_H         (VIDEO_H),
+        .WORDS_PER_LINE(MACHINE == "quux" ? VIDEO_W / 32 : VIDEO_W / 32)
     ) u_display (
         .clk(clk), .rst(disp_rst), .fabric_rst(rst),
 @end
@@ -27057,4 +27061,91 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
   localparam int unsigned ARMX0 = (SPREAD != 0 && PIC_H  <= H_ACTIVE) ? (H_ACTIVE - PIC_H)  / 2 : RMX0;
 @new
   localparam int unsigned ARMX0 = (SPREAD != 0 && PIC_H  <= H_ACTIVE) ? (H_ACTIVE - PIC_H + 1) / 2 : RMX0;
+@end
+
+@mutation quux-feature-page-the-board-name-not-given
+@check quux13_devices_hd_quux
+@file rtl/machine/quux_feature_page.sv
+@note Words 20-24 read 0 on revision 13 whatever the board's name is: the
+@note page's own width test made one no word has, which keeps the name
+@note named and so through lint.
+@old
+                 word = WORD_BITS > 32 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32] : 32'd0;
+@new
+                 word = WORD_BITS > 99 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32] : 32'd0;
+@end
+
+@mutation quux-feature-page-the-board-name-a-word-on
+@check quux13_devices_name_quux
+@file rtl/machine/quux_feature_page.sv
+@note Word 20 + k gives the name's word k + 1: the first four characters
+@note lost and the rest a word early.
+@old
+                 word = WORD_BITS > 32 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32] : 32'd0;
+@new
+                 word = WORD_BITS > 32 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o17) +: 32] : 32'd0;
+@end
+
+@mutation machine-the-board-name-backwards
+@check quux13_devices_name_quux
+@file rtl/machine/cadr_machine.sv
+@note The literal's bytes taken from bit 0 up: the name's last character
+@note first.
+@old
+      if (k < n) w[8*k +: 8] = s[8*(n - 1 - k) +: 8];
+@new
+      if (k < n) w[8*k +: 8] = s[8*k +: 8];
+@end
+
+@mutation machine-the-board-name-one-character-short
+@check quux13_devices_hd_quux
+@file rtl/machine/cadr_machine.sv
+@note A 20-character name with its last character dropped: the bound one
+@note short, which a 9-character name does not reach.
+@old
+    for (int unsigned k = 0; k < 20; k++)
+@new
+    for (int unsigned k = 0; k < 19; k++)
+@end
+
+@mutation machine-the-feature-page-at-the-old-width
+@check quux13_devices_hd_quux
+@file rtl/machine/cadr_machine.sv
+@note Feature words 11 and 12 say 1280 wide whatever the board builds.
+@old
+        .SCREEN_WIDTH (VIDEO_WIDTH),
+@new
+        .SCREEN_WIDTH (1280),
+@end
+
+@mutation machine-the-video-buffer-at-the-old-size
+@check quux13_space_hd_quux
+@file rtl/machine/cadr_machine.sv
+@note The video controller's buffer decoded at 40,960 words whatever the
+@note board builds: the window's last word at 1920 by 1080 is nothing.
+@old
+      .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
+@new
+      .VIDEO_WORDS(40960),
+@end
+
+@mutation console-the-video-size-width-and-height-crossed
+@check console13
+@file rtl/plumbing/cadr_console.sv
+@note Word 39 gives the height where the width goes.
+@old
+                                 ? {VIDEO_MARK, 11'(VIDEO_WIDTH), 11'(VIDEO_HEIGHT)}
+@new
+                                 ? {VIDEO_MARK, 11'(VIDEO_HEIGHT), 11'(VIDEO_WIDTH)}
+@end
+
+@mutation console-a-video-controller-on-the-cadr
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Word 39 carries the marker over a size of 0 by 0 where there is no
+@note video controller, in place of UNMAPPED.
+@old
+                             : (r_hi_q && r_idx_q == 5'd7 && VIDEO_WIDTH != 0)
+@new
+                             : (r_hi_q && r_idx_q == 5'd7)
 @end

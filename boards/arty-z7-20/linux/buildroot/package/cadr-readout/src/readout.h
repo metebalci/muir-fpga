@@ -23,6 +23,7 @@
 #include <stdint.h>
 
 #include <cadr/cadr_board.h>
+#include <cadr/cadr_video.h>
 
 #include "cadr_image.h"
 
@@ -83,6 +84,10 @@ enum ro_p0 { RO_IDENT = 0, RO_STAT = 1, RO_CYCLES = 2, RO_CYCLESH = 3,
 // said to a person about it is in megawords (`ro_main_amount`).  A fabric
 // older than the word reads `RO_UNMAPPED` there, and its machine has 32
 // units fixed, the CADR's 32 boards and QUUX's 2MW.
+// **QUUX'S VIDEO CONTROLLER, page 2's word 39** (`cadr/cadr_video.h`): its
+// size, which each board's bitstream gives; the CADR, and QUUX older than the
+// word, carry no marker there.
+#define RO_VIDEO        CADR_VIDEO_WORD
 #define RO_BOARDS       37u
 #define RO_BOARDS_MARK  0x4244u	/* "BD" */
 #define RO_BOARDS_MAX   1024u
@@ -190,6 +195,14 @@ int ro_quux_revision(struct readout *r);
 // A checkpoint of a machine is of ALL its memory, so this is what one is
 // sized by, and a caller does not guess it.
 unsigned ro_main_boards(struct readout *r);
+
+// **QUUX'S VIDEO CONTROLLER'S SIZE**, out of `RO_VIDEO`: 1 and the size; 0
+// when the word carries no marker, a CADR's or a QUUX older than the word,
+// whose video controller is 1280 by 1024 (`cadr_video_old`); -1 when it
+// carries the marker over a size no QUUX has.  A checkpoint and an RFB
+// server are of the screen the bitstream has, so this is what they are
+// sized by.
+int ro_video(struct readout *r, struct cadr_video *v);
 
 // **QUUX's MAIN MEMORY AS A PERSON READS IT**, `units` of 64K words written
 // as an amount into `out`: whole megawords with the unit, `32MW`, or

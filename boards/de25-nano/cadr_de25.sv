@@ -556,7 +556,18 @@ module cadr_de25 #(
   logic [2:0]  dbg_wire_state;
   logic [23:0] dbg_frames;
 
+  // **QUUX'S VIDEO CONTROLLER AND THE BOARD NAME** (contract HD): the size
+  // this board's QUUX gives its band in feature words 11 and 12, which its
+  // display output shows and its console's word 39 says to the programs on
+  // the processing system, and the name revision 13's feature words 20-24
+  // give.  One place each, so the four cannot disagree by an edit to one;
+  // `build/machine_param.pass` holds them equal.
+  localparam int unsigned VIDEO_W = 1280;
+  localparam int unsigned VIDEO_H = 1024;
+  localparam logic [8*64-1:0] BOARD = "DE25-Nano";
+
   cadr_machine #(
+      .VIDEO_WIDTH(VIDEO_W), .VIDEO_HEIGHT(VIDEO_H), .BOARD_NAME(BOARD),
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),
@@ -1676,6 +1687,8 @@ module cadr_de25 #(
   logic [14:0] con_hdmi_sleep_secs;
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
   cadr_console #(
+      .VIDEO_WIDTH(MACHINE == "quux" ? VIDEO_W : 0),
+      .VIDEO_HEIGHT(MACHINE == "quux" ? VIDEO_H : 0),
       .REG_BASE(32'h0000_0000), .ID_W(4), .LEN_W(8),
       .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
   ) u_console (
@@ -1933,9 +1946,9 @@ module cadr_de25 #(
       .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
       // QUUX shows the video controller, 1280 by 1024 at 40 words a line, filling the
       // raster; the CADR its first board's 768 by 963 at 24.
-      .PIC_W         (MACHINE == "quux" ? 1280 : 768),
-      .PIC_H         (MACHINE == "quux" ? 1024 : 963),
-      .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 24)
+      .PIC_W         (MACHINE == "quux" ? VIDEO_W : 768),
+      .PIC_H         (MACHINE == "quux" ? VIDEO_H : 963),
+      .WORDS_PER_LINE(MACHINE == "quux" ? VIDEO_W / 32 : 24)
   ) u_display (
       .clk(clk), .rst(disp_rst), .fabric_rst(1'b0),
       .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),

@@ -230,7 +230,17 @@ QUUX_L1_PROGRAMS := divmd divmdsync tickwin clockwait
 # the memory port and the cache, the testbench the pack side.  The machine is built with revision 13's main memory at
 # `QUUX13_TB_BASE`, a base no board uses, which the testbench lays packed
 # storage out from.
-QUUX13_PROGRAMS := alu byte dispatch map space space512 lines fused devices disk
+# **AND THE BOARD'S OWN WORDS** (contract HD): `devices_hd` and `space_hd`,
+# the feature page and the window with the video controller at 1920 by 1080
+# and a 20-character board name; `devices_name` a 9-character name at 1280 by
+# 1024.  `golden/src/quux13.rs`'s `variant` sets muir's machine to the same
+# board, and `QUUX13_G_<program>` gives the machine under test its
+# parameters.
+QUUX13_PROGRAMS := alu byte dispatch map space space512 lines fused devices disk devices_hd devices_name space_hd
+QUUX13_G_devices_hd   := -GVIDEO_WIDTH=1920 -GVIDEO_HEIGHT=1080 -GBOARD_NAME='"Full HD test, 20 ch."' \
+                         -CFLAGS -DCADR_TB_VIDEO_WORDS=64800u
+QUUX13_G_space_hd     := $(QUUX13_G_devices_hd)
+QUUX13_G_devices_name := -GBOARD_NAME='"DE25-Nano"'
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
@@ -255,7 +265,7 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass \
        $(BUILD)/checkpoint.quux.pass \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
-       $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
+       $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
 check: $(filter-out $(QUUX_PENDING),$(CHECK_QUUX)) quux-pending
@@ -1425,7 +1435,7 @@ $$(BUILD)/quux13_%.quux.$(1).golden: $$(QUUX13_GOLDEN) | $$(BUILD)
 
 $$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
 	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_quux13_$$*_quux_$(1) \
-	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) $$(QUUX13_G_$$*) \
 	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
 	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux13_$$*_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
@@ -2781,6 +2791,13 @@ MACHINE_PARAM_SRC := $(wildcard rtl/*/*.sv rtl/*/*/*.sv boards/*/*.sv) \
                      boards/de25-nano/quartus/build.sh \
                      boards/de25-nano/quartus/program.sh
 
+# **THE MACHINE'S GUARDS ON THE BOARD'S VIDEO SIZE AND NAME** (contract HD),
+# each with its negative control: a value just inside the rule elaborates and
+# one just outside stops with the guard's own words.
+$(BUILD)/machine_guard.pass: tools/machine_guard_check.py $(MACHINE_SRC) | $(BUILD)
+	VERILATOR=$(VERILATOR) python3 tools/machine_guard_check.py $(MACHINE_SRC)
+	@touch $@
+
 $(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) Makefile \
                            boards/kria-kr260/display_raster.mk | $(BUILD)
 	VERILATOR=$(VERILATOR) TCLSH=$(TCLSH) python3 tools/machine_param_check.py .
@@ -3671,7 +3688,7 @@ $(BUILD)/obj_display_out_kr260_quux/Vcadr_display_out: rtl/plumbing/cadr_display
                                                        boards/kria-kr260/display_raster.mk | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS '-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX' \
 	    -Mdir $(BUILD)/obj_display_out_kr260_quux \
-	    $(DISPLAY_KR260_G) -GPIC_W=1280 -GPIC_H=1024 -GWORDS_PER_LINE=40 -GCOLOR_BASE=470024192 \
+	    $(DISPLAY_KR260_G) -GPIC_W=1920 -GPIC_H=1080 -GWORDS_PER_LINE=60 -GCOLOR_BASE=470024192 \
 	    --top-module cadr_display_out \
 	    rtl/plumbing/cadr_display_out.sv $(abspath tb/cadr_display_out_tb.cpp)
 
@@ -3976,11 +3993,14 @@ $(BUILD)/console.pass: $(BUILD)/obj_console/Vcadr_console_harness \
 # **AND THE SAME CONSOLE AT REVISION 13'S MEMORY BOARDS**: word 37 coming up
 # with 512 boards and taking 1 to 1,024, the DE25-Nano's most (its
 # reservation holds 64M words; the Arty Z7-20's and the Kria KR260's 32M, 512
-# boards), and word 38 saying so.  The whole check again, since the count is
+# boards), and word 38 saying so; and word 39 saying a video controller of
+# 1920 by 1080, where `console.pass` holds it `UNMAPPED`.  The whole check again, since the count is
 # one register among the face's; `machine_param.pass` holds that each board's
 # top hands its console these numbers.
 CONSOLE13_BOARDS := -GMEM_BOARDS_DEFAULT=512 -GMEM_BOARDS_MAX=1024 \
-                    -CFLAGS -DCONSOLE_BOARDS_DEFAULT=512u -CFLAGS -DCONSOLE_BOARDS_MAX=1024u
+                    -CFLAGS -DCONSOLE_BOARDS_DEFAULT=512u -CFLAGS -DCONSOLE_BOARDS_MAX=1024u \
+                    -GVIDEO_WIDTH=1920 -GVIDEO_HEIGHT=1080 \
+                    -CFLAGS -DCONSOLE_VIDEO_WIDTH=1920u -CFLAGS -DCONSOLE_VIDEO_HEIGHT=1080u
 $(BUILD)/obj_console13/Vcadr_console_harness: $(CONSOLE_SRC) \
                                               tb/cadr_console_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_console13 \
@@ -4459,7 +4479,8 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(DISK_PACKS_SRC)/q8_disks.sha256 \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
 	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk \
-	    QCHK=$(CHECKPOINT_WORK)/quux.chk Q13CHK=$(CHECKPOINT_WORK)/quux13.chk Q8_DISKS=$(Q8_DISKS)
+	    QCHK=$(CHECKPOINT_WORK)/quux.chk Q13CHK=$(CHECKPOINT_WORK)/quux13.chk \
+	    Q13HDCHK=$(CHECKPOINT_WORK)/quux13hd.chk Q8_DISKS=$(Q8_DISKS)
 	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
@@ -4544,7 +4565,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # and each is caught when muir refuses the file, saves other bytes, or the
 # file is not muir's own.  It rides on `build/checkpoint.pass`, which builds
 # the program, the test's binaries in the one work directory and muir.
-CHECKPOINT_QUUX_RESUMED := at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
+CHECKPOINT_QUUX_RESUMED := at 78187493520 microcycles, 6548202583200 ns, 0.0625MW of main memory
 #
 # **AND REVISION 13's, VERSION 50** (contract G2 appendix A1.13): the same
 # machine at revision 13's widths and sizes, `quux_checkpoint --revision 13`,
@@ -4556,6 +4577,13 @@ CHECKPOINT_QUUX_RESUMED := at 78187493520 microcycles, 6548202583200 ns, 1 memor
 CHECKPOINT_QUUX13_RESUMED := resumed: version 50 at 78187493520 microcycles, 6548202583200 ns, 1 memory boards
 CHECKPOINT_QUUX13_MUTANTS := 22 23 24 25 26 27 28 29 30 31
 QUUX_CHECKPOINT_BIN := golden/target/release/quux_checkpoint
+# **AND AT THE KRIA KR260'S 1920 BY 1080** (contract HD): revision 13's
+# machine with the video controller at that size, held to muir's own file
+# for the same machine, loaded and saved back by muir; mutants 38 and 39,
+# the size and the buffer at 1280 by 1024 whatever the bitstream says, are
+# caught there, and mutant 40, the resume line without the size, by the
+# package's own check of the line.
+CHECKPOINT_QUUX13HD_MUTANTS := 38 39
 
 $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoint.rs $(GOLDEN_AXIS) golden/src/trace.rs \
                                golden/Cargo.toml | $(BUILD)
@@ -4624,6 +4652,43 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	     echo "checkpoint.quux: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
 	   fi; \
 	 done
+	$(GOLDEN) --release --bin quux_checkpoint -- $(CHECKPOINT_WORK)/quux13hd-muir.chk \
+	    --machine quux --sync-cycle-ticks 4 --sync-ilong-ticks 0 --revision 13 --video-size 1920x1080
+	@set -e; W=$(CHECKPOINT_WORK); G=$(QUUX_CHECKPOINT_BIN); \
+	 T="--revision 13 --machine quux --sync-cycle-ticks 4 --sync-ilong-ticks 0"; \
+	 cmp $$W/quux13hd.chk $$W/quux13hd-muir.chk \
+	   || { echo "checkpoint.quux: revision 13's file at 1920x1080 is not muir's own for the same machine"; exit 1; }; \
+	 $$G --resume-and-save $$W/quux13hd.chk $$W/quux13hd-back.chk $$T > $$W/quux13hd-muir.log 2>&1 \
+	   || { echo "checkpoint.quux: muir REFUSED revision 13's file at 1920x1080"; sed -n '$$p' $$W/quux13hd-muir.log; exit 1; }; \
+	 cmp $$W/quux13hd.chk $$W/quux13hd-back.chk \
+	   || { echo "checkpoint.quux: muir loaded the 1920x1080 file and saved DIFFERENT bytes"; exit 1; }; \
+	 grep -q "a video controller of 1920x1080" $$W/quux13hd-muir.log \
+	   || { echo "checkpoint.quux: muir did not resume a 1920x1080 video controller:"; cat $$W/quux13hd-muir.log; exit 1; }; \
+	 echo "checkpoint.quux: revision 13 at 1920x1080, $$(stat -c%s $$W/quux13hd.chk) bytes, muir's own for the same machine,"; \
+	 echo "checkpoint.quux: loaded and saved back identically, $$(sed 's/^resumed: //' $$W/quux13hd-muir.log)"; \
+	 for m in $(CHECKPOINT_QUUX13HD_MUTANTS); do \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/hdmut-$$m-cadr.chk $$W/hdmut-$$m-q12.chk \
+	       $$W/hdmut-$$m-q13.chk $$W/hdmut-$$m.chk > $$W/hdmut-$$m.out 2>&1 \
+	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
+	          cat $$W/hdmut-$$m.out; exit 1; }; \
+	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/hdmut-$$m.out); \
+	   if ! $$G --resume-and-save $$W/hdmut-$$m.chk $$W/hdmut-$$m-back.chk $$T \
+	            > $$W/hdmut-$$m.log 2>&1; then \
+	     echo "checkpoint.quux: mutant $$m caught at 1920x1080, muir refused it --- $$what"; \
+	   elif ! cmp -s $$W/hdmut-$$m.chk $$W/hdmut-$$m-back.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught at 1920x1080, muir saved other bytes --- $$what"; \
+	   elif ! cmp -s $$W/hdmut-$$m.chk $$W/quux13hd-muir.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught at 1920x1080, not muir's own file --- $$what"; \
+	   else \
+	     echo "checkpoint.quux: mutant $$m SURVIVED all three legs at 1920x1080 --- $$what"; exit 1; \
+	   fi; \
+	 done; \
+	 if $$W/checkpoint_test-40 $$W $(Q8_DISKS) > $$W/mut-40.out 2>&1; then \
+	   echo "checkpoint.quux: mutant 40 SURVIVED the resume line's check"; exit 1; \
+	 fi; \
+	 grep -q "resume line is 0x1, the reference says 0x0" $$W/mut-40.out \
+	   || { echo "checkpoint.quux: mutant 40 failed, and not on the resume line: BROKEN"; cat $$W/mut-40.out; exit 1; }; \
+	 echo "checkpoint.quux: mutant 40 caught by the resume line's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-40.out)"
 	@touch $@
 
 # ------------------------------------ the I/O board's two Linux programs

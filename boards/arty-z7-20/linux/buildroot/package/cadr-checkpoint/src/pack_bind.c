@@ -247,6 +247,15 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 		if (b->sync_k)
 			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 					       " --sync-cycle-ticks %u", b->sync_k);
+		// **AND THE VIDEO CONTROLLER'S SIZE**, which muir takes as
+		// `--video-size` and refuses a checkpoint of another size at:
+		// 1280x1024 is its default, and the Kria KR260's is not.
+#if CHK_MUTATE != 40
+		if (b->video_width)
+			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+					       " --video-size %ux%u", b->video_width,
+					       b->video_height);
+#endif
 	} else {
 		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 				       "cadr --rtl --timing-model fpga");
@@ -350,6 +359,8 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 	if (b->quux) {
 		fprintf(f, "revision: %u\n", b->revision);
 		fprintf(f, "sync-cycle-ticks: %u\n", b->sync_k);
+		if (b->video_width)
+			fprintf(f, "video-size: %ux%u\n", b->video_width, b->video_height);
 	}
 	fprintf(f, "running: %s\n", b->running > 0 ? "yes" : "no");
 	fprintf(f, "machine-halted-first: %s\n", b->machine_halted_first ? "yes" : "no");
@@ -570,6 +581,15 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 			b->revision = (unsigned)strtoul(v, NULL, 10);
 		} else if ((v = field(line, "sync-cycle-ticks")) != NULL) {
 			b->sync_k = (unsigned)strtoul(v, NULL, 10);
+		} else if ((v = field(line, "video-size")) != NULL) {
+			unsigned w = 0, h = 0;
+			if (sscanf(v, "%ux%u", &w, &h) != 2 || w == 0 || h == 0) {
+				note(err, errlen, "%s: video-size \"%s\", which is not WxH", path, v);
+				fclose(f);
+				return -1;
+			}
+			b->video_width = w;
+			b->video_height = h;
 		} else if ((v = field(line, "running")) != NULL) {
 			b->running = strcmp(v, "yes") == 0;
 		} else if ((v = field(line, "pack")) != NULL) {

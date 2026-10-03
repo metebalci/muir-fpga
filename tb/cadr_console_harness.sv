@@ -61,7 +61,11 @@ module cadr_console_harness #(
     // The console's memory boards: the CADR's 32 from 1 to 60 unless a build
     // says otherwise, as `console13.pass` does at revision 13's.
     parameter int unsigned MEM_BOARDS_DEFAULT = 32,
-    parameter int unsigned MEM_BOARDS_MAX     = 60
+    parameter int unsigned MEM_BOARDS_MAX     = 60,
+    // The video controller's size for word 39: none unless a build gives one,
+    // as `console13.pass` gives the Kria KR260's QUUX.
+    parameter int unsigned VIDEO_WIDTH  = 0,
+    parameter int unsigned VIDEO_HEIGHT = 0
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -388,7 +392,8 @@ module cadr_console_harness #(
   logic [3:0] tv_map_a;
 
   cadr_console #(
-      .MEM_BOARDS_DEFAULT(MEM_BOARDS_DEFAULT), .MEM_BOARDS_MAX(MEM_BOARDS_MAX)
+      .MEM_BOARDS_DEFAULT(MEM_BOARDS_DEFAULT), .MEM_BOARDS_MAX(MEM_BOARDS_MAX),
+      .VIDEO_WIDTH(VIDEO_WIDTH), .VIDEO_HEIGHT(VIDEO_HEIGHT)
   ) console (
       .clk        (clk),
       .rst        (rst),

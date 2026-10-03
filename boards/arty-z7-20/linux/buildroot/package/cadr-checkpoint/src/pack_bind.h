@@ -116,6 +116,11 @@ struct binding {
 	// before the lines were, whose resume then names neither.
 	unsigned revision;
 	unsigned sync_k;
+	// **AND QUUX's VIDEO CONTROLLER'S SIZE**, the bitstream's (console word
+	// 39), which muir's `--video-size` gives and muir refuses a checkpoint
+	// of another size at.  0 on the CADR and in a sidecar written before
+	// the size was named.
+	unsigned video_width, video_height;
 	// The run state the file records: 1 when the machine was running and
 	// this program halted it for the read, so that the file carries RUN and
 	// SRUN set and muir resumes it running; 0 when it was found halted and
@@ -202,7 +207,8 @@ int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,
 // checkpoint last, which is the order muir's own usage puts them in.  It
 // names everything muir needs to take the file as the board ran it: on the
 // CADR the timing model and the boards; on QUUX the revision, as the
-// environment's `MUIR_QUUX_REVISION=` before the command, and K.
+// environment's `MUIR_QUUX_REVISION=` before the command, K and the video
+// controller's size.
 void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n);
 
 #endif

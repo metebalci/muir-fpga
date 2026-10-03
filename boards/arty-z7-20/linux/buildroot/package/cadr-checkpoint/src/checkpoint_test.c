@@ -772,6 +772,7 @@ int main(int argc, char **argv)
 	const char *out = argc > 3 ? argv[3] : NULL;
 	const char *quux_out = argc > 4 ? argv[4] : NULL;
 	const char *quux13_out = argc > 5 ? argv[5] : NULL;
+	const char *quux13hd_out = argc > 6 ? argv[6] : NULL;
 
 	if (chk_rtl_mutation())
 		printf("checkpoint: THIS IS A MUTANT --- %s\n", chk_rtl_mutation());
@@ -954,6 +955,8 @@ int main(int argc, char **argv)
 		qb.boards = 512;
 		qb.revision = 13;
 		qb.sync_k = 5;
+		qb.video_width = 1920;
+		qb.video_height = 1080;
 		qb.running = 1;
 		qb.u[0].present = 1;
 		snprintf(qb.u[0].path, sizeof qb.u[0].path, "/mnt/card/packs/disk-pack-0.img");
@@ -962,7 +965,7 @@ int main(int argc, char **argv)
 		snprintf(qb.checkpoint, sizeof qb.checkpoint, "%s", stand);
 		char cmd[4096];
 		static const char want13[] = "MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 "
-			"--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk";
+			"--video-size 1920x1080 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk";
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
 		if (strcmp(cmd, want13) != 0) {
 			fprintf(stderr, "QUUX revision 13's resume line is [%s], wanting [%s]\n", cmd, want13);
@@ -971,6 +974,9 @@ int main(int argc, char **argv)
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || !rd.quux)
 			fail("the sidecar lost the machine", 0, 1);
+		else if (rd.video_width != 1920 || rd.video_height != 1080)
+			fail("the sidecar lost the video controller's size",
+			     ((uint64_t)rd.video_width << 16) | rd.video_height, (1920u << 16) | 1080u);
 		else if (rd.revision != 13 || rd.sync_k != 5 || rd.running != 1)
 			fail("the sidecar lost the revision, K or the run state",
 			     ((uint64_t)rd.revision << 16) | (rd.sync_k << 8) | (unsigned)rd.running,
@@ -985,27 +991,31 @@ int main(int argc, char **argv)
 		{
 			FILE *sf = fopen(side, "r");
 			char line[8192];
-			int saw_rev = 0, saw_k = 0, saw_run = 0, saw_resume = 0;
+			int saw_rev = 0, saw_k = 0, saw_run = 0, saw_resume = 0, saw_video = 0;
 			while (sf && fgets(line, sizeof line, sf)) {
 				line[strcspn(line, "\n")] = '\0';
 				saw_rev += strcmp(line, "revision: 13") == 0;
 				saw_k += strcmp(line, "sync-cycle-ticks: 5") == 0;
+				saw_video += strcmp(line, "video-size: 1920x1080") == 0;
 				saw_run += strcmp(line, "running: yes") == 0;
 				saw_resume += strncmp(line, "resume: ", 8) == 0 &&
 					      strstr(line, "MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 ");
 			}
 			if (sf)
 				fclose(sf);
-			if (saw_rev != 1 || saw_k != 1 || saw_run != 1 || saw_resume != 1)
-				fail("the sidecar's revision, K, running and resume lines",
-				     (uint64_t)saw_rev * 1000 + saw_k * 100 + saw_run * 10 + saw_resume, 1111);
+			if (saw_rev != 1 || saw_k != 1 || saw_run != 1 || saw_resume != 1 || saw_video != 1)
+				fail("the sidecar's revision, K, running, resume and video size lines",
+				     (uint64_t)saw_video * 10000 + saw_rev * 1000 + saw_k * 100 + saw_run * 10 +
+				     saw_resume, 11111);
 		}
 		// Revision 12 at K = 4 names its own revision and K.
 		qb.revision = 12;
 		qb.sync_k = 4;
+		qb.video_width = 1280;
+		qb.video_height = 1024;
 		qb.running = 0;
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
-		if (strcmp(cmd, "MUIR_QUUX_REVISION=12 quux --rtl --sync-cycle-ticks 4 "
+		if (strcmp(cmd, "MUIR_QUUX_REVISION=12 quux --rtl --sync-cycle-ticks 4 --video-size 1280x1024 "
 			   "--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk") != 0)
 			fail("QUUX revision 12's resume line", 1, 0);
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
@@ -1020,7 +1030,7 @@ int main(int argc, char **argv)
 				fclose(sf);
 			}
 			if (bind_read(&rd, side, err, sizeof err) != 0 || rd.running != -1 ||
-			    rd.revision != 0 || rd.sync_k != 0)
+			    rd.revision != 0 || rd.sync_k != 0 || rd.video_width != 0)
 				fail("an old sidecar's run state, revision or K", (unsigned)rd.running, 0);
 			bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
 			if (strcmp(cmd, "quux --rtl --resume q.chk") != 0)
@@ -1777,6 +1787,52 @@ int main(int argc, char **argv)
 		       "where it stands, %lu reads over a modeled window%s%s\n", qb13.len,
 		       qb13.hole_len, qr.reads, quux13_out ? ", wrote " : "",
 		       quux13_out ? quux13_out : "");
+		// **AND THE SAME MACHINE WITH THE KRIA KR260'S VIDEO CONTROLLER**,
+		// 1920 by 1080 (contract HD): the image sized by the bitstream's
+		// word 39, its 64,800 words carried and its size written where
+		// muir's `Tv::save` writes it, so that muir resumes the file under
+		// `--video-size 1920x1080` and refuses it under another.  The file
+		// goes where the sixth argument says and `build/checkpoint.quux.pass`
+		// holds it to muir's own for the same machine at that size.
+		{
+			struct cadr_image hd;
+			if (img_alloc_video(&hd, 1, 1, 13, 1920u, 1080u) != 0) {
+				fprintf(stderr, "out of memory\n");
+				return 1;
+			}
+			if (ro_read_machine(&qr, &hd) != 0) {
+				fail("the window would not give revision 13 up at 1920 by 1080", qr.stale, 0);
+				return 1;
+			}
+			if (!chk_rtl_mutation() &&
+			    (hd.tv_words != 64800u || hd.video_width != 1920u || hd.video_height != 1080u))
+				fail("the image's video controller at 1920 by 1080, in words", hd.tv_words, 64800);
+			hd.main13 = packed;
+			for (size_t i = 0; i < hd.tv_words; ++i)
+				hd.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
+			struct chk hb;
+			chk_init(&hb);
+			chk_rtl_body(&hb, &hd, &q13decl);
+			// Revision 13's body and the 23,840 further words of the
+			// buffer, four bytes each.
+			if (!chk_rtl_mutation() && hb.len + hb.hole_len != quux13_len + (64800u - 40960u) * 4u)
+				fail("the body's length at 1920 by 1080", hb.len + hb.hole_len,
+				     quux13_len + (64800u - 40960u) * 4u);
+			if (quux13hd_out && chk_write_file(quux13hd_out, "rtl", 1, &hb) != 0) {
+				perror(quux13hd_out);
+				return 1;
+			}
+			// And a size no QUUX has is refused.
+			struct cadr_image no;
+			if (img_alloc_video(&no, 1, 1, 13, 1900u, 1080u) == 0) {
+				fail("a video controller 1900 wide, taken", 1900, 0);
+				img_free(&no);
+			}
+			printf("checkpoint: and at 1920 by 1080, %zu bytes of body%s%s\n", hb.len,
+			       quux13hd_out ? ", wrote " : "", quux13hd_out ? quux13hd_out : "");
+			chk_free(&hb);
+			img_free(&hd);
+		}
 		free(packed);
 		chk_free(&qb13);
 		img_free(&q13);

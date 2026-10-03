@@ -49,16 +49,17 @@ use muir::quux_input::{KeyboardMouse, QuuxInput};
 use muir::tv::Board;
 
 /// `main.rs`'s `machine` for `--machine quux`: block-disk and the video
-/// controller at the bitstreams' 1280 by 1024, one memory board, and a disk
-/// of `DISK_BLOCKS` blocks with none written (contract Q8a, format 41); of
+/// controller at `video`, muir's default 1280 by 1024 unless `--video-size`
+/// gives the Kria KR260's 1920 by 1080, one memory board, and a disk of
+/// `DISK_BLOCKS` blocks with none written (contract Q8a, format 41); of
 /// revision 13 when `rev13` says so.
-fn machine(rev13: bool) -> Machine {
+fn machine(rev13: bool, video: (usize, usize)) -> Machine {
     let mut m = Machine::with_memory_boards(1);
     m.geometry = if rev13 { Geometry::QUUX_13 } else { Geometry::QUUX };
     let mut bd = BlockDisk::new(block_disk::BLOCK_NS);
     bd.attach(Disk::blank(DISK_BLOCKS));
     m.block_disk = Some(bd);
-    m.tv.set_video_size(1280, 1024);
+    m.tv.set_video_size(video.0, video.1);
     m.tv.set_board(Board::Video);
     m.plug_chaos(0);
     m
@@ -130,6 +131,17 @@ fn main() {
         assert!(rev13, "--revision takes 13");
         args.drain(i..i + 2);
     }
+    // The video controller's size, muir's `--video-size WxH`, as the
+    // bitstream says it (contract HD).
+    let mut video = (1280, 1024);
+    if let Some(i) = args.iter().position(|a| a == "--video-size") {
+        let size = args.get(i + 1).and_then(|v| v.split_once('x'))
+            .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+            .expect("--video-size takes WxH");
+        muir::tv::check_video_size(size.0, size.1, false).expect("a video controller muir takes");
+        video = size;
+        args.drain(i..i + 2);
+    }
     let resume = args.first().map(String::as_str) == Some("--resume-and-save");
     if which != machine_axis::Which::Quux
         || args.len() != if resume { 3 } else { 1 }
@@ -137,7 +149,7 @@ fn main() {
     {
         eprintln!(
             "usage: quux_checkpoint FILE --machine quux --sync-cycle-ticks K [--sync-ilong-ticks L] \
-             [--revision 13]\n       quux_checkpoint --resume-and-save IN OUT --revision 13 ..."
+             [--revision 13] [--video-size WxH]\n       quux_checkpoint --resume-and-save IN OUT --revision 13 ..."
         );
         std::process::exit(2);
     }
@@ -145,7 +157,7 @@ fn main() {
         // muir's own round trip, as `resume_engine` does it: the engine of
         // the machine the checkpoint is of, loaded, and saved again.
         let c = muir::checkpoint::read(std::path::Path::new(&args[1])).expect("the checkpoint");
-        let mut e = trace::engine_on(machine(true), timing);
+        let mut e = trace::engine_on(machine(true, video), timing);
         e.load(&mut c.reader()).expect("muir took the checkpoint");
         let mut w = muir::checkpoint::Writer::new();
         e.save(&mut w);
@@ -153,16 +165,18 @@ fn main() {
         muir::checkpoint::write(std::path::Path::new(&args[2]), &c.engine, c.memory_boards, bits, &w.finish())
             .expect("the checkpoint saved again");
         println!(
-            "resumed: version {} at {} microcycles, {} ns, {} memory boards",
+            "resumed: version {} at {} microcycles, {} ns, {} memory boards, a video controller of {}x{}",
             c.version,
             e.m.cycles,
             e.m.ns,
-            c.memory_boards
+            c.memory_boards,
+            e.m.tv.screen().0,
+            e.m.tv.screen().1
         );
         return;
     }
     let path = args[0].clone();
-    let mut m = machine(rev13);
+    let mut m = machine(rev13, video);
     let wide = m.geometry.wide();
     // A word's bits, and a word poisoned at them: 32, or on revision 13 40
     // with its tag.

@@ -98,6 +98,30 @@ module cadr_machine #(
     // Unread below revision 13.
     parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,
 
+    // **THE VIDEO CONTROLLER'S SIZE**, muir's `--video-size` and
+    // `Tv::set_video_size`: 1280 by 1024, muir's default and the size the
+    // Arty Z7-20's and the DE25-Nano's QUUX build, unless the board says
+    // otherwise; the Kria KR260 builds 1920 by 1080, its display's raster.
+    // muir's `check_video_size` is the rule, held below: a line a whole
+    // number of words, at most 1920 by 1080, so the buffer is at most 64,800
+    // words, inside `cadr_ddr_map::VIDEO_WORDS_MAX`.  The feature page's
+    // words 11 and 12 say it to the band.  Unread on the CADR.
+    parameter int unsigned VIDEO_WIDTH  = 1280,
+    parameter int unsigned VIDEO_HEIGHT = 1024,
+
+    // **THE BOARD NAME** (contract HD §6): what runs the machine, which
+    // revision 13's feature words 20-24 give to the band to print and never
+    // to branch on.  A string, given by each board's top level as a string
+    // literal, which SystemVerilog stores right-justified in these 64 bytes;
+    // `BOARD_NAME_WORDS` below lays it out as the page has it, at most 20
+    // printable ASCII characters (`040`-`176`), 4 to a word in `<31:0>`, the
+    // first in `<7:0>`, zero bytes after the last.  Elaboration refuses a
+    // longer name, a byte outside that range and a zero byte inside the
+    // name (`build/board_name_guard.pass` holds the refusals).  Empty, the
+    // default, is no name: the words read 0.  Unread below revision 13 and
+    // on the CADR.
+    parameter logic [8*64-1:0] BOARD_NAME = '0,
+
     // The physical word address, 28 bits on revision 13 (G1 §3.2), and the
     // beats a line fill returns: two of revision 12's four words, and five
     // of revision 13's packed storage.
@@ -602,8 +626,9 @@ module cadr_machine #(
   //                                                  `cadr_microcycle.sv`
   //   the boot PROM, version 2000, which is the image `PROM_HEX` names: every
   //   QUUX build and check hands it `build/boot_prom.quux.hex`
-  //   the video controller in place of the SIMPLE and LISPM TV, 1280 by
-  //   1024, and no color board                           `quux_video.sv`
+  //   the video controller in place of the SIMPLE and LISPM TV, at the
+  //   board's `VIDEO_WIDTH` by `VIDEO_HEIGHT`, and no color board
+  //                                                      `quux_video.sv`
   //   `MUL` and `DIV` in one instruction each, and the divider's hold
   //                                   `quux_muldiv.sv`, `cadr_microcycle.sv`
   //   the interval timers, source 15 and the interrupt
@@ -618,10 +643,50 @@ module cadr_machine #(
   // 40-bit word is revision 13, `(13 << 4) | 4`, `Geometry::QUUX_13`
   // (contract G2 §2.8).
   localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-  // The video controller at the size every QUUX bitstream builds: 1280 by
-  // 1024, one bit a pixel, 40 words a line at `17000000`.
-  localparam int unsigned VIDEO_WIDTH  = 1280;
-  localparam int unsigned VIDEO_HEIGHT = 1024;
+  // The video controller at the board's size, `VIDEO_WIDTH` by
+  // `VIDEO_HEIGHT`, one bit a pixel, `VIDEO_WIDTH / 32` words a line, and
+  // muir's `check_video_size` held on it at elaboration.
+  // The board name's length: its literal is right-justified, so the
+  // characters are the bytes up to the highest one that is not zero.
+  function automatic int unsigned board_name_chars(input logic [8*64-1:0] s);
+    int unsigned n = 0;
+    for (int unsigned i = 0; i < 64; i++)
+      if (s[8*i +: 8] != 8'd0) n = i + 1;
+    return n;
+  endfunction
+  // Whether every character is printable ASCII, `040`-`176`; a zero byte
+  // inside the name is not.
+  function automatic bit board_name_printable(input logic [8*64-1:0] s);
+    bit ok = 1'b1;
+    for (int unsigned i = 0; i < board_name_chars(s); i++)
+      if (s[8*i +: 8] < 8'o40 || s[8*i +: 8] > 8'o176) ok = 1'b0;
+    return ok;
+  endfunction
+  // Feature words 20-24: character k of the name, counted from its first,
+  // at bits `8k + 7` to `8k`, so word 20 + k/4 holds it in `<8(k mod 4)+7 :
+  // 8(k mod 4)>`.
+  function automatic logic [159:0] board_name_words(input logic [8*64-1:0] s);
+    logic [159:0] w = '0;
+    int unsigned n = board_name_chars(s);
+    for (int unsigned k = 0; k < 20; k++)
+      if (k < n) w[8*k +: 8] = s[8*(n - 1 - k) +: 8];
+    return w;
+  endfunction
+  localparam int unsigned BOARD_NAME_CHARS = board_name_chars(BOARD_NAME);
+  localparam logic [159:0] BOARD_NAME_WORDS = board_name_words(BOARD_NAME);
+  if (BOARD_NAME_CHARS > 20) begin : g_board_name_long
+    $error("cadr_machine: the board name is %0d characters, over 20", BOARD_NAME_CHARS);
+  end
+  if (!board_name_printable(BOARD_NAME)) begin : g_board_name_bytes
+    $error("cadr_machine: the board name has a byte outside 040-176");
+  end
+
+  // At most 1920 by 1080 is at most 64,800 words, inside the display's
+  // `cadr_ddr_map::VIDEO_WORDS_MAX`, 65,536, whose room `build/mem_map.pass` holds.
+  if (VIDEO_WIDTH == 0 || VIDEO_HEIGHT == 0 || VIDEO_WIDTH % 32 != 0 ||
+      VIDEO_WIDTH > 1920 || VIDEO_HEIGHT > 1080) begin : g_video_size
+    $error("cadr_machine: the video controller cannot be %0d by %0d", VIDEO_WIDTH, VIDEO_HEIGHT);
+  end
   // **REVISION 13'S FEATURE WORDS** (contract G2 §4.3, appendix A1.10;
   // muir's `Geometry::feature_word` on `QUUX_13`): the level-1 map entry's 7
   // bits and so 4,096 level-2 entries, 4,096 dispatch memory entries, and the
@@ -1369,6 +1434,7 @@ module cadr_machine #(
         .SCREEN_HEIGHT(VIDEO_HEIGHT),
         .SCREEN_WPL   (VIDEO_WIDTH / 32),
         .SCREEN_BUFFER(VIDEO_BUFFER),
+        .BOARD_NAME_WORDS(BOARD_NAME_WORDS),
         .WORD_BITS    (WORD_BITS)
     ) feature_page (
         .clk          (clk),

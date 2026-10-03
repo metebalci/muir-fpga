@@ -788,8 +788,14 @@ static void emit_block_disk(struct chk *w, const struct cadr_image *img,
 static void emit_video(struct chk *w, const struct cadr_image *img)
 {
 	chk_u8(w, MUIR_TV_BOARD_VIDEO);			/* READ, the machine */
-	chk_u16(w, MUIR_VIDEO_WIDTH);			/* DECLARED, the bitstreams' */
+#if CHK_MUTATE == 38
+	// The old bitstreams' size whatever the bitstream says.
+	chk_u16(w, MUIR_VIDEO_WIDTH);
 	chk_u16(w, MUIR_VIDEO_HEIGHT);
+#else
+	chk_u16(w, (uint16_t)img->video_width);		/* READ, console word 39 */
+	chk_u16(w, (uint16_t)img->video_height);
+#endif
 #if CHK_MUTATE == 14
 	// The CADR's buffer, 32,768 words, where the video controller's is 40,960.
 	chk_u32s(w, img->tv, IMG_TV_WORDS);
@@ -1520,6 +1526,12 @@ const char *chk_rtl_mutation(void)
 	return "QUUX's main memory written in the sidecar as boards";
 #elif CHK_MUTATE == 37
 	return "QUUX's main memory said in memory boards";
+#elif CHK_MUTATE == 38
+	return "the video controller's size written as 1280x1024 whatever the bitstream says";
+#elif CHK_MUTATE == 39
+	return "the video controller's buffer sized at 1280x1024 whatever the bitstream says";
+#elif CHK_MUTATE == 40
+	return "the resume line without the video controller's size";
 #else
 	return NULL;
 #endif

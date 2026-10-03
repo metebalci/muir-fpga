@@ -175,7 +175,7 @@ and a mode, word 210 of the register page, with no sync program, no color
 map and no interrupt. muir's
 `docs/quux.md` is the contract, and `screen_geom.h` cites it beside each number.
 
-| | CADR | QUUX, the video controller |
+| | CADR | QUUX, the video controller, at 1280 by 1024 |
 |---|---|---|
 | pixels across | 768 | 1280 |
 | lines | 963 | 1024 |
@@ -184,12 +184,18 @@ map and no interrupt. muir's
 | window mapped | 128 KB | 160 KB |
 | color TV | may be fitted | none |
 
+**The video controller's size is the bitstream's.** Each board's top level
+gives its QUUX a size, and its console's page 2 word 39 says it
+(`docs/console.md`). This program reads that word and serves the screen at
+that size, at most 1920 by 1080, 60 words to a line and 64,800 words. A QUUX
+bitstream older than the word is 1280 by 1024, and the program says so.
+
 The buffer starts where the CADR's does, at physical `17000000`, so this
-program maps the window at the same base in memory, all 40,960 words of it.
+program maps the window at the same base in memory, the whole buffer.
 On QUUX the buffer is on the memory bus with main memory, and the machine's
 cache writes it through to DDR, so what this program reads is at most one
 write behind the processor. Pixel `x` of line `y` is bit `x mod 32` of word
-`40y + x/32` on QUUX, the CADR's rule with its own line length. `MODE BOW` is
+`(width/32)y + x/32` on QUUX, the CADR's rule with its own line length. `MODE BOW` is
 the same bit 2 of the mode, and `--bow` still says it.
 
 **The program is told the machine and does not ask.** QUUX's register page at
@@ -200,7 +206,9 @@ port and the console on its own, and none of them carries a read of the
 machine's I/O page. The build stamp names a commit and how the tree stood, not
 which machine was built. So `--machine cadr|quux` says which: it is muir's own
 flag with muir's own two words, and the default is `cadr`. Any other word is
-refused. The card carries it as a commented line in `fpgarc`.
+refused. The card carries it as a commented line in `fpgarc`. What the
+console's word 39 says is held against it: `--machine cadr` on a bitstream
+whose word says a video controller, which is QUUX's, is refused.
 
 `--color-terminal` is refused with `--machine quux`. QUUX has no color TV, and
 the video controller's 160 KB run over the window the color board's would
@@ -1181,9 +1189,10 @@ fits one, and then binds and serves a black screen anyway.
 
 ## What is not built
 
-- **Asking the fabric which machine it is.** A word in the console's face
-  carrying QUUX's feature page, or the machine in the build stamp, would let
-  `--machine` go. Neither exists, so the card says it.
+- **Asking the fabric which machine it is.** The console's word 39 says
+  QUUX's video controller and nothing on the CADR, which is enough to refuse
+  `--machine cadr` on QUUX's bitstream, but not to tell the CADR from a QUUX
+  bitstream older than the word. So the card still says it.
 - **Reading `MODE BOW`**, which is described above. It is fabric work in three
   files, none of them this program's, and the section above says which.
 - **Encodings past Raw and RRE.** Hextile and ZRLE would both beat RRE on a

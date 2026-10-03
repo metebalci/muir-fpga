@@ -7,6 +7,8 @@
 
 #include "screen_frame.h"
 
+#include <stdio.h>
+
 void screen_frame_init(struct screen_frame *f, int black_on_white)
 {
 	f->width = SCREEN_WIDTH;
@@ -37,13 +39,43 @@ void screen_frame_init_color(struct screen_frame *f)
 	f->black_on_white = 0;
 }
 
-void screen_frame_init_mono(struct screen_frame *f, int black_on_white)
+void screen_frame_init_mono(struct screen_frame *f, int black_on_white, const struct cadr_video *video)
 {
 	screen_frame_init(f, black_on_white);
-	f->width = SCREEN_MONO_WIDTH;
-	f->height = SCREEN_MONO_HEIGHT;
-	f->words_per_line = SCREEN_MONO_WORDS_PER_LINE;
-	f->visible_words = SCREEN_MONO_VISIBLE_WORDS;
+	f->width = video->width;
+	f->height = video->height;
+	f->words_per_line = video->words_per_line;
+	f->visible_words = video->words;
+}
+
+int screen_video_for(enum screen_machine m, uint32_t word, struct cadr_video *video, int *old,
+		     char *why, unsigned whylen)
+{
+	struct cadr_video v;
+	const int said = cadr_video_decode(word, &v);
+	*old = 0;
+	if (said < 0) {
+		snprintf(why, whylen, "the console's word 39 (0x%08x) carries the video "
+			 "controller's marker over a size no QUUX has", (unsigned)word);
+		return -1;
+	}
+	if (m == SCREEN_MACHINE_CADR) {
+		if (said == 1) {
+			snprintf(why, whylen, "--machine cadr, and the console's word 39 says this "
+				 "fabric's video controller is %ux%u: the bitstream is QUUX's",
+				 v.width, v.height);
+			return -1;
+		}
+		cadr_video_old(video);
+		return 0;
+	}
+	if (said == 0) {
+		cadr_video_old(video);
+		*old = 1;
+		return 0;
+	}
+	*video = v;
+	return 0;
 }
 
 // muir's own two words and nothing else: `--machine wants cadr or quux`.
@@ -65,17 +97,18 @@ const char *screen_machine_name(enum screen_machine m)
 	return m == SCREEN_MACHINE_QUUX ? "quux" : "cadr";
 }
 
-void screen_frame_init_for(struct screen_frame *f, enum screen_machine m, int black_on_white)
+void screen_frame_init_for(struct screen_frame *f, enum screen_machine m, int black_on_white,
+			   const struct cadr_video *video)
 {
 	if (m == SCREEN_MACHINE_QUUX)
-		screen_frame_init_mono(f, black_on_white);
+		screen_frame_init_mono(f, black_on_white, video);
 	else
 		screen_frame_init(f, black_on_white);
 }
 
-unsigned screen_window_bytes(enum screen_machine m)
+unsigned screen_window_bytes(enum screen_machine m, const struct cadr_video *video)
 {
-	return m == SCREEN_MACHINE_QUUX ? SCREEN_MONO_WINDOW_BYTES : SCREEN_WINDOW_BYTES;
+	return m == SCREEN_MACHINE_QUUX ? video->words * 4u : SCREEN_WINDOW_BYTES;
 }
 
 int screen_machine_has_color(enum screen_machine m)

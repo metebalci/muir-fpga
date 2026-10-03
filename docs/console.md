@@ -233,7 +233,18 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  the most in bits 10 to 0.  `cadr-console` refuses a count past
                  the most by it; a fabric older than the word reads UNMAPPED
                  here and takes 1 to 60 from 32
-    39-47        read UNMAPPED; writes dropped
+    39 VIDEO    **QUUX's video controller's size**, read only: a marker of
+                 0x356 in bits 31 to 22, the width in pixels in bits 21 to 11
+                 and the height in lines in bits 10 to 0.  Each board's top
+                 level gives the console the size it gives the machine, which
+                 the band reads from its feature words 11 and 12: 1280 by 1024
+                 on the Arty Z7-20 and the DE25-Nano.  `cadr-terminal`,
+                 `cadr-readout` and `cadr-checkpoint` size QUUX's screen by
+                 it.  The CADR, which has no video controller, reads UNMAPPED
+                 here, and so does a QUUX bitstream older than the word, whose
+                 video controller is 1280 by 1024; `cadr-terminal --machine
+                 cadr` refuses a bitstream whose word carries the marker
+    40-47        read UNMAPPED; writes dropped
 
     page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 

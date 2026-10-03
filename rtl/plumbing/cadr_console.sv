@@ -285,7 +285,22 @@
 //
 //                 A fabric older than the word reads `UNMAPPED` here, whose
 //                 top ten bits are not the marker, and holds 1 to 60 from 32.
-//     39-47       `UNMAPPED`
+//     39 VIDEO    **the video controller's size**, read only, on QUUX's
+//                 fabric: the size its feature words 11 and 12 give the band
+//                 (contract HD §1), so that the programs on the processing
+//                 system --- the RFB server, the readout and the checkpoint
+//                 --- take it from the bitstream and not from a constant:
+//
+//                   bits 31:22  `VIDEO_MARK`, a marker
+//                   bits 21:11  the width in pixels, a multiple of 32
+//                   bits 10:0   the height in lines
+//
+//                 The CADR has no video controller and reads `UNMAPPED`
+//                 here, as a fabric older than the word does; neither has
+//                 the marker in its top ten bits.  Each board's top level
+//                 gives it the size it gives the machine
+//                 (`build/machine_param.pass` holds the two equal).
+//     40-47       `UNMAPPED`
 //
 //   page 3, `REG_BASE + 0xC0`: all sixteen read `UNMAPPED`.
 //
@@ -765,6 +780,13 @@ module cadr_console #(
     parameter logic [9:0]  MEM_BOARDS_RANGE_MARK = 10'h1A5,
     parameter int unsigned MEM_BOARDS_DEFAULT = 32,
     parameter int unsigned MEM_BOARDS_MAX     = 60,
+    // **AND THE VIDEO CONTROLLER'S SIZE**, page 2's word 39, read only:
+    // QUUX's, which each board's top level gives as it gives the machine;
+    // zero, the default and the CADR's, is no video controller and reads
+    // `UNMAPPED`.  The marker is ten bits, as word 38's is, and not its.
+    parameter logic [9:0]  VIDEO_MARK   = 10'h356,
+    parameter int unsigned VIDEO_WIDTH  = 0,
+    parameter int unsigned VIDEO_HEIGHT = 0,
     // The transaction ID's width and the read burst length's: twelve and four
     // on a Zynq board's `M_AXI_GP`, which is AXI3, and four and eight on the
     // Agilex 5's two processor-to-fabric bridges, which are AXI4 and so may
@@ -1579,6 +1601,8 @@ module cadr_console #(
                              : (r_hi_q && r_idx_q == 5'd6)
                                  ? {MEM_BOARDS_RANGE_MARK, 11'(MEM_BOARDS_DEFAULT),
                                     11'(MEM_BOARDS_MAX)}
+                             : (r_hi_q && r_idx_q == 5'd7 && VIDEO_WIDTH != 0)
+                                 ? {VIDEO_MARK, 11'(VIDEO_WIDTH), 11'(VIDEO_HEIGHT)}
                                  : UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
     else begin

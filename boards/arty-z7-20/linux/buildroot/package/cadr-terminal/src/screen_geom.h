@@ -82,6 +82,7 @@
 #include <stdint.h>
 
 #include <cadr/cadr_board.h>
+#include <cadr/cadr_video.h>
 
 #define SCREEN_WIDTH            768u
 #define SCREEN_HEIGHT           963u
@@ -165,11 +166,16 @@
 // the display's.  QUUX has no color board, so nothing else is there; that is
 // why `--color-terminal` is refused on QUUX rather than served out of the
 // top of the video controller's buffer.
-#define SCREEN_MONO_WIDTH           1280u
-#define SCREEN_MONO_HEIGHT          1024u
-#define SCREEN_MONO_WORDS_PER_LINE  40u
-#define SCREEN_MONO_VISIBLE_WORDS   (SCREEN_MONO_HEIGHT * SCREEN_MONO_WORDS_PER_LINE)
-#define SCREEN_MONO_WINDOW_BYTES    (SCREEN_MONO_VISIBLE_WORDS * 4u)
+//
+// **AND ITS SIZE IS THE BITSTREAM'S** (contract HD): 1280 by 1024 on the Arty
+// Z7-20 and the DE25-Nano, the Kria KR260's raster on the Kria KR260, which
+// the console's word 39 says (`cadr/cadr_video.h`).  These are the most it
+// can be, muir's `check_video_size`, which the frame and the window are
+// sized by; the screen served is the size the word gives.
+#define SCREEN_MONO_MAX_WIDTH         CADR_VIDEO_MAX_WIDTH
+#define SCREEN_MONO_MAX_HEIGHT        CADR_VIDEO_MAX_HEIGHT
+#define SCREEN_MONO_MAX_VISIBLE_WORDS CADR_VIDEO_MAX_WORDS
+#define SCREEN_MONO_MAX_WINDOW_BYTES  (SCREEN_MONO_MAX_VISIBLE_WORDS * 4u)
 
 // Which machine the bitstream is: muir's `--machine cadr|quux`, the word for
 // word the same.  `screen_frame.h` says why the program is told it.
@@ -227,13 +233,14 @@ enum screen_machine {
 #define SCREEN_COLOR_BASE           CADR_BOARD_COLOR_BASE
 
 // The largest of the three screens, in frame-buffer words: 963 x 24 =
-// 23,112, 454 x 72 = 32,688, and the video controller's 1024 x 40 = 40,960.  **The video controller is
-// the biggest in words and in lines**, which is worth knowing before sizing
-// anything by the first board's figure; the asserts below say so rather than
-// choosing, so that a screen made bigger later stops the build instead of
-// overrunning a buffer sized by the old one.
-#define SCREEN_MAX_VISIBLE_WORDS SCREEN_MONO_VISIBLE_WORDS
-#define SCREEN_MAX_HEIGHT        SCREEN_MONO_HEIGHT
+// 23,112, 454 x 72 = 32,688, and the video controller's, at most 1080 x 60 =
+// 64,800.  **The video controller is the biggest in words and in lines**,
+// which is worth knowing before sizing anything by the first board's
+// figure; the asserts below say so rather than choosing, so that a screen
+// made bigger later stops the build instead of overrunning a buffer sized by
+// the old one.
+#define SCREEN_MAX_VISIBLE_WORDS SCREEN_MONO_MAX_VISIBLE_WORDS
+#define SCREEN_MAX_HEIGHT        SCREEN_MONO_MAX_HEIGHT
 _Static_assert(SCREEN_MAX_VISIBLE_WORDS >= SCREEN_VISIBLE_WORDS
 	       && SCREEN_MAX_VISIBLE_WORDS >= SCREEN_COLOR_VISIBLE_WORDS,
 	       "a frame holds the largest screen's words");
@@ -241,7 +248,7 @@ _Static_assert(SCREEN_MAX_HEIGHT >= SCREEN_HEIGHT && SCREEN_MAX_HEIGHT >= SCREEN
 	       "a frame holds the largest screen's lines");
 // And the video controller's window stays inside the display's share of the reservation,
 // below the spare 1 MB up.
-_Static_assert(SCREEN_BASE + SCREEN_MONO_WINDOW_BYTES <= CADR_BOARD_SPARE_BASE,
+_Static_assert(SCREEN_BASE + SCREEN_MONO_MAX_WINDOW_BYTES <= CADR_BOARD_SPARE_BASE,
 	       "the video controller's buffer fits below the spare");
 // **ON REVISION 13 THE WINDOW'S BASE IN DDR IS THE SAME.**  The machine
 // reaches its frame buffer at `1760000000` in a 28-bit physical space where

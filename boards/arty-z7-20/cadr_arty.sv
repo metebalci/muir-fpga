@@ -898,7 +898,18 @@ module cadr_arty #(
   localparam logic [31:0] PROVE_WORD = 32'h8A5C_36E1;
   localparam logic [31:0] PROVE_ECHO = cadr_ddr_map::main_byte_address(22'o12345706);
 
+  // **QUUX'S VIDEO CONTROLLER AND THE BOARD NAME** (contract HD): the size
+  // this board's QUUX gives its band in feature words 11 and 12, which its
+  // display output shows and its console's word 39 says to the programs on
+  // the processing system, and the name revision 13's feature words 20-24
+  // give.  One place each, so the four cannot disagree by an edit to one;
+  // `build/machine_param.pass` holds them equal.
+  localparam int unsigned VIDEO_W = 1280;
+  localparam int unsigned VIDEO_H = 1024;
+  localparam logic [8*64-1:0] BOARD = "Arty Z7-20";
+
   cadr_machine #(
+      .VIDEO_WIDTH(VIDEO_W), .VIDEO_HEIGHT(VIDEO_H), .BOARD_NAME(BOARD),
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),
@@ -2269,6 +2280,8 @@ module cadr_arty #(
     logic        disp_asleep, disp_sleep_fitted;
 
     cadr_console #(
+        .VIDEO_WIDTH(MACHINE == "quux" ? VIDEO_W : 0),
+        .VIDEO_HEIGHT(MACHINE == "quux" ? VIDEO_H : 0),
         .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
     ) u_console (
         .clk(clk), .rst(gp1_rst), .fabric_rst(rst),
@@ -2411,9 +2424,9 @@ module cadr_arty #(
           .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
           // QUUX shows the video controller, 1280 by 1024 at 40 words a line, filling the
           // raster; the CADR its first board's 768 by 963 at 24.
-          .PIC_W         (MACHINE == "quux" ? 1280 : 768),
-          .PIC_H         (MACHINE == "quux" ? 1024 : 963),
-          .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 24)
+          .PIC_W         (MACHINE == "quux" ? VIDEO_W : 768),
+          .PIC_H         (MACHINE == "quux" ? VIDEO_H : 963),
+          .WORDS_PER_LINE(MACHINE == "quux" ? VIDEO_W / 32 : 24)
       ) u_display (
           .clk(clk), .rst(disp_rst), .fabric_rst(rst),
           .m_araddr(hp3_araddr), .m_arlen(hp3_arlen), .m_arsize(hp3_arsize),

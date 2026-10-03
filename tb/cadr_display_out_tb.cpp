@@ -136,7 +136,12 @@ constexpr const char *kModeName = "VESA DMT 1280x1024 at 60 Hz";
 // its side, so the module keeps it upright whatever `rotate` says; and QUUX
 // has no color board.  Its configurations are A and B below and Q, which
 // asks for both quarter turns and holds the picture upright.
-#ifdef CADR_DISPLAY_QUUX
+//
+// **AND ON THE KRIA KR260 IT IS THE RASTER'S OWN 1920 BY 1080** at 60 words a
+// line (contract HD), which fills the raster with no margin at all.
+#if defined(CADR_DISPLAY_QUUX) && defined(CADR_DISPLAY_KR260)
+constexpr int kPicW = 1920, kPicH = 1080, kWords = 60;
+#elif defined(CADR_DISPLAY_QUUX)
 constexpr int kPicW = 1280, kPicH = 1024, kWords = 40;
 #else
 constexpr int kPicW = 768, kPicH = 963, kWords = 24;
@@ -536,13 +541,12 @@ int main(int argc, char **argv) {
     if (got != want) Fail("%s is %d, want %d", what, got, want);
   };
 #if defined(CADR_DISPLAY_QUUX) && defined(CADR_DISPLAY_KR260)
-  // The Kria KR260's figures, from the contract's table of the placement at
-  // 1920x1080: the video controller at the left edge, centered vertically,
-  // with 640 black columns at its right.
+  // The Kria KR260's figures (contract HD): the video controller at 1920 by
+  // 1080 fills the raster, every column and every row.
   figure(MX0, 0, "the video controller's first column");
-  figure(MX0 + kPicW - 1, 1279, "the video controller's last column");
-  figure(MY0, 28, "the video controller's first row");
-  figure(MY0 + kPicH - 1, 1051, "the video controller's last row");
+  figure(MX0 + kPicW - 1, 1919, "the video controller's last column");
+  figure(MY0, 0, "the video controller's first row");
+  figure(MY0 + kPicH - 1, 1079, "the video controller's last row");
   if (MX0 + kPicW > HA || MY0 + kPicH > VA)
     Fail("the raster does not hold the video controller at 1:1");
 #elif defined(CADR_DISPLAY_QUUX)

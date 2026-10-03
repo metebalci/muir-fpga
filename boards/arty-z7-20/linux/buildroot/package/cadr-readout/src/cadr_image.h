@@ -67,7 +67,8 @@
 // **QUUX'S SIZES**, muir's `Geometry::QUUX`: a PDL buffer of 16K words with a
 // fourteen-bit pointer, a level-1 map entry of six bits and so 2,048 level-2
 // entries, the boot PROM at control store 36000 and never written there, and
-// the video controller's buffer, 1280 by 1024 at one bit a pixel.
+// the video controller's buffer, 1280 by 1024 at one bit a pixel unless the
+// bitstream says another size (`cadr/cadr_video.h`; `img_alloc_video`).
 // `img_alloc_machine` sizes the arrays by these on QUUX.
 #define IMG_QUUX_PDL_WORDS  16384u
 #define IMG_QUUX_L2_WORDS   2048u
@@ -291,7 +292,7 @@ struct cadr_image {
 	// --- which a copy beside a body of the same size would not leave room
 	// --- for --- and `chk_rtl_body` hands them to the file as they stand.
 	const volatile uint8_t *main13;	/* boards * IMG_BOARD_WORDS * 5 bytes */
-	uint32_t *tv;		/* IMG_TV_WORDS */
+	uint32_t *tv;		/* tv_words: IMG_TV_WORDS, or the video controller's */
 
 	// --- the first display board's color map, `[color][channel]` with
 	// --- red first.  It is not DDR and it is not the readout window: it
@@ -307,6 +308,10 @@ struct cadr_image {
 	// --- 8,192 and level 2's 4,096, and words of 40 bits.
 	int quux, rev13;
 	unsigned pdl_words, l2_words, tv_words, dmem_words, l1_words, word_bits;
+	// --- QUUX's video controller's size, the bitstream's (console word
+	// --- 39): `tv_words` is its height times its width over 32.  0 on the
+	// --- CADR.
+	unsigned video_width, video_height;
 	struct quux_state qx;	/* QUUX's alone; zero on the CADR */
 };
 
@@ -317,6 +322,11 @@ int img_alloc_machine(struct cadr_image *img, unsigned boards, int quux);
 // And a QUUX of either revision, 12 or 13: revision 13's arrays at its sizes
 // and no main memory, which is `main13`'s to point at.
 int img_alloc_revision(struct cadr_image *img, unsigned boards, int quux, int revision);
+// And with QUUX's video controller at `width` by `height`, which a QUUX
+// bitstream says on its console (`ro_video`); the two above take 1280 by
+// 1024.  Refused, -1, for a size `cadr/cadr_video.h` does not take.
+int img_alloc_video(struct cadr_image *img, unsigned boards, int quux, int revision,
+		    unsigned width, unsigned height);
 void img_free(struct cadr_image *img);
 
 static inline int img_flag(const struct cadr_image *img, enum img_flag b)

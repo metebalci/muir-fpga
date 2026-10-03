@@ -570,8 +570,28 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
+	// **QUUX'S VIDEO CONTROLLER IS THE BITSTREAM'S SIZE** (console word 39):
+	// the checkpoint carries its buffer and its size, and muir resumes it at
+	// that size alone.  A bitstream older than the word has 1280 by 1024.
+	struct cadr_video video;
+	cadr_video_old(&video);
+	if (quux) {
+		const int v = ro_video(&r, &video);
+		if (v < 0) {
+			say("the console's word 39 says a video controller no QUUX has (%08x)",
+			    (unsigned)r.read(&r, RO_VIDEO));
+			return 1;
+		}
+		if (v == 0) {
+			cadr_video_old(&video);
+			say("the console's word 39 carries no video controller: this bitstream "
+			    "is older than the word, and its video controller is %ux%u",
+			    video.width, video.height);
+		}
+	}
+
 	struct cadr_image img;
-	if (img_alloc_revision(&img, boards, quux, revision) != 0) {
+	if (img_alloc_video(&img, boards, quux, revision, video.width, video.height) != 0) {
 		say("out of memory for a machine of %s", memory);
 		return 1;
 	}
@@ -752,7 +772,9 @@ int main(int argc, char **argv)
 	}
 
 	if (want_display) {
-		// The CADR display's 32,768 words, or the video controller's 40,960.
+		// The CADR display's 32,768 words, or the video controller's, its
+		// height times its width over 32: 40,960 at 1280 by 1024, 64,800 at
+		// 1920 by 1080.
 		volatile uint32_t *tv =
 			cadr_map(fd, DDR_DISPLAY_BASE, (size_t)img.tv_words * 4u,
 				 "the display's window");
@@ -802,6 +824,8 @@ int main(int argc, char **argv)
 	bind.quux = quux;
 	bind.revision = quux ? (unsigned)revision : 0u;
 	bind.sync_k = quux ? sync_k : 0u;
+	bind.video_width = quux ? img.video_width : 0u;
+	bind.video_height = quux ? img.video_height : 0u;
 	bind.running = ran;
 	bind.microcycles = img.cycles;
 	bind.ns = (quux ? img.qx.m : img.ticks) * CHK_GRID_NS;

@@ -595,6 +595,11 @@ module cadr_machine #(
     parameter int unsigned SYNC_K = 4,
     parameter int unsigned SYNC_L = 0,
     parameter int unsigned WORD_BITS = 32,
+    // The board's video controller and name (contract HD), which the stub
+    // takes and does nothing with.
+    parameter int unsigned VIDEO_WIDTH  = 1280,
+    parameter int unsigned VIDEO_HEIGHT = 1024,
+    parameter logic [8*64-1:0] BOARD_NAME = '0,
     localparam int unsigned PHYS_BITS  = WORD_BITS > 32 ? 28 : 22,
     localparam int unsigned RLINE_BITS = WORD_BITS > 32 ? 320 : 128
 ) (

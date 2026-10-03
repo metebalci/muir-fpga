@@ -55,6 +55,7 @@ struct model {
 	// Page 2's word 37 as the fabric reads it: the memory boards' count
 	// under its marker, or 0 for a fabric older than the word.
 	uint32_t boards_word;
+	uint32_t video_word;
 	uint32_t hi_latch_cycles, hi_latch_ticks;
 	uint64_t cycles, ticks;
 	int running;
@@ -183,6 +184,7 @@ static uint32_t model_read(struct readout *r, unsigned word)
 	case RO_DATA_LO: return (uint32_t)model_word(m, sel, a);
 	case RO_DATA_HI: return (uint32_t)(model_word(m, sel, a) >> 32) & 0xFFFFu;
 	case RO_BOARDS: return m->boards_word ? m->boards_word : RO_UNMAPPED;
+	case RO_VIDEO: return m->video_word ? m->video_word : RO_UNMAPPED;
 	default: return RO_UNMAPPED;
 	}
 }
@@ -569,6 +571,55 @@ int main(void)
 				fail("the memory boards from word 37", got_boards, cases[i].want);
 		}
 		m->boards_word = 0;
+	}
+
+	// ---- QUUX's video controller, page 2's word 39 ------------------------
+	//
+	// A checkpoint and its image are sized by it (contract HD): the marker
+	// over 1920 by 1080 or 1280 by 1024 reads as that size; no marker --- a
+	// CADR's, or QUUX older than the word --- reads 0; the marker over a
+	// size no QUUX has reads -1.  And the image is allocated at the size it
+	// is given, its buffer the height times the width over 32.
+	{
+		const struct { uint32_t word; int want; unsigned w, h; } cases[] = {
+			{(0x356u << 22) | (1920u << 11) | 1080u, 1, 1920, 1080},
+			{(0x356u << 22) | (1280u << 11) | 1024u, 1, 1280, 1024},
+			{(0x356u << 22) | (1024u << 11) | 768u, 1, 1024, 768},
+			{(0x356u << 22) | (1900u << 11) | 1080u, -1, 0, 0},
+			{(0x356u << 22) | (1952u << 11) | 1080u, -1, 0, 0},
+			{(0x356u << 22) | (1920u << 11) | 1081u, -1, 0, 0},
+			{(0x356u << 22) | (0u << 11) | 1080u, -1, 0, 0},
+			{(0x357u << 22) | (1920u << 11) | 1080u, 0, 0, 0},
+			{0x42440200u, 0, 0, 0}, {0, 0, 0, 0}};
+		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+			struct cadr_video v = { 0, 0, 0, 0 };
+			m->video_word = cases[i].word;
+			const int got = ro_video(&r, &v);
+			if (got != cases[i].want || (got == 1 && (v.width != cases[i].w || v.height != cases[i].h ||
+								 v.words != cases[i].h * (cases[i].w / 32u))))
+				fail("the video controller from word 39", ((uint64_t)(unsigned)got << 32) |
+				     (v.width << 16) | v.height, ((uint64_t)(unsigned)cases[i].want << 32) |
+				     (cases[i].w << 16) | cases[i].h);
+		}
+		m->video_word = 0;
+		struct cadr_image hd;
+		if (img_alloc_video(&hd, 1, 1, 13, 1920u, 1080u) != 0 || hd.tv_words != 64800u ||
+		    hd.video_width != 1920u || hd.video_height != 1080u)
+			fail("an image of QUUX at 1920 by 1080, its buffer's words", hd.tv_words, 64800);
+		else
+			img_free(&hd);
+		if (img_alloc_revision(&hd, 1, 1, 13) != 0 || hd.tv_words != 40960u || hd.video_width != 1280u)
+			fail("an image of QUUX at the old size, its buffer's words", hd.tv_words, 40960);
+		else
+			img_free(&hd);
+		if (img_alloc_video(&hd, 1, 1, 13, 1900u, 1080u) == 0) {
+			fail("an image of QUUX 1900 wide, taken", 1900, 0);
+			img_free(&hd);
+		}
+		if (img_alloc_video(&hd, 1, 0, 12, 0, 0) != 0 || hd.tv_words != IMG_TV_WORDS || hd.video_width != 0)
+			fail("the CADR's image, its buffer's words", hd.tv_words, IMG_TV_WORDS);
+		else
+			img_free(&hd);
 	}
 
 	// ---- QUUX's main memory is an amount, never boards --------------------

@@ -45,7 +45,11 @@ a daemon and has no init script, because it halts the machine while it reads.
    `--main-memory-size <n>MW` on QUUX, in muir's form, and each is refused
    on the other machine. One that disagrees with the machine is refused,
    because a checkpoint of less memory drops memory the band has and one of
-   more invents it.
+   more invents it. QUUX's video controller is read at the bitstream's own
+   size, the console's page 2 word 39: its buffer, and the size muir's
+   `Tv::save` writes. A bitstream older than that word is 1280 by 1024. The
+   sidecar's resume line names the size as muir's `--video-size`, which muir
+   refuses a checkpoint of another size under.
 5. Reads every disk pack through and digests it, still halted.
 6. Writes the checkpoint, then the sidecar that binds it to those packs.
 7. Starts the machine again, unless told to leave it halted.
@@ -274,16 +278,21 @@ anywhere in that stream would break it.
 `running` says whether the file records the machine running (`yes`, it was
 running when the program halted it) or halted (`no`). The `resume` line is
 the command, to be run as written, that resumes the file as the board ran
-it. A QUUX checkpoint's sidecar also carries the revision and the
-microcycle's length in ticks, K, and its line names both, the revision as
-the environment's `MUIR_QUUX_REVISION` before the command, since muir's
-`quux` refuses a checkpoint of another revision or another K:
+it. A QUUX checkpoint's sidecar also carries the revision, the
+microcycle's length in ticks, K, and the video controller's size, and its
+line names all three, the revision as the environment's `MUIR_QUUX_REVISION`
+before the command, since muir's `quux` refuses a checkpoint of another
+revision, another K or another size:
 
     revision: 13
     sync-cycle-ticks: 5
+    video-size: 1280x1024
     running: yes
     ...
-    resume: MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
+    resume: MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 --video-size 1280x1024 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
+
+A sidecar written before the size was named carries no `video-size`, and its
+line names none: its checkpoint is 1280 by 1024, muir's default.
 
 The QUUX line names no memory flag: muir builds the machine with as much
 main memory as the checkpoint has. QUUX has no memory boards, so its sidecar

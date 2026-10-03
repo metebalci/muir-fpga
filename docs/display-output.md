@@ -236,6 +236,13 @@ setting, so the lone placement is chosen by the setting latched at the frame's
 top, between two constants. On the Arty Z7-20 and the DE25-Nano a screen
 alone stays where it is with both.
 
+**QUUX's video controller is the board's size.** Each board's top level
+gives its QUUX a size, which the band reads from its feature words 11 and 12
+and the display output shows at 1:1. On the Arty Z7-20 and the DE25-Nano it
+is 1280 by 1024, the raster's own. On the Kria KR260 it is 1920 by 1080, 60
+words a line and 64,800 words, so it fills that board's raster too, every
+column and every row.
+
 The border is black whatever `MODE BOW` says. The border is not the CADR's
 screen at all, so it does not follow a bit that decides how the CADR's own zeros
 are shown.

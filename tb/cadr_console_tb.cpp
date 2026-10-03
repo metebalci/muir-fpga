@@ -205,6 +205,16 @@ constexpr uint32_t kBoardsRangeMark = 0x1A5u;
 #define CONSOLE_BOARDS_MAX 60u
 #endif
 constexpr unsigned g_boards_default = CONSOLE_BOARDS_DEFAULT, g_boards_max = CONSOLE_BOARDS_MAX;
+// Word 39, the video controller's size: a ten-bit marker over the width and
+// the height, eleven bits each; `UNMAPPED` with no video controller, which is
+// this build's unless it defines the size (`console13.pass`: 1920 by 1080).
+constexpr unsigned kRegVideo = 39;
+constexpr uint32_t kVideoMark = 0x356u;
+#ifndef CONSOLE_VIDEO_WIDTH
+#define CONSOLE_VIDEO_WIDTH 0u
+#define CONSOLE_VIDEO_HEIGHT 0u
+#endif
+constexpr unsigned g_video_width = CONSOLE_VIDEO_WIDTH, g_video_height = CONSOLE_VIDEO_HEIGHT;
 // `cadr_console.sv`'s own three keys and the word's marker.
 constexpr uint32_t kTvSimpleKey = 0x534D504Cu;  /* "SMPL" */
 constexpr uint32_t kTvLispmKey = 0x4C53504Du;   /* "LSPM" */
@@ -1405,9 +1415,10 @@ int main(int argc, char **argv) {
   // boards took word 33, a third when the display output took word 34, a
   // fourth when the lamps took word 35, a fifth when the display output's
   // sleep took word 36, a sixth when the memory boards took word 37 and a
-  // seventh when their range took word 38, and it gained nothing else: the
-  // end of page 2 past the seven, and the two ends of page 3.
-  for (unsigned i : {39u, 47u, 48u, 63u}) {
+  // seventh when their range took word 38, and an eighth when QUUX's video
+  // controller took word 39, which is held below; and it gained nothing else:
+  // the end of page 2 past the eight, and the two ends of page 3.
+  for (unsigned i : {40u, 47u, 48u, 63u}) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("a word of pages 2 and 3 that is not the build", w, kUnmapped);
     ++unmapped_seen;
@@ -1820,6 +1831,25 @@ int main(int argc, char **argv) {
     // backplane it did not expect.
     DoWrite(Con(kRegBoards), (kBoardsKey << 16) | D, 0xF);
     boards("the memory boards at the end", D);
+  }
+
+  // **WORD 39 SAYS THE VIDEO CONTROLLER'S SIZE**, read only: the marker, the
+  // width and the height this build's fabric was given, or `UNMAPPED` with
+  // none; and writes of its own read-back, of a size and of the key words
+  // change nothing.
+  {
+    const uint32_t want = g_video_width
+        ? (kVideoMark << 22) | (g_video_width << 11) | g_video_height : kUnmapped;
+    uint32_t w = ReadWord(Con(kRegVideo));
+    if (w != want) Fail("the video controller's size, word 39", w, want);
+    for (uint32_t v : {want, (kVideoMark << 22) | (1280u << 11) | 1024u, 0u, 0xFFFFFFFFu,
+                       (kBoardsKey << 16) | 33u})
+      DoWrite(Con(kRegVideo), v, 0xF);
+    w = ReadWord(Con(kRegVideo));
+    if (w != want) Fail("the video controller's size after writes to it", w, want);
+    // And the neighbors are what they were: word 38 the range, word 40
+    // nothing.
+    if (ReadWord(Con(40)) != kUnmapped) Fail("word 40", ReadWord(Con(40)), kUnmapped);
   }
 
   // **AND THE TWO DISPLAY BOARDS' COLOR MAPS, pages 4 and 5.**
@@ -2898,7 +2928,9 @@ int main(int argc, char **argv) {
       "      %u taken, each count tried read back and held; word 38 read the\n"
       "      range; %u, 0 and counts past eleven bits refused with 59 standing;\n"
       "      thirteen values that mean nothing, six partial strobes and the key\n"
-      "      at the neighboring words changed nothing\n",
-      g_boards_default, g_boards_max, g_boards_max + 1u);
+      "      at the neighboring words changed nothing\n"
+      "    THE VIDEO CONTROLLER'S SIZE, page 2's word 39: %s\n",
+      g_boards_default, g_boards_max, g_boards_max + 1u,
+      g_video_width ? "its marker over the size given, held against writes" : "UNMAPPED, none given");
   return 0;
 }

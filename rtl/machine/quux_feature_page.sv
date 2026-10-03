@@ -32,7 +32,11 @@
 //     16   the number of interval timers, 3 (revision 10, contract Q11)
 //     17   the MACRO DISPATCH MEMORY's entries, 1,024 (revision 12,
 //          contract H8a; `cadr_microcycle.sv`)
-//     20-77  0
+//     20-24  on revision 13 the board name (contract HD §6.4): up to 20
+//          printable ASCII characters, 4 to a word in <31:0>, the first in
+//          <7:0>, zero bytes after the last; each board's top level gives
+//          it.  0 below revision 13 and where no name is given
+//     25-77  0
 //
 // And the registers (`Machine::bus_read` and `bus_write`):
 //
@@ -88,8 +92,9 @@
 // edge, K ticks after it, so at K >= 4 they are cleared a tick before it
 // and nothing is held off `SINTR` for them (contract Q11, section 4).
 //
-// Words 11 to 13 are the display's: the video controller at the bitstreams'
-// 1280 by 1024, 40 words a line.  The values are parameters that `cadr_machine.sv` sets
+// Words 11 to 13 are the display's: the video controller at the board's
+// size, `cadr_machine.sv`'s `VIDEO_WIDTH` by `VIDEO_HEIGHT`, a line its width
+// in 32-bit words.  The values are parameters that `cadr_machine.sv` sets
 // from the one place each is decided, so this page and the thing it
 // describes cannot disagree by an edit to one of them.
 //
@@ -151,6 +156,10 @@ module quux_feature_page #(
     parameter int unsigned SCREEN_HEIGHT  = 1024,
     parameter int unsigned SCREEN_WPL     = 40,
     parameter logic [31:0] SCREEN_BUFFER  = 32'o17000000,
+    // Words 20-24, revision 13's board name (contract HD §6.4), as
+    // `cadr_machine.sv` lays it out: word 20 + k in `<32k+31:32k>`.  Read 0
+    // below revision 13.
+    parameter logic [159:0] BOARD_NAME_WORDS = '0,
     // 32, QUUX to revision 12; 40, revision 13, whose file device takes
     // 28-bit addresses and main memory's size in 28 bits
     // (`quux_file_device.sv`).  The words above that change with it are
@@ -372,6 +381,9 @@ module quux_feature_page #(
         8'o15:   word = OPTIONAL_DEVICES;
         8'o16:   word = TIMERS;
         8'o17:   word = MACRO_ENTRIES;
+        // The board name, revision 13's (contract HD §6.4).
+        8'o20, 8'o21, 8'o22, 8'o23, 8'o24:
+                 word = WORD_BITS > 32 ? BOARD_NAME_WORDS[32 * (32'(which) - 32'o20) +: 32] : 32'd0;
         8'o100:  word = {24'd0, fd_irq, chaos_ireq, in_irq, disk_irq, timer_pending};
         8'o101:  word = {26'd0, err[2], 1'b0, err[1], 2'b00, err[0]};
         8'o102:  word = {31'd0, errstop};

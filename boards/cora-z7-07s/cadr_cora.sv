@@ -867,7 +867,15 @@ module cadr_cora #(
   localparam logic [31:0] PROVE_WORD = 32'h8A5C_36E1;
   localparam logic [31:0] PROVE_ECHO = cadr_ddr_map::main_byte_address(22'o12345706);
 
+  // **THE BOARD NAME** (contract HD §6.3), which revision 13's feature words
+  // 20-24 would give; reserved, this board running the CADR alone, whose
+  // machine has no feature page and reads none of these.
+  localparam int unsigned VIDEO_W = 1280;
+  localparam int unsigned VIDEO_H = 1024;
+  localparam logic [8*64-1:0] BOARD = "Cora Z7-07S";
+
   cadr_machine #(
+      .VIDEO_WIDTH(VIDEO_W), .VIDEO_HEIGHT(VIDEO_H), .BOARD_NAME(BOARD),
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),

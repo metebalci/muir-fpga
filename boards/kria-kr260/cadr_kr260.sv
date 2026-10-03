@@ -322,7 +322,20 @@ module cadr_kr260 #(
   logic [26:0] tick;
   always_ff @(posedge clk) tick <= tick + 27'd1;
 
+  // **QUUX'S VIDEO CONTROLLER AND THE BOARD NAME** (contract HD): the size
+  // this board's QUUX gives its band in feature words 11 and 12, which its
+  // display output shows and its console's word 39 says to the programs on
+  // the processing system, and the name revision 13's feature words 20-24
+  // give.  One place each, so the four cannot disagree by an edit to one;
+  // `build/machine_param.pass` holds them equal.
+  // **THE RASTER'S OWN 1920 BY 1080** (contract HD): QUUX fills the
+  // display, every column and every row of it.
+  localparam int unsigned VIDEO_W = 1920;
+  localparam int unsigned VIDEO_H = 1080;
+  localparam logic [8*64-1:0] BOARD = "Kria KR260";
+
   cadr_machine #(
+      .VIDEO_WIDTH(VIDEO_W), .VIDEO_HEIGHT(VIDEO_H), .BOARD_NAME(BOARD),
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),
@@ -1291,9 +1304,10 @@ module cadr_kr260 #(
     // (`cadr_kr260_pixel_clock.sv`).  At that raster the CADR's two screens
     // sit side by side at 1:1 with no overlap, upright and turned, spread so
     // that the margins at both sides and the gap between are equal (192
-    // columns each upright), and QUUX's 1280 by 1024 fits upright with black
-    // to its right; the module's placement rule puts them there and
-    // `build/display_out_kr260.pass` holds the eight edges.
+    // columns each upright), one screen shown alone is centered, and QUUX's
+    // video controller is the raster's own 1920 by 1080 and fills it; the
+    // module's placement rule puts them there and
+    // `build/display_out_kr260.pass` and `.quux.pass` hold the edges.
     //
     // **THE MEMORY SIDE IS `S_AXI_HP3_FPD`**, the Zynq boards' `S_AXI_HP3`'s
     // role: off the machine's port and off the pack side's, sharing XPI 5
@@ -1349,14 +1363,14 @@ module cadr_kr260 #(
         .H_ACTIVE(1920), .H_FRONT(88), .H_SYNC(44), .H_BACK(148),
         .V_ACTIVE(1080), .V_FRONT(4),  .V_SYNC(5),  .V_BACK(36),
         // The CADR's two screens spread across the raster's width, the left
-        // margin, the gap and the right margin equal; QUUX's one picture
-        // stays at the left edge.
+        // margin, the gap and the right margin equal, and one screen alone
+        // centered; QUUX's picture is the raster's size and fills it.
         .SPREAD(MACHINE == "cadr" ? 1 : 0),
-        // QUUX shows the video controller, 1280 by 1024 at 40 words a line;
+        // QUUX shows the video controller at the board's size, `VIDEO_W` by `VIDEO_H`;
         // the CADR its first board's 768 by 963 at 24, and the color board.
-        .PIC_W         (MACHINE == "quux" ? 1280 : 768),
-        .PIC_H         (MACHINE == "quux" ? 1024 : 963),
-        .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 24)
+        .PIC_W         (MACHINE == "quux" ? VIDEO_W : 768),
+        .PIC_H         (MACHINE == "quux" ? VIDEO_H : 963),
+        .WORDS_PER_LINE(MACHINE == "quux" ? VIDEO_W / 32 : 24)
     ) u_display (
         .clk(clk), .rst(disp_rst), .fabric_rst(rst),
         .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
@@ -1424,6 +1438,8 @@ module cadr_kr260 #(
     /* verilator lint_on UNUSEDSIGNAL */
 
     cadr_console #(
+        .VIDEO_WIDTH(MACHINE == "quux" ? VIDEO_W : 0),
+        .VIDEO_HEIGHT(MACHINE == "quux" ? VIDEO_H : 0),
         .REG_BASE(32'hB000_0000), .ID_W(16), .LEN_W(8),
         .MEM_BOARDS_DEFAULT(BOARDS_DEFAULT), .MEM_BOARDS_MAX(BOARDS_MAX)
     ) u_console (

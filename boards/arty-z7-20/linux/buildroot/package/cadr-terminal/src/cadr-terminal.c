@@ -136,10 +136,12 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include <cadr/cadr_endpoint.h>
 #include <cadr/cadr_log.h>
 #include <cadr/cadr_mem.h>
+#include <cadr/cadr_video.h>
 
 #include <cadr/cadr_input_link.h>
 
@@ -431,15 +433,39 @@ int main(int argc, char **argv)
 	// it runs anyway.
 	if (!no_guard && cadr_guard(mem, "the display's window") < 0)
 		return 1;
+	// 1b. **WHICH SIZE THE SCREEN IS, FROM THE BITSTREAM** (contract HD):
+	// the console's word 39, QUUX's video controller's size, read through
+	// the console's face, which every bitstream the guard passes has.  A
+	// machine and a bitstream that disagree are refused: `--machine cadr`
+	// on QUUX's, whose word says a video controller.
+	struct cadr_video video;
+	{
+		volatile uint32_t *con = cadr_map(mem, CADR_BOARD_CONSOLE_BASE, 4u * (CADR_VIDEO_WORD + 1u),
+						  "the console's face");
+		if (!con)
+			return 1;
+		const uint32_t word = con[CADR_VIDEO_WORD];
+		munmap((void *)con, 4u * (CADR_VIDEO_WORD + 1u));
+		char why[200];
+		int old = 0;
+		if (screen_video_for(machine, word, &video, &old, why, sizeof why) != 0) {
+			say("%s", why);
+			return 2;
+		}
+		if (old)
+			say("the console's word 39 says no video controller: this QUUX bitstream is "
+			    "older than the word, and its video controller is %ux%u", video.width,
+			    video.height);
+	}
 	// 2. The window.
-	const unsigned window_bytes = screen_window_bytes(machine);
+	const unsigned window_bytes = screen_window_bytes(machine, &video);
 	volatile uint32_t *window = cadr_map(mem, window_phys, window_bytes,
 					     "the display's window");
 	if (!window)
 		return 1;
 
 	struct screen_frame frame;
-	screen_frame_init_for(&frame, machine, bow);
+	screen_frame_init_for(&frame, machine, bow, &video);
 	screen_frame_read(&frame, window);
 	say("the machine is %s (--machine): its display's window is %u KB at 0x%08x; the "
 	    "screen is %ux%u, %u words a line, %u of the window's %u words, one bit a pixel, "

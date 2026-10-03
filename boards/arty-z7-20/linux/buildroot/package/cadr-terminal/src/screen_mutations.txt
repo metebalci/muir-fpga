@@ -1670,7 +1670,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @file screen_frame.c
 @why QUUX's word 40 bit 0 is the first pixel of line 1; at the CADR's 24 words a line it is pixel 512 of line 1
 @old
-	f->words_per_line = SCREEN_MONO_WORDS_PER_LINE;
+	f->words_per_line = video->words_per_line;
 @new
 	f->words_per_line = SCREEN_WORDS_PER_LINE;
 @end
@@ -1679,7 +1679,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @file screen_frame.c
 @why a viewer of QUUX's screen is told 1280x1024, and a screen of 963 lines is told something else
 @old
-	f->height = SCREEN_MONO_HEIGHT;
+	f->height = video->height;
 @new
 	f->height = SCREEN_HEIGHT;
 @end
@@ -1688,7 +1688,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @file screen_frame.c
 @why a viewer of QUUX's screen is told 1280 pixels across, and 768 is the CADR's
 @old
-	f->width = SCREEN_MONO_WIDTH;
+	f->width = video->width;
 @new
 	f->width = SCREEN_WIDTH;
 @end
@@ -1697,7 +1697,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @file screen_frame.c
 @why the frame takes all 40,960 words: a screen lit only in its last word is not blank
 @old
-	f->visible_words = SCREEN_MONO_VISIBLE_WORDS;
+	f->visible_words = video->words;
 @new
 	f->visible_words = SCREEN_VISIBLE_WORDS;
 @end
@@ -1707,10 +1707,10 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @why --machine quux must give the video controller's frame, 1280x1024 at 40 words a line
 @old
 	if (m == SCREEN_MACHINE_QUUX)
-		screen_frame_init_mono(f, black_on_white);
+		screen_frame_init_mono(f, black_on_white, video);
 @new
 	if (m == SCREEN_MACHINE_CADR)
-		screen_frame_init_mono(f, black_on_white);
+		screen_frame_init_mono(f, black_on_white, video);
 @end
 
 @mutation the-machine-is-read-without-case
@@ -1753,7 +1753,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @file screen_frame.c
 @why QUUX's window is the video controller's 40,960 words, 163,840 bytes; the CADR's 128 KB stops 8,192 words short
 @old
-	return m == SCREEN_MACHINE_QUUX ? SCREEN_MONO_WINDOW_BYTES : SCREEN_WINDOW_BYTES;
+	return m == SCREEN_MACHINE_QUUX ? video->words * 4u : SCREEN_WINDOW_BYTES;
 @new
 	return SCREEN_WINDOW_BYTES;
 @end
@@ -1872,4 +1872,59 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	k->prefix = 0;
 	k->latches = 0;
 }
+@end
+
+@mutation the-video-controller-at-the-old-size-whatever-word-39-says
+@file screen_frame.c
+@why QUUX's screen is the size the bitstream's word 39 says, 1920x1080 on the Kria KR260
+@old
+	*video = v;
+	return 0;
+}
+@new
+	(void)v;
+	cadr_video_old(video);
+	return 0;
+}
+@end
+
+@mutation the-cadr-taken-on-a-quux-bitstream
+@file screen_frame.c
+@why --machine cadr on a bitstream whose word 39 says a video controller is refused
+@old
+		if (said == 1) {
+			snprintf(why, whylen, "--machine cadr, and the console's word 39 says this "
+@new
+		if (said == 2) {
+			snprintf(why, whylen, "--machine cadr, and the console's word 39 says this "
+@end
+
+@mutation a-video-size-no-quux-has-taken
+@file screen_frame.c
+@why a word 39 with the marker over a size no QUUX has is refused
+@old
+	if (said < 0) {
+@new
+	if (said < -1) {
+@end
+
+@mutation the-window-mapped-at-the-old-size
+@file screen_frame.c
+@why the window mapped is the video controller's buffer at the bitstream's size
+@old
+	return m == SCREEN_MACHINE_QUUX ? video->words * 4u : SCREEN_WINDOW_BYTES;
+@new
+	return m == SCREEN_MACHINE_QUUX ? 40960u * 4u : SCREEN_WINDOW_BYTES;
+@end
+
+@mutation an-old-quux-bitstream-not-said-to-be-old
+@file screen_frame.c
+@why a QUUX bitstream older than word 39 is served at 1280x1024 and said so
+@old
+		cadr_video_old(video);
+		*old = 1;
+		return 0;
+@new
+		cadr_video_old(video);
+		return 0;
 @end

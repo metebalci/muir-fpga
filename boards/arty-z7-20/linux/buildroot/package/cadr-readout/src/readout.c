@@ -250,6 +250,11 @@ int ro_quux_revision(struct readout *r)
 	return (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
 }
 
+int ro_video(struct readout *r, struct cadr_video *v)
+{
+	return cadr_video_decode(r->read(r, RO_VIDEO), v);
+}
+
 unsigned ro_main_boards(struct readout *r)
 {
 	const uint32_t w = r->read(r, RO_BOARDS);
@@ -528,13 +533,29 @@ int img_alloc_machine(struct cadr_image *img, unsigned boards, int quux)
 
 int img_alloc_revision(struct cadr_image *img, unsigned boards, int quux, int revision)
 {
+	return img_alloc_video(img, boards, quux, revision, CADR_VIDEO_OLD_WIDTH, CADR_VIDEO_OLD_HEIGHT);
+}
+
+int img_alloc_video(struct cadr_image *img, unsigned boards, int quux, int revision,
+		    unsigned width, unsigned height)
+{
 	memset(img, 0, sizeof *img);
+	if (quux && (width == 0 || height == 0 || width % 32u != 0 ||
+		     width > CADR_VIDEO_MAX_WIDTH || height > CADR_VIDEO_MAX_HEIGHT))
+		return -1;
 	img->boards = boards;
 	img->quux = quux != 0;
 	img->rev13 = quux && revision == 13;
 	img->pdl_words = quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS;
 	img->l2_words = img->rev13 ? IMG_L2_WORDS_13 : quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS;
+	img->video_width = quux ? width : 0u;
+	img->video_height = quux ? height : 0u;
+#if CHK_MUTATE == 39
+	// A checkpoint mutant: the buffer at the old bitstreams' size.
 	img->tv_words = quux ? IMG_QUUX_TV_WORDS : IMG_TV_WORDS;
+#else
+	img->tv_words = quux ? height * (width / 32u) : IMG_TV_WORDS;
+#endif
 	img->dmem_words = img->rev13 ? IMG_DMEM_WORDS_13 : IMG_DMEM_WORDS;
 	img->l1_words = img->rev13 ? IMG_L1_WORDS_13 : IMG_L1_WORDS;
 #if CHK_MUTATE == 29

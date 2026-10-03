@@ -33,8 +33,12 @@
 //!             at level 1 `177` and level 2 `7777`, a store with both
 //!             enables, a (type, map bit) dispatch above 2,047, and a page
 //!             fault on `<31:28>`
-//!   devices   the feature page's words 0 to 17 at revision 13, and the file
-//!             device's rings at 28-bit addresses on 8-word lines
+//!   devices   the feature page's words 0 to 25 at revision 13, the board
+//!             name in 20 to 24 among them, and the file device's rings at
+//!             28-bit addresses on 8-word lines
+//!   devices_hd, devices_name, space_hd
+//!             `devices` and `space` on another board: 1920 by 1080 with a
+//!             20-character name, and a 9-character name ([`variant`])
 //!   disk      block-disk's packed and 4-byte transfers through the channel,
 //!             the memory port and the cache, on a pack the testbench serves
 //!
@@ -727,8 +731,36 @@ const WINDOW_13: u64 = 0o1760000000;
 const OLD_REGISTER_PAGE: u64 = 0o17777400;
 const SPY_13: u64 = 0o17773000;
 const HIGH_13: u64 = 0o20000000;
-/// The window's buffer, the video controller's 40,960 words.
-const FB_WORDS_13: u64 = 40960;
+/// **THE BOARD A PROGRAM IS HELD ON** (contract HD §1, §6): the video
+/// controller's size and the board name the machine under test was built
+/// with, set from the program's name ([`variant`]) before anything is built,
+/// so that muir's machine, the program and the fabric's parameters agree.
+/// 1280 by 1024 and no name unless a variant says otherwise.
+static VIDEO: std::sync::Mutex<((usize, usize), &'static str)> = std::sync::Mutex::new(((1280, 1024), ""));
+
+/// The window's buffer, the video controller's words: 40,960 at 1280 by
+/// 1024, 64,800 at 1920 by 1080.
+fn fb_words_13() -> u64 {
+    let ((w, h), _) = *VIDEO.lock().unwrap();
+    (w / 32 * h) as u64
+}
+
+/// A program and its board: `devices` and `space` as they are, and
+/// `devices_hd` and `space_hd` at 1920 by 1080 with a 20-character name,
+/// whose last word holds four characters and no zero byte, and
+/// `devices_name` at 1280 by 1024 with "DE25-Nano", whose nine characters
+/// end inside word 22.
+fn variant(name: &str) -> (&str, (usize, usize), &'static str) {
+    match name {
+        "devices_hd" => ("devices", (1920, 1080), HD_TEST_NAME),
+        "space_hd" => ("space", (1920, 1080), HD_TEST_NAME),
+        "devices_name" => ("devices", (1280, 1024), "DE25-Nano"),
+        _ => (name, (1280, 1024), ""),
+    }
+}
+
+/// Twenty printable characters, the most the page holds.
+const HD_TEST_NAME: &str = "Full HD test, 20 ch.";
 
 /// M memory the memory programs keep a rolling word and an address in.
 const M_W: u64 = 0o10;
@@ -820,7 +852,8 @@ fn space_program(boards: u32) -> Prog {
     let past = p.through(5, main_end);
     let spy = p.through(6, SPY_13);
     let window_2 = p.through(7, WINDOW_13 + 0o2000);
-    let past_window = p.through(8, WINDOW_13 + FB_WORDS_13);
+    let past_window = p.through(8, WINDOW_13 + fb_words_13());
+    let window_last = p.through(12, WINDOW_13 + fb_words_13() - 1);
     let gap = p.through(9, 0o400000000);
     let below_page = p.through(10, 0o1777776000);
 
@@ -862,6 +895,11 @@ fn space_program(boards: u32) -> Prog {
     // and main memory past 22 bits are cached).
     p.read_a(0o114, w(0o005, 0x1234_5678), "the window's word 7 again, a hit");
     p.read_a(0o107, w(0o025, 0x1357_9bdf), "main memory at 20000005 again, a hit");
+    // The buffer's last word at the board's size, which one board size
+    // short would leave as nothing.
+    p.a(0o123, window_last as Word).a(0o124, w(0o025, 0x0ace_1357));
+    p.write_a(0o124, 0o123).read_a(0o123, w(0o005, 0x0ace_1357), "the window's last word");
+    p.read_a(r101, 0, "the window's last word: no NXM");
     // Nothing past the window's buffer, between main memory and the window,
     // and between the window and the register page; each sets the NXM bit,
     // cleared between.
@@ -904,7 +942,9 @@ fn devices_program() -> Prog {
     let reg = p.through(1, REGISTER_PAGE_13);
     // muir's own answers, from a revision-13 machine of the same size.
     let mut m = machine(&[], BOARDS_13);
-    for k in 0..0o20u64 {
+    // Words 0 to 25: to 17 the machine's sizes, 20 to 24 the board name,
+    // 25 nothing.
+    for k in 0..0o26u64 {
         let want = m.bus_read((REGISTER_PAGE_13 + k) as u32);
         p.a(0o103, (reg + k) as Word);
         p.read_a(0o103, want, &format!("feature word {k:o}"));
@@ -1281,14 +1321,14 @@ fn program(name: &str) -> Prog {
         "byte" => byte_program(),
         "dispatch" => dispatch_program(),
         "map" => map_program().0,
-        "space" => space_program(BOARDS_13),
+        "space" | "space_hd" => space_program(BOARDS_13),
         "space512" => space_program(512),
         "lines" => lines_program(),
         "fused" => fused_program(),
-        "devices" => devices_program(),
+        "devices" | "devices_hd" | "devices_name" => devices_program(),
         "disk" => disk_program(),
         _ => {
-            eprintln!("quux13: no program `{name}`; they are alu, byte, dispatch, map, space, space512, lines, fused, devices and disk");
+            eprintln!("quux13: no program `{name}`; they are alu, byte, dispatch, map, space, space512, space_hd, lines, fused, devices, devices_hd, devices_name and disk");
             std::process::exit(2);
         }
     }
@@ -1300,6 +1340,9 @@ fn machine(prom: &[Insn], boards: u32) -> Machine {
     let mut m = Which::Quux.machine(prom);
     m.geometry = REV13;
     m.main = vec![0; (boards as usize) << 16];
+    let ((w, h), name) = *VIDEO.lock().unwrap();
+    m.tv.set_video_size(w, h);
+    m.set_board_name(name).expect("quux13: the board name");
     m
 }
 
@@ -1309,7 +1352,7 @@ fn machine(prom: &[Insn], boards: u32) -> Machine {
 fn boards(name: &str) -> u32 {
     if name == "space512" {
         512
-    } else if matches!(name, "space" | "lines" | "fused" | "devices" | "disk") {
+    } else if matches!(name, "space" | "lines" | "fused" | "devices" | "disk" | "devices_hd" | "space_hd" | "devices_name") {
         BOARDS_13
     } else {
         32
@@ -1361,6 +1404,8 @@ fn main() {
         eprintln!("usage: quux13 --program <name> [--sync-cycle-ticks K [--sync-ilong-ticks L]] [--prom]");
         std::process::exit(2);
     };
+    let (_, size, board_name) = variant(&name);
+    *VIDEO.lock().unwrap() = (size, board_name);
     let prog = program(&name);
     let prom = prog.prom();
 

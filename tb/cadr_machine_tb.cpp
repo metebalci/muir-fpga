@@ -684,10 +684,15 @@ int main(int argc, char **argv) {
   // QUUX's main memory: its words, when the operation standing is due, and
   // the writes the processor's cycles owe it, in order.
   constexpr uint32_t kMainBase = 0x1B000000u;
-  // The video controller's frame buffer: `tv::BUFFER`, 40,960 words, at the
-  // display's base, `cadr_ddr_map::DISPLAY_BASE` on the Zynq boards.
+  // The video controller's frame buffer: `tv::BUFFER`, 40,960 words at 1280
+  // by 1024 unless the build gives the machine another size and this file
+  // its words (`CADR_TB_VIDEO_WORDS`, the Makefile's `QUUX13_G_<program>`),
+  // at the display's base, `cadr_ddr_map::DISPLAY_BASE` on the Zynq boards.
   constexpr uint32_t kFbBase = 0x1C000000u;
-  constexpr uint32_t kFb = 017000000u, kFbWords = 40960u;
+#ifndef CADR_TB_VIDEO_WORDS
+#define CADR_TB_VIDEO_WORDS 40960u
+#endif
+  constexpr uint32_t kFb = 017000000u, kFbWords = CADR_TB_VIDEO_WORDS;
   auto q_fb = [&](uint32_t p) { return p >= kFb && p - kFb < kFbWords; };
   long q_fb_fills = 0, q_fb_writes = 0;
   std::map<uint32_t, uint32_t> q_mem;

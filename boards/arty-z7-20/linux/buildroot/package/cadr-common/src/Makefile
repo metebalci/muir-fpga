@@ -22,7 +22,7 @@
 LIB     := libcadr-common.a
 SOURCES := cadr_log.c cadr_mem.c cadr_input_link.c cadr_endpoint.c
 HEADERS := cadr/cadr_log.h cadr/cadr_mem.h cadr/cadr_input_link.h \
-           cadr/cadr_endpoint.h cadr/cadr_board.h
+           cadr/cadr_endpoint.h cadr/cadr_board.h cadr/cadr_video.h
 OBJECTS := $(SOURCES:.c=.o)
 
 AR ?= ar

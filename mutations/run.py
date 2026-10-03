@@ -2221,7 +2221,9 @@ CHECKS = {
         "flags": ["-O2", "-CFLAGS", "-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX",
                   "-GH_ACTIVE=1920", "-GH_FRONT=88", "-GH_SYNC=44", "-GH_BACK=148",
                   "-GV_ACTIVE=1080", "-GV_FRONT=4", "-GV_SYNC=5", "-GV_BACK=36",
-                  "-GPIC_W=1280", "-GPIC_H=1024", "-GWORDS_PER_LINE=40",
+                  # The Kria KR260's QUUX at the raster's own 1920 by 1080
+                  # (contract HD), as the Makefile builds it.
+                  "-GPIC_W=1920", "-GPIC_H=1080", "-GWORDS_PER_LINE=60",
                   "-GCOLOR_BASE=470024192"],
         "golden": None,
         "machine": "quux",
@@ -2717,12 +2719,15 @@ CHECKS = {
 }
 
 # The console at revision 13's memory boards (`console13.pass`): word 37 from
-# 512 and up to 1,024, word 38 saying so.  The harness takes the two as
+# 512 and up to 1,024, word 38 saying so; and word 39 a video controller of
+# 1920 by 1080.  The harness takes the two as
 # parameters and the testbench as defines, as the Makefile builds it.
 CHECKS["console13"] = dict(CHECKS["console"], **{
     "flags": CHECKS["console"]["flags"] + [
         "-GMEM_BOARDS_DEFAULT=512", "-GMEM_BOARDS_MAX=1024",
-        "-CFLAGS", "-DCONSOLE_BOARDS_DEFAULT=512u", "-CFLAGS", "-DCONSOLE_BOARDS_MAX=1024u"],
+        "-CFLAGS", "-DCONSOLE_BOARDS_DEFAULT=512u", "-CFLAGS", "-DCONSOLE_BOARDS_MAX=1024u",
+        "-GVIDEO_WIDTH=1920", "-GVIDEO_HEIGHT=1080",
+        "-CFLAGS", "-DCONSOLE_VIDEO_WIDTH=1920u", "-CFLAGS", "-DCONSOLE_VIDEO_HEIGHT=1080u"],
     "machine": "quux",
 })
 
@@ -2771,14 +2776,21 @@ PENDING = {}
 # 4,096, 8,192 and 4,096 entries: the same machine under `CADR_RDW_POISON`
 # on the `map` program, which writes all three; and on the cache's RAMs,
 # under `CADR_RDW_POISON_CACHE` as well, on the `lines` program.
-QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map", "space", "space512", "lines", "fused", "devices", "disk")
+# And the board's own words (contract HD): the Makefile's `QUUX13_G_<program>`
+# for the three programs on another board's size and name.
+QUUX13_PROGRAMS = ("alu", "byte", "dispatch", "map", "space", "space512", "lines", "fused", "devices", "disk",
+                   "devices_hd", "devices_name", "space_hd")
 QUUX13_TB_BASE = "170156032"
+_HD = ["-GVIDEO_WIDTH=1920", "-GVIDEO_HEIGHT=1080", '-GBOARD_NAME="Full HD test, 20 ch."',
+       "-CFLAGS", "-DCADR_TB_VIDEO_WORDS=64800u"]
+QUUX13_BOARD_FLAGS = {"devices_hd": _HD, "space_hd": _HD, "devices_name": ['-GBOARD_NAME="DE25-Nano"']}
 for _p in QUUX13_PROGRAMS:
     CHECKS["quux13_%s_quux" % _p] = dict(MACHINE_CHECK, **{
         "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
         "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"', "-GWORD_BITS=40",
                                            "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE,
-                                           "-CFLAGS", "-DQUUX13_TB_BASE=%su" % QUUX13_TB_BASE],
+                                           "-CFLAGS", "-DQUUX13_TB_BASE=%su" % QUUX13_TB_BASE]
+                 + QUUX13_BOARD_FLAGS.get(_p, []),
         "golden": "quux13_%s.quux.golden" % _p,
         "prom": "quux13_%s_prom.hex" % _p,
         "machine": "quux",
@@ -3742,6 +3754,10 @@ def check_makefile():
     # `displayport` is the Kria KR260's DisplayPort link, `cadr-displayport`:
     # C under `boards/`, closed the way `serial` is, with a mutation list of
     # its own in its package run by its own `mutate.py` from its own check.
+    # `machine_guard` lints the machine with a board name and a video size
+    # just inside and just outside the rule, each refusal beside its negative
+    # control, so a guard that refused all or nothing fails it; a mutation
+    # of the guard is that same pair.
     # `br_force` is Python and the Makefile's own rebuild macro over the four
     # boards' defconfigs, with nothing verilated; it was shown to catch the
     # fault it exists for by restoring that fault (U-Boot forced on the Kria
@@ -3753,7 +3769,7 @@ def check_makefile():
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora",
                            "de25_pins", "de25_linux", "kr260_linux", "displayport",
-                           "br_force"}
+                           "br_force", "machine_guard"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four
