@@ -51,7 +51,7 @@ DE25-Nano's synthesis read back revision 13's machine, word and PROM image by
 name.
 
 These fits were built from `857e7bb`, QUUX revision 13 with its own boot
-PROM, version 2001, and 512 memory boards out of reset, with muir pinned at
+PROM, version 2001, and 32MW of main memory out of reset, with muir pinned at
 `a6fa3b3`. Revision 13 is at five ticks on the Arty Z7-20 and four on the
 DE25-Nano. Both stamps read `857e7bb0`, the tree clean.
 

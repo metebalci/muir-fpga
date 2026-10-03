@@ -87,7 +87,7 @@ word not in the table reads 0 and takes no write.
 | `0x11C` | RESP_PROD | read, write | Read: words 165 and 170, which are always equal. Write `{EPOCH, <15:0> index}`: the commands up to `index` are complete (below). |
 | `0x120` | RESP_CONS | read | The response consumer, word 171. |
 | `0x124` | HANDLES | read, write | Write `{EPOCH, <7:0> count}`: the handles open, 0 to 64, from the next accepted completion on. Read: the count the machine sees in 161 `<23:16>`. |
-| `0x128` | MEM_WORDS | read | The words of main memory this bitstream has, the memory boards' count times 65,536: `0x20_0000` today. |
+| `0x128` | MEM_WORDS | read | The words of main memory the machine has, the amount `--main-memory-size` sets (console page 2 word 37, sixteen 64K-word units a megaword): `0x200_0000` at revision 13's default of 32MW, `0x20_0000` at revision 12's 2MW. |
 
 A word written `{EPOCH, ...}` carries the epoch in its top sixteen bits.
 
