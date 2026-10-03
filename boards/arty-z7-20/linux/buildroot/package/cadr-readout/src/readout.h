@@ -19,6 +19,7 @@
 #ifndef READOUT_H
 #define READOUT_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <cadr/cadr_board.h>
@@ -72,12 +73,16 @@ enum ro_p0 { RO_IDENT = 0, RO_STAT = 1, RO_CYCLES = 2, RO_CYCLESH = 3,
 #define RO_MAP_CHANNELS IMG_MAP_CHANNELS
 #define RO_COLOR_MAP_WORD(board, color) \
 	(((board) ? RO_PAGE5 : RO_PAGE4) + (unsigned)(color))
-// **HOW MANY MEMORY BOARDS THE MACHINE HAS, page 2's word 37**, muir's
-// `--main-memory-boards`: the marker "BD" in bits 31 to 16 and the count of
-// 64K-word boards in bits 10 to 0, bits 15 to 11 clear: 1 to 60 on the CADR
-// and QUUX to revision 12, and on revision 13 1 to what the board keeps for
-// its main memory, never more than muir's 1,024.  A fabric older than the
-// word reads `RO_UNMAPPED` there, and its machine has 32 boards fixed.
+// **THE MACHINE'S MAIN MEMORY, page 2's word 37**: the marker "BD" in bits
+// 31 to 16 and a count of 64K-word units in bits 10 to 0, bits 15 to 11
+// clear.  On the CADR the units are its memory boards, muir's
+// `--main-memory-boards`, 1 to 60.  **QUUX HAS NO MEMORY BOARDS**: the same
+// word holds its main memory as an amount, muir's `--main-memory-size <n>MW`,
+// sixteen units a megaword, 1MW to 3MW on revision 12 and on revision 13 1MW
+// to what the board keeps for it, never more than muir's 64MW; everything
+// said to a person about it is in megawords (`ro_main_amount`).  A fabric
+// older than the word reads `RO_UNMAPPED` there, and its machine has 32
+// units fixed, the CADR's 32 boards and QUUX's 2MW.
 #define RO_BOARDS       37u
 #define RO_BOARDS_MARK  0x4244u	/* "BD" */
 #define RO_BOARDS_MAX   1024u
@@ -176,14 +181,29 @@ int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l);
 // for a stale echo or a word that is neither.
 int ro_quux_revision(struct readout *r);
 
-// **HOW MANY MEMORY BOARDS THE MACHINE HAS**, out of `RO_BOARDS`: 1 to 1,024,
-// or 0 when the word carries no marker --- a fabric older than it, whose
-// machine has 32 boards fixed --- or a count outside 1 to 1,024 or with bits
-// 15 to 11 set, which no fabric holds.  Whether the machine takes that many
-// is its caller's: the CADR's backplane holds 60.
+// **HOW MUCH MAIN MEMORY THE MACHINE HAS**, out of `RO_BOARDS`, in 64K-word
+// units --- the CADR's memory boards, or QUUX's amount sixteen to a
+// megaword: 1 to 1,024, or 0 when the word carries no marker --- a fabric
+// older than it, whose machine has 32 fixed --- or a count outside 1 to 1,024
+// or with bits 15 to 11 set, which no fabric holds.  Whether the machine
+// takes that many is its caller's: the CADR's backplane holds 60.
 // A checkpoint of a machine is of ALL its memory, so this is what one is
 // sized by, and a caller does not guess it.
 unsigned ro_main_boards(struct readout *r);
+
+// **QUUX's MAIN MEMORY AS A PERSON READS IT**, `units` of 64K words written
+// as an amount into `out`: whole megawords with the unit, `32MW`, or
+// kilowords, `3840KW`, when the units are not a whole number of megawords,
+// as muir's own report has it.  Never boards: QUUX has none.
+#define RO_MW_UNITS 16u	/* a megaword is sixteen 64K-word units */
+void ro_main_amount(unsigned units, char *out, size_t n);
+
+// **AND AS A FLAG TAKES IT**, muir's `quux --main-memory-size <n>MW`: digits,
+// then `MW`, and nothing else --- no other unit, no fraction, no sign, no
+// space, no bare number and never a bare M, which could be read as
+// megabytes.  0 with `*units` set to sixteen a megaword, or -1.  Whether the
+// amount is in the machine's range is the caller's.
+int ro_parse_megawords(const char *text, unsigned *units);
 
 // QUUX's own state, into `img->qx`: the clocks, the keyboard and mouse,
 // block-disk and the page.  **THE CLOCKS RUN WHILE THEY ARE READ**, so each

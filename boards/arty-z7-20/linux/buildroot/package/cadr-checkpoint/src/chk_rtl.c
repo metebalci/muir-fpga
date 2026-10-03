@@ -1514,6 +1514,12 @@ const char *chk_rtl_mutation(void)
 	return "a machine found running written with SRUN clear, as the halt left it";
 #elif CHK_MUTATE == 34
 	return "a machine found halted written as running";
+#elif CHK_MUTATE == 35
+	return "QUUX's main memory taken as --boards, the CADR's flag";
+#elif CHK_MUTATE == 36
+	return "QUUX's main memory written in the sidecar as boards";
+#elif CHK_MUTATE == 37
+	return "QUUX's main memory said in memory boards";
 #else
 	return NULL;
 #endif

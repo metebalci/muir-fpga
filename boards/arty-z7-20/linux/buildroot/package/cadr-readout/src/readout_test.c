@@ -571,6 +571,51 @@ int main(void)
 		m->boards_word = 0;
 	}
 
+	// ---- QUUX's main memory is an amount, never boards --------------------
+	//
+	// The same word holds QUUX's main memory in 64K-word units, sixteen a
+	// megaword, and what a person reads of it is the amount: whole
+	// megawords, or kilowords when the units are not a whole number of
+	// them, as muir's own report has it.  A flag takes `<n>MW` alone, as
+	// muir's `--main-memory-size` does: digits, then the unit, and nothing
+	// else --- never a bare number, never a bare M, no other unit, no space.
+	{
+		const struct { unsigned units; const char *want; } amounts[] = {
+			{16, "1MW"}, {32, "2MW"}, {512, "32MW"}, {1024, "64MW"},
+			{60, "3840KW"}, {1, "64KW"}, {33, "2112KW"}};
+		for (unsigned i = 0; i < sizeof amounts / sizeof amounts[0]; ++i) {
+			char got[32];
+			ro_main_amount(amounts[i].units, got, sizeof got);
+			if (strcmp(got, amounts[i].want) != 0) {
+				fprintf(stderr, "QUUX's main memory of %u units reads \"%s\", wanting \"%s\"\n",
+					amounts[i].units, got, amounts[i].want);
+				fail("QUUX's main memory as an amount", i, ~0u);
+			}
+		}
+		const struct { const char *text; int ok; unsigned units; } flags[] = {
+			{"32MW", 1, 512}, {"1MW", 1, 16}, {"64MW", 1, 1024}, {"2MW", 1, 32},
+			{"32", 0, 0}, {"32M", 0, 0}, {"32mw", 0, 0}, {"32Mw", 0, 0},
+			{"MW", 0, 0}, {"3.5MW", 0, 0}, {"32 MW", 0, 0}, {" 32MW", 0, 0},
+			{"32KW", 0, 0}, {"32MB", 0, 0}, {"-1MW", 0, 0}, {"+1MW", 0, 0},
+			{"0x20MW", 0, 0}, {"32MWW", 0, 0}, {"", 0, 0},
+			{"99999999999MW", 0, 0}, {"268435456MW", 0, 0}};
+		for (unsigned i = 0; i < sizeof flags / sizeof flags[0]; ++i) {
+			unsigned units = 0xDEADu;
+			const int rc = ro_parse_megawords(flags[i].text, &units);
+			if (flags[i].ok && (rc != 0 || units != flags[i].units)) {
+				fprintf(stderr, "\"%s\" is refused or read as %u units, wanting %u\n",
+					flags[i].text, units, flags[i].units);
+				fail("an amount in megawords this must take", i, flags[i].units);
+			} else if (!flags[i].ok && rc == 0) {
+				fprintf(stderr, "\"%s\" is taken as %u units, and is no amount in MW\n",
+					flags[i].text, units);
+				fail("a form of main memory this must refuse", i, ~0u);
+			}
+		}
+		if (ro_parse_megawords(NULL, NULL) == 0)
+			fail("no text taken as an amount", 1, 0);
+	}
+
 	printf("readout: %ld words compared through a modeled window, %lu reads "
 	       "and %lu writes, %lu refused for a stale echo, and the "
 	       "transaction audit read back field for field with an unmarked "

@@ -4,7 +4,8 @@
 // The checkpoint program: the board's machine into a file muir can open, and
 // its disks bound to it.
 //
-//     cadr-checkpoint [-o FILE] [--boards N] [--pack FILE[,UNIT]] [--no-packs]
+//     cadr-checkpoint [-o FILE] [--boards N | --main-memory-size <n>MW]
+//                     [--pack FILE[,UNIT]] [--no-packs]
 //                     [--pack-dir DIR] [--chaos-address OCTAL] [--no-display]
 //                     [--already-halted] [--leave-halted] [--packs-stopped]
 //                     [--no-guard] [--machine cadr|quux]
@@ -20,6 +21,11 @@
 // machine the bitstream is, and a checkpoint of the other machine is refused
 // before anything is read, since it would be a file of one machine's fields
 // filled from the other's.
+//
+// **MAIN MEMORY IN EACH MACHINE'S OWN WORDS.**  The CADR's is its memory
+// boards, `--boards N`; QUUX has no memory boards, and its main memory is an
+// amount, `--main-memory-size <n>MW` in muir's form.  Each is refused on the
+// other machine, and everything said about QUUX's is in megawords.
 //
 // **WHAT IT IS FOR.**  When the board goes wrong there are sixteen diagnostic
 // registers and three words beside them, and that is a keyhole.  A checkpoint
@@ -95,17 +101,22 @@
 
 // muir's own default Chaosnet address, `chaos::Config::default()`.
 #define DEFAULT_CHAOS_ADDRESS 0177001u
-// **THE MACHINE'S OWN COUNT IS THE CONSOLE'S PAGE 2 WORD 37**, muir's
-// `--main-memory-boards`, which the card sets at boot (`ro_main_boards`); this
-// is the count of a fabric older than that word, which had 32 boards fixed in
-// its top level, and muir's own default.  **A board raised past 32 cannot
-// cold-boot System 100** --- measured --- and System 1003 and later can.
+// **THE MACHINE'S OWN MAIN MEMORY IS THE CONSOLE'S PAGE 2 WORD 37**, in
+// 64K-word units: the CADR's memory boards, muir's `--main-memory-boards`, or
+// QUUX's amount, muir's `--main-memory-size`, sixteen units a megaword; the
+// card sets it at boot (`ro_main_boards`).  This is the count of a fabric
+// older than that word, which had 32 fixed in its top level, and muir's own
+// default: the CADR's 32 boards, QUUX's 2MW.  **A CADR raised past 32 boards
+// cannot cold-boot System 100** --- measured --- and System 1003 and later can.
 #define DEFAULT_BOARDS 32u
-// **REVISION 13's MAIN MEMORY IS 32M WORDS ON THE BOARDS BY DEFAULT**
-// (contract G2 §3), 512 of muir's 64K-word units, which the fabric comes up
-// with and word 37 reads, as on every revision; the most is the room the
-// board keeps for it (`cadr_board.h`).
+// **REVISION 13's MAIN MEMORY IS 32MW ON THE BOARDS BY DEFAULT**
+// (contract G2 §3), which the fabric comes up with and word 37 reads, as on
+// every revision; the most is the room the board keeps for it
+// (`cadr_board.h`), in 64K-word units.
 #define MAX_BOARDS_13 (CADR_BOARD_QUUX13_MAIN_WORDS_MAX >> 16)
+// The most revision 12 has, sixty 64K-word units, 3840KW, as the CADR's
+// backplane.
+#define MAX_BOARDS 60u
 
 // --- the face over /dev/mem ------------------------------------------------
 
@@ -130,8 +141,9 @@ static void mem_write(struct readout *r, unsigned word, uint32_t v)
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: cadr-checkpoint [-o FILE] [--boards N] [--pack FILE[,UNIT]]\n"
-		"                       [--no-packs] [--pack-dir DIR] [--chaos-address OCTAL]\n"
+		"usage: cadr-checkpoint [-o FILE] [--boards N | --main-memory-size <n>MW]\n"
+		"                       [--pack FILE[,UNIT]] [--no-packs] [--pack-dir DIR]\n"
+		"                       [--chaos-address OCTAL]\n"
 		"                       [--no-display] [--already-halted] [--leave-halted]\n"
 		"                       [--packs-stopped] [--no-guard] [--machine cadr|quux]\n"
 		"       cadr-checkpoint --halt | --start\n"
@@ -248,9 +260,11 @@ static int do_verify(const char *sidecar, char **override, unsigned overrides)
 		memcpy(b.u[u].path, spec, n);
 		b.u[u].path[n] = '\0';
 	}
-	say("%s: the checkpoint %s, taken %s, %llu microcycles, %u memory boards, "
+	char memory[64];
+	bind_memory_words(b.quux, b.boards, memory, sizeof memory);
+	say("%s: the checkpoint %s, taken %s, %llu microcycles, %s, "
 	    "%u pack(s)", sidecar, b.checkpoint, b.taken,
-	    (unsigned long long)b.microcycles, b.boards, b.present);
+	    (unsigned long long)b.microcycles, memory, b.present);
 	int chk_moved = 0;
 	const int moved = bind_verify(&b, &chk_moved, err, sizeof err);
 	if (moved < 0) {
@@ -297,7 +311,9 @@ int main(int argc, char **argv)
 	const char *out = NULL;
 	const char *verify = NULL;
 	const char *pack_dir = BIND_DIR;
-	unsigned boards = 0;	/* the machine's own unless --boards says */
+	unsigned boards = 0;	/* 64K-word units: the machine's own unless a flag says */
+	const char *boards_arg = NULL;	/* the CADR's --boards */
+	const char *size_arg = NULL;	/* QUUX's --main-memory-size */
 	unsigned long chaos = DEFAULT_CHAOS_ADDRESS;
 	int want_display = 1, leave_halted = 0, guard = 1;
 	int already_halted = 0, no_packs = 0, halt_only = 0, start_only = 0;
@@ -326,7 +342,9 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "--verify") && i + 1 < argc) {
 			verify = argv[++i];
 		} else if (!strcmp(a, "--boards") && i + 1 < argc) {
-			boards = (unsigned)strtoul(argv[++i], NULL, 0);
+			boards_arg = argv[++i];
+		} else if (!strcmp(a, "--main-memory-size") && i + 1 < argc) {
+			size_arg = argv[++i];
 		} else if (!strcmp(a, "--pack") && i + 1 < argc) {
 			if (npacks >= BIND_UNITS) {
 				say("--pack: the controller has %u unit slots",
@@ -374,10 +392,14 @@ int main(int argc, char **argv)
 		return do_verify(verify, packs, npacks);
 	if (halt_only && start_only)
 		usage();
-	if (boards && (boards < 1 || boards > MAX_BOARDS_13)) {
-		say("--boards %u: 1 to 60 of the CADR's backplane, or to %u for QUUX revision 13",
-		    boards, MAX_BOARDS_13);
-		return 2;
+	{
+		char err[256] = "";
+		const int rc = bind_memory_asked(quux, boards_arg, size_arg, MAX_BOARDS_13,
+						 &boards, err, sizeof err);
+		if (rc != 0) {
+			say("%s", err);
+			return rc;
+		}
 	}
 
 	struct readout r;
@@ -507,40 +529,50 @@ int main(int argc, char **argv)
 			say("the bitstream is QUUX revision 13: 40-bit words and packed "
 			    "main memory, checkpoint version %u", CHK_VERSION_40);
 	}
-	// **HOW MANY BOARDS, WHICH IS THE MACHINE'S AND NOT A GUESS.**  A
+	// **HOW MUCH MAIN MEMORY, WHICH IS THE MACHINE'S AND NOT A GUESS.**  A
 	// checkpoint is of all of main memory, and muir refuses to resume one
-	// under another count, so the count is the fabric's own: the console's
-	// word 37.  A fabric older than the word had 32 fixed.  A `--boards`
-	// that disagrees with the fabric is refused, because a checkpoint of
-	// fewer boards drops memory the band has and one of more invents it.
+	// under another amount, so it is the fabric's own: the console's word
+	// 37.  A fabric older than the word had 32 units fixed.  A `--boards` or
+	// `--main-memory-size` that disagrees with the fabric is refused,
+	// because a checkpoint of less drops memory the band has and one of more
+	// invents it.
+	char memory[64];
 	{
 		const unsigned fabric = ro_main_boards(&r);
+		bind_memory_words(quux, DEFAULT_BOARDS, memory, sizeof memory);
 		if (!fabric)
-			say("the console's word 37 carries no memory boards' count: this "
-			    "bitstream is older than the word and has %u boards fixed",
-			    DEFAULT_BOARDS);
+			say("the console's word 37 carries no main memory: this bitstream "
+			    "is older than the word and has %s fixed", memory);
 		const unsigned has = fabric ? fabric : DEFAULT_BOARDS;
 		if (boards && boards != has) {
-			say("--boards %u, and the machine has %u memory boards: a checkpoint "
-			    "is of all of main memory, so it is taken at the machine's own count",
-			    boards, has);
+			bind_memory_words(quux, has, memory, sizeof memory);
+			say("%s %s, and the machine has %s: a checkpoint is of all of main "
+			    "memory, so it is taken at the machine's own",
+			    quux ? "--main-memory-size" : "--boards", quux ? size_arg : boards_arg,
+			    memory);
 			return 2;
 		}
 		boards = has;
 	}
-	if (revision != 13 && boards > 60) {
-		say("the machine has %u memory boards: the backplane holds 1 to 60", boards);
+	bind_memory_words(quux, boards, memory, sizeof memory);
+	if (revision != 13 && boards > MAX_BOARDS) {
+		char most[32];
+		ro_main_amount(MAX_BOARDS, most, sizeof most);
+		if (quux)
+			say("the machine has %s: revision 12 holds at most %s", memory, most);
+		else
+			say("the machine has %s: the backplane holds 1 to %u", memory, MAX_BOARDS);
 		return 2;
 	}
 	if (revision == 13 && boards > MAX_BOARDS_13) {
-		say("the machine has %u memory boards: revision 13's room on this board holds 1 to %u",
-		    boards, MAX_BOARDS_13);
+		say("the machine has %s: revision 13's room on this board holds 1MW to %uMW",
+		    memory, MAX_BOARDS_13 / RO_MW_UNITS);
 		return 2;
 	}
 
 	struct cadr_image img;
 	if (img_alloc_revision(&img, boards, quux, revision) != 0) {
-		say("out of memory for a machine of %u boards", boards);
+		say("out of memory for a machine of %s", memory);
 		return 1;
 	}
 	struct chk_declared decl;
@@ -789,9 +821,9 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	say("%s written: %u memory boards, %llu microcycles retired, PC %o, "
+	say("%s written: %s, %llu microcycles retired, PC %o, "
 	    "%zu bytes of body packed",
-	    out, boards, (unsigned long long)img.cycles, img.pc, body_len);
+	    out, memory, (unsigned long long)img.cycles, img.pc, body_len);
 	say("  %lu reads and %lu writes over the console's window",
 	    r.reads, r.writes);
 	say("%s written: %u pack(s) bound to it by name, geometry and SHA-256",

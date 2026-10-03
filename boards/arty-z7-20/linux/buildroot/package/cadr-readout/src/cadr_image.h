@@ -40,8 +40,10 @@
 // sixteen colors of red, green and blue.
 #define IMG_MAP_COLORS   16
 #define IMG_MAP_CHANNELS 3
-// A memory board is 64K words, and how many the machine has is the console's
+// A memory board is 64K words, and how many the CADR has is the console's
 // page 2 word 37 (`ro_main_boards`), 32 unless the card says otherwise.
+// QUUX has no boards: the same word holds its main memory as an amount in
+// units of this size, sixteen a megaword (`ro_main_amount`).
 #define IMG_BOARD_WORDS 65536u
 
 // **REVISION 13'S** (contract G2 §2, appendix A1; muir's `Geometry::QUUX_13`):
@@ -282,7 +284,7 @@ struct cadr_image {
 	// --- that a reader of this struct is not left wondering where they
 	// --- went, and `cadr-readout` does not fill them.
 	uint32_t *main;		/* boards * IMG_BOARD_WORDS; NULL on revision 13 */
-	unsigned boards;
+	unsigned boards;	/* the CADR's boards, or QUUX's amount in 64K-word units */
 	// --- revision 13's main memory is packed storage, 5 bytes a word
 	// --- (G1 4.1), and is NOT copied: `main13` is the bytes where they
 	// --- are --- on a board the DDR mapping itself, 160 MB at 32M words,

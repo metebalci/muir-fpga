@@ -94,6 +94,9 @@ struct binding {
 	char checkpoint_sha[SHA256_HEX];
 	uint64_t checkpoint_bytes;
 	char taken[64];			/* ISO 8601, local time with its offset */
+	// Main memory in 64K-word units: the CADR's boards, or QUUX's amount,
+	// sixteen a megaword, which the sidecar records as an amount under
+	// `main-memory-size:` and never as boards.
 	unsigned boards;
 	uint64_t microcycles;
 	uint64_t ns;
@@ -179,6 +182,21 @@ int bind_halt_mark(const char *path, uint64_t cycles);
 // 1 when the mark is there and names `cycles`, 0 otherwise.
 int bind_halted_here(const char *path, uint64_t cycles);
 void bind_halt_unmark(const char *path);
+
+// **WHAT A PERSON READS OF MAIN MEMORY**, `units` of 64K words in the
+// machine's own words: the CADR's `32 memory boards`, and QUUX's amount,
+// `32MW of main memory` (`ro_main_amount`).  QUUX has no memory boards, and
+// nothing this program says about it counts them.
+void bind_memory_words(int quux, unsigned units, char *out, size_t n);
+
+// **THE MAIN MEMORY THE COMMAND LINE ASKED FOR**, held to the machine named:
+// the CADR's `--boards N`, 1 to 60, and QUUX's `--main-memory-size <n>MW`,
+// muir's flag and form, 1MW to `most_units`.  Each machine's flag is refused
+// on the other, naming the right one.  An argument not given is NULL.
+// Returns 0 with `*units` set (0 when neither was given: the machine's own
+// is taken), or 2 with `err`, the program's exit status for a bad flag.
+int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,
+		      unsigned most_units, unsigned *units, char *err, size_t errlen);
 
 // The command a resume takes, into `out`.  The packs in unit order, the
 // checkpoint last, which is the order muir's own usage puts them in.  It

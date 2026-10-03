@@ -606,6 +606,149 @@ static int run_state_check(const struct cadr_image *found, const struct chk_decl
 	return 0;
 }
 
+// ---- QUUX's main memory in its own words ----------------------------------
+
+static void memory_fail(const char *what, const char *got, const char *want)
+{
+	fprintf(stderr, "checkpoint: FAIL: main memory: %s: [%s], wanting [%s]\n", what, got, want);
+	++bad;
+}
+
+// How many lines of the sidecar at `side` are `line` (`whole` 1) or begin
+// with it (`whole` 0).
+static int sidecar_has(const char *side, const char *line, int whole)
+{
+	FILE *f = fopen(side, "r");
+	char buf[8192];
+	int n = 0;
+	while (f && fgets(buf, sizeof buf, f)) {
+		buf[strcspn(buf, "\n")] = '\0';
+		n += whole ? strcmp(buf, line) == 0 : strncmp(buf, line, strlen(line)) == 0;
+	}
+	if (f)
+		fclose(f);
+	return n;
+}
+
+static void memory_words_check(const char *side)
+{
+	char got[128], err[512];
+	// What a person reads: the CADR's boards, QUUX's amount.
+	{
+		const struct { int quux; unsigned units; const char *want; } t[] = {
+			{0, 32, "32 memory boards"}, {0, 60, "60 memory boards"}, {0, 1, "1 memory board"},
+			{1, 512, "32MW of main memory"}, {1, 1024, "64MW of main memory"},
+			{1, 32, "2MW of main memory"}, {1, 60, "3840KW of main memory"}};
+		for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
+			bind_memory_words(t[i].quux, t[i].units, got, sizeof got);
+			if (strcmp(got, t[i].want) != 0)
+				memory_fail("said", got, t[i].want);
+		}
+	}
+	// What the flags take: each machine's own, and the other's refused by
+	// name; QUUX's in whole megawords with the unit, within the board's room.
+	{
+		const struct {
+			int quux; const char *boards, *size; int rc; unsigned units; const char *says;
+		} t[] = {
+			{0, NULL, NULL, 0, 0, NULL},
+			{1, NULL, NULL, 0, 0, NULL},
+			{0, "32", NULL, 0, 32, NULL},
+			{0, "60", NULL, 0, 60, NULL},
+			{0, "1", NULL, 0, 1, NULL},
+			{0, "61", NULL, 2, 0, "1 to 60"},
+			{0, "0", NULL, 2, 0, "1 to 60"},
+			{0, "32x", NULL, 2, 0, "1 to 60"},
+			{0, NULL, "2MW", 2, 0, "--main-memory-size is QUUX's"},
+			{1, "512", NULL, 2, 0, "--boards is the CADR's"},
+			{1, "512", NULL, 2, 0, "--main-memory-size <n>MW, such as --main-memory-size 32MW"},
+			{1, NULL, "32MW", 0, 512, NULL},
+			{1, NULL, "1MW", 0, 16, NULL},
+			{1, NULL, "33MW", 2, 0, "1MW to 32MW"},
+			{1, NULL, "0MW", 2, 0, "1MW to 32MW"},
+			{1, NULL, "32", 2, 0, "main memory is given in megawords, with the unit MW, such as 32MW"},
+			{1, NULL, "32M", 2, 0, "main memory is given in megawords, with the unit MW, such as 32MW"},
+			{1, NULL, "2048KW", 2, 0, "main memory is given in megawords, with the unit MW, such as 32MW"},
+			{1, "512", "32MW", 2, 0, "--boards is the CADR's"},
+		};
+		for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
+			unsigned units = 0xDEADu;
+			err[0] = '\0';
+			const int rc = bind_memory_asked(t[i].quux, t[i].boards, t[i].size, 512u, &units,
+							 err, sizeof err);
+			char what[160];
+			snprintf(what, sizeof what, "%s with --boards %s --main-memory-size %s",
+				 t[i].quux ? "QUUX" : "the CADR", t[i].boards ? t[i].boards : "-",
+				 t[i].size ? t[i].size : "-");
+			if (rc != t[i].rc) {
+				snprintf(got, sizeof got, "%d, %s", rc, err);
+				memory_fail(what, got, t[i].rc ? "refused" : "taken");
+			} else if (rc == 0 && units != t[i].units) {
+				char w[32];
+				snprintf(got, sizeof got, "%u units", units);
+				snprintf(w, sizeof w, "%u units", t[i].units);
+				memory_fail(what, got, w);
+			} else if (t[i].says && !strstr(err, t[i].says)) {
+				memory_fail(what, err, t[i].says);
+			}
+		}
+	}
+	// What the sidecar records: QUUX's amount under muir's flag's name, and
+	// the CADR's boards; read back to the same units either way.
+	{
+		const struct { int quux; unsigned units; const char *line, *not; } t[] = {
+			{1, 512, "main-memory-size: 32MW", "boards:"},
+			{1, 60, "main-memory-size: 3840KW", "boards:"},
+			{0, 32, "boards: 32", "main-memory-size:"}};
+		for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
+			struct binding b, rd;
+			bind_init(&b);
+			b.quux = t[i].quux;
+			b.boards = t[i].units;
+			b.revision = t[i].quux ? 13u : 0u;
+			b.sync_k = t[i].quux ? 5u : 0u;
+			snprintf(b.checkpoint, sizeof b.checkpoint, "m.chk");
+			if (bind_write(&b, side, err, sizeof err) != 0) {
+				memory_fail("a sidecar written", err, "written");
+				continue;
+			}
+			if (sidecar_has(side, t[i].line, 1) != 1)
+				memory_fail("the sidecar's memory line", "absent", t[i].line);
+			if (sidecar_has(side, t[i].not, 0) != 0)
+				memory_fail("the other machine's memory line in the sidecar", t[i].not, "none");
+			bind_init(&rd);
+			if (bind_read(&rd, side, err, sizeof err) != 0 || rd.boards != t[i].units) {
+				snprintf(got, sizeof got, "%u units %s", rd.boards, err);
+				memory_fail("the sidecar's memory read back", got, t[i].line);
+			}
+		}
+		// A sidecar written before QUUX's line was says boards, and is read.
+		FILE *f = fopen(side, "w");
+		if (f) {
+			fprintf(f, "format: %s\nmachine: quux\nboards: 512\n", BIND_FORMAT);
+			fclose(f);
+		}
+		struct binding rd;
+		bind_init(&rd);
+		if (bind_read(&rd, side, err, sizeof err) != 0 || rd.boards != 512u)
+			memory_fail("an older QUUX sidecar's boards", err, "512 units");
+		// An amount the sidecar cannot be held to is refused, not guessed.
+		static const char *const badv[] = {"32", "32M", "2.5MW", "100KW", "MW"};
+		for (unsigned i = 0; i < sizeof badv / sizeof badv[0]; ++i) {
+			f = fopen(side, "w");
+			if (f) {
+				fprintf(f, "format: %s\nmachine: quux\nmain-memory-size: %s\n",
+					BIND_FORMAT, badv[i]);
+				fclose(f);
+			}
+			bind_init(&rd);
+			if (bind_read(&rd, side, err, sizeof err) == 0)
+				memory_fail("a sidecar's amount that is no amount", badv[i], "refused");
+		}
+		remove(side);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	// **THE SCRATCH DIRECTORY IS NOT OPTIONAL.**  Half of what this file
@@ -898,6 +1041,13 @@ int main(int argc, char **argv)
 		    bind_read(&rd, side, err, sizeof err) != 0 || rd.quux)
 			fail("a CADR sidecar read back as QUUX's", 1, 0);
 		remove(side);
+
+		// **QUUX's MAIN MEMORY IS AN AMOUNT, NEVER BOARDS; THE CADR KEEPS
+		// ITS BOARDS.**  What the program says, what its flags take and what
+		// its sidecar records, each machine in its own words.  Every
+		// failure here prints one line under one prefix, which is what the
+		// Makefile's memory mutants are judged by.
+		memory_words_check(side);
 
 		// **THE HALT `--halt` MADE**, which `--already-halted` takes as the
 		// machine running before it only at the count it was made at.

@@ -4361,6 +4361,16 @@ CHECKPOINT_SHA  := 8a1894f21fae8711f53e1323f073c6a4dddb5e603937eb9f41b063110587c
 # synthetic machine's microcode is poison that no resume can be watched
 # running.  The board's own run on is the proof of the rest.
 CHECKPOINT_RUN_MUTANTS := 32 33 34
+# **QUUX's MAIN MEMORY IN ITS OWN WORDS, AND ITS THREE MUTANTS, 35 TO 37.**
+# QUUX's main memory is an amount and never boards; the CADR keeps its
+# boards.  The program says `32MW of main memory` on QUUX and `32 memory
+# boards` on the CADR, takes `--main-memory-size <n>MW` on QUUX and `--boards
+# N` on the CADR, refusing each on the other by name, and its sidecar records
+# QUUX's as `main-memory-size: 32MW`.  The host check holds the three
+# (`checkpoint_test.c`'s `memory_words_check`), and each mutant must fail
+# there: QUUX taking `--boards`, QUUX's sidecar written in boards, and QUUX's
+# memory said in boards.  muir has no part in it, so none is asked.
+CHECKPOINT_MEMORY_MUTANTS := 35 36 37
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
@@ -4441,6 +4451,16 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	     || { echo "checkpoint: mutant $$m failed, and not on the run state: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
 	   echo "checkpoint: mutant $$m caught by the run state's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	 done; \
+	 for m in $(CHECKPOINT_MEMORY_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
+	     echo "checkpoint: mutant $$m SURVIVED the main memory's words --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	     exit 1; \
+	   fi; \
+	   grep -q "^checkpoint: FAIL: main memory: " $$W/mut-$$m.out \
+	     || { echo "checkpoint: mutant $$m failed, and not on the main memory's words: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   echo "checkpoint: mutant $$m caught by the main memory's words --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	 done
 	@touch $@
 

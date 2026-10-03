@@ -5,6 +5,7 @@
 
 #include "pack_bind.h"
 #include "quux_disk.h"
+#include "readout.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -331,7 +332,19 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 	fprintf(f, "taken: %s\n", b->taken);
 	fprintf(f, "engine: rtl\n");
 	fprintf(f, "machine: %s\n", b->quux ? "quux" : "cadr");
-	fprintf(f, "boards: %u\n", b->boards);
+	// **QUUX's MAIN MEMORY IS AN AMOUNT**, under muir's flag's name; the
+	// CADR's is its boards.
+#if CHK_MUTATE == 36
+	if (0) {
+#else
+	if (b->quux) {
+#endif
+		char amount[32];
+		ro_main_amount(b->boards, amount, sizeof amount);
+		fprintf(f, "main-memory-size: %s\n", amount);
+	} else {
+		fprintf(f, "boards: %u\n", b->boards);
+	}
 	fprintf(f, "microcycles: %llu\n", (unsigned long long)b->microcycles);
 	fprintf(f, "ns: %llu\n", (unsigned long long)b->ns);
 	if (b->quux) {
@@ -409,6 +422,93 @@ static int subfield(const char *rest, const char *name, char *out, size_t n)
 	return -1;
 }
 
+// An amount as `ro_main_amount` writes it, `32MW` or `3840KW`, back into
+// 64K-word units: 0, or -1 for anything else, a KW that is not whole units
+// included.
+static int amount_units(const char *text, unsigned *units)
+{
+	if (ro_parse_megawords(text, units) == 0)
+		return 0;
+	const size_t n = strlen(text);
+	if (n < 3 || strcmp(text + n - 2, "KW") != 0)
+		return -1;
+	uint64_t kw = 0;
+	for (size_t i = 0; i < n - 2; ++i) {
+		if (text[i] < '0' || text[i] > '9')
+			return -1;
+		kw = kw * 10u + (uint64_t)(text[i] - '0');
+		if (kw > 0xFFFFFFFFu)
+			return -1;
+	}
+	const unsigned per = IMG_BOARD_WORDS / 1024u;	/* 64K words a unit */
+	if (kw == 0 || kw % per != 0)
+		return -1;
+	*units = (unsigned)(kw / per);
+	return 0;
+}
+
+void bind_memory_words(int quux, unsigned units, char *out, size_t n)
+{
+#if CHK_MUTATE == 37
+	quux = 0;
+#endif
+	if (quux) {
+		char amount[32];
+		ro_main_amount(units, amount, sizeof amount);
+		snprintf(out, n, "%s of main memory", amount);
+	} else {
+		snprintf(out, n, "%u memory board%s", units, units == 1 ? "" : "s");
+	}
+}
+
+int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,
+		      unsigned most_units, unsigned *units, char *err, size_t errlen)
+{
+	*units = 0;
+	// **EACH MACHINE'S OWN FLAG**, and the other's refused naming the
+	// right one, as muir and `cadr-console` refuse it: no alias.
+#if CHK_MUTATE == 35
+	if (0) {
+#else
+	if (quux && boards_arg) {
+#endif
+		note(err, errlen, "--boards is the CADR's: QUUX's main memory is an amount, "
+		     "--main-memory-size <n>MW, such as --main-memory-size 32MW");
+		return 2;
+	}
+	if (!quux && size_arg) {
+		note(err, errlen, "--main-memory-size is QUUX's: the CADR's main memory is "
+		     "boards, --boards N, such as --boards 32");
+		return 2;
+	}
+	if (boards_arg) {
+		char *end = NULL;
+		const unsigned long v = strtoul(boards_arg, &end, 0);
+		if (!end || end == boards_arg || *end != '\0' || v < 1 || v > 60) {
+			note(err, errlen, "--boards %s: the CADR's backplane holds 1 to 60 memory "
+			     "boards", boards_arg);
+			return 2;
+		}
+		*units = (unsigned)v;
+		return 0;
+	}
+	if (size_arg) {
+		unsigned u = 0;
+		if (ro_parse_megawords(size_arg, &u) != 0) {
+			note(err, errlen, "--main-memory-size %s: main memory is given in megawords, "
+			     "with the unit MW, such as 32MW", size_arg);
+			return 2;
+		}
+		if (u < RO_MW_UNITS || u > most_units) {
+			note(err, errlen, "--main-memory-size %s: QUUX's main memory on this board "
+			     "is 1MW to %uMW", size_arg, most_units / RO_MW_UNITS);
+			return 2;
+		}
+		*units = u;
+	}
+	return 0;
+}
+
 int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 {
 	FILE *f = fopen(path, "r");
@@ -452,7 +552,16 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 			}
 			b->quux = strcmp(v, "quux") == 0;
 		} else if ((v = field(line, "boards")) != NULL) {
+			// The CADR's, and QUUX's in a sidecar written before its
+			// amount was.
 			b->boards = (unsigned)strtoul(v, NULL, 10);
+		} else if ((v = field(line, "main-memory-size")) != NULL) {
+			if (amount_units(v, &b->boards) != 0) {
+				note(err, errlen, "%s: main-memory-size \"%s\", which is no "
+				     "amount of 64K-word units in MW or KW", path, v);
+				fclose(f);
+				return -1;
+			}
 		} else if ((v = field(line, "microcycles")) != NULL) {
 			b->microcycles = strtoull(v, NULL, 10);
 		} else if ((v = field(line, "ns")) != NULL) {

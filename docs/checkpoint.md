@@ -37,11 +37,14 @@ a daemon and has no init script, because it halts the machine while it reads.
    written halted.
 4. Reads the processor's memories and its register table through the
    console's readout window, and main memory and the display straight out of
-   DDR through `/dev/mem`. Main memory is read at the machine's own count of
-   boards, the console's page 2 word 37, which the card's
-   `--main-memory-boards` sets; a fabric older than that word has 32 boards
-   fixed. A `--boards` that disagrees with the machine's count is refused,
-   because a checkpoint of fewer boards drops memory the band has and one of
+   DDR through `/dev/mem`. Main memory is read at the machine's own amount,
+   the console's page 2 word 37, which the card sets: the CADR's memory
+   boards, `--main-memory-boards`, and QUUX's amount, `--main-memory-size`.
+   A fabric older than that word has 32 boards fixed, 2MW on QUUX. The
+   program's own flags are each machine's: `--boards N` on the CADR and
+   `--main-memory-size <n>MW` on QUUX, in muir's form, and each is refused
+   on the other machine. One that disagrees with the machine is refused,
+   because a checkpoint of less memory drops memory the band has and one of
    more invents it.
 5. Reads every disk pack through and digests it, still halted.
 6. Writes the checkpoint, then the sidecar that binds it to those packs.
@@ -283,7 +286,14 @@ the environment's `MUIR_QUUX_REVISION` before the command, since muir's
     resume: MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
 
 The QUUX line names no memory flag: muir builds the machine with as much
-main memory as the checkpoint has.
+main memory as the checkpoint has. QUUX has no memory boards, so its sidecar
+records its main memory as an amount, in whole megawords, or in kilowords
+when it is not a whole number of them, where the CADR's says `boards`:
+
+    main-memory-size: 32MW
+
+A sidecar written before that line says `boards` on QUUX too, counting
+64K-word units, and is still read.
 
 The checkpoint's own digest is in there too, so a sidecar that has drifted
 away from the file it was written for is found out as well as a pack that has.
@@ -454,8 +464,10 @@ ends and once to copy it, and writes the file as it goes. At 32M words main
 memory is 160 MB. A copy of it beside a body of the same size would not fit
 in the memory Linux has beside the machine.
 
-`--boards` counts 64K-word units on revision 13 as muir's header does. The
-default is 512, 32M words, and the most is the room the board keeps.
+`--main-memory-size` gives revision 13's main memory in whole megawords,
+as muir's flag does. The default is 32MW, and the most is the room the board
+keeps: 32MW on the Arty Z7-20 and the Kria KR260, 64MW on the DE25-Nano.
+muir's header still counts it in 64K-word units, sixteen a megaword.
 
 `build/checkpoint.quux.pass` holds it the way it holds revision 12's.
 `golden/src/quux_checkpoint.rs --revision 13` builds the same machine at

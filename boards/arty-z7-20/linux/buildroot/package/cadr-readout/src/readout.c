@@ -5,6 +5,7 @@
 
 #include "readout.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -256,6 +257,33 @@ unsigned ro_main_boards(struct readout *r)
 		return 0;
 	const unsigned n = w & 0xFFFFu;
 	return (n >= 1u && n <= RO_BOARDS_MAX) ? n : 0u;	/* bits 15:11 clear below 1,024 */
+}
+
+void ro_main_amount(unsigned units, char *out, size_t n)
+{
+	if (units % RO_MW_UNITS == 0)
+		snprintf(out, n, "%uMW", units / RO_MW_UNITS);
+	else
+		snprintf(out, n, "%lluKW", (unsigned long long)units * (IMG_BOARD_WORDS / 1024u));
+}
+
+int ro_parse_megawords(const char *text, unsigned *units)
+{
+	if (!text || !units)
+		return -1;
+	const size_t n = strlen(text);
+	if (n < 3 || strcmp(text + n - 2, "MW") != 0)
+		return -1;
+	uint64_t mw = 0;
+	for (size_t i = 0; i < n - 2; ++i) {
+		if (text[i] < '0' || text[i] > '9')
+			return -1;
+		mw = mw * 10u + (uint64_t)(text[i] - '0');
+		if (mw * RO_MW_UNITS > 0xFFFFFFFFu)
+			return -1;	/* no count of units this is */
+	}
+	*units = (unsigned)(mw * RO_MW_UNITS);
+	return 0;
 }
 
 // muir's clock at a word of the microsecond clock: ticks since power-on,

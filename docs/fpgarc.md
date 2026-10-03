@@ -609,7 +609,7 @@ megawords.
 naming `--main-memory-boards`.
 
 `cadr-checkpoint` takes a checkpoint at the machine's own amount, read from the
-console, and refuses a `--boards` that disagrees with it.
+console, and refuses a `--main-memory-size` that disagrees with it.
 
 ## `--date` and `--time`
 
