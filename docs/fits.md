@@ -24,6 +24,18 @@ reports none.
 
 ## From a clean tree
 
+This fit was built from `3261986`, the Kria KR260's first QUUX: revision 13
+at four ticks, QUUX's 64-bit memory master on the 128-bit port through
+narrow bursts, with muir pinned at `a6fa3b3`. The stamp reads `32619860`, the
+tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Kria KR260 | QUUX revision 13, K = 4 | +0.810 ns | +0.015 ns | 22,226 of 117,120 LUTs, 18.98% | 73 of 144 BRAM tiles | 4,201 of 14,640 CLBs | `3261986` | clean | 2026-10-03 |
+
+It passed the RAM enable check over 113 ports, every clause of
+`quux_machine.xdc` took, and it holds no cell of the debug cable.
+
 These fits were built from `78f0f67`, which finishes QUUX's memory master's
 write split at 4 KiB, with muir pinned at `a6fa3b3`. Revision 13 is at five
 ticks on the Arty Z7-20 and four on the DE25-Nano. Both stamps read
