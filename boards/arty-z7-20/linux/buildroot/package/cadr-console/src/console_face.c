@@ -9,6 +9,8 @@
 #include <cadr/cadr_log.h>
 
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -843,6 +845,159 @@ void cons_say_build(const struct cons_build *b)
 uint32_t cons_build_word(struct console *c)
 {
 	return c->read(c, CONS_BUILD);
+}
+
+// ---------------------------------------------------------------------------
+// **WHICH MACHINE THE FABRIC IS**, the readout window's entry 21 and the stamp
+// ---------------------------------------------------------------------------
+//
+// `console_face.h` has what entry 21 carries.  The decode is pure, and the
+// read is four cycles on the face and the stamp's one.
+
+void cons_machine_id_of(uint64_t entry, uint32_t build_word, struct cons_machine_id *m)
+{
+	memset(m, 0, sizeof *m);
+	m->answered = 1;
+	m->entry = entry;
+	m->build = cons_build_of(build_word);
+	if (entry == CONS_RO_NO_MEMORY) {
+		// The CADR's bitstream: the entry is QUUX's alone.
+		m->known = 1;
+		m->word_bits = 32;
+		return;
+	}
+	if (((entry >> 32) & 0xFFFFu) != CONS_QUUX_SIGNATURE)
+		return;		/* neither: `known` stays 0 */
+	m->known = 1;
+	m->quux = 1;
+	m->k = (unsigned)((entry >> 24) & 0xFFu);
+	m->l = (unsigned)((entry >> 16) & 0xFFu);
+	const unsigned low = (unsigned)(entry & 0xFFFFu);
+	if (low == 0) {
+		// Revision 12's bitstreams answer 0 there, and only they do.
+		m->revision = 12;
+		m->word_bits = 32;
+		return;
+	}
+	m->machine_id = ((uint32_t)CONS_QUUX_SIGNATURE << 16) | low;
+	m->revision = (low >> 4) & 0xFFu;
+	m->processor_type = low & 0xFu;
+	// Revision 13's words are 40 bits.  A revision this program has not
+	// met has a width it does not know, and says so rather than guessing.
+	m->word_bits = m->revision == 13 ? 40 : 0;
+}
+
+int cons_read_machine_id(struct console *c, struct cons_machine_id *m)
+{
+	const uint32_t asked = (CONS_RO_SEL_REGS << 14) | CONS_RO_QUUX_ID;
+	for (int tries = 0; tries < 2; ++tries) {
+		c->write(c, CONS_RO, asked);
+		// The echo is read first and arms the two halves beside it.
+		const uint32_t echo = c->read(c, CONS_RO);
+		const uint32_t lo = c->read(c, CONS_RO_LO);
+		const uint32_t hi = c->read(c, CONS_RO_HI);
+		if (echo != asked)
+			continue;
+		cons_machine_id_of((uint64_t)lo | ((uint64_t)(hi & 0xFFFFu) << 32),
+				   cons_build_word(c), m);
+		return 0;
+	}
+	memset(m, 0, sizeof *m);
+	m->build = cons_build_of(cons_build_word(c));
+	return -1;
+}
+
+// The build's few words, for the one line.
+static void build_words(const struct cons_build *b, char *out, size_t n)
+{
+	if (!b->stamped)
+		snprintf(out, n, "no build stamp");
+	else if (b->no_git)
+		snprintf(out, n, "build %08x, no git information", b->word);
+	else
+		snprintf(out, n, "build %08x (commit %07x, tree %s)", b->word, b->commit,
+			 cons_build_tree_words(b));
+}
+
+void cons_say_machine_id(const struct cons_machine_id *m)
+{
+	char build[160];
+	build_words(&m->build, build, sizeof build);
+	if (!m->answered) {
+		say("machine: NOT KNOWN --- the readout window's echo named another entry twice; %s",
+		    build);
+		return;
+	}
+	if (!m->known) {
+		say("machine: NOT KNOWN --- entry 21 reads %012llx, neither QUUX's signature nor the "
+		    "CADR's answer; %s", (unsigned long long)m->entry, build);
+		return;
+	}
+	if (!m->quux) {
+		say("machine: CADR, %u-bit words; %s", m->word_bits, build);
+		return;
+	}
+	char id[128];
+	if (m->machine_id)
+		snprintf(id, sizeof id, "MACHINE-ID %08x (revision %u, processor type %u)",
+			 m->machine_id, m->revision, m->processor_type);
+	else
+		snprintf(id, sizeof id, "MACHINE-ID not in the register table, which only "
+			 "revision 12 answers 0 at");
+	char width[32];
+	if (m->word_bits)
+		snprintf(width, sizeof width, "%u-bit words", m->word_bits);
+	else
+		snprintf(width, sizeof width, "words of a width not known here");
+	say("machine: QUUX revision %u, %s, %s, microcycle K=%u L=%u; %s",
+	    m->revision, id, width, m->k, m->l, build);
+}
+
+int cons_machine_word(struct console *c, int argc, char **argv, int *status)
+{
+	if (argc < 1 || strcmp(argv[0], "machine"))
+		return 0;
+	// What was asked for, if anything: a machine, and on QUUX a revision.
+	int want_quux = -1;
+	unsigned want_rev = 0;
+	if (argc > 1) {
+		if (!strcmp(argv[1], "quux"))
+			want_quux = 1;
+		else if (!strcmp(argv[1], "cadr"))
+			want_quux = 0;
+		char *end = NULL;
+		if (argc > 2 && want_quux == 1)
+			want_rev = (unsigned)strtoul(argv[2], &end, 10);
+		if (want_quux < 0 || argc > 3 || (argc > 2 && (want_quux != 1 || !end ||
+							     *end || !want_rev))) {
+			say("machine [cadr|quux [REVISION]]  which machine the fabric is; with a "
+			    "machine named, and a revision of QUUX's, whether it is that one");
+			*status = 2;
+			return 1;
+		}
+	}
+	struct cons_machine_id m;
+	cons_read_machine_id(c, &m);
+	cons_say_machine_id(&m);
+	if (!m.answered || !m.known) {
+		*status = 1;
+		return 1;
+	}
+	const int same = want_quux < 0 ||
+			 (m.quux == want_quux && (!want_rev || m.revision == want_rev));
+	if (!same) {
+		char asked[48], is[48];
+		snprintf(asked, sizeof asked, want_quux ? "QUUX" : "the CADR");
+		if (want_rev)
+			snprintf(asked, sizeof asked, "QUUX revision %u", want_rev);
+		snprintf(is, sizeof is, "the CADR");
+		if (m.quux)
+			snprintf(is, sizeof is, "QUUX revision %u", m.revision);
+		say("machine: NOT THE MACHINE ASKED FOR --- asked for %s, and the fabric is %s",
+		    asked, is);
+	}
+	*status = same ? 0 : 1;
+	return 1;
 }
 
 void cons_say_status(const struct cons_status *st)

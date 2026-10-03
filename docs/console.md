@@ -1405,7 +1405,7 @@ contradicts itself. The board latches bit 4 off the same synchronized level the
 machine's own reset arms read, at the same edges, so the two cannot disagree.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
-`start`, `boot`, `step N`, `regs`, `status`, `ident`, `switch`, `debug-cable`,
+`start`, `boot`, `step N`, `regs`, `status`, `ident`, `machine`, `switch`, `debug-cable`,
 `debug-cable-connect`, `debug-cable-disconnect`, `debug-cable-wiring`,
 `tv-board`, `color-tv`, `display-output`, `display-rotate`,
 `display-sleep`, `main-memory-boards`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
@@ -1755,6 +1755,38 @@ The commit is taken when the PACKAGE is built and not when the image is, so a
 Buildroot output directory carried across a commit that changed no source of
 this package keeps the older number. `make buildroot-rebuild` is what forces
 it, which is what the image procedure already does.
+
+## Which machine the board is running
+
+**`cadr-console machine` says which machine the fabric is, asked of the
+fabric and never of the card.** A report of a board run names the machine
+and the revision the run had. A card can say one machine while the fabric is
+the other, as a QUUX card's files can be served beside the CADR's bitstream,
+so a run that took the machine from the card can report a revision the board
+never ran. Every board run prints this line beside each result.
+
+The machine and its microcycle come from the readout window, the register
+table's entry 21. QUUX answers it with its signature `0x5155`, K and L, and
+MACHINE-ID's low half on revision 13. Revision 12's bitstreams answer 0 in
+that half, and the CADR answers with the window's "no memory" word. The
+entry is a constant of the bitstream, so it reads true while the machine
+runs. The word's width follows the revision: 32 bits on the CADR and on QUUX
+to revision 12, 40 bits on revision 13. The build is page 2's word 32, as in
+`status`. The line reads like one of these:
+
+    machine: CADR, 32-bit words; build e7aaa180 (commit e7aaa18, tree clean)
+    machine: QUUX revision 13, MACHINE-ID 515500d4 (revision 13, processor type 4), 40-bit words, microcycle K=5 L=0; build 78f0f670 (commit 78f0f67, tree clean)
+
+On the DE25-Nano the build reads `no build stamp`, for the reason the section
+above gives. An entry that is neither machine's answer reads `NOT KNOWN`, and
+so does a readout window whose echo names another entry twice running, which
+is another program reading the window at the same instant.
+
+With a machine named, `machine quux 13`, `machine quux` or `machine cadr`,
+the line is printed the same way and the program exits 0 only when the
+fabric is that machine and, if one was named, that revision of QUUX. A
+script asserts the machine it believes it is testing this way, and a fabric
+that is not it says `NOT THE MACHINE ASKED FOR` and exits 1.
 
 ## The program that reads it
 

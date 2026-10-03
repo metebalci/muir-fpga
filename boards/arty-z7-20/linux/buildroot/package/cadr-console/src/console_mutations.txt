@@ -865,3 +865,121 @@
 @new
 	b->mark_ok = 1;
 @end
+
+@mutation machine-cadr-answer-not-the-cadr
+@file console_face.c
+@why the CADR's bitstream answers entry 21 with RO_NO_MEMORY, and a report must say
+@why CADR for it, never NOT KNOWN or QUUX
+@old
+	if (entry == CONS_RO_NO_MEMORY) {
+@new
+	if (entry == 0) {
+@end
+
+@mutation machine-signature-not-checked
+@file console_face.c
+@why only QUUX's signature in <47:32> makes the entry QUUX's: a word that is
+@why neither machine's must say NOT KNOWN, not a revision
+@old
+	if (((entry >> 32) & 0xFFFFu) != CONS_QUUX_SIGNATURE)
+		return;		/* neither: `known` stays 0 */
+@new
+@end
+
+@mutation machine-k-and-l-crossed
+@file console_face.c
+@why K is <31:24> and L <23:16>: the Arty Z7-20's revision 13 runs at K=5, and a
+@why line that printed L for K would name a microcycle the fabric does not have
+@old
+	m->k = (unsigned)((entry >> 24) & 0xFFu);
+	m->l = (unsigned)((entry >> 16) & 0xFFu);
+@new
+	m->k = (unsigned)((entry >> 16) & 0xFFu);
+	m->l = (unsigned)((entry >> 24) & 0xFFu);
+@end
+
+@mutation machine-revision-12-not-told
+@file console_face.c
+@why revision 12's bitstreams answer 0 in <15:0>, and only they do: that zero is
+@why how revision 12 is told, and it must not read as revision 0
+@old
+	if (low == 0) {
+@new
+	if (0) {
+@end
+
+@mutation machine-revision-from-the-wrong-bits
+@file console_face.c
+@why MACHINE-ID's revision is <11:4>, the processor type <3:0>
+@old
+	m->revision = (low >> 4) & 0xFFu;
+@new
+	m->revision = low & 0xFFu;
+@end
+
+@mutation machine-width-guessed-past-13
+@file console_face.c
+@why a revision this program has not met has a width it does not know, and the line
+@why must say so rather than call it 40 bits
+@old
+	m->word_bits = m->revision == 13 ? 40 : 0;
+@new
+	m->word_bits = m->revision >= 13 ? 40 : 0;
+@end
+
+@mutation machine-stale-echo-believed
+@file console_face.c
+@why the window is shared with cadr-readout and cadr-checkpoint: a word whose echo
+@why names another entry is that entry's, and must not be decoded as entry 21
+@old
+		if (echo != asked)
+			continue;
+@new
+@end
+
+@mutation machine-stale-echo-not-asked-again
+@file console_face.c
+@why one stale echo is another program's read landing between, and is asked again
+@old
+	for (int tries = 0; tries < 2; ++tries) {
+@new
+	for (int tries = 0; tries < 1; ++tries) {
+@end
+
+@mutation machine-asked-at-the-wrong-entry
+@file console_face.c
+@why entry 21 of the register table is the one that says which machine; entry 20 is
+@why another register
+@old
+	const uint32_t asked = (CONS_RO_SEL_REGS << 14) | CONS_RO_QUUX_ID;
+@new
+	const uint32_t asked = (CONS_RO_SEL_REGS << 14) | (CONS_RO_QUUX_ID - 1u);
+@end
+
+@mutation machine-other-machine-answers-0
+@file console_face.c
+@why with a machine named, a board run's script reads the status: the CADR's fabric
+@why asked whether it is QUUX revision 13 must answer 1
+@old
+	*status = same ? 0 : 1;
+@new
+	*status = 0;
+@end
+
+@mutation machine-revision-not-compared
+@file console_face.c
+@why revision 12's fabric is not revision 13's, which is the report this exists to stop
+@old
+			 (m.quux == want_quux && (!want_rev || m.revision == want_rev));
+@new
+			 (m.quux == want_quux);
+@end
+
+@mutation machine-unknown-answers-0
+@file console_face.c
+@why a fabric whose entry 21 is neither machine's has not said which it is
+@old
+	if (!m.answered || !m.known) {
+@new
+	if (!m.answered) {
+@end

@@ -177,6 +177,17 @@ struct model {
 	int range_unmapped;		/* a fabric older than word 38 */
 	int range_unmarked;		/* word 38 with a range and no marker */
 	uint8_t map[2][CONS_MAP_COLORS][CONS_MAP_CHANNELS];
+	// **AND THE READOUT WINDOW, page 0's words 10 to 12, AS FAR AS ENTRY 21
+	// OF THE REGISTER TABLE.**  Word 10 written with `{sel, addr}`, and its
+	// read latching the echo and the two halves beside it.  The entry is the
+	// check's, a canned value; any other address answers `RO_NO_MEMORY`'s
+	// complement, so a read of the wrong entry cannot pass for the CADR's
+	// answer.  `ro_stale` reads that many echoes wrong first, as a window
+	// another program was using at the same instant would.
+	uint64_t ro_entry21;
+	uint32_t ro_asked, ro_echo, ro_lo, ro_hi;
+	unsigned ro_stale;
+	unsigned ro_writes;
 };
 
 static void model_advance(struct model *m, uint64_t t)
@@ -399,7 +410,26 @@ static uint32_t model_read(struct console *c, unsigned word)
 		if (m->debug_frames_unmapped) return CONS_UNMAPPED;
 		return ((uint32_t)CONS_DEBUG_FRAMES_MARK << 24) |
 		       ((m->dbg_heard & 0xFFFFu) << 8) | (m->dbg_refused & 0xFFu);
-	default: return CONS_UNMAPPED;	/* words 10-12 */
+	// The readout window: the read of word 10 latches the echo and both
+	// halves, and words 11 and 12 read what it latched.
+	case CONS_RO: {
+		uint64_t w = m->ro_asked == ((CONS_RO_SEL_REGS << 14) | CONS_RO_QUUX_ID)
+				     ? m->ro_entry21
+				     : (~CONS_RO_NO_MEMORY & 0xFFFFFFFFFFFFull);
+		m->ro_echo = m->ro_asked;
+		// A stale echo comes with the word of the entry it names.
+		if (m->ro_stale) {
+			--m->ro_stale;
+			m->ro_echo ^= 1u;
+			w = ~CONS_RO_NO_MEMORY & 0xFFFFFFFFFFFFull;
+		}
+		m->ro_lo = (uint32_t)w;
+		m->ro_hi = (uint32_t)(w >> 32);
+		return m->ro_echo;
+	}
+	case CONS_RO_LO: return m->ro_lo;
+	case CONS_RO_HI: return m->ro_hi;
+	default: return CONS_UNMAPPED;
 	}
 }
 
@@ -527,6 +557,11 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 		}
 		return;
 	}
+	if (word == CONS_RO) {
+		m->ro_asked = v;
+		++m->ro_writes;
+		return;
+	}
 	if (word >= 32 || word < CONS_PAGE1)
 		return;			/* the rest of page 0 is read-only */
 	++m->diag_writes;
@@ -628,6 +663,9 @@ static void model_init(struct model *m)
 					(uint8_t)(1u + (unsigned)(b * 61 + k * 7 + ch * 29) % 250u);
 	m->q_latch = 0;
 	m->md_latch = 0;
+	// And the CADR's bitstream, which answers entry 21 with `RO_NO_MEMORY`.
+	m->ro_entry21 = CONS_RO_NO_MEMORY;
+	m->ro_stale = 0;
 }
 
 // ---- capturing what the program says ------------------------------------
@@ -689,11 +727,10 @@ static void check_ident(void)
 	// frame counts: registers, each of which must read as something a dead
 	// bus could not produce.
 	//
-	// **10, 11 and 12 ARE THE READOUT AND THIS MODEL DOES NOT CARRY
-	// THEM**, so they read UNMAPPED here and are registers on the fabric.
-	// `build/readout.pass` is what holds them; said out loud rather than
-	// left as a gap, because a sweep that called a register unmapped and
-	// was believed would be this file agreeing with itself.
+	// **10, 11 and 12 ARE THE READOUT AND THIS MODEL CARRIES ONE ENTRY OF
+	// IT**, the register table's entry 21, for `machine`; the rest of the
+	// window is `build/readout.pass`'s to hold.  They are registers, so
+	// the sweep does not call them unmapped.
 	CHECK(c.read(&c, CONS_DEBUG_FRAMES) != CONS_UNMAPPED,
 	      "page 0 word 15 reads UNMAPPED, and it is the cable's two counts");
 	CHECK((c.read(&c, CONS_DEBUG_FRAMES) >> 24) == CONS_DEBUG_FRAMES_MARK,
@@ -2555,6 +2592,151 @@ static void check_display_sleep_word(void)
 // takes what it says --- 512, and 61 to 511, which the CADR's 60 would refuse
 // --- and refuses 513 and 1024 with that range; and a fabric older than word
 // 38 is held to the CADR's 1 to 60.
+// **`machine`: WHICH MACHINE THE FABRIC IS**, against canned values of the
+// register table's entry 21 and the stamp.  Every value is the check's: the
+// CADR's answer; revision 13 at the Arty Z7-20's K of 5 with an L that is not
+// K, so that crossed fields show; revision 13 on a board whose console reads
+// no stamp; revision 12, whose entry carries no MACHINE-ID; a revision this
+// program has not met; and a word that is neither machine's.  Each line is
+// held whole, so a field taken from the wrong bits, or a width or a revision
+// guessed, reads wrong.
+static void check_machine_word(void)
+{
+	struct model m;
+	struct console c;
+	static const struct {
+		uint64_t entry;
+		uint32_t build;
+		int status;
+		const char *line;
+	} t[] = {
+		{ CONS_RO_NO_MEMORY, 0xC0FFEE20u, 0,
+		  "machine: CADR, 32-bit words; build c0ffee20 (commit c0ffee2, tree clean)" },
+		{ 0x5155050300D4ull, 0x78F0F670u, 0,
+		  "machine: QUUX revision 13, MACHINE-ID 515500d4 (revision 13, processor type 4), "
+		  "40-bit words, microcycle K=5 L=3; build 78f0f670 (commit 78f0f67, tree clean)" },
+		{ 0x5155040000D4ull, CONS_BUILD_NONE, 0,
+		  "machine: QUUX revision 13, MACHINE-ID 515500d4 (revision 13, processor type 4), "
+		  "40-bit words, microcycle K=4 L=0; no build stamp" },
+		{ 0x515504010000ull, 0x1234ABC1u, 0,
+		  "machine: QUUX revision 12, MACHINE-ID not in the register table, which only "
+		  "revision 12 answers 0 at, 32-bit words, microcycle K=4 L=1; build 1234abc1 "
+		  "(commit 1234abc, tree modified)" },
+		{ 0x5155060000E5ull, 0x0000000Fu, 0,
+		  "machine: QUUX revision 14, MACHINE-ID 515500e5 (revision 14, processor type 5), "
+		  "words of a width not known here, microcycle K=6 L=0; build 0000000f, no git information" },
+		{ 0x123456789ABCull, 0xC0FFEE20u, 1,
+		  "machine: NOT KNOWN --- entry 21 reads 123456789abc, neither QUUX's signature nor "
+		  "the CADR's answer; build c0ffee20 (commit c0ffee2, tree clean)" },
+	};
+	for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
+		model_init(&m);
+		attach(&c, &m);
+		m.ro_entry21 = t[i].entry;
+		m.build = t[i].build;
+		char *argv[] = {"machine"};
+		int status = -1;
+		capture_start();
+		const int took = cons_machine_word(&c, 1, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == t[i].status, "machine (%u): taken %d, answered %d, wanting %d",
+		      i, took, status, t[i].status);
+		CHECK(strstr(said, t[i].line) != NULL, "machine (%u) said [%s], wanting [%s]", i, said,
+		      t[i].line);
+		CHECK(m.ro_writes == 1 && m.ro_asked == ((CONS_RO_SEL_REGS << 14) | CONS_RO_QUUX_ID),
+		      "machine (%u) asked the window %u times, last for %05x", i, m.ro_writes, m.ro_asked);
+	}
+	// The decode alone, field by field, on the crossed case.
+	{
+		struct cons_machine_id id;
+		cons_machine_id_of(0x5155050300D4ull, 0x78F0F670u, &id);
+		CHECK(id.quux == 1 && id.known == 1 && id.revision == 13 && id.k == 5 && id.l == 3 &&
+		      id.machine_id == 0x515500D4u && id.processor_type == 4 && id.word_bits == 40 &&
+		      id.build.commit == 0x078F0F67u,
+		      "revision 13's entry decoded as rev %u K %u L %u id %08x type %u width %u",
+		      id.revision, id.k, id.l, id.machine_id, id.processor_type, id.word_bits);
+		cons_machine_id_of(CONS_RO_NO_MEMORY, CONS_BUILD_NONE, &id);
+		CHECK(id.quux == 0 && id.known == 1 && id.revision == 0 && id.machine_id == 0 &&
+		      id.word_bits == 32 && !id.build.stamped, "the CADR's answer decoded as QUUX's");
+		// The signature one bit off is no machine's.
+		cons_machine_id_of(0x5154050000D4ull, 0, &id);
+		CHECK(id.known == 0, "a signature one bit off taken for QUUX's");
+	}
+	// **A STALE ECHO IS ASKED AGAIN, ONCE**, and two are no answer.
+	model_init(&m);
+	attach(&c, &m);
+	m.ro_entry21 = 0x5155050000D4ull;
+	m.ro_stale = 1;
+	{
+		char *argv[] = {"machine"};
+		int status = -1;
+		capture_start();
+		cons_machine_word(&c, 1, argv, &status);
+		const char *said = capture_end();
+		CHECK(status == 0 && m.ro_writes == 2 && strstr(said, "QUUX revision 13") != NULL,
+		      "one stale echo: answered %d after %u asks: %s", status, m.ro_writes, said);
+		m.ro_stale = 2;
+		status = -1;
+		capture_start();
+		cons_machine_word(&c, 1, argv, &status);
+		said = capture_end();
+		CHECK(status == 1 && strstr(said, "machine: NOT KNOWN --- the readout window's echo "
+					 "named another entry twice") != NULL,
+		      "two stale echoes: answered %d: %s", status, said);
+	}
+	// **WITH A MACHINE NAMED**, 0 only when the fabric is that machine, and
+	// the line says what it is when it is not.
+	static const struct {
+		uint64_t entry;
+		int argc;
+		const char *a1, *a2;
+		int status;
+		const char *says;
+	} e[] = {
+		{ 0x5155050000D4ull, 3, "quux", "13", 0, NULL },
+		{ 0x5155050000D4ull, 2, "quux", NULL, 0, NULL },
+		{ CONS_RO_NO_MEMORY, 2, "cadr", NULL, 0, NULL },
+		{ 0x515504000000ull, 2, "quux", NULL, 0, NULL },
+		{ CONS_RO_NO_MEMORY, 3, "quux", "13", 1,
+		  "NOT THE MACHINE ASKED FOR --- asked for QUUX revision 13, and the fabric is the CADR" },
+		{ 0x515504000000ull, 3, "quux", "13", 1,
+		  "asked for QUUX revision 13, and the fabric is QUUX revision 12" },
+		{ 0x5155050000D4ull, 2, "cadr", NULL, 1,
+		  "asked for the CADR, and the fabric is QUUX revision 13" },
+		{ CONS_RO_NO_MEMORY, 2, "quux", NULL, 1, "asked for QUUX, and the fabric is the CADR" },
+		{ 0x123456789ABCull, 2, "cadr", NULL, 1, "NOT KNOWN" },
+		{ CONS_RO_NO_MEMORY, 2, "lisp", NULL, 2, "machine [cadr|quux [REVISION]]" },
+		{ CONS_RO_NO_MEMORY, 3, "cadr", "13", 2, "machine [cadr|quux [REVISION]]" },
+		{ CONS_RO_NO_MEMORY, 3, "quux", "x13", 2, "machine [cadr|quux [REVISION]]" },
+		{ CONS_RO_NO_MEMORY, 3, "quux", "0", 2, "machine [cadr|quux [REVISION]]" },
+		{ CONS_RO_NO_MEMORY, 4, "quux", "13", 2, "machine [cadr|quux [REVISION]]" },
+	};
+	for (unsigned i = 0; i < sizeof e / sizeof e[0]; ++i) {
+		model_init(&m);
+		attach(&c, &m);
+		m.ro_entry21 = e[i].entry;
+		char *argv[] = {"machine", (char *)e[i].a1, (char *)e[i].a2, "extra"};
+		int status = -1;
+		capture_start();
+		const int took = cons_machine_word(&c, e[i].argc, argv, &status);
+		const char *said = capture_end();
+		CHECK(took == 1 && status == e[i].status, "machine %s %s (%u): answered %d, wanting %d: %s",
+		      e[i].a1, e[i].a2 ? e[i].a2 : "", i, status, e[i].status, said);
+		CHECK(e[i].says ? strstr(said, e[i].says) != NULL
+				: strstr(said, "NOT THE MACHINE ASKED FOR") == NULL,
+		      "machine %s %s (%u) said: %s", e[i].a1, e[i].a2 ? e[i].a2 : "", i, said);
+		if (e[i].status == 2)
+			CHECK(m.ro_writes == 0, "machine with words it does not take asked the window");
+	}
+	// And another word is not this one.
+	{
+		char *argv[] = {"machines"};
+		int status = -1;
+		CHECK(cons_machine_word(&c, 1, argv, &status) == 0 && status == -1,
+		      "machines was taken as machine");
+	}
+}
+
 static void check_boards_word_13(void)
 {
 	struct model m;
@@ -3404,6 +3586,7 @@ int main(int argc, char **argv)
 	check_display_sleep_word();
 	check_boards_word();
 	check_boards_word_13();
+	check_machine_word();
 	check_display_words();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.
@@ -3490,6 +3673,12 @@ int main(int argc, char **argv)
 	       "      as a commit.  A dirty build is said to be one TWICE, because its\n"
 	       "      commit names where it started and not what it is.  The word comes\n"
 	       "      back off page 2 and `status` carries it, so one command answers it\n"
+	       "    WHICH MACHINE THE FABRIC IS, `machine`: the readout window's entry 21\n"
+	       "      and the stamp, against canned values --- the CADR's answer, revision\n"
+	       "      13 at K=5 with L not K, revision 13 with no stamp, revision 12 with no\n"
+	       "      MACHINE-ID, a revision not met and a word of neither machine --- each\n"
+	       "      line held whole; a stale echo asked again once and two refused; with a\n"
+	       "      machine named, 0 only for that machine and revision\n"
 	       "    WHETHER THE LAMPS BLINK, page 2's word 35: the key makes them steady and\n"
 	       "      its complement makes them blink, asked twice is still steady, and the\n"
 	       "      line says which in words; a word with no marker is an older fabric\n"

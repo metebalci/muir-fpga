@@ -69,7 +69,7 @@
 //     cadr-console [--regs ADDR] [--log PATH]... [--settle-us N] [--no-guard]
 //                  [command [arguments]]
 //
-//     halt | start | step [N] | regs | status | ident | switch
+//     halt | start | step [N] | regs | status | ident | machine | switch
 //     read EADR | write EADR VALUE
 //     examine ADDR [N] | deposit ADDR VALUE
 //     trace-keys on|off | trace-chaos on|off
@@ -337,6 +337,12 @@ static void help(void)
 	say("regs            all sixteen registers by muir's names, FLAG-1 and FLAG-2 field by field");
 	say("status          running or halted, and why; PC; CYCLES measured twice");
 	say("ident           IDENT, STAT, CYCLES and TICKS");
+	say("machine [cadr|quux [REVISION]]");
+	say("                which machine the fabric is, asked of the fabric: the CADR or");
+	say("                QUUX, its revision and MACHINE-ID, the word's width, K and L,");
+	say("                and the build stamp, on one line.  A board run prints it beside");
+	say("                each result.  With a machine named, exits 0 only when it is that");
+	say("                one");
 	say("switch          SW0, the no-auto-boot switch: what it did at the last reset,");
 	say("                and where it is now.  Exits 0 when it held the machine");
 	say("debug-cable     the role on Pmod JA: debugger, debuggee, or asked and refused");
@@ -435,6 +441,9 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 	// `main-memory-boards`, page 2's word 37, whole in the face for the
 	// same reason.
 	if (cons_boards_word(c, argc, argv, &exit_status))
+		return 0;
+	// `machine`, which machine the fabric is, whole in the face too.
+	if (cons_machine_word(c, argc, argv, &exit_status))
 		return 0;
 	if (!strcmp(cmd, "help") || !strcmp(cmd, "?"))
 		help();

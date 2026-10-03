@@ -937,6 +937,56 @@ int cons_display_word(struct console *c, int argc, char **argv, int *status);
 
 // --- how many memory boards the backplane has, page 2's word 37 ----------
 
+// **`machine`: WHICH MACHINE THE FABRIC IS, ASKED OF THE FABRIC.**  A report
+// of a board run names the machine and the revision it ran, and a report
+// once named revision 13 for runs that ran the CADR's bitstream: the card
+// said one machine and the fabric was the other.  So this reads them from
+// the fabric itself, never from the card, and a board run prints the line
+// beside each result.
+//
+// The machine and the microcycle come from the readout window (page 0's words
+// 10 to 12): the processor's register table's entry 21, `cadr_microcycle.sv`'s
+// `RG_QUUX_ID`, which QUUX answers with its signature `0x5155` in <47:32>, K
+// in <31:24>, L in <23:16> and MACHINE-ID's <15:0> in <15:0> on revision 13
+// (0x00D4: the revision in <11:4>, the processor type in <3:0>), and 0 there
+// on revision 12; and which the CADR answers with `CONS_RO_NO_MEMORY`.  A
+// constant of the bitstream, so it reads true with the machine running.
+// MACHINE-ID is the signature over that half, the word QUUX's functional
+// source 16 and the feature page's first word read.  The word's width is the
+// revision's: 32 bits on the CADR and QUUX to revision 12, 40 on revision 13.
+// The build is page 2's word 32, `cons_build_of`.
+#define CONS_RO_SEL_REGS    10u
+#define CONS_RO_QUUX_ID     21u
+#define CONS_RO_NO_MEMORY   0xA5A55A5AA5A5ull
+#define CONS_QUUX_SIGNATURE 0x5155u
+struct cons_machine_id {
+	int answered;		/* the window's echo named the entry asked for */
+	uint64_t entry;		/* entry 21 as read, 48 bits */
+	int quux;		/* 1 QUUX, 0 the CADR */
+	int known;		/* the entry is the CADR's answer or carries the signature */
+	unsigned revision;	/* QUUX's: 12, 13, ...; 0 on the CADR */
+	uint32_t machine_id;	/* QUUX's MACHINE-ID; 0 when the fabric does not carry it */
+	unsigned processor_type;
+	unsigned k, l;		/* QUUX's microcycle, in ticks */
+	unsigned word_bits;	/* 32 or 40; 0 for a revision this program does not know */
+	struct cons_build build;
+};
+// Pure: the decode of entry 21 and the stamp word, for a check that holds it
+// against canned values.
+void cons_machine_id_of(uint64_t entry, uint32_t build_word, struct cons_machine_id *m);
+// The readout window's entry 21, and the stamp.  0, or -1 with `answered`
+// clear when the echo named another entry twice running: the window is
+// shared with `cadr-readout` and `cadr-checkpoint`, so one stale echo is
+// asked again.
+int cons_read_machine_id(struct console *c, struct cons_machine_id *m);
+// One line, `machine: ...`, through `say`.
+void cons_say_machine_id(const struct cons_machine_id *m);
+// **`machine [cadr|quux [REVISION]]`, WHOLE, AS TYPED.**  1 when `argv[0]` is
+// the word, 0 with nothing done for any other.  The line, and `*status` 0
+// when the fabric said which machine it is and is the one asked for, if one
+// was; 1 when it is not, or did not say; 2 for words it does not take.
+int cons_machine_word(struct console *c, int argc, char **argv, int *status);
+
 struct cons_boards {
 	uint32_t word;		/* word 37 as it read */
 	int mark_ok;		/* it carried `CONS_BOARDS_MARK` */
