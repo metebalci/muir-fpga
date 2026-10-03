@@ -228,20 +228,68 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 	size_t at = 0;
 	// The CADR's fabric keeps muir-fpga's grid and the checkpoint says so,
 	// and muir refuses a checkpoint resumed under another timing model.
-	// QUUX's timing is `sync`, of the K and L in the checkpoint itself, which
-	// muir takes from the file.  muir is two executables, and the machine
-	// is the one named: `quux` for QUUX, `cadr` for the CADR.
-	at += (size_t)snprintf(out + at, at < n ? n - at : 0, "%s",
-			       b->quux ? "quux --rtl"
-				       : "cadr --rtl --timing-model fpga");
+	// muir is two executables, and the machine is the one named: `quux` for
+	// QUUX, `cadr` for the CADR.
+	//
+	// **QUUX's TIMING IS `sync`, OF THE BOARD'S K**, and muir refuses a
+	// checkpoint of one K resumed under another --- its default is 4, and
+	// the Arty Z7-20's revision 13 runs at 5 --- so K is named.  **AND ITS
+	// REVISION**, which `quux` takes from the environment and not from a
+	// flag, and refuses a checkpoint of the other revision at: so the line
+	// starts with the assignment a shell takes for that one command.  A
+	// sidecar older than the two lines names neither.
+	if (b->quux) {
+		if (b->revision)
+			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+					       "MUIR_QUUX_REVISION=%u ", b->revision);
+		at += (size_t)snprintf(out + at, at < n ? n - at : 0, "quux --rtl");
+		if (b->sync_k)
+			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+					       " --sync-cycle-ticks %u", b->sync_k);
+	} else {
+		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+				       "cadr --rtl --timing-model fpga");
+	}
 	for (unsigned u = 0; u < BIND_UNITS; ++u) {
 		if (!b->u[u].present)
 			continue;
 		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 				       " --disk-pack %s,%u", b->u[u].path, u);
 	}
-	snprintf(out + at, at < n ? n - at : 0, " --main-memory-boards %u --resume %s",
-		 b->boards, chk);
+	// **THE MEMORY IS THE CHECKPOINT'S OWN**: muir builds the machine with
+	// as much main memory as the file has, and a flag may only agree.  The
+	// CADR's line names its boards in the CADR's own flag.  QUUX's names
+	// nothing, since QUUX's memory is an amount and not boards, and its
+	// flag is not the same word in every muir.
+	if (!b->quux)
+		at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+				       " --main-memory-boards %u", b->boards);
+	snprintf(out + at, at < n ? n - at : 0, " --resume %s", chk);
+}
+
+int bind_halt_mark(const char *path, uint64_t cycles)
+{
+	FILE *f = fopen(path, "w");
+	if (!f)
+		return -1;
+	fprintf(f, "%llu\n", (unsigned long long)cycles);
+	return fclose(f) == 0 ? 0 : -1;
+}
+
+int bind_halted_here(const char *path, uint64_t cycles)
+{
+	FILE *f = fopen(path, "r");
+	if (!f)
+		return 0;
+	unsigned long long at = 0;
+	const int got = fscanf(f, "%llu", &at);
+	fclose(f);
+	return got == 1 && at == (unsigned long long)cycles;
+}
+
+void bind_halt_unmark(const char *path)
+{
+	remove(path);
 }
 
 int bind_write(const struct binding *b, const char *path, char *err, size_t errlen)
@@ -286,6 +334,11 @@ int bind_write(const struct binding *b, const char *path, char *err, size_t errl
 	fprintf(f, "boards: %u\n", b->boards);
 	fprintf(f, "microcycles: %llu\n", (unsigned long long)b->microcycles);
 	fprintf(f, "ns: %llu\n", (unsigned long long)b->ns);
+	if (b->quux) {
+		fprintf(f, "revision: %u\n", b->revision);
+		fprintf(f, "sync-cycle-ticks: %u\n", b->sync_k);
+	}
+	fprintf(f, "running: %s\n", b->running > 0 ? "yes" : "no");
 	fprintf(f, "machine-halted-first: %s\n", b->machine_halted_first ? "yes" : "no");
 	fprintf(f, "packs-program-stopped: %s\n", b->packs_program_stopped ? "yes" : "unknown");
 	fprintf(f, "packs: %u\n", b->present);
@@ -364,6 +417,7 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 		return -1;
 	}
 	bind_init(b);
+	b->running = -1;	/* until a `running:` line says */
 	char line[8192];
 	int saw_format = 0;
 	while (fgets(line, sizeof line, f)) {
@@ -403,6 +457,12 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen)
 			b->microcycles = strtoull(v, NULL, 10);
 		} else if ((v = field(line, "ns")) != NULL) {
 			b->ns = strtoull(v, NULL, 10);
+		} else if ((v = field(line, "revision")) != NULL) {
+			b->revision = (unsigned)strtoul(v, NULL, 10);
+		} else if ((v = field(line, "sync-cycle-ticks")) != NULL) {
+			b->sync_k = (unsigned)strtoul(v, NULL, 10);
+		} else if ((v = field(line, "running")) != NULL) {
+			b->running = strcmp(v, "yes") == 0;
 		} else if ((v = field(line, "pack")) != NULL) {
 			char buf[1024];
 			if (subfield(v, "unit", buf, sizeof buf) != 0) {

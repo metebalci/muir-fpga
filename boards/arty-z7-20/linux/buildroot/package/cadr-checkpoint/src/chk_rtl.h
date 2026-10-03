@@ -64,6 +64,15 @@ const char *const *chk_rtl_missing_quux(void);
 // machine.  Non-zero, with the reason in `why`, or 0.
 int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n);
 
+// **THE RUN STATE THE MACHINE HAD BEFORE THIS PROGRAM HALTED IT.**  The
+// window is read with the machine halted, so `RUN` and `SRUN` read clear
+// whatever the machine was doing; a machine this program found running and
+// halted for the read is written with both set, as they stood before the
+// halt, so that muir resumes it running from where it stood.  A machine found
+// halted is written as it was read.  `was_running` is the program's own
+// measurement, CYCLES moving before the halt (`ro_is_halted`).
+void chk_rtl_run_state(struct cadr_image *img, int was_running);
+
 // What a mutant of this file was built to do, or NULL for the real thing.
 // `CHK_MUTATE` is never defined in the program that goes on the board; the
 // host check builds this file again with each value and requires muir to

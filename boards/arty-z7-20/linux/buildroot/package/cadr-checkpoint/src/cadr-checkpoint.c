@@ -35,6 +35,16 @@
 // writes the clock control register with RUN clear, reads, and writes RUN
 // back unless `--leave-halted` says not to.
 //
+// **AND THE FILE RECORDS THE RUN STATE THE MACHINE HAD BEFORE THAT HALT.**
+// RUN and SRUN read clear on a machine this program halted, and a file
+// written as read resumes halted in muir; so a machine found running is
+// written with both set, as they stood, and muir runs it on from where it
+// stood with no `continue`.  `--halt` writes down the halt it made, and
+// `--already-halted` takes the machine as running when the count still
+// stands there (`bind_halted_here`).  The sidecar's `running:` line says
+// which, and its resume line names what muir needs to take the file as the
+// board ran it: on QUUX the revision and K.
+//
 // **AND THE PACKS ARE READ AT THE SAME INSTANT AS THE MACHINE.**  A
 // checkpoint carries the blocks a run has written and never the disk, so a
 // resume against a pack that has moved on restores a machine into a disk it
@@ -393,13 +403,22 @@ int main(int argc, char **argv)
 			    "control register");
 			return 1;
 		}
+		// **THE HALT IS THIS PROGRAM'S AND IT IS WRITTEN DOWN**, so that
+		// the checkpoint `--already-halted` takes next records the machine
+		// as running, which it was until this write: `bind_halted_here`.
+		const uint64_t at = ro_cycles(&r);
+		if (bind_halt_mark(BIND_HALT_MARK, at) != 0)
+			say("%s could not be written: %s.  The checkpoint taken next will "
+			    "record the machine halted, as it then reads", BIND_HALT_MARK,
+			    strerror(errno));
 		say("halted at %llu microcycles.  Nothing is written to the packs "
 		    "from here on; stop cadr-disk-packs now, then take the "
 		    "checkpoint with --already-halted --leave-halted.",
-		    (unsigned long long)ro_cycles(&r));
+		    (unsigned long long)at);
 		return 0;
 	}
 	if (start_only) {
+		bind_halt_unmark(BIND_HALT_MARK);
 		ro_start(&r);
 		say("the machine is running again");
 		return 0;
@@ -453,6 +472,7 @@ int main(int argc, char **argv)
 	}
 
 	// **WHICH MACHINE THE BITSTREAM IS, ASKED BEFORE ANYTHING IS READ.**
+	unsigned sync_k = 0;
 	{
 		unsigned k = 0, l = 0;
 		const int is = ro_machine_is_quux(&r, &k, &l);
@@ -471,6 +491,7 @@ int main(int argc, char **argv)
 		if (quux)
 			say("the bitstream is QUUX, its microcycle %u ticks and %u more "
 			    "for ILONG", k, l);
+		sync_k = k;
 	}
 	// **AND WHICH REVISION OF QUUX**, entry 21's <15:0>: revision 13's
 	// words, sizes and main memory are its own (contract G2 appendix A1.13).
@@ -535,6 +556,12 @@ int main(int argc, char **argv)
 	}
 
 	const int was_running = !ro_is_halted(&r);
+	// **WHETHER THE MACHINE WAS RUNNING BEFORE THE HALT THIS CHECKPOINT IS
+	// TAKEN IN**: running when found, and so halted here; or halted by
+	// `--halt` for it, at the count it still stands at.
+	const int halted_for_it = !was_running && already_halted &&
+				  bind_halted_here(BIND_HALT_MARK, ro_cycles(&r));
+	const int ran = was_running || halted_for_it;
 	if (was_running && already_halted) {
 		say("--already-halted, and the machine is still retiring "
 		    "microcycles.  Nothing is read.");
@@ -632,6 +659,20 @@ int main(int argc, char **argv)
 		}
 	}
 
+	// **AND THE RUN STATE IT HAD BEFORE THE HALT**: RUN and SRUN read clear
+	// on a machine this program halted, and are written as they stood, so
+	// that muir resumes it running from where it stood (`chk_rtl_run_state`).
+	chk_rtl_run_state(&img, ran);
+	if (ran)
+		say("the machine was running%s: the file records RUN and SRUN set, as "
+		    "they stood before the halt, and muir resumes it running",
+		    halted_for_it ? " until cadr-checkpoint --halt stopped it" : "");
+	else
+		say("the machine was not running when found: the file records RUN %s "
+		    "and SRUN %s, as read",
+		    img_flag(&img, IMG_F_RUN) ? "set" : "clear",
+		    img_flag(&img, IMG_F_SRUN) ? "set" : "clear");
+
 	// **THE FIRST DISPLAY BOARD'S COLOR MAP**, off the console face's page
 	// 4.  It is not DDR and it is not the readout window: register 4 is
 	// write only on the Xbus, the RAMs and their converters being off the
@@ -727,6 +768,9 @@ int main(int argc, char **argv)
 	// that a sidecar beside the wrong file is found out as well.
 	bind.boards = boards;
 	bind.quux = quux;
+	bind.revision = quux ? (unsigned)revision : 0u;
+	bind.sync_k = quux ? sync_k : 0u;
+	bind.running = ran;
 	bind.microcycles = img.cycles;
 	bind.ns = (quux ? img.qx.m : img.ticks) * CHK_GRID_NS;
 	when(bind.taken, sizeof bind.taken);
@@ -761,8 +805,8 @@ int main(int argc, char **argv)
 	bind_resume_command(&bind, out, cmd, sizeof cmd);
 	say("  to open it: %s", cmd);
 	if (img.rev13)
-		say("  (a revision 13 checkpoint, version %u: muir reads it, and its "
-		    "executables run revision 13 once muir-sim's revision 13 lands)", CHK_VERSION_40);
+		say("  (a revision 13 checkpoint, version %u: muir's quux runs it under "
+		    "MUIR_QUUX_REVISION=13, which the line names)", CHK_VERSION_40);
 	// **SAID EVERY TIME, BECAUSE IT IS THE ONE THING NOTHING CHECKS.**
 	say("BEFORE RESUMING, check the packs against the digests above ---");
 	say("  cadr-checkpoint --verify %s", sidecar);

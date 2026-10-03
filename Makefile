@@ -4351,6 +4351,16 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # 561567 bytes; muir loads it, saves it back byte for byte and resumes at the
 # same microcycle.
 CHECKPOINT_SHA  := 8a1894f21fae8711f53e1323f073c6a4dddb5e603937eb9f41b063110587c763
+# **THE RUN STATE BEFORE THE HALT, AND ITS THREE MUTANTS, 32 TO 34.**  A
+# machine the program found running and halted for the read is written with
+# RUN and SRUN set, as they stood, so that muir resumes it running; one found
+# halted is written as read (`chk_rtl.c`'s `chk_rtl_run_state`).  The host
+# check finds the two slots by setting each flag alone and holds the function
+# to them, so these three are caught there, by the check itself failing on
+# its run state, and not by muir: muir takes a file with either value, and a
+# synthetic machine's microcode is poison that no resume can be watched
+# running.  The board's own run on is the proof of the rest.
+CHECKPOINT_RUN_MUTANTS := 32 33 34
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of MIT's grid, ten nanoseconds each, the two the model
 # sets.  The checkpoint declares muir's `fpga` timing model, so it is resumed
@@ -4421,6 +4431,16 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	   else \
 	     echo "checkpoint: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
 	   fi; \
+	 done; \
+	 for m in $(CHECKPOINT_RUN_MUTANTS); do \
+	   if $$W/checkpoint_test-$$m $$W $(Q8_DISKS) > $$W/mut-$$m.out 2>&1; then \
+	     echo "checkpoint: mutant $$m SURVIVED the run state's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
+	     exit 1; \
+	   fi; \
+	   grep -q "^checkpoint: FAIL: .*run state before the halt" $$W/mut-$$m.out \
+	     || { echo "checkpoint: mutant $$m failed, and not on the run state: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   echo "checkpoint: mutant $$m caught by the run state's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out)"; \
 	 done
 	@touch $@
 

@@ -519,6 +519,93 @@ static int unpack_equals(const uint8_t *raw, size_t len)
 	return ok;
 }
 
+// The body of `img` as it would be written, into `out` (freed by the caller).
+static void body_of(const struct cadr_image *img, const struct chk_declared *d, struct chk *out)
+{
+	chk_init(out);
+	chk_rtl_body(out, img, d);
+}
+
+// The one byte at which two bodies differ, or -1 when they differ at none or
+// at more than one, or in length.
+static long one_byte_apart(const struct chk *a, const struct chk *b)
+{
+	if (a->len != b->len)
+		return -1;
+	long at = -1;
+	for (size_t i = 0; i < a->len; ++i) {
+		if (a->p[i] == b->p[i])
+			continue;
+		if (at >= 0)
+			return -1;
+		at = (long)i;
+	}
+	return at;
+}
+
+// **THE RUN STATE, HELD ON THE TWO SLOTS muir READS IT FROM.**  `found` is a
+// machine as the window read it; returns 0, or -1 having said why.
+static int run_state_check(const struct cadr_image *found, const struct chk_declared *d,
+			   const char *which)
+{
+	const uint64_t both = (1ull << IMG_F_RUN) | (1ull << IMG_F_SRUN);
+	struct cadr_image halted = *found, run_only = *found, srun_only = *found;
+	halted.flags &= ~both;
+	run_only.flags = (found->flags & ~both) | (1ull << IMG_F_RUN);
+	srun_only.flags = (found->flags & ~both) | (1ull << IMG_F_SRUN);
+	struct chk b0, br, bs, bw, bh;
+	body_of(&halted, d, &b0);
+	body_of(&run_only, d, &br);
+	body_of(&srun_only, d, &bs);
+	const long at_run = one_byte_apart(&b0, &br), at_srun = one_byte_apart(&b0, &bs);
+	int bad_here = 0;
+	if (at_run < 0 || at_srun < 0 || at_run == at_srun ||
+	    b0.p[at_run] != 0 || br.p[at_run] != 1 || b0.p[at_srun] != 0 || bs.p[at_srun] != 1) {
+		fprintf(stderr, "%s: RUN and SRUN are not one byte each, 0 and 1 (%ld, %ld)\n",
+			which, at_run, at_srun);
+		bad_here = 1;
+	}
+	// Found running and halted for the read: both set, and nothing else moved.
+	struct cadr_image ran = halted;
+	chk_rtl_run_state(&ran, 1);
+	body_of(&ran, d, &bw);
+	if (!bad_here) {
+		int ok = bw.len == b0.len && bw.p[at_run] == 1 && bw.p[at_srun] == 1;
+		for (size_t i = 0; ok && i < b0.len; ++i)
+			if ((long)i != at_run && (long)i != at_srun && bw.p[i] != b0.p[i])
+				ok = 0;
+		if (!ok) {
+			fprintf(stderr, "%s: a machine found running is not written with RUN %u and "
+				"SRUN %u set and the rest as read\n", which,
+				bw.len > (size_t)at_run ? bw.p[at_run] : 9u,
+				bw.len > (size_t)at_srun ? bw.p[at_srun] : 9u);
+			bad_here = 1;
+		}
+	}
+	// Found halted: written exactly as read.
+	struct cadr_image stood = halted;
+	chk_rtl_run_state(&stood, 0);
+	body_of(&stood, d, &bh);
+	if (bh.len != b0.len || memcmp(bh.p, b0.p, b0.len) != 0) {
+		fprintf(stderr, "%s: a machine found halted is not written as it was read\n", which);
+		bad_here = 1;
+	}
+	chk_free(&b0);
+	chk_free(&br);
+	chk_free(&bs);
+	chk_free(&bw);
+	chk_free(&bh);
+	if (bad_here) {
+		fprintf(stderr, "checkpoint: FAIL: %s's run state before the halt\n", which);
+		++bad;
+		return -1;
+	}
+	printf("checkpoint: %s's run state: RUN at byte %ld and SRUN at byte %ld of the body, "
+	       "both set for a machine found running and as read for one found halted\n",
+	       which, at_run, at_srun);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	// **THE SCRATCH DIRECTORY IS NOT OPTIONAL.**  Half of what this file
@@ -708,32 +795,128 @@ int main(int argc, char **argv)
 			remove(side);
 		}
 
-		// **A QUUX BINDING SAYS SO, AND ITS RESUME IS QUUX'S.**  The line
-		// survives the file, and the command it prints is muir's `quux`
-		// and not the CADR's timing model, which `quux` refuses; the
-		// CADR's is `cadr` with it.
+		// **A QUUX BINDING SAYS SO, AND ITS RESUME IS QUUX'S, WHOLE.**  The
+		// line survives the file, and the command it prints is muir's
+		// `quux` with everything muir needs to take the file as the board
+		// ran it: the revision, which `quux` reads from the environment
+		// and refuses a checkpoint of the other at, and K, which muir
+		// refuses a checkpoint of another K at --- the Arty Z7-20's revision
+		// 13 runs at 5 and muir's default is 4.  No memory flag: muir
+		// builds the machine with the checkpoint's own memory.  The CADR's
+		// is `cadr` with its timing model and its boards.  Held whole,
+		// every word, against the line a person pastes.
 		struct binding qb;
 		bind_init(&qb);
 		qb.quux = 1;
-		qb.boards = 32;
+		qb.boards = 512;
+		qb.revision = 13;
+		qb.sync_k = 5;
+		qb.running = 1;
+		qb.u[0].present = 1;
+		snprintf(qb.u[0].path, sizeof qb.u[0].path, "/mnt/card/packs/disk-pack-0.img");
+		snprintf(qb.u[0].format, sizeof qb.u[0].format, "vhd-dynamic");
+		qb.present = 1;
 		snprintf(qb.checkpoint, sizeof qb.checkpoint, "%s", stand);
 		char cmd[4096];
+		static const char want13[] = "MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 "
+			"--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk";
 		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
-		if (strncmp(cmd, "quux --rtl ", 11) != 0 || strstr(cmd, "--timing-model") ||
-		    strstr(cmd, "--machine"))
-			fail("QUUX's resume command", 1, 0);
+		if (strcmp(cmd, want13) != 0) {
+			fprintf(stderr, "QUUX revision 13's resume line is [%s], wanting [%s]\n", cmd, want13);
+			fail("QUUX revision 13's resume line", 1, 0);
+		}
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || !rd.quux)
 			fail("the sidecar lost the machine", 0, 1);
+		else if (rd.revision != 13 || rd.sync_k != 5 || rd.running != 1)
+			fail("the sidecar lost the revision, K or the run state",
+			     ((uint64_t)rd.revision << 16) | (rd.sync_k << 8) | (unsigned)rd.running,
+			     (13u << 16) | (5u << 8) | 1u);
+		else {
+			// `--verify` prints the line from the sidecar it read.
+			bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
+			if (strcmp(cmd, want13) != 0)
+				fail("the resume line from the sidecar read back", 1, 0);
+		}
+		// And the file says it in words a person reads.
+		{
+			FILE *sf = fopen(side, "r");
+			char line[8192];
+			int saw_rev = 0, saw_k = 0, saw_run = 0, saw_resume = 0;
+			while (sf && fgets(line, sizeof line, sf)) {
+				line[strcspn(line, "\n")] = '\0';
+				saw_rev += strcmp(line, "revision: 13") == 0;
+				saw_k += strcmp(line, "sync-cycle-ticks: 5") == 0;
+				saw_run += strcmp(line, "running: yes") == 0;
+				saw_resume += strncmp(line, "resume: ", 8) == 0 &&
+					      strstr(line, "MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 ");
+			}
+			if (sf)
+				fclose(sf);
+			if (saw_rev != 1 || saw_k != 1 || saw_run != 1 || saw_resume != 1)
+				fail("the sidecar's revision, K, running and resume lines",
+				     (uint64_t)saw_rev * 1000 + saw_k * 100 + saw_run * 10 + saw_resume, 1111);
+		}
+		// Revision 12 at K = 4 names its own revision and K.
+		qb.revision = 12;
+		qb.sync_k = 4;
+		qb.running = 0;
+		bind_resume_command(&qb, "q.chk", cmd, sizeof cmd);
+		if (strcmp(cmd, "MUIR_QUUX_REVISION=12 quux --rtl --sync-cycle-ticks 4 "
+			   "--disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume q.chk") != 0)
+			fail("QUUX revision 12's resume line", 1, 0);
+		if (bind_write(&qb, side, err, sizeof err) != 0 ||
+		    bind_read(&rd, side, err, sizeof err) != 0 || rd.running != 0)
+			fail("a halted machine's sidecar read back as running", (unsigned)rd.running, 0);
+		// A sidecar written before the lines were names neither, and its
+		// run state is unknown rather than a guess.
+		{
+			FILE *sf = fopen(side, "w");
+			if (sf) {
+				fprintf(sf, "format: %s\nmachine: quux\nboards: 32\n", BIND_FORMAT);
+				fclose(sf);
+			}
+			if (bind_read(&rd, side, err, sizeof err) != 0 || rd.running != -1 ||
+			    rd.revision != 0 || rd.sync_k != 0)
+				fail("an old sidecar's run state, revision or K", (unsigned)rd.running, 0);
+			bind_resume_command(&rd, "q.chk", cmd, sizeof cmd);
+			if (strcmp(cmd, "quux --rtl --resume q.chk") != 0)
+				fail("an old sidecar's resume line", 1, 0);
+		}
 		qb.quux = 0;
+		qb.revision = 0;
+		qb.sync_k = 0;
+		qb.boards = 32;
+		qb.u[0].format[0] = '\0';
 		bind_resume_command(&qb, "c.chk", cmd, sizeof cmd);
-		if (strncmp(cmd, "cadr --rtl ", 11) != 0 || strstr(cmd, "--machine") ||
-		    !strstr(cmd, "--timing-model fpga"))
+		if (strcmp(cmd, "cadr --rtl --timing-model fpga --disk-pack "
+			   "/mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume c.chk") != 0) {
+			fprintf(stderr, "the CADR's resume line is [%s]\n", cmd);
 			fail("the CADR's resume command", 1, 0);
+		}
 		if (bind_write(&qb, side, err, sizeof err) != 0 ||
 		    bind_read(&rd, side, err, sizeof err) != 0 || rd.quux)
 			fail("a CADR sidecar read back as QUUX's", 1, 0);
 		remove(side);
+
+		// **THE HALT `--halt` MADE**, which `--already-halted` takes as the
+		// machine running before it only at the count it was made at.
+		{
+			char mark[320];
+			snprintf(mark, sizeof mark, "%s/halted", work);
+			remove(mark);
+			if (bind_halted_here(mark, 77))
+				fail("no mark taken as a halt this program made", 1, 0);
+			if (bind_halt_mark(mark, 0x123456789ull) != 0)
+				fail("the halt mark could not be written", 1, 0);
+			if (!bind_halted_here(mark, 0x123456789ull))
+				fail("the halt mark at its own count", 0, 1);
+			if (bind_halted_here(mark, 0x12345678Aull))
+				fail("a machine that ran on since the mark taken as halted there", 1, 0);
+			bind_halt_unmark(mark);
+			if (bind_halted_here(mark, 0x123456789ull))
+				fail("a mark taken away and still taken", 1, 0);
+		}
 	}
 
 	// ---- a QUUX disk, bound by its footers and never by its size -------
@@ -1117,6 +1300,18 @@ int main(int argc, char **argv)
 		machine_body_len = machine_part + rtl_part;
 	}
 
+	// ---- the run state before the halt ----------------------------------
+	//
+	// **A MACHINE FOUND RUNNING IS WRITTEN RUNNING, AND ONE FOUND HALTED AS
+	// IT WAS READ.**  The program halts a running machine to read it, so the
+	// window gives RUN and SRUN clear; `chk_rtl_run_state` puts both back.
+	// Where the two bytes are is found here independently of that function:
+	// the image with each flag set alone against the image with neither,
+	// each one byte apart --- so the assertion below is on the two slots muir
+	// reads RUN and SRUN from, and not on whatever the function touched.
+	if (run_state_check(&img, &decl, "the CADR") != 0)
+		return 1;
+
 	if (out) {
 		if (chk_write_file(out, "rtl", 1, &body) != 0) {
 			perror(out);
@@ -1384,6 +1579,9 @@ int main(int argc, char **argv)
 		if (!chk_rtl_mutation() && (qb13.len + qb13.hole_len != quux13_len ||
 					    qb13.hole_len != (size_t)IMG_BOARD_WORDS * 5u))
 			fail("revision 13's body's length", qb13.len + qb13.hole_len, quux13_len);
+		// The run state again, on revision 13's body, whose slots are its own.
+		if (run_state_check(&q13, &q13decl, "QUUX revision 13") != 0)
+			return 1;
 		if (quux13_out && chk_write_file(quux13_out, "rtl", 1, &qb13) != 0) {
 			perror(quux13_out);
 			return 1;

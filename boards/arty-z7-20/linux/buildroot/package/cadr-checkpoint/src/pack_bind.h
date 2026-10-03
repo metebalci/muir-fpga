@@ -104,6 +104,20 @@ struct binding {
 	// is muir's `quux` and whose one pack is block-disk's, unit 0.  A
 	// sidecar without the line is the CADR's, which is all there was.
 	int quux;
+	// **WHAT muir NEEDS TO RESUME IT AS THE BOARD RAN IT**: QUUX's revision,
+	// 12 or 13, which muir's `quux` takes from `MUIR_QUUX_REVISION` and
+	// refuses a checkpoint of the other at; and the microcycle's length in
+	// ticks, K, which `--sync-cycle-ticks` gives and muir refuses a
+	// checkpoint of another K at.  Both are the fabric's own (the readout's
+	// register table's entry 21).  0 on the CADR, and 0 in a sidecar written
+	// before the lines were, whose resume then names neither.
+	unsigned revision;
+	unsigned sync_k;
+	// The run state the file records: 1 when the machine was running and
+	// this program halted it for the read, so that the file carries RUN and
+	// SRUN set and muir resumes it running; 0 when it was found halted and
+	// is written so; -1 in a sidecar written before the line was.
+	int running;
 };
 
 void bind_init(struct binding *b);
@@ -153,8 +167,24 @@ int bind_read(struct binding *b, const char *path, char *err, size_t errlen);
 // be read at all.  `chk_moved` is set if the checkpoint itself has changed.
 int bind_verify(struct binding *b, int *chk_moved, char *err, size_t errlen);
 
+// **THE HALT `cadr-checkpoint --halt` MADE**, for the longer way round
+// (`docs/checkpoint.md`): `--halt` writes the microcycle count it halted a
+// running machine at into `path`, and `--already-halted` takes the machine
+// as running before the halt only when the mark is there and the count still
+// stands at it --- a machine that has retired a microcycle since was started
+// by somebody, and a mark of a count it is not at is not about this halt.
+// `--start` takes the mark away.  `BIND_HALT_MARK` on the board.
+#define BIND_HALT_MARK "/var/run/cadr-checkpoint-halted"
+int bind_halt_mark(const char *path, uint64_t cycles);
+// 1 when the mark is there and names `cycles`, 0 otherwise.
+int bind_halted_here(const char *path, uint64_t cycles);
+void bind_halt_unmark(const char *path);
+
 // The command a resume takes, into `out`.  The packs in unit order, the
-// checkpoint last, which is the order muir's own usage puts them in.
+// checkpoint last, which is the order muir's own usage puts them in.  It
+// names everything muir needs to take the file as the board ran it: on the
+// CADR the timing model and the boards; on QUUX the revision, as the
+// environment's `MUIR_QUUX_REVISION=` before the command, and K.
 void bind_resume_command(const struct binding *b, const char *chk, char *out, size_t n);
 
 #endif

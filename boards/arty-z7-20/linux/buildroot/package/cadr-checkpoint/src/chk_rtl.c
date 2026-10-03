@@ -1395,6 +1395,35 @@ int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n)
 	return 1;
 }
 
+// --- the run state before the halt -------------------------------------------
+//
+// `ClockControl::run`, the clock control register's bit 0, and `Rtl::srun`,
+// which follows it at each master clock edge (muir's `mclk_edge`): both up
+// on a machine that is running, and both down once the console has written
+// the register with RUN clear --- which is how this program halts a machine
+// to read it.  So what the window reads is the halt this program made, not
+// the machine's own state, and a file written from it resumes halted: muir's
+// prompt then says "the machine is halted, its RUN clear".  The two are put
+// back as they stood before the halt, and nothing else is: the halt changed
+// nothing else that the file carries.
+void chk_rtl_run_state(struct cadr_image *img, int was_running)
+{
+#if CHK_MUTATE == 34
+	(void)was_running;
+	if (1)
+#else
+	if (was_running)
+#endif
+	{
+#if CHK_MUTATE != 32
+		img->flags |= 1ull << IMG_F_RUN;
+#endif
+#if CHK_MUTATE != 33
+		img->flags |= 1ull << IMG_F_SRUN;
+#endif
+	}
+}
+
 // --- what a mutant of this file was built to do ----------------------------
 //
 // **`CHK_MUTATE` IS NEVER DEFINED IN THE PROGRAM THAT GOES ON THE BOARD.**
@@ -1479,6 +1508,12 @@ const char *chk_rtl_mutation(void)
 	return "revision 13's level-2 map written at revision 12's 2,048 entries";
 #elif CHK_MUTATE == 31
 	return "a 40-bit body written under version 49, a 32-bit machine's";
+#elif CHK_MUTATE == 32
+	return "a machine found running written with RUN clear, as the halt left it";
+#elif CHK_MUTATE == 33
+	return "a machine found running written with SRUN clear, as the halt left it";
+#elif CHK_MUTATE == 34
+	return "a machine found halted written as running";
 #else
 	return NULL;
 #endif

@@ -30,7 +30,11 @@ a daemon and has no init script, because it halts the machine while it reads.
 2. Looks at the drive bay and refuses to go on if it finds no pack and was
    not told there is none.
 3. Halts the machine, by writing the clock control register with RUN clear.
-   A read taken while the datapath moves is torn.
+   A read taken while the datapath moves is torn. The file records the run
+   state the machine had before that halt: a machine found running is
+   written with RUN and SRUN set, as they stood, and muir resumes it running
+   from where it stood, with no `continue`. A machine found halted is
+   written halted.
 4. Reads the processor's memories and its register table through the
    console's readout window, and main memory and the display straight out of
    DDR through `/dev/mem`. Main memory is read at the machine's own count of
@@ -257,11 +261,29 @@ anywhere in that stream would break it.
     boards: 32
     microcycles: 1234567890
     ns: 6172839506
+    running: yes
     machine-halted-first: yes
     packs-program-stopped: unknown
     packs: 1
     pack: unit=0 bytes=269562880 geometry=815,19,17 read-only=no sha256=... file=/mnt/card/packs/disk-pack-0.img
     resume: cadr --rtl --timing-model fpga --disk-pack /mnt/card/packs/disk-pack-0.img,0 --main-memory-boards 32 --resume muir-20260911-193000.chk
+
+`running` says whether the file records the machine running (`yes`, it was
+running when the program halted it) or halted (`no`). The `resume` line is
+the command, to be run as written, that resumes the file as the board ran
+it. A QUUX checkpoint's sidecar also carries the revision and the
+microcycle's length in ticks, K, and its line names both, the revision as
+the environment's `MUIR_QUUX_REVISION` before the command, since muir's
+`quux` refuses a checkpoint of another revision or another K:
+
+    revision: 13
+    sync-cycle-ticks: 5
+    running: yes
+    ...
+    resume: MUIR_QUUX_REVISION=13 quux --rtl --sync-cycle-ticks 5 --disk-pack /mnt/card/packs/disk-pack-0.img,0 --resume muir-20261003-101500.chk
+
+The QUUX line names no memory flag: muir builds the machine with as much
+main memory as the checkpoint has.
 
 The checkpoint's own digest is in there too, so a sidecar that has drifted
 away from the file it was written for is found out as well as a pack that has.
@@ -554,7 +576,11 @@ On a card of the older two-partition shape that mount is `/dev/mmcblk0p2`, and
 the bay is that partition's own root rather than `packs/` in it.
 
 `--already-halted` refuses to read a machine that is still retiring
-microcycles, so the order cannot be got wrong silently. `--packs-stopped` is
+microcycles, so the order cannot be got wrong silently. `--halt` writes down
+the microcycle count it halted the machine at, in
+`/var/run/cadr-checkpoint-halted`, and `--already-halted` records the
+machine as running when the count still stands there, since it was running
+until that halt; `--start` takes the note away. `--packs-stopped` is
 the operator saying that nothing was writing the packs; the program cannot
 see that for itself, so the sidecar records it as `unknown` when it is not
 said rather than claiming something nothing checked. `/tmp` is RAM here, and
