@@ -564,7 +564,8 @@ of ticks, K, and an `ILONG` instruction takes L ticks more. This is muir's
 `TimingModel::Sync { cycle_ticks, ilong_ticks }`, run as `--timing-model sync
 --sync-cycle-ticks K`. K and L belong to a board, and L is 0 on both. The
 DE25-Nano runs at K = 4, which is 40 ns a microcycle. The Arty Z7-20 runs
-revision 12 at K = 4 and revision 13 at K = 5, 50 ns a microcycle.
+revision 12 at K = 4 and revision 13 at K = 5, 50 ns a microcycle. The Kria
+KR260 builds revision 13 only, at K = 4.
 
 **The Arty's revision 13 takes a longer microcycle, not a slower clock.** Its
 map, two levels through the memory path's decode, misses four ticks on that
@@ -582,7 +583,8 @@ with the divider needing the word 17 ticks before that microcycle's end.
 Since the `DIV` rule below, a `DIV` is held nine microcycles after its
 operands are ready, so that argument no longer sets the floor. The floor is
 unchanged until a fit at a smaller K says otherwise. Each board's top level states
-K as `SYNC_K`, and the Arty's states revision 13's as `SYNC_K13`. The
+K as `SYNC_K`, and the Arty's and the Kria KR260's state revision 13's as
+`SYNC_K13`. The
 DE25-Nano's QUUX constraint file, `quux_de25.sdc`, writes its counts as
 numbers, and `tools/grid_check.py` holds every `# sync:` count there to that
 board's `SYNC_K`. The Arty's, `quux_machine.xdc`, serves both revisions, so it

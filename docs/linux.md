@@ -517,11 +517,13 @@ from main memory to the end of the records, which is where the CADR's ends.
     board        revision 13's region         main memory     Linux
     Arty Z7-20   0x1200_0000-0x1C11_FFFF      160 MB          350.875 MB, two ranges
     DE25-Nano    0xA000_0000-0xB411_FFFF      room for 320 MB 670.875 MB
+    Kria KR260   0x5A00_0000-0x6411_FFFF      160 MB          the rest but the firmware's
 
 **Revision 13's tree is the board's tree with its reservation after the
-CADR's**, which it takes out: `zynq-arty-z7-20-quux13.dts` and
-`socfpga_agilex5_de25_nano_quux13.dts`. The kernel builds both trees, since
-it builds every tree in the board's `dts/`.
+CADR's**, which it takes out: `zynq-arty-z7-20-quux13.dts`,
+`socfpga_agilex5_de25_nano_quux13.dts` and
+`zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dts`. The kernel builds every tree
+in the board's `dts/`, so each board's image carries both.
 
 **U-Boot's own tree is the machine's too, so each machine has its own
 loader.** U-Boot runs with the tree in its FIT: `u-boot.img` on the Zynq
@@ -543,6 +545,13 @@ build's own loader byte for byte.
   says, and places the kernel's tree and the ramdisk just under itself. Both
   machines' regions end below `0xB800_0000`, and the fixed loads end below
   `0xA000_0000`.
+- The Kria KR260 has no loader of this project's: its factory U-Boot runs
+  `boot.cmd`, whose loads all end below `0x5A00_0000`, where revision 13's
+  region starts, and which pins `fdt_high` and `initrd_high` so that nothing
+  is moved. It relocates itself above `0x7B80_0000`, clear of both regions.
+  Its own tree is the firmware's, which reserves neither, and it writes
+  nothing in either. So on this board the pairing is the kernel's tree
+  alone.
 
 **The pairing is the card's, and the served set's.** The loader fetches the
 kernel's tree from the folder it fetches the bitstream from, under the board

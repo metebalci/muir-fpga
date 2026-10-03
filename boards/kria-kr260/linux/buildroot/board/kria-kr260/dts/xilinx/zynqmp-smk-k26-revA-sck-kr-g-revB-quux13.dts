@@ -1,0 +1,59 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * The Kria KR260 as Linux sees it, with QUUX revision 13 beside it.
+ *
+ * THE CADR's TREE (`zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dts`) WITH
+ * REVISION 13's RESERVATION IN PLACE OF THE CADR's, and nothing else
+ * different: the same model and the QSPI flash controller off, said again
+ * because an overlay applied to mainline's tree cannot include another's
+ * fragments by reference.  `post-image.sh` applies it to mainline's tree and
+ * writes zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dtb, which a revision 13
+ * card or served set carries under the CADR tree's own name.
+ *
+ * AN OVERLAY ON MAINLINE'S OWN KR260 TREE.  Mainline builds the board's tree
+ * as the K26 starter-kit SOM's (`zynqmp-smk-k26-revA.dts`) with the KR260
+ * carrier's overlay applied (`zynqmp-sck-kr-g-revB.dtso`), and Buildroot
+ * builds exactly that tree, `xilinx/zynqmp-smk-k26-revA-sck-kr-g-revB`.  This
+ * file is applied to it afterwards with `fdtoverlay`
+ * (`board/kria-kr260/post-image.sh`), and the result is
+ * zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dtb.
+ * Nothing of AMD's is copied here; nothing of the kernel's source is patched.
+ *
+ * WHAT IS ADDED:
+ *
+ *   the model, restated in AMD's own words ("ZynqMP KR260 revB", the
+ *     carrier's overlay), so that the card staging can read which board's
+ *     tree this is out of this file, as it reads the other boards' out of
+ *     theirs;
+ *   revision 13's 161.125 MB at 0x5A00_0000, no-map, from
+ *     quux13-reserved.dtsi, which says why there;
+ *   the QSPI FLASH CONTROLLER TURNED OFF.  The flash holds the board's own
+ *     boot firmware, two images of it, and this project never writes it.
+ *     With the node on, Linux binds the controller and offers the flash as
+ *     /dev/mtd*; with it off, nothing on the board can reach the flash at
+ *     all, and nothing here reads it.  The DE25-Nano's tree turns its flash
+ *     controller off too, for a reason of its own.
+ *
+ * NOTHING OF THE FABRIC IS DESCRIBED.  As on the other boards the programs
+ * reach the faces through /dev/mem, so there is no node for them.  The card's
+ * boot script loads the fabric with the factory U-Boot's `fpga loadb`, whose
+ * load releases the fabric's isolation and resets by itself, before the
+ * kernel starts.
+ *
+ * Every node is named by its path, `&{/...}`, because the base tree's labels
+ * are not needed and a path cannot resolve to a different node.
+ */
+
+/dts-v1/;
+/plugin/;
+
+&{/} {
+	model = "ZynqMP KR260 revB";
+};
+
+/include/ "quux13-reserved.dtsi"
+
+&{/axi/spi@ff0f0000} {
+	status = "disabled";
+};

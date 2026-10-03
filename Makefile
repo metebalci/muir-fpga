@@ -249,7 +249,7 @@ CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass \
        $(BUILD)/quux_fd_face.pass \
        $(BUILD)/quux_axi_master.quux.pass \
        $(BUILD)/checkpoint.quux.pass \
-       $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
+       $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/machine_param.pass $(BUILD)/word_width.pass muir-pin
 
@@ -369,6 +369,7 @@ $(BUILD)/mem_map.pass: tools/mem_map_check.py \
                        boards/de25-nano/cadr_de25.sv \
                        boards/kria-kr260/cadr_kr260.sv \
                        boards/kria-kr260/linux/cadr-reserved.dtsi \
+                       boards/kria-kr260/linux/quux13-reserved.dtsi \
                        boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h \
                        boards/arty-z7-20/linux/cadr-reserved.dtsi \
                        boards/de25-nano/linux/cadr-reserved.dtsi \
@@ -1245,6 +1246,22 @@ $(BUILD)/obj_quux13_axi_master/Vquux_axi_master: rtl/plumbing/quux_axi_master.sv
 
 $(BUILD)/quux13_axi_master.quux.pass: $(BUILD)/obj_quux13_axi_master/Vquux_axi_master
 	$(BUILD)/obj_quux13_axi_master/Vquux_axi_master
+	@touch $@
+
+# **AND THE SAME MASTER BEHIND THE KRIA KR260'S 128-BIT PORT**,
+# `rtl/plumbing/quux_axi_narrow128.sv`, as the board builds the pair
+# (`tb/quux_axi_narrow128_harness.sv`): the master's whole check again on the
+# wider port, each beat in the half its own address selects, and no write
+# beat before its burst's address (`tb/quux_axi_narrow128_tb.cpp`).
+$(BUILD)/obj_quux_axi_narrow128/Vquux_axi_narrow128_harness: rtl/plumbing/quux_axi_master.sv \
+        rtl/plumbing/quux_axi_narrow128.sv tb/quux_axi_narrow128_harness.sv tb/quux_axi_narrow128_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -Mdir $(BUILD)/obj_quux_axi_narrow128 \
+	    --top-module quux_axi_narrow128_harness rtl/plumbing/quux_axi_master.sv \
+	    rtl/plumbing/quux_axi_narrow128.sv tb/quux_axi_narrow128_harness.sv \
+	    $(abspath tb/quux_axi_narrow128_tb.cpp)
+
+$(BUILD)/quux_axi_narrow128.quux.pass: $(BUILD)/obj_quux_axi_narrow128/Vquux_axi_narrow128_harness
+	$(BUILD)/obj_quux_axi_narrow128/Vquux_axi_narrow128_harness
 	@touch $@
 
 # ------------------------------------ where QUUX differs, on both machines
@@ -2697,7 +2714,8 @@ KR260_PORT_SRC := tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv \
     rtl/plumbing/cadr_axi_lanes128.sv rtl/plumbing/cadr_axi_burst128.sv \
     rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
     rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-    $(GP1) rtl/plumbing/cadr_debug_window.sv
+    $(GP1) rtl/plumbing/cadr_debug_window.sv \
+    rtl/plumbing/quux_axi_master.sv rtl/plumbing/quux_axi_narrow128.sv
 KR260_LAMP_SRC := rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
 
 $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) \
@@ -2705,6 +2723,11 @@ $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT
 	$(KR260_LINT) $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_LAMP_SRC)
 	$(KR260_LINT) -GDDR=1 $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) $(KR260_LAMP_SRC)
 	$(KR260_LINT) -GDDR=1 -GLMTV=0 $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) $(KR260_LAMP_SRC)
+	@# And QUUX revision 13, the other machine this board builds (K6): with
+	@# and without the processing system.
+	$(KR260_LINT) -GMACHINE='"quux"' -GWORD_BITS=40 $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_LAMP_SRC)
+	$(KR260_LINT) -GDDR=1 -GMACHINE='"quux"' -GWORD_BITS=40 $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv \
+	    $(KR260_PORT_SRC) $(KR260_LAMP_SRC)
 	@touch $@
 
 # ------------------------------------------------- which machine is built

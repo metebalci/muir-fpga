@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The two files of this board's image that are made from other files: the
-# CADR's device tree, and boot.scr.
+# The three files of this board's image that are made from other files: the
+# CADR's device tree, QUUX revision 13's, and boot.scr.
 #
 # **THE TREE IS MAINLINE'S OWN KR260 TREE WITH THE CADR's ADDITIONS APPLIED.**
 # The kernel builds zynqmp-smk-k26-revA-sck-kr-g-revB.dtb as mainline does,
@@ -34,6 +34,7 @@ EXT=${BR2_EXTERNAL_CADR_KR260_PATH:?post-image.sh: no BR2_EXTERNAL_CADR_KR260_PA
 BOARD=$EXT/board/kria-kr260
 BASE=zynqmp-smk-k26-revA-sck-kr-g-revB
 TREE=$BASE-cadr
+TREE13=$BASE-quux13
 
 die() { echo "post-image.sh: $*" >&2; exit 1; }
 
@@ -56,6 +57,27 @@ get -p "$IMAGES/$TREE.dtb" /reserved-memory/cadr@63000000 | grep -qx no-map \
 [ "$(get "$IMAGES/$TREE.dtb" /axi/spi@ff0f0000 status)" = disabled ] \
 	|| die "$TREE.dtb leaves the QSPI flash controller on"
 echo "post-image.sh: $TREE.dtb: $BASE.dtb with the CADR's region at 0x63000000, no-map, and the QSPI controller off"
+
+# **AND REVISION 13's TREE, MAINLINE's WITH REVISION 13's OVERLAY IN PLACE OF
+# THE CADR's**, read back the same way: its node, no other machine's, its
+# region from main memory to the end of the records, no-map, the model and
+# the flash controller off (`quux13-reserved.dtsi`).
+"$HOST/bin/dtc" -@ -q -I dts -O dtb -i "$EXT/.." -o "$IMAGES/$TREE13.dtbo" \
+	"$BOARD/dts/xilinx/$TREE13.dts" || die "revision 13's overlay does not compile"
+"$HOST/bin/fdtoverlay" -i "$IMAGES/$BASE.dtb" -o "$IMAGES/$TREE13.dtb" "$IMAGES/$TREE13.dtbo" \
+	|| die "revision 13's overlay does not apply to $BASE.dtb"
+rm -f "$IMAGES/$TREE13.dtbo"
+reg=$(get -t x "$IMAGES/$TREE13.dtb" /reserved-memory/quux13@5a000000 reg) \
+	|| die "$TREE13.dtb has no /reserved-memory/quux13@5a000000"
+[ "$reg" = "0 5a000000 0 a120000" ] || die "$TREE13.dtb reserves '$reg', wanting 0 5a000000 0 a120000"
+get -p "$IMAGES/$TREE13.dtb" /reserved-memory/quux13@5a000000 | grep -qx no-map \
+	|| die "revision 13's region in $TREE13.dtb is not no-map"
+! get -l "$IMAGES/$TREE13.dtb" /reserved-memory | grep -q '^cadr@' \
+	|| die "$TREE13.dtb keeps the CADR's node beside revision 13's"
+[ "$(get "$IMAGES/$TREE13.dtb" / model)" = "ZynqMP KR260 revB" ] || die "$TREE13.dtb is not the KR260's tree"
+[ "$(get "$IMAGES/$TREE13.dtb" /axi/spi@ff0f0000 status)" = disabled ] \
+	|| die "$TREE13.dtb leaves the QSPI controller on"
+echo "post-image.sh: $TREE13.dtb: $BASE.dtb with revision 13's region at 0x5a000000, no-map, and the QSPI controller off"
 
 "$HOST/bin/mkimage" -A arm64 -O linux -T script -C none -n "the CADR on the Kria KR260" \
 	-d "$BOARD/boot.cmd" "$IMAGES/boot.scr" >/dev/null || die "mkimage could not make boot.scr"

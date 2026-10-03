@@ -139,8 +139,10 @@ BOARDS = {
         "machines": ["cadr"],
         "pads": ["ja"],
     },
-    # The Kria KR260: the CADR alone for now, as the Cora, on its own memory
-    # map, with the `PS8`'s stub for the board with the processing system.
+    # The Kria KR260: the CADR, and QUUX at revision 13 alone (contract G2,
+    # the KR260 port's K6), on its own memory map, with the `PS8`'s stub for
+    # the board with the processing system.  `machines` is what the plain
+    # sweep builds with no word; QUUX is swept at 40 bits by `word_reaches`.
     "kr260": {
         "top": "cadr_kr260",
         "file": "boards/kria-kr260/cadr_kr260.sv",
@@ -155,6 +157,10 @@ BOARDS = {
         },
         "machines": ["cadr"],
         "pads": ["pmod1"],
+        # Revision 13 at four ticks, `SYNC_K13`; there is no revision 12.
+        "sync_k": {40: 4},
+        # Revision 13's room on this board: 32M words.
+        "boards13_max": 512,
     },
 }
 
@@ -604,13 +610,18 @@ def main():
         for config in BOARDS["cora"]["configs"]:
             refused_at("cora", config, "quux",
                        "the Cora Z7-07S builds the CADR only", "cadr_cora")
+        # QUUX at revision 12's word is refused on the Kria KR260, which
+        # builds revision 13 alone.
         for config in BOARDS["kr260"]["configs"]:
             refused_at("kr260", config, "quux",
-                       "the Kria KR260 builds the CADR only", "cadr_kr260")
-        # The word, on the two boards that build QUUX.
+                       "and the Kria KR260 builds the CADR and QUUX revision 13", "cadr_kr260")
+        # The word, on the boards that build QUUX.
         for board in ("arty", "de25"):
             for bits in (None, 40):
                 word_reaches(board, "DDR=1 HDMI=1", bits, scratch)
+        # With the processing system: the file device's page is there only
+        # behind its port, as on the other boards.
+        word_reaches("kr260", "DDR=1", 40, scratch)
 
         # **THE ARTY'S FLOW STATES THE K ITS MACHINE COUNTS**: `tick.tcl`'s
         # `cadr_sync_k` for each word is the table's, and the flow sets the
@@ -697,12 +708,29 @@ def main():
         flow("the Cora's Vivado flow takes MACHINE=cadr", cora,
              {"MACHINE": "cadr", "OUTDIR": out("d")}, None,
              [], ["FAILED --- MACHINE"])
-        flow("the Kria KR260's Vivado flow refuses MACHINE=quux", kr260,
-             {"MACHINE": "quux", "OUTDIR": out("k")}, 1,
-             ["BIT: FAILED --- MACHINE=quux, and the Kria KR260 builds the"], [])
-        flow("the Kria KR260's Vivado flow takes MACHINE=cadr", kr260,
+        flow("the Kria KR260's Vivado flow refuses MACHINE=quux at revision 12's word", kr260,
+             {"MACHINE": "quux", "OUTDIR": out("k-quux13")}, 1,
+             ["BIT: FAILED --- MACHINE=quux at WORD_BITS=32, and the Kria KR260 builds"],
+             ["BIT: the machine is"])
+        flow("the Kria KR260's Vivado flow refuses MACHINE=%s" % NOT_A_MACHINE, kr260,
+             {"MACHINE": NOT_A_MACHINE, "OUTDIR": out("k2")}, 1,
+             ["BIT: FAILED --- MACHINE=%s is not a machine" % NOT_A_MACHINE], ["BIT: the machine is"])
+        flow("the Kria KR260's Vivado flow refuses WORD_BITS=40 on the CADR", kr260,
+             {"MACHINE": "cadr", "WORD_BITS": "40", "OUTDIR": out("k3")}, 1,
+             ["BIT: FAILED --- WORD_BITS=40 is QUUX revision 13, and MACHINE=cadr"],
+             ["BIT: the machine is"])
+        flow("the Kria KR260's Vivado flow refuses revision 13 into a directory not named for it",
+             kr260, {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("k-quux")}, 1,
+             ["BIT: FAILED --- MACHINE=quux into OUTDIR="], ["BIT: the machine is"])
+        flow("the Kria KR260's Vivado flow takes WORD_BITS=40 on QUUX with PROM 2001", kr260,
+             {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("kr260-quux13")}, None,
+             ["BIT: the machine is quux, revision 13 (WORD_BITS=40)\n",
+              "BIT: the boot PROM is build/boot_prom.quux13.hex\n"],
+             ["FAILED --- MACHINE", "FAILED --- WORD_BITS"])
+        flow("the Kria KR260's Vivado flow takes MACHINE=cadr with MIT's PROM", kr260,
              {"MACHINE": "cadr", "OUTDIR": out("l")}, None,
-             [], ["FAILED --- MACHINE"])
+             ["BIT: the machine is cadr\n", "BIT: the boot PROM is build/boot_prom.hex\n"],
+             ["FAILED --- MACHINE"])
 
         nowhere = {"QUARTUS_ROOTDIR": out("no-quartus")}
         for script, who in (("build.sh", "de25"), ("program.sh", "de25-program")):

@@ -24,6 +24,20 @@ reports none.
 
 ## From a clean tree
 
+These fits were built from `78f0f67`, which finishes QUUX's memory master's
+write split at 4 KiB, with muir pinned at `a6fa3b3`. Revision 13 is at five
+ticks on the Arty Z7-20 and four on the DE25-Nano. Both stamps read
+`78f0f670`, the tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 13, K = 5 | +0.280 ns | +0.035 ns | 22,523 of 53,200 LUTs, 42.34% | 83 of 140 BRAM tiles | 7,119 of 13,300 | `78f0f67` | clean | 2026-10-03 |
+| DE25-Nano | QUUX revision 13 | +1.564 ns | +0.003 ns | 29,743 of 46,800 ALMs, 64% | 203 of 358 M20K | --- | `78f0f67` | clean | 2026-10-03 |
+
+The Arty Z7-20's fit passed the RAM enable check over 129 ports. The
+DE25-Nano's synthesis read back revision 13's machine, word and PROM image by
+name.
+
 These fits were built from `857e7bb`, QUUX revision 13 with its own boot
 PROM, version 2001, and 512 memory boards out of reset, with muir pinned at
 `a6fa3b3`. Revision 13 is at five ticks on the Arty Z7-20 and four on the

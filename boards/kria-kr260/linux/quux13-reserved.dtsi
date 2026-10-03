@@ -1,0 +1,36 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// QUUX revision 13's memory on the Kria KR260, told to Linux: the reservation
+// in revision 13's own device tree, which a card or a served set carries
+// beside revision 13's bitstream and no other.
+//
+// `rtl/plumbing/cadr_ddr_map.sv` places revision 13's main memory, packed
+// storage, directly below the display; the display and the disk pack
+// program's records stay where the CADR's are.  This node reserves from main
+// memory to the end of the records, and no further:
+//
+//   QUUX13_MAIN_BASE    = 0x5A00_0000, 160 MB, 32M words    main memory
+//   DISPLAY_BASE        = 0x6400_0000,   1 MB               the display
+//   SPARE_BASE          = 0x6410_0000, 128 KB               the records
+//   QUUX13_RESERVED_END = 0x6412_0000, the CADR's end too
+//
+// IN OVERLAY FORM, as the CADR's `cadr-reserved.dtsi` is, and applied to
+// mainline's tree in its place, never on top of it
+// (`board/kria-kr260/post-image.sh`): an overlay cannot take the CADR's node
+// out, so revision 13's tree is the board's own tree with this node and the
+// same other additions (`zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dts`).
+// The region is below the factory U-Boot's relocation at 0x7F89_F000 and its
+// stack, heap and tree from 0x7B80_FC00, and above every load address the
+// card's boot script uses, which are all below 0x5A00_0000 (`boot.cmd`), as
+// for the CADR's.  `no-map`, for the CADR's reason.
+
+&{/reserved-memory} {
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	quux13@5a000000 {
+		reg = <0x0 0x5a000000 0x0 0x0a120000>;
+		no-map;
+	};
+};

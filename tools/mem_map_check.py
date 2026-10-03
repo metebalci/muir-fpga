@@ -348,6 +348,7 @@ def same(what, fam, pairs):
 
 KR260_TOP = "boards/kria-kr260/cadr_kr260.sv"
 KR260_DTSI = "boards/kria-kr260/linux/cadr-reserved.dtsi"
+KR260_DTSI13 = "boards/kria-kr260/linux/quux13-reserved.dtsi"
 
 
 def kr260(root, pkg):
@@ -414,6 +415,18 @@ def kr260(root, pkg):
     if end13 != pm["DISPLAY_BASE"]:
         disagree("%s: revision 13's main memory, 5 bytes a word, ends at 0x%08X and the "
                  "display begins at 0x%08X" % (NAMES[fam], end13, pm["DISPLAY_BASE"]))
+    # And revision 13's own reservation, the node its tree carries in place of
+    # the CADR's (K6): from main memory to the end of the records.
+    unit13, base13, size13 = dtsi(read(root, KR260_DTSI13), KR260_DTSI13)
+    same("revision 13's reservation", fam, [
+        (DDR_MAP + " QUUX13_MAIN_BASE", pm["QUUX13_MAIN_BASE"]),
+        (KR260_DTSI13 + " reg", base13),
+        (KR260_DTSI13 + " unit address", unit13)])
+    same("revision 13's reservation's end", fam, [
+        (DDR_MAP + " QUUX13_RESERVED_END", pm["QUUX13_RESERVED_END"]),
+        ("the spare's base + RECORDS_BYTES", pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4
+         + pm["RECORDS_BYTES"]),
+        (KR260_DTSI13 + " reg", base13 + size13)])
     layout(fam, pm)
     # The faces' windows: where the programs look and where the fabric answers.
     for k, param in (("PACK", "PACK_BASE"), ("CHAOS", "CHAOS_BASE"), ("SERIAL", "SER_BASE"),

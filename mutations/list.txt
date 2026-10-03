@@ -26660,3 +26660,147 @@ setenv cadr_booti 'setenv bootargs ${cadr_bootargs} && saveenv && booti ${cadr_k
 @new
         .CON_BASE(32'hB000_0000), .DBG_BASE(32'hB000_2000),
 @end
+
+@mutation quux-narrow128-write-half-off-the-channel
+@check quux_axi_narrow128_quux
+@file rtl/plumbing/quux_axi_narrow128.sv
+@note **A WRITE BEAT'S HALF IS ITS BURST'S, NOT THE CHANNEL'S**: QUUX's
+@note master puts a split write's second address out while the first burst's
+@note beat may still wait, so a half read off the address channel puts that
+@note beat in the second burst's half.  Caught on "a write strobe outside its
+@note beat's half".
+@old
+  assign w_high  = aw_q[0] ^ w_odd;
+@new
+  assign w_high  = (aw_q[0] & 1'b0) ^ s_awaddr[3] ^ w_odd;
+@end
+
+@mutation quux-narrow128-read-half-off-the-channel
+@check quux_axi_narrow128_quux
+@file rtl/plumbing/quux_axi_narrow128.sv
+@note A split line's second read address goes out while the first burst's
+@note beats are still to come, so a half read off the address channel takes
+@note them from the wrong half.  Caught on "a line's byte is wrong".
+@old
+  assign r_high  = ar_q[0] ^ r_odd;
+@new
+  assign r_high  = (ar_q[0] & 1'b0) ^ s_araddr[3] ^ r_odd;
+@end
+
+@mutation quux-narrow128-write-beat-before-its-address
+@check quux_axi_narrow128_quux
+@file rtl/plumbing/quux_axi_narrow128.sv
+@note A write beat let through before its burst's address is taken, whose
+@note half nobody yet knows.  Caught on "a write beat on the port before its
+@note burst's address".
+@old
+  assign m_wvalid  = s_wvalid && (aw_n != 2'd0);
+  assign s_wready  = m_wready && (aw_n != 2'd0);
+@new
+  assign m_wvalid  = s_wvalid;
+  assign s_wready  = m_wready;
+@end
+
+@mutation quux-narrow128-read-queue-keeps-the-old-head
+@check quux_axi_narrow128_quux
+@file rtl/plumbing/quux_axi_narrow128.sv
+@note A burst finishing as the next one's address is taken: the new address
+@note must become the head, and keeping the old one puts the new burst's beats
+@note in the finished one's half.  Caught on "a line's byte is wrong".
+@old
+          if (ar_n == 2'd1) ar_q[0] <= s_araddr[3];
+@new
+          if (ar_n == 2'd1) ar_q[0] <= ar_q[0];
+@end
+
+@mutation quux-narrow128-odd-beat-not-counted
+@check quux_axi_narrow128_quux
+@file rtl/plumbing/quux_axi_narrow128.sv
+@note A burst's beats alternate halves, beat by beat; a count that never
+@note moved puts every beat of a line in its first beat's half.  Caught on
+@note "a line's byte is wrong".
+@old
+      if (r_take) r_odd <= m_rlast ? 1'b0 : !r_odd;
+@new
+      if (r_take) r_odd <= 1'b0;
+@end
+
+@mutation mem-map-kr260-revision-13-reserves-short-of-the-records
+@check mem_map
+@file boards/kria-kr260/linux/quux13-reserved.dtsi
+@note The Kria KR260's revision 13 node ending a page short of the records,
+@note which Linux would then take.  Caught on "revision 13's reservation's
+@note end".
+@old
+		reg = <0x0 0x5a000000 0x0 0x0a120000>;
+@new
+		reg = <0x0 0x5a000000 0x0 0x0a11f000>;
+@end
+
+@mutation mem-map-kr260-revision-13-at-the-cadrs-base
+@check mem_map
+@file boards/kria-kr260/linux/quux13-reserved.dtsi
+@note The Kria KR260's revision 13 node at the CADR's base, leaving revision
+@note 13's main memory to Linux.  Caught on "revision 13's reservation".
+@old
+	quux13@5a000000 {
+		reg = <0x0 0x5a000000 0x0 0x0a120000>;
+@new
+	quux13@63000000 {
+		reg = <0x0 0x63000000 0x0 0x0a120000>;
+@end
+
+@mutation machine-param-the-kr260-console-counts-the-cadrs-boards
+@check machine_param
+@file boards/kria-kr260/cadr_kr260.sv
+@note The Kria KR260's top hands its console the CADR's boards whatever it
+@note builds, revision 13 coming up at 2M words.
+@old
+  localparam bit          REV13_BOARDS   = MACHINE == "quux" && WORD_BITS > 32;
+@new
+  localparam bit          REV13_BOARDS   = 1'b0;
+@end
+
+@mutation machine-param-the-kr260-builds-the-cable-on-quux
+@check machine_param
+@file boards/kria-kr260/cadr_kr260.sv
+@note The debug cable built into QUUX's bitstream on the Kria KR260, which has
+@note none (contract Q5).  Caught on "the debug cable's cells".
+@old
+  if (MACHINE == "cadr") begin : g_dbg_cable
+@new
+  if (1'b1) begin : g_dbg_cable
+@end
+
+@mutation machine-param-the-kr260-flow-gives-revision-13-mits-prom
+@check machine_param
+@file boards/kria-kr260/vivado/bitstream.tcl
+@note The Kria KR260's revision 13 bitstream built with MIT's boot PROM.
+@old
+set prom [expr {$machine eq "quux" ? "build/boot_prom.quux13.hex" : "build/boot_prom.hex"}]
+@new
+set prom [expr {$machine eq "quux" ? "build/boot_prom.hex" : "build/boot_prom.hex"}]
+@end
+
+@mutation machine-param-the-kr260-flow-takes-revision-12
+@check machine_param
+@file boards/kria-kr260/vivado/bitstream.tcl
+@note The Kria KR260's flow taking QUUX at revision 12's word, which the
+@note board does not build.
+@old
+if {$machine eq "quux" && $word_bits ne "40"} {
+@new
+if {$machine eq "quux" && $word_bits ne "40" && 0} {
+@end
+
+@mutation machine-param-the-kr260-machine-is-not-the-word
+@check machine_param
+@file boards/kria-kr260/cadr_kr260.sv
+@note The Kria KR260's top elaborating QUUX at revision 12's word, which it
+@note refuses: the refusal let through.  Caught on "refused in cadr_kr260".
+@old
+  if (!(MACHINE == "cadr" && WORD_BITS == 32) && !(MACHINE == "quux" && WORD_BITS == 40)) begin : g_machine_refused
+@new
+  if (!(MACHINE == "cadr" && WORD_BITS == 32) && !(MACHINE == "quux")) begin : g_machine_refused
+@end
+

@@ -272,8 +272,11 @@ TAG = re.compile(
 # written from the flow's `sync_k` (`vivado/tick.tcl`), `$sync_k` or
 # `[expr {$sync_k - n}]`, and held here to its tag, a hold one tick less;
 # `build/machine_param.pass` holds the flow's `sync_k` to each revision's
-# machine.  A file that is no board's may not use the tag.
-SYNC_BY_REVISION = ("rtl/plumbing/xilinx7/", "boards/arty-z7-20/")
+# machine.  The Kria KR260's flow builds revision 13 from the same
+# `quux_machine.xdc` and reads its K from its own top level (`SYNC_K13`) the
+# same way, so its flow's counts are written from `sync_k` too.  A file that
+# is no board's may not use the tag.
+SYNC_BY_REVISION = ("rtl/plumbing/xilinx7/", "boards/arty-z7-20/", "boards/kria-kr260/")
 SYNC_BOARDS = [
     ("boards/de25-nano/", "boards/de25-nano/cadr_de25.sv"),
 ]

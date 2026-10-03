@@ -850,6 +850,17 @@ CHECKS = {
         "golden": None,
         "machine": "quux",
     },
+    # The same master behind the Kria KR260's 128-bit port, the pair as the
+    # board builds it (`tb/quux_axi_narrow128_tb.cpp`).
+    "quux_axi_narrow128_quux": {
+        "sources": ["rtl/plumbing/quux_axi_narrow128.sv"],
+        "extra": ["rtl/plumbing/quux_axi_master.sv", "tb/quux_axi_narrow128_harness.sv"],
+        "top": "quux_axi_narrow128_harness",
+        "tb": "tb/quux_axi_narrow128_tb.cpp",
+        "flags": ["-O2"],
+        "golden": None,
+        "machine": "quux",
+    },
     # QUUX's 64-bit AXI master with its line fills, against AXI3 and a
     # memory (`tb/quux_axi_master_tb.cpp`).
     "quux_axi_master_quux": {
@@ -1940,6 +1951,8 @@ CHECKS = {
                     "boards/cora-z7-07s/cadr_cora.sv",
                     "rtl/machine/cadr_machine.sv",
                     "rtl/plumbing/cadr_ddr_map.sv",
+                    "boards/kria-kr260/cadr_kr260.sv",
+                    "boards/kria-kr260/vivado/bitstream.tcl",
                     "boards/arty-z7-20/vivado/bitstream.tcl",
                     "boards/arty-z7-20/vivado/tick.tcl",
                     "boards/cora-z7-07s/vivado/bitstream.tcl",
@@ -1979,6 +1992,7 @@ CHECKS = {
                     "boards/de25-nano/cadr_de25.sv",
                     "boards/kria-kr260/cadr_kr260.sv",
                     "boards/kria-kr260/linux/cadr-reserved.dtsi",
+                    "boards/kria-kr260/linux/quux13-reserved.dtsi",
                     "boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h",
                     "boards/arty-z7-20/linux/cadr-reserved.dtsi",
                     "boards/de25-nano/linux/cadr-reserved.dtsi",
