@@ -9,6 +9,7 @@ source "$BR2_EXTERNAL_CADR_PATH/package/cadr-terminal/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-serial/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-chaosnet/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-usb-input/Config.in"
+source "$BR2_EXTERNAL_CADR_PATH/package/cadr-displayport/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/quux-file-device/Config.in"
 # The two programs here that are not ours, last.  Each is built from its own
 # upstream source at the commit this repository pins, and neither is patched.

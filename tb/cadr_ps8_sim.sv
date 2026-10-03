@@ -141,6 +141,38 @@ module cadr_ps8 (
     output var logic          hp2_rlast,
     output var logic          hp2_rvalid,
     input  var logic          hp2_rready,
+    input  var logic          hp3_rclk,
+    input  var logic          hp3_wclk,
+    input  var logic [48:0]   hp3_awaddr,
+    input  var logic [7:0]    hp3_awlen,
+    input  var logic [2:0]    hp3_awsize,
+    input  var logic [1:0]    hp3_awburst,
+    input  var logic          hp3_awvalid,
+    output var logic          hp3_awready,
+    input  var logic [127:0]  hp3_wdata,
+    input  var logic [15:0]   hp3_wstrb,
+    input  var logic          hp3_wlast,
+    input  var logic          hp3_wvalid,
+    output var logic          hp3_wready,
+    output var logic [1:0]    hp3_bresp,
+    output var logic          hp3_bvalid,
+    input  var logic          hp3_bready,
+    input  var logic [48:0]   hp3_araddr,
+    input  var logic [7:0]    hp3_arlen,
+    input  var logic [2:0]    hp3_arsize,
+    input  var logic [1:0]    hp3_arburst,
+    input  var logic          hp3_arvalid,
+    output var logic          hp3_arready,
+    output var logic [127:0]  hp3_rdata,
+    output var logic [1:0]    hp3_rresp,
+    output var logic          hp3_rlast,
+    output var logic          hp3_rvalid,
+    input  var logic          hp3_rready,
+    input  var logic          dp_videoinclk,
+    input  var logic          dp_livevideoinvsync,
+    input  var logic          dp_livevideoinhsync,
+    input  var logic          dp_livevideoinde,
+    input  var logic [35:0]   dp_livevideoinpixel1,
     input  var logic [95:0]   gpio_i,
     output var logic [95:0]   gpio_o,
     input  var logic [7:0]    irq0
@@ -245,6 +277,21 @@ module cadr_ps8 (
       .rvalid(hp2_rvalid), .rready(hp2_rready));
   assign hp0_rdata = {64'd0, hp0_rdata_lo};
   assign hp2_rdata = {64'd0, hp2_rdata_lo};
+
+  // ----------------------------------------- the display output's port
+  //
+  // Not modeled: no design simulated against this model reads it.  It takes
+  // an address and never answers one, and writes nothing; the DisplayPort
+  // controller's live input goes nowhere.
+  assign hp3_awready = 1'b0;
+  assign hp3_wready  = 1'b0;
+  assign hp3_bresp   = 2'b00;
+  assign hp3_bvalid  = 1'b0;
+  assign hp3_arready = 1'b0;
+  assign hp3_rdata   = 128'd0;
+  assign hp3_rresp   = 2'b00;
+  assign hp3_rlast   = 1'b0;
+  assign hp3_rvalid  = 1'b0;
 endmodule
 /* verilator lint_on UNUSEDSIGNAL */
 

@@ -225,6 +225,15 @@
 #define CADR_BOARD_TALLY_OFF0    0x6Cu
 #define CADR_BOARD_TALLY_OFF1    0x70u
 
+// **THE DISPLAY OUTPUT'S LINK IS THE PROCESSING SYSTEM'S DISPLAYPORT**, which
+// `cadr-displayport` brings up and keeps: the controller's registers (UG1087,
+// DISPLAY_PORT module) and the PS-GTR transceivers' (UG1087, SERDES module),
+// whose lane 1 carries the link on this carrier.
+#define CADR_BOARD_DISPLAYPORT_HEX FD4A0000
+#define CADR_BOARD_DISPLAYPORT_BYTES 0x0000D000u
+#define CADR_BOARD_SERDES_HEX      FD400000
+#define CADR_BOARD_SERDES_BYTES    0x00020000u
+
 #endif  // CADR_BOARD_KR260
 
 // Hex digits into a number and into a string.  Two levels, so that the
@@ -255,6 +264,10 @@
 #define CADR_BOARD_COLOR_BASE        CADR_BOARD_NUM(CADR_BOARD_COLOR_HEX)
 #define CADR_BOARD_COLOR_BASE_STR    CADR_BOARD_STR(CADR_BOARD_COLOR_HEX)
 #define CADR_BOARD_SPARE_BASE        CADR_BOARD_NUM(CADR_BOARD_SPARE_HEX)
+#if defined(CADR_BOARD_KR260)
+#define CADR_BOARD_DISPLAYPORT_BASE  CADR_BOARD_NUM(CADR_BOARD_DISPLAYPORT_HEX)
+#define CADR_BOARD_SERDES_BASE       CADR_BOARD_NUM(CADR_BOARD_SERDES_HEX)
+#endif
 // **QUUX REVISION 13's MEMORY, AND ITS OWN RESERVATION** (contract G2 §3):
 // main memory in packed storage, word w at byte `CADR_BOARD_QUUX13_MAIN_BASE +
 // 5w` (G1 §4.1), with room for `CADR_BOARD_QUUX13_MAIN_WORDS_MAX` words

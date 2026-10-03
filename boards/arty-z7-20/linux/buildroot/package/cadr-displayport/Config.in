@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_CADR_DISPLAYPORT
+	bool "cadr-displayport"
+	# Depends on cadr-common rather than selecting it, as the board's
+	# address map does: the map is a choice inside cadr-common, and a
+	# package that selected cadr-common while depending on the map would be
+	# a recursive dependency, which Kconfig answers by dropping the map.
+	depends on BR2_PACKAGE_CADR_COMMON && BR2_CADR_BOARD_KR260
+	help
+	  The Kria KR260's DisplayPort link, for the display output in
+	  the fabric.  The display output puts the machine's screens on
+	  a 1920x1080 raster and hands it to the processing system's
+	  DisplayPort controller's live video input; this program sets
+	  up the transceiver lane, trains the link with the monitor,
+	  tells the controller what the stream is, and follows the
+	  display output's sleep: the monitor is told D3 and the stream
+	  stops when the display is muted, and D0 and the stream come
+	  back when it is let go.  Pixels never pass through it.
+
+	  The Kria KR260's alone, and only with a display output in the
+	  fabric: it reads the console's word 36 first, and stops on a
+	  fabric whose word carries no display output's marker.
+
+comment "cadr-displayport is the Kria KR260's"
+	depends on !BR2_PACKAGE_CADR_COMMON || !BR2_CADR_BOARD_KR260

@@ -166,7 +166,9 @@ module cadr_kr260_fault #(
   logic hp0_awready, hp0_wready, hp0_bvalid, hp0_arready, hp0_rlast, hp0_rvalid;
   logic hp2_awready, hp2_wready, hp2_bvalid, hp2_arready, hp2_rlast, hp2_rvalid;
   logic [1:0]   hp0_bresp, hp0_rresp, hp2_bresp, hp2_rresp;
-  logic [127:0] hp0_rdata, hp2_rdata;
+  logic [127:0] hp0_rdata, hp2_rdata, hp3_rdata;
+  logic hp3_awready, hp3_wready, hp3_bvalid, hp3_arready, hp3_rlast, hp3_rvalid;
+  logic [1:0] hp3_bresp, hp3_rresp;
 
   // **KEPT BY NAME.**  Nothing here leaves the chip through the processing
   // system: its ports feed the default slaves and the slaves feed it back,
@@ -218,6 +220,21 @@ module cadr_kr260_fault #(
       .hp2_arvalid(1'b0), .hp2_arready(hp2_arready),
       .hp2_rdata(hp2_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
       .hp2_rvalid(hp2_rvalid), .hp2_rready(1'b1),
+      // The display output's port, idle as the two memory ports are.
+      .hp3_rclk(clk), .hp3_wclk(clk),
+      .hp3_awaddr(49'd0), .hp3_awlen(8'd0), .hp3_awsize(3'b100), .hp3_awburst(2'b01),
+      .hp3_awvalid(1'b0), .hp3_awready(hp3_awready),
+      .hp3_wdata(128'd0), .hp3_wstrb(16'd0), .hp3_wlast(1'b0), .hp3_wvalid(1'b0),
+      .hp3_wready(hp3_wready),
+      .hp3_bresp(hp3_bresp), .hp3_bvalid(hp3_bvalid), .hp3_bready(1'b1),
+      .hp3_araddr(49'd0), .hp3_arlen(8'd0), .hp3_arsize(3'b100), .hp3_arburst(2'b01),
+      .hp3_arvalid(1'b0), .hp3_arready(hp3_arready),
+      .hp3_rdata(hp3_rdata), .hp3_rresp(hp3_rresp), .hp3_rlast(hp3_rlast),
+      .hp3_rvalid(hp3_rvalid), .hp3_rready(1'b1),
+      // And no picture: the DisplayPort controller's live input held at
+      // nothing, its clock low.
+      .dp_videoinclk(1'b0), .dp_livevideoinvsync(1'b0), .dp_livevideoinhsync(1'b0),
+      .dp_livevideoinde(1'b0), .dp_livevideoinpixel1(36'd0),
       .gpio_i(gpio_i), .gpio_o(gpio_o),
       .irq0(8'd0)
   );
@@ -237,7 +254,9 @@ module cadr_kr260_fault #(
                     hp0_awready, hp0_wready, hp0_bvalid, hp0_arready, hp0_rlast, hp0_rvalid,
                     hp2_awready, hp2_wready, hp2_bvalid, hp2_arready, hp2_rlast, hp2_rvalid,
                     hp0_bresp, hp0_rresp, hp2_bresp, hp2_rresp,
-                    hp0_rdata, hp2_rdata};
+                    hp0_rdata, hp2_rdata,
+                    hp3_awready, hp3_wready, hp3_bvalid, hp3_arready, hp3_rlast, hp3_rvalid,
+                    hp3_bresp, hp3_rresp, hp3_rdata};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

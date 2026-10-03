@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The Kria KR260's DisplayPort link at boot: cadr-displayport brings the link
+# up for the display output in the fabric, keeps it, and follows its sleep.
+#
+# S83, after S80cadr-disk-packs, which writes the card's `--display-output`,
+# `--display-rotate` and `--display-sleep` into the console face before the
+# drive comes present, so that the first picture on the monitor is the one
+# the card asks for; and before S85cadr-terminal, whose wake this program
+# follows.  It takes no flag from `fpgarc`: the mode is fixed per board and
+# the sleep is the display output's own setting.
+#
+# Not on the fault bitstream (`FAULT_SH` below), and the program itself stops
+# on a fabric with no display output, saying so.
+
+PROG=/usr/bin/cadr-displayport
+PIDFILE=/var/run/cadr-displayport.pid
+
+DAEMON_SH=/usr/share/cadr/daemon.sh
+. "$DAEMON_SH"
+STOP_SH=/usr/share/cadr/stop.sh
+. "$STOP_SH"
+FAULT_SH=/usr/share/cadr/fault.sh
+. "$FAULT_SH"
+
+start() {
+	cadr_fault_stop && return 0
+	cadr_daemon "$PROG" "$PIDFILE"
+}
+
+stop() {
+	cadr_stop cadr-displayport "$PIDFILE"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?

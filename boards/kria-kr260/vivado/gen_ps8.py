@@ -92,6 +92,15 @@ def axi_slave(p):
 #     live input; no HP port has a DDR port to itself on this part.
 #   `S_AXI_HP2_FPD` (`SAXIGP4`): the disk pack's.  XPI 4, shared with HP1
 #     and nothing else here, so the disk's traffic is off the machine's port.
+#   `S_AXI_HP3_FPD` (`SAXIGP5`): the display output's reads of the CADR's
+#     screens.  XPI 5, shared with the FPD DMA alone, and off both the
+#     machine's port and the pack side's (UG1085 ch. 35).
+#   `DPVIDEOINCLK` and `DPLIVEVIDEOIN*`: the display output's raster into the
+#     DisplayPort controller's live video input, pixel 1 at 8 bits a
+#     component in UG1085 table 33-3's places, clocked by the fabric's own
+#     pixel clock.  The controller's video reference clock (`DPVIDEOREFCLK`)
+#     is not used: without Linux's display driver it is not at the mode's
+#     rate (measured in the board's K9 spike).
 #   `EMIOGPIOI`: the fabric's ninety-six bits into the GPIO block.  Banks 3
 #     and 4 carry the memory tally (`rtl/plumbing/cadr_mem_count.sv`), read
 #     at `DATA_3_RO` 0xFF0A_006C and `DATA_4_RO` 0xFF0A_0070 (UG1087); bank 5
@@ -109,7 +118,10 @@ def axi_slave(p):
 # unless a driver claims them (measured on the board).
 EXPOSED = (axi_master("MAXIGP0") + axi_master("MAXIGP1")
            + axi_slave("SAXIGP2") + axi_slave("SAXIGP4")
-           + ["EMIOGPIOI", "EMIOGPIOO", "PLPSIRQ0"])
+           + ["EMIOGPIOI", "EMIOGPIOO", "PLPSIRQ0"]
+           + axi_slave("SAXIGP5")
+           + ["DPVIDEOINCLK", "DPLIVEVIDEOINVSYNC", "DPLIVEVIDEOINHSYNC",
+              "DPLIVEVIDEOINDE", "DPLIVEVIDEOINPIXEL1"])
 
 # Inputs that are not exposed and must not be zero, each with its value and
 # the reason.  All but the four `AxCACHE` lines are what Vivado's own PS IP
@@ -139,6 +151,8 @@ TIED = {
     "SAXIGP2ARCACHE": ("4'b0011", "as AWCACHE"),
     "SAXIGP4AWCACHE": ("4'b0011", "as HP0's: a fabric master writing DDR"),
     "SAXIGP4ARCACHE": ("4'b0011", "as AWCACHE"),
+    "SAXIGP5AWCACHE": ("4'b0011", "as HP0's: the display never writes"),
+    "SAXIGP5ARCACHE": ("4'b0011", "as HP0's: a fabric master reading DDR"),
 }
 
 WHY_ZERO = {
@@ -162,6 +176,16 @@ WHY_ZERO = {
     "SAXIGP4ARQOS": "as AWQOS",
     "SAXIGP4AWUSER": "no coherency is asked for: the region is uncached",
     "SAXIGP4ARUSER": "as AWUSER",
+    "SAXIGP5AWID": "the display never writes",
+    "SAXIGP5ARID": "one ID: the display's reads come back in the order asked",
+    "SAXIGP5AWLOCK": "no exclusive access on this path",
+    "SAXIGP5ARLOCK": "as AWLOCK",
+    "SAXIGP5AWPROT": "data, secure, unprivileged, as HP0's",
+    "SAXIGP5ARPROT": "as AWPROT",
+    "SAXIGP5AWQOS": "no quality-of-service arbitration is asked for",
+    "SAXIGP5ARQOS": "as AWQOS",
+    "SAXIGP5AWUSER": "no coherency is asked for: the region is uncached",
+    "SAXIGP5ARUSER": "as AWUSER",
 }
 
 # The prefix a pin's block is known by, and what the wrapper calls it.
@@ -172,6 +196,8 @@ PREFIXES = [
     ("SAXIGP4", "hp2_"),
     ("EMIOGPIO", "gpio_"),
     ("PLPSIRQ0", "irq0"),
+    ("SAXIGP5", "hp3_"),
+    ("DP", "dp_"),
 ]
 
 

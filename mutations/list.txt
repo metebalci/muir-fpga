@@ -13366,9 +13366,9 @@ if {0 && $held ne $want} {
 @note column each picture reaches, telling the two apart by their colors, and
 @note holds it to 704 and 1279.
 @old
-  localparam int unsigned CX0  = H_ACTIVE - CPIC_W;
+  localparam int unsigned CX0  = H_ACTIVE - CPIC_W - SP_U;
 @new
-  localparam int unsigned CX0  = (H_ACTIVE - CPIC_W) / 2;
+  localparam int unsigned CX0  = (H_ACTIVE - CPIC_W) / 2 + (SP_U & 0);
 @end
 
 @mutation the-first-display-is-centered-on-the-raster-again
@@ -13386,9 +13386,9 @@ if {0 && $held ne $want} {
 @note only asserted the pair's total width would pass either of them moved by
 @note the same amount.
 @old
-  localparam int unsigned MX0  = 0;
+  localparam int unsigned MX0  = SP_U;
 @new
-  localparam int unsigned MX0  = (H_ACTIVE - PIC_W) / 2;
+  localparam int unsigned MX0  = (H_ACTIVE - PIC_W) / 2 + SP_U;
 @end
 
 @mutation the-two-screens-share-one-column-too-many
@@ -13408,9 +13408,9 @@ if {0 && $held ne $want} {
 @note the color picture's pixels one place along --- which is the second thing
 @note it would take a comparison to see.
 @old
-  localparam int unsigned CX0  = H_ACTIVE - CPIC_W;
+  localparam int unsigned CX0  = H_ACTIVE - CPIC_W - SP_U;
 @new
-  localparam int unsigned CX0  = H_ACTIVE - CPIC_W - 1;
+  localparam int unsigned CX0  = H_ACTIVE - CPIC_W - SP_U - 1;
 @end
 
 @mutation the-turned-color-board-is-one-column-out
@@ -13425,9 +13425,9 @@ if {0 && $held ne $want} {
 @note exactly what a check that ran one orientation would miss, and this
 @note module has two of them and three settings.
 @old
-  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H;
+  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H - SP_R;
 @new
-  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H - 1;
+  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H - SP_R - 1;
 @end
 
 @mutation a-lines-bank-is-taken-at-its-first-pixel
@@ -26804,3 +26804,178 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
   if (!(MACHINE == "cadr" && WORD_BITS == 32) && !(MACHINE == "quux")) begin : g_machine_refused
 @end
 
+
+@mutation rd128-the-half-does-not-alternate
+@check axi_rd128
+@file rtl/plumbing/cadr_axi_rd128.sv
+@note Every beat of a burst taken from the half its first beat is in: a
+@note narrow burst's beats alternate halves, so every second doubleword
+@note would be the other half's.  The beat count is left in, so lint has
+@note nothing to say.
+@old
+  wire half = half_q[rp] ^ parity;
+@new
+  wire half = half_q[rp] ^ (parity & 1'b0) ^ (parity & 1'b0);
+@end
+
+@mutation rd128-the-queue-is-never-full
+@check axi_rd128
+@file rtl/plumbing/cadr_axi_rd128.sv
+@note The address channel never held: a ninth burst in flight overwrites
+@note the oldest burst's half before its data comes back.
+@old
+  wire full  = count == (AW+1)'(DEPTH);
+@new
+  wire full  = count == (AW+1)'(DEPTH + 7);
+@end
+
+@mutation rd128-the-half-from-the-wrong-address-bit
+@check axi_rd128
+@file rtl/plumbing/cadr_axi_rd128.sv
+@note Bit 4 of the burst's address remembered instead of bit 3.
+@old
+        half_q[wp] <= s_araddr[3];
+@new
+        half_q[wp] <= s_araddr[4] ^ (s_araddr[3] & 1'b0);
+@end
+
+@mutation rd128-the-beat-count-runs-on-across-bursts
+@check axi_rd128
+@file rtl/plumbing/cadr_axi_rd128.sv
+@note The count of beats not cleared at a burst's last beat, so a burst
+@note after one of odd length starts in the wrong half.
+@old
+      if (done) begin
+        rp     <= (rp == AW'(DEPTH - 1)) ? '0 : rp + AW'(1);
+        parity <= 1'b0;
+      end else if (beat) begin
+@new
+      if (done) begin
+        rp     <= (rp == AW'(DEPTH - 1)) ? '0 : rp + AW'(1);
+        parity <= !parity;
+      end else if (beat) begin
+@end
+
+@mutation rd128-the-length-doubled
+@check axi_rd128
+@file rtl/plumbing/cadr_axi_rd128.sv
+@note The four-bit length widened into the wrong place: a burst of n + 1
+@note beats asked of the port as 2n + 1.
+@old
+  assign m_arlen   = {4'd0, s_arlen};
+@new
+  assign m_arlen   = {3'd0, s_arlen, 1'b0};
+@end
+
+@mutation display-out-the-pixel-counter-eleven-bits
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note The raster's pixel counter sized for 2048 pixels a line, enough for
+@note the Arty's 1688 and not the Kria KR260's 2200: only the board's own
+@note raster can catch it, which is why the board's raster is a build of
+@note its own.
+@old
+  localparam int unsigned HC_W = $clog2(H_TOTAL);
+@new
+  localparam int unsigned HC_W = ($clog2(H_TOTAL) > 11) ? 11 : $clog2(H_TOTAL);
+@end
+
+@mutation display-out-the-pixel-counter-eleven-bits-quux
+@check display_out_kr260_quux
+@file rtl/plumbing/cadr_display_out.sv
+@note As above, on QUUX's picture at the Kria KR260's raster.
+@old
+  localparam int unsigned HC_W = $clog2(H_TOTAL);
+@new
+  localparam int unsigned HC_W = ($clog2(H_TOTAL) > 11) ? 11 : $clog2(H_TOTAL);
+@end
+
+@mutation kr260-the-live-input-has-no-data-enable
+@check kr260
+@file boards/kria-kr260/cadr_kr260.sv
+@note The DisplayPort controller's live data enable tied low: a raster with
+@note syncs and no picture.  Caught by lint, the registered enable read by
+@note nothing.
+@old
+        .dp_livevideoinhsync(live_hsync), .dp_livevideoinde(live_de),
+@new
+        .dp_livevideoinhsync(live_hsync), .dp_livevideoinde(1'b0),
+@end
+
+@mutation kr260-the-color-board-map-is-not-asked
+@check kr260
+@file boards/kria-kr260/cadr_kr260.sv
+@note The machine's second map port left at entry zero, so the color screen
+@note would come out in one color.  Caught by lint, the display's map index
+@note read by nothing.
+@old
+      .disp_map_a(disp_map_a), .disp_color_map_q(con_disp_color_map_q),
+@new
+      .disp_map_a(4'd0), .disp_color_map_q(con_disp_color_map_q),
+@end
+
+@mutation kr260-the-display-at-the-wrong-back-porch
+@check machine_param
+@file boards/kria-kr260/cadr_kr260.sv
+@note The board's display built one pixel off the raster its check holds:
+@note no lint can see it and `display_out_kr260` builds the module at its
+@note own figures, so only the figures read at the board's `u_display`
+@note catch it.
+@old
+        .H_ACTIVE(1920), .H_FRONT(88), .H_SYNC(44), .H_BACK(148),
+@new
+        .H_ACTIVE(1920), .H_FRONT(88), .H_SYNC(44), .H_BACK(149),
+@end
+
+@mutation kr260-the-cadr-shows-quux-picture
+@check machine_param
+@file boards/kria-kr260/cadr_kr260.sv
+@note The CADR's first display read as QUUX's video controller, 1280 by 1024
+@note at 40 words a line.
+@old
+        .PIC_W         (MACHINE == "quux" ? 1280 : 768),
+        .PIC_H         (MACHINE == "quux" ? 1024 : 963),
+        .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 24)
+    ) u_display (
+        .clk(clk), .rst(disp_rst), .fabric_rst(rst),
+@new
+        .PIC_W         (1280),
+        .PIC_H         (1024),
+        .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 40)
+    ) u_display (
+        .clk(clk), .rst(disp_rst), .fabric_rst(rst),
+@end
+
+@mutation display-out-the-margins-shared-in-halves
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note The columns neither screen uses shared out in two, not three: the
+@note screens pushed to the raster's sides with no gap but the middle one.
+@old
+  localparam int unsigned SP_U = (SPREAD != 0 && FIT_U) ? (H_ACTIVE - PIC_W - CPIC_W) / 3 : 0;
+@new
+  localparam int unsigned SP_U = (SPREAD != 0 && FIT_U) ? (H_ACTIVE - PIC_W - CPIC_W) / 2 : 0;
+@end
+
+@mutation display-out-the-turned-screens-not-spread
+@check display_out_kr260
+@file rtl/plumbing/cadr_display_out.sv
+@note Turned, the two screens left at the raster's sides: only the upright
+@note placement shares out its columns.
+@old
+  localparam int unsigned SP_R = (SPREAD != 0 && FIT_R) ? (H_ACTIVE - PIC_H - CPIC_H) / 3 : 0;
+@new
+  localparam int unsigned SP_R = (SPREAD != 0 && FIT_R) ? 0 : 0;
+@end
+
+@mutation kr260-the-cadr-screens-not-spread
+@check machine_param
+@file boards/kria-kr260/cadr_kr260.sv
+@note The board's CADR built with its screens at the raster's two sides:
+@note `display_out_kr260` builds the module with `SPREAD` set by itself, so
+@note only the parameter read at the board's `u_display` catches it.
+@old
+        .SPREAD(MACHINE == "cadr" ? 1 : 0),
+@new
+        .SPREAD(MACHINE == "cadr" ? 0 : 0),
+@end

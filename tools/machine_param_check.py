@@ -71,6 +71,7 @@ printed either way.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -469,6 +470,8 @@ def word_reaches(board, config, bits, scratch):
     cable_at_top(board, config, "MACHINE=quux, %s" % asked, "quux", tree)
     # And the console's memory boards are the revision's.
     boards_at_console(board, config, "MACHINE=quux, %s" % asked, want > 32, tree)
+    if board == "kr260":
+        kr260_raster(config, "MACHINE=quux, %s" % asked, "quux", tree)
     # And the file device's page names the revision: "QF13" at 40 bits,
     # "QFD9" below (`rtl/plumbing/quux_fd_face.sv`).
     ident_want = 0x51463133 if want > 32 else 0x51464439
@@ -537,6 +540,44 @@ def reaches(board, config, value, scratch):
     # and every trace at that K would still pass.
     if want == "quux":
         k_at_generator(board, config, "MACHINE=quux", 32, tree)
+    if board == "kr260":
+        kr260_raster(config, asked, want, tree)
+
+
+def kr260_raster(config, asked, machine, tree):
+    """**THE KRIA KR260'S DISPLAY IS BUILT AT THE RASTER ITS CHECK HOLDS.**
+    `build/display_out_kr260.pass` builds `cadr_display_out` with the figures
+    in `boards/kria-kr260/display_raster.mk` and holds the eight edges at them;
+    this holds that the board's top level hands its `u_display` the same
+    figures, read at the instance, and the machine's own picture."""
+    if config != "DDR=1":
+        return
+    top = BOARDS["kr260"]["top"]
+    with open("boards/kria-kr260/display_raster.mk") as f:
+        text = f.read()
+    m = re.search(r"^DISPLAY_KR260_G\s*:=((?:.*\\\n)*.*)$", text, re.M)
+    want = {}
+    if m:
+        for k, v in re.findall(r"-G(\w+)=(\d+)", m.group(1)):
+            want[k] = int(v)
+    raster = ["H_ACTIVE", "H_FRONT", "H_SYNC", "H_BACK",
+              "V_ACTIVE", "V_FRONT", "V_SYNC", "V_BACK"]
+    what = "%s, %s, %s: u_display's raster is display_raster.mk's" % (top, config, asked)
+    if sorted(want) != sorted(raster):
+        say(False, "%s --- display_raster.mk names %s" % (what, sorted(want)))
+        return
+    pic = {"PIC_W": 768, "PIC_H": 963, "WORDS_PER_LINE": 24, "SPREAD": 1} if machine == "cadr" \
+        else {"PIC_W": 1280, "PIC_H": 1024, "WORDS_PER_LINE": 40, "SPREAD": 0}
+    want.update(pic)
+    got, why = params_at_cell(tree, top, "u_display", list(want))
+    if got is None:
+        say(False, "%s --- %s" % (what, why or "no u_display"))
+    elif got != want:
+        say(False, "%s --- it elaborates %s, want %s" % (
+            what, ", ".join("%s=%d" % kv for kv in sorted(got.items())),
+            ", ".join("%s=%d" % kv for kv in sorted(want.items()))))
+    else:
+        say(True, "%s, and %s's picture %dx%d" % (what, machine, pic["PIC_W"], pic["PIC_H"]))
 
 
 def k_at_generator(board, config, asked, bits, tree):

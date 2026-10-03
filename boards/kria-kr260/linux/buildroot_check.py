@@ -286,9 +286,34 @@ def configs(tree, out):
     programs(tree, os.path.join(out, "target", "usr", "bin"))
 
 
+def raster(tree):
+    """**THE LINK PROGRAM'S MODE IS THE FABRIC'S RASTER.**  `cadr-displayport`
+    writes the controller's main stream attributes from `dp_link.h`'s figures,
+    and the fabric's display is built at `display_raster.mk`'s (held at the
+    board's `u_display` by `tools/machine_param_check.py`).  A monitor shown a
+    stream whose attributes are not the raster's shows nothing, or a picture
+    moved, so the two are one."""
+    root = os.path.abspath(os.path.join(tree, "..", "..", "..", ".."))
+    mk = open(os.path.join(root, "boards", "kria-kr260", "display_raster.mk")).read()
+    fabric = {k: int(v) for k, v in re.findall(r"-G(\w+)=(\d+)", mk)}
+    hdr = open(os.path.join(root, "boards", "arty-z7-20", "linux", "buildroot", "package",
+                            "cadr-displayport", "src", "dp_link.h")).read()
+    prog = {k: int(v) for k, v in re.findall(r"^#define DP_([HV]_[A-Z]+)\s+(\d+)u", hdr, re.M)}
+    if sorted(fabric) != sorted(prog) or len(fabric) != 8:
+        die("the raster's figures are %s in display_raster.mk and %s in dp_link.h"
+            % (sorted(fabric), sorted(prog)))
+    for k in sorted(fabric):
+        if fabric[k] != prog[k]:
+            die("%s is %d in display_raster.mk and %d in cadr-displayport's dp_link.h"
+                % (k, fabric[k], prog[k]))
+    print("buildroot-kr260: cadr-displayport's mode is the fabric's raster, %dx%d"
+          % (fabric["H_ACTIVE"], fabric["V_ACTIVE"]))
+
+
 def programs(tree, bindir):
     """The programs in `bindir` say the KR260's addresses and ports, in their
     own --help and messages, which are compiled from the one map."""
+    raster(tree)
     want = board_map(header_path(tree))
     # **THE CONNECTOR'S NAME IS HELD HERE AND NOT READ BACK**: the programs are
     # compared with the map, so a wrong name in the map would pass that
@@ -313,6 +338,13 @@ def programs(tree, bindir):
         "cadr-chaosnet": ["skip %s guard" % want["CADR_BOARD_TALLY"]],
         "cadr-usb-input": [],
         "quux-file-device": ["skip %s guard" % want["CADR_BOARD_TALLY"]],
+        # The DisplayPort link's program: the controller and the transceiver
+        # where this board's map puts them, the console it follows, and the
+        # board's mode.
+        "cadr-displayport": ["the controller at 0x%s, the lane at 0x%s, the console at 0x%s"
+                             % (want["CADR_BOARD_DISPLAYPORT_HEX"], want["CADR_BOARD_SERDES_HEX"],
+                                want["CADR_BOARD_CONSOLE_HEX"]),
+                             "1920x1080 at 60 Hz"],
     }
     for prog, texts in sorted(said.items()):
         path = os.path.join(bindir, prog)

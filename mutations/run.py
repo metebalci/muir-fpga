@@ -303,6 +303,15 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The Kria KR260's display reads on its 128-bit `S_AXI_HP3_FPD`, several
+    # bursts in flight.
+    "axi_rd128": {
+        "sources": ["rtl/plumbing/cadr_axi_rd128.sv"],
+        "top": "cadr_axi_rd128",
+        "tb": "tb/cadr_axi_rd128_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
     # The witness that goes on the board ahead of the machine, and the path
     # it drives.  `sources` is the state machine alone, because that is what
     # these mutations are aimed at; the adapter and the widening are in
@@ -1822,7 +1831,9 @@ CHECKS = {
                 "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/cadr_disk_pack.sv",
                 "rtl/plumbing/cadr_console.sv", "rtl/plumbing/cadr_gp0_default.sv",
                 "rtl/plumbing/quux_fd_face.sv"] + GP0 + [
-                "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_debug_window.sv"],
+                "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_debug_window.sv",
+                "boards/kria-kr260/cadr_kr260_pixel_clock.sv",
+                "rtl/plumbing/cadr_display_out.sv", "rtl/plumbing/cadr_axi_rd128.sv"],
         "top": "cadr_kr260",
         "tb": None,
         "flags": [],
@@ -2185,6 +2196,31 @@ CHECKS = {
         "top": "cadr_display_out",
         "tb": "tb/cadr_display_out_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2 -DCADR_DISPLAY_QUUX",
+                  "-GPIC_W=1280", "-GPIC_H=1024", "-GWORDS_PER_LINE=40",
+                  "-GCOLOR_BASE=470024192"],
+        "golden": None,
+        "machine": "quux",
+    },
+    # The Kria KR260's display at its own raster, CEA-861's 1920x1080, as the
+    # Makefile's `DISPLAY_KR260_G` builds it: the CADR's two screens and
+    # QUUX's video controller.
+    "display_out_kr260": {
+        "sources": ["rtl/plumbing/cadr_display_out.sv"],
+        "top": "cadr_display_out",
+        "tb": "tb/cadr_display_out_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2 -DCADR_DISPLAY_KR260",
+                  "-GH_ACTIVE=1920", "-GH_FRONT=88", "-GH_SYNC=44", "-GH_BACK=148",
+                  "-GV_ACTIVE=1080", "-GV_FRONT=4", "-GV_SYNC=5", "-GV_BACK=36",
+                  "-GSPREAD=1"],
+        "golden": None,
+    },
+    "display_out_kr260_quux": {
+        "sources": ["rtl/plumbing/cadr_display_out.sv"],
+        "top": "cadr_display_out",
+        "tb": "tb/cadr_display_out_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX",
+                  "-GH_ACTIVE=1920", "-GH_FRONT=88", "-GH_SYNC=44", "-GH_BACK=148",
+                  "-GV_ACTIVE=1080", "-GV_FRONT=4", "-GV_SYNC=5", "-GV_BACK=36",
                   "-GPIC_W=1280", "-GPIC_H=1024", "-GWORDS_PER_LINE=40",
                   "-GCOLOR_BASE=470024192"],
         "golden": None,
@@ -3703,13 +3739,16 @@ def check_makefile():
     # `board_reset` is one `.pass` and three builds, one a board, and each
     # build is its own entry above, `board_reset_arty` and the other two.
     # `fault` is the same shape: `fault_arty`, `fault_cora` and `fault_de25`.
+    # `displayport` is the Kria KR260's DisplayPort link, `cadr-displayport`:
+    # C under `boards/`, closed the way `serial` is, with a mutation list of
+    # its own in its package run by its own `mutate.py` from its own check.
     # `checkpoint_quux` is `checkpoint`'s QUUX half and closed its way: its
     # mutants, 9 to 16, are `chk_rtl.c`'s own behind `CHK_MUTATE`, judged by
     # muir and by muir's own file for the same machine in its own rule.
     known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora",
-                           "de25_pins", "de25_linux", "kr260_linux"}
+                           "de25_pins", "de25_linux", "kr260_linux", "displayport"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four

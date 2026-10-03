@@ -49,6 +49,26 @@ Z7-20's own constraint file copies out the handful of pins that design uses
 rather than carrying the master file. It cites the commit and digest it read
 them from.
 
+### AMD's DisplayPort transceiver values
+
+The Kria KR260's DisplayPort link is brought up by `cadr-displayport`, a
+program of this project's. Two tables in it are AMD's, formerly Xilinx's, and
+both are under the **MIT License**. They are in
+`boards/arty-z7-20/linux/buildroot/package/cadr-displayport/src/amd_dp_tables.h`,
+which carries their copyright lines and says where each came from. The license
+text is `AMD-Xilinx-MIT.txt` beside it.
+
+The first table is the processing system's transceiver writes for DisplayPort
+on lane 1. They are what Vivado's processing-system IP generates in
+`psu_init.c` for the KR260's board files. The factory boot firmware does not
+make them, so the program does. The second table is the voltage swing and
+pre-emphasis values for each training level. It is from AMD's embeddedsw
+DisplayPort driver, `xdppsu_serdes.c`, at the commit the header names.
+
+The rest of the program is AGPL, version 3 or later. It was written from AMD's
+technical reference manual and register reference, not from Linux's display
+driver.
+
 ### muir
 
 The simulator this machine is held to is a separate repository and is not

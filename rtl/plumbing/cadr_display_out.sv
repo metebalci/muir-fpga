@@ -377,6 +377,14 @@ module cadr_display_out #(
     // `MODE BOW`: see the header.
     parameter bit          BOW = 1'b0,
 
+    // **WHERE THE RASTER HOLDS BOTH SCREENS SIDE BY SIDE, SPREAD THEM**: the
+    // columns neither screen uses shared out equally, so the first display's
+    // left margin, the gap between the two and the color board's right margin
+    // are the same.  Off, the two are pushed to the raster's two sides, which
+    // is the only placement a raster too narrow for both has.  The Kria
+    // KR260's CADR sets it; see "Where each picture sits" below.
+    parameter int unsigned SPREAD = 0,
+
     // How many 64-bit entries a bank of each buffer has.  Big enough for a band
     // --- `ceil(PIC_H/2)` and `ceil(CPIC_H/2)` --- rounded up to a power of two
     // so that the bank is one address bit and its stride cannot be anything
@@ -502,11 +510,22 @@ module cadr_display_out #(
   //
   // Vertically each is centered on its own, and an odd margin loses its half
   // pixel at the bottom, which is where a reader expects it.
-  localparam int unsigned MX0  = 0;
+  //
+  // **AND WHERE THE RASTER IS WIDE ENOUGH FOR BOTH, `SPREAD` SHARES OUT THE
+  // REST**: on the Kria KR260's 1920 columns the 576 that neither screen uses
+  // upright are three margins of 192 --- the first display at columns 192 to
+  // 959, the color board at 1152 to 1727 --- and turned, 503 are 167 at each
+  // side and 169 between, the odd columns going to the gap.  A raster too
+  // narrow for both keeps the rule above whatever `SPREAD` says.
+  localparam bit          FIT_U = PIC_W + CPIC_W <= H_ACTIVE;
+  localparam bit          FIT_R = PIC_H + CPIC_H <= H_ACTIVE;
+  localparam int unsigned SP_U = (SPREAD != 0 && FIT_U) ? (H_ACTIVE - PIC_W - CPIC_W) / 3 : 0;
+  localparam int unsigned SP_R = (SPREAD != 0 && FIT_R) ? (H_ACTIVE - PIC_H - CPIC_H) / 3 : 0;
+  localparam int unsigned MX0  = SP_U;
   localparam int unsigned MY0  = (V_ACTIVE - PIC_H)  / 2;
-  localparam int unsigned CX0  = H_ACTIVE - CPIC_W;
+  localparam int unsigned CX0  = H_ACTIVE - CPIC_W - SP_U;
   localparam int unsigned CY0  = (V_ACTIVE - CPIC_H) / 2;
-  localparam int unsigned RMX0 = 0;
+  localparam int unsigned RMX0 = SP_R;
   // **A PICTURE WIDER THAN THE RASTER IS HIGH IS NOT TURNED A QUARTER TURN.**
   // QUUX's video controller is 1280 by 1024 and fills the raster upright, so on its
   // side it would not fit; `ROTATABLE` is what says so, and `rotate` is taken
@@ -514,7 +533,7 @@ module cadr_display_out #(
   // fits either way and is exactly what it was.
   localparam bit          ROTATABLE = PIC_W <= V_ACTIVE;
   localparam int unsigned RMY0 = ROTATABLE ? (V_ACTIVE - PIC_W)  / 2 : 0;
-  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H;
+  localparam int unsigned RCX0 = H_ACTIVE - CPIC_H - SP_R;
   localparam int unsigned RCY0 = (V_ACTIVE - CPIC_W) / 2;
 
   localparam int unsigned LINE_BYTES  = WORDS_PER_LINE  * 4;

@@ -1,0 +1,280 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for cadr-displayport: bugs `dp_test.c` has to catch.
+#
+# `mutate.py` applies each record to a copy of this package's sources, builds
+# the check against it, and runs it.  A mutation the check FAILS on is a check
+# doing its job; one it passes is SURVIVED and the run is red.  A record that
+# no longer matches its file exactly once, or does not compile, is BROKEN and
+# also fails the run.  The format is `mutations/list.txt`'s.
+#
+# WHERE THE LIST CAME FROM.  The five rules `dp_link.h` states, each measured
+# on the board, broken one at a time; then the main stream attributes and the
+# transfer unit, the training's two procedures, and the keeper's four cases:
+# the mute, its release, an unplug and a dropped stream.
+
+@mutation the-scale-factors-left-at-their-reset-value
+@file dp_link.c
+@why rule 4: at 0x10101 the board turns 248 to 254 into 249 to 255
+@old
+	wr(io, DPR_AV_BUF_LIVE_VIDEO_COMP0_SF, 0x10000);
+@new
+	wr(io, DPR_AV_BUF_LIVE_VIDEO_COMP0_SF, 0x10101);
+@end
+
+@mutation the-gt-reset-pulsed
+@file dp_link.c
+@why rule 2: a GT_RESET pulse after the lane is set up breaks clock recovery for good
+@old
+	wr(io, DPR_PHY_RESET, DP_PHY_RESET_8B10B);
+@new
+	wr(io, DPR_PHY_RESET, DP_PHY_RESET_8B10B | DP_PHY_RESET_GT);
+	wr(io, DPR_PHY_RESET, DP_PHY_RESET_8B10B);
+@end
+
+@mutation the-stream-left-on-while-the-link-trains
+@file dp_link.c
+@why rule 3: a training with the stream on leaves the monitor deaf
+@old
+	uint8_t caps[16], st[6], v;
+	wr(io, DPR_MAIN_STREAM_ENABLE, 0);
+@new
+	uint8_t caps[16], st[6], v;
+@end
+
+@mutation no-idle-after-a-failed-training
+@file dp_link.c
+@why rule 3: a deaf monitor hears again only after ten seconds of an idle link
+@old
+			io->sleep_us(io, DP_IDLE_US);
+@new
+			io->sleep_us(io, DP_IDLE_US / 10u);
+@end
+
+@mutation the-lane-not-set-up
+@file dp_link.c
+@why rule 1: the firmware leaves lane 1 powered down
+@old
+		io->wr(io, DP_SERDES, off, (v & ~w->mask) | (w->value & w->mask));
+@new
+		io->wr(io, DP_SERDES, off, (v & ~w->mask) | (w->value & w->mask & (i == 0 ? 0u : ~0u)));
+@end
+
+@mutation lane-0-overwritten
+@file amd_dp_tables.h
+@why the lane table writes lane 1's ICM field alone; lane 0 is not DisplayPort's
+@old
+	{ 0xFD410010u, 0x00000070u, 0x00000040u, "ICM_CFG0" },
+@new
+	{ 0xFD410010u, 0x00000077u, 0x00000040u, "ICM_CFG0" },
+@end
+
+@mutation a-spread-step-dropped
+@file amd_dp_tables.h
+@why every lane write is the firmware's
+@old
+	{ 0xFD406370u, 0x000000FFu, 0x0000007Cu, "L1_PLL_SS_STEP_SIZE_0_LSB" },
+@new
+	{ 0xFD406370u, 0x000000FFu, 0x0000007Du, "L1_PLL_SS_STEP_SIZE_0_LSB" },
+@end
+
+@mutation the-swing-table-transposed
+@file dp_link.c
+@why rule 5: the table is indexed by pre-emphasis first
+@old
+	io->wr(io, DP_SERDES, AMD_PSGTR_L1_TX_MARGININGF - 0xFD400000u, amd_dp_vs[pe][vs]);
+@new
+	io->wr(io, DP_SERDES, AMD_PSGTR_L1_TX_MARGININGF - 0xFD400000u, amd_dp_vs[vs][pe]);
+@end
+
+@mutation the-swing-never-raised
+@file dp_link.c
+@why the monitor recovers the clock only at the swing it asks for
+@old
+		if (!cr)
+			lane_set = dp_drive(io, st[4] & 3u, (st[4] >> 2) & 3u);
+@new
+		if (!cr)
+			lane_set = dp_drive(io, 0, (st[4] >> 2) & 3u);
+@end
+
+@mutation the-max-swing-flag-never-set
+@file dp_link.c
+@why the monitor is told when the source can go no further
+@old
+	if (vs == 3 || amd_dp_vs[pe][vs + 1] == 0xff)
+		set |= 0x04;
+@new
+	if (vs == 3 && amd_dp_vs[pe][vs] == 0x00)
+		set |= 0x04;
+@end
+
+@mutation no-downspread-said
+@file dp_link.c
+@why the lane spreads its clock, and the link says so to both ends
+@old
+	    dp_dpcd_wr1(io, 0x107, 0x10) || dp_dpcd_wr1(io, 0x108, 0x01))
+@new
+	    dp_dpcd_wr1(io, 0x107, 0x00) || dp_dpcd_wr1(io, 0x108, 0x01))
+@end
+
+@mutation equalization-on-pattern-2
+@file dp_link.c
+@why HBR2 equalizes on pattern 3, which the monitor offers
+@old
+	const unsigned tps = (caps[2] & 0x40u) ? 3u : 2u;
+@new
+	const unsigned tps = (caps[2] & 0x40u) ? 2u : 3u;
+@end
+
+@mutation the-training-not-ended
+@file dp_link.c
+@why the monitor shows the stream only once training is over
+@old
+	dp_dpcd_wr1(io, 0x102, 0x00);
+	wr(io, DPR_TRAINING_PATTERN_SET, 0);
+	wr(io, DPR_SCRAMBLING_DISABLE, 0);
+	if (dp_dpcd_rd(io, 0x103, &v, 1) == 0)
+@new
+	wr(io, DPR_TRAINING_PATTERN_SET, 0);
+	wr(io, DPR_SCRAMBLING_DISABLE, 0);
+	if (dp_dpcd_rd(io, 0x103, &v, 1) == 0)
+@end
+
+@mutation the-hstart-without-the-back-porch
+@file dp_link.c
+@why the main stream attributes are CEA-861's
+@old
+	wr(io, DPR_MS_HSTART, DP_H_SYNC + DP_H_BACK);
+@new
+	wr(io, DPR_MS_HSTART, DP_H_SYNC);
+@end
+
+@mutation the-transfer-unit-at-hbr
+@file dp_link.c
+@why the transfer unit is HBR2's on one lane
+@old
+	const uint64_t den = DP_LINK_BW == 0x14u ? 540000ull : DP_LINK_BW == 0x0Au ? 270000ull : 162000ull;
+@new
+	const uint64_t den = DP_LINK_BW == 0x14u ? 270000ull : DP_LINK_BW == 0x0Au ? 270000ull : 162000ull;
+@end
+
+@mutation the-data-count-one-high
+@file dp_link.c
+@why UG1087's words per line less one, for one lane
+@old
+	wr(io, DPR_USER_DATA_COUNT_PER_LANE, DP_H_ACTIVE * 24u / 16u - 1u);
+@new
+	wr(io, DPR_USER_DATA_COUNT_PER_LANE, DP_H_ACTIVE * 24u / 16u);
+@end
+
+@mutation the-ps-clock-for-the-live-video
+@file dp_link.c
+@why the live video's clock and timing are the fabric's
+@old
+	wr(io, DPR_AV_BUF_AUD_VID_CLK_SOURCE, 0);		// the fabric's clock and timing
+@new
+	wr(io, DPR_AV_BUF_AUD_VID_CLK_SOURCE, 1);		// the fabric's clock and timing
+@end
+
+@mutation no-d3-on-the-mute
+@file dp_link.c
+@why the mute tells the monitor D3
+@old
+		dp_stream_off(io);
+		dp_dpcd_wr1(io, 0x600, 2);
+@new
+		dp_stream_off(io);
+@end
+
+@mutation the-stream-left-on-in-the-mute
+@file dp_link.c
+@why the mute turns the stream off
+@old
+		dp_stream_off(io);
+		dp_dpcd_wr1(io, 0x600, 2);
+@new
+		dp_dpcd_wr1(io, 0x600, 2);
+@end
+
+@mutation no-d0-on-the-release
+@file dp_link.c
+@why the release tells the monitor D0
+@old
+		dp_dpcd_wr1(io, 0x600, 1);
+		io->sleep_us(io, 1000);
+		dp_stream_on(io);
+@new
+		io->sleep_us(io, 1000);
+		dp_stream_on(io);
+@end
+
+@mutation no-training-when-the-monitor-lost-the-stream-in-d3
+@file dp_link.c
+@why a monitor that lost the stream across D3 is trained again
+@old
+		if (dp_in_sync(io)) {
+			logf_(io, "the display output is let go: D0, and the monitor has the stream");
+@new
+		if (1) {
+			logf_(io, "the display output is let go: D0, and the monitor has the stream");
+@end
+
+@mutation a-training-at-every-release
+@file dp_link.c
+@why a monitor that kept the stream across D3 is not trained again
+@old
+		if (dp_in_sync(io)) {
+			logf_(io, "the display output is let go: D0, and the monitor has the stream");
+@new
+		if (0) {
+			logf_(io, "the display output is let go: D0, and the monitor has the stream");
+@end
+
+@mutation the-unplug-not-seen
+@file dp_link.c
+@why a monitor unplugged and plugged back is brought up again
+@old
+	if (!dp_hpd(io)) {
+		if (k->up) {
+@new
+	if (!dp_hpd(io)) {
+		if (0) {
+@end
+
+@mutation a-dropped-stream-not-looked-for
+@file dp_link.c
+@why a monitor that drops the stream is found within the second
+@old
+	if (!k->asleep && now >= k->next_check_us) {
+@new
+	if (!k->asleep && now >= k->next_check_us + 10000000u) {
+@end
+
+@mutation the-marker-not-asked
+@file dp_link.c
+@why a word 36 without the display output's marker is never a mute
+@old
+	const int muted = (word36 >> 16) == DP_SLEEP_MARK && (word36 & DP_SLEEP_MUTED);
+@new
+	const int muted = (word36 & DP_SLEEP_MUTED) != 0;
+@end
+
+@mutation a-defer-taken-for-an-answer
+@file dp_link.c
+@why a DEFER is asked again
+@old
+		if (code == 2u) {		// DEFER
+@new
+		if (code == 3u) {		// DEFER
+@end
+
+@mutation the-lane-written-again-at-a-second-start
+@file dp_link.c
+@why a lane already up is left alone
+@old
+	if (((icm >> 4) & 7u) == 4u && (lock & AMD_PSGTR_L1_PLL_LOCKED)) {
+@new
+	if (((icm >> 4) & 7u) == 4u && (lock & AMD_PSGTR_L1_PLL_LOCKED) && 0) {
+@end

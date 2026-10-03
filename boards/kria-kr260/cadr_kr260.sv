@@ -59,10 +59,17 @@
 //     SOM's fan and high stops it (measured on the board).  Every KR260
 //     bitstream holds it low; one that left it to a pull would be one that
 //     might cook the part.
-//   - **NO DISPLAY OUTPUT YET.**  The KR260's only video connector is the
-//     processing system's DisplayPort, and the display output's hookup to it
-//     is its own slice; until then the screen is `cadr-terminal`'s, over the
-//     network, as on the Cora.
+//   - **THE DISPLAY OUTPUT GOES TO THE PROCESSING SYSTEM'S DISPLAYPORT.**
+//     The board's only video connector is the processing system's
+//     DisplayPort, so `rtl/plumbing/cadr_display_out.sv` --- the same module
+//     the Arty and the DE25-Nano build --- hands its raster to the
+//     DisplayPort controller's live video input, as the DE25-Nano hands it
+//     to the ADV7513, at 1920x1080 at 60 Hz, the board's fixed mode.  It
+//     reads the screens over `S_AXI_HP3_FPD` through `cadr_axi_rd128.sv`;
+//     its pixel clock is `cadr_kr260_pixel_clock.sv`'s; and the link itself
+//     is brought up, kept and put to sleep by `cadr-displayport` on the
+//     processing system, which follows the console's word 36.  See the
+//     display output below.
 //   - **THE CADR AND QUUX REVISION 13, AND NOTHING BETWEEN.**  QUUX is built
 //     here at revision 13 alone, the 40-bit word (`WORD_BITS` 40, contract
 //     G2), at four ticks a microcycle (`SYNC_K13`); revision 12 is retired
@@ -226,6 +233,9 @@ module cadr_kr260 #(
   logic [3:0]  con_tv_map_a;
   logic [23:0] con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q;
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
+  // The color board's map entry the display output asks for, a raster line
+  // at a time; zero where there is no display output.
+  logic [3:0]  disp_map_a;
   logic        con_steady_lamps;
   // How many 64K-word memory boards the backplane has, page 2's word 37,
   // muir's `--main-memory-boards`: the machine's address decode and QUUX's
@@ -338,9 +348,8 @@ module cadr_kr260 #(
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
       .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
       .tv_color_map_q(con_tv_color_map_q),
-      // The color board's map on its second port, which is the display
-      // output's on a board that has one.  None here yet.
-      .disp_map_a(4'd0), .disp_color_map_q(con_disp_color_map_q),
+      // The color board's map on its second port, the display output's.
+      .disp_map_a(disp_map_a), .disp_color_map_q(con_disp_color_map_q),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .mem_line(mem_line), .mem_beats(mem_beats), .mem_wide(mem_wide), .mem_rline(mem_rline), .mem_drained(mem_drained),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -1260,13 +1269,158 @@ module cadr_kr260 #(
     logic [31:0] con_build;
     cadr_usr_access u_usr_access (.build(con_build));
 
-    // No display output on this board yet: word 36's setting goes nowhere
-    // and the word reads `UNMAPPED`, as on the Cora.
+    // =============================================== the display output
+    //
+    // **THE SAME DISPLAY THE ARTY Z7-20 AND THE DE25-NANO HAVE, WITH THE
+    // WHOLE LINK OFF THE FABRIC.**  `rtl/plumbing/cadr_display_out.sv` reads
+    // the CADR's two screens --- or QUUX's video controller --- out of the
+    // machine's own memory and puts them on a raster: the same module, the
+    // same run-time output selection, rotation and sleep timer, and the
+    // console's words 34 and 36 as on the other boards.  What parts the
+    // three is what happens to that raster afterwards.  The Arty encodes and
+    // serializes it in fabric; the DE25-Nano hands it to an ADV7513; here it
+    // goes into the processing system's DisplayPort controller's live video
+    // input, which makes the link (UG1085 ch. 33, "Live Video Interface").
+    // The controller does nothing until software brings the link up, and
+    // only the processing system can reach its registers, so that is
+    // `cadr-displayport`'s, a program on Linux --- the counterpart of the
+    // DE25-Nano's `cadr_adv7513.sv`.  Pixels never pass through software.
+    //
+    // **THE BOARD'S MODE IS 1920x1080 AT 60 Hz**, CEA-861's 1920/88/44/148
+    // by 1080/4/5/36 with both syncs positive, at 148.4375 MHz
+    // (`cadr_kr260_pixel_clock.sv`).  At that raster the CADR's two screens
+    // sit side by side at 1:1 with no overlap, upright and turned, spread so
+    // that the margins at both sides and the gap between are equal (192
+    // columns each upright), and QUUX's 1280 by 1024 fits upright with black
+    // to its right; the module's placement rule puts them there and
+    // `build/display_out_kr260.pass` holds the eight edges.
+    //
+    // **THE MEMORY SIDE IS `S_AXI_HP3_FPD`**, the Zynq boards' `S_AXI_HP3`'s
+    // role: off the machine's port and off the pack side's, sharing XPI 5
+    // with the FPD DMA alone.  The port is 128 bits wide as the firmware
+    // leaves it and the display reads 64, with eight reads in flight, so
+    // `cadr_axi_rd128.sv` puts its bursts on the port as narrow bursts and
+    // remembers which half each starts in.  The display never writes.
+    //
+    // **THE RASTER INTO THE CONTROLLER, REGISTERED ON THE PIXEL CLOCK AND
+    // NOWHERE ELSE**: one register a pin, pixel 1 at eight bits a component
+    // in UG1085 table 33-3's places (red in 35:28, green in 23:16, blue in
+    // 11:4, the rest zero), the controller clocked by the same pixel clock
+    // through `DPVIDEOINCLK`.  The fitter times the PS8's live inputs
+    // against that clock.
+    //
+    // **AND SLEEP IS THE PROGRAM'S, BECAUSE THE LINK IS.**  The timer, the
+    // setting and the wake are the module's and word 36's, as on every
+    // board; the mute it makes is read back by the console as bit 15, and
+    // `cadr-displayport` follows that bit: muted, the sink is told D3 and the
+    // main stream stops; let go, D0 and the stream again.  The raster keeps
+    // running behind it, as on both other boards, so a monitor that wakes
+    // finds a picture that never stopped.  Stopping the live clock or the
+    // syncs instead was measured and does not drop the link (K9).
     logic        con_hdmi_sleep_set, con_hdmi_wake;
-    logic [14:0] con_hdmi_sleep_secs;
+    logic [14:0] con_hdmi_sleep_secs, disp_sleep_setting;
+    logic        disp_asleep;
+
+    // **THE DISPLAY'S RESET IS THE PORT'S**, synchronized as the others'
+    // are, and the fabric's at `fabric_rst`, which resets its sleep setting at
+    // once and its fetch once the reads it has out are answered, as on the
+    // Arty.
+    logic disp_rst;
+    always_ff @(posedge clk) disp_rst <= !port_rst_sync[2];
+
+    logic        pclk, prst;
+    cadr_kr260_pixel_clock u_pixel_clock (
+        .clk25(clk25), .rst(rst), .pclk(pclk), .prst(prst)
+    );
+
+    logic [31:0] dm_araddr;
+    logic [3:0]  dm_arlen;
+    logic [1:0]  dm_arsize, dm_arburst, dm_rresp;
+    logic        dm_arvalid, dm_arready, dm_rvalid, dm_rready, dm_rlast;
+    logic [63:0] dm_rdata;
+    logic        disp_de, disp_hsync, disp_vsync, disp_mute, disp_sleep_due;
+    logic [7:0]  disp_red, disp_green, disp_blue;
+    logic        disp_underrun, disp_rd_error;
+
+    cadr_display_out #(
+        .BASE(cadr_ddr_map::DISPLAY_BASE),
+        .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
+        // The board's raster: CEA-861's 1920x1080 at 60 Hz.
+        .H_ACTIVE(1920), .H_FRONT(88), .H_SYNC(44), .H_BACK(148),
+        .V_ACTIVE(1080), .V_FRONT(4),  .V_SYNC(5),  .V_BACK(36),
+        // The CADR's two screens spread across the raster's width, the left
+        // margin, the gap and the right margin equal; QUUX's one picture
+        // stays at the left edge.
+        .SPREAD(MACHINE == "cadr" ? 1 : 0),
+        // QUUX shows the video controller, 1280 by 1024 at 40 words a line;
+        // the CADR its first board's 768 by 963 at 24, and the color board.
+        .PIC_W         (MACHINE == "quux" ? 1280 : 768),
+        .PIC_H         (MACHINE == "quux" ? 1024 : 963),
+        .WORDS_PER_LINE(MACHINE == "quux" ? 40 : 24)
+    ) u_display (
+        .clk(clk), .rst(disp_rst), .fabric_rst(rst),
+        .m_araddr(dm_araddr), .m_arlen(dm_arlen), .m_arsize(dm_arsize),
+        .m_arburst(dm_arburst), .m_arvalid(dm_arvalid), .m_arready(dm_arready),
+        .m_rdata(dm_rdata), .m_rresp(dm_rresp), .m_rlast(dm_rlast),
+        .m_rvalid(dm_rvalid), .m_rready(dm_rready),
+        // What is shown and which way up, out of the console face.
+        .out_sel(con_hdmi_out), .rotate(con_hdmi_rotate),
+        // Whether it sleeps: a setting and a wake out of the console face,
+        // the wake from `cadr-terminal` for a key or the mouse at the board.
+        .sleep_set(con_hdmi_sleep_set), .sleep_secs(con_hdmi_sleep_secs),
+        .wake(con_hdmi_wake), .sleep_setting(disp_sleep_setting),
+        .sleep_due(disp_sleep_due), .asleep(disp_asleep),
+        .pclk(pclk), .prst(prst),
+        // The color board's map, an entry a raster line.
+        .map_a(disp_map_a), .map_q(con_disp_color_map_q),
+        .mute(disp_mute),
+        .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
+        .red(disp_red), .green(disp_green), .blue(disp_blue),
+        .underrun(disp_underrun), .rd_error(disp_rd_error)
+    );
+
+    // The port's read side, as narrow bursts on its 128 bits.
+    logic [31:0]  hp3_araddr;
+    logic [7:0]   hp3_arlen;
+    logic [2:0]   hp3_arsize;
+    logic         hp3_arvalid, hp3_arready, hp3_rvalid, hp3_rready, hp3_rlast;
+    logic [127:0] hp3_rdata;
+    logic [1:0]   hp3_rresp;
+    // The write side's answers, which nothing asks for.
+    logic         hp3_awready, hp3_wready, hp3_bvalid;
+    logic [1:0]   hp3_bresp;
+    cadr_axi_rd128 #(.DEPTH(8)) u_disp_rd128 (
+        .clk(clk), .rst(disp_rst),
+        .s_araddr(dm_araddr), .s_arlen(dm_arlen), .s_arsize(dm_arsize),
+        .s_arvalid(dm_arvalid), .s_arready(dm_arready),
+        .s_rdata(dm_rdata), .s_rvalid(dm_rvalid), .s_rready(dm_rready),
+        .s_rlast(dm_rlast),
+        .m_araddr(hp3_araddr), .m_arlen(hp3_arlen), .m_arsize(hp3_arsize),
+        .m_arvalid(hp3_arvalid), .m_arready(hp3_arready),
+        .m_rdata(hp3_rdata), .m_rvalid(hp3_rvalid), .m_rready(hp3_rready),
+        .m_rlast(hp3_rlast)
+    );
+    assign dm_rresp = hp3_rresp;
+
+    // The live video input: registered on the pixel clock.
+    logic [35:0] live_pixel;
+    logic        live_de, live_hsync, live_vsync;
+    always_ff @(posedge pclk) begin
+      live_pixel <= {disp_red, 4'd0, disp_green, 4'd0, disp_blue, 4'd0};
+      live_de    <= disp_de;
+      live_hsync <= disp_hsync;
+      live_vsync <= disp_vsync;
+    end
+
+    // What nothing here reads goes into the fold, for the reason every
+    // output of the machine does: a signal with no consumer is one synthesis
+    // may delete, and then the register behind it is gone.  The mute is read
+    // by the console as `disp_asleep`; the link program acts on that.
     /* verilator lint_off UNUSEDSIGNAL */
-    logic unused_hdmi_sleep;
-    assign unused_hdmi_sleep = ^{con_hdmi_sleep_set, con_hdmi_sleep_secs, con_hdmi_wake};
+    logic unused_disp;
+    assign unused_disp = ^{disp_underrun, disp_rd_error, disp_sleep_due,
+                           disp_mute, dm_arburst,
+                           hp3_awready, hp3_wready, hp3_bvalid, hp3_bresp};
     /* verilator lint_on UNUSEDSIGNAL */
 
     cadr_console #(
@@ -1292,8 +1446,8 @@ module cadr_kr260 #(
         .steady_lamps(con_steady_lamps),
         .mem_boards(con_mem_boards),
         .hdmi_sleep_set(con_hdmi_sleep_set), .hdmi_sleep_secs(con_hdmi_sleep_secs),
-        .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(1'b0),
-        .hdmi_sleep_q(15'd0), .hdmi_asleep(1'b0),
+        .hdmi_wake(con_hdmi_wake), .hdmi_sleep_fitted(1'b1),
+        .hdmi_sleep_q(disp_sleep_setting), .hdmi_asleep(disp_asleep),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -1371,6 +1525,23 @@ module cadr_kr260 #(
         .hp2_rdata(hp2w_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
         .hp2_rvalid(hp2_rvalid), .hp2_rready(hp2_rready),
         .gpio_i(gpio_i), .gpio_o(gpio_o),
+        // The display output's reads: the read side only, the write side
+        // tied off, since the display never writes.
+        .hp3_rclk(clk), .hp3_wclk(clk),
+        .hp3_awaddr(49'd0), .hp3_awlen(8'd0), .hp3_awsize(3'd3), .hp3_awburst(2'b01),
+        .hp3_awvalid(1'b0), .hp3_awready(hp3_awready),
+        .hp3_wdata(128'd0), .hp3_wstrb(16'd0), .hp3_wlast(1'b0), .hp3_wvalid(1'b0),
+        .hp3_wready(hp3_wready), .hp3_bresp(hp3_bresp), .hp3_bvalid(hp3_bvalid),
+        .hp3_bready(1'b1),
+        .hp3_araddr({17'd0, hp3_araddr}), .hp3_arlen(hp3_arlen),
+        .hp3_arsize(hp3_arsize), .hp3_arburst(2'b01),
+        .hp3_arvalid(hp3_arvalid), .hp3_arready(hp3_arready),
+        .hp3_rdata(hp3_rdata), .hp3_rresp(hp3_rresp), .hp3_rlast(hp3_rlast),
+        .hp3_rvalid(hp3_rvalid), .hp3_rready(hp3_rready),
+        // The display's raster into the DisplayPort controller.
+        .dp_videoinclk(pclk), .dp_livevideoinvsync(live_vsync),
+        .dp_livevideoinhsync(live_hsync), .dp_livevideoinde(live_de),
+        .dp_livevideoinpixel1(live_pixel),
         // GIC SPIs 121 to 123: the disk's, the Chaosnet cable's and the
         // serial line's, as `IRQ_F2P` bits 0 to 2 on the Zynq-7000.
         .irq0({5'b0, ser_irq, chaos_irq, pack_irq})
@@ -1392,6 +1563,8 @@ module cadr_kr260 #(
   end else begin : g_nomem
 
     // No processing system: the machine alone, as the Cora's `g_nomem`.
+    // And no display output, so nothing asks the color board's map.
+    assign disp_map_a = 4'd0;
     assign mem_done  = 1'b0;
     assign mem_rdata = 32'd0;
     assign mem_rline = '0;

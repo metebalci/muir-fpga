@@ -135,6 +135,41 @@ if {$machine eq "quux"} {
     puts "BIT: QUUX's microcycle is $sync_k ticks"
 }
 if {$ddr > 0} { read_xdc rtl/plumbing/xilinx7/cadr_ddr.xdc }
+# THE DISPLAY OUTPUT'S CLOCKS AND CROSSINGS, on a board with its processing
+# system, where the display is built.  And the assertions that file cannot
+# make for itself, the Arty Z7-20's flow's for the same module: that the two
+# clocks exist, and that each bound named a register.
+if {$ddr > 0} {
+    read_xdc boards/kria-kr260/cadr_kr260_display.xdc
+    foreach c {clk_raw pixel_raw} {
+        if {[llength [get_clocks -quiet $c]] != 1} {
+            puts "BIT: FAILED --- no clock `$c`. boards/kria-kr260/cadr_kr260_display.xdc"
+            puts "BIT: names the machine's and the pixel MMCM's outputs by their nets; a"
+            puts "BIT: renamed net is a clock group that reached nothing."
+            exit 1
+        }
+    }
+    set disp_bound 0
+    set disp_pats {*req_addr_reg* *slp_want_reg* *slp_want_s1_reg* *slp_mute_reg* *slp_mute_s1_reg*}
+    if {$machine ne "quux"} { lappend disp_pats *map_idx_reg* *cmap_reg* }
+    foreach pat $disp_pats {
+        set found [get_cells -quiet -hier -filter "NAME =~ $pat"]
+        if {[llength $found] == 0} {
+            puts "BIT: FAILED --- no register matching $pat, so a bound in"
+            puts "BIT: boards/kria-kr260/cadr_kr260_display.xdc named nothing."
+            exit 1
+        }
+        incr disp_bound [llength $found]
+    }
+    set live [get_pins -quiet -hier -filter {NAME =~ *u_ps8/u_ps8/DPLIVEVIDEOIN*}]
+    if {[llength $live] != 39} {
+        puts "BIT: FAILED --- [llength $live] live video pins on the PS8, want 39"
+        puts "BIT: (DE, the two syncs and the 36-bit pixel)."
+        exit 1
+    }
+    puts "BIT: the display's pixel clock is grouped apart from the machine's;"
+    puts "BIT: $disp_bound register(s) of its crossings named; 39 live video pins"
+}
 # The debug cable is the CADR's alone (contract Q5).
 if {$ddr > 0 && $machine eq "cadr"} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
 if {$machine eq "cadr"} { read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc }

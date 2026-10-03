@@ -124,6 +124,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass $(BUILD)/xbus_axi.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/axi_widen128.pass $(BUILD)/axi_lanes128.pass $(BUILD)/axi_burst128.pass \
+       $(BUILD)/axi_rd128.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/rdw_poison.pass $(BUILD)/rdw_poison_sys.pass \
        $(BUILD)/rdw_poison_map.pass \
@@ -151,13 +152,14 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass $(BUILD)/chaos_cable.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass $(BUILD)/color_tv.pass \
        $(BUILD)/display_out.pass $(BUILD)/display_sleep.pass \
-       $(BUILD)/display_share.pass \
+       $(BUILD)/display_share.pass $(BUILD)/display_out_kr260.pass \
        $(BUILD)/hdmi_tx.pass $(BUILD)/adv7513.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass $(BUILD)/dbg_cable.pass \
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
        $(BUILD)/checkpoint.pass $(BUILD)/quux_readout_window.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
+       $(BUILD)/displayport.pass \
        $(BUILD)/usb_input.pass $(BUILD)/quux_file_device.pass \
        $(BUILD)/fpgarc.pass $(BUILD)/grid.pass \
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
@@ -244,7 +246,8 @@ CHECK_QUUX_AT_L1 = $(QUUX_L1_PROGRAMS:%=quux_%) phase_gen
 CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass \
        $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(foreach q,$(QKL1S),$(CHECK_QUUX_AT_L1:%=$(BUILD)/%.quux.$(q).pass)) \
-       $(BUILD)/display_out.quux.pass $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
+       $(BUILD)/display_out.quux.pass $(BUILD)/display_out_kr260.quux.pass \
+       $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
        $(BUILD)/quux_block_disk.quux.pass $(BUILD)/quux13_block_disk.quux.pass \
        $(BUILD)/quux_fd_face.pass \
        $(BUILD)/quux_axi_master.quux.pass \
@@ -506,6 +509,19 @@ $(BUILD)/obj_axi_burst128/Vcadr_axi_burst128: rtl/plumbing/cadr_axi_burst128.sv 
 
 $(BUILD)/axi_burst128.pass: $(BUILD)/obj_axi_burst128/Vcadr_axi_burst128
 	$(BUILD)/obj_axi_burst128/Vcadr_axi_burst128
+	@touch $@
+
+# And the display output's reads on `S_AXI_HP3_FPD`: `cadr_axi_rd128.sv` puts
+# a 64-bit read master with several bursts in flight on the 128-bit port,
+# remembering the half each burst starts in because the display's address has
+# moved on before its data comes back.  `tb/cadr_axi_rd128_tb.cpp` offers
+# more bursts than the module holds and answers in order at random latencies.
+$(BUILD)/obj_axi_rd128/Vcadr_axi_rd128: rtl/plumbing/cadr_axi_rd128.sv tb/cadr_axi_rd128_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_axi_rd128 \
+	    --top-module cadr_axi_rd128 rtl/plumbing/cadr_axi_rd128.sv $(abspath tb/cadr_axi_rd128_tb.cpp)
+
+$(BUILD)/axi_rd128.pass: $(BUILD)/obj_axi_rd128/Vcadr_axi_rd128
+	$(BUILD)/obj_axi_rd128/Vcadr_axi_rd128
 	@touch $@
 
 # ------------------------------------------------------------- the witness
@@ -2710,6 +2726,8 @@ KR260_LINT := $(VERILATOR) --lint-only -Wall -DCADR_DDR_MAP_KR260 \
     -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
     --top-module cadr_kr260 $(BOARD_STUBS) tb/cadr_kr260_stubs.sv
 KR260_PORT_SRC := tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv \
+    boards/kria-kr260/cadr_kr260_pixel_clock.sv rtl/plumbing/cadr_display_out.sv \
+    rtl/plumbing/cadr_axi_rd128.sv \
     rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen128.sv \
     rtl/plumbing/cadr_axi_lanes128.sv rtl/plumbing/cadr_axi_burst128.sv \
     rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
@@ -2762,7 +2780,8 @@ MACHINE_PARAM_SRC := $(wildcard rtl/*/*.sv rtl/*/*/*.sv boards/*/*.sv) \
                      boards/de25-nano/quartus/build.sh \
                      boards/de25-nano/quartus/program.sh
 
-$(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) Makefile | $(BUILD)
+$(BUILD)/machine_param.pass: tools/machine_param_check.py $(MACHINE_PARAM_SRC) Makefile \
+                           boards/kria-kr260/display_raster.mk | $(BUILD)
 	VERILATOR=$(VERILATOR) TCLSH=$(TCLSH) python3 tools/machine_param_check.py .
 	$(MAKE) -s -n de25 MACHINE=quux | tr -d '\\\n' \
 	    | grep -q 'MACHINE=quux .*boards/de25-nano/quartus/build.sh' \
@@ -3619,6 +3638,44 @@ $(BUILD)/obj_display_out_quux/Vcadr_display_out: rtl/plumbing/cadr_display_out.s
 
 $(BUILD)/display_out.quux.pass: $(BUILD)/obj_display_out_quux/Vcadr_display_out
 	$(BUILD)/obj_display_out_quux/Vcadr_display_out
+	@touch $@
+
+# **THE KRIA KR260'S DISPLAY, AT ITS OWN RASTER**: CEA-861's 1920x1080 at
+# 60 Hz and the board's 148.4375 MHz pixel clock, the module built with the
+# figures `boards/kria-kr260/cadr_kr260.sv` passes it and the testbench with
+# `CADR_DISPLAY_KR260`, which carries the same figures a second time and holds
+# the eight edges of each screen: the CADR's two screens side by side at 1:1
+# with no overlap, upright and turned, spread so that the left margin, the gap
+# and the right margin are equal (`SPREAD`, which the board's CADR sets), and
+# QUUX's video controller upright at the left edge.
+#
+# The figures are in a file of their own beside the board's top level, which
+# `tools/machine_param_check.py` reads too and which the mutation runner's
+# copy carries, where it does not carry this Makefile.
+include boards/kria-kr260/display_raster.mk
+
+$(BUILD)/obj_display_out_kr260/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
+                                                  tb/cadr_display_out_tb.cpp \
+                                                  boards/kria-kr260/display_raster.mk | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS '-O2 -DCADR_DISPLAY_KR260' -Mdir $(BUILD)/obj_display_out_kr260 \
+	    $(DISPLAY_KR260_G) -GSPREAD=1 --top-module cadr_display_out \
+	    rtl/plumbing/cadr_display_out.sv $(abspath tb/cadr_display_out_tb.cpp)
+
+$(BUILD)/display_out_kr260.pass: $(BUILD)/obj_display_out_kr260/Vcadr_display_out
+	$(BUILD)/obj_display_out_kr260/Vcadr_display_out
+	@touch $@
+
+$(BUILD)/obj_display_out_kr260_quux/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
+                                                       tb/cadr_display_out_tb.cpp \
+                                                       boards/kria-kr260/display_raster.mk | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS '-O2 -DCADR_DISPLAY_KR260 -DCADR_DISPLAY_QUUX' \
+	    -Mdir $(BUILD)/obj_display_out_kr260_quux \
+	    $(DISPLAY_KR260_G) -GPIC_W=1280 -GPIC_H=1024 -GWORDS_PER_LINE=40 -GCOLOR_BASE=470024192 \
+	    --top-module cadr_display_out \
+	    rtl/plumbing/cadr_display_out.sv $(abspath tb/cadr_display_out_tb.cpp)
+
+$(BUILD)/display_out_kr260.quux.pass: $(BUILD)/obj_display_out_kr260_quux/Vcadr_display_out
+	$(BUILD)/obj_display_out_kr260_quux/Vcadr_display_out
 	@touch $@
 
 # The display output's sleep: the timer, its prescaler and the mute on the four
@@ -4614,6 +4671,7 @@ CHAOSNET_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet
 CHAOSNET_SRC := $(CHAOSNET_PKG)/src
 SERIAL_PKG   := boards/arty-z7-20/linux/buildroot/package/cadr-serial
 SERIAL_SRC   := $(SERIAL_PKG)/src
+DISPLAYPORT_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-displayport/src
 TERMINAL_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-terminal
 TERMINAL_SRC := $(TERMINAL_PKG)/src
 USB_INPUT_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-usb-input
@@ -4734,6 +4792,21 @@ $(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h
 	$(MAKE) -C $(SERIAL_SRC) all COMMON=host
 	$(MAKE) -C $(SERIAL_SRC) clean
 	@echo "serial: the program builds, and the cable's far end agrees with muir's endpoint"
+	@touch $@
+
+# **THE KRIA KR260'S DISPLAYPORT LINK, `cadr-displayport`**: its procedure
+# against a model of the board's controller, transceiver lane and monitor ---
+# the board as the KR260 port's K9 spike measured it, the three traps it
+# showed included --- and then every record of its own mutation list, as the
+# serial line's check runs its own.  The program itself is compiled too.
+$(BUILD)/displayport.pass: $(wildcard $(DISPLAYPORT_SRC)/*.c) $(wildcard $(DISPLAYPORT_SRC)/*.h) \
+                           $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
+                           $(DISPLAYPORT_SRC)/displayport_mutations.txt \
+                           $(DISPLAYPORT_SRC)/mutate.py | $(BUILD)
+	$(MAKE) -C $(DISPLAYPORT_SRC) check
+	$(MAKE) -C $(DISPLAYPORT_SRC) all COMMON=host
+	$(MAKE) -C $(DISPLAYPORT_SRC) clean
+	@echo "displayport: the link comes up from the stock board, follows the mute and recovers, against the board's model"
 	@touch $@
 
 # cadr-common's sources for the same reason the serial line's check has them:
@@ -5200,7 +5273,7 @@ $(BUILD)/kr260_linux.pass: $(BR_KR260_CHECK) \
 	@python3 $(BR_KR260_CHECK) boot boards/kria-kr260/linux/buildroot
 	@rm -rf $(KR260_LINUX_WORK) && mkdir -p $(KR260_LINUX_WORK)/bin
 	@cp -a $(BR_EXTERNAL)/package $(KR260_LINUX_WORK)/package
-	@set -e; for p in $(DE25_LINUX_PROGRAMS); do \
+	@set -e; for p in $(DE25_LINUX_PROGRAMS) cadr-displayport; do \
 	    MAKEFLAGS= $(BR_MAKE) -s -C $(KR260_LINUX_WORK)/package/$$p/src all COMMON=host READOUT=host DISK=host \
 	        CFLAGS="-O2 -Wall -Wextra -Werror -std=gnu11 -DCADR_BOARD_KR260"; \
 	    cp $(KR260_LINUX_WORK)/package/$$p/src/$$p $(KR260_LINUX_WORK)/bin/; \

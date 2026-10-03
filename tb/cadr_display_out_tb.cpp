@@ -97,6 +97,24 @@ typedef Vcadr_display_out Dut;
 
 namespace {
 
+// **THE KRIA KR260'S BUILD, `CADR_DISPLAY_KR260`, IS ITS OWN RASTER**:
+// CEA-861's 1920x1080 at 60 Hz, the board's fixed mode, transcribed from the
+// standard as the other is from VESA's.  Built with the module's raster
+// parameters set to the same figures by the Makefile, which is a second
+// transcription of them; this one is read from the syncs.
+#ifdef CADR_DISPLAY_KR260
+// CEA-861 VIC 16, 1920x1080p at 60 Hz: active, front porch, sync, back porch,
+// and both syncs positive.
+constexpr int HA = 1920, HF = 88, HS = 44, HB = 148;
+constexpr int VA = 1080, VF = 4, VS = 5, VB = 36;
+constexpr int HT = HA + HF + HS + HB;   // 2200
+constexpr int VT = VA + VF + VS + VB;   // 1125
+constexpr int HPOS = 1, VPOS = 1;
+// The board's own pixel clock, to the picosecond: 25 MHz x 47.5 / 8 =
+// 148.4375 MHz, a period of 6736.8 ps.
+constexpr uint64_t kPclkHalf = 3368;
+constexpr const char *kModeName = "CEA-861 1920x1080 at 60 Hz";
+#else
 // The raster, from VESA DMT's own figures for 1280x1024 at 60 Hz: active,
 // front porch, sync, back porch, and both syncs positive.
 // `docs/display-output.md` has the arithmetic these come out of.
@@ -108,6 +126,7 @@ constexpr int HPOS = 1, VPOS = 1;
 // The board's own pixel clock, to the picosecond: 1688 x 1066 x 59.92 Hz.
 constexpr uint64_t kPclkHalf = 4638;
 constexpr const char *kModeName = "VESA DMT 1280x1024 at 60 Hz";
+#endif
 
 // The two screens: muir's `WIDTH`/`HEIGHT`/`WORDS_PER_LINE` and its
 // `COLOR_*` counterparts.
@@ -168,10 +187,22 @@ int gDriveRotate = -1;
 // against the figures `docs/display-output.md` states, which is a third
 // transcription; and every configuration then measures the extreme column and
 // row the picture actually reached and holds that to the same eight.
-constexpr int MX0 = 0,         MY0 = (VA - kPicH) / 2;
-constexpr int CX0 = HA - kCW,  CY0 = (VA - kCH) / 2;
-constexpr int RMX0 = 0,        RMY0 = (VA - kPicW) / 2;
-constexpr int RCX0 = HA - kCH, RCY0 = (VA - kCW) / 2;
+//
+// **THE KRIA KR260'S CADR SPREADS THEM** (the module's `SPREAD`, which its
+// build of this check sets): where the raster holds both side by side, the
+// columns neither uses are three equal margins, the first display's left, the
+// gap and the color board's right, any odd columns going to the gap.  QUUX's
+// build has no color board and no `SPREAD`.
+#if defined(CADR_DISPLAY_KR260) && !defined(CADR_DISPLAY_QUUX)
+constexpr int SPU = (HA - kPicW - kCW) / 3;
+constexpr int SPR = (HA - kPicH - kCH) / 3;
+#else
+constexpr int SPU = 0, SPR = 0;
+#endif
+constexpr int MX0 = SPU,             MY0 = (VA - kPicH) / 2;
+constexpr int CX0 = HA - kCW - SPU,  CY0 = (VA - kCH) / 2;
+constexpr int RMX0 = SPR,            RMY0 = (VA - kPicW) / 2;
+constexpr int RCX0 = HA - kCH - SPR, RCY0 = (VA - kCW) / 2;
 
 // The rectangle a screen covers for a given rotation: first column, first row,
 // width, height.  Rotated, the picture's width and height change places.
@@ -490,13 +521,55 @@ int main(int argc, char **argv) {
   auto figure = [&](int got, int want, const char *what) {
     if (got != want) Fail("%s is %d, want %d", what, got, want);
   };
-#ifdef CADR_DISPLAY_QUUX
+#if defined(CADR_DISPLAY_QUUX) && defined(CADR_DISPLAY_KR260)
+  // The Kria KR260's figures, from the contract's table of the placement at
+  // 1920x1080: the video controller at the left edge, centered vertically,
+  // with 640 black columns at its right.
+  figure(MX0, 0, "the video controller's first column");
+  figure(MX0 + kPicW - 1, 1279, "the video controller's last column");
+  figure(MY0, 28, "the video controller's first row");
+  figure(MY0 + kPicH - 1, 1051, "the video controller's last row");
+  if (MX0 + kPicW > HA || MY0 + kPicH > VA)
+    Fail("the raster does not hold the video controller at 1:1");
+#elif defined(CADR_DISPLAY_QUUX)
   figure(MX0, 0, "the video controller's first column");
   figure(MX0 + kPicW - 1, 1279, "the video controller's last column");
   figure(MY0, 0, "the video controller's first row");
   figure(MY0 + kPicH - 1, 1023, "the video controller's last row");
   if (MX0 + kPicW > HA || MY0 + kPicH > VA)
     Fail("the raster does not hold the video controller at 1:1");
+#elif defined(CADR_DISPLAY_KR260)
+  // **THE KRIA KR260'S EIGHT EDGES A SCREEN** at 1920x1080: the two screens
+  // SIDE BY SIDE WITH NO OVERLAP, upright and turned, SPREAD so that the left
+  // margin, the gap and the right margin are equal --- 192 columns each
+  // upright, and turned 167 at each side and 169 between --- and each
+  // centered vertically, as the contract's table has the rows.
+  figure(MX0, 192, "the first display's first column, upright");
+  figure(MX0 + kPicW - 1, 959, "the first display's last column, upright");
+  figure(CX0, 1152, "the color board's first column, upright");
+  figure(CX0 + kCW - 1, 1727, "the color board's last column, upright");
+  figure(CX0 - (MX0 + kPicW), 192, "the black columns between the two, upright");
+  figure(HA - (CX0 + kCW), 192, "the black columns right of the color board, upright");
+  figure(MY0, 58, "the first display's first row, upright");
+  figure(MY0 + kPicH - 1, 1020, "the first display's last row, upright");
+  figure(CY0, 313, "the color board's first row, upright");
+  figure(CY0 + kCH - 1, 766, "the color board's last row, upright");
+  figure(RMX0, 167, "the first display's first column, turned");
+  figure(RMX0 + kPicH - 1, 1129, "the first display's last column, turned");
+  figure(RCX0, 1299, "the color board's first column, turned");
+  figure(RCX0 + kCH - 1, 1752, "the color board's last column, turned");
+  figure(RCX0 - (RMX0 + kPicH), 169, "the black columns between the two, turned");
+  figure(HA - (RCX0 + kCH), 167, "the black columns right of the color board, turned");
+  figure(RMY0, 156, "the first display's first row, turned");
+  figure(RMY0 + kPicW - 1, 923, "the first display's last row, turned");
+  figure(RCY0, 252, "the color board's first row, turned");
+  figure(RCY0 + kCW - 1, 827, "the color board's last row, turned");
+  if (MX0 < 0 || MY0 < 0 || CX0 < 0 || CY0 < 0 ||
+      RMX0 < 0 || RMY0 < 0 || RCX0 < 0 || RCY0 < 0 ||
+      MX0 + kPicW > HA || CX0 + kCW > HA || MY0 + kPicH > VA || CY0 + kCH > VA ||
+      RMX0 + kPicH > HA || RCX0 + kCH > HA || RMY0 + kPicW > VA ||
+      RCY0 + kCW > VA)
+    Fail("the raster does not hold both screens at 1:1, upright and rotated");
 #else
   figure(MX0, 0, "the first display's first column, upright");
   figure(MX0 + kPicW - 1, 767, "the first display's last column, upright");

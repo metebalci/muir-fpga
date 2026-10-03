@@ -1483,7 +1483,15 @@ fi
   printf "# answers those addresses with an NXM, which is how the band finds\r\n"
   printf "# out it has no color screen. Serve the picture with\r\n"
   printf "# --color-terminal above.\r\n"
-  printf -- "#--color-tv\r\n"
+  # **THE KRIA KR260'S CADR CARD FITS IT**, and shows both screens: at the
+  # board's 1920x1080 the two sit side by side at 1:1, so the color board is
+  # on by default there and off everywhere else.
+  if [ "$BOARD_NAME" = kria-kr260 ] && [ "$MACHINE" != quux ]; then
+    printf "# ON ON THIS BOARD: its monitor holds both screens side by side.\r\n"
+    printf -- "--color-tv\r\n"
+  else
+    printf -- "#--color-tv\r\n"
+  fi
 
   printf "\r\n"
   # **EACH MACHINE'S OWN FLAG**: the CADR's main memory is boards, QUUX's an
@@ -1530,14 +1538,24 @@ fi
   printf "# Read by the disk pack program's init script, before the drive comes\r\n"
   printf "# present, and written into the console face. The display output scans\r\n"
   printf "# the display's region of memory at a monitor's rate and drives the\r\n"
-  printf "# HDMI connector with no software in the path.\r\n"
+  if [ "$BOARD_NAME" = kria-kr260 ]; then
+    printf "# DisplayPort connector, J6, at 1920x1080 at 60 Hz, with no software\r\n"
+    printf "# in the path; cadr-displayport keeps the link.\r\n"
+  else
+    printf "# HDMI connector with no software in the path.\r\n"
+  fi
   printf "# docs/display-output.md is the design.\r\n"
   printf "\r\n"
   printf "# Which screens go to the monitor: the first display, the color board,\r\n"
   printf "# or both. Whatever is shown is centered at 1:1 with the rest black,\r\n"
   printf "# and where both overlap the color one is drawn over the first. The\r\n"
   printf "# default is tv, the machine's own screen.\r\n"
-  printf -- "#--display-output tv\r\n"
+  if [ "$BOARD_NAME" = kria-kr260 ] && [ "$MACHINE" != quux ]; then
+    printf "# BOTH ON THIS BOARD, which fits the color board above.\r\n"
+    printf -- "--display-output both\r\n"
+  else
+    printf -- "#--display-output tv\r\n"
+  fi
   printf "\r\n"
   printf "# Which way up, for a monitor stood on its side. The CADR's screen is\r\n"
   printf "# 768 by 963, taller than it is wide, so a turned monitor holds it\r\n"

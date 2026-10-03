@@ -3854,6 +3854,48 @@ if generate_fpgarc "" 1; then
 	fi
 fi
 
+# **THE KRIA KR260'S CADR CARD FITS THE COLOR TV AND SHOWS BOTH SCREENS**:
+# at the board's 1920x1080 the first display and the color board sit side by
+# side at 1:1, so its card carries `--color-tv` and `--display-output both`
+# live, development and release alike.  The Arty's release above is the
+# control that no other board's card does, and the Kria KR260's QUUX card,
+# which has no color board, carries neither.
+case_head "a Kria KR260 CADR card fits the color TV and shows both screens, live"
+for _rel in "" 1; do
+	sandbox
+	if generate_fpgarc "" "$_rel" "" kria-kr260; then
+		GEN="$WORK/gen/card/fpgarc"
+		got=$(live_flags "$GEN" | tr '\n' '|')
+		case "$got" in
+		*"|--color-tv|"*"--display-output both|"*)
+			ok "${_rel:+the release: }--color-tv and --display-output both are live: [$got]" ;;
+		*)
+			fail "the Kria KR260's ${_rel:+released }CADR card's live lines are [$got], without --color-tv and --display-output both" ;;
+		esac
+		if [ "$(setting_lines "$GEN" --color-tv)" = 1 ] && [ "$(setting_lines "$GEN" --display-output)" = 1 ]; then
+			ok "and each is written once"
+		else
+			fail "--color-tv is written $(setting_lines "$GEN" --color-tv) times and --display-output $(setting_lines "$GEN" --display-output)"
+		fi
+		if [ "$HAVE_READER" != yes ]; then
+			fail "there is no reader to agree with the card script"
+		elif fpgarc_has "$GEN" --color-tv && [ "$(fpgarc_args "$GEN" --display-output | sed 's/ *$//')" = "'--display-output' 'both'" ]; then
+			ok "and the reader hands S80 both"
+		else
+			fail "the reader does not find --color-tv and --display-output both: [$(fpgarc_args "$GEN" --display-output)]"
+		fi
+	fi
+done
+sandbox
+if generate_fpgarc "" 1 "" kria-kr260 "" "" "" "" "" quux 13; then
+	GEN="$WORK/gen/card/fpgarc"
+	got=$(live_flags "$GEN" | tr '\n' '|')
+	case "$got" in
+	*--color-tv*|*--display-output*) fail "the Kria KR260's QUUX card carries [$got]: QUUX has no color board" ;;
+	*) ok "and its QUUX card carries neither: [$got]" ;;
+	esac
+fi
+
 # **AND A QUUX CARD SAYS SO, LIVE.**  Nothing can ask the fabric which
 # machine it is, so every init script believes the card's `--machine` line:
 # a QUUX card that did not say quux would start ozd and leave the file device
