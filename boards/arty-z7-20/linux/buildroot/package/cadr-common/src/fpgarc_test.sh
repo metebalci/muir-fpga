@@ -244,9 +244,10 @@ switch) [ "\${CONSOLE_SWITCH:-no}" = yes ] ;;
 	case "\$*" in
 	*"blinking-leds off"*) [ "\${CONSOLE_LAMPS:-yes}" = yes ] ;;
 	*"display-sleep"*) [ "\${CONSOLE_SLEEP:-yes}" = yes ] ;;
-	*"main-memory-boards"*)
+	*"main-memory-boards"*|*"main-memory-size"*)
 		_d=after; [ -s "$WORK/daemon.calls" ] || _d=before
-		echo "main-memory-boards was asked \$_d the pack program started" >> "$WORK/boards.order"
+		_w=main-memory-boards; case "\$*" in *main-memory-size*) _w=main-memory-size ;; esac
+		echo "\$_w was asked \$_d the pack program started" >> "$WORK/boards.order"
 		[ "\${CONSOLE_BOARDS:-yes}" = yes ]
 		;;
 	*) : ;;
@@ -3283,16 +3284,90 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 	fi
 fi
 
-case_head "QUUX takes the count too"
+# **QUUX's MAIN MEMORY IS AN AMOUNT**, muir's `--main-memory-size <n>MW`:
+# the card's amount reaches the console as typed, before the drive, and the
+# console --- which asks the fabric which machine it is --- takes or refuses
+# the form and the range.  The CADR's `--main-memory-boards` on a QUUX card
+# is refused naming the new flag, with no alias, and QUUX's flag on a CADR
+# card is refused naming the CADR's; neither reaches the console.
+
+case_head "QUUX: --main-memory-size 32MW is asked of the console before the drive comes present"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--machine quux' '--main-memory-size 32MW' > "$WORK/card/fpgarc"
+	: > "$WORK/boards.order"
+	ntp_boot NTPD=yes
+	if grep -qx -- "--log /dev/console main-memory-size 32MW" "$WORK/console.calls"; then
+		ok "the console was asked main-memory-size 32MW on a QUUX card"
+	else
+		fail "a QUUX card's amount did not reach the console: [$(tr '\n' '|' < "$WORK/console.calls")]"
+	fi
+	if [ "$(cat "$WORK/boards.order")" = "main-memory-size was asked before the pack program started" ]; then
+		ok "and before the pack program started"
+	else
+		fail "the amount was asked out of order: [$(cat "$WORK/boards.order")]"
+	fi
+	passes_not "--main-memory-size" "cadr-disk-packs"
+	says_not "cadr-memory"
+fi
+
+case_head "QUUX: an amount the console refuses is said, and the boot goes on"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--machine quux' '--main-memory-size 32M' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes CONSOLE_BOARDS=no
+	if grep -qx -- "--log /dev/console main-memory-size 32M" "$WORK/console.calls"; then
+		ok "the console was asked, and its own line says why it refused"
+	else
+		fail "the console was not asked main-memory-size 32M"
+	fi
+	says "cadr-memory: --main-memory-size 32M: not set --- the console's line above says why"
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "and the pack program was started"
+	else
+		fail "the pack program was not started"
+	fi
+fi
+
+case_head "QUUX: --main-memory-boards is refused, naming --main-memory-size"
 sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	printf '%s\r\n' '--machine quux' '--main-memory-boards 33' > "$WORK/card/fpgarc"
 	ntp_boot NTPD=yes
-	if grep -qx -- "--log /dev/console main-memory-boards 33" "$WORK/console.calls"; then
-		ok "the console was asked main-memory-boards 33 on a QUUX card"
+	if grep -q "main-memory" "$WORK/console.calls"; then
+		fail "the console was asked about main memory: [$(tr '\n' '|' < "$WORK/console.calls")]"
 	else
-		fail "a QUUX card's count did not reach the console"
+		ok "the console was asked nothing about main memory"
 	fi
+	says "cadr-memory: --main-memory-boards is the CADR's: QUUX's main memory is an amount, --main-memory-size <n>MW, such as --main-memory-size 32MW; not set"
+	passes_not "--main-memory-boards" "cadr-disk-packs"
+fi
+
+case_head "QUUX: both lines, and only the amount reaches the console"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--machine quux' '--main-memory-boards 33' '--main-memory-size 16MW' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes
+	if [ "$(grep -c "main-memory" "$WORK/console.calls")" = 1 ] &&
+	   grep -qx -- "--log /dev/console main-memory-size 16MW" "$WORK/console.calls"; then
+		ok "the console was asked main-memory-size 16MW and nothing else about memory"
+	else
+		fail "the console's memory calls: [$(tr '\n' '|' < "$WORK/console.calls")]"
+	fi
+	says "cadr-memory: --main-memory-boards is the CADR's"
+fi
+
+case_head "the CADR: --main-memory-size is refused, naming --main-memory-boards"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--main-memory-size 32MW' > "$WORK/card/fpgarc"
+	ntp_boot NTPD=yes
+	if grep -q "main-memory" "$WORK/console.calls"; then
+		fail "the console was asked about main memory: [$(tr '\n' '|' < "$WORK/console.calls")]"
+	else
+		ok "the console was asked nothing about main memory"
+	fi
+	says "cadr-memory: --main-memory-size is QUUX's: the CADR's main memory is --main-memory-boards N, such as --main-memory-boards 32; not set"
 fi
 
 # ---------------------------------------------------------------------------
@@ -3341,7 +3416,8 @@ generate_fpgarc() {
 	  # ${10} is MACHINE, quux for a card carrying a QUUX bitstream, read
 	  # by the board's facts, which settle it beside REVISION.
 	  MACHINE=${10:-}
-	  REVISION=
+	  # ${11} is REVISION, 13 for a card carrying revision 13's bitstream.
+	  REVISION=${11:-}
 	  . "$WORK/gen/board.sh"
 	  NO_AUTO_BOOT=$1
 	  # $2 is RELEASE: empty for the development card, 1 for the card a
@@ -3436,6 +3512,10 @@ if generate_fpgarc ""; then
 	fi
 	while IFS= read -r req; do
 		[ -n "$req" ] || continue
+		# **QUUX's MAIN MEMORY IS QUUX's FLAG**: a CADR card names the
+		# CADR's `--main-memory-boards` and not it, and a QUUX card the
+		# other way round, which the cases on the memory hold.
+		[ "$req" = --main-memory-size ] && continue
 		reqs=$((reqs + 1))
 		n=0
 		for flag in $req; do
@@ -3538,6 +3618,50 @@ if generate_fpgarc ""; then
 		fi
 	done
 fi
+
+# **EACH CARD NAMES ITS OWN MACHINE's MAIN MEMORY**: the CADR's boards, or
+# QUUX's amount in whole megawords at the board's own range, commented at its
+# default, and never the other machine's flag.
+case_head "a CADR card names --main-memory-boards and not QUUX's --main-memory-size"
+sandbox
+if generate_fpgarc ""; then
+	G="$WORK/gen/card/fpgarc"
+	if [ "$(setting_lines "$G" --main-memory-boards)" = 1 ] &&
+	   ! tr -d '\r' < "$G" | grep -q -- "main-memory-size"; then
+		ok "the CADR card carries the boards and nothing of the amount"
+	else
+		fail "the CADR card's memory lines: [$(tr -d '\r' < "$G" | grep -- 'main-memory' | tr '\n' '|')]"
+	fi
+fi
+for mem_case in ":arty-z7-20:2MW:3MW" "13:arty-z7-20:32MW:32MW" "13:de25-nano:32MW:64MW"; do
+	IFS=: read -r mem_rev mem_board mem_default mem_most <<MEMCASE
+$mem_case
+MEMCASE
+	case_head "a QUUX card${mem_rev:+ of revision $mem_rev} on $mem_board names --main-memory-size $mem_default, 1MW to $mem_most, and no boards"
+	sandbox
+	if generate_fpgarc "" "" "" "$mem_board" "" "" "" "" "" quux "$mem_rev"; then
+		G="$WORK/gen/card/fpgarc"
+		if tr -d '\r' < "$G" | grep -qx -- "#--main-memory-size $mem_default" &&
+		   [ "$(setting_lines "$G" --main-memory-size)" = 1 ]; then
+			ok "the card carries [#--main-memory-size $mem_default], once"
+		else
+			fail "the card's amount: [$(tr -d '\r' < "$G" | grep -- 'main-memory' | tr '\n' '|')]"
+		fi
+		if tr -d '\r' < "$G" | grep -qF -- "muir's own --main-memory-size: 1MW to $mem_most on this"; then
+			ok "and says the board's range, 1MW to $mem_most"
+		else
+			fail "the card does not say the range 1MW to $mem_most"
+		fi
+		if tr -d '\r' < "$G" | grep -q -- "main-memory-boards"; then
+			fail "a QUUX card names --main-memory-boards"
+		else
+			ok "and names no boards"
+		fi
+		if [ "$HAVE_READER" = yes ] && fpgarc_has "$G" --main-memory-size; then
+			fail "--main-memory-size is live on a card written with nothing asked"
+		fi
+	fi
+done
 
 case_head "NO_AUTO_BOOT=1 makes the same line live"
 sandbox
@@ -3823,6 +3947,10 @@ if generate_fpgarc "" 1; then
 	fi
 	while IFS= read -r req; do
 		[ -n "$req" ] || continue
+		# **QUUX's MAIN MEMORY IS QUUX's FLAG**: a CADR card names the
+		# CADR's `--main-memory-boards` and not it, and a QUUX card the
+		# other way round, which the cases on the memory hold.
+		[ "$req" = --main-memory-size ] && continue
 		reqs=$((reqs + 1))
 		n=0
 		for flag in $req; do

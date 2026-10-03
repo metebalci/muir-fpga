@@ -983,3 +983,141 @@
 @new
 	if (!m.answered) {
 @end
+
+@mutation size-unit-not-checked
+@file console_face.c
+@why main memory is given in megawords with the unit written: 32MB, 32KW and a bare
+@why 32M must be refused, never read as megawords
+@old
+	if (n < 3 || strcmp(text + n - 2, "MW"))
+		return -1;
+@new
+	if (n < 3)
+		return -1;
+@end
+
+@mutation size-unit-taken-in-lower-case
+@file console_face.c
+@why the unit is case-sensitive, as every word is: 32mw is refused, as muir refuses it
+@old
+	if (n < 3 || strcmp(text + n - 2, "MW"))
+@new
+	if (n < 3 || (strcmp(text + n - 2, "MW") && strcmp(text + n - 2, "mw")))
+@end
+
+@mutation size-fraction-taken
+@file console_face.c
+@why a whole number of megawords and no fraction: 1.5MW is refused
+@old
+		if (text[i] < '0' || text[i] > '9')
+			return -1;
+		v = v * 10u + (uint64_t)(text[i] - '0');
+@new
+		if ((text[i] < '0' || text[i] > '9') && text[i] != '.')
+			return -1;
+		if (text[i] != '.')
+			v = v * 10u + (uint64_t)(text[i] - '0');
+@end
+
+@mutation size-one-past-the-most
+@file console_face.c
+@why the board keeps 32MW for revision 13 on the Arty Z7-20: 33MW is past its room
+@old
+		if (mw < 1 || mw > most) {
+@new
+		if (mw < 1 || mw > most + 1u) {
+@end
+
+@mutation size-zero-taken
+@file console_face.c
+@why no main memory is no machine: 0MW is refused, as muir refuses it
+@old
+		if (mw < 1 || mw > most) {
+@new
+		if (mw > most) {
+@end
+
+@mutation size-range-in-boards
+@file console_face.c
+@why word 38's most is in 64K-word boards, sixteen to a megaword: read as megawords
+@why it would let 512MW through on a board that keeps 32MW
+@old
+	const unsigned most = max / CONS_MW_BOARDS;
+@new
+	const unsigned most = max;
+@end
+
+@mutation size-written-as-boards
+@file console_face.c
+@why the word inside is in boards, sixteen a megaword: 32MW is 512 boards, not 32
+@old
+		want = mw * CONS_MW_BOARDS;
+@new
+		want = mw;
+@end
+
+@mutation size-taken-on-the-cadr
+@file console_face.c
+@why the CADR's main memory is boards: main-memory-size on the CADR is refused,
+@why naming main-memory-boards
+@old
+	if (!quux) {
+		say("main-memory-size is QUUX's: the CADR's main memory is boards, "
+@new
+	if (0) {
+		say("main-memory-size is QUUX's: the CADR's main memory is boards, "
+@end
+
+@mutation boards-taken-on-quux
+@file console_face.c
+@why QUUX's main memory is an amount: main-memory-boards on QUUX is refused, naming
+@why main-memory-size, with no alias
+@old
+	if (quux) {
+		say("main-memory-boards is the CADR's: QUUX's main memory is an amount, "
+@new
+	if (0) {
+		say("main-memory-boards is the CADR's: QUUX's main memory is an amount, "
+@end
+
+@mutation memory-words-set-on-an-unknown-fabric
+@file console_face.c
+@why a fabric whose machine cannot be read sets nothing: the word would be taken as
+@why the CADR's or QUUX's on a guess
+@old
+	if (id->answered && id->known)
+		return id->quux;
+@new
+	return id->quux;
+@end
+
+@mutation size-reported-in-kilowords
+@file console_face.c
+@why QUUX's memory is said in whole megawords when it is whole ones
+@old
+	if (boards % CONS_MW_BOARDS == 0)
+@new
+	if (boards % CONS_MW_BOARDS == 1)
+@end
+
+@mutation size-answers-0-whatever-the-fabric-holds
+@file console_face.c
+@why the init script reads the status: a fabric that did not take the amount answers 1
+@old
+	*status = (!asked || b.count == want) ? 0 : 1;
+	return 1;
+}
+@new
+	*status = 0;
+	return 1;
+}
+@end
+
+@mutation size-default-said-as-the-fabrics-count
+@file console_face.c
+@why the default is the machine's, word 38's: 2MW on revision 12 and 32MW on revision 13
+@old
+	amount_words(dflt, deflt, sizeof deflt);
+@new
+	amount_words(b.count, deflt, sizeof deflt);
+@end

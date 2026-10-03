@@ -80,10 +80,11 @@
 # mounts, which is the reason the clock's step is here too.
 # `set_the_root_login` below is the whole of it.
 #
-# **AND THE MEMORY BOARDS' COUNT IS SET HERE, BEFORE THE DRIVE.**  The card's
-# `--main-memory-boards` reaches the fabric through `cadr-console` before the
-# drive comes present, which is before any band has counted the boards.
-# `set_the_memory_boards` below is the whole of it.
+# **AND THE MAIN MEMORY IS SET HERE, BEFORE THE DRIVE.**  The card's
+# `--main-memory-boards`, the CADR's, or `--main-memory-size`, QUUX's, reaches
+# the fabric through `cadr-console` before the drive comes present, which is
+# before any band has counted its memory.  `set_the_memory_boards` below is
+# the whole of it.
 #
 # **AND THE BOOT BUTTON'S STEP LIVES HERE, WHICH NEEDS SAYING.**  `fpgarc`'s
 # `--no-auto-boot`, and SW0 on the board, each leave the CADR's boot button
@@ -760,33 +761,60 @@ install_the_root_keys() {
 	     "password now (Dropbear -s); the serial console still does"
 }
 
-# **HOW MANY MEMORY BOARDS THE MACHINE HAS**, muir's `--main-memory-boards`: 1
-# to 60 boards of 64K words, 32 unless the card says; on QUUX revision 13 1 to
-# what the board keeps for its main memory, 512 unless the card says.  The fabric's address
-# decode answers main memory below the count's last board and gives the NXM
-# above it, so the band's cold boot finds exactly the count times 64K words.
+# **HOW MUCH MAIN MEMORY THE MACHINE HAS.**  The CADR's is boards, muir's
+# `--main-memory-boards`: 1 to 60 boards of 64K words, 32 unless the card says.
+# QUUX's is an amount, muir's `--main-memory-size <n>MW`: a whole number of
+# megawords with the unit written, 1MW to what the board keeps for revision
+# 13 (32MW on the Arty Z7-20 and the Kria KR260, 64MW on the DE25-Nano) and
+# 32MW unless the card says, or 1MW to 3MW on revision 12, 2MW unless it
+# says.  The fabric's address decode answers main memory below the amount and
+# gives the NXM above it, so the band's cold boot finds exactly that much.
 #
 # **IT IS SET BEFORE THE DRIVE COMES PRESENT**, which is before any band has
-# counted the boards: the PROM ran when the bitstream loaded, and it touches
-# no main memory while it waits for the drive.  A count changed under a running
-# band takes memory away from it, which is why the step is here and nowhere
-# later.  QUUX takes the count, as muir's QUUX does, in its own range.  A count the console
-# will not take, and a fabric older than the setting, are both refused BY the
-# console, whose line says which; the machine then has the fabric's count.
+# counted its memory: the PROM ran when the bitstream loaded, and it touches
+# no main memory while it waits for the drive.  An amount changed under a
+# running band takes memory away from it, which is why the step is here and
+# nowhere later.  **EACH MACHINE'S FLAG IS ITS OWN**, as muir's are: a card
+# that says `--machine quux` has `--main-memory-boards` refused, naming the
+# flag that replaced it with no alias, and a CADR card has
+# `--main-memory-size` refused, naming the CADR's.  The form and the range
+# are the console's to refuse, and it says which machine the fabric is from
+# the fabric itself; a fabric older than the setting is refused by it too.
+# The machine then has what the fabric holds.
 #
-# Nothing is printed when the flag is not there, because a machine with
-# muir's 32 boards has nothing to say about it.
+# Nothing is printed when the card says nothing, because a machine at muir's
+# default has nothing to say about it.
 set_the_memory_boards() {
-	[ -f "$RC" ] && fpgarc_has "$RC" --main-memory-boards || return 0
+	[ -f "$RC" ] || return 0
+	if fpgarc_is_quux; then
+		if fpgarc_has "$RC" --main-memory-boards; then
+			echo "cadr-memory: --main-memory-boards is the CADR's: QUUX's main memory is an" \
+			     "amount, --main-memory-size <n>MW, such as --main-memory-size 32MW; not set"
+		fi
+		set_the_memory --main-memory-size main-memory-size
+	else
+		if fpgarc_has "$RC" --main-memory-size; then
+			echo "cadr-memory: --main-memory-size is QUUX's: the CADR's main memory is" \
+			     "--main-memory-boards N, such as --main-memory-boards 32; not set"
+		fi
+		set_the_memory --main-memory-boards main-memory-boards
+	fi
+}
+
+# One machine's flag, $1, through the console's word for it, $2.
+set_the_memory() {
+	fpgarc_has "$RC" "$1" || return 0
+	mem_flag=$1
+	mem_word=$2
 	if ! command -v cadr-console > /dev/null 2>&1; then
-		echo "cadr-memory: --main-memory-boards, and no cadr-console to ask with;" \
-		     "the machine has the fabric's own 32 boards"
+		echo "cadr-memory: $mem_flag, and no cadr-console to ask with;" \
+		     "the machine has the fabric's own main memory"
 		return 0
 	fi
-	eval "set -- $(fpgarc_args "$RC" --main-memory-boards)"
-	if ! cadr-console --log /dev/console main-memory-boards "${2:-}" 2>&1; then
-		echo "cadr-memory: --main-memory-boards ${2:-}: not set --- the console's line" \
-		     "above says why; the machine has the count the fabric holds"
+	eval "set -- $(fpgarc_args "$RC" "$mem_flag")"
+	if ! cadr-console --log /dev/console "$mem_word" "${2:-}" 2>&1; then
+		echo "cadr-memory: $mem_flag ${2:-}: not set --- the console's line" \
+		     "above says why; the machine has the main memory the fabric holds"
 	fi
 }
 

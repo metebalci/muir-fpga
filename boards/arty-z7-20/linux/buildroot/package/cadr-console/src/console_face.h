@@ -1016,8 +1016,31 @@ int cons_parse_boards(const char *text, unsigned *count);
 // word, 0 with nothing done for any other.  A count and then a report, or a
 // report alone.  `*status` 0 when the fabric has the word and holds what was
 // asked, 1 when it does not, 2 for a count that is not 1 to the machine's
-// most, which writes nothing and says the machine's range.
+// most, which writes nothing and says the machine's range.  **The CADR's
+// alone**: on QUUX it writes nothing, says `main-memory-size`, and answers 2;
+// and a fabric whose machine cannot be read answers 1 with nothing written.
 int cons_boards_word(struct console *c, int argc, char **argv, int *status);
+
+// **QUUX's MAIN MEMORY IS AN AMOUNT, `main-memory-size [<n>MW]`**, muir's
+// `quux --main-memory-size <n>MW`: a whole number of megawords with the unit
+// written, `32MW`, and nothing else --- no other unit, no fraction, no bare
+// number and never a bare M, which could be read as megabytes; the unit is
+// case-sensitive, as every word here is.  QUUX has no memory boards, so its
+// memory is never given as boards: `main-memory-boards` is the CADR's alone,
+// and on QUUX it is refused naming this word.  The word is the same word 37
+// inside, sixteen 64K-word boards a megaword, and the range is word 38's in
+// whole megawords: 1MW to 32MW on the Arty Z7-20 and the Kria KR260 and 1MW
+// to 64MW on the DE25-Nano at revision 13, and 1MW to 3MW at revision 12, the
+// whole megawords below its sixty boards' 3.75M words, as muir gives it.
+// Which machine the fabric is comes from `machine`'s entry 21, never from the
+// card.  `*status` 0 when the fabric holds what was asked, 1 when it does not
+// or the machine could not be read, 2 for a form or an amount it does not
+// take, or for this word on the CADR, which writes nothing.
+#define CONS_MW_BOARDS 16u	/* a megaword is sixteen 64K-word boards */
+// `<n>MW` as muir takes it: digits, then `MW`.  0 with `*mw` set, or -1.
+// Whether the amount is in this machine's range is `cons_size_word`'s.
+int cons_parse_megawords(const char *text, unsigned *mw);
+int cons_size_word(struct console *c, int argc, char **argv, int *status);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir-sim/src/spy.rs's
 // ClockControl and ../muir-sim/tests/spy.rs:743-761).

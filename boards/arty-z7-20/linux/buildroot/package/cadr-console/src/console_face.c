@@ -1347,10 +1347,36 @@ void cons_say_boards(const struct cons_boards *b)
 	    b->count == b->dflt ? ", muir's default" : "", b->max);
 }
 
+// Which machine the fabric is, for the two memory words: 1 QUUX, 0 the CADR,
+// -1 not known, said.
+static int memory_machine(struct console *c, const char *word, struct cons_machine_id *id)
+{
+	cons_read_machine_id(c, id);
+	if (id->answered && id->known)
+		return id->quux;
+	say("%s: which machine the fabric is could not be read, so nothing is set; `machine` says why",
+	    word);
+	return -1;
+}
+
 int cons_boards_word(struct console *c, int argc, char **argv, int *status)
 {
 	if (argc < 1 || strcmp(argv[0], "main-memory-boards"))
 		return 0;
+	// **THE CADR's WORD**: QUUX's main memory is an amount, and the flag
+	// that gave it in boards went without an alias, as muir's did.
+	struct cons_machine_id id;
+	const int quux = memory_machine(c, "main-memory-boards", &id);
+	if (quux < 0) {
+		*status = 1;
+		return 1;
+	}
+	if (quux) {
+		say("main-memory-boards is the CADR's: QUUX's main memory is an amount, "
+		    "main-memory-size <n>MW, such as main-memory-size 32MW");
+		*status = 2;
+		return 1;
+	}
 	struct cons_boards b;
 	unsigned want = 0;
 	const int asked = argc > 1;
@@ -1375,6 +1401,90 @@ int cons_boards_word(struct console *c, int argc, char **argv, int *status)
 	// The answer, for a script: 0 when the fabric has the word and, if a
 	// count was asked for, holds it.
 	*status = (b.mark_ok && (!asked || b.count == want)) ? 0 : 1;
+	return 1;
+}
+
+int cons_parse_megawords(const char *text, unsigned *mw)
+{
+	if (!text)
+		return -1;
+	const size_t n = strlen(text);
+	if (n < 3 || strcmp(text + n - 2, "MW"))
+		return -1;
+	uint64_t v = 0;
+	for (size_t i = 0; i < n - 2; ++i) {
+		if (text[i] < '0' || text[i] > '9')
+			return -1;
+		v = v * 10u + (uint64_t)(text[i] - '0');
+		if (v > 0xFFFFFFFFu)
+			return -1;	/* no number this is: muir's parse fails too */
+	}
+	*mw = (unsigned)v;
+	return 0;
+}
+
+// An amount of boards in QUUX's words: whole megawords, or kilowords when the
+// count is not a whole number of them, as muir's own report has it.
+static void amount_words(unsigned boards, char *out, size_t n)
+{
+	if (boards % CONS_MW_BOARDS == 0)
+		snprintf(out, n, "%uMW", boards / CONS_MW_BOARDS);
+	else
+		snprintf(out, n, "%uKW", boards * (CONS_BOARD_WORDS / 1024u));
+}
+
+int cons_size_word(struct console *c, int argc, char **argv, int *status)
+{
+	if (argc < 1 || strcmp(argv[0], "main-memory-size"))
+		return 0;
+	struct cons_machine_id id;
+	const int quux = memory_machine(c, "main-memory-size", &id);
+	if (quux < 0) {
+		*status = 1;
+		return 1;
+	}
+	if (!quux) {
+		say("main-memory-size is QUUX's: the CADR's main memory is boards, "
+		    "main-memory-boards N, such as main-memory-boards 32");
+		*status = 2;
+		return 1;
+	}
+	unsigned dflt, max;
+	cons_read_boards_range(c, &dflt, &max);
+	const unsigned most = max / CONS_MW_BOARDS;
+	const int asked = argc > 1;
+	unsigned want = 0;
+	if (asked) {
+		unsigned mw = 0;
+		if (cons_parse_megawords(argv[1], &mw) != 0) {
+			say("main-memory-size %s: main memory is given in megawords, with the unit MW, "
+			    "such as 32MW", argv[1]);
+			*status = 2;
+			return 1;
+		}
+		if (mw < 1 || mw > most) {
+			say("main-memory-size %s: revision %u's main memory on this board is 1MW to %uMW",
+			    argv[1], id.revision, most);
+			*status = 2;
+			return 1;
+		}
+		want = mw * CONS_MW_BOARDS;
+		cons_set_boards(c, want);
+	}
+	struct cons_boards b;
+	cons_read_boards(c, &b);
+	if (!b.mark_ok) {
+		say("main-memory-size: word 37 does not carry its marker (0x%08x): this fabric is older "
+		    "than the word, and its main memory is fixed", b.word);
+		*status = 1;
+		return 1;
+	}
+	char has[24], deflt[24];
+	amount_words(b.count, has, sizeof has);
+	amount_words(dflt, deflt, sizeof deflt);
+	say("main-memory-size: %s of main memory%s; revision %u on this board takes 1MW to %uMW, "
+	    "%s by default", has, b.count == dflt ? ", the default" : "", id.revision, most, deflt);
+	*status = (!asked || b.count == want) ? 0 : 1;
 	return 1;
 }
 

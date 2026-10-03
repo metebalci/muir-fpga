@@ -293,14 +293,16 @@ is how `COLOR-EXISTS-P` in the band finds out whether it has one. So
 `--color-tv` is off unless the card asks for it, and the color screen is
 served with `--color-terminal` above.
 
-**The memory boards**, read by `S80cadr-disk-packs` before it starts the disk
-pack program, and written into the console face. One flag, and the section
-below is about it.
+**The main memory**, read by `S80cadr-disk-packs` before it starts the disk
+pack program, and written into the console face. One flag for each machine,
+and the two sections below are about them.
 
     --main-memory-boards N
-                          how many 64K-word boards of main memory: 1 to 60
-                          on the CADR, and on QUUX revision 13 1 to what the
-                          board keeps for its main memory
+                          the CADR's: how many 64K-word boards of main
+                          memory, 1 to 60
+    --main-memory-size <n>MW
+                          QUUX's: how much main memory, in whole megawords
+                          with the unit written, such as 32MW
 
 **The display output**, read by `S80cadr-disk-packs` before it starts the disk
 pack program, and written into the console face. `docs/display-output.md` is the
@@ -536,13 +538,10 @@ it.
 
 ## `--main-memory-boards`
 
-muir's flag, with muir's meaning: how many 64K-word boards of main memory the
-machine has. On the CADR and on QUUX to revision 12 it is from 1 to 60, and
-the default is 32, two million words, which is what every band before System
-2001 was built for and what the fabric comes up with. On QUUX revision 13 it
-is from 1 to what the board keeps for its main memory, 512 boards on the Arty
-Z7-20 and 1,024 on the DE25-Nano, and the default is 512, 32M words, as muir's
-revision 13 has it.
+The CADR's flag, muir's own with muir's meaning: how many 64K-word boards of
+main memory the machine has, from 1 to 60. The default is 32, two million
+words, which is what every band before System 2001 was built for and what the
+fabric comes up with.
 
     --main-memory-boards 60      3,932,160 words, the most there is room for
 
@@ -569,13 +568,47 @@ the range on the console at boot, and the machine keeps the count it has. The
 fabric says its own range in the console's word 38. A fabric older than the
 setting has 32 boards fixed, and the console says that too.
 
-**QUUX takes the count**, as muir's QUUX does: its main memory is the count
-times 64K words, and its file device's `MEM_WORDS` says the same. Revision
-13's room is its own reservation (`docs/linux.md`): 160 MB of packed storage,
-32M words, on the Arty Z7-20, and 320 MB, 64M words, on the DE25-Nano, where
-muir's own most, 1,024 boards, is the bound.
+**It is the CADR's alone.** QUUX has no memory boards, so a card that says
+`--machine quux` has this line refused at boot, with a line naming
+`--main-memory-size`, and nothing is set from it. There is no alias.
 
-`cadr-checkpoint` takes a checkpoint at the machine's own count, read from the
+## `--main-memory-size`
+
+QUUX's flag, muir's own with muir's meaning: how much main memory the machine
+has, in whole megawords with the unit written.
+
+    --main-memory-size 32MW      33,554,432 words
+
+The amount is a whole number followed by `MW`, and nothing else is taken: no
+other unit (`32KW`, `32MB`), no fraction (`1.5MW`), no bare number and never a
+bare `M` (`32M`), which could be read as megabytes. The unit is case-sensitive,
+as every flag's word is. Each of these is refused with the same line muir
+gives:
+
+    main-memory-size 32M: main memory is given in megawords, with the unit MW, such as 32MW
+
+**The range is the board's.** On revision 13 it is 1MW to what the board keeps
+for QUUX's main memory, its reservation (`docs/linux.md`): 32MW on the Arty
+Z7-20 and the Kria KR260, and 64MW on the DE25-Nano. The default is 32MW, as
+muir's revision 13 has it. On revision 12 it is 1MW to 3MW, the whole
+megawords below its sixty 64K-word boards' 3.75M words, and the default is
+2MW. An amount outside the range is refused with the range:
+
+    main-memory-size 33MW: revision 13's main memory on this board is 1MW to 32MW
+
+It is set before the drive comes present, through `cadr-console
+main-memory-size`, for the reason the boards' count is. Which machine the
+fabric is, and so whether it takes this word at all, the console reads from
+the fabric itself (`docs/console.md`, Which machine the board is running), and
+the range from its word 38. Inside the fabric the amount is still kept as 64K-word
+units, sixteen a megaword, and its file device's `MEM_WORDS` says the same
+amount; everything the card and the console say about QUUX's memory is in
+megawords.
+
+**It is QUUX's alone.** A CADR card has this line refused at boot, with a line
+naming `--main-memory-boards`.
+
+`cadr-checkpoint` takes a checkpoint at the machine's own amount, read from the
 console, and refuses a `--boards` that disagrees with it.
 
 ## `--date` and `--time`

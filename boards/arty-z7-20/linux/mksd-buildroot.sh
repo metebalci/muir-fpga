@@ -1486,22 +1486,44 @@ fi
   printf -- "#--color-tv\r\n"
 
   printf "\r\n"
-  printf "# ================================================= the memory boards\r\n"
-  printf "# Read by the disk pack program's init script, before the drive comes\r\n"
-  printf "# present, and written into the console face. docs/fpgarc.md has the\r\n"
-  printf "# section on it.\r\n"
-  printf "\r\n"
-  printf "# How many 64K-word boards of main memory the machine has, 1 to 60,\r\n"
-  printf "# muir's own --main-memory-boards. The band counts them at its cold\r\n"
-  printf "# boot. The default is 32, two million words, which every band runs\r\n"
-  printf "# on; System 1003 and later use more, and 60 is 3,932,160 words. A\r\n"
-  printf "# band older than System 1003 halts at its cold boot with more than\r\n"
-  printf "# 32. QUUX to revision 12 takes the same count. QUUX revision 13\r\n"
-  printf "# takes 1 to what the board keeps for its main memory (512 on the\r\n"
-  printf "# Arty Z7-20, 1024 on the DE25-Nano), and 512, 32M words, by default.\r\n"
-  printf "# \`cadr-console main-memory-boards\` reports it, and sets it before a\r\n"
-  printf "# band boots.\r\n"
-  printf -- "#--main-memory-boards 32\r\n"
+  # **EACH MACHINE'S OWN FLAG**: the CADR's main memory is boards, QUUX's an
+  # amount in whole megawords, and each card names only its own machine's.
+  if [ "$MACHINE" = quux ]; then
+    # The most is what the board keeps for revision 13, the DE25-Nano 64MW and
+    # the others 32MW; revision 12's sixty boards are 3MW whole.
+    if [ "$REVISION" = 13 ]; then
+      MEM_DEFAULT=32MW
+      case "$BOARD_NAME" in de25-nano) MEM_MOST=64MW ;; *) MEM_MOST=32MW ;; esac
+    else
+      MEM_DEFAULT=2MW
+      MEM_MOST=3MW
+    fi
+    printf "# ================================================= the main memory\r\n"
+    printf "# Read by the disk pack program's init script, before the drive comes\r\n"
+    printf "# present, and written into the console face. docs/fpgarc.md has the\r\n"
+    printf "# section on it.\r\n"
+    printf "\r\n"
+    printf "# How much main memory the machine has, in whole megawords with the\r\n"
+    printf "# unit written, muir's own --main-memory-size: 1MW to %s on this\r\n" "$MEM_MOST"
+    printf "# board, and %s by default. No other unit, no fraction and never a\r\n" "$MEM_DEFAULT"
+    printf "# bare M. The band counts it at its cold boot. \`cadr-console\r\n"
+    printf "# main-memory-size\` reports it, and sets it before a band boots.\r\n"
+    printf -- "#--main-memory-size %s\r\n" "$MEM_DEFAULT"
+  else
+    printf "# ================================================= the memory boards\r\n"
+    printf "# Read by the disk pack program's init script, before the drive comes\r\n"
+    printf "# present, and written into the console face. docs/fpgarc.md has the\r\n"
+    printf "# section on it.\r\n"
+    printf "\r\n"
+    printf "# How many 64K-word boards of main memory the machine has, 1 to 60,\r\n"
+    printf "# muir's own --main-memory-boards. The band counts them at its cold\r\n"
+    printf "# boot. The default is 32, two million words, which every band runs\r\n"
+    printf "# on; System 1003 and later use more, and 60 is 3,932,160 words. A\r\n"
+    printf "# band older than System 1003 halts at its cold boot with more than\r\n"
+    printf "# 32. \`cadr-console main-memory-boards\` reports it, and sets it\r\n"
+    printf "# before a band boots.\r\n"
+    printf -- "#--main-memory-boards 32\r\n"
+  fi
 
   printf "\r\n"
   printf "# ================================================= the display output\r\n"

@@ -4696,7 +4696,8 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
 	@echo "fpgarc: read back out of itself, a card of the old two-partition shape still"
 	@echo "fpgarc: mounts and is told it is old, the clock is NTP's first and the card's"
 	@echo "fpgarc: when NTP does not answer, root's password and keys come from the card,"
-	@echo "fpgarc: the memory boards' count reaches the console before the drive, and the"
+	@echo "fpgarc: the main memory reaches the console before the drive, the CADR's as boards"
+	@echo "fpgarc: and QUUX's in megawords, each refusing the other's flag, and the"
 	@echo "fpgarc: Kria KR260's card is found by its reader and not by its label"
 	@touch $@
 

@@ -207,8 +207,10 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  `cadr-console display-sleep [SECONDS]` reads and sets it, and has
                  no way to wake the monitor.  `docs/display-output.md` has the
                  timer
-    37 BOARDS   **how many 64K-word memory boards the machine has**, muir's
-                 `--main-memory-boards`.  A write whose top half is
+    37 BOARDS   **how much main memory the machine has, in 64K-word units**:
+                 the CADR's boards, muir's `--main-memory-boards`, and
+                 QUUX's amount, muir's `--main-memory-size`, sixteen units a
+                 megaword.  A write whose top half is
                  `MEM_BOARDS_KEY`, "MB", with a count of 1 to the machine's
                  most in bits 10 to 0 and bits 15 to 11 clear, is a new count;
                  it must strobe all four lanes, and any other count, 0 and one
@@ -223,7 +225,9 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  whose MEM_WORDS is the count times 64K.  The fabric comes up
                  with 32, or 512 on revision 13, and the fabric's reset brings
                  it back.  `cadr-console main-memory-boards [N]` reads and sets
-                 it, before a band boots
+                 it on the CADR, and `cadr-console main-memory-size [<n>MW]` on
+                 QUUX, in whole megawords; each refuses the other machine's
+                 word.  Both are for before a band boots
     38 RANGE    **what word 37 takes on this machine**, read only: a marker
                  of 0x1A5 in bits 31 to 22, the default in bits 21 to 11 and
                  the most in bits 10 to 0.  `cadr-console` refuses a count past
@@ -1408,7 +1412,7 @@ machine's own reset arms read, at the same edges, so the two cannot disagree.
 `start`, `boot`, `step N`, `regs`, `status`, `ident`, `machine`, `switch`, `debug-cable`,
 `debug-cable-connect`, `debug-cable-disconnect`, `debug-cable-wiring`,
 `tv-board`, `color-tv`, `display-output`, `display-rotate`,
-`display-sleep`, `main-memory-boards`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
+`display-sleep`, `main-memory-boards`, `main-memory-size`, `blinking-leds`, `color-map`, `trace-keys on|off`, `trace-chaos on|off`,
 `read`, `write`, `examine` and `deposit`. Its `help` says what each does. The
 display output's three were `hdmi-output`, `hdmi-rotate` and `hdmi-sleep`; those
 words are refused with the new name and exit 2.  It

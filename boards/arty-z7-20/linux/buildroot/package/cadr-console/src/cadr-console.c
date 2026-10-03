@@ -370,12 +370,17 @@ static void help(void)
 	say("                wait over and wakes a monitor asleep.  With no word it reports");
 	say("                the setting and whether the monitor is asleep.  Exits 0 when");
 	say("                there is a display output and it holds what was asked");
-	say("main-memory-boards [N]  how many 64K-word memory boards the machine has: 1 to 60,");
-	say("                32 by default; QUUX revision 13 1 to what the board keeps for");
-	say("                its main memory, 512 by default.  --main-memory-boards.  The band's cold boot");
+	say("main-memory-boards [N]  the CADR's: how many 64K-word memory boards the machine has,");
+	say("                1 to 60, 32 by default.  --main-memory-boards.  The band's cold boot");
 	say("                counts them, so set it before the band boots: a count changed");
 	say("                under a running band takes memory away from it.  With no word");
 	say("                it reports.  Exits 0 when the fabric holds what was asked");
+	say("main-memory-size [<n>MW]  QUUX's: how much main memory, in whole megawords with");
+	say("                the unit written, such as 32MW: 1MW to what the board keeps for");
+	say("                revision 13 (32MW on the Arty Z7-20 and the Kria KR260, 64MW on the");
+	say("                DE25-Nano), 32MW by default; 1MW to 3MW on revision 12, 2MW by");
+	say("                default.  --main-memory-size.  Set it before the band boots.  With");
+	say("                no word it reports.  Exits 0 when the fabric holds what was asked");
 	say("blinking-leds [on|off]  whether the board's activity lamps blink, or hold a level:");
 	say("                off is --no-blinking-leds.  With no word it reports.  Exits 0");
 	say("                when the lamps do what the words say: blinking with no word or");
@@ -441,6 +446,9 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 	// `main-memory-boards`, page 2's word 37, whole in the face for the
 	// same reason.
 	if (cons_boards_word(c, argc, argv, &exit_status))
+		return 0;
+	// `main-memory-size`, QUUX's main memory as an amount, the same way.
+	if (cons_size_word(c, argc, argv, &exit_status))
 		return 0;
 	// `machine`, which machine the fabric is, whole in the face too.
 	if (cons_machine_word(c, argc, argv, &exit_status))

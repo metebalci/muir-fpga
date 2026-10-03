@@ -2587,11 +2587,6 @@ static void check_display_sleep_word(void)
 // fabric that does not hold what was asked, or is older than the word,
 // answers 1.  The init script reads the status, so it is held as well as the
 // words.
-// **REVISION 13'S MEMORY BOARDS**: word 38 says the machine comes up with
-// 512 and takes 1 to 512 (the Arty Z7-20's room), and `main-memory-boards`
-// takes what it says --- 512, and 61 to 511, which the CADR's 60 would refuse
-// --- and refuses 513 and 1024 with that range; and a fabric older than word
-// 38 is held to the CADR's 1 to 60.
 // **`machine`: WHICH MACHINE THE FABRIC IS**, against canned values of the
 // register table's entry 21 and the stamp.  Every value is the check's: the
 // CADR's answer; revision 13 at the Arty Z7-20's K of 5 with an L that is not
@@ -2737,7 +2732,184 @@ static void check_machine_word(void)
 	}
 }
 
-static void check_boards_word_13(void)
+// **QUUX's MAIN MEMORY, `main-memory-size <n>MW`**, as muir's `quux` takes
+// it: a whole number of megawords with the unit written, and every other
+// form refused with the one message, writing nothing; the range word 38's in
+// whole megawords, 1MW to 32MW on revision 13 at the Arty Z7-20's 512 boards
+// and to 64MW at the DE25-Nano's 1,024, 1MW to 3MW on revision 12; the CADR's
+// `main-memory-boards` refused on QUUX naming this word, and this word refused
+// on the CADR; and a fabric whose machine cannot be read set nothing.  Which
+// machine it is comes from the model's entry 21, as `machine` reads it.
+static void say_size(struct console *c, const char *arg, int *status, const char **said)
+{
+	char *argv[] = {"main-memory-size", (char *)arg};
+	*status = -1;
+	capture_start();
+	cons_size_word(c, arg ? 2 : 1, argv, status);
+	*said = capture_end();
+}
+
+static void check_size_word(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+	m.ro_entry21 = 0x5155050000D4ull;	/* revision 13, K = 5 */
+	m.boards = 512u;
+	m.boards_default = 512u;
+	m.boards_max = 512u;
+	int status = -1;
+	const char *said = "";
+	static const struct { const char *arg; unsigned boards; } ok[] = {
+		{"1MW", 16u}, {"31MW", 496u}, {"8MW", 128u}, {"32MW", 512u}, {"032MW", 512u},
+	};
+	for (unsigned i = 0; i < sizeof ok / sizeof ok[0]; ++i) {
+		const unsigned writes = m.boards_writes;
+		say_size(&c, ok[i].arg, &status, &said);
+		CHECK(status == 0 && m.boards_writes == writes + 1 && m.boards == ok[i].boards &&
+		      m.boards_last == (((uint32_t)CONS_BOARDS_KEY << 16) | ok[i].boards),
+		      "main-memory-size %s: answered %d, the fabric at %u boards: %s", ok[i].arg, status,
+		      m.boards, said);
+		char want[96];
+		snprintf(want, sizeof want, "main-memory-size: %uMW of main memory%s; revision 13 on this "
+			 "board takes 1MW to 32MW, 32MW by default", ok[i].boards / 16u,
+			 ok[i].boards == 512u ? ", the default" : "");
+		CHECK(strstr(said, want) != NULL, "main-memory-size %s said [%s], wanting [%s]", ok[i].arg,
+		      said, want);
+	}
+	// **EVERY OTHER FORM**, muir's own list and its neighbors: the one
+	// message, nothing written.
+	static const char *const form[] = {
+		"32M", "32mw", "32Mw", "32mW", "1.5MW", "32KW", "32MB", "32", "MW", "", " 32MW",
+		"32MW ", "-1MW", "+1MW", "0x20MW", "32 MW", "32MWMW", "99999999999MW", "32W",
+	};
+	for (unsigned i = 0; i < sizeof form / sizeof form[0]; ++i) {
+		const unsigned writes = m.boards_writes;
+		say_size(&c, form[i], &status, &said);
+		char want[128];
+		snprintf(want, sizeof want, "main-memory-size %s: main memory is given in megawords, "
+			 "with the unit MW, such as 32MW", form[i]);
+		CHECK(status == 2 && m.boards_writes == writes && strstr(said, want) != NULL,
+		      "main-memory-size \"%s\": answered %d, %u writes: %s", form[i], status,
+		      m.boards_writes - writes, said);
+	}
+	// **THE RANGE, the board's**, with the amount said back.
+	static const char *const range[] = {"0MW", "33MW", "64MW", "1024MW"};
+	for (unsigned i = 0; i < sizeof range / sizeof range[0]; ++i) {
+		const unsigned writes = m.boards_writes;
+		say_size(&c, range[i], &status, &said);
+		char want[128];
+		snprintf(want, sizeof want, "main-memory-size %s: revision 13's main memory on this board "
+			 "is 1MW to 32MW", range[i]);
+		CHECK(status == 2 && m.boards_writes == writes && strstr(said, want) != NULL,
+		      "main-memory-size %s: answered %d: %s", range[i], status, said);
+	}
+	// The word alone reports, in megawords, and writes nothing.
+	{
+		const unsigned writes = m.boards_writes;
+		say_size(&c, NULL, &status, &said);
+		CHECK(status == 0 && m.boards_writes == writes &&
+		      strstr(said, "main-memory-size: 32MW of main memory, the default") != NULL,
+		      "main-memory-size alone: answered %d: %s", status, said);
+		CHECK(strstr(said, "boards") == NULL, "QUUX's memory was reported in boards: %s", said);
+	}
+	// A fabric that does not take the amount answers 1.
+	m.boards_deaf = 1;
+	say_size(&c, "16MW", &status, &said);
+	CHECK(status == 1 && m.boards == 512u, "a fabric that kept 32MW answered %d to 16MW: %s",
+	      status, said);
+	m.boards_deaf = 0;
+	// **THE CADR's WORD ON QUUX**: refused naming this one, nothing written,
+	// with a count and alone.
+	{
+		const char *argv1[] = {"main-memory-boards", "512"};
+		for (int argc = 2; argc >= 1; --argc) {
+			const unsigned writes = m.boards_writes;
+			status = -1;
+			capture_start();
+			const int took = cons_boards_word(&c, argc, (char **)argv1, &status);
+			said = capture_end();
+			CHECK(took == 1 && status == 2 && m.boards_writes == writes &&
+			      strstr(said, "main-memory-boards is the CADR's: QUUX's main memory is an "
+					   "amount, main-memory-size <n>MW, such as main-memory-size 32MW") != NULL,
+			      "main-memory-boards on QUUX (%d words): answered %d: %s", argc, status, said);
+		}
+	}
+	// The DE25-Nano's room, 1,024 boards: 64MW taken, 65MW refused.
+	m.boards_max = 1024u;
+	say_size(&c, "64MW", &status, &said);
+	CHECK(status == 0 && m.boards == 1024u, "revision 13 at 1,024: 64MW answered %d: %s", status,
+	      said);
+	say_size(&c, "65MW", &status, &said);
+	CHECK(status == 2 && m.boards == 1024u &&
+	      strstr(said, "revision 13's main memory on this board is 1MW to 64MW") != NULL,
+	      "revision 13 at 1,024: 65MW answered %d: %s", status, said);
+	// **REVISION 12**: sixty boards are 3.75M words, so 1MW to 3MW, 2MW by
+	// default; and a count that is no whole number of megawords is said in
+	// kilowords, as muir says it.
+	model_init(&m);
+	attach(&c, &m);
+	m.ro_entry21 = 0x515504000000ull;
+	say_size(&c, NULL, &status, &said);
+	CHECK(status == 0 && strstr(said, "main-memory-size: 2MW of main memory, the default; revision "
+					 "12 on this board takes 1MW to 3MW, 2MW by default") != NULL,
+	      "revision 12 alone: answered %d: %s", status, said);
+	say_size(&c, "3MW", &status, &said);
+	CHECK(status == 0 && m.boards == 48u, "revision 12: 3MW answered %d, %u boards: %s", status,
+	      m.boards, said);
+	say_size(&c, "4MW", &status, &said);
+	CHECK(status == 2 && m.boards == 48u &&
+	      strstr(said, "main-memory-size 4MW: revision 12's main memory on this board is 1MW to 3MW") != NULL,
+	      "revision 12: 4MW answered %d: %s", status, said);
+	m.boards = 31u;
+	say_size(&c, NULL, &status, &said);
+	CHECK(strstr(said, "main-memory-size: 1984KW of main memory;") != NULL,
+	      "31 boards said as: %s", said);
+	// And a QUUX fabric older than word 37.
+	m.boards_unmapped = 1;
+	say_size(&c, NULL, &status, &said);
+	CHECK(status == 1 && strstr(said, "older than the word") != NULL,
+	      "QUUX with no word 37 answered %d: %s", status, said);
+	// **THIS WORD ON THE CADR** is refused naming the CADR's, nothing written.
+	model_init(&m);
+	attach(&c, &m);
+	{
+		const unsigned writes = m.boards_writes;
+		say_size(&c, "32MW", &status, &said);
+		CHECK(status == 2 && m.boards_writes == writes && m.boards == 32u &&
+		      strstr(said, "main-memory-size is QUUX's: the CADR's main memory is boards, "
+				   "main-memory-boards N, such as main-memory-boards 32") != NULL,
+		      "main-memory-size on the CADR: answered %d: %s", status, said);
+	}
+	// **AND A FABRIC THAT CANNOT SAY WHICH MACHINE IT IS** sets nothing,
+	// with either word.
+	m.ro_entry21 = 0x123456789ABCull;
+	{
+		const unsigned writes = m.boards_writes;
+		say_size(&c, "32MW", &status, &said);
+		CHECK(status == 1 && m.boards_writes == writes &&
+		      strstr(said, "which machine the fabric is could not be read") != NULL,
+		      "main-memory-size on an unknown fabric: answered %d: %s", status, said);
+		char *argv[] = {"main-memory-boards", "40"};
+		status = -1;
+		capture_start();
+		cons_boards_word(&c, 2, argv, &status);
+		said = capture_end();
+		CHECK(status == 1 && m.boards_writes == writes,
+		      "main-memory-boards on an unknown fabric: answered %d: %s", status, said);
+	}
+	{
+		char *argv[] = {"main-memory-sizes"};
+		status = -1;
+		CHECK(cons_size_word(&c, 1, argv, &status) == 0 && status == -1,
+		      "main-memory-sizes was taken as main-memory-size");
+	}
+}
+
+// **WORD 38 AT THE FACE**, under any machine: the setter refuses past the
+// most it reads, and a range that cannot be is not trusted.
+static void check_boards_range(void)
 {
 	struct model m;
 	struct console c;
@@ -2746,48 +2918,6 @@ static void check_boards_word_13(void)
 	m.boards = 512u;
 	m.boards_default = 512u;
 	m.boards_max = 512u;
-	int status = -1;
-	const unsigned counts[] = {61u, 512u, 1u, 511u, 127u, 128u};
-	for (unsigned i = 0; i < sizeof counts / sizeof counts[0]; ++i) {
-		char text[8];
-		snprintf(text, sizeof text, "%u", counts[i]);
-		char *argv[] = {"main-memory-boards", text};
-		const unsigned writes = m.boards_writes;
-		status = -1;
-		capture_start();
-		const int took = cons_boards_word(&c, 2, argv, &status);
-		const char *said = capture_end();
-		CHECK(took == 1 && status == 0, "revision 13: main-memory-boards %u: taken %d, answered %d",
-		      counts[i], took, status);
-		CHECK(m.boards_writes == writes + 1 && m.boards == counts[i],
-		      "revision 13: main-memory-boards %u left the fabric at %u", counts[i], m.boards);
-		char want[128];
-		snprintf(want, sizeof want, "main-memory-boards: %u boards of 64K words, %u words",
-			 counts[i], counts[i] * 65536u);
-		CHECK(strstr(said, want) != NULL && strstr(said, "takes 1 to 512") != NULL,
-		      "revision 13: main-memory-boards %u reported: %s", counts[i], said);
-		CHECK((counts[i] == 512u) == (strstr(said, "muir's default") != NULL),
-		      "revision 13: main-memory-boards %u named the default wrongly: %s", counts[i], said);
-	}
-	const char *refused[] = {"513", "1024", "1025", "0", "2047"};
-	for (unsigned i = 0; i < sizeof refused / sizeof refused[0]; ++i) {
-		char *argv[] = {"main-memory-boards", (char *)refused[i]};
-		const unsigned writes = m.boards_writes;
-		status = -1;
-		capture_start();
-		const int took = cons_boards_word(&c, 2, argv, &status);
-		const char *said = capture_end();
-		CHECK(took == 1 && status == 2, "revision 13: main-memory-boards \"%s\": taken %d, answered %d",
-		      refused[i], took, status);
-		CHECK(m.boards_writes == writes, "revision 13: main-memory-boards \"%s\" wrote the word",
-		      refused[i]);
-		CHECK(strstr(said, "main-memory-boards N: decimal, 1 to 512") != NULL &&
-		      strstr(said, "512 is the default") != NULL &&
-		      strstr(said, "revision 13") != NULL,
-		      "revision 13: main-memory-boards \"%s\" was not refused with the range: %s",
-		      refused[i], said);
-	}
-	CHECK(m.boards == 128u, "revision 13: a refused count moved the fabric to %u", m.boards);
 	{
 		const unsigned writes = m.boards_writes;
 		CHECK(cons_set_boards(&c, 513u) == -1 && m.boards_writes == writes,
@@ -2795,23 +2925,12 @@ static void check_boards_word_13(void)
 		CHECK(cons_set_boards(&c, 512u) == 0 && m.boards == 512u,
 		      "revision 13: cons_set_boards 512 did not write it");
 	}
-	// The DE25-Nano's room, 1,024 boards: 1024 taken.
-	m.boards_max = 1024u;
-	{
-		char *argv[] = {"main-memory-boards", "1024"};
-		status = -1;
-		capture_start();
-		cons_boards_word(&c, 2, argv, &status);
-		const char *said = capture_end();
-		CHECK(status == 0 && m.boards == 1024u, "revision 13 at 1,024: answered %d, fabric %u: %s",
-		      status, m.boards, said);
-	}
 	// **A FABRIC OLDER THAN WORD 38 IS THE CADR'S**: 61 refused with 1 to 60.
 	m.range_unmapped = 1;
 	{
 		char *argv[] = {"main-memory-boards", "61"};
 		const unsigned writes = m.boards_writes;
-		status = -1;
+		int status = -1;
 		capture_start();
 		cons_boards_word(&c, 2, argv, &status);
 		const char *said = capture_end();
@@ -3585,7 +3704,8 @@ int main(int argc, char **argv)
 	check_hdmi_sleep();
 	check_display_sleep_word();
 	check_boards_word();
-	check_boards_word_13();
+	check_size_word();
+	check_boards_range();
 	check_machine_word();
 	check_display_words();
 	// The logging last: these take the destinations away from the capture
