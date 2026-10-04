@@ -680,10 +680,11 @@ int main(int argc, char **argv)
 				say("--color-terminal, and page 2's word 33 carries no marker: "
 				    "this fabric is older than the second display board");
 			uint8_t map[CMAP_COLORS][CMAP_CHANNELS];
-			if (color_map_read(&cmap, map))
-				screen_frame_map(&color_frame, map);
-			else
+			// Mapped whether or not it was written, so the first frame
+			// and every later one are drawn through the same rule.
+			if (!color_map_read(&cmap, map))
 				said_no_map = 1;
+			screen_frame_map(&color_frame, map);
 		}
 		screen_frame_read(&color_frame, color_window);
 		if (screen_server_bind(&color_srv, color_listen.addr[0] ? color_listen.addr : NULL,
@@ -705,7 +706,8 @@ int main(int argc, char **argv)
 			? color_listen.port - TERMINAL_PORT : 0);
 		if (said_no_map)
 			say("the color map is all zeros: the machine has not written one, so every "
-			    "one of the sixteen colors is black and so is the picture");
+			    "one of the sixteen colors shows as white, 377 minus what is stored, "
+			    "and so does the picture");
 	}
 
 	// 4. The loop.

@@ -1324,7 +1324,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @why screen through the first board's map draws it in colors nothing wrote
 @note MIT's software writes the color board's map and never the first
 @note board's, so on a real machine the wrong page is all zeros and the
-@note picture is black --- which looks exactly like a machine that has not
+@note picture is white --- which looks exactly like a machine that has not
 @note drawn yet.
 @old
 		const uint32_t w = f->read(f, CMAP_WORD(1, c));
@@ -1927,4 +1927,38 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @new
 		cadr_video_old(video);
 		return 0;
+@end
+
+@mutation the-color-map-is-shown-as-stored
+@file color_map.c
+@why `WRITE-COLOR-MAP` stores 377 minus the color a pixel is to appear as; a server that
+@why renders the stored byte shows every color complemented, the band's black background white
+@old
+		map[c][0] = (uint8_t)(255u - CMAP_RED(w));
+		map[c][1] = (uint8_t)(255u - CMAP_GREEN(w));
+		map[c][2] = (uint8_t)(255u - CMAP_BLUE(w));
+@new
+		map[c][0] = (uint8_t)CMAP_RED(w);
+		map[c][1] = (uint8_t)CMAP_GREEN(w);
+		map[c][2] = (uint8_t)CMAP_BLUE(w);
+@end
+
+@mutation the-color-maps-blue-is-shown-as-stored
+@file color_map.c
+@why one gun left as stored gives a picture with a color cast, which only a check of each
+@why channel of each entry sees
+@old
+		map[c][2] = (uint8_t)(255u - CMAP_BLUE(w));
+@new
+		map[c][2] = (uint8_t)CMAP_BLUE(w);
+@end
+
+@mutation an-unwritten-map-is-judged-by-what-is-shown
+@file color_map.c
+@why an unwritten map stores zeros and shows white; judged by the shown bytes it reads as
+@why written, and the program never says the machine has not drawn a map yet
+@old
+		if (w & 0xFFFFFFu)
+@new
+		if (map[c][0] || map[c][1] || map[c][2])
 @end

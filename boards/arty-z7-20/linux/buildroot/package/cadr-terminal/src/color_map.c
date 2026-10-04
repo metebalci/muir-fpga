@@ -68,10 +68,11 @@ int color_map_read(struct color_map_face *f, uint8_t map[CMAP_COLORS][CMAP_CHANN
 	int any = 0;
 	for (int c = 0; c < CMAP_COLORS; ++c) {
 		const uint32_t w = f->read(f, CMAP_WORD(1, c));
-		map[c][0] = (uint8_t)CMAP_RED(w);
-		map[c][1] = (uint8_t)CMAP_GREEN(w);
-		map[c][2] = (uint8_t)CMAP_BLUE(w);
-		if (map[c][0] || map[c][1] || map[c][2])
+		// Shown inverted: `color_map.h` says why.
+		map[c][0] = (uint8_t)(255u - CMAP_RED(w));
+		map[c][1] = (uint8_t)(255u - CMAP_GREEN(w));
+		map[c][2] = (uint8_t)(255u - CMAP_BLUE(w));
+		if (w & 0xFFFFFFu)
 			any = 1;
 	}
 	return any;

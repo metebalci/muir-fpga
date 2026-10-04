@@ -1151,8 +1151,12 @@ back of the color map", the RAMs and their converters being off the board. The
 fabric keeps the sixteen entries as muir does and offers them on the console
 face's page 5; `color_map.h` is this program's reader, and the map is re-read
 with every frame because the window system rewrites it whenever it changes a
-color. A machine that has written no map has every color black, and the
-program says so rather than serving a black screen silently.
+color. **Each entry is shown inverted, 377 minus each stored channel**, as
+muir's `Tv::rgb` and the fabric's display output show it: `WRITE-COLOR-MAP`
+stores `(- 377 value)` for the color a pixel is to appear as, so entry 0
+stored 377 377 377 is black and an entry stored 0 377 377 is pure red. A
+machine that has written no map stores zeros, so every color shows white,
+and the program says so rather than serving a white screen silently.
 
 **Where it is served.** muir's default is the display above the main screen's,
 and this takes the same rule: `--terminal 0.0.0.0:5900` puts the color screen
@@ -1185,7 +1189,9 @@ entries are all black while the pixel indices behind them are unwritten memory,
 sixteen distinct values with 260,533 of them not zero. So no machine has drawn
 a color picture yet. And with no board fitted the flag is not refused: the
 program prints the sentence naming the NXM and naming `--color-tv` as what
-fits one, and then binds and serves a black screen anyway.
+fits one, and then binds and serves a black screen anyway. That session
+rendered the map as stored; shown inverted, as it is now, the same unwritten
+map serves a white screen.
 
 ## What is not built
 

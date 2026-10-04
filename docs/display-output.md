@@ -46,6 +46,15 @@ The copy is refreshed one entry a raster line, so the whole map is never more
 than sixteen lines old, and it is refreshed rather than loaded once because
 `WRITE-COLOR-MAP` writes the map while the machine runs.
 
+**The copy holds what is shown: 377 minus each stored channel.**
+`WRITE-COLOR-MAP` takes the color a pixel is to appear as and stores
+`(- 377 value)` in each channel, and muir's `Tv::rgb` shows `255 - stored`.
+So each entry is complemented as it is copied: entry 0 stored 377 377 377,
+which `(COLOR:WRITE-COLOR-MAP 0 0 0 0)` leaves, is black, and an entry stored
+0 377 377, `(377 0 0)` asked, is pure red. The board's own map keeps the
+stored bytes. The copy resets to zeros, black, until the first sixteen lines
+have filled it.
+
 ### What is shown, and which way up
 
 Two settings, written at boot by the disk pack program's init step exactly as
@@ -728,7 +737,12 @@ It holds:
   the three channels the encoder is given --- the map injective in the color
   with no two channels of one color equal, so a channel order the other way
   round, an index off by one and a map read off the other screen are each
-  visible;
+  visible --- and each entry shown inverted, 377 minus each stored channel,
+  with no entry its own complement, so a map shown as stored misses every
+  color pixel;
+- the map's two entries the band itself leaves, in a configuration of their
+  own: entry 0 stored 377 377 377 shown black on every pixel of it, and
+  entry 1 stored 0 377 377 shown pure red;
 - both screens at once, with the color one over the first in the columns they
   share;
 - both quarter turns, by the same pictures read the other way: an output line

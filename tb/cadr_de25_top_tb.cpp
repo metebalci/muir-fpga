@@ -65,7 +65,8 @@
 //   once a frame of 1066 lines for three of them, both positive, DE on 1280
 //   pixels of 1024 lines --- VESA DMT's 1280x1024 at 60 Hz --- the first
 //   display's lit pixels white, and the color board's pixels the color map's
-//   entry with red in the top byte, green in the middle and blue at the
+//   entry shown inverted, 377 minus each stored channel as `WRITE-COLOR-MAP`
+//   means it, with red in the top byte, green in the middle and blue at the
 //   bottom, which is what the ADV7513's `0x16` setting says the bus is.
 //
 //   THE TRANSMITTER'S PROGRAM, counted on the wires: once out of the fabric's
@@ -554,7 +555,9 @@ int main(int argc, char **argv) {
   // color with three different channels, so a crossed pair of channels is a
   // different color.
   constexpr uint32_t kMapColor = 0x102030u;
-  video.color = kMapColor;
+  // What the monitor shows of it: 377 minus each stored channel.
+  constexpr uint32_t kMapShown = 0xEFDFCFu;
+  video.color = kMapShown;
   r->cadr_de25__DOT__u_reset_release__DOT__tbo_ninit_done = 1;
   r->cadr_de25__DOT__u_pll__DOT__tbo_unlock = 0;
   top->btn = 3;
@@ -761,7 +764,7 @@ int main(int argc, char **argv) {
             video.white == 0,
         "the color board: %ld pixels of the map's %06x, %ld white and %ld of "
         "anything else (the first %06x): red is the top byte of the bus and "
-        "blue the bottom", video.want_color, kMapColor, video.white,
+        "blue the bottom", video.want_color, kMapShown, video.white,
         video.other, video.first_other);
   const long color_pixels = video.want_color;
 
@@ -862,7 +865,7 @@ int main(int argc, char **argv) {
       "    the transmitter written %ld times out of reset, none at the sleep,\n"
       "      33 at the wake; the clock stopped asleep, and its gate moved\n"
       "      %ld times, never on the rising edge.\n",
-      to_live, to_run, first_white, color_pixels, kMapColor, first_program,
+      to_live, to_run, first_white, color_pixels, kMapShown, first_program,
       gate_moves);
   return 0;
 }

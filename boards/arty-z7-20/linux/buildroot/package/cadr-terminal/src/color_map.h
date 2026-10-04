@@ -81,10 +81,13 @@ int color_map_ident(struct color_map_face *f, uint32_t *got);
 // apart.
 int color_map_fitted(struct color_map_face *f);
 
-// The color TV's sixteen colors, `[color][channel]` with red first.
-// Returns 1 if any of the forty-eight bytes is not zero, which is what says
-// the machine has written a map: an unwritten one is every gun at zero and
-// every color black, and a screen drawn through it is a black screen.
+// The color TV's sixteen colors AS SHOWN, `[color][channel]` with red first:
+// 377 minus each stored byte.  `WRITE-COLOR-MAP` in `sys/window/color.lisp`
+// takes the color a pixel is to appear as and stores `(- 377 value)` in each
+// channel, and muir's `Tv::rgb` shows `255 - stored`, as the fabric's display
+// output does.  Returns 1 if any of the forty-eight STORED bytes is not zero,
+// which is what says the machine has written a map: an unwritten one stores
+// zeros, which show as white.
 int color_map_read(struct color_map_face *f, uint8_t map[CMAP_COLORS][CMAP_CHANNELS]);
 
 #endif

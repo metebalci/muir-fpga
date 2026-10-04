@@ -225,6 +225,15 @@
 // refreshed ONE ENTRY A RASTER LINE, so the whole map is no more than sixteen
 // lines old.
 //
+// **THE COPY HOLDS WHAT IS SHOWN, 377 MINUS EACH STORED CHANNEL.**
+// `WRITE-COLOR-MAP` in `sys/window/color.lisp` takes the color a pixel is to
+// appear as --- "numbers from 0 to 377 that together say how pixels containing
+// LOC should appear on the screen" --- and stores `(- 377 value)` in each
+// channel, and muir's `Tv::rgb` shows `255 - stored`.  So each entry is
+// complemented as it is copied, and the board's own map, which the console
+// face offers Linux and a checkpoint carries, keeps the stored bytes.  The
+// copy resets to zeros, black, until the first sixteen lines have filled it.
+//
 // The copy is what makes the lookup possible at all: a pixel needs its color in
 // the pixel domain and the map lives in the machine's, four bits of address
 // arriving every pixel.  It is refreshed rather than loaded once because
@@ -478,8 +487,8 @@ module cadr_display_out #(
     output var logic        vsync,
     // Three channels of eight bits.  The first display's one bit becomes 0x00 or
     // 0xFF on all three; the color board's four bits become the map entry they
-    // name, red in bits 23 to 16 of it, which is `WRITE-COLOR-MAP`'s own channel
-    // order.
+    // name, shown inverted (see "THE COLOR MAP"), red in bits 23 to 16 of it,
+    // which is `WRITE-COLOR-MAP`'s own channel order.
     output var logic [7:0]  red,
     output var logic [7:0]  green,
     output var logic [7:0]  blue,
@@ -1498,8 +1507,9 @@ module cadr_display_out #(
 
       // ---- the color map's copy, one entry a line, taken eight pixels after
       //      the index went out: see the header for the crossing it is.
+      //      Complemented, 377 minus each stored channel: what is shown.
       if (hc == HC_W'(8)) begin
-        cmap[map_idx] <= map_q;
+        cmap[map_idx] <= ~map_q;
         map_idx       <= map_idx + 4'd1;
       end
 

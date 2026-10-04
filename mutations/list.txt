@@ -13307,6 +13307,34 @@ if {0 && $held ne $want} {
       end else begin
 @end
 
+@mutation the-color-map-is-shown-as-stored
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note `WRITE-COLOR-MAP` stores 377 minus the color a pixel is to appear as,
+@note and muir's `Tv::rgb` shows 255 minus the stored byte. A copy taken as
+@note stored shows every color complemented: the band's background, entry 0
+@note stored 377 377 377, comes out white instead of black. Every entry of
+@note the check's map differs from its complement, and configuration I holds
+@note entry 0 stored 377 377 377 to black and entry 1 stored 0 377 377 to
+@note pure red.
+@old
+        cmap[map_idx] <= ~map_q;
+@new
+        cmap[map_idx] <= map_q;
+@end
+
+@mutation the-color-maps-blue-is-shown-as-stored
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note One channel left as stored: the other two are right, so the picture is
+@note a picture with a color cast, and only a check that compares each
+@note channel of each entry sees it.
+@old
+        cmap[map_idx] <= ~map_q;
+@new
+        cmap[map_idx] <= {~map_q[23:8], map_q[7:0]};
+@end
+
 @mutation the-rotated-band-is-the-wrong-word-column
 @check display_out
 @file rtl/plumbing/cadr_display_out.sv

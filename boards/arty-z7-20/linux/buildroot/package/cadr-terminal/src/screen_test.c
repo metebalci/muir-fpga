@@ -1936,23 +1936,50 @@ static void check_color_screen(void)
 		face[CMAP_DISPLAY] = ((uint32_t)CMAP_TV_MARK << 16) | CMAP_TV_COLOR;
 		CHECK(color_map_fitted(&cm) == 1, "a fitted color board was not seen");
 
+		// **WHAT IS READ IS WHAT THE MONITOR SHOWS: 377 MINUS EACH STORED
+		// BYTE.**  `WRITE-COLOR-MAP` stores `(- 377 value)` for the color
+		// a pixel is to appear as, and muir's `Tv::rgb` shows
+		// `255 - stored`; no byte of this map is its own complement, so
+		// a reader that handed the stored bytes on misses all 48.
 		uint8_t read_back[CMAP_COLORS][CMAP_CHANNELS];
 		CHECK(color_map_read(&cm, read_back) == 1,
 		      "a map with every gun set came back as an unwritten one");
 		unsigned wrong = 0;
 		for (unsigned c = 0; c < CMAP_COLORS; ++c)
 			for (unsigned k = 0; k < CMAP_CHANNELS; ++k)
-				if (read_back[c][k] != map[c][k]) {
+				if (read_back[c][k] != (uint8_t)(255u - map[c][k])) {
 					if (wrong < 3)
 						fail(__LINE__,
 						     "the color board's map at %u/%u read %u, "
-						     "wanting %u --- the first board's is %u there",
-						     c, k, read_back[c][k], map[c][k],
+						     "wanting %u (stored %u) --- the first board's "
+						     "is %u there",
+						     c, k, read_back[c][k], 255u - map[c][k],
+						     map[c][k],
 						     (unsigned)((face[CMAP_WORD(0, c)]
 								 >> (16 - 8 * k)) & 0xFFu));
 					++wrong;
 				}
-		CHECK(wrong == 0, "%u of the 48 map bytes came from the wrong page or channel", wrong);
+		CHECK(wrong == 0, "%u of the 48 map bytes came from the wrong page or "
+		      "channel, or were not shown inverted", wrong);
+
+		// **THE TWO ENTRIES THE BAND ITSELF LEAVES**, to a viewer's
+		// pixel: entry 0 as `(COLOR:WRITE-COLOR-MAP 0 0 0 0)` stores it,
+		// 377 377 377, must be black, and entry 1 stored 0 377 377 ---
+		// `(377 0 0)` asked --- must be pure red.
+		face[CMAP_WORD(1, 0)] = 0xFFFFFFu;
+		face[CMAP_WORD(1, 1)] = 0x00FFFFu;
+		CHECK(color_map_read(&cm, read_back) == 1,
+		      "a map holding 377 377 377 came back as an unwritten one");
+		screen_frame_init_color(&frame);
+		screen_frame_map(&frame, read_back);
+		{
+			const uint32_t black = rfb_pixel(&rgb888, frame.map, 0, SCREEN_COLORS);
+			const uint32_t red = rfb_pixel(&rgb888, frame.map, 1, SCREEN_COLORS);
+			CHECK(black == 0x000000u,
+			      "entry 0 stored 377 377 377 is shown as 0x%06x, wanting black", black);
+			CHECK(red == 0xFF0000u,
+			      "entry 1 stored 0 377 377 is shown as 0x%06x, wanting pure red", red);
+		}
 
 		// And an unwritten map is said to be one, so that the program
 		// can tell a black screen from a machine that has not drawn.

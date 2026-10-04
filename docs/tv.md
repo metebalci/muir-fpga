@@ -759,6 +759,18 @@ netlists strobe them, and offers them to Linux on the console face's pages 4
 and 5, read only. `cadr-terminal --color-terminal` renders the color screen
 through page 5 and `cadr-checkpoint` carries page 4 into the checkpoint.
 
+**The map is shown inverted, 377 minus each stored channel.**
+`WRITE-COLOR-MAP` in `sys/window/color.lisp` takes R, G and B as "numbers
+from 0 to 377 that together say how pixels containing LOC should appear on
+the screen" and sends the board `(- 377 (LOGAND (FIX R) 377))` for each, so
+the RAM holds the complement of the color asked for. muir's `Tv::rgb` shows
+`255 - stored`, and so do the display output and `cadr-terminal`: after
+`(COLOR:WRITE-COLOR-MAP 0 0 0 0)`, which stores 377 377 377, entry 0 is
+black, and an entry written `(377 0 0)` is pure red. The map itself, on
+pages 4 and 5 and in a checkpoint, keeps the stored bytes. What the off-board
+converters really made of a stored byte is not documented; the inversion
+follows the software, as muir's does.
+
 **The second frame buffer is a second window of the display's region of DDR**,
 128 KB above the first, which is the first board's own 32,768 words.
 `cadr_ddr_map.sv`'s `COLOR_DISPLAY_BASE` is the constant. Nothing on the Linux
@@ -796,8 +808,8 @@ color board while the machine runs, and MIT's own `COLOR-EXISTS-P` body, typed
 at a Lisp Listener out of the four primitives the System 304 band had, answered
 `NIL` before and `T` after --- the console's register face and a bus cycle at
 `0o17200000` agreeing across a backplane they share and nothing else. The map
-reads sixteen black entries for either board and the color screen serves black
-over unwritten memory, so nothing has drawn a picture on this board yet.
+read sixteen entries of zeros for either board and the color screen served
+black over unwritten memory, so nothing had drawn a picture on this board then.
 `docs/board.md` has that session.
 
 ## What is not built

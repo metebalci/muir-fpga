@@ -300,6 +300,26 @@ uint32_t MapEntry(int k) {
   return (r << 16) | (g << 8) | b;
 }
 
+// **WHAT A MONITOR SHOWS OF AN ENTRY IS 377 MINUS EACH STORED CHANNEL.**
+// `WRITE-COLOR-MAP` in `sys/window/color.lisp` takes the color a pixel is to
+// appear as and stores `(- 377 value)` in each channel, and muir's `Tv::rgb`
+// shows `255 - stored`.  So every entry this check offers is drawn as its
+// complement, and a module that drew the stored bytes misses every color
+// pixel: no entry of `MapEntry` is its own complement.
+uint32_t Shown(uint32_t stored) { return ~stored & 0xFFFFFFu; }
+
+// The map the module is offered.  `MapEntry`, except in configuration I,
+// where two entries are what the band itself stores: entry 0 as
+// `(COLOR:WRITE-COLOR-MAP 0 0 0 0)` leaves it, 377 377 377, which must show
+// black, and entry 1 as a pure red, `(377 0 0)` asked and 0 377 377 stored,
+// which must show 0xFF0000.
+bool gRedBlack = false;
+uint32_t Stored(int k) {
+  if (gRedBlack && k == 0) return 0xFFFFFFu;
+  if (gRedBlack && k == 1) return 0x00FFFFu;
+  return MapEntry(k);
+}
+
 // ---------------------------------------------------------- the geometry
 //
 // Where a raster pixel comes from, which is the whole of what rotation means
@@ -339,7 +359,7 @@ bool ColorSrc(int x, int y, int rot, int sel, int *row, int *col) {
 uint32_t WantRGB(int x, int y, int sel, int rot) {
   int row, col;
   if ((sel & 2) && ColorSrc(x, y, rot, sel, &row, &col))
-    return MapEntry(ColorIndex(row, col));
+    return Shown(Stored(ColorIndex(row, col)));
   if ((sel & 1) && MonoSrc(x, y, rot, sel, &row, &col))
     return MonoLit(row, col) ? 0xFFFFFFu : 0u;
   return 0u;
@@ -523,6 +543,9 @@ std::set<uint32_t> gMapColors;
 struct Result {
   long underruns = 0, compared = 0, mono_beats = 0, color_beats = 0;
   long black_lines = 0, bursts = 0;
+  // Configuration I's: the color pixels of entries 0 and 1 in the reference,
+  // and how many of each came out black and pure red.
+  long idx0 = 0, idx1 = 0, black0 = 0, red1 = 0;
   size_t max_in_flight = 0;
   Extent mono, color;
 };
@@ -673,10 +696,11 @@ int main(int argc, char **argv) {
       // **AND NO MAP ENTRY MAY BE WHITE OR BLACK**, because that is what tells
       // a color board's pixel from a first display's when the extents below
       // are measured.
-      if (e == 0xFFFFFFu || e == 0u)
-        Fail("map entry %d is %06x, which is what the first display draws", k, e);
+      if (Shown(e) == 0xFFFFFFu || Shown(e) == 0u)
+        Fail("map entry %d shows as %06x, which is what the first display draws", k,
+             Shown(e));
       ent.insert(e);
-      gMapColors.insert(e);
+      gMapColors.insert(Shown(e));
     }
     if (ent.size() != 16) Fail("the map is not injective in the color");
   }
@@ -731,7 +755,7 @@ int main(int argc, char **argv) {
 
       // The color board's map, answered combinationally as
       // `rtl/machine/cadr_tv.sv` answers it.
-      dut->map_q = MapEntry(dut->map_a & 15);
+      dut->map_q = Stored(dut->map_a & 15);
 
       if (ck && clk_v) { slave.Drive(dut); dut->eval(); slave.Sample(dut); }
       dut->clk = clk_v; dut->pclk = pclk_v;
@@ -824,6 +848,12 @@ int main(int argc, char **argv) {
           if (got) line_black = false;
           if (compare && mon.frames >= 3 && mon.y >= 0 && mon.y < VA) {
             const uint32_t want = WantRGB(mon.x, mon.y, sel, rot);
+            int crow, ccol;
+            if (gRedBlack && (sel & 2) && ColorSrc(mon.x, mon.y, rot, sel, &crow, &ccol)) {
+              const int k = ColorIndex(crow, ccol);
+              if (k == 0) { ++res->idx0; if (got == 0u) ++res->black0; }
+              if (k == 1) { ++res->idx1; if (got == 0xFF0000u) ++res->red1; }
+            }
             if (got != want) {
               if (++mismatches <= 4) {
                 Fail("pixel (%d,%d) is %06x, want %06x", mon.x, mon.y, got, want);
@@ -1207,6 +1237,26 @@ int main(int argc, char **argv) {
          h.color_beats, static_cast<long>(kCWords) * kCH);
   placed(h, 2, 1, "H color clockwise");
 
+  // ------------------------------------------------------ configuration I
+  //
+  // **THE MAP IS SHOWN INVERTED, AS THE BAND STORES IT.**  The color board
+  // alone, upright, with entry 0 stored 377 377 377 and entry 1 stored
+  // 0 377 377: every pixel of entry 0 must be black and every pixel of entry 1
+  // pure red.  The two are counted from the reference picture, so a run that
+  // drew neither color cannot pass by having nothing to compare.
+  gRedBlack = true;
+  Result rb;
+  (void)run(2, 0, 0, 0, 4, true, &rb, "I color upright, black and red");
+  gRedBlack = false;
+  if (rb.underruns) Fail("configuration I reported an underrun");
+  if (rb.idx0 == 0 || rb.idx1 == 0)
+    Fail("configuration I compared %ld pixels of entry 0 and %ld of entry 1",
+         rb.idx0, rb.idx1);
+  if (rb.black0 != rb.idx0)
+    Fail("entry 0 stored 377 377 377: %ld of %ld pixels black", rb.black0, rb.idx0);
+  if (rb.red1 != rb.idx1)
+    Fail("entry 1 stored 0 377 377: %ld of %ld pixels pure red", rb.red1, rb.idx1);
+
   if (bad) {
     std::fprintf(stderr, "FAIL: %d problems\n", bad);
     return 1;
@@ -1225,8 +1275,9 @@ int main(int argc, char **argv) {
       "    %d and %d to %d, sharing %d\n"
       "    and: the color screen alone, both with the color one drawn over the\n"
       "    first, both quarter turns, both rotated at once, the color screen\n"
-      "    turned by itself, and the underrun reported with the port slowed to\n"
-      "    200 clocks a beat\n",
+      "    turned by itself, the underrun reported with the port slowed to\n"
+      "    200 clocks a beat, and the map shown inverted: entry 0 stored\n"
+      "    377 377 377 black, entry 1 stored 0 377 377 pure red\n",
       kModeName, a.compared, HT, HA, HS, HS + HB, VT, VA, VS,
       HPOS ? "positive" : "negative", VPOS ? "positive" : "negative",
       MX0, MX0 + kPicW - 1, MY0, MY0 + kPicH - 1,
