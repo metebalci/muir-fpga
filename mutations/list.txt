@@ -20699,7 +20699,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-level-2-is-written-as-the-cadrs-1024
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A level-2 store drops the block number's sixth bit, so the entry for
 @note block 41 lands in block 01 and a translation through block 41 finds
@@ -20711,7 +20711,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-machine-id-says-another-processor
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Source 16 answers processor type 1 rather than 4.
 @old
@@ -20721,7 +20721,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-source-36-is-not-source-16
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/cadr_microcycle.sv
 @note `IR<30>` is taken into the decode, so source 36 reads the open bus
 @note where muir's reads the MACHINE-ID.
@@ -20732,21 +20732,23 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-source-17-reads-zero
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Source 17 reads 0 on QUUX, as revision 9's clocks' status read with both
 @note timers off, where since revision 10 it reads all ones, as every source
 @note nothing drives (contract Q11).
+@note The form here builds at both word widths: written for revision 12's
+@note 32 bits alone, lint refused it at revision 13's 40.
 @old
     end else if (QUUX && group_b && ir[28:26] == 3'd5) begin
 @new
     end else if (QUUX && group_b && ir[28:26] == 3'd7) begin
-      mf = 32'd0;
+      mf = '0;
     end else if (QUUX && group_b && ir[28:26] == 3'd5) begin
 @end
 
 @mutation quux-the-pdl-pointer-is-twelve-bits
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A 4K PDL buffer where QUUX's is 16K: the index written with 177777
 @note reads back 7777, and the push from 37777 lands elsewhere.
@@ -20757,7 +20759,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-pdl-write-takes-the-read-address
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The shared port's address is the read's when the write pulse fires.
 @old
@@ -20767,7 +20769,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-pdl-write-lands-at-the-read-address
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/cadr_microcycle.sv
 @note What Vivado 2026.1's synthesis built of the READ_FIRST PDL buffer:
 @note the address mux dropped, so every write lands at the read address.
@@ -20793,7 +20795,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-feature-page-is-128-words
-@check quux_registers_quux
+@check quux13_registers_quux
 @file rtl/machine/quux_feature_page.sv
 @note The word is chosen by seven bits, so the reserved words from 204 up
 @note read the words 200 below them: 204 reads word 4, 16,384.  (The map
@@ -20806,7 +20808,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-feature-page-says-five-bits
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/quux_feature_page.sv
 @note Word 1 says the CADR's five-bit entry.
 @old
@@ -20816,7 +20818,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-feature-page-says-60-words-a-line
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/quux_feature_page.sv
 @note Word 12 says muir's default 1920-pixel line, not the bitstream's.
 @old
@@ -20826,7 +20828,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-write-of-the-feature-page-is-not-taken
-@check quux_page_quux
+@check quux13_page_quux
 @file rtl/machine/quux_feature_page.sv
 @note The page takes reads only, so a write of the keyboard's status, the
 @note bus errors or error stop goes nowhere, where muir's register takes it.
@@ -20839,7 +20841,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-page-matches-its-old-page
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/quux_feature_page.sv
 @note The page's own match is the old page, `17377000`, where the decode
 @note no longer selects anything, so the page never answers and the cycle
@@ -20886,7 +20888,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-network-answers-its-old-aliases
-@check quux_registers_quux
+@check quux13_registers_quux
 @file rtl/machine/quux_feature_page.sv
 @note Words 140-147 as the CADR's board answers them at `764140` on: 144
 @note the CSR again, 146 and 147 read, and a write of 144 or 145 taken, 145
@@ -20901,7 +20903,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-network-takes-a-write-of-start
-@check quux_registers_quux
+@check quux13_registers_quux
 @file rtl/machine/quux_feature_page.sv
 @note A write of 145, START, reaches the board, which takes it at `764152`
 @note as a write of its write buffer, where a write of 145 goes nowhere
@@ -20913,7 +20915,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-network-reads-144
-@check quux_registers_quux
+@check quux13_registers_quux
 @file rtl/machine/quux_feature_page.sv
 @note A read of 144 reaches the board, which answers the CSR at `764150`,
 @note where 144 is reserved and reads 0 (contract Q13).
@@ -20924,7 +20926,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-block-disk-at-the-old-address
-@check quux_busreset_quux
+@check quux13_busreset_quux
 @file rtl/machine/quux_block_disk.sv
 @note Block-disk matches its registers where the CADR controller has them,
 @note `17377774`, where nothing reaches it since revision 11, so words
@@ -20936,7 +20938,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-feature-page-is-not-on-the-seam
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/cadr_machine.sv
 @note The page's word is left off the seam, so every read of it takes what
 @note the seam holds without it.
@@ -20949,7 +20951,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-video-keeps-the-wrong-mode-bit
-@check quux_tv_quux
+@check quux13_tv_quux
 @file rtl/machine/quux_video.sv
 @note The mode keeps bit 3, the CADR board's interrupt enable, where the
 @note video controller keeps black-on-white alone.
@@ -20960,7 +20962,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-video-reads-black-on-white-in-bit-3
-@check quux_tv_quux
+@check quux13_tv_quux
 @file rtl/machine/quux_video.sv
 @note The mode reads black-on-white back one bit up.
 @old
@@ -20970,7 +20972,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-video-mode-is-eight-words
-@check quux_tv_quux
+@check quux13_tv_quux
 @file rtl/machine/quux_video.sv
 @note The mode is matched on eight words, as the CADR board's registers are,
 @note so the register page's reserved words 211-217 read and take the mode
@@ -20982,7 +20984,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-video-mode-at-the-old-address
-@check quux_tv_quux
+@check quux13_tv_quux
 @file rtl/machine/quux_video.sv
 @note The mode is where it was before revision 11, `17377760`, so word 210
 @note of the register page reads 0 and takes no write (contract Q13).
@@ -21004,7 +21006,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-video-mode-refuses-writes
-@check quux_tv_quux
+@check quux13_tv_quux
 @file rtl/machine/quux_video.sv
 @note The mode takes no write, so black-on-white never changes and
 @note `quux_tv` reads its own write back wrong.  (Its acknowledgment no
@@ -21146,7 +21148,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-mul-decodes-as-div
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Function 42 is taken for the divide.
 @old
@@ -21156,7 +21158,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-div-looks-at-ir-7
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note `DIV` also requires `IR<7>` clear, a bit the 74S139 does not look at.
 @old
@@ -21166,7 +21168,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-mul-output-selector-honored
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note `MUL` drives the output bus only when `IR<13:12>` selects the ALU.
 @old
@@ -21176,7 +21178,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-div-leaves-q
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note `DIV` does not load `Q`.
 @old
@@ -21186,7 +21188,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-start-after-a-start-is-not-held
-@check quux_startstart_quux
+@check quux13_startstart_quux
 @file rtl/machine/cadr_microcycle.sv
 @note QUUX's own `-WAIT` term, `MEMSTART AND MEMOP` (muir's `Rtl::stall`),
 @note suppressed: a memory start in the microcycle right after a start runs,
@@ -21199,7 +21201,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-start-is-held-only-after-a-read
-@check quux_startstart_quux
+@check quux13_startstart_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The hold only when the first start is a read, so a write followed by
 @note a start in the next microcycle is not held.
@@ -21210,7 +21212,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-start-is-held-only-after-a-write
-@check quux_startstart_quux
+@check quux13_startstart_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The hold only when the first start is a write, so a read followed by
 @note a start in the next microcycle is not held.
@@ -21221,7 +21223,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-fetch-after-a-start-is-not-held
-@check dispatch_write_order_quux
+@check dispatch_write_order13_quux
 @file rtl/machine/cadr_microcycle.sv
 @note `MEMOP` includes the macro-instruction fetch, `LCINC AND NEEDFETCH`;
 @note without it a fetch right after a read is not held, which
@@ -21245,7 +21247,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-divider-holds-eight-cycles
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A `DIV` is held eight microcycles where muir holds nine
 @note (`muldiv::DIV_CYCLES`), so a `DIV` of a register runs 40 ns early.
@@ -21256,7 +21258,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-divider-holds-ten-cycles
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A `DIV` is held ten microcycles, a master clock more than muir's nine.
 @old
@@ -21266,7 +21268,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-nopped-div-holds
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A `DIV` standing nopped still holds the machine.
 @old
@@ -21276,7 +21278,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-div-of-md-counts-from-ir
-@check quux_divmd_quux
+@check quux13_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A `DIV` of MD counts its nine from the edge that loaded `IR` and not
 @note from the end of the MD interlock, the rule before muir's da3b4f4: the
@@ -21289,7 +21291,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-divider-reads-its-operands-late
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The divider takes its operands 46 ticks late, the fiftieth at a K of
 @note four, so its steps are not done by the edge that ends a `DIV`'s
@@ -21301,7 +21303,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-the-divider-reads-its-operands-at-the-edge
-@check quux_muldiv_quux
+@check quux13_muldiv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The divider takes its operands in the tick after the edge, before the
 @note scratchpad latches have followed the new address.
@@ -21325,7 +21327,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-dispatch-write-reads-the-new-word
-@check dispatch_write_order_quux
+@check dispatch_write_order13_quux
 @file rtl/machine/cadr_microcycle.sv
 @note QUUX defines the old word in a RAM's own write cycle; the CADR's bypass
 @note on QUUX gives the new one.
@@ -21359,38 +21361,44 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-level-2-map-reads-the-new-word-after-a-store
-@check dispatch_write_order_quux
+@check dispatch_write_order13_quux
 @file rtl/machine/cadr_microcycle.sv
 @note QUUX reads the old word in the microcycle a map store's write lands.
+@note Revision 13's stores enable at VMA<29> and <28> (A1.7), so the
+@note pass-around keys on those there.
 @old
   assign vmo  = (!QUUX && wmapd && vma[25]) ? l2_store : vmo_rd;
 @new
-  assign vmo  = (wmapd && vma[25]) ? l2_store : vmo_rd;
+  assign vmo  = (wmapd && (WIDE ? vma[28] : vma[25])) ? l2_store : vmo_rd;
 @end
 
 @mutation quux-level-1-map-reads-the-new-word-after-a-store
-@check dispatch_write_order_quux
+@check dispatch_write_order13_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The same for level 1: `map-level-1-source-after-write` on QUUX.
+@note Revision 13's stores enable at VMA<29> and <28> (A1.7), so the
+@note pass-around keys on those there.
 @old
   assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store : vmap_rd;
 @new
-  assign vmap = (wmapd && vma[26]) ? l1_store : vmap_rd;
+  assign vmap = (wmapd && (WIDE ? vma[29] : vma[26])) ? l1_store : vmap_rd;
 @end
 
 @mutation quux-has-no-wait-for-md
-@check dispatch_write_order_quux
+@check dispatch_write_order13_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Without the wait a microcycle reading MD with a read in flight runs at
 @note once on the old word.
+@note The form here builds at both word widths: written for revision 12's
+@note 32 bits alone, lint refused it at revision 13's 40.
 @old
     assign quux_hold = use_md_q && hold_rip;
 @new
-    assign quux_hold = 1'b0;
+    assign quux_hold = use_md_q && hold_rip && 1'b0;
 @end
 
 @mutation quux-wait-for-md-ends-two-edges-early
-@check quux_memedge_quux
+@check quux13_memedge_quux
 @file rtl/machine/cadr_microcycle.sv
 @note READ IN PROGRESS as muir has it falls 140 ns after the acknowledgment;
 @note the fabric's register falls two ticks sooner.  Without the tail the
@@ -21406,18 +21414,20 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-wait-for-md-asks-a-tick-early
-@check dispatch_write_order_quux
+@check dispatch_write_order13_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The question is READ IN PROGRESS as the edge left it, taken a tick
 @note after the edge; taken at the edge it is the question the tick before.
+@note The form here builds at both word widths: written for revision 12's
+@note 32 bits alone, lint refused it at revision 13's 40.
 @old
         if (hold_mclk_q) hold_rip <= rd_in_progress || (rip_tail != 2'd0);
 @new
-        if (mclk_edge) hold_rip <= rd_in_progress || (rip_tail != 2'd0);
+        if (mclk_edge || (hold_mclk_q && 1'b0)) hold_rip <= rd_in_progress || (rip_tail != 2'd0);
 @end
 
 @mutation quux-div-of-md-is-not-reloaded-from-the-word-read
-@check quux_divmd_quux
+@check quux13_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A `DIV` of MD whose read lands after the divider took its operands
 @note divides the old word without the reload: here it reloads only at the
@@ -21429,7 +21439,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-div-of-md-takes-the-m-bus
-@check quux_divmd_quux
+@check quux13_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A word strobed before the `DIV`'s own load is in `md_held` a master
 @note clock edge before it is in MD; loaded from MD then, the divider takes
@@ -21536,7 +21546,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-gen-ilong-adds-nothing
-@check quux_divmd_quux_l1
+@check quux13_divmd_quux_l1
 @file rtl/machine/quux_phase_gen.sv
 @note `ILONG` read by nothing: every microcycle is K ticks where muir makes
 @note an `ILONG` one K + L.
@@ -21557,7 +21567,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-writes-a-tick-before-the-edge
-@check quux_pdlsync_quux
+@check quux13_pdlsync_quux
 @file rtl/machine/quux_phase_gen.sv
 @note The write pulse a tick early: the maps and the dispatch memory are
 @note written a tick before the edge that reads them, which then takes the
@@ -21569,7 +21579,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-control-store-without-the-bypass
-@check machine_quux
+@check quux13_imemsync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The word a `WRITE-I-MEM` writes lands on the edge that loads IR, so
 @note without the bypass IR takes the word the address held before it.
@@ -21580,7 +21590,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-control-store-read-every-tick
-@check machine_quux
+@check quux13_alu_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Read every tick at NPC, the word follows the next instruction's NPC
 @note once IR has moved, and IR takes a word from two ahead.
@@ -21591,7 +21601,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-control-store-read-at-pc
-@check machine_quux
+@check quux13_alu_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Read at the edge from PC, which that edge is only now moving: the word
 @note is the instruction's own and not the next.
@@ -21602,7 +21612,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-latches-follow-only-at-the-boundary
-@check machine_quux
+@check quux13_alu_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Loaded only while TPCLK is up, which on QUUX is the boundary's tick,
 @note before IR moves: every latch holds the instruction before's word.
@@ -21613,7 +21623,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-pdl-latch-a-tick-late
-@check quux_pdlsync_quux
+@check quux13_pdlsync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A register after the block RAM's output, loaded while TPCLK was up a
 @note tick before: on QUUX that is the boundary's tick, so it holds the word
@@ -21625,7 +21635,7 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @end
 
 @mutation quux-a-div-of-md-counts-a-cycle-early
-@check quux_divmd_quux
+@check quux13_divmd_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The count after the MD interlock starts at one, so a `DIV` of MD is
 @note held eight microcycles after its word where muir holds nine.
@@ -21810,7 +21820,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-control-store-written-nowhere
-@check quux_imemsync_quux
+@check quux13_imemsync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note QUUX's control store never written: IR takes every word written from
 @note `IWR`, so only a word run from the store after it is written can see.
@@ -21821,7 +21831,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-control-store-written-at-the-moved-pc
-@check quux_imemsync_quux
+@check quux13_imemsync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Written a tick after the edge at PC, which that edge has moved to the
 @note return address, instead of at the address the write was for.
@@ -21846,7 +21856,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 # whose program reaches it.
 
 @mutation quux-the-tick-is-late-by-a-tick
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note The first period after a write is one tick longer than muir's: the
 @note count starts at the edge a tick late and does not make up the tick.
@@ -21857,7 +21867,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-clocks-count-a-microsecond-short
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A microsecond is 99 ticks after a rise, so every period after the
 @note first is a tick short a microsecond.
@@ -21868,7 +21878,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-clock-flag-is-not-sticky
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note The flag is up only in the tick of its rise, where it stays up until
 @note cleared.
@@ -21879,7 +21889,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-page-clear-does-not-clear
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A write of a timer's word with `<1>` set leaves its flag up.
 @old
@@ -21889,7 +21899,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-period-write-does-not-restart
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A period written while a timer is on takes effect at the next rise rather
 @note than starting a period from the write.
@@ -21900,7 +21910,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-period-of-zero-runs
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A period of 0 is taken as 1, as revision 4's tick took it, where the
 @note interval timer stops (`Tick::after`): the timer then rises every
@@ -21916,7 +21926,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-every-timer-counts-timer-1s-period
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note Every timer's turn-on counts timer 1's period, as if the three shared one
 @note register, and not its own.
@@ -21927,7 +21937,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-timer-word-swaps-on-and-flag
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A timer's control word reads its flag in `<0>` and its on in `<1>`.
 @old
@@ -21939,7 +21949,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-page-read-takes-the-flags-after-its-edge
-@check quux_clockwait_quux_l1
+@check quux13_clockwait_quux_l1
 @file rtl/machine/quux_clocks.sv
 @note A page read takes the flags as they stand in the tick the page takes it,
 @note the tick after the edge that takes its cycle, so a rise in that tick is
@@ -21953,7 +21963,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-source-15-misses-the-edge
-@check quux_clockwait_quux_l1
+@check quux13_clockwait_quux_l1
 @file rtl/machine/quux_clocks.sv
 @note Source 15 is taken at the edge without a microsecond that falls on
 @note it, so a read on a microsecond's boundary reads one less than muir.
@@ -21966,7 +21976,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-source-15-counts-from-the-reset
-@check quux_clockwait_quux_l1
+@check quux13_clockwait_quux_l1
 @file rtl/machine/quux_clocks.sv
 @note The microsecond clock starts at the reset edge and not at the
 @note machine's power-on, two edges later, so every read is 20 ns ahead.
@@ -21977,7 +21987,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-clocks-do-not-interrupt
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note No timer's flag reaches the interrupt the jump conditions test.
 @old
@@ -21989,7 +21999,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-sintr-takes-the-flags-the-microcycle-started-with
-@check quux_tickwin_quux_l1
+@check quux13_tickwin_quux_l1
 @file rtl/machine/quux_clocks.sv
 @note **THE RULE BEFORE muir'S `ef015eb`**: `SINTR` from the flags as they stood
 @note at the last master clock edge, which misses a rise inside the microcycle,
@@ -22005,7 +22015,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-page-read-at-a-held-edge-takes-the-flags-before-it
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A page read whose cycle is taken at a held edge --- a start right behind
 @note it, which QUUX holds until the first has gone out --- takes the flags as
@@ -22018,7 +22028,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-clocks-are-not-on-sintr
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/cadr_machine.sv
 @note The timers' interrupt does not reach `SINTR`, so jump condition 5
 @note never sees it.
@@ -22029,7 +22039,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-reset-devices-resets-no-timer
-@check quux_busreset_quux
+@check quux13_busreset_quux
 @file rtl/machine/quux_clocks.sv
 @note Reset devices leaves the interval timers as they were (contract Q11).
 @old
@@ -22039,7 +22049,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-reset-devices-on-a-write-of-0
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_feature_page.sv
 @note A write of word 104 resets the devices whatever its `<0>`: `clocks` writes
 @note it with 0 while the three timers run.
@@ -22050,7 +22060,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-timers-answer-words-100-to-117
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_feature_page.sv
 @note The timers' decode takes words 100 to 117 for 110 to 117, so a write of
 @note word 104 is a write of timer 2's control word.
@@ -22061,7 +22071,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-word-115-reads-0
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_feature_page.sv
 @note Timer 2's period does not read back.
 @old
@@ -22071,7 +22081,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-feature-word-16-reads-0
-@check quux_page_quux
+@check quux13_page_quux
 @file rtl/machine/quux_feature_page.sv
 @note Feature word 16 reads 0, as below revision 10, where it counts the timers.
 @old
@@ -22081,7 +22091,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-word-100-in-revision-10s-order
-@check quux_page_quux
+@check quux13_page_quux
 @file rtl/machine/quux_feature_page.sv
 @note Word 100 in revision 10's order, before contract Q13's: timer 2 at
 @note `<7>`, block-disk at `<2>`, the keyboard and the mouse at `<3>` and
@@ -22093,7 +22103,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-mode-is-taken-at-every-write
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A timer's mode is taken from every write of its control word, and not
 @note only from the write that turns it on.
@@ -22104,7 +22114,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-one-shot-runs-on
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A one-shot's count does not stop at its rise, and it rises again a period on.
 @old
@@ -22114,7 +22124,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-timer-2-interrupts-without-its-enable
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note Timer 2's flag interrupts whatever its interrupt enable says.
 @old
@@ -22124,7 +22134,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-word-100-ignores-the-interrupt-enables
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note Word 100's timer bits are the flags whatever the interrupt enables say.
 @old
@@ -22134,7 +22144,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-periodic-rise-reloads-another-timers-period
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/quux_clocks.sv
 @note A periodic timer's rise reloads the next timer's period, so a second
 @note period is another timer's while the first was its own.
@@ -22156,7 +22166,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 # the page at them.
 
 @mutation quux-destination-3-still-turns-timer-0-on
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Destination 3 written with `<0>` set, Q1's turn-on, still turns timer 0 on,
 @note periodic with its interrupt enable, as the alias did.
@@ -22187,7 +22197,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-destination-3-still-clears-timer-0s-flag
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Destination 3 written with `<1>` set, Q1's clear, still clears timer 0's
 @note flag, as the alias did (and turns it on if it was off).
@@ -22218,7 +22228,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-destination-3-still-turns-timer-0-off
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Destination 3 written with `<0>` clear, Q1's turn-off, still turns timer 0
 @note off, as the alias did.
@@ -22249,7 +22259,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-destination-3-still-holds-timer-0-off-sintr
-@check quux_clocks_quux
+@check quux13_clocks_quux
 @file rtl/machine/cadr_microcycle.sv
 @note `SINTR` at the edge of a destination 3 write that would have cleared or
 @note turned off timer 0 under the alias still leaves the timers' interrupt
@@ -22302,7 +22312,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-prom-is-at-zero
-@check quux_imemsync_quux
+@check quux13_imemsync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The trap starts QUUX at 0, the CADR's reset PC, and not at the PROM's
 @note base, 36000: the program runs out of the RAM there.
@@ -22313,7 +22323,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-prom-answers-at-the-bottom-too
-@check quux_imemsync_quux
+@check quux13_imemsync_quux
 @file rtl/machine/cadr_microcycle.sv
 @note QUUX's PROM answers at control store 0-1777 as well as at 36000, as
 @note the CADR's overlay does, so the RAM there is hidden.
@@ -22324,7 +22334,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-trap-fetches-at-npc
-@check dispatch_write_order_quux
+@check dispatch_write_order13_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Before the first boundary the control store is read at NPC, which the
 @note standing trap has at 36000, and not at the PC, 0: the trap's nopped IR
@@ -22346,7 +22356,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-word-14-is-zero
-@check quux_map_quux
+@check quux13_features_quux
 @file rtl/machine/quux_feature_page.sv
 @note The feature page does not list the interval timer and the microsecond
 @note clock.
@@ -22357,7 +22367,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-word-100-names-the-keyboard-and-the-network-alike
-@check quux_page_quux
+@check quux13_page_quux
 @file rtl/machine/quux_feature_page.sv
 @note Word 100's `<4>` and `<6>` swapped: the keyboard read as the network.
 @old
@@ -22367,7 +22377,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-word-101-does-not-clear
-@check quux_page_quux
+@check quux13_page_quux
 @file rtl/machine/quux_feature_page.sv
 @note A write of word 101 leaves the bus errors standing.
 @old
@@ -22377,7 +22387,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-word-102-is-not-error-stop
-@check quux_page_quux
+@check quux13_page_quux
 @file rtl/machine/quux_feature_page.sv
 @note A write of word 102 reaches no mode register.
 @old
@@ -22387,7 +22397,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-network-does-not-interrupt-the-processor
-@check quux_page_quux
+@check quux13_page_quux
 @file rtl/machine/quux_feature_page.sv
 @note The network's request reaches word 100 and not the processor, as it
 @note did before muir's `0c10ae9`.
@@ -22458,7 +22468,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-block-disk-is-not-active-at-once
-@check quux_block_disk_quux
+@check quux13_block_disk_quux
 @file rtl/machine/quux_block_disk.sv
 @note Not-active as soon as the walk ends, not after the blocks' time.
 @old
@@ -22534,7 +22544,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-block-disk-no-pack-reads-a-pack
-@check machine_quux
+@check quux13_busreset_quux
 @file rtl/machine/quux_block_disk.sv
 @note Status `<9>` reads 0 with nothing on unit 0, so the boot PROM's polls
 @note of a disk with no pack read 0x001.
@@ -22545,7 +22555,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-unibus-window-answers-on-quux
-@check quux_page_quux
+@check quux13_page_quux
 @file rtl/machine/cadr_xbus_decode.sv
 @note QUUX keeps the Unibus: the window is the Unibus's and not an empty Xbus
 @note address, so the program's read of `764140` reaches the I/O board.
@@ -22565,7 +22575,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 # `cadr-checkpoint` tells the two bitstreams apart.
 
 @mutation quux-ro-count-carries-the-next-timers-prescaler
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/quux_clocks.sv
 @note Each timer's count word carries the next timer's prescaler, so a
 @note checkpoint's deadline is another timer's.
@@ -22576,7 +22586,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-time-a-microsecond-ahead
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/quux_clocks.sv
 @note The microsecond clock reads one ahead of itself, so every instant a
 @note checkpoint takes from it is a microsecond late.
@@ -22587,7 +22597,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-count-sticky-and-live-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/quux_clocks.sv
 @note A timer's raised flag and its running period trade places in its count
 @note word, so a stopped timer reads as raised.
@@ -22598,7 +22608,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-id-k-and-l-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Entry 21 gives L where K belongs, so a checkpoint declares the wrong
 @note microcycle for `TimingModel::Sync`.
@@ -22609,7 +22619,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-count-entries-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Entries 23 and 24 swap, so timer 0's count is read as timer 1's.
 @old
@@ -22621,7 +22631,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-conf-entries-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Entries 27 and 28 swap, so timer 1's mode, enable and period are timer 2's.
 @old
@@ -22633,7 +22643,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-conf-mode-and-enable-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/quux_clocks.sv
 @note A timer's mode and interrupt enable trade places in its readout word.
 @old
@@ -22654,7 +22664,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-input-overflow-and-enable-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/quux_input.sv
 @note The keyboard's overflow and its interrupt enable trade places in the
 @note word a checkpoint takes `QuuxInput` from.
@@ -22665,7 +22675,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-fifo-one-slot-on
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/quux_input.sv
 @note The FIFO's words are read one slot past the index asked for, so a
 @note checkpoint's key words are each the next one's.
@@ -22676,7 +22686,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-block-disk-time-counted-backwards
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/quux_block_disk.sv
 @note The ticks since the blocks' time ran out are negated, so a finished
 @note transfer reads as one still owed.
@@ -22687,7 +22697,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-block-disk-walking-and-walked-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/quux_block_disk.sv
 @note A disk that has walked reads as walking, so `cadr-checkpoint` refuses
 @note an idle disk, and one walking now reads as merely having walked.
@@ -22698,7 +22708,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-mouse-x-and-y-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_machine.sv
 @note Selector 12's word 0 carries the mouse's X where its Y belongs.
 @old
@@ -22708,7 +22718,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-fifo-index-off-by-one-bit
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_machine.sv
 @note The FIFO's index reaches the page with its low bit inverted.
 @old
@@ -22718,7 +22728,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-bus-errors-crossed
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_machine.sv
 @note The Unibus NXM and the Xbus NXM trade bits in word 6, so a checkpoint
 @note records an Xbus error as the Unibus's.
@@ -22731,7 +22741,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-disk-flags-rotated
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_machine.sv
 @note Block-disk's seven flags land a bit up, so the pack's presence reads
 @note as the bad command.
@@ -22742,7 +22752,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-page-at-selector-13
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_machine.sv
 @note The register page's readout is joined at selector 13, so selector 12,
 @note where `cadr-checkpoint` reads it, answers RO_NO_MEMORY.
@@ -22764,7 +22774,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-ro-black-on-white-inverted
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_memory_path.sv
 @note The video controller's black-on-white reaches the readout inverted.
 @old
@@ -22783,7 +22793,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 # port in the machine.
 
 @mutation quux-hit-ignores-the-valid-bit
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_cache.sv
 @note A way's tag matching is a hit whether or not the way holds a line, so
 @note an invalidated or never-filled way answers with whatever it last had.
@@ -22794,7 +22804,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-miss-evicts-the-most-recent-way
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_cache.sv
 @note A full set evicts the way used last instead of the other, which is
 @note not muir's order: its `Vec` drops the least recently used.
@@ -22805,19 +22815,21 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-tag-short-a-bit
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_cache.sv
 @note Way 1's tag is stored without its low bit, so two lines 2K words apart
 @note are one line to the cache.  (Its top bit is no test: it is `phys<21>`,
 @note which no word of QUUX's two million has.)
+@note The form here builds at both word widths: written for revision 12's
+@note 32 bits alone, lint refused it at revision 13's 40.
 @old
     if (fill &&  way_q) tag1_ram[idx_q] <= tag_q;
 @new
-    if (fill &&  way_q) tag1_ram[idx_q] <= {tag_q[10:1], 1'b0};
+    if (fill &&  way_q) tag1_ram[idx_q] <= {tag_q[TAG_BITS-1:1], 1'b0};
 @end
 
 @mutation quux-a-hit-does-not-move-the-order
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_cache.sv
 @note A hit makes the other way of its set the most recent, so the next
 @note miss evicts the line just used.
@@ -22828,7 +22840,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-write-moves-the-order
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A write touches the set's order as a read does; muir's writes never
 @note call `Cache::read`.
@@ -22839,7 +22851,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-write-through-does-not-update-the-line
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_cache.sv
 @note A write to a word the cache holds goes to main memory and not into
 @note the line, so the next read hits the old word.
@@ -22850,7 +22862,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-invalidation-misses-a-way
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_cache.sv
 @note The whole-cache invalidation clears way 0's lines and leaves way 1's.
 @old
@@ -22865,7 +22877,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-invalidation-forgets-the-owed-grant
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A block-disk register written between cycles is owed to the next
 @note grant for one tick only, so it invalidates nothing unless the grant
@@ -22877,7 +22889,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-transfer-words-do-not-drop-their-set
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A transfer's word written to main memory leaves the cache's line of it
 @note standing, so a processor read after DONE hits the word from before.
@@ -22888,7 +22900,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-transfer-overtakes-the-write-buffer
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note The uncached requester goes ahead of a write still in the buffer, so a
 @note transfer reads a word from before the processor's write.
@@ -22899,7 +22911,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-hit-is-not-answered-at-the-hit-time
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A hit is not answered two ticks after its grant but waits, as a miss
 @note does, for a line, which no hit asks for.
@@ -22910,7 +22922,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-line-fill-is-a-tick-short
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note The floor is 370 ns where muir's nominal line fill is 380.
 @old
@@ -22920,7 +22932,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-miss-does-not-wait-for-main-memory
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A read that misses starts its line at the grant even while a write is
 @note still going to main memory: two operations at once, faster than muir.
@@ -22931,7 +22943,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-write-ignores-the-full-buffer
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A write is answered after the hit time even when the buffer's last
 @note write is still going, a buffer of two where muir's holds one.
@@ -22942,7 +22954,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-register-is-acknowledged-a-tick-early
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A device register's cycle is acknowledged 30 ns after its grant at a
 @note K of four, not a microcycle on.
@@ -22953,7 +22965,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-an-empty-address-waits-for-the-grant
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note An address nothing answers is acknowledged from the edge that grants
 @note it, a tick after muir's instant, not in the tick that takes it.
@@ -22964,7 +22976,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-fill-asks-the-word-not-the-line
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note The line fill asks at the word's own address, so the line is four
 @note words from the wrong boundary.
@@ -22975,7 +22987,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-miss-word-is-the-line-s-first
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A read that missed is handed the line's first word, not its own.
 @old
@@ -22985,7 +22997,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-a-register-is-asked-twice
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note The register is asked in the two ticks after the grant, so a read
 @note that moves something --- the keyboard's FIFO --- moves it twice.
@@ -22996,7 +23008,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-memory-bus-asks-a-register
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A cycle of the memory bus asks a device register as well, as the Xbus
 @note put main memory's cycles before every slave.
@@ -23007,7 +23019,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-cycle-release-waits-mfinishd
-@check quux_memedge_quux
+@check quux13_memedge_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A cycle of main memory's releases MBUSY and READ IN PROGRESS through
 @note the Xbus's two delays, 30 ns and 140 ns, where muir releases it on the
@@ -23021,7 +23033,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-cached-release-seen-a-tick-late
-@check quux_memedge_quux
+@check quux13_memedge_quux
 @file rtl/machine/cadr_microcycle.sv
 @note MBUSY.SYNC takes MBUSY as the register holds it, so an acknowledgment
 @note on a master clock edge is seen at the next one.
@@ -23032,7 +23044,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-main-memory-word-from-the-bridge
-@check quux_memedge_quux
+@check quux13_memedge_quux
 @file rtl/machine/cadr_memory_path.sv
 @note A read on QUUX takes its word off the bridge, which never answered
 @note it, and not off the memory port.  The boot trace reads only words
@@ -23045,7 +23057,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-block-disk-writes-do-not-invalidate
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note A block-disk register written between the processor's cycles is never
 @note owed to the next grant: only a pulse on the grant's own tick counts.
@@ -23067,7 +23079,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-line-read-is-one-beat
-@check quux_axi_master_quux
+@check quux13_axi_master_quux
 @file rtl/plumbing/quux_axi_master.sv
 @note A line fill asks one 64-bit beat, two of the line's four words.
 @old
@@ -23077,7 +23089,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-line-beats-crossed
-@check quux_axi_master_quux
+@check quux13_axi_master_quux
 @file rtl/plumbing/quux_axi_master.sv
 @note The line's two beats land in each other's halves.
 @old
@@ -23087,7 +23099,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-word-write-strobes-the-other-half
-@check quux_axi_master_quux
+@check quux13_axi_master_quux
 @file rtl/plumbing/quux_axi_master.sv
 @note A word write's strobes select the half its address does not.
 @old
@@ -23097,7 +23109,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-abandoned-read-is-answered
-@check quux_axi_master_quux
+@check quux13_axi_master_quux
 @file rtl/plumbing/quux_axi_master.sv
 @note A read whose request fell before its answer is answered anyway, and
 @note the next request takes that answer as its own.
@@ -23118,7 +23130,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @end
 
 @mutation quux-the-register-s-word-taken-a-tick-late
-@check quux_port_quux
+@check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
 @note The register's word is taken in the tick after it was asked, when the
 @note register's held match may be another address's.
@@ -23188,7 +23200,7 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @end
 
 @mutation quux-an-empty-ack-clears-its-own-countdowns
-@check quux_tv_quux
+@check quux13_tv_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The grant's edge clears the two countdowns that an address nothing
 @note answers loaded in the same tick, so READ IN PROGRESS never falls and
@@ -23200,7 +23212,7 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @end
 
 @mutation quux-an-empty-read-lands-at-the-grant
-@check dispatch_write_order_quux
+@check dispatch_write_order13_quux
 @file rtl/machine/cadr_microcycle.sv
 @note An address nothing answers puts its zero in MD at the grant's own edge,
 @note a microcycle before muir finds it acknowledged (`md-acked-on-an-edge-nxm`).
@@ -23788,7 +23800,7 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 
 @mutation quux-reset-devices-reaches-no-board
 @check quux_busreset_quux
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/cadr_machine.sv
 @note On QUUX a write of word 104 with `<0>` set resets no board: block-disk
 @note keeps its command and its error, the network its enable, the file device
@@ -23812,7 +23824,7 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @end
 
 @mutation quux-28-is-held-off-on-quux
-@check quux_busreset_quux
+@check quux13_busreset_quux
 @file rtl/machine/cadr_machine.sv
 @note The CADR's hold-off kept on QUUX: `SINTR` at the edge of an
 @note `INTERRUPT-CONTROL` write raising `<28>` drops block-disk's done, where
@@ -23825,7 +23837,7 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 
 @mutation quux-28-still-resets-quux
 @check quux_busreset_quux
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/cadr_machine.sv
 @note `<28>`'s rise still resets QUUX's boards beside reset devices, as it did
 @note up to revision 9: block-disk, the network and the file device are reset
@@ -23882,7 +23894,7 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @end
 
 @mutation quux-bus-reset-misses-block-disk
-@check quux_busreset_quux
+@check quux13_busreset_quux
 @file rtl/machine/cadr_machine.sv
 @note Block-disk takes the power-on reset alone as `-XBUS INIT`, so its
 @note command and its error stand through the reset.  The anchor follows the
@@ -23904,7 +23916,7 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @end
 
 @mutation quux-bus-reset-misses-the-io-board
-@check quux_busreset_quux
+@check quux13_busreset_quux
 @file rtl/machine/cadr_memory_path.sv
 @note The I/O board's `-UB INIT` is the power-on reset alone, so the
 @note Chaosnet interface keeps its transmit interrupt enable.
@@ -24257,7 +24269,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-word-17-reads-zero
-@check quux_registers_quux
+@check quux13_registers_quux
 @file rtl/machine/quux_feature_page.sv
 @note Feature word 17 reads 0, as below revision 12: no MACRO DISPATCH MEMORY.
 @old
@@ -24267,7 +24279,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-word-15-names-the-clock-alone
-@check quux_rtc_quux
+@check quux13_rtc_quux
 @file rtl/machine/quux_feature_page.sv
 @note Feature word 15 says the clock and not the file device, which is
 @note what muir's said between its two commits of revision 9.
@@ -24278,7 +24290,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-word-103-answers-at-104
-@check quux_rtc_quux
+@check quux13_rtc_quux
 @file rtl/machine/quux_feature_page.sv
 @note The clock one word up: 103 reads 0 and 104, reserved, the seconds.
 @old
@@ -24288,7 +24300,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-the-machine-writes-the-clock
-@check quux_rtc_quux
+@check quux13_rtc_quux
 @file rtl/machine/quux_feature_page.sv
 @note A write of word 103 sets the seconds, as a write of the host's
 @note RTC_SECONDS does: muir's word 103 is read only, and a write goes nowhere.
@@ -24339,7 +24351,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-word-100-leaves-out-the-file-device
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_feature_page.sv
 @note Word 100's `<7>` reads 0: the file device interrupts the processor and
 @note the processor cannot find out who did.
@@ -24350,7 +24362,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-the-file-device-does-not-interrupt-the-processor
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_feature_page.sv
 @note Word 100's `<6>` is up and `SINTR` is not.
 @old
@@ -24360,7 +24372,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-reset-devices-leaves-the-file-device
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_feature_page.sv
 @note The file device takes the power-on reset alone and not reset devices, so a
 @note write of word 104 leaves it enabled with its queue (the Q9 amendment).
@@ -24371,7 +24383,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-the-bus-reset-does-not-reach-the-file-device
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/cadr_machine.sv
 @note `PROG.UNIBUS.RESET` leaves the file device enabled, its command queued.
 @old
@@ -24381,7 +24393,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-the-file-device-sees-main-memory-at-half-its-size
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/cadr_machine.sv
 @note MEM_WORDS and the enable's bound at half the boards' words: the
 @note testbench reads MEM_WORDS through the host side against the boards it
@@ -24393,7 +24405,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-the-producer-is-shown-before-the-write-buffer-drains
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/cadr_machine.sv
 @note The host is shown a command the moment 164 is written, with the
 @note command's last word still in the write buffer: the testbench finds the
@@ -24405,7 +24417,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-a-completion-leaves-the-cache-standing
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/cadr_machine.sv
 @note The host's completion is not an invalidation: the lines the program
 @note read before a response are read again stale after it.
@@ -24416,7 +24428,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-the-readout-gives-the-indexes-at-the-bases-word
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_machine.sv
 @old
           14'd7: quux_ro_word <= fd_ro_bases;
@@ -24427,7 +24439,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation quux-the-readout-gives-no-flags
-@check quux_readout_window_quux
+@check quux13_readout_window_quux
 @file rtl/machine/cadr_machine.sv
 @old
           14'd9: quux_ro_word <= fd_ro_flags;
@@ -24530,7 +24542,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-a-response-waiting-under-the-interrupt-enable
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @note Status `<8>` gated by the interrupt enable, as word 100's `<6>` is: a
 @note polling driver with the enable off never sees a response.
@@ -24541,7 +24553,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-the-interrupt-ignores-its-enable
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @old
   assign irq = ie && (cons != resp_cons || pub);
@@ -24550,7 +24562,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-the-interrupt-comes-with-the-index
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @note The interrupt rises in the tick 170 does rather than the tick before:
 @note `SINTR` is taken at the edge from the tick before it, so a completion
@@ -24586,7 +24598,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-a-completion-invalidates-nothing
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @old
   assign invalidate = pub;
@@ -24686,7 +24698,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-the-handles-are-not-closed-by-a-disable
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @note A disable leaves 161's handles open where muir's closes every one.
 @old
@@ -24784,7 +24796,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-a-ring-off-a-line-is-taken
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @old
     return base[LINE_BITS-1:0] == '0 && log2 <= 4'd8
@@ -24803,7 +24815,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-a-producer-past-the-ring-is-taken
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @note One command more than the ring holds: the bound just outside.
 @old
@@ -24822,7 +24834,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-a-consumer-past-the-producer-is-taken
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @note One response past the producer: the bound just outside.
 @old
@@ -24832,7 +24844,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-a-base-is-written-while-enabled
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @old
           8'o162: if (!enabled) cmd_base  <= wdata[BASE_BITS-1:0];
@@ -24841,7 +24853,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-a-write-of-160-keeps-the-refusal
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @old
           8'o160: begin
@@ -24867,7 +24879,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fd-the-bus-reset-does-not-disable
-@check quux_files_quux
+@check quux13_files_quux
 @file rtl/machine/quux_file_device.sv
 @old
   assign m_disable = (m_wr_control && enabled && !wdata[0]) || (xbus_init && enabled);
@@ -24939,7 +24951,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 # held by `golden/src/fused.rs`'s three programs.
 
 @mutation fused-return-not-taken-to-the-handler
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note NPC takes the stack's word on a fused return: every one runs the main
 @note loop's dispatch, two microcycles more each, the popped word kept.
@@ -24950,7 +24962,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-pops-the-word
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The popped word counted off the stack even where the entry's N is clear:
 @note the main loop's push is skipped and nothing puts the word back.
@@ -24961,7 +24973,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-ignores-n
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note An entry with N keeps the popped word as well, and the handler's own
 @note push leaves two.
@@ -24972,7 +24984,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-takes-an-r-entry
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note An entry with R and not P fuses to its address, 0, where the main loop's
 @note dispatch returns through it.
@@ -24983,7 +24995,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-takes-a-p-entry
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note An entry with P fuses to its address and never pushes.
 @old
@@ -24993,7 +25005,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-call-with-popj-condition-inverted
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A call with POPJ fuses when its condition pushes and not when it does not.
 @old
@@ -25003,7 +25015,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-ignores-a-push
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A POPJ that pushes too fuses, and the pushed word is not the handler's.
 @old
@@ -25013,7 +25025,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-ignores-lcinc
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A return in a microcycle whose counter steps by `NEXT INSTR` or a
 @note dispatch's `IR<24>` fuses on the halfword before the step.
@@ -25024,7 +25036,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-without-the-word
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A return that needs a fetch fuses on M 31, the word before.
 @old
@@ -25034,7 +25046,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-any-main-loop
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The popped word's address is not compared: another word with <14> fuses.
 @old
@@ -25044,7 +25056,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-writing-m31
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A POPJ that writes M 31 fuses on the word before the write.
 @old
@@ -25054,7 +25066,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-writing-interrupt-control
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A POPJ that writes INTERRUPT-CONTROL fuses.
 @old
@@ -25064,7 +25076,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-enable-ignored
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The enable not read: a stale memory after a control-store write runs.
 @old
@@ -25074,7 +25086,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation control-store-write-keeps-the-enable
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A `WRITE-I-MEM` leaves the enable up, and the stale entries run.
 @old
@@ -25084,7 +25096,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-halfword-by-lc-unstepped
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The halfword chosen by LC before `NEXT INSTR` steps it: the other half.
 @old
@@ -25094,7 +25106,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation fused-return-index-drops-a-register-bit
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The index without the register's low bit: the specialised entry at an
 @note odd index is never taken.
@@ -25105,7 +25117,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation macro-dispatch-memory-written-at-the-next-index
-@check quux_fused_quux
+@check quux13_returns_quux
 @file rtl/machine/cadr_microcycle.sv
 @note Destination 7 writes the entry after the index.
 @old
@@ -25115,7 +25127,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation operand-arg-without-the-one
-@check quux_operand_quux
+@check quux13_operand_quux
 @file rtl/machine/cadr_microcycle.sv
 @note ARG's address without `QADARG1`'s + 1.
 @old
@@ -25125,7 +25137,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation operand-local-and-arg-swapped
-@check quux_operand_quux
+@check quux13_operand_quux
 @file rtl/machine/cadr_microcycle.sv
 @note LOCAL taken for ARG and ARG for LOCAL.
 @old
@@ -25135,7 +25147,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation operand-any-register
-@check quux_operand_quux
+@check quux13_operand_quux
 @file rtl/machine/cadr_microcycle.sv
 @note An address armed for every register, not LOCAL and ARG alone.
 @old
@@ -25145,7 +25157,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation operand-loaded-a-microcycle-early
-@check quux_operand_quux
+@check quux13_operand_quux
 @file rtl/machine/cadr_microcycle.sv
 @note PDL-INDEX loaded at the fused return's own edge, before the microcycle
 @note after it, which then reads the address.
@@ -25156,7 +25168,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation operand-base-before-the-returns-own-write
-@check quux_operand_quux
+@check quux13_operand_quux
 @file rtl/machine/cadr_microcycle.sv
 @note `M-AP` as it stood before the return's own write lands with the pulse.
 @old
@@ -25166,7 +25178,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation operand-localp-copy-not-following-a-writes
-@check quux_operand_quux
+@check quux13_operand_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The copy of `A-LOCALP` not written by an A write at its address.
 @old
@@ -25176,7 +25188,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-m31-not-armed
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A fused return on the prefetched word leaves M 31 the word before.
 @old
@@ -25186,7 +25198,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-a31-keeps-a-memory
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A 31 reads A memory after M 31 took the prefetched word.
 @old
@@ -25196,7 +25208,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-a31-not-released-by-an-a-write
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note An A write at 31 leaves A 31 reading M 31's register.
 @old
@@ -25206,7 +25218,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-m31-read-from-m-memory
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note M 31 read from M memory, which the prefetched word never reached.
 @old
@@ -25216,7 +25228,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-condition-6-not-tested
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A return on the fetch path fuses on the buffered word with condition 6
 @note true.
@@ -25227,7 +25239,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-store-started-not-refused
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A return in the microcycle after a store's start fuses on the word the
 @note store is about to replace.
@@ -25238,7 +25250,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-map-write-keeps-the-word
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note A map write leaves the buffered word.
 @old
@@ -25248,7 +25260,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-not-a-fetch
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note No grant is the stream's fetch, so nothing is ever buffered.
 @old
@@ -25258,7 +25270,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-store-keeps-the-word
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/quux_mem_port.sv
 @note A store to the buffered word leaves it in the port, and the processor's
 @note view takes it back at the next master clock edge.
@@ -25269,7 +25281,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-store-drop-a-tick-late
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/cadr_microcycle.sv
 @note The processor's view keeps the buffered word over the grant of a store
 @note to it, and the microcycle that grant begins fuses on it.
@@ -25280,7 +25292,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-transfer-keeps-the-word
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/quux_mem_port.sv
 @note A transfer by block-disk leaves the buffered word.
 @old
@@ -25300,7 +25312,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-takes-the-fetched-word
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/quux_mem_port.sv
 @note The word fetched taken again, not the one after it.
 @old
@@ -25310,7 +25322,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-miss-takes-the-fetched-word
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/quux_mem_port.sv
 @note On a miss, the word fetched from the line taken, not the one after it.
 @old
@@ -25320,7 +25332,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation prefetch-vaddr-not-stepped
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/quux_mem_port.sv
 @note The buffered word's virtual address the fetch's own.
 @old
@@ -25330,7 +25342,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @end
 
 @mutation cache-next-word-is-the-word
-@check quux_prefetch_quux
+@check quux13_prefetch_quux
 @file rtl/machine/quux_cache.sv
 @note The line's next word the word itself.
 @old

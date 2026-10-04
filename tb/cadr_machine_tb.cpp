@@ -327,12 +327,12 @@ int main(int argc, char **argv) {
   std::map<uint64_t, uint64_t> rtc_sets;
   struct FdDone {
     uint64_t due, prod, handles;
-    std::vector<std::pair<uint32_t, uint32_t>> words;
+    std::vector<std::pair<uint32_t, uint64_t>> words;
   };
   std::vector<FdDone> fd_done;
   struct FdTake {
     uint64_t start, index;
-    std::vector<std::pair<uint32_t, uint32_t>> entry;
+    std::vector<std::pair<uint32_t, uint64_t>> entry;
   };
   std::vector<FdTake> fd_takes;
   std::vector<uint64_t> ack_for;
@@ -373,10 +373,10 @@ int main(int argc, char **argv) {
         }
         if (k9 == "fdtake" && n9 == 3) fd_takes.push_back(FdTake{h0, h1, {}});
         if (k9 == "fdc" && n9 == 3 && !fd_takes.empty())
-          fd_takes.back().entry.emplace_back(static_cast<uint32_t>(h0), static_cast<uint32_t>(h1));
+          fd_takes.back().entry.emplace_back(static_cast<uint32_t>(h0), static_cast<uint64_t>(h1));
         if (k9 == "fd" && n9 == 4) fd_done.push_back(FdDone{h0, h1, h2, {}});
         if (k9 == "fdw" && n9 == 3 && !fd_done.empty())
-          fd_done.back().words.emplace_back(static_cast<uint32_t>(h0), static_cast<uint32_t>(h1));
+          fd_done.back().words.emplace_back(static_cast<uint32_t>(h0), static_cast<uint64_t>(h1));
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
         if (std::strstr(line, "golden/src/quux.rs")) script_trace = true;
         // Revision 13's programs (`golden/src/quux13.rs`) are scripts too,
@@ -386,9 +386,11 @@ int main(int argc, char **argv) {
           script_trace = true;
           dispatch_trace = true;
         }
+        // `returns` is `fused` at revision 13, where `golden/src/quux13.rs`
+        // has a `fused` of its own.
         if (std::strstr(line, "golden/src/quux.rs") &&
             (std::strstr(line, "program fused,") || std::strstr(line, "program operand,") ||
-             std::strstr(line, "program prefetch,")))
+             std::strstr(line, "program prefetch,") || std::strstr(line, "program returns,")))
           dispatch_trace = true;
         if (std::strstr(line, "QUUX's boot PROM")) quux_prom = true;
         if (std::strstr(line, "machine: quux")) quux_machine = true;
@@ -710,6 +712,16 @@ int main(int argc, char **argv) {
   auto q13_main = [&](uint32_t a) {
     return a >= kMain13Base && a - kMain13Base < 5u * (static_cast<uint32_t>(main_boards) << 16);
   };
+  // Word w of revision 13's main memory, whole, and a word put there as the
+  // host puts it: the file device's server writes a word's five bytes.
+  auto q13_word = [&](uint32_t w) {
+    uint64_t v = 0;
+    for (int b = 0; b < 5; ++b) v |= static_cast<uint64_t>(q13_get(kMain13Base + 5u * w + b)) << (8 * b);
+    return v;
+  };
+  auto q13_put = [&](uint32_t w, uint64_t v) {
+    for (int b = 0; b < 5; ++b) q13[kMain13Base + 5u * w + b] = static_cast<uint8_t>(v >> (8 * b));
+  };
   long q13_spanning = 0;
   // The pack side, when the trace has a pack: one move at a time, a dirty
   // slot written back before its fill, some ticks after the request, and a
@@ -812,10 +824,10 @@ int main(int argc, char **argv) {
               for (const auto &w : fd_takes[take_next].entry) {
                 ++entry_words_checked;
                 const auto it = q_mem.find(w.first);
-                const uint32_t have = it == q_mem.end() ? 0u : it->second;
+                const uint64_t have = rev13 ? q13_word(w.first) : it == q_mem.end() ? 0u : it->second;
                 if (have != w.second) {
                   std::fprintf(stderr, "FAIL: the host was shown command %" PRIu64 " with word %o of its "
-                               "entry %08x in main memory, not the %08x the processor wrote\n",
+                               "entry %08" PRIx64 " in main memory, not the %08" PRIx64 " the processor wrote\n",
                                fd_takes[take_next].index, w.first, have, w.second);
                   ++bad;
                 }
@@ -854,7 +866,12 @@ int main(int argc, char **argv) {
         host_ops.emplace_back(11u, epoch | static_cast<uint32_t>(d.handles));
         host_ops.emplace_back(9u, epoch | static_cast<uint32_t>(d.prod & 0xFFFFu));
         host_ops.emplace_back(3u, 0u);
-        for (const auto &w : d.words) q_mem[w.first] = w.second;
+        for (const auto &w : d.words) {
+          if (rev13)
+            q13_put(w.first, w.second);
+          else
+            q_mem[w.first] = static_cast<uint32_t>(w.second);
+        }
         ++fd_played;
       }
       if (!host_ops.empty() && t >= 4) {

@@ -237,6 +237,19 @@ QUUX_L1_PROGRAMS := divmd divmdsync tickwin clockwait
 # board, and `QUUX13_G_<program>` gives the machine under test its
 # parameters.
 QUUX13_PROGRAMS := alu byte dispatch map space space512 lines fused devices disk devices_hd devices_name space_hd
+# **AND REVISION 12'S PROGRAMS AT REVISION 13** (G2's retirement of revision
+# 12): the programs of `golden/src/quux.rs` that are the only test of what
+# they hold --- the clocks, the real-time clock, the file device, the
+# prefetch and the divide among them --- assembled again with revision 13's
+# fields, map, register page and INTERRUPT-CONTROL flags (`quux --revision
+# 13`) and held against the machine at `WORD_BITS` 40 as `quux13_<program>`,
+# beside revision 12's `quux_<program>`; `fused` is `returns` there and `map`
+# is `features`, `golden/src/quux13.rs` having its own of each.
+# `QUUX13_PORTED_L1` are those taken at an L of one as well, as
+# `QUUX_L1_PROGRAMS` are.
+QUUX13_PORTED := rtc clocks tickwin clockwait divmd muldiv files prefetch pdlsync imemsync memedge startstart returns operand busreset registers page tv features
+QUUX13_PORTED_L1 := tickwin clockwait divmd divmdsync
+QUUX13_PORTED_ALL := $(sort $(QUUX13_PORTED) $(QUUX13_PORTED_L1))
 QUUX13_G_devices_hd   := -GVIDEO_WIDTH=1920 -GVIDEO_HEIGHT=1080 -GBOARD_NAME='"Full HD test, 20 ch."' \
                          -CFLAGS -DCADR_TB_VIDEO_WORDS=64800u
 QUUX13_G_space_hd     := $(QUUX13_G_devices_hd)
@@ -250,10 +263,10 @@ QUUX13_G_devices_name := -GBOARD_NAME='"DE25-Nano"'
 QUUX_PENDING :=
 QUUX_PENDING_WHY :=
 # The checks QUUX is held to at a K, each at every K of `QUUX_KS`.
-CHECK_QUUX_AT = machine dispatch_write_order quux_port quux_readout_window \
-       $(QUUX_SYNC_PROGRAMS:%=quux_%) $(QUUX13_PROGRAMS:%=quux13_%) rdw_poison_quux13 \
+CHECK_QUUX_AT = machine dispatch_write_order dispatch_write_order13 quux_port quux_readout_window quux13_readout_window \
+       $(QUUX_SYNC_PROGRAMS:%=quux_%) $(QUUX13_PROGRAMS:%=quux13_%) $(QUUX13_PORTED:%=quux13_%) rdw_poison_quux13 \
        rdw_poison_quux13_mem rdw_poison_quux13_pf quux13_port
-CHECK_QUUX_AT_L1 = $(QUUX_L1_PROGRAMS:%=quux_%) phase_gen
+CHECK_QUUX_AT_L1 = $(QUUX_L1_PROGRAMS:%=quux_%) $(QUUX13_PORTED_L1:%=quux13_%) phase_gen
 CHECK_QUUX = $(BUILD)/xbus_decode.quux.pass \
        $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(foreach q,$(QKL1S),$(CHECK_QUUX_AT_L1:%=$(BUILD)/%.quux.$(q).pass)) \
@@ -1331,6 +1344,9 @@ QUUX13_TB_BASE := 170156032
 .PRECIOUS: $(BUILD)/quux13_%_prom.hex
 $(BUILD)/quux13_%_prom.hex: $(QUUX13_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux13 -- --program $* --prom > $@
+# And revision 12's programs ported (`QUUX13_PORTED`), from `golden/src/quux.rs`.
+$(QUUX13_PORTED_ALL:%=$(BUILD)/quux13_%_prom.hex): $(BUILD)/quux13_%_prom.hex: $(QUUX_GOLDEN) | $(BUILD)
+	$(GOLDEN) --release --bin quux -- --program $* --machine quux --revision 13 --prom > $@
 
 $(BUILD)/quux_%.golden: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine cadr > $@
@@ -1411,6 +1427,25 @@ $$(BUILD)/dispatch_write_order.quux.$(1).pass: $$(BUILD)/obj_dispatch_write_orde
 	$$(BUILD)/obj_dispatch_write_order_quux_$(1)/Vcadr_machine $$(BUILD)/dispatch_write_order.quux.$(1).golden
 	@touch $$@
 
+# And at revision 13, `WORD_BITS` 40 (`dispatch_write_order.rs --revision 13`).
+$$(BUILD)/dispatch_write_order13.quux.$(1).golden: golden/src/dispatch_write_order.rs golden/src/trace.rs \
+                                                  $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
+	$$(GOLDEN) --release --bin dispatch_write_order -- --machine quux --revision 13 --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/obj_dispatch_write_order13_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_dispatch_write_order_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) --public-flat-rw -O2 -CFLAGS -O2 +define+CADR_GAP_MONITOR -CFLAGS -DCADR_GAP_MONITOR -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_dispatch_write_order13_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) \
+	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/boot_prom.quux13.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_dispatch_write_order_tb.cpp)
+
+$$(BUILD)/dispatch_write_order13.quux.$(1).pass: $$(BUILD)/obj_dispatch_write_order13_quux_$(1)/Vcadr_machine \
+                                                $$(BUILD)/dispatch_write_order13.quux.$(1).golden \
+                                                $$(BUILD)/boot_prom.quux13.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_dispatch_write_order13_quux_$(1)/Vcadr_machine $$(BUILD)/dispatch_write_order13.quux.$(1).golden
+	@touch $$@
+
 .PRECIOUS: $$(BUILD)/quux_%.quux.$(1).golden $$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine
 
 $$(BUILD)/quux_%.quux.$(1).golden: $$(QUUX_GOLDEN) | $$(BUILD)
@@ -1433,6 +1468,9 @@ $$(BUILD)/quux_%.quux.$(1).pass: $$(BUILD)/obj_quux_%_quux_$(1)/Vcadr_machine $$
 
 $$(BUILD)/quux13_%.quux.$(1).golden: $$(QUUX13_GOLDEN) | $$(BUILD)
 	$$(GOLDEN) --release --bin quux13 -- --program $$* --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(QUUX13_PORTED_ALL:%=$$(BUILD)/quux13_%.quux.$(1).golden): $$(BUILD)/quux13_%.quux.$(1).golden: $$(QUUX_GOLDEN) | $$(BUILD)
+	$$(GOLDEN) --release --bin quux -- --program $$* --machine quux --revision 13 --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
 
 $$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
 	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_quux13_$$*_quux_$(1) \
@@ -1534,6 +1572,20 @@ $$(BUILD)/obj_quux_readout_window_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/qu
 $$(BUILD)/quux_readout_window.quux.$(1).pass: $$(BUILD)/obj_quux_readout_window_quux_$(1)/Vcadr_machine \
                                              $$(BUILD)/boot_prom.quux.hex $$(BUILD)/sync_prom.hex
 	$$(BUILD)/obj_quux_readout_window_quux_$(1)/Vcadr_machine
+	@touch $$@
+
+# And at revision 13, `WORD_BITS` 40: the same words at its widths and sizes.
+$$(BUILD)/obj_quux13_readout_window_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/quux_readout_window_tb.cpp | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $$(BUILD)/obj_quux13_readout_window_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GSYNC_K=$(2) -GSYNC_L=$(3) -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) \
+	    -CFLAGS '-DQUUX_TB=1 -DQUUX13_TB=1 -DSYNC_K_TB=$(2) -DSYNC_L_TB=$(3)' \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/boot_prom.quux13.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/quux_readout_window_tb.cpp)
+
+$$(BUILD)/quux13_readout_window.quux.$(1).pass: $$(BUILD)/obj_quux13_readout_window_quux_$(1)/Vcadr_machine \
+                                               $$(BUILD)/boot_prom.quux13.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_quux13_readout_window_quux_$(1)/Vcadr_machine
 	@touch $$@
 
 $$(BUILD)/phase_gen.quux.$(1).golden: golden/src/phase_gen.rs $$(GOLDEN_AXIS) golden/Cargo.toml | $$(BUILD)
@@ -3255,7 +3307,11 @@ MUTANT_QUUX = $(BUILD)/boot_prom.quux.hex $(BUILD)/xbus_decode.quux.golden \
                   $(BUILD)/dispatch_write_order.quux.$(q).golden \
                   $(QUUX_SYNC_PROGRAMS:%=$(BUILD)/quux_%.quux.$(q).golden)) \
               $(foreach q,k4l1,$(QUUX_L1_PROGRAMS:%=$(BUILD)/quux_%.quux.$(q).golden) \
-                  $(BUILD)/phase_gen.quux.$(q).golden)
+                  $(BUILD)/phase_gen.quux.$(q).golden) \
+              $(QUUX13_PORTED_ALL:%=$(BUILD)/quux13_%_prom.hex) \
+              $(BUILD)/dispatch_write_order13.quux.k4.golden \
+              $(QUUX13_PORTED:%=$(BUILD)/quux13_%.quux.k4.golden) \
+              $(QUUX13_PORTED_L1:%=$(BUILD)/quux13_%.quux.k4l1.golden)
 
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \

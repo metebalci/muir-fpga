@@ -450,6 +450,8 @@ new field is poisoned in the register that holds it and read back through the
 window. Each moving word is held to the ticks it could have been taken at, and
 a timer's predicted rise is held against the flag itself. Built as the CADR,
 the same addresses must read `RO_NO_MEMORY`.
+`make build/quux13_readout_window.quux.k4.pass` holds the same at revision
+13's widths and sizes.
 
 **Neither machine's checkpoint can be restored to the fabric.** The readout
 window only reads, so a checkpoint is resumed in muir and not on

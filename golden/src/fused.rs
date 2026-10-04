@@ -368,11 +368,12 @@ pub fn store_early(base: u64) -> u32 {
 
 /// `A[a]` = `v` in as few dispatch-constant pieces as `v` needs, which is a
 /// fixed count for a fixed `v`.
-fn konst_short(p: &mut Prog, a: u64, v: u32) {
-    let parts = [(0u64, 10u64), (10, 10), (20, 10), (30, 2)];
-    let n = parts.iter().rposition(|&(pos, _)| (v as u64) >> pos != 0).map_or(1, |i| i + 1);
+fn konst_short(p: &mut Prog, a: u64, v: impl WordValue) {
+    let v = word_value(v);
+    let parts = konst_parts();
+    let n = parts.iter().rposition(|&(pos, _)| v >> pos != 0).map_or(1, |i| i + 1);
     for (k, &(pos, w)) in parts[..n].iter().enumerate() {
-        let piece = ((v as u64) >> pos) & ((1 << w) - 1);
+        let piece = (v >> pos) & ((1 << w) - 1);
         p.i(DISPATCH | DMEM_WRITE | a_src(piece));
         if k == 0 {
             p.i(ALU | SETM | src(0) | a_dest(a));
@@ -623,7 +624,7 @@ fn lay(phases: &[Phase], marks: &[u64]) -> Built {
     konst_short(&mut p, A_LOCALP_2, LOCALP_2);
     konst_short(&mut p, A_WORD, WORD);
     konst_short(&mut p, A_AP, AP);
-    konst_short(&mut p, A_SB_ON, 1 << 26);
+    konst_short(&mut p, A_SB_ON, sequence_break());
     konst_short(&mut p, A_SB_OFF, 0);
     konst_short(&mut p, A_MAP_VA, r7(0, 0));
     konst_short(&mut p, A_MAP_W, level_2_store(CODE_PAGE));
@@ -667,7 +668,7 @@ fn lay(phases: &[Phase], marks: &[u64]) -> Built {
         // clear is as long.
         p.konst(A_REGISTER, register);
         konst_short(&mut p, A_LC, starts[n] * 4);
-        konst_short(&mut p, A_INTCTL, if ph.sequence_break { 1 << 26 } else { 0 });
+        konst_short(&mut p, A_INTCTL, if ph.sequence_break { sequence_break() } else { 0 });
         konst_short(&mut p, LOCALP_AT, LOCALP);
         konst_short(&mut p, A_PDL_POINTER, pdl_pointer(n));
         let word_at = |k: usize| (words[(starts[n] - r7(0, 0)) as usize + k], starts[n] + k as u32);

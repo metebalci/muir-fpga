@@ -6,6 +6,20 @@
 //!
 //!     quux --program <name> [--machine cadr|quux]          the trace
 //!     quux --program <name> --prom                         the PROM image
+//!     quux --program <name> --machine quux --revision 13   on revision 13
+//!
+//! **AND ON REVISION 13** (`--revision 13`, contract G2): the programs that
+//! are the only test of what they hold, [`PORTED_13`], assembled again for
+//! QUUX's 40-bit revision and traced on `Geometry::QUUX_13`; the Makefile
+//! holds them as `quux13_<name>`.  What revision 13 moved is moved in
+//! the assembling, not in the programs: the fields of every word
+//! ([`to_rev13`]), the constants' widths, the map's stores and pages
+//! ([`r7`]), the register page and INTERRUPT-CONTROL's flags.  Where a
+//! program read a word of main memory it never wrote, which muir and
+//! revision 12's testbench read as zero and revision 13's as a poison, the
+//! revision 13 program writes it first; where a program's layout is in
+//! lines, revision 13's are eight words.  `fused` is `returns` there and
+//! `map` is `features`, `golden/src/quux13.rs` having its own of each.
 //!
 //! MIT's boot PROM reaches QUUX's map and PDL buffer and nothing else of it:
 //! it never reads functional source 16, never reads the feature page, never
@@ -57,6 +71,163 @@ use muir::quux_input::KeyboardMouse;
 /// images, one a machine; `main` sets this before anything is assembled.
 static BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// **REVISION 13** (`--revision 13`, contract G2 with its appendix A1):
+/// the same programs on revision 13's 40-bit QUUX, `Geometry::QUUX_13`,
+/// which keeps revision 12's devices, register offsets and timings and
+/// changes the word, the fields and the map.  Where a program names
+/// something revision 13 moved, the names below give revision 13's: the
+/// fields of every word the program assembles ([`to_rev13`]), the
+/// constants' fourth piece of ten bits, the map's stores and 1024-word pages
+/// ([`level_1_store`], [`level_2_store`], [`r7`]), the register page at
+/// `1777777400`, and INTERRUPT-CONTROL's flags eight bits up ([`int_enable`],
+/// [`unibus_reset_flag`], [`sequence_break`]).  `main` sets it before
+/// anything is assembled; unset, every image and trace is revision 12's,
+/// byte for byte as before it existed.
+static REV13: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn rev13() -> bool {
+    REV13.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The register page on revision 13 (A1.10, G1 §3.2), and the frame
+/// buffer's window.
+const REGISTER_PAGE_13: u64 = 0o1777777400;
+const WINDOW_13: u64 = 0o1760000000;
+
+/// **A word assembled with revision 12's fields, in revision 13's** (A1.1):
+/// a BYTE word's rotate becomes `IR<5:0>` and its length - 1 `IR<11:6>`; a
+/// JUMP's bit-test rotate and a DISPATCH's rotate take `IR<47>` as their
+/// bit 5.  A rotate that brings bit `b` to bit 0 --- an LDB's, a bit
+/// test's, a DISPATCH's --- brings it in the ring of 40 at 40 - b; a
+/// deposit's places its byte at the rotate, which is the same number in
+/// both.  ALU words and conditions are unchanged; a condition with `IR<4:3>`
+/// set, which revision 13 decodes as another condition (A1.3), and a BYTE
+/// word with misc bits, which revision 13 reads as length bits, are refused.
+fn to_rev13(raw: u64) -> u64 {
+    assert_eq!(raw >> 47 & 1, 0, "revision 12's words leave IR<47> clear: {raw:o}");
+    let ring_40 = |r: u64| {
+        let b = (32 - r) % 32;
+        (40 - b) % 40
+    };
+    let rot6 = |r: u64| (r >> 5) << 47 | (r & 0o37);
+    match raw >> 43 & 3 {
+        // ALU: output select 0 would read the masker's fields, which move;
+        // `MUL` and `DIV` drive the output bus whatever it says.
+        0 => {
+            let muldiv = raw >> 8 & 1 == 1 && raw >> 3 & 3 >= 2;
+            assert!(raw >> 12 & 3 != 0 || raw & 0o1777 == 0 || muldiv, "an ALU word on the masker: {raw:o}");
+            raw
+        }
+        // JUMP: a condition as it is, a bit test's rotate in the ring of 40.
+        1 => {
+            if raw >> 5 & 1 == 1 {
+                assert_eq!(raw >> 3 & 3, 0, "a condition revision 13 reads as another: {raw:o}");
+                raw
+            } else {
+                raw & !0o37 | rot6(ring_40(raw & 0o37))
+            }
+        }
+        // DISPATCH: its rotate in the ring of 40, the address as it is.
+        2 => {
+            assert_eq!(raw >> 23 & 1, 0, "revision 12's dispatch address is 11 bits: {raw:o}");
+            raw & !0o37 | rot6(ring_40(raw & 0o37))
+        }
+        // BYTE: the rotate and length - 1 at their six bits.
+        _ => {
+            assert_eq!(raw >> 10 & 3, 0, "a BYTE word's misc bits are length bits on revision 13: {raw:o}");
+            let (func, r, n) = (raw >> 12 & 3, raw & 0o37, raw >> 5 & 0o37);
+            let r = if func == LDB >> 12 { ring_40(r) } else { r };
+            raw & !0o7777 | func << 12 | n << 6 | r
+        }
+    }
+}
+
+/// `INTERRUPT-CONTROL`'s `INT.ENABLE`: `<27>`, `<35>` on revision 13 (A1.6).
+fn int_enable() -> u64 {
+    if rev13() { 1 << 35 } else { 1 << 27 }
+}
+
+/// `INTERRUPT-CONTROL`'s `PROG.UNIBUS.RESET`: `<28>`, `<36>` on revision 13.
+fn unibus_reset_flag() -> u64 {
+    if rev13() { 1 << 36 } else { 1 << 28 }
+}
+
+/// `INTERRUPT-CONTROL`'s `SEQUENCE.BREAK`: `<26>`, `<34>` on revision 13.
+pub fn sequence_break() -> u64 {
+    if rev13() { 1 << 34 } else { 1 << 26 }
+}
+
+/// The pieces of ten bits a constant is made from: three and two on
+/// revision 12's 32 bits, four on revision 13's 40.
+fn konst_parts() -> [(u64, u64); 4] {
+    if rev13() { [(0, 10), (10, 10), (20, 10), (30, 10)] } else { [(0, 10), (10, 10), (20, 10), (30, 2)] }
+}
+
+/// A constant of any of the widths the programs write them in.
+trait WordValue {
+    fn value(self) -> u64;
+}
+impl WordValue for u64 {
+    fn value(self) -> u64 {
+        self
+    }
+}
+impl WordValue for u32 {
+    fn value(self) -> u64 {
+        self as u64
+    }
+}
+impl WordValue for i32 {
+    fn value(self) -> u64 {
+        u32::try_from(self).expect("a constant is not negative") as u64
+    }
+}
+
+/// A constant, checked against the word.
+fn word_value(v: impl WordValue) -> u64 {
+    let v = v.value();
+    assert!(v >> if rev13() { 40 } else { 32 } == 0, "a constant wider than the word: {v:o}");
+    v
+}
+
+/// The programs ported to revision 13: each is held at revision 12 as it
+/// always was, and at revision 13 as `quux13_<name>` (the Makefile's
+/// `QUUX13_PORTED`).
+const PORTED_13: &[&str] = &[
+    "rtc", "clocks", "tickwin", "clockwait", "divmd", "divmdsync", "muldiv", "files", "prefetch", "pdlsync",
+    "imemsync", "memedge", "startstart", "returns", "operand", "busreset", "registers", "page", "tv", "features",
+];
+
+/// The machine a program runs on: `which`'s, and on revision 13 its
+/// geometry with main memory at QUUX's 32 boards, as
+/// `golden/src/quux13.rs` builds it.
+fn machine(which: Which, prom: &[Insn]) -> muir::machine::Machine {
+    let mut m = which.machine(prom);
+    if rev13() {
+        m.geometry = Geometry::QUUX_13;
+        m.main = vec![0; 32 << 16];
+        // No board name, as the machine under test is built (feature words
+        // 20-24 reading 0; `golden/src/quux13.rs`'s `variant`).
+        m.set_board_name("").expect("quux: no board name");
+    }
+    m
+}
+
+/// The machine's geometry, revision 13's when the run is.
+fn geometry(which: Which) -> Geometry {
+    if rev13() { Geometry::QUUX_13 } else { which.geometry() }
+}
+
+/// The cache's line: four words, eight on revision 13 (G2 §3).
+fn line_words() -> u64 {
+    if rev13() { 8 } else { 4 }
+}
+
+/// All ones in the word: 32 bits, 40 on revision 13.
+fn ones() -> u64 {
+    if rev13() { (1 << 40) - 1 } else { 0xffff_ffff }
+}
+
 fn prom_base(which: Which) -> u64 {
     match which {
         Which::Cadr => 0,
@@ -69,6 +240,8 @@ fn prom_base(which: Which) -> u64 {
 struct Prog {
     base: u64,
     words: Vec<u64>,
+    /// Where [`Prog::park`] put the park, the program's end.
+    parked: Option<u64>,
 }
 
 /// A functional destination, with the harmless M word 37 written beside it
@@ -79,7 +252,7 @@ fn fdest(d: u64) -> u64 {
 
 impl Prog {
     fn new() -> Self {
-        Prog { base: BASE.load(std::sync::atomic::Ordering::Relaxed), words: Vec::new() }
+        Prog { base: BASE.load(std::sync::atomic::Ordering::Relaxed), words: Vec::new(), parked: None }
     }
 
     /// The control store address the next word lands at.
@@ -88,7 +261,7 @@ impl Prog {
     }
 
     fn i(&mut self, raw: u64) {
-        self.words.push(raw);
+        self.words.push(if rev13() { to_rev13(raw) } else { raw });
     }
 
     fn fill(&mut self, n: usize) {
@@ -99,10 +272,10 @@ impl Prog {
 
     /// `A[a]` = `v`, made from the dispatch constant: ten bits, ten bits, ten
     /// bits and two, each loaded by a dispatch-memory write and deposited.
-    fn konst(&mut self, a: u64, v: u32) {
-        let parts = [(0u64, 10u64), (10, 10), (20, 10), (30, 2)];
-        for (k, &(pos, w)) in parts.iter().enumerate() {
-            let piece = ((v as u64) >> pos) & ((1 << w) - 1);
+    fn konst(&mut self, a: u64, v: impl WordValue) {
+        let v = word_value(v);
+        for (k, &(pos, w)) in konst_parts().iter().enumerate() {
+            let piece = (v >> pos) & ((1 << w) - 1);
             self.i(DISPATCH | DMEM_WRITE | a_src(piece));
             if k == 0 {
                 self.i(ALU | SETM | src(0) | a_dest(a));
@@ -135,6 +308,7 @@ impl Prog {
     /// Stops: a jump to itself, the instruction after it inhibited.
     fn park(&mut self) {
         let here = self.at();
+        self.parked = Some(here);
         self.i(JUMP | target(here) | ALWAYS | N);
         self.fill(1);
     }
@@ -162,15 +336,48 @@ const VADDR: u32 = (7 << 13) | (2 << 8);
 const VADDR_PAST: u32 = (7 << 13) | (3 << 8);
 
 /// A store of level-1 entry `entry` as QUUX takes it: bits 4:0 in
-/// `VMA<31:27>`, bit 5 in `VMA<24>`, `VMA<26>` enabling.
-fn level_1_store(entry: u32) -> u32 {
-    ((entry & 0o37) << 27) | (1 << 26) | (((entry >> 5) & 1) << 24)
+/// `VMA<31:27>`, bit 5 in `VMA<24>`, `VMA<26>` enabling.  On revision 13
+/// the entry is `<38:32>` and `<29>` enables (A1.7).
+fn level_1_store(entry: u32) -> u64 {
+    if rev13() {
+        return (entry as u64) << 32 | 1 << 29;
+    }
+    (((entry & 0o37) << 27) | (1 << 26) | (((entry >> 5) & 1) << 24)) as u64
 }
 
 /// A store of a level-2 entry, read and write permitted, on physical page
-/// `page`.
-fn level_2_store(page: u32) -> u32 {
-    (1 << 25) | (1 << 23) | (1 << 22) | page
+/// `page`.  On revision 13 `<28>` enables, `<27:26>` permit and the entry
+/// names the 1024-word page that holds `page` ([`phys`]; A1.7).
+fn level_2_store(page: u32) -> u64 {
+    if rev13() {
+        return 1 << 28 | 1 << 27 | 1 << 26 | phys(page) >> 10;
+    }
+    ((1 << 25) | (1 << 23) | (1 << 22) | page) as u64
+}
+
+/// The physical address of revision 12's 256-word page `page`: main
+/// memory's where revision 12's main memory is, and the register page at
+/// revision 13's address.  Revision 12's other pages are not revision 13's,
+/// and a program that names one is not ported.
+fn phys(page: u32) -> u64 {
+    if !rev13() {
+        return (page as u64) << 8;
+    }
+    match page {
+        FEATURE_PAGE => REGISTER_PAGE_13,
+        // The page below it, where nothing answers on either revision:
+        // between the window and the register page on revision 13.
+        BELOW_FEATURE_PAGE => REGISTER_PAGE_13 - 0o400,
+        p if p < 0o36000 => (p as u64) << 8,
+        // Revision 12's frame buffer, `17000000`, is the window at
+        // `1760000000` (G1 §3.2).
+        p if (0o36000..0o36400).contains(&p) => WINDOW_13 + (((p - 0o36000) as u64) << 8),
+        OLD_PAGES_13 | 0o3777776 | GAP_PAGE_13 => (page as u64) << 8,
+        // Revision 12's display registers, `17377400`: past main memory's
+        // 32 boards on revision 13, where nothing answers.
+        0o36777 => (page as u64) << 8,
+        p => panic!("page {p:o} is revision 12's alone"),
+    }
 }
 
 /// The register page, the feature page with it, at the last page of the
@@ -208,8 +415,21 @@ const FEATURE_WORDS: [u32; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 0o10, 0o11, 0o12, 0o13
 /// On the CADR the register page and the page below it are the Unibus
 /// window's last two pages, where nothing answers: each read times out with
 /// the Unibus NXM bit, and the read at `17377770` with the Xbus one.
+///
+/// **On revision 13** (A1.7): the same, with revision 13's map --- region 7
+/// is `VA<27:15>` 7 and its slots are 1024-word pages, so the register
+/// page's words are at `1400` in slot 2; the level-1 entry is 141, its
+/// seventh bit set where revision 12's 41 set the sixth, and 45 for the
+/// store of both; `MAP(MD)` reads the entry in `<38:32>` --- and nothing at
+/// `17377770`, which is past main memory's 32 boards there.
 fn map_program() -> Prog {
     let mut p = Prog::new();
+    let (vaddr, vaddr_past) = if rev13() {
+        ((7u32 << 15) | (2 << 10) | 0o1400, (7u32 << 15) | (3 << 10) | 0o1000)
+    } else {
+        (VADDR, VADDR_PAST)
+    };
+    let region = |r: u32| if rev13() { r << 15 } else { r << 13 };
 
     // Sources 15, 16, 36 and 17.
     for (k, s) in [0o15u64, 0o16, 0o36, 0o17].iter().enumerate() {
@@ -218,8 +438,8 @@ fn map_program() -> Prog {
 
     // Level-1 entry 41 at index 7, through `VMA<24>`: `MD` names the
     // index, the store's `VMA` the entry.
-    p.konst(0o300, VADDR);
-    p.konst(0o301, level_1_store(0o41));
+    p.konst(0o300, vaddr);
+    p.konst(0o301, level_1_store(if rev13() { 0o141 } else { 0o41 }));
     p.konst(0o302, level_2_store(FEATURE_PAGE));
     p.to(0o300, MD);
     p.to(0o301, fdest(0o23));
@@ -233,21 +453,21 @@ fn map_program() -> Prog {
     p.source(0o11, RESULT + 4);
 
     // Slot 3 of the same region onto the page below the register page.
-    p.konst(0o303, VADDR_PAST);
+    p.konst(0o303, vaddr_past);
     p.konst(0o304, level_2_store(BELOW_FEATURE_PAGE));
     p.to(0o303, MD);
     p.to(0o304, fdest(0o23));
     p.fill(2);
 
     // `MAP(MD)` of a region nothing stored: index 6.
-    p.konst(0o305, 6 << 13);
+    p.konst(0o305, region(6));
     p.to(0o305, MD);
     p.fill(1);
     p.source(0o11, RESULT + 5);
 
     // The feature page, word by word. Each read waits for its word.
     for (k, &w) in FEATURE_WORDS.iter().enumerate() {
-        p.konst(0o306, VADDR | w);
+        p.konst(0o306, vaddr | w);
         p.read(0o306, RESULT + 0o20 + k as u64);
     }
     // And the page below it, which nothing answers on either machine.
@@ -255,7 +475,7 @@ fn map_program() -> Prog {
     // And the words of page 36777 between the CADR display's registers and
     // its disk's, `17377770`, which are nothing's on either machine: QUUX
     // has neither there (contract Q13).
-    p.konst(0o323, (7 << 13) | (4 << 8) | 0o370);
+    p.konst(0o323, if rev13() { (7 << 15) | (4 << 10) | 0o1770 } else { (7 << 13) | (4 << 8) | 0o370 });
     p.konst(0o324, level_2_store(0o36777));
     p.to(0o323, MD);
     p.to(0o324, fdest(0o23));
@@ -309,7 +529,7 @@ fn map_program() -> Prog {
 
     // A store of both levels at once: level 1 at index 5 takes entry 45,
     // and level 2 is written in block 0, the level-1 bits zero.
-    p.konst(0o321, 5 << 13);
+    p.konst(0o321, region(5));
     p.konst(0o322, level_1_store(0o45) | level_2_store(FEATURE_PAGE));
     p.to(0o321, MD);
     p.to(0o322, fdest(0o23));
@@ -359,13 +579,17 @@ fn tv_program() -> Prog {
     let quux = BASE.load(std::sync::atomic::Ordering::Relaxed) != 0;
     let (reg_page, control) = if quux { (FEATURE_PAGE, VIDEO_MODE) } else { (0o36777, TV_CONTROL) };
     let mut p = Prog::new();
-    let va = |slot: u32, word: u32| (7 << 13) | (slot << 8) | word;
+    let pages = [(0u32, 0o36000u32), (1, 0o36237), (2, 0o36240), (3, 0o36200), (4, reg_page)];
+    for (slot, page) in pages {
+        set_slot(slot, page);
+    }
+    let va = |slot: u32, word: u32| if rev13() { r7(slot, word) } else { (7 << 13) | (slot << 8) | word };
     p.konst(0o300, va(0, 0));
     p.konst(0o301, level_1_store(2));
     p.to(0o300, MD);
     p.to(0o301, fdest(0o23));
     p.fill(2);
-    for (slot, page) in [(0u32, 0o36000u32), (1, 0o36237), (2, 0o36240), (3, 0o36200), (4, reg_page)] {
+    for (slot, page) in pages {
         p.konst(0o302, va(slot, 0));
         p.konst(0o303, level_2_store(page));
         p.to(0o302, MD);
@@ -388,6 +612,11 @@ fn tv_program() -> Prog {
     read(&mut p, va(0, 0), RESULT);
     write(&mut p, va(1, 0o377), TV_LAST);
     read(&mut p, va(1, 0o377), RESULT + 1);
+    // Revision 13's window in the testbench is a poison until written
+    // (`tb/cadr_machine_tb.cpp`), where muir's buffer is zero.
+    if rev13() {
+        write(&mut p, va(3, 0), 0);
+    }
     read(&mut p, va(3, 0), RESULT + 2);
     read(&mut p, va(2, 0), RESULT + 3);
     // The registers.
@@ -586,7 +815,7 @@ fn tick_program_with(cleared_reads: u64) -> Prog {
     p.to(0o702, fdest(3));
     reads(&mut p, &mut k, 6);
     // The interrupt enabled, `INTERRUPT-CONTROL<27>`.
-    p.konst(0o703, 1 << 27);
+    p.konst(0o703, int_enable());
     p.to(0o703, fdest(2));
     reads(&mut p, &mut k, 12);
     // A period of 5 written while it runs: the next rise from now, landing
@@ -715,7 +944,7 @@ impl Tp {
     /// The PDL pointer at 0, and `INTERRUPT-CONTROL<27>`, the interrupt
     /// enabled, so that condition 5 tests every timer's word 100 bit.
     fn start(&mut self, p: &mut Prog) {
-        let (zero, int) = (self.c.c(p, 0), self.c.c(p, 1 << 27));
+        let (zero, int) = (self.c.c(p, 0), self.c.c(p, int_enable()));
         p.to(zero, fdest(DEST_PDL_POINTER));
         p.to(int, fdest(DEST_INTCTL));
     }
@@ -848,7 +1077,7 @@ fn clocks_program_layout() -> (Prog, Vec<(&'static str, u64, u64)>) {
     p.source(0o17, RESULT);
     p.source(0o15, RESULT + 1);
     p.i(ALU | SETM | m_src(0o37) | a_dest(RESULT + 2));
-    let ones = t.c.c(&mut p, !0);
+    let ones = t.c.c(&mut p, ones());
     let guard = p.words.len();
     p.i(0);
     p.fill(1);
@@ -1271,7 +1500,7 @@ fn check_clocks(which: Which, m: &muir::machine::Machine) {
         assert_eq!(m.amem[(RESULT + 1) as usize] as u32, !0, "CADR: source 15 reads all ones");
         return;
     }
-    assert_eq!(m.amem[RESULT as usize] as u32, !0, "QUUX: source 17 reads all ones since revision 10");
+    assert_eq!(m.amem[RESULT as usize], ones(), "QUUX: source 17 reads all ones since revision 10");
     let (_, marks) = clocks_program_layout();
     let n = marks.iter().map(|&(_, from, len)| from + len).max().unwrap();
     let log = pdl_log(m, n);
@@ -1331,6 +1560,7 @@ const TICKWIN_WAIT_SHIFTS: usize = 4;
 /// Region 7's level-2 slot 1 onto the register page, beside `wait_setup`'s
 /// slot 0 on main memory.
 fn map_page_at_slot_1(p: &mut Prog, t: &mut Tp) {
+    set_slot(1, FEATURE_PAGE);
     let (a, v) = (t.c.c(p, r7(1, 0)), t.c.c(p, level_2_store(FEATURE_PAGE)));
     p.to(a, MD);
     p.to(v, fdest(0o23));
@@ -1549,9 +1779,18 @@ fn page_program() -> Prog {
 }
 
 /// The program, and the addresses of its two marks.
+///
+/// **On revision 13** the old Unibus window is main memory (G1 §3.2), and
+/// slot 2 is revision 13's nothing instead, between main memory and the
+/// window, at the same word.
 fn page_program_marks() -> (Prog, u64, u64) {
     let mut p = Prog::new();
-    let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
+    let pages = [(0u32, FEATURE_PAGE), (1, BELOW_FEATURE_PAGE),
+                 (2, if rev13() { GAP_PAGE_13 } else { PAGE_UNIBUS_CHAOS >> 8 })];
+    for (slot, page) in pages {
+        set_slot(slot, page);
+    }
+    let va = |slot: u32, w: u32| if rev13() { r7(slot, w) } else { (7 << 13) | (slot << 8) | w };
     let mut k = 0u64;
     // The map: level 1 entry 3 at region 7; level 2 slots 0, 1 and 2.
     p.konst(0o300, va(0, 0));
@@ -1559,7 +1798,7 @@ fn page_program_marks() -> (Prog, u64, u64) {
     p.to(0o300, MD);
     p.to(0o301, fdest(0o23));
     p.fill(2);
-    for (slot, page) in [(0u32, FEATURE_PAGE), (1, BELOW_FEATURE_PAGE), (2, PAGE_UNIBUS_CHAOS >> 8)] {
+    for (slot, page) in pages {
         p.konst(0o302, va(slot, 0));
         p.konst(0o303, level_2_store(page));
         p.to(0o302, MD);
@@ -1583,7 +1822,7 @@ fn page_program_marks() -> (Prog, u64, u64) {
         rd(&mut p, &mut c, &mut k, w);
     }
     // The keyboard.
-    p.konst(0o703, 1 << 27);
+    p.konst(0o703, int_enable());
     p.to(0o703, fdest(DEST_INTCTL));
     wr(&mut p, &mut c, va(0, 0o120), 1 << 8);
     let mark_1 = p.at();
@@ -1692,9 +1931,9 @@ fn check_page(which: Which, m: &muir::machine::Machine) {
     assert_eq!(&r[20..22], &[T_ON | T_FLAG | T_IE, 2], "QUUX: 112 and 113, timer 1 risen");
     assert_eq!(r[22] & 0o6, 0o4, "QUUX: 100, timer 2");
     assert_eq!(&r[23..25], &[T_ON | T_FLAG | T_IE, 2], "QUUX: 114 and 115, timer 2 risen");
-    let id = which.geometry().machine_id.unwrap();
+    let id = geometry(which).machine_id.unwrap();
     assert_eq!(&r[25..30], &[0, 0, 0, 3, id], "QUUX: 110, 111, 104, feature word 16 and the MACHINE-ID");
-    assert_eq!(id >> 4 & 0o7777, 12, "QUUX: revision 12");
+    assert_eq!(id >> 4 & 0o7777, if rev13() { 13 } else { 12 }, "QUUX: the revision");
     let r = &r[10..];
     assert_eq!(r[20] & 0o240, 0o240, "QUUX: 140, Transmit Done and its interrupt enable");
     assert_eq!(r[21] & (1 << 6), 1 << 6, "QUUX: 100, the network");
@@ -1742,6 +1981,9 @@ const REGISTERS_UNWRITTEN: [(u32, u32); 13] = [
 /// (contract Q13 §1, muir's `table`), `None` for word 103, the real-time
 /// clock, which reads the counted clock.
 fn register_at_power_on(w: u32) -> Option<u32> {
+    if rev13() {
+        return register_at_power_on_13(w);
+    }
     let id = Geometry::QUUX.machine_id.unwrap();
     let screen = ((machine_axis::VIDEO_WIDTH as u32) << 16) | machine_axis::VIDEO_HEIGHT as u32;
     Some(match w {
@@ -1773,6 +2015,30 @@ fn register_at_power_on(w: u32) -> Option<u32> {
     })
 }
 
+/// **And on revision 13** (A1.10): the words revision 13 changed --- its
+/// MACHINE-ID, the level-1 entry's 7 bits, 4,096 level-2 and dispatch
+/// memory entries, the window at `1760000000` --- and revision 12's for the
+/// rest, each held to what muir's revision 13 machine reads there.
+fn register_at_power_on_13(w: u32) -> Option<u32> {
+    let want = match w {
+        0 => Geometry::QUUX_13.machine_id.unwrap(),
+        1 => 7,
+        2 | 6 => 4096,
+        0o13 => 0o1760000000,
+        _ => {
+            REV13.store(false, std::sync::atomic::Ordering::Relaxed);
+            let v = register_at_power_on(w);
+            REV13.store(true, std::sync::atomic::Ordering::Relaxed);
+            v?
+        }
+    };
+    let mut m = machine(Which::Quux, &[]);
+    if w != 0o103 {
+        assert_eq!(m.bus_read((REGISTER_PAGE_13 + w as u64) as u32) as u32, want, "registers: word {w:o} is muir's");
+    }
+    Some(want)
+}
+
 /// **Every word of QUUX's register page, and every address that was one**
 /// (contract Q13): muir's `tests/quux_registers.rs` table as a program,
 /// traced, so that the fabric reads the same 256 words muir's own test
@@ -1799,29 +2065,48 @@ fn register_at_power_on(w: u32) -> Option<u32> {
 ///
 /// Each sweep is a loop over the addresses, the address kept in `M[12]` and
 /// the count in `M[13]`, so the program is small and its rows many.
+///
+/// **On revision 13** the old addresses are main memory (G1 §3.2), and the
+/// fourth sweep reaches revision 13's nothing instead, at the same counts:
+/// the two pages below the register page, `1777776400`-`1777777377`
+/// ([`OLD_PAGES_13`]), a word between main memory and the window,
+/// `400000000`, and a word past main memory's end.  The writes are of all
+/// 40 bits.
 fn registers_program() -> Prog {
     let mut p = Prog::new();
     let mut t = Tp::new(0);
-    map_region_7(&mut p, &mut t.c, &[FEATURE_PAGE, OLD_PAGE, OLD_DEVICE_PAGE, OLD_WINDOW_PAGE, BELOW_FEATURE_PAGE]);
+    if rev13() {
+        map_region_7(&mut p, &mut t.c, &[FEATURE_PAGE, OLD_PAGES_13, OLD_PAGES_13 + 1, GAP_PAGE_13, PAST_MAIN_PAGE_13]);
+    } else {
+        map_region_7(&mut p, &mut t.c, &[FEATURE_PAGE, OLD_PAGE, OLD_DEVICE_PAGE, OLD_WINDOW_PAGE, BELOW_FEATURE_PAGE]);
+    }
     let zero = t.c.c(&mut p, 0);
     p.to(zero, fdest(DEST_PDL_POINTER));
     registers_sweep(&mut p, &mut t, r7(0, 0), 0o400, None);
     for &(first, n) in &REGISTERS_UNWRITTEN {
-        registers_sweep(&mut p, &mut t, r7(0, first), n, Some(!0));
+        registers_sweep(&mut p, &mut t, r7(0, first), n, Some(ones()));
     }
     registers_sweep(&mut p, &mut t, r7(0, 0), 0o400, None);
     for (va, n) in [(r7(1, 0), 0o1000u32), (r7(3, 0), 1), (r7(4, 0o377), 1)] {
         registers_sweep(&mut p, &mut t, va, n, None);
-        registers_sweep(&mut p, &mut t, va, n, Some(!0));
+        registers_sweep(&mut p, &mut t, va, n, Some(ones()));
     }
     p.park();
     p
 }
 
+/// Revision 13's nothing for the `registers` program, as revision 12's
+/// 256-word pages ([`phys`]): the two pages below the register page; a page
+/// between main memory and the window; and the page at main memory's end,
+/// 32 boards.
+const OLD_PAGES_13: u32 = 0o3777775;
+const GAP_PAGE_13: u32 = 0o400000000 >> 8;
+const PAST_MAIN_PAGE_13: u32 = (32 << 16) >> 8;
+
 /// `n` accesses from the virtual address `va` up, each a read pushed, or a
 /// write of `write`; each followed by word 101 read and pushed, and written
 /// with 0.
-fn registers_sweep(p: &mut Prog, t: &mut Tp, va: u32, n: u32, write: Option<u32>) {
+fn registers_sweep(p: &mut Prog, t: &mut Tp, va: u32, n: u32, write: Option<u64>) {
     const AT: u64 = 12;
     const LEFT: u64 = 13;
     let (start, count, one, zero) = (t.c.c(p, va), t.c.c(p, n), t.c.c(p, 1), t.c.c(p, 0));
@@ -1894,9 +2179,12 @@ fn check_registers(which: Which, m: &muir::machine::Machine) {
 // ------------------------------------------------------------ the checks
 
 fn check_map(which: Which, m: &muir::machine::Machine) {
+    if rev13() {
+        return check_map_13(m);
+    }
     let r = |k: u64| m.amem[(RESULT + k) as usize] as u32;
     let quux = which == Which::Quux;
-    let id = which.geometry().machine_id;
+    let id = geometry(which).machine_id;
     let ones = !0u32;
     // Sources 15, 16, 36, 17: the CADR drives nothing on any of them; QUUX
     // answers its microsecond clock on 15, read in the first microsecond,
@@ -1963,6 +2251,30 @@ fn check_map(which: Which, m: &muir::machine::Machine) {
     assert_eq!((r(0o14) >> 24) & 0o77, both_entry, "{which:?}: MAP(MD) after a store of both");
 }
 
+/// [`check_map`] on revision 13: the sources at 40 bits, the level-1 entry's
+/// seven bits in `<38:32>` of `MAP(MD)` and in the map, the feature page's
+/// words as `registers` holds them, and the PDL buffer as on revision 12.
+fn check_map_13(m: &muir::machine::Machine) {
+    let r = |k: u64| m.amem[(RESULT + k) as usize];
+    let id = Geometry::QUUX_13.machine_id.unwrap() as u64;
+    assert_eq!([r(0), r(1), r(2), r(3)], [0, id, id, ones()], "revision 13: sources 15, 16, 36 and 17");
+    let index = |va: u64| (va >> 15) as usize;
+    assert_eq!(m.l1_map[index(7 << 15)], 0o141, "revision 13: the level-1 entry stored");
+    assert_eq!(r(4) >> 32 & 0o177, 0o141, "revision 13: MAP(MD)<38:32>");
+    assert_eq!(m.l2_map[(0o141 << 5) | 2] & 0o777777, (REGISTER_PAGE_13 >> 10) as u32, "revision 13: level 2 in the entry's block");
+    assert_eq!(r(5) >> 32 & 0o177, 0, "revision 13: a region nothing stored");
+    for (k, &w) in FEATURE_WORDS.iter().enumerate() {
+        if let Some(want) = register_at_power_on(w) {
+            assert_eq!(r(0o20 + k as u64), want as u64, "revision 13: feature word {w:o}");
+        }
+    }
+    assert_eq!(r(0o41), id, "revision 13: word 0 after a write of it");
+    assert_eq!((r(6), r(7), r(0o10)), (0o2000, 0o13572466, 0o37777), "revision 13: the PDL buffer's pointer, word and index");
+    assert_eq!((r(0o11), r(0o12), r(0o13)), (0o11111111, 0, 0o37777), "revision 13: the PDL buffer's 16K");
+    assert_eq!(m.l1_map[index(5 << 15)], 0o45, "revision 13: level 1 of a store of both");
+    assert_eq!(r(0o14) >> 32 & 0o177, 0o45, "revision 13: MAP(MD) after a store of both");
+}
+
 // ------------------------------------------------------ waiting for MD
 
 /// The main-memory page the next two programs read, through level-1 entry 2
@@ -1976,7 +2288,8 @@ const MD_BEFORE_READ: u32 = 0o1234;
 /// Maps region 7's slot 0 onto `WAIT_PAGE`, read and write permitted, and
 /// writes `word` there at `WAIT_WORD`.  `A[305]` holds the virtual address.
 fn wait_setup(p: &mut Prog, word: u32) {
-    let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
+    set_slot(0, WAIT_PAGE);
+    let va = r7;
     p.konst(0o300, va(0, 0));
     p.konst(0o301, level_1_store(2));
     p.to(0o300, MD);
@@ -2320,7 +2633,7 @@ fn tickwait_program() -> Prog {
     wait_setup(&mut p, 0o777);
     p.konst(0o700, 1);
     p.to(0o700, fdest(3));
-    p.konst(0o703, 1 << 27);
+    p.konst(0o703, int_enable());
     p.to(0o703, fdest(2));
     p.konst(0o702, 3);
     for (j, &us) in TICKWAIT_US.iter().enumerate() {
@@ -2394,14 +2707,14 @@ fn memedge_word(k: u64) -> u32 {
 fn memedge_program() -> Prog {
     let mut p = Prog::new();
     wait_setup(&mut p, 0o777);
-    let va = |w: u64| ((7u32 << 13) | (w as u32 & 0o377)) as u32;
+    let va = |w: u64| r7(0, w as u32 & 0o377);
     for r in 0..MEMEDGE_ROUNDS {
         // The words and their addresses first, so the writes stand two
-        // instructions apart.
+        // instructions apart; a line each.
         for j in 0..MEMEDGE_WRITES {
             let k = r * MEMEDGE_WRITES + j;
             p.konst(0o310 + 2 * j, memedge_word(k));
-            p.konst(0o311 + 2 * j, va(0o20 + 4 * k));
+            p.konst(0o311 + 2 * j, va(0o20 + line_words() * k));
         }
         for j in 0..MEMEDGE_WRITES {
             p.to(0o310 + 2 * j, MD);
@@ -2419,12 +2732,13 @@ fn memedge_program() -> Prog {
         }
     }
     // Level-2 slot 1 of the region onto the page nothing answers.
-    p.konst(0o302, ((7u32 << 13) | (1 << 8)) as u32);
+    set_slot(1, BELOW_FEATURE_PAGE);
+    p.konst(0o302, r7(1, 0));
     p.konst(0o303, level_2_store(BELOW_FEATURE_PAGE));
     p.to(0o302, MD);
     p.to(0o303, fdest(0o23));
     p.fill(2);
-    p.konst(0o304, ((7u32 << 13) | (1 << 8) | 0o17) as u32);
+    p.konst(0o304, r7(1, 0o17));
     for n in 0..MEMEDGE_NXM_READS {
         p.konst(RESULT + 0o70 + n, 0xDEAD_0000 + n as u32);
     }
@@ -2548,14 +2862,17 @@ const UB_INT_BY_HAND: u32 = 0o100000 | 0o300;
 fn busreset_program() -> Prog {
     let quux = BASE.load(std::sync::atomic::Ordering::Relaxed) != 0;
     let mut p = Prog::new();
-    let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
+    if rev13() {
+        set_slot(1, FEATURE_PAGE);
+    }
+    let va = |slot: u32, w: u32| if rev13() { r7(slot, w) } else { (7 << 13) | (slot << 8) | w };
     let mut k = 0u64;
     let reads = busreset_reads(quux);
     // The map: level 1 entry 3 at region 7; level 2 slot 1 the register
     // page, whose words on QUUX are every device this program touches
     // (contract Q13); and on the CADR slot 0 the devices, slot 2 the Unibus
     // and slot 3 the interface's own registers.
-    p.konst(0o300, va(0, 0));
+    p.konst(0o300, va(if rev13() { 1 } else { 0 }, 0));
     p.konst(0o301, level_1_store(3));
     p.to(0o300, MD);
     p.to(0o301, fdest(0o23));
@@ -2610,7 +2927,7 @@ fn busreset_program() -> Prog {
         // too, a hold-off of the disk's term alone would not show.)
         // The two words are made here once, and the reset below reuses them.
         p.fill(4);
-        p.konst(0o306, 1 << 28);
+        p.konst(0o306, unibus_reset_flag());
         p.konst(0o307, 0);
         p.to(0o306, fdest(DEST_INTCTL));
         p.fill(4);
@@ -2836,7 +3153,7 @@ fn startstart_program() -> Prog {
         p.i(DISPATCH | DMEM_WRITE | a_src(w));
         p.i(ALU | ADD | src(0) | a_src(0o300) | a_dest(a));
     };
-    let va = |slot: u32, w: u32| (7 << 13) | (slot << 8) | w;
+    let va = r7;
     // A write on its own: the word in `A[d]` at the address in `A[a]`.
     let write = |p: &mut Prog, d: u64, a: u64| {
         p.to(d, MD);
@@ -2861,15 +3178,17 @@ fn startstart_program() -> Prog {
         // Level-2 slot 2: the register page, the video controller's mode
         // among its words.
         for (slot, page) in [(2u32, FEATURE_PAGE)] {
+            set_slot(slot, page);
             p.konst(0o302, va(slot, 0));
             p.konst(0o303, level_2_store(page));
             p.to(0o302, MD);
             p.to(0o303, fdest(0o23));
             p.fill(2);
         }
-        // Addresses: A[320 + n] is word 20 + 4n, a line each.
+        // Addresses: A[320 + n] is word 20 + 4n, a line each (20 + 8n on
+        // revision 13).
         for n in 0..16u64 {
-            addr(&mut p, 0o320 + n, 0o20 + 4 * n);
+            addr(&mut p, 0o320 + n, 0o20 + line_words() * n);
         }
         let line = |n: u64| 0o320 + n;
         // Seeds: the word at line n is `startstart_word(n)`.
@@ -2878,6 +3197,16 @@ fn startstart_program() -> Prog {
             p.konst(D, startstart_word(n as u32));
             write(&mut p, D, line(n));
             back.push(line(n));
+        }
+        // Revision 13's main memory in the testbench is a poison until
+        // written (`tb/cadr_machine_tb.cpp`), where muir's is zero: lines 2
+        // and 7, read below and not seeded, are written 0 first, which
+        // caches nothing.
+        if rev13() {
+            p.konst(D, 0);
+            for n in [2u64, 7] {
+                write(&mut p, D, line(n));
+            }
         }
         // Data words, D + j = `startstart_word(40 + j)`.
         for j in 0..6u32 {
@@ -2942,9 +3271,10 @@ fn startstart_program() -> Prog {
         read_md(&mut p, r);
         p.fill(2);
         // A write then a write, `MD` loaded in the microcycle after the
-        // second start, at words 120 and 124.
-        addr(&mut p, X, 0o120);
-        addr(&mut p, X + 1, 0o124);
+        // second start, at words 120 and 124 (240 and 250, a line each
+        // past the sixteen, on revision 13).
+        addr(&mut p, X, if rev13() { 0o240 } else { 0o120 });
+        addr(&mut p, X + 1, if rev13() { 0o250 } else { 0o124 });
         p.to(D + 4, MD);
         p.to(X, START_WRITE);
         p.to(X + 1, START_WRITE);
@@ -2966,8 +3296,8 @@ fn startstart_program() -> Prog {
     }
     // The two single writes, `MD` loaded one microcycle after the start and
     // two: the first writes the new word, the second the old.
-    addr(&mut p, X + 2, 0o130);
-    addr(&mut p, X + 3, 0o134);
+    addr(&mut p, X + 2, if rev13() { 0o260 } else { 0o130 });
+    addr(&mut p, X + 3, if rev13() { 0o270 } else { 0o134 });
     p.to(D + 4, MD);
     p.to(X + 2, START_WRITE);
     p.to(D + 5, MD);
@@ -3028,7 +3358,7 @@ fn check_startstart(which: Which, m: &muir::machine::Machine) {
 /// takes as many ten-bit pieces of the dispatch constant as it has, where
 /// `Prog::konst` always takes four.
 struct Pool {
-    at: std::collections::HashMap<u32, u64>,
+    at: std::collections::HashMap<u64, u64>,
     next: u64,
 }
 
@@ -3041,17 +3371,18 @@ impl Pool {
     }
 
     /// The A address holding `v`, made here the first time it is asked.
-    fn c(&mut self, p: &mut Prog, v: u32) -> u64 {
+    fn c(&mut self, p: &mut Prog, v: impl WordValue) -> u64 {
+        let v = word_value(v);
         if let Some(&a) = self.at.get(&v) {
             return a;
         }
         let a = self.next;
         assert!(a <= Self::LAST, "the constant pool is full");
         self.next += 1;
-        let parts = [(0u64, 10u64), (10, 10), (20, 10), (30, 2)];
-        let n = parts.iter().rposition(|&(pos, _)| (v as u64) >> pos != 0).map_or(1, |i| i + 1);
+        let parts = konst_parts();
+        let n = parts.iter().rposition(|&(pos, _)| v >> pos != 0).map_or(1, |i| i + 1);
         for (k, &(pos, w)) in parts[..n].iter().enumerate() {
-            let piece = ((v as u64) >> pos) & ((1 << w) - 1);
+            let piece = (v >> pos) & ((1 << w) - 1);
             p.i(DISPATCH | DMEM_WRITE | a_src(piece));
             if k == 0 {
                 p.i(ALU | SETM | src(0) | a_dest(a));
@@ -3106,13 +3437,42 @@ impl Pool {
     }
 }
 
+/// **REGION 7'S SLOTS ON REVISION 13**: the 256-word page each slot is
+/// mapped onto, as the program maps it.  Revision 13's pages are 1024 words
+/// (A1.7), so region 7 is `VA<27:15>` 7 and a slot is a 1024-word page,
+/// `VA<14:10>`, shared by every slot whose page is in the same physical
+/// page, so that words one after another in main memory are one after
+/// another in the region too; a slot's word `w` is at its page's offset in
+/// that page.
+static SLOTS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+/// Slot `slot` onto `page` (revision 13; see [`SLOTS`]).
+fn set_slot(slot: u32, page: u32) {
+    let mut s = SLOTS.lock().unwrap();
+    if s.len() <= slot as usize {
+        s.resize(slot as usize + 1, u32::MAX);
+    }
+    s[slot as usize] = page;
+}
+
 /// Region 7's virtual address of word `w` of slot `slot`.
 fn r7(slot: u32, w: u32) -> u32 {
-    (7 << 13) | (slot << 8) | w
+    if !rev13() {
+        return (7 << 13) | (slot << 8) | w;
+    }
+    let s = SLOTS.lock().unwrap();
+    let page = *s.get(slot as usize).filter(|&&p| p != u32::MAX).expect("r7: a slot no store has mapped");
+    let frame = phys(page) >> 10;
+    let vpage = s.iter().position(|&p| p != u32::MAX && phys(p) >> 10 == frame).unwrap() as u32;
+    assert!(w < 0o400, "r7: word {w:o} is past its page");
+    (7 << 15) | (vpage << 10) | (phys(page) & 0o1400) as u32 | w
 }
 
 /// Maps region 7: level 1 entry 3; level 2 slot k onto `pages[k]`.
 fn map_region_7(p: &mut Prog, c: &mut Pool, pages: &[u32]) {
+    for (slot, &page) in pages.iter().enumerate() {
+        set_slot(slot as u32, page);
+    }
     let (a0, a1) = (c.c(p, r7(0, 0)), c.c(p, level_1_store(3)));
     p.to(a0, MD);
     p.to(a1, fdest(0o23));
@@ -3186,7 +3546,7 @@ fn check_rtc(which: Which, m: &muir::machine::Machine) {
         return;
     }
     let r: Vec<u32> = (0..RTC_READS).map(|k| m.amem[(RESULT + k) as usize] as u32).collect();
-    let id = which.geometry().machine_id.unwrap();
+    let id = geometry(which).machine_id.unwrap();
     assert!((id >> 4) & 0xfff >= 9, "QUUX: revision 9 or later");
     assert_eq!(r[0], id, "QUUX: MACHINE-ID on the page");
     assert_eq!(r[1], 3, "QUUX: word 15, the clock and the file device");
@@ -3225,12 +3585,18 @@ fn fd_word0(tag: u32, opcode: u32, flags: u32) -> u32 {
 /// and differs from whatever the slot held before, so a host shown the
 /// producer before that word has left the write buffer finds the slot's old
 /// word 0 in main memory, which the testbench compares.
+///
+/// On revision 13 word 7 is written 0 as well, after word 6: the host reads
+/// the entry's eight words, and the testbench's main memory is a poison
+/// until written where muir's is zero.
 fn fd_command(p: &mut Prog, c: &mut Pool, slot: u32, words: [u32; 7], then_prod: Option<u32>) {
-    for i in (1..7).chain(0..1) {
+    let last = if rev13() { 8 } else { 7 };
+    for i in (1..last).chain(0..1) {
         let va = r7(1, 8 * slot + i as u32);
+        let w = words.get(i).copied().unwrap_or(0);
         match then_prod {
-            Some(n) if i == 0 => c.wr_wr(p, va, words[i], r7(0, 0o164), n),
-            _ => c.wr(p, va, words[i]),
+            Some(n) if i == 0 => c.wr_wr(p, va, w, r7(0, 0o164), n),
+            _ => c.wr(p, va, w),
         }
     }
 }
@@ -3313,6 +3679,12 @@ fn files_program() -> Prog {
     c.wr(&mut p, reg(0o160), 0x101);
     // OPEN `/f` for reading.
     c.wr(&mut p, buf(0), u32::from_le_bytes([b'/', b'f', 0, 0]));
+    // Revision 13's main memory in the testbench is a poison until written
+    // (`tb/cadr_machine_tb.cpp`), where muir's is zero: the words read
+    // before the device writes them are written 0 first.
+    if rev13() {
+        c.wr(&mut p, resp(0), 0);
+    }
     c.rd(&mut p, &mut k, resp(0));
     fd_command(&mut p, &mut c, 0, [fd_word0(0x1234, op::OPEN, 0), 0, FD_NAME, 2, 0, 0, 0], Some(1));
     c.rd(&mut p, &mut k, reg(0o165));
@@ -3326,6 +3698,9 @@ fn files_program() -> Prog {
     c.rd(&mut p, &mut k, reg(0o100));
     c.rd(&mut p, &mut k, reg(0o161));
     // READ sixteen bytes of it into B, whose line is cached first.
+    if rev13() {
+        c.wr(&mut p, buf(FD_B & 0o377), 0);
+    }
     c.rd(&mut p, &mut k, buf(FD_B & 0o377));
     fd_command(&mut p, &mut c, 1, [fd_word0(0x2345, op::READ, 0), 1, 0, 0, FD_B, 16, 0], Some(2));
     c.poll(&mut p, reg(0o170), 2);
@@ -3369,7 +3744,7 @@ fn files_program() -> Prog {
     // device still enabled.  Then `RESET-DEVICES`, word 104 (the Q9
     // amendment), which disables it.
     fd_command(&mut p, &mut c, 1, [fd_word0(0x6789, op::OPEN, 0), 0, FD_NAME, 2, 0, 0, 0], Some(2));
-    let (on, off) = (c.c(&mut p, 1 << 28), c.c(&mut p, 0));
+    let (on, off) = (c.c(&mut p, unibus_reset_flag()), c.c(&mut p, 0));
     p.to(on, fdest(DEST_INTCTL));
     p.fill(4);
     p.to(off, fdest(DEST_INTCTL));
@@ -3575,7 +3950,7 @@ const PREFETCH_ROWS: u64 = 1_250;
 fn fused_run(which: Which, phases: &[fused::Phase], timing: muir::clock::TimingModel) -> (u64, muir::rtl::Rtl) {
     let b = fused::program(phases);
     let park = *b.marks.last().unwrap();
-    let mut e = trace::engine_on(which.machine(&b.prog.prom()), timing);
+    let mut e = trace::engine_on(machine(which, &b.prog.prom()), timing);
     e.boot();
     for _ in 0..200_000u64 {
         if e.machine().opc as u64 == park {
@@ -3743,7 +4118,7 @@ fn cycles(name: &str, which: Which) -> u64 {
     match name {
         "clocks" if which == Which::Cadr => 1600,
         "busreset" if which == Which::Quux => 1200,
-        "map" => 450,
+        "map" | "features" => 450,
         "tv" => 560,
         "muldiv" => 540,
         "tick" => 1350,
@@ -3762,9 +4137,10 @@ fn cycles(name: &str, which: Which) -> u64 {
         "busreset" => 700,
         "startstart" => 600,
         "rtc" => RTC_ROWS,
+        "files" if rev13() => FILES_ROWS_13,
         "files" => FILES_ROWS,
         "unibus" => 3000,
-        "fused" => FUSED_ROWS,
+        "fused" | "returns" => FUSED_ROWS,
         "operand" => OPERAND_ROWS,
         "prefetch" => PREFETCH_ROWS,
         _ => unreachable!(),
@@ -3778,6 +4154,8 @@ const REGISTERS_ROWS: u64 = 26_500;
 /// The two programs of revision 9, run to their park and a little past it.
 const RTC_ROWS: u64 = 400;
 const FILES_ROWS: u64 = 2800;
+/// And on revision 13, whose program writes each command's word 7 as well.
+const FILES_ROWS_13: u64 = 3000;
 
 /// The clocks program on QUUX parks at microcycle 6,239 at a K of four; the
 /// CADR parks after its first few words.
@@ -3785,7 +4163,9 @@ const CLOCKS_ROWS: u64 = 6_500;
 
 fn program(name: &str) -> Prog {
     match name {
-        "map" => map_program(),
+        // `features` is `map` under another name, which revision 13's
+        // checks take, `golden/src/quux13.rs` having a `map` of its own.
+        "map" | "features" => map_program(),
         "tv" => tv_program(),
         "muldiv" => muldiv_program(),
         "tick" => tick_program(),
@@ -3806,7 +4186,9 @@ fn program(name: &str) -> Prog {
         "rtc" => rtc_program(),
         "files" => files_program(),
         "unibus" => unibus_program(),
-        "fused" => fused::program(&fused::fused_phases()).prog,
+        // `returns` is `fused` under another name, which revision 13's
+        // checks take, `golden/src/quux13.rs` having a `fused` of its own.
+        "fused" | "returns" => fused::program(&fused::fused_phases()).prog,
         "operand" => fused::program(&fused::operand_phases()).prog,
         "prefetch" => fused::program(&fused::prefetch_phases()).prog,
         _ => {
@@ -3867,14 +4249,15 @@ fn fd_events(e: &muir::rtl::Rtl, prod_before: u16, due_before: Option<u64>, last
         let i = prod.wrapping_sub(1) as u32;
         let r = resp_base + 8 * (i % resp_n);
         let c = cmd_base + 8 * (i % cmd_n);
-        let entry = |a: u32| m.main[a as usize] as u32;
+        // A word whole: 32 bits, and on revision 13 40, its tag with it.
+        let entry = |a: u32| m.main[a as usize];
         for w in 0..8 {
             println!("# fdw {:x} {:x}", r + w, entry(r + w));
         }
         let (opcode, st) = ((entry(c) >> 16) & 0xff, (entry(r) >> 16) & 0xff);
-        if st == 0 && matches!(opcode, op::READ | op::DIRECTORY | op::COMPLETE) {
-            let b = entry(c + 4);
-            for w in 0..entry(r + 1).div_ceil(4) {
+        if st == 0 && matches!(opcode as u32, op::READ | op::DIRECTORY | op::COMPLETE) {
+            let b = (entry(c + 4) & 0xfff_ffff) as u32;
+            for w in 0..(entry(r + 1) as u32 & 0xffff_ffff).div_ceil(4) {
                 println!("# fdw {:x} {:x}", b + w, entry(b + w));
             }
         }
@@ -3909,6 +4292,14 @@ fn main() {
         match a.as_str() {
             "--program" => name = it.next(),
             "--prom" => prom_only = true,
+            "--revision" => match it.next().as_deref() {
+                Some("13") if which == Which::Quux => REV13.store(true, std::sync::atomic::Ordering::Relaxed),
+                Some("12") => {}
+                v => {
+                    eprintln!("quux: --revision is 12, or 13 with --machine quux, not {v:?}");
+                    std::process::exit(2);
+                }
+            },
             _ => {
                 eprintln!("quux: unknown argument `{a}`");
                 std::process::exit(2);
@@ -3917,11 +4308,15 @@ fn main() {
     }
     let Some(name) = name else {
         eprintln!(
-            "usage: quux --program <name> [--machine cadr|quux] \
+            "usage: quux --program <name> [--machine cadr|quux [--revision 12|13]] \
              [--sync-cycle-ticks K [--sync-ilong-ticks L]] [--prom]"
         );
         std::process::exit(2);
     };
+    if rev13() && !PORTED_13.contains(&name.as_str()) {
+        eprintln!("quux: {name} is not ported to revision 13; the ported are {}", PORTED_13.join(", "));
+        std::process::exit(2);
+    }
     let prog = program(&name);
     let prom = prog.prom();
 
@@ -3934,12 +4329,13 @@ fn main() {
         return;
     }
 
-    let mut e = trace::engine_on(which.machine(&prom), timing);
+    let mut e = trace::engine_on(machine(which, &prom), timing);
     e.boot();
     println!("{}", trace::COLUMNS);
     println!(
-        "# generated by golden/src/quux.rs from muir's rtl engine: program {name}, machine: {}{}",
+        "# generated by golden/src/quux.rs from muir's rtl engine: program {name}, machine: {}{}{}",
         which.name(),
+        if rev13() { ", revision 13" } else { "" },
         machine_axis::timing_suffix(which, timing)
     );
     println!("{}", trace::RADIX);
@@ -3952,7 +4348,7 @@ fn main() {
     let mut presses: Vec<(u64, Vec<u32>)> = Vec::new();
     if name == "page" && which == Which::Quux {
         let (_, m1, m2) = page_program_marks();
-        let mut probe = trace::engine_on(which.machine(&prom), timing);
+        let mut probe = trace::engine_on(machine(which, &prom), timing);
         probe.boot();
         let mut pt = trace::Trace::new(&probe);
         let mut pending = vec![(m1, PAGE_KEYS_1.to_vec()), (m2, (0..PAGE_KEYS_2).map(page_key_2).collect())];
@@ -4021,11 +4417,21 @@ fn main() {
         }
     }
     assert!(rtc_sets.is_empty(), "rtc: the program reached both marks");
+    // On revision 13 every program runs to its park within its rows, and
+    // the trace says where the file device's bases ended, which the
+    // testbench reads through the readout (as `golden/src/quux13.rs`'s do).
+    if rev13() {
+        let park = prog.parked.expect("quux: every program parks");
+        assert!((park..=park + 1).contains(&(e.pc() as u64)), "quux: {name} on revision 13 ends at PC {:o}, not its park {park:o}", e.pc());
+        use muir::file_device as fd;
+        let dev = &e.machine().file_device;
+        println!("# fdbases {:x} {:x}", dev.read(fd::CMD_BASE, e.ns()), dev.read(fd::RESP_BASE, e.ns()));
+    }
     if let Some(dir) = scratch {
         let _ = std::fs::remove_dir_all(dir);
     }
     match name.as_str() {
-        "map" => check_map(which, e.machine()),
+        "map" | "features" => check_map(which, e.machine()),
         "tv" => check_tv(which, e.machine()),
         "muldiv" => check_muldiv(which, e.machine()),
         "tick" => check_tick(which, e.machine(), TICK_CLEARED_READS),
@@ -4046,7 +4452,7 @@ fn main() {
         "rtc" => check_rtc(which, e.machine()),
         "files" => check_files(which, e.machine()),
         "unibus" => check_unibus(which, e.machine()),
-        "fused" => check_fused(which, &e, fused::fused_phases(), timing),
+        "fused" | "returns" => check_fused(which, &e, fused::fused_phases(), timing),
         "operand" => {
             check_fused(which, &e, fused::operand_phases(), timing);
             check_operand(which, e.machine());

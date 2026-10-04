@@ -272,6 +272,9 @@ The fabric's side:
   command's entry is already in main memory as the processor wrote it.
 - `build/quux_rtc.quux.k4.pass` reads word 103 against muir's clock with the
   host setting it twice, once to the last second.
+- `build/quux13_files.quux.k4.pass` and `build/quux13_rtc.quux.k4.pass` run
+  the same two programs at revision 13, with the rings at its addresses and
+  the entries' words whole, 40 bits.
 - `build/quux_fd_face.pass` drives this page over AXI in the program's order,
   with the machine's register page behind it, and holds every rule above,
   including each ordering by the tick.

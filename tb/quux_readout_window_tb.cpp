@@ -28,6 +28,13 @@
 // against the register itself: the timer is set going, its word read, and
 // the flag must rise at exactly the tick the word says.
 //
+// **AND AT REVISION 13** (`QUUX13_TB` 1, the machine at `WORD_BITS` 40):
+// the same words at revision 13's widths and sizes --- 40-bit words in the
+// PDL buffer, M 31 and the prefetch's word, a level-1 map of 8,192 7-bit
+// entries and a level-2 map of 4,096 28-bit ones, 28-bit addresses in the
+// prefetch and the file device's bases, the bases' two words 7 and 10, and
+// MACHINE-ID's low half in entry 21.
+//
 // **AND ON THE CADR NONE OF IT IS THERE.**  Built with `QUUX_TB` 0 the same
 // addresses must read `RO_NO_MEMORY`, which is how `cadr-checkpoint` tells
 // the two bitstreams apart and refuses the wrong machine's checkpoint.
@@ -44,6 +51,12 @@
 
 #ifndef QUUX_TB
 #error "QUUX_TB is 1 for a QUUX build of cadr_machine and 0 for a CADR one"
+#endif
+#ifndef QUUX13_TB
+#define QUUX13_TB 0
+#endif
+#if QUUX13_TB && !QUUX_TB
+#error "QUUX13_TB is QUUX's revision 13"
 #endif
 #if QUUX_TB
 #ifndef SYNC_K_TB
@@ -63,6 +76,25 @@ constexpr unsigned kSelAmem = 2, kSelMmem = 3;
 // `RG_QUUX_MACRO` and on).
 constexpr unsigned kRgQuuxId = 21, kRgTime = 22, kRgCount = 23, kRgConf = 26, kRgMacro = 29,
                    kRgLast = 40;
+
+// The widths and sizes the words are read at: revision 12's, or 13's.
+#if QUUX13_TB
+constexpr unsigned kWordBits = 40, kVaddrBits = 28, kPhysBits = 28, kFdBaseBits = 28;
+constexpr unsigned kL1Bits = 7, kL1Entries = 8192, kL2Bits = 28, kL2Entries = 4096;
+constexpr uint64_t kRevLow = 0x00D4;
+#else
+constexpr unsigned kWordBits = 32, kVaddrBits = 24, kPhysBits = 22, kFdBaseBits = 24;
+constexpr unsigned kL1Bits = 6, kL1Entries = 2048, kL2Bits = 24, kL2Entries = 2048;
+constexpr uint64_t kRevLow = 0;
+#endif
+constexpr uint64_t kWordMask = (1ull << kWordBits) - 1;
+
+// A value into a register or an array word of whatever width Verilator gave
+// it.
+template <class T>
+void Put(T &slot, uint64_t v) {
+  slot = static_cast<T>(v);
+}
 
 int fails = 0;
 long checks = 0;
@@ -224,7 +256,7 @@ int main(int argc, char **argv) {
   {
     const uint64_t w = Window(kSelRegs, kRgQuuxId);
     const uint64_t want = (0x5155ull << 32) | (static_cast<uint64_t>(SYNC_K_TB) << 24) |
-                          (static_cast<uint64_t>(SYNC_L_TB) << 16);
+                          (static_cast<uint64_t>(SYNC_L_TB) << 16) | kRevLow;
     Check(w == want, "entry 21 read 0x%012" PRIx64 ", wanting QUUX's 0x%012" PRIx64, w, want);
     Check(Window(kSelRegs, kRgLast + 1) == kNoMemory, "entry 41 is not RO_NO_MEMORY");
   }
@@ -234,11 +266,12 @@ int main(int argc, char **argv) {
   // The top of each: a window one bit too narrow reads another word there.
   {
     struct { const char *what; unsigned sel, addr, bits; } at[] = {
-        {"the PDL buffer's word 16383", kSelPdl, 16383, 32},
-        {"the PDL buffer's word 1024", kSelPdl, 1024, 32},
-        {"the level-1 map's entry 2047", kSelMap1, 2047, 6},
-        {"the level-2 map's entry 2047", kSelMap2, 2047, 24},
-        {"the level-2 map's entry 1024", kSelMap2, 1024, 24},
+        {"the PDL buffer's word 16383", kSelPdl, 16383, kWordBits},
+        {"the PDL buffer's word 1024", kSelPdl, 1024, kWordBits},
+        {"the level-1 map's last entry", kSelMap1, kL1Entries - 1, kL1Bits},
+        {"the level-1 map's middle entry", kSelMap1, kL1Entries / 2, kL1Bits},
+        {"the level-2 map's last entry", kSelMap2, kL2Entries - 1, kL2Bits},
+        {"the level-2 map's entry 1024", kSelMap2, 1024, kL2Bits},
         {"the boot PROM's word 1023", kSelProm, 1023, 48},
     };
     for (auto &a : at) {
@@ -246,9 +279,9 @@ int main(int argc, char **argv) {
       // loses is a one.
       const uint64_t v = Poison(a.sel, a.addr, a.bits) | (1ull << (a.bits - 1));
       switch (a.sel) {
-        case kSelPdl: PROC(pdl)[a.addr] = static_cast<uint32_t>(v); break;
-        case kSelMap1: PROC(l1_map)[a.addr] = static_cast<uint8_t>(v); break;
-        case kSelMap2: PROC(l2_map)[a.addr] = static_cast<uint32_t>(v); break;
+        case kSelPdl: Put(PROC(pdl)[a.addr], v); break;
+        case kSelMap1: Put(PROC(l1_map)[a.addr], v); break;
+        case kSelMap2: Put(PROC(l2_map)[a.addr], v); break;
         default: PROC(prom_mem)[a.addr] = v; break;
       }
       // And the word below it different, so an address that lost its top
@@ -432,8 +465,8 @@ int main(int argc, char **argv) {
   // and the three indexes; and the handles open and the host's claim, which
   // `cadr-checkpoint` refuses a checkpoint on.
   for (int round = 0; round < 2; ++round) {
-    FD(cmd_base) = static_cast<uint32_t>(Poison(60 + round, 0, 24));
-    FD(resp_base) = static_cast<uint32_t>(Poison(60 + round, 1, 24));
+    FD(cmd_base) = static_cast<uint32_t>(Poison(60 + round, 0, kFdBaseBits));
+    FD(resp_base) = static_cast<uint32_t>(Poison(60 + round, 1, kFdBaseBits));
     FD(cmd_log2) = round ? 8 : 3;
     FD(resp_log2) = round ? 1 : 7;
     FD(prod) = static_cast<uint16_t>(Poison(60 + round, 2, 16));
@@ -447,8 +480,16 @@ int main(int argc, char **argv) {
     FD(handles) = round ? 64 : 0xA5;
     Tick();
     const uint64_t b = Window(kSelPage, 7);
+#if QUUX13_TB
+    // Revision 13's 28-bit bases: the command ring's in word 7, the
+    // response ring's in word 10.
+    Check(b == FD(cmd_base), "word 7 read 0x%012" PRIx64 ", the command ring's base", b);
+    const uint64_t b10 = Window(kSelPage, 10);
+    Check(b10 == FD(resp_base), "word 10 read 0x%012" PRIx64 ", the response ring's base", b10);
+#else
     Check(b == ((static_cast<uint64_t>(FD(cmd_base)) << 24) | FD(resp_base)),
           "word 7 read 0x%012" PRIx64 ", the rings' bases", b);
+#endif
     const uint64_t x = Window(kSelPage, 8);
     Check(x == ((static_cast<uint64_t>(FD(prod)) << 32) | (static_cast<uint64_t>(FD(cons)) << 16) |
                 FD(resp_cons)),
@@ -480,7 +521,7 @@ int main(int argc, char **argv) {
     PROC(macro_opr_arg) = 1;
     PROC(macro_opr_delta) = static_cast<uint8_t>(Poison(29, 4, 6));
     PROC(macro_m31_v) = 1;
-    PROC(macro_m31_w) = static_cast<uint32_t>(Poison(29, 5, 32));
+    Put(PROC(macro_m31_w), Poison(29, 5, kWordBits));
     PROC(a31_from_m31) = 1;
     PROC(macro_fused_n) = static_cast<uint32_t>(Poison(29, 6, 32));
     PROC(macro_opr_n) = static_cast<uint32_t>(Poison(29, 7, 32));
@@ -488,11 +529,11 @@ int main(int argc, char **argv) {
     // The prefetch's view is taken from the memory port's buffer at every
     // master clock edge, so the buffer is what is set.
     PORT(pf_v) = 1;
-    PORT(pf_vaddr_q) = static_cast<uint32_t>(Poison(29, 9, 24));
-    PORT(pf_phys) = static_cast<uint32_t>(Poison(29, 10, 22));
-    PORT(pf_word) = static_cast<uint32_t>(Poison(29, 11, 32));
+    PORT(pf_vaddr_q) = static_cast<uint32_t>(Poison(29, 9, kVaddrBits));
+    PORT(pf_phys) = static_cast<uint32_t>(Poison(29, 10, kPhysBits));
+    Put(PORT(pf_word), Poison(29, 11, kWordBits));
     PORT(pf_fetch_v) = 1;
-    PORT(pf_fetch_vaddr_q) = static_cast<uint32_t>(Poison(29, 12, 24));
+    PORT(pf_fetch_vaddr_q) = static_cast<uint32_t>(Poison(29, 12, kVaddrBits));
     for (int i = 0; i < 16; ++i) Tick();
     const uint64_t want[12] = {
         reg,
@@ -503,10 +544,10 @@ int main(int argc, char **argv) {
         PROC(macro_fused_n),
         PROC(macro_opr_n),
         PROC(macro_pf_n),
-        (1ull << 24) | PORT(pf_vaddr_q),
+        (1ull << kVaddrBits) | PORT(pf_vaddr_q),
         PORT(pf_phys),
         PORT(pf_word),
-        (1ull << 24) | PORT(pf_fetch_vaddr_q),
+        (1ull << kVaddrBits) | PORT(pf_fetch_vaddr_q),
     };
     for (unsigned i = 0; i < 12; ++i) {
       const uint64_t w = Window(kSelRegs, kRgMacro + i);
@@ -520,23 +561,24 @@ int main(int argc, char **argv) {
       Check(w == v, "the MACRO DISPATCH MEMORY's entry %u read 0x%012" PRIx64 ", holding 0x%05x", a,
             w, v);
     }
-    const uint32_t m31 = static_cast<uint32_t>(Poison(29, 13, 32));
-    PROC(m31_r) = m31;
+    const uint64_t m31 = Poison(29, 13, kWordBits);
+    Put(PROC(m31_r), m31);
     // M 31 is octal, `M-INST-BUFFER`: word 25.
-    PROC(mmem)[031] = ~m31;
-    PROC(amem)[031] = ~m31 ^ 1u;
+    Put(PROC(mmem)[031], ~m31 & kWordMask);
+    Put(PROC(amem)[031], (~m31 ^ 1u) & kWordMask);
     uint64_t r = Window(kSelMmem, 031);
-    Check(r == m31, "M 31 read 0x%012" PRIx64 ", its register holding 0x%08x", r, m31);
+    Check(r == m31, "M 31 read 0x%012" PRIx64 ", its register holding 0x%010" PRIx64, r, m31);
     r = Window(kSelAmem, 031);
-    Check(r == m31, "A 31 read 0x%012" PRIx64 ", M 31's register 0x%08x", r, m31);
+    Check(r == m31, "A 31 read 0x%012" PRIx64 ", M 31's register 0x%010" PRIx64, r, m31);
     PROC(a31_from_m31) = 0;
     r = Window(kSelAmem, 031);
-    Check(r == (~m31 ^ 1u), "A 31 read 0x%012" PRIx64 ", A memory's 0x%08x", r, ~m31 ^ 1u);
+    Check(r == ((~m31 ^ 1u) & kWordMask), "A 31 read 0x%012" PRIx64 ", A memory's 0x%010" PRIx64, r,
+          (~m31 ^ 1u) & kWordMask);
     Check(Window(kSelMmem, 030) == PROC(mmem)[030], "M 30 is M memory's");
   }
 
   // ---- and nothing else answers there ------------------------------------
-  for (unsigned a : {10u, 11u, 63u, 128u, 1000u, 16383u}) {
+  for (unsigned a : {QUUX13_TB ? 11u : 10u, 11u, 63u, 128u, 1000u, 16383u}) {
     const uint64_t w = Window(kSelPage, a);
     Check(w == kNoMemory, "selector 12 word %u read 0x%012" PRIx64 ", not RO_NO_MEMORY", a, w);
   }
@@ -547,7 +589,7 @@ int main(int argc, char **argv) {
 #endif
 
   std::printf("quux_readout_window: %s, %ld checks, %ld ticks, %d failed\n",
-              QUUX_TB ? "QUUX" : "the CADR", checks, ticks, fails);
+              QUUX13_TB ? "QUUX revision 13" : QUUX_TB ? "QUUX" : "the CADR", checks, ticks, fails);
   delete dut;
   return fails ? 1 : 0;
 }

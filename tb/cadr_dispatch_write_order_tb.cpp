@@ -37,6 +37,14 @@
 // A program ends in a jump to itself, so its end state does not depend on
 // how many microcycles run past that point; the golden says how many run and
 // this runs as many.
+//
+// AND AT REVISION 13 (the golden's header says `revision 13`, the machine
+// built at `WORD_BITS` 40): revision 13's sizes --- a dispatch memory of
+// 4,096, a level-1 map of 8,192 and a level-2 map of 4,096 --- 40-bit words
+// at the end, and main memory as packed storage from `QUUX13_TB_BASE`, five
+// bytes a word, filled five beats a line of eight and written five bytes a
+// word, `tb/cadr_machine_tb.cpp`'s layout; a byte nothing wrote is zero, as
+// muir's main memory is.
 
 #include <algorithm>
 #include <cerrno>
@@ -83,9 +91,9 @@ struct Program {
   std::vector<std::pair<uint32_t, uint32_t>> l2, dmem, main;
   uint32_t speed = 0;   // {SPEED1, SPEED0} of the mode register at the boot
   std::vector<Row> trace;
-  std::vector<uint32_t> mmem, spc;
-  uint32_t spcptr = 0;
-  std::map<uint32_t, uint32_t> end_dmem, end_l1, end_l2, end_pdl;
+  std::vector<uint64_t> mmem, spc;
+  uint64_t spcptr = 0;
+  std::map<uint32_t, uint64_t> end_dmem, end_l1, end_l2, end_pdl;
 };
 
 bool ParseRow(const char *p, Row &r) {
@@ -98,13 +106,13 @@ bool ParseRow(const char *p, Row &r) {
   return true;
 }
 
-std::vector<uint32_t> Words(const char *p) {
-  std::vector<uint32_t> out;
+std::vector<uint64_t> Words(const char *p) {
+  std::vector<uint64_t> out;
   for (;;) {
     char *end = nullptr;
-    const unsigned long v = std::strtoul(p, &end, 16);
+    const unsigned long long v = std::strtoull(p, &end, 16);
     if (end == p) break;
-    out.push_back(static_cast<uint32_t>(v));
+    out.push_back(static_cast<uint64_t>(v));
     p = end;
   }
   return out;
@@ -114,9 +122,15 @@ std::vector<uint32_t> Words(const char *p) {
 // `machine: quux`, and the fabric under test is then built as QUUX.  QUUX's
 // level 2 is 2048 entries and its PDL 16K words, and it has no hung
 // microcycle, so the two bounds a hung write is held to are not reached.
-bool quux = false;
-size_t L2Words() { return quux ? 2048 : 1024; }
+bool quux = false, rev13 = false;
+size_t L2Words() { return rev13 ? 4096 : quux ? 2048 : 1024; }
 size_t PdlWords() { return quux ? 16384 : 1024; }
+size_t L1Words() { return rev13 ? 8192 : 2048; }
+size_t DmemWords() { return rev13 ? 4096 : 2048; }
+#ifndef QUUX13_TB_BASE
+#define QUUX13_TB_BASE 0x12000000u
+#endif
+constexpr uint32_t kMain13Base = QUUX13_TB_BASE;
 
 bool Load(const char *path, std::vector<Program> &all) {
   std::FILE *f = std::fopen(path, "r");
@@ -128,6 +142,7 @@ bool Load(const char *path, std::vector<Program> &all) {
   Program *p = nullptr;
   while (std::fgets(line, sizeof line, f)) {
     if (line[0] == '#' && std::strstr(line, "machine: quux")) quux = true;
+    if (line[0] == '#' && std::strstr(line, "revision 13")) rev13 = true;
     if (line[0] == '#' || line[0] == '\n') continue;
     char tag[32] = {0}, sub[32] = {0};
     unsigned long long a = 0, b = 0;
@@ -163,12 +178,13 @@ bool Load(const char *path, std::vector<Program> &all) {
       else if (s == "spc") p->spc = Words(rest);
       else if (s == "spcptr") p->spcptr = Words(rest).at(0);
       else {
-        const std::vector<uint32_t> w = Words(rest);
+        const std::vector<uint64_t> w = Words(rest);
         if (w.size() != 2) return false;
-        if (s == "dmem") p->end_dmem[w[0]] = w[1];
-        else if (s == "l1") p->end_l1[w[0]] = w[1];
-        else if (s == "l2") p->end_l2[w[0]] = w[1];
-        else if (s == "pdl") p->end_pdl[w[0]] = w[1];
+        const uint32_t at = static_cast<uint32_t>(w[0]);
+        if (s == "dmem") p->end_dmem[at] = w[1];
+        else if (s == "l1") p->end_l1[at] = w[1];
+        else if (s == "l2") p->end_l2[at] = w[1];
+        else if (s == "pdl") p->end_pdl[at] = w[1];
         else return false;
       }
     } else if (std::strncmp(line, "done", 4) == 0) {
@@ -186,7 +202,7 @@ bool Load(const char *path, std::vector<Program> &all) {
 // list: a word the list does not name must be zero.
 template <typename Array>
 int Memory(const Program &p, const char *what, const Array &fabric, size_t n,
-           const std::map<uint32_t, uint32_t> &want) {
+           const std::map<uint32_t, uint64_t> &want) {
   int bad = 0;
   for (size_t k = 0; k < n; ++k) {
     const auto it = want.find(static_cast<uint32_t>(k));
@@ -232,8 +248,8 @@ int Run(const Program &p, Totals &tot) {
 #define PROC(x) root->cadr_machine__DOT__processor__DOT__##x
   for (size_t k = 0; k < 1024; ++k) PROC(prom_mem)[k] = k < p.prom.size() ? p.prom[k] : 0;
   for (const auto &e : p.imem) PROC(imem)[e.first] = e.second;
-  for (size_t k = 0; k < 2048; ++k) PROC(dmem)[k] = 0;
-  for (size_t k = 0; k < 2048; ++k) PROC(l1_map)[k] = 0;
+  for (size_t k = 0; k < DmemWords(); ++k) PROC(dmem)[k] = 0;
+  for (size_t k = 0; k < L1Words(); ++k) PROC(l1_map)[k] = 0;
   for (size_t k = 0; k < L2Words(); ++k) PROC(l2_map)[k] = 0;
   for (size_t k = 0; k < 1024; ++k) PROC(amem)[k] = 0;
   for (size_t k = 0; k < PdlWords(); ++k) PROC(pdl)[k] = 0;
@@ -243,6 +259,16 @@ int Run(const Program &p, Totals &tot) {
   for (const auto &e : p.dmem) PROC(dmem)[e.first] = e.second;
   std::map<uint32_t, uint32_t> mem;
   for (const auto &e : p.main) mem[e.first] = e.second;
+  // Revision 13's main memory, bytes of packed storage, zero where nothing
+  // wrote; the program's words placed five bytes a word.
+  std::map<uint32_t, uint8_t> mem13;
+  auto byte13 = [&](uint32_t a) -> uint8_t {
+    const auto it = mem13.find(a);
+    return it == mem13.end() ? 0 : it->second;
+  };
+  for (const auto &e : p.main)
+    for (int b = 0; b < 5; ++b)
+      mem13[kMain13Base + 5u * e.first + b] = static_cast<uint8_t>(static_cast<uint64_t>(e.second) >> (8 * b));
 
   // When -MEMACK is due for the bus cycle a row starts: the first nonzero
   // `ack` at or after that row, as `tb/cadr_machine_tb.cpp` finds it.
@@ -324,6 +350,27 @@ int Run(const Program &p, Totals &tot) {
       if (q_due < 0) q_due = t + 1 + static_cast<long>(q_rng() % 5);
       if (t >= q_due) {
         const uint32_t w = (dut->mem_addr - kMainBase) / 4;
+        if (!q_answered && rev13) {
+          // Revision 13: a line of eight words in five beats, or a word's
+          // five bytes written; a single read the port never makes.
+          q_answered = true;
+          const uint32_t a = dut->mem_addr;
+          constexpr int kRlineWords = static_cast<int>(sizeof(dut->mem_rline) / 4);
+          if (dut->mem_line && !dut->mem_write) {
+            for (int x = 0; x < kRlineWords; ++x) dut->mem_rline[x] = 0;
+            for (int b = 0; b < 8 * dut->mem_beats && b / 4 < kRlineWords; ++b)
+              dut->mem_rline[b / 4] |= static_cast<uint32_t>(byte13(a + b)) << (8 * (b % 4));
+            ++tot.reads;
+          } else if (dut->mem_write) {
+            for (int b = 0; b < 5; ++b)
+              mem13[a + b] = static_cast<uint8_t>(static_cast<uint64_t>(dut->mem_wdata) >> (8 * b));
+            ++tot.writes;
+          } else {
+            std::fprintf(stderr, "FAIL: %s: a single read of main memory at %08x, which revision 13's "
+                         "port never makes\n", p.name.c_str(), a);
+            ++bad;
+          }
+        }
         if (!q_answered) {
           q_answered = true;
           if (dut->mem_line) {
@@ -436,24 +483,24 @@ int Run(const Program &p, Totals &tot) {
 
   // The end state, every word.
   for (size_t i = 0; i < 32; ++i) {
-    if (PROC(mmem)[i] != p.mmem.at(i)) {
-      std::fprintf(stderr, "FAIL: %s: M[%zo] is %" PRIo32 ", rtl has %" PRIo32 "\n",
-                   p.name.c_str(), i, static_cast<uint32_t>(PROC(mmem)[i]), p.mmem.at(i));
+    if (static_cast<uint64_t>(PROC(mmem)[i]) != p.mmem.at(i)) {
+      std::fprintf(stderr, "FAIL: %s: M[%zo] is %" PRIo64 ", rtl has %" PRIo64 "\n",
+                   p.name.c_str(), i, static_cast<uint64_t>(PROC(mmem)[i]), p.mmem.at(i));
       ++bad;
     }
     if ((PROC(spcm)[i] & 0x7ffffu) != (p.spc.at(i) & 0x7ffffu)) {
-      std::fprintf(stderr, "FAIL: %s: SPC[%zo] is %" PRIo32 ", rtl has %" PRIo32 "\n",
+      std::fprintf(stderr, "FAIL: %s: SPC[%zo] is %" PRIo32 ", rtl has %" PRIo64 "\n",
                    p.name.c_str(), i, static_cast<uint32_t>(PROC(spcm)[i]), p.spc.at(i));
       ++bad;
     }
   }
   if (PROC(spcptr) != p.spcptr) {
-    std::fprintf(stderr, "FAIL: %s: SPCPTR is %u, rtl has %u\n", p.name.c_str(),
+    std::fprintf(stderr, "FAIL: %s: SPCPTR is %u, rtl has %" PRIu64 "\n", p.name.c_str(),
                  static_cast<unsigned>(PROC(spcptr)), p.spcptr);
     ++bad;
   }
-  bad += Memory(p, "the dispatch memory", PROC(dmem), 2048, p.end_dmem);
-  bad += Memory(p, "the level-1 map", PROC(l1_map), 2048, p.end_l1);
+  bad += Memory(p, "the dispatch memory", PROC(dmem), DmemWords(), p.end_dmem);
+  bad += Memory(p, "the level-1 map", PROC(l1_map), L1Words(), p.end_l1);
   bad += Memory(p, "the level-2 map", PROC(l2_map), L2Words(), p.end_l2);
   bad += Memory(p, "the PDL", PROC(pdl), PdlWords(), p.end_pdl);
 #ifdef CADR_GAP_MONITOR
@@ -502,10 +549,11 @@ int main(int argc, char **argv) {
     std::printf("  %-26s %s\n", p.name.c_str(), bad ? "DIFFERS" : "agrees");
     if (bad) ++failed;
   }
-  std::printf("dispatch_write_order: %zu programs, %ld microcycles, %ld dispatch writes, "
+  std::printf("dispatch_write_order%s: %zu programs, %ld microcycles, %ld dispatch writes, "
               "%ld microcycles held by -WAIT or -HANG, "
               "%ld reads and %ld writes of main memory\n",
-              all.size(), tot.rows, tot.disp_writes, tot.stalls, tot.reads, tot.writes);
+              rev13 ? " (revision 13)" : "", all.size(), tot.rows, tot.disp_writes, tot.stalls, tot.reads,
+              tot.writes);
   // The model's placement is the stimulus the whole check stands on, so it is
   // held here rather than trusted: every -MEMACK where muir's is.
   long slipped = 0;
