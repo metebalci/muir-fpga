@@ -90,6 +90,18 @@ that is skipped is not a guard. The header also says why Buildroot's own
 `packages-file-list.txt` cannot be the oracle, which is that it still names
 packages deleted a day earlier.
 
+The same script asks that every package's symbol is in the built `.config`,
+so that a package whose `Config.in` is not sourced cannot silently leave the
+image. Kconfig writes no line at all for a symbol whose `depends on` does not
+hold, so a package that exists for one board only, such as the Kria KR260's
+`cadr-displayport`, is absent from every other board's `.config`. The script
+accepts that absence only after it has evaluated the package's `depends on`
+and found it unmet. `make check` holds this without Buildroot:
+`tools/br_kconfig_check.py` writes the lines Kconfig would write for each
+board's defconfig and runs the script against them. Each board's file must
+be accepted, and each copy with one written package symbol removed must be
+refused.
+
 **The start-up routine is the same one, proved rather than assumed.** U-Boot's
 SPL runs `ps7_init()` and `ps7_post_config()` from a `ps7_init_gpl.c`, as
 Digilent's FSBL did. Ours is generated from

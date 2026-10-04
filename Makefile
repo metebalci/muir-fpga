@@ -165,7 +165,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/de25_pins.pass $(BUILD)/de25.pass $(BUILD)/de25_faces.pass \
        $(BUILD)/de25_jtag.pass $(BUILD)/mem_map.pass $(BUILD)/reserved.pass \
        $(BUILD)/de25_linux.pass $(BUILD)/kr260_linux.pass $(BUILD)/rootfs_packages.pass \
-       $(BUILD)/br_force.pass \
+       $(BUILD)/br_force.pass $(BUILD)/br_kconfig.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.pass) \
        muir-pin current
@@ -5147,6 +5147,21 @@ $(BUILD)/br_force.pass: tools/br_force_check.py $(BR_DEFCONFIGS) Makefile \
 	    python3 tools/br_force_check.py $$d $(BR_EXTERNAL)/package $$w/forced; \
 	done
 	@rm -rf $(BUILD)/br_force
+	@touch $@
+
+# **AND THE IMAGE CHECK'S CONFIGURATION QUESTION, ASKED OF EACH DEFCONFIG.**
+# `post-build.sh` asks that every package's symbol is in the built `.config`;
+# Kconfig writes no line for a symbol whose `depends on` is unmet, which is
+# every board's cadr-displayport but the Kria KR260's, and a check that read
+# that absence as a missing source line stopped the other boards' builds.
+# `tools/br_kconfig_check.py` writes the lines Kconfig would write for this
+# tree's symbols from each defconfig, with no Buildroot, and runs the real
+# `post-build.sh` against them.
+BR_POST_BUILD := $(BR_EXTERNAL)/board/arty-z7-20/post-build.sh
+$(BUILD)/br_kconfig.pass: tools/br_kconfig_check.py $(BR_POST_BUILD) $(BR_DEFCONFIGS) Makefile \
+                          $(wildcard $(BR_EXTERNAL)/package/*/*.mk) \
+                          $(wildcard $(BR_EXTERNAL)/package/*/Config.in) | $(BUILD)
+	python3 tools/br_kconfig_check.py $(BR_POST_BUILD) $(BR_EXTERNAL)/package $(BUILD)/br_kconfig $(BR_DEFCONFIGS)
 	@touch $@
 
 # The image is opened and compared against the target tree it was made from,

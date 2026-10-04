@@ -3802,6 +3802,11 @@ def check_makefile():
     # boards' defconfigs, with nothing verilated; it was shown to catch the
     # fault it exists for by restoring that fault (U-Boot forced on the Kria
     # KR260, which selects none).
+    # `br_kconfig` is Python and the image check `post-build.sh` over the four
+    # boards' defconfigs, with nothing verilated; it was shown to catch the
+    # fault it exists for by running it on the check 3a that read a symbol
+    # Kconfig does not write (an unmet `depends on`) as a missing source line:
+    # the Arty Z7-20, the Cora Z7-07S and the DE25-Nano refused.
     # `checkpoint_quux` is `checkpoint`'s QUUX half and closed its way: its
     # mutants, 9 to 16, are `chk_rtl.c`'s own behind `CHK_MUTATE`, judged by
     # muir and by muir's own file for the same machine in its own rule.
@@ -3809,7 +3814,7 @@ def check_makefile():
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora",
                            "de25_pins", "de25_linux", "kr260_linux", "displayport",
-                           "br_force", "machine_guard"}
+                           "br_force", "br_kconfig", "machine_guard"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four

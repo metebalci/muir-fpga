@@ -54,8 +54,9 @@
 #      expected set makes check 1 vacuous, and a check that cannot fail is not
 #      a check.  It also catches a package that built and did not install.
 #   3. CONFIGURED.  Every config symbol a package declares must appear in the
-#      built `.config`, and every `BR2_PACKAGE_CADR_*=y` in a defconfig must be
-#      a symbol some package declares.  A half-done rename --- the directory
+#      built `.config` unless its own `depends on` is unmet there, and every
+#      `BR2_PACKAGE_CADR_*=y` in a defconfig must be a symbol some package
+#      declares.  A half-done rename --- the directory
 #      moved and Config.in or the defconfig not --- silently drops the package
 #      from the image, and then checks 1 and 2 agree about a smaller machine
 #      than the one that was asked for.
@@ -92,6 +93,32 @@ CONFIG=${BR2_CONFIG:-}
 say()  { echo "the image and the packages: $*"; }
 die()  { echo "the image and the packages: $*" >&2; exit 1; }
 
+# The `depends on` expressions of the `config <sym>` entry in <Config.in>,
+# one a line (Kconfig ANDs them): the lines after `config <sym>` up to the
+# next entry (config, menuconfig, comment, menu, choice, if, source, end*) or
+# the entry's help, so neither a `comment`'s own `depends on` nor the words of
+# a help text are taken for the package's.
+depends_of() {
+	awk -v sym="$2" '
+		$1 == "config" && $2 == sym { on = 1; next }
+		on && $1 ~ /^(config|menuconfig|comment|menu|choice|if|source|end[a-z]*|help|---help---)$/ { exit }
+		on && $1 == "depends" && $2 == "on" { sub(/^[ \t]*depends[ \t]+on[ \t]+/, ""); print }
+	' "$1"
+}
+# Whether a `depends on` expression holds in $CONFIG.  Only what the packages
+# here write is understood: symbols, `!symbol`, joined by `&&`.  Anything else
+# (`||`, parentheses, comparisons) stops the build rather than be guessed at.
+depends_met() {
+	for term in $(echo "$1" | sed 's/&&/ /g'); do
+		case $term in
+			!BR2_[A-Z0-9_]*) ! grep -qx "${term#!}=y" "$CONFIG" || return 1 ;;
+			BR2_[A-Z0-9_]*)  grep -qx "$term=y" "$CONFIG" || return 1 ;;
+			*) die "a dependency term this check cannot evaluate: '$term' in '$1'" ;;
+		esac
+	done
+	return 0
+}
+
 [ -f "$CONFIG" ] || die "no Buildroot .config at $CONFIG; nothing to check against"
 [ -d "$PKGDIR" ] || die "no package directory at $PKGDIR"
 
@@ -126,11 +153,21 @@ for pkg in "$PKGDIR"/*/; do
 	[ -n "$sym" ] || die "$name/Config.in declares no BR2_PACKAGE_ symbol"
 	declared="$declared $sym"
 
-	# check 3a: kconfig has seen it, so boards/arty-z7-20/linux/buildroot/Config.in sources it
-	grep -qE "^($sym=|# $sym is not set)" "$CONFIG" \
-		|| die "$name declares $sym and the built .config has never heard of it:
+	# check 3a: kconfig has seen it, so boards/arty-z7-20/linux/buildroot/Config.in sources it.
+	# Kconfig writes no line at all for a symbol whose `depends on` is unmet,
+	# so such a symbol's absence says nothing about the source line: the
+	# Kria KR260's cadr-displayport on every other board.  Its absence is
+	# accepted only when its dependency is evaluated and found unmet here.
+	if ! grep -qE "^($sym=|# $sym is not set)" "$CONFIG"; then
+		deps=$(depends_of "$pkg/Config.in" "$sym")
+		if [ -n "$deps" ] && ! depends_met "$deps"; then
+			say "$name is not on this board: $sym depends on" $deps
+			continue
+		fi
+		die "$name declares $sym and the built .config has never heard of it:
     boards/arty-z7-20/linux/buildroot/Config.in does not source $name/Config.in, so the package
     is not in the image at all.  Add the source line."
+	fi
 
 	grep -qx "$sym=y" "$CONFIG" || continue
 	packages=$((packages + 1))
