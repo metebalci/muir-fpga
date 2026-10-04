@@ -25,6 +25,34 @@ reports none.
 
 ## From a clean tree
 
+These fits were built from `d0bd127`, the release candidate for Systems
+1003 and 2001: the color map shown as 377 minus the stored value, with muir
+pinned at `071f9a6`. The Kria KR260's QUUX is 1920 by 1080 and the other
+boards' 1280 by 1024. Revision 13 is at five ticks on the Arty Z7-20 and
+four on the DE25-Nano and the Kria KR260. Every stamp reads `d0bd1270`, the
+tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | CADR | +0.243 ns | +0.014 ns | 15,107 of 53,200 LUTs, 28.40% | 46 of 140 BRAM tiles | 5,660 of 13,300 | `d0bd127` | clean | 2026-10-04 |
+| Arty Z7-20 | QUUX revision 13, K = 5 | +0.183 ns | +0.029 ns | 22,608 of 53,200 LUTs, 42.50% | 84 of 140 BRAM tiles | 6,807 of 13,300 | `d0bd127` | clean | 2026-10-04 |
+| Cora Z7-07S | CADR | +0.393 ns | +0.033 ns | 13,975 of 14,400 LUTs, 97.05% | 43 of 50 BRAM tiles | 4,331 of 4,400 | `d0bd127` | clean | 2026-10-04 |
+| Kria KR260 | CADR | +1.961 ns | +0.010 ns | 15,308 of 117,120 LUTs, 13.07% | 41 of 144 BRAM tiles | 3,294 of 14,640 CLBs | `d0bd127` | clean | 2026-10-04 |
+| Kria KR260 | QUUX revision 13, K = 4 | +1.473 ns | +0.010 ns | 22,891 of 117,120 LUTs, 19.54% | 76 of 144 BRAM tiles | 4,483 of 14,640 CLBs | `d0bd127` | clean | 2026-10-04 |
+| DE25-Nano | CADR | +2.238 ns | 0.000 ns | 16,515 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `d0bd127` | clean | 2026-10-04 |
+| DE25-Nano | QUUX revision 13 | +1.613 ns | +0.001 ns | 29,779 of 46,800 ALMs, 64% | 205 of 358 M20K | --- | `d0bd127` | clean | 2026-10-04 |
+
+Each passed its RAM enable check: the Arty Z7-20's over 98 and 131 ports,
+the Cora Z7-07S's over 92, and the Kria KR260's over 88 and 119. The
+DE25-Nano's synthesis read back each machine, word and PROM image by name.
+
+Against the fits from `6a4e960` below, the Cora Z7-07S's figures are the
+same. The Kria KR260's QUUX lost 0.358 ns; its worst path is the machine's
+reset into a register of the memory port's cache, with no logic between
+them, so the slack is where the router put that net. The DE25-Nano's QUUX
+lost 0.386 ns, inside the +1.564 ns to +2.155 ns it had measured before. The
+Arty Z7-20's QUUX gained 0.058 ns and the Kria KR260's CADR 0.388 ns.
+
 These fits were built from `6a4e960`, the video controller's size and the
 board name per board, with muir pinned at `91ce0c9`. The Kria KR260's QUUX
 is 1920 by 1080 and the other boards' 1280 by 1024. Revision 13 is at five
