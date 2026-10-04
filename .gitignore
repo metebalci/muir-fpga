@@ -80,3 +80,8 @@ boards/*/local.conf
 
 # Handovers from sibling projects, each with a note of its source commit.
 ref/
+
+# Vivado's router writes its congestion report into the directory it runs
+# from, the tree's top in a fit; it is a fit's by-product, not a source, and
+# would mark the stamp of every fit after it "tree untracked".
+iter_*_CongestedCLBsAndNets.txt
