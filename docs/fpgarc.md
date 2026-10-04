@@ -147,7 +147,8 @@ and each maps to one of that program's own flags.
     --ozd-root            a tree it serves, repeatable.  A card that carries
                           a band carries its sources in `sys/` and its site
                           configuration in `site/`, and both lines are live
-                          on it.  `sys` carries `,ro` and `site` does not
+                          on it.  Both are read-write; `,ro` after a
+                          path serves that tree read-only
     --ozd-host            a machine in the host table it answers from,
                           repeatable
     --ozd-hosts-text      a band's own host table, whose hosts it also answers
@@ -180,8 +181,12 @@ because the image picks it when it is built. An image without the `ozd` user
 mounts the card as root's alone, with `umask=0022`, and says so on the console.
 The cost is accepted: FAT has no owner per directory, so the host can write
 every file on the card, the packs, the boot files and this file included, and
-not only `site/`. `sys` stays `,ro`, so the host itself refuses to write the
-sources.
+not only `site/`. `sys` is served read-write too, because a band compiles
+its sources where they are: `qc-file-load` and `make-system` write each QFASL
+beside its source. The host asks for no password, so anything that reaches
+its socket may write the sources; that risk is accepted, and a damaged tree
+is put back from the release's sys tarball. A card that wants the sources
+read-only adds `,ro` to that line.
 
 **FILE's dates are the band's, and a card with neither line gets plain UTC.**
 The two lines are ozd's `--file-dates` and `--timezone` and mean the same.
@@ -954,7 +959,7 @@ live. A QUUX card has `--machine quux` live as well.
 
     --chaos-address 177201
     --chaos-udp 127.0.0.1:42042
-    --ozd-root sys=/mnt/card/sys,ro
+    --ozd-root sys=/mnt/card/sys
     --ozd-root site=/mnt/card/site
     --terminal 0.0.0.0:5900
     --keyboard-boot ctrl,meta

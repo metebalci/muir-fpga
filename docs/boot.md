@@ -199,7 +199,7 @@ say that. This paragraph is where it is said instead.
     packs/      disk-pack-0.img .. disk-pack-7.img, whichever exist, and
                 muir-cc.img where a debugger runs; neither the boot ROM nor
                 U-Boot ever looks here
-    sys/        the band's Lisp sources, served read-only
+    sys/        the band's Lisp sources, served read-write
     site/       the band's site configuration, served read-write
     /srv/tftp/arty-z7-20
                 uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage,
@@ -229,8 +229,8 @@ decided against. Nothing else is ever booted.
 The root filesystem is the initramfs on both paths, unpacked into RAM, so
 nothing on the board drifts. **The card is read by the loader and mounted
 READ-WRITE by Linux at `/mnt/card`**, and the things the board writes on it
-are a disk pack in `packs/`, the band's `site/` tree, and the `clock` file at
-the root. **Small persistent state, if it is ever wanted, is a file on the
+are a disk pack in `packs/`, the band's `site/` tree, the QFASLs a band
+compiles into `sys/`, and the `clock` file at the root. **Small persistent state, if it is ever wanted, is a file on the
 card that the image reads at start**, not a partition and not a writable root.
 `clock` is already that: the board has no clock of its own, so the disk pack
 program writes the time there at a clean shutdown and reads it at the next

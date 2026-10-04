@@ -276,14 +276,18 @@ the default serves no tree.
 carries the band's files beside it, and there are two trees because the band
 uses them two different ways:
 
-    sys/    the band's sources, named as --ozd-root sys=/mnt/card/sys,ro
+    sys/    the band's sources, named as --ozd-root sys=/mnt/card/sys
     site/   the band's site configuration, named as --ozd-root site=/mnt/card/site
 
-**`sys/` is read-only and `site/` is not, and the difference is the point.**
-Sources are a tree nothing reaching the host's socket should write in, so the
-`,ro` is there. A site is the few files that say what this site is --- its host
-table, its logical pathname translations --- and a site is a thing its owner
-changes, so that root is served read-write and carries no `,ro`. The two are
+**Both are served read-write.** A band compiles its sources where they are:
+`qc-file-load` and `make-system` write each QFASL beside its source, and a
+read-only tree refuses that. A site is the few files that say what this site
+is --- its host table, its logical pathname translations --- and a site is a
+thing its owner changes. So neither line carries `,ro`. The host asks for no
+password, so anything that reaches its socket may write the sources; that
+risk is accepted as very small, and a damaged tree is put back from the
+release's sys tarball. A card that wants the sources read-only adds `,ro` to
+that line. The two are
 not the same size: the sources are the table below, and a site configuration
 is a handful of files and a few tens of kilobytes. One band and the files that
 belong to it are one thing, and they go on one card together.
@@ -292,9 +296,8 @@ belong to it are one thing, and they go on one card together.
 runs as the `ozd` user and refuses a writable tree it cannot write, so the card
 is mounted with its group set to the `ozd` group and the group may write. FAT
 has no owner per directory, so one mount gives every file the same group, and
-the host can write the packs and the boot files as well as `site/`. The `,ro`
-on `sys` is what keeps the host from writing the sources. `docs/fpgarc.md` has
-the mount's options.
+the host can write the packs and the boot files as well as `sys/` and `site/`.
+`docs/fpgarc.md` has the mount's options.
 
 The three places they could have gone were measured, on a real FAT32 image made
 by the same `mkfs.vfat -F 32` a card is made with, with the real files copied in

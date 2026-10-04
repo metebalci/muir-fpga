@@ -352,9 +352,13 @@ PACKS=${PACKS:-}
 # two different ways:
 #
 #   SYS    the band's sources, staged as `sys/` and named on the card's menu
-#          as `--ozd-root sys=/mnt/card/sys,ro`.  Read-only: it is a tree of
-#          sources and nothing that reaches the host's socket should write in
-#          it.  The tree this project ships beside is 508 files and 17 MB.
+#          as `--ozd-root sys=/mnt/card/sys`.  Read-WRITE, because a band
+#          compiles its sources where they are: `qc-file-load` and
+#          `make-system` write each QFASL beside its source.  ozd asks for no
+#          password, so whatever reaches its socket may write the tree; that
+#          risk is accepted, and a damaged tree is put back from the release's
+#          sys tarball.  `,ro` stays available to a card that wants it.  The
+#          tree this project ships beside is 508 files and 17 MB.
 #   SITE   the band's site configuration --- its host table, its logical
 #          pathname translations, the few files that say what THIS site is ---
 #          staged as `site/` and named as `--ozd-root site=/mnt/card/site`.
@@ -855,8 +859,8 @@ stage_tree() {
     printf "  %-22s home/, made at the first boot, is the users'.\r\n" ''
   else
     printf '  %-22s the disk packs.  See below.\r\n' 'packs/'
-    printf "  %-22s the band's Lisp sources, read-only, and its\r\n" 'sys/  site/'
-    printf '  %-22s site configuration, which it may write.\r\n' ''
+    printf "  %-22s the band's Lisp sources and its site\r\n" 'sys/  site/'
+    printf '  %-22s configuration, which it may both write.\r\n' ''
   fi
   printf '  %-22s the settings.  Edit these here, on the card,\r\n' 'fpgarc  cadrrc  quuxrc'
   printf '  %-22s where they survive a reboot: everything else\r\n' ''
@@ -1280,21 +1284,25 @@ fi
   printf "# for a file or not.  The band's Lisp files are on THIS card, in two\r\n"
   printf "# folders, and cost memory to nobody:\r\n"
   printf "#\r\n"
-  printf "#     --ozd-root sys=/mnt/card/sys,ro\r\n"
+  printf "#     --ozd-root sys=/mnt/card/sys\r\n"
   printf "#     --ozd-root site=/mnt/card/site\r\n"
   printf "#\r\n"
-  printf "# ,ro is read-only, which is what a tree of SOURCES wants: without it\r\n"
-  printf "# the host may write in the tree, and anything that reaches its socket\r\n"
-  printf "# may.  The SITE tree has no ,ro, because a site configuration --- its\r\n"
-  printf "# host table, its logical pathname translations --- is a thing its\r\n"
-  printf "# owner changes, and a band that edits it should be able to save it.\r\n"
+  printf "# Both are read-write.  The SOURCES are, because a band compiles them\r\n"
+  printf "# where they are: qc-file-load and make-system write each QFASL beside\r\n"
+  printf "# its source, and a read-only tree refuses that.  The SITE tree is,\r\n"
+  printf "# because a site configuration --- its host table, its logical\r\n"
+  printf "# pathname translations --- is a thing its owner changes.  The host\r\n"
+  printf "# asks for no password, so anything that reaches its socket may write\r\n"
+  printf "# both; that risk is accepted, and a damaged sys/ is put back from\r\n"
+  printf "# the release's sys tarball.  Add ,ro to a line to serve that tree\r\n"
+  printf "# read-only.\r\n"
   printf "# The card is mounted so that the host's group may write it, and FAT\r\n"
   printf "# has no owner per folder, so the host can write every file on this\r\n"
   printf "# card and not only site/.  That cost is accepted.\r\n"
   printf "# The user's own directory is always there and is always in memory, so\r\n"
   printf "# a band that compiles a system has somewhere to put its warnings\r\n"
   printf "# without a line here.\r\n"
-  printf -- "%s--ozd-root sys=/mnt/card/sys,ro\r\n" "$MENU_OZD_ROOT"
+  printf -- "%s--ozd-root sys=/mnt/card/sys\r\n" "$MENU_OZD_ROOT"
   printf -- "%s--ozd-root site=/mnt/card/site\r\n" "$MENU_OZD_SITE"
   printf "\r\n"
   printf "# A machine in the host table it answers HOSTAB from, so that a band\r\n"

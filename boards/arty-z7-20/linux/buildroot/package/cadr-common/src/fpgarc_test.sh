@@ -3846,7 +3846,7 @@ sandbox
 if generate_fpgarc "" 1; then
 	GEN="$WORK/gen/card/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
-	want='--chaos-address 177201|--chaos-udp 127.0.0.1:42042|--ozd-root sys=/mnt/card/sys,ro|--ozd-root site=/mnt/card/site|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|'
+	want='--chaos-address 177201|--chaos-udp 127.0.0.1:42042|--ozd-root sys=/mnt/card/sys|--ozd-root site=/mnt/card/site|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|'
 	if [ "$got" = "$want" ]; then
 		ok "the switches, the cable on the loopback, the two trees, the screen and the boot chord, and nothing else"
 	else
@@ -3906,7 +3906,7 @@ sandbox
 if generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" quux; then
 	GEN="$WORK/gen/card/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
-	want='--chaos-address 177201|--chaos-udp 127.0.0.1:42042|--ozd-root sys=/mnt/card/sys,ro|--ozd-root site=/mnt/card/site|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--machine quux|'
+	want='--chaos-address 177201|--chaos-udp 127.0.0.1:42042|--ozd-root sys=/mnt/card/sys|--ozd-root site=/mnt/card/site|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--machine quux|'
 	if [ "$got" = "$want" ]; then
 		ok "the six a board needs, and the machine"
 	else
@@ -5929,17 +5929,19 @@ fi
 # **THE BAND'S TWO TREES ARE TWO LINES AND TWO DECISIONS.**  A line naming a
 # tree that is not there stops the host in its own words, so each is live
 # exactly when its own tree was staged --- and they are separate, because a
-# card may carry one and not the other.  The sources are read-only and the site
-# configuration is not, which is the difference between a tree of sources and a
-# thing its owner changes.
+# card may carry one and not the other.  Both are served read-write: the
+# site configuration because its owner changes it, and the sources because a
+# band compiles them where they are (`qc-file-load` and `make-system` write
+# each QFASL beside its source).  So neither line carries `,ro`, and a card
+# whose sources line still did would fail the exact-line match below.
 case_head "the card names each of the band's trees exactly when it carries that tree"
 sandbox
 if generate_fpgarc "" "" "" arty-z7-20 "" "/some/sys" "/some/site"; then
 	GEN="$WORK/gen/card/fpgarc"
-	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root sys=/mnt/card/sys,ro'; then
-		ok "a card with the sources on it names them, read-only"
+	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root sys=/mnt/card/sys'; then
+		ok "a card with the sources on it names them, read-write, WITHOUT ,ro"
 	else
-		fail "a card carrying the sources does not name them"
+		fail "a card carrying the sources does not name them read-write"
 	fi
 	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root site=/mnt/card/site'; then
 		ok "and a card with the site configuration names it, and WITHOUT ,ro"
@@ -5950,7 +5952,7 @@ fi
 sandbox
 if generate_fpgarc "" ""; then
 	GEN="$WORK/gen/card/fpgarc"
-	if tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-root sys=/mnt/card/sys,ro'; then
+	if tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-root sys=/mnt/card/sys'; then
 		ok "and a card without the sources leaves that line commented, so the host still starts"
 	else
 		fail "a card with no sources still names them, which stops the host"
@@ -5966,7 +5968,7 @@ fi
 sandbox
 if generate_fpgarc "" "" "" arty-z7-20 "" "/some/sys" ""; then
 	GEN="$WORK/gen/card/fpgarc"
-	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root sys=/mnt/card/sys,ro' \
+	if tr -d '\r' < "$GEN" | grep -qx -- '--ozd-root sys=/mnt/card/sys' \
 	   && tr -d '\r' < "$GEN" | grep -qx -- '#--ozd-root site=/mnt/card/site'; then
 		ok "a card with the sources and no site tree names one and comments the other"
 	else

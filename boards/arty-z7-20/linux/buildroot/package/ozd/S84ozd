@@ -154,7 +154,7 @@ DEFAULT_PORT=42142
 # is the one place this parts from the rule that a script's default stands only
 # where the card is silent, and the reason is that a home directory is not a
 # setting: it is a thing that has to exist.  A card names a tree with
-# `--ozd-root <name>=<path>,ro`, which ozd mounts at /<name>.  A card that
+# `--ozd-root <name>=<path>[,ro]`, which ozd mounts at /<name>.  A card that
 # writes an unnamed root instead gets ozd's own refusal by name, because a
 # second base is not a thing ozd has.
 BASE_ROOT=/var/lib/ozd/lispm
@@ -178,12 +178,16 @@ OZD_USER=ozd
 # A tree is named on the card, and the place for it is the card itself,
 # which is on the card and costs no memory:
 #
-#     --ozd-root sys=/mnt/card/sys,ro
+#     --ozd-root sys=/mnt/card/sys
 #     --ozd-root site=/mnt/card/site
 #
-# `sys` is the band's sources and is read-only.  `site` is its site
-# configuration and is served read-write, so that a band can save the host
-# table it generates.  ozd refuses a writable root it cannot write, so
+# Both are served read-write.  `sys` is the band's sources, and a band
+# compiles them where they are: `qc-file-load` and `make-system` write each
+# QFASL beside its source.  `site` is its site configuration, so that a band
+# can save the host table it generates.  The risk that anything reaching the
+# socket may write the sources is accepted, and a damaged tree is put back
+# from the release's sys tarball; `,ro` still serves a tree read-only.  ozd
+# refuses a writable root it cannot write, so
 # S80cadr-disk-packs mounts the card with this user's group and gives the group
 # write; ozd can therefore write the whole card, which is the accepted cost.
 #
