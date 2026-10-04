@@ -2004,6 +2004,8 @@ CHECKS = {
                     "boards/kria-kr260/cadr_kr260.sv",
                     "boards/kria-kr260/linux/cadr-reserved.dtsi",
                     "boards/kria-kr260/linux/quux13-reserved.dtsi",
+                    "boards/kria-kr260/linux/buildroot/board/kria-kr260/dts/xilinx/"
+                    "zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dts",
                     "boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h",
                     "boards/arty-z7-20/linux/cadr-reserved.dtsi",
                     "boards/de25-nano/linux/cadr-reserved.dtsi",

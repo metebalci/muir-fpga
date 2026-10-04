@@ -384,6 +384,7 @@ $(BUILD)/mem_map.pass: tools/mem_map_check.py \
                        boards/kria-kr260/cadr_kr260.sv \
                        boards/kria-kr260/linux/cadr-reserved.dtsi \
                        boards/kria-kr260/linux/quux13-reserved.dtsi \
+                       boards/kria-kr260/linux/buildroot/board/kria-kr260/dts/xilinx/zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dts \
                        boards/arty-z7-20/linux/buildroot/package/cadr-common/src/cadr/cadr_board.h \
                        boards/arty-z7-20/linux/cadr-reserved.dtsi \
                        boards/de25-nano/linux/cadr-reserved.dtsi \
@@ -5414,84 +5415,145 @@ buildroot-kr260-rebuild: buildroot-kr260-check
 
 # ------------------------------------------------------------ the release
 #
-# **A RELEASE IS SIX ZIPS, ONE A BOARD AND MACHINE, AND THIS IS THE ONE
-# COMMAND THAT MAKES THEM**: the CADR for the four boards, and QUUX for the
-# Arty Z7-20 and the DE25-Nano.  There is no card image any more: a user
-# formats a microSD card themselves, as one FAT32 partition in an MBR, and
-# unpacks their board's zip onto it.  Each zip is self-sufficient, names its
-# machine and its board in its own file name and inside it, and is what is
-# published for that board and machine.
+# **A RELEASE IS SEVEN ZIPS, ONE A BOARD AND MACHINE, AND THIS IS THE ONE
+# COMMAND THAT MAKES THEM**: the CADR for the four boards, and QUUX revision
+# 13 for the Arty Z7-20, the DE25-Nano and the Kria KR260.  There is no card
+# image any more: a user formats a microSD card themselves, as one FAT32
+# partition in an MBR, and unpacks their board's zip onto it.  Each zip is
+# self-sufficient, names its machine and its board in its own file name and
+# inside it, and is what is published for that board and machine.
 #
 #     make release RELEASE_COMMIT=<the commit all of them were built from> \
 #                  BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
 #                  BIT_KR260=<a .bit> \
-#                  BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf> \
+#                  BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf> BIT_KR260_QUUX=<a .bit> \
 #                  FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf> \
 #                  FAULT_KR260=<a .bit>
 #
 # **AND EACH README NAMES THE COMMIT**, RELEASE_COMMIT, which a Zynq
-# bitstream's build stamp beside it must agree with (mksd-release.sh).  A QUUX
-# zip carries the same fault bitstream as its board's CADR zip.
+# bitstream's build stamp beside it must agree with (mksd-release.sh), **AND
+# THE SYSTEM**: `CADR_SYSTEM` for the CADR's zips and `QUUX_SYSTEM` for
+# QUUX's, with their muir-sys releases and file names.  A QUUX zip carries
+# the same fault bitstream as its board's CADR zip.
+#
+# **THE QUUX BITSTREAMS ARE REVISION 13'S, AND THE TARGET ASKS THEIR NAMES.**
+# Nothing in a bitstream file says which machine it is --- that is the
+# fabric's MACHINE-ID, which only a running board answers --- so this holds
+# what the flows hold instead: a QUUX build is `quux_<board>` in a directory
+# whose name says `quux13` for revision 13, and a CADR build is
+# `cadr_<board>` in a directory that names no QUUX
+# (`boards/*/vivado/bitstream.tcl`, `boards/de25-nano/quartus/build.sh`).
+# A revision 12 bitstream named for a revision 13 zip stops here.
 #
 # **AND EACH ZIP CARRIES ITS BOARD'S FAULT BITSTREAM**, the one the loader
 # takes when the CADR's will not load (`docs/board.md`), named the same way.
 #
-# **SIX ZIPS ARE SIX CHANCES FOR ONE TO BE STALE**, which is why this is
-# one target and not six: a release in which five were rebuilt and the sixth
-# was not is exactly the sort of thing that ships.  So every bitstream is
-# required by name, the target refuses to build a partial release, and it
-# prints the six zips together at the end with their digests, where a missing
-# one is visible.
+# **SEVEN ZIPS ARE SEVEN CHANCES FOR ONE TO BE STALE**, which is why this is
+# one target and not seven: a release in which six were rebuilt and the
+# seventh was not is exactly the sort of thing that ships.  So every
+# bitstream is required by name, the target refuses to build a partial
+# release, and it prints the seven zips together at the end with their
+# digests, where a missing one is visible.  **THEN IT READS THEM BACK**:
+# `tools/release_check.py` over `RELEASE_DIR` (`make release-check`), which
+# reads every bitstream's build out of the file in the zip, the device tree,
+# the loader, `fpgarc` and `README.TXT`.
 #
 # The bitstreams are not in this repository --- they are built by Vivado and by
 # Quartus, which `make check` does not run --- so they are named on the command
 # line.  Each board's Buildroot output must exist: `make buildroot`,
 # `make buildroot-cora`, `make buildroot-de25` and `make buildroot-kr260`
 # build them.  The Kria KR260's fault bitstream is `tools/fault_zynq.tcl`'s
-# with `BOARD=kr260`.
-.PHONY: release
-RELEASE_DIR := build/sd/release
+# with `BOARD=kr260`.  `RELEASE_DIR` is where the seven go, `build/sd/release`
+# unless given.
+.PHONY: release release-check
+RELEASE_DIR ?= build/sd/release
+CADR_SYSTEM ?= 1003
+QUUX_SYSTEM ?= 2001
+RELEASE_ZIPS := arty-z7-20/cadr-arty-z7-20.zip cora-z7-07s/cadr-cora-z7-07s.zip \
+                de25-nano/cadr-de25-nano.zip kria-kr260/cadr-kria-kr260.zip \
+                quux-arty-z7-20/quux-arty-z7-20.zip quux-de25-nano/quux-de25-nano.zip \
+                quux-kria-kr260/quux-kria-kr260.zip
 release:
 	@for v in RELEASE_COMMIT BIT_ARTY BIT_CORA BIT_DE25 BIT_KR260 BIT_ARTY_QUUX BIT_DE25_QUUX \
-	          FAULT_ARTY FAULT_CORA FAULT_DE25 FAULT_KR260; do \
+	          BIT_KR260_QUUX FAULT_ARTY FAULT_CORA FAULT_DE25 FAULT_KR260; do \
 	    eval "b=\$$$$v"; \
 	    [ -n "$$b" ] || { \
-	        echo "release: $$v is not set.  A release is six zips and this target makes"; \
-	        echo "release: all six, so that one board cannot be left at an older build:"; \
+	        echo "release: $$v is not set.  A release is seven zips and this target makes"; \
+	        echo "release: all seven, so that one board cannot be left at an older build:"; \
 	        echo "release:   make release RELEASE_COMMIT=<the commit they were built from>"; \
 	        echo "release:                BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf>"; \
 	        echo "release:                BIT_KR260=<a .bit> BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf>"; \
+	        echo "release:                BIT_KR260_QUUX=<a .bit>"; \
 	        echo "release:                FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf>"; \
 	        echo "release:                FAULT_KR260=<a .bit>"; \
 	        exit 1; }; \
 	    [ $$v = RELEASE_COMMIT ] || [ -f "$$b" ] || { echo "release: $$v=$$b is not a file"; exit 1; }; \
+	    case $$v in \
+	    BIT_*_QUUX) case "$$(basename "$$b"):$$(dirname "$$b")" in \
+	                quux_*:*quux13*) ;; \
+	                *) echo "release: $$v=$$b is not a QUUX revision 13 build: the flows write quux_<board> into a directory that says quux13"; exit 1 ;; \
+	                esac ;; \
+	    BIT_*) case "$$(basename "$$b"):$$(dirname "$$b")" in \
+	           cadr_*:*quux*) echo "release: $$v=$$b sits in a QUUX build's directory"; exit 1 ;; \
+	           cadr_*) ;; \
+	           *) echo "release: $$v=$$b is not a CADR build: the flows write cadr_<board>"; exit 1 ;; \
+	           esac ;; \
+	    esac; \
 	done
-	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(CADR_SYSTEM) IMAGES=$(BR_OUT)/images \
+	    OUT=$(RELEASE_DIR)/arty-z7-20 \
 	    BIT=$(BIT_ARTY) FAULT_BIT=$(FAULT_ARTY) boards/arty-z7-20/linux/mksd-release.sh
-	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT_CORA)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(CADR_SYSTEM) IMAGES=$(BR_OUT_CORA)/images \
+	    OUT=$(RELEASE_DIR)/cora-z7-07s \
 	    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
 	    BIT=$(BIT_CORA) FAULT_BIT=$(FAULT_CORA) boards/arty-z7-20/linux/mksd-release.sh
-	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT_DE25)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(CADR_SYSTEM) IMAGES=$(BR_OUT_DE25)/images \
+	    OUT=$(RELEASE_DIR)/de25-nano \
 	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
 	    BIT=$(BIT_DE25) FAULT_BIT=$(FAULT_DE25) boards/arty-z7-20/linux/mksd-release.sh
-	RELEASE_COMMIT=$(RELEASE_COMMIT) IMAGES=$(BR_OUT_KR260)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(CADR_SYSTEM) IMAGES=$(BR_OUT_KR260)/images \
+	    OUT=$(RELEASE_DIR)/kria-kr260 \
 	    BOARD_DIR=boards/kria-kr260 BOARD_DTB=zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb \
 	    BIT=$(BIT_KR260) FAULT_BIT=$(FAULT_KR260) boards/arty-z7-20/linux/mksd-release.sh
-	RELEASE_COMMIT=$(RELEASE_COMMIT) MACHINE=quux IMAGES=$(BR_OUT)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(QUUX_SYSTEM) MACHINE=quux REVISION=13 IMAGES=$(BR_OUT)/images \
+	    OUT=$(RELEASE_DIR)/quux-arty-z7-20 \
 	    BIT=$(BIT_ARTY_QUUX) FAULT_BIT=$(FAULT_ARTY) boards/arty-z7-20/linux/mksd-release.sh
-	RELEASE_COMMIT=$(RELEASE_COMMIT) MACHINE=quux IMAGES=$(BR_OUT_DE25)/images \
+	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(QUUX_SYSTEM) MACHINE=quux REVISION=13 IMAGES=$(BR_OUT_DE25)/images \
+	    OUT=$(RELEASE_DIR)/quux-de25-nano \
 	    BOARD_DIR=boards/de25-nano BOARD_DTB=socfpga_agilex5_de25_nano_cadr.dtb \
 	    BIT=$(BIT_DE25_QUUX) FAULT_BIT=$(FAULT_DE25) boards/arty-z7-20/linux/mksd-release.sh
+	RELEASE_COMMIT=$(RELEASE_COMMIT) SYSTEM=$(QUUX_SYSTEM) MACHINE=quux REVISION=13 IMAGES=$(BR_OUT_KR260)/images \
+	    OUT=$(RELEASE_DIR)/quux-kria-kr260 \
+	    BOARD_DIR=boards/kria-kr260 BOARD_DTB=zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb \
+	    BIT=$(BIT_KR260_QUUX) FAULT_BIT=$(FAULT_KR260) boards/arty-z7-20/linux/mksd-release.sh
 	@echo
-	@echo "release: six zips, one a board and machine, built from $(RELEASE_COMMIT):"
-	@for z in $(RELEASE_DIR)/arty-z7-20/cadr-arty-z7-20.zip $(RELEASE_DIR)/cora-z7-07s/cadr-cora-z7-07s.zip \
-	          $(RELEASE_DIR)/de25-nano/cadr-de25-nano.zip $(RELEASE_DIR)/kria-kr260/cadr-kria-kr260.zip \
-	          $(RELEASE_DIR)/quux-arty-z7-20/quux-arty-z7-20.zip $(RELEASE_DIR)/quux-de25-nano/quux-de25-nano.zip; do \
+	@echo "release: seven zips, one a board and machine, built from $(RELEASE_COMMIT):"
+	@for z in $(RELEASE_ZIPS:%=$(RELEASE_DIR)/%); do \
 	    [ -f "$$z" ] || { echo "release: $$z was not built"; exit 1; }; \
 	    printf '  %-50s %10d  %s\n' "$$z" "$$(stat -c %s $$z)" "$$(sha256sum $$z | cut -c1-16)"; \
 	done
+	@$(MAKE) --no-print-directory release-check RELEASE_DIR=$(RELEASE_DIR) RELEASE_COMMIT=$(RELEASE_COMMIT)
 	@echo "release: each is unpacked onto a microSD card formatted as ONE FAT32"
 	@echo "release: partition in an MBR.  docs/boot.md says how."
+
+# **AND THE SEVEN READ BACK, ON THEIR OWN**, over any directory of zips: a
+# release built here, or one downloaded.  The systems the READMEs must name
+# are the check's own, 1003 and 2001, and not `CADR_SYSTEM` and `QUUX_SYSTEM`
+# above, so that a wrong number there is caught rather than agreed with;
+# `RELEASE_CHECK_CADR_SYSTEM` and `RELEASE_CHECK_QUUX_SYSTEM` say otherwise.
+# `RELEASE_FAULT_COMMIT` names the fault bitstreams' commit where it is not
+# the release's, and `RELEASE_CADR_ASSETS` and `RELEASE_QUUX_ASSETS` a
+# directory of each system's two files, which the README's instructions are
+# tried on.
+release-check:
+	@[ -n "$(RELEASE_COMMIT)" ] || { echo "release-check: RELEASE_COMMIT=<the commit the release was built from> is required"; exit 1; }
+	python3 tools/release_check.py $(RELEASE_DIR) --commit $(RELEASE_COMMIT) --root . \
+	    $(if $(RELEASE_CHECK_CADR_SYSTEM),--cadr-system $(RELEASE_CHECK_CADR_SYSTEM)) \
+	    $(if $(RELEASE_CHECK_QUUX_SYSTEM),--quux-system $(RELEASE_CHECK_QUUX_SYSTEM)) \
+	    $(if $(DTC),--dtc $(DTC)) \
+	    $(if $(RELEASE_FAULT_COMMIT),--fault-commit $(RELEASE_FAULT_COMMIT)) \
+	    $(if $(RELEASE_CADR_ASSETS),--cadr-assets $(RELEASE_CADR_ASSETS)) \
+	    $(if $(RELEASE_QUUX_ASSETS),--quux-assets $(RELEASE_QUUX_ASSETS))
 
 # ------------------------------------------------------- MD on the composed
 # machine

@@ -4,8 +4,11 @@
 #
 # Build the zip that is released for a board.
 #
-#     BIT=<the released bitstream> FAULT_BIT=<its fault bitstream> \
+#     SYSTEM=1003 BIT=<the released bitstream> FAULT_BIT=<its fault bitstream> \
 #         boards/arty-z7-20/linux/mksd-release.sh
+#
+#     MACHINE=quux REVISION=13 SYSTEM=2001 BIT=<QUUX revision 13's bitstream> \
+#     FAULT_BIT=<the board's fault bitstream> boards/arty-z7-20/linux/mksd-release.sh
 #
 #     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
 #     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
@@ -104,6 +107,16 @@ case "$MACHINE" in
 	quux) OUT=${OUT:-build/sd/release/quux-$BOARD_NAME} ;;
 	*) echo "mksd-release: MACHINE=$MACHINE: it is cadr or quux" >&2; exit 1 ;;
 esac
+# **AND WHICH REVISION OF QUUX**, passed straight through: REVISION=13 stages
+# revision 13's device tree and loader beside its bitstream
+# (mksd-buildroot.sh, "A card carries one machine").  Unset is the CADR, or
+# QUUX revision 12.
+REVISION=${REVISION:-}
+# **AND THE SYSTEM THE CARD IS FOR**, a muir-sys System number, which the
+# README names with its release and its two files: 1003 for the CADR's
+# cards, 2001 for revision 13's.  Named, never guessed, like the commit.
+SYSTEM=${SYSTEM:-}
+[ -n "$SYSTEM" ] || { echo "mksd-release: SYSTEM=<the muir-sys System the card is for, such as 1003 or 2001> is required" >&2; exit 1; }
 # **AND THE COMMIT THE RELEASE WAS BUILT FROM, NAMED, NEVER GUESSED**, as the
 # bitstream is: the README carries it, and a file somebody downloaded a month
 # ago then says what it is.  A Zynq bitstream's build stamp beside it
@@ -144,7 +157,7 @@ done
 [ -z "${IMAGES:-}" ] || export IMAGES
 
 OUT="$OUT" BIT="$BIT" FAULT_BIT="$FAULT_BIT" NO_FAULT= STANDALONE=1 RELEASE=1 \
-    MACHINE="$MACHINE" RELEASE_COMMIT="$RELEASE_COMMIT" \
+    MACHINE="$MACHINE" REVISION="$REVISION" SYSTEM="$SYSTEM" RELEASE_COMMIT="$RELEASE_COMMIT" \
     BOARD_DIR="$BOARD_DIR" BOARD_DTB="$BOARD_DTB" \
     boards/arty-z7-20/linux/mksd-buildroot.sh
 

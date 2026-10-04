@@ -558,8 +558,9 @@ kernel's tree from the folder it fetches the bitstream from, under the board
 tree's own name (`cadr.env`'s `cadr_card`, the served `uEnv.net`). So
 `mksd-buildroot.sh` with `REVISION=13` stages revision 13's tree under that
 name beside revision 13's bitstream, and revision 13's loader under the
-loader's name. It then reads both trees back, the one in the board's folder
-and the one inside the loader, and requires revision 13's node in each. A card
+loader's name; on the Kria KR260, which has no loader of ours, the tree alone.
+It then reads both trees back, the one in the board's folder and the one
+inside the loader, and requires revision 13's node in each. A card
 normally carries one machine. The fabric cannot be asked which machine it is,
 so nothing on the board can check the pairing. A revision 13 bitstream under
 the CADR's tree hands Linux revision 13's main memory; the opposite pairing is

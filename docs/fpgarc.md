@@ -971,9 +971,11 @@ set. The address is 177201 because muir-sys's site names LISPM-1 to LISPM-7 at
 boots as an unknown host whose associated machine is not OZ, so a login and a
 pathname with no host go nowhere. A second board on the same network takes
 177202, and so on. The two `--ozd-root` lines serve the card's `sys/` and
-`site/`, which a release ships empty: a CADR band reads its error table from
-`SYS:` at every boot and stops without it, so the user copies the system's
-`sys` and `site` folders there and edits nothing. The cable is plugged into the board itself, because the band's file and
+`site/`, which a release ships empty: the user copies the system's `sys` and
+`site` folders there and edits nothing. System 1003 boots without them, on
+the band's own error table, but loading or compiling a file of the system
+needs them; System 1002 reads its error table from `SYS:` at every
+boot and stops without it. The cable is plugged into the board itself, because the band's file and
 time host is on the board and the machine reaches it over the cable. The
 screen is the only way to use a board that has no monitor of its own. The
 chord is what cold-boots the machine from a viewer.

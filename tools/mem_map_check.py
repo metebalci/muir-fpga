@@ -349,6 +349,7 @@ def same(what, fam, pairs):
 KR260_TOP = "boards/kria-kr260/cadr_kr260.sv"
 KR260_DTSI = "boards/kria-kr260/linux/cadr-reserved.dtsi"
 KR260_DTSI13 = "boards/kria-kr260/linux/quux13-reserved.dtsi"
+KR260_DTS_DIR = "boards/kria-kr260/linux/buildroot/board/kria-kr260/dts/xilinx"
 
 
 def kr260(root, pkg):
@@ -427,6 +428,32 @@ def kr260(root, pkg):
         ("the spare's base + RECORDS_BYTES", pm["DISPLAY_BASE"] + pm["DISPLAY_WORDS"] * 4
          + pm["RECORDS_BYTES"]),
         (KR260_DTSI13 + " reg", base13 + size13)])
+    # And the card's REVISION=13 arm for the board: the node it looks for in
+    # the tree it stages, and that tree the one made from revision 13's
+    # overlay, which includes revision 13's reservation.
+    m = re.search(r'^case "\$REVISION" in\n(.*?)^esac', read(root, MKSD), re.S | re.M)
+    arm = re.search(r"^\s*kria-kr260\)\s*$(.*?);;", m.group(1) if m else "", re.S | re.M)
+    if not arm:
+        fail("%s: REVISION=13 has no arm for %s" % (MKSD, NAMES[fam]))
+    r = re.findall(r"^\s*RESERVED=quux13@([0-9a-fA-F]+)\s*$", arm.group(1), re.M)
+    if len(r) != 1:
+        fail("%s: REVISION=13 on kria-kr260 names %d RESERVED=quux13@..., wanting one"
+             % (MKSD, len(r)))
+    same("revision 13's card node", fam, [
+        (KR260_DTSI13 + " unit address", unit13),
+        (MKSD + " REVISION=13 RESERVED", int(r[0], 16))])
+    t = re.findall(r"^\s*TREE_IMAGE=(\S+)\.dtb\s*$", arm.group(1), re.M)
+    dts = os.path.join(KR260_DTS_DIR, (t[0] if len(t) == 1 else "?") + ".dts")
+    if len(t) != 1 or not os.path.isfile(os.path.join(root, dts)):
+        disagree("%s: REVISION=13 on kria-kr260 stages %s, which no tree in %s is made from"
+                 % (MKSD, t, KR260_DTS_DIR))
+    elif not re.search(r'^/include/ "%s"\s*$' % re.escape(os.path.basename(KR260_DTSI13)),
+                       read(root, dts), re.M):
+        disagree("%s: REVISION=13 on kria-kr260 stages %s.dtb, whose %s does not include %s"
+                 % (MKSD, t[0], dts, os.path.basename(KR260_DTSI13)))
+    else:
+        print("mem_map: %-16s %-26s %s.dtb, from %s" % (NAMES[fam], "revision 13's card tree",
+                                                        t[0], os.path.basename(dts)))
     layout(fam, pm)
     # The faces' windows: where the programs look and where the fabric answers.
     for k, param in (("PACK", "PACK_BASE"), ("CHAOS", "CHAOS_BASE"), ("SERIAL", "SER_BASE"),

@@ -497,8 +497,9 @@ empty. `README.TXT` at the root says which board the zip is for and what each
 part is, because a card in a Windows reader otherwise shows a folder named
 after a board and a 270 MB `.img` and explains nothing.
 
-**A release is six zips: the CADR for each of the four boards, and QUUX for
-the Arty Z7-20 and the DE25-Nano.** The CADR's are these.
+**A release is seven zips: the CADR for each of the four boards, and QUUX
+revision 13 for the Arty Z7-20, the DE25-Nano and the Kria KR260.** The
+CADR's are these.
 
     cadr-arty-z7-20.zip     about 8.1 MB     12,500,992 B on the card
     cadr-cora-z7-07s.zip    about 8.1 MB     10,498,048 B on the card
@@ -510,12 +511,27 @@ Each zip also carries its board's fault bitstream beside the fabric, and
 `FAULT_KR260` beside the four bitstreams. The sizes of the first three were
 measured before that file was added; the Kria KR260's include it.
 
-A QUUX zip, `quux-arty-z7-20.zip` or `quux-de25-nano.zip`, holds the same
-files as its board's CADR zip, the fault bitstream included, except three.
-The fabric is QUUX's. `fpgarc` has `--machine quux` live, which every init
-script reads, since nothing can ask the fabric which machine it is. And
-`README.TXT` says QUUX, and that `packs/disk-pack-0.img` is QUUX's one disk.
-Every README also names the commit the zip was built from.
+A QUUX zip, `quux-arty-z7-20.zip`, `quux-de25-nano.zip` or
+`quux-kria-kr260.zip`, holds the same files as its board's CADR zip, the
+fault bitstream included, except these. The fabric is QUUX revision 13's, and
+the kernel's device tree is revision 13's, which reserves revision 13's region
+in place of the CADR's (`docs/linux.md`, "Each machine's reservation"); on the
+Arty Z7-20 and the DE25-Nano the loader is revision 13's too, since U-Boot
+runs with its own copy of the tree. `fpgarc` has `--machine quux` live, which
+every init script reads, since nothing can ask the fabric which machine it
+is, and offers QUUX's main memory in MW. And `README.TXT` says QUUX revision
+13, and that `packs/disk-pack-0.img` is QUUX's one disk.
+
+Every README also names the commit the zip was built from, and the system the
+card is for: System 1003 for the CADR's and System 2001 for QUUX's, with its
+muir-sys release and its two files, the numbered release's
+(`release-2001-disk.vhd.gz` and `release-2001-sys.tar.gz`) and the rolling
+release's, whose names never change (`latest-quux`'s `quux-disk.vhd.gz` and
+`quux-sys.tar.gz`; for the CADR `release-1003-pack.img.gz`,
+`release-1003-sys.tar.gz`, and `latest-cadr`'s `cadr-pack.img.gz` and
+`cadr-sys.tar.gz`). Both systems boot with an empty `sys/`, on the band's own
+error table; loading or compiling a file of the system needs the system's
+`sys` and `site` folders on the card.
 
 The download is given to a tenth of a megabyte because it is not the same to
 the byte twice: a zip stores each file's own time, so two builds of the same
@@ -650,39 +666,55 @@ and the section above says what it costs.
 
 ## The release, and the card this project builds for itself
 
-**A release is six zips, one for each board and machine, and one command
-makes all six.**
+**A release is seven zips, one for each board and machine, and one command
+makes all seven.**
 
     make release RELEASE_COMMIT=<the commit they were built from> \
                  BIT_ARTY=<a .bit> BIT_CORA=<a .bit> BIT_DE25=<a .rbf> \
                  BIT_KR260=<a .bit> \
-                 BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf> \
+                 BIT_ARTY_QUUX=<a .bit> BIT_DE25_QUUX=<a .rbf> BIT_KR260_QUUX=<a .bit> \
                  FAULT_ARTY=<a .bit> FAULT_CORA=<a .bit> FAULT_DE25=<a .rbf> \
                  FAULT_KR260=<a .bit>
 
-**It is one target rather than six because six zips are six chances for one
-to be stale.** A release in which five were rebuilt and the sixth was not is
-exactly the sort of thing that ships, so every bitstream is required by name,
-a missing one stops the run before anything is built, and the six zips are
-printed together at the end with their sizes and digests, where a missing one
-is visible. `RELEASE_COMMIT` is written into every README. A Zynq
-bitstream's build stamp beside it, `<bit>.stamp`, must name that commit and a
-clean tree, or the release stops. The bitstreams are named on the command line
-because they are not in this repository: they are built by Vivado and by
-Quartus, which `make check` does not run.
+**It is one target rather than seven because seven zips are seven chances for
+one to be stale.** A release in which six were rebuilt and the seventh was not
+is exactly the sort of thing that ships, so every bitstream is required by
+name, a missing one stops the run before anything is built, and the seven zips
+are printed together at the end with their sizes and digests, where a missing
+one is visible. `RELEASE_COMMIT` is written into every README, and so is the
+system each card is for, `CADR_SYSTEM` (1003 unless given) and `QUUX_SYSTEM`
+(2001). A Zynq bitstream's build stamp beside it, `<bit>.stamp`, must name
+that commit and a clean tree, or the release stops. The bitstreams are named
+on the command line because they are not in this repository: they are built
+by Vivado and by Quartus, which `make check` does not run. Nothing in a
+bitstream file says which machine it is, so the target holds what the flows
+hold: a QUUX bitstream is `quux_<board>` in a directory whose name says
+`quux13`, and a CADR bitstream is `cadr_<board>` in one that names no QUUX.
+
+**Then the seven are read back**, by `tools/release_check.py`, which
+`make release-check RELEASE_COMMIT=<the commit>` also runs over any
+directory of zips. It reads only the zips: exactly the seven; each
+bitstream's build out of the file itself (a Zynq `.bit`'s header, the
+DE25-Nano core image's USERCODE), the machine's at the commit with a clean
+tree and the fault bitstream's at the same commit; the kernel's device tree
+and the loader's, which must reserve the machine's region and not the other
+machine's; every live line of `fpgarc`; and the README's machine, board,
+commit and system. The machine a bitstream is, its MACHINE-ID, is read only
+by a running board, with `cadr-console machine`.
 
 Each board's Buildroot output must exist first, which is `make buildroot`,
 `make buildroot-cora`, `make buildroot-de25` and `make buildroot-kr260`. One board on its own is
 
-    RELEASE_COMMIT=<the commit> FAULT_BIT=<the fault bitstream> \
+    RELEASE_COMMIT=<the commit> SYSTEM=1003 FAULT_BIT=<the fault bitstream> \
     BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
-    RELEASE_COMMIT=<the commit> IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
+    RELEASE_COMMIT=<the commit> SYSTEM=1003 IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
     FAULT_BIT=<the Cora's fault bitstream> \
     BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
 
-and `MACHINE=quux` with a QUUX bitstream makes that board's QUUX zip. The zip
+and `MACHINE=quux REVISION=13 SYSTEM=2001` with a revision 13 bitstream makes
+that board's QUUX zip. The zip
 goes in a directory named for the board, `quux-<board>` for QUUX's, and
 carries the machine's and the board's names in its own name, so two boards' releases can be built one after the other
 without either being overwritten, and a file somebody downloaded a month ago

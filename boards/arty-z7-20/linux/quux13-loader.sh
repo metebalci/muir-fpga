@@ -101,7 +101,22 @@ case "$BOARD" in
     cmp -s u-boot.img quux13-check/u-boot.img || die "the recorded command did not reproduce u-boot.img"
     # And revision 13's.
     cp "arch/arm/dts/$Q13.dtb" "quux13/$TREE.dtb"
-    eval "$(echo "$CMD" | sed "s| -b arch/arm/dts/$TREE.dtb | -b quux13/$TREE.dtb |g; s| u-boot.img >| $OUT >|")"
+    # EVERY `-b`, which U-Boot's build gives twice, one configuration each:
+    # a `g` substitution whose match ends in the space the next one begins
+    # with replaced only the first, and the loader carried the board's tree
+    # as its second configuration.  So one at a time until none is left.
+    Q13CMD=$(echo "$CMD" | sed -e ":a" -e "s| -b arch/arm/dts/$TREE.dtb | -b quux13/$TREE.dtb |" -e "ta" \
+                               -e "s| u-boot.img >| $OUT >|")
+    ! echo "$Q13CMD" | grep -q -- "-b arch/arm/dts/$TREE.dtb" \
+      || die "the loader's command still names the board's tree"
+    eval "$Q13CMD"
+    # And read back: each tree in it is revision 13's.  A tree's node names
+    # are its strings, and the loader's code carries none of either.
+    n=$(./tools/dumpimage -l "$OUT" | grep -c "Type: *Flat Device Tree" || true)
+    q=$(strings -a "$OUT" | grep -c "^quux13@" || true)
+    c=$(strings -a "$OUT" | grep -c "^cadr@" || true)
+    [ "$n" -gt 0 ] && [ "$q" = "$n" ] && [ "$c" = 0 ] \
+      || die "$OUT carries $n trees, $q of them revision 13's and $c the CADR's node"
     ;;
   de25-nano)
     eval "$(echo "$CMD" | sed 's|-d ./u-boot.dtb -O \. |-d ./u-boot.dtb -O quux13-check |')"

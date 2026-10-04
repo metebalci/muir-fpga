@@ -317,7 +317,7 @@ same on every board.
 **A release zip is built for this board the same way it is for the other**,
 with the board in the same two variables:
 
-    RELEASE_COMMIT=<the commit> IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
+    RELEASE_COMMIT=<the commit> SYSTEM=1003 IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
     FAULT_BIT=<the Cora's fault bitstream> \
     BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh

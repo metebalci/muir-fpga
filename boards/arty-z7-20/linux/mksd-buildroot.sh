@@ -192,6 +192,9 @@ README_UENV_MAC=yes
 README_USB_STORAGE=
 README_FAULT_LAMPS="IF EVERY LIGHT ON THE BOARD BLINKS TOGETHER, twice a second and red"
 README_FAULT_LAMPS2="on a color light, "
+# DISPLAY_W and DISPLAY_H, in each arm, are the board's display mode, fixed
+# per board (docs/display-output.md, 1. The video mode), which QUUX's screen
+# is: 1280 by 1024, and on the Kria KR260 1920 by 1080.
 case "$BOARD_NAME" in
   de25-nano)
     ROOT_FILES="u-boot.itb:u-boot.itb"
@@ -215,6 +218,8 @@ case "$BOARD_NAME" in
     DEBUG_WINDOW_US=0x2000_1000
     DEBUG_PORT="the lightweight HPS-to-FPGA bridge"
     REBUILD=buildroot-de25-rebuild
+    DISPLAY_W=1280
+    DISPLAY_H=1024
     ;;
   kria-kr260)
     # The factory U-Boot in the QSPI flash runs boot.scr from the card, and
@@ -250,6 +255,8 @@ case "$BOARD_NAME" in
     README_USB_STORAGE=yes
     README_FAULT_LAMPS="IF UF1 AND UF2 BLINK TOGETHER, twice a second,"
     README_FAULT_LAMPS2=""
+    DISPLAY_W=1920
+    DISPLAY_H=1080
     ;;
   *)
     ROOT_FILES="boot.bin:BOOT.BIN u-boot.img:u-boot.img"
@@ -273,6 +280,8 @@ case "$BOARD_NAME" in
     DEBUG_WINDOW_US=0x8000_1000
     DEBUG_PORT="M_AXI_GP1"
     REBUILD=buildroot-rebuild
+    DISPLAY_W=1280
+    DISPLAY_H=1024
     ;;
 esac
 # The FIT the first-stage loader reads, which carries U-Boot and its
@@ -319,7 +328,17 @@ case "$REVISION" in
         ROOT_FILES="u-boot-quux13.itb:u-boot.itb"
         RESERVED=quux13@a0000000
         ;;
-      *) die "REVISION=13 on $BOARD_NAME: QUUX revision 13 runs on the Arty Z7-20 and the DE25-Nano" ;;
+      # The Kria KR260's loader is the factory U-Boot in its flash, which
+      # runs boot.scr and reads no tree of ours, so revision 13 changes only
+      # the kernel's tree: post-image.sh's revision 13 tree, staged under the
+      # board tree's name as on the other two.  boot.scr's loads all sit
+      # below the region (boards/kria-kr260/linux/buildroot/board/kria-kr260/
+      # boot.cmd).
+      kria-kr260)
+        TREE_IMAGE=zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dtb
+        RESERVED=quux13@5a000000
+        ;;
+      *) die "REVISION=13 on $BOARD_NAME: QUUX revision 13 runs on the Arty Z7-20, the DE25-Nano and the Kria KR260" ;;
     esac
     ;;
   *) die "REVISION=$REVISION: it is 13, QUUX revision 13, or unset for the CADR and revision 12" ;;
@@ -392,6 +411,14 @@ RELEASE=${RELEASE:-}
 RELEASE_COMMIT=${RELEASE_COMMIT:-}
 if [ -n "$RELEASE_COMMIT" ] && ! printf '%s\n' "$RELEASE_COMMIT" | grep -Eqx '[0-9a-f]{7,40}'; then
   echo "mksd-buildroot: RELEASE_COMMIT=$RELEASE_COMMIT is not a commit: 7 to 40 hexadecimal digits" >&2
+  exit 1
+fi
+# **AND THE SYSTEM A RELEASE CARD IS FOR**, a muir-sys System number, which a
+# release card's README names (readme_system below).  mksd-release.sh
+# requires it; a number of digits, nothing else.
+SYSTEM=${SYSTEM:-}
+if [ -n "${RELEASE:-}" ] && ! printf '%s\n' "$SYSTEM" | grep -Eqx '[0-9]{3,5}'; then
+  echo "mksd-buildroot: a release card names its system: SYSTEM=<a System number, such as 2001>, not '$SYSTEM'" >&2
   exit 1
 fi
 DTC=${DTC:-$HOSTBIN/dtc}
@@ -815,6 +842,25 @@ stage_tree() {
 # is one zip a board and they differ in only a few files: a card made from the
 # wrong board's zip looks perfectly ordinary in a reader.  CRLF, because the
 # reader is Notepad.
+# **AND THE SYSTEM A RELEASE CARD IS FOR**, named with its muir-sys release
+# and the two files the user takes from it: the numbered release's, and the
+# rolling release's, whose names never change (docs/boot.md).  A revision 13
+# card is for System 2001, the CADR's for System 1003; `make release` says
+# which, as SYSTEM, and this writes the names from the number.
+readme_system() {
+  if [ "$MACHINE" = quux ]; then
+    _what=disk.vhd.gz; _rolling=latest-quux; _who="QUUX revision $REVISION"
+    [ -n "$REVISION" ] || _who="QUUX revision 12"
+  else
+    _what=pack.img.gz; _rolling=latest-cadr; _who="the CADR"
+  fi
+  printf 'The system\r\n'
+  printf 'This card runs %s, and its system is System %s: muir-sys\r\n' "$_who" "$SYSTEM"
+  printf 'release-%s, whose two files are release-%s-%s and\r\n' "$SYSTEM" "$SYSTEM" "$_what"
+  printf "release-%s-sys.tar.gz.  muir-sys's %s carries the same two\r\n" "$SYSTEM" "$_rolling"
+  printf 'files while it is System %s, under names that never change:\r\n' "$SYSTEM"
+  printf '%s-%s and %s-sys.tar.gz.\r\n\r\n' "$MACHINE" "$_what" "$MACHINE"
+}
 {
   if [ "$MACHINE" = quux ]; then
     printf 'QUUX on a card --- for the %s and no other board.\r\n\r\n' "$BOARD_NAME"
@@ -889,11 +935,12 @@ stage_tree() {
     printf 'footer and not by its name.  A QUUX system release is such a disk;\r\n'
     printf 'uncompress it and copy it here under this name.\r\n\r\n'
     if [ -n "${RELEASE:-}" ]; then
+      readme_system
       printf "The system's files\r\n"
       printf "Copy the sys and site folders of the system's sources into sys/\r\n"
-      printf 'and site/ here.  The machine reads them through its file device,\r\n'
-      printf 'and at every boot it reads its error table from sys/; without them\r\n'
-      printf 'it stops and asks for a file.\r\n\r\n'
+      printf 'and site/ here.  The machine reads and writes them through its\r\n'
+      printf 'file device.  System %s boots without them, on its own error\r\n' "$SYSTEM"
+      printf 'table, but loading or compiling any file of the system needs them.\r\n\r\n'
     fi
   else
     printf 'Name a pack\r\n'
@@ -908,11 +955,13 @@ stage_tree() {
     printf 'sees.  cadrrc is what names it, and the two are deleted or kept\r\n'
     printf 'together.\r\n\r\n'
     if [ -n "${RELEASE:-}" ]; then
+      readme_system
       printf "The system's files\r\n"
       printf "Copy the sys and site folders of the system's sources into sys/\r\n"
-      printf 'and site/ here.  The machine reads them from the file and time host\r\n'
-      printf 'on this board, and at every boot it reads its error table from\r\n'
-      printf 'sys/; without them it stops and asks for a file.\r\n\r\n'
+      printf 'and site/ here.  The machine reads and writes them through the file\r\n'
+      printf 'and time host on this board.  System %s boots without them, on its\r\n' "$SYSTEM"
+      printf 'own error table, but loading or compiling any file of the system\r\n'
+      printf 'needs them.\r\n\r\n'
       printf 'The Chaosnet address\r\n'
       printf "fpgarc's --chaos-address is this machine's address, 177201, which\r\n"
       printf "is LISPM-1 in muir-sys's systems.  They name LISPM-1 to LISPM-7 at\r\n"
@@ -1366,8 +1415,9 @@ fi
   printf "\r\n"
   printf "# Which machine the bitstream is, muir's own flag: cadr, MIT's, whose\r\n"
   printf "# screen is 768 by 963, or quux, the evolved CADR, whose screen is\r\n"
-  printf "# the video controller, 1280 by 1024, with no color TV.  The fabric cannot be asked,\r\n"
-  printf "# so a card carrying a QUUX bitstream says quux here.\r\n"
+  printf "# the video controller, %s by %s on this board, with no color TV.\r\n" "$DISPLAY_W" "$DISPLAY_H"
+  printf "# The fabric cannot be asked, so a card carrying a QUUX bitstream\r\n"
+  printf "# says quux here.\r\n"
   if [ "$MACHINE" = quux ]; then
     printf -- "--machine quux\r\n"
   else
@@ -1547,10 +1597,10 @@ fi
   printf "# present, and written into the console face. The display output scans\r\n"
   printf "# the display's region of memory at a monitor's rate and drives the\r\n"
   if [ "$BOARD_NAME" = kria-kr260 ]; then
-    printf "# DisplayPort connector, J6, at 1920x1080 at 60 Hz, with no software\r\n"
+    printf "# DisplayPort connector, J6, at %sx%s at 60 Hz, with no software\r\n" "$DISPLAY_W" "$DISPLAY_H"
     printf "# in the path; cadr-displayport keeps the link.\r\n"
   else
-    printf "# HDMI connector with no software in the path.\r\n"
+    printf "# HDMI connector, at %sx%s at 60 Hz, with no software in the path.\r\n" "$DISPLAY_W" "$DISPLAY_H"
   fi
   printf "# docs/display-output.md is the design.\r\n"
   printf "\r\n"
@@ -2009,18 +2059,25 @@ if command -v "$DTC" >/dev/null 2>&1; then
   if [ "$LOADER" = u-boot.itb ] || [ "$LOADER" = u-boot.img ]; then
     [ -x "$HOSTBIN/dumpimage" ] && [ -x "$HOSTBIN/fdtget" ] \
       || die "no dumpimage or fdtget in $HOSTBIN to read U-Boot's tree out of $LOADER"
-    at=0; pos=
+    # **EVERY TREE IN IT, NOT THE LAST.**  The Arty Z7-20's u-boot.img
+    # carries the board's tree twice, one configuration each (U-Boot's build
+    # passes `-b` twice), and the first-stage loader may take either; a
+    # loader with one tree of each machine passed this when it read only the
+    # last.
+    at=0; trees=0
     for img in $("$HOSTBIN/fdtget" -l "$OUT/card/$LOADER" /images); do
-      [ "$("$HOSTBIN/fdtget" "$OUT/card/$LOADER" "/images/$img" type)" = flat_dt ] && pos=$at
+      if [ "$("$HOSTBIN/fdtget" "$OUT/card/$LOADER" "/images/$img" type)" = flat_dt ]; then
+        trees=$((trees + 1))
+        "$HOSTBIN/dumpimage" -T flat_dt -p "$at" -o "$OUT/uboot-tree.dtb" "$OUT/card/$LOADER" >/dev/null \
+          || die "dumpimage could not take the tree $img out of $LOADER"
+        "$DTC" -I dtb -O dts -o "$OUT/uboot-tree.dts" "$OUT/uboot-tree.dtb" 2>/dev/null
+        grep -A4 "$RESERVED" "$OUT/uboot-tree.dts" | grep -q 'no-map' \
+          || die "the tree U-Boot runs with ($img in $LOADER) has no $RESERVED, no-map: it is not this machine's, and U-Boot would place itself, the kernel's tree and the ramdisk without knowing where the machine's memory is"
+        grep -q "\"$MODEL\"" "$OUT/uboot-tree.dts" || die "the tree $img in $LOADER is not \"$MODEL\""
+      fi
       at=$((at + 1))
     done
-    [ -n "$pos" ] || die "$LOADER carries no tree"
-    "$HOSTBIN/dumpimage" -T flat_dt -p "$pos" -o "$OUT/uboot-tree.dtb" "$OUT/card/$LOADER" >/dev/null \
-      || die "dumpimage could not take the tree out of $LOADER"
-    "$DTC" -I dtb -O dts -o "$OUT/uboot-tree.dts" "$OUT/uboot-tree.dtb" 2>/dev/null
-    grep -A4 "$RESERVED" "$OUT/uboot-tree.dts" | grep -q 'no-map' \
-      || die "the tree U-Boot runs with (in $LOADER) has no $RESERVED, no-map: it is not this machine's, and U-Boot would place itself, the kernel's tree and the ramdisk without knowing where the machine's memory is"
-    grep -q "\"$MODEL\"" "$OUT/uboot-tree.dts" || die "the tree in $LOADER is not \"$MODEL\""
+    [ "$trees" -gt 0 ] || die "$LOADER carries no tree"
     rm -f "$OUT/uboot-tree.dtb" "$OUT/uboot-tree.dts"
   fi
 else

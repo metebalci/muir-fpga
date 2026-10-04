@@ -17898,6 +17898,51 @@ cadr_gpo=0x10d120e8
         RESERVED=quux13@18000000
 @end
 
+@mutation mem-map-the-kria-card-names-the-wrong-revision-13-node
+@check mem_map
+@file boards/arty-z7-20/linux/mksd-buildroot.sh
+@note The Kria KR260's revision 13 card checks its tree for a node the tree
+@note does not have: every release of the Kria's QUUX zip is refused, or a
+@note tree that reserves somewhere else passes.
+@note
+@note Caught at "revision 13's card node: ... REVISION=13 RESERVED".
+@old
+        RESERVED=quux13@5a000000
+@new
+        RESERVED=quux13@63000000
+@end
+
+@mutation mem-map-the-kria-card-stages-the-cadrs-tree-for-revision-13
+@check mem_map
+@file boards/arty-z7-20/linux/mksd-buildroot.sh
+@note The Kria KR260's revision 13 card staged with the CADR's tree: Linux
+@note is handed revision 13's main memory as its own, and the two corrupt
+@note each other silently.
+@note
+@note Caught at "REVISION=13 on kria-kr260 stages
+@note zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb, whose ... does not include
+@note quux13-reserved.dtsi".
+@old
+        TREE_IMAGE=zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dtb
+@new
+        TREE_IMAGE=zynqmp-smk-k26-revA-sck-kr-g-revB-cadr.dtb
+@end
+
+@mutation mem-map-the-kria-revision-13-tree-reserves-the-cadrs-region
+@check mem_map
+@file boards/kria-kr260/linux/buildroot/board/kria-kr260/dts/xilinx/zynqmp-smk-k26-revA-sck-kr-g-revB-quux13.dts
+@note The Kria KR260's revision 13 tree takes the CADR's reservation in place
+@note of its own: the tree the revision 13 card stages hands Linux revision
+@note 13's main memory.
+@note
+@note Caught at "REVISION=13 on kria-kr260 stages ... whose ... does not
+@note include quux13-reserved.dtsi".
+@old
+/include/ "quux13-reserved.dtsi"
+@new
+/include/ "cadr-reserved.dtsi"
+@end
+
 @mutation mem-map-the-records-outgrow-their-area
 @check mem_map
 @file rtl/plumbing/cadr_ddr_map.sv

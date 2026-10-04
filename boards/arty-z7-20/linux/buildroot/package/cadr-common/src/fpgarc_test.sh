@@ -6617,9 +6617,14 @@ if lift_readme "$WORK/rd"; then
 		for rel in "" 1; do
 			for m in cadr quux; do
 				rm -rf "$WORK/rd/card"; mkdir -p "$WORK/rd/card"
+				# A release card names its system, 1003 for the CADR's and 2001
+				# for QUUX's; QUUX is revision 13 on the three boards that run
+				# it and revision 12 on the Cora Z7-07S.
+				sys=; [ -z "$rel" ] || { [ "$m" = quux ] && sys=2001 || sys=1003; }
+				rev=; [ "$m" = quux ] && [ "$b" != cora-z7-07s ] && rev=13
 				( set -u
 				  OUT="$WORK/rd"; BOARD_NAME=$b; BOARD_DTB=the-board.dtb; MACHINE=$m; NO_FAULT=
-				  RELEASE=$rel; RELEASE_COMMIT=${rel:+abc1234}
+				  RELEASE=$rel; RELEASE_COMMIT=${rel:+abc1234}; SYSTEM=$sys; REVISION=$rev
 				  . "$WORK/rd/board.sh"
 				  ROOT_NAMES=
 				  for rf in $ROOT_FILES; do ROOT_NAMES="${ROOT_NAMES:+$ROOT_NAMES }${rf#*:}"; done
@@ -6631,6 +6636,25 @@ if lift_readme "$WORK/rd"; then
 				fi
 				r=$(tr -d '\r' < "$WORK/rd/card/README.TXT")
 				if [ -n "$rel" ]; then
+					if [ "$m" = quux ]; then what=disk.vhd.gz; else what=pack.img.gz; fi
+					flat=$(printf '%s\n' "$r" | tr '\n' ' ' | tr -s ' ')
+					for want in "its system is System $sys" "release-$sys-$what" \
+					            "release-$sys-sys.tar.gz" "latest-$m" "$m-$what" "$m-sys.tar.gz" \
+					            "System $sys boots without them, on its own error"; do
+						case "$flat" in *"$want"*) ;; *)
+							fail "the release README for $b ($m) does not say [$want]"
+							readme_bad=$((readme_bad + 1)) ;;
+						esac
+					done
+					case "$m:$rev:$flat" in
+					quux:13:*"This card runs QUUX revision 13,"*|quux::*"This card runs QUUX revision 12,"*|cadr::*"This card runs the CADR,"*) ;;
+					*) fail "the release README for $b ($m) does not say which machine and revision it runs"
+					   readme_bad=$((readme_bad + 1)) ;;
+					esac
+					case "$flat" in *"stops and asks for a file"*)
+						fail "the release README for $b ($m) says the machine stops without sys/"
+						readme_bad=$((readme_bad + 1)) ;;
+					esac
 					for want in 'it sets its clock by NTP at boot, from pool.ntp.org' \
 					            '--no-ntp turns it off' '--root-password sets another' \
 					            'A file named authorized_keys here'; do
