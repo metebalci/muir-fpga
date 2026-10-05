@@ -20717,10 +20717,10 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 # ------------------------------------------------------------------ QUUX
 #
 # QUUX, the evolved CADR: what `cadr_machine` builds under `MACHINE ==
-# "quux"`, held by the checks that build it so --- `machine_quux` on QUUX's
-# own boot PROM, and each `quux_<program>_quux` on a program of
+# "quux"`, held by the checks that build it so, at revision 13 --- each
+# `quux13_<program>_quux` on a program of `golden/src/quux13.rs` or of
 # `golden/src/quux.rs` --- and, for the gate that keeps it out of the CADR,
-# by the CADR's side of the same programs, `quux_<program>`.
+# by the CADR's side of `golden/src/quux.rs`'s programs, `quux_<program>`.
 
 @mutation quux-the-cadr-is-built-as-quux
 @check quux_map
@@ -20733,28 +20733,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
   localparam bit          QUUX      = MACHINE == "quux";
 @new
   localparam bit          QUUX      = MACHINE == "quux" || MACHINE == "cadr";
-@end
-
-@mutation quux-the-sixth-level-1-bit-is-not-written
-@check quux_map_quux
-@file rtl/machine/cadr_microcycle.sv
-@note A level-1 store drops `VMA<24>`, so entry 41 is stored as 01: the
-@note CADR's five bits in QUUX's six.
-@old
-    assign l1_store = {vma[24], vma[31:27]};
-@new
-    assign l1_store = {1'b0, vma[31:27]};
-@end
-
-@mutation quux-map-md-reads-bit-29-as-zero
-@check quux_map_quux
-@file rtl/machine/cadr_microcycle.sv
-@note `MAP(MD)<29>` reads the CADR's hard zero on QUUX, while the map
-@note itself holds six bits.
-@old
-    assign mf_map = {!pfw, !pfr, vmap, vmo};
-@new
-    assign mf_map = {!pfw, !pfr, vmap[5] & 1'b0, vmap[4:0], vmo};
 @end
 
 @mutation quux-level-2-is-written-as-the-cadrs-1024
@@ -20840,17 +20818,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
     assign pdla   = pdl_we ? pdla_write : pdla_read;
 @new
     assign pdla   = (pdl_we && 1'b0) ? pdla_write : pdla_read;
-@end
-
-@mutation quux-the-feature-page-is-not-decoded
-@check quux_map_quux
-@file rtl/machine/cadr_xbus_decode.sv
-@note The decode puts the register page on page 37776, the page below it,
-@note where nothing answers, so a read of the page fails with NXM.
-@old
-    assign feature_page = page == 14'o37777;
-@new
-    assign feature_page = page == 14'o37776;
 @end
 
 @mutation quux-the-feature-page-is-128-words
@@ -21053,17 +21020,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
   localparam logic [21:0] MODE   = 22'o17377760;
 @end
 
-@mutation quux-video-buffer-is-a-word-short
-@check quux_tv_quux
-@file rtl/machine/quux_video.sv
-@note The buffer's last word, `17117777`, is not claimed, so its cycle
-@note times out.  A bound with a mutation just inside it.
-@old
-  assign fb_c  = sel && ((phys - BUFFER) < 22'(BUFFER_WORDS));
-@new
-  assign fb_c  = sel && ((phys - BUFFER) < 22'(BUFFER_WORDS - 1));
-@end
-
 @mutation quux-video-mode-refuses-writes
 @check quux13_tv_quux
 @file rtl/machine/quux_video.sv
@@ -21074,29 +21030,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
   assign store_now = ctl && dev_rq && dev_write && !taken;
 @new
   assign store_now = ctl && dev_rq && dev_write && !taken && 1'b0;
-@end
-
-@mutation quux-the-decode-answers-one-past-the-video-buffer
-@check xbus_decode_quux
-@file rtl/machine/cadr_xbus_decode.sv
-@note The decode takes one word past the video controller's buffer.  A
-@note bound with a mutation just outside it.
-@old
-    assign video_buffer = (phys - 22'o17000000) < 22'(VIDEO_WORDS);
-@new
-    assign video_buffer = (phys - 22'o17000000) <= 22'(VIDEO_WORDS);
-@end
-
-@mutation quux-the-port-folds-the-video-buffer-onto-32k
-@check quux_tv_quux
-@file rtl/plumbing/cadr_ddr_map.sv
-@note The memory bus addresses the video controller with the CADR boards' fifteen bits,
-@note so the buffer's top 8K words land on its bottom 8K and its last word,
-@note which `quux_tv` writes and reads, reads back the word below.
-@old
-    return (phys >= 22'o17000000) ? mono_display_byte_address(phys[15:0])
-@new
-    return (phys >= 22'o17000000) ? mono_display_byte_address({1'b0, phys[14:0]})
 @end
 
 @mutation quux-video-is-turned-when-asked
@@ -21530,52 +21463,6 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
       dv_k <= dv_k + 6'd1;
 @end
 
-@mutation quux-the-register-page-is-gated-on-xbus-io
-@check xbus_decode_quux
-@file rtl/machine/cadr_xbus_decode.sv
-@note The register page is still gated on the old Xbus I/O pages, as it was
-@note at `17377000` before revision 11, so at `17777400` it is never a
-@note device (contract Q13).
-@old
-    assign device = feature_page || (xbus_io && video_buffer);
-@new
-    assign device = xbus_io && (feature_page || video_buffer);
-@end
-
-@mutation quux-the-old-register-page-still-answers
-@check xbus_decode_quux
-@file rtl/machine/cadr_xbus_decode.sv
-@note The old register page, `17377000`-`17377377`, is still a device, where
-@note since revision 11 nothing answers it (contract Q13).
-@old
-    assign device = feature_page || (xbus_io && video_buffer);
-@new
-    assign device = feature_page || (xbus_io && video_buffer) || page == 14'o36776;
-@end
-
-@mutation quux-the-old-device-registers-still-answer
-@check xbus_decode_quux
-@file rtl/machine/cadr_xbus_decode.sv
-@note The CADR's display and disk registers after the old page are still
-@note devices on QUUX, as the video controller's and block-disk's were before revision
-@note 11 (contract Q13).
-@old
-    assign device = feature_page || (xbus_io && video_buffer);
-@new
-    assign device = feature_page || (xbus_io && (video_buffer || tv_control || disk_regs));
-@end
-
-@mutation quux-the-color-ranges-answer-on-quux
-@check xbus_decode_quux
-@file rtl/machine/cadr_xbus_decode.sv
-@note The color TV's ranges answer on QUUX with the color input up, where
-@note QUUX has no color board and muir's `decode_quux` no color term.
-@old
-    assign device = feature_page || (xbus_io && video_buffer);
-@new
-    assign device = feature_page || (xbus_io && (video_buffer || (color_tv && (color_buffer || color_control))));
-@end
-
 # ---------------------------------------------------------------- H1a
 #
 # QUUX'S SYNCHRONOUS MICROCYCLE OF K TICKS: its generator, the writes on the
@@ -21778,17 +21665,6 @@ set_multicycle_path -setup 4 -from $quux_usec_s -to $slow
 set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @end
 
-@mutation grid-quux-arty-k-moved-alone
-@check machine_param
-@file boards/arty-z7-20/cadr_arty.sv
-@note The Arty's revision 12 moved to five ticks: its constraints follow it,
-@note and its checks and its fit are for four.
-@old
-    parameter int unsigned SYNC_K = 4,
-@new
-    parameter int unsigned SYNC_K = 5,
-@end
-
 @mutation machine-param-the-arty-revision-13-back-at-four
 @check machine_param
 @file boards/arty-z7-20/cadr_arty.sv
@@ -21824,11 +21700,12 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @mutation machine-param-the-arty-flow-reads-the-other-revisions-k
 @check machine_param
 @file boards/arty-z7-20/vivado/tick.tcl
-@note `cadr_sync_k` answers each revision with the other's K.
+@note `cadr_sync_k` answers revision 13 with the top level's other K,
+@note `SYNC_K`, revision 12's.
 @old
-    set name [expr {$word_bits eq "40" ? "SYNC_K13" : "SYNC_K"}]
+    set name SYNC_K13
 @new
-    set name [expr {$word_bits eq "40" ? "SYNC_K" : "SYNC_K13"}]
+    set name SYNC_K
 @end
 
 @mutation machine-param-the-arty-flow-gives-revision-13-prom-2000
@@ -21840,21 +21717,6 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
     set prom build/boot_prom.quux13.hex
 @new
     set prom build/boot_prom.quux.hex
-@end
-
-@mutation machine-param-the-arty-flow-gives-revision-12-prom-2001
-@check machine_param
-@file boards/arty-z7-20/vivado/bitstream.tcl
-@note Revision 12's bitstream built with revision 13's boot PROM, which stops
-@note at a 32-bit disk.
-@old
-} else {
-    set prom build/boot_prom.quux.hex
-}
-@new
-} else {
-    set prom build/boot_prom.quux13.hex
-}
 @end
 
 @mutation grid-quux-arty-every-tick-first-hop-at-k-minus-1
@@ -22404,16 +22266,6 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
   assign cs_ra   = QUUX ? npc : cs_radr;
 @end
 
-@mutation quux-the-feature-page-says-revision-4
-@check quux_map_quux
-@file rtl/machine/cadr_machine.sv
-@note The MACHINE-ID of revision 4, before the clocks and the register page.
-@old
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-@new
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_0044;
-@end
-
 @mutation quux-word-14-is-zero
 @check quux13_features_quux
 @file rtl/machine/quux_feature_page.sv
@@ -22536,72 +22388,6 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
   assign not_active = !walking && (!walked || busy_ticks >= (due >> 4));
 @end
 
-@mutation quux-block-disk-is-a-tick-late
-@check quux_block_disk_quux
-@file rtl/machine/quux_block_disk.sv
-@note The time is counted from the tick after the START, so not-active and
-@note the done interrupt come ten nanoseconds after muir's instant.
-@old
-              busy_ticks <= 32'd1;
-@new
-              busy_ticks <= 32'd0;
-@end
-
-@mutation quux-block-disk-past-the-end-is-no-error
-@check quux_block_disk_quux
-@file rtl/machine/quux_block_disk.sv
-@note A block the pack side denies stops the transfer without `<17>`.
-@old
-            req_valid <= 1'b0;
-            past_end  <= 1'b1;
-@new
-            req_valid <= 1'b0;
-            past_end  <= past_end;
-@end
-
-@mutation quux-block-disk-the-pointer-carries
-@check quux_block_disk_quux
-@file rtl/machine/quux_block_disk.sv
-@note The command list pointer counts all thirty-two bits, where only the
-@note low sixteen count.
-@old
-              ch_addr  <= {clp[21:16], clp_n};
-@new
-              ch_addr  <= 22'(clp + {16'd0, n});
-@end
-
-@mutation quux-block-disk-the-ccw-page-is-the-word
-@check quux_block_disk_quux
-@file rtl/machine/quux_block_disk.sv
-@note The page is taken from the command list word's low bits, not `<21:8>`.
-@old
-              page     <= ch_rdata[21:8];
-@new
-              page     <= ch_rdata[13:0];
-@end
-
-@mutation quux-block-disk-a-write-is-not-dirty
-@check quux_block_disk_quux
-@file rtl/machine/quux_block_disk.sv
-@note A block written is never marked written, so the pack side never writes
-@note it back and the pack keeps the old block.
-@old
-                ch_wrote <= 1'b1;
-@new
-                ch_wrote <= 1'b0;
-@end
-
-@mutation quux-block-disk-the-address-is-where-it-started
-@check quux_block_disk_quux
-@file rtl/machine/quux_block_disk.sv
-@note The disk address is left where the transfer started, not at the last
-@note block moved.
-@old
-          da      <= {4'd0, lba};
-@new
-          da      <= da;
-@end
-
 @mutation quux-block-disk-no-pack-reads-a-pack
 @check quux13_busreset_quux
 @file rtl/machine/quux_block_disk.sv
@@ -22629,7 +22415,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 # What a checkpoint of a QUUX board reads: the processor's clocks in the
 # register table's entries 21 to 25, and the register page's keyboard, mouse,
 # block-disk, bus errors and the video controller's black-on-white at selector 12.
-# `quux_readout_window_quux` holds each field against the register that holds
+# `quux13_readout_window_quux` holds each field against the register that holds
 # it; `quux_readout_window` holds that a CADR answers none of it, which is how
 # `cadr-checkpoint` tells the two bitstreams apart.
 
@@ -22845,11 +22631,11 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 # ------------------------------------------------ QUUX's memory port, Q6
 #
 # Contract Q6, revision 7: main memory off the Xbus, through the cache to
-# the memory controller at the nominal timing, a floor.  `quux_port_quux`
+# the memory controller at the nominal timing, a floor.  `quux13_port_quux`
 # holds `quux_mem_port.sv` and `quux_cache.sv` to muir's `MemoryPort` tick for
 # tick and then to coherence with a transfer beside the processor;
-# `quux_axi_master_quux` holds the line fill on the port; `machine_quux` the
-# port in the machine.
+# `quux13_axi_master_quux` holds the line fill on the port; the
+# `quux13_<program>_quux` checks the port in the machine.
 
 @mutation quux-hit-ignores-the-valid-bit
 @check quux13_port_quux
@@ -23126,17 +22912,6 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
       if (invalidate) inval_owed <= 1'b0;
 @end
 
-@mutation quux-machine-id-revision-7
-@check quux_map_quux
-@file rtl/machine/cadr_machine.sv
-@note MACHINE-ID says revision 7, the memory port's, from before the device
-@note registers.
-@old
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-@new
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_0074;
-@end
-
 @mutation quux-line-read-is-one-beat
 @check quux13_axi_master_quux
 @file rtl/plumbing/quux_axi_master.sv
@@ -23178,16 +22953,6 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
           else if (state == RDATA) state <= DONE;
 @end
 
-@mutation quux-line-read-at-the-word
-@check quux_axi_master_quux
-@file rtl/plumbing/quux_axi_master.sv
-@note A line fill asks at the word's own beat, not the line's first.
-@old
-      if (!WIDE) addr0 = {a_q[31:4], 4'b0000};
-@new
-      if (!WIDE) addr0 = {a_q[31:3], 3'b000};
-@end
-
 @mutation quux-the-register-s-word-taken-a-tick-late
 @check quux13_port_quux
 @file rtl/machine/quux_mem_port.sv
@@ -23224,39 +22989,11 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 # Contract Q7, revision 8: no device bus.  The frame buffer is on the memory
 # bus through the cache, a device register is taken at the grant and
 # acknowledged a microcycle on, and an address nothing answers fails in the
-# tick that takes it.  `quux_port_quux` holds the port to muir's
+# tick that takes it.  `quux13_port_quux` holds the port to muir's
 # `MemoryPort` with the frame buffer and the registers in it; the machine's
 # programs hold the rest.  And block-disk's disk of any size up to 2^28
-# blocks (contract Q8a), which `quux_block_disk_quux` holds three blocks
+# blocks (contract Q8a), which `quux13_block_disk_quux` holds three blocks
 # short of it.
-
-@mutation quux-the-frame-buffer-is-a-register
-@check quux_tv_quux
-@file rtl/machine/cadr_memory_path.sv
-@note The video controller's frame buffer is taken as a device register and
-@note not as the memory bus's: no cache and no DDR, the register decode
-@note answering it with whatever the seam holds.
-@old
-        .is_memory  (REV13 ? is_memory : (is_memory || (device && video_fb))),
-        .is_device  (REV13 ? device : (device && !video_fb)),
-@new
-        .is_memory  (REV13 ? is_memory : (is_memory || (device && video_fb && 1'b0))),
-        .is_device  (REV13 ? device : (device && !(video_fb && 1'b0))),
-@end
-
-@mutation quux-the-frame-buffer-at-main-memory-s-base
-@check quux_port_quux
-@file rtl/plumbing/cadr_ddr_map.sv
-@note The memory bus puts the frame buffer at main memory's base, 17000000
-@note words in, where the scanout never reads it.  A machine that reads back
-@note what it wrote there sees nothing wrong; the port's memory, which keeps
-@note the display's region apart, does.
-@old
-    return (phys >= 22'o17000000) ? mono_display_byte_address(phys[15:0])
-                                  : main_byte_address(phys);
-@new
-    return main_byte_address(phys);
-@end
 
 @mutation quux-an-empty-ack-clears-its-own-countdowns
 @check quux13_tv_quux
@@ -23279,18 +23016,6 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
       if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
 @new
       if (loadmd_edge && (mclk_edge || hang)) begin
-@end
-
-@mutation quux-block-disk-keeps-24-bits-of-address
-@check quux_block_disk_quux
-@file rtl/machine/quux_block_disk.sv
-@note The disk address register keeps 24 bits, a T-300's reach, where a
-@note QUUX disk runs to 2^28 blocks: the last blocks of a large disk are
-@note asked for sixteen million blocks low.
-@old
-          2'd2: da  <= {4'd0, wdata[27:0]};
-@new
-          2'd2: da  <= {8'd0, wdata[23:0]};
 @end
 
 @mutation rev13-block-disk-a-read-wraps-past-2-28
@@ -23722,17 +23447,6 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
   localparam logic [15:0] QUUX_REV         = WIDE ? 16'd0 : 16'd0;
 @end
 
-@mutation rev13-readout-entry-21-names-revision-13-on-revision-12
-@check machine_quux
-@file rtl/machine/cadr_microcycle.sv
-@note Entry 21 carries MACHINE-ID's low half on revision 12 too, where a
-@note reader takes the 0 there for revision 12.
-@old
-  localparam logic [15:0] QUUX_REV         = WIDE ? MACHINE_ID[15:0] : 16'd0;
-@new
-  localparam logic [15:0] QUUX_REV         = MACHINE_ID[15:0];
-@end
-
 @mutation rev13-the-file-device-page-says-qfd9
 @check machine_param
 @file boards/arty-z7-20/cadr_arty.sv
@@ -23858,7 +23572,6 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @end
 
 @mutation quux-reset-devices-reaches-no-board
-@check quux_busreset_quux
 @check quux13_files_quux
 @file rtl/machine/cadr_machine.sv
 @note On QUUX a write of word 104 with `<0>` set resets no board: block-disk
@@ -23895,7 +23608,6 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @end
 
 @mutation quux-28-still-resets-quux
-@check quux_busreset_quux
 @check quux13_files_quux
 @file rtl/machine/cadr_machine.sv
 @note `<28>`'s rise still resets QUUX's boards beside reset devices, as it did
@@ -24280,55 +23992,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 
 # --------------------------------- QUUX revision 9: the clock and the file device
 #
-# The machine's side is held against muir by `quux_rtc_quux` and
-# `quux_files_quux`, the host's side by `quux_fd_face_quux`, and the page's
+# The machine's side is held against muir by `quux13_rtc_quux` and
+# `quux13_files_quux`, the host's side by `quux_fd_face_quux`, and the page's
 # place on the port by `gp0_split_quux` and `gp0_split_axi4_quux`.
-
-@mutation quux-machine-id-revision-8
-@check quux_rtc_quux
-@file rtl/machine/cadr_machine.sv
-@note MACHINE-ID says revision 8, the device registers', from before the
-@note clock and the file device: the revision just below this one.
-@old
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-@new
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_0084;
-@end
-
-@mutation quux-machine-id-revision-9
-@check quux_page_quux
-@file rtl/machine/cadr_machine.sv
-@note MACHINE-ID says revision 9, the real-time clock's and the file device's,
-@note from before the interval timers and reset devices.
-@old
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-@new
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_0094;
-@end
-
-@mutation quux-machine-id-revision-11
-@check quux_page_quux
-@file rtl/machine/cadr_machine.sv
-@note MACHINE-ID says revision 11, the register page at `17777400`, from
-@note before the fused return (contract H8a): the revision just below this
-@note one.
-@old
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-@new
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00B4;
-@end
-
-@mutation quux-machine-id-revision-10
-@check quux_page_quux
-@file rtl/machine/cadr_machine.sv
-@note MACHINE-ID says revision 10, the interval timers' and reset devices',
-@note from before the register page moved to `17777400` (contract Q13): the
-@note revision just below this one.
-@old
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
-@new
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00A4;
-@end
 
 @mutation quux-word-17-reads-zero
 @check quux13_registers_quux
@@ -25363,16 +25029,6 @@ FAULT_SH=/usr/share/cadr/faults.sh
     if (pf_drop) pf_nx_v = 1'b0;
 @end
 
-@mutation prefetch-past-the-line
-@check quux_prefetch_quux
-@file rtl/machine/quux_mem_port.sv
-@note The line's last word takes the line's first as the next.
-@old
-    assign pf_next_ok = pf_same_line;
-@new
-    assign pf_next_ok = 1'b1;
-@end
-
 @mutation prefetch-takes-the-fetched-word
 @check quux13_prefetch_quux
 @file rtl/machine/quux_mem_port.sv
@@ -25458,15 +25114,26 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note The processor refuses a width only when it is neither 32 nor 40, so a
 @note CADR builds at 40 bits, which MIT's machine never had.
 @old
-  if (WORD_BITS != 32 && !(QUUX && WORD_BITS == 40)) begin : g_bad_word
+  if (WORD_BITS != (MACHINE == "quux" ? 40 : 32)) begin : g_bad_word
 @new
   if (WORD_BITS != 32 && WORD_BITS != 40) begin : g_bad_word
+@end
+
+@mutation word-width-quux-takes-32
+@check word_width
+@file rtl/machine/cadr_microcycle.sv
+@note The processor takes QUUX at 32 bits, revision 12's word, which is
+@note retired: a board's top level could build it again.
+@old
+  if (WORD_BITS != (MACHINE == "quux" ? 40 : 32)) begin : g_bad_word
+@new
+  if (WORD_BITS != (MACHINE == "quux" ? 40 : 32) && !(MACHINE == "quux" && WORD_BITS == 32)) begin : g_bad_word
 @end
 
 # ----------------------------------------------- revision 13's processor
 #
 # QUUX revision 13 (contract G2, appendix A1), the processor at `WORD_BITS`
-# 40, against `golden/src/quux13.rs`'s programs on muir's `Geometry::QUUX_13`:
+# 40, against `golden/src/quux13.rs`'s programs on muir's `Geometry::QUUX`:
 # the misc decode, the ring of 40 and its masker, LC byte mode's add, the
 # conditions and the overflow flag, the dispatch memory at 4,096, the
 # location counter at 30 bits, and the map at 8,192 x 7 and 4,096 x 28 with
@@ -25890,7 +25557,7 @@ FAULT_SH=/usr/share/cadr/faults.sh
 #
 # QUUX revision 13's memory port and cache (contract G2 §3, G1 §3.2-§4.2):
 # `quux13_port_quux` holds `quux_mem_port.sv` and `quux_cache.sv` at
-# `WORD_BITS` 40 to muir's `MemoryPort` on `Geometry::QUUX_13` tick for tick,
+# `WORD_BITS` 40 to muir's `MemoryPort` on `Geometry::QUUX` tick for tick,
 # the testbench's main memory packed storage in bytes; `quux13_axi_master_quux`
 # holds the five-beat lines, the five-byte writes and the split at 4 KiB;
 # `xbus_decode_quux13` the 28-bit space at every address; the programs of

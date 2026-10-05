@@ -140,11 +140,10 @@ module cadr_microcycle #(
     //     and index `PDL_BITS` wide, written from `OB` masked, read back whole
     //     in sources 2 and 3, and wrapping at the buffer's own size.
     //
-    // What holds each: `build/quux_map.quux.pass` against muir's QUUX and
+    // What holds each: `build/quux13_features.quux.pass` against muir's QUUX and
     // `build/quux_map.pass` against its CADR, the program being
-    // `golden/src/quux.rs --program map`; `build/machine.quux.pass`, QUUX's
-    // boot PROM clearing all 16K words of the PDL buffer and 64 blocks of
-    // level 2; and the records aimed at each in `mutations/list.txt`.
+    // `golden/src/quux.rs --program map`; and the records aimed at each in
+    // `mutations/list.txt`.
     parameter string MACHINE = "cadr",
     // The MACHINE-ID, functional sources 16 and 36 on QUUX: `cadr_machine.sv`
     // gives it, from the one place it is decided.  The default is revision
@@ -164,7 +163,7 @@ module cadr_microcycle #(
     // take the whole word.
     //
     // **A 40-BIT WORD IS REVISION 13'S PROCESSOR** (contract G2 §2, appendix
-    // A1; muir's `Geometry::QUUX_13`, everything keyed on `wide()`), behind
+    // A1; muir's `Geometry::QUUX`, everything keyed on `wide()`), behind
     // `WIDE` below: 6-bit BYTE fields and no misc decode in a BYTE word
     // (A1.1), the rotator and masker on a ring of 40 and LC byte mode's add
     // (A1.2), the jump conditions on the fields with conditions 10 and 11 and
@@ -185,7 +184,7 @@ module cadr_microcycle #(
     // (`tools/word_width_check.py`), which lints the machine at 40 on QUUX
     // and reads each word's width back, and revision 13's programs,
     // `build/quux13_*.quux.k4.pass` (`golden/src/quux13.rs`), against muir's
-    // `rtl` on `Geometry::QUUX_13`.
+    // `rtl` on `Geometry::QUUX`.
     parameter int unsigned WORD_BITS = 32,
     // **QUUX'S MICROCYCLE IN TICKS** (H1a, muir's `TimingModel::Sync`): K,
     // and L more for an `ILONG` instruction.  A board's, from its top level
@@ -433,7 +432,7 @@ module cadr_microcycle #(
   // QUUX's widths, and the CADR's: `Geometry::QUUX` and `Geometry::CADR`.
   localparam bit          QUUX      = MACHINE == "quux";
   // **REVISION 13** (contract G2 with its appendix A1, muir's
-  // `Geometry::QUUX_13`): a 40-bit word is revision 13, and its fields, its
+  // `Geometry::QUUX`): a 40-bit word is revision 13, and its fields, its
   // rotator and masker, its jump conditions, its dispatch memory, its
   // location counter and its map come with the word, as muir's
   // `Geometry::wide` keys them.  Each is behind `WIDE` below, and each is
@@ -454,9 +453,11 @@ module cadr_microcycle #(
   localparam int unsigned PDL_BITS  = QUUX ? 14 : 10;
   localparam int unsigned PDL_WORDS = 1 << PDL_BITS;
 
-  // 32 on the CADR, 32 or 40 on QUUX (`Geometry::word_bits`).
-  if (WORD_BITS != 32 && !(QUUX && WORD_BITS == 40)) begin : g_bad_word
-    $error("cadr_microcycle: WORD_BITS is %0d on %s; a word is 32 bits on the CADR and 32 or 40 on QUUX", WORD_BITS, MACHINE);
+  // 32 on the CADR and 40 on QUUX (`Geometry::word_bits`); revision 12, the
+  // 32-bit QUUX, is retired.  Asked of `MACHINE` itself, the parameter as
+  // given, rather than of `QUUX` derived from it.
+  if (WORD_BITS != (MACHINE == "quux" ? 40 : 32)) begin : g_bad_word
+    $error("cadr_microcycle: WORD_BITS is %0d on %s; a word is 32 bits on the CADR and 40 on QUUX", WORD_BITS, MACHINE);
   end
 
   // ------------------------------------------------------------ the clock
@@ -765,7 +766,7 @@ module cadr_microcycle #(
   // 36000 being a multiple of 2000.  The trap below starts the PC there, and
   // a `WRITE-I-MEM` into the PROM's addresses writes nothing (`quux_prom_wr`).
   // What holds it: every QUUX trace, the boot PROM's among them, each of
-  // whose microcycles is fetched here; and `build/quux_imemsync.quux.k4.pass`,
+  // whose microcycles is fetched here; and `build/quux13_imemsync.quux.k4.pass`,
   // whose program writes the control store just below 36000 and over the
   // PROM's own words, and runs both.  **What nothing holds is
   // `quux_prom_wr` itself**: the RAM behind the PROM is never fetched, so a
@@ -1082,7 +1083,7 @@ module cadr_microcycle #(
   // in a hung microcycle, and on the boundary's own tick in one that runs.
   // QUUX's RAM gives the old word, since the write lands on the edge that
   // reads it.  What holds it: the `popj-*` and `x-popj-*` programs of
-  // `build/dispatch_write_order.pass` and `build/dispatch_write_order.quux.pass`.
+  // `build/dispatch_write_order.pass` and `build/dispatch_write_order13.quux.pass`.
   assign dram_q = (!QUUX && dispwr) ? a[16:0] : dram_rd;
   assign dr     = dram_q[16];
   assign dp     = dram_q[15];
@@ -1942,8 +1943,8 @@ module cadr_microcycle #(
   // lands (the edge ending a `WRITE-I-MEM`'s `IWRITED` microcycle, whose
   // pulse writes the store); RESET-DEVICES does neither.
   //
-  // What holds it: `build/quux_fused.quux.k4.pass` and
-  // `build/quux_operand.quux.k4.pass` (`golden/src/fused.rs`), and the
+  // What holds it: `build/quux13_returns.quux.k4.pass` and
+  // `build/quux13_operand.quux.k4.pass` (`golden/src/fused.rs`), and the
   // CADR's side, the same programs, `build/quux_fused.pass` and
   // `build/quux_operand.pass`.
   logic [31:0] macro_reg;
@@ -2950,7 +2951,7 @@ module cadr_microcycle #(
     // microcycle, is that load's: `div_have` says one was strobed since the
     // edge, and the load takes `md_held` then too.  A strobe on the load's
     // own tick is the reload's, a tick later.  Every other M source is the M
-    // bus.  `build/quux_divmd.quux.*` and `build/quux_divmdsync.quux.*` hold
+    // bus.  `build/quux13_divmd.quux.*` and `build/quux13_divmdsync.quux.*` hold
     // it: a `DIV` of MD at every distance from its read that lands the word
     // before, on and after its load.  `div_md`, `div_have` and `div_strobed`
     // are read every tick and are out of the constraint files' relaxed set
@@ -3004,8 +3005,8 @@ module cadr_microcycle #(
   // two edges sooner,
   // `RD_FINISH_T` being counted to the hang's boundary (see there), so
   // `rip_tail` carries it those two ticks.  What holds it:
-  // `build/dispatch_write_order.quux.pass`, muir's `on_quux_*` programs,
-  // whose microcycles wait for the word read, and `build/machine.quux.pass`.
+  // `build/dispatch_write_order13.quux.pass`, muir's `on_quux_*` programs,
+  // whose microcycles wait for the word read.
   // The hold itself is built below the two countdowns it reads.
 
   // "Cleared by MEMACK delayed by about 150 ns" --- `-RDFINISH` is `-MFINISH`
@@ -3384,7 +3385,7 @@ module cadr_microcycle #(
       // at the edge and finds it acknowledged only when it next carries the
       // bus forward, after the edge, so its word reaches MD at the next
       // master clock edge: `md-acked-on-an-edge-nxm` and
-      // `nxm-fall-on-the-grant-edge` in `build/dispatch_write_order.quux.pass`.
+      // `nxm-fall-on-the-grant-edge` in `build/dispatch_write_order13.quux.pass`.
       if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
@@ -3840,7 +3841,7 @@ module cadr_microcycle #(
   // was taken at, 26 to 28 their interrupt enables, modes and periods
   // (`quux_clocks.sv`'s `ro_*` has the fields; revision 10 moved 25, the
   // interval timer's period, into 26 to 28).
-  // What holds them: `build/quux_readout_window.quux.pass`.
+  // What holds them: `build/quux13_readout_window.quux.pass`.
   localparam logic [13:0] RG_QUUX_ID       = 14'd21;
   // Entry 21's `<15:0>`: MACHINE-ID's low half on revision 13, `0x00D4`,
   // which says the revision and so the words' width; 0 on revision 12.

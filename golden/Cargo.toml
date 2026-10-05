@@ -93,16 +93,8 @@ name = "quux_input"
 path = "src/quux_input.rs"
 
 [[bin]]
-name = "quux_block_disk"
-path = "src/quux_block_disk.rs"
-
-[[bin]]
 name = "quux_checkpoint"
 path = "src/quux_checkpoint.rs"
-
-[[bin]]
-name = "quux_port"
-path = "src/quux_port.rs"
 
 [[bin]]
 name = "quux_file_device"

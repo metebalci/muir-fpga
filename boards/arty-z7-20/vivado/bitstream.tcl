@@ -124,11 +124,11 @@
 # **WHICH MACHINE**, which is asked first and refused before anything is
 # written, so that a wrong name leaves no directory behind it:
 #
-#     MACHINE=quux DDR=1 HDMI=1 OUTDIR=build/arty-quux-hdmi vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
+#     MACHINE=quux WORD_BITS=40 DDR=1 HDMI=1 OUTDIR=build/arty-quux13-hdmi vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
 #
 # `cadr`, the default, is MIT's machine and this flow exactly as it was.
 # `quux` is the evolved CADR, a bitstream of its own: the top level's
-# `MACHINE` generic, a default directory of `build/arty-quux`, and a file
+# `MACHINE` generic, a default directory of `build/arty-quux13`, and a file
 # named `quux_arty.bit` instead of `cadr_arty.bit`.  **A QUUX BUILD MUST NAME
 # ITS MACHINE IN ITS DIRECTORY**, because the reports beside the bitstream
 # carry no machine in their names, and a QUUX build into `build/ddr` would
@@ -142,17 +142,17 @@ if {$machine ne "cadr" && $machine ne "quux"} {
 }
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z020clg400-1"}]
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) \
-                      : ($machine eq "quux" ? "build/arty-quux" : "build/bitstream")}]
+                      : ($machine eq "quux" ? "build/arty-quux13" : "build/bitstream")}]
 if {$machine eq "quux" && [string first quux [file tail $outdir]] < 0} {
     puts "BIT: FAILED --- MACHINE=quux into OUTDIR=$outdir, whose name does not say"
-    puts "BIT: quux. Name the directory for the machine, as build/arty-quux-ddr."
+    puts "BIT: quux. Name the directory for the machine, as build/arty-quux13-ddr."
     exit 1
 }
-# **AND WHICH REVISION OF QUUX**: `WORD_BITS=40` is QUUX revision 13, whose
-# processor comes with its 40-bit word (contract G2), 32 the default and
-# everything before it.  The top level's `WORD_BITS` generic, passed only at
-# 40, and a directory that says `quux13`, for the reason above; a revision 12
-# build into a `quux13` directory is refused the same way.
+# **AND THE WORD**: `WORD_BITS=40` is QUUX, revision 13, whose processor
+# comes with its 40-bit word (contract G2), and 32, the default, the CADR's.
+# Revision 12, QUUX at 32 bits, is retired and refused, as the Kria KR260's
+# flow refuses it.  The top level's `WORD_BITS` generic, passed only at 40,
+# and a directory that says `quux13`, for the reason above.
 set word_bits [expr {[info exists ::env(WORD_BITS)] ? $::env(WORD_BITS) : "32"}]
 if {$word_bits ne "32" && $word_bits ne "40"} {
     puts "BIT: FAILED --- WORD_BITS=$word_bits is not a word. It is 32, or 40 for"
@@ -164,10 +164,14 @@ if {$word_bits eq "40" && $machine ne "quux"} {
     puts "BIT: the CADR's word is 32 bits."
     exit 1
 }
-set says_13 [expr {[string first quux13 [file tail $outdir]] >= 0}]
-if {$machine eq "quux" && $says_13 != ($word_bits eq "40")} {
+if {$machine eq "quux" && $word_bits ne "40"} {
+    puts "BIT: FAILED --- MACHINE=quux at WORD_BITS=$word_bits, which was revision 12,"
+    puts "BIT: and revision 12 is retired: give WORD_BITS=40."
+    exit 1
+}
+if {$machine eq "quux" && [string first quux13 [file tail $outdir]] < 0} {
     puts "BIT: FAILED --- WORD_BITS=$word_bits into OUTDIR=$outdir: a revision 13"
-    puts "BIT: build, and only one, goes to a directory that says quux13."
+    puts "BIT: build goes to a directory that says quux13."
     exit 1
 }
 if {$word_bits eq "40"} {
@@ -273,17 +277,13 @@ if {$prove != 0 && $prove != 1 && $prove != 2} {
 # Everything below asks this rather than `$ddr`.
 set port [expr {($ddr > 0 || $prove > 0 || $hdmi > 0) ? 1 : 0}]
 
-# QUUX boots from its own PROM, each revision from its own: revision 12 from
-# version 2000, which `make build/boot_prom.quux.hex` writes out of muir's
-# `data/quux-promh-2000.mcr`, and revision 13 from version 2001, which `make
-# build/boot_prom.quux13.hex` writes out of `data/quux-promh.mcr`.  Each
-# stops the other revision's disk (contract G2 §2.8).
+# QUUX boots from its own PROM, version 2001, which `make
+# build/boot_prom.quux13.hex` writes out of muir's `data/quux-promh.mcr`
+# (contract G2 §2.8).
 if {$machine ne "quux"} {
     set prom build/boot_prom.hex
-} elseif {$word_bits eq "40"} {
-    set prom build/boot_prom.quux13.hex
 } else {
-    set prom build/boot_prom.quux.hex
+    set prom build/boot_prom.quux13.hex
 }
 puts "BIT: the boot PROM is $prom"
 if {![file exists $prom]} {
@@ -378,8 +378,8 @@ if {$prove > 0} {
 read_xdc boards/arty-z7-20/cadr_arty.xdc
 read_xdc -ref cadr_machine rtl/plumbing/xilinx7/cadr_machine.xdc
 # QUUX's own clauses, which would reach every path on the CADR, each count of
-# K written from `sync_k`: the top level's own K for the revision this build
-# is, four to revision 12 and five at revision 13 (`tick.tcl`).
+# K written from `sync_k`: the top level's own K for revision 13, five
+# (`tick.tcl`).
 if {$machine eq "quux"} {
     set sync_k [cadr_sync_k $word_bits]
     read_xdc -ref cadr_machine rtl/plumbing/xilinx7/quux_machine.xdc

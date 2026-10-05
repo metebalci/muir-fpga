@@ -18,7 +18,6 @@
 # them), which is only a convenience: a prediction that went wrong would
 # still be compared, and would show as a status nobody meant.
 
-import functools
 import os
 import stat
 
@@ -42,17 +41,20 @@ def oflags(mode=MODE_READ, if_exists=SUPERSEDE, if_none_error=0):
 
 
 class Scenario:
-    def __init__(self, name, rev=12):
+    def __init__(self, name, rev=13):
+        # Revision 13 alone: revision 12, whose words were 32 bits, is
+        # retired, and muir's device has no other layout.
+        assert rev == 13, "revision 12 is retired"
         self.rev = rev
-        self.name = name if rev == 12 else "%s-%d" % (name, rev)
+        self.name = "%s-%d" % (name, rev)
         # Revision 13's addresses are 28 bits on an 8-word line.
-        self.address = 0xFFFFFF if rev == 12 else 0xFFFFFFF
-        self.line = 3 if rev == 12 else 7
+        self.address = 0xFFFFFFF
+        self.line = 7
         # The tags the machine's words carry: a command entry's and buffer
         # A's (revision 13 only).
         self.cmd_tag = FIXNUM
         self.data_tag = FIXNUM
-        self.lines = [] if rev == 12 else ["revision %d" % rev]
+        self.lines = ["revision %d" % rev]
         self.seed = []          # (kind, rel, arg...)
         self.tag = 1
         self.heap = HEAP
@@ -162,7 +164,7 @@ class Scenario:
             n = b if b_len is None else b_len
             at = self.alloc(min(n, 65536)) if b_addr is None else b_addr
             if at + (min(n, 65536) + 3) // 4 <= MEMORY and not at & self.line:
-                poison = 0xA5000000 | self.tag | (POISON_TAG << 32 if self.rev == 13 else 0)
+                poison = 0xA5000000 | self.tag | POISON_TAG << 32
                 self.op("fill", hex(at), (min(n, 65536) + 3) // 4, hex(poison))
             b_addr, b_len = at, n
         self.index += 1
@@ -170,18 +172,13 @@ class Scenario:
         self.tag = (self.tag + 1) & 0xFFFF
         w0 = tag | (op & 0xFF) << 16 | (flags & 0xFF) << 24
         words = [w0, handle, a_addr or 0, a_len or 0, b_addr or 0, b_len or 0, off, date]
-        if self.rev == 13:
-            words = [(w & 0xFFFFFFFF) | self.cmd_tag << 32 for w in words]
-        self.op("cmd", *[hex(w) if k in (0, 2, 4) or self.rev == 13 else w
-                         for k, w in enumerate(words)])
+        words = [(w & 0xFFFFFFFF) | self.cmd_tag << 32 for w in words]
+        self.op("cmd", *[hex(w) for w in words])
 
     def bytes(self, at, data):
-        """Bytes into memory from word `at`, 4 a word; on revision 13 each
-        word tagged as buffer A's are."""
-        if self.rev == 13:
-            self.op("bytes", hex(at), data.hex() or "-", hex(self.data_tag))
-        else:
-            self.op("bytes", hex(at), data.hex())
+        """Bytes into memory from word `at`, 4 a word, each word tagged as
+        buffer A's are."""
+        self.op("bytes", hex(at), data.hex() or "-", hex(self.data_tag))
 
     def go(self, n=1):
         """Post the last n commands, let the device run, and consume what it answered."""
@@ -217,7 +214,7 @@ class Scenario:
         return "\n".join(self.lines) + "\n"
 
 
-def basic(rev=12):
+def basic(rev=13):
     s = Scenario("basic", rev)
     s.file("root/hello.txt", "Hello, world!\n")
     s.file("root/big.bin", bytes((i * 7 + 3) & 0xFF for i in range(100000)), mtime=T0 + 5)
@@ -311,7 +308,7 @@ def basic(rev=12):
     return s
 
 
-def directory(rev=12):
+def directory(rev=13):
     s = Scenario("directory", rev)
     for n in ("b.txt", "a.txt", ".hidden", "C.txt", "sp ace.txt", "~tilde"):
         s.file("root/" + n, n * 3)
@@ -348,7 +345,7 @@ def directory(rev=12):
     return s
 
 
-def complete(rev=12):
+def complete(rev=13):
     s = Scenario("complete", rev)
     for n in ("apple", "apricot", "app", "banana", ".dot"):
         s.file("root/c/" + n, n)
@@ -363,7 +360,7 @@ def complete(rev=12):
     return s
 
 
-def ops(rev=12):
+def ops(rev=13):
     s = Scenario("ops", rev)
     s.file("root/f.txt", "f")
     s.file("root/a.txt", "a")
@@ -395,7 +392,7 @@ def ops(rev=12):
     return s
 
 
-def names(rev=12):
+def names(rev=13):
     s = Scenario("names", rev)
     s.file("root/hello.txt", "hi")
     s.file("root/sp ace", "space")
@@ -409,7 +406,7 @@ def names(rev=12):
     return s
 
 
-def mounts_override(rev=12):
+def mounts_override(rev=13):
     s = Scenario("mounts_override", rev)
     s.file("base/sys/base-only", "hidden by the named sys")
     s.file("base/site/site.lisp", "site")
@@ -430,7 +427,7 @@ def mounts_override(rev=12):
     return s
 
 
-def mounts_named_only(rev=12):
+def mounts_named_only(rev=13):
     s = Scenario("mounts_named_only", rev)
     s.file("s/a", "a")
     s.file("t/b", "b")
@@ -455,7 +452,7 @@ def mounts_named_only(rev=12):
     return s
 
 
-def mounts_none(rev=12):
+def mounts_none(rev=13):
     s = Scenario("mounts_none", rev)
     s.start()
     s.one(DIRECTORY, a="/", b=512)
@@ -467,7 +464,7 @@ def mounts_none(rev=12):
     return s
 
 
-def mounts_bad(rev=12):
+def mounts_bad(rev=13):
     s = Scenario("mounts_bad", rev)
     s.file("afile", "not a folder")
     for d in ("a", "b", "c", "d", "x"):
@@ -483,7 +480,7 @@ def mounts_bad(rev=12):
     return s
 
 
-def handles(rev=12):
+def handles(rev=13):
     s = Scenario("handles", rev)
     s.file("root/h.txt", "handle")
     s.start("@/root")
@@ -518,7 +515,7 @@ def handles(rev=12):
     return s
 
 
-def rings(rev=12):
+def rings(rev=13):
     s = Scenario("rings", rev)
     s.file("root/r.txt", "ring")
     s.start("@/root", cmd_log2=0, resp_log2=0)
@@ -571,7 +568,7 @@ def rings(rev=12):
     return s
 
 
-def buffers(rev=12):
+def buffers(rev=13):
     s = Scenario("buffers", rev)
     s.file("root/f.txt", "0123456789")
     # A file with no period a buffer's words could hide a misplaced run in.
@@ -605,30 +602,29 @@ def buffers(rev=12):
         s.one(op, a="/f.txt", b=16)
     for op in (DIRECTORY, COMPLETE, DELETE, RENAME, CREATE_DIRECTORY, LOG, WRITE, READ):
         s.one(op, 0x40, a="/f.txt", b=16)
-    if s.rev == 13:
-        # Revision 13's line is 8 words, and its addresses 28 bits: a buffer
-        # on a 4-word line is bad, and one whose <27:24> are set is past
-        # memory where revision 12 would drop them; <31:28> are dropped.
-        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=good + 4)
-        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=0x01000000 | good)
-        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=0xF0000000 | good)
-        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=MEMORY - 8, a_len=33)
-        s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=MEMORY - 8, a_len=32)
-        h = s.open_read("/f.txt")
-        s.one(READ, handle=h, b=4, b_addr=good + 4)
-        # The last line of main memory, written whole: nothing past it.
-        s.one(READ, handle=h, b=32, b_addr=MEMORY - 8)
-        # Every length a last word can be left at, in words that straddle
-        # the mapping's 32-bit words in each of the ways a packed word can.
-        for n in (1, 2, 3, 5, 6, 7, 9, 10, 11, 13):
-            s.one(READ, handle=h, b=n, off=0)
-        s.close(h)
+    # Revision 13's line is 8 words, and its addresses 28 bits: a buffer
+    # on a 4-word line is bad, and one whose <27:24> are set is past
+    # memory where revision 12 would drop them; <31:28> are dropped.
+    s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=good + 4)
+    s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=0x01000000 | good)
+    s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=0xF0000000 | good)
+    s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=MEMORY - 8, a_len=33)
+    s.one(OPEN, oflags(MODE_PROBE), a=b"/f.txt", a_addr=MEMORY - 8, a_len=32)
+    h = s.open_read("/f.txt")
+    s.one(READ, handle=h, b=4, b_addr=good + 4)
+    # The last line of main memory, written whole: nothing past it.
+    s.one(READ, handle=h, b=32, b_addr=MEMORY - 8)
+    # Every length a last word can be left at, in words that straddle
+    # the mapping's 32-bit words in each of the ways a packed word can.
+    for n in (1, 2, 3, 5, 6, 7, 9, 10, 11, 13):
+        s.one(READ, handle=h, b=n, off=0)
+    s.close(h)
     return s
 
 
 def rings13(rev=13):
     """Revision 13's rings: on an 8-word line, 28-bit bases."""
-    s = Scenario("rings", rev)
+    s = Scenario("ringlines", rev)
     s.file("root/r.txt", "ring")
     s.start("@/root", cmd_log2=0, resp_log2=0)
     s.probe("/r.txt")
@@ -673,7 +669,7 @@ def tags13(rev=13):
     return s
 
 
-def logs(rev=12):
+def logs(rev=13):
     s = Scenario("logs", rev)
     s.start("@/root")
     s.file("root/keep", "k")
@@ -687,7 +683,7 @@ def logs(rev=12):
     return s
 
 
-def symlinks(rev=12):
+def symlinks(rev=13):
     s = Scenario("symlinks", rev)
     s.file("root/real/file.txt", "real file")
     s.file("root/real/f2.txt", "second")
@@ -728,7 +724,7 @@ def symlinks(rev=12):
     return s
 
 
-def perms(rev=12):
+def perms(rev=13):
     s = Scenario("perms", rev)
     s.file("root/secret.txt", "secret")
     s.file("root/locked/x.txt", "x")
@@ -757,12 +753,11 @@ def perms(rev=12):
     return s
 
 
-REVISION_12 = [basic, directory, complete, ops, names, mounts_override, mounts_named_only,
-               mounts_none, mounts_bad, handles, rings, buffers, logs, symlinks, perms]
-
-# Every script again on revision 13 (contract G2 §4.3): main memory packed,
-# the machine's words fixnums, a buffer B's poisoned with another tag; and
-# what only revision 13 has.  `rings` at revision 13 is `rings13`'s name, so
-# the 2^16 indexes are run once, at revision 12.
-ALL = REVISION_12 + [functools.partial(f, rev=13) for f in REVISION_12 if f is not rings] \
-    + [rings13, tags13]
+# Every script on revision 13 (contract G2 §4.3): main memory packed, the
+# machine's words fixnums, a buffer B's poisoned with another tag; and what
+# only revision 13 has, `rings13` and `tags13`.  Revision 12's runs of the
+# same scripts, 32-bit words, are retired with it; `rings`, whose indexes
+# cross 2^16, runs here at revision 13.
+SCRIPTS = [basic, directory, complete, ops, names, mounts_override, mounts_named_only,
+           mounts_none, mounts_bad, handles, rings, buffers, logs, symlinks, perms]
+ALL = SCRIPTS + [rings13, tags13]

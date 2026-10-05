@@ -534,7 +534,7 @@ number dangerous, and they are the reason this document exists.
 | 1 | **A generator cycle is the read tap plus the restart, each rounded on its own.** 85 + 60 = 145 ns, which is 9 + 6 = 15 ticks at the 10 ns grid and 29 at 5. | `Speed::cycle_ns` is `read_phase_ns(ilong) + RESTART_AFTER_READ_NS`, and `TimingModel::cycle_ns` rounds the two separately. Every cycle length in the machine follows from its tap; none is written down separately. |
 | 2 | **The write-pulse family is measured from the END of the read phase; TSE, SELECT and `-TPR60` are measured from `-TPR0`.** | `cadr_phase_gen.sv` computes `wp_on_at` as `read_sel + WP_ON_T`, while `tptse` compares against `TSE_OFF_T` directly. They are two different origins, which is why they cannot collide however the tap moves. |
 | 3 | **The write pulse is 15 ns wide on the drawings**, `WPIRAM_OFF` minus `WP_ON`. The width is the claim, not either end. At the 10 ns grid both ends round up separately and the pulse is 20 ns wide. | `clock.rs`: "no signal on the board is derived from the pulse's width" — so what matters is that the control store sees a pulse at all, and both ends must move together. |
-| 4 | **The write pulse is clamped to the cycle boundary.** The board's `-TPW70` outlives `-TPDONE` at 60 by 10 ns; the model takes `WP_OFF_NS.min(RESTART)`. | `clock.rs` at `RESTART_AFTER_READ_NS`: "the write pulse of one cycle overlaps the start of the next by 10 ns". With no gate delays in fabric, an unclamped pulse would write at the next instruction's address. The scratchpads, the maps and the dispatch memory take their address and word as the clamped pulse ends, which is the boundary's own tick. On the CADR a map or dispatch read in the microcycle that writes the same memory gets the new word, the board's race as muir's netlist model settles it, so the processor passes the word being written around the RAM. On QUUX it gets the old word, as QUUX defines it. In a microcycle `-HANG` holds, the pulse ends on the park's first tick, and the maps' and the dispatch memory's write lands with the same address and word up to two ticks before it or up to two ticks after it (row 30). QUUX has no hung microcycle: a microcycle that reads MD with a read in flight waits whole cycles with no write pulse and then runs once. Held by `build/dispatch_write_order.pass` and `build/dispatch_write_order.quux.pass`, and at revision 13 by `build/dispatch_write_order13.quux.pass`. |
+| 4 | **The write pulse is clamped to the cycle boundary.** The board's `-TPW70` outlives `-TPDONE` at 60 by 10 ns; the model takes `WP_OFF_NS.min(RESTART)`. | `clock.rs` at `RESTART_AFTER_READ_NS`: "the write pulse of one cycle overlaps the start of the next by 10 ns". With no gate delays in fabric, an unclamped pulse would write at the next instruction's address. The scratchpads, the maps and the dispatch memory take their address and word as the clamped pulse ends, which is the boundary's own tick. On the CADR a map or dispatch read in the microcycle that writes the same memory gets the new word, the board's race as muir's netlist model settles it, so the processor passes the word being written around the RAM. On QUUX it gets the old word, as QUUX defines it. In a microcycle `-HANG` holds, the pulse ends on the park's first tick, and the maps' and the dispatch memory's write lands with the same address and word up to two ticks before it or up to two ticks after it (row 30). QUUX has no hung microcycle: a microcycle that reads MD with a read in flight waits whole cycles with no write pulse and then runs once. Held by `build/dispatch_write_order.pass` and, on QUUX, `build/dispatch_write_order13.quux.pass`. |
 | 5 | **ILONG adds exactly 40 ns to a read tap before it is rounded, except at extra slow.** | `Speed::read_phase_ns`. At extra slow 160 ns is already the longest tap the chain provides. Held by `extra-slow-stretches-with-ilong`. |
 | 6 | **SELECT falls after `-TPR60` and before the earliest read tap: 60 < 65 < 75.** | `clock.rs` at `SELECT_NS`: "after SPEEDCLK at 60 has clocked the synchronizer and the board has settled, before the earliest tap at 75". In ticks that is 12 < 13 < 15 at 5 ns, and 6 < 7 < 8 at 10 ns — the ordering survives, with nothing to spare. Held by `the-read-phase-is-selected-at-the-start-of-the-cycle`. |
 | 7 | **`-TPR60`'s window is `TPR60_ON` to `TPR60_ON + TPR_PULSE_NS`**, 60 to 100 ns. | The `-TPR0` pulse is 40 ns wide and every read tap is that pulse delayed, so the window's width is the pulse's. |
@@ -568,9 +568,8 @@ QUUX does not replay the CADR's delay line. Its microcycle is a fixed number
 of ticks, K, and an `ILONG` instruction takes L ticks more. This is muir's
 `TimingModel::Sync { cycle_ticks, ilong_ticks }`, run as `--timing-model sync
 --sync-cycle-ticks K`. K and L belong to a board, and L is 0 on both. The
-DE25-Nano runs at K = 4, which is 40 ns a microcycle. The Arty Z7-20 runs
-revision 12 at K = 4 and revision 13 at K = 5, 50 ns a microcycle. The Kria
-KR260 builds revision 13 only, at K = 4.
+DE25-Nano and the Kria KR260 run at K = 4, which is 40 ns a microcycle, and
+the Arty Z7-20 at K = 5, 50 ns a microcycle.
 
 **The Arty's revision 13 takes a longer microcycle, not a slower clock.** Its
 map, two levels through the memory path's decode, misses four ticks on that
@@ -621,21 +620,21 @@ Inside a microcycle:
   takes 400 ns at K = 4. For MD the count starts at the end of the last cycle
   the wait for MD held, so a `DIV` of MD is held nine microcycles after its
   word has landed. A `MUL` runs one microcycle after the same wait. This is
-  muir's `muldiv::DIV_CYCLES`, and `build/quux_divmd.quux.*` and
-  `build/quux_muldiv.quux.*` hold it.
+  muir's `muldiv::DIV_CYCLES`, and `build/quux13_divmd.quux.*` and
+  `build/quux13_muldiv.quux.*` hold it.
 - A memory start in the microcycle right after a start is held, a `-WAIT`
   term of QUUX's own, `MEMSTART AND MEMOP`. The first cycle goes out at the
   next master clock edge with its own address, direction and word, the
   second start then waits for it to end, and both land. The CADR has no
   such term: on the board the cycle that goes out takes the second start's
   direction and `VMA<7:0>`, and the first is lost.
-  `build/quux_startstart.quux.*` holds the hold, with reads and writes to
+  `build/quux13_startstart.quux.*` holds the hold, with reads and writes to
   lines missing and cached, and `dispatch-held-by-wait-0` holds it for a
   fetch.
 - A write carries `MD` as it stands at the edge the cycle goes out on, the
   edge ending the microcycle after the start, so an `MD` loaded in that
   microcycle is the word written. This holds on both machines
-  (`build/quux_startstart.pass` and `build/quux_startstart.quux.*`).
+  (`build/quux_startstart.pass` and `build/quux13_startstart.quux.*`).
 - A console write lands at the master clock edge, and nowhere else.
 - There are no speed bits and no speed synchronizer. The mode register's
   bits 1 and 0 go nowhere.
@@ -643,7 +642,7 @@ Inside a microcycle:
   waiting or not, from the interrupt as it stands on that edge's own tick
   (muir's `Machine::interrupt_at`). A clock flag that rises inside a
   microcycle, or on the edge that ends it, is in it.
-  `build/quux_tickwin.quux.k4l1.pass` puts rises at every tick of a
+  `build/quux13_tickwin.quux.k4l1.pass` puts rises at every tick of a
   microcycle and inside a wait for MD.
 
 Each program named here also runs at revision 13, the same program
@@ -675,7 +674,7 @@ of three ways, by its address, through `rtl/machine/quux_mem_port.sv`:
   tick that takes it, with word 101's NXM bit set and a read giving zero.
   There is no timer.
 
-This is muir's `memory_port::MemoryPort`, and `build/quux_port.quux.k4.pass`
+This is muir's `memory_port::MemoryPort`, and `build/quux13_port.quux.k4.pass`
 holds the module to it tick for tick.
 
 - A read that hits is answered two ticks, 20 ns, after its grant. The RAMs
@@ -727,7 +726,7 @@ processor wrote before START. The whole cache is invalidated at the grant
 after any write of a block-disk register, which is muir's rule. A transfer's
 word written to main memory also clears its set in the cache, so that no
 processor read hits a word from before the transfer after DONE, which is the
-second rule. The coherence run of `build/quux_port.quux.k4.pass` holds both
+second rule. The coherence run of `build/quux13_port.quux.k4.pass` holds both
 rules with the processor and a transfer running together.
 
 QUUX's memory adapter has no timing exception. Nothing of the processor's
@@ -741,7 +740,7 @@ adapter asks for the bus's 80 ns and that each of these paths asks for one
 tick.
 
 The traces QUUX is held to are taken at a K and an L named in their files:
-`rtl.quux.k4.golden`, `quux_divmd.quux.k4l1.golden` and so on. `make check
+`quux13_alu.quux.k4.golden`, `quux13_divmd.quux.k4l1.golden` and so on. `make check
 MACHINE=quux` runs them at every board's K, 4 and 5 (the Makefile's
 `QUUX_KS`), at an L of 0. It also runs the programs with `ILONG`
 instructions at an L of one. The memory port is built at each K, since it

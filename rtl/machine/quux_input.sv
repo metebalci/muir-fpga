@@ -45,7 +45,7 @@
 //
 // What holds it: `build/quux_input.quux.pass`, the module against muir's
 // `QuuxInput` over a script of presses, motion, buttons, reads and writes
-// (`golden/src/quux_input.rs`); and `build/quux_page.quux.k4.pass`, a program
+// (`golden/src/quux_input.rs`); and `build/quux13_page.quux.k4.pass`, a program
 // reading the page on the whole machine with key words pressed on the cable.
 
 `default_nettype none

@@ -660,8 +660,9 @@ exactly that.
 
 `build/sd/buildroot/card/` is the card's contents as a directory, and
 `build/sd/buildroot/<machine>-<board>.zip` is that directory zipped, which is
-what a user unpacks. The machine is `cadr`, or `quux` when `MACHINE=quux`
-says the bitstream is QUUX's. The zip is read back afterwards --- unpacked to a scratch
+what a user unpacks. The machine is `cadr`, or `quux` when `MACHINE=quux
+REVISION=13` says the bitstream is QUUX's; `MACHINE=quux` alone, which was
+revision 12's card, is refused. The zip is read back afterwards --- unpacked to a scratch
 directory and compared against what was staged, every file byte for byte and
 the name sets both ways --- because what is published is the zip and not the
 directory. **What the image's readback could say and this cannot is that the

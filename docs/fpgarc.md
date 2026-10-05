@@ -595,9 +595,8 @@ gives:
 **The range is the board's.** On revision 13 it is 1MW to what the board keeps
 for QUUX's main memory, its reservation (`docs/linux.md`): 32MW on the Arty
 Z7-20 and the Kria KR260, and 64MW on the DE25-Nano. The default is 32MW, as
-muir's revision 13 has it. On revision 12 it is 1MW to 3MW, the whole
-megawords below its sixty 64K-word boards' 3.75M words, and the default is
-2MW. An amount outside the range is refused with the range:
+muir's revision 13 has it. An amount outside the range is refused with the
+range:
 
     main-memory-size 33MW: revision 13's main memory on this board is 1MW to 32MW
 

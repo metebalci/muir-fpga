@@ -46,7 +46,7 @@
 // units of this size, sixteen a megaword (`ro_main_amount`).
 #define IMG_BOARD_WORDS 65536u
 
-// **REVISION 13'S** (contract G2 §2, appendix A1; muir's `Geometry::QUUX_13`):
+// **REVISION 13'S** (contract G2 §2, appendix A1; muir's `Geometry::QUUX`):
 // words of 40 bits --- A, M, the PDL buffer, Q, VMA, MD, L and main memory
 // --- read out whole, the tag in <39:32>; a dispatch memory of 4,096
 // entries; a level-1 map of 8,192 seven-bit entries and a level-2 map of

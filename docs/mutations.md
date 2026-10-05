@@ -205,7 +205,7 @@ the RTL of a copy, then built through the board's real flow. Three have been:
 The second is also a record in `mutations/list.txt`,
 `quux-the-pdl-write-lands-at-the-read-address`, written with the select held
 low by a constant so that lint still sees every signal read. In RTL it is a
-behavior, and `quux_map_quux` catches it.
+behavior, and `quux13_features_quux` catches it.
 
 The second fault was a block RAM enabled while its address was still
 moving. QUUX's control store is read at the edge, at NPC, whose cone the

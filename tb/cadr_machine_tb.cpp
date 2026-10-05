@@ -1905,7 +1905,7 @@ int main(int argc, char **argv) {
   // its trace at the pin: it saves nothing (muir's contract Q8, its buffer
   // being page 3, filled only from a label it never reads here), so its
   // every cycle is block-disk's status, polled.  Main memory is held on QUUX
-  // by the programs of `golden/src/quux.rs` and by `build/quux_port.quux.*`,
+  // by the programs of `golden/src/quux.rs` and by `build/quux13_port.quux.*`,
   // and this run must then reach none of it: a cycle of main memory's here
   // would be a PROM that is not the one the trace was taken from.
   if (quux_prom && mem_cycles != 0) {

@@ -10,7 +10,7 @@
 //
 // There is no muir reference for the host's side: muir's device runs its
 // commands itself.  The machine's side is muir's and is held on the whole
-// machine by `build/quux_files.quux.k4.pass` and `build/quux_rtc.quux.k4.pass`;
+// machine by `build/quux13_files.quux.k4.pass` and `build/quux13_rtc.quux.k4.pass`;
 // what is here is the part of the contract that is this project's, each
 // rule with the case just outside it:
 //

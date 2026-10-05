@@ -63,16 +63,16 @@
 // left, counted down to one; the flag rises in the tick both run out, and a
 // periodic timer's both reload for the next period.
 //
-// What holds it, each against muir's QUUX at the pin: `build/quux_clocks.quux.k4.pass`,
+// What holds it, each against muir's QUUX at the pin: `build/quux13_clocks.quux.k4.pass`,
 // a program that reads every timer's two words through the page across
 // rises, clears, periods written while running, each turned off, one-shot
 // and periodic, the three at once, destination 3 writing only M and the
 // shared edge;
-// `build/quux_tickwin.quux.k4l1.pass`, the window between a rise and the
+// `build/quux13_tickwin.quux.k4l1.pass`, the window between a rise and the
 // edge `SINTR` is taken at, against a page write's edges;
-// `build/quux_clockwait.quux.k4l1.pass`, the page's reads of word 100 and of
+// `build/quux13_clockwait.quux.k4l1.pass`, the page's reads of word 100 and of
 // a timer's word with the rise a tick either side of the edge that takes
-// them; `build/quux_busreset.quux.k4.pass`, `RESET-DEVICES`; the CADR's side
+// them; `build/quux13_busreset.quux.k4.pass`, `RESET-DEVICES`; the CADR's side
 // of `clocks`, sources 15 and 17 all ones and destinations 3 and 4 writing M
 // alone; and the records aimed here in `mutations/list.txt`.
 
@@ -116,7 +116,7 @@ module quux_clocks (
     // next rise is `pre + (us - 1) * TICKS_A_US` ticks after the tick its
     // word was taken at, and the reader must know which tick that was, the
     // timers running while the machine is halted and the reader's accesses
-    // being microseconds apart.  `build/quux_readout_window.quux.k4.pass`
+    // being microseconds apart.  `build/quux13_readout_window.quux.k4.pass`
     // holds every field.
     //   ro_time      <38:32> usec_t, <31:0> usec
     //   ro_count[k]  <47:41> usec<6:0>, <40:34> usec_t, <33> on, <32> sticky,

@@ -10,8 +10,9 @@
 //! One operation a line, numbers decimal or `0x` hexadecimal:
 //!
 //! ```text
-//! revision 13           first, if at all: a revision-13 machine's device and main
-//!                       memory, 40-bit words (contract G2 §4.3, appendix A1.10)
+//! revision 13           first, always: a revision-13 machine's device and main
+//!                       memory, 40-bit words (contract G2 §4.3, appendix A1.10);
+//!                       revision 12, whose words were 32 bits, is retired
 //! memory WORDS          main memory's size, zeroed
 //! root SPEC             a --file-root value, `@` standing for the folder
 //! describe              the mounts as the start lists them
@@ -80,8 +81,8 @@ fn hex_bytes(s: &str) -> Vec<u8> {
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
 }
 
-/// A word of main memory as this program keeps it: 32 bits to revision 12,
-/// 40 on revision 13, and how each is printed and stored.
+/// A word of main memory as this program keeps it: 40 bits, revision 13's,
+/// and how it is printed and stored.
 trait Cell: MemoryWord + Default {
     /// Hex digits in the transcript.
     const DIGITS: usize;
@@ -91,14 +92,6 @@ trait Cell: MemoryWord + Default {
     /// A script's number: `<31:0>` and, where the word has it, the tag.
     fn from_script(v: u64) -> Self {
         Self::tagged(v as u32, (v >> 32) as u8)
-    }
-}
-
-impl Cell for u32 {
-    const DIGITS: usize = 8;
-    const BYTES: usize = 4;
-    fn wide(self) -> u64 {
-        self.into()
     }
 }
 
@@ -165,13 +158,13 @@ fn main() {
     let tree = PathBuf::from(tree.expect("--tree"));
     let out = out.expect("--out");
     let text = fs::read_to_string(&script).expect("the script");
-    // `revision 13`, if it is there, is the first operation.
+    // `revision 13` is the first operation: revision 12 is retired.
     let first = text.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#'));
-    let t = if first == Some("revision 13") {
-        run::<u64>(&script, &text, &tree, true)
-    } else {
-        run::<u32>(&script, &text, &tree, false)
-    };
+    assert!(
+        first == Some("revision 13"),
+        "{script}: `revision 13` is the first operation; revision 12 is retired"
+    );
+    let t = run::<u64>(&script, &text, &tree, true);
     fs::write(&out, t).expect("the transcript");
 }
 
@@ -181,7 +174,6 @@ fn run<W: Cell>(script: &str, text: &str, tree: &Path, revision_13: bool) -> Str
     let mut t = String::new();
     let mut dev = FileDevice::new();
     dev.log = Some(Vec::new());
-    dev.revision_13 = revision_13;
     let mut mounts = Mounts::default();
     let mut main: Vec<W> = Vec::new();
     let mut now: u64 = 1;

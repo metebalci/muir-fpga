@@ -100,7 +100,7 @@
 // main memory itself (`docs/file-device.md`).  The readout gives each base
 // a word of its own there (`ro_bases`, `ro_resp_base`).
 //
-// What holds it: `build/quux_files.quux.k4.pass`, a program driving every
+// What holds it: `build/quux13_files.quux.k4.pass`, a program driving every
 // register on the whole machine against muir's device, with the testbench
 // playing the server at muir's instants through this side; and
 // `build/quux_fd_face.pass`, the face and this module driven over AXI as

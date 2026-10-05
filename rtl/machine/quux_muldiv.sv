@@ -52,14 +52,14 @@
 // strobe (`md_held`), and the microcycle that then runs ends no sooner than
 // 180 ns after the strobe --- READ IN PROGRESS falls 140 ns after it and the
 // microcycle is K = 4 ticks --- where the divider is done 170 ns after it.
-// A step a tick would need 330.  `build/quux_divmd.quux.*` and
-// `build/quux_divmdsync.quux.*` hold it: a `DIV` of MD at every distance
+// A step a tick would need 330.  `build/quux13_divmd.quux.*` and
+// `build/quux13_divmdsync.quux.*` hold it: a `DIV` of MD at every distance
 // from its read.
 //
 // What holds it: `build/muldiv.quux.pass` against `muldiv::run` itself over
 // thousands of operands chosen at the edges of both representations and at
 // random, each loaded and stepped as the processor does, and
-// `build/quux_muldiv.quux.pass` against muir's QUUX running `MUL` and `DIV`
+// `build/quux13_muldiv.quux.pass` against muir's QUUX running `MUL` and `DIV`
 // in the processor, with the CADR's side of that program --- functions 42
 // and 43 as the 74S181's --- in `build/quux_muldiv.pass`.
 

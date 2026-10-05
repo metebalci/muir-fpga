@@ -123,7 +123,7 @@ static void emit_words_padded(struct chk *w, const uint64_t *v, size_t have, siz
 		chk_word(w, i < have ? v[i] : 0u);
 }
 
-// **REVISION 13** (contract G2 appendix A1.13; muir's `Geometry::QUUX_13`):
+// **REVISION 13** (contract G2 appendix A1.13; muir's `Geometry::QUUX`):
 // a level-1 entry of seven bits; level 2 in 4,096 entries, `L2_MAP_WORDS`,
 // every one of which the machine has; and the cache's 8-word lines, the lines
 // of packed storage (`memory_port::Layout::REVISION_13`).

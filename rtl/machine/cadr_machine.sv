@@ -83,8 +83,8 @@ module cadr_machine #(
     parameter int unsigned SYNC_L = 0,
 
     // **THE WORD'S WIDTH**, muir's `Geometry::word_bits`: 32 on the CADR and
-    // on QUUX to revision 12, 40 on revision 13 (contract G2 §2.1), whose
-    // processor comes with the word: `cadr_microcycle.sv` says what that is,
+    // 40 on QUUX, revision 13 (contract G2 §2.1), whose processor comes with
+    // the word: `cadr_microcycle.sv` says what that is,
     // and what of the machine around it is still revision 12's. The ports
     // below that carry a word carry the whole of it, `R` among them; the
     // console's registers and the bus audit take `<31:0>`.
@@ -633,8 +633,8 @@ module cadr_machine #(
   //   controller's mode on it                           `quux_feature_page.sv`
   //   the 16K-word PDL buffer, its pointer and index 14 bits
   //                                                  `cadr_microcycle.sv`
-  //   the boot PROM, version 2000, which is the image `PROM_HEX` names: every
-  //   QUUX build and check hands it `build/boot_prom.quux.hex`
+  //   the boot PROM, version 2001, which is the image `PROM_HEX` names: every
+  //   QUUX build hands it `build/boot_prom.quux13.hex`
   //   the video controller in place of the SIMPLE and LISPM TV, at the
   //   board's `VIDEO_WIDTH` by `VIDEO_HEIGHT`, and no color board
   //                                                      `quux_video.sv`
@@ -645,12 +645,12 @@ module cadr_machine #(
   //
   // The values every part reads are decided once, here.
   localparam bit          QUUX       = MACHINE == "quux";
-  // `(0x5155 << 16) | (12 << 4) | 4`: the signature, hardware revision 12
-  // --- the fused return, the MACRO-DISPATCH register and the MACRO
-  // DISPATCH MEMORY (contract H8a), after contract Q13's register page at
-  // `17777400` --- and processor type 4, `Geometry::QUUX.machine_id`.  A
-  // 40-bit word is revision 13, `(13 << 4) | 4`, `Geometry::QUUX_13`
-  // (contract G2 §2.8).
+  // `(0x5155 << 16) | (13 << 4) | 4`: the signature, hardware revision 13,
+  // the 40-bit word (contract G2 §2.8), and processor type 4,
+  // `Geometry::QUUX.machine_id`.  The other value, revision 12's
+  // `(12 << 4) | 4` --- the fused return, the MACRO-DISPATCH register and the
+  // MACRO DISPATCH MEMORY (contract H8a) --- is a 32-bit word's, which only
+  // the CADR is now, and which never reads it.
   localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
   // The video controller at the board's size, `VIDEO_WIDTH` by
   // `VIDEO_HEIGHT`, one bit a pixel, `VIDEO_WIDTH / 32` words a line, and
@@ -1535,7 +1535,7 @@ module cadr_machine #(
     //     100-177  the keyboard FIFO's sixty-four words, by index
     //
     // and anything else `RO_NO_MEMORY`.  What holds it:
-    // `build/quux_readout_window.quux.pass`.
+    // `build/quux13_readout_window.quux.pass`.
     always_ff @(posedge clk) begin
       if (rst) begin
         quux_ro_a1 <= 18'h3FFFF;
@@ -1720,7 +1720,7 @@ module cadr_machine #(
   // the video controller's frame buffer and block-disk's transfers one word
   // a cycle, and
   // the port's answers to the bridge stand in for the PS7's handshakes.
-  // What holds the port's own traffic is `build/quux_port.quux.*.pass`.
+  // What holds the port's own traffic is `build/quux13_port.quux.*.pass`.
   //
   // The port's answers are taken a tick after the bridge sees them, as the
   // PS7's handshakes always come after the request they answer: the bridge

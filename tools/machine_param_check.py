@@ -39,16 +39,17 @@ build and program scripts refuse a name that is not a machine and accept
 both, and the build script refuses QUUX beside `FAULT=1`, because the fault
 bitstream carries no machine.
 
-**AND THE WORD, `WORD_BITS`, THE SAME WAY** (contract G2): 40 is QUUX
-revision 13.  On the Arty's and the DE25-Nano's memory board with its
-display, `MACHINE=quux WORD_BITS=40` lints clean and `u_machine` elaborates
-`WORD_BITS` 40, and no `WORD_BITS` elaborates 32; and the file device's
-page, `u_fd_face`, names the revision by its IDENT, "QF13" at 40 and "QFD9"
-below.  The Arty's flow refuses a
-width that is not a word, 40 on the CADR, and a directory that says `quux13`
-for any build but revision 13's or does not for revision 13's, and takes
-revision 13 into one that does; the DE25-Nano's two scripts refuse a width
-that is not a word and 40 on the CADR, and take revision 13.
+**AND THE WORD, `WORD_BITS`, THE SAME WAY** (contract G2): 40 is QUUX,
+revision 13, and QUUX at 32, revision 12, is retired.  On every board that
+builds QUUX, `MACHINE=quux WORD_BITS=40` lints clean and `u_machine`
+elaborates `WORD_BITS` 40, and the file device's page, `u_fd_face`, names
+the revision by its IDENT, "QF13"; and QUUX at the default 32 stops
+elaboration, on the Arty and the DE25-Nano in the processor and on the Kria
+KR260 in its top level.  The Arty's flow refuses a width that is not a word,
+40 on the CADR, 32 on QUUX, and a revision 13 build into a directory that
+does not say `quux13`, and takes revision 13 into one that does; the
+DE25-Nano's two scripts refuse a width that is not a word, 40 on the CADR
+and 32 on QUUX, and take revision 13.
 
 **AND THE DEBUG CABLE IS THE CADR'S ALONE** (contract Q5).  In the same
 elaborated tree, the CADR has one cell each of the cable's connector,
@@ -97,13 +98,14 @@ BOARDS = {
             "plain": ([], []),
             "DDR=1 HDMI=1": (["-GDDR=1", "-GHDMI=1"], ["tb/cadr_ps7_stub.sv"]),
         },
-        "machines": ["cadr", "quux"],
+        # `machines` is what the plain sweep builds with no word; QUUX is
+        # swept at 40 bits by `word_reaches`, and refused at 32.
+        "machines": ["cadr"],
         # The debug cable's eight pads, Pmod JA.
         "pads": ["ja"],
-        # QUUX's K by the word: revision 12's four, and revision 13's five,
-        # the machine's clock left at 100 MHz so that its timers count true
-        # time (`cadr_arty.sv`, `SYNC_K13`).
-        "sync_k": {32: 4, 40: 5},
+        # QUUX's K at revision 13, five, the machine's clock left at 100 MHz
+        # so that its timers count true time (`cadr_arty.sv`, `SYNC_K13`).
+        "sync_k": {40: 5},
         # Revision 13's most memory boards: what the board's reservation holds
         # (`cadr_ddr_map.sv`, 32M words), written here apart from it.
         "boards13_max": 512,
@@ -123,10 +125,10 @@ BOARDS = {
             "plain": ([], []),
             "DDR=1 HDMI=1": (["-DCADR_DE25_DDR", "-DCADR_DE25_HDMI"], []),
         },
-        "machines": ["cadr", "quux"],
+        "machines": ["cadr"],
         # The debug cable's eight pads, JP1 pins 31 to 38.
         "pads": ["jp1_pin3%d" % i for i in range(1, 9)],
-        "sync_k": {32: 4, 40: 4},
+        "sync_k": {40: 4},
         # 64M words of room, and muir's most is 1,024 boards.
         "boards13_max": 1024,
         "video": (1280, 1024),
@@ -165,7 +167,7 @@ BOARDS = {
         },
         "machines": ["cadr"],
         "pads": ["pmod1"],
-        # Revision 13 at four ticks, `SYNC_K13`; there is no revision 12.
+        # Revision 13 at four ticks, `SYNC_K13`.
         "sync_k": {40: 4},
         # Revision 13's room on this board: 32M words.
         "boards13_max": 512,
@@ -478,11 +480,10 @@ def cable_at_top(board, config, asked, machine, tree):
 
 
 def word_reaches(board, config, bits, scratch):
-    """QUUX at `bits` (None: not given, so 32) lints clean and is the width
-    at u_machine."""
+    """QUUX at `bits`, 40, lints clean and is the width at u_machine."""
     top = BOARDS[board]["top"]
-    want = bits if bits is not None else 32
-    asked = "WORD_BITS=%d" % bits if bits is not None else "no WORD_BITS"
+    want = bits
+    asked = "WORD_BITS=%d" % bits
     what = "%s, %s, MACHINE=quux, %s: u_machine elaborates WORD_BITS %d" % (top, config, asked, want)
     rc, out = verilator(board, config, "quux", "--lint-only", word_bits=bits)
     if rc != 0:
@@ -503,7 +504,7 @@ def word_reaches(board, config, bits, scratch):
         say(False, "%s --- it elaborates %d" % (what, got))
     else:
         say(True, what)
-    # **AND THE REVISION'S K**: on the Arty revision 13's is not revision 12's.
+    # **AND THE REVISION'S K**, the board's own.
     k_at_generator(board, config, "MACHINE=quux, %s" % asked, want, tree)
     # And no debug cable at revision 13 either.
     cable_at_top(board, config, "MACHINE=quux, %s" % asked, "quux", tree)
@@ -512,9 +513,9 @@ def word_reaches(board, config, bits, scratch):
     if board == "kr260":
         kr260_raster(config, "MACHINE=quux, %s" % asked, "quux", tree)
     video_and_name(board, config, "MACHINE=quux, %s" % asked, "quux", want > 32, tree)
-    # And the file device's page names the revision: "QF13" at 40 bits,
-    # "QFD9" below (`rtl/plumbing/quux_fd_face.sv`).
-    ident_want = 0x51463133 if want > 32 else 0x51464439
+    # And the file device's page names the revision: "QF13" at 40 bits
+    # (`rtl/plumbing/quux_fd_face.sv`).
+    ident_want = 0x51463133
     what = "%s, %s, MACHINE=quux, %s: u_fd_face's IDENT is %08x" % (top, config, asked, ident_want)
     got, why = fd_ident_at_instance(tree, top)
     if got is None:
@@ -572,14 +573,8 @@ def reaches(board, config, value, scratch):
         say(True, what)
     # **AND THE DEBUG CABLE IS THERE ON THE CADR AND NOWHERE ON QUUX.**
     cable_at_top(board, config, asked, want, tree)
-    # **AND THE CONSOLE'S MEMORY BOARDS ARE THE CADR'S AND REVISION 12'S.**
+    # **AND THE CONSOLE'S MEMORY BOARDS ARE THE CADR'S.**
     boards_at_console(board, config, asked, False, tree)
-    # **AND QUUX'S K REACHES ITS GENERATOR**: the board's own SYNC_K, through
-    # `cadr_machine` and `cadr_microcycle`, is the K `quux_phase_gen` counts.
-    # A top level that dropped it would build the machine at the default K
-    # and every trace at that K would still pass.
-    if want == "quux":
-        k_at_generator(board, config, "MACHINE=quux", 32, tree)
     if board == "kr260":
         kr260_raster(config, asked, want, tree)
     video_and_name(board, config, asked, want, False, tree)
@@ -756,24 +751,38 @@ def main():
         for config in BOARDS["cora"]["configs"]:
             refused_at("cora", config, "quux",
                        "the Cora Z7-07S builds the CADR only", "cadr_cora")
-        # QUUX at revision 12's word is refused on the Kria KR260, which
-        # builds revision 13 alone.
+        # QUUX at revision 12's word, the default 32, is refused: on the
+        # Kria KR260 by its top level, and on the Arty and the DE25-Nano by
+        # the processor, revision 12 being retired.
         for config in BOARDS["kr260"]["configs"]:
             refused_at("kr260", config, "quux",
                        "and the Kria KR260 builds the CADR and QUUX revision 13", "cadr_kr260")
+        for board in ("arty", "de25"):
+            top = BOARDS[board]["top"]
+            for config in BOARDS[board]["configs"]:
+                refused_at(board, config, "quux",
+                           "cadr_microcycle: WORD_BITS is 32 on quux", "%s.u_machine.processor" % top)
         # The word, on the boards that build QUUX.
         for board in ("arty", "de25"):
-            for bits in (None, 40):
-                word_reaches(board, "DDR=1 HDMI=1", bits, scratch)
+            word_reaches(board, "DDR=1 HDMI=1", 40, scratch)
         # With the processing system: the file device's page is there only
         # behind its port, as on the other boards.
         word_reaches("kr260", "DDR=1", 40, scratch)
 
         # **THE ARTY'S FLOW STATES THE K ITS MACHINE COUNTS**: `tick.tcl`'s
-        # `cadr_sync_k` for each word is the table's, and the flow sets the
-        # `sync_k` that `quux_machine.xdc` writes its counts from with it,
-        # for the word it builds, before it reads that file.
-        for bits in (32, 40):
+        # `cadr_sync_k` at 40 is the table's, and the flow sets the `sync_k`
+        # that `quux_machine.xdc` writes its counts from with it, for the
+        # word it builds, before it reads that file; at 32 it has none.
+        what = "the Arty's flow states no K at WORD_BITS=32, revision 12's (tick.tcl, cadr_sync_k)"
+        script = os.path.join(scratch, "sync_k32.tcl")
+        with open(script, "w") as f:
+            f.write("source boards/arty-z7-20/vivado/tick.tcl\nputs \"K=[cadr_sync_k 32]\"\n")
+        rc, out = run([TCLSH, script])
+        if rc == 0 or "TICK: FAILED --- WORD_BITS=32 has no K" not in out:
+            say(False, "%s --- it says:\n%s" % (what, out.strip()))
+        else:
+            say(True, what)
+        for bits in (40,):
             k_want = BOARDS["arty"]["sync_k"][bits]
             what = "the Arty's flow states K=%d at WORD_BITS=%d (tick.tcl, cadr_sync_k)" % (k_want, bits)
             script = os.path.join(scratch, "sync_k.tcl")
@@ -810,10 +819,16 @@ def main():
              arty, {"MACHINE": "quux", "OUTDIR": out("ddr")}, 1,
              ["BIT: FAILED --- MACHINE=quux into OUTDIR="],
              ["BIT: the machine is"])
-        for value in ("cadr", "quux"):
-            flow("the Arty's Vivado flow takes MACHINE=%s" % value, arty,
-                 {"MACHINE": value, "OUTDIR": out("arty-%s-ddr" % value)}, None,
-                 ["BIT: the machine is %s" % value], ["FAILED --- MACHINE"])
+        flow("the Arty's Vivado flow takes MACHINE=cadr", arty,
+             {"MACHINE": "cadr", "OUTDIR": out("arty-cadr-ddr")}, None,
+             ["BIT: the machine is cadr"], ["FAILED --- MACHINE"])
+        flow("the Arty's Vivado flow takes MACHINE=quux at WORD_BITS=40", arty,
+             {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux13-ddr")}, None,
+             ["BIT: the machine is quux"], ["FAILED --- MACHINE"])
+        flow("the Arty's Vivado flow refuses MACHINE=quux at revision 12's word", arty,
+             {"MACHINE": "quux", "OUTDIR": out("arty-quux13-ddr")}, 1,
+             ["BIT: FAILED --- MACHINE=quux at WORD_BITS=32, which was revision 12,"],
+             ["BIT: the machine is"])
         flow("the Arty's Vivado flow takes no MACHINE as cadr", arty,
              {"OUTDIR": out("b")}, None,
              ["BIT: the machine is cadr"], ["FAILED --- MACHINE"])
@@ -827,17 +842,13 @@ def main():
         flow("the Arty's Vivado flow refuses revision 13 into a directory not named for it",
              arty, {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux-ddr")}, 1,
              ["BIT: FAILED --- WORD_BITS=40 into OUTDIR="], ["BIT: the machine is"])
-        flow("the Arty's Vivado flow refuses revision 12 into a directory named for 13",
-             arty, {"MACHINE": "quux", "OUTDIR": out("arty-quux13-ddr")}, 1,
-             ["BIT: FAILED --- WORD_BITS=32 into OUTDIR="], ["BIT: the machine is"])
         flow("the Arty's Vivado flow takes WORD_BITS=40 on QUUX", arty,
              {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out("arty-quux13-ddr")}, None,
              ["BIT: the machine is quux, revision 13 (WORD_BITS=40)"], ["FAILED --- WORD_BITS"])
-        # **EACH REVISION'S BOOT PROM IS ITS OWN** (contract G2 §2.8): the
-        # Arty's flow names the image it builds in, and a revision given the
-        # other's never boots its band.
+        # **EACH MACHINE'S BOOT PROM IS ITS OWN** (contract G2 §2.8): the
+        # Arty's flow names the image it builds in, MIT's for the CADR and
+        # PROM 2001 for QUUX.
         proms = {("cadr", None): "build/boot_prom.hex",
-                 ("quux", None): "build/boot_prom.quux.hex",
                  ("quux", "40"): "build/boot_prom.quux13.hex"}
         for (value, bits), image in sorted(proms.items(), key=str):
             env_add = {"MACHINE": value,
@@ -884,11 +895,14 @@ def main():
             flow("the DE25-Nano's %s refuses MACHINE=%s" % (script, NOT_A_MACHINE),
                  cmd, dict(nowhere, MACHINE=NOT_A_MACHINE), 1,
                  ["%s: REFUSED: MACHINE is '%s'" % (who, NOT_A_MACHINE)], [])
-            for value in ("cadr", "quux"):
+            for value, bits in (("cadr", None), ("quux", "40")):
                 # Accepted, and refused only later for the Quartus that is
                 # not there.
+                env_add = dict(nowhere, MACHINE=value)
+                if bits:
+                    env_add["WORD_BITS"] = bits
                 flow("the DE25-Nano's %s takes MACHINE=%s" % (script, value),
-                     cmd, dict(nowhere, MACHINE=value), 1,
+                     cmd, env_add, 1,
                      ["%s: REFUSED:" % who], ["REFUSED: MACHINE is"])
         for script, who in (("build.sh", "de25"), ("program.sh", "de25-program")):
             cmd = ["sh", "boards/de25-nano/quartus/" + script, "x"]
@@ -898,6 +912,9 @@ def main():
             flow("the DE25-Nano's %s refuses WORD_BITS=40 on the CADR" % script, cmd,
                  dict(nowhere, MACHINE="cadr", WORD_BITS="40"), 1,
                  ["%s: REFUSED: WORD_BITS=40 is QUUX revision 13, and MACHINE=cadr" % who], [])
+            flow("the DE25-Nano's %s refuses MACHINE=quux at revision 12's word" % script, cmd,
+                 dict(nowhere, MACHINE="quux"), 1,
+                 ["%s: REFUSED: MACHINE=quux at WORD_BITS=32, which was revision 12" % who], [])
             flow("the DE25-Nano's %s takes WORD_BITS=40 on QUUX" % script, cmd,
                  dict(nowhere, MACHINE="quux", WORD_BITS="40"), 1,
                  ["%s: REFUSED:" % who], ["REFUSED: WORD_BITS"])

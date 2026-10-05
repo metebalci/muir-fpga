@@ -267,12 +267,11 @@ TAG = re.compile(
 # the DE25-Nano it is a number, held to the SYNC_K of the board whose
 # constraints the file is: the default of that parameter in the board's top
 # level, which is what its bitstream is built at.  **ON THE ARTY Z7-20 THE K
-# IS THE REVISION'S**, four to revision 12 and five at revision 13
-# (`SYNC_K` and `SYNC_K13`), so there a count of K is never a number: it is
-# written from the flow's `sync_k` (`vivado/tick.tcl`), `$sync_k` or
-# `[expr {$sync_k - n}]`, and held here to its tag, a hold one tick less;
-# `build/machine_param.pass` holds the flow's `sync_k` to each revision's
-# machine.  The Kria KR260's flow builds revision 13 from the same
+# IS THE FLOW'S**, revision 13's five (`SYNC_K13`), so there a count of K is
+# never a number: it is written from the flow's `sync_k`
+# (`vivado/tick.tcl`), `$sync_k` or `[expr {$sync_k - n}]`, and held here to
+# its tag, a hold one tick less; `build/machine_param.pass` holds the flow's
+# `sync_k` to the machine.  The Kria KR260's flow builds revision 13 from the same
 # `quux_machine.xdc` and reads its K from its own top level (`SYNC_K13`) the
 # same way, so its flow's counts are written from `sync_k` too.  A file that
 # is no board's may not use the tag.
@@ -442,12 +441,14 @@ def walk(node, fn):
 
 
 def elaborate(root, machine, scratch):
-    """The registers of `cadr_machine` built as `machine`, out of Verilator's
-    elaborated tree: parameters applied and generate blocks chosen, so each
-    machine has exactly the instances its bitstream has."""
+    """The registers of `cadr_machine` built as `machine`, QUUX at its 40-bit
+    word, out of Verilator's elaborated tree: parameters applied and generate
+    blocks chosen, so each machine has exactly the instances its bitstream
+    has."""
     mdir = os.path.join(scratch, machine)
     cmd = [VERILATOR, "--json-only", "-Irtl/machine", "-Irtl/plumbing", "-Mdir", mdir,
-           f'-GMACHINE="{machine}"', "--top-module", "cadr_machine",
+           f'-GMACHINE="{machine}"', *(["-GWORD_BITS=40"] if machine == "quux" else []),
+           "--top-module", "cadr_machine",
            "rtl/machine/cadr_tick_pkg.sv", "rtl/plumbing/cadr_ddr_map.sv",
            "rtl/machine/cadr_machine.sv"]
     p = subprocess.run(cmd, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

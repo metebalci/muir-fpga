@@ -36,8 +36,9 @@
 # second eight-minute build.  Zero, or no value, is the plain board.  With
 # both, the directory is `build/de25-ddr-probe/`.
 #
-# **`MACHINE=quux` BUILDS THE EVOLVED CADR**, a bitstream of its own, into
-# `build/de25-quux/` with the same suffixes after it, so that neither
+# **`MACHINE=quux` BUILDS THE EVOLVED CADR**, a bitstream of its own, with
+# `WORD_BITS=40` (below), into `build/de25-quux13/` with the same suffixes
+# after it, so that neither
 # machine's build removes the other's.  The processor's files it writes are
 # named `quux_de25.*` in place of `cadr_de25.*`, because those are the files
 # that leave the directory; the project and its `.sof` keep the top level's
@@ -96,9 +97,10 @@ esac
 if [ "${FAULT:-0}" = 1 ] && [ "$machine" != cadr ]; then
     refuse "FAULT=1 takes no MACHINE=$machine: the fault bitstream carries no machine"
 fi
-# **`WORD_BITS=40` IS QUUX REVISION 13** (contract G2), whose processor comes
-# with its 40-bit word, into a directory of its own, `build/de25-quux13/`
-# with the same suffixes.  32, the default, is everything before it.
+# **`WORD_BITS=40` IS QUUX, REVISION 13** (contract G2), whose processor
+# comes with its 40-bit word, into a directory of its own,
+# `build/de25-quux13/` with the same suffixes; 32, the default, is the
+# CADR's.  Revision 12, QUUX at 32 bits, is retired and refused.
 word_bits=${WORD_BITS:-32}
 case $word_bits in
     32|40) ;;
@@ -106,6 +108,9 @@ case $word_bits in
 esac
 if [ "$word_bits" = 40 ] && [ "$machine" != quux ]; then
     refuse "WORD_BITS=40 is QUUX revision 13, and MACHINE=$machine: the CADR's word is 32 bits"
+fi
+if [ "$machine" = quux ] && [ "$word_bits" != 40 ]; then
+    refuse "MACHINE=quux at WORD_BITS=$word_bits, which was revision 12, and revision 12 is retired: give WORD_BITS=40"
 fi
 
 conf=boards/de25-nano/local.conf
@@ -124,13 +129,11 @@ for tool in "$bin/quartus_sh" "$bin/quartus_ipgenerate" "$bin/quartus_syn" \
     [ -x "$tool" ] || refuse "$tool is not there"
 done
 
-# QUUX's boot PROM is its own, and each revision's its own: version 2000 for
-# revision 12 and version 2001 for revision 13 (contract G2 §2.8).
+# QUUX's boot PROM is its own, version 2001 (contract G2 §2.8).
 # `project.tcl` chooses it the same way, and synthesis's parameter table is
 # read back below.
 prom_image=build/boot_prom.hex
-[ "$machine" = quux ] && prom_image=build/boot_prom.quux.hex
-[ "$machine" = quux ] && [ "$word_bits" = 40 ] && prom_image=build/boot_prom.quux13.hex
+[ "$machine" = quux ] && prom_image=build/boot_prom.quux13.hex
 for image in "$prom_image" build/sync_prom.hex; do
     [ -s "$image" ] || refuse "$image is missing; \`make de25\` builds it first"
 done
@@ -171,10 +174,8 @@ case $mhz in
     *) refuse "DE25_DDR_MHZ is '$mhz'; the LPDDR4 runs at 1066.667 (either revision) or 1333.333 (rev B)" ;;
 esac
 out=build/de25
-if [ "$machine" = quux ] && [ "$word_bits" = 40 ]; then
+if [ "$machine" = quux ]; then
     out=$out-quux13
-elif [ "$machine" = quux ]; then
-    out=$out-quux
 fi
 if [ "$ddr" -eq 1 ]; then
     out=$out-ddr

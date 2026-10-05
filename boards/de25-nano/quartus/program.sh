@@ -9,8 +9,9 @@
 #
 # The second loads the instrumented build from `build/de25-probe/`, which
 # `make de25 PROBE_DEPTH=1024` writes, and the first the plain one.
-# `MACHINE=quux` loads the evolved CADR's build from `build/de25-quux/` and
-# the same suffixes after it, as `build.sh` names them.
+# `MACHINE=quux WORD_BITS=40` loads the evolved CADR's build from
+# `build/de25-quux13/` and the same suffixes after it, as `build.sh` names
+# them.
 #
 # **VOLATILE, AND NOTHING ELSE.**  This loads `build/de25/output_files/
 # cadr_de25.sof` into the part's configuration memory, which a power cycle
@@ -76,7 +77,8 @@ case $machine in
     cadr|quux) ;;
     *) refuse "MACHINE is '$machine'; it is cadr, MIT's machine, or quux, the evolved CADR" ;;
 esac
-# QUUX revision 13, `WORD_BITS=40`, is its own build, as `build.sh` names it.
+# QUUX, revision 13, `WORD_BITS=40`, is its own build, as `build.sh` names
+# it; revision 12, QUUX at 32 bits, is retired and refused.
 word_bits=${WORD_BITS:-32}
 case $word_bits in
     32|40) ;;
@@ -84,6 +86,9 @@ case $word_bits in
 esac
 if [ "$word_bits" = 40 ] && [ "$machine" != quux ]; then
     refuse "WORD_BITS=40 is QUUX revision 13, and MACHINE=$machine: the CADR's word is 32 bits"
+fi
+if [ "$machine" = quux ] && [ "$word_bits" != 40 ]; then
+    refuse "MACHINE=quux at WORD_BITS=$word_bits, which was revision 12, and revision 12 is retired: give WORD_BITS=40"
 fi
 
 conf=boards/de25-nano/local.conf
@@ -102,10 +107,8 @@ serial=${DE25_SERIAL:-$(conf_value DE25_SERIAL)}
 [ -n "$serial" ] || refuse "set DE25_SERIAL, or add a DE25_SERIAL= line to $conf"
 
 out=build/de25
-if [ "$machine" = quux ] && [ "$word_bits" = 40 ]; then
+if [ "$machine" = quux ]; then
     out=$out-quux13
-elif [ "$machine" = quux ]; then
-    out=$out-quux
 fi
 case ${DDR:-0} in
     ''|0) ;;
@@ -245,7 +248,7 @@ held=$(block | sed -n 's/^ *Design hash *\([0-9A-F]*\).*/\1/p' | head -n 1)
 if [ -n "$held" ]; then
     [ "$held" = "$built" ] || refuse "the part's hub reports design $held, and this build's is ${built:-not in $sld}"
     say "the part's hub reports design $held, this build's"
-elif [ "$out" = build/de25-probe ] || [ "$out" = build/de25-quux-probe ]; then
+elif [ "$out" = build/de25-probe ] || [ "$out" = build/de25-quux13-probe ]; then
     refuse "the part's hub reports no design, and the probe's build has a node on it"
 else
     say "the part's hub reports no design, as the plain build's, with no node, does"

@@ -281,16 +281,12 @@ if {!$fault} {
 # start without them, and the synthesis report's parameter table is where the
 # two paths can be read back.
 if {!$fault} {
-    # QUUX boots from its own PROM, each revision from its own: version 2000
-    # for revision 12, version 2001 for revision 13 (`WORD_BITS` 40), as
-    # `build.sh` requires and reads back.
-    set prom_word [expr {[info exists ::env(WORD_BITS)] ? $::env(WORD_BITS) : "32"}]
+    # QUUX boots from its own PROM, version 2001, revision 13's (`WORD_BITS`
+    # 40), as `build.sh` requires and reads back.
     if {$machine ne "quux"} {
         set prom_file boot_prom.hex
-    } elseif {$prom_word eq "40"} {
-        set prom_file boot_prom.quux13.hex
     } else {
-        set prom_file boot_prom.quux.hex
+        set prom_file boot_prom.quux13.hex
     }
     set_parameter -name PROM_HEX      [file join $root build $prom_file]
     set_parameter -name SYNC_PROM_HEX [file join $root build sync_prom.hex]

@@ -303,8 +303,8 @@ loader_env() {
   esac
 }
 # **A CARD CARRIES ONE MACHINE, AND ITS TREES GO WITH ITS BITSTREAM.**  The
-# CADR's and QUUX revision 12's device tree reserves the CADR's region;
-# revision 13's reserves its own region (docs/linux.md, "Each machine's
+# CADR's device tree reserves the CADR's region; QUUX revision 13's reserves
+# its own region (docs/linux.md, "Each machine's
 # reservation").  The kernel's tree is fetched from the folder the bitstream is
 # fetched from, under the board tree's own name, so REVISION=13 stages
 # revision 13's tree under that name beside revision 13's bitstream, and
@@ -341,7 +341,7 @@ case "$REVISION" in
       *) die "REVISION=13 on $BOARD_NAME: QUUX revision 13 runs on the Arty Z7-20, the DE25-Nano and the Kria KR260" ;;
     esac
     ;;
-  *) die "REVISION=$REVISION: it is 13, QUUX revision 13, or unset for the CADR and revision 12" ;;
+  *) die "REVISION=$REVISION: it is 13, QUUX revision 13, or unset for the CADR" ;;
 esac
 # **AND WHICH MACHINE THE BITSTREAM IS, WHICH THE FABRIC CANNOT BE ASKED
 # EITHER.**  MACHINE=quux is a card for a QUUX bitstream: `fpgarc` carries
@@ -349,13 +349,14 @@ esac
 # and where its disk goes, and the zip is named quux-<board>.zip.  cadr, the
 # default, writes the line commented and names the zip cadr-<board>.zip.
 # Revision 13 is QUUX's, so REVISION=13 makes quux the default and refuses
-# cadr.
+# cadr; and QUUX is revision 13, so MACHINE=quux without it is refused:
+# revision 12, whose card it would have been, is retired.
 MACHINE=${MACHINE:-}
 [ -z "$REVISION" ] || MACHINE=${MACHINE:-quux}
 MACHINE=${MACHINE:-cadr}
 case "$MACHINE" in
   cadr) [ -z "$REVISION" ] || die "REVISION=$REVISION is QUUX's, and MACHINE=cadr" ;;
-  quux) ;;
+  quux) [ -n "$REVISION" ] || die "MACHINE=quux is QUUX revision 13: give REVISION=13 (revision 12 is retired)" ;;
   *) die "MACHINE=$MACHINE: it is cadr or quux" ;;
 esac
 # The board's four files, which the card's folder and the server's directory
@@ -850,7 +851,6 @@ stage_tree() {
 readme_system() {
   if [ "$MACHINE" = quux ]; then
     _what=disk.vhd.gz; _rolling=latest-quux; _who="QUUX revision $REVISION"
-    [ -n "$REVISION" ] || _who="QUUX revision 12"
   else
     _what=pack.img.gz; _rolling=latest-cadr; _who="the CADR"
   fi
@@ -1573,14 +1573,9 @@ fi
   # amount in whole megawords, and each card names only its own machine's.
   if [ "$MACHINE" = quux ]; then
     # The most is what the board keeps for revision 13, the DE25-Nano 64MW and
-    # the others 32MW; revision 12's sixty boards are 3MW whole.
-    if [ "$REVISION" = 13 ]; then
-      MEM_DEFAULT=32MW
-      case "$BOARD_NAME" in de25-nano) MEM_MOST=64MW ;; *) MEM_MOST=32MW ;; esac
-    else
-      MEM_DEFAULT=2MW
-      MEM_MOST=3MW
-    fi
+    # the others 32MW.
+    MEM_DEFAULT=32MW
+    case "$BOARD_NAME" in de25-nano) MEM_MOST=64MW ;; *) MEM_MOST=32MW ;; esac
     printf "# ================================================= the main memory\r\n"
     printf "# Read by the disk pack program's init script, before the drive comes\r\n"
     printf "# present, and written into the console face. docs/fpgarc.md has the\r\n"

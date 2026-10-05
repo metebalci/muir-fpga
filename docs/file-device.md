@@ -87,7 +87,7 @@ word not in the table reads 0 and takes no write.
 | `0x11C` | RESP_PROD | read, write | Read: words 165 and 170, which are always equal. Write `{EPOCH, <15:0> index}`: the commands up to `index` are complete (below). |
 | `0x120` | RESP_CONS | read | The response consumer, word 171. |
 | `0x124` | HANDLES | read, write | Write `{EPOCH, <7:0> count}`: the handles open, 0 to 64, from the next accepted completion on. Read: the count the machine sees in 161 `<23:16>`. |
-| `0x128` | MEM_WORDS | read | The words of main memory the machine has, the amount `--main-memory-size` sets (console page 2 word 37, sixteen 64K-word units a megaword): `0x200_0000` at revision 13's default of 32MW, `0x20_0000` at revision 12's 2MW. |
+| `0x128` | MEM_WORDS | read | The words of main memory the machine has, the amount `--main-memory-size` sets (console page 2 word 37, sixteen 64K-word units a megaword): `0x200_0000` at revision 13's default of 32MW. |
 
 A word written `{EPOCH, ...}` carries the epoch in its top sixteen bits.
 
@@ -192,7 +192,7 @@ not yet measured on a board.**
 
 ## Revision 13: packed memory, fixnums, 28-bit addresses
 
-On QUUX revision 13 (muir's `Geometry::QUUX_13`) the protocol is the same,
+On QUUX revision 13 (muir's `Geometry::QUUX`) the protocol is the same,
 and the memory under it is not:
 
 - **Main memory is packed storage**: word `w` is the five bytes at
@@ -206,9 +206,9 @@ and the memory under it is not:
   the field and the tag `005`.
 - **Rings and buffers are at 28-bit addresses on an 8-word line.** A buffer
   on a 4-word line is a bad buffer, and a ring on one is refused at the
-  enable. Revision 12's are 24-bit, on a 4-word line.
+  enable. Revision 12's, which is retired, were 24-bit, on a 4-word line.
 - **The page says which.** It reads `QF13` (0x51463133) where revision 12's
-  reads `QFD9`, its ring bases are 28 bits, and its `MEM_WORDS` may say up to
+  read `QFD9`, its ring bases are 28 bits, and its `MEM_WORDS` may say up to
   64M words. A program of either revision refuses the other's page rather
   than reading its memory wrong. **The fabric's side of this page is not
   built yet.**
@@ -265,16 +265,15 @@ does.
 
 The fabric's side:
 
-- `build/quux_files.quux.k4.pass` runs a program on the whole machine that
+- `build/quux13_files.quux.k4.pass` runs a program on the whole machine that
   drives every register of the file device against muir's own device, with
   the testbench playing the program at muir's instants through the machine's
-  host side. It also checks that when the host is first shown a command, the
-  command's entry is already in main memory as the processor wrote it.
-- `build/quux_rtc.quux.k4.pass` reads word 103 against muir's clock with the
+  host side, the rings at revision 13's addresses and the entries' words
+  whole, 40 bits. It also checks that when the host is first shown a
+  command, the command's entry is already in main memory as the processor
+  wrote it.
+- `build/quux13_rtc.quux.k4.pass` reads word 103 against muir's clock with the
   host setting it twice, once to the last second.
-- `build/quux13_files.quux.k4.pass` and `build/quux13_rtc.quux.k4.pass` run
-  the same two programs at revision 13, with the rings at its addresses and
-  the entries' words whole, 40 bits.
 - `build/quux_fd_face.pass` drives this page over AXI in the program's order,
   with the machine's register page behind it, and holds every rule above,
   including each ordering by the tick.

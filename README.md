@@ -344,9 +344,7 @@ and no more**: 17.125 MB of a Zynq board's 512 MB, and Linux keeps the rest.
 | `0x1C10_0000` | 128 KB | 128 KB | the disk pack program's records |
 
 The other boards have the same layout at their own base: `0xB300_0000` on the
-DE25-Nano and `0x6300_0000` on the Kria KR260. QUUX to revision 12 uses the
-same region: its main memory has the CADR's ceiling, and its video
-controller's buffer, at most 64K words, is inside the display's 1 MB.
+DE25-Nano and `0x6300_0000` on the Kria KR260.
 
 QUUX revision 13 has its own device trees and loader, and its own region:
 main memory as 32M words of packed storage from `0x1200_0000`, then the display

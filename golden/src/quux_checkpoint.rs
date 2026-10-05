@@ -5,19 +5,18 @@
 //! reference `cadr-checkpoint --machine quux` is compared with BYTE FOR BYTE.
 //!
 //!     quux_checkpoint FILE --machine quux --sync-cycle-ticks K [--sync-ilong-ticks L]
-//!                     [--revision 13]
+//!                     --revision 13
 //!     quux_checkpoint --resume-and-save IN OUT --revision 13 --machine quux
 //!                     --sync-cycle-ticks K [--sync-ilong-ticks L]
 //!
 //! **`--revision 13`** builds revision 13's machine (contract G2, appendix
-//! A1.13; muir's `Geometry::QUUX_13`): the same history, its words at 40 bits
+//! A1.13; muir's `Geometry::QUUX`), the only QUUX since revision 12 was
+//! retired: the same history, its words at 40 bits
 //! with tags that are not zero, its dispatch memory, maps and main memory at
 //! revision 13's sizes and widths, the overflow flag set, and block-disk and
 //! the file device at 28-bit addresses; muir writes it as checkpoint version
 //! 50.  **`--resume-and-save`** is muir's own round trip for it: the machine
-//! built as for a checkpoint, the file loaded into it and saved again, which
-//! is what `quux --resume` does for revision 12 and what no executable does
-//! for revision 13 yet.
+//! built as for a checkpoint, the file loaded into it and saved again.
 //!
 //! **THE MACHINE IS DESCRIBED TWICE, HERE IN muir'S TERMS AND IN
 //! `checkpoint_test.c` IN THE FABRIC'S, AND THE FILE IS WHAT SAYS THE TWO
@@ -51,11 +50,11 @@ use muir::tv::Board;
 /// `main.rs`'s `machine` for `--machine quux`: block-disk and the video
 /// controller at `video`, muir's default 1280 by 1024 unless `--video-size`
 /// gives the Kria KR260's 1920 by 1080, one memory board, and a disk of
-/// `DISK_BLOCKS` blocks with none written (contract Q8a, format 41); of
-/// revision 13 when `rev13` says so.
-fn machine(rev13: bool, video: (usize, usize)) -> Machine {
+/// `DISK_BLOCKS` blocks with none written (contract Q8a, format 41), at
+/// revision 13.
+fn machine(video: (usize, usize)) -> Machine {
     let mut m = Machine::with_memory_boards(1);
-    m.geometry = if rev13 { Geometry::QUUX_13 } else { Geometry::QUUX };
+    m.geometry = Geometry::QUUX;
     let mut bd = BlockDisk::new(block_disk::BLOCK_NS);
     bd.attach(Disk::blank(DISK_BLOCKS));
     m.block_disk = Some(bd);
@@ -96,7 +95,6 @@ const CYCLES: u64 = 0x12_3456_7890;
 /// Block-disk's registers as written: a command it does not do, with the
 /// done interrupt enabled, so START stops by error and moves nothing.
 const DISK_CMD: u32 = 0x1234_5805;
-const DISK_CLP: u32 = 0x00AB_CDEF;
 const DISK_DA: u32 = 0x3FED_CBA9;
 /// Key words pressed: seventy, six past the FIFO, and fifty-nine read back.
 const KEYS: u64 = 70;
@@ -112,7 +110,6 @@ const DISK_BLOCKS: u32 = 16 * 1 * 16;
 /// log2 of its entries, the response ring's.
 const FD_CMD_BASE: u32 = 0x00_1000;
 const FD_CMD_LOG2: u32 = 2;
-const FD_RESP_BASE: u32 = 0x00_1100;
 const FD_RESP_LOG2: u32 = 1;
 /// Revision 13's: block-disk's command list pointer is 28 bits, and the
 /// file device's rings are on an 8-word line.
@@ -145,11 +142,12 @@ fn main() {
     let resume = args.first().map(String::as_str) == Some("--resume-and-save");
     if which != machine_axis::Which::Quux
         || args.len() != if resume { 3 } else { 1 }
-        || (resume && !rev13)
+        || !rev13
     {
         eprintln!(
             "usage: quux_checkpoint FILE --machine quux --sync-cycle-ticks K [--sync-ilong-ticks L] \
-             [--revision 13] [--video-size WxH]\n       quux_checkpoint --resume-and-save IN OUT --revision 13 ..."
+             --revision 13 [--video-size WxH]\n       quux_checkpoint --resume-and-save IN OUT --revision 13 ...\n\
+             (revision 12 is retired)"
         );
         std::process::exit(2);
     }
@@ -157,7 +155,7 @@ fn main() {
         // muir's own round trip, as `resume_engine` does it: the engine of
         // the machine the checkpoint is of, loaded, and saved again.
         let c = muir::checkpoint::read(std::path::Path::new(&args[1])).expect("the checkpoint");
-        let mut e = trace::engine_on(machine(true, video), timing);
+        let mut e = trace::engine_on(machine(video), timing);
         e.load(&mut c.reader()).expect("muir took the checkpoint");
         let mut w = muir::checkpoint::Writer::new();
         e.save(&mut w);
@@ -176,12 +174,11 @@ fn main() {
         return;
     }
     let path = args[0].clone();
-    let mut m = machine(rev13, video);
-    let wide = m.geometry.wide();
-    // A word's bits, and a word poisoned at them: 32, or on revision 13 40
-    // with its tag.
+    let mut m = machine(video);
+    assert!(m.geometry.wide(), "QUUX is revision 13's 40-bit word");
+    // A word's bits, and a word poisoned at them: 40 with its tag.
     let word_bits = m.geometry.word_bits;
-    let (clp, resp_base) = if wide { (DISK_CLP_13, FD_RESP_BASE_13) } else { (DISK_CLP, FD_RESP_BASE) };
+    let (clp, resp_base) = (DISK_CLP_13, FD_RESP_BASE_13);
 
     // The file device, through muir's own calls: the rings configured and
     // enabled with the interrupt enable, one command posted --- an opcode
@@ -231,10 +228,8 @@ fn main() {
         *w = poison(5, i as u64, 21) as u32;
     }
     // The dispatch memory and both map levels at the machine's own sizes
-    // and widths: 2,048, 2,048 of 6 bits and 2,048 of 24, and on revision
-    // 13 4,096, 8,192 of 7 and 4,096 of 28 (A1.4, A1.7).
-    let (dmem, l1, l1_bits, l2, l2_bits) =
-        if wide { (4096, 8192, 7, 4096, 28) } else { (2048, 2048, 6, 2048, 24) };
+    // and widths: 4,096, 8,192 of 7 bits and 4,096 of 28 (A1.4, A1.7).
+    let (dmem, l1, l1_bits, l2, l2_bits) = (4096, 8192, 7, 4096, 28);
     for (i, w) in m.dmem.iter_mut().take(dmem).enumerate() {
         *w = poison(6, i as u64, 17) as u32;
     }
@@ -255,7 +250,7 @@ fn main() {
     m.vma = poison(10, 6, word_bits);
     m.md = poison(10, 7, word_bits);
     // Revision 13's fixnum overflow flag, the flag word's <35>.
-    m.overflow = wide;
+    m.overflow = true;
     m.dispatch_constant = poison(10, 15, 10) as u16;
     // The console's registers the table's flags carry, and the page's.
     m.mode.errstop = true;
@@ -305,21 +300,14 @@ fn main() {
         let mut main = std::mem::take(&mut m.main);
         let d = m.block_disk.as_mut().unwrap();
         d.advance(ns);
-        if wide {
-            d.write_40(block_disk::COMMAND, DISK_CMD, &mut main);
-            d.write_40(block_disk::CLP, clp, &mut main);
-            d.write_40(block_disk::DA, DISK_DA, &mut main);
-            d.write_40(block_disk::START, 0, &mut main);
-        } else {
-            d.write(block_disk::COMMAND, DISK_CMD, &mut main);
-            d.write(block_disk::CLP, clp, &mut main);
-            d.write(block_disk::DA, DISK_DA, &mut main);
-            d.write(block_disk::START, 0, &mut main);
-        }
+        d.write(block_disk::COMMAND, DISK_CMD, &mut main);
+        d.write(block_disk::CLP, clp, &mut main);
+        d.write(block_disk::DA, DISK_DA, &mut main);
+        d.write(block_disk::START, 0, &mut main);
         m.main = main;
     }
 
-    // **Revision 12's fused return** (contract H8a): the register, the
+    // **The fused return** (contract H8a): the register, the
     // index and every entry poisoned at their widths, the base copies, and
     // an operand address and an M 31 word armed, as `checkpoint_test.c`
     // models the register table's entries 29 to 33 and selector 13.  The

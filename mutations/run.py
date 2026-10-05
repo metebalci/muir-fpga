@@ -560,26 +560,14 @@ CHECKS = {
     "machine": dict(MACHINE_CHECK, **{
         "flags": MACHINE_CHECK["flags"] + ["-GMEMORY_ANSWERS=1'b1"],
     }),
-    # **THE SAME MACHINE CHECK ON QUUX**, and QUUX's programs on both
-    # machines.  `machine_quux` is `machine` built with `MACHINE="quux"` and
-    # QUUX's boot PROM against muir's trace of that PROM on QUUX; each
-    # `quux_<program>` is the whole machine built with a program of
-    # `golden/src/quux.rs` as its PROM image, `_quux` on QUUX and without it
-    # on the CADR, where it holds the CADR's side of the difference.  `prom`
+    # **QUUX'S PROGRAMS ON THE CADR**: each `quux_<program>` is the whole
+    # machine built with a program of `golden/src/quux.rs` as its PROM image,
+    # where it holds the CADR's side of the difference; QUUX's side is
+    # `quux13_<program>_quux`, below, revision 12 being retired.  `prom`
     # names the PROM image among the goldens, and `machine` says which
     # machine a check holds, which is what `--machine` selects by.
-    # QUUX's decode over every address: the register page and the video
-    # controller's buffer.
-    "xbus_decode_quux": {
-        "sources": ["rtl/machine/cadr_xbus_decode.sv"],
-        "top": "cadr_xbus_decode",
-        "tb": "tb/cadr_xbus_decode_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", '-GMACHINE="quux"'],
-        "golden": "xbus_decode.quux.golden",
-        "machine": "quux",
-    },
-    # Revision 13's 28-bit space, every address (`golden/src/xbus_decode.rs`
-    # `--revision-13`).
+    # QUUX's decode, revision 13's 28-bit space, every address
+    # (`golden/src/xbus_decode.rs --revision-13`).
     "xbus_decode_quux13": {
         "sources": ["rtl/machine/cadr_xbus_decode.sv"],
         "top": "cadr_xbus_decode",
@@ -598,151 +586,33 @@ CHECKS = {
         "golden": "xbus_decode.quux13ch.golden",
         "machine": "quux",
     },
-    "machine_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "rtl.quux.golden",
-        "prom": "boot_prom.quux.hex",
-        "machine": "quux",
-    }),
     "quux_map": dict(MACHINE_CHECK, **{
         "golden": "quux_map.golden",
         "prom": "quux_map_prom.hex",
-    }),
-    "quux_map_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_map.quux.golden",
-        "prom": "quux_map_prom.quux.hex",
-        "machine": "quux",
     }),
     "quux_tv": dict(MACHINE_CHECK, **{
         "golden": "quux_tv.golden",
         "prom": "quux_tv_prom.hex",
     }),
-    "quux_tv_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_tv.quux.golden",
-        "prom": "quux_tv_prom.quux.hex",
-        "machine": "quux",
-    }),
     "quux_muldiv": dict(MACHINE_CHECK, **{
         "golden": "quux_muldiv.golden",
         "prom": "quux_muldiv_prom.hex",
-    }),
-    "quux_muldiv_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_muldiv.quux.golden",
-        "prom": "quux_muldiv_prom.quux.hex",
-        "machine": "quux",
     }),
     "quux_tick": dict(MACHINE_CHECK, **{
         "golden": "quux_tick.golden",
         "prom": "quux_tick_prom.hex",
     }),
-    # QUUX's side of `tick` is `ticksync`, at its synchronous microcycle.
-    # Words written into the control store and run, QUUX's alone.
-    "quux_imemsync_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_imemsync.quux.golden",
-        "prom": "quux_imemsync_prom.quux.hex",
-        "machine": "quux",
-    }),
-    # A push and a pop, QUUX's alone (`golden/src/quux.rs --program pdlsync`).
-    "quux_pdlsync_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_pdlsync.quux.golden",
-        "prom": "quux_pdlsync_prom.quux.hex",
-        "machine": "quux",
-    }),
     # QUUX's clocks: the three interval timers of revision 10 on the register
     # page, destination 3 writing only M and the shared edge (contract Q11), and
-    # the microsecond clock (Q1); the CADR's side of the same program.
+    # the microsecond clock (Q1): the CADR's side of the program.
     "quux_clocks": dict(MACHINE_CHECK, **{
         "golden": "quux_clocks.golden",
         "prom": "quux_clocks_prom.hex",
-    }),
-    "quux_clocks_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_clocks.quux.golden",
-        "prom": "quux_clocks_prom.quux.hex",
-        "machine": "quux",
-    }),
-    # The window between a flag's rise and the edge `SINTR` is taken at.
-    "quux_tickwin_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_tickwin.quux.golden",
-        "prom": "quux_tickwin_prom.quux.hex",
-        "machine": "quux",
-    }),
-    # The clocks read between the edges, and the page's reads of the timers
-    # with a rise a tick either side of the edge that takes them.
-    "quux_clockwait_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_clockwait.quux.golden",
-        "prom": "quux_clockwait_prom.quux.hex",
-        "machine": "quux",
-    }),
-    # QUUX's write buffer back to back, and the reads after it (contract Q6).
-    "quux_memedge_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_memedge.quux.golden",
-        "prom": "quux_memedge_prom.quux.hex",
-        "machine": "quux",
-    }),
-    # QUUX's register page, keyboard, network and no Unibus (Q2 to Q5).
-    "quux_page_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_page.quux.golden",
-        "prom": "quux_page_prom.quux.hex",
-        "machine": "quux",
-    }),
-    # Every word of the register page, and every address that was one
-    # (contract Q13).
-    "quux_registers_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_registers.quux.golden",
-        "prom": "quux_registers_prom.quux.hex",
-        "machine": "quux",
-    }),
-    # Revision 9 (contract Q9), QUUX's alone: the real-time clock at word
-    # 103 with the host setting it, and the file device, the testbench
-    # playing the host's server at muir's instants through the host side.
-    "quux_rtc_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_rtc.quux.golden",
-        "prom": "quux_rtc_prom.quux.hex",
-        "machine": "quux",
-    }),
-    "quux_files_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_files.quux.golden",
-        "prom": "quux_files_prom.quux.hex",
-        "machine": "quux",
     }),
     # `PROG.UNIBUS.RESET` and what each board clears on it, both machines.
     "quux_busreset": dict(MACHINE_CHECK, **{
         "golden": "quux_busreset.golden",
         "prom": "quux_busreset_prom.hex",
-    }),
-    "quux_busreset_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_busreset.quux.golden",
-        "prom": "quux_busreset_prom.quux.hex",
-        "machine": "quux",
     }),
     # Memory starts in consecutive microcycles, which QUUX holds, and on both
     # machines a write's `MD` loaded in the microcycle after its start.
@@ -750,49 +620,20 @@ CHECKS = {
         "golden": "quux_startstart.golden",
         "prom": "quux_startstart_prom.hex",
     }),
-    "quux_startstart_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_startstart.quux.golden",
-        "prom": "quux_startstart_prom.quux.hex",
-        "machine": "quux",
-    }),
-    # Revision 12's fused return (contract H8a, `golden/src/fused.rs`): the
-    # returns and their fallbacks, the operand address, and the cache-only
-    # prefetch; on the CADR the same programs, whose destinations 5 to 7 write
-    # only M and whose main loop runs throughout.
+    # The fused return (contract H8a, `golden/src/fused.rs`) on the CADR: the
+    # same programs, whose destinations 5 to 7 write only M and whose main
+    # loop runs throughout.
     "quux_fused": dict(MACHINE_CHECK, **{
         "golden": "quux_fused.golden",
         "prom": "quux_fused_prom.hex",
-    }),
-    "quux_fused_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_fused.quux.golden",
-        "prom": "quux_fused_prom.quux.hex",
-        "machine": "quux",
     }),
     "quux_operand": dict(MACHINE_CHECK, **{
         "golden": "quux_operand.golden",
         "prom": "quux_operand_prom.hex",
     }),
-    "quux_operand_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_operand.quux.golden",
-        "prom": "quux_operand_prom.quux.hex",
-        "machine": "quux",
-    }),
     "quux_prefetch": dict(MACHINE_CHECK, **{
         "golden": "quux_prefetch.golden",
         "prom": "quux_prefetch_prom.hex",
-    }),
-    "quux_prefetch_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_prefetch.quux.golden",
-        "prom": "quux_prefetch_prom.quux.hex",
-        "machine": "quux",
     }),
     # Every register of the I/O board and the interface's two over the
     # Unibus, at many phases of the board's clocks: the CADR's alone.  It is
@@ -810,13 +651,6 @@ CHECKS = {
         "golden": "quux_divmd.golden",
         "prom": "quux_divmd_prom.hex",
     }),
-    "quux_divmd_quux": dict(MACHINE_CHECK, **{
-        "sources": MACHINE_CHECK["sources"] + QUUX_SOURCES,
-        "flags": MACHINE_CHECK["flags"] + ['-GMACHINE="quux"'],
-        "golden": "quux_divmd.quux.golden",
-        "prom": "quux_divmd_prom.quux.hex",
-        "machine": "quux",
-    }),
     "quux_tickwait": dict(MACHINE_CHECK, **{
         "golden": "quux_tickwait.golden",
         "prom": "quux_tickwait_prom.hex",
@@ -830,21 +664,10 @@ CHECKS = {
         "golden": "quux_input.quux.golden",
         "machine": "quux",
     },
-    # QUUX's memory port and its cache on their own, against muir's
-    # `MemoryPort` tick for tick, and then held to coherence with a
-    # transfer beside the processor (`tb/quux_mem_port_tb.cpp`).
-    "quux_port_quux": {
-        "sources": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux_cache.sv",
-                    "rtl/machine/quux_mem_port.sv"],
-        "top": "quux_mem_port",
-        "tb": "tb/quux_mem_port_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2"],
-        "golden": "quux_port.quux.k4.golden",
-        "machine": "quux",
-    },
-    # And at revision 13 (`WORD_BITS` 40), against muir's `MemoryPort` on
-    # `Geometry::QUUX_13`: packed storage, 8-word lines and the prefetch's
-    # page reach (`tb/quux13_mem_port_tb.cpp`), at the Makefile's base.
+    # QUUX's memory port and its cache on their own at revision 13
+    # (`WORD_BITS` 40), against muir's `MemoryPort` tick for tick: packed
+    # storage, 8-word lines and the prefetch's page reach
+    # (`tb/quux13_mem_port_tb.cpp`), at the Makefile's base.
     "quux13_port_quux": {
         "sources": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux_cache.sv",
                     "rtl/machine/quux_mem_port.sv"],
@@ -854,7 +677,8 @@ CHECKS = {
         "golden": "quux13_port.quux.k4.golden",
         "machine": "quux",
     },
-    # And revision 13's five-beat lines, five-byte writes and 4 KiB split
+    # QUUX's 64-bit AXI master with its line fills, against AXI3 and a
+    # memory: revision 13's five-beat lines, five-byte writes and 4 KiB split
     # (`tb/quux13_axi_master_tb.cpp`).
     "quux13_axi_master_quux": {
         "sources": ["rtl/plumbing/quux_axi_master.sv"],
@@ -875,26 +699,8 @@ CHECKS = {
         "golden": None,
         "machine": "quux",
     },
-    # QUUX's 64-bit AXI master with its line fills, against AXI3 and a
-    # memory (`tb/quux_axi_master_tb.cpp`).
-    "quux_axi_master_quux": {
-        "sources": ["rtl/plumbing/quux_axi_master.sv"],
-        "top": "quux_axi_master",
-        "tb": "tb/quux_axi_master_tb.cpp",
-        "flags": ["-O2"],
-        "golden": None,
-        "machine": "quux",
-    },
-    # QUUX's block-disk on its own, against `BlockDisk`.
-    "quux_block_disk_quux": {
-        "sources": ["rtl/machine/quux_block_disk.sv"],
-        "top": "quux_block_disk",
-        "tb": "tb/quux_block_disk_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2"],
-        "golden": "quux_block_disk.quux.golden",
-        "machine": "quux",
-    },
-    # And at revision 13 (`WORD_BITS` 40), against `BlockDisk::write_40`:
+    # QUUX's block-disk on its own at revision 13 (`WORD_BITS` 40), against
+    # muir's `BlockDisk`:
     # pages, the packed and the 4-byte transfers, the GPT fixture's 8-bit
     # view, NXM, a page past the pack's end, and on a pack of all 2^28
     # blocks a block past the disk address's 28 bits
@@ -1486,10 +1292,11 @@ CHECKS = {
         "gprom": True,
     },
     # QUUX's state through the readout window: what a checkpoint of a QUUX
-    # board reads, each field against the register that holds it, at K = 4
-    # (`build/quux_readout_window.quux.k4.pass`); and the CADR, where none
-    # of it answers (`build/quux_readout_window.pass`).
-    "quux_readout_window_quux": {
+    # board reads, each field against the register that holds it, at
+    # revision 13's widths and sizes and K = 4, `tb/quux_readout_window_tb.cpp`
+    # under `QUUX13_TB` (`build/quux13_readout_window.quux.k4.pass`); and the
+    # CADR, where none of it answers (`build/quux_readout_window.pass`).
+    "quux13_readout_window_quux": {
         # The board's map first: QUUX's memory port imports it.
         "sources": ["rtl/plumbing/cadr_ddr_map.sv",
                     "rtl/machine/cadr_microcycle.sv", "rtl/machine/cadr_memory_path.sv",
@@ -1509,10 +1316,11 @@ CHECKS = {
         "tb": "tb/quux_readout_window_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
                   "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
-                  "-Iboards/arty-z7-20", '-GMACHINE="quux"', "-GSYNC_K=4", "-GSYNC_L=0",
-                  "-CFLAGS", "-DQUUX_TB=1 -DSYNC_K_TB=4 -DSYNC_L_TB=0"],
+                  "-Iboards/arty-z7-20", '-GMACHINE="quux"', "-GWORD_BITS=40", "-GSYNC_K=4", "-GSYNC_L=0",
+                  "-GQUUX13_MAIN_BASE=170156032",
+                  "-CFLAGS", "-DQUUX_TB=1 -DQUUX13_TB=1 -DSYNC_K_TB=4 -DSYNC_L_TB=0"],
         "golden": None,
-        "prom": "boot_prom.quux.hex",
+        "prom": "boot_prom.quux13.hex",
         "machine": "quux",
     },
     "quux_readout_window": {
@@ -2738,24 +2546,13 @@ CHECKS["console13"] = dict(CHECKS["console"], **{
     "machine": "quux",
 })
 
-# The same programs, and muir's own of QUUX, on the machine built as QUUX:
-# `golden/src/dispatch_write_order.rs --machine quux`.  QUUX's wait for MD,
-# its old word in a RAM's own write cycle and its one rate are held here.
-CHECKS["dispatch_write_order_quux"] = dict(CHECKS["dispatch_write_order"], **{
-    "sources": CHECKS["dispatch_write_order"]["sources"] + ["rtl/machine/quux_phase_gen.sv"],
-    "extra": CHECKS["dispatch_write_order"]["extra"] + [
-        f for f in QUUX_SOURCES if f != "rtl/machine/quux_phase_gen.sv"],
-    "flags": CHECKS["dispatch_write_order"]["flags"] + ['-GMACHINE="quux"'],
-    "golden": "dispatch_write_order.quux.golden",
-    "machine": "quux",
-})
 
 # **QUUX'S TIMINGS (H1a).**  Every check that holds QUUX to a trace of muir's
 # `rtl` holds it at a microcycle of K ticks, and the trace and the build name
 # K (`QUUX_TIMED` in the Makefile): `<check>.quux.k4.golden`, built with
-# `-GSYNC_K=4`.  The keys above are K = 4, both boards' K and the least QUUX
-# takes (`quux_phase_gen.sv` says why).  `quux_divmd_quux_l1` and `quux_divmdsync_quux_l1`
-# are the machine checks at an L of one, and `phase_gen_quux` holds the
+# `-GSYNC_K=4`.  The keys above are K = 4, the least QUUX takes
+# (`quux_phase_gen.sv` says why).  `quux13_<program>_quux_l1` are the machine
+# checks at an L of one, and `phase_gen_quux` holds the
 # generator alone at K and K + 1.  A key missing here selects zero records
 # and reports success, which is why the keys are made by rule and not by hand.
 def _timed(key, k, l):
@@ -2777,7 +2574,7 @@ PENDING = {}
 
 # **REVISION 13'S PROCESSOR** (contract G2, appendix A1): the whole machine
 # at `WORD_BITS` 40 on the programs of `golden/src/quux13.rs`, the
-# Makefile's `QUUX13_PROGRAMS`, each traced on muir's `Geometry::QUUX_13`,
+# Makefile's `QUUX13_PROGRAMS`, each traced on muir's `Geometry::QUUX`,
 # with its main memory at the Makefile's `QUUX13_TB_BASE`.
 # And the read-during-write window on revision 13's dispatch memory and map,
 # 4,096, 8,192 and 4,096 entries: the same machine under `CADR_RDW_POISON`
@@ -2814,10 +2611,12 @@ CHECKS["rdw_poison_quux13_pf_quux"] = dict(CHECKS["quux13_fused_quux"], **{
                                                      "+define+CADR_RDW_POISON_CACHE"],
 })
 
-# **AND REVISION 12'S PROGRAMS AT REVISION 13** (G2's retirement of revision
-# 12): the programs of `golden/src/quux.rs` ported with `--revision 13`,
-# the Makefile's `QUUX13_PORTED` and `QUUX13_PORTED_L1`, held against the
-# same machine at `WORD_BITS` 40 as `quux13_<program>`.
+# **AND `golden/src/quux.rs`'S PROGRAMS ON QUUX** (G2's retirement of
+# revision 12): the programs written for revision 12, assembled with
+# `--revision 13`, the Makefile's `QUUX13_PORTED` and `QUUX13_PORTED_L1`,
+# held against the same machine at `WORD_BITS` 40 as `quux13_<program>`.
+# `divmdsync` is at an L of one alone: its `ILONG` fillers are what moves
+# a read's word into the ticks between a `DIV`'s edge and its load.
 QUUX13_PORTED = ("rtc", "clocks", "tickwin", "clockwait", "divmd", "muldiv", "files", "prefetch",
                  "pdlsync", "imemsync", "memedge", "startstart", "returns", "operand", "busreset",
                  "registers", "page", "tv", "features")
@@ -2832,43 +2631,26 @@ for _p in QUUX13_PORTED_L1:
 for _p in set(QUUX13_PORTED_L1) - set(QUUX13_PORTED):
     del CHECKS["quux13_%s_quux" % _p]
 
-# And QUUX's state through the readout window at revision 13's widths and
-# sizes, `tb/quux_readout_window_tb.cpp` under `QUUX13_TB`.
-CHECKS["quux13_readout_window_quux"] = dict(CHECKS["quux_readout_window_quux"], **{
-    "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
-              "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
-              "-Iboards/arty-z7-20", '-GMACHINE="quux"', "-GWORD_BITS=40", "-GSYNC_K=4", "-GSYNC_L=0",
-              "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE,
-              "-CFLAGS", "-DQUUX_TB=1 -DQUUX13_TB=1 -DSYNC_K_TB=4 -DSYNC_L_TB=0"],
-    "prom": "boot_prom.quux13.hex",
-})
+assert "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE in CHECKS["quux13_readout_window_quux"]["flags"]
 
-# And the writes that land in the microcycle that reads the same memory, at
-# revision 13 (`dispatch_write_order.rs --revision 13`).
-CHECKS["dispatch_write_order13_quux"] = dict(CHECKS["dispatch_write_order_quux"], **{
-    "flags": CHECKS["dispatch_write_order_quux"]["flags"] + [
-        "-GWORD_BITS=40", "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE,
+# The same programs, and muir's own of QUUX, on the machine built as QUUX
+# at revision 13: `golden/src/dispatch_write_order.rs --machine quux
+# --revision 13`.  QUUX's wait for MD, its old word in a RAM's own write
+# cycle and its one rate are held here.
+CHECKS["dispatch_write_order13_quux"] = dict(CHECKS["dispatch_write_order"], **{
+    "sources": CHECKS["dispatch_write_order"]["sources"] + ["rtl/machine/quux_phase_gen.sv"],
+    "extra": CHECKS["dispatch_write_order"]["extra"] + [
+        f for f in QUUX_SOURCES if f != "rtl/machine/quux_phase_gen.sv"],
+    "flags": CHECKS["dispatch_write_order"]["flags"] + [
+        '-GMACHINE="quux"', "-GWORD_BITS=40", "-GQUUX13_MAIN_BASE=" + QUUX13_TB_BASE,
         "-CFLAGS", "-DQUUX13_TB_BASE=%su" % QUUX13_TB_BASE],
     "golden": "dispatch_write_order13.quux.golden",
+    "machine": "quux",
 })
 
-QUUX_TIMED_KEYS = ["machine_quux", "dispatch_write_order_quux", "dispatch_write_order13_quux"] + \
-    ["quux_%s_quux" % p for p in ("map", "tv", "muldiv", "clocks", "divmd", "tickwin", "pdlsync",
-                                  "imemsync", "page", "registers", "clockwait", "memedge", "busreset",
-                                  "startstart", "rtc", "files", "fused", "operand", "prefetch")] + \
+QUUX_TIMED_KEYS = ["dispatch_write_order13_quux"] + \
     ["quux13_%s_quux" % p for p in QUUX13_PROGRAMS + QUUX13_PORTED] + \
     ["rdw_poison_quux13_quux", "rdw_poison_quux13_mem_quux", "rdw_poison_quux13_pf_quux"]
-CHECKS["quux_divmd_quux_l1"] = _timed("quux_divmd_quux", 4, 1)
-CHECKS["quux_tickwin_quux_l1"] = _timed("quux_tickwin_quux", 4, 1)
-CHECKS["quux_clockwait_quux_l1"] = _timed("quux_clockwait_quux", 4, 1)
-# `divmdsync`, QUUX's alone, at an L of one: its `ILONG` fillers are
-# what moves a read's word into the ticks between a `DIV`'s edge and its load.
-CHECKS["quux_divmdsync_quux"] = dict(CHECKS["quux_divmd_quux"], **{
-    "golden": "quux_divmdsync.quux.golden",
-    "prom": "quux_divmdsync_prom.quux.hex",
-})
-CHECKS["quux_divmdsync_quux_l1"] = _timed("quux_divmdsync_quux", 4, 1)
-del CHECKS["quux_divmdsync_quux"]
 for _key in QUUX_TIMED_KEYS:
     CHECKS[_key] = _timed(_key, 4, 0)
 for _key, (_k, _l) in (("phase_gen_quux", (4, 1)),):
@@ -3837,17 +3619,8 @@ def check_makefile():
     programs = re.search(r"^QUUX_PROGRAMS := (.*)$", text, re.M)
     for prog in (programs.group(1).split() if programs else []):
         names |= {"quux_" + prog}
-    # QUUX runs its own list at its synchronous microcycle (`ticksync` for
-    # `tick`), so a program's QUUX check is named from that one.
-    programs = re.search(r"^QUUX_SYNC_PROGRAMS := (.*)$", text, re.M)
-    for prog in (programs.group(1).split() if programs else []):
-        names |= {"quux_" + prog + "_quux"}
-    # And the programs QUUX also runs at an L of one, `<program>_quux_l1`.
-    programs = re.search(r"^QUUX_L1_PROGRAMS := (.*)$", text, re.M)
-    for prog in (programs.group(1).split() if programs else []):
-        names |= {"quux_" + prog + "_quux_l1"}
-    # And revision 13's, `golden/src/quux13.rs`, QUUX's alone, and revision
-    # 12's programs ported to it, at an L of zero and of one.
+    # QUUX's, revision 13's: `golden/src/quux13.rs`'s programs, and
+    # `golden/src/quux.rs`'s on QUUX, at an L of zero and of one.
     for var, suffix in (("QUUX13_PROGRAMS", "_quux"), ("QUUX13_PORTED", "_quux"),
                         ("QUUX13_PORTED_L1", "_quux_l1")):
         programs = re.search(r"^%s := (.*)$" % var, text, re.M)

@@ -58,7 +58,7 @@
 //
 // **AND BLOCK-DISK'S CHANNEL SEES MAIN MEMORY ALONE** (`CHANNEL`, revision
 // 13): muir's transfer takes a command list word or a page only from main
-// memory, `main.get` and `page + PAGE > main.len()` (`BlockDisk::write_40`),
+// memory, `main.get` and `page + PAGE > main.len()` (`BlockDisk::write`),
 // so for the channel the window and the register page are nothing, and
 // `memory` is main memory.  `build/xbus_decode.quux13ch.pass` holds that
 // decode at every address too.  Below revision 13 `CHANNEL` changes
@@ -67,7 +67,7 @@
 // The CADR's decode is the text below `g_cadr`, unchanged; on the CADR the
 // register page's addresses are the Unibus window's last page, where
 // nothing answers.  What holds each: `build/xbus_decode.pass` the CADR's
-// over all 4,194,304 addresses, and `build/xbus_decode.quux.pass` QUUX's,
+// over all 4,194,304 addresses, and `build/xbus_decode.quux13.pass` QUUX's,
 // against a golden that asks muir the same question on QUUX.
 
 `default_nettype none

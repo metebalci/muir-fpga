@@ -176,19 +176,17 @@ with no debug cable (contract Q5), with muir pinned at `fc654c1`. QUUX revision
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | QUUX | +0.089 ns | +0.008 ns | 16,888 of 53,200 LUTs, 31.74% | 62 of 140 BRAM tiles | 5,654 of 13,300 | `d708429` | clean | 2026-10-02 |
 | Arty Z7-20 | QUUX revision 13, K = 5 | +0.142 ns | +0.044 ns | 22,453 of 53,200 LUTs, 42.20% | 83 of 140 BRAM tiles | 7,001 of 13,300 | `d708429` | clean | 2026-10-02 |
 | Arty Z7-20 | CADR | +0.126 ns | +0.021 ns | 15,048 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,547 of 13,300 | `d708429` | clean | 2026-10-02 |
 | Cora Z7-07S | CADR | +0.158 ns | +0.036 ns | 13,952 of 14,400 LUTs, 96.89% | 43 of 50 BRAM tiles | 4,335 of 4,400 | `d708429` | clean | 2026-10-02 |
 | Kria KR260 | CADR | +3.528 ns | +0.013 ns | 14,017 of 117,120 LUTs, 11.97% | 38 of 144 BRAM tiles | 3,029 of 14,640 CLBs | `d708429` | clean | 2026-10-02 |
-| DE25-Nano | QUUX | +2.343 ns | 0.000 ns | 18,598 of 46,800 ALMs, 40% | 191 of 358 M20K | --- | `d708429` | clean | 2026-10-02 |
 | DE25-Nano | QUUX revision 13 | +1.910 ns | 0.000 ns | 29,659 of 46,800 ALMs, 63% | 203 of 358 M20K | --- | `d708429` | clean | 2026-10-02 |
 | DE25-Nano | CADR | +2.422 ns | +0.001 ns | 16,480 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `d708429` | clean | 2026-10-02 |
 
 The worst setup path of each Zynq fit but the Kria KR260's is the machine's
 reset into a register of the machine, which has one tick; the Kria KR260's is
 the board's reset into the Chaosnet face. Every Zynq fit passed
-the RAM enable check, over 105, 129, 98, 92 and 82 ports in the order above. The
+the RAM enable check, over 129, 98, 92 and 82 ports in the order above. The
 QUUX fits have no cell of the debug cable and the CADR fits carry it, with both
 of its six-tick clauses reaching their registers. The DE25-Nano's CADR fit
 counts 82 pins of its memory adapter's address and data.
@@ -215,37 +213,31 @@ figure.
 |---|---|---|---|---|---|---|---|---|---|
 | Arty Z7-20 | CADR | +0.264 ns | +0.010 ns | 15,070 of 53,200 LUTs, 28.33% | 46 of 140 BRAM tiles | 5,553 of 13,300 | `9695172` | clean | 2026-09-29 |
 
-These fits were built from `74c2cf9`, QUUX's revision 11 with the register
-page at `17777400` (contract Q13), with muir pinned at `a2ae522`.
+These fits were built from `74c2cf9`, the tree of QUUX's revision 11 with
+the register page at `17777400` (contract Q13), with muir pinned at
+`a2ae522`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | QUUX | +0.113 ns | +0.029 ns | 15,529 of 53,200 LUTs, 29.19% | 62 of 140 BRAM tiles | 5,178 of 13,300 | `74c2cf9` | clean | 2026-09-28 |
 | Arty Z7-20 | CADR | +0.222 ns | +0.042 ns | 15,050 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,529 of 13,300 | `74c2cf9` | clean | 2026-09-28 |
 | Cora Z7-07S | CADR | +0.210 ns | +0.041 ns | 14,024 of 14,400 LUTs, 97.39% | 43 of 50 BRAM tiles | 4,325 of 4,400 | `74c2cf9` | clean | 2026-09-28 |
-| DE25-Nano | QUUX | +2.288 ns | 0.000 ns | 17,557 of 46,800 ALMs, 38% | 191 of 358 M20K | --- | `74c2cf9` | clean | 2026-09-28 |
 | DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `74c2cf9` | clean | 2026-09-28 |
 
 The CADR fits are the same, figure for figure, as those of the working tree
-on `ab41da7` below, since revision 11 changes nothing of the CADR's. The Arty
-Z7-20's QUUX fit meets timing by 0.113 ns; its worst setup path is the
-machine's reset into the readout's word, which has one tick. Each Zynq fit
-also passed `boards/arty-z7-20/vivado/rams_enable_check.tcl`, over 105, 98
-and 92 block RAM ports.
+on `ab41da7` below, since revision 11 changes nothing of the CADR's. Each
+Zynq fit also passed `boards/arty-z7-20/vivado/rams_enable_check.tcl`, over
+98 and 92 block RAM ports.
 
 These fits were built from `10cf117`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | QUUX | +0.176 ns | +0.028 ns | 15,568 of 53,200 LUTs, 29.26% | 62 of 140 BRAM tiles | 5,339 of 13,300 | `10cf117` | clean | 2026-09-27 |
 | Arty Z7-20 | CADR | +0.225 ns | +0.028 ns | 15,054 of 53,200 LUTs, 28.30% | 46 of 140 BRAM tiles | 5,523 of 13,300 | `10cf117` | clean | 2026-09-27 |
 | Cora Z7-07S | CADR | +0.277 ns | +0.021 ns | 14,040 of 14,400 LUTs, 97.50% | 43 of 50 BRAM tiles | 4,347 of 4,400 | `10cf117` | clean | 2026-09-27 |
-| DE25-Nano | QUUX | +2.299 ns | 0.000 ns | 17,526 of 46,800 ALMs, 37% | 191 of 358 M20K | --- | `10cf117` | clean | 2026-09-27 |
 | DE25-Nano | CADR | +2.327 ns | 0.000 ns | 16,452 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `10cf117` | clean | 2026-09-27 |
 
-On the DE25-Nano the worst setup path of both fits is an HDMI output pin. The
-machine clock's own worst setup slack is +2.909 ns for QUUX and +2.347 ns for
-the CADR.
+On the DE25-Nano the worst setup path is an HDMI output pin. The machine
+clock's own worst setup slack is +2.347 ns.
 
 ## From a modified tree
 
@@ -256,15 +248,13 @@ records to just above the display's 1 MB. muir is pinned at `fc654c1`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | QUUX | +0.131 ns | +0.038 ns | 17,296 of 53,200 LUTs, 32.51% | 62 of 140 BRAM tiles | 5,910 of 13,300 | working tree on `2df53b7` | modified | 2026-10-01 |
 | Arty Z7-20 | CADR | +0.536 ns | +0.024 ns | 15,065 of 53,200 LUTs, 28.32% | 46 of 140 BRAM tiles | 5,578 of 13,300 | working tree on `2df53b7` | modified | 2026-10-01 |
 | Cora Z7-07S | CADR | +0.158 ns | +0.036 ns | 13,952 of 14,400 LUTs, 96.89% | 43 of 50 BRAM tiles | 4,335 of 4,400 | working tree on `2df53b7` | modified | 2026-10-02 |
 | Kria KR260 | CADR | +3.528 ns | +0.013 ns | 14,017 of 117,120 LUTs, 11.97% | 38 of 144 BRAM tiles | 3,029 of 14,640 CLBs | working tree on `2df53b7` | modified | 2026-10-02 |
-| DE25-Nano | QUUX | +2.146 ns | 0.000 ns | 18,926 of 46,800 ALMs, 40% | 191 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
 | DE25-Nano | CADR | +2.422 ns | +0.001 ns | 16,480 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
 
-The Arty fits passed `boards/arty-z7-20/vivado/rams_enable_check.tcl` over
-105 and 98 block RAM ports, the Cora's over 92 and the Kria KR260's over 82,
+The Arty fit passed `boards/arty-z7-20/vivado/rams_enable_check.tcl` over
+98 block RAM ports, the Cora's over 92 and the Kria KR260's over 82,
 with its 38 multicycle exceptions on its two clocks. On the DE25-Nano the
 CADR's adapter keeps 82 address and data registers, where it kept 80 with
 the base at `0xB000_0000`: main memory's top byte is now `0xB3` against the
@@ -279,13 +269,11 @@ the connector's pads are left undriven with their pull-downs. muir is pinned at
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | QUUX | +0.219 ns | +0.041 ns | 16,862 of 53,200 LUTs, 31.70% | 62 of 140 BRAM tiles | 5,558 of 13,300 | working tree on `2df53b7` | modified | 2026-10-02 |
 | Arty Z7-20 | QUUX revision 13, K = 5 | +0.241 ns | +0.036 ns | 22,459 of 53,200 LUTs, 42.22% | 83 of 140 BRAM tiles | 7,331 of 13,300 | working tree on `2df53b7` | modified | 2026-10-02 |
 | Arty Z7-20 | CADR | +0.185 ns | +0.019 ns | 15,052 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,593 of 13,300 | working tree on `2df53b7` | modified | 2026-10-02 |
 | Arty Z7-20 | CADR | +0.186 ns | +0.034 ns | 15,046 of 53,200 LUTs, 28.28% | 46 of 140 BRAM tiles | 5,564 of 13,300 | `2df53b7` | clean | 2026-10-02 |
 | Cora Z7-07S | CADR | +0.495 ns | +0.016 ns | 13,942 of 14,400 LUTs, 96.82% | 43 of 50 BRAM tiles | 4,332 of 4,400 | working tree on `2df53b7` | modified | 2026-10-02 |
 | Kria KR260 | CADR | +2.848 ns | +0.014 ns | 14,014 of 117,120 LUTs, 11.97% | 38 of 144 BRAM tiles | 2,956 of 14,640 CLBs | working tree on `2df53b7` | modified | 2026-10-02 |
-| DE25-Nano | QUUX | +2.495 ns | +0.001 ns | 18,601 of 46,800 ALMs, 40% | 191 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
 | DE25-Nano | QUUX revision 13 | +1.540 ns | +0.001 ns | 29,707 of 46,800 ALMs, 63% | 203 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
 | DE25-Nano | CADR | +2.550 ns | 0.000 ns | 16,500 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `2df53b7` | modified | 2026-10-02 |
 | DE25-Nano | CADR | +2.550 ns | 0.000 ns | 16,500 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `2df53b7` | clean | 2026-10-02 |
@@ -301,8 +289,8 @@ the old one.
 
 The worst setup path of revision 13 at five ticks is now the virtual address
 into the prefetcher's fetch address, +0.241 ns, where the fit on `f00f376`
-above was limited by the reset of the debug window, +0.153 ns. Both Arty Z7-20
-QUUX fits passed the RAM enable check, over 105 and 129 ports, and found no cell
+above was limited by the reset of the debug window, +0.153 ns. The Arty
+Z7-20's QUUX fit passed the RAM enable check over 129 ports and found no cell
 of the debug cable; the eight pads of Pmod JA are placed and carry their
 pull-downs, with no net on them.
 
@@ -435,27 +423,16 @@ block RAM tiles, 4 DSPs and 11,278 registers. The worst setup path of each
 is a reset's fan-out outside the processor, and the 0.071 ns between them
 is placement. Both passed `rams_enable_check.tcl` over 98 block RAM ports.
 
-These fits were built from the tree committed as `aec5f54` with QUUX's
-revision 12, the fused return and its cache-only prefetch (contract H8a),
-and muir pinned at `fdc1503`, whose sources `a2f3f81` keeps unchanged. The
-commit adds one width cast in `cadr_microcycle.sv` after these fits; the
-Arty Z7-20's and the DE25-Nano's QUUX refitted with it gave the same
-bitstreams, and the commit pins muir at `a2f3f81`.
+These fits were built from the tree committed as `aec5f54`, the tree of
+QUUX's revision 12, the fused return and its cache-only prefetch (contract
+H8a), and muir pinned at `fdc1503`, whose sources `a2f3f81` keeps
+unchanged; the commit pins muir at `a2f3f81`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | QUUX | +0.776 ns | +0.022 ns | 17,105 of 53,200 LUTs, 32.15% | 62 of 140 BRAM tiles | 5,685 of 13,300 | `aec5f54` | see above | 2026-09-28 |
 | Arty Z7-20 | CADR | +0.264 ns | +0.010 ns | 15,070 of 53,200 LUTs, 28.33% | 46 of 140 BRAM tiles | 5,553 of 13,300 | `aec5f54` | see above | 2026-09-28 |
 | Cora Z7-07S | CADR | +0.494 ns | +0.024 ns | 13,894 of 14,400 LUTs, 96.49% | 43 of 50 BRAM tiles | 4,350 of 4,400 | `aec5f54` | see above | 2026-09-28 |
-| DE25-Nano | QUUX | +2.112 ns | 0.000 ns | 18,912 of 46,800 ALMs, 40% | 191 of 358 M20K | --- | `aec5f54` | see above | 2026-09-28 |
 | DE25-Nano | CADR | +2.443 ns | 0.000 ns | 16,466 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `aec5f54` | see above | 2026-09-28 |
-
-The MACRO DISPATCH MEMORY is LUT RAM on the Zynq boards and MLABs on the
-DE25-Nano, so the block memory is what it was: the Arty Z7-20's QUUX fit
-still asks 105 block RAM ports of `rams_enable_check.tcl` and uses 62 tiles.
-Its worst setup path is in the divider; the fused return's own paths into
-the control store's address, from the MACRO DISPATCH MEMORY, M 31's register
-and the prefetch's word, have 15.8, 15.5 and 17.2 ns of their 40 ns.
 
 These fits were built from `8f2e34e` with the change that cuts the processor
 system's three reset synchronizers' clears
@@ -465,15 +442,14 @@ pinned at `a2ae522`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| DE25-Nano | QUUX | +2.288 ns | 0.000 ns | 17,557 of 46,800 ALMs, 38% | 191 of 358 M20K | --- | `8f2e34e` | modified | 2026-09-28 |
 | DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `8f2e34e` | modified | 2026-09-28 |
 
-Both fits have no recovery or removal path at any of the four corners: the
-only asynchronous clears in either design were those six, and they are now
-cut. The setup, hold and size figures are the same as those of the clean fits
-of `74c2cf9` above. Those two fits, analyzed again with the new check, fail
-removal at all four corners, worst -0.668 ns for QUUX and -0.672 ns for the
-CADR, while recovery passes by +3.812 ns and +3.802 ns.
+The fit has no recovery or removal path at any of the four corners: the
+only asynchronous clears in the design were those six, and they are now
+cut. The setup, hold and size figures are the same as those of the clean fit
+of `74c2cf9` above. That fit, analyzed again with the new check, fails
+removal at all four corners, worst -0.672 ns, while recovery passes by
++3.802 ns.
 
 These fits were built from `66a9eb5` with the constraint change that was then
 committed as `208b903`.
@@ -485,8 +461,7 @@ committed as `208b903`.
 | DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `66a9eb5` | modified | 2026-09-27 |
 
 The DE25-Nano's worst setup path is an HDMI output pin; the machine clock's
-own worst setup slack is +2.769 ns. QUUX's fits from the same tree, on the
-Arty Z7-20 and the DE25-Nano, give the same figures as the clean fits above.
+own worst setup slack is +2.769 ns.
 
 These fits were built from the working tree on `e764825` with the change in
 which destination 3 no longer controls timer 0 (QUUX revision 10, contract
@@ -494,40 +469,26 @@ Q11 as amended) and muir pinned at `9f432a6`.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | QUUX | -0.013 ns | +0.020 ns | 15,560 of 53,200 LUTs, 29.25% | 62 of 140 BRAM tiles | 5,297 of 13,300 | working tree on `e764825` | modified | 2026-09-27 |
 | Arty Z7-20 | CADR | +0.193 ns | +0.038 ns | 15,049 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,521 of 13,300 | working tree on `e764825` | modified | 2026-09-27 |
 | Cora Z7-07S | CADR | +0.282 ns | +0.053 ns | 14,037 of 14,400 LUTs, 97.48% | 43 of 50 BRAM tiles | 4,328 of 4,400 | working tree on `e764825` | modified | 2026-09-27 |
-| DE25-Nano | QUUX | +2.049 ns | 0.000 ns | 17,531 of 46,800 ALMs, 37% | 191 of 358 M20K | --- | working tree on `e764825` | modified | 2026-09-27 |
 | DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `e764825` | modified | 2026-09-27 |
 
-**The Arty Z7-20's QUUX fit missed timing** by 13 ps and 8 ps, on two paths
-from the processor's memory start (`memstart`) into the memory interface's
-`nxm` and `device` registers, which have two ticks, 20 ns, and took
-20.013 ns. The same path is the worst in the clean QUUX fit above, with
-+0.176 ns. The change that followed gives QUUX's control store an explicit
-block RAM enable and has the cache read only at master clock edges
-(`docs/mutations.md`); it was fitted on this tree, and its fits below meet
-timing. On the DE25-Nano the worst setup path of both fits is an HDMI output
-pin; the machine clock's own worst setup slack is +2.768 ns for QUUX and
-+2.769 ns for the CADR.
+On the DE25-Nano the worst setup path is an HDMI output pin; the machine
+clock's own worst setup slack is +2.769 ns.
 
-These fits were built from the working tree on `ab41da7` with that change
-and muir pinned at `66408f8`. Each Zynq fit also passed
-`boards/arty-z7-20/vivado/rams_enable_check.tcl`, which asked 105 block RAM
-ports of the Arty Z7-20's QUUX build, 98 of its CADR build and 92 of the Cora
-Z7-07S's, and found every path into their address, write enable and enable
-within one tick.
+These fits were built from the working tree on `ab41da7` with the change
+that gives QUUX's control store an explicit block RAM enable and has the
+cache read only at master clock edges (`docs/mutations.md`), and muir pinned
+at `66408f8`. Each Zynq fit also passed
+`boards/arty-z7-20/vivado/rams_enable_check.tcl`, which asked 98 block RAM
+ports of the Arty Z7-20's CADR build and 92 of the Cora Z7-07S's, and found
+every path into their address, write enable and enable within one tick.
 
 | Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
 |---|---|---|---|---|---|---|---|---|---|
-| Arty Z7-20 | QUUX | +0.117 ns | +0.035 ns | 15,584 of 53,200 LUTs, 29.29% | 62 of 140 BRAM tiles | 5,330 of 13,300 | working tree on `ab41da7` | modified | 2026-09-27 |
 | Arty Z7-20 | CADR | +0.222 ns | +0.042 ns | 15,050 of 53,200 LUTs, 28.29% | 46 of 140 BRAM tiles | 5,529 of 13,300 | working tree on `ab41da7` | modified | 2026-09-27 |
 | Cora Z7-07S | CADR | +0.210 ns | +0.041 ns | 14,024 of 14,400 LUTs, 97.39% | 43 of 50 BRAM tiles | 4,325 of 4,400 | working tree on `ab41da7` | modified | 2026-09-27 |
-| DE25-Nano | QUUX | +2.294 ns | 0.000 ns | 17,499 of 46,800 ALMs, 37% | 191 of 358 M20K | --- | working tree on `ab41da7` | modified | 2026-09-27 |
 | DE25-Nano | CADR | +1.663 ns | 0.000 ns | 16,451 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | working tree on `ab41da7` | modified | 2026-09-27 |
 
-The Arty Z7-20's QUUX fit meets timing by 0.117 ns; its worst setup path is
-now the disk controller's request into the transaction audit's first
-physical address, which has one tick. On the DE25-Nano the worst setup path
-of both fits is an HDMI output pin; the machine clock's own worst setup slack
-is +2.734 ns for QUUX and +2.769 ns for the CADR.
+On the DE25-Nano the worst setup path is an HDMI output pin; the machine
+clock's own worst setup slack is +2.769 ns.

@@ -4,8 +4,8 @@
 // QUUX's memory port and register decode (contracts Q6 and Q7, revision
 // 8): the processor's cycle on a machine with no bus interface and no
 // device bus.  muir's `memory_port::MemoryPort` is the reference, and
-// `build/quux_port.quux.pass` holds this module to it tick for tick
-// (`golden/src/quux_port.rs`).  The cycle goes one of three ways, by the
+// `build/quux13_port.quux.pass` holds this module to it tick for tick
+// (`golden/src/quux13_port.rs`).  The cycle goes one of three ways, by the
 // held decode of its physical address:
 //
 //   THE MEMORY BUS, main memory and the video controller's frame buffer, through the
@@ -87,7 +87,7 @@
 // from outside the machine (the contract: "a halt drains the write buffer").
 //
 // **REVISION 13'S PORT** (contract G2 §3, `WORD_BITS` 40; muir's
-// `MemoryPort::for_geometry` on `Geometry::QUUX_13`, `Layout::REVISION_13`):
+// `MemoryPort::new`):
 // 40-bit words and 28-bit physical addresses (G1 §3.2), the cache's 8-word
 // lines (`quux_cache.sv`), and main memory in PACKED STORAGE (G1 §4.1): word
 // w at byte `MAIN13_BASE + 5w`, `<7:0>` first and the tag last, a line of 8

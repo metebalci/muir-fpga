@@ -3633,7 +3633,7 @@ if generate_fpgarc ""; then
 		fail "the CADR card's memory lines: [$(tr -d '\r' < "$G" | grep -- 'main-memory' | tr '\n' '|')]"
 	fi
 fi
-for mem_case in ":arty-z7-20:2MW:3MW" "13:arty-z7-20:32MW:32MW" "13:de25-nano:32MW:64MW"; do
+for mem_case in "13:arty-z7-20:32MW:32MW" "13:de25-nano:32MW:64MW" "13:kria-kr260:32MW:32MW"; do
 	IFS=: read -r mem_rev mem_board mem_default mem_most <<MEMCASE
 $mem_case
 MEMCASE
@@ -3903,7 +3903,7 @@ fi
 # release above keeps four, with the line commented.
 case_head "a QUUX release's menu has the six and --machine quux live, and the reader calls it QUUX"
 sandbox
-if generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" quux; then
+if generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" quux 13; then
 	GEN="$WORK/gen/card/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
 	want='--chaos-address 177201|--chaos-udp 127.0.0.1:42042|--ozd-root sys=/mnt/card/sys|--ozd-root site=/mnt/card/site|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--machine quux|'
@@ -3940,6 +3940,16 @@ if generate_fpgarc "" 1; then
 	else
 		ok "and the reader takes it for the CADR's"
 	fi
+fi
+# **AND QUUX WITHOUT REVISION=13 IS REFUSED**: that card was revision 12's,
+# which is retired, and no bitstream it could carry is built.
+sandbox
+if (generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" quux) > "$WORK/badrev" 2>&1; then
+	fail "MACHINE=quux with no REVISION wrote a card"
+elif grep -q "MACHINE=quux is QUUX revision 13: give REVISION=13" "$WORK/badrev"; then
+	ok "and MACHINE=quux with no REVISION is refused by name, revision 12 being retired"
+else
+	fail "MACHINE=quux with no REVISION was refused without saying why: $(cat "$WORK/badrev")"
 fi
 sandbox
 if (generate_fpgarc "" 1 "" arty-z7-20 "" "" "" "" "" vax) > "$WORK/badmachine" 2>&1; then
@@ -6661,12 +6671,14 @@ if lift_readme "$WORK/rd"; then
 	for b in arty-z7-20 cora-z7-07s de25-nano kria-kr260; do
 		for rel in "" 1; do
 			for m in cadr quux; do
+				# QUUX is revision 13, on the three boards that run it; the
+				# Cora Z7-07S builds the CADR alone.
+				[ "$m:$b" != quux:cora-z7-07s ] || continue
 				rm -rf "$WORK/rd/card"; mkdir -p "$WORK/rd/card"
 				# A release card names its system, 1003 for the CADR's and 2001
-				# for QUUX's; QUUX is revision 13 on the three boards that run
-				# it and revision 12 on the Cora Z7-07S.
+				# for QUUX's.
 				sys=; [ -z "$rel" ] || { [ "$m" = quux ] && sys=2001 || sys=1003; }
-				rev=; [ "$m" = quux ] && [ "$b" != cora-z7-07s ] && rev=13
+				rev=; [ "$m" = quux ] && rev=13
 				( set -u
 				  OUT="$WORK/rd"; BOARD_NAME=$b; BOARD_DTB=the-board.dtb; MACHINE=$m; NO_FAULT=
 				  RELEASE=$rel; RELEASE_COMMIT=${rel:+abc1234}; SYSTEM=$sys; REVISION=$rev
@@ -6692,7 +6704,7 @@ if lift_readme "$WORK/rd"; then
 						esac
 					done
 					case "$m:$rev:$flat" in
-					quux:13:*"This card runs QUUX revision 13,"*|quux::*"This card runs QUUX revision 12,"*|cadr::*"This card runs the CADR,"*) ;;
+					quux:13:*"This card runs QUUX revision 13,"*|cadr::*"This card runs the CADR,"*) ;;
 					*) fail "the release README for $b ($m) does not say which machine and revision it runs"
 					   readme_bad=$((readme_bad + 1)) ;;
 					esac

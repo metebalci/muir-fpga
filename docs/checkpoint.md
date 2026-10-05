@@ -445,7 +445,7 @@ refusal, by a re-save that differs, or by a file that is not muir's own. The
 keeps them private. They are the CADR's code, which `build/checkpoint.pass`
 holds.
 
-`make build/quux_readout_window.quux.k4.pass` holds the fabric's half. Each
+`make build/quux13_readout_window.quux.k4.pass` holds the fabric's half. Each
 new field is poisoned in the register that holds it and read back through the
 window. Each moving word is held to the ticks it could have been taken at, and
 a timer's predicted rise is held against the flag itself. Built as the CADR,
@@ -480,12 +480,12 @@ as muir's flag does. The default is 32MW, and the most is the room the board
 keeps: 32MW on the Arty Z7-20 and the Kria KR260, 64MW on the DE25-Nano.
 muir's header still counts it in 64K-word units, sixteen a megaword.
 
-`build/checkpoint.quux.pass` holds it the way it holds revision 12's.
-`golden/src/quux_checkpoint.rs --revision 13` builds the same machine at
-revision 13 through muir's own calls. The program's file must be muir's
-byte for byte. No executable of muir's runs revision 13 yet, so muir's own
-load and save come from the same generator (`--resume-and-save`). Mutants 22
-to 31 are revision 13's.
+`build/checkpoint.quux.pass` holds it. `golden/src/quux_checkpoint.rs
+--revision 13` builds the same machine through muir's own calls. The
+program's file must be muir's byte for byte, and muir's own load and save
+come from the same generator (`--resume-and-save`). Mutants 9 to 31 are
+caught there. Revision 12's file, version 49, is retired with that
+revision.
 
 ## `--chaos-address` is octal, as muir's is
 

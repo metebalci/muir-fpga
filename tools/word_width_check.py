@@ -6,19 +6,20 @@
     python3 tools/word_width_check.py .
 
 `WORD_BITS` is the word's width, muir's `Geometry::word_bits`: 32 on the CADR
-and on QUUX to revision 12, 40 on revision 13 (contract G2 §2.1).
-`cadr_machine` takes it and hands it to `cadr_microcycle`, which declares its
-words with it.  Every check against muir builds the machine at 32, where a
-word declared `[31:0]` and a word declared `[WORD_BITS-1:0]` are the same
-design; so a word that dropped the parameter, or a machine that did not pass
-it down, would leave every one of them green.  This asks the question at 40.
+and 40 on QUUX, revision 13 (contract G2 §2.1); revision 12, the 32-bit
+QUUX, is retired.  `cadr_machine` takes it and hands it to `cadr_microcycle`,
+which declares its words with it.  Every check of the CADR builds the
+machine at 32, where a word declared `[31:0]` and a word declared
+`[WORD_BITS-1:0]` are the same design; so a word that dropped the parameter,
+or a machine that did not pass it down, would leave every one of them green.
+This asks the question at 40.
 
-**THE MACHINE LINTS CLEAN AT EACH WIDTH IT TAKES**: the CADR at 32, QUUX at
-32 and at 40, `cadr_machine` as the top and Verilator's `-Wall`.  At 40 a
-word left at 32 bits is a width Verilator names.
+**THE MACHINE LINTS CLEAN AT EACH WIDTH IT TAKES**: the CADR at 32 and QUUX
+at 40, `cadr_machine` as the top and Verilator's `-Wall`.  At 40 a word left
+at 32 bits is a width Verilator names.
 
 **AND THE WIDTHS ARE READ BACK, NOT INFERRED FROM THE TEXT.**  For each of
-the three, Verilator writes its elaborated tree as JSON and this reads the
+the two, Verilator writes its elaborated tree as JSON and this reads the
 width of every word in the module `cadr_machine`'s `processor` cell was
 elaborated into, and of `cadr_machine`'s own word ports: each must be
 `WORD_BITS`.  And the processor's parts that stay 32 bits at 40 (the ALU's
@@ -33,15 +34,16 @@ the level-1 entry 7 and `MAP(MD)` 40, the physical address on the cables
 and its register 28, and the prefetch's virtual and physical word addresses
 28; the dispatch memory has 4,096 entries,
 level 1 8,192 and level 2 4,096, with their addresses 12, 13 and 12 bits
-wide; and at 32 each is revision 12's or the CADR's.  Read back as the
+wide; and on the CADR each is the CADR's.  Read back as the
 words are, element widths and array depths both.
 
 **A WIDTH THE MACHINE DOES NOT HAVE MUST STOP ELABORATION** with the
-processor's own message: 40 on the CADR, and 36 on QUUX.
+processor's own message: 40 on the CADR, and 32, revision 12's, and 36 on
+QUUX.
 
 WHAT THIS DOES NOT SAY.  It says nothing about what a 40-bit word does:
 that is revision 13's programs' (`build/quux13_*.quux.k4.pass`), against
-muir's traces on `Geometry::QUUX_13`, and at 32 every other check's.
+muir's traces on `Geometry::QUUX`, and at 32 the CADR's checks'.
 
 Exit status 0 when every case agrees, 1 otherwise, with each case's line
 printed either way.
@@ -67,23 +69,23 @@ WORDS = ["a", "m", "r", "ob", "q", "vma", "md", "l", "mf", "mo", "md_held",
          "rdata", "wdata", "pf_view_word", "pf_word_now"]
 # What stays 32 bits at 40.
 NARROW = ["alu", "st"]
-# Revision 13's sizes and revision 12's and the CADR's (A1.4, A1.6, A1.7):
-# name -> (CADR, QUUX at 32, QUUX at 40), an element's width.
+# Revision 13's sizes and the CADR's (A1.4, A1.6, A1.7):
+# name -> (CADR, QUUX at 40), an element's width.
 SIZED = {
-    "lc_q": (26, 26, 30), "vmo": (24, 24, 28), "lvmo": (24, 24, 28),
-    "vmap": (5, 6, 7), "l1_map": (5, 6, 7), "l2_map": (24, 24, 28),
-    "mf_map": (32, 32, 40), "msk": (32, 32, 40),
-    "dadr": (11, 11, 12), "adr0": (11, 11, 13), "adr1": (10, 11, 12),
-    "phys_r": (22, 22, 28), "pf_view_phys": (22, 22, 28),
-    "pf_view_vaddr": (24, 24, 28), "pf_view_fetch_vaddr": (24, 24, 28),
+    "lc_q": (26, 30), "vmo": (24, 28), "lvmo": (24, 28),
+    "vmap": (5, 7), "l1_map": (5, 7), "l2_map": (24, 28),
+    "mf_map": (32, 40), "msk": (32, 40),
+    "dadr": (11, 12), "adr0": (11, 13), "adr1": (10, 12),
+    "phys_r": (22, 28), "pf_view_phys": (22, 28),
+    "pf_view_vaddr": (24, 28), "pf_view_fetch_vaddr": (24, 28),
 }
 # And the arrays' depths.
-DEEP = {"dmem": (2048, 2048, 4096), "l1_map": (2048, 2048, 8192), "l2_map": (1024, 2048, 4096)}
+DEEP = {"dmem": (2048, 4096), "l1_map": (2048, 8192), "l2_map": (1024, 4096)}
 # The machine's own ports that carry a word.
 MACHINE_WORDS = ["a", "m", "ob", "q", "vma", "md", "mem_wdata"]
 
-CASES = [("cadr", 32), ("quux", 32), ("quux", 40)]
-REFUSED = [("cadr", 40), ("quux", 36)]
+CASES = [("cadr", 32), ("quux", 40)]
+REFUSED = [("cadr", 40), ("quux", 32), ("quux", 36)]
 
 log = []
 failures = []

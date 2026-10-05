@@ -4,14 +4,15 @@
 //! Where QUUX differs from the CADR, as programs in the boot PROM, traced on
 //! muir's `rtl` engine on either machine.
 //!
-//!     quux --program <name> [--machine cadr|quux]          the trace
+//!     quux --program <name> [--machine cadr]               the CADR's trace
 //!     quux --program <name> --prom                         the PROM image
-//!     quux --program <name> --machine quux --revision 13   on revision 13
+//!     quux --program <name> --machine quux --revision 13   QUUX's, revision 13
 //!
-//! **AND ON REVISION 13** (`--revision 13`, contract G2): the programs that
-//! are the only test of what they hold, [`PORTED_13`], assembled again for
-//! QUUX's 40-bit revision and traced on `Geometry::QUUX_13`; the Makefile
-//! holds them as `quux13_<name>`.  What revision 13 moved is moved in
+//! **ON QUUX, REVISION 13** (`--revision 13`, contract G2): the programs that
+//! are the only test of what they hold, [`PORTED_13`], assembled for QUUX's
+//! 40-bit revision and traced on `Geometry::QUUX`; the Makefile holds them
+//! as `quux13_<name>`.  Revision 12, for which they were written, is
+//! retired, and `--machine quux` without `--revision 13` is refused.  What revision 13 moved is moved in
 //! the assembling, not in the programs: the fields of every word
 //! ([`to_rev13`]), the constants' widths, the map's stores and pages
 //! ([`r7`]), the register page and INTERRUPT-CONTROL's flags.  Where a
@@ -72,8 +73,8 @@ use muir::quux_input::KeyboardMouse;
 static BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// **REVISION 13** (`--revision 13`, contract G2 with its appendix A1):
-/// the same programs on revision 13's 40-bit QUUX, `Geometry::QUUX_13`,
-/// which keeps revision 12's devices, register offsets and timings and
+/// the programs on revision 13's 40-bit QUUX, `Geometry::QUUX`, which kept
+/// revision 12's devices, register offsets and timings and
 /// changes the word, the fields and the map.  Where a program names
 /// something revision 13 moved, the names below give revision 13's: the
 /// fields of every word the program assembles ([`to_rev13`]), the
@@ -81,8 +82,7 @@ static BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0)
 /// ([`level_1_store`], [`level_2_store`], [`r7`]), the register page at
 /// `1777777400`, and INTERRUPT-CONTROL's flags eight bits up ([`int_enable`],
 /// [`unibus_reset_flag`], [`sequence_break`]).  `main` sets it before
-/// anything is assembled; unset, every image and trace is revision 12's,
-/// byte for byte as before it existed.
+/// anything is assembled; unset, every image and trace is the CADR's.
 static REV13: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn rev13() -> bool {
@@ -190,9 +190,8 @@ fn word_value(v: impl WordValue) -> u64 {
     v
 }
 
-/// The programs ported to revision 13: each is held at revision 12 as it
-/// always was, and at revision 13 as `quux13_<name>` (the Makefile's
-/// `QUUX13_PORTED`).
+/// The programs ported to revision 13, held as `quux13_<name>` (the
+/// Makefile's `QUUX13_PORTED`).
 const PORTED_13: &[&str] = &[
     "rtc", "clocks", "tickwin", "clockwait", "divmd", "divmdsync", "muldiv", "files", "prefetch", "pdlsync",
     "imemsync", "memedge", "startstart", "returns", "operand", "busreset", "registers", "page", "tv", "features",
@@ -204,7 +203,7 @@ const PORTED_13: &[&str] = &[
 fn machine(which: Which, prom: &[Insn]) -> muir::machine::Machine {
     let mut m = which.machine(prom);
     if rev13() {
-        m.geometry = Geometry::QUUX_13;
+        m.geometry = Geometry::QUUX;
         m.main = vec![0; 32 << 16];
         // No board name, as the machine under test is built (feature words
         // 20-24 reading 0; `golden/src/quux13.rs`'s `variant`).
@@ -215,7 +214,7 @@ fn machine(which: Which, prom: &[Insn]) -> muir::machine::Machine {
 
 /// The machine's geometry, revision 13's when the run is.
 fn geometry(which: Which) -> Geometry {
-    if rev13() { Geometry::QUUX_13 } else { which.geometry() }
+    if rev13() { Geometry::QUUX } else { which.geometry() }
 }
 
 /// The cache's line: four words, eight on revision 13 (G2 §3).
@@ -2021,7 +2020,7 @@ fn register_at_power_on(w: u32) -> Option<u32> {
 /// rest, each held to what muir's revision 13 machine reads there.
 fn register_at_power_on_13(w: u32) -> Option<u32> {
     let want = match w {
-        0 => Geometry::QUUX_13.machine_id.unwrap(),
+        0 => Geometry::QUUX.machine_id.unwrap(),
         1 => 7,
         2 | 6 => 4096,
         0o13 => 0o1760000000,
@@ -2256,7 +2255,7 @@ fn check_map(which: Which, m: &muir::machine::Machine) {
 /// words as `registers` holds them, and the PDL buffer as on revision 12.
 fn check_map_13(m: &muir::machine::Machine) {
     let r = |k: u64| m.amem[(RESULT + k) as usize];
-    let id = Geometry::QUUX_13.machine_id.unwrap() as u64;
+    let id = Geometry::QUUX.machine_id.unwrap() as u64;
     assert_eq!([r(0), r(1), r(2), r(3)], [0, id, id, ones()], "revision 13: sources 15, 16, 36 and 17");
     let index = |va: u64| (va >> 15) as usize;
     assert_eq!(m.l1_map[index(7 << 15)], 0o141, "revision 13: the level-1 entry stored");
@@ -4294,9 +4293,8 @@ fn main() {
             "--prom" => prom_only = true,
             "--revision" => match it.next().as_deref() {
                 Some("13") if which == Which::Quux => REV13.store(true, std::sync::atomic::Ordering::Relaxed),
-                Some("12") => {}
                 v => {
-                    eprintln!("quux: --revision is 12, or 13 with --machine quux, not {v:?}");
+                    eprintln!("quux: --revision is 13, with --machine quux, not {v:?}");
                     std::process::exit(2);
                 }
             },
@@ -4308,11 +4306,15 @@ fn main() {
     }
     let Some(name) = name else {
         eprintln!(
-            "usage: quux --program <name> [--machine cadr|quux [--revision 12|13]] \
+            "usage: quux --program <name> [--machine cadr | --machine quux --revision 13] \
              [--sync-cycle-ticks K [--sync-ilong-ticks L]] [--prom]"
         );
         std::process::exit(2);
     };
+    if which == Which::Quux && !rev13() {
+        eprintln!("quux: QUUX is revision 13, --revision 13; revision 12 is retired");
+        std::process::exit(2);
+    }
     if rev13() && !PORTED_13.contains(&name.as_str()) {
         eprintln!("quux: {name} is not ported to revision 13; the ported are {}", PORTED_13.join(", "));
         std::process::exit(2);

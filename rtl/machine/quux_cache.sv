@@ -51,7 +51,7 @@
 // invalid way if one is, else the way NOT most recently used, and whatever
 // is filled or hit becomes the most recent.  The two descriptions hold the
 // same lines in every order two ways allow, invalidations included, and
-// `build/quux_port.quux.pass` compares every read's hit or miss with
+// `build/quux13_port.quux.pass` compares every read's hit or miss with
 // muir's.  A write touches neither the order nor the valid bits
 // (`busint.rs`, and muir's port: a write never calls `Cache::read`); a line
 // holding the word takes the new word, two ticks after the grant.

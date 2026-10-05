@@ -7,9 +7,9 @@
 //!
 //! **QUUX IS BUILT HERE AS muir'S LIBRARY BUILDS IT, AND AS muir'S OWN
 //! `machine()` IN `src/main.rs` DOES**: the geometry set on the machine before
-//! the engine is made, QUUX's boot PROM (revision 12's, PROM 2000,
-//! `prom::quux_boot_prom_for`, muir's `data/quux-promh-2000.mcr`), the video
-//! controller fitted as the display, and
+//! the engine is made, QUUX's boot PROM (PROM 2001, `prom::quux_boot_prom`,
+//! muir's `data/quux-promh.mcr`), the video controller fitted as the
+//! display, and
 //! block-disk as the disk.  One thing is
 //! this project's and not muir's default: **THE VIDEO CONTROLLER IS 1280 BY
 //! 1024**, the size the bitstreams build, set explicitly with
@@ -59,13 +59,12 @@ impl Which {
         }
     }
 
-    /// The machine's own boot PROM: MIT's, or QUUX's version 2000, revision
-    /// 12's, which is the QUUX this module builds (`Geometry::QUUX`).
-    /// Revision 13's, PROM 2001, is `prom --machine quux --word-bits 40`'s.
+    /// The machine's own boot PROM: MIT's, or QUUX's version 2001, revision
+    /// 13's, `prom --machine quux --word-bits 40`'s.
     pub fn boot_prom(self) -> Vec<Insn> {
         match self {
             Which::Cadr => muir::prom::boot_prom(),
-            Which::Quux => muir::prom::quux_boot_prom_for(Geometry::QUUX),
+            Which::Quux => muir::prom::quux_boot_prom(),
         }
     }
 

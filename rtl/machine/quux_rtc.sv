@@ -26,7 +26,7 @@
 // QUUX's microcycles, so `build/quux_fd_face.pass` holds it, and the hold,
 // through the host side: a fraction staged a few ticks short of the second
 // and the carry counted.  What holds the word as the machine reads it is
-// `build/quux_rtc.quux.k4.pass`.
+// `build/quux13_rtc.quux.k4.pass`.
 //
 // The host side:
 //

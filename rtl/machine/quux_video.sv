@@ -37,11 +37,11 @@
 // asked in the one tick after the grant (`quux_mem_port.sv`), the first the
 // match has the grant's address, and its bit is written then.
 //
-// What holds it: `build/quux_tv.quux.pass`, whose program writes and reads
+// What holds it: `build/quux13_tv.quux.pass`, whose program writes and reads
 // the buffer's first and last words, reads one past its end and the word past
 // the CADR's 32K, and writes and reads the mode and the seven reserved words
 // after it, against muir's QUUX row for row; `build/quux_tv.pass` holds the
-// CADR's side of the same program; `build/quux_registers.quux.pass` finds
+// CADR's side of the same program; `build/quux13_registers.quux.pass` finds
 // nothing at the old registers, `17377760`-`17377767`; and the records aimed
 // here in `mutations/list.txt`.
 

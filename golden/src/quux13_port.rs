@@ -4,12 +4,11 @@
 //! The reference trace for `rtl/machine/quux_mem_port.sv` at revision 13
 //! (`WORD_BITS` 40): QUUX's memory port with contract G2 §3's cache and
 //! packed storage, out of muir's own `memory_port::MemoryPort` as
-//! `MemoryPort::for_geometry` makes it on `Geometry::QUUX_13`, tick by tick.
+//! `MemoryPort::new` makes it, revision 13's, tick by tick.
 //!
 //!     quux13_port --machine quux --sync-cycle-ticks K
 //!
-//! What `golden/src/quux_port.rs` is to revision 12, with what revision 13
-//! changes (muir's `Layout::REVISION_13`, G1 §3-§4, G2 §3):
+//! What revision 13 changed from revision 12's port (G1 §3-§4, G2 §3):
 //!
 //! - **40-bit words and 28-bit physical addresses**: main memory is 64M
 //!   words, the most a board holds (G1 §4.5), and its sets are visited by
@@ -60,7 +59,7 @@ use std::collections::HashMap;
 use muir::busint::{self, Responder};
 use muir::cache::MemoryTiming;
 use muir::clock::TimingModel;
-use muir::machine::{Geometry, Word};
+use muir::machine::Word;
 use muir::memory_port::{Drop, MemoryPort, Reach};
 
 const TICK_NS: u64 = 10;
@@ -206,7 +205,7 @@ fn main() {
     }
     let k = u64::from(cycle_ticks);
 
-    let mut port = MemoryPort::for_geometry(&Geometry::QUUX_13);
+    let mut port = MemoryPort::new();
     port.keep_timing_model(timing);
     let config = port.cache().config;
     let memory = port.memory_timing();
@@ -253,7 +252,7 @@ fn main() {
     let (mut drops, mut stores_to_word, mut spanning, mut fetch_reads) = (0u64, 0u64, 0u64, 0u64);
 
     println!(
-        "# quux13_port: muir's memory_port::MemoryPort on Geometry::QUUX_13, golden/src/quux13_port.rs, timing: {}",
+        "# quux13_port: muir's memory_port::MemoryPort on Geometry::QUUX, golden/src/quux13_port.rs, timing: {}",
         machine_axis::timing_name(timing)
     );
     println!("# initial(phys) = (((phys + 1) * 0x9E3779B97F4A7C15) >> 20 ^ 0x3C5AA5C3A5) mod 2^40");

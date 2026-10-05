@@ -4,7 +4,7 @@
 // Drives rtl/machine/quux_mem_port.sv at revision 13 (WORD_BITS 40) from
 // the reference trace and compares every tick.  The trace is
 // golden/src/quux13_port.rs's, out of muir's own memory_port::MemoryPort on
-// Geometry::QUUX_13, and carries the processor's stimulus as well as what
+// Geometry::QUUX, and carries the processor's stimulus as well as what
 // the port must do with it: -MEMGRANT, -MEMACK, -LOADMD, NXM TIMEOUT,
 // whether the cycle was the memory bus's, the word a read brings, and the
 // prefetch's buffer at every master clock edge.
@@ -25,8 +25,10 @@
 // alone (G1 §4.2): a line of it is four beats, a write four bytes.
 //
 // It answers each operation after a latency drawn from a seeded generator,
-// sooner than the nominal figures, so every acknowledgment must still land
-// on muir's instant, as `tb/quux_mem_port_tb.cpp` says for revision 12; and
+// sooner than the nominal figures, as a board faster than them answers, so
+// every acknowledgment must still land on muir's instant --- the floor: an
+// answer the port took early would be faster than muir, and one that waited
+// for the memory rather than the count would move with the latency; and
 // a second, uncached requester --- block-disk's channel on the machine ---
 // reads and writes whole words of main memory the trace never touches,
 // which the port serves between its own operations: a write of five bytes
@@ -40,10 +42,12 @@
 // to the word it holds, which the processor drops at the grant itself and
 // the port a tick later (`cadr_microcycle.sv`, "the prefetch").
 //
-// **AND THE PORT'S COHERENCE WITH A TRANSFER AT REVISION 13**, which muir
-// does not model (`tb/quux_mem_port_tb.cpp` says why for revision 12):
-// `RunCoherence13` below, whole 40-bit words in packed storage and the
-// cache's 8-word lines.
+// **AND THE PORT'S COHERENCE WITH A TRANSFER**, which muir does not model at
+// all: muir's block-disk moves a transfer's words at START and its cache
+// holds no words, so nothing above can see what the fabric's cache does when
+// block-disk's words reach main memory beside it, word by word, through the
+// uncached requester.  `RunCoherence13` below holds it, whole 40-bit words in
+// packed storage and the cache's 8-word lines.
 
 #include <cerrno>
 #include <cinttypes>
@@ -160,8 +164,8 @@ int Fail(const Row &r, const char *what, uint64_t got, uint64_t want) {
 }
 
 // **THE PORT'S COHERENCE WITH A TRANSFER, AT REVISION 13.**  The contract's
-// two rules as `tb/quux_mem_port_tb.cpp` holds them for revision 12, with
-// revision 13's words and lines: a transfer's read sees every word the
+// two rules, held as properties with revision 13's words and lines, since
+// muir has no model of them: a transfer's read sees every word the
 // processor wrote before it (the write buffer is drained first), and no
 // processor read hits a word from before a transfer's write (the cache's
 // `snoop` drops the word's set as it lands).  The processor and a transfer

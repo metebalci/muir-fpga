@@ -468,9 +468,8 @@ region, on every board:
 - **Main memory** is 4M words at 4 bytes a word, the whole 22-bit physical
   space. The machine fits at most 60 boards of 64K words, 3,932,160 words
   (15 MB), since the top four slots of the space are the display, the disk
-  controller and the Unibus. QUUX to revision 12 has the same space and the
-  same ceiling. Revision 13 has its own region (below), and its count runs to
-  what that region holds. The fabric writes it, and `cadr-console`, `cadr-checkpoint`
+  controller and the Unibus. QUUX, revision 13, has its own region (below),
+  and its count runs to what that region holds. The fabric writes it, and `cadr-console`, `cadr-checkpoint`
   and `quux-file-device` map it.
 - **The display** holds both TV boards' buffers, 32,768 words each, 256 KB in
   use; QUUX's video controller has one buffer of at most 64K words, 256 KB,
@@ -506,10 +505,8 @@ clear of the new region.
 
 ## Each machine's reservation, and how a card pairs it with its bitstream
 
-**Each machine has its own device trees.** The CADR's and QUUX revision 12's
-reserve the CADR's region, as above, since revision 12's main memory and its
-video controller's buffer are inside the CADR's own areas. QUUX revision 13's
-reserve its own region (`quux13-reserved.dtsi`). Its main memory is 32M words
+**Each machine has its own device trees.** The CADR's reserve the CADR's
+region, as above. QUUX revision 13's reserve its own region (`quux13-reserved.dtsi`). Its main memory is 32M words
 of packed storage, 5 bytes a word, directly below the display. The display and
 the disk pack program's records stay where the CADR's are. The region runs
 from main memory to the end of the records, which is where the CADR's ends.

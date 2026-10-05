@@ -56,7 +56,7 @@
 // controller checks none of them.
 //
 // **REVISION 13** (`WORD_BITS` 40; contract G2 §4.2, appendix A1.10 and
-// A1.11; muir's `BlockDisk::write_40`) moves 1024-word pages of 40-bit
+// A1.11; muir's `BlockDisk::write`) moves 1024-word pages of 40-bit
 // words, one an entry, `<27:10>` the page, and command `<12>` chooses the
 // transfer: packed, 5 blocks a page, the page's bytes as main memory holds
 // them; or 4-byte, 4 blocks, `<31:0>` of each word, a read writing tag `005`.
@@ -64,15 +64,12 @@
 // Its walk, `g_walk13` below, says the rest; the store, the seam and the face
 // are revision 12's.
 //
-// What holds it: `build/quux_block_disk.quux.pass`, the module against
+// What holds it: `build/quux13_block_disk.quux.pass`, the module against
 // muir's `BlockDisk` over a script of register reads and writes at muir's
 // instants, the pack side and main memory answered by the testbench from
 // images of their own, and every page and block compared at the end
-// (`golden/src/quux_block_disk.rs`); and QUUX's boot PROM trace, which reads
-// the registers with no pack (`build/machine.quux.k4.pass`).  At revision
-// 13, `build/quux13_block_disk.quux.pass`, the same against
-// `BlockDisk::write_40` (`golden/src/quux13_block_disk.rs`), the GPT fixture
-// and a pack of all 2^28 blocks among its scripts; and
+// (`golden/src/quux13_block_disk.rs`), the GPT fixture and a pack of all
+// 2^28 blocks among its scripts; and
 // `build/quux13_disk.quux.k4.pass`, both transfers on the whole machine
 // through the memory port into packed storage, the testbench the pack side.
 
@@ -542,7 +539,7 @@ module quux_block_disk #(
   end
   end else begin : g_walk13
   // **REVISION 13'S WALK** (contract G2 §4.2, appendix A1.11; muir's
-  // `BlockDisk::write_40`): an entry moves a 1024-word page, `<27:10>`, and
+  // `BlockDisk::write`): an entry moves a 1024-word page, `<27:10>`, and
   // command `<12>` chooses how its words lie on the disk.  Packed, 5 blocks
   // a page, word w at the page's bytes 5w to 5w + 4, `<7:0>` first and the
   // tag last; 4-byte, 4 blocks, `<31:0>` at bytes 4w to 4w + 3, a read

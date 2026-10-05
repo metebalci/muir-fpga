@@ -3,7 +3,7 @@
 //
 //! **QUUX revision 13's processor** (contract G2 §2, with its appendix A1),
 //! as programs in the boot PROM, traced on muir's `rtl` engine on
-//! `Geometry::QUUX_13`.
+//! `Geometry::QUUX`.
 //!
 //!     quux13 --program <name> --sync-cycle-ticks K [--sync-ilong-ticks L]
 //!     quux13 --program <name> --prom
@@ -74,7 +74,7 @@ use muir::isa::asm::{
 use muir::machine::{Geometry, Machine, PROM_WORDS, QUUX_PROM_BASE, Word, macro_dispatch};
 
 /// Revision 13.
-const REV13: Geometry = Geometry::QUUX_13;
+const REV13: Geometry = Geometry::QUUX;
 
 /// A memory's constants: 0, 1 and 2.
 const ZERO: u64 = 0o40;

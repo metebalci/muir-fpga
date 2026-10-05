@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Holds rtl/machine/quux_block_disk.sv at revision 13 (WORD_BITS 40) to
-// muir's `block_disk::BlockDisk::write_40` over the script
+// muir's `block_disk::BlockDisk::write` over the script
 // `golden/src/quux13_block_disk.rs` writes: the registers written and read at
 // muir's instants, the done interrupt on either side of the instant muir
 // raises it, and at the end every 1024-word page of main memory and every
 // block of the pack the script names, each by its hash, and the GPT
-// fixture's page read through an 8-bit view.  `tb/quux_block_disk_tb.cpp` is
-// revision 12's, and says why what is compared cannot move with a bug: main
-// memory and the pack start as a rule of the address alone, and every change
+// fixture's page read through an 8-bit view.  What is compared cannot move
+// with a bug: main memory and the pack start as a rule of the address alone,
+// and every change
 // to either afterwards is the module's --- the channel's writes into memory,
 // and the pack side's write-backs of the slots the walk wrote.
 //
@@ -410,7 +410,7 @@ int RunScript(const char *path) {
                  tagged_005, mem_nxm);
     return 1;
   }
-  std::printf("ok: revision 13's block-disk agrees with muir's BlockDisk::write_40 on a pack of "
+  std::printf("ok: revision 13's block-disk agrees with muir's BlockDisk::write on a pack of "
               "%x blocks: %ld register reads, %ld writes, %ld interrupt instants, %ld pages and "
               "%ld blocks at the end, %ld bytes of the GPT's 8-bit view;\n"
               "    the pack side served %ld blocks, wrote %ld back, denied %ld; the channel read "

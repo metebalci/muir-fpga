@@ -98,19 +98,20 @@ proc cadr_tick_ns {{file "boards/arty-z7-20/cadr_arty.sv"}} {
 }
 
 # And how many ticks is QUUX's microcycle?  The same file's answer, for the
-# same reason: `cadr_arty.sv` hands the machine `SYNC_K` to revision 12 and
-# `SYNC_K13` at revision 13, and `quux_machine.xdc` writes every one of its
+# same reason: `cadr_arty.sv` hands the machine `SYNC_K13` at revision 13,
+# and `quux_machine.xdc` writes every one of its
 # counts from the `sync_k` the flow takes from here before it reads that
 # file.  A K written a second time in the flow is a K that can disagree with
 # the machine: a constraint a tick longer than the microcycle is a path the
 # fit calls met that the fabric does not.  `build/machine_param.pass` holds
-# this answer against each revision's own K.
+# this answer against the revision's own K.  Revision 12, QUUX at 32 bits,
+# is retired, and has no K here.
 proc cadr_sync_k {word_bits {file "boards/arty-z7-20/cadr_arty.sv"}} {
-    if {$word_bits ne "32" && $word_bits ne "40"} {
-        puts "TICK: FAILED --- WORD_BITS=$word_bits has no K; it is 32, or 40 for revision 13."
+    if {$word_bits ne "40"} {
+        puts "TICK: FAILED --- WORD_BITS=$word_bits has no K; QUUX is revision 13, 40."
         exit 1
     }
-    set name [expr {$word_bits eq "40" ? "SYNC_K13" : "SYNC_K"}]
+    set name SYNC_K13
     set fh [open $file r]
     set text [read $fh]
     close $fh

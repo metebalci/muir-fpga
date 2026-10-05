@@ -116,16 +116,16 @@
 // page's own match is not what bounds it: it sees a cycle only when the
 // held decode has already called it a device's, and the only other device
 // cycles, the video controller's buffer, are far below it.  What bounds the
-// page is `cadr_xbus_decode.sv`, which `build/xbus_decode.quux.pass` holds
+// page is `cadr_xbus_decode.sv`, which `build/xbus_decode.quux13.pass` holds
 // over every address.
 //
-// What holds it: `build/quux_registers.quux.k4.pass`, whose program reads
+// What holds it: `build/quux13_registers.quux.k4.pass`, whose program reads
 // all 256 words at power-on, writes all ones to every read-only and reserved
 // word and reads them all again, 101 after each, against muir's own table
 // (`tests/quux_registers.rs`), and finds nothing at the old page, the old
-// device registers and the old Unibus window; `build/quux_map.quux.k4.pass`,
+// device registers and the old Unibus window; `build/quux13_features.quux.k4.pass`,
 // whose program reads words 0 to 14, 100, 220 and 377 through the map;
-// `build/quux_page.quux.k4.pass`, whose program reads and writes every
+// `build/quux13_page.quux.k4.pass`, whose program reads and writes every
 // register word with key words pressed on the cable, the flags risen, a bus
 // error made and the Chaosnet interface written and read through the page;
 // each comparing `MD`, `SINTR` and every microcycle's length on every row
@@ -272,7 +272,7 @@ module quux_feature_page #(
   // 144, 146 and 147 are reserved, and a write of 142, 143 or 145 goes
   // nowhere, where the CADR's board takes a write of `764152`, 145, as its
   // write buffer's and answers `764150` and `764156` as aliases.
-  // `build/quux_registers.quux.k4.pass` holds each: all ones written to
+  // `build/quux13_registers.quux.k4.pass` holds each: all ones written to
   // every one of them and every word read again after.
   logic in_chaos, chaos_answers;
   assign in_chaos = which[7:3] == 5'o14;
