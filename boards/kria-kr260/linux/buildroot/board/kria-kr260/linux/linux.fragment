@@ -87,7 +87,9 @@ CONFIG_USB_ONBOARD_DEV=y
 # pending: (reason unknown)"), so the hubs stay in reset and no USB device
 # appears at all: no card and no keyboard.  So the proxy is left out.  The
 # factory U-Boot always starts USB before it reads the card, because the card
-# is a USB disk to it.
+# is a USB disk to it.  On some boots a controller then sees its hub at full
+# speed and dies ten seconds later; /etc/init.d/S79usb-hubs starts that
+# controller again.
 # CONFIG_GPIO_SHARED_PROXY is not set
 CONFIG_USB_STORAGE=y
 CONFIG_SCSI=y

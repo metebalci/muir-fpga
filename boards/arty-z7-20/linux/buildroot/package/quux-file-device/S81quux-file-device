@@ -24,6 +24,19 @@
 # card has none, as a place the machine may write has to exist; `sys` and
 # `site` are served when they are there and said to be missing when not.
 #
+# **AND `home/lispm/`, THE USER LISPM's HOME DIRECTORY, IS MADE AT EVERY
+# BOOT.**  The band takes HOST:/home/<user>/ as a user's home, the user id in
+# lower case (muir-sys's `sys/io/file/hostfs.lisp`), and its login loads the
+# init file from there; with no such directory the login says "No home
+# directory for lispm; init file not loaded" and every write there fails with
+# "Directory not found".  The file device has no login command, so the
+# program never learns a user's name, and it answers a directory that is not
+# there as muir's device does, with DNF; making one is not its business.  So
+# the card has it, as S84ozd gives the CADR's file host LISPM's.  LISPM is
+# the user muir's docs and muir-sys's release notes log in as; another
+# user's directory is made the same way, under `home/` on the card.
+# `mkdir -p` leaves a directory that is there, and what is in it, alone.
+#
 # **A CARD THAT NAMES `--file-root` ITSELF GETS ITS OWN LINES AND NONE OF
 # THESE**, the rule every script here follows for its defaults.  The flag is
 # repeatable, one line a mount.
@@ -35,6 +48,8 @@
 PROG=/usr/bin/quux-file-device
 PIDFILE=/var/run/quux-file-device.pid
 CARD=/mnt/card
+# The user whose home directory the card always has (above).
+HOME_USER=lispm
 
 RC="$CARD/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
@@ -61,7 +76,7 @@ start() {
 		return 0
 	fi
 	if [ $# -eq 0 ]; then
-		[ -d "$CARD/home" ] || mkdir -p "$CARD/home"
+		mkdir -p "$CARD/home/$HOME_USER"
 		for m in sys site home; do
 			if [ -d "$CARD/$m" ]; then
 				set -- "$@" --file-root "$m=$CARD/$m"

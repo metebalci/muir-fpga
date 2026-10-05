@@ -902,7 +902,9 @@ readme_system() {
     printf "  %-22s the system's Lisp sources and its site\r\n" 'sys/  site/'
     printf '  %-22s configuration, which the machine reads and\r\n' ''
     printf '  %-22s writes as HOST through its file device.\r\n' ''
-    printf "  %-22s home/, made at the first boot, is the users'.\r\n" ''
+    printf "  %-22s home/, made at the first boot, holds the\r\n" ''
+    printf "  %-22s users' home directories, and home/lispm/,\r\n" ''
+    printf "  %-22s the user LISPM's, is made at every boot.\r\n" ''
   else
     printf '  %-22s the disk packs.  See below.\r\n' 'packs/'
     printf "  %-22s the band's Lisp sources and its site\r\n" 'sys/  site/'
@@ -973,7 +975,22 @@ readme_system() {
   # the box takes the date from NTP when it has a network, and starts at the
   # epoch with neither a network nor fpgarc's --date and --time; measured on a
   # release card, System 1002 then shows 01/01/70.
+  # **THE BOOT TAKES ABOUT TWO MINUTES**: from the loader's first line to the
+  # Lisp Listener, 93 to 117 s on every board and both machines, measured on
+  # the release cards; Linux's login prompt came at 21 to 37 s of that.
   if [ -n "${RELEASE:-}" ]; then
+    printf 'Switching it on\r\n'
+    printf 'The machine boots by itself.  Linux is up about half a minute\r\n'
+    printf 'after the board is switched on or reset, and the machine reaches\r\n'
+    printf 'the Lisp Listener about two minutes from the start: 93 to 117\r\n'
+    printf 'seconds on these boards.\r\n\r\n'
+    if [ "$MACHINE" = quux ]; then
+      printf 'Logging in to the machine\r\n'
+      printf 'The first time the machine reads a file it asks you to log in.\r\n'
+      printf "The user LISPM's home directory, HOST: /home/lispm/, is\r\n"
+      printf 'home/lispm/ here.  Another name logs in too, but has a home\r\n'
+      printf 'directory only once home/<name>/ is made here, in lower case.\r\n\r\n'
+    fi
     printf 'The date\r\n'
     printf 'This board keeps no time while it is switched off.  With a network\r\n'
     printf 'it sets its clock by NTP at boot, from pool.ntp.org, before the\r\n'

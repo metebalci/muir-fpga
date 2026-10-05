@@ -1,0 +1,52 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# THE KRIA KR260's USB CONTROLLERS, STARTED AGAIN WHEN ONE OF THEM DIED AT
+# BOOT.  S79, before S80cadr-disk-packs, which looks for the card.
+#
+# Each of the processing system's two USB controllers has one of the
+# carrier's USB2734 hubs on its port 1: USB0's (`1-1`) carries the card
+# reader, USB1's (`3-1`) the USB ports, so the keyboard and the mouse.  On
+# some boots one controller sees its hub at full speed instead of high speed
+# ("usb 1-1: new full-speed USB device"), gets no answer from it, and gives
+# up ten seconds later ("xHCI host controller not responding, assume dead",
+# "HC died; cleaning up"): a board with no card, or with no keyboard, until
+# the next boot.  The hubs are left as the factory U-Boot sets them up
+# (`linux.fragment`, CONFIG_GPIO_SHARED_PROXY), so Linux cannot reset them.
+#
+# **WHAT BRINGS ONE BACK IS STARTING ITS CONTROLLER AGAIN**: unbinding the
+# controller's Xilinx glue and binding it again, which runs the controller's
+# whole start once more.  That is all this does, and only for a controller
+# that said "HC died"; a boot where both hubs came up costs nothing.
+#
+# The death comes about ten seconds after the hub was first seen, at about
+# 12 s of uptime, so a missing hub is waited for until DEADLINE.
+
+DEADLINE=16
+GLUE=/sys/bus/platform/drivers/dwc3-xilinx
+
+start() {
+	while :; do
+		[ -e /sys/bus/usb/devices/1-1 ] && [ -e /sys/bus/usb/devices/3-1 ] && return 0
+		up=$(cut -d. -f1 /proc/uptime)
+		[ "$up" -ge "$DEADLINE" ] && break
+		sleep 1
+	done
+	for n in 0 1; do
+		case $n in 0) glue=ff9d0000.usb what="the card reader" ;;
+		           1) glue=ff9e0000.usb what="the keyboard and the mouse" ;; esac
+		dmesg | grep -q "xhci-hcd\.$n\.auto: HC died" || continue
+		echo "usb: USB$n's controller died at boot, so $what had gone; starting it again"
+		echo "$glue" > "$GLUE/unbind" && sleep 1 && echo "$glue" > "$GLUE/bind" ||
+			echo "usb: USB$n's controller could not be started again"
+	done
+	return 0
+}
+
+case "$1" in
+	start) start ;;
+	stop|restart|reload) ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

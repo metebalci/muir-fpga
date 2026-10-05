@@ -2001,15 +2001,16 @@ columns they share.
 display**, with a border 256 columns wide on each side, and they describe what
 was on the monitor then.
 
-The board takes about fifteen seconds to boot Linux and the CADR takes a while
-longer to load its microcode off the pack and paint anything, so the first
-thing on the monitor is a black screen with the run bar and the disk light
-blinking on one line near the bottom. What should follow is the window system
-and a Lisp Listener, which is the same picture the remote viewer serves on
-port 5900 — so **the viewer is the control**. If the viewer shows the screen
-and the monitor does not, the fault is in this block or in the cable; if
-neither shows it, the machine has not got there yet and this block is not the
-thing to look at.
+The board takes about half a minute to boot Linux, and the machine reaches the
+Lisp Listener about two minutes after the board is switched on (93 to 117
+seconds on the release cards). The CADR loads its microcode off the pack before
+it paints anything, so the first thing on the monitor is a black screen with
+the run bar and the disk light blinking on one line near the bottom. What
+should follow is the window system and a Lisp Listener, which is the same
+picture the remote viewer serves on port 5900 — so **the viewer is the
+control**. If the viewer shows the screen and the monitor does not, the fault
+is in this block or in the cable; if neither shows it, the machine has not got
+there yet and this block is not the thing to look at.
 
 ### What the failures would mean
 

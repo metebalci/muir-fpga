@@ -497,6 +497,16 @@ from before is found the same way. The board's USB ports are for the keyboard
 and the mouse: do not plug other USB storage in. `README.TXT` on that board's
 card says so.
 
+**On some boots one of the Kria's two USB controllers dies, and the board
+starts it again.** The card reader hangs from USB0's hub and the USB ports from
+USB1's. Now and then a controller sees its hub at full speed instead of high
+speed, gets no answer from it, and gives up ten seconds later ("HC died"),
+which left the board with no card, or with no keyboard, until the next boot.
+`/etc/init.d/S79usb-hubs` waits until both hubs are there, or until 16 s
+after the kernel started, and starts any controller that died again by
+unbinding and binding its Xilinx glue. The card is then found a few seconds
+later than usual.
+
 **Unpack into the root of the card, not into a folder on it.** `BOOT.BIN` and
 `uEnv.txt` are read from the root by name, and a card whose files are one
 level down behaves exactly like a card with no files on it.

@@ -4826,6 +4826,14 @@ if prepare ozd S84ozd; then
 	else
 		fail "ozd was given no base root; it was given: $(ozd_given)"
 	fi
+	# **AND LISPM's HOME DIRECTORY IN IT.**  LOGIN gives LISPM /lispm/ and
+	# ozd does not make it, so without this a login as LISPM had a home
+	# directory that was not there and every write to it was refused.
+	if [ -d "$WORK/ozdroot/lispm" ]; then
+		ok "and LISPM's home directory in it, /lispm/"
+	else
+		fail "the base root has no lispm/, so LISPM's home directory /lispm/ is not there"
+	fi
 	if ozd_given | grep -q -- "--root sys="; then
 		fail "ozd was given a tree nobody named; the default serves none"
 	else
@@ -6435,7 +6443,44 @@ if prepare quux-file-device S81quux-file-device; then
 	else
 		fail "the card has no home/ after the file device started"
 	fi
+	if [ -d "$WORK/card/home/lispm" ]; then
+		ok "and home/lispm/, the user LISPM's home directory"
+	else
+		fail "the card has no home/lispm/, so a login as LISPM finds no home directory"
+	fi
 	logs_to quux-file-device
+fi
+
+# **A RELEASE CARD AFTER ITS FIRST BOOT HAS `home/` AND NOTHING IN IT**, which
+# is the card on which a login said "No home directory for lispm" and a write
+# to HOST:/home/lispm/ said "Directory not found": the script made `home/`
+# only when it was missing, and never the user's directory under it.  And a
+# home directory that is there keeps what is in it.
+case_head "a card that has home/ but no home/lispm/ gets home/lispm/, and a home directory's files stay"
+sandbox
+printf '%s\r\n' '--machine quux' > "$RC"
+mkdir -p "$WORK/card/sys" "$WORK/card/site" "$WORK/card/home/other"
+printf 'kept\n' > "$WORK/card/home/other/init.lisp"
+if prepare quux-file-device S81quux-file-device; then
+	run_script S81quux-file-device
+	passes "--file-root home=$WORK/card/home" "quux-file-device"
+	if [ -d "$WORK/card/home/lispm" ]; then
+		ok "home/lispm/ was made beside the home/ the card had"
+	else
+		fail "the card had home/ and still has no home/lispm/ after the file device started"
+	fi
+	if [ "$(cat "$WORK/card/home/other/init.lisp" 2>/dev/null)" = kept ]; then
+		ok "a home directory that was there kept its file"
+	else
+		fail "home/other/init.lisp did not survive the start"
+	fi
+	printf 'mine\n' > "$WORK/card/home/lispm/lispm.init"
+	run_script S81quux-file-device
+	if [ "$(cat "$WORK/card/home/lispm/lispm.init" 2>/dev/null)" = mine ]; then
+		ok "and at the next boot home/lispm/ keeps what was written there"
+	else
+		fail "home/lispm/lispm.init did not survive a second start"
+	fi
 fi
 
 case_head "a card with no site/ is served without it, and says so"
@@ -6663,6 +6708,22 @@ if lift_readme "$WORK/rd"; then
 							readme_bad=$((readme_bad + 1)) ;;
 						esac
 					done
+					# The boot takes about two minutes, measured on every
+					# board, and not "about a minute", which was said once.
+					case "$flat" in *"about two minutes from the start: 93 to 117 seconds"*) ;; *)
+						fail "the release README for $b ($m) does not say how long the boot takes"
+						readme_bad=$((readme_bad + 1)) ;;
+					esac
+					case "$flat" in *"about a minute"*)
+						fail "the release README for $b ($m) says the boot takes about a minute"
+						readme_bad=$((readme_bad + 1)) ;;
+					esac
+					# A QUUX card says where LISPM's home directory is.
+					case "$m:$flat" in
+					quux:*"HOST: /home/lispm/, is home/lispm/ here"*|cadr:*) ;;
+					*) fail "the release README for $b ($m) does not say where LISPM's home directory is"
+					   readme_bad=$((readme_bad + 1)) ;;
+					esac
 				fi
 				case "$b:$r" in
 				kria-kr260:*"do not plug other USB storage"*) ;;

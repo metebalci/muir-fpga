@@ -341,8 +341,10 @@ start() {
 
 	# The home directory, made before ozd looks at it and owned by the user
 	# that will write in it.  ozd refuses a root it cannot resolve, so it
-	# has to exist rather than be made on first use.
-	mkdir -p "$BASE_ROOT" 2>/dev/null
+	# has to exist rather than be made on first use.  **AND LISPM's OWN
+	# DIRECTORY IN IT**: LOGIN gives LISPM /lispm/, ozd does not make it,
+	# and without it every write there says "Directory not found".
+	mkdir -p "$BASE_ROOT/lispm" 2>/dev/null
 	chown -R "$OZD_USER" "$BASE_ROOT" 2>/dev/null
 
 	# The defaults first and the card's lines after them.  A default is
