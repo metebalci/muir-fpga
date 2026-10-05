@@ -164,6 +164,8 @@ int ConfigurationB() {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // MIT's timer whole: this check's memory answers in a few ticks.
+  dut->mem_answers = 0;
   // **THE BACKPLANE WITH ONE DISPLAY BOARD**, which is `busint::decode`'s
   // own machine and every trace in this repository but the one above.
   dut->tv_lispm = 0;
@@ -428,6 +430,8 @@ int main(int argc, char **argv) {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // MIT's timer whole: this check's memory answers in a few ticks.
+  dut->mem_answers = 0;
   // **THE BACKPLANE WITH BOTH BOARDS.** The first display is a SIMPLE TV,
   // which is muir's own default and what the trace's model is; the color
   // board is a LISPM TV whatever this says, `Tv::color` being one.

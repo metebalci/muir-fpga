@@ -42,8 +42,13 @@
 //!
 //! Note the model pre-decides at the grant --- a responder that answers gets
 //! its device time and no timer, one that does not gets the timeout --- where
-//! the board runs the timer either way and takes whichever comes first. They
-//! agree wherever the model is exercised, so `device_ns` here stays well
+//! MIT's board runs the timer either way and takes whichever comes first.
+//! The fabric runs it either way too, and a slave that has taken the cycle
+//! and always answers holds it off (`dev_hold` in
+//! `rtl/machine/cadr_busint_xbus.sv`), which is the model's rule for it.  So
+//! some cycles here answer late, past the sixth rise: main memory behind the
+//! DE25-Nano's bridge was measured answering 903 ticks after it was asked,
+//! and a timer that ended such a cycle gave MD zero.  The rest answer well
 //! inside the timeout; see the README.
 
 use muir::busint::{self, Busint, Responder};
@@ -73,6 +78,14 @@ const TICKS: u64 = 40_000;
 /// trace covers a device faster than the setup, one slower than a
 /// microcycle, and the ordinary case.
 fn device_ns(cycle: u64) -> u64 {
+    // Past the sixth rise, which is 4.7 to 5.5 us after the grant: 6 and
+    // 10 us, a slow DDR read.  On a cycle `responder` gives no slave this is
+    // never asked for.
+    match cycle % 41 {
+        7 => return 6_000,
+        28 => return 10_000,
+        _ => {}
+    }
     match cycle % 6 {
         0 => 0,   // answers the instant -XBUS.RQ goes out
         1 => 25,

@@ -908,8 +908,16 @@ module cadr_arty #(
   localparam int unsigned VIDEO_H = 1024;
   localparam logic [8*64-1:0] BOARD = "Arty Z7-20";
 
+  // **MAIN MEMORY ALWAYS ANSWERS** where the machine's `mem_*` reach DDR, so
+  // the NXM timer must not end a cycle it has taken (`cadr_busint_xbus.sv`'s
+  // header has the DE25-Nano measurement that needed it).  HP0 has been measured answering in at most 88 ticks, far inside the NXM
+  // timer, so here the hold changes no cycle; it is set where the machine
+  // drives the port, as on every board with DDR behind it.
+  localparam bit MEM_ANSWERS = (PORT != 0) && (PROVE == 0);
+
   cadr_machine #(
       .VIDEO_WIDTH(VIDEO_W), .VIDEO_HEIGHT(VIDEO_H), .BOARD_NAME(BOARD),
+      .MEMORY_ANSWERS(MEM_ANSWERS),
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),

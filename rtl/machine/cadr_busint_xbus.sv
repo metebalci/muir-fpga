@@ -43,11 +43,16 @@
 // output after that --- busint::nxm_timeout_at, which is the first rise plus
 // TIMEOUT_NS.
 //
-// One place this is closer to the board than the model is: `busint.rs` decides
-// at the grant whether a cycle will be answered or will time out, because it
-// can see which responder is at the address.  The board cannot; the timer runs
-// on every cycle and whichever comes first wins.  They agree wherever the model
-// is exercised, real devices answering far inside 4.25 us.
+// One place this differs from the model in how it decides, and not in what:
+// `busint.rs` decides at the grant whether a cycle will be answered or will
+// time out, because it can see which responder is at the address, and a
+// responder that is there answers however late.  MIT's board cannot see that;
+// its timer runs on every cycle and ends any cycle nothing has answered by the
+// sixth rise.  Here the timer runs on every cycle as the board's does, and a
+// slave that has taken the cycle and always answers holds it off with
+// `dev_hold` (below), which is the model's rule for that slave.  For a cycle
+// no slave takes, the timer ends it, as on both.  They agree wherever the
+// model is exercised.
 //
 // **THE REQTIM PROM HAS TWO TABLES AND BOTH ARE HERE.**  The counter above is
 // the first, `busint::TIMEOUT_NS`, five whole periods after the gated output's
@@ -61,6 +66,27 @@
 // cadr_busint_regs.sv`'s DBGOUT page is what asserts the line.  Without it a
 // debug cycle would end at 4.25 us, inside the window the far end is still
 // allowed to answer in.
+//
+// **AND A SLAVE THAT HAS TAKEN THE CYCLE HOLDS THE TIMER OFF: `dev_hold`.**
+// MIT's interface runs the REQTIM counter on every Xbus cycle and lets it end
+// any cycle nothing has answered by the sixth rise, slow slave or absent one
+// alike.  On MIT's backplane that only ever ended a cycle to empty space,
+// because a memory board answered within a microsecond.  Main memory here is
+// DDR behind a processing system's bridge, and on the DE25-Nano the bridge
+// has been measured answering a single-word read 903 ticks after it was asked
+// --- past the sixth rise, which comes about 470 ticks plus the oscillator's
+// phase after the grant.  The timer then ended the cycle, the late word was
+// dropped, MD took zero, and the band halted or trapped on a word of zero it
+// had never stored.  So the memory path raises `dev_hold` for a processor
+// cycle the bridge has taken and whose memory always answers, and the timer's
+// sixth rise does not end it: the cycle ends on the bridge's answer, however
+// late.  A cycle to an address no slave decodes --- past the last memory
+// board, or empty Xbus space --- has no hold and times out exactly as MIT's
+// does, which is what memory sizing counts on.  muir already does the same:
+// `busint::Busint` charges the timeout only to a cycle no responder answers,
+// and a memory board answers when its own clock says, however late.  On a
+// board whose memory beats the timer, which is MIT's and every trace's, the
+// hold changes no cycle.
 //
 // NOT HERE YET: MIT's own Unibus arbitration for the DEBUG master --- `NPR`,
 // `NPG1 IN`, `SACK` and `-UB BBSY`, the branches named above --- and the
@@ -108,6 +134,7 @@ module cadr_busint_xbus (
     output var logic dev_rq,       // -XBUS.RQ, as a positive level
     output var logic dev_write,
     input  var logic dev_ack,      // the slave has given or taken the word
+    input  var logic dev_hold,     // a slave has taken this cycle and will answer it: see the header
 
     // The Unibus. `unibus` is the decode's: this address is up there rather
     // than on the Xbus, so the cycle arbitrates for the bus before it runs.
@@ -300,7 +327,17 @@ module cadr_busint_xbus (
   // `build/unibus.pass`'s debug cycle the far end never answers.
   logic [10:0] elapsed;         // ticks since the grant
   logic       answered;         // the slave has answered; the deskew is running
-  logic [10:0] answered_at;     // `elapsed` when it did
+  // **THE DESKEW COUNTS FROM THE ANSWER ON ITS OWN, NOT IN `elapsed`.**  It
+  // was `answered_at`, the value of `elapsed` at the answer, compared as
+  // `elapsed >= answered_at + DESKEW_T - 1` in eleven bits.  Once `dev_hold`
+  // let a slave answer late, an answer at 2,043 ticks or more wrapped the sum
+  // and acknowledged the read 3 ticks after the answer instead of 7, and
+  // `elapsed` saturating at 2,047 would have left a later answer no deskew at
+  // all.  Counted from the answer, saturating, it is the same for an answer
+  // at any time: after the answer's own edge it reads 1, as
+  // `elapsed - answered_at` did.  `tb/cadr_memory_path_tb.cpp`'s
+  // configuration C holds the 7 at 600, 1,000, 2,100 and 3,000 ticks.
+  logic [3:0]  since_answer;    // ticks since it did, saturating
 
   // **"MEMRQ DROPS WHEN MEMACK RISES, WHICH CAUSES MEMACK TO DROP."**  The
   // acknowledgment, -XBUS.RQ and NXM TIMEOUT go the instant the cpu lifts
@@ -365,7 +402,7 @@ module cadr_busint_xbus (
   // **THE READ PATH'S OWN TAP IS A REGISTER, COMPARED ONE TICK EARLY**, which
   // is what `cadr_phase_gen.sv` does for its taps and is here for the same
   // reason.  Written as a comparison read straight into `acked`, the ten-bit
-  // magnitude compare against `answered_at + DESKEW_T` stands between the
+  // magnitude compare against `answered_at + DESKEW_T` (`since_answer` now) stood between the
   // counter and -MEMACK/-LOADMD; those cross to the processor and land on
   // `md`'s and `md_held`'s clock enables, which were sixty of the eighty-six
   // failing endpoints of the DDR board at 37616d3:
@@ -395,7 +432,7 @@ module cadr_busint_xbus (
   // exists to shorten would stop being timed at all.
   logic deskewed, deskew_due;
   assign deskew_due = answered && (state == GRANTED)
-                   && (elapsed >= answered_at + 11'(DESKEW_T) - 11'd1);
+                   && (since_answer >= 4'(DESKEW_T) - 4'd1);
 
   logic acked;
   assign acked = ack_standing
@@ -459,7 +496,7 @@ module cadr_busint_xbus (
       write       <= 1'b0;
       elapsed     <= 11'd0;
       answered    <= 1'b0;
-      answered_at <= 11'd0;
+      since_answer <= 4'd0;
       deskewed    <= 1'b0;
       ub_acked    <= 1'b0;
       ub_loadmd   <= 1'b0;
@@ -498,7 +535,9 @@ module cadr_busint_xbus (
         end
         // On the Xbus the timeout is the acknowledgment.  On the Unibus it
         // is `SSYN T0` instead, below.
-        if (nxm_due && state == GRANTED) begin
+        // Unless a slave that always answers has the cycle: the header's
+        // `dev_hold`.  The Unibus branch below keeps MIT's timer whole.
+        if (nxm_due && state == GRANTED && !dev_hold) begin
           state <= ACKED;
           nxm   <= 1'b1;
         end
@@ -518,7 +557,7 @@ module cadr_busint_xbus (
             if (mclk) begin
               elapsed     <= 11'd0;
               answered    <= 1'b0;
-              answered_at <= 11'd0;
+              since_answer <= 4'd0;
               ssyn_seen   <= 1'b0;
               ub_ack_at   <= 11'd0;
               ub_md_at    <= 11'd0;
@@ -579,7 +618,7 @@ module cadr_busint_xbus (
           end else if (mclk) begin
             elapsed     <= 11'd0;
             answered    <= 1'b0;
-            answered_at <= 11'd0;
+            since_answer <= 4'd0;
             ssyn_seen   <= 1'b0;
             ub_ack_at   <= 11'd0;
             ub_md_at    <= 11'd0;
@@ -670,7 +709,7 @@ module cadr_busint_xbus (
 
         GRANTED: begin
           // Saturating, not wrapping. `elapsed` gates -XBUS.RQ through
-          // SETUP_T and the read deskew through `answered_at`, and both are
+          // SETUP_T (the read deskew has `since_answer` of its own), and it is
           // "has this long passed" rather than "how long": once past, past.
           // Wrapping made -XBUS.RQ fall for sixteen ticks in the middle of
           // any cycle that reached 1,024 of them, which on the board is a
@@ -681,13 +720,14 @@ module cadr_busint_xbus (
           // At the 10 ns grid the timer ends one at about 470 ticks plus the
           // phase.
           if (elapsed != 11'h7FF) elapsed <= elapsed + 11'd1;
+          if (answered && since_answer != 4'hF) since_answer <= since_answer + 4'd1;
           if (acked) begin
             state <= ACKED;
           end else if (answering && !answered) begin
-            // A read: remember when the slave answered and let the deskew run
-            // from there. `elapsed` still holds that tick's value here.
-            answered    <= 1'b1;
-            answered_at <= elapsed;
+            // A read: remember that the slave answered and let the deskew run
+            // from there, its count 1 after this edge.
+            answered     <= 1'b1;
+            since_answer <= 4'd1;
           end
         end
 

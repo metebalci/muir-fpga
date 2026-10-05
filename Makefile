@@ -1062,6 +1062,7 @@ DE25_MAP := -DCADR_DDR_MAP_DE25_NANO
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_machine_tb.cpp)
@@ -1092,6 +1093,7 @@ $(BUILD)/dispatch_write_order.golden: golden/src/dispatch_write_order.rs golden/
 
 $(BUILD)/obj_dispatch_write_order/Vcadr_machine: $(MACHINE_SRC) tb/cadr_dispatch_write_order_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) --public-flat-rw -O2 -CFLAGS -O2 +define+CADR_GAP_MONITOR -CFLAGS -DCADR_GAP_MONITOR -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_dispatch_write_order \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_dispatch_write_order_tb.cpp)
@@ -1636,6 +1638,7 @@ $(BUILD)/power_on.pass: $(BUILD)/obj_power_on/Vcadr_machine \
 # twenty seconds.
 $(BUILD)/obj_ddr_boot/Vcadr_machine: $(MACHINE_SRC) tb/cadr_ddr_boot_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_ddr_boot \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_ddr_boot_tb.cpp)
@@ -1787,6 +1790,7 @@ $(BUILD)/blink_lamps.pass: $(BUILD)/obj_blink_lamps/Vcadr_blink_lamps_harness
 # had.  Thirteen seconds, the same 600,000 microcycles as `machine.pass`.
 $(BUILD)/obj_map_boot/Vcadr_machine: $(MACHINE_SRC) tb/cadr_map_boot_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_map_boot \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_map_boot_tb.cpp)
@@ -1825,6 +1829,7 @@ $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
 # decompressed fresh for the run and removed after.  Twenty-five seconds.
 $(BUILD)/obj_band/Vcadr_machine: $(MACHINE_SRC) tb/cadr_band_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_band_tb.cpp)
@@ -1877,6 +1882,7 @@ band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom
 # instrument that quietly did nothing.
 $(BUILD)/obj_hash_watch/Vcadr_machine: $(MACHINE_SRC) tb/cadr_hash_watch_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_hash_watch \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_hash_watch_tb.cpp)
@@ -2184,6 +2190,7 @@ pack-band: $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness $(BUILD)/rtl_sys.golden
 # Four runs, three of 600,000 microcycles and one short, about a minute.
 $(BUILD)/obj_map_access/Vcadr_machine: $(MACHINE_SRC) tb/cadr_map_access_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_map_access \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/map_access_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_map_access_tb.cpp)
@@ -5641,6 +5648,7 @@ release-check:
 # processor's own WRCYC, which nothing else in `make check` does.
 $(BUILD)/obj_md_compose/Vcadr_machine: $(MACHINE_SRC) tb/cadr_md_compose_tb.cpp tb/cadr_tick.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_md_compose \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_md_compose_tb.cpp)
@@ -5661,6 +5669,7 @@ $(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_pr
 # and its own header says it never reaches a memory cycle.
 $(BUILD)/obj_park/Vcadr_machine: $(MACHINE_SRC) tb/cadr_park_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_park \
+	    -GMEMORY_ANSWERS="1'b1" \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE_SRC) $(abspath tb/cadr_park_tb.cpp)

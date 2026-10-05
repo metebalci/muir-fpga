@@ -503,7 +503,7 @@
             if (mclk) begin
               elapsed     <= 11'd0;
               answered    <= 1'b0;
-              answered_at <= 11'd0;
+              since_answer <= 4'd0;
               ssyn_seen   <= 1'b0;
               ub_ack_at   <= 11'd0;
               ub_md_at    <= 11'd0;
@@ -701,10 +701,14 @@
 @file rtl/machine/cadr_busint_xbus.sv
 @note `elapsed` still holds the answering tick's value where this runs, which
 @note is the sort of thing that is one off as easily as not.
+@note
+@note Re-aimed when the deskew got its own count, `since_answer`, in place of
+@note `answered_at`: the count starting at 0 rather than 1 after the answer's
+@note edge is the same tick late.
 @old
-            answered_at <= elapsed;
+            since_answer <= 4'd1;
 @new
-            answered_at <= elapsed + 11'd1;
+            since_answer <= 4'd0;
 @end
 
 @mutation the-timeout-oscillator-runs-fast
@@ -1136,6 +1140,60 @@
   assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb);
 @new
   assign cpu_bridged       = QUUX ? 1'b0 : (is_memory || tv_fb || tvc_fb || nxm);
+@end
+
+@mutation the-timer-ends-a-cycle-memory-has-taken
+@check memory_path
+@file rtl/machine/cadr_busint_xbus.sv
+@note The fix for the DE25-Nano's halts: MIT's timer ended a main-memory
+@note cycle the FPGA-to-SDRAM bridge answered late (measured to 903 ticks),
+@note and MD took zero.  Without the hold term the interface is MIT's again;
+@note `tb/cadr_memory_path_tb.cpp`'s configuration C reads at 600 and 1,000
+@note ticks of latency and finds NXM and MD zero, as the board did.  Written
+@note so that `dev_hold` stays read, which -Wall requires.
+@old
+        if (nxm_due && state == GRANTED && !dev_hold) begin
+@new
+        if (nxm_due && state == GRANTED && (1'b1 || !dev_hold)) begin
+@end
+
+@mutation the-hold-reaches-past-the-last-board
+@check memory_path
+@file rtl/machine/cadr_memory_path.sv
+@note The hold is for a cycle the bridge has taken.  Raised for every cycle
+@note while main memory answers, it holds the timer off a read past the last
+@note board, which nothing answers, and memory sizing never ends: the
+@note configuration C read past board 32 never comes back.
+@old
+        .dev_hold   (mem_answers && cpu_bridged),
+@new
+        .dev_hold   (mem_answers || (cpu_bridged && 1'b0)),
+@end
+
+@mutation the-hold-leaves-out-the-frame-buffer
+@check memory_path
+@file rtl/machine/cadr_memory_path.sv
+@note The display's frame-buffer window is the same bridge at a second base,
+@note and answers as late as main memory does.  A hold for main memory alone
+@note lets the timer end a late frame-buffer read; configuration C's 600-tick
+@note frame-buffer leg finds NXM and MD zero.
+@old
+        .dev_hold   (mem_answers && cpu_bridged),
+@new
+        .dev_hold   (mem_answers && cpu_bridged && !tv_fb),
+@end
+
+@mutation the-hold-without-memory-behind-the-bridge
+@check memory_path
+@file rtl/machine/cadr_memory_path.sv
+@note On a board with no memory nothing ever answers the bridge, and only
+@note the timer ends a main-memory cycle.  A hold that did not ask
+@note `mem_answers` would leave such a machine waiting for ever; configuration
+@note C's legs with `mem_answers` down require MIT's NXM and MD zero.
+@old
+        .dev_hold   (mem_answers && cpu_bridged),
+@new
+        .dev_hold   ((mem_answers || 1'b1) && cpu_bridged),
 @end
 
 @mutation every-cycle-is-a-read-on-the-xbus
@@ -1696,16 +1754,17 @@
 @note The counter is eleven bits now, because a debug cycle's timeout and the
 @note Unibus acknowledgment after it are counted in it past 1,023 ticks; the
 @note mutation keeps the nine bits that were measured.
+@note
+@note Re-aimed when the deskew's own count took the line under it; what is
+@note mutated is unchanged.
 @old
           if (elapsed != 11'h7FF) elapsed <= elapsed + 11'd1;
+          if (answered && since_answer != 4'hF) since_answer <= since_answer + 4'd1;
           if (acked) begin
-            state <= ACKED;
-          end else if (answering && !answered) begin
 @new
           elapsed <= {2'b0, elapsed[8:0] + 9'd1};
+          if (answered && since_answer != 4'hF) since_answer <= since_answer + 4'd1;
           if (acked) begin
-            state <= ACKED;
-          end else if (answering && !answered) begin
 @end
 
 
@@ -24049,10 +24108,13 @@ set_multicycle_path -setup 9 -from $cycle -to $contract
 @note Xbus one is and as this one was: `SSYN T0` is `SSYN IN OR NXM TIMEOUT`,
 @note so `-LMACK` is `UNIBUS_ACK_NS` after it.  150 ns early at the write of
 @note the microsecond counter and the read of `764154`, measured.
+@note
+@note Re-aimed when the Xbus branch took `dev_hold` (a slave that always
+@note answers holds the timer off); what is mutated is unchanged.
 @old
-        if (nxm_due && state == GRANTED) begin
+        if (nxm_due && state == GRANTED && !dev_hold) begin
 @new
-        if (nxm_due && (state == GRANTED || state == UB)) begin
+        if (nxm_due && (state == GRANTED || state == UB) && !dev_hold) begin
 @end
 
 @mutation the-unibus-timeout-acks-a-tick-early

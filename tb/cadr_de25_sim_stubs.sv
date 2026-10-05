@@ -600,6 +600,9 @@ module cadr_machine #(
     parameter int unsigned VIDEO_WIDTH  = 1280,
     parameter int unsigned VIDEO_HEIGHT = 1024,
     parameter logic [8*64-1:0] BOARD_NAME = '0,
+    // Whether main memory always answers (`cadr_busint_xbus.sv`'s
+    // `dev_hold`), which the stub takes and does nothing with.
+    parameter bit MEMORY_ANSWERS = 1'b0,
     localparam int unsigned PHYS_BITS  = WORD_BITS > 32 ? 28 : 22,
     localparam int unsigned RLINE_BITS = WORD_BITS > 32 ? 320 : 128
 ) (

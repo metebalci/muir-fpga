@@ -122,6 +122,15 @@ module cadr_machine #(
     // on the CADR.
     parameter logic [8*64-1:0] BOARD_NAME = '0,
 
+    // **WHETHER MAIN MEMORY IS DDR THAT ALWAYS ANSWERS**: 1 on a board whose
+    // `mem_*` port reaches the processing system's memory, 0 on one with no
+    // memory behind it (and the default, MIT's machine).  At 1 the NXM timer
+    // does not end a processor cycle main memory has taken, however late the
+    // bridge answers; past the last memory board it still does.  The reason,
+    // measured on the DE25-Nano, is `cadr_busint_xbus.sv`'s header.  Unread on
+    // QUUX, whose memory port has no timer on memory.
+    parameter bit MEMORY_ANSWERS = 1'b0,
+
     // The physical word address, 28 bits on revision 13 (G1 §3.2), and the
     // beats a line fill returns: two of revision 12's four words, and five
     // of revision 13's packed storage.
@@ -1064,6 +1073,7 @@ module cadr_machine #(
       .rdata      (rdata),
       .timed_out  (timed_out),
       .boards     (boards),
+      .mem_answers(MEMORY_ANSWERS),
       .device     (device),
       .dev_rq     (dev_rq),
       .dev_write  (dev_write),

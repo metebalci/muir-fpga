@@ -241,6 +241,8 @@ int ConfigurationB() {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // MIT's timer whole: this check's memory answers in a few ticks.
+  dut->mem_answers = 0;
   // The backplane configuration B runs on: one SIMPLE TV and no color
   // board, which is what `busint::decode` describes and what every trace
   // here was taken on.  `build/color_tv.pass` is the other backplane.
@@ -620,6 +622,8 @@ static int run_trace(const char *path) {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // MIT's timer whole: this check's memory answers in a few ticks.
+  dut->mem_answers = 0;
   // **THE BOARD THE TRACE IS OF**, out of its own header, and no second
   // display: the color TV has a check of its own and `busint::decode` is the
   // backplane without one.

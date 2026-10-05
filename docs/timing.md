@@ -72,7 +72,12 @@ as a named constant.
    changes when the oscillator starts moves every timeout. On the Xbus the
    timeout is the acknowledgment. On the Unibus it is `SSYN T0`, so a cycle
    nothing answers is acknowledged 150 ns after it and its MD strobe is 100 ns
-   after it, as a slave's are after `-UB SSYN`.
+   after it, as a slave's are after `-UB SSYN`. On a board whose main memory
+   is DDR, the timer does not end a cycle that main memory or a display window
+   has taken. The DE25-Nano's bridge has answered single-word reads after 9
+   microseconds, and a timer that ended such a read gave MD zero. MIT's memory
+   boards always answered first. A cycle to an address nothing answers still
+   times out, which is how the band counts its memory boards.
 5. On the Unibus the MD strobe lands 50 ns before the acknowledgment. On the
    Xbus the two coincide.
 6. The register blocks' pulse, strobe and answer are three taps of one delay

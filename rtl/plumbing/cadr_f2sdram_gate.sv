@@ -22,9 +22,12 @@
 //
 // So the port is open while `h2f_gp_out[0]` is high and `h2f_reset` is low.
 // Until then the AXI adapter and `cadr_f2sdram_share.sv` are held in reset,
-// exactly as `hp0_aresetn` holds the Zynq's adapter, and every memory cycle
-// the machine makes ends on the bus interface's NXM timer, as on a board with
-// no memory.
+// exactly as `hp0_aresetn` holds the Zynq's adapter, and a main-memory cycle
+// the machine makes WAITS: on this board main memory always answers, so the
+// bus interface's NXM timer does not end such a cycle (`cadr_busint_xbus.sv`,
+// `dev_hold`), and the request stands until the port opens and carries it.
+// The machine is held until the port has been live once (below), so it only
+// meets a shut port later, when software or the processor's reset shuts it.
 //
 // **SHUTTING THE PORT DOES NOT CUT A TRANSACTION IN HALF.**  A master that has
 // put a valid address to the bridge may not take it back, and a bridge that
@@ -80,9 +83,13 @@
 //
 // It is a LATCH and not the level: once the machine is running, software
 // lowering the bit or the processor resetting must not reset the machine, any
-// more than `SAXIHP0ARESETN` falling resets the Zynq's.  What a shut port does
-// to a running machine is what a board with no memory does, which is the whole
-// of `cadr_f2sdram_share.sv`'s and this module's other business.  The fabric's
+// more than `SAXIHP0ARESETN` falling resets the Zynq's.  A shut port stops a
+// running machine at its next main-memory cycle, which waits with its request
+// standing and is put to the bridge anew when the port opens, its own word
+// coming back --- `tb/cadr_f2sdram_reset_tb.cpp`'s held-read legs, shut by
+// software and by the processor's reset.  It is not ended as an NXM with MD
+// zero, which is what MIT's timer did here before `dev_hold` and what made a
+// late answer a word of zero.  The fabric's
 // own reset re-arms it, and it is not set again until the drain above has
 // put the port through its reset, so KEY1 restarts the machine and it waits
 // for the port again --- the drain and a handful of ticks, the port being

@@ -574,6 +574,8 @@ int main(int argc, char **argv) {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // MIT's timer whole: this check's memory answers in a few ticks.
+  dut->mem_answers = 0;
   // **THE BACKPLANE THIS CHECK RUNS ON: one SIMPLE TV and no color TV**,
   // which is muir's own default and the machine `busint::decode` describes.
   // Driven rather than left to Verilator's zero, for the reason the `md`

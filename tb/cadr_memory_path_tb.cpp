@@ -183,6 +183,9 @@ Arb RunOnce(bool stream, std::map<unsigned, unsigned> &ddr) {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // Main memory here answers in a few ticks, so `mem_answers` changes no
+  // cycle of configurations A and B; up, as on every board with DDR.
+  dut->mem_answers = 1;
   // **THE BACKPLANE THIS CHECK RUNS ON: one SIMPLE TV and no color TV**,
   // which is muir's own default and the machine `busint::decode` describes.
   // Driven rather than left to Verilator's zero, for the reason the `md`
@@ -410,6 +413,220 @@ int RunArbiter() {
 
 }  // namespace
 
+// ------------------------------------------------- slow memory, configuration C
+//
+// **MAIN MEMORY BEHIND THE DDR BRIDGE ANSWERS LATE, AND IT STILL ANSWERS.**
+// The DE25-Nano's FPGA-to-SDRAM bridge has been measured answering a
+// single-word read 903 ticks after the bridge asked, and about once every two
+// boots later than the NXM timer, whose sixth rise comes about 470 ticks plus
+// the oscillator's phase after the grant.  MIT's bus interface runs that timer
+// on every Xbus cycle and its memory boards always beat it; this memory does
+// not, and a read the timer ended gave MD zero --- the halts and traps of the
+// release candidate's DE25 runs.  So `mem_answers` holds the timer off a cycle
+// main memory has taken (`cadr_memory_path.sv`, `cadr_busint_xbus.sv`).
+//
+// Held here three ways, from the stimulus and never from the DUT:
+//   * a write and a read back at 600, 1,000, 2,100 and 3,000 ticks of
+//     latency, -MEMACK 7 ticks after the answer in each, with
+//     `mem_answers` up, end on the memory's answer: no NXM, the read's MD is
+//     the word written, and the cycle is longer than the latency;
+//   * the display's frame-buffer window, the same bridge at a second base,
+//     answers as late and is held the same way;
+//   * the same read with `mem_answers` down is MIT's machine: the timer ends
+//     it, NXM TIMEOUT, MD zero, before the memory answers --- which is what the
+//     board did, and what says the stimulus reaches the case at all;
+//   * memory sizing is unchanged: with `mem_answers` up, a read past the last
+//     board reaches no slave, never asks the bridge, and still times out to
+//     NXM with MD zero, which is how the band counts its boards.
+namespace {
+
+struct Slow {
+  bool timed_out = false;
+  bool asked = false;       // the bridge put a request out
+  long cycle = -1;          // grant to -MEMACK, ticks
+  long deskew = -1;         // the bridge's answer to -MEMACK, ticks
+  unsigned md = 0;
+};
+
+// One write (unless `read_only`) and one read of `a`, the DDR answering
+// `latency` ticks after the bridge asks.
+Slow RunSlowOnce(int latency, bool answers, unsigned a, bool read_only,
+                 unsigned word, std::map<unsigned, unsigned> &ddr) {
+  Slow out;
+  auto *dut = new Vcadr_memory_path;
+  dut->n_boot = 1;
+  long tick = 0;
+  int memrq = 1, wrcyc = 0;
+  unsigned phys = 0, wdata = 0;
+  long req_since = -1;
+  int req_last = 0;
+  dut->clk = 0;
+  dut->rst = 1;
+  dut->mclk = 0;
+  dut->n_memrq = 1;
+  dut->wrcyc = 0;
+  dut->phys = 0;
+  dut->wdata = 0;
+  dut->boards = 32;
+  dut->mem_answers = answers;
+  dut->tv_lispm = 0;
+  dut->color_tv = 0;
+  dut->tv_map_a = 0;
+  dut->device_ack = 0;
+  dut->device_rdata = 0;
+  dut->spy_rdata = 0;
+  dut->xbus_init = 0;
+  dut->mem_done = 0;
+  dut->mem_rdata = 0;
+  dut->ch_req = 0;
+  dut->ch_write = 0;
+  dut->ch_addr = 0;
+  dut->ch_wdata = 0;
+  dut->eval();
+  bool asked_now = false;
+  long first_done = -1;
+  auto step = [&]() {
+    dut->rst = (tick < 4);
+    dut->mclk = (tick % kMicrocycle) == 0;
+    dut->n_memrq = memrq;
+    dut->wrcyc = wrcyc;
+    dut->phys = phys;
+    dut->wdata = wdata;
+    dut->clk = 1;
+    dut->eval();
+    if (dut->mem_req && !req_last) { req_since = tick; asked_now = true; }
+    if (!dut->mem_req) req_since = -1;
+    req_last = dut->mem_req;
+    const int done = (req_since >= 0) && (tick - req_since >= latency);
+    dut->mem_done = done;
+    if (done && !dut->mem_write) {
+      auto it = ddr.find(dut->mem_addr);
+      dut->mem_rdata = (it == ddr.end()) ? Untouched(dut->mem_addr) : it->second;
+    }
+    dut->eval();
+    if (done && dut->mem_write) ddr[dut->mem_addr] = dut->mem_wdata;
+    if (done && first_done < 0) first_done = tick;
+    dut->clk = 0;
+    dut->eval();
+    ++tick;
+  };
+  for (int k = 0; k < 8; ++k) step();
+  for (int c = read_only ? 1 : 0; c < 2; ++c) {
+    const bool write = (c == 0);
+    memrq = 0;
+    wrcyc = write;
+    phys = a;
+    wdata = word;
+    asked_now = false;
+    first_done = -1;
+    long grant = -1, ack = -1;
+    bool to = false;
+    for (long k = 0; k < 60000; ++k) {
+      step();
+      if (!dut->n_memgrant && grant < 0) grant = tick;
+      if (dut->timed_out) to = true;
+      if (grant >= 0 && !dut->n_memack) { ack = tick; break; }
+    }
+    if (!write) {
+      out.timed_out = to || dut->timed_out;
+      out.asked = asked_now;
+      out.cycle = (grant >= 0 && ack >= 0) ? ack - grant : -1;
+      out.deskew = (first_done >= 0 && ack >= 0) ? ack - first_done : -1;
+      out.md = dut->rdata;
+    }
+    memrq = 1;
+    // Long enough for an abandoned transaction to drain before the next one.
+    for (int k = 0; k < latency + 16; ++k) step();
+  }
+  dut->final();
+  delete dut;
+  return out;
+}
+
+int RunSlowMemory() {
+  int bad = 0;
+  const unsigned a = 0x00012345u;              // inside board 1 of 32
+  // **THE READ'S DESKEW IS THE SAME HOWEVER LATE THE ANSWER.**  From the
+  // bridge's answer to -MEMACK is the 60 ns tap of the TD100, and the cycle at
+  // 600 ticks is the reference for it; 2,100 and 3,000 are past the 2,047
+  // ticks an eleven-bit count of the cycle reached, where the deskew once
+  // wrapped and acknowledged a read 4 ticks early.
+  long deskew_ref = -1;
+  for (int latency : {600, 1000, 2100, 3000}) {
+    std::map<unsigned, unsigned> ddr;
+    const unsigned word = CpuWord(a) ^ (unsigned)latency;
+    Slow on = RunSlowOnce(latency, true, a, false, word, ddr);
+    if (deskew_ref < 0) deskew_ref = on.deskew;
+    if (on.deskew != deskew_ref || on.deskew != 7) {
+      std::fprintf(stderr,
+                   "FAIL: a read answered %d ticks after the bridge asked was "
+                   "acknowledged %ld ticks after the answer, wanted 7 as at 600\n",
+                   latency, on.deskew);
+      ++bad;
+    }
+    if (on.timed_out || on.md != word || on.cycle < latency) {
+      std::fprintf(stderr,
+                   "FAIL: with main memory answering, a read at %d ticks of "
+                   "latency %s, MD %08x (wanted %08x), cycle %ld ticks\n",
+                   latency, on.timed_out ? "TIMED OUT to NXM" : "did not time out",
+                   on.md, word, on.cycle);
+      ++bad;
+    }
+    std::map<unsigned, unsigned> ddr2;
+    Slow off = RunSlowOnce(latency, false, a, false, word, ddr2);
+    if (!off.timed_out || off.md != 0u) {
+      std::fprintf(stderr,
+                   "FAIL: MIT's timer (mem_answers down) did not end the read "
+                   "at %d ticks: NXM %d, MD %08x, cycle %ld ticks --- the "
+                   "stimulus no longer reaches the late case\n",
+                   latency, (int)off.timed_out, off.md, off.cycle);
+      ++bad;
+    }
+  }
+  // The display's frame-buffer window is the same bridge at a second base,
+  // and it answers as late: a word of the first display board, written and
+  // read back at 600 ticks, must not time out either.
+  {
+    std::map<unsigned, unsigned> ddr;
+    const unsigned fb = 017000123u;
+    const unsigned word = CpuWord(fb) ^ 0x7Bu;
+    Slow on = RunSlowOnce(600, true, fb, false, word, ddr);
+    if (on.timed_out || on.md != word || !on.asked) {
+      std::fprintf(stderr,
+                   "FAIL: a read of the display's frame buffer at 600 ticks "
+                   "of latency %s, MD %08x (wanted %08x), bridge asked %d\n",
+                   on.timed_out ? "TIMED OUT to NXM" : "did not time out",
+                   on.md, word, (int)on.asked);
+      ++bad;
+    }
+  }
+  // Past the last of 32 boards: board 32 is the first that is not there.
+  {
+    std::map<unsigned, unsigned> ddr;
+    const unsigned past = 32u << 16;
+    Slow s = RunSlowOnce(1000, true, past, true, 0, ddr);
+    if (!s.timed_out || s.md != 0u || s.asked) {
+      std::fprintf(stderr,
+                   "FAIL: a read past the last board, with main memory "
+                   "answering: NXM %d, MD %08x, bridge asked %d --- memory "
+                   "sizing needs NXM, MD zero and no request\n",
+                   (int)s.timed_out, s.md, (int)s.asked);
+      ++bad;
+    }
+  }
+  if (bad) return 1;
+  std::printf(
+      "    and slow memory: reads answered 600, 1,000, 2,100 and 3,000 ticks "
+      "after the bridge asked came back with the word written, no NXM, and "
+      "-MEMACK 7 ticks after the answer in every one, and so did "
+      "the display's frame buffer at 600; with mem_answers down MIT's timer "
+      "ended both reads, MD zero; a read past the last board still timed "
+      "out to NXM without asking the bridge.\n");
+  return 0;
+}
+
+}  // namespace
+
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
 
@@ -433,6 +650,9 @@ int main(int argc, char **argv) {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // Main memory here answers in a few ticks, so `mem_answers` changes no
+  // cycle of configurations A and B; up, as on every board with DDR.
+  dut->mem_answers = 1;
   // **THE BACKPLANE THIS CHECK RUNS ON: one SIMPLE TV and no color TV**,
   // which is muir's own default and the machine `busint::decode` describes.
   // Driven rather than left to Verilator's zero, for the reason the `md`
@@ -655,6 +875,8 @@ int main(int argc, char **argv) {
 
   const int arb = RunArbiter();
   if (arb) return arb;
+  const int slow = RunSlowMemory();
+  if (slow) return slow;
 
   std::printf(
       "ok: %ld ticks agree with muir's busint::Busint through the whole path\n"

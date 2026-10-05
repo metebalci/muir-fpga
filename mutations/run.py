@@ -554,7 +554,12 @@ CHECKS = {
     # `gprom` because this rule passes the PROM image as a parameter with an
     # absolute path rather than leaning on the relative default, as the
     # Makefile does.
-    "machine": MACHINE_CHECK,
+    # The composed checks that model main memory build the machine as the
+    # boards with DDR do, `MEMORY_ANSWERS` 1, as the Makefile does: the hold
+    # changes no cycle where memory answers in time, and these say so.
+    "machine": dict(MACHINE_CHECK, **{
+        "flags": MACHINE_CHECK["flags"] + ["-GMEMORY_ANSWERS=1'b1"],
+    }),
     # **THE SAME MACHINE CHECK ON QUUX**, and QUUX's programs on both
     # machines.  `machine_quux` is `machine` built with `MACHINE="quux"` and
     # QUUX's boot PROM against muir's trace of that PROM on QUUX; each
@@ -976,7 +981,7 @@ CHECKS = {
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_md_compose_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
+        "flags": ["-GMEMORY_ANSWERS=1'b1", "-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
                   "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
                   "-Iboards/arty-z7-20"],
         "golden": None,
@@ -1008,7 +1013,7 @@ CHECKS = {
         "tb": "tb/cadr_dispatch_write_order_tb.cpp",
         # With the gap monitor, which is what catches a write placed a tick
         # too near MD or the boundary with the word still right.
-        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR",
+        "flags": ["-GMEMORY_ANSWERS=1'b1", "-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR",
                   "-CFLAGS", "-DCADR_GAP_MONITOR", "--public-flat-rw", "-Irtl/machine",
                   "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
                   "-Iboards/arty-z7-20"],
@@ -1040,7 +1045,7 @@ CHECKS = {
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_park_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "--public-flat-rw", "-Irtl/machine",
+        "flags": ["-GMEMORY_ANSWERS=1'b1", "-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "--public-flat-rw", "-Irtl/machine",
                   "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
                   "-Iboards/arty-z7-20"],
         "golden": None,
@@ -1057,7 +1062,7 @@ CHECKS = {
         "extra": ["rtl/machine/cadr_console_state.sv"],
         "top": "cadr_machine",
         "tb": "tb/cadr_ddr_boot_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "flags": ["-GMEMORY_ANSWERS=1'b1", "-O2", "-CFLAGS", "-O2", "+define+CADR_GAP_MONITOR", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": None,
         "gprom": True,
     },
@@ -1123,7 +1128,7 @@ CHECKS = {
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_map_boot_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "flags": ["-GMEMORY_ANSWERS=1'b1", "-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": "rtl.golden",
         "gprom": True,
     },
@@ -1154,7 +1159,7 @@ CHECKS = {
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_map_access_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+        "flags": ["-GMEMORY_ANSWERS=1'b1", "-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
                   "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": "rtl.golden",
         "gprom_path": "map_access_prom.hex",

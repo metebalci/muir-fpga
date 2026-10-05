@@ -566,8 +566,22 @@ module cadr_de25 #(
   localparam int unsigned VIDEO_H = 1024;
   localparam logic [8*64-1:0] BOARD = "DE25-Nano";
 
+  // **MAIN MEMORY ALWAYS ANSWERS** with `DDR`, and on this board it answers
+  // late: the FPGA-to-SDRAM bridge was measured answering a single-word read
+  // 903 ticks after it was asked, past the NXM timer's sixth rise, and a read
+  // the timer ended gave MD zero (`cadr_busint_xbus.sv`'s header).  So with
+  // `DDR` the timer does not end a cycle main memory has taken; without it
+  // there is no memory and every such cycle times out, as on MIT's empty
+  // backplane.
+`ifdef CADR_DE25_DDR
+  localparam bit MEM_ANSWERS = 1'b1;
+`else
+  localparam bit MEM_ANSWERS = 1'b0;
+`endif
+
   cadr_machine #(
       .VIDEO_WIDTH(VIDEO_W), .VIDEO_HEIGHT(VIDEO_H), .BOARD_NAME(BOARD),
+      .MEMORY_ANSWERS(MEM_ANSWERS),
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .MACHINE(MACHINE),

@@ -39,6 +39,16 @@
 //   return its own word.  This is the path `mutations/list.txt`'s
 //   `gate-the-processors-reset-waits-for-quiet` takes away.
 //
+//   A PORT SHUT UNDER A HELD READ.  On a board whose memory always answers,
+//   the bus interface's NXM timer no longer ends a main-memory cycle
+//   (`cadr_busint_xbus.sv`, `dev_hold`), so a read the port cannot carry is
+//   not given up: `mem_req` stays up.  Shut by software (`h2f_gp_out[0]`
+//   low) before the read, and by the processor's reset after the bridge has
+//   taken it and before it answers: in both the read must get no answer
+//   while the port is shut --- no `mem_done`, no stale word --- and once the
+//   port is open again the standing request must be put to the bridge anew
+//   and return its own word.
+//
 // THE BRIDGE'S PROTOCOL IS WATCHED THROUGHOUT: a valid that falls before its
 // ready is counted, and the count must be zero.
 
@@ -344,6 +354,49 @@ int main(int argc, char **argv) {
     read_is_own("after the processor's reset", 0xB000'0A04u);
   }
 
+  // --- a port shut under a held read: the request stands, and is carried
+  // when the port opens again.
+  for (int how = 0; how < 2; ++how) {
+    const char *what = how == 0 ? "a read held across software shutting the port"
+                                : "a read held across the processor's reset";
+    const uint32_t a = how == 0 ? 0xB000'0B00u : 0xB000'0C04u;
+    if (how == 0) {
+      d->gp_open = 0;
+      long n = 0;
+      while (d->live && n < 200) { step(); ++n; }
+      if (d->live) fail("%s: the port did not shut", what);
+      d->mem_addr = a;
+      d->mem_write = 0;
+      d->mem_req = 1;
+    } else {
+      const long before = reads_taken[0];
+      d->mem_addr = a;
+      d->mem_write = 0;
+      d->mem_req = 1;
+      long n = 0;
+      while (reads_taken[0] == before && n < 200) { step(); ++n; }
+      if (reads_taken[0] == before) fail("%s: the read never reached the bridge", what);
+      d->h2f_reset = 1;
+    }
+    bool answered_shut = false;
+    for (int i = 0; i < 300; ++i) {
+      step();
+      if (d->mem_done) answered_shut = true;
+    }
+    if (answered_shut) fail("%s: answered while the port was shut", what);
+    if (how == 0) d->gp_open = 1; else d->h2f_reset = 0;
+    long n = 0;
+    while (!d->mem_done && n < 5000) { step(); ++n; }
+    if (!d->mem_done) fail("%s: never answered once the port opened", what);
+    else if (d->mem_rdata != word32(a))
+      fail("%s: answered %08x, want its own word %08x", what,
+           static_cast<uint32_t>(d->mem_rdata), word32(a));
+    d->mem_req = 0;
+    step();
+    step();
+    read_is_own(what, 0xB000'0D00u + 0x100u * static_cast<uint32_t>(how));
+  }
+
   if (withdrawn != 0)
     fail("%ld addresses or write beats withdrawn from the bridge before their "
          "handshake", withdrawn);
@@ -355,6 +408,8 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf("ok: the memory port's two resets, with transactions in flight: "
-              "no answer lost or misdelivered, nothing withdrawn\n");
+              "no answer lost or misdelivered, nothing withdrawn; a read held "
+              "across a shut port waited and got its own word when it "
+              "reopened\n");
   return 0;
 }

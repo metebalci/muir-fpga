@@ -173,6 +173,14 @@ module cadr_memory_path #(
     // How many 64K-word memory boards are fitted: 1 to 60, or 1 to 1,024 on
     // revision 13 (`cadr_xbus_decode.sv`).
     input  var logic [10:0] boards,
+    // **WHETHER MAIN MEMORY ALWAYS ANSWERS A CYCLE IT TAKES**: up on a board
+    // whose main memory is DDR behind the processing system's bridge, down on
+    // one with no memory behind it.  Up, a processor cycle to main memory or
+    // a display window, which the bridge answers, is not ended by the NXM
+    // timer however late the answer comes; see `cadr_busint_xbus.sv`'s
+    // `dev_hold`.  A level for the whole run, which `cadr_machine.sv` makes of
+    // its `MEMORY_ANSWERS`.
+    input  var logic        mem_answers,
 
     // The Xbus, as a slave that is not main memory sees it. `phys` and
     // `wdata` above are the address and the word; `device` says the decode
@@ -1184,7 +1192,9 @@ module cadr_memory_path #(
     // The register decode answers every register at the grant's
     // instant, so nothing waits for a register's acknowledgment.
     logic unused_quux_port;
-    assign unused_quux_port = ^{unibus, select_debug, ub_ssyn, dev_ack};
+    // QUUX's port has no NXM timer on memory at all (`quux_mem_port.sv`), so
+    // it has no use for `mem_answers` either.
+    assign unused_quux_port = ^{unibus, select_debug, ub_ssyn, dev_ack, mem_answers};
   end else begin : g_cadr_busint
     cadr_busint_xbus busint (
         .clk        (clk),
@@ -1199,6 +1209,8 @@ module cadr_memory_path #(
         .dev_rq     (cpu_rq),
         .dev_write  (cpu_write),
         .dev_ack    (dev_ack),
+        // The bridge has the processor's cycle and its memory answers.
+        .dev_hold   (mem_answers && cpu_bridged),
         .unibus     (unibus),
         .select_debug(select_debug),
         .ub_msyn    (ub_msyn),

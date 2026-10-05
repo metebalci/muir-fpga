@@ -61,6 +61,7 @@ int main(int argc, char **argv) {
   dut->n_memrq = 1;
   dut->wrcyc = 0;
   dut->dev_ack = 0;
+  dut->dev_hold = 0;
   dut->eval();
 
   // **MUIR'S t = 0 IS TWO EDGES AFTER THE RESET EDGE, NOT THE RESET EDGE.**
@@ -101,7 +102,7 @@ int main(int argc, char **argv) {
   // and mean nothing, so the run has to show reads and writes, a slave that
   // answers at once and one that takes longer than a microcycle, and a
   // request that arrives on the master clock edge itself.
-  long grants = 0, reads = 0, writes = 0, instant = 0, over_a_cycle = 0;
+  long grants = 0, reads = 0, writes = 0, instant = 0, over_a_cycle = 0, past_timer = 0;
   long rq_on_edge = 0, timeouts = 0, ack_with_rq = 0;
   int memack_last = 1;
   int timed_out_last = 0;
@@ -160,6 +161,12 @@ int main(int argc, char **argv) {
     // cycle. That is the stimulus, not something the interface is told.
     dut->dev_ack = r.present && (rq_since >= 0) &&
                    ((r.tick - rq_since) * kGridNs >= r.device_ns);
+    // **A SLAVE THAT IS THERE HOLDS THE TIMER OFF**, which is muir's rule ---
+    // `Busint` charges the timeout only to a cycle no responder answers --- and
+    // the fabric's `dev_hold`: the trace's late devices answer past the sixth
+    // rise and must still be answered, not timed out.  Nothing at the address
+    // holds nothing.
+    dut->dev_hold = r.present;
     dut->eval();
 
     if (dut->n_memack != r.n_memack)
@@ -207,6 +214,9 @@ int main(int argc, char **argv) {
       // Longer than a normal microcycle on the grid: the tap and the
       // restart each rounded up, 85 and 60 ns.
       if (r.device_ns > (GridTicks(85) + GridTicks(60)) * kGridNs) ++over_a_cycle;
+      // Answered after the sixth rise could have ended it: 4.7 us at the
+      // earliest phase, plus the 80 ns of setup before -XBUS.RQ.
+      if (r.present && r.device_ns > 4700) ++past_timer;
       if (r.mclk && !r.n_memrq) ++rq_on_edge;
     }
     memgrant_last = r.n_memgrant;
@@ -343,6 +353,7 @@ int main(int argc, char **argv) {
               {"cycles slower than a microcycle", over_a_cycle},
               {"requests standing at the master clock edge", rq_on_edge},
               {"cycles that timed out", timeouts},
+              {"cycles answered past the sixth rise", past_timer},
               {"cycles acknowledged with -XBUS.RQ still out", ack_with_rq}};
   for (const auto &w : want)
     if (w.n == 0) {
@@ -354,11 +365,12 @@ int main(int argc, char **argv) {
   std::printf(
       "ok: %ld ticks agree with muir's busint::Busint\n"
       "    %ld cycles --- %ld reads, %ld writes, %ld answered at once, "
-      "%ld slower than a microcycle, %ld timed out\n"
+      "%ld slower than a microcycle, %ld timed out, %ld answered past the "
+      "sixth rise and held\n"
       "    %ld acknowledged with -XBUS.RQ still out\n"
       "    %ld one-tick request gone by the edge and not granted, %ld standing "
       "at the edge and run\n",
-      checked, grants, reads, writes, instant, over_a_cycle, timeouts,
+      checked, grants, reads, writes, instant, over_a_cycle, timeouts, past_timer,
       ack_with_rq, one_tick_legs, standing_legs);
   return 0;
 }
