@@ -976,13 +976,13 @@ readme_system() {
   # epoch with neither a network nor fpgarc's --date and --time; measured on a
   # release card, System 1002 then shows 01/01/70.
   # **THE BOOT TAKES ABOUT TWO MINUTES**: from the loader's first line to the
-  # Lisp Listener, 93 to 117 s on every board and both machines, measured on
+  # Lisp Listener, 93 to 123 s on every board and both machines, measured on
   # the release cards; Linux's login prompt came at 21 to 37 s of that.
   if [ -n "${RELEASE:-}" ]; then
     printf 'Switching it on\r\n'
     printf 'The machine boots by itself.  Linux is up about half a minute\r\n'
     printf 'after the board is switched on or reset, and the machine reaches\r\n'
-    printf 'the Lisp Listener about two minutes from the start: 93 to 117\r\n'
+    printf 'the Lisp Listener about two minutes from the start: 93 to 123\r\n'
     printf 'seconds on these boards.\r\n\r\n'
     if [ "$MACHINE" = quux ]; then
       printf 'Logging in to the machine\r\n'

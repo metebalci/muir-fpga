@@ -6722,7 +6722,7 @@ if lift_readme "$WORK/rd"; then
 					done
 					# The boot takes about two minutes, measured on every
 					# board, and not "about a minute", which was said once.
-					case "$flat" in *"about two minutes from the start: 93 to 117 seconds"*) ;; *)
+					case "$flat" in *"about two minutes from the start: 93 to 123 seconds"*) ;; *)
 						fail "the release README for $b ($m) does not say how long the boot takes"
 						readme_bad=$((readme_bad + 1)) ;;
 					esac

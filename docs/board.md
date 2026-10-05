@@ -2002,7 +2002,7 @@ display**, with a border 256 columns wide on each side, and they describe what
 was on the monitor then.
 
 The board takes about half a minute to boot Linux, and the machine reaches the
-Lisp Listener about two minutes after the board is switched on (93 to 117
+Lisp Listener about two minutes after the board is switched on (93 to 123
 seconds on the release cards). The CADR loads its microcode off the pack before
 it paints anything, so the first thing on the monitor is a black screen with
 the run bar and the disk light blinking on one line near the bottom. What
