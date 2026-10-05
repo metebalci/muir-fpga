@@ -328,6 +328,16 @@ struct key_state {
 	// Positions the viewer has down.
 	uint8_t down[KEY_MAX_DOWN];
 	unsigned downs;
+	// **Which keysym holds which of those positions, and on which plane**:
+	// muir's `Keyboard::held`.  A key's release, and its repeats, go to the
+	// position its press went to, whatever shift is held by then: `(` and
+	// `)` are each on two keys, and the shift held at release would
+	// otherwise choose the other one and leave the pressed key down.  Part
+	// of `down`: every entry's position is down, and `drop_down` drops the
+	// entries of the position it lets go, by whatever path it goes.
+	uint32_t held_sym[KEY_MAX_DOWN];
+	uint8_t held_pos[KEY_MAX_DOWN], held_shifted[KEY_MAX_DOWN];
+	unsigned helds;
 	// A prefix keysym pressed and not yet answered; 0 for none.  Zero is
 	// not a keysym, so it needs no flag of its own.
 	uint32_t prefix;

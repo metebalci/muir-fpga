@@ -2355,6 +2355,168 @@ static void want_got(const char *what, const uint32_t *w, unsigned n)
 		      what, i, model.got[i], w[i]);
 }
 
+// ---- a key's release goes to the position its press went to ------------
+//
+// muir's `tests/keyboard.rs` at b00f8f7, the same six tests on the same
+// state machine.  `(` and `)` each sit on two positions: `(` shifted on the
+// `9` key, 071, and plain on its own, 0132; `)` shifted on the `0` key,
+// 0171, and plain on its own, 0137.  A key-up chose its position by the
+// shift held at release, so `(` typed as Shift+9 with Shift let go first
+// went up at 0132, 071 stayed down, and the next press of 071 --- the next
+// `(` or 9 --- was dropped, only its key-up sent.
+
+// The words queued since the last call, oldest first, taken off the queue.
+static unsigned take_words(struct key_state *k, uint32_t *out, unsigned max)
+{
+	unsigned n = 0;
+	while (key_pending(k)) {
+		const uint32_t w = key_peek(k);
+		key_took(k);
+		if (n < max)
+			out[n] = w;
+		++n;
+	}
+	return n;
+}
+
+// The queued words against `want`, every mismatch said with both lists.
+static void want_words(int line, struct key_state *k, const char *what,
+		       const uint32_t *want, unsigned n)
+{
+	uint32_t got[32];
+	const unsigned m = take_words(k, got, 32);
+	int same = m == n;
+	for (unsigned i = 0; same && i < n; ++i)
+		same = got[i] == want[i];
+	++checks;
+	if (same)
+		return;
+	char g[256] = "", w[256] = "";
+	for (unsigned i = 0; i < m && i < 32; ++i)
+		snprintf(g + strlen(g), sizeof g - strlen(g), " %s%03o",
+			 (got[i] & KEY_UP) ? "up " : "dn ", got[i] & 0177u);
+	for (unsigned i = 0; i < n; ++i)
+		snprintf(w + strlen(w), sizeof w - strlen(w), " %s%03o",
+			 (want[i] & KEY_UP) ? "up " : "dn ", want[i] & 0177u);
+	fail(line, "%s: got [%s ], want [%s ]", what, g, w);
+}
+
+#define KS_SHIFT_L 0xffe1u
+
+// The character typed with the viewer's shift, let go in the order asked.
+static void typed_with_shift(struct key_state *k, uint32_t sym, int shift_first)
+{
+	key_state_init(k);
+	key_event(k, KS_SHIFT_L, 1);
+	key_event(k, sym, 1);
+	if (shift_first) {
+		key_event(k, KS_SHIFT_L, 0);
+		key_event(k, sym, 0);
+	} else {
+		key_event(k, sym, 0);
+		key_event(k, KS_SHIFT_L, 0);
+	}
+}
+
+static void release_goes_where_press_went(uint32_t sym, uint32_t digit, unsigned on_digit,
+					  int shift_first)
+{
+	char what[96];
+	const char *order = shift_first ? "shift let go first" : "key let go first";
+	struct key_state k;
+
+	typed_with_shift(&k, sym, shift_first);
+	const uint32_t w_typed[] = {
+		word_of(024, 0), word_of(on_digit, 0),
+		shift_first ? word_of(024, 1) : word_of(on_digit, 1),
+		shift_first ? word_of(on_digit, 1) : word_of(024, 1)
+	};
+	snprintf(what, sizeof what, "'%c' typed with shift, %s", (int)sym, order);
+	want_words(__LINE__, &k, what, w_typed, 4);
+
+	// Then the same character again, with the viewer's shift: it reaches
+	// the machine whole.
+	key_event(&k, KS_SHIFT_L, 1);
+	key_event(&k, sym, 1);
+	key_event(&k, sym, 0);
+	key_event(&k, KS_SHIFT_L, 0);
+	const uint32_t w_again[] = {
+		word_of(024, 0), word_of(on_digit, 0), word_of(on_digit, 1), word_of(024, 1)
+	};
+	snprintf(what, sizeof what, "'%c' again after it, %s", (int)sym, order);
+	want_words(__LINE__, &k, what, w_again, 4);
+
+	// Or the digit that shares its key.
+	typed_with_shift(&k, sym, shift_first);
+	take_words(&k, NULL, 0);
+	key_event(&k, digit, 1);
+	key_event(&k, digit, 0);
+	const uint32_t w_digit[] = { word_of(on_digit, 0), word_of(on_digit, 1) };
+	snprintf(what, sizeof what, "'%c' after '%c', %s", (int)digit, (int)sym, order);
+	want_words(__LINE__, &k, what, w_digit, 2);
+
+	// Nothing is left down: a stray release finds nothing to let go.
+	key_event(&k, sym, 0);
+	key_event(&k, digit, 0);
+	snprintf(what, sizeof what, "stray releases of '%c' and '%c', %s", (int)sym,
+		 (int)digit, order);
+	want_words(__LINE__, &k, what, NULL, 0);
+	CHECK(k.dropped == 0, "%lu words dropped silently", k.dropped);
+}
+
+static void check_key_release_goes_where_press_went(void)
+{
+	release_goes_where_press_went('(', '9', 071, 0);
+	release_goes_where_press_went('(', '9', 071, 1);
+	release_goes_where_press_went(')', '0', 0171, 0);
+	release_goes_where_press_went(')', '0', 0171, 1);
+
+	// **A key held and repeated stays on the position it went down on**,
+	// whatever the shift does meanwhile: `(` pressed with shift, the shift
+	// let go, and the viewer's repeat of `(` is the key over `9` still
+	// down, not a second key; and a viewer that names the key by its
+	// unshifted keysym on release, `9` for the `(` it pressed, lets the
+	// same key go and leaves nothing behind to catch the next `(`.
+	struct key_state k;
+	key_state_init(&k);
+	key_event(&k, KS_SHIFT_L, 1);
+	key_event(&k, '(', 1);
+	key_event(&k, KS_SHIFT_L, 0);
+	key_event(&k, '(', 1);
+	key_event(&k, '(', 0);
+	const uint32_t w_repeat[] = {
+		word_of(024, 0), word_of(071, 0), word_of(024, 1), word_of(071, 1)
+	};
+	want_words(__LINE__, &k, "'(' held with shift, shift let go, '(' repeated and let go",
+		   w_repeat, 4);
+	key_event(&k, KS_SHIFT_L, 1);
+	key_event(&k, '(', 1);
+	key_event(&k, KS_SHIFT_L, 0);
+	key_event(&k, '9', 0);
+	want_words(__LINE__, &k, "'(' with shift, let go as '9' after the shift", w_repeat, 4);
+	key_event(&k, '(', 0);
+	want_words(__LINE__, &k, "the '(' release after it", NULL, 0);
+	key_event(&k, '(', 1);
+	key_event(&k, '(', 0);
+	const uint32_t w_own[] = { word_of(0132, 0), word_of(0132, 1) };
+	want_words(__LINE__, &k, "'(' next with no shift: its own key", w_own, 2);
+
+	// **Without a shift, nothing changes**: `(` and `)` go to their own
+	// keys and the digits to theirs, a stroke each.
+	key_state_init(&k);
+	const struct { uint32_t sym; unsigned p; } plain[] = {
+		{ '(', 0132 }, { '9', 071 }, { ')', 0137 }, { '0', 0171 }, { '(', 0132 }
+	};
+	for (unsigned i = 0; i < sizeof plain / sizeof plain[0]; ++i) {
+		char what[64];
+		key_event(&k, plain[i].sym, 1);
+		key_event(&k, plain[i].sym, 0);
+		const uint32_t w[] = { word_of(plain[i].p, 0), word_of(plain[i].p, 1) };
+		snprintf(what, sizeof what, "'%c' with no shift", (int)plain[i].sym);
+		want_words(__LINE__, &k, what, w, 2);
+	}
+}
+
 static void check_key_pacing(void)
 {
 	// The constant, said in the two facts it is made of, so that a change
@@ -5284,6 +5446,9 @@ int main(int argc, char **argv)
 
 	printf("--- the trace: muir's own line for what a keysym became\n");
 	check_keyboard_trace();
+
+	printf("--- a key's release goes to the position its press went to\n");
+	check_key_release_goes_where_press_went();
 
 	printf("--- the mouse\n");
 	check_mouse();

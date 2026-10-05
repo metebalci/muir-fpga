@@ -78,6 +78,24 @@ static void add_down(struct key_state *k, uint8_t p)
 		k->down[k->downs++] = p;
 }
 
+// A position let go takes every record of the keysym holding it with it,
+// whichever path let it go: a record left behind would send the next
+// release of its keysym to a position that is up, and swallow the press
+// after it.
+static void drop_held_at(struct key_state *k, uint8_t p)
+{
+	unsigned n = 0;
+	for (unsigned i = 0; i < k->helds; ++i) {
+		if (k->held_pos[i] == p)
+			continue;
+		k->held_sym[n] = k->held_sym[i];
+		k->held_pos[n] = k->held_pos[i];
+		k->held_shifted[n] = k->held_shifted[i];
+		++n;
+	}
+	k->helds = n;
+}
+
 static void drop_down(struct key_state *k, uint8_t p)
 {
 	for (unsigned i = 0; i < k->downs; ++i) {
@@ -85,8 +103,31 @@ static void drop_down(struct key_state *k, uint8_t p)
 			continue;
 		memmove(&k->down[i], &k->down[i + 1], (k->downs - i - 1) * sizeof k->down[0]);
 		--k->downs;
+		drop_held_at(k, p);
 		return;
 	}
+}
+
+// The record of the position `keysym` went down on, or -1.
+static int held_by(const struct key_state *k, uint32_t keysym)
+{
+	for (unsigned i = 0; i < k->helds; ++i)
+		if (k->held_sym[i] == keysym)
+			return (int)i;
+	return -1;
+}
+
+// `keysym` went down on `p`, on the plane `shifted` says.  A table that is
+// full records nothing, and that keysym's release takes the lookup, as
+// before records existed.
+static void hold(struct key_state *k, uint32_t keysym, uint8_t p, int shifted)
+{
+	if (held_by(k, keysym) >= 0 || k->helds >= KEY_MAX_DOWN)
+		return;
+	k->held_sym[k->helds] = keysym;
+	k->held_pos[k->helds] = p;
+	k->held_shifted[k->helds] = (uint8_t)(shifted != 0);
+	++k->helds;
 }
 
 // A keysym whose next release is to be dropped.  Returns 1 and removes it.
@@ -699,6 +740,17 @@ static struct key_went resolve(struct key_state *k, uint32_t keysym, int down)
 		return w_of(KEY_WENT_SENT, (uint8_t)mp, 0, 0);
 	}
 
+	// A key held: its repeats and its release go to the position its press
+	// went to, not to the one the shift now held would choose.  A repeat
+	// sends nothing, the key being down already.
+	const int h = held_by(k, keysym);
+	if (h >= 0) {
+		const uint8_t p = k->held_pos[h], was = k->held_shifted[h];
+		if (!down)
+			release(k, p);
+		return w_of(KEY_WENT_SENT, p, was, 0);
+	}
+
 	uint8_t pos[8], want[8];
 	const unsigned found = positions(&k->map, keysym, pos, want, 8);
 	if (found == 0) {
@@ -734,10 +786,13 @@ static struct key_went resolve(struct key_state *k, uint32_t keysym, int down)
 	for (unsigned i = 0; i < found; ++i) {
 		if ((want[i] != 0) != (shifted != 0))
 			continue;
-		if (down && !press(k, pos[i]))
-			return w_of(KEY_WENT_REFUSED, pos[i], shifted, 0);
-		if (!down)
+		if (down) {
+			if (!press(k, pos[i]))
+				return w_of(KEY_WENT_REFUSED, pos[i], shifted, 0);
+			hold(k, keysym, pos[i], shifted);
+		} else {
 			release(k, pos[i]);
+		}
 		return w_of(KEY_WENT_SENT, pos[i], shifted, 0);
 	}
 

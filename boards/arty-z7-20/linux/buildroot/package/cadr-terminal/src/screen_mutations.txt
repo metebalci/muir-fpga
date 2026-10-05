@@ -1962,3 +1962,48 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @new
 		if (map[c][0] || map[c][1] || map[c][2])
 @end
+
+# ------------------------------------------- a key's release where its press went
+#
+# muir's b00f8f7: a key's release, and its repeats, go to the position its
+# press went to, and a position let go takes its records with it.  Held by
+# `check_key_release_goes_where_press_went`, muir's six tests again.
+
+@mutation a-release-goes-where-the-shift-now-says
+@file input_keys.c
+@why `(` typed as Shift+9 with Shift let go first goes up on its own key, 0132: 071
+@why stays down, and the next `(` or 9 sends only its key-up
+@note The fix undone: the record of where a keysym went down is never read.
+@old
+	const int h = held_by(k, keysym);
+@new
+	const int h = -1;
+@end
+
+@mutation a-press-is-not-recorded
+@file input_keys.c
+@why the press on the viewer's plane leaves no record, so its release takes the
+@why lookup under whatever shift is held then
+@old
+			hold(k, keysym, pos[i], shifted);
+@new
+@end
+
+@mutation a-position-let-go-keeps-its-records
+@file input_keys.c
+@why a position let go by another keysym, `9` for the `(` that pressed it, keeps the
+@why `(`'s record: the next `(` with no shift is taken for a repeat and sent nowhere
+@old
+		drop_held_at(k, p);
+@new
+@end
+
+@mutation a-repeat-presses-again
+@file input_keys.c
+@why a repeat of a held key is taken as a fresh press under the shift held now: `(`
+@why repeated after its Shift is let go goes down on its own key, 0132, a second key
+@old
+	if (h >= 0) {
+@new
+	if (h >= 0 && !down) {
+@end
