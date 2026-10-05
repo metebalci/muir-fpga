@@ -25,6 +25,34 @@ reports none.
 
 ## From a clean tree
 
+These fits were built from `774f360`, the release commit for Systems 1003
+and 2001: a slave that has taken a cycle and always answers holds off the
+bus timeout, and the cards make the user's home directories, with muir
+pinned at `071f9a6`. The Kria KR260's QUUX is 1920 by 1080 and the other
+boards' 1280 by 1024. Revision 13 is at five ticks on the Arty Z7-20 and
+four on the DE25-Nano and the Kria KR260. Every stamp reads `774f3600`, the
+tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | CADR | +0.209 ns | +0.018 ns | 15,106 of 53,200 LUTs, 28.39% | 46 of 140 BRAM tiles | 5,517 of 13,300 | `774f360` | clean | 2026-10-05 |
+| Arty Z7-20 | QUUX revision 13, K = 5 | +0.183 ns | +0.029 ns | 22,608 of 53,200 LUTs, 42.50% | 84 of 140 BRAM tiles | 6,807 of 13,300 | `774f360` | clean | 2026-10-05 |
+| Cora Z7-07S | CADR | +0.695 ns | +0.041 ns | 13,949 of 14,400 LUTs, 96.87% | 43 of 50 BRAM tiles | 4,360 of 4,400 | `774f360` | clean | 2026-10-05 |
+| Kria KR260 | CADR | +1.406 ns | +0.013 ns | 15,331 of 117,120 LUTs, 13.09% | 41 of 144 BRAM tiles | 3,206 of 14,640 CLBs | `774f360` | clean | 2026-10-05 |
+| Kria KR260 | QUUX revision 13, K = 4 | +1.473 ns | +0.010 ns | 22,891 of 117,120 LUTs, 19.54% | 76 of 144 BRAM tiles | 4,483 of 14,640 CLBs | `774f360` | clean | 2026-10-05 |
+| DE25-Nano | CADR | +2.380 ns | 0.000 ns | 16,495 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `774f360` | clean | 2026-10-05 |
+| DE25-Nano | QUUX revision 13 | +1.613 ns | +0.001 ns | 29,779 of 46,800 ALMs, 64% | 205 of 358 M20K | --- | `774f360` | clean | 2026-10-05 |
+
+Each passed its RAM enable check: the Arty Z7-20's over 98 and 131 ports,
+the Cora Z7-07S's over 92, and the Kria KR260's over 88 and 119. The
+DE25-Nano's synthesis read back each machine, word and PROM image by name.
+
+Against the fits from `d0bd127` below, the three QUUX fits have the same
+slack and the same figures. Of the CADR's, the Kria KR260's lost 0.555 ns;
+its worst path is now inside the display output, from the rotation setting
+into a pixel register through seven levels of logic. The Arty Z7-20's lost
+0.034 ns, the Cora Z7-07S's gained 0.302 ns and the DE25-Nano's 0.142 ns.
+
 These fits were built from `d0bd127`, the release candidate for Systems
 1003 and 2001: the color map shown as 377 minus the stored value, with muir
 pinned at `071f9a6`. The Kria KR260's QUUX is 1920 by 1080 and the other
