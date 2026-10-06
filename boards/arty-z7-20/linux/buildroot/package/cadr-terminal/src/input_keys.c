@@ -710,16 +710,20 @@ static struct key_went resolve(struct key_state *k, uint32_t keysym, int down)
 			}
 			return w_nothing("a prefix acts on its press");
 		}
-		if (!down)
-			return w_nothing("the prefix stands until a key is pressed behind it");
-		k->prefix = 0;
-		mark_tapped(k, keysym);
-		uint8_t p, want;
-		if (!after_prefix(&k->map, first, keysym, &p, &want))
-			return w_behind(first, 0, 0, 0);
-		if (!behind_prefix(k, p, want))
-			return w_of(KEY_WENT_REFUSED, p, want, 0);
-		return w_behind(first, 1, p, want);
+		// A key-up is not looked up behind it: the prefix stands until
+		// a key is pressed behind it, and a key held from before it and
+		// let go meanwhile goes up below as any release does, rather
+		// than staying down for the machine.
+		if (down) {
+			k->prefix = 0;
+			mark_tapped(k, keysym);
+			uint8_t p, want;
+			if (!after_prefix(&k->map, first, keysym, &p, &want))
+				return w_behind(first, 0, 0, 0);
+			if (!behind_prefix(k, p, want))
+				return w_of(KEY_WENT_REFUSED, p, want, 0);
+			return w_behind(first, 1, p, want);
+		}
 	}
 	if (is_prefix(&k->map, keysym)) {
 		if (down) {

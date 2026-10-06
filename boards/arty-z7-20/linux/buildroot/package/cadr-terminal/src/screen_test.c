@@ -2206,6 +2206,43 @@ static void check_keyboard(void)
 		pump(40);
 		const uint32_t u[] = { word_of(0123, 0), word_of(0123, 1) };
 		want_keys("a prefix pressed twice lets go, and 'a' is 'a'", u, 2);
+
+		// A key held from before the prefix and let go while it stands
+		// goes up at once: the prefix waits for the next key PRESSED.
+		// Left down, 'a' would be down for the machine, and its next
+		// press would send nothing.
+		model.nkeys = 0;
+		send_key(&c, 'a', 1);
+		send_key(&c, 0xff14u, 1);
+		send_key(&c, 0xff14u, 0);
+		send_key(&c, 'a', 0);
+		send_key(&c, 0xff14u, 1);   // the prefix again: let go
+		send_key(&c, 0xff14u, 0);
+		send_key(&c, 'a', 1);
+		send_key(&c, 'a', 0);
+		pump(40);
+		const uint32_t r[] = { word_of(0123, 0), word_of(0123, 1),
+				       word_of(0123, 0), word_of(0123, 1) };
+		want_keys("'a' let go while a prefix stands goes up, and its next press is sent",
+			  r, 4);
+
+		// ...and the prefix still applies to the key pressed behind it:
+		// Scroll_Lock then '1' is Roman I after 'a' has gone up.
+		model.nkeys = 0;
+		send_key(&c, 'a', 1);
+		send_key(&c, 0xff14u, 1);
+		send_key(&c, 0xff14u, 0);
+		send_key(&c, 'a', 0);
+		send_key(&c, '1', 1);
+		send_key(&c, '1', 0);
+		send_key(&c, 'a', 1);
+		send_key(&c, 'a', 0);
+		pump(40);
+		const uint32_t q[] = { word_of(0123, 0), word_of(0123, 1),
+				       word_of(0101, 0), word_of(0101, 1),
+				       word_of(0123, 0), word_of(0123, 1) };
+		want_keys("'a' let go while a prefix stands, then Roman I behind it, then 'a'",
+			  q, 6);
 		client_close(&c);
 		settle();
 	}
