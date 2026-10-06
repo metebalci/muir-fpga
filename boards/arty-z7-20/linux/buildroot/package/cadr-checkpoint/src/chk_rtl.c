@@ -595,6 +595,12 @@ static void emit_memory_port(struct chk *w, const struct cadr_image *img)
 	chk_bool(w, img->qx.fetch_v);			/* READ fetch_vaddr */
 	if (img->qx.fetch_v)
 		chk_u32(w, img->qx.fetch_vaddr);
+	// Revision 14: the reference's write-back's end, which a cycle waits
+	// for (A14.6); past, as `memory_free_at` is.
+#if CHK_MUTATE != 45
+	if (img->rev14)
+		chk_u64(w, 0);				/* IDLE write_back_until */
+#endif
 }
 
 // `MacroDispatch::save`, version 49 (revision 12, contract H8a): the
@@ -959,7 +965,13 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	if (quux) {
 		// `Machine::geometry`: `Geometry::QUUX`, or `QUUX_13`, which the
 		// register table's entry 21 said the bitstream is.
+		// Revision 14's is `Geometry::QUUX_14`, revision 13's with no
+		// level-1 entry: 0, feature word 1's (A14.14).
+#if CHK_MUTATE == 41
 		const unsigned l1_bits = img->rev13 ? MUIR_QUUX13_L1_BITS : MUIR_QUUX_L1_BITS;
+#else
+		const unsigned l1_bits = img->rev14 ? 0u : img->rev13 ? MUIR_QUUX13_L1_BITS : MUIR_QUUX_L1_BITS;
+#endif
 #if CHK_MUTATE == 9
 		// The CADR's PDL width on QUUX: a machine whose pointer is too
 		// wide for its own buffer.
@@ -1131,6 +1143,35 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// guess.  What it is NOT is consistent with the idle instants in
 	// `Busint` above, which are a fresh machine's.
 	chk_u64(w, chk_ns(img));			/* READ ns */
+	// **REVISION 14'S OWN** (A14.14), after everything revision 13 has:
+	// `Machine::lc`'s `<40:32>`, the `rtl` engine never writing that
+	// field; the memory system's words 220 to 224; and the redirect's
+	// copies of the PDL buffer's base and head.  The TLB is not kept: a
+	// resume starts with it swept.
+	if (img->rev14) {
+		chk_u16(w, 0);				/* IDLE Machine::lc <40:32> */
+#if CHK_MUTATE == 42
+		chk_u32(w, img->qx.refused);
+		chk_bool(w, img->qx.ephemeral);
+		chk_u64(w, img->qx.pointer_types);
+		chk_u32(w, img->qx.directory);
+#else
+		chk_u32(w, img->qx.directory);		/* READ word 220 */
+		chk_bool(w, img->qx.ephemeral);		/* READ word 221 <0> */
+#if CHK_MUTATE == 43
+		chk_u64(w, (img->qx.pointer_types >> 32) | (img->qx.pointer_types << 32));
+#else
+		chk_u64(w, img->qx.pointer_types);	/* READ words 222, 223 */
+#endif
+		chk_u32(w, img->qx.refused);		/* READ word 224 */
+#endif
+		chk_u32(w, img->qx.pdl_base);		/* READ A 430's copy */
+#if CHK_MUTATE == 44
+		chk_u16(w, 0);
+#else
+		chk_u16(w, img->qx.pdl_head);		/* READ A 431's copy */
+#endif
+	}
 
 	// --- the Rtl tail ---------------------------------------------------
 	//
@@ -1268,6 +1309,13 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// Version 49: `MEMSTART`'s cycle is the stream's fetch, for QUUX's
 	// prefetch; READ on QUUX, and false on the CADR, which never sets it.
 	chk_bool(w, img_flag(img, IMG_F_MEMSTART_FETCH));	/* READ */
+	// Revision 14's location counter's `<33:32>` (A14.11, A14.14).
+	if (img->rev14)
+#if CHK_MUTATE == 47
+		chk_u8(w, 0);
+#else
+		chk_u8(w, img->lc_hi);			/* READ */
+#endif
 }
 
 // --- what it could not read ------------------------------------------------
@@ -1528,6 +1576,20 @@ const char *chk_rtl_mutation(void)
 	return "QUUX's main memory said in memory boards";
 #elif CHK_MUTATE == 38
 	return "the video controller's size written as 1280x1024 whatever the bitstream says";
+#elif CHK_MUTATE == 41
+	return "revision 14's geometry written with revision 13's level-1 bits";
+#elif CHK_MUTATE == 42
+	return "revision 14's directory base and refused count written crossed";
+#elif CHK_MUTATE == 43
+	return "revision 14's pointer-type register written with its two words crossed";
+#elif CHK_MUTATE == 44
+	return "revision 14's redirect head written 0";
+#elif CHK_MUTATE == 45
+	return "revision 14's write-back's end left out of the memory port";
+#elif CHK_MUTATE == 46
+	return "revision 14's map levels read from the window, which has none";
+#elif CHK_MUTATE == 47
+	return "revision 14's LC<33:32> written 0";
 #elif CHK_MUTATE == 39
 	return "the video controller's buffer sized at 1280x1024 whatever the bitstream says";
 #elif CHK_MUTATE == 40

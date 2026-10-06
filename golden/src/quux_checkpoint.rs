@@ -5,8 +5,8 @@
 //! reference `cadr-checkpoint --machine quux` is compared with BYTE FOR BYTE.
 //!
 //!     quux_checkpoint FILE --machine quux --sync-cycle-ticks K [--sync-ilong-ticks L]
-//!                     --revision 13
-//!     quux_checkpoint --resume-and-save IN OUT --revision 13 --machine quux
+//!                     --revision 13|14
+//!     quux_checkpoint --resume-and-save IN OUT --revision 13|14 --machine quux
 //!                     --sync-cycle-ticks K [--sync-ilong-ticks L]
 //!
 //! **`--revision 13`** builds revision 13's machine (contract G2, appendix
@@ -15,7 +15,12 @@
 //! with tags that are not zero, its dispatch memory, maps and main memory at
 //! revision 13's sizes and widths, the overflow flag set, and block-disk and
 //! the file device at 28-bit addresses; muir writes it as checkpoint version
-//! 50.  **`--resume-and-save`** is muir's own round trip for it: the machine
+//! 50.  **`--revision 14`** builds the same machine at revision 14 (contract
+//! G3 revision 14, A14.14; muir's `Geometry::QUUX_14`): no map levels, and
+//! the memory system's words 220 to 224 and the redirect's copies set, as
+//! `checkpoint_test.c`'s `fill_quux14` reads them; muir writes it as version
+//! 50 with revision 14's sections appended.
+//! **`--resume-and-save`** is muir's own round trip for it: the machine
 //! built as for a checkpoint, the file loaded into it and saved again.
 //!
 //! **THE MACHINE IS DESCRIBED TWICE, HERE IN muir'S TERMS AND IN
@@ -51,10 +56,10 @@ use muir::tv::Board;
 /// controller at `video`, muir's default 1280 by 1024 unless `--video-size`
 /// gives the Kria KR260's 1920 by 1080, one memory board, and a disk of
 /// `DISK_BLOCKS` blocks with none written (contract Q8a, format 41), at
-/// revision 13.
-fn machine(video: (usize, usize)) -> Machine {
+/// revision 13, or 14 when `rev14`.
+fn machine(video: (usize, usize), rev14: bool) -> Machine {
     let mut m = Machine::with_memory_boards(1);
-    m.geometry = Geometry::QUUX;
+    m.geometry = if rev14 { Geometry::QUUX_14 } else { Geometry::QUUX };
     let mut bd = BlockDisk::new(block_disk::BLOCK_NS);
     bd.attach(Disk::blank(DISK_BLOCKS));
     m.block_disk = Some(bd);
@@ -115,6 +120,15 @@ const FD_RESP_LOG2: u32 = 1;
 /// file device's rings are on an 8-word line.
 const DISK_CLP_13: u32 = 0x0ABC_DEF0;
 const FD_RESP_BASE_13: u32 = 0x00_1108;
+/// Revision 14's memory system's words and the redirect's copies, as
+/// `checkpoint_test.c` has them: the directory base, a multiple of 4 in 18
+/// bits, with the ephemeral-reference enable; the pointer-type register; the
+/// refused count; the PDL buffer's base and head.
+const DIRECTORY_14: u32 = 0x1_F2A4;
+const TYPES_14: u64 = 0x0123_4567_89AB_CDEF;
+const REFUSED_14: u32 = 0x89AB_CDEF;
+const PDL_BASE_14: u32 = 0xFEDC_BA98;
+const PDL_HEAD_14: u16 = 0x2B5C;
 
 fn main() {
     // The machine and its timing as every trace takes them
@@ -122,10 +136,11 @@ fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let which = machine_axis::take(&mut args);
     let timing = machine_axis::take_timing(which, &mut args);
-    let mut rev13 = false;
+    let (mut rev13, mut rev14) = (false, false);
     if let Some(i) = args.iter().position(|a| a == "--revision") {
         rev13 = args.get(i + 1).map(String::as_str) == Some("13");
-        assert!(rev13, "--revision takes 13");
+        rev14 = args.get(i + 1).map(String::as_str) == Some("14");
+        assert!(rev13 || rev14, "--revision takes 13 or 14");
         args.drain(i..i + 2);
     }
     // The video controller's size, muir's `--video-size WxH`, as the
@@ -142,11 +157,11 @@ fn main() {
     let resume = args.first().map(String::as_str) == Some("--resume-and-save");
     if which != machine_axis::Which::Quux
         || args.len() != if resume { 3 } else { 1 }
-        || !rev13
+        || !(rev13 || rev14)
     {
         eprintln!(
             "usage: quux_checkpoint FILE --machine quux --sync-cycle-ticks K [--sync-ilong-ticks L] \
-             --revision 13 [--video-size WxH]\n       quux_checkpoint --resume-and-save IN OUT --revision 13 ...\n\
+             --revision 13|14 [--video-size WxH]\n       quux_checkpoint --resume-and-save IN OUT --revision 13|14 ...\n\
              (revision 12 is retired)"
         );
         std::process::exit(2);
@@ -155,7 +170,7 @@ fn main() {
         // muir's own round trip, as `resume_engine` does it: the engine of
         // the machine the checkpoint is of, loaded, and saved again.
         let c = muir::checkpoint::read(std::path::Path::new(&args[1])).expect("the checkpoint");
-        let mut e = trace::engine_on(machine(video), timing);
+        let mut e = trace::engine_on(machine(video, rev14), timing);
         e.load(&mut c.reader()).expect("muir took the checkpoint");
         let mut w = muir::checkpoint::Writer::new();
         e.save(&mut w);
@@ -174,7 +189,7 @@ fn main() {
         return;
     }
     let path = args[0].clone();
-    let mut m = machine(video);
+    let mut m = machine(video, rev14);
     assert!(m.geometry.wide(), "QUUX is revision 13's 40-bit word");
     // A word's bits, and a word poisoned at them: 40 with its tag.
     let word_bits = m.geometry.word_bits;
@@ -233,11 +248,24 @@ fn main() {
     for (i, w) in m.dmem.iter_mut().take(dmem).enumerate() {
         *w = poison(6, i as u64, 17) as u32;
     }
-    for (i, w) in m.l1_map.iter_mut().take(l1).enumerate() {
-        *w = poison(7, i as u64, l1_bits) as u32;
-    }
-    for (i, w) in m.l2_map.iter_mut().take(l2).enumerate() {
-        *w = poison(8, i as u64, l2_bits) as u32;
+    // Revision 14 has no map levels: muir keeps both arrays, zero.
+    if !rev14 {
+        for (i, w) in m.l1_map.iter_mut().take(l1).enumerate() {
+            *w = poison(7, i as u64, l1_bits) as u32;
+        }
+        for (i, w) in m.l2_map.iter_mut().take(l2).enumerate() {
+            *w = poison(8, i as u64, l2_bits) as u32;
+        }
+    } else {
+        // Its memory system's words (A14.9) and the redirect's copies
+        // (A14.7), which the readout's entries 41 to 45 give.
+        m.memory_words = muir::tlb::Words {
+            directory: DIRECTORY_14,
+            ephemeral: true,
+            pointer_types: TYPES_14,
+            refused: REFUSED_14,
+        };
+        m.pdl_copies = muir::tlb::PdlCopies { base: PDL_BASE_14, head: PDL_HEAD_14 };
     }
     for (i, w) in m.main.iter_mut().enumerate() {
         *w = poison(12, i as u64, word_bits);

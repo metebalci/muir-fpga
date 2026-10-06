@@ -124,10 +124,15 @@ impl Trace {
         // a later microcycle, and a sample taken only after the step never
         // sees it.
         let mut ack = self.ack_at(e).unwrap_or(0);
+        // Revision 14's TLB hold, for `MD` below: the held time before it,
+        // and the instant the step that ran the microcycle began at.
+        let held_before = e.machine().tlb.held_ns;
+        let mut step_from;
 
         let mut drained = 0u32;
         loop {
             let before = e.machine().cycles;
+            step_from = e.ns();
             e.step_until(e.ns() + TICK_NS)?;
             if e.machine().cycles != before {
                 break;
@@ -207,6 +212,25 @@ impl Trace {
             && (row_ir >> 26) & 7 == 2;
         if srcmd {
             md = signals[4].1;
+        }
+        // **AND REVISION 14'S TLB HOLD**, which `Rtl::tlb_hold` runs inside
+        // the same step as the microcycle it holds: whole microcycles with
+        // the master clock and the bus running on, `-LOADMD` landing `MD` at
+        // the edge of the acknowledgment (`after_memack` at every held
+        // edge).  An acknowledgment at or before the hold's end has put the
+        // word in `MD` before the read phase, so `MD` is read back after the
+        // step --- unless the instruction stores into `MD` at its own edge
+        // (`DESTMDR`), whose store the read-back would give instead.  A
+        // microcycle not held, or held with no acknowledgment inside, keeps
+        // the sample taken before the step.
+        let held = e.machine().tlb.held_ns - held_before;
+        // `DESTMDR` as `Rtl::read_phase` decodes it: an ALU or BYTE word
+        // (`IR<44:43>` 0 or 3), `IR<25>` clear, `IR<23>` and `IR<22>` set.
+        let class = (row_ir >> 43) & 3;
+        let row_dest = class == 0 || class == 3;
+        let destmdr = row_dest && (row_ir >> 25) & 1 == 0 && (row_ir >> 23) & 1 != 0 && (row_ir >> 22) & 1 != 0;
+        if !srcmd && held > 0 && ack != 0 && ack <= step_from + held && !destmdr {
+            md = e.machine().md as u64;
         }
 
         let stall = e.stalled_ns() - self.last_stalled;

@@ -63,6 +63,10 @@
 // 4 in <3:0>); revision 12's bitstreams answer 0 there.  **The fabric's side
 // of this is not built yet**: it is what this program asks of it.
 #define IMG_QUUX_ID_13    0x00D4u
+// Revision 14's (contract G3 revision 14, appendix A14), 0x00E4: revision 13's
+// words, sizes and packed storage, no map levels, and the memory system's
+// words in the register table's entries 41 to 45 (A14.14).
+#define IMG_QUUX_ID_14    0x00E4u
 
 // **QUUX'S SIZES**, muir's `Geometry::QUUX`: a PDL buffer of 16K words with a
 // fourteen-bit pointer, a level-1 map entry of six bits and so 2,048 level-2
@@ -110,7 +114,14 @@ enum img_quux_reg {
 	IMG_RG_QUUX_MACRO = 29, IMG_RG_QUUX_MACRO_IX = 30, IMG_RG_QUUX_BASES = 31,
 	IMG_RG_QUUX_ARMED = 32, IMG_RG_QUUX_M31_W = 33, IMG_RG_QUUX_FUSED_N = 34,
 	IMG_RG_QUUX_OPR_N = 35, IMG_RG_QUUX_PF_N = 36, IMG_RG_QUUX_PF = 37,
-	IMG_RG_QUUX_PF_PHYS = 38, IMG_RG_QUUX_PF_WORD = 39, IMG_RG_QUUX_PF_FETCH = 40
+	IMG_RG_QUUX_PF_PHYS = 38, IMG_RG_QUUX_PF_WORD = 39, IMG_RG_QUUX_PF_FETCH = 40,
+	// Revision 14's memory system (A14.9, A14.14): `<18>` word 221's
+	// ephemeral-reference enable over word 220, the directory base, in
+	// `<17:0>`; words 222 and 223, the pointer-type register; word 224, the
+	// refused write-backs; and the redirect's copies, the head's 14 bits
+	// in `<45:32>` over the base's 32.
+	IMG_RG_QUUX_MS = 41, IMG_RG_QUUX_TYPES0 = 42, IMG_RG_QUUX_TYPES1 = 43,
+	IMG_RG_QUUX_REFUSED = 44, IMG_RG_QUUX_COPIES = 45
 };
 #define IMG_QUUX_TIMERS 3
 #define IMG_QUUX_MARK 0x5155u
@@ -180,6 +191,11 @@ struct quux_state {
 	uint32_t pf_vaddr, pf_phys, fetch_vaddr;
 	uint64_t pf_word;
 	uint32_t fused_n, opr_n, pf_n;
+	// Revision 14's memory system, muir's `tlb::Words` and `PdlCopies`.
+	uint32_t directory, refused, pdl_base;
+	int ephemeral;
+	uint64_t pointer_types;
+	uint16_t pdl_head;
 };
 
 
@@ -272,6 +288,7 @@ struct cadr_image {
 	uint64_t ir, iwr;
 	uint64_t l, q, vma, md, md_held;	/* words */
 	uint32_t st, lc, lvmo, phys_r;
+	uint8_t lc_hi;			/* revision 14's LC<33:32>, 0 before it */
 	uint8_t spcptr;
 	uint8_t speed, speed_a, mode_speed;
 	uint64_t flags;
@@ -306,7 +323,9 @@ struct cadr_image {
 	// --- QUUX the PDL buffer's 16K, level 2's 2,048 and the video controller's buffer;
 	// --- on revision 13 (`rev13`) the dispatch memory's 4,096, level 1's
 	// --- 8,192 and level 2's 4,096, and words of 40 bits.
-	int quux, rev13;
+	// --- revision 14 (`rev14`) is revision 13's in all of these, `rev13`
+	// --- set too, but has no map levels: both are written zero and not read.
+	int quux, rev13, rev14;
 	unsigned pdl_words, l2_words, tv_words, dmem_words, l1_words, word_bits;
 	// --- QUUX's video controller's size, the bitstream's (console word
 	// --- 39): `tv_words` is its height times its width over 32.  0 on the

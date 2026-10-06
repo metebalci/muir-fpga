@@ -51,12 +51,14 @@
 
 // The memories, by the name a person types and the selector the fabric takes,
 // with their depth and width on each machine the window can be on: the CADR,
-// QUUX to revision 12, and QUUX revision 13, whose words are 40 bits, whose
+// QUUX to revision 12, QUUX revision 13, whose words are 40 bits, whose
 // dispatch memory is 4,096 entries and whose map is 8,192 seven-bit level-1
-// entries over 4,096 28-bit level-2 ones (contract G2 §2, appendix A1).
-enum { M_CADR, M_QUUX, M_QUUX13, M_MACHINES };
+// entries over 4,096 28-bit level-2 ones (contract G2 §2, appendix A1), and
+// QUUX revision 14, revision 13's with no map levels: a TLB, which no
+// checkpoint keeps (contract G3 revision 14, A14.14).
+enum { M_CADR, M_QUUX, M_QUUX13, M_QUUX14, M_MACHINES };
 static const char *const kMachineNames[M_MACHINES] = {
-	"the CADR", "QUUX to revision 12", "QUUX revision 13"
+	"the CADR", "QUUX to revision 12", "QUUX revision 13", "QUUX revision 14"
 };
 struct mem {
 	const char *name;
@@ -65,22 +67,24 @@ struct mem {
 	unsigned bits[M_MACHINES];
 	const char *what;
 };
-#define SAME(v) { v, v, v }
+#define SAME(v) { v, v, v, v }
 static const struct mem kMems[] = {
 	{ "imem",  IMG_SEL_IMEM, SAME(IMG_IMEM_WORDS), SAME(48), "the control store" },
 	{ "prom",  IMG_SEL_PROM, SAME(IMG_PROM_WORDS), SAME(48), "the boot PROM" },
-	{ "amem",  IMG_SEL_AMEM, SAME(IMG_AMEM_WORDS), { 32, 32, 40 }, "the A memory" },
-	{ "mmem",  IMG_SEL_MMEM, SAME(IMG_MMEM_WORDS), { 32, 32, 40 }, "the M memory" },
+	{ "amem",  IMG_SEL_AMEM, SAME(IMG_AMEM_WORDS), { 32, 32, 40, 40 }, "the A memory" },
+	{ "mmem",  IMG_SEL_MMEM, SAME(IMG_MMEM_WORDS), { 32, 32, 40, 40 }, "the M memory" },
 	{ "pdl",   IMG_SEL_PDL,
-	  { IMG_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS }, { 32, 32, 40 },
+	  { IMG_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS }, { 32, 32, 40, 40 },
 	  "the pushdown buffer" },
 	{ "spc",   IMG_SEL_SPC,  SAME(IMG_SPC_WORDS), SAME(21), "the micro-stack" },
-	{ "dmem",  IMG_SEL_DMEM, { IMG_DMEM_WORDS, IMG_DMEM_WORDS, IMG_DMEM_WORDS_13 }, SAME(17),
+	{ "dmem",  IMG_SEL_DMEM, { IMG_DMEM_WORDS, IMG_DMEM_WORDS, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13 },
+	  SAME(17),
 	  "the dispatch memory" },
-	{ "map1",  IMG_SEL_MAP1, { IMG_L1_WORDS, IMG_L1_WORDS, IMG_L1_WORDS_13 }, { 5, 6, 7 },
+	{ "map1",  IMG_SEL_MAP1, { IMG_L1_WORDS, IMG_L1_WORDS, IMG_L1_WORDS_13, 0 },
+	  { 5, 6, 7, 0 },
 	  "the level-1 map" },
-	{ "map2",  IMG_SEL_MAP2, { IMG_L2_WORDS, IMG_QUUX_L2_WORDS, IMG_L2_WORDS_13 },
-	  { 24, 24, 28 }, "the level-2 map" },
+	{ "map2",  IMG_SEL_MAP2, { IMG_L2_WORDS, IMG_QUUX_L2_WORDS, IMG_L2_WORDS_13, 0 },
+	  { 24, 24, 28, 0 }, "the level-2 map" },
 	{ "opcs",  IMG_SEL_OPCS, SAME(IMG_OPCS), SAME(14), "the OPC shift register" },
 	{ "regs",  IMG_SEL_REGS, SAME(21), SAME(48), "the register table below" },
 	{ "audit", IMG_SEL_AUDIT, SAME(IMG_AUDIT_WORDS), SAME(48),
@@ -370,7 +374,7 @@ int main(int argc, char **argv)
 		    "CADR's NONE: the window is not answering", IMG_RG_QUUX_ID);
 		return 1;
 	}
-	const int machine = rev == 13 ? M_QUUX13 : rev == 12 ? M_QUUX : M_CADR;
+	const int machine = rev == 14 ? M_QUUX14 : rev == 13 ? M_QUUX13 : rev == 12 ? M_QUUX : M_CADR;
 	say("the bitstream is %s", kMachineNames[machine]);
 
 	int rc = 0;

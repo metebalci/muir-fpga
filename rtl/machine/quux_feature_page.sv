@@ -165,6 +165,10 @@ module quux_feature_page #(
     // (`quux_file_device.sv`).  The words above that change with it are
     // `cadr_machine.sv`'s to give.
     parameter int unsigned WORD_BITS      = 32,
+    // Revision 14's TLB entries (A14.9: word 2 says them, word 1 is 0, and
+    // words 220-227 are the memory system's, `quux_mmu.sv`'s); 0 below
+    // revision 14, where word 2 is the level-2 map's entries.
+    parameter int unsigned TLB_ENTRIES    = 0,
     localparam int unsigned MEM_BITS      = WORD_BITS > 32 ? 28 : 23
 ) (
     input  var logic        clk,
@@ -254,8 +258,15 @@ module quux_feature_page #(
     output var logic [47:0] ro_fd_bases,
     output var logic [47:0] ro_fd_resp_base,
     output var logic [47:0] ro_fd_indexes,
-    output var logic [47:0] ro_fd_flags
+    output var logic [47:0] ro_fd_flags,
+    // --- revision 14's words 220-227: a write in the tick the page takes
+    // it, and the word the page names read back (`quux_mmu.sv`)
+    output var logic        ms_we,
+    output var logic [2:0]  ms_idx,
+    output var logic [31:0] ms_wdata,
+    input  var logic [31:0] ms_rdata
 );
+  localparam bit PAGED = TLB_ENTRIES != 0;
 
   localparam logic [13:0] FEATURE_PAGE = 14'o37777;
 
@@ -367,7 +378,7 @@ module quux_feature_page #(
       unique case (which)
         8'o0:    word = MACHINE_ID;
         8'o1:    word = 32'(L1_BITS);
-        8'o2:    word = 32'(32 << L1_BITS);
+        8'o2:    word = PAGED ? 32'(TLB_ENTRIES) : 32'(32 << L1_BITS);
         8'o3:    word = 32'(1 << PDL_BITS);
         8'o4:    word = 32'(IMEM_WORDS);
         8'o5:    word = 32'(AMEM_WORDS);
@@ -389,6 +400,9 @@ module quux_feature_page #(
         8'o102:  word = {31'd0, errstop};
         8'o103:  word = rtc_seconds;
         8'o110, 8'o111, 8'o112, 8'o113, 8'o114, 8'o115: word = {8'd0, tm_rdata};
+        // Revision 14's memory system's words (A14.9).
+        8'o220, 8'o221, 8'o222, 8'o223, 8'o224, 8'o225, 8'o226, 8'o227:
+                 word = PAGED ? ms_rdata : 32'd0;
         default: word = 32'd0;
       endcase
     end
@@ -428,6 +442,11 @@ module quux_feature_page #(
   assign tm_we      = take && dev_write && which[7:3] == 5'o11 && which[2:1] != 2'b11;
   assign tm_idx     = which[2:0];
   assign tm_wdata   = wdata[23:0];
+  // Revision 14's words 220-227, written at the instant the page answers,
+  // as muir's `bus_write` writes them.
+  assign ms_we      = PAGED && take && dev_write && which[7:3] == 5'o22;
+  assign ms_idx     = which[2:0];
+  assign ms_wdata   = wdata;
 
   // No term is held off at `INTERRUPT-CONTROL<28>`'s edge: on QUUX it
   // resets nothing (contract Q11), and `RESET-DEVICES` needs no hold-off.

@@ -293,10 +293,25 @@ int main(int argc, char **argv) {
   // against the cycle that owes it.  The programs read no byte they did not
   // write.
   bool rev13 = false;
+  // **REVISION 14** (`golden/src/quux14.rs`, contract G3 revision 14): its
+  // main memory is revision 13's packed storage, its frame buffer is at the
+  // device window's bus address `1 << 28`, and two more things write and
+  // fill it besides the processor's own cycles: the walk's reads, which
+  // fill lines no cycle of the processor's is at, and the write-backs'
+  // table words, which no cycle owes.  Both are served here as main memory
+  // and counted; the programs read every table word they assert back through
+  // the physical memory window, so a wrong write-back reads wrong in MD.
+  bool rev14 = false;
+  long side_fills = 0, side_writes = 0;
   // The file device's two bases as muir's device holds them at the end of a
   // revision-13 program (`# fdbases`), for the readout's selector 12.
   bool have_fd_bases = false;
   uint64_t fd_cmd_base_end = 0, fd_resp_base_end = 0;
+  // Revision 14's memory system's words and the redirect's copies as muir
+  // holds them at the end (`# mswords`, `# pdlcopies`), for the readout's
+  // entries 41 to 45 (A14.14).
+  bool have_ms = false, have_copies = false;
+  uint64_t ms_dir_end = 0, ms_types_end = 0, ms_refused_end = 0, copies_base_end = 0, copies_head_end = 0;
   // **BLOCK-DISK'S PACK AND ITS TRANSFERS ON THE WHOLE MACHINE** (revision
   // 13's `disk` program, `golden/src/quux13.rs`): the pack's blocks
   // (`# disk`), those holding the rule's words (`# pack`), and the pages the
@@ -341,6 +356,7 @@ int main(int argc, char **argv) {
   std::vector<bool> arbitrated;
   long unibus_cycles = 0;
   size_t total_rows = 0;
+  uint64_t trace_end_ns = 0;
   {
     char line[512];
     std::vector<uint64_t> bus_at;   // row indices that start a bus cycle
@@ -366,6 +382,17 @@ int main(int argc, char **argv) {
           rtc_start = h0;
         }
         if (k9 == "rtcset" && n9 == 3) rtc_sets[h0] = h1;
+        if (k9 == "mswords" && n9 == 4) {
+          have_ms = true;
+          ms_dir_end = h0;
+          ms_types_end = h1;
+          ms_refused_end = h2;
+        }
+        if (k9 == "pdlcopies" && n9 == 3) {
+          have_copies = true;
+          copies_base_end = h0;
+          copies_head_end = h1;
+        }
         if (k9 == "fdbases" && n9 == 3) {
           have_fd_bases = true;
           fd_cmd_base_end = h0;
@@ -382,7 +409,7 @@ int main(int argc, char **argv) {
         // Revision 13's programs (`golden/src/quux13.rs`) are scripts too,
         // and their dispatches and location counter are compared row for
         // row like the fused return's.
-        if (std::strstr(line, "golden/src/quux13.rs")) {
+        if (std::strstr(line, "golden/src/quux13.rs") || std::strstr(line, "golden/src/quux14.rs")) {
           script_trace = true;
           dispatch_trace = true;
         }
@@ -395,6 +422,7 @@ int main(int argc, char **argv) {
         if (std::strstr(line, "QUUX's boot PROM")) quux_prom = true;
         if (std::strstr(line, "machine: quux")) quux_machine = true;
         if (std::strstr(line, "revision 13")) rev13 = true;
+        if (std::strstr(line, "revision 14")) rev13 = rev14 = true;
         unsigned boards_line = 0;
         if (std::sscanf(line, "# boards %u", &boards_line) == 1) main_boards = boards_line;
         if (k9 == "disk" && n9 == 2) {
@@ -434,6 +462,7 @@ int main(int argc, char **argv) {
       // the loaded word is discarded either way.
       mds.push_back(r.v[kMd]);
       ends.push_back(r.v[kNs]);
+      trace_end_ns = r.v[kNs];
       stalled_srcmd.push_back(r.v[kStall] != 0);
       if (r.v[kBus]) bus_at.push_back(total_rows);
       ++total_rows;
@@ -769,7 +798,10 @@ int main(int argc, char **argv) {
 
   // Long enough for every microcycle plus the reset and a margin: the
   // longest cycle the generator makes is 44 ticks at extra slow.
-  const long kMaxTicks = static_cast<long>(total_rows) * 96 + 1024;
+  // And as long as the trace's own time with the same margin again, which
+  // revision 14's sweep needs: a microcycle held 8,192 ticks for it.
+  const long kMaxTicks = std::max(static_cast<long>(total_rows) * 96 + 1024,
+                                  static_cast<long>(trace_end_ns / kTickNs) * 2 + 1024);
 
   // The file device's host: the next completion to play, what STATE and the
   // command producer shown to the host last read, and when the producer
@@ -1025,10 +1057,18 @@ int main(int argc, char **argv) {
           } else if (dut->mem_line) {
             ++q_fills;
             if (q_in_fb) ++q_fb_fills;
-            const uint32_t want = q_in_fb ? kFbBase + 32u * ((ph - kWindow13) >> 3)
+            const uint32_t kWin = rev14 ? (1u << 28) : kWindow13;
+            const uint32_t want = q_in_fb ? kFbBase + 32u * ((ph - kWin) >> 3)
                                           : kMain13Base + 40u * (ph >> 3);
             const int beats = q_in_fb ? 4 : 5;
-            if (dut->mem_write || a != want || dut->mem_beats != beats || !bus_outstanding || dut->wrcyc) {
+            // Revision 14: a fill no cycle of the processor's is at is the
+            // walk's or a write-back's re-read, a line of main memory.
+            const bool side_fill = rev14 && !q_in_fb && !dut->mem_write && dut->mem_beats == 5 &&
+                                   (a - kMain13Base) % 40u == 0 &&
+                                   (a != want || !bus_outstanding || dut->wrcyc);
+            if (side_fill) {
+              ++side_fills;
+            } else if (dut->mem_write || a != want || dut->mem_beats != beats || !bus_outstanding || dut->wrcyc) {
               std::fprintf(stderr, "microcycle %zu: a line fill of %d beats at %08x for word %o%s, want %d at "
                            "%08x\n", k, dut->mem_beats, a, ph, dut->wrcyc ? ", a write" : "", beats, want);
               ++bad;
@@ -1040,15 +1080,24 @@ int main(int argc, char **argv) {
             ++q_writes;
             if (q_in_fb) ++q_fb_writes;
             const int bytes = q_in_fb ? 4 : 5;
-            if (q_owed.empty()) {
+            const uint32_t kWin = rev14 ? (1u << 28) : kWindow13;
+            const auto owed_at = [&](uint32_t p) {
+              return p >= kWin ? kFbBase + 4u * (p - kWin) : kMain13Base + 5u * p;
+            };
+            // Revision 14: a write of main memory no cycle owes, five bytes
+            // of a word, is a write-back's table word.
+            const bool side_write = rev14 && !q_in_fb && dut->mem_wide && (a - kMain13Base) % 5u == 0 &&
+                                    (q_owed.empty() || owed_at(q_owed.front().first) != a);
+            if (side_write) {
+              ++side_writes;
+            } else if (q_owed.empty()) {
               std::fprintf(stderr, "microcycle %zu: DDR written at %08x, which no cycle wrote\n", k, a);
               ++bad;
             } else {
               const auto want = q_owed.front();
               q_owed.erase(q_owed.begin());
-              const bool fb = want.first >= kWindow13;
-              const uint32_t want_a = fb ? kFbBase + 4u * (want.first - kWindow13)
-                                         : kMain13Base + 5u * want.first;
+              const bool fb = want.first >= kWin;
+              const uint32_t want_a = owed_at(want.first);
               const uint64_t want_w = want.second & (fb ? 0xFFFFFFFFull : 0xFFFFFFFFFFull);
               if (a != want_a || dut->mem_wdata != want_w || dut->mem_wide != (fb ? 0 : 1)) {
                 std::fprintf(stderr, "microcycle %zu: DDR written %" PRIx64 " at %08x, %s, the cycle wrote %"
@@ -1584,6 +1633,9 @@ int main(int argc, char **argv) {
     if (rev13)
       std::printf("    revision 13: packed storage at %08x, %ld writes of words across two beats\n",
                   kMain13Base, q13_spanning);
+    if (rev14)
+      std::printf("    revision 14: %ld line fills of the walk's and the write-backs' reads, %ld table words "
+                  "written back\n", side_fills, side_writes);
     if (have_disk) {
       std::printf("    block-disk: the pack side served %ld blocks, wrote %ld back and denied %ld; the "
                   "channel read %ld words, %ld of them of two beats, and wrote %ld\n",
@@ -1699,7 +1751,7 @@ int main(int argc, char **argv) {
       return dut->con_ro_data;
     };
     const uint64_t id = readout(10, 21);
-    const uint64_t want_low = rev13 ? 0x00D4u : 0u;
+    const uint64_t want_low = rev14 ? 0x00E4u : rev13 ? 0x00D4u : 0u;
     if ((id >> 32) != 0x5155u || (id & 0xFFFFu) != want_low) {
       std::fprintf(stderr, "FAIL: the register table's entry 21 reads %012" PRIx64 ", want 5155 over "
                    "K and L and %04" PRIx64 " in <15:0>\n", id, want_low);
@@ -1715,6 +1767,25 @@ int main(int argc, char **argv) {
       } else {
         std::printf("    the readout: entry 21 %012" PRIx64 ", the file device's bases %" PRIx64 " and %"
                     PRIx64 "\n", id, w7, w10);
+      }
+    }
+    if (rev14) {
+      // Entries 41 to 45: {221 <0>, 220}, 222, 223, 224, and the copies,
+      // the head over the base.
+      const uint64_t e41 = readout(10, 41), e42 = readout(10, 42), e43 = readout(10, 43),
+                     e44 = readout(10, 44), e45 = readout(10, 45);
+      const uint64_t want45 = (copies_head_end << 32) | copies_base_end;
+      if (!have_ms || !have_copies || e41 != ms_dir_end || e42 != (ms_types_end & 0xFFFFFFFFu) ||
+          e43 != (ms_types_end >> 32) || e44 != ms_refused_end || e45 != want45) {
+        std::fprintf(stderr, "FAIL: the readout's entries 41 to 45 read %" PRIx64 " %" PRIx64 " %" PRIx64
+                     " %" PRIx64 " %" PRIx64 ", muir's %" PRIx64 " %" PRIx64 " %" PRIx64 " %" PRIx64
+                     " %" PRIx64 "%s\n", e41, e42, e43, e44, e45, ms_dir_end, ms_types_end & 0xFFFFFFFFu,
+                     ms_types_end >> 32, ms_refused_end, want45,
+                     have_ms && have_copies ? "" : " (the trace has none)");
+        ++bad;
+      } else {
+        std::printf("    the readout: the memory system's words %" PRIx64 " %" PRIx64 " %" PRIx64 " %" PRIx64
+                    ", the redirect's copies %" PRIx64 "\n", e41, e42, e43, e44, e45);
       }
     }
   }

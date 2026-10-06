@@ -90,6 +90,21 @@ module cadr_machine #(
     // console's registers and the bus audit take `<31:0>`.
     parameter int unsigned WORD_BITS = 32,
 
+    // **QUUX'S HARDWARE REVISION AT 40 BITS**: 13, or 14 (contract G3
+    // revision 14 with its appendix A14; muir's `Geometry::QUUX_14`, its
+    // `MUIR_QUUX_REVISION=14`): the 32-bit virtual address space and its two
+    // windows, the page table walked by hardware behind a TLB in place of
+    // the two map levels, the PDL buffer redirect, the ephemeral-reference
+    // setter, the location counter at 34 bits and jump condition 12
+    // (`cadr_microcycle.sv`, `quux_mmu.sv`).  Each board's top gives it.
+    // Unread on the CADR.
+    parameter int unsigned REVISION = 13,
+    // **REVISION 14'S TLB ENTRIES**, N (A14.4): a power of two from 1,024 to
+    // 32,768, 4,096 on every board (decisions.md:265), muir's `--tlb`; the
+    // index is `VA<9+k:10>` and the tag `VA<31:10+k>`, k = log2 N
+    // (`quux_tlb.sv`).  Each board's top gives it; unread below revision 14.
+    parameter int unsigned TLB_ENTRIES = 4096,
+
     // **WHERE REVISION 13'S MAIN MEMORY IS IN DDR** (contract G1 §4.1): word
     // w in packed storage at byte `QUUX13_MAIN_BASE + 5w`
     // (`quux_mem_port.sv`).  The board's layout decides it,
@@ -134,7 +149,8 @@ module cadr_machine #(
     // The physical word address, 28 bits on revision 13 (G1 §3.2), and the
     // beats a line fill returns: two of revision 12's four words, and five
     // of revision 13's packed storage.
-    localparam int unsigned PHYS_BITS  = WORD_BITS > 32 ? 28 : 22,
+    localparam bit          PAGED      = MACHINE == "quux" && WORD_BITS > 32 && REVISION >= 14,
+    localparam int unsigned PHYS_BITS  = PAGED ? 29 : WORD_BITS > 32 ? 28 : 22,
     localparam int unsigned RLINE_BITS = WORD_BITS > 32 ? 320 : 128
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
@@ -651,7 +667,11 @@ module cadr_machine #(
   // `(12 << 4) | 4` --- the fused return, the MACRO-DISPATCH register and the
   // MACRO DISPATCH MEMORY (contract H8a) --- is a 32-bit word's, which only
   // the CADR is now, and which never reads it.
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
+  // Revision 14's `(14 << 4) | 4`, `Geometry::QUUX_14.machine_id`.
+  localparam logic [31:0] MACHINE_ID = PAGED ? 32'h5155_00E4 : WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
+  if (QUUX && WORD_BITS > 32 && REVISION != 13 && REVISION != 14) begin : g_bad_revision
+    $error("cadr_machine: REVISION is %0d; QUUX at 40 bits is revision 13 or 14", REVISION);
+  end
   // The video controller at the board's size, `VIDEO_WIDTH` by
   // `VIDEO_HEIGHT`, one bit a pixel, `VIDEO_WIDTH / 32` words a line, and
   // muir's `check_video_size` held on it at elaboration.
@@ -701,9 +721,11 @@ module cadr_machine #(
   // bits and so 4,096 level-2 entries, 4,096 dispatch memory entries, and the
   // video controller's buffer at the frame buffer window, `1760000000`; and
   // the file device's main memory size in 28 bits (`quux_file_device.sv`).
-  localparam int unsigned FEATURE_L1_BITS = WORD_BITS > 32 ? 7 : 6;
+  // Revision 14 (A14.9): word 1 0, no level-1 map; word 2 the TLB's
+  // entries; word 13 the buffer at its device-window address.
+  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : WORD_BITS > 32 ? 7 : 6;
   localparam int unsigned FEATURE_DMEM    = WORD_BITS > 32 ? 4096 : 2048;
-  localparam logic [31:0] VIDEO_BUFFER    = WORD_BITS > 32 ? 32'o1760000000 : 32'o17000000;
+  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : WORD_BITS > 32 ? 32'o1760000000 : 32'o17000000;
   localparam int unsigned FD_MEM_BITS     = WORD_BITS > 32 ? 28 : 23;
 
   // The cables, named at both ends as `cadr_cables.map` has them.
@@ -930,7 +952,9 @@ module cadr_machine #(
       .MACHINE_ID(MACHINE_ID),
       .SYNC_K(SYNC_K),
       .SYNC_L(SYNC_L),
-      .WORD_BITS(WORD_BITS)
+      .WORD_BITS(WORD_BITS),
+      .REVISION(REVISION),
+      .TLB_ENTRIES(TLB_ENTRIES)
   ) processor (
       .clk         (clk),
       .rst         (rst),
@@ -1013,7 +1037,30 @@ module cadr_machine #(
       .clock_edge  (clock_edge),
       .ro_addr     (con_ro_addr),
       .ro_data     (proc_ro_data),
-      .ro_echo     (con_ro_echo)
+      .ro_echo     (con_ro_echo),
+      .boards      (boards),
+      .ms_we       (ms_we),
+      .ms_idx      (ms_idx),
+      .ms_wdata    (ms_wdata),
+      .ms_rdata    (ms_rdata),
+      .sd_look     (sd_look),
+      .sd_phys     (sd_phys),
+      .sd_ready    (sd_ready),
+      .sd_walk_ready(sd_walk_ready),
+      .sd_ack_at   (sd_ack_at),
+      .sd_hit      (sd_hit),
+      .sd_word     (sd_word),
+      .sd_commit   (sd_commit),
+      .sd_wr       (sd_wr),
+      .sd_wdata    (sd_wdata),
+      .sd_until    (sd_until),
+      .sd_done     (sd_done),
+      .sd_fill_v   (sd_fill_v),
+      .sd_fill_word(sd_fill_word),
+      .sd_wdone    (sd_wdone),
+      .wb_hold     (wb_hold),
+      .wb_rel_v    (wb_rel_v),
+      .wb_rel      (wb_rel)
   );
 
   // The virtual address register, `Q` and `MD` for the console, captured at
@@ -1040,7 +1087,19 @@ module cadr_machine #(
   logic        cached, bd_written;
   // Revision 12's cache-only prefetch, between the processor and the port.
   logic        pf_fetch, pf_drop, pf_nx_v, pf_nx_fetch_v;
-  logic [(WORD_BITS > 32 ? 28 : 24)-1:0] pf_vaddr, pf_nx_vaddr, pf_nx_fetch_vaddr;
+  logic [(PAGED ? 32 : WORD_BITS > 32 ? 28 : 24)-1:0] pf_vaddr, pf_nx_vaddr, pf_nx_fetch_vaddr;
+  // Revision 14's memory system's seams (`quux_mmu.sv`): the register
+  // page's words 220-227, and the walk's and the write-back's side seam
+  // into the memory port.
+  logic        ms_we;
+  logic [2:0]  ms_idx;
+  logic [31:0] ms_wdata, ms_rdata;
+  logic        sd_look, sd_ready, sd_hit, sd_commit, sd_wr, sd_fill_v, sd_wdone, wb_hold, wb_rel_v;
+  logic        sd_walk_ready;
+  logic signed [10:0] sd_ack_at;
+  logic [28:0] sd_phys;
+  logic [39:0] sd_wdata, sd_word, sd_fill_word;
+  logic signed [10:0] sd_until, sd_done, wb_rel;
   logic [PHYS_BITS-1:0] pf_nx_phys;
   logic [WORD_BITS-1:0] pf_nx_word;
   logic [31:0] cache_hits, cache_misses;
@@ -1056,6 +1115,7 @@ module cadr_machine #(
       .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
       .SYNC_K(SYNC_K),
       .WORD_BITS(WORD_BITS),
+      .REVISION(REVISION),
       .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE)
   ) memory (
       .clk        (clk),
@@ -1253,7 +1313,25 @@ module cadr_machine #(
       .page_ch_rdata  (page_ch_rdata),
       .chaos_ireq     (chaos_ireq),
       .mouse_buttons  (mouse_buttons),
-      .video_bow_o    (video_bow)
+      .video_bow_o    (video_bow),
+      .sd_look        (sd_look),
+      .sd_phys        (sd_phys),
+      .sd_ready       (sd_ready),
+      .sd_walk_ready  (sd_walk_ready),
+      .sd_ack_at      (sd_ack_at),
+      .sd_hit         (sd_hit),
+      .sd_word        (sd_word),
+      .sd_commit      (sd_commit),
+      .sd_wr          (sd_wr),
+      .sd_wdata       (sd_wdata),
+      .sd_until       (sd_until),
+      .sd_done        (sd_done),
+      .sd_fill_v      (sd_fill_v),
+      .sd_fill_word   (sd_fill_word),
+      .sd_wdone       (sd_wdone),
+      .wb_hold        (wb_hold),
+      .wb_rel_v       (wb_rel_v),
+      .wb_rel         (wb_rel)
   );
 
   // --- the disk controller, the first Xbus slave that is not main memory ---
@@ -1300,6 +1378,9 @@ module cadr_machine #(
   // pages, `quux_block_disk.sv`).
   logic        ch_req, ch_write, ch_done, ch_nxm;
   logic [PHYS_BITS-1:0] ch_addr;
+  if (PAGED) begin : g_ch_addr_main
+    assign ch_addr[PHYS_BITS-1] = 1'b0;
+  end
   logic [WORD_BITS-1:0] ch_wdata, ch_rdata;
 
   // **ON QUUX THE DISK IS BLOCK-DISK AND NOTHING ELSE** (`quux_block_disk.sv`,
@@ -1342,7 +1423,9 @@ module cadr_machine #(
       .store_miss (store_miss),
       .ch_req   (ch_req),
       .ch_write (ch_write),
-      .ch_addr  (ch_addr),
+      // Main memory alone, 28 bits; revision 14's bus address has `<28>`
+      // clear for it (A14.1).
+      .ch_addr  (ch_addr[(WORD_BITS > 32 ? 28 : 22)-1:0]),
       .ch_wdata (ch_wdata),
       .ch_done  (ch_done),
       .ch_nxm   (ch_nxm),
@@ -1445,7 +1528,8 @@ module cadr_machine #(
         .SCREEN_WPL   (VIDEO_WIDTH / 32),
         .SCREEN_BUFFER(VIDEO_BUFFER),
         .BOARD_NAME_WORDS(BOARD_NAME_WORDS),
-        .WORD_BITS    (WORD_BITS)
+        .WORD_BITS    (WORD_BITS),
+        .TLB_ENTRIES  (PAGED ? TLB_ENTRIES : 0)
     ) feature_page (
         .clk          (clk),
         .rst          (rst),
@@ -1503,7 +1587,11 @@ module cadr_machine #(
         .ro_fd_bases  (fd_ro_bases),
         .ro_fd_resp_base(fd_ro_resp_base),
         .ro_fd_indexes(fd_ro_indexes),
-        .ro_fd_flags  (fd_ro_flags)
+        .ro_fd_flags  (fd_ro_flags),
+        .ms_we        (ms_we),
+        .ms_idx       (ms_idx),
+        .ms_wdata     (ms_wdata),
+        .ms_rdata     (ms_rdata)
     );
 
     // **THE REGISTER PAGE'S DEVICES ON THE READOUT, AT SELECTOR 12**: what a
@@ -1601,6 +1689,12 @@ module cadr_machine #(
   assign tm_idx             = 3'd0;
   assign tm_wdata           = 24'd0;
   assign page_reset_devices = 1'b0;
+  // Nor revision 14's words.
+  assign ms_we    = 1'b0;
+  assign ms_idx   = 3'd0;
+  assign ms_wdata = 32'd0;
+  logic unused_ms;
+  assign unused_ms = ^ms_rdata;
   // The page's wires the CADR does not read, and its readout: selector 12
   // reads `RO_NO_MEMORY` on the CADR, as every selector it does not map.
   assign quux_ro_word = 48'hA5A5_5A5A_A5A5;

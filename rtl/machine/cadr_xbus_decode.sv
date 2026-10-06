@@ -83,9 +83,12 @@ module cadr_xbus_decode #(
     // The decode block-disk's channel takes on revision 13: main memory
     // alone.
     parameter int unsigned CHANNEL   = 0,
+    // 13, or 14: revision 14's 29-bit bus address (A14.1).
+    parameter int unsigned REVISION  = 13,
     localparam bit          REV13     = MACHINE == "quux" && WORD_BITS > 32,
+    localparam bit          PAGED     = REV13 && REVISION >= 14,
     localparam bit          MAIN_ONLY = CHANNEL != 0,
-    localparam int unsigned PHYS_BITS = REV13 ? 28 : 22
+    localparam int unsigned PHYS_BITS = PAGED ? 29 : REV13 ? 28 : 22
 ) (
     // The bottom two bits pick a register *inside* a device rather than which
     // device: every region in Xbus I/O space is aligned to at least four
@@ -165,7 +168,24 @@ module cadr_xbus_decode #(
   assign color_buffer  = phys[21:15] == 7'd122;      // 0o17200000, 32768 words
   assign color_control = phys[21:3]  == 19'd507901;  // 0o17377750, 8 words
 
-  if (REV13) begin : g_quux13
+  if (PAGED) begin : g_quux14
+    // **REVISION 14'S BUS ADDRESS** (A14.1; muir's `busint::decode_quux_14`):
+    // with `<28>` clear, main memory up to the boards' end and nothing past
+    // it; with `<28>` set, the device window at `<27:0>`: the register page
+    // at `1777777400`, frame buffer 0 from the window's base for the video
+    // controller's words, on the memory bus with main memory, and nothing
+    // else, the reserved slices and pages among it.
+    logic register_page, window, main;
+    assign register_page = phys[28] && (&phys[27:8]);
+    assign window        = phys[28] && (phys[27:0] < 28'(VIDEO_WORDS));
+    assign main          = !phys[28] && phys[27:16] < 12'(boards);
+    assign device = register_page && !MAIN_ONLY;
+    assign memory = (window && !MAIN_ONLY) || main;
+    assign nxm    = !memory && !device;
+    logic unused_rev12;
+    assign unused_rev12 = ^{tv_buffer, tv_control, disk_regs, color_buffer, color_control, color_tv,
+                            in_window, xbus_io};
+  end else if (REV13) begin : g_quux13
     // Revision 13's 28-bit space (see the header), in as few levels as it
     // can be: this is the far end of the map, and has two ticks.  The window
     // is the top 4M words, `phys<27:22>` all ones, so its offset is

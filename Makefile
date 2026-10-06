@@ -253,18 +253,44 @@ QUUX13_G_devices_hd   := -GVIDEO_WIDTH=1920 -GVIDEO_HEIGHT=1080 -GBOARD_NAME='"F
                          -CFLAGS -DCADR_TB_VIDEO_WORDS=64800u
 QUUX13_G_space_hd     := $(QUUX13_G_devices_hd)
 QUUX13_G_devices_name := -GBOARD_NAME='"DE25-Nano"'
+# **REVISION 14** (contract G3 revision 14 with its appendix A14): the
+# programs of `golden/src/quux14.rs`, each a group of the scenarios muir's
+# `tests/revision_14.rs` holds revision 14 to, traced on muir's
+# `Geometry::QUUX_14` and held against the whole machine built at
+# `REVISION` 14, as `quux14_<program>`: `windows` and `space` the address
+# space and its windows, `walk` and `noentry` the walk and the TLB,
+# `empty` and `empty8k` the sweep at 4,096 and 8,192 entries (`TLB_ENTRIES`),
+# `mapmd` `MAP(MD)` and the map-bit dispatches, `lc` and `fetch` the location
+# counter at 34 bits and condition 12, `words` the register page's words
+# 220-224, `writeback`, `setter`, `setter0` and `wbhold` the write-backs and
+# the setter, `redirect` the PDL buffer redirect, `fiddle` and `double` a
+# port-B fill against a direct write and a double miss, `redirectam` and
+# `fiddleam` those two with nothing to write back, and `inflight`,
+# `inflightfb` and `inflight0` walks behind a cycle in flight and without
+# one (clarification 74).
+QUUX14_PROGRAMS := windows space walk noentry empty empty8k mapmd lc fetch words writeback setter setter0 wbhold redirect redirectam fiddle fiddleam double inflight inflightfb inflight0
+QUUX14_G_empty8k := -GTLB_ENTRIES=8192
+# **AND THE TLB'S READ-DURING-WRITE WINDOW** (`quux_tlb.sv`): the programs
+# that write it most, `double` (both ports' fills, at one index), `mapmd` (the
+# operations on port B), `empty` (the sweep, both ports), and `inflight` and
+# `inflight0` (walks behind a cycle in flight, and without one), on the
+# machine under `CADR_RDW_POISON`, where a port read in a tick the other port
+# writes its entry takes the complement and a port's own read and write in
+# one tick stops the run; and under `CADR_RDW_POISON_CACHE`, the same of the
+# cache's RAMs, which a walk's reads share with the processor's.
+QUUX14_POISON := double mapmd empty inflight inflightfb inflight0
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
 # records stay, and `mutations/run.py`'s `PENDING` names them in the same
-# words.  None is pending: revision 9's real-time clock and file device
-# (contract Q9), which held `map` and `page`, are built.
+# words.  None is pending.
 QUUX_PENDING :=
 QUUX_PENDING_WHY :=
 # The checks QUUX is held to at a K, each at every K of `QUUX_KS`.
 CHECK_QUUX_AT = dispatch_write_order13 quux13_readout_window \
        $(QUUX13_PROGRAMS:%=quux13_%) $(QUUX13_PORTED:%=quux13_%) rdw_poison_quux13 \
-       rdw_poison_quux13_mem rdw_poison_quux13_pf quux13_port
+       rdw_poison_quux13_mem rdw_poison_quux13_pf quux13_port \
+       $(QUUX14_PROGRAMS:%=quux14_%) $(QUUX14_POISON:%=rdw_poison_quux14_%)
 CHECK_QUUX_AT_L1 = $(QUUX13_PORTED_L1:%=quux13_%) phase_gen
 CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(foreach q,$(QKL1S),$(CHECK_QUUX_AT_L1:%=$(BUILD)/%.quux.$(q).pass)) \
@@ -928,7 +954,8 @@ $(BUILD)/sstep.pass: $(BUILD)/obj_sstep/Vcadr_microcycle \
 # now land: they used to be answered from the trace by the testbench, and that
 # line is gone. It joins `nomem`, `ddr_boot`, `mem_count`, `arty` and `probe`
 # through this variable, all of which build the whole machine.
-MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/quux_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
+MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/quux_phase_gen.sv rtl/machine/quux_tlb.sv rtl/machine/quux_mmu.sv \
+               rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
                rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv rtl/plumbing/cadr_xbus_ddr.sv \
                rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv rtl/machine/cadr_tv.sv \
                rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
@@ -1274,6 +1301,7 @@ $(BUILD)/quux_%_prom.hex: $(QUUX_GOLDEN) | $(BUILD)
 # **AND REVISION 13'S PROGRAMS** (`QUUX13_PROGRAMS`), assembled at 36000 with
 # revision 13's fields; their traces and machines are in `QUUX_TIMED`.
 QUUX13_GOLDEN := golden/src/quux13.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Cargo.toml
+QUUX14_GOLDEN := golden/src/quux14.rs golden/src/trace.rs $(GOLDEN_AXIS) golden/Cargo.toml
 # Revision 13's main memory in the machine the programs are held against,
 # and in the testbench's DDR: 0x0A246000, 4 KiB aligned as G1 asks.
 QUUX13_TB_BASE := 170156032
@@ -1283,6 +1311,10 @@ $(BUILD)/quux13_%_prom.hex: $(QUUX13_GOLDEN) | $(BUILD)
 # And `golden/src/quux.rs`'s programs on QUUX (`QUUX13_PORTED`).
 $(QUUX13_PORTED_ALL:%=$(BUILD)/quux13_%_prom.hex): $(BUILD)/quux13_%_prom.hex: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine quux --revision 13 --prom > $@
+# Revision 14's programs (`QUUX14_PROGRAMS`).
+.PRECIOUS: $(BUILD)/quux14_%_prom.hex
+$(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
+	$(GOLDEN) --release --bin quux14 -- --program $* --prom > $@
 
 $(BUILD)/quux_%.golden: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine cadr > $@
@@ -1370,6 +1402,51 @@ $$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_
 $$(BUILD)/quux13_%.quux.$(1).pass: $$(BUILD)/obj_quux13_%_quux_$(1)/Vcadr_machine $$(BUILD)/quux13_%.quux.$(1).golden \
                                   $$(BUILD)/quux13_%_prom.hex $$(BUILD)/sync_prom.hex
 	$$(BUILD)/obj_quux13_$$*_quux_$(1)/Vcadr_machine $$(BUILD)/quux13_$$*.quux.$(1).golden
+	@touch $$@
+
+# Revision 14's programs, the machine at `REVISION` 14.
+.PRECIOUS: $$(BUILD)/quux14_%.quux.$(1).golden $$(BUILD)/obj_quux14_%_quux_$(1)/Vcadr_machine
+
+$$(BUILD)/quux14_%.quux.$(1).golden: $$(QUUX14_GOLDEN) | $$(BUILD)
+	$$(GOLDEN) --release --bin quux14 -- --program $$* --machine quux --sync-cycle-ticks $(2) --sync-ilong-ticks $(3) > $$@
+
+$$(BUILD)/obj_quux14_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_quux14_$$*_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GREVISION=14 -GSYNC_K=$(2) -GSYNC_L=$(3) $$(QUUX14_G_$$*) \
+	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux14_$$*_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+$$(BUILD)/quux14_%.quux.$(1).pass: $$(BUILD)/obj_quux14_%_quux_$(1)/Vcadr_machine $$(BUILD)/quux14_%.quux.$(1).golden \
+                                  $$(BUILD)/quux14_%_prom.hex $$(BUILD)/sync_prom.hex
+	$$(BUILD)/obj_quux14_$$*_quux_$(1)/Vcadr_machine $$(BUILD)/quux14_$$*.quux.$(1).golden
+	@touch $$@
+
+$$(BUILD)/obj_rdw_poison_quux14_%_quux_$(1)/Vcadr_machine: $$(MACHINE_SRC) tb/cadr_machine_tb.cpp tb/cadr_tick.h | $$(BUILD)
+	$$(VERILATOR) $$(VFLAGS) +define+CADR_GAP_MONITOR +define+CADR_RDW_POISON +define+CADR_RDW_POISON_CACHE -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $$(BUILD)/obj_rdw_poison_quux14_$$*_quux_$(1) \
+	    -GMACHINE='"quux"' -GWORD_BITS=40 -GREVISION=14 -GSYNC_K=$(2) -GSYNC_L=$(3) $$(QUUX14_G_$$*) \
+	    -GQUUX13_MAIN_BASE=$(QUUX13_TB_BASE) -CFLAGS -DQUUX13_TB_BASE=$(QUUX13_TB_BASE)u \
+	    -GPROM_HEX='"$$(abspath $$(BUILD))/quux14_$$*_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$$(abspath $$(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_machine $$(MACHINE_SRC) $$(abspath tb/cadr_machine_tb.cpp)
+
+# The run agrees with muir under the poison, the TLB was written (a program
+# that never wrote it would pass with the window unexercised), and no port
+# was read through the other's write of its entry: the machine is built never
+# to, and a read through it that nothing used would pass the comparison.
+$$(BUILD)/rdw_poison_quux14_%.quux.$(1).pass: $$(BUILD)/obj_rdw_poison_quux14_%_quux_$(1)/Vcadr_machine \
+                                             $$(BUILD)/quux14_%.quux.$(1).golden \
+                                             $$(BUILD)/quux14_%_prom.hex $$(BUILD)/sync_prom.hex
+	@set -e; $$(BUILD)/obj_rdw_poison_quux14_$$*_quux_$(1)/Vcadr_machine $$(BUILD)/quux14_$$*.quux.$(1).golden \
+	    > $$(BUILD)/rdw_poison_quux14_$$*.quux.$(1).log 2>&1 \
+	  || { cat $$(BUILD)/rdw_poison_quux14_$$*.quux.$(1).log; exit 1; }; \
+	 grep -q "^rdw_poison: the TLB written at [1-9][0-9]* ticks" $$(BUILD)/rdw_poison_quux14_$$*.quux.$(1).log \
+	  || { echo "rdw_poison_quux14_$$*: the TLB was never written"; exit 1; }; \
+	 grep -q "read through the other port's write 0 times" $$(BUILD)/rdw_poison_quux14_$$*.quux.$(1).log \
+	  || { grep "^rdw_poison: the TLB" $$(BUILD)/rdw_poison_quux14_$$*.quux.$(1).log; \
+	       echo "rdw_poison_quux14_$$*: a port read through the other's write"; exit 1; }; \
+	 grep "^rdw_poison: the TLB\|^ok:" $$(BUILD)/rdw_poison_quux14_$$*.quux.$(1).log
 	@touch $$@
 
 # **AND REVISION 13'S READ-DURING-WRITE WINDOW** (see "the read-during-write
@@ -3177,7 +3254,10 @@ MUTANT_QUUX = $(BUILD)/boot_prom.quux13.hex \
               $(QUUX13_PORTED_ALL:%=$(BUILD)/quux13_%_prom.hex) \
               $(BUILD)/dispatch_write_order13.quux.k4.golden \
               $(QUUX13_PORTED:%=$(BUILD)/quux13_%.quux.k4.golden) \
-              $(QUUX13_PORTED_L1:%=$(BUILD)/quux13_%.quux.k4l1.golden)
+              $(QUUX13_PORTED_L1:%=$(BUILD)/quux13_%.quux.k4l1.golden) \
+              $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%_prom.hex) \
+              $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%.quux.k4.golden) \
+              $(BUILD)/quux14_windows.quux.k5.golden $(BUILD)/quux14_double.quux.k5.golden
 
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
@@ -4403,7 +4483,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
                           $(wildcard $(COMMON_SRC)/cadr/*.h) | $(BUILD)
 	$(MAKE) -C $(CHECKPOINT_SRC) check WORK=$(CHECKPOINT_WORK) CHK=$(CHECKPOINT_WORK)/out.chk \
 	    QCHK=$(CHECKPOINT_WORK)/quux.chk Q13CHK=$(CHECKPOINT_WORK)/quux13.chk \
-	    Q13HDCHK=$(CHECKPOINT_WORK)/quux13hd.chk Q8_DISKS=$(Q8_DISKS)
+	    Q13HDCHK=$(CHECKPOINT_WORK)/quux13hd.chk Q14CHK=$(CHECKPOINT_WORK)/quux14.chk Q8_DISKS=$(Q8_DISKS)
 	$(MAKE) -C $(CHECKPOINT_SRC) all WORK=$(CHECKPOINT_WORK) COMMON=host READOUT=host DISK=host
 	$(MAKE) -C $(CHECKPOINT_SRC) clean WORK=$(CHECKPOINT_WORK)
 	$(MAKE) -C $(CHECKPOINT_SRC) mutants WORK=$(CHECKPOINT_WORK)
@@ -4502,6 +4582,12 @@ QUUX_CHECKPOINT_BIN := golden/target/release/quux_checkpoint
 # caught there, and mutant 40, the resume line without the size, by the
 # package's own check of the line.
 CHECKPOINT_QUUX13HD_MUTANTS := 38 39
+# **AND REVISION 14'S** (contract G3 revision 14, A14.14): the same machine at
+# revision 14, `quux_checkpoint --revision 14`, with no map levels and the
+# memory system's words and the redirect's copies; mutants 41 to 46 caught on
+# its legs, and 47, LC's `<33:32>` written 0, by the package's own check, as
+# muir's file for a fresh engine holds those bits at 0.
+CHECKPOINT_QUUX14_MUTANTS := 41 42 43 44 45 46
 
 $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoint.rs $(GOLDEN_AXIS) golden/src/trace.rs \
                                golden/Cargo.toml | $(BUILD)
@@ -4574,6 +4660,44 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	 grep -q "resume line is 0x1, the reference says 0x0" $$W/mut-40.out \
 	   || { echo "checkpoint.quux: mutant 40 failed, and not on the resume line: BROKEN"; cat $$W/mut-40.out; exit 1; }; \
 	 echo "checkpoint.quux: mutant 40 caught by the resume line's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-40.out)"
+	$(GOLDEN) --release --bin quux_checkpoint -- $(CHECKPOINT_WORK)/quux14-muir.chk \
+	    --machine quux --sync-cycle-ticks 4 --sync-ilong-ticks 0 --revision 14
+	@set -e; W=$(CHECKPOINT_WORK); G=$(QUUX_CHECKPOINT_BIN); \
+	 T="--revision 14 --machine quux --sync-cycle-ticks 4 --sync-ilong-ticks 0"; \
+	 cmp $$W/quux14.chk $$W/quux14-muir.chk \
+	   || { echo "checkpoint.quux: revision 14's file is not muir's own for the same machine"; exit 1; }; \
+	 $$G --resume-and-save $$W/quux14.chk $$W/quux14-back.chk $$T > $$W/quux14-muir.log 2>&1 \
+	   || { echo "checkpoint.quux: muir REFUSED revision 14's file"; sed -n '$$p' $$W/quux14-muir.log; exit 1; }; \
+	 cmp $$W/quux14.chk $$W/quux14-back.chk \
+	   || { echo "checkpoint.quux: muir loaded revision 14's file and saved DIFFERENT bytes"; exit 1; }; \
+	 grep -q "$(CHECKPOINT_QUUX13_RESUMED)" $$W/quux14-muir.log \
+	   || { echo "checkpoint.quux: muir did not resume revision 14's machine as written:"; \
+	        cat $$W/quux14-muir.log; exit 1; }; \
+	 echo "checkpoint.quux: revision 14, $$(stat -c%s $$W/quux14.chk) bytes, muir's own for the same machine,"; \
+	 echo "checkpoint.quux: loaded and saved back identically, $$(sed 's/^resumed: //' $$W/quux14-muir.log)"; \
+	 for m in $(CHECKPOINT_QUUX14_MUTANTS); do \
+	   $$W/checkpoint_test-$$m $$W $(Q8_DISKS) $$W/q14mut-$$m-cadr.chk $$W/q14mut-$$m-q12.chk \
+	       $$W/q14mut-$$m-q13.chk $$W/q14mut-$$m-q13hd.chk $$W/q14mut-$$m.chk > $$W/q14mut-$$m.out 2>&1 \
+	     || { echo "checkpoint.quux: mutant $$m did not build or did not run: BROKEN"; \
+	          cat $$W/q14mut-$$m.out; exit 1; }; \
+	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/q14mut-$$m.out); \
+	   if ! $$G --resume-and-save $$W/q14mut-$$m.chk $$W/q14mut-$$m-back.chk $$T \
+	            > $$W/q14mut-$$m.log 2>&1; then \
+	     echo "checkpoint.quux: mutant $$m caught, muir refused it --- $$what"; \
+	   elif ! cmp -s $$W/q14mut-$$m.chk $$W/q14mut-$$m-back.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught, muir saved other bytes --- $$what"; \
+	   elif ! cmp -s $$W/q14mut-$$m.chk $$W/quux14-muir.chk; then \
+	     echo "checkpoint.quux: mutant $$m caught, not muir's own file --- $$what"; \
+	   else \
+	     echo "checkpoint.quux: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
+	   fi; \
+	 done; \
+	 if $$W/checkpoint_test-47 $$W $(Q8_DISKS) > $$W/mut-47.out 2>&1; then \
+	   echo "checkpoint.quux: mutant 47 SURVIVED the package's check of LC<33:32>"; exit 1; \
+	 fi; \
+	 grep -q "^revision 14's LC<33:32>, as the engine's last byte is 0x0, the reference says 0x2" $$W/mut-47.out \
+	   || { echo "checkpoint.quux: mutant 47 failed, and not on LC<33:32>: BROKEN"; cat $$W/mut-47.out; exit 1; }; \
+	 echo "checkpoint.quux: mutant 47 caught by the package's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-47.out)"
 	@touch $@
 
 # ------------------------------------ the I/O board's two Linux programs

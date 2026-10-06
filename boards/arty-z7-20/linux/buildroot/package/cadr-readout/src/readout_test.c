@@ -418,8 +418,8 @@ int main(void)
 	{
 		const uint64_t sig = ((uint64_t)IMG_QUUX_MARK << 32) | (4ull << 24) | (1ull << 16);
 		const struct { uint64_t id; int rev; } cases[] = {
-			{ 0, 0 }, { sig, 12 }, { sig | IMG_QUUX_ID_13, 13 },
-			{ sig | 0x00C4u, -1 }, { sig | 0x00D5u, -1 },
+			{ 0, 0 }, { sig, 12 }, { sig | IMG_QUUX_ID_13, 13 }, { sig | IMG_QUUX_ID_14, 14 },
+			{ sig | 0x00C4u, -1 }, { sig | 0x00D5u, -1 }, { sig | 0x00E5u, -1 },
 		};
 		for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
 			m->quux_id = cases[i].id;
@@ -465,6 +465,36 @@ int main(void)
 		if (w.dmem[IMG_DMEM_WORDS - 1] != m->dmem[IMG_DMEM_WORDS - 1] ||
 		    w.dmem[IMG_DMEM_WORDS] != 0 || w.l1_map[IMG_L1_WORDS] != 0)
 			fail("the dispatch memory past 2,048", w.dmem[IMG_DMEM_WORDS], 0);
+		img_free(&w);
+		// Revision 14: revision 13's arrays and words, and no map levels,
+		// which are left zero and never asked for (A14.14).
+		if (img_alloc_revision(&w, 1, 1, 14) != 0) {
+			fprintf(stderr, "out of memory\n");
+			return 1;
+		}
+		if (!w.rev13 || !w.rev14 || w.dmem_words != 4096 || w.l1_words != 8192 ||
+		    w.l2_words != 4096 || w.word_bits != 40 || w.main)
+			fail("revision 14's arrays", w.dmem_words, 4096);
+		w.quux = 0;
+		const unsigned long before = r.reads;
+		if (ro_read_machine(&r, &w) != 0)
+			fail("revision 14's window would not give its words up", r.stale, 0);
+		if (w.amem[IMG_AMEM_WORDS - 1] != poison(IMG_SEL_AMEM, IMG_AMEM_WORDS - 1, 40))
+			fail("revision 14's A memory at 40 bits", w.amem[IMG_AMEM_WORDS - 1],
+			     poison(IMG_SEL_AMEM, IMG_AMEM_WORDS - 1, 40));
+		unsigned nonzero = 0;
+		for (unsigned i = 0; i < w.l1_words; ++i)
+			nonzero += w.l1_map[i] != 0;
+		for (unsigned i = 0; i < w.l2_words; ++i)
+			nonzero += w.l2_map[i] != 0;
+		if (nonzero != 0 || m->l1[0] == 0)
+			fail("revision 14's map levels, read", nonzero, 0);
+		// The reads: revision 13's less both map levels' 12,288 words,
+		// each an address written and three words read.
+		if (r.reads - before > 3u * (IMG_PROM_WORDS + IMG_IMEM_WORDS + IMG_AMEM_WORDS +
+					     IMG_MMEM_WORDS + IMG_QUUX_PDL_WORDS + IMG_SPC_WORDS +
+					     IMG_DMEM_WORDS_13 + IMG_OPCS + 21) + 8u)
+			fail("revision 14's reads, which ask for the maps", r.reads - before, 0);
 		img_free(&w);
 		for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
 			m->amem[i] = (uint32_t)poison(IMG_SEL_AMEM, i, 32);

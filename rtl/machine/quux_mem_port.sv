@@ -145,9 +145,16 @@ module quux_mem_port
     // and 0 the board's layout's, `cadr_ddr_map::QUUX13_MAIN_BASE`, which
     // revision 13's device tree reserves.  Unread below revision 13.
     parameter logic [31:0] MAIN13_BASE = 32'd0,
+    // **REVISION 14** (contract G3 revision 14, A14.1 and A14.6): the bus
+    // address is 29 bits, the frame buffer in the device window at `<28>`,
+    // and the cache keys all 29; the walk and the write-back reach the cache
+    // and main memory through the side seam below; and a cycle whose
+    // reference writes back waits behind its write-back.  Everything else is
+    // revision 13's port.
+    parameter bit          PAGED       = 1'b0,
     localparam bit          WIDE       = WORD_BITS > 32,
-    localparam int unsigned PHYS_BITS  = WIDE ? 28 : 22,
-    localparam int unsigned VADDR_BITS = WIDE ? 28 : 24,
+    localparam int unsigned PHYS_BITS  = PAGED ? 29 : WIDE ? 28 : 22,
+    localparam int unsigned VADDR_BITS = PAGED ? 32 : WIDE ? 28 : 24,
     // A line's beats as the memory's side returns them: two 64-bit beats of
     // four words, or on revision 13 five of packed storage.
     localparam int unsigned RLINE_BITS = WIDE ? 320 : 128
@@ -236,7 +243,50 @@ module quux_mem_port
     output var logic [PHYS_BITS-1:0]  pf_nx_phys,
     output var logic [WORD_BITS-1:0]  pf_nx_word,
     output var logic         pf_nx_fetch_v,
-    output var logic [VADDR_BITS-1:0] pf_nx_fetch_vaddr
+    output var logic [VADDR_BITS-1:0] pf_nx_fetch_vaddr,
+
+    // --- revision 14 (`quux_mmu.sv`).  Main memory's boards: a walk's read
+    // past main memory's end reads 0 and fills its line with zeros, in muir's
+    // time, asking main memory nothing (A14.6, clarification 3).
+    input  var logic [10:0]  boards,
+    // The side seam (`quux_mmu.sv`): the walk's reads and the write-back's,
+    // through the cache's side lookup (`quux_cache.sv`).  `sd_look` looks
+    // `sd_phys` up when `sd_ready` says the cache's read port is free, and
+    // over the next tick `sd_hit` and `sd_word` answer; in that tick
+    // `sd_commit` takes the read, touching the order and filling the line
+    // on a miss as a processor's read does (`MemoryPort::walk_read`), its
+    // line arriving later on `sd_fill_v` (zeros past main memory's end,
+    // asking main memory nothing); or `sd_wr` writes `sd_wdata` into a line
+    // holding it and into the write buffer (`walk_write`), `sd_wdone` when it
+    // is in.  `sd_until` is the instant either starts at in muir's time,
+    // and `sd_done` its end, both in the frame of the tick of the commit.
+    // `sd_ready` is the write-back's, which runs while its cycle waits;
+    // `sd_walk_ready` the walker's, which waits for the cycle in flight to
+    // be acknowledged (clarification 74), and `sd_ack_at` is the instant of
+    // the last acknowledgment, which a walk's first read is taken no
+    // earlier than.
+    input  var logic         sd_look,
+    input  var logic [28:0]  sd_phys,
+    output var logic         sd_ready,
+    output var logic         sd_walk_ready,
+    output var logic signed [10:0] sd_ack_at,
+    output var logic         sd_hit,
+    output var logic [39:0]  sd_word,
+    input  var logic         sd_commit,
+    input  var logic         sd_wr,
+    input  var logic [39:0]  sd_wdata,
+    input  var logic signed [10:0] sd_until,
+    output var logic signed [10:0] sd_done,
+    output var logic         sd_fill_v,
+    output var logic [39:0]  sd_fill_word,
+    output var logic         sd_wdone,
+    // The cycle the port takes now has a write-back, which goes before it:
+    // its lookup and its answer wait for `wb_rel_v`, `wb_rel` being the
+    // instant the write-back is done (`write_back_until`), in the tick it
+    // is given.
+    input  var logic         wb_hold,
+    input  var logic         wb_rel_v,
+    input  var logic signed [10:0] wb_rel
 );
 
   localparam int unsigned HIT_T = cadr_tick_pkg::ticks(20);
@@ -252,6 +302,7 @@ module quux_mem_port
   // Its argument's low bits are no part of it.
   /* verilator lint_off UNUSEDSIGNAL */
   function automatic logic window(input logic [PHYS_BITS-1:0] p);
+    if (PAGED) return p[PHYS_BITS-1];
     return WIDE && (&p[PHYS_BITS-1:PHYS_BITS-6]);
   endfunction
   /* verilator lint_on UNUSEDSIGNAL */
@@ -362,11 +413,20 @@ module quux_mem_port
   logic [LINE_WORDS*WB-1:0] fill_words;
   logic [WB-1:0] update_word;
 
-  quux_cache #(.WORD_BITS(WORD_BITS)) cache (
+  // **REVISION 14'S OTHER LOOKUPS** (`quux_mmu.sv`): the side seam's, and
+  // a cycle's own taken again after its write-back (`relook`), whose side
+  // lookups have moved the cache's held address.  Neither meets the grant's
+  // own: the side seam waits for an idle port at no master clock edge, and
+  // a relook is the cycle's.  Declared here; the side machine is below.
+  logic                 relook, c_fill_raw, c_s_fill, c_s_hit, s_fill_owed, s_vfill_q;
+  logic [PHYS_BITS-1:0] cyc_phys;
+  logic [WB-1:0]        c_s_word;
+
+  quux_cache #(.WORD_BITS(WORD_BITS), .PAGED(PAGED)) cache (
       .clk        (clk),
       .rst        (rst),
-      .look       (idle && mclk),
-      .look_phys  (phys),
+      .look       ((idle && mclk) || relook),
+      .look_phys  (relook ? cyc_phys : phys),
       .line_phys  (line_phys),
       .hit        (c_hit),
       .hit_way    (c_hit_way),
@@ -383,7 +443,16 @@ module quux_mem_port
       .fill_line  (fill_words),
       .invalidate (c_inval),
       .snoop      (c_snoop),
-      .snoop_phys (snoop_phys)
+      .snoop_phys (snoop_phys),
+      .slook      (PAGED && sd_look),
+      .slook_phys (PHYS_BITS'(sd_phys)),
+      .s_hit      (c_s_hit),
+      .s_word     (c_s_word),
+      .s_touch    (PAGED && sd_commit),
+      .s_fill     (c_s_fill),
+      .s_fill_line(s_vfill_q ? '0 : fill_words),
+      .s_update   (PAGED && sd_wr),
+      .s_update_word(WB'(sd_wdata))
   );
 
   // The way and the victim are the cache's business: it keeps them for the
@@ -537,7 +606,9 @@ module quux_mem_port
 
   logic go_write, go_fill, go_u, through;
   assign go_write = wb_valid && !wb_sent;
-  assign go_fill  = fill_owed && !fill_have && !go_write;
+  // A side read's line is filled as a processor read's is (`s_fill_owed`,
+  // revision 14), never while one of the processor's is owed.
+  assign go_fill  = (fill_owed || s_fill_owed) && !fill_have && !go_write;
   // The order: the buffer's write, then a line, then the uncached word.
   // Decided here once, for the wires and for the state both.
   assign go_u     = u_req && !go_write && !go_fill;
@@ -589,10 +660,14 @@ module quux_mem_port
   assign u_done    = through && mem_done;
   assign u_rdata   = u_word13;
 
-  assign c_fill  = (mstate == M_BUSY) && mem_done && (op == OP_FILL);
+  assign c_fill_raw = (mstate == M_BUSY) && mem_done && (op == OP_FILL);
+  assign c_fill     = c_fill_raw && !s_fill_owed;
+  assign c_s_fill   = PAGED && ((c_fill_raw && s_fill_owed) || s_vfill_q);
   assign c_snoop = through && mem_done && u_write && u_main;
   assign snoop_phys = u_phys;
-  assign drained = !wb_valid && !fill_owed && (mstate == M_IDLE) && !mem_done;
+  logic s_wpend;
+  assign drained = !wb_valid && !fill_owed && !s_fill_owed && !s_vfill_q && !s_wpend
+                && (mstate == M_IDLE) && !mem_done;
 
   // The line's words out of its beats, for the fill standing.
   if (WIDE) begin : g_unpack_13
@@ -603,6 +678,79 @@ module quux_mem_port
   end else begin : g_unpack_12
     assign fill_words = mem_rline;
   end
+
+  // ------------------------------------------------- revision 14's time
+  //
+  // muir's arithmetic for revision 14 (`MemoryPort::memory_cycle`,
+  // `walk_read`, `walk_write`, `write_back_until`), in signed counts against
+  // the tick they are read in, as `quux_mmu.sv` keeps its own: over the tick
+  // after an edge e, an instant less e.  Signed, because a side request is
+  // taken a few ticks after the instant it starts at, and the instants it
+  // is compared with may be earlier still.  Revision 13's countdowns above
+  // stay revision 13's.
+  localparam logic signed [10:0] FLOOR = -11'sd512;
+  function automatic logic signed [10:0] down(input logic signed [10:0] v);
+    return (v == FLOOR) ? v : v - 11'sd1;
+  endfunction
+  function automatic logic signed [10:0] smax(input logic signed [10:0] x, input logic signed [10:0] y);
+    return (x > y) ? x : y;
+  endfunction
+  // A line fill's time at `p`: muir's `fill_ns_at`, a tick a beat past two,
+  // two for an address at or past revision 13's window, three below it.
+  function automatic logic signed [10:0] fill_at(input logic [PHYS_BITS-1:0] p);
+    return 11'(READ_T) + ((32'(p) >= 32'o1760000000) ? 11'sd2 : 11'sd3);
+  endfunction
+  logic signed [10:0] free_s, buf_s, g_s, wbu_s, ack_s;
+  // The cycle taken waits for its write-back.
+  logic wbw;
+  // The side seam's state: the address looked up, past main memory or not,
+  // and a write waiting for the buffer.
+  logic [PHYS_BITS-1:0] s_phys_q;
+  logic                 s_virt_q;
+  logic [WB-1:0]        s_wword;
+  assign sd_ready  = PAGED && (state == IDLE || state == REQUESTED || (state == GRANTED && wbw))
+                  && !fill_owed && !s_fill_owed && !s_vfill_q && !s_wpend && !(idle && mclk) && !relook;
+  // The cycle looks itself up again in the tick the write-back ends, unless
+  // the write-back's word goes into the cycle's own set then or a tick
+  // before: the RAM's write is a tick after `sd_wr`, and a lookup in the
+  // set it writes, at its edge or before it, would read the word without
+  // the bits.  Then it waits, the instant held, and decides later; muir's
+  // arithmetic still sets its answer.
+  logic rel_pend, s_wr_q, rel_clash;
+  logic signed [10:0] rel_q, rel_now;
+  assign rel_clash = (sd_wr || s_wr_q) && s_phys_q[10:OFF_BITS] == cyc_phys[10:OFF_BITS];
+  assign rel_now   = rel_pend ? rel_q : wb_rel;
+  assign relook    = PAGED && state == GRANTED && wbw && (wb_rel_v || rel_pend) && !rel_clash;
+  // **A WALK'S READ WAITS FOR THE CYCLE IN FLIGHT** (clarification 74): the
+  // walker looks only with no cycle granted, or from the tick the cycle is
+  // acknowledged, `ACKED`, its line landed by then; never while a cycle
+  // waits for its write-back or its answer.  The cache then serves one
+  // lookup at a time.
+  assign sd_walk_ready = PAGED && !(idle && mclk) && !s_fill_owed && !s_vfill_q && !s_wpend
+                      && (((state == IDLE || state == REQUESTED) && !fill_owed)
+                          || (state == ACKED && (fill_have || !fill_owed)));
+  logic signed [10:0] ack_last_s;
+  assign sd_ack_at = ack_last_s;
+  assign sd_hit    = c_s_hit;
+  assign sd_word   = 40'(c_s_word);
+  assign sd_fill_v = c_s_fill;
+  assign sd_fill_word = s_vfill_q ? 40'd0 : 40'(fill_words[WB*s_phys_q[OFF_BITS-1:0] +: WB]);
+  assign sd_wdone  = PAGED && s_wpend && !wb_valid;
+  // The decision's instants, the cycle's (`now`: the grant, or the
+  // write-back's end) and the side request's.
+  logic signed [10:0] now_s, p_start, p_done, p_at, s_start;
+  assign now_s   = smax(g_s, wbu_s);
+  assign p_start = smax(now_s, free_s);
+  assign p_done  = p_start + (write ? 11'(WRITE_T) : fill_at(line_phys));
+  assign p_at    = smax(now_s + 11'(HIT_T), buf_s);
+  assign s_start = smax(sd_until, free_s);
+  // The side's answers: a read's done, hit or miss; a write's buffer.
+  assign sd_done = sd_wr ? smax(sd_until + 11'(HIT_T), buf_s)
+                 : c_s_hit ? sd_until + 11'(HIT_T)
+                 : s_start + fill_at(s_phys_q);
+  // Main memory's words, for a side read past its end.
+  logic [27:0] main_words;
+  assign main_words = 28'({boards, 16'd0});
 
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -642,7 +790,30 @@ module quux_mem_port
       hits        <= 32'd0;
       misses      <= 32'd0;
       for (int w = 0; w < LINE_WORDS; w++) line_word[w] <= '0;
+      free_s      <= FLOOR;
+      buf_s       <= FLOOR;
+      g_s         <= FLOOR;
+      wbu_s       <= FLOOR;
+      ack_s       <= FLOOR;
+      wbw         <= 1'b0;
+      cyc_phys    <= '0;
+      s_virt_q    <= 1'b0;
+      s_phys_q    <= '0;
+      s_wword     <= '0;
+      s_wpend     <= 1'b0;
+      s_wr_q      <= 1'b0;
+      ack_last_s  <= FLOOR;
+      rel_pend    <= 1'b0;
+      rel_q       <= FLOOR;
+      s_vfill_q   <= 1'b0;
+      s_fill_owed <= 1'b0;
     end else begin
+      free_s <= down(free_s);
+      buf_s  <= down(buf_s);
+      g_s    <= down(g_s);
+      wbu_s  <= down(wbu_s);
+      ack_s  <= down(ack_s);
+      ack_last_s <= down(ack_last_s);
       // The countdowns run on their own.
       if (free_in != '0) free_in <= free_in - 1'b1;
       if (buf_in  != '0) buf_in  <= buf_in  - 1'b1;
@@ -663,7 +834,14 @@ module quux_mem_port
               // An address nothing answers is acknowledged in this tick and
               // stands acknowledged from the edge.
               state       <= empty ? ACKED : GRANTED;
-              first       <= !empty;
+              if (empty) ack_last_s <= 11'sd0;
+              // Revision 14: a cycle with a write-back waits for it, and
+              // looks itself up again then (`relook`).
+              first       <= !empty && !(PAGED && wb_hold);
+              wbw         <= PAGED && wb_hold;
+              cyc_phys    <= phys;
+              g_s         <= 11'sd0;
+              wbu_s       <= FLOOR;
               elapsed     <= 6'd0;
               kmem        <= 1'b0;
               kdev        <= 1'b0;
@@ -678,14 +856,47 @@ module quux_mem_port
         end
 
         GRANTED: begin
-          first <= 1'b0;
+          first <= relook;
+          if (relook) begin
+            wbw      <= 1'b0;
+            wbu_s    <= rel_now - 11'sd1;
+            rel_pend <= 1'b0;
+          end else if (PAGED && wbw && wb_rel_v) begin
+            rel_pend <= 1'b1;
+            rel_q    <= wb_rel - 11'sd1;
+          end else if (rel_pend) begin
+            rel_q    <= down(rel_q);
+          end
           if (elapsed != 6'h3F) elapsed <= elapsed + 6'd1;
           if (first) begin
             kmem <= is_memory;
             kdev <= is_device && !is_memory;
           end
           settle <= 1'b0;
-          if (decide) begin
+          if (decide && PAGED) begin
+            // Revision 14's `memory_cycle`: from the grant, or from the
+            // write-back's end, whichever is later; each answer in this
+            // tick's frame, `mack_q` set now for an instant two edges on.
+            read_hit_q <= !write && c_hit;
+            if (write) begin
+              free_s <= p_done - 11'sd1;
+              buf_s  <= p_done - 11'sd1;
+              if (p_at <= 11'sd2 && ready) mack_q <= 1'b1;
+              else ack_s <= p_at - 11'sd1;
+            end else if (c_hit) begin
+              hits <= hits + 32'd1;
+              if (now_s + 11'(HIT_T) <= 11'sd2) mack_q <= 1'b1;
+              else ack_s <= now_s + 11'(HIT_T) - 11'sd1;
+            end else begin
+              misses    <= misses + 32'd1;
+              free_s    <= p_done - 11'sd1;
+              ack_s     <= p_done - 11'sd1;
+              fill_owed <= 1'b1;
+              fill_have <= 1'b0;
+              fill_phys <= line_phys;
+              from_line <= 1'b1;
+            end
+          end else if (decide) begin
             // muir's `memory_cycle`, at the grant: the start is when main
             // memory is free, the done a timing after it, and the write
             // buffer is free when its write is done.  A write's arithmetic
@@ -703,7 +914,7 @@ module quux_mem_port
               done_q     <= done_in;
               settle     <= 1'b1;
             end
-          end else if (settle) begin
+          end else if (settle && !PAGED) begin
             // The read the edge before looked up: `done_q` is counted from
             // the grant, two edges back.
             if (read_hit_q) hits <= hits + 32'd1;
@@ -718,12 +929,14 @@ module quux_mem_port
             end
           end else if (mem_cycle && !first && !acked && !mack_q) begin
             // Waiting: for the count, for the line, for the buffer.
-            if (ack_in <= CW'(HIT_T) && ready
-                && (write || fill_have || c_fill)) begin
+            if ((PAGED ? (ack_s <= 11'sd2) : (ack_in <= CW'(HIT_T))) && ready
+                && (write || (PAGED && read_hit_q) || fill_have || c_fill)) begin
               mack_q <= 1'b1;
             end
           end
           if (acked) begin
+            // The acknowledgment's instant: the next tick, the first `ACKED`.
+            ack_last_s <= 11'sd0;
             state <= ACKED;
             if (mem_cycle && write) begin
               // Into the buffer, at the acknowledgment.
@@ -750,6 +963,44 @@ module quux_mem_port
       if (state == ACKED && fill_have) begin
         fill_owed <= 1'b0;
         fill_have <= 1'b0;
+      end
+
+      // **REVISION 14'S SIDE SEAM** (`quux_mmu.sv`): the instants are
+      // muir's (`walk_read`, `walk_write`); the words are the cache's and
+      // main memory's.
+      if (PAGED) begin
+        s_vfill_q <= 1'b0;
+        if (sd_look) begin
+          s_phys_q <= PHYS_BITS'(sd_phys);
+          s_virt_q <= 29'(sd_phys) >= 29'(main_words);
+        end
+        if (sd_commit) begin
+          if (c_s_hit) hits <= hits + 32'd1;
+          else begin
+            misses <= misses + 32'd1;
+            free_s <= s_start + fill_at(s_phys_q) - 11'sd1;
+            if (s_virt_q) s_vfill_q <= 1'b1;
+            else begin
+              s_fill_owed <= 1'b1;
+              fill_phys   <= s_phys_q;
+            end
+          end
+        end
+        if (c_fill_raw && s_fill_owed) s_fill_owed <= 1'b0;
+        s_wr_q <= sd_wr;
+        if (sd_wr) begin
+          free_s  <= smax(sd_until, free_s) + 11'(WRITE_T) - 11'sd1;
+          buf_s   <= smax(sd_until, free_s) + 11'(WRITE_T) - 11'sd1;
+          s_wpend <= 1'b1;
+          s_wword <= WB'(sd_wdata);
+        end
+        if (s_wpend && !wb_valid) begin
+          wb_valid <= 1'b1;
+          wb_sent  <= 1'b0;
+          wb_phys  <= s_phys_q;
+          wb_word  <= s_wword;
+          s_wpend  <= 1'b0;
+        end
       end
 
       // The memory controller: one operation, held until main memory has

@@ -145,9 +145,13 @@ module cadr_memory_path #(
     // with packed storage at `QUUX13_MAIN_BASE` (`quux_mem_port.sv`).
     parameter int unsigned WORD_BITS = 32,
     parameter logic [31:0] QUUX13_MAIN_BASE = 32'd0,  // 0: `cadr_ddr_map::QUUX13_MAIN_BASE`
+    // 13, or revision 14's 29-bit bus address with the device window at
+    // `<28>` (A14.1) and its memory system's side seam into the port.
+    parameter int unsigned REVISION = 13,
     localparam bit          REV13      = MACHINE == "quux" && WORD_BITS > 32,
-    localparam int unsigned PHYS_BITS  = REV13 ? 28 : 22,
-    localparam int unsigned VADDR_BITS = REV13 ? 28 : 24,
+    localparam bit          PAGED      = REV13 && REVISION >= 14,
+    localparam int unsigned PHYS_BITS  = PAGED ? 29 : REV13 ? 28 : 22,
+    localparam int unsigned VADDR_BITS = PAGED ? 32 : REV13 ? 28 : 24,
     localparam int unsigned RLINE_BITS = REV13 ? 320 : 128
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
@@ -594,7 +598,27 @@ module cadr_memory_path #(
     output var logic [2:0]  mouse_buttons,
     // The video controller's black-on-white, the one bit of its mode, for the
     // readout (a checkpoint's `Tv::mode`); zero on the CADR.
-    output var logic        video_bow_o
+    output var logic        video_bow_o,
+
+    // Revision 14's side seam (`quux_mmu.sv` to `quux_mem_port.sv`).
+    input  var logic        sd_look,
+    input  var logic [28:0] sd_phys,
+    output var logic        sd_ready,
+    output var logic        sd_walk_ready,
+    output var logic signed [10:0] sd_ack_at,
+    output var logic        sd_hit,
+    output var logic [39:0] sd_word,
+    input  var logic        sd_commit,
+    input  var logic        sd_wr,
+    input  var logic [39:0] sd_wdata,
+    input  var logic signed [10:0] sd_until,
+    output var logic signed [10:0] sd_done,
+    output var logic        sd_fill_v,
+    output var logic [39:0] sd_fill_word,
+    output var logic        sd_wdone,
+    input  var logic        wb_hold,
+    input  var logic        wb_rel_v,
+    input  var logic signed [10:0] wb_rel
 );
 
   // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`).  The decode
@@ -845,7 +869,7 @@ module cadr_memory_path #(
   logic color_fitted;
   assign color_fitted = (LMTV != 0) && color_tv;
 
-  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS), .WORD_BITS(WORD_BITS)) decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS), .WORD_BITS(WORD_BITS), .REVISION(REVISION)) decode (
       .color_tv(color_fitted),
       .phys  (phys),
       .boards(boards),
@@ -869,7 +893,7 @@ module cadr_memory_path #(
 
   // On revision 13 it is the 28-bit space's, and the channel's view of it,
   // main memory alone (`cadr_xbus_decode.sv`'s `CHANNEL`).
-  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS), .WORD_BITS(WORD_BITS), .CHANNEL(1)) ch_decode (
+  cadr_xbus_decode #(.MACHINE(MACHINE), .VIDEO_WORDS(VIDEO_WORDS), .WORD_BITS(WORD_BITS), .REVISION(REVISION), .CHANNEL(1)) ch_decode (
       .color_tv(color_fitted),
       .phys  (ch_addr),
       .boards(boards),
@@ -1121,7 +1145,7 @@ module cadr_memory_path #(
   assign br_done_o  = br_done;
 
   if (QUUX) begin : g_quux_port
-    quux_mem_port #(.K(SYNC_K), .WORD_BITS(WORD_BITS), .MAIN13_BASE(QUUX13_MAIN_BASE)) port (
+    quux_mem_port #(.K(SYNC_K), .WORD_BITS(WORD_BITS), .MAIN13_BASE(QUUX13_MAIN_BASE), .PAGED(PAGED)) port (
         .clk        (clk),
         .rst        (rst),
         .mclk       (mclk),
@@ -1176,7 +1200,26 @@ module cadr_memory_path #(
         .pf_nx_phys (pf_nx_phys),
         .pf_nx_word (pf_nx_word),
         .pf_nx_fetch_v    (pf_nx_fetch_v),
-        .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr)
+        .pf_nx_fetch_vaddr(pf_nx_fetch_vaddr),
+        .boards     (boards),
+        .sd_look    (sd_look),
+        .sd_phys    (sd_phys),
+        .sd_ready   (sd_ready),
+        .sd_walk_ready(sd_walk_ready),
+        .sd_ack_at  (sd_ack_at),
+        .sd_hit     (sd_hit),
+        .sd_word    (sd_word),
+        .sd_commit  (sd_commit),
+        .sd_wr      (sd_wr),
+        .sd_wdata   (sd_wdata),
+        .sd_until   (sd_until),
+        .sd_done    (sd_done),
+        .sd_fill_v  (sd_fill_v),
+        .sd_fill_word(sd_fill_word),
+        .sd_wdone   (sd_wdone),
+        .wb_hold    (wb_hold),
+        .wb_rel_v   (wb_rel_v),
+        .wb_rel     (wb_rel)
     );
     assign br_rdata = br_word[31:0];
     // The channel's word, taken where the bridge takes its own `rdata`: at
@@ -1196,6 +1239,18 @@ module cadr_memory_path #(
     // it has no use for `mem_answers` either.
     assign unused_quux_port = ^{unibus, select_debug, ub_ssyn, dev_ack, mem_answers};
   end else begin : g_cadr_busint
+    // No memory system of revision 14's on the CADR.
+    assign sd_ready     = 1'b0;
+    assign sd_walk_ready = 1'b0;
+    assign sd_ack_at    = '0;
+    assign sd_hit       = 1'b0;
+    assign sd_word      = '0;
+    assign sd_done      = '0;
+    assign sd_fill_v    = 1'b0;
+    assign sd_fill_word = '0;
+    assign sd_wdone     = 1'b0;
+    logic unused_sd;
+    assign unused_sd = ^{sd_look, sd_commit, sd_wr, sd_phys, sd_wdata, sd_until, wb_hold, wb_rel_v, wb_rel};
     cadr_busint_xbus busint (
         .clk        (clk),
         .rst        (rst),

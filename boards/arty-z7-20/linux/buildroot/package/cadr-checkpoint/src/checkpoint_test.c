@@ -83,7 +83,7 @@ struct model {
 	// --- to the window advances it by `step`, as the board's does between
 	// --- a reader's accesses.  TICKS is two ahead of it, the reset being
 	// --- two edges before power-on.
-	int quux, rev13;
+	int quux, rev13, rev14;
 	unsigned k, l;
 	uint64_t qm, step;
 	struct qtimer timer[IMG_QUUX_TIMERS];
@@ -94,6 +94,7 @@ struct model {
 	uint64_t page;			/* word 6 */
 	uint64_t fd[3];			/* words 7, 8 and 9: the file device */
 	uint64_t fd_resp_13;		/* word 10, revision 13's response ring's base */
+	uint64_t ms[5];			/* entries 41 to 45, revision 14's memory system */
 	// Revision 12's fused return: the register table's entries 29 to 40 and
 	// selector 13, the MACRO DISPATCH MEMORY.
 	uint64_t macro[12];
@@ -144,8 +145,15 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 	case IMG_SEL_PDL:  return a < (m->quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS) ? m->pdl[a] : 0;
 	case IMG_SEL_SPC:  return a < IMG_SPC_WORDS ? m->spc[a] : 0;
 	case IMG_SEL_DMEM: return a < (m->rev13 ? IMG_DMEM_WORDS_13 : IMG_DMEM_WORDS) ? m->dmem[a] : 0;
-	case IMG_SEL_MAP1: return a < (m->rev13 ? IMG_L1_WORDS_13 : IMG_L1_WORDS) ? m->l1[a] : 0;
+	// Revision 14 has no map levels: the selectors answer as one this
+	// machine has not got (`cadr_microcycle.sv`).
+	case IMG_SEL_MAP1:
+		if (m->rev14)
+			return RO_NO_MEMORY;
+		return a < (m->rev13 ? IMG_L1_WORDS_13 : IMG_L1_WORDS) ? m->l1[a] : 0;
 	case IMG_SEL_MAP2:
+		if (m->rev14)
+			return RO_NO_MEMORY;
 		return a < (m->rev13 ? IMG_L2_WORDS_13 : m->quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS)
 			       ? m->l2[a] : 0;
 	case IMG_SEL_OPCS: return a < IMG_OPCS ? m->opcs[a] : 0;
@@ -157,7 +165,8 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 		switch (a) {
 		case IMG_RG_QUUX_ID:
 			return ((uint64_t)IMG_QUUX_MARK << 32) | ((uint64_t)m->k << 24) |
-			       ((uint64_t)m->l << 16) | (m->rev13 ? IMG_QUUX_ID_13 : 0u);
+			       ((uint64_t)m->l << 16) |
+			       (m->rev14 ? IMG_QUUX_ID_14 : m->rev13 ? IMG_QUUX_ID_13 : 0u);
 		case IMG_RG_QUUX_TIME:
 			return ((uint64_t)(99u - m->qm % 100u) << 32) |
 			       ((m->qm / 100u) & 0xFFFFFFFFull);
@@ -168,6 +177,8 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 				return qtimer_conf(&m->timer[a - IMG_RG_QUUX_CONF]);
 			if (a >= IMG_RG_QUUX_MACRO && a <= IMG_RG_QUUX_PF_FETCH)
 				return m->macro[a - IMG_RG_QUUX_MACRO];
+			if (m->rev14 && a >= IMG_RG_QUUX_MS && a <= IMG_RG_QUUX_COPIES)
+				return m->ms[a - IMG_RG_QUUX_MS];
 			return RO_NO_MEMORY;
 		}
 	case IMG_SEL_MACRO:
@@ -476,6 +487,30 @@ static void fill_quux13(struct model *m)
 	m->macro[IMG_RG_QUUX_M31_W - IMG_RG_QUUX_MACRO] = poison(10, 33, 40);
 }
 
+// **REVISION 14** (contract G3 revision 14, A14.14): revision 13's machine,
+// entry 21 saying 14, no map levels, and the memory system's words in
+// entries 41 to 45 as `quux_checkpoint.rs --revision 14` sets them through
+// muir's: the directory base (a multiple of 4, 18 bits) with the
+// ephemeral-reference enable at `<18>`, the pointer-type register's two
+// words, the refused count, and the redirect's copies, the head's 14 bits
+// over the base's 32.
+#define Q_DIRECTORY_14   0x1F2A4u
+#define Q_TYPES_14       0x0123456789ABCDEFull
+#define Q_REFUSED_14     0x89ABCDEFu
+#define Q_PDL_BASE_14    0xFEDCBA98u
+#define Q_PDL_HEAD_14    0x2B5Cu
+
+static void fill_quux14(struct model *m)
+{
+	fill_quux13(m);
+	m->rev14 = 1;
+	m->ms[0] = (1ull << 18) | Q_DIRECTORY_14;
+	m->ms[1] = Q_TYPES_14 & 0xFFFFFFFFu;
+	m->ms[2] = Q_TYPES_14 >> 32;
+	m->ms[3] = Q_REFUSED_14;
+	m->ms[4] = ((uint64_t)Q_PDL_HEAD_14 << 32) | Q_PDL_BASE_14;
+}
+
 // --- the packer, against its own inverse -----------------------------------
 
 static int unpack_equals(const uint8_t *raw, size_t len)
@@ -764,7 +799,8 @@ int main(int argc, char **argv)
 	if (argc < 3) {
 		fprintf(stderr, "usage: checkpoint_test <scratch directory> <QUUX's disks, "
 			"muir's data/> [<CADR checkpoint to write> [<QUUX checkpoint to write> "
-			"[<QUUX revision 13's to write>]]]\n");
+			"[<QUUX revision 13's to write> [<revision 13's at 1920x1080> "
+			"[<QUUX revision 14's>]]]]]\n");
 		return 2;
 	}
 	const char *work = argv[1];
@@ -773,6 +809,7 @@ int main(int argc, char **argv)
 	const char *quux_out = argc > 4 ? argv[4] : NULL;
 	const char *quux13_out = argc > 5 ? argv[5] : NULL;
 	const char *quux13hd_out = argc > 6 ? argv[6] : NULL;
+	const char *quux14_out = argc > 7 ? argv[7] : NULL;
 
 	if (chk_rtl_mutation())
 		printf("checkpoint: THIS IS A MUTANT --- %s\n", chk_rtl_mutation());
@@ -1832,6 +1869,68 @@ int main(int argc, char **argv)
 			       quux13hd_out ? ", wrote " : "", quux13hd_out ? quux13hd_out : "");
 			chk_free(&hb);
 			img_free(&hd);
+		}
+		// ---- QUUX revision 14 ------------------------------------------
+		//
+		// The same machine at revision 14 (A14.14): no map levels, the
+		// memory system's words and the redirect's copies, the memory
+		// port's write-back's end and LC's `<33:32>`.  The file goes where
+		// the seventh argument says and `build/checkpoint.quux.pass` holds
+		// it to muir's own for the same machine.
+		{
+			fill_quux14(q);
+			if (ro_quux_revision(&qr) != 14)
+				fail("revision 14's window read as another revision", ro_quux_revision(&qr), 14);
+			struct cadr_image q14;
+			if (img_alloc_revision(&q14, 1, 1, 14) != 0) {
+				fprintf(stderr, "out of memory\n");
+				return 1;
+			}
+			if (ro_read_machine(&qr, &q14) != 0) {
+				fail("the window would not give revision 14 up", qr.stale, 0);
+				return 1;
+			}
+			if (!chk_rtl_mutation() &&
+			    (q14.qx.directory != Q_DIRECTORY_14 || !q14.qx.ephemeral ||
+			     q14.qx.pointer_types != Q_TYPES_14 || q14.qx.refused != Q_REFUSED_14 ||
+			     q14.qx.pdl_base != Q_PDL_BASE_14 || q14.qx.pdl_head != Q_PDL_HEAD_14))
+				fail("revision 14's memory system's words", q14.qx.directory, Q_DIRECTORY_14);
+			q14.main13 = packed;
+			for (size_t i = 0; i < IMG_QUUX_TV_WORDS; ++i)
+				q14.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
+			struct chk qb14;
+			chk_init(&qb14);
+			chk_rtl_body(&qb14, &q14, &q13decl);
+			// Revision 13's body and: the write-back's end, 8 bytes; the
+			// machine's own, LC's 2, the words' 4 + 1 + 8 + 4 and the
+			// copies' 4 + 2; and the engine's LC byte.
+			const size_t quux14_len = quux13_len + 8u + 25u + 1u;
+			if (!chk_rtl_mutation() && qb14.len + qb14.hole_len != quux14_len)
+				fail("revision 14's body's length", qb14.len + qb14.hole_len, quux14_len);
+			// **LC<33:32> IS THE ENGINE'S LAST BYTE**, which muir's own
+			// file for a fresh engine cannot hold to anything but 0: so
+			// the same machine with its LC at 2^33 is written too, and it
+			// differs from the first in that byte alone.
+			{
+				struct chk hi;
+				chk_init(&hi);
+				q14.lc_hi = 2u;
+				chk_rtl_body(&hi, &q14, &q13decl);
+				q14.lc_hi = 0u;
+				if (hi.len != qb14.len || hi.p[hi.len - 1] != 2u ||
+				    memcmp(hi.p, qb14.p, hi.len - 1u) != 0)
+					fail("revision 14's LC<33:32>, as the engine's last byte",
+					     hi.len ? hi.p[hi.len - 1] : 0u, 2u);
+				chk_free(&hi);
+			}
+			if (quux14_out && chk_write_file(quux14_out, "rtl", 1, &qb14) != 0) {
+				perror(quux14_out);
+				return 1;
+			}
+			printf("checkpoint: QUUX revision 14, %zu bytes of body%s%s\n", qb14.len,
+			       quux14_out ? ", wrote " : "", quux14_out ? quux14_out : "");
+			chk_free(&qb14);
+			img_free(&q14);
 		}
 		free(packed);
 		chk_free(&qb13);

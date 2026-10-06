@@ -118,11 +118,11 @@ install: all
 # `CHK` names a file for it to write, which is how `build/checkpoint.pass`
 # gets something for muir to open, and `QCHK` the QUUX machine's, which
 # `build/checkpoint.quux.pass` compares with muir's own; `Q13CHK` revision
-# 13's, and `Q13HDCHK` revision 13's with the video controller at 1920 by
-# 1080.
+# 13's, `Q13HDCHK` revision 13's with the video controller at 1920 by
+# 1080, and `Q14CHK` revision 14's.
 check: $(WORK)/checkpoint_test
 	$(Q8_VERIFY)
-	$(WORK)/checkpoint_test $(WORK) $(Q8_DISKS) $(CHK) $(QCHK) $(Q13CHK) $(Q13HDCHK)
+	$(WORK)/checkpoint_test $(WORK) $(Q8_DISKS) $(CHK) $(QCHK) $(Q13CHK) $(Q13HDCHK) $(Q14CHK)
 
 $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \
                          $(READOUT_DIR)/readout.c $(READOUT_DIR)/readout.h \
@@ -139,10 +139,11 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMO
 # The list and the two loops in the repository's own Makefile are two
 # statements of one set, and each check runs whatever its loop names: 1 to 8
 # are the CADR's, judged by `build/checkpoint.pass`, and 9 to 21 QUUX's,
-# judged by `build/checkpoint.quux.pass`; 32 to 34 are the run state's,
+# judged by `build/checkpoint.quux.pass`, as are 41 to 46, revision 14's,
+# and 47, which the host check itself must fail on; 32 to 34 are the run state's,
 # which the host check itself must fail on, judged by `build/checkpoint.pass`.
 # A mutant added here and not there is built and never judged.
-MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40
+MUTANTS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) $(wildcard $(COMMON_DIR)/cadr/*.h) \

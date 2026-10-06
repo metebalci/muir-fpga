@@ -147,7 +147,7 @@ QUUX_SOURCES = ["rtl/machine/quux_rtc.sv", "rtl/machine/quux_file_device.sv",
                 "rtl/machine/quux_muldiv.sv", "rtl/machine/quux_phase_gen.sv",
                 "rtl/machine/quux_clocks.sv", "rtl/machine/quux_input.sv",
                 "rtl/machine/quux_block_disk.sv", "rtl/machine/quux_cache.sv",
-                "rtl/machine/quux_mem_port.sv"]
+                "rtl/machine/quux_mem_port.sv", "rtl/machine/quux_tlb.sv", "rtl/machine/quux_mmu.sv"]
 
 CHECKS = {
     "phase_gen": {
@@ -2648,7 +2648,35 @@ CHECKS["dispatch_write_order13_quux"] = dict(CHECKS["dispatch_write_order"], **{
     "machine": "quux",
 })
 
+# **REVISION 14** (contract G3 revision 14, appendix A14): the whole machine
+# at `REVISION` 14 on the programs of `golden/src/quux14.rs`, the Makefile's
+# `QUUX14_PROGRAMS`, each traced on muir's `Geometry::QUUX_14`; and the TLB's
+# read-during-write window, the same machine under `CADR_RDW_POISON` on the
+# programs the Makefile's `QUUX14_POISON` names.
+QUUX14_PROGRAMS = ("windows", "space", "walk", "noentry", "empty", "empty8k", "mapmd", "lc", "fetch",
+                   "words", "writeback", "setter", "setter0", "wbhold", "redirect", "redirectam", "fiddle", "fiddleam",
+                   "double", "inflight", "inflightfb", "inflight0")
+QUUX14_POISON = ("double", "mapmd", "empty", "inflight", "inflightfb", "inflight0")
+QUUX14_FLAGS = {"empty8k": ["-GTLB_ENTRIES=8192"]}
+for _p in QUUX14_PROGRAMS:
+    CHECKS["quux14_%s_quux" % _p] = dict(CHECKS["quux13_alu_quux"], **{
+        "flags": CHECKS["quux13_alu_quux"]["flags"] + ["-GREVISION=14"] + QUUX14_FLAGS.get(_p, []),
+        "golden": "quux14_%s.quux.golden" % _p,
+        "prom": "quux14_%s_prom.hex" % _p,
+    })
+for _p in QUUX14_POISON:
+    CHECKS["rdw_poison_quux14_%s_quux" % _p] = dict(CHECKS["quux14_%s_quux" % _p], **{
+        "flags": CHECKS["quux14_%s_quux" % _p]["flags"] + ["+define+CADR_RDW_POISON",
+                                                          "+define+CADR_RDW_POISON_CACHE"],
+    })
+# Two at K = 5 as well, for the bounds K = 4 cannot see: the reset's sweep a
+# tick short, and a queued walk's hold.
+for _p in ("windows", "double"):
+    CHECKS["quux14_%s_quux_k5" % _p] = _timed("quux14_%s_quux" % _p, 5, 0)
+
 QUUX_TIMED_KEYS = ["dispatch_write_order13_quux"] + \
+    ["quux14_%s_quux" % p for p in QUUX14_PROGRAMS] + \
+    ["rdw_poison_quux14_%s_quux" % p for p in QUUX14_POISON] + \
     ["quux13_%s_quux" % p for p in QUUX13_PROGRAMS + QUUX13_PORTED] + \
     ["rdw_poison_quux13_quux", "rdw_poison_quux13_mem_quux", "rdw_poison_quux13_pf_quux"]
 for _key in QUUX_TIMED_KEYS:
@@ -3626,6 +3654,11 @@ def check_makefile():
         programs = re.search(r"^%s := (.*)$" % var, text, re.M)
         for prog in (programs.group(1).split() if programs else []):
             names |= {"quux13_" + prog + suffix}
+    # Revision 14's, `golden/src/quux14.rs`'s, and the TLB's poison on some.
+    for var, prefix in (("QUUX14_PROGRAMS", "quux14_"), ("QUUX14_POISON", "rdw_poison_quux14_")):
+        programs = re.search(r"^%s := (.*)$" % var, text, re.M)
+        for prog in (programs.group(1).split() if programs else []):
+            names |= {prefix + prog + "_quux"}
     for found in sorted(names):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

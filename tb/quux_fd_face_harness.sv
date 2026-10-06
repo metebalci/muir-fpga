@@ -116,6 +116,11 @@ module quux_fd_face_harness (
   // The MACHINE-ID is `cadr_machine.sv`'s, revision 12; nothing here reads
   // word 0, but the page takes no default.
   quux_feature_page #(.MACHINE_ID(32'h5155_00C4)) page (
+      // Revision 14's words 220-227, which revision 12 has not got.
+      /* verilator lint_off PINCONNECTEMPTY */
+      .ms_we (), .ms_idx (), .ms_wdata (),
+      /* verilator lint_on PINCONNECTEMPTY */
+      .ms_rdata     (32'd0),
       .clk          (clk),
       .rst          (mach_rst),
       .xbus_init    (xbus_init),

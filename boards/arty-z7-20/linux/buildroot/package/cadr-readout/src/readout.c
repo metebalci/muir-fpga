@@ -176,9 +176,16 @@ int ro_read_machine(struct readout *r, struct cadr_image *img)
 		return -1;
 	if (ro_block32(r, IMG_SEL_DMEM, img->dmem_words, img->dmem) != 0)
 		return -1;
-	if (ro_block32(r, IMG_SEL_MAP1, img->l1_words, img->l1_map) != 0)
+	// Revision 14 has no map levels (A14.14): the arrays stay zero.
+#if CHK_MUTATE == 46
+	// A checkpoint mutant: the maps read from a window that has none.
+	const int maps = 1;
+#else
+	const int maps = !img->rev14;
+#endif
+	if (maps && ro_block32(r, IMG_SEL_MAP1, img->l1_words, img->l1_map) != 0)
 		return -1;
-	if (ro_block32(r, IMG_SEL_MAP2, img->l2_words, img->l2_map) != 0)
+	if (maps && ro_block32(r, IMG_SEL_MAP2, img->l2_words, img->l2_map) != 0)
 		return -1;
 	for (unsigned i = 0; i < IMG_OPCS; ++i) {
 		uint64_t w = 0;
@@ -201,6 +208,7 @@ int ro_read_machine(struct readout *r, struct cadr_image *img)
 	img->md = v[IMG_RG_MD] & word;
 	img->st = (uint32_t)v[IMG_RG_ST];
 	img->lc = (uint32_t)v[IMG_RG_LC];
+	img->lc_hi = img->rev14 ? (uint8_t)((v[IMG_RG_LC] >> 32) & 3u) : 0u;
 	img->wadr = (uint16_t)v[IMG_RG_WADR];
 	img->pdl_ptr = (uint16_t)v[IMG_RG_PDLPTR];
 	img->pdl_idx = (uint16_t)v[IMG_RG_PDLIDX];
@@ -230,7 +238,7 @@ int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l)
 	if (w == RO_NO_MEMORY)
 		return 0;
 	if (((w >> 32) & 0xFFFFu) != IMG_QUUX_MARK ||
-	    ((w & 0xFFFFu) != 0 && (w & 0xFFFFu) != IMG_QUUX_ID_13))
+	    ((w & 0xFFFFu) != 0 && (w & 0xFFFFu) != IMG_QUUX_ID_13 && (w & 0xFFFFu) != IMG_QUUX_ID_14))
 		return -1;
 	if (k)
 		*k = (unsigned)((w >> 24) & 0xFFu);
@@ -247,7 +255,7 @@ int ro_quux_revision(struct readout *r)
 		return is;
 	if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_ID, &w) != 0)
 		return -1;
-	return (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
+	return (w & 0xFFFFu) == IMG_QUUX_ID_14 ? 14 : (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
 }
 
 int ro_video(struct readout *r, struct cadr_video *v)
@@ -467,7 +475,10 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 	// revision 12's is at <24>, a physical one of 28 bits where revision
 	// 12's is 22, and the word 40 bits, as M 31's is.  The fabric's
 	// side is not built yet.
-	const unsigned va = img->rev13 ? 28u : 24u, pa = img->rev13 ? 28u : 22u;
+	// Revision 14's are a 32-bit virtual word address with the held bit at
+	// <32>, and a 29-bit physical one (A14.1, A14.13).
+	const unsigned va = img->rev14 ? 32u : img->rev13 ? 28u : 24u;
+	const unsigned pa = img->rev14 ? 29u : img->rev13 ? 28u : 22u;
 	const uint64_t word = ((uint64_t)1 << img->word_bits) - 1u;
 	q->m31_w = QV(IMG_RG_QUUX_M31_W) & word;
 	q->fused_n = (uint32_t)QV(IMG_RG_QUUX_FUSED_N);
@@ -482,6 +493,19 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 #undef QV
 	if (ro_block32(r, IMG_SEL_MACRO, IMG_QUUX_MACRO_ENTRIES, q->macro_entries) != 0)
 		return -1;
+	if (img->rev14) {
+		// Revision 14's memory system (A14.14), entries 41 to 45.
+		uint64_t m[IMG_RG_QUUX_COPIES - IMG_RG_QUUX_MS + 1];
+		for (unsigned i = 0; i < sizeof m / sizeof m[0]; ++i)
+			if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_MS + i, &m[i]) != 0)
+				return -1;
+		q->directory = (uint32_t)(m[0] & 0777777u);
+		q->ephemeral = (int)((m[0] >> 18) & 1u);
+		q->pointer_types = (m[1] & 0xFFFFFFFFu) | ((m[2] & 0xFFFFFFFFu) << 32);
+		q->refused = (uint32_t)m[3];
+		q->pdl_base = (uint32_t)m[4];
+		q->pdl_head = (uint16_t)((m[4] >> 32) & 037777u);
+	}
 	return 0;
 }
 
@@ -545,7 +569,8 @@ int img_alloc_video(struct cadr_image *img, unsigned boards, int quux, int revis
 		return -1;
 	img->boards = boards;
 	img->quux = quux != 0;
-	img->rev13 = quux && revision == 13;
+	img->rev13 = quux && (revision == 13 || revision == 14);
+	img->rev14 = quux && revision == 14;
 	img->pdl_words = quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS;
 	img->l2_words = img->rev13 ? IMG_L2_WORDS_13 : quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS;
 	img->video_width = quux ? width : 0u;

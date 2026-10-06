@@ -1797,9 +1797,9 @@
 @note grid the trailing edge was three ticks clear of the boundary and the two
 @note edges were indistinguishable.
 @old
-  assign iwe = iwrited && !n_tpwpiram && n_tpwpiram_q && machrun;
+  assign iwe = iwrited && !n_tpwpiram && n_tpwpiram_q && machrun && !(PAGED && tlbh);
 @new
-  assign iwe = iwrited && n_tpwpiram && !n_tpwpiram_q && machrun;
+  assign iwe = iwrited && n_tpwpiram && !n_tpwpiram_q && machrun && !(PAGED && tlbh);
 @end
 
 @mutation a-strobe-on-the-boundary-waits-a-microcycle
@@ -1815,7 +1815,7 @@
 @note already hold.  Aimed at `microcycle_sys` because the boot PROM's trace
 @note never places one.
 @old
-      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && (gen_edge || hang) && !(QUUX && memstart && memgo_q && mclk_edge)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -1836,7 +1836,7 @@
 @note the band's view of the same line; this is the directed one, which runs
 @note in a minute on the boot PROM.
 @old
-      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && (gen_edge || hang) && !(QUUX && memstart && memgo_q && mclk_edge)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -2371,12 +2371,12 @@
 @note the word.  Held for the next boundary, MD is the old word for one
 @note microcycle more.
 @old
-      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && (gen_edge || hang) && !(QUUX && memstart && memgo_q && mclk_edge)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @new
-      if (loadmd_edge && hang && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && hang && !(QUUX && memstart && memgo_q && mclk_edge)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -2459,21 +2459,21 @@
 @note when a hang begins, measured --- it survived every check.  The word
 @note is kept out of MD for the whole hang only when both go.
 @old
-      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && (gen_edge || hang) && !(QUUX && memstart && memgo_q && mclk_edge)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
         md_held    <= WORD_BITS'(rdata);
         md_pending <= 1'b1;
-      end else if (md_pending && (mclk_edge || hang)) begin
+      end else if (md_pending && (gen_edge || hang)) begin
 @new
-      if (loadmd_edge && mclk_edge && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && gen_edge && !(QUUX && memstart && memgo_q && mclk_edge)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
         md_held    <= WORD_BITS'(rdata);
         md_pending <= 1'b1;
-      end else if (md_pending && mclk_edge) begin
+      end else if (md_pending && gen_edge) begin
 @end
 
 @mutation the-address-the-decode-sees-is-a-microcycle-old
@@ -2492,9 +2492,9 @@
 @note a register, and a register on a signal is an invitation to move its
 @note source back one more step.
 @old
-  assign phys    = memstart ? {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus} : phys_r;
+  assign phys    = memstart ? phys_start : phys_r;
 @new
-  assign phys    = phys_r;
+  assign phys    = memstart ? phys_r : phys_r;
 @end
 
 @mutation the-held-decode-is-a-microcycle-late
@@ -8082,11 +8082,9 @@ if {0 && $held ne $want} {
 @note The address does not come through it at all; it comes through `vmo`
 @note here, which is what this record moves.
 @old
-          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
+    assign phys_start = {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
 @new
-          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {lvmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
+    assign phys_start = {lvmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
 @end
 
 @mutation the-access-bit-comes-from-the-page-half-of-the-map-word
@@ -8117,9 +8115,9 @@ if {0 && $held ne $want} {
 @note would close it is a machine-level reference whose program holds an
 @note asymmetric map word, which means the band on `cadr_machine` and a pack.
 @old
-  assign pfr   = lvmo_eff[L2_BITS-1];
+  assign pfr   = lvmo_eff[ACC_HI];
 @new
-  assign pfr   = lvmo_eff[L2_BITS-1] && lvmo_eff[13];
+  assign pfr   = lvmo_eff[ACC_HI] && lvmo_eff[13];
 @end
 
 @mutation the-physical-page-is-one-too-high
@@ -8140,11 +8138,9 @@ if {0 && $held ne $want} {
 @note it, so the first read takes a word muir never had.  Measured: `machine`
 @note SURVIVES this and `map_boot` catches it.
 @old
-          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
+    assign phys_start = {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
 @new
-          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0] + {{(PHYS_BITS-1-OFFSET_BITS){1'b0}}, 1'b1}, vma_bus};
+    assign phys_start = {vmo[PHYS_BITS-1-OFFSET_BITS:0] + {{(PHYS_BITS-1-OFFSET_BITS){1'b0}}, 1'b1}, vma_bus};
 @end
 
 @mutation the-memory-address-loses-its-page-bit
@@ -8190,9 +8186,9 @@ if {0 && $held ne $want} {
 @note Both bits stay read, so lint cannot do the catching instead.  Caught by
 @note the read-only configuration's permitted read, at microcycle 536,302.
 @old
-  assign pfr   = lvmo_eff[L2_BITS-1];
+  assign pfr   = lvmo_eff[ACC_HI];
 @new
-  assign pfr   = lvmo_eff[L2_BITS-1] && lvmo_eff[L2_BITS-2];
+  assign pfr   = lvmo_eff[ACC_HI] && lvmo_eff[ACC_HI-1];
 @end
 
 @mutation map-access-bits-swapped
@@ -8203,11 +8199,11 @@ if {0 && $held ne $want} {
 @note case lint is blind to.  Caught on the same line as the record above:
 @note the read-only entry's permitted read becomes a refusal.
 @old
-  assign pfr   = lvmo_eff[L2_BITS-1];
-  assign pfw   = !(!lvmo_eff[L2_BITS-2] && wrcyc);
+  assign pfr   = lvmo_eff[ACC_HI];
+  assign pfw   = !(!lvmo_eff[ACC_HI-1] && wrcyc);
 @new
-  assign pfr   = lvmo_eff[L2_BITS-2];
-  assign pfw   = !(!lvmo_eff[L2_BITS-1] && wrcyc);
+  assign pfr   = lvmo_eff[ACC_HI-1];
+  assign pfw   = !(!lvmo_eff[ACC_HI] && wrcyc);
 @end
 
 @mutation map-write-bit-refuses-a-read-too
@@ -8217,9 +8213,9 @@ if {0 && $held ne $want} {
 @note refuses a read as well.  That is the third way to confuse the two bits
 @note and the third caught on the read-only entry's permitted read.
 @old
-  assign pfw   = !(!lvmo_eff[L2_BITS-2] && wrcyc);
+  assign pfw   = !(!lvmo_eff[ACC_HI-1] && wrcyc);
 @new
-  assign pfw   = !(!lvmo_eff[L2_BITS-2] && (wrcyc || rdcyc));
+  assign pfw   = !(!lvmo_eff[ACC_HI-1] && (wrcyc || rdcyc));
 @end
 
 @mutation map-refusal-still-starts-a-cycle
@@ -8234,9 +8230,9 @@ if {0 && $held ne $want} {
 @note so lint is silent.  Caught at microcycle 536,304, the read-only entry's
 @note refused write, by -MEMRQ going out.
 @old
-  assign memgo = memstart && vmaok;
+  assign memgo = memstart && vmaok && !(PAGED && redirect_in);
 @new
-  assign memgo = memstart;
+  assign memgo = memstart && !(PAGED && redirect_in);
 @end
 
 @mutation level-2-map-write-takes-the-new-first-level-entry
@@ -13987,10 +13983,10 @@ if {0 && $held ne $want} {
 @note address the machine held when the microcycle retired, and MD to hold
 @note what memory gave.
 @old
-          phys_r     <= {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
+          phys_r     <= phys_start;
           wdata      <= md_bus;
 @new
-          phys_r     <= cpu_edge ? {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus} : phys_r;
+          phys_r     <= cpu_edge ? phys_start : phys_r;
           wdata      <= md_bus;
 @end
 
@@ -16612,6 +16608,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
       .SYNC_K(SYNC_K),
       .WORD_BITS(WORD_BITS),
+      .REVISION(REVISION),
       .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE)
   ) memory (
       .clk        (clk),
@@ -16628,6 +16625,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
       .VIDEO_WORDS(VIDEO_WIDTH / 32 * VIDEO_HEIGHT),
       .SYNC_K(SYNC_K),
       .WORD_BITS(WORD_BITS),
+      .REVISION(REVISION),
       .QUUX13_MAIN_BASE(QUUX13_MAIN_BASE)
   ) memory (
       .clk        (clk),
@@ -20270,9 +20268,9 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @note lands MD moves: `dispatch-held-by-wait-1` to `-3` then leave the word at
 @note `MD<2:0>` = 2 as well as at 5, where muir's `rtl` writes it once.
 @old
-  assign wp     = wp_end && machrun;
+  assign wp     = wp_end && machrun && !(PAGED && tlbh);
 @new
-  assign wp     = wp_end;
+  assign wp     = wp_end && !(PAGED && tlbh);
 @end
 
 @mutation a-write-is-taken-at-the-pulse-leading-edge
@@ -20299,12 +20297,12 @@ if [ "${FAULT:-0}" = 1 ] && [ "$machine" = nothing ]; then
 @note cycle's write pulse ends misses the pulse: `dispatch-on-md-gap-3` writes
 @note at `MD<2:0>` = 2 where muir's `rtl` writes at 5.
 @old
-      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && (gen_edge || hang) && !(QUUX && memstart && memgo_q && mclk_edge)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
 @new
-      if (loadmd_edge && mclk_edge && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && gen_edge && !(QUUX && memstart && memgo_q && mclk_edge)) begin
         md         <= WORD_BITS'(rdata);
         md_pending <= 1'b0;
       end else if (loadmd_edge) begin
@@ -20800,9 +20798,13 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @file rtl/machine/cadr_microcycle.sv
 @note The shared port's address is the read's when the write pulse fires.
 @old
-    assign pdla   = pdl_we ? pdla_write : pdla_read;
+    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
+                  : pdl_we ? pdla_write
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_read;
 @new
-    assign pdla   = pdl_we ? pdla_read : pdla_write;
+    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
+                  : pdl_we ? pdla_read
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_write;
 @end
 
 @mutation quux-the-pdl-write-lands-at-the-read-address
@@ -20815,9 +20817,13 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note held low by a constant rather than deleted, so that lint still sees
 @note `pdla_write` read.
 @old
-    assign pdla   = pdl_we ? pdla_write : pdla_read;
+    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
+                  : pdl_we ? pdla_write
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_read;
 @new
-    assign pdla   = (pdl_we && 1'b0) ? pdla_write : pdla_read;
+    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
+                  : (pdl_we && 1'b0) ? pdla_write
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_read;
 @end
 
 @mutation quux-the-feature-page-is-128-words
@@ -21335,9 +21341,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note `MAP(MD)` in the microcycle a level-1 store's write lands reads the
 @note entry stored, on the CADR: `map-level-1-source-after-write`.
 @old
-  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store : vmap_rd;
+  assign vmap = PAGED ? '0 : (!QUUX && wmapd && vma[26]) ? l1_store : vmap_rd;
 @new
-  assign vmap = vmap_rd;
+  assign vmap = PAGED ? '0 : vmap_rd;
 @end
 
 @mutation the-cadr-level-2-map-reads-the-old-word-after-a-store
@@ -21347,9 +21353,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note store's write lands read the word stored, on the CADR:
 @note `map-source-after-write` and `map-dispatch-after-write`.
 @old
-  assign vmo  = (!QUUX && wmapd && vma[25]) ? l2_store : vmo_rd;
+  assign vmo  = PAGED ? L2_BITS'(mmu_ent_a) : (!QUUX && wmapd && vma[25]) ? l2_store : vmo_rd;
 @new
-  assign vmo  = vmo_rd;
+  assign vmo  = PAGED ? L2_BITS'(mmu_ent_a) : vmo_rd;
 @end
 
 @mutation quux-level-2-map-reads-the-new-word-after-a-store
@@ -21359,9 +21365,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note Revision 13's stores enable at VMA<29> and <28> (A1.7), so the
 @note pass-around keys on those there.
 @old
-  assign vmo  = (!QUUX && wmapd && vma[25]) ? l2_store : vmo_rd;
+  assign vmo  = PAGED ? L2_BITS'(mmu_ent_a) : (!QUUX && wmapd && vma[25]) ? l2_store : vmo_rd;
 @new
-  assign vmo  = (wmapd && (WIDE ? vma[28] : vma[25])) ? l2_store : vmo_rd;
+  assign vmo  = PAGED ? L2_BITS'(mmu_ent_a) : (wmapd && (WIDE ? vma[28] : vma[25])) ? l2_store : vmo_rd;
 @end
 
 @mutation quux-level-1-map-reads-the-new-word-after-a-store
@@ -21371,9 +21377,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note Revision 13's stores enable at VMA<29> and <28> (A1.7), so the
 @note pass-around keys on those there.
 @old
-  assign vmap = (!QUUX && wmapd && vma[26]) ? l1_store : vmap_rd;
+  assign vmap = PAGED ? '0 : (!QUUX && wmapd && vma[26]) ? l1_store : vmap_rd;
 @new
-  assign vmap = (wmapd && (WIDE ? vma[29] : vma[26])) ? l1_store : vmap_rd;
+  assign vmap = PAGED ? '0 : (wmapd && (WIDE ? vma[29] : vma[26])) ? l1_store : vmap_rd;
 @end
 
 @mutation quux-has-no-wait-for-md
@@ -21891,9 +21897,9 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note `clockwait` at an L of one reads it 10 ns apart against the
 @note boundaries; `clocks` reads it once since revision 10.
 @old
-      if (mclk_edge) usec_s <= usec + 32'(power_on_t == 2'd0 && usec_t == 7'd0);
+      if (gen_edge) usec_s <= usec + 32'(power_on_t == 2'd0 && usec_t == 7'd0);
 @new
-      if (mclk_edge) usec_s <= usec;
+      if (gen_edge) usec_s <= usec;
 @end
 
 @mutation quux-source-15-counts-from-the-reset
@@ -21945,7 +21951,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @old
       if (mclk_edge && !cpu_edge) flag_s <= flag;
 @new
-      if (1'b0) flag_s <= flag;
+      if (mclk_edge && !cpu_edge && 1'b0) flag_s <= flag;
 @end
 
 @mutation quux-the-clocks-are-not-on-sintr
@@ -22099,6 +22105,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
+        .gen_edge (gen_edge),
         .pg_we    (tm_we),
         .pg_idx   (tm_idx),
         .pg_wdata (tm_wdata),
@@ -22112,6 +22119,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
+        .gen_edge (gen_edge),
         .pg_we    (tm_we || d3),
         .pg_idx   (d3 ? 3'd0 : tm_idx),
         .pg_wdata (d3 ? 24'o401 : tm_wdata),
@@ -22130,6 +22138,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
+        .gen_edge (gen_edge),
         .pg_we    (tm_we),
         .pg_idx   (tm_idx),
         .pg_wdata (tm_wdata),
@@ -22143,6 +22152,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
+        .gen_edge (gen_edge),
         .pg_we    (tm_we || d3),
         .pg_idx   (d3 ? 3'd0 : tm_idx),
         .pg_wdata (d3 ? 24'o403 : tm_wdata),
@@ -22161,6 +22171,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
+        .gen_edge (gen_edge),
         .pg_we    (tm_we),
         .pg_idx   (tm_idx),
         .pg_wdata (tm_wdata),
@@ -22174,6 +22185,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
+        .gen_edge (gen_edge),
         .pg_we    (tm_we || d3),
         .pg_idx   (d3 ? 3'd0 : tm_idx),
         .pg_wdata (d3 ? 24'o0 : tm_wdata),
@@ -22194,6 +22206,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
+        .gen_edge (gen_edge),
         .pg_we    (tm_we),
         .pg_idx   (tm_idx),
         .pg_wdata (tm_wdata),
@@ -22216,6 +22229,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
         .n_boot   (n_boot),
         .mclk_edge(mclk_edge),
         .cpu_edge (cpu_edge),
+        .gen_edge (gen_edge),
         .pg_we    (tm_we),
         .pg_idx   (tm_idx),
         .pg_wdata (tm_wdata),
@@ -22668,9 +22682,9 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note The form here builds at both word widths: written for revision 12's
 @note 32 bits alone, lint refused it at revision 13's 40.
 @old
-    if (fill &&  way_q) tag1_ram[idx_q] <= tag_q;
+    if (wr_tag && wr1) tag1_ram[widx] <= wtag;
 @new
-    if (fill &&  way_q) tag1_ram[idx_q] <= {tag_q[TAG_BITS-1:1], 1'b0};
+    if (wr_tag && wr1) tag1_ram[widx] <= {wtag[TAG_BITS-1:1], 1'b0};
 @end
 
 @mutation quux-a-hit-does-not-move-the-order
@@ -23013,9 +23027,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note An address nothing answers puts its zero in MD at the grant's own edge,
 @note a microcycle before muir finds it acknowledged (`md-acked-on-an-edge-nxm`).
 @old
-      if (loadmd_edge && (mclk_edge || hang) && !(QUUX && memstart && memgo_q)) begin
+      if (loadmd_edge && (gen_edge || hang) && !(QUUX && memstart && memgo_q && mclk_edge)) begin
 @new
-      if (loadmd_edge && (mclk_edge || hang)) begin
+      if (loadmd_edge && (gen_edge || hang)) begin
 @end
 
 @mutation rev13-block-disk-a-read-wraps-past-2-28
@@ -23387,9 +23401,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note Revision 13's feature word 1 says revision 12's 6-bit level-1 entry,
 @note and word 2 its 2,048 level-2 entries.
 @old
-  localparam int unsigned FEATURE_L1_BITS = WORD_BITS > 32 ? 7 : 6;
+  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : WORD_BITS > 32 ? 7 : 6;
 @new
-  localparam int unsigned FEATURE_L1_BITS = WORD_BITS > 32 ? 6 : 6;
+  localparam int unsigned FEATURE_L1_BITS = PAGED ? 0 : WORD_BITS > 32 ? 6 : 6;
 @end
 
 @mutation rev13-feature-word-6-says-2048
@@ -23409,9 +23423,9 @@ set_multicycle_path -setup 5 -from $slow -to $quux_cache_held
 @note Revision 13's feature word 13 says revision 12's frame buffer at
 @note `17000000`, where the window is at `1760000000`.
 @old
-  localparam logic [31:0] VIDEO_BUFFER    = WORD_BITS > 32 ? 32'o1760000000 : 32'o17000000;
+  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : WORD_BITS > 32 ? 32'o1760000000 : 32'o17000000;
 @new
-  localparam logic [31:0] VIDEO_BUFFER    = WORD_BITS > 32 ? 32'o17000000 : 32'o17000000;
+  localparam logic [31:0] VIDEO_BUFFER    = PAGED ? 32'o34000000000 : WORD_BITS > 32 ? 32'o17000000 : 32'o17000000;
 @end
 
 @mutation rev13-readout-word-10-its-low-bit-wrong
@@ -24982,9 +24996,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/cadr_microcycle.sv
 @note A map write leaves the buffered word.
 @old
-    assign pf_drop  = (cpu_edge && (destlc || (destmem && ir[20:19] == 2'd3))) || !n_boot;
+    assign pf_drop  = (cpu_edge && (destlc || (!PAGED && destmem && ir[20:19] == 2'd3)))
 @new
-    assign pf_drop  = (cpu_edge && (destlc || (destmem && ir[20:19] == 2'd3 && 1'b0))) || !n_boot;
+    assign pf_drop  = (cpu_edge && (destlc || (!PAGED && destmem && ir[20:19] == 2'd3 && 1'b0)))
 @end
 
 @mutation prefetch-not-a-fetch
@@ -25014,9 +25028,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note The processor's view keeps the buffered word over the grant of a store
 @note to it, and the microcycle that grant begins fuses on it.
 @old
-          pf_view_v           <= pf_nx_v && !pf_store_to_word;
+          pf_view_v           <= pf_nx_v && !(mclk_edge && pf_store_to_word);
 @new
-          pf_view_v           <= pf_nx_v && !(pf_store_to_word && 1'b0);
+          pf_view_v           <= pf_nx_v && !(mclk_edge && pf_store_to_word && 1'b0);
 @end
 
 @mutation prefetch-transfer-keeps-the-word
@@ -25092,9 +25106,13 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note The machine hands the processor 32 whatever it was asked for, so a
 @note 40-bit machine has a 32-bit processor.
 @old
-      .WORD_BITS(WORD_BITS)
+      .WORD_BITS(WORD_BITS),
+      .REVISION(REVISION),
+      .TLB_ENTRIES(TLB_ENTRIES)
 @new
-      .WORD_BITS(32)
+      .WORD_BITS(32),
+      .REVISION(REVISION),
+      .TLB_ENTRIES(TLB_ENTRIES)
 @end
 
 @mutation word-width-a-machine-port-stays-32
@@ -25183,9 +25201,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note counter, where revision 13's is `LC<29:0>` (A1.6): the counter read back
 @note loses `<29:26>`.
 @old
-        if (destlc) lc_q <= ob[LC_BITS-1:0];
+    assign lc_wr = ob[LC_BITS-1:0];
 @new
-        if (destlc) lc_q <= LC_BITS'(ob[25:0]);
+    assign lc_wr = LC_BITS'(ob[25:0]);
 @end
 
 @mutation rev13-interrupt-control-takes-revision-12s-bits
@@ -25401,9 +25419,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A level-1 write at an address with `<31:28>` set, which A1.7 forbids:
 @note the write lands at `<27:15>`, over the entry that address aliases.
 @old
-    assign map_l1_en = vma[29] && !map_gate;
+    assign map_l1_en = !PAGED && vma[29] && !map_gate;
 @new
-    assign map_l1_en = vma[29];
+    assign map_l1_en = !PAGED && vma[29];
 @end
 
 @mutation rev13-both-enables-write-level-2-too
@@ -25412,9 +25430,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A store with both enables writing level 2 as well, where A1.7 writes
 @note level 1 alone.
 @old
-    assign map_l2_en = vma[28] && !vma[29] && !map_gate;
+    assign map_l2_en = !PAGED && vma[28] && !vma[29] && !map_gate;
 @new
-    assign map_l2_en = vma[28] && !map_gate;
+    assign map_l2_en = !PAGED && vma[28] && !map_gate;
 @end
 
 @mutation rev13-level-1-takes-vma-24
@@ -25468,9 +25486,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note revision 12's, where A1.7 says `<27>`: a read of a page with `<23>` set
 @note and `<27>` clear goes to memory.
 @old
-  assign pfr   = lvmo_eff[L2_BITS-1];
+  assign pfr   = lvmo_eff[ACC_HI];
 @new
-  assign pfr   = WIDE ? lvmo_eff[L2_BITS-5] ^ (lvmo_eff[L2_BITS-1] & 1'b0) : lvmo_eff[L2_BITS-1];
+  assign pfr   = WIDE ? lvmo_eff[ACC_HI-4] ^ (lvmo_eff[ACC_HI] & 1'b0) : lvmo_eff[ACC_HI];
 @end
 
 @mutation rev13-the-latch-comes-up-as-revision-12s
@@ -25492,9 +25510,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note The location counter source at 40 bits reading `LC<26:0>` and zeros
 @note above, where A1.6 has the counter's 30 bits at `<29:0>`.
 @old
-                      int_enable, sequence_break, 4'd0, lc_q[LC_BITS-1:1], lc0b});
+                      int_enable, sequence_break, 4'(0), lc_q[LC_BITS-1:1], lc0b});
 @new
-                      int_enable, sequence_break, 4'd0, lc_q[LC_BITS-1:1] & {3'd0, {(LC_BITS-4){1'b1}}}, lc0b});
+                      int_enable, sequence_break, 4'(0), lc_q[LC_BITS-1:1] & {3'd0, {(LC_BITS-4){1'b1}}}, lc0b});
 @end
 
 @mutation rev13-the-dispatch-memory-is-read-in-its-undefined-tick
@@ -25548,9 +25566,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note MACHINE-ID at 40 bits saying revision 12, `0x5155_00C4`, where G2 §2.8
 @note says 13.
 @old
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
+  localparam logic [31:0] MACHINE_ID = PAGED ? 32'h5155_00E4 : WORD_BITS > 32 ? 32'h5155_00D4 : 32'h5155_00C4;
 @new
-  localparam logic [31:0] MACHINE_ID = WORD_BITS > 32 ? 32'h5155_00C4 : 32'h5155_00C4;
+  localparam logic [31:0] MACHINE_ID = PAGED ? 32'h5155_00E4 : WORD_BITS > 32 ? 32'h5155_00C4 : 32'h5155_00C4;
 @end
 
 # ------------------------------------------- revision 13's memory port
@@ -25573,9 +25591,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note (`0o40000`, `0o77777`); the top two, `phys<27:26>`, only the window
 @note has, and no main memory a board holds shares a set with it there.
 @old
-    if (fill &&  way_q) tag1_ram[idx_q] <= tag_q;
+    if (wr_tag && wr1) tag1_ram[widx] <= wtag;
 @new
-    if (fill &&  way_q) tag1_ram[idx_q] <= tag_q & ~(TAG_BITS'(1) << 14);
+    if (wr_tag && wr1) tag1_ram[widx] <= wtag & ~(TAG_BITS'(1) << 14);
 @end
 
 @mutation rev13-cache-fill-misses-word-7
@@ -25584,9 +25602,13 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A fill writes seven of the line's eight lanes, so a later hit on the
 @note line's last word takes whatever the lane held before.
 @old
+      wr_tag = 1'b1;
       lanes = '1;
+    end else if (upd_q) begin
 @new
+      wr_tag = 1'b1;
       lanes = LINE_WORDS'({LINE_WORDS{1'b1}} >> 1);
+    end else if (upd_q) begin
 @end
 
 @mutation rev13-next-line-looks-up-the-same-set
@@ -25596,9 +25618,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note one: a fetch at a line's end takes word 0 of whatever line of its own
 @note set the tag matches, never the next line's.
 @old
-    assign nwr_idx = idx_q - IDX_BITS'(1);
+    assign nwr_idx = widx - IDX_BITS'(1);
 @new
-    assign nwr_idx = idx_q - IDX_BITS'(0);
+    assign nwr_idx = widx - IDX_BITS'(0);
 @end
 
 @mutation rev13-next-line-hit-ignores-valid
@@ -25628,9 +25650,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note The next line's copy of way 1's tags is never written, so a line
 @note filled into way 1 is never found by the page reach.
 @old
-      if (fill &&  way_q) ntag1_ram[nwr_idx] <= tag_q;
+      if (wr_tag && wr1) ntag1_ram[nwr_idx] <= wtag;
 @new
-      if (fill &&  way_q && 1'b0) ntag1_ram[nwr_idx] <= tag_q;
+      if (wr_tag && wr1 && 1'b0) ntag1_ram[nwr_idx] <= wtag;
 @end
 
 @mutation rev13-next-line-word-copy-misses-a-store
@@ -25652,9 +25674,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note RAMs DID land at a write's edge.  It must be caught, or a poison that
 @note never fires and one nothing samples look alike (the block-RAM rule).
 @old
-  assign rdw0 = look && wr0 && (look_idx == idx_q);
+  assign rdw0 = look_any && wr0 && (look_idx == widx);
 @new
-  assign rdw0 = look;
+  assign rdw0 = look_any;
 @end
 
 @mutation rev13-next-line-ram-read-in-its-undefined-tick
@@ -26093,8 +26115,12 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note main memory, so a page there is moved, packed, into the words the
 @note window's buffer lies over, where muir stops it with NXM.
 @old
+    // Block-disk's channel takes main memory alone (see the header).
+    assign device = register_page && !MAIN_ONLY;
     assign memory = (window && !MAIN_ONLY) || main;
 @new
+    // Block-disk's channel takes main memory alone (see the header).
+    assign device = register_page && !MAIN_ONLY;
     assign memory = window || main;
 @end
 
@@ -26103,8 +26129,10 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @file rtl/machine/cadr_xbus_decode.sv
 @note The register page is a device to the channel as to the processor.
 @old
+    // Block-disk's channel takes main memory alone (see the header).
     assign device = register_page && !MAIN_ONLY;
 @new
+    // Block-disk's channel takes main memory alone (see the header).
     assign device = register_page;
 @end
 
@@ -26160,9 +26188,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note past 4M words, the window and the register page all fold onto the
 @note bottom of main memory.
 @old
-  assign phys    = memstart ? {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus} : phys_r;
+    assign phys_start = {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
 @new
-  assign phys    = memstart ? {vmo[PHYS_BITS-1-OFFSET_BITS:12] & 6'd0, vmo[11:0], vma_bus} : phys_r;
+    assign phys_start = {vmo[PHYS_BITS-1-OFFSET_BITS:12] & 6'd0, vmo[11:0], vma_bus};
 @end
 
 @mutation rev13-a-store-drops-the-tag
@@ -26962,4 +26990,408 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
                              : (r_hi_q && r_idx_q == 5'd7 && VIDEO_WIDTH != 0)
 @new
                              : (r_hi_q && r_idx_q == 5'd7)
+@end
+
+# ----------------------------------------------------- QUUX revision 14
+#
+# Contract G3 revision 14, appendix A14: the TLB (`quux_tlb.sv`), the walk,
+# the write-back, the windows, the redirect, the operations and the memory
+# system's words (`quux_mmu.sv`), the write-back's seam to the memory port
+# and the cache (`quux_mem_port.sv`, `quux_cache.sv`), LC at 34 bits and
+# condition 12 (`cadr_microcycle.sv`) and feature word 2
+# (`quux_feature_page.sv`), each held by a program of `golden/src/quux14.rs`
+# that muir at the pin matches; `redirectam` and `fiddleam` hold the redirect
+# and the fiddles without a write-back, and `inflight` the walks behind a
+# cycle in flight (clarification 74).
+
+@mutation rev14-the-tlb-is-indexed-a-page-up
+@check quux14_fiddleam_quux
+@file rtl/machine/quux_mmu.sv
+@note The TLB's index taken from `VA<10+k:11>` where A14.4's is `VA<9+k:10>`:
+@note two pages a TLB's depth apart no longer share an entry.
+@old
+    return va[9+K:10];
+@new
+    return va[10+K:11];
+@end
+
+@mutation rev14-the-walk-reads-the-directory-at-va-30-19
+@check quux14_mapmd_quux
+@file rtl/machine/quux_mmu.sv
+@note The directory entry's address from `VA<30:19>` where A14.3's is
+@note `VA<31:20>`: the walk reads another table's entry.
+@old
+    return {base[17:2], va[31:20]};
+@new
+    return {base[17:2], va[30:19]};
+@end
+
+@mutation rev14-a-directory-entry-is-present-at-status-5
+@check quux14_noentry_quux
+@file rtl/machine/quux_mmu.sv
+@note A directory entry taken as present at status 5, where A14.3's is 4.
+@old
+    return d[26:24] == 3'd4 && d[17:0] < frames;
+@new
+    return d[26:24] == 3'd5 && d[17:0] < frames;
+@end
+
+@mutation rev14-the-no-entry-word-is-status-1
+@check quux14_mapmd_quux
+@file rtl/machine/quux_mmu.sv
+@note The word a walk that finds nothing gives, `60` in `<29:18>`, written
+@note `61`.
+@old
+  localparam logic [29:0] NO_ENTRY     = 30'(32'o60 << 18);
+@new
+  localparam logic [29:0] NO_ENTRY     = 30'(32'o61 << 18);
+@end
+
+@mutation rev14-a-memorys-window-is-status-4
+@check quux14_space_quux
+@file rtl/machine/quux_mmu.sv
+@note A memory's window's fixed entry at status 4, access 11, where A14.2's
+@note is status 7: a reference there goes to memory and does not fault.
+@old
+  localparam logic [29:0] FIX_AMEM     = 30'(32'b11 << 28 | 32'o760 << 18);
+@new
+  localparam logic [29:0] FIX_AMEM     = 30'(32'b11 << 28 | 32'o1460 << 18);
+@end
+
+@mutation rev14-the-physical-window-drops-its-lowest-frame-bit
+@check quux14_windows_quux
+@file rtl/machine/quux_mmu.sv
+@note The physical window's frame `VA<27:10>` with `<10>` dropped.
+@old
+    if (va[28]) return FIX_RW4 | 30'(va[27:10]);
+@new
+    if (va[28]) return FIX_RW4 | 30'({va[27:11], 1'b0});
+@end
+
+@mutation rev14-the-setter-takes-space-14
+@check quux14_setter_quux
+@file rtl/machine/quux_mmu.sv
+@note A pointer into space 14 marked as an ephemeral reference, where
+@note A14.8's space is 15 (`<31:28>` 1101).
+@old
+  assign eph = ephemeral && is_pointer(md_out) && md_out[31:28] == 4'b1101;
+@new
+  assign eph = ephemeral && is_pointer(md_out) && md_out[31:28] == 4'b1100;
+@end
+
+@mutation rev14-a-read-marks-the-page-modified
+@check quux14_wbhold_quux
+@file rtl/machine/quux_mmu.sv
+@note The modified bit written back on a read as well as on a write.
+@old
+                 | (wrcyc ? (30'(1 << 29) & ~ent_a) : 30'd0)
+@new
+                 | ((30'(1 << 29) & ~ent_a))
+@end
+
+@mutation rev14-the-guard-refuses-the-tlbs-own-frame
+@check quux14_windows_quux
+@file rtl/machine/quux_mmu.sv
+@note The guard's frame test inverted: every write-back refused but one to a
+@note frame the TLB does not hold.
+@old
+    return page[26:24] >= 3'd2 && page[26:24] <= 3'd6 && page[17:0] == frame;
+@new
+    return page[26:24] >= 3'd2 && page[26:24] <= 3'd6 && page[17:0] != frame;
+@end
+
+@mutation rev14-the-tlb-entry-is-not-ored
+@check quux14_windows_quux
+@file rtl/machine/quux_mmu.sv
+@note The TLB's entry left without the bits a write-back sets (A14.6), so
+@note the next reference writes them back again.
+@old
+        ta_wdata = {1'b1, tag(va_a), ta_q[29:0] | wb_bits};
+@new
+        ta_wdata = {1'b1, tag(va_a), ta_q[29:0]};
+@end
+
+@mutation rev14-the-direct-write-is-operation-2
+@check quux14_fiddleam_quux
+@file rtl/machine/quux_mmu.sv
+@note `WRITE-MAP`'s direct write taken as operation 2, the invalidation's
+@note code, where A14.4's is 1.
+@old
+        tb_wdata = (op == 2'd1) ? {1'b1, tag(va_b), vma[29:0]} : '0;
+@new
+        tb_wdata = (op == 2'd2) ? {1'b1, tag(va_b), vma[29:0]} : '0;
+@end
+
+@mutation rev14-the-invalidation-sweeps
+@check quux14_empty_quux
+@file rtl/machine/quux_mmu.sv
+@note Operation 2, an invalidation, starting the sweep that 3, the empty,
+@note starts.
+@old
+      if (op_land && op == 2'd3) begin
+@new
+      if (op_land && op == 2'd2) begin
+@end
+
+@mutation rev14-the-reset-sweep-a-tick-long
+@check quux14_windows_quux
+@file rtl/machine/quux_mmu.sv
+@note The reset's sweep a tick past the instant muir's ends at: a start a
+@note microcycle after it waits a microcycle more at K = 4.
+@old
+    parameter int signed   SWEEP_RESET_ADJ = 2,
+@new
+    parameter int signed   SWEEP_RESET_ADJ = 3,
+@end
+
+@mutation rev14-the-reset-sweep-a-tick-short
+@check quux14_windows_quux_k5
+@file rtl/machine/quux_mmu.sv
+@note The reset's sweep a tick before the instant muir's ends at, which K = 4
+@note cannot tell and K = 5 can: the bound on the other side.
+@old
+    parameter int signed   SWEEP_RESET_ADJ = 2,
+@new
+    parameter int signed   SWEEP_RESET_ADJ = 1,
+@end
+
+@mutation rev14-the-empty-sweep-a-tick-long
+@check quux14_empty_quux
+@file rtl/machine/quux_mmu.sv
+@note An empty's sweep a tick past N from the microcycle's start (A14.4).
+@old
+        sweep_s  <= 17'(ENTRIES) - 17'(since_start) - 17'sd1;
+@new
+        sweep_s  <= 17'(ENTRIES) - 17'(since_start) - 17'sd0;
+@end
+
+@mutation rev14-a-walked-entry-is-read-again
+@check quux14_windows_quux
+@file rtl/machine/quux_mmu.sv
+@note A write-back after port A's walk reads the tables again, where A14.6
+@note has it write at once.
+@old
+            else if (walked_a) begin
+@new
+            else if (walked_a && !walked_a) begin
+@end
+
+@mutation rev14-a-queued-walk-does-not-hold-its-cycle
+@check quux14_double_quux_k5
+@file rtl/machine/quux_mmu.sv
+@note Port B's walk queued behind port A's not holding the generator cycle
+@note it starts in, whose `until` it has not reached yet: a microcycle short
+@note at K = 5.
+@old
+                                 || (wstate != W_IDLE && wstate != W_TLB
+@new
+                                 || (wstate != W_IDLE && wstate != W_TLB && 1'b0
+@end
+
+@mutation rev14-the-redirect-stops-at-pp
+@check quux14_redirectam_quux
+@file rtl/machine/quux_mmu.sv
+@note The redirect's inside test `off < n` where A14.7's is `off <= n`: the
+@note word one past PP goes to memory.
+@old
+  assign redirect_in  = fires && off_pdl <= 32'(n_pdl);
+@new
+  assign redirect_in  = fires && off_pdl < 32'(n_pdl);
+@end
+
+@mutation rev14-the-redirects-n-is-pp-less-the-head
+@check quux14_redirectam_quux
+@file rtl/machine/quux_mmu.sv
+@note `n` without its 1 (A14.7).
+@old
+  assign n_pdl   = PDL_BITS'(pdl_ptr - pdl_head + PDL_BITS'(1));
+@new
+  assign n_pdl   = PDL_BITS'(pdl_ptr - pdl_head + PDL_BITS'(0));
+@end
+
+@mutation rev14-the-head-is-snooped-at-a-432
+@check quux14_redirectam_quux
+@file rtl/machine/quux_mmu.sv
+@note The head's copy taken in a write of A 432, where A14.7's is 431.
+@old
+    if (a_we && a_adr == 10'o431) pdl_head <= a_data[PDL_BITS-1:0];
+@new
+    if (a_we && a_adr == 10'o432) pdl_head <= a_data[PDL_BITS-1:0];
+@end
+
+@mutation rev14-the-redirect-takes-either-access-bit
+@check quux14_fiddleam_quux
+@file rtl/machine/quux_mmu.sv
+@note The access test taking either bit for permission: a status-5 page of
+@note access `01` read or written without the redirect.
+@old
+                && !(raw_a[27] && (!wrcyc || raw_a[26]));
+@new
+                && !(raw_a[27] || (!wrcyc && raw_a[26]));
+@end
+
+@mutation rev14-a-tlb-hit-is-not-taken
+@check quux14_redirectam_quux
+@file rtl/machine/quux_mmu.sv
+@note Port A's hit never taken: every reference walks, or finds nothing.
+@old
+    else if (hit_a)              raw_a = ta_q[29:0];
+@new
+    else if (hit_a && !hit_a)    raw_a = ta_q[29:0];
+@end
+
+@mutation rev14-a-fill-on-the-read-tick
+@check rdw_poison_quux14_double_quux
+@file rtl/machine/quux_mmu.sv
+@note **THE BLOCK-RAM RULE, JUST OUTSIDE IT**: a walk's fill written on the
+@note generator cycle's first tick, when both ports read, so that port B reads
+@note the entry port A writes at one index (`double`).  The machine may still
+@note agree with muir; the poison's count of reads through a write does not.
+@old
+  assign fill_now = wstate == W_TLB && w_load && !g1;
+@new
+  assign fill_now = wstate == W_TLB && w_load && (g1 || !g1);
+@end
+
+@mutation rev14-the-first-walk-read-starts-at-g2
+@check quux14_setter_quux
+@file rtl/machine/quux_mmu.sv
+@note The walk's first read started a tick late, at the generator cycle's
+@note second tick rather than at its start.
+@old
+      sd_until  = d_first ? -11'sd1 : smax(until_s, sd_ack_at);
+@new
+      sd_until  = d_first ? 11'sd0 : smax(until_s, sd_ack_at);
+@end
+
+@mutation rev14-refused-is-not-cleared-by-its-write
+@check quux14_writeback_quux
+@file rtl/machine/quux_mmu.sv
+@note Word 224 kept on a write, where A14.9 has a write clear it.
+@old
+          3'd4:    refused <= 32'd0;
+@new
+          3'd4:    refused <= refused;
+@end
+
+@mutation rev14-word-223-writes-222s-half
+@check quux14_words_quux
+@file rtl/machine/quux_mmu.sv
+@note Word 223 written into the pointer-type register's low half, 222's.
+@old
+          3'd3:    pointer_types[63:32] <= ms_wdata;
+@new
+          3'd3:    pointer_types[31:0] <= ms_wdata;
+@end
+
+@mutation rev14-the-write-back-ends-a-tick-late
+@check quux14_wbhold_quux
+@file rtl/machine/quux_mem_port.sv
+@note The write-back's end taken in the frame of the tick before, a tick
+@note late: the cycle behind it decides a tick after muir's instant.
+@old
+            wbu_s    <= rel_now - 11'sd1;
+@new
+            wbu_s    <= rel_now;
+@end
+
+@mutation rev14-the-write-back-word-misses-the-line
+@check quux14_windows_quux
+@file rtl/machine/quux_cache.sv
+@note The write-back's word not written into the line that holds it: the
+@note cache keeps the table word without the bits, and a read of it then
+@note disagrees with main memory.
+@old
+      s_upd_q <= s_update && s_hit;
+@new
+      s_upd_q <= 1'b0 && s_update && s_hit;
+@end
+
+@mutation rev14-lcs-adder-drops-its-carry
+@check quux14_lc_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `LC<33:32>`'s adder without the carry into `<32>` (A14.11).
+@old
+    assign lc_e     = m[33:32] + {alu_q[32], alu_q[32]} + {1'b0, c32};
+@new
+    assign lc_e     = m[33:32] + {alu_q[32], alu_q[32]} + {1'b0, 1'b0 & c32};
+@end
+
+@mutation rev14-lcs-shifted-write-is-the-adders
+@check quux14_lc_quux
+@file rtl/machine/cadr_microcycle.sv
+@note An output select shifting left taking `LC<33:32>` from the adder as it
+@note stands, where A14.11 shifts it in.
+@old
+    assign lc_wr    = {lc_arith ? (osel[1] ? {lc_e[0], alu_f[31]} : lc_e) : ob[33:32], ob[31:0]};
+@new
+    assign lc_wr    = {lc_arith ? (osel[1] ? lc_e : lc_e) : ob[33:32], ob[31:0]};
+@end
+
+@mutation rev14-condition-12-is-signed
+@check quux14_lc_quux
+@file rtl/machine/cadr_microcycle.sv
+@note Condition 12 compared signed, where A14.10's is unsigned.
+@old
+      5'o12: jcond = m[31:0] <= a[31:0];
+@new
+      5'o12: jcond = $signed(m[31:0]) <= $signed(a[31:0]);
+@end
+
+@mutation rev14-feature-word-2-is-4096
+@check quux14_space_quux
+@file rtl/machine/quux_feature_page.sv
+@note Feature word 2 at half the TLB's entries (A14.9).
+@old
+        8'o2:    word = PAGED ? 32'(TLB_ENTRIES) : 32'(32 << L1_BITS);
+@new
+        8'o2:    word = PAGED ? 32'(TLB_ENTRIES / 2) : 32'(32 << L1_BITS);
+@end
+
+@mutation rev14-port-b-writes-at-port-as-index
+@check quux14_fiddleam_quux
+@file rtl/machine/quux_tlb.sv
+@note Port B's write, the operations' and half the sweep's, landing at the
+@note entry port A addresses.
+@old
+      if (b_we) tlb_mem[b_idx] <= b_wdata;
+@new
+      if (b_we) tlb_mem[a_idx] <= b_wdata;
+@end
+
+@mutation rev14-the-walk-does-not-wait-for-the-acknowledgment
+@check quux14_inflight_quux
+@file rtl/machine/quux_mmu.sv
+@note A walk's first read taken at the generator cycle's start whatever the
+@note cycle in flight, where clarification 74 takes it no earlier than the
+@note cycle's acknowledgment: the walk's arithmetic forgets the wait its
+@note lookups keep.
+@old
+      sd_until  = d_first ? -11'sd1 : smax(until_s, sd_ack_at);
+@new
+      sd_until  = d_first ? -11'sd1 : smax(until_s, FLOOR & sd_ack_at);
+@end
+
+@mutation rev14-the-walker-looks-while-a-cycle-is-granted
+@check quux14_inflight_quux
+@file rtl/machine/quux_mem_port.sv
+@note The walker looking up while the cycle in flight is granted and not
+@note acknowledged, a hit's or a write-back's, beside the processor's own
+@note lookup (clarification 74).
+@old
+                      && (((state == IDLE || state == REQUESTED) && !fill_owed)
+@new
+                      && (((state == IDLE || state == REQUESTED || state == GRANTED) && !fill_owed)
+@end
+
+@mutation rev14-the-walker-runs-while-the-write-back-waits
+@check quux14_inflight_quux
+@file rtl/machine/quux_mem_port.sv
+@note The walker on the side seam while the cycle waits for its write-back,
+@note as before clarification 74: the two on the seam at once, which the
+@note monitor in `quux_mmu.sv` stops (W4).
+@old
+                          || (state == ACKED && (fill_have || !fill_owed)));
+@new
+                          || (state == ACKED && (fill_have || !fill_owed)) || (state == GRANTED && wbw));
 @end

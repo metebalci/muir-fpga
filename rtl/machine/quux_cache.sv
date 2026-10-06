@@ -90,8 +90,11 @@ module quux_cache #(
     // 32, the CADR's word and QUUX's to revision 12; 40, revision 13's
     // (`cadr_machine.sv`).
     parameter int unsigned WORD_BITS = 32,
+    // Revision 14's key, 29 bits: `<28>` = 1 for the device window's frame
+    // buffer, 0 for main memory (A14.1).
+    parameter bit          PAGED     = 1'b0,
     localparam bit          WIDE      = WORD_BITS > 32,
-    localparam int unsigned PHYS_BITS = WIDE ? 28 : 22,
+    localparam int unsigned PHYS_BITS = PAGED ? 29 : WIDE ? 28 : 22,
     localparam int unsigned LINE_WORDS = WIDE ? 8 : 4
 ) (
     input  var logic         clk,
@@ -142,7 +145,26 @@ module quux_cache #(
     // `Cache::invalidate`.  And a word block-disk wrote: its set dropped.
     input  var logic         invalidate,
     input  var logic         snoop,
-    input  var logic [PHYS_BITS-1:0] snoop_phys
+    input  var logic [PHYS_BITS-1:0] snoop_phys,
+
+    // **REVISION 14'S SIDE LOOKUP** (`quux_mmu.sv` through `quux_mem_port.sv`):
+    // the walk's reads and the write-back's, with held registers of their
+    // own, so that a processor's cycle's set, tag, way and pending fill are
+    // never theirs.  The RAMs' one read port is the processor's or the
+    // side's in a tick, never both (the port sees to it).  `s_hit` and
+    // `s_word` are out over the tick after `slook`; in that tick `s_touch`
+    // commits a read to the order as a processor's read does, keeping the
+    // way a miss fills (`s_fill`), and `s_update` writes a word into the
+    // line that holds it.  Unused, and tied low, below revision 14.
+    input  var logic         slook,
+    input  var logic [PHYS_BITS-1:0] slook_phys,
+    output var logic         s_hit,
+    output var logic [WORD_BITS-1:0] s_word,
+    input  var logic         s_touch,
+    input  var logic         s_fill,
+    input  var logic [LINE_WORDS*WORD_BITS-1:0] s_fill_line,
+    input  var logic         s_update,
+    input  var logic [WORD_BITS-1:0] s_update_word
 );
 
   localparam int unsigned OFF_BITS = WIDE ? 3 : 2;
@@ -176,6 +198,20 @@ module quux_cache #(
   assign v0 = valid0[idx_q];
   assign v1 = valid1[idx_q];
 
+  // The side lookup's own held address, way and update.
+  logic [IDX_BITS-1:0] s_idx_q;
+  logic [TAG_BITS-1:0] s_tag_q;
+  logic [OFF_BITS-1:0] s_off_q;
+  logic s_h0, s_h1, s_way_q, s_victim, s_touch_q, s_upd_q, s_upd_way_q;
+  // The set a touch was of, for the order a tick later: the side may look
+  // the next address up in the tick it touches.
+  logic [IDX_BITS-1:0] s_tidx_q;
+  logic [WB-1:0] s_upd_word_q;
+  assign s_h0     = valid0[s_idx_q] && (tag0_out == s_tag_q);
+  assign s_h1     = valid1[s_idx_q] && (tag1_out == s_tag_q);
+  assign s_hit    = s_h0 || s_h1;
+  assign s_victim = !valid0[s_idx_q] ? 1'b0 : !valid1[s_idx_q] ? 1'b1 : !mru[s_idx_q];
+
   logic h0, h1;
   assign h0  = v0 && (tag0_out == tag_q);
   assign h1  = v1 && (tag1_out == tag_q);
@@ -206,6 +242,7 @@ module quux_cache #(
   end
   assign word = way_q ? word1_q : word0_q;
   assign next_word = way_q ? next1_q : next0_q;
+  assign s_word = s_h1 ? data1_out[s_off_q] : data0_out[s_off_q];
 
   // ------------------------------------------------------------ the RAMs
   //
@@ -217,26 +254,48 @@ module quux_cache #(
   (* ram_style = "block", ramstyle = "M20K" *) logic [TAG_BITS-1:0] tag1_ram [SETS];
 
   logic [IDX_BITS-1:0] look_idx;
-  assign look_idx = look_phys[10:OFF_BITS];
+  assign look_idx = look ? look_phys[10:OFF_BITS] : slook_phys[10:OFF_BITS];
+  logic look_any;
+  assign look_any = look || slook;
 
   // Which word lanes of which way are written this edge, and with what.
-  logic        wr0, wr1;
+  logic        wr0, wr1, wr_tag;
   logic [LINE_WORDS-1:0] lanes;
   logic [LINE_WORDS*WB-1:0] wr_line;
+  logic [IDX_BITS-1:0] widx;
+  logic [TAG_BITS-1:0] wtag;
   always_comb begin
     wr0 = 1'b0;
     wr1 = 1'b0;
+    wr_tag = 1'b0;
     lanes = '0;
     wr_line = fill_line;
+    widx = idx_q;
+    wtag = tag_q;
     if (fill) begin
       wr0 = !way_q;
       wr1 = way_q;
+      wr_tag = 1'b1;
       lanes = '1;
     end else if (upd_q) begin
       wr0 = !upd_way_q;
       wr1 = upd_way_q;
       lanes = LINE_WORDS'(1) << off_q;
       wr_line = {LINE_WORDS{upd_word_q}};
+    end else if (s_fill) begin
+      wr0 = !s_way_q;
+      wr1 = s_way_q;
+      wr_tag = 1'b1;
+      lanes = '1;
+      wr_line = s_fill_line;
+      widx = s_idx_q;
+      wtag = s_tag_q;
+    end else if (s_upd_q) begin
+      wr0 = !s_upd_way_q;
+      wr1 = s_upd_way_q;
+      lanes = LINE_WORDS'(1) << s_off_q;
+      wr_line = {LINE_WORDS{s_upd_word_q}};
+      widx = s_idx_q;
     end
   end
 
@@ -246,8 +305,8 @@ module quux_cache #(
   // else defines it, and a board flow never does.
   logic rdw0, rdw1;
 `ifdef CADR_RDW_POISON
-  assign rdw0 = look && wr0 && (look_idx == idx_q);
-  assign rdw1 = look && wr1 && (look_idx == idx_q);
+  assign rdw0 = look_any && wr0 && (look_idx == widx);
+  assign rdw1 = look_any && wr1 && (look_idx == widx);
   longint unsigned n_ram_writes = 0, n_rdw = 0;
   always_ff @(posedge clk) begin
     if (wr0 || wr1) n_ram_writes <= n_ram_writes + 1;
@@ -271,12 +330,12 @@ module quux_cache #(
 `endif
 
   always_ff @(posedge clk) begin
-    if (look) begin
+    if (look_any) begin
       tag0_out <= rdw0 ? ~tag0_ram[look_idx] : tag0_ram[look_idx];
       tag1_out <= rdw1 ? ~tag1_ram[look_idx] : tag1_ram[look_idx];
     end
-    if (fill && !way_q) tag0_ram[idx_q] <= tag_q;
-    if (fill &&  way_q) tag1_ram[idx_q] <= tag_q;
+    if (wr_tag && wr0) tag0_ram[widx] <= wtag;
+    if (wr_tag && wr1) tag1_ram[widx] <= wtag;
   end
 
   // A word lane of each way, a RAM of its own, so that a write-through
@@ -285,12 +344,12 @@ module quux_cache #(
     (* ram_style = "block", ramstyle = "M20K" *) logic [WB-1:0] d0_ram [SETS];
     (* ram_style = "block", ramstyle = "M20K" *) logic [WB-1:0] d1_ram [SETS];
     always_ff @(posedge clk) begin
-      if (look) begin
+      if (look_any) begin
         data0_out[w] <= rdw0 ? ~d0_ram[look_idx] : d0_ram[look_idx];
         data1_out[w] <= rdw1 ? ~d1_ram[look_idx] : d1_ram[look_idx];
       end
-      if (wr0 && lanes[w]) d0_ram[idx_q] <= wr_line[WB*w +: WB];
-      if (wr1 && lanes[w]) d1_ram[idx_q] <= wr_line[WB*w +: WB];
+      if (wr0 && lanes[w]) d0_ram[widx] <= wr_line[WB*w +: WB];
+      if (wr1 && lanes[w]) d1_ram[widx] <= wr_line[WB*w +: WB];
     end
   end
 
@@ -312,7 +371,7 @@ module quux_cache #(
     logic [IDX_BITS-1:0] nwr_idx, nidx;
     logic [TAG_BITS-1:0] ntag0_out, ntag1_out;
     logic [WB-1:0]       nd0_out, nd1_out;
-    assign nwr_idx = idx_q - IDX_BITS'(1);
+    assign nwr_idx = widx - IDX_BITS'(1);
     assign nidx    = idx_q + IDX_BITS'(1);
     logic nrdw0, nrdw1;
 `ifdef CADR_RDW_POISON
@@ -329,8 +388,8 @@ module quux_cache #(
         nd0_out   <= nrdw0 ? ~nd0_ram[look_idx] : nd0_ram[look_idx];
         nd1_out   <= nrdw1 ? ~nd1_ram[look_idx] : nd1_ram[look_idx];
       end
-      if (fill && !way_q) ntag0_ram[nwr_idx] <= tag_q;
-      if (fill &&  way_q) ntag1_ram[nwr_idx] <= tag_q;
+      if (wr_tag && wr0) ntag0_ram[nwr_idx] <= wtag;
+      if (wr_tag && wr1) ntag1_ram[nwr_idx] <= wtag;
       if (wr0 && lanes[0]) nd0_ram[nwr_idx] <= wr_line[WB-1:0];
       if (wr1 && lanes[0]) nd1_ram[nwr_idx] <= wr_line[WB-1:0];
     end
@@ -352,6 +411,11 @@ module quux_cache #(
       tag_q <= look_phys[PHYS_BITS-1:11];
       off_q <= look_phys[OFF_BITS-1:0];
     end
+    if (slook) begin
+      s_idx_q <= slook_phys[10:OFF_BITS];
+      s_tag_q <= slook_phys[PHYS_BITS-1:11];
+      s_off_q <= slook_phys[OFF_BITS-1:0];
+    end
   end
 
   always_ff @(posedge clk) begin
@@ -365,7 +429,30 @@ module quux_cache #(
       valid0     <= '0;
       valid1     <= '0;
       mru        <= '0;
+      s_way_q      <= 1'b0;
+      s_touch_q    <= 1'b0;
+      s_upd_q      <= 1'b0;
+      s_upd_way_q  <= 1'b0;
+      s_upd_word_q <= '0;
+      s_tidx_q     <= '0;
     end else begin
+      // The side's commit: the way, the order a tick later, a fill into the
+      // way kept, an update into the way that holds the word.
+      if (s_touch) begin
+        s_way_q  <= s_hit ? s_h1 : s_victim;
+        s_tidx_q <= s_idx_q;
+      end
+      s_touch_q <= s_touch;
+      if (s_touch_q) mru[s_tidx_q] <= s_way_q;
+      s_upd_q <= s_update && s_hit;
+      if (s_update) begin
+        s_upd_way_q  <= s_h1;
+        s_upd_word_q <= s_update_word;
+      end
+      if (s_fill) begin
+        if (s_way_q) valid1[s_idx_q] <= 1'b1;
+        else         valid0[s_idx_q] <= 1'b1;
+      end
       upd_q <= update && hit;
       if (update) begin
         upd_way_q  <= hit_way;

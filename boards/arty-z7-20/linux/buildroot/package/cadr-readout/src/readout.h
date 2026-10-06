@@ -182,7 +182,8 @@ int ro_read_machine(struct readout *r, struct cadr_image *img);
 int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l);
 
 // **WHICH REVISION OF QUUX**: entry 21's <15:0>, MACHINE-ID's on revision 13
-// (`IMG_QUUX_ID_13`) and 0 on revision 12.  13 or 12, 0 for the CADR, and -1
+// (`IMG_QUUX_ID_13`) and 14 (`IMG_QUUX_ID_14`), and 0 on revision 12.  14, 13
+// or 12, 0 for the CADR, and -1
 // for a stale echo or a word that is neither.
 int ro_quux_revision(struct readout *r);
 

@@ -87,6 +87,10 @@ module quux_clocks (
     // The master clock edge, and the edge that runs a microcycle.
     input  var logic        mclk_edge,
     input  var logic        cpu_edge,
+    // Every edge the generator restarts at, the master clock's and, on
+    // revision 14, those a TLB hold takes (`cadr_microcycle.sv`'s
+    // `gen_edge`): the microsecond clock as a read phase after it reads it.
+    input  var logic        gen_edge,
 
     // The register page (`quux_feature_page.sv`): a write of word 110 + `pg_idx`
     // in the tick the page takes it, and its word; `RESET-DEVICES`, the
@@ -195,7 +199,7 @@ module quux_clocks (
       end
       // At the edge, with an increment that falls on it: a change on an edge
       // counts as before it, muir's rule.
-      if (mclk_edge) usec_s <= usec + 32'(power_on_t == 2'd0 && usec_t == 7'd0);
+      if (gen_edge) usec_s <= usec + 32'(power_on_t == 2'd0 && usec_t == 7'd0);
     end
   end
 

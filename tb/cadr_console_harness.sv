@@ -545,6 +545,25 @@ module cadr_console_harness #(
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
   ) processor (
+      // Revision 14's memory system's seams, which a revision-13 or CADR
+      // processor leaves idle.
+      .boards      (11'd0),
+      .ms_we       (1'b0),
+      .ms_idx      (3'd0),
+      .ms_wdata    (32'd0),
+      .sd_ready    (1'b0),
+      .sd_walk_ready(1'b0),
+      .sd_ack_at   (11'sd0),
+      .sd_hit      (1'b0),
+      .sd_word     (40'd0),
+      .sd_done     (11'sd0),
+      .sd_fill_v   (1'b0),
+      .sd_fill_word(40'd0),
+      .sd_wdone    (1'b0),
+      /* verilator lint_off PINCONNECTEMPTY */
+      .ms_rdata (), .sd_look (), .sd_phys (), .sd_commit (), .sd_wr (), .sd_wdata (),
+      .sd_until (), .wb_hold (), .wb_rel_v (), .wb_rel (),
+      /* verilator lint_on PINCONNECTEMPTY */
       .clk         (clk),
       .rst         (mach_rst),
       .n_boot      (n_boot),
