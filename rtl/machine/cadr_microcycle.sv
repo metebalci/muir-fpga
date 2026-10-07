@@ -123,6 +123,9 @@ module cadr_microcycle #(
     // twelve hex digits.  Generated into build/, never committed.  On QUUX
     // it is QUUX's boot PROM, version 2000, which `cadr_machine.sv` is handed.
     parameter string PROM_HEX = "build/boot_prom.hex",
+    // A tick's real length in picoseconds, for QUUX's clocks
+    // (`cadr_machine.sv`).
+    parameter int unsigned TICK_PS = cadr_tick_pkg::TICK_NS * 1000,
 
     // "cadr" or "quux", from `cadr_machine.sv`, and QUUX's MACHINE-ID, which
     // is decided there.  **QUUX'S PARTS OF THIS PROCESSOR**, each behind
@@ -450,20 +453,29 @@ module cadr_microcycle #(
     output var logic [28:0] sd_phys,
     input  var logic        sd_ready,
     input  var logic        sd_walk_ready,
+    input  var logic        sd_grant_ready,
     input  var logic signed [10:0] sd_ack_at,
     input  var logic        sd_hit,
     input  var logic [39:0] sd_word,
+    input  var logic        sd_hit_live,
+    input  var logic        sd_h1_live,
+    input  var logic [39:0] sd_word0_live,
+    input  var logic [39:0] sd_word1_live,
     output var logic        sd_commit,
     output var logic        sd_wr,
     output var logic [39:0] sd_wdata,
+    output var logic [29:0] sd_wbits,
     output var logic signed [10:0] sd_until,
     input  var logic signed [10:0] sd_done,
     input  var logic        sd_fill_v,
     input  var logic [39:0] sd_fill_word,
     input  var logic        sd_wdone,
+    output var logic        sd_relook,
     output var logic        wb_hold,
     output var logic        wb_rel_v,
-    output var logic signed [10:0] wb_rel
+    output var logic        wb_rel_now,
+    output var logic signed [10:0] wb_rel,
+    output var logic signed [10:0] wb_rel_q
 );
 
   localparam int unsigned IMEM_WORDS = 16384;
@@ -587,8 +599,12 @@ module cadr_microcycle #(
   // redirect.
   logic [29:0] mmu_ent_a, mmu_ent_b;
   logic [1:0]  mmu_map_bits;
-  logic        redirect_in, redirect_pdl_rd, mmu_op_drop;
-  logic [13:0] redirect_idx;
+  logic        redirect_in, redirect_in_q, redirect_pdl_rd, mmu_op_drop;
+  logic [13:0] redirect_idx_q;
+  // `VMA`'s and `MD`'s next values, the D of each register: revision 14's
+  // TLB is read at the edge from them (`quux_mmu.sv`).  Assigned below with
+  // the registers they model.
+  logic [31:0] vma_nx, md_nx;
   logic mclk_edge;
   assign mclk_edge = gen_edge && !(PAGED && tlbh);
 
@@ -1340,34 +1356,62 @@ module cadr_microcycle #(
   // through the M bus was then timed from it at one tick.  The latch closes
   // a tick later than the others, still six ticks before the write pulse.
   if (QUUX) begin : g_quux_pdl
-    logic                pdl_we, redir_we;
+    logic                pdl_we;
     logic [PDL_BITS-1:0] pdla;
     logic [WORD_BITS-1:0]  pdl_rd, pdl_wd;
     assign pdl_we = wp && pdlwrited;
-    // **REVISION 14'S REDIRECT TAKES THIS PORT TWICE** (A14.7): a read
-    // inside the buffer in the microcycle it holds, a tick after the hold is
-    // decided (`redirect_pdl_rd`), its word kept for the edge the start goes
-    // out at (`redir_word`); and a write inside the buffer at that edge, of
-    // the word the write carries, `MD` as the edge leaves it.  The edge's
-    // own pulse is the start's instruction's, which writes no PDL buffer:
-    // one destination an instruction, and the start's is `VMA`.
-    assign redir_we = PAGED && mclk_edge && memstart && redirect_in && wrcyc;
-    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
-                  : pdl_we ? pdla_write
-                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_read;
-    assign pdl_wd = redir_we ? md_bus : l;
+    // **REVISION 14'S REDIRECT READS THIS PORT, AND WRITES THROUGH A
+    // REGISTER** (A14.7): a read inside the buffer in the generator cycle it
+    // holds, on that cycle's last tick but one (`redirect_pdl_rd`), its word
+    // kept for the edge the start goes out at (`redir_word`); and a write
+    // inside the buffer at that edge, of the word the write carries, `MD` as
+    // the edge leaves it.  The edge's own pulse is the start's instruction's,
+    // which writes no PDL buffer: one destination an instruction, and the
+    // start's is `VMA`.
+    //
+    // The buffer is enabled on every tick, and its word has the tick only,
+    // so the write is taken at its edge into registers of the edge (`rw_*`:
+    // the word, `MD`'s next value, has the microcycle into them as into
+    // `MD`) and put into the RAM at a later generator edge whose tick writes
+    // nothing else (`rw_put`), from those registers.  A read at an edge's
+    // own tick is free: the word at the new pointer is the next tick's read,
+    // and a held or halted cycle reads the same word again on the ticks
+    // after.  Until then the registers stand for the RAM's word: a read of
+    // their index gives their word (`rw_fwd`), the redirect's own read
+    // included, and a write pulse to their index supersedes them.  The
+    // readout's port reads the RAM, which has the word at most a generator
+    // cycle after its edge.
+    logic                  redir_we, rw_put, rw_fwd;
+    logic                  rw_v = 1'b0;
+    logic [PDL_BITS-1:0]   rw_ix;
+    logic [WORD_BITS-1:0]  rw_wd;
+    assign redir_we = PAGED && mclk_edge && memstart && redirect_in_q && wrcyc;
+    assign rw_put   = PAGED && gen_edge && rw_v && !pdl_we;
+    assign pdla   = pdl_we ? pdla_write
+                  : rw_put ? rw_ix
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_read;
+    assign pdl_wd = pdl_we ? l : rw_wd;
     // WRITE_FIRST, for the reason the file's header gives: a tool's fault.
     always_ff @(posedge clk) begin
-      if (pdl_we || redir_we) begin
+      if (pdl_we || rw_put) begin
         pdl[pdla] <= pdl_wd;
         pdl_rd    <= pdl_wd;
       end else
         pdl_rd <= pdl[pdla];
     end
+    always_ff @(posedge clk) begin
+      if (rw_put || (pdl_we && pdla_write == rw_ix)) rw_v <= 1'b0;
+      if (redir_we) begin
+        rw_v  <= 1'b1;
+        rw_ix <= PDL_BITS'(redirect_idx_q);
+        rw_wd <= md_bus;
+      end
+      rw_fwd <= PAGED && rw_v && !rw_put && !pdl_we && pdla == rw_ix;
+    end
     logic redir_rd_q;
     always_ff @(posedge clk) begin
       redir_rd_q <= PAGED && redirect_pdl_rd;
-      if (redir_rd_q) redir_word <= pdl_rd;
+      if (redir_rd_q) redir_word <= pdl_q;
     end
 `ifdef CADR_GAP_MONITOR
     always_ff @(posedge clk)
@@ -1379,7 +1423,7 @@ module cadr_microcycle #(
     // it would give it a tick later, K - 2 ticks before the edge that reads
     // it.  (It was the latch that took the word while TPCLK was high, when a
     // microcycle had a read phase.)
-    assign pdl_q = pdl_rd;
+    assign pdl_q = rw_fwd ? rw_wd : pdl_rd;
   end else begin : g_cadr_pdl
     assign redir_word = '0;
     always_ff @(posedge clk) begin
@@ -2541,6 +2585,7 @@ module cadr_microcycle #(
         .rst           (rst),
         .n_boot        (n_boot),
         .gen_edge      (gen_edge),
+        .gen_pre       (!n_tpwp),
         .machrun_base  (machrun_base),
         .cpu_edge      (cpu_edge),
         .tlbh          (tlbh),
@@ -2548,6 +2593,8 @@ module cadr_microcycle #(
         .wrcyc         (wrcyc),
         .vma           (40'(vma)),
         .md            (40'(md)),
+        .vma_nx        (vma_nx),
+        .md_nx         (md_nx),
         .srcmap_run    (srcmap && !nop),
         .map_dispatch  (irdisp && (ir[8] || ir[9])),
         .pdl_ptr       (14'(pdl_ptr)),
@@ -2562,7 +2609,8 @@ module cadr_microcycle #(
         .ent_b         (mmu_ent_b),
         .map_bits      (mmu_map_bits),
         .redirect_in   (redirect_in),
-        .redirect_idx  (redirect_idx),
+        .redirect_in_q (redirect_in_q),
+        .redirect_idx_q(redirect_idx_q),
         .pdl_rd        (redirect_pdl_rd),
         .op_drop       (mmu_op_drop),
         .ms_we         (ms_we),
@@ -2573,20 +2621,29 @@ module cadr_microcycle #(
         .sd_phys       (sd_phys),
         .sd_ready      (sd_ready),
         .sd_walk_ready (sd_walk_ready),
+        .sd_grant_ready(sd_grant_ready),
         .sd_ack_at     (sd_ack_at),
         .sd_hit        (sd_hit),
         .sd_word       (sd_word),
+        .sd_hit_live   (sd_hit_live),
+        .sd_h1_live    (sd_h1_live),
+        .sd_word0_live (sd_word0_live),
+        .sd_word1_live (sd_word1_live),
         .sd_commit     (sd_commit),
         .sd_wr         (sd_wr),
         .sd_wdata      (sd_wdata),
+        .sd_wbits      (sd_wbits),
         .sd_until      (sd_until),
         .sd_done       (sd_done),
         .sd_fill_v     (sd_fill_v),
         .sd_fill_word  (sd_fill_word),
         .sd_wdone      (sd_wdone),
+        .sd_relook     (sd_relook),
         .wb_hold       (wb_hold),
         .wb_rel_v      (wb_rel_v),
+        .wb_rel_now    (wb_rel_now),
         .wb_rel        (wb_rel),
+        .wb_rel_q      (wb_rel_q),
         .ro_directory  (ro_dir),
         .ro_ephemeral  (ro_eph),
         .ro_pointer_types(ro_types),
@@ -2605,7 +2662,8 @@ module cadr_microcycle #(
     assign mmu_ent_b       = '0;
     assign mmu_map_bits    = 2'b11;
     assign redirect_in     = 1'b0;
-    assign redirect_idx    = '0;
+    assign redirect_in_q   = 1'b0;
+    assign redirect_idx_q  = '0;
     assign redirect_pdl_rd = 1'b0;
     assign mmu_op_drop     = 1'b0;
     assign ms_rdata        = 32'd0;
@@ -2614,10 +2672,14 @@ module cadr_microcycle #(
     assign sd_commit       = 1'b0;
     assign sd_wr           = 1'b0;
     assign sd_wdata        = '0;
+    assign sd_wbits        = '0;
     assign sd_until        = '0;
+    assign sd_relook       = 1'b0;
     assign wb_hold         = 1'b0;
     assign wb_rel_v        = 1'b0;
+    assign wb_rel_now      = 1'b0;
     assign wb_rel          = '0;
+    assign wb_rel_q        = '0;
     assign ro_mmu_words    = RO_NO_MEMORY_W;
     assign ro_mmu_types0   = RO_NO_MEMORY_W;
     assign ro_mmu_types1   = RO_NO_MEMORY_W;
@@ -2625,8 +2687,9 @@ module cadr_microcycle #(
     assign ro_mmu_pdl      = RO_NO_MEMORY_W;
     logic unused_mmu;
     assign unused_mmu = ^{boards, ms_we, ms_idx, ms_wdata, sd_ready, sd_walk_ready, sd_ack_at, sd_hit, sd_word, sd_done, sd_fill_v,
-                          sd_fill_word, sd_wdone, machrun_base, mmu_ent_a, mmu_ent_b, redirect_idx,
-                          redirect_pdl_rd, mmu_op_drop, 32'(TLB_ENTRIES)};
+                          sd_fill_word, sd_wdone, machrun_base, mmu_ent_a, mmu_ent_b,
+                          redirect_pdl_rd, mmu_op_drop, 32'(TLB_ENTRIES), sd_grant_ready, sd_hit_live,
+                          sd_h1_live, sd_word0_live, sd_word1_live, vma_nx, md_nx, redirect_in_q, redirect_idx_q};
   end
 
   // page MD 2A20-2B14, and the address the cables carry.
@@ -2734,11 +2797,14 @@ module cadr_microcycle #(
   if (PAGED) begin : g_rev14_phys
     logic [31:0] va_bus;
     assign va_bus     = (cpu_edge && vmaenb) ? vmas[31:0] : vma[31:0];
+    // VMA moves at a cpu edge alone, so this is its next value.
+    assign vma_nx     = va_bus;
     assign phys_start = (va_bus[31:28] == 4'b1110) ? {1'b1, va_bus[27:0]}
                                                     : {1'b0, vmo[17:0], va_bus[9:0]};
     logic unused_vma_bus;
     assign unused_vma_bus = ^vma_bus;
   end else begin : g_rev13_phys
+    assign vma_nx     = '0;
     assign phys_start = {vmo[PHYS_BITS-1-OFFSET_BITS:0], vma_bus};
   end
   assign phys    = memstart ? phys_start : phys_r;
@@ -3422,7 +3488,7 @@ module cadr_microcycle #(
   logic [47:0] qclk_ro_count [0:2];
   logic [25:0] qclk_ro_conf [0:2];
   if (QUUX) begin : g_quux_tick
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -3452,10 +3518,10 @@ module cadr_microcycle #(
       assign qclk_ro_count[k] = 48'd0;
       assign qclk_ro_conf[k]  = 26'd0;
     end
-    // The page's words reach nothing on the CADR; named so lint sees them
-    // read.
+    // The page's words reach nothing on the CADR, nor does the tick's length;
+    // named so lint sees them read.
     logic unused_tick;
-    assign unused_tick = tm_we ^ (^tm_idx) ^ (^tm_wdata) ^ reset_devices;
+    assign unused_tick = tm_we ^ (^tm_idx) ^ (^tm_wdata) ^ reset_devices ^ (TICK_PS == 0);
   end
 
   // page Q 2A05-2A11: the 74S194s shift under `QS1`/`QS0`.
@@ -4398,6 +4464,41 @@ module cadr_microcycle #(
              n_on_boundary, n_under_memstart, n_write_under_memstart);
   end
 `endif
+
+
+  // **`MD`'S NEXT VALUE** (revision 14's port B, `quux_mmu.sv`): the D of
+  // the register above, its writers in the order the process takes them,
+  // the last one winning.  Every one of them is a tick of `gen_edge` or a
+  // master clock edge on QUUX (`ub_md_take` included), so the TLB read at
+  // the edge sees every word MD takes.  Held to the register on every tick
+  // of the checks built with `CADR_GAP_MONITOR`.
+  if (PAGED) begin : g_rev14_md_nx
+    always_comb begin
+      md_nx = md[31:0];
+      if (loadmd_edge && (gen_edge || hang) && !(QUUX && memstart && memgo_q && mclk_edge))
+        md_nx = rdata[31:0];
+      else if (!loadmd_edge && md_pending && (gen_edge || hang))
+        md_nx = md_held[31:0];
+      if (ub_md_take) md_nx = ub_md_data;
+      if (cpu_edge && destmdr) md_nx = ob[31:0];
+      if (mclk_edge && memstart && redirect_in && !wrcyc) md_nx = redir_word[31:0];
+    end
+`ifdef CADR_GAP_MONITOR
+    logic [31:0] md_nx_q, vma_nx_q;
+    logic        nx_valid;
+    always_ff @(posedge clk) begin
+      md_nx_q  <= md_nx;
+      vma_nx_q <= vma_nx;
+      nx_valid <= !rst;
+      if (nx_valid && !rst && md[31:0] != md_nx_q)
+        $fatal(1, "md_nx: MD took %08x where its next value said %08x", md[31:0], md_nx_q);
+      if (nx_valid && !rst && vma[31:0] != vma_nx_q)
+        $fatal(1, "vma_nx: VMA took %08x where its next value said %08x", vma[31:0], vma_nx_q);
+    end
+`endif
+  end else begin : g_no_md_nx
+    assign md_nx = '0;
+  end
 
 endmodule
 

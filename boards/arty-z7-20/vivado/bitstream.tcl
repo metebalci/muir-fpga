@@ -969,32 +969,9 @@ if {$machine eq "quux"} {
         {*memory/g_quux_port.port/cache/*} {*processor/md_reg* *processor/md_held_reg*}
     puts "BIT: QUUX: [llength $quux_tick_cells] tick countdown cells"
 }
-# **REVISION 14'S CLAUSES, `quux14_machine.xdc`, ASKED WHAT THEY REACHED**:
-# the TLB's word out of it a tick after the edge, to the next edge and into
-# the every-tick registers' first hop; both ports' addresses at the tick;
-# the memory system's registers at the tick but for what it holds of the
-# microcycle (`tools/grid_check.py`'s `REV14_CLASSED`); and the redirect's
-# word at the tick after the PDL buffer's read.
-if {$revision eq "14"} {
-    set q_tlb {*processor/g_rev14_mmu.mmu/tlb/*}
-    set q_every {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
-                 *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
-                 *memory/ub_addr_reg*}
-    # sync: K - 1
-    assert_clause_timing $tick [expr {$sync_k - 1}] "the TLB's word to the next edge" $q_tlb
-    # sync: K - 3
-    assert_clause_timing $tick [expr {$sync_k - 3}] "the TLB's word into the every-tick registers" \
-        $q_tlb $q_every
-    # grid: 0 ns + 1 tick
-    assert_pin_timing $tick 1 "into the TLB's two addresses" $q_tlb ADDR*
-    # sync: K
-    assert_instance_timing $tick $sync_k *u_machine/processor/g_rev14_mmu.mmu/* \
-        {*mmu/directory_reg* *mmu/ephemeral_reg* *mmu/pointer_types_reg* *mmu/pdl_base_reg*
-         *mmu/pdl_head_reg* *mmu/tlb/*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the PDL buffer into the redirect's word" \
-        {*processor/g_quux_pdl.pdl_reg*} {*processor/g_quux_pdl.redir_word_reg*}
-}
+# **REVISION 14'S CLAUSES, ASKED WHAT THEY REACHED** (`tlb_check.tcl`'s
+# `assert_rev14_clauses` has the list and the reasons).
+if {$revision eq "14"} { assert_rev14_clauses $tick $sync_k }
 
 opt_design
 place_design

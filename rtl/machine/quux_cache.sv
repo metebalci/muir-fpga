@@ -151,20 +151,32 @@ module quux_cache #(
     // the walk's reads and the write-back's, with held registers of their
     // own, so that a processor's cycle's set, tag, way and pending fill are
     // never theirs.  The RAMs' one read port is the processor's or the
-    // side's in a tick, never both (the port sees to it).  `s_hit` and
-    // `s_word` are out over the tick after `slook`; in that tick `s_touch`
-    // commits a read to the order as a processor's read does, keeping the
-    // way a miss fills (`s_fill`), and `s_update` writes a word into the
-    // line that holds it.  Unused, and tied low, below revision 14.
+    // side's in a tick, never both (the port sees to it).  The answer is
+    // out over the tick after `slook` (`s_hit_live`, `s_word_live`) and is
+    // a register over the tick after that (`s_hit`, `s_word`, with the way
+    // and the victim), the tick the side acts on it: `s_touch` commits the
+    // read to the order as a processor's read does, keeping the way a miss
+    // fills (`s_fill`), and `s_update` writes a word into the line that
+    // holds it, at that tick's edge.  Unused, and tied low, below revision
+    // 14.
     input  var logic         slook,
     input  var logic [PHYS_BITS-1:0] slook_phys,
     output var logic         s_hit,
     output var logic [WORD_BITS-1:0] s_word,
+    output var logic         s_hit_live,
+    output var logic         s_h1_live,
+    output var logic [WORD_BITS-1:0] s_word0_live,
+    output var logic [WORD_BITS-1:0] s_word1_live,
     input  var logic         s_touch,
     input  var logic         s_fill,
     input  var logic [LINE_WORDS*WORD_BITS-1:0] s_fill_line,
     input  var logic         s_update,
-    input  var logic [WORD_BITS-1:0] s_update_word
+    input  var logic [WORD_BITS-1:0] s_update_word,
+    // The write-back's bits, a register of the side's from the tick after
+    // the grant: a re-read entry's word is written from the registered
+    // answer and these, taken here a tick early, so that nothing from
+    // outside reaches the RAMs' write ports in the tick of the write.
+    input  var logic [29:0]  s_update_bits
 );
 
   localparam int unsigned OFF_BITS = WIDE ? 3 : 2;
@@ -202,15 +214,26 @@ module quux_cache #(
   logic [IDX_BITS-1:0] s_idx_q;
   logic [TAG_BITS-1:0] s_tag_q;
   logic [OFF_BITS-1:0] s_off_q;
-  logic s_h0, s_h1, s_way_q, s_victim, s_touch_q, s_upd_q, s_upd_way_q;
+  logic s_h0, s_h1, s_way_q, s_victim, s_touch_q, s_look_q, s_upd_q, s_upd_way_q;
+  logic [WB-1:0] s_upd_word_q;
   // The set a touch was of, for the order a tick later: the side may look
   // the next address up in the tick it touches.
   logic [IDX_BITS-1:0] s_tidx_q;
-  logic [WB-1:0] s_upd_word_q;
   assign s_h0     = valid0[s_idx_q] && (tag0_out == s_tag_q);
   assign s_h1     = valid1[s_idx_q] && (tag1_out == s_tag_q);
-  assign s_hit    = s_h0 || s_h1;
+  assign s_hit_live = s_h0 || s_h1;
   assign s_victim = !valid0[s_idx_q] ? 1'b0 : !valid1[s_idx_q] ? 1'b1 : !mru[s_idx_q];
+  // The answer as a register, the tick after it is out: what the side acts
+  // on, the way and the victim with it.
+  logic s_h1_q, s_victim_q;
+  logic [29:0] s_bits_q;
+  always_ff @(posedge clk) begin
+    s_bits_q   <= s_update_bits;
+    s_hit      <= s_hit_live;
+    s_h1_q     <= s_h1;
+    s_victim_q <= s_victim;
+    s_word     <= s_word_live;
+  end
 
   logic h0, h1;
   assign h0  = v0 && (tag0_out == tag_q);
@@ -242,7 +265,13 @@ module quux_cache #(
   end
   assign word = way_q ? word1_q : word0_q;
   assign next_word = way_q ? next1_q : next0_q;
-  assign s_word = s_h1 ? data1_out[s_off_q] : data0_out[s_off_q];
+  // Each way's word at the side's offset, chosen by the way only where it
+  // is used, after what each way's word decides (`quux_mmu.sv`).
+  logic [WB-1:0] s_word_live;
+  assign s_word0_live = data0_out[s_off_q];
+  assign s_word1_live = data1_out[s_off_q];
+  assign s_h1_live    = s_h1;
+  assign s_word_live  = s_h1 ? s_word1_live : s_word0_live;
 
   // ------------------------------------------------------------ the RAMs
   //
@@ -295,6 +324,12 @@ module quux_cache #(
       wr1 = s_upd_way_q;
       lanes = LINE_WORDS'(1) << s_off_q;
       wr_line = {LINE_WORDS{s_upd_word_q}};
+      widx = s_idx_q;
+    end else if (s_update && !s_look_q && s_hit) begin
+      wr0 = !s_h1_q;
+      wr1 = s_h1_q;
+      lanes = LINE_WORDS'(1) << s_off_q;
+      wr_line = {LINE_WORDS{s_word | WB'(s_bits_q)}};
       widx = s_idx_q;
     end
   end
@@ -431,21 +466,27 @@ module quux_cache #(
       mru        <= '0;
       s_way_q      <= 1'b0;
       s_touch_q    <= 1'b0;
+      s_look_q     <= 1'b0;
       s_upd_q      <= 1'b0;
       s_upd_way_q  <= 1'b0;
       s_upd_word_q <= '0;
       s_tidx_q     <= '0;
     end else begin
-      // The side's commit: the way, the order a tick later, a fill into the
-      // way kept, an update into the way that holds the word.
+      // The side's commit, from the registered answer: the way, the order a
+      // tick later, a fill into the way kept.
       if (s_touch) begin
-        s_way_q  <= s_hit ? s_h1 : s_victim;
+        s_way_q  <= s_hit ? s_h1_q : s_victim_q;
         s_tidx_q <= s_idx_q;
       end
       s_touch_q <= s_touch;
       if (s_touch_q) mru[s_tidx_q] <= s_way_q;
-      s_upd_q <= s_update && s_hit;
-      if (s_update) begin
+      // An update: in the tick after its look (the walked entry's write,
+      // into the line looked up for it), taken from the answer then out and
+      // written a tick later; later than that, written at its own tick's
+      // edge from the registered answer.
+      s_look_q <= slook;
+      s_upd_q  <= s_update && s_look_q && s_hit_live;
+      if (s_update && s_look_q) begin
         s_upd_way_q  <= s_h1;
         s_upd_word_q <= s_update_word;
       end

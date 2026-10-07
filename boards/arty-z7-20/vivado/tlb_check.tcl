@@ -15,19 +15,20 @@
 #   - `tlb_ports`: which primitive port is the RTL's port A, `VMA`'s, and
 #     which port B, `MD`'s.  **A TOOL MAY SWAP A TRUE DUAL-PORT RAM'S PORTS**:
 #     on every Arty fit M2 made, the RTL's port A was the primitive's B.  So
-#     a port is told by what reaches its address: port A's carries the
-#     walker's fill address (`w_va`), which port B's never does, and port
-#     B's carries `MD` and not `w_va`.
+#     a port is told by what reaches its address: port A's carries its own
+#     pending write's index (`pa_idx`), port B's its own (`pb_idx`).
 #   - `report_tlb`: after routing, the TLB's paths by port, each with its
 #     requirement, slack and logic levels, and the requirements every path
 #     out of each port and into each address was given, into `tlb_paths.txt`
 #     beside the bitstream.  This is the figure `docs/fits.md` quotes.
-#   - `assert_tlb_addressed_at_the_tick`: the block-RAM rule (UG473;
-#     `rams_enable_check.tcl`) on the TLB alone, asked with every timing
-#     exception dropped: every path into either port's address within one
-#     tick.  The TLB is enabled on the generator cycle's first tick and at
-#     its writes, which `rams_enable_check.tcl`'s structural sort cannot
-#     tell from an edge, so it is asked here by name, and on UltraRAM too.
+#   - `assert_tlb_enabled_at_the_edge`: the block-RAM rule (UG473;
+#     `rams_enable_check.tcl`) on the TLB alone, block RAM or UltraRAM.  The
+#     TLB is read at the edge from `VMA`'s and `MD`'s next values, which the
+#     constraint files give the microcycle, and written on the ticks between
+#     from the memory system's pending writes, registers of the tick; so each
+#     port's enable must be one the machine raises at its edges, its fan-in
+#     reaching both registers that make the boundary, as
+#     `rams_enable_check.tcl` sorts every other block RAM's.
 
 # The TLB's primitive cells.
 proc tlb_cells {} {
@@ -103,9 +104,9 @@ proc tlb_ports {} {
             set f {}; foreach x $dpat { lappend f "REF_PIN_NAME =~ $x" }
             set dp [get_pins -quiet -of $c -filter [join $f " || "]]
             set fin [get_property NAME [get_cells -quiet -of [all_fanin -quiet -flat -startpoints_only $ap]]]
-            set fill [expr {[lsearch -glob $fin *g_rev14_mmu.mmu/w_va_reg*] >= 0}]
-            set md   [expr {[lsearch -glob $fin *processor/md_reg*] >= 0}]
-            if {$fill} { set rtl A } elseif {$md} { set rtl B } else { set rtl ? }
+            set pa [expr {[lsearch -glob $fin *g_rev14_mmu.mmu/pa_idx_reg*] >= 0}]
+            set pb [expr {[lsearch -glob $fin *g_rev14_mmu.mmu/pb_idx_reg*] >= 0}]
+            if {$pa && !$pb} { set rtl A } elseif {$pb && !$pa} { set rtl B } else { set rtl ? }
             lappend out [list $c $pp $rtl $ap $dp]
         }
     }
@@ -178,38 +179,97 @@ proc report_tlb {outdir} {
     puts "TLB: the TLB's paths, port by port, are in $outdir/tlb_paths.txt"
 }
 
-# Asked after `reset_timing`, with the machine's clock re-derived at the tick
-# and every exception gone (`rams_enable_check.tcl`).  Deletes `bit` and
-# exits on a path into either address that misses one tick.
-proc assert_tlb_addressed_at_the_tick {bit} {
-    set ports [tlb_ports]
-    if {[llength $ports] == 0} { return }
-    set n 0; set bad 0; set worst ""
-    foreach p $ports {
-        lassign $p c pp rtl ap dp
-        foreach path [get_timing_paths -quiet -setup -max_paths 1000 -nworst 1 -to $ap] {
+# Asked after `reset_timing` (`rams_enable_check.tcl`), of the netlist alone:
+# each port of each TLB cell enabled from the boundary, and every port told
+# apart.  Deletes `bit` and exits otherwise.
+proc assert_tlb_enabled_at_the_edge {bit} {
+    set n 0; set bad {}
+    foreach c [tlb_cells] {
+        set ref [get_property REF_NAME $c]
+        if {[string match RAMB* $ref]} {
+            set ens {ENARDEN ENBWREN}
+        } elseif {[string match URAM* $ref]} {
+            set ens {EN_A EN_B}
+        } else {
+            continue
+        }
+        foreach en $ens {
+            set pin [get_pins -quiet $c/$en]
+            if {![llength $pin]} { continue }
             incr n
-            set slack [get_property SLACK $path]
-            if {$worst eq "" || $slack < [lindex $worst 0]} {
-                set worst [list $slack [get_property STARTPOINT_PIN $path] [get_property ENDPOINT_PIN $path] \
-                               [get_property DATAPATH_DELAY $path]]
-            }
-            if {$slack < 0} { incr bad }
+            set cls [rams_enable_classify $pin]
+            if {$cls ne "boundary"} { lappend bad "$c/$en $cls" }
         }
     }
+    foreach p [tlb_ports] {
+        lassign $p c pp rtl ap dp
+        if {$rtl eq "?"} { lappend bad "$c port $pp not told apart" }
+    }
     if {$n == 0} {
-        puts "RAMEN: FAILED --- no path reaches the TLB's addresses; the query is wrong"
+        puts "RAMEN: FAILED --- no enable pin of the TLB found; the query is wrong"
         file delete -force $bit
         exit 1
     }
-    lassign $worst slack from to delay
-    if {$bad} {
-        puts "RAMEN: FAILED --- the TLB: $bad of $n paths into its addresses miss one tick;"
-        puts [format "RAMEN: worst %.3f ns from %s to %s, slack %.3f. The bitstream %s is deleted." \
-                  $delay $from $to $slack $bit]
+    if {[llength $bad]} {
+        puts "RAMEN: FAILED --- the TLB: [join $bad {; }]: a port enabled on a tick that is not"
+        puts "RAMEN: the boundary's while its address is the microcycle's. The bitstream $bit is deleted."
         file delete -force $bit
         exit 1
     }
-    puts [format "RAMEN: ok --- the TLB: %d paths into both ports' addresses within one tick,\
-                  every exception dropped; worst %.3f ns, %s to %s, slack %.3f" $n $delay $from $to $slack]
+    puts "RAMEN: ok --- the TLB: $n enable pins, every one raised at the machine's edges"
+}
+
+# **REVISION 14'S CLAUSES, ASKED WHAT THEY REACHED** (`quux14_machine.xdc`,
+# and the relaxed set's pattern for the TLB and the edge's registers in
+# `cadr_machine.xdc`), by both Zynq flows after synthesis: the TLB's word out
+# of it as the edge's registers' is, to the next edge and into the
+# every-tick registers' first hop; `md_held` into its port B at the tick; the
+# side seam's looks into the cache's RAMs at the tick, from every register;
+# the memory system's registers at the tick but for what it holds of the
+# microcycle (`tools/grid_check.py`'s `REV14_CLASSED`); and the redirect's
+# word at the tick after the PDL buffer's read.
+proc assert_rev14_clauses {tick sync_k} {
+    set q_tlb {*processor/g_rev14_mmu.mmu/tlb/*}
+    set q_every {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
+                 *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
+                 *memory/ub_addr_reg*}
+    # sync: K
+    assert_clause_timing $tick $sync_k "the TLB's word to the next edge" $q_tlb
+    # sync: K - 2
+    assert_clause_timing $tick [expr {$sync_k - 2}] "the TLB's word into the every-tick registers" \
+        $q_tlb $q_every
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "MD_HELD into the TLB" {*processor/md_held_reg*} $q_tlb
+    # sync: K
+    assert_instance_timing $tick $sync_k *u_machine/processor/g_rev14_mmu.mmu/* \
+        {*mmu/directory_reg* *mmu/ephemeral_reg* *mmu/pointer_types_reg* *mmu/pdl_base_reg*
+         *mmu/pdl_head_reg* *mmu/e_* *mmu/tlb/*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the PDL buffer into the redirect's word" \
+        {*processor/g_quux_pdl.pdl_reg*} {*processor/g_quux_pdl.redir_word_reg*}
+    # The side seam's looks: every path through `sd_look` and `sd_phys` into
+    # the cache's RAMs at the tick, and at least one.
+    set through [get_pins -quiet -hier -filter {NAME =~ *processor/g_rev14_mmu.mmu/sd_look ||
+                                                NAME =~ *processor/g_rev14_mmu.mmu/sd_phys[*]}]
+    set rams [get_cells -quiet -hier -filter {NAME =~ *memory/g_quux_port.port/cache/* && IS_SEQUENTIAL}]
+    if {[llength $through] == 0 || [llength $rams] == 0} {
+        puts "XDC: FAILED --- the side seam's looks: [llength $through] pins of sd_look and sd_phys,"
+        puts "XDC: [llength $rams] cells of the cache, so the clause that names them reached nothing."
+        exit 1
+    }
+    set n 0; set over 0; set worst ""
+    foreach p [get_timing_paths -quiet -setup -through $through -to $rams -max_paths 400000 -nworst 1] {
+        incr n
+        set req [get_property REQUIREMENT $p]
+        if {$req > $tick + 0.001} {
+            incr over
+            if {$worst eq ""} { set worst "[get_property STARTPOINT_PIN $p] -> [get_property ENDPOINT_PIN $p] asks for $req ns" }
+        }
+    }
+    if {$n == 0 || $over > 0} {
+        puts "XDC: FAILED --- the side seam's looks into the cache: $n paths, $over asking for more"
+        puts "XDC: than one tick. First: $worst"
+        exit 1
+    }
+    puts "XDC: the side seam's looks into the cache: $n paths, every one at one tick"
 }

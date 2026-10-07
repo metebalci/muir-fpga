@@ -99,6 +99,12 @@ module cadr_machine #(
     // (`cadr_microcycle.sv`, `quux_mmu.sv`).  Each board's top gives it.
     // Unread on the CADR.
     parameter int unsigned REVISION = 13,
+    // **A TICK'S REAL LENGTH, IN PICOSECONDS**: the board's clock period,
+    // which QUUX's microsecond clock, interval timers and real-time clock
+    // count wall time by (`quux_clocks.sv`, `quux_rtc.sv`).  The grid's 10 ns
+    // by default; each board's top gives its own.  Nothing else reads it:
+    // every count the machine makes is in ticks, whatever a tick lasts.
+    parameter int unsigned TICK_PS = cadr_tick_pkg::TICK_NS * 1000,
     // **REVISION 14'S TLB ENTRIES**, N (A14.4): a power of two from 1,024 to
     // 32,768, 4,096 on every board (decisions.md:265), muir's `--tlb`; the
     // index is `VA<9+k:10>` and the tag `VA<31:10+k>`, k = log2 N
@@ -948,6 +954,7 @@ module cadr_machine #(
 
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX),
+      .TICK_PS(TICK_PS),
       .MACHINE(MACHINE),
       .MACHINE_ID(MACHINE_ID),
       .SYNC_K(SYNC_K),
@@ -1047,20 +1054,29 @@ module cadr_machine #(
       .sd_phys     (sd_phys),
       .sd_ready    (sd_ready),
       .sd_walk_ready(sd_walk_ready),
+      .sd_grant_ready(sd_grant_ready),
       .sd_ack_at   (sd_ack_at),
       .sd_hit      (sd_hit),
       .sd_word     (sd_word),
+      .sd_hit_live (sd_hit_live),
+      .sd_h1_live  (sd_h1_live),
+      .sd_word0_live(sd_word0_live),
+      .sd_word1_live(sd_word1_live),
       .sd_commit   (sd_commit),
       .sd_wr       (sd_wr),
       .sd_wdata    (sd_wdata),
+      .sd_wbits    (sd_wbits),
       .sd_until    (sd_until),
       .sd_done     (sd_done),
       .sd_fill_v   (sd_fill_v),
       .sd_fill_word(sd_fill_word),
       .sd_wdone    (sd_wdone),
+      .sd_relook   (sd_relook),
       .wb_hold     (wb_hold),
       .wb_rel_v    (wb_rel_v),
-      .wb_rel      (wb_rel)
+      .wb_rel_now  (wb_rel_now),
+      .wb_rel      (wb_rel),
+      .wb_rel_q    (wb_rel_q)
   );
 
   // The virtual address register, `Q` and `MD` for the console, captured at
@@ -1095,11 +1111,12 @@ module cadr_machine #(
   logic [2:0]  ms_idx;
   logic [31:0] ms_wdata, ms_rdata;
   logic        sd_look, sd_ready, sd_hit, sd_commit, sd_wr, sd_fill_v, sd_wdone, wb_hold, wb_rel_v;
-  logic        sd_walk_ready;
+  logic        sd_walk_ready, sd_grant_ready, sd_hit_live, sd_h1_live, sd_relook, wb_rel_now;
   logic signed [10:0] sd_ack_at;
   logic [28:0] sd_phys;
-  logic [39:0] sd_wdata, sd_word, sd_fill_word;
-  logic signed [10:0] sd_until, sd_done, wb_rel;
+  logic [39:0] sd_wdata, sd_word, sd_fill_word, sd_word0_live, sd_word1_live;
+  logic [29:0] sd_wbits;
+  logic signed [10:0] sd_until, sd_done, wb_rel, wb_rel_q;
   logic [PHYS_BITS-1:0] pf_nx_phys;
   logic [WORD_BITS-1:0] pf_nx_word;
   logic [31:0] cache_hits, cache_misses;
@@ -1318,20 +1335,29 @@ module cadr_machine #(
       .sd_phys        (sd_phys),
       .sd_ready       (sd_ready),
       .sd_walk_ready  (sd_walk_ready),
+      .sd_grant_ready (sd_grant_ready),
       .sd_ack_at      (sd_ack_at),
       .sd_hit         (sd_hit),
       .sd_word        (sd_word),
+      .sd_hit_live    (sd_hit_live),
+      .sd_h1_live     (sd_h1_live),
+      .sd_word0_live  (sd_word0_live),
+      .sd_word1_live  (sd_word1_live),
       .sd_commit      (sd_commit),
       .sd_wr          (sd_wr),
       .sd_wdata       (sd_wdata),
+      .sd_wbits       (sd_wbits),
       .sd_until       (sd_until),
       .sd_done        (sd_done),
       .sd_fill_v      (sd_fill_v),
       .sd_fill_word   (sd_fill_word),
       .sd_wdone       (sd_wdone),
+      .sd_relook      (sd_relook),
       .wb_hold        (wb_hold),
       .wb_rel_v       (wb_rel_v),
-      .wb_rel         (wb_rel)
+      .wb_rel_now     (wb_rel_now),
+      .wb_rel         (wb_rel),
+      .wb_rel_q       (wb_rel_q)
   );
 
   // --- the disk controller, the first Xbus slave that is not main memory ---
@@ -1521,6 +1547,7 @@ module cadr_machine #(
 
     quux_feature_page #(
         .MACHINE_ID   (MACHINE_ID),
+        .TICK_PS      (TICK_PS),
         .L1_BITS      (FEATURE_L1_BITS),
         .DMEM_WORDS   (FEATURE_DMEM),
         .SCREEN_WIDTH (VIDEO_WIDTH),

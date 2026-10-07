@@ -146,13 +146,14 @@ proc rams_rule {what cells we wa} {
 
 # The assertion.  `machine` is `cadr` or `quux`, and `revision` QUUX's.
 #
-# **REVISION 14'S TLB HAS THE SHAPE TOO, ON ITS FILL**: port A's address is
-# the walker's fill address while a fill writes and `VMA`'s index while the
-# port reads, chosen by the fill's own enable (`quux_mmu.sv`).  So in block
-# RAM its writing port must have the fill's address, `w_va`, among its
-# address pins' registers, found by the register only the fill's enable
-# reads, `w_load`.  UltraRAM (the Kria KR260) has other pins and is not
-# asked; its fills are what a walk's next lookup reads.
+# **REVISION 14'S TLB HAS THE SHAPE TOO, ON ITS WRITES**: each port's
+# address is its pending write's index while that write is written and
+# `VMA`'s or `MD`'s next value at the edge, chosen by the pending write's own
+# valid bit (`quux_mmu.sv`).  So in block RAM each writing port must have
+# its pending index, `pa_idx` or `pb_idx`, among its address pins'
+# registers, found by the register only that write's enable reads, `pa_v`
+# or `pb_v`.  UltraRAM (the Kria KR260) has other pins and is not asked;
+# its writes are what the next edge's lookup reads.
 proc assert_rams_write_where_the_rtl_says {machine {revision 13}} {
     # {what} {cells} {write-enable register} {write-address register}
     # Block-disk's write port registers are its walk's, which each revision
@@ -177,12 +178,18 @@ proc assert_rams_write_where_the_rtl_says {machine {revision 13}} {
     if {$machine eq "quux"} {
         set n 0
         if {$revision eq "14"} {
+            # The redirect's write, put into the PDL buffer from its registers
+            # at a later edge (`cadr_microcycle.sv`'s `rw_put`).
+            lappend quux_rules {revision 14's redirect's PDL write} {*processor/g_quux_pdl.pdl_reg*} \
+                {*processor/g_quux_pdl.rw_v_reg*} {*processor/g_quux_pdl.rw_ix_reg*}
             set tlb_ramb [get_cells -quiet -hier -filter {REF_NAME =~ RAMB* && NAME =~ *g_rev14_mmu.mmu/tlb/*}]
             if {[llength $tlb_ramb]} {
-                lappend quux_rules {revision 14's TLB, its fill} {*g_rev14_mmu.mmu/tlb/tlb_mem_reg*} \
-                    {*g_rev14_mmu.mmu/w_load_reg*} {*g_rev14_mmu.mmu/w_va_reg*}
+                lappend quux_rules {revision 14's TLB, port A's writes} {*g_rev14_mmu.mmu/tlb/tlb_mem_reg*} \
+                    {*g_rev14_mmu.mmu/pa_v_reg*} {*g_rev14_mmu.mmu/pa_idx_reg*}
+                lappend quux_rules {revision 14's TLB, port B's writes} {*g_rev14_mmu.mmu/tlb/tlb_mem_reg*} \
+                    {*g_rev14_mmu.mmu/pb_v_reg*} {*g_rev14_mmu.mmu/pb_idx_reg*}
             } else {
-                puts "RAMS:         revision 14's TLB is in no block RAM here, so its fill is not asked"
+                puts "RAMS:         revision 14's TLB is in no block RAM here, so its writes are not asked"
             }
         }
         foreach {what cells we wa} $quux_rules { rams_rule $what $cells $we $wa; incr n }

@@ -55,6 +55,9 @@
 //!             control
 //!   double    port A and port B missing at one index in one microcycle,
 //!             and port A's fill evicting a direct write
+//!   forward   a TLB write and a lookup at one edge: a direct write and
+//!             `MAP(MD)` or a start at its index, a write's OR and
+//!             `MAP(MD)`, a walk's fill and its start's OR
 //!
 //! **NOTHING IS PRESET**, as in `golden/src/quux13.rs`: every constant is
 //! made by the program from the dispatch constant, and every table word,
@@ -1225,8 +1228,52 @@ fn redirect_program(am: bool) -> (Prog, Expect) {
     p.copies(PAGE2, 0o100);
     p.read(PAGE2 as Word, Some(pdl_word(0o100)), Some(0), "inside, the entry held");
     p.read(PAGE2 as Word, Some(pdl_word(0o100)), Some(0), "inside again");
+    // A write inside, the word it puts in the buffer at the edge its start
+    // goes out at read through PDL-INDEX by the microcycle after that edge,
+    // at its index and at another; with a PDL buffer write at another index,
+    // and one at its own, landing at the edge right after it; and its word
+    // read again after two more writes inside.
+    p.copies(BASE, 0o100);
+    let inside = |off: u32| w(0o025, 0o300 + off as u64);
+    for (idx, off, pulse, what) in [
+        (0o102u64, 2u32, None, "the inside write, read at its index by the next microcycle"),
+        (0o101, 4, None, "another index, read by the microcycle after an inside write"),
+        (0o104, 3, Some(w(0o025, 0o444)), "the inside write, a PDL write at another index right after it"),
+        (0o105, 5, Some(w(0o025, 0o555)), "a PDL write at the inside write's index right after it"),
+    ] {
+        let (ka, wa, aa) = (p.k(idx), p.k(inside(off)), p.k((BASE + off) as Word));
+        let pa = pulse.map(|v| p.k(v));
+        p.op(ALU | SETA | a_src(ka) | PDL_INDEX);
+        p.op(ALU | SETA | a_src(wa) | MD);
+        p.op(ALU | SETA | a_src(aa) | START_WRITE);
+        match pa {
+            None => {
+                p.fill(1);
+                let want = if idx == 0o100 + off as u64 { inside(off) } else { w(0o025, 0o111) };
+                p.put(ALU | SETM | src(5), Some(want), what);
+                p.fill(2);
+            }
+            Some(pa) => {
+                p.op(ALU | SETA | a_src(pa) | PDL_AT_INDEX);
+                p.fill(2);
+                let back = p.k(0o100 + off as u64);
+                p.op(ALU | SETA | a_src(back) | PDL_INDEX);
+                let want = if idx == 0o100 + off as u64 { pulse.unwrap() } else { inside(off) };
+                p.put(ALU | SETM | src(5), Some(want), what);
+                if idx != 0o100 + off as u64 {
+                    p.op(ALU | SETA | a_src(ka) | PDL_INDEX);
+                    p.put(ALU | SETM | src(5), pulse, "the PDL write at the other index");
+                }
+            }
+        }
+    }
+    for (k, off) in [(0o102u64, 2u32), (0o103, 3)] {
+        let ka = p.k(k);
+        p.op(ALU | SETA | a_src(ka) | PDL_INDEX);
+        p.put(ALU | SETM | src(5), Some(inside(off)), "an inside write's word, two writes inside later");
+    }
     p.park();
-    (p, Expect { redirects: Some([4 + 1 + 1 + 3 + 2, 2 + 1]), ..Expect::default() })
+    (p, Expect { redirects: Some([4 + 1 + 1 + 3 + 2 + 4, 2 + 1]), ..Expect::default() })
 }
 
 // ---------------------------------------------------------------- fiddle
@@ -1470,6 +1517,125 @@ fn inflight0_program() -> (Prog, Expect) {
     (p, Expect::default())
 }
 
+// --------------------------------------------------------------- forward
+
+/// The forwards' pages: an operation's page read by `MAP(MD)` and one read
+/// by a start, the write-back's OR's page, and a page walked by two hits,
+/// with the page beside it whose walk brings the lines into the cache.
+const FWD_OPB: u32 = 0o6001 << 10;
+const FWD_OPA: u32 = 0o6002 << 10;
+const FWD_OR: u32 = 0o6003 << 10;
+const FWD_FILL: u32 = 0o6020 << 10;
+/// The pages at those two operations' indices with other tags, whose entries
+/// the operations replace.
+const FWD_CLASH_B: u32 = FWD_OPB + (4096 << 10);
+const FWD_CLASH_A: u32 = FWD_OPA + (4096 << 10);
+/// Pages in directory lines no walk has read, each walked behind a register
+/// page's write in flight.
+const FWD_COLD: [u32; 3] = [0o10 << 20 | 0o5 << 10, 0o20 << 20 | 0o5 << 10, 0o30 << 20 | 0o5 << 10];
+
+/// **A TLB write and a lookup at one edge** (A14.4, A14.5): each lookup sees
+/// the entry as written at the edge that ended the microcycle before, the
+/// write landing at that same edge included.  A direct write, and in the
+/// microcycle after its landing `MAP(MD)` at its index, then a start at the
+/// index of another, each twice: at the write's own page, and at a page of
+/// the same index the write's entry replaces, which then walks (the clash);
+/// a write's OR of accessed and modified, and `MAP(MD)` of
+/// its page in the microcycle after its grant; and a walk of two hits whose
+/// fill lands at its hold's last edge (K = 4) or a tick before it (K = 5),
+/// whose start's OR then needs the filled entry, the page read again and
+/// read by `MAP(MD)` after it, `MD` the walked page so that port B reads the
+/// filled index at that edge.  Then three walks by port B behind a register
+/// page's write in flight, their directory entries' lines not in the cache,
+/// at three distances from the start, main memory idle: a walk's first read
+/// is taken at the write's acknowledgment (clarification 74), and its
+/// miss's line counts from there.  Each table maps the page elsewhere, so a lookup that missed
+/// the write would walk to another frame.
+fn forward_program() -> (Prog, Expect) {
+    let mut t = Tables::default();
+    t.map(FWD_OPB, rw(0o300));
+    t.map(FWD_OPA, rw(0o301));
+    t.map(FWD_OR, rw(0o304));
+    t.map(FWD_FILL, rw(0o305));
+    t.map(FWD_FILL + (1 << 10), rw(0o306));
+    t.map(FWD_CLASH_B, rw(0o307) | A);
+    t.map(FWD_CLASH_A, rw(0o310) | A);
+    for (k, &cold) in FWD_COLD.iter().enumerate() {
+        t.map(cold, rw(0o320 + k as u32));
+    }
+    let mut p = Prog::new();
+    p.start().tables(&t);
+    for f in [0o300u32, 0o301, 0o302, 0o303, 0o304, 0o305, 0o307, 0o310] {
+        p.poke(f << 10, w(0o025, f as u64));
+    }
+    // The clashes: each page in the TLB first, at the operation's index.
+    p.map(FWD_CLASH_B as Word, Some((rw(0o307) | A) & ENTRY), "the clashing page for MAP(MD), first");
+    p.map(FWD_CLASH_A as Word, Some((rw(0o310) | A) & ENTRY), "the clashing page for the start, first");
+    let (ca, opc) = (p.k(FWD_CLASH_B as Word), p.k(1 << 32 | (rw(0o302) | A) & ENTRY));
+    let ob = p.k(FWD_OPB as Word);
+    p.op(ALU | SETA | a_src(ob) | MD);
+    p.op(ALU | SETA | a_src(opc) | WRITE_MAP);
+    p.op(ALU | SETA | a_src(ca) | MD);
+    p.put_masked(ALU | SETM | SRC_MAP, (rw(0o307) | A) & ENTRY, ENTRY,
+                 "MAP(MD) of the clashing page at the direct write's landing edge: a walk");
+    let (cb, opd) = (p.k(FWD_CLASH_A as Word), p.k(1 << 32 | (rw(0o303) | A) & ENTRY));
+    let oa = p.k(FWD_OPA as Word);
+    p.op(ALU | SETA | a_src(oa) | MD);
+    p.op(ALU | SETA | a_src(opd) | WRITE_MAP);
+    p.op(ALU | SETA | a_src(cb) | START_READ);
+    p.taken(jcond(4), Some(0), "the start of the clashing page at the landing edge: the fault");
+    p.put(ALU | SETM | SRC_MD, Some(w(0o025, 0o310)), "the start of the clashing page at the landing edge: a walk");
+    // The direct write, and `MAP(MD)` at its index in the microcycle after
+    // the one it lands at the end of.
+    let (va, op) = (p.k(FWD_OPB as Word), p.k(1 << 32 | (rw(0o302) | A) & ENTRY));
+    p.op(ALU | SETA | a_src(va) | MD);
+    p.op(ALU | SETA | a_src(op) | WRITE_MAP);
+    p.op(ALU | SETA | a_src(va) | MD);
+    p.put_masked(ALU | SETM | SRC_MAP, (rw(0o302) | A) & ENTRY, ENTRY,
+                 "MAP(MD) at the direct write's landing edge");
+    // The same for a start, its VMA loaded at that edge.
+    let (vb, opb) = (p.k(FWD_OPA as Word), p.k(1 << 32 | (rw(0o303) | A) & ENTRY));
+    p.op(ALU | SETA | a_src(vb) | MD);
+    p.op(ALU | SETA | a_src(opb) | WRITE_MAP);
+    p.op(ALU | SETA | a_src(vb) | START_READ);
+    p.taken(jcond(4), Some(0), "the start at the direct write's landing edge: the fault");
+    p.put(ALU | SETM | SRC_MD, Some(w(0o025, 0o303)), "the start at the direct write's landing edge");
+    // The write's OR, and `MAP(MD)` of its page in the microcycle after its
+    // grant: the TLB holds the table's own entry, accessed 0.
+    p.tlb_op(1, FWD_OR as Word, rw(0o304) & ENTRY);
+    let vo = p.k(FWD_OR as Word);
+    p.op(ALU | SETA | a_src(vo) | MD);
+    p.op(ALU | SETA | a_src(vo) | START_WRITE);
+    p.fill(1);
+    p.put_masked(ALU | SETM | SRC_MAP, (rw(0o304) | A | M) & ENTRY, ENTRY, "MAP(MD) at the write's grant");
+    p.fill(2);
+    p.peek(0o304 << 10, FWD_OR as Word, "the write went out");
+    // The walk of two hits, its lines brought in by port B's walk of the page
+    // beside it, which sets nothing; then the page again, and `MAP(MD)`.
+    p.map((FWD_FILL + (1 << 10)) as Word, Some(rw(0o306) & ENTRY), "the lines, first");
+    let vf = p.k(FWD_FILL as Word);
+    p.op(ALU | SETA | a_src(vf) | MD);
+    p.read(FWD_FILL as Word, Some(w(0o025, 0o305)), Some(0), "the walk of two hits");
+    p.read(FWD_FILL as Word, Some(w(0o025, 0o305)), Some(0), "the page again");
+    p.map(FWD_FILL as Word, Some((rw(0o305) | A) & ENTRY), "its entry, accessed");
+    // The walks behind a register page's write in flight, which main memory
+    // has no part in: its acknowledgment a microcycle after its grant, the
+    // walk's miss's line counted from there.  The write's word the pointer
+    // the walk is for, `MD` with it.
+    for (k, &cold) in FWD_COLD.iter().enumerate() {
+        p.fill(24);
+        let (pa, ra) = (p.k(LIST | cold as Word), p.k(reg(0o224)));
+        p.op(ALU | SETA | a_src(pa) | MD);
+        p.op(ALU | SETA | a_src(ra) | START_WRITE);
+        p.fill(k);
+        p.put_masked(ALU | SETM | SRC_MAP, rw(0o320 + k as u32) & ENTRY, ENTRY,
+                     &format!("a walk behind a register write in flight, {k} between: MAP(MD)"));
+        p.put(ALU | SETM | SRC_MD, Some(LIST | cold as Word), &format!("a walk behind a register write in flight, {k} between: MD"));
+    }
+    p.park();
+    (p, Expect { walks: Some(2 + 2 + 2 + 3), write_backs: Some(2), refusals: Some(0), ..Expect::default() })
+}
+
 // ------------------------------------------------------------------ main
 
 /// What muir's model is to have counted at the end of a program, as the
@@ -1515,11 +1681,12 @@ fn program(name: &str) -> (Prog, Expect) {
         "inflight" => inflight_program(false),
         "inflightfb" => inflight_program(true),
         "inflight0" => inflight0_program(),
+        "forward" => forward_program(),
         _ => {
             eprintln!(
                 "quux14: no program `{name}`; they are windows, space, walk, noentry, empty, empty8k, mapmd, lc, \
                  fetch, words, writeback, setter, setter0, wbhold, redirect, redirectam, fiddle, fiddleam, double, \
-                 inflight, inflightfb and inflight0"
+                 inflight, inflightfb, inflight0 and forward"
             );
             std::process::exit(2);
         }

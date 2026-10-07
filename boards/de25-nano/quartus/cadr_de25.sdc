@@ -195,8 +195,9 @@ if {[get_collection_size $quux_fast] > 0} {
 # grant, its countdowns and the cache's order and valid bits move on every
 # tick.  What the cache holds of the microcycle is given back its time in
 # `quux_de25.sdc`.  And revision 14's memory system, `quux_mmu.sv`, out
-# whole but for the register page's words, the redirect's copies and the
-# TLB, with the redirect's word and its strobe: `cadr_machine.xdc` says why.
+# whole but for the register page's words, the redirect's copies, the TLB
+# and the edge's registers (`e_*`), with the redirect's word and its strobe:
+# `cadr_machine.xdc` says why.
 set out_whole [get_registers -nowarn {u_machine|g_cadr_disk.disk|* u_machine|g_quux_disk.disk|* u_machine|audit|*
                                       u_machine|memory|tv|* u_machine|memory|g_color_tv.tv_color|*
                                       u_machine|memory|iob|*
@@ -216,6 +217,7 @@ set held [get_registers -nowarn [concat \
     [cadr_leaves {u_machine|memory|busint_regs|} {sel in_int in_map wr which mapk}] \
     [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {directory ephemeral pointer_types
                                                          pdl_base pdl_head}] \
+    [list {u_machine|processor|g_rev14_mmu.mmu|e_*}] \
     [list {u_machine|processor|g_rev14_mmu.mmu|tlb|*}]]]
 set slow [remove_from_collection $machine $fast]
 set slow [remove_from_collection $slow $out_whole]
@@ -263,8 +265,11 @@ set_multicycle_path -hold  7 -from $slow -to $slow
 set split_pr {u_machine|processor}
 set split_latch_addr [get_registers -nowarn [concat \
     [cadr_leaves "${split_pr}|" {ir pdl_ptr pdl_idx spcptr}]]]
+# Revision 14's `rw_fwd`, the redirect's held PDL word's select, is a latch
+# as the PDL buffer's output is (`cadr_machine.xdc`).
 set split_latch [get_keepers -nowarn [list "${split_pr}|amem_rtl_*" "${split_pr}|mmem_rtl_*" \
-                                           "${split_pr}|pdl_rtl_*" "${split_pr}|spcm_rtl_*"]]
+                                           "${split_pr}|pdl_rtl_*" "${split_pr}|spcm_rtl_*" \
+                                           "${split_pr}|g_quux_pdl.rw_fwd"]]
 set split_dmem [get_keepers -nowarn [list "${split_pr}|dmem_rtl_*"]]
 set split_cstore [get_keepers -nowarn [list "${split_pr}|imem_rtl_*" "${split_pr}|prom_mem_rtl_*"]]
 set split_md [get_registers -nowarn [cadr_leaves "${split_pr}|" {md}]]

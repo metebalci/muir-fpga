@@ -19,9 +19,10 @@
 // while the port writes.  UltraRAM refuses WRITE_FIRST, and Vivado then
 // builds block RAM in its place without failing (M2); in NO_CHANGE it builds
 // one URAM288.  So nothing here reads a word through a write: `quux_mmu.sv`
-// reads both ports again at the start of every generator cycle, after the
-// writes of the cycle before, and never reads a port in a tick either port
-// writes the address it reads.
+// reads both ports at every generator cycle's edge and writes them only on
+// the ticks between, a write landing at an edge or pending across it
+// forwarded to that edge's read; no port is read in a tick either port
+// writes.
 //
 // **THE PRIMITIVE IS CHOSEN OUTSIDE `rtl/machine/`**: block RAM on the Arty
 // Z7-20, M20K on the DE25-Nano, UltraRAM on the Kria KR260, each by its
@@ -37,10 +38,11 @@
 // TLB's programs under it, and `n_rdw` counts the ticks it fired on.
 //
 // **THE ENABLES ARE EXPLICIT** (the block-RAM rule, `0c500d4`): each port is
-// enabled only on the ticks it reads or writes, its address then a register
-// of the tick, so a block RAM's address is never moving while it is enabled
-// (UG473; `boards/arty-z7-20/vivado/rams_enable_check.tcl` holds the netlist
-// to it).
+// enabled only on the ticks it reads or writes: at the edge, its address
+// then `VMA`'s or `MD`'s next value, which has the microcycle, and on a tick
+// it writes, its address then a register of the tick; so a block RAM's
+// address is never moving while it is enabled (UG473;
+// `boards/arty-z7-20/vivado/tlb_check.tcl` holds each enable to the edge).
 
 `default_nettype none
 

@@ -244,6 +244,21 @@ module cadr_arty #(
   //
   // 125 MHz in, 100 MHz out. The VCO must sit between 600 and 1200 MHz on a
   // -1 part: 125 x 8 is 1000, comfortably inside, and 1000 / 10 is the tick.
+  //
+  // **REVISION 14 OF QUUX TAKES A 15 ns TICK ON THIS BOARD**, 1000 / 15: its
+  // memory system's one-tick paths (the side seam's looks, its live answer
+  // into the walk's result, MD's next value into the TLB's forward) do not
+  // close at 10 ns on this part, and every count stays as it is, so nothing
+  // moves tick for tick.  The machine's wall clocks (the microsecond clock,
+  // the interval timers, the real-time clock) are handed the tick's length,
+  // `TICK_PS`, and keep wall time.  `tick.tcl` reads these two numbers and
+  // the build's machine and revision.
+  localparam real CLKOUT0_DIVIDE_BASE   = 10.000;
+  localparam real CLKOUT0_DIVIDE_QUUX14 = 15.000;
+  // The tick in picoseconds for the machine's wall clocks, from the same
+  // divider of the same 1,000 MHz.
+  localparam int unsigned TICK_PS = int'(1000.0 * ((MACHINE == "quux" && REVISION == 14)
+                                                   ? CLKOUT0_DIVIDE_QUUX14 : CLKOUT0_DIVIDE_BASE));
   logic clk_fb, clk_raw, clk, mmcm_locked;
 
   // The eleven clock outputs this design does not take are left empty on
@@ -262,7 +277,8 @@ module cadr_arty #(
       // are written against, so the fabric and its timing cannot describe
       // two different machines.  See the header for why every tick COUNT in
       // the design stays exactly as it was.
-      .CLKOUT0_DIVIDE_F(10.000)   // 100 MHz, one tick = 10 ns
+      .CLKOUT0_DIVIDE_F((MACHINE == "quux" && REVISION == 14) ? CLKOUT0_DIVIDE_QUUX14
+                                                              : CLKOUT0_DIVIDE_BASE)
   ) u_mmcm (
       .CLKIN1  (sysclk),
       .CLKFBIN (clk_fb),
@@ -948,7 +964,8 @@ module cadr_arty #(
       .SYNC_L(SYNC_L),
       .WORD_BITS(WORD_BITS),
       .REVISION(REVISION),
-      .TLB_ENTRIES(TLB_ENTRIES)
+      .TLB_ENTRIES(TLB_ENTRIES),
+      .TICK_PS(TICK_PS)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO

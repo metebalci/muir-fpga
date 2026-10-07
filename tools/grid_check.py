@@ -456,41 +456,53 @@ SDC_NAMED = {"cadr": ["boards/de25-nano/quartus/cadr_de25.sdc"],
 #     registers that keep its time, and may be in it.
 #
 # `quux_mmu.sv`: the generator's ticks (`g1`, `g2`, `since_start`), the hold
-# (`held`), the walk's and the write-back's countdowns (`until_s`, `b_t`) and
-# the sweep's (`sweep_s`, `sweeping`, `sweep_i`), the walker's and the
-# write-back's machines and what they carry (`wstate`, `w_*`, `wk_*`,
-# `spec_*`, `bstate`, `b_*`), the bypasses (`byp_*`, `walked_*`,
-# `redirect_held`), the redirect's read (`pdl_rd`) and the guard's count and
+# (`held`, `res_mid`), the walk's and the write-back's countdowns (`until_s`,
+# `b_t`) and the sweep's (`sweep_s`, `sweeping`, `sweep_i`), the walker's and
+# the write-back's machines and what they carry (`wstate`, `w_*`, `wk_*`,
+# `spec_*`, `bstate`, `b_*`, `st1`), the walk's results (`ra*`, `rb*`,
+# `walked_*`, `redirect_held`), the TLB's pending writes (`pa_*`, `pb_*`),
+# the redirect's pending read and its registers for the PDL buffer
+# (`rd_pend`, `redirect_in_q`, `redirect_idx_q`) and the guard's count and
 # its pulse (`refused`, `refuse_now`) all move on whatever tick the side seam
-# answers on.  Held: the register page's words 220-223 (`directory`,
-# `ephemeral`, `pointer_types`), written at the page's answer from a word the
-# bus has held for eight ticks, and the redirect's copies (`pdl_base`,
-# `pdl_head`), written by A memory's own pulse from `L` as A memory is.
+# answers on, or on every tick.  Held: the register page's words 220-223
+# (`directory`, `ephemeral`, `pointer_types`), written at the page's answer
+# from a word the bus has held for eight ticks, the redirect's copies
+# (`pdl_base`, `pdl_head`), written by A memory's own pulse from `L` as A
+# memory is, and the edge's registers (`e_*`), loaded at an edge alone: the
+# TLB's forwards and the walk's entries the datapath reads, the writes
+# landing at the edge, and the write-back's grant.
 # `quux_tlb.sv`'s memory and its two outputs are the TLB's RAM, in the set
 # and given their own time by the flows (`quux_machine.xdc`,
 # `quux_de25.sdc`).  In `cadr_microcycle.sv`, the redirect's word and its
 # strobe (`redir_rd_q`, `redir_word`), taken a tick after the PDL buffer's
 # read.  And the memory port and its cache, out whole: every register of
 # `quux_mem_port.sv` and `quux_cache.sv` (the walk's countdowns `free_s`,
-# `buf_s`, `g_s`, `wbu_s`, `ack_s`, `ack_last_s`, the release `rel_q` and
-# `rel_pend`, the write's `s_wpend`, `s_wr_q` and `wbw` among them) out of
-# the set.
+# `buf_s`, `g_s`, `wbu_s`, `ack_s`, `ack_last_s`, the release `rel_q`,
+# `rel_pend` and `rel_ok_q`, the write's `s_wpend`, `s_wr_late_q` and `wbw`,
+# and `granted1` among them) out of the set.
 REV14 = "quux14"
 REV14_TICK = "tick"
 REV14_HELD = "held"
 REV14_CLASSED = {
     "quux_mmu": {
         **{n: REV14_HELD for n in ("directory", "ephemeral", "pointer_types",
-                                   "pdl_base", "pdl_head")},
+                                   "pdl_base", "pdl_head",
+                                   "e_fa_v", "e_fb_v", "e_fa_hit", "e_fb_hit", "e_fa_ent", "e_fb_ent",
+                                   "e_bpa_v", "e_bpb_v", "e_bpa", "e_bpb",
+                                   "e_or_v", "e_op_v", "e_or_idx", "e_op_idx", "e_or_w", "e_op_w",
+                                   "e_go", "e_ref", "e_bits", "e_frame")},
         **{n: REV14_TICK for n in (
-            "g1", "g2", "since_start", "held", "until_s", "b_t",
+            "g1", "g2", "since_start", "held", "res_mid", "until_s", "b_t",
             "sweep_s", "sweeping", "sweep_i",
-            "wstate", "w_port", "w_b_queued", "w_va", "w_page_at", "w_result", "w_load",
+            "wstate", "w_port", "w_b_queued", "w_va", "w_page_at", "w_first", "w_done",
             "wk_page_v", "wk_page_at", "wk_page", "spec_v", "spec_port",
-            "bstate", "b_va", "b_frame", "b_bits", "b_page_at", "b_page",
-            "byp_a_v", "byp_b_v", "byp_a", "byp_b", "byp_b_va",
+            "bstate", "b_va", "b_ul", "b_frame", "b_bits", "b_page_at", "b_page", "st1",
+            "ra_v", "rb_v", "ra", "rb", "rb_va",
             "walked_a", "walked_b", "redirect_held",
-            "pdl_rd", "refused", "refuse_now")},
+            "pa_v", "pb_v", "pa_idx", "pb_idx", "pa_w", "pb_w",
+            "rd_pend", "redirect_in_q", "redirect_idx_q", "refused", "refuse_now",
+            "d_wa", "d_wb", "d_redir", "lv_dok", "lv_gok",
+            "f_v", "f_word", "f_dok", "f_gok", "f_load", "b_rel_n", "w_ua", "wb_rel_now_q")},
     },
     "quux_tlb": {n: REV14_HELD for n in ("tlb_mem", "a_q", "b_q")},
 }
@@ -498,7 +510,7 @@ REV14_CLASSED = {
 REV14_NAMED_TICK = {
     "cadr_microcycle": ("g_quux_pdl.redir_rd_q", "redir_word"),
     "quux_mem_port": ("free_s", "buf_s", "g_s", "wbu_s", "ack_s", "ack_last_s",
-                      "rel_q", "rel_pend", "s_wpend", "s_wr_q", "wbw"),
+                      "rel_q", "rel_pend", "s_wpend", "s_wr_late_q", "wbw", "granted1", "rel_ok_q"),
 }
 # Modules out of the relaxed set whole, register by register.
 REV14_OUT_WHOLE = ("quux_mem_port", "quux_cache")

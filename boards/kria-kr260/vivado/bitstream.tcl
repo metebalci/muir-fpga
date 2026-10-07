@@ -458,26 +458,7 @@ if {$machine eq "quux"} {
 }
 # Revision 14's clauses, `quux14_machine.xdc`, asked as the Arty Z7-20's
 # flow asks them, with the reasons there.
-if {$revision eq "14"} {
-    set q_tlb {*processor/g_rev14_mmu.mmu/tlb/*}
-    set q_every {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
-                 *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
-                 *memory/ub_addr_reg*}
-    # sync: K - 1
-    assert_clause_timing $tick [expr {$sync_k - 1}] "the TLB's word to the next edge" $q_tlb
-    # sync: K - 3
-    assert_clause_timing $tick [expr {$sync_k - 3}] "the TLB's word into the every-tick registers" \
-        $q_tlb $q_every
-    # grid: 0 ns + 1 tick
-    assert_pin_timing $tick 1 "into the TLB's two addresses" $q_tlb ADDR*
-    # sync: K
-    assert_instance_timing $tick $sync_k *u_machine/processor/g_rev14_mmu.mmu/* \
-        {*mmu/directory_reg* *mmu/ephemeral_reg* *mmu/pointer_types_reg* *mmu/pdl_base_reg*
-         *mmu/pdl_head_reg* *mmu/tlb/*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the PDL buffer into the redirect's word" \
-        {*processor/g_quux_pdl.pdl_reg*} {*processor/g_quux_pdl.redir_word_reg*}
-}
+if {$revision eq "14"} { assert_rev14_clauses $tick $sync_k }
 
 opt_design
 place_design

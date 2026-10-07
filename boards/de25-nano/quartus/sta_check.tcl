@@ -503,8 +503,9 @@ proc assert_through_timing {period cycles what from through to} {
 # **REVISION 14'S TLB, PORT BY PORT** (contract G3 revision 14, A14.15): the
 # worst path out of each port and into each port's address, at this corner,
 # each port told apart by the address that reaches it, since a tool may swap
-# a true dual-port RAM's ports: the RTL's port A is the one the walker's fill
-# address, `w_va`, reaches, and port B the one `MD` reaches.  Printed as
+# a true dual-port RAM's ports: the RTL's port A is the one its own pending
+# write's index, `pa_idx`, reaches, and port B the one `pb_idx` reaches.
+# Printed as
 # `sta: TLB` lines, which `build.sh` keeps in its log.
 proc sta_tlb_line {label paths} {
     set n 0
@@ -519,15 +520,15 @@ proc sta_tlb_line {label paths} {
 }
 proc sta_tlb_report {} {
     set tlb $::quux_tlb
-    set w_va [get_registers -nowarn [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {w_va}]]
-    set md   [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md}]]
+    set pa [get_registers -nowarn [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {pa_idx}]]
+    set pb [get_registers -nowarn [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {pb_idx}]]
     foreach pp {a b} {
         set addr [get_pins -nowarn -compatibility_mode "u_machine|processor|g_rev14_mmu.mmu|tlb|*|port${pp}addr*"]
         set dout [get_pins -nowarn -compatibility_mode "u_machine|processor|g_rev14_mmu.mmu|tlb|*|port${pp}dataout*"]
-        set fill [get_collection_size [get_timing_paths -setup -npaths 1 -from $w_va -through $addr -to $tlb]]
-        set mdin [get_collection_size [get_timing_paths -setup -npaths 1 -from $md -through $addr -to $tlb]]
-        set rtl [expr {$fill ? "A" : ($mdin ? "B" : "?")}]
-        puts "sta: TLB the M20K's port [string toupper $pp] is the RTL's port $rtl (fill address $fill, MD $mdin)"
+        set ina [get_collection_size [get_timing_paths -setup -npaths 1 -from $pa -through $addr -to $tlb]]
+        set inb [get_collection_size [get_timing_paths -setup -npaths 1 -from $pb -through $addr -to $tlb]]
+        set rtl [expr {($ina && !$inb) ? "A" : (($inb && !$ina) ? "B" : "?")}]
+        puts "sta: TLB the M20K's port [string toupper $pp] is the RTL's port $rtl (port A's pending index $ina, port B's $inb)"
         sta_tlb_line "port $rtl out, worst" [get_timing_paths -setup -npaths 1 -through $dout]
         sta_tlb_line "port $rtl out, every-tick regs" [get_timing_paths -setup -npaths 1 -through $dout -to $::split_every_tick]
         sta_tlb_line "port $rtl address in, worst" [get_timing_paths -setup -npaths 1 -through $addr -to $tlb]
@@ -1022,33 +1023,37 @@ if {$sta_quux} {
     }
 }
 # **REVISION 14'S CLAUSES** (`quux_de25.sdc`, the TLB's), asked the same two
-# ways: the TLB's word to the next edge and into the every-tick registers;
-# its two addresses at the tick and its words and enables at K; and the
-# memory system's registers at the tick but for what it holds of the
+# ways: the TLB's word to the next edge and into the every-tick registers,
+# the edge's registers' K and K - 2; the edge's registers into it at K and
+# `md_held` at the tick; the side seam's looks into the cache at the tick;
+# and the memory system's registers at the tick but for what it holds of the
 # microcycle.  `REVISION` is the build's, from `build.sh`.
 if {$sta_quux && [info exists ::env(REVISION)] && $::env(REVISION) eq "14"} {
-    set sta_tlb_addr [get_pins -nowarn -compatibility_mode \
-        {u_machine|processor|g_rev14_mmu.mmu|tlb|*|portaaddr* u_machine|processor|g_rev14_mmu.mmu|tlb|*|portbaddr*}]
     if {![info exists ::quux_tlb] || [get_collection_size $::quux_tlb] == 0} {
         puts "sta: FAIL: revision 14 has no TLB keepers, so quux_de25.sdc's TLB clauses are on nothing"
         incr failures
+    } elseif {![info exists ::quux_side_look] || [get_collection_size $::quux_side_look] == 0} {
+        puts "sta: FAIL: no net of the memory system's sd_look and sd_phys (side_net|kept), so"
+        puts "sta: FAIL: quux_de25.sdc's clause for the side seam's looks into the cache is on nothing;"
+        puts "sta: FAIL: the flow reads rtl/plumbing/agilex5/quux_keep_net.sv, which keeps them"
+        incr failures
     } else {
-        puts "sta: revision 14's TLB: [get_collection_size $::quux_tlb] keepers,\
-              [get_collection_size $::quux_tlb_in] word and enable pins,\
-              [get_collection_size $sta_tlb_addr] address pins"
-        # sync: K - 1
-        assert_clause_timing $tick 3 "the TLB's word to the next edge" $::quux_tlb $::slow
-        # grid: 0 ns + 1 tick
-        assert_clause_timing $tick 1 "the TLB's word into the every-tick registers" $::quux_tlb $::split_every_tick
-        # grid: 0 ns + 1 tick
-        assert_through_timing $tick 1 "into the TLB's two addresses" "" $sta_tlb_addr $::quux_tlb
+        puts "sta: revision 14's TLB: [get_collection_size $::quux_tlb] keepers;\
+              the side seam's looks through [get_collection_size $::quux_side_look] nets"
         # sync: K
-        assert_through_timing $tick 4 "the edge's registers into the TLB's words and enables" \
-            [get_registers -nowarn [cadr_leaves {u_machine|processor|} {ir vma md}]] \
-            $::quux_tlb_in $::quux_tlb
+        assert_clause_timing $tick 4 "the TLB's word to the next edge" $::quux_tlb $::slow
+        # sync: K - 2
+        assert_clause_timing $tick 2 "the TLB's word into the every-tick registers" $::quux_tlb $::split_every_tick
+        # sync: K
+        assert_clause_timing $tick 4 "the edge's registers into the TLB" \
+            [get_registers -nowarn [cadr_leaves {u_machine|processor|} {ir vma md}]] $::quux_tlb
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "MD_HELD into the TLB" $::split_md_held $::quux_tlb
+        # grid: 0 ns + 1 tick
+        assert_through_timing $tick 1 "the side seam's looks into the cache" "" $::quux_side_look $::quux_cache_held
         # sync: K
         assert_instance_timing $tick 4 u_machine|processor|g_rev14_mmu.mmu \
-            {directory ephemeral pointer_types pdl_base pdl_head}
+            {directory ephemeral pointer_types pdl_base pdl_head e_*}
         sta_tlb_report
     }
 }

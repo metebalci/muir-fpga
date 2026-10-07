@@ -605,20 +605,29 @@ module cadr_memory_path #(
     input  var logic [28:0] sd_phys,
     output var logic        sd_ready,
     output var logic        sd_walk_ready,
+    output var logic        sd_grant_ready,
     output var logic signed [10:0] sd_ack_at,
     output var logic        sd_hit,
     output var logic [39:0] sd_word,
+    output var logic        sd_hit_live,
+    output var logic        sd_h1_live,
+    output var logic [39:0] sd_word0_live,
+    output var logic [39:0] sd_word1_live,
     input  var logic        sd_commit,
     input  var logic        sd_wr,
     input  var logic [39:0] sd_wdata,
+    input  var logic [29:0] sd_wbits,
     input  var logic signed [10:0] sd_until,
     output var logic signed [10:0] sd_done,
     output var logic        sd_fill_v,
     output var logic [39:0] sd_fill_word,
     output var logic        sd_wdone,
+    input  var logic        sd_relook,
     input  var logic        wb_hold,
     input  var logic        wb_rel_v,
-    input  var logic signed [10:0] wb_rel
+    input  var logic        wb_rel_now,
+    input  var logic signed [10:0] wb_rel,
+    input  var logic signed [10:0] wb_rel_q
 );
 
   // **QUUX HAS NO UNIBUS** (contract Q5, `Geometry::unibus`).  The decode
@@ -1206,20 +1215,29 @@ module cadr_memory_path #(
         .sd_phys    (sd_phys),
         .sd_ready   (sd_ready),
         .sd_walk_ready(sd_walk_ready),
+        .sd_grant_ready(sd_grant_ready),
         .sd_ack_at  (sd_ack_at),
         .sd_hit     (sd_hit),
         .sd_word    (sd_word),
+        .sd_hit_live(sd_hit_live),
+        .sd_h1_live (sd_h1_live),
+        .sd_word0_live(sd_word0_live),
+        .sd_word1_live(sd_word1_live),
         .sd_commit  (sd_commit),
         .sd_wr      (sd_wr),
         .sd_wdata   (sd_wdata),
+        .sd_wbits   (sd_wbits),
         .sd_until   (sd_until),
         .sd_done    (sd_done),
         .sd_fill_v  (sd_fill_v),
         .sd_fill_word(sd_fill_word),
         .sd_wdone   (sd_wdone),
+        .sd_relook  (sd_relook),
         .wb_hold    (wb_hold),
         .wb_rel_v   (wb_rel_v),
-        .wb_rel     (wb_rel)
+        .wb_rel_now (wb_rel_now),
+        .wb_rel     (wb_rel),
+        .wb_rel_q   (wb_rel_q)
     );
     assign br_rdata = br_word[31:0];
     // The channel's word, taken where the bridge takes its own `rdata`: at
@@ -1242,15 +1260,20 @@ module cadr_memory_path #(
     // No memory system of revision 14's on the CADR.
     assign sd_ready     = 1'b0;
     assign sd_walk_ready = 1'b0;
+    assign sd_grant_ready = 1'b0;
     assign sd_ack_at    = '0;
     assign sd_hit       = 1'b0;
     assign sd_word      = '0;
+    assign sd_hit_live  = 1'b0;
+    assign sd_h1_live   = 1'b0;
+    assign sd_word0_live = '0;
+    assign sd_word1_live = '0;
     assign sd_done      = '0;
     assign sd_fill_v    = 1'b0;
     assign sd_fill_word = '0;
     assign sd_wdone     = 1'b0;
     logic unused_sd;
-    assign unused_sd = ^{sd_look, sd_commit, sd_wr, sd_phys, sd_wdata, sd_until, wb_hold, wb_rel_v, wb_rel};
+    assign unused_sd = ^{sd_look, sd_commit, sd_wr, sd_phys, sd_wdata, sd_wbits, sd_until, sd_relook, wb_hold, wb_rel_v, wb_rel_now, wb_rel, wb_rel_q};
     cadr_busint_xbus busint (
         .clk        (clk),
         .rst        (rst),

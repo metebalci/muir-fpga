@@ -38,7 +38,18 @@
 # a tick then lasts is this file's business and nothing else's.
 
 # The machine's tick, in nanoseconds, as `cadr_arty.sv` builds it.
-proc cadr_tick_ns {{file "boards/arty-z7-20/cadr_arty.sv"}} {
+#
+# On the Arty Z7-20 the output divider is named by the build: QUUX at revision
+# 14 takes `CLKOUT0_DIVIDE_QUUX14` and every other build
+# `CLKOUT0_DIVIDE_BASE`, both stated once in `cadr_arty.sv`; `machine` and
+# `revision`, when not given, are the flow's `MACHINE` and `REVISION`.
+proc cadr_tick_ns {{file "boards/arty-z7-20/cadr_arty.sv"} {machine ""} {revision ""}} {
+    if {$machine eq ""} {
+        set machine [expr {[info exists ::env(MACHINE)] ? $::env(MACHINE) : "cadr"}]
+    }
+    if {$revision eq ""} {
+        set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
+    }
     if {![file exists $file]} {
         puts "TICK: FAILED --- $file does not exist, so the period the"
         puts "TICK: constraints are written against cannot be read from the"
@@ -57,7 +68,7 @@ proc cadr_tick_ns {{file "boards/arty-z7-20/cadr_arty.sv"}} {
         CLKIN1_PERIOD    {\.CLKIN1_PERIOD\s*\(\s*([0-9]+\.?[0-9]*)\s*\)}
         DIVCLK_DIVIDE    {\.DIVCLK_DIVIDE\s*\(\s*([0-9]+\.?[0-9]*)\s*\)}
         CLKFBOUT_MULT_F  {\.CLKFBOUT_MULT_F\s*\(\s*([0-9]+\.?[0-9]*)\s*\)}
-        CLKOUT0_DIVIDE_F {\.CLKOUT0_DIVIDE_F\s*\(\s*([0-9]+\.?[0-9]*)\s*\)}
+        CLKOUT0_DIVIDE_F {\.CLKOUT0_DIVIDE_F\s*\(\s*([0-9]+\.?[0-9]*|\()}
     } {
         set hits [regexp -all -inline $pattern $text]
         # `regexp -all -inline` returns the whole match and then the capture
@@ -73,6 +84,19 @@ proc cadr_tick_ns {{file "boards/arty-z7-20/cadr_arty.sv"}} {
             exit 1
         }
         set got($name) [lindex $hits 1]
+    }
+    # A divider named rather than written: the build's own, stated once.
+    if {![string is double -strict $got(CLKOUT0_DIVIDE_F)]} {
+        set which [expr {$machine eq "quux" && $revision eq "14" ? "CLKOUT0_DIVIDE_QUUX14" : "CLKOUT0_DIVIDE_BASE"}]
+        set hits [regexp -all -inline \
+            "localparam\\s+real\\s+$which\\s*=\\s*(\[0-9\]+\\.?\[0-9\]*)\\s*;" $text]
+        if {[llength $hits] != 2} {
+            puts "TICK: FAILED --- $file states $which [expr {[llength $hits] / 2}] time(s);\
+                  exactly one is wanted, for MACHINE=$machine REVISION=$revision."
+            exit 1
+        }
+        set got(CLKOUT0_DIVIDE_F) [lindex $hits 1]
+        puts "TICK: $file: MACHINE=$machine REVISION=$revision takes $which = $got(CLKOUT0_DIVIDE_F)"
     }
 
     if {$got(CLKFBOUT_MULT_F) <= 0 || $got(DIVCLK_DIVIDE) <= 0 ||

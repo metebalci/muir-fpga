@@ -20798,13 +20798,13 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @file rtl/machine/cadr_microcycle.sv
 @note The shared port's address is the read's when the write pulse fires.
 @old
-    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
-                  : pdl_we ? pdla_write
-                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_read;
+    assign pdla   = pdl_we ? pdla_write
+                  : rw_put ? rw_ix
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_read;
 @new
-    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
-                  : pdl_we ? pdla_read
-                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_write;
+    assign pdla   = pdl_we ? pdla_read
+                  : rw_put ? rw_ix
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_write;
 @end
 
 @mutation quux-the-pdl-write-lands-at-the-read-address
@@ -20817,13 +20817,13 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note held low by a constant rather than deleted, so that lint still sees
 @note `pdla_write` read.
 @old
-    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
-                  : pdl_we ? pdla_write
-                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_read;
+    assign pdla   = pdl_we ? pdla_write
+                  : rw_put ? rw_ix
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_read;
 @new
-    assign pdla   = redir_we ? PDL_BITS'(redirect_idx)
-                  : (pdl_we && 1'b0) ? pdla_write
-                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx) : pdla_read;
+    assign pdla   = (pdl_we && 1'b0) ? pdla_write
+                  : rw_put ? rw_ix
+                  : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_read;
 @end
 
 @mutation quux-the-feature-page-is-128-words
@@ -21581,9 +21581,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note tick before: on QUUX that is the boundary's tick, so it holds the word
 @note at the pointer before the edge.
 @old
-    assign pdl_q = pdl_rd;
+    assign pdl_q = rw_fwd ? rw_wd : pdl_rd;
 @new
-    always_ff @(posedge clk) if (tpclk_q) pdl_q <= pdl_rd;
+    always_ff @(posedge clk) if (tpclk_q) pdl_q <= rw_fwd ? rw_wd : pdl_rd;
 @end
 
 @mutation quux-a-div-of-md-counts-a-cycle-early
@@ -21788,9 +21788,9 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note The first period after a write is one tick longer than muir's: the
 @note count starts at the edge a tick late and does not make up the tick.
 @old
-          pre[k]    <= 7'(TICKS_A_US - 2);
+          pre[k]    <= 7'(TICKS_A_US - 2) + 7'(us_more(ACC0));
 @new
-          pre[k]    <= 7'(TICKS_A_US - 1);
+          pre[k]    <= 7'(TICKS_A_US - 1) + 7'(us_more(ACC0));
 @end
 
 @mutation quux-the-clocks-count-a-microsecond-short
@@ -21799,9 +21799,9 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note A microsecond is 99 ticks after a rise, so every period after the
 @note first is a tick short a microsecond.
 @old
-            pre[k] <= 7'(TICKS_A_US - 1);
+            pre[k]     <= 7'(TICKS_A_US - 1) + 7'(us_more(pre_acc[k]));
 @new
-            pre[k] <= 7'(TICKS_A_US - 2);
+            pre[k]     <= 7'(TICKS_A_US - 2) + 7'(us_more(pre_acc[k]));
 @end
 
 @mutation quux-a-clock-flag-is-not-sticky
@@ -21844,11 +21844,13 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note microsecond after the program wrote it 0.
 @old
           live[k]   <= start_us[k] != 24'd0;
-          pre[k]    <= 7'(TICKS_A_US - 2);
+          pre[k]    <= 7'(TICKS_A_US - 2) + 7'(us_more(ACC0));
+          pre_acc[k] <= us_left(ACC0);
           us[k]     <= start_us[k];
 @new
           live[k]   <= 1'b1;
-          pre[k]    <= 7'(TICKS_A_US - 2);
+          pre[k]    <= 7'(TICKS_A_US - 2) + 7'(us_more(ACC0));
+          pre_acc[k] <= us_left(ACC0);
           us[k]     <= (start_us[k] == 24'd0) ? 24'd1 : start_us[k];
 @end
 
@@ -22099,7 +22101,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note periodic with its interrupt enable, as the alias did.
 @old
   if (QUUX) begin : g_quux_tick
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -22113,7 +22115,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
   if (QUUX) begin : g_quux_tick
     logic d3;
     always_ff @(posedge clk) d3 <= !rst && cpu_edge && low_group && (ir[21:19] == 3'd3) && ob[0];
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -22132,7 +22134,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note flag, as the alias did (and turns it on if it was off).
 @old
   if (QUUX) begin : g_quux_tick
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -22146,7 +22148,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
   if (QUUX) begin : g_quux_tick
     logic d3;
     always_ff @(posedge clk) d3 <= !rst && cpu_edge && low_group && (ir[21:19] == 3'd3) && ob[1];
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -22165,7 +22167,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note off, as the alias did.
 @old
   if (QUUX) begin : g_quux_tick
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -22179,7 +22181,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
   if (QUUX) begin : g_quux_tick
     logic d3;
     always_ff @(posedge clk) d3 <= !rst && cpu_edge && low_group && (ir[21:19] == 3'd3) && !ob[0];
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -22200,7 +22202,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note wherever destination 3 is written, so the whole term stands for timer 0's).
 @old
   if (QUUX) begin : g_quux_tick
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -22223,7 +22225,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @new
   if (QUUX) begin : g_quux_tick
     logic irq_c;
-    quux_clocks clocks (
+    quux_clocks #(.TICK_PS(TICK_PS)) clocks (
         .clk      (clk),
         .rst      (rst),
         .n_boot   (n_boot),
@@ -22861,7 +22863,7 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note The register is asked in the two ticks after the grant, so a read
 @note that moves something --- the keyboard's FIFO --- moves it twice.
 @old
-  assign dev_rq    = (state == GRANTED) && first && dev_cycle;
+  assign dev_rq    = (state == GRANTED) && first_eff && dev_cycle;
 @new
   assign dev_rq    = (state == GRANTED) && (elapsed < 6'd2) && dev_cycle;
 @end
@@ -22872,9 +22874,9 @@ set_multicycle_path -setup [expr {$sync_k - 1}] -from $slow -to $split_every_tic
 @note A cycle of the memory bus asks a device register as well, as the Xbus
 @note put main memory's cycles before every slave.
 @old
-  assign dev_rq    = (state == GRANTED) && first && dev_cycle;
+  assign dev_rq    = (state == GRANTED) && first_eff && dev_cycle;
 @new
-  assign dev_rq    = (state == GRANTED) && first && (dev_cycle || mem_cycle);
+  assign dev_rq    = (state == GRANTED) && first_eff && (dev_cycle || mem_cycle);
 @end
 
 @mutation quux-cycle-release-waits-mfinishd
@@ -24265,9 +24267,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @check quux_fd_face_quux
 @file rtl/machine/quux_rtc.sv
 @old
-  localparam logic [29:0] STEP   = 30'(TICK_NS);
+  localparam logic [29:0] STEP    = 30'(TICK_PS / 1000);
 @new
-  localparam logic [29:0] STEP   = 30'(2 * TICK_NS);
+  localparam logic [29:0] STEP    = 30'(2 * TICK_PS / 1000);
 @end
 
 @mutation fd-quiet-while-busy
@@ -25017,9 +25019,9 @@ FAULT_SH=/usr/share/cadr/faults.sh
 @note A store to the buffered word leaves it in the port, and the processor's
 @note view takes it back at the next master clock edge.
 @old
-    if (state == GRANTED && first && write && line_phys == pf_nx_phys) pf_nx_v = 1'b0;
+    if (state == GRANTED && first_eff && write && line_phys == pf_nx_phys) pf_nx_v = 1'b0;
 @new
-    if (state == GRANTED && first && write && line_phys == pf_nx_phys && 1'b0) pf_nx_v = 1'b0;
+    if (state == GRANTED && first_eff && write && line_phys == pf_nx_phys && 1'b0) pf_nx_v = 1'b0;
 @end
 
 @mutation prefetch-store-drop-a-tick-late
@@ -27106,9 +27108,9 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @note The TLB's entry left without the bits a write-back sets (A14.6), so
 @note the next reference writes them back again.
 @old
-        ta_wdata = {1'b1, tag(va_a), ta_q[29:0] | wb_bits};
+  assign or_word = {1'b1, tag(va_a), qa_ent | wb_bits};
 @new
-        ta_wdata = {1'b1, tag(va_a), ta_q[29:0]};
+  assign or_word = {1'b1, tag(va_a), qa_ent | (wb_bits & 30'd0)};
 @end
 
 @mutation rev14-the-direct-write-is-operation-2
@@ -27117,9 +27119,9 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @note `WRITE-MAP`'s direct write taken as operation 2, the invalidation's
 @note code, where A14.4's is 1.
 @old
-        tb_wdata = (op == 2'd1) ? {1'b1, tag(va_b), vma[29:0]} : '0;
+  assign op_word = (op == 2'd1) ? {1'b1, tag(va_b), vma[29:0]} : '0;
 @new
-        tb_wdata = (op == 2'd2) ? {1'b1, tag(va_b), vma[29:0]} : '0;
+  assign op_word = (op == 2'd2) ? {1'b1, tag(va_b), vma[29:0]} : '0;
 @end
 
 @mutation rev14-the-invalidation-sweeps
@@ -27171,21 +27173,21 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @note A write-back after port A's walk reads the tables again, where A14.6
 @note has it write at once.
 @old
-            else if (walked_a) begin
+        b_ul      <= walked_a;
 @new
-            else if (walked_a && !walked_a) begin
+        b_ul      <= walked_a && !walked_a;
 @end
 
-@mutation rev14-a-queued-walk-does-not-hold-its-cycle
-@check quux14_double_quux_k5
+@mutation rev14-a-queued-walk-looks-a-tick-late
+@check quux14_double_quux
 @file rtl/machine/quux_mmu.sv
-@note Port B's walk queued behind port A's not holding the generator cycle
-@note it starts in, whose `until` it has not reached yet: a microcycle short
-@note at K = 5.
+@note Port B's walk queued behind port A's not looked up in the tick port
+@note A's ends but on the next: its directory read a tick past the instant
+@note muir starts it at.
 @old
-                                 || (wstate != W_IDLE && wstate != W_TLB
+          wstate     <= sd_walk_ready ? W_DANS : W_DLOOK;
 @new
-                                 || (wstate != W_IDLE && wstate != W_TLB && 1'b0
+          wstate     <= W_DLOOK;
 @end
 
 @mutation rev14-the-redirect-stops-at-pp
@@ -27235,33 +27237,43 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @file rtl/machine/quux_mmu.sv
 @note Port A's hit never taken: every reference walks, or finds nothing.
 @old
-    else if (hit_a)              raw_a = ta_q[29:0];
+  assign raw_a = (use_a && hit_a) ? qa_ent : pre_a;
 @new
-    else if (hit_a && !hit_a)    raw_a = ta_q[29:0];
+  assign raw_a = (use_a && hit_a && !hit_a) ? qa_ent : pre_a;
 @end
 
-@mutation rev14-a-fill-on-the-read-tick
-@check rdw_poison_quux14_double_quux
+@mutation rev14-a-fill-written-at-the-edge
+@check rdw_poison_quux14_forward_quux_k5
 @file rtl/machine/quux_mmu.sv
-@note **THE BLOCK-RAM RULE, JUST OUTSIDE IT**: a walk's fill written on the
-@note generator cycle's first tick, when both ports read, so that port B reads
-@note the entry port A writes at one index (`double`).  The machine may still
-@note agree with muir; the poison's count of reads through a write does not.
+@note **THE WRITES OFF THE EDGE, JUST OUTSIDE IT** (R1): a walk's fill pending
+@note at an edge written there by port A, in place of its read, while port B
+@note reads the same index (`forward`, the fill a tick before the hold's last
+@note edge at K = 5, `MD` the walked page): the poison's count of reads
+@note through a write.
 @old
-  assign fill_now = wstate == W_TLB && w_load && !g1;
+    end else if (gen_edge) begin
+      ta_en = 1'b1;
+      tb_en = 1'b1;
+    end else begin
 @new
-  assign fill_now = wstate == W_TLB && w_load && (g1 || !g1);
+    end else if (gen_edge) begin
+      ta_en = 1'b1;
+      tb_en = 1'b1;
+      if (pa_v) begin
+        ta_we = 1'b1; ta_idx = pa_idx;
+      end
+    end else begin
 @end
 
 @mutation rev14-the-first-walk-read-starts-at-g2
 @check quux14_setter_quux
 @file rtl/machine/quux_mmu.sv
 @note The walk's first read started a tick late, at the generator cycle's
-@note second tick rather than at its start.
+@note first tick rather than at its start.
 @old
-      sd_until  = d_first ? -11'sd1 : smax(until_s, sd_ack_at);
+        sd_until  = w_first ? until_s : w_ua;
 @new
-      sd_until  = d_first ? 11'sd0 : smax(until_s, sd_ack_at);
+        sd_until  = w_first ? until_s + 11'sd1 : w_ua;
 @end
 
 @mutation rev14-refused-is-not-cleared-by-its-write
@@ -27298,13 +27310,24 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @mutation rev14-the-write-back-word-misses-the-line
 @check quux14_windows_quux
 @file rtl/machine/quux_cache.sv
-@note The write-back's word not written into the line that holds it: the
-@note cache keeps the table word without the bits, and a read of it then
-@note disagrees with main memory.
+@note The walked entry's write-back word not written into the line that
+@note holds it: the cache keeps the table word without the bits, and a read
+@note of it then disagrees with main memory.
 @old
-      s_upd_q <= s_update && s_hit;
+      s_upd_q  <= s_update && s_look_q && s_hit_live;
 @new
-      s_upd_q <= 1'b0 && s_update && s_hit;
+      s_upd_q  <= 1'b0 && s_update && s_look_q && s_hit_live;
+@end
+
+@mutation rev14-the-reread-write-back-word-misses-the-line
+@check quux14_writeback_quux
+@file rtl/machine/quux_cache.sv
+@note The same for a write-back that read the page entry again: the word
+@note written at its tick's edge from the registered answer, not written.
+@old
+    end else if (s_update && !s_look_q && s_hit) begin
+@new
+    end else if (s_update && !s_look_q && s_hit && 1'b0) begin
 @end
 
 @mutation rev14-lcs-adder-drops-its-carry
@@ -27360,16 +27383,16 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
 @end
 
 @mutation rev14-the-walk-does-not-wait-for-the-acknowledgment
-@check quux14_inflight_quux
+@check quux14_forward_quux
 @file rtl/machine/quux_mmu.sv
 @note A walk's first read taken at the generator cycle's start whatever the
 @note cycle in flight, where clarification 74 takes it no earlier than the
 @note cycle's acknowledgment: the walk's arithmetic forgets the wait its
 @note lookups keep.
 @old
-      sd_until  = d_first ? -11'sd1 : smax(until_s, sd_ack_at);
+        sd_until  = w_first ? until_s : w_ua;
 @new
-      sd_until  = d_first ? -11'sd1 : smax(until_s, FLOOR & sd_ack_at);
+        sd_until  = w_first ? until_s : smax(until_s, FLOOR & w_ua);
 @end
 
 @mutation rev14-the-walker-looks-while-a-cycle-is-granted
@@ -27394,6 +27417,306 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
                           || (state == ACKED && (fill_have || !fill_owed)));
 @new
                           || (state == ACKED && (fill_have || !fill_owed)) || (state == GRANTED && wbw));
+@end
+
+@mutation rev14-port-a-reads-at-vma
+@check quux14_walk_quux
+@file rtl/machine/quux_mmu.sv
+@note Port A read at the edge from `VMA` as it stands, not from its next
+@note value (A14.4): a start reads the entry of the address before it.
+@old
+    ta_en = 1'b0; ta_we = 1'b0; ta_idx = index(vma_nx); ta_wdata = pa_w;
+@new
+    ta_en = 1'b0; ta_we = 1'b0; ta_idx = index(vma_nx ^ va_a ^ vma_nx ^ va_a ^ va_a); ta_wdata = pa_w;
+@end
+
+@mutation rev14-port-b-reads-at-md
+@check quux14_inflight0_quux
+@file rtl/machine/quux_mmu.sv
+@note Port B read at the edge from `MD` as it stands, not from its next
+@note value (A14.5): `MAP(MD)` reads the entry of the `MD` before.
+@old
+    tb_en = 1'b0; tb_we = 1'b0; tb_idx = index(md_nx);  tb_wdata = pb_w;
+@new
+    tb_en = 1'b0; tb_we = 1'b0; tb_idx = index(md_nx ^ va_b ^ md_nx ^ va_b ^ va_b);  tb_wdata = pb_w;
+@end
+
+@mutation rev14-md-next-forgets-the-redirect
+@check quux14_redirect_quux
+@file rtl/machine/cadr_microcycle.sv
+@note **THE MONITOR'S PLANTED CONTROL**: `MD`'s next value without the
+@note redirect's word, which MD takes at a start the redirect serves inside
+@note the buffer (A14.7).  The TLB's port B would read the word before it;
+@note `CADR_GAP_MONITOR`'s check of the next value against MD stops the run.
+@old
+      if (mclk_edge && memstart && redirect_in && !wrcyc) md_nx = redir_word[31:0];
+@new
+      if (mclk_edge && memstart && redirect_in && !wrcyc && 1'b0) md_nx = redir_word[31:0];
+@end
+
+@mutation rev14-a-direct-write-is-not-forwarded-to-port-a
+@check quux14_forward_quux
+@file rtl/machine/quux_mmu.sv
+@note A direct write landing at an edge not forwarded to port A's read there:
+@note a start in the microcycle after the landing reads the entry before it.
+@old
+    op_ma = op_go && index(va_b) == index(vma_nx);
+@new
+    op_ma = 1'b0 && op_go && index(va_b) == index(vma_nx);
+@end
+
+@mutation rev14-a-direct-write-is-not-forwarded-to-port-b
+@check quux14_forward_quux
+@file rtl/machine/quux_mmu.sv
+@note The same for port B: `MAP(MD)` in the microcycle after the landing.
+@old
+    else if (op_go && index(va_b) == index(md_nx)) begin fb_m = 1'b1; fb_w = op_word; end
+@new
+    else if (1'b0 && op_go && index(va_b) == index(md_nx)) begin fb_m = 1'b1; fb_w = op_word; end
+@end
+
+@mutation rev14-the-or-is-not-forwarded-to-port-b
+@check quux14_forward_quux
+@file rtl/machine/quux_mmu.sv
+@note The write-back's OR at its grant not forwarded to port B's read there:
+@note `MAP(MD)` of the page in the microcycle after the grant reads it
+@note without accessed and modified.
+@old
+    if (or_go && index(va_a) == index(md_nx)) begin fb_m = 1'b1; fb_w = or_word; end
+@new
+    if (1'b0 && or_go && index(va_a) == index(md_nx)) begin fb_m = 1'b1; fb_w = or_word; end
+@end
+
+@mutation rev14-a-fill-at-the-edge-is-not-forwarded
+@check quux14_forward_quux
+@file rtl/machine/quux_mmu.sv
+@note A walk's fill made at its hold's last edge (two hits at K = 4) not
+@note forwarded to port A's read there: the start's OR misses the filled
+@note entry, and the page's next reference writes back again.
+@old
+    fl_sel = !op_ma && fill_now && fl_ma;
+@new
+    fl_sel = 1'b0 && !op_ma && fill_now && fl_ma;
+@end
+
+@mutation rev14-a-pending-fill-is-not-forwarded
+@check quux14_forward_quux_k5
+@file rtl/machine/quux_mmu.sv
+@note The same for a fill made a tick before the edge and pending across it
+@note (two hits at K = 5).
+@old
+    else if (pa_v && pa_idx == index(vma_nx)) begin fa_m = 1'b1; fa_w = pa_w; end
+@new
+    else if (1'b0 && pa_v && pa_idx == index(vma_nx)) begin fa_m = 1'b1; fa_w = pa_w; end
+@end
+
+@mutation rev14-a-forward-hits-any-tag
+@check quux14_forward_quux
+@file rtl/machine/quux_mmu.sv
+@note A forwarded write taken as a hit for any tag at its index: a lookup of
+@note another page at the index the write replaces reads the write's entry
+@note (the clash).
+@old
+    fa_hit = fl_sel ? fl_ha : fwd_hit(fa_w, vma_nx);
+@new
+    fa_hit = fl_sel ? (fl_ha || 1'b1) : fa_w[WIDTH-1];
+@end
+
+@mutation rev14-a-port-b-forward-hits-any-tag
+@check quux14_forward_quux
+@file rtl/machine/quux_mmu.sv
+@note The same at port B.
+@old
+      e_fb_hit <= fwd_hit(fb_w, md_nx);
+@new
+      e_fb_hit <= fb_w[WIDTH-1];
+@end
+
+@mutation rev14-port-as-walked-entry-is-not-kept
+@check quux14_double_quux
+@file rtl/machine/quux_mmu.sv
+@note Port A's walked entry taken by the edge only in its answer's tick and
+@note not at the edges after it: once port B's fill at the same index has
+@note replaced it in the TLB, port A's reference reads port B's entry
+@note (A14.4, the review's F5).
+@old
+        e_bpa_v <= !cpu_edge && ((r_set && !r_port) || ra_v);
+@new
+        e_bpa_v <= !cpu_edge && (r_set && !r_port) && !ra_v;
+@end
+
+@mutation rev14-a-refusal-waits-for-a-relook
+@check quux14_writeback_quux
+@file rtl/machine/quux_mmu.sv
+@note The cycle's own line not read again in the tick the cache answers the
+@note write-back's page entry: a refusal by the guard decides a tick late
+@note (R3's `sd_relook`).
+@old
+      B_DANS, B_PANS: sd_relook = 1'b1;
+@new
+      B_DANS: sd_relook = 1'b1;
+@end
+
+@mutation rev14-a-write-decides-in-its-own-tick
+@check quux14_writeback_quux
+@file rtl/machine/quux_mem_port.sv
+@note A write-back's write decides the cycle in its own tick, before the
+@note write buffer's countdown has taken the write: the cycle is answered
+@note early by the write's time.
+@old
+  assign decide_now = PAGED && state == GRANTED && wbw_eff && wb_rel_now && rel_ok_q;
+@new
+  assign decide_now = PAGED && state == GRANTED && wbw_eff && (wb_rel_now || (wb_rel_v && sd_wr)) && rel_ok_q;
+@end
+
+@mutation rev14-the-side-answer-is-taken-live
+@check quux14_writeback_quux
+@file rtl/machine/quux_mem_port.sv
+@note **THE SIDE SEAM'S ANSWER, JUST OUTSIDE ITS REGISTER** (R3): the answer
+@note the walk and the write-back act on taken from the cache's output in
+@note the tick they act, a tick after the answer: the write-back's reads see
+@note the waiting cycle's own line, read again in between.
+@old
+  assign sd_hit    = c_s_hit;
+@new
+  assign sd_hit    = c_s_hit_live || (c_s_hit && 1'b0);
+@end
+
+@mutation rev14-the-cycle-does-not-wait-for-its-write-back
+@check quux14_writeback_quux
+@file rtl/machine/quux_mem_port.sv
+@note **THE GRANT'S REGISTER, JUST OUTSIDE IT** (R4): the write-back's hold,
+@note a register of the grant's edge, not read on the tick after it, so the
+@note cycle decides before its write-back.
+@old
+  assign first_eff  = (first && !wbw_hold1) || decide_now;
+@new
+  assign first_eff  = first || decide_now;
+@end
+
+@mutation rev14-the-write-back-looks-a-tick-late
+@check quux14_writeback_quux
+@file rtl/machine/quux_mmu.sv
+@note The write-back's first look not made on the tick after the grant but
+@note on the next: a walked entry's write decides a tick late.
+@old
+        bstate  <= b_spec ? (b_ul ? B_WR : B_DANS) : (b_ul ? B_ULOOK : B_DLOOK);
+@new
+        bstate  <= b_ul ? B_ULOOK : B_DLOOK;
+@end
+
+@mutation rev14-the-redirect-reads-at-the-edge
+@check quux14_redirect_quux
+@file rtl/machine/quux_mmu.sv
+@note **THE REDIRECT'S READ, JUST OUTSIDE ITS TICK** (R5): the PDL buffer read
+@note for the redirect on the held cycle's edge tick, where the buffer's own
+@note read for the next cycle is.
+@old
+  assign pdl_rd = rd_pend && gen_pre;
+@new
+  assign pdl_rd = rd_pend && gen_edge;
+@end
+
+@mutation rev14-the-redirects-index-is-off-by-one
+@check quux14_redirect_quux
+@file rtl/machine/quux_mmu.sv
+@note The redirect's index for the PDL buffer's port a word past the one the
+@note tick before computed (R5).
+@old
+    redirect_idx_q <= redirect_idx;
+@new
+    redirect_idx_q <= redirect_idx + PDL_BITS'(1);
+@end
+
+@mutation rev14-the-walks-entry-written-mid-cycle
+@check quux14_forward_quux
+@file rtl/machine/quux_mmu.sv
+@note **THE MONITOR'S PLANTED CONTROL**: a walk's result taken as written in
+@note the middle of a cycle that runs, which `CADR_GAP_MONITOR` stops.
+@old
+      res_mid    <= gen_edge ? 1'b0 : (res_mid || r_set);
+@new
+      res_mid    <= gen_edge ? !tlbh : (res_mid || r_set);
+@end
+
+@mutation rev14-the-redirects-pdl-write-is-not-forwarded
+@check quux14_redirect_quux
+@file rtl/machine/cadr_microcycle.sv
+@note **THE REDIRECT'S PDL WRITE THROUGH REGISTERS** (R5): its word, held in
+@note registers from its edge until a later edge puts it in the buffer, not
+@note given to a read of its index before then: the microcycle after the
+@note write reads the buffer's old word.
+@old
+      rw_fwd <= PAGED && rw_v && !rw_put && !pdl_we && pdla == rw_ix;
+@new
+      rw_fwd <= 1'b0 && PAGED && rw_v && !rw_put && !pdl_we && pdla == rw_ix;
+@end
+
+@mutation rev14-the-redirects-pdl-write-is-forwarded-at-any-index
+@check quux14_redirect_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The held word given to a read at any index while it waits.
+@old
+      rw_fwd <= PAGED && rw_v && !rw_put && !pdl_we && pdla == rw_ix;
+@new
+      rw_fwd <= PAGED && rw_v && !rw_put && !pdl_we;
+@end
+
+@mutation rev14-the-redirects-pdl-write-is-put-over-a-pulse
+@check quux14_redirect_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The held word put at an edge whose PDL write pulse has the port: the
+@note pulse's write takes it and the held word is lost.
+@old
+    assign rw_put   = PAGED && gen_edge && rw_v && !pdl_we;
+@new
+    assign rw_put   = PAGED && gen_edge && rw_v;
+@end
+
+@mutation rev14-the-redirects-pdl-write-is-never-put
+@check quux14_redirect_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The held word never put in the buffer: it is lost when the next
+@note redirect's write takes the registers.
+@old
+    assign rw_put   = PAGED && gen_edge && rw_v && !pdl_we;
+@new
+    assign rw_put   = 1'b0 && PAGED && gen_edge && rw_v && !pdl_we;
+@end
+
+@mutation rev14-a-pulse-does-not-supersede-the-redirects-pdl-write
+@check quux14_redirect_quux
+@file rtl/machine/cadr_microcycle.sv
+@note A PDL write pulse at the held word's index, landing while it waits,
+@note leaves it waiting: put later, it overwrites the newer word.
+@old
+      if (rw_put || (pdl_we && pdla_write == rw_ix)) rw_v <= 1'b0;
+@new
+      if (rw_put) rw_v <= 1'b0;
+@end
+
+@mutation rev14-the-decision-takes-the-write-backs-end-a-tick-late
+@check quux14_writeback_quux
+@file rtl/machine/quux_mem_port.sv
+@note The write-back's end, given the cycle from a register in the tick its
+@note refusal is a register (`wb_rel_q`), a tick late: the cycle is answered
+@note a tick after muir's.
+@old
+  assign now_s   = smax(g_s, decide_now ? wb_rel_q : wbu_s);
+@new
+  assign now_s   = smax(g_s, decide_now ? wb_rel_q + 11'sd1 : wbu_s);
+@end
+
+@mutation rev14-a-side-lines-fill-holds-main-memory-a-tick-long
+@check quux14_forward_quux
+@file rtl/machine/quux_mem_port.sv
+@note The side read's line fill, registered from its address a tick after
+@note the look, holding main memory a tick longer: the next read's start is
+@note a tick late.
+@old
+        s_fill_t1 <= fill_at(s_phys_q) - 11'sd1;
+@new
+        s_fill_t1 <= fill_at(s_phys_q);
 @end
 
 @mutation grid-rev14-the-walks-countdown-in-the-zynq-relaxed-set
@@ -27516,4 +27839,79 @@ set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "14"}]
 if [ "$revision" = 14 ] && [ "$machine" != quux ]; then
 @new
 if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
+@end
+
+@mutation quux-the-microsecond-is-the-grids-ticks
+@check wall_time_15000
+@file rtl/machine/quux_clocks.sv
+@note A microsecond counted as the grid's whole ticks whatever a tick lasts:
+@note at 15 ns the microsecond clock and the timers run at two thirds of the
+@note wall's rate.
+@old
+  localparam int unsigned TICKS_A_US = 1_000_000 / TICK_PS;
+  localparam int unsigned US_REM     = 1_000_000 % TICK_PS;
+@new
+  localparam int unsigned TICKS_A_US = 1000 / cadr_tick_pkg::TICK_NS;
+  localparam int unsigned US_REM     = 0 * TICK_PS;
+@end
+
+@mutation quux-the-microseconds-leftover-starts-at-zero
+@check wall_time_15000
+@file rtl/machine/quux_clocks.sv
+@note The leftover picoseconds starting at none rather than half a tick: each
+@note microsecond falls up to a tick early, not on the nearest tick.
+@old
+  localparam logic [19:0] ACC0 = 20'(TICK_PS / 2);
+@new
+  localparam logic [19:0] ACC0 = 20'(TICK_PS * 0);
+@end
+
+@mutation quux-a-timers-first-microsecond-is-whole-ticks
+@check wall_time_15000
+@file rtl/machine/quux_clocks.sv
+@note A timer turned on counting its first microsecond in whole ticks: every
+@note rise after it falls the fraction late.
+@old
+          pre[k]    <= 7'(TICKS_A_US - 2) + 7'(us_more(ACC0));
+          pre_acc[k] <= us_left(ACC0);
+@new
+          pre[k]    <= 7'(TICKS_A_US - 2);
+          pre_acc[k] <= ACC0;
+@end
+
+@mutation quux-the-clocks-first-microsecond-is-whole-ticks
+@check wall_time_15000
+@file rtl/machine/quux_clocks.sv
+@note The microsecond clock's first microsecond after a reset counted in
+@note whole ticks.
+@old
+      usec_t     <= 7'(TICKS_A_US - 1) + 7'(us_more(ACC0));
+      usec_acc   <= us_left(ACC0);
+@new
+      usec_t     <= 7'(TICKS_A_US - 1);
+      usec_acc   <= ACC0;
+@end
+
+@mutation quux-the-real-time-clock-steps-the-grid
+@check wall_time_15000
+@file rtl/machine/quux_rtc.sv
+@note The real-time clock adding the grid's 10 ns a tick, not the tick's own
+@note length: at 15 ns it runs at two thirds of the wall's rate.
+@old
+  localparam logic [29:0] STEP    = 30'(TICK_PS / 1000);
+  localparam logic [9:0]  STEP_PS = 10'(TICK_PS % 1000);
+@new
+  localparam logic [29:0] STEP    = 30'(cadr_tick_pkg::TICK_NS);
+  localparam logic [9:0]  STEP_PS = 10'(0 * TICK_PS);
+@end
+
+@mutation quux-the-real-time-clock-drops-its-picoseconds
+@check wall_time_12500
+@file rtl/machine/quux_rtc.sv
+@note The picoseconds over whole nanoseconds never carried: at 12.5 ns the
+@note clock loses half a nanosecond a tick.
+@old
+  assign next_fraction = frac_q + STEP + 30'(ps_carry);
+@new
+  assign next_fraction = frac_q + STEP + 30'(ps_carry & 1'b0);
 @end

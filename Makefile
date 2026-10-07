@@ -267,18 +267,20 @@ QUUX13_G_devices_name := -GBOARD_NAME='"DE25-Nano"'
 # port-B fill against a direct write and a double miss, `redirectam` and
 # `fiddleam` those two with nothing to write back, and `inflight`,
 # `inflightfb` and `inflight0` walks behind a cycle in flight and without
-# one (clarification 74).
-QUUX14_PROGRAMS := windows space walk noentry empty empty8k mapmd lc fetch words writeback setter setter0 wbhold redirect redirectam fiddle fiddleam double inflight inflightfb inflight0
+# one (clarification 74), and `forward` a TLB write and a lookup at one
+# edge, which the TLB's read at the edge forwards.
+QUUX14_PROGRAMS := windows space walk noentry empty empty8k mapmd lc fetch words writeback setter setter0 wbhold redirect redirectam fiddle fiddleam double inflight inflightfb inflight0 forward
 QUUX14_G_empty8k := -GTLB_ENTRIES=8192
 # **AND THE TLB'S READ-DURING-WRITE WINDOW** (`quux_tlb.sv`): the programs
 # that write it most, `double` (both ports' fills, at one index), `mapmd` (the
 # operations on port B), `empty` (the sweep, both ports), and `inflight` and
-# `inflight0` (walks behind a cycle in flight, and without one), on the
+# `inflight0` (walks behind a cycle in flight, and without one), and
+# `forward` (a fill pending across an edge port B reads its index at), on the
 # machine under `CADR_RDW_POISON`, where a port read in a tick the other port
 # writes its entry takes the complement and a port's own read and write in
 # one tick stops the run; and under `CADR_RDW_POISON_CACHE`, the same of the
 # cache's RAMs, which a walk's reads share with the processor's.
-QUUX14_POISON := double mapmd empty inflight inflightfb inflight0
+QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
@@ -298,6 +300,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/muldiv.quux.pass $(BUILD)/quux_input.quux.pass \
        $(BUILD)/quux13_block_disk.quux.pass \
        $(BUILD)/quux_fd_face.pass \
+       $(BUILD)/wall_time.pass \
        $(BUILD)/checkpoint.quux.pass \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
@@ -955,6 +958,7 @@ $(BUILD)/sstep.pass: $(BUILD)/obj_sstep/Vcadr_microcycle \
 # line is gone. It joins `nomem`, `ddr_boot`, `mem_count`, `arty` and `probe`
 # through this variable, all of which build the whole machine.
 MACHINE_SRC := $(TICKPKG) rtl/machine/cadr_phase_gen.sv rtl/machine/quux_phase_gen.sv rtl/machine/quux_tlb.sv rtl/machine/quux_mmu.sv \
+               rtl/plumbing/quux_keep_net.sv \
                rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
                rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv rtl/plumbing/cadr_xbus_ddr.sv \
                rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv rtl/machine/cadr_tv.sv \
@@ -1200,6 +1204,23 @@ $(BUILD)/obj_quux_fd_face/Vquux_fd_face_harness: $(QUUX_FD_FACE_SRC) tb/quux_fd_
 
 $(BUILD)/quux_fd_face.pass: $(BUILD)/obj_quux_fd_face/Vquux_fd_face_harness
 	$(BUILD)/obj_quux_fd_face/Vquux_fd_face_harness
+	@touch $@
+
+# **QUUX'S WALL CLOCKS AT ANY TICK** (`quux_clocks.sv`, `quux_rtc.sv`): the
+# microsecond clock, an interval timer and the real-time clock against wall
+# time over 40 ms, at 10 ns (every board's but one), 15 ns (the Arty Z7-20's
+# revision 14 build) and two lengths that divide neither a microsecond nor
+# whole nanoseconds alike (`tb/quux_wall_time_tb.cpp`).  muir counts these
+# in its own nanoseconds, so this is the fabric's alone.
+WALL_TIME_PS := 10000 15000 12500 13000
+WALL_TIME_SRC := $(TICKPKG) rtl/machine/quux_clocks.sv rtl/machine/quux_rtc.sv tb/quux_wall_time_harness.sv
+
+$(BUILD)/obj_wall_time_%/Vquux_wall_time_harness: $(WALL_TIME_SRC) tb/quux_wall_time_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -GTICK_PS=$* -Mdir $(BUILD)/obj_wall_time_$* \
+	    --top-module quux_wall_time_harness $(WALL_TIME_SRC) $(abspath tb/quux_wall_time_tb.cpp)
+
+$(BUILD)/wall_time.pass: $(WALL_TIME_PS:%=$(BUILD)/obj_wall_time_%/Vquux_wall_time_harness)
+	@set -e; for ps in $(WALL_TIME_PS); do $(BUILD)/obj_wall_time_$$ps/Vquux_wall_time_harness; done
 	@touch $@
 
 # `rtl/machine/quux_input.sv` on its own, against muir's `QuuxInput` over a
@@ -2946,12 +2967,16 @@ DE25_DDR_MHZ ?= 1066.667
 # programmer takes: `boards/de25-nano/quartus/build.sh` says what each makes.
 DE25_HPS_BOOT ?= hps-first
 DE25_SPL_HEX ?=
-de25: $(MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
+# The DE25-Nano's machine: the same sources, with the Agilex 5 version of the
+# kept net (`rtl/plumbing/agilex5/quux_keep_net.sv`) in place of the
+# behavioral one.
+DE25_MACHINE_SRC = $(filter-out rtl/plumbing/quux_keep_net.sv,$(MACHINE_SRC)) rtl/plumbing/agilex5/quux_keep_net.sv
+de25: $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
       $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux$(if $(filter 14,$(REVISION)),14,13).hex)
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
 	    HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) $(if $(REVISION),REVISION=$(REVISION)) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
-	    boards/de25-nano/quartus/build.sh $(MACHINE_SRC) $(DE25_TOP) \
+	    boards/de25-nano/quartus/build.sh $(DE25_MACHINE_SRC) $(DE25_TOP) \
 	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
 	    $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
 	    $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI))

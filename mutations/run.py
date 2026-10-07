@@ -2228,6 +2228,18 @@ CHECKS = {
         "golden": None,
         "machine": "quux",
     },
+    # QUUX's wall clocks against wall time at a tick of 15 ns, the Arty Z7-20's
+    # at revision 14, and at 12.5 ns, a tick of no whole nanoseconds
+    # (`tb/quux_wall_time_tb.cpp`; `build/wall_time.pass` adds 10 and 13).
+    **{"wall_time_%d" % ps: {
+        "sources": ["rtl/machine/quux_clocks.sv", "rtl/machine/quux_rtc.sv"],
+        "extra": ["tb/quux_wall_time_harness.sv"],
+        "top": "quux_wall_time_harness",
+        "tb": "tb/quux_wall_time_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-GTICK_PS=%d" % ps],
+        "golden": None,
+        "machine": "quux",
+    } for ps in (15000, 12500)},
     # `M_AXI_GP1` split three ways: the decode that lets the console and the
     # debug cable's carrier share the port, with the property `gp0_split`
     # holds on the other one --- every address answered, in both directions,
@@ -2655,8 +2667,8 @@ CHECKS["dispatch_write_order13_quux"] = dict(CHECKS["dispatch_write_order"], **{
 # programs the Makefile's `QUUX14_POISON` names.
 QUUX14_PROGRAMS = ("windows", "space", "walk", "noentry", "empty", "empty8k", "mapmd", "lc", "fetch",
                    "words", "writeback", "setter", "setter0", "wbhold", "redirect", "redirectam", "fiddle", "fiddleam",
-                   "double", "inflight", "inflightfb", "inflight0")
-QUUX14_POISON = ("double", "mapmd", "empty", "inflight", "inflightfb", "inflight0")
+                   "double", "inflight", "inflightfb", "inflight0", "forward")
+QUUX14_POISON = ("double", "mapmd", "empty", "inflight", "inflightfb", "inflight0", "forward")
 QUUX14_FLAGS = {"empty8k": ["-GTLB_ENTRIES=8192"]}
 for _p in QUUX14_PROGRAMS:
     CHECKS["quux14_%s_quux" % _p] = dict(CHECKS["quux13_alu_quux"], **{
@@ -2669,10 +2681,13 @@ for _p in QUUX14_POISON:
         "flags": CHECKS["quux14_%s_quux" % _p]["flags"] + ["+define+CADR_RDW_POISON",
                                                           "+define+CADR_RDW_POISON_CACHE"],
     })
-# Two at K = 5 as well, for the bounds K = 4 cannot see: the reset's sweep a
-# tick short, and a queued walk's hold.
-for _p in ("windows", "double"):
+# Some at K = 5 as well, for the bounds K = 4 cannot see: the reset's sweep
+# a tick short, a queued walk's hold, a walk's fill pending across the edge
+# (`forward`), and a walk of two hits whose entry is in a tick before the
+# edge (`inflight0`).
+for _p in ("windows", "double", "forward", "inflight0"):
     CHECKS["quux14_%s_quux_k5" % _p] = _timed("quux14_%s_quux" % _p, 5, 0)
+CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_quux", 5, 0)
 
 QUUX_TIMED_KEYS = ["dispatch_write_order13_quux"] + \
     ["quux14_%s_quux" % p for p in QUUX14_PROGRAMS] + \

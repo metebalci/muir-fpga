@@ -78,7 +78,11 @@
 
 `default_nettype none
 
-module quux_clocks (
+module quux_clocks #(
+    // A tick's real length in picoseconds, the board's (`quux_rtc.sv`): the
+    // grid's 10 ns by default.
+    parameter int unsigned TICK_PS = cadr_tick_pkg::TICK_NS * 1000
+) (
     input  var logic        clk,
     input  var logic        rst,
     // `-BOOT`, active low: a boot is a `-RESET` and resets every timer.
@@ -118,7 +122,8 @@ module quux_clocks (
     // registers, each word taken in one tick, and each timer's count word
     // carrying the microsecond clock's low bits of the SAME tick: a timer's
     // next rise is `pre + (us - 1) * TICKS_A_US` ticks after the tick its
-    // word was taken at, and the reader must know which tick that was, the
+    // word was taken at (at a tick that does not divide a microsecond, up to
+    // a tick a microsecond more, `pre_acc` not being read out), and the reader must know which tick that was, the
     // timers running while the machine is halted and the reader's accesses
     // being microseconds apart.  `build/quux13_readout_window.quux.k4.pass`
     // holds every field.
@@ -131,7 +136,28 @@ module quux_clocks (
     output var logic [25:0] ro_conf [0:2]
 );
 
-  localparam int unsigned TICKS_A_US = 1000 / cadr_tick_pkg::TICK_NS;
+  // **A MICROSECOND IS THE BOARD'S TICKS, WHOLE OR NOT**: `TICKS_A_US` whole
+  // ticks, and when a tick does not divide it, one tick more in each
+  // microsecond where the picoseconds left over (`US_REM` a microsecond)
+  // have added up to a tick, Bresenham's way: 66 or 67 ticks at 15 ns, two
+  // in three of them 67.  So the microsecond clock and every timer keep wall
+  // time over any run, never more than half a tick from it.  At 10 ns `US_REM` is 0 and
+  // every microsecond is the 100 ticks it always was, which every trace
+  // holds.  `build/wall_time.pass` holds it at four lengths.
+  localparam int unsigned TICKS_A_US = 1_000_000 / TICK_PS;
+  localparam int unsigned US_REM     = 1_000_000 % TICK_PS;
+  // The leftover picoseconds start at half a tick, so that a microsecond
+  // boundary falls on the tick nearest its wall time, half a tick either
+  // way at most.
+  localparam logic [19:0] ACC0 = 20'(TICK_PS / 2);
+  // The leftover picoseconds after a microsecond's `acc`: whether the next
+  // microsecond takes a tick more, and what is left after it.
+  function automatic logic us_more(input logic [19:0] acc);
+    return 32'(acc) + 32'(US_REM) >= 32'(TICK_PS);
+  endfunction
+  function automatic logic [19:0] us_left(input logic [19:0] acc);
+    return us_more(acc) ? 20'(32'(acc) + 32'(US_REM) - 32'(TICK_PS)) : 20'(32'(acc) + 32'(US_REM));
+  endfunction
 
   // ------------------------------------------------ the three timers
 
@@ -139,6 +165,7 @@ module quux_clocks (
   logic [23:0] period [0:2];
   logic [23:0] us [0:2];
   logic [6:0]  pre [0:2];
+  logic [19:0] pre_acc [0:2];
   logic [2:0]  rise, flag;
   for (genvar k = 0; k < 3; k++) begin : g_rise
     assign rise[k] = en[k] && live[k] && (pre[k] == 7'd0) && (us[k] == 24'd1);
@@ -183,19 +210,24 @@ module quux_clocks (
   logic [1:0]  power_on_t;
   logic [31:0] usec;
   logic [6:0]  usec_t;
+  logic [19:0] usec_acc;
 
   always_ff @(posedge clk) begin
     if (rst) begin
       power_on_t <= 2'(cadr_tick_pkg::POWER_ON_EDGES);
       usec       <= 32'd0;
-      usec_t     <= 7'(TICKS_A_US - 1);
+      usec_t     <= 7'(TICKS_A_US - 1) + 7'(us_more(ACC0));
+      usec_acc   <= us_left(ACC0);
       usec_s     <= 32'd0;
     end else begin
       if (power_on_t != 2'd0) begin
         power_on_t <= power_on_t - 2'd1;
       end else begin
-        usec_t <= (usec_t == 7'd0) ? 7'(TICKS_A_US - 1) : usec_t - 7'd1;
-        if (usec_t == 7'd0) usec <= usec + 32'd1;
+        usec_t <= (usec_t == 7'd0) ? 7'(TICKS_A_US - 1) + 7'(us_more(usec_acc)) : usec_t - 7'd1;
+        if (usec_t == 7'd0) begin
+          usec     <= usec + 32'd1;
+          usec_acc <= us_left(usec_acc);
+        end
       end
       // At the edge, with an increment that falls on it: a change on an edge
       // counts as before it, muir's rule.
@@ -235,6 +267,7 @@ module quux_clocks (
         period[k] <= 24'd0;
         us[k]     <= 24'd0;
         pre[k]    <= 7'd0;
+        pre_acc[k] <= ACC0;
       end
     end else begin
       for (int k = 0; k < 3; k++) begin
@@ -252,7 +285,8 @@ module quux_clocks (
         // rise and a stop for a one-shot.
         if (en[k] && live[k]) begin
           if (pre[k] == 7'd0) begin
-            pre[k] <= 7'(TICKS_A_US - 1);
+            pre[k]     <= 7'(TICKS_A_US - 1) + 7'(us_more(pre_acc[k]));
+            pre_acc[k] <= us_left(pre_acc[k]);
             if (us[k] == 24'd1) begin
               sticky[k] <= 1'b1;
               if (one_shot[k]) live[k] <= 1'b0;
@@ -268,7 +302,8 @@ module quux_clocks (
           en[k]     <= 1'b1;
           sticky[k] <= 1'b0;
           live[k]   <= start_us[k] != 24'd0;
-          pre[k]    <= 7'(TICKS_A_US - 2);
+          pre[k]    <= 7'(TICKS_A_US - 2) + 7'(us_more(ACC0));
+          pre_acc[k] <= us_left(ACC0);
           us[k]     <= start_us[k];
         end
         if (off[k]) begin

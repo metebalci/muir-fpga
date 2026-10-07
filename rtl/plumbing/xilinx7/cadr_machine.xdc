@@ -401,16 +401,19 @@
 # **AND REVISION 14'S MEMORY SYSTEM**, `quux_mmu.sv`, out whole but for what
 # it holds of the microcycle: the generator's ticks it counts, the hold, the
 # walk's, the write-back's and the sweep's countdowns and machines, the
-# bypasses and the guard's count all move on whatever tick the cache's side
-# seam answers on.  What stays in the set is the register page's words
-# 220-223, written at the page's answer from a word the bus has held for
-# eight ticks, the redirect's copies of A 430 and 431, written by A memory's
-# own pulse from `L` as A memory is, and the TLB itself, whose read on the
-# generator cycle's first tick `quux_machine.xdc` gives its own time.  And
-# the redirect's word in `cadr_microcycle.sv`, `redir_word`, taken a tick
-# after the PDL buffer's read on the strobe `redir_rd_q`.  `tools/
-# grid_check.py` classes every register of the memory system, and fails when
-# one that moves on a tick of its own is in this set.
+# walk's results, the TLB's pending writes and the guard's count all move on
+# whatever tick the cache's side seam answers on.  What stays in the set is
+# the register page's words 220-223, written at the page's answer from a
+# word the bus has held for eight ticks, the redirect's copies of A 430 and
+# 431, written by A memory's own pulse from `L` as A memory is, the TLB
+# itself, read at the edge from `VMA`'s and `MD`'s next values, and the
+# edge's registers (`e_*`), loaded at an edge alone: the TLB's forwards and
+# the walk's entries for the datapath, the writes landing at the edge, and
+# the write-back's grant.  And the redirect's word in `cadr_microcycle.sv`,
+# `redir_word`, taken a tick after the PDL buffer's read on the strobe
+# `redir_rd_q`.  `tools/grid_check.py` classes every register of the memory
+# system, and fails when one that moves on a tick of its own is in this
+# set.
 # What QUUX alone relaxes beyond this is in `quux_machine.xdc`, read only for a
 # QUUX build.
 
@@ -457,6 +460,7 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                        NAME =~ *g_rev14_mmu.mmu/pointer_types_reg* || \
                                        NAME =~ *g_rev14_mmu.mmu/pdl_base_reg* || \
                                        NAME =~ *g_rev14_mmu.mmu/pdl_head_reg* || \
+                                       NAME =~ *g_rev14_mmu.mmu/e_* || \
                                        NAME =~ *g_rev14_mmu.mmu/tlb/*) && \
                                   NAME !~ *processor/g_quux_pdl.redir_rd_q_reg* && \
                                   NAME !~ *processor/g_quux_pdl.redir_word_reg* && \
@@ -596,9 +600,13 @@ set split_latch_addr [filter [all_registers] {NAME =~ *processor/ir_reg*      ||
                                               NAME =~ *processor/pdl_ptr_reg* || \
                                               NAME =~ *processor/pdl_idx_reg* || \
                                               NAME =~ *processor/spcptr_reg*}]
+# Revision 14's `rw_fwd` (`cadr_microcycle.sv`), which gives the redirect's
+# held PDL word in place of the buffer's, is loaded every tick from the
+# latch's address and read as the latch is, so it is one of them.
 set split_latch [filter [all_registers] {NAME =~ *processor/amem_reg*   || \
                                          NAME =~ *processor/mmem_reg*   || \
                                          NAME =~ *processor/g_*_pdl.pdl_reg* || \
+                                         NAME =~ *processor/g_quux_pdl.rw_fwd_reg* || \
                                          NAME =~ *processor/amem_q_reg* || \
                                          NAME =~ *processor/mmem_q_reg* || \
                                          NAME =~ *processor/g_cadr_pdl.pdl_q_reg* || \

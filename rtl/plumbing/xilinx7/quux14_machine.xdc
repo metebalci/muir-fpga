@@ -3,66 +3,51 @@
 #
 # QUUX revision 14's own exceptions, read scoped to `cadr_machine` after
 # `quux_machine.xdc` and only for a revision 14 build (`REVISION=14`): every
-# object this file names is in `quux_mmu.sv`'s TLB, which no other build has,
-# and Vivado 2026.1 drops a clause whose `-from` or `-to` matched nothing
-# with a critical warning (12-4739), measured on a three-register design.
+# object this file names is in `quux_mmu.sv` or its seam to the memory
+# port, which no other build has, and Vivado 2026.1 drops a clause whose
+# `-from` or `-to` matched nothing with a critical warning (12-4739),
+# measured on a three-register design.
 #
-# **THE TLB IS READ ON THE GENERATOR CYCLE'S FIRST TICK, A TICK AFTER THE
-# EDGE** (`quux_mmu.sv`, "THE HOLD, AND WHEN IT IS DECIDED"): its address is
-# `VMA`'s or `MD`'s index as the edge leaves them, its enable is `g1`, and
-# its word is out at the end of that tick.  So the TLB is two things the
-# relaxed set cannot be at once:
+# **THE TLB IS READ AT THE EDGE** (`quux_mmu.sv`, contract G3 revision 14,
+# A14.4 and A14.5): its address is `VMA`'s or `MD`'s next value, its enable
+# the generator's last tick, and its word is out from the next cycle's
+# first tick.  So it is one of the edge's registers, in the relaxed set by
+# `cadr_machine.xdc`'s own pattern, and every clause the edge's registers
+# have is its own: K into the relaxed set, K - 2 into the every-tick
+# registers, and the microcycle into its address from the registers the
+# ALU's output comes from.  Its writes are on the ticks between, from the
+# memory system's pending writes, which are out of the set and so at the
+# tick.  The edge's own registers of `quux_mmu.sv` (`e_*`, the forwards,
+# the walk's entries, the writes landing at the edge and the write-back's
+# grant) are in the set by the same pattern.  This file writes what is left:
 #
-#   - **INTO ITS ADDRESS, ONE TICK** (contract G3 revision 14, A14.15, M2's
-#     note: "a one-tick constraint into port B's address").  `VMA` and `MD`
-#     are in the relaxed set and so is the RAM, so without this clause their
-#     paths into the address would be given the microcycle where they have
-#     the tick after the edge; and a block RAM enabled while its address
-#     still moves can lose words (UG473; `boards/arty-z7-20/vivado/
-#     rams_enable_check.tcl`).  Both ports' address pins, whichever the tool
-#     calls A: Vivado swaps a true dual-port RAM's ports (M2).  Its data and
-#     write enables keep the relaxed set's K: a write lands at the master
-#     clock edge (the write-back's OR) or at the cpu edge (an operation), K
-#     ticks after the edge's registers moved, and on the ticks between the
-#     enable is held off by the generator's own edge terms, which are not in
-#     the set and are timed at the tick.
-#   - **OUT OF IT, ONE TICK LESS THAN EACH CLAUSE GIVES THE EDGE'S
-#     REGISTERS**, the word leaving the RAM a tick after theirs: K - 1 to the
-#     next edge, and K - 3 into the every-tick registers, whose first hop the
-#     relaxed set's registers have K - 2 for (`quux_machine.xdc`, "THE
-#     EVERY-TICK REGISTERS, SPLIT TO SUM TO K").  At K = 4 that is the tick
-#     itself: the port's entry through the tag compare into `MEMGO`'s held
-#     copy and the memory path's held decode.
+#   - **MD_HELD INTO THE TLB'S PORT B, ONE TICK** (M2's note 4): a word the
+#     bus strobed on the tick before an edge is `MD`'s next value there, so
+#     the path from `md_held` into port B's address has the tick, as its
+#     path into MD has (`quux_machine.xdc`).
+#   - **THE SIDE SEAM'S LOOKS INTO THE CACHE'S RAMS, ONE TICK**: the walk's
+#     first look, on the generator cycle's first tick, is addressed from
+#     `VMA`, `MD`, the directory base and the TLB's word, and the
+#     write-back's first, on the tick after the grant, from the grant's
+#     registers; every one of them in the relaxed set, whose clause into the
+#     cache's held address (`quux_machine.xdc`) would give these looks the
+#     microcycle.  Named by the memory system's two outputs the looks leave
+#     it by, `sd_look` and `sd_phys`.
 #
-# The TLB is out of `cadr_machine.xdc`'s control-store split by name, so the
-# clauses here are the only ones written from it.  The flow asserts each
-# took (`boards/arty-z7-20/vivado/bitstream.tcl`), and `tools/grid_check.py`
-# holds each `# sync:` count to its tag.
+# The flow asserts each clause took (`boards/arty-z7-20/vivado/
+# bitstream.tcl`), and `tools/grid_check.py` holds each `# grid:` count to
+# its tag.
 
 set quux_tlb [filter [all_registers] {NAME =~ *processor/g_rev14_mmu.mmu/tlb/*}]
-set quux_tlb_addr [get_pins -quiet -of $quux_tlb -filter {REF_PIN_NAME =~ ADDR*}]
 
-# Out of the TLB, to the next edge.
-# sync: K - 1
-set_multicycle_path -setup [expr {$sync_k - 1}] -from $quux_tlb -to $slow
-set_multicycle_path -hold  [expr {$sync_k - 2}] -from $quux_tlb -to $slow
-
-# Out of the TLB into the every-tick registers' first hop.
-# sync: K - 3
-set_multicycle_path -setup [expr {$sync_k - 3}] -from $quux_tlb -to $split_every_tick
-set_multicycle_path -hold  [expr {$sync_k - 4}] -from $quux_tlb -to $split_every_tick
-
-# Out of the TLB into the divider's operands and the cache's address, each
-# of which the edge's registers have K for.
-# sync: K - 1
-set_multicycle_path -setup [expr {$sync_k - 1}] -from $quux_tlb -to $quux_divider
-set_multicycle_path -hold  [expr {$sync_k - 2}] -from $quux_tlb -to $quux_divider
-# sync: K - 1
-set_multicycle_path -setup [expr {$sync_k - 1}] -from $quux_tlb -to $quux_cache_held
-set_multicycle_path -hold  [expr {$sync_k - 2}] -from $quux_tlb -to $quux_cache_held
-
-# Into both ports' addresses, from every register: the tick.  Last, so that
-# it outranks every clause above that names the RAM as a destination.
+# MD_HELD into port B's address: the tick.
 # grid: 0 ns + 1 tick
-set_multicycle_path -setup 1 -from [all_registers] -to $quux_tlb_addr
-set_multicycle_path -hold  0 -from [all_registers] -to $quux_tlb_addr
+set_multicycle_path -setup 1 -from $split_md_held -to $quux_tlb
+set_multicycle_path -hold  0 -from $split_md_held -to $quux_tlb
+
+# The side seam's looks into the cache's RAMs: the tick, from every register.
+set quux_side_look [get_pins -quiet -hier -filter {NAME =~ *processor/g_rev14_mmu.mmu/sd_look || \
+                                                   NAME =~ *processor/g_rev14_mmu.mmu/sd_phys[*]}]
+# grid: 0 ns + 1 tick
+set_multicycle_path -setup 1 -from [all_registers] -through $quux_side_look -to $quux_cache_held
+set_multicycle_path -hold  0 -from [all_registers] -through $quux_side_look -to $quux_cache_held

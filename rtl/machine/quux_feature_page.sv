@@ -145,6 +145,9 @@ module quux_feature_page #(
     parameter logic [31:0] MULDIV         = 32'd3,
     parameter logic [31:0] TICK           = 32'd1,
     parameter logic [31:0] CLOCKS         = 32'd1,
+    // A tick's real length in picoseconds, for the real-time clock
+    // (`cadr_machine.sv`).
+    parameter int unsigned TICK_PS        = cadr_tick_pkg::TICK_NS * 1000,
     // Word 15: the optional devices, a bit each, <0> the real-time clock and
     // <1> the file device.
     parameter logic [31:0] OPTIONAL_DEVICES = 32'd3,
@@ -322,7 +325,7 @@ module quux_feature_page #(
   logic [29:0] rtc_fraction;
   logic        fd_mine, fd_irq;
 
-  quux_rtc rtc (
+  quux_rtc #(.TICK_PS(TICK_PS)) rtc (
       .clk        (clk),
       .we_seconds (host_we && host_widx == 4'd0),
       .we_fraction(host_we && host_widx == 4'd1),

@@ -116,6 +116,21 @@ tens are still two numbers. One is a divisor in the package and one is a
 clock period in the board file, so a board can change its tick without
 touching the grid.
 
+**QUUX revision 14 on the Arty Z7-20 takes a 15 ns tick.** Its memory
+system has paths of one tick that do not close at 10 ns on that part, so
+`cadr_arty.sv` divides the same 1,000 MHz by 15 for that build alone, and
+`boards/arty-z7-20/vivado/tick.tcl` gives the flow that period. Every count is
+unchanged, so the machine does exactly what it does at 10 ns, tick for tick,
+and the traces are the same. Only real time moves: a microcycle of K = 4 ticks
+is 60 ns. The clocks that keep wall time are handed the tick's length in
+picoseconds (`cadr_machine.sv`'s `TICK_PS`, from the board's top), so they
+still keep it. At 15 ns a microsecond is 66 or 67 ticks, two in three of them
+67, in the microsecond clock and in each interval timer (`quux_clocks.sv`).
+The real-time clock adds 15 ns a tick, with any picoseconds over whole
+nanoseconds counted apart (`quux_rtc.sv`). `build/wall_time.pass` holds both
+against wall time at 10, 12.5, 13 and 15 ns. The other boards and builds keep
+10 ns.
+
 **Rounding is always up.** `ticks(ns)` is `(ns + TICK_NS - 1) / TICK_NS` and
 never a plain division. Truncation collapses MIT's 5 ns instant to zero ticks
 and puts SELECT on top of a read tap. It also makes the fabric sample

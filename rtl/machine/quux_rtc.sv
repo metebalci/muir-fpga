@@ -12,7 +12,14 @@
 // fraction of the second they start at, through the host side at boot and at
 // least once a second after (`docs/file-device.md`).  In between the count
 // runs on the fabric's own clock, a nanosecond count of the second that moves
-// `TICK_NS` a tick and carries into the seconds at 10^9.
+// by the tick's real length a tick and carries into the seconds at 10^9.
+//
+// **THE TICK'S REAL LENGTH IS THE BOARD'S** (`TICK_PS`, picoseconds, from the
+// board's top through `cadr_machine.sv`): 10 ns on every board but the Arty
+// Z7-20's revision 14 build, whose tick is 15 ns.  A length that is not whole
+// nanoseconds carries its picoseconds in a count of its own (`ps_q`), so the
+// clock keeps wall time exactly over any run, its nanoseconds never more than
+// one behind.  `build/wall_time.pass` holds it at four lengths.
 //
 // **IT HOLDS AT 2^32 - 1** and never wraps to 0, which would read as no
 // clock at all; muir's `Rtc::seconds` saturates the same way.
@@ -48,8 +55,9 @@
 `default_nettype none
 
 module quux_rtc #(
-    // Nanoseconds a tick: the grid's, which is real time on every board.
-    parameter int unsigned TICK_NS = cadr_tick_pkg::TICK_NS
+    // A tick's real length in picoseconds, the board's: the grid's 10 ns by
+    // default.
+    parameter int unsigned TICK_PS = cadr_tick_pkg::TICK_NS * 1000
 ) (
     input  var logic        clk,
 
@@ -67,14 +75,21 @@ module quux_rtc #(
   assign seconds  = sec_q;
   assign fraction = frac_q;
 
-  localparam logic [29:0] SECOND = 30'd1_000_000_000;
-  localparam logic [29:0] STEP   = 30'(TICK_NS);
+  localparam logic [29:0] SECOND  = 30'd1_000_000_000;
+  // The whole nanoseconds of a tick, and the picoseconds over them.
+  localparam logic [29:0] STEP    = 30'(TICK_PS / 1000);
+  localparam logic [9:0]  STEP_PS = 10'(TICK_PS % 1000);
 
   logic [29:0] stage = 30'd0;
+  logic [9:0]  ps_q  = 10'd0;
+  logic [9:0]  next_ps;
+  logic        ps_carry;
   logic [29:0] next_fraction;
   logic        carry;
 
-  assign next_fraction = frac_q + STEP;
+  assign next_ps       = ps_q + STEP_PS;
+  assign ps_carry      = next_ps >= 10'd1000;
+  assign next_fraction = frac_q + STEP + 30'(ps_carry);
   assign carry         = next_fraction >= SECOND;
 
   always_ff @(posedge clk) begin
@@ -82,7 +97,9 @@ module quux_rtc #(
       sec_q  <= wdata;
       frac_q <= stage;
       stage  <= 30'd0;
+      ps_q   <= 10'd0;
     end else begin
+      ps_q   <= ps_carry ? next_ps - 10'd1000 : next_ps;
       if (we_fraction && wdata < 32'd1_000_000_000) stage <= wdata[29:0];
       frac_q <= carry ? next_fraction - SECOND : next_fraction;
       if (carry && sec_q != 32'hFFFF_FFFF) sec_q <= sec_q + 32'd1;
