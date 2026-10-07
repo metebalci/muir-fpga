@@ -20799,11 +20799,11 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note The shared port's address is the read's when the write pulse fires.
 @old
     assign pdla   = pdl_we ? pdla_write
-                  : rw_put ? rw_ix
+                  : (PAGED && rw_put) ? rw_ix
                   : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_read;
 @new
     assign pdla   = pdl_we ? pdla_read
-                  : rw_put ? rw_ix
+                  : (PAGED && rw_put) ? rw_ix
                   : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_write;
 @end
 
@@ -20818,11 +20818,11 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note `pdla_write` read.
 @old
     assign pdla   = pdl_we ? pdla_write
-                  : rw_put ? rw_ix
+                  : (PAGED && rw_put) ? rw_ix
                   : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_read;
 @new
     assign pdla   = (pdl_we && 1'b0) ? pdla_write
-                  : rw_put ? rw_ix
+                  : (PAGED && rw_put) ? rw_ix
                   : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_read;
 @end
 
@@ -21581,9 +21581,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note tick before: on QUUX that is the boundary's tick, so it holds the word
 @note at the pointer before the edge.
 @old
-    assign pdl_q = rw_fwd ? rw_wd : pdl_rd;
+    assign pdl_q = (PAGED && rw_fwd) ? rw_wd : pdl_rd;
 @new
-    always_ff @(posedge clk) if (tpclk_q) pdl_q <= rw_fwd ? rw_wd : pdl_rd;
+    always_ff @(posedge clk) if (tpclk_q) pdl_q <= (PAGED && rw_fwd) ? rw_wd : pdl_rd;
 @end
 
 @mutation quux-a-div-of-md-counts-a-cycle-early

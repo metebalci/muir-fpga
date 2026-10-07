@@ -25,6 +25,24 @@ reports none.
 
 ## From a clean tree
 
+These fits are QUUX revision 14's, built from `c24545e`: a processor's write
+is no longer acknowledged while a side write waits for the write buffer,
+with muir pinned at `203b1b4`. Revision 14 is at four ticks on all three
+boards, with a 15 ns tick on the Arty Z7-20 and a 10 ns tick on the
+DE25-Nano and the Kria KR260. Every stamp reads `c24545e0`, the tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 14, K = 4, 15 ns | +0.479 ns | +0.024 ns | 19,994 of 53,200 LUTs, 37.58% | 89 of 140 BRAM tiles | 6,478 of 13,300 | `c24545e` | clean | 2026-10-07 |
+| Kria KR260 | QUUX revision 14, K = 4 | +2.137 ns | +0.010 ns | 20,714 of 117,120 LUTs, 17.69% | 76 of 144 BRAM tiles, 1 of 64 URAM | 4,196 of 14,640 CLBs | `c24545e` | clean | 2026-10-07 |
+| DE25-Nano | QUUX revision 14, K = 4 | +1.240 ns | 0.000 ns | 19,170 of 46,800 ALMs, 41% | 215 of 358 M20K | --- | `c24545e` | clean | 2026-10-07 |
+
+Each Zynq fit passed its RAM enable check, the TLB's enables at the
+machine's edges among them: the Arty Z7-20's over 131 ports, the Kria
+KR260's over 101. The DE25-Nano's synthesis read back the machine, the
+word, the revision and the PROM image by name. All three ran the board
+list on these bitstreams, the DE25-Nano at 10 ns.
+
 These fits are QUUX revision 14's, built from `6f119c1`: the TLB read at
 the edge, the side seam registered, the wall clocks at any tick, with muir
 pinned at `203b1b4`. Revision 14 is at four ticks on all three boards, with

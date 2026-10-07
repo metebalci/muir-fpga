@@ -303,6 +303,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/wall_time.pass \
        $(BUILD)/checkpoint.quux.pass \
        $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%.quux.lat.pass) \
+       $(BUILD)/de25_syn.pass \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
@@ -3002,6 +3003,34 @@ de25: $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(B
 	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \
 	    $(if $(filter-out 0,$(DDR)),$(DE25_DDR)) \
 	    $(if $(filter-out 0,$(HDMI)),$(DE25_HDMI))
+
+# **AND EVERY MACHINE AND REVISION STILL SYNTHESIZES ON QUARTUS**: the
+# CADR, QUUX revision 13 and QUUX revision 14, each through `build.sh` with
+# `DE25_SYN_ONLY=1`, which stops after synthesis and its checks.  A change
+# made for one revision can leave another unbuildable, and only a tool says
+# so: revision 14's PDL redirect put registers into revision 13's buffer
+# muxes, and Quartus then built that buffer from registers, which do not
+# fit.  No simulation sees it, and a fit of the revision that was being
+# worked on does not either.  Where no Quartus is configured
+# (`QUARTUS_ROOTDIR`, or the board's `local.conf`), the pass says it was
+# skipped and is not written, so it runs again where Quartus is.
+DE25_SYN_FLOW := boards/de25-nano/quartus/build.sh boards/de25-nano/quartus/project.tcl \
+                 $(wildcard boards/de25-nano/quartus/*.sdc) boards/de25-nano/quartus/rams_check.tcl
+$(BUILD)/de25_syn.pass: $(DE25_MACHINE_SRC) $(DE25_TOP) $(DE25_DDR) $(DE25_HDMI) $(DE25_SYN_FLOW) \
+                        $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/boot_prom.quux13.hex \
+                        $(BUILD)/boot_prom.quux14.hex | $(BUILD)
+	@if [ -z "$$QUARTUS_ROOTDIR" ] && ! grep -qs '^[[:space:]]*QUARTUS_ROOTDIR' boards/de25-nano/local.conf; then \
+	   echo "de25_syn: skipped --- no Quartus here (QUARTUS_ROOTDIR, or boards/de25-nano/local.conf)"; exit 0; fi; \
+	 for b in cadr:32: quux:40:13 quux:40:14; do \
+	   m=$${b%%:*}; r=$${b##*:}; w=$${b#*:}; w=$${w%%:*}; \
+	   log=$(BUILD)/de25_syn.$$m$$r.log; \
+	   $(MAKE) --no-print-directory -o $(BUILD)/boot_prom.hex -o $(BUILD)/sync_prom.hex \
+	       -o $(BUILD)/boot_prom.quux13.hex -o $(BUILD)/boot_prom.quux14.hex \
+	       de25 MACHINE=$$m WORD_BITS=$$w $${r:+REVISION=$$r} DDR=1 HDMI=1 DE25_SYN_ONLY=1 > $$log 2>&1 \
+	     || { echo "de25_syn: $$m $${r:+revision $$r} does NOT synthesize on Quartus; see $$log"; \
+	          grep -h '^de25: REFUSED' $$log; exit 1; }; \
+	   echo "de25_syn: $$m $${r:+revision $$r} synthesizes, its synthesis checks passed"; \
+	 done; touch $@
 
 # **AND THE DE25-NANO'S FAULT BITSTREAM**, `boards/de25-nano/cadr_de25_fault.sv`:
 # no machine, every lamp blinking, and the memory board's processor system,

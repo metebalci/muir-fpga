@@ -193,6 +193,16 @@ fi
 if [ "$ddr" -eq 1 ]; then
     out=$out-ddr
 fi
+# **SYNTHESIS ONLY** (`DE25_SYN_ONLY=1`, `make de25-syn`): every step and
+# every check up to synthesis's own, then a stop before the fitter, in a
+# directory of its own so that a full build beside it is left alone.  It is
+# how `build/de25_syn.*.pass` asks that each machine and revision still
+# synthesizes, which a fit of another revision cannot say.
+syn_only=${DE25_SYN_ONLY:-0}
+case $syn_only in
+    0|1) ;;
+    *) refuse "DE25_SYN_ONLY is '$syn_only'; it is 0 or 1" ;;
+esac
 
 # The display output, or not.  **THE PIXEL CLOCK IS THE SPECIFICATION'S OWN**,
 # and it is written here because this is where the PLL is asked for it: VESA
@@ -254,6 +264,11 @@ if [ "$depth" -gt 0 ]; then
     [ "$fault" -eq 0 ] || refuse "FAULT=1 takes no probe: the fault bitstream has no machine to watch"
     out=$out-probe
     say "the probe is in this build: $depth samples, into $out"
+fi
+if [ "$syn_only" -eq 1 ]; then
+    [ "$fault" -eq 0 ] || refuse "DE25_SYN_ONLY=1 is the machine's question; the fault bitstream has no machine"
+    out=$out-syn
+    say "synthesis only, into $out"
 fi
 if [ "$ddr" -eq 1 ]; then
     say "the processor and its memory are in this build: LPDDR4 at $mhz MHz, into $out"
@@ -645,6 +660,10 @@ rams_check() {
 if [ "$fault" -eq 0 ]; then
     say "4-rams-check"
     rams_check synthesized 4-rams-check.log
+fi
+if [ "$syn_only" -eq 1 ]; then
+    say "synthesis only: synthesized and checked, stopped before the fitter"
+    exit 0
 fi
 
 step 5-fit "$bin/quartus_fit" cadr_de25

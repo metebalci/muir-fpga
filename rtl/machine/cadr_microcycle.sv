@@ -1387,10 +1387,14 @@ module cadr_microcycle #(
     logic [WORD_BITS-1:0]  rw_wd;
     assign redir_we = PAGED && mclk_edge && memstart && redirect_in_q && wrcyc;
     assign rw_put   = PAGED && gen_edge && rw_v && !pdl_we;
+    // Revision 13's buffer is the one write port and its read, the forms
+    // below folded to it by the parameter, so that Quartus infers it as it
+    // did before the redirect: with the redirect's registers in the address
+    // and data muxes it builds the buffer from registers, which do not fit.
     assign pdla   = pdl_we ? pdla_write
-                  : rw_put ? rw_ix
+                  : (PAGED && rw_put) ? rw_ix
                   : (PAGED && redirect_pdl_rd) ? PDL_BITS'(redirect_idx_q) : pdla_read;
-    assign pdl_wd = pdl_we ? l : rw_wd;
+    assign pdl_wd = (!PAGED || pdl_we) ? l : rw_wd;
     // WRITE_FIRST, for the reason the file's header gives: a tool's fault.
     always_ff @(posedge clk) begin
       if (pdl_we || rw_put) begin
@@ -1423,7 +1427,7 @@ module cadr_microcycle #(
     // it would give it a tick later, K - 2 ticks before the edge that reads
     // it.  (It was the latch that took the word while TPCLK was high, when a
     // microcycle had a read phase.)
-    assign pdl_q = rw_fwd ? rw_wd : pdl_rd;
+    assign pdl_q = (PAGED && rw_fwd) ? rw_wd : pdl_rd;
   end else begin : g_cadr_pdl
     assign redir_word = '0;
     always_ff @(posedge clk) begin
