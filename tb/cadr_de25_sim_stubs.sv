@@ -603,7 +603,12 @@ module cadr_machine #(
     // Whether main memory always answers (`cadr_busint_xbus.sv`'s
     // `dev_hold`), which the stub takes and does nothing with.
     parameter bit MEMORY_ANSWERS = 1'b0,
-    localparam int unsigned PHYS_BITS  = WORD_BITS > 32 ? 28 : 22,
+    // QUUX's revision and revision 14's TLB entries, which the stub takes
+    // and does nothing with but the bus address's width (A14.1).
+    parameter int unsigned REVISION = 13,
+    parameter int unsigned TLB_ENTRIES = 4096,
+    localparam int unsigned PHYS_BITS  = (MACHINE == "quux" && WORD_BITS > 32 && REVISION >= 14) ? 29
+                                       : WORD_BITS > 32 ? 28 : 22,
     localparam int unsigned RLINE_BITS = WORD_BITS > 32 ? 320 : 128
 ) (
     input  var logic         clk,

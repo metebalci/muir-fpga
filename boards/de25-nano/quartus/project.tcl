@@ -227,7 +227,13 @@ if {$probe_depth > 0} {
 # still agree with muir on every program, and the last section of
 # `cadr_microcycle.sv` says why.  `build.sh` refuses a synthesis in which the
 # three are anything but MLABs.
-foreach memory [expr {$fault ? {} : {dmem l1_map l2_map}}] {
+# Revision 14 has no map (contract G3 revision 14): its TLB is below.
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
+if {$revision ne "13" && $revision ne "14"} {
+    puts "project: REVISION is '$revision', which is neither 13 nor 14"
+    exit 1
+}
+foreach memory [expr {$fault ? {} : ($revision eq "14" ? {dmem} : {dmem l1_map l2_map})}] {
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE MLAB -to "u_machine|processor|$memory"
     set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|processor|$memory"
 }
@@ -266,6 +272,20 @@ if {!$fault && $machine eq "quux"} {
 # controller's own checks --- the drive against `golden/src/disk.rs`, the
 # channel and the band --- still agree with the reference.
 # `build.sh` refuses a synthesis in which the store is anything but M20K.
+# **AND REVISION 14'S TLB IS ONE TRUE DUAL-PORT M20K MEMORY** (contract G3
+# revision 14, §5.4), chosen here and not in `rtl/machine/`: M2 measured
+# that Quartus builds one only when both ports write, which `quux_tlb.sv`
+# has them do, and the RAM carries `no_rw_check`; otherwise two simple
+# dual-port copies, or registers (A14.15).  What checking off gives away is
+# the word read through the other port's write in one tick, which
+# `quux_tlb.sv` never does and `build/rdw_poison_quux14_*.pass` holds.
+# `build.sh` refuses a synthesis in which the TLB is anything but one M20K
+# memory.
+if {!$fault && $revision eq "14"} {
+    set_instance_assignment -name RAMSTYLE_ATTRIBUTE M20K -to "u_machine|processor|g_rev14_mmu.mmu|tlb|tlb_mem"
+    set_instance_assignment -name RAMSTYLE_ATTRIBUTE_RDW no_rw_check -to "u_machine|processor|g_rev14_mmu.mmu|tlb|tlb_mem"
+}
+
 if {!$fault} {
     # The store is `disk`'s in either machine's generate block: the CADR's
     # controller in `g_cadr_disk`, QUUX's block-disk in `g_quux_disk`.
@@ -286,7 +306,7 @@ if {!$fault} {
     if {$machine ne "quux"} {
         set prom_file boot_prom.hex
     } else {
-        set prom_file boot_prom.quux13.hex
+        set prom_file boot_prom.quux$revision.hex
     }
     set_parameter -name PROM_HEX      [file join $root build $prom_file]
     set_parameter -name SYNC_PROM_HEX [file join $root build sync_prom.hex]
@@ -308,6 +328,11 @@ if {$word_bits ne "32" && $word_bits ne "40"} {
 }
 if {!$fault && $word_bits eq "40"} {
     set_parameter -name WORD_BITS 40
+}
+# **AND REVISION 14**, set only at 14, so that revision 13's project is
+# unchanged; `build.sh` reads it back.
+if {!$fault && $revision eq "14"} {
+    set_parameter -name REVISION 14
 }
 
 # ------------------------------------------------------ the configuration

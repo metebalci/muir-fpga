@@ -74,6 +74,14 @@ constraints to them two ways:
     evaluated from the filter's own text and the Quartus set by running the
     SDC files in `tclsh` with the collection commands stubbed.
 
+**AND REVISION 14'S EVERY-TICK REGISTERS OUT OF BOTH RELAXED SETS.**  The
+machines are elaborated three ways, the CADR and QUUX at revisions 13 and
+14, and every register of revision 14's memory system is classed in
+`REV14_CLASSED` as moving on a tick of its own or as held for the
+microcycle.  A `tick` register in either relaxed set fails, and so does a
+register of `quux_mmu.sv` or `quux_tlb.sv` that is not classed, so one
+added later cannot fall into the set unread.
+
 It does not see the names synthesis gives the block memories (`REF_NAME`,
 `get_keepers`), which the flows' own assertions ask of the fitted design.
 
@@ -254,7 +262,8 @@ COUNT = r"(\d+|\$sync_k|\[expr\s*\{\s*\$sync_k\s*[+-]\s*\d+\s*\}\])"
 STATEMENT = re.compile(
     r"^\s*(?:if\s*\{[^}]*\}\s*\{\s*)?"
     r"(?:set_multicycle_path\s+-(setup|hold)\s+" + COUNT +
-    r"|(assert_multicycle_applied|assert_instance_timing|assert_clause_timing)\s+\$tick\s+" + COUNT + ")")
+    r"|(assert_multicycle_applied|assert_instance_timing|assert_clause_timing"
+    r"|assert_pin_timing|assert_through_timing)\s+\$tick\s+" + COUNT + ")")
 SYNC_EXPR = re.compile(r"^\[expr\s*\{\s*\$sync_k\s*([+-])\s*(\d+)\s*\}\]$")
 TAG = re.compile(
     r"^\s*#\s*(?:grid:\s*(\d+)\s*ns(?:\s*([+-])\s*(\d+)\s*ticks?)?"
@@ -416,12 +425,83 @@ def check_constraints(root, grid):
 
 VERILATOR = os.environ.get("VERILATOR", "verilator")
 TCLSH = os.environ.get("TCLSH", "tclsh")
-MACHINES = ("cadr", "quux")
-XDC_NAMED = ["rtl/plumbing/xilinx7/cadr_machine.xdc", "rtl/plumbing/xilinx7/quux_machine.xdc"]
+# Each machine as a board builds it: the CADR, QUUX at revision 13, and QUUX at
+# revision 14, whose memory system (`quux_mmu.sv`, `quux_tlb.sv`) only that
+# revision elaborates.
+MACHINES = ("cadr", "quux", "quux14")
+GENERICS = {"cadr": ['-GMACHINE="cadr"'],
+            "quux": ['-GMACHINE="quux"', "-GWORD_BITS=40"],
+            "quux14": ['-GMACHINE="quux"', "-GWORD_BITS=40", "-GREVISION=14"]}
+XDC_NAMED = ["rtl/plumbing/xilinx7/cadr_machine.xdc", "rtl/plumbing/xilinx7/quux_machine.xdc",
+             "rtl/plumbing/xilinx7/quux14_machine.xdc"]
 # The SDC files each machine's build reads, in the order `project.tcl` reads them.
 SDC_NAMED = {"cadr": ["boards/de25-nano/quartus/cadr_de25.sdc"],
              "quux": ["boards/de25-nano/quartus/cadr_de25.sdc",
-                      "boards/de25-nano/quartus/quux_de25.sdc"]}
+                      "boards/de25-nano/quartus/quux_de25.sdc"],
+             "quux14": ["boards/de25-nano/quartus/cadr_de25.sdc",
+                        "boards/de25-nano/quartus/quux_de25.sdc"]}
+
+# **REVISION 14'S REGISTERS, EACH CLASSED BY WHEN IT MOVES** (contract G3
+# revision 14, F2).  The relaxed set is every register of the machine less a
+# list of names, so a register of revision 14 that moves on a tick of its own
+# and is left off that list is relaxed in silence: its paths get the
+# microcycle where the machine gives them one tick, and nothing in a trace
+# can see it.  So every register of the memory system's two modules is
+# classed here, read off the RTL, and a register added to either without a
+# class fails:
+#
+#   - `tick`: moves on a tick of its own, or is read by a register that does,
+#     and must be out of the relaxed set on both families' boards;
+#   - `held`: loaded at an instant the microcycle owns and read only by
+#     registers that keep its time, and may be in it.
+#
+# `quux_mmu.sv`: the generator's ticks (`g1`, `g2`, `since_start`), the hold
+# (`held`), the walk's and the write-back's countdowns (`until_s`, `b_t`) and
+# the sweep's (`sweep_s`, `sweeping`, `sweep_i`), the walker's and the
+# write-back's machines and what they carry (`wstate`, `w_*`, `wk_*`,
+# `spec_*`, `bstate`, `b_*`), the bypasses (`byp_*`, `walked_*`,
+# `redirect_held`), the redirect's read (`pdl_rd`) and the guard's count and
+# its pulse (`refused`, `refuse_now`) all move on whatever tick the side seam
+# answers on.  Held: the register page's words 220-223 (`directory`,
+# `ephemeral`, `pointer_types`), written at the page's answer from a word the
+# bus has held for eight ticks, and the redirect's copies (`pdl_base`,
+# `pdl_head`), written by A memory's own pulse from `L` as A memory is.
+# `quux_tlb.sv`'s memory and its two outputs are the TLB's RAM, in the set
+# and given their own time by the flows (`quux_machine.xdc`,
+# `quux_de25.sdc`).  In `cadr_microcycle.sv`, the redirect's word and its
+# strobe (`redir_rd_q`, `redir_word`), taken a tick after the PDL buffer's
+# read.  And the memory port and its cache, out whole: every register of
+# `quux_mem_port.sv` and `quux_cache.sv` (the walk's countdowns `free_s`,
+# `buf_s`, `g_s`, `wbu_s`, `ack_s`, `ack_last_s`, the release `rel_q` and
+# `rel_pend`, the write's `s_wpend`, `s_wr_q` and `wbw` among them) out of
+# the set.
+REV14 = "quux14"
+REV14_TICK = "tick"
+REV14_HELD = "held"
+REV14_CLASSED = {
+    "quux_mmu": {
+        **{n: REV14_HELD for n in ("directory", "ephemeral", "pointer_types",
+                                   "pdl_base", "pdl_head")},
+        **{n: REV14_TICK for n in (
+            "g1", "g2", "since_start", "held", "until_s", "b_t",
+            "sweep_s", "sweeping", "sweep_i",
+            "wstate", "w_port", "w_b_queued", "w_va", "w_page_at", "w_result", "w_load",
+            "wk_page_v", "wk_page_at", "wk_page", "spec_v", "spec_port",
+            "bstate", "b_va", "b_frame", "b_bits", "b_page_at", "b_page",
+            "byp_a_v", "byp_b_v", "byp_a", "byp_b", "byp_b_va",
+            "walked_a", "walked_b", "redirect_held",
+            "pdl_rd", "refused", "refuse_now")},
+    },
+    "quux_tlb": {n: REV14_HELD for n in ("tlb_mem", "a_q", "b_q")},
+}
+# Registers of modules shared with other revisions, named one by one.
+REV14_NAMED_TICK = {
+    "cadr_microcycle": ("g_quux_pdl.redir_rd_q", "redir_word"),
+    "quux_mem_port": ("free_s", "buf_s", "g_s", "wbu_s", "ack_s", "ack_last_s",
+                      "rel_q", "rel_pend", "s_wpend", "s_wr_q", "wbw"),
+}
+# Modules out of the relaxed set whole, register by register.
+REV14_OUT_WHOLE = ("quux_mem_port", "quux_cache")
 
 # One register of one instance: the module it is in, its name inside the
 # module (a generate block's name before it, as both tools write it), and its
@@ -447,7 +527,7 @@ def elaborate(root, machine, scratch):
     has."""
     mdir = os.path.join(scratch, machine)
     cmd = [VERILATOR, "--json-only", "-Irtl/machine", "-Irtl/plumbing", "-Mdir", mdir,
-           f'-GMACHINE="{machine}"', *(["-GWORD_BITS=40"] if machine == "quux" else []),
+           *GENERICS[machine],
            "--top-module", "cadr_machine",
            "rtl/machine/cadr_tick_pkg.sv", "rtl/plumbing/cadr_ddr_map.sv",
            "rtl/machine/cadr_machine.sv"]
@@ -494,7 +574,41 @@ def elaborate(root, machine, scratch):
         fail(f"{len(tops)} cadr_machine modules in Verilator's tree for {machine}")
     regs = []
 
+    def writers(mod):
+        """For each variable a nonblocking assignment writes, the generate
+        scope of the process that writes it.  Vivado names a register by the
+        scope of the process that makes it, not of the declaration: a
+        variable declared in the module and written in `g_x` is `g_x.v_reg`,
+        measured on a three-register design in Vivado 2026.1, and so is
+        QUUX's PDL buffer, `g_quux_pdl.pdl_reg_*` (M7e)."""
+        out = {}
+
+        def rec(n, gen):
+            if isinstance(n, list):
+                for v in n:
+                    rec(v, gen)
+                return
+            if not isinstance(n, dict) or n.get("type") == "CELL":
+                return
+            if n.get("type") == "ASSIGNDLY":
+                def lhs(m):
+                    if m.get("type") == "VARREF" and m.get("access") == "WR":
+                        out.setdefault(m.get("varp"), gen)
+                walk(n.get("lhsp", []), lhs)
+            if n.get("type") == "BEGIN" and n.get("generate") and n.get("name") \
+                    and not n.get("implied") and not n.get("unnamed"):
+                gen = gen + n["name"] + "."
+            for v in n.values():
+                if isinstance(v, (list, dict)):
+                    rec(v, gen)
+        for v in mod.values():
+            if isinstance(v, (list, dict)):
+                rec(v, "")
+        return out
+
     def visit(mod, path):
+        wgen = writers(mod)
+
         def rec(n, gen):
             if isinstance(n, list):
                 for v in n:
@@ -510,8 +624,9 @@ def elaborate(root, machine, scratch):
                 if n["addr"] in written:
                     d = dims(by.get(n.get("dtypep")))
                     local = gen + n["name"]
+                    viv = (gen or wgen.get(n["addr"], "")) + n["name"]
                     regs.append(Reg(mod.get("origName"), local,
-                                    "/".join(path + [local + "_reg" + d]),
+                                    "/".join(path + [viv + "_reg" + d]),
                                     "|".join(["u_machine"] + path + [local + d])))
                 return
             if t == "BEGIN" and n.get("generate") and n.get("name") \
@@ -751,7 +866,55 @@ def check_names(root):
                      "\n".join(f"  {mod} `{loc}`: relaxed in {v[True][0]}, at the tick in "
                                f"{v[False][0]}" for (mod, loc), v in split[:12]) +
                      (f"\n  ... and {len(split) - 12} more" if len(split) > 12 else ""))
+    check_rev14(regs[REV14], xdc_slow[REV14], sdc_slow[REV14])
     return len(hits), sum(len(regs[m]) for m in MACHINES)
+
+
+def check_rev14(regs, xdc_slow, sdc_slow):
+    """Revision 14's every-tick registers are out of both relaxed sets, and
+    every register of its memory system is classed (`REV14_CLASSED`)."""
+    have = collections.defaultdict(set)
+    for x in regs:
+        have[x.module].add(x.local)
+    for mod, classes in REV14_CLASSED.items():
+        if mod not in have:
+            fail(f"{mod} has no register in cadr_machine at revision 14, so revision "
+                 f"14's classes of its registers hold nothing")
+        unclassed = sorted(have[mod] - set(classes))
+        if unclassed:
+            fail(f"{mod} has registers revision 14's classes do not name, so nothing says "
+                 f"whether the relaxed set may take them: {', '.join(unclassed)}; class each "
+                 f"in tools/grid_check.py's REV14_CLASSED, `tick` or `held`")
+        gone = sorted(set(classes) - have[mod])
+        if gone:
+            fail(f"{mod} at revision 14 has no register {', '.join(gone)}, which "
+                 f"REV14_CLASSED names")
+    for mod, names in REV14_NAMED_TICK.items():
+        gone = sorted(set(names) - have[mod])
+        if gone:
+            fail(f"{mod} at revision 14 has no register {', '.join(gone)}, which "
+                 f"REV14_NAMED_TICK names")
+    for mod in REV14_OUT_WHOLE:
+        if mod not in have:
+            fail(f"{mod} has no register in cadr_machine at revision 14")
+    tick = []
+    for x in regs:
+        if REV14_CLASSED.get(x.module, {}).get(x.local) == REV14_TICK \
+                or x.local in REV14_NAMED_TICK.get(x.module, ()) \
+                or x.module in REV14_OUT_WHOLE:
+            tick.append(x)
+    bad = [(tool, x) for x in tick
+           for tool, name, slow in (("rtl/plumbing/xilinx7/cadr_machine.xdc", x.vivado, xdc_slow),
+                                    ("boards/de25-nano/quartus/cadr_de25.sdc", x.quartus, sdc_slow))
+           if name in slow]
+    if bad:
+        fail("revision 14's every-tick registers in the relaxed set, which would give "
+             "their paths the microcycle where they have one tick:\n" +
+             "\n".join(f"  {tool}: {x.module} `{x.local}`" for tool, x in bad[:24]) +
+             (f"\n  ... and {len(bad) - 24} more" if len(bad) > 24 else ""))
+    print(f"ok: revision 14's {len(tick)} every-tick registers are out of both relaxed sets, "
+          f"and its memory system's {sum(len(c) for c in REV14_CLASSED.values())} registers "
+          f"are each classed")
 
 
 if __name__ == "__main__":

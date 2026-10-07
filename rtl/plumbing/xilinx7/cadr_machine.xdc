@@ -398,6 +398,19 @@
 # tick, the port being answered at instants of its own.  What the cache holds
 # of the microcycle --- its RAMs and the address they were read at --- is
 # given back its time in `quux_machine.xdc`.
+# **AND REVISION 14'S MEMORY SYSTEM**, `quux_mmu.sv`, out whole but for what
+# it holds of the microcycle: the generator's ticks it counts, the hold, the
+# walk's, the write-back's and the sweep's countdowns and machines, the
+# bypasses and the guard's count all move on whatever tick the cache's side
+# seam answers on.  What stays in the set is the register page's words
+# 220-223, written at the page's answer from a word the bus has held for
+# eight ticks, the redirect's copies of A 430 and 431, written by A memory's
+# own pulse from `L` as A memory is, and the TLB itself, whose read on the
+# generator cycle's first tick `quux_machine.xdc` gives its own time.  And
+# the redirect's word in `cadr_microcycle.sv`, `redir_word`, taken a tick
+# after the PDL buffer's read on the strobe `redir_rd_q`.  `tools/
+# grid_check.py` classes every register of the memory system, and fails when
+# one that moves on a tick of its own is in this set.
 # What QUUX alone relaxes beyond this is in `quux_machine.xdc`, read only for a
 # QUUX build.
 
@@ -438,6 +451,15 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *processor/iwd_q_reg*  && \
                                   NAME !~ *muldiv/dv_*       && \
                                   NAME !~ *memory/g_quux_port.port/* && \
+                                  (NAME !~ *processor/g_rev14_mmu.mmu/* || \
+                                       NAME =~ *g_rev14_mmu.mmu/directory_reg* || \
+                                       NAME =~ *g_rev14_mmu.mmu/ephemeral_reg* || \
+                                       NAME =~ *g_rev14_mmu.mmu/pointer_types_reg* || \
+                                       NAME =~ *g_rev14_mmu.mmu/pdl_base_reg* || \
+                                       NAME =~ *g_rev14_mmu.mmu/pdl_head_reg* || \
+                                       NAME =~ *g_rev14_mmu.mmu/tlb/*) && \
+                                  NAME !~ *processor/g_quux_pdl.redir_rd_q_reg* && \
+                                  NAME !~ *processor/g_quux_pdl.redir_word_reg* && \
                                   (NAME !~ *g_quux_video.video/* || \
                                        NAME =~ *g_quux_video.video/ctl_reg* || \
                                        NAME =~ *g_quux_video.video/fb_reg*) && \
@@ -576,16 +598,20 @@ set split_latch_addr [filter [all_registers] {NAME =~ *processor/ir_reg*      ||
                                               NAME =~ *processor/spcptr_reg*}]
 set split_latch [filter [all_registers] {NAME =~ *processor/amem_reg*   || \
                                          NAME =~ *processor/mmem_reg*   || \
-                                         NAME =~ *processor/pdl_reg*    || \
+                                         NAME =~ *processor/g_*_pdl.pdl_reg* || \
                                          NAME =~ *processor/amem_q_reg* || \
                                          NAME =~ *processor/mmem_q_reg* || \
-                                         NAME =~ *processor/pdl_q_reg*  || \
+                                         NAME =~ *processor/g_cadr_pdl.pdl_q_reg* || \
                                          NAME =~ *processor/spc_q_reg*}]
 set split_dmem [filter [all_registers] {NAME =~ *processor/dmem_reg*}]
+# The control store's split takes every block RAM of the processor but the
+# three scratchpads' and revision 14's TLB, whose read is a tick after the
+# edge and whose clauses are `quux14_machine.xdc`'s.
 set split_cstore [filter [all_registers] {(REF_NAME =~ RAMB* && NAME =~ *processor/* && \
                                            NAME !~ *processor/amem_reg* && \
+                                           NAME !~ *processor/g_rev14_mmu.mmu/tlb/* && \
                                            NAME !~ *processor/mmem_reg* && \
-                                           NAME !~ *processor/pdl_reg*) || \
+                                           NAME !~ *processor/g_*_pdl.pdl_reg*) || \
                                           NAME =~ *processor/imem_q_reg* || \
                                           NAME =~ *processor/prom_q_reg*}]
 set split_maps [filter [all_registers] {NAME =~ *processor/l1_map_reg* || \

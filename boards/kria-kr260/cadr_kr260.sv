@@ -107,9 +107,17 @@ module cadr_kr260 #(
     // `boards/arty-z7-20/vivado/tick.tcl`'s `cadr_sync_k`.  The CADR reads
     // none.
     parameter int unsigned SYNC_K13 = 4,
+    // And four at revision 14 (contract G3 revision 14).
+    parameter int unsigned SYNC_K14 = 4,
     // **THE WORD**: 32, the CADR's, or 40, QUUX revision 13's; the flow's
     // `WORD_BITS` sets it.
-    parameter int unsigned WORD_BITS = 32
+    parameter int unsigned WORD_BITS = 32,
+    // **QUUX'S HARDWARE REVISION AT 40 BITS**: 13, or 14 when the flow is
+    // asked for it by name (`REVISION=14`), as on the Arty Z7-20.
+    parameter int unsigned REVISION = 13,
+    // **REVISION 14'S TLB ENTRIES** (A14.4): 4,096, in one UltraRAM by the
+    // flow's `RAM_STYLE` (`boards/kria-kr260/vivado/quux14_tlb_ram.xdc`).
+    parameter int unsigned TLB_ENTRIES = 4096
 ) (
     input  var logic       clk25,      // the carrier's 25 MHz, pin C3
     // UF1 and UF2, the board's two user LEDs, lit when driven high.
@@ -129,6 +137,11 @@ module cadr_kr260 #(
     $error("cadr_kr260: MACHINE is \"%s\" at WORD_BITS %0d, and the Kria KR260 builds the CADR and QUUX revision 13 (WORD_BITS 40) only",
            MACHINE, WORD_BITS);
   end
+  if (REVISION != 13 && !(REVISION == 14 && MACHINE == "quux")) begin : g_revision_refused
+    $error("cadr_kr260: REVISION is %0d on %s, and the Kria KR260 builds QUUX at revision 13 or 14",
+           REVISION, MACHINE);
+  end
+  localparam bit PAGED14 = MACHINE == "quux" && WORD_BITS > 32 && REVISION >= 14;
 
   // The base this board's region has, stated here and held against the
   // package the flow chose: see the header.
@@ -188,7 +201,7 @@ module cadr_kr260 #(
   logic [47:0] ir;
   logic [9:0]  dc;
   logic [25:0] lc;
-  logic [(WORD_BITS > 32 ? 28 : 22)-1:0] phys;
+  logic [(PAGED14 ? 29 : WORD_BITS > 32 ? 28 : 22)-1:0] phys;
   logic [17:0] ub_addr;
   logic [15:0] ub_rdata;
   logic [2:0]  arb_stage;
@@ -347,8 +360,10 @@ module cadr_kr260 #(
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),
       .MACHINE(MACHINE),
-      .SYNC_K(SYNC_K13),
-      .WORD_BITS(WORD_BITS)
+      .SYNC_K(PAGED14 ? SYNC_K14 : SYNC_K13),
+      .WORD_BITS(WORD_BITS),
+      .REVISION(REVISION),
+      .TLB_ENTRIES(TLB_ENTRIES)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       .sintr_o(sintr), .device_ack(1'b0), .device_rdata(32'd0),

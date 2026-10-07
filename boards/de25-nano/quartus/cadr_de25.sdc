@@ -182,7 +182,9 @@ set quux_fast [get_registers -nowarn {u_machine|processor|g_quux_tick.clocks|*
                                       u_machine|processor|*div_have
                                       u_machine|processor|iwe_q
                                       u_machine|processor|iwa_q u_machine|processor|iwa_q[*]
-                                      u_machine|processor|iwd_q u_machine|processor|iwd_q[*]}]
+                                      u_machine|processor|iwd_q u_machine|processor|iwd_q[*]
+                                      u_machine|processor|g_quux_pdl.redir_rd_q
+                                      u_machine|processor|redir_word u_machine|processor|redir_word[*]}]
 if {[get_collection_size $quux_fast] > 0} {
     set fast [add_to_collection $fast $quux_fast]
 }
@@ -192,13 +194,16 @@ if {[get_collection_size $quux_fast] > 0} {
 # And QUUX's memory port, `quux_mem_port.sv` with its cache, out whole: its
 # grant, its countdowns and the cache's order and valid bits move on every
 # tick.  What the cache holds of the microcycle is given back its time in
-# `quux_de25.sdc`.
+# `quux_de25.sdc`.  And revision 14's memory system, `quux_mmu.sv`, out
+# whole but for the register page's words, the redirect's copies and the
+# TLB, with the redirect's word and its strobe: `cadr_machine.xdc` says why.
 set out_whole [get_registers -nowarn {u_machine|g_cadr_disk.disk|* u_machine|g_quux_disk.disk|* u_machine|audit|*
                                       u_machine|memory|tv|* u_machine|memory|g_color_tv.tv_color|*
                                       u_machine|memory|iob|*
                                       u_machine|memory|busint_regs|*
                                       u_machine|memory|g_quux_video.video|*
-                                      u_machine|memory|g_quux_port.port|*}]
+                                      u_machine|memory|g_quux_port.port|*
+                                      u_machine|processor|g_rev14_mmu.mmu|*}]
 set held [get_registers -nowarn [concat \
     [cadr_leaves {u_machine|g_cadr_disk.disk|} {mine which}] \
     [cadr_leaves {u_machine|g_quux_disk.disk|} {mine which}] \
@@ -208,7 +213,10 @@ set held [get_registers -nowarn [concat \
     [cadr_leaves {u_machine|memory|g_color_tv.tv_color|} {ctl fb which}] \
     [cadr_leaves {u_machine|memory|g_quux_video.video|} {ctl fb}] \
     [cadr_leaves {u_machine|memory|iob|} {sel kbm clkgrp chgrp sergrp wr which}] \
-    [cadr_leaves {u_machine|memory|busint_regs|} {sel in_int in_map wr which mapk}]]]
+    [cadr_leaves {u_machine|memory|busint_regs|} {sel in_int in_map wr which mapk}] \
+    [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {directory ephemeral pointer_types
+                                                         pdl_base pdl_head}] \
+    [list {u_machine|processor|g_rev14_mmu.mmu|tlb|*}]]]
 set slow [remove_from_collection $machine $fast]
 set slow [remove_from_collection $slow $out_whole]
 set slow [add_to_collection $slow $held]

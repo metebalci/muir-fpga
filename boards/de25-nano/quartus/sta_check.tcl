@@ -384,24 +384,32 @@ proc assert_instance_timing {period cycles instance relaxed {elsewhere {}}} {
         incr failures
         return
     }
-    set named [get_registers -nowarn [cadr_leaves "${instance}|" $relaxed]]
-    set rest [remove_from_collection $all $named]
+    # An empty `relaxed` asks only that none of the rest is relaxed; an empty
+    # collection is not one `remove_from_collection` takes.
+    set rest $all
+    set n_named 0
+    set kept {}
+    if {[llength $relaxed] > 0} {
+        set named [get_registers -nowarn [cadr_leaves "${instance}|" $relaxed]]
+        set n_named [get_collection_size $named]
+        if {$n_named > 0} { set rest [remove_from_collection $rest $named] }
+        set kept [requirements [data_pins $named]]
+    }
     set n_other 0
     if {[llength $elsewhere] > 0} {
         set other [get_registers -nowarn [cadr_leaves "${instance}|" $elsewhere]]
         set n_other [get_collection_size $other]
-        set rest [remove_from_collection $rest $other]
+        if {$n_other > 0} { set rest [remove_from_collection $rest $other] }
     }
-    set kept [requirements [data_pins $named]]
     set swallowed [requirements [data_pins $rest]]
     set n_kept [expr {[dict exists $kept $want] ? [dict get $kept $want] : 0}]
     set n_swallowed [expr {[dict exists $swallowed $want] ? [dict get $swallowed $want] : 0}]
-    puts "sta: $instance: [get_collection_size $all] registers, [get_collection_size $named] meant relaxed,\
+    puts "sta: $instance: [get_collection_size $all] registers, $n_named meant relaxed,\
           [get_collection_size $rest] meant at the tick, $n_other relaxed by another clause"
     if {$n_swallowed > 0} {
         puts "sta: FAIL: $n_swallowed registers of $instance that must be timed at the tick ask for $want ns"
         incr failures
-    } elseif {$n_kept == 0} {
+    } elseif {$n_kept == 0 && [llength $relaxed] > 0} {
         puts "sta: FAIL: no register $relaxed of $instance asks for $want ns, so the clause reached nothing"
         incr failures
     } else {
@@ -446,6 +454,83 @@ proc assert_clause_timing {period cycles what from to} {
         incr failures
     } else {
         puts "sta: $what: $n endpoints at $key ns and none above it: the clause took"
+    }
+}
+
+# A CLAUSE WRITTEN THROUGH A RAM'S PINS TOOK: `assert_clause_timing` with a
+# `-through`, for revision 14's TLB, whose address and whose words and
+# enables `quux_de25.sdc` gives different times though they end at the same
+# keepers.  `from` may be empty, for every path through the pins.
+proc assert_through_timing {period cycles what from through to} {
+    global failures
+    set want [expr {$period * $cycles}]
+    if {[get_collection_size $through] == 0 || [get_collection_size $to] == 0} {
+        puts "sta: FAIL: $what: the clause's collections are empty, so it reached nothing"
+        incr failures
+        return
+    }
+    if {$from eq ""} {
+        set paths [get_timing_paths -setup -through $through -to $to -npaths 200000 -nworst 1]
+    } else {
+        set paths [get_timing_paths -setup -from $from -through $through -to $to -npaths 200000 -nworst 1]
+    }
+    set hist {}
+    set over 0
+    set first ""
+    foreach_in_collection p $paths {
+        set rel [get_path_info $p -clock_relationship]
+        dict incr hist [format %.3f $rel]
+        if {$rel > $want + 0.001} {
+            incr over
+            if {$first eq ""} {
+                set first "[get_node_info -name [get_path_info $p -from]] -> [get_node_info -name [get_path_info $p -to]] at $rel ns"
+            }
+        }
+    }
+    set key [format %.3f $want]
+    set n [expr {[dict exists $hist $key] ? [dict get $hist $key] : 0}]
+    if {$over > 0} {
+        puts "sta: FAIL: $what: $over paths ask for more than $key ns; first: $first"
+        incr failures
+    } elseif {$n == 0} {
+        puts "sta: FAIL: $what: no path asks for $key ns, so the clause reached nothing; paths: [said $hist]"
+        incr failures
+    } else {
+        puts "sta: $what: $n paths at $key ns and none above it: the clause took"
+    }
+}
+
+# **REVISION 14'S TLB, PORT BY PORT** (contract G3 revision 14, A14.15): the
+# worst path out of each port and into each port's address, at this corner,
+# each port told apart by the address that reaches it, since a tool may swap
+# a true dual-port RAM's ports: the RTL's port A is the one the walker's fill
+# address, `w_va`, reaches, and port B the one `MD` reaches.  Printed as
+# `sta: TLB` lines, which `build.sh` keeps in its log.
+proc sta_tlb_line {label paths} {
+    set n 0
+    foreach_in_collection p $paths {
+        puts [format "sta: TLB %-30s slack %7.3f of %7.3f ns, %2d levels, %s -> %s" $label \
+                  [get_path_info $p -slack] [get_path_info $p -clock_relationship] \
+                  [get_path_info $p -num_logic_levels] \
+                  [get_node_info -name [get_path_info $p -from]] [get_node_info -name [get_path_info $p -to]]]
+        incr n
+    }
+    if {$n == 0} { puts "sta: TLB $label: no path" }
+}
+proc sta_tlb_report {} {
+    set tlb $::quux_tlb
+    set w_va [get_registers -nowarn [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {w_va}]]
+    set md   [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md}]]
+    foreach pp {a b} {
+        set addr [get_pins -nowarn -compatibility_mode "u_machine|processor|g_rev14_mmu.mmu|tlb|*|port${pp}addr*"]
+        set dout [get_pins -nowarn -compatibility_mode "u_machine|processor|g_rev14_mmu.mmu|tlb|*|port${pp}dataout*"]
+        set fill [get_collection_size [get_timing_paths -setup -npaths 1 -from $w_va -through $addr -to $tlb]]
+        set mdin [get_collection_size [get_timing_paths -setup -npaths 1 -from $md -through $addr -to $tlb]]
+        set rtl [expr {$fill ? "A" : ($mdin ? "B" : "?")}]
+        puts "sta: TLB the M20K's port [string toupper $pp] is the RTL's port $rtl (fill address $fill, MD $mdin)"
+        sta_tlb_line "port $rtl out, worst" [get_timing_paths -setup -npaths 1 -through $dout]
+        sta_tlb_line "port $rtl out, every-tick regs" [get_timing_paths -setup -npaths 1 -through $dout -to $::split_every_tick]
+        sta_tlb_line "port $rtl address in, worst" [get_timing_paths -setup -npaths 1 -through $addr -to $tlb]
     }
 }
 
@@ -916,12 +1001,55 @@ if {$sta_quux} {
         # QUUX's memory port: none of its tick registers relaxed, the address
         # the cache holds at the microcycle, and nothing out of the cache
         # relaxed: its word reaches MD in the tick after the lookup's.
-        # sync: K
-        assert_instance_timing $tick 4 u_machine|memory|g_quux_port.port \
-            {cache|idx_q cache|tag_q cache|off_q}
+        # At revision 14 the cache's held address is also the side seam's,
+        # at the tick, so its relaxed paths are asked by their source, VMA.
+        if {[info exists ::env(REVISION)] && $::env(REVISION) eq "14"} {
+            # sync: K
+            assert_instance_timing $tick 4 u_machine|memory|g_quux_port.port {} \
+                {cache|idx_q cache|tag_q cache|off_q}
+            # sync: K
+            assert_clause_timing $tick 4 "VMA into the cache's held address" \
+                [get_registers -nowarn [cadr_leaves {u_machine|processor|} {vma}]] \
+                [get_registers -nowarn [cadr_leaves {u_machine|memory|g_quux_port.port|cache|} {idx_q tag_q off_q}]]
+        } else {
+            # sync: K
+            assert_instance_timing $tick 4 u_machine|memory|g_quux_port.port \
+                {cache|idx_q cache|tag_q cache|off_q}
+        }
         # grid: 0 ns + 1 tick
         assert_clause_timing $tick 1 "the cache's word into MD" $::quux_cache_held \
             [get_registers -nowarn [cadr_leaves {u_machine|processor|} {md md_held}]]
+    }
+}
+# **REVISION 14'S CLAUSES** (`quux_de25.sdc`, the TLB's), asked the same two
+# ways: the TLB's word to the next edge and into the every-tick registers;
+# its two addresses at the tick and its words and enables at K; and the
+# memory system's registers at the tick but for what it holds of the
+# microcycle.  `REVISION` is the build's, from `build.sh`.
+if {$sta_quux && [info exists ::env(REVISION)] && $::env(REVISION) eq "14"} {
+    set sta_tlb_addr [get_pins -nowarn -compatibility_mode \
+        {u_machine|processor|g_rev14_mmu.mmu|tlb|*|portaaddr* u_machine|processor|g_rev14_mmu.mmu|tlb|*|portbaddr*}]
+    if {![info exists ::quux_tlb] || [get_collection_size $::quux_tlb] == 0} {
+        puts "sta: FAIL: revision 14 has no TLB keepers, so quux_de25.sdc's TLB clauses are on nothing"
+        incr failures
+    } else {
+        puts "sta: revision 14's TLB: [get_collection_size $::quux_tlb] keepers,\
+              [get_collection_size $::quux_tlb_in] word and enable pins,\
+              [get_collection_size $sta_tlb_addr] address pins"
+        # sync: K - 1
+        assert_clause_timing $tick 3 "the TLB's word to the next edge" $::quux_tlb $::slow
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the TLB's word into the every-tick registers" $::quux_tlb $::split_every_tick
+        # grid: 0 ns + 1 tick
+        assert_through_timing $tick 1 "into the TLB's two addresses" "" $sta_tlb_addr $::quux_tlb
+        # sync: K
+        assert_through_timing $tick 4 "the edge's registers into the TLB's words and enables" \
+            [get_registers -nowarn [cadr_leaves {u_machine|processor|} {ir vma md}]] \
+            $::quux_tlb_in $::quux_tlb
+        # sync: K
+        assert_instance_timing $tick 4 u_machine|processor|g_rev14_mmu.mmu \
+            {directory ephemeral pointer_types pdl_base pdl_head}
+        sta_tlb_report
     }
 }
 # The transaction audit has no register on a board with no console to read

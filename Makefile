@@ -1132,6 +1132,26 @@ QUUX_PROM_2001_SHA256 := f7c69350df58be279ce20482b849a4eb8895053bb9855e2710317a9
 $(BUILD)/boot_prom.quux13.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin prom -- --machine quux --word-bits 40 > $@
 
+# **REVISION 14 BOOTS FROM PROM 2002** (contract G3 revision 14),
+# `boot_prom.quux14.hex`, which the boards' revision 14 flows carry
+# (`REVISION=14`).  muir carries no PROM 2002, so it comes from muir-sys's
+# hand-over `handover-2002-a07a05c`, its `promh.mcr` kept in the gitignored
+# `vendor/system-2002/` and held to the digest the hand-over's `SHA256SUMS`
+# gives it, and read by muir's own reader at revision 14's geometry
+# (`golden/src/prom.rs`); the image is held to its digest as well.  Nothing
+# in `make check` reads it.
+QUUX_PROM_2002 ?= vendor/system-2002/handover-2002-a07a05c-promh.mcr
+QUUX_PROM_2002_MCR_SHA256 := c053248cdab09ac3c23b2263433fddd63a12b3fc39627e5f7b24078039614e73
+QUUX_PROM_2002_SHA256 := 483a5fba64f26a70a28878d3b30de4439637a04918ea97eaf4811be0ba0b408d
+$(BUILD)/boot_prom.quux14.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml $(QUUX_PROM_2002) | $(BUILD)
+	echo "$(QUUX_PROM_2002_MCR_SHA256)  $(QUUX_PROM_2002)" | sha256sum --quiet -c - \
+	    || { echo "boot_prom.quux14.hex: $(QUUX_PROM_2002) is not handover-2002-a07a05c's PROM 2002"; exit 1; }
+	$(GOLDEN) --release --bin prom -- --machine quux --word-bits 40 --revision 14 \
+	    --mcr $(abspath $(QUUX_PROM_2002)) > $@.tmp
+	echo "$(QUUX_PROM_2002_SHA256)  $@.tmp" | sha256sum --quiet -c - \
+	    || { echo "boot_prom.quux14.hex: the image is not PROM 2002's"; rm -f $@.tmp; exit 1; }
+	mv $@.tmp $@
+
 $(BUILD)/prom_revisions.pass: $(BUILD)/boot_prom.quux13.hex golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml Makefile
 	echo "$(QUUX_PROM_2001_SHA256)  $(BUILD)/boot_prom.quux13.hex" | sha256sum --quiet -c - \
 	    || { echo "prom_revisions: boot_prom.quux13.hex is not PROM 2001, revision 13's"; exit 1; }
@@ -2927,9 +2947,9 @@ DE25_DDR_MHZ ?= 1066.667
 DE25_HPS_BOOT ?= hps-first
 DE25_SPL_HEX ?=
 de25: $(MACHINE_SRC) $(DE25_TOP) $(DE25_PROBE) $(DE25_DDR) $(DE25_HDMI) $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
-      $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux13.hex)
+      $(if $(filter quux,$(MACHINE)),$(BUILD)/boot_prom.quux$(if $(filter 14,$(REVISION)),14,13).hex)
 	PROBE_DEPTH=$(PROBE_DEPTH) DDR=$(DDR) DE25_DDR_MHZ=$(DE25_DDR_MHZ) \
-	    HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) \
+	    HDMI=$(HDMI) MACHINE=$(MACHINE) WORD_BITS=$(WORD_BITS) $(if $(REVISION),REVISION=$(REVISION)) \
 	    DE25_HPS_BOOT=$(DE25_HPS_BOOT) DE25_SPL_HEX=$(DE25_SPL_HEX) \
 	    boards/de25-nano/quartus/build.sh $(MACHINE_SRC) $(DE25_TOP) \
 	    $(if $(filter-out 0,$(PROBE_DEPTH)),$(DE25_PROBE)) \

@@ -21603,9 +21603,9 @@ set_multicycle_path -setup 2 -from $split_md_held -to $split_md
 @note The Arty's top level hands the machine a K other than its own, so the
 @note bitstream runs at a K no constraint states.
 @old
-      .SYNC_K(WORD_BITS > 32 ? SYNC_K13 : SYNC_K),
+      .SYNC_K(WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K),
 @new
-      .SYNC_K((WORD_BITS > 32 ? SYNC_K13 : SYNC_K) + 1),
+      .SYNC_K((WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K) + 1),
 @end
 
 @mutation machine-param-the-de25-drops-its-k
@@ -21687,7 +21687,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @file boards/arty-z7-20/cadr_arty.sv
 @note The Arty's top level hands revision 13 revision 12's K.
 @old
-      .SYNC_K(WORD_BITS > 32 ? SYNC_K13 : SYNC_K),
+      .SYNC_K(WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K),
 @new
       .SYNC_K(SYNC_K),
 @end
@@ -21698,7 +21698,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note The flow writes QUUX's constraints at revision 12's K whatever it
 @note builds.
 @old
-    set sync_k [cadr_sync_k $word_bits]
+    set sync_k [cadr_sync_k $word_bits boards/arty-z7-20/cadr_arty.sv $revision]
 @new
     set sync_k [cadr_sync_k 32]
 @end
@@ -21709,7 +21709,7 @@ set_multicycle_path -setup 5 -from $quux_usec_s -to $slow
 @note `cadr_sync_k` answers revision 13 with the top level's other K,
 @note `SYNC_K`, revision 12's.
 @old
-    set name SYNC_K13
+    set name SYNC_K$revision
 @new
     set name SYNC_K
 @end
@@ -26623,7 +26623,7 @@ setenv cadr_booti 'setenv bootargs ${cadr_bootargs} && saveenv && booti ${cadr_k
 @file boards/kria-kr260/vivado/bitstream.tcl
 @note The Kria KR260's revision 13 bitstream built with MIT's boot PROM.
 @old
-set prom [expr {$machine eq "quux" ? "build/boot_prom.quux13.hex" : "build/boot_prom.hex"}]
+set prom [expr {$machine eq "quux" ? "build/boot_prom.quux$revision.hex" : "build/boot_prom.hex"}]
 @new
 set prom [expr {$machine eq "quux" ? "build/boot_prom.hex" : "build/boot_prom.hex"}]
 @end
@@ -27394,4 +27394,126 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
                           || (state == ACKED && (fill_have || !fill_owed)));
 @new
                           || (state == ACKED && (fill_have || !fill_owed)) || (state == GRANTED && wbw));
+@end
+
+@mutation grid-rev14-the-walks-countdown-in-the-zynq-relaxed-set
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note Revision 14's walk countdown, `until_s`, which runs down a tick a tick
+@note and is read on the generator cycle's first tick, put back in the Zynq
+@note boards' relaxed set: one every-tick register of the memory system
+@note relaxed to the microcycle, which no trace can see.
+@old
+                                  (NAME !~ *processor/g_rev14_mmu.mmu/* || \
+@new
+                                  (NAME !~ *processor/g_rev14_mmu.mmu/* || \
+                                       NAME =~ *g_rev14_mmu.mmu/until_s_reg* || \
+@end
+
+@mutation grid-rev14-the-redirects-word-in-the-zynq-relaxed-set
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The redirect's word, taken a tick after the PDL buffer's read, back in
+@note the Zynq boards' relaxed set, where the buffer's output would be given
+@note the latches' K - 1 ticks to reach it.
+@old
+                                  NAME !~ *processor/g_quux_pdl.redir_word_reg* && \
+@new
+@end
+
+@mutation grid-rev14-a-port-countdown-in-the-zynq-relaxed-set
+@check grid
+@file rtl/plumbing/xilinx7/cadr_machine.xdc
+@note The memory port's main-memory countdown, `free_s`, back in the Zynq
+@note boards' relaxed set while the rest of the port stays out of it.
+@old
+                                  NAME !~ *memory/g_quux_port.port/* && \
+@new
+                                  (NAME !~ *memory/g_quux_port.port/* || \
+                                       NAME =~ *g_quux_port.port/free_s_reg*) && \
+@end
+
+@mutation grid-rev14-the-walks-countdown-in-the-de25-relaxed-set
+@check grid
+@file boards/de25-nano/quartus/cadr_de25.sdc
+@note The same countdown put back in the DE25-Nano's relaxed set, among the
+@note memory system's held registers.
+@old
+    [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {directory ephemeral pointer_types
+@new
+    [cadr_leaves {u_machine|processor|g_rev14_mmu.mmu|} {directory ephemeral pointer_types until_s
+@end
+
+@mutation machine-param-the-arty-builds-revision-13-whatever-it-is-asked
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note The Arty Z7-20's top level hands the machine revision 13 whatever
+@note the flow asked for: a revision 14 bitstream would be revision 13's
+@note under revision 14's name, and every other check of the board green.
+@old
+      .REVISION(REVISION),
+@new
+      .REVISION(13),
+@end
+
+@mutation machine-param-the-de25-builds-revision-13-whatever-it-is-asked
+@check machine_param
+@file boards/de25-nano/cadr_de25.sv
+@note The same on the DE25-Nano.
+@old
+      .REVISION(REVISION),
+@new
+      .REVISION(13),
+@end
+
+@mutation machine-param-the-kria-builds-revision-13-whatever-it-is-asked
+@check machine_param
+@file boards/kria-kr260/cadr_kr260.sv
+@note The same on the Kria KR260.
+@old
+      .REVISION(REVISION),
+@new
+      .REVISION(13),
+@end
+
+@mutation machine-param-the-arty-counts-revision-13s-k-at-revision-14
+@check machine_param
+@file boards/arty-z7-20/cadr_arty.sv
+@note Revision 14 on the Arty Z7-20 given revision 13's five ticks, where
+@note the contract builds it at four and the flow writes its constraints
+@note from four.
+@old
+      .SYNC_K(WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K),
+@new
+      .SYNC_K(WORD_BITS > 32 ? SYNC_K13 : SYNC_K),
+@end
+
+@mutation machine-param-the-arty-flow-builds-revision-14-unasked
+@check machine_param
+@file boards/arty-z7-20/vivado/bitstream.tcl
+@note The Arty Z7-20's flow building revision 14 when no revision is named.
+@old
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
+@new
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "14"}]
+@end
+
+@mutation machine-param-the-kria-flow-builds-revision-14-unasked
+@check machine_param
+@file boards/kria-kr260/vivado/bitstream.tcl
+@note The same on the Kria KR260's flow.
+@old
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
+@new
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "14"}]
+@end
+
+@mutation machine-param-the-de25-takes-revision-14-on-the-cadr
+@check machine_param
+@file boards/de25-nano/quartus/build.sh
+@note The DE25-Nano's build taking REVISION=14 beside the CADR.
+@old
+if [ "$revision" = 14 ] && [ "$machine" != quux ]; then
+@new
+if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @end

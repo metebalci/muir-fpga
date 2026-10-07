@@ -142,7 +142,9 @@ if {$machine ne "cadr" && $machine ne "quux"} {
 }
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z020clg400-1"}]
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) \
-                      : ($machine eq "quux" ? "build/arty-quux13" : "build/bitstream")}]
+                      : ($machine eq "quux" ? ([info exists ::env(REVISION)] && $::env(REVISION) eq "14" \
+                                               ? "build/arty-quux14" : "build/arty-quux13") \
+                                            : "build/bitstream")}]
 if {$machine eq "quux" && [string first quux [file tail $outdir]] < 0} {
     puts "BIT: FAILED --- MACHINE=quux into OUTDIR=$outdir, whose name does not say"
     puts "BIT: quux. Name the directory for the machine, as build/arty-quux13-ddr."
@@ -169,13 +171,31 @@ if {$machine eq "quux" && $word_bits ne "40"} {
     puts "BIT: and revision 12 is retired: give WORD_BITS=40."
     exit 1
 }
-if {$machine eq "quux" && [string first quux13 [file tail $outdir]] < 0} {
-    puts "BIT: FAILED --- WORD_BITS=$word_bits into OUTDIR=$outdir: a revision 13"
-    puts "BIT: build goes to a directory that says quux13."
+# **AND THE REVISION**: QUUX at 40 bits is revision 13 unless the flow is
+# asked for revision 14 by name, `REVISION=14` (contract G3 revision 14):
+# the 32-bit virtual address, the TLB, the 29-bit physical address, PROM
+# 2002 and its own constraints.  Nothing builds revision 14 by default, and
+# a revision 14 build goes to a directory that says `quux14`, a revision 13
+# one to a directory that says `quux13`, so that neither replaces the
+# other's bitstream.  The top level's `REVISION` generic is passed only at
+# 14, so revision 13's synthesis command is the one it has always been.
+set revision [expr {[info exists ::env(REVISION)] ? $::env(REVISION) : "13"}]
+if {$revision ne "13" && $revision ne "14"} {
+    puts "BIT: FAILED --- REVISION=$revision is not a revision. QUUX at 40 bits is"
+    puts "BIT: revision 13, the default, or 14."
+    exit 1
+}
+if {$revision eq "14" && $machine ne "quux"} {
+    puts "BIT: FAILED --- REVISION=14 is QUUX's, and MACHINE=$machine."
+    exit 1
+}
+if {$machine eq "quux" && [string first quux$revision [file tail $outdir]] < 0} {
+    puts "BIT: FAILED --- WORD_BITS=$word_bits into OUTDIR=$outdir: a revision $revision"
+    puts "BIT: build goes to a directory that says quux$revision."
     exit 1
 }
 if {$word_bits eq "40"} {
-    puts "BIT: the machine is $machine, revision 13 (WORD_BITS=40)"
+    puts "BIT: the machine is $machine, revision $revision (WORD_BITS=40)"
 } else {
     puts "BIT: the machine is $machine"
 }
@@ -279,9 +299,13 @@ set port [expr {($ddr > 0 || $prove > 0 || $hdmi > 0) ? 1 : 0}]
 
 # QUUX boots from its own PROM, version 2001, which `make
 # build/boot_prom.quux13.hex` writes out of muir's `data/quux-promh.mcr`
-# (contract G2 §2.8).
+# (contract G2 §2.8); and revision 14 from PROM 2002, which `make
+# build/boot_prom.quux14.hex` writes out of the hand-over's own file, held
+# to its digest (the Makefile's `QUUX_PROM_2002`).
 if {$machine ne "quux"} {
     set prom build/boot_prom.hex
+} elseif {$revision eq "14"} {
+    set prom build/boot_prom.quux14.hex
 } else {
     set prom build/boot_prom.quux13.hex
 }
@@ -329,6 +353,12 @@ foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv] {
 source boards/arty-z7-20/vivado/rams_check.tcl
 rams_canary $part
 read_verilog -sv $sources
+# **REVISION 14'S TLB IN BLOCK RAM**, chosen here and not in `rtl/machine/`
+# (contract G3 revision 14, §5.4): five RAMB36E1, 4K x 9 each, both ports
+# writing.  Read before synthesis, which is where `RAM_STYLE` is taken; the
+# netlist's cells are asked after it (`tlb_check.tcl`).
+source boards/arty-z7-20/vivado/tlb_check.tcl
+if {$revision eq "14"} { read_tlb_ram_style boards/arty-z7-20/vivado/quux14_tlb_ram.xdc }
 synth_design -top cadr_arty -part $part \
     -generic PROM_HEX=[file normalize $prom] \
     -generic SYNC_PROM_HEX=[file normalize $sync_prom] \
@@ -338,10 +368,13 @@ synth_design -top cadr_arty -part $part \
     -generic HDMI=$hdmi \
     -generic LMTV=$lmtv \
     {*}[expr {$machine eq "quux" ? [list -generic MACHINE=quux] : {}}] \
-    {*}[expr {$word_bits eq "40" ? [list -generic WORD_BITS=40] : {}}]
+    {*}[expr {$word_bits eq "40" ? [list -generic WORD_BITS=40] : {}}] \
+    {*}[expr {$revision eq "14" ? [list -generic REVISION=14] : {}}]
 # That every block RAM writes where the RTL says, which synthesis once did
 # not and nothing downstream noticed.  Stops the build if not.
-assert_rams_write_where_the_rtl_says $machine
+assert_rams_write_where_the_rtl_says $machine $revision
+# And revision 14's TLB is the memory this board's setting asked for.
+assert_tlb_primitive $revision block
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilization and timing prose below describes."
@@ -381,9 +414,11 @@ read_xdc -ref cadr_machine rtl/plumbing/xilinx7/cadr_machine.xdc
 # K written from `sync_k`: the top level's own K for revision 13, five
 # (`tick.tcl`).
 if {$machine eq "quux"} {
-    set sync_k [cadr_sync_k $word_bits]
+    set sync_k [cadr_sync_k $word_bits boards/arty-z7-20/cadr_arty.sv $revision]
     read_xdc -ref cadr_machine rtl/plumbing/xilinx7/quux_machine.xdc
 }
+# And revision 14's, whose every object is its TLB's.
+if {$revision eq "14"} { read_xdc -ref cadr_machine rtl/plumbing/xilinx7/quux14_machine.xdc }
 # Only when the BSCANE2 it names is in the design. See the switch above.
 if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # And the same rule for the memory port's own deadline: every object
@@ -779,19 +814,19 @@ if {$machine ne "quux"} {
     # grid: 75 ns - 1 tick
     assert_clause_timing $tick 7 "IR into the scratchpad latches" \
         {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
-        {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
-         *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
+        {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
+         *processor/spc_q_reg*}
     # grid: 60 ns + 1 tick
     assert_clause_timing $tick 7 "out of the scratchpad latches" \
-        {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
-         *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*}
+        {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
+         *processor/spc_q_reg*}
     # grid: 60 ns - 1 tick
     assert_clause_timing $tick 5 "the latches into the dispatch memory's write" \
-        {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
-         *processor/mmem_q_reg* *processor/pdl_q_reg* *processor/spc_q_reg*} {*processor/dmem_reg*}
+        {*processor/amem_reg* *processor/mmem_reg* *processor/g_cadr_pdl.pdl_reg*
+         *processor/spc_q_reg*} {*processor/dmem_reg*}
     # grid: 60 ns - 1 tick
     assert_clause_timing $tick 5 "the control store's word" \
-        {*processor/imem_reg* *processor/imem_q_reg* *processor/prom_q_reg*}
+        {*processor/imem_reg*}
     # grid: 0 ns + 3 ticks
     assert_clause_timing $tick 3 "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
     # grid: 0 ns + 3 ticks
@@ -839,8 +874,8 @@ if {$machine eq "quux"} {
         puts "BIT: clause taking it out of the relaxed set is on nothing."
         exit 1
     }
-    set q_latch {*processor/amem_reg* *processor/mmem_reg* *processor/pdl_reg* *processor/amem_q_reg*
-                 *processor/mmem_q_reg* *processor/spc_q_reg*}
+    set q_latch {*processor/amem_reg* *processor/mmem_reg* *processor/g_quux_pdl.pdl_reg*
+                 *processor/spc_q_reg*}
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "IR into the scratchpad latches" \
         {*processor/ir_reg* *processor/pdl_ptr_reg* *processor/pdl_idx_reg* *processor/spcptr_reg*} \
@@ -852,18 +887,31 @@ if {$machine eq "quux"} {
         {*processor/dmem_reg*}
     # sync: K
     assert_clause_timing $tick $sync_k "the control store's word" \
-        {*processor/imem_reg* *processor/imem_q_reg* *processor/prom_q_reg*}
-    # sync: K
-    assert_clause_timing $tick $sync_k "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
+        {*processor/imem_reg* *processor/prom_q_reg*}
+    # The maps' clauses are revision 13's: revision 14 has no map, and its
+    # TLB's clauses are asked below.
+    if {$revision eq "13"} {
+        # sync: K
+        assert_clause_timing $tick $sync_k "the maps' write" {*processor/l1_map_reg* *processor/l2_map_reg*}
+    }
     # sync: K
     assert_clause_timing $tick $sync_k "the dispatch memory's write" {*processor/dmem_reg*}
-    # grid: 0 ns + 1 tick
-    assert_clause_timing $tick 1 "the three memories' writes into the readout" \
-        {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
-        {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
-    # sync: K
-    assert_clause_timing $tick $sync_k "MD into the writes' address" {*processor/md_reg*} \
-        {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
+    if {$revision eq "13"} {
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the three memories' writes into the readout" \
+            {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*} \
+            {*processor/ro_dmem_q_reg* *processor/ro_map1_q_reg* *processor/ro_map2_q_reg*}
+        # sync: K
+        assert_clause_timing $tick $sync_k "MD into the writes' address" {*processor/md_reg*} \
+            {*processor/l1_map_reg* *processor/l2_map_reg* *processor/dmem_reg*}
+    } else {
+        # grid: 0 ns + 1 tick
+        assert_clause_timing $tick 1 "the dispatch memory's write into the readout" \
+            {*processor/dmem_reg*} {*processor/ro_dmem_q_reg*}
+        # sync: K
+        assert_clause_timing $tick $sync_k "MD into the dispatch memory's write address" \
+            {*processor/md_reg*} {*processor/dmem_reg*}
+    }
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "MD_HELD into MD" {*processor/md_held_reg*} {*processor/md_reg*}
     # grid: 0 ns + 1 tick
@@ -874,12 +922,12 @@ if {$machine eq "quux"} {
         {*processor/ir_reg* *processor/vma_reg* *processor/memstart_reg* *processor/md_reg*} \
         {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
          *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
-         *memory/unibus_reg* *memory/ub_addr_reg*}
+         *memory/ub_addr_reg*}
     # grid: 0 ns + 2 ticks
     assert_clause_timing $tick 2 "the second hop of the every-tick registers" \
         {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
          *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
-         *memory/unibus_reg* *memory/ub_addr_reg*}
+         *memory/ub_addr_reg*}
     # sync: K
     assert_clause_timing $tick $sync_k "the edge's registers into QUUX's divider" \
         {*processor/q_reg* *processor/ir_reg*} {*processor/g_quux_muldiv.muldiv/dv_*}
@@ -899,15 +947,53 @@ if {$machine eq "quux"} {
         {*processor/g_quux_tick.clocks/usec_s_reg*}
     # QUUX's memory port: none of its tick registers relaxed, and the address
     # the cache holds at the microcycle.
-    # sync: K
-    assert_instance_timing $tick $sync_k *memory/g_quux_port.port/* \
-        {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
+    # At revision 14 the cache's held address is also the side seam's, a
+    # walk's look on the tick, so its endpoints' worst paths are the tick's
+    # and the relaxed ones are asked by their source: the edge's VMA.
+    if {$revision eq "13"} {
+        # sync: K
+        assert_instance_timing $tick $sync_k *memory/g_quux_port.port/* \
+            {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
+    } else {
+        # sync: K
+        assert_instance_timing $tick $sync_k *memory/g_quux_port.port/* {} \
+            {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
+        # sync: K
+        assert_clause_timing $tick $sync_k "VMA into the cache's held address" {*processor/vma_reg*} \
+            {*cache/idx_q_reg* *cache/tag_q_reg* *cache/off_q_reg*}
+    }
     # And nothing out of the cache relaxed at all: its word reaches MD in the
     # tick after the lookup's.
     # grid: 0 ns + 1 tick
     assert_clause_timing $tick 1 "the cache's word into MD" \
         {*memory/g_quux_port.port/cache/*} {*processor/md_reg* *processor/md_held_reg*}
     puts "BIT: QUUX: [llength $quux_tick_cells] tick countdown cells"
+}
+# **REVISION 14'S CLAUSES, `quux14_machine.xdc`, ASKED WHAT THEY REACHED**:
+# the TLB's word out of it a tick after the edge, to the next edge and into
+# the every-tick registers' first hop; both ports' addresses at the tick;
+# the memory system's registers at the tick but for what it holds of the
+# microcycle (`tools/grid_check.py`'s `REV14_CLASSED`); and the redirect's
+# word at the tick after the PDL buffer's read.
+if {$revision eq "14"} {
+    set q_tlb {*processor/g_rev14_mmu.mmu/tlb/*}
+    set q_every {*processor/memgo_q_reg* *processor/destmem_q_reg* *processor/use_md_q_reg*
+                 *processor/ifetch_q_reg* *memory/is_memory_reg* *memory/device_reg* *memory/nxm_reg*
+                 *memory/ub_addr_reg*}
+    # sync: K - 1
+    assert_clause_timing $tick [expr {$sync_k - 1}] "the TLB's word to the next edge" $q_tlb
+    # sync: K - 3
+    assert_clause_timing $tick [expr {$sync_k - 3}] "the TLB's word into the every-tick registers" \
+        $q_tlb $q_every
+    # grid: 0 ns + 1 tick
+    assert_pin_timing $tick 1 "into the TLB's two addresses" $q_tlb ADDR*
+    # sync: K
+    assert_instance_timing $tick $sync_k *u_machine/processor/g_rev14_mmu.mmu/* \
+        {*mmu/directory_reg* *mmu/ephemeral_reg* *mmu/pointer_types_reg* *mmu/pdl_base_reg*
+         *mmu/pdl_head_reg* *mmu/tlb/*}
+    # grid: 0 ns + 1 tick
+    assert_clause_timing $tick 1 "the PDL buffer into the redirect's word" \
+        {*processor/g_quux_pdl.pdl_reg*} {*processor/g_quux_pdl.redir_word_reg*}
 }
 
 opt_design
@@ -952,6 +1038,11 @@ if {$luts < 1500 || $brams < 20} {
 report_utilization                     -file $outdir/utilisation.rpt
 report_timing_summary -max_paths 10    -file $outdir/timing.rpt
 report_clocks                          -file $outdir/clocks.rpt
+if {$revision eq "14"} {
+    report_utilization -hierarchical -hierarchical_depth 4 -file $outdir/utilisation_hier.rpt
+    report_timing -delay_type max -max_paths 20 -nworst 1 -unique_pins -file $outdir/worst_setup.rpt
+    report_tlb $outdir
+}
 
 # Guarded, because `get_timing_paths` returns an empty list when there is
 # nothing to report --- and nothing to report is what SUCCESS looks like. The

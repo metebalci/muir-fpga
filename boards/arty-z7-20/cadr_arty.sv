@@ -163,8 +163,13 @@ module cadr_arty #(
     // sixty-cycle clock, which count ticks, still count true time.  The
     // flow reads the K a build takes from here (`vivado/tick.tcl`) and
     // states it in `quux_machine.xdc`'s counts.  The CADR reads none.
+    // **AND FOUR AT REVISION 14** (contract G3 revision 14, Q-G3f): the
+    // TLB's registered read takes the map chain's place, which is what kept
+    // revision 13 at five.  The fit at K=4 is what entitles it, and five
+    // the fallback if it misses (`docs/fits.md`).
     parameter int unsigned SYNC_K = 4,
     parameter int unsigned SYNC_K13 = 5,
+    parameter int unsigned SYNC_K14 = 4,
     parameter int unsigned SYNC_L = 0,
 
     // **THE WORD'S WIDTH**, handed to `cadr_machine` as it stands: 32, or 40
@@ -172,7 +177,18 @@ module cadr_arty #(
     // word (`rtl/machine/cadr_microcycle.sv`).  The flow's `WORD_BITS` sets
     // it, 32 unless asked, and `build/machine_param.pass` holds that it
     // arrives.  The probe takes each word's `<31:0>`.
-    parameter int unsigned WORD_BITS = 32
+    parameter int unsigned WORD_BITS = 32,
+
+    // **QUUX'S HARDWARE REVISION AT 40 BITS**, handed to `cadr_machine` as
+    // it stands: 13, or 14 (contract G3 revision 14), the 32-bit virtual
+    // address, the TLB and the 29-bit physical address.  13 unless the flow
+    // is asked for 14 by name (`REVISION=14`); `build/machine_param.pass`
+    // holds that it arrives.  The CADR reads none.
+    parameter int unsigned REVISION = 13,
+    // **REVISION 14'S TLB ENTRIES**, N (A14.4): 4,096 on every board
+    // (decisions.md:265), in block RAM here, five RAMB36E1 by the flow's
+    // `RAM_STYLE` (`vivado/quux14_tlb_ram.xdc`).  Unread below revision 14.
+    parameter int unsigned TLB_ENTRIES = 4096
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -368,7 +384,13 @@ module cadr_arty #(
   logic [47:0] ir;
   logic [9:0]  dc;
   logic [25:0] lc;
-  logic [(WORD_BITS > 32 ? 28 : 22)-1:0] phys;
+  // The bus address the machine asks about: 22 bits on the CADR, 28 at
+  // revision 13 and 29 at revision 14, the device window's `<28>` (A14.1).
+  localparam bit PAGED14 = MACHINE == "quux" && WORD_BITS > 32 && REVISION >= 14;
+  logic [(PAGED14 ? 29 : WORD_BITS > 32 ? 28 : 22)-1:0] phys;
+  if (REVISION != 13 && !(REVISION == 14 && MACHINE == "quux")) begin : g_revision_refused
+    $error("cadr_arty: REVISION is %0d on %s; QUUX is built at revision 13 or 14", REVISION, MACHINE);
+  end
   logic [17:0] ub_addr;
   logic [15:0] ub_rdata;
   logic [2:0]  arb_stage;
@@ -922,9 +944,11 @@ module cadr_arty #(
       .SYNC_PROM_HEX(SYNC_PROM_HEX),
       .LMTV(LMTV),
       .MACHINE(MACHINE),
-      .SYNC_K(WORD_BITS > 32 ? SYNC_K13 : SYNC_K),
+      .SYNC_K(WORD_BITS > 32 ? (PAGED14 ? SYNC_K14 : SYNC_K13) : SYNC_K),
       .SYNC_L(SYNC_L),
-      .WORD_BITS(WORD_BITS)
+      .WORD_BITS(WORD_BITS),
+      .REVISION(REVISION),
+      .TLB_ENTRIES(TLB_ENTRIES)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO

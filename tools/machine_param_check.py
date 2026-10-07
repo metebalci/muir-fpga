@@ -106,6 +106,8 @@ BOARDS = {
         # QUUX's K at revision 13, five, the machine's clock left at 100 MHz
         # so that its timers count true time (`cadr_arty.sv`, `SYNC_K13`).
         "sync_k": {40: 5},
+        # And revision 14's, `SYNC_K14`: four (contract G3 revision 14).
+        "sync_k14": 4,
         # Revision 13's most memory boards: what the board's reservation holds
         # (`cadr_ddr_map.sv`, 32M words), written here apart from it.
         "boards13_max": 512,
@@ -129,6 +131,8 @@ BOARDS = {
         # The debug cable's eight pads, JP1 pins 31 to 38.
         "pads": ["jp1_pin3%d" % i for i in range(1, 9)],
         "sync_k": {40: 4},
+        # Revision 14 at the same four, the board's one `SYNC_K`.
+        "sync_k14": 4,
         # 64M words of room, and muir's most is 1,024 boards.
         "boards13_max": 1024,
         "video": (1280, 1024),
@@ -167,8 +171,10 @@ BOARDS = {
         },
         "machines": ["cadr"],
         "pads": ["pmod1"],
-        # Revision 13 at four ticks, `SYNC_K13`.
+        # Revision 13 at four ticks, `SYNC_K13`, and revision 14 at four,
+        # `SYNC_K14`.
         "sync_k": {40: 4},
+        "sync_k14": 4,
         # Revision 13's room on this board: 32M words.
         "boards13_max": 512,
         "video": (1920, 1080),
@@ -200,7 +206,7 @@ def run(cmd, env=None):
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
-def verilator(board, config, value, mode, mdir=None, word_bits=None):
+def verilator(board, config, value, mode, mdir=None, word_bits=None, revision=None):
     spec = BOARDS[board]
     gens, extra = spec["configs"][config]
     cmd = [VERILATOR, mode]
@@ -213,6 +219,8 @@ def verilator(board, config, value, mode, mdir=None, word_bits=None):
         cmd.append('-GMACHINE="%s"' % value)
     if word_bits is not None:
         cmd.append("-GWORD_BITS=%d" % word_bits)
+    if revision is not None:
+        cmd.append("-GREVISION=%d" % revision)
     if mdir is not None:
         cmd += ["-Mdir", mdir]
     cmd += ["--top-module", spec["top"]]
@@ -526,6 +534,62 @@ def word_reaches(board, config, bits, scratch):
         say(True, what)
 
 
+def revision_reaches(board, config, scratch):
+    """**REVISION 14 REACHES `u_machine` WHEN IT IS ASKED FOR, AND ONLY
+    THEN** (contract G3 revision 14): `MACHINE=quux WORD_BITS=40
+    REVISION=14` lints clean and elaborates `REVISION` 14 and the TLB's
+    4,096 entries at u_machine, the board's revision 14 K at the generator,
+    and the memory system's module, `quux_mmu`; QUUX at 40 bits with no
+    revision is 13, with no `quux_mmu`; and `REVISION=14` on the CADR stops
+    elaboration in the top level."""
+    top = BOARDS[board]["top"]
+    for rev, asked in ((14, "REVISION=14"), (None, "no REVISION")):
+        want = 14 if rev else 13
+        what = "%s, %s, MACHINE=quux, WORD_BITS=40, %s: u_machine elaborates REVISION %d" % (
+            top, config, asked, want)
+        rc, out = verilator(board, config, "quux", "--lint-only", word_bits=40, revision=rev)
+        if rc != 0:
+            say(False, "%s --- the lint failed:\n%s" % (what, out.strip()))
+            continue
+        mdir = tempfile.mkdtemp(dir=scratch)
+        rc, out = verilator(board, config, "quux", "--json-only", mdir, word_bits=40, revision=rev)
+        if rc != 0:
+            say(False, "%s --- the JSON dump failed:\n%s" % (what, out.strip()))
+            continue
+        with open(os.path.join(mdir, "V%s.tree.json" % top)) as f:
+            tree = json.load(f)
+        shutil.rmtree(mdir, True)
+        got, why = params_at_cell(tree, top, "u_machine", ["REVISION", "TLB_ENTRIES"])
+        if got is None:
+            say(False, "%s --- %s" % (what, why or "no u_machine"))
+        elif got != {"REVISION": want, "TLB_ENTRIES": 4096}:
+            say(False, "%s --- it elaborates %s" % (what, got))
+        else:
+            say(True, "%s and TLB_ENTRIES 4096" % what)
+        mmus = []
+        walk(tree, lambda n: mmus.append(n)
+             if n.get("type") == "MODULE" and n.get("origName") == "quux_mmu" else None)
+        what = "%s, %s, MACHINE=quux, WORD_BITS=40, %s: %d quux_mmu" % (
+            top, config, asked, 1 if rev else 0)
+        say(len(mmus) == (1 if rev else 0), what if len(mmus) == (1 if rev else 0)
+            else "%s --- the tree has %d" % (what, len(mmus)))
+        if rev:
+            k_want = BOARDS[board]["sync_k14"]
+            kwhat = "%s, %s, MACHINE=quux, WORD_BITS=40, REVISION=14: the microcycle is SYNC_K=%d ticks at the generator" % (
+                top, config, k_want)
+            k, why = sync_k_at_generator(tree)
+            if k is None:
+                say(False, "%s --- %s" % (kwhat, why))
+            elif k != k_want:
+                say(False, "%s --- it counts %d" % (kwhat, k))
+            else:
+                say(True, kwhat)
+    what = "%s, %s, MACHINE=cadr, REVISION=14: refused in %s" % (top, config, top)
+    rc, out = verilator(board, config, "cadr", "--lint-only", revision=14)
+    say(rc != 0 and "REVISION is 14 on cadr" in out,
+        what if rc != 0 and "REVISION is 14 on cadr" in out else "%s --- it was not:\n%s" % (what, out.strip()))
+
+
 def sync_k_at_generator(tree):
     """The SYNC_K of the one `quux_phase_gen` the tree elaborates."""
     mods = []
@@ -719,6 +783,7 @@ def flow(what, cmd, env_add, rc_want, has, lacks):
     env = dict(os.environ)
     env.pop("MACHINE", None)
     env.pop("WORD_BITS", None)
+    env.pop("REVISION", None)
     env.update(env_add)
     rc, out = run(cmd, env)
     wrong = []
@@ -768,6 +833,9 @@ def main():
         # With the processing system: the file device's page is there only
         # behind its port, as on the other boards.
         word_reaches("kr260", "DDR=1", 40, scratch)
+        # And the revision, on the three boards that build QUUX.
+        for board, config in (("arty", "DDR=1 HDMI=1"), ("de25", "DDR=1 HDMI=1"), ("kr260", "DDR=1")):
+            revision_reaches(board, config, scratch)
 
         # **THE ARTY'S FLOW STATES THE K ITS MACHINE COUNTS**: `tick.tcl`'s
         # `cadr_sync_k` at 40 is the table's, and the flow sets the `sync_k`
@@ -793,13 +861,31 @@ def main():
                 say(False, "%s --- it says:\n%s" % (what, out.strip()))
             else:
                 say(True, what)
+        for board, top in (("arty", "boards/arty-z7-20/cadr_arty.sv"), ("kr260", "boards/kria-kr260/cadr_kr260.sv")):
+            k_want = BOARDS[board]["sync_k14"]
+            what = "the %s flow states K=%d at revision 14 (tick.tcl, cadr_sync_k)" % (board, k_want)
+            script = os.path.join(scratch, "sync_k14.tcl")
+            with open(script, "w") as f:
+                f.write("source boards/arty-z7-20/vivado/tick.tcl\nputs \"K=[cadr_sync_k 40 %s 14]\"\n" % top)
+            rc, out = run([TCLSH, script])
+            if rc != 0 or ("K=%d" % k_want) not in out.split("\n"):
+                say(False, "%s --- it says:\n%s" % (what, out.strip()))
+            else:
+                say(True, what)
+        what = "the Arty's flow states no K at REVISION=15 (tick.tcl, cadr_sync_k)"
+        script = os.path.join(scratch, "sync_k15.tcl")
+        with open(script, "w") as f:
+            f.write("source boards/arty-z7-20/vivado/tick.tcl\nputs \"K=[cadr_sync_k 40 boards/arty-z7-20/cadr_arty.sv 15]\"\n")
+        rc, out = run([TCLSH, script])
+        say(rc != 0 and "TICK: FAILED --- REVISION=15 has no K" in out,
+            what if rc != 0 and "TICK: FAILED --- REVISION=15 has no K" in out else "%s --- it says:\n%s" % (what, out.strip()))
         with open("boards/arty-z7-20/vivado/bitstream.tcl") as f:
             text = f.read()
         sets = [i for i, line in enumerate(text.split("\n"))
-                if line.strip() == "set sync_k [cadr_sync_k $word_bits]"]
+                if line.strip() == "set sync_k [cadr_sync_k $word_bits boards/arty-z7-20/cadr_arty.sv $revision]"]
         reads = [i for i, line in enumerate(text.split("\n"))
                  if "read_xdc" in line and "quux_machine.xdc" in line and not line.lstrip().startswith("#")]
-        what = "the Arty's flow sets sync_k from the word it builds, once, before quux_machine.xdc"
+        what = "the Arty's flow sets sync_k from the word and revision it builds, once, before quux_machine.xdc"
         if len(sets) != 1 or len(reads) != 1 or sets[0] > reads[0]:
             say(False, "%s --- %d such line(s), %d read(s) of the file" % (what, len(sets), len(reads)))
         else:
@@ -859,6 +945,25 @@ def main():
                  % (value, " WORD_BITS=%s" % bits if bits else "", image), arty, env_add, None,
                  ["BIT: the boot PROM is %s\n" % image],
                  ["BIT: the boot PROM is %s\n" % other for other in proms.values() if other != image])
+        # **REVISION 14 ONLY WHEN ASKED FOR, AND INTO ITS OWN DIRECTORY.**
+        for name, cmd, prefix in (("the Arty's", arty, "arty"), ("the Kria KR260's", kr260, "kr260")):
+            flow("%s Vivado flow refuses REVISION=15" % name, cmd,
+                 {"MACHINE": "quux", "WORD_BITS": "40", "REVISION": "15", "OUTDIR": out(prefix + "-quux14")}, 1,
+                 ["BIT: FAILED --- REVISION=15 is not a revision"], ["BIT: the machine is"])
+            flow("%s Vivado flow refuses REVISION=14 on the CADR" % name, cmd,
+                 {"MACHINE": "cadr", "REVISION": "14", "OUTDIR": out(prefix + "-cadr")}, 1,
+                 ["BIT: FAILED --- REVISION=14 is QUUX's, and MACHINE=cadr"], ["BIT: the machine is"])
+            flow("%s Vivado flow refuses revision 14 into a directory that says quux13" % name, cmd,
+                 {"MACHINE": "quux", "WORD_BITS": "40", "REVISION": "14", "OUTDIR": out(prefix + "-quux13")}, 1,
+                 ["quux14"], ["BIT: the machine is"])
+            flow("%s Vivado flow refuses revision 13 into a directory that says quux14" % name, cmd,
+                 {"MACHINE": "quux", "WORD_BITS": "40", "OUTDIR": out(prefix + "-quux14")}, 1,
+                 ["quux13"], ["BIT: the machine is"])
+            flow("%s Vivado flow takes REVISION=14 with PROM 2002" % name, cmd,
+                 {"MACHINE": "quux", "WORD_BITS": "40", "REVISION": "14", "OUTDIR": out(prefix + "-quux14")}, None,
+                 ["BIT: the machine is quux, revision 14 (WORD_BITS=40)\n",
+                  "BIT: the boot PROM is build/boot_prom.quux14.hex\n"],
+                 ["FAILED --- REVISION", "FAILED --- MACHINE"])
         flow("the Cora's Vivado flow refuses MACHINE=quux", cora,
              {"MACHINE": "quux", "OUTDIR": out("c")}, 1,
              ["BIT: FAILED --- MACHINE=quux, and the Cora Z7-07S builds the"], [])
@@ -918,6 +1023,16 @@ def main():
             flow("the DE25-Nano's %s takes WORD_BITS=40 on QUUX" % script, cmd,
                  dict(nowhere, MACHINE="quux", WORD_BITS="40"), 1,
                  ["%s: REFUSED:" % who], ["REFUSED: WORD_BITS"])
+        cmd = ["sh", "boards/de25-nano/quartus/build.sh", "x"]
+        flow("the DE25-Nano's build.sh refuses REVISION=15", cmd,
+             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="15"), 1,
+             ["de25: REFUSED: REVISION is '15'"], [])
+        flow("the DE25-Nano's build.sh refuses REVISION=14 on the CADR", cmd,
+             dict(nowhere, MACHINE="cadr", REVISION="14"), 1,
+             ["de25: REFUSED: REVISION=14 is QUUX's, and MACHINE=cadr"], [])
+        flow("the DE25-Nano's build.sh takes REVISION=14 on QUUX", cmd,
+             dict(nowhere, MACHINE="quux", WORD_BITS="40", REVISION="14"), 1,
+             ["de25: REFUSED:"], ["REFUSED: REVISION"])
         # A fault build carries no machine, so QUUX beside it is refused, and
         # the CADR, the default, is taken as far as the missing Quartus.
         cmd = ["sh", "boards/de25-nano/quartus/build.sh", "x"]
@@ -937,7 +1052,7 @@ def main():
     if failures:
         print("machine: FAILED, %d of the cases above" % len(failures))
         return 1
-    print("machine: every board's top level hands MACHINE, WORD_BITS and its K to u_machine, "
+    print("machine: every board's top level hands MACHINE, WORD_BITS, REVISION and its K to u_machine, "
           "and the Cora and the flows refuse what they must")
     return 0
 

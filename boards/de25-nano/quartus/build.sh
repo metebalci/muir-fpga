@@ -112,6 +112,18 @@ fi
 if [ "$machine" = quux ] && [ "$word_bits" != 40 ]; then
     refuse "MACHINE=quux at WORD_BITS=$word_bits, which was revision 12, and revision 12 is retired: give WORD_BITS=40"
 fi
+# **AND THE REVISION**: QUUX at 40 bits is revision 13 unless the build is
+# asked for revision 14 by name, `REVISION=14` (contract G3 revision 14),
+# into `build/de25-quux14/` with the same suffixes, so that neither
+# revision's build removes the other's.
+revision=${REVISION:-13}
+case $revision in
+    13|14) ;;
+    *) refuse "REVISION is '$revision'; QUUX at 40 bits is revision 13, the default, or 14" ;;
+esac
+if [ "$revision" = 14 ] && [ "$machine" != quux ]; then
+    refuse "REVISION=14 is QUUX's, and MACHINE=$machine"
+fi
 
 conf=boards/de25-nano/local.conf
 conf_value() {
@@ -132,8 +144,9 @@ done
 # QUUX's boot PROM is its own, version 2001 (contract G2 §2.8).
 # `project.tcl` chooses it the same way, and synthesis's parameter table is
 # read back below.
+# Revision 14's is PROM 2002 (`make build/boot_prom.quux14.hex`).
 prom_image=build/boot_prom.hex
-[ "$machine" = quux ] && prom_image=build/boot_prom.quux13.hex
+[ "$machine" = quux ] && prom_image=build/boot_prom.quux$revision.hex
 for image in "$prom_image" build/sync_prom.hex; do
     [ -s "$image" ] || refuse "$image is missing; \`make de25\` builds it first"
 done
@@ -175,7 +188,7 @@ case $mhz in
 esac
 out=build/de25
 if [ "$machine" = quux ]; then
-    out=$out-quux13
+    out=$out-quux$revision
 fi
 if [ "$ddr" -eq 1 ]; then
     out=$out-ddr
@@ -376,7 +389,7 @@ fi
 
 # ------------------------------------------------------- 2. the project
 step 2-project env PROBE_DEPTH="$depth" DDR="$ddr" HDMI="$hdmi" FAULT="$fault" MACHINE="$machine" \
-    WORD_BITS="$word_bits" DE25_HPS_BOOT="$hps_boot" \
+    WORD_BITS="$word_bits" REVISION="$revision" DE25_HPS_BOOT="$hps_boot" \
     "$bin/quartus_sh" -t boards/de25-nano/quartus/project.tcl "$out" "$userid" "$@"
 
 # **AND THE PROCESSOR SYSTEM, ON THE MEMORY BOARD.**  `qsys-script` builds it
@@ -437,14 +450,30 @@ if [ "$fault" -eq 1 ]; then
     say "the processor system and both bridges' default slaves are in, and no machine"
 else
 if [ "$ddr" -eq 1 ]; then copies=2; else copies=1; fi
-for memory in dmem l1_map l2_map; do
+# Revision 14 has no map: its dispatch memory alone, and its TLB below.
+if [ "$revision" = 14 ]; then mlabs=dmem; else mlabs="dmem l1_map l2_map"; fi
+for memory in $mlabs; do
     n=$(grep -c "^; u_machine|processor|${memory}_rtl_[0-9]*|[^;]*; MLAB " "$rpt" || true)
     [ "$n" -eq "$copies" ] || refuse "synthesis made u_machine|processor|$memory into $n MLABs, wanting $copies; see $dir/$rpt"
 done
 if grep -q 'RAM logic "u_machine|processor|\(dmem\|l1_map\|l2_map\)" is uninferred' 4-syn.log; then
     refuse "synthesis built one of the three asynchronous memories from registers; see $dir/4-syn.log"
 fi
-say "the dispatch memory and both levels of the map are MLABs, $copies copies each"
+if [ "$revision" = 14 ]; then
+    if grep -q 'u_machine|processor|\(l1_map\|l2_map\)' "$rpt"; then
+        refuse "a revision 14 build has a map in it; see $dir/$rpt"
+    fi
+    say "the dispatch memory is MLABs, $copies copies, and there is no map"
+    # **REVISION 14'S TLB IS ONE TRUE DUAL-PORT M20K MEMORY** (`project.tcl`).
+    n=$(grep -c "^; u_machine|processor|g_rev14_mmu\.mmu|tlb|tlb_mem_rtl_[0-9]*|[^;]*; M20K[^;]*; True Dual Port " "$rpt" || true)
+    [ "$n" -eq 1 ] || refuse "synthesis made revision 14's TLB into $n true dual-port M20K memories, wanting 1; see $dir/$rpt"
+    if grep -q 'RAM logic "u_machine|processor|g_rev14_mmu\.mmu|tlb|tlb_mem" is uninferred' 4-syn.log; then
+        refuse "synthesis built revision 14's TLB from logic; see $dir/4-syn.log"
+    fi
+    say "revision 14's TLB is one true dual-port M20K memory"
+else
+    say "the dispatch memory and both levels of the map are MLABs, $copies copies each"
+fi
 # QUUX's MACRO DISPATCH MEMORY the same (revision 12): the machine's reader
 # and, with the console, the readout's.
 if [ "$machine" = quux ]; then
@@ -569,6 +598,22 @@ if [ "$fault" -eq 0 ]; then
     [ "$got_bits" = "$word_bits" ] \
         || refuse "synthesis gave u_machine WORD_BITS '${got_bits:-nothing}', wanting $word_bits; see $dir/$rpt"
     say "synthesis gave u_machine WORD_BITS $word_bits"
+    # And QUUX's revision, the same way: 14 only when it was asked for.
+    if [ "$machine" = quux ]; then
+        got_rev=$(awk '
+            /^; Parameter Settings for User Entity cadr_machine Instance: u_machine *;/ { inside = 1; next }
+            inside && /^; Parameter Settings/ { exit }
+            inside && /^; REVISION *;/ { split($0, f, ";"); v = f[3]; gsub(/ /, "", v); print v; exit }
+        ' "$rpt")
+        case $got_rev in
+            *[!01]*|'') ;;
+            *) got_rev=$(printf '%s\n' "$got_rev" \
+                   | awk '{ n = 0; for (i = 1; i <= length($0); i++) n = n * 2 + substr($0, i, 1); print n }') ;;
+        esac
+        [ "$got_rev" = "$revision" ] \
+            || refuse "synthesis gave u_machine REVISION '${got_rev:-nothing}', wanting $revision; see $dir/$rpt"
+        say "synthesis gave u_machine REVISION $revision"
+    fi
     # And the boot PROM, by its file name: a revision given the other's PROM
     # never boots its band, and nothing in the fit would say so.
     got_prom=$(awk '

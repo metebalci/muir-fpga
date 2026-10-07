@@ -105,13 +105,18 @@ proc cadr_tick_ns {{file "boards/arty-z7-20/cadr_arty.sv"}} {
 # the machine: a constraint a tick longer than the microcycle is a path the
 # fit calls met that the fabric does not.  `build/machine_param.pass` holds
 # this answer against the revision's own K.  Revision 12, QUUX at 32 bits,
-# is retired, and has no K here.
-proc cadr_sync_k {word_bits {file "boards/arty-z7-20/cadr_arty.sv"}} {
+# is retired, and has no K here.  Revision 14 (contract G3 revision 14) is
+# `SYNC_K14`, the same file's, read when the flow is asked for it.
+proc cadr_sync_k {word_bits {file "boards/arty-z7-20/cadr_arty.sv"} {revision 13}} {
     if {$word_bits ne "40"} {
         puts "TICK: FAILED --- WORD_BITS=$word_bits has no K; QUUX is revision 13, 40."
         exit 1
     }
-    set name SYNC_K13
+    if {$revision ne "13" && $revision ne "14"} {
+        puts "TICK: FAILED --- REVISION=$revision has no K; QUUX at 40 bits is revision 13 or 14."
+        exit 1
+    }
+    set name SYNC_K$revision
     set fh [open $file r]
     set text [read $fh]
     close $fh
@@ -123,6 +128,6 @@ proc cadr_sync_k {word_bits {file "boards/arty-z7-20/cadr_arty.sv"}} {
         exit 1
     }
     set k [lindex $hits 1]
-    puts "TICK: $file: QUUX's microcycle at WORD_BITS=$word_bits is $name = $k ticks"
+    puts "TICK: $file: QUUX's microcycle at WORD_BITS=$word_bits, revision $revision, is $name = $k ticks"
     return $k
 }

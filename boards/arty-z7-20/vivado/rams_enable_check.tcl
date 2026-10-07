@@ -101,6 +101,10 @@ proc assert_rams_enabled_only_while_addressed {tick bit} {
     set ports {}
     set counts [dict create unused 0 always 0 boundary 0 anytick 0]
     foreach b $rams {
+        # Revision 14's TLB is asked by name below (`tlb_check.tcl`): its
+        # ports are enabled on the generator cycle's first tick, which the
+        # sort cannot tell from an edge, and its write enables at an edge.
+        if {[string match *g_rev14_mmu.mmu/tlb/* $b]} continue
         foreach {port en addr we} {A ENARDEN ADDRARDADDR WEA B ENBWREN ADDRBWRADDR WEBWE} {
             set enp [get_pins -quiet $b/$en]
             if {![llength $enp]} continue
@@ -161,6 +165,11 @@ proc assert_rams_enabled_only_while_addressed {tick bit} {
     set others [get_clocks -quiet -filter "NAME != [get_property NAME $mclk]"]
     if {[llength $others]} {
         set_clock_groups -asynchronous -group $mclk -group $others
+    }
+
+    # Revision 14's TLB, block RAM or UltraRAM, by name.
+    if {[llength [info procs assert_tlb_addressed_at_the_tick]]} {
+        assert_tlb_addressed_at_the_tick $bit
     }
 
     set bad 0

@@ -144,8 +144,16 @@ proc rams_rule {what cells we wa} {
     return [llength $rams]
 }
 
-# The assertion.  `machine` is `cadr` or `quux`.
-proc assert_rams_write_where_the_rtl_says {machine} {
+# The assertion.  `machine` is `cadr` or `quux`, and `revision` QUUX's.
+#
+# **REVISION 14'S TLB HAS THE SHAPE TOO, ON ITS FILL**: port A's address is
+# the walker's fill address while a fill writes and `VMA`'s index while the
+# port reads, chosen by the fill's own enable (`quux_mmu.sv`).  So in block
+# RAM its writing port must have the fill's address, `w_va`, among its
+# address pins' registers, found by the register only the fill's enable
+# reads, `w_load`.  UltraRAM (the Kria KR260) has other pins and is not
+# asked; its fills are what a walk's next lookup reads.
+proc assert_rams_write_where_the_rtl_says {machine {revision 13}} {
     # {what} {cells} {write-enable register} {write-address register}
     # Block-disk's write port registers are its walk's, which each revision
     # has in a generate block of its own, `g_walk12` or `g_walk13`: the
@@ -168,6 +176,15 @@ proc assert_rams_write_where_the_rtl_says {machine} {
     set quux_only {*processor/g_quux_pdl.pdl_reg* *g_quux_disk.disk/blk_ram_reg*}
     if {$machine eq "quux"} {
         set n 0
+        if {$revision eq "14"} {
+            set tlb_ramb [get_cells -quiet -hier -filter {REF_NAME =~ RAMB* && NAME =~ *g_rev14_mmu.mmu/tlb/*}]
+            if {[llength $tlb_ramb]} {
+                lappend quux_rules {revision 14's TLB, its fill} {*g_rev14_mmu.mmu/tlb/tlb_mem_reg*} \
+                    {*g_rev14_mmu.mmu/w_load_reg*} {*g_rev14_mmu.mmu/w_va_reg*}
+            } else {
+                puts "RAMS:         revision 14's TLB is in no block RAM here, so its fill is not asked"
+            }
+        }
         foreach {what cells we wa} $quux_rules { rams_rule $what $cells $we $wa; incr n }
         puts "RAMS: ok      QUUX: all $n RAMs whose read and write share an address"
         puts "RAMS:         chosen by the write enable were found, and write where the RTL says"

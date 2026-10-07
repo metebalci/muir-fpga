@@ -122,3 +122,53 @@ set_multicycle_path -hold  1 -from $split_every_tick -to $quux_cache_held
 # grid: 0 ns + 1 tick
 set_multicycle_path -setup 1 -from $split_md_held -to $quux_cache_held
 set_multicycle_path -hold  0 -from $split_md_held -to $quux_cache_held
+
+# **REVISION 14'S TLB** (contract G3 revision 14), an M20K read on the
+# generator cycle's first tick, a tick after the edge:
+# `rtl/plumbing/xilinx7/quux14_machine.xdc` has the argument, and this is
+# the same set in this tool's words.  Quartus keeps a RAM out of a register
+# collection, so the TLB is in no relaxed set here: every path into it and out
+# of it is the tick unless a clause below says otherwise.  Out of it, one
+# tick less than each clause gives the edge's registers: K - 1 to the next
+# edge and into the divider's operands and the cache's address, and one into
+# the every-tick registers, which the edge's registers reach in two.  Into
+# it, the address of either port stays at the tick; its words, its write
+# enables and its read enables take the edge's registers' K, a write
+# landing at the master clock edge or the cpu edge and the generator's edge
+# terms, which are at the tick, holding the enables off on the ticks
+# between; and the TLB's own word into them, a write-back's OR, K - 1.  A
+# revision 13 build has no TLB, and then no clause is written.
+set quux_tlb [get_keepers -nowarn {u_machine|processor|g_rev14_mmu.mmu|tlb|*}]
+if {[get_collection_size $quux_tlb] > 0} {
+    set quux_tlb_in [get_pins -nowarn -compatibility_mode \
+        {u_machine|processor|g_rev14_mmu.mmu|tlb|*|portadatain* u_machine|processor|g_rev14_mmu.mmu|tlb|*|portawe*
+         u_machine|processor|g_rev14_mmu.mmu|tlb|*|portare* u_machine|processor|g_rev14_mmu.mmu|tlb|*|portbdatain*
+         u_machine|processor|g_rev14_mmu.mmu|tlb|*|portbwe* u_machine|processor|g_rev14_mmu.mmu|tlb|*|portbre*}]
+    # sync: K - 1
+    set_multicycle_path -setup 3 -from $quux_tlb -to $slow
+    set_multicycle_path -hold  2 -from $quux_tlb -to $slow
+    # grid: 0 ns + 1 tick
+    set_multicycle_path -setup 1 -from $quux_tlb -to $split_every_tick
+    set_multicycle_path -hold  0 -from $quux_tlb -to $split_every_tick
+    # sync: K - 1
+    set_multicycle_path -setup 3 -from $quux_tlb -to $quux_divider
+    set_multicycle_path -hold  2 -from $quux_tlb -to $quux_divider
+    # sync: K - 1
+    set_multicycle_path -setup 3 -from $quux_tlb -to $quux_cache_held
+    set_multicycle_path -hold  2 -from $quux_tlb -to $quux_cache_held
+    # sync: K
+    set_multicycle_path -setup 4 -from $slow -through $quux_tlb_in -to $quux_tlb
+    set_multicycle_path -hold  3 -from $slow -through $quux_tlb_in -to $quux_tlb
+    # sync: K
+    set_multicycle_path -setup 4 -from $split_cstore -through $quux_tlb_in -to $quux_tlb
+    set_multicycle_path -hold  3 -from $split_cstore -through $quux_tlb_in -to $quux_tlb
+    # sync: K - 1
+    set_multicycle_path -setup 3 -from $split_latch -through $quux_tlb_in -to $quux_tlb
+    set_multicycle_path -hold  2 -from $split_latch -through $quux_tlb_in -to $quux_tlb
+    # sync: K - 2
+    set_multicycle_path -setup 2 -from $split_every_tick -through $quux_tlb_in -to $quux_tlb
+    set_multicycle_path -hold  1 -from $split_every_tick -through $quux_tlb_in -to $quux_tlb
+    # sync: K - 1
+    set_multicycle_path -setup 3 -from $quux_tlb -through $quux_tlb_in -to $quux_tlb
+    set_multicycle_path -hold  2 -from $quux_tlb -through $quux_tlb_in -to $quux_tlb
+}

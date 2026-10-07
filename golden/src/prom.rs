@@ -7,6 +7,13 @@
 //! Revision 12 and its PROM 2000 are retired, so QUUX at 32 bits is
 //! refused (contract G2).
 //!
+//! **And with `--revision 14 --mcr <file>`, revision 14's, PROM 2002**
+//! (contract G3 revision 14), out of the MCR file muir-sys hands over, read
+//! by muir's own reader at revision 14's geometry, `prom::parse_quux_mcr`,
+//! which is what `quux --prom` runs.  muir carries no PROM 2002 of its own,
+//! so the file is named; the Makefile holds it and the image to their
+//! digests (`QUUX_PROM_2002`).
+//!
 //! One 48-bit word a line, twelve hex digits, [`PROM_WORDS`] of them --- the
 //! bottom 1K of the control store, which is what `-PROMENABLE` at PCTL 1C19
 //! overlays. The words are `Insn::raw()`, which is what `rtl.rs` fetches:
@@ -39,9 +46,53 @@ fn main() {
         };
         args.drain(i..(i + 2).min(args.len()));
     }
+    let mut revision = 13;
+    while let Some(i) = args.iter().position(|a| a == "--revision") {
+        revision = match args.get(i + 1).map(String::as_str) {
+            Some("13") => 13,
+            Some("14") => 14,
+            v => {
+                eprintln!("prom: --revision is `{}`; it is 13, or 14", v.unwrap_or(""));
+                std::process::exit(2);
+            }
+        };
+        args.drain(i..(i + 2).min(args.len()));
+    }
+    let mut mcr = None;
+    while let Some(i) = args.iter().position(|a| a == "--mcr") {
+        mcr = args.get(i + 1).cloned();
+        if mcr.is_none() {
+            eprintln!("prom: --mcr wants a file");
+            std::process::exit(2);
+        }
+        args.drain(i..(i + 2).min(args.len()));
+    }
     if let Some(a) = args.first() {
-        eprintln!("prom: unknown argument `{a}`; usage: prom [--machine cadr|quux] [--word-bits 32|40]");
+        eprintln!(
+            "prom: unknown argument `{a}`; usage: prom [--machine cadr|quux] [--word-bits 32|40] \
+             [--revision 14 --mcr <file>]"
+        );
         std::process::exit(2);
+    }
+    if revision == 14 || mcr.is_some() {
+        // Revision 14's PROM 2002, out of the hand-over's file.
+        let (Which::Quux, 40, 14, Some(path)) = (which, word_bits, revision, mcr.as_ref()) else {
+            eprintln!("prom: PROM 2002 is QUUX's at revision 14: give --machine quux --word-bits 40 --revision 14 --mcr <file>");
+            std::process::exit(2);
+        };
+        let bytes = std::fs::read(path).unwrap_or_else(|e| {
+            eprintln!("prom: {path}: {e}");
+            std::process::exit(2);
+        });
+        let prom = muir::prom::parse_quux_mcr(&bytes, muir::machine::Geometry::QUUX_14).unwrap_or_else(|e| {
+            eprintln!("prom: {path}: {e}");
+            std::process::exit(2);
+        });
+        for i in 0..PROM_WORDS {
+            let w = prom.get(i).map_or(0, |insn| insn.raw());
+            println!("{w:012x}");
+        }
+        return;
     }
     let prom = match (which, word_bits) {
         (Which::Quux, 40) => which.boot_prom(),

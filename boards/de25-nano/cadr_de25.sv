@@ -207,7 +207,15 @@ module cadr_de25 #(
     // word (`rtl/machine/cadr_microcycle.sv`).  The flow's `WORD_BITS` sets
     // it, 32 unless asked, and `build/machine_param.pass` holds that it
     // arrives.  The probe takes each word's `<31:0>`.
-    parameter int unsigned WORD_BITS = 32
+    parameter int unsigned WORD_BITS = 32,
+
+    // **QUUX'S HARDWARE REVISION AT 40 BITS**: 13, or 14 (contract G3
+    // revision 14) when the build is asked for it by name (`REVISION=14`),
+    // at the same four ticks.  The CADR reads none.
+    parameter int unsigned REVISION = 13,
+    // **REVISION 14'S TLB ENTRIES** (A14.4): 4,096, in M20K by the
+    // project's `RAMSTYLE_ATTRIBUTE` (`quartus/project.tcl`).
+    parameter int unsigned TLB_ENTRIES = 4096
 ) (
     // `CLOCK0_50`, 50 MHz, on the 1.1 V bank with the switches and the LEDs.
     input  var logic       clock50_0,
@@ -439,7 +447,12 @@ module cadr_de25 #(
   logic [25:0] lc;
   logic        vmaok, jcond, nop, pcs1, pcs0, iwrited, promenable, clock_edge;
   logic        wrcyc, device, dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn;
-  logic [(WORD_BITS > 32 ? 28 : 22)-1:0] phys;
+  // The bus address: 22 bits on the CADR, 28 at revision 13, 29 at 14.
+  localparam bit PAGED14 = MACHINE == "quux" && WORD_BITS > 32 && REVISION >= 14;
+  logic [(PAGED14 ? 29 : WORD_BITS > 32 ? 28 : 22)-1:0] phys;
+  if (REVISION != 13 && !(REVISION == 14 && MACHINE == "quux")) begin : g_revision_refused
+    $error("cadr_de25: REVISION is %0d on %s; QUUX is built at revision 13 or 14", REVISION, MACHINE);
+  end
   logic [31:0] dev_wdata;
   logic [2:0]  arb_stage, ub_ssyn_by;
   logic        n_memrq, n_memack, n_memgrant, mbusy, mbusy_sync;
@@ -587,7 +600,9 @@ module cadr_de25 #(
       .MACHINE(MACHINE),
       .SYNC_K(SYNC_K),
       .SYNC_L(SYNC_L),
-      .WORD_BITS(WORD_BITS)
+      .WORD_BITS(WORD_BITS),
+      .REVISION(REVISION),
+      .TLB_ENTRIES(TLB_ENTRIES)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       .sintr_o(sintr),
