@@ -25,6 +25,32 @@ reports none.
 
 ## From a clean tree
 
+These fits were built from `c3b8fd2`, the release commit for Systems 1003
+and 2001 after revision 14's first fits: revision 13's PDL buffer infers on
+Quartus again, with muir pinned at `203b1b4`. QUUX is revision 13, at five
+ticks on the Arty Z7-20 and four on the DE25-Nano and the Kria KR260. The
+Kria KR260's QUUX is 1920 by 1080 and the other boards' 1280 by 1024. Every
+stamp reads `c3b8fd20`, the tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | CADR | +0.275 ns | +0.015 ns | 15,187 of 53,200 LUTs, 28.55% | 46 of 140 BRAM tiles | 5,639 of 13,300 | `c3b8fd2` | clean | 2026-10-07 |
+| Arty Z7-20 | QUUX revision 13, K = 5 | +0.022 ns | +0.034 ns | 22,832 of 53,200 LUTs, 42.92% | 84 of 140 BRAM tiles | 7,207 of 13,300 | `c3b8fd2` | clean | 2026-10-07 |
+| Cora Z7-07S | CADR | +0.280 ns | +0.010 ns | 14,033 of 14,400 LUTs, 97.45% | 43 of 50 BRAM tiles | 4,361 of 4,400 | `c3b8fd2` | clean | 2026-10-07 |
+| Kria KR260 | CADR | +1.987 ns | +0.015 ns | 15,309 of 117,120 LUTs, 13.07% | 41 of 144 BRAM tiles | 3,247 of 14,640 CLBs | `c3b8fd2` | clean | 2026-10-07 |
+| Kria KR260 | QUUX revision 13, K = 4 | +0.460 ns | +0.015 ns | 22,996 of 117,120 LUTs, 19.63% | 76 of 144 BRAM tiles | 4,345 of 14,640 CLBs | `c3b8fd2` | clean | 2026-10-07 |
+| DE25-Nano | CADR | +2.353 ns | 0.000 ns | 16,504 of 46,800 ALMs, 35% | 135 of 358 M20K | --- | `c3b8fd2` | clean | 2026-10-08 |
+| DE25-Nano | QUUX revision 13 | +1.520 ns | 0.000 ns | 29,969 of 46,800 ALMs, 64% | 205 of 358 M20K | --- | `c3b8fd2` | clean | 2026-10-08 |
+
+Each passed its RAM enable check: the Arty Z7-20's over 98 and 131 ports,
+the Cora Z7-07S's over 92, and the Kria KR260's over 88 and 119. The
+DE25-Nano's synthesis read back each machine, word and PROM image by name.
+Against the fits from `94a7771` below, every fit still meets timing. The
+Kria KR260's QUUX lost 1.013 ns, the Arty Z7-20's 0.161 ns and the
+DE25-Nano's 0.093 ns. Of the CADR's, the Cora Z7-07S's lost 0.415 ns and
+the DE25-Nano's 0.027 ns, and the Kria KR260's gained 0.581 ns and the Arty
+Z7-20's 0.066 ns.
+
 These fits are QUUX revision 14's, built from `c24545e`: a processor's write
 is no longer acknowledged while a side write waits for the write buffer,
 with muir pinned at `203b1b4`. Revision 14 is at four ticks on all three
