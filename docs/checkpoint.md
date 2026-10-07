@@ -487,6 +487,25 @@ come from the same generator (`--resume-and-save`). Mutants 9 to 31 are
 caught there. Revision 12's file, version 49, is retired with that
 revision.
 
+## A revision 14 checkpoint
+
+QUUX revision 14's checkpoint is version 50 too, and the revision is in the
+geometry: the map has no level 1, so its level-1 bits are 0 (contract G3
+revision 14, A14.14). After everything revision 13 writes come `LC<40:32>`,
+the memory system's words 220 to 224, and the redirect's copies of the PDL
+buffer's base and head; at the end, `LC<33:32>`. The TLB is not kept, so a
+resumed machine starts with it swept. Main memory is revision 13's, packed
+where it stands, with the same room on each board.
+
+The program takes revision 14 from the register table's entry 21, as it
+takes 13, and the resume line names `MUIR_QUUX_REVISION=14`. The revisions
+it writes are 12, 13 and 14 (`bind_revision_known`), and it refuses any
+other by name. `golden/src/quux_checkpoint.rs --revision 14` builds the
+same machine through muir's own calls, and `build/checkpoint.quux.pass`
+holds the program's file to it byte for byte. Mutants 41 to 46 are caught
+there; 47, `LC<33:32>` written 0, and 48, revision 14 refused as unknown,
+are caught by the package's own check.
+
 ## `--chaos-address` is octal, as muir's is
 
 muir's flag "wants one address in octal or subnet:host", and

@@ -166,8 +166,10 @@ proc assert_rams_enabled_only_while_addressed {tick bit} {
         set_clock_groups -asynchronous -group $mclk -group $others
     }
 
-    # Revision 14's TLB, block RAM or UltraRAM, by name.
-    if {[llength [info procs assert_tlb_enabled_at_the_edge]]} {
+    # Revision 14's TLB, block RAM or UltraRAM, by name, on a build that has
+    # one: the CADR and revision 13 have none, and `tlb_check.tcl`, which the
+    # flows source for every build, would otherwise find no pin and refuse.
+    if {[llength [info procs assert_tlb_enabled_at_the_edge]] && [llength [tlb_cells]]} {
         assert_tlb_enabled_at_the_edge $bit
     }
 

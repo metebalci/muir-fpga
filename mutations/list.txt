@@ -27081,6 +27081,18 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
   assign eph = ephemeral && is_pointer(md_out) && md_out[31:28] == 4'b1100;
 @end
 
+@mutation rev14-a-write-acknowledged-over-a-waiting-side-write
+@check quux14_writeback_quux_lat
+@file rtl/machine/quux_mem_port.sv
+@note The write buffer's readiness without the side seam's waiting write: a
+@note processor's write acknowledged on the tick a side write takes the
+@note emptied buffer, and lost, with main memory slower than muir's count.
+@old
+  assign ready = !mem_cycle || !write || (!wb_valid && !(PAGED && s_wpend));
+@new
+  assign ready = !mem_cycle || !write || (!wb_valid && !(PAGED && s_wpend && wb_valid));
+@end
+
 @mutation rev14-a-read-marks-the-page-modified
 @check quux14_wbhold_quux
 @file rtl/machine/quux_mmu.sv

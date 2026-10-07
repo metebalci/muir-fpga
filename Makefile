@@ -302,6 +302,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux_fd_face.pass \
        $(BUILD)/wall_time.pass \
        $(BUILD)/checkpoint.quux.pass \
+       $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%.quux.lat.pass) \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
@@ -1353,6 +1354,27 @@ $(BUILD)/quux13_%_prom.hex: $(QUUX13_GOLDEN) | $(BUILD)
 $(QUUX13_PORTED_ALL:%=$(BUILD)/quux13_%_prom.hex): $(BUILD)/quux13_%_prom.hex: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine quux --revision 13 --prom > $@
 # Revision 14's programs (`QUUX14_PROGRAMS`).
+# **AND AT THE BOARDS' MAIN-MEMORY LATENCY**: each revision 14 program on the
+# machine at K = 4 again, its main memory answering 33 to 228 ticks after
+# each request, drawn from each of `QUUX14_LAT_SEEDS` (`tb/cadr_machine_tb.cpp`,
+# `LAT_HI`).  The harness's own memory is always faster than muir's count; the
+# boards' is often slower, and a processor's write was lost there, where a
+# side write took the write buffer between the acknowledgment's decision and
+# the word's entry (`rtl/machine/quux_mem_port.sv`, `ready`).  Lengths and
+# acknowledgment instants are counted, everything else compared, and every
+# write a cycle made must reach main memory.
+QUUX14_LAT_SEEDS := 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16
+$(BUILD)/quux14_%.quux.lat.pass: $(BUILD)/obj_quux14_%_quux_k4/Vcadr_machine $(BUILD)/quux14_%.quux.k4.golden \
+                                 $(BUILD)/quux14_%_prom.hex $(BUILD)/sync_prom.hex
+	@set -e; for s in $(QUUX14_LAT_SEEDS); do \
+	   LAT_LO=33 LAT_HI=228 LAT_SEED=$$s $(BUILD)/obj_quux14_$*_quux_k4/Vcadr_machine \
+	       $(BUILD)/quux14_$*.quux.k4.golden > $(BUILD)/quux14_$*.quux.lat.log 2>&1 \
+	     || { echo "quux14_$*: main memory at 33 to 228 ticks, seed $$s: FAILED"; \
+	          grep -v '^ ' $(BUILD)/quux14_$*.quux.lat.log | tail -n 20; exit 1; }; \
+	 done; \
+	 echo "quux14_$*: main memory at 33 to 228 ticks, $(words $(QUUX14_LAT_SEEDS)) seeds: $$(grep -o '[0-9]* microcycle lengths and [0-9]* acknowledgments' $(BUILD)/quux14_$*.quux.lat.log) at the last"
+	@touch $@
+
 .PRECIOUS: $(BUILD)/quux14_%_prom.hex
 $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux14 -- --program $* --prom > $@
@@ -4631,7 +4653,9 @@ CHECKPOINT_QUUX13HD_MUTANTS := 38 39
 # revision 14, `quux_checkpoint --revision 14`, with no map levels and the
 # memory system's words and the redirect's copies; mutants 41 to 46 caught on
 # its legs, and 47, LC's `<33:32>` written 0, by the package's own check, as
-# muir's file for a fresh engine holds those bits at 0.
+# muir's file for a fresh engine holds those bits at 0.  And 48, revision 14's
+# bitstream refused as a revision the board's program does not know, by the
+# package's own check of the revisions it writes.
 CHECKPOINT_QUUX14_MUTANTS := 41 42 43 44 45 46
 
 $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoint.rs $(GOLDEN_AXIS) golden/src/trace.rs \
@@ -4742,7 +4766,13 @@ $(BUILD)/checkpoint.quux.pass: $(BUILD)/checkpoint.pass golden/src/quux_checkpoi
 	 fi; \
 	 grep -q "^revision 14's LC<33:32>, as the engine's last byte is 0x0, the reference says 0x2" $$W/mut-47.out \
 	   || { echo "checkpoint.quux: mutant 47 failed, and not on LC<33:32>: BROKEN"; cat $$W/mut-47.out; exit 1; }; \
-	 echo "checkpoint.quux: mutant 47 caught by the package's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-47.out)"
+	 echo "checkpoint.quux: mutant 47 caught by the package's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-47.out)"; \
+	 if $$W/checkpoint_test-48 $$W $(Q8_DISKS) > $$W/mut-48.out 2>&1; then \
+	   echo "checkpoint.quux: mutant 48 SURVIVED the package's check of the revisions"; exit 1; \
+	 fi; \
+	 grep -q "^checkpoint: FAIL: revision 14 is refused, and it is one this program writes" $$W/mut-48.out \
+	   || { echo "checkpoint.quux: mutant 48 failed, and not on revision 14: BROKEN"; cat $$W/mut-48.out; exit 1; }; \
+	 echo "checkpoint.quux: mutant 48 caught by the package's check --- $$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-48.out)"
 	@touch $@
 
 # ------------------------------------ the I/O board's two Linux programs

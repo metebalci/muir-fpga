@@ -788,6 +788,31 @@ int main(int argc, char **argv) {
   bool q_answered = false;
   long q_fills = 0, q_writes = 0;
   uint64_t q_seed = 0x5155u;
+  // **MAIN MEMORY AT THE BOARDS' LATENCY** (`LAT_HI`, `LAT_LO`, `LAT_SEED`):
+  // each QUUX main-memory request answered 33 to 228 ticks after it is made,
+  // drawn per request from the seed, where the harness's own answers take 1
+  // to 5 ticks, or 14 to 18 for a lone write --- always faster than muir's
+  // count, so the port never waited on the memory itself.  The boards' DDR
+  // answers in 33 to 228 ticks (`MemoryTiming::DE25_NANO`'s measurement),
+  // often slower than the count.  muir does not model that wait, so a
+  // microcycle's length and -MEMACK's instant then differ from the trace and
+  // are counted rather than failed; everything else is compared as ever,
+  // and every write a cycle made must reach main memory.
+  // `build/quux14_*.quux.lat.pass` runs each revision 14 program so.
+  const long lat_lo = std::getenv("LAT_LO") ? std::atol(std::getenv("LAT_LO")) : 33;
+  const long lat_hi = std::getenv("LAT_HI") ? std::atol(std::getenv("LAT_HI")) : 0;
+  if (lat_hi > 0 && (lat_lo < 1 || lat_hi < lat_lo)) {
+    std::fprintf(stderr, "FAIL: LAT_LO %ld and LAT_HI %ld are not a range of ticks\n", lat_lo, lat_hi);
+    return 2;
+  }
+  if (std::getenv("LAT_SEED")) q_seed = std::strtoull(std::getenv("LAT_SEED"), nullptr, 0);
+  long lat_longest = 0, lat_lengths = 0, lat_late_fills = 0;
+  // The bus cycles the processor started, the latest few, and the first row
+  // that disagreed with muir: said at the end of a run under `LAT_HI`.
+  struct LatCycle { size_t row; uint32_t phys; bool device, write, nxm; };
+  std::deque<LatCycle> lat_cycles, lat_before_bad;
+  long lat_first_bad = -1;
+  uint64_t lat_bad_fabric_ns = 0, lat_bad_muir_ns = 0;
   auto q_rng = [&]() {
     q_seed = q_seed * 6364136223846793005ull + 1442695040888963407ull;
     return static_cast<uint32_t>(q_seed >> 33);
@@ -801,7 +826,7 @@ int main(int argc, char **argv) {
   // And as long as the trace's own time with the same margin again, which
   // revision 14's sweep needs: a microcycle held 8,192 ticks for it.
   const long kMaxTicks = std::max(static_cast<long>(total_rows) * 96 + 1024,
-                                  static_cast<long>(trace_end_ns / kTickNs) * 2 + 1024);
+                                  static_cast<long>(trace_end_ns / kTickNs) * 2 + 1024) * (lat_hi > 0 ? 40 : 1);
 
   // The file device's host: the next completion to play, what STATE and the
   // command producer shown to the host last read, and when the producer
@@ -1029,7 +1054,11 @@ int main(int argc, char **argv) {
       // register a few microcycles after its last store, which is what the
       // file device's host must not be shown a command before.
       if (q_due < 0)
-        q_due = t + ((dut->mem_write && !dut->mem_line) ? 14 : 1) + static_cast<long>(q_rng() % 5);
+      {
+        q_due = lat_hi > 0 ? t + lat_lo + static_cast<long>(q_rng() % static_cast<uint32_t>(lat_hi - lat_lo + 1))
+                           : t + ((dut->mem_write && !dut->mem_line) ? 14 : 1) + static_cast<long>(q_rng() % 5);
+        lat_longest = std::max(lat_longest, q_due - t);
+      }
       if (t >= q_due) {
         // The word's physical address, main memory's or the frame buffer's.
         const uint32_t w = q_in_fb ? kFb + ((dut->mem_addr - kFbBase) >> 2)
@@ -1068,6 +1097,14 @@ int main(int argc, char **argv) {
                                    (a != want || !bus_outstanding || dut->wrcyc);
             if (side_fill) {
               ++side_fills;
+            } else if (lat_hi > 0 && !bus_outstanding && !dut->mem_write && a == want && dut->mem_beats == beats &&
+                       !dut->wrcyc) {
+              // Under `LAT_HI`: the line of the cycle the processor is still
+              // waiting on (its own `phys`), answered after muir's instant
+              // for the acknowledgment, which is where this testbench ends
+              // `bus_outstanding`.  Its words are this memory's, which every
+              // checked write built, and reach MD, compared every microcycle.
+              ++lat_late_fills;
             } else if (dut->mem_write || a != want || dut->mem_beats != beats || !bus_outstanding || dut->wrcyc) {
               std::fprintf(stderr, "microcycle %zu: a line fill of %d beats at %08x for word %o%s, want %d at "
                            "%08x\n", k, dut->mem_beats, a, ph, dut->wrcyc ? ", a write" : "", beats, want);
@@ -1250,7 +1287,7 @@ int main(int argc, char **argv) {
       acked_armed = false;
       const long slip = static_cast<long>(ack_for_cur) - ns_now;
       ack_error[slip]++;
-      if (slip != 0 && ack_error[slip] <= 3)
+      if (slip != 0 && ack_error[slip] <= 3 && lat_hi == 0)
         std::fprintf(stderr, "microcycle %zu: -MEMACK %+ld ns from muir's, the cycle started at row %ld\n",
                      k, slip, armed_row);
       // The yardstick itself: a cycle the disk controller answered, whose
@@ -1320,6 +1357,10 @@ int main(int argc, char **argv) {
     auto arm_bus = [&](const Row &r, uint64_t ns_at_t, bool at_row_edge) {
       ++grants_checked;
       bus_outstanding = true;
+      if (lat_hi > 0) {
+        lat_cycles.push_back({k, dut->phys, dut->device != 0, dut->wrcyc != 0, dut->nxm != 0});
+        if (lat_cycles.size() > 64) lat_cycles.pop_front();
+      }
       // **THE WORD A WRITE CARRIES IS `MD` AS IT STANDS AT THE GRANT.**  A
       // cycle granted at the edge that ends row `k` takes the `MD` that edge
       // has just loaded, so an `MD` loaded by row `k` itself --- the
@@ -1470,6 +1511,8 @@ int main(int argc, char **argv) {
             if (!any_slip || slip > worst_slip) worst_slip = slip;
             if (!any_slip || slip < best_slip) best_slip = slip;
             any_slip = true;
+          } else if (lat_hi > 0) {
+            ++lat_lengths;
           } else {
             bad += Fail(r, "the microcycle in ns", got, want);
           }
@@ -1579,6 +1622,12 @@ int main(int argc, char **argv) {
 
       last_edge = t;
       prev_ns = r.v[kNs];
+      if (lat_hi > 0 && bad > 0 && lat_first_bad < 0) {
+        lat_first_bad = static_cast<long>(k);
+        lat_before_bad = lat_cycles;
+        lat_bad_fabric_ns = static_cast<uint64_t>(t) * kTickNs;
+        lat_bad_muir_ns = cur.v[kNs];
+      }
       ++k;
       if (k < total_rows) {
         if (!read_next(cur)) {
@@ -1661,7 +1710,22 @@ int main(int argc, char **argv) {
     std::printf("             %+5ld ns  %ld cycles\n", e.first, e.second);
     if (e.first != kInstrumentSlipNs) ack_slipped += e.second;
   }
-  if (ack_slipped) {
+  if (lat_hi > 0 && lat_first_bad >= 0) {
+    std::printf("    the first row that disagreed: %ld, at %" PRIu64 " ns of the fabric's time and %" PRIu64
+                " of muir's; the bus cycles started before it:\n", lat_first_bad, lat_bad_fabric_ns, lat_bad_muir_ns);
+    for (const auto &c : lat_before_bad)
+      if (static_cast<long>(c.row) + 40 >= lat_first_bad)
+        std::printf("      row %zu: %s %s at %o%s\n", c.row, c.write ? "write" : "read",
+                    c.device ? "of a device" : c.nxm ? "of nothing (NXM)" : "of main memory", c.phys, "");
+  }
+  if (lat_hi > 0) {
+    std::printf("    revision 13's line fills answered after muir's acknowledgment of their own cycle: %ld\n",
+                lat_late_fills);
+    std::printf("    main memory at %ld to %ld ticks (seed %s, the longest drawn %ld): %ld microcycle lengths "
+                "and %ld acknowledgments differ from muir's, as a wait muir does not model makes them\n",
+                lat_lo, lat_hi, std::getenv("LAT_SEED") ? std::getenv("LAT_SEED") : "the harness's", lat_longest,
+                lat_lengths, ack_slipped);
+  } else if (ack_slipped) {
     std::fprintf(stderr, "FAIL: %ld acknowledgments are not at muir's instant\n", ack_slipped);
     ++bad;
   }

@@ -706,6 +706,17 @@ holds the module to it tick for tick.
   carry the arithmetic: when main memory is next free, and when the write
   buffer is. In simulation a memory faster than the figures makes every
   acknowledgment muir's own. On a board QUUX is never faster than muir.
+- **Simulation runs the slower memory too.** `build/quux14_*.quux.lat.pass`
+  answers each of revision 14's programs' main-memory requests 33 to 228
+  ticks after they are made, drawn from sixteen seeds (`tb/cadr_machine_tb.cpp`,
+  `LAT_HI`). There the microcycle lengths and the acknowledgment instants
+  differ from muir's and are counted; everything else is compared, and every
+  write a cycle makes must reach main memory. With slow memory a revision 14
+  write-back's table word, waiting for a full write buffer, took it on the
+  tick it emptied: between the tick a processor's write was acknowledged and
+  the tick its word entered the buffer. The processor's word was lost. A
+  processor's write is now not acknowledged while a side write waits
+  (`ready` in `quux_mem_port.sv`).
 - A cycle of the memory bus is released on its acknowledgment: `MBUSY` and
   `READ IN PROGRESS` fall with it, where a register's cycle and an empty
   address keep the 30 ns and 140 ns delays.

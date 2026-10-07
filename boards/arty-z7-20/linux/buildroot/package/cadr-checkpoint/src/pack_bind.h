@@ -194,6 +194,15 @@ void bind_halt_unmark(const char *path);
 // nothing this program says about it counts them.
 void bind_memory_words(int quux, unsigned units, char *out, size_t n);
 
+// **THE REVISIONS OF QUUX A CHECKPOINT IS WRITTEN OF**, the register table's
+// entry 21: 12, and 13 and 14, whose words are 40 bits in packed main memory
+// (contract G2 appendix A1.13; revision 14 has revision 13's main memory, its
+// checkpoint version 50 with the revision in the geometry, contract G3
+// revision 14 A14.14).  `bind_revision_known` is 1 for those three, and
+// `bind_revision_packed` 1 for the two with packed storage.
+int bind_revision_known(unsigned revision);
+int bind_revision_packed(unsigned revision);
+
 // **THE MAIN MEMORY THE COMMAND LINE ASKED FOR**, held to the machine named:
 // the CADR's `--boards N`, 1 to 60, and QUUX's `--main-memory-size <n>MW`,
 // muir's flag and form, 1MW to `most_units`.  Each machine's flag is refused

@@ -516,18 +516,19 @@ int main(int argc, char **argv)
 		sync_k = k;
 	}
 	// **AND WHICH REVISION OF QUUX**, entry 21's <15:0>: revision 13's
-	// words, sizes and main memory are its own (contract G2 appendix A1.13).
+	// words, sizes and main memory are its own (contract G2 appendix A1.13),
+	// and revision 14's are revision 13's (A14.14): `bind_revision_known`.
 	int revision = 0;
 	if (quux) {
 		revision = ro_quux_revision(&r);
-		if (revision != 12 && revision != 13) {
+		if (revision < 0 || !bind_revision_known((unsigned)revision)) {
 			say("the readout's register table entry %u names no revision of QUUX "
 			    "this program knows", IMG_RG_QUUX_ID);
 			return 1;
 		}
-		if (revision == 13)
-			say("the bitstream is QUUX revision 13: 40-bit words and packed "
-			    "main memory, checkpoint version %u", CHK_VERSION_40);
+		if (bind_revision_packed((unsigned)revision))
+			say("the bitstream is QUUX revision %d: 40-bit words and packed "
+			    "main memory, checkpoint version %u", revision, CHK_VERSION_40);
 	}
 	// **HOW MUCH MAIN MEMORY, WHICH IS THE MACHINE'S AND NOT A GUESS.**  A
 	// checkpoint is of all of main memory, and muir refuses to resume one
@@ -555,7 +556,8 @@ int main(int argc, char **argv)
 		boards = has;
 	}
 	bind_memory_words(quux, boards, memory, sizeof memory);
-	if (revision != 13 && boards > MAX_BOARDS) {
+	const int packed = quux && bind_revision_packed((unsigned)revision);
+	if (!packed && boards > MAX_BOARDS) {
 		char most[32];
 		ro_main_amount(MAX_BOARDS, most, sizeof most);
 		if (quux)
@@ -564,9 +566,9 @@ int main(int argc, char **argv)
 			say("the machine has %s: the backplane holds 1 to %u", memory, MAX_BOARDS);
 		return 2;
 	}
-	if (revision == 13 && boards > MAX_BOARDS_13) {
-		say("the machine has %s: revision 13's room on this board holds 1MW to %uMW",
-		    memory, MAX_BOARDS_13 / RO_MW_UNITS);
+	if (packed && boards > MAX_BOARDS_13) {
+		say("the machine has %s: revision %d's room on this board holds 1MW to %uMW",
+		    memory, revision, MAX_BOARDS_13 / RO_MW_UNITS);
 		return 2;
 	}
 
@@ -861,8 +863,9 @@ int main(int argc, char **argv)
 	bind_resume_command(&bind, out, cmd, sizeof cmd);
 	say("  to open it: %s", cmd);
 	if (img.rev13)
-		say("  (a revision 13 checkpoint, version %u: muir's quux runs it under "
-		    "MUIR_QUUX_REVISION=13, which the line names)", CHK_VERSION_40);
+		say("  (a revision %d checkpoint, version %u: muir's quux runs it under "
+		    "MUIR_QUUX_REVISION=%d, which the line names)", revision, CHK_VERSION_40,
+		    revision);
 	// **SAID EVERY TIME, BECAUSE IT IS THE ONE THING NOTHING CHECKS.**
 	say("BEFORE RESUMING, check the packs against the digests above ---");
 	say("  cadr-checkpoint --verify %s", sidecar);

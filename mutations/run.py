@@ -2696,6 +2696,12 @@ QUUX_TIMED_KEYS = ["dispatch_write_order13_quux"] + \
     ["rdw_poison_quux13_quux", "rdw_poison_quux13_mem_quux", "rdw_poison_quux13_pf_quux"]
 for _key in QUUX_TIMED_KEYS:
     CHECKS[_key] = _timed(_key, 4, 0)
+# Revision 14's programs at the boards' main-memory latency (the Makefile's
+# `quux14_%.quux.lat.pass`, its `QUUX14_LAT_SEEDS`): the K = 4 machine and
+# trace, sixteen seeds.
+QUUX14_LAT_SEEDS = tuple(range(1, 17))
+for _p in QUUX14_PROGRAMS:
+    CHECKS["quux14_%s_quux_lat" % _p] = dict(CHECKS["quux14_%s_quux" % _p], lat_seeds=QUUX14_LAT_SEEDS)
 for _key, (_k, _l) in (("phase_gen_quux", (4, 1)),):
     CHECKS[_key] = {
         "sources": ["rtl/machine/quux_phase_gen.sv"],
@@ -3171,6 +3177,16 @@ def build_and_run(args, work, check, build_fails=False):
     if spec.get("gprom_path"):
         cmd.append(os.path.join(work, spec["gprom_path"]))
         cmd.append(os.path.join(args.goldens, "boot_prom.hex"))
+    # **AND AT THE BOARDS' MAIN-MEMORY LATENCY**, the Makefile's
+    # `quux14_%.quux.lat.pass`: the same binary once a seed, its main memory
+    # answering 33 to 228 ticks after each request.  Caught at the first
+    # seed that fails.
+    if spec.get("lat_seeds"):
+        for seed in spec["lat_seeds"]:
+            rc, out = run(cmd, work, {"LAT_LO": "33", "LAT_HI": "228", "LAT_SEED": str(seed)})
+            if rc != 0:
+                return CAUGHT, "seed %d: %s" % (seed, first_problem(out))
+        return SURVIVED, out.strip().split("\n")[0]
     rc, out = run(cmd, work)
     if rc != 0:
         return CAUGHT, first_problem(out)

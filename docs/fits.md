@@ -25,6 +25,36 @@ reports none.
 
 ## From a clean tree
 
+These fits are QUUX revision 14's, built from `6f119c1`: the TLB read at
+the edge, the side seam registered, the wall clocks at any tick, with muir
+pinned at `203b1b4`. Revision 14 is at four ticks on all three boards, with
+a 15 ns tick on the Arty Z7-20 and a 10 ns tick on the DE25-Nano and the
+Kria KR260. The Kria KR260's QUUX is 1920 by 1080 and the other boards'
+1280 by 1024. Every stamp reads `6f119c10`, the tree clean.
+
+| Board | Machine | Setup slack | Hold slack | Logic | Block memory | Slices | Commit | Tree | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| Arty Z7-20 | QUUX revision 14, K = 4, 15 ns | +0.655 ns | +0.027 ns | 19,987 of 53,200 LUTs, 37.57% | 89 of 140 BRAM tiles | 6,534 of 13,300 | `6f119c1` | clean | 2026-10-07 |
+| Kria KR260 | QUUX revision 14, K = 4 | +1.726 ns | +0.012 ns | 20,704 of 117,120 LUTs, 17.68% | 76 of 144 BRAM tiles, 1 of 64 URAM | 4,006 of 14,640 CLBs | `6f119c1` | clean | 2026-10-07 |
+| DE25-Nano | QUUX revision 14, K = 4 | +1.275 ns | +0.007 ns | 19,199 of 46,800 ALMs, 41% | 215 of 358 M20K | --- | `6f119c1` | clean | 2026-10-07 |
+
+The TLB is block RAM on the Arty Z7-20, one UltraRAM on the Kria KR260 and
+one true dual-port M20K memory on the DE25-Nano, each as its flow asks.
+Each Zynq fit passed its RAM enable check, the TLB's enables at the
+machine's edges among them: the Arty Z7-20's over 131 ports, the Kria
+KR260's over 101. The DE25-Nano's synthesis read back the machine, the
+word, the revision and the PROM image by name, and its timing analysis
+found the side seam's one-tick clause on 14 nets.
+
+**THESE BITSTREAMS LOSE A WRITE.** Revision 14 at `6f119c1` drops a
+processor's write when a side write takes the write buffer between the
+write's acknowledgment and its word's entry, which needs main memory slower
+than muir's count, as the boards' is. The DE25-Nano read special
+variables unbound in five trials of five, and the Kria KR260's high band
+halted in a full garbage collection in four runs of six. Fits with the fix,
+from the working tree, pass both: the DE25-Nano at 10 ns six trials of six,
+the Kria KR260 six runs of six. `docs/timing.md` has the mechanism.
+
 These fits were built from `94a7771`, the release commit for Systems 1003
 and 2001 with a key's release sent to the position its press went to, with
 muir pinned at `b00f8f7`. QUUX is revision 13 only: revision 12 is retired.

@@ -1590,6 +1590,8 @@ const char *chk_rtl_mutation(void)
 	return "revision 14's map levels read from the window, which has none";
 #elif CHK_MUTATE == 47
 	return "revision 14's LC<33:32> written 0";
+#elif CHK_MUTATE == 48
+	return "revision 14's bitstream refused as a revision this program does not know";
 #elif CHK_MUTATE == 39
 	return "the video controller's buffer sized at 1280x1024 whatever the bitstream says";
 #elif CHK_MUTATE == 40

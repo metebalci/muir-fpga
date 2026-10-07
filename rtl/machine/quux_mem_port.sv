@@ -538,8 +538,21 @@ module quux_mem_port
 
   // A write enters the buffer at its acknowledgment, when the one before it
   // has really gone: the count alone is muir's, the flag is the board's.
+  //
+  // **AND NOT WHILE REVISION 14'S SIDE SEAM HAS A WRITE WAITING FOR IT**
+  // (`s_wpend`, below).  The acknowledgment is decided a tick before the
+  // word enters the buffer (`mack_q`, then `acked`), and a side write waiting
+  // for a full buffer takes it on the tick the buffer empties.  Decided on
+  // that tick from `wb_valid` alone, the processor's write then entered a
+  // buffer the side write had just filled, the memory controller marked the
+  // side write sent, and the processor's word was never written to main
+  // memory.  Only main memory slower than muir's count lets the buffer still
+  // be full when a write is acknowledged, which the boards' DDR is and the
+  // golden harness's memory was not; `build/quux14_*.quux.lat.pass` answers
+  // at the boards' spread.
   logic ready;
-  assign ready = !mem_cycle || !write || !wb_valid;
+  logic s_wpend;
+  assign ready = !mem_cycle || !write || (!wb_valid && !(PAGED && s_wpend));
 
   // ------------------------------------------------------ the prefetch
   //
@@ -693,7 +706,6 @@ module quux_mem_port
   assign c_s_fill   = PAGED && ((c_fill_raw && s_fill_owed) || s_vfill_q);
   assign c_snoop = through && mem_done && u_write && u_main;
   assign snoop_phys = u_phys;
-  logic s_wpend;
   assign drained = !wb_valid && !fill_owed && !s_fill_owed && !s_vfill_q && !s_wpend
                 && (mstate == M_IDLE) && !mem_done;
 
@@ -1130,6 +1142,14 @@ module quux_mem_port
   end
 
 `ifdef CADR_GAP_MONITOR
+  // **THE WRITE BUFFER TAKES ONE WORD A TICK**: a processor's write entering
+  // it at its acknowledgment and a side write entering it on the same tick
+  // would leave one of them unwritten.  `ready` keeps the acknowledgment off
+  // a waiting side write; a side write the walk makes on the very tick the
+  // acknowledgment is decided is held here, and has not been seen.
+  always_ff @(posedge clk)
+    if (!rst && PAGED && s_wpend && !wb_valid && state == GRANTED && acked && mem_cycle && write)
+      $fatal(1, "quux_mem_port: a side write and the processor's write enter the write buffer on one tick");
   // The side read's fill time and place, registered a tick early, are its
   // address's in every tick that answers it.
   always_ff @(posedge clk)
