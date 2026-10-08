@@ -798,7 +798,9 @@ int main(int argc, char **argv) {
   // microcycle's length and -MEMACK's instant then differ from the trace and
   // are counted rather than failed; everything else is compared as ever,
   // and every write a cycle made must reach main memory.
-  // `build/quux14_*.quux.lat.pass` runs each revision 14 program so.
+  // `build/quux14_*.quux.lat.pass` runs each revision 14 program so, and
+  // `build/machine.lat.pass` and `build/quux_*.lat.pass` the CADR's goldens
+  // (`c_due` below).
   const long lat_lo = std::getenv("LAT_LO") ? std::atol(std::getenv("LAT_LO")) : 33;
   const long lat_hi = std::getenv("LAT_HI") ? std::atol(std::getenv("LAT_HI")) : 0;
   if (lat_hi > 0 && (lat_lo < 1 || lat_hi < lat_lo)) {
@@ -817,6 +819,22 @@ int main(int argc, char **argv) {
     q_seed = q_seed * 6364136223846793005ull + 1442695040888963407ull;
     return static_cast<uint32_t>(q_seed >> 33);
   };
+  // The latencies drawn under `LAT_HI`, on either machine, so that the
+  // report says the range was really sampled and not one value of it.
+  long lat_draws = 0;
+  std::set<long> lat_drawn;
+  // **AND THE CADR'S MAIN MEMORY AT THE SAME LATENCY.**  The CADR's bridge
+  // (`rtl/plumbing/cadr_xbus_ddr.sv`) is answered at muir's instant
+  // otherwise, with the word on `mem_rdata` for the whole of the read's
+  // flight, so a bridge that took the word before `mem_done` read the right
+  // one.  Under `LAT_HI` each of its requests is answered `LAT_LO` to
+  // `LAT_HI` ticks after `mem_req` rises, drawn from the same generator, and
+  // `mem_rdata` carries the complement of the word until the tick
+  // `mem_done` stands.  The word is the trace's for the row the request
+  // rises in, which every row of the read's flight carries (`rdata_for`).
+  long c_due = -1;
+  uint32_t c_word = 0;
+  long c_requests = 0;
   long early_grants = 0;
   size_t unanswerable = 0;
   std::set<uint64_t> a_values, m_values, ob_values;
@@ -1058,6 +1076,10 @@ int main(int argc, char **argv) {
         q_due = lat_hi > 0 ? t + lat_lo + static_cast<long>(q_rng() % static_cast<uint32_t>(lat_hi - lat_lo + 1))
                            : t + ((dut->mem_write && !dut->mem_line) ? 14 : 1) + static_cast<long>(q_rng() % 5);
         lat_longest = std::max(lat_longest, q_due - t);
+        if (lat_hi > 0) {
+          ++lat_draws;
+          lat_drawn.insert(q_due - t);
+        }
       }
       if (t >= q_due) {
         // The word's physical address, main memory's or the frame buffer's.
@@ -1241,7 +1263,29 @@ int main(int argc, char **argv) {
     if (bus_outstanding && dut->nxm) was_nxm = true;
     const long answer_tick =
         ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
-    if (dut->mem_req && !q_main && bus_outstanding && t >= answer_tick) dut->mem_done = 1;
+    if (lat_hi > 0 && !quux_machine) {
+      // The CADR's main memory at the boards' latency (see `c_due`).
+      if (dut->mem_req && !q_main && bus_outstanding) {
+        if (c_due < 0) {
+          c_due = t + lat_lo + static_cast<long>(q_rng() % static_cast<uint32_t>(lat_hi - lat_lo + 1));
+          c_word = static_cast<uint32_t>(rdata_for[k < total_rows ? k : 0]);
+          lat_longest = std::max(lat_longest, c_due - t);
+          ++lat_draws;
+          ++c_requests;
+          lat_drawn.insert(c_due - t);
+        }
+        if (t >= c_due) {
+          dut->mem_done = 1;
+          dut->mem_rdata = c_word;
+        } else {
+          dut->mem_rdata = ~c_word;
+        }
+      } else if (!dut->mem_req) {
+        c_due = -1;
+      }
+    } else if (dut->mem_req && !q_main && bus_outstanding && t >= answer_tick) {
+      dut->mem_done = 1;
+    }
     // **THE XBUS DEVICES WERE ANSWERED FROM THE TRACE HERE, AND THAT LINE IS
     // GONE.**  It raised `device_ack` whenever the decode said the cycle was
     // a device's, at the instant muir's own responder answered, with
@@ -1312,9 +1356,12 @@ int main(int argc, char **argv) {
           ++dev_ack_wrong;
         }
       }
+      // Under `LAT_HI` the oscillator's phase against the microcycles moves
+      // with every wait muir does not model, so the NXM timer's instant is
+      // one of the acknowledgments counted below, not this witness.
       if (cur_nxm && !pack_trace) {
         ++nxm_acks;
-        if (slip != kNxmAckSlipNs) {
+        if (slip != kNxmAckSlipNs && lat_hi == 0) {
           std::fprintf(stderr,
                        "FAIL: the NXM timer ended a cycle %+ld ns from muir, "
                        "wanting %+ld --- the timeout oscillator free-runs from "
@@ -1719,12 +1766,26 @@ int main(int argc, char **argv) {
                     c.device ? "of a device" : c.nxm ? "of nothing (NXM)" : "of main memory", c.phys, "");
   }
   if (lat_hi > 0) {
-    std::printf("    revision 13's line fills answered after muir's acknowledgment of their own cycle: %ld\n",
-                lat_late_fills);
-    std::printf("    main memory at %ld to %ld ticks (seed %s, the longest drawn %ld): %ld microcycle lengths "
-                "and %ld acknowledgments differ from muir's, as a wait muir does not model makes them\n",
-                lat_lo, lat_hi, std::getenv("LAT_SEED") ? std::getenv("LAT_SEED") : "the harness's", lat_longest,
-                lat_lengths, ack_slipped);
+    if (quux_machine)
+      std::printf("    revision 13's line fills answered after muir's acknowledgment of their own cycle: %ld\n",
+                  lat_late_fills);
+    else
+      std::printf("    the CADR's bridge: %ld requests of main memory answered here at the drawn latency\n",
+                  c_requests);
+    std::printf("    main memory at %ld to %ld ticks (seed %s, %ld drawn, %zu distinct, the longest %ld): %ld "
+                "microcycle lengths and %ld acknowledgments differ from muir's, as a wait muir does not model "
+                "makes them\n",
+                lat_lo, lat_hi, std::getenv("LAT_SEED") ? std::getenv("LAT_SEED") : "the harness's", lat_draws,
+                lat_drawn.size(), lat_longest, lat_lengths, ack_slipped);
+    // **A SWEEP THAT DREW NOTHING TESTED NOTHING.**  Main memory's cycles were
+    // counted at their grants, so a mode that read the range and answered
+    // them at muir's instants anyway reads none drawn here, or one latency
+    // for all of them, where the range has more than one.
+    if (!quux_machine && mem_cycles > 0 && (c_requests == 0 || (c_requests > 1 && lat_hi > lat_lo && lat_drawn.size() < 2))) {
+      std::fprintf(stderr, "FAIL: %ld cycles of main memory, and the bridge's requests drew %ld latencies, %zu "
+                   "distinct\n", mem_cycles, c_requests, lat_drawn.size());
+      ++bad;
+    }
   } else if (ack_slipped) {
     std::fprintf(stderr, "FAIL: %ld acknowledgments are not at muir's instant\n", ack_slipped);
     ++bad;

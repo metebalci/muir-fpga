@@ -170,7 +170,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/de25_linux.pass $(BUILD)/kr260_linux.pass $(BUILD)/rootfs_packages.pass \
        $(BUILD)/br_force.pass $(BUILD)/br_kconfig.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
-       $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.pass) \
+       $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.pass) $(CADR_LAT) \
        muir-pin current
 
 # **WHERE QUUX DIFFERS FROM THE CADR**, the programs of `golden/src/quux.rs`:
@@ -179,6 +179,8 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
 # below.  `tick` and `tickwait` are the CADR's alone, revision 4's tick
 # having been QUUX's, whose period destination 4 set.
 QUUX_PROGRAMS := map tv muldiv tick divmd tickwait clocks busreset startstart unibus fused operand prefetch
+# The CADR's goldens at the boards' main-memory latency (`cadr_lat_sweep`).
+CADR_LAT = $(BUILD)/machine.lat.pass $(QUUX_PROGRAMS:%=$(BUILD)/quux_%.lat.pass)
 # Since revision 10 (contract Q11) `clocks` holds the three interval timers
 # on the register page, destinations 3 and 4 writing M alone, source 17
 # reading all ones and the shared edge, `tickwin` the window
@@ -1393,6 +1395,35 @@ $(BUILD)/quux_%.pass: $(BUILD)/obj_quux_%/Vcadr_machine $(BUILD)/quux_%.golden \
                       $(BUILD)/quux_%_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_quux_$*/Vcadr_machine $(BUILD)/quux_$*.golden
 	@touch $@
+
+# **AND THE CADR'S GOLDENS AT THE BOARDS' MAIN-MEMORY LATENCY**: MIT's boot
+# PROM and each of `QUUX_PROGRAMS` on the CADR again, its bridge's requests
+# of main memory answered 33 to 228 ticks after each is made, drawn from each
+# of `QUUX14_LAT_SEEDS` as revision 14's sweep draws them, with the word on
+# `mem_rdata` only from the tick `mem_done` stands (`tb/cadr_machine_tb.cpp`,
+# `c_due`).  Lengths and acknowledgment instants, the NXM timer's among them,
+# are counted; everything else is compared.  A program that reaches no main
+# memory draws nothing and says so; one that does must draw more than one
+# latency, which the testbench asserts.  `<golden>.lat.log` keeps every
+# seed's line.
+# $(1) the golden's name, $(2) its testbench, $(3) its trace.
+define cadr_lat_sweep
+	@set -e; : > $(BUILD)/$(1).lat.log; for s in $(QUUX14_LAT_SEEDS); do \
+	   LAT_LO=33 LAT_HI=228 LAT_SEED=$$s $(2) $(3) > $(BUILD)/$(1).lat.out 2>&1 \
+	     || { echo "$(1): main memory at 33 to 228 ticks, seed $$s: FAILED"; \
+	          grep -v '^ ' $(BUILD)/$(1).lat.out | tail -n 20; exit 1; }; \
+	   echo "seed $$s: $$(grep -o '[0-9]* drawn, [0-9]* distinct.*acknowledgments' $(BUILD)/$(1).lat.out | tr -d ')')" \
+	     >> $(BUILD)/$(1).lat.log; \
+	 done; \
+	 echo "$(1): main memory at 33 to 228 ticks, $(words $(QUUX14_LAT_SEEDS)) seeds: $$(sed -n '$$s/^seed [0-9]*: //p' $(BUILD)/$(1).lat.log) at the last"
+	@touch $@
+endef
+$(BUILD)/machine.lat.pass: $(BUILD)/obj_machine/Vcadr_machine $(BUILD)/rtl.golden \
+                           $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
+	$(call cadr_lat_sweep,machine,$(BUILD)/obj_machine/Vcadr_machine,$(BUILD)/rtl.golden)
+$(QUUX_PROGRAMS:%=$(BUILD)/quux_%.lat.pass): $(BUILD)/quux_%.lat.pass: $(BUILD)/obj_quux_%/Vcadr_machine \
+                           $(BUILD)/quux_%.golden $(BUILD)/quux_%_prom.hex $(BUILD)/sync_prom.hex
+	$(call cadr_lat_sweep,quux_$*,$(BUILD)/obj_quux_$*/Vcadr_machine,$(BUILD)/quux_$*.golden)
 
 
 # ------------------------------------------------ QUUX's timings, H1a

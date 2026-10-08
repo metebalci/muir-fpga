@@ -2702,6 +2702,13 @@ for _key in QUUX_TIMED_KEYS:
 QUUX14_LAT_SEEDS = tuple(range(1, 17))
 for _p in QUUX14_PROGRAMS:
     CHECKS["quux14_%s_quux_lat" % _p] = dict(CHECKS["quux14_%s_quux" % _p], lat_seeds=QUUX14_LAT_SEEDS)
+# And the CADR's goldens at the same latency (the Makefile's `CADR_LAT`,
+# `machine.lat.pass` and `quux_%.lat.pass`): the same binaries and traces,
+# the same sixteen seeds.
+CADR_LAT_PROGRAMS = ("map", "tv", "muldiv", "tick", "divmd", "tickwait", "clocks", "busreset", "startstart",
+                     "unibus", "fused", "operand", "prefetch")
+for _key in ["machine"] + ["quux_%s" % _p for _p in CADR_LAT_PROGRAMS]:
+    CHECKS[_key + "_lat"] = dict(CHECKS[_key], lat_seeds=QUUX14_LAT_SEEDS)
 for _key, (_k, _l) in (("phase_gen_quux", (4, 1)),):
     CHECKS[_key] = {
         "sources": ["rtl/machine/quux_phase_gen.sv"],

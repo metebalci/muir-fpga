@@ -27927,3 +27927,29 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @new
   assign next_fraction = frac_q + STEP + 30'(ps_carry & 1'b0);
 @end
+
+@mutation bridge-takes-the-word-a-tick-before-mem-done
+@check machine_lat
+@file rtl/plumbing/cadr_xbus_ddr.sv
+@note The bridge's `rdata` loaded from `mem_rdata` as it stood a tick before
+@note `mem_done`.  At muir's instants the testbench holds the word on
+@note `mem_rdata` for the whole of a read's flight, so every fixed-instant
+@note golden passes this; at the boards' latency the word is there only from
+@note the tick `mem_done` stands, and the complement before it reaches MD.
+@old
+    end else if (mem_done && !done) begin
+      done <= 1'b1;
+      // Held for the cpu, which takes the word at -LOADMD.
+      if (!dev_write) rdata <= mem_rdata;
+    end
+  end
+@new
+    end else if (mem_done && !done) begin
+      done <= 1'b1;
+      // Held for the cpu, which takes the word at -LOADMD.
+      if (!dev_write) rdata <= mem_rdata_q;
+    end
+  end
+  logic [31:0] mem_rdata_q;
+  always_ff @(posedge clk) mem_rdata_q <= mem_rdata;
+@end
