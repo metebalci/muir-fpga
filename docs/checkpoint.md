@@ -403,6 +403,21 @@ power-on, `usec * 100 + 99 - usec_t`, and the thirty-two bits of microseconds
 are unwrapped against the console's tick count. A timer's next rise is
 `pre + (us - 1) * 100` ticks after its word was taken.
 
+**At a tick that does not divide a microsecond**, the 15 ns tick of revision
+14 on the Arty Z7-20 (`docs/timing.md`), neither is exact. A microsecond is
+then 66 or 67 ticks, and which one each coming microsecond takes is decided by
+an accumulator that is not read out (`quux_clocks.sv`'s `pre_acc`). So
+`pre + (us - 1) * 66` ticks falls short of the rise by up to one tick for each
+microsecond left, two thirds of one on average. The program does not count
+that way: `(us - 1) * 100` ticks of the 10 ns grid are `us - 1` whole
+microseconds, and `pre` ticks and then `us - 1` microseconds of wall time are
+within a tick of the rise, however long the period. What does reach the file
+at 15 ns is that `pre` and `usec_t` count 15 ns ticks and the program takes
+them as 10 ns ones. muir's instant and each timer's deadline are then off by
+up to about a third of a microsecond either way, by the same bound for any
+period. The traces and `build/checkpoint.quux.pass` are at 10 ns, where every
+microsecond is 100 ticks and both are exact.
+
 What a QUUX checkpoint does not carry exactly, besides what it shares with the
 CADR's list above:
 

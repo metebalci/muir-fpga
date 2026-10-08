@@ -28,7 +28,8 @@
 //!   noentry   no directory (base 0), and the no-entry results: a missing
 //!             directory entry, a status-0 entry, a frame past main memory,
 //!             status 7 in a table, the retired status 3 loaded as in core;
-//!             a not-in-core entry loaded, `MAP(MD)` reading it unwalked
+//!             a not-in-core entry loaded, `MAP(MD)` reading it unwalked;
+//!             the directory base past main memory, read as zeros
 //!   empty, empty8k
 //!             the sweep: the reset's and an empty's, N ticks each, at 4,096
 //!             entries and at 8,192 (`TLB_ENTRIES`)
@@ -58,6 +59,9 @@
 //!   forward   a TLB write and a lookup at one edge: a direct write and
 //!             `MAP(MD)` or a start at its index, a write's OR and
 //!             `MAP(MD)`, a walk's fill and its start's OR
+//!   mdmove    `MD` moving in a walk's hold, to a page the TLB holds and to
+//!             another word of the walked page, the walk's fill standing
+//!             across the edge it moves at
 //!
 //! **NOTHING IS PRESET**, as in `golden/src/quux13.rs`: every constant is
 //! made by the program from the dispatch constant, and every table word,
@@ -713,7 +717,11 @@ fn walk_program() -> (Prog, Expect) {
 /// nothing; then a missing directory entry, a status-0 entry, an in-core
 /// entry past main memory and a status 7 in a table each fault, twice, the
 /// second walking again; a status 3 loads as in core; a status-1 entry
-/// faults, and `MAP(MD)` reads it with no further walk.
+/// faults, and `MAP(MD)` reads it with no further walk.  Then the directory
+/// base past main memory (A14.6, clarification 3): the walk's read of the
+/// directory entry there, the first word past main memory's end, reads 0,
+/// its line filled with zeros in a line fill's time and main memory not
+/// asked, and the read faults, twice, the second from that line.
 fn noentry_program() -> (Prog, Expect) {
     const NO_DIR: u32 = 0o1 << 20 | 0o5 << 10;
     const ZERO_ENTRY: u32 = 0o2 << 20 | 0o5 << 10;
@@ -749,8 +757,14 @@ fn noentry_program() -> (Prog, Expect) {
     p.read(THREE as Word, Some(w(0o025, 3)), Some(0), "status 3 loads as in core");
     p.read(OUT as Word, None, Some(1), "status 1: a fault");
     p.map(OUT as Word, Some(out & ENTRY), "MAP(MD) reads the status-1 entry");
+    // The base at frame 4000, the first of the 2,048 past main memory, and
+    // a page whose directory entry is that frame's first word.
+    p.base(MAIN >> 10);
+    for _ in 0..2 {
+        p.read(0o5 << 10, None, Some(1), "the directory past main memory");
+    }
     p.park();
-    (p, Expect { walks: Some(1 + 8 + 1 + 1), ..Expect::default() })
+    (p, Expect { walks: Some(1 + 8 + 1 + 1 + 2), ..Expect::default() })
 }
 
 // ----------------------------------------------------------------- empty
@@ -1636,6 +1650,128 @@ fn forward_program() -> (Prog, Expect) {
     (p, Expect { walks: Some(2 + 2 + 2 + 3), write_backs: Some(2), refusals: Some(0), ..Expect::default() })
 }
 
+// ---------------------------------------------------------------- mdmove
+
+/// The first page walked while `MD` moves, at the first of its eight-entry
+/// line of page-table words; case k's page is eight pages on for each k,
+/// with the page beside it, whose walk brings the lines into the cache.
+const MOVE: u32 = 0o6040 << 10;
+/// The page `MD` moves to off the walked page, in the TLB.
+const MOVE_TO: u32 = 0o6000 << 10;
+/// Frames: case k's page at 500 + k, the page beside it at 520 + k, the
+/// word its read loads at 540 + k, the word the writes before it store at
+/// 620 + k, and `MOVE_TO`'s at 560.
+const MOVE_FRAME: u32 = 0o500;
+/// The frame buffer's words the reads of the window load, through the
+/// device window, each in its own line.
+const MOVE_FB: u32 = 0o34000000200;
+
+/// Where the word that moves `MD` comes from.
+#[derive(Clone, Copy, PartialEq)]
+enum Load {
+    /// Main memory, a line fill.
+    Fill,
+    /// Main memory, its line in the cache.
+    Hit,
+    /// The frame buffer, a line fill a tick shorter than main memory's.
+    Fb,
+    /// Main memory, a line fill behind `n` writes of main memory, which
+    /// starts when main memory is free.
+    AfterWrites(usize),
+}
+
+/// **`MD` moving in a walk's hold** (A14.5, A14.6; muir's `Rtl::tlb_hold`,
+/// whose port B looks up again when `MD` has changed while the microcycle
+/// waits): `MD` a pointer into a page the TLB does not hold, a read whose
+/// word is another pointer, and `MAP(MD)` one or two microcycles on, which
+/// walks for the first pointer behind the read (clarification 74) while
+/// the read's word moves `MD`.  M1, `MD` moving to a page the TLB holds:
+/// the walk's entry is not `MD`'s, and `MAP(MD)` reads the other page's;
+/// the read a line fill of main memory or of the frame buffer, or a hit.
+/// M2, `MD` moving to another word of the walked page: `MAP(MD)` reads the
+/// entry the walk's fill brings, from the RAM after a hit, and behind one
+/// or two writes from the fill standing across the edge `MD` moves at,
+/// not yet in the RAM (K = 5 behind one write, K = 4 behind two).  Every
+/// page's lines are brought into the cache first, by a walk of the page
+/// beside it, so that each walk is two hits.
+///
+/// **NOT HERE**: M2 behind a line fill with no write before it, where the
+/// walk's entry comes in the very tick of the edge `MD` moves at (K = 5
+/// from main memory, K = 4 from the frame buffer); muir finds the entry in
+/// the TLB, and `quux_mmu.sv`, which forwards no fill made in an edge's own
+/// tick to port B, walks again.
+fn mdmove_program() -> (Prog, Expect) {
+    // (moves within the walked page, where the word comes from, the
+    // fillers between the start and `MAP(MD)`)
+    let cases: [(bool, Load, usize); 9] = [
+        (false, Load::Fill, 1),
+        (false, Load::Hit, 1),
+        (false, Load::Fb, 1),
+        (true, Load::Hit, 1),
+        (true, Load::Hit, 2),
+        (true, Load::AfterWrites(1), 1),
+        (true, Load::AfterWrites(2), 1),
+        (true, Load::AfterWrites(1), 2),
+        (true, Load::AfterWrites(2), 2),
+    ];
+    let page = |k: usize| MOVE + 0o10 * (k as u32) * (1 << 10);
+    let mut t = Tables::default();
+    for k in 0..cases.len() {
+        t.map(page(k), rw(MOVE_FRAME + k as u32));
+        t.map(page(k) + (1 << 10), rw(MOVE_FRAME + 0o20 + k as u32));
+    }
+    t.map(MOVE_TO, rw(MOVE_FRAME + 0o60));
+    let mut p = Prog::new();
+    p.start().tables(&t);
+    let pointer = |k: usize, inside: bool| if inside { page(k) + 5 } else { MOVE_TO };
+    let load_at = |k: usize, load: Load| match load {
+        Load::Fb => (MOVE_FB + 0o10 * k as u32) as Word,
+        _ => phys_va((MOVE_FRAME + 0o40 + k as u32) << 10),
+    };
+    // The frame buffer's words are 32 bits, and read back as fixnums.
+    let word = |k: usize, inside: bool, load: Load| {
+        (if load == Load::Fb { FIX } else { LIST }) | pointer(k, inside) as Word
+    };
+    for (k, &(inside, load, _)) in cases.iter().enumerate() {
+        if load == Load::Fb {
+            p.write(word(k, inside, load), load_at(k, load), Some(0), "the frame buffer's word");
+        } else {
+            p.poke((MOVE_FRAME + 0o40 + k as u32) << 10, word(k, inside, load));
+        }
+    }
+    for k in 0..cases.len() {
+        p.map((page(k) + (1 << 10)) as Word, Some(rw(MOVE_FRAME + 0o20 + k as u32) & ENTRY), "the lines, first");
+    }
+    p.map(MOVE_TO as Word, Some(rw(MOVE_FRAME + 0o60) & ENTRY), "the page MD moves to, in the TLB");
+    for (k, &(inside, load, gap)) in cases.iter().enumerate() {
+        let what = format!("{} {k}, {gap} between", if inside { "M2" } else { "M1" });
+        if load == Load::Hit {
+            let first = format!("{what}: the read's line, first");
+            p.read(load_at(k, load), Some(word(k, inside, load)), Some(0), &first);
+        }
+        let (pa, ra) = (p.k(LIST | page(k) as Word), p.k(load_at(k, load)));
+        if let Load::AfterWrites(n) = load {
+            let (wd, wa) = (p.k(0), p.k(phys_va((MOVE_FRAME + 0o120 + k as u32) << 10)));
+            p.op(ALU | SETA | a_src(wd) | MD);
+            for _ in 0..n {
+                p.op(ALU | SETA | a_src(wa) | START_WRITE);
+                p.fill(1);
+            }
+        }
+        p.op(ALU | SETA | a_src(pa) | MD);
+        p.op(ALU | SETA | a_src(ra) | START_READ);
+        p.fill(gap);
+        let frame = if inside { MOVE_FRAME + k as u32 } else { MOVE_FRAME + 0o60 };
+        p.put_masked(ALU | SETM | SRC_MAP, rw(frame) & ENTRY, ENTRY, &format!("{what}: MAP(MD)"));
+        p.put(ALU | SETM | SRC_MD, Some(word(k, inside, load)), &format!("{what}: MD"));
+    }
+    p.park();
+    // A walk for each page beside a case's and for `MOVE_TO`, then one for
+    // each case.
+    let n = cases.len() as u64;
+    (p, Expect { walks: Some(n + 1 + n), write_backs: Some(0), refusals: Some(0), ..Expect::default() })
+}
+
 // ------------------------------------------------------------------ main
 
 /// What muir's model is to have counted at the end of a program, as the
@@ -1682,11 +1818,12 @@ fn program(name: &str) -> (Prog, Expect) {
         "inflightfb" => inflight_program(true),
         "inflight0" => inflight0_program(),
         "forward" => forward_program(),
+        "mdmove" => mdmove_program(),
         _ => {
             eprintln!(
                 "quux14: no program `{name}`; they are windows, space, walk, noentry, empty, empty8k, mapmd, lc, \
                  fetch, words, writeback, setter, setter0, wbhold, redirect, redirectam, fiddle, fiddleam, double, \
-                 inflight, inflightfb, inflight0 and forward"
+                 inflight, inflightfb, inflight0, forward and mdmove"
             );
             std::process::exit(2);
         }

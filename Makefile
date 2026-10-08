@@ -269,20 +269,21 @@ QUUX13_G_devices_name := -GBOARD_NAME='"DE25-Nano"'
 # port-B fill against a direct write and a double miss, `redirectam` and
 # `fiddleam` those two with nothing to write back, and `inflight`,
 # `inflightfb` and `inflight0` walks behind a cycle in flight and without
-# one (clarification 74), and `forward` a TLB write and a lookup at one
-# edge, which the TLB's read at the edge forwards.
-QUUX14_PROGRAMS := windows space walk noentry empty empty8k mapmd lc fetch words writeback setter setter0 wbhold redirect redirectam fiddle fiddleam double inflight inflightfb inflight0 forward
+# one (clarification 74), `forward` a TLB write and a lookup at one
+# edge, which the TLB's read at the edge forwards, and `mdmove` `MD` moving
+# in a walk's hold, which port B looks up again.
+QUUX14_PROGRAMS := windows space walk noentry empty empty8k mapmd lc fetch words writeback setter setter0 wbhold redirect redirectam fiddle fiddleam double inflight inflightfb inflight0 forward mdmove
 QUUX14_G_empty8k := -GTLB_ENTRIES=8192
 # **AND THE TLB'S READ-DURING-WRITE WINDOW** (`quux_tlb.sv`): the programs
 # that write it most, `double` (both ports' fills, at one index), `mapmd` (the
 # operations on port B), `empty` (the sweep, both ports), and `inflight` and
 # `inflight0` (walks behind a cycle in flight, and without one), and
-# `forward` (a fill pending across an edge port B reads its index at), on the
-# machine under `CADR_RDW_POISON`, where a port read in a tick the other port
-# writes its entry takes the complement and a port's own read and write in
-# one tick stops the run; and under `CADR_RDW_POISON_CACHE`, the same of the
+# `forward` and `mdmove` (a fill pending across an edge port B reads its
+# index at), on the machine under `CADR_RDW_POISON`, where a port read in a
+# tick the other port writes its entry takes the complement and a port's own
+# read and write in one tick stops the run; and under `CADR_RDW_POISON_CACHE`, the same of the
 # cache's RAMs, which a walk's reads share with the processor's.
-QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward
+QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation

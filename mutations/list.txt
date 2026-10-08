@@ -27731,6 +27731,53 @@ if {$machine eq "quux" && $word_bits ne "40" && 0} {
         s_fill_t1 <= fill_at(s_phys_q);
 @end
 
+@mutation rev14-a-side-read-past-main-memory-asks-main-memory
+@check quux14_noentry_quux
+@file rtl/machine/quux_mem_port.sv
+@note A walk's read past main memory's end sent to main memory for its line,
+@note where it reads zeros and asks nothing: the directory base past main
+@note memory, whose first word the walk reads, waits for a line that never
+@note comes.
+@old
+            if (s_virt_q) s_vfill_q <= 1'b1;
+@new
+            if (1'b0 && s_virt_q) s_vfill_q <= 1'b1;
+@end
+
+@mutation rev14-a-pending-fill-is-not-forwarded-to-port-b
+@check quux14_mdmove_quux
+@file rtl/machine/quux_mmu.sv
+@note A walk's fill pending across the edge `MD` moves at, to another word of
+@note the walked page, not forwarded to port B's read there: port B misses
+@note and walks again, where muir finds the entry (behind two writes at
+@note K = 4; behind one at K = 5).
+@old
+    else if (pa_v && pa_idx == index(md_nx)) begin fb_m = 1'b1; fb_w = pa_w; end
+@new
+@end
+
+@mutation rev14-port-bs-walked-entry-for-any-md
+@check quux14_mdmove_quux
+@file rtl/machine/quux_mmu.sv
+@note Port B's walked entry taken for the rest of the microcycle whatever
+@note `MD` has become: `MD` moved to a page the TLB holds, and `MAP(MD)`
+@note reads the walked page's entry instead of that page's.
+@old
+        e_bpb_v <= !cpu_edge && ((r_set && r_port) ? (r_va == md_nx) : (rb_v && rb_va == md_nx));
+@new
+        e_bpb_v <= !cpu_edge && ((r_set && r_port) ? (r_va == md_nx) : rb_v);
+@end
+
+@mutation rev14-port-bs-entry-written-at-the-edge-for-any-md
+@check quux14_mdmove_quux
+@file rtl/machine/quux_mmu.sv
+@note The same for a walk's entry written in the edge's own tick.
+@old
+        e_bpb_v <= !cpu_edge && ((r_set && r_port) ? (r_va == md_nx) : (rb_v && rb_va == md_nx));
+@new
+        e_bpb_v <= !cpu_edge && ((r_set && r_port) ? 1'b1 : (rb_v && rb_va == md_nx));
+@end
+
 @mutation grid-rev14-the-walks-countdown-in-the-zynq-relaxed-set
 @check grid
 @file rtl/plumbing/xilinx7/cadr_machine.xdc
