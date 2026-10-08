@@ -29032,10 +29032,10 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @mutation quux15-pdl-held-write-not-read
 @check quux15_pdl_quux
 @file rtl/machine/quux15_core.sv
-@note A read at the edge after a write landed takes the RAM's word, which
-@note the RAM takes only at that edge: the word before the write.
+@note A read after a write landed takes the RAM's word, which the RAM takes
+@note only when a newer write lands: the word before the write.
 @old
-          rd_pdl_fix_v <= land_fix || (pdlw_v && pdlw_addr == cs_pdl_addr);
+          rd_pdl_fix_v <= land_fix || (pdlh_v && pdlh_addr == cs_pdl_addr && !pdl_pend);
 @new
           rd_pdl_fix_v <= land_fix;
 @end
@@ -29133,7 +29133,7 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @end
 
 @mutation quux15-rd-word-leaves-its-pdl-word-in-the-ram
-@check quux15_pdl_quux
+@check quux15_pdlhold_quux
 @file rtl/machine/quux15_core.sv
 @note A word RD holds takes its PDL buffer word from the RAM's output each
 @note clock, which the RAM, read every clock, changes under it.
@@ -29152,4 +29152,111 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
   assign pdl_raddr   = (BUBBLES == 2) ? (cs_ir[30] ? c_cs_nr.ptr : c_cs_nr.idx) : cs_pdl_addr;
 @new
   assign pdl_raddr   = (BUBBLES == 2) ? (cs_ir[30] ? c.ptr : c.idx) : cs_pdl_addr;
+@end
+
+@mutation quux15-halt-squash-forgets-a-nop
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note The halt's squash fetches a nopped word again as one that runs.
+@old
+        nop_next     = rd_v_q ? rd_nop : cs_nop;
+@new
+        nop_next     = 1'b0;
+@end
+
+@mutation quux15-halt-squash-loses-the-second-word
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note The halt's squash fetches the first squashed word again and then the
+@note next in sequence, not the second word squashed.
+@old
+        npc_after    = (rd_v_q && cs_v_q) ? cs_pc : (rd_v_q ? rd_trap : cs_trap) ? npc : npc_q;
+@new
+        npc_after    = (rd_v_q ? rd_trap : cs_trap) ? npc : npc_q;
+@end
+
+@mutation quux15-halt-lands-the-last-pdl-write
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note The last microcycle's PDL buffer write is not held over the halt: the
+@note next word's read takes it, where a single-edge machine's reads the
+@note word before.
+@old
+          pdl_pend <= 1'b1;
+@new
+          pdl_pend <= 1'b0;
+@end
+
+@mutation quux15-halt-leaves-the-write-without-its-word
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note A write whose word the squashed microcycle would have fixed waits for
+@note it, and the drain never ends.
+@old
+    halt_fixes = (draining_now || stepping) && !rd_v && !cs_v && !hw_v;
+@new
+    halt_fixes = 1'b0;
+@end
+
+@mutation quux15-step-forgets-its-own-step
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note The single step's own flag dropped: after its word CS fetches on.
+@old
+      stepping <= (stepping || step_go) && !drain_end;
+@new
+      stepping <= 1'b0;
+@end
+
+@mutation quux15-debug-ir-extension-not-written
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note Strobe 6 loads nothing: the debug IR's `<63:48>` stays as it was, and
+@note a word whose SH is there runs without it.
+@old
+          3'd6: debug_ir[63:48] <= spy_wdata;
+@new
+          3'd6: ;
+@end
+
+@mutation quux15-spy-register-3-open
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note Spy register 3 reads open, as revision 14's, not `IR<63:48>`.
+@old
+      4'd3:  spy_rdata = store_q[63:48];
+@new
+      4'd3:  spy_rdata = 16'hffff;
+@end
+
+@mutation quux15-run-resumes-a-halt-word
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note RUN resumes a machine a HALT word stopped while ERROR-STOP-ENABLE
+@note stands.
+@old
+    resume_go    = cc_run && halted && !(mode[2] && x_halted);
+@new
+    resume_go    = cc_run && halted;
+@end
+
+@mutation quux15-halt-word-runs-on
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note A HALT word under ERROR-STOP-ENABLE does not stop the machine.
+@old
+    halt_set  = commit && !ex_nop && ex_isel[11:10] == 2'd1 && ex_isel[44:43] != 2'd3 && errstop;
+@new
+    halt_set  = 1'b0 && commit && !ex_nop && ex_isel[11:10] == 2'd1 && ex_isel[44:43] != 2'd3 && errstop;
+@end
+
+@mutation quux15-freeze-reads-the-next-fetch
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note Stopped at OA-OUTSIDE-FIELDS, the store reads the next fetch's word,
+@note and the spy's IR is not the word in EX that stopped the machine.
+@old
+    if (errhalt != 2'd0) npc = ex_pc;
+@new
+    if (errhalt != 2'd0) npc = npc_q;
 @end

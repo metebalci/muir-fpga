@@ -45,6 +45,8 @@ module quux15_mmu #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
+    // The console's -RESET, in the clock it is for.
+    input  var logic        con_reset,
 
     // --- The lookups' addresses for the next clock: WB's start's and EX's
     // --- `MD`'s, read at this clock's end.
@@ -158,7 +160,7 @@ module quux15_mmu #(
   logic [11:0]  a_idx_q, b_idx_q;
   logic         vm_a, vm_b, vm_none;
   quux15_validmap #(.ENTRIES(ENTRIES), .READS(2)) valid (
-      .clk(clk), .rst(rst), .clear(op_empty), .we(w_en), .waddr(w_idx), .wbit(w_v),
+      .clk(clk), .rst(rst), .clear(op_empty || con_reset), .we(w_en && !con_reset), .waddr(w_idx), .wbit(w_v),
       .raddr0(a_idx_q), .raddr1(b_idx_q), .raddr2(12'd0),
       .rbit0(vm_a), .rbit1(vm_b), .rbit2(vm_none));
   // The writes the RAMs have not taken, oldest first, each with its valid
@@ -556,6 +558,18 @@ module quux15_mmu #(
           8'o224: refused <= '0;
           default: ;
         endcase
+      end
+      // --- The console's -RESET (`reset_memory_system`), the machine
+      // halted and the MMU idle, in the clock it is for: the TLB emptied and
+      // its lookups held to that clock's 4,096th, the words cleared.
+      if (con_reset) begin
+        fq_v          <= '0;
+        hist_v        <= 1'b0;
+        sweep_left    <= 13'(ENTRIES - 1);
+        directory     <= '0;
+        ephemeral     <= 1'b0;
+        pointer_types <= '0;
+        refused       <= '0;
       end
     end
   end

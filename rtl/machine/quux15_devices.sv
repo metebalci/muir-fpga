@@ -49,6 +49,9 @@ module quux15_devices #(
 ) (
     input  var logic        clk,
     input  var logic        rst,
+    // The console's -RESET: the interval timers as a power-on leaves them
+    // (`Timers::new`), and nothing else.
+    input  var logic        timers_rst,
     // The clock's period in units of 0.5 ns (word 25), and the real-time
     // clock's seconds at power-on, both the board's (the host's).
     input  var logic [6:0]  period,
@@ -407,6 +410,8 @@ module quux15_devices #(
         bd_rem <= bd_rem - 48'(period);
         if (bd_rem - 48'(period) <= 0) bd_active <= 1'b0;
       end
+      if (timers_rst)
+        for (int k = 0; k < 3; k++) tm[k] <= '0;
     end
   end
 

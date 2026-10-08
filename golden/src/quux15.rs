@@ -50,7 +50,7 @@
 //! and muir's own kind of program, `golden/src/quux15_preset.rs`: the
 //! speculation matrix (`matrix`) and programs at random (`random`), each a
 //! trace of many runs, a `# run` line naming each; `dispatch`, `predict`,
-//! `slotstep` and `imem`.  **A TRACE CARRIES ITS MEMORIES**: every run's PROM, and a
+//! `slotstep`, `pdlhold` and `imem`.  **A TRACE CARRIES ITS MEMORIES**: every run's PROM, and a
 //! preset program's control store, A, M and dispatch memory, as
 //! `# image <memory> <address> <word>` lines, which the testbench writes into
 //! the core before its reset ends, as a bitstream would hold them.
@@ -79,6 +79,7 @@
 //! trace says it carries the fault in its second line.
 
 mod machine_axis;
+mod quux15_console;
 mod quux15_devices;
 mod quux15_memside;
 mod quux15_preset;
@@ -928,6 +929,12 @@ struct Case {
     /// The port's timing, when the run's is not the Kria's: a slow write
     /// that keeps CMD_PROD waiting, as muir's test of it does.
     timing: Option<PortTiming>,
+    /// What a console does to the run, in order, before it runs on to its
+    /// park (`quux15_console.rs`).
+    script: Vec<quux15_console::Act>,
+    /// Whether the run's end is held to `micro`'s: not when the console
+    /// runs words of its own or boots the machine again.
+    micro_check: bool,
 }
 
 impl Case {
@@ -949,6 +956,8 @@ impl Case {
             skip_sweep: false,
             beyond_micro: Vec::new(),
             timing: None,
+            script: Vec::new(),
+            micro_check: true,
         }
     }
 
@@ -1201,18 +1210,20 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     if case.skip_sweep {
         e.skip_sweep();
     }
-    let memory = case.memory_lines(&e);
+    let mut memory = case.memory_lines(&e);
     let mut host = FileHost::default();
     let mut rows = vec![t.row(&e).line];
     let mut parked_at = None;
     let mut halted = false;
-    loop {
-        if let Some(at) = parked_at
-            && e.clock() >= at + 32
-            && e.quiet()
-        {
-            break;
-        }
+    // One clock: its row, the park seen, or the error halt the case ends at
+    // (`Ok(true)`).
+    let clock = |e: &mut Pipeline,
+                     t: &mut trace15::Trace15,
+                     host: &mut FileHost,
+                     rows: &mut Vec<String>,
+                     parked_at: &mut Option<u64>,
+                     halted: &mut bool|
+     -> Result<bool, (i32, String)> {
         if e.clock() >= 200_000 {
             return Err((1, format!("{name} never reached its park in 200,000 clocks")));
         }
@@ -1222,36 +1233,100 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 (Some((pc, code)), Some(want)) if (pc, code) == want => {
                     // The machine stops: the clock's row says so, and the
                     // trace ends.
-                    rows.push(t.row_halting(&e, code).line);
-                    parked_at = Some(e.clock());
-                    halted = true;
-                    break;
+                    rows.push(t.row_halting(e, code).line);
+                    *parked_at = Some(e.clock());
+                    *halted = true;
+                    return Ok(true);
                 }
                 _ => return Err((1, format!("{name} stopped at clock {}: {h:?}", e.clock()))),
             },
         }
-        host.watch(&e);
-        let row = t.row(&e);
+        host.watch(e);
+        let row = t.row(e);
         if parked_at.is_none() && row.commit == Some(Some(case.park as u16)) {
-            parked_at = Some(e.clock());
+            *parked_at = Some(e.clock());
         }
         rows.push(row.line);
+        Ok(false)
+    };
+    // The console's script first, each action at the clock it is made, as
+    // the trace's lines say for the testbench.
+    for act in &case.script {
+        use quux15_console::Act;
+        match *act {
+            Act::Wait(n) => {
+                for _ in 0..n {
+                    if clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)? {
+                        break;
+                    }
+                }
+            }
+            Act::Spy(eadr, v) => {
+                memory.push(format!("# spy {:x} {eadr:x} {v:x}", e.clock() + 1));
+                e.spy_write(eadr, v);
+                clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)?;
+            }
+            Act::UntilHalted => {
+                let from = e.clock();
+                while !e.is_halted() {
+                    if e.clock() > from + 20_000 {
+                        return Err((1, format!("{name}: the halt did not end by clock {}", e.clock())));
+                    }
+                    clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)?;
+                }
+                memory.push(format!("# halted {:x} {}", e.clock(), quux15_console::tail_hex(&e)));
+            }
+            Act::Frozen(n) => {
+                // Stopped at the error the case ends at, the machine frozen:
+                // each clock the word in EX stops it again.
+                let (_, code) = case.halts.expect("a frozen run stops at an error");
+                if !halted {
+                    return Err((1, format!("{name}: frozen before its stop")));
+                }
+                for _ in 0..n {
+                    match e.tick() {
+                        Err(h) if halt_code(&h).map(|(_, c)| c) == Some(code) => {
+                            rows.push(t.row_halting(&e, code).line);
+                        }
+                        other => return Err((1, format!("{name}: frozen, clock {}: {other:?}", e.clock()))),
+                    }
+                }
+            }
+            Act::Reads => {
+                for eadr in 0..16u8 {
+                    memory.push(format!("# read {:x} {eadr:x} {:x}", e.clock(), e.spy_read(eadr)));
+                }
+            }
+        }
+    }
+    while !halted {
+        if let Some(at) = parked_at
+            && e.clock() >= at + 32
+            && e.quiet()
+        {
+            break;
+        }
+        if clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)? {
+            break;
+        }
     }
     if case.halts.is_some() && !halted {
         return Err((1, format!("{name} reached its park, not the stop it ends at")));
     }
     // The machine it ends with, against micro's, and the results.
-    let mut u = micro(case, period).map_err(|x| (1, x))?;
-    for &(k, w) in &case.beyond_micro {
-        let um = u.machine_mut();
-        um.mmem[k] = w;
-        um.amem[k] = w;
-    }
-    let d = differences(e.machine(), u.machine());
-    if !d.is_empty() {
-        let mut x = d.join("; ");
-        x.push_str(&format!("; {name}: the pipeline differs from micro in {} places", d.len()));
-        return Err((3, x));
+    if case.micro_check {
+        let mut u = micro(case, period).map_err(|x| (1, x))?;
+        for &(k, w) in &case.beyond_micro {
+            let um = u.machine_mut();
+            um.mmem[k] = w;
+            um.amem[k] = w;
+        }
+        let d = differences(e.machine(), u.machine());
+        if !d.is_empty() {
+            let mut x = d.join("; ");
+            x.push_str(&format!("; {name}: the pipeline differs from micro in {} places", d.len()));
+            return Err((3, x));
+        }
     }
     let mut bad = Vec::new();
     for (a, want, mask, what) in &case.results {
@@ -1313,6 +1388,9 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "predict" => vec![quux15_preset::predict_program().case("predict")],
         "slotstep" => vec![quux15_preset::slot_step().case("slotstep")],
+        "pdlhold" => vec![quux15_preset::pdl_hold().case("pdlhold")],
+        "console" => quux15_console::console(period),
+        "halts" => quux15_console::halts(period),
         _ => vec![Case::of_prog(name, &program(name, period))],
     }
 }

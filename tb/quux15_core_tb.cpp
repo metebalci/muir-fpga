@@ -217,6 +217,14 @@ struct Run {
     std::vector<std::pair<uint64_t, uint64_t>> words;
   };
   std::vector<FdDone> fd_done;
+  // The console (`golden/src/quux15_console.rs`): a diagnostic register
+  // written before a clock, one read as a clock ends, and the halted
+  // pipeline's state as a clock ends, the end of muir's checkpoint in hex.
+  struct Spy {
+    uint64_t clock, eadr, word;
+  };
+  std::vector<Spy> spy_writes, spy_reads;
+  std::vector<std::pair<uint64_t, std::string>> halted;
 };
 
 // The run's memories into the design, which has just come up.
@@ -302,6 +310,16 @@ int read_trace(const char *path, std::vector<Run> &runs) {
           d.words.emplace_back(std::strtoull(w[k].c_str(), nullptr, 16),
                                std::strtoull(w[k + 1].c_str(), nullptr, 16));
         runs.back().fd_done.push_back(d);
+        continue;
+      }
+      if (w.size() == 4 && (w[0] == "spy" || w[0] == "read")) {
+        Run::Spy e{std::strtoull(w[1].c_str(), nullptr, 16), std::strtoull(w[2].c_str(), nullptr, 16),
+                   std::strtoull(w[3].c_str(), nullptr, 16)};
+        (w[0] == "spy" ? runs.back().spy_writes : runs.back().spy_reads).push_back(e);
+        continue;
+      }
+      if (w.size() == 3 && w[0] == "halted") {
+        runs.back().halted.emplace_back(std::strtoull(w[1].c_str(), nullptr, 16), w[2]);
         continue;
       }
       if (w.size() == 2 && w[0] == "period") {
@@ -636,6 +654,72 @@ class Bench {
 };
 #endif
 
+#ifdef QUUX15_CORE
+// **The halted pipeline as muir's checkpoint writes it** (`save_15`'s fields
+// after the machine, the period and the port), from the core's readout, in
+// hexadecimal: what a checkpoint the fabric writes carries.
+std::string halted_tail(Top *dut) {
+  std::string out;
+  auto put = [&](uint64_t v, int bytes) {
+    char h[3];
+    for (int k = 0; k < bytes; ++k) {
+      std::snprintf(h, sizeof h, "%02x", static_cast<unsigned>((v >> (8 * k)) & 0xff));
+      out += h;
+    }
+  };
+  auto sel = [&](int k) {
+    dut->ro_sel = k;
+    dut->eval();
+    return static_cast<uint64_t>(dut->ro_word);
+  };
+  put(sel(0), 2);                                   // npc
+  const uint64_t na = sel(1);                       // npc_after
+  put((na >> 14) & 1, 1);
+  if ((na >> 14) & 1) put(na & 0x3fff, 2);
+  const uint64_t nf = sel(2);
+  put((nf >> 1) & 1, 1);                            // pre_nop_next
+  put(nf & 1, 1);                                   // nop_next
+  const uint64_t pp = sel(3);                       // pdl_pending
+  put((pp >> 14) & 1, 1);
+  if ((pp >> 14) & 1) {
+    put(pp & 0x3fff, 2);
+    put(sel(4), 5);
+  }
+  const uint64_t mo = sel(5);                       // md_old
+  put(mo & 1, 1);
+  if (mo & 1) put(sel(6), 5);
+  put(0, 1);                                        // d_wait
+  put(0, 1);                                        // d_slot_pending
+  put(sel(8), 8);                                   // oa_low
+  put(sel(9), 8);                                   // oa_high
+  put(0, 1);                                        // next_instr, between microcycles
+  put(sel(10) & 1, 1);                              // next_instrd
+  put(sel(11), 4);                                  // lvmo
+  put(sel(12) & 1, 1);                              // wrcyc
+  const uint64_t sw = sel(13);                      // spc_write
+  put((sw >> 24) & 1, 1);
+  if ((sw >> 24) & 1) {
+    put((sw >> 19) & 0x1f, 1);
+    put(sw & 0x7ffff, 4);
+  }
+  const uint64_t mw = sel(14);                      // map_write_d
+  put(mw & 1, 1);
+  if (mw & 1) {
+    put(sel(15), 5);
+    put(sel(16), 5);
+  }
+  put(8, 8);                                        // opc, eight
+  const uint64_t o0 = sel(17), o1 = sel(18);
+  for (int k = 0; k < 8; ++k) put(((k < 4 ? o0 : o1) >> (14 * (k % 4))) & 0x3fff, 2);
+  const uint64_t h = sel(19);
+  put((h >> 1) & 1, 1);                             // x.halted
+  put(h & 1, 1);                                    // halted
+  put(sel(20), 8);                                  // committed
+  put(sel(21), 2);                                  // npc_prev
+  return out;
+}
+#endif
+
 // One run on a design made for it, its registers' random words from
 // `seed`: 0 when it agrees, 1 when not.
 int run_trace(const char *path, const Run &run, int seed) {
@@ -664,6 +748,7 @@ int run_trace(const char *path, const Run &run, int seed) {
     dut->m_awready = 0; dut->m_wready = 0; dut->m_arready = 0;
     dut->m_bvalid = 0; dut->m_rvalid = 0; dut->m_bid = 0; dut->m_bresp = 0;
     dut->m_rdata = 0; dut->m_rresp = 0; dut->m_rlast = 0;
+    dut->spy_we = 0; dut->spy_eadr = 0; dut->spy_wdata = 0; dut->spy_raddr = 0; dut->ro_sel = 0;
   };
   quiet();
 #else
@@ -716,6 +801,16 @@ int run_trace(const char *path, const Run &run, int seed) {
 #ifdef QUUX15_CORE
     clock = k;
 #endif
+#ifdef QUUX15_CORE
+    // The console's write for the clock after this edge's.
+    dut->spy_we = 0;
+    for (const Run::Spy &w : run.spy_writes)
+      if (w.clock == k + 1) {
+        dut->spy_we = 1;
+        dut->spy_eadr = static_cast<uint8_t>(w.eadr);
+        dut->spy_wdata = static_cast<uint16_t>(w.word);
+      }
+#endif
     if (k > 0) edge();
 #ifdef QUUX15_CORE
     if (bench_bad) {
@@ -758,6 +853,34 @@ int run_trace(const char *path, const Run &run, int seed) {
         std::fprintf(stderr, "clock %zu: %s is %" PRIx64 ", muir says %" PRIx64 "\n", k, col.name,
                      got, row[c]);
     }
+#ifdef QUUX15_CORE
+    // The console's reads and the halted state, as this clock ends.
+    for (const Run::Spy &r : run.spy_reads) {
+      if (r.clock != k) continue;
+      dut->spy_raddr = static_cast<uint8_t>(r.eadr);
+      dut->eval();
+      if (dut->spy_rdata == r.word) continue;
+      if (bad == 0) {
+        first_clock = k;
+        first_column = "spy";
+      }
+      if (++bad <= 20)
+        std::fprintf(stderr, "clock %zu: spy register %" PRIu64 " reads %x, muir says %" PRIx64 "\n", k,
+                     r.eadr, static_cast<unsigned>(dut->spy_rdata), r.word);
+    }
+    for (const auto &h : run.halted) {
+      if (h.first != k) continue;
+      const std::string got = halted_tail(dut);
+      if (got == h.second) continue;
+      if (bad == 0) {
+        first_clock = k;
+        first_column = "halted";
+      }
+      if (++bad <= 20)
+        std::fprintf(stderr, "clock %zu: the halted state is %s, muir's checkpoint %s\n", k, got.c_str(),
+                     h.second.c_str());
+    }
+#endif
   }
   dut->final();
   delete dut;

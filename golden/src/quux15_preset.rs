@@ -27,6 +27,8 @@
 //!             R, which EX's check of P and R squashes and restores
 //!   slotstep  a return to the main loop under N whose nopped slot steps LC,
 //!             RD resolving the next return from that step
+//!   pdlhold   a word reading the PDL buffer held in RD behind a word
+//!             waiting for `MD`, the word behind it addressing another word
 //!   imem      WRITE-I-MEM in MIT's form: words written and run later
 //!   imemorder WRITE-I-MEM going on at the word after it in execution
 //!             order: the word right after it written, the word two after
@@ -175,6 +177,8 @@ impl Preset {
             skip_sweep: self.skip_sweep,
             beyond_micro: self.beyond_micro.clone(),
             timing: self.timing,
+            script: Vec::new(),
+            micro_check: true,
         }
     }
 }
@@ -823,6 +827,43 @@ pub fn slot_step() -> Preset {
     p.stop();
     p.fill_to(main | 2);
     p.op(ALU | ADD | a_src(ONE) | m_src(0o24) | m_dest(0o24));
+    p.stop();
+    p
+}
+
+/// **A word reading the PDL buffer held in RD**: behind a word that waits in
+/// EX for `MD` (the word after a read start's successor, which reads the
+/// `MD` from before), the word after it in CS addressing another word of the
+/// buffer through the other register. RD keeps the word it read; the RAM,
+/// read every clock at CS's address, does not. By the pointer with the
+/// index's word behind, by the index with the pointer's, and by the pointer
+/// with a filler behind.
+pub fn pdl_hold() -> Preset {
+    use muir::isa::asm::{SRC_MD, START_READ};
+    const PHYS: Word = 0o36000000000;
+    let mut p = Preset::new();
+    p.skip_sweep = true;
+    let (ptr, idx) = (p.k(0o1000), p.k(0o1010));
+    p.op(ALU | SETA | a_src(ptr) | fd(0o14));
+    p.op(ALU | SETA | a_src(idx) | fd(0o13));
+    let (x, y) = (p.k(0o111), p.k(0o222));
+    p.op(ALU | SETA | a_src(x) | fd(0o10));
+    p.op(ALU | SETA | a_src(y) | fd(0o12));
+    p.fill(4);
+    let ways = [
+        (src(0o25), ALU | SETM | src(0o5) | m_dest(0o25)),
+        (src(0o5), ALU | SETM | src(0o25) | m_dest(0o26)),
+        (src(0o25), filler().raw()),
+    ];
+    for (k, (held, behind)) in ways.into_iter().enumerate() {
+        let a = p.k(PHYS | k as u64);
+        p.op(ALU | SETA | a_src(a) | START_READ);
+        p.fill(1);
+        p.op(ALU | SETM | SRC_MD | m_dest(0o21));
+        p.op(ALU | SETM | held | m_dest(0o22 + k as u64));
+        p.op(behind);
+        p.fill(4);
+    }
     p.stop();
     p
 }

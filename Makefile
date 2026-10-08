@@ -299,9 +299,14 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # the speculation matrix and programs at random, and the same with memory
 # starts (`randmem`, `matrixmem`), traced at 10 ns alone; and the memory
 # side's rows (`golden/src/quux15_memside.rs`), `ports` and `walk`, at both
-# periods, where the port's clocks round differently.
-QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev
+# periods, where the port's clocks round differently; and the console's
+# (`golden/src/quux15_console.rs`): halts, single steps, the debug IR, the
+# reset and the boot (`console`), and a halt at every clock of five programs
+# and of a write start in a delay slot, and at every third of two at random
+# with memory (`halts`, at 10 ns alone), each halted state held byte for
+# byte to muir's checkpoint.
+QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -309,10 +314,11 @@ QUUX15_PERIODS_random := 20
 QUUX15_PERIODS_matrixmem := 20
 QUUX15_PERIODS_randmem := 20
 QUUX15_PERIODS_timers := 14 16 17 20 22 38
+QUUX15_PERIODS_halts := 20
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
-QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict slotstep imem memory time $(QUUX15_GROUPS)
+QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem memory time $(QUUX15_GROUPS)
 QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                   $(BUILD)/quux15_$(p).quux.p$(q).golden))
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
@@ -1421,7 +1427,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # every period.  `quux15_<program>.quux.p<P>.b2.golden` is the same program
 # with two bubbles, A15b.14's fallback (`--bubbles 2`).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
-                 golden/src/quux15_devices.rs \
+                 golden/src/quux15_devices.rs golden/src/quux15_console.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 $(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)

@@ -45,11 +45,21 @@
 // walk; the late squash) and its microcycle, whose starts, map store and
 // fixed write word WB and the port take.
 //
+// **THE CONSOLE** (A15b.13; muir's `pipeline/control.rs`) writes and reads
+// the diagnostic registers (`spy_*`): RUN cleared drains the machine to a
+// single-edge machine's state between two microcycles (CS and RD squashed
+// and fetched again, EX and WB done, the port empty), and the readout
+// (`ro_*`) gives what muir's checkpoint of it carries after the machine;
+// STEP runs one word through the four stages, IDEBUG the debug IR's word in
+// its place; the mode register's `-RESET` and `-BOOT`, taken halted; a HALT
+// word under ERROR-STOP-ENABLE drains; OA-OUTSIDE-FIELDS freezes the machine
+// mid-clock, the word in EX, which the spy reads.
+//
 // **WHAT IS NOT BUILT** --- MACRO-DISPATCH and D, the keyboard and the
 // mouse, the network, block-disk's transfers (no pack is fitted, as in every
-// trace here), the PDL buffer redirect inside the buffer, the console's halt
-// --- stops a simulation at the word that needs it, naming it (`unbuilt`),
-// rather than running on wrong.
+// trace here), the PDL buffer redirect inside the buffer --- stops a
+// simulation at the word that needs it, naming it (`unbuilt`), rather than
+// running on wrong.
 
 `default_nettype none
 
@@ -153,7 +163,20 @@ module quux15_core #(
     // the testbench's responder subtracts from the port's clocks.
     output var logic        axi_one_write_id,
     output var logic [3:0]  axi_read_clocks,
-    output var logic [3:0]  axi_write_clocks
+    output var logic [3:0]  axi_write_clocks,
+
+    // The console's diagnostic bus (`muir::spy`; A15b.13): a register
+    // written at this clock's edge, `EADR<3:0>` and the word; a register
+    // read, its word as the clock ends; and the readout of the halted
+    // pipeline's state between two microcycles, a field a selector, what
+    // a checkpoint of revision 15 carries after the machine.
+    input  var logic        spy_we,
+    input  var logic [3:0]  spy_eadr,
+    input  var logic [15:0] spy_wdata,
+    input  var logic [3:0]  spy_raddr,
+    output var logic [15:0] spy_rdata,
+    input  var logic [4:0]  ro_sel,
+    output var logic [63:0] ro_word
 );
 
   localparam logic [13:0] RESET_PC = 14'o36000;
@@ -237,11 +260,11 @@ module quux15_core #(
 
   // --- The stages.  A word's `seq` is its place in program order, eight
   // bits, compared by difference.
-  logic        cs_v, cs_nop, cs_pre_nop, cs_trap;
-  logic [7:0]  cs_seq;
-  logic [13:0] cs_pc;
+  logic        cs_v_q, cs_nop_q, cs_pre_nop_q, cs_trap_q;
+  logic [7:0]  cs_seq_q;
+  logic [13:0] cs_pc_q;
 
-  logic        rd_v, rd_nop, rd_pre_nop;
+  logic        rd_v_q, rd_nop, rd_pre_nop, rd_trap;
   logic [7:0]  rd_seq;
   logic [13:0] rd_pc;
   logic [63:0] rd_word;
@@ -293,9 +316,98 @@ module quux15_core #(
   // --- The front end: the next fetch's address, the one after it when RD
   // or a redirect chose it before the word between was fetched, the next
   // fetched word's squashes, and the sequence counter.
-  logic [13:0] npc, npc_after;
-  logic        npc_after_v, nop_next, pre_nop_next;
-  logic [7:0]  seq_ctr;
+  logic [13:0] npc_q, npc_after_q;
+  logic        npc_after_v_q, nop_next_q, pre_nop_next_q;
+  logic [7:0]  seq_ctr_q;
+
+  // --- The console (`Pipeline::console_edge`; A15b.13).  The clock control
+  // register (RUN, STEP, NOP, IDEBUG, LDSTAT), the mode register (QUUX's
+  // without its speed bits; `<2>` ERROR-STOP-ENABLE, register-page word 102
+  // too), the OPC control register and the debug IR, which the spy writes;
+  // RUN and STEP as the master clock registers them (`srun`, `sstep`,
+  // `ssdone`); halted, drained; draining; one word's step under way; a HALT
+  // word under ERROR-STOP-ENABLE committed, whose drain begins next clock.
+  logic        cc_run, cc_step, cc_nop11, cc_idebug, cc_ldstat;
+  logic [5:0]  mode;
+  logic [2:0]  opc_ctl;
+  logic [63:0] debug_ir;
+  logic        srun, sstep, ssdone, halted, draining, stepping, halt_req;
+  // The HALT bit of the last microcycle (`x.halted`), the last committed
+  // microcycle's sequence, and the microcycles committed (`committed`).
+  logic        x_halted;
+  logic [7:0]  last_seq;
+  logic [63:0] committed;
+  // CS's word is the debug IR's, loaded with IDEBUG up.
+  logic        cs_dbg_q;
+  logic [63:0] cs_dbg_word;
+
+  // `-RESET` and `-BOOT` from the mode register's `<6>` and `<7>`, at the
+  // edge the spy's write lands at (`console_edge`): the console's registers
+  // cleared, RUN kept by the reset and set by the boot.
+  logic reset_go, boot_go, reset_q, boot_q;
+  always_comb begin
+    boot_go  = spy_we && spy_eadr[2:0] == 3'd5 && spy_wdata[7];
+    reset_go = (spy_we && spy_eadr[2:0] == 3'd5 && spy_wdata[6]) || boot_go;
+  end
+  // The clock the reset and the boot are for.
+  always_ff @(posedge clk) begin
+    reset_q <= !rst && reset_go;
+    boot_q  <= !rst && boot_go;
+  end
+
+  // **THE CONSOLE'S CLOCK** (`console_edge`), from the registers as the
+  // clock begins: RUN cleared while running, or a HALT word's drain, begins
+  // the halt; RUN resumes a halted machine but under ERROR-STOP-ENABLE after
+  // a HALT word; STEP raised runs one word.
+  logic        drain_start, resume_go, step_go, halted_now, draining_now, fetch_ok;
+  always_comb begin
+    drain_start  = !halted && !draining && ((srun && !cc_run) || halt_req);
+    resume_go    = cc_run && halted && !(mode[2] && x_halted);
+    step_go      = cc_step && !sstep && halted && !resume_go;
+    halted_now   = halted && !resume_go && !step_go;
+    draining_now = draining || drain_start;
+    // `fetching`: the step's word, or the machine running.
+    fetch_ok     = !draining_now && !stepping && (step_go || (cc_run && !halted_now));
+  end
+
+  // **THE HALT'S SQUASH** (`begin_drain`), as the clock begins: CS and RD
+  // emptied, their words fetched again in order, the first at the next
+  // fetch's address and the second, or the trap again, or the address the
+  // next fetch would have taken, after it.
+  logic        rd_v, cs_v, npc_after_v, nop_next, pre_nop_next;
+  logic        cs_nop, cs_pre_nop, cs_trap, cs_dbg;
+  logic [13:0] npc, npc_after, cs_pc;
+  logic [7:0]  seq_ctr, cs_seq;
+  always_comb begin
+    rd_v = rd_v_q && !drain_start;
+    cs_v = cs_v_q && !drain_start;
+    cs_nop = cs_nop_q; cs_pre_nop = cs_pre_nop_q; cs_trap = cs_trap_q; cs_dbg = cs_dbg_q;
+    cs_pc = cs_pc_q; cs_seq = cs_seq_q;
+    npc = npc_q; npc_after = npc_after_q; npc_after_v = npc_after_v_q;
+    nop_next = nop_next_q; pre_nop_next = pre_nop_next_q; seq_ctr = seq_ctr_q;
+    // Stopped at an error, nothing moves: the store reads the word in EX
+    // for the spy's IR.
+    if (errhalt != 2'd0) npc = ex_pc;
+    // **THE CONSOLE'S BOOT** (`console_edge`'s `reset_pipeline` and `trap`),
+    // as the clock after its write begins, the machine halted and so
+    // empty: the trap in CS at the PROM's first word, the next fetch there.
+    if (boot_q) begin
+      cs_v = 1'b1; cs_nop = 1'b1; cs_pre_nop = 1'b0; cs_trap = 1'b1; cs_dbg = 1'b0;
+      cs_pc = RESET_PC; cs_seq = seq_ctr_q;
+      npc = RESET_PC; npc_after_v = 1'b0; nop_next = 1'b0; pre_nop_next = 1'b0;
+      seq_ctr = seq_ctr_q + 8'd1;
+    end
+    if (drain_start) begin
+      if (rd_v_q || cs_v_q) begin
+        npc          = rd_v_q ? rd_pc : cs_pc;
+        nop_next     = rd_v_q ? rd_nop : cs_nop;
+        pre_nop_next = rd_v_q ? (rd_pre_nop && !rd_nop) : (cs_pre_nop && !cs_nop);
+        npc_after_v  = 1'b1;
+        npc_after    = (rd_v_q && cs_v_q) ? cs_pc : (rd_v_q ? rd_trap : cs_trap) ? npc : npc_q;
+      end
+      seq_ctr = ex_v ? ex_seq + 8'd1 : wb_v ? wb_seq + 8'd1 : seq_ctr_q + 8'd1;
+    end
+  end
 
   // --- RD's copies.
   copies_t     c;
@@ -360,6 +472,7 @@ module quux15_core #(
   // Register-page words: 101's bus errors (`<0>` nothing there), 102's
   // error stop, 225's posted writes answered with an error.
   logic        bus_nxm, errstop;
+  assign errstop = mode[2];
   logic [31:0] posted_errors;
   // CMD_PROD's write, taken from the register write and held until every
   // write before it is answered (`Back::cmd_prod`; A15b.5).
@@ -404,7 +517,7 @@ module quux15_core #(
       .wdata(wb_imem_data)
   );
   // The boot's trap is a word of zeros, read from nowhere.
-  assign cs_word = cs_trap ? 64'd0 : store_q;
+  assign cs_word = cs_trap ? 64'd0 : cs_dbg ? cs_dbg_word : store_q;
 
   // ========================================================= A and the PDL
 
@@ -428,28 +541,27 @@ module quux15_core #(
       .waddr(land_a_addr),
       .wdata(land_data)
   );
-  // **THE PDL BUFFER TAKES A WRITE A CLOCK AFTER IT LANDS**, held in
-  // `pdlw_*` meanwhile: a read at the edge a write lands at reads the word
-  // before it, as muir's reads before the edge's landing do, whatever the
-  // RAM would make of a read and a write of one address at one edge; a read
-  // at the next edge takes the held word (`rd_pdl_fix`).  With two bubbles
-  // the word after a writer is read at the edge its writer lands at.
-  logic        pdlw_v;
-  logic [13:0] pdlw_addr;
-  logic [39:0] pdlw_data;
-  always_ff @(posedge clk) begin
-    pdlw_v    <= land_pdl_we && running;
-    pdlw_addr <= land_pdl_addr;
-    pdlw_data <= land_pdl_data;
-  end
+  // **THE PDL BUFFER'S NEWEST WRITE IS HELD**, in `pdlh_*`, and the RAM
+  // takes it when a newer one lands: a read at the edge a write lands at
+  // reads the word before it, as muir's reads before the edge's landing do,
+  // whatever the RAM would make of a read and a write of one address at one
+  // edge; a later read takes the held word (`rd_pdl_fix`).  With two bubbles
+  // the word after a writer is read at the edge its writer lands at.  **A
+  // HALT HOLDS IT OVER** (`pdl_pending`) when the last microcycle made it:
+  // the next word's read takes the word before it, and it lands after
+  // (`pdl_pend`), as a single-edge machine's buffer does.
+  logic        pdlh_v, pdl_pend;
+  logic [13:0] pdlh_addr;
+  logic [39:0] pdlh_data;
+  logic [7:0]  pdlh_seq;
   quux15_ram #(.WIDTH(40), .DEPTH(16384)) pdl (
       .clk  (clk),
       .re   (pdl_re),
       .raddr(pdl_raddr),
       .rdata(pdl_q),
-      .we   (pdlw_v && !rst),
-      .waddr(pdlw_addr),
-      .wdata(pdlw_data)
+      .we   (pdlh_v && land_pdl_we),
+      .waddr(pdlh_addr),
+      .wdata(pdlh_data)
   );
 
   // The machine runs: out of reset, and no error halt now or before.  The
@@ -846,7 +958,7 @@ module quux15_core #(
   // --- The port (`quux15_port.sv`) and the memory management
   // --- (`quux15_mmu.sv`).
   logic        p_busy, p_req, p_land, p_land_next, w_ok, w_req, fix_v, post_req, post_ok;
-  logic        t_start, t_ready, port_idle, port_empty;
+  logic        t_start, t_ready, port_idle, port_idle_n, port_empty;
   logic [28:0] p_bus, w_bus, post_bus, t_addr;
   logic [39:0] p_word, p_word_next, fix_word, post_word, t_word;
   logic [2:0]  w_slot, fix_slot;
@@ -860,7 +972,7 @@ module quux15_core #(
       .fix_v(fix_v), .fix_slot(fix_slot), .fix_word(fix_word),
       .post_req(post_req), .post_bus(post_bus), .post_word(post_word), .post_ok(post_ok),
       .t_start(t_start), .t_addr(t_addr), .t_ready(t_ready), .t_word(t_word),
-      .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle),
+      .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle), .idle_n(port_idle_n),
       .empty(port_empty), .sweep_go(fd_done),
       .one_write_id(axi_one_write_id),
       .read_fabric_clocks(axi_read_clocks), .write_fabric_clocks(axi_write_clocks),
@@ -882,7 +994,7 @@ module quux15_core #(
   logic        ephemeral;
   logic [63:0] pointer_types;
   quux15_mmu #(.MAIN_WORDS(MAIN_WORDS)) mmu (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(rst), .con_reset(reset_q),
       .a_next_va(a_next_va), .b_next_va(b_next_va),
       .a_req(a_req), .a_va(a_va), .a_hold(a_hold), .a_entry(a_entry),
       .k_req(k_req), .k_va(k_va), .k_entry(k_entry), .k_write(k_write), .k_md(k_md),
@@ -952,7 +1064,7 @@ module quux15_core #(
   logic [31:0] dev_rd_word, microseconds;
   logic        dev_rd_built, dev_wr_built, int_now;
   quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) devices (
-      .clk(clk), .rst(rst), .period(period), .rtc_start(rtc_start),
+      .clk(clk), .rst(rst), .timers_rst(reset_q), .period(period), .rtc_start(rtc_start),
       .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_data(cprod_word),
       .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
       .fd_done(fd_done), .fd_handles(fd_handles),
@@ -1325,7 +1437,12 @@ module quux15_core #(
     logic [31:0] va;
   } start_t;
   start_t      xs0, xs1;
-  logic        x_mw_v, loads_md, fix_any;
+  logic        x_mw_v, loads_md, fix_any, drain_fix, fix_halt, fix_held, halt_fixes;
+  logic [39:0] fix_md;
+  // The word a halt fixed for a write WB has yet to grant.
+  logic        hw_v;
+  logic [7:0]  hw_seq;
+  logic [39:0] hw_word;
   logic [39:0] x_mw_vma, x_mw_md, md_final, fix_val;
   function automatic logic [69:0] add_start(input start_t a, input start_t b, input logic w,
                                              input logic f, input logic [31:0] va);
@@ -1569,7 +1686,7 @@ module quux15_core #(
   logic [7:0]  pw_eff_seq;
   logic [2:0]  pw_eff_slot;
   logic        n_pend_v, n_rd_port, n_old_v, n_wp_v, n_pw_v, n_pw_reg, n_rgw_v, n_rgw_word_v;
-  logic        n_mwd_v, n_bus_nxm, n_errstop, n_pend_dev;
+  logic        n_mwd_v, n_bus_nxm, n_pend_dev;
   logic [1:0]  n_pend_left, n_ack_left;
   logic [39:0] n_pend_word, n_old_md, n_wp_md, n_rgw_word, n_md, n_mwd_vma, n_mwd_md;
   logic [7:0]  n_old_seq, n_wp_seq, n_pw_seq;
@@ -1588,10 +1705,22 @@ module quux15_core #(
     end
     wb_nxm = at_grant && s_nothing;
     // --- The fix of the word of the write started before.
-    fix_any  = commit && wp_v && pw_eff_v && pw_eff_seq == wp_seq;
+    // **A HALT FIXES THE WORD ITSELF** (`clock_once`'s end): with nothing
+    // left in EX, RD or CS to fix it, the word is MD as it stands, now if
+    // the write is granted, or at its grant (`hw_*`).  RD and CS are empty
+    // as a drain or a step runs its last word, and nothing is fetched after
+    // it (`halt_fixes`, from the registers); the write is the start EX
+    // commits now, which no grant meets in its own clock, or the one
+    // pending with EX empty.
+    halt_fixes = (draining_now || stepping) && !rd_v && !cs_v && !hw_v;
+    drain_fix = halt_fixes && (commit ? ((xs0.v && xs0.write) || (xs1.v && xs1.write)) : (!ex_v && wp_v));
+    fix_halt  = halt_fixes && !ex_v && wp_v && pw_eff_v && pw_eff_seq == wp_seq;
+    fix_held  = hw_v && pw_eff_v && pw_eff_seq == hw_seq;
+    fix_any  = (wp_v && pw_eff_v && pw_eff_seq == wp_seq && (commit || (halt_fixes && !ex_v))) || fix_held;
     fix_v    = fix_any && !pw_eff_reg;
     fix_slot = pw_eff_slot;
-    fix_word = fix_val;
+    fix_md   = commit ? ((ex_succ && !ex_rif) ? md_now : nmd) : md_now;
+    fix_word = fix_halt ? md_now : fix_held ? hw_word : fix_val;
     // --- The register's write taken now (`register_write_now`); CMD_PROD's
     // --- held for the port.
     rw_take  = rgw_v && rgw_word_v;
@@ -1602,12 +1731,10 @@ module quux15_core #(
     ub_register = rw_take && !register_writable(rgw_bus[7:0]);
     n_posted  = posted_now;
     n_bus_nxm = bus_nxm || wb_nxm;
-    n_errstop = errstop;
     if (rw_take) begin
       unique case (rgw_bus[7:0])
         8'o225: n_posted = '0;
         8'o101: n_bus_nxm = 1'b0;
-        8'o102: n_errstop = rgw_word[0];
         default: ;
       endcase
     end
@@ -1645,13 +1772,14 @@ module quux15_core #(
       n_wp_seq = ex_seq;
       n_wp_md  = nmd;
     end
+    if (drain_fix) n_wp_v = 1'b0;
     // --- The register's write: taken, made, its word fixed.
     n_rgw_v = rgw_v && !rw_take; n_rgw_bus = rgw_bus; n_rgw_word_v = rgw_word_v; n_rgw_word = rgw_word;
     if (at_grant && s_device && st_write[0]) begin
       n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word_v = st_word_v[0]; n_rgw_word = st_word[0];
     end
     if (fix_any && pw_eff_reg) begin
-      n_rgw_word_v = 1'b1; n_rgw_word = fix_val;
+      n_rgw_word_v = 1'b1; n_rgw_word = fix_word;
     end
     // --- MD: the word EX leaves, or the read's word that landed.  The word
     // --- right after a read start that committed after the read landed
@@ -1934,7 +2062,7 @@ module quux15_core #(
   // CS (`cs_hold`, `cs_reads`): the OA-REG-HIGH hold while its writer is in RD
   // or EX, and the PDL buffer's address waiting for a pointer or an index
   // written from the ALU.
-  logic        rd_free, cs_hold, oa_hold, pdl_wait, cs_moves, cs_load;
+  logic        rd_free, cs_hold, oa_hold, pdl_wait, cs_moves, cs_load, cs_load_raw;
   logic [47:0] cs_low, cs_ir, cs_sh_a, cs_sh_m;
   logic [1:0]  cs_rp;
   logic [13:0] cs_pdl_addr;
@@ -1956,7 +2084,10 @@ module quux15_core #(
     cs_pdl_addr = cs_ir[30] ? c_cs.ptr : c_cs.idx;
     // CS loads at the next address once its word has gone; not in the clock
     // a WRITE-I-MEM's refetch begins, the store being written a clock on.
-    cs_load  = (!cs_keep || cs_moves) && !block_load && errhalt_now == 1'b0;
+    // The console's `fetching` gates CS's load, not the store's read, which
+    // with CS empty, halted or draining, reads at NPC for the spy's IR.
+    cs_load_raw = (!cs_keep || cs_moves) && !block_load && errhalt_now == 1'b0;
+    cs_load  = cs_load_raw && fetch_ok;
     // A and the PDL buffer read every clock: RD takes their words in the
     // clock its word arrives and keeps them after, so a read that no word
     // takes changes nothing.
@@ -1973,7 +2104,7 @@ module quux15_core #(
   // `npc` already holds; or it keeps the delay slot held, which reads
   // nothing either way.  So the redirect reaches NPC's registers and CS's,
   // and not the store (checked below).
-  logic        rd_killed_nr, rd_moves_nr, cs_moves_nr, cs_load_nr, oa_hold_nr, pdl_wait_nr;
+  logic        rd_killed_nr, rd_moves_nr, cs_moves_nr, cs_load_nr, cs_load_nr_raw, oa_hold_nr, pdl_wait_nr;
   logic [13:0] npc_nr;
   copies_t     c_app_nr;
   /* verilator lint_off UNUSEDSIGNAL */
@@ -1992,11 +2123,14 @@ module quux15_core #(
                                || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
     pdl_wait_nr = cs_rp[1] && (cs_rp[0] ? c_cs_nr.ptr_pend : c_cs_nr.idx_pend);
     cs_moves_nr = cs_v && (!rd_v || rd_moves_nr) && !oa_hold_nr && !pdl_wait_nr && errhalt_now == 1'b0;
-    cs_load_nr  = (!cs_v || cs_moves_nr) && errhalt_now == 1'b0;
+    cs_load_nr_raw = (!cs_v || cs_moves_nr) && errhalt_now == 1'b0;
+    cs_load_nr  = cs_load_nr_raw && fetch_ok;
   end
   // The store's read, and the PDL buffer's address: with two bubbles as
   // though EX redirects nothing.
-  assign store_re    = (BUBBLES == 2) ? cs_load_nr : cs_load;
+  // Halted, the store reads the next word to run for the spy's IR; stopped
+  // at an error, the word in EX (the next fetch's address is EX's then).
+  assign store_re    = ((BUBBLES == 2) ? cs_load_nr_raw : cs_load_raw) || errhalt != 2'd0;
   assign store_raddr = (BUBBLES == 2) ? npc_nr : npc_e;
   assign pdl_raddr   = (BUBBLES == 2) ? (cs_ir[30] ? c_cs_nr.ptr : c_cs_nr.idx) : cs_pdl_addr;
 
@@ -2015,8 +2149,39 @@ module quux15_core #(
         $display("quux15_core: two bubbles: CS loads %o, the store read %o (%b)", npc_e, npc_nr, cs_load_nr);
         $finish;
       end
-      if (cs_keep && !cs_moves && !cs_load && cs_load_nr) begin
+      if (cs_keep && !cs_moves && !cs_load && cs_load_nr_raw) begin
         $display("quux15_core: two bubbles: CS keeps %o while the store reads", cs_pc);
+        $finish;
+      end
+    end
+  end
+  // **WHAT THE HALT RELIES ON**, which muir's drain does by hand:
+  // - the halt's fix: no grant meets the start EX commits in its own clock;
+  // - the successor's MD (`md_old`, kept at the drain's end only for the
+  //   read start that ran last): a read start is granted in WB before the
+  //   word after it commits, and any later commit drops it, so it is the
+  //   last committed word's whenever it stands;
+  // - RD's copies (`restore_copies`): a word's effects reach them only as
+  //   it leaves RD for EX, and the squash leaves RD and CS empty, so with
+  //   EX and WB drained they stand as the registers do, save a pending
+  //   write's `seq` under no pending flag and the stack's top kept as the
+  //   stack's word at the pointer (`spc_below`), the same word.
+  always_ff @(posedge clk) begin
+    if (!rst && errhalt == 2'd0) begin
+      if (commit && pw_eff_v && pw_eff_seq == ex_seq) begin
+        $display("quux15_core: a grant meets the start of the word EX commits, %o", ex_pc);
+        $finish;
+      end
+      if (n_old_v && n_old_seq != (commit ? ex_seq : last_seq)) begin
+        $display("quux15_core: the MD a read start kept is not the last word's, %o", n_old_seq);
+        $finish;
+      end
+      if (drain_end && (c_next.spc_ptr != c_res.spc_ptr || c_next.ptr != c_res.ptr || c_next.idx != c_res.idx
+                        || c_next.lc != c_res.lc || c_next.nf != c_res.nf || c_next.bm != c_res.bm
+                        || c_next.next_instr != c_res.next_instr || c_next.spc_pend || c_next.ptr_pend
+                        || c_next.idx_pend || c_next.lc_pend
+                        || (!c_next.spc_below && c_next.spc_top != c_res.spc_top))) begin
+        $display("quux15_core: the halt leaves RD's copies apart from the registers");
         $finish;
       end
     end
@@ -2050,13 +2215,13 @@ module quux15_core #(
     if (rst) begin
       // `Pipeline::boot`: the trap in CS at the PROM's first word, which the
       // first fetch reads again; RD's copies from the registers.
-      cs_v <= 1'b1; cs_nop <= 1'b1; cs_pre_nop <= 1'b0; cs_trap <= 1'b1;
-      cs_seq <= 8'd1; cs_pc <= RESET_PC;
-      rd_v <= 1'b0; ex_v <= 1'b0; wb_v <= 1'b0;
+      cs_v_q <= 1'b1; cs_nop_q <= 1'b1; cs_pre_nop_q <= 1'b0; cs_trap_q <= 1'b1; cs_dbg_q <= 1'b0;
+      cs_seq_q <= 8'd1; cs_pc_q <= RESET_PC;
+      rd_v_q <= 1'b0; ex_v <= 1'b0; wb_v <= 1'b0; rd_trap <= 1'b0;
       rd_nop <= 1'b0; rd_pre_nop <= 1'b0; ex_nop <= 1'b0; ex_pre_nop <= 1'b0;
-      npc <= RESET_PC; npc_after_v <= 1'b0; npc_after <= 14'd0;
-      nop_next <= 1'b0; pre_nop_next <= 1'b0;
-      seq_ctr <= 8'd2;
+      npc_q <= RESET_PC; npc_after_v_q <= 1'b0; npc_after_q <= 14'd0;
+      nop_next_q <= 1'b0; pre_nop_next_q <= 1'b0;
+      seq_ctr_q <= 8'd2;
       c <= '0;
       q <= 40'd0; vma <= 40'd0; md <= 40'd0; lc <= 34'd0; lc_needfetch <= 1'b0;
       pdl_ptr <= 14'd0; pdl_idx <= 14'd0; spcptr <= 5'd0; intctl <= 4'd0; dc <= 10'd0;
@@ -2064,6 +2229,7 @@ module quux15_core #(
       for (int k = 0; k < 8; k++) opc[k] <= 14'd0;
       npc_prev <= RESET_PC;
       next_instrd <= 1'b0;
+      x_halted <= 1'b0; last_seq <= 8'd0; committed <= 64'd0; hw_v <= 1'b0;
       spc_w_v <= 1'b0; spc_w_ptr <= 5'd0; spc_w_word <= 19'd0;
       errhalt <= 2'd0;
       ex_clocks <= 5'd0;
@@ -2076,7 +2242,7 @@ module quux15_core #(
       vmaok <= 1'b0; wrcyc <= 1'b0; lvmo <= 30'(32'b11 << 26 | 32'o777777);
       ack_left <= 2'd0; pend_v <= 1'b0; pend_dev <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
       wp_v <= 1'b0; pw_v <= 1'b0; rgw_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
-      bus_nxm <= 1'b0; errstop <= 1'b0; posted_errors <= '0;
+      bus_nxm <= 1'b0; posted_errors <= '0;
       wb_fresh <= 1'b0; st_v <= '0; ex_map_held <= 1'b0; ex_late_held <= 1'b0; ex_b_walked <= 1'b0;
     end else if (errhalt != 2'd0) begin
       // Stopped: nothing moves.
@@ -2103,6 +2269,11 @@ module quux15_core #(
         spc_w_v <= nsw_v; spc_w_ptr <= nsw_ptr; spc_w_word <= nsw_word;
         npc_prev <= x_npc;
         next_instrd <= nid_new;
+        // The HALT bit (`x.halted`): an executed word's `IR<11:10>` 1, not
+        // a BYTE word's.
+        x_halted <= !ex_nop && ex_isel[11:10] == 2'd1 && ex_isel[44:43] != 2'd3;
+        last_seq <= ex_seq;
+        committed <= committed + 64'd1;
         if (!ex_nop) begin
           for (int k = 7; k > 0; k--) opc[k] <= opc[k-1];
           opc[0] <= ex_pc;
@@ -2143,7 +2314,7 @@ module quux15_core #(
       end else if (cprod_v && port_empty) begin
         cprod_v <= 1'b0;
       end
-      bus_nxm <= n_bus_nxm; errstop <= n_errstop; posted_errors <= n_posted;
+      bus_nxm <= n_bus_nxm; posted_errors <= n_posted;
       if (land_a_we && land_a_addr == 10'o430) pdl_base <= land_data[31:0];
       if (land_a_we && land_a_addr == 10'o431) pdl_head <= land_data[13:0];
 
@@ -2213,7 +2384,7 @@ module quux15_core #(
       // --- RD: CS's word, read at this edge; or the word RD holds, d2 and
       // the PDL buffer's forward into it.
       if (cs_moves) begin
-        rd_v <= 1'b1; rd_nop <= cs_n_nop; rd_pre_nop <= cs_n_pre;
+        rd_v_q <= 1'b1; rd_nop <= cs_n_nop; rd_pre_nop <= cs_n_pre; rd_trap <= cs_trap;
         rd_seq <= cs_seq; rd_pc <= cs_pc; rd_word <= cs_word; rd_ir <= cs_ir;
         rd_a_addr <= cs_ir[41:32];
         // d3: the write landing at the edge of the read, which the RAM gives
@@ -2231,11 +2402,11 @@ module quux15_core #(
           logic land_fix;
           land_fix = land_pdl_we && land_pdl_addr == cs_pdl_addr
                   && (cs_seq - land_pdl_seq) >= 8'd2 && (cs_seq - land_pdl_seq) < 8'd128;
-          rd_pdl_fix_v <= land_fix || (pdlw_v && pdlw_addr == cs_pdl_addr);
-          rd_pdl_fix   <= land_fix ? land_pdl_data : pdlw_data;
+          rd_pdl_fix_v <= land_fix || (pdlh_v && pdlh_addr == cs_pdl_addr && !pdl_pend);
+          rd_pdl_fix   <= land_fix ? land_pdl_data : pdlh_data;
         end
       end else if (rd_moves || !rd_keep) begin
-        rd_v <= 1'b0;
+        rd_v_q <= 1'b0;
       end else begin
         rd_nop <= rd_n_nop; rd_pre_nop <= rd_n_pre;
         rd_a_fix_v <= 1'b1; rd_a_fix <= rd_a_n;
@@ -2244,24 +2415,202 @@ module quux15_core #(
       end
 
       // --- CS: the next word, at the address RD or the redirect chose.
-      seq_ctr <= seq_e;
-      npc <= npc_e; npc_after <= npc_after_e; npc_after_v <= npc_after_v_e;
-      nop_next <= nop_next_e; pre_nop_next <= pre_nop_next_e;
+      seq_ctr_q <= seq_e;
+      npc_q <= npc_e; npc_after_q <= npc_after_e; npc_after_v_q <= npc_after_v_e;
+      nop_next_q <= nop_next_e; pre_nop_next_q <= pre_nop_next_e;
       if (cs_load) begin
-        cs_v <= 1'b1; cs_trap <= 1'b0;
-        cs_nop <= nop_next_e; cs_pre_nop <= pre_nop_next_e && !nop_next_e;
-        cs_seq <= seq_e; cs_pc <= npc_e;
-        seq_ctr <= seq_e + 8'd1;
-        npc <= npc_after_v_e ? npc_after_e : npc_e + 14'd1;
-        npc_after_v <= 1'b0;
-        nop_next <= 1'b0; pre_nop_next <= 1'b0;
+        cs_v_q <= 1'b1; cs_trap_q <= 1'b0;
+        // With IDEBUG up the debug IR's word in place of the store's.
+        cs_dbg_q <= cc_idebug; cs_dbg_word <= debug_ir;
+        cs_nop_q <= nop_next_e; cs_pre_nop_q <= pre_nop_next_e && !nop_next_e;
+        cs_seq_q <= seq_e; cs_pc_q <= npc_e;
+        seq_ctr_q <= seq_e + 8'd1;
+        npc_q <= npc_after_v_e ? npc_after_e : npc_e + 14'd1;
+        npc_after_v_q <= 1'b0;
+        nop_next_q <= 1'b0; pre_nop_next_q <= 1'b0;
       end else if (!cs_keep || cs_moves) begin
         // Squashed, or gone to RD with the next fetch a clock later.
-        cs_v <= 1'b0;
+        cs_v_q <= 1'b0;
       end else begin
-        cs_nop <= cs_n_nop; cs_pre_nop <= cs_n_pre;
+        cs_nop_q <= cs_n_nop; cs_pre_nop_q <= cs_n_pre;
       end
     end
+    if (!rst) begin
+      // **THE CONSOLE'S -RESET AND -BOOT** (`console_edge`): OA-REG-LOW
+      // and OA-REG-HIGH and word 225 cleared; the boot empties the four
+      // stages and what is on its way (`reset_pipeline`), the trap in CS at
+      // the PROM's first word, VMAOK clear.  Taken halted, the port idle.
+      if (reset_q) begin
+        oa_low <= '0; oa_high <= '0; posted_errors <= '0;
+      end
+      // The word a halt fixed, for its write's grant.
+      if (drain_fix && !fix_halt) begin
+        hw_v <= 1'b1; hw_seq <= commit ? ex_seq : wp_seq; hw_word <= fix_md;
+      end else if (fix_held) begin
+        hw_v <= 1'b0;
+      end
+      if (boot_q) begin
+        spc_w_v <= 1'b0; old_v <= 1'b0; mwd_v <= 1'b0; wp_v <= 1'b0; vmaok <= 1'b0; hw_v <= 1'b0;
+        npc_prev <= RESET_PC;
+        c <= c_boot;
+      end
+    end
+  end
+
+  // ============================================================ the console
+
+  // RD's copies after a boot (`restore_copies` after `reset_pipeline`): the
+  // registers as they stand, the stack's pending write dropped.
+  copies_t c_boot;
+  always_comb begin
+    c_boot = '0;
+    c_boot.spc_ptr = spcptr;
+    c_boot.spc_top = spc[spcptr];
+    c_boot.ptr = pdl_ptr;
+    c_boot.idx = pdl_idx;
+    c_boot.lc = lc;
+    c_boot.nf = lc_needfetch;
+    c_boot.bm = intctl[3];
+    c_boot.next_instr = next_instrd;
+  end
+
+  // **THE HALT ENDS** (`clock_once`'s end) as the clock ends with nothing in
+  // the four stages, the port idle, no word on its way to MD, no register
+  // write or CMD_PROD left: halted, between two microcycles.
+  logic ex_v_n, wb_v_n, rd_v_n, cs_v_n, cprod_v_n, drain_end, halt_set;
+  always_comb begin
+    ex_v_n    = rd_moves || (ex_v && !commit);
+    wb_v_n    = commit || (wb_v && !wb_leaves);
+    rd_v_n    = cs_moves || (rd_keep && !rd_moves);
+    cs_v_n    = cs_load || (cs_keep && !cs_moves);
+    cprod_v_n = take_cmd_prod || (cprod_v && !port_empty);
+    drain_end = (draining_now || stepping || step_go) && errhalt == 2'd0 && !errhalt_now
+             && !ex_v_n && !wb_v_n && !rd_v_n && !cs_v_n && port_idle_n
+             && !n_rd_port && !n_pend_v && !n_rgw_v && !cprod_v_n;
+    // A HALT word under ERROR-STOP-ENABLE: the machine drains (`ex.halt`).
+    halt_set  = commit && !ex_nop && ex_isel[11:10] == 2'd1 && ex_isel[44:43] != 2'd3 && errstop;
+  end
+
+  // **THE SPY'S WRITE** (`Machine::spy_write`), at the edge before the
+  // clock it is for; `-RESET` and `-BOOT` with it (`reset_go`, `boot_go`).
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      // `Pipeline::boot`: RUN preset by -BOOT.
+      cc_run <= 1'b1; cc_step <= 1'b0; cc_nop11 <= 1'b0; cc_idebug <= 1'b0; cc_ldstat <= 1'b0;
+      mode <= '0; opc_ctl <= '0; debug_ir <= '0;
+      srun <= 1'b1; sstep <= 1'b0; ssdone <= 1'b0;
+      halted <= 1'b0; draining <= 1'b0; stepping <= 1'b0; halt_req <= 1'b0;
+    end else begin
+      ssdone   <= sstep;
+      sstep    <= cc_step;
+      srun     <= drain_end ? 1'b0 : cc_run;
+      halted   <= drain_end || halted_now;
+      draining <= draining_now && !drain_end;
+      stepping <= (stepping || step_go) && !drain_end;
+      halt_req <= halt_set;
+      if (drain_end) cc_run <= 1'b0;
+      if (rw_take && rgw_bus[7:0] == 8'o102) mode[2] <= rgw_word[0];
+      if (spy_we) begin
+        unique case (spy_eadr[2:0])
+          3'd0: debug_ir[15:0]  <= spy_wdata;
+          3'd1: debug_ir[31:16] <= spy_wdata;
+          3'd2: debug_ir[47:32] <= spy_wdata;
+          3'd3: {cc_ldstat, cc_idebug, cc_nop11, cc_step, cc_run} <= spy_wdata[4:0];
+          3'd4: opc_ctl <= spy_wdata[2:0];
+          // QUUX's mode register has no speed bits.
+          3'd5: mode <= {spy_wdata[5:2], 2'b00};
+          // `-LDDBIRX` (proposed), revision 15's alone.
+          3'd6: debug_ir[63:48] <= spy_wdata;
+          default: ;
+        endcase
+      end
+      if (reset_go) begin
+        mode <= '0; opc_ctl <= '0;
+        cc_step <= 1'b0; cc_nop11 <= 1'b0; cc_idebug <= 1'b0; cc_ldstat <= 1'b0;
+      end
+      if (boot_go) cc_run <= 1'b1;
+    end
+  end
+
+  // The PDL buffer's held write, and the halt's drain end and the boot.
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      pdlh_v <= 1'b0; pdl_pend <= 1'b0;
+    end else begin
+      if (land_pdl_we && running) begin
+        pdlh_v <= 1'b1; pdlh_addr <= land_pdl_addr; pdlh_data <= land_pdl_data; pdlh_seq <= land_pdl_seq;
+      end
+      // The held-over write lands after the first word's read.
+      if (pdl_pend && cs_moves) pdl_pend <= 1'b0;
+      if (drain_end && !pdl_pend) begin
+        if ((land_pdl_we && running) ? land_pdl_seq == (commit ? ex_seq : last_seq)
+                                     : (pdlh_v && pdlh_seq == (commit ? ex_seq : last_seq)))
+          pdl_pend <= 1'b1;
+      end
+      // A boot loses a write held over (`Back::default`).
+      if (boot_q && pdl_pend) begin
+        pdlh_v <= 1'b0; pdl_pend <= 1'b0;
+      end
+    end
+  end
+
+  // **THE SPY'S READ** (`spy_15`, of committed state): IR the next word to
+  // run, read from the store while halted (a console reads IR halted), PC
+  // its address; OPC the oldest
+  // of the eight; FLAG-1's PROMDISABLE, ERR (the HALT bit), SSDONE and
+  // SRUN, its other flags clear in their senses; FLAG-2's VMAOK; the
+  // statistics counter 0; the rest open.
+  always_comb begin
+    unique case (spy_raddr)
+      4'd0:  spy_rdata = store_q[15:0];
+      4'd1:  spy_rdata = store_q[31:16];
+      4'd2:  spy_rdata = store_q[47:32];
+      4'd3:  spy_rdata = store_q[63:48];
+      4'd4:  spy_rdata = {2'b00, opc[7]};
+      // PC: the oldest word not committed, or the next fetch (`pc_15`).
+      4'd5:  spy_rdata = {2'b00, (ex_v && !ex_nop) ? ex_pc : (rd_v_q && !rd_nop) ? rd_pc
+                                  : (cs_v_q && !cs_nop_q) ? cs_pc_q : npc_q};
+      4'd8:  spy_rdata = 16'he800 | {3'd0, mode[5], 1'b0, x_halted, ssdone, srun, 8'd0};
+      4'd9:  spy_rdata = 16'hc0c0 | {12'd0, !vmaok, 3'd0};
+      4'd14: spy_rdata = 16'd0;
+      4'd15: spy_rdata = 16'd0;
+      default: spy_rdata = 16'hffff;
+    endcase
+  end
+
+  // **THE READOUT OF THE HALTED PIPELINE** (`save_15`'s fields after the
+  // machine, the period and the port, in its order).
+  always_comb begin
+    unique case (ro_sel)
+      5'd0:  ro_word = {50'd0, npc};
+      5'd1:  ro_word = {49'd0, npc_after_v, npc_after};
+      5'd2:  ro_word = {62'd0, pre_nop_next, nop_next};
+      5'd3:  ro_word = {49'd0, pdl_pend, pdlh_addr};
+      5'd4:  ro_word = {24'd0, pdlh_data};
+      5'd5:  ro_word = {63'd0, old_v};
+      5'd6:  ro_word = {24'd0, old_md};
+      5'd7:  ro_word = 64'd0;                             // D's wait: D is not built
+      5'd8:  ro_word = {38'd0, oa_low};
+      5'd9:  ro_word = {42'd0, oa_high};
+      5'd10: ro_word = {63'd0, next_instrd};
+      5'd11: ro_word = {34'd0, lvmo};
+      5'd12: ro_word = {63'd0, wrcyc};
+      5'd13: ro_word = {39'd0, spc_w_v, spc_w_ptr, spc_w_word};
+      5'd14: ro_word = {63'd0, mwd_v};
+      5'd15: ro_word = {24'd0, mwd_vma};
+      5'd16: ro_word = {24'd0, mwd_md};
+      5'd17: ro_word = {8'd0, opc[3], opc[2], opc[1], opc[0]} ;
+      5'd18: ro_word = {8'd0, opc[7], opc[6], opc[5], opc[4]};
+      5'd19: ro_word = {62'd0, x_halted, halted};
+      5'd20: ro_word = committed;
+      5'd21: ro_word = {50'd0, npc_prev};
+      // The console's registers, which the machine's part of a checkpoint
+      // carries: the mode register, the clock control register, the OPC
+      // control register; and the debug IR.
+      5'd22: ro_word = {50'd0, opc_ctl, cc_ldstat, cc_idebug, cc_nop11, cc_step, cc_run, mode};
+      5'd23: ro_word = debug_ir;
+      default: ro_word = 64'd0;
+    endcase
   end
 
   // ========================================================= the observation
@@ -2285,8 +2634,11 @@ module quux15_core #(
   end
 
   always_comb begin
-    obs_cs       = {cs_v, cs_v && cs_nop, cs_pc};
-    obs_rd       = {rd_v, rd_v && rd_nop, rd_pc};
+    // A HALT word's drain squashes CS and RD as its clock ends in muir
+    // (`ex.halt`), which the core does as the next clock begins: the clock's
+    // row shows them gone.
+    obs_cs       = {cs_v_q && !(halt_req && !halted && !draining), cs_v_q && cs_nop_q, cs_pc_q};
+    obs_rd       = {rd_v_q && !(halt_req && !halted && !draining), rd_v_q && rd_nop, rd_pc};
     obs_ex       = {ex_v, ex_v && ex_nop, ex_pc};
     obs_wb       = {wb_v, wb_v && wb_nop, wb_pc};
     obs_pdlptr   = pdl_ptr;
@@ -2299,7 +2651,7 @@ module quux15_core #(
     obs_ic       = {2'd0, intctl, 26'd0};
     obs_oalow    = oa_low;
     obs_oahigh   = oa_high;
-    obs_halted   = 1'b0;
+    obs_halted   = halted;
     obs_errhalt  = errhalt;
   end
 
@@ -2339,7 +2691,8 @@ module quux15_core #(
   logic unused;
   assign unused = ^{ex_int_rd, s_regword[32], st_fetch, port_idle, lvmo[29:28], lvmo[25:0], n_land, n_md_now[39:32],
                     ex_pre_nop, x_mul, x_div, wb_seq, unbuilt, ex_word[63:62], ex_word[59],
-                    ex_msrc[4], sx.pushed, ex_disp, plan.returns};
+                    ex_msrc[4], sx.pushed, ex_disp, plan.returns,
+                    spy_eadr[3]};   // the write decoder takes `EADR<2:0>` (`spy::write_strobe`)
 
 endmodule
 

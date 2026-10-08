@@ -99,6 +99,9 @@ module quux15_port #(
     output var logic [4:0]  inflight_n,
     // Nothing queued, in flight or filling.
     output var logic        idle,
+    // The same as the clock ends, the sweep's hold over too (`Port::idle`):
+    // what a halt's drain waits for.
+    output var logic        idle_n,
     // Every write answered, as the tick leaves the clock (`Port::empty`):
     // what CMD_PROD waits for.
     output var logic        empty,
@@ -500,6 +503,18 @@ module quux15_port #(
     queue_n    = q_count - {3'd0, mw_taken} + {3'd0, post_push} + {3'd0, w_push};
     inflight_n = f_count - n_land + {4'd0, mw_taken};
     idle       = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE;
+    begin
+      logic fill_n;
+      // A fill as the clock ends: asked for now, issued or waiting, or
+      // landing at the next clock.
+      unique case (fs)
+        F_NONE, F_LAND: fill_n = f_new;
+        F_WAIT:         fill_n = 1'b1;
+        F_DATA:         fill_n = 1'b1;
+        default:        fill_n = 1'b0;
+      endcase
+      idle_n = queue_n == 4'd0 && inflight_n == 5'd0 && !fill_n && !sweep_go && sweep_left == 16'd0;
+    end
     empty      = q_count == 4'd0 && f_count == n_land;
   end
 
