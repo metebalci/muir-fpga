@@ -15,9 +15,10 @@
 //!             and holds until the enable is cleared
 //!             (and OA-OUTSIDE-FIELDS's freeze: the machine stopped
 //!             mid-clock, the word in EX, read as it stands)
-//!   halts     a halt at every clock of five programs and of a write start
-//!             in a mispredicted jump's delay slot, a read's word landing
-//!             around it, and at every third clock of two of muir's
+//!   halts     a halt at every clock of five programs, of a write start in
+//!             a mispredicted jump's delay slot, a read's word landing
+//!             around it, and of a write started by a read start's
+//!             successor, and at every third clock of two of muir's
 //!             programs at random with memory, each resumed at once and run
 //!             to its park
 //!
@@ -249,6 +250,38 @@ fn write_in_slot(gap: Option<usize>) -> Preset {
     p
 }
 
+/// **A write started right after a read start, its word fixed by a halt**:
+/// MD-START-WRITE as the read's successor waits in EX for the read to land
+/// and leaves the read's word in MD, whatever it wrote (A15b.3); it writes
+/// M 31 too, so the return behind it waits in RD under the guard while it
+/// is in EX and WB. A halt in its first clock in WB finds EX empty and
+/// fixes the write's word with MD as it stands, the read's, as the write is
+/// granted (`clock_once`'s end); a read of the word after the resume shows
+/// which word was written. Run unhalted, muir's pipeline writes the word
+/// the successor wrote to MD, and `micro` the read's: these runs are held to
+/// muir's pipeline alone.
+fn write_after_read() -> Preset {
+    use muir::isa::asm::{POPJ, SETM, SRC_MD, START_READ};
+    const PHYS: Word = 0o36000000000;
+    let mut p = Preset::new();
+    p.skip_sweep = true;
+    p.main.push((0o10, 0o123321));
+    let ret = 0o100;
+    let (back, r, x) = (p.k(ret), p.k(PHYS | 0o10), p.k(0o4444));
+    p.op(ALU | SETA | a_src(back) | super::fd(0o15));
+    p.fill(3);
+    p.op(ALU | SETA | a_src(r) | START_READ);
+    p.op(ALU | SETA | a_src(x) | 0o32 << 19 | 0o31 << 14);
+    p.op(ALU | ADD | a_src(super::ONE) | m_src(0o20) | m_dest(0o20) | POPJ);
+    p.fill(1);
+    p.fill_to(ret);
+    p.op(ALU | SETA | a_src(r) | START_READ);
+    p.fill(1);
+    p.op(ALU | SETM | SRC_MD | m_dest(0o22));
+    p.stop();
+    p
+}
+
 /// **A halt at every clock**: each a run of its own, halted at the start
 /// of that clock, its halted state recorded, resumed at once.
 pub fn halts(period: u64) -> Vec<Case> {
@@ -269,6 +302,14 @@ pub fn halts(period: u64) -> Vec<Case> {
             c.script = halt_at(at);
             v.push(c);
         }
+    }
+    let p = write_after_read();
+    let end = park_clock(&p.case("x"), period);
+    for at in 2..=end {
+        let mut c = p.case(&format!("readwrite-{at}"));
+        c.script = halt_at(at);
+        c.micro_check = false;
+        v.push(c);
     }
     for seed in [1u64, 2] {
         let p = super::quux15_preset::random_program(seed, true);

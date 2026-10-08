@@ -301,10 +301,10 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # side's rows (`golden/src/quux15_memside.rs`), `ports` and `walk`, at both
 # periods, where the port's clocks round differently; and the console's
 # (`golden/src/quux15_console.rs`): halts, single steps, the debug IR, the
-# reset and the boot (`console`), and a halt at every clock of five programs
-# and of a write start in a delay slot, and at every third of two at random
-# with memory (`halts`, at 10 ns alone), each halted state held byte for
-# byte to muir's checkpoint.
+# reset and the boot (`console`), and a halt at every clock of five programs,
+# of a write start in a delay slot and of one right after a read start, and
+# at every third of two at random with memory (`halts`, at 10 ns alone), each
+# halted state held byte for byte to muir's checkpoint.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
 QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts
 QUUX15_PERIODS := 20 17

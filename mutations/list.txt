@@ -29198,6 +29198,30 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     halt_fixes = 1'b0;
 @end
 
+@mutation quux15-halt-grants-the-write-a-stale-word
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note A write granted as the halt fixes its word takes MD as its start left
+@note it, not MD as it stands: after a read start's successor, the read's
+@note word.
+@old
+    fix_word = fix_halt ? md_now : fix_held ? hw_word : fix_val;
+@new
+    fix_word = fix_held ? hw_word : fix_val;
+@end
+
+@mutation quux15-halt-holds-the-write-s-own-md
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note A write the halt fixes before its grant holds MD as the word committing
+@note now wrote it, not the read's word that stands after a read start's
+@note successor.
+@old
+    fix_md   = commit ? ((ex_succ && !ex_rif) ? md_now : nmd) : md_now;
+@new
+    fix_md   = commit ? nmd : md_now;
+@end
+
 @mutation quux15-step-forgets-its-own-step
 @check quux15_console_quux
 @file rtl/machine/quux15_core.sv
