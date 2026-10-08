@@ -309,13 +309,12 @@ module quux15_core #(
   logic [63:0] wb_imem_data;
   // WB's first clock, when its word's writes land; and the word's starts
   // still to be granted, in order (`Back::starts`): read or write, LC's
-  // fetch, the virtual address; and a write's word, `MD` as its start's
-  // microcycle left it (A15b.3), which only the first
-  // start can need, LC's fetch being a read.
+  // fetch, the virtual address.  A write's word is MD as it stands at the
+  // grant, which is MD as its start's microcycle left it (A15b.3): nothing
+  // moves MD in between (below, `md_at_commit`).
   logic        wb_fresh;
   logic [1:0]  st_v, st_write, st_fetch;
   logic [31:0] st_va [2];
-  logic [39:0] st_word;
   logic        ex_map_held, ex_late_held, ex_b_walked, ex_int_rd;
 
   // --- The front end: the next fetch's address, the one after it when RD
@@ -964,7 +963,7 @@ module quux15_core #(
       .clk(clk), .rst(rst),
       .p_busy(p_busy), .p_req(p_req), .p_bus(p_bus), .p_land(p_land), .p_word(p_word),
       .p_land_next(p_land_next), .p_word_next(p_word_next),
-      .w_ok(w_ok), .w_req(w_req), .w_bus(w_bus), .w_word(st_word),
+      .w_ok(w_ok), .w_req(w_req), .w_bus(w_bus), .w_word(md),
       .post_req(post_req), .post_bus(post_bus), .post_word(post_word), .post_ok(post_ok),
       .t_start(t_start), .t_addr(t_addr), .t_ready(t_ready), .t_word(t_word),
       .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle), .idle_n(port_idle_n),
@@ -1123,7 +1122,7 @@ module quux15_core #(
     k_va        = a_va;
     k_entry     = s_entry;
     k_write     = st_write[0];
-    k_md        = st_write[0] ? st_word : md_now;
+    k_md        = md_now;
     w_bus       = s_bus;
     p_bus       = s_bus;
   end
@@ -1732,7 +1731,7 @@ module quux15_core #(
     n_rgw_v = rgw_v && !rw_take; n_rgw_bus = rgw_bus; n_rgw_word = rgw_word;
     n_rgw_rel = rgw_rel || commit || halt_rel;
     if (at_grant && s_device && st_write[0]) begin
-      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = st_word;
+      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = md;
       n_rgw_rel = commit || halt_rel;
     end
     // --- MD: the word EX leaves, or the read's word that landed.  The word
@@ -2109,6 +2108,24 @@ module quux15_core #(
       end
     end
   end
+  // **WHAT A WRITE'S WORD RELIES ON**: the port's queue entry, a register's
+  // write and the walker take MD as it stands at the grant, for the word
+  // muir's start carries from EX's commit (`written`), MD as the start's
+  // microcycle left it (A15b.3; right after a read start, the read's word).
+  // The two are one word because nothing moves MD while WB holds a write
+  // start: a start waits in EX while a read is on its way, and WB holds EX
+  // until its starts are granted.  A change that lets a word move MD in
+  // between stops here.
+  logic [39:0] md_at_commit;
+  always_ff @(posedge clk) begin
+    if (commit) md_at_commit <= md_final;
+    if (!rst && errhalt == 2'd0 && wb_v && st_v[0] && st_write[0]
+        && (md != md_at_commit || md_now != md_at_commit)) begin
+      $display("quux15_core: MD moved between the commit of the write at %o and its grant: %o, not %o",
+               wb_pc, md_now, md_at_commit);
+      $finish;
+    end
+  end
   // **WHAT THE HALT RELIES ON**, which muir's drain does by hand:
   // - the successor's MD (`md_old`, kept at the drain's end only for the
   //   read start that ran last): a read start is granted in WB before the
@@ -2281,9 +2298,6 @@ module quux15_core #(
         st_fetch  <= {xs1.fetch, xs0.fetch};
         st_va[0]  <= xs0.va;
         st_va[1]  <= xs1.va;
-        // A write carries MD as its start's microcycle leaves it: right
-        // after a read start, the read's word (A15b.3).
-        st_word   <= md_final;
       end else if (s_done) begin
         st_v      <= {1'b0, st_v[1]};
         st_write  <= {1'b0, st_write[1]};

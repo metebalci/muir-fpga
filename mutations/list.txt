@@ -29220,21 +29220,22 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @mutation quux15-write-carries-md-from-before-the-read
 @check quux15_halts_quux
 @file rtl/machine/quux15_core.sv
-@note A write started right after a read start carries MD as the word left
-@note it before the read's word landed: its own MD load, or MD from before
-@note the read (A15b.3).
+@note The word right after a read start leaves MD as it left it, its own MD
+@note load or MD from before the read, not the read's word, and a write it
+@note starts carries that word (A15b.3).
 @old
-        st_word   <= md_final;
+    md_final = (ex_succ && !ex_rif) ? md_now : nmd;
 @new
-        st_word   <= nmd;
+    md_final = nmd;
 @end
 
-# A write's queue entry taking MD as it stands at its grant (`md_now` for
-# `st_word` at the port's `w_word`) is no fault here: nothing changes MD
-# between a write's commit and its grant, a start waiting in EX while a read
-# is on its way and WB holding EX until its starts are granted, so the word
-# is the start's. It survived every quux15 check; the register's write
-# below takes the next word's MD instead, as the single-edge rule would.
+# A write's word is MD as it stands at the grant (the port's `w_word`, a
+# register's write, the walker's word), not a copy kept from EX's commit:
+# a record planting MD as the start's microcycle left it there would be
+# equivalent, since the core's assertion that MD at a write's grant equals
+# MD at its commit (`md_at_commit`, quux15_core.sv) holds over every
+# quux15 trace on both bubble counts. The register's write below takes the
+# next word's MD instead, as the single-edge rule would.
 
 @mutation quux15-register-write-takes-the-next-word-s-md
 @check quux15_halts_quux
@@ -29242,9 +29243,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A register's write takes MD as the word committing at its grant leaves
 @note it, the next word's MD load (the single-edge rule), not its start's.
 @old
-      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = st_word;
+      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = md;
 @new
-      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = commit ? nmd : st_word;
+      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = commit ? nmd : md;
 @end
 
 @mutation quux15-register-write-released-at-its-grant
