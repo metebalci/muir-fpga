@@ -147,6 +147,7 @@ CHECK_CADR = $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.p
        $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/kr260.pass $(BUILD)/machine_param.pass \
        $(BUILD)/word_width.pass \
        $(BUILD)/work_dirs.pass \
+       mutrev \
        $(BUILD)/board_reset.pass $(BUILD)/fault.pass \
        $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
@@ -3327,8 +3328,11 @@ MUTDIR ?= $(BUILD)/mutants
 # that passed at one moment failing twenty-four microcycles in at the next,
 # with the results either side belonging to two different designs. To try
 # uncommitted work, call `mutations/run.py` directly and read its dirty-tree
-# warning.
+# warning, or give `MUTREV=` empty, which leaves `--rev` out and mutates the
+# working tree; the runner then prints the same warning.
+# `mutrev` (`tools/mutrev_check.py`) holds all three forms.
 MUTREV ?= HEAD
+MUTREVFLAG = $(if $(MUTREV),--rev $(MUTREV))
 
 # **HOW MANY MUTATIONS RUN AT ONCE.** The runner's own default is half the
 # machine's cores, and its reason is memory rather than courtesy: a job is a
@@ -3370,6 +3374,13 @@ MUTCACHEFLAGS := $(if $(MUTCCACHE),--ccache '$(MUTCCACHE)' --ccache-size $(MUTCC
 mutants-anchors:
 	python3 mutations/anchors.py
 
+# How `make mutants` passes `MUTREV` on: `--rev HEAD` unset, `--rev <sha>`
+# given, and no `--rev` at all when empty.  It asks `make -n`, so it runs
+# nothing and takes under a second; phony and in `check`, as `muir-pin` is.
+.PHONY: mutrev
+mutrev:
+	python3 tools/mutrev_check.py .
+
 # QUUX's traces and PROM images, both machines' programs among them: `make
 # mutants` runs the records aimed at the CADR's checks, the CADR's side of
 # QUUX's programs included, and `make mutants MACHINE=quux` those aimed at
@@ -3396,7 +3407,7 @@ mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/dispatch_write_order.golden $(MUTANT_QUUX) | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
-	    --jobs $(MUTJOBS) --rev $(MUTREV) --machine $(MACHINE) $(MUTCACHEFLAGS)
+	    --jobs $(MUTJOBS) $(MUTREVFLAG) --machine $(MACHINE) $(MUTCACHEFLAGS)
 
 # The runner's own guarantees, against lists written to fail: a mutation
 # that does not apply, one that lint rejects, a survivor with nothing
