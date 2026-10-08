@@ -28696,3 +28696,29 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @new
       n_pend_v = 1'b1; n_pend_left = 2'd1; n_pend_word = '0;
 @end
+
+@mutation quux15-imem-refetch-after-its-own-address
+@check quux15_imemorder_quux
+@file rtl/machine/quux15_core.sv
+@note The words behind a WRITE-I-MEM are fetched again from the write's own
+@note address + 1, not from the word after it in execution order: a write
+@note in a jump's delay slot loses the jump (muir's
+@note `ImemRefetchAfterItsAddress`).
+@old
+        redirect_to = x_npc - 14'd1;
+@new
+        redirect_to = ex_pc + 14'd1;
+@end
+
+@mutation quux15-store-forward-removed
+@check quux15_imemorder_quux
+@file rtl/machine/quux15_store.sv
+@note The store's forward of a word written in the clock it is read left
+@note out: the word right after a WRITE-I-MEM, fetched again in the clock
+@note the store is written, takes the RAM's result in that clock, the old
+@note word (its complement under the poison).
+@old
+      fwd_v     <= we && waddr == raddr && raddr < PROM_BASE;
+@new
+      fwd_v     <= we && waddr == raddr && raddr < PROM_BASE && 1'b0;
+@end

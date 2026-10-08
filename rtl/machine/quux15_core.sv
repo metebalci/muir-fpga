@@ -1597,9 +1597,12 @@ module quux15_core #(
     redirect_to = x_npc;
     if (commit && !ex_nop) begin
       if (wrote_imem) begin
+        // The word after the write in execution order, fetched again after
+        // the write: the next in sequence, or the target of the transfer whose
+        // slot it fills, the address the write pushes under N.
         redirect    = 1'b1;
         refetch     = 1'b1;
-        redirect_to = ex_pc + 14'd1;
+        redirect_to = x_npc - 14'd1;
       end else if (ex_resolved) begin
         if (x_npc != (ex_next2_v ? ex_next2 : x_npc_seq)
             || (ex_pred_taken_v && ex_pred_taken != x_taken)

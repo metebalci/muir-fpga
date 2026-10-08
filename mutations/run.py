@@ -2698,7 +2698,7 @@ CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_
 # an address written in the same clock is poisoned.
 QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlfield", "pdlfieldout",
                "dconst", "dispatch", "predict", "imem", "memory", "ports", "walk", "matrix", "random",
-               "matrixmem", "randmem")
+               "matrixmem", "randmem", "imemorder")
 QUUX15_PERIODS = (20, 17)
 QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,)}
 for _p in QUUX15_CORE:

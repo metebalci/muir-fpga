@@ -301,7 +301,7 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # side's rows (`golden/src/quux15_memside.rs`), `ports` and `walk`, at both
 # periods, where the port's clocks round differently.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20

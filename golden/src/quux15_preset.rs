@@ -25,14 +25,17 @@
 //!             (muir's `dispatches_predicted_each_way_end_as_on_micro`)
 //!   predict   a dispatch predicted at its entry's address with another P or
 //!             R, which EX's check of P and R squashes and restores
-//!   imem      WRITE-I-MEM: words written and run later
+//!   imem      WRITE-I-MEM in MIT's form: words written and run later
+//!   imemorder WRITE-I-MEM going on at the word after it in execution
+//!             order: the word right after it written, the word two after
+//!             it, and in a jump's delay slot another word and the target
 //!
 //! Each run ends at the stop, a jump to itself at 1000, and its machine
 //! must end as `micro`'s; these programs leave no results of their own.
 
 use muir::isa::Insn;
 use muir::isa::asm::{
-    ADD, ALU, ALWAYS, AND, DISPATCH, HINT, INVERT, IOR, JUMP, LDB, N, OA_HIGH_SELECT, OA_LOW_SELECT, P,
+    ADD, ALU, ALWAYS, AND, DISPATCH, HINT, IOR, JUMP, LDB, N, OA_HIGH_SELECT, OA_LOW_SELECT, P,
     POPJ, Q_LOAD, R, SETA, SETM, XOR, a_dest, a_src, filler, m_dest, m_src, predicted, src, target,
 };
 use muir::machine::Word;
@@ -784,17 +787,11 @@ pub fn predict_program() -> Preset {
     p
 }
 
-/// **WRITE-I-MEM** (A15b.4): a JUMP with P and R writes the control store
-/// at its address from IWR, A's `<31:0>` over M's, and the words behind it
-/// are fetched again.  A word written under INVERT, and one whose condition
-/// holds, which pushes and pops the micro stack as the CADR does; each run
-/// later, called with N and without.
-///
-/// **NOT THE WORD RIGHT AFTER THE WRITE**: there muir's pipeline fetches the
-/// written word again and runs it, where `micro` runs the word it had
-/// fetched before the write, so no trace of it can be taken until muir
-/// settles which; the store's forward of a word written in the clock it is
-/// read waits on that.
+/// **WRITE-I-MEM** (A15b.4), in MIT's form: a JUMP with P, R and N,
+/// unconditional, `IR<9:0>` 1647, writes the control store at its address
+/// from IWR, A's `<31:0>` over M's, pushes and pops the micro stack as the
+/// CADR does, and the words behind it are fetched again.  Two words written
+/// and each run later, called with N and without.
 pub fn imem_program() -> Preset {
     let mut p = Preset::new();
     let word = |w: u64| (w >> 32, w & 0xffff_ffff);
@@ -803,14 +800,14 @@ pub fn imem_program() -> Preset {
     let (hi, lo) = word(later);
     let ka = p.k(hi);
     p.set(lo, 0o20);
-    p.op(JUMP | P | R | 1 << 5 | 7 | INVERT | target(0o500) | a_src(ka) | m_src(0o20));
+    p.op(write_i_mem(0o500) | a_src(ka) | m_src(0o20));
     p.fill(1);
-    // At 510, under a condition that holds: M 22 + 1, and back.
+    // At 510: M 22 + 1, and back.
     let other = ALU | ADD | a_src(ONE) | m_src(0o22) | m_dest(0o22) | POPJ;
     let (hi, lo) = word(other);
     let ka = p.k(hi);
     p.set(lo, 0o23);
-    p.op(JUMP | P | R | ALWAYS | target(0o510) | a_src(ka) | m_src(0o23));
+    p.op(write_i_mem(0o510) | a_src(ka) | m_src(0o23));
     p.fill(1);
     // Run each word written, with N and without.
     for at in [0o500, 0o510] {
@@ -825,4 +822,86 @@ pub fn imem_program() -> Preset {
     p.fill_to(0o510);
     p.fill(2);
     p
+}
+
+/// A WRITE-I-MEM of the control store's word `at`, in MIT's form: R, P, N,
+/// unconditional, not inverted, `IR<9:0>` 1647 (`cadsym.lisp`'s
+/// `WRITE-I-MEM`, whose `JUMP-OP` carries N).
+fn write_i_mem(at: u64) -> u64 {
+    JUMP | P | R | N | ALWAYS | target(at)
+}
+
+/// **WRITE-I-MEM goes on at the word after it in execution order**
+/// (A15b.3, A15b.4; muir's
+/// `write_i_mem_goes_on_at_the_word_after_it_in_execution_order` and
+/// `row_a_word_written_by_write_i_mem_runs_as_written`), each in MIT's form:
+///
+///   next          a write of the word right after it: the new word runs,
+///                 fetched again in the clock the store is written (the
+///                 store's forward, under the RAM's poison)
+///   two-ahead     a write of the word two after it, already fetched: the
+///                 new word runs
+///   slot-other-micro-unchecked
+///                 in a jump's delay slot, a write of another word: the
+///                 machine goes on at the jump's target
+///   slot-target-micro-unchecked
+///                 in a jump's delay slot, a write of the jump's target: the
+///                 target's new word runs
+///
+/// **THE TWO DELAY-SLOT RUNS ARE TAKEN WITH `micro`'S CHECKS OFF** (the
+/// case's `select_check`, `micro`'s `oa_select_check`): `micro`'s
+/// WRITE-I-MEM check refuses a write run as a delay slot, which only a word
+/// written at run time can make, as muir's own test runs `micro` unchecked
+/// for them.  The OA select check goes off with it; neither run selects.
+pub fn imem_order() -> Vec<(String, Preset)> {
+    let inc = |m: u64| ALU | ADD | a_src(ONE) | m_src(m) | m_dest(m);
+    let word = inc(0o22);
+    let wim = |p: &mut Preset, at: u64| {
+        let hi = p.k(word >> 32);
+        p.mmem.push((0o30, word & 0xffff_ffff));
+        p.op(write_i_mem(at) | a_src(hi) | m_src(0o30));
+    };
+    let mut v = Vec::new();
+    // The word right after it.
+    let mut p = Preset::new();
+    let at = p.at() + 1;
+    wim(&mut p, at);
+    p.op(inc(0o21));
+    p.fill(1);
+    p.stop();
+    v.push(("next".to_string(), p));
+    // The word two after it.
+    let mut p = Preset::new();
+    let (old, new) = (p.k(0o1111), p.k(0o2222));
+    let at = p.at() + 2;
+    let w2 = ALU | SETA | a_src(new) | m_dest(0o26);
+    let hi = p.k(w2 >> 32);
+    p.mmem.push((0o30, w2 & 0xffff_ffff));
+    p.op(write_i_mem(at) | a_src(hi) | m_src(0o30));
+    p.fill(1);
+    p.op(ALU | SETA | a_src(old) | m_dest(0o26));
+    p.fill(1);
+    p.stop();
+    v.push(("two-ahead".to_string(), p));
+    // In a delay slot: another word, then the target.
+    for other in [true, false] {
+        let mut p = Preset::new();
+        p.select_check = false;
+        let jump = p.at();
+        let t = jump + 0o10;
+        let written = if other { jump + 0o20 } else { t };
+        p.op(JUMP | ALWAYS | target(t));
+        wim(&mut p, written);
+        p.op(inc(0o21));
+        p.stop();
+        p.fill_to(t);
+        p.op(inc(0o23));
+        p.stop();
+        p.fill_to(jump + 0o20);
+        p.fill(2);
+        p.stop();
+        let name = if other { "slot-other-micro-unchecked" } else { "slot-target-micro-unchecked" };
+        v.push((name.to_string(), p));
+    }
+    v
 }

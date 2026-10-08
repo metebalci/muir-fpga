@@ -1210,6 +1210,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "walk" => quux15_memside::walk().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "dispatch" => vec![quux15_preset::dispatches().case("dispatch")],
         "imem" => vec![quux15_preset::imem_program().case("imem")],
+        "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "predict" => vec![quux15_preset::predict_program().case("predict")],
         _ => vec![Case::of_prog(name, &program(name, period))],
     }
