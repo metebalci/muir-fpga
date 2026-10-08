@@ -298,7 +298,7 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # `QUUX15_GROUPS` are traces of many runs each (`golden/src/quux15_preset.rs`),
 # the speculation matrix and programs at random, which hold no time and are
 # traced at 10 ns alone.
-QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dispatch predict imem
+QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict imem
 QUUX15_GROUPS := matrix random
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
@@ -307,7 +307,7 @@ QUUX15_PERIODS_random := 20
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
-QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dispatch predict imem $(QUUX15_GROUPS)
+QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict imem $(QUUX15_GROUPS)
 QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                   $(BUILD)/quux15_$(p).quux.p$(q).golden))
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose

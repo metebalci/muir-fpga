@@ -28423,3 +28423,15 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @new
             refetch_pc = rd_pc;
 @end
+
+@mutation quux15-dispatch-constant-left-by-a-dispatch-memory-write
+@check quux15_dconst_quux
+@file rtl/machine/quux15_core.sv
+@note A dispatch-memory write leaves the dispatch constant as it was, where
+@note every DISPATCH loads it (page DSPCTL: its 25S07s are clocked under
+@note -IRDISP).
+@old
+          ndc = ex_isel[41:32];
+@new
+          ndc = (ex_isel[11:10] == 2'd2) ? dc : ex_isel[41:32];
+@end

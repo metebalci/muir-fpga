@@ -44,6 +44,8 @@
 //!             guard
 //!   pdlfield, pdlfieldout
 //!             the PDL address field, and PDL-FIELD-MISMATCH
+//!   dconst    the dispatch constant, loaded by every DISPATCH, a
+//!             dispatch-memory write included
 //!
 //! and muir's own kind of program, `golden/src/quux15_preset.rs`: the
 //! speculation matrix (`matrix`) and programs at random (`random`), each a
@@ -796,6 +798,21 @@ fn pdlfieldout_program() -> Prog {
     p
 }
 
+/// **The dispatch constant** (page DSPCTL): every DISPATCH loads it from its
+/// `IR<41:32>`, a dispatch-memory write included, and functional source 0
+/// reads it in the next word.
+fn dconst_program() -> Prog {
+    let mut p = Prog::new();
+    p.start();
+    p.a(0o525, 0o300000);
+    p.op(DISPATCH | 0o2100 << 12 | DMEM_WRITE | a_src(0o525));
+    p.put(ALU | SETM | src(0), 0o525, "after a dispatch-memory write: its IR<41:32>");
+    p.op(DISPATCH | 0o2100 << 12 | a_src(0o252));
+    p.put(ALU | SETM | src(0), 0o252, "after a dispatch through the entry it wrote, which falls through");
+    p.park();
+    p
+}
+
 fn program(name: &str, period: u64) -> Prog {
     match name {
         "alu" => alu_program(),
@@ -809,6 +826,7 @@ fn program(name: &str, period: u64) -> Prog {
         "stack" => stack_program(),
         "pdlfield" => pdlfield_program(),
         "pdlfieldout" => pdlfieldout_program(),
+        "dconst" => dconst_program(),
         _ => {
             eprintln!("quux15: no program `{name}`");
             std::process::exit(2);
