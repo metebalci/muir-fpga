@@ -36,6 +36,9 @@ module quux15_exec (
     input  var logic        vmaok,
     input  var logic        int_pending,
     input  var logic        sequence_break,
+    // A map-bit dispatch's bits, `{<23>, <22>}` of the entry port B
+    // translated `MD` through, both 1 for an `MD` that is not a pointer.
+    input  var logic [1:0]  map_bits,
     // MUL's and DIV's words, the core's divider's.
     input  var logic [31:0] mul_ob,
     input  var logic [31:0] mul_q,
@@ -306,7 +309,12 @@ module quux15_exec (
   assign drot  = (ir[11:10] == 2'd3) ? lc_rotation({ir[47], ir[4:0]}) : {ir[47], ir[4:0]};
   assign dm    = rol40(m, drot)[31:0];
   assign dmask = (ir[7:5] == 3'd0) ? 32'd0 : (32'hffff_ffff >> (5'd31 - 5'(ir[7:5] - 3'd1)));
-  assign daddr = ir[23:12] | 12'(dm & dmask);
+  // With map bits (`IR<9:8>`), `<0>` is the map bit 1, 2 or either picks.
+  always_comb begin
+    if (ir[9:8] == 2'd0) daddr = ir[23:12] | 12'(dm & dmask);
+    else daddr = ir[23:12] | 12'(dm & dmask & ~32'd1)
+               | {11'd0, ir[9:8] == 2'd1 ? map_bits[0] : ir[9:8] == 2'd2 ? map_bits[1] : |map_bits};
+  end
 
   // Bits nothing here reads: the class's other fields, LC's high counter.
   logic unused;

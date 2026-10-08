@@ -74,6 +74,7 @@
 //! trace says it carries the fault in its second line.
 
 mod machine_axis;
+mod quux15_memside;
 mod quux15_preset;
 mod trace15;
 
@@ -88,6 +89,7 @@ use muir::isa::asm::{
 };
 use muir::machine::{Geometry, Halt, Machine, PROM_WORDS, QUUX_PROM_BASE, Word};
 use muir::micro::Micro;
+use muir::pipeline::port::LateModel;
 use muir::pipeline::{CACHE_WORDS, Mutation, Pipeline, PortTiming};
 use muir::tlb;
 
@@ -890,6 +892,20 @@ struct Case {
     halts: Option<(u64, u8)>,
     select_check: bool,
     results: Vec<(u64, Word, Word, String)>,
+    /// Main memory's words before the run, a bitstream's presets as the
+    /// other memories' are.
+    main: Vec<(usize, Word)>,
+    /// muir's seeded memory model for the posted writes (A15b's checks),
+    /// which the testbench's responder reproduces draw for draw.
+    late: Option<LateModel>,
+    /// -RESET's sweep of the TLB taken as done, as muir's own tests of the
+    /// memory side take it (`Pipeline::skip_sweep`).
+    skip_sweep: bool,
+    /// M words `micro` cannot give, which the run must end with: word 225
+    /// read after a planted error response, which `micro`, having no port,
+    /// never answers.  `micro`'s M and its A shadow take them before the
+    /// comparison.
+    beyond_micro: Vec<(usize, Word)>,
 }
 
 impl Case {
@@ -906,6 +922,10 @@ impl Case {
             halts: p.halts_at,
             select_check: p.select_check,
             results: p.results.clone(),
+            main: Vec::new(),
+            late: None,
+            skip_sweep: false,
+            beyond_micro: Vec::new(),
         }
     }
 
@@ -929,6 +949,24 @@ impl Case {
         for &(k, w) in &self.dmem {
             out.push(format!("# image dmem {k:x} {w:x}"));
         }
+        for &(k, w) in &self.main {
+            out.push(format!("# image main {k:x} {w:x}"));
+        }
+        out
+    }
+
+    /// The memory side's lines: the port's clocks at the period, which the
+    /// testbench's responder answers by; the seeded model, if the run has
+    /// one; and whether -RESET's sweep of the TLB is taken as done.
+    fn memory_lines(&self, e: &Pipeline) -> Vec<String> {
+        let c = e.port.clocks();
+        let mut out = vec![format!("# port {:x} {:x} {:x}", c.read, c.write, c.occupancy)];
+        if let Some(m) = self.late {
+            out.push(format!("# late {:x} {:x} {:x}", m.seed, m.most, m.errors));
+        }
+        if self.skip_sweep {
+            out.push("# sweep skipped".to_string());
+        }
         out
     }
 }
@@ -951,6 +989,9 @@ fn machine(case: &Case) -> Machine {
     }
     for &(k, w) in &case.dmem {
         m.dmem[k] = w;
+    }
+    for &(k, w) in &case.main {
+        m.main[k] = w;
     }
     m
 }
@@ -1041,7 +1082,17 @@ fn micro(case: &Case, period: u64) -> Result<Micro, String> {
 struct Ran {
     lines: Vec<String>,
     summary: String,
+    memory: Vec<String>,
+    /// What the run reached of the memory side, for the group's line.
+    reached: [u64; 14],
 }
+
+/// The names of `Ran::reached`'s counts.
+const REACHED: [&str; 14] = [
+    "late squashes", "MD waits", "starts behind starts", "map holds", "WB holds", "read-rule waits",
+    "queue-full clocks", "writes accepted", "fills", "two-beat writes", "accepts held by a beat",
+    "walks", "write-backs", "refusals",
+];
 
 /// **A run on the pipeline, a row a clock**: to the park's first commit,
 /// then on until the memory side is quiet and 32 clocks more, or to the
@@ -1053,8 +1104,13 @@ fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, 
     if let Some(f) = planted {
         e.mutation = f;
     }
+    e.port.model = case.late;
     let mut t = trace15::Trace15::start(&mut e);
     e.boot();
+    if case.skip_sweep {
+        e.skip_sweep();
+    }
+    let memory = case.memory_lines(&e);
     let mut rows = vec![t.row(&e).line];
     let mut parked_at = None;
     let mut halted = false;
@@ -1092,7 +1148,12 @@ fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, 
         return Err((1, format!("{name} reached its park, not the stop it ends at")));
     }
     // The machine it ends with, against micro's, and the results.
-    let u = micro(case, period).map_err(|x| (1, x))?;
+    let mut u = micro(case, period).map_err(|x| (1, x))?;
+    for &(k, w) in &case.beyond_micro {
+        let um = u.machine_mut();
+        um.mmem[k] = w;
+        um.amem[k] = w;
+    }
     let d = differences(e.machine(), u.machine());
     if !d.is_empty() {
         let mut x = d.join("; ");
@@ -1125,7 +1186,13 @@ fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, 
         mt.oa_hold,
         mt.pdl_wait,
     );
-    Ok(Ran { lines: rows, summary })
+    let (pm, tlb) = (e.port.meters, &e.machine().tlb);
+    let reached = [
+        mt.late_squashes, mt.md_wait, mt.start_wait, mt.map_hold, mt.wb_hold, pm.read_rule_reads,
+        pm.queue_full_clocks, pm.writes, pm.fills, pm.two_beat_writes, pm.beat_delays, tlb.walks,
+        tlb.write_backs, tlb.refusals,
+    ];
+    Ok(Ran { lines: rows, summary, memory, reached })
 }
 
 /// The runs a program name stands for: one, or a group's.
@@ -1133,8 +1200,14 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
     match name {
         "matrix" => quux15_preset::matrix().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "random" => (1..=quux15_preset::RANDOM_SEEDS)
-            .map(|seed| quux15_preset::random_program(seed).case(&format!("seed-{seed}")))
+            .map(|seed| quux15_preset::random_program(seed, false).case(&format!("seed-{seed}")))
             .collect(),
+        "randmem" => (1..=quux15_memside::RANDOM_MEMORY_SEEDS)
+            .map(|seed| quux15_preset::random_program(seed, true).case(&format!("seed-{seed}")))
+            .collect(),
+        "matrixmem" => quux15_preset::matrix_memory().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "ports" => quux15_memside::ports().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "walk" => quux15_memside::walk().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "dispatch" => vec![quux15_preset::dispatches().case("dispatch")],
         "imem" => vec![quux15_preset::imem_program().case("imem")],
         "predict" => vec![quux15_preset::predict_program().case("predict")],
@@ -1202,6 +1275,7 @@ fn main() {
     };
     let group = runs.len() > 1;
     let mut out = Vec::new();
+    let mut reached = [0u64; 14];
     for case in &runs {
         let ran = match run_case(case, period, planted) {
             Ok(r) => r,
@@ -1223,12 +1297,18 @@ fn main() {
             out.push(format!("# run {}", case.name));
         }
         out.push(trace15::RADIX.to_string());
+        out.extend(ran.memory.iter().cloned());
         out.extend(case.images());
         out.extend(ran.lines);
         if !group {
             eprintln!("quux15: {}", ran.summary);
         }
+        for (r, n) in reached.iter_mut().zip(ran.reached) {
+            *r += n;
+        }
     }
+    let counts: Vec<String> = REACHED.iter().zip(reached).map(|(w, n)| format!("{n} {w}")).collect();
+    eprintln!("quux15: {name}: the memory side reached {}", counts.join(", "));
     if group {
         eprintln!("quux15: {name}: {} runs, each equal to micro's", runs.len());
     }

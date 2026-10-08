@@ -2697,13 +2697,16 @@ CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_
 # over `QUUX15_CORE`.  Every register comes up random, and the RAMs' read of
 # an address written in the same clock is poisoned.
 QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlfield", "pdlfieldout",
-               "dconst", "dispatch", "predict", "imem", "matrix", "random")
+               "dconst", "dispatch", "predict", "imem", "memory", "ports", "walk", "matrix", "random",
+               "matrixmem", "randmem")
 QUUX15_PERIODS = (20, 17)
-QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,)}
+QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,)}
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {
         "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
-                    "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv"],
+                    "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv",
+                    "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_port.sv",
+                    "rtl/machine/quux15_mmu.sv", "rtl/plumbing/quux15_axi_master.sv"],
         "extra": ["rtl/machine/quux_muldiv.sv"],
         "top": "quux15_core",
         "tb": "tb/quux15_core_tb.cpp",

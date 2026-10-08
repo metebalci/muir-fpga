@@ -28191,9 +28191,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_core.sv
 @note DIV 17 clocks in EX where it is 18.
 @old
-    ex_needs  = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd5 : 5'd1;
+    ex_needs    = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd5 : 5'd1;
 @new
-    ex_needs  = ex_rd_div ? 5'd17 : ex_rd_mul ? 5'd5 : 5'd1;
+    ex_needs    = ex_rd_div ? 5'd17 : ex_rd_mul ? 5'd5 : 5'd1;
 @end
 
 @mutation quux15-mul-a-clock-short
@@ -28201,9 +28201,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_core.sv
 @note MUL 4 clocks in EX where it is 5.
 @old
-    ex_needs  = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd5 : 5'd1;
+    ex_needs    = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd5 : 5'd1;
 @new
-    ex_needs  = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd4 : 5'd1;
+    ex_needs    = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd4 : 5'd1;
 @end
 
 @mutation quux15-tag-of-an-arithmetic-function
@@ -28434,4 +28434,265 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
           ndc = ex_isel[41:32];
 @new
           ndc = (ex_isel[11:10] == 2'd2) ? dc : ex_isel[41:32];
+@end
+
+# --------------------------------------------- revision 15's core, the memory side
+#
+# `rtl/machine/quux15_port.sv`, `quux15_mmu.sv`, `rtl/plumbing/quux15_axi_master.sv`
+# and the core's WB starts and EX holds, held clock for clock to muir's
+# pipeline over `golden/src/quux15_memside.rs`'s runs and the random programs
+# and matrix with memory starts.  Each record is one of the slice's planted
+# faults: the read rule and its in-flight compare, the queue's limit, the
+# register hold, the successor rule, the beat count, the accept at the last
+# beat, revision 14's two longer holds of port B, each forward into port B's
+# lookup, port B on the live MD, a nopped start and a nopped lookup, the late
+# squash, the cache's RAM rule; and the faults found while it was built.
+#
+# NOT HERE, AN EQUIVALENT MUTANT: a write start granted behind a fill of its
+# line (muir's `write_waits_for_fill` false).  No program reaches it: a fill
+# in flight is the processor's read, which holds every start at WB and EX
+# behind it until it lands, or a table read of a walk or a write-back, which
+# holds WB's start (port A) or EX's word with WB empty (port B).  The port's
+# check stands; muir holds it to its port alone
+# (`a_write_behind_a_fill_lands_after_it`).
+
+@mutation quux15-read-rule-ignores-the-writes-in-flight
+@check quux15_ports_quux
+@file rtl/machine/quux15_port.sv
+@note The read rule waits for the line's queued writes only, not for those
+@note accepted and not yet answered: a fill issued after a write's accept and
+@note before its response reads main memory's old word (muir's
+@note `read_rule_waits_for_responses` false).
+@old
+      if (staying[k] && f_line[k] == f_line_now) written = 1'b1;
+@new
+      if (staying[k] && f_line[k] == f_line_now && 1'b0) written = 1'b1;
+@end
+
+@mutation quux15-read-rule-removed
+@check quux15_randmem_quux
+@file rtl/machine/quux15_port.sv
+@note A fill is issued with its line's writes queued or in flight.
+@old
+    ar_req  = (fs == F_WAIT || f_new) && !written;
+@new
+    ar_req  = (fs == F_WAIT || f_new) && !(written && 1'b0);
+@end
+
+@mutation quux15-queue-of-nine
+@check quux15_ports_quux
+@file rtl/machine/quux15_port.sv
+@note A ninth write start is granted into a queue of eight.
+@old
+        && (q_after_accept + {3'd0, post_push}) < 4'(QN);
+@new
+        && (q_after_accept + {3'd0, post_push}) < 4'(QN + 1);
+@end
+
+@mutation quux15-register-hold-removed
+@check quux15_ports_quux
+@file rtl/machine/quux15_core.sv
+@note A register's access goes ahead of a register's write not yet taken: a
+@note read right after a write reads the word as it was.
+@old
+    s_reg_hold  = rgw_v && s_device;
+@new
+    s_reg_hold  = 1'b0;
+@end
+
+@mutation quux15-successor-waits-for-md
+@check quux15_ports_quux
+@file rtl/machine/quux15_core.sv
+@note The word right after a read start waits for the read's word, where it
+@note reads MD as the start found it (muir's `SuccessorWaitsForMd`).
+@old
+    ex_succ     = old_v_eff && old_seq_eff + 8'd1 == ex_seq;
+@new
+    ex_succ     = 1'b0;
+@end
+
+@mutation quux15-every-write-one-beat
+@check quux15_ports_quux
+@file rtl/plumbing/quux15_axi_master.sv
+@note A word that runs past its first 8-byte beat is written as one beat:
+@note its last bytes are lost and the next accept is not held by them.
+@old
+    two       = off >= 3'd4;
+@new
+    two       = 1'b0;
+@end
+
+@mutation quux15-accept-at-the-last-beat
+@check quux15_ports_quux
+@file rtl/plumbing/quux15_axi_master.sv
+@note A write of two beats is accepted when its second beat is taken, a
+@note clock late, where its address and first beat taken are its accept.
+@old
+    w_taken = w_hs;
+@new
+    w_taken = (w_hs && !two) || (cont_v && !cont_aw && m_wvalid && m_wready);
+@end
+
+@mutation quux15-port-b-walks-again-after-its-own-fill
+@check quux15_walk_quux
+@file rtl/machine/quux15_mmu.sv
+@note Revision 14's first longer hold: port B's walk's fill is not used by
+@note port B in the clock it lands, which looks the TLB up again at the next.
+@old
+      else if (wb.fill) b_entry = wb.entry;
+@new
+      else if (wb.fill) b_hold = 1'b1;
+@end
+
+@mutation quux15-port-b-misses-wbs-fill-of-the-same-clock
+@check quux15_walk_quux
+@file rtl/machine/quux15_mmu.sv
+@note Revision 14's second longer hold: port B's lookup does not see the
+@note fill or the OR WB's start made in the same clock, and walks the page
+@note again.
+@old
+    if ((aw_fill || k_or_b) && aw_idx == b_idx_q) b_word = b_fwd;
+@new
+    if ((aw_fill || k_or_b) && aw_idx == b_idx_q && 1'b0) b_word = b_fwd;
+@end
+
+@mutation quux15-port-b-reads-through-a-write-not-yet-taken
+@check quux15_walk_quux
+@file rtl/machine/quux15_mmu.sv
+@note Port B takes the TLB RAM's word, not the write the RAM takes at the
+@note edge it was read at or has not taken yet.
+@old
+    b_word = tlb_word(rb_q, b_idx_q);
+@new
+    b_word = rb_q;
+@end
+
+@mutation quux15-port-b-looks-up-the-live-md
+@check quux15_walk_quux
+@file rtl/machine/quux15_core.sv
+@note Port B looks up MD as the read has left it, not the MD the word right
+@note after the read start reads (A15b.3's `MD` row).
+@old
+  localparam bit PORT_B_READS_OLD_MD = 1'b1;
+@new
+  localparam bit PORT_B_READS_OLD_MD = 1'b0;
+@end
+
+@mutation quux15-a-nopped-start-made
+@check quux15_matrixmem_quux
+@file rtl/machine/quux15_core.sv
+@note A delay slot N inhibits makes its start all the same (the core's form
+@note of muir's `SquashedStart`).
+@old
+      if (ex_nop) begin
+        nsw_v = 1'b0;
+      end else begin
+@new
+      if (ex_nop) begin
+        nsw_v = 1'b0;
+        if (has_fd(ex_isel) && (fd_code(ex_isel) == 5'o21 || fd_code(ex_isel) == 5'o22))
+          {xs0, xs1} = add_start(xs0, xs1, fd_code(ex_isel) == 5'o22, 1'b0, x_ob[31:0]);
+      end else begin
+@end
+
+@mutation quux15-a-nopped-lookup-made
+@check quux15_walk_quux
+@file rtl/machine/quux15_core.sv
+@note A MAP(MD) in a delay slot N inhibits makes its lookup and walks, and
+@note its fill evicts an entry (the core's form of muir's `SquashedLookup`).
+@old
+    ex_portb    = !ex_nop && ((ex_ir[31] && ex_ir[29:26] == 4'o11)
+@new
+    ex_portb    = ((ex_ir[31] && ex_ir[29:26] == 4'o11)
+@end
+
+@mutation quux15-late-squash-removed
+@check quux15_ports_quux
+@file rtl/machine/quux15_core.sv
+@note A check of conditions 4-6 in the clock its start faults commits as
+@note predicted, no fault (muir's `NoLateSquash`).
+@old
+    ex_late     = ex_reach_mul && !ex_mul_hold && !ex_nop && fault_now && ex_reads_vmaok
+@new
+    ex_late     = 1'b0 && ex_reach_mul && !ex_mul_hold && !ex_nop && fault_now && ex_reads_vmaok
+@end
+
+@mutation quux15-cache-looked-up-at-its-installs-edge
+@check quux15_walk_quux
+@file rtl/machine/quux15_port.sv
+@note Just outside the cache's RAM rule: a table read waiting on a fill is
+@note made at the edge the fill's line is written, a clock early, and reads
+@note the tags port B is writing.
+@old
+    f_exists   = fs == F_WAIT || fs == F_DATA || f_new;
+@new
+    f_exists   = fs == F_WAIT || (fs == F_DATA && !install) || f_new;
+@end
+
+@mutation quux15-a-word-fixed-at-its-grant-takes-the-slots-old-line
+@check quux15_randmem_quux
+@file rtl/machine/quux15_port.sv
+@note Found while built: a write's word fixed in the clock the write is
+@note granted takes whether the cache holds its line from the queue entry
+@note the slot held before.
+@old
+          if (w_push && w_slot == fix_slot) begin
+            // Granted in this clock: its tag read answers next clock.
+            npend[n] = 1'b1;
+          end else if (q_hres[fix_slot]) begin
+@new
+          if (q_hres[fix_slot]) begin
+@end
+
+@mutation quux15-a-word-fixed-at-its-grant-takes-the-slots-old-address
+@check quux15_randmem_quux
+@file rtl/machine/quux15_port.sv
+@note Found while built: a write's word fixed in the clock the write is
+@note granted is written into the line of the address the slot held before.
+@old
+          nset[n] = set_of((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot]);
+@new
+          nset[n] = set_of(q_bus[fix_slot]);
+@end
+
+@mutation quux15-lvmo-zero-at-power-on
+@check quux15_matrixmem_quux
+@file rtl/machine/quux15_core.sv
+@note Found while built: LVMO comes up zero, where muir's machine has read
+@note and write access in it, which MAP(MD) before any start reads.
+@old
+      vmaok <= 1'b0; wrcyc <= 1'b0; lvmo <= 30'(32'b11 << 26 | 32'o777777);
+@new
+      vmaok <= 1'b0; wrcyc <= 1'b0; lvmo <= '0;
+@end
+
+@mutation quux15-refusal-not-counted
+@check quux15_walk_quux
+@file rtl/machine/quux15_mmu.sv
+@note A write-back refused is not counted in word 224.
+@old
+      if (k_refused) refused <= refused + 32'd1;
+@new
+      if (k_refused) refused <= refused;
+@end
+
+@mutation quux15-error-response-not-counted
+@check quux15_ports_quux
+@file rtl/machine/quux15_core.sv
+@note A posted write answered with an error is not counted in word 225.
+@old
+    posted_now  = posted_errors + {27'd0, errors_now};
+@new
+    posted_now  = posted_errors + {27'd0, errors_now & 5'd0};
+@end
+
+@mutation quux15-nothing-there-answers-a-clock-late
+@check quux15_ports_quux
+@file rtl/machine/quux15_core.sv
+@note An address nothing answers lands its zero in MD two clocks after its
+@note grant, a register's time, where it is one.
+@old
+      n_pend_v = 1'b1; n_pend_left = 2'd0; n_pend_word = '0;
+@new
+      n_pend_v = 1'b1; n_pend_left = 2'd1; n_pend_word = '0;
 @end

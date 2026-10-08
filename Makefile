@@ -296,18 +296,22 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # `quux15_generator.quux.pass` holds the generator refusing a pipeline whose
 # machine is not `micro`'s, and its PROM images at 64 bits.
 # `QUUX15_GROUPS` are traces of many runs each (`golden/src/quux15_preset.rs`),
-# the speculation matrix and programs at random, which hold no time and are
-# traced at 10 ns alone.
+# the speculation matrix and programs at random, and the same with memory
+# starts (`randmem`, `matrixmem`), traced at 10 ns alone; and the memory
+# side's rows (`golden/src/quux15_memside.rs`), `ports` and `walk`, at both
+# periods, where the port's clocks round differently.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict imem
-QUUX15_GROUPS := matrix random
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
 QUUX15_PERIODS_random := 20
+QUUX15_PERIODS_matrixmem := 20
+QUUX15_PERIODS_randmem := 20
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
-QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict imem $(QUUX15_GROUPS)
+QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict imem memory $(QUUX15_GROUPS)
 QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                   $(BUILD)/quux15_$(p).quux.p$(q).golden))
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
@@ -1414,7 +1418,8 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # Revision 15's programs (`QUUX15_PROGRAMS`): a trace's name carries its
 # period, `quux15_<program>.quux.p<P>.golden`, and the PROM image is one at
 # every period.
-QUUX15_GOLDEN := golden/src/quux15.rs golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
+QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
+                 golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 $(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux15 -- --program $(word 1,$(subst ., ,$*)) --machine quux \
@@ -1441,7 +1446,8 @@ $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace: $(QUUX15_GOLDEN) | $(BUILD
 # clock poisoned (`QUUX15_RDW_POISON`), which the core must never use.
 # Each trace is run under two seeds.
 QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/machine/quux15_ram.sv \
-                   rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv
+                   rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
+                   rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv
 QUUX15_CORE_FLAGS := --x-assign unique --x-initial unique +define+QUUX15_RDW_POISON -Irtl/machine \
                      -CFLAGS -DQUUX15_TOP=Vquux15_core -CFLAGS -DQUUX15_CORE
 QUUX15_SEEDS := 1 1000

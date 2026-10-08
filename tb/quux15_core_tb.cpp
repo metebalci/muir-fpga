@@ -45,6 +45,26 @@
 //   gaddr, mdword, raddr an event's address or word, on a row with its event
 //   the rest             every row
 //
+// **MAIN MEMORY IS THE TESTBENCH'S** (`QUUX15_CORE`'s build): five bytes a
+// word from byte 5w, its run's `# image main` words before reset ends, on the
+// core's 64-bit AXI master port (`rtl/plumbing/quux15_axi_master.sv`).  The
+// responder answers as muir's `PortTiming` at the trace's period does, by
+// the run's `# port <read> <write> <occupancy>` line, in clocks, the
+// master's declared constants less (A15b.5, `axi_read_clocks` and
+// `axi_write_clocks`): a line's last beat `read` clocks after its first
+// address less the read's constant, so that the fill lands `read` clocks
+// after it is issued; a write's B its constant before the clock the write
+// lands at, `write` clocks after its accept, plus the lateness muir's
+// `LateModel` draws for it
+// (`# late <seed> <most> <errors>`), draw for draw in accept order, the
+// first `errors` writes answered with an error; and a new write's address
+// and first beat taken `occupancy` clocks after the last.  muir lands the
+// writes in order, several in one clock when a later one was answered
+// first: each write has its own ID, and a write whose landing an earlier
+// one decides is answered before that one, earliest deadline first.  A run
+// with `# sweep skipped` has -RESET's sweep of the TLB taken as done, as
+// muir's `Pipeline::skip_sweep` takes it.
+//
 // A design that stops the simulation (`$finish`, the core's "not built")
 // fails at that clock.  Nothing here computes what a core should do: every
 // value it holds a column to is the trace's.  It reports the first 20
@@ -80,6 +100,9 @@ using Top = QUUX15_TOP;
 struct Totals {
   size_t clocks = 0, commits = 0, operands = 0, grants = 0, landed = 0, registers = 0;
 } totals;
+
+// Main memory's words: QUUX's 32 boards, 2M words, five bytes each.
+constexpr uint64_t kMainWords = 32u << 16;
 
 // When a column is compared, by the trace's row.
 enum When { kEvery, kStage, kAtCommit, kIfGrant, kIfMd, kIfReg, kIfOpnd };
@@ -167,6 +190,11 @@ struct Run {
   std::string name;
   std::vector<Image> images;
   std::vector<std::vector<uint64_t>> rows;
+  // The port's clocks at the trace's period, the seeded model, the sweep.
+  uint64_t read = 0, write = 0, occupancy = 1;
+  bool late = false;
+  uint64_t late_seed = 0, late_most = 0, late_errors = 0;
+  bool skip_sweep = false;
 };
 
 // The run's memories into the design, which has just come up.
@@ -187,6 +215,8 @@ bool load(Top *dut, const Run &run, const char *path) {
       r->quux15_core__DOT__dmem[i.address] = static_cast<uint32_t>(i.word & 0x1ffff);
     else if (i.memory == "pdl" && i.address < 16384)
       r->quux15_core__DOT__pdl__DOT__mem[i.address] = i.word & 0xffffffffffull;
+    else if (i.memory == "main" && i.address < kMainWords)
+      ;  // the testbench's own, `Bench::image`
     else
       ok = false;
     if (!ok) {
@@ -233,6 +263,23 @@ int read_trace(const char *path, std::vector<Run> &runs) {
         runs.back().name = w[1];
         continue;
       }
+      if (w.size() == 4 && w[0] == "port") {
+        runs.back().read = std::strtoull(w[1].c_str(), nullptr, 16);
+        runs.back().write = std::strtoull(w[2].c_str(), nullptr, 16);
+        runs.back().occupancy = std::strtoull(w[3].c_str(), nullptr, 16);
+        continue;
+      }
+      if (w.size() == 4 && w[0] == "late") {
+        runs.back().late = true;
+        runs.back().late_seed = std::strtoull(w[1].c_str(), nullptr, 16);
+        runs.back().late_most = std::strtoull(w[2].c_str(), nullptr, 16);
+        runs.back().late_errors = std::strtoull(w[3].c_str(), nullptr, 16);
+        continue;
+      }
+      if (w.size() == 2 && w[0] == "sweep" && w[1] == "skipped") {
+        runs.back().skip_sweep = true;
+        continue;
+      }
       if (!w.empty() && w[0] == "clock") {
         // A run begins.
         if (!runs.back().rows.empty() || header) runs.emplace_back();
@@ -276,6 +323,205 @@ int read_trace(const char *path, std::vector<Run> &runs) {
   return result;
 }
 
+#ifdef QUUX15_CORE
+
+// **THE RESPONDER** on the core's AXI port: main memory, and muir's port's
+// timing and seeded model.  `drive` sets its inputs for clock `t`, `take`
+// reads what the core did in that clock before its edge.
+class Bench {
+ public:
+  explicit Bench(const Run &run) : run_(run), mem_(kMainWords * 5, 0) {
+    seed_ = run.late_seed;
+    errors_ = run.late_errors;
+  }
+
+  void image(uint64_t addr, uint64_t word) {
+    for (int b = 0; b < 5; ++b) mem_[addr * 5 + b] = static_cast<uint8_t>(word >> (8 * b));
+  }
+
+  // muir's `LateModel::next`: xorshift64*, 1 to `most` clocks.
+  uint64_t late() {
+    if (!run_.late) return 0;
+    uint64_t x = seed_ ? seed_ : 1;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    seed_ = x;
+    const uint64_t most = run_.late_most ? run_.late_most : 1;
+    return ((x * 0x2545f4914f6cdd1dull) >> 33) % most + 1;
+  }
+
+  void drive(Top *d, uint64_t t) {
+    // Writes land in main memory at the clock muir lands them.
+    for (Write &w : writes_)
+      if (!w.applied && w.land == t) {
+        for (const auto &b : w.bytes) mem_[b.first] = b.second;
+        w.applied = true;
+      }
+    // A new write's address and first beat taken `occupancy` clocks after
+    // the last; a write's second beat or second address at once.
+    const bool ready = cont_ || t >= last_accept_ + run_.occupancy || !accepted_any_;
+    d->m_awready = ready;
+    d->m_wready = ready;
+    d->m_arready = 1;
+    // The line's beats, its last `read` clocks after its first address less
+    // the master's constant.
+    const uint64_t rc = d->axi_read_clocks, wc = d->axi_write_clocks;
+    d->m_rvalid = 0;
+    d->m_rlast = 0;
+    d->m_rdata = 0;
+    d->m_rresp = 0;
+    if (!lines_.empty()) {
+      Line &l = lines_.front();
+      const uint64_t first = l.ar + run_.read - rc - 4;
+      if (t >= first && l.sent < 5 && t == first + l.sent) {
+        uint64_t v = 0;
+        const uint64_t base = l.byte + 8 * l.sent;
+        for (int b = 0; b < 8; ++b)
+          if (base + b < mem_.size()) v |= static_cast<uint64_t>(mem_[base + b]) << (8 * b);
+        d->m_rvalid = 1;
+        d->m_rdata = v;
+        d->m_rlast = (l.sent == l.first_beats - 1) || l.sent == 4;
+      }
+    }
+    // One B a clock: a write that must land at the next clock, or else the
+    // one whose deadline comes first among those that may be answered early.
+    d->m_bvalid = 0;
+    d->m_bid = 0;
+    d->m_bresp = 0;
+    bpick_ = -1;
+    bfirst_ = false;
+    for (size_t k = 0; k < writes_.size(); ++k) {
+      Write &w = writes_[k];
+      if (w.b_done) continue;
+      if (w.split && !w.b1 && t >= w.ready1) {
+        if (bpick_ < 0 || w.land < writes_[bpick_].land) {
+          bpick_ = static_cast<long>(k);
+          bfirst_ = true;
+        }
+        continue;
+      }
+      if (t < w.ready) continue;
+      if (w.exact && w.land - wc == t) {
+        bpick_ = static_cast<long>(k);
+        bfirst_ = false;
+        break;
+      }
+      if (!w.exact && (bpick_ < 0 || w.land < writes_[bpick_].land)) {
+        bpick_ = static_cast<long>(k);
+        bfirst_ = false;
+      }
+    }
+    if (bpick_ >= 0) {
+      Write &w = writes_[bpick_];
+      if (!bfirst_ && w.exact && w.land - wc != t) {
+        // An exact write is answered at its clock alone.
+        bpick_ = -1;
+      } else {
+        d->m_bvalid = 1;
+        d->m_bid = w.id;
+        d->m_bresp = (!bfirst_ && w.error) ? 2 : 0;
+      }
+    }
+  }
+
+  // What the core did in clock `t`, its outputs before the edge; false when
+  // the core broke the responder's rules.
+  bool take(const Top *d, uint64_t t, std::string &why) {
+    if (d->m_arvalid && d->m_arready) {
+      const uint64_t a = d->m_araddr;
+      if (a % 40 == 0) {
+        Line l;
+        l.ar = t;
+        l.byte = a;
+        l.first_beats = static_cast<int>(d->m_arlen) + 1;
+        if (!lines_.empty()) {
+          why = "a line read while another is answered";
+          return false;
+        }
+        lines_.push_back(l);
+      }
+    }
+    if (d->m_rvalid && d->m_rready && !lines_.empty()) {
+      Line &l = lines_.front();
+      if (++l.sent == 5) lines_.erase(lines_.begin());
+    }
+    const bool aw = d->m_awvalid && d->m_awready, wb = d->m_wvalid && d->m_wready;
+    if (cont_) {
+      Write &w = writes_.back();
+      if (wb) {
+        put(w, cont_addr_, d->m_wdata, d->m_wstrb);
+        cont_ = false;
+        w.ready = t + 1;
+      }
+    } else if (aw && wb) {
+      // A write accepted: its lateness drawn, its landing in muir's order.
+      Write w;
+      w.id = d->m_awid;
+      w.accept = t;
+      put(w, d->m_awaddr, d->m_wdata, d->m_wstrb);
+      int strobes = __builtin_popcount(d->m_wstrb);
+      const bool more = strobes < 5;
+      w.split = more && d->m_awlen == 0;
+      cont_ = more;
+      cont_addr_ = d->m_awaddr + 8;
+      w.ready = t + 1;
+      w.ready1 = t + 1;
+      const uint64_t r = t + run_.write + late();
+      w.error = errors_ > 0;
+      if (errors_ > 0) --errors_;
+      w.exact = r > last_land_;
+      w.land = r > last_land_ ? r : last_land_;
+      last_land_ = w.land;
+      last_accept_ = t;
+      accepted_any_ = true;
+      writes_.push_back(w);
+    } else if (aw != wb) {
+      why = "a write's address and first beat taken apart";
+      return false;
+    }
+    if (d->m_bvalid && d->m_bready && bpick_ >= 0) {
+      Write &w = writes_[bpick_];
+      if (bfirst_) w.b1 = true;
+      else w.b_done = true;
+    }
+    // Every write answered by its deadline.
+    const uint64_t wc = d->axi_write_clocks;
+    for (const Write &w : writes_)
+      if (!w.b_done && t + wc >= w.land) {
+        why = "a write's B missed its clock";
+        return false;
+      }
+    while (!writes_.empty() && writes_.front().b_done && writes_.front().applied) writes_.erase(writes_.begin());
+    return true;
+  }
+
+ private:
+  struct Line {
+    uint64_t ar = 0, byte = 0;
+    int first_beats = 5, sent = 0;
+  };
+  struct Write {
+    uint32_t id = 0;
+    uint64_t accept = 0, land = 0, ready = 0, ready1 = 0;
+    bool exact = false, error = false, split = false, b1 = false, b_done = false, applied = false;
+    std::vector<std::pair<uint64_t, uint8_t>> bytes;
+  };
+  static void put(Write &w, uint64_t addr, uint64_t data, uint32_t strb) {
+    for (int b = 0; b < 8; ++b)
+      if ((strb >> b) & 1) w.bytes.emplace_back(addr + b, static_cast<uint8_t>(data >> (8 * b)));
+  }
+
+  const Run &run_;
+  std::vector<uint8_t> mem_;
+  std::vector<Line> lines_;
+  std::vector<Write> writes_;
+  uint64_t seed_ = 0, errors_ = 0, last_accept_ = 0, last_land_ = 0, cont_addr_ = 0;
+  bool cont_ = false, accepted_any_ = false, bfirst_ = false;
+  long bpick_ = -1;
+};
+#endif
+
 // One run on a design made for it, its registers' random words from
 // `seed`: 0 when it agrees, 1 when not.
 int run_trace(const char *path, const Run &run, int seed) {
@@ -284,12 +530,35 @@ int run_trace(const char *path, const Run &run, int seed) {
   Verilated::gotFinish(false);
   Verilated::randSeed(seed);
   Top *dut = new Top;
+#ifdef QUUX15_CORE
+  Bench bench(run);
+  for (const Image &i : run.images)
+    if (i.memory == "main" && i.address < kMainWords) bench.image(i.address, i.word);
+  std::string bench_why;
+  bool bench_bad = false;
+  uint64_t clock = 0;
+  auto edge = [&]() {
+    bench.drive(dut, clock);
+    dut->clk = 0;
+    dut->eval();
+    if (!bench_bad && !bench.take(dut, clock, bench_why)) bench_bad = true;
+    dut->clk = 1;
+    dut->eval();
+  };
+  auto quiet = [&]() {
+    dut->m_awready = 0; dut->m_wready = 0; dut->m_arready = 0;
+    dut->m_bvalid = 0; dut->m_rvalid = 0; dut->m_bid = 0; dut->m_bresp = 0;
+    dut->m_rdata = 0; dut->m_rresp = 0; dut->m_rlast = 0;
+  };
+  quiet();
+#else
   auto edge = [&]() {
     dut->clk = 0;
     dut->eval();
     dut->clk = 1;
     dut->eval();
   };
+#endif
   dut->rst = 1;
   dut->clk = 0;
   dut->eval();
@@ -298,17 +567,46 @@ int run_trace(const char *path, const Run &run, int seed) {
     delete dut;
     return 1;
   }
+#ifdef QUUX15_CORE
+  for (int k = 0; k < 4; ++k) {
+    dut->clk = 0;
+    dut->eval();
+    dut->clk = 1;
+    dut->eval();
+  }
+#else
   for (int k = 0; k < 4; ++k) edge();
+#endif
   dut->rst = 0;
   dut->clk = 0;
   dut->eval();
+#ifdef QUUX15_CORE
+  if (run.skip_sweep) {
+    dut->rootp->quux15_core__DOT__mmu__DOT__sweep_left = 0;
+    dut->eval();
+  }
+#endif
 
   long bad = 0;
   size_t first_clock = 0;
   const char *first_column = nullptr;
   size_t commits = 0, operands = 0, grants = 0, landed = 0, registers = 0;
   for (size_t k = 0; k < rows.size(); ++k) {
+#ifdef QUUX15_CORE
+    clock = k;
+#endif
     if (k > 0) edge();
+#ifdef QUUX15_CORE
+    if (bench_bad) {
+      std::fprintf(stderr, "clock %zu: the responder: %s\n", k, bench_why.c_str());
+      if (bad == 0) {
+        first_clock = k;
+        first_column = "axi";
+      }
+      ++bad;
+      break;
+    }
+#endif
     if (Verilated::gotFinish()) {
       std::fprintf(stderr, "clock %zu: the design stopped the simulation\n", k);
       if (bad == 0) {

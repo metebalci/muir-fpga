@@ -75,40 +75,46 @@ fn disp(addr: u64) -> u64 {
 /// memories' words.
 #[derive(Default, Clone)]
 pub struct Preset {
-    words: Vec<u64>,
-    amem: Vec<(u64, Word)>,
-    mmem: Vec<(u64, Word)>,
-    dmem: Vec<(usize, u32)>,
+    pub(crate) words: Vec<u64>,
+    pub(crate) amem: Vec<(u64, Word)>,
+    pub(crate) mmem: Vec<(u64, Word)>,
+    pub(crate) dmem: Vec<(usize, u32)>,
     next_a: u64,
     /// `micro`'s OA select check; off for the matrix, as in muir's test.
-    select_check: bool,
+    pub(crate) select_check: bool,
+    /// Main memory's presets, the seeded memory model, and -RESET's sweep
+    /// taken as done (the memory side's programs, `quux15_memside.rs`).
+    pub main: Vec<(usize, Word)>,
+    pub late: Option<muir::pipeline::port::LateModel>,
+    pub skip_sweep: bool,
+    pub beyond_micro: Vec<(usize, Word)>,
 }
 
 impl Preset {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Preset { select_check: true, ..Preset::default() }
     }
-    fn op(&mut self, w: u64) -> &mut Self {
+    pub(crate) fn op(&mut self, w: u64) -> &mut Self {
         self.words.push(w);
         self
     }
-    fn at(&self) -> u64 {
+    pub(crate) fn at(&self) -> u64 {
         self.words.len() as u64
     }
-    fn fill(&mut self, n: usize) -> &mut Self {
+    pub(crate) fn fill(&mut self, n: usize) -> &mut Self {
         for _ in 0..n {
             self.op(filler().raw());
         }
         self
     }
-    fn fill_to(&mut self, to: u64) -> &mut Self {
+    pub(crate) fn fill_to(&mut self, to: u64) -> &mut Self {
         while self.at() < to {
             self.fill(1);
         }
         self
     }
     /// An A-memory constant, from 101 up: its address.
-    fn k(&mut self, v: Word) -> u64 {
+    pub(crate) fn k(&mut self, v: Word) -> u64 {
         let a = 0o101 + self.next_a;
         assert!(a < 0o1700, "A memory's constants run into the scratch words");
         self.next_a += 1;
@@ -116,12 +122,12 @@ impl Preset {
         a
     }
     /// M `slot` <- the A constant `v`.
-    fn set(&mut self, v: Word, slot: u64) -> &mut Self {
+    pub(crate) fn set(&mut self, v: Word, slot: u64) -> &mut Self {
         let a = self.k(v);
         self.op(ALU | SETA | a_src(a) | m_dest(slot))
     }
     /// Jumps to the stop.
-    fn stop(&mut self) -> &mut Self {
+    pub(crate) fn stop(&mut self) -> &mut Self {
         self.op(JUMP | target(STOP) | ALWAYS | N);
         self.op(filler().raw())
     }
@@ -158,6 +164,10 @@ impl Preset {
             halts: None,
             select_check: self.select_check,
             results: Vec::new(),
+            main: self.main.clone(),
+            late: self.late,
+            skip_sweep: self.skip_sweep,
+            beyond_micro: self.beyond_micro.clone(),
         }
     }
 }
@@ -189,11 +199,18 @@ const SUBS: [u64; 4] = [0o700, 0o720, 0o740, 0o760];
 
 /// **A program at random** that keeps MIT's microcode rules, so that `micro`
 /// and the pipeline must end alike (muir's `random_program` with every
-/// feature but those that start memory cycles): forward branches only,
-/// calls to subroutines that return.
-pub fn random_program(seed: u64) -> Preset {
+/// feature): forward branches only, calls to subroutines that return.  With
+/// `memory` clear, the constructs that start memory cycles are data words
+/// instead, slice 2's start-free programs; set, they are muir's: a read and
+/// `MD` two words after it at the soonest, a write, a register's read, a
+/// start that faults and its check, and two starts in a row.
+pub fn random_program(seed: u64, memory: bool) -> Preset {
+    use muir::isa::asm::{MD, SRC_MD, START_READ, START_WRITE};
+    const PHYS: Word = 0o36000000000;
+    const REGISTER_PAGE: Word = 0o35777777400;
     let mut rng = Rng(seed);
     let mut p = Preset::new();
+    p.skip_sweep = memory;
     // Scratch: M 20-27, A 1700-1707; constants in A 101 up.
     let consts: Vec<u64> = (0..8).map(|k| p.k(rng.next() & 0o7777777777 | (k << 32))).collect();
     for (k, &c) in consts.iter().enumerate().take(4) {
@@ -314,6 +331,24 @@ pub fn random_program(seed: u64) -> Preset {
                 last_transfer = true;
                 continue;
             }
+            // A read: its start, a word, then MD.
+            6 if !last_transfer && memory => {
+                let a = p.k(PHYS | rng.below(64));
+                p.op(ALU | SETA | a_src(a) | START_READ);
+                data(&mut rng, &mut p);
+                if rng.chance(1, 2) {
+                    data(&mut rng, &mut p);
+                }
+                p.op(ALU | SETM | SRC_MD | m_dest(0o20 + rng.below(8)));
+            }
+            // A write: MD, its start, two words.
+            7 if !last_transfer && memory => {
+                let a = p.k(PHYS | rng.below(64));
+                p.op(ALU | SETM | m_src(0o20 + rng.below(8)) | MD);
+                p.op(ALU | SETA | a_src(a) | START_WRITE);
+                data(&mut rng, &mut p);
+                data(&mut rng, &mut p);
+            }
             // A return address pushed as data, and a POPJ to it.
             8 if !last_transfer => {
                 let k = rng.below(3);
@@ -368,6 +403,40 @@ pub fn random_program(seed: u64) -> Preset {
             13 => {
                 let f = if rng.chance(1, 2) { 0o42 << 3 } else { 0o43 << 3 };
                 p.op(ALU | f | m_srcs(&mut rng) | a_srcs(&mut rng) | m_dest(0o20 + rng.below(8)));
+            }
+            // A register's read: MACHINE-ID, the microsecond clock's
+            // feature word.
+            14 if !last_transfer && memory => {
+                let a = p.k(REGISTER_PAGE | if rng.chance(1, 2) { 0 } else { 0o14 });
+                p.op(ALU | SETA | a_src(a) | START_READ);
+                data(&mut rng, &mut p);
+                p.op(ALU | SETM | SRC_MD | m_dest(0o20 + rng.below(8)));
+            }
+            // A start that faults, and the check right after it.
+            15 if !last_transfer && memory => {
+                let a = p.k(0o1000 + rng.below(64));
+                let start = if rng.chance(1, 2) { START_READ } else { START_WRITE };
+                if start == START_WRITE {
+                    p.op(ALU | SETM | m_src(0o20) | MD);
+                }
+                p.op(ALU | SETA | a_src(a) | start);
+                let n = if rng.chance(1, 2) { N } else { 0 };
+                p.op(jcond(4) | P | target(SUBS[rng.below(4) as usize]) | n);
+                last_transfer = true;
+                continue;
+            }
+            // Two starts in a row: the second held until the first is
+            // acknowledged.
+            17 if !last_transfer && memory => {
+                let (a, b) = (p.k(PHYS | rng.below(64)), p.k(PHYS | rng.below(64)));
+                let first = if rng.chance(1, 2) { START_READ } else { START_WRITE };
+                if first == START_WRITE {
+                    p.op(ALU | SETM | m_src(0o20 + rng.below(8)) | MD);
+                }
+                p.op(ALU | SETA | a_src(a) | first);
+                p.op(ALU | SETA | a_src(b) | START_READ);
+                data(&mut rng, &mut p);
+                p.op(ALU | SETM | SRC_MD | m_dest(0o20 + rng.below(8)));
             }
             // A dispatch-memory write, and a dispatch that reads it next.
             16 if !last_transfer => {
@@ -446,8 +515,8 @@ pub fn random_program(seed: u64) -> Preset {
 
 // --- The speculation matrix -------------------------------------------------
 
-/// The delay slot's kinds in the matrix, but a start and `MAP(MD)`, which
-/// wait for the memory side.
+/// The delay slot's kinds in the matrix: `matrix`'s seven, and
+/// `matrixmem`'s two that wait for the memory side, a start and `MAP(MD)`.
 #[derive(Clone, Copy, Debug)]
 enum SlotKind {
     Plain,
@@ -457,10 +526,13 @@ enum SlotKind {
     Pop,
     OaWrite,
     Transfer,
+    Start,
+    MapMd,
 }
 
 const SLOTS: [SlotKind; 7] =
     [SlotKind::Plain, SlotKind::Popj, SlotKind::Call, SlotKind::Push, SlotKind::Pop, SlotKind::OaWrite, SlotKind::Transfer];
+const SLOTS_MEMORY: [SlotKind; 2] = [SlotKind::Start, SlotKind::MapMd];
 
 /// The branch's kinds in the matrix.
 #[derive(Clone, Copy, Debug)]
@@ -536,6 +608,11 @@ fn matrix_case(branch: Branch, n: bool, slot: SlotKind, lpc: bool) -> Preset {
         SlotKind::Pop => p.op(ALU | SETM | src(0o14) | m_dest(0o26)),
         SlotKind::OaWrite => p.op(ALU | SETA | a_src(oa) | fd(0o17)),
         SlotKind::Transfer => p.op(JUMP | ALWAYS | N | target(TARGET + 4)),
+        SlotKind::Start => {
+            let a = p.k(0o36000000010);
+            p.op(ALU | SETA | a_src(a) | muir::isa::asm::START_READ)
+        }
+        SlotKind::MapMd => p.op(ALU | SETM | src(0o11) | m_dest(0o26)),
     };
     // The fall-through: a selecting word when the slot writes OA-REG-HIGH.
     let select = if matches!(slot, SlotKind::OaWrite) { OA_HIGH_SELECT } else { 0 };
@@ -570,6 +647,20 @@ fn matrix_case(branch: Branch, n: bool, slot: SlotKind, lpc: bool) -> Preset {
 
 /// Every case of the matrix, but its starts', each named.
 pub fn matrix() -> Vec<(String, Preset)> {
+    matrix_of(&SLOTS)
+}
+
+/// The matrix's cases with a start or `MAP(MD)` in the delay slot, -RESET's
+/// sweep taken as done, as muir's test takes it.
+pub fn matrix_memory() -> Vec<(String, Preset)> {
+    let mut cases = matrix_of(&SLOTS_MEMORY);
+    for (_, p) in &mut cases {
+        p.skip_sweep = true;
+    }
+    cases
+}
+
+fn matrix_of(slots: &[SlotKind]) -> Vec<(String, Preset)> {
     let mut cases = Vec::new();
     let entries =
         [(TARGET as u32, "jump"), (SUB as u32 | 1 << 15, "call"), (1 << 16, "return"), (1 << 16 | 1 << 15, "drop")];
@@ -580,7 +671,7 @@ pub fn matrix() -> Vec<(String, Preset)> {
         ((0, false, true), "return"),
         ((0o777, false, false), "elsewhere"),
     ];
-    for slot in SLOTS {
+    for &slot in slots {
         for n in [false, true] {
             let mut branches = vec![
                 (Branch::Jump, "jump".to_string()),

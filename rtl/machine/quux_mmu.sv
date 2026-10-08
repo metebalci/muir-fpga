@@ -79,12 +79,16 @@
 // the checks built with `CADR_GAP_MONITOR` fail if a result is ever
 // written inside a cycle that runs.
 //
-// **WHAT IS BUILT AND NOTHING HOLDS**: a walk's fill pending across an edge
-// forwarded to port B's read there.  It is muir's entry for an `MD` that
-// changes, in a cycle the walk holds, to the page being walked at that
-// edge; no program brings `MD` there.  **AND WHAT IS NOT BUILT**: the same
-// for a fill made in that edge's own tick, from the cache's answer then
-// out, which would put `MD`'s next value in that answer's tick.
+// **WHAT IS BUILT, AND WHERE PORT B WAITS LONGER THAN muir'S**: a walk's
+// fill pending across an edge is forwarded to port B's read there, muir's
+// entry for an `MD` that changes, in a cycle the walk holds, to the page
+// being walked at that edge.  A fill made in that edge's own tick is not
+// (it would put `MD`'s next value in the cache's answer's tick): when `MD`
+// moves at that edge to another word of the walked page, which a program
+// can bring about, port B walks the page again.  And port B's walk queued
+// behind port A's (`w_b_queued`) still runs after A's fill has made B's
+// lookup hit.  Each holds port B a walk longer than muir does; revision
+// 15's memory management (`quux15_mmu.sv`) has neither.
 //
 // **WHAT NOTHING HOLDS HERE TICK FOR TICK, AND WHY**: muir translates a
 // port-B lookup whose `MD` moved during a `-WAIT` of the same microcycle by
