@@ -11,6 +11,10 @@
 //                 line runs past a 4 KiB boundary (`40L mod 4096` from 4064
 //                 to 4088), the second address the clock after the first;
 //                 the line's 40 bytes come with its last beat
+//   a window's    the frame buffer's eight words of four bytes, a fixnum's
+//   line          tag on each, from `DISPLAY_BASE`: four beats
+//   a window's    four bytes, the field, the tag dropped
+//   word write
 //   a word write  five bytes from `5w`: one beat with five strobes, or two
 //                 beats when the word runs past its first 8-byte beat
 //                 (offsets 4 to 7, half of all words); two bursts of a beat
@@ -20,15 +24,17 @@
 //                 burst follows the next clock, and the write channel takes
 //                 no other write until then (muir's `port::beats`).
 //
-// **ONE AXI ID A WRITE SLOT** (`w_id`, the port's in-flight slot): the
-// responses may come in any order between slots, and the port retires the
-// writes in order whatever order they come in.  muir's port lands, at one
-// clock, every write at the in-flight list's front that is answered by
-// then, several at once when a later one was answered before an earlier
-// one; one B a clock with one ID could not land two writes in one clock.
-// A split write's two bursts share their slot's ID, and its answer is the
-// second B.
-//
+// **THE WRITES' AXI IDS ARE ONE PARAMETER, `ONE_WRITE_ID`** (A15b.5, "one
+// ID", and §6).  Set, every write carries ID 0: the responses come in
+// order, and each answers the oldest write still unanswered.  Clear, each
+// write carries its in-flight slot (`w_id`), and the responses may come in
+// any order between slots, the port retiring the writes in order whatever
+// order they come in: what muir's seeded memory model needs while it may
+// answer a later write first, so that the port lands several in one clock.
+// A split write's two bursts share their ID, and its answer is the second
+// B.  **One ID is the board's** (A15b.5): with an ID a slot, two writes to
+// one word may complete in either order.
+
 // **THE DECLARED CONSTANTS INSIDE r AND w** (A15b.5): a fill lands
 // in the port the clock after its last beat (`READ_FABRIC_CLOCKS`, counted
 // from the first address taken by the testbench's responder, which answers
@@ -42,6 +48,14 @@
 
 module quux15_axi_master #(
     parameter int unsigned ID_BITS = 4,
+    // Where main memory and the frame buffer are in the port's space, the
+    // board's (`cadr_ddr_map.sv`); the testbench's own by default, the
+    // Kria's layout from 0.
+    parameter logic [31:0] MAIN_BASE    = 32'h0000_0000,
+    parameter logic [31:0] DISPLAY_BASE = 32'h0A00_0000,
+    // One AXI ID for every write, the responses in order (A15b.5); or one
+    // a slot, for a memory model that answers out of order.
+    parameter bit          ONE_WRITE_ID = 1'b0,
     // The declared constants inside r and w (A15b.5): the clocks
     // from a line's last beat to its fill landing in the port, and from a
     // write's B to its landing.
@@ -70,7 +84,8 @@ module quux15_axi_master #(
     output var logic               b_done,
     output var logic [ID_BITS-1:0] b_id,
     output var logic               b_err,
-    // The constants, for the testbench's responder.
+    // The constants, for the testbench's responder, and the ID mode.
+    output var logic               one_write_id,
     output var logic [3:0]         read_fabric_clocks,
     output var logic [3:0]         write_fabric_clocks,
 
@@ -104,6 +119,7 @@ module quux15_axi_master #(
     output var logic               m_rready
 );
 
+  assign one_write_id        = ONE_WRITE_ID;
   assign read_fabric_clocks  = 4'(READ_FABRIC_CLOCKS);
   assign write_fabric_clocks = 4'(WRITE_FABRIC_CLOCKS);
 
@@ -115,14 +131,19 @@ module quux15_axi_master #(
 
   // The line's byte address, and where it crosses 4 KiB: the first burst's
   // beats, 1 to 4, when it does.
+  // A line of the frame buffer's window (the bus address's `<28>`) is eight
+  // words of four bytes from `DISPLAY_BASE`, 32 bytes in four beats, which
+  // never cross 4 KiB.
   logic [31:0] line_byte;
   logic [11:0] line_off;
-  logic        line_split;
+  logic        line_split, line_win;
   logic [2:0]  first_beats;
   always_comb begin
-    line_byte   = {ar_line, 5'd0} + {2'd0, ar_line, 3'd0};   // 40L
+    line_win    = ar_line[25];
+    line_byte   = line_win ? DISPLAY_BASE + {2'd0, ar_line[24:0], 5'd0}
+                           : MAIN_BASE + {1'b0, ar_line, 5'd0} + {3'd0, ar_line, 3'd0};   // 40L
     line_off    = line_byte[11:0];
-    line_split  = line_off > 12'd4056;
+    line_split  = !line_win && line_off > 12'd4056;
     first_beats = 3'((13'd4096 - {1'b0, line_off}) >> 3);
   end
 
@@ -132,13 +153,23 @@ module quux15_axi_master #(
   logic [7:0]  second_len;
   logic [2:0]  beat;
   logic [63:0] beats [4];
+  logic        r_win;
+  logic [39:0] win_words [8];
+  always_comb begin
+    // The window's words: the field with a fixnum's tag, `005` (G1 §4.2).
+    for (int k = 0; k < 8; k++) begin
+      logic [63:0] b;
+      b = (k / 2 == 3) ? m_rdata : beats[k / 2];
+      win_words[k] = {8'o005, (k % 2 == 1) ? b[63:32] : b[31:0]};
+    end
+  end
 
   always_comb begin
     m_arsize  = SIZE_8;
     m_arburst = INCR;
     m_arvalid = 1'b0;
     m_araddr  = line_byte;
-    m_arlen   = line_split ? {5'd0, first_beats - 3'd1} : 8'd4;
+    m_arlen   = line_win ? 8'd3 : line_split ? {5'd0, first_beats - 3'd1} : 8'd4;
     ar_taken  = 1'b0;
     unique case (rstate)
       R_IDLE: begin
@@ -153,8 +184,10 @@ module quux15_axi_master #(
       default: ;
     endcase
     m_rready = 1'b1;
-    rd_last  = rstate != R_IDLE && m_rvalid && beat == 3'd4;
-    rd_data  = {m_rdata, beats[3], beats[2], beats[1], beats[0]};
+    rd_last  = rstate != R_IDLE && m_rvalid && beat == (r_win ? 3'd3 : 3'd4);
+    rd_data  = r_win ? {win_words[7], win_words[6], win_words[5], win_words[4], win_words[3], win_words[2],
+                        win_words[1], win_words[0]}
+                     : {m_rdata, beats[3], beats[2], beats[1], beats[0]};
   end
 
   always_ff @(posedge clk) begin
@@ -168,6 +201,7 @@ module quux15_axi_master #(
           second_addr <= {line_byte[31:12] + 20'd1, 12'd0};
           second_len  <= {5'd0, 3'd4 - first_beats};
           beat        <= 3'd0;
+          r_win       <= line_win;
         end
         R_SECOND: if (m_arready) rstate <= R_DATA;
         default: ;
@@ -175,7 +209,7 @@ module quux15_axi_master #(
       if (rstate != R_IDLE && m_rvalid) begin
         if (beat < 3'd4) beats[beat[1:0]] <= m_rdata;
         beat <= beat + 3'd1;
-        if (beat == 3'd4) rstate <= R_IDLE;
+        if (beat == (r_win ? 3'd3 : 3'd4)) rstate <= R_IDLE;
       end
     end
   end
@@ -191,17 +225,23 @@ module quux15_axi_master #(
   logic [63:0] data1, data2;
   logic [7:0]  strb1, strb2;
   logic [103:0] shifted;
+  logic        w_win;
+  logic [7:0]  wmask;
   always_comb begin
-    wb_byte   = {1'b0, w_bus, 2'd0} + {3'd0, w_bus};          // 5w
+    // The window's word: four bytes, the field, the tag dropped (G1 §4.2).
+    w_win     = w_bus[28];
+    wb_byte   = w_win ? DISPLAY_BASE + {2'd0, w_bus[27:0], 2'd0}
+                      : MAIN_BASE + {1'b0, w_bus, 2'd0} + {3'd0, w_bus};          // 5w
     beat_addr = {wb_byte[31:3], 3'd0};
     off       = wb_byte[2:0];
-    two       = off >= 3'd4;
+    two       = !w_win && off >= 3'd4;
     split     = two && (beat_addr[11:3] == 9'h1ff);
-    shifted   = {64'd0, w_word} << (8 * off);
+    shifted   = {64'd0, w_win ? {8'd0, w_word[31:0]} : w_word} << (8 * off);
+    wmask     = w_win ? 8'h0f : 8'h1f;
     data1     = shifted[63:0];
     data2     = {24'd0, shifted[103:64]};
-    strb1     = 8'(16'h001f << off);
-    strb2     = 8'((16'h001f << off) >> 8);
+    strb1     = 8'({8'd0, wmask} << off);
+    strb2     = 8'(({8'd0, wmask} << off) >> 8);
   end
 
   // The continuation of the last write accepted: its second beat, and for
@@ -214,6 +254,7 @@ module quux15_axi_master #(
   // Each slot's write is split, its first B to be held.
   logic [SLOTS-1:0] split_q, first_b_q, err_q;
   logic        w_hs;
+  logic [ID_BITS-1:0] ans_ptr, b_slot;
 
   always_comb begin
     w_free    = !cont_v;
@@ -222,7 +263,7 @@ module quux15_axi_master #(
     m_bready  = 1'b1;
     if (cont_v) begin
       m_awvalid = cont_aw && !cont_aw_done;
-      m_awid    = cont_id;
+      m_awid    = ONE_WRITE_ID ? '0 : cont_id;
       m_awaddr  = cont_addr;
       m_awlen   = 8'd0;
       m_wvalid  = !cont_w_done;
@@ -231,7 +272,7 @@ module quux15_axi_master #(
       m_wlast   = 1'b1;
     end else begin
       m_awvalid = w_req;
-      m_awid    = w_id;
+      m_awid    = ONE_WRITE_ID ? '0 : w_id;
       m_awaddr  = beat_addr;
       m_awlen   = (two && !split) ? 8'd1 : 8'd0;
       m_wvalid  = w_req;
@@ -244,14 +285,18 @@ module quux15_axi_master #(
     w_hs    = !cont_v && w_req && m_awready && m_wready;
     w_taken = w_hs;
     // A write's answer: its last B.
-    b_done = m_bvalid && !(split_q[m_bid] && !first_b_q[m_bid]);
-    b_id   = m_bid;
-    b_err  = m_bresp[1] || err_q[m_bid];
+    // The slot a response answers: its ID's, or with one ID the oldest
+    // unanswered.
+    b_slot = ONE_WRITE_ID ? ans_ptr : m_bid;
+    b_done = m_bvalid && !(split_q[b_slot] && !first_b_q[b_slot]);
+    b_id   = b_slot;
+    b_err  = m_bresp[1] || err_q[b_slot];
   end
 
   always_ff @(posedge clk) begin
     if (rst) begin
       cont_v    <= 1'b0;
+      ans_ptr   <= '0;
       split_q   <= '0;
       first_b_q <= '0;
       err_q     <= '0;
@@ -275,10 +320,11 @@ module quux15_axi_master #(
             && (cont_w_done || (m_wvalid && m_wready)))
           cont_v <= 1'b0;
       end
+      if (b_done) ans_ptr <= ans_ptr + 1'b1;
       if (m_bvalid) begin
-        if (split_q[m_bid] && !first_b_q[m_bid]) begin
-          first_b_q[m_bid] <= 1'b1;
-          err_q[m_bid]     <= m_bresp[1];
+        if (split_q[b_slot] && !first_b_q[b_slot]) begin
+          first_b_q[b_slot] <= 1'b1;
+          err_q[b_slot]     <= m_bresp[1];
         end
       end
     end

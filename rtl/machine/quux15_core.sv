@@ -42,11 +42,11 @@
 // walk; the late squash) and its microcycle, whose starts, map store and
 // fixed write word WB and the port take.
 //
-// **WHAT IS NOT BUILT** --- MACRO-DISPATCH and D, the devices beyond the
-// memory system's register-page words, the frame buffer's window, the PDL
-// buffer redirect inside the buffer, time, the console's halt --- stops a
-// simulation at the word that needs it, naming it (`unbuilt`), rather than
-// running on wrong.
+// **WHAT IS NOT BUILT** --- MACRO-DISPATCH and D, the keyboard and the
+// mouse, the network, block-disk's transfers (no pack is fitted, as in every
+// trace here), the PDL buffer redirect inside the buffer, the console's halt
+// --- stops a simulation at the word that needs it, naming it (`unbuilt`),
+// rather than running on wrong.
 
 `default_nettype none
 
@@ -58,7 +58,13 @@ module quux15_core #(
     // Main memory's words: QUUX's 32 boards, 2M words.
     parameter int unsigned MAIN_WORDS = 32'h0020_0000,
     // The cache's words (`quux15_port.sv`): 4,096 sets of two 8-word lines.
-    parameter int unsigned CACHE_WORDS = 65536
+    parameter int unsigned CACHE_WORDS = 65536,
+    // The frame buffer's words, the device window's slice 0: the video
+    // controller at 1280 by 1024, a bit a pixel.
+    parameter int unsigned FB_WORDS = 40960,
+    // One AXI ID for every write, as the board needs (A15b.5); clear while
+    // muir's seeded memory model may answer a later write first.
+    parameter bit ONE_WRITE_ID = 1'b0
 ) (
     input  var logic        clk,
     // Power-on: the machine as muir's `Pipeline::boot` leaves it, the boot's
@@ -124,8 +130,21 @@ module quux15_core #(
     input  var logic        m_rlast,
     input  var logic        m_rvalid,
     output var logic        m_rready,
+    // The clock's period in units of 0.5 ns (word 25, the machine's time),
+    // and the real-time clock's seconds at power-on: the board's.
+    input  var logic [6:0]  period,
+    input  var logic [31:0] rtc_start,
+    // The file device's host (contract Q9; `quux15_devices.sv`): the
+    // doorbell and the producer; a command completed, its words written into
+    // main memory by the host, and the handles then open.
+    output var logic        fd_doorbell,
+    output var logic [15:0] fd_prod,
+    output var logic        fd_enabled,
+    input  var logic        fd_done,
+    input  var logic [7:0]  fd_handles,
     // The master's declared constants inside r and w (A15b.5), which
     // the testbench's responder subtracts from the port's clocks.
+    output var logic        axi_one_write_id,
     output var logic [3:0]  axi_read_clocks,
     output var logic [3:0]  axi_write_clocks
 );
@@ -262,7 +281,7 @@ module quux15_core #(
   logic [1:0]  st_v, st_write, st_fetch, st_word_v;
   logic [31:0] st_va [2];
   logic [39:0] st_word [2];
-  logic        ex_map_held, ex_late_held;
+  logic        ex_map_held, ex_late_held, ex_int_rd;
 
   // --- The front end: the next fetch's address, the one after it when RD
   // or a redirect chose it before the word between was fetched, the next
@@ -304,7 +323,7 @@ module quux15_core #(
   logic [1:0]  ack_left;
   // A read's word on its way to MD from a register or nothing there (clocks
   // to its landing, the word); a read in the port (`md_fill` or a hit).
-  logic        pend_v;
+  logic        pend_v, pend_dev;
   logic [1:0]  pend_left;
   logic [39:0] pend_word;
   logic        rd_port;
@@ -335,6 +354,10 @@ module quux15_core #(
   // error stop, 225's posted writes answered with an error.
   logic        bus_nxm, errstop;
   logic [31:0] posted_errors;
+  // CMD_PROD's write, taken from the register write and held until every
+  // write before it is answered (`Back::cmd_prod`; A15b.5).
+  logic        cprod_v, rw_take, take_cmd_prod;
+  logic [31:0] cprod_word;
   // The PDL buffer redirect's copies of A 430 and 431 (A14.7).
   logic [31:0] pdl_base;
   logic [13:0] pdl_head;
@@ -472,11 +495,10 @@ module quux15_core #(
   // What a simulation stops at: a word that needs what is not built.
   localparam int UNBUILT_BITS = 3;
   logic [UNBUILT_BITS-1:0] unbuilt;
-  localparam int U_DEVICE = 0;  // a device register beyond the memory system's, the frame buffer's
-                                // window, the PDL buffer redirect inside the buffer, a dispatch-memory
-                                // write on map bits (slice 5)
+  localparam int U_DEVICE = 0;  // the keyboard's, the mouse's or the network's words, the PDL buffer
+                                // redirect inside the buffer, a dispatch-memory write on map bits
   localparam int U_MACRO = 1;   // MACRO-DISPATCH: destinations 5-7, the PDL field on M-AP or A-LOCALP (slice 4)
-  localparam int U_TIME  = 2;   // the microsecond clock, source 15 (slice 5)
+  localparam int U_DEV   = 2;   // a device's word the devices do not answer (a guard)
 
   // ======================================================== RD's copies' help
 
@@ -796,13 +818,13 @@ module quux15_core #(
   // --- The port (`quux15_port.sv`) and the memory management
   // --- (`quux15_mmu.sv`).
   logic        p_busy, p_req, p_land, p_land_next, w_ok, w_req, fix_v, post_req, post_ok;
-  logic        t_start, t_ready, port_idle;
+  logic        t_start, t_ready, port_idle, port_empty;
   logic [28:0] p_bus, w_bus, post_bus, t_addr;
   logic [39:0] p_word, p_word_next, fix_word, post_word, t_word;
   logic [2:0]  w_slot, fix_slot;
   logic [4:0]  errors_now, inflight_n;
   logic [3:0]  queue_n;
-  quux15_port #(.SETS(CACHE_WORDS / 16)) port (
+  quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID)) port (
       .clk(clk), .rst(rst),
       .p_busy(p_busy), .p_req(p_req), .p_bus(p_bus), .p_land(p_land), .p_word(p_word),
       .p_land_next(p_land_next), .p_word_next(p_word_next),
@@ -811,6 +833,8 @@ module quux15_core #(
       .post_req(post_req), .post_bus(post_bus), .post_word(post_word), .post_ok(post_ok),
       .t_start(t_start), .t_addr(t_addr), .t_ready(t_ready), .t_word(t_word),
       .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle),
+      .empty(port_empty), .sweep_go(fd_done),
+      .one_write_id(axi_one_write_id),
       .read_fabric_clocks(axi_read_clocks), .write_fabric_clocks(axi_write_clocks),
       .m_awid(m_awid), .m_awaddr(m_awaddr), .m_awlen(m_awlen), .m_awsize(m_awsize),
       .m_awburst(m_awburst), .m_awvalid(m_awvalid), .m_awready(m_awready), .m_wdata(m_wdata),
@@ -861,9 +885,22 @@ module quux15_core #(
       32'h515500f4, 32'h0, 32'h1000, 32'h4000, 32'h4000, 32'h400, 32'h1000, 32'h3,
       32'h1, 32'h5000400, 32'h10028, 32'he0000000, 32'h1, 32'h3, 32'h3, 32'h400};
   logic [31:0] posted_now;
+  // The words `quux15_devices.sv` answers, a clock after the grant.
+  function automatic logic dev_word(input logic [7:0] k);
+    return k == 8'o100 || k == 8'o103 || k == 8'o104 || (k >= 8'o110 && k <= 8'o115)
+        || (k >= 8'o200 && k <= 8'o203) || k == 8'o210 || (k >= 8'o160 && k <= 8'o171);
+  endfunction
+  // The words of the devices not built: the keyboard and the mouse, the
+  // network.
+  function automatic logic unbuilt_word(input logic [7:0] k);
+    return (k >= 8'o120 && k <= 8'o123) || (k >= 8'o140 && k <= 8'o147)
+        ;
+  endfunction
   function automatic logic [32:0] register_read(input logic [7:0] k, input logic [31:0] posted);
     if (k < 8'o20) return {1'b1, FEATURES[k[3:0]]};
+    if (dev_word(k) || unbuilt_word(k)) return {1'b0, 32'd0};
     unique case (k)
+      8'o25:  return {1'b1, 25'd0, period};
       8'o101: return {1'b1, 31'd0, bus_nxm};
       8'o102: return {1'b1, 31'd0, errstop};
       8'o220: return {1'b1, 14'd0, directory};
@@ -872,13 +909,28 @@ module quux15_core #(
       8'o223: return {1'b1, pointer_types[63:32]};
       8'o224: return {1'b1, refused};
       8'o225: return {1'b1, posted};
-      8'o226, 8'o227: return {1'b1, 32'd0};
-      default: return {1'b0, 32'd0};
+      // Every other word is reserved, or a constant 0 on this board: the
+      // board name (words 20-24) where the board's top gives none.
+      default: return {1'b1, 32'd0};
     endcase
   endfunction
   function automatic logic register_writable(input logic [7:0] k);
-    return k < 8'o20 || k == 8'o101 || k == 8'o102 || (k >= 8'o220 && k <= 8'o227);
+    return !unbuilt_word(k);
   endfunction
+
+  // --- The register page's devices and the machine's time
+  // --- (`quux15_devices.sv`).
+  logic [31:0] dev_rd_word, microseconds;
+  logic        dev_rd_built, dev_wr_built, int_now;
+  quux15_devices #(.MAIN_WORDS(MAIN_WORDS)) devices (
+      .clk(clk), .rst(rst), .period(period), .rtc_start(rtc_start),
+      .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_data(cprod_word),
+      .fd_doorbell(fd_doorbell), .fd_prod(fd_prod), .fd_enabled(fd_enabled),
+      .fd_done(fd_done), .fd_handles(fd_handles),
+      .rd_v(at_grant && s_device && !st_write[0] && dev_word(s_bus[7:0])), .rd_k(s_bus[7:0]),
+      .rd_word(dev_rd_word), .rd_built(dev_rd_built),
+      .wr_v(rw_take && errhalt == 2'd0 && dev_word(rgw_bus[7:0]) && !take_cmd_prod), .wr_k(rgw_bus[7:0]), .wr_data(rgw_word[31:0]), .wr_built(dev_wr_built),
+      .microseconds(microseconds), .int_now(int_now));
 
   // --- The start at WB's head (`start_at_wb`).
   localparam logic [28:0] REGISTER_PAGE_BUS = 29'h1fff_ff00;
@@ -922,8 +974,10 @@ module quux15_core #(
     if (a_va[31:29] == 3'b111 && !a_va[28]) s_bus = {1'b1, a_va[27:0]};
     else s_bus = {1'b0, s_entry[17:0], a_va[9:0]};
     s_device    = s_bus[28:8] == REGISTER_PAGE_BUS[28:8];
-    s_window    = s_bus[28] && !s_device;
-    s_memory    = !s_bus[28] && s_bus < 29'(MAIN_WORDS);
+    // The frame buffer's window is memory as main memory is, through the
+    // cache and the port (`busint::decode_quux_14`).
+    s_window    = s_bus[28] && !s_device && s_bus[27:0] < 28'(FB_WORDS);
+    s_memory    = (!s_bus[28] && s_bus < 29'(MAIN_WORDS)) || s_window;
     s_nothing   = !s_device && !s_window && !s_memory;
     s_regword   = register_read(s_bus[7:0], posted_now);
     // A register access waits while a register's write before it is still to
@@ -1084,6 +1138,7 @@ module quux15_core #(
       4'o12: ex_func = md_in;
       4'o13: ex_func = {lc_needfetch, 1'b0, intctl, intctl[3] ? lc : {lc[33:1], 1'b0}};
       4'o14: ex_func = {11'd0, spcptr, 5'd0, spc[spcptr]};
+      4'o15: ex_func = {8'd0, microseconds};
       4'o16: ex_func = {8'd0, MACHINE_ID};
       default: ex_func = {40{1'b1}};
     endcase
@@ -1109,7 +1164,9 @@ module quux15_core #(
       // A start WB reaches in a clock EX commits in is translated there.
       .vmaok         ((a_req && !k_busy) ? 1'b1 : vmaok),
       .map_bits      (map_bits),
-      .int_pending   (1'b0),
+      // The interrupt as this clock's register write leaves it, under
+      // INTERRUPT-CONTROL <27>, the enable.
+      .int_pending   (intctl[1] && int_now),
       .sequence_break(intctl[0]),
       .mul_ob        (mul_ob),
       .mul_q         (mul_q),
@@ -1292,7 +1349,6 @@ module quux15_core #(
           if (!ex_word[50]) ub_ex[U_MACRO] = 1'b1;
           formed = (ex_word[49] ? pdl_idx : pdl_ptr) + {{6{ex_word[58]}}, ex_word[58:51]};
         end
-        if (ex_isel[31] && ex_msrc[3:0] == 4'o15) ub_ex[U_TIME] = 1'b1;
         if (ex_pop_pdl && ex_isel[31]) nptr = pdl_ptr - 14'd1;
         if (pops_spc(ex_isel)) begin
           sx.sp = spcptr - 5'd1;
@@ -1469,11 +1525,11 @@ module quux15_core #(
   //
   // What WB's start, EX's register write (`register_write_now`, at EX's
   // start) and EX's microcycle leave, in muir's order within the clock.
-  logic        pw_eff_v, pw_eff_reg, rw_take, wb_nxm;
+  logic        pw_eff_v, pw_eff_reg, wb_nxm;
   logic [7:0]  pw_eff_seq;
   logic [2:0]  pw_eff_slot;
   logic        n_pend_v, n_rd_port, n_old_v, n_wp_v, n_pw_v, n_pw_reg, n_rgw_v, n_rgw_word_v;
-  logic        n_mwd_v, n_bus_nxm, n_errstop;
+  logic        n_mwd_v, n_bus_nxm, n_errstop, n_pend_dev;
   logic [1:0]  n_pend_left, n_ack_left;
   logic [39:0] n_pend_word, n_old_md, n_wp_md, n_rgw_word, n_md, n_mwd_vma, n_mwd_md;
   logic [7:0]  n_old_seq, n_wp_seq, n_pw_seq;
@@ -1496,8 +1552,10 @@ module quux15_core #(
     fix_v    = fix_any && !pw_eff_reg;
     fix_slot = pw_eff_slot;
     fix_word = fix_val;
-    // --- The register's write taken now (`register_write_now`).
+    // --- The register's write taken now (`register_write_now`); CMD_PROD's
+    // --- held for the port.
     rw_take  = rgw_v && rgw_word_v;
+    take_cmd_prod = rw_take && rgw_bus[7:0] == 8'o164;
     rw_v     = rw_take && rgw_bus[7:0] >= 8'o220 && rgw_bus[7:0] <= 8'o224;
     rw_k     = rgw_bus[7:0];
     rw_data  = rgw_word[31:0];
@@ -1517,9 +1575,13 @@ module quux15_core #(
     n_pend_v = pend_v && pend_left != 2'd0;
     n_pend_left = pend_left - 2'd1;
     n_pend_word = pend_word;
+    n_pend_dev = 1'b0;
     if (at_grant && !st_write[0] && s_device) begin
       n_pend_v = 1'b1; n_pend_left = 2'd1; n_pend_word = {8'd0, s_regword[31:0]};
+      // A device's word: read a clock on, at that clock's instant.
+      n_pend_dev = dev_word(s_bus[7:0]);
     end
+    if (pend_v && pend_left != 2'd0 && pend_dev) n_pend_word = {8'd0, dev_rd_word};
     if (at_grant && !st_write[0] && s_nothing) begin
       n_pend_v = 1'b1; n_pend_left = 2'd0; n_pend_word = '0;
     end
@@ -1827,10 +1889,11 @@ module quux15_core #(
   // the redirect inside the PDL buffer: muir's `bus_read` and `bus_write`
   // and the redirect's buffer access, not built here.
   logic ub_wb;
-  assign ub_wb = (at_grant && ((s_device && !st_write[0] && !s_regword[32]) || s_window))
+  assign ub_wb = (at_grant && s_device && !st_write[0] && unbuilt_word(s_bus[7:0]))
               || (fault_now && s_redirect && s_inside) || ub_register;
   assign unbuilt = ub_ex | ((rd_moves && plan.ub_macro) ? (UNBUILT_BITS'(1) << U_MACRO) : '0)
-                 | (ub_wb ? (UNBUILT_BITS'(1) << U_DEVICE) : '0);
+                 | (ub_wb ? (UNBUILT_BITS'(1) << U_DEVICE) : '0)
+                 | ((!dev_rd_built || !dev_wr_built) ? (UNBUILT_BITS'(1) << U_DEV) : '0);
 
   // ================================================================= the edge
 
@@ -1873,8 +1936,8 @@ module quux15_core #(
       // LVMO as muir's machine has it at power-on (`lvmo_at_power_on`): read
       // and write access, the frame all ones.
       vmaok <= 1'b0; wrcyc <= 1'b0; lvmo <= 30'(32'b11 << 26 | 32'o777777);
-      ack_left <= 2'd0; pend_v <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
-      wp_v <= 1'b0; pw_v <= 1'b0; rgw_v <= 1'b0; mwd_v <= 1'b0;
+      ack_left <= 2'd0; pend_v <= 1'b0; pend_dev <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
+      wp_v <= 1'b0; pw_v <= 1'b0; rgw_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
       bus_nxm <= 1'b0; errstop <= 1'b0; posted_errors <= '0;
       wb_fresh <= 1'b0; st_v <= '0; ex_map_held <= 1'b0; ex_late_held <= 1'b0;
     end else if (errhalt != 2'd0) begin
@@ -1928,13 +1991,19 @@ module quux15_core #(
         wrcyc <= st_write[0];
       end
       ack_left <= n_ack_left;
-      pend_v <= n_pend_v; pend_left <= n_pend_left; pend_word <= n_pend_word;
+      pend_v <= n_pend_v; pend_left <= n_pend_left; pend_word <= n_pend_word; pend_dev <= n_pend_dev;
       rd_port <= n_rd_port;
       old_v <= n_old_v; old_seq <= n_old_seq; old_md <= n_old_md;
       wp_v <= n_wp_v; wp_seq <= n_wp_seq; wp_md <= n_wp_md;
       pw_v <= n_pw_v; pw_reg <= n_pw_reg; pw_seq <= n_pw_seq; pw_slot <= n_pw_slot;
       rgw_v <= n_rgw_v; rgw_bus <= n_rgw_bus; rgw_word_v <= n_rgw_word_v; rgw_word <= n_rgw_word;
       mwd_v <= n_mwd_v; mwd_vma <= n_mwd_vma; mwd_md <= n_mwd_md;
+      if (take_cmd_prod) begin
+        cprod_v    <= 1'b1;
+        cprod_word <= rgw_word[31:0];
+      end else if (cprod_v && port_empty) begin
+        cprod_v <= 1'b0;
+      end
       bus_nxm <= n_bus_nxm; errstop <= n_errstop; posted_errors <= n_posted;
       if (land_a_we && land_a_addr == 10'o430) pdl_base <= land_data[31:0];
       if (land_a_we && land_a_addr == 10'o431) pdl_head <= land_data[13:0];
@@ -1985,6 +2054,9 @@ module quux15_core #(
         ex_clocks <= 5'd0;
         ex_map_held <= 1'b0;
         ex_late_held <= 1'b0;
+        // The interrupt as it stood in the word's last clock in RD: what a
+        // check that sampled there would read (a planted fault's).
+        ex_int_rd <= int_now;
       end else if (commit || !ex_v) begin
         ex_v <= 1'b0;
         ex_clocks <= 5'd0;
@@ -2058,7 +2130,7 @@ module quux15_core #(
       obs_gaddr    <= {3'd0, s_bus};
       obs_mdl      <= land_now;
       obs_mdword   <= land_word;
-      obs_reg      <= (at_grant && s_device && !st_write[0]) || rw_take;
+      obs_reg      <= (at_grant && s_device && !st_write[0]) || (rw_take && !take_cmd_prod);
       obs_raddr    <= {3'd0, rw_take ? rgw_bus : s_bus};
       obs_queue    <= queue_n;
       obs_inflight <= inflight_n;
@@ -2095,7 +2167,7 @@ module quux15_core #(
   // A word that needs what is not built stops the simulation, named.
   always_ff @(posedge clk) begin
     if (!rst && errhalt == 2'd0 && unbuilt != '0) begin
-      $display("quux15_core: not built: %b (bit 0 a device, the window or the redirect inside, 1 MACRO-DISPATCH, 2 time) at PC %o",
+      $display("quux15_core: not built: %b (bit 0 a device, the window or the redirect inside, 1 MACRO-DISPATCH, 2 a device word unanswered) at PC %o",
                unbuilt, ex_v ? ex_pc : rd_pc);
       $finish;
     end
@@ -2104,7 +2176,7 @@ module quux15_core #(
 
   // What nothing reads yet.
   logic unused;
-  assign unused = ^{st_fetch, port_idle, lvmo_eff[29:28], lvmo_eff[25:0], n_land, n_read[39:32],
+  assign unused = ^{ex_int_rd, s_regword[32], st_fetch, port_idle, lvmo_eff[29:28], lvmo_eff[25:0], n_land, n_read[39:32],
                     ex_pre_nop, x_mul, x_div, wb_seq, unbuilt, ex_word[63:62], ex_word[59],
                     ex_msrc[4], sx.pushed, ex_disp};
 

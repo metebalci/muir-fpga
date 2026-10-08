@@ -63,7 +63,14 @@
 // first: each write has its own ID, and a write whose landing an earlier
 // one decides is answered before that one, earliest deadline first.  A run
 // with `# sweep skipped` has -RESET's sweep of the TLB taken as done, as
-// muir's `Pipeline::skip_sweep` takes it.
+// muir's `Pipeline::skip_sweep` takes it.  Its `# period` and `# rtc` lines
+// are the board's period in units of 0.5 ns and the real-time clock's
+// seconds at power-on, given to the core as its top and its host give them.
+// Its `# fdprod` and `# fddone` lines are the file device's host as muir's
+// `FileDevice` played it (`golden/src/quux15.rs`'s `FileHost`): the fabric's
+// doorbell is held to the clocks the producer moved at, and at each
+// completion's clock the host's words go into main memory and the fabric is
+// told.
 //
 // A design that stops the simulation (`$finish`, the core's "not built")
 // fails at that clock.  Nothing here computes what a core should do: every
@@ -101,8 +108,11 @@ struct Totals {
   size_t clocks = 0, commits = 0, operands = 0, grants = 0, landed = 0, registers = 0;
 } totals;
 
-// Main memory's words: QUUX's 32 boards, 2M words, five bytes each.
+// Main memory's words: QUUX's 32 boards, 2M words, five bytes each; the
+// frame buffer's, four bytes each from the master's `DISPLAY_BASE`.
 constexpr uint64_t kMainWords = 32u << 16;
+constexpr uint64_t kFbWords = 40960;
+constexpr uint64_t kDisplayBase = 0x0A000000;
 
 // When a column is compared, by the trace's row.
 enum When { kEvery, kStage, kAtCommit, kIfGrant, kIfMd, kIfReg, kIfOpnd };
@@ -195,6 +205,16 @@ struct Run {
   bool late = false;
   uint64_t late_seed = 0, late_most = 0, late_errors = 0;
   bool skip_sweep = false;
+  // The period in units of 0.5 ns and the real-time clock's start.
+  uint64_t period = 20, rtc = 0;
+  // The file device's host: the doorbells, by clock, and the completions,
+  // by clock, each its handles open and the words written.
+  std::vector<std::pair<uint64_t, uint64_t>> fd_prod;
+  struct FdDone {
+    uint64_t clock, handles;
+    std::vector<std::pair<uint64_t, uint64_t>> words;
+  };
+  std::vector<FdDone> fd_done;
 };
 
 // The run's memories into the design, which has just come up.
@@ -261,6 +281,29 @@ int read_trace(const char *path, std::vector<Run> &runs) {
       }
       if (w.size() >= 2 && w[0] == "run") {
         runs.back().name = w[1];
+        continue;
+      }
+      if (w.size() == 3 && w[0] == "fdprod") {
+        runs.back().fd_prod.emplace_back(std::strtoull(w[1].c_str(), nullptr, 16),
+                                          std::strtoull(w[2].c_str(), nullptr, 16));
+        continue;
+      }
+      if (w.size() >= 3 && w[0] == "fddone" && w.size() % 2 == 1) {
+        Run::FdDone d;
+        d.clock = std::strtoull(w[1].c_str(), nullptr, 16);
+        d.handles = std::strtoull(w[2].c_str(), nullptr, 16);
+        for (size_t k = 3; k + 1 < w.size(); k += 2)
+          d.words.emplace_back(std::strtoull(w[k].c_str(), nullptr, 16),
+                               std::strtoull(w[k + 1].c_str(), nullptr, 16));
+        runs.back().fd_done.push_back(d);
+        continue;
+      }
+      if (w.size() == 2 && w[0] == "period") {
+        runs.back().period = std::strtoull(w[1].c_str(), nullptr, 16);
+        continue;
+      }
+      if (w.size() == 2 && w[0] == "rtc") {
+        runs.back().rtc = std::strtoull(w[1].c_str(), nullptr, 16);
         continue;
       }
       if (w.size() == 4 && w[0] == "port") {
@@ -330,7 +373,7 @@ int read_trace(const char *path, std::vector<Run> &runs) {
 // reads what the core did in that clock before its edge.
 class Bench {
  public:
-  explicit Bench(const Run &run) : run_(run), mem_(kMainWords * 5, 0) {
+  explicit Bench(const Run &run) : run_(run), mem_(kMainWords * 5, 0), fb_(kFbWords * 4, 0) {
     seed_ = run.late_seed;
     errors_ = run.late_errors;
   }
@@ -352,10 +395,20 @@ class Bench {
   }
 
   void drive(Top *d, uint64_t t) {
+    // The file device's host: a completion at this clock, its words into
+    // main memory before anything reads them.
+    d->fd_done = 0;
+    for (const Run::FdDone &f : run_.fd_done)
+      if (f.clock == t) {
+        for (const auto &w : f.words) image(w.first, w.second);
+        d->fd_done = 1;
+        d->fd_handles = static_cast<uint8_t>(f.handles);
+      }
     // Writes land in main memory at the clock muir lands them.
     for (Write &w : writes_)
       if (!w.applied && w.land == t) {
-        for (const auto &b : w.bytes) mem_[b.first] = b.second;
+        for (const auto &b : w.bytes)
+          if (uint8_t *at = byte(b.first)) *at = b.second;
         w.applied = true;
       }
     // A new write's address and first beat taken `occupancy` clocks after
@@ -373,15 +426,15 @@ class Bench {
     d->m_rresp = 0;
     if (!lines_.empty()) {
       Line &l = lines_.front();
-      const uint64_t first = l.ar + run_.read - rc - 4;
-      if (t >= first && l.sent < 5 && t == first + l.sent) {
+      const uint64_t first = l.ar + run_.read - rc - (l.total - 1);
+      if (t >= first && l.sent < l.total && t == first + l.sent) {
         uint64_t v = 0;
         const uint64_t base = l.byte + 8 * l.sent;
         for (int b = 0; b < 8; ++b)
-          if (base + b < mem_.size()) v |= static_cast<uint64_t>(mem_[base + b]) << (8 * b);
+          if (const uint8_t *at = byte(base + b)) v |= static_cast<uint64_t>(*at) << (8 * b);
         d->m_rvalid = 1;
         d->m_rdata = v;
-        d->m_rlast = (l.sent == l.first_beats - 1) || l.sent == 4;
+        d->m_rlast = (l.sent == l.first_beats - 1) || l.sent == l.total - 1;
       }
     }
     // One B a clock: a write that must land at the next clock, or else the
@@ -391,6 +444,31 @@ class Bench {
     d->m_bresp = 0;
     bpick_ = -1;
     bfirst_ = false;
+    // **ONE ID** (the core's `ONE_WRITE_ID`, A15b.5): the responses in
+    // order, the oldest write's, a split write's first B before its last,
+    // each at its write's clock or the first after the one before.
+    if (d->axi_one_write_id) {
+      for (size_t k = 0; k < writes_.size(); ++k) {
+        Write &w = writes_[k];
+        if (w.b_done) continue;
+        if (w.split && !w.b1) {
+          if (t >= w.ready1) {
+            bpick_ = static_cast<long>(k);
+            bfirst_ = true;
+          }
+        } else if (t >= w.ready && t + wc >= w.land) {
+          bpick_ = static_cast<long>(k);
+        }
+        break;
+      }
+      if (bpick_ >= 0) {
+        Write &w = writes_[bpick_];
+        d->m_bvalid = 1;
+        d->m_bid = 0;
+        d->m_bresp = (!bfirst_ && w.error) ? 2 : 0;
+      }
+      return;
+    }
     for (size_t k = 0; k < writes_.size(); ++k) {
       Write &w = writes_[k];
       if (w.b_done) continue;
@@ -428,12 +506,33 @@ class Bench {
   // What the core did in clock `t`, its outputs before the edge; false when
   // the core broke the responder's rules.
   bool take(const Top *d, uint64_t t, std::string &why) {
+    // The doorbell: the fabric's, at the clocks and values the host saw.
+    bool want = false;
+    uint64_t value = 0;
+    for (const auto &p : run_.fd_prod)
+      if (p.first == t) {
+        want = true;
+        value = p.second;
+      }
+    if (d->fd_doorbell != want || (want && d->fd_prod != value)) {
+      char b[160];
+      std::snprintf(b, sizeof b, "the file device's doorbell is %d (%" PRIx64 "), the host's %d (%" PRIx64 ")",
+                    static_cast<int>(d->fd_doorbell), static_cast<uint64_t>(d->fd_prod),
+                    static_cast<int>(want), value);
+      why = b;
+      return false;
+    }
     if (d->m_arvalid && d->m_arready) {
       const uint64_t a = d->m_araddr;
-      if (a % 40 == 0) {
+      // A line's first address: main memory's at 40 bytes a line, the
+      // frame buffer's at 32 (the second address of a split line is
+      // neither).
+      const bool win = a >= kDisplayBase;
+      if (win ? a % 32 == 0 : a % 40 == 0) {
         Line l;
         l.ar = t;
         l.byte = a;
+        l.total = win ? 4 : 5;
         l.first_beats = static_cast<int>(d->m_arlen) + 1;
         if (!lines_.empty()) {
           why = "a line read while another is answered";
@@ -444,7 +543,7 @@ class Bench {
     }
     if (d->m_rvalid && d->m_rready && !lines_.empty()) {
       Line &l = lines_.front();
-      if (++l.sent == 5) lines_.erase(lines_.begin());
+      if (++l.sent == l.total) lines_.erase(lines_.begin());
     }
     const bool aw = d->m_awvalid && d->m_awready, wb = d->m_wvalid && d->m_wready;
     if (cont_) {
@@ -460,8 +559,10 @@ class Bench {
       w.id = d->m_awid;
       w.accept = t;
       put(w, d->m_awaddr, d->m_wdata, d->m_wstrb);
+      // Main memory's word is five bytes, in one beat or two; the frame
+      // buffer's is four, in one.
       int strobes = __builtin_popcount(d->m_wstrb);
-      const bool more = strobes < 5;
+      const bool more = d->m_awaddr < kDisplayBase && strobes < 5;
       w.split = more && d->m_awlen == 0;
       cont_ = more;
       cont_addr_ = d->m_awaddr + 8;
@@ -488,7 +589,7 @@ class Bench {
     // Every write answered by its deadline.
     const uint64_t wc = d->axi_write_clocks;
     for (const Write &w : writes_)
-      if (!w.b_done && t + wc >= w.land) {
+      if (!d->axi_one_write_id && !w.b_done && t + wc >= w.land) {
         why = "a write's B missed its clock";
         return false;
       }
@@ -499,8 +600,15 @@ class Bench {
  private:
   struct Line {
     uint64_t ar = 0, byte = 0;
-    int first_beats = 5, sent = 0;
+    int first_beats = 5, sent = 0, total = 5;
   };
+  // The byte at a port address: main memory's from 0, the frame buffer's
+  // from `kDisplayBase` (the master's defaults); nothing elsewhere.
+  uint8_t *byte(uint64_t a) {
+    if (a < mem_.size()) return &mem_[a];
+    if (a >= kDisplayBase && a - kDisplayBase < fb_.size()) return &fb_[a - kDisplayBase];
+    return nullptr;
+  }
   struct Write {
     uint32_t id = 0;
     uint64_t accept = 0, land = 0, ready = 0, ready1 = 0;
@@ -513,7 +621,7 @@ class Bench {
   }
 
   const Run &run_;
-  std::vector<uint8_t> mem_;
+  std::vector<uint8_t> mem_, fb_;
   std::vector<Line> lines_;
   std::vector<Write> writes_;
   uint64_t seed_ = 0, errors_ = 0, last_accept_ = 0, last_land_ = 0, cont_addr_ = 0;
@@ -546,6 +654,7 @@ int run_trace(const char *path, const Run &run, int seed) {
     dut->eval();
   };
   auto quiet = [&]() {
+    dut->fd_done = 0; dut->fd_handles = 0;
     dut->m_awready = 0; dut->m_wready = 0; dut->m_arready = 0;
     dut->m_bvalid = 0; dut->m_rvalid = 0; dut->m_bid = 0; dut->m_bresp = 0;
     dut->m_rdata = 0; dut->m_rresp = 0; dut->m_rlast = 0;
@@ -561,6 +670,12 @@ int run_trace(const char *path, const Run &run, int seed) {
 #endif
   dut->rst = 1;
   dut->clk = 0;
+#ifdef QUUX15_CORE
+  // The board's period and the host's real-time clock, as its top gives
+  // them.
+  dut->period = static_cast<uint8_t>(run.period);
+  dut->rtc_start = static_cast<uint32_t>(run.rtc);
+#endif
   dut->eval();
   if (!load(dut, run, path)) {
     dut->final();

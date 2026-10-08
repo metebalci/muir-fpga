@@ -74,6 +74,7 @@
 //! trace says it carries the fault in its second line.
 
 mod machine_axis;
+mod quux15_devices;
 mod quux15_memside;
 mod quux15_preset;
 mod trace15;
@@ -906,6 +907,9 @@ struct Case {
     /// never answers.  `micro`'s M and its A shadow take them before the
     /// comparison.
     beyond_micro: Vec<(usize, Word)>,
+    /// The port's timing, when the run's is not the Kria's: a slow write
+    /// that keeps CMD_PROD waiting, as muir's test of it does.
+    timing: Option<PortTiming>,
 }
 
 impl Case {
@@ -926,6 +930,7 @@ impl Case {
             late: None,
             skip_sweep: false,
             beyond_micro: Vec::new(),
+            timing: None,
         }
     }
 
@@ -955,12 +960,18 @@ impl Case {
         out
     }
 
-    /// The memory side's lines: the port's clocks at the period, which the
-    /// testbench's responder answers by; the seeded model, if the run has
+    /// The machine's lines: the period in units of 0.5 ns, and the
+    /// real-time clock's seconds at power-on, which the testbench gives the
+    /// core as a board's top and host do; the port's clocks at the period,
+    /// which its responder answers by; the seeded model, if the run has
     /// one; and whether -RESET's sweep of the TLB is taken as done.
     fn memory_lines(&self, e: &Pipeline) -> Vec<String> {
         let c = e.port.clocks();
-        let mut out = vec![format!("# port {:x} {:x} {:x}", c.read, c.write, c.occupancy)];
+        let mut out = vec![
+            format!("# period {:x}", e.period()),
+            format!("# rtc {:x}", machine_axis::RTC_START),
+            format!("# port {:x} {:x} {:x}", c.read, c.write, c.occupancy),
+        ];
         if let Some(m) = self.late {
             out.push(format!("# late {:x} {:x} {:x}", m.seed, m.most, m.errors));
         }
@@ -1038,6 +1049,67 @@ fn differences(e: &Machine, u: &Machine) -> Vec<String> {
     d
 }
 
+/// **The file device's host, as the trace records it for the testbench**
+/// (contract Q9): on a board the fabric rings the host when the command
+/// producer moves, and the host, Linux's daemon, runs the command, writes
+/// its response and buffer B into main memory, and says so; here muir's
+/// `FileDevice` does the host's part, and each clock is watched for both.
+///
+///   # fdprod <clock> <value>       the producer moved in this clock: the
+///                                  fabric's doorbell, which the testbench
+///                                  holds it to
+///   # fddone <clock> <handles> <address> <word> ...
+///                                  a command completed in this clock: the
+///                                  handles then open and the words the
+///                                  host wrote, its response entry and the
+///                                  buffer B of a command that writes one,
+///                                  which the testbench writes and tells
+///                                  the fabric of in the same clock
+#[derive(Default)]
+struct FileHost {
+    prod: u32,
+    cons: u16,
+    lines: Vec<String>,
+}
+
+impl FileHost {
+    fn watch(&mut self, e: &Pipeline) {
+        use muir::file_device::{CMD_BASE, CMD_PROD, CMD_SIZE, CONTROL, RESP_BASE, RESP_SIZE};
+        let m = e.machine();
+        let fd = &m.file_device;
+        let clock = e.clock();
+        let on = fd.read(CONTROL, 0) & 1 != 0;
+        let prod = fd.read(CMD_PROD, 0);
+        if on && prod != self.prod {
+            self.lines.push(format!("# fdprod {clock:x} {prod:x}"));
+        }
+        let cons = fd.response_producer();
+        if on && cons == self.cons.wrapping_add(1) {
+            let k = u32::from(self.cons);
+            let (cb, cl) = (fd.read(CMD_BASE, 0), fd.read(CMD_SIZE, 0));
+            let (rb, rl) = (fd.read(RESP_BASE, 0), fd.read(RESP_SIZE, 0));
+            let e_at = (cb + 8 * (k % (1 << cl))) as usize;
+            let r_at = (rb + 8 * (k % (1 << rl))) as usize;
+            let mut words: Vec<usize> = (r_at..r_at + 8).collect();
+            let opcode = (m.main[e_at] as u32 >> 16) & 0xff;
+            if matches!(opcode, 2 | 5 | 6) {
+                let (b, len) = (m.main[e_at + 4] as u32 as usize, m.main[e_at + 5] as u32 as usize);
+                let n = len.min(65_536).div_ceil(4);
+                if b + n <= m.main.len() {
+                    words.extend(b..b + n);
+                }
+            }
+            let mut line = format!("# fddone {clock:x} {:x}", fd.handles_open());
+            for a in words {
+                line.push_str(&format!(" {a:x} {:x}", m.main[a]));
+            }
+            self.lines.push(line);
+        }
+        self.prod = if on { prod } else { 0 };
+        self.cons = if on { cons } else { 0 };
+    }
+}
+
 /// The error halt a run may end at, as the trace's code.
 fn halt_code(h: &Halt) -> Option<(u64, u8)> {
     match *h {
@@ -1100,7 +1172,7 @@ const REACHED: [&str; 14] = [
 fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, (i32, String)> {
     let name = &case.name;
     let mut e = Pipeline::new(machine(case));
-    e.configure(period, TIMING, CACHE_WORDS);
+    e.configure(period, case.timing.unwrap_or(TIMING), CACHE_WORDS);
     if let Some(f) = planted {
         e.mutation = f;
     }
@@ -1111,6 +1183,7 @@ fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, 
         e.skip_sweep();
     }
     let memory = case.memory_lines(&e);
+    let mut host = FileHost::default();
     let mut rows = vec![t.row(&e).line];
     let mut parked_at = None;
     let mut halted = false;
@@ -1138,6 +1211,7 @@ fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, 
                 _ => return Err((1, format!("{name} stopped at clock {}: {h:?}", e.clock()))),
             },
         }
+        host.watch(&e);
         let row = t.row(&e);
         if parked_at.is_none() && row.commit == Some(Some(case.park as u16)) {
             parked_at = Some(e.clock());
@@ -1192,6 +1266,8 @@ fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, 
         pm.queue_full_clocks, pm.writes, pm.fills, pm.two_beat_writes, pm.beat_delays, tlb.walks,
         tlb.write_backs, tlb.refusals,
     ];
+    let mut memory = memory;
+    memory.extend(host.lines);
     Ok(Ran { lines: rows, summary, memory, reached })
 }
 
@@ -1210,6 +1286,11 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "walk" => quux15_memside::walk().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "dispatch" => vec![quux15_preset::dispatches().case("dispatch")],
         "imem" => vec![quux15_preset::imem_program().case("imem")],
+        "timers" => quux15_devices::timers().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "interrupt" => quux15_devices::interrupt(period).into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "blockdisk" => quux15_devices::blockdisk().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "window" => quux15_devices::window().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "filedev" => quux15_devices::filedev().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "predict" => vec![quux15_preset::predict_program().case("predict")],
         _ => vec![Case::of_prog(name, &program(name, period))],

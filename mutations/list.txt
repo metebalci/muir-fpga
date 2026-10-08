@@ -28517,9 +28517,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A word that runs past its first 8-byte beat is written as one beat:
 @note its last bytes are lost and the next accept is not held by them.
 @old
-    two       = off >= 3'd4;
+    two       = !w_win && off >= 3'd4;
 @new
-    two       = 1'b0;
+    two       = 1'b0 && !w_win;
 @end
 
 @mutation quux15-accept-at-the-last-beat
@@ -28721,4 +28721,267 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
       fwd_v     <= we && waddr == raddr && raddr < PROM_BASE;
 @new
       fwd_v     <= we && waddr == raddr && raddr < PROM_BASE && 1'b0;
+@end
+
+# --------------------------------------------- revision 15's core, devices and time
+#
+# `rtl/machine/quux15_devices.sv`: the machine's time at the clock's period,
+# the microsecond and real-time clocks, the interval timers, block-disk's
+# registers, word 100, RESET-DEVICES and the interrupt the conditions read,
+# held clock for clock to muir's pipeline over `golden/src/quux15_devices.rs`
+# and the `time` program at A15b.12's periods.
+
+@mutation quux15-microsecond-a-clock-late
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note The microsecond clock steps a clock after the instant it reaches a
+@note microsecond exactly, where an edge is acted on at the first clock at
+@note or after it.
+@old
+      if ({1'b0, us_frac} + 12'(period) >= US_UNITS) begin
+@new
+      if ({1'b0, us_frac} + 12'(period) > US_UNITS) begin
+@end
+
+@mutation quux15-timer-flag-a-clock-late
+@check quux15_interrupt_quux
+@file rtl/machine/quux15_devices.sv
+@note A timer's flag rises a clock after its deadline when the deadline
+@note falls on a clock's instant.
+@old
+    if (n <= 0) begin
+@new
+    if (n < 0) begin
+@end
+
+@mutation quux15-timer-clear-off-the-grid
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note A periodic timer's flag cleared late counts a whole period from the
+@note clear, where its next deadline is the next boundary of its start's
+@note grid.
+@old
+          r.up = 1'b0;
+        end
+      end
+@new
+          r.up = 1'b0;
+          r.rem = units_of(t.period_us);
+        end
+      end
+@end
+
+@mutation quux15-one-shot-clear-restarts
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note A one-shot timer's clear starts it again, where it counts nothing more.
+@old
+        if (t.one_shot || t.period_us == 24'd0) begin
+          r.armed = 1'b0;
+@new
+        if (t.one_shot || t.period_us == 24'd0) begin
+          r.armed = 1'b1;
+          r.rem   = units_of(t.period_us);
+@end
+
+@mutation quux15-period-write-leaves-the-deadline
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note A period written while the timer is on leaves its deadline, where the
+@note new period counts from the write.
+@old
+        r.rem   = units_of(v[23:0]);
+@new
+        r.rem   = t.rem;
+@end
+
+@mutation quux15-word-100-not-under-the-enable
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note Word 100's timer bits are the flags whatever the interrupt enables.
+@old
+    return {24'd0, fd, 3'd0, idle && cmd[11], t2.ie && t2.up, t1.ie && t1.up, t0.ie && t0.up};
+@new
+    return {24'd0, fd, 3'd0, idle && cmd[11], t2.ie && t2.up, t1.up, t0.ie && t0.up};
+@end
+
+@mutation quux15-interrupt-before-the-clocks-write
+@check quux15_interrupt_quux
+@file rtl/machine/quux15_devices.sv
+@note The conditions read the interrupt as it stood before the register
+@note write taken in their clock.
+@old
+  assign int_now = sources(tm_w[0], tm_w[1], tm_w[2], bd_cmd_w, bd_idle_w,
+@new
+  assign int_now = sources(tm[0], tm[1], tm[2], bd_cmd, !bd_active,
+@end
+
+@mutation quux15-interrupt-sampled-in-rd
+@check quux15_interrupt_quux
+@file rtl/machine/quux15_core.sv
+@note The check samples the interrupt as it stood when its word left RD,
+@note not in its last clock in EX (muir's `InterruptSampledInRd`).
+@old
+      .int_pending   (intctl[1] && int_now),
+@new
+      .int_pending   (intctl[1] && ex_int_rd),
+@end
+
+@mutation quux15-reset-devices-leaves-the-timers
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note RESET-DEVICES leaves the interval timers running.
+@old
+      if (wr_reset) tm_w[k] = '0;
+@new
+      if (wr_reset && 1'b0) tm_w[k] = '0;
+@end
+
+@mutation quux15-block-disk-bad-command-not-flagged
+@check quux15_blockdisk_quux
+@file rtl/machine/quux15_devices.sv
+@note START of a command other than read and write does not stop by error.
+@old
+      bd_bad_w = !(bd_cmd[3:0] == 4'o00 || bd_cmd[3:0] == 4'o11);
+@new
+      bd_bad_w = 1'b0 && !(bd_cmd[3:0] == 4'o00 || bd_cmd[3:0] == 4'o11);
+@end
+
+@mutation quux15-block-disk-done-interrupt-without-its-enable
+@check quux15_interrupt_quux
+@file rtl/machine/quux15_devices.sv
+@note Block-disk's done interrupt is the not-active level alone, whatever
+@note command `<11>` says.
+@old
+    return {24'd0, fd, 3'd0, idle && cmd[11], t2.ie && t2.up, t1.ie && t1.up, t0.ie && t0.up};
+@new
+    return {24'd0, fd, 3'd0, idle && (cmd[11] || !cmd[11]), t2.ie && t2.up, t1.ie && t1.up, t0.ie && t0.up};
+@end
+
+@mutation quux15-rtc-start-not-loaded
+@check quux15_timers_quux
+@file rtl/machine/quux15_devices.sv
+@note The real-time clock counts from 0 at power-on, not from the host's
+@note seconds.
+@old
+      rtc_sec  <= rtc_start;
+@new
+      rtc_sec  <= rtc_start & 32'h0;
+@end
+
+@mutation quux15-window-word-written-five-bytes
+@check quux15_window_quux
+@file rtl/plumbing/quux15_axi_master.sv
+@note A word of the frame buffer's window is written as main memory's five
+@note bytes, its tag over the next word's first byte.
+@old
+    wmask     = w_win ? 8'h0f : 8'h1f;
+@new
+    wmask     = w_win ? 8'h1f : 8'h1f;
+@end
+
+@mutation quux15-window-fill-without-its-tag
+@check quux15_window_quux
+@file rtl/plumbing/quux15_axi_master.sv
+@note A line of the frame buffer filled with its fields alone, where each
+@note word carries a fixnum's tag.
+@old
+      win_words[k] = {8'o005, (k % 2 == 1) ? b[63:32] : b[31:0]};
+@new
+      win_words[k] = {8'o000, (k % 2 == 1) ? b[63:32] : b[31:0]};
+@end
+
+@mutation quux15-window-past-the-buffer-is-memory
+@check quux15_window_quux
+@file rtl/machine/quux15_core.sv
+@note An offset of the device window past the frame buffer is taken for
+@note memory, where nothing is there.
+@old
+    s_window    = s_bus[28] && !s_device && s_bus[27:0] < 28'(FB_WORDS);
+@new
+    s_window    = s_bus[28] && !s_device && s_bus[27:0] < 28'(FB_WORDS + 8);
+@end
+
+@mutation quux15-video-mode-keeps-every-bit
+@check quux15_window_quux
+@file rtl/machine/quux15_devices.sv
+@note The video controller's mode reads back more than black-on-white.
+@old
+      8'o210: rd_word = {29'd0, bow, 2'd0};
+@new
+      8'o210: rd_word = {29'd0, bow, 1'b0, bow};
+@end
+
+@mutation quux15-cmd-prod-not-behind-the-writes
+@check quux15_filedev_quux
+@file rtl/machine/quux15_core.sv
+@note CMD_PROD reaches the file device at once, not once every write
+@note before it is answered (muir's `NoCmdProdWait`): the host would read a
+@note ring entry still in the posted writes.
+@old
+      .prod_v(cprod_v && port_empty && errhalt == 2'd0), .prod_data(cprod_word),
+@new
+      .prod_v(cprod_v && errhalt == 2'd0), .prod_data(cprod_word),
+@end
+
+@mutation quux15-sweep-misses-a-set
+@check quux15_filedev_quux
+@file rtl/machine/quux15_port.sv
+@note The completion's sweep leaves the set of the last line filled
+@note (muir's `SweepMissesASet`): the response read over a line read before
+@note the command reads the old word.
+@old
+      if (sweep_go) begin
+        v0 <= '0;
+        v1 <= '0;
+@new
+      if (sweep_go) begin
+        for (int k = 0; k < SETS; k++)
+          if (SB'(k) != last_fill_set) begin
+            v0[k] <= 1'b0;
+            v1[k] <= 1'b0;
+          end
+@end
+
+@mutation quux15-sweep-holds-no-lookup
+@check quux15_filedev_quux
+@file rtl/machine/quux15_port.sv
+@note The completion's sweep clears the lines but holds no lookup for its
+@note cache words / 512 clocks.
+@old
+  assign sweeping = sweep_go || sweep_left != 16'd0;
+@new
+  assign sweeping = sweep_go || (sweep_left != 16'd0 && 1'b0);
+@end
+
+@mutation quux15-file-device-producer-unchecked
+@check quux15_filedev_quux
+@file rtl/machine/quux15_devices.sv
+@note A producer that claims more entries than the ring holds is taken,
+@note where it sets the index fault.
+@old
+      if (prod_data[15:0] - fd_ccons_w > (16'd1 << fd_clog_w)
+@new
+      if (prod_data[15:0] - fd_ccons_w > (16'd1 << fd_clog_w) + 16'd16
+@end
+
+@mutation quux15-file-device-ring-fit-unchecked
+@check quux15_filedev_quux
+@file rtl/machine/quux15_devices.sv
+@note A ring off a line is enabled, where the enable is refused.
+@old
+    return base[2:0] == 3'd0 && log2 <= 4'd8
+@new
+    return base[2:0] == base[2:0] && log2 <= 4'd8
+@end
+
+@mutation quux15-file-device-interrupt-without-its-enable
+@check quux15_filedev_quux
+@file rtl/machine/quux15_devices.sv
+@note Word 100's file device bit is a response waiting, whatever the
+@note interrupt enable says.
+@old
+      8'o100: rd_word = sources(tm[0], tm[1], tm[2], bd_cmd, !bd_active, fd_ie && fd_ccons != fd_rcons);
+@new
+      8'o100: rd_word = sources(tm[0], tm[1], tm[2], bd_cmd, !bd_active, fd_ccons != fd_rcons);
 @end

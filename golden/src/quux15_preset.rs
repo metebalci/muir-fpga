@@ -91,6 +91,7 @@ pub struct Preset {
     pub late: Option<muir::pipeline::port::LateModel>,
     pub skip_sweep: bool,
     pub beyond_micro: Vec<(usize, Word)>,
+    pub timing: Option<muir::pipeline::PortTiming>,
 }
 
 impl Preset {
@@ -171,6 +172,7 @@ impl Preset {
             late: self.late,
             skip_sweep: self.skip_sweep,
             beyond_micro: self.beyond_micro.clone(),
+            timing: self.timing,
         }
     }
 }

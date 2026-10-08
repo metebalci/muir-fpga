@@ -2698,14 +2698,15 @@ CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_
 # an address written in the same clock is poisoned.
 QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlfield", "pdlfieldout",
                "dconst", "dispatch", "predict", "imem", "memory", "ports", "walk", "matrix", "random",
-               "matrixmem", "randmem", "imemorder")
+               "matrixmem", "randmem", "imemorder", "time", "timers", "interrupt", "blockdisk", "window", "filedev")
 QUUX15_PERIODS = (20, 17)
-QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,)}
+QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,),
+                     "time": (14, 16, 17, 20, 22, 38), "timers": (14, 16, 17, 20, 22, 38)}
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {
         "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
                     "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv",
-                    "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_port.sv",
+                    "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_devices.sv",
                     "rtl/machine/quux15_mmu.sv", "rtl/plumbing/quux15_axi_master.sv"],
         "extra": ["rtl/machine/quux_muldiv.sv"],
         "top": "quux15_core",

@@ -301,17 +301,18 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # side's rows (`golden/src/quux15_memside.rs`), `ports` and `walk`, at both
 # periods, where the port's clocks round differently.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
 QUUX15_PERIODS_random := 20
 QUUX15_PERIODS_matrixmem := 20
 QUUX15_PERIODS_randmem := 20
+QUUX15_PERIODS_timers := 14 16 17 20 22 38
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
-QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict imem memory $(QUUX15_GROUPS)
+QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict imem memory time $(QUUX15_GROUPS)
 QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                   $(BUILD)/quux15_$(p).quux.p$(q).golden))
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
@@ -1419,6 +1420,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # period, `quux15_<program>.quux.p<P>.golden`, and the PROM image is one at
 # every period.
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
+                 golden/src/quux15_devices.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 $(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)
@@ -1447,6 +1449,7 @@ $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace: $(QUUX15_GOLDEN) | $(BUILD
 # Each trace is run under two seeds.
 QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/machine/quux15_ram.sv \
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
+                   rtl/machine/quux15_devices.sv \
                    rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv
 QUUX15_CORE_FLAGS := --x-assign unique --x-initial unique +define+QUUX15_RDW_POISON -Irtl/machine \
                      -CFLAGS -DQUUX15_TOP=Vquux15_core -CFLAGS -DQUUX15_CORE

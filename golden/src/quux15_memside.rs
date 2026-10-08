@@ -100,7 +100,7 @@ fn run() -> Preset {
 
 impl Preset {
     /// M `slot` <- the word at the virtual address `va` (muir's `read`).
-    fn read(&mut self, va: Word, slot: u64) -> &mut Self {
+    pub(crate) fn read(&mut self, va: Word, slot: u64) -> &mut Self {
         let a = self.k(va);
         self.op(ALU | SETA | a_src(a) | START_READ);
         self.fill(1);
@@ -108,7 +108,7 @@ impl Preset {
     }
 
     /// The word `word` to the virtual address `va` (muir's `write`).
-    fn write(&mut self, word: Word, va: Word) -> &mut Self {
+    pub(crate) fn write(&mut self, word: Word, va: Word) -> &mut Self {
         let (wa, aa) = (self.k(word), self.k(va));
         self.op(ALU | SETA | a_src(wa) | MD);
         self.op(ALU | SETA | a_src(aa) | START_WRITE);

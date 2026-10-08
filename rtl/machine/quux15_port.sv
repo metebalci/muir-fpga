@@ -53,6 +53,7 @@
 
 module quux15_port #(
     parameter int unsigned SETS    = 4096,
+    parameter bit          ONE_WRITE_ID = 1'b0,
     parameter int unsigned ID_BITS = 4,
     localparam int unsigned SB = $clog2(SETS),
     localparam int unsigned TB = 26 - SB
@@ -98,7 +99,15 @@ module quux15_port #(
     output var logic [4:0]  inflight_n,
     // Nothing queued, in flight or filling.
     output var logic        idle,
-    // The master's declared constants (`quux15_axi_master.sv`).
+    // Every write answered, as the tick leaves the clock (`Port::empty`):
+    // what CMD_PROD waits for.
+    output var logic        empty,
+    // The file device's completion this clock: every line invalid, and
+    // every lookup waits a set's clock each (`Port::sweep`; A15b.6).
+    input  var logic        sweep_go,
+    // The master's declared constants and its writes' ID mode
+    // (`quux15_axi_master.sv`).
+    output var logic        one_write_id,
     output var logic [3:0]  read_fabric_clocks,
     output var logic [3:0]  write_fabric_clocks,
 
@@ -156,11 +165,12 @@ module quux15_port #(
   logic [39:0]  mw_word;
   logic [25:0]  ar_line;
 
-  quux15_axi_master #(.ID_BITS(ID_BITS)) master (
+  quux15_axi_master #(.ID_BITS(ID_BITS), .ONE_WRITE_ID(ONE_WRITE_ID)) master (
       .clk(clk), .rst(rst),
       .ar_req(ar_req), .ar_line(ar_line), .ar_taken(ar_taken), .rd_last(rd_last), .rd_data(rd_data),
       .w_req(mw_req), .w_bus(mw_bus), .w_word(mw_word), .w_id(mw_id), .w_free(mw_free),
       .w_taken(mw_taken), .b_done(b_done), .b_id(b_id), .b_err(b_err),
+      .one_write_id(one_write_id),
       .read_fabric_clocks(read_fabric_clocks), .write_fabric_clocks(write_fabric_clocks),
       .m_awid(m_awid), .m_awaddr(m_awaddr), .m_awlen(m_awlen), .m_awsize(m_awsize),
       .m_awburst(m_awburst), .m_awvalid(m_awvalid), .m_awready(m_awready), .m_wdata(m_wdata),
@@ -214,6 +224,15 @@ module quux15_port #(
   // write-back's post writes that word.
   logic        tl_v, tl_way;
   logic [25:0] tl_line;
+
+  // The sweep's clocks still to run after this one: cache words / 512 in
+  // all (A15b.6); lookups wait while it runs.
+  localparam int unsigned SWEEP_CLOCKS = SETS * 16 / 512 > 1 ? SETS * 16 / 512 : 1;
+  logic [15:0] sweep_left;
+  logic        sweeping;
+  assign sweeping = sweep_go || sweep_left != 16'd0;
+  // The set the last fill installed: a planted fault's sweep leaves it.
+  logic [SB-1:0] last_fill_set;
 
   // The cache's valid bits and the way each set used last: an empty cache
   // at power-on, as a bitstream holds it, which -RESET leaves as it is.
@@ -364,14 +383,14 @@ module quux15_port #(
   // P, W, post: what the core may ask now.
   logic [3:0] q_after_accept;
   logic       post_push, w_push;
-  assign p_busy = fs == F_WAIT || fs == F_DATA;
+  assign p_busy = fs == F_WAIT || fs == F_DATA || sweeping;
   always_comb begin
     q_after_accept = q_count - {3'd0, mw_taken};
     post_ok = q_after_accept < 4'(QN);
   end
   assign post_push = post_req && post_ok;
   always_comb begin
-    w_ok = !((fs == F_WAIT || fs == F_DATA) && f_bus[28:3] == w_bus[28:3])
+    w_ok = !((fs == F_WAIT || fs == F_DATA) && f_bus[28:3] == w_bus[28:3]) && !sweeping
         && (q_after_accept + {3'd0, post_push}) < 4'(QN);
   end
   always_comb begin
@@ -383,7 +402,7 @@ module quux15_port #(
   logic t_issue, t_wanted;
   always_comb begin
     t_wanted = t_start || tst == T_RETRY || (tst == T_LOOK && t_cancel);
-    t_issue  = t_wanted && !f_exists;
+    t_issue  = t_wanted && !f_exists && !sweeping;
   end
   always_comb begin
     t_ready  = tst == T_HIT || (tst == T_FILL && fs == F_LAND);
@@ -445,6 +464,7 @@ module quux15_port #(
     queue_n    = q_count - {3'd0, mw_taken} + {3'd0, post_push} + {3'd0, w_push};
     inflight_n = f_count - n_land + {4'd0, mw_taken};
     idle       = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE;
+    empty      = q_count == 4'd0 && f_count == n_land;
   end
 
   // ================================================================ the edge
@@ -460,6 +480,7 @@ module quux15_port #(
       tl_v <= 1'b0;
       inst_q <= 1'b0;
       db_v <= '0;
+      sweep_left <= '0;
     end else begin
       // --- The landings and the accept.
       f_head  <= f_head + n_land[3:0];
@@ -550,7 +571,16 @@ module quux15_port #(
         f_table <= t_miss;
       end
       inst_q <= install;
+      // The sweep, before a fill installed at this edge, which lands after it.
+      if (sweep_go) begin
+        v0 <= '0;
+        v1 <= '0;
+        sweep_left <= 16'(SWEEP_CLOCKS - 1);
+      end else if (sweep_left != 16'd0) begin
+        sweep_left <= sweep_left - 16'd1;
+      end
       if (install) begin
+        last_fill_set <= f_set;
         f_word        <= rd_data[40*f_bus[2:0] +: 40];
         mru[f_set]    <= victim;
         inst_set_q    <= f_set;
@@ -640,7 +670,7 @@ module quux15_port #(
 
   // The fill's queued writes and the queue's slots, the master's line.
   logic unused;
-  assign unused = ^{m_rlast, m_rresp, lt_with_p};
+  assign unused = ^{m_rlast, m_rresp, lt_with_p, last_fill_set};
 
 `ifdef QUUX15_DEBUG
   // A line a clock of the port's events, for a build with `QUUX15_DEBUG`.
