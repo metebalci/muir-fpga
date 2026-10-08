@@ -32,7 +32,10 @@
 // `src/pipeline/` it is (`stages.rs`, `exec.rs`, `control.rs`), and the
 // order of a clock is `stages.rs`'s `clock_once`: WB, then EX, then the
 // front end (the redirect and its squash and restore, or RD's choices),
-// then CS's reads, then the edge.
+// then CS's reads, then the edge.  That order is what each clock computes,
+// not the logic's depth: RD's choices are made from the copies as the clock
+// began, beside the choices after a redirect and a squashed slot's, and EX's
+// outcome selects among them last (`plan_r`, `plan_x`, `plan_k`).
 //
 // **THE MEMORY SIDE'S ORDER IN A CLOCK IS muir'S**: the port's tick (writes
 // answered land, the queue's head accepted, a fill issued or landed) and a
@@ -856,7 +859,7 @@ module quux15_core #(
   quux15_mmu #(.MAIN_WORDS(MAIN_WORDS)) mmu (
       .clk(clk), .rst(rst),
       .a_next_va(a_next_va), .b_next_va(b_next_va),
-      .a_req(a_req), .a_va(a_va), .a_write(st_write[0]), .a_hold(a_hold), .a_entry(a_entry),
+      .a_req(a_req), .a_va(a_va), .a_hold(a_hold), .a_entry(a_entry),
       .k_req(k_req), .k_va(k_va), .k_entry(k_entry), .k_write(k_write), .k_md(k_md),
       .k_hold(k_hold), .k_busy(k_busy), .post_req(post_req), .post_bus(post_bus), .post_word(post_word),
       .post_ok(post_ok),
@@ -1042,11 +1045,7 @@ module quux15_core #(
   logic md_wait, start_wait, map_hold, ex_portb, ex_reach_b, ex_b_hold, ex_reach_mul, ex_mul_hold;
   logic ex_reads_vmaok, ex_late, old_v_eff;
   logic [7:0]  old_seq_eff;
-  logic [39:0] old_md_eff, md_read, md_portb;
-  // Port B looks up the MD the word reads, MD as a read start found it for
-  // the word right after the start (A15b.3's `MD` row), never MD as the read
-  // has since left it.
-  localparam bit PORT_B_READS_OLD_MD = 1'b1;
+  logic [39:0] old_md_eff, md_read;
   logic [4:0] ex_needs;
   /* verilator lint_off UNUSEDSIGNAL */
   function automatic logic is_pointer(input logic [39:0] w);
@@ -1078,13 +1077,15 @@ module quux15_core #(
     start_wait  = ex_will_start && (ex_ack || ex_rif);
     map_hold    = ex_will_start && mwd_v && !ex_map_held;
     md_read     = ex_succ_old ? old_md : md_now;
-    md_portb    = PORT_B_READS_OLD_MD ? md_read : md_now;
     ex_portb    = !ex_nop && ((ex_ir[31] && ex_ir[29:26] == 4'o11)
                               || (ex_ir[44:43] == 2'd2 && ex_ir[9:8] != 2'd0 && ex_ir[11:10] != 2'd2
-                                  && is_pointer(md_portb)));
+                                  && is_pointer(md_now)));
     ex_reach_b  = ex_go && !md_wait && !start_wait && !map_hold;
     b_req       = ex_reach_b && ex_portb && !sweeping;
-    b_va        = md_portb[31:0];
+    // Port B looks up MD as it stands: the word right after a start, the
+    // one word that would read MD as the start found it, never reads the
+    // map (A15b.2's rule).
+    b_va        = md_now[31:0];
   end
   always_comb begin
     ex_b_hold   = ex_portb && (sweeping || b_hold);
@@ -1107,8 +1108,6 @@ module quux15_core #(
   logic [4:0]  ex_msrc;
   logic [39:0] ex_func, ex_mdata, md_in;
   logic        ex_pop_pdl, pfr, pfw;
-  logic [29:0] lvmo_eff;
-  logic        wrcyc_eff;
   logic [1:0]  map_bits;
   always_comb begin
     ex_msrc    = ex_isel[30:26];
@@ -1117,13 +1116,14 @@ module quux15_core #(
     // right after a read start.
     md_in      = md_read;
     // The last translation as WB left it this clock: MAP(MD)'s `<31:30>`.
-    lvmo_eff   = fault_now ? s_entry : lvmo;
-    wrcyc_eff  = fault_now ? st_write[0] : wrcyc;
-    pfr        = lvmo_eff[27];
-    pfw        = !(!lvmo_eff[26] && wrcyc_eff);
+    // MAP(MD)'s two fault bits from the last start's translation: no word
+    // that reads the map runs while WB translates the start before it
+    // (A15b.2's rule).
+    pfr        = lvmo[27];
+    pfw        = !(!lvmo[26] && wrcyc);
     // A map-bit dispatch's bits: the entry's `<23:22>` on a pointer, both
     // set on another word.
-    map_bits   = is_pointer(md_in) ? b_entry[23:22] : 2'b11;
+    map_bits   = is_pointer(md_now) ? b_entry[23:22] : 2'b11;
     unique case (ex_msrc[3:0])
       4'o0:  ex_func = {30'd0, dc};
       4'o1:  ex_func = {11'd0, spcptr, 5'd0, spc[spcptr]};
@@ -1627,18 +1627,14 @@ module quux15_core #(
 
   // The lookups' addresses for the next clock: the start WB will translate,
   // and the MD EX's word will read.
-  logic        n_succ, n_land;
-  logic [7:0]  n_ex_seq;
-  logic [39:0] n_md_now, n_read;
+  logic        n_land;
+  logic [39:0] n_md_now;
   always_comb begin
     if (wb_v && !wb_leaves) a_next_va = s_done ? st_va[1] : st_va[0];
     else a_next_va = xs0.va;
-    n_ex_seq = rd_moves ? rd_seq : ex_seq;
     n_land   = p_land_next || (n_pend_v && n_pend_left == 2'd0);
     n_md_now = p_land_next ? p_word_next : (n_pend_v && n_pend_left == 2'd0) ? n_pend_word : n_md;
-    n_succ   = n_old_v && n_old_seq + 8'd1 == n_ex_seq;
-    n_read   = (n_succ && PORT_B_READS_OLD_MD) ? n_old_md : n_md_now;
-    b_next_va = n_read[31:0];
+    b_next_va = n_md_now[31:0];
   end
 
   // EX's check of RD's choices (`ex_stage`'s end): a choice that was wrong,
@@ -1722,13 +1718,32 @@ module quux15_core #(
   // or EX's squash of the delay slot under N; RD's choices made for the word
   // in RD.
   logic        ex_free, rd_keep, cs_keep, rd_n_nop, rd_n_pre, cs_n_nop, cs_n_pre;
-  logic        refetch_slot, slot_here, view_new, rd_moves, cs_follows, block_load;
-  logic [13:0] refetch_pc, follower, npc_e, npc_after_e;
+  logic        refetch_slot, slot_here, rd_moves, cs_follows, block_load;
+  logic [13:0] refetch_pc, npc_e, npc_after_e;
   logic        npc_after_v_e, nop_next_e, pre_nop_next_e;
   logic [7:0]  seq_e;
-  copies_t     c_dec, c_app, c_next;
-  plan_t       plan;
-  logic        hold;
+  copies_t     c_app, c_next;
+  /* verilator lint_off UNUSEDSIGNAL */
+  copies_t     c_cs;           // its PDL pointer and index alone
+  /* verilator lint_on UNUSEDSIGNAL */
+  plan_t       plan, plan_r, plan_x, plan_k;
+  logic        hold_r, hold_x, rd_killed, rd_moves_n, rd_moves_x;
+  logic [13:0] follower_r, follower_x;
+
+  // **RD's CHOICES, THREE WAYS, EX's OUTCOME SELECTING AT THE END**
+  // (`plan_for`): the plan from the copies as the clock began, which is the
+  // one RD makes unless EX squashes or redirects (muir's `rd_plan`, before
+  // WB and EX); the plan of a delay slot EX squashes under N, a nopped
+  // word's, LC's own step alone; and the plan after a redirect, from the
+  // copies EX restores, which feeds only registers (CS is squashed then).
+  // Each is complete on its own, so that EX's decision chooses among them
+  // and does not run through them.
+  always_comb begin
+    follower_r = (cs_v && cs_seq == rd_seq + 8'd1) ? cs_pc : npc;
+    plan_r = rd_plan(c, follower_r, 1'b0, rd_nop, rd_pre_nop, nsw_v, nsw_ptr, nsw_word, land_spc);
+    hold_r = plan_r.returns && guard_holds(1'b0, nid_new);
+  end
+
   always_comb begin
     ex_free  = !ex_v || commit;
     rd_keep  = rd_v;
@@ -1744,14 +1759,12 @@ module quux15_core #(
     nop_next_e = nop_next; pre_nop_next_e = pre_nop_next;
     seq_e = seq_ctr;
     block_load = 1'b0;
-    view_new = 1'b0;
-    c_dec = c;
+    rd_killed = 1'b0;
     c_app = c_ref;
     if (redirect) begin
       // Every word after the delay slot leaves nothing; the delay slot stays,
       // nopped under N, wherever it is; nopped by RD's prediction and running
       // after all, it is fetched again.
-      view_new = 1'b1;
       if (rd_v) begin
         if (rd_seq == slot_seq && !refetch) begin
           if (kill_rd) begin
@@ -1797,24 +1810,18 @@ module quux15_core #(
         npc_after_v_e = 1'b1;
         nop_next_e = kill_rd;
       end
-      c_dec = c_res;
       c_app = c_res;
       // Sequence numbers follow the order words run in.
       if (cs_keep) seq_e = cs_seq + 8'd1;
       else if (rd_keep) seq_e = rd_seq + 8'd1;
       else seq_e = ex_seq + ((refetch_slot || !slot_here) ? 8'd0 : 8'd1) + 8'd1;
     end else begin
-      if (ex_restore) begin
-        view_new = 1'b1;
-        c_dec = c_res;
-        c_app = c_res;
-      end
+      if (ex_restore) c_app = c_res;
       if (kill_rd) begin
         if (rd_v && rd_seq == slot_seq) begin
           rd_n_nop = 1'b1;
           rd_n_pre = 1'b0;
-          view_new = 1'b1;
-          c_dec = c_app;
+          rd_killed = 1'b1;
         end else if (cs_v && cs_seq == slot_seq) begin
           cs_n_nop = 1'b1;
           cs_n_pre = 1'b0;
@@ -1824,32 +1831,46 @@ module quux15_core #(
         end
       end
     end
-    // The address of the word after RD's (`follower`), as `plan_for` reads
-    // it: before EX at the clock's start, after a redirect or a restore.
-    if (view_new) follower = (cs_keep && cs_seq == rd_seq + 8'd1) ? cs_pc : npc_e;
-    else follower = (cs_v && cs_seq == rd_seq + 8'd1) ? cs_pc : npc;
-    plan = rd_plan(c_dec, follower, view_new, rd_n_nop, rd_n_pre, nsw_v, nsw_ptr, nsw_word, land_spc);
-    hold = plan.returns && guard_holds(view_new, nid_new);
-    rd_moves = rd_keep && ex_free && !hold && errhalt_now == 1'b0;
-    cs_follows = rd_keep && cs_keep && cs_seq == rd_seq + 8'd1;
-    c_next = c_app;
+    // After a redirect: the plan from the copies EX restores, the address of
+    // the word after RD's as the redirect leaves it.
+    follower_x = (cs_keep && cs_seq == rd_seq + 8'd1) ? cs_pc : npc_e;
+    plan_x = rd_plan(c_res, follower_x, 1'b1, rd_n_nop, rd_n_pre, nsw_v, nsw_ptr, nsw_word, land_spc);
+    hold_x = plan_x.returns && guard_holds(1'b1, nid_new);
+    // A squashed delay slot: a nopped word's plan, LC's own step alone.
+    plan_k = '0;
+    plan_k.e.dest = D_NONE;
+    plan_k.e.lcstep_own = c_app.next_instr;
+    plan = redirect ? plan_x : rd_killed ? plan_k : plan_r;
+    // RD moves on its own plan, or a squashed slot's, which never holds;
+    // after a redirect, on the redirect's.
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0;
+    rd_moves_x = rd_keep && ex_free && !hold_x && errhalt_now == 1'b0;
+    rd_moves = redirect ? rd_moves_x : rd_moves_n;
+    // CS follows RD only without a redirect, which keeps no word behind the
+    // delay slot: the plan after a redirect reaches NPC's registers alone.
+    cs_follows = !redirect && rd_keep && cs_keep && cs_seq == rd_seq + 8'd1;
+    c_next = rd_moves ? apply_effects(plan.e, c_app) : c_app;
     if (rd_moves) begin
       // `make_plan`.
-      c_next = apply_effects(plan.e, c_app);
-      if (plan.next2_v) begin
-        if (cs_follows) begin
-          npc_e = plan.next2;
-          npc_after_v_e = 1'b0;
-        end else begin
-          npc_after_e = plan.next2;
-          npc_after_v_e = 1'b1;
-        end
+      if (plan.next2_v && !cs_follows) begin
+        npc_after_e = plan.next2;
+        npc_after_v_e = 1'b1;
       end
-      if (plan.kills) begin
-        if (cs_follows) cs_n_pre = 1'b1;
-        else pre_nop_next_e = 1'b1;
-      end
+      if (plan.kills && !cs_follows) pre_nop_next_e = 1'b1;
     end
+    // The word after RD's, when CS holds it, from RD's own plan alone.
+    if (cs_follows && rd_moves_n && !rd_killed) begin
+      if (plan_r.next2_v) begin
+        npc_e = plan_r.next2;
+        npc_after_v_e = 1'b0;
+      end
+      if (plan_r.kills) cs_n_pre = 1'b1;
+    end
+    // The copies CS reads the PDL buffer through: after a redirect CS holds
+    // at most the delay slot, behind an empty RD, so they are EX's.
+    c_cs = redirect ? c_res
+         : (rd_moves_n && !rd_killed) ? apply_effects(plan_r.e, c_app)
+         : (rd_moves_n && c_app.next_instr) ? lc_step(c_app) : c_app;
   end
 
   // CS (`cs_hold`, `cs_reads`): the OA-REG-HIGH hold while its writer is in RD
@@ -1860,12 +1881,13 @@ module quux15_core #(
   logic [1:0]  cs_rp;
   logic [13:0] cs_pdl_addr;
   always_comb begin
-    rd_free  = !rd_keep || rd_moves;
+    // After a redirect CS keeps only the delay slot, behind an empty RD.
+    rd_free  = !rd_keep || redirect || rd_moves_n;
     cs_low   = cs_word[47:0];
     oa_hold  = cs_word[61] && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
                             || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
     cs_rp    = reads_pdl(cs_low);
-    pdl_wait = cs_rp[1] && (cs_rp[0] ? c_next.ptr_pend : c_next.idx_pend);
+    pdl_wait = cs_rp[1] && (cs_rp[0] ? c_cs.ptr_pend : c_cs.idx_pend);
     cs_hold  = oa_hold || pdl_wait;
     cs_moves = cs_keep && rd_free && !cs_hold && errhalt_now == 1'b0;
     // SH: OA-REG-HIGH as the clock began into the A source's address, and
@@ -1873,7 +1895,7 @@ module quux15_core #(
     cs_sh_a  = cs_word[61] ? ({oa_high, 26'd0} & (48'o1777 << 32)) : 48'd0;
     cs_sh_m  = (cs_word[61] && !cs_low[31]) ? ({oa_high, 26'd0} & (48'o37 << 26)) : 48'd0;
     cs_ir    = cs_low | cs_sh_a | cs_sh_m;
-    cs_pdl_addr = cs_ir[30] ? c_next.ptr : c_next.idx;
+    cs_pdl_addr = cs_ir[30] ? c_cs.ptr : c_cs.idx;
     // CS loads at the next address once its word has gone; not in the clock
     // a WRITE-I-MEM's refetch begins, the store being written a clock on.
     cs_load  = (!cs_keep || cs_moves) && !block_load && errhalt_now == 1'b0;
@@ -2157,6 +2179,20 @@ module quux15_core #(
   end
 
 `ifndef SYNTHESIS
+  // **A15b.2's rule, the micro-assembler's**: no word right after a start
+  // reads the map (`MAP(MD)` or a map-bit dispatch).  The core relies on it
+  // (port B sees nothing of WB's clock), so a trace that breaks it is no
+  // reference for this core.
+  logic s1_prev_started;
+  always_ff @(posedge clk) begin
+    if (rst) s1_prev_started <= 1'b0;
+    else if (commit) s1_prev_started <= xs0.v;
+    if (!rst && errhalt == 2'd0 && commit && ex_portb && s1_prev_started) begin
+      $display("quux15_core: the word at %o reads the map right after a start (A15b.2's rule)", ex_pc);
+      $finish;
+    end
+  end
+
   // muir grants a word's second start in the clock its first faults; WB
   // here takes one start a clock, which no program yet tells apart.
   always_ff @(posedge clk) begin
@@ -2176,9 +2212,9 @@ module quux15_core #(
 
   // What nothing reads yet.
   logic unused;
-  assign unused = ^{ex_int_rd, s_regword[32], st_fetch, port_idle, lvmo_eff[29:28], lvmo_eff[25:0], n_land, n_read[39:32],
+  assign unused = ^{ex_int_rd, s_regword[32], st_fetch, port_idle, lvmo[29:28], lvmo[25:0], n_land, n_md_now[39:32],
                     ex_pre_nop, x_mul, x_div, wb_seq, unbuilt, ex_word[63:62], ex_word[59],
-                    ex_msrc[4], sx.pushed, ex_disp};
+                    ex_msrc[4], sx.pushed, ex_disp, plan.returns};
 
 endmodule
 

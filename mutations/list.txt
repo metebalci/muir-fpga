@@ -28105,9 +28105,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A PDL read through the pointer or the index the word before writes
 @note from the ALU does not wait for it, and reads at the old one.
 @old
-    pdl_wait = cs_rp[1] && (cs_rp[0] ? c_next.ptr_pend : c_next.idx_pend);
+    pdl_wait = cs_rp[1] && (cs_rp[0] ? c_cs.ptr_pend : c_cs.idx_pend);
 @new
-    pdl_wait = cs_rp[1] && (cs_rp[0] ? c_next.ptr_pend : c_next.idx_pend) && 1'b0;
+    pdl_wait = cs_rp[1] && (cs_rp[0] ? c_cs.ptr_pend : c_cs.idx_pend) && 1'b0;
 @end
 
 @mutation quux15-sl-or-stuck-at-0
@@ -28328,9 +28328,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The guard removed: a return RD resolves leaves RD while the word in
 @note EX writes INTERRUPT-CONTROL, M 31 or the stack's data.
 @old
-    hold = plan.returns && guard_holds(view_new, nid_new);
+    hold_r = plan_r.returns && guard_holds(1'b0, nid_new);
 @new
-    hold = plan.returns && guard_holds(view_new, nid_new) && 1'b0;
+    hold_r = plan_r.returns && guard_holds(1'b0, nid_new) && 1'b0;
 @end
 
 @mutation quux15-pdl-field-index-while-its-base-is-written
@@ -28448,6 +28448,12 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 # lookup, port B on the live MD, a nopped start and a nopped lookup, the late
 # squash, the cache's RAM rule; and the faults found while it was built.
 #
+# NOT HERE, PORT B ON WB'S CLOCK: revision 14's second longer hold (port B
+# missing WB's fill or OR of the same clock) and port B on the live MD.  The
+# word in EX is the word right after WB's, and A15b.2's rule keeps a word
+# right after a start from reading the map, so port B never meets WB's clock
+# or a read's old MD, and the core has neither forward to remove.
+#
 # NOT HERE, AN EQUIVALENT MUTANT: a write start granted behind a fill of its
 # line (muir's `write_waits_for_fill` false).  No program reaches it: a fill
 # in flight is the processor's read, which holds every start at WB and EX
@@ -28544,18 +28550,6 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
       else if (wb.fill) b_hold = 1'b1;
 @end
 
-@mutation quux15-port-b-misses-wbs-fill-of-the-same-clock
-@check quux15_walk_quux
-@file rtl/machine/quux15_mmu.sv
-@note Revision 14's second longer hold: port B's lookup does not see the
-@note fill or the OR WB's start made in the same clock, and walks the page
-@note again.
-@old
-    if ((aw_fill || k_or_b) && aw_idx == b_idx_q) b_word = b_fwd;
-@new
-    if ((aw_fill || k_or_b) && aw_idx == b_idx_q && 1'b0) b_word = b_fwd;
-@end
-
 @mutation quux15-port-b-reads-through-a-write-not-yet-taken
 @check quux15_walk_quux
 @file rtl/machine/quux15_mmu.sv
@@ -28565,17 +28559,6 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     b_word = tlb_word(rb_q, b_idx_q);
 @new
     b_word = rb_q;
-@end
-
-@mutation quux15-port-b-looks-up-the-live-md
-@check quux15_walk_quux
-@file rtl/machine/quux15_core.sv
-@note Port B looks up MD as the read has left it, not the MD the word right
-@note after the read start reads (A15b.3's `MD` row).
-@old
-  localparam bit PORT_B_READS_OLD_MD = 1'b1;
-@new
-  localparam bit PORT_B_READS_OLD_MD = 1'b0;
 @end
 
 @mutation quux15-a-nopped-start-made
@@ -28931,16 +28914,13 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note (muir's `SweepMissesASet`): the response read over a line read before
 @note the command reads the old word.
 @old
-      if (sweep_go) begin
-        v0 <= '0;
-        v1 <= '0;
+    v_we0 = install && !victim;
+    v_we1 = install && victim;
+    v_wa  = f_set;
 @new
-      if (sweep_go) begin
-        for (int k = 0; k < SETS; k++)
-          if (SB'(k) != last_fill_set) begin
-            v0[k] <= 1'b0;
-            v1[k] <= 1'b0;
-          end
+    v_we0 = (install && !victim) || (sweep_go && !install && !last_fill_way);
+    v_we1 = (install && victim) || (sweep_go && !install && last_fill_way);
+    v_wa  = install ? f_set : last_fill_set;
 @end
 
 @mutation quux15-sweep-holds-no-lookup

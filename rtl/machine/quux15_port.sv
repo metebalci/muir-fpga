@@ -42,8 +42,8 @@
 //
 // **THE CACHE**: 2 ways a set, `SETS` sets of 8 words, the set the line's
 // low bits, LRU by the way used last; tags and lines in `quux15_tdp.sv`
-// RAMs (a line 8 lanes of 45 bits, a word in each, five 9-bit bytes, so
-// that a word is written with its byte enables), the valid bits and the
+// RAMs (a line 8 words of five bytes, so that a word is written with its
+// byte enables, as UltraRAM takes them), the valid bits and the
 // way used last in registers.  A fill installs into the way not used last
 // at the edge of its line's last beat, and lands the clock after, when
 // lookups may be made again; a queued write or a buffered word whose line
@@ -231,17 +231,18 @@ module quux15_port #(
   logic [15:0] sweep_left;
   logic        sweeping;
   assign sweeping = sweep_go || sweep_left != 16'd0;
-  // The set the last fill installed: a planted fault's sweep leaves it.
+  // The set and way the last fill installed: a planted fault's sweep leaves
+  // them.
   logic [SB-1:0] last_fill_set;
+  logic          last_fill_way;
 
-  // The cache's valid bits and the way each set used last: an empty cache
-  // at power-on, as a bitstream holds it, which -RESET leaves as it is.
-  logic [SETS-1:0] v0, v1, mru;
-  initial begin
-    v0  = '0;
-    v1  = '0;
-    mru = '0;
-  end
+  // The cache's valid bits, a way's in RAM (`quux15_validmap.sv`), which
+  // the sweep clears in its first clock; and the way each set used last.
+  // An empty cache at power-on, as a bitstream holds it, which -RESET leaves
+  // as it is.
+  logic [SETS-1:0] mru;
+  initial mru = '0;
+  logic          v0p, v0t, v0w, v1p, v1t, v1w;
   // The fill installed at the last edge: its set and way.
   logic        inst_q, inst_way_q;
   logic [SB-1:0] inst_set_q;
@@ -263,8 +264,8 @@ module quux15_port #(
   logic [TB-1:0] tb_wdata;
   logic [TB-1:0] tag0_a, tag1_a, tag0_b, tag1_b;
   logic [39:0]   d0_we, d1_we;
-  logic [359:0]  dbk_wdata;
-  logic [359:0]  data0_a, data1_a, data0_b, data1_b;
+  logic [319:0]  dbk_wdata;
+  logic [319:0]  data0_a, data1_a, data0_b, data1_b;
 
   quux15_tdp #(.WIDTH(TB), .DEPTH(SETS)) tags0 (
       .clk(clk), .a_en(ta_en), .a_we(1'b0), .a_addr(ta_addr), .a_wdata('0), .a_q(tag0_a),
@@ -272,16 +273,16 @@ module quux15_port #(
   quux15_tdp #(.WIDTH(TB), .DEPTH(SETS)) tags1 (
       .clk(clk), .a_en(ta_en), .a_we(1'b0), .a_addr(ta_addr), .a_wdata('0), .a_q(tag1_a),
       .b_en(tb_en), .b_we(tb_we[1]), .b_addr(tb_addr), .b_wdata(tb_wdata), .b_q(tag1_b));
-  quux15_tdp #(.WIDTH(360), .DEPTH(SETS), .BYTE(9)) lines0 (
+  quux15_tdp #(.WIDTH(320), .DEPTH(SETS), .BYTE(8)) lines0 (
       .clk(clk), .a_en(da_en), .a_we('0), .a_addr(da_addr), .a_wdata('0), .a_q(data0_a),
       .b_en(db_en), .b_we(d0_we), .b_addr(dbk_addr), .b_wdata(dbk_wdata), .b_q(data0_b));
-  quux15_tdp #(.WIDTH(360), .DEPTH(SETS), .BYTE(9)) lines1 (
+  quux15_tdp #(.WIDTH(320), .DEPTH(SETS), .BYTE(8)) lines1 (
       .clk(clk), .a_en(da_en), .a_we('0), .a_addr(da_addr), .a_wdata('0), .a_q(data1_a),
       .b_en(db_en), .b_we(d1_we), .b_addr(dbk_addr), .b_wdata(dbk_wdata), .b_q(data1_b));
 
   // A lane of a line.
-  function automatic logic [39:0] lane(input logic [359:0] row, input logic [2:0] k);
-    return row[45*k +: 40];
+  function automatic logic [39:0] lane(input logic [319:0] row, input logic [2:0] k);
+    return row[40*k +: 40];
   endfunction
 
   // ================================================================ the tick
@@ -331,12 +332,12 @@ module quux15_port #(
     p_set = set_of(lp_bus);
     t_set = set_of(lt_bus);
     w_set = set_of(lw_bus);
-    p_h0  = v0[p_set] && tag0_a == tag_of(lp_bus);
-    p_h1  = v1[p_set] && tag1_a == tag_of(lp_bus);
+    p_h0  = v0p && tag0_a == tag_of(lp_bus);
+    p_h1  = v1p && tag1_a == tag_of(lp_bus);
     p_hit  = lp_v && (p_h0 || p_h1);
     p_miss = lp_v && !(p_h0 || p_h1);
-    t_h0  = v0[t_set] && tag0_b == tag_of(lt_bus);
-    t_h1  = v1[t_set] && tag1_b == tag_of(lt_bus);
+    t_h0  = v0t && tag0_b == tag_of(lt_bus);
+    t_h1  = v1t && tag1_b == tag_of(lt_bus);
     // A table read made with a P read that missed was Busy.
     t_cancel = lt_v && lt_with_p && p_miss;
     t_hit  = lt_v && !t_cancel && (t_h0 || t_h1);
@@ -344,8 +345,8 @@ module quux15_port #(
     // A write start's tags: the way a fill installed at the same edge was
     // read through its write, and cannot hold the start's line, which no
     // fill in flight has.
-    w_h0  = v0[w_set] && tag0_a == tag_of(lw_bus) && !(inst_q && inst_set_q == w_set && !inst_way_q);
-    w_h1  = v1[w_set] && tag1_a == tag_of(lw_bus) && !(inst_q && inst_set_q == w_set && inst_way_q);
+    w_h0  = v0w && tag0_a == tag_of(lw_bus) && !(inst_q && inst_set_q == w_set && !inst_way_q);
+    w_h1  = v1w && tag1_a == tag_of(lw_bus) && !(inst_q && inst_set_q == w_set && inst_way_q);
     // The words, a buffered newer one in place of the line's.
     p_lookup_word = lane(p_h1 ? data1_a : data0_a, lp_bus[2:0]);
     t_lookup_word = lane(t_h1 ? data1_b : data0_b, lt_bus[2:0]);
@@ -425,6 +426,23 @@ module quux15_port #(
     victim  = !mru[f_set];
   end
 
+  logic          v_we0, v_we1;
+  logic [SB-1:0] v_wa;
+  quux15_validmap #(.ENTRIES(SETS), .READS(3)) valid0 (
+      .clk(clk), .rst(1'b0), .clear(sweep_go), .we(v_we0), .waddr(v_wa), .wbit(1'b1),
+      .raddr0(lp_bus[3 +: SB]), .raddr1(lt_bus[3 +: SB]), .raddr2(lw_bus[3 +: SB]),
+      .rbit0(v0p), .rbit1(v0t), .rbit2(v0w));
+  quux15_validmap #(.ENTRIES(SETS), .READS(3)) valid1 (
+      .clk(clk), .rst(1'b0), .clear(sweep_go), .we(v_we1), .waddr(v_wa), .wbit(1'b1),
+      .raddr0(lp_bus[3 +: SB]), .raddr1(lt_bus[3 +: SB]), .raddr2(lw_bus[3 +: SB]),
+      .rbit0(v1p), .rbit1(v1t), .rbit2(v1w));
+  // The valid maps' writes: a fill's install.
+  always_comb begin
+    v_we0 = install && !victim;
+    v_we1 = install && victim;
+    v_wa  = f_set;
+  end
+
   // The buffer's next entry to write, and the RAMs' ports this clock.
   // The oldest alone, in order: one whose way is still to come waits a
   // clock, and every word behind it.
@@ -449,11 +467,11 @@ module quux15_port #(
     d1_we    = '0;
     dbk_wdata = '0;
     if (install) begin
-      for (int k = 0; k < 8; k++) dbk_wdata[45*k +: 45] = {5'd0, rd_data[40*k +: 40]};
+      dbk_wdata = rd_data;
       if (victim) d1_we = '1;
       else        d0_we = '1;
     end else if (!t_issue && drain && db_hit[drain_k]) begin
-      dbk_wdata[45*db_lane[drain_k] +: 45] = {5'd0, db_word[drain_k]};
+      dbk_wdata[40*db_lane[drain_k] +: 40] = db_word[drain_k];
       if (db_way[drain_k]) d1_we[5*db_lane[drain_k] +: 5] = 5'h1f;
       else                 d0_we[5*db_lane[drain_k] +: 5] = 5'h1f;
     end
@@ -573,20 +591,17 @@ module quux15_port #(
       inst_q <= install;
       // The sweep, before a fill installed at this edge, which lands after it.
       if (sweep_go) begin
-        v0 <= '0;
-        v1 <= '0;
         sweep_left <= 16'(SWEEP_CLOCKS - 1);
       end else if (sweep_left != 16'd0) begin
         sweep_left <= sweep_left - 16'd1;
       end
       if (install) begin
         last_fill_set <= f_set;
+        last_fill_way <= victim;
         f_word        <= rd_data[40*f_bus[2:0] +: 40];
         mru[f_set]    <= victim;
         inst_set_q    <= f_set;
         inst_way_q    <= victim;
-        if (victim) v1[f_set] <= 1'b1;
-        else        v0[f_set] <= 1'b1;
         if (f_table) begin
           tl_v    <= 1'b1;
           tl_line <= f_bus[28:3];
@@ -670,7 +685,7 @@ module quux15_port #(
 
   // The fill's queued writes and the queue's slots, the master's line.
   logic unused;
-  assign unused = ^{m_rlast, m_rresp, lt_with_p, last_fill_set};
+  assign unused = ^{m_rlast, m_rresp, lt_with_p, last_fill_set, last_fill_way};
 
 `ifdef QUUX15_DEBUG
   // A line a clock of the port's events, for a build with `QUUX15_DEBUG`.

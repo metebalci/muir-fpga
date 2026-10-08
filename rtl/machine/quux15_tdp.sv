@@ -14,9 +14,9 @@
 // that came to rely on it fails its golden.  The port is written never to
 // make one where it uses the word; the poison is a simulation's.
 //
-// `BYTE` bits a byte, each with its write enable: 9 for the cache's lines,
-// five bytes a word (UltraRAM's and block RAM's byte with its parity bit),
-// and `WIDTH` for one enable.  `INIT_WORD` is every word at power-on.
+// `BYTE` bits a byte, each with its write enable: 8 for the cache's lines,
+// five bytes a word, as UltraRAM's byte write takes them, and `WIDTH` for
+// one enable.  `INIT_WORD` is every word at power-on; UltraRAM's is 0.
 
 `default_nettype none
 
@@ -60,29 +60,29 @@ module quux15_tdp #(
   assign b_poison = 1'b0;
 `endif
 
-  // Two processes write the one array, as the vendors' true dual-port
-  // templates do; `always_ff` would refuse a second writer.
+  // **THE VENDOR'S TEMPLATE** (Vivado's "UltraRAM True Dual Port Mode -
+  // Byte write"): each port's write in a process of its own, column by
+  // column, and its read in another when it writes nothing (no change),
+  // so that the board's flow can take it into UltraRAM (`RAM_STYLE`).
+  // Two processes write the one array, as the template's do; `always_ff`
+  // would refuse a second writer.
   /* verilator lint_off MULTIDRIVEN */
   always @(posedge clk) begin
-    if (a_en) begin
-      if (|a_we) begin
-        for (int unsigned k = 0; k < BYTES; k++)
-          if (a_we[k]) mem[a_addr][k*BYTE +: BYTE] <= a_wdata[k*BYTE +: BYTE];
-      end else begin
-        a_q <= a_poison ? ~mem[a_addr] : mem[a_addr];
-      end
-    end
+    if (a_en)
+      for (int unsigned k = 0; k < BYTES; k++)
+        if (a_we[k]) mem[a_addr][k*BYTE +: BYTE] <= a_wdata[k*BYTE +: BYTE];
+  end
+  always @(posedge clk) begin
+    if (a_en && ~|a_we) a_q <= a_poison ? ~mem[a_addr] : mem[a_addr];
   end
 
   always @(posedge clk) begin
-    if (b_en) begin
-      if (|b_we) begin
-        for (int unsigned k = 0; k < BYTES; k++)
-          if (b_we[k]) mem[b_addr][k*BYTE +: BYTE] <= b_wdata[k*BYTE +: BYTE];
-      end else begin
-        b_q <= b_poison ? ~mem[b_addr] : mem[b_addr];
-      end
-    end
+    if (b_en)
+      for (int unsigned k = 0; k < BYTES; k++)
+        if (b_we[k]) mem[b_addr][k*BYTE +: BYTE] <= b_wdata[k*BYTE +: BYTE];
+  end
+  always @(posedge clk) begin
+    if (b_en && ~|b_we) b_q <= b_poison ? ~mem[b_addr] : mem[b_addr];
   end
   /* verilator lint_on MULTIDRIVEN */
 

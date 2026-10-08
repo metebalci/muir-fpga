@@ -31,7 +31,7 @@
 // **THE TLB**: 4,096 entries, direct-mapped, an entry `VA<31:22>` and the
 // page entry's `<29:0>` in two RAMs of one write and one read, one read by
 // WB's next start's address and one by EX's next `MD`, each at the clock's
-// end for the next; the valid bits in registers, so that an empty clears
+// end for the next; the valid bits in RAM (`quux15_validmap.sv`), so that an empty clears
 // every entry at once, as muir's sweep does, the starts and port B's
 // lookups held 4,096 clocks behind it by a count (A14.4).  The RAMs
 // take one write a clock, in order; a write not yet taken, or taken at the
@@ -55,7 +55,6 @@ module quux15_mmu #(
     // --- acknowledgment and `MD`); its address.
     input  var logic        a_req,
     input  var logic [31:0] a_va,
-    input  var logic        a_write,
     output var logic        a_hold,        // the walk reads on
     output var logic [29:0] a_entry,       // the translation, when not held
 
@@ -141,17 +140,25 @@ module quux15_mmu #(
 
   // ================================================================ the TLB
 
-  logic [ENTRIES-1:0] valid;
+  // The entries' words, the tag and the entry, in two RAMs of one write and
+  // one read; their valid bits in RAM (`quux15_validmap.sv`), which an empty
+  // or -RESET clears in one clock.
   logic [11:0]  ra_idx, rb_idx, w_idx;
   logic [39:0]  ra_q, rb_q, w_data;
-  logic         w_en;
+  logic         w_en, w_v;
   quux15_ram #(.WIDTH(40), .DEPTH(ENTRIES)) tlb_a (
       .clk(clk), .re(1'b1), .raddr(ra_idx), .rdata(ra_q), .we(w_en), .waddr(w_idx), .wdata(w_data));
   quux15_ram #(.WIDTH(40), .DEPTH(ENTRIES)) tlb_b (
       .clk(clk), .re(1'b1), .raddr(rb_idx), .rdata(rb_q), .we(w_en), .waddr(w_idx), .wdata(w_data));
-  // The writes the RAMs have not taken, oldest first, and the one they took
-  // at the last edge, which that edge's reads read through.
-  logic [FN-1:0] fq_v;
+  logic         vm_a, vm_b, vm_none;
+  quux15_validmap #(.ENTRIES(ENTRIES), .READS(2)) valid (
+      .clk(clk), .rst(rst), .clear(op_empty), .we(w_en), .waddr(w_idx), .wbit(w_v),
+      .raddr0(a_va[21:10]), .raddr1(b_va[21:10]), .raddr2(12'd0),
+      .rbit0(vm_a), .rbit1(vm_b), .rbit2(vm_none));
+  // The writes the RAMs have not taken, oldest first, each with its valid
+  // bit; and the one they took at the last edge, which that edge's reads
+  // read through.
+  logic [FN-1:0] fq_v, fq_bit;
   logic [11:0]   fq_idx [FN];
   logic [39:0]   fq_data [FN];
   logic          hist_v;
@@ -166,6 +173,14 @@ module quux15_mmu #(
     if (hist_v && hist_idx == at) r = hist_data;
     for (int k = 0; k < FN; k++)
       if (fq_v[k] && fq_idx[k] == at) r = fq_data[k];
+    return r;
+  endfunction
+  // An entry's valid bit: a write not yet taken's, or the RAM's.
+  function automatic logic tlb_valid(input logic ram, input logic [11:0] at);
+    logic r;
+    r = ram;
+    for (int k = 0; k < FN; k++)
+      if (fq_v[k] && fq_idx[k] == at) r = fq_bit[k];
     return r;
   endfunction
 
@@ -266,7 +281,7 @@ module quux15_mmu #(
   always_comb begin
     // --- The lookup.
     a_word      = tlb_word(ra_q, a_idx_q);
-    a_hit       = valid[idx(a_va)] && a_word[39:30] == a_va[31:22];
+    a_hit       = tlb_valid(vm_a, idx(a_va)) && a_word[39:30] == a_va[31:22];
     a_hit_entry = a_word[29:0];
     // --- The walk, on a miss of a paged address.
     wa = walk_call(w_state, w_va, a_va, t_ready, t_word, directory);
@@ -384,34 +399,20 @@ module quux15_mmu #(
   //
   // **PORT B FROM WHAT THE CLOCK BEGAN WITH**, so that EX's hold and MAP(MD)
   // wait on neither WB's grant nor its holds: port B's lookup counts only
-  // when WB leaves, so a walk WB's start has under way is over by then (its
-  // fill forwarded here), and port B's own walk is the one it began
-  // (`w_owner`); and WB's OR is forwarded when its start translates without
-  // a fault, whether or not WB is then held, where nothing here is used.
-  logic        bw_v, b_called, k_or_b, a_vmaok, a_paged_now;
+  // when WB leaves, so a walk WB's start has under way is over by then, and
+  // port B's own walk is the one it began (`w_owner`).  **NOTHING OF WB'S
+  // CLOCK REACHES IT**: the word in EX is the word right after WB's, and a
+  // word right after a start does not read the map (A15b.2's rule, the
+  // micro-assembler's), so WB's same clock's fill and OR, which muir's
+  // pipeline would show port B, never meet a lookup.
+  logic        bw_v, b_called;
   logic [11:0] bw_idx;
-  logic [39:0] bw_data, b_fwd;
-  logic [29:0] a_entry2, k_bits_b;
+  logic [39:0] bw_data;
   step_e       b_state;
   always_comb begin
-    // --- WB's OR as port B sees it.
-    a_paged_now = region(a_va) == PAGED;
-    a_entry2 = a_entry;
-    if (a_paged_now && a_entry[26:24] == 3'd5 && !(a_entry[27] && (!a_write || a_entry[26])))
-      a_entry2 = a_entry | 30'(3 << 26);
-    a_vmaok  = a_entry2[27] && (!a_write || a_entry2[26]);
-    k_bits_b = (ACCESSED & ~a_entry2)
-             | (a_write ? ((MODIFIED & ~a_entry2)
-                           | ((ephemeral && pointer_types[k_md[37:32]] && k_md[31:28] == 4'b1101)
-                              ? (EPHEMERAL & ~a_entry2) : '0)) : '0);
-    k_or_b   = a_req && !a_hold && !k_busy && a_paged_now && a_vmaok && k_bits_b != '0
-            && (a_hit || aw_fill);
-    b_fwd    = aw_fill ? {a_va[31:22], wa.entry} : {a_va[31:22], a_hit_entry};
-    if (k_or_b) b_fwd = {b_fwd[39:30], b_fwd[29:0] | k_bits_b};
-    // --- The lookup, through WB's write of this clock.
+    // --- The lookup.
     b_word = tlb_word(rb_q, b_idx_q);
-    if ((aw_fill || k_or_b) && aw_idx == b_idx_q) b_word = b_fwd;
-    b_hit       = (valid[idx(b_va)] || (aw_fill && aw_idx == idx(b_va))) && b_word[39:30] == b_va[31:22];
+    b_hit       = tlb_valid(vm_b, idx(b_va)) && b_word[39:30] == b_va[31:22];
     b_hit_entry = b_word[29:0];
     // --- Its walk: its own, or one WB's start has ended.
     b_state = (w_owner_a || w_state == IDLE) ? IDLE : w_state;
@@ -454,7 +455,6 @@ module quux15_mmu #(
 
   always_ff @(posedge clk) begin
     if (rst) begin
-      valid      <= '0;
       fq_v       <= '0;
       hist_v     <= 1'b0;
       w_state    <= IDLE;
@@ -480,15 +480,16 @@ module quux15_mmu #(
       if (k_refused) refused <= refused + 32'd1;
 
       // --- The TLB's writes, in muir's order: WB's, port B's fill, the
-      // --- operation; the valid bits at once, the RAMs one a clock.
+      // --- operation; the RAMs take one a clock, the oldest; an empty drops
+      // --- every write before it, its valid bits cleared at once.
       begin
-        logic [FN-1:0] nv;
+        logic [FN-1:0] nv, nb;
         logic [11:0]   ni [FN];
         logic [39:0]   nd [FN];
-        logic [ENTRIES-1:0] vn;
         int n;
         n = 0;
         nv = '0;
+        nb = '0;
         for (int k = 0; k < FN; k++) begin
           ni[k] = '0;
           nd[k] = '0;
@@ -496,26 +497,20 @@ module quux15_mmu #(
         // The oldest is taken this edge.
         for (int k = 1; k < FN; k++)
           if (fq_v[k]) begin
-            nv[n] = 1'b1; ni[n] = fq_idx[k]; nd[n] = fq_data[k];
+            nv[n] = 1'b1; nb[n] = fq_bit[k]; ni[n] = fq_idx[k]; nd[n] = fq_data[k];
             n++;
           end
-        vn = valid;
         if (aw_v) begin
-          nv[n] = 1'b1; ni[n] = aw_idx; nd[n] = aw_data; n++;
-          vn[aw_idx] = 1'b1;
+          nv[n] = 1'b1; nb[n] = 1'b1; ni[n] = aw_idx; nd[n] = aw_data; n++;
         end
         if (bw_v) begin
-          nv[n] = 1'b1; ni[n] = bw_idx; nd[n] = bw_data; n++;
-          vn[bw_idx] = 1'b1;
+          nv[n] = 1'b1; nb[n] = 1'b1; ni[n] = bw_idx; nd[n] = bw_data; n++;
         end
-        if (op_load) begin
-          nv[n] = 1'b1; ni[n] = idx(op_md[31:0]);
+        if (op_load || op_inval) begin
+          nv[n] = 1'b1; nb[n] = op_load; ni[n] = idx(op_md[31:0]);
           nd[n] = {op_md[31:22], op_vma[29:0]}; n++;
-          vn[idx(op_md[31:0])] = 1'b1;
         end
-        if (op_inval) vn[idx(op_md[31:0])] = 1'b0;
-        if (op_empty) vn = '0;
-        valid <= vn;
+        if (op_empty) nv = '0;
         // The RAMs take the oldest now: one queued, or this clock's first.
         hist_v    <= w_en;
         hist_idx  <= w_idx;
@@ -523,11 +518,12 @@ module quux15_mmu #(
         if (!fq_v[0] && nv[0]) begin
           // This clock's first write is taken at once.
           for (int k = 0; k < FN - 1; k++) begin
-            fq_v[k] <= nv[k + 1]; fq_idx[k] <= ni[k + 1]; fq_data[k] <= nd[k + 1];
+            fq_v[k] <= nv[k + 1]; fq_bit[k] <= nb[k + 1]; fq_idx[k] <= ni[k + 1]; fq_data[k] <= nd[k + 1];
           end
           fq_v[FN-1] <= 1'b0;
         end else begin
           fq_v <= nv;
+          fq_bit <= nb;
           for (int k = 0; k < FN; k++) begin
             fq_idx[k] <= ni[k]; fq_data[k] <= nd[k];
           end
@@ -556,9 +552,11 @@ module quux15_mmu #(
 
   // The RAMs' write this clock: the oldest queued, or this clock's first.
   always_comb begin
-    w_en   = fq_v[0] || aw_v || bw_v || op_load;
+    // An empty this clock drops every write before it, its own clock's too.
+    w_en   = (fq_v[0] || aw_v || bw_v || op_load || op_inval) && !op_empty;
     w_idx  = fq_v[0] ? fq_idx[0] : aw_v ? aw_idx : bw_v ? bw_idx : idx(op_md[31:0]);
     w_data = fq_v[0] ? fq_data[0] : aw_v ? aw_data : bw_v ? bw_data : {op_md[31:22], op_vma[29:0]};
+    w_v    = fq_v[0] ? fq_bit[0] : (aw_v || bw_v || op_load);
     ra_idx = idx(a_next_va);
     rb_idx = idx(b_next_va);
   end
@@ -572,14 +570,14 @@ module quux15_mmu #(
         $error("quux15_mmu: port B looked up %o, read at index %o", b_va, b_idx_q);
       if ((wa.tstart && k_tstart) || (wa.tstart && wb.tstart) || (k_tstart && wb.tstart))
         $error("quux15_mmu: two table reads begun in one clock");
-      if (fq_v[FN-1] && (aw_v || bw_v || op_load))
+      if (fq_v[FN-1] && (aw_v || bw_v || op_load || op_inval))
         $error("quux15_mmu: the TLB's writes overflow");
     end
   end
 `endif
 
   logic unused;
-  assign unused = ^{k_done, wb, wa.fill, k_md[39:38], k_md[27:0], op_vma[39:34], op_vma[31:30],
+  assign unused = ^{vm_none, k_done, wb, wa.fill, k_md[39:38], k_md[27:0], op_vma[39:34], op_vma[31:30],
                     op_md[39:32]};
 
 endmodule

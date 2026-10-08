@@ -226,7 +226,8 @@ bool load(Top *dut, const Run &run, const char *path) {
     if (i.memory == "prom" && i.address < 1024)
       r->quux15_core__DOT__store__DOT__prom[i.address] = i.word;
     else if (i.memory == "imem" && i.address < 16384)
-      r->quux15_core__DOT__store__DOT__ram__DOT__mem[i.address] = i.word;
+      // The store keeps `<47:0>` inverted (`quux15_store.sv`).
+      r->quux15_core__DOT__store__DOT__ram__DOT__mem[i.address] = i.word ^ 0x0000ffffffffffffull;
     else if (i.memory == "amem" && i.address < 1024)
       r->quux15_core__DOT__amem__DOT__mem[i.address] = i.word & 0xffffffffffull;
     else if (i.memory == "mmem" && i.address < 32)

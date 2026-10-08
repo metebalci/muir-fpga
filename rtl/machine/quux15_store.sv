@@ -20,9 +20,13 @@
 // extension zero (`golden/src/machine_axis.rs`, "the control store comes up
 // all ones", which muir's `Insn::new` keeps to 48 bits).  No trace fetches a
 // word nobody wrote; the convention says what such a fetch would read.
+// **`<47:0>` IS STORED INVERTED**, so that a RAM that comes up zero, as
+// UltraRAM does, reads that word: one RTL on every board.
 //
-// The RAM is inferred here; the board's top chooses the primitive (URAM on
-// the Kria) when revision 15 is built for one.
+// The RAM is inferred here; the board's flow chooses the primitive (URAM on
+// the Kria, `RAM_STYLE`) when revision 15 is built for one.  The RAM is read
+// at every address CS sends, the PROM's too, and the PROM's word chosen a
+// clock on, so that no address compare stands before the read's enable.
 
 `default_nettype none
 
@@ -39,6 +43,7 @@ module quux15_store #(
 );
 
   localparam logic [13:0] PROM_BASE = 14'o36000;
+  localparam logic [63:0] INVERT    = 64'h0000_ffff_ffff_ffff;
 
   logic [63:0] prom[1024] /* verilator public_flat_rw */;
   initial begin
@@ -51,15 +56,15 @@ module quux15_store #(
   quux15_ram #(
       .WIDTH    (64),
       .DEPTH    (16384),
-      .INIT_WORD(64'h0000_ffff_ffff_ffff)
+      .INIT_WORD(64'h0)
   ) ram (
       .clk  (clk),
-      .re   (re && raddr < PROM_BASE),
+      .re   (re),
       .raddr(raddr),
       .rdata(ram_q),
       .we   (we && waddr < PROM_BASE),
       .waddr(waddr),
-      .wdata(wdata)
+      .wdata(wdata ^ INVERT)
   );
 
   always_ff @(posedge clk) begin
@@ -71,7 +76,7 @@ module quux15_store #(
     end
   end
 
-  assign rdata = fwd_v ? fwd_q : from_prom ? prom_q : ram_q;
+  assign rdata = fwd_v ? fwd_q : from_prom ? prom_q : ram_q ^ INVERT;
 
 endmodule
 

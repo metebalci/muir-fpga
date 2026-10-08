@@ -19,9 +19,9 @@
 //!   walk      the TLB and the walk: words read through page tables, a
 //!             walk of each depth, the write-back of the accessed and the
 //!             modified bits and its refusal, the `WRITE-MAP` operations,
-//!             `MAP(MD)` and a map-bit dispatch, port B right after a read
-//!             start (muir's row of A15b.3's `MD` row), and a wrong-path
-//!             `MAP(MD)` that evicts nothing
+//!             `MAP(MD)` and a map-bit dispatch, and a wrong-path `MAP(MD)`
+//!             that evicts nothing; no word right after a start reads the
+//!             map (A15b.2's rule)
 //!
 //! `randmem` and `matrixmem` are `quux15_preset.rs`'s random programs and
 //! matrix with their memory starts.  Every run takes -RESET's sweep of the
@@ -30,7 +30,7 @@
 
 use muir::isa::asm::{
     ALU, HINT, JUMP, LDB, MD, N, P, POPJ, SETA, SETM, SRC_MD, START_READ, START_WRITE,
-    a_src, filler, m_dest, m_src, predicted, src, target,
+    a_src, filler, m_dest, m_src, src, target,
 };
 use muir::machine::Word;
 use muir::pipeline::port::LateModel;
@@ -268,6 +268,12 @@ pub fn ports() -> Vec<(String, Preset)> {
     for hit in [false, true] {
         for gap in 0..3 {
             for k in 0..3 {
+                // `MAP(MD)` right after the start breaks A15b.2's rule (no
+                // word right after a start reads the map), which revision
+                // 15's core relies on: not a program it runs.
+                if gap == 0 && k == 2 {
+                    continue;
+                }
                 let mut p = run();
                 p.main.push((0o40, 5));
                 let (two, a) = (p.k(2), p.k(PHYS | 0o40));
@@ -475,42 +481,11 @@ pub fn walk() -> Vec<(String, Preset)> {
         p.fill(1);
     }
     v.push(("map-dispatch".into(), p));
-    // Port B right after a read start looks up the MD its word reads, and a
-    // walk keeps its address (muir's row of A15b.3's `MD` row).
-    for k in 0..16 {
-        let (hit, dispatch, y_held, y_read) = (k & 8 != 0, k & 4 != 0, k & 2 != 0, k & 1 != 0);
-        v.push((
-            format!("port-b-old-md-h{}-d{}-y{}-r{}", hit as u8, dispatch as u8, y_held as u8, y_read as u8),
-            port_b_case(hit, dispatch, y_held, y_read),
-        ));
-    }
-    // MAP(MD) right after a read start that walks: the word looks the walked
-    // page up in the clock the walk's fill lands, and finds it there
-    // (revision 14's second longer hold, `quux_mmu.sv`'s queue, not kept).
-    for dispatch in [false, true] {
-        let mut p = run();
-        const LIST: Word = 0o016 << 32;
-        p.table(x, 9, rw_entry(3));
-        p.main.push(((3 << 10) + 5, 0o777));
-        p.set_directory();
-        p.write(1 << 0o16, REGISTER_PAGE | 0o222);
-        let (xa, xm) = (p.k(x + 5), p.k(LIST | (x + 5)));
-        p.op(ALU | SETA | a_src(xm) | MD);
-        p.op(ALU | SETA | a_src(xa) | START_READ);
-        if dispatch {
-            const T: u64 = 0o40;
-            let next = p.at() + 2;
-            p.dmem.push((T as usize, next as u32));
-            p.dmem.push((T as usize | 1, next as u32));
-            p.op(disp(T) | 2 << 8 | SRC_MD | predicted(next, false, false));
-            p.fill(1);
-        } else {
-            p.op(ALU | SETM | src(0o11) | m_dest(0o25));
-        }
-        p.op(ALU | SETM | SRC_MD | m_dest(0o26));
-        p.stop();
-        v.push((format!("port-b-behind-a-walk-d{}", dispatch as u8), p));
-    }
+    // **NOT HERE, PORT B RIGHT AFTER A START** (muir's row of A15b.3's `MD`
+    // row, `MAP(MD)` or a map-bit dispatch in the word right after a read
+    // start, and its walk keeping its address): A15b.2's rule, the
+    // micro-assembler's, refuses a word right after a start that reads the
+    // map, and revision 15's core relies on it.
     // MAP(MD) in a delay slot N inhibits: its lookup is not made, and the
     // entry written directly at its TLB index stays.
     let mut p = run();
@@ -582,58 +557,6 @@ pub fn walk() -> Vec<(String, Preset)> {
     p.stop();
     v.push(("wrong-path-map-md".into(), p));
     v
-}
-
-/// muir's `row_port_b_right_after_a_read_start_walks_the_md_it_reads`, one
-/// case.
-fn port_b_case(hit: bool, dispatch: bool, y_held: bool, y_read: bool) -> Preset {
-    const LIST: Word = 0o016 << 32;
-    let x: Word = 0o4000;
-    let y: Word = 1 << 20 | 5 << 10;
-    let z: Word = 2 << 20 | 7 << 10;
-    let page = |va: Word| ((va >> 10) & 0o1777) as usize;
-    let mut p = run();
-    for (va, table) in [(x, 9), (y, 10), (z, 11)] {
-        p.main.push(((8 << 10) + (va >> 20) as usize, rw_entry(table)));
-    }
-    p.main.push(((9 << 10) + page(x), rw_entry(3)));
-    p.main.push(((10 << 10) + page(y), rw_entry(4)));
-    p.main.push(((11 << 10) + page(z), rw_entry(5)));
-    p.main.push(((9 << 10) + page(y), rw_entry(6)));
-    p.main.push(((9 << 10) + page(z), rw_entry(7)));
-    for frame in 3..8 {
-        p.main.push((frame << 10, 0o1000 + frame as Word));
-    }
-    p.main.push((0o40, LIST | y));
-    p.set_directory();
-    p.write(1 << 0o16, REGISTER_PAGE | 0o222);
-    if hit {
-        p.read(PHYS | 0o40, 0o31);
-    }
-    if y_held {
-        p.read(y, 0o31);
-    }
-    let (xa, at) = (p.k(LIST | x), p.k(PHYS | 0o40));
-    p.op(ALU | SETA | a_src(xa) | MD);
-    p.op(ALU | SETA | a_src(at) | START_READ);
-    if dispatch {
-        const T: u64 = 0o40;
-        let next = p.at() + 2;
-        p.dmem.push((T as usize, next as u32));
-        p.dmem.push((T as usize | 1, next as u32));
-        p.op(disp(T) | 2 << 8 | SRC_MD | predicted(next, false, false));
-        p.fill(1);
-    } else {
-        p.op(ALU | SETM | src(0o11) | m_dest(0o25));
-    }
-    p.op(ALU | SETM | SRC_MD | m_dest(0o32));
-    if y_read {
-        p.read(y, 0o26);
-    }
-    p.read(z, 0o27);
-    p.read(x, 0o30);
-    p.stop();
-    p
 }
 
 #[allow(dead_code)]

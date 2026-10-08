@@ -40,6 +40,12 @@ module quux15_ram #(
     for (int unsigned k = 0; k < DEPTH; k++) mem[k] = INIT_WORD;
   end
 
+  // In the vendor's template's form (Vivado's simple dual port): the write
+  // and the read each in a process of their own, so that the board's flow
+  // can take the RAM into UltraRAM (`RAM_STYLE`) as well as block RAM.
+  always_ff @(posedge clk) begin
+    if (we) mem[waddr] <= wdata;
+  end
   always_ff @(posedge clk) begin
     if (re) begin
 `ifdef QUUX15_RDW_POISON
@@ -48,7 +54,6 @@ module quux15_ram #(
       rdata <= mem[raddr];
 `endif
     end
-    if (we) mem[waddr] <= wdata;
   end
 
 endmodule
