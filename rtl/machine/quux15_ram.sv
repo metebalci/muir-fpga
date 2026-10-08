@@ -34,7 +34,7 @@ module quux15_ram #(
     input  var logic [WIDTH-1:0]         wdata
 );
 
-  logic [WIDTH-1:0] mem[DEPTH];
+  logic [WIDTH-1:0] mem[DEPTH] /* verilator public_flat_rw */;
 
   initial begin
     for (int unsigned k = 0; k < DEPTH; k++) mem[k] = INIT_WORD;

@@ -6,6 +6,13 @@
 //
 //   V<top> <trace>... [+plusargs, handed to the design]
 //
+// A trace is one run or several, each from its header line (`# clock ...`)
+// on, named by its `# run` line.  **A RUN BRINGS ITS MEMORIES**: its
+// `# image <memory> <address> <word>` lines are written into the core's
+// PROM, control store, A, M, dispatch memory and PDL buffer after its RAMs
+// have come up and before its reset ends, as a bitstream would hold them
+// (`QUUX15_CORE`'s build; the stand-in has no memories and ignores them).
+//
 // The design is the Verilated top `QUUX15_TOP` names, built with this file:
 // revision 15's core (`rtl/machine/quux15_core.sv`), or `tb/quux15_replay.sv`,
 // the stand-in that shows this testbench catches what it should
@@ -14,9 +21,10 @@
 // of its own, made afresh.
 //
 // **EVERY REGISTER COMES UP RANDOM.**  The core is built with Verilator's
-// `--x-initial unique` and run under `Verilated::randReset(2)`, the seed
-// `QUUX15_SEED` (1 if unset), so that state its reset does not set is
-// whatever a board's would be, and a trace that reads it fails.  The
+// `--x-initial unique` and run under `Verilated::randReset(2)`, a run's seed
+// `QUUX15_SEED` (1 if unset) plus its place in its trace, which a failure
+// names, so that state its reset does not set is whatever a board's would
+// be, and a trace that reads it fails.  The
 // memories come up as the core's `initial` blocks say, which is what a
 // bitstream says of a RAM.
 //
@@ -60,10 +68,18 @@
 #define QUUX15_STR(x) QUUX15_STR2(x)
 #define QUUX15_HEADER(x) QUUX15_STR(x.h)
 #include QUUX15_HEADER(QUUX15_TOP)
+#ifdef QUUX15_CORE
+#include "Vquux15_core___024root.h"
+#endif
 
 namespace {
 
 using Top = QUUX15_TOP;
+
+// What a trace's runs held, summed for its line.
+struct Totals {
+  size_t clocks = 0, commits = 0, operands = 0, grants = 0, landed = 0, registers = 0;
+} totals;
 
 // When a column is compared, by the trace's row.
 enum When { kEvery, kStage, kAtCommit, kIfGrant, kIfMd, kIfReg, kIfOpnd };
@@ -142,9 +158,55 @@ std::vector<std::string> words(const char *line) {
   return out;
 }
 
-// Reads `path`'s rows: 0 when it is a reference this testbench reads, and
-// otherwise what the run exits with.
-int read_trace(const char *path, std::vector<std::vector<uint64_t>> &rows) {
+// One run of a trace: its name, its memories' words and its rows.
+struct Image {
+  std::string memory;
+  uint64_t address, word;
+};
+struct Run {
+  std::string name;
+  std::vector<Image> images;
+  std::vector<std::vector<uint64_t>> rows;
+};
+
+// The run's memories into the design, which has just come up.
+bool load(Top *dut, const Run &run, const char *path) {
+#ifdef QUUX15_CORE
+  auto *r = dut->rootp;
+  for (const Image &i : run.images) {
+    bool ok = true;
+    if (i.memory == "prom" && i.address < 1024)
+      r->quux15_core__DOT__store__DOT__prom[i.address] = i.word;
+    else if (i.memory == "imem" && i.address < 16384)
+      r->quux15_core__DOT__store__DOT__ram__DOT__mem[i.address] = i.word;
+    else if (i.memory == "amem" && i.address < 1024)
+      r->quux15_core__DOT__amem__DOT__mem[i.address] = i.word & 0xffffffffffull;
+    else if (i.memory == "mmem" && i.address < 32)
+      r->quux15_core__DOT__mmem[i.address] = i.word & 0xffffffffffull;
+    else if (i.memory == "dmem" && i.address < 4096)
+      r->quux15_core__DOT__dmem[i.address] = static_cast<uint32_t>(i.word & 0x1ffff);
+    else if (i.memory == "pdl" && i.address < 16384)
+      r->quux15_core__DOT__pdl__DOT__mem[i.address] = i.word & 0xffffffffffull;
+    else
+      ok = false;
+    if (!ok) {
+      std::fprintf(stderr, "%s: run %s: no memory `%s` with a word %" PRIx64 "\n", path,
+                   run.name.c_str(), i.memory.c_str(), i.address);
+      return false;
+    }
+  }
+#else
+  // The stand-in plays rows back and has no memories to take.
+  (void)dut;
+  (void)run;
+  (void)path;
+#endif
+  return true;
+}
+
+// Reads `path`'s runs: 0 when it is a reference this testbench reads, and
+// otherwise what the program exits with.
+int read_trace(const char *path, std::vector<Run> &runs) {
   std::FILE *f = std::fopen(path, "r");
   if (!f) {
     std::fprintf(stderr, "cannot read %s\n", path);
@@ -154,6 +216,7 @@ int read_trace(const char *path, std::vector<std::vector<uint64_t>> &rows) {
   bool header = false;
   int result = 0;
   while (result == 0 && std::fgets(line, sizeof line, f)) {
+    std::vector<std::vector<uint64_t>> &rows = runs.empty() ? runs.emplace_back().rows : runs.back().rows;
     if (line[0] == '#') {
       if (std::strstr(line, "PLANTED FAULT")) {
         std::fprintf(stderr, "%s carries a fault planted in muir; it is no reference\n", path);
@@ -161,7 +224,18 @@ int read_trace(const char *path, std::vector<std::vector<uint64_t>> &rows) {
         break;
       }
       std::vector<std::string> w = words(line + 1);
+      if (w.size() == 4 && w[0] == "image") {
+        runs.back().images.push_back({w[1], std::strtoull(w[2].c_str(), nullptr, 16),
+                                      std::strtoull(w[3].c_str(), nullptr, 16)});
+        continue;
+      }
+      if (w.size() >= 2 && w[0] == "run") {
+        runs.back().name = w[1];
+        continue;
+      }
       if (!w.empty() && w[0] == "clock") {
+        // A run begins.
+        if (!runs.back().rows.empty() || header) runs.emplace_back();
         bool ok = w.size() == kN + 1;
         for (size_t c = 0; ok && c < kN; ++c) ok = w[c + 1] == kColumns[c].name;
         if (!ok) {
@@ -191,16 +265,24 @@ int read_trace(const char *path, std::vector<std::vector<uint64_t>> &rows) {
     rows.push_back(v);
   }
   std::fclose(f);
-  if (result == 0 && (!header || rows.size() < 2)) {
-    std::fprintf(stderr, "FAIL: %s carries %s%zu rows\n", path, header ? "" : "no header and ",
-                 rows.size());
-    result = 1;
+  for (size_t k = 0; result == 0 && k < runs.size(); ++k) {
+    if (runs[k].name.empty()) runs[k].name = std::to_string(k);
+    if (!header || runs[k].rows.size() < 2) {
+      std::fprintf(stderr, "FAIL: %s run %s carries %s%zu rows\n", path, runs[k].name.c_str(),
+                   header ? "" : "no header and ", runs[k].rows.size());
+      result = 1;
+    }
   }
   return result;
 }
 
-// One trace on a design made for it: 0 when it agrees, 1 when not.
-int run_trace(const char *path, const std::vector<std::vector<uint64_t>> &rows) {
+// One run on a design made for it, its registers' random words from
+// `seed`: 0 when it agrees, 1 when not.
+int run_trace(const char *path, const Run &run, int seed) {
+  const std::vector<std::vector<uint64_t>> &rows = run.rows;
+  // A run before that stopped the simulation stopped it for itself alone.
+  Verilated::gotFinish(false);
+  Verilated::randSeed(seed);
   Top *dut = new Top;
   auto edge = [&]() {
     dut->clk = 0;
@@ -209,6 +291,13 @@ int run_trace(const char *path, const std::vector<std::vector<uint64_t>> &rows) 
     dut->eval();
   };
   dut->rst = 1;
+  dut->clk = 0;
+  dut->eval();
+  if (!load(dut, run, path)) {
+    dut->final();
+    delete dut;
+    return 1;
+  }
   for (int k = 0; k < 4; ++k) edge();
   dut->rst = 0;
   dut->clk = 0;
@@ -254,13 +343,18 @@ int run_trace(const char *path, const std::vector<std::vector<uint64_t>> &rows) 
   dut->final();
   delete dut;
   if (bad) {
-    std::fprintf(stderr, "FAIL: %ld differences over %zu clocks of %s; the first at clock %zu, %s\n",
-                 bad, rows.size(), path, first_clock, first_column);
+    std::fprintf(stderr,
+                 "FAIL: %ld differences over %zu clocks of %s%s%s (QUUX15_SEED %d); the first at clock %zu, %s\n",
+                 bad, rows.size(), path, run.name.empty() ? "" : " run ", run.name.c_str(), seed,
+                 first_clock, first_column);
     return 1;
   }
-  std::printf("ok: %zu clocks of %s agree with muir's pipeline: %zu commits, %zu ALU and BYTE "
-              "words' operands, %zu grants, %zu words landed in MD, %zu registers taken\n",
-              rows.size(), path, commits, operands, grants, landed, registers);
+  totals.clocks += rows.size();
+  totals.commits += commits;
+  totals.operands += operands;
+  totals.grants += grants;
+  totals.landed += landed;
+  totals.registers += registers;
   return 0;
 }
 
@@ -268,9 +362,9 @@ int run_trace(const char *path, const std::vector<std::vector<uint64_t>> &rows) 
 
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
-  const char *seed = std::getenv("QUUX15_SEED");
+  const char *seed_s = std::getenv("QUUX15_SEED");
+  const int seed = seed_s ? std::atoi(seed_s) : 1;
   Verilated::randReset(2);
-  Verilated::randSeed(seed ? std::atoi(seed) : 1);
   std::vector<const char *> paths;
   for (int i = 1; i < argc; ++i)
     if (argv[i][0] != '+') paths.push_back(argv[i]);
@@ -280,10 +374,24 @@ int main(int argc, char **argv) {
   }
   int result = 0;
   for (const char *path : paths) {
-    std::vector<std::vector<uint64_t>> rows;
-    const int r = read_trace(path, rows);
+    std::vector<Run> runs;
+    const int r = read_trace(path, runs);
     if (r) return r;
-    if (run_trace(path, rows)) result = 1;
+    totals = Totals{};
+    bool bad = false;
+    // Each run's random words from a seed of its own, so that a run that
+    // fails fails alone too.
+    for (size_t k = 0; k < runs.size(); ++k)
+      if (run_trace(path, runs[k], seed + static_cast<int>(k))) bad = true;
+    if (bad) {
+      result = 1;
+      continue;
+    }
+    std::printf("ok: %zu clocks of %s%s agree with muir's pipeline: %zu commits, %zu ALU and BYTE "
+                "words' operands, %zu grants, %zu words landed in MD, %zu registers taken\n",
+                totals.clocks, path,
+                runs.size() > 1 ? (" in " + std::to_string(runs.size()) + " runs").c_str() : "",
+                totals.commits, totals.operands, totals.grants, totals.landed, totals.registers);
   }
   return result;
 }

@@ -28105,9 +28105,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A PDL read through the pointer or the index the word before writes
 @note from the ALU does not wait for it, and reads at the old one.
 @old
-    pdl_wait = cs_rp[1] && (cs_rp[0] ? nc_ptr_pend : nc_idx_pend);
+    pdl_wait = cs_rp[1] && (cs_rp[0] ? c_next.ptr_pend : c_next.idx_pend);
 @new
-    pdl_wait = cs_rp[1] && (cs_rp[0] ? nc_ptr_pend : nc_idx_pend) && 1'b0;
+    pdl_wait = cs_rp[1] && (cs_rp[0] ? c_next.ptr_pend : c_next.idx_pend) && 1'b0;
 @end
 
 @mutation quux15-sl-or-stuck-at-0
@@ -28248,4 +28248,178 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     if (re) begin
 @new
     if (re || 1'b1) begin
+@end
+
+# --------------------------------------- revision 15's core, transfers and speculation
+#
+# The redirect's squashes and its refetch, N's squash of the delay slot,
+# the restores of RD's copies, the guard and the other holds of RD and CS,
+# the hint and EX's check of a prediction, the stack's write landing a
+# microcycle on, and the PDL address field's early index and check, each
+# planted once.  The matrix and the programs at random are traces of many
+# runs (`golden/src/quux15_preset.rs`).  LC's copy and the late squash wait
+# for the memory side, where LC's fetch and starts are.
+#
+# Two faults that look like faults are not, and have no record: the redirect
+# of a delay slot RD nopped on a prediction that EX finds wrong, which the
+# check of the prediction's kind redirects first in every case; and the
+# restore of RD's copies of the PDL pointer and index, which the words
+# squashed never move (only a word leaving RD does) and which equal the
+# registers whenever nothing is pending.  Each survived all 532 runs of the
+# matrix and 200 programs at random.
+
+@mutation quux15-redirect-keeps-the-word-in-cs
+@check quux15_matrix_quux
+@file rtl/machine/quux15_core.sv
+@note A redirect squashes the word after the delay slot in RD but not the
+@note one in CS, which runs on the wrong path.
+@old
+        end else cs_keep = 1'b0;
+@new
+        end else cs_keep = cs_v;
+@end
+
+@mutation quux15-redirect-keeps-the-word-in-rd
+@check quux15_imem_quux
+@file rtl/machine/quux15_core.sv
+@note A redirect leaves the word in RD standing: after a WRITE-I-MEM its
+@note delay slot runs from RD and again from the refetch.  At every other
+@note redirect the word in RD is the delay slot, which stays.
+@old
+        end else rd_keep = 1'b0;
+@new
+        end else rd_keep = rd_v;
+@end
+
+@mutation quux15-n-squashes-no-delay-slot
+@check quux15_transfer_quux
+@file rtl/machine/quux15_core.sv
+@note A transfer taken with N leaves its delay slot to run.
+@old
+    kill_rd         = commit && !ex_nop && inhibit;
+@new
+    kill_rd         = commit && !ex_nop && inhibit && 1'b0;
+@end
+
+@mutation quux15-write-i-mem-fetches-nothing-again
+@check quux15_imem_quux
+@file rtl/machine/quux15_core.sv
+@note The words behind a WRITE-I-MEM are not squashed and fetched again.
+@old
+      if (wrote_imem) begin
+@new
+      if (wrote_imem && 1'b0) begin
+@end
+
+@mutation quux15-write-i-mem-refetch-without-its-wait
+@check quux15_imem_quux
+@file rtl/machine/quux15_core.sv
+@note The refetch after a WRITE-I-MEM loads CS in the redirect's own clock,
+@note a clock before the store takes the word.
+@old
+        block_load = 1'b1;
+@new
+        block_load = 1'b0;
+@end
+
+@mutation quux15-guard-removed
+@check quux15_stack_quux
+@file rtl/machine/quux15_core.sv
+@note The guard removed: a return RD resolves leaves RD while the word in
+@note EX writes INTERRUPT-CONTROL, M 31 or the stack's data.
+@old
+    hold = plan.returns && guard_holds(view_new, nid_new);
+@new
+    hold = plan.returns && guard_holds(view_new, nid_new) && 1'b0;
+@end
+
+@mutation quux15-pdl-field-index-while-its-base-is-written
+@check quux15_pdlfield_quux
+@file rtl/machine/quux15_core.sv
+@note RD forms the PDL address field's index from its copy of the pointer
+@note while the pointer is still being written from the ALU.
+@old
+            if (rd_word[50:49] == 2'd2 && !cc.ptr_pend) p.e.dest = D_IDX;
+@new
+            if (rd_word[50:49] == 2'd2) p.e.dest = D_IDX;
+@end
+
+@mutation quux15-pdl-field-check-removed
+@check quux15_pdlfieldout_quux
+@file rtl/machine/quux15_core.sv
+@note PDL-FIELD-MISMATCH removed: a field that formed another index than
+@note the word writes runs on.
+@old
+        mismatch = (ex_alu || ex_byte) && ex_word[48] && ex_word[50] && formed != nidx;
+@new
+        mismatch = (ex_alu || ex_byte) && ex_word[48] && ex_word[50] && formed != nidx && 1'b0;
+@end
+
+@mutation quux15-stack-copy-not-restored
+@check quux15_matrix_quux
+@file rtl/machine/quux15_core.sv
+@note A squash restores RD's copy of the stack's pointer from itself, as the
+@note squashed words left it.
+@old
+    c_res.spc_ptr = sx.sp;
+@new
+    c_res.spc_ptr = c.spc_ptr;
+@end
+
+@mutation quux15-hint-read-inverted
+@check quux15_transfer_quux
+@file rtl/machine/quux15_core.sv
+@note H read inverted: a conditional jump is predicted the other way.
+@old
+            taken = rd_word[48];
+@new
+            taken = !rd_word[48];
+@end
+
+@mutation quux15-predicted-address-not-compared
+@check quux15_matrix_quux
+@file rtl/machine/quux15_core.sv
+@note EX checks a prediction's kind and not its address: a dispatch
+@note predicted to jump elsewhere goes there.
+@old
+        if (x_npc != (ex_next2_v ? ex_next2 : x_npc_seq)
+@new
+        if ((x_npc != (ex_next2_v ? ex_next2 : x_npc_seq) && 1'b0)
+@end
+
+@mutation quux15-predicted-p-and-r-not-compared
+@check quux15_predict_quux
+@file rtl/machine/quux15_core.sv
+@note EX checks a dispatch's predicted address and not its P and R: an
+@note entry that jumps to X predicted as a call of X keeps RD's push, and the
+@note return at X, which RD resolves from its copy, goes astray.
+@old
+            || (ex_pred_pr_v && ex_pred_pr != entry_pr))
+@new
+            || (ex_pred_pr_v && ex_pred_pr != entry_pr && 1'b0))
+@end
+
+@mutation quux15-stack-push-read-at-once
+@check quux15_stack_quux
+@file rtl/machine/quux15_core.sv
+@note A push's word read through functional source 1 by the word right
+@note after it, where that word reads the old one.
+@old
+      4'o1:  ex_func = {11'd0, spcptr, 5'd0, spc[spcptr]};
+@new
+      4'o1:  ex_func = {11'd0, spcptr, 5'd0, spc_landed(spcptr)};
+@end
+
+@mutation quux15-a-slot-that-runs-after-all-is-not-fetched-again
+@check quux15_matrix_quux
+@file rtl/machine/quux15_core.sv
+@note RD nopped a delay slot on a jump it predicted taken with N; EX finds
+@note it not taken, and the slot is left standing in RD, where it is fetched
+@note again so that it runs.
+@old
+            refetch_slot = 1'b1;
+            refetch_pc = rd_pc;
+            rd_keep = 1'b0;
+@new
+            refetch_pc = rd_pc;
 @end

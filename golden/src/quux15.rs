@@ -36,10 +36,28 @@
 //!   time      word 25, the period (A15b.1), and timer 0 at 1 us polled
 //!             through three rises, each acted on at the first clock at or
 //!             after it (A15b.12)
+//!   oa, oaout the OA registers, their selects, the hold, and
+//!             OA-OUTSIDE-FIELDS
+//!   pdl       the PDL buffer: its forwards, its wait, its wrap
+//!   muldiv    MUL and DIV
+//!   stack     the micro stack's word a microcycle after its push, and the
+//!             guard
+//!   pdlfield, pdlfieldout
+//!             the PDL address field, and PDL-FIELD-MISMATCH
 //!
-//! **NOTHING IS PRESET**, as in `golden/src/quux14.rs`: every constant is
-//! made by the program from the dispatch constant, and every data word is
-//! written by the program.  **EACH PROGRAM SAYS WHAT IT REACHED**: its
+//! and muir's own kind of program, `golden/src/quux15_preset.rs`: the
+//! speculation matrix (`matrix`) and programs at random (`random`), each a
+//! trace of many runs, a `# run` line naming each; `dispatch`, `predict`
+//! and `imem`.  **A TRACE CARRIES ITS MEMORIES**: every run's PROM, and a
+//! preset program's control store, A, M and dispatch memory, as
+//! `# image <memory> <address> <word>` lines, which the testbench writes into
+//! the core before its reset ends, as a bitstream would hold them.
+//!
+//! **NOTHING IS PRESET** in this file's programs, as in
+//! `golden/src/quux14.rs`: every constant is made by the program from the
+//! dispatch constant, and every data word is written by the program.  The
+//! preset programs are muir's tests', presets and all.  **EACH PROGRAM SAYS
+//! WHAT IT REACHED**: its
 //! results land in A memory from `200` up.  Before it writes a row, the
 //! generator runs the same machine on `micro`, muir's specification, and
 //! refuses a trace whose machine ends otherwise than `micro`'s (A, M, the
@@ -54,6 +72,7 @@
 //! trace says it carries the fault in its second line.
 
 mod machine_axis;
+mod quux15_preset;
 mod trace15;
 
 use machine_axis::Which;
@@ -154,8 +173,10 @@ struct Prog {
     /// an OA register at a distance, or before any write, as muir's tests
     /// of the hold do.
     select_check: bool,
-    /// The program ends at OA-OUTSIDE-FIELDS at this word, not at its park.
-    halts_at: Option<u64>,
+    /// The program ends at an error halt at this word, not at its park: the
+    /// word and the trace's `errhalt` code, 1 OA-OUTSIDE-FIELDS and 2
+    /// PDL-FIELD-MISMATCH.
+    halts_at: Option<(u64, u8)>,
 }
 
 impl Prog {
@@ -565,7 +586,7 @@ fn oaout_program() -> Prog {
     let v = p.k(1 << 13);
     p.op(ALU | SETA | a_src(v) | OA_LOW);
     p.op(ALU | SETA | a_src(v) | OA_LOW);
-    p.halts_at = Some(p.at());
+    p.halts_at = Some((p.at(), 1));
     p.op(ALU | SETA | a_src(ONE) | a_dest(0o300) | OA_LOW_SELECT);
     p.fill(4);
     p.park();
@@ -664,6 +685,117 @@ fn muldiv_program() -> Prog {
     p
 }
 
+/// Destinations 2, INTERRUPT-CONTROL, and 15, the micro stack pushed with
+/// data.
+const INTERRUPT_CONTROL: u64 = fd(0o2);
+const SPC_PUSH: u64 = fd(0o15);
+
+/// **The micro stack and the guard** (A15b.3, A15b.16): a word pushed as
+/// data, read through functional source 1 in the word after it (the old
+/// word, its push landing a microcycle on) and two after (the new), and
+/// popped by source 14; a return address pushed as data and a POPJ right
+/// after it, which RD holds a clock for, its copy of the top not yet
+/// written; and returns right after a write of INTERRUPT-CONTROL and of M
+/// 31, and two after a write of M 31, each held a clock by the guard; a POPJ
+/// on a word that pops by its source, which EX decides.
+fn stack_program() -> Prog {
+    let mut p = Prog::new();
+    p.start();
+    let word = p.k(0o12345);
+    p.op(ALU | SETA | a_src(word) | SPC_PUSH);
+    p.put(ALU | SETM | src(0o1), 1 << 24, "the stack's word in the word after its push: the old one");
+    p.put(ALU | SETM | src(0o1), 1 << 24 | 0o12345, "two words after: the new one");
+    p.put(ALU | SETM | src(0o14), 1 << 24 | 0o12345, "popped by the source");
+    // A return address pushed as data, and a POPJ right after it.
+    let count = p.result(4, !0, "the delay slots that ran: one past a return, three after calls with N");
+    p.op(ALU | SETA | a_src(ZERO) | a_dest(count));
+    let to = p.at() + 16;
+    let ret = p.k(to);
+    p.op(ALU | SETA | a_src(ret) | SPC_PUSH);
+    p.op(filler().raw() | POPJ);
+    p.op(ALU | ADD | m_src(M_ONE) | a_src(count) | a_dest(count));
+    p.fill_to(to);
+    // Calls to subroutines whose returns follow a write the guard holds for.
+    let subs = [QUUX_PROM_BASE as u64 + 0o1600, QUUX_PROM_BASE as u64 + 0o1620, QUUX_PROM_BASE as u64 + 0o1640];
+    for &sub in &subs {
+        p.op(JUMP | ALWAYS | P | N | target(sub));
+        p.op(ALU | ADD | m_src(M_ONE) | a_src(count) | a_dest(count));
+    }
+    // A POPJ on a word that pops by its source: EX decides where it goes.
+    let to = p.at() + 16;
+    let ret = p.k(to);
+    p.op(ALU | SETA | a_src(ret) | SPC_PUSH);
+    p.op(ALU | SETA | a_src(ret) | SPC_PUSH);
+    p.fill(1);
+    p.put(ALU | SETM | src(0o14) | POPJ, 2 << 24 | to, "popped by the source, on a POPJ");
+    p.fill(1);
+    p.fill_to(to);
+    p.park();
+    // INTERRUPT-CONTROL written, then the return.
+    p.fill_to(subs[0]);
+    p.op(ALU | SETA | a_src(ZERO) | INTERRUPT_CONTROL);
+    p.op(filler().raw() | POPJ);
+    p.fill(1);
+    // M 31 written, then the return.
+    p.fill_to(subs[1]);
+    p.op(ALU | SETA | a_src(ONE) | m_dest(0o31));
+    p.op(filler().raw() | POPJ);
+    p.fill(1);
+    // M 31 written two words before the return.
+    p.fill_to(subs[2]);
+    p.op(ALU | SETA | a_src(TWO) | m_dest(0o31));
+    p.fill(1);
+    p.op(filler().raw() | POPJ);
+    p.fill(1);
+    p
+}
+
+/// **The PDL address field** (A15b.2): PDL-INDEX written as the pointer or
+/// the index plus a displacement the field carries too, read through at once
+/// without a wait, RD having formed the index; and with its base written
+/// from the ALU in the word before, where RD cannot form it and the read
+/// waits a clock.
+fn pdlfield_program() -> Prog {
+    let mut p = Prog::new();
+    p.start();
+    let words: Vec<u64> = (0..6).map(|k| p.k(0o4000 + k)).collect();
+    let ptr = p.k(0o77);
+    p.op(ALU | SETA | a_src(ptr) | PDL_POINTER);
+    p.fill(2);
+    for &w in &words {
+        p.op(ALU | SETA | a_src(w) | PDL_PUSH);
+    }
+    // The pointer is 105: the index 105 - 3, read at once.
+    let (minus3, two, one, ptr2) = (p.k((!2u64) & 0o7777777777777), p.k(2), p.k(1), p.k(0o101));
+    p.op(ALU | ADD | src(0o2) | a_src(minus3) | PDL_INDEX | muir::isa::asm::pdl_field(2, -3));
+    p.put(ALU | SETM | PDL_AT_IDX, 0o4002, "the index the field formed on the pointer, read at once");
+    p.op(ALU | ADD | src(0o3) | a_src(two) | PDL_INDEX | muir::isa::asm::pdl_field(3, 2));
+    p.put(ALU | SETM | PDL_AT_IDX, 0o4004, "on the index, read at once");
+    // The pointer written from the ALU right before: RD cannot form it.
+    p.op(ALU | SETA | a_src(ptr2) | PDL_POINTER);
+    p.op(ALU | ADD | src(0o2) | a_src(one) | PDL_INDEX | muir::isa::asm::pdl_field(2, 1));
+    p.put(ALU | SETM | PDL_AT_IDX, 0o4002, "its base written the word before: the read waits");
+    p.park();
+    p
+}
+
+/// **PDL-FIELD-MISMATCH** (A15b.2): a field whose displacement is not the
+/// constant the word adds; the word commits and the machine stops.  The
+/// same sum is written once before without the field, so that the stopping
+/// word's write, which the pipeline leaves in WB, writes what is there.
+fn pdlfieldout_program() -> Prog {
+    let mut p = Prog::new();
+    p.start();
+    p.put(ALU | SETA | a_src(TWO), 2, "a word before the stop");
+    let five = p.k(5);
+    p.op(ALU | ADD | src(0o2) | a_src(five) | PDL_INDEX);
+    p.halts_at = Some((p.at(), 2));
+    p.op(ALU | ADD | src(0o2) | a_src(five) | PDL_INDEX | muir::isa::asm::pdl_field(2, 4));
+    p.fill(4);
+    p.park();
+    p
+}
+
 fn program(name: &str, period: u64) -> Prog {
     match name {
         "alu" => alu_program(),
@@ -674,8 +806,11 @@ fn program(name: &str, period: u64) -> Prog {
         "oaout" => oaout_program(),
         "pdl" => pdl_program(),
         "muldiv" => muldiv_program(),
+        "stack" => stack_program(),
+        "pdlfield" => pdlfield_program(),
+        "pdlfieldout" => pdlfieldout_program(),
         _ => {
-            eprintln!("quux15: no program `{name}`; alu, transfer, memory, time, oa, oaout, pdl or muldiv");
+            eprintln!("quux15: no program `{name}`");
             std::process::exit(2);
         }
     }
@@ -721,12 +856,84 @@ fn mutation(name: &str) -> Option<Mutation> {
 
 // ---------------------------------------------------------------- machine
 
-/// The machine for `prom`: QUUX as the fabric builds it, at revision 15,
-/// with QUUX's main memory.
-fn machine(prom: &[Insn]) -> Machine {
-    let mut m = Which::Quux.machine(prom);
+/// **A run**, of a program in the PROM or of muir's preset kind: the PROM's
+/// words, the memories' words before it runs, where it parks or stops, and
+/// what it is to leave in A.  A trace carries its memories as `# image`
+/// lines, which `tb/quux15_core_tb.cpp` loads into the core as a bitstream
+/// would hold them.
+struct Case {
+    name: String,
+    prom: Vec<u64>,
+    imem: Vec<(usize, u64)>,
+    amem: Vec<(usize, Word)>,
+    mmem: Vec<(usize, Word)>,
+    dmem: Vec<(usize, u32)>,
+    park: u64,
+    halts: Option<(u64, u8)>,
+    select_check: bool,
+    results: Vec<(u64, Word, Word, String)>,
+}
+
+impl Case {
+    fn of_prog(name: &str, p: &Prog) -> Case {
+        let prom = p.prom().iter().map(|w| w.raw()).collect();
+        Case {
+            name: name.to_string(),
+            prom,
+            imem: Vec::new(),
+            amem: Vec::new(),
+            mmem: Vec::new(),
+            dmem: Vec::new(),
+            park: p.park.expect("every program parks"),
+            halts: p.halts_at,
+            select_check: p.select_check,
+            results: p.results.clone(),
+        }
+    }
+
+    /// The memories' words as the trace's `# image` lines say them.
+    fn images(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for (k, &w) in self.prom.iter().enumerate() {
+            if w != 0 {
+                out.push(format!("# image prom {k:x} {w:x}"));
+            }
+        }
+        for &(k, w) in &self.imem {
+            out.push(format!("# image imem {k:x} {w:x}"));
+        }
+        for &(k, w) in &self.amem {
+            out.push(format!("# image amem {k:x} {w:x}"));
+        }
+        for &(k, w) in &self.mmem {
+            out.push(format!("# image mmem {k:x} {w:x}"));
+        }
+        for &(k, w) in &self.dmem {
+            out.push(format!("# image dmem {k:x} {w:x}"));
+        }
+        out
+    }
+}
+
+/// The machine for `case`: QUUX as the fabric builds it, at revision 15,
+/// with QUUX's main memory, and the case's memories.
+fn machine(case: &Case) -> Machine {
+    let prom: Vec<Insn> = case.prom.iter().map(|&w| Insn::extended(w)).collect();
+    let mut m = Which::Quux.machine(&prom);
     m.geometry = REV15;
     m.main = vec![0; MAIN];
+    for &(k, w) in &case.imem {
+        m.imem[k] = Insn::extended(w);
+    }
+    for &(k, w) in &case.amem {
+        m.amem[k] = w;
+    }
+    for &(k, w) in &case.mmem {
+        m.mmem[k] = w;
+    }
+    for &(k, w) in &case.dmem {
+        m.dmem[k] = w;
+    }
     m
 }
 
@@ -765,35 +972,156 @@ fn differences(e: &Machine, u: &Machine) -> Vec<String> {
     d.extend(first_difference("the PDL buffer", &e.pdl[..], &u.pdl[..]));
     d.extend(first_difference("dispatch memory", &e.dmem[..], &u.dmem[..]));
     d.extend(first_difference("main memory", &e.main[..], &u.main[..]));
+    d.extend(first_difference("the control store", &e.imem[..], &u.imem[..]));
     if e.posted_write_errors != 0 {
         d.push(format!("word 225, the posted writes' errors, is {}", e.posted_write_errors));
     }
     d
 }
 
-/// `micro` run to the park and 16 microcycles on, or to the stop the program
+/// The error halt a run may end at, as the trace's code.
+fn halt_code(h: &Halt) -> Option<(u64, u8)> {
+    match *h {
+        Halt::OaOutsideFields { pc, .. } => Some((u64::from(pc), 1)),
+        Halt::PdlFieldMismatch { pc, .. } => Some((u64::from(pc), 2)),
+        _ => None,
+    }
+}
+
+/// `micro` run to the park and 16 microcycles on, or to the stop the case
 /// ends at.
-fn micro(prog: &Prog, prom: &[Insn], period: u64, name: &str) -> Micro {
-    let mut u = Micro::new(machine(prom));
+fn micro(case: &Case, period: u64) -> Result<Micro, String> {
+    let name = &case.name;
+    let mut u = Micro::new(machine(case));
     u.period = period;
-    u.oa_select_check = prog.select_check;
+    u.oa_select_check = case.select_check;
     u.boot();
     let mut n = 0u64;
-    let park = prog.park.expect("every program parks");
-    while u64::from(u.machine().opc) != park {
-        assert!(n < 400_000, "quux15: {name} never reached its park on micro");
-        match (u.step(), prog.halts_at) {
-            (Ok(()), _) => {}
-            (Err(Halt::OaOutsideFields { pc, .. }), Some(at)) if u64::from(pc) == at => return u,
-            (Err(h), _) => panic!("quux15: {name} stopped on micro at microcycle {n}: {h:?}"),
+    while u64::from(u.machine().opc) != case.park {
+        if n >= 400_000 {
+            return Err(format!("{name} never reached its park on micro"));
+        }
+        if let Err(h) = u.step() {
+            return match (halt_code(&h), case.halts) {
+                (Some(a), Some(b)) if a == b => Ok(u),
+                _ => Err(format!("{name} stopped on micro at microcycle {n}: {h:?}")),
+            };
         }
         n += 1;
     }
-    assert!(prog.halts_at.is_none(), "quux15: {name} reached its park on micro, not its stop");
-    for _ in 0..16 {
-        u.step().unwrap_or_else(|h| panic!("quux15: {name} stopped on micro at its park: {h:?}"));
+    if case.halts.is_some() {
+        return Err(format!("{name} reached its park on micro, not its stop"));
     }
-    u
+    for _ in 0..16 {
+        u.step().map_err(|h| format!("{name} stopped on micro at its park: {h:?}"))?;
+    }
+    Ok(u)
+}
+
+/// What a run shows: its trace's lines, its summary, and whether its
+/// results were checked against `micro`.
+struct Ran {
+    lines: Vec<String>,
+    summary: String,
+}
+
+/// **A run on the pipeline, a row a clock**: to the park's first commit,
+/// then on until the memory side is quiet and 32 clocks more, or to the
+/// error halt it ends at; its machine against `micro`'s, and its results.
+fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, (i32, String)> {
+    let name = &case.name;
+    let mut e = Pipeline::new(machine(case));
+    e.configure(period, TIMING, CACHE_WORDS);
+    if let Some(f) = planted {
+        e.mutation = f;
+    }
+    let mut t = trace15::Trace15::start(&mut e);
+    e.boot();
+    let mut rows = vec![t.row(&e).line];
+    let mut parked_at = None;
+    let mut halted = false;
+    loop {
+        if let Some(at) = parked_at
+            && e.clock() >= at + 32
+            && e.quiet()
+        {
+            break;
+        }
+        if e.clock() >= 200_000 {
+            return Err((1, format!("{name} never reached its park in 200,000 clocks")));
+        }
+        match e.tick() {
+            Ok(()) => {}
+            Err(h) => match (halt_code(&h), case.halts) {
+                (Some((pc, code)), Some(want)) if (pc, code) == want => {
+                    // The machine stops: the clock's row says so, and the
+                    // trace ends.
+                    rows.push(t.row_halting(&e, code).line);
+                    parked_at = Some(e.clock());
+                    halted = true;
+                    break;
+                }
+                _ => return Err((1, format!("{name} stopped at clock {}: {h:?}", e.clock()))),
+            },
+        }
+        let row = t.row(&e);
+        if parked_at.is_none() && row.commit == Some(Some(case.park as u16)) {
+            parked_at = Some(e.clock());
+        }
+        rows.push(row.line);
+    }
+    if case.halts.is_some() && !halted {
+        return Err((1, format!("{name} reached its park, not the stop it ends at")));
+    }
+    // The machine it ends with, against micro's, and the results.
+    let u = micro(case, period).map_err(|x| (1, x))?;
+    let d = differences(e.machine(), u.machine());
+    if !d.is_empty() {
+        let mut x = d.join("; ");
+        x.push_str(&format!("; {name}: the pipeline differs from micro in {} places", d.len()));
+        return Err((3, x));
+    }
+    let mut bad = Vec::new();
+    for (a, want, mask, what) in &case.results {
+        let got = e.machine().amem[*a as usize];
+        if got & mask != *want {
+            bad.push(format!("A {a:o}, {what}: {got:#012x}, not {want:#012x}"));
+        }
+    }
+    if !bad.is_empty() {
+        return Err((1, format!("{name}: {} of {} results wrong: {}", bad.len(), case.results.len(), bad.join("; "))));
+    }
+    let mt = &e.meters;
+    let summary = format!(
+        "{name}: {} clocks, {} microcycles, {} results equal micro's, {} {:o} at clock {}; {} squashed, \
+         mispredicted {:?}, {} guard holds, {} OA-hold clocks, {} PDL waits",
+        e.clock() + 1,
+        mt.retired,
+        case.results.len(),
+        if case.halts.is_some() { "stopped at" } else { "park" },
+        case.halts.map_or(case.park, |(pc, _)| pc),
+        parked_at.unwrap_or(0),
+        mt.squashed,
+        mt.mispredicted,
+        mt.guard_hold,
+        mt.oa_hold,
+        mt.pdl_wait,
+    );
+    Ok(Ran { lines: rows, summary })
+}
+
+/// The runs a program name stands for: one, or a group's.
+fn cases(name: &str, period: u64) -> Vec<Case> {
+    match name {
+        "matrix" => quux15_preset::matrix().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "random" => (1..=quux15_preset::RANDOM_SEEDS)
+            .map(|seed| quux15_preset::random_program(seed).case(&format!("seed-{seed}")))
+            .collect(),
+        "dispatch" => vec![quux15_preset::dispatches().case("dispatch")],
+        "imem" => vec![quux15_preset::imem_program().case("imem")],
+        "predict" => vec![quux15_preset::predict_program().case("predict")],
+        _ => vec![Case::of_prog(name, &program(name, period))],
+    }
 }
 
 fn main() {
@@ -842,117 +1170,53 @@ fn main() {
     };
     // The PROM's image is one at every period: the time program's word 25
     // is a result, not a word of the program.
-    let prog = program(&name, period.unwrap_or(20));
-    let prom = prog.prom();
+    let runs = cases(&name, period.unwrap_or(20));
     if prom_only {
+        let prom = &runs[0].prom;
         for k in 0..PROM_WORDS {
-            println!("{:016x}", prom.get(k).map_or(0, |w| w.raw()));
+            println!("{:016x}", prom.get(k).copied().unwrap_or(0));
         }
         return;
     }
-    let park = prog.park.expect("every program parks");
     let Some(period) = period else {
         eprintln!("quux15: a trace is taken at a period: --period <P>, in units of 0.5 ns");
         std::process::exit(2);
     };
-
-    // The pipeline, a row a clock: to the park's first commit, then on until
-    // the memory side is quiet and 32 clocks more.
-    let mut e = Pipeline::new(machine(&prom));
-    e.configure(period, TIMING, CACHE_WORDS);
-    if let Some(f) = planted {
-        e.mutation = f;
-    }
-    let mut t = trace15::Trace15::start(&mut e);
-    e.boot();
-    let mut rows = vec![t.row(&e).line];
-    let mut parked_at = None;
-    loop {
-        if let Some(at) = parked_at
-            && e.clock() >= at + 32
-            && e.quiet()
-        {
-            break;
-        }
-        if e.clock() >= 200_000 {
-            eprintln!("quux15: {name} never reached its park in 200,000 clocks");
-            std::process::exit(1);
-        }
-        match (e.tick(), prog.halts_at) {
-            (Ok(()), _) => {}
-            (Err(Halt::OaOutsideFields { pc, .. }), Some(at)) if u64::from(pc) == at => {
-                // The machine stops: the clock's row says so, and the trace ends.
-                rows.push(t.row_halting(&e, 1).line);
-                parked_at = Some(e.clock());
-                break;
+    let group = runs.len() > 1;
+    let mut out = Vec::new();
+    for case in &runs {
+        let ran = match run_case(case, period, planted) {
+            Ok(r) => r,
+            Err((code, x)) => {
+                eprintln!("quux15: {x}");
+                std::process::exit(code);
             }
-            (Err(h), _) => {
-                eprintln!("quux15: {name} stopped at clock {}: {h:?}", e.clock());
-                std::process::exit(1);
-            }
+        };
+        out.push(trace15::COLUMNS.to_string());
+        out.push(format!(
+            "# generated by golden/src/quux15.rs from muir's pipeline: program {name}, machine: quux, \
+             revision 15, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {CACHE_WORDS} words{}",
+            period / 2,
+            if period % 2 == 1 { 5 } else { 0 },
+            TIMING,
+            planted.map_or(String::new(), |f| format!(", WITH THE PLANTED FAULT {f:?}"))
+        ));
+        if group {
+            out.push(format!("# run {}", case.name));
         }
-        let row = t.row(&e);
-        if parked_at.is_none() && row.commit == Some(Some(park as u16)) {
-            parked_at = Some(e.clock());
-        }
-        rows.push(row.line);
-    }
-
-    // The machine it ends with, against micro's, and the results.
-    if prog.halts_at.is_some() && rows.last().is_some_and(|r| !r.ends_with(" 1")) {
-        eprintln!("quux15: {name} reached its park, not the stop it ends at");
-        std::process::exit(1);
-    }
-    let u = micro(&prog, &prom, period, &name);
-    let d = differences(e.machine(), u.machine());
-    if !d.is_empty() {
-        for x in &d {
-            eprintln!("quux15: {name}: {x}");
-        }
-        eprintln!("quux15: {name}: the pipeline differs from micro in {} places", d.len());
-        std::process::exit(3);
-    }
-    let mut bad = 0;
-    for (a, want, mask, what) in &prog.results {
-        let got = e.machine().amem[*a as usize];
-        if got & mask != *want {
-            eprintln!("quux15: {name}: A {a:o}, {what}: {got:#012x}, not {want:#012x}");
-            bad += 1;
+        out.push(trace15::RADIX.to_string());
+        out.extend(case.images());
+        out.extend(ran.lines);
+        if !group {
+            eprintln!("quux15: {}", ran.summary);
         }
     }
-    if bad > 0 {
-        eprintln!("quux15: {name}: {bad} of {} results wrong", prog.results.len());
-        std::process::exit(1);
+    if group {
+        eprintln!("quux15: {name}: {} runs, each equal to micro's", runs.len());
     }
-
-    println!("{}", trace15::COLUMNS);
-    println!(
-        "# generated by golden/src/quux15.rs from muir's pipeline: program {name}, machine: quux, revision 15, \
-         period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {CACHE_WORDS} words{}",
-        period / 2,
-        if period % 2 == 1 { 5 } else { 0 },
-        TIMING,
-        planted.map_or(String::new(), |f| format!(", WITH THE PLANTED FAULT {f:?}"))
-    );
-    println!("{}", trace15::RADIX);
-    for r in &rows {
-        println!("{r}");
+    let mut stdout = std::io::stdout().lock();
+    for l in &out {
+        use std::io::Write;
+        writeln!(stdout, "{l}").expect("the trace is written");
     }
-    let mt = &e.meters;
-    eprintln!(
-        "quux15: {name}: {} clocks, {} microcycles, {} results equal micro's, {} {:o} at clock {}; \
-         {} squashed, mispredicted {:?}, {} OA-hold clocks, {} start waits, {} MD waits; {} words",
-        e.clock() + 1,
-        mt.retired,
-        prog.results.len(),
-        if prog.halts_at.is_some() { "OA-OUTSIDE-FIELDS at" } else { "park" },
-        prog.halts_at.unwrap_or(park),
-        parked_at.unwrap_or(0),
-        mt.squashed,
-        mt.mispredicted,
-        mt.oa_hold,
-        mt.start_wait,
-        mt.md_wait,
-        prog.words.len(),
-    );
 }

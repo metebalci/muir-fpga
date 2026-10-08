@@ -290,15 +290,24 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # pipeline (`golden/src/trace15.rs`) with the Kria's memory timing and
 # cache, each at each of its periods in units of 0.5 ns: 20, the Kria's
 # design period (10 ns), and 17 (8.5 ns); `time`, which reads time, at
-# A15b.12's 7, 8, 11 and 19 ns as well.  No core is built yet.  `quux15_replay.quux.pass`
-# holds the testbench the core is to be held to, `tb/quux15_core_tb.cpp`, on
-# a stand-in that plays a trace back (`tb/quux15_replay.sv`,
-# `tools/quux15_replay_check.py`); `quux15_generator.quux.pass` holds the
-# generator refusing a pipeline whose machine is not `micro`'s, and its PROM
-# images at 64 bits.
-QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv
+# A15b.12's 7, 8, 11 and 19 ns as well.  `quux15_replay.quux.pass` holds the
+# testbench the core is held to, `tb/quux15_core_tb.cpp`, on a stand-in that
+# plays a trace back (`tb/quux15_replay.sv`, `tools/quux15_replay_check.py`);
+# `quux15_generator.quux.pass` holds the generator refusing a pipeline whose
+# machine is not `micro`'s, and its PROM images at 64 bits.
+# `QUUX15_GROUPS` are traces of many runs each (`golden/src/quux15_preset.rs`),
+# the speculation matrix and programs at random, which hold no time and are
+# traced at 10 ns alone.
+QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dispatch predict imem
+QUUX15_GROUPS := matrix random
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
+QUUX15_PERIODS_matrix := 20
+QUUX15_PERIODS_random := 20
+# The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
+# below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
+# read.
+QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dispatch predict imem $(QUUX15_GROUPS)
 QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                   $(BUILD)/quux15_$(p).quux.p$(q).golden))
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
@@ -1419,30 +1428,38 @@ $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace: $(QUUX15_GOLDEN) | $(BUILD
 	$(GOLDEN) --release --bin quux15 -- --program transfer --machine quux --period 20 \
 	    --mutation HintInverted > $@
 
-# **REVISION 15'S CORE** (`rtl/machine/quux15_core.sv`), with each program of
-# `QUUX15_CORE` as its PROM image, held to that program's traces at every
-# period of `QUUX15_PERIODS` clock for clock by `tb/quux15_core_tb.cpp`: the
-# straight line --- ALU and BYTE words and their bypasses, the OA registers,
-# their selects and hold and OA-OUTSIDE-FIELDS, the PDL buffer, MUL and DIV.
-# Built with every register random at power-on (`--x-initial unique`, the
-# testbench's `randReset`), and with the RAMs' read of an address written in
-# the same clock poisoned (`QUUX15_RDW_POISON`), which the core must never
-# use.
-QUUX15_CORE := alu oa oaout pdl muldiv
+# **REVISION 15'S CORE** (`rtl/machine/quux15_core.sv`), held clock for clock
+# by `tb/quux15_core_tb.cpp` to each program of `QUUX15_CORE` at each of its
+# periods, every run of a trace on a core made for it, its memories loaded
+# from the trace's `# image` lines: ALU and BYTE words and their bypasses,
+# the OA registers, their selects and hold and OA-OUTSIDE-FIELDS, the PDL
+# buffer and its address field, MUL and DIV; transfers and speculation,
+# the micro stack, the guard and WRITE-I-MEM.  One build serves every
+# trace, its registers random at power-on (`--x-initial unique`, the
+# testbench's `randReset`, a run's seed its place in its trace and
+# `QUUX15_SEED`), and the RAMs' read of an address written in the same
+# clock poisoned (`QUUX15_RDW_POISON`), which the core must never use.
+# Each trace is run under two seeds.
 QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/machine/quux15_ram.sv \
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv
 QUUX15_CORE_FLAGS := --x-assign unique --x-initial unique +define+QUUX15_RDW_POISON -Irtl/machine \
-                     -CFLAGS -DQUUX15_TOP=Vquux15_core
-.PRECIOUS: $(BUILD)/obj_quux15_%_core/Vquux15_core
-$(BUILD)/obj_quux15_%_core/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $(BUILD)/quux15_%_prom.hex | $(BUILD)
-	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_$*_core \
-	    -GPROM_HEX='"$(abspath $(BUILD))/quux15_$*_prom.hex"' \
+                     -CFLAGS -DQUUX15_TOP=Vquux15_core -CFLAGS -DQUUX15_CORE
+QUUX15_SEEDS := 1 1000
+$(BUILD)/obj_quux15_core/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core \
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
 
-$(BUILD)/quux15_%.quux.pass: $(BUILD)/obj_quux15_%_core/Vquux15_core \
-                             $(foreach q,$(QUUX15_PERIODS),$(BUILD)/quux15_%.quux.p$(q).golden)
-	$(BUILD)/obj_quux15_$*_core/Vquux15_core $(foreach q,$(QUUX15_PERIODS),$(BUILD)/quux15_$*.quux.p$(q).golden)
-	@touch $@
+define QUUX15_CORE_RULE
+$$(BUILD)/quux15_$(1).quux.pass: $$(BUILD)/obj_quux15_core/Vquux15_core \
+        $$(foreach q,$$(or $$(QUUX15_PERIODS_$(1)),$$(QUUX15_PERIODS)),$$(BUILD)/quux15_$(1).quux.p$$(q).golden)
+	@for s in $$(QUUX15_SEEDS); do \
+	   QUUX15_SEED=$$$$s $$(BUILD)/obj_quux15_core/Vquux15_core \
+	       $$(foreach q,$$(or $$(QUUX15_PERIODS_$(1)),$$(QUUX15_PERIODS)),$$(BUILD)/quux15_$(1).quux.p$$(q).golden) \
+	     || exit 1; \
+	 done
+	@touch $$@
+endef
+$(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p))))
 
 $(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_replay -CFLAGS -DQUUX15_TOP=Vquux15_replay \
@@ -3500,8 +3517,8 @@ MUTANT_QUUX = $(BUILD)/boot_prom.quux13.hex \
               $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%_prom.hex) \
               $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%.quux.k4.golden) \
               $(BUILD)/quux14_windows.quux.k5.golden $(BUILD)/quux14_double.quux.k5.golden \
-              $(QUUX15_CORE:%=$(BUILD)/quux15_%_prom.hex) \
-              $(foreach p,$(QUUX15_CORE),$(foreach q,$(QUUX15_PERIODS),$(BUILD)/quux15_$(p).quux.p$(q).golden))
+              $(foreach p,$(QUUX15_CORE),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
+                $(BUILD)/quux15_$(p).quux.p$(q).golden))
 
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \

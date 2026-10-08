@@ -10,8 +10,11 @@
 //
 // CS sends the address (`re` with `raddr`) and the word is out by the next
 // edge, registered, as the core's CS stage holds it.  `WRITE-I-MEM` writes the
-// RAM in WB (A15b.4); a write and a read of one address in one clock read the
-// old word, and under `QUUX15_RDW_POISON` its complement (`quux15_ram.sv`).
+// RAM in WB (A15b.4).  **A READ OF THE ADDRESS WRITTEN IN THE SAME CLOCK TAKES
+// THE WORD WRITTEN**, by a forward: WRITE-I-MEM's refetch of the word right
+// after it reads it in the clock it is written, and the RAM's own result
+// there, the old word (under `QUUX15_RDW_POISON` its complement,
+// `quux15_ram.sv`), is never used.
 //
 // **THE RAM COMES UP AS muir's MACHINE HAS IT**: `<47:0>` all ones and the
 // extension zero (`golden/src/machine_axis.rs`, "the control store comes up
@@ -37,14 +40,14 @@ module quux15_store #(
 
   localparam logic [13:0] PROM_BASE = 14'o36000;
 
-  logic [63:0] prom[1024];
+  logic [63:0] prom[1024] /* verilator public_flat_rw */;
   initial begin
     for (int unsigned k = 0; k < 1024; k++) prom[k] = 64'd0;
     if (PROM_HEX != "") $readmemh(PROM_HEX, prom);
   end
 
-  logic [63:0] ram_q, prom_q;
-  logic        from_prom;
+  logic [63:0] ram_q, prom_q, fwd_q;
+  logic        from_prom, fwd_v;
   quux15_ram #(
       .WIDTH    (64),
       .DEPTH    (16384),
@@ -63,10 +66,12 @@ module quux15_store #(
     if (re) begin
       prom_q    <= prom[raddr[9:0]];
       from_prom <= raddr >= PROM_BASE;
+      fwd_v     <= we && waddr == raddr && raddr < PROM_BASE;
+      fwd_q     <= wdata;
     end
   end
 
-  assign rdata = from_prom ? prom_q : ram_q;
+  assign rdata = fwd_v ? fwd_q : from_prom ? prom_q : ram_q;
 
 endmodule
 
