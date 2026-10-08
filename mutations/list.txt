@@ -28000,3 +28000,252 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
   logic [31:0] mem_rdata_q;
   always_ff @(posedge clk) mem_rdata_q <= mem_rdata;
 @end
+
+# --------------------------------------------- revision 15's core, the straight line
+#
+# `rtl/machine/quux15_core.sv` held clock for clock to muir's pipeline over
+# `golden/src/quux15.rs`'s programs (`quux15_<program>_quux`).  Each record is
+# one of the slice's planted faults: a bypass, the PDL buffer's forwards and
+# wait, each OR of the OA selects stuck at 0, the hold removed or a clock
+# short, OA-OUTSIDE-FIELDS removed, -RESET leaving the OA registers, MUL's
+# and DIV's clocks, and one each in the datapath, the RAM and the store.
+
+@mutation quux15-d1-into-a-left-out
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note d1, WB's write into the A operand of the word in EX, left out: a word
+@note that reads A at the address the word before wrote reads the old word.
+@old
+    ex_a_d1 = (land_a_we && land_a_addr == ex_a_addr) ? land_data : ex_a;
+@new
+    ex_a_d1 = (land_a_we && land_a_addr == ex_a_addr && 1'b0) ? land_data : ex_a;
+@end
+
+@mutation quux15-d1-into-m-left-out
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note d1 into the M operand left out: M right after its write reads the old word.
+@old
+    ex_m_d1 = (land_m_we && land_m_addr == ex_m_addr && !ex_ir[31]) ? land_data : ex_m;
+@new
+    ex_m_d1 = (land_m_we && land_m_addr == ex_m_addr && !ex_ir[31] && 1'b0) ? land_data : ex_m;
+@end
+
+@mutation quux15-d1-into-a-held-word-left-out
+@check quux15_muldiv_quux
+@file rtl/machine/quux15_core.sv
+@note A word EX holds keeps the operands it began with, not WB's write of
+@note its first clock: a MUL right after its M operand's writer multiplies
+@note the old word when it commits, five clocks on.
+@old
+        ex_m <= ex_m_d1;
+@new
+        ex_m <= ex_m_d1 & ex_m;
+@end
+
+@mutation quux15-d2-into-a-left-out
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note d2, WB's write into the A operand of the word in RD, left out: A two
+@note words after its write reads the old word.
+@old
+    rd_a_n     = (land_a_we && land_a_addr == rd_a_addr) ? land_data : rd_a;
+@new
+    rd_a_n     = (land_a_we && land_a_addr == rd_a_addr && 1'b0) ? land_data : rd_a;
+@end
+
+@mutation quux15-d2-into-m-left-out
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note d2 into the M operand left out: M two words after its write reads the old word.
+@old
+    rd_m_n     = (land_m_we && land_m_addr == rd_m_addr && !rd_ir[31]) ? land_data : rd_m;
+@new
+    rd_m_n     = (land_m_we && land_m_addr == rd_m_addr && !rd_ir[31] && 1'b0) ? land_data : rd_m;
+@end
+
+@mutation quux15-d3-left-out
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note d3, the write landing at the edge A is read at, left out: A three
+@note words after its write takes the RAM's word, which is the old one, and
+@note under the poison its complement.
+@old
+        rd_a_fix_v <= land_a_we && land_a_addr == cs_ir[41:32];
+@new
+        rd_a_fix_v <= land_a_we && land_a_addr == cs_ir[41:32] && 1'b0;
+@end
+
+@mutation quux15-pdl-forward-in-rd-left-out
+@check quux15_pdl_quux
+@file rtl/machine/quux15_core.sv
+@note The PDL buffer's forward from WB into the word in RD left out: the
+@note read two words after a push takes the old word.
+@old
+    rd_pdl_fwd = land_pdl_we && land_pdl_addr == rd_pdl_addr && (rd_seq - land_pdl_seq) >= 8'd2
+@new
+    rd_pdl_fwd = land_pdl_we && land_pdl_addr == rd_pdl_addr && (rd_seq - land_pdl_seq) >= 8'd2 && 1'b0
+@end
+
+@mutation quux15-pdl-forward-at-the-read-left-out
+@check quux15_pdl_quux
+@file rtl/machine/quux15_core.sv
+@note The forward that replaces a read of the address written in the same
+@note clock left out: the read three words after a push takes the RAM's
+@note word, under the poison the old word's complement.
+@old
+        rd_pdl_fix_v <= land_pdl_we && land_pdl_addr == cs_pdl_addr
+@new
+        rd_pdl_fix_v <= land_pdl_we && land_pdl_addr == cs_pdl_addr && 1'b0
+@end
+
+@mutation quux15-pdl-wait-left-out
+@check quux15_pdl_quux
+@file rtl/machine/quux15_core.sv
+@note A PDL read through the pointer or the index the word before writes
+@note from the ALU does not wait for it, and reads at the old one.
+@old
+    pdl_wait = cs_rp[1] && (cs_rp[0] ? nc_ptr_pend : nc_idx_pend);
+@new
+    pdl_wait = cs_rp[1] && (cs_rp[0] ? nc_ptr_pend : nc_idx_pend) && 1'b0;
+@end
+
+@mutation quux15-sl-or-stuck-at-0
+@check quux15_oa_quux
+@file rtl/machine/quux15_core.sv
+@note SL's OR of OA-REG-LOW into the word in EX stuck at 0: a destination,
+@note a function, a rotate and a dispatch-memory write's address go unmodified.
+@old
+    ex_isel    = ex_low | (ex_sl ? oa_lo_bits : 48'd0);
+@new
+    ex_isel    = ex_low | (ex_sl ? oa_lo_bits & 48'd0 : 48'd0);
+@end
+
+@mutation quux15-sh-or-into-a-stuck-at-0
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note SH's OR of OA-REG-HIGH into the A source's address at CS stuck at 0.
+@old
+    cs_ir    = cs_low | cs_sh_a | cs_sh_m;
+@new
+    cs_ir    = cs_low | (cs_sh_a & 48'd0) | cs_sh_m;
+@end
+
+@mutation quux15-sh-or-into-m-stuck-at-0
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note SH's OR of OA-REG-HIGH into the M source's address stuck at 0.
+@old
+    cs_ir    = cs_low | cs_sh_a | cs_sh_m;
+@new
+    cs_ir    = cs_low | cs_sh_a | (cs_sh_m & 48'd0);
+@end
+
+@mutation quux15-oa-hold-left-out
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note The OA-REG-HIGH hold removed: the SH word right after its writer
+@note leaves CS at once and reads the register as it was.
+@old
+    cs_hold  = oa_hold || pdl_wait;
+@new
+    cs_hold  = (oa_hold && 1'b0) || pdl_wait;
+@end
+
+@mutation quux15-oa-hold-a-clock-short
+@check quux15_alu_quux
+@file rtl/machine/quux15_core.sv
+@note The hold while the writer is in RD alone, a clock short: the SH word
+@note leaves CS while its writer is in EX, before the register is written.
+@old
+                            || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
+@new
+                            || (ex_v && !ex_nop && writes_oa_high(ex_ir) && 1'b0));
+@end
+
+@mutation quux15-oa-outside-fields-left-out
+@check quux15_oaout_quux
+@file rtl/machine/quux15_core.sv
+@note OA-OUTSIDE-FIELDS removed: the word with a register bit outside its
+@note fields commits, where the machine stops.
+@old
+    errhalt_now = ex_try && !ex_nop && ex_outside;
+@new
+    errhalt_now = ex_try && !ex_nop && ex_outside && 1'b0;
+@end
+
+@mutation quux15-reset-leaves-the-oa-registers
+@check quux15_oa_quux
+@file rtl/machine/quux15_core.sv
+@note -RESET does not clear OA-REG-LOW and OA-REG-HIGH: they come up as
+@note the flip-flops do, which the testbench makes random, and an SH word
+@note before any write reads that.
+@old
+      overflow <= 1'b0; oa_low <= 26'd0; oa_high <= 22'd0;
+@new
+      overflow <= 1'b0;
+@end
+
+@mutation quux15-div-a-clock-short
+@check quux15_muldiv_quux
+@file rtl/machine/quux15_core.sv
+@note DIV 17 clocks in EX where it is 18.
+@old
+    ex_needs  = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd5 : 5'd1;
+@new
+    ex_needs  = ex_rd_div ? 5'd17 : ex_rd_mul ? 5'd5 : 5'd1;
+@end
+
+@mutation quux15-mul-a-clock-short
+@check quux15_muldiv_quux
+@file rtl/machine/quux15_core.sv
+@note MUL 4 clocks in EX where it is 5.
+@old
+    ex_needs  = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd5 : 5'd1;
+@new
+    ex_needs  = ex_rd_div ? 5'd18 : ex_rd_mul ? 5'd4 : 5'd1;
+@end
+
+@mutation quux15-tag-of-an-arithmetic-function
+@check quux15_alu_quux
+@file rtl/machine/quux15_exec.sv
+@note An arithmetic function's tag taken from the logic table, where it is
+@note M's: an ADD of two fixnums gives a tag of all ones.
+@old
+  assign alu_out = {alumode ? tf : tx, f[31:0]};
+@new
+  assign alu_out = {tf, f[31:0]};
+@end
+
+@mutation quux15-byte-mask-from-bit-0
+@check quux15_alu_quux
+@file rtl/machine/quux15_exec.sv
+@note A DPB's mask from bit 0, where it starts at the rotate: the constants
+@note the programs make ten bits at a time come out wrong.
+@old
+  assign bright  = ir[13] ? ir[5:0] : 6'd0;
+@new
+  assign bright  = ir[13] ? 6'd0 : 6'd0;
+@end
+
+@mutation quux15-ram-read-without-its-enable
+@check quux15_pdl_quux
+@file rtl/machine/quux15_ram.sv
+@note A RAM that reads every clock: the PDL buffer's word of a word waiting
+@note in RD behind a DIV is replaced by the word behind it in CS reads.
+@old
+    if (re) begin
+@new
+    if (re || 1'b1) begin
+@end
+
+@mutation quux15-prom-read-without-its-enable
+@check quux15_alu_quux
+@file rtl/machine/quux15_store.sv
+@note The PROM read every clock: the word CS holds through the OA hold is
+@note replaced by the next address's.
+@old
+    if (re) begin
+@new
+    if (re || 1'b1) begin
+@end

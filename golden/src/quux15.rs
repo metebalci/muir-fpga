@@ -60,11 +60,12 @@ use machine_axis::Which;
 use muir::engine::Engine;
 use muir::isa::Insn;
 use muir::isa::asm::{
-    ADD, ALU, ALWAYS, AND, BYTE, DISPATCH, DMEM_WRITE, DPB, HINT, INVERT, JUMP, LDB, MD, N, OA_HIGH_SELECT, P,
+    ADD, ALU, ALWAYS, AND, BYTE, DISPATCH, DMEM_WRITE, DPB, HINT, INVERT, JUMP, LDB, MD, N, OA_HIGH_SELECT,
+    OA_LOW_SELECT, P,
     POPJ, R, SETA, SETM, SETO, SETZ, SRC_MD, START_READ, START_WRITE, a_dest, a_src, filler, m_dest, m_src,
     src, target,
 };
-use muir::machine::{Geometry, Machine, PROM_WORDS, QUUX_PROM_BASE, Word};
+use muir::machine::{Geometry, Halt, Machine, PROM_WORDS, QUUX_PROM_BASE, Word};
 use muir::micro::Micro;
 use muir::pipeline::{CACHE_WORDS, Mutation, Pipeline, PortTiming};
 use muir::tlb;
@@ -149,11 +150,24 @@ struct Prog {
     results: Vec<(u64, Word, Word, String)>,
     next_k: u64,
     park: Option<u64>,
+    /// `micro`'s OA select check (A15b.15) on: off for a program that reads
+    /// an OA register at a distance, or before any write, as muir's tests
+    /// of the hold do.
+    select_check: bool,
+    /// The program ends at OA-OUTSIDE-FIELDS at this word, not at its park.
+    halts_at: Option<u64>,
 }
 
 impl Prog {
     fn new() -> Self {
-        Prog { words: Vec::new(), results: Vec::new(), next_k: 0, park: None }
+        Prog {
+            words: Vec::new(),
+            results: Vec::new(),
+            next_k: 0,
+            park: None,
+            select_check: true,
+            halts_at: None,
+        }
     }
 
     /// The control store address the next word lands at.
@@ -441,14 +455,227 @@ fn time_program(period: u64) -> Prog {
     p
 }
 
+/// OA-REG-LOW, destination 16.
+const OA_LOW: u64 = fd(0o16);
+/// The PDL buffer's destinations: 10 at the pointer, 11 pushed, 12 at
+/// PDL-INDEX; 13 PDL-INDEX and 14 the pointer.
+const PDL_AT_POINTER: u64 = fd(0o10);
+const PDL_PUSH: u64 = fd(0o11);
+const PDL_AT_INDEX: u64 = fd(0o12);
+const PDL_INDEX: u64 = fd(0o13);
+const PDL_POINTER: u64 = fd(0o14);
+/// Its sources: 24 popped by the pointer, 25 at the pointer, 5 at
+/// PDL-INDEX.
+const PDL_POP: u64 = src(0o24);
+const PDL_TOP: u64 = src(0o25);
+const PDL_AT_IDX: u64 = src(0o5);
+
+/// `v` rotated left `k` places in the ring of 40 (`rol40`).
+fn rol40(v: Word, k: u32) -> Word {
+    let v = v & ((1 << 40) - 1);
+    match k % 40 {
+        0 => v,
+        k => (v << k | v >> (40 - k)) & ((1 << 40) - 1),
+    }
+}
+
+/// **The OA registers and selects** (A15b.15; muir's
+/// `the_oa_high_hold_is_2_1_0_clocks` and its fields): OA-REG-HIGH as
+/// -RESET leaves it, 0, read by an SH word with no writer before it; an SH
+/// word 1, 2 and 3 words after its writer, CS holding it 2, 1 and 0 clocks;
+/// SH on a BYTE word; and SL into each field it reaches but a JUMP's: an ALU
+/// word's A destination, its M destination and its function, a BYTE word's
+/// destination and its rotate and length, a dispatch-memory write's
+/// address.  `micro`'s select check is off, as for muir's test of the hold.
+fn oa_program() -> Prog {
+    let mut p = Prog::new();
+    p.select_check = false;
+    p.start();
+    p.a(0o1700, 0o11).a(0o1701, 0o770000).a(0o1703, 0o33);
+    p.m(0o20, 0o100).m(0o21, 0o300).m(0o24, 0o200).m(0o25, 0o12345670);
+    p.put(ALU | ADD | a_src(0o1700) | m_src(0o20) | OA_HIGH_SELECT, 0o11 + 0o100, "SH at power-on: A 1700 + M 20");
+    for before in 1..=3 {
+        // A 1700 | 3 and M 20 | 4.
+        let v = p.k(3 << 6 | 4);
+        p.op(ALU | SETA | a_src(v) | OA_HIGH);
+        p.fill(before - 1);
+        p.put(
+            ALU | ADD | a_src(0o1700) | m_src(0o20) | OA_HIGH_SELECT,
+            0o33 + 0o200,
+            &format!("SH {before} words after its writer: A 1703 + M 24"),
+        );
+    }
+    // SH on a BYTE word: A 1701 and M 21, the low 12 bits of M into A.
+    let v = p.k(1 << 6 | 1);
+    p.op(ALU | SETA | a_src(v) | OA_HIGH);
+    p.put(byte(LDB, 0, 12) | a_src(0o1700) | m_src(0o20) | OA_HIGH_SELECT, 0o770300, "SH on LDB: M 21 into A 1701");
+    // SL into an ALU word's A destination: A 300 | 5.
+    let (word, v) = (p.k(0o12345), p.k(0o5 << 14));
+    p.op(ALU | SETA | a_src(v) | OA_LOW);
+    p.op(ALU | SETA | a_src(word) | a_dest(0o300) | OA_LOW_SELECT);
+    p.put(ALU | SETA | a_src(0o305), 0o12345, "SL into an A destination: A 305");
+    // Into an M destination: M 20 | 3.
+    let (word, v) = (p.k(0o54321), p.k(0o3 << 14));
+    p.op(ALU | SETA | a_src(v) | OA_LOW);
+    p.op(ALU | SETA | a_src(word) | m_dest(0o20) | OA_LOW_SELECT);
+    p.put(ALU | SETM | m_src(0o23), 0o54321, "SL into an M destination: M 23");
+    // Into the ALU function: SETZ made SETA.
+    let (word, v) = (p.k(0o666), p.k(SETA));
+    p.op(ALU | SETA | a_src(v) | OA_LOW);
+    p.put(ALU | SETZ | a_src(word) | OA_LOW_SELECT, 0o666, "SL into the function: SETZ made SETA");
+    // Into a BYTE word's destination: A 310 | 2.
+    let v = p.k(0o2 << 14);
+    p.op(ALU | SETA | a_src(v) | OA_LOW);
+    p.op(byte(LDB, 0, 12) | m_src(0o21) | a_src(ZERO) | a_dest(0o310) | OA_LOW_SELECT);
+    p.put(ALU | SETA | a_src(0o312), 0o300, "SL into a BYTE destination: A 312");
+    // Into its rotate and length: LDB of one bit made eight, rotated 32.
+    let v = p.k(32 | 7 << 6);
+    p.op(ALU | SETA | a_src(v) | OA_LOW);
+    p.put(
+        byte(LDB, 0, 1) | m_src(0o25) | a_src(ZERO) | OA_LOW_SELECT,
+        rol40(0o12345670, 32) & 0xff,
+        "SL into a BYTE's rotate and length",
+    );
+    // Into a dispatch-memory write's address: entry 2000 | 12, falling
+    // through with N, which the dispatch through it then shows: the word
+    // after it does not run.
+    let count = p.result(2, !0, "a dispatch through the entry SL wrote, N inhibiting one count");
+    p.op(ALU | SETA | a_src(ONE) | a_dest(count));
+    let (entry, v) = (p.k(0o340000), p.k(0o12 << 12));
+    p.op(ALU | SETA | a_src(v) | OA_LOW);
+    p.op(DISPATCH | 0o2000 << 12 | DMEM_WRITE | a_src(entry) | OA_LOW_SELECT);
+    p.op(DISPATCH | 0o2012 << 12);
+    for _ in 0..2 {
+        p.op(ALU | ADD | m_src(M_ONE) | a_src(count) | a_dest(count));
+    }
+    p.park();
+    p
+}
+
+/// **OA-OUTSIDE-FIELDS** (A15b.15): OA-REG-LOW with `<13>`, the output
+/// select, which no field of an ALU word's SL takes; the machine stops at
+/// the word that selects it, before it commits.  The register is written
+/// twice, so that the word in WB when the machine stops, whose write the
+/// pipeline leaves unlanded, writes what is already there.
+fn oaout_program() -> Prog {
+    let mut p = Prog::new();
+    p.select_check = false;
+    p.start();
+    p.put(ALU | SETA | a_src(TWO), 2, "a word before the stop");
+    let v = p.k(1 << 13);
+    p.op(ALU | SETA | a_src(v) | OA_LOW);
+    p.op(ALU | SETA | a_src(v) | OA_LOW);
+    p.halts_at = Some(p.at());
+    p.op(ALU | SETA | a_src(ONE) | a_dest(0o300) | OA_LOW_SELECT);
+    p.fill(4);
+    p.park();
+    p
+}
+
+/// **The PDL buffer** (A15b.3, A15b.10; muir's
+/// `the_pdl_buffer_across_its_wrap`): a read through the pointer right after
+/// its write from the ALU, which waits a clock, and the index's likewise;
+/// pushes across the wrap, each read one, two and three words after (the old
+/// word, WB's forward, and the forward that replaces a read of the address
+/// written in that clock); pops back across it; a write at the pointer and
+/// at the index, read back; and a word that reads and pushes each clock.
+fn pdl_program() -> Prog {
+    let top: Word = 0o37777;
+    let mut p = Prog::new();
+    p.start();
+    let start = p.k(top - 2);
+    p.op(ALU | SETA | a_src(start) | PDL_POINTER);
+    p.put(ALU | SETM | PDL_TOP, 0, "at the pointer right after its write: waits, then the old word");
+    for k in 0..5u64 {
+        let v = p.k(0o1000 + k);
+        p.op(ALU | SETA | a_src(v) | PDL_PUSH);
+        for (j, want) in [(1, 0), (2, 0o1000 + k), (3, 0o1000 + k)] {
+            p.put(ALU | SETM | PDL_TOP, want, &format!("push {k}, read {j} words after"));
+        }
+    }
+    for k in 0..6u64 {
+        let want = if k < 5 { 0o1004 - k } else { 0 };
+        p.put(ALU | SETM | PDL_POP, want, &format!("pop {k}"));
+    }
+    let i = p.k(0o123);
+    p.op(ALU | SETA | a_src(i) | PDL_INDEX);
+    p.put(ALU | SETM | PDL_AT_IDX, 0, "at the index right after its write: waits");
+    let v = p.k(0o4444);
+    p.op(ALU | SETA | a_src(v) | PDL_AT_INDEX);
+    for (j, want) in [(1, 0), (2, 0o4444), (3, 0o4444)] {
+        p.put(ALU | SETM | PDL_AT_IDX, want, &format!("the write at the index, read {j} words after"));
+    }
+    let v = p.k(0o7070);
+    p.op(ALU | SETA | a_src(v) | PDL_AT_POINTER);
+    p.fill(1);
+    p.put(ALU | SETM | PDL_TOP, 0o7070, "the write at the pointer, read two words after");
+    p.op(ALU | SETA | a_src(start) | PDL_POINTER);
+    p.fill(2);
+    // Each push writes the word it read plus one, a word up; the read right
+    // after it takes the old word there, the first pushes' across the wrap.
+    for (k, want) in [0o1000, 0o1001, 0o1002, 0o1003, 0o1004, 0].into_iter().enumerate() {
+        p.op(ALU | ADD | a_src(ONE) | PDL_TOP | PDL_PUSH);
+        p.put(ALU | SETM | PDL_TOP, want, &format!("read and push {k}, then the old word"));
+    }
+    p.put(ALU | SETM | src(0o2), (top - 2 + 6) & top, "the pointer, wrapped");
+    // A word that waits in RD while a DIV holds EX keeps the PDL buffer's
+    // word it read, whatever the word behind it in CS reads.
+    let (n, d) = (p.k(1000), p.k(7));
+    p.op(ALU | SETA | a_src(n) | m_dest(0o20));
+    p.op(ALU | 0o43 << 3 | m_src(0o20) | a_src(d) | m_dest(0o21));
+    p.put(ALU | SETM | PDL_TOP, 6, "at the pointer, read while a DIV held EX");
+    p.put(ALU | SETM | PDL_AT_IDX, 0o4444, "at the index, behind it");
+    p.park();
+    p
+}
+
+/// **MUL and DIV** (A15b.3: DIV 18 clocks in EX, MUL 5): each right after
+/// its M operand's writer (d1), its output and `Q` read right after it, and
+/// the two back to back; operands of both signs, a divisor of zero, and Q
+/// as the M operand.
+fn muldiv_program() -> Prog {
+    use muir::muldiv::{Op as MD_OP, run};
+    let mut p = Prog::new();
+    p.start();
+    let mut q: u32 = 0;
+    let cases: [(u32, u32, u32); 5] =
+        [(1_000_000, 7, 0), (0xffff_cfc7, 67, 12), (0x7fff_ffff, 0xffff_ffff, 99), (5, 0, 3), (123_456, 789, 0x8000_0001)];
+    for (k, &(m, a, q0)) in cases.iter().enumerate() {
+        let (km, ka, kq) = (p.k(Word::from(m)), p.k(Word::from(a)), p.k(Word::from(q0)));
+        p.op(ALU | SETA | a_src(kq) | muir::isa::asm::Q_LOAD | m_dest(0o30));
+        q = q0;
+        p.op(ALU | SETA | a_src(km) | m_dest(0o20));
+        let op = if k % 2 == 0 { MD_OP::Div } else { MD_OP::Mul };
+        let f = if op == MD_OP::Div { 0o43 } else { 0o42 };
+        let (out, nq) = run(op, m, a, q);
+        p.put(ALU | f << 3 | m_src(0o20) | a_src(ka), Word::from(out), &format!("case {k}: {op:?}'s output, read in the next word"));
+        q = nq;
+        p.put(ALU | SETM | muir::isa::asm::SRC_Q, Word::from(q), &format!("case {k}: Q"));
+        // The other, back to back, Q as its M operand.
+        let op2 = if op == MD_OP::Div { MD_OP::Mul } else { MD_OP::Div };
+        let f2 = if op2 == MD_OP::Div { 0o43 } else { 0o42 };
+        let (out2, nq2) = run(op2, q, a, q);
+        p.put(ALU | f2 << 3 | muir::isa::asm::SRC_Q | a_src(ka), Word::from(out2), &format!("case {k}: {op2:?} of Q"));
+        q = nq2;
+        p.put(ALU | SETM | muir::isa::asm::SRC_Q, Word::from(q), &format!("case {k}: Q after both"));
+    }
+    let _ = q;
+    p.park();
+    p
+}
+
 fn program(name: &str, period: u64) -> Prog {
     match name {
         "alu" => alu_program(),
         "transfer" => transfer_program(),
         "memory" => memory_program(),
         "time" => time_program(period),
+        "oa" => oa_program(),
+        "oaout" => oaout_program(),
+        "pdl" => pdl_program(),
+        "muldiv" => muldiv_program(),
         _ => {
-            eprintln!("quux15: no program `{name}`; alu, transfer, memory or time");
+            eprintln!("quux15: no program `{name}`; alu, transfer, memory, time, oa, oaout, pdl or muldiv");
             std::process::exit(2);
         }
     }
@@ -544,19 +771,25 @@ fn differences(e: &Machine, u: &Machine) -> Vec<String> {
     d
 }
 
-/// `micro` run to the park and 16 microcycles on.
-fn micro(prom: &[Insn], period: u64, park: u64, name: &str) -> Micro {
+/// `micro` run to the park and 16 microcycles on, or to the stop the program
+/// ends at.
+fn micro(prog: &Prog, prom: &[Insn], period: u64, name: &str) -> Micro {
     let mut u = Micro::new(machine(prom));
     u.period = period;
+    u.oa_select_check = prog.select_check;
     u.boot();
     let mut n = 0u64;
+    let park = prog.park.expect("every program parks");
     while u64::from(u.machine().opc) != park {
         assert!(n < 400_000, "quux15: {name} never reached its park on micro");
-        if let Err(h) = u.step() {
-            panic!("quux15: {name} stopped on micro at microcycle {n}: {h:?}");
+        match (u.step(), prog.halts_at) {
+            (Ok(()), _) => {}
+            (Err(Halt::OaOutsideFields { pc, .. }), Some(at)) if u64::from(pc) == at => return u,
+            (Err(h), _) => panic!("quux15: {name} stopped on micro at microcycle {n}: {h:?}"),
         }
         n += 1;
     }
+    assert!(prog.halts_at.is_none(), "quux15: {name} reached its park on micro, not its stop");
     for _ in 0..16 {
         u.step().unwrap_or_else(|h| panic!("quux15: {name} stopped on micro at its park: {h:?}"));
     }
@@ -645,9 +878,18 @@ fn main() {
             eprintln!("quux15: {name} never reached its park in 200,000 clocks");
             std::process::exit(1);
         }
-        if let Err(h) = e.tick() {
-            eprintln!("quux15: {name} stopped at clock {}: {h:?}", e.clock());
-            std::process::exit(1);
+        match (e.tick(), prog.halts_at) {
+            (Ok(()), _) => {}
+            (Err(Halt::OaOutsideFields { pc, .. }), Some(at)) if u64::from(pc) == at => {
+                // The machine stops: the clock's row says so, and the trace ends.
+                rows.push(t.row_halting(&e, 1).line);
+                parked_at = Some(e.clock());
+                break;
+            }
+            (Err(h), _) => {
+                eprintln!("quux15: {name} stopped at clock {}: {h:?}", e.clock());
+                std::process::exit(1);
+            }
         }
         let row = t.row(&e);
         if parked_at.is_none() && row.commit == Some(Some(park as u16)) {
@@ -657,7 +899,11 @@ fn main() {
     }
 
     // The machine it ends with, against micro's, and the results.
-    let u = micro(&prom, period, park, &name);
+    if prog.halts_at.is_some() && rows.last().is_some_and(|r| !r.ends_with(" 1")) {
+        eprintln!("quux15: {name} reached its park, not the stop it ends at");
+        std::process::exit(1);
+    }
+    let u = micro(&prog, &prom, period, &name);
     let d = differences(e.machine(), u.machine());
     if !d.is_empty() {
         for x in &d {
@@ -694,12 +940,13 @@ fn main() {
     }
     let mt = &e.meters;
     eprintln!(
-        "quux15: {name}: {} clocks, {} microcycles, {} results equal micro's, park {:o} committed at clock {}; \
+        "quux15: {name}: {} clocks, {} microcycles, {} results equal micro's, {} {:o} at clock {}; \
          {} squashed, mispredicted {:?}, {} OA-hold clocks, {} start waits, {} MD waits; {} words",
         e.clock() + 1,
         mt.retired,
         prog.results.len(),
-        park,
+        if prog.halts_at.is_some() { "OA-OUTSIDE-FIELDS at" } else { "park" },
+        prog.halts_at.unwrap_or(park),
         parked_at.unwrap_or(0),
         mt.squashed,
         mt.mispredicted,

@@ -36,6 +36,10 @@ module quux15_replay (
     output logic [63:0] obs_md,
     output logic [63:0] obs_lc,
     output logic [63:0] obs_ic,
+    output logic [63:0] obs_opnd,
+    output logic [63:0] obs_ea,
+    output logic [63:0] obs_em,
+    output logic [63:0] obs_ob,
     output logic [63:0] obs_oalow,
     output logic [63:0] obs_oahigh,
     output logic [63:0] obs_grant,
@@ -46,10 +50,11 @@ module quux15_replay (
     output logic [63:0] obs_raddr,
     output logic [63:0] obs_queue,
     output logic [63:0] obs_inflight,
-    output logic [63:0] obs_halted
+    output logic [63:0] obs_halted,
+    output logic [63:0] obs_errhalt
 );
-  // The clock and the 24 columns `golden/src/trace15.rs` writes.
-  localparam int COLUMNS = 25;
+  // The clock and the 29 columns `golden/src/trace15.rs` writes.
+  localparam int COLUMNS = 30;
 
   integer fd;
   longint unsigned shown;
@@ -65,14 +70,16 @@ module quux15_replay (
     int n;
     logic [63:0] c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11;
     logic [63:0] c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24;
+    logic [63:0] c25, c26, c27, c28, c29;
     while ($fgets(line, fd) != 0) begin
       if (line.len() < 2 || line.getc(0) == "#") continue;
-      n = $sscanf(line, "%h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h",
+      n = $sscanf(line,
+                  "%h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h %h",
                   c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16,
-                  c17, c18, c19, c20, c21, c22, c23, c24);
+                  c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29);
       if (n != COLUMNS) $fatal(1, "quux15_replay: a row of %0d columns, not %0d", n, COLUMNS);
       row = '{c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17,
-              c18, c19, c20, c21, c22, c23, c24};
+              c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29};
       return;
     end
   endtask
@@ -98,17 +105,22 @@ module quux15_replay (
     obs_md     = value(11);
     obs_lc     = value(12);
     obs_ic     = value(13);
-    obs_oalow  = value(14);
-    obs_oahigh = value(15);
-    obs_grant  = value(16);
-    obs_gaddr  = value(17);
-    obs_mdl    = value(18);
-    obs_mdword = value(19);
-    obs_reg    = value(20);
-    obs_raddr    = value(21);
-    obs_queue    = value(22);
-    obs_inflight = value(23);
-    obs_halted   = value(24);
+    obs_opnd   = value(14);
+    obs_ea     = value(15);
+    obs_em     = value(16);
+    obs_ob     = value(17);
+    obs_oalow  = value(18);
+    obs_oahigh = value(19);
+    obs_grant  = value(20);
+    obs_gaddr  = value(21);
+    obs_mdl    = value(22);
+    obs_mdword = value(23);
+    obs_reg    = value(24);
+    obs_raddr    = value(25);
+    obs_queue    = value(26);
+    obs_inflight = value(27);
+    obs_halted   = value(28);
+    obs_errhalt  = value(29);
   endtask
 
   initial begin

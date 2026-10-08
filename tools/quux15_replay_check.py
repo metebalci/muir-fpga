@@ -16,7 +16,8 @@ the design, which plays a trace back, it must:
   so that no column goes uncompared and the comparison runs to the end;
   pass one value changed where it compares nothing: an event's address or
   word in a clock without the event, a register in a clock without a commit,
-  a nopped word's address, an empty stage's nop bit;
+  an output in a clock that committed no ALU or BYTE word, a nopped word's
+  address, an empty stage's nop bit;
   fail a trace played against a reference it is not (`--as`): one taken
   with a fault planted in muir's pipeline that moves clocks and no result,
   or one taken at another period.
@@ -30,7 +31,8 @@ import subprocess
 import sys
 
 STAGES = {"cs", "rd", "ex", "wb", "commit"}
-AT_COMMIT = {"pdlptr", "pdlidx", "spcptr", "q", "vma", "md", "lc", "ic"}
+AT_COMMIT = {"pdlptr", "pdlidx", "spcptr", "q", "vma", "md", "lc", "ic", "opnd"}
+OPERANDS = {"ea", "em", "ob"}
 EVENT = {"gaddr": "grant", "mdword": "mdl", "raddr": "reg"}
 FIRST = re.compile(r"^FAIL: .* the first at clock (\d+), (\w+)$", re.M)
 
@@ -56,6 +58,8 @@ def compared(names, row, c):
     name = names[c]
     if name in AT_COMMIT:
         return bool(row[names.index("commit")] >> 15 & 1)
+    if name in OPERANDS:
+        return bool(row[names.index("commit")] >> 15 & 1) and row[names.index("opnd")] != 0
     if name in EVENT:
         return row[names.index(EVENT[name])] != 0
     return True
@@ -111,7 +115,8 @@ def check_trace(tb, path, caught, fails):
     # The controls: a change where the testbench compares nothing.
     controls = []
     for name, why in (("gaddr", "an address with no grant"), ("pdlptr", "a register with no commit"),
-                      ("mdword", "a word with nothing landed")):
+                      ("mdword", "a word with nothing landed"),
+                      ("ob", "an output with no ALU or BYTE word committed")):
         c = names.index(name)
         at = [k for k, row in enumerate(rows) if not compared(names, row, c)]
         if at:

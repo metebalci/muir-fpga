@@ -1,0 +1,73 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// **REVISION 15'S CONTROL STORE** (contract G3 revision 15, A15b.2, A15b.4):
+// 16,384 words of 64 bits, MIT's 48 in `<47:0>` and the extension in
+// `<63:48>`, and QUUX's boot PROM at 36000-37777 (contract Q2), 1,024 words
+// of 64 bits read from `PROM_HEX`, a word a line in hex
+// (`golden/src/quux15.rs --prom`).  muir's `Machine::fetch`: an address from
+// 36000 up reads the PROM, which nothing writes, and every other the RAM.
+//
+// CS sends the address (`re` with `raddr`) and the word is out by the next
+// edge, registered, as the core's CS stage holds it.  `WRITE-I-MEM` writes the
+// RAM in WB (A15b.4); a write and a read of one address in one clock read the
+// old word, and under `QUUX15_RDW_POISON` its complement (`quux15_ram.sv`).
+//
+// **THE RAM COMES UP AS muir's MACHINE HAS IT**: `<47:0>` all ones and the
+// extension zero (`golden/src/machine_axis.rs`, "the control store comes up
+// all ones", which muir's `Insn::new` keeps to 48 bits).  No trace fetches a
+// word nobody wrote; the convention says what such a fetch would read.
+//
+// The RAM is inferred here; the board's top chooses the primitive (URAM on
+// the Kria) when revision 15 is built for one.
+
+`default_nettype none
+
+module quux15_store #(
+    parameter string PROM_HEX = ""
+) (
+    input  var logic        clk,
+    input  var logic        re,
+    input  var logic [13:0] raddr,
+    output var logic [63:0] rdata,
+    input  var logic        we,
+    input  var logic [13:0] waddr,
+    input  var logic [63:0] wdata
+);
+
+  localparam logic [13:0] PROM_BASE = 14'o36000;
+
+  logic [63:0] prom[1024];
+  initial begin
+    for (int unsigned k = 0; k < 1024; k++) prom[k] = 64'd0;
+    if (PROM_HEX != "") $readmemh(PROM_HEX, prom);
+  end
+
+  logic [63:0] ram_q, prom_q;
+  logic        from_prom;
+  quux15_ram #(
+      .WIDTH    (64),
+      .DEPTH    (16384),
+      .INIT_WORD(64'h0000_ffff_ffff_ffff)
+  ) ram (
+      .clk  (clk),
+      .re   (re && raddr < PROM_BASE),
+      .raddr(raddr),
+      .rdata(ram_q),
+      .we   (we && waddr < PROM_BASE),
+      .waddr(waddr),
+      .wdata(wdata)
+  );
+
+  always_ff @(posedge clk) begin
+    if (re) begin
+      prom_q    <= prom[raddr[9:0]];
+      from_prom <= raddr >= PROM_BASE;
+    end
+  end
+
+  assign rdata = from_prom ? prom_q : ram_q;
+
+endmodule
+
+`default_nettype wire

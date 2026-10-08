@@ -2689,6 +2689,28 @@ for _p in ("windows", "double", "forward", "inflight0", "mdmove"):
     CHECKS["quux14_%s_quux_k5" % _p] = _timed("quux14_%s_quux" % _p, 5, 0)
 CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_quux", 5, 0)
 
+# **REVISION 15'S CORE** (contract G3 revision 15, appendix A15b):
+# `rtl/machine/quux15_core.sv` on its own, a program of `golden/src/quux15.rs`
+# its PROM image, held clock for clock to that program's traces at 10 and
+# 8.5 ns by `tb/quux15_core_tb.cpp`, the Makefile's `quux15_%.quux.pass` over
+# `QUUX15_CORE`.  Every register comes up random, and the RAMs' read of an
+# address written in the same clock is poisoned.
+QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv")
+QUUX15_PERIODS = (20, 17)
+for _p in QUUX15_CORE:
+    CHECKS["quux15_%s_quux" % _p] = {
+        "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
+                    "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv"],
+        "extra": ["rtl/machine/quux_muldiv.sv"],
+        "top": "quux15_core",
+        "tb": "tb/quux15_core_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--x-assign", "unique", "--x-initial", "unique",
+                  "+define+QUUX15_RDW_POISON", "-Irtl/machine", "-CFLAGS", "-DQUUX15_TOP=Vquux15_core"],
+        "golden": ["quux15_%s.quux.p%d.golden" % (_p, _q) for _q in QUUX15_PERIODS],
+        "prom": "quux15_%s_prom.hex" % _p,
+        "machine": "quux",
+    }
+
 QUUX_TIMED_KEYS = ["dispatch_write_order13_quux"] + \
     ["quux14_%s_quux" % p for p in QUUX14_PROGRAMS] + \
     ["rdw_poison_quux14_%s_quux" % p for p in QUUX14_POISON] + \
@@ -3706,6 +3728,10 @@ def check_makefile():
         programs = re.search(r"^%s := (.*)$" % var, text, re.M)
         for prog in (programs.group(1).split() if programs else []):
             names |= {prefix + prog + "_quux"}
+    # Revision 15's core, on `golden/src/quux15.rs`'s programs it runs.
+    programs = re.search(r"^QUUX15_CORE := (.*)$", text, re.M)
+    for prog in (programs.group(1).split() if programs else []):
+        names |= {"quux15_" + prog + "_quux"}
     for found in sorted(names):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

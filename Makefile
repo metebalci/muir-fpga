@@ -296,7 +296,7 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # `tools/quux15_replay_check.py`); `quux15_generator.quux.pass` holds the
 # generator refusing a pipeline whose machine is not `micro`'s, and its PROM
 # images at 64 bits.
-QUUX15_PROGRAMS := alu transfer memory time
+QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
@@ -327,6 +327,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
+       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1417,6 +1418,31 @@ $(BUILD)/quux15_%_prom.hex: $(QUUX15_GOLDEN) | $(BUILD)
 $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace: $(QUUX15_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux15 -- --program transfer --machine quux --period 20 \
 	    --mutation HintInverted > $@
+
+# **REVISION 15'S CORE** (`rtl/machine/quux15_core.sv`), with each program of
+# `QUUX15_CORE` as its PROM image, held to that program's traces at every
+# period of `QUUX15_PERIODS` clock for clock by `tb/quux15_core_tb.cpp`: the
+# straight line --- ALU and BYTE words and their bypasses, the OA registers,
+# their selects and hold and OA-OUTSIDE-FIELDS, the PDL buffer, MUL and DIV.
+# Built with every register random at power-on (`--x-initial unique`, the
+# testbench's `randReset`), and with the RAMs' read of an address written in
+# the same clock poisoned (`QUUX15_RDW_POISON`), which the core must never
+# use.
+QUUX15_CORE := alu oa oaout pdl muldiv
+QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/machine/quux15_ram.sv \
+                   rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv
+QUUX15_CORE_FLAGS := --x-assign unique --x-initial unique +define+QUUX15_RDW_POISON -Irtl/machine \
+                     -CFLAGS -DQUUX15_TOP=Vquux15_core
+.PRECIOUS: $(BUILD)/obj_quux15_%_core/Vquux15_core
+$(BUILD)/obj_quux15_%_core/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $(BUILD)/quux15_%_prom.hex | $(BUILD)
+	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_$*_core \
+	    -GPROM_HEX='"$(abspath $(BUILD))/quux15_$*_prom.hex"' \
+	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
+
+$(BUILD)/quux15_%.quux.pass: $(BUILD)/obj_quux15_%_core/Vquux15_core \
+                             $(foreach q,$(QUUX15_PERIODS),$(BUILD)/quux15_%.quux.p$(q).golden)
+	$(BUILD)/obj_quux15_$*_core/Vquux15_core $(foreach q,$(QUUX15_PERIODS),$(BUILD)/quux15_$*.quux.p$(q).golden)
+	@touch $@
 
 $(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_replay -CFLAGS -DQUUX15_TOP=Vquux15_replay \
@@ -3473,7 +3499,9 @@ MUTANT_QUUX = $(BUILD)/boot_prom.quux13.hex \
               $(QUUX13_PORTED_L1:%=$(BUILD)/quux13_%.quux.k4l1.golden) \
               $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%_prom.hex) \
               $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%.quux.k4.golden) \
-              $(BUILD)/quux14_windows.quux.k5.golden $(BUILD)/quux14_double.quux.k5.golden
+              $(BUILD)/quux14_windows.quux.k5.golden $(BUILD)/quux14_double.quux.k5.golden \
+              $(QUUX15_CORE:%=$(BUILD)/quux15_%_prom.hex) \
+              $(foreach p,$(QUUX15_CORE),$(foreach q,$(QUUX15_PERIODS),$(BUILD)/quux15_$(p).quux.p$(q).golden))
 
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \

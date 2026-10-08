@@ -25,6 +25,11 @@
 //!             the eight registers EX writes as the last commit left them
 //!             (`muir::pipeline::registers_of`): PDL pointer and index, the
 //!             micro stack's pointer, Q, VMA, MD, LC, INTERRUPT-CONTROL
+//!   opnd      1 when the microcycle committed in this clock ran an ALU or a
+//!             BYTE word
+//!   ea em ob  that word's A operand, its M operand (M memory's word or a
+//!             functional source's) and its output bus, which its
+//!             destination takes (`Pipeline::operands`); 0 with none
 //!   oalow oahigh
 //!             OA-REG-LOW and OA-REG-HIGH as the clock ends
 //!   grant     a start granted at WB in this clock: 1 a read, 3 a write, 0
@@ -40,6 +45,10 @@
 //!             the in-flight list's limits are held each clock and not only
 //!             by results
 //!   halted    1 when the machine is halted, drained
+//!   errhalt   the machine stopped at an error in this clock, the word in EX
+//!             not committed and nothing at the clock's edge done: 1
+//!             OA-OUTSIDE-FIELDS (A15b.15); 0 running.  A trace ends at
+//!             the row that says so
 //!
 //! What the testbench compares of each is its own business and is written
 //! there: a nopped word's address, the registers on a row with no commit,
@@ -51,11 +60,12 @@
 //! trace refuses it rather than dropping one.
 
 use muir::engine::Engine;
+use muir::isa::Op;
 use muir::pipeline::{Event, Pipeline, registers_of};
 
 /// The columns, in order.
 pub const COLUMNS: &str = "# clock cs rd ex wb commit pdlptr pdlidx spcptr q vma md lc ic \
-     oalow oahigh grant gaddr mdl mdword reg raddr queue inflight halted";
+     opnd ea em ob oalow oahigh grant gaddr mdl mdword reg raddr queue inflight halted errhalt";
 
 /// The radix, said once so no reader has to guess.
 pub const RADIX: &str = "# every value hexadecimal; row k is the machine as clock k ends";
@@ -74,6 +84,7 @@ pub fn slot(s: Option<Option<u16>>) -> u64 {
 pub struct Trace15 {
     events: usize,
     commits: usize,
+    operands: usize,
     regs: Option<[u64; 8]>,
 }
 
@@ -89,11 +100,18 @@ impl Trace15 {
     pub fn start(e: &mut Pipeline) -> Self {
         e.events = Some(Vec::new());
         e.registers = Some(Vec::new());
-        Trace15 { events: 0, commits: 0, regs: None }
+        e.operands = Some(Vec::new());
+        Trace15 { events: 0, commits: 0, operands: 0, regs: None }
     }
 
     /// The row of the clock the pipeline has just run, or of its boot.
     pub fn row(&mut self, e: &Pipeline) -> Row {
+        self.row_halting(e, 0)
+    }
+
+    /// The row of a clock in which the machine stopped at the error `code`
+    /// (`errhalt`), or ran (0).
+    pub fn row_halting(&mut self, e: &Pipeline, errhalt: u8) -> Row {
         let clock = e.clock();
         let regs = *self.regs.get_or_insert_with(|| registers_of(e.machine()));
         let mut regs_now = regs;
@@ -101,6 +119,7 @@ impl Trace15 {
         let (mut grant, mut gaddr) = (0u64, 0u64);
         let (mut mdl, mut mdword) = (0u64, 0u64);
         let (mut reg, mut raddr) = (0u64, 0u64);
+        let (mut opnd, mut ea, mut em, mut ob) = (0u64, 0u64, 0u64, 0u64);
         let events = e.events.as_ref().expect("the trace's records are on");
         for &(at, ev) in &events[self.events..] {
             assert_eq!(at, clock, "trace15: an event of clock {at} read at clock {clock}");
@@ -112,6 +131,15 @@ impl Trace15 {
                     let recorded = e.registers.as_ref().expect("the trace's records are on");
                     regs_now = recorded[self.commits];
                     self.commits += 1;
+                    if let Some(pc) = pc {
+                        let operands = e.operands.as_ref().expect("the trace's records are on");
+                        let (at, a, m, out) = operands[self.operands];
+                        assert_eq!(at, pc, "trace15: the operands recorded and the commits disagree at clock {clock}");
+                        self.operands += 1;
+                        if matches!(e.machine().fetch(pc).op(), Op::Alu | Op::Byte) {
+                            (opnd, ea, em, ob) = (1, a, m, out);
+                        }
+                    }
                 }
                 Event::Grant(bus, write) => {
                     assert_eq!(grant, 0, "trace15: two grants in clock {clock}");
@@ -143,7 +171,8 @@ impl Trace15 {
         let r = regs_now;
         let line = format!(
             "{clock:x} {:04x} {:04x} {:04x} {:04x} {commit:04x} {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x} \
-             {oalow:x} {oahigh:x} {grant:x} {gaddr:x} {mdl:x} {mdword:x} {reg:x} {raddr:x} {queue:x} {inflight:x} {:x}",
+             {opnd:x} {ea:x} {em:x} {ob:x} {oalow:x} {oahigh:x} {grant:x} {gaddr:x} {mdl:x} {mdword:x} {reg:x} \
+             {raddr:x} {queue:x} {inflight:x} {:x} {errhalt:x}",
             slot(cs),
             slot(rd),
             slot(ex),
