@@ -25,6 +25,8 @@
 //!             (muir's `dispatches_predicted_each_way_end_as_on_micro`)
 //!   predict   a dispatch predicted at its entry's address with another P or
 //!             R, which EX's check of P and R squashes and restores
+//!   slotstep  a return to the main loop under N whose nopped slot steps LC,
+//!             RD resolving the next return from that step
 //!   imem      WRITE-I-MEM in MIT's form: words written and run later
 //!   imemorder WRITE-I-MEM going on at the word after it in execution
 //!             order: the word right after it written, the word two after
@@ -786,6 +788,42 @@ pub fn predict_program() -> Preset {
     p.fill(1);
     p.op(ALU | ADD | a_src(ONE) | m_src(0o23) | m_dest(0o23) | POPJ);
     p.fill(1);
+    p
+}
+
+/// **A delay slot N nops steps LC all the same**: a return to the main loop
+/// (the popped word's `<14>`) by a JUMP with R and N, which RD resolves, its
+/// slot nopped and stepping LC as the next microcycle does; then at the
+/// return's address a POPJ to the main loop again, which RD resolves from
+/// its copy of NEEDFETCH as that step left it.  LC written 0 sets
+/// NEEDFETCH, so the first return goes to its address as it is, the word
+/// after its slot; the slot's step makes LC 2 and clears NEEDFETCH, so the
+/// second goes to its address with `<1>` set.  A copy that missed the step
+/// would leave the POPJ to EX, which redirects.
+pub fn slot_step() -> Preset {
+    let mut p = Preset::new();
+    // The slot's step starts LC's fetch, which -RESET's sweep would hold.
+    p.skip_sweep = true;
+    let (w, main) = (0o200u64, 0o300u64);
+    let lc = p.k(0);
+    let second = p.k(main | 1 << 14);
+    let first = p.k((w + 2) | 1 << 14);
+    p.op(ALU | SETA | a_src(lc) | fd(0o1));
+    p.op(ALU | SETA | a_src(second) | fd(0o15));
+    p.op(ALU | SETA | a_src(first) | fd(0o15));
+    p.fill(2);
+    p.op(JUMP | ALWAYS | N | target(w));
+    p.fill(1);
+    p.fill_to(w);
+    p.op(JUMP | ALWAYS | R | N | target(0));
+    p.op(ALU | ADD | a_src(ONE) | m_src(0o20) | m_dest(0o20));
+    p.op(ALU | ADD | a_src(ONE) | m_src(0o21) | m_dest(0o21) | POPJ);
+    p.op(ALU | ADD | a_src(ONE) | m_src(0o22) | m_dest(0o22));
+    p.op(ALU | ADD | a_src(ONE) | m_src(0o23) | m_dest(0o23));
+    p.stop();
+    p.fill_to(main | 2);
+    p.op(ALU | ADD | a_src(ONE) | m_src(0o24) | m_dest(0o24));
+    p.stop();
     p
 }
 

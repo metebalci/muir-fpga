@@ -53,7 +53,7 @@
 
 module quux15_port #(
     parameter int unsigned SETS    = 4096,
-    parameter bit          ONE_WRITE_ID = 1'b0,
+    parameter bit          ONE_WRITE_ID = 1'b1,
     parameter int unsigned ID_BITS = 4,
     localparam int unsigned SB = $clog2(SETS),
     localparam int unsigned TB = 26 - SB
@@ -152,6 +152,13 @@ module quux15_port #(
   endfunction
   function automatic logic [TB-1:0] tag_of(input logic [28:0] b);
     return b[28 -: TB];
+  endfunction
+  // A written word as the line keeps it, what a fill would read back: main
+  // memory's whole word; in the frame buffer's window (`<28>`) the field
+  // with a fixnum's tag, `005`, the window storing the field and dropping
+  // the tag (G1 §4.2).
+  function automatic logic [39:0] as_held(input logic [28:0] b, input logic [39:0] w);
+    return b[28] ? {8'o005, w[31:0]} : w;
   endfunction
   /* verilator lint_on UNUSEDSIGNAL */
 
@@ -646,7 +653,7 @@ module quux15_port #(
         // A write-back's posted word: the line its table read found.
         if (post_push) begin
           nv[n] = 1'b1; nyoung[n] = 1'b1;
-          nset[n] = set_of(post_bus); nlane[n] = post_bus[2:0]; nword[n] = post_word;
+          nset[n] = set_of(post_bus); nlane[n] = post_bus[2:0]; nword[n] = as_held(post_bus, post_word);
           nhit[n] = tl_v && tl_line == post_bus[28:3];
           nway[n] = tl_way;
           if (install && set_of(post_bus) == f_set && tl_way == victim) nhit[n] = 1'b0;
@@ -658,7 +665,7 @@ module quux15_port #(
           // The entry's address: granted in this clock, the start's own.
           nset[n] = set_of((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot]);
           nlane[n] = (w_push && w_slot == fix_slot) ? w_bus[2:0] : q_bus[fix_slot][2:0];
-          nword[n] = fix_word;
+          nword[n] = as_held((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot], fix_word);
           nslot[n] = fix_slot;
           if (w_push && w_slot == fix_slot) begin
             // Granted in this clock: its tag read answers next clock.

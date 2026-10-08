@@ -71,10 +71,13 @@ module quux15_mmu #(
     output var logic [39:0] post_word,
     input  var logic        post_ok,
 
-    // --- Port B: EX's word reaches its lookup; the `MD` it reads.
+    // --- Port B: EX's word reaches its lookup; the `MD` it reads; its
+    // walk done in an earlier clock, so that it takes the TLB as it stands.
     input  var logic        b_req,
     input  var logic [31:0] b_va,
+    input  var logic        b_walked,
     output var logic        b_hold,
+    output var logic        b_walk_done,   // its walk done: it holds a clock
     output var logic [29:0] b_entry,
 
     // --- The WRITE-MAP operation landing at the head of EX's microcycle.
@@ -423,13 +426,19 @@ module quux15_mmu #(
     bw_data = {b_va[31:22], wb.entry};
     if (region(b_va) == PAGED && b_hit) begin
       b_entry = b_hit_entry;
+    end else if (region(b_va) == PAGED && !b_walked) begin
+      // **A WALK'S FILL IS USED A CLOCK LATER**: the word holds the clock
+      // its walk ends, the fill written at the edge, and looks the TLB up
+      // again in the next (muir's `ex_stage`, `b_walked`), so that no table
+      // word reaches EX's operand in the clock it lands.
+      b_hold = 1'b1;
     end else if (region(b_va) == PAGED) begin
-      if (!wb.done) b_hold = 1'b1;
-      else if (wb.fill) b_entry = wb.entry;
-      else b_entry = NO_ENTRY;
+      // Walked, and the TLB without it: the walk found no entry.
+      b_entry = NO_ENTRY;
     end
-    b_called = b_req && region(b_va) == PAGED && !b_hit;
-    bw_v     = b_called && wb.done && wb.fill;
+    b_called    = b_req && region(b_va) == PAGED && !b_hit && !b_walked;
+    bw_v        = b_called && wb.done && wb.fill;
+    b_walk_done = b_called && wb.done;
     if (!b_called) wb = '{state: wa.state, va: wa.va, default: '0};
   end
 

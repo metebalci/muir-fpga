@@ -300,7 +300,7 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # starts (`randmem`, `matrixmem`), traced at 10 ns alone; and the memory
 # side's rows (`golden/src/quux15_memside.rs`), `ports` and `walk`, at both
 # periods, where the port's clocks round differently.
-QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict imem
+QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep imem
 QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
@@ -312,7 +312,7 @@ QUUX15_PERIODS_timers := 14 16 17 20 22 38
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
-QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict imem memory time $(QUUX15_GROUPS)
+QUUX15_CORE := alu oa oaout pdl muldiv transfer stack pdlfield pdlfieldout dconst dispatch predict slotstep imem memory time $(QUUX15_GROUPS)
 QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                   $(BUILD)/quux15_$(p).quux.p$(q).golden))
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
@@ -341,7 +341,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
-       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) \
+       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.b2.pass) \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1418,14 +1418,15 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 
 # Revision 15's programs (`QUUX15_PROGRAMS`): a trace's name carries its
 # period, `quux15_<program>.quux.p<P>.golden`, and the PROM image is one at
-# every period.
+# every period.  `quux15_<program>.quux.p<P>.b2.golden` is the same program
+# with two bubbles, A15b.14's fallback (`--bubbles 2`).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
                  golden/src/quux15_devices.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 $(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux15 -- --program $(word 1,$(subst ., ,$*)) --machine quux \
-	    --period $(patsubst p%,%,$(word 3,$(subst ., ,$*))) > $@
+	    --period $(patsubst p%,%,$(word 3,$(subst ., ,$*))) $(if $(filter b2,$(subst ., ,$*)),--bubbles 2) > $@
 $(BUILD)/quux15_%_prom.hex: $(QUUX15_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux15 -- --program $* --prom > $@
 # A trace with a fault planted in muir's pipeline, which moves clocks and no
@@ -1458,17 +1459,25 @@ $(BUILD)/obj_quux15_core/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp 
 	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core \
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
 
+# **AND WITH TWO BUBBLES** (A15b.14's fallback, the core's `BUBBLES` 2),
+# every program's traces taken with two (`quux15_%.quux.b2.pass`), until the
+# boards' fits decide between them.
+$(BUILD)/obj_quux15_core_b2/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -GBUBBLES=2 -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_b2 \
+	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
+
 define QUUX15_CORE_RULE
-$$(BUILD)/quux15_$(1).quux.pass: $$(BUILD)/obj_quux15_core/Vquux15_core \
-        $$(foreach q,$$(or $$(QUUX15_PERIODS_$(1)),$$(QUUX15_PERIODS)),$$(BUILD)/quux15_$(1).quux.p$$(q).golden)
+$$(BUILD)/quux15_$(1).quux$(3).pass: $$(BUILD)/obj_quux15_core$(2)/Vquux15_core \
+        $$(foreach q,$$(or $$(QUUX15_PERIODS_$(1)),$$(QUUX15_PERIODS)),$$(BUILD)/quux15_$(1).quux.p$$(q)$(3).golden)
 	@for s in $$(QUUX15_SEEDS); do \
-	   QUUX15_SEED=$$$$s $$(BUILD)/obj_quux15_core/Vquux15_core \
-	       $$(foreach q,$$(or $$(QUUX15_PERIODS_$(1)),$$(QUUX15_PERIODS)),$$(BUILD)/quux15_$(1).quux.p$$(q).golden) \
+	   QUUX15_SEED=$$$$s $$(BUILD)/obj_quux15_core$(2)/Vquux15_core \
+	       $$(foreach q,$$(or $$(QUUX15_PERIODS_$(1)),$$(QUUX15_PERIODS)),$$(BUILD)/quux15_$(1).quux.p$$(q)$(3).golden) \
 	     || exit 1; \
 	 done
 	@touch $$@
 endef
-$(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p))))
+$(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p),,)))
+$(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p),_b2,.b2)))
 
 $(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_replay -CFLAGS -DQUUX15_TOP=Vquux15_replay \

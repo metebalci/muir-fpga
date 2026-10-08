@@ -58,10 +58,12 @@
 // `LateModel` draws for it
 // (`# late <seed> <most> <errors>`), draw for draw in accept order, the
 // first `errors` writes answered with an error; and a new write's address
-// and first beat taken `occupancy` clocks after the last.  muir lands the
-// writes in order, several in one clock when a later one was answered
-// first: each write has its own ID, and a write whose landing an earlier
-// one decides is answered before that one, earliest deadline first.  A run
+// and first beat taken `occupancy` clocks after the last.  muir answers the
+// writes in order, one a clock, a write drawn earlier than the one before
+// it answered the clock after that one (A15b.5, one ID for every write).
+// With the core's `ONE_WRITE_ID` clear, each write has its own ID, and a
+// write whose landing an earlier one decides is answered before that one,
+// earliest deadline first.  A run
 // with `# sweep skipped` has -RESET's sweep of the TLB taken as done, as
 // muir's `Pipeline::skip_sweep` takes it.  Its `# period` and `# rtc` lines
 // are the board's period in units of 0.5 ns and the real-time clock's
@@ -573,7 +575,7 @@ class Bench {
       w.error = errors_ > 0;
       if (errors_ > 0) --errors_;
       w.exact = r > last_land_;
-      w.land = r > last_land_ ? r : last_land_;
+      w.land = r > last_land_ ? r : last_land_ + 1;
       last_land_ = w.land;
       last_accept_ = t;
       accepted_any_ = true;
@@ -590,7 +592,7 @@ class Bench {
     // Every write answered by its deadline.
     const uint64_t wc = d->axi_write_clocks;
     for (const Write &w : writes_)
-      if (!d->axi_one_write_id && !w.b_done && t + wc >= w.land) {
+      if (!w.b_done && t + wc >= w.land) {
         why = "a write's B missed its clock";
         return false;
       }

@@ -65,9 +65,13 @@ module quux15_core #(
     // The frame buffer's words, the device window's slice 0: the video
     // controller at 1280 by 1024, a bit a pixel.
     parameter int unsigned FB_WORDS = 40960,
-    // One AXI ID for every write, as the board needs (A15b.5); clear while
-    // muir's seeded memory model may answer a later write first.
-    parameter bit ONE_WRITE_ID = 1'b0
+    // One AXI ID for every write, as the board needs (A15b.5), its writes
+    // answered in order; clear, an ID a slot of the port's in-flight list.
+    parameter bit ONE_WRITE_ID = 1'b1,
+    // The bubbles a wrong prediction costs (A15b.14): 1, EX's decision
+    // driving the next fetch's address in its own clock; or 2, the fallback,
+    // the target fetched a clock later (muir's `Pipeline::bubbles`).
+    parameter int unsigned BUBBLES = 1
 ) (
     input  var logic        clk,
     // Power-on: the machine as muir's `Pipeline::boot` leaves it, the boot's
@@ -284,7 +288,7 @@ module quux15_core #(
   logic [1:0]  st_v, st_write, st_fetch, st_word_v;
   logic [31:0] st_va [2];
   logic [39:0] st_word [2];
-  logic        ex_map_held, ex_late_held, ex_int_rd;
+  logic        ex_map_held, ex_late_held, ex_b_walked, ex_int_rd;
 
   // --- The front end: the next fetch's address, the one after it when RD
   // or a redirect chose it before the word between was fetched, the next
@@ -417,14 +421,28 @@ module quux15_core #(
       .waddr(land_a_addr),
       .wdata(land_data)
   );
+  // **THE PDL BUFFER TAKES A WRITE A CLOCK AFTER IT LANDS**, held in
+  // `pdlw_*` meanwhile: a read at the edge a write lands at reads the word
+  // before it, as muir's reads before the edge's landing do, whatever the
+  // RAM would make of a read and a write of one address at one edge; a read
+  // at the next edge takes the held word (`rd_pdl_fix`).  With two bubbles
+  // the word after a writer is read at the edge its writer lands at.
+  logic        pdlw_v;
+  logic [13:0] pdlw_addr;
+  logic [39:0] pdlw_data;
+  always_ff @(posedge clk) begin
+    pdlw_v    <= land_pdl_we && running;
+    pdlw_addr <= land_pdl_addr;
+    pdlw_data <= land_pdl_data;
+  end
   quux15_ram #(.WIDTH(40), .DEPTH(16384)) pdl (
       .clk  (clk),
       .re   (pdl_re),
       .raddr(pdl_raddr),
       .rdata(pdl_q),
-      .we   (land_pdl_we && running),
-      .waddr(land_pdl_addr),
-      .wdata(land_pdl_data)
+      .we   (pdlw_v && !rst),
+      .waddr(pdlw_addr),
+      .wdata(pdlw_data)
   );
 
   // The machine runs: out of reset, and no error halt now or before.  The
@@ -848,7 +866,7 @@ module quux15_core #(
       .m_rlast(m_rlast), .m_rvalid(m_rvalid), .m_rready(m_rready));
 
   logic [31:0] a_next_va, b_next_va, a_va, b_va, k_va;
-  logic        a_req, a_hold, k_req, k_write, k_hold, k_busy, b_req, b_hold, op_v, rw_v, sweeping;
+  logic        a_req, a_hold, k_req, k_write, k_hold, k_busy, b_req, b_hold, b_walk_done, op_v, rw_v, sweeping;
   logic [29:0] a_entry, b_entry, k_entry;
   logic [39:0] k_md, op_vma, op_md;
   logic [7:0]  rw_k;
@@ -863,7 +881,8 @@ module quux15_core #(
       .k_req(k_req), .k_va(k_va), .k_entry(k_entry), .k_write(k_write), .k_md(k_md),
       .k_hold(k_hold), .k_busy(k_busy), .post_req(post_req), .post_bus(post_bus), .post_word(post_word),
       .post_ok(post_ok),
-      .b_req(b_req), .b_va(b_va), .b_hold(b_hold), .b_entry(b_entry),
+      .b_req(b_req), .b_va(b_va), .b_walked(ex_b_walked), .b_hold(b_hold), .b_walk_done(b_walk_done),
+      .b_entry(b_entry),
       .op_v(op_v), .op_vma(op_vma), .op_md(op_md),
       .t_start(t_start), .t_addr(t_addr), .t_ready(t_ready), .t_word(t_word),
       .rw_v(rw_v), .rw_k(rw_k), .rw_data(rw_data),
@@ -1730,14 +1749,18 @@ module quux15_core #(
   logic        hold_r, hold_x, rd_killed, rd_moves_n, rd_moves_x;
   logic [13:0] follower_r, follower_x;
 
-  // **RD's CHOICES, THREE WAYS, EX's OUTCOME SELECTING AT THE END**
-  // (`plan_for`): the plan from the copies as the clock began, which is the
-  // one RD makes unless EX squashes or redirects (muir's `rd_plan`, before
-  // WB and EX); the plan of a delay slot EX squashes under N, a nopped
-  // word's, LC's own step alone; and the plan after a redirect, from the
-  // copies EX restores, which feeds only registers (CS is squashed then).
-  // Each is complete on its own, so that EX's decision chooses among them
-  // and does not run through them.
+  // **RD's CHOICES, EX's OUTCOME SELECTING AT THE END** (`plan_for`): the
+  // plan from the copies as the clock began, which is the one RD makes
+  // unless EX squashes or redirects (muir's `rd_plan`, before WB and EX);
+  // and the plan of a delay slot EX squashes under N, a nopped word's, LC's
+  // own step alone.  **AFTER A REDIRECT THE DELAY SLOT WAITS IN RD A
+  // CLOCK** and plans from the restored copies in the next, so that no plan
+  // follows EX's outcome in the clock EX decides it; the bubble comes ahead
+  // of the slot, and none is added.  With two bubbles the target comes a
+  // clock later anyway, and the slot plans at the redirect from the copies
+  // EX restores (`plan_x`), which feeds only registers, CS being empty.
+  // Each plan is complete on its own, so that EX's decision chooses among
+  // them and does not run through them.
   always_comb begin
     follower_r = (cs_v && cs_seq == rd_seq + 8'd1) ? cs_pc : npc;
     plan_r = rd_plan(c, follower_r, 1'b0, rd_nop, rd_pre_nop, nsw_v, nsw_ptr, nsw_word, land_spc);
@@ -1800,9 +1823,16 @@ module quux15_core #(
         npc_e = refetch_pc;
         npc_after_e = redirect_to;
         npc_after_v_e = 1'b1;
+        // Two bubbles: the slot RD nopped on the prediction is fetched again
+        // a clock later, as the target would be.
+        if (BUBBLES == 2) block_load = 1'b1;
       end else if (slot_here) begin
         npc_e = redirect_to;
         npc_after_v_e = 1'b0;
+        // Two bubbles: the target a clock later.  With the delay slot not
+        // fetched yet there is nothing to delay, the slot being the next
+        // word in sequence.
+        if (BUBBLES == 2) block_load = 1'b1;
       end else begin
         // The delay slot not fetched yet: it comes first.
         npc_e = ex_pc + 14'd1;
@@ -1840,11 +1870,12 @@ module quux15_core #(
     plan_k = '0;
     plan_k.e.dest = D_NONE;
     plan_k.e.lcstep_own = c_app.next_instr;
-    plan = redirect ? plan_x : rd_killed ? plan_k : plan_r;
-    // RD moves on its own plan, or a squashed slot's, which never holds;
-    // after a redirect, on the redirect's.
+    plan = (BUBBLES == 2 && redirect) ? plan_x : rd_killed ? plan_k : plan_r;
+    // RD moves on its own plan, or a squashed slot's, which never holds.
+    // After a redirect RD holds the delay slot, which waits, or nothing;
+    // with two bubbles the slot moves on the redirect's plan.
     rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0;
-    rd_moves_x = rd_keep && ex_free && !hold_x && errhalt_now == 1'b0;
+    rd_moves_x = BUBBLES == 2 && rd_keep && ex_free && !hold_x && errhalt_now == 1'b0;
     rd_moves = redirect ? rd_moves_x : rd_moves_n;
     // CS follows RD only without a redirect, which keeps no word behind the
     // delay slot: the plan after a redirect reaches NPC's registers alone.
@@ -1961,7 +1992,7 @@ module quux15_core #(
       ack_left <= 2'd0; pend_v <= 1'b0; pend_dev <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
       wp_v <= 1'b0; pw_v <= 1'b0; rgw_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
       bus_nxm <= 1'b0; errstop <= 1'b0; posted_errors <= '0;
-      wb_fresh <= 1'b0; st_v <= '0; ex_map_held <= 1'b0; ex_late_held <= 1'b0;
+      wb_fresh <= 1'b0; st_v <= '0; ex_map_held <= 1'b0; ex_late_held <= 1'b0; ex_b_walked <= 1'b0;
     end else if (errhalt != 2'd0) begin
       // Stopped: nothing moves.
       obs_commit <= 16'd0;
@@ -2076,6 +2107,7 @@ module quux15_core #(
         ex_clocks <= 5'd0;
         ex_map_held <= 1'b0;
         ex_late_held <= 1'b0;
+        ex_b_walked <= 1'b0;
         // The interrupt as it stood in the word's last clock in RD: what a
         // check that sampled there would read (a planted fault's).
         ex_int_rd <= int_now;
@@ -2089,6 +2121,7 @@ module quux15_core #(
         if (ex_reach_mul) ex_clocks <= ex_clocks + 5'd1;
         if (ex_go && !md_wait && !start_wait && map_hold) ex_map_held <= 1'b1;
         if (ex_late) ex_late_held <= 1'b1;
+        if (b_walk_done) ex_b_walked <= 1'b1;
       end
 
       // --- RD: CS's word, read at this edge; or the word RD holds, d2 and
@@ -2105,11 +2138,16 @@ module quux15_core #(
         rd_m_addr <= cs_ir[30:26];
         rd_m <= (land_m_we && land_m_addr == cs_ir[30:26]) ? land_data : mmem[cs_ir[30:26]];
         rd_pdl_addr <= cs_pdl_addr;
-        // The PDL buffer: the old word, unless the write two or more words
-        // before replaces it.
-        rd_pdl_fix_v <= land_pdl_we && land_pdl_addr == cs_pdl_addr
-                     && (cs_seq - land_pdl_seq) >= 8'd2 && (cs_seq - land_pdl_seq) < 8'd128;
-        rd_pdl_fix   <= land_pdl_data;
+        // The PDL buffer: the old word, unless the write landing at this
+        // edge, two or more words before, replaces it; or the write landed
+        // at the last edge, which the RAM takes at this one.
+        begin
+          logic land_fix;
+          land_fix = land_pdl_we && land_pdl_addr == cs_pdl_addr
+                  && (cs_seq - land_pdl_seq) >= 8'd2 && (cs_seq - land_pdl_seq) < 8'd128;
+          rd_pdl_fix_v <= land_fix || (pdlw_v && pdlw_addr == cs_pdl_addr);
+          rd_pdl_fix   <= land_fix ? land_pdl_data : pdlw_data;
+        end
       end else if (rd_moves || !rd_keep) begin
         rd_v <= 1'b0;
       end else begin
@@ -2131,7 +2169,8 @@ module quux15_core #(
         npc <= npc_after_v_e ? npc_after_e : npc_e + 14'd1;
         npc_after_v <= 1'b0;
         nop_next <= 1'b0; pre_nop_next <= 1'b0;
-      end else if (!cs_keep) begin
+      end else if (!cs_keep || cs_moves) begin
+        // Squashed, or gone to RD with the next fetch a clock later.
         cs_v <= 1'b0;
       end else begin
         cs_nop <= cs_n_nop; cs_pre_nop <= cs_n_pre;

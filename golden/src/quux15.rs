@@ -6,7 +6,7 @@
 //! (`muir::pipeline::Pipeline`, the `rtl` engine on revision 15) with the
 //! Kria KR260's memory timing and cache, at a period of `P` units of 0.5 ns.
 //!
-//!     quux15 --program <name> --period <P> [--mutation <fault>]
+//!     quux15 --program <name> --period <P> [--bubbles <B>] [--mutation <fault>]
 //!     quux15 --program <name> --prom
 //!
 //! Each program is written in `golden/src/trace15.rs`'s columns, which
@@ -49,8 +49,8 @@
 //!
 //! and muir's own kind of program, `golden/src/quux15_preset.rs`: the
 //! speculation matrix (`matrix`) and programs at random (`random`), each a
-//! trace of many runs, a `# run` line naming each; `dispatch`, `predict`
-//! and `imem`.  **A TRACE CARRIES ITS MEMORIES**: every run's PROM, and a
+//! trace of many runs, a `# run` line naming each; `dispatch`, `predict`,
+//! `slotstep` and `imem`.  **A TRACE CARRIES ITS MEMORIES**: every run's PROM, and a
 //! preset program's control store, A, M and dispatch memory, as
 //! `# image <memory> <address> <word>` lines, which the testbench writes into
 //! the core before its reset ends, as a bitstream would hold them.
@@ -65,6 +65,11 @@
 //! refuses a trace whose machine ends otherwise than `micro`'s (A, M, the
 //! micro stack, the PDL buffer, dispatch memory, main memory and the
 //! registers), or whose results are not the program's.
+//!
+//! **`--bubbles 2` TAKES A15b.14'S FALLBACK**: a wrong prediction costs two
+//! bubbles, the target fetched a clock later (`Pipeline::bubbles`), for the
+//! core built with `BUBBLES` 2; the trace says so in its second line.  The
+//! contract's one bubble is the default.
 //!
 //! **`--mutation` PLANTS ONE OF MUIR'S FAULTS IN THE PIPELINE**
 //! (`muir::pipeline::Mutation`, by its name), for the checks that show this
@@ -512,7 +517,8 @@ fn rol40(v: Word, k: u32) -> Word {
 /// SH on a BYTE word; and SL into each field it reaches but a JUMP's: an ALU
 /// word's A destination, its M destination and its function, a BYTE word's
 /// destination and its rotate and length, a dispatch-memory write's
-/// address.  `micro`'s select check is off, as for muir's test of the hold.
+/// address; and an SH word in a delay slot that CS holds while its jump
+/// redirects.  `micro`'s select check is off, as for muir's test of the hold.
 fn oa_program() -> Prog {
     let mut p = Prog::new();
     p.select_check = false;
@@ -574,6 +580,18 @@ fn oa_program() -> Prog {
     for _ in 0..2 {
         p.op(ALU | ADD | m_src(M_ONE) | a_src(count) | a_dest(count));
     }
+    // SH in a delay slot, held in CS by OA-REG-HIGH's writer in EX while the
+    // jump before it moves on, so that the jump, hinted not taken and taken,
+    // redirects with its slot still in CS.  OA-REG-HIGH zero: the select
+    // changes no address.
+    let ran = p.result(1, !0, "the slot held in CS at its jump's redirect runs once");
+    p.op(ALU | SETA | a_src(ZERO) | a_dest(ran));
+    p.op(ALU | SETA | a_src(ZERO) | OA_HIGH);
+    let t = p.at() + 3;
+    p.op(jcond(3) | m_src(M_ZERO) | a_src(ZERO) | target(t));
+    p.op(ALU | ADD | m_src(M_ONE) | a_src(ran) | a_dest(ran) | OA_HIGH_SELECT);
+    p.fill(1);
+    p.fill_to(t);
     p.park();
     p
 }
@@ -1169,10 +1187,11 @@ const REACHED: [&str; 14] = [
 /// **A run on the pipeline, a row a clock**: to the park's first commit,
 /// then on until the memory side is quiet and 32 clocks more, or to the
 /// error halt it ends at; its machine against `micro`'s, and its results.
-fn run_case(case: &Case, period: u64, planted: Option<Mutation>) -> Result<Ran, (i32, String)> {
+fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) -> Result<Ran, (i32, String)> {
     let name = &case.name;
     let mut e = Pipeline::new(machine(case));
     e.configure(period, case.timing.unwrap_or(TIMING), CACHE_WORDS);
+    e.bubbles = bubbles;
     if let Some(f) = planted {
         e.mutation = f;
     }
@@ -1293,6 +1312,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "filedev" => quux15_devices::filedev().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "imemorder" => quux15_preset::imem_order().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "predict" => vec![quux15_preset::predict_program().case("predict")],
+        "slotstep" => vec![quux15_preset::slot_step().case("slotstep")],
         _ => vec![Case::of_prog(name, &program(name, period))],
     }
 }
@@ -1304,7 +1324,7 @@ fn main() {
         eprintln!("quux15: revision 15 is QUUX's; give --machine quux or no --machine");
         std::process::exit(2);
     }
-    let (mut name, mut prom_only, mut planted, mut period) = (None, false, None, None);
+    let (mut name, mut prom_only, mut planted, mut period, mut bubbles) = (None, false, None, None, 1u8);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -1319,6 +1339,17 @@ fn main() {
                             "quux15: --period is `{v}`; it is the period in units of 0.5 ns, {:?}",
                             muir::clock::PERIOD_15_RANGE
                         );
+                        std::process::exit(2);
+                    }
+                }
+            }
+            "--bubbles" => {
+                let v = it.next().unwrap_or_default();
+                match v.as_str() {
+                    "1" => bubbles = 1,
+                    "2" => bubbles = 2,
+                    _ => {
+                        eprintln!("quux15: --bubbles is `{v}`; a wrong prediction costs 1 bubble or 2");
                         std::process::exit(2);
                     }
                 }
@@ -1338,7 +1369,7 @@ fn main() {
         }
     }
     let Some(name) = name else {
-        eprintln!("usage: quux15 --program <name> --period <P> [--mutation <fault>] | --prom");
+        eprintln!("usage: quux15 --program <name> --period <P> [--bubbles <B>] [--mutation <fault>] | --prom");
         std::process::exit(2);
     };
     // The PROM's image is one at every period: the time program's word 25
@@ -1359,7 +1390,7 @@ fn main() {
     let mut out = Vec::new();
     let mut reached = [0u64; 14];
     for case in &runs {
-        let ran = match run_case(case, period, planted) {
+        let ran = match run_case(case, period, bubbles, planted) {
             Ok(r) => r,
             Err((code, x)) => {
                 eprintln!("quux15: {x}");
@@ -1369,10 +1400,11 @@ fn main() {
         out.push(trace15::COLUMNS.to_string());
         out.push(format!(
             "# generated by golden/src/quux15.rs from muir's pipeline: program {name}, machine: quux, \
-             revision 15, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {CACHE_WORDS} words{}",
+             revision 15, period {period} units of 0.5 ns ({}.{} ns), memory {:?}, cache {CACHE_WORDS} words{}{}",
             period / 2,
             if period % 2 == 1 { 5 } else { 0 },
             TIMING,
+            if bubbles == 2 { ", two bubbles" } else { "" },
             planted.map_or(String::new(), |f| format!(", WITH THE PLANTED FAULT {f:?}"))
         ));
         if group {

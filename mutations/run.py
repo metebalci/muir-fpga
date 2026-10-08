@@ -2697,7 +2697,7 @@ CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_
 # over `QUUX15_CORE`.  Every register comes up random, and the RAMs' read of
 # an address written in the same clock is poisoned.
 QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlfield", "pdlfieldout",
-               "dconst", "dispatch", "predict", "imem", "memory", "ports", "walk", "matrix", "random",
+               "dconst", "dispatch", "predict", "slotstep", "imem", "memory", "ports", "walk", "matrix", "random",
                "matrixmem", "randmem", "imemorder", "time", "timers", "interrupt", "blockdisk", "window", "filedev")
 QUUX15_PERIODS = (20, 17)
 QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,),
@@ -2707,6 +2707,7 @@ for _p in QUUX15_CORE:
         "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
                     "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv",
                     "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_devices.sv",
+                    "rtl/machine/quux15_validmap.sv",
                     "rtl/machine/quux15_mmu.sv", "rtl/plumbing/quux15_axi_master.sv"],
         "extra": ["rtl/machine/quux_muldiv.sv"],
         "top": "quux15_core",
@@ -2718,6 +2719,13 @@ for _p in QUUX15_CORE:
                    for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)],
         "machine": "quux",
     }
+    # And with two bubbles (the Makefile's `quux15_%.quux.b2.pass`): the
+    # core built with `BUBBLES` 2, the traces taken with two.
+    CHECKS["quux15_%s_quux_b2" % _p] = dict(
+        CHECKS["quux15_%s_quux" % _p],
+        flags=CHECKS["quux15_%s_quux" % _p]["flags"] + ["-GBUBBLES=2"],
+        golden=["quux15_%s.quux.p%d.b2.golden" % (_p, _q)
+                for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)])
 
 QUUX_TIMED_KEYS = ["dispatch_write_order13_quux"] + \
     ["quux14_%s_quux" % p for p in QUUX14_PROGRAMS] + \
@@ -3742,7 +3750,7 @@ def check_makefile():
     groups = re.search(r"^QUUX15_GROUPS := (.*)$", text, re.M)
     for prog in (programs.group(1).split() if programs else []):
         for name in (groups.group(1).split() if groups and prog == "$(QUUX15_GROUPS)" else [prog]):
-            names |= {"quux15_" + name + "_quux"}
+            names |= {"quux15_" + name + "_quux", "quux15_" + name + "_quux_b2"}
     for found in sorted(names):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

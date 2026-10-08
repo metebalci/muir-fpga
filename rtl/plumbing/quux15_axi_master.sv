@@ -25,15 +25,14 @@
 //                 no other write until then (muir's `port::beats`).
 //
 // **THE WRITES' AXI IDS ARE ONE PARAMETER, `ONE_WRITE_ID`** (A15b.5, "one
-// ID", and §6).  Set, every write carries ID 0: the responses come in
-// order, and each answers the oldest write still unanswered.  Clear, each
-// write carries its in-flight slot (`w_id`), and the responses may come in
-// any order between slots, the port retiring the writes in order whatever
-// order they come in: what muir's seeded memory model needs while it may
-// answer a later write first, so that the port lands several in one clock.
-// A split write's two bursts share their ID, and its answer is the second
-// B.  **One ID is the board's** (A15b.5): with an ID a slot, two writes to
-// one word may complete in either order.
+// ID", and §6).  Set, the default and the board's, every write carries ID
+// 0: the responses come in order, one a clock, and each answers the oldest
+// write still unanswered, as muir's port answers them.  Clear, each write
+// carries its in-flight slot (`w_id`), and the responses may come in any
+// order between slots, the port retiring the writes in order whatever order
+// they come in, several in one clock; muir answers no run so, and with an
+// ID a slot two writes to one word may complete in either order.  A split
+// write's two bursts share their ID, and its answer is the second B.
 
 // **THE DECLARED CONSTANTS INSIDE r AND w** (A15b.5): a fill lands
 // in the port the clock after its last beat (`READ_FABRIC_CLOCKS`, counted
@@ -55,7 +54,7 @@ module quux15_axi_master #(
     parameter logic [31:0] DISPLAY_BASE = 32'h0A00_0000,
     // One AXI ID for every write, the responses in order (A15b.5); or one
     // a slot, for a memory model that answers out of order.
-    parameter bit          ONE_WRITE_ID = 1'b0,
+    parameter bit          ONE_WRITE_ID = 1'b1,
     // The declared constants inside r and w (A15b.5): the clocks
     // from a line's last beat to its fill landing in the port, and from a
     // write's B to its landing.

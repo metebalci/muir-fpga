@@ -436,6 +436,20 @@ pub fn walk() -> Vec<(String, Preset)> {
     }
     p.stop();
     v.push(("walks-find-nothing".into(), p));
+    // MAP(MD) of the same addresses: port B's walk finds nothing, the word
+    // holds the clock it ends and takes the TLB as it stands in the next,
+    // no entry there.
+    let mut p = run();
+    p.main.push(((8 << 10) + 1, 2 << 24 | 9));
+    p.main.push(((8 << 10) + 2, rw_entry(10)));
+    p.set_directory();
+    for (k, va) in [x, 1 << 20, 2 << 20].into_iter().enumerate() {
+        let a = p.k(va);
+        p.op(ALU | SETA | a_src(a) | MD);
+        p.op(ALU | SETM | src(0o11) | m_dest(0o20 + k as u64));
+    }
+    p.stop();
+    v.push(("map-md-finds-nothing".into(), p));
     // The WRITE-MAP operations: a direct write, MAP(MD) of it at once and
     // after; an invalidation; an empty, and MAP(MD) after it.
     let mut p = run();
@@ -455,6 +469,28 @@ pub fn walk() -> Vec<(String, Preset)> {
     p.op(ALU | SETM | src(0o11) | m_dest(0o24));
     p.stop();
     v.push(("map-operations".into(), p));
+    // An entry, the TLB emptied, and the next page's entry made first in
+    // its group of 64: the entry before the empty stays gone, and MAP(MD)
+    // walks for it.
+    let mut p = run();
+    let y: Word = x + 0o2000;
+    p.table(x, 9, rw_entry(6));
+    p.table(y, 9, rw_entry(7));
+    p.set_directory();
+    p.direct_write(x, rw_entry(3));
+    p.fill(1);
+    p.op(ALU | SETM | src(0o11) | m_dest(0o24));
+    let empty = p.k(3 << 32);
+    p.op(ALU | SETA | a_src(empty) | fd(0o23));
+    p.fill(1);
+    let ya = p.k(y);
+    p.op(ALU | SETA | a_src(ya) | MD);
+    p.op(ALU | SETM | src(0o11) | m_dest(0o25));
+    let xa = p.k(x);
+    p.op(ALU | SETA | a_src(xa) | MD);
+    p.op(ALU | SETM | src(0o11) | m_dest(0o26));
+    p.stop();
+    v.push(("empty-then-a-neighbour".into(), p));
     // A map-bit dispatch on a pointer: word 222 makes DTP-LIST one, and X's
     // entry's map bit 1 picks the entry; on a word not a pointer both bits
     // read 1.  Each entry calls a landing that counts and returns.

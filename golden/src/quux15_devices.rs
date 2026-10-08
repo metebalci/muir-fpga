@@ -29,8 +29,8 @@
 //!             responses consumed, word 100 `<7>` under the enable; and the
 //!             host's part, muir's `FileDevice`, recorded for the testbench
 //!   window    the frame buffer's window through the cache: a word written
-//!             and read back, its tag dropped in the buffer and kept in a
-//!             line the cache holds, a line evicted and filled again, odd and
+//!             and read back, its tag dropped in the buffer and in a line the
+//!             cache holds, a line evicted and filled again, odd and
 //!             even words, an offset past the buffer (nothing there, the
 //!             bus error), and the video controller's mode, word 210
 //!
@@ -457,16 +457,14 @@ pub fn window() -> Vec<(String, Preset)> {
     const LIST: Word = 0o016 << 32;
     let mut v = Vec::new();
     // A word written and read back: a miss whose fill reads the buffer's
-    // field with a fixnum's tag; a hit; a write of a word the cache holds;
-    // the line evicted by two lines of main memory in its set, and filled
-    // again with the field written.  **NOT READ WHILE THE LINE HOLDS IT**:
-    // muir's pipeline keeps the word's tag in the line, a hit reading it
-    // whole, where `micro` and a fill read the buffer's field with a
-    // fixnum's tag, so no trace of that read can be taken until muir
-    // settles which.
+    // field with a fixnum's tag; a hit; a write of a word the cache holds,
+    // read back while the line holds it, the line keeping what the window
+    // will hold, the field with a fixnum's tag, as a fill would read it; the
+    // line evicted by two lines of main memory in its set, and filled again
+    // with the field written.
     let mut p = run();
     p.write(LIST | 0o12345, win(5)).read(win(5), 0o20).read(win(5), 0o21);
-    p.write(LIST | 0o54321, win(6));
+    p.write(LIST | 0o54321, win(6)).read(win(6), 0o22);
     p.read(PHYS | (32768 + 6), 0o23).read(PHYS | (65536 + 6), 0o24);
     p.read(win(6), 0o25).read(win(5), 0o26);
     p.stop();
