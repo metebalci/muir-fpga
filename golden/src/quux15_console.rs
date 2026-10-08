@@ -17,10 +17,11 @@
 //!             mid-clock, the word in EX, read as it stands)
 //!   halts     a halt at every clock of five programs, of a write start in
 //!             a mispredicted jump's delay slot, a read's word landing
-//!             around it, and of a write started by a read start's
-//!             successor, and at every third clock of two of muir's
-//!             programs at random with memory, each resumed at once and run
-//!             to its park
+//!             around it, and of the writes A15b.3 names (a write right
+//!             after a read start, a write then a word loading MD, a
+//!             register's write),
+//!             and at every third clock of two of muir's programs at random
+//!             with memory, each resumed at once and run to its park
 //!
 //! **THE TRACE SAYS WHAT THE CONSOLE DID AND WHAT IT READ**:
 //!
@@ -226,10 +227,9 @@ fn park_clock(case: &Case, period: u64) -> u64 {
 
 /// **A write start in a mispredicted jump's delay slot**: EX's redirect
 /// leaves the slot alone in the pipeline, so a halt in the clock after it
-/// commits finds RD and CS empty behind a write whose word no word will
-/// fix, and fixes it itself, MD as it stands (`clock_once`'s end), as the
-/// write is granted or later. A read started `gap` words before the jump,
-/// if any, lands its word in MD around then.
+/// commits finds RD and CS empty behind the write, which carries MD as its
+/// start's microcycle left it (A15b.3) wherever the halt falls. A read started `gap` words before the jump, if any, lands its
+/// word in MD around then.
 fn write_in_slot(gap: Option<usize>) -> Preset {
     use muir::isa::asm::{AEQM, JUMP, SETM, SRC_MD, START_READ, START_WRITE, target};
     const PHYS: Word = 0o36000000000;
@@ -250,21 +250,21 @@ fn write_in_slot(gap: Option<usize>) -> Preset {
     p
 }
 
-/// **A write started right after a read start, its word fixed by a halt**:
-/// MD-START-WRITE as the read's successor waits in EX for the read to land
-/// and leaves the read's word in MD, whatever it wrote (A15b.3); it writes
-/// M 31 too, so the return behind it waits in RD under the guard while it
-/// is in EX and WB. A halt in its first clock in WB finds EX empty and
-/// fixes the write's word with MD as it stands, the read's, as the write is
-/// granted (`clock_once`'s end); a read of the word after the resume shows
-/// which word was written. Run unhalted, muir's pipeline writes the word
-/// the successor wrote to MD, and `micro` the read's: these runs are held to
-/// muir's pipeline alone.
+/// **A write started right after a read start**: MD-START-WRITE as the
+/// read's successor waits in EX for the read to land and leaves the read's
+/// word in MD, whatever it wrote, and its write carries that word
+/// (A15b.3); it writes M 31 too, so the return
+/// behind it waits in RD under the guard while it is in EX and WB, and a
+/// halt in its first clock in WB finds EX empty. A read of the word after
+/// the run shows which word was written; a halt anywhere ends alike.
 fn write_after_read() -> Preset {
     use muir::isa::asm::{POPJ, SETM, SRC_MD, START_READ};
     const PHYS: Word = 0o36000000000;
     let mut p = Preset::new();
     p.skip_sweep = true;
+    // The word right after a start writes MD: `micro`'s MD-after-start
+    // check, under its OA select check, would stop it.
+    p.select_check = false;
     p.main.push((0o10, 0o123321));
     let ret = 0o100;
     let (back, r, x) = (p.k(ret), p.k(PHYS | 0o10), p.k(0o4444));
@@ -280,6 +280,98 @@ fn write_after_read() -> Preset {
     p.op(ALU | SETM | SRC_MD | m_dest(0o22));
     p.stop();
     p
+}
+
+/// The write a start makes in [`md_after_start`]'s programs.
+#[derive(Clone, Copy)]
+enum Writer15 {
+    /// VMA-START-WRITE, at its own address, of MD.
+    Vma,
+    /// MD-START-WRITE, at VMA as it stands, of 3333.
+    Md,
+    /// VMA-START-WRITE of register-page word 222, the pointer types' low
+    /// half (A14.9).
+    Register,
+}
+
+/// The word right after the start in [`md_after_start`]'s programs.
+#[derive(Clone, Copy)]
+enum Next15 {
+    Filler,
+    /// A word loading MD with 5555.
+    LoadsMd,
+    /// A read start, held behind the write.
+    Read,
+}
+
+/// **What a write carries** (A15b.3, revision 15): MD <- 1111; a read
+/// start of 123321 right before the write, or none; a hit on the written
+/// line or a miss; the write; the word after it; MD and the written word
+/// read back. A write carries MD as its start's microcycle leaves it: the
+/// read's word right after a read start, the start's own otherwise,
+/// whatever the next word loads; a register's write is taken no sooner than
+/// the clock after that word, with the start's word.
+fn md_after_start(w: Writer15, read: bool, hit: bool, next: Next15) -> Preset {
+    use muir::isa::asm::{MD, SETM, SRC_MD, START_READ, START_WRITE, VMA};
+    const PHYS: Word = 0o36000000000;
+    const REGISTER_PAGE: Word = 0o35777777400;
+    let mut p = Preset::new();
+    p.skip_sweep = true;
+    // Words no assembler makes: `micro` runs without its OA select check
+    // and the MD-after-start check under it, as muir's own tests do.
+    p.select_check = false;
+    p.main.push((0o10, 0o123321));
+    let target = match w {
+        Writer15::Register => REGISTER_PAGE | 0o222,
+        _ => PHYS | 0o50,
+    };
+    let (r, t, v1, v3, v5, other) =
+        (p.k(PHYS | 0o10), p.k(target), p.k(0o1111), p.k(0o3333), p.k(0o5555), p.k(PHYS | 0o60));
+    if hit {
+        p.read(target, 0o20);
+    }
+    p.op(ALU | SETA | a_src(v1) | MD);
+    if read {
+        p.op(ALU | SETA | a_src(r) | START_READ);
+    }
+    match w {
+        Writer15::Vma | Writer15::Register => p.op(ALU | SETA | a_src(t) | START_WRITE),
+        Writer15::Md => {
+            if !read {
+                p.op(ALU | SETA | a_src(t) | VMA);
+            }
+            p.op(ALU | SETA | a_src(v3) | 0o32 << 19 | 0o36 << 14)
+        }
+    };
+    match next {
+        Next15::Filler => p.fill(1),
+        Next15::LoadsMd => p.op(ALU | SETA | a_src(v5) | MD),
+        Next15::Read => p.op(ALU | SETA | a_src(other) | START_READ),
+    };
+    p.fill(2);
+    p.op(ALU | SETM | SRC_MD | m_dest(0o26));
+    let back = if read && matches!(w, Writer15::Md) { PHYS | 0o10 } else { target };
+    p.read(back, 0o27);
+    p.stop();
+    p
+}
+
+/// [`md_after_start`]'s programs: a read start right before
+/// VMA-START-WRITE or MD-START-WRITE, then a filler, a word loading MD or a
+/// held read start; no read, then a word loading MD, a hit and a miss; and
+/// a register's write then a word loading MD.
+fn md_after_start_programs() -> Vec<(String, Preset)> {
+    let mut v = Vec::new();
+    for (wn, w) in [("vma", Writer15::Vma), ("md", Writer15::Md)] {
+        for (nn, n) in [("filler", Next15::Filler), ("loadsmd", Next15::LoadsMd), ("read", Next15::Read)] {
+            v.push((format!("mdread-{wn}-{nn}"), md_after_start(w, true, false, n)));
+        }
+        for hit in [false, true] {
+            v.push((format!("mdwrite-{wn}-hit{}", hit as u8), md_after_start(w, false, hit, Next15::LoadsMd)));
+        }
+    }
+    v.push(("mdwrite-register".into(), md_after_start(Writer15::Register, false, false, Next15::LoadsMd)));
+    v
 }
 
 /// **A halt at every clock**: each a run of its own, halted at the start
@@ -303,13 +395,15 @@ pub fn halts(period: u64) -> Vec<Case> {
             v.push(c);
         }
     }
-    let p = write_after_read();
-    let end = park_clock(&p.case("x"), period);
-    for at in 2..=end {
-        let mut c = p.case(&format!("readwrite-{at}"));
-        c.script = halt_at(at);
-        c.micro_check = false;
-        v.push(c);
+    let mut programs = vec![("readwrite".to_string(), write_after_read())];
+    programs.extend(md_after_start_programs());
+    for (name, p) in programs {
+        let end = park_clock(&p.case("x"), period);
+        for at in 2..=end {
+            let mut c = p.case(&format!("{name}-{at}"));
+            c.script = halt_at(at);
+            v.push(c);
+        }
     }
     for seed in [1u64, 2] {
         let p = super::quux15_preset::random_program(seed, true);

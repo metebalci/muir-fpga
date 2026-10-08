@@ -28655,32 +28655,6 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 # only right after the start, which A15b.2's rule keeps from reading the
 # map; WB's walk and write-back come before its own start's fill.
 #
-@mutation quux15-a-word-fixed-at-its-grant-takes-the-slots-old-line
-@check quux15_randmem_quux
-@file rtl/machine/quux15_port.sv
-@note Found while built: a write's word fixed in the clock the write is
-@note granted takes whether the cache holds its line from the queue entry
-@note the slot held before.
-@old
-        if (w_push && w_slot == fix_slot) begin
-          // Granted in this clock: its tag read answers next clock.
-          npend[n] = 1'b1;
-        end else if (q_hres[fix_slot]) begin
-@new
-        if (q_hres[fix_slot]) begin
-@end
-
-@mutation quux15-a-word-fixed-at-its-grant-takes-the-slots-old-address
-@check quux15_randmem_quux
-@file rtl/machine/quux15_port.sv
-@note Found while built: a write's word fixed in the clock the write is
-@note granted is written into the line of the address the slot held before.
-@old
-        nset[n] = set_of((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot]);
-@new
-        nset[n] = set_of(q_bus[fix_slot]);
-@end
-
 @mutation quux15-lvmo-zero-at-power-on
 @check quux15_matrixmem_quux
 @file rtl/machine/quux15_core.sv
@@ -29243,39 +29217,89 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
           pdl_pend <= 1'b0;
 @end
 
-@mutation quux15-halt-leaves-the-write-without-its-word
+@mutation quux15-write-carries-md-from-before-the-read
 @check quux15_halts_quux
 @file rtl/machine/quux15_core.sv
-@note A write whose word the squashed microcycle would have fixed waits for
-@note it, and the drain never ends.
+@note A write started right after a read start carries MD as the word left
+@note it before the read's word landed: its own MD load, or MD from before
+@note the read (A15b.3).
 @old
-    halt_fixes = (draining_now || stepping) && !rd_v && !cs_v && !hw_v;
+        st_word   <= md_final;
 @new
-    halt_fixes = 1'b0;
+        st_word   <= nmd;
 @end
 
-@mutation quux15-halt-grants-the-write-a-stale-word
+# A write's queue entry taking MD as it stands at its grant (`md_now` for
+# `st_word` at the port's `w_word`) is no fault here: nothing changes MD
+# between a write's commit and its grant, a start waiting in EX while a read
+# is on its way and WB holding EX until its starts are granted, so the word
+# is the start's. It survived every quux15 check; the register's write
+# below takes the next word's MD instead, as the single-edge rule would.
+
+@mutation quux15-register-write-takes-the-next-word-s-md
 @check quux15_halts_quux
 @file rtl/machine/quux15_core.sv
-@note A write granted as the halt fixes its word takes MD as its start left
-@note it, not MD as it stands: after a read start's successor, the read's
-@note word.
+@note A register's write takes MD as the word committing at its grant leaves
+@note it, the next word's MD load (the single-edge rule), not its start's.
 @old
-    fix_word = fix_halt ? md_now : fix_held ? hw_word : fix_val;
+      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = st_word;
 @new
-    fix_word = fix_held ? hw_word : fix_val;
+      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = commit ? nmd : st_word;
 @end
 
-@mutation quux15-halt-holds-the-write-s-own-md
+@mutation quux15-register-write-released-at-its-grant
+@check quux15_interrupt_quux
+@file rtl/machine/quux15_core.sv
+@note A register's write is taken the clock after its grant though the word
+@note after its start has not left EX: that word's conditions see the
+@note interrupt the write makes.
+@old
+      n_rgw_rel = commit || halt_rel;
+@new
+      n_rgw_rel = 1'b1;
+@end
+
+@mutation quux15-register-write-not-released-by-a-later-word
+@check quux15_interrupt_quux
+@file rtl/machine/quux15_core.sv
+@note A register's write granted before the word after its start leaves EX
+@note waits for a halt to release it.
+@old
+    n_rgw_rel = rgw_rel || commit || halt_rel;
+@new
+    n_rgw_rel = rgw_rel || halt_rel;
+@end
+
+@mutation quux15-halt-never-releases-a-register-write
 @check quux15_halts_quux
 @file rtl/machine/quux15_core.sv
-@note A write the halt fixes before its grant holds MD as the word committing
-@note now wrote it, not the read's word that stands after a read start's
-@note successor.
+@note A register's write whose next word the halt squashed is never taken,
+@note and the drain never ends.
 @old
-    fix_md   = commit ? ((ex_succ && !ex_rif) ? md_now : nmd) : md_now;
+    halt_rel = (draining_now || stepping) && !rd_v && !cs_v && !ex_v;
 @new
-    fix_md   = commit ? nmd : md_now;
+    halt_rel = 1'b0;
+@end
+
+@mutation quux15-a-write-s-line-takes-the-slot-s-old-word
+@check quux15_randmem_quux
+@file rtl/machine/quux15_port.sv
+@note The cache's line a write hits takes the word its queue slot held
+@note before, not the write's.
+@old
+        nword[n] = as_held(w_bus, w_word);
+@new
+        nword[n] = as_held(w_bus, q_word[w_slot]);
+@end
+
+@mutation quux15-a-write-s-queue-entry-keeps-the-slot-s-old-word
+@check quux15_randmem_quux
+@file rtl/machine/quux15_port.sv
+@note A write's queue entry keeps the word its slot held before.
+@old
+        q_word[w_slot] <= w_word;
+@new
+        q_word[w_slot] <= q_word[w_slot];
 @end
 
 @mutation quux15-step-forgets-its-own-step

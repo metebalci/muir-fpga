@@ -43,7 +43,10 @@
 // while a read is on its way, but for the word right after the read's
 // start; a start behind a start; the map store's write; port B's lookup and
 // walk; the late squash) and its microcycle, whose starts, map store and
-// fixed write word WB and the port take.
+// a write's word WB and the port take.  A write carries MD as its start's
+// microcycle leaves it (A15b.3; right after a read start, the read's
+// word); a device register's write still waits for the word after its start
+// to leave EX.
 //
 // **THE CONSOLE** (A15b.13; muir's `pipeline/control.rs`) writes and reads
 // the diagnostic registers (`spy_*`): RUN cleared drains the machine to a
@@ -306,11 +309,13 @@ module quux15_core #(
   logic [63:0] wb_imem_data;
   // WB's first clock, when its word's writes land; and the word's starts
   // still to be granted, in order (`Back::starts`): read or write, LC's
-  // fetch, the virtual address, the word once fixed.
+  // fetch, the virtual address; and a write's word, `MD` as its start's
+  // microcycle left it (A15b.3), which only the first
+  // start can need, LC's fetch being a read.
   logic        wb_fresh;
-  logic [1:0]  st_v, st_write, st_fetch, st_word_v;
+  logic [1:0]  st_v, st_write, st_fetch;
   logic [31:0] st_va [2];
-  logic [39:0] st_word [2];
+  logic [39:0] st_word;
   logic        ex_map_held, ex_late_held, ex_b_walked, ex_int_rd;
 
   // --- The front end: the next fetch's address, the one after it when RD
@@ -451,18 +456,10 @@ module quux15_core #(
   logic        old_v;
   logic [7:0]  old_seq;
   logic [39:0] old_md;
-  // A write started in the microcycle before, MD as it left it
-  // (`write_pending`); a write granted whose word the next microcycle fixes
-  // (`pending_word`): the queue's entry or the register's.
-  logic        wp_v;
-  logic [7:0]  wp_seq;
-  logic [39:0] wp_md;
-  logic        pw_v, pw_reg;
-  logic [7:0]  pw_seq;
-  logic [2:0]  pw_slot;
-  // A device register's write, taken the clock after its grant once its
-  // word is fixed.
-  logic        rgw_v, rgw_word_v;
+  // A device register's write, taken the clock after its grant and no
+  // sooner than the clock after the word right after its start has left EX
+  // (`rgw_rel`, muir's `released`; A15b.3).
+  logic        rgw_v, rgw_rel;
   logic [28:0] rgw_bus;
   logic [39:0] rgw_word;
   // A map store's write, landing at the head of the next microcycle
@@ -957,19 +954,17 @@ module quux15_core #(
 
   // --- The port (`quux15_port.sv`) and the memory management
   // --- (`quux15_mmu.sv`).
-  logic        p_busy, p_req, p_land, p_land_next, w_ok, w_req, fix_v, post_req, post_ok;
+  logic        p_busy, p_req, p_land, p_land_next, w_ok, w_req, post_req, post_ok;
   logic        t_start, t_ready, port_idle, port_idle_n, port_empty;
   logic [28:0] p_bus, w_bus, post_bus, t_addr;
-  logic [39:0] p_word, p_word_next, fix_word, post_word, t_word;
-  logic [2:0]  w_slot, fix_slot;
+  logic [39:0] p_word, p_word_next, post_word, t_word;
   logic [4:0]  errors_now, inflight_n;
   logic [3:0]  queue_n;
   quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID)) port (
       .clk(clk), .rst(rst),
       .p_busy(p_busy), .p_req(p_req), .p_bus(p_bus), .p_land(p_land), .p_word(p_word),
       .p_land_next(p_land_next), .p_word_next(p_word_next),
-      .w_ok(w_ok), .w_req(w_req), .w_bus(w_bus), .w_slot(w_slot),
-      .fix_v(fix_v), .fix_slot(fix_slot), .fix_word(fix_word),
+      .w_ok(w_ok), .w_req(w_req), .w_bus(w_bus), .w_word(st_word),
       .post_req(post_req), .post_bus(post_bus), .post_word(post_word), .post_ok(post_ok),
       .t_start(t_start), .t_addr(t_addr), .t_ready(t_ready), .t_word(t_word),
       .errors_now(errors_now), .queue_n(queue_n), .inflight_n(inflight_n), .idle(port_idle), .idle_n(port_idle_n),
@@ -1128,7 +1123,7 @@ module quux15_core #(
     k_va        = a_va;
     k_entry     = s_entry;
     k_write     = st_write[0];
-    k_md        = st_word_v[0] ? st_word[0] : md_now;
+    k_md        = st_write[0] ? st_word : md_now;
     w_bus       = s_bus;
     p_bus       = s_bus;
   end
@@ -1437,13 +1432,8 @@ module quux15_core #(
     logic [31:0] va;
   } start_t;
   start_t      xs0, xs1;
-  logic        x_mw_v, loads_md, fix_any, drain_fix, fix_halt, fix_held, halt_fixes;
-  logic [39:0] fix_md;
-  // The word a halt fixed for a write WB has yet to grant.
-  logic        hw_v;
-  logic [7:0]  hw_seq;
-  logic [39:0] hw_word;
-  logic [39:0] x_mw_vma, x_mw_md, md_final, fix_val;
+  logic        x_mw_v, halt_rel;
+  logic [39:0] x_mw_vma, x_mw_md, md_final;
   function automatic logic [69:0] add_start(input start_t a, input start_t b, input logic w,
                                              input logic f, input logic [31:0] va);
     start_t s0, s1;
@@ -1470,7 +1460,6 @@ module quux15_core #(
     nq = q; nvma = vma; nmd = md_in; nlc = lc; nlc_nf = lc_needfetch; novf = overflow;
     xs0 = '0; xs1 = '0;
     x_mw_v = 1'b0; x_mw_vma = vma; x_mw_md = md_in;
-    loads_md = 1'b0; fix_val = wp_md;
     // A map store's write of the microcycle before lands at this one's head
     // (`write_map_14`).
     op_v = commit && mwd_v;
@@ -1670,11 +1659,6 @@ module quux15_core #(
         nlc_nf = stepped[34];
       end
       nid_new = nni;
-      // The write started in the microcycle before takes its word: MD as
-      // this one leaves it when it loads MD and starts nothing, and otherwise
-      // MD as the start left it (`next_microcycle_holds_the_write`).
-      loads_md = !ex_nop && (ex_alu || ex_byte) && !ex_isel[25] && fd_code(ex_isel)[4:2] == 3'b110;
-      fix_val  = (loads_md && !xs0.v) ? nmd : wp_md;
     end
   end
 
@@ -1682,48 +1666,20 @@ module quux15_core #(
   //
   // What WB's start, EX's register write (`register_write_now`, at EX's
   // start) and EX's microcycle leave, in muir's order within the clock.
-  logic        pw_eff_v, pw_eff_reg, wb_nxm;
-  logic [7:0]  pw_eff_seq;
-  logic [2:0]  pw_eff_slot;
-  logic        n_pend_v, n_rd_port, n_old_v, n_wp_v, n_pw_v, n_pw_reg, n_rgw_v, n_rgw_word_v;
+  logic        wb_nxm;
+  logic        n_pend_v, n_rd_port, n_old_v, n_rgw_v, n_rgw_rel;
   logic        n_mwd_v, n_bus_nxm, n_pend_dev;
   logic [1:0]  n_pend_left, n_ack_left;
-  logic [39:0] n_pend_word, n_old_md, n_wp_md, n_rgw_word, n_md, n_mwd_vma, n_mwd_md;
-  logic [7:0]  n_old_seq, n_wp_seq, n_pw_seq;
-  logic [2:0]  n_pw_slot;
+  logic [39:0] n_pend_word, n_old_md, n_rgw_word, n_md, n_mwd_vma, n_mwd_md;
+  logic [7:0]  n_old_seq;
   logic [28:0] n_rgw_bus;
   logic [31:0] n_posted;
   logic        ub_register;
   always_comb begin
-    // --- WB's grant: what it leaves for the fix and the landing.
-    pw_eff_v = pw_v; pw_eff_reg = pw_reg; pw_eff_seq = pw_seq; pw_eff_slot = pw_slot;
-    if (at_grant && s_done && st_write[0] && !st_word_v[0] && (s_memory || s_device)) begin
-      pw_eff_v = 1'b1;
-      pw_eff_reg = s_device;
-      pw_eff_seq = wb_seq;
-      pw_eff_slot = w_slot;
-    end
     wb_nxm = at_grant && s_nothing;
-    // --- The fix of the word of the write started before.
-    // **A HALT FIXES THE WORD ITSELF** (`clock_once`'s end): with nothing
-    // left in EX, RD or CS to fix it, the word is MD as it stands, now if
-    // the write is granted, or at its grant (`hw_*`).  RD and CS are empty
-    // as a drain or a step runs its last word, and nothing is fetched after
-    // it (`halt_fixes`, from the registers); the write is the start EX
-    // commits now, which no grant meets in its own clock, or the one
-    // pending with EX empty.
-    halt_fixes = (draining_now || stepping) && !rd_v && !cs_v && !hw_v;
-    drain_fix = halt_fixes && (commit ? ((xs0.v && xs0.write) || (xs1.v && xs1.write)) : (!ex_v && wp_v));
-    fix_halt  = halt_fixes && !ex_v && wp_v && pw_eff_v && pw_eff_seq == wp_seq;
-    fix_held  = hw_v && pw_eff_v && pw_eff_seq == hw_seq;
-    fix_any  = (wp_v && pw_eff_v && pw_eff_seq == wp_seq && (commit || (halt_fixes && !ex_v))) || fix_held;
-    fix_v    = fix_any && !pw_eff_reg;
-    fix_slot = pw_eff_slot;
-    fix_md   = commit ? ((ex_succ && !ex_rif) ? md_now : nmd) : md_now;
-    fix_word = fix_halt ? md_now : fix_held ? hw_word : fix_val;
     // --- The register's write taken now (`register_write_now`); CMD_PROD's
     // --- held for the port.
-    rw_take  = rgw_v && rgw_word_v;
+    rw_take  = rgw_v && rgw_rel;
     take_cmd_prod = rw_take && rgw_bus[7:0] == 8'o164;
     rw_v     = rw_take && rgw_bus[7:0] >= 8'o220 && rgw_bus[7:0] <= 8'o224;
     rw_k     = rgw_bus[7:0];
@@ -1764,22 +1720,20 @@ module quux15_core #(
     n_ack_left = (ack_left != 2'd0) ? ack_left - 2'd1 : 2'd0;
     if (at_grant && s_done && (s_device || (s_memory && st_write[0]))) n_ack_left = 2'd1;
     if (at_grant && s_nothing) n_ack_left = 2'd0;
-    // --- The word a write's start waits for.
-    n_pw_v = pw_eff_v && !fix_any; n_pw_reg = pw_eff_reg; n_pw_seq = pw_eff_seq; n_pw_slot = pw_eff_slot;
-    n_wp_v = wp_v; n_wp_seq = wp_seq; n_wp_md = wp_md;
-    if (commit) begin
-      n_wp_v   = (xs0.v && xs0.write) || (xs1.v && xs1.write);
-      n_wp_seq = ex_seq;
-      n_wp_md  = nmd;
-    end
-    if (drain_fix) n_wp_v = 1'b0;
-    // --- The register's write: taken, made, its word fixed.
-    n_rgw_v = rgw_v && !rw_take; n_rgw_bus = rgw_bus; n_rgw_word_v = rgw_word_v; n_rgw_word = rgw_word;
+    // --- The register's write: taken, made, released.  A word that leaves
+    // --- EX after the start's releases it (`end_of_microcycle`), at the
+    // --- grant's clock or later, and so does a halt or a step whose last
+    // --- word has left EX with RD and CS empty, nothing left to see the
+    // --- interrupt before the write (`clock_once`'s end).  No word after
+    // --- the start leaves EX before the grant, WB holding EX until its
+    // --- starts are granted, so muir's release at the grant (`released`)
+    // --- is this clock's.
+    halt_rel = (draining_now || stepping) && !rd_v && !cs_v && !ex_v;
+    n_rgw_v = rgw_v && !rw_take; n_rgw_bus = rgw_bus; n_rgw_word = rgw_word;
+    n_rgw_rel = rgw_rel || commit || halt_rel;
     if (at_grant && s_device && st_write[0]) begin
-      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word_v = st_word_v[0]; n_rgw_word = st_word[0];
-    end
-    if (fix_any && pw_eff_reg) begin
-      n_rgw_word_v = 1'b1; n_rgw_word = fix_word;
+      n_rgw_v = 1'b1; n_rgw_bus = s_bus; n_rgw_word = st_word;
+      n_rgw_rel = commit || halt_rel;
     end
     // --- MD: the word EX leaves, or the read's word that landed.  The word
     // --- right after a read start that committed after the read landed
@@ -2156,7 +2110,6 @@ module quux15_core #(
     end
   end
   // **WHAT THE HALT RELIES ON**, which muir's drain does by hand:
-  // - the halt's fix: no grant meets the start EX commits in its own clock;
   // - the successor's MD (`md_old`, kept at the drain's end only for the
   //   read start that ran last): a read start is granted in WB before the
   //   word after it commits, and any later commit drops it, so it is the
@@ -2168,8 +2121,10 @@ module quux15_core #(
   //   stack's word at the pointer (`spc_below`), the same word.
   always_ff @(posedge clk) begin
     if (!rst && errhalt == 2'd0) begin
-      if (commit && pw_eff_v && pw_eff_seq == ex_seq) begin
-        $display("quux15_core: a grant meets the start of the word EX commits, %o", ex_pc);
+      // A write is a word's first start, LC's fetch its second: WB keeps
+      // one write's word.
+      if (commit && xs1.v && xs1.write) begin
+        $display("quux15_core: a write as a word's second start, %o", ex_pc);
         $finish;
       end
       if (n_old_v && n_old_seq != (commit ? ex_seq : last_seq)) begin
@@ -2229,7 +2184,7 @@ module quux15_core #(
       for (int k = 0; k < 8; k++) opc[k] <= 14'd0;
       npc_prev <= RESET_PC;
       next_instrd <= 1'b0;
-      x_halted <= 1'b0; last_seq <= 8'd0; committed <= 64'd0; hw_v <= 1'b0;
+      x_halted <= 1'b0; last_seq <= 8'd0; committed <= 64'd0;
       spc_w_v <= 1'b0; spc_w_ptr <= 5'd0; spc_w_word <= 19'd0;
       errhalt <= 2'd0;
       ex_clocks <= 5'd0;
@@ -2241,7 +2196,7 @@ module quux15_core #(
       // and write access, the frame all ones.
       vmaok <= 1'b0; wrcyc <= 1'b0; lvmo <= 30'(32'b11 << 26 | 32'o777777);
       ack_left <= 2'd0; pend_v <= 1'b0; pend_dev <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
-      wp_v <= 1'b0; pw_v <= 1'b0; rgw_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
+      rgw_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
       bus_nxm <= 1'b0; posted_errors <= '0;
       wb_fresh <= 1'b0; st_v <= '0; ex_map_held <= 1'b0; ex_late_held <= 1'b0; ex_b_walked <= 1'b0;
     end else if (errhalt != 2'd0) begin
@@ -2304,9 +2259,7 @@ module quux15_core #(
       pend_v <= n_pend_v; pend_left <= n_pend_left; pend_word <= n_pend_word; pend_dev <= n_pend_dev;
       rd_port <= n_rd_port;
       old_v <= n_old_v; old_seq <= n_old_seq; old_md <= n_old_md;
-      wp_v <= n_wp_v; wp_seq <= n_wp_seq; wp_md <= n_wp_md;
-      pw_v <= n_pw_v; pw_reg <= n_pw_reg; pw_seq <= n_pw_seq; pw_slot <= n_pw_slot;
-      rgw_v <= n_rgw_v; rgw_bus <= n_rgw_bus; rgw_word_v <= n_rgw_word_v; rgw_word <= n_rgw_word;
+      rgw_v <= n_rgw_v; rgw_bus <= n_rgw_bus; rgw_rel <= n_rgw_rel; rgw_word <= n_rgw_word;
       mwd_v <= n_mwd_v; mwd_vma <= n_mwd_vma; mwd_md <= n_mwd_md;
       if (take_cmd_prod) begin
         cprod_v    <= 1'b1;
@@ -2328,14 +2281,14 @@ module quux15_core #(
         st_fetch  <= {xs1.fetch, xs0.fetch};
         st_va[0]  <= xs0.va;
         st_va[1]  <= xs1.va;
-        st_word_v <= 2'b00;
+        // A write carries MD as its start's microcycle leaves it: right
+        // after a read start, the read's word (A15b.3).
+        st_word   <= md_final;
       end else if (s_done) begin
         st_v      <= {1'b0, st_v[1]};
         st_write  <= {1'b0, st_write[1]};
         st_fetch  <= {1'b0, st_fetch[1]};
         st_va[0]  <= st_va[1];
-        st_word_v <= {1'b0, st_word_v[1]};
-        st_word[0] <= st_word[1];
       end
       if (commit) begin
         wb_nop <= ex_nop; wb_seq <= ex_seq; wb_pc <= ex_pc;
@@ -2443,14 +2396,8 @@ module quux15_core #(
       if (reset_q) begin
         oa_low <= '0; oa_high <= '0; posted_errors <= '0;
       end
-      // The word a halt fixed, for its write's grant.
-      if (drain_fix && !fix_halt) begin
-        hw_v <= 1'b1; hw_seq <= commit ? ex_seq : wp_seq; hw_word <= fix_md;
-      end else if (fix_held) begin
-        hw_v <= 1'b0;
-      end
       if (boot_q) begin
-        spc_w_v <= 1'b0; old_v <= 1'b0; mwd_v <= 1'b0; wp_v <= 1'b0; vmaok <= 1'b0; hw_v <= 1'b0;
+        spc_w_v <= 1'b0; old_v <= 1'b0; mwd_v <= 1'b0; vmaok <= 1'b0;
         npc_prev <= RESET_PC;
         c <= c_boot;
       end

@@ -11,8 +11,8 @@
 // **A CLOCK BEGINS WITH muir'S `Port::tick`**, from the registers it began
 // with: the writes at the in-flight list's front that are answered land, in
 // order, several in one clock when a later one was answered first; the
-// queue's head is accepted when its word is fixed, the list has room after
-// those landings, and the write channel takes it; the fill waiting on the
+// queue's head is accepted when the list has room after those landings and
+// the write channel takes it; the fill waiting on the
 // read rule is issued when no write to its line is queued or in flight; a
 // fill whose line came in the clock before lands.  The core's stages then
 // ask in this clock what muir's ask after the tick.
@@ -25,15 +25,17 @@
 //   P  the processor's read at WB's grant, through port A, never while a
 //      fill is in flight (`p_busy`, muir's `Answer::Busy`, which holds WB);
 //   W  a write start at WB's grant, port A's tags alone: whether the cache
-//      holds its line, which its word, once fixed, writes;
+//      holds its line, which the word the start carries writes;
 //   T  a table read of a walk or a write-back, through port B; it is not
 //      made while a fill is in flight and is asked again the next clock, as
 //      muir's walker asks again after `Busy`; one made in the clock of a P
 //      read that misses was Busy in muir, whose P made its fill first, and
 //      is asked again.
 //
-// **THE LINES' WRITES WAIT FOR PORT B** in a buffer of four: a word fixed
-// for a write the cache holds, a write-back's posted word.  Each is written
+// **THE LINES' WRITES WAIT FOR PORT B** in a buffer of four: a write's word,
+// made at its grant, its tag read answering a clock later (a write carries
+// `MD` as its start's microcycle left it, A15b.5), and a
+// write-back's posted word.  Each is written
 // at the first clock port B neither reads for T nor installs a fill and
 // port A does not read the line's set; until then, and in the clock after
 // one is made, a lookup's word is taken from the buffer where it holds a
@@ -71,14 +73,11 @@ module quux15_port #(
     output var logic        p_land_next,
     output var logic [39:0] p_word_next,
 
-    // --- W: a write start, and its word once fixed.
+    // --- W: a write start and the word it carries.
     output var logic        w_ok,
     input  var logic        w_req,
     input  var logic [28:0] w_bus,
-    output var logic [2:0]  w_slot,
-    input  var logic        fix_v,
-    input  var logic [2:0]  fix_slot,
-    input  var logic [39:0] fix_word,
+    input  var logic [39:0] w_word,
 
     // --- A write-back's posted word, ahead of its reference's start.
     input  var logic        post_req,
@@ -193,12 +192,9 @@ module quux15_port #(
 
   // =============================================================== the state
 
-  // The queue: each entry's bus address, word, whether the word is fixed,
-  // and whether the cache holds its line (`q_hres` once the grant's tag read
-  // has answered), in which way.
+  // The queue: each entry's bus address and word.
   logic [28:0] q_bus [QN];
   logic [39:0] q_word [QN];
-  logic [QN-1:0] q_wv, q_hit, q_way, q_hres;
   logic [2:0]  q_head;
   logic [3:0]  q_count;
 
@@ -322,12 +318,12 @@ module quux15_port #(
     errors_now = n_err;
   end
 
-  // The accept: the head's word fixed, room in the list after the landings,
-  // the write channel free.
+  // The accept: room in the list after the landings, the write channel
+  // free.
   logic [3:0] f_tail;
   always_comb begin
     f_tail  = f_head + f_count[3:0];
-    mw_req  = q_count != 4'd0 && q_wv[q_head] && (f_count - n_land) < 5'(FN) && mw_free;
+    mw_req  = q_count != 4'd0 && (f_count - n_land) < 5'(FN) && mw_free;
     mw_bus  = q_bus[q_head];
     mw_word = q_word[q_head];
     mw_id   = f_tail;
@@ -393,6 +389,7 @@ module quux15_port #(
   // P, W, post: what the core may ask now.
   logic [3:0] q_after_accept;
   logic       post_push, w_push;
+  logic [2:0] w_slot;
   assign p_busy = fs == F_WAIT || fs == F_DATA || sweeping;
   always_comb begin
     q_after_accept = q_count - {3'd0, mw_taken};
@@ -566,27 +563,15 @@ module quux15_port #(
         if (install && set_of(post_bus) == f_set && tl_way == victim) nhit[n] = 1'b0;
         n++;
       end
-      // A write's word fixed.
-      if (fix_v) begin
+      // A write's word, granted in this clock: its tag read answers next
+      // clock.
+      if (w_push) begin
         nv[n] = 1'b1; nyoung[n] = 1'b1;
-        // The entry's address: granted in this clock, the start's own.
-        nset[n] = set_of((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot]);
-        nlane[n] = (w_push && w_slot == fix_slot) ? w_bus[2:0] : q_bus[fix_slot][2:0];
-        nword[n] = as_held((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot], fix_word);
-        nslot[n] = fix_slot;
-        if (w_push && w_slot == fix_slot) begin
-          // Granted in this clock: its tag read answers next clock.
-          npend[n] = 1'b1;
-        end else if (q_hres[fix_slot]) begin
-          nhit[n] = q_hit[fix_slot];
-          nway[n] = q_way[fix_slot];
-        end else if (lw_v && lw_slot == fix_slot) begin
-          nhit[n] = w_h0 || w_h1;
-          nway[n] = w_h1;
-        end else begin
-          npend[n] = 1'b1;
-        end
-        if (install && nset[n] == f_set && nway[n] == victim && !npend[n]) nhit[n] = 1'b0;
+        nset[n] = set_of(w_bus);
+        nlane[n] = w_bus[2:0];
+        nword[n] = as_held(w_bus, w_word);
+        nslot[n] = w_slot;
+        npend[n] = 1'b1;
         n++;
       end
       db_nx_v[d] = nv; db_nx_hit[d] = nhit; db_nx_way[d] = nway; db_nx_pend[d] = npend; db_nx_young[d] = nyoung;
@@ -600,7 +585,7 @@ module quux15_port #(
 
   always_ff @(posedge clk) begin
     if (rst) begin
-      q_head <= '0; q_count <= '0; q_wv <= '0; q_hit <= '0; q_hres <= '0;
+      q_head <= '0; q_count <= '0;
       f_head <= '0; f_count <= '0; f_arr <= '0; f_err <= '0;
       fs <= F_NONE;
       lp_v <= 1'b0; lw_v <= 1'b0; lt_v <= 1'b0;
@@ -629,31 +614,16 @@ module quux15_port #(
         f_err[b_id] <= b_err;
       end
 
-      // --- The queue: the accept, the post, the write start, the word.
-      if (mw_taken) q_wv[q_head] <= 1'b0;
+      // --- The queue: the accept, the post, the write start with its word.
       q_head  <= q_head + 3'(mw_taken);
       q_count <= queue_n;
       if (post_push) begin
         q_bus[3'(q_head + 3'(q_count))]  <= post_bus;
         q_word[3'(q_head + 3'(q_count))] <= post_word;
-        q_wv[3'(q_head + 3'(q_count))]   <= 1'b1;
-        q_hres[3'(q_head + 3'(q_count))] <= 1'b1;
-        q_hit[3'(q_head + 3'(q_count))]  <= 1'b0;
       end
       if (w_push) begin
         q_bus[w_slot]  <= w_bus;
-        q_wv[w_slot]   <= 1'b0;
-        q_hres[w_slot] <= 1'b0;
-        q_hit[w_slot]  <= 1'b0;
-      end
-      if (lw_v) begin
-        q_hres[lw_slot] <= 1'b1;
-        q_hit[lw_slot]  <= w_h0 || w_h1;
-        q_way[lw_slot]  <= w_h1;
-      end
-      if (fix_v) begin
-        q_word[fix_slot] <= fix_word;
-        q_wv[fix_slot]   <= 1'b1;
+        q_word[w_slot] <= w_word;
       end
 
       // --- The lookups made now, answered next clock.
@@ -715,10 +685,6 @@ module quux15_port #(
           tl_line <= f_bus[28:3];
           tl_way  <= victim;
         end
-        // A queued write or a buffered word whose line it replaces.
-        for (int k = 0; k < QN; k++)
-          if (set_of(q_bus[k]) == f_set && ((lw_v && lw_slot == 3'(k)) ? w_h1 : q_way[k]) == victim)
-            q_hit[k] <= 1'b0;
       end
 
       // --- The buffer: the word drained, the words made now, each way of
@@ -741,9 +707,9 @@ module quux15_port #(
   int unsigned dbg_clock = 0;
   always_ff @(posedge clk) begin
     dbg_clock <= rst ? 0 : dbg_clock + 1;
-    if (!rst && (p_req || w_push || fix_v || post_push || lp_v || lw_v || lt_v || drain || install || mw_taken || n_land != 0))
-      $display("%0d port: p_req %b %h w_push %b %h slot %0d fix %b slot %0d %h | lp %b hit %b%b lw %b slot %0d hit %b%b | drain %b set %h way %b lane %0d hit %b | inst %b | acc %b land %0d | db_v %b pend %b",
-               dbg_clock + 1, p_req, p_bus, w_push, w_bus, w_slot, fix_v, fix_slot, fix_word, lp_v, p_h1, p_h0,
+    if (!rst && (p_req || w_push || post_push || lp_v || lw_v || lt_v || drain || install || mw_taken || n_land != 0))
+      $display("%0d port: p_req %b %h w_push %b %h slot %0d %h | lp %b hit %b%b lw %b slot %0d hit %b%b | drain %b set %h way %b lane %0d hit %b | inst %b | acc %b land %0d | db_v %b pend %b",
+               dbg_clock + 1, p_req, p_bus, w_push, w_bus, w_slot, w_word, lp_v, p_h1, p_h0,
                lw_v, lw_slot, w_h1, w_h0, drain, db_set[0], db_way[0], db_lane[0], db_hit[0], install, mw_taken,
                n_land, db_v, db_pend);
   end
@@ -759,9 +725,9 @@ module quux15_port #(
         $error("quux15_port: a write start in the clock a lookup missed");
       if (p_req && p_busy)
         $error("quux15_port: a processor read while a fill is in flight");
-      if (post_push && fix_v && db_v[DBN-1])
+      if (post_push && w_push && db_v[DBN-1])
         $error("quux15_port: the lines' write buffer overflows");
-      if (db_v == '1 && (post_push || fix_v))
+      if (db_v == '1 && (post_push || w_push))
         $error("quux15_port: the lines' write buffer overflows");
       if (post_push && !(tl_v && tl_line == post_bus[28:3]))
         $error("quux15_port: a posted word whose line no table read found");

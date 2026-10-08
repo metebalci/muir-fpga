@@ -12,7 +12,7 @@
 //!             sweep; the late squash after a start that faults; a squashed
 //!             start; a start right after a map write; the read rule under
 //!             the seeded model; word 225 and an error response; a write
-//!             carrying the `MD` of the microcycle after its start; the
+//!             carrying `MD` as its start's microcycle left it; the
 //!             word after a read start reading the old `MD`; forty writes to
 //!             consecutive words, half of them two data beats, under a
 //!             model that answers up to 200 clocks late
@@ -248,9 +248,13 @@ pub fn ports() -> Vec<(String, Preset)> {
         }
         v.push((format!("word-225-errors{errors}"), p));
     }
-    // A write carries the MD of the microcycle after its start; a start
-    // right after it is held and the write carries the MD before it.
+    // A write carries MD as its start's microcycle leaves it, whatever the
+    // next word loads (A15b.3); a start right after it
+    // is held and the write carries the MD before it.
     let mut p = run();
+    // The word right after a start writes MD: `micro`'s MD-after-start
+    // check, under its OA select check, would stop it.
+    p.select_check = false;
     let (a, b, v1, v2) = (p.k(PHYS | 0o50), p.k(PHYS | 0o60), p.k(0o1111), p.k(0o2222));
     p.op(ALU | SETA | a_src(v1) | MD);
     p.op(ALU | SETA | a_src(a) | START_WRITE);
@@ -262,7 +266,7 @@ pub fn ports() -> Vec<(String, Preset)> {
     p.fill(2);
     p.op(ALU | SETM | SRC_MD | m_dest(0o26));
     p.stop();
-    v.push(("write-carries-next-md".into(), p));
+    v.push(("write-carries-its-start-s-md".into(), p));
     // The word right after a read start reads MD as the start found it: read,
     // written and through MAP(MD), at gaps 0 to 2, a miss and a hit.
     for hit in [false, true] {
@@ -275,6 +279,9 @@ pub fn ports() -> Vec<(String, Preset)> {
                     continue;
                 }
                 let mut p = run();
+                // MD written right after the start: `micro`'s MD-after-start
+                // check, under its OA select check, would stop it.
+                p.select_check = !(gap == 0 && k == 1);
                 p.main.push((0o40, 5));
                 let (two, a) = (p.k(2), p.k(PHYS | 0o40));
                 if hit {
