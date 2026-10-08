@@ -52,6 +52,12 @@ use muir::machine::{Geometry, IntervalTimer, Machine, QUUX_PROM_BASE, Timers};
 use muir::quux_input::{KeyboardMouse, QuuxInput};
 use muir::tv::Board;
 
+/// The machine's time in nanoseconds, a unit to the ns, as QUUX revisions 13
+/// and 14 keep it (muir's `TimeBase::NS`; revision 15 counts 0.5 ns), and so
+/// a thousand units to the microsecond for the interval timers.
+const NS: muir::clock::TimeBase = muir::clock::TimeBase::NS;
+const PER_US: u64 = 1000;
+
 /// `main.rs`'s `machine` for `--machine quux`: block-disk and the video
 /// controller at `video`, muir's default 1280 by 1024 unless `--video-size`
 /// gives the Kria KR260's 1920 by 1080, one memory board, and a disk of
@@ -207,16 +213,16 @@ fn main() {
         use muir::file_device as fd;
         let dev = &mut m.file_device;
         let t0 = 1_000_000;
-        dev.write(fd::CMD_BASE, FD_CMD_BASE, t0, 0, &m.main);
-        dev.write(fd::CMD_SIZE, FD_CMD_LOG2, t0, 0, &m.main);
-        dev.write(fd::RESP_BASE, resp_base, t0, 0, &m.main);
-        dev.write(fd::RESP_SIZE, FD_RESP_LOG2, t0, 0, &m.main);
-        dev.write(fd::CONTROL, 0x101, t0, 0, &m.main);
+        dev.write(fd::CMD_BASE, FD_CMD_BASE, (t0, NS), 0, &m.main);
+        dev.write(fd::CMD_SIZE, FD_CMD_LOG2, (t0, NS), 0, &m.main);
+        dev.write(fd::RESP_BASE, resp_base, (t0, NS), 0, &m.main);
+        dev.write(fd::RESP_SIZE, FD_RESP_LOG2, (t0, NS), 0, &m.main);
+        dev.write(fd::CONTROL, 0x101, (t0, NS), 0, &m.main);
         m.main[FD_CMD_BASE as usize] = (0x1234 | 0o77 << 16) as muir::machine::Word;
-        dev.write(fd::CMD_PROD, 1, t0, 0, &m.main);
-        dev.advance(t0 + 1_000_000, &mut m.main);
-        dev.write(fd::RESP_CONS, 1, t0 + 1_000_000, 0, &m.main);
-        dev.write(fd::RESP_CONS, 5, t0 + 1_000_000, 0, &m.main);
+        dev.write(fd::CMD_PROD, 1, (t0, NS), 0, &m.main);
+        dev.advance(t0 + 1_000_000, &mut m.main, NS);
+        dev.write(fd::RESP_CONS, 1, (t0 + 1_000_000, NS), 0, &m.main);
+        dev.write(fd::RESP_CONS, 5, (t0 + 1_000_000, NS), 0, &m.main);
         assert_eq!(dev.read(fd::STATUS, t0 + 1_000_000), 1 | 1 << 3, "the file device's status");
         assert_eq!(dev.read(fd::RESP_PROD, t0 + 1_000_000), 1, "the command answered");
         assert!(m.checkpoint_refusal().is_none(), "a checkpoint may be taken");
@@ -298,13 +304,13 @@ fn main() {
     // with its, risen once; timer 2 one-shot without it, risen a tick before `M0`.
     let mut t = Timers::new();
     let (on, one_shot, ie) = (IntervalTimer::ON, IntervalTimer::ONE_SHOT, IntervalTimer::INTERRUPT_ENABLE);
-    t.write(0o111, ONE_SHOT_US, (ENABLED - 5) * 10);
-    t.write(0o113, PERIOD_US, (ENABLED - 5) * 10);
-    t.write(0o110, on | one_shot | ie, ENABLED * 10);
-    t.write(0o112, on | ie, ENABLED * 10);
+    t.write(0o111, ONE_SHOT_US, (ENABLED - 5) * 10, PER_US);
+    t.write(0o113, PERIOD_US, (ENABLED - 5) * 10, PER_US);
+    t.write(0o110, on | one_shot | ie, ENABLED * 10, PER_US);
+    t.write(0o112, on | ie, ENABLED * 10, PER_US);
     let shot = (M0 - 1) * 10 - SHOT_AT_M0_US as u64 * 1000;
-    t.write(0o115, SHOT_AT_M0_US, shot - 50);
-    t.write(0o114, on | one_shot, shot);
+    t.write(0o115, SHOT_AT_M0_US, shot - 50, PER_US);
+    t.write(0o114, on | one_shot, shot, PER_US);
     assert!(!t.timer[0].flag(M0 * 10) && t.timer[1].flag(M0 * 10) && t.timer[2].flag(M0 * 10));
     m.timers = t;
 

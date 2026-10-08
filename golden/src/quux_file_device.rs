@@ -66,6 +66,10 @@ use muir::file_device::{
 };
 use muir::machine::MemoryWord;
 
+/// The device's time in nanoseconds, a unit to the ns: QUUX revision 13's
+/// and 14's time base (muir's `TimeBase::NS`; revision 15 counts 0.5 ns).
+const NS: muir::clock::TimeBase = muir::clock::TimeBase::NS;
+
 fn num(s: &str) -> u64 {
     match s.strip_prefix("0x") {
         Some(h) => u64::from_str_radix(h, 16),
@@ -210,19 +214,19 @@ fn run<W: Cell>(script: &str, text: &str, tree: &Path, revision_13: bool) -> Str
             }
             "rings" => {
                 (cb, cl, rb, rl) = (num(w[1]) as u32, num(w[2]) as u32, num(w[3]) as u32, num(w[4]) as u32);
-                dev.write(CMD_BASE, cb, now, now, &main);
-                dev.write(CMD_SIZE, cl, now, now, &main);
-                dev.write(RESP_BASE, rb, now, now, &main);
-                dev.write(RESP_SIZE, rl, now, now, &main);
+                dev.write(CMD_BASE, cb, (now, NS), now, &main);
+                dev.write(CMD_SIZE, cl, (now, NS), now, &main);
+                dev.write(RESP_BASE, rb, (now, NS), now, &main);
+                dev.write(RESP_SIZE, rl, (now, NS), now, &main);
                 // The script's own copies, as the device took them.
                 (cb, rb) = (cb & address, rb & address);
             }
             "enable" => {
-                dev.write(CONTROL, 1 | (num(w[1]) as u32) << 8, now, now, &main);
+                dev.write(CONTROL, 1 | (num(w[1]) as u32) << 8, (now, NS), now, &main);
                 (prod, rcons, seen) = (0, 0, 0);
             }
             "disable" => {
-                dev.write(CONTROL, 0, now, now, &main);
+                dev.write(CONTROL, 0, (now, NS), now, &main);
                 (prod, rcons, seen) = (0, 0, 0);
             }
             "reset" => {
@@ -249,15 +253,15 @@ fn run<W: Cell>(script: &str, text: &str, tree: &Path, revision_13: bool) -> Str
                 }
                 prod = prod.wrapping_add(1);
             }
-            "post" => dev.write(CMD_PROD, prod as u32, now, now, &main),
+            "post" => dev.write(CMD_PROD, prod as u32, (now, NS), now, &main),
             "consume" => {
                 rcons = rcons.wrapping_add(num(w[1]) as u16);
-                dev.write(RESP_CONS, rcons as u32, now, now, &main);
+                dev.write(RESP_CONS, rcons as u32, (now, NS), now, &main);
             }
             "nowat" => nowat.push(num(w[1]) as u16),
             "run" => {
                 now += 1 << 50;
-                dev.advance(now, &mut main);
+                dev.advance(now, &mut main, NS);
                 let upto = dev.response_producer();
                 let clock = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                 let digits = W::DIGITS;
