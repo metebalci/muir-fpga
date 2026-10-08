@@ -537,6 +537,7 @@ static void dump(const struct machine_model *m, unsigned from)
 #define P_TAB 022
 #define P_META_L 045
 #define P_RUBOUT 023
+#define P_ROMAN_I 0101
 
 int main(int argc, char **argv)
 {
@@ -862,6 +863,48 @@ int main(int argc, char **argv)
 			      "**AND THE PART THAT WAS KEPT COMPLETES**: %u words",
 			      h.m.gots - m4);
 		}
+
+		// **THE PREFIX, THROUGH THIS PROGRAM'S OWN LINK TO THE KEY
+		// TRANSLATION** (`cadr-terminal/src/input_keys.c`, which the
+		// viewer's path uses too): a key held from before Scroll_Lock
+		// and let go while the prefix stands goes up at once, and its
+		// next press is sent.  Before, the release was dropped, the key
+		// stayed down for the machine and its next press was lost.
+		const unsigned m5 = h.m.gots;
+		feed(h.kbd_w, EV_KEY, C_A, 1);
+		feed(h.kbd_w, EV_KEY, C_SCROLL, 1);
+		feed(h.kbd_w, EV_KEY, C_SCROLL, 0);
+		feed(h.kbd_w, EV_KEY, C_A, 0);
+		feed(h.kbd_w, EV_KEY, C_SCROLL, 1);	// the prefix again: let go
+		feed(h.kbd_w, EV_KEY, C_SCROLL, 0);
+		feed(h.kbd_w, EV_KEY, C_A, 1);
+		feed(h.kbd_w, EV_KEY, C_A, 0);
+		settle(&h, 16);
+		check(h.m.gots - m5 == 4 && saw(&h.m, m5, P_A, 0) && saw(&h.m, m5 + 1, P_A, 1)
+		      && saw(&h.m, m5 + 2, P_A, 0) && saw(&h.m, m5 + 3, P_A, 1),
+		      "**A KEY LET GO WHILE THE PREFIX STANDS GOES UP, AND ITS NEXT PRESS IS SENT**: "
+		      "%u words", h.m.gots - m5);
+		if (h.m.gots - m5 != 4)
+			dump(&h.m, m5);
+		// ...and the prefix still applies to the key pressed behind it:
+		// Scroll_Lock then 1 is Roman I after a has gone up.
+		const unsigned m6 = h.m.gots;
+		feed(h.kbd_w, EV_KEY, C_A, 1);
+		feed(h.kbd_w, EV_KEY, C_SCROLL, 1);
+		feed(h.kbd_w, EV_KEY, C_SCROLL, 0);
+		feed(h.kbd_w, EV_KEY, C_A, 0);
+		feed(h.kbd_w, EV_KEY, C_1, 1);
+		feed(h.kbd_w, EV_KEY, C_1, 0);
+		feed(h.kbd_w, EV_KEY, C_A, 1);
+		feed(h.kbd_w, EV_KEY, C_A, 0);
+		settle(&h, 20);
+		check(h.m.gots - m6 == 6 && saw(&h.m, m6, P_A, 0) && saw(&h.m, m6 + 1, P_A, 1)
+		      && saw(&h.m, m6 + 2, P_ROMAN_I, 0) && saw(&h.m, m6 + 3, P_ROMAN_I, 1)
+		      && saw(&h.m, m6 + 4, P_A, 0) && saw(&h.m, m6 + 5, P_A, 1),
+		      "a let go while the prefix stands, then Roman I behind it, then a: %u words",
+		      h.m.gots - m6);
+		if (h.m.gots - m6 != 6)
+			dump(&h.m, m6);
 
 		// The words arrived in the order they were typed and none was
 		// lost in the fabric.
