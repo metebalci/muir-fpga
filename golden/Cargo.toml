@@ -115,3 +115,7 @@ path = "src/quux13_block_disk.rs"
 [[bin]]
 name = "quux14"
 path = "src/quux14.rs"
+
+[[bin]]
+name = "quux15"
+path = "src/quux15.rs"

@@ -3663,11 +3663,20 @@ def check_makefile():
     # `checkpoint_quux` is `checkpoint`'s QUUX half and closed its way: its
     # mutants, 9 to 16, are `chk_rtl.c`'s own behind `CHK_MUTATE`, judged by
     # muir and by muir's own file for the same machine in its own rule.
+    # `quux15_replay` and `quux15_generator` are revision 15's, before its
+    # core: the testbench `tb/quux15_core_tb.cpp` on a stand-in that plays a
+    # trace back, and the generator of the traces.  Nothing of the fabric is
+    # built by either, so there is nothing here to mutate; each carries its
+    # faults in its own rule --- a stub core, a value changed in every column,
+    # a trace with a fault planted in muir's pipeline, the pipeline's bypasses
+    # left out --- with the leg that must catch each named.  The core's
+    # records arrive with the core, against `quux15_<program>`.
     known = set(CHECKS) | {"board_reset", "fault", "ddr_map", "readout_face", "checkpoint",
                            "checkpoint_quux", "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora",
                            "de25_pins", "de25_linux", "kr260_linux", "displayport",
-                           "br_force", "br_kconfig", "machine_guard"}
+                           "br_force", "br_kconfig", "machine_guard",
+                           "quux15_replay_quux", "quux15_generator_quux"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four

@@ -285,6 +285,22 @@ QUUX14_G_empty8k := -GTLB_ENTRIES=8192
 # read and write in one tick stops the run; and under `CADR_RDW_POISON_CACHE`, the same of the
 # cache's RAMs, which a walk's reads share with the processor's.
 QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
+# **REVISION 15** (contract G3 revision 15 with its appendix A15b): the
+# programs of `golden/src/quux15.rs`, traced A ROW A CLOCK on muir's
+# pipeline (`golden/src/trace15.rs`) with the Kria's memory timing and
+# cache, each at each of its periods in units of 0.5 ns: 20, the Kria's
+# design period (10 ns), and 17 (8.5 ns); `time`, which reads time, at
+# A15b.12's 7, 8, 11 and 19 ns as well.  No core is built yet.  `quux15_replay.quux.pass`
+# holds the testbench the core is to be held to, `tb/quux15_core_tb.cpp`, on
+# a stand-in that plays a trace back (`tb/quux15_replay.sv`,
+# `tools/quux15_replay_check.py`); `quux15_generator.quux.pass` holds the
+# generator refusing a pipeline whose machine is not `micro`'s, and its PROM
+# images at 64 bits.
+QUUX15_PROGRAMS := alu transfer memory time
+QUUX15_PERIODS := 20 17
+QUUX15_PERIODS_time := 14 16 17 20 22 38
+QUUX15_TRACES = $(foreach p,$(QUUX15_PROGRAMS),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
+                  $(BUILD)/quux15_$(p).quux.p$(q).golden))
 # **CHECKS PENDING A RULING, NAMED AND SKIPPED ALOUD.**  A check whose
 # reference waits on a ruling of muir's is listed here, left out of `make
 # check MACHINE=quux`, and named by `quux-pending` on every run; its mutation
@@ -310,6 +326,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/de25_syn.pass \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
+       $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1383,6 +1400,66 @@ $(BUILD)/quux14_%.quux.lat.pass: $(BUILD)/obj_quux14_%_quux_k4/Vcadr_machine $(B
 .PRECIOUS: $(BUILD)/quux14_%_prom.hex
 $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux14 -- --program $* --prom > $@
+
+# Revision 15's programs (`QUUX15_PROGRAMS`): a trace's name carries its
+# period, `quux15_<program>.quux.p<P>.golden`, and the PROM image is one at
+# every period.
+QUUX15_GOLDEN := golden/src/quux15.rs golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
+.PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
+$(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)
+	$(GOLDEN) --release --bin quux15 -- --program $(word 1,$(subst ., ,$*)) --machine quux \
+	    --period $(patsubst p%,%,$(word 3,$(subst ., ,$*))) > $@
+$(BUILD)/quux15_%_prom.hex: $(QUUX15_GOLDEN) | $(BUILD)
+	$(GOLDEN) --release --bin quux15 -- --program $* --prom > $@
+# A trace with a fault planted in muir's pipeline, which moves clocks and no
+# result: the hint read inverted.  The generator writes it, its results being
+# `micro`'s; the testbench must fail it against the reference.
+$(BUILD)/quux15_transfer.quux.p20.hintinverted.trace: $(QUUX15_GOLDEN) | $(BUILD)
+	$(GOLDEN) --release --bin quux15 -- --program transfer --machine quux --period 20 \
+	    --mutation HintInverted > $@
+
+$(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_replay -CFLAGS -DQUUX15_TOP=Vquux15_replay \
+	    --top-module quux15_replay tb/quux15_replay.sv $(abspath tb/quux15_core_tb.cpp)
+
+# **THE TESTBENCH, HELD TO WHAT IT MUST CATCH**, on the stand-in: every trace
+# played back passes; a stub core fails at clock 0; a value changed in each
+# column, at the last clock it is compared, is named by clock and column; a
+# change where nothing is compared passes; and two traces played against a
+# reference fail: `transfer` with the planted fault, and `memory` at 8.5 ns
+# against 10 ns.
+$(BUILD)/quux15_replay.quux.pass: $(BUILD)/obj_quux15_replay/Vquux15_replay tools/quux15_replay_check.py \
+                                  $(QUUX15_TRACES) $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace
+	python3 tools/quux15_replay_check.py $(BUILD)/obj_quux15_replay/Vquux15_replay $(QUUX15_TRACES) \
+	    --as $(BUILD)/quux15_transfer.quux.p20.golden $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace \
+	    --as $(BUILD)/quux15_memory.quux.p20.golden $(BUILD)/quux15_memory.quux.p17.golden
+	@touch $@
+
+# **THE GENERATOR REFUSES A PIPELINE THAT IS WRONG**: `alu` with each of
+# muir's three bypasses left out writes no trace, the d3 bypass's refused by
+# the comparison with `micro` itself.  And every PROM image is 1,024 words of
+# 64 bits, `alu`'s with its OA-REG-HIGH select at `IR<61>`, which an image cut
+# to MIT's 48 bits would drop.
+$(BUILD)/quux15_generator.quux.pass: $(QUUX15_GOLDEN) $(QUUX15_PROGRAMS:%=$(BUILD)/quux15_%_prom.hex) | $(BUILD)
+	@for m in NoD1 NoD2 NoD3; do \
+	   if $(GOLDEN) --release --bin quux15 -- --program alu --machine quux --period 20 --mutation $$m \
+	        > $(BUILD)/quux15_generator.$$m.trace 2> $(BUILD)/quux15_generator.$$m.log; then \
+	     echo "quux15_generator: $$m planted in muir's pipeline, and alu's trace is written"; exit 1; fi; \
+	   if [ -s $(BUILD)/quux15_generator.$$m.trace ]; then \
+	     echo "quux15_generator: $$m planted, and a part of a trace is written"; exit 1; fi; \
+	   echo "quux15_generator: ok      $$m planted is refused: $$(tail -n 1 $(BUILD)/quux15_generator.$$m.log)"; \
+	 done
+	@grep -q "differs from micro" $(BUILD)/quux15_generator.NoD3.log \
+	  || { echo "quux15_generator: NoD3 is not refused by the comparison with micro"; exit 1; }
+	@for p in $(QUUX15_PROGRAMS); do \
+	   f=$(BUILD)/quux15_$${p}_prom.hex; \
+	   [ "$$(wc -l < $$f)" = 1024 ] && [ "$$(grep -c -E '^[0-9a-f]{16}$$' $$f)" = 1024 ] \
+	     || { echo "quux15_generator: $$f is not 1,024 words of 64 bits"; exit 1; }; \
+	 done
+	@grep -q -E '^[2367abef][0-9a-f]{15}$$' $(BUILD)/quux15_alu_prom.hex \
+	  || { echo "quux15_generator: alu's PROM image has no word with IR<61>, its OA-REG-HIGH select"; exit 1; }
+	@echo "quux15_generator: ok      every PROM image is 1,024 words of 64 bits, alu's with its select at IR<61>"
+	@touch $@
 
 $(BUILD)/quux_%.golden: $(QUUX_GOLDEN) | $(BUILD)
 	$(GOLDEN) --release --bin quux -- --program $* --machine cadr > $@

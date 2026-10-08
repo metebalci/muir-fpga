@@ -1,0 +1,239 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// Holds revision 15's core to muir's pipeline clock for clock, over a trace of
+// `golden/src/quux15.rs`, whose columns `golden/src/trace15.rs` says.
+//
+//   V<top> <trace> [+plusargs, handed to the design]
+//
+// The design is the Verilated top `QUUX15_TOP` names, built with this file:
+// revision 15's core, or `tb/quux15_replay.sv`, the stand-in that shows this
+// testbench catches what it should (`tools/quux15_replay_check.py`).  Either
+// shows the trace's columns on outputs of the same names, `obs_<column>`.
+//
+// **ROW k IS THE DESIGN AS CLOCK k ENDS.**  `rst` is held high for four
+// rising edges and dropped; row 0 is compared there, with no edge since, and
+// row k after the k-th rising edge from it.  Each column of each row is
+// compared, with four rules that leave out what muir does not define:
+//
+//   cs rd ex wb commit   a stage's word, `<15>` valid, `<14>` nopped,
+//                        `<13:0>` its address: the valid bit always; whether
+//                        nopped when valid; the address when valid and not
+//                        nopped (muir gives no nopped word's address)
+//   pdlptr ... ic        the eight registers, on a row whose commit is valid
+//   gaddr, mdword, raddr an event's address or word, on a row with its event
+//   the rest             every row
+//
+// Nothing here computes what a core should do: every value it holds a column
+// to is the trace's.  It reports the first 20 differences and the first one
+// again on its last line, `FAIL: ... the first at clock <k>, <column>`, which
+// the stand-in's check reads.
+
+#include <cinttypes>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include "verilated.h"
+
+#ifndef QUUX15_TOP
+#error "QUUX15_TOP names the Verilated top: Vquux15_replay, or revision 15's core"
+#endif
+#define QUUX15_STR2(x) #x
+#define QUUX15_STR(x) QUUX15_STR2(x)
+#define QUUX15_HEADER(x) QUUX15_STR(x.h)
+#include QUUX15_HEADER(QUUX15_TOP)
+
+namespace {
+
+using Top = QUUX15_TOP;
+
+// When a column is compared, by the trace's row.
+enum When { kEvery, kStage, kAtCommit, kIfGrant, kIfMd, kIfReg };
+
+struct Column {
+  const char *name;
+  When when;
+  uint64_t (*get)(const Top *);
+};
+
+#define QUUX15_COLUMN(n, w) \
+  { #n, w, [](const Top *d) -> uint64_t { return static_cast<uint64_t>(d->obs_##n); } }
+
+// In the trace's order, after its clock.
+const Column kColumns[] = {
+    QUUX15_COLUMN(cs, kStage),         QUUX15_COLUMN(rd, kStage),
+    QUUX15_COLUMN(ex, kStage),         QUUX15_COLUMN(wb, kStage),
+    QUUX15_COLUMN(commit, kStage),     QUUX15_COLUMN(pdlptr, kAtCommit),
+    QUUX15_COLUMN(pdlidx, kAtCommit),  QUUX15_COLUMN(spcptr, kAtCommit),
+    QUUX15_COLUMN(q, kAtCommit),       QUUX15_COLUMN(vma, kAtCommit),
+    QUUX15_COLUMN(md, kAtCommit),      QUUX15_COLUMN(lc, kAtCommit),
+    QUUX15_COLUMN(ic, kAtCommit),      QUUX15_COLUMN(oalow, kEvery),
+    QUUX15_COLUMN(oahigh, kEvery),     QUUX15_COLUMN(grant, kEvery),
+    QUUX15_COLUMN(gaddr, kIfGrant),    QUUX15_COLUMN(mdl, kEvery),
+    QUUX15_COLUMN(mdword, kIfMd),      QUUX15_COLUMN(reg, kEvery),
+    QUUX15_COLUMN(raddr, kIfReg),      QUUX15_COLUMN(queue, kEvery),
+    QUUX15_COLUMN(inflight, kEvery),   QUUX15_COLUMN(halted, kEvery),
+};
+constexpr size_t kN = sizeof kColumns / sizeof kColumns[0];
+
+// The trace's columns, by name, for the rules.
+constexpr size_t kCommit = 4, kGrant = 15, kMdl = 17, kReg = 19;
+
+bool stage_agrees(uint64_t got, uint64_t want) {
+  if (got >> 16) return false;
+  const bool valid = (want >> 15) & 1, nop = (want >> 14) & 1;
+  if (((got >> 15) & 1) != valid) return false;
+  if (!valid) return true;
+  if (((got >> 14) & 1) != nop) return false;
+  if (nop) return true;
+  return (got & 0x3fff) == (want & 0x3fff);
+}
+
+bool compared(When w, const std::vector<uint64_t> &row) {
+  switch (w) {
+    case kEvery:
+    case kStage:
+      return true;
+    case kAtCommit:
+      return (row[kCommit] >> 15) & 1;
+    case kIfGrant:
+      return row[kGrant] != 0;
+    case kIfMd:
+      return row[kMdl] != 0;
+    case kIfReg:
+      return row[kReg] != 0;
+  }
+  return true;
+}
+
+std::vector<std::string> words(const char *line) {
+  std::vector<std::string> out;
+  const char *p = line;
+  while (*p) {
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    const char *q = p;
+    while (*q && *q != ' ' && *q != '\t' && *q != '\n' && *q != '\r') ++q;
+    if (q > p) out.emplace_back(p, q - p);
+    p = q;
+  }
+  return out;
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+  Verilated::commandArgs(argc, argv);
+  const char *path = nullptr;
+  for (int i = 1; i < argc; ++i)
+    if (argv[i][0] != '+') path = argv[i];
+  if (!path) {
+    std::fprintf(stderr, "usage: %s <trace> [+plusargs]\n", argv[0]);
+    return 2;
+  }
+  std::FILE *f = std::fopen(path, "r");
+  if (!f) {
+    std::fprintf(stderr, "cannot read %s\n", path);
+    return 2;
+  }
+
+  // The header: the columns this testbench knows, in its order, and a trace
+  // that is a reference rather than one with a fault planted in muir.
+  std::vector<std::vector<uint64_t>> rows;
+  char line[1024];
+  bool header = false;
+  while (std::fgets(line, sizeof line, f)) {
+    if (line[0] == '#') {
+      if (std::strstr(line, "PLANTED FAULT")) {
+        std::fprintf(stderr, "%s carries a fault planted in muir; it is no reference\n", path);
+        return 2;
+      }
+      std::vector<std::string> w = words(line + 1);
+      if (!w.empty() && w[0] == "clock") {
+        bool ok = w.size() == kN + 1;
+        for (size_t c = 0; ok && c < kN; ++c) ok = w[c + 1] == kColumns[c].name;
+        if (!ok) {
+          std::fprintf(stderr, "%s: its columns are not the ones this testbench compares\n", path);
+          return 2;
+        }
+        header = true;
+      }
+      continue;
+    }
+    std::vector<std::string> w = words(line);
+    if (w.empty()) continue;
+    if (w.size() != kN + 1) {
+      std::fprintf(stderr, "%s: row %zu has %zu columns, not %zu\n", path, rows.size(), w.size(),
+                   kN + 1);
+      return 2;
+    }
+    std::vector<uint64_t> v;
+    for (const std::string &s : w) v.push_back(std::strtoull(s.c_str(), nullptr, 16));
+    if (v[0] != rows.size()) {
+      std::fprintf(stderr, "%s: row %zu is clock %" PRIu64 "\n", path, rows.size(), v[0]);
+      return 2;
+    }
+    rows.push_back(v);
+  }
+  std::fclose(f);
+  if (!header || rows.size() < 2) {
+    std::fprintf(stderr, "FAIL: %s carries %s%zu rows\n", path, header ? "" : "no header and ",
+                 rows.size());
+    return 1;
+  }
+
+  Top *dut = new Top;
+  auto edge = [&]() {
+    dut->clk = 0;
+    dut->eval();
+    dut->clk = 1;
+    dut->eval();
+  };
+  dut->rst = 1;
+  for (int k = 0; k < 4; ++k) edge();
+  dut->rst = 0;
+  dut->clk = 0;
+  dut->eval();
+
+  long bad = 0;
+  size_t first_clock = 0;
+  const char *first_column = nullptr;
+  size_t commits = 0, grants = 0, landed = 0, registers = 0;
+  for (size_t k = 0; k < rows.size(); ++k) {
+    if (k > 0) edge();
+    const std::vector<uint64_t> &want = rows[k];
+    commits += (want[1 + kCommit] >> 15) & 1;
+    grants += want[1 + kGrant] != 0;
+    landed += want[1 + kMdl] != 0;
+    registers += want[1 + kReg] != 0;
+    const std::vector<uint64_t> row(want.begin() + 1, want.end());
+    for (size_t c = 0; c < kN; ++c) {
+      const Column &col = kColumns[c];
+      if (!compared(col.when, row)) continue;
+      const uint64_t got = col.get(dut);
+      const bool agrees = col.when == kStage ? stage_agrees(got, row[c]) : got == row[c];
+      if (agrees) continue;
+      if (bad == 0) {
+        first_clock = k;
+        first_column = col.name;
+      }
+      if (++bad <= 20)
+        std::fprintf(stderr, "clock %zu: %s is %" PRIx64 ", muir says %" PRIx64 "\n", k, col.name,
+                     got, row[c]);
+    }
+  }
+  dut->final();
+  delete dut;
+  if (bad) {
+    std::fprintf(stderr, "FAIL: %ld differences over %zu clocks of %s; the first at clock %zu, %s\n",
+                 bad, rows.size(), path, first_clock, first_column);
+    return 1;
+  }
+  std::printf("ok: %zu clocks of %s agree with muir's pipeline: %zu commits, %zu grants, "
+              "%zu words landed in MD, %zu registers taken\n",
+              rows.size(), path, commits, grants, landed, registers);
+  return 0;
+}
