@@ -678,8 +678,14 @@ of three ways, by its address, through `rtl/machine/quux_mem_port.sv`:
 
 - **The memory bus**: main memory and the video controller's frame buffer,
   through a cache, `rtl/machine/quux_cache.sv`. The cache holds 4,096 words
-  in lines of four, two ways to a set. It is write-through, allocates a line on a
-  read miss and never on a write, and holds the memory bus's words only.
+  in two ways. On revisions 13 and 14 a line is eight 40-bit words, in 256
+  sets of two lines; revision 12's lines were four 32-bit words, in 512 sets.
+  It is write-through, allocates a line on a read miss and never on a write,
+  and holds the memory bus's words only. On revision 14 it is keyed by the
+  29-bit bus address, the frame buffer's with `<28>` set, and the walk's and
+  the write-back's reads go through it too, one lookup at a time. A walk's
+  read past main memory's end reads zero and fills its line with zeros, in
+  a line fill's time, asking main memory nothing.
 - **A device register**: a word of the register page at `17777400`, the
   video controller's and block-disk's among them, reached by the processor's
   register decode and never cached. A register access takes two microcycles: the register is taken at
@@ -695,7 +701,10 @@ holds the module to it tick for tick.
 - A read that hits is answered two ticks, 20 ns, after its grant. The RAMs
   are read at the grant's edge from the map's output, which has had the
   whole microcycle, and the tags are compared over the tick after it.
-- A read that misses is a line fill of 380 ns, and a write takes 290 ns.
+- A read that misses is a line fill, and a write takes 290 ns. A line fill
+  is 380 ns and a tick for each 64-bit beat past two, muir's
+  `MemoryPort::fill_ns`: 410 ns from main memory, five beats, and 400 ns
+  from the frame buffer, four. Revision 12's line of two beats took 380 ns.
   Main memory does one operation at a time. A write is answered after the
   hit time by a write buffer of one word, or when the buffer's last write is
   done. A miss behind a write waits for it.
@@ -731,9 +740,14 @@ holds the module to it tick for tick.
   microcycle before the grant. Its zero reaches MD at the next master clock
   edge and not at the grant's own, because muir finds the cycle acknowledged
   only after the edge that grants it.
-- A line fill is two 64-bit beats at a 16-byte boundary,
-  `rtl/plumbing/quux_axi_master.sv`, on the Arty's `S_AXI_HP0` and on the
-  DE25-Nano's FPGA-to-SDRAM bridge.
+- Main memory is packed storage on revisions 13 and 14: word w is the five
+  bytes at `MAIN13_BASE + 5w`, `<7:0>` first and the tag last. A line of
+  eight words is 40 bytes, five 64-bit beats, and a write is five bytes at
+  any byte. The frame buffer keeps four bytes a word, so its line is four
+  beats, and a write there drops the tag. `rtl/plumbing/quux_axi_master.sv`
+  puts them on the Arty's `S_AXI_HP0` and on the DE25-Nano's FPGA-to-SDRAM
+  bridge, with strobes, a word across two beats and a burst split at a
+  4 KiB boundary. Revision 12's line was two beats at a 16-byte boundary.
 
 The video controller's frame buffer is in DDR at the display's base, where the scanout
 reads it on its own port. The cache writes it through, so the scanout sees
@@ -754,6 +768,13 @@ word written to main memory also clears its set in the cache, so that no
 processor read hits a word from before the transfer after DONE, which is the
 second rule. The coherence run of `build/quux13_port.quux.k4.pass` holds both
 rules with the processor and a transfer running together.
+
+**Revision 15's cache**, as its contract specifies it and not yet built here,
+keeps the two ways and the lines of eight words, 40 bytes, write-through and
+allocated on a read miss only. Its size is a board's parameter, outside
+`rtl/machine/`: 64K words on the Kria KR260, 16K on the DE25-Nano and 4K on
+the Arty Z7-20, each board taking the largest size up to its own whose hit
+is two clocks.
 
 QUUX's memory adapter has no timing exception. Nothing of the processor's
 reaches it: the frame buffer is the cache's and the registers are the
