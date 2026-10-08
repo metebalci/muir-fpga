@@ -277,7 +277,7 @@ struct cadr_image {
 	uint64_t *prom;			/* IMG_PROM_WORDS, 48 bits each */
 	uint64_t *imem;			/* IMG_IMEM_WORDS, 48 bits each */
 	uint64_t *amem, *mmem, *pdl;	/* words: 32 bits, 40 on revision 13 */
-	uint32_t *spc;			/* 21 bits */
+	uint32_t *spc;			/* 19 bits */
 	uint32_t *dmem;			/* 17 bits, `dmem_words` of them */
 	uint32_t *l1_map;		/* 5 bits, 6 on QUUX, 7 on revision 13 */
 	uint32_t *l2_map;		/* 24 bits, 28 on revision 13 */

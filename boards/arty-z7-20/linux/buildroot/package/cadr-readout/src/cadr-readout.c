@@ -76,7 +76,7 @@ static const struct mem kMems[] = {
 	{ "pdl",   IMG_SEL_PDL,
 	  { IMG_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS, IMG_QUUX_PDL_WORDS }, { 32, 32, 40, 40 },
 	  "the pushdown buffer" },
-	{ "spc",   IMG_SEL_SPC,  SAME(IMG_SPC_WORDS), SAME(21), "the micro-stack" },
+	{ "spc",   IMG_SEL_SPC,  SAME(IMG_SPC_WORDS), SAME(19), "the micro-stack" },
 	{ "dmem",  IMG_SEL_DMEM, { IMG_DMEM_WORDS, IMG_DMEM_WORDS, IMG_DMEM_WORDS_13, IMG_DMEM_WORDS_13 },
 	  SAME(17),
 	  "the dispatch memory" },

@@ -232,7 +232,7 @@ static void fill(struct model *m)
 	for (unsigned i = 0; i < IMG_PDL_WORDS; ++i)
 		m->pdl[i] = (uint32_t)poison(IMG_SEL_PDL, i, 32);
 	for (unsigned i = 0; i < IMG_SPC_WORDS; ++i)
-		m->spc[i] = (uint32_t)poison(IMG_SEL_SPC, i, 21);
+		m->spc[i] = (uint32_t)poison(IMG_SEL_SPC, i, 19);
 	for (unsigned i = 0; i < IMG_DMEM_WORDS; ++i)
 		m->dmem[i] = (uint32_t)poison(IMG_SEL_DMEM, i, 17);
 	for (unsigned i = 0; i < IMG_L1_WORDS; ++i)
@@ -317,7 +317,7 @@ int main(void)
 				    IMG_PDL_WORDS, IMG_SPC_WORDS,
 				    IMG_DMEM_WORDS, IMG_L1_WORDS,
 				    IMG_L2_WORDS, IMG_OPCS };
-	const unsigned bits[] = { 48, 48, 32, 32, 32, 21, 17, 5, 24, 14 };
+	const unsigned bits[] = { 48, 48, 32, 32, 32, 19, 17, 5, 24, 14 };
 	for (unsigned i = 0; i < 10 && bad < 10; ++i) {
 		for (unsigned a = 0; a < depths[i]; ++a) {
 			uint64_t w = 0;

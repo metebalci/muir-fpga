@@ -1998,6 +1998,62 @@
   assign spcv = spushd ? spc_q : spcw;
 @end
 
+@mutation the-stack-keeps-a-bit-above-18
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note The stack is `SPC<18:0>`: SPCW0-18 and SPCO0-18 on page SPC, so a
+@note word pushed by destination 15 keeps its `<18:0>` and nothing above.
+@note Here `L<19>` reaches the stack's `<18>`, as a stack wider than 19
+@note bits would keep a bit muir's does not. `spc-push-high-bits` pushes a
+@note word with `<18>` and `<19>` set, on the CADR, and holds the word the
+@note stack keeps and the word both stack sources read back.
+@old
+  assign spcw = destspcd ? l[18:0] : {5'd0, reta};
+@new
+  assign spcw = destspcd ? {l[18] ^ l[19], l[17:0]} : {5'd0, reta};
+@end
+
+@mutation the-stacks-m-read-drops-spco18
+@check dispatch_write_order
+@file rtl/machine/cadr_microcycle.sv
+@note `SPCO18` drives `M<18>` through the 74S373 at SPCLCH 4A07, so both
+@note stack sources read `SPCO<18:0>` under `SPCPTR` on `M<28:24>`. This
+@note puts `<17:0>` there and drops `<18>`, which a stack word whose `<18>`
+@note is set shows on the CADR (`spc-push-high-bits`).
+@old
+    else if (spcenb) m = WORD_BITS'({3'd0, spcptr, 5'd0, spc_q});
+@new
+    else if (spcenb) m = WORD_BITS'({3'd0, spcptr, 6'd0, spc_q[17:0]});
+@end
+
+@mutation the-stack-keeps-a-bit-above-18-on-quux
+@check dispatch_write_order13_quux
+@file rtl/machine/cadr_microcycle.sv
+@note The stack is `SPC<18:0>`: SPCW0-18 and SPCO0-18 on page SPC, so a
+@note word pushed by destination 15 keeps its `<18:0>` and nothing above.
+@note Here `L<19>` reaches the stack's `<18>`, as a stack wider than 19
+@note bits would keep a bit muir's does not. `spc-push-high-bits` pushes a
+@note word with `<18>` and `<19>` set, on QUUX at revision 13, and holds the word the
+@note stack keeps and the word both stack sources read back.
+@old
+  assign spcw = destspcd ? l[18:0] : {5'd0, reta};
+@new
+  assign spcw = destspcd ? {l[18] ^ l[19], l[17:0]} : {5'd0, reta};
+@end
+
+@mutation the-stacks-m-read-drops-spco18-on-quux
+@check dispatch_write_order13_quux
+@file rtl/machine/cadr_microcycle.sv
+@note `SPCO18` drives `M<18>` through the 74S373 at SPCLCH 4A07, so both
+@note stack sources read `SPCO<18:0>` under `SPCPTR` on `M<28:24>`. This
+@note puts `<17:0>` there and drops `<18>`, which a stack word whose `<18>`
+@note is set shows on QUUX at revision 13 (`spc-push-high-bits`).
+@old
+    else if (spcenb) m = WORD_BITS'({3'd0, spcptr, 5'd0, spc_q});
+@new
+    else if (spcenb) m = WORD_BITS'({3'd0, spcptr, 6'd0, spc_q[17:0]});
+@end
+
 @mutation the-first-map-level-is-read-a-microcycle-stale
 @check microcycle_sys
 @file rtl/machine/cadr_microcycle.sv

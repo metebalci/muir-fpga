@@ -246,7 +246,7 @@ fn main() {
         *w = poison(4, i as u64, word_bits);
     }
     for (i, w) in m.spc.iter_mut().enumerate() {
-        *w = poison(5, i as u64, 21) as u32;
+        *w = poison(5, i as u64, 19) as u32;
     }
     // The dispatch memory and both map levels at the machine's own sizes
     // and widths: 4,096, 8,192 of 7 bits and 4,096 of 28 (A1.4, A1.7).

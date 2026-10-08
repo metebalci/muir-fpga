@@ -104,7 +104,7 @@ struct Mem {
 const Mem kMems[] = {
     {"the control store", 0, 16384, 48}, {"the boot PROM", 1, 1024, 48},
     {"the A memory", 2, 1024, 32},       {"the M memory", 3, 32, 32},
-    {"the pushdown buffer", 4, 1024, 32},{"the micro-stack", 5, 32, 21},
+    {"the pushdown buffer", 4, 1024, 32},{"the micro-stack", 5, 32, 19},
     {"the dispatch memory", 6, 2048, 17},{"the level-1 map", 7, 2048, 5},
     {"the level-2 map", 8, 1024, 24},    {"the OPC shift register", 9, 8, 14},
 };

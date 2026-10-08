@@ -60,7 +60,7 @@
 // TPCLK low, after the latches have stopped following.
 //
 // Sizes, for what will have to fit: A memory 1024 x 32 and the PDL 1024 x 32
-// are a BRAM36 each at x32.  M memory 32 x 32 and the stack 32 x 21 are small
+// are a BRAM36 each at x32.  M memory 32 x 32 and the stack 32 x 19 are small
 // enough for distributed RAM, which is where the 93425As' asynchronous read
 // would have gone anyway.  One BRAM per original chip would not fit and is
 // not what this asks for.
@@ -1273,17 +1273,19 @@ module cadr_microcycle #(
   //
   // Sizes, for what will have to fit: A memory 1024 x 32 and the PDL
   // 1024 x 32 are a BRAM36 each at x32.  M memory 32 x 32 and the stack
-  // 32 x 21 are small enough to land in distributed RAM, which is where the
+  // 32 x 19 are small enough to land in distributed RAM, which is where the
   // 93425As' asynchronous read would have gone anyway; one BRAM per original
   // chip would not fit and is not what this asks for.
 
   logic [WORD_BITS-1:0] amem [0:1023];
   logic [WORD_BITS-1:0] mmem [0:31];
   logic [WORD_BITS-1:0] pdl  [0:PDL_WORDS-1];
-  logic [20:0] spcm [0:31];
+  // The stack is `SPC<18:0>`: SPCW0-18 and SPCO0-18 on page SPC, and a
+  // parity bit this fabric does not keep.
+  logic [18:0] spcm [0:31];
 
   logic [WORD_BITS-1:0] amem_q, mmem_q, pdl_q;
-  logic [20:0] spc_q;
+  logic [18:0] spc_q;
 
   // page L 3C26-3C29: the 74S374 that holds OB for the write pulse.  Its
   // input is the datapath's and comes in until slice 3.
@@ -1449,8 +1451,8 @@ module cadr_microcycle #(
   logic [4:0]  spcptr;
   logic [13:0] reta;
   logic        spushd, destspcd, spush, spop, spcnt;
-  logic [20:0] spcw, spcv;
-  assign spcw = destspcd ? l[20:0] : {7'd0, reta};
+  logic [18:0] spcw, spcv;
+  assign spcw = destspcd ? l[18:0] : {5'd0, reta};
   assign spcv = spushd ? spcw : spc_q;
 
   assign spop  = ((srcspcpop && !nop) || popj) && !ignpopj
@@ -1687,9 +1689,10 @@ module cadr_microcycle #(
     if (mpassm)      m = mmem_out;
     else if (pdlenb) m = pdl_q;
     // `SPCPTR<4:0>` on M<28:24> through the 74S241 at 4B10, with the RAM's
-    // own `SPCO` under it --- not the push pass-around, which is on the SPC
-    // bus and goes to the next-address path instead.
-    else if (spcenb) m = WORD_BITS'({3'd0, spcptr, 6'd0, spc_q[17:0]});
+    // own `SPCO<18:0>` under it, `SPCO18` onto M<18> by the 74S373 at
+    // SPCLCH 4A07 --- not the push pass-around, which is on the SPC bus and
+    // goes to the next-address path instead.
+    else if (spcenb) m = WORD_BITS'({3'd0, spcptr, 5'd0, spc_q});
     else if (mfenb)  m = mf;
     else             m = '0;
   end
@@ -4114,7 +4117,7 @@ module cadr_microcycle #(
   localparam logic [3:0] RO_AMEM = 4'd2;   // the A memory, 1024 x 32
   localparam logic [3:0] RO_MMEM = 4'd3;   // the M memory, 32 x 32
   localparam logic [3:0] RO_PDL  = 4'd4;   // the pushdown buffer, 1024 x 32
-  localparam logic [3:0] RO_SPC  = 4'd5;   // the micro-stack, 32 x 21
+  localparam logic [3:0] RO_SPC  = 4'd5;   // the micro-stack, 32 x 19
   localparam logic [3:0] RO_DMEM = 4'd6;   // the dispatch memory, 2048 x 17
   localparam logic [3:0] RO_MAP1 = 4'd7;   // the level-1 map, 2048 x 5
   localparam logic [3:0] RO_MAP2 = 4'd8;   // the level-2 map, 1024 x 24
@@ -4128,7 +4131,7 @@ module cadr_microcycle #(
   // (declared with the fused return, whose memory's second port is here too).
   logic [47:0] ro_imem_q, ro_prom_q;
   logic [WORD_BITS-1:0] ro_amem_q, ro_mmem_q, ro_pdl_q;
-  logic [20:0] ro_spc_q;
+  logic [18:0] ro_spc_q;
   logic [16:0] ro_dmem_q;
   logic [L1_BITS-1:0] ro_map1_q;
   logic [L2_BITS-1:0] ro_map2_q;
@@ -4345,7 +4348,7 @@ module cadr_microcycle #(
       RO_AMEM: ro_word = 48'((QUUX && a31_from_m31 && ro_a1[9:0] == 10'o31) ? m31_r : ro_amem_q);
       RO_MMEM: ro_word = 48'((QUUX && ro_a1[4:0] == 5'o31) ? m31_r : ro_mmem_q);
       RO_PDL:  ro_word = 48'(ro_pdl_q);
-      RO_SPC:  ro_word = {27'd0, ro_spc_q};
+      RO_SPC:  ro_word = {29'd0, ro_spc_q};
       RO_DMEM: ro_word = {31'd0, ro_dmem_q};
       // Revision 14 has no map levels (A14.14): the selectors answer as
       // memories this machine has not got.
@@ -4379,7 +4382,7 @@ module cadr_microcycle #(
   //                            the fabric tri-states, so the drivers are muxes
   //   n_tpr60                  SPEEDCLK, counted from the boundary instead
   //   funct<0>, funct<3>       misc functions 0 and 3, neither of them -HALT
-  //   spcv<20:15>              the stack's word above the return address:
+  //   spcv<18:15>              the stack's word above the return address:
   //                            it reaches the parity check and nothing else
   //   lvmo_eff<21:0>           -PMA21..8, the physical page: it leaves on the
   //                            cables as the bus cycle's address, which is
@@ -4391,7 +4394,7 @@ module cadr_microcycle #(
   //                            the bus, and that is the memory's to give
   logic unused;
   assign unused = &{1'b0, n_tpclk, tptse, n_tpr60, funct[0], funct[3],
-                    spcv[20:15], lvmo_eff[L2_BITS-3:0], destmdr, dmask[7]};
+                    spcv[18:15], lvmo_eff[L2_BITS-3:0], destmdr, dmask[7]};
 
   // ----------------------------------------- THE READ-DURING-WRITE WINDOW
   //

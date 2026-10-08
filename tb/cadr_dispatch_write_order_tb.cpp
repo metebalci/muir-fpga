@@ -488,7 +488,9 @@ int Run(const Program &p, Totals &tot) {
                    p.name.c_str(), i, static_cast<uint64_t>(PROC(mmem)[i]), p.mmem.at(i));
       ++bad;
     }
-    if ((PROC(spcm)[i] & 0x7ffffu) != (p.spc.at(i) & 0x7ffffu)) {
+    // Every bit the stack holds: it is `SPC<18:0>`, and a bit above <18> it
+    // kept is a fault.
+    if (static_cast<uint64_t>(PROC(spcm)[i]) != p.spc.at(i)) {
       std::fprintf(stderr, "FAIL: %s: SPC[%zo] is %" PRIo32 ", rtl has %" PRIo64 "\n",
                    p.name.c_str(), i, static_cast<uint32_t>(PROC(spcm)[i]), p.spc.at(i));
       ++bad;

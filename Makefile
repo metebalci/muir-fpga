@@ -4716,7 +4716,15 @@ $(BUILD)/work_dirs.pass: tools/work_dir_check.py Makefile \
 # body grows by 4,122 bytes, 632,409 to 636,531, and the packed file to
 # 561567 bytes; muir loads it, saves it back byte for byte and resumes at the
 # same microcycle.
-CHECKPOINT_SHA  := 8a1894f21fae8711f53e1323f073c6a4dddb5e603937eb9f41b063110587c763
+#
+# **AND WHEN THE STACK WENT TO 19 BITS.**  The fabric's micro-stack is
+# `SPC<18:0>`, as the CADR's is, and the readout window gives 19 bits of
+# each word, so the modeled window's stack words are 19 bits where they were
+# 21.  Nothing else moves: the file stays 561,567 bytes, and with the stack
+# words drawn at 21 bits again it hashes to the digest before, 8a1894f2...c763;
+# muir loads it, saves it back byte for byte and resumes at the same
+# microcycle.
+CHECKPOINT_SHA  := 2fc55173a198d0444d6856e184763b6c1a354ac0cc5c5cf91a1fa783035593f1
 # **THE RUN STATE BEFORE THE HALT, AND ITS THREE MUTANTS, 32 TO 34.**  A
 # machine the program found running and halted for the read is written with
 # RUN and SRUN set, as they stood, so that muir resumes it running; one found

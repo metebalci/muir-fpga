@@ -43,6 +43,11 @@
 //!   read finishes inside the microcycle or which wait for it), `MAP(MD)`
 //!   after a map write (`map-source-after-write`), and a dispatch on a map
 //!   bit after one (`map-dispatch-after-write`).
+//! - **The micro-stack is `SPC<18:0>`** (SPCW0-18 and SPCO0-18 on page
+//!   SPC): a word pushed by destination 15 keeps its `<18:0>`, and both
+//!   stack sources put `SPCO<18:0>` on `M<18:0>`, `SPCO18` by the 74S373 at
+//!   SPCLCH 4A07.  `spc-push-high-bits`, this file's own, pushes a word with
+//!   `<18>` and the bits above it set and reads it back by both sources.
 //! - **QUUX has no hung microcycle**: a microcycle that reads `MD` with a
 //!   read in flight waits whole cycles and runs once, whole, so its writes
 //!   take their addresses from the word read (`dispatch-on-md-gap-*` and
@@ -287,6 +292,9 @@ const HELD_CYCLES: u64 = 400;
 const PDL_POINTER: u64 = (0o14 << 19) | (0o37 << 14);
 const PDL_TOP: u64 = (0o10 << 19) | (0o37 << 14);
 const SPC_PUSH: u64 = (0o15 << 19) | (0o37 << 14);
+/// A word for the stack with `<18>` and every bit from `<19>` to `<29>` set
+/// above its `<17:0>`.
+const SPC_HIGH_WORD: u32 = 0o7777654321;
 const E: u64 = 0o1300;
 const DISPATCH_WORD: u32 = 0o123456;
 
@@ -565,6 +573,24 @@ fn programs(which: machine_axis::Which) -> Vec<Program> {
                 Insn::new(ALU | SETM | SRC_MD | a_src(3) | m_dest(13)),
             ],
         ));
+    }
+    // This file's own: a word with bits above `<18>` pushed by destination
+    // 15 and read back by both stack sources, `SPC` and `SPC` with a pop.
+    // The stack is `SPC<18:0>` (SPCW0-18 and SPCO0-18 on page SPC), so the
+    // stack keeps `<18:0>` of the word and `SPCO18` drives `M<18>` (the
+    // 74S373 at SPCLCH 4A07).
+    {
+        let mut p = vec![filler()];
+        constant(SPC_HIGH_WORD, 4, &mut p);
+        p.push(Insn::new(ALU | SETM | m_src(4) | a_src(3) | SPC_PUSH));
+        p.push(filler());
+        p.push(Insn::new(ALU | SETM | src(0o1) | a_src(3) | m_dest(5)));
+        p.push(Insn::new(ALU | SETM | src(0o14) | a_src(3) | m_dest(6)));
+        p.push(filler());
+        let here = p.len();
+        p.push(halt_here(here));
+        let rows = here as u64 + 4;
+        all.push(program("spc-push-high-bits", p, rows));
     }
     all.push(read_then(
         "map-store-held-by-wait",

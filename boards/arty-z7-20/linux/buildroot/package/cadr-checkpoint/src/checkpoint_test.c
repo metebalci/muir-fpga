@@ -278,7 +278,7 @@ static void fill(struct model *m)
 	for (unsigned i = 0; i < IMG_PDL_WORDS; ++i)
 		m->pdl[i] = (uint32_t)poison(IMG_SEL_PDL, i, 32);
 	for (unsigned i = 0; i < IMG_SPC_WORDS; ++i)
-		m->spc[i] = (uint32_t)poison(IMG_SEL_SPC, i, 21);
+		m->spc[i] = (uint32_t)poison(IMG_SEL_SPC, i, 19);
 	for (unsigned i = 0; i < IMG_DMEM_WORDS; ++i)
 		m->dmem[i] = (uint32_t)poison(IMG_SEL_DMEM, i, 17);
 	for (unsigned i = 0; i < IMG_L1_WORDS; ++i)
@@ -357,7 +357,7 @@ static void fill_quux(struct model *m)
 	for (unsigned i = 0; i < IMG_QUUX_PDL_WORDS; ++i)
 		m->pdl[i] = (uint32_t)poison(IMG_SEL_PDL, i, 32);
 	for (unsigned i = 0; i < IMG_SPC_WORDS; ++i)
-		m->spc[i] = (uint32_t)poison(IMG_SEL_SPC, i, 21);
+		m->spc[i] = (uint32_t)poison(IMG_SEL_SPC, i, 19);
 	for (unsigned i = 0; i < IMG_DMEM_WORDS; ++i)
 		m->dmem[i] = (uint32_t)poison(IMG_SEL_DMEM, i, 17);
 	for (unsigned i = 0; i < IMG_L1_WORDS; ++i)
