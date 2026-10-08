@@ -1450,7 +1450,7 @@ $(BUILD)/quux15_transfer.quux.p20.hintinverted.trace: $(QUUX15_GOLDEN) | $(BUILD
 # Each trace is run under two seeds.
 QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/machine/quux15_ram.sv \
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
-                   rtl/machine/quux15_devices.sv rtl/machine/quux15_validmap.sv \
+                   rtl/machine/quux15_devices.sv rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv \
                    rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv
 QUUX15_CORE_FLAGS := --x-assign unique --x-initial unique +define+QUUX15_RDW_POISON -Irtl/machine \
                      -CFLAGS -DQUUX15_TOP=Vquux15_core -CFLAGS -DQUUX15_CORE

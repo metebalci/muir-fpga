@@ -153,10 +153,13 @@ module quux15_mmu #(
       .clk(clk), .re(1'b1), .raddr(ra_idx), .rdata(ra_q), .we(w_en), .waddr(w_idx), .wdata(w_data));
   quux15_ram #(.WIDTH(40), .DEPTH(ENTRIES)) tlb_b (
       .clk(clk), .re(1'b1), .raddr(rb_idx), .rdata(rb_q), .we(w_en), .waddr(w_idx), .wdata(w_data));
+  // The indices the RAMs were read at, at the last edge: each lookup's own,
+  // the valid bits read there too.
+  logic [11:0]  a_idx_q, b_idx_q;
   logic         vm_a, vm_b, vm_none;
   quux15_validmap #(.ENTRIES(ENTRIES), .READS(2)) valid (
       .clk(clk), .rst(rst), .clear(op_empty), .we(w_en), .waddr(w_idx), .wbit(w_v),
-      .raddr0(a_va[21:10]), .raddr1(b_va[21:10]), .raddr2(12'd0),
+      .raddr0(a_idx_q), .raddr1(b_idx_q), .raddr2(12'd0),
       .rbit0(vm_a), .rbit1(vm_b), .rbit2(vm_none));
   // The writes the RAMs have not taken, oldest first, each with its valid
   // bit; and the one they took at the last edge, which that edge's reads
@@ -167,7 +170,6 @@ module quux15_mmu #(
   logic          hist_v;
   logic [11:0]   hist_idx;
   logic [39:0]   hist_data;
-  logic [11:0]   a_idx_q, b_idx_q;
 
   // The RAM's word at a lookup's address, the newest write forwarded.
   function automatic logic [39:0] tlb_word(input logic [39:0] q, input logic [11:0] at);
@@ -284,7 +286,7 @@ module quux15_mmu #(
   always_comb begin
     // --- The lookup.
     a_word      = tlb_word(ra_q, a_idx_q);
-    a_hit       = tlb_valid(vm_a, idx(a_va)) && a_word[39:30] == a_va[31:22];
+    a_hit       = tlb_valid(vm_a, a_idx_q) && a_word[39:30] == a_va[31:22];
     a_hit_entry = a_word[29:0];
     // --- The walk, on a miss of a paged address.
     wa = walk_call(w_state, w_va, a_va, t_ready, t_word, directory);
@@ -415,7 +417,7 @@ module quux15_mmu #(
   always_comb begin
     // --- The lookup.
     b_word = tlb_word(rb_q, b_idx_q);
-    b_hit       = tlb_valid(vm_b, idx(b_va)) && b_word[39:30] == b_va[31:22];
+    b_hit       = tlb_valid(vm_b, b_idx_q) && b_word[39:30] == b_va[31:22];
     b_hit_entry = b_word[29:0];
     // --- Its walk: its own, or one WB's start has ended.
     b_state = (w_owner_a || w_state == IDLE) ? IDLE : w_state;
@@ -424,17 +426,16 @@ module quux15_mmu #(
     b_entry = fixed_entry(b_va);
     bw_idx  = idx(b_va);
     bw_data = {b_va[31:22], wb.entry};
-    if (region(b_va) == PAGED && b_hit) begin
-      b_entry = b_hit_entry;
-    end else if (region(b_va) == PAGED && !b_walked) begin
-      // **A WALK'S FILL IS USED A CLOCK LATER**: the word holds the clock
-      // its walk ends, the fill written at the edge, and looks the TLB up
-      // again in the next (muir's `ex_stage`, `b_walked`), so that no table
-      // word reaches EX's operand in the clock it lands.
-      b_hold = 1'b1;
-    end else if (region(b_va) == PAGED) begin
-      // Walked, and the TLB without it: the walk found no entry.
-      b_entry = NO_ENTRY;
+    if (region(b_va) == PAGED) begin
+      // **THE TLB's WORD RAW**: a miss holds the word, so the hit decides
+      // nothing of the entry it reads, but after the word's walk, when the
+      // TLB without it means the walk found no entry.  **A WALK'S FILL IS
+      // USED A CLOCK LATER**: the word holds the clock its walk ends, the
+      // fill written at the edge, and looks the TLB up again in the next
+      // (muir's `ex_stage`, `b_walked`), so that no table word reaches EX's
+      // operand in the clock it lands.
+      b_entry = (b_walked && !b_hit) ? NO_ENTRY : b_hit_entry;
+      b_hold  = !b_hit && !b_walked;
     end
     b_called    = b_req && region(b_va) == PAGED && !b_hit && !b_walked;
     bw_v        = b_called && wb.done && wb.fill;

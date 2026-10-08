@@ -2707,7 +2707,7 @@ for _p in QUUX15_CORE:
         "sources": ["rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
                     "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv",
                     "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_devices.sv",
-                    "rtl/machine/quux15_validmap.sv",
+                    "rtl/machine/quux15_validmap.sv", "rtl/machine/quux15_recency.sv",
                     "rtl/machine/quux15_mmu.sv", "rtl/plumbing/quux15_axi_master.sv"],
         "extra": ["rtl/machine/quux_muldiv.sv"],
         "top": "quux15_core",

@@ -28158,8 +28158,10 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The hold while the writer is in RD alone, a clock short: the SH word
 @note leaves CS while its writer is in EX, before the register is written.
 @old
+    oa_hold  = cs_word[61] && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
                             || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
 @new
+    oa_hold  = cs_word[61] && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
                             || (ex_v && !ex_nop && writes_oa_high(ex_ir) && 1'b0));
 @end
 
@@ -28229,10 +28231,11 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @end
 
 @mutation quux15-ram-read-without-its-enable
-@check quux15_pdl_quux
+@check quux15_matrix_quux
 @file rtl/machine/quux15_ram.sv
-@note A RAM that reads every clock: the PDL buffer's word of a word waiting
-@note in RD behind a DIV is replaced by the word behind it in CS reads.
+@note A RAM that reads every clock: the control store's word CS holds through
+@note the OA hold is replaced by the next address's.  (A and the PDL buffer
+@note read every clock by design, RD keeping their words.)
 @old
     if (re) begin
 @new
@@ -28603,12 +28606,12 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note granted takes whether the cache holds its line from the queue entry
 @note the slot held before.
 @old
-          if (w_push && w_slot == fix_slot) begin
-            // Granted in this clock: its tag read answers next clock.
-            npend[n] = 1'b1;
-          end else if (q_hres[fix_slot]) begin
+        if (w_push && w_slot == fix_slot) begin
+          // Granted in this clock: its tag read answers next clock.
+          npend[n] = 1'b1;
+        end else if (q_hres[fix_slot]) begin
 @new
-          if (q_hres[fix_slot]) begin
+        if (q_hres[fix_slot]) begin
 @end
 
 @mutation quux15-a-word-fixed-at-its-grant-takes-the-slots-old-address
@@ -28617,9 +28620,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note Found while built: a write's word fixed in the clock the write is
 @note granted is written into the line of the address the slot held before.
 @old
-          nset[n] = set_of((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot]);
+        nset[n] = set_of((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot]);
 @new
-          nset[n] = set_of(q_bus[fix_slot]);
+        nset[n] = set_of(q_bus[fix_slot]);
 @end
 
 @mutation quux15-lvmo-zero-at-power-on
@@ -28956,12 +28959,10 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note Port B uses its walk's fill in the clock it lands (muir's
 @note `PortBFillSameClock`), the table word reaching EX's operand then.
 @old
-      b_hold = 1'b1;
-    end else if (region(b_va) == PAGED) begin
+      b_hold  = !b_hit && !b_walked;
 @new
-      b_hold = !wb.done;
-      if (wb.done) b_entry = wb.fill ? wb.entry : NO_ENTRY;
-    end else if (region(b_va) == PAGED) begin
+      b_hold  = !b_hit && !b_walked && !wb.done;
+      if (!b_hit && !b_walked && wb.done) b_entry = wb.fill ? wb.entry : NO_ENTRY;
 @end
 
 @mutation quux15-port-b-walks-again
@@ -29108,3 +29109,47 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 # and that word's port-B walk filled a clock before (its fill used a clock
 # later), so no fill or queued write meets it; the core drops one all the
 # same.
+
+@mutation quux15-two-bubbles-store-reads-past-rds-plan
+@check quux15_transfer_quux_b2
+@file rtl/machine/quux15_core.sv
+@note With two bubbles the store reads the next word in sequence where RD's
+@note plan sends the fetch elsewhere.
+@old
+      npc_nr = plan_r.next2;
+@new
+      npc_nr = npc;
+@end
+
+@mutation quux15-two-bubbles-store-reads-under-a-held-cs
+@check quux15_oa_quux_b2
+@file rtl/machine/quux15_core.sv
+@note With two bubbles the store reads while CS keeps its word under the
+@note OA-REG-HIGH hold, and CS's word changes under it.
+@old
+    cs_moves_nr = cs_v && (!rd_v || rd_moves_nr) && !oa_hold_nr && !pdl_wait_nr && errhalt_now == 1'b0;
+@new
+    cs_moves_nr = cs_v && (!rd_v || rd_moves_nr) && !(oa_hold_nr && 1'b0) && !pdl_wait_nr && errhalt_now == 1'b0;
+@end
+
+@mutation quux15-rd-word-leaves-its-pdl-word-in-the-ram
+@check quux15_pdl_quux
+@file rtl/machine/quux15_core.sv
+@note A word RD holds takes its PDL buffer word from the RAM's output each
+@note clock, which the RAM, read every clock, changes under it.
+@old
+        rd_pdl_fix_v <= 1'b1; rd_pdl_fix <= rd_pdl_n;
+@new
+        rd_pdl_fix_v <= rd_pdl_fix_v || rd_pdl_fwd; rd_pdl_fix <= rd_pdl_n;
+@end
+
+@mutation quux15-two-bubbles-pdl-read-through-the-old-copies
+@check quux15_pdl_quux_b2
+@file rtl/machine/quux15_core.sv
+@note With two bubbles CS reads the PDL buffer through RD's copies as the
+@note clock began, missing the pointer and index the words before change.
+@old
+  assign pdl_raddr   = (BUBBLES == 2) ? (cs_ir[30] ? c_cs_nr.ptr : c_cs_nr.idx) : cs_pdl_addr;
+@new
+  assign pdl_raddr   = (BUBBLES == 2) ? (cs_ir[30] ? c.ptr : c.idx) : cs_pdl_addr;
+@end

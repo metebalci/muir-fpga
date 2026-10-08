@@ -244,11 +244,10 @@ module quux15_port #(
   logic          last_fill_way;
 
   // The cache's valid bits, a way's in RAM (`quux15_validmap.sv`), which
-  // the sweep clears in its first clock; and the way each set used last.
-  // An empty cache at power-on, as a bitstream holds it, which -RESET leaves
-  // as it is.
-  logic [SETS-1:0] mru;
-  initial mru = '0;
+  // the sweep clears in its first clock; and the way each set used last, in
+  // RAM too (`quux15_recency.sv`).  An empty cache at power-on, as a
+  // bitstream holds it, which -RESET leaves as it is.
+  logic          mru_f;
   logic          v0p, v0t, v0w, v1p, v1t, v1w;
   // The fill installed at the last edge: its set and way.
   logic        inst_q, inst_way_q;
@@ -430,8 +429,18 @@ module quux15_port #(
   always_comb begin
     install = fs == F_DATA && rd_last;
     f_set   = set_of(f_bus);
-    victim  = !mru[f_set];
+    victim  = !mru_f;
   end
+
+  // The way each set used last: a P hit's, a T hit's and an install's
+  // writes, the later in that order taking a set written twice; none in
+  // -RESET.
+  quux15_recency #(.SETS(SETS)) recency (
+      .clk(clk),
+      .we0(p_hit && !rst), .wa0(p_set), .wd0(p_h1),
+      .we1(t_hit && !rst), .wa1(t_set), .wd1(t_h1),
+      .we2(install && !rst), .wa2(f_set), .wd2(victim),
+      .ra(f_set), .rd(mru_f));
 
   logic          v_we0, v_we1;
   logic [SB-1:0] v_wa;
@@ -468,7 +477,9 @@ module quux15_port #(
     tb_addr  = install ? f_set : set_of(t_issue ? (t_start ? t_addr : t_bus) : t_bus);
     tb_we    = install ? (victim ? 2'b10 : 2'b01) : 2'b00;
     tb_wdata = tag_of(f_bus);
-    db_en    = install || t_issue || (drain && db_hit[drain_k]);
+    // Port B enabled for the oldest word whether it drains or not, a read
+    // that nothing takes when it does not: the drain gates the write alone.
+    db_en    = install || t_issue || (db_v[0] && !db_pend[0] && db_hit[0]);
     dbk_addr = install ? f_set : (t_issue ? set_of(t_start ? t_addr : t_bus) : db_set[drain_k]);
     d0_we    = '0;
     d1_we    = '0;
@@ -490,6 +501,84 @@ module quux15_port #(
     inflight_n = f_count - n_land + {4'd0, mw_taken};
     idle       = q_count == 4'd0 && f_count == 5'd0 && fs == F_NONE;
     empty      = q_count == 4'd0 && f_count == n_land;
+  end
+
+  // **THE BUFFER'S NEXT ENTRIES, WITH ITS OLDEST DRAINED AND WITHOUT**,
+  // each from the clock's registered state and its new words, so that the
+  // drain, which waits on this clock's table read and P lookup, only picks.
+  logic [DBN-1:0] db_nx_v [2], db_nx_hit [2], db_nx_way [2], db_nx_pend [2], db_nx_young [2];
+  logic [SB-1:0]  db_nx_set [2][DBN];
+  logic [2:0]     db_nx_lane [2][DBN];
+  logic [39:0]    db_nx_word [2][DBN];
+  logic [2:0]     db_nx_slot [2][DBN];
+  always_comb begin
+    for (int d = 0; d < 2; d++) begin
+      logic drained;
+      logic [DBN-1:0] nv, nhit, nway, npend, nyoung;
+      logic [SB-1:0]  nset [DBN];
+      logic [2:0]     nlane [DBN];
+      logic [39:0]    nword [DBN];
+      logic [2:0]     nslot [DBN];
+      int n;
+      drained = d == 1;
+      // The entries that stay, in order.
+      n = 0;
+      nv = '0; nhit = '0; nway = '0; npend = '0; nyoung = '0;
+      for (int k = 0; k < DBN; k++) begin
+        nset[k] = '0; nlane[k] = '0; nword[k] = '0; nslot[k] = '0;
+      end
+      for (int k = 0; k < DBN; k++)
+        if (db_v[k] && !(drained && 2'(k) == drain_k)) begin
+          nv[n] = 1'b1;
+          nset[n] = db_set[k]; nlane[n] = db_lane[k]; nword[n] = db_word[k];
+          nslot[n] = db_slot[k];
+          nhit[n] = db_hit[k]; nway[n] = db_way[k]; npend[n] = db_pend[k];
+          // A word whose way the grant's tag read answers now.
+          if (db_pend[k] && lw_v && lw_slot == db_slot[k]) begin
+            npend[n] = 1'b0;
+            nhit[n]  = w_h0 || w_h1;
+            nway[n]  = w_h1;
+          end
+          if (install && db_set[k] == f_set && nway[n] == victim) nhit[n] = 1'b0;
+          n++;
+        end
+      // A write-back's posted word: the line its table read found.
+      if (post_push) begin
+        nv[n] = 1'b1; nyoung[n] = 1'b1;
+        nset[n] = set_of(post_bus); nlane[n] = post_bus[2:0]; nword[n] = as_held(post_bus, post_word);
+        nhit[n] = tl_v && tl_line == post_bus[28:3];
+        nway[n] = tl_way;
+        if (install && set_of(post_bus) == f_set && tl_way == victim) nhit[n] = 1'b0;
+        n++;
+      end
+      // A write's word fixed.
+      if (fix_v) begin
+        nv[n] = 1'b1; nyoung[n] = 1'b1;
+        // The entry's address: granted in this clock, the start's own.
+        nset[n] = set_of((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot]);
+        nlane[n] = (w_push && w_slot == fix_slot) ? w_bus[2:0] : q_bus[fix_slot][2:0];
+        nword[n] = as_held((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot], fix_word);
+        nslot[n] = fix_slot;
+        if (w_push && w_slot == fix_slot) begin
+          // Granted in this clock: its tag read answers next clock.
+          npend[n] = 1'b1;
+        end else if (q_hres[fix_slot]) begin
+          nhit[n] = q_hit[fix_slot];
+          nway[n] = q_way[fix_slot];
+        end else if (lw_v && lw_slot == fix_slot) begin
+          nhit[n] = w_h0 || w_h1;
+          nway[n] = w_h1;
+        end else begin
+          npend[n] = 1'b1;
+        end
+        if (install && nset[n] == f_set && nway[n] == victim && !npend[n]) nhit[n] = 1'b0;
+        n++;
+      end
+      db_nx_v[d] = nv; db_nx_hit[d] = nhit; db_nx_way[d] = nway; db_nx_pend[d] = npend; db_nx_young[d] = nyoung;
+      for (int k = 0; k < DBN; k++) begin
+        db_nx_set[d][k] = nset[k]; db_nx_lane[d][k] = nlane[k]; db_nx_word[d][k] = nword[k]; db_nx_slot[d][k] = nslot[k];
+      end
+    end
   end
 
   // ================================================================ the edge
@@ -563,8 +652,6 @@ module quux15_port #(
       lt_with_p <= p_req;
       p_hit_land <= p_hit;
       p_hit_word <= p_lookup_word;
-      if (p_hit) mru[p_set] <= p_h1;
-      if (t_hit) mru[t_set] <= t_h1;
 
       // --- The table read.
       if (t_start) t_bus <= t_addr;
@@ -606,7 +693,6 @@ module quux15_port #(
         last_fill_set <= f_set;
         last_fill_way <= victim;
         f_word        <= rd_data[40*f_bus[2:0] +: 40];
-        mru[f_set]    <= victim;
         inst_set_q    <= f_set;
         inst_way_q    <= victim;
         if (f_table) begin
@@ -620,72 +706,13 @@ module quux15_port #(
             q_hit[k] <= 1'b0;
       end
 
-      // --- The buffer: the word drained, the words made now.
-      for (int k = 0; k < DBN; k++) db_young[k] <= 1'b0;
-      begin
-        logic [DBN-1:0] nv, nhit, nway, npend, nyoung;
-        logic [SB-1:0]  nset [DBN];
-        logic [2:0]     nlane [DBN];
-        logic [39:0]    nword [DBN];
-        logic [2:0]     nslot [DBN];
-        int n;
-        // The entries that stay, in order.
-        n = 0;
-        nv = '0; nhit = '0; nway = '0; npend = '0; nyoung = '0;
-        for (int k = 0; k < DBN; k++) begin
-          nset[k] = '0; nlane[k] = '0; nword[k] = '0; nslot[k] = '0;
-        end
-        for (int k = 0; k < DBN; k++)
-          if (db_v[k] && !(drain && 2'(k) == drain_k)) begin
-            nv[n] = 1'b1;
-            nset[n] = db_set[k]; nlane[n] = db_lane[k]; nword[n] = db_word[k];
-            nslot[n] = db_slot[k];
-            nhit[n] = db_hit[k]; nway[n] = db_way[k]; npend[n] = db_pend[k];
-            // A word whose way the grant's tag read answers now.
-            if (db_pend[k] && lw_v && lw_slot == db_slot[k]) begin
-              npend[n] = 1'b0;
-              nhit[n]  = w_h0 || w_h1;
-              nway[n]  = w_h1;
-            end
-            if (install && db_set[k] == f_set && nway[n] == victim) nhit[n] = 1'b0;
-            n++;
-          end
-        // A write-back's posted word: the line its table read found.
-        if (post_push) begin
-          nv[n] = 1'b1; nyoung[n] = 1'b1;
-          nset[n] = set_of(post_bus); nlane[n] = post_bus[2:0]; nword[n] = as_held(post_bus, post_word);
-          nhit[n] = tl_v && tl_line == post_bus[28:3];
-          nway[n] = tl_way;
-          if (install && set_of(post_bus) == f_set && tl_way == victim) nhit[n] = 1'b0;
-          n++;
-        end
-        // A write's word fixed.
-        if (fix_v) begin
-          nv[n] = 1'b1; nyoung[n] = 1'b1;
-          // The entry's address: granted in this clock, the start's own.
-          nset[n] = set_of((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot]);
-          nlane[n] = (w_push && w_slot == fix_slot) ? w_bus[2:0] : q_bus[fix_slot][2:0];
-          nword[n] = as_held((w_push && w_slot == fix_slot) ? w_bus : q_bus[fix_slot], fix_word);
-          nslot[n] = fix_slot;
-          if (w_push && w_slot == fix_slot) begin
-            // Granted in this clock: its tag read answers next clock.
-            npend[n] = 1'b1;
-          end else if (q_hres[fix_slot]) begin
-            nhit[n] = q_hit[fix_slot];
-            nway[n] = q_way[fix_slot];
-          end else if (lw_v && lw_slot == fix_slot) begin
-            nhit[n] = w_h0 || w_h1;
-            nway[n] = w_h1;
-          end else begin
-            npend[n] = 1'b1;
-          end
-          if (install && nset[n] == f_set && nway[n] == victim && !npend[n]) nhit[n] = 1'b0;
-          n++;
-        end
-        db_v <= nv; db_hit <= nhit; db_way <= nway; db_pend <= npend; db_young <= nyoung;
-        for (int k = 0; k < DBN; k++) begin
-          db_set[k] <= nset[k]; db_lane[k] <= nlane[k]; db_word[k] <= nword[k]; db_slot[k] <= nslot[k];
-        end
+      // --- The buffer: the word drained, the words made now, each way of
+      // the drain made ready and the drain choosing (`db_nx`).
+      db_v <= db_nx_v[drain]; db_hit <= db_nx_hit[drain]; db_way <= db_nx_way[drain];
+      db_pend <= db_nx_pend[drain]; db_young <= db_nx_young[drain];
+      for (int k = 0; k < DBN; k++) begin
+        db_set[k] <= db_nx_set[drain][k]; db_lane[k] <= db_nx_lane[drain][k];
+        db_word[k] <= db_nx_word[drain][k]; db_slot[k] <= db_nx_slot[drain][k];
       end
     end
   end

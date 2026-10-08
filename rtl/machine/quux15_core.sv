@@ -371,13 +371,20 @@ module quux15_core #(
 
   // --- The memories: M and the micro stack in flip-flops, dispatch memory
   // read in EX.  Each comes up as muir's machine has it; a testbench may
-  // load them as a bitstream would (`public_flat_rw`).
+  // load them as a bitstream would (`public_flat_rw`).  **DISPATCH MEMORY
+  // IN TWO HALVES**, its even entries and its odd: both read at the address's
+  // `<11:1>`, and `<0>`, which a map-bit dispatch takes from port B's
+  // lookup, picks between their words last.
   logic [39:0] mmem[32] /* verilator public_flat_rw */;
-  logic [16:0] dmem[4096] /* verilator public_flat_rw */;
+  logic [16:0] dmem_even[2048] /* verilator public_flat_rw */;
+  logic [16:0] dmem_odd[2048] /* verilator public_flat_rw */;
   logic [18:0] spc[32];
   initial begin
     for (int k = 0; k < 32; k++) mmem[k] = 40'd0;
-    for (int k = 0; k < 4096; k++) dmem[k] = 17'd0;
+    for (int k = 0; k < 2048; k++) begin
+      dmem_even[k] = 17'd0;
+      dmem_odd[k]  = 17'd0;
+    end
     for (int k = 0; k < 32; k++) spc[k] = 19'd0;
   end
 
@@ -1237,17 +1244,24 @@ module quux15_core #(
     r.sw_word = w;
     return r;
   endfunction
-  // `pop_spc`: the word in `popped`.
-  function automatic spcx_t pop_spc(input spcx_t s);
+  // `pop_spc`: the word in `popped`.  **A POP READS THE STACK WHERE THE
+  // MICROCYCLE BEGAN**, at the pointer as EX took it (`top0`, `p0`): after
+  // the microcycle's own push the word below it, after the source's pop the
+  // word that pop left, and a plain pop the top.  Only WRITE-I-MEM's
+  // return under POPJ pops past it (`top1`), and its plain pop takes the
+  // word it pushed.  So the stack is read at addresses from registers, and
+  // the microcycle's decisions choose among the words read.
+  function automatic spcx_t pop_spc(input spcx_t s, input logic [18:0] top0, input logic [18:0] top1,
+                                    input logic [4:0] p0);
     spcx_t r;
     r = s;
     if (r.spc_pushed) begin
       r.spc_popped = 1'b1;
-      r.popped = spc_landed(r.sp - 5'd1);
+      r.popped = top0;
     end else if (r.spc_popped) begin
-      r.popped = spc_landed(r.sp + 5'd1);
+      r.popped = (r.sp == p0 - 5'd1) ? top0 : top1;
     end else begin
-      r.popped = (r.sw_v && r.sw_ptr == r.sp) ? r.sw_word : spc_landed(r.sp);
+      r.popped = (r.sw_v && r.sw_ptr == r.sp) ? r.sw_word : top0;
       r.sp = r.sp - 5'd1;
       r.spc_popped = 1'b1;
     end
@@ -1322,6 +1336,13 @@ module quux15_core #(
     else s1 = '{v: 1'b1, write: w, fetch: f, va: va};
     return {s0, s1};
   endfunction
+  // The stack's words a pop of this microcycle reads (`pop_spc`).
+  logic [18:0] spc_top0, spc_top1;
+  always_comb begin
+    spc_top0 = spc_landed(spcptr);
+    spc_top1 = spc_landed(spcptr + 5'd1);
+  end
+
   always_comb begin
     errhalt_now = ex_try && !ex_nop && ex_outside;
     commit      = ex_try && !errhalt_now;
@@ -1344,7 +1365,7 @@ module quux15_core #(
     nx_a_addr = 10'd0; nx_m_addr = 5'd0; nx_pdl_addr = 14'd0;
     dmem_we = 1'b0; dmem_wdata = ex_a_d1[16:0];
     inhibit = 1'b0; x_taken = 1'b0; wrote_imem = 1'b0; entry_pr = 2'd0;
-    entry = dmem[x_daddr];
+    entry = x_daddr[0] ? dmem_odd[x_daddr[11:1]] : dmem_even[x_daddr[11:1]];
     iwr = {ex_a_d1[31:0], ex_mdata[31:0]};
     formed = 14'd0; mismatch = 1'b0; popj_end = 1'b0;
     stepped = '0;
@@ -1444,7 +1465,7 @@ module quux15_core #(
               sx = push_spc(sx, {5'd0, ex_isel[7] ? x_npc - 14'd1 : x_npc});
               sx.spc_pushed = 1'b0;
               sx.spc_popped = 1'b0;
-              sx = pop_spc(sx);
+              sx = pop_spc(sx, spc_top0, spc_top1, spcptr);
             end
           end else begin
             x_taken = x_jcond != ex_isel[6];
@@ -1453,7 +1474,7 @@ module quux15_core #(
             if (x_taken) begin
               x_npc = ex_isel[25:12];
               if (ex_isel[9]) begin
-                sx = pop_spc(sx);
+                sx = pop_spc(sx, spc_top0, spc_top1, spcptr);
                 x_npc = sx.popped[13:0];
                 if (sx.popped[14]) begin
                   // `jump_return`, MACRO-DISPATCH off: the fetch asked for.
@@ -1498,7 +1519,7 @@ module quux15_core #(
                                                    : x_npc});
               x_npc = entry[13:0];
               if (entry[16]) begin
-                sx = pop_spc(sx);
+                sx = pop_spc(sx, spc_top0, spc_top1, spcptr);
                 x_npc = sx.popped[13:0];
                 if (sx.popped[14]) begin
                   if (!pops_spc(ex_isel)) nni = 1'b1;
@@ -1511,7 +1532,7 @@ module quux15_core #(
         end
         // POPJ: a return at the microcycle's end.
         if (popj_end) begin
-          sx = pop_spc(sx);
+          sx = pop_spc(sx, spc_top0, spc_top1, spcptr);
           x_npc = sx.popped[13:0];
           if (sx.popped[14]) begin
             if (!pops_spc(ex_isel)) nni = 1'b1;
@@ -1698,7 +1719,13 @@ module quux15_core #(
   logic [18:0] arch_top_new;
   copies_t     c_ref, c_res;
   always_comb begin
-    arch_top_new = (nsw_v && nsw_ptr == sx.sp) ? nsw_word : spc_after_ex(sx.sp, land_spc);
+    // The stack's top as EX leaves it: the pointer moves a word at most, so
+    // the three words around it as EX took it are read, and EX's pointer
+    // picks one.
+    arch_top_new = (nsw_v && nsw_ptr == sx.sp) ? nsw_word
+                 : (sx.sp == spcptr) ? spc_after_ex(spcptr, land_spc)
+                 : (sx.sp == spcptr + 5'd1) ? spc_after_ex(spcptr + 5'd1, land_spc)
+                 : spc_after_ex(spcptr - 5'd1, land_spc);
     c_ref = c;
     if (commit) begin
       if (c.idx_pend && c.idx_seq == ex_seq) begin
@@ -1930,13 +1957,71 @@ module quux15_core #(
     // CS loads at the next address once its word has gone; not in the clock
     // a WRITE-I-MEM's refetch begins, the store being written a clock on.
     cs_load  = (!cs_keep || cs_moves) && !block_load && errhalt_now == 1'b0;
-    store_re    = cs_load;
-    store_raddr = npc_e;
-    a_re        = cs_moves;
+    // A and the PDL buffer read every clock: RD takes their words in the
+    // clock its word arrives and keeps them after, so a read that no word
+    // takes changes nothing.
+    a_re        = 1'b1;
     a_raddr     = cs_ir[41:32];
-    pdl_re      = cs_moves;
-    pdl_raddr   = cs_pdl_addr;
+    pdl_re      = 1'b1;
   end
+
+  // **THE STORE'S READ WITHOUT EX's REDIRECT**, for two bubbles: the next
+  // address and CS's load as they are in a clock EX redirects nothing,
+  // from the plan RD makes from its copies and EX's squash of the delay
+  // slot under N.  In a clock EX redirects, CS takes nothing that clock
+  // but the delay slot not fetched yet, the next word in sequence, which
+  // `npc` already holds; or it keeps the delay slot held, which reads
+  // nothing either way.  So the redirect reaches NPC's registers and CS's,
+  // and not the store (checked below).
+  logic        rd_killed_nr, rd_moves_nr, cs_moves_nr, cs_load_nr, oa_hold_nr, pdl_wait_nr;
+  logic [13:0] npc_nr;
+  copies_t     c_app_nr;
+  /* verilator lint_off UNUSEDSIGNAL */
+  copies_t     c_cs_nr;           // its PDL pointer and index alone
+  /* verilator lint_on UNUSEDSIGNAL */
+  always_comb begin
+    rd_killed_nr = kill_rd && rd_v && rd_seq == slot_seq;
+    rd_moves_nr  = rd_v && ex_free && !(hold_r && !rd_killed_nr) && errhalt_now == 1'b0;
+    npc_nr = npc;
+    if (rd_v && cs_v && cs_seq == rd_seq + 8'd1 && rd_moves_nr && !rd_killed_nr && plan_r.next2_v)
+      npc_nr = plan_r.next2;
+    c_app_nr = ex_restore ? c_res : c_ref;
+    c_cs_nr  = (rd_moves_nr && !rd_killed_nr) ? apply_effects(plan_r.e, c_app_nr)
+             : (rd_moves_nr && c_app_nr.next_instr) ? lc_step(c_app_nr) : c_app_nr;
+    oa_hold_nr  = cs_word[61] && ((rd_v && !(rd_nop || rd_killed_nr) && writes_oa_high(rd_ir))
+                               || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
+    pdl_wait_nr = cs_rp[1] && (cs_rp[0] ? c_cs_nr.ptr_pend : c_cs_nr.idx_pend);
+    cs_moves_nr = cs_v && (!rd_v || rd_moves_nr) && !oa_hold_nr && !pdl_wait_nr && errhalt_now == 1'b0;
+    cs_load_nr  = (!cs_v || cs_moves_nr) && errhalt_now == 1'b0;
+  end
+  // The store's read, and the PDL buffer's address: with two bubbles as
+  // though EX redirects nothing.
+  assign store_re    = (BUBBLES == 2) ? cs_load_nr : cs_load;
+  assign store_raddr = (BUBBLES == 2) ? npc_nr : npc_e;
+  assign pdl_raddr   = (BUBBLES == 2) ? (cs_ir[30] ? c_cs_nr.ptr : c_cs_nr.idx) : cs_pdl_addr;
+
+`ifndef SYNTHESIS
+  // What two bubbles rely on: CS loads only the word the store read for it,
+  // and keeps a word only while the store reads nothing; a word CS gives RD
+  // reads the PDL buffer where it would after a redirect too.
+  always_ff @(posedge clk) begin
+    if (BUBBLES == 2 && !rst && errhalt == 2'd0) begin
+      if (cs_moves && cs_rp[1] && (cs_ir[30] ? c_cs_nr.ptr : c_cs_nr.idx) != cs_pdl_addr) begin
+        $display("quux15_core: two bubbles: CS's word at %o reads the PDL buffer at %o, not %o", cs_pc,
+                 cs_ir[30] ? c_cs_nr.ptr : c_cs_nr.idx, cs_pdl_addr);
+        $finish;
+      end
+      if (cs_load && !(cs_load_nr && npc_nr == npc_e)) begin
+        $display("quux15_core: two bubbles: CS loads %o, the store read %o (%b)", npc_e, npc_nr, cs_load_nr);
+        $finish;
+      end
+      if (cs_keep && !cs_moves && !cs_load && cs_load_nr) begin
+        $display("quux15_core: two bubbles: CS keeps %o while the store reads", cs_pc);
+        $finish;
+      end
+    end
+  end
+`endif
 
   // A device beyond the memory system's words, the frame buffer's window,
   // the redirect inside the PDL buffer: muir's `bus_read` and `bus_write`
@@ -2004,7 +2089,8 @@ module quux15_core #(
     end else begin
       // --- M memory, the micro stack and dispatch memory take their writes.
       if (land_m_we) mmem[land_m_addr] <= land_data;
-      if (dmem_we) dmem[x_daddr] <= dmem_wdata;
+      if (dmem_we && !x_daddr[0]) dmem_even[x_daddr[11:1]] <= dmem_wdata;
+      if (dmem_we && x_daddr[0]) dmem_odd[x_daddr[11:1]] <= dmem_wdata;
       if (land_spc) spc[spc_w_ptr] <= spc_w_word;
 
       // --- The registers at EX's end.
@@ -2154,7 +2240,7 @@ module quux15_core #(
         rd_nop <= rd_n_nop; rd_pre_nop <= rd_n_pre;
         rd_a_fix_v <= 1'b1; rd_a_fix <= rd_a_n;
         rd_m <= rd_m_n;
-        rd_pdl_fix_v <= rd_pdl_fix_v || rd_pdl_fwd; rd_pdl_fix <= rd_pdl_n;
+        rd_pdl_fix_v <= 1'b1; rd_pdl_fix <= rd_pdl_n;
       end
 
       // --- CS: the next word, at the address RD or the redirect chose.
