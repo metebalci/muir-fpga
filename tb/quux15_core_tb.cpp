@@ -247,6 +247,9 @@ bool load(Top *dut, const Run &run, const char *path) {
       r->quux15_core__DOT__dmem_even[i.address / 2] = static_cast<uint32_t>(i.word & 0x1ffff);
     else if (i.memory == "dmem" && i.address < 4096)
       r->quux15_core__DOT__dmem_odd[i.address / 2] = static_cast<uint32_t>(i.word & 0x1ffff);
+    else if (i.memory == "mdmem" && i.address < 1024)
+      // The MACRO DISPATCH MEMORY's entries, eighteen bits.
+      r->quux15_core__DOT__mdmem[i.address] = static_cast<uint32_t>(i.word & 0x3ffff);
     else if (i.memory == "pdl" && i.address < 16384)
       r->quux15_core__DOT__pdl__DOT__mem[i.address] = i.word & 0xffffffffffull;
     else if (i.memory == "main" && i.address < kMainWords)

@@ -28221,6 +28221,195 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
                       || (ex_v && !ex_nop && writes_oa_high(ex_ir) && 1'b0));
 @end
 
+@mutation quux15-fused-return-keeps-the-word-under-n
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note A fused return keeps its popped word when the entry has N, and pops it
+@note when not.
+@old
+      f.keep = !e[14];
+@new
+      f.keep = e[14];
+@end
+
+@mutation quux15-fused-return-ignores-p-and-r
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note A return fuses on an entry with P or R, which the main loop's dispatch
+@note runs.
+@old
+    if (mdreg[31] && popped[14] && popped[13:0] == mdreg[13:0] && !e[15] && !e[16]) begin
+@new
+    if (mdreg[31] && popped[14] && popped[13:0] == mdreg[13:0]) begin
+@end
+
+@mutation quux15-fused-return-reads-the-other-halfword
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note A fused return dispatches on the halfword of M 31 that LC does not name.
+@old
+      default: o = st[1] ? 6'd0 : 6'd16;
+@new
+      default: o = st[1] ? 6'd16 : 6'd0;
+@end
+
+@mutation quux15-fused-return-reads-a-stale-entry
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note A fused return reads the entry one before the one the halfword names.
+@old
+    e = mdmem[hw[15:6]];
+@new
+    e = mdmem[hw[15:6] - 10'd1];
+@end
+
+@mutation quux15-operand-arg-without-the-one
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note ARG's operand address is M-AP + delta, without the one.
+@old
+    return (arg ? ap + 14'd1 : localp) + {8'd0, delta};
+@new
+    return (arg ? ap : localp) + {8'd0, delta};
+@end
+
+@mutation quux15-operand-never-loaded
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The operand address a fused return armed is never loaded into PDL-INDEX.
+@old
+      if (mdop_v) nidx = op_addr(mdop_arg, mdop_delta);
+@new
+      if (1'b0) nidx = op_addr(mdop_arg, mdop_delta);
+@end
+
+@mutation quux15-pdl-field-m-ap-without-the-landing
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The PDL address field on M-AP reads the copy, not the M-AP write the
+@note word in WB lands now (muir-sim's bug before ecae9ab).
+@old
+            2'd0:    formed = (land_m_we && land_m_addr == mdreg[28:24]) ? land_data[13:0] : ap;
+@new
+            2'd0:    formed = ap;
+@end
+
+@mutation quux15-pdl-field-a-localp-without-the-landing
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The PDL address field on A-LOCALP reads the copy, not the A-LOCALP
+@note write the word in WB lands now.
+@old
+            2'd1:    formed = (land_a_we && land_a_addr == mdreg[23:14]) ? land_data[13:0] : localp;
+@new
+            2'd1:    formed = localp;
+@end
+
+@mutation quux15-pdl-field-early-on-m-ap-being-written
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD forms the index on M-AP while a word before is still writing it.
+@old
+            if (rd_word[50:49] == 2'd0 && !base_in_flight(1'b0, 10'd0, 1'b1, mdreg[28:24])) p.e.dest = D_IDX;
+@new
+            if (rd_word[50:49] == 2'd0) p.e.dest = D_IDX;
+@end
+
+@mutation quux15-pdl-field-early-on-a-localp-being-written
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD forms the index on A-LOCALP while a word before is still writing
+@note it.
+@old
+            if (rd_word[50:49] == 2'd1 && !base_in_flight(1'b1, mdreg[23:14], 1'b0, 5'd0)) p.e.dest = D_IDX;
+@new
+            if (rd_word[50:49] == 2'd1) p.e.dest = D_IDX;
+@end
+
+@mutation quux15-a-localp-copy-misses-its-write
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The copy of A-LOCALP does not take the A write at the address the
+@note register names.
+@old
+      if (land_a_we && running && land_a_addr == md_reg_now[23:14]) localp <= land_data[13:0];
+@new
+      if (land_a_we && running && land_a_addr == md_reg_now[23:14] + 10'd1) localp <= land_data[13:0];
+@end
+
+@mutation quux15-m-ap-copy-misses-its-write
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The copy of M-AP does not take the M write at the address the register
+@note names.
+@old
+      if (land_m_we && running && land_m_addr == md_reg_now[28:24]) ap <= land_data[13:0];
+@new
+      if (land_m_we && running && land_m_addr == md_reg_now[28:24] + 5'd1) ap <= land_data[13:0];
+@end
+
+@mutation quux15-macro-dispatch-index-not-written
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note Destination 6 does not write the index destination 7 writes at.
+@old
+              5'o6: n_mdindex = x_ob[9:0];
+@new
+              5'o6: ;
+@end
+
+@mutation quux15-macro-dispatch-entry-not-written
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note Destination 7 writes the entry beside the one the index names.
+@old
+        if (mdmem_we) mdmem[mdindex] <= x_ob[17:0];
+@new
+        if (mdmem_we) mdmem[mdindex ^ 10'd1] <= x_ob[17:0];
+@end
+
+@mutation quux15-macro-dispatch-register-not-written
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note Destination 5 does not write the register.
+@old
+              5'o5: n_mdreg = {x_ob[31:30], 1'b0, x_ob[28:0]};
+@new
+              5'o5: ;
+@end
+
+@mutation quux15-write-i-mem-keeps-the-enable
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note A control-store write leaves MACRO-DISPATCH enabled: a return fuses on
+@note entries that name the old microcode's addresses.
+@old
+            n_mdreg[31] = 1'b0;
+@new
+            n_mdreg[31] = n_mdreg[31];
+@end
+
+@mutation quux15-fused-return-pops-the-kept-word-in-ex
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note EX pops a fused return's popped word though the entry keeps it.
+@old
+          if (fx.keep) sx.sp = sx.sp + 5'd1;
+@new
+          if (fx.keep) sx.sp = sx.sp;
+@end
+
+@mutation quux15-guard-misses-macro-dispatch-writes
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note The guard does not hold a return behind a word writing the
+@note MACRO-DISPATCH register or an entry.
+@old
+      if (has_fd(ex_ir) && (fd_code(ex_ir) == 5'o2 || fd_code(ex_ir) == 5'o5 || fd_code(ex_ir) == 5'o6
+@new
+      if (has_fd(ex_ir) && (fd_code(ex_ir) == 5'o2 || 1'b0 || 1'b0
+@end
+
 @mutation quux15-a-dispatch-takes-sl
 @check quux15_dispsel_quux
 @file rtl/machine/quux15_core.sv
@@ -28467,9 +28656,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note PDL-FIELD-MISMATCH removed: a field that formed another index than
 @note the word writes runs on.
 @old
-        mismatch = (ex_alu || ex_byte) && ex_word[48] && ex_word[50] && formed != nidx;
+        mismatch = (ex_alu || ex_byte) && ex_word[48] && formed != nidx;
 @new
-        mismatch = (ex_alu || ex_byte) && ex_word[48] && ex_word[50] && formed != nidx && 1'b0;
+        mismatch = (ex_alu || ex_byte) && ex_word[48] && formed != nidx && 1'b0;
 @end
 
 @mutation quux15-stack-copy-not-restored
@@ -29089,9 +29278,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A return to the main loop that RD resolves with NEEDFETCH clear goes
 @note to its address as popped, not with `<1>` set.
 @old
-        else target = popped[13:0] | 14'd2;
+          target = popped[13:0] | 14'd2;
 @new
-        else target = popped[13:0];
+          target = popped[13:0];
 @end
 
 @mutation quux15-window-written-word-keeps-its-tag

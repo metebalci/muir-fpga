@@ -58,7 +58,14 @@
 // word under ERROR-STOP-ENABLE drains; OA-OUTSIDE-FIELDS freezes the machine
 // mid-clock, the word in EX, which the spy reads.
 //
-// **WHAT IS NOT BUILT** --- MACRO-DISPATCH and D, the keyboard and the
+// **MACRO-DISPATCH** (A15.2, A15b.9, A15b.16): its register, index and
+// entries (destinations 5-7); the copies of A-LOCALP and M-AP, and the PDL
+// address field on them; the fused return on M 31, decided in RD when no
+// fetch is due and checked in EX, its handler, its kept word and the
+// operand address it arms for the microcycle after it.
+//
+// **WHAT IS NOT BUILT** --- D's dispatch on the fetched word (A15b.9),
+// which waits for its timing to reach the reference; the keyboard and the
 // mouse, the network, block-disk's transfers (no pack is fitted, as in every
 // trace here), the PDL buffer redirect inside the buffer --- stops a
 // simulation at the word that needs it, naming it (`unbuilt`), rather than
@@ -190,7 +197,11 @@ module quux15_core #(
   // (after a pop the top is the stack's word below, `spc_below`; a data push
   // not yet committed, by its word's `seq`), the PDL pointer and index and a
   // write of either from the ALU not yet committed, LC's counter, NEEDFETCH,
-  // byte mode and an LC write not yet committed, and NEXT INSTR.
+  // byte mode and an LC write not yet committed, and NEXT INSTR; an operand
+  // address a fused return armed, for the microcycle after it to load into
+  // PDL-INDEX, known or not (`operand_after`), and an index lost to an
+  // operand load whose address RD could not know, which only a restore finds
+  // again.
   typedef struct packed {
     logic [4:0]  spc_ptr;
     logic [18:0] spc_top;
@@ -209,6 +220,10 @@ module quux15_core #(
     logic        lc_pend;
     logic [7:0]  lc_seq;
     logic        next_instr;
+    logic        opa_v;
+    logic        opa_known;
+    logic [13:0] opa_addr;
+    logic        idx_lost;
   } copies_t;
 
   // A word's effects on the copies, in the order `plan_for` makes them
@@ -228,6 +243,12 @@ module quux15_core #(
     logic [18:0] push_word;
     logic        ret;          // a return, popped
     logic        ret_ni;       // and the step it asks for
+    logic        opload;       // the operand load armed before, executed or nopped
+    logic        keep;         // a fused return's popped word kept
+    logic [18:0] keep_word;
+    logic        opa;          // a fused return's operand address armed
+    logic        opa_known;
+    logic [13:0] opa_addr;
   } effects_t;
 
   // RD's choices for its word (`RdPlan`).
@@ -242,7 +263,6 @@ module quux15_core #(
     logic [1:0]  pred_pr;      // {P, R}
     logic        kills;
     logic        returns;
-    logic        ub_macro;
   } plan_t;
 
   // The micro stack's pointer and flags through one microcycle (`push_spc`,
@@ -488,6 +508,19 @@ module quux15_core #(
   logic [16:0] dmem_even[2048] /* verilator public_flat_rw */;
   logic [16:0] dmem_odd[2048] /* verilator public_flat_rw */;
   logic [18:0] spc[32];
+  // **MACRO-DISPATCH** (A15.2, A15b.9, A15b.16; muir's `MacroDispatch`): the
+  // register, destination 5 (`<31>` the enable, `<30>` D's, `<28:0>` the
+  // main loop's address and where A-LOCALP and M-AP are); the index,
+  // destination 6; the MACRO DISPATCH MEMORY, destination 7, read in RD and
+  // in EX; the copies of A-LOCALP and M-AP, fourteen bits, which follow the
+  // writes of the words the register names; and the operand address a fused
+  // return arms, loaded into PDL-INDEX as the microcycle after it ends.
+  logic [31:0] mdreg;
+  logic [9:0]  mdindex;
+  logic [17:0] mdmem[1024] /* verilator public_flat_rw */;
+  logic [13:0] localp, ap;
+  logic        mdop_v, mdop_arg;
+  logic [5:0]  mdop_delta;
   initial begin
     for (int k = 0; k < 32; k++) mmem[k] = 40'd0;
     for (int k = 0; k < 2048; k++) begin
@@ -495,6 +528,7 @@ module quux15_core #(
       dmem_odd[k]  = 17'd0;
     end
     for (int k = 0; k < 32; k++) spc[k] = 19'd0;
+    for (int k = 0; k < 1024; k++) mdmem[k] = 18'd0;
   end
 
   // ================================================================= the store
@@ -637,7 +671,7 @@ module quux15_core #(
   logic [UNBUILT_BITS-1:0] unbuilt;
   localparam int U_DEVICE = 0;  // the keyboard's, the mouse's or the network's words, the PDL buffer
                                 // redirect inside the buffer, a dispatch-memory write on map bits
-  localparam int U_MACRO = 1;   // MACRO-DISPATCH: destinations 5-7, the PDL field on M-AP or A-LOCALP (slice 4)
+  localparam int U_MACRO = 1;   // D's dispatch on a fetched word (A15b.9)
   localparam int U_DEV   = 2;   // a device's word the devices do not answer (a guard)
 
   // ======================================================== RD's copies' help
@@ -662,6 +696,32 @@ module quux15_core #(
     r.spc_pend = 1'b0;
     return r;
   endfunction
+  // `OperandLoad`: the armed operand address into the index, or the index
+  // lost when RD could not know the address.
+  function automatic copies_t op_load(input copies_t ci);
+    copies_t r;
+    r = ci;
+    if (!r.opa_v) return r;
+    r.opa_v = 1'b0;
+    if (r.opa_known) begin
+      r.idx = r.opa_addr;
+      r.idx_pend = 1'b0;
+      r.idx_lost = 1'b0;
+    end else begin
+      r.idx_pend = 1'b1;
+      r.idx_lost = 1'b1;
+    end
+    return r;
+  endfunction
+  // `SpcKeep`: a fused return leaves its popped word on the stack.
+  function automatic copies_t spc_keep(input copies_t ci, input logic [18:0] w);
+    copies_t r;
+    r = ci;
+    r.spc_ptr = r.spc_ptr + 5'd1;
+    r.spc_top = w;
+    r.spc_below = 1'b0;
+    return r;
+  endfunction
   function automatic copies_t spc_push(input copies_t ci, input logic [18:0] w);
     copies_t r;
     r = ci;
@@ -676,13 +736,14 @@ module quux15_core #(
     copies_t r;
     r = ci;
     if (e.lcstep_own) r = lc_step(r);
+    if (e.opload) r = op_load(r);
     if (e.spcpop_src) r = spc_pop(r);
     if (e.pdl_dec) r.ptr = r.ptr - 14'd1;
     unique case (e.dest)
       D_LC:      begin r.lc_pend = 1'b1; r.lc_seq = e.seq; r.nf = 1'b1; end
       D_PDL_INC: r.ptr = r.ptr + 14'd1;
-      D_IDX:     begin r.idx = e.idx_val; r.idx_pend = 1'b0; end
-      D_IDX_W:   begin r.idx_pend = 1'b1; r.idx_seq = e.seq; end
+      D_IDX:     begin r.idx = e.idx_val; r.idx_pend = 1'b0; r.idx_lost = 1'b0; end
+      D_IDX_W:   begin r.idx_pend = 1'b1; r.idx_seq = e.seq; r.idx_lost = 1'b0; end
       D_PTR_W:   begin r.ptr_pend = 1'b1; r.ptr_seq = e.seq; end
       D_SPC:     begin
         r.spc_ptr = r.spc_ptr + 5'd1;
@@ -698,6 +759,12 @@ module quux15_core #(
     if (e.ret) begin
       r = spc_pop(r);
       if (e.ret_ni) r.next_instr = 1'b1;
+    end
+    if (e.keep) r = spc_keep(r, e.keep_word);
+    if (e.opa) begin
+      r.opa_v = 1'b1;
+      r.opa_known = e.opa_known;
+      r.opa_addr = e.opa_addr;
     end
     return r;
   endfunction
@@ -724,11 +791,84 @@ module quux15_core #(
     return (spc_w_v && spc_w_ptr == ci.spc_ptr) ? spc_w_word : spc[ci.spc_ptr];
   endfunction
 
+  // **THE FUSED RETURN** (`MacroDispatch::fused_return`; A15.2, H8a §3.3):
+  // a pop of `popped` with M 31's word `m31`, LC and byte mode as the return
+  // finds them.  The main loop's dispatch would take the halfword (or byte)
+  // of M 31 that LC, stepped, names (`lc_rotation_at`, in the ring of 40,
+  // the rotate 34): its `<15:6>` the entry's index, `<8:6>` the register,
+  // `<5:0>` delta.  The return fuses when the register is enabled, the
+  // popped word is the main loop's and the entry has neither P nor R.
+  typedef struct packed {
+    logic        fuse;
+    logic [13:0] handler;
+    logic        keep;
+    logic        op_v;
+    logic        op_arg;
+    logic [5:0]  op_delta;
+  } fused_t;
+  function automatic fused_t fused_on(input logic [18:0] popped, input logic [39:0] m31,
+                                      input logic bm, input logic [33:0] lcv);
+    fused_t      f;
+    logic [33:0] st;
+    logic [5:0]  o;
+    logic [15:0] hw;
+    logic [17:0] e;
+    f = '0;
+    st = lcv + (bm ? 34'd1 : 34'd2);
+    case ({bm, st[1:0]})
+      3'b100:  o = 6'd24;
+      3'b101:  o = 6'd0;
+      3'b110:  o = 6'd8;
+      3'b111:  o = 6'd16;
+      default: o = st[1] ? 6'd0 : 6'd16;
+    endcase
+    hw = m31[o +: 16];
+    e = mdmem[hw[15:6]];
+    if (mdreg[31] && popped[14] && popped[13:0] == mdreg[13:0] && !e[15] && !e[16]) begin
+      f.fuse = 1'b1;
+      f.handler = e[13:0];
+      f.keep = !e[14];
+      f.op_v = e[17] && (hw[8:6] == 3'd5 || hw[8:6] == 3'd6);
+      f.op_arg = hw[8:6] == 3'd6;
+      f.op_delta = hw[5:0];
+    end
+    return f;
+  endfunction
+  // The operand address (`operand_address`): A-LOCALP + delta, or M-AP + 1 +
+  // delta for ARG, from the copies, in the PDL buffer's fourteen bits.
+  function automatic logic [13:0] op_addr(input logic arg, input logic [5:0] delta);
+    return (arg ? ap + 14'd1 : localp) + {8'd0, delta};
+  endfunction
+  // A word that writes `M 31` or INTERRUPT-CONTROL, which a fused return
+  // cannot be.
+  function automatic logic writes_m31_ic(input logic [47:0] ir);
+    return (ir[44:43] == 2'd0 || ir[44:43] == 2'd3) && !ir[25]
+        && (ir[18:14] == 5'o31 || ir[23:19] == 5'o2);
+  endfunction
+  // **A base copy still being written** (`base_in_flight`): a word in EX or
+  // WB that writes A at `a` or M at `m`, or WB's write landing now.
+  function automatic logic base_in_flight(input logic chk_a, input logic [9:0] a,
+                                          input logic chk_m, input logic [4:0] m);
+    logic h;
+    h = 1'b0;
+    if (ex_v && !ex_nop && (ex_ir[44:43] == 2'd0 || ex_ir[44:43] == 2'd3)) begin
+      if (chk_a && (ex_ir[25] ? ex_ir[23:14] : {5'd0, ex_ir[18:14]}) == a) h = 1'b1;
+      if (chk_m && !ex_ir[25] && ex_ir[18:14] == m) h = 1'b1;
+    end
+    if (wb_v && !wb_nop) begin
+      if (chk_a && wb_a_we && wb_a_addr == a) h = 1'b1;
+      if (chk_m && wb_m_we && wb_m_addr == m) h = 1'b1;
+    end
+    if (chk_a && land_a_we && land_a_addr == a) h = 1'b1;
+    if (chk_m && land_m_we && land_m_addr == m) h = 1'b1;
+    return h;
+  endfunction
+
   // **RD's choices for its word** (`plan_for`, with `rd_return`), from the
   // copies `c0`; `follower` is the address of the word after it.  A return
   // whose popped word asks for the main loop (`<14>`) resolves in RD only
-  // when no fetch is due: MACRO-DISPATCH is not built, so there is no fused
-  // return.
+  // when no fetch is due, fused on M 31 when it can be; on the fetch path
+  // EX decides.
   function automatic plan_t rd_plan(input copies_t c0, input logic [13:0] follower,
                                     input logic view_new, input logic nop, input logic pre_nop,
                                     input logic sw_v, input logic [4:0] sw_ptr,
@@ -737,15 +877,21 @@ module quux15_core #(
     copies_t     cc;
     logic [13:0] ret, base, target;
     logic [1:0]  unc;
-    logic        taken, has_t, retn;
+    logic        taken, has_t, retn, adv;
     logic [18:0] popped;
+    fused_t      f;
     p = '0;
     p.e.dest = D_NONE;
     cc = c0;
-    // The microcycle's own step, executed or nopped.
+    adv = 1'b0;
+    // The microcycle's own step and operand load, executed or nopped.
     if (cc.next_instr) begin
       p.e.lcstep_own = 1'b1;
       cc = lc_step(cc);
+    end
+    if (cc.opa_v) begin
+      p.e.opload = 1'b1;
+      cc = op_load(cc);
     end
     if (nop || pre_nop) return p;
     if (pops_spc(rd_ir) && rd_ir[44:43] != 2'd2) begin
@@ -774,11 +920,17 @@ module quux15_core #(
           // its base is still being written.
           p.e.dest = D_IDX_W;
           if (rd_word[48]) begin
+            if (rd_word[50:49] == 2'd0 && !base_in_flight(1'b0, 10'd0, 1'b1, mdreg[28:24])) p.e.dest = D_IDX;
+            if (rd_word[50:49] == 2'd1 && !base_in_flight(1'b1, mdreg[23:14], 1'b0, 5'd0)) p.e.dest = D_IDX;
             if (rd_word[50:49] == 2'd2 && !cc.ptr_pend) p.e.dest = D_IDX;
             if (rd_word[50:49] == 2'd3 && !cc.idx_pend) p.e.dest = D_IDX;
-            if (!rd_word[50]) p.ub_macro = 1'b1;
           end
-          base = rd_word[49] ? cc.idx : cc.ptr;
+          unique case (rd_word[50:49])
+            2'd0:    base = ap;
+            2'd1:    base = localp;
+            2'd2:    base = cc.ptr;
+            default: base = cc.idx;
+          endcase
           p.e.idx_val = base + {{6{rd_word[58]}}, rd_word[58:51]};
           if (p.e.dest == D_IDX) begin
             cc.idx = p.e.idx_val;
@@ -848,6 +1000,7 @@ module quux15_core #(
       end
       2'd2: begin
         // DISPATCH.
+        adv = rd_ir[24];
         if (rd_ir[24]) begin
           p.e.lcstep_disp = 1'b1;
           cc = lc_step(cc);
@@ -902,7 +1055,31 @@ module quux15_core #(
           cc.next_instr = 1'b1;
         end
         if (cc.lc_pend || cc.nf) has_t = 1'b0;
-        else target = popped[13:0] | 14'd2;
+        else begin
+          target = popped[13:0] | 14'd2;
+          // M 31 from its register, never forwarded (A15b.16): the guard
+          // holds while a word before writes it.
+          if (!(adv || p.e.lcstep_own || p.e.push || p.e.dest == D_SPC || pops_spc(rd_ir)
+                || writes_m31_ic(rd_ir))) begin
+            f = fused_on(popped, mmem[5'o31], cc.bm, cc.lc);
+            if (f.fuse) begin
+              target = f.handler;
+              if (f.keep) begin
+                p.e.keep = 1'b1;
+                p.e.keep_word = popped;
+                cc = spc_keep(cc, popped);
+              end
+              if (f.op_v) begin
+                p.e.opa = 1'b1;
+                p.e.opa_known = !base_in_flight(1'b1, mdreg[23:14], 1'b1, mdreg[28:24]);
+                p.e.opa_addr = op_addr(f.op_arg, f.op_delta);
+                cc.opa_v = 1'b1;
+                cc.opa_known = p.e.opa_known;
+                cc.opa_addr = p.e.opa_addr;
+              end
+            end
+          end
+        end
       end
       p.next2_v = has_t;
       p.next2 = target;
@@ -1404,6 +1581,15 @@ module quux15_core #(
   // `execute`: what the word in EX does when it commits this clock.
   logic        commit, ex_alu, ex_byte, ex_jump, ex_disp;
   logic        inhibit, x_taken, wrote_imem, popj_end;
+  // A fused return's (`main_loop_return`): the operand address it arms;
+  // MACRO-DISPATCH's writes, destinations 5, 6 and 7.
+  fused_t      fx;
+  logic        ex_op_v, ex_op_arg, mdmem_we;
+  logic [5:0]  ex_op_delta;
+  logic [31:0] n_mdreg;
+  logic [28:14] md_reg_now;
+  logic [9:0]  n_mdindex;
+  assign md_reg_now = commit ? n_mdreg[28:14] : mdreg[28:14];
   logic [1:0]  entry_pr;
   logic [13:0] x_npc, x_npc_seq;
   logic [16:0] entry;
@@ -1419,6 +1605,19 @@ module quux15_core #(
   logic [33:0] nlc;
   logic        nlc_nf, novf, nni;
   logic [13:0] nptr, nidx, formed;
+  // **EX's fused return** (`main_loop_return`), from the registers as EX
+  // finds them: none in a microcycle that steps LC (a dispatch's `IR<24>`
+  // or NEXT INSTRD), pushes, pops by source, or writes M 31 or
+  // INTERRUPT-CONTROL; none on the fetch path, where D would dispatch on the
+  // fetched word (`d_path`, which stops the run).
+  function automatic logic fuse_barred(input logic adv, input logic pushed);
+    return adv || next_instrd || pushed || pops_spc(ex_isel) || writes_m31_ic(ex_isel);
+  endfunction
+  function automatic logic d_path(input logic [14:0] popped, input logic adv, input logic nf,
+                                  input logic pushed);
+    return nf && mdreg[31] && mdreg[30] && !fuse_barred(adv, pushed) && popped[14]
+        && popped[13:0] == mdreg[13:0];
+  endfunction
   logic [3:0]  nintctl;
   logic [9:0]  ndc;
   logic [25:0] noa_low;
@@ -1482,6 +1681,9 @@ module quux15_core #(
     formed = 14'd0; mismatch = 1'b0; popj_end = 1'b0;
     stepped = '0;
     ub_ex = '0;
+    fx = '0;
+    ex_op_v = 1'b0; ex_op_arg = 1'b0; ex_op_delta = 6'd0;
+    n_mdreg = mdreg; n_mdindex = mdindex; mdmem_we = 1'b0;
     sx = '0;
     sx.sp = spcptr;
     nsw_v = spc_w_v; nsw_ptr = spc_w_ptr; nsw_word = spc_w_word;
@@ -1498,8 +1700,16 @@ module quux15_core #(
       end else begin
         popj_end = ex_isel[42];
         if ((ex_alu || ex_byte) && ex_word[48]) begin
-          if (!ex_word[50]) ub_ex[U_MACRO] = 1'b1;
-          formed = (ex_word[49] ? pdl_idx : pdl_ptr) + {{6{ex_word[58]}}, ex_word[58:51]};
+          // B as the word finds it: M-AP and A-LOCALP from the copies, or a
+          // write of either by the word in WB, which lands at this edge (d1,
+          // as the word's operands take it; `pdl_field_index`).
+          unique case (ex_word[50:49])
+            2'd0:    formed = (land_m_we && land_m_addr == mdreg[28:24]) ? land_data[13:0] : ap;
+            2'd1:    formed = (land_a_we && land_a_addr == mdreg[23:14]) ? land_data[13:0] : localp;
+            2'd2:    formed = pdl_ptr;
+            default: formed = pdl_idx;
+          endcase
+          formed = formed + {{6{ex_word[58]}}, ex_word[58:51]};
         end
         if (ex_pop_pdl && ex_isel[31]) nptr = pdl_ptr - 14'd1;
         if (pops_spc(ex_isel)) begin
@@ -1527,7 +1737,11 @@ module quux15_core #(
                 nlc_nf = 1'b1;
               end
               5'o2: nintctl = x_ob[37:34];
-              5'o5, 5'o6, 5'o7: ub_ex[U_MACRO] = 1'b1;
+              // MACRO-DISPATCH (`MacroDispatch::write`): the register keeps
+              // `<31>`, `<28:0>` and on revision 15 `<30>`, D's enable.
+              5'o5: n_mdreg = {x_ob[31:30], 1'b0, x_ob[28:0]};
+              5'o6: n_mdindex = x_ob[9:0];
+              5'o7: mdmem_we = 1'b1;
               5'o10: begin
                 nx_pdl_we   = 1'b1;
                 nx_pdl_addr = nptr;
@@ -1573,6 +1787,9 @@ module quux15_core #(
             // WRITE-I-MEM: the store at the address from IWR, in WB; the
             // words behind are fetched again (A15b.4).
             wrote_imem = 1'b1;
+            // Every control-store write clears MACRO-DISPATCH's enable
+            // (`write_imem`, H8a §3.6).
+            n_mdreg[31] = 1'b0;
             if (!ex_isel[6] && x_jcond) begin
               sx = push_spc(sx, {5'd0, ex_isel[7] ? x_npc - 14'd1 : x_npc});
               sx.spc_pushed = 1'b0;
@@ -1589,9 +1806,12 @@ module quux15_core #(
                 sx = pop_spc(sx, spc_top0, spc_top1, spcptr);
                 x_npc = sx.popped[13:0];
                 if (sx.popped[14]) begin
-                  // `jump_return`, MACRO-DISPATCH off: the fetch asked for.
+                  // `jump_return`: the fetch asked for, or the fused return.
                   if (!pops_spc(ex_isel)) nni = 1'b1;
                   if (!lc_needfetch) x_npc[1] = 1'b1;
+                  if (!lc_needfetch && !fuse_barred(1'b0, sx.pushed))
+                    fx = fused_on(sx.popped, mmem[5'o31], intctl[3], nlc);
+                  if (d_path(sx.popped[14:0], 1'b0, lc_needfetch, sx.pushed)) ub_ex[U_MACRO] = 1'b1;
                 end
                 popj_end = 1'b0;
               end
@@ -1636,6 +1856,9 @@ module quux15_core #(
                 if (sx.popped[14]) begin
                   if (!pops_spc(ex_isel)) nni = 1'b1;
                   if (!nlc_nf) x_npc[1] = 1'b1;
+                  if (!nlc_nf && !fuse_barred(ex_isel[24], sx.pushed))
+                    fx = fused_on(sx.popped, mmem[5'o31], intctl[3], nlc);
+                  if (d_path(sx.popped[14:0], ex_isel[24], nlc_nf, sx.pushed)) ub_ex[U_MACRO] = 1'b1;
                 end
               end
               popj_end = 1'b0;
@@ -1649,12 +1872,28 @@ module quux15_core #(
           if (sx.popped[14]) begin
             if (!pops_spc(ex_isel)) nni = 1'b1;
             if (!nlc_nf) x_npc[1] = 1'b1;
+            if (!nlc_nf && !fuse_barred(1'b0, sx.pushed))
+              fx = fused_on(sx.popped, mmem[5'o31], intctl[3], nlc);
+            if (d_path(sx.popped[14:0], 1'b0, nlc_nf, sx.pushed)) ub_ex[U_MACRO] = 1'b1;
           end
         end
+        // **The fused return** (`main_loop_return`): the handler next, the
+        // popped word kept unless the entry's N, and the operand address
+        // armed.
+        if (fx.fuse) begin
+          x_npc = fx.handler;
+          if (fx.keep) sx.sp = sx.sp + 5'd1;
+          ex_op_v = fx.op_v;
+          ex_op_arg = fx.op_arg;
+          ex_op_delta = fx.op_delta;
+        end
         nsw_v = sx.sw_v; nsw_ptr = sx.sw_ptr; nsw_word = sx.sw_word;
-        mismatch = (ex_alu || ex_byte) && ex_word[48] && ex_word[50] && formed != nidx;
+        mismatch = (ex_alu || ex_byte) && ex_word[48] && formed != nidx;
       end
-      // `end_of_microcycle`: NEXT INSTRD steps LC, fetching with NEEDFETCH.
+      // `end_of_microcycle`: the operand address the microcycle before armed
+      // loads PDL-INDEX, over the word's own write, executed or nopped;
+      // NEXT INSTRD steps LC, fetching with NEEDFETCH.
+      if (mdop_v) nidx = op_addr(mdop_arg, mdop_delta);
       if (next_instrd) begin
         stepped = step_lc(nlc, nlc_nf, nintctl[3]);
         if (stepped[35]) begin
@@ -1816,7 +2055,7 @@ module quux15_core #(
                  : spc_after_ex(spcptr - 5'd1, land_spc);
     c_ref = c;
     if (commit) begin
-      if (c.idx_pend && c.idx_seq == ex_seq) begin
+      if (c.idx_pend && !c.idx_lost && c.idx_seq == ex_seq) begin
         c_ref.idx_pend = 1'b0;
         c_ref.idx = nidx;
       end
@@ -1846,6 +2085,11 @@ module quux15_core #(
     c_res.nf = nlc_nf;
     c_res.bm = nintctl[3];
     c_res.next_instr = nid_new;
+    // The operand address armed as EX leaves it, from the copies
+    // (`restore_copies`).
+    c_res.opa_v = commit ? ex_op_v : mdop_v;
+    c_res.opa_known = 1'b1;
+    c_res.opa_addr = commit ? op_addr(ex_op_arg, ex_op_delta) : op_addr(mdop_arg, mdop_delta);
   end
 
   // **The front end** (`front_and_edge`): a redirect's squash and restore,
@@ -2158,7 +2402,9 @@ module quux15_core #(
       if (drain_end && (c_next.spc_ptr != c_res.spc_ptr || c_next.ptr != c_res.ptr || c_next.idx != c_res.idx
                         || c_next.lc != c_res.lc || c_next.nf != c_res.nf || c_next.bm != c_res.bm
                         || c_next.next_instr != c_res.next_instr || c_next.spc_pend || c_next.ptr_pend
-                        || c_next.idx_pend || c_next.lc_pend
+                        || c_next.idx_pend || c_next.lc_pend || c_next.idx_lost
+                        || c_next.opa_v != c_res.opa_v
+                        || (c_next.opa_v && (!c_next.opa_known || c_next.opa_addr != c_res.opa_addr))
                         || (!c_next.spc_below && c_next.spc_top != c_res.spc_top))) begin
         $display("quux15_core: the halt leaves RD's copies apart from the registers");
         $finish;
@@ -2173,7 +2419,7 @@ module quux15_core #(
   logic ub_wb;
   assign ub_wb = (at_grant && s_device && !st_write[0] && unbuilt_word(s_bus[7:0]))
               || (fault_now && s_redirect && s_inside) || ub_register;
-  assign unbuilt = ub_ex | ((rd_moves && plan.ub_macro) ? (UNBUILT_BITS'(1) << U_MACRO) : '0)
+  assign unbuilt = ub_ex
                  | (ub_wb ? (UNBUILT_BITS'(1) << U_DEVICE) : '0)
                  | ((!dev_rd_built || !dev_wr_built) ? (UNBUILT_BITS'(1) << U_DEV) : '0);
 
@@ -2204,6 +2450,7 @@ module quux15_core #(
       c <= '0;
       q <= 40'd0; vma <= 40'd0; md <= 40'd0; lc <= 34'd0; lc_needfetch <= 1'b0;
       pdl_ptr <= 14'd0; pdl_idx <= 14'd0; spcptr <= 5'd0; intctl <= 4'd0; dc <= 10'd0;
+      mdreg <= 32'd0; mdindex <= 10'd0; localp <= 14'd0; ap <= 14'd0; mdop_v <= 1'b0;
       overflow <= 1'b0; oa_low <= 26'd0; oa_high <= 22'd0;
       for (int k = 0; k < 8; k++) opc[k] <= 14'd0;
       npc_prev <= RESET_PC;
@@ -2237,6 +2484,11 @@ module quux15_core #(
       if (dmem_we && !x_daddr[0]) dmem_even[x_daddr[11:1]] <= dmem_wdata;
       if (dmem_we && x_daddr[0]) dmem_odd[x_daddr[11:1]] <= dmem_wdata;
       if (land_spc) spc[spc_w_ptr] <= spc_w_word;
+      // The copies of A-LOCALP and M-AP take the writes landing now at the
+      // addresses the register names as EX leaves it (`a_written`,
+      // `m_written`).
+      if (land_a_we && running && land_a_addr == md_reg_now[23:14]) localp <= land_data[13:0];
+      if (land_m_we && running && land_m_addr == md_reg_now[28:24]) ap <= land_data[13:0];
 
       // --- The registers at EX's end.
       md <= n_md;
@@ -2248,6 +2500,9 @@ module quux15_core #(
         spc_w_v <= nsw_v; spc_w_ptr <= nsw_ptr; spc_w_word <= nsw_word;
         npc_prev <= x_npc;
         next_instrd <= nid_new;
+        mdop_v <= ex_op_v; mdop_arg <= ex_op_arg; mdop_delta <= ex_op_delta;
+        mdreg <= n_mdreg; mdindex <= n_mdindex;
+        if (mdmem_we) mdmem[mdindex] <= x_ob[17:0];
         // The HALT bit (`x.halted`): an executed word's `IR<11:10>` 1, not
         // a BYTE word's.
         x_halted <= !ex_nop && ex_isel[11:10] == 2'd1 && ex_isel[44:43] != 2'd3;
@@ -2416,6 +2671,9 @@ module quux15_core #(
       // the PROM's first word, VMAOK clear.  Taken halted, the port idle.
       if (reset_q) begin
         oa_low <= '0; oa_high <= '0; posted_errors <= '0;
+        // MACRO-DISPATCH's enable cleared and its armed operand dropped,
+        // the rest kept (`MacroDispatch::reset`).
+        mdreg[31] <= 1'b0; mdop_v <= 1'b0;
       end
       if (boot_q) begin
         spc_w_v <= 1'b0; old_v <= 1'b0; mwd_v <= 1'b0; vmaok <= 1'b0;
@@ -2648,7 +2906,7 @@ module quux15_core #(
   // A word that needs what is not built stops the simulation, named.
   always_ff @(posedge clk) begin
     if (!rst && errhalt == 2'd0 && unbuilt != '0) begin
-      $display("quux15_core: not built: %b (bit 0 a device, the window or the redirect inside, 1 MACRO-DISPATCH, 2 a device word unanswered) at PC %o",
+      $display("quux15_core: not built: %b (bit 0 a device, the window or the redirect inside, 1 D on a fetched word, 2 a device word unanswered) at PC %o",
                unbuilt, ex_v ? ex_pc : rd_pc);
       $finish;
     end

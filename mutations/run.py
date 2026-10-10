@@ -2699,7 +2699,7 @@ CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_
 QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlfield", "pdlfieldout",
                "dconst", "dispatch", "predict", "slotstep", "pdlhold", "imem", "memory", "ports", "walk", "matrix",
                "random", "matrixmem", "randmem", "imemorder", "time", "timers", "interrupt", "blockdisk", "window",
-               "filedev", "console", "halts", "dispsel", "fieldbase")
+               "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop")
 QUUX15_PERIODS = (20, 17)
 QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,), "halts": (20,),
                      "time": (14, 16, 17, 20, 22, 38), "timers": (14, 16, 17, 20, 22, 38)}

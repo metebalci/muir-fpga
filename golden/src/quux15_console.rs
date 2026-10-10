@@ -17,11 +17,11 @@
 //!             mid-clock, the word in EX, read as it stands)
 //!   halts     a halt at every clock of five programs, of a write start in
 //!             a mispredicted jump's delay slot, a read's word landing
-//!             around it, and of the writes A15b.3 names (a write right
-//!             after a read start, a write then a word loading MD, a
-//!             register's write),
-//!             and at every third clock of two of muir's programs at random
-//!             with memory, each resumed at once and run to its park
+//!             around it, of the writes A15b.3 names (a write right after a
+//!             read start, a write then a word loading MD, a register's
+//!             write) and of the main loop's machines with D off, and at
+//!             every third clock of two of muir's programs at random with
+//!             memory, each resumed at once and run to its park
 //!
 //! **THE TRACE SAYS WHAT THE CONSOLE DID AND WHAT IT READ**:
 //!
@@ -401,6 +401,17 @@ pub fn halts(period: u64) -> Vec<Case> {
         let end = park_clock(&p.case("x"), period);
         for at in 2..=end {
             let mut c = p.case(&format!("{name}-{at}"));
+            c.script = halt_at(at);
+            v.push(c);
+        }
+    }
+    // The main loop's machines, D off: a halt in a fused return's wait for
+    // its operand address among them.
+    for (name, p) in super::quux15_main::machines(&[false]) {
+        let end = park_clock(&super::quux15_main::parked(&p), period);
+        for at in 2..=end {
+            let mut c = super::quux15_main::parked(&p);
+            c.name = format!("main-{name}-{at}");
             c.script = halt_at(at);
             v.push(c);
         }

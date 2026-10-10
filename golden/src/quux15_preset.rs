@@ -104,6 +104,8 @@ pub struct Preset {
     pub skip_sweep: bool,
     pub beyond_micro: Vec<(usize, Word)>,
     pub timing: Option<muir::pipeline::PortTiming>,
+    /// The MACRO DISPATCH MEMORY's entries (`quux15_main.rs`).
+    pub mdmem: Vec<(usize, u32)>,
 }
 
 impl Preset {
@@ -187,6 +189,7 @@ impl Preset {
             timing: self.timing,
             script: Vec::new(),
             micro_check: true,
+            mdmem: self.mdmem.clone(),
         }
     }
 }

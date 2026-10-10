@@ -81,6 +81,7 @@
 mod machine_axis;
 mod quux15_console;
 mod quux15_devices;
+mod quux15_main;
 mod quux15_memside;
 mod quux15_preset;
 mod trace15;
@@ -936,6 +937,8 @@ struct Case {
     /// Whether the run's end is held to `micro`'s: not when the console
     /// runs words of its own or boots the machine again.
     micro_check: bool,
+    /// The MACRO DISPATCH MEMORY's entries before the run.
+    mdmem: Vec<(usize, u32)>,
 }
 
 impl Case {
@@ -959,6 +962,7 @@ impl Case {
             timing: None,
             script: Vec::new(),
             micro_check: true,
+            mdmem: Vec::new(),
         }
     }
 
@@ -984,6 +988,9 @@ impl Case {
         }
         for &(k, w) in &self.main {
             out.push(format!("# image main {k:x} {w:x}"));
+        }
+        for &(k, w) in &self.mdmem {
+            out.push(format!("# image mdmem {k:x} {w:x}"));
         }
         out
     }
@@ -1031,6 +1038,9 @@ fn machine(case: &Case) -> Machine {
     }
     for &(k, w) in &case.main {
         m.main[k] = w;
+    }
+    for &(k, w) in &case.mdmem {
+        m.macro_dispatch.entries[k] = w;
     }
     m
 }
@@ -1390,6 +1400,17 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "predict" => vec![quux15_preset::predict_program().case("predict")],
         "slotstep" => vec![quux15_preset::slot_step().case("slotstep")],
         "pdlhold" => vec![quux15_preset::pdl_hold().case("pdlhold")],
+        "mainloop" => {
+            let mut v: Vec<Case> = quux15_main::main_loop()
+                .into_iter()
+                .map(|(n, mut c)| {
+                    c.name = n;
+                    c
+                })
+                .collect();
+            v.extend(quux15_main::field_macro().into_iter().map(|(n, p)| p.case(&format!("field-{n}"))));
+            v
+        }
         "dispsel" => quux15_preset::dispatch_selects().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "fieldbase" => quux15_preset::field_bases().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "console" => quux15_console::console(period),

@@ -303,10 +303,13 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # (`golden/src/quux15_console.rs`): halts, single steps, the debug IR, the
 # reset and the boot (`console`), and a halt at every clock of five programs,
 # of a write start in a delay slot and of one right after a read start, and
-# at every third of two at random with memory (`halts`, at 10 ns alone), each
-# halted state held byte for byte to muir's checkpoint.
+# of the main loop's machines, and at every third of two at random with
+# memory (`halts`, at 10 ns alone), each halted state held byte for byte to
+# muir's checkpoint; and the main loop's (`golden/src/quux15_main.rs`,
+# `mainloop`): the fused return with D off and the PDL address field on M-AP
+# and A-LOCALP.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -1431,7 +1434,7 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # with two bubbles, A15b.14's fallback (`--bubbles 2`), which `make
 # quux15-b2` runs (below).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
-                 golden/src/quux15_devices.rs golden/src/quux15_console.rs \
+                 golden/src/quux15_devices.rs golden/src/quux15_console.rs golden/src/quux15_main.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
 $(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)
