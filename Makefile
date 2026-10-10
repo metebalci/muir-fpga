@@ -306,8 +306,7 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # at every third of two at random with memory (`halts`, at 10 ns alone), each
 # halted state held byte for byte to muir's checkpoint.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts \
-                 dispsel fieldbase
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -348,7 +347,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
-       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.b2.pass) \
+       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -356,6 +355,9 @@ check: $(filter-out $(QUUX_PENDING),$(CHECK_QUUX)) quux-pending
 else
 check: $(CHECK_CADR)
 endif
+
+.PHONY: quux15-b2
+quux15-b2: $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.b2.pass)
 
 .PHONY: quux-pending
 quux-pending:
@@ -1426,7 +1428,8 @@ $(BUILD)/quux14_%_prom.hex: $(QUUX14_GOLDEN) | $(BUILD)
 # Revision 15's programs (`QUUX15_PROGRAMS`): a trace's name carries its
 # period, `quux15_<program>.quux.p<P>.golden`, and the PROM image is one at
 # every period.  `quux15_<program>.quux.p<P>.b2.golden` is the same program
-# with two bubbles, A15b.14's fallback (`--bubbles 2`).
+# with two bubbles, A15b.14's fallback (`--bubbles 2`), which `make
+# quux15-b2` runs (below).
 QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quux15_memside.rs \
                  golden/src/quux15_devices.rs golden/src/quux15_console.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
@@ -1467,8 +1470,10 @@ $(BUILD)/obj_quux15_core/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp 
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
 
 # **AND WITH TWO BUBBLES** (A15b.14's fallback, the core's `BUBBLES` 2),
-# every program's traces taken with two (`quux15_%.quux.b2.pass`), until the
-# boards' fits decide between them.
+# every program's traces taken with two (`quux15_%.quux.b2.pass`).  Revision
+# 15 runs with one bubble, so these are not in `make check`; the parameter
+# stays, and `make quux15-b2 MACHINE=quux` runs every one of them by hand
+# (`-j`, as `make check`), as does `mutations/run.py`'s records on them.
 $(BUILD)/obj_quux15_core_b2/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -GBUBBLES=2 -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_b2 \
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
