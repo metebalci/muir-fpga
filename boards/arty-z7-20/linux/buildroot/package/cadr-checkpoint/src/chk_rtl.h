@@ -39,6 +39,16 @@ struct chk_declared {
 	// to match `--chaos-address`, and muir's own default is what the
 	// program uses unless told otherwise.
 	uint32_t chaos_address;
+	// **REVISION 15'S** (A15b.13), which its file states and a resume is
+	// refused on when they differ: the real-time clock, the host's (0) or
+	// counted from `rtc_start` at the machine's instant `rtc_base`, muir's
+	// `--rtc`; the memory's timing, muir's `--memory-timing`, the Kria's
+	// when all three are 0; and the cache's words, 65,536 when 0.
+	int rtc_counted;
+	uint32_t rtc_start;
+	uint64_t rtc_base;
+	uint64_t timing[3];
+	uint32_t cache_words;
 };
 
 // The whole body, `Machine::save` then the `Rtl` tail, in muir's order: the
@@ -57,6 +67,7 @@ int chk_chaos_address(const char *s, unsigned *out);
 // the CADR's, and QUUX's.
 const char *const *chk_rtl_missing(void);
 const char *const *chk_rtl_missing_quux(void);
+const char *const *chk_rtl_missing_quux15(void);
 
 // **WHY A CHECKPOINT OF THIS MACHINE CANNOT BE WRITTEN NOW**, as muir's
 // `Machine::checkpoint_refusal` says it: QUUX's file device with a handle

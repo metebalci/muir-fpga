@@ -36,6 +36,9 @@
 // file's version says which, and `chk_write_file` takes it from the body.
 #define CHK_VERSION 49u
 #define CHK_VERSION_40 50u
+// QUUX revision 15's (A15b.13; muir's `VERSION_15`): version 50's words,
+// the pipeline's state after the machine.  A body says so in `version`.
+#define CHK_VERSION_15 51u
 
 // **MIT'S GRID, `cadr_tick_pkg::TICK_NS`: what a fabric tick stands for in
 // muir's nanoseconds**, and so what the machine's elapsed time is multiplied
@@ -64,6 +67,9 @@ struct chk {
 	// The bytes a word takes, muir's `Writer::set_word_bits`: 4, or 5 on
 	// revision 13.  `chk_init` makes it 4.
 	unsigned word_bytes;
+	// The format's version when the width alone does not say it: 0, or
+	// `CHK_VERSION_15`.  `chk_init` makes it 0.
+	unsigned version;
 	// Where `len` stood when `chk_hole` was called, and the bytes that go
 	// there: revision 13's main memory, which is not copied into `p`.
 	const volatile uint8_t *hole;

@@ -2624,6 +2624,12 @@ static void check_machine_word(void)
 		{ 0x5155060000E5ull, 0x0000000Fu, 0,
 		  "machine: QUUX revision 14, MACHINE-ID 515500e5 (revision 14, processor type 5), "
 		  "words of a width not known here, microcycle K=6 L=0; build 0000000f, no git information" },
+		{ 0x5155220000F4ull, 0x0E4E7450u, 0,
+		  "machine: QUUX revision 15, MACHINE-ID 515500f4 (revision 15, processor type 4), "
+		  "40-bit words, period 17 ns; build 0e4e7450 (commit 0e4e745, tree clean)" },
+		{ 0x5155110000F4ull, 0x0E4E7450u, 0,
+		  "machine: QUUX revision 15, MACHINE-ID 515500f4 (revision 15, processor type 4), "
+		  "40-bit words, period 8.5 ns; build 0e4e7450 (commit 0e4e745, tree clean)" },
 		{ 0x123456789ABCull, 0xC0FFEE20u, 1,
 		  "machine: NOT KNOWN --- entry 21 reads 123456789abc, neither QUUX's signature nor "
 		  "the CADR's answer; build c0ffee20 (commit c0ffee2, tree clean)" },

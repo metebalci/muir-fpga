@@ -23,6 +23,7 @@ void chk_init(struct chk *w)
 	w->cap = 0;
 	w->broken = 0;
 	w->word_bytes = 4;
+	w->version = 0;
 	w->hole = NULL;
 	w->hole_at = 0;
 	w->hole_len = 0;
@@ -395,7 +396,8 @@ int chk_write_file(const char *path, const char *engine, uint32_t boards,
 #if CHK_MUTATE == 31
 	chk_u32(&head, CHK_VERSION);
 #else
-	chk_u32(&head, body->word_bytes == 5 ? CHK_VERSION_40 : CHK_VERSION);
+	chk_u32(&head, body->version ? body->version
+		       : body->word_bytes == 5 ? CHK_VERSION_40 : CHK_VERSION);
 #endif
 	size_t n = strlen(engine);
 	chk_u8(&head, (uint8_t)n);

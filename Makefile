@@ -309,7 +309,7 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # `mainloop`): the fused return with D off and the PDL address field on M-AP
 # and A-LOCALP.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop checkpoints
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -318,6 +318,8 @@ QUUX15_PERIODS_matrixmem := 20
 QUUX15_PERIODS_randmem := 20
 QUUX15_PERIODS_timers := 14 16 17 20 22 38
 QUUX15_PERIODS_halts := 20
+# The checkpoints at 10 ns and at the Kria's 17 ns, its build's period.
+QUUX15_PERIODS_checkpoints := 20 34
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
@@ -350,7 +352,7 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
-       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) \
+       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1206,6 +1208,25 @@ $(BUILD)/boot_prom.quux14.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.to
 	    || { echo "boot_prom.quux14.hex: the image is not PROM 2002's"; rm -f $@.tmp; exit 1; }
 	mv $@.tmp $@
 
+# **REVISION 15 BOOTS FROM PROM 2002 ASSEMBLED FOR IT** (contract G3
+# revision 15), `boot_prom.quux15.hex`, a 64-bit word a line, which the
+# Kria's revision 15 flow carries (`quux15_bitstream.tcl`'s `PROM`).  It comes
+# from muir-sys's revision-15 build of PROM 2002, its `promh.mcr` kept in the
+# gitignored `ref/system-2002-rev15/` and held to its digest, read by muir's
+# own reader at revision 15's geometry (`golden/src/prom.rs`); the image is
+# held to its digest as well.  Nothing in `make check` reads it.
+QUUX15_PROM_2002 ?= ref/system-2002-rev15/promh.mcr
+QUUX15_PROM_2002_MCR_SHA256 := 3d93319a8e851f5f14a2fcd66cd1ed21abb33049c355edf8cc893c791fb4b124
+QUUX15_PROM_2002_SHA256 := 2b27752f9327d5ed3e61c7af39777d8ebf7e6ab971f6fdaa2e56bfe1c88cdb1c
+$(BUILD)/boot_prom.quux15.hex: golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml $(QUUX15_PROM_2002) | $(BUILD)
+	echo "$(QUUX15_PROM_2002_MCR_SHA256)  $(QUUX15_PROM_2002)" | sha256sum --quiet -c - \
+	    || { echo "boot_prom.quux15.hex: $(QUUX15_PROM_2002) is not revision 15's PROM 2002"; exit 1; }
+	$(GOLDEN) --release --bin prom -- --machine quux --word-bits 40 --revision 15 \
+	    --mcr $(abspath $(QUUX15_PROM_2002)) > $@.tmp
+	echo "$(QUUX15_PROM_2002_SHA256)  $@.tmp" | sha256sum --quiet -c - \
+	    || { echo "boot_prom.quux15.hex: the image is not revision 15's PROM 2002"; rm -f $@.tmp; exit 1; }
+	mv $@.tmp $@
+
 $(BUILD)/prom_revisions.pass: $(BUILD)/boot_prom.quux13.hex golden/src/prom.rs $(GOLDEN_AXIS) golden/Cargo.toml Makefile
 	echo "$(QUUX_PROM_2001_SHA256)  $(BUILD)/boot_prom.quux13.hex" | sha256sum --quiet -c - \
 	    || { echo "prom_revisions: boot_prom.quux13.hex is not PROM 2001, revision 13's"; exit 1; }
@@ -1437,7 +1458,11 @@ QUUX15_GOLDEN := golden/src/quux15.rs golden/src/quux15_preset.rs golden/src/quu
                  golden/src/quux15_devices.rs golden/src/quux15_console.rs golden/src/quux15_main.rs \
                  golden/src/trace15.rs $(GOLDEN_AXIS) golden/Cargo.toml
 .PRECIOUS: $(BUILD)/quux15_%.golden $(BUILD)/quux15_%_prom.hex
+# A run that ends in a checkpoint writes muir's file into `quux15_ckpt/`,
+# which its trace names (the checkpoints group).
 $(BUILD)/quux15_%.golden: $(QUUX15_GOLDEN) | $(BUILD)
+	mkdir -p $(BUILD)/quux15_ckpt
+	QUUX15_CHECKPOINTS=$(abspath $(BUILD))/quux15_ckpt \
 	$(GOLDEN) --release --bin quux15 -- --program $(word 1,$(subst ., ,$*)) --machine quux \
 	    --period $(patsubst p%,%,$(word 3,$(subst ., ,$*))) $(if $(filter b2,$(subst ., ,$*)),--bubbles 2) > $@
 $(BUILD)/quux15_%_prom.hex: $(QUUX15_GOLDEN) | $(BUILD)
@@ -1465,10 +1490,29 @@ QUUX15_CORE_SRC := rtl/machine/quux15_core.sv rtl/machine/quux15_exec.sv rtl/mac
                    rtl/machine/quux15_store.sv rtl/machine/quux_muldiv.sv rtl/machine/quux15_tdp.sv \
                    rtl/machine/quux15_devices.sv rtl/machine/quux15_validmap.sv rtl/machine/quux15_recency.sv \
                    rtl/machine/quux15_port.sv rtl/machine/quux15_mmu.sv rtl/plumbing/quux15_axi_master.sv
+# **AND THE BOARD'S CHECKPOINT WRITER** (A15b.13): a run that ends in a
+# checkpoint (the checkpoints group) is read through the core's readout by
+# `cadr-readout`'s reader and written by `cadr-checkpoint`'s `chk_rtl.c`,
+# the programs a board runs, built here for this host as a library the
+# testbench links, and held to muir's file byte for byte.
+Q15CHK_PKG := boards/arty-z7-20/linux/buildroot/package
+Q15CHK_SRC := $(Q15CHK_PKG)/cadr-readout/src/readout.c $(Q15CHK_PKG)/cadr-checkpoint/src/chk.c \
+              $(Q15CHK_PKG)/cadr-checkpoint/src/chk_rtl.c
+Q15CHK_HDR := $(Q15CHK_PKG)/cadr-readout/src/readout.h $(Q15CHK_PKG)/cadr-readout/src/cadr_image.h \
+              $(Q15CHK_PKG)/cadr-checkpoint/src/chk.h $(Q15CHK_PKG)/cadr-checkpoint/src/chk_rtl.h \
+              $(wildcard $(Q15CHK_PKG)/cadr-common/src/cadr/*.h)
+Q15CHK_INC := -I$(abspath $(Q15CHK_PKG)/cadr-readout/src) -I$(abspath $(Q15CHK_PKG)/cadr-checkpoint/src) \
+              -I$(abspath $(Q15CHK_PKG)/cadr-common/src)
+Q15CHK_LIB := $(abspath $(BUILD))/q15chk/libq15chk.a
+$(BUILD)/q15chk/libq15chk.a: $(Q15CHK_SRC) $(Q15CHK_HDR) | $(BUILD)
+	mkdir -p $(BUILD)/q15chk
+	cd $(BUILD)/q15chk && cc -O2 -Wall -Wextra -Werror -std=gnu11 $(Q15CHK_INC) -c $(abspath $(Q15CHK_SRC)) \
+	    && rm -f libq15chk.a && ar rcs libq15chk.a readout.o chk.o chk_rtl.o
 QUUX15_CORE_FLAGS := --x-assign unique --x-initial unique +define+QUUX15_RDW_POISON -Irtl/machine \
-                     -CFLAGS -DQUUX15_TOP=Vquux15_core -CFLAGS -DQUUX15_CORE
+                     -CFLAGS -DQUUX15_TOP=Vquux15_core -CFLAGS -DQUUX15_CORE \
+                     $(foreach i,$(Q15CHK_INC),-CFLAGS $(i)) -LDFLAGS $(Q15CHK_LIB)
 QUUX15_SEEDS := 1 1000
-$(BUILD)/obj_quux15_core/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp | $(BUILD)
+$(BUILD)/obj_quux15_core/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $(BUILD)/q15chk/libq15chk.a | $(BUILD)
 	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core \
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
 
@@ -1477,7 +1521,7 @@ $(BUILD)/obj_quux15_core/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp 
 # 15 runs with one bubble, so these are not in `make check`; the parameter
 # stays, and `make quux15-b2 MACHINE=quux` runs every one of them by hand
 # (`-j`, as `make check`), as does `mutations/run.py`'s records on them.
-$(BUILD)/obj_quux15_core_b2/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp | $(BUILD)
+$(BUILD)/obj_quux15_core_b2/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $(BUILD)/q15chk/libq15chk.a | $(BUILD)
 	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -GBUBBLES=2 -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_b2 \
 	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
 
@@ -2995,6 +3039,39 @@ KR260_PORT_SRC := tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv \
     $(GP1) rtl/plumbing/cadr_debug_window.sv \
     rtl/plumbing/quux_axi_master.sv rtl/plumbing/quux_axi_narrow128.sv
 KR260_LAMP_SRC := rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
+
+# **REVISION 15'S CONSOLE FACE** (`rtl/plumbing/quux15_face.sv`), driven over
+# AXI as Linux's programs drive it, the core behind it modeled
+# (`tb/quux15_face_tb.cpp`): its words, the reset, the latches, the readout's
+# echo, the diagnostic registers and the bitstream's words, at the Kria's
+# period.
+QUUX15_FACE_SRC := rtl/plumbing/cadr_gp_regs.sv rtl/plumbing/quux15_face.sv
+$(BUILD)/obj_quux15_face/Vquux15_face: $(QUUX15_FACE_SRC) tb/quux15_face_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -GPERIOD=34 -Irtl/plumbing -Mdir $(BUILD)/obj_quux15_face \
+	    --top-module quux15_face $(QUUX15_FACE_SRC) $(abspath tb/quux15_face_tb.cpp)
+$(BUILD)/quux15_face.pass: $(BUILD)/obj_quux15_face/Vquux15_face
+	$(BUILD)/obj_quux15_face/Vquux15_face
+	@touch $@
+
+# **REVISION 15 ON THE KRIA KR260** (`boards/kria-kr260/quux15_kr260.sv`): its
+# own top level, the pipelined core behind its console face, linted as its
+# flow builds it, with the same stubs.
+QUUX15_KR260_SRC := rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) \
+    rtl/plumbing/quux_axi_narrow128.sv rtl/plumbing/cadr_axi_lanes128.sv \
+    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
+    rtl/plumbing/quux15_face.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
+    tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv
+$(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
+                            boards/kria-kr260/vivado/quux15_bitstream.tcl | $(BUILD)
+	$(VERILATOR) --lint-only -Wall -DCADR_DDR_MAP_KR260 -Irtl/machine -Irtl/plumbing \
+	    -Irtl/plumbing/xilinx7 -Iboards/kria-kr260 --top-module quux15_kr260 \
+	    $(BOARD_STUBS) tb/cadr_kr260_stubs.sv $(QUUX15_KR260_SRC)
+	@# The flow reads the same files: every one of them in its list.
+	@for f in $(filter-out tb/%,$(QUUX15_KR260_SRC)); do \
+	   grep -q "$$f" boards/kria-kr260/vivado/quux15_bitstream.tcl \
+	     || { echo "quux15_kr260: $$f is linted and not in quux15_bitstream.tcl"; exit 1; }; \
+	 done
+	@touch $@
 
 $(BUILD)/kr260.pass: $(MACHINE_SRC) boards/kria-kr260/cadr_kr260.sv $(KR260_PORT_SRC) \
                      $(KR260_LAMP_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv | $(BUILD)

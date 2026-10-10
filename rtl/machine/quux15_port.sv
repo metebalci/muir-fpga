@@ -57,6 +57,10 @@ module quux15_port #(
     parameter int unsigned SETS    = 4096,
     parameter bit          ONE_WRITE_ID = 1'b1,
     parameter int unsigned ID_BITS = 4,
+    // Main memory's and the frame buffer's bases on the AXI port
+    // (`quux15_axi_master.sv`).
+    parameter logic [31:0] MAIN_BASE    = 32'h0000_0000,
+    parameter logic [31:0] DISPLAY_BASE = 32'h0A00_0000,
     localparam int unsigned SB = $clog2(SETS),
     localparam int unsigned TB = 26 - SB
 ) (
@@ -174,7 +178,8 @@ module quux15_port #(
   logic [39:0]  mw_word;
   logic [25:0]  ar_line;
 
-  quux15_axi_master #(.ID_BITS(ID_BITS), .ONE_WRITE_ID(ONE_WRITE_ID)) master (
+  quux15_axi_master #(.ID_BITS(ID_BITS), .ONE_WRITE_ID(ONE_WRITE_ID),
+                      .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) master (
       .clk(clk), .rst(rst),
       .ar_req(ar_req), .ar_line(ar_line), .ar_taken(ar_taken), .rd_last(rd_last), .rd_data(rd_data),
       .w_req(mw_req), .w_bus(mw_bus), .w_word(mw_word), .w_id(mw_id), .w_free(mw_free),

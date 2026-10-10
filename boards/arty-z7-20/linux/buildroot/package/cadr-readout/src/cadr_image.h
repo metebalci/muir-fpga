@@ -67,6 +67,12 @@
 // words, sizes and packed storage, no map levels, and the memory system's
 // words in the register table's entries 41 to 45 (A14.14).
 #define IMG_QUUX_ID_14    0x00E4u
+// Revision 15's (contract G3 revision 15, A15b.13), 0x00F4: the pipelined
+// core (`quux15_core.sv`) behind its own console face (`quux15_face.sv`),
+// revision 14's words, sizes and packed storage, the control store at 64
+// bits, and a register table of its own (`img_rg15`).  Entry 21's <31:24>
+// is the clock's period in units of 0.5 ns, not K, and <23:16> is 0.
+#define IMG_QUUX_ID_15    0x00F4u
 
 // **QUUX'S SIZES**, muir's `Geometry::QUUX`: a PDL buffer of 16K words with a
 // fourteen-bit pointer, a level-1 map entry of six bits and so 2,048 level-2
@@ -234,6 +240,84 @@ struct cadr_audit {
 	unsigned port_reads, port_writes;
 };
 
+// --- REVISION 15'S WINDOW, `quux15_core.sv`'s readout ------------------
+//
+// The selectors are the console's (`img_sel`) for the memories, the control
+// store's 64 bits whole; the register table at selector 10 is revision 15's
+// own (`img_rg15`); selector 12 is the devices' (`img_dv15`), selector 14 the
+// halted pipeline's (`save_15`'s fields, `img_tl15`), and a write of
+// selector 15 takes the devices' snapshot, the instant and the timers, which
+// the time words then read, so that a checkpoint names one instant however
+// long its reads take.  Word 12 of the face carries a word's <63:32> whole.
+#define IMG_SEL_TAIL 14u
+#define IMG_SEL_SNAP 15u
+enum img_rg15 {
+	IMG_RG15_Q = 0, IMG_RG15_VMA = 1, IMG_RG15_MD = 2,
+	IMG_RG15_LC = 3,	/* <33:0> the counter, <40> NEED-FETCH */
+	IMG_RG15_PDLPTR = 4, IMG_RG15_PDLIDX = 5, IMG_RG15_SPCPTR = 6,
+	IMG_RG15_INTCTL = 7,	/* as muir holds it, <29:26> */
+	IMG_RG15_DC = 8,
+	IMG_RG15_FLAGS = 9,	/* <0> overflow, <1> VMAOK, <2> word 101's NXM */
+	IMG_RG15_OPC = 10,	/* muir's `Machine::opc` */
+	IMG_RG15_MACRO = 11, IMG_RG15_MACRO_IX = 12,
+	IMG_RG15_BASES = 13,	/* <13:0> A-LOCALP's copy, <29:16> M-AP's */
+	IMG_RG15_ARMED = 14,	/* <8> armed, <7> ARG, <5:0> delta */
+	IMG_RG15_DIRECTORY = 15,	/* <17:0> word 220, <18> word 221's enable */
+	IMG_RG15_TYPES = 16, IMG_RG15_REFUSED = 17,
+	IMG_RG15_COPIES = 18,	/* <31:0> A 430's copy, <45:32> A 431's */
+	IMG_RG15_POSTED = 19,	/* word 225 */
+	IMG_RG15_CLOCKS = 20,
+	IMG_RG15_ID = 21,	/* QUUX's signature, the period, MACHINE-ID's <15:0> */
+	IMG_RG15_COMMITTED = 22,
+	IMG_RG15_COUNT = 23
+};
+enum img_dv15 {
+	IMG_DV15_TIMER = 0,	/* + k: <0> on, <1> one-shot, <2> enable, <31:8> period */
+	IMG_DV15_DEADLINE = 3,	/* + k: in units of 0.5 ns, all ones for none */
+	IMG_DV15_FD = 6,	/* <0> on, <1> enable, <2> refused, <3> fault, <15:8> handles */
+	IMG_DV15_FD_CBASE = 7, IMG_DV15_FD_RBASE = 8,
+	IMG_DV15_FD_LOGS = 9,	/* <3:0> command, <7:4> response */
+	IMG_DV15_FD_INDEXES = 10,	/* <15:0> producer, <31:16> consumer, <47:32> response consumer */
+	IMG_DV15_BD_CMD = 11, IMG_DV15_BD_CLP = 12, IMG_DV15_BD_DA = 13, IMG_DV15_BD_LMA = 14,
+	IMG_DV15_BD_FLAGS = 15,	/* <0> bad command, <1> past the end, <2> NXM, <3> active */
+	IMG_DV15_BD_DONE = 16, IMG_DV15_BD_NOW = 17,
+	IMG_DV15_BOW = 18,
+	IMG_DV15_NS = 19,	/* the snapshot's instant, muir's `Machine::ns` */
+	IMG_DV15_RTC = 20, IMG_DV15_US = 21,
+	IMG_DV15_TV_AT = 22,	/* the last RESET-DEVICES's instant */
+	IMG_DV15_COUNT = 23
+};
+// The halted pipeline's words, `ro_sel` 0 to 23 (`quux15_core.sv`).
+enum img_tl15 {
+	IMG_TL15_NPC = 0, IMG_TL15_NPC_AFTER = 1, IMG_TL15_NOPS = 2, IMG_TL15_PDL_PENDING = 3,
+	IMG_TL15_PDL_WORD = 4, IMG_TL15_MD_OLD = 5, IMG_TL15_MD_OLD_WORD = 6, IMG_TL15_D_WAIT = 7,
+	IMG_TL15_OA_LOW = 8, IMG_TL15_OA_HIGH = 9, IMG_TL15_NEXT_INSTRD = 10, IMG_TL15_LVMO = 11,
+	IMG_TL15_WRCYC = 12, IMG_TL15_SPC_WRITE = 13, IMG_TL15_MAP_WRITE = 14,
+	IMG_TL15_MAP_VMA = 15, IMG_TL15_MAP_MD = 16, IMG_TL15_OPC_LOW = 17, IMG_TL15_OPC_HIGH = 18,
+	IMG_TL15_HALTED = 19, IMG_TL15_COMMITTED = 20, IMG_TL15_NPC_PREV = 21,
+	IMG_TL15_CONSOLE = 22,	/* <5:0> mode, <10:6> clock control, <13:11> OPC control */
+	IMG_TL15_DEBUG_IR = 23,
+	IMG_TL15_COUNT = 24
+};
+
+// What revision 15's window says that the others' do not.
+struct quux15_state {
+	unsigned period;		/* entry 21's <31:24>: units of 0.5 ns */
+	uint64_t lc;			/* <33:0> and <40> NEED-FETCH */
+	uint32_t intctl;
+	int overflow, vmaok, bus_nxm;
+	uint16_t opc;			/* muir's `Machine::opc` */
+	uint64_t clocks, committed;
+	uint64_t ns;			/* the snapshot's instant */
+	uint32_t timer_ctl[IMG_QUUX_TIMERS];
+	uint64_t deadline[IMG_QUUX_TIMERS];
+	uint32_t bd_cmd, bd_clp, bd_da, bd_lma, bd_flags;
+	uint64_t bd_done, bd_now;
+	uint64_t tv_at;			/* muir's `Tv::written_at` */
+	uint32_t posted;
+	uint64_t tail[IMG_TL15_COUNT];
+};
+
 // The register table's entries, `cadr_microcycle.sv`'s `RG_*`.
 enum img_reg {
 	IMG_RG_PC = 0, IMG_RG_LPC = 1, IMG_RG_IR = 2, IMG_RG_IWR = 3,
@@ -325,13 +409,16 @@ struct cadr_image {
 	// --- 8,192 and level 2's 4,096, and words of 40 bits.
 	// --- revision 14 (`rev14`) is revision 13's in all of these, `rev13`
 	// --- set too, but has no map levels: both are written zero and not read.
-	int quux, rev13, rev14;
+	// --- revision 15 (`rev15`) is revision 14's in all of these, `rev13`
+	// --- and `rev14` set too; its own state is `q15`.
+	int quux, rev13, rev14, rev15;
 	unsigned pdl_words, l2_words, tv_words, dmem_words, l1_words, word_bits;
 	// --- QUUX's video controller's size, the bitstream's (console word
 	// --- 39): `tv_words` is its height times its width over 32.  0 on the
 	// --- CADR.
 	unsigned video_width, video_height;
 	struct quux_state qx;	/* QUUX's alone; zero on the CADR */
+	struct quux15_state q15;	/* revision 15's alone */
 };
 
 // The CADR's machine.

@@ -875,9 +875,252 @@ static void emit_quux_input(struct chk *w, const struct cadr_image *img)
 	chk_bool(w, q->mouse_enable);			/* READ */
 }
 
+// --- REVISION 15 -------------------------------------------------------
+//
+// **QUUX REVISION 15'S FILE, VERSION 51** (A15b.13; muir's `Pipeline::save`):
+// `Machine::save` at revision 15, then the pipeline's period, its port's
+// timing and cache, and `save_15`'s fields, all READ off `quux15_core.sv`'s
+// window (`ro_read_quux15`) but for what the core does not keep, each marked.
+// **THE CACHE IS WRITTEN EMPTY** (A15b.13): no line held and the
+// recency bytes zero.  A drained cache's words are main memory's, so a cold
+// one moves when a read is answered, never what it reads.
+#define MUIR_REVISION_15_MARK (0200u | 15u)
+#define MUIR_KRIA_READ_NS 247u
+#define MUIR_KRIA_WRITE_NS 130u
+#define MUIR_KRIA_OCCUPANCY_NS 10u
+#define MUIR_CACHE_WORDS_15 65536u
+#define MUIR_LINE_WORDS_15 8u
+#define MUIR_L1_WORDS_13 8192u
+#define MUIR_XBUS_NXM 01u
+
+// `Timers::save` at revision 15: the snapshot's words, the deadline already
+// muir's, in units of 0.5 ns (`quux15_devices.sv`).
+static void emit_timers_15(struct chk *w, const struct cadr_image *img)
+{
+	const struct quux15_state *x = &img->q15;
+	for (unsigned k = 0; k < MUIR_TIMERS; ++k) {
+		chk_bool(w, x->timer_ctl[k] & 1u);		/* READ on */
+		chk_bool(w, (x->timer_ctl[k] >> 1) & 1u);	/* READ one_shot */
+		chk_bool(w, (x->timer_ctl[k] >> 2) & 1u);	/* READ interrupt_enable */
+		chk_u32(w, (x->timer_ctl[k] >> 8) & 0xFFFFFFu);	/* READ period_us */
+		chk_u64(w, x->deadline[k]);			/* READ deadline */
+	}
+}
+
+// `BlockDisk::save` at revision 15: the registers, DONE and the instant it
+// was last told, as `quux15_devices.sv` keeps them, and the bay's pack.
+static void emit_block_disk_15(struct chk *w, const struct cadr_image *img,
+			       const struct chk_declared *d)
+{
+	const struct quux15_state *x = &img->q15;
+	chk_u32(w, x->bd_cmd);				/* READ */
+	chk_u32(w, x->bd_clp);				/* READ */
+	chk_u32(w, x->bd_da);				/* READ */
+	chk_u32(w, x->bd_lma);				/* READ */
+	chk_u64(w, x->bd_done);				/* READ done_at */
+	chk_u64(w, x->bd_now);				/* READ now */
+	chk_u64(w, MUIR_BLOCK_NS);			/* DECLARED, muir's */
+	chk_bool(w, (x->bd_flags >> 1) & 1u);		/* READ past_end */
+	chk_bool(w, (x->bd_flags >> 2) & 1u);		/* READ nxm */
+	chk_bool(w, x->bd_flags & 1u);			/* READ bad_command */
+	if (d->present & 1u) {
+		chk_bool(w, 1);
+		emit_quux_disk(w, d);
+	} else {
+		chk_bool(w, 0);
+	}
+}
+
+// `save_15`'s fields after the machine, the period and the port, off the
+// halted pipeline's words (`img_tl15`), as `tb/quux15_core_tb.cpp` holds
+// them to muir's at every halt.
+static void emit_pipeline_15(struct chk *w, const struct cadr_image *img)
+{
+	const uint64_t *t = img->q15.tail;
+	chk_u16(w, (uint16_t)(t[IMG_TL15_NPC] & 0x3FFFu));		/* READ npc */
+	chk_opt_u16(w, (t[IMG_TL15_NPC_AFTER] >> 14) & 1u,
+		    (uint16_t)(t[IMG_TL15_NPC_AFTER] & 0x3FFFu));	/* READ npc_after */
+	chk_bool(w, (t[IMG_TL15_NOPS] >> 1) & 1u);			/* READ pre_nop_next */
+	chk_bool(w, t[IMG_TL15_NOPS] & 1u);				/* READ nop_next */
+	const int pend = (t[IMG_TL15_PDL_PENDING] >> 14) & 1u;
+	chk_bool(w, pend);						/* READ pdl_pending */
+	if (pend) {
+		chk_u16(w, (uint16_t)(t[IMG_TL15_PDL_PENDING] & 0x3FFFu));
+		chk_word(w, t[IMG_TL15_PDL_WORD]);
+	}
+	const int old = t[IMG_TL15_MD_OLD] & 1u;
+	chk_bool(w, old);						/* READ md_old */
+	if (old)
+		chk_word(w, t[IMG_TL15_MD_OLD_WORD]);
+	chk_bool(w, t[IMG_TL15_D_WAIT] & 1u);				/* READ d_wait */
+	chk_bool(w, 0);			/* NONE d_slot_pending: D's fetched word is not built */
+	chk_u64(w, t[IMG_TL15_OA_LOW]);					/* READ */
+	chk_u64(w, t[IMG_TL15_OA_HIGH]);				/* READ */
+	chk_bool(w, 0);			/* IDLE next_instr: taken between microcycles */
+	chk_bool(w, t[IMG_TL15_NEXT_INSTRD] & 1u);			/* READ */
+	chk_u32(w, (uint32_t)t[IMG_TL15_LVMO]);				/* READ */
+	chk_bool(w, t[IMG_TL15_WRCYC] & 1u);				/* READ */
+	// The micro stack's pending write: the core keeps the stack's 19
+	// bits of a data push, which is all `SPC<18:0>` reads back.
+	const uint64_t sw = t[IMG_TL15_SPC_WRITE];
+	chk_bool(w, (sw >> 24) & 1u);					/* READ spc_write */
+	if ((sw >> 24) & 1u) {
+		chk_u8(w, (uint8_t)((sw >> 19) & 0x1Fu));
+		chk_u32(w, (uint32_t)(sw & 0x7FFFFu));
+	}
+	chk_bool(w, t[IMG_TL15_MAP_WRITE] & 1u);			/* READ map_write_d */
+	if (t[IMG_TL15_MAP_WRITE] & 1u) {
+		chk_word(w, t[IMG_TL15_MAP_VMA]);
+		chk_word(w, t[IMG_TL15_MAP_MD]);
+	}
+	uint16_t opc[IMG_OPCS];
+	for (unsigned k = 0; k < IMG_OPCS; ++k)
+		opc[k] = (uint16_t)((t[k < 4 ? IMG_TL15_OPC_LOW : IMG_TL15_OPC_HIGH] >> (14u * (k % 4u))) & 0x3FFFu);
+	chk_u16s(w, opc, IMG_OPCS);					/* READ opc */
+	chk_bool(w, (t[IMG_TL15_HALTED] >> 1) & 1u);			/* READ x.halted */
+	chk_bool(w, t[IMG_TL15_HALTED] & 1u);				/* READ halted */
+	chk_u64(w, t[IMG_TL15_COMMITTED]);				/* READ committed */
+	chk_u16(w, (uint16_t)(t[IMG_TL15_NPC_PREV] & 0x3FFFu));		/* READ npc_prev */
+}
+
+// `Tv::save` for revision 15's video controller: `emit_video`'s, and the
+// instant of the last RESET-DEVICES, which the fabric keeps for it.
+static void emit_video_15(struct chk *w, const struct cadr_image *img)
+{
+	chk_u8(w, MUIR_TV_BOARD_VIDEO);				/* READ, the machine */
+	chk_u16(w, (uint16_t)img->video_width);			/* READ, console word 39 */
+	chk_u16(w, (uint16_t)img->video_height);
+	chk_u32s(w, img->tv, img->tv_words);			/* READ, out of DDR */
+	chk_u32(w, img->qx.bow ? MUIR_TV_MODE_BOW : 0u);	/* READ */
+	static const uint8_t zero_sync[IMG_TV_SYNC] = { 0 };
+	chk_bytes(w, zero_sync, IMG_TV_SYNC);			/* NONE on the video controller */
+	chk_u16(w, 0);
+	chk_u8(w, MUIR_TV_SYNC_ENABLE);
+	for (unsigned i = 0; i < MUIR_TV_COLOR_MAP_BYTES; ++i)
+		chk_u8(w, 0);					/* NONE on the video controller */
+	chk_bool(w, 0);			/* flag_written: RESET-DEVICES clears it, nothing sets it */
+	chk_u64(w, img->q15.tv_at);				/* READ written_at */
+	chk_u64(w, 0);						/* origin */
+	chk_bool(w, 0);						/* sync_held.0 */
+	chk_bool(w, 0);						/* sync_held.1 */
+}
+
+static void body_15(struct chk *w, const struct cadr_image *img, const struct chk_declared *d)
+{
+	const struct quux15_state *x = &img->q15;
+	const uint64_t con = x->tail[IMG_TL15_CONSOLE];
+	struct chk_declared no_drives;
+	memset(&no_drives, 0, sizeof no_drives);
+	no_drives.chaos_address = d->chaos_address;
+
+	// --- Machine::save, at revision 15 ----------------------------------
+	w->word_bytes = 5u;
+	w->version = CHK_VERSION_15;
+	chk_u64s(w, img->prom, IMG_PROM_WORDS);			/* READ, 64 bits */
+	// The control store as its RAM holds it, the words under the PROM
+	// too: what the core comes up with there is muir's machine's.
+	chk_u64s(w, img->imem, IMG_IMEM_WORDS);			/* READ, 64 bits */
+	for (unsigned b = 0; b < 6; ++b)
+		chk_bool(w, (con >> b) & 1u);			/* READ mode */
+	for (unsigned b = 6; b < 11; ++b)
+		chk_bool(w, (con >> b) & 1u);			/* READ clock_control */
+	for (unsigned b = 11; b < 14; ++b)
+		chk_bool(w, (con >> b) & 1u);			/* READ opc_control */
+	chk_u64(w, x->tail[IMG_TL15_DEBUG_IR]);			/* READ debug_ir */
+	chk_bool(w, 0);			/* IDLE prog_reset: a pulse, down between microcycles */
+	chk_bool(w, 0);			/* IDLE prog_boot */
+	chk_words(w, img->amem, IMG_AMEM_WORDS);		/* READ */
+	chk_words(w, img->mmem, IMG_MMEM_WORDS);		/* READ */
+	chk_u32s(w, img->dmem, img->dmem_words);		/* READ */
+	chk_words(w, img->pdl, img->pdl_words);			/* READ */
+	chk_u32s(w, img->spc, IMG_SPC_WORDS);			/* READ */
+	chk_u8(w, img->spcptr);					/* READ */
+	chk_u16(w, img->pdl_ptr);				/* READ */
+	chk_u16(w, img->pdl_idx);				/* READ */
+	chk_word(w, img->q);					/* READ */
+	chk_u16(w, x->opc);					/* READ Machine::opc */
+	chk_u32(w, (uint32_t)x->lc);				/* READ lc <31:0> */
+	chk_word(w, img->vma);					/* READ */
+	chk_word(w, img->md);					/* READ */
+	chk_u32(w, x->intctl);					/* READ */
+	chk_u16(w, img->dc);					/* READ */
+	static const uint32_t no_l1[MUIR_L1_WORDS_13] = { 0 };
+	chk_u32s(w, no_l1, MUIR_L1_WORDS_13);		/* NONE: revision 15 has no map levels */
+	chk_u8(w, MUIR_REVISION_15_MARK);			/* READ, the machine */
+	chk_u8(w, MUIR_QUUX_PDL_BITS);
+	chk_bool(w, 1);						/* muldiv */
+	chk_bool(w, 1);						/* tick */
+	chk_bool(w, 1);						/* macro_dispatch */
+	chk_u8(w, IMG_WORD_BITS_13);
+	chk_bool(w, x->overflow);				/* READ */
+	emit_timers_15(w, img);
+	emit_macro_dispatch(w, img, 1);
+	if (d->rtc_counted) {
+		chk_bool(w, 1);					/* DECLARED Rtc::Counted */
+		chk_u32(w, d->rtc_start);
+		chk_u64(w, d->rtc_base);
+	} else {
+		chk_bool(w, 0);					/* DECLARED Rtc::Host */
+	}
+	emit_file_device(w, img);
+	chk_bool(w, 0);			/* IDLE dma_written: taken at every clock */
+	static const uint32_t no_l2[MUIR_QUUX13_L2_WORDS] = { 0 };
+	chk_u32s(w, no_l2, MUIR_QUUX13_L2_WORDS);	/* NONE: revision 15 has no map levels */
+	chk_u32(w, img->boards);				/* READ, console word 37 */
+	const size_t words = (size_t)img->boards * IMG_BOARD_WORDS;
+	chk_u64(w, (uint64_t)words);
+	chk_hole(w, img->main13, 5u * words);			/* READ, out of DDR */
+	chk_u16(w, x->bus_nxm ? MUIR_XBUS_NXM : 0u);		/* READ word 101 */
+	chk_u16(w, MUIR_LOCAL_ENABLE);				/* NONE interrupt_status */
+	chk_bool(w, 0);						/* NONE write_through */
+	static const uint16_t sixteen[16] = { 0 };
+	chk_u16s(w, sixteen, 16);				/* NONE unibus_map */
+	chk_u16s(w, sixteen, 16);				/* NONE read_buffer */
+	chk_u16s(w, sixteen, 16);				/* NONE write_buffer */
+	chk_bool(w, x->vmaok);					/* READ */
+	emit_disk(w, &no_drives);
+	chk_bool(w, 1);						/* block_disk is there */
+	emit_block_disk_15(w, img, d);
+	emit_video_15(w, img);
+	chk_bool(w, 0);						/* DECLARED no color TV */
+	// The I/O board: on revision 15 the network on it is not built, and
+	// nothing else of it is QUUX's.  As muir's machine comes up.
+	emit_ioboard(w, d);
+	emit_quux_input(w, img);	/* the keyboard and mouse are not built: empty */
+	chk_u64(w, x->committed);				/* READ cycles */
+	chk_u64(w, x->ns);					/* READ ns, the snapshot's */
+	chk_u16(w, (uint16_t)(x->lc >> 32));			/* READ lc <40:32> */
+	chk_u32(w, img->qx.directory);				/* READ word 220 */
+	chk_bool(w, img->qx.ephemeral);				/* READ word 221 <0> */
+	chk_u64(w, img->qx.pointer_types);			/* READ words 222, 223 */
+	chk_u32(w, img->qx.refused);				/* READ word 224 */
+	chk_u32(w, img->qx.pdl_base);				/* READ A 430's copy */
+	chk_u16(w, img->qx.pdl_head);				/* READ A 431's copy */
+	chk_u32(w, x->posted);					/* READ word 225 */
+
+	// --- the pipeline -----------------------------------------------------
+	chk_u64(w, x->period);					/* READ entry 21 */
+	const int kria = !d->timing[0] && !d->timing[1] && !d->timing[2];
+	chk_u64(w, kria ? MUIR_KRIA_READ_NS : d->timing[0]);	/* DECLARED */
+	chk_u64(w, kria ? MUIR_KRIA_WRITE_NS : d->timing[1]);
+	chk_u64(w, kria ? MUIR_KRIA_OCCUPANCY_NS : d->timing[2]);
+	const uint32_t cache = d->cache_words ? d->cache_words : MUIR_CACHE_WORDS_15;
+	chk_u32(w, cache);					/* DECLARED */
+	chk_u32(w, 0);						/* no line held */
+	const size_t sets = cache / MUIR_LINE_WORDS_15 / 2u;
+	chk_u64(w, (uint64_t)sets);
+	for (size_t i = 0; i < sets; ++i)
+		chk_u8(w, 0);					/* the recency, zero */
+	emit_pipeline_15(w, img);
+}
+
 void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		  const struct chk_declared *d)
 {
+	if (img->rev15) {
+		body_15(w, img, d);
+		return;
+	}
 	const int quux = img->quux;
 	// On QUUX the drive bay's pack is block-disk's, and the CADR controller
 	// in muir's machine beside it holds none.
@@ -1425,6 +1668,30 @@ static const char *const kMissingQuux[] = {
 	NULL
 };
 
+// Revision 15's (A15b.13): what `quux15_core.sv`'s window does not give.
+static const char *const kMissingQuux15[] = {
+	"the cache's lines and its recency: written EMPTY (A15b.13).  A",
+	"    drained cache's words are main memory's, so a resumed machine misses",
+	"    where muir's would hit, which moves when a read is answered and never",
+	"    what it reads.",
+	"the I/O board, whose network revision 15's fabric does not build, and",
+	"    nothing else of which is QUUX's: written as muir's machine comes up.",
+	"    A resumed machine's board catches up with the clock at its first look.",
+	"the keyboard and the mouse on the register page, which revision 15's",
+	"    fabric does not build: written empty.",
+	"D's dispatch on a fetched word, which revision 15's fabric does not build:",
+	"    no word armed for M 31 and no slot pending.",
+	"a data push's word waiting for the micro stack: its 19 bits, which are",
+	"    all SPC<18:0> keeps; muir keeps the push's 32.",
+	"and the DISK PACK, which revision 15's fabric does not build: no pack.",
+	NULL
+};
+
+const char *const *chk_rtl_missing_quux15(void)
+{
+	return kMissingQuux15;
+}
+
 const char *const *chk_rtl_missing(void)
 {
 	return kMissing;
@@ -1462,6 +1729,14 @@ int chk_rtl_refusal(const struct cadr_image *img, char *why, size_t n)
 // nothing else that the file carries.
 void chk_rtl_run_state(struct cadr_image *img, int was_running)
 {
+	// Revision 15's: the clock control register's RUN, which the console's
+	// halt cleared, in the halted pipeline's console word (`img_tl15`); the
+	// pipeline keeps no SRUN of its own in its file.
+	if (img->rev15) {
+		if (was_running)
+			img->q15.tail[IMG_TL15_CONSOLE] |= 1ull << 6;
+		return;
+	}
 #if CHK_MUTATE == 34
 	(void)was_running;
 	if (1)

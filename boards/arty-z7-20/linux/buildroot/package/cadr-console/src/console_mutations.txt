@@ -922,9 +922,19 @@
 @why a revision this program has not met has a width it does not know, and the line
 @why must say so rather than call it 40 bits
 @old
-	m->word_bits = m->revision == 13 ? 40 : 0;
+	m->word_bits = m->revision == 13 || m->revision == 15 ? 40 : 0;
 @new
 	m->word_bits = m->revision >= 13 ? 40 : 0;
+@end
+
+@mutation machine-period-said-as-k
+@file console_face.c
+@why revision 15's entry carries its clock's period where K stood, and the line must
+@why say a period, in nanoseconds, and not a K
+@old
+	if (m->revision >= 15)
+@new
+	if (m->revision >= 16)
 @end
 
 @mutation machine-stale-echo-believed

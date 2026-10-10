@@ -884,9 +884,10 @@ void cons_machine_id_of(uint64_t entry, uint32_t build_word, struct cons_machine
 	m->machine_id = ((uint32_t)CONS_QUUX_SIGNATURE << 16) | low;
 	m->revision = (low >> 4) & 0xFFu;
 	m->processor_type = low & 0xFu;
-	// Revision 13's words are 40 bits.  A revision this program has not
-	// met has a width it does not know, and says so rather than guessing.
-	m->word_bits = m->revision == 13 ? 40 : 0;
+	// Revision 13's words are 40 bits, and revision 15's.  A revision this
+	// program has not met has a width it does not know, and says so rather
+	// than guessing.
+	m->word_bits = m->revision == 13 || m->revision == 15 ? 40 : 0;
 }
 
 int cons_read_machine_id(struct console *c, struct cons_machine_id *m)
@@ -951,8 +952,14 @@ void cons_say_machine_id(const struct cons_machine_id *m)
 		snprintf(width, sizeof width, "%u-bit words", m->word_bits);
 	else
 		snprintf(width, sizeof width, "words of a width not known here");
-	say("machine: QUUX revision %u, %s, %s, microcycle K=%u L=%u; %s",
-	    m->revision, id, width, m->k, m->l, build);
+	// Revision 15's entry carries its clock's period, in units of 0.5 ns,
+	// where K stood (A15b.5): a pipelined machine's microcycle is its clock.
+	if (m->revision >= 15)
+		say("machine: QUUX revision %u, %s, %s, period %u%s ns; %s",
+		    m->revision, id, width, m->k / 2u, m->k % 2u ? ".5" : "", build);
+	else
+		say("machine: QUUX revision %u, %s, %s, microcycle K=%u L=%u; %s",
+		    m->revision, id, width, m->k, m->l, build);
 }
 
 int cons_machine_word(struct console *c, int argc, char **argv, int *status)

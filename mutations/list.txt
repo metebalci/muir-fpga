@@ -28221,6 +28221,13 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
                       || (ex_v && !ex_nop && writes_oa_high(ex_ir) && 1'b0));
 @end
 
+# Revision 15's main loop, D off: what no trace reaches, so no record.
+# RD's operand address while a word before writes A-LOCALP or M-AP, and the
+# lost index that loading it leaves, hang muir's pipeline (CS waits on an
+# index a restore alone finds again), so no trace runs that far; the
+# records return with muir's fix.  A return to the main loop whose own word
+# steps LC (NEXT-INSTRD, which bars fusing) is in no trace either.
+
 @mutation quux15-fused-return-keeps-the-word-under-n
 @check quux15_mainloop_quux
 @file rtl/machine/quux15_core.sv
@@ -28522,16 +28529,30 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
   assign bright  = ir[13] ? 6'd0 : 6'd0;
 @end
 
-@mutation quux15-ram-read-without-its-enable
-@check quux15_matrix_quux
+@mutation quux15-tlb-ram-write-dropped
+@check quux15_walk_quux
 @file rtl/machine/quux15_ram.sv
-@note A RAM that reads every clock: the control store's word CS holds through
-@note the OA hold is replaced by the next address's.  (A and the PDL buffer
-@note read every clock by design, RD keeping their words.)
+@note The TLB's RAMs, the one-port RAM's users since the control store, A
+@note and the PDL buffer took two ports for the readout, never written: a
+@note walk's entry is not kept, and a later lookup of its page reads the word
+@note the RAM came up with.  (A RAM reading every clock, which the control
+@note store's port A is held to, `quux15-tdp-port-a-read-without-its-enable`,
+@note changes nothing here: the TLB reads every lookup.)
 @old
-    if (re) begin
+    if (we) mem[waddr] <= wdata;
 @new
-    if (re || 1'b1) begin
+    if (we && 1'b0) mem[waddr] <= wdata;
+@end
+
+@mutation quux15-tdp-port-a-read-without-its-enable
+@check quux15_matrix_quux
+@file rtl/machine/quux15_tdp.sv
+@note A two-port RAM whose port A reads every clock: the control store's word
+@note CS holds through the OA hold is replaced by the next address's.
+@old
+    if (a_en && ~|a_we) a_q <= a_poison ? ~mem[a_addr] : mem[a_addr];
+@new
+    if ((a_en || 1'b1) && ~|a_we) a_q <= a_poison ? ~mem[a_addr] : mem[a_addr];
 @end
 
 @mutation quux15-prom-read-without-its-enable
@@ -29611,4 +29632,316 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     if (errhalt != 2'd0) npc = ex_pc;
 @new
     if (errhalt != 2'd0) npc = npc_q;
+@end
+
+# Revision 15's checkpoint (A15b.13): the core's readout, the devices' time words
+# and the board's reader and writer, which the checkpoints group holds to muir's
+# files byte for byte through the testbench.
+
+@mutation quux15-readout-pdl-held-write-left-out
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_core.sv
+@note The readout reads the PDL buffer's RAM alone, its newest write, held
+@note outside it, left out.
+@old
+    rm_held_q2      <= pdlh_v && !pdl_pend && pdlh_addr == rm_addr_q;
+@new
+    rm_held_q2      <= 1'b0;
+@end
+
+@mutation quux15-readout-pdl-held-over-write-in
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_core.sv
+@note The readout puts a PDL write held over the halt into the buffer, where
+@note muir keeps it pending.
+@old
+    rm_held_q2      <= pdlh_v && !pdl_pend && pdlh_addr == rm_addr_q;
+@new
+    rm_held_q2      <= pdlh_v && pdlh_addr == rm_addr_q;
+@end
+
+@mutation quux15-readout-m-next-word
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_core.sv
+@note The readout's M word is its neighbor's.
+@old
+      4'd3:    rm_small <= {24'd0, mmem[rm_addr_q[4:0]]};
+@new
+      4'd3:    rm_small <= {24'd0, mmem[rm_addr_q[4:0] ^ 5'd1]};
+@end
+
+@mutation quux15-readout-dispatch-halves-crossed
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_core.sv
+@note The readout takes dispatch memory's even entries for its odd ones.
+@old
+      4'd6:    rm_small <= {47'd0, rm_addr_q[0] ? dmem_odd[rm_addr_q[11:1]] : dmem_even[rm_addr_q[11:1]]};
+@new
+      4'd6:    rm_small <= {47'd0, !rm_addr_q[0] ? dmem_odd[rm_addr_q[11:1]] : dmem_even[rm_addr_q[11:1]]};
+@end
+
+@mutation quux15-readout-pdl-index-for-pointer
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_core.sv
+@note The register table's PDL-POINTER is PDL-INDEX.
+@old
+      5'd4:  return {50'd0, pdl_ptr};
+@new
+      5'd4:  return {50'd0, pdl_idx};
+@end
+
+@mutation quux15-readout-lc-without-needfetch
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_core.sv
+@note The register table's LC leaves NEED-FETCH out.
+@old
+      5'd3:  return {23'd0, lc_needfetch, 6'd0, lc};
+@new
+      5'd3:  return {23'd0, 1'b0, 6'd0, lc};
+@end
+
+@mutation quux15-readout-takes-the-port-running
+@check quux15_transfer_quux
+@file rtl/machine/quux15_core.sv
+@note The readout takes the memories' write ports while the machine runs.
+@old
+  assign ro_on = halted && rm_en_q;
+@new
+  assign ro_on = rm_en_q;
+@end
+
+@mutation quux15-pdl-held-write-taken-in-reset
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_core.sv
+@note The PDL buffer takes its held write in reset, whatever WB came up as.
+@old
+  assign pdl_we = pdlh_v && land_pdl_we && running;
+@new
+  assign pdl_we = pdlh_v && land_pdl_we;
+@end
+
+@mutation quux15-pdl-copies-come-up-random
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_core.sv
+@note The redirect's copies come up as the flip-flops do, not as muir's
+@note machine has them.
+@old
+      pdl_base <= '0; pdl_head <= '0;
+@new
+      pdl_base <= pdl_base; pdl_head <= pdl_head;
+@end
+
+@mutation quux15-readout-store-not-turned-back
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_store.sv
+@note The readout gives the control store's word as stored, <47:0> inverted.
+@old
+  assign ro_imem = ram_ro_q ^ INVERT;
+@new
+  assign ro_imem = ram_ro_q;
+@end
+
+@mutation quux15-readout-prom-next-word
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_store.sv
+@note The readout's PROM word is the next one's.
+@old
+    if (ro_en) ro_prom <= prom[ro_addr[9:0]];
+@new
+    if (ro_en) ro_prom <= prom[ro_addr[9:0] + 10'd1];
+@end
+
+@mutation quux15-timer-deadline-the-next-not-the-rise
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_devices.sv
+@note A risen timer's deadline is the next boundary its count holds, not the
+@note rise muir keeps.
+@old
+                     : tm[k].up ? {16'd0, tm_rise[k]}
+@new
+                     : tm[k].up && 1'b0 ? {16'd0, tm_rise[k]}
+@end
+
+@mutation quux15-timer-rise-a-period-late
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_devices.sv
+@note A timer's rise is kept a period late.
+@old
+        tm_rise[k] <= inst + 48'($signed(tm_w[k].rem));
+@new
+        tm_rise[k] <= inst + 48'(period) + 48'($signed(tm_w[k].rem));
+@end
+
+@mutation quux15-block-disk-told-by-writes-alone
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_devices.sv
+@note Block-disk is told the clock at a write of its words, not at a read.
+@old
+      if (wr_bd || (rq_v && rq_k[7:2] == 6'o40)) bd_now <= inst;
+@new
+      if (wr_bd) bd_now <= inst;
+@end
+
+@mutation quux15-block-disk-done-at-the-instant
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_devices.sv
+@note RESET-DEVICES's DONE is the instant, not the clock block-disk was last
+@note told.
+@old
+      if (wr_reset) bd_done <= bd_now;
+@new
+      if (wr_reset) bd_done <= inst;
+@end
+
+@mutation quux15-display-reset-instant-not-kept
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_devices.sv
+@note The video controller's last RESET-DEVICES instant is not kept.
+@old
+      if (wr_reset) tv_at <= inst;
+@new
+      if (wr_reset) tv_at <= tv_at;
+@end
+
+@mutation quux15-snapshot-a-clock-late
+@check quux15_checkpoints_quux
+@file rtl/machine/quux15_devices.sv
+@note The snapshot's instant is the next clock's.
+@old
+      snap_inst <= inst;
+@new
+      snap_inst <= inst + 48'(period);
+@end
+
+@mutation quux15-checkpoint-timer-mode-is-the-enable
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The board's writer gives a timer's interrupt enable as its mode.
+@old
+		chk_bool(w, (x->timer_ctl[k] >> 1) & 1u);	/* READ one_shot */
+@new
+		chk_bool(w, (x->timer_ctl[k] >> 2) & 1u);	/* READ one_shot */
+@end
+
+@mutation quux15-checkpoint-block-disk-done-is-now
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The board's writer gives block-disk's DONE as the clock it was last told.
+@old
+	chk_u64(w, x->bd_done);				/* READ done_at */
+@new
+	chk_u64(w, x->bd_now);				/* READ done_at */
+@end
+
+@mutation quux15-checkpoint-nop-flags-crossed
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The board's writer gives NOP-NEXT for the pre-nop flag.
+@old
+	chk_bool(w, (t[IMG_TL15_NOPS] >> 1) & 1u);			/* READ pre_nop_next */
+@new
+	chk_bool(w, (t[IMG_TL15_NOPS] ) & 1u);			/* READ pre_nop_next */
+@end
+
+@mutation quux15-checkpoint-version-50
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The board's writer names its file revision 13's and 14's version.
+@old
+	w->version = CHK_VERSION_15;
+@new
+	w->version = CHK_VERSION_40;
+@end
+
+@mutation quux15-checkpoint-recency-one-short
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The board's writer counts the cache's recency one byte short.
+@old
+	chk_u64(w, (uint64_t)sets);
+@new
+	chk_u64(w, (uint64_t)sets - 1u);
+@end
+
+@mutation quux15-checkpoint-cycles-are-the-clocks
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The board's writer gives the clocks as the microcycles.
+@old
+	chk_u64(w, x->committed);				/* READ cycles */
+@new
+	chk_u64(w, x->clocks);				/* READ cycles */
+@end
+
+@mutation quux15-readout-localp-is-ap
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-readout/src/readout.c
+@note The board's reader takes M-AP's copy for A-LOCALP's.
+@old
+	q->localp = (uint32_t)(v[IMG_RG15_BASES] & 0x3FFFu);
+@new
+	q->localp = (uint32_t)((v[IMG_RG15_BASES] >> 16) & 0x3FFFu);
+@end
+
+# Revision 15's console face on a board (`rtl/plumbing/quux15_face.sv`),
+# held by `tb/quux15_face_tb.cpp`.
+
+@mutation quux15-face-reset-on-any-value
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note The machine released by any value written to RESET, not its key alone.
+@old
+  assign key_ok = wr && w_word == 10'd6 && wr_mask == 32'hFFFF_FFFF && wr_data == RESET_KEY;
+@new
+  assign key_ok = wr && w_word == 10'd6 && wr_mask == 32'hFFFF_FFFF && (wr_data == RESET_KEY || 1'b1);
+@end
+
+@mutation quux15-face-snapshot-on-every-address
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note The devices' snapshot taken at every readout address, not selector 15's.
+@old
+      rm_snap <= wr && w_word == 10'd10 && wr_data[17:14] == 4'd15;
+@new
+      rm_snap <= wr && w_word == 10'd10 && (wr_data[17:14] == 4'd15 || 1'b1);
+@end
+
+@mutation quux15-face-echo-before-the-word
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note The echo names the address before its word is there.
+@old
+          ro_echo    <= ro_asked;
+@new
+          ro_echo    <= ro_echo;
+@end
+
+@mutation quux15-face-cyclesh-not-latched
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note CYCLESH latched as zero by the read of CYCLES.
+@old
+        10'd2:  cycles_hi <= committed[63:32];
+@new
+        10'd2:  cycles_hi <= committed[63:32] & 32'd0;
+@end
+
+@mutation quux15-face-spy-register-off-by-one
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note Word 16 + k reads diagnostic register k + 1.
+@old
+  assign spy_raddr = r_word[3:0];
+@new
+  assign spy_raddr = r_word[3:0] + 4'd1;
+@end
+
+@mutation quux15-face-q-read-live
+@check quux15_face
+@file rtl/plumbing/quux15_face.sv
+@note Q read as it stands, not as the read of VMA latched it.
+@old
+        10'd8:  rd_data = q_l;
+@new
+        10'd8:  rd_data = q[31:0] ^ (q_l & 32'd0);
 @end

@@ -4,7 +4,10 @@
 // **A TRUE DUAL-PORT RAM OF REVISION 15'S MEMORY SIDE**: two ports, each a
 // synchronous read with its word registered or a write of the bytes its
 // enables name, one or the other a clock.  The cache's tags and lines are
-// each one (`quux15_port.sv`).
+// each one (`quux15_port.sv`); and the control store, A and the PDL buffer,
+// read by CS on port A and written on port B, whose address is the
+// console's readout's while the machine is halted (`quux15_core.sv`,
+// `quux15_store.sv`).
 //
 // **NO_CHANGE**: a port that writes leaves its output as it was, which is
 // what UltraRAM builds (a block RAM builds it too), so nothing reads a word

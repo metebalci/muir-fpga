@@ -74,6 +74,21 @@
 // completion's clock the host's words go into main memory and the fabric is
 // told.
 //
+// **A RUN THAT ENDS IN A CHECKPOINT** (`# checkpoint <clock> <file> <rtc start>
+// <rtc base> <read> <write> <occupancy> <cache>`, the checkpoints group):
+// halted, the devices' snapshot is taken at that clock's edge, and after it
+// the whole machine is read through the core's readout (`rm_*`) by the
+// board's own reader (`cadr-readout`'s `ro_read_quux15`, its face modeled
+// here: a word of the window is the core's three clocks after its address)
+// and written by the board's own writer (`chk_rtl.c`), main memory and the
+// frame buffer being this testbench's; the file must be muir's, `<file>`,
+// byte for byte.  The fabric's is kept beside it as `<file>.fabric` when it
+// is not and `QUUX15_KEEP_FABRIC` is set, for a field-by-field look.  The
+// model takes no snapshot of its own when the reader asks: the clock muir's
+// file is of has taken it.  A run that ends in `# checkpoint-refused <clock>
+// <why>` is one muir refuses to write, a file device's handle open or command
+// queued: the board's writer must refuse it too (`chk_rtl_refusal`).
+//
 // A design that stops the simulation (`$finish`, the core's "not built")
 // fails at that clock.  Nothing here computes what a core should do: every
 // value it holds a column to is the trace's.  It reports the first 20
@@ -99,6 +114,17 @@
 #include QUUX15_HEADER(QUUX15_TOP)
 #ifdef QUUX15_CORE
 #include "Vquux15_core___024root.h"
+#include <fstream>
+#include <functional>
+#include <unistd.h>
+#include <iterator>
+// The board's C headers, whose compile-time checks are C11's.
+#define _Static_assert static_assert
+extern "C" {
+#include "chk_rtl.h"
+#include "readout.h"
+}
+#undef _Static_assert
 #endif
 
 namespace {
@@ -225,6 +251,13 @@ struct Run {
   };
   std::vector<Spy> spy_writes, spy_reads;
   std::vector<std::pair<uint64_t, std::string>> halted;
+  // The checkpoint the run ends in, if it does: its clock, muir's file and
+  // what the fabric's declares.
+  struct Ckpt {
+    bool on = false, refused = false;
+    uint64_t clock = 0, rtc_start = 0, rtc_base = 0, read = 0, write = 0, occupancy = 0, cache = 0;
+    std::string file;
+  } ckpt;
 };
 
 // The run's memories into the design, which has just come up.
@@ -321,6 +354,26 @@ int read_trace(const char *path, std::vector<Run> &runs) {
         (w[0] == "spy" ? runs.back().spy_writes : runs.back().spy_reads).push_back(e);
         continue;
       }
+      if (w.size() == 9 && w[0] == "checkpoint") {
+        Run::Ckpt &c = runs.back().ckpt;
+        c.on = true;
+        c.clock = std::strtoull(w[1].c_str(), nullptr, 16);
+        c.file = w[2];
+        c.rtc_start = std::strtoull(w[3].c_str(), nullptr, 16);
+        c.rtc_base = std::strtoull(w[4].c_str(), nullptr, 16);
+        c.read = std::strtoull(w[5].c_str(), nullptr, 10);
+        c.write = std::strtoull(w[6].c_str(), nullptr, 10);
+        c.occupancy = std::strtoull(w[7].c_str(), nullptr, 10);
+        c.cache = std::strtoull(w[8].c_str(), nullptr, 10);
+        continue;
+      }
+      if (w.size() == 3 && w[0] == "checkpoint-refused") {
+        Run::Ckpt &c = runs.back().ckpt;
+        c.on = true;
+        c.refused = true;
+        c.clock = std::strtoull(w[1].c_str(), nullptr, 16);
+        continue;
+      }
       if (w.size() == 3 && w[0] == "halted") {
         runs.back().halted.emplace_back(std::strtoull(w[1].c_str(), nullptr, 16), w[2]);
         continue;
@@ -408,6 +461,10 @@ class Bench {
   void image(uint64_t addr, uint64_t word) {
     for (int b = 0; b < 5; ++b) mem_[addr * 5 + b] = static_cast<uint8_t>(word >> (8 * b));
   }
+
+  // Main memory's bytes, packed storage, and the frame buffer's.
+  const std::vector<uint8_t> &main_bytes() const { return mem_; }
+  const std::vector<uint8_t> &fb_bytes() const { return fb_; }
 
   // muir's `LateModel::next`: xorshift64*, 1 to `most` clocks.
   uint64_t late() {
@@ -723,6 +780,105 @@ std::string halted_tail(Top *dut) {
 }
 #endif
 
+#ifdef QUUX15_CORE
+// **The console face as the board's reader drives it** (`quux15_face.sv`'s
+// words 10 to 12): a write of word 10 puts the address on the core's readout
+// and three clocks later the word is there; its read is the echo, 11 and 12
+// the word's halves.
+struct TbFace {
+  Top *dut;
+  std::function<void()> edge;
+  uint32_t echo = 0x3FFFF;
+  uint64_t data = 0;
+};
+uint32_t tb_face_read(struct readout *r, unsigned word) {
+  TbFace *f = static_cast<TbFace *>(r->ctx);
+  if (word == RO_ADDR) return f->echo;
+  if (word == RO_DATA_LO) return static_cast<uint32_t>(f->data);
+  if (word == RO_DATA_HI) return static_cast<uint32_t>(f->data >> 32);
+  return RO_UNMAPPED;
+}
+void tb_face_write(struct readout *r, unsigned word, uint32_t v) {
+  TbFace *f = static_cast<TbFace *>(r->ctx);
+  if (word != RO_ADDR) return;
+  f->dut->rm_sel = static_cast<uint8_t>((v >> 14) & 0xF);
+  f->dut->rm_addr = static_cast<uint16_t>(v & 0x3FFF);
+  for (int k = 0; k < 4; ++k) f->edge();
+  f->data = f->dut->rm_word;
+  f->echo = v;
+}
+
+std::vector<uint8_t> file_bytes(const std::string &path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+// The run's checkpoint, the machine halted and its snapshot taken: the
+// fabric's file against muir's.  Empty when they are the same bytes.
+std::string checkpoint_check(Top *dut, const Run &run, const Bench &bench, const std::function<void()> &edge) {
+  TbFace face{dut, edge};
+  struct readout r;
+  std::memset(&r, 0, sizeof r);
+  r.read = tb_face_read;
+  r.write = tb_face_write;
+  r.ctx = &face;
+  struct cadr_image img;
+  if (img_alloc_video(&img, static_cast<unsigned>(kMainWords >> 16), 1, 15, 1280, 1024) != 0)
+    return "the image could not be made";
+  std::string why;
+  if (ro_read_quux15(&r, &img) != 0) {
+    img_free(&img);
+    return "the readout's echo named another word";
+  }
+  if (run.ckpt.refused) {
+    char refusal[256];
+    const int refuses = chk_rtl_refusal(&img, refusal, sizeof refusal);
+    img_free(&img);
+    return refuses ? "" : "muir refuses this checkpoint, a file device's handle open or command "
+                          "queued, and the board's writer does not";
+  }
+  img.main13 = bench.main_bytes().data();
+  const std::vector<uint8_t> &fb = bench.fb_bytes();
+  for (unsigned i = 0; i < img.tv_words && 4u * i + 3u < fb.size(); ++i)
+    img.tv[i] = static_cast<uint32_t>(fb[4 * i]) | static_cast<uint32_t>(fb[4 * i + 1]) << 8 |
+                static_cast<uint32_t>(fb[4 * i + 2]) << 16 | static_cast<uint32_t>(fb[4 * i + 3]) << 24;
+  struct chk_declared d;
+  std::memset(&d, 0, sizeof d);
+  d.chaos_address = 0177001;
+  d.rtc_counted = 1;
+  d.rtc_start = static_cast<uint32_t>(run.ckpt.rtc_start);
+  d.rtc_base = run.ckpt.rtc_base;
+  d.timing[0] = run.ckpt.read;
+  d.timing[1] = run.ckpt.write;
+  d.timing[2] = run.ckpt.occupancy;
+  d.cache_words = static_cast<uint32_t>(run.ckpt.cache);
+  struct chk w;
+  chk_init(&w);
+  chk_rtl_body(&w, &img, &d);
+  const std::string kept = run.ckpt.file + ".fabric";
+  const std::string out = kept + "." + std::to_string(static_cast<long>(getpid()));
+  if (chk_write_file(out.c_str(), "rtl", static_cast<uint32_t>(kMainWords >> 16), &w) != 0)
+    why = "the fabric's file could not be written";
+  chk_free(&w);
+  img.main13 = nullptr;
+  img_free(&img);
+  if (!why.empty()) return why;
+  const std::vector<uint8_t> a = file_bytes(out), b = file_bytes(run.ckpt.file);
+  const bool keep = std::getenv("QUUX15_KEEP_FABRIC") != nullptr && a != b;
+  if (keep)
+    std::rename(out.c_str(), kept.c_str());
+  else
+    std::remove(out.c_str());
+  if (b.empty()) return "muir's file " + run.ckpt.file + " is not there";
+  if (a == b) return "";
+  size_t k = 0;
+  while (k < a.size() && k < b.size() && a[k] == b[k]) ++k;
+  return "the fabric's checkpoint, " + std::to_string(a.size()) + " bytes, is not muir's, " +
+         std::to_string(b.size()) + " bytes: they part at byte " + std::to_string(k) +
+         (keep ? " (" + kept + ")" : "");
+}
+#endif
+
 // One run on a design made for it, its registers' random words from
 // `seed`: 0 when it agrees, 1 when not.
 int run_trace(const char *path, const Run &run, int seed) {
@@ -752,6 +908,7 @@ int run_trace(const char *path, const Run &run, int seed) {
     dut->m_bvalid = 0; dut->m_rvalid = 0; dut->m_bid = 0; dut->m_bresp = 0;
     dut->m_rdata = 0; dut->m_rresp = 0; dut->m_rlast = 0;
     dut->spy_we = 0; dut->spy_eadr = 0; dut->spy_wdata = 0; dut->spy_raddr = 0; dut->ro_sel = 0;
+    dut->rm_en = 1; dut->rm_snap = 0; dut->rm_sel = 0; dut->rm_addr = 0;
   };
   quiet();
 #else
@@ -805,8 +962,11 @@ int run_trace(const char *path, const Run &run, int seed) {
     clock = k;
 #endif
 #ifdef QUUX15_CORE
-    // The console's write for the clock after this edge's.
+    // The console's write for the clock after this edge's, and the
+    // devices' snapshot at a checkpoint's clock's own edge, which takes the
+    // instant and the timers as that clock has them.
     dut->spy_we = 0;
+    dut->rm_snap = run.ckpt.on && run.ckpt.clock == k;
     for (const Run::Spy &w : run.spy_writes)
       if (w.clock == k + 1) {
         dut->spy_we = 1;
@@ -885,6 +1045,20 @@ int run_trace(const char *path, const Run &run, int seed) {
     }
 #endif
   }
+#ifdef QUUX15_CORE
+  // A run that ends in a checkpoint: the machine read and written as a
+  // board's program does, against muir's file.
+  if (bad == 0 && run.ckpt.on) {
+    dut->rm_snap = 0;
+    const std::string why = checkpoint_check(dut, run, bench, edge);
+    if (!why.empty()) {
+      std::fprintf(stderr, "clock %" PRIu64 ": %s\n", run.ckpt.clock, why.c_str());
+      first_clock = run.ckpt.clock;
+      first_column = "checkpoint";
+      ++bad;
+    }
+  }
+#endif
   dut->final();
   delete dut;
   if (bad) {

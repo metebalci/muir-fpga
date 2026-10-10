@@ -15,6 +15,11 @@
 //!             and holds until the enable is cleared
 //!             (and OA-OUTSIDE-FIELDS's freeze: the machine stopped
 //!             mid-clock, the word in EX, read as it stands)
+//!   checkpoints  a halt in programs of every kind, at clocks spread over
+//!             each run, and the run ended there with muir's checkpoint of
+//!             the halted machine, which the testbench takes through the
+//!             core's readout and the board's own writer (`chk_rtl.c`) and
+//!             holds to it byte for byte (A15b.13)
 //!   halts     a halt at every clock of five programs, of a write start in
 //!             a mispredicted jump's delay slot, a read's word landing
 //!             around it, of the writes A15b.3 names (a write right after a
@@ -29,6 +34,10 @@
 //! # spy <clock> <register> <word>       written before that clock
 //! # read <clock> <register> <word>      read as that clock ends, halted
 //! # halted <clock> <bytes>              halted, drained, as that clock ends
+//! # checkpoint <clock> <file> <rtc start> <rtc base> <read> <write> <occupancy> <cache>
+//!                                       halted, the run's end: muir's file
+//!                                       as a fabric writes it, and what
+//!                                       the fabric's file declares
 //! ```
 //!
 //! `<bytes>` are the end of muir's own checkpoint of the halted pipeline
@@ -65,6 +74,10 @@ pub enum Act {
     /// Clocks of a machine stopped at the error its case ends at, frozen
     /// mid-clock as muir's pipeline stops (OA-OUTSIDE-FIELDS, A15b.15).
     Frozen(u64),
+    /// Halted: one clock more, in which the console takes the devices'
+    /// snapshot, and the run ends with muir's checkpoint of the machine as
+    /// that clock leaves it ([`fabric_body`]).
+    CheckpointEnd,
 }
 
 use Act::*;
@@ -72,6 +85,47 @@ use Act::*;
 /// The end of muir's checkpoint of `e`, halted: `save_15`'s fields after
 /// the machine, the period and the port, in hexadecimal.
 pub fn tail_hex(e: &Pipeline) -> String {
+    tail_bytes(e).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// **muir's checkpoint of `e`, halted, as a fabric writes it** (A15b.13):
+/// `Pipeline::save`'s body with the cache written empty, no
+/// line held and the recency zero, the micro stack's pending word at the
+/// stack's 19 bits ([`tail_bytes`]), and the I/O board as muir's machine
+/// comes up: on revision 15 the network on it is not built, and nothing
+/// else of it is QUUX's, so the fabric has none of its time to give, and a
+/// resumed machine's board catches up with the clock at its first look.
+/// Every other byte is muir's own.
+pub fn fabric_body(e: &Pipeline) -> Vec<u8> {
+    let mut m = e.machine().clone();
+    let address = m.ioboard.chaos.as_ref().map(|c| c.address());
+    m.ioboard = muir::ioboard::IoBoard::default();
+    if let Some(a) = address {
+        m.ioboard.plug_chaos(a, None, 0, false);
+    }
+    let mut head = Writer::new();
+    m.save(&mut head);
+    head.u64(e.period());
+    let mut out = head.finish();
+    let mut port = Writer::new();
+    e.port.save(&mut port);
+    let port = port.finish();
+    // The port's: three u64 of timing, the cache's words, the lines held
+    // (a count, then a way and a line each), the recency (a count, bytes).
+    let held = u32::from_le_bytes(port[28..32].try_into().expect("the port's count")) as usize;
+    let at = 32 + 8 * held;
+    let sets = u64::from_le_bytes(port[at..at + 8].try_into().expect("the recency's count"));
+    out.extend_from_slice(&port[..28]);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&sets.to_le_bytes());
+    out.extend(std::iter::repeat_n(0u8, sets as usize));
+    out.extend(tail_bytes(e));
+    out
+}
+
+/// `save_15`'s fields after the machine, the period and the port, as
+/// [`tail_hex`] gives them, in bytes.
+pub fn tail_bytes(e: &Pipeline) -> Vec<u8> {
     let mut all = Writer::new();
     e.save(&mut all);
     let all = all.finish();
@@ -94,7 +148,7 @@ pub fn tail_hex(e: &Pipeline) -> String {
         let w = u32::from_le_bytes([tail[at + 2], tail[at + 3], tail[at + 4], tail[at + 5]]) & 0o1777777;
         tail[at + 2..at + 6].copy_from_slice(&w.to_le_bytes());
     }
-    tail.iter().map(|b| format!("{b:02x}")).collect()
+    tail
 }
 
 /// The run halted at the start of clock `at`, 2 or later, its halt read,
@@ -424,6 +478,72 @@ pub fn halts(period: u64) -> Vec<Case> {
             c.script = halt_at(at);
             v.push(c);
         }
+    }
+    v
+}
+
+/// A halt at clock `at`, and the run's end with the checkpoint.
+fn checkpoint_at(at: u64) -> Vec<Act> {
+    assert!(at >= 2, "a console's write lands from the second clock on");
+    vec![Wait(at - 1), Spy(spy::CLK, 0), UntilHalted, CheckpointEnd]
+}
+
+/// The clocks a run of `end` clocks is halted at for a checkpoint: about
+/// `n`, spread over it, the second and the last among them.
+fn spread(end: u64, n: u64) -> Vec<u64> {
+    let step = (end.saturating_sub(2) / n.max(1)).max(1);
+    let mut at: Vec<u64> = (2..=end).step_by(step as usize).collect();
+    if at.last() != Some(&end) && end >= 2 {
+        at.push(end);
+    }
+    at
+}
+
+/// **The checkpoints** (A15b.13): runs of every kind halted at clocks spread
+/// over each, each ended with muir's checkpoint of the halted machine as a
+/// fabric writes it, which the testbench holds the fabric's own to.
+pub fn checkpoints(period: u64) -> Vec<Case> {
+    let mut v = Vec::new();
+    let mut add = |name: &str, base: Case, n: u64| {
+        let end = park_clock(&base, period);
+        for at in spread(end, n) {
+            let mut c = base.clone();
+            c.name = format!("{name}-{at}");
+            c.script = checkpoint_at(at);
+            c.micro_check = false;
+            v.push(c);
+        }
+    };
+    for prog in ["transfer", "stack", "pdl", "oa", "muldiv", "pdlfield", "dconst"] {
+        add(prog, Case::of_prog(prog, &program(prog, period)), 12);
+    }
+    add("imem", super::quux15_preset::imem_program().case("imem"), 12);
+    add("pdlhold", super::quux15_preset::pdl_hold().case("pdlhold"), 12);
+    for (n, p) in super::quux15_devices::timers() {
+        add(&format!("timers-{n}"), p.case(&n), 4);
+    }
+    for (n, p) in super::quux15_devices::filedev() {
+        add(&format!("filedev-{n}"), p.case(&n), 3);
+    }
+    for (n, p) in super::quux15_devices::blockdisk() {
+        add(&format!("blockdisk-{n}"), p.case(&n), 3);
+    }
+    for (n, p) in super::quux15_devices::window() {
+        add(&format!("window-{n}"), p.case(&n), 3);
+    }
+    for gap in [None, Some(0), Some(2)] {
+        let tag = gap.map_or("alone".to_string(), |g| g.to_string());
+        add(&format!("slotwrite-{tag}"), write_in_slot(gap).case("x"), 6);
+    }
+    add("readwrite", write_after_read().case("x"), 6);
+    for (name, p) in md_after_start_programs().into_iter().take(6) {
+        add(&name, p.case("x"), 4);
+    }
+    for (name, p) in super::quux15_main::machines(&[false]) {
+        add(&format!("main-{name}"), super::quux15_main::parked(&p), 6);
+    }
+    for seed in [1u64, 2] {
+        add(&format!("randmem-{seed}"), super::quux15_preset::random_program(seed, true).case("x"), 10);
     }
     v
 }

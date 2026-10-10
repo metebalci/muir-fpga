@@ -2699,9 +2699,20 @@ CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_
 QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlfield", "pdlfieldout",
                "dconst", "dispatch", "predict", "slotstep", "pdlhold", "imem", "memory", "ports", "walk", "matrix",
                "random", "matrixmem", "randmem", "imemorder", "time", "timers", "interrupt", "blockdisk", "window",
-               "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop")
+               "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop", "checkpoints")
 QUUX15_PERIODS = (20, 17)
+# The Makefile's `Q15CHK_SRC` and its include directories: `cadr-readout`'s
+# reader and `cadr-checkpoint`'s writer, which the testbench holds a
+# checkpoint run's file to muir's with.
+_Q15CHK_PKG = "boards/arty-z7-20/linux/buildroot/package/"
+QUUX15_CLIB = {
+    "sources": [_Q15CHK_PKG + "cadr-readout/src/readout.c", _Q15CHK_PKG + "cadr-checkpoint/src/chk.c",
+                _Q15CHK_PKG + "cadr-checkpoint/src/chk_rtl.c"],
+    "include": [_Q15CHK_PKG + "cadr-readout/src", _Q15CHK_PKG + "cadr-checkpoint/src",
+                _Q15CHK_PKG + "cadr-common/src"],
+}
 QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,), "halts": (20,),
+                     "checkpoints": (20, 34),
                      "time": (14, 16, 17, 20, 22, 38), "timers": (14, 16, 17, 20, 22, 38)}
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {
@@ -2719,6 +2730,9 @@ for _p in QUUX15_CORE:
         "golden": ["quux15_%s.quux.p%d.golden" % (_p, _q)
                    for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)],
         "machine": "quux",
+        # The board's checkpoint writer, which the testbench links: built
+        # from the mutant's copy, so a record may aim at it too.
+        "clib": QUUX15_CLIB,
     }
     # And with two bubbles (the Makefile's `quux15_%.quux.b2.pass`): the
     # core built with `BUBBLES` 2, the traces taken with two.
@@ -2727,6 +2741,17 @@ for _p in QUUX15_CORE:
         flags=CHECKS["quux15_%s_quux" % _p]["flags"] + ["-GBUBBLES=2"],
         golden=["quux15_%s.quux.p%d.b2.golden" % (_p, _q)
                 for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)])
+
+# Revision 15's console face (the Makefile's `quux15_face.pass`).
+CHECKS["quux15_face"] = {
+    "sources": ["rtl/plumbing/quux15_face.sv"],
+    "extra": ["rtl/plumbing/cadr_gp_regs.sv"],
+    "top": "quux15_face",
+    "tb": "tb/quux15_face_tb.cpp",
+    "flags": ["-O2", "-CFLAGS", "-O2", "-GPERIOD=34", "-Irtl/plumbing"],
+    "golden": None,
+    "machine": "quux",
+}
 
 QUUX_TIMED_KEYS = ["dispatch_write_order13_quux"] + \
     ["quux14_%s_quux" % p for p in QUUX14_PROGRAMS] + \
@@ -2908,7 +2933,8 @@ def parse(path):
                 % (path, m.line, m.name, m.check))
         # A mutation to a file its check does not build would run a clean
         # design and be reported as caught or survived on no evidence.
-        if m.path not in CHECKS[m.check]["sources"]:
+        built = CHECKS[m.check]["sources"] + CHECKS[m.check].get("clib", {}).get("sources", [])
+        if m.path not in built:
             die("%s:%d: `%s` mutates %s, which `%s` does not build"
                 % (path, m.line, m.name, m.path, m.check))
         if not m.old.strip():
@@ -3189,6 +3215,24 @@ def build_and_run(args, work, check, build_fails=False):
     obj = os.path.join(work, "obj_" + check)
     cmd = [args.verilator, "--cc", "--exe", "--build", "-Wall"]
     cmd += spec["flags"]
+    # C the testbench links, built from the mutant's copy into a library of
+    # its own: the Makefile's `$(BUILD)/q15chk/libq15chk.a`.
+    if spec.get("clib"):
+        lib_dir = os.path.join(work, "clib_" + check)
+        os.makedirs(lib_dir, exist_ok=True)
+        inc = ["-I" + os.path.join(work, d) for d in spec["clib"]["include"]]
+        rc, out = run(["cc", "-O2", "-Wall", "-Wextra", "-Werror", "-std=gnu11"] + inc + ["-c"]
+                      + [os.path.join(work, s) for s in spec["clib"]["sources"]], lib_dir)
+        if rc != 0:
+            return BROKEN, first_problem(out)
+        lib = os.path.join(lib_dir, "libq15chk.a")
+        objs = [os.path.splitext(os.path.basename(s))[0] + ".o" for s in spec["clib"]["sources"]]
+        rc, out = run(["ar", "rcs", lib] + objs, lib_dir)
+        if rc != 0:
+            return BROKEN, first_problem(out)
+        for i in inc:
+            cmd += ["-CFLAGS", i]
+        cmd += ["-LDFLAGS", lib]
     if spec.get("gprom_path"):
         # A check that writes its own PROM names it here, and it is placed in
         # the mutant's work directory so two mutants cannot share one file.

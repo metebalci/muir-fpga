@@ -903,6 +903,7 @@ fn mutation(name: &str) -> Option<Mutation> {
 /// what it is to leave in A.  A trace carries its memories as `# image`
 /// lines, which `tb/quux15_core_tb.cpp` loads into the core as a bitstream
 /// would hold them.
+#[derive(Clone)]
 struct Case {
     name: String,
     prom: Vec<u64>,
@@ -1262,6 +1263,7 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
     };
     // The console's script first, each action at the clock it is made, as
     // the trace's lines say for the testbench.
+    let mut checkpointed = false;
     for act in &case.script {
         use quux15_console::Act;
         match *act {
@@ -1308,7 +1310,54 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                     memory.push(format!("# read {:x} {eadr:x} {:x}", e.clock(), e.spy_read(eadr)));
                 }
             }
+            Act::CheckpointEnd => {
+                // One clock more, in which the testbench's console takes the
+                // devices' snapshot; the file is of the machine as it leaves
+                // it, as a fabric writes it (A15b.13).
+                clock(&mut e, &mut t, &mut host, &mut rows, &mut parked_at, &mut halted)?;
+                let dir = std::env::var("QUUX15_CHECKPOINTS").map_err(|_| {
+                    (2, format!("{name}: a run that ends in a checkpoint wants QUUX15_CHECKPOINTS, its files' directory"))
+                })?;
+                let file = format!("{dir}/{name}.p{period}.chk");
+                // A file device with a handle open or a command queued holds
+                // what no checkpoint carries: muir refuses, and so must the
+                // board's writer.
+                if let Some(why) = e.machine().checkpoint_refusal() {
+                    let _ = std::fs::remove_file(&file);
+                    memory.push(format!("# checkpoint-refused {:x} {}", e.clock(), why.replace(' ', "_")));
+                    checkpointed = true;
+                    break;
+                }
+                let body = quux15_console::fabric_body(&e);
+                muir::checkpoint::write_version(
+                    std::path::Path::new(&file),
+                    "rtl",
+                    e.machine().memory_boards(),
+                    muir::checkpoint::VERSION_15,
+                    &body,
+                )
+                .map_err(|x| (2, format!("{name}: {file}: {x}")))?;
+                let muir::machine::Rtc::Counted { start, base_ns } = e.machine().rtc else {
+                    return Err((1, format!("{name}: a trace's real-time clock is counted")));
+                };
+                let tm = case.timing.unwrap_or(TIMING);
+                memory.push(format!(
+                    "# checkpoint {:x} {file} {start:x} {base_ns:x} {} {} {} {CACHE_WORDS}",
+                    e.clock(),
+                    tm.read_ns,
+                    tm.write_ns,
+                    tm.occupancy_ns
+                ));
+                checkpointed = true;
+                break;
+            }
         }
+    }
+    if checkpointed {
+        let mut memory = memory;
+        memory.extend(host.lines);
+        let summary = format!("{name}: checkpoint at clock {}", e.clock());
+        return Ok(Ran { lines: rows, summary, memory, reached: [0; 14] });
     }
     while !halted {
         if let Some(at) = parked_at
@@ -1415,6 +1464,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "fieldbase" => quux15_preset::field_bases().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "console" => quux15_console::console(period),
         "halts" => quux15_console::halts(period),
+        "checkpoints" => quux15_console::checkpoints(period),
         _ => vec![Case::of_prog(name, &program(name, period))],
     }
 }

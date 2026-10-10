@@ -40,6 +40,41 @@ int ro_word(struct readout *r, unsigned sel, unsigned addr, uint64_t *word)
 	return 0;
 }
 
+// Revision 15's: the same, the face's word 12 carrying `<63:32>` whole.
+// **THE ECHO MOVES WHEN THE WORD IS THERE**, some clocks after the address
+// (`quux15_face.sv`), and a read can reach the face before the write that
+// asked: so the echo is read again, each read latching the halves anew,
+// until it names the address, `RO_ECHO_TRIES` times at most.
+#define RO_ECHO_TRIES 64
+int ro_word64(struct readout *r, unsigned sel, unsigned addr, uint64_t *word)
+{
+	const uint32_t asked = ((uint32_t)(sel & 0xFu) << 14) |
+			       (uint32_t)(addr & 0x3FFFu);
+	r->write(r, RO_ADDR, asked);
+	++r->writes;
+	for (int tries = 0; tries < RO_ECHO_TRIES; ++tries) {
+		const uint32_t echo = r->read(r, RO_ADDR);
+		++r->reads;
+		if (echo != asked)
+			continue;
+		const uint32_t lo = r->read(r, RO_DATA_LO);
+		const uint32_t hi = r->read(r, RO_DATA_HI);
+		r->reads += 2;
+		*word = (uint64_t)lo | ((uint64_t)hi << 32);
+		return 0;
+	}
+	++r->stale;
+	return -1;
+}
+
+static int ro_block64(struct readout *r, unsigned sel, unsigned n, uint64_t *into)
+{
+	for (unsigned i = 0; i < n; ++i)
+		if (ro_word64(r, sel, i, &into[i]) != 0)
+			return -1;
+	return 0;
+}
+
 int ro_block(struct readout *r, unsigned sel, unsigned n, uint64_t *into)
 {
 	for (unsigned i = 0; i < n; ++i)
@@ -160,6 +195,9 @@ uint64_t ro_ticks(struct readout *r)
 
 int ro_read_machine(struct readout *r, struct cadr_image *img)
 {
+	// Revision 15's window is its own (`ro_read_quux15`).
+	if (img->rev15)
+		return ro_read_quux15(r, img);
 	if (ro_block(r, IMG_SEL_PROM, IMG_PROM_WORDS, img->prom) != 0)
 		return -1;
 	if (ro_block(r, IMG_SEL_IMEM, IMG_IMEM_WORDS, img->imem) != 0)
@@ -238,7 +276,8 @@ int ro_machine_is_quux(struct readout *r, unsigned *k, unsigned *l)
 	if (w == RO_NO_MEMORY)
 		return 0;
 	if (((w >> 32) & 0xFFFFu) != IMG_QUUX_MARK ||
-	    ((w & 0xFFFFu) != 0 && (w & 0xFFFFu) != IMG_QUUX_ID_13 && (w & 0xFFFFu) != IMG_QUUX_ID_14))
+	    ((w & 0xFFFFu) != 0 && (w & 0xFFFFu) != IMG_QUUX_ID_13 && (w & 0xFFFFu) != IMG_QUUX_ID_14 &&
+	     (w & 0xFFFFu) != IMG_QUUX_ID_15))
 		return -1;
 	if (k)
 		*k = (unsigned)((w >> 24) & 0xFFu);
@@ -255,7 +294,8 @@ int ro_quux_revision(struct readout *r)
 		return is;
 	if (ro_word(r, IMG_SEL_REGS, IMG_RG_QUUX_ID, &w) != 0)
 		return -1;
-	return (w & 0xFFFFu) == IMG_QUUX_ID_14 ? 14 : (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
+	return (w & 0xFFFFu) == IMG_QUUX_ID_15 ? 15 : (w & 0xFFFFu) == IMG_QUUX_ID_14 ? 14
+	     : (w & 0xFFFFu) == IMG_QUUX_ID_13 ? 13 : 12;
 }
 
 int ro_video(struct readout *r, struct cadr_video *v)
@@ -509,6 +549,117 @@ int ro_read_quux(struct readout *r, struct cadr_image *img)
 	return 0;
 }
 
+// **REVISION 15'S MACHINE** (A15b.13), out of `quux15_core.sv`'s window:
+// the devices' snapshot taken first, so that every time word names one
+// instant, then the memories, the register table, the devices and the halted
+// pipeline.  Main memory and the display are DDR and the caller's.
+int ro_read_quux15(struct readout *r, struct cadr_image *img)
+{
+	const uint64_t word = ((uint64_t)1 << 40) - 1u;
+	uint64_t v[IMG_RG15_COUNT], dv[IMG_DV15_COUNT], w = 0;
+	struct quux_state *q = &img->qx;
+	struct quux15_state *x = &img->q15;
+	if (ro_word64(r, IMG_SEL_SNAP, 0, &w) != 0)
+		return -1;
+	if (ro_block64(r, IMG_SEL_PROM, IMG_PROM_WORDS, img->prom) != 0 ||
+	    ro_block64(r, IMG_SEL_IMEM, IMG_IMEM_WORDS, img->imem) != 0 ||
+	    ro_block64(r, IMG_SEL_AMEM, IMG_AMEM_WORDS, img->amem) != 0 ||
+	    ro_block64(r, IMG_SEL_MMEM, IMG_MMEM_WORDS, img->mmem) != 0 ||
+	    ro_block64(r, IMG_SEL_PDL, img->pdl_words, img->pdl) != 0)
+		return -1;
+	for (unsigned i = 0; i < IMG_AMEM_WORDS; ++i)
+		img->amem[i] &= word;
+	for (unsigned i = 0; i < IMG_MMEM_WORDS; ++i)
+		img->mmem[i] &= word;
+	for (unsigned i = 0; i < img->pdl_words; ++i)
+		img->pdl[i] &= word;
+	for (unsigned i = 0; i < IMG_SPC_WORDS; ++i) {
+		if (ro_word64(r, IMG_SEL_SPC, i, &w) != 0)
+			return -1;
+		img->spc[i] = (uint32_t)(w & 0x7FFFFu);
+	}
+	for (unsigned i = 0; i < img->dmem_words; ++i) {
+		if (ro_word64(r, IMG_SEL_DMEM, i, &w) != 0)
+			return -1;
+		img->dmem[i] = (uint32_t)(w & 0x1FFFFu);
+	}
+	for (unsigned i = 0; i < IMG_OPCS; ++i) {
+		if (ro_word64(r, IMG_SEL_OPCS, i, &w) != 0)
+			return -1;
+		img->opcs[i] = (uint16_t)(w & 0x3FFFu);
+	}
+	for (unsigned i = 0; i < IMG_QUUX_MACRO_ENTRIES; ++i) {
+		if (ro_word64(r, IMG_SEL_MACRO, i, &w) != 0)
+			return -1;
+		q->macro_entries[i] = (uint32_t)(w & 0x3FFFFu);
+	}
+	if (ro_block64(r, IMG_SEL_REGS, IMG_RG15_COUNT, v) != 0 ||
+	    ro_block64(r, IMG_SEL_QUUX_PAGE, IMG_DV15_COUNT, dv) != 0 ||
+	    ro_block64(r, IMG_SEL_TAIL, IMG_TL15_COUNT, x->tail) != 0)
+		return -1;
+
+	img->q = v[IMG_RG15_Q] & word;
+	img->vma = v[IMG_RG15_VMA] & word;
+	img->md = v[IMG_RG15_MD] & word;
+	x->lc = v[IMG_RG15_LC];
+	img->pdl_ptr = (uint16_t)(v[IMG_RG15_PDLPTR] & 0x3FFFu);
+	img->pdl_idx = (uint16_t)(v[IMG_RG15_PDLIDX] & 0x3FFFu);
+	img->spcptr = (uint8_t)(v[IMG_RG15_SPCPTR] & 0x1Fu);
+	x->intctl = (uint32_t)v[IMG_RG15_INTCTL];
+	img->dc = (uint16_t)(v[IMG_RG15_DC] & 0x3FFu);
+	x->overflow = (int)(v[IMG_RG15_FLAGS] & 1u);
+	x->vmaok = (int)((v[IMG_RG15_FLAGS] >> 1) & 1u);
+	x->bus_nxm = (int)((v[IMG_RG15_FLAGS] >> 2) & 1u);
+	x->opc = (uint16_t)(v[IMG_RG15_OPC] & 0x3FFFu);
+	q->macro_reg = (uint32_t)v[IMG_RG15_MACRO];
+	q->macro_index = (uint32_t)(v[IMG_RG15_MACRO_IX] & 0x3FFu);
+	q->localp = (uint32_t)(v[IMG_RG15_BASES] & 0x3FFFu);
+	q->ap = (uint32_t)((v[IMG_RG15_BASES] >> 16) & 0x3FFFu);
+	q->opr_v = (int)((v[IMG_RG15_ARMED] >> 8) & 1u);
+	q->opr_arg = (int)((v[IMG_RG15_ARMED] >> 7) & 1u);
+	q->opr_delta = (unsigned)(v[IMG_RG15_ARMED] & 0x3Fu);
+	q->m31_v = 0;
+	q->directory = (uint32_t)(v[IMG_RG15_DIRECTORY] & 0x3FFFFu);
+	q->ephemeral = (int)((v[IMG_RG15_DIRECTORY] >> 18) & 1u);
+	q->pointer_types = v[IMG_RG15_TYPES];
+	q->refused = (uint32_t)v[IMG_RG15_REFUSED];
+	q->pdl_base = (uint32_t)v[IMG_RG15_COPIES];
+	q->pdl_head = (uint16_t)((v[IMG_RG15_COPIES] >> 32) & 0x3FFFu);
+	x->posted = (uint32_t)v[IMG_RG15_POSTED];
+	x->clocks = v[IMG_RG15_CLOCKS];
+	x->period = (unsigned)((v[IMG_RG15_ID] >> 24) & 0xFFu);
+	x->committed = v[IMG_RG15_COMMITTED];
+	img->cycles = x->committed;
+
+	for (unsigned k = 0; k < IMG_QUUX_TIMERS; ++k) {
+		x->timer_ctl[k] = (uint32_t)dv[IMG_DV15_TIMER + k];
+		x->deadline[k] = dv[IMG_DV15_DEADLINE + k];
+	}
+	q->fd_enabled = (int)(dv[IMG_DV15_FD] & 1u);
+	q->fd_ie = (int)((dv[IMG_DV15_FD] >> 1) & 1u);
+	q->fd_refused = (int)((dv[IMG_DV15_FD] >> 2) & 1u);
+	q->fd_fault = (int)((dv[IMG_DV15_FD] >> 3) & 1u);
+	q->fd_handles = (unsigned)((dv[IMG_DV15_FD] >> 8) & 0xFFu);
+	q->fd_cmd_base = (uint32_t)dv[IMG_DV15_FD_CBASE];
+	q->fd_resp_base = (uint32_t)dv[IMG_DV15_FD_RBASE];
+	q->fd_cmd_log2 = (uint32_t)(dv[IMG_DV15_FD_LOGS] & 0xFu);
+	q->fd_resp_log2 = (uint32_t)((dv[IMG_DV15_FD_LOGS] >> 4) & 0xFu);
+	q->fd_cmd_prod = (uint16_t)(dv[IMG_DV15_FD_INDEXES] & 0xFFFFu);
+	q->fd_cmd_cons = (uint16_t)((dv[IMG_DV15_FD_INDEXES] >> 16) & 0xFFFFu);
+	q->fd_resp_cons = (uint16_t)((dv[IMG_DV15_FD_INDEXES] >> 32) & 0xFFFFu);
+	x->bd_cmd = (uint32_t)dv[IMG_DV15_BD_CMD];
+	x->bd_clp = (uint32_t)dv[IMG_DV15_BD_CLP];
+	x->bd_da = (uint32_t)dv[IMG_DV15_BD_DA];
+	x->bd_lma = (uint32_t)dv[IMG_DV15_BD_LMA];
+	x->bd_flags = (uint32_t)dv[IMG_DV15_BD_FLAGS];
+	x->bd_done = dv[IMG_DV15_BD_DONE];
+	x->bd_now = dv[IMG_DV15_BD_NOW];
+	q->bow = (int)(dv[IMG_DV15_BOW] & 1u);
+	x->ns = dv[IMG_DV15_NS];
+	x->tv_at = dv[IMG_DV15_TV_AT];
+	return 0;
+}
+
 int ro_audit(struct readout *r, struct cadr_audit *a, unsigned *mark)
 {
 	uint64_t w[IMG_AUDIT_WORDS];
@@ -569,8 +720,9 @@ int img_alloc_video(struct cadr_image *img, unsigned boards, int quux, int revis
 		return -1;
 	img->boards = boards;
 	img->quux = quux != 0;
-	img->rev13 = quux && (revision == 13 || revision == 14);
-	img->rev14 = quux && revision == 14;
+	img->rev13 = quux && (revision == 13 || revision == 14 || revision == 15);
+	img->rev14 = quux && (revision == 14 || revision == 15);
+	img->rev15 = quux && revision == 15;
 	img->pdl_words = quux ? IMG_QUUX_PDL_WORDS : IMG_PDL_WORDS;
 	img->l2_words = img->rev13 ? IMG_L2_WORDS_13 : quux ? IMG_QUUX_L2_WORDS : IMG_L2_WORDS;
 	img->video_width = quux ? width : 0u;

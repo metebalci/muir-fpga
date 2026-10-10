@@ -23,6 +23,13 @@
 // **`<47:0>` IS STORED INVERTED**, so that a RAM that comes up zero, as
 // UltraRAM does, reads that word: one RTL on every board.
 //
+// **THE READOUT** (A15b.13): the RAM's word at `ro_addr` on its write port,
+// `<47:0>` turned back, and the PROM's on a port of its own, each a clock
+// after the address, for the console's checkpoint taken halted.  So the RAM
+// is two ports (`quux15_tdp.sv`): CS reads on port A, and port B is the
+// write's, or the readout's while `ro_en` stands, which the core raises only
+// halted, when nothing writes.
+//
 // The RAM is inferred here; the board's flow chooses the primitive (URAM on
 // the Kria, `RAM_STYLE`) when revision 15 is built for one.  The RAM is read
 // at every address CS sends, the PROM's too, and the PROM's word chosen a
@@ -39,7 +46,11 @@ module quux15_store #(
     output var logic [63:0] rdata,
     input  var logic        we,
     input  var logic [13:0] waddr,
-    input  var logic [63:0] wdata
+    input  var logic [63:0] wdata,
+    input  var logic        ro_en,
+    input  var logic [13:0] ro_addr,
+    output var logic [63:0] ro_imem,
+    output var logic [63:0] ro_prom
 );
 
   localparam logic [13:0] PROM_BASE = 14'o36000;
@@ -51,21 +62,31 @@ module quux15_store #(
     if (PROM_HEX != "") $readmemh(PROM_HEX, prom);
   end
 
-  logic [63:0] ram_q, prom_q, fwd_q;
+  logic [63:0] ram_q, prom_q, fwd_q, ram_ro_q;
   logic        from_prom, fwd_v;
-  quux15_ram #(
+  logic ram_we;
+  assign ram_we = we && waddr < PROM_BASE;
+  quux15_tdp #(
       .WIDTH    (64),
       .DEPTH    (16384),
       .INIT_WORD(64'h0)
   ) ram (
-      .clk  (clk),
-      .re   (re),
-      .raddr(raddr),
-      .rdata(ram_q),
-      .we   (we && waddr < PROM_BASE),
-      .waddr(waddr),
-      .wdata(wdata ^ INVERT)
+      .clk    (clk),
+      .a_en   (re),
+      .a_we   (1'b0),
+      .a_addr (raddr),
+      .a_wdata(64'd0),
+      .a_q    (ram_q),
+      .b_en   (ram_we || ro_en),
+      .b_we   (ram_we),
+      .b_addr (ro_en ? ro_addr : waddr),
+      .b_wdata(wdata ^ INVERT),
+      .b_q    (ram_ro_q)
   );
+  assign ro_imem = ram_ro_q ^ INVERT;
+  always_ff @(posedge clk) begin
+    if (ro_en) ro_prom <= prom[ro_addr[9:0]];
+  end
 
   always_ff @(posedge clk) begin
     if (re) begin

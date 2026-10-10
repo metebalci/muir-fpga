@@ -1096,13 +1096,14 @@ int main(int argc, char **argv)
 		// Makefile's memory mutants are judged by.
 		memory_words_check(side);
 
-		// **THE REVISIONS A CHECKPOINT IS WRITTEN OF**: 12, 13 and 14, the
-		// last two packed; the board's program refuses any other by the
+		// **THE REVISIONS A CHECKPOINT IS WRITTEN OF**: 12 to 15, the last
+		// three packed; the board's program refuses any other by the
 		// register table's entry 21.  One line a failure, which mutant 48
 		// is judged by.
 		{
 			const struct { unsigned rev; int known, packed; } t[] = {
-				{0, 0, 0}, {11, 0, 0}, {12, 1, 0}, {13, 1, 1}, {14, 1, 1}, {15, 0, 0}};
+				{0, 0, 0}, {11, 0, 0}, {12, 1, 0}, {13, 1, 1}, {14, 1, 1}, {15, 1, 1},
+				{16, 0, 0}};
 			for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
 				if (bind_revision_known(t[i].rev) != t[i].known) {
 					fprintf(stderr, "checkpoint: FAIL: revision %u is %s, and it is %s\n", t[i].rev,

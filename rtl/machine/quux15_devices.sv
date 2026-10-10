@@ -86,7 +86,15 @@ module quux15_devices #(
     // Source 15, the microseconds since power-on, at this clock's instant.
     output var logic [31:0] microseconds,
     // The interrupt, as this clock's write leaves it (word 100 non-zero).
-    output var logic        int_now
+    output var logic        int_now,
+
+    // The readout (A15b.13): a word of the devices' own state, `ro_k`
+    // naming it, for the checkpoint a board takes halted; `snap` takes the
+    // instant and the timers as they stand, which the readout's time words
+    // read, so that a checkpoint names one instant however long it reads.
+    input  var logic        snap,
+    input  var logic [4:0]  ro_k,
+    output var logic [63:0] ro_dev
 );
 
   localparam logic [11:0] US_UNITS  = 12'd2000;
@@ -97,6 +105,12 @@ module quux15_devices #(
   logic [31:0] us_cnt, rtc_sec;
   logic [10:0] us_frac;
   logic [30:0] rtc_frac;
+  // The instant itself, kept for the readout alone (muir's `Machine::ns`).
+  logic [47:0] inst;
+  always_ff @(posedge clk) begin
+    if (rst) inst <= 48'(period);
+    else inst <= inst + 48'(period);
+  end
   always_ff @(posedge clk) begin
     if (rst) begin
       // Clock 1's instant is one period.
@@ -205,6 +219,11 @@ module quux15_devices #(
   logic        bd_bad, bd_past_end, bd_nxm;
   logic signed [47:0] bd_rem;     // DONE less now: not active once <= 0
   logic        bd_active;
+  // For the readout: the instant block-disk was last told the clock (an
+  // access of its words), and DONE, as muir's `BlockDisk` keeps them; and the
+  // instant of the last RESET-DEVICES, which muir's video controller keeps
+  // (`Tv::xbus_init`'s `written_at`).
+  logic [47:0] bd_now, bd_done, tv_at;
 
   // ============================================================ the display
 
@@ -390,6 +409,7 @@ module quux15_devices #(
       bd_cmd <= '0; bd_clp <= '0; bd_da <= '0; bd_lma <= '0;
       bd_bad <= 1'b0; bd_past_end <= 1'b0; bd_nxm <= 1'b0;
       bd_rem <= '0; bd_active <= 1'b0;
+      bd_now <= '0; bd_done <= '0; tv_at <= '0;
       fd_on <= 1'b0; fd_ie <= 1'b0; fd_refused <= 1'b0; fd_fault <= 1'b0;
       fd_cbase <= '0; fd_rbase <= '0; fd_clog <= '0; fd_rlog <= '0;
       fd_cprod <= '0; fd_ccons <= '0; fd_rcons <= '0; fd_hopen <= '0;
@@ -405,6 +425,11 @@ module quux15_devices #(
       if (wr_bd && wr_k[1:0] == 2'd1) bd_clp <= wr_data[27:0];
       if (wr_bd && wr_k[1:0] == 2'd2) bd_da <= wr_data[27:0];
       if (wr_reset) bd_active <= 1'b0;
+      // muir's `advance` before an access, and RESET-DEVICES's DONE at the
+      // clock last told.
+      if (wr_bd || (rq_v && rq_k[7:2] == 6'o40)) bd_now <= inst;
+      if (wr_reset) bd_done <= bd_now;
+      if (wr_reset) tv_at <= inst;
       // DONE counted down by the period: no pack, nothing to count.
       if (bd_active) begin
         bd_rem <= bd_rem - 48'(period);
@@ -415,8 +440,90 @@ module quux15_devices #(
     end
   end
 
+  // ============================================================= the readout
+
+  // **A TIMER'S DEADLINE AS muir KEEPS IT**: `rem` holds it less the
+  // instant until the flag rises; then a periodic timer's count runs on to
+  // the next boundary of its grid and a one-shot's stops, and muir's
+  // deadline stays where the flag rose until a clear moves it.  So the
+  // instant of each rise is kept here, for the readout alone.
+  logic [47:0] tm_rise [3];
+  always_ff @(posedge clk) begin
+    for (int k = 0; k < 3; k++)
+      if (!rst && tm_w[k].armed && !tm_w[k].up && $signed(tm_w[k].rem - 38'(period)) <= 0)
+        tm_rise[k] <= inst + 48'($signed(tm_w[k].rem));
+  end
+
+  // **THE SNAPSHOT**: the instant and each timer's words and deadline, as
+  // `snap` finds them; `u64::MAX` is no deadline.
+  logic [47:0] snap_inst;
+  logic [31:0] snap_ctl [3];
+  logic [63:0] snap_dl [3];
+  always_ff @(posedge clk) begin
+    if (snap) begin
+      snap_inst <= inst;
+      for (int k = 0; k < 3; k++) begin
+        snap_ctl[k] <= {tm[k].period_us, 3'd0, tm[k].up, tm[k].armed, tm[k].ie, tm[k].one_shot, tm[k].on};
+        snap_dl[k]  <= !tm[k].armed ? 64'hFFFF_FFFF_FFFF_FFFF
+                     : tm[k].up ? {16'd0, tm_rise[k]}
+                     : {16'd0, inst + 48'($signed(tm[k].rem))};
+      end
+    end
+  end
+
+  // **THE DEVICES' STATE FOR A CHECKPOINT**: what muir's `Timers`,
+  // `FileDevice`, `BlockDisk` and the machine's clock save, as the
+  // registers here hold it; the time words the snapshot's.
+  //
+  //   0-2   timer k: <0> on, <1> one-shot, <2> interrupt enable, <3> a
+  //         deadline, <4> the flag; <31:8> the period in us
+  //   3-5   timer k's deadline, in units of 0.5 ns; all ones for none
+  //   6     the file device: <0> enabled, <1> interrupt enable, <2> refused,
+  //         <3> the index fault; <15:8> the handles open
+  //   7, 8  the command ring's base, the response ring's
+  //   9     <3:0> the command ring's log2 size, <7:4> the response ring's
+  //   10    <15:0> the command producer, <31:16> its consumer, <47:32> the
+  //         response consumer
+  //   11-14 block-disk's command, command list, disk address and LMA
+  //   15    block-disk: <0> a bad command, <1> past the end, <2> NXM,
+  //         <3> active
+  //   16    DONE, and 17 the instant block-disk was last told
+  //   18    word 210's black-on-white
+  //   19    the instant, muir's `Machine::ns`
+  //   20    the real-time clock's seconds; 21 the microseconds
+  //   22    the instant of the last RESET-DEVICES
+  always_comb begin
+    ro_dev = 64'd0;
+    unique case (ro_k)
+      5'd0:  ro_dev = {32'd0, snap_ctl[0]};
+      5'd1:  ro_dev = {32'd0, snap_ctl[1]};
+      5'd2:  ro_dev = {32'd0, snap_ctl[2]};
+      5'd3:  ro_dev = snap_dl[0];
+      5'd4:  ro_dev = snap_dl[1];
+      5'd5:  ro_dev = snap_dl[2];
+      5'd6:  ro_dev = {48'd0, fd_hopen, 4'd0, fd_fault, fd_refused, fd_ie, fd_on};
+      5'd7:  ro_dev = {36'd0, fd_cbase};
+      5'd8:  ro_dev = {36'd0, fd_rbase};
+      5'd9:  ro_dev = {56'd0, fd_rlog, fd_clog};
+      5'd10: ro_dev = {16'd0, fd_rcons, fd_ccons, fd_cprod};
+      5'd11: ro_dev = {32'd0, bd_cmd};
+      5'd12: ro_dev = {36'd0, bd_clp};
+      5'd13: ro_dev = {36'd0, bd_da};
+      5'd14: ro_dev = {36'd0, bd_lma};
+      5'd15: ro_dev = {60'd0, bd_active, bd_nxm, bd_past_end, bd_bad};
+      5'd16: ro_dev = {16'd0, bd_done};
+      5'd17: ro_dev = {16'd0, bd_now};
+      5'd18: ro_dev = {63'd0, bow};
+      5'd19: ro_dev = {16'd0, snap_inst};
+      5'd20: ro_dev = {32'd0, rtc_sec};
+      5'd21: ro_dev = {32'd0, us_cnt};
+      5'd22: ro_dev = {16'd0, tv_at};
+      default: ro_dev = 64'd0;
+    endcase
+  end
+
   logic unused;
-  assign unused = ^{bd_clp, wr_k[7:3], prod_data[31:16]};
+  assign unused = ^{wr_k[7:3], prod_data[31:16]};
 
 endmodule
 

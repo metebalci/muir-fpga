@@ -521,6 +521,56 @@ holds the program's file to it byte for byte. Mutants 41 to 46 are caught
 there; 47, `LC<33:32>` written 0, and 48, revision 14 refused as unknown,
 are caught by the package's own check.
 
+## A revision 15 checkpoint
+
+QUUX revision 15's checkpoint is muir's version 51, `Pipeline::save`: the
+machine at revision 15, whose level-1 byte carries the revision with `<7>`
+set and which ends with word 225; then the clock's period in units of 0.5 ns,
+the memory port's timing and cache, and the pipeline's state between two
+microcycles (contract G3 revision 15, A15b.13). The control store's words are
+64 bits. A fabric checkpoint of revision 15 resumes in muir; nothing is
+restored to the fabric.
+
+The machine is read through the pipelined core's own window
+(`rtl/machine/quux15_core.sv`, behind `rtl/plumbing/quux15_face.sv`, the
+console's words), not the CADR's register table. The memories are read on
+their write ports, so the readout adds nothing to the core's read paths, and
+only halted, drained, when nothing writes. A write of selector 15 first takes
+the devices' snapshot: the instant and the interval timers, with each timer's
+deadline as muir keeps it, so that every time word names one instant however
+long the reads take. `cadr-readout`'s `ro_read_quux15` reads it all, and
+`chk_rtl.c` writes the file.
+
+What the file holds otherwise than muir's own:
+
+- the cache written empty, no line held and the recency zero. A drained
+  cache's words are main memory's, so a resumed machine misses where muir's
+  would hit, which moves when a read is answered and never what it reads;
+- the I/O board as muir's machine comes up. Revision 15's fabric does not
+  build the network on it, and nothing else of it is QUUX's; a resumed
+  machine's board catches up with the clock at its first look;
+- a data push's word waiting for the micro stack at the stack's 19 bits,
+  which are all `SPC<18:0>` keeps;
+- the keyboard, the mouse and D's dispatch on a fetched word, which the
+  fabric does not build: empty.
+
+`cadr-checkpoint --what-it-cannot-read` names them on a revision 15 board.
+The resume line names `MUIR_QUUX_REVISION=15` and `--microcycle-ns` at the
+bitstream's period, which muir refuses another at, as it refuses another
+memory timing or cache.
+
+**The proof is the core's own testbench.** The checkpoints group of
+`golden/src/quux15_console.rs` halts programs of every kind at clocks spread
+over each run, ends each run there with muir's checkpoint of the halted
+machine, and `tb/quux15_core_tb.cpp` reads the core through its window with
+the board's own reader and writes the file with the board's own writer, both
+linked into it. The two files must be the same bytes, at 10 ns and at the
+Kria's 17 ns. muir's file is taken with the cache empty, the I/O board fresh
+and the stack's word at 19 bits, the three differences above; every other
+byte is muir's. A run muir refuses, a file device with a command queued, the
+board's writer must refuse too. The mutation records `quux15-readout-*`,
+`quux15-checkpoint-*` and the devices' time words are caught there.
+
 ## `--chaos-address` is octal, as muir's is
 
 muir's flag "wants one address in octal or subnet:host", and

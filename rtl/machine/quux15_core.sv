@@ -88,6 +88,11 @@ module quux15_core #(
     // One AXI ID for every write, as the board needs (A15b.5), its writes
     // answered in order; clear, an ID a slot of the port's in-flight list.
     parameter bit ONE_WRITE_ID = 1'b1,
+    // Where main memory and the frame buffer are in the AXI port's space: a
+    // board's (`cadr_ddr_map.sv`), the testbench's own by default
+    // (`quux15_axi_master.sv`).
+    parameter logic [31:0] MAIN_BASE    = 32'h0000_0000,
+    parameter logic [31:0] DISPLAY_BASE = 32'h0A00_0000,
     // The bubbles a wrong prediction costs (A15b.14): 1, EX's decision
     // driving the next fetch's address in its own clock; or 2, the fallback,
     // the target fetched a clock later (muir's `Pipeline::bubbles`).
@@ -186,7 +191,22 @@ module quux15_core #(
     input  var logic [3:0]  spy_raddr,
     output var logic [15:0] spy_rdata,
     input  var logic [4:0]  ro_sel,
-    output var logic [63:0] ro_word
+    output var logic [63:0] ro_word,
+    // **THE MACHINE'S READOUT** (A15b.13), for the checkpoint a board takes
+    // halted: `rm_sel` names a memory or a table and `rm_addr` its word,
+    // which is out on `rm_word` three clocks after both stand, `rm_en` up.
+    // The memories are read on their write ports, and only halted, drained:
+    // a read while the machine runs reads nothing and changes nothing.
+    // `rm_snap` takes the devices' time words (`quux15_devices.sv`).
+    input  var logic        rm_en,
+    input  var logic        rm_snap,
+    input  var logic [3:0]  rm_sel,
+    input  var logic [13:0] rm_addr,
+    output var logic [63:0] rm_word,
+    // The microcycles committed and the clocks since reset, for the
+    // console's CYCLES and TICKS.
+    output var logic [63:0] obs_committed,
+    output var logic [47:0] obs_clocks
 );
 
   localparam logic [13:0] RESET_PC = 14'o36000;
@@ -537,6 +557,15 @@ module quux15_core #(
   logic [13:0] store_raddr;
   logic [63:0] store_q, cs_word;
   logic        running;
+  // The readout (A15b.13): its address a clock after the face's, and the
+  // memories' write ports taken for it while the machine is halted.
+  logic        ro_on, rm_en_q;
+  logic [3:0]  rm_sel_q;
+  logic [13:0] rm_addr_q;
+  logic [63:0] ro_imem, ro_prom;
+  logic [39:0] ro_a, ro_pdl;
+  logic [63:0] ro_dev;
+  assign ro_on = halted && rm_en_q;
   quux15_store #(.PROM_HEX(PROM_HEX)) store (
       .clk  (clk),
       .re   (store_re),
@@ -544,7 +573,11 @@ module quux15_core #(
       .rdata(store_q),
       .we   (wb_v && wb_fresh && wb_imem_we && running),
       .waddr(wb_imem_addr),
-      .wdata(wb_imem_data)
+      .wdata(wb_imem_data),
+      .ro_en  (ro_on),
+      .ro_addr(rm_addr_q),
+      .ro_imem(ro_imem),
+      .ro_prom(ro_prom)
   );
   // The boot's trap is a word of zeros, read from nowhere.
   assign cs_word = cs_trap ? 64'd0 : cs_dbg ? cs_dbg_word : store_q;
@@ -566,14 +599,22 @@ module quux15_core #(
   logic [13:0] land_pdl_addr;
   logic [7:0]  land_pdl_seq;
 
-  quux15_ram #(.WIDTH(40), .DEPTH(1024)) amem (
-      .clk  (clk),
-      .re   (a_re),
-      .raddr(a_raddr),
-      .rdata(a_q),
-      .we   (land_a_we && running),
-      .waddr(land_a_addr),
-      .wdata(land_data)
+  // Two ports (`quux15_tdp.sv`): CS reads on port A; port B is WB's
+  // write, or the readout's while the machine is halted (`ro_on`).
+  logic amem_we, pdl_we;
+  assign amem_we = land_a_we && running;
+  quux15_tdp #(.WIDTH(40), .DEPTH(1024)) amem (
+      .clk    (clk),
+      .a_en   (a_re),
+      .a_we   (1'b0),
+      .a_addr (a_raddr),
+      .a_wdata(40'd0),
+      .a_q    (a_q),
+      .b_en   (amem_we || ro_on),
+      .b_we   (amem_we),
+      .b_addr (ro_on ? rm_addr_q[9:0] : land_a_addr),
+      .b_wdata(land_data),
+      .b_q    (ro_a)
   );
   // **THE PDL BUFFER'S NEWEST WRITE IS HELD**, in `pdlh_*`, and the RAM
   // takes it when a newer one lands: a read at the edge a write lands at
@@ -588,14 +629,22 @@ module quux15_core #(
   logic [13:0] pdlh_addr;
   logic [39:0] pdlh_data;
   logic [7:0]  pdlh_seq;
-  quux15_ram #(.WIDTH(40), .DEPTH(16384)) pdl (
-      .clk  (clk),
-      .re   (pdl_re),
-      .raddr(pdl_raddr),
-      .rdata(pdl_q),
-      .we   (pdlh_v && land_pdl_we),
-      .waddr(pdlh_addr),
-      .wdata(pdlh_data)
+  // The held write goes into the RAM when a newer one lands, which the
+  // machine takes only running: never in reset, whatever WB's registers came
+  // up as.
+  assign pdl_we = pdlh_v && land_pdl_we && running;
+  quux15_tdp #(.WIDTH(40), .DEPTH(16384)) pdl (
+      .clk    (clk),
+      .a_en   (pdl_re),
+      .a_we   (1'b0),
+      .a_addr (pdl_raddr),
+      .a_wdata(40'd0),
+      .a_q    (pdl_q),
+      .b_en   (pdl_we || ro_on),
+      .b_we   (pdl_we),
+      .b_addr (ro_on ? rm_addr_q : pdlh_addr),
+      .b_wdata(pdlh_data),
+      .b_q    (ro_pdl)
   );
 
   // The machine runs: out of reset, and no error halt now or before.  The
@@ -1140,7 +1189,8 @@ module quux15_core #(
   logic [39:0] p_word, p_word_next, post_word, t_word;
   logic [4:0]  errors_now, inflight_n;
   logic [3:0]  queue_n;
-  quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID)) port (
+  quux15_port #(.SETS(CACHE_WORDS / 16), .ONE_WRITE_ID(ONE_WRITE_ID),
+                .MAIN_BASE(MAIN_BASE), .DISPLAY_BASE(DISPLAY_BASE)) port (
       .clk(clk), .rst(rst),
       .p_busy(p_busy), .p_req(p_req), .p_bus(p_bus), .p_land(p_land), .p_word(p_word),
       .p_land_next(p_land_next), .p_word_next(p_word_next),
@@ -1246,7 +1296,8 @@ module quux15_core #(
       .rd_v(at_grant && s_device && !st_write[0] && dev_word(s_bus[7:0])), .rd_k(s_bus[7:0]),
       .rd_word(dev_rd_word), .rd_built(dev_rd_built),
       .wr_v(rw_take && errhalt == 2'd0 && dev_word(rgw_bus[7:0]) && !take_cmd_prod), .wr_k(rgw_bus[7:0]), .wr_data(rgw_word[31:0]), .wr_built(dev_wr_built),
-      .microseconds(microseconds), .int_now(int_now));
+      .microseconds(microseconds), .int_now(int_now),
+      .snap(rm_snap), .ro_k(rm_addr_q[4:0]), .ro_dev(ro_dev));
 
   // --- The start at WB's head (`start_at_wb`).
   localparam logic [28:0] REGISTER_PAGE_BUS = 29'h1fff_ff00;
@@ -2469,6 +2520,8 @@ module quux15_core #(
       ack_left <= 2'd0; pend_v <= 1'b0; pend_dev <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
       rgw_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
       bus_nxm <= 1'b0; posted_errors <= '0;
+      // The redirect's copies come up as muir's machine has them.
+      pdl_base <= '0; pdl_head <= '0;
       wb_fresh <= 1'b0; st_v <= '0; ex_map_held <= 1'b0; ex_late_held <= 1'b0; ex_b_walked <= 1'b0;
     end else if (errhalt != 2'd0) begin
       // Stopped: nothing moves.
@@ -2806,38 +2859,151 @@ module quux15_core #(
 
   // **THE READOUT OF THE HALTED PIPELINE** (`save_15`'s fields after the
   // machine, the period and the port, in its order).
-  always_comb begin
-    unique case (ro_sel)
-      5'd0:  ro_word = {50'd0, npc};
-      5'd1:  ro_word = {49'd0, npc_after_v, npc_after};
-      5'd2:  ro_word = {62'd0, pre_nop_next, nop_next};
-      5'd3:  ro_word = {49'd0, pdl_pend, pdlh_addr};
-      5'd4:  ro_word = {24'd0, pdlh_data};
-      5'd5:  ro_word = {63'd0, old_v};
-      5'd6:  ro_word = {24'd0, old_md};
-      5'd7:  ro_word = 64'd0;                             // D's wait: D is not built
-      5'd8:  ro_word = {38'd0, oa_low};
-      5'd9:  ro_word = {42'd0, oa_high};
-      5'd10: ro_word = {63'd0, next_instrd};
-      5'd11: ro_word = {34'd0, lvmo};
-      5'd12: ro_word = {63'd0, wrcyc};
-      5'd13: ro_word = {39'd0, spc_w_v, spc_w_ptr, spc_w_word};
-      5'd14: ro_word = {63'd0, mwd_v};
-      5'd15: ro_word = {24'd0, mwd_vma};
-      5'd16: ro_word = {24'd0, mwd_md};
-      5'd17: ro_word = {8'd0, opc[3], opc[2], opc[1], opc[0]} ;
-      5'd18: ro_word = {8'd0, opc[7], opc[6], opc[5], opc[4]};
-      5'd19: ro_word = {62'd0, x_halted, halted};
-      5'd20: ro_word = committed;
-      5'd21: ro_word = {50'd0, npc_prev};
+  function automatic logic [63:0] tail_field(input logic [4:0] k);
+    unique case (k)
+      5'd0:  return {50'd0, npc};
+      5'd1:  return {49'd0, npc_after_v, npc_after};
+      5'd2:  return {62'd0, pre_nop_next, nop_next};
+      5'd3:  return {49'd0, pdl_pend, pdlh_addr};
+      5'd4:  return {24'd0, pdlh_data};
+      5'd5:  return {63'd0, old_v};
+      5'd6:  return {24'd0, old_md};
+      5'd7:  return 64'd0;                             // D's wait: D is not built
+      5'd8:  return {38'd0, oa_low};
+      5'd9:  return {42'd0, oa_high};
+      5'd10: return {63'd0, next_instrd};
+      5'd11: return {34'd0, lvmo};
+      5'd12: return {63'd0, wrcyc};
+      5'd13: return {39'd0, spc_w_v, spc_w_ptr, spc_w_word};
+      5'd14: return {63'd0, mwd_v};
+      5'd15: return {24'd0, mwd_vma};
+      5'd16: return {24'd0, mwd_md};
+      5'd17: return {8'd0, opc[3], opc[2], opc[1], opc[0]} ;
+      5'd18: return {8'd0, opc[7], opc[6], opc[5], opc[4]};
+      5'd19: return {62'd0, x_halted, halted};
+      5'd20: return committed;
+      5'd21: return {50'd0, npc_prev};
       // The console's registers, which the machine's part of a checkpoint
       // carries: the mode register, the clock control register, the OPC
       // control register; and the debug IR.
-      5'd22: ro_word = {50'd0, opc_ctl, cc_ldstat, cc_idebug, cc_nop11, cc_step, cc_run, mode};
-      5'd23: ro_word = debug_ir;
-      default: ro_word = 64'd0;
+      5'd22: return {50'd0, opc_ctl, cc_ldstat, cc_idebug, cc_nop11, cc_step, cc_run, mode};
+      5'd23: return debug_ir;
+      default: return 64'd0;
+    endcase
+  endfunction
+  assign ro_word = tail_field(ro_sel);
+
+  // **THE MACHINE'S READOUT** (A15b.13): the rest of a checkpoint, what
+  // muir's `Machine::save` writes of revision 15, by selector, the
+  // console's numbering (`cadr_image.h`'s `img_sel`):
+  //
+  //   0  the control store, its RAM (the words under the PROM read as the
+  //      RAM holds them)      1  the PROM
+  //   2  A      3  M      4  the PDL buffer, with its newest write held
+  //   5  the micro stack     6  dispatch memory     9  the eight OPCs
+  //   10 the registers, below      12 the devices (`quux15_devices.sv`),
+  //      their time words as `rm_snap` last found them
+  //   13 the MACRO DISPATCH MEMORY      14 the halted pipeline (`ro_sel`)
+  //
+  // and every other selector `RO_NO_MEMORY`.  The registers:
+  //
+  //   0  Q      1  VMA      2  MD
+  //   3  LC: <33:0> the counter, <40> NEED-FETCH (muir's `Machine::lc`)
+  //   4  PDL-POINTER      5  PDL-INDEX      6  the micro stack's pointer
+  //   7  INTERRUPT-CONTROL as muir holds it, <29:26>
+  //   8  the dispatch constant
+  //   9  <0> the fixnum overflow, <1> VMAOK, <2> word 101's NXM
+  //   10 the address of the last word run, muir's `Machine::opc`
+  //   11 MACRO-DISPATCH's register      12 its index
+  //   13 the copies: <13:0> A-LOCALP's, <29:16> M-AP's
+  //   14 the operand address armed: <8> armed, <7> ARG, <5:0> delta
+  //   15 word 220, the directory's base, <17:0>; <18> word 221's enable
+  //   16 words 222 and 223, the pointer-type register
+  //   17 word 224, the write-backs refused
+  //   18 the redirect's copies: <31:0> A 430's, <45:32> A 431's
+  //   19 word 225, the posted writes answered with an error
+  //   20 the clocks since reset: the machine's time is this times the period
+  //   21 QUUX's signature: <47:32> 0x5155, <31:24> the period in units of
+  //      0.5 ns, <15:0> MACHINE-ID's own
+  //   22 the microcycles committed
+  //
+  // A word is out three clocks after its address: the address registered,
+  // the memory or the table read, the choice registered.
+  localparam logic [63:0] RO_NO_MEMORY = 64'h0000_A5A5_5A5A_A5A5;
+  logic [47:0] clocks;
+  assign obs_committed = committed;
+  assign obs_clocks    = clocks;
+  logic [3:0]  rm_sel_q2;
+  logic        rm_held_q2;
+  logic [39:0] rm_held_word_q2;
+  logic [63:0] rm_small;
+  function automatic logic [63:0] reg_field(input logic [4:0] k);
+    unique case (k)
+      5'd0:  return {24'd0, q};
+      5'd1:  return {24'd0, vma};
+      5'd2:  return {24'd0, md};
+      5'd3:  return {23'd0, lc_needfetch, 6'd0, lc};
+      5'd4:  return {50'd0, pdl_ptr};
+      5'd5:  return {50'd0, pdl_idx};
+      5'd6:  return {59'd0, spcptr};
+      5'd7:  return {34'd0, intctl, 26'd0};
+      5'd8:  return {54'd0, dc};
+      5'd9:  return {61'd0, bus_nxm, vmaok, overflow};
+      5'd10: return {50'd0, opc[0]};
+      5'd11: return {32'd0, mdreg};
+      5'd12: return {54'd0, mdindex};
+      5'd13: return {34'd0, ap, 2'd0, localp};
+      5'd14: return {55'd0, mdop_v, mdop_arg, 1'b0, mdop_delta};
+      5'd15: return {45'd0, ephemeral, directory};
+      5'd16: return pointer_types;
+      5'd17: return {32'd0, refused};
+      5'd18: return {18'd0, pdl_head, pdl_base};
+      5'd19: return {32'd0, posted_errors};
+      5'd20: return {16'd0, clocks};
+      5'd21: return {16'd0, MACHINE_ID[31:16], 1'b0, period, 8'd0, MACHINE_ID[15:0]};
+      5'd22: return committed;
+      default: return RO_NO_MEMORY;
+    endcase
+  endfunction
+  always_ff @(posedge clk) begin
+    if (rst) clocks <= 48'd0;
+    else clocks <= clocks + 48'd1;
+    rm_en_q   <= rm_en;
+    rm_sel_q  <= rm_sel;
+    rm_addr_q <= rm_addr;
+    rm_sel_q2 <= rm_sel_q;
+    // The PDL buffer's newest write, held outside the RAM until a newer one
+    // lands, is the buffer's word there unless it is held over the halt.
+    rm_held_q2      <= pdlh_v && !pdl_pend && pdlh_addr == rm_addr_q;
+    rm_held_word_q2 <= pdlh_data;
+    unique case (rm_sel_q)
+      4'd3:    rm_small <= {24'd0, mmem[rm_addr_q[4:0]]};
+      4'd5:    rm_small <= {45'd0, spc[rm_addr_q[4:0]]};
+      4'd6:    rm_small <= {47'd0, rm_addr_q[0] ? dmem_odd[rm_addr_q[11:1]] : dmem_even[rm_addr_q[11:1]]};
+      4'd9:    rm_small <= {50'd0, opc[rm_addr_q[2:0]]};
+      4'd10:   rm_small <= reg_field(rm_addr_q[4:0]);
+      4'd12:   rm_small <= ro_dev;
+      4'd13:   rm_small <= {46'd0, mdmem[rm_addr_q[9:0]]};
+      4'd14:   rm_small <= tail_field(rm_addr_q[4:0]);
+      default: rm_small <= RO_NO_MEMORY;
+    endcase
+    unique case (rm_sel_q2)
+      4'd0:    rm_word <= ro_imem;
+      4'd1:    rm_word <= ro_prom;
+      4'd2:    rm_word <= {24'd0, ro_a};
+      4'd4:    rm_word <= {24'd0, rm_held_q2 ? rm_held_word_q2 : ro_pdl};
+      default: rm_word <= rm_small;
     endcase
   end
+`ifndef SYNTHESIS
+  // The readout takes the memories' write ports only while nothing writes.
+  always_ff @(posedge clk) begin
+    if (!rst && ro_on && ((wb_v && wb_fresh && wb_imem_we) || land_a_we || pdl_we)) begin
+      $display("quux15_core: the readout took a memory's write port while it was written");
+      $finish;
+    end
+  end
+`endif
 
   // ========================================================= the observation
 

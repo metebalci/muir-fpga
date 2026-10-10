@@ -229,6 +229,15 @@ int ro_parse_megawords(const char *text, unsigned *units);
 #define RO_QUUX_TRIES 8
 int ro_read_quux(struct readout *r, struct cadr_image *img);
 
+// **REVISION 15'S MACHINE** (A15b.13), into `img`, an image allocated as
+// revision 15's: the devices' snapshot, then every memory and table of
+// `quux15_core.sv`'s window, `ro_word64` at a time.  Main memory and the
+// display are not here.  Returns 0, or -1 at the first stale echo.
+int ro_read_quux15(struct readout *r, struct cadr_image *img);
+// `ro_word` with the face's word 12 whole: a word's `<63:32>` on revision
+// 15, whose control store is 64 bits.
+int ro_word64(struct readout *r, unsigned sel, unsigned addr, uint64_t *word);
+
 // The transaction audit at selector 11, unpacked.  **Every one of its nine
 // words must carry `B05A` in its top sixteen bits or this returns -1 with
 // nothing written**: a bitstream older than the audit answers

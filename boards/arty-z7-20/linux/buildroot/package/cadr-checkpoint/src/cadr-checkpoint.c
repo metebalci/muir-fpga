@@ -152,9 +152,11 @@ static void usage(void)
 	exit(2);
 }
 
-static void print_missing(int quux)
+// QUUX's revision 15 has a window of its own, and its own list.
+static void print_missing(int quux, int revision)
 {
-	const char *const *m = quux ? chk_rtl_missing_quux() : chk_rtl_missing();
+	const char *const *m = quux && revision >= 15 ? chk_rtl_missing_quux15()
+			       : quux ? chk_rtl_missing_quux() : chk_rtl_missing();
 	say("what a checkpoint off this board cannot carry, and what is written");
 	say("instead.  Every one of these is a field muir's own format has and");
 	say("this fabric has no reading for:");
@@ -385,7 +387,7 @@ int main(int argc, char **argv)
 		}
 	}
 	if (want_missing) {
-		print_missing(quux);
+		print_missing(quux, 0);
 		return 0;
 	}
 	if (verify)
@@ -510,10 +512,8 @@ int main(int argc, char **argv)
 			    is ? "QUUX" : "the CADR", quux ? "quux" : "cadr");
 			return 1;
 		}
-		if (quux)
-			say("the bitstream is QUUX, its microcycle %u ticks and %u more "
-			    "for ILONG", k, l);
 		sync_k = k;
+		(void)l;
 	}
 	// **AND WHICH REVISION OF QUUX**, entry 21's <15:0>: revision 13's
 	// words, sizes and main memory are its own (contract G2 appendix A1.13),
@@ -526,9 +526,22 @@ int main(int argc, char **argv)
 			    "this program knows", IMG_RG_QUUX_ID);
 			return 1;
 		}
+		// Entry 21's <31:24> is K on revisions 12 to 14 and revision
+		// 15's clock period in units of 0.5 ns, with <23:16> L or 0.
+		{
+			unsigned k = 0, l = 0;
+			ro_machine_is_quux(&r, &k, &l);
+			if (revision >= 15)
+				say("the bitstream is QUUX revision %d, its clock's period %u%s ns",
+				    revision, k / 2u, k % 2u ? ".5" : "");
+			else
+				say("the bitstream is QUUX, its microcycle %u ticks and %u more "
+				    "for ILONG", k, l);
+		}
 		if (bind_revision_packed((unsigned)revision))
 			say("the bitstream is QUUX revision %d: 40-bit words and packed "
-			    "main memory, checkpoint version %u", revision, CHK_VERSION_40);
+			    "main memory, checkpoint version %u", revision,
+			    revision >= 15 ? CHK_VERSION_15 : CHK_VERSION_40);
 	}
 	// **HOW MUCH MAIN MEMORY, WHICH IS THE MACHINE'S AND NOT A GUESS.**  A
 	// checkpoint is of all of main memory, and muir refuses to resume one
@@ -660,7 +673,8 @@ int main(int argc, char **argv)
 	// machine starts no other: this waits for the port to say so, and a
 	// port that never does is a fault this program names rather than a
 	// checkpoint it writes with a word missing.
-	if (quux && !img_flag(&img, IMG_F_MEM_DRAINED)) {
+	// Revision 15's halt drains the port before it stands (A15b.13).
+	if (quux && !img.rev15 && !img_flag(&img, IMG_F_MEM_DRAINED)) {
 		int drained = 0;
 		for (int i = 0; i < 100000 && drained == 0; ++i)
 			drained = ro_mem_drained(&r);
@@ -830,7 +844,8 @@ int main(int argc, char **argv)
 	bind.video_height = quux ? img.video_height : 0u;
 	bind.running = ran;
 	bind.microcycles = img.cycles;
-	bind.ns = (quux ? img.qx.m : img.ticks) * CHK_GRID_NS;
+	// Revision 15's instant is in units of 0.5 ns.
+	bind.ns = img.rev15 ? img.q15.ns / 2u : (quux ? img.qx.m : img.ticks) * CHK_GRID_NS;
 	when(bind.taken, sizeof bind.taken);
 	snprintf(bind.checkpoint, sizeof bind.checkpoint, "%s", out);
 	if (sha256_file(out, bind.checkpoint_sha, &bind.checkpoint_bytes) != 0) {
@@ -864,8 +879,8 @@ int main(int argc, char **argv)
 	say("  to open it: %s", cmd);
 	if (img.rev13)
 		say("  (a revision %d checkpoint, version %u: muir's quux runs it under "
-		    "MUIR_QUUX_REVISION=%d, which the line names)", revision, CHK_VERSION_40,
-		    revision);
+		    "MUIR_QUUX_REVISION=%d, which the line names)", revision,
+		    img.rev15 ? CHK_VERSION_15 : CHK_VERSION_40, revision);
 	// **SAID EVERY TIME, BECAUSE IT IS THE ONE THING NOTHING CHECKS.**
 	say("BEFORE RESUMING, check the packs against the digests above ---");
 	say("  cadr-checkpoint --verify %s", sidecar);
@@ -875,7 +890,7 @@ int main(int argc, char **argv)
 	    "in the fabric can see that: the controller recomputes a block's "
 	    "header and checkwords as it moves it, so a block from another "
 	    "moment passes every check the machine makes.");
-	print_missing(quux);
+	print_missing(quux, revision);
 
 	img_free(&img);
 	if (was_running && !leave_halted) {

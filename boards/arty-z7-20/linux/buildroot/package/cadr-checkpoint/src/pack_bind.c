@@ -244,7 +244,13 @@ void bind_resume_command(const struct binding *b, const char *chk, char *out, si
 			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 					       "MUIR_QUUX_REVISION=%u ", b->revision);
 		at += (size_t)snprintf(out + at, at < n ? n - at : 0, "quux --rtl");
-		if (b->sync_k)
+		// Revision 15's `sync_k` is its clock's period in units of 0.5
+		// ns, muir's `--microcycle-ns`, which it refuses another at.
+		if (b->sync_k && b->revision >= 15)
+			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
+					       " --microcycle-ns %u%s", b->sync_k / 2u,
+					       b->sync_k % 2u ? ".5" : "");
+		else if (b->sync_k)
 			at += (size_t)snprintf(out + at, at < n ? n - at : 0,
 					       " --sync-cycle-ticks %u", b->sync_k);
 		// **AND THE VIDEO CONTROLLER'S SIZE**, which muir takes as
@@ -477,13 +483,13 @@ int bind_revision_known(unsigned revision)
 #if CHK_MUTATE == 48
 	return revision == 12 || revision == 13;
 #else
-	return revision >= 12 && revision <= 14;
+	return revision >= 12 && revision <= 15;
 #endif
 }
 
 int bind_revision_packed(unsigned revision)
 {
-	return revision == 13 || revision == 14;
+	return revision >= 13 && revision <= 15;
 }
 
 int bind_memory_asked(int quux, const char *boards_arg, const char *size_arg,
