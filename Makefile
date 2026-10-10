@@ -306,7 +306,8 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # at every third of two at random with memory (`halts`, at 10 ns alone), each
 # halted state held byte for byte to muir's checkpoint.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts \
+                 dispsel fieldbase
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20

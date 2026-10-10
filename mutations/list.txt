@@ -28214,11 +28214,58 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note The hold while the writer is in RD alone, a clock short: the SH word
 @note leaves CS while its writer is in EX, before the register is written.
 @old
-    oa_hold  = cs_word[61] && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
-                            || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
+    oa_hold  = cs_sh && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
+                      || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
 @new
-    oa_hold  = cs_word[61] && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
-                            || (ex_v && !ex_nop && writes_oa_high(ex_ir) && 1'b0));
+    oa_hold  = cs_sh && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
+                      || (ex_v && !ex_nop && writes_oa_high(ex_ir) && 1'b0));
+@end
+
+@mutation quux15-a-dispatch-takes-sl
+@check quux15_dispsel_quux
+@file rtl/machine/quux15_core.sv
+@note A transferring dispatch's IR<60>, its predicted address's <12>, read
+@note as SL: OA-REG-LOW ORed into its address, or the machine stopped at
+@note OA-OUTSIDE-FIELDS.
+@old
+    ex_sl      = ex_word[60] && (ex_low[44:43] != 2'd2 || ex_low[11:10] == 2'd2);
+@new
+    ex_sl      = ex_word[60];
+@end
+
+@mutation quux15-a-dispatch-memory-write-loses-its-sl
+@check quux15_dispsel_quux
+@file rtl/machine/quux15_core.sv
+@note A dispatch-memory write's SL read as no select, as a transferring
+@note dispatch's is: the write goes to the entry without OA-REG-LOW's bits.
+@old
+    ex_sl      = ex_word[60] && (ex_low[44:43] != 2'd2 || ex_low[11:10] == 2'd2);
+@new
+    ex_sl      = ex_word[60] && ex_low[44:43] != 2'd2;
+@end
+
+@mutation quux15-a-dispatch-takes-sh-in-ex
+@check quux15_dispsel_quux
+@file rtl/machine/quux15_core.sv
+@note A transferring dispatch's IR<61>, its predicted address's <13>, read
+@note as SH in EX: OA-REG-HIGH, in no field of a dispatch, stops the machine
+@note at OA-OUTSIDE-FIELDS.
+@old
+    ex_sh      = ex_word[61] && ex_low[44:43] != 2'd2;
+@new
+    ex_sh      = ex_word[61];
+@end
+
+@mutation quux15-a-dispatch-takes-sh-in-cs
+@check quux15_dispsel_quux
+@file rtl/machine/quux15_core.sv
+@note A transferring dispatch's IR<61> read as SH in CS: OA-REG-HIGH ORed
+@note into its M source, which then dispatches on another word, and the
+@note dispatch held behind a writer of the register.
+@old
+  assign cs_sh = cs_word[61] && cs_word[44:43] != 2'd2;
+@new
+  assign cs_sh = cs_word[61];
 @end
 
 @mutation quux15-oa-outside-fields-left-out
@@ -28390,6 +28437,17 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
     hold_r = plan_r.returns && guard_holds(1'b0, nid_new);
 @new
     hold_r = plan_r.returns && guard_holds(1'b0, nid_new) && 1'b0;
+@end
+
+@mutation quux15-pdl-field-index-while-the-index-is-written
+@check quux15_fieldbase_quux
+@file rtl/machine/quux15_core.sv
+@note RD forms the PDL address field's index from its copy of the index
+@note while the word right before is still writing the index from the ALU.
+@old
+            if (rd_word[50:49] == 2'd3 && !cc.idx_pend) p.e.dest = D_IDX;
+@new
+            if (rd_word[50:49] == 2'd3) p.e.dest = D_IDX;
 @end
 
 @mutation quux15-pdl-field-index-while-its-base-is-written

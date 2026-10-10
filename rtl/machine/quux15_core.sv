@@ -514,6 +514,10 @@ module quux15_core #(
   );
   // The boot's trap is a word of zeros, read from nowhere.
   assign cs_word = cs_trap ? 64'd0 : cs_dbg ? cs_dbg_word : store_q;
+  // CS's SH: no dispatch takes it, a transferring one's `<61>` being its
+  // predicted address's `<13>` (A15b.2).
+  logic cs_sh;
+  assign cs_sh = cs_word[61] && cs_word[44:43] != 2'd2;
 
   // ========================================================= A and the PDL
 
@@ -1154,8 +1158,11 @@ module quux15_core #(
   logic        ex_sl, ex_sh, ex_outside;
   always_comb begin
     ex_low     = ex_word[47:0];
-    ex_sl      = ex_word[60];
-    ex_sh      = ex_word[61];
+    // SL on an ALU, BYTE or JUMP word and on a dispatch-memory write, SH on
+    // no dispatch: a transferring dispatch's `<61:48>` is its predicted
+    // address (A15b.2).
+    ex_sl      = ex_word[60] && (ex_low[44:43] != 2'd2 || ex_low[11:10] == 2'd2);
+    ex_sh      = ex_word[61] && ex_low[44:43] != 2'd2;
     {f_hi, f_lo} = oa_fields(ex_low);
     oa_lo_bits = {22'd0, oa_low};
     oa_hi_bits = {oa_high, 26'd0};
@@ -2023,16 +2030,16 @@ module quux15_core #(
     // After a redirect CS keeps only the delay slot, behind an empty RD.
     rd_free  = !rd_keep || redirect || rd_moves_n;
     cs_low   = cs_word[47:0];
-    oa_hold  = cs_word[61] && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
-                            || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
+    oa_hold  = cs_sh && ((rd_keep && !rd_n_nop && writes_oa_high(rd_ir))
+                      || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
     cs_rp    = reads_pdl(cs_low);
     pdl_wait = cs_rp[1] && (cs_rp[0] ? c_cs.ptr_pend : c_cs.idx_pend);
     cs_hold  = oa_hold || pdl_wait;
     cs_moves = cs_keep && rd_free && !cs_hold && errhalt_now == 1'b0;
     // SH: OA-REG-HIGH as the clock began into the A source's address, and
     // into the M source's when it is M memory's (A15b.15).
-    cs_sh_a  = cs_word[61] ? ({oa_high, 26'd0} & (48'o1777 << 32)) : 48'd0;
-    cs_sh_m  = (cs_word[61] && !cs_low[31]) ? ({oa_high, 26'd0} & (48'o37 << 26)) : 48'd0;
+    cs_sh_a  = cs_sh ? ({oa_high, 26'd0} & (48'o1777 << 32)) : 48'd0;
+    cs_sh_m  = (cs_sh && !cs_low[31]) ? ({oa_high, 26'd0} & (48'o37 << 26)) : 48'd0;
     cs_ir    = cs_low | cs_sh_a | cs_sh_m;
     cs_pdl_addr = cs_ir[30] ? c_cs.ptr : c_cs.idx;
     // CS loads at the next address once its word has gone; not in the clock
@@ -2072,8 +2079,8 @@ module quux15_core #(
     c_app_nr = ex_restore ? c_res : c_ref;
     c_cs_nr  = (rd_moves_nr && !rd_killed_nr) ? apply_effects(plan_r.e, c_app_nr)
              : (rd_moves_nr && c_app_nr.next_instr) ? lc_step(c_app_nr) : c_app_nr;
-    oa_hold_nr  = cs_word[61] && ((rd_v && !(rd_nop || rd_killed_nr) && writes_oa_high(rd_ir))
-                               || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
+    oa_hold_nr  = cs_sh && ((rd_v && !(rd_nop || rd_killed_nr) && writes_oa_high(rd_ir))
+                         || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
     pdl_wait_nr = cs_rp[1] && (cs_rp[0] ? c_cs_nr.ptr_pend : c_cs_nr.idx_pend);
     cs_moves_nr = cs_v && (!rd_v || rd_moves_nr) && !oa_hold_nr && !pdl_wait_nr && errhalt_now == 1'b0;
     cs_load_nr_raw = (!cs_v || cs_moves_nr) && errhalt_now == 1'b0;

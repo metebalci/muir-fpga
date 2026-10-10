@@ -1390,6 +1390,8 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "predict" => vec![quux15_preset::predict_program().case("predict")],
         "slotstep" => vec![quux15_preset::slot_step().case("slotstep")],
         "pdlhold" => vec![quux15_preset::pdl_hold().case("pdlhold")],
+        "dispsel" => quux15_preset::dispatch_selects().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "fieldbase" => quux15_preset::field_bases().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "console" => quux15_console::console(period),
         "halts" => quux15_console::halts(period),
         _ => vec![Case::of_prog(name, &program(name, period))],

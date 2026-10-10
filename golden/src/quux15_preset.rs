@@ -29,6 +29,14 @@
 //!             RD resolving the next return from that step
 //!   pdlhold   a word reading the PDL buffer held in RD behind a word
 //!             waiting for `MD`, the word behind it addressing another word
+//!   dispsel   a dispatch predicting an address of 10000 octal or more,
+//!             whose `<61:60>` take no OA select, wrong each time, after an
+//!             SH word spent OA-REG-HIGH; a dispatch-memory write whose SL
+//!             selects (muir's
+//!             `a_dispatch_predicting_an_address_above_7777_takes_no_select`)
+//!   fieldbase a PDL address field on the PDL pointer or index that the word
+//!             right before it wrote, or the word before that, the buffer
+//!             read through the index formed
 //!   imem      WRITE-I-MEM in MIT's form: words written and run later
 //!   imemorder WRITE-I-MEM going on at the word after it in execution
 //!             order: the word right after it written, the word two after
@@ -866,6 +874,101 @@ pub fn pdl_hold() -> Preset {
     }
     p.stop();
     p
+}
+
+/// **A transferring dispatch takes no OA select** (A15b.2): its `<61:60>`
+/// are its predicted address's `<13:12>`. A dispatch predicting a jump to
+/// 10000, 20000 or 37777 octal, wrong each time, after OA-REG-HIGH was
+/// written and spent by an SH word and OA-REG-LOW by an SL jump, `micro`
+/// running with its OA select check: read as SL or SH, the bits would halt
+/// `micro`, and OR OA-REG-HIGH into the dispatch's M source or OA-REG-LOW
+/// into its address. A dispatch-memory write's SL still selects: entry
+/// 101 | 6, 107, written, and a dispatch on entry 107 goes where the write
+/// put it.
+pub fn dispatch_selects() -> Vec<(String, Preset)> {
+    let mut v = Vec::new();
+    for addr in [0o10000u64, 0o20000, 0o37777] {
+        let mut p = Preset::new();
+        p.set(1, 0o20);
+        // OA-REG-HIGH 3: M source 3 more, were it ORed into a word.
+        let three = p.k(3);
+        p.op(ALU | SETA | a_src(three) | fd(0o17));
+        p.op(ALU | ADD | a_src(ZERO) | m_src(0o20) | m_dest(0o25) | OA_HIGH_SELECT);
+        // OA-REG-LOW the address three words on, which an SL jump under N
+        // takes: 4 more in the dispatch's address, were it ORed in.
+        let at = p.at();
+        let low = p.k((at + 3) << 12);
+        p.op(ALU | SETA | a_src(low) | fd(0o16));
+        p.op(JUMP | ALWAYS | N | target(0) | OA_LOW_SELECT);
+        p.fill(1);
+        p.fill(3);
+        // M 20's low two bits: 1 jumps to 600, 3 to 640.
+        p.op(disp(0o100) | 2 << 5 | m_src(0o20) | predicted(addr, false, false));
+        p.fill(1);
+        let back = p.at();
+        p.stop();
+        let (one_at, three_at) = (0o600u64, 0o640u64);
+        p.dmem.push((0o101, one_at as u32));
+        p.dmem.push((0o103, three_at as u32));
+        p.fill_to(one_at);
+        p.set(0o111, 0o26);
+        p.op(JUMP | ALWAYS | N | target(back));
+        p.fill(1);
+        p.fill_to(three_at);
+        p.set(0o333, 0o26);
+        p.op(JUMP | ALWAYS | N | target(back));
+        p.fill(1);
+        v.push((format!("predicted-{addr:o}"), p));
+    }
+    let mut p = Preset::new();
+    let (one_at, three_at) = (0o600u64, 0o640u64);
+    let (six, word) = (p.k(6 << 12), p.k(one_at));
+    p.dmem.push((0o107, three_at as u32));
+    p.op(ALU | SETA | a_src(six) | fd(0o16));
+    p.op(disp(0o101) | 2 << 10 | a_src(word) | OA_LOW_SELECT);
+    p.fill(2);
+    p.op(disp(0o107));
+    p.fill(1);
+    let back = p.at();
+    p.stop();
+    p.fill_to(one_at);
+    p.set(0o111, 0o26);
+    p.op(JUMP | ALWAYS | N | target(back));
+    p.fill(1);
+    p.fill_to(three_at);
+    p.set(0o333, 0o26);
+    p.op(JUMP | ALWAYS | N | target(back));
+    p.fill(1);
+    v.push(("dmem-write-sl".into(), p));
+    v
+}
+
+/// **A PDL address field reads its base as the word finds it** (A15b.2):
+/// the PDL pointer or the index 40, written by the word right before the
+/// field or the one before that, the field forming 40 + 5 and the word
+/// writing PDL-INDEX 45 as well, which `micro` holds the two to, and the
+/// buffer's word 45 read through the index in the next word. (A field on
+/// M-AP or A-LOCALP waits for MACRO-DISPATCH.)
+pub fn field_bases() -> Vec<(String, Preset)> {
+    use muir::isa::asm::pdl_field;
+    let mut v = Vec::new();
+    for (name, base, writer) in [("pointer", 2u64, 0o14u64), ("index", 3, 0o13)] {
+        for gap in [0, 1] {
+            let mut p = Preset::new();
+            let (k40, k45, kv) = (p.k(0o40), p.k(0o45), p.k(0o4545));
+            p.op(ALU | SETA | a_src(k45) | fd(0o13));
+            p.op(ALU | SETA | a_src(kv) | fd(0o12));
+            p.fill(2);
+            p.op(ALU | SETA | a_src(k40) | fd(writer));
+            p.fill(gap);
+            p.op(ALU | SETA | a_src(k45) | fd(0o13) | pdl_field(base, 5));
+            p.op(ALU | SETM | src(0o5) | m_dest(0o26));
+            p.fill(1);
+            p.stop();
+            v.push((format!("{name}-gap{gap}"), p));
+        }
+    }
+    v
 }
 
 /// **WRITE-I-MEM** (A15b.4), in MIT's form: a JUMP with P, R and N,
