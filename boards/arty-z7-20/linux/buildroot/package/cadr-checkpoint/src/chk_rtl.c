@@ -1017,9 +1017,14 @@ static void body_15(struct chk *w, const struct cadr_image *img, const struct ch
 	w->word_bytes = 5u;
 	w->version = CHK_VERSION_15;
 	chk_u64s(w, img->prom, IMG_PROM_WORDS);			/* READ, 64 bits */
-	// The control store as its RAM holds it, the words under the PROM
-	// too: what the core comes up with there is muir's machine's.
-	chk_u64s(w, img->imem, IMG_IMEM_WORDS);			/* READ, 64 bits */
+	// The control store as its RAM holds it, and **ZERO UNDER THE PROM**,
+	// as revisions 13 and 14 write it: the PROM has the addresses from 36000
+	// up, nothing fetches the RAM behind it and `Machine::write_imem` writes
+	// nothing there, so muir's machine holds zeros.  The core's RAM there
+	// holds what it came up with, which no machine can observe.
+	chk_u64(w, IMG_IMEM_WORDS);
+	for (unsigned i = 0; i < IMG_IMEM_WORDS; ++i)
+		chk_u64(w, i < IMG_QUUX_PROM_BASE ? img->imem[i] : 0u);	/* READ, 64 bits */
 	for (unsigned b = 0; b < 6; ++b)
 		chk_bool(w, (con >> b) & 1u);			/* READ mode */
 	for (unsigned b = 6; b < 11; ++b)

@@ -864,7 +864,8 @@ int main(int argc, char **argv)
 
 	say("%s written: %s, %llu microcycles retired, PC %o, "
 	    "%zu bytes of body packed",
-	    out, memory, (unsigned long long)img.cycles, img.pc, body_len);
+	    out, memory, (unsigned long long)img.cycles,
+	    img.rev15 ? (unsigned)(img.q15.tail[IMG_TL15_NPC] & 0x3FFFu) : (unsigned)img.pc, body_len);
 	say("  %lu reads and %lu writes over the console's window",
 	    r.reads, r.writes);
 	say("%s written: %u pack(s) bound to it by name, geometry and SHA-256",

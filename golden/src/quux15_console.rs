@@ -95,9 +95,15 @@ pub fn tail_hex(e: &Pipeline) -> String {
 /// comes up: on revision 15 the network on it is not built, and nothing
 /// else of it is QUUX's, so the fabric has none of its time to give, and a
 /// resumed machine's board catches up with the clock at its first look.
+/// And the control store under the PROM zero, as muir's own machine holds
+/// it and the board's writer writes it: the traces' machine comes up all
+/// ones there, the fabric's power-on convention, which nothing fetches.
 /// Every other byte is muir's own.
 pub fn fabric_body(e: &Pipeline) -> Vec<u8> {
     let mut m = e.machine().clone();
+    for w in m.imem.iter_mut().skip(muir::machine::QUUX_PROM_BASE as usize) {
+        *w = muir::isa::Insn::extended(0);
+    }
     let address = m.ioboard.chaos.as_ref().map(|c| c.address());
     m.ioboard = muir::ioboard::IoBoard::default();
     if let Some(a) = address {

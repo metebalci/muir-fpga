@@ -3059,7 +3059,7 @@ $(BUILD)/quux15_face.pass: $(BUILD)/obj_quux15_face/Vquux15_face
 QUUX15_KR260_SRC := rtl/plumbing/cadr_ddr_map.sv $(QUUX15_CORE_SRC) \
     rtl/plumbing/quux_axi_narrow128.sv rtl/plumbing/cadr_axi_lanes128.sv \
     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_gp1_split.sv rtl/plumbing/cadr_gp_regs.sv \
-    rtl/plumbing/quux15_face.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
+    rtl/plumbing/quux15_face.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/xilinx7/cadr_usr_access.sv \
     tb/cadr_ps8_stub.sv boards/kria-kr260/cadr_ps8.sv boards/kria-kr260/quux15_kr260.sv
 $(BUILD)/quux15_kr260.pass: $(QUUX15_KR260_SRC) $(BOARD_STUBS) tb/cadr_kr260_stubs.sv \
                             boards/kria-kr260/vivado/quux15_bitstream.tcl | $(BUILD)

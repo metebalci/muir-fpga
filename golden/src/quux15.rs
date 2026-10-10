@@ -1318,7 +1318,10 @@ fn run_case(case: &Case, period: u64, bubbles: u8, planted: Option<Mutation>) ->
                 let dir = std::env::var("QUUX15_CHECKPOINTS").map_err(|_| {
                     (2, format!("{name}: a run that ends in a checkpoint wants QUUX15_CHECKPOINTS, its files' directory"))
                 })?;
-                let file = format!("{dir}/{name}.p{period}.chk");
+                // Two bubbles' file apart from one's: the two runs halt in
+                // states of their own at the same clock.
+                let b2 = if bubbles == 2 { ".b2" } else { "" };
+                let file = format!("{dir}/{name}.p{period}{b2}.chk");
                 // A file device with a handle open or a command queued holds
                 // what no checkpoint carries: muir refuses, and so must the
                 // board's writer.

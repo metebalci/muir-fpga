@@ -29863,6 +29863,17 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 	chk_u64(w, (uint64_t)sets - 1u);
 @end
 
+@mutation quux15-checkpoint-ram-under-the-prom
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The board's writer gives the control store's RAM under the PROM as the
+@note core holds it, all ones, where muir's machine holds zero.
+@old
+		chk_u64(w, i < IMG_QUUX_PROM_BASE ? img->imem[i] : 0u);	/* READ, 64 bits */
+@new
+		chk_u64(w, i < IMG_QUUX_PROM_BASE ? img->imem[i] : img->imem[i]);	/* READ, 64 bits */
+@end
+
 @mutation quux15-checkpoint-cycles-are-the-clocks
 @check quux15_checkpoints_quux
 @file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c

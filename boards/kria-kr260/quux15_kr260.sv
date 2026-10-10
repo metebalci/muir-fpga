@@ -213,6 +213,44 @@ module quux15_kr260 #(
   assign qm_rlast  = hp0_rlast;
   assign qm_rvalid = hp0_rvalid;
 
+  // ------------------------------------------------ the port's own tally
+  //
+  // What the machine asked its memory port for and what the processing system
+  // answered, `rtl/plumbing/cadr_mem_count.sv`, on EMIO banks 3 and 4, as
+  // `cadr_kr260.sv` has it: the board's programs read its marker bits before
+  // they touch a master port (`cadr_mem.c`'s guard).  An ask is a read or a
+  // write address taken, counted at its rise, so that addresses taken on
+  // consecutive clocks count once; an answer is the processing system's own
+  // handshake, B or the last R, and is exact.  And the machine's clock,
+  // counted and Gray coded, on bank 5's EMIO 94:64; EMIO 95 is `pl_resetn0`'s
+  // own bit, left low on the way in.
+  logic [63:0] tally;
+  logic        count_req, count_write, count_bvalid, count_bready;
+  logic        count_rvalid, count_rready, count_rlast;
+  always_ff @(posedge clk) begin
+    count_req    <= (qm_arvalid && qm_arready) || (qm_awvalid && qm_awready);
+    count_write  <= qm_awvalid && qm_awready;
+    count_bvalid <= qm_bvalid;
+    count_bready <= qm_bready;
+    count_rvalid <= hp0_rvalid;
+    count_rready <= qm_rready;
+    count_rlast  <= hp0_rlast;
+  end
+  cadr_mem_count u_count (
+      .clk(clk), .rst(rst),
+      .req(count_req), .req_write(count_write),
+      .bvalid(count_bvalid), .bready(count_bready),
+      .rvalid(count_rvalid), .rready(count_rready), .rlast(count_rlast),
+      .gpio(tally)
+  );
+  logic [30:0] clk_count, clk_gray;
+  always_ff @(posedge clk) begin
+    clk_count <= clk_count + 31'd1;
+    clk_gray  <= clk_count ^ (clk_count >> 1);
+  end
+  logic [95:0] gpio_i;
+  assign gpio_i = {1'b0, clk_gray, tally};
+
   // ------------------------------------- the master ports: HPM0 and HPM1
   logic [39:0]  hpm0_awaddr, hpm0_araddr, hpm1_awaddr, hpm1_araddr;
   logic [7:0]   hpm0_awlen, hpm0_arlen, hpm1_awlen, hpm1_arlen;
@@ -421,7 +459,7 @@ module quux15_kr260 #(
       .hp2_arvalid(1'b0), .hp2_arready(hp2_arready),
       .hp2_rdata(hp2_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
       .hp2_rvalid(hp2_rvalid), .hp2_rready(1'b1),
-      .gpio_i(96'd0), .gpio_o(gpio_o),
+      .gpio_i(gpio_i), .gpio_o(gpio_o),
       .hp3_rclk(clk), .hp3_wclk(clk),
       .hp3_awaddr(49'd0), .hp3_awlen(8'd0), .hp3_awsize(3'd4), .hp3_awburst(2'b01),
       .hp3_awvalid(1'b0), .hp3_awready(hp3_awready),
