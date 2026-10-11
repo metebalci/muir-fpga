@@ -611,9 +611,13 @@ module quux15_core #(
   logic [7:0]  land_pdl_seq;
 
   // Two ports (`quux15_tdp.sv`): CS reads on port A; port B is WB's
-  // write, or the readout's while the machine is halted (`ro_on`).
+  // write, D's of A 31 at its word's arrival, or the readout's while the
+  // machine is halted (`ro_on`).  **D'S WRITE IS NOT WB'S LANDING**: it is
+  // made with the stages empty, so no forward takes it, and it stays off the
+  // forwards into EX's and RD's operands, which would put D's decision on
+  // EX's path.
   logic amem_we, pdl_we;
-  assign amem_we = land_a_we && running;
+  assign amem_we = (land_a_we || d_m31) && running;
   quux15_tdp #(.WIDTH(40), .DEPTH(1024)) amem (
       .clk    (clk),
       .a_en   (a_re),
@@ -623,8 +627,8 @@ module quux15_core #(
       .a_q    (a_q),
       .b_en   (amem_we || ro_on),
       .b_we   (amem_we),
-      .b_addr (ro_on ? rm_addr_q[9:0] : land_a_addr),
-      .b_wdata(land_data),
+      .b_addr (ro_on ? rm_addr_q[9:0] : d_m31 ? 10'o31 : land_a_addr),
+      .b_wdata(d_m31 ? d_m31_word : land_data),
       .b_q    (ro_a)
   );
   // **THE PDL BUFFER'S NEWEST WRITE IS HELD**, in `pdlh_*`, and the RAM
@@ -1193,15 +1197,6 @@ module quux15_core #(
     land_pdl_addr = wb_pdl_at_index ? pdl_idx : wb_pdl_addr;
     land_pdl_data = wb_pdl_data;
     land_pdl_seq  = wb_seq;
-    // D writes M 31, and A 31 with it, at its word's arrival (`d_decides`),
-    // WB empty then.
-    if (d_m31) begin
-      land_a_we   = 1'b1;
-      land_a_addr = 10'o31;
-      land_m_we   = 1'b1;
-      land_m_addr = 5'o31;
-      land_data   = d_m31_word;
-    end
   end
 
   // --- The port (`quux15_port.sv`) and the memory management
@@ -2637,6 +2632,8 @@ module quux15_core #(
     end else begin
       // --- M memory, the micro stack and dispatch memory take their writes.
       if (land_m_we) mmem[land_m_addr] <= land_data;
+      // D's M 31 at its word's arrival, WB empty then.
+      if (d_m31) mmem[5'o31] <= d_m31_word;
       if (dmem_we && !x_daddr[0]) dmem_even[x_daddr[11:1]] <= dmem_wdata;
       if (dmem_we && x_daddr[0]) dmem_odd[x_daddr[11:1]] <= dmem_wdata;
       if (land_spc) spc[spc_w_ptr] <= spc_w_word;
@@ -2645,6 +2642,8 @@ module quux15_core #(
       // `m_written`).
       if (land_a_we && running && land_a_addr == md_reg_now[23:14]) localp <= land_data[13:0];
       if (land_m_we && running && land_m_addr == md_reg_now[28:24]) ap <= land_data[13:0];
+      if (d_m31 && running && md_reg_now[23:14] == 10'o31) localp <= d_m31_word[13:0];
+      if (d_m31 && running && md_reg_now[28:24] == 5'o31) ap <= d_m31_word[13:0];
 
       // --- The registers at EX's end.
       md <= n_md;
