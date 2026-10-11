@@ -13,19 +13,16 @@
 //!   mainloop  opcode 1 eleven times, then 7; a sequence break; a fetch
 //!             that faults; an entry with P; opcode 10's operand address,
 //!             LOCAL and ARG; each with D off, the returns that need no fetch
-//!             fused on M 31; and a PDL address field on M-AP and on
-//!             A-LOCALP written by the word right before it, or the one
-//!             before that (muir's
+//!             fused on M 31, and with D on, the returns that need one
+//!             decided at their word's arrival; the planted pairs, D off and
+//!             on; D's own machines; and a PDL address field
+//!             on M-AP and on A-LOCALP written by the word right before it,
+//!             or the one before that (muir's
 //!             `a_pdl_field_reads_a_base_the_word_before_wrote`)
-//!
-//! **D ON WAITS FOR THE REFERENCE**: D's effects that need the fetched word
-//! happen at its arrival (A15b.9); until muir does so, the core stops at
-//! such a return, naming it (`unbuilt`).  `machines(&[true])` builds those
-//! runs.
 
 use muir::isa::asm::{
-    ALU, ALWAYS, CARRY_IN, DISPATCH, JUMP, M_PLUS_C, N, P, POPJ, SETA, SETM, SRC_MD, START_READ,
-    a_dest, a_src, filler, m_dest, m_src, pdl_field, src, target,
+    ALU, ALWAYS, CARRY_IN, DISPATCH, JUMP, M_PLUS_C, MD, N, P, POPJ, SETA, SETM, SRC_MD, START_READ,
+    START_WRITE, a_dest, a_src, filler, m_dest, m_src, pdl_field, src, target,
 };
 use muir::machine::Word;
 use muir::machine::macro_dispatch;
@@ -57,6 +54,12 @@ const OP_10: u64 = 0o230;
 const OP_2: u64 = 0o240;
 /// Opcode 3's handler: words planted before its return.
 const OP_3: u64 = 0o250;
+/// Opcode 11's handler: reads the PDL buffer through PDL-INDEX as its first
+/// word finds it, the operand address its return loaded.
+const OP_11: u64 = 0o270;
+/// Opcode 5's handler, whose entry has N alone: the popped word is not kept,
+/// and the handler goes to the park without returning.
+const OP_5: u64 = 0o300;
 /// Where the register names `A-LOCALP` and `M-AP`, and what they hold.
 const LOCALP_AT: u64 = 0o432;
 const AP_AT: u64 = 0o21;
@@ -67,6 +70,11 @@ const SENTINEL: u64 = 0o3777;
 const CODE: Word = 0o36000000400;
 /// A paged address with no page table, where a fetch faults.
 const UNMAPPED: Word = 0o1000;
+/// A memory's zero.
+const ZERO: u64 = 0o40;
+/// The physical memory window, and the register page.
+const PHYSICAL_WINDOW: Word = 0o36000000000;
+const REGISTER_PAGE: Word = 0o35777777400;
 
 /// A halfword: `<13:9>` the opcode, `<8:6>` the register, `<5:0>` delta.
 const fn hw(op: u32, reg: u32, delta: u32) -> u32 {
@@ -194,18 +202,30 @@ pub fn parked(p: &Preset) -> Case {
     c
 }
 
-/// **The main loop's runs**, D off: the machines, and the planted pairs.
+/// **The main loop's runs**: the machines, D off and on; the planted pairs,
+/// D off and on; and D's own machines.
 pub fn main_loop() -> Vec<(String, Case)> {
-    let mut v: Vec<(String, Case)> = machines(&[false]).into_iter().map(|(n, p)| (n, parked(&p))).collect();
-    v.extend(planted_pairs().into_iter().map(|(n, p)| (n, parked(&p))));
+    let mut v: Vec<(String, Case)> =
+        machines(&[false, true]).into_iter().map(|(n, p)| (n, parked(&p))).collect();
+    for d in [false, true] {
+        v.extend(planted_pairs(d).into_iter().map(|(n, p)| (n, parked(&p))));
+    }
+    v.extend(d_timing().into_iter().map(|(n, p)| (n, parked(&p))));
     v
 }
 
-/// muir's `ml_machine`: the main loop's machine with opcode 2's handler, a
-/// return at its first word, and opcode 3's, `body` before its return; each
-/// pushes M 31 as the microcycle after its return finds it.
-fn ml_machine(program: &[u32], body: &[u64]) -> Preset {
-    let mut p = d_machine(d_register(false), program, CODE, false, false);
+/// The word `w` at `at` in `p`'s control store, the words before it as they
+/// are or fillers.
+fn put_at(p: &mut Preset, at: u64, w: u64) {
+    p.fill_to(at + 1);
+    p.words[at as usize] = w;
+}
+
+/// muir's `ml_machine`: the main loop's machine, D as `d` says, with opcode
+/// 2's handler, a return at its first word, and opcode 3's, `body` before
+/// its return; each pushes M 31 as the microcycle after its return finds it.
+fn ml_machine(d: bool, program: &[u32], body: &[u64]) -> Preset {
+    let mut p = d_machine(d_register(d), program, CODE, false, false);
     let fd = |c: u64| c << 19 | 0o37 << 14;
     let mut put = |at: u64, w: u64| {
         p.fill_to(at);
@@ -234,7 +254,8 @@ fn ml_machine(program: &[u32], body: &[u64]) -> Preset {
 
 /// **RD's return inputs and the guard on planted pairs** (A15b.16; muir's
 /// `rd_s_lc_copy_on_planted_pairs` and `each_case_of_the_guard_on_planted_pairs`),
-/// D off: a return right after the microcycle that steps LC, and right
+/// D as `d` says, its runs' names ending `-d` when on: a return right after
+/// the microcycle that steps LC, and right
 /// after a write of LC; right after a word that writes INTERRUPT-CONTROL,
 /// M 31, the MACRO-DISPATCH register or an entry, or pushes SPC data; M 31
 /// written two words before and three; a control-store write before a
@@ -242,13 +263,14 @@ fn ml_machine(program: &[u32], body: &[u64]) -> Preset {
 /// written by destinations 6 and 7 that the next fused return reads; and
 /// opcode 6, whose entry has P, in a word's second halfword, where the
 /// return before it would fuse but for the entry.
-fn planted_pairs() -> Vec<(String, Preset)> {
+fn planted_pairs(d: bool) -> Vec<(String, Preset)> {
     use muir::isa::asm::R;
     let fd = |c: u64| c << 19 | 0o37 << 14;
     let f = filler().raw();
+    let on = if d { "-d" } else { "" };
     let mut v = Vec::new();
-    v.push(("pair-step".to_string(), ml_machine(&TWOS_THREES, &[])));
-    v.push(("pair-lc".to_string(), ml_machine(&TWOS_THREES, &[ALU | SETM | src(0o13) | fd(1)])));
+    v.push((format!("pair-step{on}"), ml_machine(d, &TWOS_THREES, &[])));
+    v.push((format!("pair-lc{on}"), ml_machine(d, &TWOS_THREES, &[ALU | SETM | src(0o13) | fd(1)])));
     // Each case's constants first, in a machine of its own.
     type Body = fn(&mut Preset, &dyn Fn(u64) -> u64, u64) -> Vec<u64>;
     let cases: [(&str, Body); 9] = [
@@ -289,15 +311,155 @@ fn planted_pairs() -> Vec<(String, Preset)> {
     // return before it fuses but for the entry.
     let mut program = ONES;
     program[5] = hw(6, 0, 0);
-    v.push(("entry-p-second".to_string(), d_machine(d_register(false), &program, CODE, false, false)));
+    v.push((format!("entry-p-second{on}"), d_machine(d_register(d), &program, CODE, false, false)));
     for (name, body) in cases {
         // The constants the body asks for, then the machine around it.
         let mut scratch = Preset::new();
         let words = body(&mut scratch, &fd, f);
-        let mut p = ml_machine(&TWOS_THREES, &words);
+        let mut p = ml_machine(d, &TWOS_THREES, &words);
         // A constant's address is the same from the machine's first `k`.
         p.amem.extend(scratch.amem.iter().copied());
-        v.push((name.to_string(), p));
+        v.push((format!("{name}{on}"), p));
+    }
+    v
+}
+
+/// **D's own machines** (muir's tests of D at its word's
+/// arrival), D off and on, their names ending `-nod` and `-d`:
+///
+/// - `store-*`: a store of two opcode-7 halfwords into the macroinstruction
+///   word opcode 3's return's fetch reads, started by the word before the
+///   return, by the return, and by its delay slot: D decides on its fetch's
+///   own word, which the store wrote (`d_decides_on_the_fetch_s_own_word`);
+/// - `slotstack`: the delay slot after opcode 3's return reads the micro
+///   stack's pointer and word, popped, as the return left it
+///   (`d_s_slot_sees_the_stack_popped`);
+/// - `readret`: opcode 3's return starts a read of the program's third word,
+///   which lands before the fetch its delay slot starts: D decides on its
+///   fetch's word, not the read's;
+/// - `opbase`: opcode 3's return right after a word that writes A-LOCALP,
+///   fused or decided on opcode 11, LOCAL 2, whose handler reads the PDL
+///   buffer through the operand address in its first word
+///   (`an_operand_address_over_a_base_the_word_before_writes`);
+/// - `ap31`: opcode 10's operand addresses, the register naming M-AP at M 31,
+///   which D writes with its word: the address is formed from M-AP as it
+///   stood before D's write;
+/// - `nxm` and `device`: the macroinstructions where nothing answers, and in
+///   the register page: each return's fetch ends D's wait at its WB, to
+///   `QMLP`, whose dispatch parks;
+/// - `entry-n`: opcode 5, whose entry has N alone, after a return that needs
+///   a fetch: D takes it and does not keep the popped word;
+/// - `earlier`: a return that needs a fetch while the sequence break stands
+///   goes to the main loop without D, its fetch a miss still filling when
+///   condition 6's call, taken with N, does what `SB-DEFER` does (the break
+///   cleared, LC written back with NEEDFETCH) and returns to the main loop
+///   again, where D waits: D decides on its slot's fetch, LC stepped, never
+///   on the earlier fill that lands during its wait (muir's
+///   `d_decides_on_its_slot_s_fetch_not_an_earlier_one`);
+/// - `irq`: opcode 1 eleven times with an interrupt pending and enabled,
+///   which a device register's write raises before the main loop: D's wait
+///   never begins, and `QMLP`'s condition-6 call counts each return.
+fn d_timing() -> Vec<(String, Preset)> {
+    let mut v = Vec::new();
+    let sevens = Word::from(hw(7, 0, 0) | hw(7, 0, 0) << 16);
+    // The stored word at A 60, its address, the program's second word, at A 61.
+    let (word_at, addr_at) = (0o60u64, 0o61u64);
+    let program = [hw(1, 0, 0), hw(3, 0, 0), hw(1, 0, 0), hw(1, 0, 0), hw(7, 0, 0), hw(7, 0, 0)];
+    for d in [false, true] {
+        let on = if d { "d" } else { "nod" };
+        for by in ["before", "return", "slot"] {
+            let body = match by {
+                "before" => vec![ALU | SETA | a_src(word_at) | MD, ALU | SETA | a_src(addr_at) | START_WRITE],
+                _ => vec![ALU | SETA | a_src(word_at) | MD],
+            };
+            let n = body.len() as u64;
+            let mut p = ml_machine(d, &program, &body);
+            match by {
+                "return" => put_at(&mut p, OP_3 + n, ALU | SETA | a_src(addr_at) | START_WRITE | POPJ),
+                "slot" => put_at(&mut p, OP_3 + n + 1, ALU | SETA | a_src(addr_at) | START_WRITE),
+                _ => {}
+            }
+            p.amem.push((word_at, sevens));
+            p.amem.push((addr_at, CODE + 1));
+            v.push((format!("store-{by}-{on}"), p));
+        }
+        // The slot: M 26 <- the stack's pointer and word.
+        let mut p = ml_machine(d, &[hw(1, 0, 0), hw(3, 0, 0), hw(1, 0, 0), hw(7, 0, 0)], &[]);
+        put_at(&mut p, OP_3 + 1, ALU | SETM | src(0o1) | m_dest(0o26));
+        v.push((format!("slotstack-{on}"), p));
+        // The return: a read of the program's third word.
+        let mut p = ml_machine(d, &[hw(1, 0, 0), hw(3, 0, 0), hw(1, 0, 0), hw(1, 0, 0), hw(7, 0, 0)], &[]);
+        put_at(&mut p, OP_3, ALU | SETA | a_src(addr_at) | START_READ | POPJ);
+        p.amem.push((addr_at, CODE + 2));
+        v.push((format!("readret-{on}"), p));
+        // Opcode 11, LOCAL 2, after opcode 3's return, A-LOCALP written right
+        // before it.
+        let mut p = ml_machine(
+            d,
+            &[hw(3, 0, 0), hw(0o11, 5, 2), hw(1, 0, 0), hw(7, 0, 0)],
+            &[ALU | SETA | a_src(LOCALP_AT) | a_dest(LOCALP_AT)],
+        );
+        let fd = |c: u64| c << 19 | 0o37 << 14;
+        put_at(&mut p, OP_11, ALU | SETM | src(0o5) | m_dest(0o27));
+        put_at(&mut p, OP_11 + 1, filler().raw() | POPJ);
+        put_at(&mut p, OP_11 + 2, ALU | SETM | m_src(0o31) | fd(0o11));
+        p.dmem.push(((OPDTB + 0o11) as usize, OP_11 as u32));
+        for k in 0..macro_dispatch::ENTRIES {
+            if k >> 3 & 0o37 == 0o11 {
+                p.mdmem.push((k, OP_11 as u32 | macro_dispatch::OPERAND));
+            }
+        }
+        v.push((format!("opbase-{on}"), p));
+        // M-AP at M 31.
+        let d_bit = if d { macro_dispatch::D_ENABLE } else { 0 };
+        let r = macro_dispatch::word(QMLP as u16, LOCALP_AT as u16, 0o31) | d_bit;
+        let program = [hw(0o10, 6, 5), hw(0o10, 6, 3), hw(1, 0, 0), hw(0o10, 6, 1), hw(0o10, 5, 2), hw(7, 0, 0)];
+        v.push((format!("ap31-{on}"), d_machine(r, &program, CODE, false, false)));
+        // Fetches nothing answers, and fetches of the register page: every
+        // opcode's dispatch parks.
+        for (what, code) in [("nxm", PHYSICAL_WINDOW + 0o1000000000), ("device", REGISTER_PAGE)] {
+            let mut p = d_machine(d_register(d), &[], code, false, false);
+            for op in 0..0o40u64 {
+                if ![1, 6, 7, 0o10].contains(&op) {
+                    p.dmem.push(((OPDTB + op) as usize, OP_7 as u32));
+                }
+            }
+            v.push((format!("{what}-{on}"), p));
+        }
+        // Opcode 5, its entry N alone, in the second word's first halfword.
+        let mut p = d_machine(d_register(d), &[hw(1, 0, 0), hw(1, 0, 0), hw(5, 0, 0), hw(7, 0, 0)], CODE, false, false);
+        put_at(&mut p, OP_5, JUMP | target(OP_7) | ALWAYS | N);
+        p.dmem.push(((OPDTB + 5) as usize, 1 << 14 | OP_5 as u32));
+        for k in 0..macro_dispatch::ENTRIES {
+            if k >> 3 & 0o37 == 5 {
+                p.mdmem.push((k, macro_dispatch::N | OP_5 as u32));
+            }
+        }
+        v.push((format!("entry-n-{on}"), p));
+        // A fetch in flight from before the return D waits on.
+        let fd = |c: u64| c << 19 | 0o37 << 14;
+        let mut p = d_machine(d_register(d), &[hw(1, 0, 0), hw(7, 0, 0), hw(1, 0, 0), hw(7, 0, 0)], CODE, true, false);
+        put_at(&mut p, QMLP, JUMP | target(COND_6) | P | N | 1 << 5 | 6);
+        put_at(&mut p, COND_6, ALU | M_PLUS_C | CARRY_IN | m_src(0o10) | m_dest(0o10));
+        put_at(&mut p, COND_6 + 1, ALU | SETA | a_src(ZERO) | fd(2));
+        put_at(&mut p, COND_6 + 2, ALU | SETM | src(0o14) | m_dest(0o27));
+        put_at(&mut p, COND_6 + 3, ALU | SETA | a_src(0o50) | fd(0o15));
+        put_at(&mut p, COND_6 + 4, ALU | SETA | a_src(0o52) | fd(1));
+        put_at(&mut p, COND_6 + 5, filler().raw() | POPJ);
+        v.push((format!("earlier-{on}"), p));
+        // An interrupt pending and enabled: word 0 goes to 40, which raises
+        // it by a device register's write, and comes back.
+        let mut p = d_machine(d_register(d), &ONES, CODE, false, false);
+        let first = p.words[0];
+        let (raise, command) = (p.k(1 << 11), p.k(REGISTER_PAGE | 0o200));
+        p.words[0] = JUMP | target(0o40) | ALWAYS | N;
+        put_at(&mut p, 0o40, first);
+        put_at(&mut p, 0o41, ALU | SETA | a_src(raise) | MD);
+        put_at(&mut p, 0o42, ALU | SETA | a_src(command) | START_WRITE);
+        put_at(&mut p, 0o43, JUMP | target(1) | ALWAYS | N);
+        // INTERRUPT-CONTROL's enable, `<27>`, which word 4 writes.
+        p.amem.push((0o53, 1 << 35));
+        v.push((format!("irq-{on}"), p));
     }
     v
 }

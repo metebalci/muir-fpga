@@ -953,7 +953,7 @@ static void emit_pipeline_15(struct chk *w, const struct cadr_image *img)
 	if (old)
 		chk_word(w, t[IMG_TL15_MD_OLD_WORD]);
 	chk_bool(w, t[IMG_TL15_D_WAIT] & 1u);				/* READ d_wait */
-	chk_bool(w, 0);			/* NONE d_slot_pending: D's fetched word is not built */
+	chk_bool(w, (t[IMG_TL15_D_WAIT] >> 1) & 1u);			/* READ d_slot_pending */
 	chk_u64(w, t[IMG_TL15_OA_LOW]);					/* READ */
 	chk_u64(w, t[IMG_TL15_OA_HIGH]);				/* READ */
 	chk_bool(w, 0);			/* IDLE next_instr: taken between microcycles */
@@ -1684,8 +1684,6 @@ static const char *const kMissingQuux15[] = {
 	"    A resumed machine's board catches up with the clock at its first look.",
 	"the keyboard and the mouse on the register page, which revision 15's",
 	"    fabric does not build: written empty.",
-	"D's dispatch on a fetched word, which revision 15's fabric does not build:",
-	"    no word armed for M 31 and no slot pending.",
 	"a data push's word waiting for the micro stack: its 19 bits, which are",
 	"    all SPC<18:0> keeps; muir keeps the push's 32.",
 	"and the DISK PACK, which revision 15's fabric does not build: no pack.",

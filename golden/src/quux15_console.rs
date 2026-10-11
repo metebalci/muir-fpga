@@ -217,6 +217,21 @@ pub fn console(period: u64) -> Vec<Case> {
     }
     s.push(Spy(spy::CLK, 1));
     v.push(scripted("steps", "transfer", period, s, true));
+    // Single steps through the main loop with D on (A15b.9, A15b.13): the
+    // step of a return that begins D's wait ends with its delay slot not
+    // fetched yet, which the next step fetches first; the step of the slot
+    // ends once D has decided at its word's arrival.
+    let ones_d = super::quux15_main::machines(&[true]).into_iter().find(|(n, _)| n == "ones-d");
+    let (_, p) = ones_d.expect("the main loop's machine ones-d");
+    let mut c = super::quux15_main::parked(&p);
+    c.name = "steps-d".to_string();
+    let mut s = vec![Wait(40), Spy(spy::CLK, 0), UntilHalted];
+    for _ in 0..40 {
+        s.extend([Spy(spy::CLK, 2), Spy(spy::CLK, 0), UntilHalted, Wait(2), Reads]);
+    }
+    s.push(Spy(spy::CLK, 1));
+    c.script = s;
+    v.push(c);
     // The debug IR, as muir's `the_pipeline_runs_the_debug_ir_s_64_bits_as_
     // micro_does`: OA-REG-HIGH written, then an ADD whose SH, in the
     // extension, ORs it into A 1700 and M 20, making them A 1703 and M 24:
@@ -465,9 +480,10 @@ pub fn halts(period: u64) -> Vec<Case> {
             v.push(c);
         }
     }
-    // The main loop's machines, D off: a halt in a fused return's wait for
-    // its operand address among them.
-    for (name, p) in super::quux15_main::machines(&[false]) {
+    // The main loop's machines, D off and on: a halt in a fused return's wait
+    // for its operand address among them, and with D on a halt at every
+    // clock from a return's EX to its word's arrival (A15b.13).
+    for (name, p) in super::quux15_main::machines(&[false, true]) {
         let end = park_clock(&super::quux15_main::parked(&p), period);
         for at in 2..=end {
             let mut c = super::quux15_main::parked(&p);
@@ -545,7 +561,7 @@ pub fn checkpoints(period: u64) -> Vec<Case> {
     for (name, p) in md_after_start_programs().into_iter().take(6) {
         add(&name, p.case("x"), 4);
     }
-    for (name, p) in super::quux15_main::machines(&[false]) {
+    for (name, p) in super::quux15_main::machines(&[false, true]) {
         add(&format!("main-{name}"), super::quux15_main::parked(&p), 6);
     }
     for seed in [1u64, 2] {

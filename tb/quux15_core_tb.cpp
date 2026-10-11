@@ -748,8 +748,9 @@ std::string halted_tail(Top *dut) {
   const uint64_t mo = sel(5);                       // md_old
   put(mo & 1, 1);
   if (mo & 1) put(sel(6), 5);
-  put(0, 1);                                        // d_wait
-  put(0, 1);                                        // d_slot_pending
+  const uint64_t dw = sel(7);                       // D's wait
+  put(dw & 1, 1);                                   // d_wait
+  put((dw >> 1) & 1, 1);                            // d_slot_pending
   put(sel(8), 8);                                   // oa_low
   put(sel(9), 8);                                   // oa_high
   put(0, 1);                                        // next_instr, between microcycles

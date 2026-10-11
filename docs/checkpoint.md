@@ -527,9 +527,11 @@ QUUX revision 15's checkpoint is muir's version 51, `Pipeline::save`: the
 machine at revision 15, whose level-1 byte carries the revision with `<7>`
 set and which ends with word 225; then the clock's period in units of 0.5 ns,
 the memory port's timing and cache, and the pipeline's state between two
-microcycles (contract G3 revision 15, A15b.13). The control store's words are
-64 bits. A fabric checkpoint of revision 15 resumes in muir; nothing is
-restored to the fabric.
+microcycles (contract G3 revision 15, A15b.13), D's wait among it: a halt
+that squashed a return's delay slot leaves D waiting with the slot to fetch
+again, and the file carries both (A15b.9). The control store's words are 64
+bits. A fabric checkpoint of revision 15 resumes in muir; nothing is restored
+to the fabric.
 
 The machine is read through the pipelined core's own window
 (`rtl/machine/quux15_core.sv`, behind `rtl/plumbing/quux15_face.sv`, the
@@ -551,8 +553,7 @@ What the file holds otherwise than muir's own:
   machine's board catches up with the clock at its first look;
 - a data push's word waiting for the micro stack at the stack's 19 bits,
   which are all `SPC<18:0>` keeps;
-- the keyboard, the mouse and D's dispatch on a fetched word, which the
-  fabric does not build: empty.
+- the keyboard and the mouse, which the fabric does not build: empty.
 
 `cadr-checkpoint --what-it-cannot-read` names them on a revision 15 board.
 The resume line names `MUIR_QUUX_REVISION=15` and `--microcycle-ns` at the

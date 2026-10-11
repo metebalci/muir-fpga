@@ -28417,6 +28417,207 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
       if (has_fd(ex_ir) && (fd_code(ex_ir) == 5'o2 || 1'b0 || 1'b0
 @end
 
+@mutation quux15-d-effects-at-the-slot-s-end
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D's effects --- the kept word, PDL-INDEX, M 31 --- made as its delay
+@note slot reaches WB with its fetch, from MD as it stands then, rather than
+@note at its word's arrival.
+@old
+    d_eff  = d_dec;
+@new
+    d_eff  = d_wait_q && wb_fresh && st_fetch[0];
+@end
+
+@mutation quux15-d-keeps-regardless-of-n
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D keeps the popped word whatever the entry's N.
+@old
+    d_keep = d_eff && fx_d.fuse && fx_d.keep;
+@new
+    d_keep = d_eff && fx_d.fuse && (fx_d.keep || fx_d.fuse);
+@end
+
+@mutation quux15-d-wait-not-ended-by-a-fault
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D's fetch faults and its wait goes on, CS held for ever.
+@old
+          && (s_faulted || (at_grant && (s_device || s_nothing)));
+@new
+          && (at_grant && (s_device || s_nothing));
+@end
+
+@mutation quux15-d-waits-under-an-interrupt
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D's wait begins with an interrupt pending and enabled, condition 6's
+@note interrupt not sampled at the return.
+@old
+        && popped[13:0] == mdreg[13:0] && !(intctl[1] && int_now) && !intctl[0];
+@new
+        && popped[13:0] == mdreg[13:0] && !(intctl[1] && int_now && intctl[0]) && !intctl[0];
+@end
+
+@mutation quux15-d-wait-not-ended-by-nxm
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D's fetch finds nothing there and its wait goes on.
+@old
+          && (s_faulted || (at_grant && (s_device || s_nothing)));
+@new
+          && (s_faulted || (at_grant && (s_device || (s_nothing && s_device))));
+@end
+
+@mutation quux15-d-wait-not-ended-by-a-device
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D's fetch is answered by the register page and its wait goes on, for
+@note a word that never reaches it.
+@old
+          && (s_faulted || (at_grant && (s_device || s_nothing)));
+@new
+          && (s_faulted || (at_grant && ((s_device && s_nothing) || s_nothing)));
+@end
+
+@mutation quux15-d-decides-on-an-earlier-fetch
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D takes a fetch started before its return and still filling as its own,
+@note deciding on that word with LC not stepped.
+@old
+      d_fetch_q <= (d_fetch_q && !land_now) || (p_req && st_fetch[0] && d_wait_q);
+@new
+      d_fetch_q <= (d_fetch_q && !land_now) || (p_req && st_fetch[0] && (d_wait_q || st_fetch[0]));
+@end
+
+@mutation quux15-d-m31-a-clock-early
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D writes M 31 and A 31 in the clock before its word's arrival, from the
+@note word on its way; the M-AP copy then forms the operand address from the
+@note new word where M-AP is M 31.
+@old
+    d_m31      = d_eff && fx_d.fuse;
+    d_m31_word = d_word;
+@new
+    d_m31      = d_wait_q && d_fetch_q && n_land
+              && fused_at({4'd0, 1'b1, mdreg[13:0]}, p_land_next ? p_word_next : n_pend_word, intctl[3], lc).fuse;
+    d_m31_word = p_land_next ? p_word_next : n_pend_word;
+@end
+
+@mutation quux15-d-at-l-0
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D decides from the word on its way, a clock before it is in MD: L = 0.
+@old
+    d_dec  = d_wait_q && d_fetch_q && land_now;
+    d_word = land_word;
+@new
+    d_dec  = d_wait_q && d_fetch_q && n_land;
+    d_word = p_land_next ? p_word_next : n_pend_word;
+@end
+
+@mutation quux15-d-word-behind-the-slot-kept
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D's wait leaves CS's word behind the delay slot unsquashed.
+@old
+        if (cs_v && cs_seq != slot_seq) cs_keep = 1'b0;
+@new
+        if (cs_v && cs_seq != slot_seq && !dw_begin) cs_keep = 1'b0;
+@end
+
+@mutation quux15-d-slot-held-in-rd
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D's delay slot waits a clock in RD, as after a redirect.
+@old
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0;
+@new
+    rd_moves_n = rd_keep && ex_free && !(hold_r && !rd_killed) && errhalt_now == 1'b0
+              && !(dw_begin && rd_seq == slot_seq);
+@end
+
+@mutation quux15-d-slot-not-fetched-first
+@check quux15_console_quux
+@file rtl/machine/quux15_core.sv
+@note D's wait begins with its delay slot not fetched yet, and the word after
+@note the slot is fetched in its place.
+@old
+          npc_e = ex_pc + 14'd1;
+          nop_next_e = kill_rd;
+          dsp_e = 1'b1;
+@new
+          npc_e = ex_pc + 14'd2;
+          nop_next_e = kill_rd;
+          dsp_e = 1'b1;
+@end
+
+@mutation quux15-d-halt-drops-the-slot
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note A halt that squashes D's delay slot leaves D waiting with no slot to
+@note fetch again.
+@old
+      if (drain_end) d_slot_pend_q <= dw_begin || (d_wait_q && !d_npc_v);
+@new
+      if (drain_end) d_slot_pend_q <= 1'b0;
+@end
+
+@mutation quux15-d-executor-next-word-kept
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D leaves the executor's next word as the delay slot left it, the main
+@note loop's, not the handler's.
+@old
+      if (d_dec) npc_prev <= d_npc + 14'd1;
+@new
+      if (d_dec && !d_dec) npc_prev <= d_npc + 14'd1;
+@end
+
+@mutation quux15-d-copies-not-refreshed
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note RD's copies after D's decision without its kept word and operand
+@note address.
+@old
+      c_next = c_hlt;
+@new
+      c_next = d_dec ? c_res : c_hlt;
+@end
+
+@mutation quux15-d-readout-drops-the-slot
+@check quux15_halts_quux
+@file rtl/machine/quux15_core.sv
+@note The readout's tail gives D's wait without the delay slot to fetch again.
+@old
+      5'd7:  return {62'd0, d_slot_pend_q, d_wait_q};  // D's wait, the slot to fetch first
+@new
+      5'd7:  return {62'd0, 1'b0, d_wait_q};  // D's wait, the slot to fetch first
+@end
+
+@mutation quux15-d-checkpoint-without-the-slot
+@check quux15_checkpoints_quux
+@file boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src/chk_rtl.c
+@note The board's writer writes no delay slot to fetch again under D's wait.
+@old
+	chk_bool(w, (t[IMG_TL15_D_WAIT] >> 1) & 1u);			/* READ d_slot_pending */
+@new
+	chk_bool(w, (t[IMG_TL15_D_WAIT] >> 1) & 0u);			/* READ d_slot_pending */
+@end
+
+@mutation quux15-d-decides-on-any-landing
+@check quux15_mainloop_quux
+@file rtl/machine/quux15_core.sv
+@note D takes the next word to land in MD as its own, its fetch's or not.
+@old
+    d_dec  = d_wait_q && d_fetch_q && land_now;
+@new
+    d_dec  = d_wait_q && (d_fetch_q || !d_fetch_q) && land_now;
+@end
+
 @mutation quux15-a-dispatch-takes-sl
 @check quux15_dispsel_quux
 @file rtl/machine/quux15_core.sv
