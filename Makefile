@@ -307,9 +307,11 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # memory (`halts`, at 10 ns alone), each halted state held byte for byte to
 # muir's checkpoint; and the main loop's (`golden/src/quux15_main.rs`,
 # `mainloop`): the fused return with D off and the PDL address field on M-AP
-# and A-LOCALP.
+# and A-LOCALP; and a store and its page check before a return with N, fused
+# into an operand's handler that reads the PDL buffer in its first word
+# (`storeret`), under the port's timings and the seeded memory model.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop checkpoints bdisk bdmix
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop storeret checkpoints bdisk bdmix
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -329,6 +331,8 @@ QUUX15_PERIODS_mainsize := 20 36
 # results at 18 ns.
 QUUX15_PERIODS_bdisk := 17 36
 QUUX15_PERIODS_bdmix := 36
+# The store before a fused return at the board's 18 ns and at 10 ns.
+QUUX15_PERIODS_storeret := 36 20
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.

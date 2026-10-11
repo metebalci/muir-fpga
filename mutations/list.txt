@@ -28228,6 +28228,46 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 # records return with muir's fix.  A return to the main loop whose own word
 # steps LC (NEXT-INSTRD, which bars fusing) is in no trace either.
 
+# A return with N fused into an operand's handler, its delay slot in RD and
+# squashed there by EX: the slot's plan carries the operand load, so that the
+# handler CS holds reads the PDL buffer at the operand address
+# (`golden/src/quux15_main.rs`'s `store_return`, the PDL buffer's words at
+# the operand address and the index left standing apart).
+
+@mutation quux15-squashed-slot-drops-the-operand-load
+@check quux15_storeret_quux
+@file rtl/machine/quux15_core.sv
+@note A delay slot EX squashes in RD carries LC's step alone, not the operand
+@note load the fused return before it armed: the handler reads the PDL buffer
+@note at the index the return found.
+@old
+    e.opload = ci.opa_v;
+@new
+    e.opload = 1'b0;
+@end
+
+@mutation quux15-cs-reads-past-a-squashed-slot
+@check quux15_storeret_quux
+@file rtl/machine/quux15_core.sv
+@note CS's copies past a slot squashed in RD take LC's step alone: the
+@note handler behind it reads the PDL buffer before the operand load.
+@old
+         : rd_moves_n ? apply_effects(plan_k.e, c_app) : c_app;
+@new
+         : (rd_moves_n && c_app.next_instr) ? lc_step(c_app) : c_app;
+@end
+
+@mutation quux15-cs-reads-past-a-squashed-slot-two-bubbles
+@check quux15_storeret_quux_b2
+@file rtl/machine/quux15_core.sv
+@note With two bubbles, the store's read without EX's redirect and the PDL
+@note buffer's address past a slot squashed in RD take LC's step alone.
+@old
+             : rd_moves_nr ? apply_effects(killed_effects(c_app_nr, rd_seq), c_app_nr) : c_app_nr;
+@new
+             : (rd_moves_nr && c_app_nr.next_instr) ? lc_step(c_app_nr) : c_app_nr;
+@end
+
 @mutation quux15-fused-return-keeps-the-word-under-n
 @check quux15_mainloop_quux
 @file rtl/machine/quux15_core.sv

@@ -516,3 +516,86 @@ pub fn field_macro() -> Vec<(String, Preset)> {
     }
     v
 }
+
+/// **A store and its page check right before a fused return into an
+/// operand's handler** (A15b.9, A15b.16), as microcode 2002's `QSANUM`
+/// ends and `QIMOVE-PDL-OPERAND` begins, under the port's timings and
+/// muir's seeded memory model: opcode 3's handler reads a word of main
+/// memory (`VMA-START-READ`, `CHECK-PAGE-READ`, the word into A), stores
+/// into it (`WRITE-MEMORY-DATA-START-WRITE`, `CHECK-PAGE-WRITE`) and
+/// returns with N (`CPOPJ`), fused on opcode 11, ARG 0, whose handler
+/// pushes the PDL buffer's word at PDL-INDEX in its first word, its return
+/// after the next, and reads it again in that next: PDL-INDEX must hold
+/// the operand address the return armed when the handler's first word
+/// reads it.  D off and on; the port as the traces' period makes it and at
+/// the Kria's, slower and faster; each with the memory model off and with
+/// twelve seeds answering each write up to 50 clocks late.
+pub fn store_return() -> Vec<(String, Case)> {
+    use muir::isa::asm::R;
+    use muir::pipeline::PortTiming;
+    use muir::pipeline::port::LateModel;
+    let fd = |c: u64| c << 19 | 0o37 << 14;
+    let program = [hw(3, 0, 0), hw(0o11, 6, 0), hw(1, 0, 0), hw(0o11, 6, 1), hw(7, 0, 0)];
+    let (word_at, addr_at, tem) = (0o60u64, 0o61u64, 0o62u64);
+    // The page fault's handler, which no run reaches: the park.
+    const PGF: u64 = 0o320;
+    let timings = [
+        ("t0", None),
+        ("kria", Some(PortTiming { read_ns: 247, write_ns: 130, occupancy_ns: 10 })),
+        ("slow", Some(PortTiming { read_ns: 600, write_ns: 400, occupancy_ns: 40 })),
+        ("fast", Some(PortTiming { read_ns: 100, write_ns: 40, occupancy_ns: 10 })),
+    ];
+    let mut v = Vec::new();
+    for d in [false, true] {
+        let on = if d { "d" } else { "nod" };
+        for (tn, timing) in timings {
+            for seed in 0..=12u64 {
+                let body = [
+                    ALU | SETA | a_src(addr_at) | START_READ,
+                    JUMP | target(PGF) | P | N | 1 << 5 | 5,
+                    ALU | SETM | SRC_MD | a_dest(tem),
+                    ALU | SETA | a_src(word_at) | fd(0o32),
+                    JUMP | target(PGF) | P | N | 1 << 5 | 5,
+                ];
+                let n = body.len() as u64;
+                let mut p = ml_machine(d, &program, &body);
+                // The return as `CPOPJ` is: a jump with R and N, no slot.
+                put_at(&mut p, OP_3 + n, JUMP | ALWAYS | R | N);
+                put_at(&mut p, PGF, JUMP | target(OP_7) | ALWAYS | N);
+                // `QIMOVE-PDL-OPERAND`: the push of the PDL buffer's word at
+                // PDL-INDEX, its return after the next word, which reads it
+                // again into M 27.
+                put_at(&mut p, OP_11, ALU | SETM | src(0o5) | fd(0o11) | POPJ);
+                put_at(&mut p, OP_11 + 1, ALU | SETM | src(0o5) | m_dest(0o27));
+                p.dmem.push(((OPDTB + 0o11) as usize, OP_11 as u32));
+                for k in 0..macro_dispatch::ENTRIES {
+                    if k >> 3 & 0o37 == 0o11 {
+                        p.mdmem.push((k, OP_11 as u32 | macro_dispatch::OPERAND));
+                    }
+                }
+                p.amem.push((word_at, 0o0240003350000));
+                p.amem.push((addr_at, PHYSICAL_WINDOW + 0o1030));
+                // The PDL buffer's words at the operand address, M-AP + 1,
+                // and at the index the machine starts with, apart: a read
+                // at the index left standing reads the second.
+                let first = p.words[0];
+                let (one, operand, sentinel, stale) = (p.k(1), p.k(0o1111), p.k(SENTINEL), p.k(0o7777));
+                p.words[0] = JUMP | target(0o340) | ALWAYS | N;
+                put_at(&mut p, 0o340, ALU | SETA | a_src(one) | fd(0o13));
+                put_at(&mut p, 0o341, ALU | SETA | a_src(operand) | fd(0o12));
+                put_at(&mut p, 0o342, ALU | SETA | a_src(sentinel) | fd(0o13));
+                put_at(&mut p, 0o343, ALU | SETA | a_src(stale) | fd(0o12));
+                put_at(&mut p, 0o344, first);
+                put_at(&mut p, 0o345, JUMP | target(1) | ALWAYS | N);
+                p.timing = timing;
+                if seed > 0 {
+                    p.late = Some(LateModel { seed, most: 50, errors: 0 });
+                }
+                let mut c = parked(&p);
+                c.name = format!("storeret-{on}-{tn}-{seed}");
+                v.push((c.name.clone(), c));
+            }
+        }
+    }
+    v
+}

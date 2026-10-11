@@ -861,6 +861,21 @@ module quux15_core #(
     return r;
   endfunction
 
+  // **A DELAY SLOT EX SQUASHES IN RD** (`plan_for` on a nopped word): its
+  // effects are a nopped word's, LC's own step and the operand load a fused
+  // return armed, which a return with N leaves to its squashed slot as one
+  // without N leaves it to the slot it runs.  Without the load the handler
+  // CS holds reads the PDL buffer at the index the return found.
+  function automatic effects_t killed_effects(input copies_t ci, input logic [7:0] seq);
+    effects_t e;
+    e = '0;
+    e.dest = D_NONE;
+    e.seq = seq;
+    e.lcstep_own = ci.next_instr;
+    e.opload = ci.opa_v;
+    return e;
+  endfunction
+
   // The micro stack as EX leaves it this clock, for the copies RD takes
   // after EX (`view_new`): the write the last microcycle left, landed by
   // this one's commit, and the one this one leaves.
@@ -2414,10 +2429,10 @@ module quux15_core #(
     follower_x = (cs_keep && cs_seq == rd_seq + 8'd1) ? cs_pc : npc_e;
     plan_x = rd_plan(c_res, follower_x, 1'b1, rd_n_nop, rd_n_pre, nsw_v, nsw_ptr, nsw_word, land_spc);
     hold_x = plan_x.returns && guard_holds(1'b1, nid_new);
-    // A squashed delay slot: a nopped word's plan, LC's own step alone.
+    // A squashed delay slot: a nopped word's plan, LC's own step and the
+    // operand load a fused return armed (`plan_for`, executed or nopped).
     plan_k = '0;
-    plan_k.e.dest = D_NONE;
-    plan_k.e.lcstep_own = c_app.next_instr;
+    plan_k.e = killed_effects(c_app, rd_seq);
     plan = (BUBBLES == 2 && redirect) ? plan_x : rd_killed ? plan_k : plan_r;
     // RD moves on its own plan, or a squashed slot's, which never holds.
     // After a redirect RD holds the delay slot, which waits, or nothing;
@@ -2449,7 +2464,7 @@ module quux15_core #(
     // at most the delay slot, behind an empty RD, so they are EX's.
     c_cs = redirect ? c_res
          : (rd_moves_n && !rd_killed) ? apply_effects(plan_r.e, c_app)
-         : (rd_moves_n && c_app.next_instr) ? lc_step(c_app) : c_app;
+         : rd_moves_n ? apply_effects(plan_k.e, c_app) : c_app;
     // D decides, or its fetch's fault ends its wait: the next address, and
     // RD's copies the registers as D leaves them, the four stages empty.
     if (d_npc_v) begin
@@ -2523,7 +2538,7 @@ module quux15_core #(
     if (d_npc_v) npc_nr = d_npc;
     c_app_nr = ex_restore ? c_res : c_ref;
     c_cs_nr  = (rd_moves_nr && !rd_killed_nr) ? apply_effects(plan_r.e, c_app_nr)
-             : (rd_moves_nr && c_app_nr.next_instr) ? lc_step(c_app_nr) : c_app_nr;
+             : rd_moves_nr ? apply_effects(killed_effects(c_app_nr, rd_seq), c_app_nr) : c_app_nr;
     oa_hold_nr  = cs_sh && ((rd_v && !(rd_nop || rd_killed_nr) && writes_oa_high(rd_ir))
                          || (ex_v && !ex_nop && writes_oa_high(ex_ir)));
     pdl_wait_nr = cs_rp[1] && (cs_rp[0] ? c_cs_nr.ptr_pend : c_cs_nr.idx_pend);

@@ -1521,6 +1521,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
             v.extend(quux15_main::field_macro().into_iter().map(|(n, p)| p.case(&format!("field-{n}"))));
             v
         }
+        "storeret" => quux15_main::store_return().into_iter().map(|(_, c)| c).collect(),
         "dispsel" => quux15_preset::dispatch_selects().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "fieldbase" => quux15_preset::field_bases().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "console" => quux15_console::console(period),
