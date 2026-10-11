@@ -14,7 +14,7 @@
 //     units of 0.5 ns (`period`, A15b.12) and the console face reports.
 //   - **THE PROCESSING SYSTEM IS `cadr_ps8.sv`'s `PS8`**, every port clocked
 //     by the machine's clock and live while `pl_resetn0` is high.
-//   - **MAIN MEMORY IS ON `S_AXI_HP0_FPD`**, packed storage at
+//   - **MAIN MEMORY IS ON `S_AXI_HP0_FPD`**, 32M words of packed storage at
 //     `CADR_DDR_MAP_KR260`'s revision-13 base (`QUUX13_MAIN_BASE`), where
 //     revisions 13 and 14 keep theirs and the board's revision-13 device
 //     tree reserves it, the frame buffer at the display base: the machine's
@@ -62,8 +62,15 @@ module quux15_kr260 #(
     $error("cadr_ddr_map's bases are %h and %h, and the Kria KR260's are %h and %h: define CADR_DDR_MAP_KR260",
            cadr_ddr_map::QUUX13_MAIN_BASE, cadr_ddr_map::DISPLAY_BASE, MAIN_BASE, DISPLAY_BASE);
   end
-  // Main memory: the core's 2M words, 32 units of 64K.
-  localparam int unsigned MAIN_WORDS = 32'h0020_0000;
+  // **MAIN MEMORY: 32M WORDS**, 512 units of 64K, packed storage filling
+  // the board's reservation from `MAIN_BASE` to the display (contract G2 §3;
+  // `cadr_ddr_map.sv`'s `QUUX13_MAIN_WORDS_MAX`), as revisions 13 and 14
+  // have it on this board.  The console's word 37 says it.
+  localparam int unsigned MAIN_WORDS = 32'h0200_0000;
+  if (MAIN_WORDS != cadr_ddr_map::QUUX13_MAIN_WORDS_MAX) begin : g_main_words
+    $error("the Kria KR260's main memory is %0d words, and its reservation holds %0d",
+           MAIN_WORDS, cadr_ddr_map::QUUX13_MAIN_WORDS_MAX);
+  end
 
   // ------------------------------------------------------------ the clock
   logic clk_fb, clk_raw, clk, mmcm_locked;

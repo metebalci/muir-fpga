@@ -602,6 +602,63 @@ pub fn walk() -> Vec<(String, Preset)> {
     v
 }
 
+/// Main memory's words on the Kria KR260 (`boards/kria-kr260/quux15_kr260.sv`;
+/// contract G2 §3): 32M, packed storage filling its reservation.
+pub const KRIA_MAIN_WORDS: usize = 32 << 20;
+
+/// **Main memory at the Kria's 32M words**, where the core is built with
+/// `MAIN_WORDS` at 32M and the testbench's memory as large; each run says so
+/// in its `# main-units` line, and a testbench of another size refuses it.
+/// Every place main memory's size reaches:
+///
+///   edges     the address decode: main memory's last word written and read
+///             back; the first word past it nothing there, MD 0 and word
+///             101's NXM; words at 2M and 4M, past the traces' 2M, memory
+///   walk      the walk's frames: a page table at main memory's last frame
+///             read through; a directory entry naming the frame past it
+///             refused, the read faulting
+///   fdring    the file device's rings: both at main memory's top, enabled;
+///             a command ring one line past it, the enable refused
+pub fn mainsize() -> Vec<(String, Preset)> {
+    let top = KRIA_MAIN_WORDS as Word;
+    let mut v: Vec<(String, Preset)> = Vec::new();
+    let sized = |p: &mut Preset| p.main_words = Some(KRIA_MAIN_WORDS);
+    let mut p = run();
+    sized(&mut p);
+    p.write(0o1234, PHYS | (top - 1)).read(PHYS | (top - 1), 0o20);
+    p.read(PHYS | top, 0o21).read(REGISTER_PAGE | 0o101, 0o22);
+    p.write(0o4321, PHYS | (2 << 20)).read(PHYS | (2 << 20), 0o23);
+    p.main.push(((4 << 20) - 1, 0o5555));
+    p.read(PHYS | ((4 << 20) - 1), 0o24);
+    p.stop();
+    v.push(("edges".into(), p));
+    // The page table at the last frame; a directory entry past it.
+    let mut p = run();
+    sized(&mut p);
+    let last = (KRIA_MAIN_WORDS >> 10) as u64 - 1;
+    let x: Word = 0o4000;
+    p.table(x, last, rw_entry(3));
+    p.main.push(((3 << 10) + 5, 0o777));
+    let y: Word = 0o4000 << 10;
+    p.main.push(((8 << 10) + (y >> 20) as usize, rw_entry(last + 1)));
+    p.set_directory();
+    p.read(x + 5, 0o20).read(y + 5, 0o21).read(REGISTER_PAGE | 0o224, 0o22);
+    p.stop();
+    v.push(("walk".into(), p));
+    // The file device's rings at main memory's top: enabled; then the
+    // command ring one line past it, refused.
+    let reg = |k: u64| REGISTER_PAGE | k;
+    let mut p = run();
+    sized(&mut p);
+    p.write(top - 8, reg(0o162)).write(0, reg(0o163)).write(top - 16, reg(0o166)).write(0, reg(0o167));
+    p.write(1, reg(0o160)).read(reg(0o161), 0o20).read(reg(0o160), 0o21);
+    p.write(0, reg(0o160)).write(top - 8, reg(0o162)).write(1, reg(0o163)).write(1, reg(0o160));
+    p.read(reg(0o161), 0o22).read(reg(0o160), 0o23);
+    p.stop();
+    v.push(("fdring".into(), p));
+    v
+}
+
 #[allow(dead_code)]
 fn _uses() {
     let _ = (P, M_ZERO);

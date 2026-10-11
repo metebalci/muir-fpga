@@ -940,6 +940,10 @@ struct Case {
     micro_check: bool,
     /// The MACRO DISPATCH MEMORY's entries before the run.
     mdmem: Vec<(usize, u32)>,
+    /// Main memory's words, when not `MAIN`'s 2M: a board's (the Kria's
+    /// 32M), which the trace's `# main-units` line names and a testbench
+    /// built for another size refuses.
+    main_words: Option<usize>,
 }
 
 impl Case {
@@ -964,6 +968,7 @@ impl Case {
             script: Vec::new(),
             micro_check: true,
             mdmem: Vec::new(),
+            main_words: None,
         }
     }
 
@@ -1014,6 +1019,9 @@ impl Case {
         if self.skip_sweep {
             out.push("# sweep skipped".to_string());
         }
+        if let Some(n) = self.main_words {
+            out.push(format!("# main-units {:x}", n >> 16));
+        }
         out
     }
 }
@@ -1024,7 +1032,7 @@ fn machine(case: &Case) -> Machine {
     let prom: Vec<Insn> = case.prom.iter().map(|&w| Insn::extended(w)).collect();
     let mut m = Which::Quux.machine(&prom);
     m.geometry = REV15;
-    m.main = vec![0; MAIN];
+    m.main = vec![0; case.main_words.unwrap_or(MAIN)];
     for &(k, w) in &case.imem {
         m.imem[k] = Insn::extended(w);
     }
@@ -1441,6 +1449,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "matrixmem" => quux15_preset::matrix_memory().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "ports" => quux15_memside::ports().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "walk" => quux15_memside::walk().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "mainsize" => quux15_memside::mainsize().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "dispatch" => vec![quux15_preset::dispatches().case("dispatch")],
         "imem" => vec![quux15_preset::imem_program().case("imem")],
         "timers" => quux15_devices::timers().into_iter().map(|(n, p)| p.case(&n)).collect(),

@@ -2742,6 +2742,37 @@ for _p in QUUX15_CORE:
         golden=["quux15_%s.quux.p%d.b2.golden" % (_p, _q)
                 for _q in QUUX15_PERIODS_OF.get(_p, QUUX15_PERIODS)])
 
+# And at the Kria's 32M words of main memory (the Makefile's
+# `quux15_mainsize.quux.pass`): the core built with `MAIN_WORDS` at 32M and
+# the testbench's memory as large, held to the `mainsize` group.
+CHECKS["quux15_mainsize_quux"] = dict(
+    CHECKS["quux15_alu_quux"],
+    flags=CHECKS["quux15_alu_quux"]["flags"] + ["-GMAIN_WORDS=33554432", "-CFLAGS", "-DQUUX15_MAIN_UNITS=512"],
+    golden=["quux15_mainsize.quux.p%d.golden" % _q for _q in (20, 36)])
+
+# Revision 15's Kria KR260 top level, linted as `build/quux15_kr260.pass`
+# lints it (`quux15_kr260_check`): its elaboration checks, the DDR map's
+# bases and main memory's size against the board's reservation, among them.
+CHECKS["quux15_kr260"] = {
+    "kind": "lint",
+    "sources": ["boards/kria-kr260/quux15_kr260.sv"],
+    "stubs": ["tb/cadr_arty_stubs.sv", "tb/cadr_usr_access_stub.sv", "tb/cadr_kr260_stubs.sv"],
+    "extra": ["rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/quux15_core.sv", "rtl/machine/quux15_exec.sv",
+              "rtl/machine/quux15_ram.sv", "rtl/machine/quux15_store.sv", "rtl/machine/quux_muldiv.sv",
+              "rtl/machine/quux15_tdp.sv", "rtl/machine/quux15_devices.sv", "rtl/machine/quux15_validmap.sv",
+              "rtl/machine/quux15_recency.sv", "rtl/machine/quux15_port.sv", "rtl/machine/quux15_mmu.sv",
+              "rtl/plumbing/quux15_axi_master.sv", "rtl/plumbing/quux_axi_narrow128.sv",
+              "rtl/plumbing/cadr_axi_lanes128.sv", "rtl/plumbing/cadr_gp0_default.sv",
+              "rtl/plumbing/cadr_gp1_split.sv", "rtl/plumbing/cadr_gp_regs.sv", "rtl/plumbing/quux15_face.sv",
+              "rtl/plumbing/cadr_mem_count.sv", "rtl/plumbing/xilinx7/cadr_usr_access.sv",
+              "tb/cadr_ps8_stub.sv", "boards/kria-kr260/cadr_ps8.sv"],
+    "top": "quux15_kr260",
+    "tb": None,
+    "flags": [],
+    "golden": None,
+    "machine": "quux",
+}
+
 # Revision 15's console face (the Makefile's `quux15_face.pass`).
 CHECKS["quux15_face"] = {
     "sources": ["rtl/plumbing/quux15_face.sv"],
@@ -3191,6 +3222,8 @@ def build_and_run(args, work, check, build_fails=False):
         return de25_check(args, work, build_fails)
     if check == "kr260":
         return kr260_check(args, work, build_fails)
+    if check == "quux15_kr260":
+        return quux15_kr260_check(args, work, build_fails)
 
     # MIT's TV sync PROM, placed for EVERY check rather than named check by
     # check.  `cadr_tv.sv` reads it at elaboration and its `SYNC_PROM_HEX`
@@ -3453,6 +3486,24 @@ def script_check(args, work, spec):
     if rc != 0:
         return CAUGHT, first_problem(out)
     return SURVIVED, "the script read the tree and agreed with it"
+
+
+def quux15_kr260_check(args, work, build_fails=False):
+    """Revision 15's Kria KR260 top level, linted as
+    `build/quux15_kr260.pass` lints it.  Lint failing, an elaboration check
+    among it, is the mutation being caught, judged by `lint_verdict`.
+    """
+    spec = CHECKS["quux15_kr260"]
+    for f in spec["sources"] + spec["stubs"] + spec["extra"]:
+        if not os.path.exists(os.path.join(work, f)):
+            return BROKEN, "%s is not in this copy" % f
+    cmd = [args.verilator, "--lint-only", "-Wall", "-DCADR_DDR_MAP_KR260",
+           "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/kria-kr260",
+           "--top-module", spec["top"]] + spec["stubs"] + spec["extra"] + spec["sources"]
+    rc, out = run(cmd, work)
+    if rc != 0:
+        return lint_verdict(out, build_fails)
+    return SURVIVED, "lint passes"
 
 
 def de25_check(args, work, build_fails=False):

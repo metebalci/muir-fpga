@@ -106,6 +106,9 @@ pub struct Preset {
     pub timing: Option<muir::pipeline::PortTiming>,
     /// The MACRO DISPATCH MEMORY's entries (`quux15_main.rs`).
     pub mdmem: Vec<(usize, u32)>,
+    /// Main memory's words, when not the traces' 2M (`quux15_memside.rs`'s
+    /// `mainsize`).
+    pub main_words: Option<usize>,
 }
 
 impl Preset {
@@ -190,6 +193,7 @@ impl Preset {
             script: Vec::new(),
             micro_check: true,
             mdmem: self.mdmem.clone(),
+            main_words: self.main_words,
         }
     }
 }

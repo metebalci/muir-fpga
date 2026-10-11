@@ -320,6 +320,9 @@ QUUX15_PERIODS_timers := 14 16 17 20 22 38
 QUUX15_PERIODS_halts := 20
 # The checkpoints at 10 ns and at the Kria's 17 ns, its build's period.
 QUUX15_PERIODS_checkpoints := 20 34
+# **MAIN MEMORY AT THE KRIA'S 32M WORDS** (`quux15_mainsize.quux.pass`,
+# below): at 10 ns and at the board's 18 ns.
+QUUX15_PERIODS_mainsize := 20 36
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.
@@ -352,7 +355,8 @@ CHECK_QUUX = $(foreach q,$(QKS),$(CHECK_QUUX_AT:%=$(BUILD)/%.quux.$(q).pass)) \
        $(BUILD)/quux13_axi_master.quux.pass $(BUILD)/quux_axi_narrow128.quux.pass $(BUILD)/xbus_decode.quux13.pass $(BUILD)/xbus_decode.quux13ch.pass \
        $(BUILD)/prom_revisions.pass $(BUILD)/console13.pass \
        $(BUILD)/quux15_replay.quux.pass $(BUILD)/quux15_generator.quux.pass \
-       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_face.pass \
+       $(QUUX15_CORE:%=$(BUILD)/quux15_%.quux.pass) $(BUILD)/quux15_mainsize.quux.pass \
+       $(BUILD)/quux15_kr260.pass $(BUILD)/quux15_face.pass \
        $(BUILD)/machine_param.pass $(BUILD)/machine_guard.pass $(BUILD)/word_width.pass muir-pin
 
 ifeq ($(MACHINE),quux)
@@ -1537,6 +1541,20 @@ $$(BUILD)/quux15_$(1).quux$(3).pass: $$(BUILD)/obj_quux15_core$(2)/Vquux15_core 
 endef
 $(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p),,)))
 $(foreach p,$(QUUX15_CORE),$(eval $(call QUUX15_CORE_RULE,$(p),_b2,.b2)))
+
+# **AND AT THE KRIA'S 32M WORDS OF MAIN MEMORY** (`boards/kria-kr260/
+# quux15_kr260.sv`'s `MAIN_WORDS`): the core built with `MAIN_WORDS` at 32M
+# and the testbench's memory as large (`QUUX15_MAIN_UNITS`, 64K-word units),
+# held to the `mainsize` group (`golden/src/quux15_memside.rs`): main
+# memory's last word and the first past it, the walk's last frame and the
+# first past it, the file device's rings at the top.  Each of its traces
+# names its size, and a testbench built for another refuses it, as the
+# traces' own testbench, built for 2M, refuses these.
+$(BUILD)/obj_quux15_core_32m/Vquux15_core: $(QUUX15_CORE_SRC) tb/quux15_core_tb.cpp $(BUILD)/q15chk/libq15chk.a | $(BUILD)
+	$(VERILATOR) $(VFLAGS) $(QUUX15_CORE_FLAGS) -GMAIN_WORDS=33554432 -CFLAGS -DQUUX15_MAIN_UNITS=512 \
+	    -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_core_32m \
+	    --top-module quux15_core $(QUUX15_CORE_SRC) $(abspath tb/quux15_core_tb.cpp)
+$(eval $(call QUUX15_CORE_RULE,mainsize,_32m,))
 
 $(BUILD)/obj_quux15_replay/Vquux15_replay: tb/quux15_replay.sv tb/quux15_core_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_quux15_replay -CFLAGS -DQUUX15_TOP=Vquux15_replay \
@@ -3627,7 +3645,7 @@ MUTANT_QUUX = $(BUILD)/boot_prom.quux13.hex \
               $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%_prom.hex) \
               $(QUUX14_PROGRAMS:%=$(BUILD)/quux14_%.quux.k4.golden) \
               $(BUILD)/quux14_windows.quux.k5.golden $(BUILD)/quux14_double.quux.k5.golden \
-              $(foreach p,$(QUUX15_CORE),$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
+              $(foreach p,$(QUUX15_CORE) mainsize,$(foreach q,$(or $(QUUX15_PERIODS_$(p)),$(QUUX15_PERIODS)),\
                 $(BUILD)/quux15_$(p).quux.p$(q).golden))
 
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \

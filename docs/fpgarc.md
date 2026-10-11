@@ -600,6 +600,12 @@ range:
 
     main-memory-size 33MW: revision 13's main memory on this board is 1MW to 32MW
 
+**On revision 15 the size is the bitstream's.** Its main memory is built at
+the board's whole reservation, 32MW on the Kria KR260. Its console's word 37
+is read only, and word 38 gives that size as both the default and the most.
+`cadr-console main-memory-size` with any other amount inside the range writes
+word 37, reads back 32MW, and exits 1.
+
 It is set before the drive comes present, through `cadr-console
 main-memory-size`, for the reason the boards' count is. Which machine the
 fabric is, and so whether it takes this word at all, the console reads from

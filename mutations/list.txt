@@ -28417,6 +28417,49 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
       if (has_fd(ex_ir) && (fd_code(ex_ir) == 5'o2 || 1'b0 || 1'b0
 @end
 
+@mutation quux15-main-decode-one-word-past
+@check quux15_mainsize_quux
+@file rtl/machine/quux15_core.sv
+@note Main memory answers one word past its end: the first word past 32M is
+@note memory, not nothing there.
+@old
+    s_memory    = (!s_bus[28] && s_bus < 29'(MAIN_WORDS)) || s_window;
+@new
+    s_memory    = (!s_bus[28] && s_bus <= 29'(MAIN_WORDS)) || s_window;
+@end
+
+@mutation quux15-walk-frames-of-2m
+@check quux15_mainsize_quux
+@file rtl/machine/quux15_mmu.sv
+@note The walk takes main memory's frames as 2M words', refusing a page table
+@note above them.
+@old
+  localparam logic [17:0] FRAMES = 18'(MAIN_WORDS >> 10);
+@new
+  localparam logic [17:0] FRAMES = 18'(MAIN_WORDS >> 14);
+@end
+
+@mutation quux15-fd-ring-short-of-the-top
+@check quux15_mainsize_quux
+@file rtl/machine/quux15_devices.sv
+@note The file device refuses a ring ending at main memory's last word.
+@old
+        && 32'(base) + (32'd8 << log2) <= 32'(MAIN_WORDS);
+@new
+        && 32'(base) + (32'd8 << log2) < 32'(MAIN_WORDS);
+@end
+
+@mutation quux15-kr260-main-words-of-2m
+@check quux15_kr260
+@file boards/kria-kr260/quux15_kr260.sv
+@note The Kria's main memory left at the traces' 2M words, short of its
+@note reservation's 32M: the top's elaboration check refuses it.
+@old
+  localparam int unsigned MAIN_WORDS = 32'h0200_0000;
+@new
+  localparam int unsigned MAIN_WORDS = 32'h0020_0000;
+@end
+
 @mutation quux15-d-effects-at-the-slot-s-end
 @check quux15_mainloop_quux
 @file rtl/machine/quux15_core.sv

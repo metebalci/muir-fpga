@@ -136,9 +136,14 @@ struct Totals {
   size_t clocks = 0, commits = 0, operands = 0, grants = 0, landed = 0, registers = 0;
 } totals;
 
-// Main memory's words: QUUX's 32 boards, 2M words, five bytes each; the
-// frame buffer's, four bytes each from the master's `DISPLAY_BASE`.
-constexpr uint64_t kMainWords = 32u << 16;
+// Main memory's words: QUUX's 32 boards, 2M words, five bytes each, or the
+// build's `QUUX15_MAIN_UNITS` of 64K words, as the core's `MAIN_WORDS` is
+// built (the Kria's 512, 32M: `quux15_mainsize.quux.pass`); the frame
+// buffer's, four bytes each from the master's `DISPLAY_BASE`.
+#ifndef QUUX15_MAIN_UNITS
+#define QUUX15_MAIN_UNITS 32
+#endif
+constexpr uint64_t kMainWords = uint64_t(QUUX15_MAIN_UNITS) << 16;
 constexpr uint64_t kFbWords = 40960;
 constexpr uint64_t kDisplayBase = 0x0A000000;
 
@@ -235,6 +240,9 @@ struct Run {
   bool skip_sweep = false;
   // The period in units of 0.5 ns and the real-time clock's start.
   uint64_t period = 20, rtc = 0;
+  // Main memory's 64K-word units, as the trace's machine has them: 32
+  // unless its `# main-units` line says otherwise.
+  uint64_t main_units = 32;
   // The file device's host: the doorbells, by clock, and the completions,
   // by clock, each its handles open and the words written.
   std::vector<std::pair<uint64_t, uint64_t>> fd_prod;
@@ -401,6 +409,10 @@ int read_trace(const char *path, std::vector<Run> &runs) {
       }
       if (w.size() == 2 && w[0] == "sweep" && w[1] == "skipped") {
         runs.back().skip_sweep = true;
+        continue;
+      }
+      if (w.size() == 2 && w[0] == "main-units") {
+        runs.back().main_units = std::strtoull(w[1].c_str(), nullptr, 16);
         continue;
       }
       if (!w.empty() && w[0] == "clock") {
@@ -884,6 +896,15 @@ std::string checkpoint_check(Top *dut, const Run &run, const Bench &bench, const
 // `seed`: 0 when it agrees, 1 when not.
 int run_trace(const char *path, const Run &run, int seed) {
   const std::vector<std::vector<uint64_t>> &rows = run.rows;
+  // **A TRACE OF ANOTHER MAIN MEMORY IS REFUSED**: the core's address decode,
+  // walk and file device are built for this testbench's size.
+  if (run.main_units != (kMainWords >> 16)) {
+    std::fprintf(stderr, "FAIL: %s run %s is of a machine with %llu units of main memory, and this testbench and its "
+                 "core are built for %llu (QUUX15_MAIN_UNITS, MAIN_WORDS)\n", path, run.name.c_str(),
+                 static_cast<unsigned long long>(run.main_units),
+                 static_cast<unsigned long long>(kMainWords >> 16));
+    return 1;
+  }
   // A run before that stopped the simulation stopped it for itself alone.
   Verilated::gotFinish(false);
   Verilated::randSeed(seed);
