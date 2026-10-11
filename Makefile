@@ -298,8 +298,9 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # `QUUX15_GROUPS` are traces of many runs each (`golden/src/quux15_preset.rs`),
 # the speculation matrix and programs at random, and the same with memory
 # starts (`randmem`, `matrixmem`), traced at 10 ns alone; and the memory
-# side's rows (`golden/src/quux15_memside.rs`), `ports` and `walk`, at both
-# periods, where the port's clocks round differently; and the console's
+# side's rows (`golden/src/quux15_memside.rs`), `ports`, `walk` and the PDL
+# buffer's redirect inside the buffer (`redirect`, at 18 ns and 10 ns), at
+# both periods, where the port's clocks round differently; and the console's
 # (`golden/src/quux15_console.rs`): halts, single steps, the debug IR, the
 # reset and the boot (`console`), and a halt at every clock of five programs,
 # of a write start in a delay slot and of one right after a read start, and
@@ -311,7 +312,7 @@ QUUX14_POISON := double mapmd empty inflight inflightfb inflight0 forward mdmove
 # into an operand's handler that reads the PDL buffer in its first word
 # (`storeret`), under the port's timings and the seeded memory model.
 QUUX15_PROGRAMS := alu transfer memory time oa oaout pdl muldiv stack pdlfield pdlfieldout dconst dispatch predict slotstep pdlhold imem
-QUUX15_GROUPS := matrix random matrixmem randmem ports walk imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop storeret checkpoints bdisk bdmix
+QUUX15_GROUPS := matrix random matrixmem randmem ports walk redirect imemorder timers interrupt blockdisk window filedev console halts dispsel fieldbase mainloop storeret checkpoints bdisk bdmix
 QUUX15_PERIODS := 20 17
 QUUX15_PERIODS_time := 14 16 17 20 22 38
 QUUX15_PERIODS_matrix := 20
@@ -333,6 +334,9 @@ QUUX15_PERIODS_bdisk := 17 36
 QUUX15_PERIODS_bdmix := 36
 # The store before a fused return at the board's 18 ns and at 10 ns.
 QUUX15_PERIODS_storeret := 36 20
+# The PDL buffer's redirect inside the buffer at the board's 18 ns and at
+# 10 ns.
+QUUX15_PERIODS_redirect := 36 20
 # The programs revision 15's core is held to (`quux15_<program>.quux.pass`,
 # below).  Here, above `CHECK_QUUX`, whose `check` takes its value when it is
 # read.

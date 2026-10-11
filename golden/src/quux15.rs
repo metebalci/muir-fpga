@@ -1492,6 +1492,7 @@ fn cases(name: &str, period: u64) -> Vec<Case> {
         "matrixmem" => quux15_preset::matrix_memory().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "ports" => quux15_memside::ports().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "walk" => quux15_memside::walk().into_iter().map(|(n, p)| p.case(&n)).collect(),
+        "redirect" => quux15_memside::redirect().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "mainsize" => quux15_memside::mainsize().into_iter().map(|(n, p)| p.case(&n)).collect(),
         "dispatch" => vec![quux15_preset::dispatches().case("dispatch")],
         "imem" => vec![quux15_preset::imem_program().case("imem")],

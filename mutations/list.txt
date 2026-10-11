@@ -28228,6 +28228,163 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 # records return with muir's fix.  A return to the main loop whose own word
 # steps LC (NEXT-INSTRD, which bars fusing) is in no trace either.
 
+# ------------------------------------------- revision 15: the PDL buffer redirect
+# A reference through a page of status 5 whose access faults it, inside the
+# PDL buffer (A14.7; A15b.3, A15b.10): its index from the copies of A 430 and
+# A 431, the test off <= n, a read's word on the RAM's second port with the
+# held write over it and in MD three clocks on, a write as the buffer's newest
+# write with its forwards into EX, RD and CS, the held clock, and MD as a read
+# start found it (`golden/src/quux15_memside.rs`'s `redirect`, and two of its
+# programs halted at every clock in `halts`).  NOT HERE: D's wait ended by a
+# fetch inside the buffer, as no microcode fetches macroinstructions from the
+# PDL buffer, so no trace has one; the port taken twice by a word that
+# writes the buffer and fetches inside it, which stays `unbuilt`; and the
+# guard that keeps a write inside from being taken as a microcycle's
+# landing held over a halt (`pdlh_ins`): in all 234 drains of the `halts`
+# group that end with a write inside held, the word after its writer has
+# committed, so the writer is never the last word and the guard's removal
+# changes nothing a trace sees.
+
+@mutation quux15-pdl-redirect-no-held-clock
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note A start inside the PDL buffer sets the next start's wait as a write to
+@note memory does, two clocks, without the redirect's held one.
+@old
+    if (s_ins) n_ack_left = 2'd2;
+@new
+    if (s_ins) n_ack_left = 2'd1;
+@end
+
+@mutation quux15-pdl-redirect-read-lands-early
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note A read inside the buffer puts its word in MD two clocks after its start,
+@note not three.
+@old
+      n_pend_v = 1'b1; n_pend_left = 2'd2; n_pend_word = '0; n_pend_pdl = 1'b1;
+@new
+      n_pend_v = 1'b1; n_pend_left = 2'd1; n_pend_word = '0; n_pend_pdl = 1'b1;
+@end
+
+@mutation quux15-pdl-redirect-index-from-the-base
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note The buffer's word inside is taken at the base's copy plus the offset, A
+@note 430's in place of A 431's.
+@old
+    s_idx       = pdl_head + s_off[13:0];
+@new
+    s_idx       = pdl_base[13:0] + s_off[13:0];
+@end
+
+@mutation quux15-pdl-redirect-head-copied-from-430
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note The head's copy is taken in A memory's write pulse at A 430, the base's
+@note location, not A 431.
+@old
+      if (land_a_we && land_a_addr == 10'o431) pdl_head <= land_data[13:0];
+@new
+      if (land_a_we && land_a_addr == 10'o430) pdl_head <= land_data[13:0];
+@end
+
+@mutation quux15-pdl-redirect-past-pp-outside
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note The test is off < n: the word one past PP goes to memory.
+@old
+      s_inside   = s_off <= {18'd0, s_redirect_n};
+@new
+      s_inside   = s_off < {18'd0, s_redirect_n};
+@end
+
+@mutation quux15-pdl-redirect-read-misses-the-held-write
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note A read inside reads the RAM alone, not the buffer's newest write held
+@note outside it.
+@old
+  assign ins_word = ins_ov_v ? ins_ov_d : ro_pdl;
+@new
+  assign ins_word = (ins_ov_v && 1'b0) ? ins_ov_d : ro_pdl;
+@end
+
+@mutation quux15-pdl-redirect-write-not-taken
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note A write inside takes no place in the buffer.
+@old
+      if (ins_wr && running) begin
+@new
+      if (1'b0) begin
+@end
+
+@mutation quux15-pdl-redirect-write-drops-the-held-one
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note A write inside replaces the held write without putting it in the RAM.
+@old
+  assign pdl_we = pdlh_v && (land_pdl_we || ins_wr) && running;
+@new
+  assign pdl_we = pdlh_v && land_pdl_we && running;
+@end
+
+@mutation quux15-pdl-redirect-no-forward-into-ex
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note The word in EX that read the buffer's word a write inside writes reads
+@note the old word.
+@old
+  assign ex_pdl_now = (ins_wr && s_idx == ex_pdl_addr) ? md : ex_pdl;
+@new
+  assign ex_pdl_now = (ins_wr && s_idx == ex_pdl_addr && 1'b0) ? md : ex_pdl;
+@end
+
+@mutation quux15-pdl-redirect-no-forward-into-rd
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note The word in RD that read the buffer's word a write inside writes reads
+@note the old word.
+@old
+    rd_pdl_n   = (ins_wr && s_idx == rd_pdl_addr) ? md : rd_pdl_fwd ? land_pdl_data : rd_pdl;
+@new
+    rd_pdl_n   = rd_pdl_fwd ? land_pdl_data : rd_pdl;
+@end
+
+@mutation quux15-pdl-redirect-no-forward-into-cs
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note The word CS hands RD at the edge a write inside lands at reads the old
+@note word.
+@old
+          rd_pdl_fix_v <= land_fix || (ins_wr && s_idx == cs_pdl_addr)
+@new
+          rd_pdl_fix_v <= land_fix
+@end
+
+@mutation quux15-pdl-redirect-read-keeps-no-start-md
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note A read inside is no read start for the word right after it, which then
+@note waits for the read's word in place of reading MD as the start found it.
+@old
+    wb_read_grant = (at_grant && !st_write[0] && (p_req || s_device || s_nothing)) || ins_rd;
+@new
+    wb_read_grant = (at_grant && !st_write[0] && (p_req || s_device || s_nothing));
+@end
+
+@mutation quux15-pdl-redirect-start-behind-runs-on
+@check quux15_redirect_quux
+@file rtl/machine/quux15_core.sv
+@note A start in EX in the clock a start inside is made at WB is not held
+@note behind it.
+@old
+    wb_ack_grant  = (s_done && at_grant && !(s_memory && !st_write[0])) || s_ins;
+@new
+    wb_ack_grant  = (s_done && at_grant && !(s_memory && !st_write[0]));
+@end
+
 # A return with N fused into an operand's handler, its delay slot in RD and
 # squashed there by EX: the slot's plan carries the operand load, so that the
 # handler CS holds reads the PDL buffer at the operand address
@@ -28527,9 +28684,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_core.sv
 @note D's fetch faults and its wait goes on, CS held for ever.
 @old
-          && (s_faulted || (at_grant && (s_device || s_nothing)));
+          && (s_faulted || s_ins || (at_grant && (s_device || s_nothing)));
 @new
-          && (at_grant && (s_device || s_nothing));
+          && (s_ins || (at_grant && (s_device || s_nothing)));
 @end
 
 @mutation quux15-d-waits-under-an-interrupt
@@ -28548,9 +28705,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_core.sv
 @note D's fetch finds nothing there and its wait goes on.
 @old
-          && (s_faulted || (at_grant && (s_device || s_nothing)));
+          && (s_faulted || s_ins || (at_grant && (s_device || s_nothing)));
 @new
-          && (s_faulted || (at_grant && (s_device || (s_nothing && s_device))));
+          && (s_faulted || s_ins || (at_grant && (s_device || (s_nothing && s_device))));
 @end
 
 @mutation quux15-d-wait-not-ended-by-a-device
@@ -28559,9 +28716,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note D's fetch is answered by the register page and its wait goes on, for
 @note a word that never reaches it.
 @old
-          && (s_faulted || (at_grant && (s_device || s_nothing)));
+          && (s_faulted || s_ins || (at_grant && (s_device || s_nothing)));
 @new
-          && (s_faulted || (at_grant && ((s_device && s_nothing) || s_nothing)));
+          && (s_faulted || s_ins || (at_grant && ((s_device && s_nothing) || s_nothing)));
 @end
 
 @mutation quux15-d-decides-on-an-earlier-fetch
@@ -29617,9 +29774,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @note A read after a write landed takes the RAM's word, which the RAM takes
 @note only when a newer write lands: the word before the write.
 @old
-          rd_pdl_fix_v <= land_fix || (pdlh_v && pdlh_addr == cs_pdl_addr && !pdl_pend);
+                       || (pdlh_v && pdlh_addr == cs_pdl_addr && !pdl_pend);
 @new
-          rd_pdl_fix_v <= land_fix;
+                       || 1'b0;
 @end
 
 @mutation quux15-two-bubbles-target-at-once
@@ -29999,9 +30156,9 @@ if [ "$revision" = 14 ] && [ "$machine" = nothing ]; then
 @file rtl/machine/quux15_core.sv
 @note The PDL buffer takes its held write in reset, whatever WB came up as.
 @old
-  assign pdl_we = pdlh_v && land_pdl_we && running;
+  assign pdl_we = pdlh_v && (land_pdl_we || ins_wr) && running;
 @new
-  assign pdl_we = pdlh_v && land_pdl_we;
+  assign pdl_we = pdlh_v && (land_pdl_we || ins_wr);
 @end
 
 @mutation quux15-pdl-copies-come-up-random

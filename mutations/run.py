@@ -2719,7 +2719,7 @@ CHECKS["rdw_poison_quux14_forward_quux_k5"] = _timed("rdw_poison_quux14_forward_
 # an address written in the same clock is poisoned.
 QUUX15_CORE = ("alu", "oa", "oaout", "pdl", "muldiv", "transfer", "stack", "pdlfield", "pdlfieldout",
                "dconst", "dispatch", "predict", "slotstep", "pdlhold", "imem", "memory", "ports", "walk", "matrix",
-               "random", "matrixmem", "randmem", "imemorder", "time", "timers", "interrupt", "blockdisk", "window",
+               "random", "matrixmem", "randmem", "redirect", "imemorder", "time", "timers", "interrupt", "blockdisk", "window",
                "filedev", "console", "halts", "dispsel", "fieldbase", "mainloop", "storeret", "checkpoints", "bdisk",
                "bdmix")
 QUUX15_PERIODS = (20, 17)
@@ -2734,7 +2734,7 @@ QUUX15_CLIB = {
                 _Q15CHK_PKG + "cadr-common/src"],
 }
 QUUX15_PERIODS_OF = {"matrix": (20,), "random": (20,), "matrixmem": (20,), "randmem": (20,), "halts": (20,),
-                     "checkpoints": (20, 34), "bdisk": (17, 36), "bdmix": (36,), "storeret": (36, 20),
+                     "checkpoints": (20, 34), "bdisk": (17, 36), "bdmix": (36,), "storeret": (36, 20), "redirect": (36, 20),
                      "time": (14, 16, 17, 20, 22, 38), "timers": (14, 16, 17, 20, 22, 38)}
 for _p in QUUX15_CORE:
     CHECKS["quux15_%s_quux" % _p] = {

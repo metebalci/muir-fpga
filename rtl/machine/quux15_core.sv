@@ -73,8 +73,18 @@
 // `quux15_block_walk.sv`, the store's seam out to the pack side
 // (`cadr_disk_pack.sv` on a board), and main memory through the port's D.
 //
-// **WHAT IS NOT BUILT** --- the keyboard and the mouse, the network, the
-// PDL buffer redirect inside the buffer --- stops a simulation at the word
+// **THE PDL BUFFER REDIRECT** (A14.7; A15b.3, A15b.10), revision 14's: a
+// start through a page of status 5 whose access faults it proceeds as if
+// the access were 11, inside the buffer or through memory.  Inside, the
+// buffer's word at the head's copy plus the offset: a read's in MD three
+// clocks after the start, read on the RAM's second port as the start found
+// it; a write's MD the buffer's newest write, which the words behind the
+// start that read that word take; and the next start a clock later than
+// after a write, the held clock.
+//
+// **WHAT IS NOT BUILT** --- the keyboard and the mouse, the network, and a
+// word that writes the PDL buffer and fetches inside it in one clock, which
+// would want the RAM's second port twice --- stops a simulation at the word
 // that needs it, naming it (`unbuilt`), rather than running on wrong.
 
 `default_nettype none
@@ -361,6 +371,7 @@ module quux15_core #(
   logic [4:0]  ex_m_addr;
   logic [39:0] ex_m;
   logic [39:0] ex_pdl;
+  logic [13:0] ex_pdl_addr;
   logic        ex_next2_v, ex_resolved, ex_pred_taken_v, ex_pred_taken, ex_pred_pr_v;
   logic [13:0] ex_next2;
   logic [1:0]  ex_pred_pr;
@@ -526,7 +537,7 @@ module quux15_core #(
   logic [1:0]  ack_left;
   // A read's word on its way to MD from a register or nothing there (clocks
   // to its landing, the word); a read in the port (`md_fill` or a hit).
-  logic        pend_v, pend_dev;
+  logic        pend_v, pend_dev, pend_pdl;
   logic [1:0]  pend_left;
   logic [39:0] pend_word;
   logic        rd_port;
@@ -669,14 +680,29 @@ module quux15_core #(
   // HALT HOLDS IT OVER** (`pdl_pending`) when the last microcycle made it:
   // the next word's read takes the word before it, and it lands after
   // (`pdl_pend`), as a single-edge machine's buffer does.
-  logic        pdlh_v, pdl_pend;
+  logic        pdlh_v, pdl_pend, pdlh_ins;
+  // A start at WB inside the buffer this clock (`start_at_wb`, below): a
+  // read or a write, at `s_idx`.
+  logic        s_ins, ins_rd, ins_wr;
+  logic [13:0] s_idx;
   logic [13:0] pdlh_addr;
   logic [39:0] pdlh_data;
   logic [7:0]  pdlh_seq;
   // The held write goes into the RAM when a newer one lands, which the
   // machine takes only running: never in reset, whatever WB's registers came
   // up as.
-  assign pdl_we = pdlh_v && land_pdl_we && running;
+  assign pdl_we = pdlh_v && (land_pdl_we || ins_wr) && running;
+  // A read inside the buffer takes the second port in its start's clock,
+  // and the held write in its place where it holds that word.  A word that
+  // writes the buffer and fetches inside it in one clock would want the
+  // port twice: not built (`unbuilt`), as no microcode does it.
+  logic        ins_ov_v;
+  logic [39:0] ins_ov_d, ins_word;
+  always_ff @(posedge clk) begin
+    ins_ov_v <= pdlh_v && pdlh_addr == s_idx && !pdl_pend;
+    ins_ov_d <= pdlh_data;
+  end
+  assign ins_word = ins_ov_v ? ins_ov_d : ro_pdl;
   quux15_tdp #(.WIDTH(40), .DEPTH(16384)) pdl (
       .clk    (clk),
       .a_en   (pdl_re),
@@ -684,9 +710,9 @@ module quux15_core #(
       .a_addr (pdl_raddr),
       .a_wdata(40'd0),
       .a_q    (pdl_q),
-      .b_en   (pdl_we || ro_on),
+      .b_en   (pdl_we || ro_on || ins_rd),
       .b_we   (pdl_we),
-      .b_addr (ro_on ? rm_addr_q : pdlh_addr),
+      .b_addr (ro_on ? rm_addr_q : ins_rd ? s_idx : pdlh_addr),
       .b_wdata(pdlh_data),
       .b_q    (ro_pdl)
   );
@@ -762,8 +788,9 @@ module quux15_core #(
   // What a simulation stops at: a word that needs what is not built.
   localparam int UNBUILT_BITS = 2;
   logic [UNBUILT_BITS-1:0] unbuilt;
-  localparam int U_DEVICE = 0;  // the keyboard's, the mouse's or the network's words, the PDL buffer
-                                // redirect inside the buffer, a dispatch-memory write on map bits
+  localparam int U_DEVICE = 0;  // the keyboard's, the mouse's or the network's words, a fetch inside
+                                // the PDL buffer with its word's write of the buffer, a dispatch-memory
+                                // write on map bits
   localparam int U_DEV   = 1;   // a device's word the devices do not answer (a guard)
 
   // ======================================================== RD's copies' help
@@ -1418,6 +1445,7 @@ module quux15_core #(
     s_inside    = 1'b0;
     s_redirect_n = pdl_ptr - pdl_head + 14'd1;
     s_off       = a_va - pdl_base;
+    s_idx       = pdl_head + s_off[13:0];
     if (a_va[31:29] != 3'b111 && a_entry[26:24] == 3'd5
         && !(a_entry[27] && (!st_write[0] || a_entry[26]))) begin
       s_redirect = 1'b1;
@@ -1427,6 +1455,15 @@ module quux15_core #(
     fault_now   = s_translated && k_idle;
     vmaok_n     = s_entry[27] && (!st_write[0] || s_entry[26]);
     s_faulted   = fault_now && !vmaok_n;
+    // **INSIDE THE BUFFER** (A14.7; A15b.3, A15b.10): no memory cycle, no
+    // write-back, no grant; a read's word in MD three clocks on, the PDL
+    // buffer's word at `s_idx` as the start finds it, read on the RAM's
+    // second port; a write's word, MD, the buffer's newest write, which the
+    // words behind the start that read that word take; the next start a
+    // clock later than after a write.
+    s_ins       = fault_now && s_redirect && s_inside;
+    ins_rd      = s_ins && !st_write[0];
+    ins_wr      = s_ins && st_write[0];
     // The bus address (`tlb::bus_address`) and who answers it
     // (`busint::decode_quux_14`).
     if (a_va[31:29] == 3'b111 && !a_va[28]) s_bus = {1'b1, a_va[27:0]};
@@ -1453,11 +1490,12 @@ module quux15_core #(
     at_grant    = k_req && !k_hold;
     w_req       = at_grant && st_write[0] && s_memory;
     p_req       = at_grant && !st_write[0] && s_memory && !p_busy;
-    s_done      = s_faulted || (at_grant && !(w_req && !w_ok) && !(at_grant && !st_write[0] && s_memory && p_busy));
+    s_done      = s_faulted || s_ins || (at_grant && !(w_req && !w_ok) && !(at_grant && !st_write[0] && s_memory && p_busy));
     wb_leaves   = !wb_v || !st_v[0] || (s_done && !st_v[1]);
-    wb_read_grant = at_grant && !st_write[0] && (p_req || s_device || s_nothing);
-    // The grants that set `ack_at` beyond this clock: all but a memory read.
-    wb_ack_grant  = s_done && at_grant && !(s_memory && !st_write[0]);
+    wb_read_grant = (at_grant && !st_write[0] && (p_req || s_device || s_nothing)) || ins_rd;
+    // The grants that set `ack_at` beyond this clock: all but a memory read,
+    // and a start inside the PDL buffer.
+    wb_ack_grant  = (s_done && at_grant && !(s_memory && !st_write[0])) || s_ins;
   end
 
   // ======================================================================= EX
@@ -1564,7 +1602,10 @@ module quux15_core #(
   // source's.  The micro stack's word is the stack's before this
   // microcycle's landing of the last one's push.
   logic [4:0]  ex_msrc;
-  logic [39:0] ex_func, ex_mdata, md_in;
+  logic [39:0] ex_func, ex_mdata, md_in, ex_pdl_now;
+  // EX's PDL word with a write inside the buffer at its start this clock
+  // over it (`start_at_wb`'s forward into the words behind the start).
+  assign ex_pdl_now = (ins_wr && s_idx == ex_pdl_addr) ? md : ex_pdl;
   logic        ex_pop_pdl, pfr, pfw;
   logic [1:0]  map_bits;
   always_comb begin
@@ -1587,8 +1628,8 @@ module quux15_core #(
       4'o1:  ex_func = {11'd0, spcptr, 5'd0, spc[spcptr]};
       4'o2:  ex_func = {26'd0, pdl_ptr};
       4'o3:  ex_func = {26'd0, pdl_idx};
-      4'o4:  begin ex_func = ex_pdl; ex_pop_pdl = 1'b1; end
-      4'o5:  ex_func = ex_pdl;
+      4'o4:  begin ex_func = ex_pdl_now; ex_pop_pdl = 1'b1; end
+      4'o5:  ex_func = ex_pdl_now;
       4'o6:  ex_func = {26'd0, opc[7]};
       4'o7:  ex_func = q;
       4'o10: ex_func = vma;
@@ -2061,7 +2102,7 @@ module quux15_core #(
   // start) and EX's microcycle leave, in muir's order within the clock.
   logic        wb_nxm;
   logic        n_pend_v, n_rd_port, n_old_v, n_rgw_v, n_rgw_rel;
-  logic        n_mwd_v, n_bus_nxm, n_pend_dev;
+  logic        n_mwd_v, n_bus_nxm, n_pend_dev, n_pend_pdl;
   logic [1:0]  n_pend_left, n_ack_left;
   logic [39:0] n_pend_word, n_old_md, n_rgw_word, n_md, n_mwd_vma, n_mwd_md;
   logic [7:0]  n_old_seq;
@@ -2092,12 +2133,19 @@ module quux15_core #(
     n_pend_left = pend_left - 2'd1;
     n_pend_word = pend_word;
     n_pend_dev = 1'b0;
+    n_pend_pdl = 1'b0;
     if (at_grant && !st_write[0] && s_device) begin
       n_pend_v = 1'b1; n_pend_left = 2'd1; n_pend_word = {8'd0, s_regword[31:0]};
       // A device's word: read a clock on, at that clock's instant.
       n_pend_dev = dev_word(s_bus[7:0]);
     end
     if (pend_v && pend_left != 2'd0 && pend_dev) n_pend_word = {8'd0, dev_rd_word};
+    // A read inside the PDL buffer: its word three clocks after the start,
+    // read on the RAM's second port as the start found it.
+    if (ins_rd) begin
+      n_pend_v = 1'b1; n_pend_left = 2'd2; n_pend_word = '0; n_pend_pdl = 1'b1;
+    end
+    if (pend_v && pend_pdl) n_pend_word = ins_word;
     if (at_grant && !st_write[0] && s_nothing) begin
       n_pend_v = 1'b1; n_pend_left = 2'd0; n_pend_word = '0;
     end
@@ -2113,6 +2161,8 @@ module quux15_core #(
     n_ack_left = (ack_left != 2'd0) ? ack_left - 2'd1 : 2'd0;
     if (at_grant && s_done && (s_device || (s_memory && st_write[0]))) n_ack_left = 2'd1;
     if (at_grant && s_nothing) n_ack_left = 2'd0;
+    // Inside the PDL buffer: three clocks, the redirect's held one (A14.7).
+    if (s_ins) n_ack_left = 2'd2;
     // --- The register's write: taken, made, released.  A word that leaves
     // --- EX after the start's releases it (`end_of_microcycle`), at the
     // --- grant's clock or later, and so does a halt or a step whose last
@@ -2266,7 +2316,7 @@ module quux15_core #(
     d_m31      = d_eff && fx_d.fuse;
     d_m31_word = d_word;
     d_end  = d_wait_q && wb_v && st_v[0] && st_fetch[0]
-          && (s_faulted || (at_grant && (s_device || s_nothing)));
+          && (s_faulted || s_ins || (at_grant && (s_device || s_nothing)));
     d_npc_v = d_dec || d_end;
     d_npc   = (d_dec && fx_d.fuse) ? fx_d.handler : mdreg[13:0];
   end
@@ -2634,12 +2684,13 @@ module quux15_core #(
   end
 `endif
 
-  // A device beyond the memory system's words, the frame buffer's window,
-  // the redirect inside the PDL buffer: muir's `bus_read` and `bus_write`
-  // and the redirect's buffer access, not built here.
+  // A device beyond the memory system's words, the frame buffer's window:
+  // muir's `bus_read` and `bus_write`, not built here; and a read inside
+  // the PDL buffer in the clock its word's own write of the buffer takes
+  // the second port.
   logic ub_wb;
   assign ub_wb = (at_grant && s_device && !st_write[0] && unbuilt_word(s_bus[7:0]))
-              || (fault_now && s_redirect && s_inside) || ub_register;
+              || (ins_rd && pdlh_v && land_pdl_we && running) || ub_register;
   assign unbuilt = ub_ex
                  | (ub_wb ? (UNBUILT_BITS'(1) << U_DEVICE) : '0)
                  | ((!dev_rd_built || !dev_wr_built) ? (UNBUILT_BITS'(1) << U_DEV) : '0);
@@ -2654,7 +2705,7 @@ module quux15_core #(
     rd_m_n     = (land_m_we && land_m_addr == rd_m_addr && !rd_ir[31]) ? land_data : rd_m;
     rd_pdl_fwd = land_pdl_we && land_pdl_addr == rd_pdl_addr && (rd_seq - land_pdl_seq) >= 8'd2
               && (rd_seq - land_pdl_seq) < 8'd128;
-    rd_pdl_n   = rd_pdl_fwd ? land_pdl_data : rd_pdl;
+    rd_pdl_n   = (ins_wr && s_idx == rd_pdl_addr) ? md : rd_pdl_fwd ? land_pdl_data : rd_pdl;
   end
 
   always_ff @(posedge clk) begin
@@ -2687,7 +2738,7 @@ module quux15_core #(
       // LVMO as muir's machine has it at power-on (`lvmo_at_power_on`): read
       // and write access, the frame all ones.
       vmaok <= 1'b0; wrcyc <= 1'b0; lvmo <= 30'(32'b11 << 26 | 32'o777777);
-      ack_left <= 2'd0; pend_v <= 1'b0; pend_dev <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
+      ack_left <= 2'd0; pend_v <= 1'b0; pend_dev <= 1'b0; pend_pdl <= 1'b0; rd_port <= 1'b0; old_v <= 1'b0;
       rgw_v <= 1'b0; mwd_v <= 1'b0; cprod_v <= 1'b0;
       bus_nxm <= 1'b0; posted_errors <= '0;
       // The redirect's copies come up as muir's machine has them.
@@ -2778,6 +2829,7 @@ module quux15_core #(
       end
       ack_left <= n_ack_left;
       pend_v <= n_pend_v; pend_left <= n_pend_left; pend_word <= n_pend_word; pend_dev <= n_pend_dev;
+      pend_pdl <= n_pend_pdl;
       rd_port <= n_rd_port;
       old_v <= n_old_v; old_seq <= n_old_seq; old_md <= n_old_md;
       rgw_v <= n_rgw_v; rgw_bus <= n_rgw_bus; rgw_rel <= n_rgw_rel; rgw_word <= n_rgw_word;
@@ -2827,7 +2879,7 @@ module quux15_core #(
         ex_seq <= rd_seq; ex_pc <= rd_pc; ex_word <= rd_word; ex_ir <= rd_ir;
         ex_a_addr <= rd_a_addr; ex_a <= rd_a_n;
         ex_m_addr <= rd_m_addr; ex_m <= rd_m_n;
-        ex_pdl <= rd_pdl_n;
+        ex_pdl <= rd_pdl_n; ex_pdl_addr <= rd_pdl_addr;
         ex_next2_v <= plan.next2_v; ex_next2 <= plan.next2;
         ex_resolved <= plan.resolved;
         ex_pred_taken_v <= plan.pred_taken_v; ex_pred_taken <= plan.pred_taken;
@@ -2845,6 +2897,7 @@ module quux15_core #(
       end else begin
         ex_a <= ex_a_d1;
         ex_m <= ex_m_d1;
+        ex_pdl <= ex_pdl_now;
         // MUL's and DIV's clocks count once the holds before them are past.
         if (ex_reach_mul) ex_clocks <= ex_clocks + 5'd1;
         if (ex_go && !md_wait && !start_wait && map_hold) ex_map_held <= 1'b1;
@@ -2873,8 +2926,9 @@ module quux15_core #(
           logic land_fix;
           land_fix = land_pdl_we && land_pdl_addr == cs_pdl_addr
                   && (cs_seq - land_pdl_seq) >= 8'd2 && (cs_seq - land_pdl_seq) < 8'd128;
-          rd_pdl_fix_v <= land_fix || (pdlh_v && pdlh_addr == cs_pdl_addr && !pdl_pend);
-          rd_pdl_fix   <= land_fix ? land_pdl_data : pdlh_data;
+          rd_pdl_fix_v <= land_fix || (ins_wr && s_idx == cs_pdl_addr)
+                       || (pdlh_v && pdlh_addr == cs_pdl_addr && !pdl_pend);
+          rd_pdl_fix   <= (ins_wr && s_idx == cs_pdl_addr) ? md : land_fix ? land_pdl_data : pdlh_data;
         end
       end else if (rd_moves || !rd_keep) begin
         rd_v_q <= 1'b0;
@@ -3004,16 +3058,22 @@ module quux15_core #(
   // The PDL buffer's held write, and the halt's drain end and the boot.
   always_ff @(posedge clk) begin
     if (rst) begin
-      pdlh_v <= 1'b0; pdl_pend <= 1'b0;
+      pdlh_v <= 1'b0; pdl_pend <= 1'b0; pdlh_ins <= 1'b0;
     end else begin
       if (land_pdl_we && running) begin
         pdlh_v <= 1'b1; pdlh_addr <= land_pdl_addr; pdlh_data <= land_pdl_data; pdlh_seq <= land_pdl_seq;
+        pdlh_ins <= 1'b0;
+      end
+      // A write inside the buffer, made at its start (A14.7): never a
+      // microcycle's landing held over a halt.
+      if (ins_wr && running) begin
+        pdlh_v <= 1'b1; pdlh_addr <= s_idx; pdlh_data <= md; pdlh_seq <= wb_seq; pdlh_ins <= 1'b1;
       end
       // The held-over write lands after the first word's read.
       if (pdl_pend && cs_moves) pdl_pend <= 1'b0;
-      if (drain_end && !pdl_pend) begin
+      if (drain_end && !pdl_pend && !ins_wr) begin
         if ((land_pdl_we && running) ? land_pdl_seq == (commit ? ex_seq : last_seq)
-                                     : (pdlh_v && pdlh_seq == (commit ? ex_seq : last_seq)))
+                                     : (pdlh_v && !pdlh_ins && pdlh_seq == (commit ? ex_seq : last_seq)))
           pdl_pend <= 1'b1;
       end
       // A boot loses a write held over (`Back::default`).
@@ -3262,7 +3322,7 @@ module quux15_core #(
   // A word that needs what is not built stops the simulation, named.
   always_ff @(posedge clk) begin
     if (!rst && errhalt == 2'd0 && unbuilt != '0) begin
-      $display("quux15_core: not built: %b (bit 0 a device, the window or the redirect inside, 1 a device word unanswered) at PC %o",
+      $display("quux15_core: not built: %b (bit 0 a device, the window or a fetch inside the PDL buffer with its own write of it, 1 a device word unanswered) at PC %o",
                unbuilt, ex_v ? ex_pc : rd_pc);
       $finish;
     end

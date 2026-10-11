@@ -472,6 +472,16 @@ pub fn halts(period: u64) -> Vec<Case> {
     }
     let mut programs = vec![("readwrite".to_string(), write_after_read())];
     programs.extend(md_after_start_programs());
+    // The PDL buffer's redirect inside the buffer: a write inside read back
+    // by the index in the next word, the same behind a write to memory, and
+    // a read inside with MD used a word later (A14.7): a halt between a
+    // write inside and its reader, and a drain that ends after the write.
+    programs.extend(
+        super::quux15_memside::redirect()
+            .into_iter()
+            .filter(|(n, _)| n == "wgap0" || n == "rgap1" || n == "mwgap")
+            .map(|(n, p)| (format!("redirect-{n}"), p)),
+    );
     for (name, p) in programs {
         let end = park_clock(&p.case("x"), period);
         for at in 2..=end {

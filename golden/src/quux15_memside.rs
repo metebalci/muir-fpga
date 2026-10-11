@@ -30,7 +30,7 @@
 
 use muir::isa::asm::{
     ALU, HINT, JUMP, LDB, MD, N, P, POPJ, SETA, SETM, SRC_MD, START_READ, START_WRITE,
-    a_src, filler, m_dest, m_src, src, target,
+    a_dest, a_src, filler, m_dest, m_src, src, target,
 };
 use muir::machine::Word;
 use muir::pipeline::port::LateModel;
@@ -656,6 +656,303 @@ pub fn mainsize() -> Vec<(String, Preset)> {
     p.read(reg(0o161), 0o22).read(reg(0o160), 0o23);
     p.stop();
     v.push(("fdring".into(), p));
+    v
+}
+
+/// A page entry of status 5, access `01`, the accessed and the modified
+/// bits set, at `frame`: every reference through it faults, so the PDL
+/// buffer's redirect takes it (A14.7).
+const fn pdl_entry(frame: u64) -> Word {
+    0b11 << 28 | 1 << 26 | 1 << 24 | 3 << 22 | frame
+}
+
+/// The PDL buffer's planted word `k`, a fixnum's tag on a pattern.
+const fn pdl_word(k: u64) -> Word {
+    0o05 << 32 | 0o7070_0000 | k
+}
+
+/// The page the redirect's runs use, its base at word 20 of it, the
+/// head at 100 and PP at 107: n is 10, so the base plus 0 to 10 is
+/// inside, at the buffer's words 100 to 110.
+const PDL_PAGE: Word = 0o2001 << 10;
+const PDL_BASE: Word = PDL_PAGE | 0o20;
+const PDL_HEAD: u64 = 0o100;
+const PDL_PP: u64 = 0o107;
+
+impl Preset {
+    /// The redirect's machine (muir's `copies` and `plant_pdl`): the
+    /// tables with `va`'s page of status 5 at frame 20, its page table at
+    /// frame 12, the copies of
+    /// A 430 and A 431 at `base` and `head`, PP at `pp`, the buffer's words
+    /// `head` to `head` + 12 planted through the index, and PDL-INDEX at
+    /// `head` + 1.
+    fn pdl_machine(&mut self, va: Word, base: Word, head: u64, pp: u64) -> &mut Self {
+        // The page table past the directory's four frames, 8 to 11.
+        self.table(va, 12, pdl_entry(0o20));
+        self.set_directory();
+        let (b, h, q) = (self.k(base), self.k(head), self.k(pp));
+        self.op(ALU | SETA | a_src(b) | a_dest(muir::tlb::A_PDL_BUFFER_VIRTUAL_ADDRESS as u64));
+        self.op(ALU | SETA | a_src(h) | a_dest(muir::tlb::A_PDL_BUFFER_HEAD as u64));
+        self.op(ALU | SETA | a_src(q) | fd(0o14));
+        for k in 0..=12u64 {
+            let (i, w) = (self.k(head + k), self.k(pdl_word(k)));
+            self.op(ALU | SETA | a_src(i) | fd(0o13));
+            self.op(ALU | SETA | a_src(w) | fd(0o12));
+        }
+        let i = self.k(head + 1);
+        self.op(ALU | SETA | a_src(i) | fd(0o13));
+        self.fill(2)
+    }
+}
+
+/// **The PDL buffer's redirect inside the buffer** (A14.7; A15b.3, A15b.10;
+/// muir's tests of A14.7 at revisions 14 and 15): a reference through a
+/// page of status 5 whose access faults it, inside the buffer, reads or
+/// writes the buffer's word at the head plus its offset, with no memory
+/// cycle, its word in `MD` three clocks after it and the next start held a
+/// clock more than a write's; outside it goes to memory.
+///
+///   edges     reads at the base plus 0, 7 and 10, the head, PP and the word
+///             past it, and plus 11 through memory; a write inside and one
+///             outside; the buffer read back by the index
+///   wgap      a write inside, then the buffer read by the index in the
+///             next word, one word later or two: the buffer takes the
+///             start's `MD`, and the read reads it in EX, RD or CS (`MD`
+///             loaded in the next word, which the MD-after-write ruling bars
+///             in microcode, is muir's own test)
+///   mwgap     a write to memory, then a write inside while the port holds
+///             the first, then the buffer read by the index
+///   wpop      a write inside at PP, then the buffer popped by the pointer
+///   rgap      a read inside, `MD` used in the next word, or one, two or
+///             three words later
+///   pairs     a write inside and a read inside of its word, a word apart,
+///             the read held behind the write's acknowledgment; a read and a
+///             write; two reads; a write of the buffer by the index and a
+///             read inside of that word right after it, a word later and two
+///   tight     starts right after starts: a read inside then a write inside
+///             of the read's word to another, a read inside, or a read of
+///             memory; two writes inside
+///   start-md  a read inside, then a write whose address is `MD` as the read
+///             start found it
+///   head      A 431 written in the word before the start: the new head
+///   acc11     the microcode's fiddle, an entry of status 5 written directly
+///             with access `11`: memory, no redirect
+///   wrap      the buffer across 2^31 words: off 0, n and n + 1
+///
+/// `pairs` and `wgap` run again at the Kria's port and a slow one, and under
+/// muir's seeded memory model.
+pub fn redirect() -> Vec<(String, Preset)> {
+    let mut v: Vec<(String, Preset)> = Vec::new();
+    let at = |off: u64| PDL_BASE + off;
+    let base = || {
+        let mut p = run();
+        p.pdl_machine(PDL_PAGE, PDL_BASE, PDL_HEAD, PDL_PP);
+        p
+    };
+    // Reads at the edges, writes inside and outside, the buffer read back.
+    let mut p = base();
+    p.main.push(((0o20 << 10) + 0o31, 0o600_0060));
+    p.read(at(0), 0o20).read(at(7), 0o21).read(at(8), 0o22).read(at(9), 0o23);
+    p.write(0o1111, at(1)).write(0o2222, at(9));
+    p.op(ALU | SETM | src(0o5) | m_dest(0o24));
+    // The buffer's last planted word, the write held before the first
+    // write inside, in the RAM after it.
+    let i12 = p.k(PDL_HEAD + 12);
+    p.op(ALU | SETA | a_src(i12) | fd(0o13));
+    p.fill(1);
+    p.op(ALU | SETM | src(0o5) | m_dest(0o27));
+    p.read(PHYS | (0o20 << 10) + 0o31, 0o25).read(PHYS | (0o20 << 10) + 0o21, 0o26);
+    p.stop();
+    v.push(("edges".into(), p));
+    // A write inside, the buffer read by the index after it, or MD loaded.
+    let gaps = |gap: u64| {
+        let mut p = base();
+        let (a, v1) = (p.k(at(1)), p.k(0o1111));
+        p.op(ALU | SETA | a_src(v1) | MD);
+        p.op(ALU | SETA | a_src(a) | START_WRITE);
+        p.fill(gap as usize);
+        p.op(ALU | SETM | src(0o5) | m_dest(0o27));
+        p.fill(3);
+        p.op(ALU | SETM | src(0o5) | m_dest(0o26));
+        p.op(ALU | SETM | SRC_MD | m_dest(0o25));
+        p.stop();
+        p
+    };
+    for gap in 0..3 {
+        v.push((format!("wgap{gap}"), gaps(gap)));
+    }
+    // A write to memory, then a write inside while the port still holds the
+    // first, then the buffer read by the index: halted at every clock
+    // (`halts`), a drain that ends after the write inside.
+    let mut p = base();
+    let (m, a, v1, v2) = (p.k(PHYS | 0o46), p.k(at(1)), p.k(0o1212), p.k(0o3434));
+    p.op(ALU | SETA | a_src(v1) | MD);
+    p.op(ALU | SETA | a_src(m) | START_WRITE);
+    p.fill(1);
+    p.op(ALU | SETA | a_src(v2) | MD);
+    p.op(ALU | SETA | a_src(a) | START_WRITE);
+    p.op(ALU | SETM | src(0o5) | m_dest(0o27));
+    p.fill(2);
+    p.read(PHYS | 0o46, 0o26);
+    p.stop();
+    v.push(("mwgap".into(), p));
+    // A write inside at PP, then the buffer popped by the pointer.
+    let mut p = base();
+    let (a, v1) = (p.k(at(PDL_PP - PDL_HEAD)), p.k(0o3333));
+    p.op(ALU | SETA | a_src(v1) | MD);
+    p.op(ALU | SETA | a_src(a) | START_WRITE);
+    p.op(ALU | SETM | src(0o4) | m_dest(0o27));
+    p.op(ALU | SETM | src(0o4) | m_dest(0o26));
+    p.stop();
+    v.push(("wpop".into(), p));
+    // A read inside, MD used in the next word or later.
+    for gap in 0..4 {
+        let mut p = base();
+        let a = p.k(at(2));
+        p.op(ALU | SETA | a_src(a) | START_READ);
+        p.fill(gap as usize);
+        p.op(ALU | SETM | SRC_MD | m_dest(0o20));
+        p.stop();
+        v.push((format!("rgap{gap}"), p));
+    }
+    // Pairs back to back.
+    let pairs = || {
+        let mut p = base();
+        let (a3, a4, v1, v2) = (p.k(at(3)), p.k(at(4)), p.k(0o4444), p.k(0o5555));
+        // A write and a read of its word, a word apart: the read held
+        // behind the write's acknowledgment.
+        p.op(ALU | SETA | a_src(v1) | MD);
+        p.op(ALU | SETA | a_src(a3) | START_WRITE);
+        p.fill(1);
+        p.op(ALU | SETA | a_src(a3) | START_READ);
+        p.fill(1);
+        p.op(ALU | SETM | SRC_MD | m_dest(0o20));
+        // A read and a write.
+        p.op(ALU | SETA | a_src(a4) | START_READ);
+        p.fill(1);
+        p.op(ALU | SETA | a_src(v2) | MD);
+        p.op(ALU | SETA | a_src(a4) | START_WRITE);
+        p.fill(2);
+        p.op(ALU | SETM | src(0o5) | m_dest(0o21));
+        // Two reads.
+        p.op(ALU | SETA | a_src(a3) | START_READ);
+        p.fill(1);
+        p.op(ALU | SETA | a_src(a4) | START_READ);
+        p.fill(1);
+        p.op(ALU | SETM | SRC_MD | m_dest(0o22));
+        // The buffer written by the index, then read inside: right after,
+        // a word later, two.
+        for (k, gap) in [0u64, 1, 2].into_iter().enumerate() {
+            let (i, w, a) = (p.k(PDL_HEAD + 5 + k as u64), p.k(0o6060 + k as u64), p.k(at(5 + k as u64)));
+            p.op(ALU | SETA | a_src(i) | fd(0o13));
+            p.fill(1);
+            p.op(ALU | SETA | a_src(w) | fd(0o12));
+            p.fill(gap as usize);
+            p.op(ALU | SETA | a_src(a) | START_READ);
+            p.fill(1);
+            p.op(ALU | SETM | SRC_MD | m_dest(0o23 + k as u64));
+        }
+        p.stop();
+        p
+    };
+    v.push(("pairs".into(), pairs()));
+    // Starts right after starts: a read inside and a write inside of the
+    // read's word to another (MD-after-read rule (A)), two reads, a read
+    // inside and one of memory: each held a clock behind the other's.
+    let tight = |second_inside: bool, second_write: bool| {
+        let mut p = base();
+        let (a3, a6, m) = (p.k(at(3)), p.k(at(6)), p.k(PHYS | 0o40));
+        p.main.push((0o40, 0o600_0062));
+        p.op(ALU | SETA | a_src(a3) | START_READ);
+        let second = if second_inside { a6 } else { m };
+        p.op(ALU | SETA | a_src(second) | if second_write { START_WRITE } else { START_READ });
+        p.fill(2);
+        p.op(ALU | SETM | SRC_MD | m_dest(0o20));
+        let i = p.k(PDL_HEAD + 6);
+        p.op(ALU | SETA | a_src(i) | fd(0o13));
+        p.fill(1);
+        p.op(ALU | SETM | src(0o5) | m_dest(0o21));
+        p.stop();
+        p
+    };
+    v.push(("tight-rw".into(), tight(true, true)));
+    // Two writes inside, back to back: the second held in EX behind the
+    // first's grant.
+    let mut p = base();
+    let (a3, a4, v1) = (p.k(at(3)), p.k(at(4)), p.k(0o7171));
+    p.op(ALU | SETA | a_src(v1) | MD);
+    p.op(ALU | SETA | a_src(a3) | START_WRITE);
+    p.op(ALU | SETA | a_src(a4) | START_WRITE);
+    p.fill(2);
+    let (i3, i4) = (p.k(PDL_HEAD + 3), p.k(PDL_HEAD + 4));
+    p.op(ALU | SETA | a_src(i3) | fd(0o13));
+    p.fill(1);
+    p.op(ALU | SETM | src(0o5) | m_dest(0o20));
+    p.op(ALU | SETA | a_src(i4) | fd(0o13));
+    p.fill(1);
+    p.op(ALU | SETM | src(0o5) | m_dest(0o21));
+    p.stop();
+    v.push(("tight-ww".into(), p));
+    // A read inside, then a write whose address is MD as the read start
+    // found it, held in EX until the read's word is in MD: it writes that
+    // word at the old MD's address.
+    let mut p = base();
+    let (a3, x) = (p.k(at(3)), p.k(PHYS | 0o44));
+    p.op(ALU | SETA | a_src(x) | MD);
+    p.op(ALU | SETA | a_src(a3) | START_READ);
+    p.op(ALU | SETM | SRC_MD | START_WRITE);
+    p.fill(2);
+    p.read(PHYS | 0o44, 0o20);
+    p.stop();
+    v.push(("start-md".into(), p));
+    v.push(("tight-rr".into(), tight(true, false)));
+    v.push(("tight-rm".into(), tight(false, false)));
+    // A 431 written right before the start.
+    let mut p = base();
+    let (h, a) = (p.k(PDL_HEAD + 2), p.k(at(1)));
+    p.op(ALU | SETA | a_src(h) | a_dest(muir::tlb::A_PDL_BUFFER_HEAD as u64));
+    p.op(ALU | SETA | a_src(a) | START_READ);
+    p.fill(1);
+    p.op(ALU | SETM | SRC_MD | m_dest(0o20));
+    p.stop();
+    v.push(("head".into(), p));
+    // The fiddle: status 5 written directly with access 11, memory.
+    let mut p = base();
+    p.main.push((0o20 << 10, 0o600_0060));
+    p.direct_write(PDL_PAGE, (pdl_entry(0o20) | 0b11 << 26) & 0o7777777777);
+    p.fill(1);
+    p.read(PDL_PAGE, 0o20);
+    p.stop();
+    v.push(("acc11".into(), p));
+    // Across 2^31 words: the base 8 below, PP 12 past the head.
+    let (low, high, b31): (Word, Word, Word) = (0o17777776000, 0o20000000000, 0o17777777770);
+    let mut p = run();
+    p.table(high, 13, pdl_entry(0o21));
+    p.main.push(((0o21 << 10) + 4, 0o600_0061));
+    p.pdl_machine(low, b31, PDL_HEAD, PDL_HEAD + 0o12);
+    for (k, off) in [0u64, 10, 11, 12].into_iter().enumerate() {
+        p.read((b31 + off) & 0o37777777777, 0o20 + k as u64);
+    }
+    p.stop();
+    v.push(("wrap".into(), p));
+    // The port's timings and the seeded model.
+    use muir::pipeline::PortTiming;
+    for (tn, t) in [
+        ("kria", PortTiming { read_ns: 247, write_ns: 130, occupancy_ns: 10 }),
+        ("slow", PortTiming { read_ns: 600, write_ns: 400, occupancy_ns: 40 }),
+    ] {
+        let mut p = pairs();
+        p.timing = Some(t);
+        v.push((format!("pairs-{tn}"), p));
+        let mut p = gaps(1);
+        p.timing = Some(t);
+        v.push((format!("wgap1-{tn}"), p));
+    }
+    for seed in 1..=4 {
+        let mut p = pairs();
+        p.late = Some(late(seed));
+        v.push((format!("pairs-late{seed}"), p));
+    }
     v
 }
 
